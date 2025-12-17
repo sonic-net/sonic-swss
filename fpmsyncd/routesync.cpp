@@ -10,6 +10,7 @@
 #include "producerstatetable.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
+#include "fpmsyncd/fpm/fpm.h"
 #include "macaddress.h"
 #include "converter.h"
 #include <string.h>
@@ -167,6 +168,8 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_vnet_routeTable(pipeline, APP_VNET_RT_TABLE_NAME, true),
     m_vnet_tunnelTable(pipeline, APP_VNET_RT_TUNNEL_TABLE_NAME, true),
     m_evpn_shlTable(pipeline, "EVPN_SPLIT_HORIZON_TABLE", true),
+    m_evpn_dfTable(pipeline, "EVPN_DF_TABLE", true),
+    m_evpn_esBackupNhgTable(pipeline, "EVPN_ES_BACKUP_NHG_TABLE", true),
     m_warmStartHelper(pipeline, m_routeTable.get(), APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
     m_srv6MySidTable(pipeline, APP_SRV6_MY_SID_TABLE_NAME, true),
     m_srv6SidListTable(pipeline, APP_SRV6_SID_LIST_TABLE_NAME, true),
@@ -1474,7 +1477,105 @@ uint16_t RouteSync::getEncapType(struct nlmsghdr *h)
 }
 
 
-void RouteSync::onEvpnShlMsg(int msg_type, struct tcmsg *tcm, struct rtattr *tca_options)
+void RouteSync::onTcFilterMsg(struct nlmsghdr *h, int len)
+{
+    struct tcmsg *tcm;
+    struct rtattr *tb[__TCA_MAX] = {0};
+    bool warmRestartInProgress = m_warmStartHelper.inProgress();
+
+    tcm = (struct tcmsg *)NLMSG_DATA(h);
+
+    netlink_parse_rtattr(tb, TCA_MAX, TCA_RTA(tcm), len);
+
+    if (tb[TCA_KIND]) {
+        if (strncmp((char *)RTA_DATA(tb[TCA_KIND]), "shl", sizeof("shl")) == 0) {
+            char if_name[IFNAMSIZ] = "0";
+            char shl_entry_key[sizeof("Vlan") + sizeof("0000") + IFNAMSIZ];
+            string shl_entries;
+            int msg_type = h->nlmsg_type;
+            struct rtattr *tca_options = tb[TCA_OPTIONS];
+
+            if (!getIfName(tcm->tcm_ifindex, if_name, IFNAMSIZ))
+            {
+                strcpy(if_name, ifname_unknown);
+            }
+
+            snprintf(shl_entry_key, sizeof(shl_entry_key),
+                     "Vlan%04u:%s",
+                     0 /* No vlans sent yet */,
+                     if_name);
+
+            if (msg_type == RTM_DELTFILTER)
+            {
+                if (!warmRestartInProgress)
+                {
+                    m_evpn_shlTable.del(shl_entry_key);
+                }
+                else
+                {
+                    SWSS_LOG_INFO("Warm-Restart mode: Receiving delete msg: %s",
+                                  shl_entry_key);
+
+                    vector<FieldValueTuple> fvVector;
+                    const KeyOpFieldsValuesTuple kfv = std::make_tuple(shl_entry_key,
+                                                                       DEL_COMMAND,
+                                                                       fvVector);
+                    m_warmStartHelper.insertRefreshMap(kfv);
+                }
+            }
+            else if (msg_type == RTM_NEWTFILTER)
+            {
+                vector<FieldValueTuple> fvVector;
+                int tca_len = tca_options->rta_len;
+                struct rtattr *tca = (struct rtattr *)RTA_DATA(tca_options);
+                char ip_addr_str[MAX_ADDR_SIZE];
+
+                while (RTA_OK(tca, tca_len)) {
+                    switch (tca->rta_type) {
+                    default:
+                        break;
+                    case TCA_FLOWER_KEY_IPV4_SRC:
+                        inet_ntop(AF_INET, RTA_DATA(tca), ip_addr_str, sizeof(ip_addr_str));
+                        shl_entries += ip_addr_str;
+                        shl_entries += NHG_DELIMITER;
+                        break;
+                    case TCA_FLOWER_KEY_IPV6_SRC:
+                        inet_ntop(AF_INET6, RTA_DATA(tca), ip_addr_str, sizeof(ip_addr_str));
+                        shl_entries += ip_addr_str;
+                        shl_entries += NHG_DELIMITER;
+                        break;
+                    }
+
+                    tca = RTA_NEXT(tca, tca_len);
+                }
+
+                /* Trim off the last deliminter in the list */
+                shl_entries = shl_entries.substr(0, shl_entries.length()-1);
+                FieldValueTuple vteps("vteps", shl_entries);
+
+                fvVector.push_back(vteps);
+
+                if (!warmRestartInProgress)
+                {
+                    m_evpn_shlTable.set(shl_entry_key, fvVector);
+                    SWSS_LOG_DEBUG("EVPN_SPLIT_HORIZON_TABLE Set Msg: %s, vteps:%s",
+                                   shl_entry_key, shl_entries.c_str());
+                }
+                else
+                {
+                    SWSS_LOG_INFO("Warm-Restart mode: EVPN_SPLIT_HORIZON_TABLE set msg: %s, vteps:%s",
+                                  shl_entry_key, shl_entries.c_str());
+                    const KeyOpFieldsValuesTuple kfv = std::make_tuple(shl_entry_key,
+                                                                       SET_COMMAND,
+                                                                       fvVector);
+                    m_warmStartHelper.insertRefreshMap(kfv);
+                }
+            }
+        }
+    }
+}
+
+void RouteSync::onEvpnShlMsg(struct nlmsghdr *h, int len)
 {
     char if_name[IFNAMSIZ] = "0";
     /*
@@ -1483,20 +1584,28 @@ void RouteSync::onEvpnShlMsg(int msg_type, struct tcmsg *tcm, struct rtattr *tca
     char shl_entry_key[sizeof("Vlan") + sizeof("0000") + IFNAMSIZ];
     string shl_entries;
     bool warmRestartInProgress = m_warmStartHelper.inProgress();
+    struct evpn_shl_msg *shl_msg = (struct evpn_shl_msg *)NLMSG_DATA(h);
 
-    assert(msg_type == RTM_NEWTFILTER || msg_type == RTM_DELTFILTER);
+    assert(h->nlmsg_type == RTM_FPM_ADD_EVPN_SHL || h->nlmsg_type == RTM_FPM_DEL_EVPN_SHL);
 
-    if (!getIfName(tcm->tcm_ifindex, if_name, IFNAMSIZ))
+    /*
+     * Port-specific information is sent using VLAN 0xFFF (4095) and
+     * is explicitly ignored at the moment.
+     */
+    if (shl_msg->esm_vid == 0xFFF)
+        return;
+
+    if (!getIfName(shl_msg->esm_ifindex, if_name, IFNAMSIZ))
     {
         strcpy(if_name, ifname_unknown);
     }
 
     snprintf(shl_entry_key, sizeof(shl_entry_key),
-             "Vlan%04u:%s",
-             0 /* No vlans sent yet */,
+             "Vlan%u:%s",
+             shl_msg->esm_vid,
              if_name);
 
-    if (msg_type == RTM_DELTFILTER)
+    if (h->nlmsg_type == RTM_FPM_DEL_EVPN_SHL)
     {
         if (!warmRestartInProgress)
         {
@@ -1514,35 +1623,35 @@ void RouteSync::onEvpnShlMsg(int msg_type, struct tcmsg *tcm, struct rtattr *tca
             m_warmStartHelper.insertRefreshMap(kfv);
         }
     }
-    else if (msg_type == RTM_NEWTFILTER)
+    else if (h->nlmsg_type == RTM_FPM_ADD_EVPN_SHL)
     {
         vector<FieldValueTuple> fvVector;
-        int tca_len = tca_options->rta_len;
-        struct rtattr *tca = (struct rtattr *)RTA_DATA(tca_options);
-        string shl_entries;
+        struct rtattr *rta = FPM_EVPN_SHL_RTA(shl_msg);
+        int rta_len = len;
         char ip_addr_str[MAX_ADDR_SIZE];
 
-        while (RTA_OK(tca, tca_len)) {
-            switch (tca->rta_type) {
+        while (RTA_OK(rta, rta_len)) {
+            switch (rta->rta_type) {
             default:
                 break;
-            case TCA_FLOWER_KEY_IPV4_SRC:
-                inet_ntop(AF_INET, RTA_DATA(tca), ip_addr_str, sizeof(ip_addr_str));
+            case FPM_SHL_IPV4_ADDR:
+                inet_ntop(AF_INET, RTA_DATA(rta), ip_addr_str, sizeof(ip_addr_str));
                 shl_entries += ip_addr_str;
                 shl_entries += NHG_DELIMITER;
                 break;
-            case TCA_FLOWER_KEY_IPV6_SRC:
-                inet_ntop(AF_INET6, RTA_DATA(tca), ip_addr_str, sizeof(ip_addr_str));
+            case FPM_SHL_IPV6_ADDR:
+                inet_ntop(AF_INET6, RTA_DATA(rta), ip_addr_str, sizeof(ip_addr_str));
                 shl_entries += ip_addr_str;
                 shl_entries += NHG_DELIMITER;
                 break;
             }
 
-            tca = RTA_NEXT(tca, tca_len);
+            rta = RTA_NEXT(rta, rta_len);
         }
 
         /* Trim off the last deliminter in the list */
-        shl_entries = shl_entries.substr(0, shl_entries.length()-1);
+        if (!shl_entries.empty())
+            shl_entries = shl_entries.substr(0, shl_entries.length()-1);
         FieldValueTuple vteps("vteps", shl_entries);
 
         fvVector.push_back(vteps);
@@ -1565,19 +1674,143 @@ void RouteSync::onEvpnShlMsg(int msg_type, struct tcmsg *tcm, struct rtattr *tca
     }
 }
 
-
-void RouteSync::onTcFilterMsg(struct nlmsghdr *h, int len)
+void RouteSync::onEvpnDfMsg(struct nlmsghdr *h, int len)
 {
-    struct tcmsg *tcm;
-    struct rtattr *tb[__TCA_MAX] = {0};
+    char if_name[IFNAMSIZ] = "0";
+    /*
+     * DF keys are: "Vlan"vlan_id:"ifname"if_id
+     */
+    char df_entry_key[sizeof("Vlan") + sizeof("0000") + IFNAMSIZ];
+    bool warmRestartInProgress = m_warmStartHelper.inProgress();
+    struct evpn_df_msg *df_msg = (struct evpn_df_msg *)NLMSG_DATA(h);
 
-    tcm = (struct tcmsg *)NLMSG_DATA(h);
+    assert(h->nlmsg_type == RTM_FPM_ADD_EVPN_DF || h->nlmsg_type == RTM_FPM_DEL_EVPN_DF);
 
-    netlink_parse_rtattr(tb, TCA_MAX, TCA_RTA(tcm), len);
+    /*
+     * Port-specific information is sent using VLAN 0xFFF (4095) and
+     * is explicitly ignored at the moment.
+     */
+    if (df_msg->edm_vid == 0xFFF)
+        return;
 
-    if (tb[TCA_KIND]) {
-        if (strncmp((char *)RTA_DATA(tb[TCA_KIND]), "shl", sizeof("shl")) == 0) {
-            onEvpnShlMsg(h->nlmsg_type, tcm, tb[TCA_OPTIONS]);
+    if (!getIfName(df_msg->edm_ifindex, if_name, IFNAMSIZ))
+    {
+        strcpy(if_name, ifname_unknown);
+    }
+
+    snprintf(df_entry_key, sizeof(df_entry_key),
+             "Vlan%u:%s",
+             df_msg->edm_vid,
+             if_name);
+
+    if (h->nlmsg_type == RTM_FPM_DEL_EVPN_DF)
+    {
+        if (!warmRestartInProgress)
+        {
+            m_evpn_dfTable.del(df_entry_key);
+        }
+        else
+        {
+            SWSS_LOG_INFO("Warm-Restart mode: Receiving delete msg: %s",
+                          df_entry_key);
+
+            vector<FieldValueTuple> fvVector;
+            const KeyOpFieldsValuesTuple kfv = std::make_tuple(df_entry_key,
+                                                               DEL_COMMAND,
+                                                               fvVector);
+            m_warmStartHelper.insertRefreshMap(kfv);
+        }
+    }
+    else if (h->nlmsg_type == RTM_FPM_ADD_EVPN_DF)
+    {
+        vector<FieldValueTuple> fvVector;
+        string is_df = (df_msg->edm_non_df ? "false" : "true");
+        FieldValueTuple df("df", is_df);
+
+        fvVector.push_back(df);
+
+        if (!warmRestartInProgress)
+        {
+            m_evpn_dfTable.set(df_entry_key, fvVector);
+            SWSS_LOG_DEBUG("EVPN_DF_TABLE Set Msg: %s, is_df:%s",
+                           df_entry_key, is_df.c_str());
+        }
+        else
+        {
+            SWSS_LOG_INFO("Warm-Restart mode: EVPN_DF_TABLE set msg: %s, is_df:%s",
+                          df_entry_key, is_df.c_str());
+            const KeyOpFieldsValuesTuple kfv = std::make_tuple(df_entry_key,
+                                                               SET_COMMAND,
+                                                               fvVector);
+            m_warmStartHelper.insertRefreshMap(kfv);
+        }
+    }
+}
+
+void RouteSync::onEvpnEsBackupNhgMsg(struct nlmsghdr *h, int len)
+{
+    char if_name[IFNAMSIZ] = "0";
+    /*
+     * ES Backup NHG keys are: "ifname"if_id
+     */
+    char backup_nhg_entry_key[IFNAMSIZ];
+    struct evpn_backup_nhg_msg *backup_nhg_msg = (struct evpn_backup_nhg_msg *)NLMSG_DATA(h);
+    bool warmRestartInProgress = m_warmStartHelper.inProgress();
+
+    assert(h->nlmsg_type == RTM_FPM_ADD_EVPN_ES_BACKUP_NHG || h->nlmsg_type == RTM_FPM_DEL_EVPN_ES_BACKUP_NHG);
+
+    if (!getIfName(backup_nhg_msg->ebnm_ifindex, if_name, IFNAMSIZ))
+    {
+        strcpy(if_name, ifname_unknown);
+    }
+
+    snprintf(backup_nhg_entry_key, sizeof(backup_nhg_entry_key),
+             "%s",
+             if_name);
+
+    if (h->nlmsg_type == RTM_FPM_DEL_EVPN_ES_BACKUP_NHG)
+    {
+        if (!warmRestartInProgress)
+        {
+            SWSS_LOG_INFO("Deleting entry: %s",
+                          backup_nhg_entry_key);
+            m_evpn_esBackupNhgTable.del(backup_nhg_entry_key);
+        }
+        else
+        {
+            SWSS_LOG_INFO("Warm-Restart mode: Receiving delete msg: %s",
+                          backup_nhg_entry_key);
+
+            vector<FieldValueTuple> fvVector;
+            const KeyOpFieldsValuesTuple kfv = std::make_tuple(backup_nhg_entry_key,
+                                                               DEL_COMMAND,
+                                                               fvVector);
+            m_warmStartHelper.insertRefreshMap(kfv);
+        }
+    }
+    else if (h->nlmsg_type == RTM_FPM_ADD_EVPN_ES_BACKUP_NHG)
+    {
+        vector<FieldValueTuple> fvVector;
+        string backup_nhg_id = std::to_string(backup_nhg_msg->ebnm_backup_nhg_id);
+
+        FieldValueTuple nexthop_group("nexthop_group", backup_nhg_id);
+
+        fvVector.push_back(nexthop_group);
+
+        if (!warmRestartInProgress)
+        {
+            m_evpn_esBackupNhgTable.set(backup_nhg_entry_key, fvVector);
+            SWSS_LOG_DEBUG("EVPN_ES_BACKUP_NHG_TABLE Set Msg: %s, Backup NHG ID:%s",
+                           backup_nhg_entry_key, backup_nhg_id.c_str());
+        }
+        else
+        {
+            SWSS_LOG_INFO("Warm-Restart mode: EVPN_ES_BACKUP_NHG_TABLE set msg: %s, Backpu NHG ID:%s",
+                          backup_nhg_entry_key, backup_nhg_id.c_str());
+            const KeyOpFieldsValuesTuple kfv = std::make_tuple(backup_nhg_entry_key,
+                                                               SET_COMMAND,
+                                                               fvVector);
+            m_warmStartHelper.insertRefreshMap(kfv);
         }
     }
 }
@@ -1594,6 +1827,7 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
         && (h->nlmsg_type != RTM_DELNEXTHOP)
         && (h->nlmsg_type != RTM_NEWTFILTER)
         && (h->nlmsg_type != RTM_DELTFILTER)
+        && !(h->nlmsg_type >= RTM_FPM_FIRST && h->nlmsg_type <= RTM_FPM_LAST)
     )
         return;
 
@@ -1602,6 +1836,12 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
         hdr_len = sizeof(struct nhmsg);
     } else if (h->nlmsg_type == RTM_NEWTFILTER || h->nlmsg_type == RTM_DELTFILTER) {
         hdr_len = sizeof(struct tcmsg);
+    } else if (h->nlmsg_type == RTM_FPM_ADD_EVPN_SHL || h->nlmsg_type == RTM_FPM_DEL_EVPN_SHL) {
+        hdr_len = sizeof(struct evpn_shl_msg);
+    } else if (h->nlmsg_type == RTM_FPM_ADD_EVPN_DF || h->nlmsg_type == RTM_FPM_DEL_EVPN_DF) {
+        hdr_len = sizeof(struct evpn_df_msg);
+    } else if (h->nlmsg_type == RTM_FPM_ADD_EVPN_ES_BACKUP_NHG || h->nlmsg_type == RTM_FPM_DEL_EVPN_ES_BACKUP_NHG) {
+        hdr_len = sizeof(struct evpn_backup_nhg_msg);
     } else {
         hdr_len = sizeof(struct ndmsg);
     }
@@ -1633,6 +1873,25 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
         onTcFilterMsg(h, len);
         return;
     }
+
+    if (h->nlmsg_type == RTM_FPM_ADD_EVPN_SHL || h->nlmsg_type == RTM_FPM_DEL_EVPN_SHL)
+    {
+        onEvpnShlMsg(h, len);
+        return;
+    }
+
+    if (h->nlmsg_type == RTM_FPM_ADD_EVPN_DF || h->nlmsg_type == RTM_FPM_DEL_EVPN_DF)
+    {
+        onEvpnDfMsg(h, len);
+        return;
+    }
+
+    if (h->nlmsg_type == RTM_FPM_ADD_EVPN_ES_BACKUP_NHG || h->nlmsg_type == RTM_FPM_DEL_EVPN_ES_BACKUP_NHG)
+    {
+        onEvpnEsBackupNhgMsg(h, len);
+        return;
+    }
+
     switch (getEncapType(h))
     {
         case NH_ENCAP_SRV6_ROUTE:

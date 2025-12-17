@@ -77,7 +77,7 @@ public:
 
     void onFpmConnected(FpmInterface& fpm)
     {
-        if (m_fpmInterface) {
+        if (!m_fpmInterface) {
             m_fpmInterface = &fpm;
         }
     }
@@ -105,8 +105,10 @@ private:
     ProducerStateTable  m_vnet_tunnelTable;
     /* EVPN Split Horizon Table */
     ProducerStateTable  m_evpn_shlTable;
-    /* Warm start helper */
-    WarmStartHelper m_warmStartHelper;
+    /* EVPN DF Table (Designated Forwarder) */
+    ProducerStateTable  m_evpn_dfTable;
+    /* EVPN ES Backup NextHopGroup Table */
+    ProducerStateTable  m_evpn_esBackupNhgTable;
     /* srv6 mySid table */
     ProducerStateTable m_srv6MySidTable; 
     /* srv6 sid list table */
@@ -147,7 +149,9 @@ private:
 
     /* Handle prefix route */
     void onEvpnRouteMsg(struct nlmsghdr *h, int len);
-    void onEvpnShlMsg(int msg_type, struct tcmsg *tcm, struct rtattr *tca_options);
+    void onEvpnShlMsg(struct nlmsghdr *h, int len);
+    void onEvpnDfMsg(struct nlmsghdr *h, int len);
+    void onEvpnEsBackupNhgMsg(struct nlmsghdr *h, int len);
     void onTcFilterMsg(struct nlmsghdr *h, int len);
 
     /* Handle routes containing an SRv6 nexthop */
