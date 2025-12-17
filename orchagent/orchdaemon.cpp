@@ -27,6 +27,8 @@ extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
 extern string                      gMySwitchType;
 extern string                      gMySwitchSubType;
+extern bool                        gOrchUnhealthy;
+extern string                      gSaiErrorString;
 
 extern void syncd_apply_view();
 /*
@@ -882,6 +884,15 @@ void OrchDaemon::start(long heartBeatInterval)
         int ret;
 
         ret = m_select->select(&s, SELECT_TIMEOUT);
+
+        /*
+         * Log an error message periodically if a previous SAI API call failed with
+         * an unrecoverable error.
+         */
+        if (gOrchUnhealthy)
+        {
+            SWSS_LOG_ERROR("%s", gSaiErrorString.c_str());
+        }
 
         auto tend = std::chrono::high_resolution_clock::now();
         heartBeat(tend, heartBeatInterval);
