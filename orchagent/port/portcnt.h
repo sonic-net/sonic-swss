@@ -99,6 +99,11 @@ public:
     } link_training; // Port link training
 
     struct {
+        std::string value;
+        bool is_set = false;
+    } media_type; // Port media type
+
+    struct {
 
         struct {
             std::vector<std::uint32_t> value;

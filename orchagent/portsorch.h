@@ -448,6 +448,7 @@ private:
     bool setPortFecOverride(sai_object_id_t port_obj, bool override_fec);
     bool setPortPfcAsym(Port &port, sai_port_priority_flow_control_mode_t pfc_asym);
     bool getDestPortId(sai_object_id_t src_port_id, dest_port_type_t port_type, sai_object_id_t &des_port_id);
+    bool setPortMediaType(Port& port, const string &media_type);
 
     bool setBridgePortAdminStatus(sai_object_id_t id, bool up);
 

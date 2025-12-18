@@ -238,6 +238,7 @@ public:
     sai_port_interface_type_t m_interface_type = SAI_PORT_INTERFACE_TYPE_NONE;
     std::set<sai_port_interface_type_t> m_adv_interface_types;
     bool      m_mpls = false;
+    std::string m_media_type = "unknown";
     /*
      * Following bit vector is used to lock
      * the queue from being changed in BufferOrch.
