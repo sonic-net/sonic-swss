@@ -153,7 +153,7 @@ private:
     void voqSyncAddNeigh(string &alias, IpAddress &ip_address, const MacAddress &mac, sai_neighbor_entry_t &neighbor_entry);
     void voqSyncDelNeigh(string &alias, IpAddress &ip_address);
     bool updateVoqNeighborEncapIndex(const NeighborEntry &neighborEntry, uint32_t encap_index);
-    void updateNextHop(const BfdUpdate&, bool is_deletion = false);
+    void updateNextHop(const BfdUpdate&);
 
     bool resolveNeighborEntry(const NeighborEntry &, const MacAddress &);
     void clearResolvedNeighborEntry(const NeighborEntry &);
