@@ -56,9 +56,16 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       fake_flowcounterrouteorch.cpp \
 		       fake_dbconnector.cpp \
 		       fake_producertable.cpp \
+		       fake_producerstatetable.cpp \
 		       fake_consumerstatetable.cpp \
 		       fake_subscriberstatetable.cpp \
 		       fake_notificationconsumer.cpp \
+		       fake_fdborch.cpp \
+		       fake_intfsorch.cpp \
+		       fake_neighorch.cpp \
+		       fake_fgnhgorch.cpp \
+		       fake_srv6orch.cpp \
+		       fake_routeorch.cpp \
 		       fake_table.cpp \
 		       p4oidmapper_test.cpp \
 		       p4orch_util_test.cpp \
