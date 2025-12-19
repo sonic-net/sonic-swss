@@ -2687,6 +2687,14 @@ class TestVnetOrch(object):
         vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2', ep_monitor='9.1.0.3,9.1.0.4', primary ='9.1.0.1', profile="Test_profile", monitoring='custom', adv_prefix='100.100.1.0/24', check_directly_connected=True)
 
+        # verify acl table action list
+        expected_action_list = [
+            "SAI_ACL_ACTION_TYPE_COUNTER",
+            "SAI_ACL_ACTION_TYPE_REDIRECT"
+        ]
+        acl_table_id = dvs_acl.get_acl_table_ids(1)[0]
+        dvs_acl.verify_acl_table_action_list(acl_table_id, expected_action_list)
+
         # verify tunnel term acl 
         expected_sai_qualifiers = {
             "SAI_ACL_ENTRY_ATTR_FIELD_DST_IP": dvs_acl.get_simple_qualifier_comparator("100.100.1.1&mask:255.255.255.255")
