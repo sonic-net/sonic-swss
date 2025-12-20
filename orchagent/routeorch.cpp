@@ -187,6 +187,8 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
 
     addLinkLocalRouteToMe(gVirtualRouterId, default_link_local_prefix);
     SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu", default_link_local_prefix.to_string().c_str());
+
+    createRetryCache(APP_ROUTE_TABLE_NAME);
 }
 
 std::string RouteOrch::getLinkLocalEui64Addr(void)
@@ -1051,7 +1053,9 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                     else
                     {
                         if (addRoute(ctx, nhg))
+                        {
                             it = consumer.m_toSync.erase(it);
+                        }
                         else
                             it++;
                     }
@@ -1072,7 +1076,9 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                     ctx.using_temp_nhg)
                 {
                     if (addRoute(ctx, nhg))
+                    {
                         it = consumer.m_toSync.erase(it);
+                    }
                     else
                         it++;
                 }
@@ -1130,10 +1136,22 @@ void RouteOrch::doTask(ConsumerBase& consumer)
             }
 
             const auto& ctx = found->second;
+
+            // if retry_cst field is set, move this task to retry cache:
+            // - add it to retry cache before executing addRoutePost/removeRoutePost
+            //      - since these functions could modify retrycache status
+            // - delete it from m_toSync after addRoutePost/removeRoutePost to avoid duplicates
+            bool rc_inserted = false;
+            if (ctx.retry_cst != DUMMY_CONSTRAINT)
+                rc_inserted = consumer.addToRetry(it_prev->second, ctx.retry_cst);
+
             const auto& object_statuses = ctx.object_statuses;
             if (object_statuses.empty())
             {
-                it_prev++;
+                if (rc_inserted)
+                    it_prev = consumer.m_toSync.erase(it_prev);
+                else
+                    it_prev++;
                 continue;
             }
 
@@ -1153,7 +1171,7 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                 {
                     /* If any existing routes are updated to point to the
                      * above interfaces, remove them from the ASIC. */
-                    if (removeRoutePost(ctx))
+                    if (removeRoutePost(ctx) || rc_inserted)
                         it_prev = consumer.m_toSync.erase(it_prev);
                     else
                         it_prev++;
@@ -1164,7 +1182,7 @@ void RouteOrch::doTask(ConsumerBase& consumer)
 
                 if (nhg.getSize() == 1 && nhg.hasIntfNextHop())
                 {
-                    if (addRoutePost(ctx, nhg))
+                    if (addRoutePost(ctx, nhg) || rc_inserted)
                         it_prev = consumer.m_toSync.erase(it_prev);
                     else
                         it_prev++;
@@ -1175,7 +1193,7 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                          gRouteBulker.bulk_entry_pending_removal(route_entry) ||
                          ctx.using_temp_nhg)
                 {
-                    if (addRoutePost(ctx, nhg))
+                    if (addRoutePost(ctx, nhg) || rc_inserted)
                         it_prev = consumer.m_toSync.erase(it_prev);
                     else
                         it_prev++;
@@ -1198,7 +1216,7 @@ void RouteOrch::doTask(ConsumerBase& consumer)
             else if (op == DEL_COMMAND)
             {
                 /* Cannot locate the route or remove succeed */
-                if (removeRoutePost(ctx))
+                if (removeRoutePost(ctx) || rc_inserted)
                     it_prev = consumer.m_toSync.erase(it_prev);
                 else
                     it_prev++;
@@ -1441,7 +1459,6 @@ bool RouteOrch::removeFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id
 
     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
     m_nextHopGroupCount--;
-
     return true;
 }
 
@@ -2012,6 +2029,12 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             SWSS_LOG_INFO("Next hop group key %s does not exist", ctx.nhg_index.c_str());
             return false;
         }
+        if (!ctx.context_index.empty() && !m_srv6Orch->contextIdExists(ctx.context_index))
+        {
+            SWSS_LOG_INFO("Context ID %s does not exist, move task entry to RetryCache", ctx.context_index.c_str());
+            ctx.retry_cst = make_constraint(RETRY_CST_PIC, ctx.context_index);
+            return false;
+        }
     }
     /* RouteOrch owns the NHG */
     else if (nextHops.getSize() == 0)
@@ -2245,11 +2268,6 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
 
         if (!ctx.context_index.empty() || nextHops.is_srv6_vpn())
         {
-            if (!ctx.context_index.empty() && !m_srv6Orch->contextIdExists(ctx.context_index))
-            {
-                SWSS_LOG_INFO("Context id %s does not exist", ctx.context_index.c_str());
-                return false;
-            }
             route_attr.id = SAI_ROUTE_ENTRY_ATTR_PREFIX_AGG_ID;
             route_attr.value.u32 = ctx.nhg_index.empty() ? m_srv6Orch->getAggId(nextHops) : m_srv6Orch->getAggId(ctx.context_index);
             route_attrs.push_back(route_attr);
@@ -2304,15 +2322,9 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
             }
 
-            // Set update preifx agg id if need
-            if (nextHops.is_srv6_vpn() ||
-                    (it_route->second.context_index != ctx.context_index && !ctx.context_index.empty()))
+            // Set/update prefix agg id if needed
+            if (!ctx.context_index.empty() || nextHops.is_srv6_vpn())
             {
-                if (!ctx.context_index.empty() && !m_srv6Orch->contextIdExists(ctx.context_index))
-                {
-                    SWSS_LOG_INFO("Context id %s does not exist", ctx.context_index.c_str());
-                    return false;
-                }
                 route_attr.id = SAI_ROUTE_ENTRY_ATTR_PREFIX_AGG_ID;
                 route_attr.value.u32 = ctx.nhg_index.empty() ? m_srv6Orch->getAggId(nextHops) : m_srv6Orch->getAggId(ctx.context_index);
                 object_statuses.emplace_back();

@@ -48,6 +48,11 @@ private:
     std::string fname;
 };
 
+class RetryRec : public RecWriter {
+public:
+    RetryRec();
+};
+
 class SwSSRec : public RecWriter {
 public:
     SwSSRec();
@@ -73,12 +78,14 @@ public:
     static const std::string SWSS_FNAME;
     static const std::string SAIREDIS_FNAME;
     static const std::string RESPPUB_FNAME;
+    static const std::string RETRY_FNAME;
 
     Recorder() = default;
     /* Individual Handlers */
     SwSSRec swss;
     SaiRedisRec sairedis;
     ResPubRec respub;
+    RetryRec retry;
 };
 
 }
