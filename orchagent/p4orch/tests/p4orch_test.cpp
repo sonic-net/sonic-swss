@@ -71,6 +71,8 @@ class P4OrchTest : public ::testing::Test {
     mock_sai_next_hop = &mock_sai_next_hop_;
     sai_next_hop_api->create_next_hop = mock_create_next_hop;
     sai_next_hop_api->remove_next_hop = mock_remove_next_hop;
+    sai_next_hop_api->create_next_hops = mock_create_next_hops;
+    sai_next_hop_api->remove_next_hops = mock_remove_next_hops;
     sai_next_hop_api->set_next_hop_attribute = mock_set_next_hop_attribute;
     sai_next_hop_api->get_next_hop_attribute = mock_get_next_hop_attribute;
     mock_sai_route = &mock_sai_route_;
