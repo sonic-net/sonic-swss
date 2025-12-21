@@ -55,6 +55,8 @@ constexpr char *kSetWcmpGroupIdAndMetadata = "set_wcmp_group_id_and_metadata";
 constexpr char *kSetMetadataAndDrop = "set_metadata_and_drop";
 constexpr char *kSetNexthop = "set_nexthop";
 constexpr char *kSetIpNexthop = "set_ip_nexthop";
+constexpr char* kSetIpNexthopAndDisableRewrites =
+    "set_ip_nexthop_and_disable_rewrites";
 constexpr char *kSetTunnelNexthop = "set_p2p_tunnel_encap_nexthop";
 constexpr char* kNoAction = "no_action";
 constexpr char *kDrop = "drop";
@@ -96,6 +98,10 @@ constexpr char *kTos = "tos";
 constexpr char *kMirrorAsIpv4Erspan = "mirror_as_ipv4_erspan";
 constexpr char *kL3AdmitAction = "admit_to_l3";
 constexpr char *kTunnelAction = "mark_for_p2p_tunnel_encap";
+constexpr char* kDisableDecrementTtl = "disable_decrement_ttl";
+constexpr char* kDisableSrcMacRewrite = "disable_src_mac_rewrite";
+constexpr char* kDisableDstMacRewrite = "disable_dst_mac_rewrite";
+constexpr char* kDisableVlanRewrite = "disable_vlan_rewrite";
 
 // Field names in P4RT TABLE DEFINITION APP DB entry.
 constexpr char *kTables = "tables";
@@ -207,6 +213,10 @@ struct P4NextHopAppDbEntry
     std::string gre_tunnel_id;
     swss::IpAddress neighbor_id;
     std::string action_str;
+    bool disable_decrement_ttl = false;
+    bool disable_src_mac_rewrite = false;
+    bool disable_dst_mac_rewrite = false;
+    bool disable_vlan_rewrite = false;
 };
 
 // P4L3AdmitAppDbEntry holds entry deserialized from table

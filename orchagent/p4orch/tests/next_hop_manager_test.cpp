@@ -98,6 +98,18 @@ const P4NextHopAppDbEntry kP4NextHopAppDbEntry3{/*next_hop_id=*/kNextHopId,
                                                 /*neighbor_id=*/swss::IpAddress(),
                                                 /*action_str=*/""};
 
+// APP DB entries for Adding with disable rewrites .
+const P4NextHopAppDbEntry kP4NextHopAppDbEntry4{
+    /*next_hop_id=*/kNextHopId,
+    /*router_interface_id=*/kRouterInterfaceId1,
+    /*gre_tunnel_id=*/"",
+    /*neighbor_id=*/swss::IpAddress(kNeighborId1),
+    /*action_str=*/"set_ip_nexthop_and_disable_rewrites",
+    /*disable_decrement_ttl=*/true,
+    /*disable_src_mac_rewrite=*/true,
+    /*disable_dst_mac_rewrite=*/true,
+    /*disable_vlan_rewrite=*/true};
+
 // APP DB entry for tunnel next hop entry
 const P4NextHopAppDbEntry kP4TunnelNextHopAppDbEntry1{/*next_hop_id=*/kTunnelNextHopId,
                                                       /*router_interface_id=*/"",
@@ -149,6 +161,22 @@ std::unordered_map<sai_attr_id_t, sai_attribute_value_t> CreateAttributeListForN
         next_hop_attr.id = SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID;
         next_hop_attr.value.oid = oid;
         next_hop_attrs.insert({next_hop_attr.id, next_hop_attr.value});
+
+        next_hop_attr.id = SAI_NEXT_HOP_ATTR_DISABLE_DECREMENT_TTL;
+        next_hop_attr.value.booldata = app_entry.disable_decrement_ttl;
+        next_hop_attrs.insert({next_hop_attr.id, next_hop_attr.value});
+
+        next_hop_attr.id = SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE;
+        next_hop_attr.value.booldata = app_entry.disable_src_mac_rewrite;
+        next_hop_attrs.insert({next_hop_attr.id, next_hop_attr.value});
+
+        next_hop_attr.id = SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE;
+        next_hop_attr.value.booldata = app_entry.disable_dst_mac_rewrite;
+        next_hop_attrs.insert({next_hop_attr.id, next_hop_attr.value});
+
+        next_hop_attr.id = SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE;
+        next_hop_attr.value.booldata = app_entry.disable_vlan_rewrite;
+        next_hop_attrs.insert({next_hop_attr.id, next_hop_attr.value});
     }
 
     next_hop_attr.id = SAI_NEXT_HOP_ATTR_IP;
@@ -178,18 +206,32 @@ bool MatchCreateNextHopArgAttrList(const sai_attribute_t *attr_list,
 
     // Sanity check for expected_attr_list.
     const auto end = expected_attr_list.end();
-    if (expected_attr_list.size() != 3 || expected_attr_list.find(SAI_NEXT_HOP_ATTR_TYPE) == end ||
+    int expected_number_attributes = 3;
+    if (expected_attr_list.find(SAI_NEXT_HOP_ATTR_TYPE) == end ||
         expected_attr_list.find(SAI_NEXT_HOP_ATTR_IP) == end ||
-        (expected_attr_list.find(SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID) == end &&
-         expected_attr_list.find(SAI_NEXT_HOP_ATTR_TUNNEL_ID) == end))
-    {
+        (expected_attr_list.find(SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID) ==
+             end &&
+         expected_attr_list.find(SAI_NEXT_HOP_ATTR_TUNNEL_ID) == end)) {
+      // SAI_NEXT_HOP_ATTR_TYPE used in all entry types.
+      // SAI_NEXT_HOP_ATTR_IP used in all entry types.
+      // One of SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID or
+      //   SAI_NEXT_HOP_ATTR_TUNNEL_ID must be used.
+      return false;
+    }
+    if (expected_attr_list.find(SAI_NEXT_HOP_ATTR_TUNNEL_ID) != end) {
+      if (expected_attr_list.size() != 3) {
         return false;
+      }
+      expected_number_attributes = 3;
+    } else {  // SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID
+      if (expected_attr_list.size() != 7) {
+        return false;
+      }
+      expected_number_attributes = 7;
     }
 
-    for (int i = 0; i < 3; ++i)
-    {
-        switch (attr_list[i].id)
-        {
+    for (int i = 0; i < expected_number_attributes; ++i) {
+      switch (attr_list[i].id) {
         case SAI_NEXT_HOP_ATTR_TYPE:
             if (attr_list[i].value.s32 != expected_attr_list.at(SAI_NEXT_HOP_ATTR_TYPE).s32)
                 return false;
@@ -231,6 +273,34 @@ bool MatchCreateNextHopArgAttrList(const sai_attribute_t *attr_list,
                 return false;
             }
             break;
+        case SAI_NEXT_HOP_ATTR_DISABLE_DECREMENT_TTL:
+          if (attr_list[i].value.booldata !=
+              expected_attr_list.at(SAI_NEXT_HOP_ATTR_DISABLE_DECREMENT_TTL)
+                  .booldata) {
+            return false;
+          }
+          break;
+        case SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE:
+          if (attr_list[i].value.booldata !=
+              expected_attr_list.at(SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE)
+                  .booldata) {
+            return false;
+          }
+          break;
+        case SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE:
+          if (attr_list[i].value.booldata !=
+              expected_attr_list.at(SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE)
+                  .booldata) {
+            return false;
+          }
+          break;
+        case SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE:
+          if (attr_list[i].value.booldata !=
+              expected_attr_list.at(SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE)
+                  .booldata) {
+            return false;
+          }
+          break;
         default:
             // Invalid attribute ID in next hop's attribute list.
             return false;
@@ -351,7 +421,7 @@ class NextHopManagerTest : public ::testing::Test
     // ProcessAddRequest (). This function also takes care of all the dependencies
     // of the next hop entry.
     // Returns a valid pointer to next hop entry on success.
-    P4NextHopEntry *AddNextHopEntry1();
+    P4NextHopEntry* AddNextHopEntry1(bool use_entry_four = false);
 
     // Adds the next hop entry -- kP4TunnelNextHopAppDbEntry1, via next hop
     // manager's ProcessAddRequest (). This function also takes care of all the
@@ -424,33 +494,36 @@ bool NextHopManagerTest::ResolveNextHopEntryDependency(const P4NextHopAppDbEntry
     return true;
 }
 
-P4NextHopEntry *NextHopManagerTest::AddNextHopEntry1()
-{
-    if (!ResolveNextHopEntryDependency(kP4NextHopAppDbEntry1, kRouterInterfaceOid1))
-    {
-        return nullptr;
-    }
+P4NextHopEntry* NextHopManagerTest::AddNextHopEntry1(bool use_entry_four) {
+  P4NextHopAppDbEntry which_entry = kP4NextHopAppDbEntry1;
+  if (use_entry_four) {
+    which_entry = kP4NextHopAppDbEntry4;
+  }
 
-    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
+  if (!ResolveNextHopEntryDependency(which_entry, kRouterInterfaceOid1)) {
+    return nullptr;
+  }
 
-    // Set up mock call.
-    EXPECT_CALL(
-        mock_sai_next_hop_,
-        create_next_hops(
-            Eq(gSwitchId), Eq(1), Pointee(Eq(3)),
-            AttrArrayEq(sai_attrs_array_t{CreateAttributeListForNextHopObject(
-                kP4NextHopAppDbEntry1, kRouterInterfaceOid1)}),
-            Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), ::testing::NotNull(),
-            ::testing::NotNull()))
-        .WillOnce(
-            DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
-                  SetArgPointee<5>(kNextHopOid), Return(SAI_STATUS_SUCCESS)));
+  std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
 
-    EXPECT_THAT(
-        CreateNextHops(std::vector<P4NextHopAppDbEntry>{kP4NextHopAppDbEntry1}),
-        ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
+  // Set up mock call.
+  EXPECT_CALL(
+      mock_sai_next_hop_,
+      create_next_hops(
+          Eq(gSwitchId), Eq(1), Pointee(Eq(7)),
+          AttrArrayEq(sai_attrs_array_t{CreateAttributeListForNextHopObject(
+              which_entry, kRouterInterfaceOid1)}),
+          Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), ::testing::NotNull(),
+          ::testing::NotNull()))
+      .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
+                      SetArgPointee<5>(kNextHopOid),
+                      Return(SAI_STATUS_SUCCESS)));
 
-    return GetNextHopEntry(KeyGenerator::generateNextHopKey(kP4NextHopAppDbEntry1.next_hop_id));
+  EXPECT_THAT(CreateNextHops(std::vector<P4NextHopAppDbEntry>{which_entry}),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
+
+  return GetNextHopEntry(
+      KeyGenerator::generateNextHopKey(which_entry.next_hop_id));
 }
 
 P4NextHopEntry *NextHopManagerTest::AddTunnelNextHopEntry1()
@@ -466,7 +539,7 @@ P4NextHopEntry *NextHopManagerTest::AddTunnelNextHopEntry1()
     EXPECT_CALL(
         mock_sai_next_hop_,
         create_next_hops(
-            Eq(gSwitchId), Eq(1), Pointee(Eq(3)),
+            Eq(gSwitchId), Eq(1), Pointee(Eq(7)),
             AttrArrayEq(sai_attrs_array_t{CreateAttributeListForNextHopObject(
                 kP4TunnelNextHopAppDbEntry1, kTunnelOid1,
                 swss::IpAddress(kNeighborId1))}),
@@ -539,7 +612,7 @@ TEST_F(NextHopManagerTest, CreateRequestShouldSucceedAddingNewNextHop) {
   EXPECT_CALL(
       mock_sai_next_hop_,
       create_next_hops(
-          Eq(gSwitchId), Eq(1), Pointee(Eq(3)),
+          Eq(gSwitchId), Eq(1), Pointee(Eq(7)),
           AttrArrayEq(sai_attrs_array_t{CreateAttributeListForNextHopObject(
               kP4NextHopAppDbEntry1, kRouterInterfaceOid1)}),
           Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), ::testing::NotNull(),
@@ -553,6 +626,49 @@ TEST_F(NextHopManagerTest, CreateRequestShouldSucceedAddingNewNextHop) {
       ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
 
   EXPECT_TRUE(ValidateNextHopEntryAdd(kP4NextHopAppDbEntry1, kNextHopOid));
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key,
+                             original_rif_ref_count + 1));
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key,
+                             original_neighbor_ref_count + 1));
+}
+
+TEST_F(NextHopManagerTest, CreateRequestShouldSucceedAddingNewNextHopRewrite) {
+  ASSERT_TRUE(ResolveNextHopEntryDependency(kP4NextHopAppDbEntry4,
+                                            kRouterInterfaceOid1));
+
+  const std::string rif_key = KeyGenerator::generateRouterInterfaceKey(
+      kP4NextHopAppDbEntry4.router_interface_id);
+  const std::string neighbor_key = KeyGenerator::generateNeighborKey(
+      kP4NextHopAppDbEntry4.router_interface_id,
+      kP4NextHopAppDbEntry4.neighbor_id);
+  uint32_t original_rif_ref_count;
+  ASSERT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                         rif_key, &original_rif_ref_count));
+  uint32_t original_neighbor_ref_count;
+  ASSERT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY,
+                                         neighbor_key,
+                                         &original_neighbor_ref_count));
+
+  std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
+
+  // Set up mock call.
+  EXPECT_CALL(
+      mock_sai_next_hop_,
+      create_next_hops(
+          Eq(gSwitchId), Eq(1), Pointee(Eq(7)),
+          AttrArrayEq(sai_attrs_array_t{CreateAttributeListForNextHopObject(
+              kP4NextHopAppDbEntry4, kRouterInterfaceOid1)}),
+          Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), ::testing::NotNull(),
+          ::testing::NotNull()))
+      .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
+                      SetArgPointee<5>(kNextHopOid),
+                      Return(SAI_STATUS_SUCCESS)));
+
+  EXPECT_THAT(
+      CreateNextHops(std::vector<P4NextHopAppDbEntry>{kP4NextHopAppDbEntry4}),
+      ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
+
+  EXPECT_TRUE(ValidateNextHopEntryAdd(kP4NextHopAppDbEntry4, kNextHopOid));
   EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key,
                              original_rif_ref_count + 1));
   EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key,
@@ -618,7 +734,7 @@ TEST_F(NextHopManagerTest, CreateNextHopsShouldFailWhenSaiCallFails) {
       mock_sai_next_hop_,
 
       create_next_hops(
-          Eq(gSwitchId), Eq(1), Pointee(Eq(3)),
+          Eq(gSwitchId), Eq(1), Pointee(Eq(7)),
           AttrArrayEq(sai_attrs_array_t{CreateAttributeListForNextHopObject(
               kP4NextHopAppDbEntry1, kRouterInterfaceOid1)}),
           Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), ::testing::NotNull(),
@@ -646,7 +762,7 @@ TEST_F(NextHopManagerTest, CreateNextHopsShouldSuccessForTunnelNexthop) {
   // Set up mock call.
   EXPECT_CALL(mock_sai_next_hop_, create_next_hops(_, _, _, _, _, _, _))
       /*      create_next_hops(
-                Eq(gSwitchId), Eq(1), Pointee(Eq(3)),
+                Eq(gSwitchId), Eq(1), Pointee(Eq(7)),
                 AttrArrayEq(sai_attrs_array_t{CreateAttributeListForNextHopObject(
                     kP4TunnelNextHopAppDbEntry1, kTunnelOid1,
                     swss::IpAddress(kNeighborId1))}),
@@ -783,7 +899,7 @@ TEST_F(NextHopManagerTest, GetNextHopEntryShouldReturnValidPointerForAddedNextHo
     EXPECT_CALL(
         mock_sai_next_hop_,
         create_next_hops(
-            Eq(gSwitchId), Eq(1), Pointee(Eq(3)),
+            Eq(gSwitchId), Eq(1), Pointee(Eq(7)),
             AttrArrayEq(sai_attrs_array_t{CreateAttributeListForNextHopObject(
                 kP4NextHopAppDbEntry1, kRouterInterfaceOid1)}),
             Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), ::testing::NotNull(),
@@ -858,6 +974,72 @@ TEST_F(NextHopManagerTest, DeserializeP4NextHopAppDbEntryShouldReturnNullPointer
         swss::FieldValueTuple("unexpected_field", "unexpected_value")};
 
     EXPECT_FALSE(DeserializeP4NextHopAppDbEntry(kNextHopP4AppDbKey, attributes).ok());
+}
+
+TEST_F(NextHopManagerTest, DeserializeP4NextHopAppDbEntryRewriteSuccess) {
+  std::vector<swss::FieldValueTuple> attributes = {
+      swss::FieldValueTuple(p4orch::kAction,
+                            "set_ip_nexthop_and_disable_rewrites"),
+      swss::FieldValueTuple(prependParamField(p4orch::kRouterInterfaceId),
+                            kRouterInterfaceId1),
+      swss::FieldValueTuple(prependParamField(p4orch::kDisableDecrementTtl),
+                            "0"),
+      swss::FieldValueTuple(prependParamField(p4orch::kDisableSrcMacRewrite),
+                            "1"),
+      swss::FieldValueTuple(prependParamField(p4orch::kDisableDstMacRewrite),
+                            "0"),
+      swss::FieldValueTuple(prependParamField(p4orch::kDisableVlanRewrite),
+                            "1")};
+
+  EXPECT_TRUE(
+      DeserializeP4NextHopAppDbEntry(kNextHopP4AppDbKey, attributes).ok());
+}
+
+TEST_F(NextHopManagerTest, DeserializeP4NextHopAppDbEntryRewriteFailures) {
+  // Invalid disable_decrement_ttl
+  std::vector<swss::FieldValueTuple> attributes1 = {
+      swss::FieldValueTuple(p4orch::kAction,
+                            "set_ip_nexthop_and_disable_rewrites"),
+      swss::FieldValueTuple(prependParamField(p4orch::kRouterInterfaceId),
+                            kRouterInterfaceId1),
+      swss::FieldValueTuple(prependParamField(p4orch::kDisableDecrementTtl),
+                            "xyz")};
+
+  // Invalid disable_src_mac_rewrite
+  std::vector<swss::FieldValueTuple> attributes2 = {
+      swss::FieldValueTuple(p4orch::kAction,
+                            "set_ip_nexthop_and_disable_rewrites"),
+      swss::FieldValueTuple(prependParamField(p4orch::kRouterInterfaceId),
+                            kRouterInterfaceId1),
+      swss::FieldValueTuple(prependParamField(p4orch::kDisableSrcMacRewrite),
+                            "nan")};
+
+  // Invalid disable_dst_mac_rewrite
+  std::vector<swss::FieldValueTuple> attributes3 = {
+      swss::FieldValueTuple(p4orch::kAction,
+                            "set_ip_nexthop_and_disable_rewrites"),
+      swss::FieldValueTuple(prependParamField(p4orch::kRouterInterfaceId),
+                            kRouterInterfaceId1),
+      swss::FieldValueTuple(prependParamField(p4orch::kDisableDstMacRewrite),
+                            "yup")};
+
+  // Invalid disable_vlan_write
+  std::vector<swss::FieldValueTuple> attributes4 = {
+      swss::FieldValueTuple(p4orch::kAction,
+                            "set_ip_nexthop_and_disable_rewrites"),
+      swss::FieldValueTuple(prependParamField(p4orch::kRouterInterfaceId),
+                            kRouterInterfaceId1),
+      swss::FieldValueTuple(prependParamField(p4orch::kDisableVlanRewrite),
+                            "NO")};
+
+  EXPECT_FALSE(
+      DeserializeP4NextHopAppDbEntry(kNextHopP4AppDbKey, attributes1).ok());
+  EXPECT_FALSE(
+      DeserializeP4NextHopAppDbEntry(kNextHopP4AppDbKey, attributes2).ok());
+  EXPECT_FALSE(
+      DeserializeP4NextHopAppDbEntry(kNextHopP4AppDbKey, attributes3).ok());
+  EXPECT_FALSE(
+      DeserializeP4NextHopAppDbEntry(kNextHopP4AppDbKey, attributes4).ok());
 }
 
 TEST_F(NextHopManagerTest, DrainValidAppEntryShouldSucceed)
@@ -1174,11 +1356,21 @@ TEST_F(NextHopManagerTest, VerifyIpNextHopStateTest)
 
     // Setup ASIC DB.
     swss::Table table(nullptr, "ASIC_STATE");
-    table.set(
-        "SAI_OBJECT_TYPE_NEXT_HOP:oid:0x65",
-        std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_TYPE", "SAI_NEXT_HOP_TYPE_IP"},
-                                           swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_IP", "10.0.0.1"},
-                                           swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID", "oid:0x1"}});
+    table.set("SAI_OBJECT_TYPE_NEXT_HOP:oid:0x65",
+              std::vector<swss::FieldValueTuple>{
+                  swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_TYPE",
+                                        "SAI_NEXT_HOP_TYPE_IP"},
+                  swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_IP", "10.0.0.1"},
+                  swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID",
+                                        "oid:0x1"},
+                  swss::FieldValueTuple{
+                      "SAI_NEXT_HOP_ATTR_DISABLE_DECREMENT_TTL", "false"},
+                  swss::FieldValueTuple{
+                      "SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE", "false"},
+                  swss::FieldValueTuple{
+                      "SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE", "false"},
+                  swss::FieldValueTuple{
+                      "SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE", "false"}});
 
     nlohmann::json j;
     j[prependMatchField(p4orch::kNexthopId)] = kNextHopId;
@@ -1234,6 +1426,81 @@ TEST_F(NextHopManagerTest, VerifyIpNextHopStateTest)
     p4_next_hop_entry->gre_tunnel_id = "invalid";
     EXPECT_FALSE(VerifyState(db_key, attributes).empty());
     p4_next_hop_entry->gre_tunnel_id = saved_gre_tunnel_id;
+}
+
+TEST_F(NextHopManagerTest, VerifyIpNextHopStateTestRewrite) {
+  auto* p4_next_hop_entry = AddNextHopEntry1(/*use_entry_four=*/true);
+  ASSERT_NE(p4_next_hop_entry, nullptr);
+
+  // Setup ASIC DB.
+  swss::Table table(nullptr, "ASIC_STATE");
+  table.set("SAI_OBJECT_TYPE_NEXT_HOP:oid:0x65",
+            std::vector<swss::FieldValueTuple>{
+                swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_TYPE",
+                                      "SAI_NEXT_HOP_TYPE_IP"},
+                swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_IP", "10.0.0.1"},
+                swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID",
+                                      "oid:0x1"},
+                swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_DISABLE_DECREMENT_TTL",
+                                      "true"},
+                swss::FieldValueTuple{
+                    "SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE", "true"},
+                swss::FieldValueTuple{
+                    "SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE", "true"},
+                swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE",
+                                      "true"}});
+
+  nlohmann::json j;
+  j[prependMatchField(p4orch::kNexthopId)] = kNextHopId;
+  const std::string db_key = std::string(APP_P4RT_TABLE_NAME) +
+                             kTableKeyDelimiter + APP_P4RT_NEXTHOP_TABLE_NAME +
+                             kTableKeyDelimiter + j.dump();
+  std::vector<swss::FieldValueTuple> attributes;
+
+  // Verification should succeed with vaild key and value.
+  attributes.push_back(swss::FieldValueTuple{
+      prependParamField(p4orch::kNeighborId), kNeighborId1});
+  attributes.push_back(swss::FieldValueTuple{
+      prependParamField(p4orch::kRouterInterfaceId), kRouterInterfaceId1});
+  attributes.push_back(swss::FieldValueTuple{
+      p4orch::kAction, p4orch::kSetIpNexthopAndDisableRewrites});
+  attributes.push_back(swss::FieldValueTuple{
+      prependParamField(p4orch::kDisableDecrementTtl), "1"});
+  attributes.push_back(swss::FieldValueTuple{
+      prependParamField(p4orch::kDisableSrcMacRewrite), "1"});
+  attributes.push_back(swss::FieldValueTuple{
+      prependParamField(p4orch::kDisableDstMacRewrite), "1"});
+  attributes.push_back(swss::FieldValueTuple{
+      prependParamField(p4orch::kDisableVlanRewrite), "1"});
+  EXPECT_EQ(VerifyState(db_key, attributes), "");
+
+  // Verification should fail if disable_decrement_ttl mismatches.
+  p4_next_hop_entry->disable_decrement_ttl =
+      !p4_next_hop_entry->disable_decrement_ttl;
+  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+  p4_next_hop_entry->disable_decrement_ttl =
+      !p4_next_hop_entry->disable_decrement_ttl;
+
+  // Verification should fail if disable_src_mac_rewrite mismatches.
+  p4_next_hop_entry->disable_src_mac_rewrite =
+      !p4_next_hop_entry->disable_src_mac_rewrite;
+  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+  p4_next_hop_entry->disable_src_mac_rewrite =
+      !p4_next_hop_entry->disable_src_mac_rewrite;
+
+  // Verification should fail if disable_dst_mac_rewrite mismatches.
+  p4_next_hop_entry->disable_dst_mac_rewrite =
+      !p4_next_hop_entry->disable_dst_mac_rewrite;
+  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+  p4_next_hop_entry->disable_dst_mac_rewrite =
+      !p4_next_hop_entry->disable_dst_mac_rewrite;
+
+  // Verification should fail if disable_vlan_rewrite mismatches.
+  p4_next_hop_entry->disable_vlan_rewrite =
+      !p4_next_hop_entry->disable_vlan_rewrite;
+  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+  p4_next_hop_entry->disable_vlan_rewrite =
+      !p4_next_hop_entry->disable_vlan_rewrite;
 }
 
 TEST_F(NextHopManagerTest, DrainNotExecuted) {
@@ -1514,11 +1781,21 @@ TEST_F(NextHopManagerTest, VerifyStateAsicDbTest)
 
     // Setup ASIC DB.
     swss::Table table(nullptr, "ASIC_STATE");
-    table.set(
-        "SAI_OBJECT_TYPE_NEXT_HOP:oid:0x65",
-        std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_TYPE", "SAI_NEXT_HOP_TYPE_IP"},
-                                           swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_IP", "10.0.0.1"},
-                                           swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID", "oid:0x1"}});
+    table.set("SAI_OBJECT_TYPE_NEXT_HOP:oid:0x65",
+              std::vector<swss::FieldValueTuple>{
+                  swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_TYPE",
+                                        "SAI_NEXT_HOP_TYPE_IP"},
+                  swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_IP", "10.0.0.1"},
+                  swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID",
+                                        "oid:0x1"},
+                  swss::FieldValueTuple{
+                      "SAI_NEXT_HOP_ATTR_DISABLE_DECREMENT_TTL", "false"},
+                  swss::FieldValueTuple{
+                      "SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE", "false"},
+                  swss::FieldValueTuple{
+                      "SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE", "false"},
+                  swss::FieldValueTuple{
+                      "SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE", "false"}});
 
     nlohmann::json j;
     j[prependMatchField(p4orch::kNexthopId)] = kNextHopId;
