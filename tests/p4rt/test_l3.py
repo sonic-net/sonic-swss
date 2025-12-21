@@ -70,6 +70,18 @@ class TestP4RTL3(object):
         )
         self._p4rt_route_obj.get_original_redis_entries(db_list)
 
+        db_list = (
+            (
+                self._p4rt_router_intf_obj.appl_db,
+                "%s:%s"
+                % (self._p4rt_router_intf_obj.APP_DB_TBL_NAME,
+                   self._p4rt_router_intf_obj.TBL_NAME),
+            ),
+            (self._p4rt_router_intf_obj.asic_db,
+             self._p4rt_router_intf_obj.ASIC_DB_TBL_NAME),
+        )
+        self._p4rt_router_intf_obj.get_original_redis_entries(db_list)
+
         # Create router interface.
         (
             router_interface_id,
@@ -79,6 +91,8 @@ class TestP4RTL3(object):
         util.verify_response(
             self.response_consumer, router_intf_key, attr_list, "SWSS_RC_SUCCESS"
         )
+        rif_oid = (
+            self._p4rt_router_intf_obj.get_newly_created_router_interface_oid())
 
         # Create neighbor.
         neighbor_id, neighbor_key, attr_list = self._p4rt_neighbor_obj.create_neighbor()
@@ -94,6 +108,30 @@ class TestP4RTL3(object):
         # get nexthop_oid of newly created nexthop
         nexthop_oid = self._p4rt_nexthop_obj.get_newly_created_nexthop_oid()
         assert nexthop_oid is not None
+
+        # Query ASIC database for newly created next hop.
+        asic_db_key = self._p4rt_nexthop_obj.get_newly_created_asic_db_key()
+        assert asic_db_key is not None
+        (status, fvs) = util.get_key(
+            self._p4rt_nexthop_obj.asic_db,
+            self._p4rt_nexthop_obj.ASIC_DB_TBL_NAME,
+            asic_db_key,
+        )
+        assert status == True
+        attr_list = [(self._p4rt_nexthop_obj.SAI_ATTR_TYPE,
+                      self._p4rt_nexthop_obj.SAI_ATTR_TYPE_IP),
+                     (self._p4rt_nexthop_obj.SAI_ATTR_IP,
+                      self._p4rt_nexthop_obj.DEFAULT_IPV4_NEIGHBOR_ID),
+                     (self._p4rt_nexthop_obj.SAI_ATTR_ROUTER_INTF_OID, rif_oid),
+                     (self._p4rt_nexthop_obj.SAI_ATTR_DISABLE_DECREMENT_TTL,
+                      "false"),
+                     (self._p4rt_nexthop_obj.SAI_ATTR_DISABLE_SRC_MAC_REWRITE,
+                      "false"),
+                     (self._p4rt_nexthop_obj.SAI_ATTR_DISABLE_DST_MAC_REWRITE,
+                      "false"),
+                     (self._p4rt_nexthop_obj.SAI_ATTR_DISABLE_VLAN_REWRITE,
+                      "false")]
+        util.verify_attr(fvs, attr_list)
 
         # Create route entry.
         route_key, attr_list = self._p4rt_route_obj.create_route(nexthop_id)
@@ -2090,3 +2128,97 @@ class TestP4RTL3(object):
             self._p4rt_route_obj.get_original_asic_db_entries_count()
         )
         self._clean_vrf(dvs)
+
+
+    def test_NexthopAddWithRewrite(self, dvs, testlog):
+        # Initialize L3 objects and database connectors.
+        self._set_up(dvs)
+        self._set_vrf(dvs)
+
+        # Set IP type for route object.
+        self._p4rt_route_obj.set_ip_type("IPV4")
+
+        # Maintain list of original Application and ASIC DB entries before
+        # adding new route.
+        db_list = (
+            (self._p4rt_nexthop_obj.asic_db,
+             self._p4rt_nexthop_obj.ASIC_DB_TBL_NAME),
+        )
+        self._p4rt_nexthop_obj.get_original_redis_entries(db_list)
+        db_list = (
+            (
+                self._p4rt_route_obj.appl_db,
+                "%s:%s"
+                % (self._p4rt_route_obj.APP_DB_TBL_NAME, self._p4rt_route_obj.TBL_NAME),
+            ),
+            (self._p4rt_route_obj.asic_db, self._p4rt_route_obj.ASIC_DB_TBL_NAME),
+        )
+        self._p4rt_route_obj.get_original_redis_entries(db_list)
+
+        db_list = (
+            (
+                self._p4rt_router_intf_obj.appl_db,
+                "%s:%s"
+                % (self._p4rt_router_intf_obj.APP_DB_TBL_NAME,
+                   self._p4rt_router_intf_obj.TBL_NAME),
+            ),
+            (self._p4rt_router_intf_obj.asic_db,
+             self._p4rt_router_intf_obj.ASIC_DB_TBL_NAME),
+        )
+        self._p4rt_router_intf_obj.get_original_redis_entries(db_list)
+
+        # Create router interface.
+        (
+            router_interface_id,
+            router_intf_key,
+            attr_list,
+        ) = self._p4rt_router_intf_obj.create_router_interface()
+        util.verify_response(
+            self.response_consumer, router_intf_key, attr_list, "SWSS_RC_SUCCESS"
+        )
+        rif_oid = (
+            self._p4rt_router_intf_obj.get_newly_created_router_interface_oid())
+
+        # Create neighbor.
+        neighbor_id, neighbor_key, attr_list = self._p4rt_neighbor_obj.create_neighbor()
+        util.verify_response(
+            self.response_consumer, neighbor_key, attr_list, "SWSS_RC_SUCCESS"
+        )
+
+        # Create nexthop.
+        nexthop_id, nexthop_key, attr_list = self._p4rt_nexthop_obj.create_next_hop(
+            action=self._p4rt_nexthop_obj.SET_IP_NEXTHOP_AND_DISABLE_REWRITES_ACTION,
+            disable_decrement_ttl=1,
+            disable_src_mac_rewrite=1,
+            disable_dst_mac_rewrite=1,
+            disable_vlan_rewrite=1)
+        util.verify_response(
+            self.response_consumer, nexthop_key, attr_list, "SWSS_RC_SUCCESS"
+        )
+        # get nexthop_oid of newly created nexthop
+        nexthop_oid = self._p4rt_nexthop_obj.get_newly_created_nexthop_oid()
+        assert nexthop_oid is not None
+
+        # Query ASIC database for newly created next hop.
+        asic_db_key = self._p4rt_nexthop_obj.get_newly_created_asic_db_key()
+        assert asic_db_key is not None
+        (status, fvs) = util.get_key(
+            self._p4rt_nexthop_obj.asic_db,
+            self._p4rt_nexthop_obj.ASIC_DB_TBL_NAME,
+            asic_db_key,
+        )
+        assert status == True
+        attr_list = [(self._p4rt_nexthop_obj.SAI_ATTR_TYPE,
+                      self._p4rt_nexthop_obj.SAI_ATTR_TYPE_IP),
+                     (self._p4rt_nexthop_obj.SAI_ATTR_IP,
+                      self._p4rt_nexthop_obj.DEFAULT_IPV4_NEIGHBOR_ID),
+                     (self._p4rt_nexthop_obj.SAI_ATTR_ROUTER_INTF_OID, rif_oid),
+                     (self._p4rt_nexthop_obj.SAI_ATTR_DISABLE_DECREMENT_TTL,
+                      "true"),
+                     (self._p4rt_nexthop_obj.SAI_ATTR_DISABLE_SRC_MAC_REWRITE,
+                      "true"),
+                     (self._p4rt_nexthop_obj.SAI_ATTR_DISABLE_DST_MAC_REWRITE,
+                      "true"),
+                     (self._p4rt_nexthop_obj.SAI_ATTR_DISABLE_VLAN_REWRITE,
+                      "true")]
+        util.verify_attr(fvs, attr_list)
