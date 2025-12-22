@@ -164,6 +164,52 @@ std::string KeyGenerator::generateMirrorSessionKey(const std::string &mirror_ses
     return generateKey(fv_map);
 }
 
+std::string KeyGenerator::generateMulticastRouterInterfaceKey(
+    const std::string& multicast_replica_port,
+    const std::string& multicast_replica_instance) {
+  std::map<std::string, std::string> fv_map = {};
+
+  fv_map.emplace(std::string(p4orch::kMatchPrefix) + p4orch::kFieldDelimiter +
+                     p4orch::kMulticastReplicaPort,
+                 multicast_replica_port);
+  fv_map.emplace(std::string(p4orch::kMatchPrefix) + p4orch::kFieldDelimiter +
+                     p4orch::kMulticastReplicaInstance,
+                 multicast_replica_instance);
+  return generateKey(fv_map);
+}
+
+std::string KeyGenerator::generateMulticastReplicationKey(
+    const std::string& multicast_group_id,
+    const std::string& multicast_replica_port,
+    const std::string& multicast_replica_instance) {
+  std::map<std::string, std::string> fv_map = {};
+
+  fv_map.emplace(std::string(p4orch::kMatchPrefix) + p4orch::kFieldDelimiter +
+                     p4orch::kMulticastGroupId,
+                 multicast_group_id);
+  fv_map.emplace(std::string(p4orch::kMatchPrefix) + p4orch::kFieldDelimiter +
+                     p4orch::kMulticastReplicaPort,
+                 multicast_replica_port);
+  fv_map.emplace(std::string(p4orch::kMatchPrefix) + p4orch::kFieldDelimiter +
+                     p4orch::kMulticastReplicaInstance,
+                 multicast_replica_instance);
+  return generateKey(fv_map);
+}
+
+std::string KeyGenerator::generateMulticastRouterInterfaceRifKey(
+    const std::string& multicast_replica_port,
+    const swss::MacAddress& src_mac) {
+  std::map<std::string, std::string> fv_map = {};
+
+  fv_map.emplace(std::string(p4orch::kMatchPrefix) + p4orch::kFieldDelimiter +
+                     p4orch::kMulticastReplicaPort,
+                 multicast_replica_port);
+  fv_map.emplace(std::string(p4orch::kActionParamPrefix) +
+                     p4orch::kFieldDelimiter + p4orch::kSrcMac,
+                 src_mac.to_string());
+  return generateKey(fv_map);
+}
+
 std::string KeyGenerator::generateWcmpGroupKey(const std::string &wcmp_group_id)
 {
     std::map<std::string, std::string> fv_map = {{p4orch::kWcmpGroupId, wcmp_group_id}};
