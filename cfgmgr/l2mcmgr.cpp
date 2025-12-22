@@ -18,6 +18,10 @@ using namespace swss;
 #define TAGGED 1
 #define UNTAGGED 0
 
+#define L2MCD_MAX_SIZE 16318
+
+static char buffer[L2MCD_MAX_SIZE] = {0};
+
 
 L2McMgr::L2McMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
         const vector<TableConnector> &tables) :
@@ -123,58 +127,79 @@ void L2McMgr::doTask(Consumer &consumer)
 
 void L2McMgr::doL2McGlobalTask(Consumer &consumer)
 {
-    L2MCD_CONFIG_MSG msg;
-    int j=0;      
     SWSS_LOG_ENTER();
-    vector<string> l2mcLocalMemKeys;
-    vector<string> l2mcLocalMrouterKeys;
-
-    memset(&msg, 0, sizeof(L2MCD_CONFIG_MSG));
+    uint32_t msg_len = 0;
+    L2MCD_CONFIG_MSG *msg = NULL;
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
 
+        string key = kfvKey(t);
+        string op  = kfvOp(t);
+        string vlanKey = key.substr(4); // Remove "Vlan"
+        int vlan_id = stoi(vlanKey);
+
         bool enabled = false;
         bool exist_enabled = false;
 
-        string key = kfvKey(t);
-        string op = kfvOp(t);
-        string vlanKey = key.substr(4); // Remove Vlan prefix
-        int vlan_id = stoi(vlanKey.c_str());
-        msg.cmd_code=0;
-        msg.query_interval=125;
-        msg.query_max_response_time=10;
-        msg.last_member_query_interval=1000;
-        msg.version=2;
-        msg.afi = MLD_IP_IPV4_AFI;
-
-        auto vlan_igmp_snooping_it = m_vlanIgmpSnoopMap.find(vlan_id);
-        if (vlan_igmp_snooping_it != m_vlanIgmpSnoopMap.end())
-        {
+        auto vlan_it = m_vlanIgmpSnoopMap.find(vlan_id);
+        if (vlan_it != m_vlanIgmpSnoopMap.end())
             exist_enabled = true;
+
+        vector<PORT_ATTR> port_list;
+        uint32_t port_count = getVlanMembers(key, port_list);
+
+        msg_len = sizeof(L2MCD_CONFIG_MSG);
+        msg_len += (uint32_t)(port_count * sizeof(PORT_ATTR));
+        if (msg_len > L2MCD_MAX_SIZE)
+        {
+            SWSS_LOG_ERROR(
+                "L2MCD_CFG:SNOOP payload too large: %u (max %u), vlan=%d",
+                msg_len, L2MCD_MAX_SIZE, vlan_id);
+
+            it = consumer.m_toSync.erase(it);
+            continue;
         }
+        memset(buffer, 0, msg_len);
+        msg = (L2MCD_CONFIG_MSG *)buffer;
+
+        msg->cmd_code  = 0;
+        msg->query_interval = 125;
+        msg->query_max_response_time = 10;
+        msg->last_member_query_interval = 1000;
+        msg->version = 2;
+        msg->afi = MLD_IP_IPV4_AFI;
+        msg->vlan_id = vlan_id;
+        msg->warm_reboot = WarmStart::isWarmStart() ? 1 : 0;
 
         if (op == SET_COMMAND)
         {
-            msg.op_code = L2MCD_OP_ENABLE;
-            msg.vlan_id = vlan_id;
+            msg->op_code = L2MCD_OP_ENABLE;
+
             auto tuples = kfvFieldsValues(t);
-            auto its = std::find_if( tuples.begin(), tuples.end(), [](const FieldValueTuple& v){ return v.first == "enabled";} );
-            if ( its == tuples.end()) {
-                SWSS_LOG_NOTICE("L2MCD_CFG:SNOOP  %s is not enabled",key.c_str());
+            auto its = std::find_if(
+                tuples.begin(), tuples.end(),
+                [](const FieldValueTuple &v){ return v.first == "enabled"; });
+
+            if (its == tuples.end())
+            {
+                SWSS_LOG_NOTICE("L2MCD_CFG:SNOOP %s is not enabled", key.c_str());
                 it = consumer.m_toSync.erase(it);
-                return;
+                continue;
             }
 
-            for (auto i : kfvFieldsValues(t))
+            for (auto &i : tuples)
             {
-                if (fvField(i) == "enabled")
+                const string &field = fvField(i);
+                const string &value = fvValue(i);
+
+                if (field == "enabled")
                 {
-                    msg.enabled = (fvValue(i) == "true") ? 1 : 0;
-                    if (!msg.enabled)
+                    msg->enabled = (value == "true") ? 1 : 0;
+                    if (!msg->enabled)
                     {
-                        msg.op_code = L2MCD_OP_DISABLE;
+                        msg->op_code = L2MCD_OP_DISABLE;
                         enabled = false;
                         m_vlanIgmpSnoopMap.erase(vlan_id);
                     }
@@ -184,170 +209,127 @@ void L2McMgr::doL2McGlobalTask(Consumer &consumer)
                         m_vlanIgmpSnoopMap[vlan_id] = true;
                     }
                 }
-                else if (fvField(i) == "querier")
-                {
-                    msg.querier = (fvValue(i) == "true") ? 1 : 0;
-                }
-                else if (fvField(i) == "fast-leave")
-                {
-                    msg.fast_leave = (fvValue(i) == "true") ? 1 : 0; 
-                }
-                else if (fvField(i) == "version")
-                {
-                    msg.version = stoi(fvValue(i).c_str());
-                }
-                else if (fvField(i) == "query-interval")
-                {
-                    msg.query_interval = stoi(fvValue(i).c_str());
-                }
-                else if (fvField(i) == "last-member-query-interval")
-                {
-                    msg.last_member_query_interval = stoi(fvValue(i).c_str());
-                }
-                else if (fvField(i) == "query-max-response-time")
-                {
-                    msg.query_max_response_time = stoi(fvValue(i).c_str());
-                }
-                vector<PORT_ATTR> port_list;
-                msg.count =  getVlanMembers(key,port_list);
-                j=0;
-                for (auto pentry = port_list.begin(); pentry != port_list.end(); pentry++)
-                {
-                    vector<FieldValueTuple> tupEntry;
-                    string vlanmemkey = key + "|" + pentry->pnames;
-                    if (m_cfgVlanMemberTable.get(vlanmemkey, tupEntry))
-                    {
-                        auto tag  = std::find_if(
-                        tupEntry.begin(), tupEntry.end(),
-                        [](auto &t){ return t.first == "tagging_mode"; });
-
-                        if (tag != tupEntry.end() && fvValue(*tag) == "untagged")
-                            msg.ports[j].tagged = UNTAGGED;
-                        else
-                            msg.ports[j].tagged = TAGGED; 
-                    }
-                    memcpy(&msg.ports[j++].pnames, pentry->pnames, L2MCD_IFNAME_SIZE);
-                    SWSS_LOG_INFO("L2MCD_CFG:SNOOP vlan %s mem-port:%s idx:%d size:%d", key.c_str(), msg.ports[j-1].pnames, j-1, (int)port_list.size());
-                }
+                else if (field == "querier") msg->querier = (value == "true") ? 1 : 0;
+                else if (field == "fast-leave") msg->fast_leave = (value == "true") ? 1 : 0;
+                else if (field == "version") msg->version = stoi(value);
+                else if (field == "query-interval") msg->query_interval = stoi(value);
+                else if (field == "last-member-query-interval") msg->last_member_query_interval = stoi(value);
+                else if (field == "query-max-response-time") msg->query_max_response_time = stoi(value);
             }
-
             if (!exist_enabled && !enabled)
             {
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
+            msg->count = port_count;
+            PORT_ATTR *ports = msg->ports;
+            for (uint32_t j = 0 ; j < port_count;j++ )
+            {
+                ports[j].tagged = port_list[j].tagged;
+                memcpy(ports[j].pnames, port_list[j].pnames, L2MCD_IFNAME_SIZE);
+            }
         }
-        else 
+        else
         {
             if (!exist_enabled)
             {
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
-            msg.op_code = L2MCD_OP_DISABLE;
-            msg.vlan_id = vlan_id;
+            msg->op_code = L2MCD_OP_DISABLE;
             m_vlanIgmpSnoopMap.erase(vlan_id);
         }
 
-        SWSS_LOG_NOTICE("L2MCD_CFG:SNOOP %s [key:%s] vlan:%d,Ver:%d, Qry:%d, qI:%d,lmqi:%d,qmr:%d,FL:%d, count:%d, afi:%d ,msg sizeof %lu", 
-               op.c_str(), key.c_str(), vlan_id, msg.version, msg.querier,msg.query_interval,
-               msg.last_member_query_interval, msg.query_max_response_time ,
-               msg.fast_leave,msg.count ,msg.afi,sizeof(msg));
-        sendMsgL2Mcd(L2MCD_SNOOP_CONFIG_MSG, sizeof(msg), (void *)&msg);
+        SWSS_LOG_NOTICE("L2MCD_CFG:SNOOP %s [key:%s] vlan:%d Ver:%d Qr:%d qi:%d lmqi:%d qmr:%d FL:%d count:%u afi:%d warm-reboot:%d",
+            op.c_str(), key.c_str(), vlan_id, msg->version, msg->querier, msg->query_interval, msg->last_member_query_interval,
+            msg->query_max_response_time, msg->fast_leave, msg->count, msg->afi,msg->warm_reboot);
 
-        /* sync dynamic member entry to l2mcd */
-        // string type_str = "";
-        // int cmd_type = 0;
-        // m_statel2mcdLocalMemberTable.getKeys(l2mcLocalMemKeys);
-        // for (auto l2mc_localMemName : l2mcLocalMemKeys)
-        // {
-        //     m_statel2mcdLocalMemberTable.hget(l2mc_localMemName, "type", type_str);
-        //     if (type_str=="remote")cmd_type = 0;
-        //     if (type_str=="dynamic")cmd_type = 2;
-        //     if (type_str=="static")cmd_type = 3;
-        //     SWSS_LOG_INFO("MEMBER_REPLAY %s %s", l2mc_localMemName.c_str(), type_str.c_str());
-        //     size_t pos=key.find('|');
-        //     auto vlan_name = key.substr(0,pos);
-        //     if (vlan_id == stoi(vlan_name.substr(4)))
-        //     {
-        //         doL2McProcRemoteEntries("SET",l2mc_localMemName,"|", cmd_type);
-        //     }
-        // }
+        sendMsgL2Mcd(L2MCD_SNOOP_CONFIG_MSG, msg_len, (void *)msg);
 
-        /* sync dynamic mrouter entry to l2mcd */
-        // string mr_type_str = "";
-        // m_statel2mcdLocalMrouterTable.getKeys(l2mcLocalMrouterKeys);
-        // for (auto l2mc_localMrouterName : l2mcLocalMrouterKeys)
-        // {
-        //     m_statel2mcdLocalMrouterTable.hget(l2mc_localMrouterName, "type", mr_type_str);
-        //     SWSS_LOG_INFO("MROUTER_REPLAY %s %s", l2mc_localMrouterName.c_str(), mr_type_str.c_str());
-        //     if (mr_type_str == "static") continue;
-        //     size_t pos=key.find('|');
-        //     auto vlan_name = key.substr(0,pos);
-        //     if (vlan_id == stoi(vlan_name.substr(4)))
-        //     {
-        //         doL2McProcRemoteMrouterEntries("SET",l2mc_localMrouterName,"|");
-        //     }
-        // }
         it = consumer.m_toSync.erase(it);
     }
-
 }
+
 
 void L2McMgr::doL2McMldGlobalTask(Consumer &consumer)
 {
-    L2MCD_CONFIG_MSG msg;
-    int j=0;      
     SWSS_LOG_ENTER();
+    uint32_t  msg_len = 0 ;
+    L2MCD_CONFIG_MSG *msg = NULL;
     vector<string> l2mcLocalMemKeys;
     vector<string> l2mcLocalMrouterKeys;
-
-    memset(&msg, 0, sizeof(L2MCD_CONFIG_MSG));
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
 
+        string key = kfvKey(t);
+        string op  = kfvOp(t);
+        string vlanKey = key.substr(4); // Remove "Vlan"
+        int vlan_id = stoi(vlanKey);
+
         bool enabled = false;
         bool exist_enabled = false;
 
-        string key = kfvKey(t);
-        string op = kfvOp(t);
-        string vlanKey = key.substr(4); // Remove Vlan prefix
-        int vlan_id = stoi(vlanKey.c_str());
-        msg.cmd_code=0;
-        msg.query_interval=125;
-        msg.query_max_response_time=10;
-        msg.last_member_query_interval=1000;
-        msg.version=2;
-        msg.afi = MLD_IP_IPV6_AFI;
-
-        auto vlan_mld_snooping_it = m_vlanMldSnoopMap.find(vlan_id);
-        if (vlan_mld_snooping_it != m_vlanMldSnoopMap.end())
-        {
+        auto vlan_it = m_vlanMldSnoopMap.find(vlan_id);
+        if (vlan_it != m_vlanMldSnoopMap.end())
             exist_enabled = true;
+
+        vector<PORT_ATTR> port_list;
+        uint32_t port_count = getVlanMembers(key, port_list);
+
+        // header + payload
+        msg_len = sizeof(L2MCD_CONFIG_MSG) + (uint32_t)(port_count * sizeof(PORT_ATTR));
+
+        if (msg_len > L2MCD_MAX_SIZE)
+        {
+            SWSS_LOG_ERROR(
+                "L2MCD_CFG:SNOOP payload too large: %u (max %u), vlan=%d",
+                msg_len, L2MCD_MAX_SIZE, vlan_id);
+
+            it = consumer.m_toSync.erase(it);
+            continue;
         }
+        memset(buffer, 0, msg_len);
+        msg = (L2MCD_CONFIG_MSG *)buffer;
+
+        msg->cmd_code  = 0;
+        msg->query_interval = 125;
+        msg->query_max_response_time = 10;
+        msg->last_member_query_interval = 1000;
+        msg->version = 2;
+        msg->afi = MLD_IP_IPV6_AFI;
+        msg->vlan_id = vlan_id;
+        msg->warm_reboot = WarmStart::isWarmStart() ? 1 : 0;
+        msg->count = port_count;
 
         if (op == SET_COMMAND)
         {
-            msg.op_code = L2MCD_OP_ENABLE;
-            msg.vlan_id = vlan_id;
+            msg->op_code = L2MCD_OP_ENABLE;
+
             auto tuples = kfvFieldsValues(t);
-            auto its = std::find_if( tuples.begin(), tuples.end(), [](const FieldValueTuple& v){ return v.first == "enabled";} );
-            if ( its == tuples.end()) {
-                SWSS_LOG_NOTICE("L2MCD_CFG:SNOOP  %s is not enabled",key.c_str());
+            auto its = std::find_if(
+                tuples.begin(), tuples.end(),
+                [](const FieldValueTuple &v){ return v.first == "enabled"; });
+
+            if (its == tuples.end())
+            {
+                SWSS_LOG_NOTICE("L2MCD_CFG:SNOOP %s is not enabled", key.c_str());
                 it = consumer.m_toSync.erase(it);
-                return;
+                continue;
             }
 
-            for (auto i : kfvFieldsValues(t))
+            for (auto &i : tuples)
             {
-                if (fvField(i) == "enabled")
+                const string &field = fvField(i);
+                const string &value = fvValue(i);
+
+                if (field == "enabled")
                 {
-                    msg.enabled = (fvValue(i) == "true") ? 1 : 0;
-                    if (!msg.enabled)
+                    msg->enabled = (value == "true") ? 1 : 0;
+                    if (!msg->enabled)
                     {
-                        msg.op_code = L2MCD_OP_DISABLE;
+                        msg->op_code = L2MCD_OP_DISABLE;
                         enabled = false;
                         m_vlanMldSnoopMap.erase(vlan_id);
                     }
@@ -357,112 +339,42 @@ void L2McMgr::doL2McMldGlobalTask(Consumer &consumer)
                         m_vlanMldSnoopMap[vlan_id] = true;
                     }
                 }
-                else if (fvField(i) == "querier")
-                {
-                    msg.querier = (fvValue(i) == "true") ? 1 : 0;
-                }
-                else if (fvField(i) == "fast-leave")
-                {
-                    msg.fast_leave = (fvValue(i) == "true") ? 1 : 0; 
-                }
-                else if (fvField(i) == "version")
-                {
-                    msg.version = stoi(fvValue(i).c_str());
-                }
-                else if (fvField(i) == "query-interval")
-                {
-                    msg.query_interval = stoi(fvValue(i).c_str());
-                }
-                else if (fvField(i) == "last-member-query-interval")
-                {
-                    msg.last_member_query_interval = stoi(fvValue(i).c_str());
-                }
-                else if (fvField(i) == "query-max-response-time")
-                {
-                    msg.query_max_response_time = stoi(fvValue(i).c_str());
-                }
-                vector<PORT_ATTR> port_list;
-                msg.count =  getVlanMembers(key,port_list);
-                j=0;
-                for (auto pentry = port_list.begin(); pentry != port_list.end(); pentry++)
-                {
-                    vector<FieldValueTuple> tupEntry;
-                    string vlanmemkey = key + "|" + pentry->pnames;
-                    if (m_cfgVlanMemberTable.get(vlanmemkey, tupEntry))
-                    {
-                        auto tag  = std::find_if(
-                        tupEntry.begin(), tupEntry.end(),
-                        [](auto &t){ return t.first == "tagging_mode"; });
-
-                        if (tag != tupEntry.end() && fvValue(*tag) == "untagged")
-                            msg.ports[j].tagged = UNTAGGED;
-                        else
-                            msg.ports[j].tagged = TAGGED; 
-                    }
-                    memcpy(&msg.ports[j++].pnames, pentry->pnames, L2MCD_IFNAME_SIZE);
-                    SWSS_LOG_INFO("L2MCD_CFG:SNOOP vlan %s mem-port:%s idx:%d size:%d", key.c_str(), msg.ports[j-1].pnames, j-1, (int)port_list.size());
-                }
-
+                else if (field == "querier") msg->querier = (value == "true") ? 1 : 0;
+                else if (field == "fast-leave") msg->fast_leave = (value == "true") ? 1 : 0;
+                else if (field == "version") msg->version = stoi(value);
+                else if (field == "query-interval") msg->query_interval = stoi(value);
+                else if (field == "last-member-query-interval") msg->last_member_query_interval = stoi(value);
+                else if (field == "query-max-response-time") msg->query_max_response_time = stoi(value);
             }
-
             if (!exist_enabled && !enabled)
             {
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
+            PORT_ATTR *ports = msg->ports;
+            for (uint32_t j= 0; j < port_count; j++ )
+            {
+                ports[j].tagged = port_list[j].tagged;
+                memcpy(ports[j].pnames, port_list[j].pnames, L2MCD_IFNAME_SIZE);
+            }
         }
-        else 
+        else
         {
             if (!exist_enabled)
             {
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
-            msg.op_code = L2MCD_OP_DISABLE;
-            msg.vlan_id = vlan_id;
+            msg->op_code = L2MCD_OP_DISABLE;
             m_vlanMldSnoopMap.erase(vlan_id);
         }
 
-        SWSS_LOG_NOTICE("L2MCD_CFG:SNOOP %s [key:%s] vlan:%d,Ver:%d, Qry:%d, qI:%d,lmqi:%d,qmr:%d,FL:%d, count:%d, afi:%d", 
-               op.c_str(), key.c_str(), vlan_id, msg.version, msg.querier,msg.query_interval,
-               msg.last_member_query_interval, msg.query_max_response_time ,
-               msg.fast_leave,msg.count ,msg.afi);
-        sendMsgL2Mcd(L2MCD_SNOOP_CONFIG_MSG, sizeof(msg), (void *)&msg);
+        SWSS_LOG_NOTICE("L2MCD_CFG:SNOOP %s [key:%s] vlan:%d Ver:%d Qr:%d qi:%d lmqi:%d qmr:%d FL:%d count:%u afi:%d warm-reboot:%d",
+            op.c_str(), key.c_str(), vlan_id, msg->version, msg->querier, msg->query_interval, msg->last_member_query_interval,
+            msg->query_max_response_time, msg->fast_leave, msg->count, msg->afi, msg->warm_reboot);
 
-        /* sync dynamic member entry to l2mcd */
-        // string type_str = "";
-        // int cmd_type = 0;
-        // m_statel2mcdLocalMemberTable.getKeys(l2mcLocalMemKeys);
-        // for (auto l2mc_localMemName : l2mcLocalMemKeys)
-        // {
-        //     m_statel2mcdLocalMemberTable.hget(l2mc_localMemName, "type", type_str);
-        //     if (type_str=="remote")cmd_type = 0;
-        //     if (type_str=="dynamic")cmd_type = 2;
-        //     if (type_str=="static")cmd_type = 3;
-        //     SWSS_LOG_INFO("MEMBER_REPLAY %s %s", l2mc_localMemName.c_str(), type_str.c_str());
-        //     size_t pos=key.find('|');
-        //     auto vlan_name = key.substr(0,pos);
-        //     if (vlan_id == stoi(vlan_name.substr(4)))
-        //     {
-        //         doL2McProcRemoteEntries("SET",l2mc_localMemName,"|", cmd_type);
-        //     }
-        // }
+        sendMsgL2Mcd(L2MCD_SNOOP_CONFIG_MSG, msg_len, (void *)msg);
 
-        /* sync dynamic mrouter entry to l2mcd */
-        // string mr_type_str = "";
-        // m_statel2mcdLocalMrouterTable.getKeys(l2mcLocalMrouterKeys);
-        // for (auto l2mc_localMrouterName : l2mcLocalMrouterKeys)
-        // {
-        //     m_statel2mcdLocalMrouterTable.hget(l2mc_localMrouterName, "type", mr_type_str);
-        //     SWSS_LOG_INFO("MROUTER_REPLAY %s %s", l2mc_localMrouterName.c_str(), mr_type_str.c_str());
-        //     if (mr_type_str == "static") continue;
-        //     size_t pos=key.find('|');
-        //     auto vlan_name = key.substr(0,pos);
-        //     if (vlan_id == stoi(vlan_name.substr(4)))
-        //     {
-        //         doL2McProcRemoteMrouterEntries("SET",l2mc_localMrouterName,"|");
-        //     }
-        // }
         it = consumer.m_toSync.erase(it);
     }
 
@@ -478,6 +390,8 @@ void L2McMgr::updateMrouterEntry(const string vlan_id, const string ifname)
     m_cfgL2McMldMrouterTable.getKeys(l2mcMldMrouterKeys);
 
     vector<pair<string, int>> l2mcMrouterKeys;
+    uint32_t msg_len = 0;
+    L2MCD_CONFIG_MSG *msg = NULL;
 
     for (auto &k : l2mcIgmpMrouterKeys)
         l2mcMrouterKeys.push_back({k, MLD_IP_IPV4_AFI});
@@ -522,29 +436,40 @@ void L2McMgr::updateMrouterEntry(const string vlan_id, const string ifname)
         if (!ifname.empty()  && iname  != ifname)
             continue;
 
-        L2MCD_CONFIG_MSG msg;
-        memset(&msg, 0, sizeof(msg));
-        msg.vlan_id = vlanid;
-        msg.count   = 1;
-        msg.afi     = afi;
-        msg.op_code = L2MCD_OP_ENABLE;
+        msg_len = sizeof(L2MCD_CONFIG_MSG) + sizeof(PORT_ATTR);
+        if (msg_len > L2MCD_MAX_SIZE)
+        {
+            SWSS_LOG_ERROR(
+                "L2MCD_CFG:SNOOP payload too large: %u (max %u), vlan=%d",
+                msg_len, L2MCD_MAX_SIZE, vlanid);
 
-        memcpy(&msg.ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
+            continue;
+        }
+        memset(buffer, 0, msg_len);
+        msg = (L2MCD_CONFIG_MSG *)buffer;
 
-        SWSS_LOG_NOTICE("L2MCD_CFG:MROUTER: [key:%s] port:%s vlan:%d afi:%d",entry.c_str(), msg.ports[0].pnames, msg.vlan_id, msg.afi);
-        sendMsgL2Mcd(L2MCD_SNOOP_MROUTER_CONFIG_MSG, sizeof(msg), (void *)&msg);
+        msg->vlan_id = vlanid;
+        msg->count   = 1;
+        msg->afi     = afi;
+        msg->op_code = L2MCD_OP_ENABLE;
+        PORT_ATTR *ports = msg->ports;
+
+        memcpy(ports[0].pnames, ifname.c_str(), L2MCD_IFNAME_SIZE);
+
+        SWSS_LOG_NOTICE("L2MCD_CFG:MROUTER: [key:%s] port:%s vlan:%d afi:%d",entry.c_str(), ports[0].pnames, msg->vlan_id, msg->afi);
+        sendMsgL2Mcd(L2MCD_SNOOP_MROUTER_CONFIG_MSG, msg_len, (void *)msg);
     }
 }
 
 void  L2McMgr::doL2McMrouterUpdateTask(Consumer &consumer)
 {
-    L2MCD_CONFIG_MSG msg;
     SWSS_LOG_ENTER();
+    uint32_t msg_len = 0;
+    L2MCD_CONFIG_MSG *msg = NULL;
 
-    memset(&msg, 0, sizeof(L2MCD_CONFIG_MSG));
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
-    {
+    {   
         KeyOpFieldsValuesTuple t = it->second;
 
         string key = kfvKey(t);
@@ -553,24 +478,39 @@ void  L2McMgr::doL2McMrouterUpdateTask(Consumer &consumer)
         string vlanKey = key.substr(4,pos-4); 
         string iname  = key.substr(pos+1);
         int vlan_id = stoi(vlanKey.c_str());
-        msg.vlan_id = vlan_id;
-        msg.count=1;
-        msg.afi = MLD_IP_IPV4_AFI;
-        memcpy(&msg.ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
+        msg_len = sizeof(L2MCD_CONFIG_MSG) + sizeof(PORT_ATTR);
+        if (msg_len > L2MCD_MAX_SIZE)
+        {
+            SWSS_LOG_ERROR(
+                "L2MCD_CFG:SNOOP payload too large: %u (max %u), vlan=%d",
+                msg_len, L2MCD_MAX_SIZE, vlan_id);
+
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+        memset(buffer, 0, msg_len);
+        msg = (L2MCD_CONFIG_MSG *)buffer;
+
+        msg->vlan_id = vlan_id;
+        msg->count=1;
+        msg->afi = MLD_IP_IPV4_AFI;
+        PORT_ATTR *ports = msg->ports;
+        memcpy(ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
+        SWSS_LOG_DEBUG("MemIntf: %s", iname.c_str());
         if (op == SET_COMMAND)
         {
-            msg.op_code = L2MCD_OP_ENABLE;
+            msg->op_code = L2MCD_OP_ENABLE;
         }
         else
         {
-            msg.op_code = L2MCD_OP_DISABLE;
+            msg->op_code = L2MCD_OP_DISABLE;
         }
         for (auto i : kfvFieldsValues(t))
         {
-            SWSS_LOG_INFO("L2MCD_CFG Field: %s Val %s vlan:%d opcode:%d", fvField(i).c_str(), fvValue(i).c_str(), vlan_id, msg.op_code );
+            SWSS_LOG_INFO("L2MCD_CFG Field: %s Val %s vlan:%d opcode:%d", fvField(i).c_str(), fvValue(i).c_str(), vlan_id, msg->op_code );
         }
-        SWSS_LOG_NOTICE("L2MCD_CFG:MROUTER: op:%s [key:%s] %s vlan:%d", op.c_str(), key.c_str(),msg.ports[0].pnames,vlan_id);
-        sendMsgL2Mcd(L2MCD_SNOOP_MROUTER_CONFIG_MSG, sizeof(msg), (void *)&msg);
+        SWSS_LOG_NOTICE("L2MCD_CFG:MROUTER: op:%s [key:%s] %s vlan:%d", op.c_str(), key.c_str(),ports[0].pnames,vlan_id);
+        sendMsgL2Mcd(L2MCD_SNOOP_MROUTER_CONFIG_MSG, msg_len, (void *)msg);
         it = consumer.m_toSync.erase(it);
     }
 
@@ -578,10 +518,10 @@ void  L2McMgr::doL2McMrouterUpdateTask(Consumer &consumer)
 
 void  L2McMgr::doL2McMldMrouterUpdateTask(Consumer &consumer)
 {
-    L2MCD_CONFIG_MSG msg;
     SWSS_LOG_ENTER();
+    uint32_t msg_len = 0;
+    L2MCD_CONFIG_MSG *msg = NULL;
 
-    memset(&msg, 0, sizeof(L2MCD_CONFIG_MSG));
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -593,24 +533,39 @@ void  L2McMgr::doL2McMldMrouterUpdateTask(Consumer &consumer)
         string vlanKey = key.substr(4,pos-4); 
         string iname  = key.substr(pos+1);
         int vlan_id = stoi(vlanKey.c_str());
-        msg.vlan_id = vlan_id;
-        msg.count=1;
-        msg.afi = MLD_IP_IPV6_AFI;
-        memcpy(&msg.ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
+        msg_len = sizeof(L2MCD_CONFIG_MSG) + sizeof(PORT_ATTR);
+        if (msg_len > L2MCD_MAX_SIZE)
+        {
+            SWSS_LOG_ERROR(
+                "L2MCD_CFG:SNOOP payload too large: %u (max %u), vlan=%d",
+                msg_len, L2MCD_MAX_SIZE, vlan_id);
+
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+        memset(buffer, 0, msg_len);
+        msg = (L2MCD_CONFIG_MSG *)buffer;
+
+        msg->vlan_id = vlan_id;
+        msg->count=1;
+        msg->afi = MLD_IP_IPV6_AFI;
+        PORT_ATTR *ports = msg->ports;
+        memcpy(ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
+        SWSS_LOG_DEBUG("MemIntf: %s", iname.c_str());
         if (op == SET_COMMAND)
         {
-            msg.op_code = L2MCD_OP_ENABLE;
+            msg->op_code = L2MCD_OP_ENABLE;
         }
         else
         {
-            msg.op_code = L2MCD_OP_DISABLE;
+            msg->op_code = L2MCD_OP_DISABLE;
         }
         for (auto i : kfvFieldsValues(t))
         {
-            SWSS_LOG_INFO("L2MCD_CFG Field: %s Val %s vlan:%d opcode:%d", fvField(i).c_str(), fvValue(i).c_str(), vlan_id, msg.op_code );
+            SWSS_LOG_INFO("L2MCD_CFG Field: %s Val %s vlan:%d opcode:%d", fvField(i).c_str(), fvValue(i).c_str(), vlan_id, msg->op_code );
         }
-        SWSS_LOG_NOTICE("L2MCD_CFG:MROUTER: op:%s [key:%s] %s vlan:%d afi:%d", op.c_str(), key.c_str(),msg.ports[0].pnames,vlan_id,msg.afi);
-        sendMsgL2Mcd(L2MCD_SNOOP_MROUTER_CONFIG_MSG, sizeof(msg), (void *)&msg);
+        SWSS_LOG_NOTICE("L2MCD_CFG:MROUTER: op:%s [key:%s] %s vlan:%d afi:%d", op.c_str(), key.c_str(),ports[0].pnames,vlan_id,msg->afi);
+        sendMsgL2Mcd(L2MCD_SNOOP_MROUTER_CONFIG_MSG, msg_len , (void *)msg);
         it = consumer.m_toSync.erase(it);
     }
 }
@@ -622,6 +577,8 @@ void L2McMgr::updateGrpStaticEntry(const string vlan_id, const string ifname)
     vector<string> l2mcGrpStaticKeys, l2mcIgmpGrpStaticKeys , l2mcMldStaticKeys;
     string srcipv4="0.0.0.0";
     string srcipv6="0::0";
+    uint32_t msg_len = 0;
+    L2MCD_CONFIG_MSG *msg = NULL;
 
     m_cfgL2McStaticTable.getKeys(l2mcIgmpGrpStaticKeys);
     m_cfgL2McMldStaticTable.getKeys(l2mcMldStaticKeys);
@@ -656,41 +613,51 @@ void L2McMgr::updateGrpStaticEntry(const string vlan_id, const string ifname)
         if (!ifname.empty()  && iname   != ifname)
             continue;
 
-        L2MCD_CONFIG_MSG msg;
-        memset(&msg, 0, sizeof(msg));
+        msg_len = sizeof(L2MCD_CONFIG_MSG) + sizeof(PORT_ATTR);
+        if (msg_len > L2MCD_MAX_SIZE)
+        {
+            SWSS_LOG_ERROR(
+                "L2MCD_CFG:SNOOP payload too large: %u (max %u), vlan=%d",
+                msg_len, L2MCD_MAX_SIZE, vlanid);
 
-        msg.op_code = L2MCD_OP_ENABLE;
-        msg.vlan_id = vlanid;
-        msg.count   = 1;
+            continue;
+        }
+        memset(buffer, 0, msg_len);
+        msg = (L2MCD_CONFIG_MSG *)buffer;
 
-        memcpy(msg.gaddr, ipKey.c_str(), L2MCD_IP_ADDR_STR_SIZE);
+        msg->op_code = L2MCD_OP_ENABLE;
+        msg->vlan_id = vlanid;
+        msg->count   = 1;
+
+        memcpy(msg->gaddr, ipKey.c_str(), L2MCD_IP_ADDR_STR_SIZE);
 
         if (IpAddress(ipKey).isV4())
         {
-            msg.afi = MLD_IP_IPV4_AFI;
-            memcpy(msg.saddr, srcipv4.c_str(), L2MCD_IP_ADDR_STR_SIZE);
+            msg->afi = MLD_IP_IPV4_AFI;
+            memcpy(msg->saddr, srcipv4.c_str(), L2MCD_IP_ADDR_STR_SIZE);
         }
         else
         {
-            msg.afi = MLD_IP_IPV6_AFI;
-            memcpy(msg.saddr, srcipv6.c_str(), L2MCD_IP_ADDR_STR_SIZE);
+            msg->afi = MLD_IP_IPV6_AFI;
+            memcpy(msg->saddr, srcipv6.c_str(), L2MCD_IP_ADDR_STR_SIZE);
         }
 
-        memcpy(msg.ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
+        PORT_ATTR *ports = msg->ports;
+        memcpy(ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
+        SWSS_LOG_DEBUG("MemIntf: %s", iname.c_str());
 
-        SWSS_LOG_NOTICE("L2MCD_CFG:STATIC [key:%s] GA:%s Port:%s vlan:%d afi:%d", entry.c_str(), ipKey.c_str(), iname.c_str(), msg.vlan_id, msg.afi);
-        SWSS_LOG_NOTICE("L2MCD_CFG:STATIC [key:%s] GA:%s Port:%s vlan:%d afi:%d", entry.c_str(), ipKey.c_str(), iname.c_str(), msg.vlan_id, msg.afi);
+        SWSS_LOG_NOTICE("L2MCD_CFG:STATIC [key:%s] GA:%s Port:%s vlan:%d afi:%d", entry.c_str(), ipKey.c_str(), iname.c_str(), msg->vlan_id, msg->afi);
 
-        sendMsgL2Mcd(L2MCD_SNOOP_STATIC_CONFIG_MSG, sizeof(msg), (void *)&msg);
+        sendMsgL2Mcd(L2MCD_SNOOP_STATIC_CONFIG_MSG, msg_len, (void *)msg);
     }
 }
 
 void L2McMgr::doL2McStaticEntryTask(Consumer &consumer)
 {
-    L2MCD_CONFIG_MSG msg;
     SWSS_LOG_ENTER();
     string srcip="0.0.0.0";
-    memset(&msg, 0, sizeof(L2MCD_CONFIG_MSG));
+    uint32_t msg_len = 0;
+    L2MCD_CONFIG_MSG *msg = NULL;
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -704,30 +671,48 @@ void L2McMgr::doL2McStaticEntryTask(Consumer &consumer)
         pos = key2.find('|');
         string ipKey = key2.substr(0,pos);
         string iname = key2.substr(pos+1);
-        msg.cmd_code=0;
         int vlan_id = stoi(vlanKey.c_str());
+        msg_len = sizeof(L2MCD_CONFIG_MSG) + sizeof(PORT_ATTR);
+        if (msg_len > L2MCD_MAX_SIZE)
+        {
+            SWSS_LOG_ERROR(
+                "L2MCD_CFG:SNOOP payload too large: %u (max %u), vlan=%d",
+                msg_len, L2MCD_MAX_SIZE, vlan_id);
+
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+        memset(buffer, 0, msg_len);
+        msg = (L2MCD_CONFIG_MSG *)buffer;
+
         if (op == SET_COMMAND)
         {
-            msg.op_code = L2MCD_OP_ENABLE;
+            msg->op_code = L2MCD_OP_ENABLE;
             size_t idx = key.find('|');
             string tmp_key = key.substr(0, idx+1) + srcip + key.substr(idx);
         }
         else
         {
-            msg.op_code = L2MCD_OP_DISABLE;
+            msg->op_code = L2MCD_OP_DISABLE;
         }
-        msg.vlan_id = vlan_id;
-        msg.count=1;
-        memcpy(msg.gaddr,ipKey.c_str(), L2MCD_IP_ADDR_STR_SIZE);
-        memcpy(msg.saddr,srcip.c_str(), L2MCD_IP_ADDR_STR_SIZE);
-        msg.afi = MLD_IP_IPV4_AFI;
-        memcpy(msg.ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
+        msg->cmd_code=0;
+        msg->vlan_id = vlan_id;
+        msg->count=1;
+        
+        memcpy(msg->gaddr,ipKey.c_str(), L2MCD_IP_ADDR_STR_SIZE);
+        memcpy(msg->saddr,srcip.c_str(), L2MCD_IP_ADDR_STR_SIZE);
+        msg->afi = MLD_IP_IPV4_AFI;
+
+        PORT_ATTR *ports = msg->ports;
+        memcpy(ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
+        SWSS_LOG_DEBUG("MemIntf: %s", iname.c_str());
+
         for (auto i : kfvFieldsValues(t))
         {
-            SWSS_LOG_INFO("L2MCD_CFG Field: %s Val %s vlan:%d opcode:%d", fvField(i).c_str(), fvValue(i).c_str(), vlan_id, msg.op_code );
+            SWSS_LOG_INFO("L2MCD_CFG Field: %s Val %s vlan:%d opcode:%d", fvField(i).c_str(), fvValue(i).c_str(), vlan_id, msg->op_code );
         }
         SWSS_LOG_NOTICE("L2MCD_CFG:STATIC op:%s [key:%s]  GA:%s Port:%s vlan:%d", op.c_str(), key.c_str(), ipKey.c_str(), iname.c_str(), vlan_id);
-        sendMsgL2Mcd(L2MCD_SNOOP_STATIC_CONFIG_MSG, sizeof(msg), (void *)&msg);
+        sendMsgL2Mcd(L2MCD_SNOOP_STATIC_CONFIG_MSG, msg_len, (void *)msg);
         it = consumer.m_toSync.erase(it);
     }
 
@@ -735,10 +720,10 @@ void L2McMgr::doL2McStaticEntryTask(Consumer &consumer)
 
 void L2McMgr::doL2McMldStaticEntryTask(Consumer &consumer)
 {
-    L2MCD_CONFIG_MSG msg;
     SWSS_LOG_ENTER();
     string srcip="0::0";
-    memset(&msg, 0, sizeof(L2MCD_CONFIG_MSG));
+    uint32_t msg_len = 0;
+    L2MCD_CONFIG_MSG *msg = NULL;
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -752,29 +737,42 @@ void L2McMgr::doL2McMldStaticEntryTask(Consumer &consumer)
         pos = key2.find('|');
         string ipKey = key2.substr(0,pos);
         string iname = key2.substr(pos+1);
-        msg.cmd_code=0;
         int vlan_id = stoi(vlanKey.c_str());
+        msg_len = sizeof(L2MCD_CONFIG_MSG) + sizeof(PORT_ATTR);
+        if (msg_len > L2MCD_MAX_SIZE)
+        {
+            SWSS_LOG_ERROR(
+                "L2MCD_CFG:SNOOP payload too large: %u (max %u), vlan=%d",
+                msg_len, L2MCD_MAX_SIZE, vlan_id);
+
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+        memset(buffer, 0, msg_len);
+        msg = (L2MCD_CONFIG_MSG *)buffer;
         if (op == SET_COMMAND)
         {
-            msg.op_code = L2MCD_OP_ENABLE;
+            msg->op_code = L2MCD_OP_ENABLE;
         }
         else
         {
-            msg.op_code = L2MCD_OP_DISABLE;
+            msg->op_code = L2MCD_OP_DISABLE;
         }
-        msg.vlan_id = vlan_id;
-        msg.count=1;
-        msg.afi = MLD_IP_IPV6_AFI;
-        memcpy(msg.gaddr,ipKey.c_str(), L2MCD_IP_ADDR_STR_SIZE);
-        memcpy(msg.saddr,srcip.c_str(), L2MCD_IP_ADDR_STR_SIZE);
-        memcpy(msg.ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
+        msg->cmd_code=0;
+        msg->vlan_id = vlan_id;
+        msg->count=1;
+        msg->afi = MLD_IP_IPV6_AFI;
+        memcpy(msg->gaddr,ipKey.c_str(), L2MCD_IP_ADDR_STR_SIZE);
+        memcpy(msg->saddr,srcip.c_str(), L2MCD_IP_ADDR_STR_SIZE);
+        PORT_ATTR *ports = msg->ports;
+        memcpy(ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
+        SWSS_LOG_DEBUG("MemIntf: %s", iname.c_str());
         for (auto i : kfvFieldsValues(t))
         {
-            SWSS_LOG_INFO("L2MCD_CFG Field: %s Val %s vlan:%d opcode:%d", fvField(i).c_str(), fvValue(i).c_str(), vlan_id, msg.op_code );
+            SWSS_LOG_INFO("L2MCD_CFG Field: %s Val %s vlan:%d opcode:%d", fvField(i).c_str(), fvValue(i).c_str(), vlan_id, msg->op_code );
         }
-        SWSS_LOG_NOTICE("L2MCD_CFG:STATIC op:%s [key:%s]  GA:%s Port:%s vlan:%d afi %d", op.c_str(), key.c_str(), ipKey.c_str(), iname.c_str(), vlan_id, msg.afi);
-        sendMsgL2Mcd(L2MCD_SNOOP_STATIC_CONFIG_MSG, sizeof(msg), (void *)&msg);
-        
+        SWSS_LOG_NOTICE("L2MCD_CFG:STATIC op:%s [key:%s]  GA:%s Port:%s vlan:%d afi %d", op.c_str(), key.c_str(), ipKey.c_str(), iname.c_str(), vlan_id, msg->afi);
+        sendMsgL2Mcd(L2MCD_SNOOP_STATIC_CONFIG_MSG, msg_len, (void *)msg);
         
         it = consumer.m_toSync.erase(it);
     }
@@ -787,79 +785,73 @@ void L2McMgr::sendL2McSnoopConfig(
         const std::string &op,
         const std::vector<FieldValueTuple> &tuples)
 {
-    L2MCD_CONFIG_MSG msg;
-    memset(&msg, 0, sizeof(msg));
 
-    msg.afi = afi;
-    msg.vlan_id = vlan_id;
-    msg.cmd_code=0;
-    msg.query_interval=125;
-    msg.query_max_response_time=10;
-    msg.last_member_query_interval=1000;
-    msg.version=2;
+    std::vector<PORT_ATTR> port_list;
+    uint32_t port_count = getVlanMembers(key, port_list);
+
+    L2MCD_CONFIG_MSG *msg = NULL;
+    uint32_t msg_len = sizeof(L2MCD_CONFIG_MSG);
+    msg_len += (uint32_t)(port_count * sizeof(PORT_ATTR));
+    if (msg_len > L2MCD_MAX_SIZE)
+    {
+        SWSS_LOG_ERROR(
+            "L2MCD_CFG:SNOOP payload too large: %u (max %u), vlan=%d",
+            msg_len, L2MCD_MAX_SIZE, vlan_id);
+
+        return;
+    }
+    memset(buffer, 0, msg_len);
+    msg = (L2MCD_CONFIG_MSG *)buffer;
+
+    msg->afi = afi;
+    msg->vlan_id = vlan_id;
+    msg->cmd_code = 0;
+    msg->query_interval = 125;
+    msg->query_max_response_time = 10;
+    msg->last_member_query_interval = 1000;
+    msg->version = 2;
+    msg->count = port_count;
+    msg->warm_reboot = WarmStart::isWarmStart() ? 1 : 0;
 
     if (op == SET_COMMAND)
     {
-        msg.op_code = L2MCD_OP_ENABLE;
+        msg->op_code = L2MCD_OP_ENABLE;
 
         for (auto &i : tuples)
         {
-            if (fvField(i) == "enabled")
-                msg.enabled = (fvValue(i) == "true") ? 1 : 0;
+            const std::string &field = fvField(i);
+            const std::string &value = fvValue(i);
 
-            else if (fvField(i) == "querier")
-                msg.querier = (fvValue(i) == "true") ? 1 : 0;
-
-            else if (fvField(i) == "fast-leave")
-                msg.fast_leave = (fvValue(i) == "true") ? 1 : 0;
-
-            else if (fvField(i) == "version")
-                msg.version = stoi(fvValue(i));
-
-            else if (fvField(i) == "query-interval")
-                msg.query_interval = stoi(fvValue(i));
-
-            else if (fvField(i) == "query-max-response-time")
-                msg.query_max_response_time = stoi(fvValue(i));
-
-            else if (fvField(i) == "last-member-query-interval")
-                msg.last_member_query_interval = stoi(fvValue(i));
-        }
-
-        /* get port members */
-        vector<PORT_ATTR> port_list;
-        msg.count =  getVlanMembers(key,port_list);
-        int j=0;
-        for (auto pentry = port_list.begin(); pentry != port_list.end(); pentry++)
-        {
-            vector<FieldValueTuple> tupEntry;
-            string vlanmemkey = key + "|" + pentry->pnames;
-            if (m_cfgVlanMemberTable.get(vlanmemkey, tupEntry))
-            {
-                auto tag  = std::find_if(
-                tupEntry.begin(), tupEntry.end(),
-                [](auto &t){ return t.first == "tagging_mode"; });
-
-                if (tag != tupEntry.end() && fvValue(*tag) == "untagged")
-                    msg.ports[j].tagged = UNTAGGED;
-                else
-                    msg.ports[j].tagged = TAGGED; 
-            }
-            memcpy(&msg.ports[j++].pnames, pentry->pnames, L2MCD_IFNAME_SIZE);
-            SWSS_LOG_INFO("L2MCD_CFG:SNOOP vlan %s mem-port:%s idx:%d size:%d", key.c_str(), msg.ports[j-1].pnames, j-1, (int)port_list.size());
+            if (field == "enabled") msg->enabled = (value == "true") ? 1 : 0;
+            else if (field == "querier") msg->querier = (value == "true") ? 1 : 0;
+            else if (field == "fast-leave") msg->fast_leave = (value == "true") ? 1 : 0;
+            else if (field == "version") msg->version = stoi(value);
+            else if (field == "query-interval") msg->query_interval = stoi(value);
+            else if (field == "last-member-query-interval") msg->last_member_query_interval = stoi(value);
+            else if (field == "query-max-response-time") msg->query_max_response_time = stoi(value);
         }
     }
     else
     {
-        msg.op_code = L2MCD_OP_DISABLE;
+        msg->op_code = L2MCD_OP_DISABLE;
     }
 
-    SWSS_LOG_NOTICE("L2MCD_CFG:SNOOP %s [key:%s] vlan:%d,Ver:%d, Qry:%d, qI:%d,lmqi:%d,qmr:%d,FL:%d, count:%d, afi:%d", 
-               op.c_str(), key.c_str(), vlan_id, msg.version, msg.querier,msg.query_interval,
-               msg.last_member_query_interval, msg.query_max_response_time ,
-               msg.fast_leave,msg.count,afi);
+    PORT_ATTR *ports = msg->ports;
+    for (uint32_t j = 0 ; j < port_count;j++ )
+    {
+        ports[j].tagged = port_list[j].tagged;
+        memcpy(ports[j].pnames, port_list[j].pnames, L2MCD_IFNAME_SIZE);
+        SWSS_LOG_INFO("L2MCD_CFG:SNOOP vlan %s mem-port:%s idx:%u total:%u",
+                    key.c_str(), ports[j].pnames, j, port_count);
+    }
 
-    sendMsgL2Mcd(L2MCD_SNOOP_CONFIG_MSG, sizeof(msg), (void *)&msg);
+    SWSS_LOG_NOTICE("L2MCD_CFG:SNOOP %s [key:%s] vlan:%d Ver:%d Qr:%d qi:%d lmqi:%d qmr:%d FL:%d count:%u afi:%d",
+                   op.c_str(), key.c_str(), vlan_id, msg->version, msg->querier, msg->query_interval,
+                   msg->last_member_query_interval, msg->query_max_response_time,
+                   msg->fast_leave, msg->count, msg->afi);
+
+    sendMsgL2Mcd(L2MCD_SNOOP_CONFIG_MSG, msg_len, (void *)msg);
+
 }
 
 void L2McMgr::doVlanUpdateTask(Consumer &consumer)
@@ -1036,6 +1028,7 @@ int L2McMgr::getPortOperState(string if_name)
 
 int  L2McMgr::getL2McPortList(DBConnector *state_db)
 {   
+    SWSS_LOG_ENTER();
     Table m_statePortTable(state_db, STATE_PORT_TABLE_NAME);
     Table m_stateLagTable(state_db, STATE_LAG_TABLE_NAME); 
     string Pname; 
@@ -1043,33 +1036,39 @@ int  L2McMgr::getL2McPortList(DBConnector *state_db)
     vector<string> lagKeys;
     m_statePortTable.getKeys(portKeys);
     m_stateLagTable.getKeys(lagKeys);
-    L2MCD_CONFIG_MSG msg;
-    int j=0;
+    uint32_t port_count=(unsigned int) portKeys.size();
+    port_count+=(unsigned int) lagKeys.size();
 
-    memset(&msg, 0, sizeof(L2MCD_CONFIG_MSG));
-    SWSS_LOG_ENTER();
-    msg.count=(unsigned int) portKeys.size();
-    msg.count+=(unsigned int) lagKeys.size();
-    if (msg.count >L2MCD_IPC_MAX_PORTS)
+    L2MCD_CONFIG_MSG *msg = NULL;
+    uint32_t msg_len = sizeof(L2MCD_CONFIG_MSG);
+    msg_len += (uint32_t)(port_count * sizeof(PORT_ATTR));
+    if (msg_len > L2MCD_MAX_SIZE)
     {
-        SWSS_LOG_ERROR("port count %d invalid", msg.count);
+        SWSS_LOG_ERROR(
+            "L2MCD_CFG:SNOOP payload too large: %u (max %u)",
+            msg_len, L2MCD_MAX_SIZE);
         return -1;
     }
+    memset(buffer, 0, msg_len);
+    msg = (L2MCD_CONFIG_MSG *)buffer;
+    msg->count = port_count;
+    int i = 0;
+    PORT_ATTR *ports = msg->ports;
     for (auto port_name : portKeys)
     {
-        msg.ports[j].oper_state = getPortOperState(port_name);
-        memcpy(msg.ports[j++].pnames, port_name.c_str(), L2MCD_IFNAME_SIZE);
-        SWSS_LOG_INFO("Port:%s oper:%d", port_name.c_str(), msg.ports[j-1].oper_state);
+        ports[i].oper_state = getPortOperState(port_name);
+        memcpy(ports[i++].pnames, port_name.c_str(), L2MCD_IFNAME_SIZE);
+        SWSS_LOG_INFO("Port:%s oper:%d", port_name.c_str(), ports[i-1].oper_state);
     }
     for (auto lag_name : lagKeys)
     {
-        msg.ports[j].oper_state = getPortOperState(lag_name);
-        memcpy(msg.ports[j++].pnames, lag_name.c_str(), L2MCD_IFNAME_SIZE);
-        SWSS_LOG_INFO("Port:%s oper:%d", lag_name.c_str(), msg.ports[j-1].oper_state);
+        ports[i].oper_state = getPortOperState(lag_name);
+        memcpy(ports[i++].pnames, lag_name.c_str(), L2MCD_IFNAME_SIZE);
+        SWSS_LOG_INFO("Port:%s oper:%d", lag_name.c_str(), ports[i-1].oper_state);
     }
-    msg.op_code = L2MCD_OP_ENABLE;
-    SWSS_LOG_NOTICE("L2MCD_CFG:PORTLIST count:%d ",  msg.count);
-    sendMsgL2Mcd(L2MCD_SNOOP_PORT_LIST_MSG, sizeof(msg), (void *)&msg);
+    msg->op_code = L2MCD_OP_ENABLE;
+    SWSS_LOG_NOTICE("L2MCD_CFG:PORTLIST count:%d ",  msg->count);
+    sendMsgL2Mcd(L2MCD_SNOOP_PORT_LIST_MSG, msg_len, (void *)msg);
     return 0;
 }
 
@@ -1126,6 +1125,20 @@ int  L2McMgr::getVlanMembers(const string &vlanKey, vector<PORT_ATTR>&port_list)
         if (vlanKey == vlanName)
         {
             strncpy(port_id.pnames, intfName.c_str(), L2MCD_IFNAME_SIZE-1);
+            vector<FieldValueTuple> tupEntry;
+            string vlanmemkey = vlanKey + "|" + intfName;
+
+            if (m_cfgVlanMemberTable.get(vlanmemkey, tupEntry))
+            {
+                auto tag = std::find_if(
+                    tupEntry.begin(), tupEntry.end(),
+                    [](auto &t){ return t.first == "tagging_mode"; });
+
+                if (tag != tupEntry.end() && fvValue(*tag) == "untagged")
+                    port_id.tagged = UNTAGGED;
+                else
+                    port_id.tagged = TAGGED;
+            }
             port_list.push_back(port_id);
             SWSS_LOG_INFO("vlan:%s MemIntf: %s", vlanName.c_str(), intfName.c_str());
         }
@@ -1138,12 +1151,10 @@ int  L2McMgr::getVlanMembers(const string &vlanKey, vector<PORT_ATTR>&port_list)
 void L2McMgr::updateVlanMember(const string vlan_id)
 {
     vector<string> l2mcVlanMemKeys;
-    L2MCD_CONFIG_MSG msg;
-    memset(&msg, 0, sizeof(L2MCD_CONFIG_MSG));
-
     // Table vlanmemtable(state_db, STATE_VLAN_MEMBER_TABLE_NAME);
     m_stateVlanMemberTable.getKeys(l2mcVlanMemKeys);
-
+    uint32_t msg_len = 0;
+    L2MCD_CONFIG_MSG *msg = NULL;
 
     for (auto l2mc_localMemName : l2mcVlanMemKeys)
     {
@@ -1167,12 +1178,26 @@ void L2McMgr::updateVlanMember(const string vlan_id)
             SWSS_LOG_INFO("Vlan not match, continue");
             continue;
         }
-
         int vlanid = atoi(vlanName.c_str());
-        msg.vlan_id = vlanid;
-        msg.count =1;
-        memcpy(msg.ports[0].pnames, intfName.c_str(), L2MCD_IFNAME_SIZE);
-        msg.op_code = L2MCD_OP_ENABLE;
+        msg_len = sizeof(L2MCD_CONFIG_MSG) + sizeof(PORT_ATTR);
+        if (msg_len > L2MCD_MAX_SIZE)
+        {
+            SWSS_LOG_ERROR(
+                "L2MCD_CFG:SNOOP payload too large: %u (max %u), vlan=%d",
+                msg_len, L2MCD_MAX_SIZE, vlanid);
+                
+            continue;
+        }
+        memset(buffer, 0, msg_len);
+        msg = (L2MCD_CONFIG_MSG *)buffer;
+
+        msg->vlan_id = vlanid;
+        msg->count =1;
+
+        PORT_ATTR *ports = msg->ports;
+        memcpy(ports[0].pnames, intfName.c_str(), L2MCD_IFNAME_SIZE);
+        SWSS_LOG_DEBUG("MemIntf: %s", intfName.c_str());
+        msg->op_code = L2MCD_OP_ENABLE;
         vector<FieldValueTuple> tupEntry;
         if (m_cfgVlanMemberTable.get(l2mc_localMemName, tupEntry))
         {
@@ -1181,20 +1206,19 @@ void L2McMgr::updateVlanMember(const string vlan_id)
             [](auto &t){ return t.first == "tagging_mode"; });
 
             if (tag != tupEntry.end() && fvValue(*tag) == "untagged")
-                msg.ports[0].tagged = UNTAGGED;
+                ports[0].tagged = UNTAGGED;
             else
-                msg.ports[0].tagged = TAGGED; 
+                ports[0].tagged = TAGGED; 
         }
-        sendMsgL2Mcd(L2MCD_VLAN_MEM_TABLE_UPDATE, sizeof(msg), (void *)&msg);
+        sendMsgL2Mcd(L2MCD_VLAN_MEM_TABLE_UPDATE, msg_len, (void *)msg);
     }
 }
 
 void L2McMgr::doL2McVlanMemUpdateTask(Consumer &consumer)
 {
-    L2MCD_CONFIG_MSG msg;
-    memset(&msg, 0, sizeof(L2MCD_CONFIG_MSG));
-
     SWSS_LOG_ENTER();
+    uint32_t msg_len = 0;
+    L2MCD_CONFIG_MSG *msg = NULL;
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -1209,9 +1233,22 @@ void L2McMgr::doL2McVlanMemUpdateTask(Consumer &consumer)
         if ((found != string::npos))
         {
             int vlanid = stoi(vlanName.c_str());
-            msg.vlan_id = vlanid;
-            msg.count =1;
-            memcpy(msg.ports[0].pnames, intfName.c_str(), L2MCD_IFNAME_SIZE);
+            msg_len = sizeof(L2MCD_CONFIG_MSG) +  sizeof(PORT_ATTR);
+            if (msg_len > L2MCD_MAX_SIZE)
+            {
+                SWSS_LOG_ERROR(
+                    "L2MCD_CFG:SNOOP payload too large: %u (max %u), vlan=%d",
+                    msg_len, L2MCD_MAX_SIZE, vlanid);
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+            memset(buffer, 0, msg_len);
+            msg = (L2MCD_CONFIG_MSG *)buffer;
+            msg->vlan_id = vlanid;
+            msg->count =1;
+            PORT_ATTR *ports = msg->ports;
+            memcpy(ports[0].pnames, intfName.c_str(), L2MCD_IFNAME_SIZE);
+            SWSS_LOG_DEBUG("MemIntf: %s", intfName.c_str());
             vector<FieldValueTuple> tupEntry;
             if (m_cfgVlanMemberTable.get(key, tupEntry))
             {
@@ -1220,20 +1257,20 @@ void L2McMgr::doL2McVlanMemUpdateTask(Consumer &consumer)
                 [](auto &t){ return t.first == "tagging_mode"; });
 
                 if (tag != tupEntry.end() && fvValue(*tag) == "untagged")
-                    msg.ports[0].tagged = UNTAGGED;
+                    ports[0].tagged = UNTAGGED;
                 else
-                    msg.ports[0].tagged = TAGGED; 
+                    ports[0].tagged = TAGGED; 
             }
             if (op == SET_COMMAND)
             {
-                msg.op_code = L2MCD_OP_ENABLE;
+                msg->op_code = L2MCD_OP_ENABLE;
             }
             else
             {
-                msg.op_code = L2MCD_OP_DISABLE;
+                msg->op_code = L2MCD_OP_DISABLE;
             }
-            SWSS_LOG_NOTICE("L2MCD_CFG:VLAN_MEMBER op:%s iname:%s %s vlan:%d tagged:%d", op.c_str(), msg.ports[0].pnames, intfName.c_str(), msg.vlan_id, msg.ports[0].tagged);
-            sendMsgL2Mcd(L2MCD_VLAN_MEM_TABLE_UPDATE, sizeof(msg), (void *)&msg);
+            SWSS_LOG_NOTICE("L2MCD_CFG:VLAN_MEMBER op:%s iname:%s %s vlan:%d tagged:%d", op.c_str(), ports[0].pnames, intfName.c_str(), msg->vlan_id, ports[0].tagged);
+            sendMsgL2Mcd(L2MCD_VLAN_MEM_TABLE_UPDATE, msg_len, (void *)msg);
         }
         it = consumer.m_toSync.erase(it);
     }
@@ -1241,10 +1278,9 @@ void L2McMgr::doL2McVlanMemUpdateTask(Consumer &consumer)
 
 void L2McMgr::doL2McLagMemberUpdateTask(Consumer &consumer)
 {
-    L2MCD_CONFIG_MSG msg;
-    memset(&msg, 0, sizeof(L2MCD_CONFIG_MSG));
-    int j=0;
     SWSS_LOG_ENTER();
+    uint32_t msg_len = 0;
+    L2MCD_CONFIG_MSG *msg = NULL;
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -1255,14 +1291,26 @@ void L2McMgr::doL2McLagMemberUpdateTask(Consumer &consumer)
         string po_name;
         string po_mem;
         size_t found = key.find(CONFIGDB_KEY_SEPARATOR);
+        msg_len = sizeof(L2MCD_CONFIG_MSG) + 2 * sizeof(PORT_ATTR);
+        if (msg_len > L2MCD_MAX_SIZE)
+        {
+            SWSS_LOG_ERROR(
+                "L2MCD_CFG:SNOOP payload too large: %u (max %u)",
+                msg_len, L2MCD_MAX_SIZE);
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+        memset(buffer, 0, msg_len);
+        msg = (L2MCD_CONFIG_MSG *)buffer;
 
         if (found != string::npos)
-        {
+        {   
+            PORT_ATTR *ports = msg->ports;
             po_name = key.substr(0, found);
             po_mem  = key.substr(found+1);
             SWSS_LOG_INFO("LAG_MEMBER %s %s %s", po_name.c_str(), po_mem.c_str(), op.c_str());
-            memcpy(msg.ports[j++].pnames, po_name.c_str(), L2MCD_IFNAME_SIZE);
-            memcpy(msg.ports[j++].pnames, po_mem.c_str(), L2MCD_IFNAME_SIZE);
+            memcpy(ports[0].pnames, po_name.c_str(), L2MCD_IFNAME_SIZE);
+            memcpy(ports[1].pnames, po_mem.c_str(), L2MCD_IFNAME_SIZE);
         }
         else
         {
@@ -1273,15 +1321,15 @@ void L2McMgr::doL2McLagMemberUpdateTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            msg.op_code = L2MCD_OP_ENABLE;
+            msg->op_code = L2MCD_OP_ENABLE;
         }
         else
         {
-            msg.op_code = L2MCD_OP_DISABLE;
+            msg->op_code = L2MCD_OP_DISABLE;
         }
-        msg.count =j;
-        SWSS_LOG_NOTICE("L2MCD_CFG:LAG_MEMBER op:%s  Po:%s  count:%d", op.c_str(), po_name.c_str(), msg.count);
-        sendMsgL2Mcd(L2MCD_LAG_MEM_TABLE_UPDATE, sizeof(msg), (void *)&msg);
+        msg->count = 2;
+        SWSS_LOG_NOTICE("L2MCD_CFG:LAG_MEMBER op:%s  Po:%s  count:%d", op.c_str(), po_name.c_str(), msg->count);
+        sendMsgL2Mcd(L2MCD_LAG_MEM_TABLE_UPDATE, msg_len, (void *)msg);
         it = consumer.m_toSync.erase(it);
     }
 }
@@ -1314,6 +1362,21 @@ void L2McMgr::doL2McL3InterfaceUpdateTask(Consumer &consumer)
             memcpy(msg.gaddr,ipstr.c_str(), L2MCD_IP_ADDR_STR_SIZE);
             msg.prefix_length = pr_len;
             SWSS_LOG_NOTICE("L2MCD_CFG:INTERFACE %s Vid:%s %d ip:%s prefix:%s(%d)", op.c_str(), vlanstr.c_str(),  msg.vlan_id, msg.gaddr, prefix.c_str(),msg.prefix_length);
+            if (ipstr.find(':') != string::npos)
+            {
+                msg.afi = MLD_IP_IPV6_AFI;
+                SWSS_LOG_DEBUG("IPv6 address: %s", ipstr.c_str());
+            }
+            else if (ipstr.find('.') != string::npos)
+            {
+                msg.afi = MLD_IP_IPV4_AFI;
+                SWSS_LOG_DEBUG("IPv4 address: %s", ipstr.c_str());
+            }
+            else
+            {
+                msg.afi = MLD_IP_IPV4_AFI;
+                SWSS_LOG_WARN("Cannot determine address family for IP: %s, defaulting to IPv4", ipstr.c_str());
+            }
             if (op == SET_COMMAND)
             {
                 msg.op_code = L2MCD_OP_ENABLE;
@@ -1331,26 +1394,37 @@ void L2McMgr::doL2McL3InterfaceUpdateTask(Consumer &consumer)
 
 void L2McMgr::doL2McInterfaceUpdateTask(Consumer &consumer)
 {
-    L2MCD_CONFIG_MSG msg;
-    memset(&msg, 0, sizeof(L2MCD_CONFIG_MSG));
-
     SWSS_LOG_ENTER();
+    uint32_t msg_len = 0;
+    L2MCD_CONFIG_MSG *msg = NULL;
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
+        msg_len = sizeof(L2MCD_CONFIG_MSG) + sizeof(PORT_ATTR);
+        if (msg_len > L2MCD_MAX_SIZE)
+        {
+            SWSS_LOG_ERROR(
+                "L2MCD_CFG:SNOOP payload too large: %u (max %u)",
+                msg_len, L2MCD_MAX_SIZE);
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+        memset(buffer, 0, msg_len);
+        msg = (L2MCD_CONFIG_MSG *)buffer;
+
         KeyOpFieldsValuesTuple t = it->second;
         auto key = kfvKey(t);
         auto op = kfvOp(t);
-        memcpy(msg.ports[0].pnames, key.c_str(), L2MCD_IFNAME_SIZE);
-        msg.count=1;
-        msg.op_code = (op == SET_COMMAND)? L2MCD_OP_ENABLE:L2MCD_OP_DISABLE;
-        msg.ports[0].oper_state = getPortOperState(msg.ports[0].pnames);
-        SWSS_LOG_NOTICE("L2MCD_CFG: IF:%s op:%s oper:%d", key.c_str(), op.c_str(),msg.ports[0].oper_state);
-        sendMsgL2Mcd(L2MCD_SNOOP_PORT_LIST_MSG, sizeof(msg), (void *)&msg);
+        msg->count=1;
+        msg->op_code = (op == SET_COMMAND)? L2MCD_OP_ENABLE:L2MCD_OP_DISABLE;
+        PORT_ATTR *ports = msg->ports;
+        memcpy(ports[0].pnames, key.c_str(), L2MCD_IFNAME_SIZE);
+        ports[0].oper_state = getPortOperState(ports[0].pnames);
+        SWSS_LOG_NOTICE("L2MCD_CFG: IF:%s op:%s oper:%d", key.c_str(), op.c_str(),ports[0].oper_state);
+        sendMsgL2Mcd(L2MCD_SNOOP_PORT_LIST_MSG, msg_len, (void *)msg);
         it = consumer.m_toSync.erase(it);
     }
 }
-
 
 void L2McMgr::doL2McSuppressUpdateTask(Consumer &consumer)
 {
@@ -1408,10 +1482,20 @@ void L2McMgr::doL2McSuppressUpdateTask(Consumer &consumer)
 
 void L2McMgr::doL2McProcRemoteEntries(string op, string key, string key_seperator, int cmd_type)
 {
-    L2MCD_CONFIG_MSG msg;
-    memset(&msg, 0, sizeof(L2MCD_CONFIG_MSG));
-
     SWSS_LOG_ENTER();
+    uint32_t msg_len = 0;
+    L2MCD_CONFIG_MSG *msg = NULL;
+    msg_len = sizeof(L2MCD_CONFIG_MSG) + sizeof(PORT_ATTR);
+    if (msg_len > L2MCD_MAX_SIZE)
+    {
+        SWSS_LOG_ERROR(
+            "L2MCD_CFG:SNOOP payload too large: %u (max %u)",
+            msg_len, L2MCD_MAX_SIZE);
+        return;
+    }
+    memset(buffer, 0, msg_len);
+    msg = (L2MCD_CONFIG_MSG *)buffer;
+
     size_t pos=key.find(key_seperator.c_str());
     auto vlan_name = key.substr(0,pos);
     auto pos1 = key.find(key_seperator.c_str(), pos+1);
@@ -1419,89 +1503,104 @@ void L2McMgr::doL2McProcRemoteEntries(string op, string key, string key_seperato
     auto pos2 = key.find(key_seperator.c_str(), pos1+1);
     auto gaddr = key.substr(pos1+1, pos2-pos1-1);
     auto pos3 = key.find(key_seperator.c_str(), pos2+1);
-    auto portname = key.substr(pos2+1, pos3-pos2-1);
+    auto iname = key.substr(pos2+1, pos3-pos2-1);
     auto pos4 = key.find(key_seperator.c_str(), pos3+1);
     auto type = key.substr(pos3+1, pos4-pos3-1);
     auto pos5 = key.find(key_seperator.c_str(), pos4+1);
     auto leave = key.substr(pos4+1, pos5-pos4-1);
-    msg.vlan_id = (unsigned int) stoi(vlan_name.substr(4));
-    memcpy(msg.saddr,saddr.c_str(), L2MCD_IP_ADDR_STR_SIZE);
-    memcpy(msg.gaddr,gaddr.c_str(), L2MCD_IP_ADDR_STR_SIZE);
+    msg->vlan_id = (unsigned int) stoi(vlan_name.substr(4));
+    memcpy(msg->saddr,saddr.c_str(), L2MCD_IP_ADDR_STR_SIZE);
+    memcpy(msg->gaddr,gaddr.c_str(), L2MCD_IP_ADDR_STR_SIZE);
     if (IpAddress(gaddr).isV4())
     {
-        msg.afi = MLD_IP_IPV4_AFI;
+        msg->afi = MLD_IP_IPV4_AFI;
     }
     else
     {
-        msg.afi = MLD_IP_IPV6_AFI;
+        msg->afi = MLD_IP_IPV6_AFI;
     }
-    msg.count=1;
-    memcpy(msg.ports[0].pnames, portname.c_str(), L2MCD_IFNAME_SIZE);
+    msg->count=1;
+    PORT_ATTR *ports = msg->ports;
+    memcpy(ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
+
     if (IpAddress(gaddr).isV4() && saddr != "0.0.0.0")
     {
-        msg.version = IGMP_VERSION_3;
+        msg->version = IGMP_VERSION_3;
     }
     else if (IpAddress(gaddr).isV4() && saddr == "0.0.0.0")
     {
-        msg.version = IGMP_VERSION_2;
+        msg->version = IGMP_VERSION_2;
     }
     else if (!IpAddress(gaddr).isV4() && saddr != "0000:0000:0000:0000:0000:0000:0000:0000")
     {
-        msg.version = MLD_VERSION_2;
+        msg->version = MLD_VERSION_2;
     }
     else
     {
-        msg.version = MLD_VERSION_1;
+        msg->version = MLD_VERSION_1;
     }
 
     if (op =="SET")
     {
-        msg.op_code = L2MCD_OP_ENABLE;
+        msg->op_code = L2MCD_OP_ENABLE;
     }
     else 
     {
-        msg.op_code = L2MCD_OP_DISABLE;
+        msg->op_code = L2MCD_OP_DISABLE;
     }
-    msg.cmd_code=cmd_type;
+    msg->cmd_code=cmd_type;
     SWSS_LOG_NOTICE("L2MCD_CFG:REMOTE op:%s [key:%s]  SA:%s GA:%s Port:%s vlan:%d type:%d", 
-           op.c_str(), key.c_str(), saddr.c_str(), gaddr.c_str(), portname.c_str(), msg.vlan_id,msg.cmd_code);
-    sendMsgL2Mcd(L2MCD_SNOOP_REMOTE_CONFIG_MSG, sizeof(msg), (void *)&msg);
+           op.c_str(), key.c_str(), saddr.c_str(), gaddr.c_str(), iname.c_str(), msg->vlan_id,msg->cmd_code);
+    sendMsgL2Mcd(L2MCD_SNOOP_REMOTE_CONFIG_MSG, msg_len , (void *)msg);
 }
 
 void L2McMgr::doL2McProcRemoteMrouterEntries(string op, string key, string key_seperator)
 {
-    L2MCD_CONFIG_MSG msg;
-    memset(&msg, 0, sizeof(L2MCD_CONFIG_MSG));
+    uint32_t msg_len = 0;
+    L2MCD_CONFIG_MSG *msg = NULL;
+    msg_len = sizeof(L2MCD_CONFIG_MSG) + sizeof(PORT_ATTR);
+    if (msg_len > L2MCD_MAX_SIZE)
+    {
+        SWSS_LOG_ERROR(
+            "L2MCD_CFG:SNOOP payload too large: %u (max %u)",
+            msg_len, L2MCD_MAX_SIZE);
+        return;
+    }
+    memset(buffer, 0, msg_len);
+    msg = (L2MCD_CONFIG_MSG *)buffer;
 
     SWSS_LOG_ENTER();
     size_t pos=key.find(key_seperator.c_str());
     auto vlan_name = key.substr(0,pos);
     auto pos1 = key.find(key_seperator.c_str(), pos+1);
-    auto portname = key.substr(pos+1, pos1-pos-1);
+    auto iname = key.substr(pos+1, pos1-pos-1);
     auto pos2 = key.find(key_seperator.c_str(), pos1+1);
     auto type = key.substr(pos1+1, pos2-pos1-1);
     auto pos3 = key.find(key_seperator.c_str(), pos2+1);
     auto leave = key.substr(pos2+1, pos3-pos2-1);
     auto pos4 = key.find(key_seperator.c_str(), pos3+1);
     auto proctol = key.substr(pos3+1, pos4-pos3-1);
-    msg.vlan_id = (unsigned int) stoi(vlan_name.substr(4));
-    msg.count=1;
+    msg->vlan_id = (unsigned int) stoi(vlan_name.substr(4));
+    msg->count=1;
+    PORT_ATTR *ports = msg->ports;
+    memcpy(ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
+
     if(proctol == "V4")
-        msg.afi = MLD_IP_IPV4_AFI;
+        msg->afi = MLD_IP_IPV4_AFI;
     else
-        msg.afi = MLD_IP_IPV6_AFI;
-    memcpy(msg.ports[0].pnames, portname.c_str(), L2MCD_IFNAME_SIZE);
+        msg->afi = MLD_IP_IPV6_AFI;
+
     if (op =="SET")
     {
-        msg.op_code = L2MCD_OP_ENABLE;
+        msg->op_code = L2MCD_OP_ENABLE;
     }
     else 
     {
-        msg.op_code = L2MCD_OP_DISABLE;
+        msg->op_code = L2MCD_OP_DISABLE;
     }
     SWSS_LOG_NOTICE("L2MCD_Mrouter:REMOTE op:%s [key:%s] Port:%s vlan:%d", 
-           op.c_str(), key.c_str(), portname.c_str(), msg.vlan_id);
-    sendMsgL2Mcd(L2MCD_SNOOP_MROUTER_REMOTE_CONFIG_MSG, sizeof(msg), (void *)&msg);
+           op.c_str(), key.c_str(), iname.c_str(), msg->vlan_id);
+    sendMsgL2Mcd(L2MCD_SNOOP_MROUTER_REMOTE_CONFIG_MSG, msg_len , (void *)msg);
 }
 
 void L2McMgr::doTask(NotificationConsumer &consumer)
@@ -1543,14 +1642,13 @@ void L2McMgr::doTask(NotificationConsumer &consumer)
             vlan_id = param;
             if (option == "enable")
             {
-                auto res = m_operUpPorts.insert(ifname);
-
+                auto res = m_operUpPorts.insert(vlan_id);
                 if (!res.second)
                 {
-                    SWSS_LOG_INFO("Vlan %s already enable, skip", ifname.c_str());
+                    SWSS_LOG_INFO("Vlan %s already enable, skip", vlan_id.c_str());
                     return;
                 }
-                SWSS_LOG_INFO("Vlan %s changed to enable", ifname.c_str());
+                SWSS_LOG_INFO("Vlan %s changed to enable", vlan_id.c_str());
                 updateVlanMember(vlan_id);
                 updateMrouterEntry(vlan_id, ifname);
                 updateGrpStaticEntry(vlan_id, ifname);
