@@ -157,6 +157,7 @@ orchagent_SOURCES += p4orch/p4orch.cpp \
 		     p4orch/wcmp_manager.cpp \
 		     p4orch/mirror_session_manager.cpp \
 		     p4orch/l3_admit_manager.cpp \
+		     p4orch/l3_multicast_manager.cpp \
  		     p4orch/ext_tables_manager.cpp
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
