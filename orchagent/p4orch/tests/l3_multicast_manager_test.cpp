@@ -828,6 +828,277 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(GetRifOid(&entries[1]), kRifOid2);
 }
 
+TEST_F(L3MulticastManagerTest, UpdateMulticastRouterInterfaceEntriesSuccess) {
+  // First, add an entry that we will update.  Expect success.
+  auto entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  std::vector<P4MulticastRouterInterfaceEntry> entries = {entry1};
+
+  // Second, update entry just added.  Expect success and no more references
+  // to the old entry.
+  std::vector<P4MulticastRouterInterfaceEntry> entries2;
+  entries2.push_back(GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac2)));
+
+  EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kRifOid2), Return(SAI_STATUS_SUCCESS)));
+  auto statuses = UpdateMulticastRouterInterfaceEntries(entries2);
+  EXPECT_EQ(statuses.size(), 1);
+  for (size_t i = 0; i < statuses.size(); ++i) {
+    EXPECT_TRUE(statuses[i].ok());
+  }
+  // Expect entry to have been updated.
+  EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                entries2[0].multicast_router_interface_entry_key),
+            nullptr);
+  EXPECT_EQ(GetRifOid(&entries2[0]), kRifOid2);
+}
+
+TEST_F(L3MulticastManagerTest,
+       UpdateMulticastRouterInterfaceEntriesNoChangeSuccess) {
+  // First, add entries that we will update.
+  auto entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x2", swss::MacAddress(kSrcMac2), kRifOid2);
+  std::vector<P4MulticastRouterInterfaceEntry> original_entries = {entry1,
+                                                                   entry2};
+
+  // Second, "update" entries to use same src mac.  Expect success.
+  auto statuses = UpdateMulticastRouterInterfaceEntries(original_entries);
+  EXPECT_EQ(statuses.size(), 2);
+  for (size_t i = 0; i < statuses.size(); ++i) {
+    EXPECT_TRUE(statuses[i].ok());
+  }
+  // Expect original RIF OIDs.
+  EXPECT_EQ(GetRifOid(&original_entries[0]), kRifOid1);
+  EXPECT_EQ(GetRifOid(&original_entries[1]), kRifOid2);
+}
+
+TEST_F(L3MulticastManagerTest,
+       UpdateMulticastRouterInterfaceEntriesCannotRemoveRif) {
+  // First, add entries that we will update.
+  auto entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x2", swss::MacAddress(kSrcMac2), kRifOid2);
+  std::vector<P4MulticastRouterInterfaceEntry> original_entries = {entry1,
+                                                                   entry2};
+
+  // Unnaturally add reference to multicast replication entry.
+  ForceAddMulticastGroupMember(kRifOid1, "some_key");
+
+  // Second, update entries just added.  Expect failure, since RIF is in use.
+  std::vector<P4MulticastRouterInterfaceEntry> entries2;
+  entries2.push_back(GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac3)));
+  entries2.push_back(GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x2", swss::MacAddress(kSrcMac4)));
+
+  auto statuses = UpdateMulticastRouterInterfaceEntries(entries2);
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_IN_USE);
+  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+
+  // Expect entries to remain unchanged.
+  EXPECT_EQ(GetRifOid(&entry1), kRifOid1);
+  EXPECT_EQ(GetRifOid(&entry2), kRifOid2);
+}
+
+TEST_F(L3MulticastManagerTest,
+       UpdateMulticastRouterInterfaceEntriesMissingEntry) {
+  // First, add entries that we will update.  Expect success.
+  auto entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x2", swss::MacAddress(kSrcMac2), kRifOid2);
+  std::vector<P4MulticastRouterInterfaceEntry> original_entries = {entry1,
+                                                                   entry2};
+
+  // Attempt to update both entries, but remove the first entry to cause an
+  // error.
+  std::vector<P4MulticastRouterInterfaceEntry> delete_entries;
+  delete_entries.push_back(entry1);
+
+  EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  auto statuses = DeleteMulticastRouterInterfaceEntries(delete_entries);
+  EXPECT_EQ(statuses.size(), 1);
+  EXPECT_TRUE(statuses[0].ok());
+
+  // Attempt to update the original entries, which should result in an error.
+  std::vector<P4MulticastRouterInterfaceEntry> update_entries;
+  update_entries.push_back(GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac3)));
+  update_entries.push_back(GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x2", swss::MacAddress(kSrcMac4)));
+
+  statuses = UpdateMulticastRouterInterfaceEntries(update_entries);
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
+  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+}
+
+TEST_F(L3MulticastManagerTest,
+       UpdateMulticastRouterInterfaceEntriesMissingOid) {
+  // First, add entries that we will update.  Expect success.
+  auto entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x2", swss::MacAddress(kSrcMac2), kRifOid2);
+  std::vector<P4MulticastRouterInterfaceEntry> original_entries = {entry1,
+                                                                   entry2};
+
+  // Force clear RIF key, to cause an internal error.
+  std::string rif_key0 = KeyGenerator::generateMulticastRouterInterfaceRifKey(
+      original_entries[0].multicast_replica_port, original_entries[0].src_mac);
+  ForceRemoveRifKey(rif_key0);
+
+  // Attempt to update the original entries, which should result in an error.
+  std::vector<P4MulticastRouterInterfaceEntry> update_entries;
+  update_entries.push_back(GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac3)));
+  update_entries.push_back(GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x2", swss::MacAddress(kSrcMac4)));
+
+  auto statuses = UpdateMulticastRouterInterfaceEntries(update_entries);
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
+  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+}
+
+TEST_F(L3MulticastManagerTest,
+       UpdateMulticastRouterInterfaceEntriesMissingRifOidInMap) {
+  // First, add entries that we will update.  Expect success.
+  auto entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x2", swss::MacAddress(kSrcMac2), kRifOid2);
+  std::vector<P4MulticastRouterInterfaceEntry> original_entries = {entry1,
+                                                                   entry2};
+
+  // Force clear internal RIF OID mapping to cause an error.
+  ForceRemoveRifOid(kRifOid1);
+
+  // Attempt to update the original entries, which should result in an error.
+  std::vector<P4MulticastRouterInterfaceEntry> update_entries;
+  update_entries.push_back(GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac3)));
+  update_entries.push_back(GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x2", swss::MacAddress(kSrcMac4)));
+
+  auto statuses = UpdateMulticastRouterInterfaceEntries(update_entries);
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
+  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+}
+
+TEST_F(L3MulticastManagerTest,
+       UpdateMulticastRouterInterfaceEntriesMissingEntryInMap) {
+  // First, add entries that we will update.  Expect success.
+  auto entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x2", swss::MacAddress(kSrcMac2), kRifOid2);
+  std::vector<P4MulticastRouterInterfaceEntry> original_entries = {entry1,
+                                                                   entry2};
+
+  // Force delete entry key from vector to cause an error.
+  ForceClearRifVector(kRifOid1);
+
+  // Attempt to update the original entries, which should result in an error.
+  std::vector<P4MulticastRouterInterfaceEntry> update_entries;
+  update_entries.push_back(GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac3)));
+  update_entries.push_back(GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x2", swss::MacAddress(kSrcMac4)));
+
+  auto statuses = UpdateMulticastRouterInterfaceEntries(update_entries);
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
+  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+}
+
+TEST_F(L3MulticastManagerTest,
+       UpdateMulticastRouterInterfaceEntriesUpdateCreateFails) {
+  // First, add entries that we will update.  Expect success.
+  auto entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x2", swss::MacAddress(kSrcMac2), kRifOid2);
+  std::vector<P4MulticastRouterInterfaceEntry> original_entries = {entry1,
+                                                                   entry2};
+
+  // Attempt to update the original entries, which is set to result in an error.
+  std::vector<P4MulticastRouterInterfaceEntry> update_entries;
+  update_entries.push_back(GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac3)));
+  update_entries.push_back(GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x2", swss::MacAddress(kSrcMac4)));
+
+  EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+  auto statuses = UpdateMulticastRouterInterfaceEntries(update_entries);
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_UNKNOWN);
+  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+}
+
+TEST_F(L3MulticastManagerTest,
+       UpdateMulticastRouterInterfaceEntriesUpdateDeleteFails) {
+  // First, add entries that we will update.  Expect success.
+  auto entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x2", swss::MacAddress(kSrcMac2), kRifOid2);
+  std::vector<P4MulticastRouterInterfaceEntry> original_entries = {entry1,
+                                                                   entry2};
+
+  // Attempt to update the original entries, which should result in an error.
+  std::vector<P4MulticastRouterInterfaceEntry> update_entries;
+  update_entries.push_back(GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac3)));
+  update_entries.push_back(GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x2", swss::MacAddress(kSrcMac4)));
+
+  // Expect first entry to be able to create RIF, but delete of old RIF to fail.
+  EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kRifOid3), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(_))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+  auto statuses = UpdateMulticastRouterInterfaceEntries(update_entries);
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_UNKNOWN);
+  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+}
+
+TEST_F(L3MulticastManagerTest,
+       UpdateMulticastRouterInterfaceEntriesUpdateLeaveOldRifSuccess) {
+  // First, add entries that we will update.  Expect success.
+  // One RIF created.
+  auto entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x2", swss::MacAddress(kSrcMac1), kRifOid1,
+      /*expect_mock=*/false);
+  std::vector<P4MulticastRouterInterfaceEntry> original_entries = {entry1,
+                                                                   entry2};
+
+  // Attempt to update an original entry, resulting in new RIF being created.
+  std::vector<P4MulticastRouterInterfaceEntry> update_entries;
+  update_entries.push_back(GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac2)));
+
+  // Expect first entry to be able to create RIF, but old RIF remains.
+  EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kRifOid2), Return(SAI_STATUS_SUCCESS)));
+  auto statuses = UpdateMulticastRouterInterfaceEntries(update_entries);
+  EXPECT_EQ(statuses.size(), 1);
+  EXPECT_TRUE(statuses[0].ok());
+}
+
 // ---------- Temporary tests (implemented functions) -------------------------
 
 TEST_F(L3MulticastManagerTest, NoGetMulticastRouterInterfaceEntry) {
@@ -918,13 +1189,6 @@ TEST_F(L3MulticastManagerTest, NoCreateMulticastGroupMember) {
   EXPECT_FALSE(CreateMulticastGroupMember(entry, /*rif_oid=*/SAI_NULL_OBJECT_ID,
                                           /*mcast_group_member_oid=*/&oid)
                    .ok());
-}
-
-TEST_F(L3MulticastManagerTest, NoUpdateMulticastRouterInterfaceEntries) {
-  std::vector<P4MulticastRouterInterfaceEntry> entries;
-  auto rcs = UpdateMulticastRouterInterfaceEntries(entries);
-  ASSERT_EQ(rcs.size(), 1);
-  EXPECT_FALSE(rcs[0].ok());
 }
 
 TEST_F(L3MulticastManagerTest, NoAddMulticastReplicationEntries) {
