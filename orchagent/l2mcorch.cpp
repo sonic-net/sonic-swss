@@ -164,6 +164,11 @@ bool L2mcOrch::RemoveL2mcGroupMember(const L2mcGroupKey &l2mc_GrpKey, string vla
         return false;
     }
 
+    if (m_syncdL2mcEntries.find(vlan_alias) == m_syncdL2mcEntries.end())
+    {
+        SWSS_LOG_NOTICE("RemoveL2mcGroupMember: vlan %s not found, skip removing group member", vlan_alias.c_str());
+        return true;
+    }
     auto l2mc_group = m_syncdL2mcEntries.at(vlan_alias).find(l2mc_GrpKey);
     auto l2mc_group_member = l2mc_group->second.l2mc_group_members.find(port.m_alias);
     /* l2mc group member already deleted or doesn't exists */
@@ -237,6 +242,12 @@ bool L2mcOrch::RemoveL2mcGroupMembers(const L2mcGroupKey &l2mc_GrpKey, string vl
         return false;
     }
 
+    if (m_syncdL2mcEntries.find(vlan_alias) == m_syncdL2mcEntries.end())
+    {
+        SWSS_LOG_NOTICE("RemoveL2mcGroupMember: vlan %s not found, skip removing group member", vlan_alias.c_str());
+        return true;
+    }
+    
     auto l2mc_group = m_syncdL2mcEntries.at(vlan_alias).find(l2mc_GrpKey);
 
     SWSS_LOG_NOTICE("RemoveL2mcGroupMembers: (%s,%s,%s) Delete l2mc group members from l2mc_gid:%lx", 
@@ -575,6 +586,8 @@ bool L2mcOrch::AddL2mcMrouterPort(const L2mcGroupKey &l2mc_GrpKey, string vlan, 
                         port.m_alias.c_str(), l2mc_group->second.l2mc_group_id, status);
         return false;
     }
+    SWSS_LOG_NOTICE("AddL2mcMrouterPort: Success to add mrouter port %s as l2mc group member to l2mc-grp:%lx rv:%d",
+                        port.m_alias.c_str(), l2mc_group->second.l2mc_group_id, status);
     l2mc_group->second.l2mc_group_members[port.m_alias].l2mc_member_id = l2mc_member_id;
     return true;
 }
@@ -608,6 +621,8 @@ bool L2mcOrch::RemoveL2mcMrouterPort(const L2mcGroupKey &l2mc_GrpKey, string vla
         }
         l2mc_group->second.l2mc_group_members.erase(l2mc_group_member);
     }
+    SWSS_LOG_NOTICE("RemoveL2mcMrouterPort: Success to remove l2mc mrouter group member %lx, from l2mc-grp:%lx rv:%d",
+                           l2mc_group_member->second.l2mc_member_id, l2mc_group->second.l2mc_group_id, status);
     return true;
 }
 
@@ -712,7 +727,6 @@ bool L2mcOrch::setL2mcSuppressionAttribute(L2mcSuppressType type, bool enable, c
 
 bool L2mcOrch::createL2mcGroup(const std::string &vlan_alias, const L2mcGroupKey &l2mcKey, Port &vlan, Port &port, bool is_ipv6)
 {
-    bool groupCreated = false;
     Port  mrport;
     // Create L2MC entry if it's not already present
     if (m_syncdL2mcEntries.find(vlan.m_alias) == m_syncdL2mcEntries.end())
@@ -722,39 +736,21 @@ bool L2mcOrch::createL2mcGroup(const std::string &vlan_alias, const L2mcGroupKey
 
     // Determine which set of router ports to use (IPv4 or IPv6)
     auto &mrouter_ports = is_ipv6 ? mrouter_ports_ipv6_per_vlan[vlan_alias] : mrouter_ports_ipv4_per_vlan[vlan_alias];
-
-    if (mrouter_ports.empty())
+    if (!hasL2mcGroup(vlan_alias, l2mcKey))
     {
-        // No router ports, directly add L2MC entry
-        if (!hasL2mcGroup(vlan_alias, l2mcKey))
+        if (!AddL2mcEntry(l2mcKey, vlan, port))
         {
-            if (!AddL2mcEntry(l2mcKey, vlan, port))
-            {
-                return false;
-            }
+            SWSS_LOG_ERROR("Failed to create L2mc entry on %s ", vlan_alias.c_str());
+            return false;
         }
     }
-    else
+    // Iterate over the router ports and add them as group members
+    for (const auto &mrouter : mrouter_ports)
     {
-        // Iterate over the router ports and add them as group members
-        for (const auto &mrouter : mrouter_ports)
+        if (gPortsOrch->getPort(mrouter, mrport))
         {
-            if (!hasL2mcGroup(vlan_alias, l2mcKey))
-            {
-                // If L2MC group doesn't exist, create it and add the first router port
-                if (gPortsOrch->getPort(mrouter, mrport))
-                {
-                    if (AddL2mcEntry(l2mcKey, vlan, mrport))
-                    {
-                        groupCreated = true;
-                    }
-                }
-            }
-            else if (gPortsOrch->getPort(mrouter, mrport) && groupCreated)
-            {
-                // If group is created, add more router ports as members
-                AddL2mcGroupMember(l2mcKey, vlan_alias, mrport);
-            }
+            // If group is created, add more router ports as members
+            AddL2mcMrouterPort(l2mcKey, vlan_alias, mrport);
         }
     }
 
@@ -865,8 +861,10 @@ bool L2mcOrch::handleL2mcSuppression(const std::string &vlan_alias, bool enable,
         }
 
         info.ipv4_group_id = getL2mcGroupId(vlan_alias, ipv4_l2mcKey);
+    }
 
-
+    if (enable && info.ipv6_group_id == SAI_NULL_OBJECT_ID)
+    {
         auto ipv6_l2mcKey = L2mcGroupKey(vlan_alias, IpAddress("0::0"), IpAddress("0::0"));
 
 
@@ -1270,12 +1268,10 @@ void L2mcOrch::doL2mcMrouterTask(Consumer &consumer)
 
         if (protocol == "V4")
         {
-            l2mcKey = L2mcGroupKey(vlan_alias, IpAddress("0.0.0.0"), IpAddress("0.0.0.0"));
             mrouter_ports = &mrouter_ports_ipv4_per_vlan[vlan_alias];
         }
         else if (protocol == "V6")
         {
-            l2mcKey = L2mcGroupKey(vlan_alias, IpAddress("0::0"), IpAddress("0::0"));
             mrouter_ports = &mrouter_ports_ipv6_per_vlan[vlan_alias];
         }
         else
@@ -1287,14 +1283,6 @@ void L2mcOrch::doL2mcMrouterTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             mrouter_ports->push_back(port_alias);
-
-            if (isSuppressionEnabled(vlan_alias))
-            {
-                if (!AddL2mcGroupMember(l2mcKey, vlan_alias, port))
-                {
-                    SWSS_LOG_WARN("Failed to add L2MC group member for VLAN %s port %s", vlan_alias.c_str(), port_alias.c_str());
-                }
-            }
 
             if (addMrouterPortToL2mcEntries(vlan_alias, port, protocol))
             {
@@ -1308,15 +1296,6 @@ void L2mcOrch::doL2mcMrouterTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            if (std::find(mrouter_ports->begin(), mrouter_ports->end(), port.m_alias) != mrouter_ports->end() 
-                && isSuppressionEnabled(vlan_alias))
-            {
-                if (!RemoveL2mcGroupMember(l2mcKey, vlan_alias, port))
-                {
-                    SWSS_LOG_WARN("Failed to remove L2MC group member for VLAN %s port %s", vlan_alias.c_str(), port_alias.c_str());
-                }
-            }
-
             if (!mrouter_ports->empty())
             {
                 removeMrouterPortFromL2mcEntries(vlan_alias, port_alias, protocol);
