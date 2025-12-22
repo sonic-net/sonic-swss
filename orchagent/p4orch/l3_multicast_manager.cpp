@@ -37,6 +37,66 @@ extern PortsOrch* gPortsOrch;
 
 namespace p4orch {
 
+namespace {
+
+// Create the vector of SAI attributes for creating a new RIF object.
+ReturnCodeOr<std::vector<sai_attribute_t>> prepareRifSaiAttrs(
+    const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry) {
+  Port port;
+  if (!gPortsOrch->getPort(
+          multicast_router_interface_entry.multicast_replica_port, port)) {
+    LOG_ERROR_AND_RETURN(
+        ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+        << "Failed to get port info for multicast_replica_port "
+        << QuotedVar(multicast_router_interface_entry.multicast_replica_port));
+  }
+
+  std::vector<sai_attribute_t> attrs;
+  sai_attribute_t attr;
+  // Map all P4 router interfaces to default VRF as virtual router is mandatory
+  // parameter for creation of router interfaces in SAI.
+  attr.id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
+  attr.value.oid = gVirtualRouterId;
+  attrs.push_back(attr);
+
+  attr.id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
+  attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_PORT;
+  attrs.push_back(attr);
+  if (port.m_type != Port::PHY) {
+    // If we need to support LAG, VLAN, or other types, we can make this a
+    // case statement like:
+    // https://source.corp.google.com/h/nss/codesearch/+/master:third_party/
+    // sonic-swss/orchagent/p4orch/router_interface_manager.cpp;l=90
+    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                         << "Unexpected port type: " << port.m_type);
+  }
+
+  attr.id = SAI_ROUTER_INTERFACE_ATTR_PORT_ID;
+  attr.value.oid = port.m_port_id;
+  attrs.push_back(attr);
+
+  attr.id = SAI_ROUTER_INTERFACE_ATTR_MTU;
+  attr.value.u32 = port.m_mtu;
+  attrs.push_back(attr);
+
+  attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
+  memcpy(attr.value.mac, multicast_router_interface_entry.src_mac.getMac(),
+         sizeof(sai_mac_t));
+  attrs.push_back(attr);
+
+  attr.id = SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE;
+  attr.value.booldata = true;
+  attrs.push_back(attr);
+
+  attr.id = SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE;
+  attr.value.booldata = true;
+  attrs.push_back(attr);
+
+  return attrs;
+}
+
+}  // namespace
+
 L3MulticastManager::L3MulticastManager(P4OidMapper* mapper, VRFOrch* vrfOrch,
                                        ResponsePublisherInterface* publisher)
     : m_p4OidMapper(mapper), m_vrfOrch(vrfOrch) {
@@ -203,8 +263,27 @@ ReturnCode L3MulticastManager::processMulticastRouterInterfaceEntries(
 ReturnCode L3MulticastManager::createRouterInterface(
     const std::string& rif_key, P4MulticastRouterInterfaceEntry& entry,
     sai_object_id_t* rif_oid) {
-  return ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
-         << "L3MulticastManager::createRouterInterface is not implemented";
+  SWSS_LOG_ENTER();
+
+  // Confirm we haven't already created a RIF for this.
+  if (m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key)) {
+    RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL(
+        "Router interface to be used by multicast router interface table "
+        << QuotedVar(rif_key) << " already exists in the centralized map");
+  }
+
+  // Create RIF SAI object.
+  ASSIGN_OR_RETURN(std::vector<sai_attribute_t> attrs,
+                   prepareRifSaiAttrs(entry));
+  auto sai_status = sai_router_intfs_api->create_router_interface(
+      rif_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+  if (sai_status != SAI_STATUS_SUCCESS) {
+    LOG_ERROR_AND_RETURN(
+        ReturnCode(sai_status)
+        << "Failed to create router interface for multicast router interface "
+        << "table: " << QuotedVar(rif_key).c_str());
+  }
+  return ReturnCode();
 }
 
 ReturnCode L3MulticastManager::deleteRouterInterface(const std::string& rif_key,
@@ -234,11 +313,53 @@ ReturnCode L3MulticastManager::deleteMulticastGroup(
 
 std::vector<ReturnCode> L3MulticastManager::addMulticastRouterInterfaceEntries(
     std::vector<P4MulticastRouterInterfaceEntry>& entries) {
-  std::vector<ReturnCode> rv;
-  rv.push_back(ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
-               << "L3MulticastManager::addMulticastRouterInterfaceEntries is "
-               << "not implemented");
-  return rv;
+  // There are two cases for add:
+  // 1. The new entry (multicast_replica_port, multicast_replica_instance) will
+  //    need a new RIF allocated.
+  // 2. The new entry will be able to use an existing RIF.
+  // Recall that RIFs are created based on multicast_replica_port and Ethernet
+  // src mac, and src mac is the action parameter associated with a table entry.
+  SWSS_LOG_ENTER();
+
+  std::vector<ReturnCode> statuses(entries.size());
+  for (size_t i = 0; i < entries.size(); ++i) {
+    auto& entry = entries[i];
+
+    sai_object_id_t rif_oid = getRifOid(&entry);
+    if (rif_oid == SAI_NULL_OBJECT_ID) {
+      std::string rif_key =
+          KeyGenerator::generateMulticastRouterInterfaceRifKey(
+              entry.multicast_replica_port, entry.src_mac);
+
+      ReturnCode create_status =
+          createRouterInterface(rif_key, entry, &rif_oid);
+      statuses[i] = create_status;
+      if (!create_status.ok()) {
+        for (size_t j = i + 1; j < entries.size(); ++j) {
+          statuses[j] = ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
+        }
+        break;
+      }
+
+      gPortsOrch->increasePortRefCount(entry.multicast_replica_port);
+      m_p4OidMapper->setOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key, rif_oid);
+      m_rifOids[rif_key] = rif_oid;
+      m_rifOidToMulticastGroupMembers[rif_oid] = {};
+    }
+
+    // Operations done regardless of whether RIF was created or not.
+    // Set the entry RIF.
+    entry.router_interface_oid = rif_oid;
+
+    // Update internal state.
+    m_multicastRouterInterfaceTable[entry
+                                        .multicast_router_interface_entry_key] =
+        entry;
+    m_rifOidToRouterInterfaceEntries[rif_oid].push_back(entry);
+
+    statuses[i] = ReturnCode();
+  }  // for i
+  return statuses;
 }
 
 std::vector<ReturnCode>
