@@ -647,18 +647,10 @@ int main(int argc, char **argv)
 
         //Connect to CHASSIS_APP_DB in redis-server in control/supervisor card as per
         //connection info in database_config.json
-        chassis_app_db = nullptr;
         if (isChassisAppDbPresent())
        	{
             gMultiAsicVoq = true;
-            try
-            {
-                chassis_app_db = make_shared<DBConnector>("CHASSIS_APP_DB", 0, true);
-            }
-            catch (const std::exception& e)
-            {
-                SWSS_LOG_NOTICE("CHASSIS_APP_DB not available, operating in standalone VOQ mode");
-            }
+	    chassis_app_db = make_shared<DBConnector>("CHASSIS_APP_DB", 0, true);
         }
     }
     else if (gMySwitchType == "fabric")
@@ -909,11 +901,7 @@ int main(int argc, char **argv)
     }
 
     shared_ptr<OrchDaemon> orchDaemon;
-    DBConnector *chassis_db = nullptr;
-    if (chassis_app_db != nullptr)
-    {
-        chassis_db = chassis_app_db.get();
-    }
+    DBConnector *chassis_db = chassis_app_db.get();
 
     /*
      * Declare shared pointers for dpu specific databases.
