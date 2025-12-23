@@ -650,7 +650,7 @@ int main(int argc, char **argv)
         if (isChassisAppDbPresent())
        	{
             gMultiAsicVoq = true;
-	    chassis_app_db = make_shared<DBConnector>("CHASSIS_APP_DB", 0, true);
+            chassis_app_db = make_shared<DBConnector>("CHASSIS_APP_DB", 0, true);
         }
     }
     else if (gMySwitchType == "fabric")
