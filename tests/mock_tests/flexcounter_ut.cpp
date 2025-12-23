@@ -1083,12 +1083,28 @@ namespace flexcounter_test
 
         /* Should create ENI Counter stats for existing ENI's */
         m_DashOrch->handleFCStatusUpdate(true);
-        m_DashOrch->doTask(*(m_DashOrch->m_fc_update_timer));
+        // m_DashOrch->doTask(*(m_DashOrch->m_fc_update_timer));
         ASSERT_TRUE(checkFlexCounter(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, ENI_COUNTER_ID_LIST));
 
         /* This should delete the STATS */
         m_DashOrch->handleFCStatusUpdate(false);
         ASSERT_FALSE(checkFlexCounter(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, ENI_COUNTER_ID_LIST));
+    }
+
+    TEST_F(StandaloneFCTest, TestMeterStatusUpdate)
+    {
+        /* Add a mock ENI */
+        EniEntry tmp_entry;
+        tmp_entry.eni_id = 0x7008000000021;
+        m_DashOrch->eni_entries_["497f23d7-f0ac-4c99-a98f-59b470e8c7c"] = tmp_entry;
+
+        /* Should create Meter Counter stats for existing ENI's */
+        m_DashOrch->handleMeterFCStatusUpdate(true);
+        ASSERT_TRUE(checkFlexCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, DASH_METER_COUNTER_ID_LIST));
+
+        /* This should delete the STATS */
+        m_DashOrch->handleMeterFCStatusUpdate(false);
+        ASSERT_FALSE(checkFlexCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, DASH_METER_COUNTER_ID_LIST));
     }
 
     TEST_F(StandaloneFCTest, TestCaching)
@@ -1179,33 +1195,5 @@ namespace flexcounter_test
                                           "SAI_PORT_STAT_IF_OUT_ERRORS"
                                          }
                                      }));
-    }
-
-    class MeterStatFlexCounterTest : public MockOrchTest
-    {
-        virtual void PostSetUp() {
-            _hook_sai_switch_api();
-        }
-
-        virtual void PreTearDown() {
-           _unhook_sai_switch_api();
-        }
-    };
-
-    TEST_F(MeterStatFlexCounterTest, TestStatusUpdate)
-    {
-        /* Add a mock ENI */
-        EniEntry tmp_entry;
-        tmp_entry.eni_id = 0x7008000000021;
-        m_DashOrch->eni_entries_["497f23d7-f0ac-4c99-a98f-59b470e8c7c"] = tmp_entry;
-
-        /* Should create Meter Counter stats for existing ENI's */
-        m_DashMeterOrch->handleMeterFCStatusUpdate(true);
-        m_DashMeterOrch->doTask(*(m_DashMeterOrch->m_meter_fc_update_timer));
-        ASSERT_TRUE(checkFlexCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, DASH_METER_COUNTER_ID_LIST));
-
-        /* This should delete the STATS */
-        m_DashMeterOrch->handleMeterFCStatusUpdate(false);
-        ASSERT_FALSE(checkFlexCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, DASH_METER_COUNTER_ID_LIST));
     }
 }
