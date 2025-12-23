@@ -46,6 +46,7 @@ extern MacAddress gVxlanMacAddress;
 extern BfdOrch *gBfdOrch;
 extern SwitchOrch *gSwitchOrch;
 extern TunnelDecapOrch *gTunneldecapOrch;
+extern FgNhgOrch *gFgNhgOrch;
 /*
  * VRF Modeling and VNetVrf class definitions
  */
@@ -757,7 +758,7 @@ sai_object_id_t VNetRouteOrch::getNextHopGroupId(const string& vnet, const NextH
     return syncd_nexthop_groups_[vnet][nexthops].next_hop_group_id;
 }
 
-bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj, const string& monitoring,  const bool isLocalEp)
+bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj, const string& monitoring, const bool isLocalEp, const uint16 _t consistent_hashing_buckets, IpPrefix &ipPrefix, bool &isNextHopChanged)
 {
     SWSS_LOG_ENTER();
 
@@ -790,6 +791,15 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
         sai_object_id_t next_hop_id = isLocalEp? gNeighOrch->getNextHopId(it):vrf_obj->getTunnelNextHop(it);
         next_hop_ids.push_back(next_hop_id);
         nhopgroup_members_set[next_hop_id] = it;
+    }
+
+    bool isFineGrainedNextHopIdChanged = false;
+
+    if (consistent_hashing_buckets > 0)
+    {
+        sai_object_id_t vrf_id;
+        vnet_orch_->getVrfIdByVnetName(vnet, vrf_id);
+        return FgNhgOrch->setFgNhg(vrf_id, ipPrefix, nhopgroup_members_set, consistent_hashing_buckets, isNextHopChanged);
     }
 
     sai_attribute_t nhg_attr;
@@ -931,7 +941,9 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
 bool VNetRouteOrch::createNextHopGroup(const string& vnet,
                                        NextHopGroupKey& nexthops,
                                        VNetVrfObject *vrf_obj,
-                                       const string& monitoring)
+                                       const string& monitoring,
+                                       const uint16_t consistent_hashing_buckets,
+                                       IpPrefix &ipPrefix)
 {
     SWSS_LOG_INFO("Creating nexthop group from nexthops(%s)\n", nexthops.to_string().c_str());
     if (nexthops.getSize() == 0)
@@ -970,7 +982,7 @@ bool VNetRouteOrch::createNextHopGroup(const string& vnet,
     else
     {
         const bool isLocalEp = isLocalEndpoint(vnet, nexthops.getNextHops().begin()->ip_address);
-        if (!addNextHopGroup(vnet, nexthops, vrf_obj, monitoring, isLocalEp))
+        if (!addNextHopGroup(vnet, nexthops, vrf_obj, monitoring, isLocalEp, consistent_hashing_buckets, ipPrefix))
         {
             SWSS_LOG_ERROR("Failed to create next hop group %s", nexthops.to_string().c_str());
             return false;
@@ -1026,6 +1038,7 @@ bool VNetRouteOrch::selectNextHopGroup(const string& vnet,
                                        IpPrefix& ipPrefix,
                                        VNetVrfObject *vrf_obj,
                                        NextHopGroupKey& nexthops_selected,
+                                       const uint16_t consistent_hashing_buckets,
                                        const map<NextHopKey, IpAddress>& monitors)
 {
     // This function returns the next hop group which is to be used to in the hardware.
@@ -1113,7 +1126,7 @@ bool VNetRouteOrch::selectNextHopGroup(const string& vnet,
     {
         SWSS_LOG_INFO("Creating next hop group  %s", nexthops_primary.to_string().c_str());
         setEndpointMonitor(vnet, monitors, nexthops_primary, monitoring, rx_monitor_timer, tx_monitor_timer, ipPrefix);
-        if (!createNextHopGroup(vnet, nexthops_primary, vrf_obj, monitoring))
+        if (!createNextHopGroup(vnet, nexthops_primary, vrf_obj, monitoring, consistent_hashing_buckets, ipPrefix))
         {
             delEndpointMonitor(vnet, nexthops_primary, ipPrefix);
             return false;
@@ -1131,6 +1144,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                                                const int32_t tx_monitor_timer,
                                                NextHopGroupKey& nexthops_secondary,
                                                const IpPrefix& adv_prefix,
+                                               const uint16_t consistent_hashing_buckets,
                                                const map<NextHopKey, IpAddress>& monitors)
 {
     SWSS_LOG_ENTER();
@@ -1170,7 +1184,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
     {
         sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
         NextHopGroupKey active_nhg("", true);
-        if (!selectNextHopGroup(vnet, nexthops, nexthops_secondary, monitoring, rx_monitor_timer, tx_monitor_timer, ipPrefix, vrf_obj, active_nhg, monitors))
+        if (!selectNextHopGroup(vnet, nexthops, nexthops_secondary, monitoring, rx_monitor_timer, tx_monitor_timer, ipPrefix, vrf_obj, active_nhg, consistent_hashing_buckets, monitors))
         {
             return true;
         }
@@ -3051,6 +3065,7 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     string monitoring;
     int32_t rx_monitor_timer = -1;
     int32_t tx_monitor_timer = -1;
+    int16_t consistent_hashing_buckets = -1;
     swss::IpPrefix adv_prefix;
     bool has_priority_ep = false;
     bool has_adv_pfx = false;
@@ -3104,6 +3119,10 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         {
             tx_monitor_timer = static_cast<int32_t>(request.getAttrUint(name));
         }
+        else if (name == "consistent_hashing_buckets")
+        {
+            consistent_hashing_buckets = static_cast<int16_t>(request.getAttrInt(name));
+        }
         else
         {
             SWSS_LOG_INFO("Unknown attribute: %s", name.c_str());
@@ -3132,6 +3151,12 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     {
         SWSS_LOG_ERROR("Primary/backup behaviour cannot function without endpoint monitoring.");
         return true;
+    }
+
+    if (consistent_hashing_buckets != -1 && consistent_hashing_buckets < 1)
+    {
+        SWSS_LOG_ERROR("consistent_hashing_buckets must be greater than 0");
+        return false;
     }
 
     const std::string& vnet_name = request.getKeyString(0);
@@ -3239,7 +3264,7 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     }
     if (vnet_orch_->isVnetExecVrf())
     {
-        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, (has_priority_ep == true) ? nhg_primary : nhg, op, profile, monitoring, rx_monitor_timer, tx_monitor_timer, nhg_secondary, adv_prefix, monitors);
+        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, (has_priority_ep == true) ? nhg_primary : nhg, op, profile, monitoring, rx_monitor_timer, tx_monitor_timer, nhg_secondary, adv_prefix, consistent_hashing_buckets,monitors);
     }
 
     return true;
