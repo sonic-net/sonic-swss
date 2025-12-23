@@ -316,7 +316,8 @@ const request_description_t vnet_route_description = {
         { "check_directly_connected", REQ_T_BOOL },
         { "rx_monitor_timer",       REQ_T_UINT },
         { "tx_monitor_timer",       REQ_T_UINT },
-        { "metric",                 REQ_T_UINT }
+        { "metric",                 REQ_T_UINT },
+        { "consistent_hashing_buckets", REQ_T_UINT },
     },
     { }
 };
@@ -528,7 +529,7 @@ private:
     NextHopGroupKey getActiveNHSet(const string&, NextHopGroupKey&, const IpPrefix& );
 
     bool selectNextHopGroup(const string&, NextHopGroupKey&, NextHopGroupKey&, const string&, const int32_t, const int32_t, IpPrefix&,
-                            VNetVrfObject *vrf_obj, NextHopGroupKey&,
+                            VNetVrfObject *vrf_obj, NextHopGroupKey&, 
                             const std::map<NextHopKey,IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
     void createBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer);
@@ -558,6 +559,7 @@ private:
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op, string& profile,
                     const string& monitoring, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer,
                     NextHopGroupKey& nexthops_secondary, const IpPrefix& adv_prefix,
+                    const uint16_t consistent_hashing_buckets,
                     const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
     template<typename T>
