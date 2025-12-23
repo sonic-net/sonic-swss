@@ -5092,10 +5092,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             p.m_alias.c_str(), m_portHlpr.getFecStr(pCfg).c_str()
                         );
                     }
-                    else
-                    {
-                        setGearboxPortsAttr(p, SAI_PORT_ATTR_FEC_MODE, &pCfg.fec.value, pCfg.fec.override_fec);
-                    }
                 }
 
                 if (pCfg.learn_mode.is_set)
