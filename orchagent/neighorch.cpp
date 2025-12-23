@@ -2204,6 +2204,15 @@ bool NeighOrch::addVoqEncapIndex(string &alias, IpAddress &ip, vector<sai_attrib
 
     if(gIntfsOrch->isRemoteSystemPortIntf(alias))
     {
+        string route_value;
+        string key = alias + m_tableVoqSystemNeighTable->getTableNameSeparator().c_str() + ip.to_string();
+        
+        if(m_tableVoqSystemNeighTable->hget(key, "no-host-route", route_value))
+        {   
+            attr.id = SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE;
+            attr.value.booldata = true;
+            neighbor_attrs.push_back(attr);
+        }
         if(getSystemPortNeighEncapIndex(alias, ip, encap_index))
         {
             attr.id = SAI_NEIGHBOR_ENTRY_ATTR_ENCAP_INDEX;
