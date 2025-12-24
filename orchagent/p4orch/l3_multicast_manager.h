@@ -206,14 +206,12 @@ class L3MulticastManager : public ObjectManagerInterface {
   std::vector<ReturnCode> deleteMulticastReplicationEntries(
       const std::vector<P4MulticastReplicationEntry>& entries);
 
-  /*
   std::string verifyMulticastRouterInterfaceState(
       const std::string& key,
       const std::vector<swss::FieldValueTuple>& tuple);
   std::string verifyMulticastReplicationState(
       const std::string& key,
       const std::vector<swss::FieldValueTuple>& tuple);
-  */
 
   // Verifies internal cache for a multicast router interface entry.
   std::string verifyMulticastRouterInterfaceStateCache(
@@ -224,11 +222,9 @@ class L3MulticastManager : public ObjectManagerInterface {
       const P4MulticastReplicationEntry& app_db_entry,
       const P4MulticastReplicationEntry* multicast_replication_entry);
 
-  /*
   // Verifies ASIC DB for a multicast router interface entry.
   std::string verifyMulticastRouterInterfaceStateAsicDb(
       const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
-  */
   // Verifies ASIC DB for a multicast replication entry.
   std::string verifyMulticastReplicationStateAsicDb(
       const P4MulticastReplicationEntry* multicast_replication_entry);

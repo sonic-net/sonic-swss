@@ -1665,16 +1665,213 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, status);
 }
 
-// ---------- Temporary tests (implemented functions) -------------------------
+TEST_F(L3MulticastManagerTest, VerifyStateMulticastRouterInterfaceTestSuccess) {
+  auto entry = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
 
-TEST_F(L3MulticastManagerTest, NoGetMulticastRouterInterfaceEntry) {
-  auto entry = GenerateP4MulticastRouterInterfaceEntry(
-      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1));
-  P4MulticastRouterInterfaceEntry* actual_entry_ptr =
-      GetMulticastRouterInterfaceEntry(
-          entry.multicast_router_interface_entry_key);
-  ASSERT_EQ(actual_entry_ptr, nullptr);
+  const std::string match_key =
+      R"({"match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string appl_db_key =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + match_key;
+  const std::string db_key = std::string(APP_P4RT_TABLE_NAME) +
+                           kTableKeyDelimiter + appl_db_key;
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+  attributes.push_back(swss::FieldValueTuple{
+      prependParamField(p4orch::kSrcMac), kSrcMac1});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  // Setup ASIC DB.
+  swss::Table table(nullptr, "ASIC_STATE");
+  table.set(
+      "SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID",
+                                "oid:0x0"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS",
+                                "00:01:02:03:04:05"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_TYPE",
+                                "SAI_ROUTER_INTERFACE_TYPE_PORT"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_PORT_ID",
+                                "oid:0x112233"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE",
+                                "true"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE",
+                                "true"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"}});
+
+  // Verification should succeed with vaild key and value.
+  EXPECT_EQ(VerifyState(db_key, attributes), "");
 }
+
+TEST_F(L3MulticastManagerTest,
+       VerifyStateMulticastRouterInterfaceTestMissingAsicDb) {
+  auto entry = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+
+  const std::string match_key =
+      R"({"match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string appl_db_key =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + match_key;
+  const std::string db_key = std::string(APP_P4RT_TABLE_NAME) +
+                           kTableKeyDelimiter + appl_db_key;
+
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+  // Use wrong source mac so state cache fails.
+  attributes.push_back(swss::FieldValueTuple{
+      prependParamField(p4orch::kSrcMac), kSrcMac2});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  // Setup ASIC DB.
+  swss::Table table(nullptr, "ASIC_STATE");
+  table.set(
+      "SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID",
+                                "oid:0x0"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS",
+                                "00:01:02:03:04:05"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_TYPE",
+                                "SAI_ROUTER_INTERFACE_TYPE_PORT"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_PORT_ID",
+                                "oid:0x112233"},
+          // These should be true.
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE",
+                               "false"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE",
+                                "false"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"}});
+
+  // Verification should fail, since values do not match.
+  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+
+  // No key should also fail.
+  table.del("SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456");
+  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+}
+
+TEST_F(L3MulticastManagerTest, VerifyStateMulticastRouterInterfaceTestBadKeys) {
+  const std::string match_key =
+      R"({"match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string appl_db_key =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + match_key;
+  std::vector<swss::FieldValueTuple> attributes;
+
+  const std::string no_delim = "p4rttable";
+  EXPECT_EQ(VerifyState(no_delim, attributes),
+            "Invalid key, missing delimiter: p4rttable");
+
+  const std::string not_p4rt = std::string("Wrong") +
+                               kTableKeyDelimiter + appl_db_key;
+  EXPECT_EQ(VerifyState(not_p4rt, attributes),
+            "Invalid key, unexpected P4RT table: " + not_p4rt);
+
+  const std::string bad_appl_db_key =
+      std::string(APP_P4RT_TUNNEL_TABLE_NAME) + kTableKeyDelimiter + match_key;
+  const std::string bad_db_key = std::string(APP_P4RT_TABLE_NAME) +
+      kTableKeyDelimiter + bad_appl_db_key;
+  EXPECT_EQ(VerifyState(bad_db_key, attributes),
+            "Invalid key, unexpected table name: " + bad_db_key);
+}
+
+TEST_F(L3MulticastManagerTest,
+       VerifyStateMulticastRouterInterfaceTestBadEntries) {
+  const std::string bad_match_key =
+      R"({"match/multicast_replica_port":"Ethernet1"})";
+  const std::string bad_appl_db_key =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + bad_match_key;
+  const std::string bad_db_key = std::string(APP_P4RT_TABLE_NAME) +
+                           kTableKeyDelimiter + bad_appl_db_key;
+
+  const std::string match_key =
+      R"({"match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string appl_db_key =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + match_key;
+  const std::string db_key = std::string(APP_P4RT_TABLE_NAME) +
+                           kTableKeyDelimiter + appl_db_key;
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+  attributes.push_back(swss::FieldValueTuple{
+      prependParamField(p4orch::kSrcMac), kSrcMac1});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  EXPECT_EQ(VerifyState(bad_db_key, attributes),
+            "Unable to deserialize key '" + bad_match_key +
+            "': Failed to deserialize multicast router interface table key");
+
+  EXPECT_EQ(VerifyState(db_key, attributes),
+            "No entry found with key '" + match_key + "'");
+}
+
+TEST_F(L3MulticastManagerTest,
+       VerifyStateMulticastRouterInterfaceTestStateCacheFails) {
+  P4MulticastRouterInterfaceEntry internal_entry =
+      GenerateP4MulticastRouterInterfaceEntry(
+          "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), "meta1");
+  internal_entry.router_interface_oid = kRifOid1;
+
+  // Bad app db entry.
+  P4MulticastRouterInterfaceEntry missing_multicast_replica_port =
+      GenerateP4MulticastRouterInterfaceEntry(
+          "", "0x1", swss::MacAddress(kSrcMac1));
+  EXPECT_FALSE(VerifyMulticastRouterInterfaceStateCache(
+      missing_multicast_replica_port, &internal_entry).empty());
+
+  // Mismatch on key.
+  P4MulticastRouterInterfaceEntry key_mismatch =
+      GenerateP4MulticastRouterInterfaceEntry(
+          "Ethernet2", "0x1", swss::MacAddress(kSrcMac1), "meta1");
+  EXPECT_FALSE(VerifyMulticastRouterInterfaceStateCache(
+      key_mismatch, &internal_entry).empty());
+
+  // Mismatch on multicast_replica_port.
+  P4MulticastRouterInterfaceEntry port_mismatch =
+      GenerateP4MulticastRouterInterfaceEntry(
+          "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), "meta1");
+  port_mismatch.multicast_replica_port = "Ethernet2";
+  EXPECT_FALSE(VerifyMulticastRouterInterfaceStateCache(
+      port_mismatch, &internal_entry).empty());
+
+  // Mismatch on multicast_replica_instance.
+  P4MulticastRouterInterfaceEntry instance_mismatch =
+      GenerateP4MulticastRouterInterfaceEntry(
+          "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), "meta1");
+  instance_mismatch.multicast_replica_instance = "0x2";
+  EXPECT_FALSE(VerifyMulticastRouterInterfaceStateCache(
+      instance_mismatch, &internal_entry).empty());
+
+  // Mismatch on src_mac.
+  P4MulticastRouterInterfaceEntry mac_mismatch =
+      GenerateP4MulticastRouterInterfaceEntry(
+          "Ethernet1", "0x1", swss::MacAddress(kSrcMac2), "meta1");
+  EXPECT_FALSE(VerifyMulticastRouterInterfaceStateCache(
+      mac_mismatch, &internal_entry).empty());
+
+  // Mismatch on multicast_metadata.
+  P4MulticastRouterInterfaceEntry metadata_mismatch =
+      GenerateP4MulticastRouterInterfaceEntry(
+          "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), "meta2");
+  EXPECT_FALSE(VerifyMulticastRouterInterfaceStateCache(
+      metadata_mismatch, &internal_entry).empty());
+}
+
+// ---------- Temporary tests (implemented functions) -------------------------
 
 TEST_F(L3MulticastManagerTest, NoGetMulticastReplicationEntry) {
   auto entry = GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1");
@@ -1683,26 +1880,24 @@ TEST_F(L3MulticastManagerTest, NoGetMulticastReplicationEntry) {
   ASSERT_EQ(actual_entry_ptr, nullptr);
 }
 
-TEST_F(L3MulticastManagerTest, NoGetRifOid) {
-  auto entry = GenerateP4MulticastRouterInterfaceEntry(
-      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1));
-  sai_object_id_t oid = GetRifOid(&entry);
-  ASSERT_EQ(oid, SAI_NULL_OBJECT_ID);
-}
-
 // ---------- Temporary tests (unimplemented functions) -----------------------
 
-TEST_F(L3MulticastManagerTest, NoVerifyState) {
-  EXPECT_FALSE(VerifyState(/*key=*/"1", /*tuple=*/{}).empty());
-}
+TEST_F(L3MulticastManagerTest, NoVerifyStateMulticastReplication) {
+  const std::string match_key =
+      R"({"match/multicast_group_id":"0x1",)"
+      R"("match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string appl_db_key =
+      std::string(APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + match_key;
+  const std::string db_key = std::string(APP_P4RT_TABLE_NAME) +
+                           kTableKeyDelimiter + appl_db_key;
 
-TEST_F(L3MulticastManagerTest, NoVerifyMulticastRouterInterfaceStateCache) {
-  auto entry1 = GenerateP4MulticastRouterInterfaceEntry(
-      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1));
-  auto entry2 = GenerateP4MulticastRouterInterfaceEntry(
-      "Ethernet2", "0x0", swss::MacAddress(kSrcMac1));
-  EXPECT_FALSE(
-      VerifyMulticastRouterInterfaceStateCache(entry1, &entry2).empty());
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
 }
 
 TEST_F(L3MulticastManagerTest, NoVerifyMulticastReplicationStateCache) {
