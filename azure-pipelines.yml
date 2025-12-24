@@ -78,7 +78,7 @@ stages:
       arch: armhf
       timeout: 240
       pool: sonicso1ES-armhf
-      sonic_slave: sonic-slave-${{ parameters.debian_version }}-armhf
+      sonic_slave: sonic-slave-${{ parameters.debian_version }}
       common_lib_artifact_name: common-lib.armhf
       swss_common_artifact_name: sonic-swss-common-${{ parameters.debian_version }}.armhf
       sairedis_artifact_name: sonic-sairedis-${{ parameters.debian_version }}.armhf
@@ -90,7 +90,7 @@ stages:
       arch: arm64
       timeout: 240
       pool: sonicso1ES-arm64
-      sonic_slave: sonic-slave-${{ parameters.debian_version }}-arm64
+      sonic_slave: sonic-slave-${{ parameters.debian_version }}
       common_lib_artifact_name: common-lib.arm64
       swss_common_artifact_name: sonic-swss-common-${{ parameters.debian_version }}.arm64
       sairedis_artifact_name: sonic-sairedis-${{ parameters.debian_version }}.arm64
