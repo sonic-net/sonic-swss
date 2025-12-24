@@ -7121,6 +7121,9 @@ bool PortsOrch::addVlan(string vlan_alias)
     saiOidToAlias[vlan_oid] =  vlan_alias;
     m_vlanPorts.emplace(vlan_alias);
 
+    PortUpdate update = { vlan, true };
+    notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
+
     return true;
 }
 
@@ -7193,6 +7196,9 @@ bool PortsOrch::removeVlan(Port vlan)
     m_portList.erase(vlan.m_alias);
     m_port_ref_count.erase(vlan.m_alias);
     m_vlanPorts.erase(vlan.m_alias);
+
+    PortUpdate update = { vlan, false };
+    notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
     return true;
 }
