@@ -706,25 +706,38 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
     attr.value.s32 = SAI_TAM_TELEMETRY_TYPE_COUNTER_SUBSCRIPTION;
     attrs.push_back(attr);
 
-    attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS;
-    attr.value.booldata = true;
-    attrs.push_back(attr);
+    if (object_type == SAI_OBJECT_TYPE_PORT)
+    {
+        attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
 
-    attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS_INGRESS;
-    attr.value.booldata = true;
-    attrs.push_back(attr);
+        attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS_INGRESS;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
 
-    attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS_EGRESS;
-    attr.value.booldata = true;
-    attrs.push_back(attr);
-
-    attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_MMU_STATS;
-    attr.value.booldata = true;
-    attrs.push_back(attr);
-
-    attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_OUTPUT_QUEUE_STATS;
-    attr.value.booldata = true;
-    attrs.push_back(attr);
+        attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS_EGRESS;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
+    }
+    else if (object_type == SAI_OBJECT_TYPE_BUFFER_POOL ||
+             object_type == SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP)
+    {
+        attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_MMU_STATS;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
+    }
+    else if (object_type == SAI_OBJECT_TYPE_QUEUE)
+    {
+        attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_OUTPUT_QUEUE_STATS;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
+    }
+    else
+    {
+        SWSS_LOG_THROW("Unsupported object type %s for high frequency telemetry",
+                       sai_serialize_object_type(object_type).c_str());
+    }
 
     attr.id = SAI_TAM_TEL_TYPE_ATTR_MODE ;
     attr.value.s32 = SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE;

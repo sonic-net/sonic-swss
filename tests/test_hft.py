@@ -165,6 +165,19 @@ class TestHFT(object):
                 "SAI_TAM_TELEMETRY_TYPE_COUNTER_SUBSCRIPTION", \
                 "Expected tam telemetry type to be " \
                 "SAI_TAM_TELEMETRY_TYPE_COUNTER_SUBSCRIPTION"
+            enable_capability = False
+            enable_capability = enable_capability or tam_tel_type[
+                "SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS"] == \
+                "true"
+            enable_capability = enable_capability or tam_tel_type[
+                "SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_MMU_STATS"] == \
+                "true"
+            enable_capability = enable_capability or tam_tel_type[
+                "SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_OUTPUT_QUEUE_STATS"] == \
+                "true"
+            assert enable_capability, \
+                "Expected tam telemetry to have at least one enable " \
+                "capability set to true"
             assert tam_tel_type[
                 "SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS"] == \
                 "true", \
