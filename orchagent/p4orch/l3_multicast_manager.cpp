@@ -392,15 +392,66 @@ void L3MulticastManager::drainWithNotExecuted() {
 
 std::string L3MulticastManager::verifyState(
     const std::string& key, const std::vector<swss::FieldValueTuple>& tuple) {
-  return "L3MulticastManager::verifyState is not implemented";
+  SWSS_LOG_ENTER();
+
+  auto pos = key.find_first_of(kTableKeyDelimiter);
+  if (pos == std::string::npos) {
+    return std::string("Invalid key, missing delimiter: ") + key;
+  }
+  std::string p4rt_table = key.substr(0, pos);
+  std::string p4rt_key = key.substr(pos + 1);
+  if (p4rt_table != APP_P4RT_TABLE_NAME) {
+    return std::string("Invalid key, unexpected P4RT table: ") + key;
+  }
+  std::string table_name;
+  std::string key_content;
+  parseP4RTKey(p4rt_key, &table_name, &key_content);
+  if (table_name == APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) {
+    return verifyMulticastRouterInterfaceState(key_content, tuple);
+  } else if (table_name == APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) {
+    return verifyMulticastReplicationState(key_content, tuple);
+  } else {
+    return std::string("Invalid key, unexpected table name: ") + key;
+  }
 }
 
-/*
 std::string L3MulticastManager::verifyMulticastRouterInterfaceState(
     const std::string& key,
     const std::vector<swss::FieldValueTuple>& tuple) {
-  return "L3MulticastManager::verifyMulticastRouterInterfaceState is not "
-         "implemented";
+  auto app_db_entry_or = deserializeMulticastRouterInterfaceEntry(
+      key, tuple);
+  if (!app_db_entry_or.ok()) {
+    ReturnCode status = app_db_entry_or.status();
+    std::stringstream msg;
+    msg << "Unable to deserialize key " << QuotedVar(key) << ": "
+        << status.message();
+    return msg.str();
+  }
+  auto& app_db_entry = *app_db_entry_or;
+
+  const std::string router_interface_entry_key =
+      KeyGenerator::generateMulticastRouterInterfaceKey(
+          app_db_entry.multicast_replica_port,
+          app_db_entry.multicast_replica_instance);
+  auto* router_interface_entry_ptr =
+      getMulticastRouterInterfaceEntry(router_interface_entry_key);
+  if (router_interface_entry_ptr == nullptr) {
+    std::stringstream msg;
+    msg << "No entry found with key " << QuotedVar(key);
+    return msg.str();
+  }
+
+  std::string cache_result = verifyMulticastRouterInterfaceStateCache(
+      app_db_entry, router_interface_entry_ptr);
+  std::string asic_db_result = verifyMulticastRouterInterfaceStateAsicDb(
+      router_interface_entry_ptr);
+  if (cache_result.empty()) {
+    return asic_db_result;
+  }
+  if (asic_db_result.empty()) {
+    return cache_result;
+  }
+  return cache_result + "; " + asic_db_result;
 }
 
 std::string L3MulticastManager::verifyMulticastReplicationState(
@@ -409,7 +460,6 @@ std::string L3MulticastManager::verifyMulticastReplicationState(
   return "L3MulticastManager::verifyMulticastReplicationState is not "
          "implemented";
 }
-*/
 
 ReturnCode L3MulticastManager::validateMulticastRouterInterfaceEntry(
     const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
@@ -941,8 +991,101 @@ std::vector<ReturnCode> L3MulticastManager::deleteMulticastReplicationEntries(
 std::string L3MulticastManager::verifyMulticastRouterInterfaceStateCache(
     const P4MulticastRouterInterfaceEntry& app_db_entry,
     const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry) {
-  return "L3MulticastManager::verifyMulticastRouterInterfaceStateCache is "
-         "not implemented";
+  const std::string router_interface_entry_key =
+      KeyGenerator::generateMulticastRouterInterfaceKey(
+          app_db_entry.multicast_replica_port,
+          app_db_entry.multicast_replica_instance);
+
+  ReturnCode status = validateMulticastRouterInterfaceEntry(app_db_entry,
+                                                            SET_COMMAND);
+  if (!status.ok()) {
+    std::stringstream msg;
+    msg << "Validation failed for multicast router interface DB entry with key "
+        << QuotedVar(router_interface_entry_key) << ": " << status.message();
+    return msg.str();
+  }
+  if (multicast_router_interface_entry->multicast_router_interface_entry_key !=
+      app_db_entry.multicast_router_interface_entry_key) {
+    std::stringstream msg;
+    msg << "Multicast router interface interface entry key "
+        << QuotedVar(app_db_entry.multicast_router_interface_entry_key)
+        << " does not match internal cache "
+        << QuotedVar(multicast_router_interface_entry->multicast_router_interface_entry_key)
+        << " in l3 multicast manager.";
+    return msg.str();
+  }
+  if (multicast_router_interface_entry->multicast_replica_port !=
+      app_db_entry.multicast_replica_port) {
+    std::stringstream msg;
+    msg << "Output port name " << QuotedVar(app_db_entry.multicast_replica_port)
+        << " does not match internal cache "
+        << QuotedVar(multicast_router_interface_entry->multicast_replica_port)
+        << " in l3 multicast manager.";
+    return msg.str();
+  }
+  if (multicast_router_interface_entry->multicast_replica_instance !=
+      app_db_entry.multicast_replica_instance) {
+    std::stringstream msg;
+    msg << "Egress instance "
+        << QuotedVar(app_db_entry.multicast_replica_instance)
+        << " does not match internal cache "
+        << QuotedVar(
+               multicast_router_interface_entry->multicast_replica_instance)
+        << " in l3 multicast manager.";
+    return msg.str();
+  }
+  if (multicast_router_interface_entry->src_mac.to_string() !=
+      app_db_entry.src_mac.to_string()) {
+    std::stringstream msg;
+    msg << "Src MAC " << QuotedVar(app_db_entry.src_mac.to_string())
+        << " does not match internal cache "
+        << QuotedVar(multicast_router_interface_entry->src_mac.to_string())
+        << " in l3 multicast manager.";
+    return msg.str();
+  }
+  if (multicast_router_interface_entry->multicast_metadata !=
+      app_db_entry.multicast_metadata) {
+    std::stringstream msg;
+    msg << "Multicast metadata " << QuotedVar(app_db_entry.multicast_metadata)
+        << " does not match internal cache "
+        << QuotedVar(multicast_router_interface_entry->multicast_metadata)
+        << " in l3 multicast manager.";
+    return msg.str();
+  }
+  std::string rif_key = KeyGenerator::generateMulticastRouterInterfaceRifKey(
+      multicast_router_interface_entry->multicast_replica_port,
+      multicast_router_interface_entry->src_mac);
+  return m_p4OidMapper->verifyOIDMapping(
+      SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key,
+      multicast_router_interface_entry->router_interface_oid);
+}
+
+std::string L3MulticastManager::verifyMulticastRouterInterfaceStateAsicDb(
+    const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry) {
+  auto attrs_or = prepareRifSaiAttrs(*multicast_router_interface_entry);
+  if (!attrs_or.ok()) {
+    return std::string("Failed to get multicast router interface SAI attrs: ") +
+           attrs_or.status().message();
+  }
+  std::vector<sai_attribute_t> attrs = *attrs_or;
+  std::vector<swss::FieldValueTuple> exp =
+      saimeta::SaiAttributeList::serialize_attr_list(
+          SAI_OBJECT_TYPE_ROUTER_INTERFACE, (uint32_t)attrs.size(),
+          attrs.data(), /*countOnly=*/false);
+
+  swss::DBConnector db("ASIC_DB", 0);
+  swss::Table table(&db, "ASIC_STATE");
+  std::string key =
+      sai_serialize_object_type(SAI_OBJECT_TYPE_ROUTER_INTERFACE) + ":" +
+      sai_serialize_object_id(
+          multicast_router_interface_entry->router_interface_oid);
+  std::vector<swss::FieldValueTuple> values;
+  if (!table.get(key, values)) {
+    return std::string("ASIC DB key not found ") + key;
+  }
+
+  return verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
+                     /*allow_unknown=*/false);
 }
 
 std::string L3MulticastManager::verifyMulticastReplicationStateCache(
