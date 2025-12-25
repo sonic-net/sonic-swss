@@ -774,7 +774,7 @@ std::vector<ReturnCode> RouteManager::createMulticastRouteEntries(
       }
       return statuses;
     }
-    SWSS_LOG_INFO("Successfully created default RPF group with oid: %ld",
+    SWSS_LOG_INFO("Successfully created default RPF group with oid: %lld",
                   empty_rpf_group_oid_);
   }
 
