@@ -1156,11 +1156,164 @@ std::vector<ReturnCode> L3MulticastManager::addMulticastReplicationEntries(
 
 std::vector<ReturnCode> L3MulticastManager::deleteMulticastReplicationEntries(
     const std::vector<P4MulticastReplicationEntry>& entries) {
-  std::vector<ReturnCode> rv;
-  rv.push_back(ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
-               << "L3MulticastManager::deleteMulticastReplicationEntries is "
-               << "not implemented");
-  return rv;
+  // There are two cases for removal:
+  // 1. This entry is the last one associated with the multicast group.  In
+  //    such a case, delete the multicast group and clear it from appropriate
+  //    maps.
+  // 2. There will still be other group members associated with the multicast
+  //    group.  In such a case, only remove the member from being associated
+  //    with the group.
+  SWSS_LOG_ENTER();
+
+  std::vector<ReturnCode> statuses(entries.size());
+  fillStatusArrayWithNotExecuted(statuses, 0);
+  for (size_t i = 0; i < entries.size(); ++i) {
+    auto& entry = entries[i];
+
+    // Confirm entry exists
+    auto* old_entry_ptr =
+        getMulticastReplicationEntry(entry.multicast_replication_key);
+    if (old_entry_ptr == nullptr) {
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_UNKNOWN)
+                    << "Multicast replication entry is not known "
+                    << QuotedVar(entry.multicast_replication_key);
+      break;
+    }
+
+    // Fetch the RIF the member is associated with.
+    sai_object_id_t old_rif_oid = getRifOid(old_entry_ptr);
+    if (old_rif_oid == SAI_NULL_OBJECT_ID) {
+      statuses[i] =
+          ReturnCode(StatusCode::SWSS_RC_INTERNAL)
+          << "Cannot find RIF oid associated with group member to delete "
+          << QuotedVar(old_entry_ptr->multicast_replication_key);
+      break;
+    }
+
+    // Confirm the old entry had OIDs assigned.
+    sai_object_id_t old_group_oid = SAI_NULL_OBJECT_ID;
+    m_p4OidMapper->getOID(SAI_OBJECT_TYPE_IPMC_GROUP,
+                          old_entry_ptr->multicast_group_id, &old_group_oid);
+    sai_object_id_t old_group_member_oid = SAI_NULL_OBJECT_ID;
+    m_p4OidMapper->getOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
+                          old_entry_ptr->multicast_replication_key,
+                          &old_group_member_oid);
+    if (old_group_oid == SAI_NULL_OBJECT_ID ||
+        old_group_member_oid == SAI_NULL_OBJECT_ID) {
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
+                    << "Multicast replication entry is missing a multicast "
+                    << "group OID or a multicast group member OID "
+                    << QuotedVar(entry.multicast_replication_key);
+      break;
+    }
+
+    // Fetch group members associated with multicast group
+    if (m_multicastGroupMembers.find(old_entry_ptr->multicast_group_id) ==
+        m_multicastGroupMembers.end()) {
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
+                    << "Cannot find members associated with multicast group "
+                    << " id " << old_entry_ptr->multicast_group_id;
+      break;
+    }
+    auto& group_members_set =
+        m_multicastGroupMembers[old_entry_ptr->multicast_group_id];
+    auto member_cnt = group_members_set.size();
+    if (group_members_set.count(old_entry_ptr->multicast_replication_key) !=
+        1) {
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
+                    << "Member " << old_entry_ptr->multicast_replication_key
+                    << " was not associated with multicast group id "
+                    << old_entry_ptr->multicast_group_id;
+      break;
+    }
+
+    // If we will delete the multicast group, confirm no more L3 routes use
+    // this group id before deleting it.
+    // We do this check before any SAI calls to avoid having to undo operations.
+    if (member_cnt == 1) {
+      // Set to non-zero to avoid deletion in case of failure.
+      uint32_t route_entry_ref_count = 1;
+      if (!m_p4OidMapper->getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                      old_entry_ptr->multicast_group_id,
+                                      &route_entry_ref_count)) {
+        statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
+                      << "Unable to fetch reference count for multicast "
+                      << "group " << old_entry_ptr->multicast_group_id;
+        break;
+      }
+
+      if (route_entry_ref_count != 0) {
+        statuses[i] = ReturnCode(StatusCode::SWSS_RC_IN_USE)
+                      << "Member " << old_entry_ptr->multicast_replication_key
+                      << " cannot be deleted because route entries are still "
+                      << "referencing multicast group "
+                      << old_entry_ptr->multicast_group_id;
+        break;
+      }
+    }
+
+    // Delete group member
+    sai_status_t member_delete_status =
+        sai_ipmc_group_api->remove_ipmc_group_member(
+            old_entry_ptr->multicast_group_member_oid);
+    if (member_delete_status != SAI_STATUS_SUCCESS) {
+      statuses[i] = member_delete_status;
+      break;
+    }
+
+    // Delete group, if necessary.
+    if (member_cnt == 1) {
+      sai_status_t group_delete_status = sai_ipmc_group_api->remove_ipmc_group(
+          old_entry_ptr->multicast_group_oid);
+      if (group_delete_status != SAI_STATUS_SUCCESS) {
+        statuses[i] = group_delete_status;
+        // On group removal failure, attempt to put the group member back.
+        sai_object_id_t re_add_rif_oid = getRifOid(old_entry_ptr);
+        std::vector<sai_attribute_t> re_add_attrs =
+            prepareMulticastGroupMemberSaiAttrs(*old_entry_ptr, re_add_rif_oid);
+        sai_status_t re_add_status =
+            sai_ipmc_group_api->create_ipmc_group_member(
+                &old_entry_ptr->multicast_group_member_oid, gSwitchId,
+                (uint32_t)re_add_attrs.size(), re_add_attrs.data());
+
+        if (re_add_status != SAI_STATUS_SUCCESS) {
+          // All kinds of bad.  We couldn't restore the multicast group object,
+          // which leaves us in an inconsistent state with what the controller
+          // expects.
+          std::stringstream err_msg;
+          err_msg << "Unable to backout removal of multicast group member for "
+                  << QuotedVar(old_entry_ptr->multicast_replication_key)
+                  << " after group delete failed";
+          SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+          SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+        } else {
+          // Update group member OID, in case it changed.
+          m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
+                                  old_entry_ptr->multicast_replication_key);
+          m_p4OidMapper->setOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
+                                old_entry_ptr->multicast_replication_key,
+                                old_entry_ptr->multicast_group_member_oid);
+        }
+        break;
+      }
+    }
+
+    // Do internal bookkeeping.
+    m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
+                            old_entry_ptr->multicast_replication_key);
+    group_members_set.erase(old_entry_ptr->multicast_replication_key);
+    m_rifOidToMulticastGroupMembers[old_rif_oid].erase(
+        entry.multicast_replication_key);
+    if (member_cnt == 1) {
+      m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_IPMC_GROUP,
+                              old_entry_ptr->multicast_group_id);
+      m_multicastGroupMembers.erase(old_entry_ptr->multicast_group_id);
+    }
+    m_multicastReplicationTable.erase(old_entry_ptr->multicast_replication_key);
+
+    statuses[i] = ReturnCode();
+  }  // for i
+  return statuses;
 }
 
 std::string L3MulticastManager::verifyMulticastRouterInterfaceStateCache(
