@@ -79,6 +79,7 @@ P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOr
     m_p4ManagerAddPrecedence.push_back(m_greTunnelManager.get());
     m_p4ManagerAddPrecedence.push_back(m_nextHopManager.get());
     m_p4ManagerAddPrecedence.push_back(m_wcmpManager.get());
+    m_p4ManagerAddPrecedence.push_back(m_l3MulticastManager.get());
     m_p4ManagerAddPrecedence.push_back(m_routeManager.get());
     m_p4ManagerAddPrecedence.push_back(m_mirrorSessionManager.get());
     m_p4ManagerAddPrecedence.push_back(m_aclTableManager.get());
