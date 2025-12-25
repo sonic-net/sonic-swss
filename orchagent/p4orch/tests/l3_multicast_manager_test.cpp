@@ -38,7 +38,6 @@ using ::testing::StrictMock;
 extern sai_object_id_t gSwitchId;
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t gVrfOid;
-// extern sai_ipmc_api_t* sai_ipmc_api;
 extern sai_ipmc_group_api_t* sai_ipmc_group_api;
 extern sai_router_interface_api_t* sai_router_intfs_api;
 extern char* gVrfName;
