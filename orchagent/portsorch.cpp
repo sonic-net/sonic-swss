@@ -5666,6 +5666,12 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
                     if (m_portVlanMember[port.m_alias].empty())
                     {
                         removeBridgePort(port);
+                        SWSS_LOG_NOTICE("%s fdb count: %u port fdb count: %u", vlan.m_alias.c_str(), vlan.m_fdb_count, port.m_fdb_count);
+                        if (m_portList[vlan.m_alias].m_fdb_count >= m_portList[port.m_alias].m_fdb_count)
+                        {
+                            m_portList[vlan.m_alias].m_fdb_count -= m_portList[port.m_alias].m_fdb_count;
+                            m_portList[port.m_alias].m_fdb_count = 0;
+                        }
                     }
                     it = consumer.m_toSync.erase(it);
                 }
