@@ -196,6 +196,16 @@ public:
         } unreliable_los; // Port unreliable_los
 
         struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } txpolarity; // Port serdes TX polarity
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } rxpolarity; // Port serdes RX polarity
+
+        struct {
             std::string value;
             bool is_set = false;
         } custom_collection; // Port serdes custom_collection
