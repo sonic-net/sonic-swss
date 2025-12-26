@@ -507,9 +507,164 @@ ReturnCode L3MulticastManager::validateMulticastRouterInterfaceEntry(
 ReturnCode L3MulticastManager::validateMulticastReplicationEntry(
     const P4MulticastReplicationEntry& multicast_replication_entry,
     const std::string& operation) {
-  return ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
-         << "L3MulticastManager::validateMulticastReplicationEntry is not "
-         << "implemented";
+  // Confirm match fields are populated.
+  if (multicast_replication_entry.multicast_group_id.empty()) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "No match field entry multicast_group_id provided";
+  }
+  if (multicast_replication_entry.multicast_replica_port.empty()) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "No match field entry multicast_replica_port provided";
+  }
+  if (multicast_replication_entry.multicast_replica_instance.empty()) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "No match field entry multicast_replica_instance provided";
+  }
+
+  if (operation == SET_COMMAND) {
+    return validateSetMulticastReplicationEntry(multicast_replication_entry);
+  } else if (operation == DEL_COMMAND) {
+    return validateDelMulticastReplicationEntry(multicast_replication_entry);
+  }
+  return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+         << "Unknown operation type " << QuotedVar(operation);
+}
+
+ReturnCode L3MulticastManager::validateSetMulticastReplicationEntry(
+    const P4MulticastReplicationEntry& multicast_replication_entry) {
+  auto* replication_entry_ptr = getMulticastReplicationEntry(
+      multicast_replication_entry.multicast_replication_key);
+
+  sai_object_id_t rif_oid = getRifOid(&multicast_replication_entry);
+  if (rif_oid == SAI_NULL_OBJECT_ID) {
+    return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+           << "Multicast group member "
+           << QuotedVar(multicast_replication_entry.multicast_replication_key)
+           << " cannot be created, since there is associated RIF available yet";
+  }
+
+  bool is_update_operation = replication_entry_ptr != nullptr;
+  if (is_update_operation) {
+    // Confirm multicast group had SAI object ID.
+    if (replication_entry_ptr->multicast_group_oid == SAI_OBJECT_TYPE_NULL) {
+      return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+             << "Multicast group OID was not assigned before updating "
+                "multicast "
+                "replication entry with keys "
+             << QuotedVar(multicast_replication_entry.multicast_group_id)
+             << ", "
+             << QuotedVar(multicast_replication_entry.multicast_replica_port)
+             << ", and "
+             << QuotedVar(
+                    multicast_replication_entry.multicast_replica_instance);
+    }
+
+    // Confirm multicast group member had SAI object ID.
+    if (replication_entry_ptr->multicast_group_member_oid ==
+        SAI_OBJECT_TYPE_NULL) {
+      return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+             << "Multicast group member OID was not assigned before updating "
+                "multicast replication entry with keys "
+             << QuotedVar(multicast_replication_entry.multicast_group_id)
+             << ", "
+             << QuotedVar(multicast_replication_entry.multicast_replica_port)
+             << ", and "
+             << QuotedVar(
+                    multicast_replication_entry.multicast_replica_instance);
+    }
+
+    // Confirm we have references to the multicast group in internal maps.
+    if (!m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                  replication_entry_ptr->multicast_group_id)) {
+      return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+             << "Expected multicast group is missing from oid map: "
+             << replication_entry_ptr->multicast_replication_key;
+    }
+    if (m_multicastGroupMembers.find(
+            replication_entry_ptr->multicast_group_id) ==
+        m_multicastGroupMembers.end()) {
+      return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+             << "Expected multicast group is missing from entry map: "
+             << replication_entry_ptr->multicast_group_id;
+    }
+
+    // Confirm the multicast object ID exists in central mapper.
+    bool exist_in_mapper = m_p4OidMapper->existsOID(
+        SAI_OBJECT_TYPE_IPMC_GROUP, replication_entry_ptr->multicast_group_id);
+    if (!exist_in_mapper) {
+      return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+             << "Multicast replication entry exists in manager but multicast "
+                "group"
+                " OID does not exist in the centralized map";
+    }
+    // Confirm the multicast member object ID exists in central mapper.
+    exist_in_mapper = m_p4OidMapper->existsOID(
+        SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
+        replication_entry_ptr->multicast_replication_key);
+    if (!exist_in_mapper) {
+      return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+             << "Multicast replication entry exists in manager but multicast "
+                "group"
+                " OID does not exist in the centralized map";
+    }
+  }
+  // No additional validation required for add operation.
+  return ReturnCode();
+}
+
+ReturnCode L3MulticastManager::validateDelMulticastReplicationEntry(
+    const P4MulticastReplicationEntry& multicast_replication_entry) {
+  auto* replication_entry_ptr = getMulticastReplicationEntry(
+      multicast_replication_entry.multicast_replication_key);
+
+  // Can't delete what isn't there.
+  if (replication_entry_ptr == nullptr) {
+    return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+           << "Multicast replication entry does not exist";
+  }
+
+  // Confirm multicast group had SAI object ID.
+  if (replication_entry_ptr->multicast_group_oid == SAI_OBJECT_TYPE_NULL) {
+    return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+           << "Multicast group OID was not assigned before updating multicast "
+              "replication entry with keys "
+           << QuotedVar(multicast_replication_entry.multicast_group_id) << ", "
+           << QuotedVar(multicast_replication_entry.multicast_replica_port)
+           << ", and "
+           << QuotedVar(multicast_replication_entry.multicast_replica_instance);
+  }
+
+  if (replication_entry_ptr->multicast_group_member_oid ==
+      SAI_OBJECT_TYPE_NULL) {
+    return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+           << "Multicast group member OID was not assigned before deleting "
+              "multicast replication entry with keys "
+           << QuotedVar(multicast_replication_entry.multicast_group_id) << ", "
+           << QuotedVar(multicast_replication_entry.multicast_replica_port)
+           << ", and "
+           << QuotedVar(multicast_replication_entry.multicast_replica_instance);
+  }
+
+  // Confirm the multicast object ID exists in central mapper.
+  bool exist_in_mapper = m_p4OidMapper->existsOID(
+      SAI_OBJECT_TYPE_IPMC_GROUP, replication_entry_ptr->multicast_group_id);
+  if (!exist_in_mapper) {
+    return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+           << "Multicast replication entry exists in manager but multicast "
+              "group"
+              " OID does not exist in the centralized map";
+  }
+  // Confirm the multicast member object ID exists in central mapper.
+  exist_in_mapper = m_p4OidMapper->existsOID(
+      SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
+      replication_entry_ptr->multicast_replication_key);
+  if (!exist_in_mapper) {
+    return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+           << "Multicast replication entry exists in manager but multicast "
+              "group"
+              " OID does not exist in the centralized map";
+  }
+  return ReturnCode();
 }
 
 ReturnCode L3MulticastManager::validateSetMulticastRouterInterfaceEntry(
@@ -1150,6 +1305,26 @@ std::vector<ReturnCode> L3MulticastManager::addMulticastReplicationEntries(
         entry.multicast_replication_key);
 
     statuses[i] = ReturnCode();
+  }  // for i
+  return statuses;
+}
+
+std::vector<ReturnCode> L3MulticastManager::updateMulticastReplicationEntries(
+    std::vector<P4MulticastReplicationEntry>& entries) {
+  // There is nothing extra to do for update operations, since the table
+  // key itself (group_id, multicast_replica_port, multicast_replica_instance)
+  // encodes the information needed to add a multicast group and multicast group
+  // member.  Validation has previously occurred that also checked internal
+  // maps.
+  SWSS_LOG_ENTER();
+
+  std::vector<ReturnCode> statuses(entries.size());
+  for (size_t i = 0; i < entries.size(); ++i) {
+    auto& entry = entries[i];
+    statuses[i] = ReturnCode(StatusCode::SWSS_RC_SUCCESS)
+                  << "Update of replication entry "
+                  << QuotedVar(entry.multicast_replication_key)
+                  << " is a no-op";
   }  // for i
   return statuses;
 }
