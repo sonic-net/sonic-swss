@@ -213,11 +213,11 @@ void FgNhgOrch::calculateBankHashBucketStartIndices(FgNhgEntry *fgNhgEntry)
 }
 
 
-void FgNhgOrch::setStateDbRouteEntry(const IpPrefix &ipPrefix, const string &vnet, uint32_t index, NextHopKey nextHop)
+void FgNhgOrch::setStateDbRouteEntry(const string &vnet, const IpPrefix &ipPrefix, uint32_t index, NextHopKey nextHop)
 {
     SWSS_LOG_ENTER();
 
-    string key = ipPrefix.to_string() + '|' + vnet;
+    string key = vnet + '|' + ipPrefix.to_string();;
     string field = std::to_string(index);
     string value = nextHop.to_string();
 
@@ -249,7 +249,7 @@ bool FgNhgOrch::writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry,
         }
     }
 
-    setStateDbRouteEntry(ipPrefix, vnet, index, nextHop);
+    setStateDbRouteEntry(vnet, ipPrefix, index, nextHop);
     return true;
 }
 
@@ -1189,7 +1189,7 @@ bool FgNhgOrch::sprayBankNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, c
             }
         }
 
-        setStateDbRouteEntry(ipPrefix, vnet, bucket_idx, nh_memb_key);
+        setStateDbRouteEntry(vnet, ipPrefix, bucket_idx, nh_memb_key);
         syncd_fg_route_entry.syncd_fgnhg_map[bank][nh_memb_key].push_back(bucket_idx);
         syncd_fg_route_entry.active_nexthops.insert(nh_memb_key);
         syncd_fg_route_entry.nhopgroup_members[bucket_idx] = next_hop_group_member_id;

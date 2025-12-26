@@ -3264,7 +3264,7 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     }
     if (vnet_orch_->isVnetExecVrf())
     {
-        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, (has_priority_ep == true) ? nhg_primary : nhg, op, profile, monitoring, rx_monitor_timer, tx_monitor_timer, nhg_secondary, adv_prefix, consistent_hashing_buckets,monitors);
+        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, (has_priority_ep == true) ? nhg_primary : nhg, op, profile, monitoring, rx_monitor_timer, tx_monitor_timer, nhg_secondary, adv_prefix, consistent_hashing_buckets, monitors);
     }
 
     return true;
