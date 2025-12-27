@@ -2436,6 +2436,12 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         }
     }
 
+    if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end())
+    {
+        m_syncdRoutes.emplace(vrf_id, RouteTable());
+        m_vrfOrch->increaseVrfRefCount(vrf_id);
+    }
+
     auto it_status = object_statuses.begin();
     auto it_route = routeTableIter->second.find(ipPrefix);
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
