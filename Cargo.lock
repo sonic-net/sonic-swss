@@ -526,6 +526,7 @@ dependencies = [
  "swss-common",
  "tempfile",
  "tokio",
+ "tokio-stream",
  "tonic",
  "tonic-health",
  "tracing",

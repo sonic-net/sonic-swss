@@ -70,22 +70,7 @@ async-trait = { workspace = true }
 
 # Benchmarking
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
-
-[[bench]]
-name = "message_conversions"
-harness = false
-
-[[bench]]
-name = "actor_throughput"
-harness = false
-
-[[bench]]
-name = "otel_export"
-harness = false
-
-[[bench]]
-name = "memory_efficiency"
-harness = false
+tokio-stream = { version = "0.1", features = ["net"] }
 
 [[bench]]
 name = "end_to_end"
@@ -93,4 +78,12 @@ harness = false
 
 [[bench]]
 name = "ipfix_actor_perf"
+harness = false
+
+[[bench]]
+name = "otel_actor_perf"
+harness = false
+
+[[bench]]
+name = "counter_db_actor_perf"
 harness = false
