@@ -150,11 +150,67 @@ std::string ValuesStore::get_value(json_t * root, const std::string & path, Valu
 /// @param root a pointer to the parsed json tree
 /// @param storage a reference to the temporary storage
 ///
+//
+void ValuesStore::extract_values_static(const std::string & lag_name, json_t * root, HashOfRecords & storage)
+{
+
+    const std::string key = "LAG_TABLE|" + lag_name;
+    Records lag_values;
+
+    for (const auto & p: m_lag_static_paths)
+    {
+        const auto & path = p.first;
+        const auto & type = p.second;
+        const auto & value = get_value(root, path, type);
+        lag_values.emplace(path, value);
+    }
+    storage.emplace(key, lag_values);
+
+    const auto & ports = get_ports(root);
+    for (const auto & port: ports)
+    {
+        const std::string key = "LAG_MEMBER_TABLE|" + lag_name + "|" + port;
+        Records member_values;
+        for (const auto & p: m_member_static_paths)
+        {
+            const auto & path = p.first;
+            const auto & type = p.second;
+            const std::string full_path = "ports." + port + "." + path;
+            const auto & value = get_value(root, full_path, type);
+            member_values.emplace(path, value);
+        }
+        storage.emplace(key, member_values);
+    }
+
+    return;
+}
+
 void ValuesStore::extract_values(const std::string & lag_name, json_t * root, HashOfRecords & storage)
 {
 
     const std::string key = "LAG_TABLE|" + lag_name;
     Records lag_values;
+
+    bool is_static = false;
+
+    for (const auto & p: m_lag_paths)
+    {
+        const auto & path = p.first;
+	const auto & type = p.second;
+	if (path  == "setup.runner_name") {
+	    const auto & value = get_value(root, path, type);
+	    if(value == "loadbalance" ||
+               value == "roundrobin")
+               is_static = true;
+            break;	    
+	}
+    }
+
+    if (is_static) {
+        extract_values_static(lag_name, root, storage);
+	return;    
+    }
+
     for (const auto & p: m_lag_paths)
     {
         const auto & path = p.first;
