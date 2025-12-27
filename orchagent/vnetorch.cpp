@@ -758,7 +758,7 @@ sai_object_id_t VNetRouteOrch::getNextHopGroupId(const string& vnet, const NextH
     return syncd_nexthop_groups_[vnet][nexthops].next_hop_group_id;
 }
 
-bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj, const string& monitoring, const bool isLocalEp, const uint16 _t consistent_hashing_buckets, IpPrefix &ipPrefix, bool &isNextHopChanged)
+bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj, const string& monitoring, const bool isLocalEp, const uint16 _t consistent_hashing_buckets, IpPrefix &ipPrefix, bool *isNextHopChanged)
 {
     SWSS_LOG_ENTER();
 
@@ -799,7 +799,7 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
     {
         sai_object_id_t vrf_id;
         vnet_orch_->getVrfIdByVnetName(vnet, vrf_id);
-        return FgNhgOrch->setFgNhg(vrf_id, *ipPrefix, nhopgroup_members_set, consistent_hashing_buckets, isNextHopChanged);
+        return FgNhgOrch->setFgNhg(vrf_id, *ipPrefix, nhopgroup_members_set, consistent_hashing_buckets, *isNextHopChanged);
     }
 
     sai_attribute_t nhg_attr;

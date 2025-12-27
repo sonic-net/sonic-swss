@@ -522,7 +522,7 @@ private:
     sai_object_id_t getNextHopGroupId(const string&, const NextHopGroupKey&);
     bool addNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj,
                             const string& monitoring, const bool isLocalEp=false,
-                            const uint16_t consistent_hashing_buckets=-1, IpPrefix *ipPrefix=nullptr, bool &isNextHopChanged=false);
+                            const uint16_t consistent_hashing_buckets=-1, IpPrefix *ipPrefix=nullptr, bool *isNextHopChanged=false);
     bool removeNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
     bool createNextHopGroup(const string&, NextHopGroupKey&, VNetVrfObject *vrf_obj,
                             const string& monitoring, const uint16_t consistent_hashing_buckets=-1, IpPrefix *ipPrefix=nullptr);
