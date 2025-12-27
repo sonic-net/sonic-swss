@@ -795,11 +795,11 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
 
     bool isFineGrainedNextHopIdChanged = false;
 
-    if (consistent_hashing_buckets > 0)
+    if (consistent_hashing_buckets > 0 && ipPrefix != nullptr)
     {
         sai_object_id_t vrf_id;
         vnet_orch_->getVrfIdByVnetName(vnet, vrf_id);
-        return FgNhgOrch->setFgNhg(vrf_id, ipPrefix, nhopgroup_members_set, consistent_hashing_buckets, isNextHopChanged);
+        return FgNhgOrch->setFgNhg(vrf_id, *ipPrefix, nhopgroup_members_set, consistent_hashing_buckets, isNextHopChanged);
     }
 
     sai_attribute_t nhg_attr;
@@ -943,7 +943,7 @@ bool VNetRouteOrch::createNextHopGroup(const string& vnet,
                                        VNetVrfObject *vrf_obj,
                                        const string& monitoring,
                                        const uint16_t consistent_hashing_buckets,
-                                       IpPrefix &ipPrefix)
+                                       IpPrefix *ipPrefix)
 {
     SWSS_LOG_INFO("Creating nexthop group from nexthops(%s)\n", nexthops.to_string().c_str());
     if (nexthops.getSize() == 0)
@@ -1075,7 +1075,7 @@ bool VNetRouteOrch::selectNextHopGroup(const string& vnet,
         NextHopGroupKey nhg_custom = getActiveNHSet( vnet, nexthops_primary, ipPrefix);
         if (!hasNextHopGroup(vnet, nhg_custom))
         {
-            if (!createNextHopGroup(vnet, nhg_custom, vrf_obj, monitoring))
+            if (!createNextHopGroup(vnet, nhg_custom, vrf_obj, monitoring, consistent_hashing_buckets, &ipPrefix))
             {
                 SWSS_LOG_WARN("Failed to create Primary based custom next hop group. Cannot proceed.");
                 delEndpointMonitor(vnet, nexthops_primary, ipPrefix);
@@ -1095,7 +1095,7 @@ bool VNetRouteOrch::selectNextHopGroup(const string& vnet,
 
         if (!hasNextHopGroup(vnet, nhg_custom_sec))
         {
-            if (!createNextHopGroup(vnet, nhg_custom_sec, vrf_obj, monitoring))
+            if (!createNextHopGroup(vnet, nhg_custom_sec, vrf_obj, monitoring, consistent_hashing_buckets, &ipPrefix))
             {
                 SWSS_LOG_WARN("Failed to create secondary based custom next hop group. Cannot proceed.");
                 delEndpointMonitor(vnet, nexthops_primary, ipPrefix);
@@ -1126,7 +1126,7 @@ bool VNetRouteOrch::selectNextHopGroup(const string& vnet,
     {
         SWSS_LOG_INFO("Creating next hop group  %s", nexthops_primary.to_string().c_str());
         setEndpointMonitor(vnet, monitors, nexthops_primary, monitoring, rx_monitor_timer, tx_monitor_timer, ipPrefix);
-        if (!createNextHopGroup(vnet, nexthops_primary, vrf_obj, monitoring, consistent_hashing_buckets, ipPrefix))
+        if (!createNextHopGroup(vnet, nexthops_primary, vrf_obj, monitoring, consistent_hashing_buckets, &ipPrefix))
         {
             delEndpointMonitor(vnet, nexthops_primary, ipPrefix);
             return false;
