@@ -70,7 +70,7 @@ extern string gMyHostName;
 extern string gMyAsicName;
 extern event_handle_t g_events_handle;
 
-// defines ------------------------------------------------------------------------------------------------------------
+// defines ---------------------------------- YANM
 
 #define DEFAULT_SYSTEM_PORT_MTU 9100
 #define VLAN_PREFIX         "Vlan"
