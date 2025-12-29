@@ -2548,6 +2548,314 @@ TEST_F(RouteManagerTest, UpdateRouteFromDifferentNexthopIdAndMetadataRecoverFail
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN}));
 }
 
+TEST_F(RouteManagerTest, UpdateMulticastRouteEntriesSucceeds) {
+  // We eventually want a prefix, not an exact match address.
+  // TODO(b/281706130)
+  auto swss_ipv6_route_prefix = swss::IpPrefix(kIpv6Prefix3);
+  auto route_entry_ipv6 = SetupSetMulticastGroupIdRouteEntry(
+      gVrfName, swss_ipv6_route_prefix, kMulticastGroupId1, kMulticastGroupOid1,
+      kMetadata1);
+  auto swss_ipv4_route_prefix = swss::IpPrefix(kIpv4Prefix4);
+  auto route_entry_ipv4 = SetupSetMulticastGroupIdRouteEntry(
+      gVrfName, swss_ipv4_route_prefix, kMulticastGroupId2, kMulticastGroupOid2,
+      kMetadata1, /*expect_rpf=*/false);
+
+  // Now update those entries to point to new multicast groups.
+  auto new_route_entry_ipv6 = GenerateP4RouteEntry(
+      gVrfName, swss_ipv6_route_prefix, p4orch::kSetMulticastGroupId,
+      kMulticastGroupId3, kMetadata1);
+  auto new_route_entry_ipv4 = GenerateP4RouteEntry(
+      gVrfName, swss_ipv4_route_prefix, p4orch::kSetMulticastGroupId,
+      kMulticastGroupId4, kMetadata1);
+  // Create fake multicast group OIDs.
+  AddMulticastGroup(kMulticastGroupId3, kMulticastGroupOid3);
+  AddMulticastGroup(kMulticastGroupId4, kMulticastGroupOid4);
+
+  EXPECT_CALL(mock_sai_ipmc_, set_ipmc_entry_attribute(_, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_THAT(UpdateMulticastRouteEntries(std::vector<P4RouteEntry>{
+                  new_route_entry_ipv6, new_route_entry_ipv4}),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS,
+                                              StatusCode::SWSS_RC_SUCCESS}));
+
+  // Expect entries to be associated with correct multicast group.
+  auto* route_entry_ptr_v6 = GetRouteEntry(route_entry_ipv6.route_entry_key);
+  auto* route_entry_ptr_v4 = GetRouteEntry(route_entry_ipv4.route_entry_key);
+  EXPECT_NE(route_entry_ptr_v6, nullptr);
+  EXPECT_NE(route_entry_ptr_v4, nullptr);
+
+  uint32_t group1_ref_cnt = 777;
+  uint32_t group2_ref_cnt = 777;
+  uint32_t group3_ref_cnt = 777;
+  uint32_t group4_ref_cnt = 777;
+
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroupId1, &group1_ref_cnt));
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroupId2, &group2_ref_cnt));
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroupId3, &group3_ref_cnt));
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroupId4, &group4_ref_cnt));
+  EXPECT_EQ(group1_ref_cnt, 0);
+  EXPECT_EQ(group2_ref_cnt, 0);
+  EXPECT_EQ(group3_ref_cnt, 1);
+  EXPECT_EQ(group4_ref_cnt, 1);
+}
+
+TEST_F(RouteManagerTest, UpdateMulticastRouteEntriesNoChangeSucceeds) {
+  // We eventually want a prefix, not an exact match address.
+  // TODO(b/281706130)
+  auto swss_ipv6_route_prefix = swss::IpPrefix(kIpv6Prefix3);
+  auto route_entry_ipv6 = SetupSetMulticastGroupIdRouteEntry(
+      gVrfName, swss_ipv6_route_prefix, kMulticastGroupId1, kMulticastGroupOid1,
+      kMetadata1);
+  auto swss_ipv4_route_prefix = swss::IpPrefix(kIpv4Prefix4);
+  auto route_entry_ipv4 = SetupSetMulticastGroupIdRouteEntry(
+      gVrfName, swss_ipv4_route_prefix, kMulticastGroupId2, kMulticastGroupOid2,
+      kMetadata1, /*expect_rpf=*/false);
+
+  // Now update those entries, but with no changes.
+  EXPECT_THAT(UpdateMulticastRouteEntries(std::vector<P4RouteEntry>{
+                  route_entry_ipv6, route_entry_ipv4}),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS,
+                                              StatusCode::SWSS_RC_SUCCESS}));
+
+  // Expect entries to be associated with correct multicast group.
+  auto* route_entry_ptr_v6 = GetRouteEntry(route_entry_ipv6.route_entry_key);
+  auto* route_entry_ptr_v4 = GetRouteEntry(route_entry_ipv4.route_entry_key);
+  EXPECT_NE(route_entry_ptr_v6, nullptr);
+  EXPECT_NE(route_entry_ptr_v4, nullptr);
+
+  uint32_t group1_ref_cnt = 777;
+  uint32_t group2_ref_cnt = 777;
+
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroupId1, &group1_ref_cnt));
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroupId2, &group2_ref_cnt));
+  EXPECT_EQ(group1_ref_cnt, 1);
+  EXPECT_EQ(group2_ref_cnt, 1);
+}
+
+TEST_F(RouteManagerTest, UpdateMulticastRouteEntriesActionChangeFails) {
+  // We eventually want a prefix, not an exact match address.
+  // TODO(b/281706130)
+  auto swss_ipv6_route_prefix = swss::IpPrefix(kIpv6Prefix3);
+  auto route_entry_ipv6 = SetupSetMulticastGroupIdRouteEntry(
+      gVrfName, swss_ipv6_route_prefix, kMulticastGroupId1, kMulticastGroupOid1,
+      kMetadata1);
+  auto swss_ipv4_route_prefix = swss::IpPrefix(kIpv4Prefix4);
+  auto route_entry_ipv4 = SetupSetMulticastGroupIdRouteEntry(
+      gVrfName, swss_ipv4_route_prefix, kMulticastGroupId2, kMulticastGroupOid2,
+      kMetadata1, /*expect_rpf=*/false);
+
+  // Now update those entries to point to new multicast groups.
+  auto new_route_entry_ipv6 = GenerateP4RouteEntry(
+      gVrfName, swss_ipv6_route_prefix, p4orch::kDrop, "", kMetadata1);
+  auto new_route_entry_ipv4 = GenerateP4RouteEntry(
+      gVrfName, swss_ipv4_route_prefix, p4orch::kSetMulticastGroupId,
+      kMulticastGroupId4, kMetadata1);
+  // Create fake multicast group OIDs.
+  AddMulticastGroup(kMulticastGroupId4, kMulticastGroupOid4);
+
+  EXPECT_THAT(
+      UpdateMulticastRouteEntries(std::vector<P4RouteEntry>{
+          new_route_entry_ipv6, new_route_entry_ipv4}),
+      ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNIMPLEMENTED,
+                                      StatusCode::SWSS_RC_NOT_EXECUTED}));
+
+  // Expect entries to be associated with first multicast groups.
+  auto* route_entry_ptr_v6 = GetRouteEntry(route_entry_ipv6.route_entry_key);
+  auto* route_entry_ptr_v4 = GetRouteEntry(route_entry_ipv4.route_entry_key);
+  EXPECT_NE(route_entry_ptr_v6, nullptr);
+  EXPECT_NE(route_entry_ptr_v4, nullptr);
+
+  uint32_t group1_ref_cnt = 777;
+  uint32_t group2_ref_cnt = 777;
+  uint32_t group4_ref_cnt = 777;
+
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroupId1, &group1_ref_cnt));
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroupId2, &group2_ref_cnt));
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroupId4, &group4_ref_cnt));
+  EXPECT_EQ(group1_ref_cnt, 1);
+  EXPECT_EQ(group2_ref_cnt, 1);
+  EXPECT_EQ(group4_ref_cnt, 0);
+}
+
+TEST_F(RouteManagerTest, UpdateRouteEntriesActionChangeToMulticastFails) {
+  auto swss_ipv4_route_prefix = swss::IpPrefix(kIpv4Prefix);
+  sai_ip_prefix_t sai_ipv4_route_prefix;
+  copy(sai_ipv4_route_prefix, swss_ipv4_route_prefix);
+  SetupNexthopIdRouteEntry(gVrfName, swss_ipv4_route_prefix, kNexthopId1,
+                           kNexthopOid1, kMetadata1);
+
+  auto new_route_entry = GenerateP4RouteEntry(gVrfName, swss_ipv4_route_prefix,
+                                              p4orch::kSetMulticastGroupId,
+                                              kMulticastGroupId1, kMetadata1);
+
+  // Create artificial multicast group object.
+  AddMulticastGroup(kMulticastGroupId1, kMulticastGroupOid1);
+
+  // Check that we fail to change action to setMulticastGroupId.
+  EXPECT_THAT(
+      UpdateRouteEntries(std::vector<P4RouteEntry>{new_route_entry}),
+      ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNIMPLEMENTED}));
+}
+
+TEST_F(RouteManagerTest, UpdateMulticastRouteEntriesNoMulticastGroupFails) {
+  // We eventually want a prefix, not an exact match address.
+  // TODO(b/281706130)
+  auto swss_ipv6_route_prefix = swss::IpPrefix(kIpv6Prefix3);
+  auto route_entry_ipv6 = SetupSetMulticastGroupIdRouteEntry(
+      gVrfName, swss_ipv6_route_prefix, kMulticastGroupId1, kMulticastGroupOid1,
+      kMetadata1);
+  auto swss_ipv4_route_prefix = swss::IpPrefix(kIpv4Prefix4);
+  auto route_entry_ipv4 = SetupSetMulticastGroupIdRouteEntry(
+      gVrfName, swss_ipv4_route_prefix, kMulticastGroupId2, kMulticastGroupOid2,
+      kMetadata1, /*expect_rpf=*/false);
+
+  // Now update those entries to point to new multicast groups.
+  auto new_route_entry_ipv6 = GenerateP4RouteEntry(
+      gVrfName, swss_ipv6_route_prefix, p4orch::kSetMulticastGroupId,
+      kMulticastGroupId3, kMetadata1);
+  auto new_route_entry_ipv4 = GenerateP4RouteEntry(
+      gVrfName, swss_ipv4_route_prefix, p4orch::kSetMulticastGroupId,
+      kMulticastGroupId4, kMetadata1);
+  // Updated multicast group is missing.
+  AddMulticastGroup(kMulticastGroupId4, kMulticastGroupOid4);
+
+  EXPECT_THAT(
+      UpdateMulticastRouteEntries(std::vector<P4RouteEntry>{
+          new_route_entry_ipv6, new_route_entry_ipv4}),
+      ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_NOT_FOUND,
+                                      StatusCode::SWSS_RC_NOT_EXECUTED}));
+
+  // Expect entries to be associated with first multicast groups.
+  auto* route_entry_ptr_v6 = GetRouteEntry(route_entry_ipv6.route_entry_key);
+  auto* route_entry_ptr_v4 = GetRouteEntry(route_entry_ipv4.route_entry_key);
+  EXPECT_NE(route_entry_ptr_v6, nullptr);
+  EXPECT_NE(route_entry_ptr_v4, nullptr);
+
+  uint32_t group1_ref_cnt = 777;
+  uint32_t group2_ref_cnt = 777;
+  uint32_t group3_ref_cnt = 777;
+  uint32_t group4_ref_cnt = 777;
+
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroupId1, &group1_ref_cnt));
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroupId2, &group2_ref_cnt));
+  EXPECT_FALSE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                          kMulticastGroupId3, &group3_ref_cnt));
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroupId4, &group4_ref_cnt));
+  EXPECT_EQ(group1_ref_cnt, 1);
+  EXPECT_EQ(group2_ref_cnt, 1);
+  EXPECT_EQ(group4_ref_cnt, 0);
+}
+
+TEST_F(RouteManagerTest, UpdateMulticastRouteEntriesSaiFails) {
+  // We eventually want a prefix, not an exact match address.
+  // TODO(b/281706130)
+  auto swss_ipv6_route_prefix = swss::IpPrefix(kIpv6Prefix3);
+  auto route_entry_ipv6 = SetupSetMulticastGroupIdRouteEntry(
+      gVrfName, swss_ipv6_route_prefix, kMulticastGroupId1, kMulticastGroupOid1,
+      kMetadata1);
+  auto swss_ipv4_route_prefix = swss::IpPrefix(kIpv4Prefix4);
+  auto route_entry_ipv4 = SetupSetMulticastGroupIdRouteEntry(
+      gVrfName, swss_ipv4_route_prefix, kMulticastGroupId2, kMulticastGroupOid2,
+      kMetadata1, /*expect_rpf=*/false);
+
+  // Now update those entries to point to new multicast groups.
+  auto new_route_entry_ipv6 = GenerateP4RouteEntry(
+      gVrfName, swss_ipv6_route_prefix, p4orch::kSetMulticastGroupId,
+      kMulticastGroupId3, kMetadata1);
+  auto new_route_entry_ipv4 = GenerateP4RouteEntry(
+      gVrfName, swss_ipv4_route_prefix, p4orch::kSetMulticastGroupId,
+      kMulticastGroupId4, kMetadata1);
+  // Create fake multicast group OIDs.
+  AddMulticastGroup(kMulticastGroupId3, kMulticastGroupOid3);
+  AddMulticastGroup(kMulticastGroupId4, kMulticastGroupOid4);
+
+  EXPECT_CALL(mock_sai_ipmc_, set_ipmc_entry_attribute(_, _))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+  EXPECT_THAT(
+      UpdateMulticastRouteEntries(std::vector<P4RouteEntry>{
+          new_route_entry_ipv6, new_route_entry_ipv4}),
+      ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN,
+                                      StatusCode::SWSS_RC_NOT_EXECUTED}));
+
+  // Expect entries to be associated with first multicast groups.
+  auto* route_entry_ptr_v6 = GetRouteEntry(route_entry_ipv6.route_entry_key);
+  auto* route_entry_ptr_v4 = GetRouteEntry(route_entry_ipv4.route_entry_key);
+  EXPECT_NE(route_entry_ptr_v6, nullptr);
+  EXPECT_NE(route_entry_ptr_v4, nullptr);
+
+  uint32_t group1_ref_cnt = 777;
+  uint32_t group2_ref_cnt = 777;
+  uint32_t group3_ref_cnt = 777;
+  uint32_t group4_ref_cnt = 777;
+
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroupId1, &group1_ref_cnt));
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroupId2, &group2_ref_cnt));
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroupId3, &group3_ref_cnt));
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroupId4, &group4_ref_cnt));
+  EXPECT_EQ(group1_ref_cnt, 1);
+  EXPECT_EQ(group2_ref_cnt, 1);
+  EXPECT_EQ(group3_ref_cnt, 0);
+  EXPECT_EQ(group4_ref_cnt, 0);
+}
+
+TEST_F(RouteManagerTest, UpdateMulticastRouteEntriesNoPreviousEntryFails) {
+  // We eventually want a prefix, not an exact match address.
+  // TODO(b/281706130)
+  // auto swss_ipv6_route_prefix = swss::IpPrefix(kIpv6Prefix);
+  // sai_ip_prefix_t sai_ipv6_route_prefix;
+  // copy(sai_ipv6_route_prefix, swss_ipv6_route_prefix);
+  auto swss_ipv6_route_prefix = swss::IpPrefix(kIpv6Prefix3);
+  auto route_entry_ipv6 = GenerateP4RouteEntry(gVrfName, swss_ipv6_route_prefix,
+                                               p4orch::kSetMulticastGroupId,
+                                               kMulticastGroupId1, kMetadata1);
+  auto swss_ipv4_route_prefix = swss::IpPrefix(kIpv4Prefix4);
+  auto route_entry_ipv4 = GenerateP4RouteEntry(gVrfName, swss_ipv4_route_prefix,
+                                               p4orch::kSetMulticastGroupId,
+                                               kMulticastGroupId2, kMetadata1);
+
+  // Do not create multicast groups or add entries.
+
+  // Now update those entries to point to new multicast groups.
+  auto new_route_entry_ipv6 = GenerateP4RouteEntry(
+      gVrfName, swss_ipv6_route_prefix, p4orch::kSetMulticastGroupId,
+      kMulticastGroupId3, kMetadata1);
+  auto new_route_entry_ipv4 = GenerateP4RouteEntry(
+      gVrfName, swss_ipv4_route_prefix, p4orch::kSetMulticastGroupId,
+      kMulticastGroupId4, kMetadata1);
+  // Create fake multicast group OIDs.
+  AddMulticastGroup(kMulticastGroupId3, kMulticastGroupOid3);
+  AddMulticastGroup(kMulticastGroupId4, kMulticastGroupOid4);
+
+  EXPECT_THAT(
+      UpdateMulticastRouteEntries(std::vector<P4RouteEntry>{
+          new_route_entry_ipv6, new_route_entry_ipv4}),
+      ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_INTERNAL,
+                                      StatusCode::SWSS_RC_NOT_EXECUTED}));
+
+  // Expect entries to still not exist.
+  auto* route_entry_ptr_v6 = GetRouteEntry(route_entry_ipv6.route_entry_key);
+  auto* route_entry_ptr_v4 = GetRouteEntry(route_entry_ipv4.route_entry_key);
+  EXPECT_EQ(route_entry_ptr_v6, nullptr);
+  EXPECT_EQ(route_entry_ptr_v4, nullptr);
+}
+
 TEST_F(RouteManagerTest, DeleteRouteEntryWithSaiErrorShouldFail)
 {
     auto swss_ipv4_route_prefix = swss::IpPrefix(kIpv4Prefix);
@@ -4010,18 +4318,3 @@ TEST_F(RouteManagerTest, CreateSetMulticastGroupIdFailToCreateRpfGroup) {
   auto* route_entry_ptr_v6 = GetRouteEntry(route_entry_ipv6.route_entry_key);
   EXPECT_EQ(route_entry_ptr_v6, nullptr);
 }
-
-// -------- Temporary tests for unimplemented functions -----------------------
-
-TEST_F(RouteManagerTest, NoUpdateMulticastRouteEntries) {
-  auto swss_ipv6_route_prefix = swss::IpPrefix(kIpv6Prefix3);
-  sai_ip_address_t sai_ipv6_address;
-  copy(sai_ipv6_address, swss_ipv6_route_prefix.getIp());
-  auto route_entry_ipv6 = GenerateP4RouteEntry(gVrfName, swss_ipv6_route_prefix,
-                                               p4orch::kSetMulticastGroupId,
-                                               kMulticastGroupId1, kMetadata1);
-  EXPECT_THAT(
-      UpdateMulticastRouteEntries(std::vector<P4RouteEntry>{route_entry_ipv6}),
-      ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNIMPLEMENTED}));
-}
-
