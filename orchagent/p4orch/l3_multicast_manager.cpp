@@ -314,9 +314,95 @@ ReturnCode L3MulticastManager::drainMulticastRouterInterfaceEntries(
 // only.
 ReturnCode L3MulticastManager::drainMulticastReplicationEntries(
     std::deque<swss::KeyOpFieldsValuesTuple>& replication_tuples) {
-  return ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
-         << "L3MulticastManager::drainMulticastReplicationEntries is not "
-         << "implemented yet";
+  SWSS_LOG_ENTER();
+  ReturnCode status;
+  std::vector<P4MulticastReplicationEntry> multicast_replication_entry_list;
+  std::deque<swss::KeyOpFieldsValuesTuple> tuple_list;
+
+  std::string prev_op;
+  bool prev_update = false;
+
+  while (!replication_tuples.empty()) {
+    auto key_op_fvs_tuple = replication_tuples.front();
+    replication_tuples.pop_front();
+    std::string table_name;
+    std::string key;
+    parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &key);
+    const std::vector<swss::FieldValueTuple>& attributes =
+        kfvFieldsValues(key_op_fvs_tuple);
+
+    // Form entry object
+    auto replication_entry_or =
+        deserializeMulticastReplicationEntry(key, attributes);
+
+    if (!replication_entry_or.ok()) {
+      status = replication_entry_or.status();
+      SWSS_LOG_ERROR("Unable to deserialize APP DB entry with key %s: %s",
+                     QuotedVar(table_name + ":" + key).c_str(),
+                     status.message().c_str());
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple), status,
+                           /*replace=*/true);
+      break;
+    }
+    auto& replication_entry = *replication_entry_or;
+
+    // Validate entry
+    const std::string& operation = kfvOp(key_op_fvs_tuple);
+    status = validateMulticastReplicationEntry(replication_entry, operation);
+    if (!status.ok()) {
+      SWSS_LOG_ERROR(
+          "Validation failed for replication APP DB entry with key  %s: %s",
+          QuotedVar(table_name + ":" + key).c_str(), status.message().c_str());
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple), status,
+                           /*replace=*/true);
+      break;
+    }
+
+    // Now, start processing batch of entries.
+    auto* replication_entry_ptr = getMulticastReplicationEntry(
+        replication_entry.multicast_replication_key);
+    bool update = replication_entry_ptr != nullptr;
+
+    if (prev_op == "") {
+      prev_op = operation;
+      prev_update = update;
+    }
+    // Process the entries if the operation type changes.
+    if (operation != prev_op || update != prev_update) {
+      status = processMulticastReplicationEntries(
+          multicast_replication_entry_list, tuple_list, prev_op, prev_update);
+      multicast_replication_entry_list.clear();
+      tuple_list.clear();
+      prev_op = operation;
+      prev_update = update;
+    }
+
+    if (!status.ok()) {
+      // Return SWSS_RC_NOT_EXECUTED if failure has occured.
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple),
+                           ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED),
+                           /*replace=*/true);
+      break;
+    } else {
+      multicast_replication_entry_list.push_back(replication_entry);
+      tuple_list.push_back(key_op_fvs_tuple);
+    }
+  }  // while
+
+  // Process any pending entries.
+  if (!multicast_replication_entry_list.empty()) {
+    auto rc = processMulticastReplicationEntries(
+        multicast_replication_entry_list, tuple_list, prev_op, prev_update);
+    if (!rc.ok()) {
+      status = rc;
+    }
+  }
+
+  drainMgmtWithNotExecuted(replication_tuples, m_publisher);
+  return status;
 }
 
 ReturnCodeOr<P4MulticastRouterInterfaceEntry>
@@ -762,6 +848,36 @@ ReturnCode L3MulticastManager::processMulticastRouterInterfaceEntries(
     }
   } else {
     statuses = deleteMulticastRouterInterfaceEntries(entries);
+  }
+  // Check status of each entry.
+  for (size_t i = 0; i < entries.size(); ++i) {
+    m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(tuple_list[i]),
+                         kfvFieldsValues(tuple_list[i]), statuses[i],
+                         /*replace=*/true);
+    if (status.ok() && !statuses[i].ok()) {
+      status = statuses[i];
+    }
+  }
+  return status;
+}
+
+ReturnCode L3MulticastManager::processMulticastReplicationEntries(
+    std::vector<P4MulticastReplicationEntry>& entries,
+    const std::deque<swss::KeyOpFieldsValuesTuple>& tuple_list,
+    const std::string& op, bool update) {
+  SWSS_LOG_ENTER();
+  ReturnCode status;
+
+  std::vector<ReturnCode> statuses;
+  // In syncd, bulk SAI calls use mode SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR.
+  if (op == SET_COMMAND) {
+    if (!update) {
+      statuses = addMulticastReplicationEntries(entries);
+    } else {
+      statuses = updateMulticastReplicationEntries(entries);
+    }
+  } else {
+    statuses = deleteMulticastReplicationEntries(entries);
   }
   // Check status of each entry.
   for (size_t i = 0; i < entries.size(); ++i) {

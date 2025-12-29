@@ -153,7 +153,6 @@ class L3MulticastManager : public ObjectManagerInterface {
       const std::deque<swss::KeyOpFieldsValuesTuple>& tuple_list,
       const std::string& op, bool update);
 
-  /*
   // Processes a list of entries of the same operation type for the replication
   // multicast table.
   // Returns an overall status code.
@@ -162,7 +161,6 @@ class L3MulticastManager : public ObjectManagerInterface {
       std::vector<P4MulticastReplicationEntry>& entries,
       const std::deque<swss::KeyOpFieldsValuesTuple>& tuple_list,
       const std::string& op, bool update);
-  */
 
   // Wrapper around SAI setup and call, for easy mocking.
   ReturnCode createRouterInterface(const std::string& rif_key,
