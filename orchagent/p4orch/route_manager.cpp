@@ -83,7 +83,7 @@ sai_object_id_t getNexthopOid(const P4RouteEntry &route_entry, const P4OidMapper
         if (!mapper.getOID(SAI_OBJECT_TYPE_NEXT_HOP, nexthop_key, &oid))
         {
             std::stringstream msg;
-            msg << "Nexthop " << QuotedVar(route_entry.nexthop_id) << " does not exist";
+            msg << "Nexthop " << QuotedVar(route_entry.wcmp_group) << " does not exist";
             SWSS_LOG_ERROR("%s", msg.str().c_str());
             SWSS_RAISE_CRITICAL_STATE(msg.str());
             return oid;
@@ -444,6 +444,9 @@ ReturnCodeOr<P4RouteEntry> RouteManager::deserializeRouteEntry(const std::string
         {
             route_entry.route_metadata = value;
         }
+    else if (field == prependParamField(p4orch::kMulticastGroupId)) {
+      route_entry.multicast_group_id = value;
+}
         else if (field != p4orch::kControllerMetadata)
         {
             return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
@@ -849,14 +852,41 @@ std::vector<ReturnCode> RouteManager::updateMulticastRouteEntries(
       << "RouteManager::updateMulticastRouteEntries is not implemented yet");
   return rv;
 }
+
 std::vector<ReturnCode> RouteManager::deleteMulticastRouteEntries(
     const std::vector<P4RouteEntry>& route_entries) {
   SWSS_LOG_ENTER();
-  std::vector<ReturnCode> rv;
-  rv.push_back(
-      ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
-      << "RouteManager::deleteMulticastRouteEntries is not implemented yet");
-  return rv;
+  std::vector<ReturnCode> statuses(route_entries.size());
+
+  for (size_t i = 0; i < route_entries.size(); ++i) {
+    const auto& route_entry = route_entries[i];
+
+    auto* route_entry_ptr = getRouteEntry(route_entry.route_entry_key);
+    assert(route_entry_ptr->action == p4orch::kSetMulticastGroupId);
+    assert(!route_entry_ptr->multicast_group_id.empty());
+
+    // Remove the entry
+    statuses[i] = sai_ipmc_api->remove_ipmc_entry(
+        &route_entry_ptr->sai_ipmc_entry);
+    if (statuses[i] != SAI_STATUS_SUCCESS) {
+      for (size_t j = i + 1; j < route_entries.size(); ++j) {
+        statuses[j] = ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
+      }
+      break;
+    }
+
+    // Bookkeeping
+    m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                    route_entry.multicast_group_id);
+    m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_IPMC_ENTRY,
+                            route_entry.route_entry_key);
+    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPMC_ENTRY);
+    m_vrfOrch->decreaseVrfRefCount(route_entry.vrf_id);
+    m_routeTable.erase(route_entry.route_entry_key);
+
+    statuses[i] = ReturnCode();
+  }
+  return statuses;
 }
 
 void RouteManager::updateRouteEntriesMeta(const P4RouteEntry &old_entry, const P4RouteEntry &new_entry)
