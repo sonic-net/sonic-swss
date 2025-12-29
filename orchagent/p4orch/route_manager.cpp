@@ -863,11 +863,85 @@ std::vector<ReturnCode> RouteManager::createMulticastRouteEntries(
 std::vector<ReturnCode> RouteManager::updateMulticastRouteEntries(
     const std::vector<P4RouteEntry>& route_entries) {
   SWSS_LOG_ENTER();
-  std::vector<ReturnCode> rv;
-  rv.push_back(
-      ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
-      << "RouteManager::updateMulticastRouteEntries is not implemented yet");
-  return rv;
+  std::vector<ReturnCode> statuses(route_entries.size());
+
+  for (size_t i = 0; i < route_entries.size(); ++i) {
+    const auto& route_entry = route_entries[i];
+    auto* old_route_entry_ptr = getRouteEntry(route_entry.route_entry_key);
+
+    if (old_route_entry_ptr == nullptr) {
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
+                    << "Unable to find route entry to update "
+                    << QuotedVar(route_entry.route_entry_key);
+      for (size_t j = i + 1; j < route_entries.size(); ++j) {
+        statuses[j] = ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
+      }
+      break;
+    }
+    // No change means nothing to do.
+    if (old_route_entry_ptr->action == route_entry.action &&
+        old_route_entry_ptr->multicast_group_id ==
+            route_entry.multicast_group_id) {
+      statuses[i] = ReturnCode()
+                    << "Entry " << QuotedVar(route_entry.route_entry_key)
+                    << " is already assigned to multicast_group_id "
+                    << QuotedVar(route_entry.multicast_group_id);
+      continue;
+    }
+    // Do not support switching to a different action.  Do we need to?
+    if (old_route_entry_ptr->action != route_entry.action) {
+      statuses[i] =
+          ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
+          << "Changing from action " << QuotedVar(old_route_entry_ptr->action)
+          << " to action " << QuotedVar(route_entry.action) << " for entry "
+          << QuotedVar(route_entry.route_entry_key) << " is not supported.";
+      for (size_t j = i + 1; j < route_entries.size(); ++j) {
+        statuses[j] = ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
+      }
+      break;
+    }
+
+    // Fetch the multicast group OID.
+    sai_object_id_t group_oid = SAI_NULL_OBJECT_ID;
+    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_IPMC_GROUP,
+                               route_entry.multicast_group_id, &group_oid)) {
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                    << "Unknown multicast group ID "
+                    << QuotedVar(route_entry.multicast_group_id);
+      for (size_t j = i + 1; j < route_entries.size(); ++j) {
+        statuses[j] = ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
+      }
+      break;
+    }
+
+    // Update the multicast group OID attribute.
+    sai_attribute_t update_attr;
+    update_attr.id = SAI_IPMC_ENTRY_ATTR_OUTPUT_GROUP_ID;
+    update_attr.value.oid = group_oid;
+    statuses[i] = sai_ipmc_api->set_ipmc_entry_attribute(
+        &old_route_entry_ptr->sai_ipmc_entry, &update_attr);
+    if (statuses[i] != SAI_STATUS_SUCCESS) {
+      for (size_t j = i + 1; j < route_entries.size(); ++j) {
+        statuses[j] = ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
+      }
+      break;
+    }
+
+    // TODO (b/286443840): Add with counter support.
+    // attr.id = SAI_IPMC_ENTRY_ATTR_COUNTER_ID;
+    // attr.value.oid = group_counter_oid;
+
+    // Bookkeeping
+    m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                    old_route_entry_ptr->multicast_group_id);
+    m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                    route_entry.multicast_group_id);
+    // We update the old entry object rather than updating maps.
+    old_route_entry_ptr->multicast_group_id = route_entry.multicast_group_id;
+
+    statuses[i] = ReturnCode();
+  }
+  return statuses;
 }
 
 std::vector<ReturnCode> RouteManager::deleteMulticastRouteEntries(
@@ -1014,6 +1088,16 @@ std::vector<ReturnCode> RouteManager::updateRouteEntries(const std::vector<P4Rou
         {
             statuses[i] = ReturnCode();
             continue;
+        }
+        // Cannot switch to multicast action for now.  Do we need to?
+        if (route_entry_ptr->action != route_entry.action &&
+            route_entry.action == p4orch::kSetMulticastGroupId) {
+          statuses[i] =
+              ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
+              << "Changing from action " << QuotedVar(route_entry_ptr->action)
+              << " to action " << QuotedVar(route_entry.action) << " for entry "
+              << QuotedVar(route_entry.route_entry_key) << " is not supported.";
+          continue;
         }
         updaters[i] = std::unique_ptr<RouteUpdater>(new RouteUpdater(*route_entry_ptr, new_entry, m_p4OidMapper));
         indice[size++] = i;
