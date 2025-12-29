@@ -562,8 +562,39 @@ std::string L3MulticastManager::verifyMulticastRouterInterfaceState(
 std::string L3MulticastManager::verifyMulticastReplicationState(
     const std::string& key,
     const std::vector<swss::FieldValueTuple>& tuple) {
-  return "L3MulticastManager::verifyMulticastReplicationState is not "
-         "implemented";
+  auto app_db_entry_or = deserializeMulticastReplicationEntry(key, tuple);
+  if (!app_db_entry_or.ok()) {
+    ReturnCode status = app_db_entry_or.status();
+    std::stringstream msg;
+    msg << "Unable to deserialize key " << QuotedVar(key) << ": "
+        << status.message();
+    return msg.str();
+  }
+  auto& app_db_entry = *app_db_entry_or;
+
+  const std::string replication_entry_key =
+      KeyGenerator::generateMulticastReplicationKey(
+          app_db_entry.multicast_group_id, app_db_entry.multicast_replica_port,
+          app_db_entry.multicast_replica_instance);
+  auto* replication_entry_ptr =
+      getMulticastReplicationEntry(replication_entry_key);
+  if (replication_entry_ptr == nullptr) {
+    std::stringstream msg;
+    msg << "No entry found with key " << QuotedVar(key);
+    return msg.str();
+  }
+
+  std::string cache_result =
+      verifyMulticastReplicationStateCache(app_db_entry, replication_entry_ptr);
+  std::string asic_db_result =
+      verifyMulticastReplicationStateAsicDb(replication_entry_ptr);
+  if (cache_result.empty()) {
+    return asic_db_result;
+  }
+  if (asic_db_result.empty()) {
+    return cache_result;
+  }
+  return cache_result + "; " + asic_db_result;
 }
 
 ReturnCode L3MulticastManager::validateMulticastRouterInterfaceEntry(
@@ -1703,14 +1734,128 @@ std::string L3MulticastManager::verifyMulticastRouterInterfaceStateAsicDb(
 std::string L3MulticastManager::verifyMulticastReplicationStateCache(
     const P4MulticastReplicationEntry& app_db_entry,
     const P4MulticastReplicationEntry* multicast_replication_entry) {
-  return "L3MulticastManager::verifyMulticastReplicationStateCache is not "
-         "implemented";
+  const std::string replication_entry_key =
+      KeyGenerator::generateMulticastReplicationKey(
+          app_db_entry.multicast_group_id, app_db_entry.multicast_replica_port,
+          app_db_entry.multicast_replica_instance);
+
+  ReturnCode status =
+      validateMulticastReplicationEntry(app_db_entry, SET_COMMAND);
+  if (!status.ok()) {
+    std::stringstream msg;
+    msg << "Validation failed for multicast replication DB entry with key "
+        << QuotedVar(replication_entry_key) << ": " << status.message();
+    return msg.str();
+  }
+  if (multicast_replication_entry->multicast_replication_key !=
+      app_db_entry.multicast_replication_key) {
+    std::stringstream msg;
+    msg << "Multicast replication entry key "
+        << QuotedVar(app_db_entry.multicast_replication_key)
+        << " does not match internal cache "
+        << QuotedVar(multicast_replication_entry->multicast_replication_key)
+        << " in l3 multicast manager for replication entry.";
+    return msg.str();
+  }
+  if (multicast_replication_entry->multicast_group_id !=
+      app_db_entry.multicast_group_id) {
+    std::stringstream msg;
+    msg << "Multicast group ID " << QuotedVar(app_db_entry.multicast_group_id)
+        << " does not match internal cache "
+        << QuotedVar(multicast_replication_entry->multicast_group_id)
+        << " in l3 multicast manager for replication entry.";
+    return msg.str();
+  }
+  if (multicast_replication_entry->multicast_replica_port !=
+      app_db_entry.multicast_replica_port) {
+    std::stringstream msg;
+    msg << "Output port name " << QuotedVar(app_db_entry.multicast_replica_port)
+        << " does not match internal cache "
+        << QuotedVar(multicast_replication_entry->multicast_replica_port)
+        << " in l3 multicast manager for replication entry.";
+    return msg.str();
+  }
+  if (multicast_replication_entry->multicast_replica_instance !=
+      app_db_entry.multicast_replica_instance) {
+    std::stringstream msg;
+    msg << "Egress instance "
+        << QuotedVar(app_db_entry.multicast_replica_instance)
+        << " does not match internal cache "
+        << QuotedVar(multicast_replication_entry->multicast_replica_instance)
+        << " in l3 multicast manager for replication entry.";
+    return msg.str();
+  }
+  if (multicast_replication_entry->multicast_metadata !=
+      app_db_entry.multicast_metadata) {
+    std::stringstream msg;
+    msg << "Multicast metadata " << QuotedVar(app_db_entry.multicast_metadata)
+        << " does not match internal cache "
+        << QuotedVar(multicast_replication_entry->multicast_metadata)
+        << " in l3 multicast manager for replication entry.";
+    return msg.str();
+  }
+  std::string group_msg = m_p4OidMapper->verifyOIDMapping(
+      SAI_OBJECT_TYPE_IPMC_GROUP,
+      multicast_replication_entry->multicast_group_id,
+      multicast_replication_entry->multicast_group_oid);
+  if (!group_msg.empty()) {
+    return group_msg;
+  }
+  return m_p4OidMapper->verifyOIDMapping(
+      SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
+      multicast_replication_entry->multicast_replication_key,
+      multicast_replication_entry->multicast_group_member_oid);
 }
 
 std::string L3MulticastManager::verifyMulticastReplicationStateAsicDb(
     const P4MulticastReplicationEntry* multicast_replication_entry) {
-  return "L3MulticastManager::verifyMulticastReplicationStateAsicDb is not "
-         "implemented";
+  // Confirm have RIF.
+  sai_object_id_t rif_oid = getRifOid(multicast_replication_entry);
+  if (rif_oid == SAI_NULL_OBJECT_ID) {
+    std::stringstream msg;
+    msg << "Unable to find RIF associated with multicast entry "
+        << QuotedVar(multicast_replication_entry->multicast_replication_key);
+    return msg.str();
+  }
+
+  // Confirm group settings.
+  std::vector<sai_attribute_t> group_attrs;  // no required attributes
+  std::vector<swss::FieldValueTuple> exp =
+      saimeta::SaiAttributeList::serialize_attr_list(
+          SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER, (uint32_t)group_attrs.size(),
+          group_attrs.data(), /*countOnly=*/false);
+
+  swss::DBConnector db("ASIC_DB", 0);
+  swss::Table table(&db, "ASIC_STATE");
+  std::string key =
+      sai_serialize_object_type(SAI_OBJECT_TYPE_IPMC_GROUP) + ":" +
+      sai_serialize_object_id(multicast_replication_entry->multicast_group_oid);
+  std::vector<swss::FieldValueTuple> values;
+  if (!table.get(key, values)) {
+    return std::string("ASIC DB key not found ") + key;
+  }
+  std::string group_msg =
+      verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
+                  /*allow_unknown=*/false);
+  if (!group_msg.empty()) {
+    return group_msg;
+  }
+
+  // Confirm group member settings.
+  auto member_attrs = prepareMulticastGroupMemberSaiAttrs(
+      *multicast_replication_entry, rif_oid);
+  exp = saimeta::SaiAttributeList::serialize_attr_list(
+      SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER, (uint32_t)member_attrs.size(),
+      member_attrs.data(), /*countOnly=*/false);
+  key = sai_serialize_object_type(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER) + ":" +
+        sai_serialize_object_id(
+            multicast_replication_entry->multicast_group_member_oid);
+  values.clear();
+  if (!table.get(key, values)) {
+    return std::string("ASIC DB key not found ") + key;
+  }
+  return verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
+                     /*allow_unknown=*/false);
 }
 
 P4MulticastRouterInterfaceEntry*
