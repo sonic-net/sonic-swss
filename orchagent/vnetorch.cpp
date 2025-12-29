@@ -1245,63 +1245,71 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         }
         bool route_updated = false;
         bool priority_route_updated = false;
-        if (it_route != syncd_tunnel_routes_[vnet].end() &&
-            ((monitoring == "" && it_route->second.nhg_key != nexthops) ||
-            ((monitoring == VNET_MONITORING_TYPE_CUSTOM || monitoring == VNET_MONITORING_TYPE_CUSTOM_BFD) && (it_route->second.primary != nexthops || it_route->second.secondary != nexthops_secondary))))
+        bool custom_monitor_ep_updated = false;
+        if (it_route != syncd_tunnel_routes_[vnet].end())
         {
-            route_updated = true;
-            NextHopGroupKey nhg = it_route->second.nhg_key;
-            if (monitoring == VNET_MONITORING_TYPE_CUSTOM || monitoring == VNET_MONITORING_TYPE_CUSTOM_BFD)
+            if ((monitoring == "" && it_route->second.nhg_key != nexthops) ||
+                ((monitoring == VNET_MONITORING_TYPE_CUSTOM || monitoring == VNET_MONITORING_TYPE_CUSTOM_BFD) &&
+                 (it_route->second.primary != nexthops || it_route->second.secondary != nexthops_secondary)))
             {
-                // if the previously active NHG is same as the newly created active NHG.case of primary secondary swap or
-                //when primary is active and secondary is changed or vice versa. In these cases we dont remove the NHG
-                // but only remove the monitors for the set which has changed.
-                if (it_route->second.primary != nexthops)
+                route_updated = true;
+                NextHopGroupKey nhg = it_route->second.nhg_key;
+                if (monitoring == VNET_MONITORING_TYPE_CUSTOM || monitoring == VNET_MONITORING_TYPE_CUSTOM_BFD)
                 {
-                    delEndpointMonitor(vnet, it_route->second.primary, ipPrefix);
-                }
-                if (it_route->second.secondary != nexthops_secondary)
-                {
-                    delEndpointMonitor(vnet, it_route->second.secondary, ipPrefix);
-                }
-                if (monitor_info_[vnet][ipPrefix].empty())
-                {
-                    monitor_info_[vnet].erase(ipPrefix);
-                }
-                priority_route_updated = true;
-            }
-            else
-            {
-                // In case of updating an existing route, decrease the reference count for the previous nexthop group
-                if (--syncd_nexthop_groups_[vnet][nhg].ref_count == 0)
-                {
-                    if (nhg.getSize() > 1)
+                    // if the previously active NHG is same as the newly created active NHG.case of primary secondary swap or
+                    //when primary is active and secondary is changed or vice versa. In these cases we dont remove the NHG
+                    // but only remove the monitors for the set which has changed.
+                    if (it_route->second.primary != nexthops)
                     {
-                        removeNextHopGroup(vnet, nhg, vrf_obj);
+                        delEndpointMonitor(vnet, it_route->second.primary, ipPrefix);
                     }
-                    else
+                    if (it_route->second.secondary != nexthops_secondary)
                     {
-                        syncd_nexthop_groups_[vnet].erase(nhg);
-                        if(nhg.getSize() == 1)
-                        {
-                            NextHopKey nexthop = *nhg.getNextHops().begin();
-                            if (!isLocalEndpoint(vnet, nexthop.ip_address))
-                            {
-                                vrf_obj->removeTunnelNextHop(nexthop);
-                            }
-                        }
+                        delEndpointMonitor(vnet, it_route->second.secondary, ipPrefix);
                     }
-                    if (monitoring != VNET_MONITORING_TYPE_CUSTOM && monitoring != VNET_MONITORING_TYPE_CUSTOM_BFD)
+                    if (monitor_info_[vnet][ipPrefix].empty())
                     {
-                        delEndpointMonitor(vnet, nhg, ipPrefix);
+                        monitor_info_[vnet].erase(ipPrefix);
                     }
+                    priority_route_updated = true;
                 }
                 else
                 {
-                    syncd_nexthop_groups_[vnet][nhg].tunnel_routes.erase(ipPrefix);
+                    // In case of updating an existing route, decrease the reference count for the previous nexthop group
+                    if (--syncd_nexthop_groups_[vnet][nhg].ref_count == 0)
+                    {
+                        if (nhg.getSize() > 1)
+                        {
+                            removeNextHopGroup(vnet, nhg, vrf_obj);
+                        }
+                        else
+                        {
+                            syncd_nexthop_groups_[vnet].erase(nhg);
+                            if(nhg.getSize() == 1)
+                            {
+                                NextHopKey nexthop = *nhg.getNextHops().begin();
+                                if (!isLocalEndpoint(vnet, nexthop.ip_address))
+                                {
+                                    vrf_obj->removeTunnelNextHop(nexthop);
+                                }
+                            }
+                        }
+                        if (monitoring != VNET_MONITORING_TYPE_CUSTOM && monitoring != VNET_MONITORING_TYPE_CUSTOM_BFD)
+                        {
+                            delEndpointMonitor(vnet, nhg, ipPrefix);
+                        }
+                    }
+                    else
+                    {
+                        syncd_nexthop_groups_[vnet][nhg].tunnel_routes.erase(ipPrefix);
+                    }
+                    vrf_obj->removeRoute(ipPrefix);
+                    vrf_obj->removeProfile(ipPrefix);
                 }
-                vrf_obj->removeRoute(ipPrefix);
-                vrf_obj->removeProfile(ipPrefix);
+            }
+            else if (isCustomMonitorEndpointUpdated(vnet, ipPrefix, monitors))
+            {
+                custom_monitor_ep_updated = true;
             }
         }
         if (!profile.empty())
@@ -1318,7 +1326,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             syncd_tunnel_routes_[vnet][ipPrefix] = tunnel_route_entry;
             syncd_nexthop_groups_[vnet][active_nhg].ref_count++;
 
-            if (priority_route_updated)
+            if (priority_route_updated || custom_monitor_ep_updated)
             {
                 MonitorUpdate update;
                 update.monitoring_type = monitoring;
@@ -3333,6 +3341,49 @@ bool VNetRouteOrch::isPartiallyLocal(const std::vector<swss::IpAddress>& ip_list
         });
 
     return !(all_true || all_false);
+}
+
+bool VNetRouteOrch::isCustomMonitorEndpointUpdated(const string& vnet, IpPrefix& ipPrefix,
+                                             const std::map<NextHopKey, swss::IpAddress>& monitors)
+{
+    SWSS_LOG_ENTER();
+
+    if (monitor_info_.find(vnet) == monitor_info_.end() ||
+    monitor_info_[vnet].find(ipPrefix) == monitor_info_[vnet].end())
+    {
+        return false;
+    }
+
+    // If the nh endpoint exists in the monitor_info map but the monitor ip is different, then return true.
+    // Note that the key of monitor_info is monitoring endpoint ip address, while monitors is nexthop key
+    // to monitor endpoint ip mapping. 
+    bool monitor_endpoint_updated = false;
+    for (auto it = monitor_info_[vnet][ipPrefix].begin(); it != monitor_info_[vnet][ipPrefix].end(); it++)
+    {
+        if (it->second.monitoring_type != VNET_MONITORING_TYPE_CUSTOM &&
+            it->second.monitoring_type != VNET_MONITORING_TYPE_CUSTOM_BFD)
+        {
+            continue;
+        }
+
+        if (monitors.find(it->second.endpoint) != monitors.end() &&
+            it->first != monitors.at(it->second.endpoint))
+        {
+            monitor_endpoint_updated = true;
+
+            SWSS_LOG_INFO("Custom monitor endpoint updated for vnet %s, prefix %s, old monitor %s, new monitor %s",
+                          vnet.c_str(), ipPrefix.to_string().c_str(),
+                          it->first.to_string().c_str(),
+                          monitors.at(it->second.endpoint).to_string().c_str());
+
+            if (--monitor_info_[vnet][ipPrefix][it->first].ref_count == 0)
+            {
+                removeMonitoringSession(vnet, it->second.endpoint, it->first, ipPrefix);
+            }
+        }
+    }
+
+    return monitor_endpoint_updated;
 }
 
 
