@@ -34,42 +34,55 @@ extern size_t gMaxBulkSize;
 namespace
 {
 
-ReturnCode checkNextHopAndWcmpGroupAndRouteMetadataExistence(bool expected_next_hop_existence,
-                                                             bool expected_wcmp_group_existence,
-                                                             bool expected_route_metadata_existence,
-                                                             const P4RouteEntry &route_entry)
-{
-    if (route_entry.nexthop_id.empty() && expected_next_hop_existence)
-    {
-        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-               << "Empty nexthop_id for route with " << route_entry.action << " action";
-    }
-    if (!route_entry.nexthop_id.empty() && !expected_next_hop_existence)
-    {
-        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-               << "Non-empty nexthop_id for route with " << route_entry.action << " action";
-    }
-    if (route_entry.wcmp_group.empty() && expected_wcmp_group_existence)
-    {
-        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-               << "Empty wcmp_group_id for route with " << route_entry.action << " action";
-    }
-    if (!route_entry.wcmp_group.empty() && !expected_wcmp_group_existence)
-    {
-        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-               << "Non-empty wcmp_group_id for route with " << route_entry.action << " action";
-    }
-    if (route_entry.route_metadata.empty() && expected_route_metadata_existence)
-    {
-        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-               << "Empty route_metadata for route with " << route_entry.action << " action";
-    }
-    if (!route_entry.route_metadata.empty() && !expected_route_metadata_existence)
-    {
-        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-               << "Non-empty route_metadata for route with " << route_entry.action << " action";
-    }
-    return ReturnCode();
+ReturnCode checkNextHopAndWcmpGroupAndRouteMetadataExistence(
+    bool expected_next_hop_existence, bool expected_wcmp_group_existence,
+    bool expected_route_metadata_existence,
+    bool expected_multicast_group_id_existence,
+    const P4RouteEntry& route_entry) {
+  if (route_entry.nexthop_id.empty() && expected_next_hop_existence) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Empty nexthop_id for route with " << route_entry.action
+           << " action";
+  }
+  if (!route_entry.nexthop_id.empty() && !expected_next_hop_existence) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Non-empty nexthop_id for route with " << route_entry.action
+           << " action";
+  }
+  if (route_entry.wcmp_group.empty() && expected_wcmp_group_existence) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Empty wcmp_group_id for route with " << route_entry.action
+           << " action";
+  }
+  if (!route_entry.wcmp_group.empty() && !expected_wcmp_group_existence) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Non-empty wcmp_group_id for route with " << route_entry.action
+           << " action";
+  }
+  if (route_entry.route_metadata.empty() && expected_route_metadata_existence) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Empty route_metadata for route with " << route_entry.action
+           << " action";
+  }
+  if (!route_entry.route_metadata.empty() &&
+      !expected_route_metadata_existence) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Non-empty route_metadata for route with " << route_entry.action
+           << " action";
+  }
+  if (route_entry.multicast_group_id.empty() &&
+      expected_multicast_group_id_existence) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Empty multicast_group_id for route with " << route_entry.action
+           << " action";
+  }
+  if (!route_entry.multicast_group_id.empty() &&
+      !expected_multicast_group_id_existence) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Non-empty multicast_group_id for route with "
+           << route_entry.action << " action";
+  }
+  return ReturnCode();
 }
 
 // Returns the nexthop OID of the given entry.
@@ -493,7 +506,16 @@ ReturnCode RouteManager::validateRouteEntry(const P4RouteEntry &route_entry, con
     {
         return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND) << "No VRF found with name " << QuotedVar(route_entry.vrf_id);
     }
-
+    if (!route_entry.multicast_group_id.empty()) {
+      if (!m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                    route_entry.multicast_group_id)) {
+        return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+               << "No multicast group ID found for "
+               << QuotedVar(route_entry.multicast_group_id);
+      }
+      // There is no OID to check, since there is no OID associated with IPMC
+      // entries.
+    }
     if (operation == SET_COMMAND)
     {
         return validateSetRouteEntry(route_entry);
@@ -508,7 +530,14 @@ ReturnCode RouteManager::validateRouteEntry(const P4RouteEntry &route_entry, con
 ReturnCode RouteManager::validateSetRouteEntry(const P4RouteEntry &route_entry)
 {
     auto *route_entry_ptr = getRouteEntry(route_entry.route_entry_key);
-    bool exist_in_mapper = m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_ROUTE_ENTRY, route_entry.route_entry_key);
+    bool exist_in_mapper = false;
+    if (route_entry.multicast_group_id.empty()) {
+      exist_in_mapper = m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_ROUTE_ENTRY,
+                                                 route_entry.route_entry_key);
+    } else {
+      exist_in_mapper = m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_IPMC_ENTRY,
+                                                 route_entry.route_entry_key);
+    }
     if (route_entry_ptr == nullptr && exist_in_mapper)
     {
         return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND) << "Route entry does not exist in manager but exists in the "
@@ -531,49 +560,60 @@ ReturnCode RouteManager::validateSetRouteEntry(const P4RouteEntry &route_entry)
     }
     if (action == p4orch::kSetNexthopId)
     {
-        RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
-            /*expected_next_hop_existence=*/true,
-            /*expected_wcmp_group_existence=*/false,
-            /*expected_route_metadata_existence=*/false, route_entry));
+      RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
+          /*expected_next_hop_existence=*/true,
+          /*expected_wcmp_group_existence=*/false,
+          /*expected_route_metadata_existence=*/false,
+          /*expected_multicast_group_id_existence=*/false, route_entry));
     }
     else if (action == p4orch::kSetWcmpGroupId)
     {
-        RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
-            /*expected_next_hop_existence=*/false,
-            /*expected_wcmp_group_existence=*/true,
-            /*expected_route_metadata_existence=*/false, route_entry));
+      RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
+          /*expected_next_hop_existence=*/false,
+          /*expected_wcmp_group_existence=*/true,
+          /*expected_route_metadata_existence=*/false,
+          /*expected_multicast_group_id_existence=*/false, route_entry));
     }
     else if (action == p4orch::kSetNexthopIdAndMetadata)
     {
-        RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
-            /*expected_next_hop_existence=*/true,
-            /*expected_wcmp_group_existence=*/false,
-            /*expected_route_metadata_existence=*/true, route_entry));
+      RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
+          /*expected_next_hop_existence=*/true,
+          /*expected_wcmp_group_existence=*/false,
+          /*expected_route_metadata_existence=*/true,
+          /*expected_multicast_group_id_existence=*/false, route_entry));
     }
     else if (action == p4orch::kSetWcmpGroupIdAndMetadata)
     {
-        RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
-            /*expected_next_hop_existence=*/false,
-            /*expected_wcmp_group_existence=*/true,
-            /*expected_route_metadata_existence=*/true, route_entry));
+      RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
+          /*expected_next_hop_existence=*/false,
+          /*expected_wcmp_group_existence=*/true,
+          /*expected_route_metadata_existence=*/true,
+          /*expected_multicast_group_id_existence=*/false, route_entry));
     }
     else if (action == p4orch::kDrop || action == p4orch::kTrap)
     {
-        RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
-            /*expected_next_hop_existence=*/false,
-            /*expected_wcmp_group_existence=*/false,
-            /*expected_route_metadata_existence=*/false, route_entry));
+      RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
+          /*expected_next_hop_existence=*/false,
+          /*expected_wcmp_group_existence=*/false,
+          /*expected_route_metadata_existence=*/false,
+          /*expected_multicast_group_id_existence=*/false, route_entry));
     }
     else if (action == p4orch::kSetMetadataAndDrop)
     {
-        RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
-            /*expected_next_hop_existence=*/false,
-            /*expected_wcmp_group_existence=*/false,
-            /*expected_route_metadata_existence=*/true, route_entry));
-    }
-    else
-    {
-        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Invalid action " << QuotedVar(action);
+      RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
+          /*expected_next_hop_existence=*/false,
+          /*expected_wcmp_group_existence=*/false,
+          /*expected_route_metadata_existence=*/true,
+          /*expected_multicast_group_id_existence=*/false, route_entry));
+    } else if (action == p4orch::kSetMulticastGroupId) {
+      RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
+          /*expected_next_hop_existence=*/false,
+          /*expected_wcmp_group_existence=*/false,
+          /*expected_route_metadata_existence=*/false,
+          /*expected_multicast_group_id_existence=*/true, route_entry));
+    } else {
+      return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+             << "Invalid action " << QuotedVar(action);
     }
 
     if (!route_entry.route_metadata.empty())
@@ -595,14 +635,23 @@ ReturnCode RouteManager::validateSetRouteEntry(const P4RouteEntry &route_entry)
 
 ReturnCode RouteManager::validateDelRouteEntry(const P4RouteEntry &route_entry)
 {
-    if (getRouteEntry(route_entry.route_entry_key) == nullptr)
-    {
-        return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND) << "Route entry does not exist";
-    }
-    if (!m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_ROUTE_ENTRY, route_entry.route_entry_key))
-    {
-        RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL("Route entry does not exist in the centralized map");
-    }
+  auto* old_route_entry_ptr = getRouteEntry(route_entry.route_entry_key);
+  if (old_route_entry_ptr == nullptr) {
+    return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+           << "Route entry does not exist";
+  }
+  if (old_route_entry_ptr->multicast_group_id.empty() &&
+      !m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_ROUTE_ENTRY,
+                                route_entry.route_entry_key)) {
+    RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL(
+        "Route entry does not exist in the centralized map");
+  }
+  if (!old_route_entry_ptr->multicast_group_id.empty() &&
+      !m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_IPMC_ENTRY,
+                                route_entry.route_entry_key)) {
+    RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL(
+        "Multicast route entry does not exist in the centralized map");
+  }
     if (!route_entry.action.empty())
     {
         return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Non-empty action for Del route";
@@ -618,6 +667,10 @@ ReturnCode RouteManager::validateDelRouteEntry(const P4RouteEntry &route_entry)
     if (!route_entry.route_metadata.empty())
     {
         return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Non-empty route_metadata for Del route";
+    }
+    if (!route_entry.multicast_group_id.empty()) {
+      return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+             << "Non-empty multicast_group_id for Del route";
     }
     return ReturnCode();
 }

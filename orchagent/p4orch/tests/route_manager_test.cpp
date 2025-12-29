@@ -931,6 +931,59 @@ TEST_F(RouteManagerTest, ValidateRouteEntryWcmpGroupActionWithValidWcmpGroupShou
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ValidateRouteEntry(route_entry, SET_COMMAND));
 }
 
+TEST_F(RouteManagerTest,
+       ValidateRouteEntrySetMulticastGroupIdActionShouldSucceed) {
+  auto swss_ipv4_route_prefix = swss::IpPrefix(kIpv6Prefix);
+  auto route_entry =
+      GenerateP4RouteEntry(gVrfName, swss_ipv4_route_prefix,
+                           p4orch::kSetMulticastGroupId, kMulticastGroupId1);
+
+  // Fake that multicast groups have been added
+  AddMulticastGroup(kMulticastGroupId1, kMulticastGroupOid1);
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ValidateRouteEntry(route_entry, SET_COMMAND));
+}
+
+TEST_F(RouteManagerTest,
+       ValidateRouteEntrySetMulticastGroupIdActionShouldFail) {
+  auto swss_ipv4_route_prefix = swss::IpPrefix(kIpv6Prefix);
+  auto route_entry = GenerateP4RouteEntry(gVrfName, swss_ipv4_route_prefix,
+                                          p4orch::kSetMulticastGroupId, "");
+  // Fake that multicast groups have been added
+  AddMulticastGroup(kMulticastGroupId1, kMulticastGroupOid1);
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+            ValidateRouteEntry(route_entry, SET_COMMAND));
+}
+
+TEST_F(RouteManagerTest,
+       ValidateRouteEntrySetMulticastGroupIdActionShouldFailNoGroup) {
+  auto swss_ipv4_route_prefix = swss::IpPrefix(kIpv6Prefix);
+  auto route_entry =
+      GenerateP4RouteEntry(gVrfName, swss_ipv4_route_prefix,
+                           p4orch::kSetMulticastGroupId, kMulticastGroupId1);
+
+  // No multicast group will be found.
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND,
+            ValidateRouteEntry(route_entry, SET_COMMAND));
+}
+
+TEST_F(RouteManagerTest,
+       ValidateRouteEntryWcmpGroupActionWithExtraMulticastGroupShouldFail) {
+  auto swss_ipv4_route_prefix = swss::IpPrefix(kIpv4Prefix);
+  auto route_entry = GenerateP4RouteEntry(gVrfName, swss_ipv4_route_prefix,
+                                          p4orch::kSetWcmpGroupId, kWcmpGroup1);
+  // Unexpected group.
+  route_entry.multicast_group_id = kMulticastGroupId1;
+  p4_oid_mapper_.setOID(
+      SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+      KeyGenerator::generateWcmpGroupKey(route_entry.wcmp_group),
+      kWcmpGroupOid1);
+  // Fake that multicast groups have been added
+  AddMulticastGroup(kMulticastGroupId1, kMulticastGroupOid1);
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+            ValidateRouteEntry(route_entry, SET_COMMAND));
+}
+
 TEST_F(RouteManagerTest, ValidateRouteEntryWithInvalidCommandShouldFail)
 {
     auto swss_ipv4_route_prefix = swss::IpPrefix(kIpv4Prefix);
@@ -1147,6 +1200,28 @@ TEST_F(RouteManagerTest, ValidateDelRouteEntryHasMetadataShouldFail)
     SetupNexthopIdRouteEntry(gVrfName, swss_ipv4_route_prefix, kNexthopId1, kNexthopOid1);
     auto route_entry = GenerateP4RouteEntry(gVrfName, swss_ipv4_route_prefix, "", "", kMetadata1);
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ValidateRouteEntry(route_entry, DEL_COMMAND));
+}
+
+TEST_F(RouteManagerTest,
+       ValidateDelRouteEntryMulticastNotInMapperShouldRaiseCriticalState) {
+  auto swss_ipv6_route_prefix = swss::IpPrefix(kIpv6Prefix3);
+  auto route_entry_ipv6 = SetupSetMulticastGroupIdRouteEntry(
+      gVrfName, swss_ipv6_route_prefix, kMulticastGroupId1, kMulticastGroupOid1,
+      kMetadata1);
+
+  // First, check that extraneous multicast_group_id causes an error.
+  route_entry_ipv6.action = "";
+  route_entry_ipv6.route_metadata = "";
+  route_entry_ipv6.multicast_group_id = kMulticastGroupId1;
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+            ValidateRouteEntry(route_entry_ipv6, DEL_COMMAND));
+
+  // Now force error during validation by deleting from the map.
+  p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_IPMC_ENTRY,
+                          route_entry_ipv6.route_entry_key);
+
+  EXPECT_EQ(StatusCode::SWSS_RC_INTERNAL,
+            ValidateRouteEntry(route_entry_ipv6, DEL_COMMAND));
 }
 
 TEST_F(RouteManagerTest, ValidateDelRouteEntrySucceeds)
