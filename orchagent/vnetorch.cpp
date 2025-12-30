@@ -1055,6 +1055,11 @@ bool VNetRouteOrch::selectNextHopGroup(const string& vnet,
             {
                 setEndpointMonitor(vnet, monitors, nexthops_secondary, monitoring, rx_monitor_timer, tx_monitor_timer, ipPrefix);
             }
+            if (isCustomMonitorEndpointUpdated(vnet, ipPrefix, monitors))
+            {
+                setEndpointMonitor(vnet, monitors, nexthops_primary, monitoring, rx_monitor_timer, tx_monitor_timer, ipPrefix);
+                setEndpointMonitor(vnet, monitors, nexthops_secondary, monitoring, rx_monitor_timer, tx_monitor_timer, ipPrefix);
+            }
             nexthops_selected = it_route->second.nhg_key;
             return true;
         }
@@ -1307,7 +1312,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                     vrf_obj->removeProfile(ipPrefix);
                 }
             }
-            else if (isCustomMonitorEndpointUpdated(vnet, ipPrefix, monitors))
+            else if (isCustomMonitorEndpointUpdated(vnet, ipPrefix, monitors, true))
             {
                 custom_monitor_ep_updated = true;
             }
@@ -3344,7 +3349,8 @@ bool VNetRouteOrch::isPartiallyLocal(const std::vector<swss::IpAddress>& ip_list
 }
 
 bool VNetRouteOrch::isCustomMonitorEndpointUpdated(const string& vnet, IpPrefix& ipPrefix,
-                                             const std::map<NextHopKey, swss::IpAddress>& monitors)
+                                             const std::map<NextHopKey, swss::IpAddress>& monitors,
+                                             const bool& delOldMonitorSession)
 {
     SWSS_LOG_ENTER();
 
@@ -3369,6 +3375,11 @@ bool VNetRouteOrch::isCustomMonitorEndpointUpdated(const string& vnet, IpPrefix&
         if (monitors.find(it->second.endpoint) != monitors.end() &&
             it->first != monitors.at(it->second.endpoint))
         {
+            if (!delOldMonitorSession)
+            {
+                return true;
+            }
+
             monitor_endpoint_updated = true;
 
             SWSS_LOG_INFO("Custom monitor endpoint updated for vnet %s, prefix %s, old monitor %s, new monitor %s",
