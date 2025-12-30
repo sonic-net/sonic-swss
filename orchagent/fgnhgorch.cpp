@@ -6,6 +6,8 @@
 #include "logger.h"
 #include "swssnet.h"
 #include "crmorch.h"
+#include "directory.h"
+#include "vnetorch.h"
 #include <array>
 #include <algorithm>
 
@@ -1576,16 +1578,14 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
 {
     SWSS_LOG_ENTER();
 
-    std::set<NextHopKey> current_nhs;
+    NextHopGroupKey nextHops;
     std::map<NextHopKey, sai_object_id_t> nhopgroup_members_set;
 
     for (const auto& member : nhopgroup_members_set_in)
     {
-        current_nhs.insert(member.second);
+        nextHops.add(member.second);
         nhopgroup_members_set[member.second] = member.first;
     }
-
-    NextHopGroupKey nextHops = NextHopGroupKey(current_nhs);
 
     // doTaskfgnhg
     FGMatchMode match_mode = FGMatchMode::PREFIX_BASED;
@@ -1649,8 +1649,9 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
     bank_member_changes.resize(1, BankMemberChanges()); // prefix_based match_mode supports single bank
 
     // initialize m_FgNhgs[fg_nhg_name].next_hops with the list of IP addresses in nextHops
-    for (const auto& nhk : current_nhs)
+    for (const auto& member : nhopgroup_members_set)
     {
+        const NextHopKey& nhk = member.first;
         if (m_FgNhgs[fg_nhg_name].next_hops.find(nhk.ip_address) == m_FgNhgs[fg_nhg_name].next_hops.end())
         {
             if(m_FgNhgs[fg_nhg_name].next_hops.size() >= m_FgNhgs[fg_nhg_name].max_next_hops)
