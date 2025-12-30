@@ -559,6 +559,7 @@ private:
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op, string& profile,
                     const string& monitoring, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer,
                     NextHopGroupKey& nexthops_secondary, const IpPrefix& adv_prefix,
+                    const uint16_t consistent_hashing_buckets,
                     const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
     template<typename T>

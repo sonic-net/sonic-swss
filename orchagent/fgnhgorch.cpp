@@ -1614,15 +1614,17 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
     SWSS_LOG_NOTICE("Added new FG_NHG entry %s with bucket_size %d, match_mode: %'" PRIu8,
             fg_nhg_name.c_str(), bucket_size, match_mode);
     isFineGrainedConfigured = true;
-    m_FgNhgs[fg_nhg_name] = fgNhgEntry;  // Store object in map
+    m_FgNhgs[fg_nhg_name] = fgNhgEntry;
 
     // doTaskFgNhgPrefix
     IpPrefix ip_prefix = ipPrefix;
 
+    // todo navdhaj: case where route exists?
     SWSS_LOG_INFO("Route does not exist in routeorch, don't need to migrate route to fgnhgorch");
     m_FgNhgs[fg_nhg_name].prefixes.push_back(ip_prefix);
     m_fgNhgPrefixes[ip_prefix] = &m_FgNhgs[fg_nhg_name];
 
+    // todo navdhaj: doing anything eith isnexthopidchanged?
     /* default isNextHopIdChanged to false so that sai route is unaffected
      * when we return early with success */
     isNextHopIdChanged = false;
