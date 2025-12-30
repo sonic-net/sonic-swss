@@ -758,7 +758,7 @@ sai_object_id_t VNetRouteOrch::getNextHopGroupId(const string& vnet, const NextH
     return syncd_nexthop_groups_[vnet][nexthops].next_hop_group_id;
 }
 
-bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj, const string& monitoring, const bool isLocalEp, const uint16 _t consistent_hashing_buckets, IpPrefix &ipPrefix, bool *isNextHopChanged)
+bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj, const string& monitoring, const bool isLocalEp, const uint16_t consistent_hashing_buckets, IpPrefix &ipPrefix, bool *isNextHopChanged)
 {
     SWSS_LOG_ENTER();
 
@@ -3121,7 +3121,7 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         }
         else if (name == "consistent_hashing_buckets")
         {
-            consistent_hashing_buckets = static_cast<int16_t>(request.getAttrInt(name));
+            consistent_hashing_buckets = static_cast<uint16_t>(request.getAttrUint(name));
         }
         else
         {
