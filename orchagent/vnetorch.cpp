@@ -758,7 +758,7 @@ sai_object_id_t VNetRouteOrch::getNextHopGroupId(const string& vnet, const NextH
     return syncd_nexthop_groups_[vnet][nexthops].next_hop_group_id;
 }
 
-bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj, const string& monitoring, const bool isLocalEp, const uint16_t consistent_hashing_buckets, IpPrefix &ipPrefix, bool *isNextHopChanged)
+bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj, const string& monitoring, const bool isLocalEp, const uint16_t consistent_hashing_buckets, IpPrefix *ipPrefix, bool *isNextHopChanged)
 {
     SWSS_LOG_ENTER();
 
@@ -3065,7 +3065,7 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     string monitoring;
     int32_t rx_monitor_timer = -1;
     int32_t tx_monitor_timer = -1;
-    int16_t consistent_hashing_buckets = -1;
+    uint16_t consistent_hashing_buckets = 0;
     swss::IpPrefix adv_prefix;
     bool has_priority_ep = false;
     bool has_adv_pfx = false;
@@ -3151,12 +3151,6 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     {
         SWSS_LOG_ERROR("Primary/backup behaviour cannot function without endpoint monitoring.");
         return true;
-    }
-
-    if (consistent_hashing_buckets != -1 && consistent_hashing_buckets < 1)
-    {
-        SWSS_LOG_ERROR("consistent_hashing_buckets must be greater than 0");
-        return false;
     }
 
     const std::string& vnet_name = request.getKeyString(0);
