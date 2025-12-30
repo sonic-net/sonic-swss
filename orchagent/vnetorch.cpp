@@ -799,7 +799,7 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
     {
         sai_object_id_t vrf_id;
         vnet_orch_->getVrfIdByVnetName(vnet, vrf_id);
-        return FgNhgOrch->setFgNhg(vrf_id, *ipPrefix, nhopgroup_members_set, consistent_hashing_buckets, *isNextHopChanged);
+        return gFgNhgOrch->setFgNhg(vrf_id, *ipPrefix, nhopgroup_members_set, consistent_hashing_buckets, isFineGrainedNextHopIdChanged);
     }
 
     sai_attribute_t nhg_attr;

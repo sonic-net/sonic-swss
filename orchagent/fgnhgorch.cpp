@@ -1650,7 +1650,8 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
             m_FgNhgs[fg_nhg_name].hash_bucket_indices.size(), BankMemberChanges());
     bank_member_changes.resize(1, BankMemberChanges()); // prefix_based match_mode supports single bank
 
-    // initialize m_FgNhgs[fg_nhg_name].next_hops with the list of IP addresses in nextHops
+    /* initialize m_FgNhgs[fg_nhg_name].next_hops with the list of IP addresses in nextHops
+    and add the corresponding next_hop_id to next_hop_ids. */
     for (const auto& member : nhopgroup_members_set)
     {
         const NextHopKey& nhk = member.first;
@@ -1667,21 +1668,6 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
             m_FgNhgs[fg_nhg_name].next_hops[nhk.ip_address] = fg_nh_info;
             SWSS_LOG_INFO("Next-hop %s alias %s added to Fine Grained next-hop group member list for prefix %s",
                     nhk.ip_address.to_string().c_str(), nhk.alias.c_str(), ipPrefix.to_string().c_str());
-        }
-    }
-
-    /* Assert each IP address exists in m_syncdNextHops table,
-     * and add the corresponding next_hop_id to next_hop_ids. */
-    for (const auto& member : nhopgroup_members_set)
-    {
-        const NextHopKey& nhk = member.first;
-        auto nexthop_entry = m_FgNhgs[fg_nhg_name].next_hops.find(nhk.ip_address);
-
-        if (nexthop_entry == m_FgNhgs[fg_nhg_name].next_hops.end())
-        {
-            SWSS_LOG_WARN("Could not find next-hop %s in Fine Grained next-hop group entry for prefix %s, skipping",
-                    nhk.to_string().c_str(), m_FgNhgs[fg_nhg_name].fg_nhg_name.c_str());
-            continue;
         }
 
         if (syncd_fg_route_entry_it == m_syncdFGRouteTables.at(vrf_id).end())
