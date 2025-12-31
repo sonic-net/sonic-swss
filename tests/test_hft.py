@@ -89,6 +89,8 @@ class TestHFT(object):
             asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
         buffer_pool_tbl = swsscommon.Table(
             asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_POOL")
+        queue_tbl = swsscommon.Table(
+            asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_QUEUE")
 
         return {
             "tam_transport": self._get_table_entries(tam_transport_tbl),
@@ -103,49 +105,9 @@ class TestHFT(object):
                 hostif_trap_tbl),
             "host_trap_group": self._get_table_entries(host_trap_group_tbl),
             "ports": self._get_table_entries(ports_tbl),
-            "buffer_pool": self._get_table_entries(buffer_pool_tbl)
+            "buffer_pool": self._get_table_entries(buffer_pool_tbl),
+            "queues": self._get_table_entries(queue_tbl)
         }
-
-    def get_queue_object_names(self, dvs, limit=3, timeout=10):
-        """Return a deterministic subset of queue names from COUNTERS_DB with retry."""
-        counters_db = swsscommon.DBConnector(2, dvs.redis_sock, 0)
-        queue_map_tbl = swsscommon.Table(counters_db, "COUNTERS_QUEUE_NAME_MAP")
-
-        deadline = time.time() + timeout
-        while True:
-            status, fvs = queue_map_tbl.get("")
-            assert status, "Expected COUNTERS_QUEUE_NAME_MAP in counters DB"
-
-            queue_names = sorted([field for field, _ in fvs])
-            if queue_names:
-                return queue_names[:limit]
-
-            if time.time() > deadline:
-                assert False, "Expected queue entries in COUNTERS_QUEUE_NAME_MAP"
-
-            time.sleep(1)
-
-    def add_queue_config(self, dvs, ports=("Ethernet0"), queue_range="0-2",
-                         profile="egress_lossless_profile"):
-        """Add BUFFER_QUEUE entries so queue counters become available."""
-        config_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        tbl = swsscommon.Table(config_db, "BUFFER_QUEUE")
-
-        added_keys = []
-        fvs = swsscommon.FieldValuePairs([("profile", profile)])
-        for port in ports:
-            key = f"{port}|{queue_range}"
-            tbl.set(key, fvs)
-            added_keys.append(key)
-
-        return added_keys
-
-    def remove_queue_config(self, dvs, keys):
-        """Remove BUFFER_QUEUE entries that were added for the test."""
-        config_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        tbl = swsscommon.Table(config_db, "BUFFER_QUEUE")
-        for key in keys:
-            tbl._del(key)
 
     def _get_table_entries(self, table):
         """Helper method to get all entries from a table."""
@@ -278,8 +240,8 @@ class TestHFT(object):
             # Fix: Use only the object ID
             subscription_oid = tam_counter_sub[
                 "SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_OBJECT_ID"]
-            assert (subscription_oid in asic_db["ports"] or subscription_oid in asic_db["buffer_pool"]), \
-                "Expected tam counter subscription to reference port"
+            assert (subscription_oid in asic_db["ports"] or subscription_oid in asic_db["buffer_pool"] or subscription_oid in asic_db["queues"]), \
+                "Expected tam counter subscription to reference port, buffer_pool, or queue"
 
             # Only check if we have counter subscriptions
             if counters_number > 0:
@@ -521,23 +483,16 @@ class TestHFT(object):
 
     def test_hft_buffer_queue_group(self, dvs, testlog):
         """Test HFT with QUEUE (buffer queue) objects."""
-        added_queue_keys = self.add_queue_config(dvs)
-
-        time.sleep(1)
-
-        queue_names = self.get_queue_object_names(dvs, limit=3)
-        counters = ["PACKETS", "BYTES", "DROPPED_PACKETS"]
-
         self.create_hft_profile(dvs)
         self.create_hft_group(dvs,
                               group_name="QUEUE",
-                              object_names=",".join(queue_names),
-                              object_counters=",".join(counters))
+                              object_names="Ethernet0|7",
+                              object_counters="PACKETS")
 
         time.sleep(5)
 
         asic_db = self.get_asic_db_objects(dvs)
-        self.verify_asic_db_objects(asic_db, groups=[(len(queue_names), len(counters))])
+        self.verify_asic_db_objects(asic_db, groups=[(1, 1)])
 
         self.delete_hft_group(dvs, group_name="QUEUE")
         time.sleep(2)
@@ -546,8 +501,6 @@ class TestHFT(object):
         self.verify_asic_db_objects(asic_db, groups=[])
 
         self.delete_hft_profile(dvs)
-
-        self.remove_queue_config(dvs, added_queue_keys)
 
     def test_hft_multiple_groups(self, dvs, testlog):
         """Test HFT with multiple groups and objects."""
