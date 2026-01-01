@@ -647,7 +647,6 @@ int main(int argc, char **argv)
 
         //Connect to CHASSIS_APP_DB in redis-server in control/supervisor card as per
         //connection info in database_config.json
-        chassis_app_db = nullptr;
         if (isChassisAppDbPresent())
        	{
             gMultiAsicVoq = true;
@@ -909,12 +908,7 @@ int main(int argc, char **argv)
     }
 
     shared_ptr<OrchDaemon> orchDaemon;
-    DBConnector *chassis_db = nullptr;
-    if (chassis_app_db != nullptr)
-    {
-        chassis_db = chassis_app_db.get();
-    }
-
+    DBConnector *chassis_db = chassis_app_db.get();
     /*
      * Declare shared pointers for dpu specific databases.
      * These dpu databases exist on the npu for smartswitch.
