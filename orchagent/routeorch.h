@@ -152,9 +152,11 @@ struct RouteBulkContext
     std::string                         protocol;  // Protocol string
     bool                                is_set;    // True if set operation
 
+    Constraint                          retry_cst;
+
     RouteBulkContext(const std::string& key, bool is_set)
         : key(key), excp_intfs_flag(false), using_temp_nhg(false), is_set(is_set),
-          fallback_to_default_route(false)
+          fallback_to_default_route(false), retry_cst(DUMMY_CONSTRAINT)
     {
     }
 
@@ -174,6 +176,7 @@ struct RouteBulkContext
         key.clear();
         protocol.clear();
         fallback_to_default_route = false;
+        retry_cst = DUMMY_CONSTRAINT;
     }
 };
 
