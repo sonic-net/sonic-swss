@@ -1312,9 +1312,12 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                     vrf_obj->removeProfile(ipPrefix);
                 }
             }
-            else if (isCustomMonitorEndpointUpdated(vnet, ipPrefix, monitors, true))
+            else if (isCustomMonitorEndpointUpdated(vnet, ipPrefix, monitors))
             {
                 custom_monitor_ep_updated = true;
+
+                delEndpointMonitor(vnet, it_route->second.primary, ipPrefix);
+                delEndpointMonitor(vnet, it_route->second.secondary, ipPrefix);
             }
         }
         if (!profile.empty())
@@ -3349,8 +3352,7 @@ bool VNetRouteOrch::isPartiallyLocal(const std::vector<swss::IpAddress>& ip_list
 }
 
 bool VNetRouteOrch::isCustomMonitorEndpointUpdated(const string& vnet, IpPrefix& ipPrefix,
-                                             const std::map<NextHopKey, swss::IpAddress>& monitors,
-                                             const bool& delOldMonitorSession)
+                                             const std::map<NextHopKey, swss::IpAddress>& monitors)
 {
     SWSS_LOG_ENTER();
 
@@ -3375,22 +3377,13 @@ bool VNetRouteOrch::isCustomMonitorEndpointUpdated(const string& vnet, IpPrefix&
         if (monitors.find(it->second.endpoint) != monitors.end() &&
             it->first != monitors.at(it->second.endpoint))
         {
-            if (!delOldMonitorSession)
-            {
-                return true;
-            }
-
             monitor_endpoint_updated = true;
 
-            SWSS_LOG_INFO("Custom monitor endpoint updated for vnet %s, prefix %s, old monitor %s, new monitor %s",
+            SWSS_LOG_NOTICE("Custom monitor endpoint updated for vnet %s, prefix %s, old monitor %s, new monitor %s",
                           vnet.c_str(), ipPrefix.to_string().c_str(),
                           it->first.to_string().c_str(),
                           monitors.at(it->second.endpoint).to_string().c_str());
 
-            if (--monitor_info_[vnet][ipPrefix][it->first].ref_count == 0)
-            {
-                removeMonitoringSession(vnet, it->second.endpoint, it->first, ipPrefix);
-            }
         }
     }
 

@@ -541,8 +541,7 @@ private:
     void delEndpointMonitor(const string& vnet, NextHopGroupKey& nexthops, IpPrefix& ipPrefix);
 
     bool isCustomMonitorEndpointUpdated(const string& vnet, IpPrefix& ipPrefix,
-                                  const std::map<NextHopKey, IpAddress>& monitors,
-                                  const bool& delOldMonitorSession=false);
+                                  const std::map<NextHopKey, IpAddress>& monitors);
 
     void postRouteState(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& profile);
     void removeRouteState(const string& vnet, IpPrefix& ipPrefix);
