@@ -1173,6 +1173,8 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
 
     if (op == SET_COMMAND)
     {
+        bool custom_monitor_ep_updated = isCustomMonitorEndpointUpdated(vnet, ipPrefix, monitors);
+
         sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
         NextHopGroupKey active_nhg("", true);
         if (!selectNextHopGroup(vnet, nexthops, nexthops_secondary, monitoring, rx_monitor_timer, tx_monitor_timer, ipPrefix, vrf_obj, active_nhg, monitors))
@@ -1250,7 +1252,6 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         }
         bool route_updated = false;
         bool priority_route_updated = false;
-        bool custom_monitor_ep_updated = false;
         if (it_route != syncd_tunnel_routes_[vnet].end())
         {
             if ((monitoring == "" && it_route->second.nhg_key != nexthops) ||
@@ -1312,10 +1313,8 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                     vrf_obj->removeProfile(ipPrefix);
                 }
             }
-            else if (isCustomMonitorEndpointUpdated(vnet, ipPrefix, monitors))
+            if (custom_monitor_ep_updated)
             {
-                custom_monitor_ep_updated = true;
-
                 delEndpointMonitor(vnet, it_route->second.primary, ipPrefix);
                 delEndpointMonitor(vnet, it_route->second.secondary, ipPrefix);
             }
