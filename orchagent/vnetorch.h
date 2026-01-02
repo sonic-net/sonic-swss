@@ -539,6 +539,10 @@ private:
                             const string& monitoring, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer,
                             IpPrefix& ipPrefix);
     void delEndpointMonitor(const string& vnet, NextHopGroupKey& nexthops, IpPrefix& ipPrefix);
+
+    bool isCustomMonitorEndpointUpdated(const string& vnet, IpPrefix& ipPrefix,
+                                  const std::map<NextHopKey, IpAddress>& monitors);
+
     void postRouteState(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& profile);
     void removeRouteState(const string& vnet, IpPrefix& ipPrefix);
     void addRouteAdvertisement(IpPrefix& ipPrefix, string& profile);
