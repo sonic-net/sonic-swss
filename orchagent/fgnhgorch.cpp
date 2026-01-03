@@ -1574,7 +1574,7 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
 }
 
 bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, 
-                        const map<sai_object_id_t, NextHopKey>& nhopgroup_members_set_in, uint16_t consistent_hashing_buckets, bool &isNextHopIdChanged)
+                        const map<sai_object_id_t, NextHopKey>& nhopgroup_members_set_in, uint16_t consistent_hashing_buckets, sai_object_id_t &next_hop_id, bool &isNextHopIdChanged)
 {
     SWSS_LOG_ENTER();
 
@@ -1737,7 +1737,9 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
         }
         m_syncdFGRouteTables[vrf_id][ipPrefix] = syncd_fg_route_entry;
     }
+    
     m_syncdFGRouteTables[vrf_id][ipPrefix].nhg_key = nextHops;
+    next_hop_id =  m_syncdFGRouteTables[vrf_id][ipPrefix].next_hop_group_id;
 
     return true;
 }
