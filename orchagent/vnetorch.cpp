@@ -794,32 +794,39 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
     }
 
     bool isFineGrainedNextHopIdChanged = false;
+    sai_object_id_t next_hop_group_id;
 
     if (consistent_hashing_buckets > 0 && ipPrefix != nullptr)
     {
         sai_object_id_t vrf_id;
         vnet_orch_->getVrfIdByVnetName(vnet, vrf_id);
-        return gFgNhgOrch->setFgNhg(vrf_id, *ipPrefix, nhopgroup_members_set, consistent_hashing_buckets, isFineGrainedNextHopIdChanged);
+
+        if (!gFgNhgOrch->setFgNhg(vrf_id, *ipPrefix, nhopgroup_members_set, consistent_hashing_buckets, next_hop_group_id, isFineGrainedNextHopIdChanged))
+        {
+            SWSS_LOG_ERROR("Failed to create fine grained next hop group for VNET %s", vnet.c_str());
+            return false;
+        }
     }
-
-    sai_attribute_t nhg_attr;
-    vector<sai_attribute_t> nhg_attrs;
-
-    nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
-    nhg_attr.value.s32 = gSwitchOrch->checkOrderedEcmpEnable() ? SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP : SAI_NEXT_HOP_GROUP_TYPE_ECMP;
-    nhg_attrs.push_back(nhg_attr);
-
-    sai_object_id_t next_hop_group_id;
-    sai_status_t status = sai_next_hop_group_api->create_next_hop_group(&next_hop_group_id,
-                                                                        gSwitchId,
-                                                                        (uint32_t)nhg_attrs.size(),
-                                                                        nhg_attrs.data());
-
-    if (status != SAI_STATUS_SUCCESS)
+    else
     {
-        SWSS_LOG_ERROR("Failed to create next hop group %s, rv:%d",
-                       nexthops.to_string().c_str(), status);
-        return false;
+        sai_attribute_t nhg_attr;
+        vector<sai_attribute_t> nhg_attrs;
+
+        nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
+        nhg_attr.value.s32 = gSwitchOrch->checkOrderedEcmpEnable() ? SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP : SAI_NEXT_HOP_GROUP_TYPE_ECMP;
+        nhg_attrs.push_back(nhg_attr);
+
+        sai_status_t status = sai_next_hop_group_api->create_next_hop_group(&next_hop_group_id,
+                                                                            gSwitchId,
+                                                                            (uint32_t)nhg_attrs.size(),
+                                                                            nhg_attrs.data());
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create next hop group %s, rv:%d",
+                        nexthops.to_string().c_str(), status);
+            return false;
+        }
     }
 
     gRouteOrch->increaseNextHopGroupCount();
@@ -831,6 +838,12 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
 
     for (auto nhid: next_hop_ids)
     {
+        sai_object_id_t next_hop_group_member_id;
+
+        if (gFgNhgOrch->isFineGrainedNhgMember(nhid))
+        {
+            continue;
+        }
         // Create a next hop group member
         vector<sai_attribute_t> nhgm_attrs;
 
@@ -850,7 +863,6 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
             nhgm_attrs.push_back(nhgm_attr);
         }
 
-        sai_object_id_t next_hop_group_member_id;
         status = sai_next_hop_group_api->create_next_hop_group_member(&next_hop_group_member_id,
                                                                     gSwitchId,
                                                                     (uint32_t)nhgm_attrs.size(),
@@ -868,6 +880,8 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
         // Save the membership into next hop structure
         next_hop_group_entry.active_members[nhopgroup_members_set.find(nhid)->second] =
                                                                 next_hop_group_member_id;
+
+        // todo navdhaj: figure out how to do this for fgnhg members
     }
 
     /*
