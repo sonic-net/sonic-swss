@@ -806,6 +806,10 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
             SWSS_LOG_ERROR("Failed to create fine grained next hop group for VNET %s", vnet.c_str());
             return false;
         }
+        if (isNextHopChanged != nullptr)
+        {
+            *isNextHopChanged = isFineGrainedNextHopIdChanged;
+        }
     }
     else
     {
@@ -840,7 +844,7 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
     {
         sai_object_id_t next_hop_group_member_id;
 
-        if (gFgNhgOrch->isFineGrainedNhgMember(nhid))
+        if (consistent_hashing_buckets > 0)
         {
             continue;
         }
@@ -863,7 +867,7 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
             nhgm_attrs.push_back(nhgm_attr);
         }
 
-        status = sai_next_hop_group_api->create_next_hop_group_member(&next_hop_group_member_id,
+        sai_status_t status = sai_next_hop_group_api->create_next_hop_group_member(&next_hop_group_member_id,
                                                                     gSwitchId,
                                                                     (uint32_t)nhgm_attrs.size(),
                                                                     nhgm_attrs.data());
@@ -1212,7 +1216,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             bool route_status = true;
 
             // Remove route if the nexthop group has no active endpoint
-            if (syncd_nexthop_groups_[vnet][active_nhg].active_members.empty())
+            if (syncd_nexthop_groups_[vnet][active_nhg].active_members.empty() && consistent_hashing_buckets < 1) // todo navdhaj: remove this condition once I figure out how to add nhg members
             {
                 if (it_route != syncd_tunnel_routes_[vnet].end())
                 {
