@@ -44,6 +44,8 @@ NUM_PORTS = 32
 # Voq asics will have 16 fabric ports created (defined in Azure/sonic-buildimage#7629).
 FABRIC_NUM_PORTS = 16
 
+SINGLE_ASIC_VOQ_FS = "single_asic_voq_fs"
+
 def ensure_system(cmd):
     rc, output = subprocess.getstatusoutput(cmd)
     if rc:
@@ -111,6 +113,12 @@ def pytest_addoption(parser):
                      action="store_true",
                      default=False,
                      help="Collect the test coverage information")
+
+    parser.addoption("--switch-mode",
+                     action="store",
+                     default=None,
+                     type=str,
+                     help="Set switch mode information")
 
 
 def random_string(size=4, chars=string.ascii_uppercase + string.digits):
@@ -294,7 +302,8 @@ class DockerVirtualSwitch:
         newctnname: str = None,
         ctnmounts: Dict[str, str] = None,
         buffer_model: str = None,
-        enable_coverage: bool = False
+        enable_coverage: bool = False,
+        switch_mode: str = None
     ):
         self.basicd = ["redis-server", "rsyslogd"]
         self.swssd = [
@@ -317,6 +326,7 @@ class DockerVirtualSwitch:
         self.vct = vct
         self.ctn = None
         self.enable_coverage = enable_coverage
+        self.switch_mode = switch_mode
 
         self.cleanup = not keeptb
 
@@ -583,7 +593,10 @@ class DockerVirtualSwitch:
         self.get_config_db()
         metadata = self.config_db.get_entry('DEVICE_METADATA|localhost', '')
         if metadata.get('switch_type', 'npu') in ['voq', 'fabric']:
-            num_ports = NUM_PORTS + FABRIC_NUM_PORTS
+            if self.switch_mode and self.switch_mode == SINGLE_ASIC_VOQ_FS:
+                num_ports = NUM_PORTS
+            else:
+                num_ports = NUM_PORTS + FABRIC_NUM_PORTS
 
         # Verify that all ports have been initialized and configured
         app_db = self.get_app_db()
@@ -603,8 +616,9 @@ class DockerVirtualSwitch:
 
         # Verify that fabric ports are monitored in STATE_DB
         if metadata.get('switch_type', 'npu') in ['voq', 'fabric']:
-            self.get_state_db()
-            self.state_db.wait_for_n_keys("FABRIC_PORT_TABLE", FABRIC_NUM_PORTS)
+            if not self.switch_mode or (self.switch_mode and self.switch_mode != SINGLE_ASIC_VOQ_FS):
+                self.get_state_db()
+                self.state_db.wait_for_n_keys("FABRIC_PORT_TABLE", FABRIC_NUM_PORTS)
 
     def net_cleanup(self) -> None:
         """Clean up network, remove extra links."""
@@ -1880,6 +1894,7 @@ def manage_dvs(request) -> str:
     force_recreate = request.config.getoption("--force-recreate-dvs")
     graceful_stop = request.config.getoption("--graceful-stop")
     enable_coverage = request.config.getoption("--enable-coverage")
+    switch_mode = request.config.getoption("--switch-mode")
 
     dvs = None
     curr_dvs_env = [] # lgtm[py/unused-local-variable]
@@ -1911,7 +1926,13 @@ def manage_dvs(request) -> str:
                 dvs.get_logs()
                 dvs.destroy()
 
-            dvs = DockerVirtualSwitch(name, imgname, keeptb, new_dvs_env, log_path, max_cpu, forcedvs, buffer_model = buffer_model, enable_coverage=enable_coverage)
+            vol = {}
+            if switch_mode and switch_mode == SINGLE_ASIC_VOQ_FS:
+                cwd = os.getcwd()
+                voq_configs = cwd + "/single_asic_voq_fs"
+                vol[voq_configs] = {"bind": "/usr/share/sonic/single_asic_voq_fs", "mode": "ro"}
+
+            dvs = DockerVirtualSwitch(name, imgname, keeptb, new_dvs_env, log_path, max_cpu, forcedvs, buffer_model = buffer_model, enable_coverage=enable_coverage, ctnmounts=vol, switch_mode=switch_mode)
 
             curr_dvs_env = new_dvs_env
 
