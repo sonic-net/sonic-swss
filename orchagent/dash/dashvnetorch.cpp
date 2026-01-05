@@ -337,7 +337,6 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
                 SWSS_LOG_ERROR("Invalid encap type %d for %s", action.encap_type(), key.c_str());
                 return true;
             }
-            outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
 
             if (action.has_vni())
             {
