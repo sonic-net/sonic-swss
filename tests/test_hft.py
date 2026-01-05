@@ -89,6 +89,8 @@ class TestHFT(object):
             asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
         buffer_pool_tbl = swsscommon.Table(
             asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_POOL")
+        queue_tbl = swsscommon.Table(
+            asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_QUEUE")
 
         return {
             "tam_transport": self._get_table_entries(tam_transport_tbl),
@@ -103,7 +105,8 @@ class TestHFT(object):
                 hostif_trap_tbl),
             "host_trap_group": self._get_table_entries(host_trap_group_tbl),
             "ports": self._get_table_entries(ports_tbl),
-            "buffer_pool": self._get_table_entries(buffer_pool_tbl)
+            "buffer_pool": self._get_table_entries(buffer_pool_tbl),
+            "queues": self._get_table_entries(queue_tbl)
         }
 
     def _get_table_entries(self, table):
@@ -165,10 +168,19 @@ class TestHFT(object):
                 "SAI_TAM_TELEMETRY_TYPE_COUNTER_SUBSCRIPTION", \
                 "Expected tam telemetry type to be " \
                 "SAI_TAM_TELEMETRY_TYPE_COUNTER_SUBSCRIPTION"
-            assert tam_tel_type[
-                "SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS"] == \
-                "true", \
-                "Expected tam telemetry to be switch enable port stats"
+            enable_capability = False
+            enable_capability = enable_capability or tam_tel_type.get(
+                "SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS", "false") == \
+                "true"
+            enable_capability = enable_capability or tam_tel_type.get(
+                "SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_MMU_STATS", "false") == \
+                "true"
+            enable_capability = enable_capability or tam_tel_type.get(
+                "SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_OUTPUT_QUEUE_STATS", "false") == \
+                "true"
+            assert enable_capability, \
+                "Expected tam telemetry to have at least one enable " \
+                "capability set to true"
             assert tam_tel_type["SAI_TAM_TEL_TYPE_ATTR_MODE"] == \
                 "SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE", \
                 "Expected tam telemetry to be mode single type"
@@ -228,8 +240,8 @@ class TestHFT(object):
             # Fix: Use only the object ID
             subscription_oid = tam_counter_sub[
                 "SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_OBJECT_ID"]
-            assert (subscription_oid in asic_db["ports"] or subscription_oid in asic_db["buffer_pool"]), \
-                "Expected tam counter subscription to reference port"
+            assert (subscription_oid in asic_db["ports"] or subscription_oid in asic_db["buffer_pool"] or subscription_oid in asic_db["queues"]), \
+                "Expected tam counter subscription to reference port, buffer_pool, or queue"
 
             # Only check if we have counter subscriptions
             if counters_number > 0:
@@ -467,6 +479,27 @@ class TestHFT(object):
 
         # Clean up
         self.delete_hft_group(dvs)
+        self.delete_hft_profile(dvs)
+
+    def test_hft_buffer_queue_group(self, dvs, testlog):
+        """Test HFT with QUEUE (buffer queue) objects."""
+        self.create_hft_profile(dvs)
+        self.create_hft_group(dvs,
+                              group_name="QUEUE",
+                              object_names="Ethernet0|7",
+                              object_counters="PACKETS")
+
+        time.sleep(5)
+
+        asic_db = self.get_asic_db_objects(dvs)
+        self.verify_asic_db_objects(asic_db, groups=[(1, 1)])
+
+        self.delete_hft_group(dvs, group_name="QUEUE")
+        time.sleep(2)
+
+        asic_db = self.get_asic_db_objects(dvs)
+        self.verify_asic_db_objects(asic_db, groups=[])
+
         self.delete_hft_profile(dvs)
 
     def test_hft_multiple_groups(self, dvs, testlog):
