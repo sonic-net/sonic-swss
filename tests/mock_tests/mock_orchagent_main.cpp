@@ -26,3 +26,9 @@ string gSaiErrorString;
 VRFOrch *gVrfOrch;
 
 void syncd_apply_view() {}
+
+bool gMultiAsicVoq = false;
+bool isChassisDbInUse()
+{
+    return gMultiAsicVoq;
+}
