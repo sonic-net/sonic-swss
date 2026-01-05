@@ -50,6 +50,19 @@ class TestHFT(object):
         fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
         tbl.set(key, fvs)
 
+    def create_hft_group_empty_group_name(self, dvs, profile_name="test"):
+        """Create HFT group in CONFIG_DB with empty group_name (invalid configuration)."""
+        config_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        tbl = swsscommon.Table(config_db, "HIGH_FREQUENCY_TELEMETRY_GROUP")
+
+        # Invalid key with only profile_name (no group_name)
+        key = profile_name
+        fvs = swsscommon.FieldValuePairs([
+            ("object_names", "Ethernet0"),
+            ("object_counters", "IF_IN_OCTETS")
+        ])
+        tbl.set(key, fvs)
+
     def delete_hft_profile(self, dvs, name="test"):
         """Delete HFT profile from CONFIG_DB."""
         config_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
@@ -61,6 +74,14 @@ class TestHFT(object):
         config_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         tbl = swsscommon.Table(config_db, "HIGH_FREQUENCY_TELEMETRY_GROUP")
         key = f"{profile_name}|{group_name}"
+        tbl._del(key)
+
+    def delete_hft_group_empty_group_name(self, dvs, profile_name="test"):
+        """Delete HFT group with empty group_name from CONFIG_DB."""
+        config_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        tbl = swsscommon.Table(config_db, "HIGH_FREQUENCY_TELEMETRY_GROUP")
+        # Key with only profile_name (no group_name)
+        key = profile_name
         tbl._del(key)
 
     def get_asic_db_objects(self, dvs):
@@ -545,6 +566,64 @@ class TestHFT(object):
         self.verify_asic_db_objects(asic_db, groups=[])
 
         # Clean up profile
+        self.delete_hft_profile(dvs)
+
+    def test_hft_invalid_counters_no_orchagent_restart(self, dvs, testlog):
+        """Test that invalid object_counters don't cause orchagent to restart."""
+        # Get orchagent PID inside the DVS container and record it
+        (exitcode, out) = dvs.runcmd("pgrep -x orchagent")
+        if exitcode != 0 or not out.strip():
+            # orchagent not found; skip
+            return
+
+        original_pid = out.strip().splitlines()[0].strip()
+
+        # Create HFT profile and group with invalid counters
+        self.create_hft_profile(dvs)
+        self.create_hft_group(dvs, object_counters="INVALID_STATS1,INVALID_STATS2")
+
+        # Allow some time for processing; orchagent should not restart
+        time.sleep(5)
+
+        # Re-check orchagent PID inside the container
+        (exitcode, out) = dvs.runcmd("pgrep -x orchagent")
+        assert exitcode == 0 and out.strip(), "orchagent disappeared after applying invalid object_counters"
+
+        new_pid = out.strip().splitlines()[0].strip()
+
+        assert new_pid == original_pid, "orchagent restarted (PID changed) after applying invalid object_counters"
+
+        # Clean up created config
+        self.delete_hft_group(dvs)
+        self.delete_hft_profile(dvs)
+
+    def test_hft_empty_group_name_no_orchagent_restart(self, dvs, testlog):
+        """Test that empty group_name (invalid key format) doesn't cause orchagent to restart."""
+        # Get orchagent PID inside the DVS container and record it
+        (exitcode, out) = dvs.runcmd("pgrep -x orchagent")
+        if exitcode != 0 or not out.strip():
+            # orchagent not found; skip
+            return
+
+        original_pid = out.strip().splitlines()[0].strip()
+
+        # Create HFT profile and group with empty group_name (invalid key format)
+        self.create_hft_profile(dvs)
+        self.create_hft_group_empty_group_name(dvs)
+
+        # Allow some time for processing; orchagent should not restart
+        time.sleep(5)
+
+        # Re-check orchagent PID inside the container
+        (exitcode, out) = dvs.runcmd("pgrep -x orchagent")
+        assert exitcode == 0 and out.strip(), "orchagent disappeared after applying empty group_name"
+
+        new_pid = out.strip().splitlines()[0].strip()
+
+        assert new_pid == original_pid, "orchagent restarted (PID changed) after applying empty group_name"
+
+        # Clean up created config
+        self.delete_hft_group_empty_group_name(dvs)
         self.delete_hft_profile(dvs)
 
     def test_hft_empty_default_config_cleanup(self, dvs, testlog):
