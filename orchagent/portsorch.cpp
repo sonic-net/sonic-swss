@@ -6466,10 +6466,16 @@ void PortsOrch::initializePriorityGroupsBulk(std::vector<Port>& ports)
 
         bulker.executeGet();
 
-        for (size_t idx = 0; idx < portCount; idx++)
+        size_t idx = 0;
+        for (const auto& port: ports)
         {
-            const auto& port = ports[idx];
+            if (port.m_priority_group_ids.size() == 0)
+            {
+                continue;
+            }
+
             const auto status = bulker.statuses[idx];
+            idx++;
 
             if (status != SAI_STATUS_SUCCESS)
             {
@@ -6544,10 +6550,16 @@ void PortsOrch::initializeQueuesBulk(std::vector<Port>& ports)
 
         bulker.executeGet();
 
-        for (size_t idx = 0; idx < portCount; idx++)
+        size_t idx = 0;
+        for (const auto& port: ports)
         {
-            const auto& port = ports[idx];
+            if (port.m_queue_ids.size() == 0)
+            {
+                continue;
+            }
+
             const auto status = bulker.statuses[idx];
+            idx++;
 
             if (status != SAI_STATUS_SUCCESS)
             {
@@ -6624,10 +6636,17 @@ void PortsOrch::initializeSchedulerGroupsBulk(std::vector<Port>& ports)
 
         bulker.executeGet();
 
+        size_t bulkIdx = 0;
         for (size_t idx = 0; idx < portCount; idx++)
         {
             const auto& port = ports[idx];
-            const auto status = bulker.statuses[idx];
+            if (scheduler_group_ids[idx].size() == 0)
+            {
+                continue;
+            }
+
+            const auto status = bulker.statuses[bulkIdx];
+            bulkIdx++;
 
             if (status != SAI_STATUS_SUCCESS)
             {
