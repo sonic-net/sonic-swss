@@ -547,7 +547,9 @@ namespace ut_fpmsyncd
         fib::nexthop_srv6 *nh_srv6_in = NULL;
         fib::seg6_seg_stack *nh_seg6_segs_in = NULL;
         std::vector<struct in6_addr> nh_segs_in;
-        NextHopGroupFull nhg = NextHopGroupFull(id_in, key_in, type_in, vrf_id_in, ifindex_t_in, ifname_in,
+        std::vector<uint32_t> dependents_in;
+        std::vector<uint32_t> depends_in;
+        NextHopGroupFull nhg = NextHopGroupFull(id_in, key_in, type_in, vrf_id_in, ifindex_t_in, ifname_in, depends_in, dependents_in,
                                                 label_type_in, bh_type_in, gateway_in, src_in, rmap_src_in, weight_in,
                                                 flags_in, has_srv6, has_seg6_segs, nh_srv6_in, nh_seg6_segs_in, nh_segs_in);
         return nhg;
@@ -576,7 +578,9 @@ namespace ut_fpmsyncd
         fib::nexthop_srv6 *nh_srv6_in = NULL;
         fib::seg6_seg_stack *nh_seg6_segs_in = NULL;
         std::vector<struct in6_addr> nh_segs_in;
-        NextHopGroupFull nhg = NextHopGroupFull(id_in, key_in, type_in, vrf_id_in, ifindex_t_in, ifname_in,
+        std::vector<uint32_t> dependents_in;
+        std::vector<uint32_t> depends_in;
+        NextHopGroupFull nhg = NextHopGroupFull(id_in, key_in, type_in, vrf_id_in, ifindex_t_in, ifname_in, depends_in, dependents_in,
                                                 label_type_in, bh_type_in, gateway_in, src_in, rmap_src_in, weight_in,
                                                 flags_in, has_srv6, has_seg6_segs, nh_srv6_in, nh_seg6_segs_in, nh_segs_in);
         return nhg;
@@ -594,7 +598,7 @@ namespace ut_fpmsyncd
         {
             nh_grp_full ngf;
             ngf.id = it->second.id;
-            ngf.weight = weights.at(ngf.id);
+            ngf.weight = (uint8_t)weights.at(ngf.id);
             ngf.num_direct = numDirects.at(ngf.id);
             nh_grp_full_list_in.push_back(ngf);
         }
