@@ -26,13 +26,16 @@ tokio = { version = "1.37", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 tokio-stream = "0.1"
 
-# Netlink for network operations
-neli = { git = "https://github.com/jbaublitz/neli.git", tag = "neli-v0.7.0-rc2" }
+# Using genetlink and netlink-packet-generic for netlink support
+genetlink = "0.2"
+netlink-packet-core = "0.7"
+netlink-packet-generic = "0.3"
+netlink-sys = "0.8"
 
 # IPFIX parser for traffic flow analysis
 ipfixrw = "0.1.0"
 ahash = "0.8.11"
-binrw = "0.14.1"
+binrw = "0.15.0"
 byteorder = "1.5.0"
 
 # Configuration and serialization
@@ -95,6 +98,3 @@ pretty_assertions = "1"
 # Build dependencies
 tonic-build = "0.12"
 vergen = { version = "8.2", features = ["build", "git", "gitoxide", "cargo", "rustc", "si"] }
-
-# Benchmarking
-criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }

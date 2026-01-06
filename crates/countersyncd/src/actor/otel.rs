@@ -1,13 +1,13 @@
-use std::{pin::Pin, sync::Arc, time::Duration};
-use tokio::{select, sync::mpsc::Receiver, sync::oneshot, time::{sleep_until, Instant as TokioInstant, Sleep}};
+use std::time::Duration;
+use tokio::{sync::mpsc::Receiver, sync::oneshot, select};
 use opentelemetry_proto::tonic::{
     common::v1::{KeyValue as ProtoKeyValue, AnyValue, any_value::Value, InstrumentationScope},
     metrics::v1::{Metric, Gauge as ProtoGauge, ResourceMetrics, ScopeMetrics},
     resource::v1::Resource as ProtoResource,
 };
 use crate::message::{
-    saistats::{SAIStats, SAIStatsMessage},
-    otel::{OtelMetrics, OtelMetricsMessageExt},
+    saistats::SAIStatsMessage,
+    otel::OtelMetrics,
 };
 use log::{info, error, debug};
 use opentelemetry_proto::tonic::collector::metrics::v1::metrics_service_client::MetricsServiceClient;
@@ -291,47 +291,6 @@ impl OtelActor {
         };
 
         timer.as_mut().reset(deadline);
-    }
-
-    pub fn print_conversion_report(sai_stats: &SAIStats, otel_metrics: &OtelMetrics) {
-        info!("[Conversion Report] SAI Stats → OpenTelemetry Gauges");
-        info!("Conversion timestamp: {}", sai_stats.observation_time);
-        info!("Input: {} SAI statistics", sai_stats.stats.len());
-        info!("Output: {} OpenTelemetry gauges", otel_metrics.len());
-
-        info!("BEFORE - Original SAI Statistics:");
-        for (index, sai_stat) in sai_stats.stats.iter().enumerate().take(10) {
-            info!(
-                "[{:2}] Object: {:20} | Type: {:3} | Stat: {:3} | Counter: {:>12}",
-                index + 1,
-                sai_stat.object_name,
-                sai_stat.type_id,
-                sai_stat.stat_id,
-                sai_stat.counter
-            );
-        }
-
-        info!("AFTER - Converted OpenTelemetry Gauges:");
-        for (index, gauge) in otel_metrics.gauges.iter().enumerate().take(10) {
-            let data_point = &gauge.data_points[0];
-            info!(
-                "[{:2}] Metric: {:35} | Value: {:>12} | Time: {}ns",
-                index + 1,
-                gauge.name,
-                data_point.value,
-                data_point.time_unix_nano
-            );
-
-            // Show key attributes on the same line
-            let attrs: Vec<String> = data_point.attributes.iter()
-                .map(|attr| format!("{}={}", attr.key, attr.value))
-                .collect();
-            if !attrs.is_empty() {
-                info!("Attributes: [{}]", attrs.join(", "));
-            }
-            info!("Description: {}", gauge.description);
-        }
-        info!("Conversion completed successfully!");
     }
 
     /// Shutdown the actor

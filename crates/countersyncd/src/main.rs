@@ -247,7 +247,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (stats_report_sender, stats_report_receiver) = channel(args.stats_reporter_capacity);
     let (counter_db_sender, counter_db_receiver) = channel(args.counter_db_capacity);
     let (otel_sender, otel_receiver) = channel(args.otel_capacity);
-    let (otel_shutdown_sender, otel_shutdown_receiver) = tokio::sync::oneshot::channel();
+    let (otel_shutdown_sender, _otel_shutdown_receiver) = tokio::sync::oneshot::channel();
 
     // Get netlink family and group configuration from SONiC constants
     let (family, group) = get_genl_family_group();
