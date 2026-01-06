@@ -742,8 +742,57 @@ namespace flexcounter_test
         // Do not check the content of port counter since it's large and varies among platforms.
         ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, oid, PORT_COUNTER_ID_LIST));
 
-        // create a routing interface
+        auto it = ports.begin();
+        it++;
+        auto secondPortName= it->first;
+        auto secondPortValues = it->second;
+        Port secondPort;
+        ASSERT_TRUE(gPortsOrch->getPort(secondPortName, secondPort));
+        auto second_oid = secondPort.m_port_id;
+
         std::deque<KeyOpFieldsValuesTuple> entries;
+        auto port_consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+
+        entries.push_back({secondPortName, "SET", {{"fec", "rs"}}});
+        port_consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        ASSERT_TRUE(gPortsOrch->getPort(secondPortName, secondPort));
+        ASSERT_EQ(secondPort.m_fec_mode, SAI_PORT_FEC_MODE_RS);
+        ASSERT_EQ(secondPort.m_fec_cfg, true);
+        ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, second_oid, PORT_COUNTER_ID_LIST));
+
+        entries.clear();
+        entries.push_back({secondPortName, "SET", {{"fec", "none"}}});
+        port_consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        ASSERT_TRUE(gPortsOrch->getPort(secondPortName, secondPort));
+        ASSERT_EQ(secondPort.m_fec_mode, SAI_PORT_FEC_MODE_NONE);
+        ASSERT_EQ(secondPort.m_fec_cfg, true);
+        ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, second_oid, PORT_COUNTER_ID_LIST));
+
+        //Verify the Port Stats counter after DEL
+        entries.clear();
+        entries.push_back({secondPortName, "DEL",  {} });
+        port_consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        auto ret = gPortsOrch->getPort(secondPortName, secondPort);
+        if (ret == true)
+        {
+           // Temporary work around since remove_port fails in sonic-sairedis/vslib in remove_internal due
+           // to switch_create doesn't seem to be calling create_internal for the ports when it is called from
+           // portsorch removePort->sai_port_api.remove_port
+            gPortsOrch->removePortFromLanesMap(secondPortName);
+            gPortsOrch->removePortFromPortListMap(secondPort.m_port_id);
+            gPortsOrch->m_portConfigMap.erase(secondPortName);
+            gPortsOrch->m_portList.erase(secondPortName);
+            gPortsOrch->saiOidToAlias.erase(secondPort.m_port_id);
+
+        }
+        ASSERT_FALSE(gPortsOrch->getPort(secondPortName, secondPort));
+        ASSERT_FALSE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, second_oid, PORT_COUNTER_ID_LIST));
+
+        // create a routing interface
+        entries.clear();
         entries.push_back({firstPort.m_alias, "SET", { {"mtu", "9100"}}});
         auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
         consumer->addToSync(entries);
