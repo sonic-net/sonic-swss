@@ -23,8 +23,7 @@ using ::p4orch::kTableKeyDelimiter;
 extern sai_object_id_t gSwitchId;
 extern sai_next_hop_group_api_t *sai_next_hop_group_api;
 extern CrmOrch *gCrmOrch;
-extern PortsOrch *gPortsOrch;
-extern size_t gMaxBulkSize;
+extern PortsOrch* gPortsOrch;
 
 namespace p4orch
 {
@@ -51,17 +50,6 @@ std::vector<sai_attribute_t> getSaiGroupAttrs(const P4WcmpGroupEntry &wcmp_group
 }
 
 } // namespace
-
-WcmpManager::WcmpManager(P4OidMapper *p4oidMapper, ResponsePublisherInterface *publisher)
-    : gNextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId, gMaxBulkSize)
-{
-    SWSS_LOG_ENTER();
-
-    assert(p4oidMapper != nullptr);
-    m_p4OidMapper = p4oidMapper;
-    assert(publisher != nullptr);
-    m_publisher = publisher;
-}
 
 std::vector<sai_attribute_t> WcmpManager::getSaiMemberAttrs(const P4WcmpGroupMemberEntry &wcmp_member_entry,
                                                             const sai_object_id_t group_oid)
@@ -279,81 +267,88 @@ ReturnCode WcmpManager::fetchPortOperStatus(const std::string &port_name, sai_po
     return ReturnCode();
 }
 
-ReturnCode WcmpManager::processWcmpGroupMembersAddition(
-    const std::vector<std::shared_ptr<P4WcmpGroupMemberEntry>> &members, const std::string &wcmp_group_key,
-    sai_object_id_t wcmp_group_oid, std::vector<std::shared_ptr<P4WcmpGroupMemberEntry>> &created_wcmp_group_members)
-{
-    SWSS_LOG_ENTER();
-    ReturnCode status;
-    vector<sai_object_id_t> nhgm_ids(members.size(), SAI_NULL_OBJECT_ID);
-    for (size_t i = 0; i < members.size(); ++i)
-    {
-        bool insert_member = true;
-        auto &member = members[i];
-        if (!member->watch_port.empty())
-        {
-            // Create member in SAI only for operationally up ports
-            sai_port_oper_status_t oper_status = SAI_PORT_OPER_STATUS_DOWN;
-            status = fetchPortOperStatus(member->watch_port, &oper_status);
-            if (!status.ok())
-            {
-                break;
-            }
-
-            if (oper_status != SAI_PORT_OPER_STATUS_UP)
-            {
-                insert_member = false;
-                member->pruned = true;
-                SWSS_LOG_NOTICE("Member %s in group %s not created in asic as the associated "
-                                "watchport "
-                                "(%s) is not operationally up",
-                                member->next_hop_id.c_str(), member->wcmp_group_id.c_str(), member->watch_port.c_str());
-            }
-        }
-        if (insert_member)
-        {
-            auto attrs = getSaiMemberAttrs(*(member.get()), wcmp_group_oid);
-            gNextHopGroupMemberBulker.create_entry(&nhgm_ids[i], (uint32_t)attrs.size(), attrs.data());
-        }
-    }
-    if (status.ok())
-    {
-        gNextHopGroupMemberBulker.flush();
-        for (size_t i = 0; i < members.size(); ++i)
-        {
-            auto &member = members[i];
-            if (!member->pruned)
-            {
-                if (nhgm_ids[i] == SAI_NULL_OBJECT_ID)
-                {
-                    if (status.ok())
-                    {
-                        status = ReturnCode(StatusCode::SWSS_RC_UNKNOWN)
-                                 << "Fail to create wcmp group member: " << QuotedVar(member->next_hop_id);
-                    }
-                    else
-                    {
-                        status << "; Fail to create wcmp group member: " << QuotedVar(member->next_hop_id);
-                    }
-                    continue;
-                }
-                member->member_oid = nhgm_ids[i];
-                m_p4OidMapper->setOID(SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER,
-                                      getWcmpGroupMemberKey(wcmp_group_key, member->member_oid), member->member_oid);
-                m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, wcmp_group_key);
-            }
-            if (!member->watch_port.empty())
-            {
-                // Add member to port_name_to_wcmp_group_member_map
-                insertMemberInPortNameToWcmpGroupMemberMap(member);
-            }
-            const std::string &next_hop_key = KeyGenerator::generateNextHopKey(member->next_hop_id);
-            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
-            m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP, next_hop_key);
-            created_wcmp_group_members.push_back(member);
-        }
-    }
+ReturnCode WcmpManager::createWcmpGroupMemberWithWatchport(
+    P4WcmpGroupEntry* wcmp_group,
+    std::shared_ptr<P4WcmpGroupMemberEntry> member,
+    const std::string& wcmp_group_key) {
+  // Create member in SAI only for operationally up ports
+  sai_port_oper_status_t oper_status = SAI_PORT_OPER_STATUS_DOWN;
+  auto status = fetchPortOperStatus(member->watch_port, &oper_status);
+  if (!status.ok()) {
     return status;
+  }
+
+  if (oper_status == SAI_PORT_OPER_STATUS_UP) {
+    auto status = createWcmpGroupMember(member, wcmp_group->wcmp_group_oid,
+                                        wcmp_group_key);
+    if (!status.ok()) {
+      SWSS_LOG_ERROR("Failed to create next hop member %s with watch_port %s",
+                     member->next_hop_id.c_str(), member->watch_port.c_str());
+      return status;
+    }
+  } else {
+    member->pruned = true;
+    SWSS_LOG_NOTICE(
+        "Member %s in group %s not created in asic as the associated watchport "
+        "(%s) is not operationally up",
+        member->next_hop_id.c_str(), member->wcmp_group_id.c_str(),
+        member->watch_port.c_str());
+  }
+  // Add member to port_name_to_wcmp_group_member_map
+  insertMemberInPortNameToWcmpGroupMemberMap(member);
+  return ReturnCode();
+}
+
+ReturnCode WcmpManager::processWcmpGroupMemberAddition(
+    std::shared_ptr<P4WcmpGroupMemberEntry> member,
+    P4WcmpGroupEntry* wcmp_group, const std::string& wcmp_group_key) {
+  ReturnCode status = ReturnCode();
+  if (!member->watch_port.empty()) {
+    status =
+        createWcmpGroupMemberWithWatchport(wcmp_group, member, wcmp_group_key);
+    if (!status.ok()) {
+      SWSS_LOG_ERROR("Failed to create WCMP group member %s with watch_port %s",
+                     member->next_hop_id.c_str(), member->watch_port.c_str());
+    }
+  } else {
+    status = createWcmpGroupMember(member, wcmp_group->wcmp_group_oid,
+                                   wcmp_group_key);
+    if (!status.ok()) {
+      SWSS_LOG_ERROR("Failed to create WCMP group member %s",
+                     member->next_hop_id.c_str());
+    }
+  }
+  if (status.ok()) {
+    // Increase reference count for corresponding next hop.
+    const std::string& next_hop_key =
+        KeyGenerator::generateNextHopKey(member->next_hop_id);
+    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+    m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP, next_hop_key);
+  }
+  return status;
+}
+
+ReturnCode WcmpManager::processWcmpGroupMemberRemoval(
+    std::shared_ptr<P4WcmpGroupMemberEntry> member,
+    const std::string& wcmp_group_key) {
+  if (member->pruned) {
+    SWSS_LOG_NOTICE("Removed pruned member %s from group %s",
+                    member->next_hop_id.c_str(), member->wcmp_group_id.c_str());
+    member->pruned = false;
+  } else {
+    auto status = removeWcmpGroupMember(member, wcmp_group_key);
+    if (!status.ok()) {
+      return status;
+    }
+  }
+  // Decrease reference count for corresponding next hop.
+  const std::string& next_hop_key =
+      KeyGenerator::generateNextHopKey(member->next_hop_id);
+  gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+  m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP, next_hop_key);
+  // Remove member from port_name_to_wcmp_group_member_map
+  removeMemberFromPortNameToWcmpGroupMemberMap(member);
+  return ReturnCode();
 }
 
 ReturnCode WcmpManager::createWcmpGroup(P4WcmpGroupEntry *wcmp_group)
@@ -371,8 +366,15 @@ ReturnCode WcmpManager::createWcmpGroup(P4WcmpGroupEntry *wcmp_group)
 
     // Create next hop group members
     std::vector<std::shared_ptr<P4WcmpGroupMemberEntry>> created_wcmp_group_members;
-    ReturnCode status = processWcmpGroupMembersAddition(wcmp_group->wcmp_group_members, wcmp_group_key,
-                                                        wcmp_group->wcmp_group_oid, created_wcmp_group_members);
+    ReturnCode status;
+    for (auto& wcmp_group_member : wcmp_group->wcmp_group_members) {
+      status = processWcmpGroupMemberAddition(wcmp_group_member, wcmp_group,
+                                              wcmp_group_key);
+      if (!status.ok()) {
+        break;
+      }
+      created_wcmp_group_members.push_back(wcmp_group_member);
+    }
     if (!status.ok())
     {
         // Clean up created group members and the group
@@ -389,7 +391,6 @@ ReturnCode WcmpManager::createWcmpGroup(P4WcmpGroupEntry *wcmp_group)
         m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, wcmp_group_key);
         return status;
     }
-
     m_wcmpGroupTable[wcmp_group->wcmp_group_id] = *wcmp_group;
     return ReturnCode();
 }
@@ -399,28 +400,33 @@ void WcmpManager::recoverGroupMembers(
     const std::vector<std::shared_ptr<p4orch::P4WcmpGroupMemberEntry>> &created_wcmp_group_members,
     const std::vector<std::shared_ptr<p4orch::P4WcmpGroupMemberEntry>> &removed_wcmp_group_members)
 {
-    SWSS_LOG_ENTER();
-    std::vector<std::shared_ptr<P4WcmpGroupMemberEntry>> members;
-    ReturnCode recovery_status;
-    // Clean up created group members - remove created new members
-    if (created_wcmp_group_members.size() != 0)
-    {
-        recovery_status = processWcmpGroupMembersRemoval(created_wcmp_group_members, wcmp_group_key, members)
-                              .prepend("Error during recovery: ");
+  // Keep track of recovery status during clean up
+  ReturnCode recovery_status;
+  // Clean up created group members - remove created new members
+  for (const auto& new_member : created_wcmp_group_members) {
+    auto status = processWcmpGroupMemberRemoval(new_member, wcmp_group_key);
+    if (!status.ok()) {
+      SWSS_LOG_ERROR(
+          "Failed to remove created next hop group member %s in "
+          "processUpdateRequest().",
+          QuotedVar(new_member->next_hop_id).c_str());
+      recovery_status.ok()
+          ? recovery_status = status.prepend("Error during recovery: ")
+          : recovery_status << "; Error during recovery: " << status.message();
     }
-
-    // Clean up removed group members - create removed old members
-    if (recovery_status.ok() && removed_wcmp_group_members.size() != 0)
-    {
-        recovery_status = processWcmpGroupMembersAddition(removed_wcmp_group_members, wcmp_group_key,
-                                                          wcmp_group_entry->wcmp_group_oid, members)
-                              .prepend("Error during recovery: ");
+  }
+  // Clean up removed group members - create removed old members
+  for (auto& old_member : removed_wcmp_group_members) {
+    auto status = processWcmpGroupMemberAddition(old_member, wcmp_group_entry,
+                                                 wcmp_group_key);
+    if (!status.ok()) {
+      recovery_status.ok()
+          ? recovery_status = status.prepend("Error during recovery: ")
+          : recovery_status << "; Error during recovery: " << status.message();
     }
-
-    if (!recovery_status.ok())
-    {
-        SWSS_RAISE_CRITICAL_STATE(recovery_status.message());
-    }
+  }
+  if (!recovery_status.ok())
+    SWSS_RAISE_CRITICAL_STATE(recovery_status.message());
 }
 
 ReturnCode WcmpManager::processUpdateRequest(P4WcmpGroupEntry *wcmp_group_entry)
@@ -443,88 +449,95 @@ ReturnCode WcmpManager::processUpdateRequest(P4WcmpGroupEntry *wcmp_group_entry)
     // 5. Make SAI call to remove the reserved old member
     // 6. Make SAI calls to create remaining new members
     ReturnCode update_request_status;
-    auto find_smallest_index = [&](p4orch::P4WcmpGroupEntry *wcmp,
-                                   std::vector<std::shared_ptr<P4WcmpGroupMemberEntry>> &other_members) -> int {
-        other_members.clear();
-        if (wcmp->wcmp_group_members.empty())
-        {
-            return -1;
+    auto find_smallest_index = [&](p4orch::P4WcmpGroupEntry* wcmp) {
+      if (wcmp->wcmp_group_members.empty()) return -1;
+      int reserved_idx = 0;
+      for (int i = 1; i < (int)wcmp->wcmp_group_members.size(); i++) {
+        if (wcmp->wcmp_group_members[i]->weight <
+            wcmp->wcmp_group_members[reserved_idx]->weight) {
+          reserved_idx = i;
         }
-        int reserved_idx = 0;
-        for (int i = 1; i < (int)wcmp->wcmp_group_members.size(); i++)
-        {
-            if (wcmp->wcmp_group_members[i]->weight < wcmp->wcmp_group_members[reserved_idx]->weight)
-            {
-                other_members.push_back(wcmp->wcmp_group_members[reserved_idx]);
-                reserved_idx = i;
-            }
-            else
-            {
-                other_members.push_back(wcmp->wcmp_group_members[i]);
-            }
-        }
-        return reserved_idx;
+      }
+      return reserved_idx;
     };
     // Find the old member who has the smallest weight, -1 if the member list is
     // empty
-    std::vector<std::shared_ptr<P4WcmpGroupMemberEntry>> other_old_members;
-    int reserved_old_member_index = find_smallest_index(old_wcmp, other_old_members);
+    int reserved_old_member_index = find_smallest_index(old_wcmp);
     // Find the new member who has the smallest weight, -1 if the member list is
     // empty
-    std::vector<std::shared_ptr<P4WcmpGroupMemberEntry>> other_new_members;
-    int reserved_new_member_index = find_smallest_index(wcmp_group_entry, other_new_members);
+    int reserved_new_member_index = find_smallest_index(wcmp_group_entry);
 
     // Remove stale group members except the member with the smallest weight
-    if (other_old_members.size() != 0)
-    {
-        update_request_status =
-            processWcmpGroupMembersRemoval(other_old_members, wcmp_group_key, removed_wcmp_group_members);
-        if (!update_request_status.ok())
-        {
-            recoverGroupMembers(wcmp_group_entry, wcmp_group_key, created_wcmp_group_members,
-                                removed_wcmp_group_members);
-            return update_request_status;
-        }
+    for (int i = 0; i < (int)old_wcmp->wcmp_group_members.size(); i++) {
+      // Reserve the old member with smallest weight
+      if (i == reserved_old_member_index) continue;
+      auto& stale_member = old_wcmp->wcmp_group_members[i];
+      update_request_status =
+          processWcmpGroupMemberRemoval(stale_member, wcmp_group_key);
+      if (!update_request_status.ok()) {
+        SWSS_LOG_ERROR(
+            "Failed to remove stale next hop group member %s in "
+            "processUpdateRequest().",
+            QuotedVar(sai_serialize_object_id(stale_member->member_oid))
+                .c_str());
+        recoverGroupMembers(wcmp_group_entry, wcmp_group_key,
+                            created_wcmp_group_members,
+                            removed_wcmp_group_members);
+        return update_request_status;
+      }
+      removed_wcmp_group_members.push_back(stale_member);
     }
 
     // Create the new member with the smallest weight if member list is nonempty
-    if (reserved_new_member_index != -1)
-    {
-        update_request_status = processWcmpGroupMembersAddition(
-            {wcmp_group_entry->wcmp_group_members[reserved_new_member_index]}, wcmp_group_key,
-            wcmp_group_entry->wcmp_group_oid, created_wcmp_group_members);
-        if (!update_request_status.ok())
-        {
-            recoverGroupMembers(wcmp_group_entry, wcmp_group_key, created_wcmp_group_members,
-                                removed_wcmp_group_members);
-            return update_request_status;
-        }
+    if (!wcmp_group_entry->wcmp_group_members.empty()) {
+      auto& member =
+          wcmp_group_entry->wcmp_group_members[reserved_new_member_index];
+      update_request_status = processWcmpGroupMemberAddition(
+          member, wcmp_group_entry, wcmp_group_key);
+      if (!update_request_status.ok()) {
+        recoverGroupMembers(wcmp_group_entry, wcmp_group_key,
+                            created_wcmp_group_members,
+                            removed_wcmp_group_members);
+        return update_request_status;
+      }
+      created_wcmp_group_members.push_back(member);
     }
 
     // Remove the old member with the smallest weight if member list is nonempty
-    if (reserved_old_member_index != -1)
-    {
-        update_request_status = processWcmpGroupMembersRemoval(
-            {old_wcmp->wcmp_group_members[reserved_old_member_index]}, wcmp_group_key, removed_wcmp_group_members);
-        if (!update_request_status.ok())
-        {
-            recoverGroupMembers(wcmp_group_entry, wcmp_group_key, created_wcmp_group_members,
-                                removed_wcmp_group_members);
-            return update_request_status;
-        }
+    if (!old_wcmp->wcmp_group_members.empty()) {
+      auto& stale_member =
+          old_wcmp->wcmp_group_members[reserved_old_member_index];
+      update_request_status =
+          processWcmpGroupMemberRemoval(stale_member, wcmp_group_key);
+      if (!update_request_status.ok()) {
+        SWSS_LOG_ERROR(
+            "Failed to remove stale next hop group member %s in "
+            "processUpdateRequest().",
+            QuotedVar(sai_serialize_object_id(stale_member->member_oid))
+                .c_str());
+        recoverGroupMembers(wcmp_group_entry, wcmp_group_key,
+                            created_wcmp_group_members,
+                            removed_wcmp_group_members);
+        return update_request_status;
+      }
+      removed_wcmp_group_members.push_back(stale_member);
     }
 
     // Create new group members
-    if (other_new_members.size() != 0)
-    {
-        update_request_status = processWcmpGroupMembersAddition(
-            other_new_members, wcmp_group_key, wcmp_group_entry->wcmp_group_oid, created_wcmp_group_members);
-        if (!update_request_status.ok())
-        {
-            recoverGroupMembers(wcmp_group_entry, wcmp_group_key, created_wcmp_group_members,
-                                removed_wcmp_group_members);
-            return update_request_status;
-        }
+    for (int i = 0; i < (int)wcmp_group_entry->wcmp_group_members.size(); i++) {
+      // Skip the new member with the lowest weight as it is already created
+      if (i == reserved_new_member_index) continue;
+      auto& member = wcmp_group_entry->wcmp_group_members[i];
+      // Create new group member
+      update_request_status = processWcmpGroupMemberAddition(
+          member, wcmp_group_entry, wcmp_group_key);
+      if (!update_request_status.ok()) {
+        recoverGroupMembers(wcmp_group_entry, wcmp_group_key,
+                            created_wcmp_group_members,
+                            removed_wcmp_group_members);
+        return update_request_status;
+      }
+      created_wcmp_group_members.push_back(member);
     }
 
     m_wcmpGroupTable[wcmp_group_entry->wcmp_group_id] = *wcmp_group_entry;
@@ -543,62 +556,6 @@ ReturnCode WcmpManager::removeWcmpGroupMember(const std::shared_ptr<P4WcmpGroupM
                             getWcmpGroupMemberKey(wcmp_group_key, wcmp_group_member->member_oid));
     m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, wcmp_group_key);
     return ReturnCode();
-}
-
-ReturnCode WcmpManager::processWcmpGroupMembersRemoval(
-    const std::vector<std::shared_ptr<P4WcmpGroupMemberEntry>> &members, const std::string &wcmp_group_key,
-    std::vector<std::shared_ptr<P4WcmpGroupMemberEntry>> &removed_wcmp_group_members)
-{
-    SWSS_LOG_ENTER();
-    ReturnCode status;
-    std::vector<sai_status_t> statuses(members.size(), SAI_STATUS_FAILURE);
-    for (size_t i = 0; i < members.size(); ++i)
-    {
-        auto &member = members[i];
-        if (!member->pruned)
-        {
-            gNextHopGroupMemberBulker.remove_entry(&statuses[i], member->member_oid);
-        }
-    }
-    gNextHopGroupMemberBulker.flush();
-    for (size_t i = 0; i < members.size(); ++i)
-    {
-        auto &member = members[i];
-        if (member->pruned)
-        {
-            SWSS_LOG_NOTICE("Removed pruned member %s from group %s", member->next_hop_id.c_str(),
-                            member->wcmp_group_id.c_str());
-            member->pruned = false;
-        }
-        else
-        {
-            if (statuses[i] != SAI_STATUS_SUCCESS)
-            {
-                if (status.ok())
-                {
-                    status = ReturnCode(statuses[i])
-                             << "Failed to delete WCMP group member: " << QuotedVar(member->next_hop_id);
-                }
-                else
-                {
-                    status << "; Failed to delete WCMP group member: " << QuotedVar(member->next_hop_id);
-                }
-                continue;
-            }
-            else
-            {
-                m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER,
-                                        getWcmpGroupMemberKey(wcmp_group_key, member->member_oid));
-                m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, wcmp_group_key);
-            }
-        }
-        const std::string &next_hop_key = KeyGenerator::generateNextHopKey(member->next_hop_id);
-        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
-        m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP, next_hop_key);
-        removeMemberFromPortNameToWcmpGroupMemberMap(member);
-        removed_wcmp_group_members.push_back(member);
-    }
-    return status;
 }
 
 ReturnCode WcmpManager::removeWcmpGroup(const std::string &wcmp_group_id)
@@ -623,10 +580,16 @@ ReturnCode WcmpManager::removeWcmpGroup(const std::string &wcmp_group_id)
                              << expected_refcount << ") referencing it.");
     }
 
-    // Delete group members
     std::vector<std::shared_ptr<p4orch::P4WcmpGroupMemberEntry>> removed_wcmp_group_members;
-    ReturnCode status =
-        processWcmpGroupMembersRemoval(wcmp_group->wcmp_group_members, wcmp_group_key, removed_wcmp_group_members);
+    ReturnCode status;
+    // Delete group members
+    for (const auto& member : wcmp_group->wcmp_group_members) {
+      status = processWcmpGroupMemberRemoval(member, wcmp_group_key);
+      if (!status.ok()) {
+        break;
+      }
+      removed_wcmp_group_members.push_back(member);
+    }
 
     // Delete group
     if (status.ok())
