@@ -158,6 +158,12 @@ bool GearboxParser::parse()
                 attr = std::make_pair("macsec_ipg", std::to_string(val.get<int>()));
                 attrs.push_back(attr);
             }
+            if (phy.find("macsec_supported") != phy.end())
+            {
+                val = phy["macsec_supported"];
+                attr = std::make_pair("macsec_supported", val.get<bool>() ? "true" : "false");
+                attrs.push_back(attr);
+            }
             if (phy.find("hwinfo") == phy.end())
             {
                 SWSS_LOG_ERROR("missing 'hwinfo' field in 'phys' item %d in gearbox configuration", iter);
