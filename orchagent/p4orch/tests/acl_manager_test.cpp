@@ -23,6 +23,7 @@
 #include "table.h"
 #include "tokenize.h"
 #include "vrforch.h"
+#include "logger.h"
 
 using ::p4orch::kTableKeyDelimiter;
 
@@ -637,8 +638,7 @@ P4AclTableDefinitionAppDbEntry getDefaultAclTableDefAppDbEntry()
     app_db_entry.match_field_lookup["inner_vlan_id"] = BuildMatchFieldJsonStrKindSaiField(P4_MATCH_INNER_VLAN_ID);
     app_db_entry.match_field_lookup["inner_vlan_cfi"] = BuildMatchFieldJsonStrKindSaiField(P4_MATCH_INNER_VLAN_CFI);
     app_db_entry.match_field_lookup["vrf_id"] =
-        BuildMatchFieldJsonStrKindSaiField(P4_MATCH_VRF_ID, P4_FORMAT_HEX_STRING,
-                                           /*bitwidth=*/16);
+        BuildMatchFieldJsonStrKindSaiField(P4_MATCH_VRF_ID, P4_FORMAT_STRING);
     app_db_entry.match_field_lookup["ipmc_table_hit"] =
         BuildMatchFieldJsonStrKindSaiField(P4_MATCH_IPMC_TABLE_HIT,
                                            P4_FORMAT_HEX_STRING, /*bitwidth=*/1);
@@ -716,9 +716,34 @@ P4AclTableDefinitionAppDbEntry getDefaultAclTableDefAppDbEntry()
     app_db_entry.action_field_lookup["do_not_learn"].push_back(
         {.sai_action = P4_ACTION_SET_DO_NOT_LEARN, .p4_param_name = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_vrf"].push_back({.sai_action = P4_ACTION_SET_VRF, .p4_param_name = "vrf"});
+    app_db_entry.action_field_lookup["set_metadata"].push_back(
+      {.sai_action = P4_ACTION_SET_ACL_META_DATA,
+       .p4_param_name = "acl_metadata"});
     app_db_entry.action_field_lookup["qos_queue"].push_back(
         {.sai_action = P4_ACTION_SET_QOS_QUEUE, .p4_param_name = "cpu_queue"});
 
+
+    // action/acl_rate_limit_copy = [
+    //   {"action":"SAI_PACKET_ACTION_FORWARD","packet_color":"SAI_PACKET_COLOR_GREEN"},
+    //   {"action":"SAI_PACKET_ACTION_COPY_CANCEL","packet_color":"SAI_PACKET_COLOR_YELLOW"},
+    //   {"action":"SAI_PACKET_ACTION_COPY_CANCEL","packet_color":"SAI_PACKET_COLOR_RED"},
+    //   {"action":"QOS_QUEUE","param":"qos_queue"}
+    // ]
+
+    app_db_entry.packet_action_color_lookup["acl_rate_limit_copy"].push_back(
+      {.packet_action = P4_PACKET_ACTION_FORWARD,
+       .packet_color = P4_PACKET_COLOR_GREEN});
+  app_db_entry.packet_action_color_lookup["acl_rate_limit_copy"].push_back(
+      {.packet_action = P4_PACKET_ACTION_COPY_CANCEL,
+       .packet_color = P4_PACKET_COLOR_YELLOW});
+  app_db_entry.packet_action_color_lookup["acl_rate_limit_copy"].push_back(
+      {.packet_action = P4_PACKET_ACTION_COPY_CANCEL,
+       .packet_color = P4_PACKET_COLOR_RED});
+  app_db_entry.action_field_lookup["acl_rate_limit_copy"].push_back(
+      {.sai_action = P4_ACTION_SET_QOS_QUEUE, .p4_param_name = "qos_queue"});
+
+
+    
     //   "action/acl_trap" = [
     //     {"action": "SAI_PACKET_ACTION_TRAP", "packet_color":
     //     "SAI_PACKET_COLOR_GREEN"},
@@ -2721,6 +2746,14 @@ TEST_F(AclManagerTest, CreateAclRuleWithInvalidSaiMatchFails)
     app_db_entry.match_fvs.erase("arp_tpa");
     acl_table->udf_group_attr_index_lookup = saved_udf_group_attr_index_lookup;
 
+    // ACL rule has invalid VRF ID.
+    app_db_entry.match_fvs["vrf_id"] = "invalid";
+    acl_rule_key =
+        KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
+    EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND,
+              ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+    app_db_entry.match_fvs.erase("vrf_id");
+
     // ACL rule has undefined match field
     app_db_entry.match_fvs["undefined"] = "1";
     acl_rule_key = KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
@@ -2800,7 +2833,7 @@ TEST_F(AclManagerTest, AclRuleWithValidMatchFields)
     app_db_entry.match_fvs["inner_vlan_pri"] = "200";
     app_db_entry.match_fvs["inner_vlan_id"] = "200";
     app_db_entry.match_fvs["inner_vlan_cfi"] = "200";
-    app_db_entry.match_fvs["vrf_id"] = "0x777";
+    app_db_entry.match_fvs["vrf_id"] = gVrfName;
     app_db_entry.match_fvs["ipmc_table_hit"] = "0x1";
 
     const auto &acl_rule_key = KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
@@ -2898,8 +2931,9 @@ TEST_F(AclManagerTest, AclRuleWithValidMatchFields)
     EXPECT_EQ(SAI_ACL_IP_FRAG_HEAD, acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_FRAG].aclfield.data.u32);
     EXPECT_EQ(SAI_PACKET_VLAN_SINGLE_OUTER_TAG,
               acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_PACKET_VLAN].aclfield.data.u32);
-    EXPECT_EQ(0x777, acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_VRF_ID].aclfield.data.u16);
-    EXPECT_EQ(0xFFFF, acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_VRF_ID].aclfield.mask.u16);
+    EXPECT_EQ(
+        gVrfOid,
+        acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_VRF_ID].aclfield.data.oid);
     EXPECT_EQ(true,
               acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT]
                   .aclfield.data.booldata);
@@ -2957,6 +2991,124 @@ TEST_F(AclManagerTest, AclRuleWithColorPacketActionsButNoRateLimit)
     EXPECT_EQ(gUserDefinedTrapStartOid + queue_num,
               acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID].aclaction.parameter.oid);
 }
+
+TEST_F(AclManagerTest, AclRuleWithColorPacketActionsButWithRateLimit) {
+  ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+
+  // Create app_db_entry with color packet action, but no rate limit attributes
+  P4AclRuleAppDbEntry app_db_entry;
+  app_db_entry.acl_table_name = kAclIngressTableName;
+  app_db_entry.priority = 100;
+  // ACL rule match fields
+  app_db_entry.match_fvs["ether_type"] = "0x0800";
+  app_db_entry.match_fvs["ipv6_dst"] = "fdf8:f53b:82e4::53";
+  app_db_entry.match_fvs["ether_dst"] = "AA:BB:CC:DD:EE:FF";
+  app_db_entry.match_fvs["ether_src"] = "AA:BB:CC:DD:EE:FF";
+  app_db_entry.match_fvs["ipv6_next_header"] = "1";
+  app_db_entry.match_fvs["src_ipv6_64bit"] = "fdf8:f53b:82e4::";
+  app_db_entry.match_fvs["arp_tpa"] = "0xff112231";
+  app_db_entry.match_fvs["udf2"] = "0x9876 & 0xAAAA";
+  app_db_entry.db_key =
+      "ACL_PUNT_TABLE:{\"match/ether_type\": \"0x0800\",\"match/ipv6_dst\": "
+      "\"fdf8:f53b:82e4::53\",\"match/ether_dst\": \"AA:BB:CC:DD:EE:FF\", "
+      "\"match/ether_src\": \"AA:BB:CC:DD:EE:FF\", \"match/ipv6_next_header\": "
+      "\"1\", \"match/src_ipv6_64bit\": "
+      "\"fdf8:f53b:82e4::\",\"match/arp_tpa\": \"0xff112231\",\"match/udf2\": "
+      "\"0x9876 & 0xAAAA\",\"priority\":100}";
+
+  const auto& acl_rule_key =
+      KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
+
+  // Set user defined trap for QOS_QUEUE, and color packet actions in meter
+  int queue_num = 8;
+  app_db_entry.action = "acl_rate_limit_copy";
+  app_db_entry.action_param_fvs["qos_queue"] = std::to_string(queue_num);
+  // Install rule
+  EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+
+  EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(
+      mock_sai_policer_,
+      create_policer(
+	  _, Eq(gSwitchId), Eq(9),
+          Truly(std::bind(MatchSaiPolicerAttribute, 9, SAI_METER_TYPE_PACKETS,
+                          SAI_PACKET_ACTION_FORWARD,
+			  SAI_PACKET_ACTION_COPY_CANCEL,
+			  SAI_PACKET_ACTION_COPY_CANCEL,
+                          0x7fffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff,
+                          std::placeholders::_1))))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+  auto acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+  ASSERT_NE(nullptr, acl_rule);
+  // Check action field value
+  EXPECT_EQ(gUserDefinedTrapStartOid + queue_num - P4_CPU_QUEUE_MIN_NUM + 1,
+            acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID]
+                .aclaction.parameter.oid);
+}
+
+TEST_F(AclManagerTest, AclRuleWithMockedPacketAction) {
+  ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+  auto app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
+  const auto& acl_rule_key =
+      KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
+
+  // set packet action
+  app_db_entry.action = "set_packet_action";
+  app_db_entry.action_param_fvs["packet_action"] =
+      "SAI_PACKET_ACTION_COPY_CANCEL";
+
+  // Install rule
+  EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+  auto* acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+  ASSERT_NE(nullptr, acl_rule);
+
+  // Check action field value
+  EXPECT_EQ(SAI_PACKET_ACTION_COPY_CANCEL,
+            acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION]
+                .aclaction.parameter.s32);
+
+  // update packet action
+  app_db_entry.action_param_fvs["packet_action"] = "SAI_PACKET_ACTION_DENY";
+  EXPECT_CALL(mock_sai_acl_,
+              set_acl_entry_attribute(Eq(kAclIngressRuleOid1), _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ProcessUpdateRuleRequest(app_db_entry, *acl_rule));
+  acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+  ASSERT_NE(nullptr, acl_rule);
+
+  // Check action field value
+  EXPECT_EQ(SAI_PACKET_ACTION_DENY,
+            acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION]
+                .aclaction.parameter.s32);
+
+  // Remove rule
+  EXPECT_CALL(mock_sai_acl_, remove_acl_entry(Eq(kAclIngressRuleOid1)))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_acl_, remove_acl_counter(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_policer_, remove_policer(Eq(kAclMeterOid1)))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
+  EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
+}
+
 
 #pragma GCC diagnostic warning "-Wdisabled-optimization"
 
@@ -4285,7 +4437,7 @@ TEST_F(AclManagerTest, CreateAclRuleWithInvalidActionFails)
     app_db_entry.action_param_fvs.erase("target");
     // Invalid cpu queue number
     app_db_entry.action = "qos_queue";
-    app_db_entry.action_param_fvs["cpu_queue"] = "10";
+    app_db_entry.action_param_fvs["cpu_queue"] = "18";
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessAddRuleRequest(acl_rule_key, app_db_entry));
     app_db_entry.action_param_fvs["cpu_queue"] = "invalid";
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessAddRuleRequest(acl_rule_key, app_db_entry));
@@ -5155,12 +5307,13 @@ TEST_F(AclManagerTest, AclRuleVerifyStateTest)
     attributes.push_back(swss::FieldValueTuple{"meter/pir", "200"});
     attributes.push_back(swss::FieldValueTuple{"meter/pburst", "200"});
     attributes.push_back(swss::FieldValueTuple{"controller_metadata", "..."});
-    const auto &acl_rule_json_key = "{\"match/ether_type\":\"0x0800\",\"match/"
-                                    "ipv6_dst\":\"fdf8:f53b:82e4::53 & "
-                                    "fdf8:f53b:82e4::53\",\"match/arp_tpa\": \"0xff112231\", "
-                                    "\"match/in_ports\": \"Ethernet1,Ethernet2\", \"match/out_ports\": "
-                                    "\"Ethernet4,Ethernet5\", \"priority\":15,\"match/ipmc_table_hit\":"
-                                    "\"0x1\"}";
+    const auto& acl_rule_json_key =
+        "{\"match/ether_type\":\"0x0800\",\"match/"
+        "ipv6_dst\":\"fdf8:f53b:82e4::53 & "
+        "fdf8:f53b:82e4::53\",\"match/arp_tpa\": \"0xff112231\", "
+        "\"match/in_ports\": \"Ethernet1,Ethernet2\", \"match/out_ports\": "
+        "\"Ethernet4,Ethernet5\", \"priority\":15,\"match/ipmc_table_hit\":"
+        "\"0x1\",\"match/vrf_id\":\"b4-traffic\"}";
     const auto &rule_tuple_key = std::string(kAclIngressTableName) + kTableKeyDelimiter + acl_rule_json_key;
     EnqueueRuleTuple(std::string(kAclIngressTableName),
                      swss::KeyOpFieldsValuesTuple({rule_tuple_key, SET_COMMAND, attributes}));
@@ -5182,21 +5335,37 @@ TEST_F(AclManagerTest, AclRuleVerifyStateTest)
     table.set(
         "SAI_OBJECT_TYPE_ACL_ENTRY:oid:0x3e9",
         std::vector<swss::FieldValueTuple>{
-            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_TABLE_ID", "oid:0x7000000000606"},
+            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_TABLE_ID",
+                                  "oid:0x7000000000606"},
             swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_PRIORITY", "15"},
             swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_ADMIN_STATE", "true"},
-            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6", "fdf8:f53b:82e4::53&mask:fdf8:f53b:82e4::53"},
-            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE", "2048&mask:0xffff"},
-            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_TYPE",
-                                  "SAI_ACL_IP_TYPE_ANY&mask:0xffffffffffffffff"},
-            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN", "2:255,17&mask:2:0xff,0xff"},
-            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT", "true"},
-            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1", "2:34,49&mask:2:0xff,0xff"},
-            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS", "2:oid:0x112233,oid:0x1fed3"},
-            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORTS", "2:oid:0x9988,oid:0x56789abcdef"},
-            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_INGRESS", "1:oid:0x2329"},
-            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER", "oid:0x7d1"},
-            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_ACTION_COUNTER", "oid:0xbb9"}});
+            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6",
+                                  "fdf8:f53b:82e4::53&mask:fdf8:f53b:82e4::53"},
+            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE",
+                                  "2048&mask:0xffff"},
+            swss::FieldValueTuple{
+                "SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_TYPE",
+                "SAI_ACL_IP_TYPE_ANY&mask:0xffffffffffffffff"},
+            swss::FieldValueTuple{
+                "SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN",
+                "2:255,17&mask:2:0xff,0xff"},
+            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_VRF_ID",
+                                  "oid:0x6f"},
+            swss::FieldValueTuple{
+                "SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT", "true"},
+            swss::FieldValueTuple{
+                "SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1",
+                "2:34,49&mask:2:0xff,0xff"},
+            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS",
+                                  "2:oid:0x112233,oid:0x1fed3"},
+            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORTS",
+                                  "2:oid:0x9988,oid:0x56789abcdef"},
+            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_INGRESS",
+                                  "1:oid:0x2329"},
+            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER",
+                                  "oid:0x7d1"},
+            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_ACTION_COUNTER",
+                                  "oid:0xbb9"}});
     table.set("SAI_OBJECT_TYPE_ACL_COUNTER:oid:0xbb9",
               std::vector<swss::FieldValueTuple>{
                   swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_TABLE_ID", "oid:0x7000000000606"},
@@ -5221,38 +5390,47 @@ TEST_F(AclManagerTest, AclRuleVerifyStateTest)
     EXPECT_FALSE(VerifyRuleState(std::string(APP_P4RT_TABLE_NAME) + ":invalid", attributes).empty());
     EXPECT_FALSE(VerifyRuleState(std::string(APP_P4RT_TABLE_NAME) + ":invalid:invalid", attributes).empty());
     EXPECT_FALSE(VerifyRuleState(std::string(APP_P4RT_TABLE_NAME) + ":ACL_PUNT_TABLE:invalid", attributes).empty());
-    EXPECT_FALSE(VerifyRuleState(std::string(APP_P4RT_TABLE_NAME) +
-                                     ":ACL_PUNT_TABLE:{\"match/ether_type\":\"0x0800\",\"match/"
-                                     "ipv6_dst\":\"fdf8:f53b:82e4::53 & "
-                                     "fdf8:f53b:82e4::53\",\"priority\":0,\"match/ipmc_table_hit\":"
-                                     "\"0x1\"}",
-                                 attributes)
-                     .empty());
-    EXPECT_FALSE(VerifyRuleState(std::string(APP_P4RT_TABLE_NAME) +
-                                     ":ACL_PUNT_TABLE:{\"match/ether_type\":\"0x0800\",\"match/"
-                                     "ipv6_dst\":\"127.0.0.1/24\",\"priority\":15,"
-                                     "\"match/ipmc_table_hit\":\"0x1\"}",
-                                 attributes)
-                     .empty());
+    EXPECT_FALSE(
+        VerifyRuleState(
+            std::string(APP_P4RT_TABLE_NAME) +
+                ":ACL_PUNT_TABLE:{\"match/ether_type\":\"0x0800\",\"match/"
+                "ipv6_dst\":\"fdf8:f53b:82e4::53 & "
+                "fdf8:f53b:82e4::53\",\"priority\":0,\"match/ipmc_table_hit\":"
+                "\"0x1\",\"match/vrf_id\":\"b4-traffic\"}",
+            attributes)
+            .empty());
+    EXPECT_FALSE(
+        VerifyRuleState(
+            std::string(APP_P4RT_TABLE_NAME) +
+                ":ACL_PUNT_TABLE:{\"match/ether_type\":\"0x0800\",\"match/"
+                "ipv6_dst\":\"127.0.0.1/24\",\"priority\":15,"
+                "\"match/ipmc_table_hit\":\"0x1\",\"match/"
+                "vrf_id\":\"b4-traffic\"}",
+            attributes)
+            .empty());
 
     // Verification should fail if entry does not exist.
-    EXPECT_FALSE(VerifyRuleState(std::string(APP_P4RT_TABLE_NAME) +
-                                     ":ACL_PUNT_TABLE:{\"match/ether_type\":\"0x0800\",\"match/"
-                                     "ipv6_dst\":\"fdf8:f53b:82e4::54 & "
-                                     "fdf8:f53b:82e4::54\",\"priority\":15,\"match/ipmc_table_hit\":"
-                                     "\"0x1\"}",
-                                 attributes)
-                     .empty());
+    EXPECT_FALSE(
+        VerifyRuleState(
+            std::string(APP_P4RT_TABLE_NAME) +
+                ":ACL_PUNT_TABLE:{\"match/ether_type\":\"0x0800\",\"match/"
+                "ipv6_dst\":\"fdf8:f53b:82e4::54 & "
+                "fdf8:f53b:82e4::54\",\"priority\":15,\"match/ipmc_table_hit\":"
+                "\"0x1\",\"match/vrf_id\":\"b4-traffic\"}",
+            attributes)
+            .empty());
 
     // Verification should fail with invalid attribute.
     EXPECT_FALSE(VerifyTableState(db_key, std::vector<swss::FieldValueTuple>{{kAction, "invalid"}}).empty());
 
     auto *acl_table = GetAclTable(kAclIngressTableName);
     EXPECT_NE(acl_table, nullptr);
-    const auto &acl_rule_key = "match/arp_tpa=0xff112231:match/ether_type=0x0800:match/"
-                               "in_ports=Ethernet1,Ethernet2:match/ipmc_table_hit=0x1:"
-                               "match/ipv6_dst=fdf8:f53b:82e4::53 & "
-                               "fdf8:f53b:82e4::53:match/out_ports=Ethernet4,Ethernet5:priority=15";
+    const auto& acl_rule_key =
+        "match/arp_tpa=0xff112231:match/ether_type=0x0800:match/"
+        "in_ports=Ethernet1,Ethernet2:match/ipmc_table_hit=0x1:"
+        "match/ipv6_dst=fdf8:f53b:82e4::53 & "
+        "fdf8:f53b:82e4::53:match/out_ports=Ethernet4,Ethernet5:match/"
+        "vrf_id=b4-traffic:priority=15";
     auto *acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
     ASSERT_NE(acl_rule, nullptr);
 

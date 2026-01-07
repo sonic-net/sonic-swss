@@ -2687,6 +2687,14 @@ class TestVnetOrch(object):
         vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2', ep_monitor='9.1.0.3,9.1.0.4', primary ='9.1.0.1', profile="Test_profile", monitoring='custom', adv_prefix='100.100.1.0/24', check_directly_connected=True)
 
+        # verify acl table action list
+        expected_action_list = [
+            "SAI_ACL_ACTION_TYPE_COUNTER",
+            "SAI_ACL_ACTION_TYPE_REDIRECT"
+        ]
+        acl_table_id = dvs_acl.get_acl_table_ids(1)[0]
+        dvs_acl.verify_acl_table_action_list(acl_table_id, expected_action_list)
+
         # verify tunnel term acl 
         expected_sai_qualifiers = {
             "SAI_ACL_ENTRY_ATTR_FIELD_DST_IP": dvs_acl.get_simple_qualifier_comparator("100.100.1.1&mask:255.255.255.255")
@@ -3112,56 +3120,160 @@ class TestVnetOrch(object):
         delete_vxlan_tunnel(dvs, tunnel_name)
         vnet_obj.check_del_vxlan_tunnel(dvs)
 
+
     '''
-    Test 32 - Test for priority vnet tunnel routes with local endpoint + bfd monitoring + rx and tx timer.
+    Test 32 - Test for priority vnet tunnel routes with ECMP nexthop group and local nhg. test primary secondary switchover + bfd monitoring + rx and tx timer.
     '''
-    def test_vnet_orch_30(self, dvs, dvs_acl, testlog):
+    def test_vnet_orch_32(self, dvs, testlog):
         self.setup_db(dvs)
-        self.clear_srv_config(dvs)
 
         vnet_obj = self.get_vnet_obj()
         tunnel_name = 'tunnel_32'
-        vnet_name = 'Vnet32'
+        vnet_name = 'vnet32'
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
         vnet_obj.fetch_exist_entries(dvs)
 
         create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
-        create_vnet_entry(dvs, vnet_name, tunnel_name, '10028', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10029', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
 
         vnet_obj.check_vnet_entry(dvs, vnet_name)
-        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10028')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10029')
+
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
 
         # create l3 interface
         self.create_l3_intf("Ethernet8", "")
+        self.create_l3_intf("Ethernet12", "")
 
         # set ip address
-        self.add_ip_address("Ethernet8", "9.1.0.1/32")
+        self.add_ip_address("Ethernet8", "9.1.0.3/32")
+        self.add_ip_address("Ethernet12", "9.1.0.4/32")
 
         # bring up interface
         self.set_admin_status("Ethernet8", "up")
+        self.set_admin_status("Ethernet12", "up")
 
         # add neighbor for directly connected endpoint
-        self.add_neighbor("Ethernet8", "9.1.0.1", "00:01:02:03:04:05")
+        self.add_neighbor("Ethernet8", "9.1.0.3", "00:01:02:03:04:05")
+        self.add_neighbor("Ethernet12", "9.1.0.4", "00:01:02:03:04:06")
 
         vnet_obj.fetch_exist_entries(dvs)
-        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2', ep_monitor='9.1.0.1,9.1.0.2', primary ='9.1.0.1', profile="Test_profile", monitoring='', rx_monitor_timer=100, tx_monitor_timer=100, adv_prefix='100.100.1.0/24', check_directly_connected=True)
+        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2,9.1.0.3,9.1.0.4', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3,9.1.0.4', primary ='9.1.0.1,9.1.0.2', monitoring='custom_bfd', adv_prefix='100.100.1.0/24', check_directly_connected=True, rx_monitor_timer=100, tx_monitor_timer=100)
+
+        # default monitor status is down, route should not be programmed in this status
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", [])
+        check_remove_routes_advertisement(dvs, "100.100.1.0/24")
+
+        # Route should be properly configured when all monitor session states go up. Only primary Endpoints should be in use.
+        update_bfd_session_state(dvs, '9.1.0.1', 'Up')
+        update_bfd_session_state(dvs, '9.1.0.2', 'Up')
+        update_bfd_session_state(dvs, '9.1.0.3', 'Up')
+        update_bfd_session_state(dvs, '9.1.0.4', 'Up')
+        time.sleep(2)
+        route1 = vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1','9.1.0.2'], tunnel_name)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1','9.1.0.2'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        # Remove second primary endpoint from group.
+        update_bfd_session_state(dvs, '9.1.0.2', 'Down')
+
+        time.sleep(2)
+        route1= vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        # Switch to secondary if both primary down
+        update_bfd_session_state(dvs, '9.1.0.1', 'Down')
+        time.sleep(2)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.3','9.1.0.4'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        # removing first endpoint of secondary. route should remain on secondary NHG
+        update_bfd_session_state(dvs, '9.1.0.3', 'Down')
+        time.sleep(2)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.4'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        # removing last endpoint of secondary. route should be removed
+        update_bfd_session_state(dvs, '9.1.0.4', 'Down')
+        time.sleep(2)
+
+        new_nhgs = get_all_created_entries(asic_db, vnet_obj.ASIC_NEXT_HOP_GROUP, [])
+        assert len(new_nhgs) == 0
+        check_remove_routes_advertisement(dvs, "100.100.1.0/24")
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
+        check_remove_state_db_routes(dvs, vnet_name, "100.100.1.1/32")
+
+        # Route should come up with secondary endpoints.
+        update_bfd_session_state(dvs, '9.1.0.3', 'Up')
+        update_bfd_session_state(dvs, '9.1.0.4', 'Up')
+
+        time.sleep(2)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.3','9.1.0.4'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        #Route should be switched to the primary endpoint.
+        update_bfd_session_state(dvs, '9.1.0.1', 'Up')
+        time.sleep(2)
+        route1= vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        #Route should be updated with the second primary endpoint.
+        update_bfd_session_state(dvs, '9.1.0.2', 'Up')
+        time.sleep(2)
+        route1 = vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1','9.1.0.2'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1','9.1.0.2'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        #Route should not be impacted by seconday endpoints going down.
+        update_bfd_session_state(dvs, '9.1.0.3', 'Down')
+        update_bfd_session_state(dvs, '9.1.0.4', 'Down')
+        time.sleep(2)
+        route1 = vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1','9.1.0.2'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1','9.1.0.2'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
+
+        #Route should not be impacted by seconday endpoints coming back up.
+        update_bfd_session_state(dvs, '9.1.0.3', 'Up')
+        update_bfd_session_state(dvs, '9.1.0.4', 'Up')
+        time.sleep(2)
+        route1 = vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1','9.1.0.2'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1','9.1.0.2'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24")
 
         # Remove tunnel route 1
         delete_vnet_routes(dvs, "100.100.1.1/32", vnet_name)
-
+        time.sleep(2)
         vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
         check_remove_state_db_routes(dvs, vnet_name, "100.100.1.1/32")
         check_remove_routes_advertisement(dvs, "100.100.1.0/24")
+
+        # Confirm the monitor sessions are removed
+        check_del_bfd_session(dvs, ['9.1.0.1', '9.1.0.2', '9.1.0.3', '9.1.0.4'])
 
         delete_vnet_entry(dvs, vnet_name)
         vnet_obj.check_del_vnet_entry(dvs, vnet_name)
         delete_vxlan_tunnel(dvs, tunnel_name)
 
-        self.remove_neighbor("Ethernet8", "9.1.0.1")
-        self.remove_ip_address("Ethernet8", "9.1.0.1/32")
+        self.remove_neighbor("Ethernet8", "9.1.0.3")
+        self.remove_ip_address("Ethernet8", "9.1.0.3/32")
         self.set_admin_status("Ethernet8", "down")
+
+        self.remove_neighbor("Ethernet12", "9.1.0.4")
+        self.remove_ip_address("Ethernet12", "9.1.0.4/32")
+        self.set_admin_status("Ethernet12", "down")
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
