@@ -29,44 +29,45 @@ extern sai_my_mac_api_t *sai_my_mac_api;
 namespace
 {
 
-ReturnCodeOr<std::vector<sai_attribute_t>> getSaiAttrs(const P4L3AdmitEntry &l3_admit_entry)
-{
-    std::vector<sai_attribute_t> l3_admit_attrs;
-    sai_attribute_t l3_admit_attr;
+ReturnCodeOr<std::vector<sai_attribute_t>> prepareSaiAttrs(
+    const P4L3AdmitEntry& l3_admit_entry) {
+  std::vector<sai_attribute_t> l3_admit_attrs;
+  sai_attribute_t l3_admit_attr;
 
-    l3_admit_attr.id = SAI_MY_MAC_ATTR_MAC_ADDRESS;
-    memcpy(l3_admit_attr.value.mac, l3_admit_entry.mac_address_data.getMac(), sizeof(sai_mac_t));
-    l3_admit_attrs.push_back(l3_admit_attr);
+  l3_admit_attr.id = SAI_MY_MAC_ATTR_MAC_ADDRESS;
+  memcpy(l3_admit_attr.value.mac, l3_admit_entry.mac_address_data.getMac(),
+         sizeof(sai_mac_t));
+  l3_admit_attrs.push_back(l3_admit_attr);
 
-    l3_admit_attr.id = SAI_MY_MAC_ATTR_MAC_ADDRESS_MASK;
-    memcpy(l3_admit_attr.value.mac, l3_admit_entry.mac_address_mask.getMac(), sizeof(sai_mac_t));
-    l3_admit_attrs.push_back(l3_admit_attr);
+  l3_admit_attr.id = SAI_MY_MAC_ATTR_MAC_ADDRESS_MASK;
+  memcpy(l3_admit_attr.value.mac, l3_admit_entry.mac_address_mask.getMac(),
+         sizeof(sai_mac_t));
+  l3_admit_attrs.push_back(l3_admit_attr);
 
-    l3_admit_attr.id = SAI_MY_MAC_ATTR_PRIORITY;
-    l3_admit_attr.value.u32 = l3_admit_entry.priority;
-    l3_admit_attrs.push_back(l3_admit_attr);
+  l3_admit_attr.id = SAI_MY_MAC_ATTR_PRIORITY;
+  l3_admit_attr.value.u32 = l3_admit_entry.priority;
+  l3_admit_attrs.push_back(l3_admit_attr);
 
-    if (!l3_admit_entry.port_name.empty())
-    {
-        Port port;
-        if (!gPortsOrch->getPort(l3_admit_entry.port_name, port))
-        {
-            LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-                                 << "Failed to get port info for port " << QuotedVar(l3_admit_entry.port_name));
-        }
-	if (port.m_type != Port::Type::PHY) {
-          LOG_ERROR_AND_RETURN(
-              ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
-              << "Port " << QuotedVar(l3_admit_entry.port_name) << "'s type "
-              << port.m_type
-              << " is not physical and is not supported for L3 Admit entry.");
-        }
-        l3_admit_attr.id = SAI_MY_MAC_ATTR_PORT_ID;
-        l3_admit_attr.value.oid = port.m_port_id;
-        l3_admit_attrs.push_back(l3_admit_attr);
+  if (!l3_admit_entry.port_name.empty()) {
+    Port port;
+    if (!gPortsOrch->getPort(l3_admit_entry.port_name, port)) {
+      LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                           << "Failed to get port info for port "
+                           << QuotedVar(l3_admit_entry.port_name));
     }
+    if (port.m_type != Port::Type::PHY) {
+      LOG_ERROR_AND_RETURN(
+          ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
+          << "Port " << QuotedVar(l3_admit_entry.port_name) << "'s type "
+          << port.m_type
+          << " is not physical and is not supported for L3 Admit entry.");
+    }
+    l3_admit_attr.id = SAI_MY_MAC_ATTR_PORT_ID;
+    l3_admit_attr.value.oid = port.m_port_id;
+    l3_admit_attrs.push_back(l3_admit_attr);
+  }
 
-    return l3_admit_attrs;
+  return l3_admit_attrs;
 }
 
 } // namespace
@@ -293,7 +294,8 @@ ReturnCode L3AdmitManager::createL3Admit(P4L3AdmitEntry &l3_admit_entry)
 {
     SWSS_LOG_ENTER();
 
-    ASSIGN_OR_RETURN(std::vector<sai_attribute_t> l3_admit_attrs, getSaiAttrs(l3_admit_entry));
+    ASSIGN_OR_RETURN(std::vector<sai_attribute_t> l3_admit_attrs,
+                     prepareSaiAttrs(l3_admit_entry));
     // Call SAI API.
     CHECK_ERROR_AND_LOG_AND_RETURN(
         sai_my_mac_api->create_my_mac(&l3_admit_entry.l3_admit_oid, gSwitchId, (uint32_t)l3_admit_attrs.size(),
@@ -464,11 +466,11 @@ std::string L3AdmitManager::verifyStateCache(const P4L3AdmitAppDbEntry &app_db_e
 
 std::string L3AdmitManager::verifyStateAsicDb(const P4L3AdmitEntry *l3_admit_entry)
 {
-    auto attrs_or = getSaiAttrs(*l3_admit_entry);
-    if (!attrs_or.ok())
-    {
-        return std::string("Failed to get SAI attrs: ") + attrs_or.status().message();
-    }
+  auto attrs_or = prepareSaiAttrs(*l3_admit_entry);
+  if (!attrs_or.ok()) {
+    return std::string("Failed to get SAI attrs: ") +
+           attrs_or.status().message();
+  }
     std::vector<sai_attribute_t> attrs = *attrs_or;
     std::vector<swss::FieldValueTuple> exp =
         saimeta::SaiAttributeList::serialize_attr_list(SAI_OBJECT_TYPE_MY_MAC, (uint32_t)attrs.size(), attrs.data(),
