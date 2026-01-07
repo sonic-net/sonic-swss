@@ -4,7 +4,6 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "bulker.h"
 #include "notificationconsumer.h"
 #include "orch.h"
 #include "p4orch/object_manager_interface.h"
@@ -65,7 +64,15 @@ struct P4WcmpGroupEntry
 class WcmpManager : public ObjectManagerInterface
 {
   public:
-    WcmpManager(P4OidMapper *p4oidMapper, ResponsePublisherInterface *publisher);
+   WcmpManager(P4OidMapper* p4oidMapper,
+               ResponsePublisherInterface* publisher) {
+     SWSS_LOG_ENTER();
+
+     assert(p4oidMapper != nullptr);
+     m_p4OidMapper = p4oidMapper;
+     assert(publisher != nullptr);
+     m_publisher = publisher;
+   }
 
     virtual ~WcmpManager() = default;
 
@@ -109,18 +116,23 @@ class WcmpManager : public ObjectManagerInterface
     ReturnCode createWcmpGroupMember(std::shared_ptr<P4WcmpGroupMemberEntry> wcmp_group_member,
                                      const sai_object_id_t group_oid, const std::string &wcmp_group_key);
 
+    // Creates WCMP group member with an associated watch_port.
+    ReturnCode createWcmpGroupMemberWithWatchport(
+        P4WcmpGroupEntry* wcmp_group,
+        std::shared_ptr<P4WcmpGroupMemberEntry> member,
+        const std::string& wcmp_group_key);
+
     // Performs watchport related addition operations and creates WCMP group
-    // members.
-    ReturnCode processWcmpGroupMembersAddition(
-        const std::vector<std::shared_ptr<P4WcmpGroupMemberEntry>> &members, const std::string &wcmp_group_key,
-        sai_object_id_t wcmp_group_oid,
-        std::vector<std::shared_ptr<P4WcmpGroupMemberEntry>> &created_wcmp_group_members);
+    // member.
+    ReturnCode processWcmpGroupMemberAddition(
+        std::shared_ptr<P4WcmpGroupMemberEntry> member,
+        P4WcmpGroupEntry* wcmp_group, const std::string& wcmp_group_key);
 
     // Performs watchport related removal operations and removes WCMP group
-    // members.
-    ReturnCode processWcmpGroupMembersRemoval(
-        const std::vector<std::shared_ptr<P4WcmpGroupMemberEntry>> &members, const std::string &wcmp_group_key,
-        std::vector<std::shared_ptr<P4WcmpGroupMemberEntry>> &removed_wcmp_group_members);
+    // member.
+    ReturnCode processWcmpGroupMemberRemoval(
+        std::shared_ptr<P4WcmpGroupMemberEntry> member,
+        const std::string& wcmp_group_key);
 
     // Processes update operation for a WCMP group entry.
     ReturnCode processUpdateRequest(P4WcmpGroupEntry *wcmp_group_entry);
@@ -173,8 +185,7 @@ class WcmpManager : public ObjectManagerInterface
     // Owners of pointers below must outlive this class's instance.
     P4OidMapper *m_p4OidMapper;
     std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
-    ResponsePublisherInterface *m_publisher;
-    ObjectBulker<sai_next_hop_group_api_t> gNextHopGroupMemberBulker;
+    ResponsePublisherInterface* m_publisher;
 
     friend class p4orch::test::WcmpManagerTest;
 };
