@@ -27,14 +27,18 @@ pub struct DatasetSpec {
 #[derive(Clone)]
 pub struct PreparedTemplate {
     pub spec: TemplateSpec,
+    #[allow(dead_code)]
     pub base_record: Arc<Vec<u8>>,
     pub records: usize,
 }
 
 pub struct PreparedDataset {
+    #[allow(dead_code)]
     pub spec: DatasetSpec,
     pub templates: Vec<PreparedTemplate>,
+    #[allow(dead_code)]
     pub template_messages: Vec<IPFixTemplatesMessage>,
+    #[allow(dead_code)]
     pub expected_messages: usize,
     pub expected_counters: usize,
 }
@@ -44,6 +48,7 @@ impl DatasetSpec {
         compute_distribution(self).2
     }
 
+    #[allow(dead_code)]
     pub fn total_messages_per_iteration(&self) -> usize {
         compute_distribution(self).1
     }
@@ -155,6 +160,7 @@ pub fn datasets() -> Vec<DatasetSpec> {
     ]
 }
 
+#[allow(dead_code)]
 pub fn rng_for_template(spec: &TemplateSpec) -> StdRng {
     let seed = ((spec.template_id as u64) << 32) ^ (spec.counters as u64) ^ 0x5a5a_5a5a_5a5a_5a5a;
     StdRng::seed_from_u64(seed)
@@ -196,6 +202,7 @@ fn compute_distribution(spec: &DatasetSpec) -> (Vec<usize>, usize, usize) {
     (records, total_messages, total_counters)
 }
 
+#[allow(dead_code)]
 pub fn randomize_record(base: &[u8], seq: u64, rng: &mut StdRng) -> SocketBufferMessage {
     let mut record = base.to_vec();
     if record.len() < 28 {
