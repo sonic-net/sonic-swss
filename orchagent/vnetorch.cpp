@@ -1047,18 +1047,21 @@ bool VNetRouteOrch::selectNextHopGroup(const string& vnet,
         }
         else
         {
-            if (it_route->second.primary != nexthops_primary)
-            {
-                setEndpointMonitor(vnet, monitors, nexthops_primary, monitoring, rx_monitor_timer, tx_monitor_timer, ipPrefix);
-            }
-            if (it_route->second.secondary != nexthops_secondary)
-            {
-                setEndpointMonitor(vnet, monitors, nexthops_secondary, monitoring, rx_monitor_timer, tx_monitor_timer, ipPrefix);
-            }
             if (isCustomMonitorEndpointUpdated(vnet, ipPrefix, monitors))
             {
                 setEndpointMonitor(vnet, monitors, nexthops_primary, monitoring, rx_monitor_timer, tx_monitor_timer, ipPrefix);
                 setEndpointMonitor(vnet, monitors, nexthops_secondary, monitoring, rx_monitor_timer, tx_monitor_timer, ipPrefix);
+            }
+            else
+            {
+                if (it_route->second.primary != nexthops_primary)
+                {
+                    setEndpointMonitor(vnet, monitors, nexthops_primary, monitoring, rx_monitor_timer, tx_monitor_timer, ipPrefix);
+                }
+                if (it_route->second.secondary != nexthops_secondary)
+                {
+                    setEndpointMonitor(vnet, monitors, nexthops_secondary, monitoring, rx_monitor_timer, tx_monitor_timer, ipPrefix);
+                }
             }
             nexthops_selected = it_route->second.nhg_key;
             return true;
@@ -1174,6 +1177,14 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
     if (op == SET_COMMAND)
     {
         bool custom_monitor_ep_updated = isCustomMonitorEndpointUpdated(vnet, ipPrefix, monitors);
+        std::map<NextHopKey, swss::IpAddress> origin_primary_monitors;
+        std::map<NextHopKey, swss::IpAddress> origin_secondary_monitors;
+        if (custom_monitor_ep_updated)
+        {
+            auto it_route =  syncd_tunnel_routes_[vnet].find(ipPrefix);
+            getCustomMonitors(vnet, ipPrefix, it_route->second.primary, origin_primary_monitors);
+            getCustomMonitors(vnet, ipPrefix, it_route->second.secondary, origin_secondary_monitors);
+        }
 
         sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
         NextHopGroupKey active_nhg("", true);
@@ -1254,7 +1265,14 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         bool priority_route_updated = false;
         if (it_route != syncd_tunnel_routes_[vnet].end())
         {
-            if ((monitoring == "" && it_route->second.nhg_key != nexthops) ||
+            if (custom_monitor_ep_updated)
+            {
+                route_updated = true;
+
+                delEndpointMonitor(vnet, origin_primary_monitors, ipPrefix);
+                delEndpointMonitor(vnet, origin_secondary_monitors, ipPrefix);
+            }
+            else if ((monitoring == "" && it_route->second.nhg_key != nexthops) ||
                 ((monitoring == VNET_MONITORING_TYPE_CUSTOM || monitoring == VNET_MONITORING_TYPE_CUSTOM_BFD) &&
                  (it_route->second.primary != nexthops || it_route->second.secondary != nexthops_secondary)))
             {
@@ -1312,11 +1330,6 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                     vrf_obj->removeRoute(ipPrefix);
                     vrf_obj->removeProfile(ipPrefix);
                 }
-            }
-            if (custom_monitor_ep_updated)
-            {
-                delEndpointMonitor(vnet, it_route->second.primary, ipPrefix);
-                delEndpointMonitor(vnet, it_route->second.secondary, ipPrefix);
             }
         }
         if (!profile.empty())
@@ -2305,6 +2318,43 @@ void VNetRouteOrch::delEndpointMonitor(const string& vnet, NextHopGroupKey& next
                 {
                     IpAddress monitor_addr = nexthop_info_[vnet][ip].monitor_addr;
                     removeBfdSession(vnet, nhk, monitor_addr);
+                }
+            }
+        }
+    }
+}
+
+void VNetRouteOrch::delEndpointMonitor(const string& vnet, const std::map<NextHopKey, IpAddress>& monitors, IpPrefix& ipPrefix)
+{
+    SWSS_LOG_ENTER();
+
+    bool is_custom_monitoring = false;
+    if (monitor_info_[vnet].find(ipPrefix) != monitor_info_[vnet].end())
+    {
+        is_custom_monitoring = true;
+    }
+    for(auto monitor : monitors)
+    {
+        NextHopKey nhk = monitor.first;
+        IpAddress monitor_ip = monitor.second;
+        if (is_custom_monitoring)
+        {
+            if (monitor_info_[vnet][ipPrefix].find(monitor_ip) != monitor_info_[vnet][ipPrefix].end() &&
+                monitor_info_[vnet][ipPrefix][monitor_ip].endpoint == nhk)
+            {
+                if (--monitor_info_[vnet][ipPrefix][monitor_ip].ref_count == 0)
+                {
+                    removeMonitoringSession(vnet, monitor_info_[vnet][ipPrefix][monitor_ip].endpoint, monitor_ip, ipPrefix);
+                }
+            }
+        }
+        else
+        {
+            if (nexthop_info_[vnet].find(nhk.ip_address) != nexthop_info_[vnet].end())
+            {
+                if (--nexthop_info_[vnet][nhk.ip_address].ref_count == 0)
+                {
+                    removeBfdSession(vnet, nhk, monitor_ip);
                 }
             }
         }
@@ -3389,6 +3439,25 @@ bool VNetRouteOrch::isCustomMonitorEndpointUpdated(const string& vnet, IpPrefix&
     return monitor_endpoint_updated;
 }
 
+void VNetRouteOrch::getCustomMonitors(const string& vnet, const IpPrefix& ipPrefix, const NextHopGroupKey& nexthops, 
+    std::map<NextHopKey, swss::IpAddress>& monitors)
+{
+    if (monitor_info_.find(vnet) != monitor_info_.end() && monitor_info_[vnet].find(ipPrefix) != monitor_info_[vnet].end())
+    {
+        for (auto nhk:nexthops.getNextHops())
+        {
+            for (const auto& monitor : monitor_info_[vnet][ipPrefix])
+            {
+                if (monitor.second.endpoint == nhk && (monitor.second.monitoring_type == VNET_MONITORING_TYPE_CUSTOM ||
+                    monitor.second.monitoring_type == VNET_MONITORING_TYPE_CUSTOM_BFD))
+                {
+                    monitors[nhk] = monitor.first;
+                    break;
+                }
+            }
+        }
+    }
+}
 
 VNetCfgRouteOrch::VNetCfgRouteOrch(DBConnector *db, DBConnector *appDb, vector<string> &tableNames)
                                   : Orch(db, tableNames),
