@@ -524,6 +524,86 @@ static void getPortSerdesAttr(PortSerdesAttrMap_t &map, const PortConfig &port)
 
 }
 
+static void getLinePortSerdesAttr(PortSerdesAttrMap_t &map, const PortConfig &port)
+{
+
+    if (port.serdes.gb_line_pre1.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_PRE1] = port.serdes.gb_line_pre1.value;
+    }
+
+    if (port.serdes.gb_line_pre2.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_PRE2] = port.serdes.gb_line_pre2.value;
+    }
+
+    if (port.serdes.gb_line_pre3.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_PRE3] = port.serdes.gb_line_pre3.value;
+    }
+
+    if (port.serdes.gb_line_main.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_MAIN] = port.serdes.gb_line_main.value;
+    }
+
+    if (port.serdes.gb_line_post1.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_POST1] = port.serdes.gb_line_post1.value;
+    }
+
+    if (port.serdes.gb_line_post2.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_POST2] = port.serdes.gb_line_post2.value;
+    }
+
+    if (port.serdes.gb_line_post3.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_POST3] = port.serdes.gb_line_post3.value;
+    }
+
+}
+
+static void getSystemPortSerdesAttr(PortSerdesAttrMap_t &map, const PortConfig &port)
+{
+
+    if (port.serdes.gb_system_pre1.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_PRE1] = port.serdes.gb_system_pre1.value;
+    }
+
+    if (port.serdes.gb_system_pre2.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_PRE2] = port.serdes.gb_system_pre2.value;
+    }
+
+    if (port.serdes.gb_system_pre3.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_PRE3] = port.serdes.gb_system_pre3.value;
+    }
+
+    if (port.serdes.gb_system_main.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_MAIN] = port.serdes.gb_system_main.value;
+    }
+
+    if (port.serdes.gb_system_post1.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_POST1] = port.serdes.gb_system_post1.value;
+    }
+
+    if (port.serdes.gb_system_post2.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_POST2] = port.serdes.gb_system_post2.value;
+    }
+
+    if (port.serdes.gb_system_post3.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_FIR_POST3] = port.serdes.gb_system_post3.value;
+    }
+
+}
+
 static bool isPathTracingSupported()
 {
     /*
@@ -4530,7 +4610,11 @@ void PortsOrch::doPortTask(Consumer &consumer)
             else
             {
                 PortSerdesAttrMap_t serdes_attr;
+                PortSerdesAttrMap_t line_serdes_attr;
+                PortSerdesAttrMap_t system_serdes_attr;
                 getPortSerdesAttr(serdes_attr, pCfg);
+                getLinePortSerdesAttr(line_serdes_attr, pCfg);
+                getSystemPortSerdesAttr(system_serdes_attr, pCfg);
 
                 // Saved configured admin status
                 bool admin_status = p.m_admin_state_up;
@@ -5192,6 +5276,34 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             it++;
                             continue;
                         }
+                    }
+                }
+
+                if (p.m_line_side_id && !line_serdes_attr.empty())
+                {
+                    if (setPortSerdesAttribute(p.m_line_side_id, p.m_switch_id, line_serdes_attr))
+                    {
+                        SWSS_LOG_NOTICE("Successfully set line-side gearbox tunings for port %s", p.m_alias.c_str());
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to set line-side gearbox tunings for port %s", p.m_alias.c_str());
+                        it++;
+                        continue;
+                    }
+                }
+
+                if (p.m_system_side_id && !system_serdes_attr.empty())
+                {
+                    if (setPortSerdesAttribute(p.m_system_side_id, p.m_switch_id, system_serdes_attr))
+                    {
+                        SWSS_LOG_NOTICE("Successfully set system-side gearbox tunings for port %s", p.m_alias.c_str());
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to set system-side gearbox tunings for port %s", p.m_alias.c_str());
+                        it++;
+                        continue;
                     }
                 }
 

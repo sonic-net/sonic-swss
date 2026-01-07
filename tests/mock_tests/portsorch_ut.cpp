@@ -59,6 +59,17 @@ namespace portsorch_test
     int32_t _sai_port_fec_mode;
     vector<sai_port_fec_mode_t> mock_port_fec_modes = {SAI_PORT_FEC_MODE_RS, SAI_PORT_FEC_MODE_FC};
 
+    // Serdes test stubs
+    struct SerdesCallInfo {
+        sai_object_id_t port_id;
+        sai_object_id_t switch_id;
+        std::map<sai_port_serdes_attr_t, std::vector<uint32_t>> attributes;
+    };
+    std::vector<SerdesCallInfo> _sai_create_port_serdes_calls;
+    std::vector<sai_object_id_t> _sai_remove_port_serdes_calls;
+    sai_object_id_t _sai_create_port_serdes_fail_for_port_id = SAI_NULL_OBJECT_ID;
+    std::map<sai_object_id_t, sai_object_id_t> _port_to_serdes_map;
+
     sai_status_t _ut_stub_sai_get_port_attribute(
         _In_ sai_object_id_t port_id,
         _In_ uint32_t attr_count,
@@ -90,6 +101,17 @@ namespace portsorch_test
         else if (attr_count== 1 && attr_list[0].id == SAI_PORT_ATTR_OPER_STATUS)
         {
             attr_list[0].value.u32 = (uint32_t)SAI_PORT_OPER_STATUS_UP;
+            status = SAI_STATUS_SUCCESS;
+        }
+        else if (attr_count == 1 && attr_list[0].id == SAI_PORT_ATTR_PORT_SERDES_ID)
+        {
+            // Check if serdes exists for this port
+            auto it = _port_to_serdes_map.find(port_id);
+            if (it != _port_to_serdes_map.end()) {
+                attr_list[0].value.oid = it->second;
+            } else {
+                attr_list[0].value.oid = SAI_NULL_OBJECT_ID;
+            }
             status = SAI_STATUS_SUCCESS;
         }
         else
@@ -269,12 +291,67 @@ namespace portsorch_test
         return pold_sai_switch_api->set_switch_attribute(switch_id, attr);
     }
 
+    sai_status_t _ut_stub_sai_create_port_serdes(
+        _Out_ sai_object_id_t *port_serdes_id,
+        _In_ sai_object_id_t switch_id,
+        _In_ uint32_t attr_count,
+        _In_ const sai_attribute_t *attr_list)
+    {
+        SerdesCallInfo call_info;
+        call_info.switch_id = switch_id;
+
+        // Extract port_id and attributes
+        for (uint32_t i = 0; i < attr_count; i++) {
+            if (attr_list[i].id == SAI_PORT_SERDES_ATTR_PORT_ID) {
+                call_info.port_id = attr_list[i].value.oid;
+
+                // Check if we should fail for this port
+                if (call_info.port_id == _sai_create_port_serdes_fail_for_port_id) {
+                    _sai_create_port_serdes_calls.push_back(call_info);
+                    return SAI_STATUS_NO_MEMORY;
+                }
+            } else {
+                // Store serdes attribute
+                std::vector<uint32_t> values(
+                    attr_list[i].value.u32list.list,
+                    attr_list[i].value.u32list.list + attr_list[i].value.u32list.count
+                );
+                call_info.attributes[static_cast<sai_port_serdes_attr_t>(attr_list[i].id)] = values;
+            }
+        }
+
+        _sai_create_port_serdes_calls.push_back(call_info);
+
+        // Create unique serdes ID
+        *port_serdes_id = call_info.port_id + 0x1000000;
+        _port_to_serdes_map[call_info.port_id] = *port_serdes_id;
+
+        return SAI_STATUS_SUCCESS;
+    }
+
+    sai_status_t _ut_stub_sai_remove_port_serdes(
+        _In_ sai_object_id_t port_serdes_id)
+    {
+        _sai_remove_port_serdes_calls.push_back(port_serdes_id);
+        return SAI_STATUS_SUCCESS;
+    }
+
+    void _reset_serdes_test_state()
+    {
+        _sai_create_port_serdes_calls.clear();
+        _sai_remove_port_serdes_calls.clear();
+        _sai_create_port_serdes_fail_for_port_id = SAI_NULL_OBJECT_ID;
+        _port_to_serdes_map.clear();
+    }
+
     void _hook_sai_port_api()
     {
         ut_sai_port_api = *sai_port_api;
         pold_sai_port_api = sai_port_api;
         ut_sai_port_api.get_port_attribute = _ut_stub_sai_get_port_attribute;
         ut_sai_port_api.set_port_attribute = _ut_stub_sai_set_port_attribute;
+        ut_sai_port_api.create_port_serdes = _ut_stub_sai_create_port_serdes;
+        ut_sai_port_api.remove_port_serdes = _ut_stub_sai_remove_port_serdes;
         sai_port_api = &ut_sai_port_api;
     }
 
@@ -1432,6 +1509,336 @@ namespace portsorch_test
         ASSERT_TRUE(taskList.empty());
 
         // Cleanup ports
+        cleanupPorts(gPortsOrch);
+    }
+
+    /**
+     * Test that verifies gearbox line-side and system-side serdes configuration
+     */
+    TEST_F(PortsOrchTest, PortGearboxSerdesConfig)
+    {
+        _reset_serdes_test_state();
+        _hook_sai_port_api();
+
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Get port and mock gearbox initialization
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+
+        // Mock gearbox port IDs (simulating initGearboxPort)
+        p.m_switch_id = 0x2100000000000000;      // PHY switch ID
+        p.m_line_side_id = 0x2100000000000001;   // Line-side port ID
+        p.m_system_side_id = 0x2100000000000002; // System-side port ID
+
+        // Update port in PortsOrch (using private access)
+        gPortsOrch->m_portList["Ethernet0"] = p;
+
+        // Generate gearbox serdes config with both line and system side
+        std::deque<KeyOpFieldsValuesTuple> kfvList = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                // Gearbox line-side serdes
+                { "gb_line_pre1",  "0x10,0x11,0x12,0x13" },
+                { "gb_line_pre2",  "0x20,0x21,0x22,0x23" },
+                { "gb_line_pre3",  "0x30,0x31,0x32,0x33" },
+                { "gb_line_main",  "0x90,0x91,0x92,0x93" },
+                { "gb_line_post1", "0x40,0x41,0x42,0x43" },
+                { "gb_line_post2", "0x50,0x51,0x52,0x53" },
+                { "gb_line_post3", "0x60,0x61,0x62,0x63" },
+                // Gearbox system-side serdes
+                { "gb_system_pre1",  "0x15,0x16,0x17,0x18" },
+                { "gb_system_pre2",  "0x25,0x26,0x27,0x28" },
+                { "gb_system_pre3",  "0x35,0x36,0x37,0x38" },
+                { "gb_system_main",  "0x95,0x96,0x97,0x98" },
+                { "gb_system_post1", "0x45,0x46,0x47,0x48" },
+                { "gb_system_post2", "0x55,0x56,0x57,0x58" },
+                { "gb_system_post3", "0x65,0x66,0x67,0x68" }
+            }
+        }};
+
+        // Refill consumer
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Verify exactly 2 serdes configurations (line + system)
+        ASSERT_EQ(_sai_create_port_serdes_calls.size(), 2);
+
+        // Verify line-side configuration
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].port_id, p.m_line_side_id);
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].switch_id, p.m_switch_id);
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_PRE1],
+                  (std::vector<uint32_t>{0x10, 0x11, 0x12, 0x13}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_PRE2],
+                  (std::vector<uint32_t>{0x20, 0x21, 0x22, 0x23}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_PRE3],
+                  (std::vector<uint32_t>{0x30, 0x31, 0x32, 0x33}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_MAIN],
+                  (std::vector<uint32_t>{0x90, 0x91, 0x92, 0x93}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_POST1],
+                  (std::vector<uint32_t>{0x40, 0x41, 0x42, 0x43}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_POST2],
+                  (std::vector<uint32_t>{0x50, 0x51, 0x52, 0x53}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_POST3],
+                  (std::vector<uint32_t>{0x60, 0x61, 0x62, 0x63}));
+
+        // Verify system-side configuration
+        ASSERT_EQ(_sai_create_port_serdes_calls[1].port_id, p.m_system_side_id);
+        ASSERT_EQ(_sai_create_port_serdes_calls[1].switch_id, p.m_switch_id);
+        ASSERT_EQ(_sai_create_port_serdes_calls[1].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_PRE1],
+                  (std::vector<uint32_t>{0x15, 0x16, 0x17, 0x18}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[1].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_PRE2],
+                  (std::vector<uint32_t>{0x25, 0x26, 0x27, 0x28}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[1].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_PRE3],
+                  (std::vector<uint32_t>{0x35, 0x36, 0x37, 0x38}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[1].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_MAIN],
+                  (std::vector<uint32_t>{0x95, 0x96, 0x97, 0x98}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[1].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_POST1],
+                  (std::vector<uint32_t>{0x45, 0x46, 0x47, 0x48}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[1].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_POST2],
+                  (std::vector<uint32_t>{0x55, 0x56, 0x57, 0x58}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[1].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_POST3],
+                  (std::vector<uint32_t>{0x65, 0x66, 0x67, 0x68}));
+
+        _unhook_sai_port_api();
+        cleanupPorts(gPortsOrch);
+    }
+
+    /**
+     * Test that verifies error handling when serdes configuration fails
+     * Tests failure on line-side
+     */
+    TEST_F(PortsOrchTest, PortGearboxSerdesConfigLineSideFailure)
+    {
+        _reset_serdes_test_state();
+        _hook_sai_port_api();
+
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Get port and mock gearbox initialization
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+
+        // Mock gearbox port IDs
+        p.m_switch_id = 0x2100000000000000;
+        p.m_line_side_id = 0x2100000000000001;
+        p.m_system_side_id = 0x2100000000000002;
+
+        gPortsOrch->m_portList["Ethernet0"] = p;
+
+        // Configure to fail line-side serdes creation
+        _sai_create_port_serdes_fail_for_port_id = p.m_line_side_id;
+
+        // Generate gearbox serdes config with both line and system side
+        std::deque<KeyOpFieldsValuesTuple> kfvList = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "gb_line_pre1",  "0x10,0x11,0x12,0x13" },
+                { "gb_line_main",  "0x90,0x91,0x92,0x93" },
+                { "gb_system_pre1",  "0x15,0x16,0x17,0x18" },
+                { "gb_system_main",  "0x95,0x96,0x97,0x98" }
+            }
+        }};
+
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Verify line-side was attempted but failed. System side will not be attempted due to
+        // early abortion in response to line-side configuration failure.
+        ASSERT_EQ(_sai_create_port_serdes_calls.size(), 1);
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].port_id, p.m_line_side_id);
+        ASSERT_TRUE(_sai_create_port_serdes_calls[0].attributes.empty());
+
+        // Verify task is pending retry
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        ASSERT_FALSE(taskList.empty());
+
+        _unhook_sai_port_api();
+        cleanupPorts(gPortsOrch);
+    }
+
+    /**
+     * Test that verifies error handling when serdes configuration fails
+     * Tests failure on system-side
+     */
+    TEST_F(PortsOrchTest, PortGearboxSerdesConfigSystemSideFailure)
+    {
+        _reset_serdes_test_state();
+        _hook_sai_port_api();
+
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Get port and mock gearbox initialization
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+
+        // Mock gearbox port IDs
+        p.m_switch_id = 0x2100000000000000;
+        p.m_line_side_id = 0x2100000000000001;
+        p.m_system_side_id = 0x2100000000000002;
+
+        gPortsOrch->m_portList["Ethernet0"] = p;
+
+        // Configure to fail system-side serdes creation
+        _sai_create_port_serdes_fail_for_port_id = p.m_system_side_id;
+
+        // Generate gearbox serdes config with both line and system side
+        std::deque<KeyOpFieldsValuesTuple> kfvList = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "gb_line_pre1",  "0x10,0x11,0x12,0x13" },
+                { "gb_line_main",  "0x90,0x91,0x92,0x93" },
+                { "gb_system_pre1",  "0x15,0x16,0x17,0x18" },
+                { "gb_system_main",  "0x95,0x96,0x97,0x98" }
+            }
+        }};
+
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Verify line-side was attempted and succeeded. 
+        ASSERT_EQ(_sai_create_port_serdes_calls.size(), 2);
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].port_id, p.m_line_side_id);
+        ASSERT_FALSE(_sai_create_port_serdes_calls[0].attributes.empty());
+
+        // Verify system-side failed.
+        ASSERT_EQ(_sai_create_port_serdes_calls[1].port_id, p.m_system_side_id);
+        ASSERT_TRUE(_sai_create_port_serdes_calls[1].attributes.empty());
+
+        // Verify task is pending retry
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        ASSERT_FALSE(taskList.empty());
+
+        _unhook_sai_port_api();
+        cleanupPorts(gPortsOrch);
+    }
+
+    /**
+     * Test that verifies gearbox serdes config is skipped for ports without gearbox
+     */
+    TEST_F(PortsOrchTest, PortGearboxSerdesConfigNoGearbox)
+    {
+        _reset_serdes_test_state();
+        _hook_sai_port_api();
+
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Get port - do NOT mock gearbox (leave IDs as 0)
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+
+        // Verify port has no gearbox IDs
+        ASSERT_EQ(p.m_line_side_id, 0);
+        ASSERT_EQ(p.m_system_side_id, 0);
+
+        // Generate gearbox serdes config
+        std::deque<KeyOpFieldsValuesTuple> kfvList = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "gb_line_pre1",  "0x10,0x11,0x12,0x13" },
+                { "gb_line_main",  "0x90,0x91,0x92,0x93" },
+                { "gb_system_pre1",  "0x15,0x16,0x17,0x18" },
+                { "gb_system_main",  "0x95,0x96,0x97,0x98" }
+            }
+        }};
+
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Verify no serdes configuration in place (port has no gearbox)
+        ASSERT_EQ(_sai_create_port_serdes_calls.size(), 0);
+
+        _unhook_sai_port_api();
         cleanupPorts(gPortsOrch);
     }
 
