@@ -30,6 +30,7 @@ extern AclOrch * gAclOrch;
 extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
 extern sai_buffer_api_t *sai_buffer_api;
+extern sai_acl_api_t *sai_acl_api;
 
 PfcWdActionHandler::PfcWdActionHandler(sai_object_id_t port, sai_object_id_t queue,
         uint8_t queueId, shared_ptr<Table> countersTable):
@@ -534,6 +535,72 @@ void PfcWdAclHandler::createPfcAclRule(shared_ptr<AclRulePacket> rule, uint8_t q
     rule->validateAddAction(attr_name, attr_value);
 
     gAclOrch->addAclRule(rule, strTable);
+}
+
+bool PfcWdAclHandler::getHwCounters(PfcWdHwStats& counters)
+{
+    SWSS_LOG_ENTER();
+
+    // Get base queue counters from parent class
+    if (!PfcWdLossyHandler::getHwCounters(counters))
+    {
+        return false;
+    }
+
+    // Add ACL counter values to the base counters
+    // Get ingress ACL counter (packets dropped by ingress ACL)
+    AclRule* ingressRule = gAclOrch->getAclRule(m_strIngressTable, m_strRule);
+    if (ingressRule != nullptr)
+    {
+        auto ingressCounterId = ingressRule->getCounterOid();
+        if (ingressCounterId != SAI_NULL_OBJECT_ID)
+        {
+            sai_attribute_t attr;
+            attr.id = SAI_ACL_COUNTER_ATTR_PACKETS;
+
+            sai_status_t status = sai_acl_api->get_acl_counter_attribute(
+                ingressCounterId, 1, &attr);
+
+            if (status == SAI_STATUS_SUCCESS)
+            {
+                // Add ingress ACL drops to RX drop count
+                counters.rxDropPkt += attr.value.u64;
+                SWSS_LOG_DEBUG("PFC WD ingress ACL counter: %" PRIu64, attr.value.u64);
+            }
+            else
+            {
+                SWSS_LOG_WARN("Failed to get ingress ACL counter stats for PFC WD: %d", status);
+            }
+        }
+    }
+
+    // Get egress ACL counter (packets dropped by egress ACL)
+    AclRule* egressRule = gAclOrch->getAclRule(m_strEgressTable, m_strRule);
+    if (egressRule != nullptr)
+    {
+        auto egressCounterId = egressRule->getCounterOid();
+        if (egressCounterId != SAI_NULL_OBJECT_ID)
+        {
+            sai_attribute_t attr;
+            attr.id = SAI_ACL_COUNTER_ATTR_PACKETS;
+
+            sai_status_t status = sai_acl_api->get_acl_counter_attribute(
+                egressCounterId, 1, &attr);
+
+            if (status == SAI_STATUS_SUCCESS)
+            {
+                // Add egress ACL drops to TX drop count
+                counters.txDropPkt += attr.value.u64;
+                SWSS_LOG_DEBUG("PFC WD egress ACL counter: %" PRIu64, attr.value.u64);
+            }
+            else
+            {
+                SWSS_LOG_WARN("Failed to get egress ACL counter stats for PFC WD: %d", status);
+            }
+        }
+    }
+
+    return true;
 }
 
 std::map<std::string, AclTable> PfcWdAclHandler::m_aclTables;
