@@ -49,6 +49,52 @@ L2McMgr::L2McMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_appL2mcSuppressTableProducer(applDb,APP_L2MC_SUPPRESS_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
+    if (WarmStart::isWarmStart())
+    {
+        auto processTable =
+            [&](Table &table, bool isIgmp)
+            {
+                vector<string> keys;
+                vector<FieldValueTuple> entry;
+
+                table.getKeys(keys);
+
+                for (const auto &key : keys)
+                {
+                    if (key.rfind("Vlan", 0) != 0)
+                    {
+                        SWSS_LOG_WARN("Invalid VLAN key: %s", key.c_str());
+                        continue;
+                    }
+
+                    if (!table.get(key, entry))
+                        continue;
+
+                    auto it = std::find_if(
+                        entry.begin(), entry.end(),
+                        [](const auto &t) { return t.first == "enabled"; });
+
+                    if (it != entry.end() && fvValue(*it) == "true")
+                    {
+                        int vlan_id = stoi(key.substr(4));
+                        auto &flag = m_warmrebootvlanMap[vlan_id];
+
+                        if (isIgmp)
+                            flag.igmp = true;
+                        else
+                            flag.mld = true;
+                    }
+                }
+            };
+
+        processTable(m_cfgL2McGlobalTable, true);   // IGMP
+        processTable(m_cfgL2McMldGlobalTable, false); // MLD
+        if (m_warmrebootvlanMap.empty())
+        {
+            SWSS_LOG_NOTICE("L2MCMGRD warm reboot RECONCILED");
+            WarmStart::setWarmStartState("l2mcmgrd", WarmStart::RECONCILED);
+        }
+    }
 
     SWSS_LOG_INFO("Add REDIS DB L2mc entry notification support");
     m_l2mcNotificationConsumer = new swss::NotificationConsumer(statDb, "L2MC_NOTIFICATIONS_REMOTE");
@@ -454,7 +500,7 @@ void L2McMgr::updateMrouterEntry(const string vlan_id, const string ifname)
         msg->op_code = L2MCD_OP_ENABLE;
         PORT_ATTR *ports = msg->ports;
 
-        memcpy(ports[0].pnames, ifname.c_str(), L2MCD_IFNAME_SIZE);
+        memcpy(ports[0].pnames, iname.c_str(),  (iname.length()<L2MCD_IFNAME_SIZE)? iname.length():L2MCD_IFNAME_SIZE);
 
         SWSS_LOG_NOTICE("L2MCD_CFG:MROUTER: [key:%s] port:%s vlan:%d afi:%d",entry.c_str(), ports[0].pnames, msg->vlan_id, msg->afi);
         sendMsgL2Mcd(L2MCD_SNOOP_MROUTER_CONFIG_MSG, msg_len, (void *)msg);
@@ -495,7 +541,7 @@ void  L2McMgr::doL2McMrouterUpdateTask(Consumer &consumer)
         msg->count=1;
         msg->afi = MLD_IP_IPV4_AFI;
         PORT_ATTR *ports = msg->ports;
-        memcpy(ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
+        memcpy(ports[0].pnames, iname.c_str(),  (iname.length()<L2MCD_IFNAME_SIZE)? iname.length():L2MCD_IFNAME_SIZE);
         SWSS_LOG_DEBUG("MemIntf: %s", iname.c_str());
         if (op == SET_COMMAND)
         {
@@ -550,7 +596,7 @@ void  L2McMgr::doL2McMldMrouterUpdateTask(Consumer &consumer)
         msg->count=1;
         msg->afi = MLD_IP_IPV6_AFI;
         PORT_ATTR *ports = msg->ports;
-        memcpy(ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
+        memcpy(ports[0].pnames, iname.c_str(),  (iname.length()<L2MCD_IFNAME_SIZE)? iname.length():L2MCD_IFNAME_SIZE);
         SWSS_LOG_DEBUG("MemIntf: %s", iname.c_str());
         if (op == SET_COMMAND)
         {
@@ -643,7 +689,7 @@ void L2McMgr::updateGrpStaticEntry(const string vlan_id, const string ifname)
         }
 
         PORT_ATTR *ports = msg->ports;
-        memcpy(ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
+        memcpy(ports[0].pnames, iname.c_str(),  (iname.length()<L2MCD_IFNAME_SIZE)? iname.length():L2MCD_IFNAME_SIZE);
         SWSS_LOG_DEBUG("MemIntf: %s", iname.c_str());
 
         SWSS_LOG_NOTICE("L2MCD_CFG:STATIC [key:%s] GA:%s Port:%s vlan:%d afi:%d", entry.c_str(), ipKey.c_str(), iname.c_str(), msg->vlan_id, msg->afi);
@@ -704,7 +750,7 @@ void L2McMgr::doL2McStaticEntryTask(Consumer &consumer)
         msg->afi = MLD_IP_IPV4_AFI;
 
         PORT_ATTR *ports = msg->ports;
-        memcpy(ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
+        memcpy(ports[0].pnames, iname.c_str(),  (iname.length()<L2MCD_IFNAME_SIZE)? iname.length():L2MCD_IFNAME_SIZE);
         SWSS_LOG_DEBUG("MemIntf: %s", iname.c_str());
 
         for (auto i : kfvFieldsValues(t))
@@ -765,7 +811,7 @@ void L2McMgr::doL2McMldStaticEntryTask(Consumer &consumer)
         memcpy(msg->gaddr,ipKey.c_str(), L2MCD_IP_ADDR_STR_SIZE);
         memcpy(msg->saddr,srcip.c_str(), L2MCD_IP_ADDR_STR_SIZE);
         PORT_ATTR *ports = msg->ports;
-        memcpy(ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
+        memcpy(ports[0].pnames, iname.c_str(),  (iname.length()<L2MCD_IFNAME_SIZE)? iname.length():L2MCD_IFNAME_SIZE);
         SWSS_LOG_DEBUG("MemIntf: %s", iname.c_str());
         for (auto i : kfvFieldsValues(t))
         {
@@ -811,7 +857,7 @@ void L2McMgr::sendL2McSnoopConfig(
     msg->last_member_query_interval = 1000;
     msg->version = 2;
     msg->count = port_count;
-    msg->warm_reboot = WarmStart::isWarmStart() ? 1 : 0;
+    //msg->warm_reboot = WarmStart::isWarmStart() ? 1 : 0;
 
     if (op == SET_COMMAND)
     {
@@ -1057,13 +1103,13 @@ int  L2McMgr::getL2McPortList(DBConnector *state_db)
     for (auto port_name : portKeys)
     {
         ports[i].oper_state = getPortOperState(port_name);
-        memcpy(ports[i++].pnames, port_name.c_str(), L2MCD_IFNAME_SIZE);
+        memcpy(ports[i++].pnames, port_name.c_str(), (port_name.length()<L2MCD_IFNAME_SIZE)? port_name.length():L2MCD_IFNAME_SIZE);
         SWSS_LOG_INFO("Port:%s oper:%d", port_name.c_str(), ports[i-1].oper_state);
     }
     for (auto lag_name : lagKeys)
     {
         ports[i].oper_state = getPortOperState(lag_name);
-        memcpy(ports[i++].pnames, lag_name.c_str(), L2MCD_IFNAME_SIZE);
+        memcpy(ports[i++].pnames, lag_name.c_str(), (lag_name.length()<L2MCD_IFNAME_SIZE)? lag_name.length():L2MCD_IFNAME_SIZE);
         SWSS_LOG_INFO("Port:%s oper:%d", lag_name.c_str(), ports[i-1].oper_state);
     }
     msg->op_code = L2MCD_OP_ENABLE;
@@ -1195,7 +1241,7 @@ void L2McMgr::updateVlanMember(const string vlan_id)
         msg->count =1;
 
         PORT_ATTR *ports = msg->ports;
-        memcpy(ports[0].pnames, intfName.c_str(), L2MCD_IFNAME_SIZE);
+        memcpy(ports[0].pnames, intfName.c_str(), (intfName.length()<L2MCD_IFNAME_SIZE)? intfName.length():L2MCD_IFNAME_SIZE);
         SWSS_LOG_DEBUG("MemIntf: %s", intfName.c_str());
         msg->op_code = L2MCD_OP_ENABLE;
         vector<FieldValueTuple> tupEntry;
@@ -1247,7 +1293,7 @@ void L2McMgr::doL2McVlanMemUpdateTask(Consumer &consumer)
             msg->vlan_id = vlanid;
             msg->count =1;
             PORT_ATTR *ports = msg->ports;
-            memcpy(ports[0].pnames, intfName.c_str(), L2MCD_IFNAME_SIZE);
+            memcpy(ports[0].pnames, intfName.c_str(), (intfName.length()<L2MCD_IFNAME_SIZE)? intfName.length():L2MCD_IFNAME_SIZE);
             SWSS_LOG_DEBUG("MemIntf: %s", intfName.c_str());
             vector<FieldValueTuple> tupEntry;
             if (m_cfgVlanMemberTable.get(key, tupEntry))
@@ -1309,8 +1355,8 @@ void L2McMgr::doL2McLagMemberUpdateTask(Consumer &consumer)
             po_name = key.substr(0, found);
             po_mem  = key.substr(found+1);
             SWSS_LOG_INFO("LAG_MEMBER %s %s %s", po_name.c_str(), po_mem.c_str(), op.c_str());
-            memcpy(ports[0].pnames, po_name.c_str(), L2MCD_IFNAME_SIZE);
-            memcpy(ports[1].pnames, po_mem.c_str(), L2MCD_IFNAME_SIZE);
+            memcpy(ports[0].pnames, po_name.c_str(), (po_name.length()<L2MCD_IFNAME_SIZE)? po_name.length():L2MCD_IFNAME_SIZE);
+            memcpy(ports[1].pnames, po_mem.c_str(), (po_mem.length()<L2MCD_IFNAME_SIZE)? po_mem.length():L2MCD_IFNAME_SIZE);
         }
         else
         {
@@ -1418,7 +1464,7 @@ void L2McMgr::doL2McInterfaceUpdateTask(Consumer &consumer)
         msg->count=1;
         msg->op_code = (op == SET_COMMAND)? L2MCD_OP_ENABLE:L2MCD_OP_DISABLE;
         PORT_ATTR *ports = msg->ports;
-        memcpy(ports[0].pnames, key.c_str(), L2MCD_IFNAME_SIZE);
+        memcpy(ports[0].pnames, key.c_str(), (key.length()<L2MCD_IFNAME_SIZE)? key.length():L2MCD_IFNAME_SIZE);
         ports[0].oper_state = getPortOperState(ports[0].pnames);
         SWSS_LOG_NOTICE("L2MCD_CFG: IF:%s op:%s oper:%d", key.c_str(), op.c_str(),ports[0].oper_state);
         sendMsgL2Mcd(L2MCD_SNOOP_PORT_LIST_MSG, msg_len, (void *)msg);
@@ -1521,7 +1567,7 @@ void L2McMgr::doL2McProcRemoteEntries(string op, string key, string key_seperato
     }
     msg->count=1;
     PORT_ATTR *ports = msg->ports;
-    memcpy(ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
+    memcpy(ports[0].pnames, iname.c_str(), (iname.length()<L2MCD_IFNAME_SIZE)? iname.length():L2MCD_IFNAME_SIZE);
 
     if (IpAddress(gaddr).isV4() && saddr != "0.0.0.0")
     {
@@ -1583,7 +1629,7 @@ void L2McMgr::doL2McProcRemoteMrouterEntries(string op, string key, string key_s
     msg->vlan_id = (unsigned int) stoi(vlan_name.substr(4));
     msg->count=1;
     PORT_ATTR *ports = msg->ports;
-    memcpy(ports[0].pnames, iname.c_str(), L2MCD_IFNAME_SIZE);
+    memcpy(ports[0].pnames, iname.c_str(), (iname.length()<L2MCD_IFNAME_SIZE)? iname.length():L2MCD_IFNAME_SIZE);
 
     if(proctol == "V4")
         msg->afi = MLD_IP_IPV4_AFI;
@@ -1643,10 +1689,11 @@ void L2McMgr::doTask(NotificationConsumer &consumer)
             if (option == "enable")
             {
                 auto res = m_operUpPorts.insert(vlan_id);
+
                 if (!res.second)
                 {
                     SWSS_LOG_INFO("Vlan %s already enable, skip", vlan_id.c_str());
-                    return;
+                    //return;
                 }
                 SWSS_LOG_INFO("Vlan %s changed to enable", vlan_id.c_str());
                 updateVlanMember(vlan_id);
@@ -1670,7 +1717,7 @@ void L2McMgr::doTask(NotificationConsumer &consumer)
                 if (!res.second)
                 {
                     SWSS_LOG_INFO("Port %s already UP, skip", ifname.c_str());
-                    return;
+                    //return;
                 }
                 SWSS_LOG_INFO("Port %s changed to UP", ifname.c_str());
                 updateMrouterEntry(vlan_id, ifname);
@@ -1681,6 +1728,105 @@ void L2McMgr::doTask(NotificationConsumer &consumer)
                 m_operUpPorts.erase(ifname);
             }
         }
+        else if (op == "WARM_REBOOT")
+        {
+            int vlanid = atoi(param.c_str());
+            int proto  = atoi(option.c_str());  // 1 = IGMP, 2 = MLD
+
+            auto it = m_warmrebootvlanMap.find(vlanid);
+            if (it == m_warmrebootvlanMap.end())
+                return;
+
+            if (proto == 1)
+                it->second.igmp = false;
+            else if (proto == 2)
+                it->second.mld = false;
+
+            if (!it->second.igmp && !it->second.mld)
+            {
+                m_warmrebootvlanMap.erase(it);
+            }
+
+            if (m_warmrebootvlanMap.empty())
+            {
+                SWSS_LOG_NOTICE("L2MCMGRD warm reboot RECONCILED");
+                WarmStart::setWarmStartState("l2mcmgrd", WarmStart::RECONCILED);
+            }
+        }
             
+    }
+}
+
+void L2McMgr::waitTillReadyToReconcile()
+{
+    for (;;)
+    {
+        WarmStart::WarmStartState state;
+        WarmStart::getWarmStartState("vlanmgrd", state);
+
+        if ((WarmStart::REPLAYED == state) ||
+            (WarmStart::RECONCILED == state))
+        {
+            SWSS_LOG_INFO("Vlanmgrd Reconciled %d", (int) state);
+            return;
+        }
+        SWSS_LOG_INFO("Vlanmgrd NOT Reconciled %d", (int) state);            
+        sleep(1);
+    }
+    return;
+}
+
+void L2McMgr::waitForPortsReady( int timeout_sec)
+{
+    SWSS_LOG_NOTICE("[WARM] Wait for ports oper_status UP (timeout=%d)", timeout_sec);
+
+    time_t start = time(nullptr);
+
+    while (true)
+    {
+        vector<string> keys;
+        m_appPortTable.getKeys(keys);
+
+        bool allReady = true;
+
+        for (const auto &key : keys)
+        {
+            vector<FieldValueTuple> fvs;
+            m_appPortTable.get(key, fvs);
+
+            string oper;
+            bool hasOper = false;
+
+            for (auto &fv : fvs)
+            {
+                if (fv.first == "oper_status")
+                {
+                    oper = fv.second;
+                    hasOper = true;
+                    break;
+                }
+            }
+
+            if (hasOper && oper != "up")
+            {
+                allReady = false;
+                SWSS_LOG_INFO("[WARM] Port %s oper=%s, wait...", key.c_str(), oper.c_str());
+                break;
+            }
+        }
+
+        if (allReady)
+        {
+            SWSS_LOG_NOTICE("[WARM] All ports oper UP");
+            return;
+        }
+
+        if (time(nullptr) - start >= timeout_sec)
+        {
+            SWSS_LOG_NOTICE("[WARM] Port wait timeout, continue anyway");
+            return;
+        }
+
+        sleep(1);
     }
 }

@@ -45,6 +45,10 @@ int main(int argc, char **argv)
 
         WarmStart::initialize("l2mcmgrd", "l2mcmgrd");
         WarmStart::checkWarmStart("l2mcmgrd", "l2mcmgrd");
+        if (WarmStart::isWarmStart())
+        {
+            WarmStart::setWarmStartState("l2mcmgrd", WarmStart::INITIALIZED);
+        }
 
         // SelectableTimer replayCheckTimer(timespec{0, 0});
         // int pasttime = 0;
@@ -98,13 +102,12 @@ int main(int argc, char **argv)
             s.addSelectables(o->getSelectables());
         }
 
-        // bool m_warmstart = WarmStart::isWarmStart();
-        // if (m_warmstart)
-        // {
-        //     replayCheckTimer.setInterval(timespec{1, 0});
-        //     replayCheckTimer.start();
-        //     s.addSelectable(&replayCheckTimer);   
-        // }
+        if (WarmStart::isWarmStart())
+        {
+            l2mcmgr.waitTillReadyToReconcile();
+            l2mcmgr.waitForPortsReady(120);
+            WarmStart::setWarmStartState("l2mcmgrd", WarmStart::REPLAYED);
+        }
 
         SWSS_LOG_NOTICE("L2MCMGrd Start main loop log_debug:%d",swss::Logger::getInstance().getMinPrio());
         while (true)
@@ -123,25 +126,6 @@ int main(int argc, char **argv)
                 l2mcmgr.doTask();
                 continue;
             }
-            // if (sel == &replayCheckTimer)
-            // {
-
-            //     if (pasttime > RESTORE_MAX_WAIT_TIME)
-            //     {
-            //         SWSS_LOG_NOTICE("L2MCMGrd Start RECONCILED ");
-            //         WarmStart::setWarmStartState("l2mcmgrd", WarmStart::RECONCILED);
-            //         s.removeSelectable(&replayCheckTimer);
-            //     }
-            //     else
-            //     {
-            //         SWSS_LOG_NOTICE("L2MCMGrd Start pasttime :%d",pasttime);
-            //         pasttime++;
-            //         replayCheckTimer.setInterval(timespec{1, 0});
-            //         // re-start replay check timer
-            //         replayCheckTimer.start();
-            //     }
-            //     continue;
-            // }
 
             auto *c = (Executor *)sel;
             c->execute();
