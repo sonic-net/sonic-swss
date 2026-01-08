@@ -59,7 +59,7 @@ MirrorEntry::MirrorEntry(const string& platform) :
         dscp(8),
         ttl(255),
         queue(0),
-        sessionId(0),
+        sessionId(SAI_NULL_OBJECT_ID),
         refCount(0)
 {
     if (platform == MLNX_PLATFORM_SUBSTRING)
@@ -74,6 +74,11 @@ MirrorEntry::MirrorEntry(const string& platform) :
     string alias = "";
     nexthopInfo.prefix = IpPrefix("0.0.0.0/0");
     nexthopInfo.nexthop = NextHopKey("0.0.0.0", alias);
+
+    // neighborInfo
+    // mac and port data members have default constructors
+    // for proper initialization
+    neighborInfo.portId = SAI_NULL_OBJECT_ID;
 }
 
 MirrorOrch::MirrorOrch(TableConnector stateDbConnector, TableConnector confDbConnector,
@@ -630,8 +635,8 @@ void MirrorOrch::setSessionState(const string& name, const MirrorEntry& session,
 
     if (attr.empty() || attr == MIRROR_SESSION_NEXT_HOP_IP)
     {
-     value = session.nexthopInfo.nexthop.to_string();
-     fvVector.emplace_back(MIRROR_SESSION_NEXT_HOP_IP, value);
+        value = session.nexthopInfo.nexthop.to_string();
+        fvVector.emplace_back(MIRROR_SESSION_NEXT_HOP_IP, value);
     }
 
     m_mirrorTable.set(name, fvVector);
@@ -653,20 +658,22 @@ bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session)
     // 2) If session has next hop, and the next hop's neighbor information is
     //    retrieved successfully, then continue.
     // 3) Otherwise, return false.
-    if (!m_neighOrch->getNeighborEntry(session.dstIp,
-                session.neighborInfo.neighbor, session.neighborInfo.mac) &&
+    NeighborEntry neighbor;
+    if ((session.nexthopInfo.nexthop.alias.empty() ||
+            !m_neighOrch->getNeighborEntry(session.dstIp,
+                neighbor, session.neighborInfo.mac)) &&
             (session.nexthopInfo.nexthop.ip_address.isZero() ||
             !m_neighOrch->getNeighborEntry(session.nexthopInfo.nexthop,
-                session.neighborInfo.neighbor, session.neighborInfo.mac)))
+                neighbor, session.neighborInfo.mac)))
     {
         return false;
     }
 
     SWSS_LOG_NOTICE("Mirror session %s neighbor is %s",
-            name.c_str(), session.neighborInfo.neighbor.alias.c_str());
+            name.c_str(), neighbor.alias.c_str());
 
     // Get mirror session monitor port information
-    m_portsOrch->getPort(session.neighborInfo.neighbor.alias,
+    m_portsOrch->getPort(neighbor.alias,
             session.neighborInfo.port);
 
     switch (session.neighborInfo.port.m_type)
@@ -1383,9 +1390,9 @@ void MirrorOrch::updateNeighbor(const NeighborUpdate& update)
         auto& session = it->second;
 
         // Check if the session's destination IP matches the neighbor's update IP
-        // or if the session's next hop IP matches the neighbor's update IP
+        // or if the session's next hop matches the neighbor's update entry
         if (session.dstIp != update.entry.ip_address &&
-                session.nexthopInfo.nexthop.ip_address != update.entry.ip_address)
+                session.nexthopInfo.nexthop != update.entry)
         {
             continue;
         }
