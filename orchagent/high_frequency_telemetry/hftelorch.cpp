@@ -195,6 +195,30 @@ task_process_status HFTelOrch::profileTableSet(const string &profile_name, const
         lexical_convert(*value_opt, state);
         profile->setStreamState(state);
         stream_state = *value_opt;
+
+        // If the telemetry session state entry already exists, keep its stream_status in sync.
+        // The entry is created/updated in doTask(NotificationConsumer&) when TAM notifies config readiness.
+        // Here we only update existing entries to avoid creating partial/incomplete state entries.
+        const auto desired_stream_status = (state == SAI_TAM_TEL_TYPE_STATE_START_STREAM) ? "enabled" : "disabled";
+        for (const auto &type_profiles : m_type_profile_mapping)
+        {
+            const auto &type = type_profiles.first;
+            if (type_profiles.second.find(profile) == type_profiles.second.end())
+            {
+                continue;
+            }
+
+            const auto session_key = profile_name + "|" + HFTelUtils::sai_type_to_group_name(type);
+            vector<FieldValueTuple> existing_values;
+            if (!m_state_telemetry_session.get(session_key, existing_values))
+            {
+                continue;
+            }
+
+            vector<FieldValueTuple> update_values;
+            update_values.emplace_back("stream_status", desired_stream_status);
+            m_state_telemetry_session.set(session_key, update_values);
+        }
     }
 
     value_opt = fvsGetValue(values, "poll_interval", true);
