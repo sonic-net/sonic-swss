@@ -828,6 +828,13 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     /* Get ports */
     this->initializePorts();
 
+    if (m_gearboxEnabled)
+    {
+        for (auto it = m_gearboxPhyMap.begin(); it != m_gearboxPhyMap.end(); ++it)
+        {
+            this->initializeGearboxPorts(it->first);
+        }
+    }
     /* Get the flood control types and check if combined mode is supported */
     vector<int32_t> supported_flood_control_types(max_flood_control_types, 0);
     sai_s32_list_t values;
@@ -1154,6 +1161,91 @@ void PortsOrch::initializePorts()
 
         SWSS_LOG_NOTICE(
             "Get port with lanes pid:%" PRIx64 " lanes:%s",
+            portId, swss::join(" ", laneSet.cbegin(), laneSet.cend()).c_str()
+        );
+    }
+}
+
+void PortsOrch::initializeGearboxPorts(int phy_id)
+{
+    SWSS_LOG_ENTER();
+
+    sai_status_t status;
+    sai_attribute_t attr;
+    sai_object_id_t switch_id;
+    auto phyOidStr = m_gearboxPhyMap[phy_id].phy_oid;
+    if (phyOidStr.size() == 0)
+    {
+        SWSS_LOG_THROW("BOX: Gearbox PHY phy_id:%d has an invalid phy_oid", phy_id);
+    }
+    sai_deserialize_object_id(phyOidStr, switch_id);
+
+    // Get port number
+    attr.id = SAI_SWITCH_ATTR_PORT_NUMBER;
+
+    status = sai_switch_api->get_switch_attribute(switch_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get port number, rv:%d", status);
+        auto handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            SWSS_LOG_THROW("PortsOrch initialization failure");
+        }
+    }
+
+    uint32_t portCount = attr.value.u32;
+
+    SWSS_LOG_NOTICE("Gearbox 0x%" PRIx64 " get %d ports", switch_id, portCount);
+
+    // Get port list
+    std::vector<sai_object_id_t> portList(portCount, SAI_NULL_OBJECT_ID);
+
+    attr.id = SAI_SWITCH_ATTR_PORT_LIST;
+    attr.value.objlist.count = static_cast<sai_uint32_t>(portList.size());
+    attr.value.objlist.list = portList.data();
+
+    status = sai_switch_api->get_switch_attribute(switch_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get port list, rv:%d", status);
+        auto handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            SWSS_LOG_THROW("PortsOrch initialization failure");
+        }
+    }
+
+    // Get port hardware lane info
+    for (const auto &portId : portList)
+    {
+        std::vector<sai_uint32_t> laneList(Port::max_lanes, 0);
+
+        attr.id = SAI_PORT_ATTR_HW_LANE_LIST;
+        attr.value.u32list.count = static_cast<sai_uint32_t>(laneList.size());
+        attr.value.u32list.list = laneList.data();
+
+        status = sai_port_api->get_port_attribute(portId, 1, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to get hardware lane list pid:%" PRIx64, portId);
+            auto handle_status = handleSaiGetStatus(SAI_API_PORT, status);
+            if (handle_status != task_process_status::task_success)
+            {
+                SWSS_LOG_THROW("PortsOrch initialization failure");
+            }
+        }
+
+        std::set<int> laneSet;
+        for (sai_uint32_t i = 0; i < attr.value.u32list.count; i++)
+        {
+            laneSet.insert(attr.value.u32list.list[i]);
+        }
+
+        this->m_gearboxLanesToPortMap[phy_id][laneSet] = portId;
+
+        SWSS_LOG_NOTICE(
+            "Get gearbox port with lanes pid:%" PRIx64 " lanes:%s",
             portId, swss::join(" ", laneSet.cbegin(), laneSet.cend()).c_str()
         );
     }
@@ -9744,212 +9836,358 @@ bool PortsOrch::initGearboxPort(Port &port)
             port.m_switch_id = phyOid;
 
             /* Create SYSTEM-SIDE port */
-            attrs.clear();
-
-            attr.id = SAI_PORT_ATTR_ADMIN_STATE;
-            attr.value.booldata = port.m_admin_state_up;
-            attrs.push_back(attr);
-
-            attr.id = SAI_PORT_ATTR_HW_LANE_LIST;
-            lanes.assign(m_gearboxInterfaceMap[port.m_index].system_lanes.begin(), m_gearboxInterfaceMap[port.m_index].system_lanes.end());
-            attr.value.u32list.list = lanes.data();
-            attr.value.u32list.count = static_cast<uint32_t>(lanes.size());
-            attrs.push_back(attr);
-
-            for (uint32_t i = 0; i < attr.value.u32list.count; i++)
+            auto gearboxSystemPortIter = m_gearboxLanesToPortMap[phy_id].find(m_gearboxInterfaceMap[port.m_index].system_lanes);
+            if (gearboxSystemPortIter != m_gearboxLanesToPortMap[phy_id].end())
             {
-                SWSS_LOG_DEBUG("BOX: list[%d] = %d", i, attr.value.u32list.list[i]);
-            }
+                systemPort = gearboxSystemPortIter->second;
+                SWSS_LOG_NOTICE("BOX: Found Gearbox system-side port 0x%" PRIx64 " for alias:%s index:%d",
+                        systemPort, port.m_alias.c_str(), port.m_index);
+                attr.id = SAI_PORT_ATTR_ADMIN_STATE;
+                attr.value.booldata = port.m_admin_state_up;
+                sai_port_api->set_port_attribute(systemPort, &attr);
 
-            attr.id = SAI_PORT_ATTR_SPEED;
-            attr.value.u32 = (uint32_t) m_gearboxPortMap[port.m_index].system_speed * (uint32_t) lanes.size();
-            if (isSpeedSupported(port.m_alias, port.m_port_id, attr.value.u32))
-            {
-                attrs.push_back(attr);
-            }
+                attr.id = SAI_PORT_ATTR_SPEED;
+                attr.value.u32 = (uint32_t) m_gearboxPortMap[port.m_index].system_speed * (uint32_t) lanes.size();
+                sai_port_api->set_port_attribute(systemPort, &attr);
 
-            attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
-            attr.value.booldata = m_gearboxPortMap[port.m_index].system_auto_neg;
-            attrs.push_back(attr);
+                attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
+                attr.value.booldata = m_gearboxPortMap[port.m_index].system_auto_neg;
+                sai_port_api->set_port_attribute(systemPort, &attr);
 
-            attr.id = SAI_PORT_ATTR_FEC_MODE;
-            if (!m_portHlpr.fecToSaiFecMode(m_gearboxPortMap[port.m_index].system_fec, sai_fec))
-            {
-                SWSS_LOG_ERROR("Invalid system FEC mode %s", m_gearboxPortMap[port.m_index].system_fec.c_str());
-                return false;
-            }
-            attr.value.s32 = sai_fec;
-            attrs.push_back(attr);
-
-            if (fec_override_sup)
-            {
-                attr.id = SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE;
-
-                attr.value.booldata = m_portHlpr.fecIsOverrideRequired(m_gearboxPortMap[port.m_index].system_fec);
-                attrs.push_back(attr);
-            }
-
-            attr.id = SAI_PORT_ATTR_INTERNAL_LOOPBACK_MODE;
-            attr.value.u32 = loopback_mode_map[m_gearboxPortMap[port.m_index].system_loopback];
-            attrs.push_back(attr);
-
-            attr.id = SAI_PORT_ATTR_LINK_TRAINING_ENABLE;
-            attr.value.booldata = m_gearboxPortMap[port.m_index].system_training;
-            attrs.push_back(attr);
-
-            if (m_cmisModuleAsicSyncSupported)
-            {
-                attr.id = SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE;
-                attr.value.booldata = false;
-                attrs.push_back(attr);
-            }
-
-            status = sai_port_api->create_port(&systemPort, phyOid, static_cast<uint32_t>(attrs.size()), attrs.data());
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_ERROR("BOX: Failed to create Gearbox system-side port for alias:%s port_id:0x%" PRIx64 " index:%d status:%d",
-                        port.m_alias.c_str(), port.m_port_id, port.m_index, status);
-                task_process_status handle_status = handleSaiCreateStatus(SAI_API_PORT, status);
-                if (handle_status != task_success)
+                attr.id = SAI_PORT_ATTR_FEC_MODE;
+                if (!m_portHlpr.fecToSaiFecMode(m_gearboxPortMap[port.m_index].system_fec, sai_fec))
                 {
-                    return parseHandleSaiStatusFailure(handle_status);
+                    SWSS_LOG_ERROR("Invalid system FEC mode %s", m_gearboxPortMap[port.m_index].system_fec.c_str());
+                    return false;
+                }
+                attr.value.s32 = sai_fec;
+                sai_port_api->set_port_attribute(systemPort, &attr);
+
+                if (fec_override_sup)
+                {
+                    attr.id = SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE;
+
+                    attr.value.booldata = m_portHlpr.fecIsOverrideRequired(m_gearboxPortMap[port.m_index].system_fec);
+                    sai_port_api->set_port_attribute(systemPort, &attr);
+                }
+
+                attr.id = SAI_PORT_ATTR_INTERNAL_LOOPBACK_MODE;
+                attr.value.u32 = loopback_mode_map[m_gearboxPortMap[port.m_index].system_loopback];
+                sai_port_api->set_port_attribute(systemPort, &attr);
+
+                attr.id = SAI_PORT_ATTR_LINK_TRAINING_ENABLE;
+                attr.value.booldata = m_gearboxPortMap[port.m_index].system_training;
+                sai_port_api->set_port_attribute(systemPort, &attr);
+
+                if (m_cmisModuleAsicSyncSupported)
+                {
+                    attr.id = SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE;
+                    attr.value.booldata = false;
+                    sai_port_api->set_port_attribute(systemPort, &attr);
                 }
             }
-            SWSS_LOG_NOTICE("BOX: Created Gearbox system-side port 0x%" PRIx64 " for alias:%s index:%d",
-                    systemPort, port.m_alias.c_str(), port.m_index);
+            else
+            {
+                attrs.clear();
+
+                attr.id = SAI_PORT_ATTR_ADMIN_STATE;
+                attr.value.booldata = port.m_admin_state_up;
+                attrs.push_back(attr);
+
+                attr.id = SAI_PORT_ATTR_HW_LANE_LIST;
+                lanes.assign(m_gearboxInterfaceMap[port.m_index].system_lanes.begin(), m_gearboxInterfaceMap[port.m_index].system_lanes.end());
+                attr.value.u32list.list = lanes.data();
+                attr.value.u32list.count = static_cast<uint32_t>(lanes.size());
+                attrs.push_back(attr);
+
+                for (uint32_t i = 0; i < attr.value.u32list.count; i++)
+                {
+                    SWSS_LOG_DEBUG("BOX: list[%d] = %d", i, attr.value.u32list.list[i]);
+                }
+
+                attr.id = SAI_PORT_ATTR_SPEED;
+                attr.value.u32 = (uint32_t) m_gearboxPortMap[port.m_index].system_speed * (uint32_t) lanes.size();
+                if (isSpeedSupported(port.m_alias, port.m_port_id, attr.value.u32))
+                {
+                    attrs.push_back(attr);
+                }
+
+                attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
+                attr.value.booldata = m_gearboxPortMap[port.m_index].system_auto_neg;
+                attrs.push_back(attr);
+
+                attr.id = SAI_PORT_ATTR_FEC_MODE;
+                if (!m_portHlpr.fecToSaiFecMode(m_gearboxPortMap[port.m_index].system_fec, sai_fec))
+                {
+                    SWSS_LOG_ERROR("Invalid system FEC mode %s", m_gearboxPortMap[port.m_index].system_fec.c_str());
+                    return false;
+                }
+                attr.value.s32 = sai_fec;
+                attrs.push_back(attr);
+
+                if (fec_override_sup)
+                {
+                    attr.id = SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE;
+
+                    attr.value.booldata = m_portHlpr.fecIsOverrideRequired(m_gearboxPortMap[port.m_index].system_fec);
+                    attrs.push_back(attr);
+                }
+
+                attr.id = SAI_PORT_ATTR_INTERNAL_LOOPBACK_MODE;
+                attr.value.u32 = loopback_mode_map[m_gearboxPortMap[port.m_index].system_loopback];
+                attrs.push_back(attr);
+
+                attr.id = SAI_PORT_ATTR_LINK_TRAINING_ENABLE;
+                attr.value.booldata = m_gearboxPortMap[port.m_index].system_training;
+                attrs.push_back(attr);
+
+                if (m_cmisModuleAsicSyncSupported)
+                {
+                    attr.id = SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE;
+                    attr.value.booldata = false;
+                    attrs.push_back(attr);
+                }
+
+                status = sai_port_api->create_port(&systemPort, phyOid, static_cast<uint32_t>(attrs.size()), attrs.data());
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("BOX: Failed to create Gearbox system-side port for alias:%s port_id:0x%" PRIx64 " index:%d status:%d",
+                            port.m_alias.c_str(), port.m_port_id, port.m_index, status);
+                    task_process_status handle_status = handleSaiCreateStatus(SAI_API_PORT, status);
+                    if (handle_status != task_success)
+                    {
+                        return parseHandleSaiStatusFailure(handle_status);
+                    }
+                }
+                SWSS_LOG_NOTICE("BOX: Created Gearbox system-side port 0x%" PRIx64 " for alias:%s index:%d",
+                        systemPort, port.m_alias.c_str(), port.m_index);
+            }
             port.m_system_side_id = systemPort;
 
             /* Create LINE-SIDE port */
-            attrs.clear();
-
-            attr.id = SAI_PORT_ATTR_ADMIN_STATE;
-            attr.value.booldata = port.m_admin_state_up;
-            attrs.push_back(attr);
-
-            attr.id = SAI_PORT_ATTR_HW_LANE_LIST;
-            lanes.assign(m_gearboxInterfaceMap[port.m_index].line_lanes.begin(), m_gearboxInterfaceMap[port.m_index].line_lanes.end());
-            attr.value.u32list.list = lanes.data();
-            attr.value.u32list.count = static_cast<uint32_t>(lanes.size());
-            attrs.push_back(attr);
-
-            for (uint32_t i = 0; i < attr.value.u32list.count; i++)
+            auto gearboxLinePortIter = m_gearboxLanesToPortMap[phy_id].find(m_gearboxInterfaceMap[port.m_index].line_lanes);
+            if (gearboxLinePortIter != m_gearboxLanesToPortMap[phy_id].end())
             {
-                SWSS_LOG_DEBUG("BOX: list[%d] = %d", i, attr.value.u32list.list[i]);
-            }
+                linePort = gearboxLinePortIter->second;
+                SWSS_LOG_NOTICE("BOX: Found Gearbox line-side port 0x%" PRIx64 " for alias:%s index:%d",
+                        linePort, port.m_alias.c_str(), port.m_index);
 
-            attr.id = SAI_PORT_ATTR_SPEED;
-            attr.value.u32 = (uint32_t) m_gearboxPortMap[port.m_index].line_speed * (uint32_t) lanes.size();
-            if (isSpeedSupported(port.m_alias, port.m_port_id, attr.value.u32))
-            {
-                attrs.push_back(attr);
-            }
+                attr.id = SAI_PORT_ATTR_ADMIN_STATE;
+                attr.value.booldata = port.m_admin_state_up;
+                sai_port_api->set_port_attribute(linePort, &attr);
 
-            attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
-            attr.value.booldata = m_gearboxPortMap[port.m_index].line_auto_neg;
-            attrs.push_back(attr);
+                attr.id = SAI_PORT_ATTR_SPEED;
+                attr.value.u32 = (uint32_t) m_gearboxPortMap[port.m_index].line_speed * (uint32_t) lanes.size();
+                sai_port_api->set_port_attribute(linePort, &attr);
 
-            attr.id = SAI_PORT_ATTR_FEC_MODE;
-            if (!m_portHlpr.fecToSaiFecMode(m_gearboxPortMap[port.m_index].line_fec, sai_fec))
-            {
-                SWSS_LOG_ERROR("Invalid line FEC mode %s", m_gearboxPortMap[port.m_index].line_fec.c_str());
-                return false;
-            }
-            attr.value.s32 = sai_fec;
-            attrs.push_back(attr);
+                attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
+                attr.value.booldata = m_gearboxPortMap[port.m_index].line_auto_neg;
+                sai_port_api->set_port_attribute(linePort, &attr);
 
-            // FEC override will take effect only when autoneg is enabled
-            if (fec_override_sup)
-            {
-                attr.id = SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE;
-                attr.value.booldata = m_portHlpr.fecIsOverrideRequired(m_gearboxPortMap[port.m_index].line_fec);
-                attrs.push_back(attr);
-            }
-
-            attr.id = SAI_PORT_ATTR_MEDIA_TYPE;
-            attr.value.u32 = media_type_map[m_gearboxPortMap[port.m_index].line_media_type];
-            attrs.push_back(attr);
-
-            attr.id = SAI_PORT_ATTR_INTERNAL_LOOPBACK_MODE;
-            attr.value.u32 = loopback_mode_map[m_gearboxPortMap[port.m_index].line_loopback];
-            attrs.push_back(attr);
-
-            attr.id = SAI_PORT_ATTR_LINK_TRAINING_ENABLE;
-            attr.value.booldata = m_gearboxPortMap[port.m_index].line_training;
-            attrs.push_back(attr);
-
-            attr.id = SAI_PORT_ATTR_INTERFACE_TYPE;
-            attr.value.u32 = interface_type_map[m_gearboxPortMap[port.m_index].line_intf_type];
-            attrs.push_back(attr);
-
-            attr.id = SAI_PORT_ATTR_ADVERTISED_SPEED;
-            vals.assign(m_gearboxPortMap[port.m_index].line_adver_speed.begin(), m_gearboxPortMap[port.m_index].line_adver_speed.end());
-            attr.value.u32list.list = vals.data();
-            attr.value.u32list.count = static_cast<uint32_t>(vals.size());
-            attrs.push_back(attr);
-
-            attr.id = SAI_PORT_ATTR_ADVERTISED_FEC_MODE;
-            vals.assign(m_gearboxPortMap[port.m_index].line_adver_fec.begin(), m_gearboxPortMap[port.m_index].line_adver_fec.end());
-            attr.value.u32list.list = vals.data();
-            attr.value.u32list.count = static_cast<uint32_t>(vals.size());
-            attrs.push_back(attr);
-
-            attr.id = SAI_PORT_ATTR_ADVERTISED_AUTO_NEG_MODE;
-            attr.value.booldata = m_gearboxPortMap[port.m_index].line_adver_auto_neg;
-            attrs.push_back(attr);
-
-            attr.id = SAI_PORT_ATTR_ADVERTISED_ASYMMETRIC_PAUSE_MODE;
-            attr.value.booldata = m_gearboxPortMap[port.m_index].line_adver_asym_pause;
-            attrs.push_back(attr);
-
-            attr.id = SAI_PORT_ATTR_ADVERTISED_MEDIA_TYPE;
-            attr.value.u32 = media_type_map[m_gearboxPortMap[port.m_index].line_adver_media_type];
-            attrs.push_back(attr);
-
-            if (m_cmisModuleAsicSyncSupported)
-            {
-                attr.id = SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE;
-                attr.value.booldata = false;
-                attrs.push_back(attr);
-            }
-
-            status = sai_port_api->create_port(&linePort, phyOid, static_cast<uint32_t>(attrs.size()), attrs.data());
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_ERROR("BOX: Failed to create Gearbox line-side port for alias:%s port_id:0x%" PRIx64 " index:%d status:%d",
-                   port.m_alias.c_str(), port.m_port_id, port.m_index, status);
-                task_process_status handle_status = handleSaiCreateStatus(SAI_API_PORT, status);
-                if (handle_status != task_success)
+                attr.id = SAI_PORT_ATTR_FEC_MODE;
+                if (!m_portHlpr.fecToSaiFecMode(m_gearboxPortMap[port.m_index].line_fec, sai_fec))
                 {
-                    return parseHandleSaiStatusFailure(handle_status);
+                    SWSS_LOG_ERROR("Invalid line FEC mode %s", m_gearboxPortMap[port.m_index].line_fec.c_str());
+                    return false;
+                }
+                attr.value.s32 = sai_fec;
+                sai_port_api->set_port_attribute(linePort, &attr);
+
+                // FEC override will take effect only when autoneg is enabled
+                if (fec_override_sup)
+                {
+                    attr.id = SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE;
+                    attr.value.booldata = m_portHlpr.fecIsOverrideRequired(m_gearboxPortMap[port.m_index].line_fec);
+                    sai_port_api->set_port_attribute(linePort, &attr);
+                }
+
+                attr.id = SAI_PORT_ATTR_MEDIA_TYPE;
+                attr.value.u32 = media_type_map[m_gearboxPortMap[port.m_index].line_media_type];
+                sai_port_api->set_port_attribute(linePort, &attr);
+
+                attr.id = SAI_PORT_ATTR_INTERNAL_LOOPBACK_MODE;
+                attr.value.u32 = loopback_mode_map[m_gearboxPortMap[port.m_index].line_loopback];
+                sai_port_api->set_port_attribute(linePort, &attr);
+
+                attr.id = SAI_PORT_ATTR_LINK_TRAINING_ENABLE;
+                attr.value.booldata = m_gearboxPortMap[port.m_index].line_training;
+                sai_port_api->set_port_attribute(linePort, &attr);
+
+                attr.id = SAI_PORT_ATTR_INTERFACE_TYPE;
+                attr.value.u32 = interface_type_map[m_gearboxPortMap[port.m_index].line_intf_type];
+                sai_port_api->set_port_attribute(linePort, &attr);
+
+                attr.id = SAI_PORT_ATTR_ADVERTISED_SPEED;
+                vals.assign(m_gearboxPortMap[port.m_index].line_adver_speed.begin(), m_gearboxPortMap[port.m_index].line_adver_speed.end());
+                attr.value.u32list.list = vals.data();
+                attr.value.u32list.count = static_cast<uint32_t>(vals.size());
+                sai_port_api->set_port_attribute(linePort, &attr);
+
+                attr.id = SAI_PORT_ATTR_ADVERTISED_FEC_MODE;
+                vals.assign(m_gearboxPortMap[port.m_index].line_adver_fec.begin(), m_gearboxPortMap[port.m_index].line_adver_fec.end());
+                attr.value.u32list.list = vals.data();
+                attr.value.u32list.count = static_cast<uint32_t>(vals.size());
+                sai_port_api->set_port_attribute(linePort, &attr);
+
+                attr.id = SAI_PORT_ATTR_ADVERTISED_AUTO_NEG_MODE;
+                attr.value.booldata = m_gearboxPortMap[port.m_index].line_adver_auto_neg;
+                sai_port_api->set_port_attribute(linePort, &attr);
+
+                attr.id = SAI_PORT_ATTR_ADVERTISED_ASYMMETRIC_PAUSE_MODE;
+                attr.value.booldata = m_gearboxPortMap[port.m_index].line_adver_asym_pause;
+                sai_port_api->set_port_attribute(linePort, &attr);
+
+                attr.id = SAI_PORT_ATTR_ADVERTISED_MEDIA_TYPE;
+                attr.value.u32 = media_type_map[m_gearboxPortMap[port.m_index].line_adver_media_type];
+                sai_port_api->set_port_attribute(linePort, &attr);
+
+                if (m_cmisModuleAsicSyncSupported)
+                {
+                    attr.id = SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE;
+                    attr.value.booldata = false;
+                    sai_port_api->set_port_attribute(linePort, &attr);
                 }
             }
-            SWSS_LOG_NOTICE("BOX: Created Gearbox line-side port 0x%" PRIx64 " for alias:%s index:%d",
-                linePort, port.m_alias.c_str(), port.m_index);
+            else
+            {
+                attrs.clear();
+
+                attr.id = SAI_PORT_ATTR_ADMIN_STATE;
+                attr.value.booldata = port.m_admin_state_up;
+                attrs.push_back(attr);
+
+                attr.id = SAI_PORT_ATTR_HW_LANE_LIST;
+                lanes.assign(m_gearboxInterfaceMap[port.m_index].line_lanes.begin(), m_gearboxInterfaceMap[port.m_index].line_lanes.end());
+                attr.value.u32list.list = lanes.data();
+                attr.value.u32list.count = static_cast<uint32_t>(lanes.size());
+                attrs.push_back(attr);
+
+                for (uint32_t i = 0; i < attr.value.u32list.count; i++)
+                {
+                    SWSS_LOG_DEBUG("BOX: list[%d] = %d", i, attr.value.u32list.list[i]);
+                }
+
+                attr.id = SAI_PORT_ATTR_SPEED;
+                attr.value.u32 = (uint32_t) m_gearboxPortMap[port.m_index].line_speed * (uint32_t) lanes.size();
+                if (isSpeedSupported(port.m_alias, port.m_port_id, attr.value.u32))
+                {
+                    attrs.push_back(attr);
+                }
+
+                attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
+                attr.value.booldata = m_gearboxPortMap[port.m_index].line_auto_neg;
+                attrs.push_back(attr);
+
+                attr.id = SAI_PORT_ATTR_FEC_MODE;
+                if (!m_portHlpr.fecToSaiFecMode(m_gearboxPortMap[port.m_index].line_fec, sai_fec))
+                {
+                    SWSS_LOG_ERROR("Invalid line FEC mode %s", m_gearboxPortMap[port.m_index].line_fec.c_str());
+                    return false;
+                }
+                attr.value.s32 = sai_fec;
+                attrs.push_back(attr);
+
+                // FEC override will take effect only when autoneg is enabled
+                if (fec_override_sup)
+                {
+                    attr.id = SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE;
+                    attr.value.booldata = m_portHlpr.fecIsOverrideRequired(m_gearboxPortMap[port.m_index].line_fec);
+                    attrs.push_back(attr);
+                }
+
+                attr.id = SAI_PORT_ATTR_MEDIA_TYPE;
+                attr.value.u32 = media_type_map[m_gearboxPortMap[port.m_index].line_media_type];
+                attrs.push_back(attr);
+
+                attr.id = SAI_PORT_ATTR_INTERNAL_LOOPBACK_MODE;
+                attr.value.u32 = loopback_mode_map[m_gearboxPortMap[port.m_index].line_loopback];
+                attrs.push_back(attr);
+
+                attr.id = SAI_PORT_ATTR_LINK_TRAINING_ENABLE;
+                attr.value.booldata = m_gearboxPortMap[port.m_index].line_training;
+                attrs.push_back(attr);
+
+                attr.id = SAI_PORT_ATTR_INTERFACE_TYPE;
+                attr.value.u32 = interface_type_map[m_gearboxPortMap[port.m_index].line_intf_type];
+                attrs.push_back(attr);
+
+                attr.id = SAI_PORT_ATTR_ADVERTISED_SPEED;
+                vals.assign(m_gearboxPortMap[port.m_index].line_adver_speed.begin(), m_gearboxPortMap[port.m_index].line_adver_speed.end());
+                attr.value.u32list.list = vals.data();
+                attr.value.u32list.count = static_cast<uint32_t>(vals.size());
+                attrs.push_back(attr);
+
+                attr.id = SAI_PORT_ATTR_ADVERTISED_FEC_MODE;
+                vals.assign(m_gearboxPortMap[port.m_index].line_adver_fec.begin(), m_gearboxPortMap[port.m_index].line_adver_fec.end());
+                attr.value.u32list.list = vals.data();
+                attr.value.u32list.count = static_cast<uint32_t>(vals.size());
+                attrs.push_back(attr);
+
+                attr.id = SAI_PORT_ATTR_ADVERTISED_AUTO_NEG_MODE;
+                attr.value.booldata = m_gearboxPortMap[port.m_index].line_adver_auto_neg;
+                attrs.push_back(attr);
+
+                attr.id = SAI_PORT_ATTR_ADVERTISED_ASYMMETRIC_PAUSE_MODE;
+                attr.value.booldata = m_gearboxPortMap[port.m_index].line_adver_asym_pause;
+                attrs.push_back(attr);
+
+                attr.id = SAI_PORT_ATTR_ADVERTISED_MEDIA_TYPE;
+                attr.value.u32 = media_type_map[m_gearboxPortMap[port.m_index].line_adver_media_type];
+                attrs.push_back(attr);
+
+                if (m_cmisModuleAsicSyncSupported)
+                {
+                    attr.id = SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE;
+                    attr.value.booldata = false;
+                    attrs.push_back(attr);
+                }
+
+                status = sai_port_api->create_port(&linePort, phyOid, static_cast<uint32_t>(attrs.size()), attrs.data());
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("BOX: Failed to create Gearbox line-side port for alias:%s port_id:0x%" PRIx64 " index:%d status:%d",
+                       port.m_alias.c_str(), port.m_port_id, port.m_index, status);
+                    task_process_status handle_status = handleSaiCreateStatus(SAI_API_PORT, status);
+                    if (handle_status != task_success)
+                    {
+                        return parseHandleSaiStatusFailure(handle_status);
+                    }
+                }
+                SWSS_LOG_NOTICE("BOX: Created Gearbox line-side port 0x%" PRIx64 " for alias:%s index:%d",
+                    linePort, port.m_alias.c_str(), port.m_index);
+            }
+            port.m_line_side_id = linePort;
 
             /* Connect SYSTEM-SIDE to LINE-SIDE */
-            attrs.clear();
-
-            attr.id = SAI_PORT_CONNECTOR_ATTR_SYSTEM_SIDE_PORT_ID;
-            attr.value.oid = systemPort;
-            attrs.push_back(attr);
-            attr.id = SAI_PORT_CONNECTOR_ATTR_LINE_SIDE_PORT_ID;
-            attr.value.oid = linePort;
-            attrs.push_back(attr);
-
-            status = sai_port_api->create_port_connector(&connector, phyOid, static_cast<uint32_t>(attrs.size()), attrs.data());
-            if (status != SAI_STATUS_SUCCESS)
+            if (gearboxSystemPortIter != m_gearboxLanesToPortMap[phy_id].end() && gearboxLinePortIter != m_gearboxLanesToPortMap[phy_id].end())
             {
-                SWSS_LOG_ERROR("BOX: Failed to connect Gearbox system-side:0x%" PRIx64 " to line-side:0x%" PRIx64 "; status:%d", systemPort, linePort, status);
-                task_process_status handle_status = handleSaiCreateStatus(SAI_API_PORT, status);
-                if (handle_status != task_success)
-                {
-                    return parseHandleSaiStatusFailure(handle_status);
-                }
+                SWSS_LOG_NOTICE("BOX: Found Gearbox ports; system-side:0x%" PRIx64 " to line-side:0x%" PRIx64, systemPort, linePort);
             }
+            else
+            {
+                attrs.clear();
 
-            SWSS_LOG_NOTICE("BOX: Connected Gearbox ports; system-side:0x%" PRIx64 " to line-side:0x%" PRIx64, systemPort, linePort);
+                attr.id = SAI_PORT_CONNECTOR_ATTR_SYSTEM_SIDE_PORT_ID;
+                attr.value.oid = systemPort;
+                attrs.push_back(attr);
+                attr.id = SAI_PORT_CONNECTOR_ATTR_LINE_SIDE_PORT_ID;
+                attr.value.oid = linePort;
+                attrs.push_back(attr);
+
+                status = sai_port_api->create_port_connector(&connector, phyOid, static_cast<uint32_t>(attrs.size()), attrs.data());
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("BOX: Failed to connect Gearbox system-side:0x%" PRIx64 " to line-side:0x%" PRIx64 "; status:%d", systemPort, linePort, status);
+                    task_process_status handle_status = handleSaiCreateStatus(SAI_API_PORT, status);
+                    if (handle_status != task_success)
+                    {
+                        return parseHandleSaiStatusFailure(handle_status);
+                    }
+                }
+
+                SWSS_LOG_NOTICE("BOX: Connected Gearbox ports; system-side:0x%" PRIx64 " to line-side:0x%" PRIx64, systemPort, linePort);
+            }
             m_gearboxPortListLaneMap[port.m_port_id] = make_tuple(systemPort, linePort);
-            port.m_line_side_id = linePort;
             saiOidToAlias[systemPort] = port.m_alias;
             saiOidToAlias[linePort] = port.m_alias;
 

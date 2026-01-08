@@ -342,6 +342,7 @@ private:
     map<int, gearbox_lane_t> m_gearboxLaneMap;
     map<int, gearbox_port_t> m_gearboxPortMap;
     map<sai_object_id_t, tuple<sai_object_id_t, sai_object_id_t>> m_gearboxPortListLaneMap;
+    map<int, map<set<int>, sai_object_id_t>> m_gearboxLanesToPortMap;
 
     unordered_set<string> m_vlanPorts;
     port_config_state_t m_portConfigState = PORT_CONFIG_MISSING;
@@ -577,6 +578,7 @@ private:
 private:
     void initializeCpuPort();
     void initializePorts();
+    void initializeGearboxPorts(int phy_id);
 
     auto getPortConfigState() const -> port_config_state_t;
     void setPortConfigState(port_config_state_t value);

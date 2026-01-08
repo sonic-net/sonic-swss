@@ -136,7 +136,7 @@ void syncd_apply_view()
     sai_attribute_t attr;
     attr.id = SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD;
     attr.value.s32 = SAI_REDIS_NOTIFY_SYNCD_APPLY_VIEW;
-    status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    status = sai_switch_api->set_switch_attribute(SAI_NULL_OBJECT_ID, &attr);
 
     if (status != SAI_STATUS_SUCCESS)
     {
