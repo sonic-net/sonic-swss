@@ -47,8 +47,8 @@ serde_yaml = "0.9"
 # Logging and error handling
 log = "0.4.22"
 env_logger = "0.11.6"
-tracing = { version = "0.1", features = ["log"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter", "serde"] }
+tracing = { version = "0.1", features = ["log", "max_level_debug", "release_max_level_info"] }
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter", "serde"] }
 thiserror = "1"
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
@@ -66,6 +66,26 @@ dashmap = "6"
 itertools = "0.13"
 uuid = { version = "1.15", features = ["v4"] }
 
+# OTEL
+tracing-opentelemetry = "0.25"
+
+opentelemetry = { version = "0.25", features = ["trace", "metrics"] }
+opentelemetry_sdk = { version = "0.25", features = ["rt-tokio"]}
+opentelemetry-stdout = "0.25"
+opentelemetry-semantic-conventions = "0.25"
+opentelemetry-http = "0.25"
+opentelemetry-otlp = { version = "0.25", features = ["tonic", "metrics"] }
+opentelemetry-proto = { version = "0.25", features = ["tonic", "metrics", "gen-tonic"] }
+
+# gRPC and HTTP 
+tonic = "0.12"
+tonic-health = "0.12"
+prost = "0.13"
+prost-types = "0.13"
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+reqwest-middleware = "0.3"
+reqwest-tracing = { version = "0.5", features = ["opentelemetry_0_25"] }
+
 # SONiC specific dependencies
 swss-common = { git = "https://github.com/sonic-net/sonic-swss-common.git", branch = "master" }
 
@@ -73,7 +93,6 @@ swss-common = { git = "https://github.com/sonic-net/sonic-swss-common.git", bran
 tempfile = "3.12"
 serial_test = "3.1"
 async-trait = "0.1"
-criterion = "0.5"
 pretty_assertions = "1"
 
 # Build dependencies

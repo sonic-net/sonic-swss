@@ -549,6 +549,15 @@ impl IpfixActor {
         });
     }
 
+    /// Returns true if the template is still known (temporary or applied).
+    fn is_template_known(&self, template_id: u16) -> bool {
+        self.temporary_templates_map.contains_key(&template_id)
+            || self
+                .applied_templates_map
+                .values()
+                .any(|ids| ids.contains(&template_id))
+    }
+
     /// Moves a template from temporary to applied state when it's used in data records.
     ///
     /// # Arguments
@@ -749,11 +758,24 @@ impl IpfixActor {
                 }
             };
 
+            let mut should_drop_message = false;
+
             data_message.sets.iter().for_each(|set| {
                 if let ipfixrw::parser::Records::Data { set_id, data: _ } = set.records {
                     self.update_applied_template(set_id);
+                    if !self.is_template_known(set_id) {
+                        should_drop_message = true;
+                    }
                 }
             });
+
+            if should_drop_message {
+                debug!(
+                    "Dropping IPFIX data message because template was deleted or unknown"
+                );
+                read_size += len as usize;
+                continue;
+            }
             let datarecords: Vec<&DataRecord> = data_message.iter_data_records().collect();
             let mut observation_time: Option<u64>;
 

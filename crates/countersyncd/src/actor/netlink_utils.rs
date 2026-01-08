@@ -3,11 +3,18 @@
 /// This module provides common functionality used by both ControlNetlinkActor
 /// and DataNetlinkActor to avoid code duplication.
 
+use netlink_sys::Socket;
+
+#[cfg(not(test))]
 use std::io;
+#[cfg(not(test))]
 use std::os::fd::AsRawFd;
 
+#[cfg(not(test))]
 use log::{debug, warn};
+#[cfg(not(test))]
 use netlink_packet_core::{NetlinkMessage, NetlinkPayload, NLM_F_ACK, NLM_F_REQUEST};
+#[cfg(not(test))]
 use netlink_packet_generic::{
     ctrl::{
         nlas::{GenlCtrlAttrs, McastGrpAttrs},
@@ -15,7 +22,8 @@ use netlink_packet_generic::{
     },
     GenlMessage,
 };
-use netlink_sys::{protocols::NETLINK_GENERIC, Socket, SocketAddr};
+#[cfg(not(test))]
+use netlink_sys::{protocols::NETLINK_GENERIC, SocketAddr};
 
 /// Creates a netlink socket for family/group resolution.
 ///
@@ -50,6 +58,7 @@ pub fn create_nl_resolver() -> Option<Socket> {
 
 /// Mock netlink resolver for testing.
 #[cfg(test)]
+#[allow(dead_code)]
 pub fn create_nl_resolver() -> Option<Socket> {
     None
 }
