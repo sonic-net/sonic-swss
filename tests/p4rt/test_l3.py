@@ -23,17 +23,6 @@ class TestP4RTL3(object):
         self._p4rt_nexthop_obj.set_up_databases(dvs)
         self._p4rt_route_obj.set_up_databases(dvs)
         self._p4rt_wcmp_group_obj.set_up_databases(dvs)
-        APP_P4RT_CHANNEL_NAME="P4rt_Channel"
-        self.p4rt_notifier = swsscommon.NotificationProducer(
-            self._p4rt_route_obj.appl_db, APP_P4RT_CHANNEL_NAME
-        )
-        self.p4rt_response_consumer = swsscommon.NotificationConsumer(
-            self._p4rt_route_obj.appl_db, APP_P4RT_CHANNEL_NAME 
-        )
-        self.response_consumer = swsscommon.NotificationConsumer(
-            self._p4rt_route_obj.appl_db, "APPL_DB_" +
-            swsscommon.APP_P4RT_TABLE_NAME + "_RESPONSE_CHANNEL"
-        )
 
     def _set_vrf(self, dvs):
         # Create VRF.
@@ -76,20 +65,20 @@ class TestP4RTL3(object):
             router_intf_key,
             attr_list,
         ) = self._p4rt_router_intf_obj.create_router_interface()
-        util.verify_response(
-            self.response_consumer, router_intf_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_router_intf_obj.verify_response(
+            router_intf_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Create neighbor.
         neighbor_id, neighbor_key, attr_list = self._p4rt_neighbor_obj.create_neighbor()
-        util.verify_response(
-            self.response_consumer, neighbor_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_neighbor_obj.verify_response(
+            neighbor_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Create nexthop.
         nexthop_id, nexthop_key, attr_list = self._p4rt_nexthop_obj.create_next_hop()
-        util.verify_response(
-            self.response_consumer, nexthop_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_nexthop_obj.verify_response(
+            nexthop_key, attr_list, "SWSS_RC_SUCCESS"
         )
         # get nexthop_oid of newly created nexthop
         nexthop_oid = self._p4rt_nexthop_obj.get_newly_created_nexthop_oid()
@@ -97,8 +86,8 @@ class TestP4RTL3(object):
 
         # Create route entry.
         route_key, attr_list = self._p4rt_route_obj.create_route(nexthop_id)
-        util.verify_response(
-            self.response_consumer, route_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_route_obj.verify_response(
+            route_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Query application database for route entries.
@@ -143,8 +132,8 @@ class TestP4RTL3(object):
         route_key, attr_list = self._p4rt_route_obj.create_route(
             action="set_nexthop_id_and_metadata", metadata="2"
         )
-        util.verify_response(
-            self.response_consumer, route_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_route_obj.verify_response(
+            route_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Query application database for route entries.
@@ -203,8 +192,8 @@ class TestP4RTL3(object):
 
         # Update route entry to drop.
         route_key, attr_list = self._p4rt_route_obj.create_route(action="drop")
-        util.verify_response(
-            self.response_consumer, route_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_route_obj.verify_response(
+            route_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Query application database for route entries.
@@ -254,24 +243,23 @@ class TestP4RTL3(object):
 
         # Remove route entry.
         self._p4rt_route_obj.remove_app_db_entry(route_key)
-        util.verify_response(self.response_consumer,
-                             route_key, [], "SWSS_RC_SUCCESS")
+        self._p4rt_route_obj.verify_response(route_key, [], "SWSS_RC_SUCCESS")
 
         # Remove nexthop.
         self._p4rt_nexthop_obj.remove_app_db_entry(nexthop_key)
-        util.verify_response(self.response_consumer,
-                             nexthop_key, [], "SWSS_RC_SUCCESS")
+        self._p4rt_nexthop_obj.verify_response(
+            nexthop_key, [], "SWSS_RC_SUCCESS")
 
         # Remove neighbor.
         self._p4rt_neighbor_obj.remove_app_db_entry(neighbor_key)
-        util.verify_response(
-            self.response_consumer, neighbor_key, [], "SWSS_RC_SUCCESS"
+        self._p4rt_neighbor_obj.verify_response(
+            neighbor_key, [], "SWSS_RC_SUCCESS"
         )
 
         # Remove router interface.
         self._p4rt_router_intf_obj.remove_app_db_entry(router_intf_key)
-        util.verify_response(
-            self.response_consumer, router_intf_key, [], "SWSS_RC_SUCCESS"
+        self._p4rt_router_intf_obj.verify_response(
+            router_intf_key, [], "SWSS_RC_SUCCESS"
         )
 
         # Query application database for route entries.
@@ -358,24 +346,24 @@ class TestP4RTL3(object):
             router_intf_key,
             attr_list,
         ) = self._p4rt_router_intf_obj.create_router_interface()
-        util.verify_response(
-            self.response_consumer, router_intf_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_router_intf_obj.verify_response(
+            router_intf_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Create neighbor.
         neighbor_id, neighbor_key, attr_list = self._p4rt_neighbor_obj.create_neighbor(
             ipv4=False
         )
-        util.verify_response(
-            self.response_consumer, neighbor_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_neighbor_obj.verify_response(
+            neighbor_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Create nexthop.
         nexthop_id, nexthop_key, attr_list = self._p4rt_nexthop_obj.create_next_hop(
             ipv4=False
         )
-        util.verify_response(
-            self.response_consumer, nexthop_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_nexthop_obj.verify_response(
+            nexthop_key, attr_list, "SWSS_RC_SUCCESS"
         )
         # Get the oid of the newly created nexthop.
         nexthop_oid = self._p4rt_nexthop_obj.get_newly_created_nexthop_oid()
@@ -387,8 +375,8 @@ class TestP4RTL3(object):
             wcmp_group_key,
             attr_list,
         ) = self._p4rt_wcmp_group_obj.create_wcmp_group()
-        util.verify_response(
-            self.response_consumer, wcmp_group_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_wcmp_group_obj.verify_response(
+            wcmp_group_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Query application database for wcmp group entries.
@@ -474,8 +462,8 @@ class TestP4RTL3(object):
         route_key, attr_list = self._p4rt_route_obj.create_route(
             wcmp_group_id=wcmp_group_id, action="set_wcmp_group_id", dst="2001:db8::/32"
         )
-        util.verify_response(
-            self.response_consumer, route_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_route_obj.verify_response(
+            route_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Query application database for route entries.
@@ -521,8 +509,8 @@ class TestP4RTL3(object):
         route_key, attr_list = self._p4rt_route_obj.create_route(
             action="drop", dst="2001:db8::/32"
         )
-        util.verify_response(
-            self.response_consumer, route_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_route_obj.verify_response(
+            route_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Query application database for route entries.
@@ -573,8 +561,8 @@ class TestP4RTL3(object):
         route_key, attr_list = self._p4rt_route_obj.create_route(
             action="trap", dst="2001:db8::/32"
         )
-        util.verify_response(
-            self.response_consumer, route_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_route_obj.verify_response(
+            route_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Query application database for route entries.
@@ -623,30 +611,29 @@ class TestP4RTL3(object):
 
         # Remove route entry.
         self._p4rt_route_obj.remove_app_db_entry(route_key)
-        util.verify_response(self.response_consumer,
-                             route_key, [], "SWSS_RC_SUCCESS")
+        self._p4rt_route_obj.verify_response(route_key, [], "SWSS_RC_SUCCESS")
 
         # Remove wcmp group entry.
         self._p4rt_wcmp_group_obj.remove_app_db_entry(wcmp_group_key)
-        util.verify_response(
-            self.response_consumer, wcmp_group_key, [], "SWSS_RC_SUCCESS"
+        self._p4rt_wcmp_group_obj.verify_response(
+            wcmp_group_key, [], "SWSS_RC_SUCCESS"
         )
 
         # Remove nexthop.
         self._p4rt_nexthop_obj.remove_app_db_entry(nexthop_key)
-        util.verify_response(self.response_consumer,
-                             nexthop_key, [], "SWSS_RC_SUCCESS")
+        self._p4rt_nexthop_obj.verify_response(
+            nexthop_key, [], "SWSS_RC_SUCCESS")
 
         # Remove neighbor.
         self._p4rt_neighbor_obj.remove_app_db_entry(neighbor_key)
-        util.verify_response(
-            self.response_consumer, neighbor_key, [], "SWSS_RC_SUCCESS"
+        self._p4rt_neighbor_obj.verify_response(
+            neighbor_key, [], "SWSS_RC_SUCCESS"
         )
 
         # Remove router interface.
         self._p4rt_router_intf_obj.remove_app_db_entry(router_intf_key)
-        util.verify_response(
-            self.response_consumer, router_intf_key, [], "SWSS_RC_SUCCESS"
+        self._p4rt_router_intf_obj.verify_response(
+            router_intf_key, [], "SWSS_RC_SUCCESS"
         )
 
         # Query application database for route entries.

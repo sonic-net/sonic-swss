@@ -26,7 +26,7 @@ TEST(ResponsePublisher, TestPublishBuffered)
     publisher.setBuffered(true);
 
     publisher.publish("SOME_TABLE", "SOME_KEY", {{"field", "value"}}, ReturnCode(SAI_STATUS_SUCCESS));
-    publisher.flush();
+    publisher.flush(false);
     ASSERT_TRUE(stateTable.hget("SOME_KEY", "field", value));
     ASSERT_EQ(value, "value");
 }
