@@ -3,6 +3,7 @@
 
 #include <string>
 #include <arpa/inet.h>
+#include <linux/nexthop.h>
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "subscriberstatetable.h"
@@ -20,6 +21,10 @@
  * write the FDB data to kernel
  */
 #define INTF_RESTORE_MAX_WAIT_TIME 180
+
+#define NHA_RTA(r)  ((struct rtattr*)(((char*)(r)) + NLMSG_ALIGN(sizeof(struct nhmsg))))
+#define IPV4_MAX_BYTE       4
+#define IPV6_MAX_BYTE      16
 
 namespace swss {
 
@@ -42,6 +47,15 @@ struct m_fdb_info
     short op_type;              /*add or del*/
 };
 
+struct m_nhg_info {
+    int      nhid;
+    std::string   vtep_str;
+    std::string   group_str;
+    char     op;
+#define NH_ADD     1
+#define NH_DEL     2
+};
+
 class FdbSync : public NetMsg
 {
 public:
@@ -51,6 +65,7 @@ public:
     ~FdbSync();
 
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
+    virtual void onMsgRaw(struct nlmsghdr *obj);
 
     bool isIntfRestoreDone();
 
@@ -87,6 +102,7 @@ public:
 private:
     ProducerStateTable m_fdbTable;
     ProducerStateTable m_imetTable;
+    ProducerStateTable m_l2NhgTable;
     SubscriberStateTable m_fdbStateTable;
     SubscriberStateTable m_mclagRemoteFdbStateTable;
     AppRestartAssist  *m_AppRestartAssist;
@@ -146,13 +162,21 @@ private:
     std::unordered_map<int, intf> m_intf_info;
 
     void addLocalMac(std::string key, std::string op);
-    void macAddVxlan(std::string key, struct in_addr vtep, std::string type, uint32_t vni, std::string intf_name);
+    void macAddVxlan(std::string key, struct in_addr vtep, std::string type, uint32_t vni, std::string intf_name, int nhid);
     void macDelVxlan(std::string auxkey);
     void macDelVxlanDB(std::string key);
     void imetAddRoute(struct in_addr vtep, std::string ifname, uint32_t vni);
     void imetDelRoute(struct in_addr vtep, std::string ifname, uint32_t vni);
     void onMsgNbr(int nlmsg_type, struct nl_object *obj);
     void onMsgLink(int nlmsg_type, struct nl_object *obj);
+
+    //NHG routines
+    void onMsgNhg(struct nlmsghdr *h, int len);
+    void nhgAddGroup(int nhid, struct nexthop_grp *nhid_grp, long unsigned int count, std::string &nh_id_grp_str);
+    void processNhgNetlinkData(struct m_nhg_info *entry);
+    void netlink_parse_rtattr(struct rtattr **tb, int max, struct rtattr *rta, int len);
+    void nhgUpdateDB(struct m_nhg_info *nhginfo);
+    void nhgDelDB(struct m_nhg_info *nhginfo);
 };
 
 }
