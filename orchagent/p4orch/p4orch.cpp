@@ -13,6 +13,7 @@
 #include "p4orch/ext_tables_manager.h"
 #include "p4orch/gre_tunnel_manager.h"
 #include "p4orch/l3_admit_manager.h"
+#include "p4orch/l3_multicast_manager.h"
 #include "p4orch/neighbor_manager.h"
 #include "p4orch/next_hop_manager.h"
 #include "p4orch/p4orch_util.h"
@@ -40,6 +41,8 @@ P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOr
     m_neighborManager = std::make_unique<NeighborManager>(&m_p4OidMapper, &m_publisher);
     m_greTunnelManager = std::make_unique<GreTunnelManager>(&m_p4OidMapper, &m_publisher);
     m_nextHopManager = std::make_unique<NextHopManager>(&m_p4OidMapper, &m_publisher);
+    m_l3MulticastManager = std::make_unique<p4orch::L3MulticastManager>(
+        &m_p4OidMapper, vrfOrch, &m_publisher);
     m_routeManager = std::make_unique<RouteManager>(&m_p4OidMapper, vrfOrch, &m_publisher);
     m_mirrorSessionManager = std::make_unique<p4orch::MirrorSessionManager>(&m_p4OidMapper, &m_publisher);
     m_aclTableManager = std::make_unique<p4orch::AclTableManager>(&m_p4OidMapper, &m_publisher);
@@ -55,6 +58,10 @@ P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOr
     m_p4TableToManagerMap[APP_P4RT_NEXTHOP_TABLE_NAME] = m_nextHopManager.get();
     m_p4TableToManagerMap[APP_P4RT_IPV4_TABLE_NAME] = m_routeManager.get();
     m_p4TableToManagerMap[APP_P4RT_IPV6_TABLE_NAME] = m_routeManager.get();
+    m_p4TableToManagerMap[APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME] =
+        m_l3MulticastManager.get();
+    m_p4TableToManagerMap[APP_P4RT_REPLICATION_IP_MULTICAST_TABLE_NAME] =
+        m_l3MulticastManager.get();
     m_p4TableToManagerMap[APP_P4RT_MIRROR_SESSION_TABLE_NAME] = m_mirrorSessionManager.get();
     m_p4TableToManagerMap[APP_P4RT_ACL_TABLE_DEFINITION_NAME] = m_aclTableManager.get();
     m_p4TableToManagerMap[APP_P4RT_WCMP_GROUP_TABLE_NAME] = m_wcmpManager.get();
@@ -72,6 +79,7 @@ P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOr
     m_p4ManagerAddPrecedence.push_back(m_aclTableManager.get());
     m_p4ManagerAddPrecedence.push_back(m_aclRuleManager.get());
     m_p4ManagerAddPrecedence.push_back(m_l3AdmitManager.get());
+    m_p4ManagerAddPrecedence.push_back(m_l3MulticastManager.get());
     m_p4ManagerAddPrecedence.push_back(m_extTablesManager.get());
     for (auto* manager : m_p4ManagerAddPrecedence) {
       m_p4ManagerDelPrecedence.insert(m_p4ManagerDelPrecedence.begin(), manager);
