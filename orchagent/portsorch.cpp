@@ -1976,7 +1976,7 @@ bool PortsOrch::addSubPort(Port &port, const string &alias, const string &vlan, 
     p.m_vlan_info.vlan_id = vlan_id;
 
     // Change hostif vlan tag for the parent port only when a first subport is created
-    if (parentPort.m_child_ports.empty())
+    if (!parentPort.m_child_ports.empty())
     {
         if (!setHostIntfsStripTag(parentPort, SAI_HOSTIF_VLAN_TAG_KEEP))
         {
