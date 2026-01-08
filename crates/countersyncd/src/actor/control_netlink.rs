@@ -2,12 +2,14 @@ use std::{thread::sleep, time::Duration};
 
 use log::{debug, info, warn};
 
-use netlink_sys::{Socket, SocketAddr, protocols::NETLINK_GENERIC};
+#[cfg(not(test))]
+use netlink_sys::{protocols::NETLINK_GENERIC, Socket, SocketAddr};
 use tokio::sync::mpsc::Sender;
 
 use std::io;
 
 use super::super::message::netlink::NetlinkCommand;
+#[cfg(not(test))]
 use super::netlink_utils;
 
 #[cfg(not(test))]
@@ -38,6 +40,7 @@ const CTRL_ATTR_FAMILY_NAME: u16 = 2;
 /// Size of generic netlink header in bytes
 const GENL_HEADER_SIZE: usize = 20;
 /// Netlink control notify multicast group ID
+#[cfg(not(test))]
 const NLCTRL_NOTIFY_GROUP_ID: u32 = 1;
 
 /// Actor responsible for monitoring netlink family registration/unregistration.
@@ -486,6 +489,7 @@ impl ControlNetlinkActor {
 #[cfg(test)]
 pub mod test {
     use super::*;
+    use netlink_sys::SocketAddr;
     use std::time::Duration;
     use tokio::{spawn, sync::mpsc::channel, time::timeout};
 
