@@ -35,6 +35,12 @@ using namespace swss;
 
 namespace swss {
 
+struct L2mcWarmRebootAfi
+{
+    bool igmp{false};
+    bool mld{false};
+};
+
 class L2McMgr : public Orch
 {
 public:
@@ -48,6 +54,8 @@ public:
     int getL2McPortList(DBConnector *state_db);
     int getL2McCfgParams(DBConnector *cfgDb);
     bool isRestoreDone();
+    void waitTillReadyToReconcile();
+    void waitForPortsReady(int timeout_sec);
   
 
 private:
@@ -85,6 +93,7 @@ private:
     map<string, string> m_l2mcMrouterentry;
     map<int, bool> m_vlanIgmpSnoopMap;
     map<int, bool> m_vlanMldSnoopMap;
+    map<int, L2mcWarmRebootAfi> m_warmrebootvlanMap;
     bool l2mcVlanReplayDone;
     bool l2mcGrpMemReplayDone;
     bool l2mcMouterReplayDone;
