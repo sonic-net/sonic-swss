@@ -3000,6 +3000,90 @@ bool PortsOrch::setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip)
     return true;
 }
 
+
+// Set collection and distribution for all members of a portchannel,
+// or directly set one of the members
+bool PortsOrch::setLagCollectionDistribution(Port &port, bool oper_status)
+{
+    SWSS_LOG_ENTER();
+    vector<Port> portv;
+    bool isLagUp = oper_status;
+    std::string lag_alias = port.m_alias;
+
+    if(port.m_type == Port::TUNNEL)
+    {
+        return true;
+    }
+
+    if (port.m_type == Port::PHY)
+    {
+        Port lag;
+        bool enable;
+        if (port.m_lag_member_id == 0 || port.m_lag_id == 0) {
+            return true;
+        }
+        if (!getPort(port.m_lag_id, lag))
+        {
+                SWSS_LOG_ERROR("Port %s, get port from lag id failed, lag id 0x%" PRIx64 ", ignored", port.m_alias.c_str(), port.m_lag_id);
+                return true;
+        }
+        lag_alias = lag.m_alias;
+        isLagUp = (lag.m_oper_status == SAI_PORT_OPER_STATUS_UP);
+        enable = (isLagUp && port.m_oper_status == SAI_PORT_OPER_STATUS_UP);
+        SWSS_LOG_NOTICE("Set %s member %s collection/distribution to %s",
+                lag_alias.c_str(), port.m_alias.c_str(), enable?"enable":"disable");
+        if (!setCollectionOnLagMember(port, enable) || !setDistributionOnLagMember(port, enable))
+        {
+            SWSS_LOG_ERROR("Set %s member %s collection/distribution to %s failed",
+                lag_alias.c_str(), port.m_alias.c_str(), enable?"enable":"disable");
+            return false;
+        }
+        return true;
+    }
+    else if (port.m_type == Port::LAG)
+    {
+        getLagMember(port, portv);
+    }
+    else
+    {
+        SWSS_LOG_ERROR("%s port type %d not supported", port.m_alias.c_str(), port.m_type);
+        return false;
+    }
+
+    for (auto p: portv)
+    {
+        if (isLagUp)
+        {
+            // enable/disable collection/distribution for oper_status up members only
+            if (p.m_oper_status != SAI_PORT_OPER_STATUS_UP)
+            {
+                continue;
+            }
+            SWSS_LOG_NOTICE("Set %s member %s collection/distribution to enable",
+                    lag_alias.c_str(), p.m_alias.c_str());
+            if (!setCollectionOnLagMember(p, true) || !setDistributionOnLagMember(p, true))
+            {
+                SWSS_LOG_ERROR("Set %s member %s collection/distribution to enable failed",
+                    lag_alias.c_str(), p.m_alias.c_str());
+                return false;
+            }
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("Set %s member %s collection/distribution to disable",
+                    lag_alias.c_str(), p.m_alias.c_str());
+            if (!setCollectionOnLagMember(p, false) || !setDistributionOnLagMember(p, false))
+            {
+                SWSS_LOG_ERROR("Set %s member %s collection/distribution to disable failed",
+                    lag_alias.c_str(), p.m_alias.c_str());
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
 bool PortsOrch::isSpeedSupported(const std::string& alias, sai_object_id_t port_id, sai_uint32_t speed)
 {
     // This method will return false iff we get a list of supported speeds and the requested speed
@@ -6063,11 +6147,16 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
             /* Sync an enabled member */
             if (status == "enabled")
             {
-                /* enable collection first, distribution-only mode
+                bool isLagUp = lag.m_oper_status == SAI_PORT_OPER_STATUS_UP;
+                SWSS_LOG_NOTICE("%s oper status is %s, %s collection/distribution for %s",
+                    lag_alias.c_str(), isLagUp?"up":"down", isLagUp?"enable":"disable", port.m_alias.c_str());
+
+                /* check LAG oper status before enable collection/distribution
+                 * enable/disable collection first, distribution-only mode
                  * is not supported on Mellanox platform
                  */
-                if (setCollectionOnLagMember(port, true) &&
-                    setDistributionOnLagMember(port, true))
+                if (setCollectionOnLagMember(port, isLagUp) &&
+                    setDistributionOnLagMember(port, isLagUp))
                 {
                     it = consumer.m_toSync.erase(it);
                 }
@@ -9174,6 +9263,19 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
         if (!setHostIntfsOperStatus(port, isUp))
         {
             SWSS_LOG_ERROR("Failed to set host interface %s operational status %s", port.m_alias.c_str(),
+                    isUp ? "up" : "down");
+        }
+        if (port.m_lag_member_id != 0 && !setLagCollectionDistribution(port, isUp))
+        {
+            SWSS_LOG_ERROR("Failed to setLagCollectionDistribution for %s, operational status %s", port.m_alias.c_str(),
+                    isUp ? "up" : "down");
+        }
+    }
+    else if (port.m_type == Port::LAG)
+    {
+        if (!setLagCollectionDistribution(port, isUp))
+        {
+            SWSS_LOG_ERROR("Failed to setLagCollectionDistribution for %s, operational status %s", port.m_alias.c_str(),
                     isUp ? "up" : "down");
         }
     }
