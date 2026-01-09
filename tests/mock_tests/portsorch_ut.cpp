@@ -209,6 +209,57 @@ namespace portsorch_test
         return pold_sai_port_api->set_port_attribute(port_id, attr);
     }
 
+    sai_status_t _ut_stub_pai_create_port(_Out_ sai_object_id_t *port_id,
+                                _In_ sai_object_id_t switch_id,
+                                _In_ uint32_t attr_count,
+                                _In_ const sai_attribute_t *attr_list)
+    {
+        return SAI_STATUS_SUCCESS;
+    }
+
+    sai_status_t _ut_stub_pai_remove_port( _In_ sai_object_id_t port_id)
+    {
+        return SAI_STATUS_SUCCESS;
+    }
+    sai_status_t _ut_stub_pai_create_port_connector(_Out_ sai_object_id_t *port_connector_id,
+                                _In_ sai_object_id_t switch_id,
+                                _In_ uint32_t attr_count,
+                                _In_ const sai_attribute_t *attr_list)
+    {
+        return SAI_STATUS_SUCCESS;
+    }
+
+    sai_status_t _ut_stub_pai_remove_port_connector(_In_ sai_object_id_t port_connector_id)
+    {
+        return SAI_STATUS_SUCCESS;
+    }
+
+    sai_status_t _ut_stub_pai_create_port_serdes(_Out_ sai_object_id_t *port_serdes_id,
+        _In_ sai_object_id_t switch_id,
+        _In_ uint32_t attr_count,
+        _In_ const sai_attribute_t *attr_list)
+    {
+        return SAI_STATUS_SUCCESS;
+    }
+
+    sai_status_t _ut_stub_pai_remove_port_serdes( _In_ sai_object_id_t port_serdes_id)
+    {
+        return SAI_STATUS_SUCCESS;
+    }
+
+    sai_status_t _ut_stub_pai_create_port_pool(_Out_ sai_object_id_t *port_pool_id,
+        _In_ sai_object_id_t switch_id,
+        _In_ uint32_t attr_count,
+        _In_ const sai_attribute_t *attr_list)
+    {
+        return SAI_STATUS_SUCCESS;
+    }
+
+    sai_status_t _ut_stub_pai_remove_port_pool( _In_ sai_object_id_t port_pool_id)
+    {
+        return SAI_STATUS_SUCCESS;
+    }
+
     vector<sai_object_type_t> supported_sai_objects = {
         SAI_OBJECT_TYPE_PORT,
         SAI_OBJECT_TYPE_LAG,
@@ -279,6 +330,28 @@ namespace portsorch_test
     }
 
     void _unhook_sai_port_api()
+    {
+        sai_port_api = pold_sai_port_api;
+    }
+
+    void _hook_sai_gb_port_api()
+    {
+        ut_sai_port_api = *sai_port_api;
+        pold_sai_port_api = sai_port_api;
+        ut_sai_port_api.create_port = _ut_stub_pai_create_port;
+        ut_sai_port_api.remove_port = _ut_stub_pai_remove_port;
+        ut_sai_port_api.get_port_attribute = _ut_stub_sai_get_port_attribute;
+        ut_sai_port_api.set_port_attribute = _ut_stub_sai_set_port_attribute;
+        ut_sai_port_api.create_port_connector = _ut_stub_pai_create_port_connector;
+        ut_sai_port_api.remove_port_connector = _ut_stub_pai_remove_port_connector;
+        ut_sai_port_api.create_port_serdes = _ut_stub_pai_create_port_serdes;
+        ut_sai_port_api.remove_port_serdes = _ut_stub_pai_remove_port_serdes;
+        ut_sai_port_api.create_port_pool = _ut_stub_pai_create_port_pool;
+        ut_sai_port_api.remove_port_pool = _ut_stub_pai_remove_port_pool;
+        sai_port_api = &ut_sai_port_api;
+    }
+
+    void _unhook_sai_gb_port_api()
     {
         sai_port_api = pold_sai_port_api;
     }
@@ -407,6 +480,108 @@ namespace portsorch_test
         std::vector<std::string> taskList;
         obj->dumpPendingTasks(taskList);
         ASSERT_TRUE(taskList.empty());
+    }
+
+    void gbInit(PortsOrch *gbObj)
+    {
+        gbObj->m_gearboxEnabled = true;
+
+        gearbox_phy_t phy;
+        phy.phy_id = 1;
+        phy.phy_oid = "oid:0x21010000000000";
+        phy.name = "phy1";
+        phy.lib_name = "libsai.so";
+        phy.firmware = "";
+        phy.firmware_major_version = "";
+        phy.sai_init_config_file = "";
+        phy.config_file = "/usr/share/sonic/hwsku/phy1_config.json";
+        phy.access = "mdio";
+        phy.hwinfo = "0";
+        phy.address = 1;
+        phy.bus_id = 0;
+        phy.context_id = 1;
+        phy.macsec_ipg = 0;
+
+        gbObj->m_gearboxPhyMap[phy.phy_id] = phy;
+
+        gearbox_interface_t iface;
+        iface.index = 1;
+        iface.phy_id = 1;
+
+        iface.line_lanes = {0, 1, 2, 3};
+
+        iface.system_lanes = {16, 17};
+
+        iface.tx_firs["line_tx_fir_main"]     = "69,69,69,69";
+        iface.tx_firs["line_tx_fir_post2"]    = "0,0,0,0";
+        iface.tx_firs["line_tx_fir_post3"]    = "0,0,0,0";
+        iface.tx_firs["line_tx_fir_pre2"]     = "0,0,0,0";
+        iface.tx_firs["line_tx_fir_pre3"]     = "0,0,0,0";
+        iface.tx_firs["system_tx_fir_main"]   = "148,148";
+        iface.tx_firs["system_tx_fir_post2"]  = "0,0";
+        iface.tx_firs["system_tx_fir_post3"]  = "0,0";
+        iface.tx_firs["system_tx_fir_pre2"]   = "0,0";
+        iface.tx_firs["system_tx_fir_pre3"]   = "0,0";
+
+        gbObj->m_gearboxInterfaceMap[iface.index] = iface;
+
+        gearbox_port_t port;
+        port.index = 1;
+        port.mdio_addr = "0";
+        port.system_speed = 100000;
+        port.system_fec = "rs";
+        port.system_auto_neg = false;
+        port.system_loopback = "none";
+        port.system_training = true;
+
+        port.line_speed = 100000;
+        port.line_fec = "rs";
+        port.line_auto_neg = false;
+        port.line_media_type = "fiber";
+        port.line_intf_type = "none";
+        port.line_loopback = "none";
+        port.line_training = false;
+
+        port.line_adver_speed = {};
+        port.line_adver_fec = {};
+        port.line_adver_auto_neg = false;
+        port.line_adver_asym_pause = false;
+        port.line_adver_media_type = "fiber";
+
+        gbObj->m_gearboxPortMap[port.index] = port;
+    }
+
+    bool getGbPhyPort(PortsOrch *obj, sai_object_id_t src_port_id, sai_object_id_t &dest_port_id)
+    {
+        bool status = false;
+        if (obj->m_gearboxEnabled)
+        {
+            if (obj->m_gearboxPortListLaneMap.find(src_port_id) != obj->m_gearboxPortListLaneMap.end())
+            {
+                dest_port_id = get<0>(obj->m_gearboxPortListLaneMap[src_port_id]);
+                SWSS_LOG_DEBUG("BOX: port id:%" PRIx64 " has a phy-side port id:%" PRIx64, src_port_id, dest_port_id);
+                status = true;
+            }
+        }
+
+        return status;
+    }
+
+    bool getGbLinePort(PortsOrch *obj, sai_object_id_t src_port_id, sai_object_id_t &dest_port_id)
+    {
+        bool status = false;
+        if (obj->m_gearboxEnabled)
+        {
+            if (obj->m_gearboxPortListLaneMap.find(src_port_id) != obj->m_gearboxPortListLaneMap.end())
+            {
+                dest_port_id = get<1>(obj->m_gearboxPortListLaneMap[src_port_id]);
+                SWSS_LOG_DEBUG("BOX: port id:%" PRIx64 " has a line-side port id:%" PRIx64, src_port_id, dest_port_id);
+                status = true;
+            }
+        }
+        SWSS_LOG_ERROR("BOX: flag:%d port id:%" PRIx64 " has a line-side port id:%" PRIx64, obj->m_gearboxEnabled, src_port_id, dest_port_id);
+
+        return status;
     }
 
     struct PortsOrchTest : public ::testing::Test
@@ -3513,6 +3688,353 @@ namespace portsorch_test
         ASSERT_TRUE(ts.empty()); // queue should be processed now
         ts.clear();
     }
+
+    /**********Start of GB UT ************************
+    TEST_F(PortsOrchTest, GbLineLinkTrainingConfig)
+    {
+        sai_attribute_t attr;
+        sai_status_t status;
+
+        gbInit(gPortsOrch);
+        _hook_sai_gb_port_api();
+
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port p, p1, p2;
+
+        gPortsOrch->getPort("Ethernet0", p);
+
+        gPortsOrch->getPort("Ethernet2", p1);
+        p.m_system_side_id = p1.m_port_id;
+
+        gPortsOrch->getPort("Ethernet4", p2);
+        p.m_line_side_id = p2.m_port_id;
+
+        gPortsOrch->m_gearboxPortListLaneMap[p.m_port_id] = make_tuple(p.m_system_side_id, p.m_line_side_id);
+
+        // Generate port config
+        std::deque<KeyOpFieldsValuesTuple> kfvList = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "link_training",       "on"                },
+            }
+        }};
+
+        // Refill consumer
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        gPortsOrch->getPort("Ethernet0", p);
+
+        sai_object_id_t systemPort = p.m_system_side_id ;
+        sai_object_id_t linePort = p.m_line_side_id ;
+
+        sai_object_id_t port_id = p.m_port_id;
+        getGbPhyPort(gPortsOrch, port_id, systemPort);
+        getGbLinePort(gPortsOrch, port_id, linePort);
+
+        // Set line link training
+        attr.id = SAI_PORT_ATTR_LINK_TRAINING_ENABLE;
+        attr.value.booldata = true;
+        status = sai_port_api->set_port_attribute(linePort, &attr);
+        ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+
+        // Get line link training
+        status = sai_port_api->get_port_attribute(linePort, 1, &attr);
+        ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+
+        // Verify link training
+        ASSERT_TRUE(p.m_link_training);
+
+        // Verify PHY line link training
+        ASSERT_TRUE(attr.value.booldata);
+
+        // Dump pending tasks
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        ASSERT_TRUE(taskList.empty());
+
+        _unhook_sai_gb_port_api();
+    }
+
+    TEST_F(PortsOrchTest, GbSystemLinkTrainingConfig)
+    {
+        sai_attribute_t attr;
+        sai_status_t status;
+
+        gbInit(gPortsOrch);
+        _hook_sai_gb_port_api();
+
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port p, p1, p2;
+
+        gPortsOrch->getPort("Ethernet0", p);
+
+        gPortsOrch->getPort("Ethernet2", p1);
+        p.m_system_side_id = p1.m_port_id;
+
+        gPortsOrch->getPort("Ethernet4", p2);
+        p.m_line_side_id = p2.m_port_id;
+
+        gPortsOrch->m_gearboxPortListLaneMap[p.m_port_id] = make_tuple(p.m_system_side_id, p.m_line_side_id);
+
+        // Generate port config
+        std::deque<KeyOpFieldsValuesTuple> kfvList = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "link_training",       "on"                },
+            }
+        }};
+
+        // Refill consumer
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        gPortsOrch->getPort("Ethernet0", p);
+
+        sai_object_id_t systemPort = p.m_system_side_id ;
+
+        sai_object_id_t port_id = p.m_port_id;
+        getGbPhyPort(gPortsOrch, port_id, systemPort);
+
+        // Set system link training
+        attr.id = SAI_PORT_ATTR_LINK_TRAINING_ENABLE;
+        attr.value.booldata = true ;
+        status = sai_port_api->set_port_attribute(systemPort, &attr);
+        ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+
+        // Get system link training
+        status = sai_port_api->get_port_attribute(systemPort, 1, &attr);
+        ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+
+        // Verify system link training
+        ASSERT_TRUE(p.m_link_training);
+
+        // Verify PHY system link training
+        ASSERT_TRUE(attr.value.booldata);
+
+        // Dump pending tasks
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        ASSERT_TRUE(taskList.empty());
+
+        _unhook_sai_gb_port_api();
+    }
+
+    TEST_F(PortsOrchTest, GbLineFecConfig)
+    {
+        sai_attribute_t attr;
+        sai_status_t status;
+
+        gbInit(gPortsOrch);
+        _hook_sai_gb_port_api();
+
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port p, p1, p2;
+
+        gPortsOrch->getPort("Ethernet0", p);
+
+        gPortsOrch->getPort("Ethernet2", p1);
+        p.m_system_side_id = p1.m_port_id;
+
+        gPortsOrch->getPort("Ethernet4", p2);
+        p.m_line_side_id = p2.m_port_id;
+
+        gPortsOrch->m_gearboxPortListLaneMap[p.m_port_id] = make_tuple(p.m_system_side_id, p.m_line_side_id);
+
+        // Generate port config
+        std::deque<KeyOpFieldsValuesTuple> kfvList = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "fec",                 "rs"  },
+            }
+        }};
+
+        // Refill consumer
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        gPortsOrch->getPort("Ethernet0", p);
+
+        sai_object_id_t linePort = p.m_line_side_id ;
+
+        sai_object_id_t port_id = p.m_port_id;
+        getGbLinePort(gPortsOrch, port_id, linePort);
+
+        // Set line port fec
+        attr.id = SAI_PORT_ATTR_FEC_MODE;
+        attr.value.s32 = SAI_PORT_FEC_MODE_RS;
+        status = sai_port_api->set_port_attribute(linePort, &attr);
+
+        // Get line port fec
+        status = sai_port_api->get_port_attribute(linePort, 1, &attr);
+        ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+
+        // Verify FEC
+        ASSERT_EQ(p.m_fec_mode, SAI_PORT_FEC_MODE_RS);
+
+        // Verify PHY line FEC
+        ASSERT_EQ(attr.value.s32, SAI_PORT_FEC_MODE_RS);
+
+        // Dump pending tasks
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        ASSERT_TRUE(taskList.empty());
+
+        _unhook_sai_gb_port_api();
+    }
+
+    TEST_F(PortsOrchTest, GbSystemFecConfig)
+    {
+        sai_attribute_t attr;
+        sai_status_t status;
+
+        gbInit(gPortsOrch);
+        _hook_sai_gb_port_api();
+
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port p, p1, p2;
+
+        gPortsOrch->getPort("Ethernet0", p);
+
+        gPortsOrch->getPort("Ethernet2", p1);
+        p.m_system_side_id = p1.m_port_id;
+
+        gPortsOrch->getPort("Ethernet4", p2);
+        p.m_line_side_id = p2.m_port_id;
+
+        gPortsOrch->m_gearboxPortListLaneMap[p.m_port_id] = make_tuple(p.m_system_side_id, p.m_line_side_id);
+
+        // Generate port config
+        std::deque<KeyOpFieldsValuesTuple> kfvList = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "fec",                 "rs"     },
+            }
+        }};
+
+        // Refill consumer
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        gPortsOrch->getPort("Ethernet0", p);
+
+        sai_object_id_t systemPort = p.m_system_side_id ;
+
+        sai_object_id_t port_id = p.m_port_id;
+        getGbPhyPort(gPortsOrch, port_id, systemPort);
+
+        // Set line port fec
+        attr.id = SAI_PORT_ATTR_FEC_MODE;
+        attr.value.s32 = SAI_PORT_FEC_MODE_RS;
+        status = sai_port_api->set_port_attribute(systemPort, &attr);
+        ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+
+        // Get line port fec
+        status = sai_port_api->get_port_attribute(systemPort, 1, &attr);
+        ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+
+        // Verify FEC
+        ASSERT_EQ(p.m_fec_mode, SAI_PORT_FEC_MODE_RS);
+
+        // Verify PHY system FEC
+        ASSERT_EQ(attr.value.s32, SAI_PORT_FEC_MODE_RS);
+
+        // Dump pending tasks
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        ASSERT_TRUE(taskList.empty());
+
+        _unhook_sai_gb_port_api();
+    }
+    **********End of GB UT ************************/
 
     /* This test passes an incorrect LAG entry and verifies that this entry is not
      * erased from the consumer table.
