@@ -1138,6 +1138,23 @@ TEST_F(WcmpManagerTest, ValidateWcmpGroupEntryWithInvalidWatchportAttributeFails
     EXPECT_EQ(0, ref_cnt);
 }
 
+TEST_F(WcmpManagerTest, CreateWcmpGroupFailsWithNonFrontPanelPortAsWatchport) {
+  p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1, kNexthopOid1);
+  P4WcmpGroupEntry app_db_entry = getDefaultWcmpGroupEntryForTest();
+  app_db_entry.wcmp_group_members[0]->watch_port = "PortChannel001";
+
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+            ProcessAddRequest(&app_db_entry));
+  std::string key = KeyGenerator::generateWcmpGroupKey(kWcmpGroupId1);
+  auto* wcmp_group_entry_ptr = GetWcmpGroupEntry(kWcmpGroupId1);
+  EXPECT_EQ(nullptr, wcmp_group_entry_ptr);
+  EXPECT_FALSE(p4_oid_mapper_->existsOID(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, key));
+  uint32_t ref_cnt;
+  EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_NEXT_HOP,
+                                          kNexthopKey1, &ref_cnt));
+  EXPECT_EQ(0, ref_cnt);
+}
+
 TEST_F(WcmpManagerTest, PruneNextHopSucceeds)
 {
     // Add member with operationally up watch port
@@ -1723,24 +1740,27 @@ TEST_F(WcmpManagerTest, WatchportStateChangeToOperUpSucceeds)
     EXPECT_FALSE(app_db_entry.wcmp_group_members[0]->pruned);
 }
 
-TEST_F(WcmpManagerTest, WatchportStateChangeFromOperUnknownToDownPrunesMemberOnlyOnceSuceeds)
-{
-    // Add member with operationally unknown watch port. Since associated
-    // watchport is not operationally up, member will not be created in SAI but
-    // will be directly added to the pruned set of WCMP group members.
-    std::string port_name = "Ethernet1";
-    P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntryWithWatchport(port_name);
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
+TEST_F(WcmpManagerTest,
+       WatchportStateChangeFromOperUnknownToDownPrunesMemberOnlyOnceSucceeds) {
+  // Add member with operationally unknown watch port. Since associated
+  // watchport is not operationally up, member will not be created in SAI but
+  // will be directly added to the pruned set of WCMP group members.
+  std::string port_name = "Ethernet1";
+  P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntryWithWatchport(port_name);
+  EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0],
+                                             true, 1));
+  EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
 
-    // Send port down signal.
-    // Verify that the pruned next hop member is not pruned again.
-    std::string op = "port_state_change";
-    std::string data = "[{\"port_id\":\"oid:0x56789abcfff\",\"port_state\":\"SAI_PORT_OPER_"
-                       "STATUS_DOWN\",\"port_error_status\":\"0\"}]";
-    HandlePortStatusChangeNotification(op, data);
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
+  // Send port down signal.
+  // Verify that the pruned next hop member is not pruned again.
+  std::string op = "port_state_change";
+  std::string data =
+      "[{\"port_id\":\"oid:0x56789abcfff\",\"port_state\":\"SAI_PORT_OPER_"
+      "STATUS_DOWN\",\"port_error_status\":\"0\"}]";
+  HandlePortStatusChangeNotification(op, data);
+  EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0],
+                                             true, 1));
+  EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
 }
 
 TEST_F(WcmpManagerTest, VerifyStateTest)
