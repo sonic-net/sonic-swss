@@ -12,6 +12,7 @@ extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
 extern FgNhgOrch *gFgNhgOrch;
 extern Srv6Orch  *gSrv6Orch;
+extern ArsOrch   *gArsOrch;
 
 extern FdbOrch *gFdbOrch;
 extern MirrorOrch *gMirrorOrch;
@@ -428,6 +429,14 @@ namespace aclorch_test
                 srv6_my_sid_cfg_table
             };
             gSrv6Orch = new Srv6Orch(m_config_db.get(), m_app_db.get(), srv6_tables, gSwitchOrch, gVrfOrch, gNeighOrch);
+            ASSERT_EQ(gArsOrch, nullptr);
+            vector<string> ars_tables = {
+                CFG_ARS_PROFILE_TABLE_NAME,
+                CFG_ARS_INTERFACE_TABLE_NAME,
+                CFG_ARS_OBJECT_TABLE_NAME,
+                CFG_ARS_NEXTHOP_TABLE_NAME
+            };
+            gArsOrch = new ArsOrch(m_config_db.get(), m_app_db.get(), m_state_db.get(), ars_tables, gVrfOrch);
 
             ASSERT_EQ(gRouteOrch, nullptr);
             const int routeorch_pri = 5;
@@ -435,7 +444,7 @@ namespace aclorch_test
                 { APP_ROUTE_TABLE_NAME,        routeorch_pri },
                 { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
             };
-            gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch, gSrv6Orch);
+            gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch, gSrv6Orch, gArsOrch);
 
             vector<TableConnector> policer_tables = {
                 TableConnector(m_config_db.get(), CFG_POLICER_TABLE_NAME),
@@ -472,6 +481,8 @@ namespace aclorch_test
             gFlowCounterRouteOrch = nullptr;
             delete gSrv6Orch;
             gSrv6Orch = nullptr;
+            delete gArsOrch;
+            gArsOrch = nullptr;
             delete gNeighOrch;
             gNeighOrch = nullptr;
             delete gFdbOrch;
