@@ -1475,6 +1475,79 @@ namespace portsorch_test
         _unhook_sai_queue_api();
     }
 
+    TEST_F(PortsOrchTest, PortDeleteQueueCountersCleanup)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Create ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port port;
+        auto testQueueIdx = 0;
+        string portName = "Ethernet0";
+        ASSERT_TRUE(gPortsOrch->getPort(portName, port));
+        ASSERT_NE(port.m_port_id, SAI_NULL_OBJECT_ID);
+        ASSERT_GT(port.m_queue_ids.size(), 0u);
+
+        // Enable Queue flex counters
+        Table flexCounterCfg = Table(m_config_db.get(), CFG_FLEX_COUNTER_TABLE_NAME);
+        const std::vector<FieldValueTuple> enable({ {FLEX_COUNTER_STATUS_FIELD, "enable"} });
+        flexCounterCfg.set("QUEUE_WATERMARK", enable);
+        flexCounterCfg.set("QUEUE", enable);
+
+        auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
+        flexCounterOrch->addExistingData(&flexCounterCfg);
+        static_cast<Orch *>(flexCounterOrch)->doTask();
+
+        sai_object_id_t targetQueueOid = port.m_queue_ids[testQueueIdx];
+
+        // Delete the port
+        entries.push_back({portName, "DEL", { { } }});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        entries.clear();
+
+        Table countersQueueNameMap(m_counters_db.get(), "COUNTERS_QUEUE_NAME_MAP");
+        Table countersQueuePortMap(m_counters_db.get(), "COUNTERS_QUEUE_PORT_MAP");
+
+        // Verify specific alias:idx field is gone from name maps
+        string dummy;
+        ASSERT_FALSE(countersQueueNameMap.hget("", portName + ":" + to_string(testQueueIdx), dummy));
+        ASSERT_FALSE(countersQueuePortMap.hget("", sai_serialize_object_id(targetQueueOid), dummy));
+
+        // Re-add the same port
+        auto it = ports.find(portName);
+        entries.push_back({portName, "SET", it->second});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        entries.clear();
+
+        // Fetch the re-added port and verify COUNTERS_DB entries exist for the queue index
+        Port readded;
+        ASSERT_TRUE(gPortsOrch->getPort(portName, readded));
+        ASSERT_GT(readded.m_queue_ids.size(), 0u);
+        sai_object_id_t readdedQ1 = readded.m_queue_ids[testQueueIdx];
+
+        // Name-map should contain alias:idx as a field
+        ASSERT_TRUE(countersQueueNameMap.hget("", portName + ":" + to_string(testQueueIdx), dummy));
+        // Port-map should contain queue OID -> port OID mapping as a field
+        ASSERT_TRUE(countersQueuePortMap.hget("", sai_serialize_object_id(readdedQ1), dummy));
+    }
+
     TEST_F(PortsOrchTest, PortPTConfigDefaultTimestampTemplate)
     {
         auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
