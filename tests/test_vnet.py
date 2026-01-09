@@ -3275,6 +3275,47 @@ class TestVnetOrch(object):
         self.remove_ip_address("Ethernet12", "9.1.0.4/32")
         self.set_admin_status("Ethernet12", "down")
 
+    '''
+    Test 33 - Create vnet route tunnel with various metric values
+    '''
+    def test_vnet_orch_33(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_33'
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
+        create_vnet_entry(dvs, 'Vnet33', tunnel_name, '10033', "")
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet33')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet33', '10033')
+
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
+
+        vnet_obj.fetch_exist_entries(dvs)
+        
+        for i in range(21):
+            create_vnet_routes(dvs, "0.0.0.0/0", 'Vnet33', '10.10.10.1', metric=i)
+            vnet_obj.check_vnet_routes(dvs, 'Vnet33', '10.10.10.1', tunnel_name)
+            check_state_db_routes(dvs, 'Vnet33', "0.0.0.0/0", ['10.10.10.1'])
+
+            entry = self.cdb.get_entry("VNET_ROUTE_TABLE", "Vnet33|0.0.0.0/0")
+            assert entry is not None
+            assert int(entry.get('metric', -1)) == i
+
+        # Clean-up and verify remove flows
+        delete_vnet_routes(dvs, "0.0.0.0/0", 'Vnet33')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet33')
+
+        delete_vnet_entry(dvs, "Vnet33")
+        vnet_obj.check_del_vnet_entry(dvs, "Vnet33")
+
+        delete_vxlan_tunnel(dvs, tunnel_name)
+        vnet_obj.check_del_vxlan_tunnel(dvs)
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
