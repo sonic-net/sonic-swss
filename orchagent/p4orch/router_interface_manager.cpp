@@ -56,36 +56,35 @@ ReturnCode validateRouterInterfaceAppDbEntry(const P4RouterInterfaceAppDbEntry &
     return ReturnCode();
 }
 
-ReturnCodeOr<std::vector<sai_attribute_t>> getSaiAttrs(const P4RouterInterfaceEntry &router_intf_entry)
-{
-    Port port;
-    if (!gPortsOrch->getPort(router_intf_entry.port_name, port))
-    {
-        LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-                             << "Failed to get port info for port " << QuotedVar(router_intf_entry.port_name));
-    }
+ReturnCodeOr<std::vector<sai_attribute_t>> prepareSaiAttrs(
+    const P4RouterInterfaceEntry& router_intf_entry) {
+  Port port;
+  if (!gPortsOrch->getPort(router_intf_entry.port_name, port)) {
+    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                         << "Failed to get port info for port "
+                         << QuotedVar(router_intf_entry.port_name));
+  }
 
-    std::vector<sai_attribute_t> attrs;
-    sai_attribute_t attr;
+  std::vector<sai_attribute_t> attrs;
+  sai_attribute_t attr;
 
-    // Map all P4 router interfaces to default VRF as virtual router is mandatory
-    // parameter for creation of router interfaces in SAI.
-    attr.id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
-    attr.value.oid = gVirtualRouterId;
+  // Map all P4 router interfaces to default VRF as virtual router is mandatory
+  // parameter for creation of router interfaces in SAI.
+  attr.id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
+  attr.value.oid = gVirtualRouterId;
+  attrs.push_back(attr);
+
+  // If mac address is not set then swss::MacAddress initializes mac address
+  // to 00:00:00:00:00:00.
+  if (router_intf_entry.src_mac_address.to_string() != "00:00:00:00:00:00") {
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
+    memcpy(attr.value.mac, router_intf_entry.src_mac_address.getMac(),
+           sizeof(sai_mac_t));
     attrs.push_back(attr);
+  }
 
-    // If mac address is not set then swss::MacAddress initializes mac address
-    // to 00:00:00:00:00:00.
-    if (router_intf_entry.src_mac_address.to_string() != "00:00:00:00:00:00")
-    {
-        attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
-        memcpy(attr.value.mac, router_intf_entry.src_mac_address.getMac(), sizeof(sai_mac_t));
-        attrs.push_back(attr);
-    }
-
-    attr.id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
-    switch (port.m_type)
-    {
+  attr.id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
+  switch (port.m_type) {
     case Port::PHY:
         attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_PORT;
         attrs.push_back(attr);
@@ -116,7 +115,7 @@ ReturnCodeOr<std::vector<sai_attribute_t>> getSaiAttrs(const P4RouterInterfaceEn
 
     default:
         LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Unsupported port type: " << port.m_type);
-    }
+  }
     attrs.push_back(attr);
 
     // Configure port MTU on router interface
@@ -205,7 +204,8 @@ ReturnCode RouterInterfaceManager::createRouterInterface(const std::string &rout
                                                                      << " already exists in the centralized map");
     }
 
-    ASSIGN_OR_RETURN(std::vector<sai_attribute_t> attrs, getSaiAttrs(router_intf_entry));
+    ASSIGN_OR_RETURN(std::vector<sai_attribute_t> attrs,
+                     prepareSaiAttrs(router_intf_entry));
 
     CHECK_ERROR_AND_LOG_AND_RETURN(
         sai_router_intfs_api->create_router_interface(&router_intf_entry.router_interface_oid, gSwitchId,
@@ -550,11 +550,11 @@ std::string RouterInterfaceManager::verifyStateCache(const P4RouterInterfaceAppD
 
 std::string RouterInterfaceManager::verifyStateAsicDb(const P4RouterInterfaceEntry *router_intf_entry)
 {
-    auto attrs_or = getSaiAttrs(*router_intf_entry);
-    if (!attrs_or.ok())
-    {
-        return std::string("Failed to get SAI attrs: ") + attrs_or.status().message();
-    }
+  auto attrs_or = prepareSaiAttrs(*router_intf_entry);
+  if (!attrs_or.ok()) {
+    return std::string("Failed to get SAI attrs: ") +
+           attrs_or.status().message();
+  }
     std::vector<sai_attribute_t> attrs = *attrs_or;
     std::vector<swss::FieldValueTuple> exp = saimeta::SaiAttributeList::serialize_attr_list(
         SAI_OBJECT_TYPE_ROUTER_INTERFACE, (uint32_t)attrs.size(), attrs.data(), /*countOnly=*/false);

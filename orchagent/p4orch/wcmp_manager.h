@@ -28,8 +28,8 @@ struct P4WcmpGroupMemberEntry
     // Default ECMP(weight=1)
     int weight = 1;
     std::string watch_port;
-    bool pruned;
-    sai_object_id_t member_oid = SAI_NULL_OBJECT_ID;
+    bool pruned = false;
+    sai_object_id_t next_hop_oid = SAI_NULL_OBJECT_ID;
     std::string wcmp_group_id;
 };
 
@@ -39,6 +39,8 @@ struct P4WcmpGroupEntry
     // next_hop_id: P4WcmpGroupMemberEntry
     std::vector<std::shared_ptr<P4WcmpGroupMemberEntry>> wcmp_group_members;
     sai_object_id_t wcmp_group_oid = SAI_NULL_OBJECT_ID;
+    std::vector<sai_object_id_t> nexthop_ids;
+    std::vector<uint32_t> nexthop_weights;
 };
 
 // WcmpManager listens to changes in table APP_P4RT_WCMP_GROUP_TABLE_NAME and
@@ -83,11 +85,8 @@ class WcmpManager : public ObjectManagerInterface
     ReturnCode getSaiObject(const std::string &json_key, sai_object_type_t &object_type,
                             std::string &object_key) override;
 
-    // Prunes next hop members egressing through the given port.
-    void pruneNextHops(const std::string &port);
-
-    // Restores pruned next hop members on link up. Returns an SWSS status code.
-    void restorePrunedNextHops(const std::string &port);
+    // Prunes or restores next hop members.
+    void updateWatchPort(const std::string& port, bool prune);
 
     // Inserts into/updates port_oper_status_map
     void updatePortOperStatusMap(const std::string &port, const sai_port_oper_status_t &status);
@@ -112,43 +111,11 @@ class WcmpManager : public ObjectManagerInterface
     // createWcmpGroup() is called
     ReturnCode createWcmpGroup(P4WcmpGroupEntry *wcmp_group_entry);
 
-    // Creates WCMP group member in the WCMP group.
-    ReturnCode createWcmpGroupMember(std::shared_ptr<P4WcmpGroupMemberEntry> wcmp_group_member,
-                                     const sai_object_id_t group_oid, const std::string &wcmp_group_key);
-
-    // Creates WCMP group member with an associated watch_port.
-    ReturnCode createWcmpGroupMemberWithWatchport(
-        P4WcmpGroupEntry* wcmp_group,
-        std::shared_ptr<P4WcmpGroupMemberEntry> member,
-        const std::string& wcmp_group_key);
-
-    // Performs watchport related addition operations and creates WCMP group
-    // member.
-    ReturnCode processWcmpGroupMemberAddition(
-        std::shared_ptr<P4WcmpGroupMemberEntry> member,
-        P4WcmpGroupEntry* wcmp_group, const std::string& wcmp_group_key);
-
-    // Performs watchport related removal operations and removes WCMP group
-    // member.
-    ReturnCode processWcmpGroupMemberRemoval(
-        std::shared_ptr<P4WcmpGroupMemberEntry> member,
-        const std::string& wcmp_group_key);
-
     // Processes update operation for a WCMP group entry.
     ReturnCode processUpdateRequest(P4WcmpGroupEntry *wcmp_group_entry);
 
-    // Clean up group members when request fails
-    void recoverGroupMembers(
-        p4orch::P4WcmpGroupEntry *wcmp_group, const std::string &wcmp_group_key,
-        const std::vector<std::shared_ptr<p4orch::P4WcmpGroupMemberEntry>> &created_wcmp_group_members,
-        const std::vector<std::shared_ptr<p4orch::P4WcmpGroupMemberEntry>> &removed_wcmp_group_members);
-
     // Deletes a WCMP group in the WCMP group table.
     ReturnCode removeWcmpGroup(const std::string &wcmp_group_id);
-
-    // Deletes a WCMP group member in the WCMP group table.
-    ReturnCode removeWcmpGroupMember(const std::shared_ptr<P4WcmpGroupMemberEntry> wcmp_group_member,
-                                     const std::string &wcmp_group_id);
 
     // Fetches oper-status of port using port_oper_status_map or SAI.
     ReturnCode fetchPortOperStatus(const std::string &port, sai_port_oper_status_t *oper_status);
@@ -162,15 +129,15 @@ class WcmpManager : public ObjectManagerInterface
     // Gets port oper-status from port_oper_status_map if present
     bool getPortOperStatusFromMap(const std::string &port, sai_port_oper_status_t *status);
 
+    // Fetches group member info (pruned status, nexthop OID) that is required
+    // before create or update.
+    ReturnCode fetchMemberInfo(P4WcmpGroupEntry* wcmp_group);
+
     // Verifies the internal cache for an entry.
     std::string verifyStateCache(const P4WcmpGroupEntry &app_db_entry, const P4WcmpGroupEntry *wcmp_group_entry);
 
     // Verifies the ASIC DB for an entry.
-    std::string verifyStateAsicDb(const P4WcmpGroupEntry *wcmp_group_entry);
-
-    // Returns the SAI attributes for a group member.
-    std::vector<sai_attribute_t> getSaiMemberAttrs(const P4WcmpGroupMemberEntry &wcmp_member_entry,
-                                                   const sai_object_id_t group_oid);
+    std::string verifyStateAsicDb(P4WcmpGroupEntry* wcmp_group_entry);
 
     // Maps wcmp_group_id to P4WcmpGroupEntry
     std::unordered_map<std::string, P4WcmpGroupEntry> m_wcmpGroupTable;

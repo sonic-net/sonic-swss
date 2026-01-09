@@ -57,34 +57,34 @@ ReturnCode validateGreTunnelAppDbEntry(const P4GreTunnelAppDbEntry &app_db_entry
     return ReturnCode();
 }
 
-std::vector<sai_attribute_t> getSaiAttrs(const P4GreTunnelEntry &gre_tunnel_entry)
-{
-    std::vector<sai_attribute_t> tunnel_attrs;
-    sai_attribute_t tunnel_attr;
-    tunnel_attr.id = SAI_TUNNEL_ATTR_TYPE;
-    tunnel_attr.value.s32 = SAI_TUNNEL_TYPE_IPINIP_GRE;
-    tunnel_attrs.push_back(tunnel_attr);
+std::vector<sai_attribute_t> prepareSaiAttrs(
+    const P4GreTunnelEntry& gre_tunnel_entry) {
+  std::vector<sai_attribute_t> tunnel_attrs;
+  sai_attribute_t tunnel_attr;
+  tunnel_attr.id = SAI_TUNNEL_ATTR_TYPE;
+  tunnel_attr.value.s32 = SAI_TUNNEL_TYPE_IPINIP_GRE;
+  tunnel_attrs.push_back(tunnel_attr);
 
-    tunnel_attr.id = SAI_TUNNEL_ATTR_PEER_MODE;
-    tunnel_attr.value.s32 = SAI_TUNNEL_PEER_MODE_P2P;
-    tunnel_attrs.push_back(tunnel_attr);
+  tunnel_attr.id = SAI_TUNNEL_ATTR_PEER_MODE;
+  tunnel_attr.value.s32 = SAI_TUNNEL_PEER_MODE_P2P;
+  tunnel_attrs.push_back(tunnel_attr);
 
-    tunnel_attr.id = SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE;
-    tunnel_attr.value.oid = gre_tunnel_entry.underlay_if_oid;
-    tunnel_attrs.push_back(tunnel_attr);
+  tunnel_attr.id = SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE;
+  tunnel_attr.value.oid = gre_tunnel_entry.underlay_if_oid;
+  tunnel_attrs.push_back(tunnel_attr);
 
-    tunnel_attr.id = SAI_TUNNEL_ATTR_OVERLAY_INTERFACE;
-    tunnel_attr.value.oid = gre_tunnel_entry.overlay_if_oid;
-    tunnel_attrs.push_back(tunnel_attr);
+  tunnel_attr.id = SAI_TUNNEL_ATTR_OVERLAY_INTERFACE;
+  tunnel_attr.value.oid = gre_tunnel_entry.overlay_if_oid;
+  tunnel_attrs.push_back(tunnel_attr);
 
-    tunnel_attr.id = SAI_TUNNEL_ATTR_ENCAP_SRC_IP;
-    swss::copy(tunnel_attr.value.ipaddr, gre_tunnel_entry.encap_src_ip);
-    tunnel_attrs.push_back(tunnel_attr);
+  tunnel_attr.id = SAI_TUNNEL_ATTR_ENCAP_SRC_IP;
+  swss::copy(tunnel_attr.value.ipaddr, gre_tunnel_entry.encap_src_ip);
+  tunnel_attrs.push_back(tunnel_attr);
 
-    tunnel_attr.id = SAI_TUNNEL_ATTR_ENCAP_DST_IP;
-    swss::copy(tunnel_attr.value.ipaddr, gre_tunnel_entry.encap_dst_ip);
-    tunnel_attrs.push_back(tunnel_attr);
-    return tunnel_attrs;
+  tunnel_attr.id = SAI_TUNNEL_ATTR_ENCAP_DST_IP;
+  swss::copy(tunnel_attr.value.ipaddr, gre_tunnel_entry.encap_dst_ip);
+  tunnel_attrs.push_back(tunnel_attr);
+  return tunnel_attrs;
 }
 
 } // namespace
@@ -329,7 +329,8 @@ ReturnCode GreTunnelManager::createGreTunnel(P4GreTunnelEntry &gre_tunnel_entry)
     // mandatory Use gUnderlayIfId, a shared global loopback rif, for encap
     // tunnels
     gre_tunnel_entry.overlay_if_oid = gUnderlayIfId;
-    std::vector<sai_attribute_t> tunnel_attrs = getSaiAttrs(gre_tunnel_entry);
+    std::vector<sai_attribute_t> tunnel_attrs =
+        prepareSaiAttrs(gre_tunnel_entry);
 
     // Call SAI API.
     CHECK_ERROR_AND_LOG_AND_RETURN(
@@ -549,7 +550,7 @@ std::string GreTunnelManager::verifyStateAsicDb(const P4GreTunnelEntry *gre_tunn
     swss::Table table(&db, "ASIC_STATE");
 
     // Verify Tunnel ASIC DB attributes
-    std::vector<sai_attribute_t> attrs = getSaiAttrs(*gre_tunnel_entry);
+    std::vector<sai_attribute_t> attrs = prepareSaiAttrs(*gre_tunnel_entry);
     std::vector<swss::FieldValueTuple> exp =
         saimeta::SaiAttributeList::serialize_attr_list(
             SAI_OBJECT_TYPE_TUNNEL, (uint32_t)attrs.size(), attrs.data(),
