@@ -825,17 +825,17 @@ class AclManagerTest : public ::testing::Test
         setUpCoppOrch();
         setUpSwitchOrch();
         setUpP4Orch();
-        // const auto& acl_groups = gSwitchOrch->getAclGroupsBindingToSwitch();
-        // EXPECT_EQ(3, acl_groups.size());
-        // EXPECT_NE(acl_groups.end(), acl_groups.find(SAI_ACL_STAGE_INGRESS));
-        // EXPECT_EQ(kAclGroupIngressOid,
-        //           acl_groups.at(SAI_ACL_STAGE_INGRESS).m_saiObjectId);
-        // EXPECT_NE(acl_groups.end(), acl_groups.find(SAI_ACL_STAGE_EGRESS));
-        // EXPECT_EQ(kAclGroupEgressOid,
-        //           acl_groups.at(SAI_ACL_STAGE_EGRESS).m_saiObjectId);
-        // EXPECT_NE(acl_groups.end(), acl_groups.find(SAI_ACL_STAGE_PRE_INGRESS));
-        // EXPECT_EQ(kAclGroupLookupOid,
-        //           acl_groups.at(SAI_ACL_STAGE_PRE_INGRESS).m_saiObjectId);
+        const auto& acl_groups = gSwitchOrch->getAclGroupsBindingToSwitch();
+        EXPECT_EQ(3, acl_groups.size());
+        EXPECT_NE(acl_groups.end(), acl_groups.find(SAI_ACL_STAGE_INGRESS));
+        EXPECT_EQ(kAclGroupIngressOid,
+                  acl_groups.at(SAI_ACL_STAGE_INGRESS).m_saiObjectId);
+        EXPECT_NE(acl_groups.end(), acl_groups.find(SAI_ACL_STAGE_EGRESS));
+        EXPECT_EQ(kAclGroupEgressOid,
+                  acl_groups.at(SAI_ACL_STAGE_EGRESS).m_saiObjectId);
+        EXPECT_NE(acl_groups.end(), acl_groups.find(SAI_ACL_STAGE_PRE_INGRESS));
+        EXPECT_EQ(kAclGroupLookupOid,
+                  acl_groups.at(SAI_ACL_STAGE_PRE_INGRESS).m_saiObjectId);
         p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_MIRROR_SESSION, KeyGenerator::generateMirrorSessionKey(gMirrorSession1),
                                kMirrorSessionOid1);
         p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_MIRROR_SESSION, KeyGenerator::generateMirrorSessionKey(gMirrorSession2),
@@ -937,46 +937,48 @@ class AclManagerTest : public ::testing::Test
     void setUpSwitchOrch()
     {
         EXPECT_CALL(mock_sai_serialize_, sai_serialize_object_id(_)).WillRepeatedly(Return(EMPTY_STRING));
-        TableConnector stateDbSwitchTable(gStateDb, "SWITCH_CAPABILITY");
-        TableConnector app_switch_table(gAppDb, APP_SWITCH_TABLE_NAME);
-        TableConnector conf_asic_sensors(gConfigDb, CFG_ASIC_SENSORS_TABLE_NAME);
-        std::vector<TableConnector> switch_tables = {conf_asic_sensors, app_switch_table};
-        gSwitchOrch = new SwitchOrch(gAppDb, switch_tables, stateDbSwitchTable);
-    }
-
-    void setUpP4Orch()
-    {
-        EXPECT_CALL(mock_sai_serialize_, sai_serialize_object_id(_)).WillRepeatedly(Return(EMPTY_STRING));
         EXPECT_CALL(mock_sai_acl_,
                     create_acl_table_group(
                         _, Eq(gSwitchId), Eq(3),
                         Truly(std::bind(MatchSaiAttributeAclGroupStage, SAI_ACL_STAGE_INGRESS, std::placeholders::_1))))
-            .WillRepeatedly(DoAll(SetArgPointee<0>(kAclGroupIngressOid), Return(SAI_STATUS_SUCCESS)));
+            .WillOnce(DoAll(SetArgPointee<0>(kAclGroupIngressOid),
+                            Return(SAI_STATUS_SUCCESS)));
         EXPECT_CALL(mock_sai_acl_,
                     create_acl_table_group(
                         _, Eq(gSwitchId), Eq(3),
                         Truly(std::bind(MatchSaiAttributeAclGroupStage, SAI_ACL_STAGE_EGRESS, std::placeholders::_1))))
-            .WillRepeatedly(DoAll(SetArgPointee<0>(kAclGroupEgressOid), Return(SAI_STATUS_SUCCESS)));
+            .WillOnce(DoAll(SetArgPointee<0>(kAclGroupEgressOid),
+                            Return(SAI_STATUS_SUCCESS)));
         EXPECT_CALL(mock_sai_acl_,
                     create_acl_table_group(_, Eq(gSwitchId), Eq(3),
                                            Truly(std::bind(MatchSaiAttributeAclGroupStage, SAI_ACL_STAGE_PRE_INGRESS,
                                                            std::placeholders::_1))))
-            .WillRepeatedly(DoAll(SetArgPointee<0>(kAclGroupLookupOid), Return(SAI_STATUS_SUCCESS)));
+            .WillOnce(DoAll(SetArgPointee<0>(kAclGroupLookupOid),
+                            Return(SAI_STATUS_SUCCESS)));
         EXPECT_CALL(mock_sai_switch_,
                     set_switch_attribute(Eq(gSwitchId),
                                          Truly(std::bind(MatchSaiSwitchAttrByAclStage, SAI_SWITCH_ATTR_INGRESS_ACL,
                                                          kAclGroupIngressOid, std::placeholders::_1))))
-            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
         EXPECT_CALL(mock_sai_switch_,
                     set_switch_attribute(Eq(gSwitchId),
                                          Truly(std::bind(MatchSaiSwitchAttrByAclStage, SAI_SWITCH_ATTR_EGRESS_ACL,
                                                          kAclGroupEgressOid, std::placeholders::_1))))
-            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
         EXPECT_CALL(mock_sai_switch_,
                     set_switch_attribute(Eq(gSwitchId),
                                          Truly(std::bind(MatchSaiSwitchAttrByAclStage, SAI_SWITCH_ATTR_PRE_INGRESS_ACL,
                                                          kAclGroupLookupOid, std::placeholders::_1))))
-            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+    TableConnector stateDbSwitchTable(gStateDb, "SWITCH_CAPABILITY");
+    TableConnector app_switch_table(gAppDb, APP_SWITCH_TABLE_NAME);
+    TableConnector conf_asic_sensors(gConfigDb, CFG_ASIC_SENSORS_TABLE_NAME);
+    std::vector<TableConnector> switch_tables = {conf_asic_sensors,
+                                                 app_switch_table};
+    gSwitchOrch = new SwitchOrch(gAppDb, switch_tables, stateDbSwitchTable);
+  }
+
+  void setUpP4Orch() {
         std::vector<std::string> p4_tables;
         gP4Orch = new P4Orch(gAppDb, p4_tables, gVrfOrch, copp_orch_);
         acl_table_manager_ = gP4Orch->getAclTableManager();
@@ -1356,7 +1358,8 @@ TEST_F(AclManagerTest, CreatePuntTableFailsWhenUserTrapsSaiCallFails)
     EXPECT_EQ(StatusCode::SWSS_RC_FULL, ProcessAddTableRequest(app_db_entry));
 }
 
-TEST_F(AclManagerTest, DISABLED_CreatePuntTableFailsWhenUserTrapGroupOrHostifNotFound)
+
+TEST_F(AclManagerTest, CreatePuntTableFailsWhenUserTrapGroupOrHostifNotFound)
 {
     auto app_db_entry = getDefaultAclTableDefAppDbEntry();
     const auto skip_cpu_queue = 1;
@@ -4920,7 +4923,8 @@ TEST_F(AclManagerTest, DoAclCounterStatsTaskFailsWhenSaiCallFails)
     EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
 }
 
-TEST_F(AclManagerTest, DISABLED_InitCreateGroupFails)
+
+TEST_F(AclManagerTest, InitCreateGroupFails)
 {
     // Failed to create ACL groups
     EXPECT_CALL(mock_sai_serialize_, sai_serialize_object_id(_)).WillRepeatedly(Return(EMPTY_STRING));
@@ -4933,7 +4937,7 @@ TEST_F(AclManagerTest, DISABLED_InitCreateGroupFails)
     EXPECT_THROW(new SwitchOrch(gAppDb, switch_tables, stateDbSwitchTable), std::runtime_error);
 }
 
-TEST_F(AclManagerTest, DISABLED_InitBindGroupToSwitchFails)
+TEST_F(AclManagerTest, InitBindGroupToSwitchFails)
 {
     EXPECT_CALL(mock_sai_serialize_, sai_serialize_object_id(_)).WillRepeatedly(Return(EMPTY_STRING));
     // Failed to bind ACL group to switch attribute.
