@@ -95,7 +95,8 @@ class NextHopManager : public ObjectManagerInterface
     std::string verifyStateAsicDb(const P4NextHopEntry *next_hop_entry);
 
     // Returns the SAI attributes for an entry.
-    ReturnCodeOr<std::vector<sai_attribute_t>> getSaiAttrs(const P4NextHopEntry &next_hop_entry);
+    ReturnCodeOr<std::vector<sai_attribute_t>> prepareSaiAttrs(
+        const P4NextHopEntry& next_hop_entry);
 
     // m_nextHopTable: next_hop_key, P4NextHopEntry
     std::unordered_map<std::string, P4NextHopEntry> m_nextHopTable;
