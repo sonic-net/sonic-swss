@@ -11,7 +11,9 @@ use std::os::unix::io::RawFd;
 
 use log::{debug, info, warn};
 
-use netlink_sys::{Socket, SocketAddr, protocols::NETLINK_GENERIC};
+use netlink_sys::Socket;
+#[cfg(not(test))]
+use netlink_sys::{protocols::NETLINK_GENERIC, SocketAddr};
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::io;
@@ -20,6 +22,7 @@ use super::super::message::{
     buffer::SocketBufferMessage,
     netlink::{NetlinkCommand, SocketConnect},
 };
+#[cfg(not(test))]
 use super::netlink_utils;
 
 #[cfg(not(test))]
