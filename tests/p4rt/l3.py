@@ -35,7 +35,7 @@ class P4RtRouterInterfaceWrapper(util.DBInterface):
             assert status == True
             is_loopback = False
             is_gVR = False
-            for f,v in fvs:
+            for f, v in fvs:
                 if f == "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID":
                     is_gVR = True
                 if f == "SAI_ROUTER_INTERFACE_ATTR_TYPE" and v == "SAI_ROUTER_INTERFACE_TYPE_LOOPBACK":
@@ -67,7 +67,8 @@ class P4RtRouterInterfaceWrapper(util.DBInterface):
 
     def generate_app_db_key(self, router_interface_id):
         d = {}
-        d[util.prepend_match_field("router_interface_id")] = router_interface_id
+        d[util.prepend_match_field("router_interface_id")
+          ] = router_interface_id
         key = json.dumps(d, separators=(",", ":"))
         return self.TBL_NAME + ":" + key
 
@@ -87,6 +88,7 @@ class P4RtRouterInterfaceWrapper(util.DBInterface):
         router_intf_key = self.generate_app_db_key(router_interface_id)
         self.set_app_db_entry(router_intf_key, attr_list)
         return router_interface_id, router_intf_key, attr_list
+
 
 class P4RtGreTunnelWrapper(util.DBInterface):
     """Interface to interact with APP DB and ASIC DB tables for P4RT GRE Tunnel object."""
@@ -130,7 +132,8 @@ class P4RtGreTunnelWrapper(util.DBInterface):
         encap_dst_ip = encap_dst_ip or self.DEFAULT_ENCAP_DST_IP
         action = action or self.DEFAULT_ACTION
         attr_list = [
-            (util.prepend_param_field(self.ROUTER_ROUTER_INTERFACE_ID_FIELD), router_interface_id),
+            (util.prepend_param_field(
+                self.ROUTER_ROUTER_INTERFACE_ID_FIELD), router_interface_id),
             (util.prepend_param_field(self.ENCAP_SRC_IP_FIELD), encap_src_ip),
             (util.prepend_param_field(self.ENCAP_DST_IP_FIELD), encap_dst_ip),
             (self.ACTION_FIELD, action),
@@ -161,7 +164,8 @@ class P4RtGreTunnelWrapper(util.DBInterface):
     def get_original_appl_db_entries_count(self):
         return len(
             self._original_entries[
-                "%s:%s" % (self.appl_db, (self.APP_DB_TBL_NAME + ":" + self.TBL_NAME))
+                "%s:%s" % (
+                    self.appl_db, (self.APP_DB_TBL_NAME + ":" + self.TBL_NAME))
             ]
         )
 
@@ -179,6 +183,7 @@ class P4RtGreTunnelWrapper(util.DBInterface):
                 "%s:%s" % (self.asic_db, self.ASIC_DB_TBL_NAME)
             ]
         )
+
 
 class P4RtNeighborWrapper(util.DBInterface):
     """Interface to interact with APP DB and ASIC DB tables for P4RT neighbor object."""
@@ -201,7 +206,8 @@ class P4RtNeighborWrapper(util.DBInterface):
 
     def generate_app_db_key(self, router_interface_id, neighbor_id):
         d = {}
-        d[util.prepend_match_field("router_interface_id")] = router_interface_id
+        d[util.prepend_match_field("router_interface_id")
+          ] = router_interface_id
         d[util.prepend_match_field("neighbor_id")] = neighbor_id
         key = json.dumps(d, separators=(",", ":"))
         return self.TBL_NAME + ":" + key
@@ -225,7 +231,8 @@ class P4RtNeighborWrapper(util.DBInterface):
             (util.prepend_param_field(self.DST_MAC_FIELD), dst_mac),
             (self.ACTION_FIELD, action),
         ]
-        neighbor_key = self.generate_app_db_key(router_interface_id, neighbor_id)
+        neighbor_key = self.generate_app_db_key(
+            router_interface_id, neighbor_id)
         self.set_app_db_entry(neighbor_key, attr_list)
         return neighbor_id, neighbor_key, attr_list
 
@@ -275,7 +282,8 @@ class P4RtNextHopWrapper(util.DBInterface):
         ipv4=True,
         tunnel_id=None,
     ):
-        action = action or (self.DEFAULT_ACTION if tunnel_id == None else self.TUNNEL_ACTION)
+        action = action or (self.DEFAULT_ACTION if tunnel_id ==
+                            None else self.TUNNEL_ACTION)
         router_interface_id = router_interface_id or self.DEFAULT_ROUTER_INTERFACE_ID
         if ipv4 is True:
             neighbor_id = neighbor_id or self.DEFAULT_IPV4_NEIGHBOR_ID
@@ -284,10 +292,13 @@ class P4RtNextHopWrapper(util.DBInterface):
         nexthop_id = nexthop_id or self.DEFAULT_NEXTHOP_ID
         attr_list = [(self.ACTION_FIELD, action)]
         if action == self.DEFAULT_ACTION:
-            attr_list.append((util.prepend_param_field(self.RIF_FIELD), router_interface_id))
-            attr_list.append((util.prepend_param_field(self.NEIGHBOR_ID_FIELD), neighbor_id))
+            attr_list.append((util.prepend_param_field(
+                self.RIF_FIELD), router_interface_id))
+            attr_list.append((util.prepend_param_field(
+                self.NEIGHBOR_ID_FIELD), neighbor_id))
         if tunnel_id != None:
-            attr_list.append((util.prepend_param_field(self.TUNNEL_ID_FIELD), tunnel_id))
+            attr_list.append((util.prepend_param_field(
+                self.TUNNEL_ID_FIELD), tunnel_id))
         nexthop_key = self.generate_app_db_key(nexthop_id)
         self.set_app_db_entry(nexthop_key, attr_list)
         return nexthop_id, nexthop_key, attr_list
@@ -314,7 +325,8 @@ class P4RtNextHopWrapper(util.DBInterface):
     def get_original_appl_db_entries_count(self):
         return len(
             self._original_entries[
-                "%s:%s" % (self.appl_db, (self.APP_DB_TBL_NAME + ":" + self.TBL_NAME))
+                "%s:%s" % (
+                    self.appl_db, (self.APP_DB_TBL_NAME + ":" + self.TBL_NAME))
             ]
         )
 
@@ -333,6 +345,7 @@ class P4RtNextHopWrapper(util.DBInterface):
             ]
         )
 
+
 class P4RtWcmpGroupWrapper(util.DBInterface):
     """Interface to interact with APP DB and ASIC DB tables for P4RT wcmp group object."""
 
@@ -341,15 +354,11 @@ class P4RtWcmpGroupWrapper(util.DBInterface):
     TBL_NAME = swsscommon.APP_P4RT_WCMP_GROUP_TABLE_NAME
     ASIC_DB_GROUP_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP"
     SAI_ATTR_GROUP_TYPE = "SAI_NEXT_HOP_GROUP_ATTR_TYPE"
-    SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP = (
-        "SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP"
+    SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS = (
+        "SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS"
     )
-    ASIC_DB_GROUP_MEMBER_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER"
-    SAI_ATTR_GROUP_MEMBER_NEXTHOP_GROUP_ID = (
-        "SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"
-    )
-    SAI_ATTR_GROUP_MEMBER_NEXTHOP_ID = "SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"
-    SAI_ATTR_GROUP_MEMBER_WEIGHT = "SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT"
+    SAI_ATTR_NEXT_HOP_LIST = "SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST"
+    SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST = "SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST"
 
     # attribute fields for wcmp group object
     NEXTHOP_ID_FIELD = "nexthop_id"
@@ -372,7 +381,8 @@ class P4RtWcmpGroupWrapper(util.DBInterface):
     # 'get_original_redis_entries' before fetching oid of newly created wcmp group.
     def get_newly_created_wcmp_group_oid(self):
         wcmp_group_oid = None
-        wcmp_group_entries = util.get_keys(self.asic_db, self.ASIC_DB_GROUP_TBL_NAME)
+        wcmp_group_entries = util.get_keys(
+            self.asic_db, self.ASIC_DB_GROUP_TBL_NAME)
         for key in wcmp_group_entries:
             if (
                 key
@@ -383,28 +393,6 @@ class P4RtWcmpGroupWrapper(util.DBInterface):
                 wcmp_group_oid = key
                 break
         return wcmp_group_oid
-
-    # Fetch key for the first newly created wcmp group member from created group
-    # members in ASIC db. This API should only be used when only one key is
-    # expected to be created after the original entries.
-    # Original wcmp group member entries in asic db must be fetched using
-    # 'get_original_redis_entries' before fetching asic db key of newly created
-    # wcmp group member.
-    def get_newly_created_wcmp_group_member_asic_db_key(self):
-        asic_db_wcmp_group_member_key = None
-        wcmp_group_member_entries = util.get_keys(
-            self.asic_db, self.ASIC_DB_GROUP_MEMBER_TBL_NAME
-        )
-        for key in wcmp_group_member_entries:
-            if (
-                key
-                not in self._original_entries[
-                    "{}:{}".format(self.asic_db, self.ASIC_DB_GROUP_MEMBER_TBL_NAME)
-                ]
-            ):
-                asic_db_wcmp_group_member_key = key
-                break
-        return asic_db_wcmp_group_member_key
 
     def generate_app_db_key(self, group_id):
         d = {}
@@ -441,7 +429,8 @@ class P4RtWcmpGroupWrapper(util.DBInterface):
     def get_original_appl_db_entries_count(self):
         return len(
             self._original_entries[
-                "%s:%s" % (self.appl_db, (self.APP_DB_TBL_NAME + ":" + self.TBL_NAME))
+                "%s:%s" % (
+                    self.appl_db, (self.APP_DB_TBL_NAME + ":" + self.TBL_NAME))
             ]
         )
 
@@ -457,13 +446,6 @@ class P4RtWcmpGroupWrapper(util.DBInterface):
         return len(
             self._original_entries[
                 "%s:%s" % (self.asic_db, self.ASIC_DB_GROUP_TBL_NAME)
-            ]
-        )
-
-    def get_original_asic_db_member_entries_count(self):
-        return len(
-            self._original_entries[
-                "%s:%s" % (self.asic_db, self.ASIC_DB_GROUP_MEMBER_TBL_NAME)
             ]
         )
 
@@ -566,7 +548,8 @@ class P4RtRouteWrapper(util.DBInterface):
             if (
                 key
                 not in self._original_entries[
-                    "%s:%s" % (self.asic_db, self.ASIC_DB_TBL_NAME)
+                "%s:%s" % (
+                    self.appl_db, (self.APP_DB_TBL_NAME + ":" + self.TBL_NAME))
                 ]
             ):
                 asic_db_key = key
@@ -575,9 +558,8 @@ class P4RtRouteWrapper(util.DBInterface):
 
     def get_original_appl_db_entries_count(self):
         return len(
-            self._original_entries[
-                "%s:%s" % (self.appl_db, (self.APP_DB_TBL_NAME + ":" + self.TBL_NAME))
-            ]
+            self._original_entries["%s:%s" %
+                                   (self.asic_db, self.ASIC_DB_TBL_NAME)]
         )
 
     def get_original_appl_state_db_entries_count(self):
