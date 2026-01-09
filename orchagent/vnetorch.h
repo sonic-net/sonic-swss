@@ -24,6 +24,9 @@
 #define VXLAN_ENCAP_TTL 128
 #define VNET_BITMAP_RIF_MTU 9100
 
+#define VNET_MONITORING_TYPE_CUSTOM "custom"
+#define VNET_MONITORING_TYPE_CUSTOM_BFD "custom_bfd"
+
 extern sai_object_id_t gVirtualRouterId;
 
 
@@ -311,6 +314,8 @@ const request_description_t vnet_route_description = {
         { "monitoring",             REQ_T_STRING },
         { "adv_prefix",             REQ_T_IP_PREFIX },
         { "check_directly_connected", REQ_T_BOOL },
+        { "rx_monitor_timer",       REQ_T_UINT },
+        { "tx_monitor_timer",       REQ_T_UINT },
     },
     { }
 };
@@ -321,6 +326,22 @@ const request_description_t monitor_state_request_description = {
                 { "state",  REQ_T_STRING },
             },
             { "state" }
+};
+
+const request_description_t custom_bfd_request_description = {
+            { REQ_T_STRING, REQ_T_STRING, REQ_T_IP, },
+            {
+                { "type",               REQ_T_STRING },
+                { "async_active",       REQ_T_STRING },
+                { "local_discriminator", REQ_T_STRING },
+                { "local_addr",         REQ_T_IP },
+                { "tx_interval",        REQ_T_UINT },
+                { "rx_interval",        REQ_T_UINT },
+                { "multiplier",         REQ_T_UINT },
+                { "multihop",           REQ_T_BOOL },
+                { "state",              REQ_T_STRING },
+            },
+            { }
 };
 
 class MonitorStateRequest : public Request
@@ -340,6 +361,25 @@ private:
     virtual bool delOperation(const Request& request);
 
     MonitorStateRequest request_;
+};
+
+class CustomBfdRequest : public Request
+{
+public:
+    CustomBfdRequest() : Request(custom_bfd_request_description, '|') { }
+};
+
+class BfdMonitorOrch : public Orch2
+{
+public:
+    BfdMonitorOrch(swss::DBConnector *db, std::string tableName);
+    virtual ~BfdMonitorOrch(void);
+
+private:
+    virtual bool addOperation(const Request& request);
+    virtual bool delOperation(const Request& request);
+
+    CustomBfdRequest request_;
 };
 
 class VNetRouteRequest : public Request
@@ -380,10 +420,14 @@ struct BfdSessionInfo
     sai_bfd_session_state_t bfd_state;
     std::string vnet;
     NextHopKey endpoint;
+
+    bool custom_bfd = false;
 };
 
 struct MonitorSessionInfo
 {
+    std::string monitoring_type = VNET_MONITORING_TYPE_CUSTOM;
+    sai_bfd_session_state_t custom_bfd_state;
     monitor_session_state_t state;
     NextHopKey endpoint;
     int ref_count;
@@ -391,6 +435,8 @@ struct MonitorSessionInfo
 
 struct MonitorUpdate
 {
+    std::string monitoring_type = VNET_MONITORING_TYPE_CUSTOM;
+    sai_bfd_session_state_t custom_bfd_state;
     monitor_session_state_t state;
     IpAddress monitor;
     IpPrefix prefix;
@@ -458,6 +504,7 @@ public:
 
     void update(SubjectType, void *);
     void updateMonitorState(string& op, const IpPrefix& prefix , const IpAddress& endpoint, string state);
+    void updateCustomBfdState(const IpAddress& monitoring_ip, const string& state);
     void updateAllMonitoringSession(const string& vnet);
 
 private:
@@ -479,16 +526,18 @@ private:
                             const string& monitoring);
     NextHopGroupKey getActiveNHSet(const string&, NextHopGroupKey&, const IpPrefix& );
 
-    bool selectNextHopGroup(const string&, NextHopGroupKey&, NextHopGroupKey&, const string&, IpPrefix&,
+    bool selectNextHopGroup(const string&, NextHopGroupKey&, NextHopGroupKey&, const string&, const int32_t, const int32_t, IpPrefix&,
                             VNetVrfObject *vrf_obj, NextHopGroupKey&,
                             const std::map<NextHopKey,IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
-    void createBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
+    void createBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer);
     void removeBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
+    void createCustomBFDMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& monitor_addr, IpPrefix& ipPrefix, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer);
     void createMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr, IpPrefix& ipPrefix);
     void removeMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr, IpPrefix& ipPrefix);
     void setEndpointMonitor(const string& vnet, const map<NextHopKey, IpAddress>& monitors, NextHopGroupKey& nexthops,
-                            const string& monitoring, IpPrefix& ipPrefix);
+                            const string& monitoring, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer,
+                            IpPrefix& ipPrefix);
     void delEndpointMonitor(const string& vnet, NextHopGroupKey& nexthops, IpPrefix& ipPrefix);
     void postRouteState(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& profile);
     void removeRouteState(const string& vnet, IpPrefix& ipPrefix);
@@ -506,7 +555,8 @@ private:
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op, string& profile,
-                    const string& monitoring, NextHopGroupKey& nexthops_secondary, const IpPrefix& adv_prefix,
+                    const string& monitoring, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer,
+                    NextHopGroupKey& nexthops_secondary, const IpPrefix& adv_prefix,
                     const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
     template<typename T>
