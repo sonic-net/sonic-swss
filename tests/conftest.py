@@ -690,6 +690,19 @@ class DockerVirtualSwitch:
 
         return (exitcode, out)
 
+    def runcmd_interactive(self, cmd):
+        res = self.ctn.exec_run(cmd, socket=True, stdout=True, stdin=True, tty=True)
+        try:
+            exitcode = res.exit_code
+            out = res.output
+        except AttributeError:
+            exitcode = None
+            out = res
+        if exitcode is not None:
+            print "-----rc={} for cmd {}-----".format(exitcode, cmd)
+
+        return (exitcode, out)
+
     # used in buildimage tests, do not delete
     def copy_file(self, path: str, filename: str) -> None:
         tarstr = io.BytesIO()
