@@ -4,6 +4,7 @@
 #include "mock_orch_test.h"
 #include "check.h"
 
+extern CrmOrch *gCrmOrch;
 EXTERN_MOCK_FNS
 
 /* 
@@ -241,6 +242,8 @@ namespace aclorch_rule_test
 
     TEST_F(AclRedirectActionTest, TunnelNH)
     {
+        shared_ptr<swss::DBConnector> config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
+        gCrmOrch = new CrmOrch(config_db.get(), CFG_CRM_TABLE_NAME);
         EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop).WillOnce(DoAll(SetArgPointee<0>(nh_oid),
                 Return(SAI_STATUS_SUCCESS)
         ));

@@ -1,5 +1,6 @@
 #include "mock_orch_test.h"
 
+extern CrmOrch *gCrmOrch;
 using namespace std;
 
 namespace mock_orch_test
@@ -112,6 +113,7 @@ void MockOrchTest::SetUp()
         app_switch_table
     };
 
+    gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
     gSwitchOrch = new SwitchOrch(m_app_db.get(), switch_tables, stateDbSwitchTable);
     gDirectory.set(gSwitchOrch);
     ut_orch_list.push_back((Orch **)&gSwitchOrch);

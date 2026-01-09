@@ -176,6 +176,7 @@ class AsicDbValidator(DVSDatabase):
 
         self.default_acl_tables = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         self.default_acl_entries = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
+        self.default_acl_groups = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
 
         self.default_hash_keys = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_HASH")
 
@@ -1479,6 +1480,7 @@ class DockerVirtualSwitch:
             db = DVSDatabase(self.ASIC_DB_ID, self.redis_sock)
             db.default_acl_tables = self.asicdb.default_acl_tables
             db.default_acl_entries = self.asicdb.default_acl_entries
+            db.default_acl_groups = self.asicdb.default_acl_groups
             db.default_hash_keys = self.asicdb.default_hash_keys
             db.default_switch_keys = self.asicdb.default_switch_keys
             db.default_copp_policers = self.asicdb.default_copp_policers

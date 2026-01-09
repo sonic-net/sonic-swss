@@ -15,6 +15,11 @@ extern "C"
 #include "flowcounterrouteorch.h"
 #include "gtest/gtest.h"
 #include "mock_sai_virtual_router.h"
+#include "mock_sai_hostif.h"
+#include "mock_sai_switch.h"
+#include "mock_sai_route.h"
+#include "mock_sai_router_interface.h"
+#include "mock_sai_acl.h"
 #include "p4orch.h"
 #include "portsorch.h"
 #include "sai_serialize.h"
@@ -22,7 +27,8 @@ extern "C"
 #include "vrforch.h"
 
 using ::testing::StrictMock;
-
+using ::testing::NiceMock;
+ 
 /* Global variables */
 sai_object_id_t gVirtualRouterId = SAI_NULL_OBJECT_ID;
 sai_object_id_t gSwitchId = SAI_NULL_OBJECT_ID;
@@ -54,13 +60,13 @@ bool gIsNatSupported = false;
 bool gTraditionalFlexCounter = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 
-AclOrch* gAclOrch;
-PortsOrch *gPortsOrch;
-CrmOrch *gCrmOrch;
-P4Orch *gP4Orch;
-VRFOrch *gVrfOrch;
-FlowCounterRouteOrch *gFlowCounterRouteOrch;
-SwitchOrch *gSwitchOrch;
+AclOrch* gAclOrch = NULL;
+PortsOrch *gPortsOrch = NULL;
+CrmOrch *gCrmOrch = NULL;
+P4Orch *gP4Orch = NULL;
+VRFOrch *gVrfOrch =NULL;
+FlowCounterRouteOrch *gFlowCounterRouteOrch = NULL;
+SwitchOrch *gSwitchOrch = NULL;
 Directory<Orch *> gDirectory;
 swss::DBConnector *gAppDb;
 swss::DBConnector *gStateDb;
@@ -91,6 +97,12 @@ sai_l2mc_api_t* sai_l2mc_api;
 sai_l2mc_group_api_t* sai_l2mc_group_api;
 sai_bridge_api_t* sai_bridge_api;
 sai_generic_programmable_api_t *sai_generic_programmable_api;
+
+NiceMock<MockSaiSwitch> mock_sai_switch_;
+NiceMock<MockSaiHostif> mock_sai_hostif_;
+NiceMock<MockSaiRouterInterface> mock_sai_router_intf_;
+NiceMock<MockSaiRoute> mock_sai_route_;
+NiceMock<MockSaiAcl> mock_sai_acl_;
 
 task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context)
 {
@@ -192,6 +204,73 @@ void AddVrf()
     static_cast<Orch *>(gVrfOrch)->doTask();
 }
 
+void initSaiAclApi()
+{
+    mock_sai_acl = &mock_sai_acl_;
+    sai_acl_api->create_acl_table = create_acl_table;
+    sai_acl_api->remove_acl_table = remove_acl_table;
+    sai_acl_api->create_acl_table_group = create_acl_table_group;
+    sai_acl_api->remove_acl_table_group = remove_acl_table_group;
+    sai_acl_api->create_acl_table_group_member = create_acl_table_group_member;
+    sai_acl_api->remove_acl_table_group_member = remove_acl_table_group_member;
+    sai_acl_api->get_acl_counter_attribute = get_acl_counter_attribute;
+    sai_acl_api->create_acl_entry = create_acl_entry;
+    sai_acl_api->remove_acl_entry = remove_acl_entry;
+    sai_acl_api->set_acl_entry_attribute = set_acl_entry_attribute;
+    sai_acl_api->create_acl_counter = create_acl_counter;
+    sai_acl_api->remove_acl_counter = remove_acl_counter;
+}
+
+void initHostIfApi()
+{
+  mock_sai_hostif = &mock_sai_hostif_;
+  sai_hostif_api->create_hostif_trap = mock_create_hostif_trap;
+  sai_hostif_api->create_hostif_table_entry = mock_create_hostif_table_entry;
+
+  sai_hostif_api->create_hostif_trap = mock_create_hostif_trap;
+  sai_hostif_api->create_hostif_table_entry = mock_create_hostif_table_entry;
+  sai_hostif_api->remove_hostif_table_entry = mock_remove_hostif_table_entry;
+  sai_hostif_api->create_hostif_trap_group = mock_create_hostif_trap_group;
+  sai_hostif_api->create_hostif = mock_create_hostif;
+  sai_hostif_api->remove_hostif = mock_remove_hostif;
+  sai_hostif_api->create_hostif_user_defined_trap = mock_create_hostif_user_defined_trap;
+  sai_hostif_api->remove_hostif_user_defined_trap = mock_remove_hostif_user_defined_trap;
+}
+
+void initRouterIntfApi()
+{
+  mock_sai_router_intf = &mock_sai_router_intf_;
+  sai_router_intfs_api->create_router_interface =
+        mock_create_router_interface;
+  sai_router_intfs_api->remove_router_interface =
+        mock_remove_router_interface;
+  sai_router_intfs_api->set_router_interface_attribute =
+        mock_set_router_interface_attribute;
+  sai_router_intfs_api->remove_router_interface =
+        mock_remove_router_interface;
+}
+
+void initRouteApi()
+{
+  mock_sai_route = &mock_sai_route_;
+  sai_route_api->create_route_entry = create_route_entry;
+  sai_route_api->remove_route_entry = remove_route_entry;
+  sai_route_api->set_route_entry_attribute = set_route_entry_attribute;
+  sai_route_api->get_route_entry_attribute = get_route_entry_attribute;
+  sai_route_api->create_route_entries = create_route_entries;
+  sai_route_api->remove_route_entries = remove_route_entries;
+  sai_route_api->set_route_entries_attribute = set_route_entries_attribute;
+  sai_route_api->get_route_entries_attribute = get_route_entries_attribute;
+}
+
+void initSwitchApi()
+{
+
+	mock_sai_switch = &mock_sai_switch_;
+	sai_switch_api->get_switch_attribute = mock_get_switch_attribute;
+	sai_switch_api->set_switch_attribute = mock_set_switch_attribute;
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -255,11 +334,27 @@ int main(int argc, char *argv[])
     gConfigDb = &config_db;
     gCountersDb = &counters_db;
     std::vector<table_name_with_pri_t> ports_tables;
+
+    CrmOrch crm_orch(gConfigDb, CFG_CRM_TABLE_NAME);
+    gCrmOrch = &crm_orch;
+
+    initSaiAclApi();
+    initHostIfApi();
+    initRouterIntfApi();
+    initRouteApi();
+
+    initSwitchApi();
+    TableConnector stateDbSwitchTable(gStateDb, "SWITCH_CAPABILITY");
+    TableConnector app_switch_table(gAppDb, APP_SWITCH_TABLE_NAME);
+    TableConnector conf_asic_sensors(gConfigDb, CFG_ASIC_SENSORS_TABLE_NAME);
+    std::vector<TableConnector> switch_tables = {conf_asic_sensors,
+                                                 app_switch_table};
+    SwitchOrch switch_orch(gAppDb, switch_tables, stateDbSwitchTable);
+    gSwitchOrch = &switch_orch;
+
     PortsOrch ports_orch(gAppDb, gStateDb, ports_tables, gAppDb);
     gPortsOrch = &ports_orch;
-    CrmOrch crm_orch(gConfigDb, CFG_CRM_TABLE_NAME);
 
-    gCrmOrch = &crm_orch;
     VRFOrch vrf_orch(gAppDb, APP_VRF_TABLE_NAME, gStateDb, STATE_VRF_OBJECT_TABLE_NAME);
     gVrfOrch = &vrf_orch;
     gDirectory.set(static_cast<VRFOrch *>(&vrf_orch));

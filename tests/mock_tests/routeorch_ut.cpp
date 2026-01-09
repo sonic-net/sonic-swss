@@ -146,6 +146,12 @@ namespace routeorch_test
 
         void SetUp() override
         {
+            if (gCrmOrch)
+            {
+                delete gCrmOrch;
+                gCrmOrch = nullptr;
+            }
+
             ASSERT_EQ(sai_route_api, nullptr);
             map<string, string> profile = {
                 { "SAI_VS_SWITCH_TYPE", "SAI_VS_SWITCH_TYPE_BCM56850" },

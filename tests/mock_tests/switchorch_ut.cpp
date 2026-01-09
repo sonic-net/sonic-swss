@@ -108,6 +108,11 @@ namespace switchorch_test
             ASSERT_EQ(status, SAI_STATUS_SUCCESS);
         }
 
+        void initCrmOrch()
+        {
+            gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
+        }
+
         void initSwitchOrch()
         {
             TableConnector stateDbSwitchTable(m_state_db.get(), "SWITCH_CAPABILITY");
@@ -122,6 +127,7 @@ namespace switchorch_test
             };
 
             ASSERT_EQ(gSwitchOrch, nullptr);
+            initCrmOrch();
             gSwitchOrch = new SwitchOrch(m_app_db.get(), switch_tables, stateDbSwitchTable);
         }
 
