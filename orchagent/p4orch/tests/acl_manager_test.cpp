@@ -9,6 +9,7 @@
 #include "acl_rule_manager.h"
 #include "acl_table_manager.h"
 #include "acl_util.h"
+#include "aclorch.h"
 #include "acltable.h"
 #include "mock_response_publisher.h"
 #include "mock_sai_acl.h"
@@ -18,6 +19,7 @@
 #include "mock_sai_switch.h"
 #include "mock_sai_udf.h"
 #include "p4orch.h"
+#include "portsorch.h"
 #include "return_code.h"
 #include "switchorch.h"
 #include "table.h"
@@ -41,6 +43,7 @@ extern VRFOrch *gVrfOrch;
 extern P4Orch *gP4Orch;
 extern std::unique_ptr<MockResponsePublisher> gMockResponsePublisher;
 extern SwitchOrch *gSwitchOrch;
+extern AclOrch* gAclOrch;
 extern sai_object_id_t gSwitchId;
 extern sai_object_id_t gVrfOid;
 extern sai_object_id_t gTrapGroupStartOid;
@@ -2860,33 +2863,140 @@ TEST_F(AclManagerTest, AclRuleWithValidMatchFields)
     EXPECT_EQ(0x56789abcdef, acl_rule->out_ports_oids[1]);
 
     // Verify SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN
-    EXPECT_EQ(2, acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.data.u8list.count);
-    EXPECT_EQ(acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].data[0],
-              acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.data.u8list.list[0]);
-    EXPECT_EQ(acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].data[1],
-              acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.data.u8list.list[1]);
-    EXPECT_EQ(acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].mask[0],
-              acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.mask.u8list.list[0]);
-    EXPECT_EQ(acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].mask[1],
-              acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.mask.u8list.list[1]);
-    EXPECT_EQ(0xff, acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].data[0]);
-    EXPECT_EQ(0x11, acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].data[1]);
-    EXPECT_EQ(0xff, acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].mask[0]);
-    EXPECT_EQ(0xff, acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].mask[1]);
+    EXPECT_EQ(
+        2,
+        acl_rule
+            ->match_fvs[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .aclfield.data.u8list.count);
+    EXPECT_EQ(
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .data[0],
+        acl_rule
+            ->match_fvs[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .aclfield.data.u8list.list[0]);
+    EXPECT_EQ(
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .data[1],
+        acl_rule
+            ->match_fvs[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .aclfield.data.u8list.list[1]);
+    EXPECT_EQ(
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .mask[0],
+        acl_rule
+            ->match_fvs[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .aclfield.mask.u8list.list[0]);
+    EXPECT_EQ(
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .mask[1],
+        acl_rule
+            ->match_fvs[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .aclfield.mask.u8list.list[1]);
+    EXPECT_EQ(
+        0xff,
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .data[0]);
+    EXPECT_EQ(
+        0x11,
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .data[1]);
+    EXPECT_EQ(
+        0xff,
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .mask[0]);
+    EXPECT_EQ(
+        0xff,
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .mask[1]);
+
     // Verify SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1
-    EXPECT_EQ(2, acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].aclfield.data.objlist.count);
-    EXPECT_EQ(acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].data[0],
-              acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].aclfield.data.u8list.list[0]);
-    EXPECT_EQ(acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].data[1],
-              acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].aclfield.data.u8list.list[1]);
-    EXPECT_EQ(acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].mask[0],
-              acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].aclfield.mask.u8list.list[0]);
-    EXPECT_EQ(acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].mask[1],
-              acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].aclfield.mask.u8list.list[1]);
-    EXPECT_EQ(0x22, acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].data[0]);
-    EXPECT_EQ(0x31, acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].data[1]);
-    EXPECT_EQ(0xff, acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].mask[0]);
-    EXPECT_EQ(0xff, acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].mask[1]);
+    EXPECT_EQ(
+        2,
+        acl_rule
+            ->match_fvs[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .aclfield.data.objlist.count);
+    EXPECT_EQ(
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .data[0],
+        acl_rule
+            ->match_fvs[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .aclfield.data.u8list.list[0]);
+    EXPECT_EQ(
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .data[1],
+        acl_rule
+            ->match_fvs[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .aclfield.data.u8list.list[1]);
+    EXPECT_EQ(
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .mask[0],
+        acl_rule
+            ->match_fvs[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .aclfield.mask.u8list.list[0]);
+    EXPECT_EQ(
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .mask[1],
+        acl_rule
+            ->match_fvs[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .aclfield.mask.u8list.list[1]);
+    EXPECT_EQ(
+        0x22,
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .data[0]);
+    EXPECT_EQ(
+        0x31,
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .data[1]);
+    EXPECT_EQ(
+        0xff,
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .mask[0]);
+    EXPECT_EQ(
+        0xff,
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .mask[1]);
     EXPECT_EQ(0xaabbccdd, acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_IN_PORT].aclfield.data.oid);
     EXPECT_EQ(0x56789abcdff, acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORT].aclfield.data.oid);
     EXPECT_EQ(0x2, acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_TCP_FLAGS].aclfield.data.u8);
@@ -5137,20 +5247,31 @@ TEST_F(AclManagerTest, AclTableVerifyStateTest)
 
     // Setup ASIC DB.
     swss::Table table(nullptr, "ASIC_STATE");
-    table.set("SAI_OBJECT_TYPE_ACL_TABLE:oid:0x7000000000606",
-              std::vector<swss::FieldValueTuple>{
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_ACL_STAGE", "SAI_ACL_STAGE_INGRESS"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_SIZE", "123"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_DST_MAC", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_TTL", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_USER_DEFINED_FIELD_GROUP_MIN", "oid:0xfa1"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST", "1:SAI_ACL_ACTION_TYPE_COUNTER"}});
+    table.set(
+        "SAI_OBJECT_TYPE_ACL_TABLE:oid:0x7000000000606",
+        std::vector<swss::FieldValueTuple>{
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_ACL_STAGE",
+                                  "SAI_ACL_STAGE_INGRESS"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_SIZE", "123"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE",
+                                  "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_DST_MAC", "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE",
+                                  "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE", "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6", "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER",
+                                  "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT",
+                                  "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_TTL", "true"},
+            swss::FieldValueTuple{
+                "SAI_ACL_TABLE_ATTR_USER_DEFINED_FIELD_GROUP_MIN", "oid:0xfa1"},
+            swss::FieldValueTuple{
+                "SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST",
+                "4:SAI_ACL_ACTION_TYPE_PACKET_ACTION,SAI_ACL_ACTION_TYPE_"
+                "COUNTER,"
+                "SAI_ACL_ACTION_TYPE_SET_POLICER,SAI_ACL_ACTION_TYPE_SET_TC"}});
     table.set("SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER:oid:0xc000000000607",
               std::vector<swss::FieldValueTuple>{
                   swss::FieldValueTuple{"SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_GROUP_ID", "oid:0xb00000000058f"},
@@ -5556,36 +5677,80 @@ TEST_F(AclManagerTest, AclRuleVerifyStateTest)
     acl_rule->action_mirror_sessions.erase(SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_EGRESS);
 
     // Verification should fail if UDF data mask mismatches.
-    acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_2] = P4UdfDataMask{};
+    acl_rule->udf_data_masks[(
+        sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_2)] =
+        P4UdfDataMask{};
     EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty());
-    acl_rule->udf_data_masks.erase(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_2);
+    acl_rule->udf_data_masks.erase(
+        (sai_acl_entry_attr_t)SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_2);
 
     // Verification should fail if UDF data mask pointer mismatches.
-    auto udf_data_mask = std::move(acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN]);
-    acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN] = sai_attribute_value_t{};
+    auto udf_data_mask = std::move(acl_rule->match_fvs[(
+        sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]);
+    acl_rule->match_fvs[(
+        sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)] =
+        sai_attribute_value_t{};
     EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty()) << VerifyRuleState(db_key, attributes);
 
-    acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.data.u8list.count = 1;
-    acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.mask.u8list.count = 2;
-    EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty()) << VerifyRuleState(db_key, attributes);
+    acl_rule
+        ->match_fvs[(
+            sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+        .aclfield.data.u8list.count = 1;
+    acl_rule
+        ->match_fvs[(
+            sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+        .aclfield.mask.u8list.count = 2;
+    EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty())
+        << VerifyRuleState(db_key, attributes);
 
-    acl_rule->match_fvs.erase(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN);
-    acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_2] = sai_attribute_value_t{};
-    EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty()) << VerifyRuleState(db_key, attributes);
-    acl_rule->match_fvs.erase(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_2);
+    acl_rule->match_fvs[(
+        sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_2)] =
+        sai_attribute_value_t{};
+    EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty())
+        << VerifyRuleState(db_key, attributes);
+    acl_rule->match_fvs.erase(
+        (sai_acl_entry_attr_t)SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_2);
 
-    acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.data.u8list.list = nullptr;
-    acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.data.u8list.count = 2;
-    acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.mask.u8list.list =
-        acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].mask.data();
-    acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.mask.u8list.count = 2;
-    EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty()) << VerifyRuleState(db_key, attributes);
+    acl_rule
+        ->match_fvs[(
+            sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+        .aclfield.data.u8list.list = nullptr;
+    acl_rule
+        ->match_fvs[(
+            sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+        .aclfield.data.u8list.count = 2;
+    acl_rule
+        ->match_fvs[(
+            sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+        .aclfield.mask.u8list.list =
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .mask.data();
+    acl_rule
+        ->match_fvs[(
+            sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+        .aclfield.mask.u8list.count = 2;
+    EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty())
+        << VerifyRuleState(db_key, attributes);
 
-    acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.data.u8list.list =
-        acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].data.data();
-    acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.mask.u8list.list = nullptr;
-    EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty()) << VerifyRuleState(db_key, attributes);
-    acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN] = std::move(udf_data_mask);
+    acl_rule
+        ->match_fvs[(
+            sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+        .aclfield.data.u8list.list =
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .data.data();
+    acl_rule
+        ->match_fvs[(
+            sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+        .aclfield.mask.u8list.list = nullptr;
+    EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty())
+        << VerifyRuleState(db_key, attributes);
+    acl_rule->match_fvs[(
+        sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)] =
+        std::move(udf_data_mask);
 
     // Verification should fail if in ports mismatches.
     acl_rule->in_ports.push_back("invalid");
@@ -5676,20 +5841,31 @@ TEST_F(AclManagerTest, AclTableVerifyStateAsicDbTest)
 
     // Setup ASIC DB.
     swss::Table table(nullptr, "ASIC_STATE");
-    table.set("SAI_OBJECT_TYPE_ACL_TABLE:oid:0x7000000000606",
-              std::vector<swss::FieldValueTuple>{
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_ACL_STAGE", "SAI_ACL_STAGE_INGRESS"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_SIZE", "123"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_DST_MAC", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_TTL", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_USER_DEFINED_FIELD_GROUP_MIN", "oid:0xfa1"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST", "1:SAI_ACL_ACTION_TYPE_COUNTER"}});
+    table.set(
+        "SAI_OBJECT_TYPE_ACL_TABLE:oid:0x7000000000606",
+        std::vector<swss::FieldValueTuple>{
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_ACL_STAGE",
+                                  "SAI_ACL_STAGE_INGRESS"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_SIZE", "123"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE",
+                                  "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_DST_MAC", "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE",
+                                  "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE", "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6", "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER",
+                                  "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT",
+                                  "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_TTL", "true"},
+            swss::FieldValueTuple{
+                "SAI_ACL_TABLE_ATTR_USER_DEFINED_FIELD_GROUP_MIN", "oid:0xfa1"},
+            swss::FieldValueTuple{
+                "SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST",
+                "4:SAI_ACL_ACTION_TYPE_PACKET_ACTION,SAI_ACL_ACTION_TYPE_"
+                "COUNTER,"
+                "SAI_ACL_ACTION_TYPE_SET_POLICER,SAI_ACL_ACTION_TYPE_SET_TC"}});
     table.set("SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER:oid:0xc000000000607",
               std::vector<swss::FieldValueTuple>{
                   swss::FieldValueTuple{"SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_GROUP_ID", "oid:0xb00000000058f"},
@@ -5718,20 +5894,31 @@ TEST_F(AclManagerTest, AclTableVerifyStateAsicDbTest)
     // Verification should fail if ACL table is missing.
     table.del("SAI_OBJECT_TYPE_ACL_TABLE:oid:0x7000000000606");
     EXPECT_FALSE(VerifyTableState(db_key, attributes).empty());
-    table.set("SAI_OBJECT_TYPE_ACL_TABLE:oid:0x7000000000606",
-              std::vector<swss::FieldValueTuple>{
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_ACL_STAGE", "SAI_ACL_STAGE_INGRESS"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_SIZE", "123"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_DST_MAC", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_TTL", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_USER_DEFINED_FIELD_GROUP_MIN", "oid:0xfa1"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST", "1:SAI_ACL_ACTION_TYPE_COUNTER"}});
+    table.set(
+        "SAI_OBJECT_TYPE_ACL_TABLE:oid:0x7000000000606",
+        std::vector<swss::FieldValueTuple>{
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_ACL_STAGE",
+                                  "SAI_ACL_STAGE_INGRESS"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_SIZE", "123"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE",
+                                  "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_DST_MAC", "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE",
+                                  "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE", "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6", "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER",
+                                  "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT",
+                                  "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_TTL", "true"},
+            swss::FieldValueTuple{
+                "SAI_ACL_TABLE_ATTR_USER_DEFINED_FIELD_GROUP_MIN", "oid:0xfa1"},
+            swss::FieldValueTuple{
+                "SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST",
+                "4:SAI_ACL_ACTION_TYPE_PACKET_ACTION,SAI_ACL_ACTION_TYPE_"
+                "COUNTER,"
+                "SAI_ACL_ACTION_TYPE_SET_POLICER,SAI_ACL_ACTION_TYPE_SET_TC"}});
 
     // Verification should fail if table group member mismatch.
     table.set(
