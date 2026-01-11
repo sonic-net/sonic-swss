@@ -852,6 +852,8 @@ TEST_F(FpmSyncdResponseTest, TestNextHopGroupAdd)
     free(group_nlh);
 }
 
+// This test verifies onRouteMsg behavior when NHG Full is disabled (m_nhgFullEnabled=false),
+// i.e. the legacy m_nh_groups table path is active.
 TEST_F(FpmSyncdResponseTest, TestRouteMsgWithNHG)
 {
     Table route_table(m_db.get(), APP_ROUTE_TABLE_NAME);
