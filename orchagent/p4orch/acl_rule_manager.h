@@ -157,7 +157,7 @@ class AclRuleManager : public ObjectManagerInterface
     std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
     std::unique_ptr<swss::DBConnector> m_countersDb;
     std::unique_ptr<swss::Table> m_countersTable;
-    std::vector<P4UserDefinedTrapHostifTableEntry> m_userDefinedTraps;
+    std::map<int, P4UserDefinedTrapHostifTableEntry> m_userDefinedTraps;
 
     friend class AclTableManager;
     friend class p4orch::test::AclManagerTest;
