@@ -355,12 +355,25 @@ public:
             {
                 return nullptr;
             }
-            if (port->m_line_side_id != SAI_NULL_OBJECT_ID)
+
+            const auto *phy = get_gearbox_phy();
+            bool force_npu = true;
+            if (phy)
+            {
+                force_npu = !phy->macsec_supported;
+            }
+
+            if (!force_npu && port->m_line_side_id != SAI_NULL_OBJECT_ID)
             {
                 m_port_id = std::make_unique<sai_object_id_t>(port->m_line_side_id);
             }
             else
             {
+                if (force_npu && port->m_line_side_id != SAI_NULL_OBJECT_ID)
+                {
+                    SWSS_LOG_NOTICE("MACsec: %s -> backend=NPU (phy marked unsupported), using NPU port",
+                                    m_port_name ? m_port_name->c_str() : "");
+                }
                 m_port_id = std::make_unique<sai_object_id_t>(port->m_port_id);
             }
         }
@@ -381,12 +394,27 @@ public:
             {
                 switchId = port->m_switch_id;
             }
+
             if (switchId == SAI_NULL_OBJECT_ID)
             {
                 SWSS_LOG_ERROR("Switch ID cannot be found");
                 return nullptr;
             }
             m_switch_id = std::make_unique<sai_object_id_t>(switchId);
+
+            const auto *phy = port ? m_orch->m_port_orch->getGearboxPhy(*port) : nullptr;
+            bool force_npu = true;
+            if (phy)
+            {
+                force_npu = !phy->macsec_supported;
+            }
+
+            if (force_npu && (*m_switch_id != gSwitchId))
+            {
+                SWSS_LOG_NOTICE("MACsec: %s -> backend=NPU (phy marked unsupported), override switch to global",
+                                m_port_name ? m_port_name->c_str() : "");
+                *m_switch_id = gSwitchId;
+            }
         }
         return m_switch_id.get();
     }
@@ -2507,28 +2535,32 @@ bool MACsecOrch::deleteMACsecSA(sai_object_id_t sa_id)
 
 FlexCounterManager& MACsecOrch::MACsecSaStatManager(MACsecOrchContext &ctx)
 {
-    if (ctx.get_gearbox_phy() != nullptr)
+    const auto *phy = ctx.get_gearbox_phy();
+    if (phy && phy->macsec_supported)
         return m_gb_macsec_sa_stat_manager;
     return m_macsec_sa_stat_manager;
 }
 
 FlexCounterManager& MACsecOrch::MACsecSaAttrStatManager(MACsecOrchContext &ctx)
 {
-    if (ctx.get_gearbox_phy() != nullptr)
+    const auto *phy = ctx.get_gearbox_phy();
+    if (phy && phy->macsec_supported)
         return m_gb_macsec_sa_attr_manager;
     return m_macsec_sa_attr_manager;
 }
 
 FlexCounterManager& MACsecOrch::MACsecFlowStatManager(MACsecOrchContext &ctx)
 {
-    if (ctx.get_gearbox_phy() != nullptr)
+    const auto *phy = ctx.get_gearbox_phy();
+    if (phy && phy->macsec_supported)
         return m_gb_macsec_flow_stat_manager;
     return m_macsec_flow_stat_manager;
 }
 
 Table& MACsecOrch::MACsecCountersMap(MACsecOrchContext &ctx)
 {
-    if (ctx.get_gearbox_phy() != nullptr)
+    const auto *phy = ctx.get_gearbox_phy();
+    if (phy && phy->macsec_supported)
         return m_gb_macsec_counters_map;
     return m_macsec_counters_map;
 }
