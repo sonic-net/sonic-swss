@@ -59,6 +59,8 @@ namespace routeorch_test
     }
 
     DEFINE_SAI_API_MOCK_SPECIFY_ENTRY_WITH_SET(route, route);
+    // Mock next hop group generic API to control NHG creation behavior
+    DEFINE_SAI_GENERIC_API_MOCK(next_hop_group, next_hop_group);
 
     shared_ptr<swss::DBConnector> m_app_db;
     shared_ptr<swss::DBConnector> m_config_db;
@@ -155,6 +157,7 @@ namespace routeorch_test
             ut_helper::initSaiApi(profile);
 
             INIT_SAI_API_MOCK(route);
+            INIT_SAI_API_MOCK(next_hop_group);
             MockSaiApis();
 
             // Hack the route create function
@@ -390,6 +393,7 @@ namespace routeorch_test
         {
             RestoreSaiApis();
             DEINIT_SAI_API_MOCK(route);
+            DEINIT_SAI_API_MOCK(next_hop_group);
 
             gDirectory.m_values.clear();
 
@@ -433,6 +437,50 @@ namespace routeorch_test
             ut_helper::uninitSaiApi();
         }
     };
+
+    // Verify temp-route nexthop selection varies when NHG creation fails
+    TEST_F(RouteOrchTest, RouteOrchTempRouteSelectionVaries)
+    {
+        // Force NHG creation to fail so addTempRoute is used
+        EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(::testing::_, ::testing::_, ::testing::_, ::testing::_))
+            .WillRepeatedly(Return(SAI_STATUS_FAILURE));
+
+        auto *routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        const std::string prefix = "3.3.3.0/24";
+
+        // Run multiple DEL/SET cycles to trigger temp-route selection repeatedly
+        std::set<std::string> chosen_nhs;
+        for (int i = 0; i < 10; ++i)
+        {
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            entries.push_back({ prefix, "DEL", {} });
+            entries.push_back({ prefix, "SET",
+                                { {"ifname", "Ethernet0,Ethernet0"},
+                                  {"nexthop", "10.0.0.2,10.0.0.3" } } });
+
+            routeConsumer->addToSync(entries);
+            static_cast<Orch *>(gRouteOrch)->doTask();
+
+            // Inspect the synced route's NHG key (should be a single temp NH)
+            const auto &routes = gRouteOrch->getSyncdRoutes();
+            auto vrf_it = routes.find(gVirtualRouterId);
+            ASSERT_NE(vrf_it, routes.end());
+            IpPrefix pfx(prefix);
+            auto rt_it = vrf_it->second.find(pfx);
+            ASSERT_NE(rt_it, vrf_it->second.end());
+            const auto &nhg_key = rt_it->second.nhg_key;
+            ASSERT_EQ(nhg_key.getSize(), 1u);
+            const auto &nh = *nhg_key.getNextHops().begin();
+            // Record selected nexthop string (IP@alias)
+            chosen_nhs.insert(nh.to_string());
+        }
+
+        // Expect at least two distinct nexthops observed across trials
+        // This confirms we are not always selecting the same member
+        ASSERT_GE(chosen_nhs.size(), 2u);
+    }
 
     TEST_F(RouteOrchTest, RouteOrch_AddDeleteIPv6)
     {
