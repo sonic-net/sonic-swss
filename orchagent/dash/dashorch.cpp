@@ -144,19 +144,21 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
         return false;
     }
 
-    uint32_t attr_count = 1;
-    sai_attribute_t appliance_attr;
+    sai_object_id_t sai_appliance_id = 0UL;
     sai_status_t status;
 
-    // NOTE: DASH Appliance object should be the first object pushed to SAI
-    sai_object_id_t sai_appliance_id = 0UL;
-    appliance_attr.id = SAI_DASH_APPLIANCE_ATTR_LOCAL_REGION_ID;
-    appliance_attr.value.u32 = entry.local_region_id();
-    status = sai_dash_appliance_api->create_dash_appliance(&sai_appliance_id, gSwitchId,
-                                                           attr_count, &appliance_attr);
-    if (status != SAI_STATUS_SUCCESS)
+    sai_attr_capability_t capability;
+    status = sai_query_attribute_capability(gSwitchId, (sai_object_type_t)SAI_OBJECT_TYPE_DASH_APPLIANCE, SAI_DASH_APPLIANCE_ATTR_LOCAL_REGION_ID, &capability);
+    if (status == SAI_STATUS_SUCCESS && capability.create_implemented)
     {
-        if (status != SAI_STATUS_NOT_IMPLEMENTED)
+        vector<sai_attribute_t> appliance_attrs;
+        sai_attribute_t attr;
+        attr.id = SAI_DASH_APPLIANCE_ATTR_LOCAL_REGION_ID;
+        attr.value.u32 = entry.local_region_id();
+        appliance_attrs.push_back(attr);
+
+        status = sai_dash_appliance_api->create_dash_appliance(&sai_appliance_id, gSwitchId, (uint32_t)appliance_attrs.size(), appliance_attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create dash appliance object in SAI for %s", appliance_id.c_str());
             task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_APPLIANCE, status);
@@ -165,8 +167,6 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
                 return parseHandleSaiStatusFailure(handle_status);
             }
         }
-        // ignore if not implemented in SAI
-        sai_appliance_id = 0;
     }
 
     sai_vip_entry_t vip_entry;
@@ -175,9 +175,10 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
     {
         return false;
     }
+    sai_attribute_t appliance_attr;
     appliance_attr.id = SAI_VIP_ENTRY_ATTR_ACTION;
     appliance_attr.value.u32 = SAI_VIP_ENTRY_ACTION_ACCEPT;
-    status = sai_dash_vip_api->create_vip_entry(&vip_entry, attr_count, &appliance_attr);
+    status = sai_dash_vip_api->create_vip_entry(&vip_entry, 1, &appliance_attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create vip entry for %s", appliance_id.c_str());
