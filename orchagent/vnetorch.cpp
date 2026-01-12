@@ -1006,7 +1006,7 @@ NextHopGroupKey VNetRouteOrch::getActiveNHSet(const string& vnet,
 
                     if (monitor.second.monitoring_type == VNET_MONITORING_TYPE_CUSTOM_BFD &&
                         monitor.second.custom_bfd_state == SAI_BFD_SESSION_STATE_UP &&
-                        monitor.second.pinned_state != PINNED_STATE_NONE)
+                        monitor.second.pinned_state != PINNED_STATE_DOWN)
                     {
                         // BFD session exists and is up
                         nhg_custom.add(it);
