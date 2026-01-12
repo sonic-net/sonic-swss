@@ -551,6 +551,8 @@ private:
     void delEndpointMonitor(const string& vnet, NextHopGroupKey& nexthops, IpPrefix& ipPrefix);
     void delEndpointMonitor(const string& vnet, const std::map<NextHopKey, IpAddress>& monitors, IpPrefix& ipPrefix);
 
+    bool isPinnedStateUpdated(const string& vnet, IpPrefix& ipPrefix,
+                                  const std::map<IpAddress, pinned_state_t>& monitor_addr_to_pinned_state);
     void updateMonitorPinnedState(const string& vnet, IpPrefix& ipPrefix,
                                   const std::map<IpAddress, pinned_state_t>& monitor_addr_to_pinned_state);
 

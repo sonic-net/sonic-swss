@@ -1192,6 +1192,8 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             getCustomMonitors(vnet, ipPrefix, it_route->second.secondary, origin_secondary_monitors);
         }
 
+        bool is_custom_monitor_pinned_state_updated = isPinnedStateUpdated(vnet, ipPrefix, monitor_addr_to_pinned_state);
+
         sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
         NextHopGroupKey active_nhg("", true);
         if (!selectNextHopGroup(vnet, nexthops, nexthops_secondary, monitoring, rx_monitor_timer, tx_monitor_timer, ipPrefix, vrf_obj, active_nhg, monitors, monitor_addr_to_pinned_state))
@@ -1336,6 +1338,9 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                     vrf_obj->removeRoute(ipPrefix);
                     vrf_obj->removeProfile(ipPrefix);
                 }
+            } else if (is_custom_monitor_pinned_state_updated)
+            {
+                route_updated = true;
             }
         }
         if (!profile.empty())
@@ -2368,6 +2373,32 @@ void VNetRouteOrch::delEndpointMonitor(const string& vnet, const std::map<NextHo
     }
 }
 
+bool VNetRouteOrch::isPinnedStateUpdated(const string& vnet, IpPrefix& ipPrefix,
+                                           const std::map<IpAddress, pinned_state_t>& monitor_addr_to_pinned_state)
+{
+    SWSS_LOG_ENTER();
+
+    if (monitor_info_.find(vnet) == monitor_info_.end() || monitor_info_[vnet].find(ipPrefix) == monitor_info_[vnet].end())
+    {
+        return false;
+    }
+
+    for (const auto& monitor : monitor_addr_to_pinned_state)
+    {
+        const IpAddress& monitor_ip = monitor.first;
+        pinned_state_t pinned_state = monitor.second;
+
+        if (monitor_info_[vnet][ipPrefix].find(monitor_ip) != monitor_info_[vnet][ipPrefix].end() &&
+            monitor_info_[vnet][ipPrefix][monitor_ip].monitoring_type == VNET_MONITORING_TYPE_CUSTOM_BFD &&
+            monitor_info_[vnet][ipPrefix][monitor_ip].pinned_state != pinned_state)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void VNetRouteOrch::updateMonitorPinnedState(const string& vnet, IpPrefix& ipPrefix,
                                   const std::map<IpAddress, pinned_state_t>& monitor_addr_to_pinned_state)
 {
@@ -2385,6 +2416,8 @@ void VNetRouteOrch::updateMonitorPinnedState(const string& vnet, IpPrefix& ipPre
 
         if (monitor_info_[vnet][ipPrefix].find(monitor_ip) != monitor_info_[vnet][ipPrefix].end())
         {
+            SWSS_LOG_NOTICE("Updating pinned state for monitor %s of prefix %s in vnet %s to %d",
+                monitor_ip.to_string().c_str(), ipPrefix.to_string().c_str(), vnet.c_str(), pinned_state);
             monitor_info_[vnet][ipPrefix][monitor_ip].pinned_state = pinned_state;
         }
     }
