@@ -1005,8 +1005,9 @@ NextHopGroupKey VNetRouteOrch::getActiveNHSet(const string& vnet,
                     }
 
                     if (monitor.second.monitoring_type == VNET_MONITORING_TYPE_CUSTOM_BFD &&
-                        monitor.second.custom_bfd_state == SAI_BFD_SESSION_STATE_UP &&
-                        monitor.second.pinned_state != PINNED_STATE_DOWN)
+                        (monitor.second.pinned_state == PINNED_STATE_UP ||
+                            (monitor.second.custom_bfd_state == SAI_BFD_SESSION_STATE_UP &&
+                             monitor.second.pinned_state != PINNED_STATE_DOWN)))
                     {
                         // BFD session exists and is up
                         nhg_custom.add(it);
@@ -1357,7 +1358,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             syncd_tunnel_routes_[vnet][ipPrefix] = tunnel_route_entry;
             syncd_nexthop_groups_[vnet][active_nhg].ref_count++;
 
-            if (priority_route_updated || custom_monitor_ep_updated)
+            if (priority_route_updated || custom_monitor_ep_updated || is_custom_monitor_pinned_state_updated)
             {
                 MonitorUpdate update;
                 update.monitoring_type = monitoring;
@@ -2416,9 +2417,12 @@ void VNetRouteOrch::updateMonitorPinnedState(const string& vnet, IpPrefix& ipPre
 
         if (monitor_info_[vnet][ipPrefix].find(monitor_ip) != monitor_info_[vnet][ipPrefix].end())
         {
-            SWSS_LOG_NOTICE("Updating pinned state for monitor %s of prefix %s in vnet %s to %d",
-                monitor_ip.to_string().c_str(), ipPrefix.to_string().c_str(), vnet.c_str(), pinned_state);
-            monitor_info_[vnet][ipPrefix][monitor_ip].pinned_state = pinned_state;
+            if (monitor_info_[vnet][ipPrefix][monitor_ip].pinned_state != pinned_state)
+            {
+                SWSS_LOG_NOTICE("Updating pinned state for monitor %s of prefix %s in vnet %s to %d",
+                    monitor_ip.to_string().c_str(), ipPrefix.to_string().c_str(), vnet.c_str(), pinned_state);
+                monitor_info_[vnet][ipPrefix][monitor_ip].pinned_state = pinned_state;
+            }
         }
     }
 }
