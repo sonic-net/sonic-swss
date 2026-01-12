@@ -1732,6 +1732,10 @@ bool PortsOrch::getPort(sai_object_id_t id, Port &port)
     return false;
 }
 
+bool PortsOrch::isFrontPanelPort(Port& port) {
+  return port.m_type == Port::PHY;
+}
+
 void PortsOrch::increasePortRefCount(const string &alias)
 {
     assert (m_port_ref_count.find(alias) != m_port_ref_count.end());

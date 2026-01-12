@@ -93,58 +93,59 @@ ReturnCode validateAppDbEntry(const P4NextHopAppDbEntry &app_db_entry)
 
 } // namespace
 
-ReturnCodeOr<std::vector<sai_attribute_t>> NextHopManager::getSaiAttrs(const P4NextHopEntry &next_hop_entry)
-{
-    std::vector<sai_attribute_t> next_hop_attrs;
-    sai_attribute_t next_hop_attr;
+ReturnCodeOr<std::vector<sai_attribute_t>> NextHopManager::prepareSaiAttrs(
+    const P4NextHopEntry& next_hop_entry) {
+  std::vector<sai_attribute_t> next_hop_attrs;
+  sai_attribute_t next_hop_attr;
 
-    if (!next_hop_entry.gre_tunnel_id.empty())
-    {
-        // From centralized mapper and, get gre tunnel that next hop depends on. Get
-        // underlay router interface from gre tunnel manager,
-        sai_object_id_t tunnel_oid;
-        if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_TUNNEL,
-                                   KeyGenerator::generateTunnelKey(next_hop_entry.gre_tunnel_id), &tunnel_oid))
-        {
-            LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-                                 << "GRE Tunnel " << QuotedVar(next_hop_entry.gre_tunnel_id) << " does not exist");
-        }
-
-        next_hop_attr.id = SAI_NEXT_HOP_ATTR_TYPE;
-        next_hop_attr.value.s32 = SAI_NEXT_HOP_TYPE_TUNNEL_ENCAP;
-        next_hop_attrs.push_back(next_hop_attr);
-
-        next_hop_attr.id = SAI_NEXT_HOP_ATTR_TUNNEL_ID;
-        next_hop_attr.value.oid = tunnel_oid;
-        next_hop_attrs.push_back(next_hop_attr);
-    }
-    else
-    {
-        // From centralized mapper, get OID of router interface that next hop
-        // depends on.
-        sai_object_id_t rif_oid;
-        if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
-                                   KeyGenerator::generateRouterInterfaceKey(next_hop_entry.router_interface_id),
-                                   &rif_oid))
-        {
-            LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-                                 << "Router intf " << QuotedVar(next_hop_entry.router_interface_id)
-                                 << " does not exist");
-        }
-        next_hop_attr.id = SAI_NEXT_HOP_ATTR_TYPE;
-        next_hop_attr.value.s32 = SAI_NEXT_HOP_TYPE_IP;
-        next_hop_attrs.push_back(next_hop_attr);
-
-        next_hop_attr.id = SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID;
-        next_hop_attr.value.oid = rif_oid;
-        next_hop_attrs.push_back(next_hop_attr);
+  if (!next_hop_entry.gre_tunnel_id.empty()) {
+    // From centralized mapper and, get gre tunnel that next hop depends on. Get
+    // underlay router interface from gre tunnel manager,
+    sai_object_id_t tunnel_oid;
+    if (!m_p4OidMapper->getOID(
+            SAI_OBJECT_TYPE_TUNNEL,
+            KeyGenerator::generateTunnelKey(next_hop_entry.gre_tunnel_id),
+            &tunnel_oid)) {
+      LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                           << "GRE Tunnel "
+                           << QuotedVar(next_hop_entry.gre_tunnel_id)
+                           << " does not exist");
     }
 
-    next_hop_attr.id = SAI_NEXT_HOP_ATTR_IP;
-    swss::copy(next_hop_attr.value.ipaddr, next_hop_entry.neighbor_id);
+    next_hop_attr.id = SAI_NEXT_HOP_ATTR_TYPE;
+    next_hop_attr.value.s32 = SAI_NEXT_HOP_TYPE_TUNNEL_ENCAP;
     next_hop_attrs.push_back(next_hop_attr);
 
-    return next_hop_attrs;
+    next_hop_attr.id = SAI_NEXT_HOP_ATTR_TUNNEL_ID;
+    next_hop_attr.value.oid = tunnel_oid;
+    next_hop_attrs.push_back(next_hop_attr);
+  } else {
+    // From centralized mapper, get OID of router interface that next hop
+    // depends on.
+    sai_object_id_t rif_oid;
+    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                               KeyGenerator::generateRouterInterfaceKey(
+                                   next_hop_entry.router_interface_id),
+                               &rif_oid)) {
+      LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                           << "Router intf "
+                           << QuotedVar(next_hop_entry.router_interface_id)
+                           << " does not exist");
+    }
+    next_hop_attr.id = SAI_NEXT_HOP_ATTR_TYPE;
+    next_hop_attr.value.s32 = SAI_NEXT_HOP_TYPE_IP;
+    next_hop_attrs.push_back(next_hop_attr);
+
+    next_hop_attr.id = SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID;
+    next_hop_attr.value.oid = rif_oid;
+    next_hop_attrs.push_back(next_hop_attr);
+  }
+
+  next_hop_attr.id = SAI_NEXT_HOP_ATTR_IP;
+  swss::copy(next_hop_attr.value.ipaddr, next_hop_entry.neighbor_id);
+  next_hop_attrs.push_back(next_hop_attr);
+
+  return next_hop_attrs;
 }
 
 ReturnCode NextHopManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type,
@@ -386,7 +387,8 @@ ReturnCode NextHopManager::createNextHop(P4NextHopEntry &next_hop_entry)
                              << " does not exist in centralized mapper");
     }
 
-    ASSIGN_OR_RETURN(std::vector<sai_attribute_t> attrs, getSaiAttrs(next_hop_entry));
+    ASSIGN_OR_RETURN(std::vector<sai_attribute_t> attrs,
+                     prepareSaiAttrs(next_hop_entry));
 
     // Call SAI API.
     CHECK_ERROR_AND_LOG_AND_RETURN(sai_next_hop_api->create_next_hop(&next_hop_entry.next_hop_oid, gSwitchId,
@@ -666,11 +668,11 @@ std::string NextHopManager::verifyStateCache(const P4NextHopAppDbEntry &app_db_e
 
 std::string NextHopManager::verifyStateAsicDb(const P4NextHopEntry *next_hop_entry)
 {
-    auto attrs_or = getSaiAttrs(*next_hop_entry);
-    if (!attrs_or.ok())
-    {
-        return std::string("Failed to get SAI attrs: ") + attrs_or.status().message();
-    }
+  auto attrs_or = prepareSaiAttrs(*next_hop_entry);
+  if (!attrs_or.ok()) {
+    return std::string("Failed to get SAI attrs: ") +
+           attrs_or.status().message();
+  }
     std::vector<sai_attribute_t> attrs = *attrs_or;
     std::vector<swss::FieldValueTuple> exp =
         saimeta::SaiAttributeList::serialize_attr_list(SAI_OBJECT_TYPE_NEXT_HOP, (uint32_t)attrs.size(), attrs.data(),
