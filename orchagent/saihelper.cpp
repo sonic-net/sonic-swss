@@ -766,10 +766,10 @@ void handleSaiFailure(sai_api_t api, string oper, sai_status_t status, bool abor
     attr.id = SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD;
     attr.value.s32 =  SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP;
 
-    status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-    if (status != SAI_STATUS_SUCCESS)
+    sai_status_t dump_status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    if (dump_status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to take sai failure dump %d", status);
+        SWSS_LOG_ERROR("Failed to take sai failure dump %d", dump_status);
     }
     if (abort_on_failure)
     {
