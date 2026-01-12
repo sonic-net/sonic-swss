@@ -61,7 +61,13 @@ class TestZmqRouteBase(TestRouteBase):
 
 class TestRoute(TestZmqRouteBase):
 
-    """ Functionality tests for route """
+    """ Functionality tests for route with mgmt VRF and ZMQ enabled
+
+    This test validates that fpmsyncd is able to connecto the orchagent, while mgmt
+    VRF is configured along with ZMQ. This excercises the code used to fix the 
+    following issue:
+    https://github.com/sonic-net/sonic-swss/issues/3985
+    """
 
     def test_RouteAddRemoveIpv4Route(self, dvs, testlog):
         self.setup_db(dvs)
