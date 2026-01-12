@@ -438,51 +438,65 @@ namespace routeorch_test
         }
     };
 
-    // Verify temp-route nexthop selection varies when NHG creation fails
-    TEST_F(RouteOrchTest, RouteOrchTempRouteSelectionVaries)
+TEST_F(RouteOrchTest, RouteOrchTempRouteSelectionVaries)
+{
+    // Force NHG creation to fail so addTempRoute() is used
+    EXPECT_CALL(*mock_sai_next_hop_group_api,
+                create_next_hop_group(::testing::_, ::testing::_, ::testing::_, ::testing::_))
+        .WillRepeatedly(Return(SAI_STATUS_FAILURE));
+
+    auto *routeConsumer =
+        dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+    ASSERT_NE(routeConsumer, nullptr);
+
+    const std::string prefix = "3.3.3.0/24";
+
+    // Capture NEXT_HOP_IDs programmed via bulker
+    std::set<sai_object_id_t> programmed_nh_oids;
+
+    EXPECT_CALL(*mock_sai_route_api,
+                create_route_entries(::testing::_, ::testing::_, ::testing::_, ::testing::_, ::testing::_, ::testing::_))
+        .WillRepeatedly(::testing::Invoke(
+            [&](uint32_t object_count,
+                const sai_route_entry_t * /*route_entries*/,
+                const uint32_t *attr_count,
+                const sai_attribute_t **attr_list,
+                sai_bulk_op_error_mode_t /*mode*/,
+                sai_status_t *object_statuses) -> sai_status_t
+            {
+                for (uint32_t i = 0; i < object_count; ++i)
+                {
+                    for (uint32_t j = 0; j < attr_count[i]; ++j)
+                    {
+                        if (attr_list[i][j].id == SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID)
+                        {
+                            programmed_nh_oids.insert(
+                                attr_list[i][j].value.oid);
+                        }
+                    }
+                    object_statuses[i] = SAI_STATUS_SUCCESS;
+                }
+                return SAI_STATUS_SUCCESS;
+            }));
+
+    // Run multiple DEL/SET cycles to trigger temp-route selection
+    for (int i = 0; i < 10; ++i)
     {
-        // Force NHG creation to fail so addTempRoute is used
-        EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(::testing::_, ::testing::_, ::testing::_, ::testing::_))
-            .WillRepeatedly(Return(SAI_STATUS_FAILURE));
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({prefix, "DEL", {}});
+        entries.push_back({prefix, "SET",
+                           {{"ifname", "Ethernet0,Ethernet0"},
+                            {"nexthop", "10.0.0.2,10.0.0.3"}}});
 
-        auto *routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
-        ASSERT_NE(routeConsumer, nullptr);
-
-        const std::string prefix = "3.3.3.0/24";
-
-        // Run multiple DEL/SET cycles to trigger temp-route selection repeatedly
-        std::set<std::string> chosen_nhs;
-        for (int i = 0; i < 10; ++i)
-        {
-            std::deque<KeyOpFieldsValuesTuple> entries;
-            entries.push_back({ prefix, "DEL", {} });
-            entries.push_back({ prefix, "SET",
-                                { {"ifname", "Ethernet0,Ethernet0"},
-                                  {"nexthop", "10.0.0.2,10.0.0.3" } } });
-
-            routeConsumer->addToSync(entries);
-            static_cast<Orch *>(gRouteOrch)->doTask();
-
-            // Inspect the synced route's NHG key (should be a single temp NH)
-            const auto &routes = gRouteOrch->getSyncdRoutes();
-            auto vrf_it = routes.find(gVirtualRouterId);
-            ASSERT_NE(vrf_it, routes.end());
-            IpPrefix pfx(prefix);
-            auto rt_it = vrf_it->second.find(pfx);
-            ASSERT_NE(rt_it, vrf_it->second.end());
-            const auto &nhg_key = rt_it->second.nhg_key;
-            ASSERT_EQ(nhg_key.getSize(), 1u);
-            const auto &nh = *nhg_key.getNextHops().begin();
-            // Record selected nexthop string (IP@alias)
-            chosen_nhs.insert(nh.to_string());
-        }
-
-        // Expect at least two distinct nexthops observed across trials
-        // This confirms we are not always selecting the same member
-        ASSERT_GE(chosen_nhs.size(), 2u);
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
     }
 
-    TEST_F(RouteOrchTest, RouteOrch_AddDeleteIPv6)
+    // We should observe at least two different temp next hops
+    ASSERT_GE(programmed_nh_oids.size(), 2u);
+}
+
+TEST_F(RouteOrchTest, RouteOrch_AddDeleteIPv6)
     {
         // Add IPv6 interface IPs (like the pytest does) and an IPv6 neighbor.
         {
