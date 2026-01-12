@@ -811,9 +811,29 @@ ReturnCode RouteManager::processRouteEntriesThatAssignMulticast(
     const std::vector<P4RouteEntry>& route_entries,
     const std::vector<swss::KeyOpFieldsValuesTuple>& tuple_list,
     const std::string& op, bool update) {
-  return ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
-         << "RouteManager::processRouteEntriesThatAssignMulticast is not "
-         << "implemented yet";
+  SWSS_LOG_ENTER();
+
+  ReturnCode status;
+  std::vector<ReturnCode> statuses;
+  // In syncd, bulk SAI calls use mode SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR.
+  if (op == SET_COMMAND) {
+    if (!update) {
+      statuses = createMulticastRouteEntries(route_entries);
+    } else {
+      statuses = updateMulticastRouteEntries(route_entries);
+    }
+  } else {
+    statuses = deleteMulticastRouteEntries(route_entries);
+  }
+  for (size_t i = 0; i < route_entries.size(); ++i) {
+    m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(tuple_list[i]),
+                         kfvFieldsValues(tuple_list[i]), statuses[i],
+                         /*replace=*/true);
+    if (status.ok() && !statuses[i].ok()) {
+      status = statuses[i];
+    }
+  }
+  return status;
 }
 
 std::vector<ReturnCode> RouteManager::createMulticastRouteEntries(
@@ -1233,6 +1253,7 @@ ReturnCode RouteManager::drain() {
   ReturnCode status;
   std::string prev_op;
   bool prev_update = false;
+  bool prev_mcast_op = false;  // indication if handling multicast group
   while (!m_entries.empty()) {
     auto key_op_fvs_tuple = m_entries.front();
     m_entries.pop_front();
@@ -1280,19 +1301,31 @@ ReturnCode RouteManager::drain() {
     }
     route_entry_list.insert(route_entry.route_entry_key);
 
-    bool update = (getRouteEntry(route_entry.route_entry_key) != nullptr);
+    auto* old_route_entry_ptr = getRouteEntry(route_entry.route_entry_key);
+    bool update = (old_route_entry_ptr != nullptr);
+    bool mcast_op = !route_entry.multicast_group_id.empty() ||
+        (update && !old_route_entry_ptr->multicast_group_id.empty());
     if (prev_op == "") {
       prev_op = operation;
       prev_update = update;
+      prev_mcast_op = mcast_op;
     }
     // Process the entries if the operation type changes.
-    if (operation != prev_op || update != prev_update) {
-      status =
-          processRouteEntries(route_list, tuple_list, prev_op, prev_update);
+    if (operation != prev_op || update != prev_update ||
+        mcast_op != prev_mcast_op) {
+      if (prev_mcast_op) {
+        status =
+            processRouteEntriesThatAssignMulticast(
+                route_list, tuple_list, prev_op, prev_update);
+      } else {
+        status =
+            processRouteEntries(route_list, tuple_list, prev_op, prev_update);
+      }
       route_list.clear();
       tuple_list.clear();
       prev_op = operation;
       prev_update = update;
+      prev_mcast_op = mcast_op;
     }
 
     if (!status.ok()) {
@@ -1309,7 +1342,13 @@ ReturnCode RouteManager::drain() {
   }
 
   if (!route_list.empty()) {
-    auto rc = processRouteEntries(route_list, tuple_list, prev_op, prev_update);
+    ReturnCode rc;
+    if (prev_mcast_op) {
+      rc = processRouteEntriesThatAssignMulticast(
+          route_list, tuple_list, prev_op, prev_update);
+    } else {
+      rc = processRouteEntries(route_list, tuple_list, prev_op, prev_update);
+    }
     if (!rc.ok()) {
       status = rc;
     }
