@@ -267,6 +267,9 @@ private:
 
     std::string m_overSubscribeRatio;
 
+    // Profiles waiting for SAI sync in refreshSharedHeadroomPool
+    std::vector<std::string> m_shpProfilesToCheck;
+
     // Initializers
     void initTableHandlerMap();
     void parseGearboxInfo(std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> gearboxInfo);
@@ -301,7 +304,8 @@ private:
     bool isHeadroomResourceValid(const std::string &port, const buffer_profile_t &profile, const std::string &new_pg);
     bool isSharedHeadroomPoolEnabledInSai();
     bool isLosslessProfileSyncedInSai(const std::string &profileName);
-    task_process_status refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size);
+    task_process_status checkPendingProfilesSyncStatus();
+    void refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size);
     task_process_status checkBufferProfileDirection(const std::string &profiles, buffer_direction_t dir);
     std::string constructZeroProfileListFromNormalProfileList(const std::string &normalProfileList, const std::string &port);
     void removeSupportedButNotConfiguredItemsOnPort(port_info_t &portInfo, const std::string &port);
