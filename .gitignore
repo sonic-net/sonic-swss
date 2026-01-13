@@ -96,4 +96,6 @@ tests/tests.log
 tests/tests.trs
 tests/mock_tests/**/*log
 tests/mock_tests/**/*trs
+tests/mock_tests/**/*_tr.xml
 orchagent/p4orch/tests/p4orch_tests
+orchagent/p4orch/tests/*_tr.xml
