@@ -1478,7 +1478,15 @@ std::string RouteManager::verifyStateCache(const P4RouteEntry &app_db_entry, con
             << QuotedVar(route_entry->route_metadata) << " in route manager.";
         return msg.str();
     }
-
+    if (route_entry->multicast_group_id != app_db_entry.multicast_group_id) {
+      std::stringstream msg;
+      msg << "Route entry " << QuotedVar(app_db_entry.route_entry_key)
+          << " with multicast group ID "
+          << QuotedVar(app_db_entry.multicast_group_id)
+          << " does not match internal cache "
+          << QuotedVar(route_entry->multicast_group_id) << " in route manager.";
+      return msg.str();
+    }
     return "";
 }
 
@@ -1507,20 +1515,43 @@ std::string RouteManager::verifyStateAsicDb(const P4RouteEntry *route_entry)
         exp_attrs.push_back(attr);
         attr.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
         attr.value.u32 = swss::to_uint<uint32_t>(route_entry->route_metadata);
-        exp_attrs.push_back(attr);
-    }
-    else
-    {
-        attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
-        attr.value.oid = getNexthopOid(*route_entry, *m_p4OidMapper);
-        exp_attrs.push_back(attr);
-        if (route_entry->action == p4orch::kSetNexthopIdAndMetadata ||
-            route_entry->action == p4orch::kSetWcmpGroupIdAndMetadata)
-        {
-            attr.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
-            attr.value.u32 = swss::to_uint<uint32_t>(route_entry->route_metadata);
-            exp_attrs.push_back(attr);
+        if (attr.value.u32 == 0) {
+          // OA might not set the metadata if it is zero since it is the
+          // default.
+          opt_attrs.push_back(attr);
+        } else {
+          exp_attrs.push_back(attr);
         }
+    } else if (route_entry->action == p4orch::kSetMulticastGroupId) {
+      attr.id = SAI_IPMC_ENTRY_ATTR_PACKET_ACTION;
+      attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+      exp_attrs.push_back(attr);
+
+      attr.id = SAI_IPMC_ENTRY_ATTR_OUTPUT_GROUP_ID;
+      attr.value.oid = SAI_NULL_OBJECT_ID;
+      m_p4OidMapper->getOID(SAI_OBJECT_TYPE_IPMC_GROUP,
+                            route_entry->multicast_group_id, &attr.value.oid);
+      exp_attrs.push_back(attr);
+      // TODO: Add with counter support.
+      // attr.id = SAI_IPMC_ENTRY_ATTR_COUNTER_ID;
+      // attr.value.oid = group_counter_oid;
+      // attrs.push_back(attr);
+    } else {
+      attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+      attr.value.oid = getNexthopOid(*route_entry, *m_p4OidMapper);
+      exp_attrs.push_back(attr);
+      if (route_entry->action == p4orch::kSetNexthopIdAndMetadata ||
+          route_entry->action == p4orch::kSetWcmpGroupIdAndMetadata) {
+        attr.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
+        attr.value.u32 = swss::to_uint<uint32_t>(route_entry->route_metadata);
+        if (attr.value.u32 == 0) {
+          // OA might not set the metadata if it is zero since it is the
+          // default.
+          opt_attrs.push_back(attr);
+        } else {
+          exp_attrs.push_back(attr);
+        }
+      }
     }
 
     if (route_entry->action == p4orch::kDrop || route_entry->action == p4orch::kTrap)
@@ -1537,31 +1568,46 @@ std::string RouteManager::verifyStateAsicDb(const P4RouteEntry *route_entry)
         attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
         attr.value.oid = SAI_NULL_OBJECT_ID;
         opt_attrs.push_back(attr);
-    }
-    else
-    {
-        attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
-        attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+    } else if (route_entry->action == p4orch::kSetMulticastGroupId) {
+      // Nothing to do.
+    } else {
+      attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+      attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+      opt_attrs.push_back(attr);
+      if (route_entry->action != p4orch::kSetNexthopIdAndMetadata &&
+          route_entry->action != p4orch::kSetWcmpGroupIdAndMetadata) {
+        attr.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
+        attr.value.u32 = 0;
         opt_attrs.push_back(attr);
-        if (route_entry->action != p4orch::kSetNexthopIdAndMetadata &&
-            route_entry->action != p4orch::kSetWcmpGroupIdAndMetadata)
-        {
-            attr.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
-            attr.value.u32 = 0;
-            opt_attrs.push_back(attr);
-        }
+      }
     }
 
-    std::vector<swss::FieldValueTuple> exp = saimeta::SaiAttributeList::serialize_attr_list(
-        SAI_OBJECT_TYPE_ROUTE_ENTRY, (uint32_t)exp_attrs.size(), exp_attrs.data(), /*countOnly=*/false);
-    std::vector<swss::FieldValueTuple> opt = saimeta::SaiAttributeList::serialize_attr_list(
-        SAI_OBJECT_TYPE_ROUTE_ENTRY, (uint32_t)opt_attrs.size(), opt_attrs.data(), /*countOnly=*/false);
+    sai_object_type_t objectType;
+    if (route_entry->multicast_group_id.empty()) {
+      objectType = SAI_OBJECT_TYPE_ROUTE_ENTRY;
+    } else {
+      objectType = SAI_OBJECT_TYPE_IPMC_ENTRY;
+    }
+
+    std::vector<swss::FieldValueTuple> exp =
+        saimeta::SaiAttributeList::serialize_attr_list(
+            objectType, (uint32_t)exp_attrs.size(), exp_attrs.data(),
+            /*countOnly=*/false);
+    std::vector<swss::FieldValueTuple> opt =
+        saimeta::SaiAttributeList::serialize_attr_list(
+            objectType, (uint32_t)opt_attrs.size(), opt_attrs.data(),
+            /*countOnly=*/false);
 
     swss::DBConnector db("ASIC_DB", 0);
     swss::Table table(&db, "ASIC_STATE");
-    std::string key = sai_serialize_object_type(SAI_OBJECT_TYPE_ROUTE_ENTRY) +
-                      ":" +
-                      sai_serialize_route_entry(prepareSaiEntry(*route_entry));
+    std::string key;
+    if (route_entry->multicast_group_id.empty()) {
+      key = sai_serialize_object_type(SAI_OBJECT_TYPE_ROUTE_ENTRY) + ":" +
+            sai_serialize_route_entry(prepareSaiEntry(*route_entry));
+    } else {
+      key = sai_serialize_object_type(SAI_OBJECT_TYPE_IPMC_ENTRY) + ":" +
+            sai_serialize_ipmc_entry(prepareSaiIpmcEntry(*route_entry));
+    }
     std::vector<swss::FieldValueTuple> values;
     if (!table.get(key, values))
     {
