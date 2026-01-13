@@ -89,7 +89,7 @@ bool isChassisDbInUse()
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v ZMQVRF] [-I heart_beat_interval] [-R] [-M]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF] [-I heart_beat_interval] [-R] [-M]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    Bit 0: sairedis.rec, Bit 1: swss.rec, Bit 2: responsepublisher.rec. For example:" << endl;
@@ -110,7 +110,7 @@ void usage()
     cout << "    -q zmq_server_address: ZMQ server address (default disable ZMQ)" << endl;
     cout << "    -c counter mode (traditional|asic_db), default: asic_db" << endl;
     cout << "    -t Override create switch timeout, in sec" << endl;
-    cout << "    -v zmqvrf: ZMQVRF name (default empty)" << endl;
+    cout << "    -v vrf: VRF name (default empty)" << endl;
     cout << "    -I heart_beat_interval: Heart beat interval in millisecond (default 10)" << endl;
     cout << "    -R enable the ring thread feature" << endl;
     cout << "    -M enable SAI MACSec POST" << endl;
@@ -390,7 +390,7 @@ int main(int argc, char **argv)
     string sairedis_rec_filename = Recorder::SAIREDIS_FNAME;
     string retry_rec_filename = Recorder::RETRY_FNAME;
     string zmq_server_address = "";
-    string zmq_vrf;
+    string vrf;
     string responsepublisher_rec_filename = Recorder::RESPPUB_FNAME;
     int record_type = SAIREDIS_RECORD_ENABLE | SWSS_RECORD_ENABLE | RETRY_RECORD_ENABLE; // Only swss, retrycache and sairedis recordings enabled by default.
     long heartBeatInterval = HEART_BEAT_INTERVAL_MSECS_DEFAULT;
@@ -494,7 +494,7 @@ int main(int argc, char **argv)
         case 'v':
             if (optarg)
             {
-                zmq_vrf = optarg;
+                vrf = optarg;
             }
             break;
         case 'I':
@@ -575,8 +575,8 @@ int main(int argc, char **argv)
     }
     else
     {
-        SWSS_LOG_NOTICE("The ZMQ channel on the northbound side of orchagent has been initialized: %s, %s", zmq_server_address.c_str(), zmq_vrf.c_str());
-        zmq_server = create_zmq_server(zmq_server_address, zmq_vrf);
+        SWSS_LOG_NOTICE("The ZMQ channel on the northbound side of orchagent has been initialized: %s, %s", zmq_server_address.c_str(), vrf.c_str());
+        zmq_server = create_zmq_server(zmq_server_address, vrf);
     }
 
     // Get switch_type
@@ -963,7 +963,7 @@ int main(int argc, char **argv)
         // To prevent message loss between ZmqServer's bind operation and the creation of ZmqProducerStateTable,
         // use lazy binding and call bind() only after the handler has been registered.
         zmq_server->bind();
-        SWSS_LOG_NOTICE("ZMQ channel on the northbound side of Orchagent successfully bound: %s, %s", zmq_server_address.c_str(), zmq_vrf.c_str());
+        SWSS_LOG_NOTICE("ZMQ channel on the northbound side of Orchagent successfully bound: %s, %s", zmq_server_address.c_str(), vrf.c_str());
     }
 
     orchDaemon->start(heartBeatInterval);

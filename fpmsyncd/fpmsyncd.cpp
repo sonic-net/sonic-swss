@@ -69,7 +69,7 @@ static bool eoiuFlagsSet(Table &bgpStateTable)
     return true;
 }
 
-std::string get_zmq_vrf(DBConnector &cfgDb) {
+std::string get_mgmt_vrf_name(DBConnector &cfgDb) {
     std::shared_ptr<std::string> mgmt_vrf_enabled = nullptr;
 
     try
@@ -104,8 +104,8 @@ int main(int argc, char **argv)
     std::unique_ptr<NotificationConsumer> routeResponseChannel;
 
     RedisPipeline pipeline(&db, ROUTE_SYNC_PPL_SIZE);
-    auto zmqVrf = get_zmq_vrf(cfgDb);
-    RouteSync sync(&pipeline, zmqVrf);
+    auto mgmt_vrf_name = get_mgmt_vrf_name(cfgDb);
+    RouteSync sync(&pipeline, mgmt_vrf_name);
 
     DBConnector stateDb("STATE_DB", 0);
     Table bgpStateTable(&stateDb, STATE_BGP_TABLE_NAME);
