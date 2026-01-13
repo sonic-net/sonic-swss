@@ -1590,7 +1590,7 @@ task_process_status BufferMgrDynamic::refreshPgsForPort(const string &port, cons
     return task_process_status::task_success;
 }
 
-task_process_status BufferMgrDynamic::refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size)
+void BufferMgrDynamic::refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size)
 {
     // The lossless profiles need to be refreshed only if system is switched between SHP and non-SHP
     bool need_refresh_profiles = false;
@@ -1680,18 +1680,11 @@ task_process_status BufferMgrDynamic::refreshSharedHeadroomPool(bool enable_stat
         }
         SWSS_LOG_NOTICE("Updating dynamic buffer profiles finished");
 
-        // Check if all profiles have been synced to SAI
+        // Save profiles that need SAI sync check to member variable
+        // The caller is responsible for checking SAI sync status
         if (!profilesToCheck.empty())
         {
-            m_applBufferProfileTable.flush();
-            for (const auto &profileName : profilesToCheck)
-            {
-                if (!isLosslessProfileSyncedInSai(profileName))
-                {
-                    SWSS_LOG_NOTICE("BUFFER_PROFILE %s is waiting to be synced to SAI", profileName.c_str());
-                    return task_process_status::task_need_retry;
-                }
-            }
+            m_shpProfilesToCheck = profilesToCheck;
         }
     }
 
@@ -1714,8 +1707,6 @@ task_process_status BufferMgrDynamic::refreshSharedHeadroomPool(bool enable_stat
     {
         checkSharedBufferPoolSize();
     }
-
-    return task_process_status::task_success;
 }
 
 // Main flows
@@ -2108,6 +2099,26 @@ bool BufferMgrDynamic::isLosslessProfileSyncedInSai(const string &profileName)
     SWSS_LOG_DEBUG("Lossless buffer profile %s has been synced to SAI (xoff %s, xon %s, size %s)",
                    profileName.c_str(), xoff.c_str(), xon.c_str(), size.c_str());
     return true;
+}
+
+task_process_status BufferMgrDynamic::checkPendingProfilesSyncStatus()
+{
+    SWSS_LOG_NOTICE("Checking SAI sync status for %zu profiles", m_shpProfilesToCheck.size());
+    m_applBufferProfileTable.flush();
+
+    for (const auto &profileName : m_shpProfilesToCheck)
+    {
+        if (!isLosslessProfileSyncedInSai(profileName))
+        {
+            SWSS_LOG_NOTICE("BUFFER_PROFILE %s is still waiting to be synced to SAI", profileName.c_str());
+            return task_process_status::task_need_retry;
+        }
+    }
+
+    // All profiles synced successfully
+    SWSS_LOG_NOTICE("All profiles synced to SAI successfully");
+    m_shpProfilesToCheck.clear();
+    return task_process_status::task_success;
 }
 
 task_process_status BufferMgrDynamic::handleCableLenTable(KeyOpFieldsValuesTuple &tuple)
@@ -2565,12 +2576,37 @@ task_process_status BufferMgrDynamic::handleBufferPoolTable(KeyOpFieldsValuesTup
                     }
                 }
 
-                string oldSHPSize = m_configuredSharedHeadroomPoolSize;
-                m_configuredSharedHeadroomPoolSize = newSHPSize;
-                if (task_process_status::task_need_retry == refreshSharedHeadroomPool(false, isSHPEnabledBySize != willSHPBeEnabledBySize))
+                // Check if we are in retry mode (profiles waiting for SAI sync)
+                if (!m_shpProfilesToCheck.empty())
                 {
-                    m_configuredSharedHeadroomPoolSize = oldSHPSize;
-                    return task_process_status::task_need_retry;
+                    // Retry mode: only check SAI sync status, don't refresh profiles
+                    SWSS_LOG_NOTICE("Retry mode: checking pending profiles");
+                    auto status = checkPendingProfilesSyncStatus();
+                    if (status == task_process_status::task_need_retry)
+                    {
+                        return task_process_status::task_need_retry;
+                    }
+                    // Profiles synced successfully, update configuration and continue
+                    m_configuredSharedHeadroomPoolSize = newSHPSize;
+                }
+                else
+                {
+                    // Not retry mode: refresh profiles
+                    string oldSHPSize = m_configuredSharedHeadroomPoolSize;
+                    m_configuredSharedHeadroomPoolSize = newSHPSize;
+                    refreshSharedHeadroomPool(false, isSHPEnabledBySize != willSHPBeEnabledBySize);
+
+                    // Check if there are profiles waiting for SAI sync
+                    if (!m_shpProfilesToCheck.empty())
+                    {
+                        auto status = checkPendingProfilesSyncStatus();
+                        if (status == task_process_status::task_need_retry)
+                        {
+                            // Rollback configuration change
+                            m_configuredSharedHeadroomPoolSize = oldSHPSize;
+                            return task_process_status::task_need_retry;
+                        }
+                    }
                 }
             }
             else if (!newSHPSize.empty())
