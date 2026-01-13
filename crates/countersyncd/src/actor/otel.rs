@@ -61,6 +61,9 @@ pub struct OtelActor {
     exports_performed: u64,
     export_failures: u64,
     console_reports: u64,
+
+    // Reconnecting tracking
+    consecutive_failures: u64,
 }
 
 impl OtelActor {
@@ -114,6 +117,7 @@ impl OtelActor {
             exports_performed: 0,
             export_failures: 0,
             console_reports: 0,
+            consecutive_failures: 0,
         })
     }
 
@@ -268,14 +272,57 @@ impl OtelActor {
             resource_metrics: vec![resource_metrics],
         };
 
-        match self.client.export(request).await {
-            Ok(_) => {
-                self.exports_performed += 1;
-                debug!("Exported buffered metrics to collector");
-            }
-            Err(e) => {
-                self.export_failures += 1;
-                error!("Failed to export metrics: {}", e);
+        // Retry connecting to the collector for 5 minutes
+        const MAX_RETRIES: u32 = 30;
+        const RETRY_INTERVAL_SEC: u64 = 10;
+        const INITIAL_DELAY_SEC: u64 = 1;
+
+        for attempt in 1..=MAX_RETRIES {
+            match self.client.export(request.clone()).await {
+                Ok(_) => {
+                    self.exports_performed += 1;
+                    
+                    // Reset consecutive failures when connection is successful
+                    if self.consecutive_failures > 0 {
+                        info!(
+                            "Successfully reconnected to collector after {} consecutive failures (attempt {})",
+                            self.consecutive_failures, attempt
+                        );
+                        self.consecutive_failures = 0;
+                        self.export_failures = 0;
+                    } else {
+                        debug!("Exported buffered metrics to collector");
+                    }
+
+                    self.buffer.clear();
+                    self.buffered_counters = 0;
+                    return;
+                }
+                Err(e) => {
+                    self.consecutive_failures += 1;
+
+                    if attempt == 1 {
+                        debug!("Failed to export metrics (attempt {}/{}): {}. Will retry for 5 minutes...", attempt, MAX_RETRIES, e);
+                    } else if attempt == MAX_RETRIES {
+                        error!(
+                            "Failed to export metrics after 5 minutes of retrying ({} attempts): {}.",
+                            MAX_RETRIES, e
+                        );
+                        self.export_failures += 1;
+                    } else if attempt % 5 == 0 {
+                        // Log every 5th attempt 
+                        info!("Still retrying export... attempt {}/{} ({}m{}s elapsed)", 
+                              attempt, MAX_RETRIES, 
+                              (attempt * RETRY_INTERVAL_SEC) / 60,
+                              (attempt * RETRY_INTERVAL_SEC) % 60);
+                    }
+                    
+                    if attempt < MAX_RETRIES {
+                        // Wait before retrying: 1s first time, then 10s
+                        let delay_sec = if attempt == 1 { INITIAL_DELAY_SEC } else { RETRY_INTERVAL_SEC };
+                        tokio::time::sleep(Duration::from_secs(delay_sec)).await;
+                    }
+                }
             }
         }
 
