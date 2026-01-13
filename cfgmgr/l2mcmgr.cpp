@@ -49,7 +49,8 @@ L2McMgr::L2McMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_appL2mcSuppressTableProducer(applDb,APP_L2MC_SUPPRESS_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
-    if (WarmStart::isWarmStart())
+    m_warmstart = WarmStart::isWarmStart();
+    if (m_warmstart)
     {
         auto processTable =
             [&](Table &table, bool isIgmp)
@@ -93,6 +94,7 @@ L2McMgr::L2McMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
         {
             SWSS_LOG_NOTICE("L2MCMGRD warm reboot RECONCILED");
             WarmStart::setWarmStartState("l2mcmgrd", WarmStart::RECONCILED);
+            m_warmstart = false;
         }
     }
 
@@ -217,7 +219,7 @@ void L2McMgr::doL2McGlobalTask(Consumer &consumer)
         msg->version = 2;
         msg->afi = MLD_IP_IPV4_AFI;
         msg->vlan_id = vlan_id;
-        msg->warm_reboot = WarmStart::isWarmStart() ? 1 : 0;
+        msg->warm_reboot = m_warmstart ? 1 : 0;
 
         if (op == SET_COMMAND)
         {
@@ -346,7 +348,7 @@ void L2McMgr::doL2McMldGlobalTask(Consumer &consumer)
         msg->version = 2;
         msg->afi = MLD_IP_IPV6_AFI;
         msg->vlan_id = vlan_id;
-        msg->warm_reboot = WarmStart::isWarmStart() ? 1 : 0;
+        msg->warm_reboot = m_warmstart ? 1 : 0;
         msg->count = port_count;
 
         if (op == SET_COMMAND)
@@ -1751,6 +1753,7 @@ void L2McMgr::doTask(NotificationConsumer &consumer)
             {
                 SWSS_LOG_NOTICE("L2MCMGRD warm reboot RECONCILED");
                 WarmStart::setWarmStartState("l2mcmgrd", WarmStart::RECONCILED);
+                m_warmstart = false;
             }
         }
             
