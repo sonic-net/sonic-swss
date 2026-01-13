@@ -204,6 +204,23 @@ if platform then
 	end
 end
 
+-- Check if platform is SPC6 or later and set modification descriptors pool size
+-- Extract model number from platform string (e.g., "sn6600" -> 6600, "sn5800" -> 5800, "sn10600" -> 10600)
+-- Use (%d+) pattern to capture one or more digits for extensibility (handles future multi-digit series like sn10xxx, sn11xxx)
+local platform = redis.call('HGET', 'DEVICE_METADATA|localhost', 'platform')
+if platform then
+    local model_str = string.match(platform, "sn(%d+)")
+    if model_str then
+        local model_number = tonumber(model_str)
+        -- SPC6 or later models (>= 6000 excludes SPC5 models like 5400/5800, includes SPC6+ like 6600/7xxx/10xxx)
+        -- Reserve 32MB for modification descriptors pool
+        if model_number and model_number >= 6000 then
+            modification_descriptors_pool_size = 32 * 1024 * 1024
+            egress_mirror_headroom  = 0
+        end
+    end
+end
+
 -- Parse all the pools and seperate them according to the direction
 local ipools = {}
 local epools = {}
@@ -403,10 +420,7 @@ accumulative_occupied_buffer = accumulative_occupied_buffer + accumulative_manag
 
 -- Accumulate sizes for egress mirror and management pool
 local accumulative_egress_mirror_overhead = admin_up_port * egress_mirror_headroom
-accumulative_occupied_buffer = accumulative_occupied_buffer
-	+ accumulative_egress_mirror_overhead
-	+ mgmt_pool_size
-	+ modification_descriptors_pool_size
+accumulative_occupied_buffer = accumulative_occupied_buffer + accumulative_egress_mirror_overhead + mgmt_pool_size + modification_descriptors_pool_size
 
 -- Switch to CONFIG_DB
 redis.call("SELECT", config_db)
