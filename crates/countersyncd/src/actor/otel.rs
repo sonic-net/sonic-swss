@@ -273,7 +273,7 @@ impl OtelActor {
         };
 
         // Retry connecting to the collector for 5 minutes
-        const MAX_RETRIES: u32 = 30;
+        const MAX_RETRIES: u64 = 30;
         const RETRY_INTERVAL_SEC: u64 = 10;
         const INITIAL_DELAY_SEC: u64 = 1;
 
