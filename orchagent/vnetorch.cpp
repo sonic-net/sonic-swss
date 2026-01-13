@@ -3518,6 +3518,12 @@ void VNetTunnelTermAcl::lazyInit()
     };
     string matches = std::accumulate(std::next(match_list.begin()), match_list.end(), match_list[0], concat);
 
+    vector<string> action_list = {
+        ACTION_REDIRECT_ACTION,
+        ACTION_COUNTER
+    };
+    string actions = std::accumulate(std::next(action_list.begin()), action_list.end(), action_list[0], concat);
+
     vector<string> bpoint_list = {
         BIND_POINT_TYPE_PORT,
         BIND_POINT_TYPE_PORTCHANNEL
@@ -3526,7 +3532,7 @@ void VNetTunnelTermAcl::lazyInit()
 
     vector<FieldValueTuple> fvs = {
         {ACL_TABLE_TYPE_MATCHES, matches},
-        {ACL_TABLE_TYPE_ACTIONS, ACTION_REDIRECT_ACTION},
+        {ACL_TABLE_TYPE_ACTIONS, actions},
         {ACL_TABLE_TYPE_BPOINT_TYPES, bpoints}
     };
 
