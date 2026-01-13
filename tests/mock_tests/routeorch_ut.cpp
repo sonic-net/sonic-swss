@@ -438,20 +438,28 @@ namespace routeorch_test
         }
     };
 
-TEST_F(RouteOrchTest, RouteOrchTempRouteSelectionVaries)
+TEST_F(RouteOrchTest, RouteOrchTempRouteUniformSelection)
 {
-    // Force NHG creation to fail so addTempRoute() is used
-    EXPECT_CALL(*mock_sai_next_hop_group_api,
-                create_next_hop_group(::testing::_, ::testing::_, ::testing::_, ::testing::_))
-        .WillRepeatedly(Return(SAI_STATUS_FAILURE));
+    // --- Step 1: Setup resolved neighbors ---
+    Table neighborTable(m_app_db.get(), APP_NEIGH_TABLE_NAME);
 
-    auto *routeConsumer =
-        dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
-    ASSERT_NE(routeConsumer, nullptr);
+    std::map<std::string, std::string> neighborIp2Mac = {
+        {"10.0.0.1", "00:00:0a:00:00:01"},
+        {"10.0.0.2", "00:00:0a:00:00:02"},
+        {"10.0.0.3", "00:00:0a:00:00:03"}
+    };
 
-    const std::string prefix = "3.3.3.0/24";
+    neighborTable.set("Ethernet0:10.0.0.1", {{"neigh", neighborIp2Mac["10.0.0.1"]}, {"family", "IPv4"}});
+    neighborTable.set("Ethernet1:10.0.0.2", {{"neigh", neighborIp2Mac["10.0.0.2"]}, {"family", "IPv4"}});
+    neighborTable.set("Ethernet2:10.0.0.3", {{"neigh", neighborIp2Mac["10.0.0.3"]}, {"family", "IPv4"}});
 
-    // Capture NEXT_HOP_IDs programmed via bulker
+    gNeighOrch->addExistingData(&neighborTable);
+    static_cast<Orch *>(gNeighOrch)->doTask();
+
+    // --- Step 2: Prepare NextHopGroupKey ---
+    NextHopGroupKey nhg_key("10.0.0.1@Ethernet0,10.0.0.2@Ethernet1,10.0.0.3@Ethernet2");
+
+    // --- Step 3: Capture programmed nexthop IDs ---
     std::set<sai_object_id_t> programmed_nh_oids;
 
     EXPECT_CALL(*mock_sai_route_api,
@@ -470,30 +478,29 @@ TEST_F(RouteOrchTest, RouteOrchTempRouteSelectionVaries)
                     {
                         if (attr_list[i][j].id == SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID)
                         {
-                            programmed_nh_oids.insert(
-                                attr_list[i][j].value.oid);
+                            // Mark the NEXT_HOP_ID as programmed
+                            programmed_nh_oids.insert(attr_list[i][j].value.oid);
                         }
-                    }
-                    object_statuses[i] = SAI_STATUS_SUCCESS;
-                }
-                return SAI_STATUS_SUCCESS;
-            }));
+					}
+					// **Simulate success** so addTempRoute thinks the route was installed
+					object_statuses[i] = SAI_STATUS_SUCCESS;
+				}
+				return SAI_STATUS_SUCCESS;
+			}));
 
-    // Run multiple DEL/SET cycles to trigger temp-route selection
-    for (int i = 0; i < 10; ++i)
+    // --- Step 4: Run 100 iterations ---
+    constexpr int kIterations = 100;
+    for (int i = 0; i < kIterations; ++i)
     {
-        std::deque<KeyOpFieldsValuesTuple> entries;
-        entries.push_back({prefix, "DEL", {}});
-        entries.push_back({prefix, "SET",
-                           {{"ifname", "Ethernet0,Ethernet0"},
-                            {"nexthop", "10.0.0.2,10.0.0.3"}}});
-
-        routeConsumer->addToSync(entries);
-        static_cast<Orch *>(gRouteOrch)->doTask();
+        RouteBulkContext ctx("3.3.3.0/24", true);
+        ctx.vrf_id = gVirtualRouterId;
+        ctx.ip_prefix = IpPrefix("3.3.3.0/24");
+        gRouteOrch->addTempRoute(ctx, nhg_key);
     }
 
-    // We should observe at least two different temp next hops
-    ASSERT_GE(programmed_nh_oids.size(), 2u);
+    // --- Step 5: Verify at least 3 distinct next hops were picked ---
+	ASSERT_GE(programmed_nh_oids.size(), 3u);
+
 }
 
 TEST_F(RouteOrchTest, RouteOrch_AddDeleteIPv6)
