@@ -39,7 +39,7 @@ extern Srv6Orch *gSrv6Orch;
 extern SwitchOrch *gSwitchOrch;
 extern sai_object_id_t gSwitchId;
 
-#define FLEX_COUNTER_DELAY_SEC 60
+int gFlexCounterDelaySec;
 
 #define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
 #define PORT_KEY                    "PORT"
@@ -64,6 +64,7 @@ unordered_map<string, string> flexCounterGroupMap =
 {
     {"PORT", PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"PORT_RATES", PORT_RATE_COUNTER_FLEX_COUNTER_GROUP},
+    {"DEBUG_MONITOR_COUNTER", DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP},
     {"PORT_BUFFER_DROP", PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP},
     {"QUEUE", QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"PFCWD", PFC_WD_FLEX_COUNTER_GROUP},
@@ -97,11 +98,30 @@ FlexCounterOrch::FlexCounterOrch(DBConnector *db, vector<string> &tableNames):
     m_deviceMetadataConfigTable(db, CFG_DEVICE_METADATA_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
-    m_delayTimer = std::make_unique<SelectableTimer>(timespec{.tv_sec = FLEX_COUNTER_DELAY_SEC, .tv_nsec = 0});
-    if (WarmStart::isWarmStart())
+
+    // Read create_only_config_db_buffers configuration once during initialization
+    std::string createOnlyConfigDbBuffersValue;
+    try
     {
-        m_delayExecutor = std::make_unique<ExecutableTimer>(m_delayTimer.get(), this, "FLEX_COUNTER_DELAY");
-        Orch::addExecutor(m_delayExecutor.get());
+        if (m_deviceMetadataConfigTable.hget("localhost", "create_only_config_db_buffers", createOnlyConfigDbBuffersValue))
+        {
+            if (createOnlyConfigDbBuffersValue == "true")
+            {
+                m_createOnlyConfigDbBuffers = true;
+            }
+        }
+    }
+    catch(const std::system_error& e)
+    {
+        SWSS_LOG_ERROR("System error reading create_only_config_db_buffers: %s", e.what());
+    }
+
+    SWSS_LOG_NOTICE("Counter delay is %d seconds", gFlexCounterDelaySec);
+    if (gFlexCounterDelaySec > 0)
+    {
+        m_delayTimer = new SelectableTimer(timespec{.tv_sec = static_cast<time_t>(gFlexCounterDelaySec), .tv_nsec = 0});
+        auto delayExecutor = new ExecutableTimer(m_delayTimer, this, "FLEX_COUNTER_DELAY");
+        Orch::addExecutor(delayExecutor);
         m_delayTimer->start();
     }
     else
@@ -119,6 +139,13 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
+    // Handle DEVICE_METADATA table changes for create_only_config_db_buffers
+    if (consumer.getTableName() == CFG_DEVICE_METADATA_TABLE_NAME)
+    {
+        handleDeviceMetadataTable(consumer);
+        return;
+    }
+
     if (!m_delayTimerExpired)
     {
         return;
@@ -126,7 +153,6 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 
     VxlanTunnelOrch* vxlan_tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     DashOrch* dash_orch = gDirectory.get<DashOrch*>();
-    DashMeterOrch* dash_meter_orch = gDirectory.get<DashMeterOrch*>();
     if (gPortsOrch && !gPortsOrch->allPortsReady())
     {
         return;
@@ -261,9 +287,9 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     {
                         dash_orch->handleFCStatusUpdate((value == "enable"));
                     }
-                    if (dash_meter_orch && (key == DASH_METER_KEY))
+                    if (dash_orch && (key == DASH_METER_KEY))
                     {
-                        dash_meter_orch->handleMeterFCStatusUpdate((value == "enable"));
+                        dash_orch->handleMeterFCStatusUpdate((value == "enable"));
                     }
                     if (gCoppOrch && (key == FLOW_CNT_TRAP_KEY))
                     {
@@ -393,6 +419,48 @@ bool FlexCounterOrch::getWredPortCountersState() const
     return m_wred_port_counter_enabled;
 }
 
+bool FlexCounterOrch::isCreateOnlyConfigDbBuffers() const
+{
+    return m_createOnlyConfigDbBuffers;
+}
+
+void FlexCounterOrch::handleDeviceMetadataTable(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+        string key = kfvKey(t);
+        string op = kfvOp(t);
+        auto data = kfvFieldsValues(t);
+
+        // Only process localhost entries
+        if (key == "localhost" && op == SET_COMMAND)
+        {
+            for (auto valuePair : data)
+            {
+                const auto &field = fvField(valuePair);
+                const auto &value = fvValue(valuePair);
+
+                if (field == "create_only_config_db_buffers")
+                {
+                    bool newValue = (value == "true");
+                    if (m_createOnlyConfigDbBuffers != newValue)
+                    {
+                        SWSS_LOG_NOTICE("Updating create_only_config_db_buffers from %s to %s",
+                                       m_createOnlyConfigDbBuffers ? "true" : "false",
+                                       value.c_str());
+                        m_createOnlyConfigDbBuffers = newValue;
+                    }
+                }
+            }
+        }
+        consumer.m_toSync.erase(it++);
+    }
+}
+
 bool FlexCounterOrch::bake()
 {
     /*
@@ -406,35 +474,13 @@ bool FlexCounterOrch::bake()
     return true;
 }
 
-static bool isCreateOnlyConfigDbBuffers(Table& deviceMetadataConfigTable)
-{
-    std::string createOnlyConfigDbBuffersValue;
-
-    try
-    {
-        if (deviceMetadataConfigTable.hget("localhost", "create_only_config_db_buffers", createOnlyConfigDbBuffersValue))
-        {
-            if (createOnlyConfigDbBuffersValue == "true")
-            {
-                return true;
-            }
-        }
-    }
-    catch(const std::system_error& e)
-    {
-        SWSS_LOG_ERROR("System error: %s", e.what());
-    }
-
-    return false;
-}
-
 map<string, FlexCounterQueueStates> FlexCounterOrch::getQueueConfigurations()
 {
     SWSS_LOG_ENTER();
 
     map<string, FlexCounterQueueStates> queuesStateVector;
 
-    if (!isCreateOnlyConfigDbBuffers(m_deviceMetadataConfigTable))
+    if (!isCreateOnlyConfigDbBuffers())
     {
         FlexCounterQueueStates flexCounterQueueState(0);
         queuesStateVector.insert(make_pair(createAllAvailableBuffersStr, flexCounterQueueState));
@@ -503,7 +549,7 @@ map<string, FlexCounterPgStates> FlexCounterOrch::getPgConfigurations()
 
     map<string, FlexCounterPgStates> pgsStateVector;
 
-    if (!isCreateOnlyConfigDbBuffers(m_deviceMetadataConfigTable))
+    if (!isCreateOnlyConfigDbBuffers())
     {
         FlexCounterPgStates flexCounterPgState(0);
         pgsStateVector.insert(make_pair(createAllAvailableBuffersStr, flexCounterPgState));

@@ -15,6 +15,8 @@
 #include <string.h>
 #include <arpa/inet.h>
 #include <linux/nexthop.h>
+#include <linux/lwtunnel.h>
+#include <linux/seg6_iptunnel.h>
 
 using namespace std;
 using namespace swss;
@@ -97,6 +99,7 @@ enum {
 	SRV6_LOCALSID_BPF				= 9,
 	SRV6_LOCALSID_SIDLIST			= 10,
 	SRV6_LOCALSID_ENCAP_SRC_ADDR	= 11,
+	SRV6_LOCALSID_IFNAME			= 12,
 };
 
 enum {
@@ -111,6 +114,8 @@ enum {
     ROUTE_ENCAP_SRV6_UNSPEC            = 0,
     ROUTE_ENCAP_SRV6_VPN_SID           = 1,
     ROUTE_ENCAP_SRV6_ENCAP_SRC_ADDR    = 2,
+    ROUTE_ENCAP_SRV6_PIC_ID            = 3,
+    ROUTE_ENCAP_SRV6_NH_ID             = 4,
 };
 
 #define MAX_MULTIPATH_NUM 514
@@ -151,6 +156,7 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_routeTable(createProducerStateTable(pipeline, APP_ROUTE_TABLE_NAME, true, m_zmqClient)),
     m_nexthop_groupTable(pipeline, APP_NEXTHOP_GROUP_TABLE_NAME, true),
     m_label_routeTable(createProducerStateTable(pipeline, APP_LABEL_ROUTE_TABLE_NAME, true, m_zmqClient)),
+    m_pic_context_groupTable(pipeline, APP_PIC_CONTEXT_TABLE_NAME, true),
     m_vnet_routeTable(pipeline, APP_VNET_RT_TABLE_NAME, true),
     m_vnet_tunnelTable(pipeline, APP_VNET_RT_TUNNEL_TABLE_NAME, true),
     m_warmStartHelper(pipeline, m_routeTable.get(), APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
@@ -163,28 +169,35 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
 }
 
-void RouteSync::setRouteWithWarmRestart(const std::string& key,
-                                      const std::vector<FieldValueTuple>& fvVector,
-                                      shared_ptr<ProducerStateTable> table,
-                                      const std::string& cmd)
+void RouteSync::setRouteWithWarmRestart(FieldValueTupleWrapperBase & fvw,
+                                        ProducerStateTable & table )
 {
     bool warmRestartInProgress = m_warmStartHelper.inProgress();
 
     if (!warmRestartInProgress)
     {
-        if (cmd == SET_COMMAND)
-        {
-            table->set(key, fvVector);
-        }
-        else if (cmd == DEL_COMMAND)
-        {
-            table->del(key);
-        }
+        table.set(fvw.KeyOpFieldsValuesTupleVector());
     }
     else
     {
-        const KeyOpFieldsValuesTuple kfv = std::make_tuple(key, cmd, fvVector);
-        m_warmStartHelper.insertRefreshMap(kfv);
+        m_warmStartHelper.insertRefreshMap(fvw.KeyOpFieldsValuesTupleVector()[0]);
+    }
+}
+
+void RouteSync::setTable(FieldValueTupleWrapperBase & fvw,
+                         ProducerStateTable & table )
+{
+    // Note: VNET tables don't use warm restart helper, so we directly set
+    table.set(fvw.KeyOpFieldsValuesTupleVector());
+}
+
+void RouteSync::delWithWarmRestart(FieldValueTupleWrapperBase && fvw,
+				   ProducerStateTable & table) {
+    bool warmRestartInProgress = m_warmStartHelper.inProgress();
+    if (!warmRestartInProgress) {
+        table.del(fvw.key);
+    } else {
+        m_warmStartHelper.insertRefreshMap(fvw.KeyOpFieldsValuesTupleVectorForDel());
     }
 }
 
@@ -321,6 +334,32 @@ const char *RouteSync::mySidAction2Str(uint32_t action)
     }
 }
 
+bool RouteSync::parseEncapSrv6VpnRoute(struct rtattr *tb, uint32_t &pic_id,
+                               uint32_t &nhg_id)
+{
+    struct rtattr *tb_encap[256] = {};
+
+    parseRtAttrNested(tb_encap, 256, tb);
+
+    if (tb_encap[ROUTE_ENCAP_SRV6_PIC_ID])
+        pic_id = *((uint32_t *)RTA_DATA(tb_encap[ROUTE_ENCAP_SRV6_PIC_ID]));
+    else {
+        SWSS_LOG_ERROR("Failed to find rtattr ROUTE_ENCAP_SRV6_PIC_ID");
+        return false;
+    }
+
+    if (tb_encap[ROUTE_ENCAP_SRV6_NH_ID])
+        nhg_id = *((uint32_t *)RTA_DATA(tb_encap[ROUTE_ENCAP_SRV6_NH_ID]));
+    else {
+        SWSS_LOG_ERROR("Failed to find rtattr ROUTE_ENCAP_SRV6_NH_ID");
+        return false;
+    }
+
+    SWSS_LOG_INFO("pic_id:%d nhg_id:%d ", pic_id, nhg_id);
+
+    return true;
+}
+
 /**
  * @parseSrv6MySidFormat() - Parses srv6 MySid format
  * @tb:         Pointer to rtattr to look for nested items in.
@@ -409,11 +448,12 @@ bool RouteSync::parseSrv6MySidFormat(struct rtattr *tb,
 bool RouteSync::parseSrv6MySid(struct rtattr *tb[], string &block_len,
                                   string &node_len, string &func_len,
                                   string &arg_len, string &action,
-                                  string &vrf, string &adj)
+                                  string &vrf, string &adj, string &intf)
 {
     uint32_t action_buf = SRV6_LOCALSID_ACTION_UNSPEC;
     char vrf_buf[IFNAMSIZ + 1] = {0};
     char adj_buf[MAX_ADDR_SIZE + 1] = {0};
+    char intf_buf[IFNAMSIZ + 1] = {0};
 
     if (tb[SRV6_LOCALSID_FORMAT])
     {
@@ -455,9 +495,16 @@ bool RouteSync::parseSrv6MySid(struct rtattr *tb[], string &block_len,
                strlen((char *)RTA_DATA(tb[SRV6_LOCALSID_VRFNAME])));
     }
 
+    if (tb[SRV6_LOCALSID_IFNAME])
+    {
+        memcpy(intf_buf, (char *)RTA_DATA(tb[SRV6_LOCALSID_IFNAME]),
+               strlen((char *)RTA_DATA(tb[SRV6_LOCALSID_IFNAME])));
+    }
+
     action = mySidAction2Str(action_buf);
     vrf = vrf_buf;
     adj = adj_buf;
+    intf = intf_buf;
 
     if (action == "unknown")
     {
@@ -466,9 +513,9 @@ bool RouteSync::parseSrv6MySid(struct rtattr *tb[], string &block_len,
     }
 
     SWSS_LOG_INFO("Rx block_len:%s node_len:%s func_len:%s arg_len:%s "
-                  "action:%s vrf:%s adj:%s",
+                  "action:%s vrf:%s adj:%s intf:%s",
                   block_len.c_str(), node_len.c_str(), func_len.c_str(),
-                  arg_len.c_str(), action.c_str(), vrf.c_str(), adj.c_str());
+                  arg_len.c_str(), action.c_str(), vrf.c_str(), adj.c_str(), intf.c_str());
 
     return true;
 }
@@ -805,9 +852,10 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
      */
     if (nlmsg_type == RTM_DELROUTE)
     {
-        vector<FieldValueTuple> fvVector;
-        setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, DEL_COMMAND);
         SWSS_LOG_INFO("RouteTable del msg: %s", destipprefix);
+        delWithWarmRestart(
+            RouteTableFieldValueTupleWrapper{std::move(destipprefix), std::string()},
+            *m_routeTable);
         return;
     }
     else if (nlmsg_type != RTM_NEWROUTE)
@@ -860,23 +908,16 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
         return;
     }
 
-    vector<FieldValueTuple> fvVector;
-    FieldValueTuple nh("nexthop", nexthops);
-    FieldValueTuple intf("ifname", intf_list);
-    FieldValueTuple vni("vni_label", vni_list);
-    FieldValueTuple mac("router_mac", mac_list);
-    FieldValueTuple proto("protocol", proto_str);
-
-    fvVector.push_back(nh);
-    fvVector.push_back(intf);
-    fvVector.push_back(vni);
-    fvVector.push_back(mac);
-    fvVector.push_back(proto);
-    
-    setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, SET_COMMAND);
     SWSS_LOG_INFO("RouteTable set EVPN msg: %s vtep:%s vni:%s mac:%s intf:%s protocol:%s",
                   destipprefix, nexthops.c_str(), vni_list.c_str(), mac_list.c_str(), intf_list.c_str(),
                   proto_str.c_str());
+    RouteTableFieldValueTupleWrapper fvw{std::move(destipprefix), std::move(proto_str)};
+    fvw.nexthop = std::move(nexthops);
+    fvw.ifname = std::move(intf_list);
+    fvw.vni_label = std::move(vni_list);
+    fvw.router_mac = std::move(mac_list);
+
+    setRouteWithWarmRestart(fvw, *m_routeTable);
     return;
 }
 
@@ -918,6 +959,123 @@ bool RouteSync::getSrv6SteerRouteNextHop(struct nlmsghdr *h, int received_bytes,
 
     return true;
 }
+bool RouteSync::getSrv6VpnRouteNextHop(struct nlmsghdr *h, int received_bytes,
+                               struct rtattr *tb[], uint32_t &pic_id,
+                               uint32_t &nhg_id)
+{
+    uint16_t encap = 0;
+
+    if (!tb[RTA_MULTIPATH])
+    {
+        if (tb[RTA_ENCAP_TYPE])
+        {
+            encap = *(uint16_t *)RTA_DATA(tb[RTA_ENCAP_TYPE]);
+        }
+
+        if (tb[RTA_ENCAP] && tb[RTA_ENCAP_TYPE] &&
+            *(uint16_t *)RTA_DATA(tb[RTA_ENCAP_TYPE]) ==
+                NH_ENCAP_SRV6_ROUTE)
+        {
+            return parseEncapSrv6VpnRoute(tb[RTA_ENCAP], pic_id, nhg_id);
+        }
+
+        SWSS_LOG_DEBUG("Rx MsgType:%d encap:%d pic_id:%d nhg_id:%d",
+                        h->nlmsg_type, encap, pic_id,
+                        nhg_id);
+    }
+    else
+    {
+        /* This is a multipath route */
+        SWSS_LOG_NOTICE("Multipath SRv6 routes aren't supported");
+        return false;
+    }
+
+    return false;
+}
+
+vector<FieldValueTuple>
+RouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
+    vector<FieldValueTuple> fvVector;
+    fvVector.push_back(FieldValueTuple("protocol", protocol.c_str()));
+    fvVector.push_back(FieldValueTuple("blackhole", blackhole.c_str()));
+    fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
+    fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
+    fvVector.push_back(FieldValueTuple("nexthop_group", nexthop_group.c_str()));
+    fvVector.push_back(FieldValueTuple("mpls_nh", mpls_nh.c_str()));
+    fvVector.push_back(FieldValueTuple("weight", weight.c_str()));
+    fvVector.push_back(FieldValueTuple("vni_label", vni_label.c_str()));
+    fvVector.push_back(FieldValueTuple("router_mac", router_mac.c_str()));
+    fvVector.push_back(FieldValueTuple("segment", segment.c_str()));
+    fvVector.push_back(FieldValueTuple("seg_src", seg_src.c_str()));
+    // Return value optimization will avoid copy of the following vector
+    return fvVector;
+}
+
+
+
+vector<FieldValueTuple>
+LabelRouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
+    vector<FieldValueTuple> fvVector;
+    fvVector.push_back(FieldValueTuple("protocol", protocol.c_str()));
+    fvVector.push_back(FieldValueTuple("blackhole", blackhole.c_str()));
+    fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
+    fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
+    fvVector.push_back(FieldValueTuple("mpls_nh", mpls_nh.c_str()));
+    fvVector.push_back(FieldValueTuple("mpls_pop", mpls_pop.c_str()));
+    return fvVector;
+}
+
+
+
+vector<FieldValueTuple>
+VnetRouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
+    vector<FieldValueTuple> fvVector;
+    fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
+    fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
+    return fvVector;
+}
+
+
+
+vector<FieldValueTuple>
+VnetTunnelTableFieldValueTupleWrapper::fieldValueTupleVector() {
+    vector<FieldValueTuple> fvVector;
+    fvVector.push_back(FieldValueTuple("endpoint", endpoint.c_str()));
+    return fvVector;
+}
+
+
+
+vector<FieldValueTuple>
+NextHopGroupTableFieldValueTupleWrapper::fieldValueTupleVector() {
+    vector<FieldValueTuple> fvVector;
+    fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
+    fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
+    fvVector.push_back(FieldValueTuple("weight", weight.c_str()));
+    return fvVector;
+}
+
+
+
+vector<FieldValueTuple>
+Srv6MySidTableFieldValueTupleWrapper::fieldValueTupleVector() {
+    vector<FieldValueTuple> fvVector;
+    fvVector.push_back(FieldValueTuple("action", action.c_str()));
+    fvVector.push_back(FieldValueTuple("vrf", vrf.c_str()));
+    fvVector.push_back(FieldValueTuple("adj", adj.c_str()));
+    return fvVector;
+}
+
+
+
+vector<FieldValueTuple>
+Srv6SidListTableFieldValueTupleWrapper::fieldValueTupleVector() {
+    vector<FieldValueTuple> fvVector;
+    fvVector.push_back(FieldValueTuple("path", path.c_str()));
+    return fvVector;
+}
+
+
 
 void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
 {
@@ -1081,13 +1239,38 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
     if (nlmsg_type == RTM_DELROUTE)
     {
         string routeTableKeyStr = string(routeTableKey);
-        string srv6SidListTableKey = routeTableKeyStr;
+        string srv6SidListTableKey = vpn_sid_str;
 
-
-        vector<FieldValueTuple> fvVector;
-        setRouteWithWarmRestart(routeTableKeyStr, fvVector, m_routeTable, DEL_COMMAND);
         SWSS_LOG_INFO("SRV6 RouteTable del msg: %s", routeTableKeyStr.c_str());
-        m_srv6SidListTable.del(srv6SidListTableKey);
+        delWithWarmRestart(
+            RouteTableFieldValueTupleWrapper{std::move(routeTableKeyStr), std::string()},
+            *m_routeTable);
+
+        auto it = m_srv6_sidlist_refcnt.find(srv6SidListTableKey);
+        if (it != m_srv6_sidlist_refcnt.end())
+        {
+            assert (it->second > 0);
+
+            /* Decrement the refcount for this SID list */
+            (it->second)--;
+            SWSS_LOG_INFO("Refcount for SID list '%s' decreased to %u",
+                          srv6SidListTableKey.c_str(), it->second);
+
+            /* If the refcount drops to zero, remove the SID list from ApplDB */
+            if (it->second == 0)
+            {
+                m_srv6SidListTable.del(srv6SidListTableKey);
+                SWSS_LOG_INFO("Refcount for SID list '%s' is zero. SID list removed from ApplDB",
+                              srv6SidListTableKey.c_str());
+
+                m_srv6_sidlist_refcnt.erase(srv6SidListTableKey);
+            }
+        }
+        else
+        {
+            SWSS_LOG_WARN("SID list '%s' not found in the map.", srv6SidListTableKey.c_str());
+        }
+
         return;
     }
     else if (nlmsg_type == RTM_NEWROUTE)
@@ -1095,32 +1278,44 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
         string routeTableKeyStr = string(routeTableKey);
         /* Write SID list to SRV6_SID_LIST_TABLE */
 
-        string srv6SidListTableKey = routeTableKeyStr;
+        string srv6SidListTableKey = vpn_sid_str;
 
-        vector<FieldValueTuple> fvVectorSidList;
+        auto it = m_srv6_sidlist_refcnt.find(srv6SidListTableKey);
+        if (it != m_srv6_sidlist_refcnt.end())
+        {
+            /* SID list already exists: just bump the refcount */
+            (it->second)++;
+            SWSS_LOG_INFO("Refcount for SID list'%s' increased to %u",
+                          srv6SidListTableKey.c_str(), it->second);
+        }
+        else
+        {
+            /* First time we see this SID list: program it into ApplDB and initialize the refcount to 1 */
+            Srv6SidListTableFieldValueTupleWrapper fvw{srv6SidListTableKey};
+            fvw.path = vpn_sid_str;
 
-        FieldValueTuple path("path", vpn_sid_str);
-        fvVectorSidList.push_back(path);
+            setTable(fvw, m_srv6SidListTable);
+            SWSS_LOG_DEBUG("Srv6SidListTable set msg: %s path: %s",
+                           srv6SidListTableKey.c_str(), vpn_sid_str.c_str());
 
-        m_srv6SidListTable.set(srv6SidListTableKey, fvVectorSidList);
-        SWSS_LOG_DEBUG("Srv6SidListTable set msg: %s path: %s",
-                        srv6SidListTableKey.c_str(), vpn_sid_str.c_str());
+            m_srv6_sidlist_refcnt[srv6SidListTableKey] = 1;
+            SWSS_LOG_INFO("SID list '%s' created and refcount initialized to 1",
+                          srv6SidListTableKey.c_str());
+        }
 
         /* Write route to ROUTE_TABLE */
 
-        vector<FieldValueTuple> fvVectorRoute;
-
-        FieldValueTuple vpn_sid("segment", srv6SidListTableKey);
-        fvVectorRoute.push_back(vpn_sid);
+        SWSS_LOG_INFO("SRV6 RouteTable set msg: %s vpn_sid:%s src_addr:%s",
+                      routeTableKeyStr.c_str(), vpn_sid_str.c_str(),
+                      src_addr_str.empty() ? "NONE" : src_addr_str.c_str());
+        RouteTableFieldValueTupleWrapper rfvw{std::move(routeTableKeyStr), ""};
+        rfvw.segment = std::move(srv6SidListTableKey);
 
         if (!src_addr_str.empty())
         {
-            FieldValueTuple seg_src("seg_src", src_addr_str);
-            fvVectorRoute.push_back(seg_src);
+            rfvw.seg_src = std::move(src_addr_str);
         }
-        setRouteWithWarmRestart(routeTableKeyStr, fvVectorRoute, m_routeTable, SET_COMMAND);
-        SWSS_LOG_INFO("SRV6 RouteTable set msg: %s vpn_sid:%s src_addr:%s",
-                      routeTableKeyStr.c_str(), vpn_sid_str.c_str(), src_addr_str.c_str());
+        setRouteWithWarmRestart(rfvw, *m_routeTable);
     }
 
     return;
@@ -1198,11 +1393,12 @@ void RouteSync::onSrv6MySidMsg(struct nlmsghdr *h, int len)
     string action_str;
     string vrf_str;
     string adj_str;
+    string intf_str;
     string my_sid_table_key;
 
     if (!parseSrv6MySid(tb, block_len_str, node_len_str,
                       func_len_str, arg_len_str, action_str, vrf_str,
-                      adj_str))
+                      adj_str, intf_str))
     {
         SWSS_LOG_ERROR("Invalid Srv6 MySid");
         return;
@@ -1304,6 +1500,13 @@ void RouteSync::onSrv6MySidMsg(struct nlmsghdr *h, int len)
         return;
     }
 
+    if (!(action_str.compare("ua")) && adj_str.empty())
+    {
+        SWSS_LOG_NOTICE("MySid uA IP Prefix: %s adj is empty",
+                        sid_value_str);
+        return;
+    }
+
     if (!(action_str.compare("end.dx6")) && adj_str.empty())
     {
         SWSS_LOG_NOTICE("MySid End.DX6 IP Prefix: %s adj is empty",
@@ -1318,25 +1521,256 @@ void RouteSync::onSrv6MySidMsg(struct nlmsghdr *h, int len)
         return;
     }
 
-    vector<FieldValueTuple> fvVector;
-    FieldValueTuple act("action", action_str);
-    fvVector.push_back(act);
+    Srv6MySidTableFieldValueTupleWrapper fvw{my_sid_table_key};
+    fvw.action = std::move(action_str);
     if (!vrf_str.empty())
     {
-        FieldValueTuple vrf("vrf", vrf_str);
-        fvVector.push_back(vrf);
+        fvw.vrf = std::move(vrf_str);
     }
     if (!adj_str.empty())
     {
-        FieldValueTuple adj("adj", adj_str);
-        fvVector.push_back(adj);
+        fvw.adj = std::move(adj_str);
+        // Append the interface name to the adjacency if one is provided
+        if (!intf_str.empty())
+        {
+            fvw.adj += "@" + intf_str;
+        }
     }
 
-    m_srv6MySidTable.set(my_sid_table_key, fvVector);
+    setTable(fvw, m_srv6MySidTable);
 
     return;
 }
 
+
+
+void RouteSync::onSrv6VpnRouteMsg(struct nlmsghdr *h, int len)
+{
+    struct rtmsg *rtm;
+    struct rtattr *tb[RTA_MAX + 1];
+    void *dest = NULL;
+    char dstaddr[IPV6_MAX_BYTE] = {0};
+    int dst_len = 0;
+    char destipprefix[MAX_ADDR_SIZE + 1] = {0};
+    char routeTableKey[IFNAMSIZ + MAX_ADDR_SIZE + 2] = {0};
+    int nlmsg_type = h->nlmsg_type;
+    unsigned int vrf_index;
+
+    rtm = (struct rtmsg *)NLMSG_DATA(h);
+
+    /* Parse attributes and extract fields of interest. */
+    memset(tb, 0, sizeof(tb));
+    netlink_parse_rtattr(tb, RTA_MAX, RTM_RTA(rtm), len);
+
+    if (!tb[RTA_DST])
+    {
+        SWSS_LOG_ERROR(
+            "Received an invalid SRv6 route: missing RTA_DST attribute");
+        return;
+    }
+
+    dest = RTA_DATA(tb[RTA_DST]);
+
+    if (rtm->rtm_family == AF_INET)
+    {
+        if (rtm->rtm_dst_len > IPV4_MAX_BITLEN)
+        {
+            SWSS_LOG_ERROR(
+                "Received an invalid SRv6 route: prefix len %d is out of range",
+                rtm->rtm_dst_len);
+            return;
+        }
+        memcpy(dstaddr, dest, IPV4_MAX_BYTE);
+        dst_len = rtm->rtm_dst_len;
+    }
+    else if (rtm->rtm_family == AF_INET6)
+    {
+        if (rtm->rtm_dst_len > IPV6_MAX_BITLEN)
+        {
+            SWSS_LOG_ERROR(
+                "Received an invalid SRv6 route: prefix len %d is out of range",
+                rtm->rtm_dst_len);
+            return;
+        }
+        memcpy(dstaddr, dest, IPV6_MAX_BYTE);
+        dst_len = rtm->rtm_dst_len;
+    }
+    else
+    {
+        SWSS_LOG_ERROR(
+            "Received an invalid SRv6 route: invalid address family %d",
+            rtm->rtm_family);
+        return;
+    }
+
+    inet_ntop(rtm->rtm_family, dstaddr, destipprefix, MAX_ADDR_SIZE);
+
+    SWSS_LOG_DEBUG("Rx MsgType:%d Family:%d Prefix:%s/%d", nlmsg_type,
+                   rtm->rtm_family, destipprefix, dst_len);
+
+    /* Table corresponding to route. */
+    if (tb[RTA_TABLE])
+    {
+        vrf_index = *(int *)RTA_DATA(tb[RTA_TABLE]);
+    }
+    else
+    {
+        vrf_index = rtm->rtm_table;
+    }
+
+    if (vrf_index)
+    {
+        if (!getIfName(vrf_index, routeTableKey, IFNAMSIZ))
+        {
+            SWSS_LOG_ERROR("Fail to get the VRF name (ifindex %u)", vrf_index);
+            return;
+        }
+        /*
+         * Now vrf device name is required to start with VRF_PREFIX
+         */
+        if (memcmp(routeTableKey, VRF_PREFIX, strlen(VRF_PREFIX)))
+        {
+            SWSS_LOG_ERROR("Invalid VRF name %s (ifindex %u)", routeTableKey,
+                           vrf_index);
+            return;
+        }
+        routeTableKey[strlen(routeTableKey)] = ':';
+    }
+
+    if ((rtm->rtm_family == AF_INET && dst_len == IPV4_MAX_BITLEN) ||
+        (rtm->rtm_family == AF_INET6 && dst_len == IPV6_MAX_BITLEN))
+    {
+        snprintf(routeTableKey + strlen(routeTableKey),
+                 sizeof(routeTableKey) - strlen(routeTableKey), "%s",
+                 destipprefix);
+    }
+    else
+    {
+        snprintf(routeTableKey + strlen(routeTableKey),
+                 sizeof(routeTableKey) - strlen(routeTableKey), "%s/%u",
+                 destipprefix, dst_len);
+    }
+
+    SWSS_LOG_INFO("Received route message dest ip prefix: %s Op:%s",
+                  destipprefix, nlmsg_type == RTM_NEWSRV6VPNROUTE ? "add" : "del");
+
+    if (nlmsg_type != RTM_NEWSRV6VPNROUTE && nlmsg_type != RTM_DELSRV6VPNROUTE)
+    {
+        SWSS_LOG_ERROR("Unknown message-type: %d for %s", nlmsg_type,
+                       destipprefix);
+        return;
+    }
+
+    switch (rtm->rtm_type)
+    {
+        case RTN_BLACKHOLE:
+        case RTN_UNREACHABLE:
+        case RTN_PROHIBIT:
+            SWSS_LOG_ERROR(
+                "RTN_BLACKHOLE route not expected (%s)", destipprefix);
+            return;
+        case RTN_UNICAST:
+            break;
+
+        case RTN_MULTICAST:
+        case RTN_BROADCAST:
+        case RTN_LOCAL:
+            SWSS_LOG_NOTICE(
+                "BUM routes aren't supported yet (%s)", destipprefix);
+            return;
+
+        default:
+            return;
+    }
+
+    uint32_t pic_id;
+    uint32_t nhg_id;
+    bool ret;
+
+    ret = getSrv6VpnRouteNextHop(h, len, tb, pic_id, nhg_id);
+    if(!ret){
+        return ;
+    }
+
+    if (nlmsg_type == RTM_DELSRV6VPNROUTE)
+    {
+        SWSS_LOG_INFO("RouteTable del msg: %s", routeTableKey);
+        delWithWarmRestart(
+            RouteTableFieldValueTupleWrapper{std::move(routeTableKey), std::string()},
+            *m_routeTable);
+        return;
+    }
+    else if (nlmsg_type == RTM_NEWSRV6VPNROUTE)
+    {
+        auto nhg_it = m_nh_groups.find(nhg_id);
+        auto pic_it = m_nh_groups.find(pic_id);
+        if(nhg_it == m_nh_groups.end() || pic_it == m_nh_groups.end())
+        {
+             SWSS_LOG_ERROR("Can not find pic or nexthop for vpn route :%s", routeTableKey);
+            return ;
+        }
+
+        NextHopGroup &nhg = nhg_it->second;
+        NextHopGroup &pic = pic_it->second;
+        if(nhg.group.size() == 0)
+        {
+            vector<FieldValueTuple> fvVector;
+            struct NextHopField nhField;
+            getPicContextGroupFields(pic, nhField);
+            FieldValueTuple nh("nexthop", nhField.nexthops.c_str());
+            FieldValueTuple vpn_sid("vpn_sid", nhField.vpn_sid.c_str());
+            FieldValueTuple seg_srcs("seg_src", nhField.seg_srcs.c_str());
+            FieldValueTuple pic_context_id("pic_context_id", "");
+            FieldValueTuple nexthop_group("nexthop_group", "");
+            fvVector.push_back(nh);
+            fvVector.push_back(vpn_sid);
+            fvVector.push_back(seg_srcs);
+            fvVector.push_back(pic_context_id);
+            fvVector.push_back(nexthop_group);
+            //Using route-table only for single next-hop
+            string nexthops, ifnames, weights;
+            getNextHopGroupFields(nhg, nexthops, ifnames, weights);
+            FieldValueTuple intf("ifname", ifnames.c_str());
+            fvVector.push_back(intf);
+            if(!weights.empty())
+            {
+                FieldValueTuple wg("weight", weights.c_str());
+                fvVector.push_back(wg);
+            }
+            m_routeTable->set(routeTableKey, fvVector);
+
+            SWSS_LOG_DEBUG("NextHop group id %d is a single nexthop address. Filling the route table %s with nexthop and ifname", nhg_id, destipprefix);
+        }
+        else{
+            vector<FieldValueTuple> fvVectorVpnRoute;
+            FieldValueTuple pic_context_id("pic_context_id", getNextHopGroupKeyAsString(pic_id));
+            fvVectorVpnRoute.push_back(pic_context_id);
+
+            vector<FieldValueTuple> fvVector;
+            struct NextHopField nhField;
+            string key = getNextHopGroupKeyAsString(nhg_id);
+            getPicContextGroupFields(pic, nhField);
+            FieldValueTuple seg_srcs("seg_src", nhField.seg_srcs.c_str());
+            fvVector.push_back(seg_srcs);
+            m_nexthop_groupTable.set(key.c_str(), fvVector);
+
+            FieldValueTuple nexthop_group("nexthop_group", getNextHopGroupKeyAsString(nhg_id));
+            fvVectorVpnRoute.push_back(nexthop_group);
+
+            FieldValueTuple nh("nexthop", "");
+            FieldValueTuple vpn_sid("vpn_sid", "");
+            FieldValueTuple seg_srcs_route("seg_src", "");
+            FieldValueTuple intf("ifname", "");
+            fvVectorVpnRoute.push_back(nh);
+            fvVectorVpnRoute.push_back(vpn_sid);
+            fvVectorVpnRoute.push_back(seg_srcs_route);
+            fvVectorVpnRoute.push_back(intf);
+            m_routeTable->set(routeTableKey, fvVectorVpnRoute);
+        }
+    }
+
+    return;
+}
 uint16_t RouteSync::getEncapType(struct nlmsghdr *h)
 {
     int len;
@@ -1416,14 +1850,21 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
 
     if ((h->nlmsg_type != RTM_NEWROUTE)
         && (h->nlmsg_type != RTM_DELROUTE)
-        && (h->nlmsg_type != RTM_NEWSRV6LOCALSID)
-        && (h->nlmsg_type != RTM_DELSRV6LOCALSID)
         && (h->nlmsg_type != RTM_NEWNEXTHOP)
         && (h->nlmsg_type != RTM_DELNEXTHOP)
-    )
+        && (h->nlmsg_type != RTM_NEWPICCONTEXT)
+        && (h->nlmsg_type != RTM_DELPICCONTEXT)
+        && (h->nlmsg_type != RTM_NEWSRV6VPNROUTE)
+        && (h->nlmsg_type != RTM_DELSRV6VPNROUTE)
+        && (h->nlmsg_type != RTM_NEWSRV6LOCALSID)
+        && (h->nlmsg_type != RTM_DELSRV6LOCALSID))
         return;
 
     if(h->nlmsg_type == RTM_NEWNEXTHOP || h->nlmsg_type == RTM_DELNEXTHOP)
+    {
+        len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(struct nhmsg)));
+    }
+    else if(h->nlmsg_type == RTM_NEWPICCONTEXT || h->nlmsg_type == RTM_DELPICCONTEXT)
     {
         len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(struct nhmsg)));
     }
@@ -1445,7 +1886,17 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
         onNextHopMsg(h, len);
         return;
     }
-    
+    if(h->nlmsg_type == RTM_NEWPICCONTEXT || h->nlmsg_type == RTM_DELPICCONTEXT)
+    {
+        onPicContextMsg(h, len);
+        return;
+    }
+    if ((h->nlmsg_type == RTM_NEWSRV6VPNROUTE)
+        || (h->nlmsg_type == RTM_DELSRV6VPNROUTE))
+    {
+        onSrv6VpnRouteMsg(h, len);
+        return;
+    }
     if ((h->nlmsg_type == RTM_NEWSRV6LOCALSID)
         || (h->nlmsg_type == RTM_DELSRV6LOCALSID))
     {
@@ -1570,9 +2021,9 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
      */
     if (nlmsg_type == RTM_DELROUTE)
     {
-        vector<FieldValueTuple> fvVector;
-        setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, DEL_COMMAND);
         SWSS_LOG_INFO("RouteTable del msg: %s", destipprefix);
+        delWithWarmRestart(RouteTableFieldValueTupleWrapper{std::move(destipprefix), ""},
+                           *m_routeTable);
         return;
 
     }
@@ -1594,12 +2045,10 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
     {
         case RTN_BLACKHOLE:
         {
-            vector<FieldValueTuple> fvVector;
-            FieldValueTuple fv("blackhole", "true");
-            fvVector.push_back(fv);
-            fvVector.push_back(proto);
-            setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, SET_COMMAND);
             SWSS_LOG_INFO("RouteTable set blackhole msg: %s", destipprefix);
+            RouteTableFieldValueTupleWrapper fvw {std::move(destipprefix), std::move(proto_str)};
+            fvw.blackhole = "true";
+            setRouteWithWarmRestart(fvw, *m_routeTable);
             return;
         }
         case RTN_UNICAST:
@@ -1615,7 +2064,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
             return;
     }
 
-    vector<FieldValueTuple> fvVector;
+    RouteTableFieldValueTupleWrapper fvw {destipprefix, std::move(proto_str)};
     string gw_list;
     string intf_list;
     string mpls_list;
@@ -1634,29 +2083,24 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
         NextHopGroup& nhg = itg->second;
         if(nhg.group.size() == 0)
         {
-        // Using route-table only for single next-hop
-        string nexthops = nhg.nexthop.empty() ? (rtnl_route_get_family(route_obj) == AF_INET ? "0.0.0.0" : "::") : nhg.nexthop;
-        string ifnames, weights;
+            // Using route-table only for single next-hop
+            string nexthops = nhg.nexthop.empty() ? (rtnl_route_get_family(route_obj) == AF_INET ? "0.0.0.0" : "::") : nhg.nexthop;
+            string ifnames, weights;
 
-        getNextHopGroupFields(nhg, nexthops, ifnames, weights, rtnl_route_get_family(route_obj));
+            getNextHopGroupFields(nhg, nexthops, ifnames, weights, rtnl_route_get_family(route_obj));
+            fvw.nexthop = std::move(nexthops);
+            fvw.ifname = std::move(ifnames);
+            if (!weights.empty())
+                fvw.weight = std::move(weights);
 
-        FieldValueTuple gw("nexthop", nexthops.c_str());
-        FieldValueTuple intf("ifname", ifnames.c_str());
-        fvVector.push_back(gw);
-        fvVector.push_back(intf);
-
-        SWSS_LOG_DEBUG("NextHop group id %d is a single nexthop address. Filling the route table %s with nexthop and ifname", nhg_id, destipprefix);
+            SWSS_LOG_DEBUG("NextHop group id %d is a single nexthop address. Filling the route table %s with nexthop and ifname", nhg_id, destipprefix);
         }
         else
         {
             nhg_id_key = getNextHopGroupKeyAsString(nhg_id);
-            FieldValueTuple nhg("nexthop_group", nhg_id_key.c_str());
-            fvVector.push_back(nhg);
+            fvw.nexthop_group = std::move(nhg_id_key);
             installNextHopGroup(nhg_id);
         }
-
-        fvVector.push_back(proto);
-
     }
     else
     {
@@ -1676,13 +2120,13 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
 
         if (alsv.size() == 1)
         {
-            if (alsv[0] == "eth0" || alsv[0] == "docker0")
+            if (alsv[0] == "eth0" || alsv[0] == "docker0" || alsv[0] == "eth1-midplane")
             {
-                SWSS_LOG_DEBUG("Skip routes to eth0 or docker0: %s %s %s",
+                SWSS_LOG_DEBUG("Skip routes to eth0 or docker0 or eth1-midplane: %s %s %s",
                             destipprefix, gw_list.c_str(), intf_list.c_str());
-                vector<FieldValueTuple> fvVector;
-                setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, DEL_COMMAND);
-                SWSS_LOG_INFO("RouteTable del msg for eth0/docker0 route: %s", destipprefix);
+                SWSS_LOG_INFO("RouteTable del msg for eth0/docker0/eth1-midplane route: %s", destipprefix);
+                delWithWarmRestart(RouteTableFieldValueTupleWrapper{std::move(destipprefix), ""},
+                                   *m_routeTable);
                 return;
             }
         }
@@ -1694,9 +2138,9 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
                 * A change in FRR behavior from version 7.2 to 7.5 causes the default route to be updated to eth0
                 * during interface up/down events. This skips routes to eth0 or docker0 to avoid such behavior.
                 */
-                if (alias == "eth0" || alias == "docker0")
+                if (alias == "eth0" || alias == "docker0" || alias == "eth1-midplane")
                 {
-                    SWSS_LOG_DEBUG("Skip routes to eth0 or docker0: %s %s %s",
+                    SWSS_LOG_DEBUG("Skip routes to eth0 or docker0 or eth1-midplane: %s %s %s",
                                 destipprefix, gw_list.c_str(), intf_list.c_str());
                     continue;
                 }
@@ -1704,32 +2148,26 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
         }
 
 
-        FieldValueTuple gw("nexthop", gw_list);
-        FieldValueTuple intf("ifname", intf_list);
+        fvw.nexthop = std::move(gw_list);
+        fvw.ifname = std::move(intf_list);
 
-        fvVector.push_back(proto);
-        fvVector.push_back(gw);
-        fvVector.push_back(intf);
         if (!mpls_list.empty())
         {
-            FieldValueTuple mpls_nh("mpls_nh", mpls_list);
-            fvVector.push_back(mpls_nh);
+            fvw.mpls_nh = std::move(mpls_list);
         }
         if (!weights.empty())
         {
-            FieldValueTuple wt("weight", weights);
-            fvVector.push_back(wt);
+            fvw.weight = std::move(weights);
         }
     }
 
+    setRouteWithWarmRestart(fvw, *m_routeTable);
     if (nhg_id)
     {
-        setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, SET_COMMAND);
         SWSS_LOG_INFO("RouteTable set msg with NHG: %s nhg_id:%d", destipprefix, nhg_id);
     }
     else
     {
-        setRouteWithWarmRestart(destipprefix, fvVector, m_routeTable, SET_COMMAND);
         SWSS_LOG_INFO("RouteTable set msg: %s nexthop:%s ifname:%s mpls:%s weight:%s",
                       destipprefix, gw_list.c_str(), intf_list.c_str(),
                       mpls_list.empty() ? "na" : mpls_list.c_str(),
@@ -1801,14 +2239,13 @@ void RouteSync::onNextHopMsg(struct nlmsghdr *h, int len)
             {
                 NextHopGroup &nhg = it->second;
                 nhg.group = group;
-                if (nhg.installed)
-                {
-                    updateNextHopGroupDb(nhg);
-                }
+                updateNextHopGroupDb(nhg);
             }
             else
             {
+                NextHopGroup nhg = NextHopGroup(id, group);
                 m_nh_groups.insert({id, NextHopGroup(id, group)});
+                updateNextHopGroupDb(nhg);
             }
         }
         else
@@ -1841,7 +2278,7 @@ void RouteSync::onNextHopMsg(struct nlmsghdr *h, int len)
                     strcpy(if_name, ifname_unknown);
                 }
                 ifname = string(if_name);
-                if (ifname == "eth0" || ifname == "docker0")
+                if (ifname == "eth0" || ifname == "docker0" || ifname =="eth1-midplane")
                 {
                     SWSS_LOG_DEBUG("Skip routes to interface: %s id[%d]", ifname.c_str(), id);
                     return;
@@ -1856,6 +2293,219 @@ void RouteSync::onNextHopMsg(struct nlmsghdr *h, int len)
     {
         SWSS_LOG_DEBUG("NextHopGroup del event: %d", id);
         deleteNextHopGroup(id);
+    }
+
+    return;
+}
+
+void netlink_parse_rtattr_nested(struct rtattr **tb, int max,
+				 const struct rtattr *rta)
+{
+	netlink_parse_rtattr(tb, max, (struct rtattr *)RTA_DATA(rta), (int)RTA_PAYLOAD(rta));
+}
+
+int RouteSync::parse_encap_seg6(const struct rtattr *tb, struct in6_addr *segs,
+    struct in6_addr *src)
+{
+    struct rtattr *tb_encap[256] = {};
+    struct seg6_iptunnel_encap_pri *ipt = NULL;
+    struct in6_addr *segments = NULL;
+
+    netlink_parse_rtattr_nested(tb_encap, 256, tb);
+
+    if (tb_encap[SEG6_IPTUNNEL_SRH]) {
+        ipt = (struct seg6_iptunnel_encap_pri *)
+            RTA_DATA(tb_encap[SEG6_IPTUNNEL_SRH]);
+        segments = ipt->srh[0].segments;
+        *segs = segments[0];
+        *src = ipt->src;
+        return 1;
+    }
+
+    return 0;
+}
+
+void RouteSync::onPicContextMsg(struct nlmsghdr *h, int len)
+{
+    int nlmsg_type = h->nlmsg_type;
+    uint32_t id = 0;
+    unsigned char addr_family;
+    int32_t ifindex = -1, grp_count = 0;
+    string ifname;
+    struct nhmsg *nhm = NULL;
+    struct rtattr *tb[NHA_MAX + 1] = {};
+    struct nexthop_grp grp[MAX_MULTIPATH_NUM];
+    struct in_addr ipv4 = {0};
+    struct in6_addr ipv6 = {0};
+    char gateway[INET6_ADDRSTRLEN] = {0};
+    char seg6[INET6_ADDRSTRLEN] = {0};
+    char seg6_srcs[INET6_ADDRSTRLEN] = {0};
+    char ifname_unknown[IFNAMSIZ] = "unknown";
+    uint16_t encap_type;
+    vector<FieldValueTuple> fvVector;
+
+    SWSS_LOG_INFO("type %d len %d", nlmsg_type, len);
+    if ((nlmsg_type != RTM_NEWPICCONTEXT)
+        && (nlmsg_type != RTM_DELPICCONTEXT))
+    {
+        return;
+    }
+
+    nhm = (struct nhmsg *)NLMSG_DATA(h);
+
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wcast-align"
+    struct rtattr* rta = NHA_RTA(nhm);
+    #pragma GCC diagnostic pop
+
+    netlink_parse_rtattr(tb, NHA_MAX, rta, len);
+
+    if (!tb[NHA_ID]) {
+        SWSS_LOG_ERROR(
+            "Nexthop group without an ID received from the zebra");
+        return;
+    }
+
+    /* We use the ID key'd nhg table for kernel updates */
+    id = *((uint32_t *)RTA_DATA(tb[NHA_ID]));
+
+    addr_family = nhm->nh_family;
+
+    if (nlmsg_type == RTM_NEWPICCONTEXT)
+    {
+        if(tb[NHA_GROUP])
+        {
+            SWSS_LOG_INFO("New nexthop group message!");
+            fvVector.emplace_back("nexthop_type", "pic_context_group");
+            struct nexthop_grp *nha_grp = (struct nexthop_grp *)RTA_DATA(tb[NHA_GROUP]);
+            grp_count = (int)(RTA_PAYLOAD(tb[NHA_GROUP]) / sizeof(*nha_grp));
+
+            if(grp_count > MAX_MULTIPATH_NUM)
+                grp_count = MAX_MULTIPATH_NUM;
+
+            fvVector.emplace_back("nexthop_count", to_string(grp_count));
+            string nhid_list;
+            string weight_list;
+            for (int i = 0; i < grp_count; i++) {
+                nhid_list += to_string(nha_grp[i].id);
+                grp[i].id = nha_grp[i].id;
+                    /*
+                        The minimum weight value is 1, but kernel store it as zero (https://git.kernel.org/pub/scm/network/iproute2/iproute2.git/tree/ip/iproute.c?h=v5.19.0#n1028).
+                        Adding one to weight to write the right value to the database.
+                    */
+                weight_list += to_string(nha_grp[i].weight + 1);
+                grp[i].weight = nha_grp[i].weight + 1;
+                if (i + 1 < grp_count)
+                {
+                    nhid_list += NHG_DELIMITER;
+                    weight_list += NHG_DELIMITER;
+                }
+            }
+            fvVector.emplace_back("nh_id", nhid_list);
+            fvVector.emplace_back("weight", weight_list);
+        }
+        else
+        {
+            if (tb[NHA_GATEWAY])
+            {
+                if (addr_family == AF_INET)
+                {
+                    memcpy(&ipv4, (void *)RTA_DATA(tb[NHA_GATEWAY]), 4);
+                    inet_ntop(AF_INET, &ipv4, gateway, INET_ADDRSTRLEN);
+                }
+                else if (addr_family == AF_INET6)
+                {
+                    memcpy(&ipv6, (void *)RTA_DATA(tb[NHA_GATEWAY]), 16);
+                    inet_ntop(AF_INET6, &ipv6, gateway, INET6_ADDRSTRLEN);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR(
+                        "Unexpected nexthop address family");
+                    return;
+                }
+                fvVector.emplace_back("nexthop", string(gateway));
+            }
+
+            if(tb[NHA_OIF])
+            {
+                ifindex = *((int32_t *)RTA_DATA(tb[NHA_OIF]));
+                char if_name[IFNAMSIZ] = {0};
+                if (!getIfName(ifindex, if_name, IFNAMSIZ))
+                {
+                    strcpy(if_name, ifname_unknown);
+                }
+                ifname = string(if_name);
+                if (ifname == "eth0" || ifname == "docker0")
+                {
+                    SWSS_LOG_DEBUG("Skip routes to inteface: %s id[%d]", ifname.c_str(), id);
+                    return;
+                }
+                fvVector.emplace_back("ifname", ifname);
+            }
+            if(tb[NHA_ENCAP] && tb[NHA_ENCAP_TYPE])
+            {
+                struct in6_addr seg6_segs = {0};
+                struct in6_addr seg6_src = {0};
+                encap_type = *((uint16_t *)RTA_DATA(tb[NHA_ENCAP_TYPE]));
+                switch (encap_type)
+                {
+                    case LWTUNNEL_ENCAP_SEG6:
+                        fvVector.emplace_back("nexthop_type", "srv6");
+                        parse_encap_seg6(tb[NHA_ENCAP], &seg6_segs, &seg6_src);
+                        inet_ntop(AF_INET6, &seg6_segs, seg6, INET6_ADDRSTRLEN);
+                        inet_ntop(AF_INET6, &seg6_src, seg6_srcs, INET6_ADDRSTRLEN);
+                        fvVector.emplace_back("vpn_sid", seg6);
+                        fvVector.emplace_back("seg_src", seg6_srcs);
+
+                        break;
+                    default:
+                        SWSS_LOG_ERROR("unknown encap type: %d id[%d]", encap_type, id);
+                }
+
+                SWSS_LOG_INFO("seg6:%s seg6_srcs:%s", seg6, seg6_srcs);
+            }
+            else
+            {
+                fvVector.emplace_back("nexthop_type", "nh");
+                fvVector.emplace_back("vpn_sid", "");
+                fvVector.emplace_back("seg_src", "");
+            }
+
+        }
+
+        if(grp_count)
+        {
+            vector<pair<uint32_t,uint8_t>> group;
+            for(int i = 0; i < grp_count; i++)
+            {
+                group.push_back(std::make_pair(grp[i].id, grp[i].weight));
+            }
+            auto it = m_nh_groups.find(id);
+            if(it != m_nh_groups.end())
+            {
+                NextHopGroup &nhg = it->second;
+                nhg.group = group;
+                updatePicContextGroupDb(nhg);
+            }
+            else
+            {
+                NextHopGroup nhg = NextHopGroup(id, group);
+                m_nh_groups.insert({id, nhg});
+                updatePicContextGroupDb(nhg);
+            }
+        }
+        else
+        {
+            SWSS_LOG_DEBUG("Received: id[%d], if[%d/%s] address[%s]", id, ifindex, ifname.c_str(), gateway);
+            NextHopGroup nhg =  NextHopGroup(id, string(gateway), ifname, seg6, seg6_srcs);
+            m_nh_groups.insert({id, nhg});
+        }
+    }
+    else if (nlmsg_type == RTM_DELPICCONTEXT)
+    {
+        SWSS_LOG_DEBUG("NextHopGroup del event: %d", id);
+        deletePicContextGroup(id);
     }
 
     return;
@@ -1879,9 +2529,10 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
 
     if (nlmsg_type == RTM_DELROUTE)
     {
-        vector<FieldValueTuple> fvVector;
-        setRouteWithWarmRestart(destaddr, fvVector, m_label_routeTable, DEL_COMMAND);
         SWSS_LOG_INFO("LabelRouteTable del msg: %s", destaddr);
+        delWithWarmRestart(
+	    LabelRouteTableFieldValueTupleWrapper{std::move(destaddr), std::string()},
+	    *m_label_routeTable);
         return;
     }
     else if (nlmsg_type != RTM_NEWROUTE)
@@ -1910,12 +2561,10 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
     {
         case RTN_BLACKHOLE:
         {
-            vector<FieldValueTuple> fvVector;
-            FieldValueTuple fv("blackhole", "true");
-            fvVector.push_back(fv);
-            fvVector.push_back(proto);
-            setRouteWithWarmRestart(destaddr, fvVector, m_label_routeTable, SET_COMMAND);
             SWSS_LOG_INFO("LabelRouteTable set blackhole msg: %s", destaddr);
+            LabelRouteTableFieldValueTupleWrapper fvw{std::move(destaddr), std::move(proto_str)};
+            fvw.blackhole = "true";
+            setRouteWithWarmRestart(fvw, *m_label_routeTable);
             return;
         }
         case RTN_UNICAST:
@@ -1944,23 +2593,18 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
     string mpls_list;
     getNextHopList(route_obj, gw_list, mpls_list, intf_list);
 
-    vector<FieldValueTuple> fvVector;
-    FieldValueTuple gw("nexthop", gw_list);
-    FieldValueTuple intf("ifname", intf_list);
-    FieldValueTuple mpls_pop("mpls_pop", "1");
-
-    fvVector.push_back(gw);
-    fvVector.push_back(intf);
-    if (!mpls_list.empty())
-    {
-        FieldValueTuple mpls_nh("mpls_nh", mpls_list);
-        fvVector.push_back(mpls_nh);
-    }
-    fvVector.push_back(mpls_pop);
-
-    setRouteWithWarmRestart(destaddr, fvVector, m_label_routeTable, SET_COMMAND);
     SWSS_LOG_INFO("LabelRouteTable set msg: %s %s %s %s", destaddr,
                   gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
+    LabelRouteTableFieldValueTupleWrapper fvw{std::move(destaddr), std::move(proto_str)};
+    fvw.nexthop = std::move(gw_list);
+    fvw.ifname = std::move(intf_list);
+    fvw.mpls_pop = "1";
+    if (!mpls_list.empty())
+    {
+        fvw.mpls_nh = std::move(mpls_list);
+    }
+
+    setRouteWithWarmRestart(fvw, *m_label_routeTable);
 }
 
 /*
@@ -1995,6 +2639,7 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vne
         /* Duplicated delete as we do not know if it is a VXLAN tunnel route*/
         m_vnet_routeTable.del(vnet_dip);
         m_vnet_tunnelTable.del(vnet_dip);
+
         return;
     }
     else if (nlmsg_type != RTM_NEWROUTE)
@@ -2040,29 +2685,25 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vne
        the route is a VXLAN tunnel route. */
     if (ifnames.find(VXLAN_IF_NAME_PREFIX) == 0)
     {
-        vector<FieldValueTuple> fvVector;
-        FieldValueTuple ep("endpoint", nexthops);
-        fvVector.push_back(ep);
-
-        m_vnet_tunnelTable.set(vnet_dip, fvVector);
         SWSS_LOG_DEBUG("%s set msg: %s %s",
                        APP_VNET_RT_TUNNEL_TABLE_NAME, vnet_dip.c_str(), nexthops.c_str());
+        VnetTunnelTableFieldValueTupleWrapper fvw{std::move(vnet_dip)};
+        fvw.endpoint = std::move(nexthops);
+        setTable(fvw, m_vnet_tunnelTable);
         return;
     }
     /* Regular VNET route */
     else
     {
-        vector<FieldValueTuple> fvVector;
-        FieldValueTuple idx("ifname", ifnames);
-        fvVector.push_back(idx);
+        VnetRouteTableFieldValueTupleWrapper fvw{vnet_dip};
+        fvw.ifname = ifnames;
 
         /* If the route has at least one next hop gateway, e.g., nexthops does not only have ',' */
         if (nexthops.length() + 1 > (unsigned int)rtnl_route_get_nnexthops(route_obj))
         {
-            FieldValueTuple nh("nexthop", nexthops);
-            fvVector.push_back(nh);
             SWSS_LOG_DEBUG("%s set msg: %s %s %s",
                            APP_VNET_RT_TABLE_NAME, vnet_dip.c_str(), ifnames.c_str(), nexthops.c_str());
+            fvw.nexthop = std::move(nexthops);
         }
         else
         {
@@ -2070,7 +2711,7 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vne
                            APP_VNET_RT_TABLE_NAME, vnet_dip.c_str(), ifnames.c_str());
         }
 
-        m_vnet_routeTable.set(vnet_dip, fvVector);
+        setTable(fvw, m_vnet_routeTable);
     }
 }
 
@@ -2598,7 +3239,27 @@ void RouteSync::deleteNextHopGroup(uint32_t nh_id)
     if(nhg.installed)
     {
         string key = getNextHopGroupKeyAsString(nh_id);
-        m_nexthop_groupTable.del(key.c_str());
+        SWSS_LOG_DEBUG("NextHopGroup table del: key [%s]", key.c_str());
+        m_nexthop_groupTable.del(key);
+    }
+    m_nh_groups.erase(git);
+}
+
+void RouteSync::deletePicContextGroup(uint32_t nh_id)
+{
+    auto git = m_nh_groups.find(nh_id);
+    if(git == m_nh_groups.end())
+    {
+        SWSS_LOG_INFO("Nexthop not found: %d", nh_id);
+        return;
+    }
+
+    NextHopGroup& nhg = git->second;
+
+    if(nhg.installed)
+    {
+        string key = getNextHopGroupKeyAsString(nh_id);
+        m_pic_context_groupTable.del(key.c_str());
         SWSS_LOG_DEBUG("NextHopGroup table del: key [%s]", key.c_str());
     }
     m_nh_groups.erase(git);
@@ -2611,26 +3272,48 @@ void RouteSync::deleteNextHopGroup(uint32_t nh_id)
  */
 void RouteSync::updateNextHopGroupDb(const NextHopGroup& nhg)
 {
-    vector<FieldValueTuple> fvVector;
     string nexthops;
     string ifnames;
     string weights;
     string key = getNextHopGroupKeyAsString(nhg.id);
     getNextHopGroupFields(nhg, nexthops, ifnames, weights);
 
-    FieldValueTuple nh("nexthop", nexthops.c_str());
-    FieldValueTuple ifname("ifname", ifnames.c_str());
-    fvVector.push_back(nh);
-    fvVector.push_back(ifname);
+    SWSS_LOG_INFO("NextHopGroup table set: key [%s] nexthop[%s] ifname[%s] weight[%s]",
+                  key.c_str(), nexthops.c_str(), ifnames.c_str(),
+                  weights.empty() ? "NONE": weights.c_str());
+
+    NextHopGroupTableFieldValueTupleWrapper fvw{std::move(key)};
+    fvw.nexthop = std::move(nexthops);
+    fvw.ifname = std::move(ifnames);
     if(!weights.empty())
     {
-        FieldValueTuple wg("weight", weights.c_str());
-        fvVector.push_back(wg);
+        fvw.weight = std::move(weights);
     }
-    SWSS_LOG_INFO("NextHopGroup table set: key [%s] nexthop[%s] ifname[%s] weight[%s]", key.c_str(), nexthops.c_str(), ifnames.c_str(), weights.c_str());
-
-    m_nexthop_groupTable.set(key.c_str(), fvVector);
+    setTable(fvw, m_nexthop_groupTable);
 }
+
+void RouteSync::updatePicContextGroupDb(const NextHopGroup& nhg)
+{
+    vector<FieldValueTuple> fvVector;
+    struct NextHopField nhField;
+    string key = getNextHopGroupKeyAsString(nhg.id);
+    getPicContextGroupFields(nhg, nhField);
+
+    FieldValueTuple nh("nexthop", nhField.nexthops.c_str());
+    FieldValueTuple ifname("ifname", nhField.ifnames.c_str());
+    FieldValueTuple vpn_sid("vpn_sid", nhField.vpn_sid.c_str());
+    FieldValueTuple seg_srcs("seg_src", nhField.seg_srcs.c_str());
+    FieldValueTuple wg("weight", nhField.weights.c_str());
+    fvVector.push_back(nh);
+    fvVector.push_back(ifname);
+    fvVector.push_back(vpn_sid);
+    fvVector.push_back(seg_srcs);
+    fvVector.push_back(wg);
+
+    //TODO: Take care of warm reboot
+    m_pic_context_groupTable.set(key.c_str(), fvVector);
+}
+
 
 /*
  * generate the database fields.
@@ -2675,6 +3358,64 @@ void RouteSync::getNextHopGroupFields(const NextHopGroup& nhg, string& nexthops,
             nexthops += nhgr.nexthop.empty() ? (af == AF_INET ? "0.0.0.0" : "::") : nhgr.nexthop;
             ifnames += nhgr.intf;
             weights += weight;
+            ++i;
+        }
+    }
+}
+
+
+/*
+ * generate the database fields.
+ * @arg pic context
+ *
+ */
+void RouteSync::getPicContextGroupFields(const NextHopGroup& nhg, struct NextHopField& nhField, uint8_t af /*= AF_INET*/)
+{
+    if(nhg.group.size() == 0)
+    {
+        if(!nhg.nexthop.empty())
+        {
+            nhField.nexthops = nhg.nexthop;
+        }
+        else
+        {
+            nhField.nexthops = af == AF_INET ? "0.0.0.0" : "::";
+        }
+        nhField.ifnames = nhg.intf;
+        nhField.vni_label += nhg.vni_label.empty() ? ("") : nhg.vni_label;
+        nhField.vpn_sid += nhg.vpn_sid.empty() ? ("") : nhg.vpn_sid;
+        nhField.seg_srcs += nhg.seg_src.empty() ? ("") : nhg.seg_src;
+    }
+    else
+    {
+        int i = 0;
+        for(const auto &nh : nhg.group)
+        {
+            uint32_t id = nh.first;
+            auto itr = m_nh_groups.find(id);
+            if(itr == m_nh_groups.end())
+            {
+                SWSS_LOG_INFO("NextHop group is incomplete: %d", nhg.id);
+                return;
+            }
+
+            NextHopGroup& nhgr = itr->second;
+            string weight = to_string(nh.second);
+            if(i)
+            {
+                nhField.nexthops += NHG_DELIMITER;
+                nhField.ifnames += NHG_DELIMITER;
+                nhField.vni_label += NHG_DELIMITER;
+                nhField.vpn_sid += NHG_DELIMITER;
+                nhField.weights += NHG_DELIMITER;
+                nhField.seg_srcs += NHG_DELIMITER;
+            }
+            nhField.nexthops += nhgr.nexthop.empty() ? (af == AF_INET ? "0.0.0.0" : "::") : nhgr.nexthop;
+            nhField.ifnames += nhgr.intf.empty() ? ("") : nhgr.intf;
+            nhField.vni_label += nhgr.vni_label.empty() ? ("") : nhgr.vni_label;
+            nhField.vpn_sid += nhgr.vpn_sid.empty() ? ("") : nhgr.vpn_sid;
+            nhField.weights += weight;
+            nhField.seg_srcs += nhgr.seg_src.empty() ? ("") : nhgr.seg_src;
             ++i;
         }
     }

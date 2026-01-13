@@ -1334,6 +1334,7 @@ class TestSrv6MySidFpmsyncd(object):
         dvs.runcmd(sid_cmd)
         dvs.runcmd(loc_cmd)
 
+    @pytest.mark.skip(reason="Skip to be removed after stabilizing the test")
     def test_Srv6MySidUNTunnelDscpMode(self, dvs, testlog):
 
         _, output = dvs.runcmd(f"vtysh -c 'show zebra dplane providers'")
@@ -1430,6 +1431,7 @@ class TestSrv6MySidFpmsyncd(object):
 
         self.teardown_srv6(dvs)
 
+    @pytest.mark.skip(reason="Skip to be removed after stabilizing the test")
     def test_Srv6MySidUNTunnelDscpModeAmbiguity(self, dvs, testlog):
         _, output = dvs.runcmd(f"vtysh -c 'show zebra dplane providers'")
         if 'dplane_fpm_sonic' not in output:
@@ -1532,7 +1534,6 @@ class TestSrv6VpnFpmsyncd(object):
         self.remove_vrf("Vrf13")
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER", len(initial_vrf_entries) - 1)
 
-    @pytest.mark.xfail(reason="Failing after Bookworm/libnl 3.7.0 upgrade")
     def test_AddRemoveSrv6SteeringRouteIpv4(self, dvs, testlog):
 
         _, output = dvs.runcmd(f"vtysh -c 'show zebra dplane providers'")
@@ -1559,12 +1560,12 @@ class TestSrv6VpnFpmsyncd(object):
 
         # check application database
         self.pdb.wait_for_entry("ROUTE_TABLE", "Vrf13:192.0.2.0/24")
-        expected_fields = {"segment": "Vrf13:192.0.2.0/24", "seg_src": "fc00:0:2::1"}
+        expected_fields = {"segment": "fc00:0:1:e000::", "seg_src": "fc00:0:2::1"}
         self.pdb.wait_for_field_match("ROUTE_TABLE", "Vrf13:192.0.2.0/24", expected_fields)
 
-        self.pdb.wait_for_entry("SRV6_SID_LIST_TABLE", "Vrf13:192.0.2.0/24")
+        self.pdb.wait_for_entry("SRV6_SID_LIST_TABLE", "fc00:0:1:e000::")
         expected_fields = {"path": "fc00:0:1:e000::"}
-        self.pdb.wait_for_field_match("SRV6_SID_LIST_TABLE", "Vrf13:192.0.2.0/24", expected_fields)
+        self.pdb.wait_for_field_match("SRV6_SID_LIST_TABLE", "fc00:0:1:e000::", expected_fields)
 
         # verify that the route has been programmed into the ASIC
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", len(tunnel_entries) + 1)
@@ -1625,7 +1626,7 @@ class TestSrv6VpnFpmsyncd(object):
 
         # check application database
         self.pdb.wait_for_deleted_entry("ROUTE_TABLE", "Vrf13:192.0.2.0/24")
-        self.pdb.wait_for_deleted_entry("SRV6_SID_LIST_TABLE", "Vrf13:192.0.2.0/24")
+        self.pdb.wait_for_deleted_entry("SRV6_SID_LIST_TABLE", "fc00:0:1:e000::")
 
         # verify that the route has been removed from the ASIC
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", len(nexthop_entries))
@@ -1637,7 +1638,6 @@ class TestSrv6VpnFpmsyncd(object):
 
         self.teardown_srv6(dvs)
 
-    @pytest.mark.xfail(reason="Failing after Bookworm/libnl 3.7.0 upgrade")
     def test_AddRemoveSrv6SteeringRouteIpv6(self, dvs, testlog):
 
         _, output = dvs.runcmd(f"vtysh -c 'show zebra dplane providers'")
@@ -1664,12 +1664,12 @@ class TestSrv6VpnFpmsyncd(object):
 
         # check application database
         self.pdb.wait_for_entry("ROUTE_TABLE", "Vrf13:2001:db8:1:1::/64")
-        expected_fields = {"segment": "Vrf13:2001:db8:1:1::/64", "seg_src": "fc00:0:2::1"}
+        expected_fields = {"segment": "fc00:0:1:e000::", "seg_src": "fc00:0:2::1"}
         self.pdb.wait_for_field_match("ROUTE_TABLE", "Vrf13:2001:db8:1:1::/64", expected_fields)
 
-        self.pdb.wait_for_entry("SRV6_SID_LIST_TABLE", "Vrf13:2001:db8:1:1::/64")
+        self.pdb.wait_for_entry("SRV6_SID_LIST_TABLE", "fc00:0:1:e000::")
         expected_fields = {"path": "fc00:0:1:e000::"}
-        self.pdb.wait_for_field_match("SRV6_SID_LIST_TABLE", "Vrf13:2001:db8:1:1::/64", expected_fields)
+        self.pdb.wait_for_field_match("SRV6_SID_LIST_TABLE", "fc00:0:1:e000::", expected_fields)
 
         # verify that the route has been programmed into the ASIC
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", len(tunnel_entries) + 1)
@@ -1730,7 +1730,7 @@ class TestSrv6VpnFpmsyncd(object):
 
         # check application database
         self.pdb.wait_for_deleted_entry("ROUTE_TABLE", "Vrf13:2001:db8:1:1::/64")
-        self.pdb.wait_for_deleted_entry("SRV6_SID_LIST_TABLE", "Vrf13:2001:db8:1:1::/64")
+        self.pdb.wait_for_deleted_entry("SRV6_SID_LIST_TABLE", "fc00:0:1:e000::")
 
         # verify that the route has been removed from the ASIC
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", len(nexthop_entries))

@@ -431,6 +431,20 @@ class TestTrimmingNegativeFlows(TestTrimmingFlows):
             qualifiers=attr_dict
         )
 
+        sai_attr_dict = {
+            "SAI_SWITCH_ATTR_PACKET_TRIM_SIZE": "100",
+            "SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE": SAI_DSCP_MODE_DICT["from-tc"],
+            "SAI_SWITCH_ATTR_PACKET_TRIM_TC_VALUE": "1",
+            "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE": SAI_QUEUE_MODE_DICT["static"],
+            "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_INDEX": "1"
+        }
+
+        trimlogger.info("Validate trimming global")
+        self.dvs_switch.verify_switch(
+            sai_switch_id=switchId,
+            sai_qualifiers=sai_attr_dict
+        )
+
         # Symmetric DSCP mode
 
         attr_dict = {
@@ -444,13 +458,10 @@ class TestTrimmingNegativeFlows(TestTrimmingFlows):
             qualifiers=attr_dict
         )
 
-        # Validation
-
         sai_attr_dict = {
             "SAI_SWITCH_ATTR_PACKET_TRIM_SIZE": "100",
             "SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE": SAI_DSCP_MODE_DICT["dscp-value"],
             "SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_VALUE": "10",
-            "SAI_SWITCH_ATTR_PACKET_TRIM_TC_VALUE": "1",
             "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE": SAI_QUEUE_MODE_DICT["static"],
             "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_INDEX": "1"
         }
@@ -462,6 +473,15 @@ class TestTrimmingNegativeFlows(TestTrimmingFlows):
         )
 
         yield
+
+        sai_attr_dict = {
+            "SAI_SWITCH_ATTR_PACKET_TRIM_SIZE": "100",
+            "SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE": SAI_DSCP_MODE_DICT["dscp-value"],
+            "SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_VALUE": "10",
+            "SAI_SWITCH_ATTR_PACKET_TRIM_TC_VALUE": "1",
+            "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE": SAI_QUEUE_MODE_DICT["static"],
+            "SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_INDEX": "1"
+        }
 
         trimlogger.info("Validate trimming global")
         self.dvs_switch.verify_switch(

@@ -152,9 +152,11 @@ struct RouteBulkContext
     std::string                         protocol;  // Protocol string
     bool                                is_set;    // True if set operation
 
+    Constraint                          retry_cst;
+
     RouteBulkContext(const std::string& key, bool is_set)
         : key(key), excp_intfs_flag(false), using_temp_nhg(false), is_set(is_set),
-          fallback_to_default_route(false)
+          fallback_to_default_route(false), retry_cst(DUMMY_CONSTRAINT)
     {
     }
 
@@ -174,6 +176,7 @@ struct RouteBulkContext
         key.clear();
         protocol.clear();
         fallback_to_default_route = false;
+        retry_cst = DUMMY_CONSTRAINT;
     }
 };
 
@@ -224,8 +227,17 @@ public:
     void decreaseNextHopRefCount(const NextHopGroupKey&);
     bool isRefCounterZero(const NextHopGroupKey&) const;
 
+    void flushRouteBulker() { gRouteBulker.flush(); }
+    int getNextHopGroupRefCount(const NextHopGroupKey& key) { return m_syncdNextHopGroups[key].ref_count; }
+    std::set<std::pair<NextHopGroupKey, sai_object_id_t>> &getBulkNhgReducedRefCnt() { return m_bulkNhgReducedRefCnt; }
+
     bool addNextHopGroup(const NextHopGroupKey&);
     bool removeNextHopGroup(const NextHopGroupKey&, const bool is_default_route_nh_swap=false);
+
+    bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
+    bool removeRoute(RouteBulkContext& ctx);
+    bool addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
+    bool removeRoutePost(const RouteBulkContext& ctx);
 
     void addNextHopRoute(const NextHopKey&, const RouteKey&);
     void removeNextHopRoute(const NextHopKey&, const RouteKey&);
@@ -244,7 +256,7 @@ public:
     const NextHopGroupKey getSyncdRouteNhgKey(sai_object_id_t vrf_id, const IpPrefix& ipPrefix);
     bool createFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id, vector<sai_attribute_t> &nhg_attrs);
     bool removeFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id);
-    bool isRouteExists(const IpPrefix& prefix);
+    bool isRouteExists(sai_object_id_t vrf_id, const IpPrefix& prefix);
     bool removeRoutePrefix(const IpPrefix& prefix);
 
     void addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
@@ -295,10 +307,6 @@ private:
     ObjectBulker<sai_next_hop_group_api_t>  gNextHopGroupMemberBulker;
 
     void addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
-    bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
-    bool removeRoute(RouteBulkContext& ctx);
-    bool addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
-    bool removeRoutePost(const RouteBulkContext& ctx);
 
     void addTempLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey&);
     bool addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey&);
