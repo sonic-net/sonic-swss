@@ -241,6 +241,11 @@ jobs:
   - script: |
       cargo test
     displayName: "Test countersyncd"
+  - task: PublishTestResults@2
+    inputs:
+      testResultsFiles: '**/*_tr.xml'
+      testRunTitle: gtest
+    condition: eq('${{ parameters.asan }}', false)
   - publish: $(System.DefaultWorkingDirectory)/
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive swss debian packages"
