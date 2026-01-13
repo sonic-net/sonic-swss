@@ -1027,6 +1027,7 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
   EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
 }
 
 TEST_F(L3MulticastManagerTest,
@@ -1048,6 +1049,7 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
   EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
 }
 
 TEST_F(L3MulticastManagerTest,
@@ -1069,6 +1071,7 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
   EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
 }
 
 TEST_F(L3MulticastManagerTest, DeleteMulticastRouterInterfaceEntriesSaiFails) {
@@ -1226,6 +1229,7 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
   EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
 }
 
 TEST_F(L3MulticastManagerTest,
@@ -1254,6 +1258,7 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
   EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
 }
 
 TEST_F(L3MulticastManagerTest,
@@ -1280,6 +1285,7 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
   EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
 }
 
 TEST_F(L3MulticastManagerTest,
@@ -1306,6 +1312,7 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
   EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
 }
 
 TEST_F(L3MulticastManagerTest,
