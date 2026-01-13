@@ -45,6 +45,7 @@ namespace
 
 constexpr char *kIpv4Prefix = "10.11.12.0/24";
 constexpr char *kIpv4Prefix2 = "10.12.12.0/24";
+constexpr char* kIpv4Prefix3 = "10.13.12.0/24";
 constexpr char* kIpv4Prefix4 = "20.30.40.50/32";
 constexpr char *kIpv6Prefix = "2001:db8:1::/32";
 constexpr char* kIpv6Prefix2 = "2001:db8:2::/32";
@@ -4346,6 +4347,12 @@ TEST_F(RouteManagerTest, VerifyStateTest)
     route_entry_ptr->route_metadata = kMetadata1;
     EXPECT_FALSE(VerifyState(db_key, attributes).empty());
     route_entry_ptr->route_metadata = saved_route_metadata;
+
+    // Verification should fail if multicast group mismatches.
+    auto saved_multicast_group_id = route_entry_ptr->multicast_group_id;
+    route_entry_ptr->multicast_group_id = kMulticastGroupId1;
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    route_entry_ptr->multicast_group_id = saved_multicast_group_id;
 }
 
 TEST_F(RouteManagerTest, VerifyStateAsicDbTest)
@@ -4354,16 +4361,32 @@ TEST_F(RouteManagerTest, VerifyStateAsicDbTest)
     SetupDropRouteEntry(gVrfName, swss_ipv4_route_prefix);
     auto swss_ipv6_route_prefix = swss::IpPrefix(kIpv6Prefix);
     SetupNexthopIdRouteEntry(gVrfName, swss_ipv6_route_prefix, kNexthopId1, kNexthopOid1, kMetadata1);
+    auto swss_ipv6_route_prefix2 = swss::IpPrefix(kIpv6Prefix2);
+    SetupNexthopIdRouteEntry(gVrfName, swss_ipv6_route_prefix2, kNexthopId1,
+                             kNexthopOid1, "0x00");
 
     auto swss_ipv4_route_prefix2 = swss::IpPrefix(kIpv4Prefix2);
     auto route_entry =
-        GenerateP4RouteEntry(gVrfName, swss_ipv4_route_prefix2, p4orch::kSetMetadataAndDrop, "", kMetadata2);
-
+        GenerateP4RouteEntry(gVrfName, swss_ipv4_route_prefix2,
+                             p4orch::kSetMetadataAndDrop, "", kMetadata2);
     std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_route_, create_route_entries(_, _, _, _, _, _))
         .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
     EXPECT_THAT(CreateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
                 ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
+
+    auto swss_ipv4_route_prefix3 = swss::IpPrefix(kIpv4Prefix3);
+    route_entry = GenerateP4RouteEntry(gVrfName, swss_ipv4_route_prefix3,
+                                       p4orch::kSetMetadataAndDrop, "", "0");
+    EXPECT_CALL(mock_sai_route_, create_route_entries(_, _, _, _, _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()),
+                  Return(SAI_STATUS_SUCCESS)));
+    EXPECT_THAT(CreateRouteEntries(std::vector<P4RouteEntry>{route_entry}),
+                ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
+
+    auto swss_ipv6_route_prefix3 = swss::IpPrefix(kIpv6Prefix3);
+    SetupTrapRouteEntry(gVrfName, swss_ipv6_route_prefix3);
 
     // Setup ASIC DB.
     swss::Table table(nullptr, "ASIC_STATE");
@@ -4372,16 +4395,36 @@ TEST_F(RouteManagerTest, VerifyStateAsicDbTest)
               std::vector<swss::FieldValueTuple>{
                   swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION", "SAI_PACKET_ACTION_DROP"},
                   swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID", "oid:0x0"}});
+    table.set(
+        "SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"10.12.12.0/"
+        "24\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}",
+        std::vector<swss::FieldValueTuple>{
+            swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION",
+                                  "SAI_PACKET_ACTION_DROP"},
+            swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_META_DATA", "2"}});
+    table.set(
+        "SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"10.13.12.0/"
+        "24\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}",
+        std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{
+            "SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION", "SAI_PACKET_ACTION_DROP"}});
     table.set("SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"2001:db8:1::/"
               "32\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}",
               std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID", "oid:0x1"},
                                                  swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_META_DATA", "1"}});
 
-    table.set("SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"10.12.12.0/"
-              "24\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}",
-              std::vector<swss::FieldValueTuple>{
-                  swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION", "SAI_PACKET_ACTION_DROP"},
-                  swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_META_DATA", "2"}});
+    table.set(
+        "SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"2001:db8:2::/"
+        "32\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}",
+        std::vector<swss::FieldValueTuple>{
+            swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID",
+                                  "oid:0x1"},
+            swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_META_DATA", "0"}});
+
+    table.set(
+        "SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"2001:db8:3:4:5:6:7:8/128\","
+        "\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}",
+        std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{
+            "SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION", "SAI_PACKET_ACTION_TRAP"}});
 
     nlohmann::json j_1;
     j_1[prependMatchField(p4orch::kVrfId)] = gVrfName;
@@ -4390,6 +4433,7 @@ TEST_F(RouteManagerTest, VerifyStateAsicDbTest)
                                  kTableKeyDelimiter + j_1.dump();
     std::vector<swss::FieldValueTuple> attributes_1;
     attributes_1.push_back(swss::FieldValueTuple{p4orch::kAction, p4orch::kDrop});
+
     nlohmann::json j_2;
     j_2[prependMatchField(p4orch::kVrfId)] = gVrfName;
     j_2[prependMatchField(p4orch::kIpv6Dst)] = kIpv6Prefix;
@@ -4409,10 +4453,49 @@ TEST_F(RouteManagerTest, VerifyStateAsicDbTest)
     attributes_3.push_back(swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMetadataAndDrop});
     attributes_3.push_back(swss::FieldValueTuple{prependParamField(p4orch::kRouteMetadata), kMetadata2});
 
+    nlohmann::json j_4;
+    j_4[prependMatchField(p4orch::kVrfId)] = gVrfName;
+    j_4[prependMatchField(p4orch::kIpv6Dst)] = kIpv4Prefix3;
+    const std::string db_key_4 = std::string(APP_P4RT_TABLE_NAME) +
+                                 kTableKeyDelimiter + APP_P4RT_IPV6_TABLE_NAME +
+                                 kTableKeyDelimiter + j_4.dump();
+    std::vector<swss::FieldValueTuple> attributes_4;
+    attributes_4.push_back(
+        swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMetadataAndDrop});
+    attributes_4.push_back(
+        swss::FieldValueTuple{prependParamField(p4orch::kRouteMetadata), "0"});
+
+    nlohmann::json j_5;
+    j_5[prependMatchField(p4orch::kVrfId)] = gVrfName;
+    j_5[prependMatchField(p4orch::kIpv6Dst)] = kIpv6Prefix2;
+    const std::string db_key_5 = std::string(APP_P4RT_TABLE_NAME) +
+                                 kTableKeyDelimiter + APP_P4RT_IPV6_TABLE_NAME +
+                                 kTableKeyDelimiter + j_5.dump();
+    std::vector<swss::FieldValueTuple> attributes_5;
+    attributes_5.push_back(swss::FieldValueTuple{
+        p4orch::kAction, p4orch::kSetNexthopIdAndMetadata});
+    attributes_5.push_back(swss::FieldValueTuple{
+        prependParamField(p4orch::kNexthopId), kNexthopId1});
+    attributes_5.push_back(swss::FieldValueTuple{
+        prependParamField(p4orch::kRouteMetadata), "0x00"});
+
+    nlohmann::json j_6;
+    j_6[prependMatchField(p4orch::kVrfId)] = gVrfName;
+    j_6[prependMatchField(p4orch::kIpv6Dst)] = kIpv6Prefix3;
+    const std::string db_key_6 = std::string(APP_P4RT_TABLE_NAME) +
+                                 kTableKeyDelimiter + APP_P4RT_IPV6_TABLE_NAME +
+                                 kTableKeyDelimiter + j_6.dump();
+    std::vector<swss::FieldValueTuple> attributes_6;
+    attributes_6.push_back(
+        swss::FieldValueTuple{p4orch::kAction, p4orch::kTrap});
+
     // Verification should succeed with correct ASIC DB values.
     EXPECT_EQ(VerifyState(db_key_1, attributes_1), "");
     EXPECT_EQ(VerifyState(db_key_2, attributes_2), "");
     EXPECT_EQ(VerifyState(db_key_3, attributes_3), "");
+    EXPECT_EQ(VerifyState(db_key_4, attributes_4), "");
+    EXPECT_EQ(VerifyState(db_key_5, attributes_5), "");
+    EXPECT_EQ(VerifyState(db_key_6, attributes_6), "");
 
     // Verification should fail if ASIC DB values mismatch.
     table.set("SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"10.11.12.0/"
@@ -4422,16 +4505,26 @@ TEST_F(RouteManagerTest, VerifyStateAsicDbTest)
     table.set("SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"2001:db8:1::/"
               "32\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}",
               std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_META_DATA", "2"}});
+    table.set(
+        "SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"10.13.12.0/"
+        "24\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}",
+        std::vector<swss::FieldValueTuple>{
+            swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_META_DATA", "2"}});
     EXPECT_FALSE(VerifyState(db_key_1, attributes_1).empty());
     EXPECT_FALSE(VerifyState(db_key_2, attributes_2).empty());
+    EXPECT_FALSE(VerifyState(db_key_4, attributes_4).empty());
 
     // Verification should fail if ASIC DB table is missing.
     table.del("SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"10.11.12.0/"
               "24\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}");
     table.del("SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"2001:db8:1::/"
               "32\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}");
+    table.del(
+        "SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"10.13.12.0/"
+        "24\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}");
     EXPECT_FALSE(VerifyState(db_key_1, attributes_1).empty());
     EXPECT_FALSE(VerifyState(db_key_2, attributes_2).empty());
+    EXPECT_FALSE(VerifyState(db_key_4, attributes_4).empty());
     table.set("SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"10.11.12.0/"
               "24\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}",
               std::vector<swss::FieldValueTuple>{
@@ -4441,6 +4534,122 @@ TEST_F(RouteManagerTest, VerifyStateAsicDbTest)
               "32\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}",
               std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID", "oid:0x1"},
                                                  swss::FieldValueTuple{"SAI_ROUTE_ENTRY_ATTR_META_DATA", "1"}});
+    table.set(
+        "SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"10.13.12.0/"
+        "24\",\"switch_id\":\"oid:0x0\",\"vr\":\"oid:0x6f\"}",
+        std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{
+            "SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION", "SAI_PACKET_ACTION_DROP"}});
+}
+
+TEST_F(RouteManagerTest, VerifyStateAsicDbMulticastTest) {
+  // We eventually want a prefix, not an exact match address.
+  // TODO(b/281706130)
+  // auto swss_ipv6_route_prefix = swss::IpPrefix(kIpv6Prefix);
+  // sai_ip_prefix_t sai_ipv6_route_prefix;
+  // copy(sai_ipv6_route_prefix, swss_ipv6_route_prefix);
+  auto swss_ipv6_route_prefix = swss::IpPrefix(kIpv6Prefix3);
+  sai_ip_address_t sai_ipv6_address;
+  copy(sai_ipv6_address, swss_ipv6_route_prefix.getIp());
+  auto route_entry_ipv6 = GenerateP4RouteEntry(gVrfName, swss_ipv6_route_prefix,
+                                               p4orch::kSetMulticastGroupId,
+                                               kMulticastGroupId1, "");
+  auto swss_ipv4_route_prefix = swss::IpPrefix(kIpv4Prefix4);
+  sai_ip_address_t sai_ipv4_address;
+  copy(sai_ipv4_address, swss_ipv4_route_prefix.getIp());
+  auto route_entry_ipv4 = GenerateP4RouteEntry(gVrfName, swss_ipv4_route_prefix,
+                                               p4orch::kSetMulticastGroupId,
+                                               kMulticastGroupId2, "");
+
+  sai_attribute_t exp_sai_attr;
+
+  std::vector<sai_attribute_t> exp_sai_attrs_v6;
+  exp_sai_attr.id = SAI_IPMC_ENTRY_ATTR_PACKET_ACTION;
+  exp_sai_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+  exp_sai_attrs_v6.push_back(exp_sai_attr);
+  exp_sai_attr.id = SAI_IPMC_ENTRY_ATTR_OUTPUT_GROUP_ID;
+  exp_sai_attr.value.oid = kMulticastGroupOid1;
+  exp_sai_attrs_v6.push_back(exp_sai_attr);
+  // exp_sai_attr.id = SAI_IPMC_ENTRY_ATTR_COUNTER_ID;
+  // exp_sai_attr.value.oid = kMulticastCounterOid1;
+  // exp_sai_attrs_v6.push_back(exp_sai_attr);
+
+  std::vector<sai_attribute_t> exp_sai_attrs_v4;
+  exp_sai_attr.id = SAI_IPMC_ENTRY_ATTR_PACKET_ACTION;
+  exp_sai_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+  exp_sai_attrs_v4.push_back(exp_sai_attr);
+  exp_sai_attr.id = SAI_IPMC_ENTRY_ATTR_OUTPUT_GROUP_ID;
+  exp_sai_attr.value.oid = kMulticastGroupOid2;
+  exp_sai_attrs_v4.push_back(exp_sai_attr);
+  // exp_sai_attr.id = SAI_IPMC_ENTRY_ATTR_COUNTER_ID;
+  // exp_sai_attr.value.oid = kMulticastCounterOid2;
+  // exp_sai_attrs_v4.push_back(exp_sai_attr);
+
+  EXPECT_CALL(mock_sai_rpf_group_, create_rpf_group(_, _, 0, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kRpfGroupOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_ipmc_, create_ipmc_entry(_, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  // Create artificial multicast group object.
+  AddMulticastGroup(kMulticastGroupId1, kMulticastGroupOid1);
+  AddMulticastGroup(kMulticastGroupId2, kMulticastGroupOid2);
+
+  EXPECT_THAT(CreateMulticastRouteEntries(std::vector<P4RouteEntry>{
+                  route_entry_ipv6, route_entry_ipv4}),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS,
+                                              StatusCode::SWSS_RC_SUCCESS}));
+  // Setup ASIC DB.
+  swss::Table table(nullptr, "ASIC_STATE");
+  table.set(
+      "SAI_OBJECT_TYPE_IPMC_ENTRY:{"
+      "\"destination\":\"2001:db8:3:4:5:6:7:8\","
+      "\"source\":\"::\","
+      "\"switch_id\":\"oid:0x0\",\"type\":\"SAI_IPMC_ENTRY_TYPE_XG\","
+      "\"vr_id\":\"oid:0x6f\"}",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_IPMC_ENTRY_ATTR_PACKET_ACTION",
+                                "SAI_PACKET_ACTION_FORWARD"},
+          swss::FieldValueTuple{"SAI_IPMC_ENTRY_ATTR_OUTPUT_GROUP_ID",
+                                "oid:0x1"}});
+  table.set(
+      "SAI_OBJECT_TYPE_IPMC_ENTRY:{\"destination\":\"20.30.40.50\","
+      "\"source\":\"0.0.0.0\","
+      "\"switch_id\":\"oid:0x0\",\"type\":\"SAI_IPMC_ENTRY_TYPE_XG\","
+      "\"vr_id\":\"oid:0x6f\"}",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_IPMC_ENTRY_ATTR_PACKET_ACTION",
+                                "SAI_PACKET_ACTION_FORWARD"},
+          swss::FieldValueTuple{"SAI_IPMC_ENTRY_ATTR_OUTPUT_GROUP_ID",
+                                "oid:0x2"}});
+
+  nlohmann::json j_1;
+  j_1[prependMatchField(p4orch::kVrfId)] = gVrfName;
+  j_1[prependMatchField(p4orch::kIpv6Dst)] = kIpv6Prefix3;
+  const std::string db_key_1 = std::string(APP_P4RT_TABLE_NAME) +
+                               kTableKeyDelimiter + APP_P4RT_IPV6_TABLE_NAME +
+                               kTableKeyDelimiter + j_1.dump();
+  std::vector<swss::FieldValueTuple> attributes_1;
+  attributes_1.push_back(
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastGroupId});
+  attributes_1.push_back(swss::FieldValueTuple{
+      prependParamField(p4orch::kMulticastGroupId), kMulticastGroupId1});
+
+  nlohmann::json j_2;
+  j_2[prependMatchField(p4orch::kVrfId)] = gVrfName;
+  j_2[prependMatchField(p4orch::kIpv4Dst)] = kIpv4Prefix4;
+  const std::string db_key_2 = std::string(APP_P4RT_TABLE_NAME) +
+                               kTableKeyDelimiter + APP_P4RT_IPV4_TABLE_NAME +
+                               kTableKeyDelimiter + j_2.dump();
+  std::vector<swss::FieldValueTuple> attributes_2;
+  attributes_2.push_back(
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastGroupId});
+  attributes_2.push_back(swss::FieldValueTuple{
+      prependParamField(p4orch::kMulticastGroupId), kMulticastGroupId2});
+
+  // Verification should succeed with correct ASIC DB values.
+  EXPECT_EQ(VerifyState(db_key_1, attributes_1), "");
+  EXPECT_EQ(VerifyState(db_key_2, attributes_2), "");
 }
 
 TEST_F(RouteManagerTest, CreateSetMulticastGroupIdRouteSucceeds) {
