@@ -15,6 +15,7 @@ use log::{info, error, debug};
 use opentelemetry_proto::tonic::collector::metrics::v1::metrics_service_client::MetricsServiceClient;
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
 use tonic::transport::Endpoint;
+use tonic::transport::Channel;
 
 /// Configuration for the OtelActor
 #[derive(Debug, Clone)]
@@ -45,7 +46,7 @@ pub struct OtelActor {
     stats_receiver: Receiver<SAIStatsMessage>,
     config: OtelActorConfig,
     shutdown_notifier: Option<oneshot::Sender<()>>,
-    client: MetricsServiceClient<tonic::transport::Channel>,
+    client: Option<MetricsServiceClient<Channel>>,
 
     // Pre-allocated reusable structures
     resource: ProtoResource,
@@ -73,8 +74,7 @@ impl OtelActor {
         config: OtelActorConfig,
         shutdown_notifier: oneshot::Sender<()>
     ) -> Result<OtelActor, Box<dyn std::error::Error>> {
-        let endpoint = config.collector_endpoint.parse::<Endpoint>()?;
-        let client = MetricsServiceClient::connect(endpoint).await?;
+        let client = None;
 
         // Pre-create reusable resource
         let resource = ProtoResource {
@@ -230,6 +230,22 @@ impl OtelActor {
             return;
         }
 
+        // Ensure client exists
+        if self.client.is_none() {
+            let endpoint = match self.config.collector_endpoint.parse::<Endpoint>() {
+                Ok(e) => e,
+                Err(e) => {
+                    error!(
+                        "Invalid OTel endpoint {}: {}",
+                        self.config.collector_endpoint, e
+                    );
+                    return;
+                }
+            };
+            let channel = endpoint.connect_lazy();
+            self.client = Some(MetricsServiceClient::new(channel));
+        }
+
         let mut proto_metrics: Vec<Metric> = Vec::new();
 
         for otel_metrics in &self.buffer {
@@ -278,7 +294,20 @@ impl OtelActor {
         const INITIAL_DELAY_SEC: u64 = 1;
 
         for attempt in 1..=MAX_RETRIES {
-            match self.client.export(request.clone()).await {
+                if self.client.is_none() {
+                    let endpoint = match self.config.collector_endpoint.parse::<Endpoint>() {
+                        Ok(e) => e,
+                        Err(e) => {
+                            error!("Invalid OTel endpoint {}: {}", self.config.collector_endpoint, e);
+                            return;
+                        }
+                    };
+                    let channel = endpoint.connect_lazy();
+                    self.client = Some(MetricsServiceClient::new(channel));
+                }
+
+            let client = self.client.as_mut().unwrap();
+            match client.export(request.clone()).await {
                 Ok(_) => {
                     self.exports_performed += 1;
                     
@@ -309,6 +338,8 @@ impl OtelActor {
                             MAX_RETRIES, e
                         );
                         self.export_failures += 1;
+                        // Drop broken client so next flush recreates it
+                        self.client = None;
                     } else if attempt % 5 == 0 {
                         // Log every 5th attempt 
                         info!("Still retrying export... attempt {}/{} ({}m{}s elapsed)", 
