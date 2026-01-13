@@ -1109,9 +1109,12 @@ L3MulticastManager::updateMulticastRouterInterfaceEntries(
     auto* old_entry_ptr = getMulticastRouterInterfaceEntry(
         entry.multicast_router_interface_entry_key);
     if (old_entry_ptr == nullptr) {
-      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                    << "Multicast router interface entry is missing "
-                    << QuotedVar(entry.multicast_router_interface_entry_key);
+      std::stringstream err_msg;
+      err_msg << "Multicast router interface entry is missing "
+              << QuotedVar(entry.multicast_router_interface_entry_key);
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
       break;
     }
 
@@ -1130,20 +1133,24 @@ L3MulticastManager::updateMulticastRouterInterfaceEntries(
         KeyGenerator::generateMulticastRouterInterfaceRifKey(
             old_entry_ptr->multicast_replica_port, old_entry_ptr->src_mac);
     if (old_rif_oid == SAI_NULL_OBJECT_ID) {
-      statuses[i] =
-          ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-          << "Multicast router interface entry is missing a RIF oid "
-          << QuotedVar(old_entry_ptr->multicast_router_interface_entry_key);
+      std::stringstream err_msg;
+      err_msg << "Multicast router interface entry is missing a RIF oid "
+              << QuotedVar(old_entry_ptr->multicast_router_interface_entry_key);
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
       break;
     }
 
     // Fetch the vector P4MulticastRouterInterfaceEntry associated with the RIF.
     if (m_rifOidToRouterInterfaceEntries.find(old_rif_oid) ==
         m_rifOidToRouterInterfaceEntries.end()) {
-      statuses[i] =
-          ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-          << "RIF oid " << old_rif_oid << " missing from map for "
-          << QuotedVar(old_entry_ptr->multicast_router_interface_entry_key);
+      std::stringstream err_msg;
+      err_msg << "RIF oid " << old_rif_oid << " missing from map for "
+              << QuotedVar(old_entry_ptr->multicast_router_interface_entry_key);
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
       break;
     }
     auto& old_entries_for_rif = m_rifOidToRouterInterfaceEntries[old_rif_oid];
@@ -1157,11 +1164,13 @@ L3MulticastManager::updateMulticastRouterInterfaceEntries(
         (m_multicastRouterInterfaceTable.find(
              old_entry_ptr->multicast_router_interface_entry_key) ==
          m_multicastRouterInterfaceTable.end())) {
-      statuses[i] =
-          ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-          << "Unable to find entry "
-          << QuotedVar(old_entry_ptr->multicast_router_interface_entry_key)
-          << " in map";
+      std::stringstream err_msg;
+      err_msg << "Unable to find entry "
+              << QuotedVar(old_entry_ptr->multicast_router_interface_entry_key)
+              << " in map";
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
       break;
     }
 
@@ -1281,9 +1290,12 @@ L3MulticastManager::deleteMulticastRouterInterfaceEntries(
     // Confirm RIF OID was assigned.
     sai_object_id_t rif_oid = getRifOid(&entry);
     if (rif_oid == SAI_NULL_OBJECT_ID) {
-      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                    << "Multicast router interface entry is missing a RIF oid "
-                    << QuotedVar(entry.multicast_router_interface_entry_key);
+      std::stringstream err_msg;
+      err_msg << "Multicast router interface entry is missing a RIF oid "
+              << QuotedVar(entry.multicast_router_interface_entry_key);
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
       break;
     }
 
@@ -1302,9 +1314,12 @@ L3MulticastManager::deleteMulticastRouterInterfaceEntries(
     // with the RIF.
     if (m_rifOidToRouterInterfaceEntries.find(rif_oid) ==
         m_rifOidToRouterInterfaceEntries.end()) {
-      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                    << "RIF oid " << rif_oid << " missing from map for "
-                    << QuotedVar(entry.multicast_router_interface_entry_key);
+      std::stringstream err_msg;
+      err_msg << "RIF oid " << rif_oid << " missing from map for "
+              << QuotedVar(entry.multicast_router_interface_entry_key);
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
       break;
     }
     auto& entries_for_rif = m_rifOidToRouterInterfaceEntries[rif_oid];
@@ -1318,10 +1333,13 @@ L3MulticastManager::deleteMulticastRouterInterfaceEntries(
         (m_multicastRouterInterfaceTable.find(
              entry.multicast_router_interface_entry_key) ==
          m_multicastRouterInterfaceTable.end())) {
-      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                    << "Unable to find entry "
-                    << QuotedVar(entry.multicast_router_interface_entry_key)
-                    << " in map";
+      std::stringstream err_msg;
+      err_msg << "Unable to find entry "
+              << QuotedVar(entry.multicast_router_interface_entry_key)
+              << " in map";
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
       break;
     }
     std::string rif_key = KeyGenerator::generateMulticastRouterInterfaceRifKey(
@@ -1505,10 +1523,12 @@ std::vector<ReturnCode> L3MulticastManager::deleteMulticastReplicationEntries(
     // Fetch the RIF the member is associated with.
     sai_object_id_t old_rif_oid = getRifOid(old_entry_ptr);
     if (old_rif_oid == SAI_NULL_OBJECT_ID) {
-      statuses[i] =
-          ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-          << "Cannot find RIF oid associated with group member to delete "
-          << QuotedVar(old_entry_ptr->multicast_replication_key);
+      std::stringstream err_msg;
+      err_msg << "Cannot find RIF oid associated with group member to delete "
+              << QuotedVar(old_entry_ptr->multicast_replication_key);
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
       break;
     }
 
@@ -1522,19 +1542,25 @@ std::vector<ReturnCode> L3MulticastManager::deleteMulticastReplicationEntries(
                           &old_group_member_oid);
     if (old_group_oid == SAI_NULL_OBJECT_ID ||
         old_group_member_oid == SAI_NULL_OBJECT_ID) {
-      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                    << "Multicast replication entry is missing a multicast "
-                    << "group OID or a multicast group member OID "
-                    << QuotedVar(entry.multicast_replication_key);
+      std::stringstream err_msg;
+      err_msg << "Multicast replication entry is missing a multicast "
+              << "group OID or a multicast group member OID "
+              << QuotedVar(entry.multicast_replication_key);
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
       break;
     }
 
     // Fetch group members associated with multicast group
     if (m_multicastGroupMembers.find(old_entry_ptr->multicast_group_id) ==
         m_multicastGroupMembers.end()) {
-      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                    << "Cannot find members associated with multicast group "
-                    << " id " << old_entry_ptr->multicast_group_id;
+      std::stringstream err_msg;
+      err_msg << "Cannot find members associated with multicast group id "
+              << old_entry_ptr->multicast_group_id;
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
       break;
     }
     auto& group_members_set =
@@ -1542,10 +1568,13 @@ std::vector<ReturnCode> L3MulticastManager::deleteMulticastReplicationEntries(
     auto member_cnt = group_members_set.size();
     if (group_members_set.count(old_entry_ptr->multicast_replication_key) !=
         1) {
-      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                    << "Member " << old_entry_ptr->multicast_replication_key
-                    << " was not associated with multicast group id "
-                    << old_entry_ptr->multicast_group_id;
+      std::stringstream err_msg;
+      err_msg << "Member " << old_entry_ptr->multicast_replication_key
+              << " was not associated with multicast group id "
+              << old_entry_ptr->multicast_group_id;
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
       break;
     }
 
@@ -1558,9 +1587,12 @@ std::vector<ReturnCode> L3MulticastManager::deleteMulticastReplicationEntries(
       if (!m_p4OidMapper->getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
                                       old_entry_ptr->multicast_group_id,
                                       &route_entry_ref_count)) {
-        statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                      << "Unable to fetch reference count for multicast "
-                      << "group " << old_entry_ptr->multicast_group_id;
+        std::stringstream err_msg;
+        err_msg << "Unable to fetch reference count for multicast group "
+                << old_entry_ptr->multicast_group_id;
+        SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+        SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+        statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
         break;
       }
 
