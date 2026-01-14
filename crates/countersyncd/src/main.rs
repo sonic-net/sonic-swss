@@ -186,6 +186,22 @@ struct Args {
         help = "Set the channel capacity for otel actor"
     )]
     otel_capacity: usize,
+
+    /// Max counters to batch before exporting to OTLP
+    #[arg(
+        long,
+        default_value = "10000",
+        help = "Max counters to accumulate before forcing an OTLP export"
+    )]
+    otel_max_counters_per_export: usize,
+
+    /// Flush timeout for OTLP export in milliseconds
+    #[arg(
+        long,
+        default_value = "1000",
+        help = "Flush timeout (ms) for OTLP export batch"
+    )]
+    otel_flush_timeout_ms: u64,
 }
 
 #[tokio::main]
@@ -214,6 +230,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.enable_otel {
         info!("OpenTelemetry endpoint: {}", args.otel_endpoint);
         info!("OpenTelemetry console output: {}", args.otel_console);
+        info!(
+            "OpenTelemetry batching: max_counters_per_export={}, flush_timeout_ms={}",
+            args.otel_max_counters_per_export, args.otel_flush_timeout_ms
+        );
     }
     info!(
         "Channel capacities - ipfix_records: {}, stats_reporter: {}, counter_db: {}, otel: {}",
@@ -227,7 +247,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (stats_report_sender, stats_report_receiver) = channel(args.stats_reporter_capacity);
     let (counter_db_sender, counter_db_receiver) = channel(args.counter_db_capacity);
     let (otel_sender, otel_receiver) = channel(args.otel_capacity);
-    let (otel_shutdown_sender, otel_shutdown_receiver) = tokio::sync::oneshot::channel();
+    let (otel_shutdown_sender, _otel_shutdown_receiver) = tokio::sync::oneshot::channel();
 
     // Get netlink family and group configuration from SONiC constants
     let (family, group) = get_genl_family_group();
@@ -301,6 +321,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let otel_config = OtelActorConfig {
             print_to_console: args.otel_console,
             collector_endpoint: args.otel_endpoint.clone(),
+            max_counters_per_export: args.otel_max_counters_per_export,
+            flush_timeout: std::time::Duration::from_millis(args.otel_flush_timeout_ms),
         };
 
         // Add OTEL to ipfix recipients only when enabled
