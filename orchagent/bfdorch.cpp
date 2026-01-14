@@ -325,7 +325,7 @@ void BfdOrch::updateNextHopId(string alias, IpAddress peer_address, sai_object_i
         return;
     }
 
-    SWSS_LOG_NOTICE("BFD: update nexthop id, next hop %s on %s, next_hop_id %llu",
+    SWSS_LOG_INFO("BFD: update nexthop id, next hop %s on %s, next_hop_id %llu",
                     peer_address.to_string().c_str(), alias.c_str(), static_cast<unsigned long long>(next_hop_id));
 
     sai_attribute_t attr;
