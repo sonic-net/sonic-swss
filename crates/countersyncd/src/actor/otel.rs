@@ -237,7 +237,7 @@ impl OtelActor {
     async fn print_otel_metrics(&mut self, otel_metrics: &OtelMetrics) {
         self.console_reports += 1;
 
-        info!(
+        debug!(
             "[OTel Report #{}] Service: {}, Scope: {} v{}, Total Gauges: {}, Messages Received: {}, Exports: {} (Failures: {})",
             self.console_reports,
             otel_metrics.service_name,
@@ -250,20 +250,20 @@ impl OtelActor {
         );
 
         if !otel_metrics.is_empty() {
-            info!("Gauge Metrics:");
+            debug!("Gauge Metrics:");
             for (index, gauge) in otel_metrics.gauges.iter().enumerate() {
                 let data_point = &gauge.data_points[0];
 
-                info!("[{:3}] Gauge: {}", index + 1, gauge.name);
-                info!("Value: {}", data_point.value);
-                info!("Unit: {}", gauge.unit);
-                info!("Time: {}ns", data_point.time_unix_nano);
-                info!("Description: {}", gauge.description);
+                debug!("[{:3}] Gauge: {}", index + 1, gauge.name);
+                debug!("Value: {}", data_point.value);
+                debug!("Unit: {}", gauge.unit);
+                debug!("Time: {}ns", data_point.time_unix_nano);
+                debug!("Description: {}", gauge.description);
 
                 if !data_point.attributes.is_empty() {
-                    info!("Attributes:");
+                    debug!("Attributes:");
                     for attr in &data_point.attributes {
-                        info!("  - {}={}", attr.key, attr.value);
+                        debug!("  - {}={}", attr.key, attr.value);
                     }
                 }
 
@@ -385,7 +385,7 @@ impl OtelActor {
 
         match result {
             Ok(_) => {
-                info!("Successfully exported buffered metrics");
+                debug!("Successfully exported buffered metrics");
                 self.consecutive_failures = 0;
             }
             Err(e) => {
