@@ -157,7 +157,8 @@ static map<string, sai_bridge_port_fdb_learning_mode_t> learn_mode_map =
 static map<string, sai_port_media_type_t> media_type_map =
 {
     { "fiber", SAI_PORT_MEDIA_TYPE_FIBER },
-    { "copper", SAI_PORT_MEDIA_TYPE_COPPER }
+    { "copper", SAI_PORT_MEDIA_TYPE_COPPER },
+    { "backplane", SAI_PORT_MEDIA_TYPE_BACKPLANE}
 };
 
 static map<string, sai_port_internal_loopback_mode_t> loopback_mode_map =
@@ -524,6 +525,15 @@ static void getPortSerdesAttr(PortSerdesAttrMap_t &map, const PortConfig &port)
         map[SAI_PORT_SERDES_ATTR_CUSTOM_COLLECTION] = SerdesValue(port.serdes.custom_collection.value);
     }
 
+    if (port.serdes.txpolarity.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_POLARITY] = SerdesValue(port.serdes.txpolarity.value);
+    }
+
+    if (port.serdes.rxpolarity.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_RX_POLARITY] = SerdesValue(port.serdes.rxpolarity.value);
+    }
 }
 
 static bool isPathTracingSupported()
@@ -4794,11 +4804,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             p.m_alias.c_str(), pCfg.speed.value
                         );
                     }
-                    else
-                    {
-                        /* Always update Gearbox speed on Gearbox ports */
-                        setGearboxPortsAttr(p, SAI_PORT_ATTR_SPEED, &pCfg.speed.value);
-                    }
                 }
 
                 if (pCfg.adv_speeds.is_set)
@@ -5086,6 +5091,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                         p.m_fec_mode = pCfg.fec.value;
                         p.m_override_fec = pCfg.fec.override_fec;
+                        p.m_fec_cfg = true;
                         m_portList[p.m_alias] = p;
 
                         SWSS_LOG_NOTICE(
@@ -5194,6 +5200,21 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             it++;
                             continue;
                         }
+                    }
+                }
+                if (pCfg.media_type.is_set)
+                {
+                    if (setPortMediaType(p, pCfg.media_type.value))
+                    {
+                        SWSS_LOG_NOTICE("Set port %s Media Type %s is successful",
+                                         p.m_alias.c_str(), pCfg.media_type.value.c_str());
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to set port %s Media Type %s",
+                                        p.m_alias.c_str(), pCfg.media_type.value.c_str());
+                        it++;
+                        continue;
                     }
                 }
 
@@ -9535,6 +9556,36 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id, sai_object_id_t 
         }
     }
     SWSS_LOG_NOTICE("Created port serdes object 0x%" PRIx64 " for port 0x%" PRIx64, port_serdes_id, port_id);
+
+    return true;
+}
+
+bool PortsOrch::setPortMediaType(Port& port, const string &media_type)
+{
+    sai_attribute_t attr;
+    sai_status_t status;
+
+    if (media_type_map.find(media_type) == media_type_map.end())
+    {
+        SWSS_LOG_NOTICE("Invalid media_type:%s for port %s", media_type.c_str(), port.m_alias.c_str());
+        return false;
+    }
+
+    attr.id = SAI_PORT_ATTR_MEDIA_TYPE;
+    attr.value.u32 = media_type_map[media_type];
+    status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set Media Type %s 0x%x to port %s, rv:%d",
+                media_type.c_str(), attr.value.u32, port.m_alias.c_str(), status);
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+    port.m_media_type = media_type;
+    SWSS_LOG_INFO("Set Media Type %s 0x%x to port pid:%" PRIx64, media_type.c_str(), attr.value.u32, port.m_port_id);
     return true;
 }
 

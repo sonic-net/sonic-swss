@@ -803,7 +803,7 @@ bool NeighOrch::getNeighborEntry(const NextHopKey &nexthop, NeighborEntry &neigh
     {
         return false;
     }
-    if (gMySwitchType == "voq")
+    if (m_intfsOrch->isRemoteSystemPortIntf(nexthop.alias))
     {
         gPortsOrch->getInbandPort(inbp);
         assert(inbp.m_alias.length());

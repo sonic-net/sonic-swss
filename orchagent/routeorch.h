@@ -152,9 +152,11 @@ struct RouteBulkContext
     std::string                         protocol;  // Protocol string
     bool                                is_set;    // True if set operation
 
+    Constraint                          retry_cst;
+
     RouteBulkContext(const std::string& key, bool is_set)
         : key(key), excp_intfs_flag(false), using_temp_nhg(false), is_set(is_set),
-          fallback_to_default_route(false)
+          fallback_to_default_route(false), retry_cst(DUMMY_CONSTRAINT)
     {
     }
 
@@ -174,6 +176,7 @@ struct RouteBulkContext
         key.clear();
         protocol.clear();
         fallback_to_default_route = false;
+        retry_cst = DUMMY_CONSTRAINT;
     }
 };
 
@@ -253,7 +256,7 @@ public:
     const NextHopGroupKey getSyncdRouteNhgKey(sai_object_id_t vrf_id, const IpPrefix& ipPrefix);
     bool createFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id, vector<sai_attribute_t> &nhg_attrs);
     bool removeFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id);
-    bool isRouteExists(const IpPrefix& prefix);
+    bool isRouteExists(sai_object_id_t vrf_id, const IpPrefix& prefix);
     bool removeRoutePrefix(const IpPrefix& prefix);
 
     void addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);

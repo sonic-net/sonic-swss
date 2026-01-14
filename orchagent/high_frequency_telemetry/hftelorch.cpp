@@ -195,6 +195,30 @@ task_process_status HFTelOrch::profileTableSet(const string &profile_name, const
         lexical_convert(*value_opt, state);
         profile->setStreamState(state);
         stream_state = *value_opt;
+
+        // If the telemetry session state entry already exists, keep its stream_status in sync.
+        // The entry is created/updated in doTask(NotificationConsumer&) when TAM notifies config readiness.
+        // Here we only update existing entries to avoid creating partial/incomplete state entries.
+        const auto desired_stream_status = (state == SAI_TAM_TEL_TYPE_STATE_START_STREAM) ? "enabled" : "disabled";
+        for (const auto &type_profiles : m_type_profile_mapping)
+        {
+            const auto &type = type_profiles.first;
+            if (type_profiles.second.find(profile) == type_profiles.second.end())
+            {
+                continue;
+            }
+
+            const auto session_key = profile_name + "|" + HFTelUtils::sai_type_to_group_name(type);
+            vector<FieldValueTuple> existing_values;
+            if (!m_state_telemetry_session.get(session_key, existing_values))
+            {
+                continue;
+            }
+
+            vector<FieldValueTuple> update_values;
+            update_values.emplace_back("stream_status", desired_stream_status);
+            m_state_telemetry_session.set(session_key, update_values);
+        }
     }
 
     value_opt = fvsGetValue(values, "poll_interval", true);
@@ -228,7 +252,7 @@ task_process_status HFTelOrch::profileTableDel(const std::string &profile_name)
         return task_process_status::task_need_retry;
     }
 
-    if (!profile_itr->second->isEmpty())
+    if (!profile_itr->second->isEmpty() || isProfileInUse(profile_itr->second))
     {
         return task_process_status::task_need_retry;
     }
@@ -355,6 +379,21 @@ std::shared_ptr<HFTelProfile> HFTelOrch::tryGetProfile(const std::string &profil
     return std::shared_ptr<HFTelProfile>();
 }
 
+bool HFTelOrch::isProfileInUse(const std::shared_ptr<HFTelProfile> &profile) const
+{
+    SWSS_LOG_ENTER();
+
+    for (const auto &type_profiles : m_type_profile_mapping)
+    {
+        if (type_profiles.second.find(profile) != type_profiles.second.end())
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -454,44 +493,56 @@ void HFTelOrch::doTask(Consumer &consumer)
         string key = kfvKey(t);
         string op = kfvOp(t);
 
-        if (table_name == CFG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE_NAME)
+        try
         {
-            if (op == SET_COMMAND)
+            if (table_name == CFG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE_NAME)
             {
-                status = profileTableSet(key, kfvFieldsValues(t));
+                if (op == SET_COMMAND)
+                {
+                    status = profileTableSet(key, kfvFieldsValues(t));
+                }
+                else if (op == DEL_COMMAND)
+                {
+                    status = profileTableDel(key);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+                }
             }
-            else if (op == DEL_COMMAND)
+            else if (table_name == CFG_HIGH_FREQUENCY_TELEMETRY_GROUP_TABLE_NAME)
             {
-                status = profileTableDel(key);
+                auto tokens = tokenize(key, '|');
+                if (tokens.size() != 2)
+                {
+                    SWSS_LOG_THROW("Invalid key %s in the %s", key.c_str(), table_name.c_str());
+                }
+                if (op == SET_COMMAND)
+                {
+                    status = groupTableSet(tokens[0], tokens[1], kfvFieldsValues(t));
+                }
+                else if (op == DEL_COMMAND)
+                {
+                    status = groupTableDel(tokens[0], tokens[1]);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+                }
             }
             else
             {
-                SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+                SWSS_LOG_ERROR("Unknown table %s\n", table_name.c_str());
             }
         }
-        else if (table_name == CFG_HIGH_FREQUENCY_TELEMETRY_GROUP_TABLE_NAME)
+        catch (const std::exception &e)
         {
-            auto tokens = tokenize(key, '|');
-            if (tokens.size() != 2)
-            {
-                SWSS_LOG_THROW("Invalid key %s in the %s", key.c_str(), table_name.c_str());
-            }
-            if (op == SET_COMMAND)
-            {
-                status = groupTableSet(tokens[0], tokens[1], kfvFieldsValues(t));
-            }
-            else if (op == DEL_COMMAND)
-            {
-                status = groupTableDel(tokens[0], tokens[1]);
-            }
-            else
-            {
-                SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
-            }
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Unknown table %s\n", table_name.c_str());
+            SWSS_LOG_ERROR("Failed to process the task for table %s, key %s, operation %s: %s",
+                           table_name.c_str(),
+                           key.c_str(),
+                           op.c_str(),
+                           e.what());
+            status = task_process_status::task_failed;
         }
 
         if (status == task_process_status::task_need_retry)
