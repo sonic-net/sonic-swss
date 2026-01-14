@@ -35,6 +35,10 @@ use crate::message::{
     saistats::SAIStatsMessage,
 };
 
+const INITIAL_BACKOFF_DELAY_SECS: u64 = 1;
+const MAX_BACKOFF_DELAY_SECS: u64 = 10;
+const MAX_EXPORT_RETRIES: u64 = 30;
+
 /// Configuration for the OtelActor
 #[derive(Debug, Clone)]
 pub struct OtelActorConfig {
@@ -271,10 +275,7 @@ impl OtelActor {
 
     // Exponential backoff
     async fn backoff(&self, attempt: u64) {
-        const INITIAL_DELAY: u64 = 1;
-        const MAX_DELAY: u64 = 10;
-        
-        let delay_secs = std::cmp::min(INITIAL_DELAY * 2u64.pow(attempt as u32 - 1), MAX_DELAY);
+        let delay_secs = std::cmp::min(INITIAL_BACKOFF_DELAY_SECS * 2u64.pow(attempt as u32 - 1), MAX_BACKOFF_DELAY_SECS);
         tokio::time::sleep(Duration::from_secs(delay_secs)).await;
     }
 
@@ -300,9 +301,7 @@ impl OtelActor {
         &mut self,
         request: ExportMetricsServiceRequest,
     ) -> Result<(), Box<dyn ExportError>> {
-        const MAX_RETRIES: u64 = 30;
-
-        for attempt in 1..=MAX_RETRIES {
+        for attempt in 1..=MAX_EXPORT_RETRIES {
             // Ensure we have a client
             let client = match self.get_client() {
                 Some(c) => c, // Use existing or newly created client
@@ -391,19 +390,11 @@ impl OtelActor {
             }
             Err(e) => {
                 // Handle export failure
-                self.consecutive_failures += 1;
                 self.export_failures += 1;
                 error!(
                     "Failed to export buffered metrics (consecutive failures {}): {:?}",
                     self.consecutive_failures, e
                 );
-
-                // Shutdown if too many consecutive failures
-                if self.consecutive_failures >= 5 {
-                    error!("Too many consecutive export failures, shutting down actor!");
-                    self.should_shutdown = true; 
-                    return;
-                }
             }
         }
 
