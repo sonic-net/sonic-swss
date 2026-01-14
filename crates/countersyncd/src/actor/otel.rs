@@ -1,5 +1,6 @@
 use std::time::Duration;
 use std::pin::Pin;
+use std::fmt::{Display, Formatter};
 use tokio::{sync::mpsc::Receiver, sync::oneshot, select};
 use tokio::time::{sleep_until, Instant as TokioInstant, Sleep};
 use opentelemetry_proto::tonic::{
@@ -14,6 +15,7 @@ use crate::message::{
 use log::{info, error, debug};
 use opentelemetry_proto::tonic::collector::metrics::v1::metrics_service_client::MetricsServiceClient;
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
+use opentelemetry::ExportError;
 use tonic::transport::Endpoint;
 use tonic::transport::Channel;
 
@@ -41,6 +43,23 @@ impl Default for OtelActorConfig {
     }
 }
 
+#[derive(Debug)]
+pub struct OtelActorExportError(String);
+
+impl std::error::Error for OtelActorExportError {}
+
+impl ExportError for OtelActorExportError {
+    fn exporter_name(&self) -> &'static str {
+        "Otel client exporter"
+    }
+}
+
+impl Display for OtelActorExportError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// Actor that receives SAI statistics and exports to OpenTelemetry
 pub struct OtelActor {
     stats_receiver: Receiver<SAIStatsMessage>,
@@ -65,6 +84,9 @@ pub struct OtelActor {
 
     // Reconnecting tracking
     consecutive_failures: u64,
+
+    // Shutdown flag
+    should_shutdown: bool,
 }
 
 impl OtelActor {
@@ -118,6 +140,7 @@ impl OtelActor {
             export_failures: 0,
             console_reports: 0,
             consecutive_failures: 0,
+            should_shutdown: false,
         })
     }
 
@@ -135,7 +158,7 @@ impl OtelActor {
                             self.handle_stats_message(stats).await;
                             self.reset_flush_timer(&mut flush_timer);
                         }
-                        None => {
+                        _none => {
                             info!("Stats receiver channel closed, shutting down OtelActor");
                             break;
                         }
@@ -145,6 +168,12 @@ impl OtelActor {
                     self.flush_buffer().await;
                     self.reset_flush_timer(&mut flush_timer);
                 }
+            }
+
+            // Check for shutdown flag
+            if self.should_shutdown {
+                info!("Shutdown flag set, exiting Otel run loop");
+                break;
             }
         }
 
@@ -224,30 +253,78 @@ impl OtelActor {
         
     }
 
+    // Exponential backoff
+    async fn backoff(&self, attempt: u64) {
+        const INITIAL_DELAY: u64 = 1;
+        const MAX_DELAY: u64 = 10;
+        
+        let delay_secs = std::cmp::min(INITIAL_DELAY * 2u64.pow(attempt as u32 - 1), MAX_DELAY);
+        tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+    }
+
+    // Get or create the Otel MetricsServiceClient
+    fn get_client(&mut self) -> Option<&mut MetricsServiceClient<Channel>> {
+        if self.client.is_none() {
+            let endpoint = match self.config.collector_endpoint.parse::<Endpoint>() {
+                Ok(e) => e,
+                Err(e) => {
+                    error!("Invalid Otel endpoint: {}", e);
+                    return None;
+                }
+            };
+
+            let channel = endpoint.connect_lazy();
+            self.client = Some(MetricsServiceClient::new(channel));
+        }
+
+        self.client.as_mut()
+    }
+
+    async fn send_request(
+        &mut self,
+        request: ExportMetricsServiceRequest,
+    ) -> Result<(), Box<dyn ExportError>> {
+        const MAX_RETRIES: u64 = 30;
+
+        for attempt in 1..=MAX_RETRIES {
+            // Ensure we have a client
+            let client = match self.get_client() {
+                Some(c) => c, // Use existing or newly created client
+                _none => { // Failed to create client
+                    self.client = None;
+                    self.backoff(attempt).await; // Wait before retrying
+                    continue;
+                }
+            };
+
+            // Attempt to send the request
+            match client.export(request.clone()).await {
+                Ok(_) => { // Successful export
+                    self.exports_performed += 1;
+                    self.consecutive_failures = 0;
+                    return Ok(());
+                }
+                Err(e) => {
+                    error!("Export attempt {} failed: {}", attempt, e);
+                    self.client = None; // Drop broken client
+                    self.consecutive_failures += 1;
+                    self.backoff(attempt).await; // Wait before retrying
+                }
+            }
+        }
+
+        // All retries exhausted
+        Err(Box::new(OtelActorExportError("Max export retries exceeded".to_string())))
+    }
+
     // Export buffered metrics to OpenTelemetry collector 
     async fn flush_buffer(&mut self) {
         if self.buffer.is_empty() {
             return;
         }
 
-        // Ensure client exists
-        if self.client.is_none() {
-            let endpoint = match self.config.collector_endpoint.parse::<Endpoint>() {
-                Ok(e) => e,
-                Err(e) => {
-                    error!(
-                        "Invalid OTel endpoint {}: {}",
-                        self.config.collector_endpoint, e
-                    );
-                    return;
-                }
-            };
-            let channel = endpoint.connect_lazy();
-            self.client = Some(MetricsServiceClient::new(channel));
-        }
-
+        // Convert buffered OtelMetrics to proto Metrics
         let mut proto_metrics: Vec<Metric> = Vec::new();
-
         for otel_metrics in &self.buffer {
             for gauge in &otel_metrics.gauges {
                 let proto_data_points = gauge.data_points.iter()
@@ -288,75 +365,33 @@ impl OtelActor {
             resource_metrics: vec![resource_metrics],
         };
 
-        // Retry connecting to the collector for 5 minutes
-        const MAX_RETRIES: u64 = 30;
-        const RETRY_INTERVAL_SEC: u64 = 10;
-        const INITIAL_DELAY_SEC: u64 = 1;
+        // Send the export request
+        let result = self.send_request(request).await;
 
-        for attempt in 1..=MAX_RETRIES {
-                if self.client.is_none() {
-                    let endpoint = match self.config.collector_endpoint.parse::<Endpoint>() {
-                        Ok(e) => e,
-                        Err(e) => {
-                            error!("Invalid OTel endpoint {}: {}", self.config.collector_endpoint, e);
-                            return;
-                        }
-                    };
-                    let channel = endpoint.connect_lazy();
-                    self.client = Some(MetricsServiceClient::new(channel));
-                }
+        match result {
+            Ok(_) => {
+                info!("Successfully exported buffered metrics");
+                self.consecutive_failures = 0;
+            }
+            Err(e) => {
+                // Handle export failure
+                self.consecutive_failures += 1;
+                self.export_failures += 1;
+                error!(
+                    "Failed to export buffered metrics (consecutive failures {}): {:?}",
+                    self.consecutive_failures, e
+                );
 
-            let client = self.client.as_mut().unwrap();
-            match client.export(request.clone()).await {
-                Ok(_) => {
-                    self.exports_performed += 1;
-                    
-                    // Reset consecutive failures when connection is successful
-                    if self.consecutive_failures > 0 {
-                        info!(
-                            "Successfully reconnected to collector after {} consecutive failures (attempt {})",
-                            self.consecutive_failures, attempt
-                        );
-                        self.consecutive_failures = 0;
-                        self.export_failures = 0;
-                    } else {
-                        debug!("Exported buffered metrics to collector");
-                    }
-
-                    self.buffer.clear();
-                    self.buffered_counters = 0;
+                // Shutdown if too many consecutive failures
+                if self.consecutive_failures >= 5 {
+                    error!("Too many consecutive export failures, shutting down actor!");
+                    self.should_shutdown = true; 
                     return;
-                }
-                Err(e) => {
-                    self.consecutive_failures += 1;
-
-                    if attempt == 1 {
-                        debug!("Failed to export metrics (attempt {}/{}): {}. Will retry for 5 minutes...", attempt, MAX_RETRIES, e);
-                    } else if attempt == MAX_RETRIES {
-                        error!(
-                            "Failed to export metrics after 5 minutes of retrying ({} attempts): {}.",
-                            MAX_RETRIES, e
-                        );
-                        self.export_failures += 1;
-                        // Drop broken client so next flush recreates it
-                        self.client = None;
-                    } else if attempt % 5 == 0 {
-                        // Log every 5th attempt 
-                        info!("Still retrying export... attempt {}/{} ({}m{}s elapsed)", 
-                              attempt, MAX_RETRIES, 
-                              (attempt * RETRY_INTERVAL_SEC) / 60,
-                              (attempt * RETRY_INTERVAL_SEC) % 60);
-                    }
-                    
-                    if attempt < MAX_RETRIES {
-                        // Wait before retrying: 1s first time, then 10s
-                        let delay_sec = if attempt == 1 { INITIAL_DELAY_SEC } else { RETRY_INTERVAL_SEC };
-                        tokio::time::sleep(Duration::from_secs(delay_sec)).await;
-                    }
                 }
             }
         }
 
+        // Clear the buffer after export attempt
         self.buffer.clear();
         self.buffered_counters = 0;
     }
