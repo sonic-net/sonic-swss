@@ -4,6 +4,7 @@
 #define protected public
 #include "orch.h"
 #undef protected
+#include <dlfcn.h>
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
@@ -36,6 +37,23 @@ namespace switchorch_test
 
     bool _ut_reg_event_unsupported;
 
+    sai_hash_api_t ut_sai_hash_api;
+    sai_hash_api_t *pold_sai_hash_api;
+    const sai_object_id_t INITIAL_HASH_ID = 0x1000;
+    sai_object_id_t next_hash_id = INITIAL_HASH_ID;
+
+    // Mock sai_query_attribute_capability function pointer
+    static std::function<sai_status_t(
+        sai_object_id_t,
+        sai_object_type_t,
+        sai_attr_id_t,
+        sai_attr_capability_t*)> g_mockQueryAttributeCapability;
+
+    bool _validate_hash_oid(sai_object_id_t hash_id)
+    {
+        return hash_id >= INITIAL_HASH_ID && hash_id < next_hash_id;
+    }
+
     sai_status_t _ut_stub_sai_set_switch_attribute(
         _In_ sai_object_id_t switch_id,
         _In_ const sai_attribute_t *attr)
@@ -58,10 +76,56 @@ namespace switchorch_test
                 _ut_stub_asic_sdk_health_event_category_sets[(sai_switch_attr_t)attr[0].id] = set<sai_switch_asic_sdk_health_category_t>(passed_category_list, passed_category_list + attr[0].value.s32list.count);
             }
             return SAI_STATUS_SUCCESS;
+        case SAI_SWITCH_ATTR_ECMP_HASH_IPV4:
+        case SAI_SWITCH_ATTR_ECMP_HASH_IPV6:
+        case SAI_SWITCH_ATTR_LAG_HASH_IPV4:
+        case SAI_SWITCH_ATTR_LAG_HASH_IPV6:
+            return SAI_STATUS_SUCCESS;
         default:
             break;
         }
         return pold_sai_switch_api->set_switch_attribute(switch_id, attr);
+    }
+
+    sai_status_t _ut_stub_sai_get_switch_attribute(
+        _In_ sai_object_id_t switch_id,
+        _In_ uint32_t attr_count,
+        _Inout_ sai_attribute_t *attr_list)
+    {
+        switch (attr_list[0].id)
+        {
+        case SAI_SWITCH_ATTR_ECMP_HASH_IPV4:
+        case SAI_SWITCH_ATTR_ECMP_HASH_IPV6:
+        case SAI_SWITCH_ATTR_LAG_HASH_IPV4:
+        case SAI_SWITCH_ATTR_LAG_HASH_IPV6:
+            attr_list[0].value.oid = SAI_NULL_OBJECT_ID;
+            return SAI_STATUS_SUCCESS;
+        default:
+            break;
+        }
+        return SAI_STATUS_NOT_IMPLEMENTED;
+    }
+
+    sai_status_t _ut_stub_sai_create_hash(
+        _Out_ sai_object_id_t *hash_id,
+        _In_ sai_object_id_t switch_id,
+        _In_ uint32_t attr_count,
+        _In_ const sai_attribute_t *attr_list)
+    {
+        *hash_id = next_hash_id++;
+        return SAI_STATUS_SUCCESS;
+    }
+
+    sai_status_t _ut_stub_sai_set_hash_attribute(
+        _In_ sai_object_id_t hash_id,
+        _In_ const sai_attribute_t *attr)
+    {
+        if (!_validate_hash_oid(hash_id))
+        {
+            return SAI_STATUS_INVALID_OBJECT_ID;
+        }
+
+        return SAI_STATUS_SUCCESS;
     }
 
     void _hook_sai_apis()
@@ -75,6 +139,78 @@ namespace switchorch_test
     void _unhook_sai_apis()
     {
         sai_switch_api = pold_sai_switch_api;
+    }
+
+    void _hook_sai_hash_apis()
+    {
+        ut_sai_switch_api = *sai_switch_api;
+        pold_sai_switch_api = sai_switch_api;
+        ut_sai_switch_api.set_switch_attribute = _ut_stub_sai_set_switch_attribute;
+        ut_sai_switch_api.get_switch_attribute = _ut_stub_sai_get_switch_attribute;
+        sai_switch_api = &ut_sai_switch_api;
+
+        ut_sai_hash_api = *sai_hash_api;
+        pold_sai_hash_api = sai_hash_api;
+        ut_sai_hash_api.create_hash = _ut_stub_sai_create_hash;
+        ut_sai_hash_api.set_hash_attribute = _ut_stub_sai_set_hash_attribute;
+        sai_hash_api = &ut_sai_hash_api;
+    }
+
+    void _unhook_sai_hash_apis()
+    {
+        sai_switch_api = pold_sai_switch_api;
+        sai_hash_api = pold_sai_hash_api;
+    }
+
+    // Function to get the original SAI query attribute function
+    static sai_status_t real_sai_query_attribute_capability(
+        sai_object_id_t switch_id,
+        sai_object_type_t object_type,
+        sai_attr_id_t attr_id,
+        sai_attr_capability_t *attr_capability)
+    {
+        // Get the next symbol in the chain (real implementation)
+        typedef sai_status_t (*sai_query_func_t)(
+            sai_object_id_t,
+            sai_object_type_t,
+            sai_attr_id_t,
+            sai_attr_capability_t*);
+
+        static sai_query_func_t real_func = nullptr;
+
+        if (!real_func)
+        {
+            // RTLD_NEXT finds the next occurrence of the symbol in the search order
+            real_func = (sai_query_func_t)dlsym(RTLD_NEXT, "sai_query_attribute_capability");
+        }
+
+        if (real_func)
+        {
+            return real_func(switch_id, object_type, attr_id, attr_capability);
+        }
+
+        // Fallback if real not found
+        return SAI_STATUS_NOT_IMPLEMENTED;
+    }
+
+    // Override the global function
+    extern "C" sai_status_t sai_query_attribute_capability(
+        _In_ sai_object_id_t switch_id,
+        _In_ sai_object_type_t object_type,
+        _In_ sai_attr_id_t attr_id,
+        _Out_ sai_attr_capability_t *attr_capability)
+    {
+        if (g_mockQueryAttributeCapability)
+        {
+            sai_status_t ret = g_mockQueryAttributeCapability(switch_id, object_type, attr_id, attr_capability);
+            if (ret != SAI_STATUS_NOT_IMPLEMENTED)
+            {
+                return ret;
+            }
+        }
+
+        return real_sai_query_attribute_capability(
+            switch_id, object_type, attr_id, attr_capability);
     }
 
     struct SwitchOrchTest : public ::testing::Test
@@ -350,5 +486,88 @@ namespace switchorch_test
     {
         sai_timespec_t timestamp = {.tv_sec = 172479515853275099, .tv_nsec = 538710245};
         checkAsicSdkHealthEvent(timestamp);
+    }
+
+    TEST_F(SwitchOrchTest, SwitchOrchTestHashIpv4Ipv6Cap)
+    {
+        static bool disable_v4v6;
+
+        g_mockQueryAttributeCapability = [=](
+            sai_object_id_t switch_id,
+            sai_object_type_t object_type,
+            sai_attr_id_t attribute_id,
+            sai_attr_capability_t *capability) -> sai_status_t
+        {
+            switch (attribute_id)
+            {
+            case SAI_SWITCH_ATTR_ECMP_HASH_IPV4:
+            case SAI_SWITCH_ATTR_ECMP_HASH_IPV6:
+            case SAI_SWITCH_ATTR_LAG_HASH_IPV4:
+            case SAI_SWITCH_ATTR_LAG_HASH_IPV6:
+                if (disable_v4v6)
+                {
+                    capability->get_implemented = false;
+                    return SAI_STATUS_NOT_SUPPORTED;
+                }
+                else
+                {
+                    capability->get_implemented = true;
+                    return SAI_STATUS_SUCCESS;
+                }
+
+            case SAI_SWITCH_ATTR_ECMP_HASH:
+            case SAI_SWITCH_ATTR_LAG_HASH:
+                capability->get_implemented = false;
+                return SAI_STATUS_NOT_SUPPORTED;
+            default:
+                break;
+            }
+            return SAI_STATUS_NOT_IMPLEMENTED;
+        };
+
+        disable_v4v6 = true;
+        auto switchCap = new SwitchCapabilities();
+        ASSERT_FALSE(switchCap->switchCapabilities.ecmpHash.isAttrSupported);
+        ASSERT_FALSE(switchCap->switchCapabilities.lagHash.isAttrSupported);
+
+        disable_v4v6 = false;
+        switchCap = new SwitchCapabilities();
+        ASSERT_TRUE(switchCap->switchCapabilities.ecmpHash.isAttrSupported);
+        ASSERT_TRUE(switchCap->switchCapabilities.lagHash.isAttrSupported);
+
+        g_mockQueryAttributeCapability = nullptr;
+    }
+
+    TEST_F(SwitchOrchTest, SwitchOrchTestHashIpv4Ipv6)
+    {
+        _hook_sai_hash_apis(); // modify to support V4/V6 attribute types
+        initSwitchOrch();
+
+        gSwitchOrch->querySwitchHashDefaults();
+        ASSERT_EQ(gSwitchOrch->m_switchHashDefaults.ecmpHash.v4Oid, SAI_NULL_OBJECT_ID);
+        ASSERT_EQ(gSwitchOrch->m_switchHashDefaults.ecmpHash.v6Oid, SAI_NULL_OBJECT_ID);
+        ASSERT_EQ(gSwitchOrch->m_switchHashDefaults.lagHash.v4Oid, SAI_NULL_OBJECT_ID);
+        ASSERT_EQ(gSwitchOrch->m_switchHashDefaults.lagHash.v6Oid, SAI_NULL_OBJECT_ID);
+
+        ASSERT_EQ(gSwitchOrch->m_switchHashDefaults.ecmpHash.platformSupportsOnlyV4V6, true);
+        ASSERT_EQ(gSwitchOrch->m_switchHashDefaults.lagHash.platformSupportsOnlyV4V6, true);
+
+        SwitchHash hash;
+        // first time, try with NULL oids
+        hash.ecmp_hash.value = {SAI_NATIVE_HASH_FIELD_SRC_IP, SAI_NATIVE_HASH_FIELD_SRC_IP};
+        ASSERT_TRUE(gSwitchOrch->setSwitchHashFieldList(hash, true));
+        ASSERT_TRUE(_validate_hash_oid(gSwitchOrch->m_switchHashDefaults.ecmpHash.v4Oid));
+        ASSERT_TRUE(_validate_hash_oid(gSwitchOrch->m_switchHashDefaults.ecmpHash.v6Oid));
+
+        hash.lag_hash.value = {SAI_NATIVE_HASH_FIELD_SRC_IP, SAI_NATIVE_HASH_FIELD_SRC_IP};
+        ASSERT_TRUE(gSwitchOrch->setSwitchHashFieldList(hash, false));
+        ASSERT_TRUE(_validate_hash_oid(gSwitchOrch->m_switchHashDefaults.lagHash.v4Oid));
+        ASSERT_TRUE(_validate_hash_oid(gSwitchOrch->m_switchHashDefaults.lagHash.v6Oid));
+
+        // try now with allocated oids
+        ASSERT_TRUE(gSwitchOrch->setSwitchHashFieldList(hash, true));
+        ASSERT_TRUE(gSwitchOrch->setSwitchHashFieldList(hash, false));
+
+        _unhook_sai_hash_apis();
     }
 }
