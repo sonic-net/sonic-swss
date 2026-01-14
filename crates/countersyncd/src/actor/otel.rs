@@ -1,23 +1,39 @@
-use std::time::Duration;
-use std::pin::Pin;
-use std::fmt::{Display, Formatter};
-use tokio::{sync::mpsc::Receiver, sync::oneshot, select};
-use tokio::time::{sleep_until, Instant as TokioInstant, Sleep};
+use std::{
+    fmt::{Display, Formatter},
+    pin::Pin,
+    time::Duration,
+};
+use tokio::{
+    select,
+    sync::{mpsc::Receiver, oneshot},
+    time::{sleep_until, Instant as TokioInstant, Sleep},
+};
+use log::{debug, error, info};
+use tonic::transport::{Channel, Endpoint};
+use opentelemetry::ExportError;
 use opentelemetry_proto::tonic::{
-    common::v1::{KeyValue as ProtoKeyValue, AnyValue, any_value::Value, InstrumentationScope},
-    metrics::v1::{Metric, Gauge as ProtoGauge, ResourceMetrics, ScopeMetrics},
+    collector::metrics::v1::{
+        metrics_service_client::MetricsServiceClient,
+        ExportMetricsServiceRequest,
+    },
+    common::v1::{
+        any_value::Value,
+        AnyValue,
+        InstrumentationScope,
+        KeyValue as ProtoKeyValue,
+    },
+    metrics::v1::{
+        Gauge as ProtoGauge,
+        Metric,
+        ResourceMetrics,
+        ScopeMetrics,
+    },
     resource::v1::Resource as ProtoResource,
 };
 use crate::message::{
-    saistats::SAIStatsMessage,
     otel::OtelMetrics,
+    saistats::SAIStatsMessage,
 };
-use log::{info, error, debug};
-use opentelemetry_proto::tonic::collector::metrics::v1::metrics_service_client::MetricsServiceClient;
-use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
-use opentelemetry::ExportError;
-use tonic::transport::Endpoint;
-use tonic::transport::Channel;
 
 /// Configuration for the OtelActor
 #[derive(Debug, Clone)]
