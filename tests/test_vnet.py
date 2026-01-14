@@ -3298,18 +3298,21 @@ class TestVnetOrch(object):
         vnet_obj.fetch_exist_entries(dvs)
         
         for i in range(21):
-            create_vnet_routes(dvs, "0.0.0.0/0", 'Vnet33', '10.10.10.1', metric=i)
-            vnet_obj.check_vnet_routes(dvs, 'Vnet33', '10.10.10.1', tunnel_name)
-            check_state_db_routes(dvs, 'Vnet33', "0.0.0.0/0", ['10.10.10.1'])
+            create_vnet_routes(dvs, f'0.0.0.{i}/32', 'Vnet33', f'10.10.10.{i}', metric=i)
+            vnet_obj.check_vnet_routes(dvs, 'Vnet33', f'10.10.10.{i}', tunnel_name)
+            check_state_db_routes(dvs, 'Vnet33', f"0.0.0.{i}/32", [f'10.10.10.{i}'])
 
-            entry = self.cdb.get_entry("VNET_ROUTE_TABLE", "Vnet33|0.0.0.0/0")
-            assert entry is not None
-            assert int(entry.get('metric', -1)) == i
+            entry = self.cdb.get_entry("VNET_ROUTE_TUNNEL", f"Vnet33|0.0.0.{i}/32")
+            assert entry is not None and len(entry) > 0, f"VNET route entry not found in CONFIG DB."
+            assert int(entry.get('metric', -1)) == i, f"VNET route metric mismatch: expected {i}, got {entry.get('metric', -1)}."
+
+            # Clean-up vnet route
+            delete_vnet_routes(dvs, f"0.0.0.{i}/32", 'Vnet33')
+            vnet_obj.check_del_vnet_routes(dvs, 'Vnet33')
+
+            vnet_obj.fetch_exist_entries(dvs)
 
         # Clean-up and verify remove flows
-        delete_vnet_routes(dvs, "0.0.0.0/0", 'Vnet33')
-        vnet_obj.check_del_vnet_routes(dvs, 'Vnet33')
-
         delete_vnet_entry(dvs, "Vnet33")
         vnet_obj.check_del_vnet_entry(dvs, "Vnet33")
 
