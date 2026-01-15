@@ -50,6 +50,8 @@ sai_object_id_t gUnderlayIfId;
 sai_object_id_t gSwitchId = SAI_NULL_OBJECT_ID;
 MacAddress gMacAddress;
 MacAddress gVxlanMacAddress;
+bool gOrchUnhealthy = false;
+string gSaiErrorString;
 
 extern size_t gMaxBulkSize;
 
@@ -141,8 +143,7 @@ void syncd_apply_view()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to notify syncd APPLY_VIEW %d", status);
-        handleSaiFailure(SAI_API_SWITCH, "set", status);
-        return;
+        handleSaiFailure(SAI_API_SWITCH, "set", status, true);
     }
 }
 
@@ -372,6 +373,7 @@ int main(int argc, char **argv)
 
     SWSS_LOG_ENTER();
 
+    gOrchUnhealthy = false;
     WarmStart::initialize("orchagent", "swss");
     WarmStart::checkWarmStart("orchagent", "swss");
 
@@ -775,8 +777,7 @@ int main(int argc, char **argv)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create a switch, rv:%d", status);
-        handleSaiFailure(SAI_API_SWITCH, "create", status);
-        return EXIT_FAILURE;
+        handleSaiFailure(SAI_API_SWITCH, "create", status, true);
     }
     SWSS_LOG_NOTICE("Create a switch, id:%" PRIu64, gSwitchId);
 
@@ -807,8 +808,7 @@ int main(int argc, char **argv)
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to get MAC address from switch, rv:%d", status);
-                handleSaiFailure(SAI_API_SWITCH, "get", status);
-                return EXIT_FAILURE;
+                handleSaiFailure(SAI_API_SWITCH, "get", status, true);
             }
             else
             {
@@ -823,8 +823,7 @@ int main(int argc, char **argv)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Fail to get switch virtual router ID %d", status);
-            handleSaiFailure(SAI_API_SWITCH, "get", status);
-            return EXIT_FAILURE;
+            handleSaiFailure(SAI_API_SWITCH, "get", status, true);
         }
 
         gVirtualRouterId = attr.value.oid;
@@ -896,8 +895,7 @@ int main(int argc, char **argv)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create underlay router interface %d", status);
-            handleSaiFailure(SAI_API_ROUTER_INTERFACE, "create", status);
-            return EXIT_FAILURE;
+            handleSaiFailure(SAI_API_ROUTER_INTERFACE, "create", status, true);
         }
 
         SWSS_LOG_NOTICE("Created underlay router interface ID %" PRIx64, gUnderlayIfId);
