@@ -795,13 +795,14 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
 
     bool isFineGrainedNextHopIdChanged = false;
     sai_object_id_t next_hop_group_id;
+    std::map<NextHopKey, sai_object_id_t> nhopgroup_member_ids;
 
     if (consistent_hashing_buckets > 0 && ipPrefix != nullptr)
     {
         sai_object_id_t vrf_id;
         vnet_orch_->getVrfIdByVnetName(vnet, vrf_id);
 
-        if (!gFgNhgOrch->setFgNhg(vrf_id, *ipPrefix, nhopgroup_members_set, consistent_hashing_buckets, next_hop_group_id, isFineGrainedNextHopIdChanged))
+        if (!gFgNhgOrch->setFgNhg(vrf_id, *ipPrefix, nhopgroup_members_set, consistent_hashing_buckets, next_hop_group_id, nhopgroup_member_ids, isFineGrainedNextHopIdChanged))
         {
             SWSS_LOG_ERROR("Failed to create fine grained next hop group for VNET %s", vnet.c_str());
             return false;
@@ -846,37 +847,41 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
 
         if (consistent_hashing_buckets > 0)
         {
-            continue;
+            // Fine Grained Next Hop Group Member already created in FgNhgOrch
+            next_hop_group_member_id = nhopgroup_member_ids[nhopgroup_members_set.find(nhid)->second];
         }
-        // Create a next hop group member
-        vector<sai_attribute_t> nhgm_attrs;
-
-        sai_attribute_t nhgm_attr;
-        nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID;
-        nhgm_attr.value.oid = next_hop_group_id;
-        nhgm_attrs.push_back(nhgm_attr);
-
-        nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
-        nhgm_attr.value.oid = nhid;
-        nhgm_attrs.push_back(nhgm_attr);
-
-        if (gSwitchOrch->checkOrderedEcmpEnable())
+        else
         {
-            nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID;
-            nhgm_attr.value.u32 = nh_seq_id_in_nhgrp[nhopgroup_members_set.find(nhid)->second];
+            // Create a next hop group member
+            vector<sai_attribute_t> nhgm_attrs;
+
+            sai_attribute_t nhgm_attr;
+            nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID;
+            nhgm_attr.value.oid = next_hop_group_id;
             nhgm_attrs.push_back(nhgm_attr);
-        }
 
-        sai_status_t status = sai_next_hop_group_api->create_next_hop_group_member(&next_hop_group_member_id,
-                                                                    gSwitchId,
-                                                                    (uint32_t)nhgm_attrs.size(),
-                                                                    nhgm_attrs.data());
+            nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
+            nhgm_attr.value.oid = nhid;
+            nhgm_attrs.push_back(nhgm_attr);
 
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to create next hop group %" PRIx64 " member %" PRIx64 ": %d\n",
-                           next_hop_group_id, next_hop_group_member_id, status);
-            return false;
+            if (gSwitchOrch->checkOrderedEcmpEnable())
+            {
+                nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID;
+                nhgm_attr.value.u32 = nh_seq_id_in_nhgrp[nhopgroup_members_set.find(nhid)->second];
+                nhgm_attrs.push_back(nhgm_attr);
+            }
+
+            sai_status_t status = sai_next_hop_group_api->create_next_hop_group_member(&next_hop_group_member_id,
+                                                                        gSwitchId,
+                                                                        (uint32_t)nhgm_attrs.size(),
+                                                                        nhgm_attrs.data());
+
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to create next hop group %" PRIx64 " member %" PRIx64 ": %d\n",
+                            next_hop_group_id, next_hop_group_member_id, status);
+                return false;
+            }
         }
 
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
@@ -884,8 +889,6 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
         // Save the membership into next hop structure
         next_hop_group_entry.active_members[nhopgroup_members_set.find(nhid)->second] =
                                                                 next_hop_group_member_id;
-
-        // todo navdhaj: figure out how to do this for fgnhg members
     }
 
     /*
@@ -898,7 +901,7 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
     return true;
 }
 
-bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj)
+bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj, IpPrefix *ipPrefix)
 {
     SWSS_LOG_ENTER();
 
@@ -913,6 +916,7 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
         return true;
     }
 
+    sai_object_id_t vr_id = vrf_obj->getVRidIngress();
     next_hop_group_id = next_hop_group_entry->second.next_hop_group_id;
     SWSS_LOG_NOTICE("Delete next hop group %s", nexthops.to_string().c_str());
 
@@ -921,12 +925,15 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
     {
         NextHopKey nexthop = nhop->first;
 
-        status = sai_next_hop_group_api->remove_next_hop_group_member(nhop->second);
-        if (status != SAI_STATUS_SUCCESS)
+        if (!gFgNhgOrch->isRouteFineGrained(vr_id, *ipPrefix, nexthops))
         {
-            SWSS_LOG_ERROR("Failed to remove next hop group member %" PRIx64 ", rv:%d",
-                           nhop->second, status);
-            return false;
+            status = sai_next_hop_group_api->remove_next_hop_group_member(nhop->second);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to remove next hop group member %" PRIx64 ", rv:%d",
+                            nhop->second, status);
+                return false;
+            }
         }
 
         /* For local endpoint, we don't remove the next hop from NeighOrch,
@@ -941,15 +948,26 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
         nhop = next_hop_group_entry->second.active_members.erase(nhop);
     }
 
-    status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
-    if (status != SAI_STATUS_SUCCESS)
+    if (ipPrefix != nullptr && gFgNhgOrch->isRouteFineGrained(vr_id, *ipPrefix, nexthops))
     {
-        SWSS_LOG_ERROR("Failed to remove next hop group %" PRIx64 ", rv:%d", next_hop_group_id, status);
-        return false;
+        if (!gFgNhgOrch->removeFgNhg(vr_id, *ipPrefix))
+        {
+            SWSS_LOG_ERROR("Failed to remove fine grained next hop group %" PRIx64, next_hop_group_id);
+            return false;
+        }
     }
+    else
+    {
+        status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove next hop group %" PRIx64 ", rv:%d", next_hop_group_id, status);
+            return false;
+        }
 
-    gRouteOrch->decreaseNextHopGroupCount();
-    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+        gRouteOrch->decreaseNextHopGroupCount();
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+    }
 
     syncd_nexthop_groups_[vnet].erase(nexthops);
 
@@ -1216,7 +1234,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             bool route_status = true;
 
             // Remove route if the nexthop group has no active endpoint
-            if (syncd_nexthop_groups_[vnet][active_nhg].active_members.empty() && consistent_hashing_buckets < 1) // todo navdhaj: remove this condition once I figure out how to add nhg members
+            if (syncd_nexthop_groups_[vnet][active_nhg].active_members.empty())
             {
                 if (it_route != syncd_tunnel_routes_[vnet].end())
                 {
@@ -1270,7 +1288,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 /* Clean up the newly created next hop group entry */
                 if (active_nhg.getSize() > 1)
                 {
-                    removeNextHopGroup(vnet, active_nhg, vrf_obj);
+                    removeNextHopGroup(vnet, active_nhg, vrf_obj, pfx);
                 }
                 return false;
             }
@@ -1309,7 +1327,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 {
                     if (nhg.getSize() > 1)
                     {
-                        removeNextHopGroup(vnet, nhg, vrf_obj);
+                        removeNextHopGroup(vnet, nhg, vrf_obj, ipPrefix);
                     }
                     else
                     {
@@ -1406,7 +1424,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         {
             if (nhg.getSize() > 1)
             {
-                removeNextHopGroup(vnet, nhg, vrf_obj);
+                removeNextHopGroup(vnet, nhg, vrf_obj, pfx);
             }
             else
             {

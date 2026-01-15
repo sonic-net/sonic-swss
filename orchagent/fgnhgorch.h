@@ -112,7 +112,7 @@ public:
     bool validNextHopInNextHopGroup(const NextHopKey&);
     bool invalidNextHopInNextHopGroup(const NextHopKey&);
     bool setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops, sai_object_id_t &next_hop_id, bool &isNextHopIdChanged);
-    bool setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const map<sai_object_id_t, NextHopKey>& nhopgroup_members_set, uint16_t consistent_hashing_buckets, sai_object_id_t &next_hop_id, bool &isNextHopIdChanged);
+    bool setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const map<sai_object_id_t, NextHopKey>& nhopgroup_members_set, uint16_t consistent_hashing_buckets, sai_object_id_t &next_hop_id, map<NextHopKey, sai_object_id_t> &nhopgroup_member_ids, bool &isNextHopIdChanged);
     bool removeFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix);
 
     // warm reboot support
