@@ -386,7 +386,6 @@ impl OtelActor {
         match result {
             Ok(_) => {
                 debug!("Successfully exported buffered metrics");
-                self.consecutive_failures = 0;
             }
             Err(e) => {
                 // Handle export failure
