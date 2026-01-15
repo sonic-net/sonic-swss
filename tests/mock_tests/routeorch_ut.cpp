@@ -444,20 +444,21 @@ TEST_F(RouteOrchTest, RouteOrchTempRouteUniformSelection)
     Table neighborTable(m_app_db.get(), APP_NEIGH_TABLE_NAME);
 
     std::map<std::string, std::string> neighborIp2Mac = {
-        {"10.0.0.1", "00:00:0a:00:00:01"},
-        {"10.0.0.2", "00:00:0a:00:00:02"},
-        {"10.0.0.3", "00:00:0a:00:00:03"}
+        {"10.0.0.4", "00:00:0a:00:00:04"},
+        {"10.0.0.5", "00:00:0a:00:00:05"},
+        {"10.0.0.6", "00:00:0a:00:00:06"}
     };
 
-    neighborTable.set("Ethernet0:10.0.0.1", {{"neigh", neighborIp2Mac["10.0.0.1"]}, {"family", "IPv4"}});
-    neighborTable.set("Ethernet1:10.0.0.2", {{"neigh", neighborIp2Mac["10.0.0.2"]}, {"family", "IPv4"}});
-    neighborTable.set("Ethernet2:10.0.0.3", {{"neigh", neighborIp2Mac["10.0.0.3"]}, {"family", "IPv4"}});
+    // Use Ethernet0 which is already configured with 10.0.0.1/24
+    neighborTable.set("Ethernet0:10.0.0.4", {{"neigh", neighborIp2Mac["10.0.0.4"]}, {"family", "IPv4"}});
+    neighborTable.set("Ethernet0:10.0.0.5", {{"neigh", neighborIp2Mac["10.0.0.5"]}, {"family", "IPv4"}});
+    neighborTable.set("Ethernet0:10.0.0.6", {{"neigh", neighborIp2Mac["10.0.0.6"]}, {"family", "IPv4"}});
 
     gNeighOrch->addExistingData(&neighborTable);
     static_cast<Orch *>(gNeighOrch)->doTask();
 
     // --- Step 2: Prepare NextHopGroupKey ---
-    NextHopGroupKey nhg_key("10.0.0.1@Ethernet0,10.0.0.2@Ethernet1,10.0.0.3@Ethernet2");
+    NextHopGroupKey nhg_key("10.0.0.4,10.0.0.5,10.0.0.6");
 
     // --- Step 3: Capture programmed nexthop IDs ---
     std::set<sai_object_id_t> programmed_nh_oids;
