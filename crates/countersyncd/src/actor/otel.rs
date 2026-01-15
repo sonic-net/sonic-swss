@@ -237,7 +237,7 @@ impl OtelActor {
     async fn print_otel_metrics(&mut self, otel_metrics: &OtelMetrics) {
         self.console_reports += 1;
 
-        debug!(
+        info!(
             "[OTel Report #{}] Service: {}, Scope: {} v{}, Total Gauges: {}, Messages Received: {}, Exports: {} (Failures: {})",
             self.console_reports,
             otel_metrics.service_name,
@@ -250,24 +250,24 @@ impl OtelActor {
         );
 
         if !otel_metrics.is_empty() {
-            debug!("Gauge Metrics:");
+            info!("Gauge Metrics:");
             for (index, gauge) in otel_metrics.gauges.iter().enumerate() {
                 let data_point = &gauge.data_points[0];
 
-                debug!("[{:3}] Gauge: {}", index + 1, gauge.name);
-                debug!("Value: {}", data_point.value);
-                debug!("Unit: {}", gauge.unit);
-                debug!("Time: {}ns", data_point.time_unix_nano);
-                debug!("Description: {}", gauge.description);
+                info!("[{:3}] Gauge: {}", index + 1, gauge.name);
+                info!("Value: {}", data_point.value);
+                info!("Unit: {}", gauge.unit);
+                info!("Time: {}ns", data_point.time_unix_nano);
+                info!("Description: {}", gauge.description);
 
                 if !data_point.attributes.is_empty() {
-                    debug!("Attributes:");
+                    info!("Attributes:");
                     for attr in &data_point.attributes {
-                        debug!("  - {}={}", attr.key, attr.value);
+                        info!("  - {}={}", attr.key, attr.value);
                     }
                 }
 
-                debug!("Raw Gauge: {:#?}", gauge);
+                info!("Raw Gauge: {:#?}", gauge);
             }
         }
         
@@ -338,8 +338,8 @@ impl OtelActor {
             return;
         }
 
-        // Convert buffered OtelMetrics to proto Metrics
         let mut proto_metrics: Vec<Metric> = Vec::new();
+
         for otel_metrics in &self.buffer {
             for gauge in &otel_metrics.gauges {
                 let proto_data_points = gauge.data_points.iter()
