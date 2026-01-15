@@ -1752,10 +1752,9 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
         if (!bucket_list.empty())
         {
             uint32_t bucket_idx = bucket_list[0];
-            auto member_it = syncd_fg_entry.nhopgroup_members.find(bucket_idx);
-            if (member_it != syncd_fg_entry.nhopgroup_members.end())
+            if (bucket_idx < syncd_fg_entry.nhopgroup_members.size())
             {
-                nhopgroup_member_ids[nhk] = member_it->second;
+                nhopgroup_member_ids[nhk] = syncd_fg_entry.nhopgroup_members[bucket_idx];
             }
         }
     }
