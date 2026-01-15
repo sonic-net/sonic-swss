@@ -220,13 +220,13 @@ void FgNhgOrch::setStateDbRouteEntry(const string &vnet, const IpPrefix &ipPrefi
 {
     SWSS_LOG_ENTER();
 
-    string key = vnet + '|' + ipPrefix.to_string();;
+    string key = vnet + '|' + ipPrefix.to_string();
     string field = std::to_string(index);
     string value = nextHop.to_string();
 
     m_stateWarmRestartRouteTable.hset(key, field, value);
 
-    SWSS_LOG_INFO("Set state db entry for ip prefix %s next hop %s with index %d",
+    SWSS_LOG_INFO("Set state db entry for vnet and ip prefix %s next hop %s with index %d",
                   key.c_str(), value.c_str(), index);
 }
 
@@ -903,7 +903,8 @@ bool FgNhgOrch::setInactiveBankToNextAvailableActiveBank(FGNextHopGroupEntry *sy
             syncd_fg_route_entry->next_hop_group_id = rif_next_hop_id;
 
             // remove state_db entry
-            m_stateWarmRestartRouteTable.del(ipPrefix.to_string());
+            string key = vnet + '|' + ipPrefix.to_string();
+            m_stateWarmRestartRouteTable.del(key);
             // Clear data structures
             syncd_fg_route_entry->syncd_fgnhg_map.clear();
             syncd_fg_route_entry->active_nexthops.clear();
@@ -1574,7 +1575,8 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
 }
 
 bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, 
-                        const map<sai_object_id_t, NextHopKey>& nhopgroup_members_set_in, uint16_t consistent_hashing_buckets, sai_object_id_t &next_hop_id, bool &isNextHopIdChanged)
+                        const map<sai_object_id_t, NextHopKey>& nhopgroup_members_set_in, uint16_t consistent_hashing_buckets, 
+                        sai_object_id_t &next_hop_id, map<NextHopKey, sai_object_id_t> &nhopgroup_member_ids, bool &isNextHopIdChanged)
 {
     SWSS_LOG_ENTER();
 
@@ -1737,9 +1739,26 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
         }
         m_syncdFGRouteTables[vrf_id][ipPrefix] = syncd_fg_route_entry;
     }
-    
+
     m_syncdFGRouteTables[vrf_id][ipPrefix].nhg_key = nextHops;
     next_hop_id =  m_syncdFGRouteTables[vrf_id][ipPrefix].next_hop_group_id;
+
+    FGNextHopGroupEntry &syncd_fg_entry = m_syncdFGRouteTables[vrf_id][ipPrefix];
+
+    for (const auto& member : syncd_fg_entry.syncd_fgnhg_map[0])
+    {
+        const NextHopKey& nhk = member.first;
+        const auto& bucket_list = member.second;
+        if (!bucket_list.empty())
+        {
+            uint32_t bucket_idx = bucket_list[0];
+            auto member_it = syncd_fg_entry.nhopgroup_members.find(bucket_idx);
+            if (member_it != syncd_fg_entry.nhopgroup_members.end())
+            {
+                nhopgroup_member_ids[nhk] = member_it->second;
+            }
+        }
+    }
 
     return true;
 }
@@ -1784,7 +1803,10 @@ bool FgNhgOrch::removeFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
         }
 
         // remove state_db entry
-        m_stateWarmRestartRouteTable.del(ipPrefix.to_string());
+        string vnet;
+        getVnetNameByVrfId(vrf_id, vnet);
+        string key = vnet + '|' + ipPrefix.to_string();
+        m_stateWarmRestartRouteTable.del(key);
     }
 
     it_route_table->second.erase(it_route);
