@@ -1288,7 +1288,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 /* Clean up the newly created next hop group entry */
                 if (active_nhg.getSize() > 1)
                 {
-                    removeNextHopGroup(vnet, active_nhg, vrf_obj, pfx);
+                    removeNextHopGroup(vnet, active_nhg, vrf_obj, &ipPrefix);
                 }
                 return false;
             }
@@ -1327,7 +1327,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 {
                     if (nhg.getSize() > 1)
                     {
-                        removeNextHopGroup(vnet, nhg, vrf_obj, ipPrefix);
+                        removeNextHopGroup(vnet, nhg, vrf_obj, &ipPrefix);
                     }
                     else
                     {
@@ -1424,7 +1424,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         {
             if (nhg.getSize() > 1)
             {
-                removeNextHopGroup(vnet, nhg, vrf_obj, pfx);
+                removeNextHopGroup(vnet, nhg, vrf_obj, &ipPrefix);
             }
             else
             {
