@@ -23,12 +23,15 @@ class NeighSync : public NetMsg
 public:
     enum { MAX_ADDR_SIZE = 64 };
 
-    NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector *cfgDb);
+    NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector *cfgDb, DBConnector *appDb);
     ~NeighSync();
 
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
     bool isNeighRestoreDone();
+
+    /* Get interface name based on interface index */
+    bool getIfName(int if_index, char *if_name, size_t name_len);
 
     AppRestartAssist *getRestartAssist()
     {
@@ -36,8 +39,11 @@ public:
     }
 
 private:
-    Table m_stateNeighRestoreTable, m_cfgPeerSwitchTable;
+    Table m_stateNeighRestoreTable, m_cfgPeerSwitchTable, m_routeCheckTable;
     ProducerStateTable m_neighTable;
+    ProducerStateTable m_routeTable;
+    struct nl_cache    *m_link_cache;
+    struct nl_sock     *m_nl_sock;
     AppRestartAssist  *m_AppRestartAssist;
     Table m_cfgVlanInterfaceTable, m_cfgLagInterfaceTable, m_cfgInterfaceTable;
 
