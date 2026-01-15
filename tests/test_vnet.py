@@ -3277,7 +3277,7 @@ class TestVnetOrch(object):
 
         tunnel_name = 'tunnel_33'
 
-        vnet_obj.fetch_exist_entries(dvs)
+    #     vnet_obj.fetch_exist_entries(dvs)
 
         create_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
         create_vnet_entry(dvs, 'Vnet33', tunnel_name, '10033', "")
