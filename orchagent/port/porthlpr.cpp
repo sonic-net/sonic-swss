@@ -764,6 +764,8 @@ template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::obplev) &serdes
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::obnlev) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::regn_bfm1p) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::regn_bfm1n) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::txpolarity) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::rxpolarity) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::custom_collection) &serdes, const std::string &field, const std::string &value) const;
 
 
@@ -965,6 +967,22 @@ bool PortHelper::parsePortPtTimestampTemplate(PortConfig &port, const std::strin
 
     port.pt_timestamp_template.value = cit->second;
     port.pt_timestamp_template.is_set = true;
+
+    return true;
+}
+
+bool PortHelper::parsePortMediaType(PortConfig &port, const std::string &field, const std::string &value) const
+{
+    SWSS_LOG_ENTER();
+
+    if (value.empty())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): empty string is prohibited", field.c_str());
+        return false;
+    }
+
+    port.media_type.value = value;
+    port.media_type.is_set = true;
 
     return true;
 }
@@ -1195,6 +1213,20 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
                 return false;
             }
         }
+        else if (field == PORT_TX_POLARITY)
+        {
+            if (!this->parsePortSerdes(port.serdes.txpolarity, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_RX_POLARITY)
+        {
+            if (!this->parsePortSerdes(port.serdes.rxpolarity, field, value))
+            {
+                return false;
+            }
+        }
         else if (field == PORT_REGN_BFM1N)
         {
             if (!this->parsePortSerdes(port.serdes.regn_bfm1n, field, value))
@@ -1298,6 +1330,13 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
             /* Placeholder to prevent warning. Not needed to be parsed here.
              * Setting exists in sonic-port.yang with possible values: routed|access|trunk
              */
+        }
+        else if (field == PORT_MEDIA_TYPE)
+        {
+            if (!this->parsePortMediaType(port, field, value))
+            {
+                return false;
+            }
         }
         else
         {

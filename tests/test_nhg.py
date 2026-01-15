@@ -283,7 +283,7 @@ class TestNhgExhaustBase(TestNextHopGroupBase):
     gen_valid_binary.fmt = '{{0:0{}b}}'.format(MAX_PORT_COUNT)
 
 
-class TestRotueOrchNhgExhaust(TestNhgExhaustBase):
+class TestRouteOrchNhgExhaust(TestNhgExhaustBase):
     def test_route_nhg_exhaust(self, dvs, testlog):
         """
         Test the situation of exhausting ECMP group, assume SAI_SWITCH_ATTR_NUMBER_OF_ECMP_GROUPS is 512
@@ -367,7 +367,7 @@ class TestRotueOrchNhgExhaust(TestNhgExhaustBase):
         self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count)
 
         # Add second batch of routes with unique nexthop groups in AppDB
-        # Add more routes with new nexthop group in AppDBdd
+        # Add more routes with new nexthop group in AppDB
         route_ipprefix = gen_ipprefix(route_count)
         base_ipprefix = route_ipprefix
         base = route_count
