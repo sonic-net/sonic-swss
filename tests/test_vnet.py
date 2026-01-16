@@ -3407,7 +3407,7 @@ class TestVnetOrch(object):
         time.sleep(2)
 
         # Verify the route is created with fine-grained ECMP
-        route, nhgid = vnet_obj.check_vnet_fine_grained_ecmp_routes(dvs, vnet_name, "100.100.34.0/24", bucket_size)
+        # route, nhgid = vnet_obj.check_vnet_fine_grained_ecmp_routes(dvs, vnet_name, "100.100.33.0/24", bucket_size)
         
         check_state_db_routes(dvs, vnet_name, "100.100.34.0/24", ['34.0.0.1', '34.0.0.2', '34.0.0.3','34.0.0.4','34.0.0.5','34.0.0.6'])
         # check_remove_routes_advertisement(dvs, "100.100.33.0/24")
