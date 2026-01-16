@@ -1237,7 +1237,7 @@ class VnetVxlanVrfTunnel(object):
         new_routes = get_all_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, [])
         key = ''
         route_exists = False
-        false_ret = ([], '')
+        false_ret = ('', '')
         
         for route in new_routes:
             rt_key = json.loads(route)
@@ -1250,14 +1250,19 @@ class VnetVxlanVrfTunnel(object):
 
         tb1 =  swsscommon.Table(asic_db, self.ASIC_ROUTE_ENTRY)
         status, fvs = tb1.get(key)
-        if not fvs:
+        if not status or not fvs:
             return false_ret
+        fvs = dict(fvs)
 
         nhgid = fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID")
+        if not nhgid:
+            return false_ret
+            
         tb2 =  swsscommon.Table(asic_db, self.ASIC_NEXT_HOP_GROUP)
         status, fvs = tb2.get(nhgid)
-        if not fvs:
+        if not status or not fvs:
             return false_ret
+        fvs = dict(fvs)
 
         nhg_type = fvs.get("SAI_NEXT_HOP_GROUP_ATTR_TYPE")
         if nhg_type != "SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP":
