@@ -2371,5 +2371,10 @@ bool FgNhgOrch::getVnetNameByVrfId(sai_object_id_t vrf_id, std::string& vnet_nam
     auto *vnet_orch = gDirectory.get<VNetOrch*>();
     assert(vnet_orch); // VnetOrch instance is created before RouteOrch
 
-    return vnet_orch->getVnetNameByVrfId(vrf_id, vnet_name);
+    if (!vnet_orch->getVnetNameByVrfId(vrf_id, vnet_name))
+    {
+        vnet_name = "default";
+        return false;
+    }
+    return true;
 }
