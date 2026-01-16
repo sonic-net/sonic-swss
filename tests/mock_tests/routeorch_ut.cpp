@@ -438,76 +438,76 @@ namespace routeorch_test
         }
     };
 
-TEST_F(RouteOrchTest, RouteOrchTempRouteUniformSelection)
-{
-    // --- Step 1: Setup resolved neighbors ---
-    Table neighborTable(m_app_db.get(), APP_NEIGH_TABLE_NAME);
-
-    std::map<std::string, std::string> neighborIp2Mac = {
-        {"10.0.0.4", "00:00:0a:00:00:04"},
-        {"10.0.0.5", "00:00:0a:00:00:05"},
-        {"10.0.0.6", "00:00:0a:00:00:06"}
-    };
-
-    // Use Ethernet0 which is already configured with 10.0.0.1/24
-    neighborTable.set("Ethernet0:10.0.0.4", {{"neigh", neighborIp2Mac["10.0.0.4"]}, {"family", "IPv4"}});
-    neighborTable.set("Ethernet0:10.0.0.5", {{"neigh", neighborIp2Mac["10.0.0.5"]}, {"family", "IPv4"}});
-    neighborTable.set("Ethernet0:10.0.0.6", {{"neigh", neighborIp2Mac["10.0.0.6"]}, {"family", "IPv4"}});
-
-    gNeighOrch->addExistingData(&neighborTable);
-    static_cast<Orch *>(gNeighOrch)->doTask();
-
-    // --- Step 2: Prepare NextHopGroupKey ---
-    NextHopGroupKey nhg_key("10.0.0.4,10.0.0.5,10.0.0.6");
-
-    // --- Step 3: Capture programmed nexthop IDs ---
-    std::set<sai_object_id_t> programmed_nh_oids;
-
-    EXPECT_CALL(*mock_sai_route_api,
-                create_route_entries(::testing::_, ::testing::_, ::testing::_, ::testing::_, ::testing::_, ::testing::_))
-        .WillRepeatedly(::testing::Invoke(
-            [&](uint32_t object_count,
-                const sai_route_entry_t * /*route_entries*/,
-                const uint32_t *attr_count,
-                const sai_attribute_t **attr_list,
-                sai_bulk_op_error_mode_t /*mode*/,
-                sai_status_t *object_statuses) -> sai_status_t
-            {
-                for (uint32_t i = 0; i < object_count; ++i)
-                {
-                    for (uint32_t j = 0; j < attr_count[i]; ++j)
-                    {
-                        if (attr_list[i][j].id == SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID)
-                        {
-                            // Mark the NEXT_HOP_ID as programmed
-                            programmed_nh_oids.insert(attr_list[i][j].value.oid);
-                        }
-					}
-					// **Simulate success** so addTempRoute thinks the route was installed
-					object_statuses[i] = SAI_STATUS_SUCCESS;
-				}
-				return SAI_STATUS_SUCCESS;
-			}));
-
-    // --- Step 4: Run 100 iterations ---
-    constexpr int kIterations = 100;
-    for (int i = 0; i < kIterations; ++i)
+    TEST_F(RouteOrchTest, RouteOrchTempRouteUniformSelection)
     {
-        RouteBulkContext ctx("3.3.3.0/24", true);
-        ctx.vrf_id = gVirtualRouterId;
-        ctx.ip_prefix = IpPrefix("3.3.3.0/24");
-        gRouteOrch->addTempRoute(ctx, nhg_key);
-        
-        // Flush the bulker to trigger SAI API calls
-        gRouteOrch->gRouteBulker.flush();
+        // --- Step 1: Setup resolved neighbors ---
+        Table neighborTable(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+
+        std::map<std::string, std::string> neighborIp2Mac = {
+            {"10.0.0.4", "00:00:0a:00:00:04"},
+            {"10.0.0.5", "00:00:0a:00:00:05"},
+            {"10.0.0.6", "00:00:0a:00:00:06"}
+        };
+
+        // Use Ethernet0 which is already configured with 10.0.0.1/24
+        neighborTable.set("Ethernet0:10.0.0.4", {{"neigh", neighborIp2Mac["10.0.0.4"]}, {"family", "IPv4"}});
+        neighborTable.set("Ethernet0:10.0.0.5", {{"neigh", neighborIp2Mac["10.0.0.5"]}, {"family", "IPv4"}});
+        neighborTable.set("Ethernet0:10.0.0.6", {{"neigh", neighborIp2Mac["10.0.0.6"]}, {"family", "IPv4"}});
+
+        gNeighOrch->addExistingData(&neighborTable);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+
+        // --- Step 2: Prepare NextHopGroupKey ---
+        NextHopGroupKey nhg_key("10.0.0.4,10.0.0.5,10.0.0.6");
+
+        // --- Step 3: Capture programmed nexthop IDs ---
+        std::set<sai_object_id_t> programmed_nh_oids;
+
+        EXPECT_CALL(*mock_sai_route_api,
+                    create_route_entries(::testing::_, ::testing::_, ::testing::_, ::testing::_, ::testing::_, ::testing::_))
+            .WillRepeatedly(::testing::Invoke(
+                [&](uint32_t object_count,
+                    const sai_route_entry_t * /*route_entries*/,
+                    const uint32_t *attr_count,
+                    const sai_attribute_t **attr_list,
+                    sai_bulk_op_error_mode_t /*mode*/,
+                    sai_status_t *object_statuses) -> sai_status_t
+                {
+                    for (uint32_t i = 0; i < object_count; ++i)
+                    {
+                        for (uint32_t j = 0; j < attr_count[i]; ++j)
+                        {
+                            if (attr_list[i][j].id == SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID)
+                            {
+                                // Mark the NEXT_HOP_ID as programmed
+                                programmed_nh_oids.insert(attr_list[i][j].value.oid);
+                            }
+                        }
+                        // **Simulate success** so addTempRoute thinks the route was installed
+                        object_statuses[i] = SAI_STATUS_SUCCESS;
+                    }
+                    return SAI_STATUS_SUCCESS;
+                }));
+
+        // --- Step 4: Run 100 iterations ---
+        constexpr int kIterations = 100;
+        for (int i = 0; i < kIterations; ++i)
+        {
+            RouteBulkContext ctx("3.3.3.0/24", true);
+            ctx.vrf_id = gVirtualRouterId;
+            ctx.ip_prefix = IpPrefix("3.3.3.0/24");
+            gRouteOrch->addTempRoute(ctx, nhg_key);
+
+            // Flush the bulker to trigger SAI API calls
+            gRouteOrch->gRouteBulker.flush();
+        }
+
+        // --- Step 5: Verify at least 3 distinct next hops were picked ---
+        ASSERT_GE(programmed_nh_oids.size(), 3u);
+
     }
 
-    // --- Step 5: Verify at least 3 distinct next hops were picked ---
-	ASSERT_GE(programmed_nh_oids.size(), 3u);
-
-}
-
-TEST_F(RouteOrchTest, RouteOrch_AddDeleteIPv6)
+    TEST_F(RouteOrchTest, RouteOrch_AddDeleteIPv6)
     {
         // Add IPv6 interface IPs (like the pytest does) and an IPv6 neighbor.
         {

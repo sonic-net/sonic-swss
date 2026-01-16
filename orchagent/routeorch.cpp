@@ -1962,7 +1962,7 @@ void RouteOrch::addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextH
     static thread_local std::mt19937 rng(std::random_device{}());
     std::uniform_int_distribution<size_t> dist(0, next_hop_set.size() - 1);
     auto it = next_hop_set.begin();
-    advance(it, dist(rng));
+    std::advance(it, dist(rng));
 
     /* Set the route's temporary next hop to be the randomly picked one */
     NextHopGroupKey tmp_next_hop((*it).to_string());
