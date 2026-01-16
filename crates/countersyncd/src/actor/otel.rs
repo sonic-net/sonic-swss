@@ -165,7 +165,7 @@ impl OtelActor {
     }
 
     /// Main run loop
-    pub async fn run(mut self) {
+    pub async fn run(mut self) -> Result<(), Box<dyn ExportError>> {
         info!("OtelActor started");
 
         let mut flush_timer = Box::pin(sleep_until(self.flush_deadline));
@@ -175,7 +175,7 @@ impl OtelActor {
                 stats_msg = self.stats_receiver.recv() => {
                     match stats_msg {
                         Some(stats) => {
-                            self.handle_stats_message(stats).await;
+                            self.handle_stats_message(stats).await?;
                             self.reset_flush_timer(&mut flush_timer);
                         }
                         _none => {
@@ -185,7 +185,7 @@ impl OtelActor {
                     }
                 }
                 _ = &mut flush_timer => {
-                    self.flush_buffer().await;
+                    self.flush_buffer().await?;
                     self.reset_flush_timer(&mut flush_timer);
                 }
             }
@@ -198,12 +198,13 @@ impl OtelActor {
         }
 
         // Flush any remaining buffered metrics before shutdown
-        self.flush_buffer().await;
+        self.flush_buffer().await?;
         self.shutdown().await;
+        Ok(())
     }
 
     /// Handle incoming SAI statistics message
-    async fn handle_stats_message(&mut self, stats: SAIStatsMessage) {
+    async fn handle_stats_message(&mut self, stats: SAIStatsMessage) -> Result<(), Box<dyn ExportError>>{
         self.messages_received += 1;
 
         debug!("Received SAI stats with {} entries, observation_time: {}",
@@ -229,9 +230,11 @@ impl OtelActor {
 
         // Force flush when counter threshold is reached
         if self.buffered_counters >= self.config.max_counters_per_export {
-            self.flush_buffer().await;
+            self.flush_buffer().await?;
             self.flush_deadline = TokioInstant::now() + self.config.flush_timeout;
         }
+
+        Ok(())
     }
 
     async fn print_otel_metrics(&mut self, otel_metrics: &OtelMetrics) {
@@ -333,9 +336,9 @@ impl OtelActor {
     }
 
     // Export buffered metrics to OpenTelemetry collector 
-    async fn flush_buffer(&mut self) {
+    async fn flush_buffer(&mut self) -> Result<(), Box<dyn ExportError>> {
         if self.buffer.is_empty() {
-            return;
+            return Ok(());
         }
 
         let mut proto_metrics: Vec<Metric> = Vec::new();
@@ -363,7 +366,7 @@ impl OtelActor {
         if proto_metrics.is_empty() {
             self.buffer.clear();
             self.buffered_counters = 0;
-            return;
+            return Ok(());
         }
 
         let resource_metrics = ResourceMetrics {
@@ -383,23 +386,18 @@ impl OtelActor {
         // Send the export request
         let result = self.send_request(request).await;
 
-        match result {
-            Ok(_) => {
-                debug!("Successfully exported buffered metrics");
-            }
-            Err(e) => {
-                // Handle export failure
-                self.export_failures += 1;
-                error!(
-                    "Failed to export buffered metrics (consecutive failures {}): {:?}",
-                    self.consecutive_failures, e
-                );
-            }
+        if let Err(e) = &result {
+            self.export_failures += 1;
+            error!(
+                "Failed to export buffered metrics (consecutive failures {}): {:?}",
+                self.consecutive_failures, e
+            );
         }
 
-        // Clear the buffer after export attempt
         self.buffer.clear();
         self.buffered_counters = 0;
+
+        result
     }
 
     fn reset_flush_timer(&self, timer: &mut Pin<Box<Sleep>>) {
