@@ -497,6 +497,9 @@ TEST_F(RouteOrchTest, RouteOrchTempRouteUniformSelection)
         ctx.vrf_id = gVirtualRouterId;
         ctx.ip_prefix = IpPrefix("3.3.3.0/24");
         gRouteOrch->addTempRoute(ctx, nhg_key);
+        
+        // Flush the bulker to trigger SAI API calls
+        gRouteOrch->gRouteBulker.flush();
     }
 
     // --- Step 5: Verify at least 3 distinct next hops were picked ---
