@@ -170,8 +170,8 @@ jobs:
         params=" ${params} --num-ports=${{ parameters.num_ports }} "
       fi
 
-      # Only run test_fgnhg.py and test_vnet.py
-      all_tests="test_fgnhg.py test_vnet.py"
+      all_tests=$(ls test_*.py | xargs)
+      all_tests="${all_tests} p4rt dash"
 
       if [ -n '${{ parameters.run_tests_pattern }}' ]; then
         all_tests=" $(ls ${{ parameters.run_tests_pattern }} | xargs) "
