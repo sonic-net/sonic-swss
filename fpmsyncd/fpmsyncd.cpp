@@ -69,6 +69,27 @@ static bool eoiuFlagsSet(Table &bgpStateTable)
     return true;
 }
 
+std::string get_mgmt_vrf_name(DBConnector &cfgDb) {
+    std::shared_ptr<std::string> mgmt_vrf_enabled = nullptr;
+
+    try
+    {
+        mgmt_vrf_enabled = cfgDb.hget("MGMT_VRF_CONFIG|vrf_global",
+                                          "mgmtVrfEnabled");
+    }
+    catch (const std::runtime_error &e)
+    {
+        return std::string();
+    }
+
+    if (!mgmt_vrf_enabled || *mgmt_vrf_enabled != "true")
+    {
+        return std::string();
+    }
+
+    return std::string("mgmt");
+}
+
 int main(int argc, char **argv)
 {
     swss::Logger::linkToDbNative("fpmsyncd");
@@ -83,7 +104,8 @@ int main(int argc, char **argv)
     std::unique_ptr<NotificationConsumer> routeResponseChannel;
 
     RedisPipeline pipeline(&db, ROUTE_SYNC_PPL_SIZE);
-    RouteSync sync(&pipeline);
+    auto mgmt_vrf_name = get_mgmt_vrf_name(cfgDb);
+    RouteSync sync(&pipeline, mgmt_vrf_name);
 
     DBConnector stateDb("STATE_DB", 0);
     Table bgpStateTable(&stateDb, STATE_BGP_TABLE_NAME);
