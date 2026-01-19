@@ -925,7 +925,7 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
     {
         NextHopKey nexthop = nhop->first;
 
-        if (!gFgNhgOrch->isRouteFineGrained(vr_id, *ipPrefix, nexthops))
+        if (!gFgNhgOrch->syncdContainsFgNhg(vr_id, *ipPrefix))
         {
             status = sai_next_hop_group_api->remove_next_hop_group_member(nhop->second);
             if (status != SAI_STATUS_SUCCESS)
@@ -948,7 +948,7 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
         nhop = next_hop_group_entry->second.active_members.erase(nhop);
     }
 
-    if (ipPrefix != nullptr && gFgNhgOrch->isRouteFineGrained(vr_id, *ipPrefix, nexthops))
+    if (ipPrefix != nullptr && gFgNhgOrch->syncdContainsFgNhg(vr_id, *ipPrefix))
     {
         if (!gFgNhgOrch->removeFgNhg(vr_id, *ipPrefix))
         {

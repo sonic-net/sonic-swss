@@ -1212,7 +1212,7 @@ bool FgNhgOrch::isRouteFineGrained(sai_object_id_t vrf_id, const IpPrefix &ipPre
 {
     SWSS_LOG_ENTER();
 
-    if (!isFineGrainedConfigured || (vrf_id != gVirtualRouterId))
+    if (!isFineGrainedConfigured)
     {
         SWSS_LOG_DEBUG("Route %s:%s vrf %" PRIx64 " default_vrf %" PRIx64 " NOT fine grained ECMP",
                         ipPrefix.to_string().c_str(), nextHops.to_string().c_str(), vrf_id, gVirtualRouterId);
@@ -1263,7 +1263,7 @@ bool FgNhgOrch::isRouteFineGrained(sai_object_id_t vrf_id, const IpPrefix &ipPre
 
 bool FgNhgOrch::syncdContainsFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
 {
-    if (!isFineGrainedConfigured || (vrf_id != gVirtualRouterId))
+    if (!isFineGrainedConfigured)
     {
         return false;
     }
@@ -1580,13 +1580,44 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
 {
     SWSS_LOG_ENTER();
 
+    // Detect if these are overlay nexthops by checking if any NextHopKey has a MAC address or VNI set
+    bool is_overlay_nexthop = false;
+    if (!nhopgroup_members_set_in.empty())
+    {
+        const auto& first_nh = nhopgroup_members_set_in.begin()->second;
+        // Overlay nexthops have MAC address or VNI set, and typically empty alias
+        if (!first_nh.mac_address.to_string().empty() || first_nh.vni != 0 || first_nh.alias.empty())
+        {
+            is_overlay_nexthop = true;
+        }
+    }
+
+    // Construct NextHopGroupKey with the correct format string
     NextHopGroupKey nextHops;
     std::map<NextHopKey, sai_object_id_t> nhopgroup_members_set;
 
-    for (const auto& member : nhopgroup_members_set_in)
+    if (is_overlay_nexthop)
     {
-        nextHops.add(member.second);
-        nhopgroup_members_set[member.second] = member.first;
+        // Build the nexthop string with MAC addresses and VNI for overlay nexthops
+        std::string nhg_str;
+        for (const auto& member : nhopgroup_members_set_in)
+        {
+            if (!nhg_str.empty())
+            {
+                nhg_str += NHG_DELIMITER;
+            }
+            nhg_str += member.second.to_string(true, false);  // overlay_nh=true, srv6_nh=false
+            nhopgroup_members_set[member.second] = member.first;
+        }
+        nextHops = NextHopGroupKey(nhg_str, true, false);  // overlay_nh=true
+    }
+    else
+    {
+        for (const auto& member : nhopgroup_members_set_in)
+        {
+            nextHops.add(member.second);
+            nhopgroup_members_set[member.second] = member.first;
+        }
     }
 
     // doTaskfgnhg
