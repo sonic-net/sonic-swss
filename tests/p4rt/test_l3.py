@@ -791,6 +791,12 @@ class TestP4RTL3(object):
         router_intf_oid = self._p4rt_router_intf_obj.get_newly_created_router_interface_oid()
         assert router_intf_oid is not None
 
+        # Create neighbor.
+        neighbor_id, neighbor_key, attr_list = self._p4rt_neighbor_obj.create_neighbor()
+        util.verify_response(
+            self.response_consumer, neighbor_key, attr_list, "SWSS_RC_SUCCESS"
+        )
+
         # Create tunnel.
         tunnel_id, tunnel_key, attr_list = self._p4rt_gre_tunnel_obj.create_gre_tunnel()
         util.verify_response(
@@ -848,12 +854,6 @@ class TestP4RTL3(object):
              self._p4rt_gre_tunnel_obj.DEFAULT_ENCAP_DST_IP),
         ]
         util.verify_attr(fvs, attr_list)
-
-        # Create neighbor.
-        neighbor_id, neighbor_key, attr_list = self._p4rt_neighbor_obj.create_neighbor()
-        util.verify_response(
-            self.response_consumer, neighbor_key, attr_list, "SWSS_RC_SUCCESS"
-        )
 
         # Create tunnel nexthop.
         nexthop_id, nexthop_key, attr_list = self._p4rt_nexthop_obj.create_next_hop(
@@ -915,16 +915,16 @@ class TestP4RTL3(object):
         util.verify_response(self.response_consumer,
                              nexthop_key, [], "SWSS_RC_SUCCESS")
 
-        # Remove neighbor.
-        self._p4rt_neighbor_obj.remove_app_db_entry(neighbor_key)
-        util.verify_response(
-            self.response_consumer, neighbor_key, [], "SWSS_RC_SUCCESS"
-        )
-
         # Remove tunnel.
         self._p4rt_gre_tunnel_obj.remove_app_db_entry(tunnel_key)
         util.verify_response(
             self.response_consumer, tunnel_key, [], "SWSS_RC_SUCCESS"
+        )
+
+        # Remove neighbor.
+        self._p4rt_neighbor_obj.remove_app_db_entry(neighbor_key)
+        util.verify_response(
+            self.response_consumer, neighbor_key, [], "SWSS_RC_SUCCESS"
         )
 
         # Remove router interface.
