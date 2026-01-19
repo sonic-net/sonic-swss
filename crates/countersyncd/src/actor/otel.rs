@@ -8,7 +8,7 @@ use tokio::{
     sync::{mpsc::Receiver, oneshot},
     time::{sleep_until, Instant as TokioInstant, Sleep},
 };
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use tonic::transport::{Channel, Endpoint};
 use opentelemetry::ExportError;
 use opentelemetry_proto::tonic::{
@@ -288,7 +288,7 @@ impl OtelActor {
             let endpoint = match self.config.collector_endpoint.parse::<Endpoint>() {
                 Ok(e) => e,
                 Err(e) => {
-                    error!("Invalid Otel endpoint: {}", e);
+                    warn!("Invalid Otel endpoint: {}", e);
                     return None;
                 }
             };
@@ -323,7 +323,7 @@ impl OtelActor {
                     return Ok(());
                 }
                 Err(e) => {
-                    error!("Export attempt {} failed: {}", attempt, e);
+                    warn!("Export attempt {} failed: {}", attempt, e);
                     self.client = None; // Drop broken client
                     self.consecutive_failures += 1;
                     self.backoff(attempt).await; // Wait before retrying
