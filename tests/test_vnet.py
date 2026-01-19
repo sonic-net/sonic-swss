@@ -3402,7 +3402,7 @@ class TestVnetOrch(object):
         # Create VNET route with consistent_hashing_buckets for fine-grained ECMP
         bucket_size = 60
         create_vnet_routes(dvs, "100.100.33.0/24", vnet_name, '33.0.0.1,33.0.0.2,33.0.0.3,33.0.0.4,33.0.0.5,33.0.0.6',
-                          consistent_hashing_buckets=bucket_size)
+                          '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C,00:12:34:56:78:9D,00:12:34:56:78:9E,00:12:34:56:78:9F', consistent_hashing_buckets=bucket_size)
         
         time.sleep(2)
 

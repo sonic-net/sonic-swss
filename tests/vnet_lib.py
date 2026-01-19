@@ -184,7 +184,7 @@ def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor=
     if metric >= 0:
         attrs.append(('metric', str(metric)))
 
-    if consistent_hashing_buckets > 0:
+    if consistent_hashing_buckets >= 0:
         attrs.append(('consistent_hashing_buckets', str(consistent_hashing_buckets)))
 
     tbl = swsscommon.Table(conf_db, "VNET_ROUTE_TUNNEL")
