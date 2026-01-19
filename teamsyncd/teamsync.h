@@ -74,6 +74,7 @@ private:
     ProducerStateTable m_lagTable;
     ProducerStateTable m_lagMemberTable;
     Table m_stateLagTable;
+    Table m_stateWarmRestartEnableTable;
 
     bool m_warmstart;
     std::unordered_map<std::string, std::vector<FieldValueTuple>> m_stateLagTablePreserved;

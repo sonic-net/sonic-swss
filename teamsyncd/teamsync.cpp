@@ -25,7 +25,8 @@ TeamSync::TeamSync(DBConnector *db, DBConnector *stateDb, Select *select) :
     m_select(select),
     m_lagTable(db, APP_LAG_TABLE_NAME),
     m_lagMemberTable(db, APP_LAG_MEMBER_TABLE_NAME),
-    m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME)
+    m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME),
+    m_stateWarmRestartEnableTable(stateDb, STATE_WARM_RESTART_ENABLE_TABLE_NAME)
 {
     WarmStart::initialize(TEAMSYNCD_APP_NAME, "teamd");
     WarmStart::checkWarmStart(TEAMSYNCD_APP_NAME, "teamd");
@@ -226,13 +227,25 @@ void TeamSync::removeLag(const string &lagName)
 void TeamSync::cleanTeamSync()
 {
     SWSS_LOG_ENTER();
-    SWSS_LOG_NOTICE("Cleaning up LAG teamd resources ...");
 
-    for (const auto& it: m_teamSelectables)
+    std::string team_value, system_value;
+    m_stateWarmRestartEnableTable.hget("system", "enable", system_value);
+    m_stateWarmRestartEnableTable.hget("teamd", "enable", team_value);
+    if (system_value == "true" || team_value == "true")
     {
-        /* Cleanup LAG */
-        removeLag(it.first);
+        SWSS_LOG_NOTICE("Warm restart enabled, skip cleaning teamd");
     }
+    else
+    {
+        SWSS_LOG_NOTICE("Cleaning up LAG teamd resources ...");
+
+        for (const auto& it: m_teamSelectables)
+        {
+            /* Cleanup LAG */
+            removeLag(it.first);
+        }
+    }
+
     return;
 }
 
