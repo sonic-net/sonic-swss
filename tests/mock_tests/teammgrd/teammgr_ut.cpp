@@ -1,7 +1,17 @@
 #include "gtest/gtest.h"
+#include <gmock/gmock.h>
 #include "../mock_table.h"
 #include "teammgr.h"
 #include <dlfcn.h>
+#include "teamd_ipc.h"
+
+using ::testing::_;
+using ::testing::Return;
+
+using namespace testing;  // <-- Needed to use EXPECT_CALL, DoAll, Return, etc.
+using namespace boost::mpl::placeholders;  // Optional, if using Boost placeholders
+
+std::function<int(const std::string &, const std::vector<std::string> &)> g_mock_send_ipc_to_teamd;
 
 extern int (*callback)(const std::string &cmd, std::string &stdout);
 extern std::vector<std::string> mockCallArgs;
@@ -10,6 +20,11 @@ static std::map<std::string, std::FILE*> pidFiles;
 
 static int (*callback_kill)(pid_t pid, int sig) = NULL;
 static std::pair<bool, FILE*> (*callback_fopen)(const char *pathname, const char *mode) = NULL;
+
+int send_ipc_to_teamd(const std::string &method, const std::vector<std::string> &args)
+{
+    return g_mock_send_ipc_to_teamd(method, args);
+}
 
 static int cb_kill(pid_t pid, int sig)
 {
@@ -185,6 +200,7 @@ namespace teammgr_ut
         teammgr.addExistingData(&cfg_lag_table);
         teammgr.doTask();
         ASSERT_NE(mockCallArgs.size(), 0);
+	ASSERT_FALSE(mockCallArgs.empty());
         EXPECT_NE(mockCallArgs.front().find("/usr/bin/teamd -r -t PortChannel382"), std::string::npos);
         EXPECT_EQ(mockCallArgs.size(), 1);
         EXPECT_EQ(mockKillCommands.size(), 1);
@@ -263,5 +279,30 @@ namespace teammgr_ut
         std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
         EXPECT_EQ(mockKillCommands.size(), 0);
         EXPECT_GE(std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count(), 200);
+    }
+
+    TEST_F(TeamMgrTest, testIpcSendRetry)
+    {
+        swss::Table cfg_mode_table = swss::Table(m_config_db.get(), CFG_TEAMD_MODE_TABLE_NAME);
+        cfg_mode_table.set("GLOBAL",{ {"mode","unified-process"} });
+        swss::Table cfg_lag_table(m_config_db.get(), CFG_LAG_TABLE_NAME);
+        cfg_lag_table.set("PortChannel123", {
+            {"admin_status", "up"},
+            {"mtu", "9100"},
+            {"lacp_key", "auto"},
+            {"min_links", "1"}
+        });
+
+        g_mock_send_ipc_to_teamd = [](const std::string &method, const std::vector<std::string> &args) -> int {
+            if (method == "PortChannelAdd" && !args.empty() && args[0]== "PortChannel123")
+            {
+                return task_need_retry;
+            }
+            return task_success;
+        };
+
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        teammgr.addExistingData(&cfg_lag_table);
+        teammgr.doTask();
     }
 }
