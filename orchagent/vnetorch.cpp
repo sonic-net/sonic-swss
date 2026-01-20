@@ -920,6 +920,15 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
     next_hop_group_id = next_hop_group_entry->second.next_hop_group_id;
     SWSS_LOG_NOTICE("Delete next hop group %s", nexthops.to_string().c_str());
 
+    if (ipPrefix != nullptr && gFgNhgOrch->syncdContainsFgNhg(vr_id, *ipPrefix))
+    {
+        if (!gFgNhgOrch->removeFgNhg(vr_id, *ipPrefix))
+        {
+            SWSS_LOG_ERROR("Failed to remove fine grained next hop group %" PRIx64, next_hop_group_id);
+            return false;
+        }
+    }
+
     for (auto nhop = next_hop_group_entry->second.active_members.begin();
          nhop != next_hop_group_entry->second.active_members.end();)
     {
@@ -948,15 +957,7 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
         nhop = next_hop_group_entry->second.active_members.erase(nhop);
     }
 
-    if (ipPrefix != nullptr && gFgNhgOrch->syncdContainsFgNhg(vr_id, *ipPrefix))
-    {
-        if (!gFgNhgOrch->removeFgNhg(vr_id, *ipPrefix))
-        {
-            SWSS_LOG_ERROR("Failed to remove fine grained next hop group %" PRIx64, next_hop_group_id);
-            return false;
-        }
-    }
-    else
+    if (!gFgNhgOrch->syncdContainsFgNhg(vr_id, *ipPrefix))
     {
         status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
         if (status != SAI_STATUS_SUCCESS)
