@@ -907,6 +907,7 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
 
     sai_object_id_t next_hop_group_id;
     auto next_hop_group_entry = syncd_nexthop_groups_[vnet].find(nexthops);
+    sai_object_id_t vr_id = vrf_obj->getVRidIngress();
     sai_status_t status;
 
     assert(next_hop_group_entry != syncd_nexthop_groups_[vnet].end());
@@ -921,7 +922,6 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
 
     if (ipPrefix != nullptr && gFgNhgOrch->syncdContainsFgNhg(vr_id, *ipPrefix))
     {
-        sai_object_id_t vr_id = vrf_obj->getVRidIngress();
         return removeFgNextHopGroup(vnet, nexthops, vrf_obj, ipPrefix);
     }
 
@@ -971,6 +971,7 @@ bool VNetRouteOrch::removeFgNextHopGroup(const string& vnet, const NextHopGroupK
 
     sai_object_id_t next_hop_group_id;
     auto next_hop_group_entry = syncd_nexthop_groups_[vnet].find(nexthops);
+    sai_object_id_t vr_id = vrf_obj->getVRidIngress();
 
     next_hop_group_id = next_hop_group_entry->second.next_hop_group_id;
     SWSS_LOG_NOTICE("Delete fine-grained next hop group %s", nexthops.to_string().c_str());
