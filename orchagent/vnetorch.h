@@ -316,7 +316,7 @@ const request_description_t vnet_route_description = {
         { "check_directly_connected", REQ_T_BOOL },
         { "rx_monitor_timer",       REQ_T_UINT },
         { "tx_monitor_timer",       REQ_T_UINT },
-        { "metric",                 REQ_T_UINT }
+        { "metric",                 REQ_T_UINT },
         { "consistent_hashing_buckets", REQ_T_UINT },
     },
     { }
