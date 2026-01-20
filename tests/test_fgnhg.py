@@ -198,13 +198,16 @@ def verify_programmed_fg_asic_db_entry(asic_db,prev_memb_dict,num_exp_changes,nh
             idxs[idx] = idxs[idx] + 1
             if memb != prev_memb_dict.get(idx, "NULL"):
                 num_changes = num_changes + 1
-                #print("Change detected at index " + str(idx) + " old nh " + prev_memb_dict.get(idx, "NULL") + " new nh " + memb)
+                print("Change detected at index " + str(idx) + " old nh " + prev_memb_dict.get(idx, "NULL") + " new nh " + memb)
         for key in nh_memb_exp_count:
             ret = ret and (nh_memb_count[key] == nh_memb_exp_count[key])
+            print("Expected count for nh " + key + " is " + str(nh_memb_exp_count[key]) + " actual count is " + str(nh_memb_count[key]))
         for idx in idxs:
             ret = ret and (idx == 1)
+        print("ret is " + str(ret))
         if num_changes != num_exp_changes:
             ret = False
+        print("ret is " + str(ret) + " num_changes expected " + str(num_exp_changes) + " actual " + str(num_changes))
         return ret, memb_dict
 
     status, new_memb_dict = wait_for_result(_access_function)
