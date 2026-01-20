@@ -3312,9 +3312,9 @@ class TestVnetOrch(object):
         vnet_obj.check_del_vxlan_tunnel(dvs)
 
     '''
-    Test 33 - Test for vnet tunnel routes with fine-grained ECMP using consistent_hashing_buckets
+    Test 34 - Test for vnet tunnel routes with fine-grained ECMP using consistent_hashing_buckets
     '''
-    def test_vnet_orch_33(self, dvs, testlog):
+    def test_vnet_orch_34(self, dvs, testlog):
         # vnet_obj = self.get_vnet_obj()
 
         # tunnel_name = 'tunnel_33' + ordered_ecmp
@@ -3385,31 +3385,31 @@ class TestVnetOrch(object):
         
         vnet_obj = self.get_vnet_obj()
 
-        tunnel_name = 'tunnel_33'
-        vnet_name = 'Vnet33'
+        tunnel_name = 'tunnel_34'
+        vnet_name = 'Vnet34'
 
         vnet_obj.fetch_exist_entries(dvs)
 
         create_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
-        create_vnet_entry(dvs, vnet_name, tunnel_name, '10033', "")
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10034', "")
 
         vnet_obj.check_vnet_entry(dvs, vnet_name)
-        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10033')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10034')
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
 
         vnet_obj.fetch_exist_entries(dvs)
 
         # Create VNET route with consistent_hashing_buckets for fine-grained ECMP
         bucket_size = 60
-        create_vnet_routes(dvs, "100.100.33.0/24", vnet_name, '33.0.0.1,33.0.0.2,33.0.0.3,33.0.0.4,33.0.0.5,33.0.0.6',
+        create_vnet_routes(dvs, "100.100.34.0/24", vnet_name, '34.0.0.1,34.0.0.2,34.0.0.3,34.0.0.4,34.0.0.5,34.0.0.6',
                           '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C,00:12:34:56:78:9D,00:12:34:56:78:9E,00:12:34:56:78:9F', consistent_hashing_buckets=bucket_size)
         
         time.sleep(2)
 
         # Verify the route is created with fine-grained ECMP
-        route, nhgid = vnet_obj.check_vnet_fine_grained_ecmp_routes(dvs, vnet_name, "100.100.33.0/24", bucket_size)
+        route, nhgid = vnet_obj.check_vnet_fine_grained_ecmp_routes(dvs, vnet_name, "100.100.34.0/24", bucket_size)
         
-        check_state_db_routes(dvs, vnet_name, "100.100.33.0/24", ['33.0.0.1', '33.0.0.2', '33.0.0.3','33.0.0.4','33.0.0.5','33.0.0.6'])
+        check_state_db_routes(dvs, vnet_name, "100.100.34.0/24", ['34.0.0.1', '34.0.0.2', '34.0.0.3','34.0.0.4','34.0.0.5','34.0.0.6'])
         # check_remove_routes_advertisement(dvs, "100.100.33.0/24")
 
         ## Update route with different endpoints while keeping fine-grained ECMP
@@ -3426,12 +3426,12 @@ class TestVnetOrch(object):
 
         # Clean up
         vnet_obj.fetch_exist_entries(dvs)
-        delete_vnet_routes(dvs, "100.100.33.0/24", vnet_name)
+        delete_vnet_routes(dvs, "100.100.34.0/24", vnet_name)
         
         time.sleep(2)
         
-        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.33.0/24"])
-        check_remove_state_db_routes(dvs, vnet_name, "100.100.33.0/24")
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.34.0/24"])
+        check_remove_state_db_routes(dvs, vnet_name, "100.100.34.0/24")
         # check_remove_routes_advertisement(dvs, "100.100.33.0/24")
 
         delete_vnet_entry(dvs, vnet_name)
