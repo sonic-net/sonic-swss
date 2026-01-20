@@ -916,17 +916,12 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
         return true;
     }
 
-    sai_object_id_t vr_id = vrf_obj->getVRidIngress();
     next_hop_group_id = next_hop_group_entry->second.next_hop_group_id;
     SWSS_LOG_NOTICE("Delete next hop group %s", nexthops.to_string().c_str());
 
     if (ipPrefix != nullptr && gFgNhgOrch->syncdContainsFgNhg(vr_id, *ipPrefix))
     {
-        if (!gFgNhgOrch->removeFgNhg(vr_id, *ipPrefix))
-        {
-            SWSS_LOG_ERROR("Failed to remove fine grained next hop group %" PRIx64, next_hop_group_id);
-            return false;
-        }
+        return removeFgNextHopGroup(vnet, nexthops, vrf_obj, ipPrefix);
     }
 
     for (auto nhop = next_hop_group_entry->second.active_members.begin();
@@ -934,15 +929,12 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
     {
         NextHopKey nexthop = nhop->first;
 
-        if (!gFgNhgOrch->syncdContainsFgNhg(vr_id, *ipPrefix))
+        status = sai_next_hop_group_api->remove_next_hop_group_member(nhop->second);
+        if (status != SAI_STATUS_SUCCESS)
         {
-            status = sai_next_hop_group_api->remove_next_hop_group_member(nhop->second);
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_ERROR("Failed to remove next hop group member %" PRIx64 ", rv:%d",
-                            nhop->second, status);
-                return false;
-            }
+            SWSS_LOG_ERROR("Failed to remove next hop group member %" PRIx64 ", rv:%d",
+                           nhop->second, status);
+            return false;
         }
 
         /* For local endpoint, we don't remove the next hop from NeighOrch,
@@ -957,17 +949,53 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
         nhop = next_hop_group_entry->second.active_members.erase(nhop);
     }
 
-    if (!gFgNhgOrch->syncdContainsFgNhg(vr_id, *ipPrefix))
+    status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
+    if (status != SAI_STATUS_SUCCESS)
     {
-        status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
-        if (status != SAI_STATUS_SUCCESS)
+        SWSS_LOG_ERROR("Failed to remove next hop group %" PRIx64 ", rv:%d", next_hop_group_id, status);
+        return false;
+    }
+
+    gRouteOrch->decreaseNextHopGroupCount();
+    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+
+    syncd_nexthop_groups_[vnet].erase(nexthops);
+
+    return true;
+}
+
+bool VNetRouteOrch::removeFgNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj, IpPrefix *ipPrefix)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t next_hop_group_id;
+    auto next_hop_group_entry = syncd_nexthop_groups_[vnet].find(nexthops);
+    sai_status_t status;
+
+    sai_object_id_t vr_id = vrf_obj->getVRidIngress();
+    next_hop_group_id = next_hop_group_entry->second.next_hop_group_id;
+    SWSS_LOG_NOTICE("Delete fine-grained next hop group %s", nexthops.to_string().c_str());
+
+    if (!gFgNhgOrch->removeFgNhg(vr_id, *ipPrefix))
+    {
+        SWSS_LOG_ERROR("Failed to remove fine grained next hop group %" PRIx64, next_hop_group_id);
+        return false;
+    }
+
+    for (auto nhop = next_hop_group_entry->second.active_members.begin();
+         nhop != next_hop_group_entry->second.active_members.end();)
+    {
+        NextHopKey nexthop = nhop->first;
+
+        /* For local endpoint, we don't remove the next hop from NeighOrch,
+         * as it is not created by VNetRouteOrch.
+        */
+        if (!isLocalEndpoint(vnet, nexthop.ip_address))
         {
-            SWSS_LOG_ERROR("Failed to remove next hop group %" PRIx64 ", rv:%d", next_hop_group_id, status);
-            return false;
+            vrf_obj->removeTunnelNextHop(nexthop);
         }
 
-        gRouteOrch->decreaseNextHopGroupCount();
-        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+        nhop = next_hop_group_entry->second.active_members.erase(nhop);
     }
 
     syncd_nexthop_groups_[vnet].erase(nexthops);

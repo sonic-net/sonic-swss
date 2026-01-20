@@ -525,6 +525,7 @@ private:
                             const string& monitoring, const bool isLocalEp=false,
                             const uint16_t consistent_hashing_buckets=0, IpPrefix *ipPrefix=nullptr, bool *isNextHopChanged=nullptr);
     bool removeNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj, IpPrefix *ipPrefix=nullptr);
+    bool removeFgNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj, IpPrefix *ipPrefix=nullptr);
     bool createNextHopGroup(const string&, NextHopGroupKey&, VNetVrfObject *vrf_obj,
                             const string& monitoring, const uint16_t consistent_hashing_buckets=0, IpPrefix *ipPrefix=nullptr);
     NextHopGroupKey getActiveNHSet(const string&, NextHopGroupKey&, const IpPrefix& );
