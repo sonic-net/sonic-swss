@@ -102,6 +102,10 @@ constexpr char* kDisableDecrementTtl = "disable_decrement_ttl";
 constexpr char* kDisableSrcMacRewrite = "disable_src_mac_rewrite";
 constexpr char* kDisableDstMacRewrite = "disable_dst_mac_rewrite";
 constexpr char* kDisableVlanRewrite = "disable_vlan_rewrite";
+constexpr char* kIpv6TunnelTermAction = "mark_for_tunnel_decap_and_set_vrf";
+constexpr char* kDecapDstIpv6 = "dst_ipv6";
+constexpr char* kDecapDstIpv6Ip = "dst_ipv6_ip";
+constexpr char* kDecapDstIpv6Mask = "dst_ipv6_mask";
 
 // Field names in P4RT TABLE DEFINITION APP DB entry.
 constexpr char *kTables = "tables";
@@ -311,6 +315,16 @@ struct P4AclRuleAppDbEntry
     P4AclMeterAppDb meter;
 };
 
+struct Ipv6TunnelTermAppDbEntry
+{
+  // Match
+  swss::IpAddress dst_ipv6_ip;
+  swss::IpAddress dst_ipv6_mask;
+  // Action
+  std::string vrf_id;
+  std::string action_str;
+};
+
 struct DepObject
 {
     sai_object_type_t sai_object;
@@ -394,6 +408,10 @@ class KeyGenerator
                                           const uint32_t &priority);
 
     static std::string generateTunnelKey(const std::string &tunnel_id);
+
+    static std::string generateIpv6TunnelTermKey(const swss::IpAddress &dst_ipv6_ip,
+                                                 const swss::IpAddress &dst_ipv6_mask,
+                                                 const std::string& vrf_id);
 
     static std::string generateExtTableKey(const std::string &table_name, const std::string &table_key);
 

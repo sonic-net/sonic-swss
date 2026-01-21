@@ -156,6 +156,7 @@ orchagent_SOURCES += p4orch/p4orch.cpp \
 		     p4orch/acl_rule_manager.cpp \
 		     p4orch/wcmp_manager.cpp \
 		     p4orch/mirror_session_manager.cpp \
+                     p4orch/tunnel_decap_group_manager.cpp \
 		     p4orch/l3_admit_manager.cpp \
 		     p4orch/l3_multicast_manager.cpp \
  		     p4orch/ext_tables_manager.cpp
