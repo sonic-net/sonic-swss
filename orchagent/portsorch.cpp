@@ -1927,13 +1927,21 @@ bool PortsOrch::addSubPort(Port &port, const string &alias, const string &vlan, 
     subIntf subIf(alias);
     string parentAlias = subIf.parentIntf();
     sai_vlan_id_t vlan_id;
+
     try
     {
-        vlan_id = static_cast<sai_vlan_id_t>(stoul(vlan));
+        if (vlan.empty())
+        {
+            vlan_id = static_cast<sai_vlan_id_t>(subIf.subIntfIdx());
+        }
+        else
+        {
+            vlan_id = static_cast<sai_vlan_id_t>(stoul(vlan));
+        }
     }
     catch (const std::invalid_argument &e)
     {
-        SWSS_LOG_ERROR("Invalid argument %s to %s()", vlan.c_str(), e.what());
+        SWSS_LOG_ERROR("Invalid arguments alias %s or vlan %s to %s()", alias.c_str(), vlan.c_str(), e.what());
         return false;
     }
     catch (const std::out_of_range &e)
