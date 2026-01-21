@@ -204,6 +204,16 @@ std::string KeyGenerator::generateTunnelKey(const std::string &tunnel_id)
     return generateKey(fv_map);
 }
 
+std::string KeyGenerator::generateIpv6TunnelTermKey(
+  const swss::IpAddress &dst_ipv6_ip,
+  const swss::IpAddress &dst_ipv6_mask,
+  const std::string& vrf_id) {
+  std::map<std::string, std::string> fv_map = {
+      {p4orch::kDecapDstIpv6Ip, dst_ipv6_ip.to_string()},
+      {p4orch::kDecapDstIpv6Mask, dst_ipv6_mask.to_string()}};
+  return generateKey(fv_map);
+}
+
 std::string KeyGenerator::generateExtTableKey(const std::string &table_name, const std::string &table_key)
 {
     std::string key;
