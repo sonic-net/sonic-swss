@@ -20,6 +20,35 @@ class MockSaiNextHopGroup
 
     MOCK_METHOD1(remove_next_hop_group, sai_status_t(_In_ sai_object_id_t next_hop_group_id));
 
+    MOCK_METHOD6(create_neighbor_entries,
+               sai_status_t(_In_ uint32_t object_count,
+                            _In_ const sai_neighbor_entry_t* neighbor_entry,
+                            _In_ const uint32_t* attr_count,
+                            _In_ const sai_attribute_t** attr_list,
+                            _In_ sai_bulk_op_error_mode_t mode,
+                            _Out_ sai_status_t* object_statuses));
+
+    MOCK_METHOD4(remove_neighbor_entries,
+               sai_status_t(_In_ uint32_t object_count,
+                            _In_ const sai_neighbor_entry_t* neighbor_entry,
+                            _In_ sai_bulk_op_error_mode_t mode,
+                            _Out_ sai_status_t* object_statuses));
+
+    MOCK_METHOD5(set_neighbor_entries_attribute,
+               sai_status_t(_In_ uint32_t object_count,
+                            _In_ const sai_neighbor_entry_t* neighbor_entry,
+                            _In_ const sai_attribute_t* attr_list,
+                            _In_ sai_bulk_op_error_mode_t mode,
+                            _Out_ sai_status_t* object_statuses));
+
+    MOCK_METHOD6(get_neighbor_entries_attribute,
+               sai_status_t(_In_ uint32_t object_count,
+                            _In_ const sai_neighbor_entry_t* neighbor_entry,
+                            _In_ const uint32_t* attr_count,
+                            _Inout_ sai_attribute_t** attr_list,
+                            _In_ sai_bulk_op_error_mode_t mode,
+                            _Out_ sai_status_t* object_statuses));
+
     MOCK_METHOD4(create_next_hop_group_member,
                  sai_status_t(_Out_ sai_object_id_t *next_hop_group_id, _In_ sai_object_id_t switch_id,
                               _In_ uint32_t attr_count, _In_ const sai_attribute_t *attr_list));
@@ -28,6 +57,21 @@ class MockSaiNextHopGroup
 
     MOCK_METHOD2(set_next_hop_group_member_attribute,
                  sai_status_t(_In_ sai_object_id_t next_hop_group_member_id, _In_ const sai_attribute_t *attr));
+
+    MOCK_METHOD7(create_next_hop_groups,
+               sai_status_t(_In_ sai_object_id_t switch_id,
+                            _In_ uint32_t object_count,
+                            _In_ const uint32_t* attr_count,
+                            _In_ const sai_attribute_t** attr_list,
+                            _In_ sai_bulk_op_error_mode_t mode,
+                            _Out_ sai_object_id_t* object_id,
+                            _Out_ sai_status_t* object_statuses));
+
+    MOCK_METHOD4(remove_next_hop_groups,
+               sai_status_t(_In_ uint32_t object_count,
+                            _In_ const sai_object_id_t* object_id,
+                            _In_ sai_bulk_op_error_mode_t mode,
+                            _Out_ sai_status_t* object_statuses));
 
     MOCK_METHOD7(create_next_hop_group_members,
                  sai_status_t(_In_ sai_object_id_t switch_id, _In_ uint32_t object_count,
@@ -38,6 +82,14 @@ class MockSaiNextHopGroup
     MOCK_METHOD4(remove_next_hop_group_members,
                  sai_status_t(_In_ uint32_t object_count, _In_ const sai_object_id_t *object_id,
                               _In_ sai_bulk_op_error_mode_t mode, _Out_ sai_status_t *object_statuses));
+
+    MOCK_METHOD6(get_next_hop_groups_attribute,
+               sai_status_t(_In_ uint32_t object_count,
+                            _In_ const sai_object_id_t* object_id,
+                            _In_ const uint32_t* attr_count,
+                            _Inout_ sai_attribute_t** attr_list,
+                            _In_ sai_bulk_op_error_mode_t mode,
+                            _Out_ sai_status_t* object_statuses));
 };
 
 // Note that before mock functions below are used, mock_sai_next_hop_group must
@@ -74,6 +126,26 @@ sai_status_t set_next_hop_group_member_attribute(_In_ sai_object_id_t next_hop_g
     return mock_sai_next_hop_group->set_next_hop_group_member_attribute(next_hop_group_member_id, attr);
 }
 
+sai_status_t create_next_hop_groups(_In_ sai_object_id_t switch_id,
+                                    _In_ uint32_t object_count,
+                                    _In_ const uint32_t* attr_count,
+                                    _In_ const sai_attribute_t** attr_list,
+                                    _In_ sai_bulk_op_error_mode_t mode,
+                                    _Out_ sai_object_id_t* object_id,
+                                    _Out_ sai_status_t* object_statuses) {
+  return mock_sai_next_hop_group->create_next_hop_groups(
+      switch_id, object_count, attr_count, attr_list, mode, object_id,
+      object_statuses);
+}
+
+sai_status_t remove_next_hop_groups(_In_ uint32_t object_count,
+                                    _In_ const sai_object_id_t* object_id,
+                                    _In_ sai_bulk_op_error_mode_t mode,
+                                    _Out_ sai_status_t* object_statuses) {
+  return mock_sai_next_hop_group->remove_next_hop_groups(
+      object_count, object_id, mode, object_statuses);
+}
+
 sai_status_t create_next_hop_group_members(_In_ sai_object_id_t switch_id, _In_ uint32_t object_count,
                                            _In_ const uint32_t *attr_count, _In_ const sai_attribute_t **attr_list,
                                            _In_ sai_bulk_op_error_mode_t mode, _Out_ sai_object_id_t *object_id,
@@ -88,3 +160,31 @@ sai_status_t remove_next_hop_group_members(_In_ uint32_t object_count, _In_ cons
 {
     return mock_sai_next_hop_group->remove_next_hop_group_members(object_count, object_id, mode, object_statuses);
 }
+
+sai_status_t mock_create_neighbor_entries(
+    _In_ uint32_t object_count, _In_ const sai_neighbor_entry_t* neighbor_entry,
+    _In_ const uint32_t* attr_count, _In_ const sai_attribute_t** attr_list,
+    _In_ sai_bulk_op_error_mode_t mode, _Out_ sai_status_t* object_statuses);
+
+sai_status_t mock_remove_neighbor_entries(
+    _In_ uint32_t object_count, _In_ const sai_neighbor_entry_t* neighbor_entry,
+    _In_ sai_bulk_op_error_mode_t mode, _Out_ sai_status_t* object_statuses);
+
+sai_status_t mock_set_neighbor_entries_attribute(
+    _In_ uint32_t object_count, _In_ const sai_neighbor_entry_t* neighbor_entry,
+    _In_ const sai_attribute_t* attr_list, _In_ sai_bulk_op_error_mode_t mode,
+    _Out_ sai_status_t* object_statuses);
+
+sai_status_t mock_get_neighbor_entries_attribute(
+    _In_ uint32_t object_count, _In_ const sai_neighbor_entry_t* neighbor_entry,
+    _In_ const uint32_t* attr_count, _Inout_ sai_attribute_t** attr_list,
+    _In_ sai_bulk_op_error_mode_t mode, _Out_ sai_status_t* object_statuses);
+
+sai_status_t get_next_hop_groups_attribute(
+    _In_ uint32_t object_count, _In_ const sai_object_id_t* object_id,
+    _In_ const uint32_t* attr_count, _Inout_ sai_attribute_t** attr_list,
+    _In_ sai_bulk_op_error_mode_t mode, _Out_ sai_status_t* object_statuses) {
+  return mock_sai_next_hop_group->get_next_hop_groups_attribute(
+      object_count, object_id, attr_count, attr_list, mode, object_statuses);
+}
+
