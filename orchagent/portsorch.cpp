@@ -84,6 +84,7 @@ extern bool gMultiAsicVoq;
 #define PORT_STATE_POLLING_SEC                            5
 #define PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS     1000
 #define PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS     60000
+#define PORT_PHY_ATTR_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
 #define QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
 #define QUEUE_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   60000
 #define PG_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   60000
@@ -698,7 +699,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         m_portStateTable(stateDb, STATE_PORT_TABLE_NAME),
         m_portOpErrTable(stateDb, STATE_PORT_OPER_ERR_TABLE_NAME),
         port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
-        port_phy_attr_manager(PORT_PHY_ATTR_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+        port_phy_attr_manager(PORT_PHY_ATTR_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_PHY_ATTR_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         gb_port_stat_manager(true,
                 PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
                 PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
