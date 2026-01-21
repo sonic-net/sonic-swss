@@ -2687,6 +2687,14 @@ class TestVnetOrch(object):
         vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2', ep_monitor='9.1.0.3,9.1.0.4', primary ='9.1.0.1', profile="Test_profile", monitoring='custom', adv_prefix='100.100.1.0/24', check_directly_connected=True)
 
+        # verify acl table action list
+        expected_action_list = [
+            "SAI_ACL_ACTION_TYPE_COUNTER",
+            "SAI_ACL_ACTION_TYPE_REDIRECT"
+        ]
+        acl_table_id = dvs_acl.get_acl_table_ids(1)[0]
+        dvs_acl.verify_acl_table_action_list(acl_table_id, expected_action_list)
+
         # verify tunnel term acl 
         expected_sai_qualifiers = {
             "SAI_ACL_ENTRY_ATTR_FIELD_DST_IP": dvs_acl.get_simple_qualifier_comparator("100.100.1.1&mask:255.255.255.255")
@@ -3266,6 +3274,50 @@ class TestVnetOrch(object):
         self.remove_neighbor("Ethernet12", "9.1.0.4")
         self.remove_ip_address("Ethernet12", "9.1.0.4/32")
         self.set_admin_status("Ethernet12", "down")
+
+    '''
+    Test 33 - Create vnet route tunnel with various metric values
+    '''
+    def test_vnet_orch_33(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_33'
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
+        create_vnet_entry(dvs, 'Vnet33', tunnel_name, '10033', "")
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet33')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet33', '10033')
+
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
+
+        vnet_obj.fetch_exist_entries(dvs)
+        
+        for i in range(21):
+            create_vnet_routes(dvs, f'0.0.0.{i}/32', 'Vnet33', f'10.10.10.{i}', metric=i)
+            vnet_obj.check_vnet_routes(dvs, 'Vnet33', f'10.10.10.{i}', tunnel_name)
+            check_state_db_routes(dvs, 'Vnet33', f"0.0.0.{i}/32", [f'10.10.10.{i}'])
+
+            entry = self.cdb.get_entry("VNET_ROUTE_TUNNEL", f"Vnet33|0.0.0.{i}/32")
+            assert entry is not None and len(entry) > 0, f"VNET route entry not found in CONFIG DB."
+            assert int(entry.get('metric', -1)) == i, f"VNET route metric mismatch: expected {i}, got {entry.get('metric', -1)}."
+
+            # Clean-up vnet route
+            delete_vnet_routes(dvs, f"0.0.0.{i}/32", 'Vnet33')
+            vnet_obj.check_del_vnet_routes(dvs, 'Vnet33')
+
+            vnet_obj.fetch_exist_entries(dvs)
+
+        # Clean-up and verify remove flows
+        delete_vnet_entry(dvs, "Vnet33")
+        vnet_obj.check_del_vnet_entry(dvs, "Vnet33")
+
+        delete_vxlan_tunnel(dvs, tunnel_name)
+        vnet_obj.check_del_vxlan_tunnel(dvs)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
