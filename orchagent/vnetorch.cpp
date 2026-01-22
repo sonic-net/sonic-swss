@@ -1515,12 +1515,11 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         sai_object_id_t vr_id = vrf_obj->getVRidIngress();
         if (gFgNhgOrch->syncdContainsFgNhg(vr_id, ipPrefix))
         {
-            sai_object_id_t next_hop_group_id;
-            SWSS_LOG_NOTICE("Delete fine-grained next hop group %s", nexthops.to_string().c_str());
+            SWSS_LOG_NOTICE("Delete fine-grained next hop group for prefix %s vnet %s", ipPrefix.to_string().c_str(), vnet.c_str());
 
             if (!gFgNhgOrch->removeFgNhg(vr_id, ipPrefix))
             {
-                SWSS_LOG_ERROR("Failed to remove fine grained next hop group %" PRIx64, next_hop_group_id);
+                SWSS_LOG_ERROR("Failed to remove fine grained next hop group for prefix %s vnet %s", ipPrefix.to_string().c_str(), vnet.c_str());
                 return false;
             }
 
