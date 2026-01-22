@@ -118,12 +118,23 @@ class PfcWdAclHandler: public PfcWdLossyHandler
         void updatePfcAclRule(shared_ptr<AclRule> rule, uint8_t queueId, string strTable, vector<sai_object_id_t> port);
 };
 
+// Tracks port-level TX drops for hardware-based PFC deadlock recovery
 class PfcWdDlrHandler: public PfcWdLossyHandler
 {
     public:
         PfcWdDlrHandler(sai_object_id_t port, sai_object_id_t queue,
                 uint8_t queueId, shared_ptr<Table> countersTable);
         virtual ~PfcWdDlrHandler(void);
+        virtual bool getHwCounters(PfcWdHwStats& counters) override;
+
+    private:
+        bool getPortTxDrops(uint64_t& txDrops);
+        bool getPortTxPackets(uint64_t& txPackets);
+        uint64_t m_lastPortTxDrops;
+        uint64_t m_lastPortTxPackets;
+        uint64_t m_baselineTxDrops;
+        uint64_t m_baselineTxPackets;
+        bool m_baselineSet;
 };
 
 // PFC queue that implements drop action by draining queue with buffer of zero size
