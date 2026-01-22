@@ -335,6 +335,7 @@ struct IcmpSaiSessionHandler : public SaiOffloadSessionHandler<IcmpSaiSessionHan
     static const std::string m_nexthop_switchover_fname;
     static const std::string m_session_type_normal;
     static const std::string m_session_type_rx;
+    static const std::string m_stats_count_mode_fname;
 
     static const uint32_t m_max_tx_interval_usec;
     static const uint32_t m_min_tx_interval_usec;
