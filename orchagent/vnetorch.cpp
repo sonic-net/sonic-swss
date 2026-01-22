@@ -1627,8 +1627,8 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 }
             }
         }
-        return true;
     }
+    return true;
 }
 
 bool VNetRouteOrch::updateTunnelRoute(const string& vnet, IpPrefix& ipPrefix,
