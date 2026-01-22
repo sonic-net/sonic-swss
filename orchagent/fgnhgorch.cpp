@@ -1659,7 +1659,7 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
     // todo navdhaj: case where route exists?
     SWSS_LOG_INFO("Route does not exist in routeorch, don't need to migrate route to fgnhgorch");
 
-    if (m_FgNhgs[fg_nhg_name].prefixes.find(ip_prefix) == m_FgNhgs[fg_nhg_name].prefixes.end())
+    if (std::find(m_FgNhgs[fg_nhg_name].prefixes.begin(), m_FgNhgs[fg_nhg_name].prefixes.end(), ip_prefix) == m_FgNhgs[fg_nhg_name].prefixes.end())
     {
         m_FgNhgs[fg_nhg_name].prefixes.push_back(ip_prefix);
     }
