@@ -13,13 +13,13 @@ namespace
 TEST(P4OrchUtilTest, KeyGeneratorTest)
 {
     std::string intf_key = KeyGenerator::generateRouterInterfaceKey("intf-qe-3/7");
-    EXPECT_EQ("router_interface_id=intf-qe-3/7", intf_key);
+    EXPECT_EQ("intf-qe-3/7", intf_key);
     std::string neighbor_key = KeyGenerator::generateNeighborKey("intf-qe-3/7", swss::IpAddress("10.0.0.22"));
     EXPECT_EQ("neighbor_id=10.0.0.22:router_interface_id=intf-qe-3/7", neighbor_key);
     std::string nexthop_key = KeyGenerator::generateNextHopKey("ju1u32m1.atl11:qe-3/7");
-    EXPECT_EQ("nexthop_id=ju1u32m1.atl11:qe-3/7", nexthop_key);
+    EXPECT_EQ("ju1u32m1.atl11:qe-3/7", nexthop_key);
     std::string wcmp_group_key = KeyGenerator::generateWcmpGroupKey("group-1");
-    EXPECT_EQ("wcmp_group_id=group-1", wcmp_group_key);
+    EXPECT_EQ("group-1", wcmp_group_key);
     std::string ipv4_route_key = KeyGenerator::generateRouteKey("b4-traffic", swss::IpPrefix("10.11.12.0/24"));
     EXPECT_EQ("ipv4_dst=10.11.12.0/24:vrf_id=b4-traffic", ipv4_route_key);
     ipv4_route_key = KeyGenerator::generateRouteKey("b4-traffic", swss::IpPrefix("0.0.0.0/0"));
