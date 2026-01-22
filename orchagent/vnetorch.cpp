@@ -1526,8 +1526,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
 
             for (auto nhop : nhg.getNextHops())
             {
-                NextHopKey nexthop = nhop->first;
-                vrf_obj->removeTunnelNextHop(nexthop);
+                vrf_obj->removeTunnelNextHop(nhop);
             }
 
             syncd_tunnel_routes_[vnet].erase(ipPrefix);
