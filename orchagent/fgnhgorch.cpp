@@ -1647,14 +1647,22 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
     SWSS_LOG_NOTICE("Added new FG_NHG entry %s with bucket_size %d, match_mode: %'" PRIu8,
             fg_nhg_name.c_str(), bucket_size, match_mode);
     isFineGrainedConfigured = true;
-    m_FgNhgs[fg_nhg_name] = fgNhgEntry;
+
+    if (m_fgNhgs.find(fg_nhg_name) == m_fgNhgs.end())
+    {
+        m_FgNhgs[fg_nhg_name] = fgNhgEntry;
+    }
 
     // doTaskFgNhgPrefix
     IpPrefix ip_prefix = ipPrefix;
 
     // todo navdhaj: case where route exists?
     SWSS_LOG_INFO("Route does not exist in routeorch, don't need to migrate route to fgnhgorch");
-    m_FgNhgs[fg_nhg_name].prefixes.push_back(ip_prefix);
+
+    if (m_fgNhgs[fg_nhg_name].prefixes.find(ip_prefix) == m_fgNhgs[fg_nhg_name].prefixes.end())
+    {
+        m_FgNhgs[fg_nhg_name].prefixes.push_back(ip_prefix);
+    }
     m_fgNhgPrefixes[ip_prefix] = &m_FgNhgs[fg_nhg_name];
 
     // todo navdhaj: doing anything eith isnexthopidchanged?
@@ -1679,9 +1687,7 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
     bool next_hop_to_add = false;
 
     /* Default init with # of banks */
-    std::vector<BankMemberChanges> bank_member_changes(
-            m_FgNhgs[fg_nhg_name].hash_bucket_indices.size(), BankMemberChanges());
-    bank_member_changes.resize(1, BankMemberChanges()); // prefix_based match_mode supports single bank
+    std::vector<BankMemberChanges> bank_member_changes(1, BankMemberChanges()); // prefix_based match_mode supports single bank
 
     /* initialize m_FgNhgs[fg_nhg_name].next_hops with the list of IP addresses in nextHops
     and add the corresponding next_hop_id to next_hop_ids. */
@@ -1696,7 +1702,7 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
                         nhk.to_string().c_str(), m_FgNhgs[fg_nhg_name].max_next_hops, ipPrefix.to_string().c_str());
                 continue;
             }
-            FGNextHopInfo fg_nh_info = {0, "", LINK_DOWN}; // prefix_based match_mode uses single bank 0
+            FGNextHopInfo fg_nh_info = {0, ""}; // prefix_based match_mode uses single bank 0
 
             m_FgNhgs[fg_nhg_name].next_hops[nhk.ip_address] = fg_nh_info;
             SWSS_LOG_INFO("Next-hop %s alias %s added to Fine Grained next-hop group member list for prefix %s",
