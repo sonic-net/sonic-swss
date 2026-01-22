@@ -1648,7 +1648,7 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
             fg_nhg_name.c_str(), bucket_size, match_mode);
     isFineGrainedConfigured = true;
 
-    if (m_fgNhgs.find(fg_nhg_name) == m_fgNhgs.end())
+    if (m_FgNhgs.find(fg_nhg_name) == m_FgNhgs.end())
     {
         m_FgNhgs[fg_nhg_name] = fgNhgEntry;
     }
@@ -1659,7 +1659,7 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
     // todo navdhaj: case where route exists?
     SWSS_LOG_INFO("Route does not exist in routeorch, don't need to migrate route to fgnhgorch");
 
-    if (m_fgNhgs[fg_nhg_name].prefixes.find(ip_prefix) == m_fgNhgs[fg_nhg_name].prefixes.end())
+    if (m_FgNhgs[fg_nhg_name].prefixes.find(ip_prefix) == m_FgNhgs[fg_nhg_name].prefixes.end())
     {
         m_FgNhgs[fg_nhg_name].prefixes.push_back(ip_prefix);
     }
@@ -1702,7 +1702,7 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
                         nhk.to_string().c_str(), m_FgNhgs[fg_nhg_name].max_next_hops, ipPrefix.to_string().c_str());
                 continue;
             }
-            FGNextHopInfo fg_nh_info = {0, ""}; // prefix_based match_mode uses single bank 0
+            FGNextHopInfo fg_nh_info = {0, "", LINK_UP}; // prefix_based match_mode uses single bank 0
 
             m_FgNhgs[fg_nhg_name].next_hops[nhk.ip_address] = fg_nh_info;
             SWSS_LOG_INFO("Next-hop %s alias %s added to Fine Grained next-hop group member list for prefix %s",
