@@ -510,12 +510,12 @@ static void getPortSerdesAttr(PortSerdesAttrMap_t &map, const PortConfig &port)
 
     if (port.serdes.txpolarity.is_set)
     {
-        map[SAI_PORT_SERDES_ATTR_TX_POLARITY] = SerdesValue(port.serdes.txpolarity.value);
+        map[SAI_PORT_SERDES_ATTR_TX_POLARITY] = port.serdes.txpolarity.value;
     }
 
     if (port.serdes.rxpolarity.is_set)
     {
-        map[SAI_PORT_SERDES_ATTR_RX_POLARITY] = SerdesValue(port.serdes.rxpolarity.value);
+        map[SAI_PORT_SERDES_ATTR_RX_POLARITY] = port.serdes.rxpolarity.value;
     }
 }
 

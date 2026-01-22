@@ -1347,14 +1347,14 @@ namespace portsorch_test
 
         // Verify txpolarity
         std::vector<std::uint32_t> txpolarity = { 0x1, 0x0, 0x1, 0x0 };
-        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_POLARITY), SerdesValue(txpolarity));
+        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_POLARITY), txpolarity);
 
         // Verify rxpolarity
         std::vector<std::uint32_t> rxpolarity = { SAI_PORT_SERDES_POLARITY_NORMAL,
                                                     SAI_PORT_SERDES_POLARITY_INVERTED,
                                                     SAI_PORT_SERDES_POLARITY_NORMAL,
                                                     SAI_PORT_SERDES_POLARITY_INVERTED };
-        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_RX_POLARITY), SerdesValue(rxpolarity));
+        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_RX_POLARITY), rxpolarity);
 
         // Dump pending tasks
         std::vector<std::string> taskList;
