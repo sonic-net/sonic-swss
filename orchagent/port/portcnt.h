@@ -99,6 +99,11 @@ public:
     } link_training; // Port link training
 
     struct {
+        std::string value;
+        bool is_set = false;
+    } media_type; // Port media type
+
+    struct {
 
         struct {
             std::vector<std::uint32_t> value;
@@ -189,6 +194,21 @@ public:
             bool value;
             bool is_set = false;
         } unreliable_los; // Port unreliable_los
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } txpolarity; // Port serdes TX polarity
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } rxpolarity; // Port serdes RX polarity
+
+        struct {
+            std::string value;
+            bool is_set = false;
+        } custom_collection; // Port serdes custom_collection
 
     } serdes; // Port serdes
 

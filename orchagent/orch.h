@@ -26,6 +26,7 @@ extern "C" {
 #include "response_publisher.h"
 #include "recorder.h"
 #include "schema.h"
+#include "retrycache.h"
 
 const char delimiter           = ':';
 const char list_item_delimiter = ',';
@@ -46,6 +47,7 @@ const char state_db_key_delimiter  = '|';
 #define NPS_PLATFORM_SUBSTRING  "nephos"
 #define CISCO_8000_PLATFORM_SUBSTRING "cisco-8000"
 #define XS_PLATFORM_SUBSTRING   "xsight"
+#define CLX_PLATFORM_SUBSTRING  "clounix"
 
 #define CONFIGDB_KEY_SEPARATOR "|"
 #define DEFAULT_KEY_SEPARATOR  ":"
@@ -174,11 +176,18 @@ public:
     /* record the tuple */
     void recordTuple(const swss::KeyOpFieldsValuesTuple &tuple);
 
-    void addToSync(const swss::KeyOpFieldsValuesTuple &entry);
+    void addToSync(const swss::KeyOpFieldsValuesTuple &entry, bool onRetry=false);
 
     // Returns: the number of entries added to m_toSync
-    size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries);
-    size_t addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries);
+    size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries, bool onRetry=false);
+    size_t addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries, bool onRetry=false); 
+
+    /**
+     * @brief Add the failed task and its constraint to the consumer's RetryCache
+     * @param task - the task that has failed due to the unmet constraint
+     * @param cst - the unmet constraint that blocks the task from being retried
+     */
+    bool addToRetry(const Task &task, const Constraint &cst);
 
     size_t refillToSync();
     size_t refillToSync(swss::Table* table);
@@ -263,6 +272,8 @@ typedef enum
 
 typedef std::pair<swss::DBConnector *, std::string> TableConnector;
 typedef std::pair<swss::DBConnector *, std::vector<std::string>> TablesConnector;
+#define CACHE "| ++++ |"
+#define DECACHE "| ---- |"
 
 class Orch
 {
@@ -306,6 +317,36 @@ public:
     virtual void onWarmBootEnd() { }
 
     void dumpPendingTasks(std::vector<std::string> &ts);
+    
+    void createRetryCache(const std::string &executorName);
+    RetryCache* getRetryCache(const std::string &executorName);
+    ConsumerBase* getConsumerBase(const std::string &executorName);
+
+    /** 
+     * @brief Add the failed task and its constraint to the consumer's RetryCache
+     * @param executorName - name of the consumer
+     * @param task - the task that has failed due to the unmet constraint
+     * @param cst - the unmet constraint that blocks the task from being retried
+     * @return true only if the consumer has initialized a retry cache and the task is successfully added into it
+     */
+    bool addToRetry(const std::string &executorName, const Task &task, const Constraint &cst);
+
+    /** 
+     * @brief Check the consumer's RetryCache for pending tasks with constraints already resolved.
+     * If any, move them from RetryMap back to SyncMap, such that they can be retried when the consumer's execute() method is invoked.
+     * Make sure to limit the number of tasks added to SyncMap in one call, to avoid starvation of new tasks in SyncMap.
+     * @param executorName - name of the consumer
+     * @param quota - maximum number of tasks to be moved back to SyncMap in a single call
+     */
+    virtual size_t retryToSync(const std::string &executorName, size_t quota=30000);
+
+    /** 
+     * @brief Notify the consumer that the constraint is already resolved
+     * @param retryOrch - the consumer's Orch instance, used to get the consumer's RetryCache
+     * @param executorName - name of the consumer to be notified
+     * @param cst - the constraint that is resolved
+     */
+    virtual void notifyRetry(Orch *retryOrch, const std::string &executorName, const Constraint &cst);
 
     /**
      * @brief Flush pending responses
@@ -313,6 +354,7 @@ public:
     void flushResponses();
 protected:
     ConsumerMap m_consumerMap;
+    RetryCacheMap m_retryCaches;
 
     Orch();
     ref_resolve_status resolveFieldRefValue(type_map&, const std::string&, const std::string&, swss::KeyOpFieldsValuesTuple&, sai_object_id_t&, std::string&);

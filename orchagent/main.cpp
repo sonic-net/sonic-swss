@@ -17,6 +17,8 @@ extern "C" {
 #include <stdexcept>
 #include <stdlib.h>
 #include <string.h>
+#include <fstream>
+#include <nlohmann/json.hpp>
 
 #include <sys/time.h>
 #include <sairedis.h>
@@ -30,6 +32,7 @@ extern "C" {
 #include <signal.h>
 #include "warm_restart.h"
 #include "gearboxutils.h"
+#include "macsecpost.h"
 
 using namespace std;
 using namespace swss;
@@ -47,6 +50,8 @@ sai_object_id_t gUnderlayIfId;
 sai_object_id_t gSwitchId = SAI_NULL_OBJECT_ID;
 MacAddress gMacAddress;
 MacAddress gVxlanMacAddress;
+bool gOrchUnhealthy = false;
+string gSaiErrorString;
 
 extern size_t gMaxBulkSize;
 
@@ -63,6 +68,7 @@ extern bool gIsNatSupported;
 #define SAIREDIS_RECORD_ENABLE 0x1
 #define SWSS_RECORD_ENABLE (0x1 << 1)
 #define RESPONSE_PUBLISHER_RECORD_ENABLE (0x1 << 2)
+#define RETRY_RECORD_ENABLE (0x1 << 3)
 
 /* orchagent heart beat message interval */
 #define HEART_BEAT_INTERVAL_MSECS_DEFAULT 10 * 1000
@@ -76,10 +82,16 @@ string gMyHostName = "";
 string gMyAsicName = "";
 bool gTraditionalFlexCounter = false;
 uint32_t create_switch_timeout = 0;
+bool gMultiAsicVoq = false;
+
+bool isChassisDbInUse()
+{
+    return gMultiAsicVoq;
+}
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF] [-I heart_beat_interval] [-R]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF] [-I heart_beat_interval] [-R] [-M]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    Bit 0: sairedis.rec, Bit 1: swss.rec, Bit 2: responsepublisher.rec. For example:" << endl;
@@ -103,6 +115,8 @@ void usage()
     cout << "    -v vrf: VRF name (default empty)" << endl;
     cout << "    -I heart_beat_interval: Heart beat interval in millisecond (default 10)" << endl;
     cout << "    -R enable the ring thread feature" << endl;
+    cout << "    -M enable SAI MACSec POST" << endl;
+    cout << "    -D Delay in seconds before flex counter processing begins after orchagent startup (default 0)" << endl;
 }
 
 void sighup_handler(int signo)
@@ -110,6 +124,7 @@ void sighup_handler(int signo)
     /*
      * Don't do any logging since they are using mutexes.
      */
+    Recorder::Instance().retry.setRotate(true);
     Recorder::Instance().swss.setRotate(true);
     Recorder::Instance().sairedis.setRotate(true);
     Recorder::Instance().respub.setRotate(true);
@@ -128,8 +143,7 @@ void syncd_apply_view()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to notify syncd APPLY_VIEW %d", status);
-        handleSaiFailure(SAI_API_SWITCH, "set", status);
-        return;
+        handleSaiFailure(SAI_API_SWITCH, "set", status, true);
     }
 }
 
@@ -203,6 +217,18 @@ void getCfgSwitchType(DBConnector *cfgDb, string &switch_type, string &switch_su
         SWSS_LOG_ERROR("System error in parsing switch subtype: %s", e.what());
     }
 
+}
+
+bool isChassisAppDbPresent()
+{
+    std::ifstream file(SonicDBConfig::DEFAULT_SONIC_DB_CONFIG_FILE);
+    if (!file.is_open()) return false;
+
+    nlohmann::json db_config;
+    file >> db_config;
+
+    return db_config.contains("DATABASES") &&
+           db_config["DATABASES"].contains("CHASSIS_APP_DB");
 }
 
 bool getSystemPortConfigList(DBConnector *cfgDb, DBConnector *appDb, vector<sai_system_port_config_t> &sysportcfglist)
@@ -347,6 +373,7 @@ int main(int argc, char **argv)
 
     SWSS_LOG_ENTER();
 
+    gOrchUnhealthy = false;
     WarmStart::initialize("orchagent", "swss");
     WarmStart::checkWarmStart("orchagent", "swss");
 
@@ -363,13 +390,17 @@ int main(int argc, char **argv)
     string record_location = Recorder::DEFAULT_DIR;
     string swss_rec_filename = Recorder::SWSS_FNAME;
     string sairedis_rec_filename = Recorder::SAIREDIS_FNAME;
+    string retry_rec_filename = Recorder::RETRY_FNAME;
     string zmq_server_address = "";
     string vrf;
     string responsepublisher_rec_filename = Recorder::RESPPUB_FNAME;
-    int record_type = 3; // Only swss and sairedis recordings enabled by default.
+    int record_type = SAIREDIS_RECORD_ENABLE | SWSS_RECORD_ENABLE | RETRY_RECORD_ENABLE; // Only swss, retrycache and sairedis recordings enabled by default.
     long heartBeatInterval = HEART_BEAT_INTERVAL_MSECS_DEFAULT;
 
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:R")) != -1)
+    // Disable SAI MACSec POST by default. Use option -M to enable it.
+    bool macsec_post_enabled = false;
+
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:R:D:M")) != -1)
     {
         switch (opt)
         {
@@ -396,7 +427,7 @@ int main(int argc, char **argv)
             // Disable all recordings if atoi() fails i.e. returns 0 due to
             // invalid command line argument.
             record_type = atoi(optarg);
-            if (record_type < 0 || record_type > 7) 
+            if (record_type < 0 || record_type > 15) 
             {
                 usage();
                 exit(EXIT_FAILURE);
@@ -487,6 +518,10 @@ int main(int argc, char **argv)
         case 'R':
             gRingMode = true;
             break;
+         case 'M':
+            macsec_post_enabled = true;
+            break;
+        case 'D': { gFlexCounterDelaySec = swss::to_int<int>(optarg); } break;
         default: /* '?' */
             exit(EXIT_FAILURE);
         }
@@ -522,6 +557,13 @@ int main(int argc, char **argv)
     Recorder::Instance().respub.setFileName(responsepublisher_rec_filename);
     Recorder::Instance().respub.startRec(false);
 
+    Recorder::Instance().retry.setRecord(
+        (record_type & RETRY_RECORD_ENABLE) == RETRY_RECORD_ENABLE
+    );
+    Recorder::Instance().retry.setLocation(record_location);
+    Recorder::Instance().retry.setFileName(retry_rec_filename);
+    Recorder::Instance().retry.startRec(true);
+
     // Instantiate database connectors
     DBConnector appl_db("APPL_DB", 0);
     DBConnector config_db("CONFIG_DB", 0);
@@ -536,7 +578,7 @@ int main(int argc, char **argv)
     else
     {
         SWSS_LOG_NOTICE("The ZMQ channel on the northbound side of orchagent has been initialized: %s, %s", zmq_server_address.c_str(), vrf.c_str());
-        zmq_server = create_zmq_server(zmq_server_address, vrf);
+        zmq_server = create_zmq_server(zmq_server_address);
     }
 
     // Get switch_type
@@ -607,7 +649,18 @@ int main(int argc, char **argv)
 
         //Connect to CHASSIS_APP_DB in redis-server in control/supervisor card as per
         //connection info in database_config.json
-        chassis_app_db = make_shared<DBConnector>("CHASSIS_APP_DB", 0, true);
+        if (isChassisAppDbPresent())
+       	{
+            gMultiAsicVoq = true;
+            try
+            {
+                chassis_app_db = make_shared<DBConnector>("CHASSIS_APP_DB", 0, true);
+            }
+            catch (const std::exception& e)
+            {
+                SWSS_LOG_NOTICE("CHASSIS_APP_DB not available, operating in standalone VOQ mode");
+            }
+        }
     }
     else if (gMySwitchType == "fabric")
     {
@@ -642,6 +695,29 @@ int main(int argc, char **argv)
         attr.value.u32 = gVoqMySwitchId;
         attrs.push_back(attr);
     }
+
+    string macsec_post_state;
+    if (gMySwitchType != "fabric" && macsec_post_enabled)
+    {
+        macsec_post_state = "switch-level-post-in-progress";
+
+        attr.id = SAI_SWITCH_ATTR_MACSEC_ENABLE_POST;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
+
+        attr.id = SAI_SWITCH_ATTR_SWITCH_MACSEC_POST_STATUS_NOTIFY;
+        attr.value.ptr = (void *)on_switch_macsec_post_status_notify;
+        attrs.push_back(attr);
+
+        attr.id = SAI_SWITCH_ATTR_MACSEC_POST_STATUS_NOTIFY;
+        attr.value.ptr = (void *)on_macsec_post_status_notify;
+        attrs.push_back(attr);
+    }
+    else
+    {
+        macsec_post_state = "disabled";
+    }
+    setMacsecPostState(&state_db, macsec_post_state);
 
     /* Must be last Attribute */
     attr.id = SAI_REDIS_SWITCH_ATTR_CONTEXT;
@@ -701,8 +777,7 @@ int main(int argc, char **argv)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create a switch, rv:%d", status);
-        handleSaiFailure(SAI_API_SWITCH, "create", status);
-        return EXIT_FAILURE;
+        handleSaiFailure(SAI_API_SWITCH, "create", status, true);
     }
     SWSS_LOG_NOTICE("Create a switch, id:%" PRIu64, gSwitchId);
 
@@ -733,8 +808,7 @@ int main(int argc, char **argv)
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to get MAC address from switch, rv:%d", status);
-                handleSaiFailure(SAI_API_SWITCH, "get", status);
-                return EXIT_FAILURE;
+                handleSaiFailure(SAI_API_SWITCH, "get", status, true);
             }
             else
             {
@@ -749,12 +823,41 @@ int main(int argc, char **argv)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Fail to get switch virtual router ID %d", status);
-            handleSaiFailure(SAI_API_SWITCH, "get", status);
-            return EXIT_FAILURE;
+            handleSaiFailure(SAI_API_SWITCH, "get", status, true);
         }
 
         gVirtualRouterId = attr.value.oid;
         SWSS_LOG_NOTICE("Get switch virtual router ID %" PRIx64, gVirtualRouterId);
+
+        /* Query MACSec POST capability and set POST state in state DB accordingly */
+        if (macsec_post_enabled)
+        {
+            sai_attr_capability_t post_capability;
+            if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SWITCH,
+                                               SAI_SWITCH_ATTR_MACSEC_ENABLE_POST,
+                                               &post_capability) == SAI_STATUS_SUCCESS &&
+                post_capability.create_implemented)
+            {
+                // POST is supported in switch init, and it was already enabled in switch init.
+                SWSS_LOG_NOTICE("MACSec POST enabled in switch init");
+            }
+            else if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_MACSEC,
+                                                    SAI_MACSEC_ATTR_ENABLE_POST,
+                                                    &post_capability) == SAI_STATUS_SUCCESS &&
+                post_capability.create_implemented)
+            {
+                // POST is only supported in MACSec init. Set POST state to notify MACSecOrch
+                // to perform POST.
+                setMacsecPostState(&state_db, "macsec-level-post-in-progress");
+                SWSS_LOG_NOTICE("MACSec POST will be enabled in MACSec init");
+            }
+            else
+            {
+                // POST is not supported by SAI. Don't declare that SAI POST fails.
+                setMacsecPostState(&state_db, "disabled");
+                SWSS_LOG_ERROR("MACSec POST is not supported by SAI");
+            }
+        }
 
         /* Get the NAT supported info */
         attr.id = SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY;
@@ -792,8 +895,7 @@ int main(int argc, char **argv)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create underlay router interface %d", status);
-            handleSaiFailure(SAI_API_ROUTER_INTERFACE, "create", status);
-            return EXIT_FAILURE;
+            handleSaiFailure(SAI_API_ROUTER_INTERFACE, "create", status, true);
         }
 
         SWSS_LOG_NOTICE("Created underlay router interface ID %" PRIx64, gUnderlayIfId);
@@ -804,7 +906,7 @@ int main(int argc, char **argv)
     }
 
     shared_ptr<OrchDaemon> orchDaemon;
-
+    DBConnector *chassis_db = chassis_app_db.get();
     /*
      * Declare shared pointers for dpu specific databases.
      * These dpu databases exist on the npu for smartswitch.
@@ -821,7 +923,7 @@ int main(int argc, char **argv)
 
     else if (gMySwitchType != "fabric")
     {
-        orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get(), zmq_server.get());
+        orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db, chassis_db, zmq_server.get());
         if (gMySwitchType == "voq")
         {
             orchDaemon->setFabricEnabled(true);
@@ -831,7 +933,7 @@ int main(int argc, char **argv)
     }
     else
     {
-        orchDaemon = make_shared<FabricOrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get(), zmq_server.get());
+        orchDaemon = make_shared<FabricOrchDaemon>(&appl_db, &config_db, &state_db, chassis_db, zmq_server.get());
     }
 
     if (gRingMode) {
@@ -852,6 +954,14 @@ int main(int argc, char **argv)
     if (!WarmStart::isWarmStart())
     {
         syncd_apply_view();
+    }
+
+    if (zmq_server)
+    {
+        // To prevent message loss between ZmqServer's bind operation and the creation of ZmqProducerStateTable,
+        // use lazy binding and call bind() only after the handler has been registered.
+        zmq_server->bind();
+        SWSS_LOG_NOTICE("ZMQ channel on the northbound side of Orchagent successfully bound: %s, %s", zmq_server_address.c_str(), vrf.c_str());
     }
 
     orchDaemon->start(heartBeatInterval);

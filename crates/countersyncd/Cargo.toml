@@ -1,0 +1,93 @@
+[package]
+name = "countersyncd"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+edition.workspace = true
+
+[dependencies]
+# Async runtime
+tokio = { workspace = true }
+
+# Configuration and serialization
+yaml-rust = { workspace = true }
+
+# Netlink for network operations
+genetlink = { workspace = true }
+netlink-packet-core = { workspace = true }
+netlink-packet-generic = { workspace = true }
+netlink-sys = { workspace = true }
+libc = "0.2"
+
+# IPFIX parser for traffic flow analysis
+ipfixrw = { workspace = true }
+ahash = { workspace = true }
+binrw = { workspace = true }
+byteorder = { workspace = true }
+
+# Logging and error handling
+log = { workspace = true }
+env_logger = { workspace = true }
+chrono = { workspace = true }
+
+# Utilities
+rand = { workspace = true }
+once_cell = { workspace = true }
+
+# Command line utilities
+clap = { workspace = true }
+color-eyre = { workspace = true }
+
+# OTEL
+tracing = { version = "0.1", features = ["max_level_debug", "release_max_level_info"] }
+tracing-opentelemetry = "0.25"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+
+opentelemetry = { version = "0.25", features = ["trace", "metrics"] }
+opentelemetry_sdk = { version = "0.25", features = ["rt-tokio"]}
+opentelemetry-stdout = "0.25"
+opentelemetry-semantic-conventions = "0.25"
+opentelemetry-http = "0.25"
+opentelemetry-otlp = { version = "0.25", features = ["tonic", "metrics"] }
+opentelemetry-proto = { version = "0.25", features = ["tonic", "metrics", "gen-tonic"] }
+
+# gRPC and HTTP 
+tonic = "0.12"
+tonic-health = "0.12"
+prost = "0.13"
+prost-types = "0.13"
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+reqwest-middleware = "0.3"
+reqwest-tracing = { version = "0.5", features = ["opentelemetry_0_25"] }
+
+# SONiC specific dependencies
+swss-common = { workspace = true }
+
+[dev-dependencies]
+# Test utilities  
+tempfile = { workspace = true }
+serial_test = { workspace = true }
+async-trait = { workspace = true }
+
+# Benchmarking
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+tokio-stream = { version = "0.1", features = ["net"] }
+
+[[bench]]
+name = "end_to_end"
+harness = false
+
+[[bench]]
+name = "ipfix_actor_perf"
+harness = false
+
+[[bench]]
+name = "otel_actor_perf"
+harness = false
+
+[[bench]]
+name = "counter_db_actor_perf"
+harness = false

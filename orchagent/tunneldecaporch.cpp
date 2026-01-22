@@ -160,6 +160,7 @@ void TunnelDecapOrch::doDecapTunnelTask(Consumer &consumer)
                     }
                     if (exists)
                     {
+                        // Apply to SAI; only touch cache/flag on success
                         setTunnelAttribute(fvField(i), dscp_mode, tunnel_id);
                         tunnelTable[key].dscp_mode = dscp_mode;
                     }
@@ -207,6 +208,7 @@ void TunnelDecapOrch::doDecapTunnelTask(Consumer &consumer)
                     }
                     if (exists)
                     {
+                        // Apply to SAI; only touch cache/flag on success
                         setTunnelAttribute(fvField(i), ttl_mode, tunnel_id);
                     }
                 }
@@ -221,6 +223,7 @@ void TunnelDecapOrch::doDecapTunnelTask(Consumer &consumer)
                     }
                     if (exists)
                     {
+                        // Apply to SAI; only touch cache/flag on success
                         setTunnelAttribute(fvField(i), dscp_to_tc_map_id, tunnel_id);
                     }
                 }
@@ -235,6 +238,7 @@ void TunnelDecapOrch::doDecapTunnelTask(Consumer &consumer)
                     }
                     if (exists)
                     {
+                        // Apply to SAI; only touch cache/flag on success
                         setTunnelAttribute(fvField(i), tc_to_pg_map_id, tunnel_id);
                     }
                 }
@@ -274,6 +278,13 @@ void TunnelDecapOrch::doDecapTunnelTask(Consumer &consumer)
                     valid = false;
                     break;
                 }
+            }
+
+            if (exists)
+            {
+                // Publish to STATE_DB if any mirrored field changed
+                setDecapTunnelStatus(key);
+                SWSS_LOG_NOTICE("Fields for TUNNEL_DECAP_TABLE entry '%s' have been synchronised in STATE_DB", key.c_str());
             }
 
             if (task_status == task_process_status::task_need_retry)

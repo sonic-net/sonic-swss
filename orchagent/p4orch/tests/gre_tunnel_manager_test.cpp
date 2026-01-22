@@ -28,12 +28,18 @@ using ::p4orch::kTableKeyDelimiter;
 using ::testing::_;
 using ::testing::DoAll;
 using ::testing::Eq;
+using ::testing::Pointee;
 using ::testing::Return;
 using ::testing::SetArgPointee;
+using ::testing::SetArrayArgument;
 using ::testing::StrictMock;
 using ::testing::Truly;
 
+using sai_attrs_array_t =
+    std::vector<std::unordered_map<sai_attr_id_t, sai_attribute_value_t>>;
+
 extern sai_object_id_t gSwitchId;
+extern sai_object_id_t gUnderlayIfId;
 extern sai_tunnel_api_t *sai_tunnel_api;
 extern sai_router_interface_api_t *sai_router_intfs_api;
 extern MockSaiTunnel *mock_sai_tunnel;
@@ -41,11 +47,29 @@ extern MockSaiTunnel *mock_sai_tunnel;
 namespace
 {
 constexpr char *kRouterInterfaceId1 = "intf-eth-1/2/3";
+constexpr char* kRouterInterfaceId2 = "intf-eth-4/5/6";
+constexpr char* kRouterInterfaceId3 = "intf-eth-7/8/9";
 constexpr sai_object_id_t kRouterInterfaceOid1 = 1;
+constexpr sai_object_id_t kRouterInterfaceOid2 = 2;
+constexpr sai_object_id_t kRouterInterfaceOid3 = 3;
 constexpr char *kGreTunnelP4AppDbId1 = "tunnel-1";
+constexpr char* kGreTunnelP4AppDbId2 = "tunnel-2";
+constexpr char* kGreTunnelP4AppDbId3 = "tunnel-3";
 constexpr char *kGreTunnelP4AppDbKey1 = R"({"match/tunnel_id":"tunnel-1"})";
+constexpr char* kGreTunnelP4AppDbKey2 = R"({"match/tunnel_id":"tunnel-2"})";
+constexpr char* kGreTunnelP4AppDbKey3 = R"({"match/tunnel_id":"tunnel-3"})";
 constexpr sai_object_id_t kGreTunnelOid1 = 0x11;
-constexpr sai_object_id_t kOverlayRifOid1 = 0x101;
+constexpr sai_object_id_t kGreTunnelOid2 = 0x12;
+constexpr sai_object_id_t kGreTunnelOid3 = 0x13;
+
+MATCHER_P(ArrayEq, array, "") {
+  for (size_t i = 0; i < array.size(); ++i) {
+    if (arg[i] != array[i]) {
+      return false;
+    }
+  }
+  return true;
+}
 
 // APP DB entries for Add request.
 const P4GreTunnelAppDbEntry kP4GreTunnelAppDbEntry1{/*tunnel_id=*/"tunnel-1",
@@ -53,6 +77,20 @@ const P4GreTunnelAppDbEntry kP4GreTunnelAppDbEntry1{/*tunnel_id=*/"tunnel-1",
                                                     /*encap_src_ip=*/swss::IpAddress("2607:f8b0:8096:3110::1"),
                                                     /*encap_dst_ip=*/swss::IpAddress("2607:f8b0:8096:311a::2"),
                                                     /*action_str=*/"mark_for_p2p_tunnel_encap"};
+
+const P4GreTunnelAppDbEntry kP4GreTunnelAppDbEntry2{
+    /*tunnel_id=*/"tunnel-2",
+    /*router_interface_id=*/"intf-eth-4/5/6",
+    /*encap_src_ip=*/swss::IpAddress("2607:f8b0:8096:3110::3"),
+    /*encap_dst_ip=*/swss::IpAddress("2607:f8b0:8096:311a::4"),
+    /*action_str=*/"mark_for_p2p_tunnel_encap"};
+
+const P4GreTunnelAppDbEntry kP4GreTunnelAppDbEntry3{
+    /*tunnel_id=*/"tunnel-3",
+    /*router_interface_id=*/"intf-eth-7/8/9",
+    /*encap_src_ip=*/swss::IpAddress("2607:f8b0:8096:3110::5"),
+    /*encap_dst_ip=*/swss::IpAddress("2607:f8b0:8096:311a::6"),
+    /*action_str=*/"mark_for_p2p_tunnel_encap"};
 
 std::unordered_map<sai_attr_id_t, sai_attribute_value_t> CreateAttributeListForGreTunnelObject(
     const P4GreTunnelAppDbEntry &app_entry, const sai_object_id_t &rif_oid)
@@ -69,7 +107,7 @@ std::unordered_map<sai_attr_id_t, sai_attribute_value_t> CreateAttributeListForG
     tunnel_attrs.insert({tunnel_attr.id, tunnel_attr.value});
 
     tunnel_attr.id = SAI_TUNNEL_ATTR_OVERLAY_INTERFACE;
-    tunnel_attr.value.oid = kOverlayRifOid1;
+    tunnel_attr.value.oid = gUnderlayIfId;
     tunnel_attrs.insert({tunnel_attr.id, tunnel_attr.value});
 
     tunnel_attr.id = SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE;
@@ -190,6 +228,16 @@ bool MatchCreateGreTunnelArgAttrList(const sai_attribute_t *attr_list,
 
     return true;
 }
+
+MATCHER_P(AttrArrayEq, array, "") {
+  for (size_t i = 0; i < array.size(); ++i) {
+    if (!MatchCreateGreTunnelArgAttrList(arg[i], array[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
 } // namespace
 
 class GreTunnelManagerTest : public ::testing::Test
@@ -205,6 +253,8 @@ class GreTunnelManagerTest : public ::testing::Test
         mock_sai_tunnel = &mock_sai_tunnel_;
         sai_tunnel_api->create_tunnel = mock_create_tunnel;
         sai_tunnel_api->remove_tunnel = mock_remove_tunnel;
+        sai_tunnel_api->create_tunnels = mock_create_tunnels;
+        sai_tunnel_api->remove_tunnels = mock_remove_tunnels;
         // Set up mock stuff for SAI router interface API structure.
         mock_sai_router_intf = &mock_sai_router_intf_;
         sai_router_intfs_api->create_router_interface = mock_create_router_interface;
@@ -218,9 +268,12 @@ class GreTunnelManagerTest : public ::testing::Test
         gre_tunnel_manager_.enqueue(APP_P4RT_TUNNEL_TABLE_NAME, entry);
     }
 
-    void Drain()
-    {
-        gre_tunnel_manager_.drain();
+    ReturnCode Drain(bool failure_before) {
+      if (failure_before) {
+        gre_tunnel_manager_.drainWithNotExecuted();
+        return ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
+      }
+      return gre_tunnel_manager_.drain();
     }
 
     std::string VerifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)
@@ -228,25 +281,42 @@ class GreTunnelManagerTest : public ::testing::Test
         return gre_tunnel_manager_.verifyState(key, tuple);
     }
 
-    ReturnCode ProcessAddRequest(const P4GreTunnelAppDbEntry &app_db_entry)
-    {
-        return gre_tunnel_manager_.processAddRequest(app_db_entry);
-    }
-
-    ReturnCode ProcessDeleteRequest(const std::string &tunnel_key)
-    {
-        return gre_tunnel_manager_.processDeleteRequest(tunnel_key);
-    }
-
-    P4GreTunnelEntry *GetGreTunnelEntry(const std::string &tunnel_key)
+    P4GreTunnelEntry* GetGreTunnelEntry(const std::string& tunnel_key)
     {
         return gre_tunnel_manager_.getGreTunnelEntry(tunnel_key);
+    }
+
+    std::vector<ReturnCode> CreateGreTunnels(
+        const std::vector<P4GreTunnelAppDbEntry>& entries)
+    {
+        return gre_tunnel_manager_.createGreTunnels(entries);
+    }
+
+    std::vector<ReturnCode> RemoveGreTunnels(
+        const std::vector<P4GreTunnelAppDbEntry>& entries)
+    {
+        return gre_tunnel_manager_.removeGreTunnels(entries);
+    }
+
+    ReturnCode processEntries(
+        const std::vector<P4GreTunnelAppDbEntry>& entries,
+        const std::vector<swss::KeyOpFieldsValuesTuple>& tuple_list,
+        const std::string& op, bool update)
+    {
+        return gre_tunnel_manager_.processEntries(entries, tuple_list, op, update);
     }
 
     ReturnCodeOr<P4GreTunnelAppDbEntry> DeserializeP4GreTunnelAppDbEntry(
         const std::string &key, const std::vector<swss::FieldValueTuple> &attributes)
     {
         return gre_tunnel_manager_.deserializeP4GreTunnelAppDbEntry(key, attributes);
+    }
+
+    ReturnCode ValidateGreTunnelAppDbEntry(
+        const P4GreTunnelAppDbEntry& app_db_entry, const std::string& operation)
+    {
+        return gre_tunnel_manager_.validateGreTunnelAppDbEntry(app_db_entry,
+                                                               operation);
     }
 
     // Adds the gre tunnel entry -- kP4GreTunnelAppDbEntry1, via gre tunnel
@@ -272,7 +342,7 @@ class GreTunnelManagerTest : public ::testing::Test
     StrictMock<MockSaiTunnel> mock_sai_tunnel_;
     StrictMock<MockSaiRouterInterface> mock_sai_router_intf_;
     StrictMock<MockSaiSerialize> mock_sai_serialize_;
-    MockResponsePublisher publisher_;
+    StrictMock<MockResponsePublisher> publisher_;
     P4OidMapper p4_oid_mapper_;
     GreTunnelManager gre_tunnel_manager_;
 };
@@ -284,17 +354,24 @@ P4GreTunnelEntry *GreTunnelManagerTest::AddGreTunnelEntry1()
                                       KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId1),
                                       kRouterInterfaceOid1));
 
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
     // Set up mock call.
-    EXPECT_CALL(mock_sai_router_intf_, create_router_interface(::testing::NotNull(), Eq(gSwitchId), Eq(2), _))
-        .WillOnce(DoAll(SetArgPointee<0>(kOverlayRifOid1), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(
+        mock_sai_tunnel_,
+        create_tunnels(
+            Eq(gSwitchId), Eq(1), Pointee(Eq(6)),
+            AttrArrayEq(sai_attrs_array_t{CreateAttributeListForGreTunnelObject(
+                kP4GreTunnelAppDbEntry1, kRouterInterfaceOid1)}),
+            Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), ::testing::NotNull(),
+            ::testing::NotNull()))
+        .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
+                        SetArgPointee<5>(kGreTunnelOid1),
+                        Return(SAI_STATUS_SUCCESS)));
 
-    EXPECT_CALL(mock_sai_tunnel_, create_tunnel(::testing::NotNull(), Eq(gSwitchId), Eq(6),
-                                                Truly(std::bind(MatchCreateGreTunnelArgAttrList, std::placeholders::_1,
-                                                                CreateAttributeListForGreTunnelObject(
-                                                                    kP4GreTunnelAppDbEntry1, kRouterInterfaceOid1)))))
-        .WillOnce(DoAll(SetArgPointee<0>(kGreTunnelOid1), Return(SAI_STATUS_SUCCESS)));
-
-    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddRequest(kP4GreTunnelAppDbEntry1));
+    EXPECT_THAT(
+        CreateGreTunnels(
+            std::vector<P4GreTunnelAppDbEntry>{kP4GreTunnelAppDbEntry1}),
+        ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
 
     return GetGreTunnelEntry(gre_tunnel_key);
 }
@@ -314,137 +391,58 @@ bool GreTunnelManagerTest::ValidateGreTunnelEntryAdd(const P4GreTunnelAppDbEntry
     return true;
 }
 
-TEST_F(GreTunnelManagerTest, ProcessAddRequestShouldSucceedAddingNewGreTunnel)
+TEST_F(GreTunnelManagerTest, CreateGreTunnelsShouldSucceedAddingNewGreTunnel)
 {
-    AddGreTunnelEntry1();
-    EXPECT_TRUE(ValidateGreTunnelEntryAdd(kP4GreTunnelAppDbEntry1));
+  AddGreTunnelEntry1();
+  EXPECT_TRUE(ValidateGreTunnelEntryAdd(kP4GreTunnelAppDbEntry1));
+
+  const auto gre_tunnel_key =
+      KeyGenerator::generateTunnelKey(kP4GreTunnelAppDbEntry1.tunnel_id);
+  EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key));
+
+  const auto router_interface_key = KeyGenerator::generateRouterInterfaceKey(
+      kP4GreTunnelAppDbEntry1.router_interface_id);
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                             router_interface_key, 1));
 }
 
-TEST_F(GreTunnelManagerTest, ProcessAddRequestShouldFailWhenGreTunnelExistInCentralMapper)
+TEST_F(GreTunnelManagerTest, CreateGreTunnelsShouldFailWhenTunnelSaiCallFails)
 {
-    const auto gre_tunnel_key = KeyGenerator::generateTunnelKey(kP4GreTunnelAppDbEntry1.tunnel_id);
-    ASSERT_EQ(gre_tunnel_key, "tunnel_id=tunnel-1");
-    ASSERT_TRUE(p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key, kGreTunnelOid1));
-    // TODO: Expect critical state.
-    EXPECT_EQ(StatusCode::SWSS_RC_INTERNAL, ProcessAddRequest(kP4GreTunnelAppDbEntry1));
+  const auto gre_tunnel_key =
+      KeyGenerator::generateTunnelKey(kP4GreTunnelAppDbEntry1.tunnel_id);
+  const auto router_interface_key = KeyGenerator::generateRouterInterfaceKey(
+      kP4GreTunnelAppDbEntry1.router_interface_id);
+
+  EXPECT_TRUE(p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                    router_interface_key,
+                                    kRouterInterfaceOid1));
+  // Set up mock call.
+  std::vector<sai_status_t> exp_status{SAI_STATUS_FAILURE};
+  EXPECT_CALL(
+      mock_sai_tunnel_,
+      create_tunnels(
+          Eq(gSwitchId), Eq(1), Pointee(Eq(6)),
+          AttrArrayEq(sai_attrs_array_t{CreateAttributeListForGreTunnelObject(
+              kP4GreTunnelAppDbEntry1, kRouterInterfaceOid1)}),
+          Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), ::testing::NotNull(),
+          ::testing::NotNull()))
+      .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
+                      SetArgPointee<5>(kGreTunnelOid1),
+                      Return(SAI_STATUS_FAILURE)));
+
+  EXPECT_THAT(CreateGreTunnels(
+                  std::vector<P4GreTunnelAppDbEntry>{kP4GreTunnelAppDbEntry1}),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN}));
+
+  // The add request failed for the gre tunnel entry.
+  EXPECT_EQ(GetGreTunnelEntry(gre_tunnel_key), nullptr);
+  EXPECT_FALSE(
+      p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key));
+
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                             router_interface_key, 0));
 }
 
-TEST_F(GreTunnelManagerTest, ProcessAddRequestShouldFailWhenDependingPortIsNotPresent)
-{
-    const P4GreTunnelAppDbEntry kAppDbEntry{/*tunnel_id=*/"tunnel-1",
-                                            /*router_interface_id=*/"intf-eth-1/2/3",
-                                            /*encap_src_ip=*/swss::IpAddress("2607:f8b0:8096:3110::1"),
-                                            /*encap_dst_ip=*/swss::IpAddress("2607:f8b0:8096:311a::2"),
-                                            /*action_str=*/"mark_for_p2p_tunnel_encap"};
-    const auto gre_tunnel_key = KeyGenerator::generateTunnelKey(kAppDbEntry.tunnel_id);
-
-    EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, ProcessAddRequest(kAppDbEntry));
-
-    EXPECT_EQ(GetGreTunnelEntry(gre_tunnel_key), nullptr);
-}
-
-TEST_F(GreTunnelManagerTest, ProcessAddRequestShouldFailWhenRifSaiCallFails)
-{
-    const auto gre_tunnel_key = KeyGenerator::generateTunnelKey(kP4GreTunnelAppDbEntry1.tunnel_id);
-    EXPECT_TRUE(p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
-                                      KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId1),
-                                      kRouterInterfaceOid1));
-    // Set up mock call.
-    EXPECT_CALL(mock_sai_router_intf_, create_router_interface(::testing::NotNull(), Eq(gSwitchId), Eq(2), _))
-        .WillOnce(DoAll(SetArgPointee<0>(kOverlayRifOid1), Return(SAI_STATUS_FAILURE)));
-
-    EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, ProcessAddRequest(kP4GreTunnelAppDbEntry1));
-
-    // The add request failed for the gre tunnel entry.
-    EXPECT_EQ(GetGreTunnelEntry(gre_tunnel_key), nullptr);
-}
-
-TEST_F(GreTunnelManagerTest, ProcessAddRequestShouldFailWhenTunnelSaiCallFails)
-{
-    const auto gre_tunnel_key = KeyGenerator::generateTunnelKey(kP4GreTunnelAppDbEntry1.tunnel_id);
-    EXPECT_TRUE(p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
-                                      KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId1),
-                                      kRouterInterfaceOid1));
-    // Set up mock call.
-    EXPECT_CALL(mock_sai_router_intf_, create_router_interface(::testing::NotNull(), Eq(gSwitchId), Eq(2), _))
-        .WillOnce(DoAll(SetArgPointee<0>(kOverlayRifOid1), Return(SAI_STATUS_SUCCESS)));
-    EXPECT_CALL(mock_sai_tunnel_, create_tunnel(::testing::NotNull(), Eq(gSwitchId), Eq(6),
-                                                Truly(std::bind(MatchCreateGreTunnelArgAttrList, std::placeholders::_1,
-                                                                CreateAttributeListForGreTunnelObject(
-                                                                    kP4GreTunnelAppDbEntry1, kRouterInterfaceOid1)))))
-        .WillOnce(Return(SAI_STATUS_FAILURE));
-    EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(Eq(kOverlayRifOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-
-    EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, ProcessAddRequest(kP4GreTunnelAppDbEntry1));
-
-    // The add request failed for the gre tunnel entry.
-    EXPECT_EQ(GetGreTunnelEntry(gre_tunnel_key), nullptr);
-}
-
-TEST_F(GreTunnelManagerTest, ProcessAddRequestShouldRaiseCriticalWhenRecoverySaiCallFails)
-{
-    const auto gre_tunnel_key = KeyGenerator::generateTunnelKey(kP4GreTunnelAppDbEntry1.tunnel_id);
-    EXPECT_TRUE(p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
-                                      KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId1),
-                                      kRouterInterfaceOid1));
-    // Set up mock call.
-    EXPECT_CALL(mock_sai_router_intf_, create_router_interface(::testing::NotNull(), Eq(gSwitchId), Eq(2), _))
-        .WillOnce(DoAll(SetArgPointee<0>(kOverlayRifOid1), Return(SAI_STATUS_SUCCESS)));
-    EXPECT_CALL(mock_sai_tunnel_, create_tunnel(::testing::NotNull(), Eq(gSwitchId), Eq(6),
-                                                Truly(std::bind(MatchCreateGreTunnelArgAttrList, std::placeholders::_1,
-                                                                CreateAttributeListForGreTunnelObject(
-                                                                    kP4GreTunnelAppDbEntry1, kRouterInterfaceOid1)))))
-        .WillOnce(Return(SAI_STATUS_FAILURE));
-    EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(Eq(kOverlayRifOid1)))
-        .WillOnce(Return(SAI_STATUS_FAILURE));
-    // TODO: Expect critical state.
-
-    EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, ProcessAddRequest(kP4GreTunnelAppDbEntry1));
-
-    // The add request failed for the gre tunnel entry.
-    EXPECT_EQ(GetGreTunnelEntry(gre_tunnel_key), nullptr);
-}
-
-TEST_F(GreTunnelManagerTest, ProcessDeleteRequestShouldFailForNonExistingGreTunnel)
-{
-    const auto gre_tunnel_key = KeyGenerator::generateTunnelKey(kP4GreTunnelAppDbEntry1.tunnel_id);
-    EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, ProcessDeleteRequest(gre_tunnel_key));
-}
-
-TEST_F(GreTunnelManagerTest, ProcessDeleteRequestShouldFailIfGreTunnelEntryIsAbsentInCentralMapper)
-{
-    auto *p4_tunnel_entry = AddGreTunnelEntry1();
-    ASSERT_NE(p4_tunnel_entry, nullptr);
-
-    const auto gre_tunnel_key = KeyGenerator::generateTunnelKey(kP4GreTunnelAppDbEntry1.tunnel_id);
-
-    ASSERT_TRUE(p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key));
-
-    // TODO: Expect critical state.
-    EXPECT_EQ(StatusCode::SWSS_RC_INTERNAL, ProcessDeleteRequest(gre_tunnel_key));
-
-    // Validate the gre tunnel entry is not deleted in P4 gre tunnel manager.
-    p4_tunnel_entry = GetGreTunnelEntry(gre_tunnel_key);
-    ASSERT_NE(p4_tunnel_entry, nullptr);
-}
-
-TEST_F(GreTunnelManagerTest, ProcessDeleteRequestShouldFailIfGreTunnelEntryIsStillReferenced)
-{
-    auto *p4_tunnel_entry = AddGreTunnelEntry1();
-    ASSERT_NE(p4_tunnel_entry, nullptr);
-
-    const auto gre_tunnel_key = KeyGenerator::generateTunnelKey(kP4GreTunnelAppDbEntry1.tunnel_id);
-    ASSERT_TRUE(p4_oid_mapper_.increaseRefCount(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key));
-
-    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessDeleteRequest(gre_tunnel_key));
-
-    // Validate the gre tunnel entry is not deleted in either P4 gre tunnel
-    // manager or central mapper.
-    p4_tunnel_entry = GetGreTunnelEntry(gre_tunnel_key);
-    ASSERT_NE(p4_tunnel_entry, nullptr);
-    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key, 1));
-}
 
 TEST_F(GreTunnelManagerTest, ProcessDeleteRequestShouldFailIfTunnelSaiCallFails)
 {
@@ -453,76 +451,25 @@ TEST_F(GreTunnelManagerTest, ProcessDeleteRequestShouldFailIfTunnelSaiCallFails)
 
     const auto gre_tunnel_key = KeyGenerator::generateTunnelKey(kP4GreTunnelAppDbEntry1.tunnel_id);
 
+    std::vector<sai_status_t> exp_status{SAI_STATUS_FAILURE};
     // Set up mock call.
-    EXPECT_CALL(mock_sai_tunnel_, remove_tunnel(Eq(p4_tunnel_entry->tunnel_oid))).WillOnce(Return(SAI_STATUS_FAILURE));
+    EXPECT_CALL(mock_sai_tunnel_, remove_tunnels(_, _, _, _))
+        .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()),
+                        Return(SAI_STATUS_FAILURE)));
 
-    EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, ProcessDeleteRequest(gre_tunnel_key));
+    EXPECT_THAT(RemoveGreTunnels(
+                    std::vector<P4GreTunnelAppDbEntry>{kP4GreTunnelAppDbEntry1}),
+                ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN}));
 
     // Validate the gre tunnel entry is not deleted in either P4 gre tunnel
     // manager or central mapper.
     p4_tunnel_entry = GetGreTunnelEntry(gre_tunnel_key);
     ASSERT_NE(p4_tunnel_entry, nullptr);
     EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key));
-}
-
-TEST_F(GreTunnelManagerTest, ProcessDeleteRequestShouldFailIfRifSaiCallFails)
-{
-    auto *p4_tunnel_entry = AddGreTunnelEntry1();
-    ASSERT_NE(p4_tunnel_entry, nullptr);
-
-    const auto gre_tunnel_key = KeyGenerator::generateTunnelKey(kP4GreTunnelAppDbEntry1.tunnel_id);
-
-    // Set up mock call.
-    EXPECT_CALL(mock_sai_tunnel_, remove_tunnel(Eq(p4_tunnel_entry->tunnel_oid))).WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(Eq(kOverlayRifOid1)))
-        .WillOnce(Return(SAI_STATUS_FAILURE));
-    EXPECT_CALL(mock_sai_tunnel_, create_tunnel(::testing::NotNull(), Eq(gSwitchId), Eq(6),
-                                                Truly(std::bind(MatchCreateGreTunnelArgAttrList, std::placeholders::_1,
-                                                                CreateAttributeListForGreTunnelObject(
-                                                                    kP4GreTunnelAppDbEntry1, kRouterInterfaceOid1)))))
-        .WillOnce(DoAll(SetArgPointee<0>(kGreTunnelOid1), Return(SAI_STATUS_SUCCESS)));
-
-    EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, ProcessDeleteRequest(gre_tunnel_key));
-
-    // Validate the gre tunnel entry is not deleted in either P4 gre tunnel
-    // manager or central mapper.
-    p4_tunnel_entry = GetGreTunnelEntry(gre_tunnel_key);
-    ASSERT_NE(p4_tunnel_entry, nullptr);
-    EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key));
-}
-
-TEST_F(GreTunnelManagerTest, ProcessDeleteRequestShouldRaiseCriticalIfRecoverySaiCallFails)
-{
-    auto *p4_tunnel_entry = AddGreTunnelEntry1();
-    ASSERT_NE(p4_tunnel_entry, nullptr);
-
-    const auto gre_tunnel_key = KeyGenerator::generateTunnelKey(kP4GreTunnelAppDbEntry1.tunnel_id);
-
-    // Set up mock call.
-    EXPECT_CALL(mock_sai_tunnel_, remove_tunnel(Eq(p4_tunnel_entry->tunnel_oid))).WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(Eq(kOverlayRifOid1)))
-        .WillOnce(Return(SAI_STATUS_FAILURE));
-    EXPECT_CALL(mock_sai_tunnel_, create_tunnel(::testing::NotNull(), Eq(gSwitchId), Eq(6),
-                                                Truly(std::bind(MatchCreateGreTunnelArgAttrList, std::placeholders::_1,
-                                                                CreateAttributeListForGreTunnelObject(
-                                                                    kP4GreTunnelAppDbEntry1, kRouterInterfaceOid1)))))
-        .WillOnce(Return(SAI_STATUS_FAILURE));
-
-    // TODO: Expect critical state.
-
-    EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, ProcessDeleteRequest(gre_tunnel_key));
-
-    // Validate the gre tunnel entry is not deleted in either P4 gre tunnel
-    // manager or central mapper.
-    p4_tunnel_entry = GetGreTunnelEntry(gre_tunnel_key);
-    ASSERT_NE(p4_tunnel_entry, nullptr);
-    EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key));
-}
-
-TEST_F(GreTunnelManagerTest, GetGreTunnelEntryShouldReturnNullPointerForNonexistingGreTunnel)
-{
-    const auto gre_tunnel_key = KeyGenerator::generateTunnelKey(kP4GreTunnelAppDbEntry1.tunnel_id);
-    EXPECT_EQ(GetGreTunnelEntry(gre_tunnel_key), nullptr);
+    const auto router_interface_key = KeyGenerator::generateRouterInterfaceKey(
+        kP4GreTunnelAppDbEntry1.router_interface_id);
+    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                               router_interface_key, 1));
 }
 
 TEST_F(GreTunnelManagerTest, DeserializeP4GreTunnelAppDbEntryShouldReturnNullPointerForInvalidField)
@@ -564,29 +511,153 @@ TEST_F(GreTunnelManagerTest, DeserializeP4GreTunnelAppDbEntryShouldReturnNullPoi
     EXPECT_FALSE(DeserializeP4GreTunnelAppDbEntry(kInvalidAppDbKey, attributes).ok());
 }
 
-TEST_F(GreTunnelManagerTest, DrainDuplicateSetRequestShouldSucceed)
-{
-    auto *p4_tunnel_entry = AddGreTunnelEntry1();
-    ASSERT_NE(p4_tunnel_entry, nullptr);
+TEST_F(GreTunnelManagerTest, ValidateGreTunnelAppDbEntryValidDelEntry) {
+  auto* p4_tunnel_entry = AddGreTunnelEntry1();
+  ASSERT_NE(p4_tunnel_entry, nullptr);
 
-    nlohmann::json j;
-    j[prependMatchField(p4orch::kTunnelId)] = kP4GreTunnelAppDbEntry1.tunnel_id;
+  EXPECT_TRUE(
+      ValidateGreTunnelAppDbEntry(kP4GreTunnelAppDbEntry1, DEL_COMMAND).ok());
+}
 
-    std::vector<swss::FieldValueTuple> fvs{
-        {p4orch::kAction, p4orch::kTunnelAction},
-        {prependParamField(p4orch::kRouterInterfaceId), kP4GreTunnelAppDbEntry1.router_interface_id},
-        {prependParamField(p4orch::kEncapSrcIp), kP4GreTunnelAppDbEntry1.encap_src_ip.to_string()},
-        {prependParamField(p4orch::kEncapDstIp), kP4GreTunnelAppDbEntry1.encap_dst_ip.to_string()}};
+TEST_F(GreTunnelManagerTest, ValidateGreTunnelAppDbEntryEntryNotFoundInDel) {
+  EXPECT_FALSE(
+      ValidateGreTunnelAppDbEntry(kP4GreTunnelAppDbEntry1, DEL_COMMAND).ok());
+}
 
-    swss::KeyOpFieldsValuesTuple app_db_entry(std::string(APP_P4RT_TUNNEL_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
-                                              SET_COMMAND, fvs);
+TEST_F(GreTunnelManagerTest,
+       ValidateGreTunnelAppDbEntryOidMapperEntryNotFoundInDel) {
+  auto* p4_tunnel_entry = AddGreTunnelEntry1();
+  ASSERT_NE(p4_tunnel_entry, nullptr);
 
-    Enqueue(app_db_entry);
-    Drain();
+  ASSERT_TRUE(p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_TUNNEL,
+                                      p4_tunnel_entry->tunnel_key));
 
-    // Expect that the update call will fail, so gre tunnel entry's fields stay
-    // the same.
-    EXPECT_TRUE(ValidateGreTunnelEntryAdd(kP4GreTunnelAppDbEntry1));
+  EXPECT_FALSE(
+      ValidateGreTunnelAppDbEntry(kP4GreTunnelAppDbEntry1, DEL_COMMAND).ok());
+}
+
+TEST_F(GreTunnelManagerTest, ValidateGreTunnelAppDbEntryRefCntNotZeroInDel) {
+  auto* p4_tunnel_entry = AddGreTunnelEntry1();
+  ASSERT_NE(p4_tunnel_entry, nullptr);
+
+  ASSERT_TRUE(p4_oid_mapper_.increaseRefCount(SAI_OBJECT_TYPE_TUNNEL,
+                                              p4_tunnel_entry->tunnel_key));
+  EXPECT_FALSE(
+      ValidateGreTunnelAppDbEntry(kP4GreTunnelAppDbEntry1, DEL_COMMAND).ok());
+}
+
+TEST_F(GreTunnelManagerTest, ValidateGreTunnelAppDbEntryValidSetEntry) {
+  const auto gre_tunnel_key =
+      KeyGenerator::generateTunnelKey(kP4GreTunnelAppDbEntry1.tunnel_id);
+  EXPECT_TRUE(p4_oid_mapper_.setOID(
+      SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+      KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId1),
+      kRouterInterfaceOid1));
+
+  EXPECT_TRUE(
+      ValidateGreTunnelAppDbEntry(kP4GreTunnelAppDbEntry1, SET_COMMAND).ok());
+}
+
+TEST_F(GreTunnelManagerTest, ValidateGreTunnelAppDbEntryInvalidAction) {
+  const P4GreTunnelAppDbEntry app_db_entry{
+      /*tunnel_id=*/"tunnel-1",
+      /*router_interface_id=*/"intf-eth-1/2/3",
+      /*encap_src_ip=*/swss::IpAddress("2607:f8b0:8096:3110::1"),
+      /*encap_dst_ip=*/swss::IpAddress("2607:f8b0:8096:311a::2"),
+      /*action_str=*/"invalid action"};
+  EXPECT_FALSE(
+      ValidateGreTunnelAppDbEntry(kP4GreTunnelAppDbEntry1, SET_COMMAND).ok());
+}
+
+TEST_F(GreTunnelManagerTest,
+       ValidateGreTunnelAppDbEntryMissingRouterInterfaceId) {
+  const P4GreTunnelAppDbEntry app_db_entry{
+      /*tunnel_id=*/"tunnel-1",
+      /*router_interface_id=*/"",
+      /*encap_src_ip=*/swss::IpAddress("2607:f8b0:8096:3110::1"),
+      /*encap_dst_ip=*/swss::IpAddress("2607:f8b0:8096:311a::2"),
+      /*action_str=*/"mark_for_p2p_tunnel_encap"};
+  EXPECT_FALSE(
+      ValidateGreTunnelAppDbEntry(kP4GreTunnelAppDbEntry1, SET_COMMAND).ok());
+}
+
+TEST_F(GreTunnelManagerTest, ValidateGreTunnelAppDbEntryEmptyEncapSrcIp) {
+  const P4GreTunnelAppDbEntry app_db_entry{
+      /*tunnel_id=*/"tunnel-1",
+      /*router_interface_id=*/"intf-eth-1/2/3",
+      /*encap_src_ip=*/swss::IpAddress(),
+      /*encap_dst_ip=*/swss::IpAddress("2607:f8b0:8096:311a::2"),
+      /*action_str=*/"mark_for_p2p_tunnel_encap"};
+  EXPECT_FALSE(
+      ValidateGreTunnelAppDbEntry(kP4GreTunnelAppDbEntry1, SET_COMMAND).ok());
+}
+
+TEST_F(GreTunnelManagerTest, ValidateGreTunnelAppDbEntryEmptyEncapDistIp) {
+  const P4GreTunnelAppDbEntry app_db_entry{
+      /*tunnel_id=*/"tunnel-1",
+      /*router_interface_id=*/"intf-eth-1/2/3",
+      /*encap_src_ip=*/swss::IpAddress("2607:f8b0:8096:3110::1"),
+      /*encap_dst_ip=*/swss::IpAddress(),
+      /*action_str=*/"mark_for_p2p_tunnel_encap"};
+  EXPECT_FALSE(
+      ValidateGreTunnelAppDbEntry(kP4GreTunnelAppDbEntry1, SET_COMMAND).ok());
+}
+
+TEST_F(GreTunnelManagerTest,
+       ValidateGreTunnelAppDbEntryMapperOidExistsForCreate) {
+  const auto gre_tunnel_key =
+      KeyGenerator::generateTunnelKey(kP4GreTunnelAppDbEntry1.tunnel_id);
+  ASSERT_TRUE(p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key,
+                                    kGreTunnelOid1));
+
+  EXPECT_FALSE(
+      ValidateGreTunnelAppDbEntry(kP4GreTunnelAppDbEntry1, SET_COMMAND).ok());
+}
+
+TEST_F(GreTunnelManagerTest,
+       ValidateGreTunnelAppDbEntryNonexistRouterInterfaceForCreate) {
+  EXPECT_FALSE(
+      ValidateGreTunnelAppDbEntry(kP4GreTunnelAppDbEntry1, SET_COMMAND).ok());
+}
+
+TEST_F(GreTunnelManagerTest, DrainDuplicateSetRequestShouldFail) {
+  auto* p4_tunnel_entry = AddGreTunnelEntry1();
+  ASSERT_NE(p4_tunnel_entry, nullptr);
+
+  nlohmann::json j;
+  j[prependMatchField(p4orch::kTunnelId)] = kP4GreTunnelAppDbEntry1.tunnel_id;
+
+  std::vector<swss::FieldValueTuple> fvs{
+      {p4orch::kAction, p4orch::kTunnelAction},
+      {prependParamField(p4orch::kRouterInterfaceId),
+       kP4GreTunnelAppDbEntry1.router_interface_id},
+      {prependParamField(p4orch::kEncapSrcIp),
+       kP4GreTunnelAppDbEntry1.encap_src_ip.to_string()},
+      {prependParamField(p4orch::kEncapDstIp),
+       kP4GreTunnelAppDbEntry1.encap_dst_ip.to_string()}};
+
+  swss::KeyOpFieldsValuesTuple app_db_entry(
+      std::string(APP_P4RT_TUNNEL_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+
+  Enqueue(app_db_entry);
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                      Eq(kfvFieldsValues(app_db_entry)),
+                      Eq(StatusCode::SWSS_RC_UNIMPLEMENTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_UNIMPLEMENTED, Drain(/*failure_before=*/false));
+
+  // Expect that the update call will fail, so gre tunnel entry's fields stay
+  // the same.
+  EXPECT_TRUE(ValidateGreTunnelEntryAdd(kP4GreTunnelAppDbEntry1));
+  const auto gre_tunnel_key =
+      KeyGenerator::generateTunnelKey(kP4GreTunnelAppDbEntry1.tunnel_id);
+  EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key));
+
+  const auto router_interface_key = KeyGenerator::generateRouterInterfaceKey(
+      kP4GreTunnelAppDbEntry1.router_interface_id);
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                             router_interface_key, 1));
 }
 
 TEST_F(GreTunnelManagerTest, DrainDeleteRequestShouldSucceedForExistingGreTunnel)
@@ -601,12 +672,17 @@ TEST_F(GreTunnelManagerTest, DrainDeleteRequestShouldSucceedForExistingGreTunnel
     std::vector<swss::FieldValueTuple> fvs;
     swss::KeyOpFieldsValuesTuple app_db_entry(std::string(APP_P4RT_TUNNEL_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
                                               DEL_COMMAND, fvs);
-    EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(Eq(kOverlayRifOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_CALL(mock_sai_tunnel_, remove_tunnel(Eq(p4_tunnel_entry->tunnel_oid))).WillOnce(Return(SAI_STATUS_SUCCESS));
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_tunnel_, remove_tunnels(_, _, _, _))
+        .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
 
     Enqueue(app_db_entry);
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     // Validate the gre tunnel entry has been deleted in both P4 gre tunnel
     // manager and centralized mapper.
@@ -614,16 +690,22 @@ TEST_F(GreTunnelManagerTest, DrainDeleteRequestShouldSucceedForExistingGreTunnel
     p4_tunnel_entry = GetGreTunnelEntry(gre_tunnel_key);
     EXPECT_EQ(p4_tunnel_entry, nullptr);
     EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key));
+    const auto router_interface_key = KeyGenerator::generateRouterInterfaceKey(
+        kP4GreTunnelAppDbEntry1.router_interface_id);
+    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                               router_interface_key, 0));
 }
 
 TEST_F(GreTunnelManagerTest, DrainValidAppEntryShouldSucceed)
 {
     nlohmann::json j;
     j[prependMatchField(p4orch::kTunnelId)] = kGreTunnelP4AppDbId1;
-    EXPECT_TRUE(p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
-                                      KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId1),
-                                      kRouterInterfaceOid1));
 
+    const auto router_interface_key = KeyGenerator::generateRouterInterfaceKey(
+        kP4GreTunnelAppDbEntry1.router_interface_id);
+    EXPECT_TRUE(p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                      router_interface_key,
+                                      kRouterInterfaceOid1));
     std::vector<swss::FieldValueTuple> fvs{
         {p4orch::kAction, p4orch::kTunnelAction},
         {prependParamField(p4orch::kRouterInterfaceId), kP4GreTunnelAppDbEntry1.router_interface_id},
@@ -634,15 +716,24 @@ TEST_F(GreTunnelManagerTest, DrainValidAppEntryShouldSucceed)
                                               SET_COMMAND, fvs);
 
     Enqueue(app_db_entry);
-    EXPECT_CALL(mock_sai_router_intf_, create_router_interface(::testing::NotNull(), Eq(gSwitchId), Eq(2), _))
-        .WillOnce(DoAll(SetArgPointee<0>(kOverlayRifOid1), Return(SAI_STATUS_SUCCESS)));
-
-    EXPECT_CALL(mock_sai_tunnel_, create_tunnel(_, _, _, _))
-        .WillOnce(DoAll(SetArgPointee<0>(kGreTunnelOid1), Return(SAI_STATUS_SUCCESS)));
-
-    Drain();
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_tunnel_, create_tunnels(_, _, _, _, _, _, _))
+        .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
+                        SetArgPointee<5>(kGreTunnelOid1),
+                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     EXPECT_TRUE(ValidateGreTunnelEntryAdd(kP4GreTunnelAppDbEntry1));
+    const auto gre_tunnel_key =
+        KeyGenerator::generateTunnelKey(kP4GreTunnelAppDbEntry1.tunnel_id);
+    EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key));
+
+    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                               router_interface_key, 1));
 }
 
 TEST_F(GreTunnelManagerTest, DrainInvalidAppEntryShouldFail)
@@ -650,6 +741,12 @@ TEST_F(GreTunnelManagerTest, DrainInvalidAppEntryShouldFail)
     nlohmann::json j;
     j[prependMatchField(p4orch::kTunnelId)] = kGreTunnelP4AppDbId1;
     j[p4orch::kTunnelId] = 1000;
+
+    const auto router_interface_key = KeyGenerator::generateRouterInterfaceKey(
+        kP4GreTunnelAppDbEntry1.router_interface_id);
+    EXPECT_TRUE(p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                      router_interface_key,
+                                      kRouterInterfaceOid1));
 
     std::vector<swss::FieldValueTuple> fvs{
         {p4orch::kAction, p4orch::kTunnelAction},
@@ -662,9 +759,16 @@ TEST_F(GreTunnelManagerTest, DrainInvalidAppEntryShouldFail)
 
     Enqueue(app_db_entry);
 
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
     EXPECT_EQ(GetGreTunnelEntry(kGreTunnelP4AppDbKey1), nullptr);
     EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, kGreTunnelP4AppDbKey1));
+    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                               router_interface_key, 0));
 
     // Invalid action_str
     fvs = {{p4orch::kAction, "set_nexthop"},
@@ -676,9 +780,16 @@ TEST_F(GreTunnelManagerTest, DrainInvalidAppEntryShouldFail)
 
     Enqueue(app_db_entry);
 
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
     EXPECT_EQ(GetGreTunnelEntry(kGreTunnelP4AppDbKey1), nullptr);
     EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, kGreTunnelP4AppDbKey1));
+    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                               router_interface_key, 0));
 
     // Miss action
     fvs = {{prependParamField(p4orch::kRouterInterfaceId), kP4GreTunnelAppDbEntry1.router_interface_id},
@@ -689,9 +800,16 @@ TEST_F(GreTunnelManagerTest, DrainInvalidAppEntryShouldFail)
 
     Enqueue(app_db_entry);
 
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
     EXPECT_EQ(GetGreTunnelEntry(kGreTunnelP4AppDbKey1), nullptr);
     EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, kGreTunnelP4AppDbKey1));
+    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                               router_interface_key, 0));
 
     // Miss router_interface_id
     fvs = {{p4orch::kAction, p4orch::kTunnelAction},
@@ -702,9 +820,16 @@ TEST_F(GreTunnelManagerTest, DrainInvalidAppEntryShouldFail)
 
     Enqueue(app_db_entry);
 
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
     EXPECT_EQ(GetGreTunnelEntry(kGreTunnelP4AppDbKey1), nullptr);
     EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, kGreTunnelP4AppDbKey1));
+    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                               router_interface_key, 0));
 
     // Miss encap_src_ip
     fvs = {{p4orch::kAction, p4orch::kTunnelAction},
@@ -715,9 +840,16 @@ TEST_F(GreTunnelManagerTest, DrainInvalidAppEntryShouldFail)
 
     Enqueue(app_db_entry);
 
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
     EXPECT_EQ(GetGreTunnelEntry(kGreTunnelP4AppDbKey1), nullptr);
     EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, kGreTunnelP4AppDbKey1));
+    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                               router_interface_key, 0));
 
     // Miss encap_dst_ip
     fvs = {{p4orch::kAction, p4orch::kTunnelAction},
@@ -728,9 +860,414 @@ TEST_F(GreTunnelManagerTest, DrainInvalidAppEntryShouldFail)
 
     Enqueue(app_db_entry);
 
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
     EXPECT_EQ(GetGreTunnelEntry(kGreTunnelP4AppDbKey1), nullptr);
     EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, kGreTunnelP4AppDbKey1));
+    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                               router_interface_key, 0));
+}
+
+TEST_F(GreTunnelManagerTest, DrainNotExecuted) {
+  const auto router_interface_key = KeyGenerator::generateRouterInterfaceKey(
+      kP4GreTunnelAppDbEntry1.router_interface_id);
+
+  EXPECT_TRUE(p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                    router_interface_key,
+                                    kRouterInterfaceOid1));
+  std::vector<swss::FieldValueTuple> fvs{
+      {p4orch::kAction, p4orch::kTunnelAction},
+      {prependParamField(p4orch::kRouterInterfaceId),
+       kP4GreTunnelAppDbEntry1.router_interface_id},
+      {prependParamField(p4orch::kEncapSrcIp),
+       kP4GreTunnelAppDbEntry1.encap_src_ip.to_string()},
+      {prependParamField(p4orch::kEncapDstIp),
+       kP4GreTunnelAppDbEntry1.encap_dst_ip.to_string()}};
+
+  nlohmann::json j;
+  j[prependMatchField(p4orch::kTunnelId)] = "1";
+  swss::KeyOpFieldsValuesTuple app_db_entry_1(
+      std::string(APP_P4RT_TUNNEL_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+  j[prependMatchField(p4orch::kTunnelId)] = "2";
+  swss::KeyOpFieldsValuesTuple app_db_entry_2(
+      std::string(APP_P4RT_TUNNEL_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+  j[prependMatchField(p4orch::kTunnelId)] = "3";
+  swss::KeyOpFieldsValuesTuple app_db_entry_3(
+      std::string(APP_P4RT_TUNNEL_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+
+  Enqueue(app_db_entry_1);
+  Enqueue(app_db_entry_2);
+  Enqueue(app_db_entry_3);
+
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_1)),
+                      Eq(kfvFieldsValues(app_db_entry_1)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_2)),
+                      Eq(kfvFieldsValues(app_db_entry_2)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_3)),
+                      Eq(kfvFieldsValues(app_db_entry_3)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_EXECUTED, Drain(/*failure_before=*/true));
+  EXPECT_EQ(nullptr, GetGreTunnelEntry(KeyGenerator::generateTunnelKey("1")));
+  EXPECT_EQ(nullptr, GetGreTunnelEntry(KeyGenerator::generateTunnelKey("2")));
+  EXPECT_EQ(nullptr, GetGreTunnelEntry(KeyGenerator::generateTunnelKey("3")));
+  EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL,
+                                        KeyGenerator::generateTunnelKey("1")));
+  EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL,
+                                        KeyGenerator::generateTunnelKey("2")));
+  EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL,
+                                        KeyGenerator::generateTunnelKey("3")));
+
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                             router_interface_key, 0));
+}
+
+TEST_F(GreTunnelManagerTest, DrainStopOnFirstFailureCreate) {
+  EXPECT_TRUE(p4_oid_mapper_.setOID(
+      SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+      KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId1),
+      kRouterInterfaceOid1));
+  EXPECT_TRUE(p4_oid_mapper_.setOID(
+      SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+      KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId2),
+      kRouterInterfaceOid2));
+  EXPECT_TRUE(p4_oid_mapper_.setOID(
+      SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+      KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId3),
+      kRouterInterfaceOid3));
+
+  std::vector<swss::FieldValueTuple> fvs1{
+      {p4orch::kAction, p4orch::kTunnelAction},
+      {prependParamField(p4orch::kRouterInterfaceId),
+       kP4GreTunnelAppDbEntry1.router_interface_id},
+      {prependParamField(p4orch::kEncapSrcIp),
+       kP4GreTunnelAppDbEntry1.encap_src_ip.to_string()},
+      {prependParamField(p4orch::kEncapDstIp),
+       kP4GreTunnelAppDbEntry1.encap_dst_ip.to_string()}};
+  std::vector<swss::FieldValueTuple> fvs2{
+      {p4orch::kAction, p4orch::kTunnelAction},
+      {prependParamField(p4orch::kRouterInterfaceId),
+       kP4GreTunnelAppDbEntry2.router_interface_id},
+      {prependParamField(p4orch::kEncapSrcIp),
+       kP4GreTunnelAppDbEntry2.encap_src_ip.to_string()},
+      {prependParamField(p4orch::kEncapDstIp),
+       kP4GreTunnelAppDbEntry2.encap_dst_ip.to_string()}};
+  std::vector<swss::FieldValueTuple> fvs3{
+      {p4orch::kAction, p4orch::kTunnelAction},
+      {prependParamField(p4orch::kRouterInterfaceId),
+       kP4GreTunnelAppDbEntry3.router_interface_id},
+      {prependParamField(p4orch::kEncapSrcIp),
+       kP4GreTunnelAppDbEntry3.encap_src_ip.to_string()},
+      {prependParamField(p4orch::kEncapDstIp),
+       kP4GreTunnelAppDbEntry3.encap_dst_ip.to_string()}};
+
+  nlohmann::json j;
+  j[prependMatchField(p4orch::kTunnelId)] = "tunnel-1";
+  swss::KeyOpFieldsValuesTuple app_db_entry_1(
+      std::string(APP_P4RT_TUNNEL_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs1);
+  j[prependMatchField(p4orch::kTunnelId)] = "tunnel-2";
+  swss::KeyOpFieldsValuesTuple app_db_entry_2(
+      std::string(APP_P4RT_TUNNEL_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs2);
+  j[prependMatchField(p4orch::kTunnelId)] = "tunnel-3";
+  swss::KeyOpFieldsValuesTuple app_db_entry_3(
+      std::string(APP_P4RT_TUNNEL_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs3);
+
+  Enqueue(app_db_entry_1);
+  Enqueue(app_db_entry_2);
+  Enqueue(app_db_entry_3);
+
+  std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS, SAI_STATUS_FAILURE,
+                                       SAI_STATUS_NOT_EXECUTED};
+  EXPECT_CALL(mock_sai_tunnel_, create_tunnels(_, Eq(3), _, _, _, _, _))
+      .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
+                      SetArgPointee<5>(kGreTunnelOid1),
+                      Return(SAI_STATUS_FAILURE)));
+
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_1)),
+                      Eq(kfvFieldsValues(app_db_entry_1)),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_2)),
+                      Eq(kfvFieldsValues(app_db_entry_2)),
+                      Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_3)),
+                      Eq(kfvFieldsValues(app_db_entry_3)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
+
+  const auto gre_tunnel_key_1 = KeyGenerator::generateTunnelKey("tunnel-1");
+  EXPECT_NE(nullptr, GetGreTunnelEntry(gre_tunnel_key_1));
+  EXPECT_TRUE(
+      p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key_1));
+
+  const auto router_interface_key_1 = KeyGenerator::generateRouterInterfaceKey(
+      kP4GreTunnelAppDbEntry1.router_interface_id);
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                             router_interface_key_1, 1));
+
+  const auto gre_tunnel_key_2 = KeyGenerator::generateTunnelKey("tunnel-2");
+  EXPECT_EQ(nullptr, GetGreTunnelEntry(gre_tunnel_key_2));
+  EXPECT_FALSE(
+      p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key_2));
+
+  const auto router_interface_key_2 = KeyGenerator::generateRouterInterfaceKey(
+      kP4GreTunnelAppDbEntry2.router_interface_id);
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                             router_interface_key_2, 0));
+
+  const auto gre_tunnel_key_3 = KeyGenerator::generateTunnelKey("tunnel-3");
+  EXPECT_EQ(nullptr, GetGreTunnelEntry(gre_tunnel_key_3));
+  EXPECT_FALSE(
+      p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key_3));
+
+  const auto router_interface_key_3 = KeyGenerator::generateRouterInterfaceKey(
+      kP4GreTunnelAppDbEntry3.router_interface_id);
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                             router_interface_key_3, 0));
+}
+
+TEST_F(GreTunnelManagerTest, DrainStopOnFirstFailureDel) {
+  EXPECT_TRUE(p4_oid_mapper_.setOID(
+      SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+      KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId1),
+      kRouterInterfaceOid1));
+  EXPECT_TRUE(p4_oid_mapper_.setOID(
+      SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+      KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId2),
+      kRouterInterfaceOid2));
+  EXPECT_TRUE(p4_oid_mapper_.setOID(
+      SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+      KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId3),
+      kRouterInterfaceOid3));
+
+  std::vector<sai_status_t> create_status{
+      SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS};
+  std::vector<sai_object_id_t> tunnel_oids{kGreTunnelOid1, kGreTunnelOid2,
+                                           kGreTunnelOid3};
+
+  EXPECT_CALL(mock_sai_tunnel_, create_tunnels(_, Eq(3), _, _, _, _, _))
+      .WillOnce(
+          DoAll(SetArrayArgument<5>(tunnel_oids.begin(), tunnel_oids.end()),
+                SetArrayArgument<6>(create_status.begin(), create_status.end()),
+                Return(SAI_STATUS_SUCCESS)));
+
+  EXPECT_THAT(CreateGreTunnels(std::vector<P4GreTunnelAppDbEntry>{
+                  kP4GreTunnelAppDbEntry1, kP4GreTunnelAppDbEntry2,
+                  kP4GreTunnelAppDbEntry3}),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS,
+                                              StatusCode::SWSS_RC_SUCCESS,
+                                              StatusCode::SWSS_RC_SUCCESS}));
+
+  const auto gre_tunnel_key_1 = KeyGenerator::generateTunnelKey("tunnel-1");
+  EXPECT_NE(nullptr, GetGreTunnelEntry(gre_tunnel_key_1));
+  EXPECT_TRUE(
+      p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key_1));
+
+  const auto router_interface_key_1 = KeyGenerator::generateRouterInterfaceKey(
+      kP4GreTunnelAppDbEntry1.router_interface_id);
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                             router_interface_key_1, 1));
+
+  const auto gre_tunnel_key_2 = KeyGenerator::generateTunnelKey("tunnel-2");
+  EXPECT_NE(nullptr, GetGreTunnelEntry(gre_tunnel_key_2));
+  EXPECT_TRUE(
+      p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key_2));
+
+  const auto router_interface_key_2 = KeyGenerator::generateRouterInterfaceKey(
+      kP4GreTunnelAppDbEntry2.router_interface_id);
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                             router_interface_key_2, 1));
+
+  const auto gre_tunnel_key_3 = KeyGenerator::generateTunnelKey("tunnel-3");
+  EXPECT_NE(nullptr, GetGreTunnelEntry(gre_tunnel_key_3));
+  EXPECT_TRUE(
+      p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key_3));
+
+  const auto router_interface_key_3 = KeyGenerator::generateRouterInterfaceKey(
+      kP4GreTunnelAppDbEntry3.router_interface_id);
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                             router_interface_key_3, 1));
+
+  std::vector<swss::FieldValueTuple> fvs1{
+      {p4orch::kAction, p4orch::kTunnelAction},
+      {prependParamField(p4orch::kRouterInterfaceId),
+       kP4GreTunnelAppDbEntry1.router_interface_id},
+      {prependParamField(p4orch::kEncapSrcIp),
+       kP4GreTunnelAppDbEntry1.encap_src_ip.to_string()},
+      {prependParamField(p4orch::kEncapDstIp),
+       kP4GreTunnelAppDbEntry1.encap_dst_ip.to_string()}};
+  std::vector<swss::FieldValueTuple> fvs2{
+      {p4orch::kAction, p4orch::kTunnelAction},
+      {prependParamField(p4orch::kRouterInterfaceId),
+       kP4GreTunnelAppDbEntry2.router_interface_id},
+      {prependParamField(p4orch::kEncapSrcIp),
+       kP4GreTunnelAppDbEntry2.encap_src_ip.to_string()},
+      {prependParamField(p4orch::kEncapDstIp),
+       kP4GreTunnelAppDbEntry2.encap_dst_ip.to_string()}};
+  std::vector<swss::FieldValueTuple> fvs3{
+      {p4orch::kAction, p4orch::kTunnelAction},
+      {prependParamField(p4orch::kRouterInterfaceId),
+       kP4GreTunnelAppDbEntry3.router_interface_id},
+      {prependParamField(p4orch::kEncapSrcIp),
+       kP4GreTunnelAppDbEntry3.encap_src_ip.to_string()},
+      {prependParamField(p4orch::kEncapDstIp),
+       kP4GreTunnelAppDbEntry3.encap_dst_ip.to_string()}};
+
+  nlohmann::json j;
+  j[prependMatchField(p4orch::kTunnelId)] = "tunnel-1";
+  swss::KeyOpFieldsValuesTuple app_db_entry_1(
+      std::string(APP_P4RT_TUNNEL_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      DEL_COMMAND, fvs1);
+  j[prependMatchField(p4orch::kTunnelId)] = "tunnel-2";
+  swss::KeyOpFieldsValuesTuple app_db_entry_2(
+      std::string(APP_P4RT_TUNNEL_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      DEL_COMMAND, fvs2);
+  j[prependMatchField(p4orch::kTunnelId)] = "tunnel-3";
+  swss::KeyOpFieldsValuesTuple app_db_entry_3(
+      std::string(APP_P4RT_TUNNEL_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      DEL_COMMAND, fvs3);
+
+  Enqueue(app_db_entry_1);
+  Enqueue(app_db_entry_2);
+  Enqueue(app_db_entry_3);
+
+  std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS, SAI_STATUS_FAILURE,
+                                       SAI_STATUS_NOT_EXECUTED};
+  EXPECT_CALL(mock_sai_tunnel_, remove_tunnels(Eq(3), _, _, _))
+      .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()),
+                      Return(SAI_STATUS_FAILURE)));
+
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_1)),
+                      Eq(kfvFieldsValues(app_db_entry_1)),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_2)),
+                      Eq(kfvFieldsValues(app_db_entry_2)),
+                      Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_3)),
+                      Eq(kfvFieldsValues(app_db_entry_3)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
+  EXPECT_EQ(nullptr, GetGreTunnelEntry(gre_tunnel_key_1));
+  EXPECT_FALSE(
+      p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key_1));
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                             router_interface_key_1, 0));
+
+  EXPECT_NE(nullptr, GetGreTunnelEntry(gre_tunnel_key_2));
+  EXPECT_TRUE(
+      p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key_2));
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                             router_interface_key_2, 1));
+
+  EXPECT_NE(nullptr, GetGreTunnelEntry(gre_tunnel_key_3));
+  EXPECT_TRUE(
+      p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key_3));
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                             router_interface_key_3, 1));
+}
+
+TEST_F(GreTunnelManagerTest, DrainStopOnFirstFailureDifferentTypes) {
+  AddGreTunnelEntry1();
+
+  EXPECT_TRUE(p4_oid_mapper_.setOID(
+      SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+      KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId2),
+      kRouterInterfaceOid2));
+
+  std::vector<swss::FieldValueTuple> fvs1{
+      {p4orch::kAction, p4orch::kTunnelAction},
+      {prependParamField(p4orch::kRouterInterfaceId),
+       kP4GreTunnelAppDbEntry1.router_interface_id},
+      {prependParamField(p4orch::kEncapSrcIp),
+       kP4GreTunnelAppDbEntry1.encap_src_ip.to_string()},
+      {prependParamField(p4orch::kEncapDstIp),
+       kP4GreTunnelAppDbEntry1.encap_dst_ip.to_string()}};
+  std::vector<swss::FieldValueTuple> fvs2{
+      {p4orch::kAction, p4orch::kTunnelAction},
+      {prependParamField(p4orch::kRouterInterfaceId),
+       kP4GreTunnelAppDbEntry2.router_interface_id},
+      {prependParamField(p4orch::kEncapSrcIp),
+       kP4GreTunnelAppDbEntry2.encap_src_ip.to_string()},
+      {prependParamField(p4orch::kEncapDstIp),
+       kP4GreTunnelAppDbEntry2.encap_dst_ip.to_string()}};
+
+  nlohmann::json j;
+  j[prependMatchField(p4orch::kTunnelId)] = "tunnel-1";
+  swss::KeyOpFieldsValuesTuple app_db_entry_1(
+      std::string(APP_P4RT_TUNNEL_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs1);
+  j[prependMatchField(p4orch::kTunnelId)] = "tunnel-2";
+  swss::KeyOpFieldsValuesTuple app_db_entry_2(
+      std::string(APP_P4RT_TUNNEL_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs2);
+
+  Enqueue(app_db_entry_2);
+  Enqueue(app_db_entry_1);
+  Enqueue(app_db_entry_2);
+
+  std::vector<sai_status_t> create_status{SAI_STATUS_SUCCESS};
+  std::vector<sai_object_id_t> tunnel_oids{kGreTunnelOid1};
+
+  EXPECT_CALL(mock_sai_tunnel_, create_tunnels(_, Eq(1), _, _, _, _, _))
+      .WillOnce(
+          DoAll(SetArrayArgument<5>(tunnel_oids.begin(), tunnel_oids.end()),
+                SetArrayArgument<6>(create_status.begin(), create_status.end()),
+                Return(SAI_STATUS_SUCCESS)));
+
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_2)),
+                      Eq(kfvFieldsValues(app_db_entry_2)),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_1)),
+                      Eq(kfvFieldsValues(app_db_entry_1)),
+                      Eq(StatusCode::SWSS_RC_UNIMPLEMENTED), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_2)),
+                      Eq(kfvFieldsValues(app_db_entry_2)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_UNIMPLEMENTED, Drain(/*failure_before=*/false));
+
+  const auto gre_tunnel_key_1 = KeyGenerator::generateTunnelKey("tunnel-1");
+  EXPECT_NE(nullptr, GetGreTunnelEntry(gre_tunnel_key_1));
+  EXPECT_TRUE(
+      p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key_1));
+
+  const auto router_interface_key_1 = KeyGenerator::generateRouterInterfaceKey(
+      kP4GreTunnelAppDbEntry1.router_interface_id);
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                             router_interface_key_1, 1));
+  // Verify that the update request failed.
+  EXPECT_TRUE(ValidateGreTunnelEntryAdd(kP4GreTunnelAppDbEntry1));
+
+  const auto gre_tunnel_key_2 = KeyGenerator::generateTunnelKey("tunnel-2");
+  EXPECT_NE(nullptr, GetGreTunnelEntry(gre_tunnel_key_2));
+  EXPECT_TRUE(
+      p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL, gre_tunnel_key_2));
+
+  const auto router_interface_key_2 = KeyGenerator::generateRouterInterfaceKey(
+      kP4GreTunnelAppDbEntry2.router_interface_id);
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                             router_interface_key_2, 1));
 }
 
 TEST_F(GreTunnelManagerTest, VerifyStateTest)

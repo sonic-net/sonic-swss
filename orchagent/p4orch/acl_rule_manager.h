@@ -42,7 +42,8 @@ class AclRuleManager : public ObjectManagerInterface
     virtual ~AclRuleManager() = default;
 
     void enqueue(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry) override;
-    void drain() override;
+    ReturnCode drain() override;
+    void drainWithNotExecuted() override;
     std::string verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple) override;
     ReturnCode getSaiObject(const std::string &json_key, sai_object_type_t &object_type,
                             std::string &object_key) override;
@@ -115,13 +116,16 @@ class AclRuleManager : public ObjectManagerInterface
                                        P4AclRule &acl_rule);
 
     // Validate and set a match attribute in an ACL rule.
-    ReturnCode setMatchValue(const acl_entry_attr_union_t attr_name, const std::string &attr_value,
-                             sai_attribute_value_t *value, P4AclRule *acl_rule,
-                             const std::string &ip_type_bit_type = EMPTY_STRING);
+    ReturnCode setMatchValue(
+        const sai_acl_entry_attr_t attr_name, const std::string& attr_value,
+        sai_attribute_value_t* value, P4AclRule* acl_rule,
+        const std::string& ip_type_bit_type = EMPTY_STRING);
 
     // Validate and set an action attribute in an ACL rule.
-    ReturnCode setActionValue(const acl_entry_attr_union_t attr_name, const std::string &attr_value,
-                              sai_attribute_value_t *value, P4AclRule *acl_rule);
+    ReturnCode setActionValue(const sai_acl_entry_attr_t attr_name,
+                              const std::string& attr_value,
+                              sai_attribute_value_t* value,
+                              P4AclRule* acl_rule);
 
     // Get port object id by name for redirect action.
     ReturnCode getRedirectActionPortOid(const std::string &target, sai_object_id_t *rediect_oid);

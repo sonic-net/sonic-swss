@@ -10,9 +10,9 @@ parameters:
 - name: pool
   type: string
   values:
-  - sonicbld-1es
-  - sonicbld-armhf
-  - sonicbld-arm64
+  - sonicso1ES-amd64
+  - sonicso1ES-armhf
+  - sonicso1ES-arm64
   - default
   default: default
 
@@ -91,7 +91,7 @@ jobs:
       vmImage: 'ubuntu-22.04'
 
   container:
-    image: sonicdev-microsoft.azurecr.io:443/${{ parameters.sonic_slave }}:latest
+    image: sonicdev-microsoft.azurecr.io:443/${{ parameters.sonic_slave }}:$(BUILD_BRANCH)
 
   steps:
   - checkout: self
@@ -106,6 +106,12 @@ jobs:
         libdbus-1-dev \
         libteam-dev
       sudo pip3 install lcov_cobertura
+      sudo apt-get install -y redis-server
+      sudo sed -i 's/notify-keyspace-events ""/notify-keyspace-events AKE/' /etc/redis/redis.conf
+      sudo sed -ri 's/^# unixsocket/unixsocket/' /etc/redis/redis.conf
+      sudo sed -ri 's/^unixsocketperm .../unixsocketperm 777/' /etc/redis/redis.conf
+      sudo sed -ri 's/redis-server.sock/redis.sock/' /etc/redis/redis.conf
+      sudo service redis-server restart
     displayName: "Install dependencies"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -232,6 +238,9 @@ jobs:
       ./autogen.sh
       dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
     displayName: "Compile sonic swss"
+  - script: |
+      cargo test
+    displayName: "Test countersyncd"
   - publish: $(System.DefaultWorkingDirectory)/
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive swss debian packages"

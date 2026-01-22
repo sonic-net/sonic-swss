@@ -18,6 +18,7 @@
 #include "p4orch.h"
 #include "return_code.h"
 #include "swssnet.h"
+
 extern "C"
 {
 #include "sai.h"
@@ -28,10 +29,15 @@ using ::p4orch::kTableKeyDelimiter;
 using ::testing::_;
 using ::testing::DoAll;
 using ::testing::Eq;
+using ::testing::Pointee;
 using ::testing::Return;
 using ::testing::SetArgPointee;
+using ::testing::SetArrayArgument;
 using ::testing::StrictMock;
 using ::testing::Truly;
+
+using sai_attrs_array_t =
+    std::vector<std::unordered_map<sai_attr_id_t, sai_attribute_value_t>>;
 
 extern sai_object_id_t gSwitchId;
 extern MockSaiNextHop *mock_sai_next_hop;
@@ -55,12 +61,22 @@ constexpr char *kRouterInterfaceId1 = "16";
 constexpr char *kRouterInterfaceId2 = "17";
 constexpr sai_object_id_t kRouterInterfaceOid1 = 1;
 constexpr sai_object_id_t kRouterInterfaceOid2 = 2;
+constexpr sai_object_id_t kRouterInterfaceOid3 = 3;
 constexpr char *kTunnelId1 = "tunnel-1";
 constexpr char *kTunnelId2 = "tunnel-2";
 constexpr sai_object_id_t kTunnelOid1 = 11;
 constexpr sai_object_id_t kTunnelOid2 = 12;
 constexpr char *kNeighborId1 = "10.0.0.1";
 constexpr char *kNeighborId2 = "fe80::21a:11ff:fe17:5f80";
+
+MATCHER_P(ArrayEq, array, "") {
+  for (size_t i = 0; i < array.size(); ++i) {
+    if (arg[i] != array[i]) {
+      return false;
+    }
+  }
+  return true;
+}
 
 // APP DB entries for Add and Update request.
 const P4NextHopAppDbEntry kP4NextHopAppDbEntry1{/*next_hop_id=*/kNextHopId,
@@ -150,7 +166,7 @@ std::unordered_map<sai_attr_id_t, sai_attribute_value_t> CreateAttributeListForN
 }
 
 // Verifies whether the attribute list is the same as expected for SAI next
-// hop's create_next_hop().
+// hop's create_next_hops().
 // Returns true if they match; otherwise, false.
 bool MatchCreateNextHopArgAttrList(const sai_attribute_t *attr_list,
                                    const std::unordered_map<sai_attr_id_t, sai_attribute_value_t> &expected_attr_list)
@@ -224,6 +240,15 @@ bool MatchCreateNextHopArgAttrList(const sai_attribute_t *attr_list,
     return true;
 }
 
+MATCHER_P(AttrArrayEq, array, "") {
+  for (size_t i = 0; i < array.size(); ++i) {
+    if (!MatchCreateNextHopArgAttrList(arg[i], array[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
 } // namespace
 
 class NextHopManagerTest : public ::testing::Test
@@ -272,9 +297,12 @@ class NextHopManagerTest : public ::testing::Test
         next_hop_manager_.enqueue(APP_P4RT_NEXTHOP_TABLE_NAME, entry);
     }
 
-    void Drain()
-    {
-        next_hop_manager_.drain();
+    ReturnCode Drain(bool failure_before) {
+      if (failure_before) {
+        next_hop_manager_.drainWithNotExecuted();
+        return ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
+      }
+      return next_hop_manager_.drain();
     }
 
     std::string VerifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)
@@ -282,24 +310,30 @@ class NextHopManagerTest : public ::testing::Test
         return next_hop_manager_.verifyState(key, tuple);
     }
 
-    ReturnCode ProcessAddRequest(const P4NextHopAppDbEntry &app_db_entry)
-    {
-        return next_hop_manager_.processAddRequest(app_db_entry);
+    P4NextHopEntry* GetNextHopEntry(const std::string& next_hop_key) {
+      return next_hop_manager_.getNextHopEntry(next_hop_key);
     }
 
-    ReturnCode ProcessUpdateRequest(const P4NextHopAppDbEntry &app_db_entry, P4NextHopEntry *next_hop_entry)
-    {
-        return next_hop_manager_.processUpdateRequest(app_db_entry, next_hop_entry);
+    std::vector<ReturnCode> CreateNextHops(
+        const std::vector<P4NextHopAppDbEntry>& entries) {
+      return next_hop_manager_.createNextHops(entries);
     }
 
-    ReturnCode ProcessDeleteRequest(const std::string &next_hop_key)
-    {
-        return next_hop_manager_.processDeleteRequest(next_hop_key);
+    std::vector<ReturnCode> RemoveNextHops(
+        const std::vector<P4NextHopAppDbEntry>& entries) {
+      return next_hop_manager_.removeNextHops(entries);
     }
 
-    P4NextHopEntry *GetNextHopEntry(const std::string &next_hop_key)
-    {
-        return next_hop_manager_.getNextHopEntry(next_hop_key);
+    ReturnCode processEntries(
+        const std::vector<P4NextHopAppDbEntry>& entries,
+        const std::vector<swss::KeyOpFieldsValuesTuple>& tuple_list,
+        const std::string& op, bool update) {
+      return next_hop_manager_.processEntries(entries, tuple_list, op, update);
+    }
+
+    ReturnCode ValidateNextHopAppDbEntry(
+        const P4NextHopAppDbEntry& app_db_entry, const std::string& operation) {
+      return next_hop_manager_.validateAppDbEntry(app_db_entry, operation);
     }
 
     ReturnCodeOr<P4NextHopAppDbEntry> DeserializeP4NextHopAppDbEntry(
@@ -340,7 +374,7 @@ class NextHopManagerTest : public ::testing::Test
     }
 
     StrictMock<MockSaiNextHop> mock_sai_next_hop_;
-    MockResponsePublisher publisher_;
+    StrictMock<MockResponsePublisher> publisher_;
     P4OidMapper p4_oid_mapper_;
     NextHopManager next_hop_manager_;
     StrictMock<MockSaiHostif> mock_sai_hostif_;
@@ -397,15 +431,24 @@ P4NextHopEntry *NextHopManagerTest::AddNextHopEntry1()
         return nullptr;
     }
 
-    // Set up mock call.
-    EXPECT_CALL(mock_sai_next_hop_,
-                create_next_hop(
-                    ::testing::NotNull(), Eq(gSwitchId), Eq(3),
-                    Truly(std::bind(MatchCreateNextHopArgAttrList, std::placeholders::_1,
-                                    CreateAttributeListForNextHopObject(kP4NextHopAppDbEntry1, kRouterInterfaceOid1)))))
-        .WillOnce(DoAll(SetArgPointee<0>(kNextHopOid), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
 
-    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddRequest(kP4NextHopAppDbEntry1));
+    // Set up mock call.
+    EXPECT_CALL(
+        mock_sai_next_hop_,
+        create_next_hops(
+            Eq(gSwitchId), Eq(1), Pointee(Eq(3)),
+            AttrArrayEq(sai_attrs_array_t{CreateAttributeListForNextHopObject(
+                kP4NextHopAppDbEntry1, kRouterInterfaceOid1)}),
+            Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), ::testing::NotNull(),
+            ::testing::NotNull()))
+        .WillOnce(
+            DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
+                  SetArgPointee<5>(kNextHopOid), Return(SAI_STATUS_SUCCESS)));
+
+    EXPECT_THAT(
+        CreateNextHops(std::vector<P4NextHopAppDbEntry>{kP4NextHopAppDbEntry1}),
+        ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
 
     return GetNextHopEntry(KeyGenerator::generateNextHopKey(kP4NextHopAppDbEntry1.next_hop_id));
 }
@@ -417,16 +460,25 @@ P4NextHopEntry *NextHopManagerTest::AddTunnelNextHopEntry1()
         return nullptr;
     }
 
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
+
     // Set up mock call.
     EXPECT_CALL(
         mock_sai_next_hop_,
-        create_next_hop(::testing::NotNull(), Eq(gSwitchId), Eq(3),
-                        Truly(std::bind(MatchCreateNextHopArgAttrList, std::placeholders::_1,
-                                        CreateAttributeListForNextHopObject(kP4TunnelNextHopAppDbEntry1, kTunnelOid1,
-                                                                            swss::IpAddress(kNeighborId1))))))
-        .WillOnce(DoAll(SetArgPointee<0>(kTunnelNextHopOid), Return(SAI_STATUS_SUCCESS)));
+        create_next_hops(
+            Eq(gSwitchId), Eq(1), Pointee(Eq(3)),
+            AttrArrayEq(sai_attrs_array_t{CreateAttributeListForNextHopObject(
+                kP4TunnelNextHopAppDbEntry1, kTunnelOid1,
+                swss::IpAddress(kNeighborId1))}),
+            Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), ::testing::NotNull(),
+            ::testing::NotNull()))
+        .WillOnce(
+            DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
+                  SetArgPointee<5>(kNextHopOid), Return(SAI_STATUS_SUCCESS)));
 
-    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddRequest(kP4TunnelNextHopAppDbEntry1));
+    EXPECT_THAT(CreateNextHops(std::vector<P4NextHopAppDbEntry>{
+                    kP4TunnelNextHopAppDbEntry1}),
+                ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
 
     return GetNextHopEntry(KeyGenerator::generateNextHopKey(kP4TunnelNextHopAppDbEntry1.next_hop_id));
 }
@@ -464,274 +516,285 @@ bool NextHopManagerTest::ValidateNextHopEntryAdd(const P4NextHopAppDbEntry &app_
     return true;
 }
 
-TEST_F(NextHopManagerTest, ProcessAddRequestShouldSucceedAddingNewNextHop)
-{
-    ASSERT_TRUE(ResolveNextHopEntryDependency(kP4NextHopAppDbEntry1, kRouterInterfaceOid1));
+TEST_F(NextHopManagerTest, CreateRequestShouldSucceedAddingNewNextHop) {
+  ASSERT_TRUE(ResolveNextHopEntryDependency(kP4NextHopAppDbEntry1,
+                                            kRouterInterfaceOid1));
 
-    const std::string rif_key = KeyGenerator::generateRouterInterfaceKey(kP4NextHopAppDbEntry1.router_interface_id);
-    const std::string neighbor_key =
-        KeyGenerator::generateNeighborKey(kP4NextHopAppDbEntry1.router_interface_id, kP4NextHopAppDbEntry1.neighbor_id);
-    uint32_t original_rif_ref_count;
-    ASSERT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key, &original_rif_ref_count));
-    uint32_t original_neighbor_ref_count;
-    ASSERT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key, &original_neighbor_ref_count));
+  const std::string rif_key = KeyGenerator::generateRouterInterfaceKey(
+      kP4NextHopAppDbEntry1.router_interface_id);
+  const std::string neighbor_key = KeyGenerator::generateNeighborKey(
+      kP4NextHopAppDbEntry1.router_interface_id,
+      kP4NextHopAppDbEntry1.neighbor_id);
+  uint32_t original_rif_ref_count;
+  ASSERT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                         rif_key, &original_rif_ref_count));
+  uint32_t original_neighbor_ref_count;
+  ASSERT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY,
+                                         neighbor_key,
+                                         &original_neighbor_ref_count));
 
-    // Set up mock call.
-    EXPECT_CALL(mock_sai_next_hop_,
-                create_next_hop(
-                    ::testing::NotNull(), Eq(gSwitchId), Eq(3),
-                    Truly(std::bind(MatchCreateNextHopArgAttrList, std::placeholders::_1,
-                                    CreateAttributeListForNextHopObject(kP4NextHopAppDbEntry1, kRouterInterfaceOid1)))))
-        .WillOnce(DoAll(SetArgPointee<0>(kNextHopOid), Return(SAI_STATUS_SUCCESS)));
+  std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
 
-    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddRequest(kP4NextHopAppDbEntry1));
+  // Set up mock call.
+  EXPECT_CALL(
+      mock_sai_next_hop_,
+      create_next_hops(
+          Eq(gSwitchId), Eq(1), Pointee(Eq(3)),
+          AttrArrayEq(sai_attrs_array_t{CreateAttributeListForNextHopObject(
+              kP4NextHopAppDbEntry1, kRouterInterfaceOid1)}),
+          Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), ::testing::NotNull(),
+          ::testing::NotNull()))
+      .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
+                      SetArgPointee<5>(kNextHopOid),
+                      Return(SAI_STATUS_SUCCESS)));
 
-    EXPECT_TRUE(ValidateNextHopEntryAdd(kP4NextHopAppDbEntry1, kNextHopOid));
-    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key, original_rif_ref_count + 1));
-    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key, original_neighbor_ref_count + 1));
+  EXPECT_THAT(
+      CreateNextHops(std::vector<P4NextHopAppDbEntry>{kP4NextHopAppDbEntry1}),
+      ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
+
+  EXPECT_TRUE(ValidateNextHopEntryAdd(kP4NextHopAppDbEntry1, kNextHopOid));
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key,
+                             original_rif_ref_count + 1));
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key,
+                             original_neighbor_ref_count + 1));
 }
 
-TEST_F(NextHopManagerTest, ProcessAddRequestShouldFailWhenNextHopExistInCentralMapper)
-{
-    ASSERT_TRUE(ResolveNextHopEntryDependency(kP4NextHopAppDbEntry1, kRouterInterfaceOid1));
-    ASSERT_TRUE(p4_oid_mapper_.setOID(
-        SAI_OBJECT_TYPE_NEXT_HOP, KeyGenerator::generateNextHopKey(kP4NextHopAppDbEntry1.next_hop_id), kNextHopOid));
-    // TODO: Expect critical state.
-    EXPECT_EQ(StatusCode::SWSS_RC_INTERNAL, ProcessAddRequest(kP4NextHopAppDbEntry1));
+TEST_F(NextHopManagerTest,
+       ValidateShouldFailForCreateWhenNextHopExistInCentralMapper) {
+  ASSERT_TRUE(ResolveNextHopEntryDependency(kP4NextHopAppDbEntry1,
+                                            kRouterInterfaceOid1));
+  ASSERT_TRUE(p4_oid_mapper_.setOID(
+      SAI_OBJECT_TYPE_NEXT_HOP,
+      KeyGenerator::generateNextHopKey(kP4NextHopAppDbEntry1.next_hop_id),
+      kNextHopOid));
+  // TODO: Expect critical state.
+  EXPECT_FALSE(
+      ValidateNextHopAppDbEntry(kP4NextHopAppDbEntry1, SET_COMMAND).ok());
 }
 
-TEST_F(NextHopManagerTest, ProcessAddRequestShouldFailWhenDependingRifIsAbsentInCentralMapper)
-{
-    const std::string neighbor_key =
-        KeyGenerator::generateNeighborKey(kP4NextHopAppDbEntry1.router_interface_id, kP4NextHopAppDbEntry1.neighbor_id);
-    ASSERT_TRUE(p4_oid_mapper_.setDummyOID(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key));
+TEST_F(NextHopManagerTest,
+       ValidateCreateShouldFailWhenDependingRifIsAbsentInCentralMapper) {
+  const std::string neighbor_key = KeyGenerator::generateNeighborKey(
+      kP4NextHopAppDbEntry1.router_interface_id,
+      kP4NextHopAppDbEntry1.neighbor_id);
+  ASSERT_TRUE(
+      p4_oid_mapper_.setDummyOID(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key));
 
-    EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, ProcessAddRequest(kP4NextHopAppDbEntry1));
-
-    EXPECT_EQ(GetNextHopEntry(KeyGenerator::generateNextHopKey(kP4NextHopAppDbEntry1.next_hop_id)), nullptr);
+  EXPECT_FALSE(
+      ValidateNextHopAppDbEntry(kP4NextHopAppDbEntry1, SET_COMMAND).ok());
 }
 
-TEST_F(NextHopManagerTest, ProcessAddRequestShouldFailWhenDependingTunnelIsAbsentInCentralMapper)
-{
-    const std::string neighbor_key =
-        KeyGenerator::generateNeighborKey(kP4TunnelNextHopAppDbEntry1.router_interface_id, kP4TunnelEntry1.neighbor_id);
-    ASSERT_TRUE(p4_oid_mapper_.setDummyOID(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key));
+TEST_F(NextHopManagerTest,
+       ValidateCreateShouldFailWhenDependingTunnelIsAbsentInCentralMapper) {
+  const std::string neighbor_key = KeyGenerator::generateNeighborKey(
+      kP4TunnelNextHopAppDbEntry1.router_interface_id,
+      kP4TunnelEntry1.neighbor_id);
+  ASSERT_TRUE(
+      p4_oid_mapper_.setDummyOID(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key));
 
-    EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, ProcessAddRequest(kP4TunnelNextHopAppDbEntry1));
-
-    EXPECT_EQ(GetNextHopEntry(KeyGenerator::generateNextHopKey(kP4TunnelNextHopAppDbEntry1.next_hop_id)), nullptr);
+  EXPECT_FALSE(
+      ValidateNextHopAppDbEntry(kP4TunnelNextHopAppDbEntry1, SET_COMMAND).ok());
 }
 
-TEST_F(NextHopManagerTest, ProcessAddRequestShouldFailWhenDependingNeigherIsAbsentInCentralMapper)
-{
-    const std::string rif_key = KeyGenerator::generateRouterInterfaceKey(kP4NextHopAppDbEntry1.router_interface_id);
-    ASSERT_TRUE(p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key, kRouterInterfaceOid1));
+TEST_F(NextHopManagerTest,
+       ValidateCreateShouldFailWhenDependingNeigherIsAbsentInCentralMapper) {
+  const std::string rif_key = KeyGenerator::generateRouterInterfaceKey(
+      kP4NextHopAppDbEntry1.router_interface_id);
+  ASSERT_TRUE(p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key,
+                                    kRouterInterfaceOid1));
 
-    EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, ProcessAddRequest(kP4NextHopAppDbEntry1));
-
-    EXPECT_EQ(GetNextHopEntry(KeyGenerator::generateNextHopKey(kP4NextHopAppDbEntry1.next_hop_id)), nullptr);
+  EXPECT_FALSE(
+      ValidateNextHopAppDbEntry(kP4TunnelNextHopAppDbEntry1, SET_COMMAND).ok());
 }
 
-TEST_F(NextHopManagerTest, ProcessAddRequestShouldFailWhenSaiCallFails)
-{
-    ASSERT_TRUE(ResolveNextHopEntryDependency(kP4NextHopAppDbEntry1, kRouterInterfaceOid1));
+TEST_F(NextHopManagerTest, CreateNextHopsShouldFailWhenSaiCallFails) {
+  ASSERT_TRUE(ResolveNextHopEntryDependency(kP4NextHopAppDbEntry1,
+                                            kRouterInterfaceOid1));
 
-    // Set up mock call.
-    EXPECT_CALL(mock_sai_next_hop_,
-                create_next_hop(
-                    ::testing::NotNull(), Eq(gSwitchId), Eq(3),
-                    Truly(std::bind(MatchCreateNextHopArgAttrList, std::placeholders::_1,
-                                    CreateAttributeListForNextHopObject(kP4NextHopAppDbEntry1, kRouterInterfaceOid1)))))
-        .WillOnce(Return(SAI_STATUS_FAILURE));
+  std::vector<sai_status_t> exp_status{SAI_STATUS_FAILURE};
 
-    EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, ProcessAddRequest(kP4NextHopAppDbEntry1));
+  // Set up mock call.
+  EXPECT_CALL(
+      mock_sai_next_hop_,
 
-    // The add request failed for the next hop entry.
-    EXPECT_EQ(GetNextHopEntry(KeyGenerator::generateNextHopKey(kP4NextHopAppDbEntry1.next_hop_id)), nullptr);
+      create_next_hops(
+          Eq(gSwitchId), Eq(1), Pointee(Eq(3)),
+          AttrArrayEq(sai_attrs_array_t{CreateAttributeListForNextHopObject(
+              kP4NextHopAppDbEntry1, kRouterInterfaceOid1)}),
+          Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), ::testing::NotNull(),
+          ::testing::NotNull()))
+      .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
+                      SetArgPointee<5>(kNextHopOid),
+                      Return(SAI_STATUS_FAILURE)));
+
+  EXPECT_THAT(
+      CreateNextHops(std::vector<P4NextHopAppDbEntry>{kP4NextHopAppDbEntry1}),
+      ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN}));
+
+  // The add request failed for the next hop entry.
+  EXPECT_EQ(GetNextHopEntry(KeyGenerator::generateNextHopKey(
+                kP4NextHopAppDbEntry1.next_hop_id)),
+            nullptr);
 }
 
-TEST_F(NextHopManagerTest, ProcessAddRequestShouldDoNoOpForDuplicateAddRequest)
-{
-    ASSERT_NE(AddNextHopEntry1(), nullptr);
+TEST_F(NextHopManagerTest, CreateNextHopsShouldSuccessForTunnelNexthop) {
+  ASSERT_TRUE(
+      ResolveNextHopEntryDependency(kP4TunnelNextHopAppDbEntry1, kTunnelOid1));
 
-    // Add the same next hop entry again.
-    EXPECT_EQ(StatusCode::SWSS_RC_EXISTS, ProcessAddRequest(kP4NextHopAppDbEntry1));
+  std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
 
-    // Adding the same next hop entry multiple times should have the same outcome
-    // as adding it once.
-    EXPECT_TRUE(ValidateNextHopEntryAdd(kP4NextHopAppDbEntry1, kNextHopOid));
-    const std::string rif_key = KeyGenerator::generateRouterInterfaceKey(kP4NextHopAppDbEntry1.router_interface_id);
-    const std::string neighbor_key =
-        KeyGenerator::generateNeighborKey(kP4NextHopAppDbEntry1.router_interface_id, kP4NextHopAppDbEntry1.neighbor_id);
-    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key, 1));
-    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key, 1));
+  // Set up mock call.
+  EXPECT_CALL(mock_sai_next_hop_, create_next_hops(_, _, _, _, _, _, _))
+      /*      create_next_hops(
+                Eq(gSwitchId), Eq(1), Pointee(Eq(3)),
+                AttrArrayEq(sai_attrs_array_t{CreateAttributeListForNextHopObject(
+                    kP4TunnelNextHopAppDbEntry1, kTunnelOid1,
+                    swss::IpAddress(kNeighborId1))}),
+                Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR),
+                ::testing::NotNull(), ::testing::NotNull()))
+      */
+      .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
+                      SetArgPointee<5>(kTunnelNextHopOid),
+                      Return(SAI_STATUS_SUCCESS)));
+
+  EXPECT_THAT(CreateNextHops(std::vector<P4NextHopAppDbEntry>{
+                  kP4TunnelNextHopAppDbEntry1}),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
+
+  EXPECT_NE(GetNextHopEntry(KeyGenerator::generateNextHopKey(
+                kP4TunnelNextHopAppDbEntry1.next_hop_id)),
+            nullptr);
+
+  EXPECT_TRUE(
+      ValidateNextHopEntryAdd(kP4TunnelNextHopAppDbEntry1, kTunnelNextHopOid));
+  const std::string tunnel_key = KeyGenerator::generateTunnelKey(
+      kP4TunnelNextHopAppDbEntry1.gre_tunnel_id);
+  const std::string neighbor_key = KeyGenerator::generateNeighborKey(
+      kP4TunnelEntry1.router_interface_id, kP4TunnelEntry1.neighbor_id);
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_TUNNEL, tunnel_key, 1));
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key, 1));
 }
 
-TEST_F(NextHopManagerTest, ProcessAddRequestShouldSuccessForTunnelNexthop)
-{
-    ASSERT_TRUE(ResolveNextHopEntryDependency(kP4TunnelNextHopAppDbEntry1, kTunnelOid1));
+TEST_F(NextHopManagerTest, RemoveRequestShouldSucceedForExistingNextHop) {
+  auto* p4_next_hop_entry = AddNextHopEntry1();
+  ASSERT_NE(p4_next_hop_entry, nullptr);
 
-    // Set up mock call.
-    EXPECT_CALL(
-        mock_sai_next_hop_,
-        create_next_hop(::testing::NotNull(), Eq(gSwitchId), Eq(3),
-                        Truly(std::bind(MatchCreateNextHopArgAttrList, std::placeholders::_1,
-                                        CreateAttributeListForNextHopObject(kP4TunnelNextHopAppDbEntry1, kTunnelOid1,
-                                                                            swss::IpAddress(kNeighborId1))))))
-        .WillOnce(DoAll(SetArgPointee<0>(kTunnelNextHopOid), Return(SAI_STATUS_SUCCESS)));
+  std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
+  EXPECT_CALL(
+      mock_sai_next_hop_,
+      remove_next_hops(_, Pointee(Eq(p4_next_hop_entry->next_hop_oid)), _, _))
+      .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()),
+                      Return(SAI_STATUS_SUCCESS)));
 
-    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddRequest(kP4TunnelNextHopAppDbEntry1));
+  EXPECT_THAT(
+      RemoveNextHops(std::vector<P4NextHopAppDbEntry>{kP4NextHopAppDbEntry1}),
+      ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
 
-    EXPECT_NE(GetNextHopEntry(KeyGenerator::generateNextHopKey(kP4TunnelNextHopAppDbEntry1.next_hop_id)), nullptr);
+  // Validate the next hop entry has been deleted in both P4 next hop manager
+  // and centralized mapper.
+  p4_next_hop_entry = GetNextHopEntry(
+      KeyGenerator::generateNextHopKey(kP4NextHopAppDbEntry1.next_hop_id));
+  EXPECT_EQ(p4_next_hop_entry, nullptr);
+  EXPECT_FALSE(p4_oid_mapper_.existsOID(
+      SAI_OBJECT_TYPE_NEXT_HOP,
+      KeyGenerator::generateNextHopKey(kP4NextHopAppDbEntry1.next_hop_id)));
 
-    // Add the same next hop entry again.
-    EXPECT_EQ(StatusCode::SWSS_RC_EXISTS, ProcessAddRequest(kP4TunnelNextHopAppDbEntry1));
-
-    // Adding the same next hop entry multiple times should have the same outcome
-    // as adding it once.
-    EXPECT_TRUE(ValidateNextHopEntryAdd(kP4TunnelNextHopAppDbEntry1, kTunnelNextHopOid));
-    const std::string tunnel_key = KeyGenerator::generateTunnelKey(kP4TunnelNextHopAppDbEntry1.gre_tunnel_id);
-    const std::string neighbor_key =
-        KeyGenerator::generateNeighborKey(kP4TunnelEntry1.router_interface_id, kP4TunnelEntry1.neighbor_id);
-    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_TUNNEL, tunnel_key, 1));
-    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key, 1));
+  // Validate ref count decrement.
+  const std::string rif_key = KeyGenerator::generateRouterInterfaceKey(
+      kP4NextHopAppDbEntry1.router_interface_id);
+  const std::string neighbor_key = KeyGenerator::generateNeighborKey(
+      kP4NextHopAppDbEntry1.router_interface_id,
+      kP4NextHopAppDbEntry1.neighbor_id);
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key, 0));
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key, 0));
 }
 
-TEST_F(NextHopManagerTest, ProcessUpdateRequestShouldFailAsItIsUnsupported)
-{
-    auto *p4_next_hop_entry = AddNextHopEntry1();
-    ASSERT_NE(p4_next_hop_entry, nullptr);
-
-    EXPECT_EQ(StatusCode::SWSS_RC_UNIMPLEMENTED, ProcessUpdateRequest(kP4NextHopAppDbEntry2, p4_next_hop_entry));
-
-    // Expect that the update call will fail, so next hop entry's fields stay the
-    // same.
-    EXPECT_TRUE(ValidateNextHopEntryAdd(kP4NextHopAppDbEntry1, kNextHopOid));
-
-    // Validate ref count stay the same.
-    const std::string rif_key = KeyGenerator::generateRouterInterfaceKey(kP4NextHopAppDbEntry1.router_interface_id);
-    const std::string neighbor_key =
-        KeyGenerator::generateNeighborKey(kP4NextHopAppDbEntry1.router_interface_id, kP4NextHopAppDbEntry1.neighbor_id);
-    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key, 1));
-    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key, 1));
+TEST_F(NextHopManagerTest, ValidateRemoveShouldFailForNonExistingNextHop) {
+  EXPECT_FALSE(
+      ValidateNextHopAppDbEntry(kP4TunnelNextHopAppDbEntry1, DEL_COMMAND).ok());
 }
 
-TEST_F(NextHopManagerTest, ProcessDeleteRequestShouldSucceedForExistingNextHop)
-{
-    auto *p4_next_hop_entry = AddNextHopEntry1();
-    ASSERT_NE(p4_next_hop_entry, nullptr);
+TEST_F(NextHopManagerTest,
+       ValidateRemoveRequestShouldFailIfNextHopEntryIsAbsentInCentralMapper) {
+  auto* p4_next_hop_entry = AddNextHopEntry1();
+  ASSERT_NE(p4_next_hop_entry, nullptr);
 
-    // Set up mock call.
-    EXPECT_CALL(mock_sai_next_hop_, remove_next_hop(Eq(p4_next_hop_entry->next_hop_oid)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+  ASSERT_TRUE(p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_NEXT_HOP,
+                                      p4_next_hop_entry->next_hop_key));
 
-    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessDeleteRequest(p4_next_hop_entry->next_hop_key));
-
-    // Validate the next hop entry has been deleted in both P4 next hop manager
-    // and centralized mapper.
-    p4_next_hop_entry = GetNextHopEntry(KeyGenerator::generateNextHopKey(kP4NextHopAppDbEntry1.next_hop_id));
-    EXPECT_EQ(p4_next_hop_entry, nullptr);
-    EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_NEXT_HOP,
-                                          KeyGenerator::generateNextHopKey(kP4NextHopAppDbEntry1.next_hop_id)));
-
-    // Validate ref count decrement.
-    const std::string rif_key = KeyGenerator::generateRouterInterfaceKey(kP4NextHopAppDbEntry1.router_interface_id);
-    const std::string neighbor_key =
-        KeyGenerator::generateNeighborKey(kP4NextHopAppDbEntry1.router_interface_id, kP4NextHopAppDbEntry1.neighbor_id);
-    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key, 0));
-    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key, 0));
+  EXPECT_EQ(
+      StatusCode::SWSS_RC_NOT_FOUND,
+      ValidateNextHopAppDbEntry(kP4TunnelNextHopAppDbEntry1, DEL_COMMAND));
 }
 
-TEST_F(NextHopManagerTest, ProcessDeleteRequestShouldFailForNonExistingNextHop)
-{
-    EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND,
-              ProcessDeleteRequest(KeyGenerator::generateNextHopKey(kP4NextHopAppDbEntry1.next_hop_id)));
+TEST_F(NextHopManagerTest,
+       ValidateRemoveRequestShouldFailIfNextHopEntryIsStillReferenced) {
+  auto* p4_next_hop_entry = AddNextHopEntry1();
+  ASSERT_NE(p4_next_hop_entry, nullptr);
+
+  ASSERT_TRUE(p4_oid_mapper_.increaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP,
+                                              p4_next_hop_entry->next_hop_key));
+
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+            ValidateNextHopAppDbEntry(kP4NextHopAppDbEntry1, DEL_COMMAND));
 }
 
-TEST_F(NextHopManagerTest, ProcessDeleteRequestShouldFailIfNextHopEntryIsAbsentInCentralMapper)
-{
-    auto *p4_next_hop_entry = AddNextHopEntry1();
-    ASSERT_NE(p4_next_hop_entry, nullptr);
+TEST_F(NextHopManagerTest, RemoveRequestShouldFailIfSaiCallFails) {
+  auto* p4_next_hop_entry = AddNextHopEntry1();
+  ASSERT_NE(p4_next_hop_entry, nullptr);
 
-    ASSERT_TRUE(p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_NEXT_HOP, p4_next_hop_entry->next_hop_key));
+  std::vector<sai_status_t> exp_status{SAI_STATUS_FAILURE};
+  EXPECT_CALL(
+      mock_sai_next_hop_,
+      remove_next_hops(_, Pointee(Eq(p4_next_hop_entry->next_hop_oid)), _, _))
+      .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()),
+                      Return(SAI_STATUS_FAILURE)));
 
-    // TODO: Expect critical state.
-    EXPECT_EQ(StatusCode::SWSS_RC_INTERNAL, ProcessDeleteRequest(p4_next_hop_entry->next_hop_key));
+  EXPECT_THAT(
+      RemoveNextHops(std::vector<P4NextHopAppDbEntry>{kP4NextHopAppDbEntry1}),
+      ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN}));
 
-    // Validate the next hop entry is not deleted in P4 next hop manager.
-    p4_next_hop_entry = GetNextHopEntry(KeyGenerator::generateNextHopKey(kP4NextHopAppDbEntry1.next_hop_id));
-    ASSERT_NE(p4_next_hop_entry, nullptr);
+  // Validate the next hop entry is not deleted in either P4 next hop manager or
+  // central mapper.
+  p4_next_hop_entry = GetNextHopEntry(
+      KeyGenerator::generateNextHopKey(kP4NextHopAppDbEntry1.next_hop_id));
+  ASSERT_NE(p4_next_hop_entry, nullptr);
+  EXPECT_TRUE(p4_oid_mapper_.existsOID(
+      SAI_OBJECT_TYPE_NEXT_HOP,
+      KeyGenerator::generateNextHopKey(kP4NextHopAppDbEntry1.next_hop_id)));
 
-    // Validate ref count remains the same.
-    const std::string rif_key = KeyGenerator::generateRouterInterfaceKey(kP4NextHopAppDbEntry1.router_interface_id);
-    const std::string neighbor_key =
-        KeyGenerator::generateNeighborKey(kP4NextHopAppDbEntry1.router_interface_id, kP4NextHopAppDbEntry1.neighbor_id);
-    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key, 1));
-    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key, 1));
-}
-
-TEST_F(NextHopManagerTest, ProcessDeleteRequestShouldFailIfNextHopEntryIsStillReferenced)
-{
-    auto *p4_next_hop_entry = AddNextHopEntry1();
-    ASSERT_NE(p4_next_hop_entry, nullptr);
-
-    ASSERT_TRUE(p4_oid_mapper_.increaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP, p4_next_hop_entry->next_hop_key));
-
-    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessDeleteRequest(p4_next_hop_entry->next_hop_key));
-
-    // Validate the next hop entry is not deleted in either P4 next hop manager or
-    // central mapper.
-    p4_next_hop_entry = GetNextHopEntry(KeyGenerator::generateNextHopKey(kP4NextHopAppDbEntry1.next_hop_id));
-    ASSERT_NE(p4_next_hop_entry, nullptr);
-    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_NEXT_HOP, p4_next_hop_entry->next_hop_key, 1));
-
-    // Validate ref count remains the same.
-    const std::string rif_key = KeyGenerator::generateRouterInterfaceKey(kP4NextHopAppDbEntry1.router_interface_id);
-    const std::string neighbor_key =
-        KeyGenerator::generateNeighborKey(kP4NextHopAppDbEntry1.router_interface_id, kP4NextHopAppDbEntry1.neighbor_id);
-    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key, 1));
-    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key, 1));
-}
-
-TEST_F(NextHopManagerTest, ProcessDeleteRequestShouldFailIfSaiCallFails)
-{
-    auto *p4_next_hop_entry = AddNextHopEntry1();
-    ASSERT_NE(p4_next_hop_entry, nullptr);
-
-    // Set up mock call.
-    EXPECT_CALL(mock_sai_next_hop_, remove_next_hop(Eq(p4_next_hop_entry->next_hop_oid)))
-        .WillOnce(Return(SAI_STATUS_FAILURE));
-
-    EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, ProcessDeleteRequest(p4_next_hop_entry->next_hop_key));
-
-    // Validate the next hop entry is not deleted in either P4 next hop manager or
-    // central mapper.
-    p4_next_hop_entry = GetNextHopEntry(KeyGenerator::generateNextHopKey(kP4NextHopAppDbEntry1.next_hop_id));
-    ASSERT_NE(p4_next_hop_entry, nullptr);
-    EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_NEXT_HOP,
-                                         KeyGenerator::generateNextHopKey(kP4NextHopAppDbEntry1.next_hop_id)));
-
-    // Validate ref count remains the same.
-    const std::string rif_key = KeyGenerator::generateRouterInterfaceKey(kP4NextHopAppDbEntry1.router_interface_id);
-    const std::string neighbor_key =
-        KeyGenerator::generateNeighborKey(kP4NextHopAppDbEntry1.router_interface_id, kP4NextHopAppDbEntry1.neighbor_id);
-    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key, 1));
-    EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key, 1));
+  // Validate ref count remains the same.
+  const std::string rif_key = KeyGenerator::generateRouterInterfaceKey(
+      kP4NextHopAppDbEntry1.router_interface_id);
+  const std::string neighbor_key = KeyGenerator::generateNeighborKey(
+      kP4NextHopAppDbEntry1.router_interface_id,
+      kP4NextHopAppDbEntry1.neighbor_id);
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key, 1));
+  EXPECT_TRUE(ValidateRefCnt(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key, 1));
 }
 
 TEST_F(NextHopManagerTest, GetNextHopEntryShouldReturnValidPointerForAddedNextHop)
 {
     ASSERT_TRUE(ResolveNextHopEntryDependency(kP4NextHopAppDbEntry1, kRouterInterfaceOid1));
 
-    // Set up mock call.
-    EXPECT_CALL(mock_sai_next_hop_,
-                create_next_hop(
-                    ::testing::NotNull(), Eq(gSwitchId), Eq(3),
-                    Truly(std::bind(MatchCreateNextHopArgAttrList, std::placeholders::_1,
-                                    CreateAttributeListForNextHopObject(kP4NextHopAppDbEntry1, kRouterInterfaceOid1)))))
-        .WillOnce(DoAll(SetArgPointee<0>(kNextHopOid), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
 
-    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddRequest(kP4NextHopAppDbEntry1));
+    // Set up mock call.
+    EXPECT_CALL(
+        mock_sai_next_hop_,
+        create_next_hops(
+            Eq(gSwitchId), Eq(1), Pointee(Eq(3)),
+            AttrArrayEq(sai_attrs_array_t{CreateAttributeListForNextHopObject(
+                kP4NextHopAppDbEntry1, kRouterInterfaceOid1)}),
+            Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), ::testing::NotNull(),
+            ::testing::NotNull()))
+        .WillOnce(
+            DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
+                  SetArgPointee<5>(kNextHopOid), Return(SAI_STATUS_SUCCESS)));
+
+    EXPECT_THAT(
+        CreateNextHops(std::vector<P4NextHopAppDbEntry>{kP4NextHopAppDbEntry1}),
+        ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
 
     EXPECT_NE(GetNextHopEntry(KeyGenerator::generateNextHopKey(kP4NextHopAppDbEntry1.next_hop_id)), nullptr);
 }
@@ -812,10 +875,20 @@ TEST_F(NextHopManagerTest, DrainValidAppEntryShouldSucceed)
     Enqueue(app_db_entry);
 
     EXPECT_TRUE(ResolveNextHopEntryDependency(kP4NextHopAppDbEntry2, kRouterInterfaceOid2));
-    EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
-        .WillOnce(DoAll(SetArgPointee<0>(kNextHopOid), Return(SAI_STATUS_SUCCESS)));
 
-    Drain();
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
+
+    // Set up mock call.
+    EXPECT_CALL(mock_sai_next_hop_, create_next_hops(_, _, _, _, _, _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
+                  SetArgPointee<5>(kNextHopOid), Return(SAI_STATUS_SUCCESS)));
+
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     EXPECT_TRUE(ValidateNextHopEntryAdd(kP4NextHopAppDbEntry2, kNextHopOid));
 }
@@ -834,10 +907,19 @@ TEST_F(NextHopManagerTest, DrainValidTunnelNexthopAppEntryShouldSucceed)
     Enqueue(tunnel_app_db_entry);
 
     EXPECT_TRUE(ResolveNextHopEntryDependency(kP4TunnelNextHopAppDbEntry2, kTunnelOid2));
-    EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
-        .WillOnce(DoAll(SetArgPointee<0>(kTunnelNextHopOid), Return(SAI_STATUS_SUCCESS)));
 
-    Drain();
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
+    // Set up mock call.
+    EXPECT_CALL(mock_sai_next_hop_, create_next_hops(_, _, _, _, _, _, _))
+        .WillOnce(DoAll(
+            SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
+            SetArgPointee<5>(kTunnelNextHopOid), Return(SAI_STATUS_SUCCESS)));
+
+    EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME),
+                                    Eq(kfvKey(tunnel_app_db_entry)),
+                                    Eq(kfvFieldsValues(tunnel_app_db_entry)),
+                                    Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     EXPECT_TRUE(ValidateNextHopEntryAdd(kP4TunnelNextHopAppDbEntry2, kTunnelNextHopOid));
 
@@ -846,10 +928,19 @@ TEST_F(NextHopManagerTest, DrainValidTunnelNexthopAppEntryShouldSucceed)
     std::vector<swss::FieldValueTuple> fvs;
     swss::KeyOpFieldsValuesTuple app_db_entry(std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
                                               DEL_COMMAND, fvs);
-    EXPECT_CALL(mock_sai_next_hop_, remove_next_hop(Eq(kTunnelNextHopOid))).WillOnce(Return(SAI_STATUS_SUCCESS));
+
+    EXPECT_CALL(mock_sai_next_hop_,
+                remove_next_hops(_, Pointee(Eq(kTunnelNextHopOid)), _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()),
+                  Return(SAI_STATUS_SUCCESS)));
 
     Enqueue(app_db_entry);
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     // Validate the next hop entry has been deleted in both P4 next hop manager
     // and centralized mapper.
@@ -880,8 +971,12 @@ TEST_F(NextHopManagerTest, DrainAppEntryWithInvalidOpShouldBeNoOp)
     Enqueue(app_db_entry);
 
     EXPECT_TRUE(ResolveNextHopEntryDependency(kP4NextHopAppDbEntry2, kRouterInterfaceOid2));
-
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
 
     EXPECT_FALSE(ValidateNextHopEntryAdd(kP4NextHopAppDbEntry2, kNextHopOid));
 }
@@ -899,8 +994,13 @@ TEST_F(NextHopManagerTest, DrainAppEntryWithInvalidFieldShouldBeNoOp)
                                               SET_COMMAND, fvs);
 
     Enqueue(app_db_entry);
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
 
-    Drain();
     EXPECT_FALSE(ValidateNextHopEntryAdd(kP4NextHopAppDbEntry2, kNextHopOid));
 
     // Missing action field
@@ -909,18 +1009,26 @@ TEST_F(NextHopManagerTest, DrainAppEntryWithInvalidFieldShouldBeNoOp)
     app_db_entry = {std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(), SET_COMMAND, fvs};
 
     Enqueue(app_db_entry);
-
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
     EXPECT_FALSE(ValidateNextHopEntryAdd(kP4NextHopAppDbEntry2, kNextHopOid));
 
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
     // Missing neighbor field
     fvs = {{p4orch::kAction, p4orch::kSetIpNexthop},
            {prependParamField(p4orch::kRouterInterfaceId), kRouterInterfaceId2}};
     app_db_entry = {std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(), SET_COMMAND, fvs};
 
     Enqueue(app_db_entry);
-
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
     EXPECT_FALSE(ValidateNextHopEntryAdd(kP4NextHopAppDbEntry2, kNextHopOid));
 
     // set_ip_nexthop + missing router_interface_id
@@ -928,8 +1036,13 @@ TEST_F(NextHopManagerTest, DrainAppEntryWithInvalidFieldShouldBeNoOp)
     app_db_entry = {std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(), SET_COMMAND, fvs};
 
     Enqueue(app_db_entry);
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
 
-    Drain();
     EXPECT_FALSE(ValidateNextHopEntryAdd(kP4NextHopAppDbEntry2, kNextHopOid));
 
     //  set_ip_nexthop + invalid param/tunnel_id
@@ -939,8 +1052,13 @@ TEST_F(NextHopManagerTest, DrainAppEntryWithInvalidFieldShouldBeNoOp)
     app_db_entry = {std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(), SET_COMMAND, fvs};
 
     Enqueue(app_db_entry);
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
 
-    Drain();
     EXPECT_FALSE(ValidateNextHopEntryAdd(kP4NextHopAppDbEntry2, kNextHopOid));
 
     // set_p2p_tunnel_encap_nexthop + invalid router_interface_id
@@ -950,8 +1068,13 @@ TEST_F(NextHopManagerTest, DrainAppEntryWithInvalidFieldShouldBeNoOp)
     app_db_entry = {std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(), SET_COMMAND, fvs};
 
     Enqueue(app_db_entry);
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
 
-    Drain();
     EXPECT_FALSE(ValidateNextHopEntryAdd(kP4TunnelNextHopAppDbEntry2, kNextHopOid));
 
     // set_p2p_tunnel_encap_nexthop + missing tunnel_id
@@ -959,8 +1082,12 @@ TEST_F(NextHopManagerTest, DrainAppEntryWithInvalidFieldShouldBeNoOp)
     app_db_entry = {std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(), SET_COMMAND, fvs};
 
     Enqueue(app_db_entry);
-
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              Drain(/*failure_before=*/false));
     EXPECT_FALSE(ValidateNextHopEntryAdd(kP4TunnelNextHopAppDbEntry2, kNextHopOid));
 }
 
@@ -971,14 +1098,21 @@ TEST_F(NextHopManagerTest, DrainUpdateRequestShouldBeUnsupported)
 
     nlohmann::json j;
     j[prependMatchField(p4orch::kNexthopId)] = kNextHopId;
-    std::vector<swss::FieldValueTuple> fvs{{prependParamField(p4orch::kNeighborId), kNeighborId2},
-                                           {prependParamField(p4orch::kRouterInterfaceId), kRouterInterfaceId2}};
+    std::vector<swss::FieldValueTuple> fvs{
+        {p4orch::kAction, p4orch::kSetIpNexthop},
+        {prependParamField(p4orch::kNeighborId), kNeighborId2},
+        {prependParamField(p4orch::kRouterInterfaceId), kRouterInterfaceId2}};
     swss::KeyOpFieldsValuesTuple app_db_entry(std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
                                               SET_COMMAND, fvs);
 
     Enqueue(app_db_entry);
     EXPECT_TRUE(ResolveNextHopEntryDependency(kP4NextHopAppDbEntry2, kRouterInterfaceOid2));
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_UNIMPLEMENTED), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_UNIMPLEMENTED,
+              Drain(/*failure_before=*/false));
 
     // Expect that the update call will fail, so next hop entry's fields stay the
     // same.
@@ -1002,11 +1136,21 @@ TEST_F(NextHopManagerTest, DrainDeleteRequestShouldSucceedForExistingNextHop)
     std::vector<swss::FieldValueTuple> fvs;
     swss::KeyOpFieldsValuesTuple app_db_entry(std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
                                               DEL_COMMAND, fvs);
-    EXPECT_CALL(mock_sai_next_hop_, remove_next_hop(Eq(p4_next_hop_entry->next_hop_oid)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
+    EXPECT_CALL(
+        mock_sai_next_hop_,
+        remove_next_hops(_, Pointee(Eq(p4_next_hop_entry->next_hop_oid)), _, _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()),
+                  Return(SAI_STATUS_SUCCESS)));
 
     Enqueue(app_db_entry);
-    Drain();
+    EXPECT_CALL(publisher_,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                        Eq(kfvFieldsValues(app_db_entry)),
+                        Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     // Validate the next hop entry has been deleted in both P4 next hop manager
     // and centralized mapper.
@@ -1092,20 +1236,223 @@ TEST_F(NextHopManagerTest, VerifyIpNextHopStateTest)
     p4_next_hop_entry->gre_tunnel_id = saved_gre_tunnel_id;
 }
 
+TEST_F(NextHopManagerTest, DrainNotExecuted) {
+  std::vector<swss::FieldValueTuple> fvs{
+      {p4orch::kAction, p4orch::kSetIpNexthop},
+      {prependParamField(p4orch::kNeighborId), kNeighborId2},
+      {prependParamField(p4orch::kRouterInterfaceId), kRouterInterfaceId2}};
+  EXPECT_TRUE(ResolveNextHopEntryDependency(kP4NextHopAppDbEntry2,
+                                            kRouterInterfaceOid2));
+  nlohmann::json j;
+  j[prependMatchField(p4orch::kNexthopId)] = "1";
+  swss::KeyOpFieldsValuesTuple app_db_entry_1(
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+  j[prependMatchField(p4orch::kNexthopId)] = "2";
+  swss::KeyOpFieldsValuesTuple app_db_entry_2(
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+  j[prependMatchField(p4orch::kNexthopId)] = "3";
+  swss::KeyOpFieldsValuesTuple app_db_entry_3(
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+
+  Enqueue(app_db_entry_1);
+  Enqueue(app_db_entry_2);
+  Enqueue(app_db_entry_3);
+
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_1)),
+                      Eq(kfvFieldsValues(app_db_entry_1)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_2)),
+                      Eq(kfvFieldsValues(app_db_entry_2)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_3)),
+                      Eq(kfvFieldsValues(app_db_entry_3)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_EXECUTED, Drain(/*failure_before=*/true));
+  EXPECT_EQ(nullptr, GetNextHopEntry(KeyGenerator::generateNextHopKey("1")));
+  EXPECT_EQ(nullptr, GetNextHopEntry(KeyGenerator::generateNextHopKey("2")));
+  EXPECT_EQ(nullptr, GetNextHopEntry(KeyGenerator::generateNextHopKey("3")));
+}
+
+TEST_F(NextHopManagerTest, DrainStopOnFirstFailureCreate) {
+  std::vector<swss::FieldValueTuple> fvs{
+      {p4orch::kAction, p4orch::kSetIpNexthop},
+      {prependParamField(p4orch::kNeighborId), kNeighborId2},
+      {prependParamField(p4orch::kRouterInterfaceId), kRouterInterfaceId2}};
+  EXPECT_TRUE(ResolveNextHopEntryDependency(kP4NextHopAppDbEntry2,
+                                            kRouterInterfaceOid2));
+  nlohmann::json j;
+  j[prependMatchField(p4orch::kNexthopId)] = "1";
+  swss::KeyOpFieldsValuesTuple app_db_entry_1(
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+  j[prependMatchField(p4orch::kNexthopId)] = "2";
+  swss::KeyOpFieldsValuesTuple app_db_entry_2(
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+  j[prependMatchField(p4orch::kNexthopId)] = "3";
+  swss::KeyOpFieldsValuesTuple app_db_entry_3(
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+
+  Enqueue(app_db_entry_1);
+  Enqueue(app_db_entry_2);
+  Enqueue(app_db_entry_3);
+
+  std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS, SAI_STATUS_FAILURE,
+                                       SAI_STATUS_NOT_EXECUTED};
+
+  EXPECT_CALL(mock_sai_next_hop_, create_next_hops(_, _, _, _, _, _, _))
+      .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
+                      SetArgPointee<5>(kNextHopOid),
+                      Return(SAI_STATUS_FAILURE)));
+
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_1)),
+                      Eq(kfvFieldsValues(app_db_entry_1)),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_2)),
+                      Eq(kfvFieldsValues(app_db_entry_2)),
+                      Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_3)),
+                      Eq(kfvFieldsValues(app_db_entry_3)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
+  EXPECT_NE(nullptr, GetNextHopEntry(KeyGenerator::generateNextHopKey("1")));
+  EXPECT_EQ(nullptr, GetNextHopEntry(KeyGenerator::generateNextHopKey("2")));
+  EXPECT_EQ(nullptr, GetNextHopEntry(KeyGenerator::generateNextHopKey("3")));
+}
+
+TEST_F(NextHopManagerTest, DrainStopOnFirstFailureDel) {
+  auto* p4_next_hop_entry = AddNextHopEntry1();
+  ASSERT_NE(p4_next_hop_entry, nullptr);
+
+  std::vector<swss::FieldValueTuple> fvs;
+
+  nlohmann::json j;
+  j[prependMatchField(p4orch::kNexthopId)] = kNextHopId;
+  swss::KeyOpFieldsValuesTuple del_app_db_entry_1(
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      DEL_COMMAND, fvs);
+  j[prependMatchField(p4orch::kNexthopId)] = kNextHopId;
+  swss::KeyOpFieldsValuesTuple del_app_db_entry_2(
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      DEL_COMMAND, fvs);
+  j[prependMatchField(p4orch::kNexthopId)] = kNextHopId;
+  swss::KeyOpFieldsValuesTuple del_app_db_entry_3(
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      DEL_COMMAND, fvs);
+
+  Enqueue(del_app_db_entry_1);
+  Enqueue(del_app_db_entry_2);
+  Enqueue(del_app_db_entry_3);
+
+  std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS, SAI_STATUS_FAILURE,
+                                       SAI_STATUS_NOT_EXECUTED};
+  EXPECT_CALL(mock_sai_next_hop_, remove_next_hops(_, _, _, _))
+      .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()),
+                      Return(SAI_STATUS_FAILURE)));
+
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(del_app_db_entry_1)),
+                      Eq(kfvFieldsValues(del_app_db_entry_1)),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(del_app_db_entry_2)),
+                      Eq(kfvFieldsValues(del_app_db_entry_2)),
+                      Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(del_app_db_entry_3)),
+                      Eq(kfvFieldsValues(del_app_db_entry_3)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
+  EXPECT_EQ(nullptr,
+            GetNextHopEntry(KeyGenerator::generateNextHopKey(kNextHopId)));
+}
+
+TEST_F(NextHopManagerTest, DrainStopOnFirstFailureDifferentTypes) {
+  auto* p4_next_hop_entry = AddNextHopEntry1();
+  ASSERT_NE(p4_next_hop_entry, nullptr);
+
+  std::vector<swss::FieldValueTuple> fvs{
+      {p4orch::kAction, p4orch::kSetIpNexthop},
+      {prependParamField(p4orch::kNeighborId), kNeighborId2},
+      {prependParamField(p4orch::kRouterInterfaceId), kRouterInterfaceId2}};
+  EXPECT_TRUE(ResolveNextHopEntryDependency(kP4NextHopAppDbEntry2,
+                                            kRouterInterfaceOid2));
+  nlohmann::json j;
+  j[prependMatchField(p4orch::kNexthopId)] = "1";
+  swss::KeyOpFieldsValuesTuple app_db_entry_1(
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+  j[prependMatchField(p4orch::kNexthopId)] = kNextHopId;
+  swss::KeyOpFieldsValuesTuple app_db_entry_2(
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+  j[prependMatchField(p4orch::kNexthopId)] = kNextHopId;
+  swss::KeyOpFieldsValuesTuple app_db_entry_3(
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      DEL_COMMAND, fvs);
+
+  Enqueue(app_db_entry_1);
+  Enqueue(app_db_entry_2);
+  Enqueue(app_db_entry_3);
+
+  std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
+
+  EXPECT_CALL(mock_sai_next_hop_, create_next_hops(_, _, _, _, _, _, _))
+      .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
+                      SetArgPointee<5>(kNextHopOid),
+                      Return(SAI_STATUS_SUCCESS)));
+
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_1)),
+                      Eq(kfvFieldsValues(app_db_entry_1)),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_2)),
+                      Eq(kfvFieldsValues(app_db_entry_2)),
+                      Eq(StatusCode::SWSS_RC_UNIMPLEMENTED), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry_3)),
+                      Eq(kfvFieldsValues(app_db_entry_3)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_UNIMPLEMENTED, Drain(/*failure_before=*/false));
+  EXPECT_NE(nullptr, GetNextHopEntry(KeyGenerator::generateNextHopKey("1")));
+  EXPECT_NE(nullptr,
+            GetNextHopEntry(KeyGenerator::generateNextHopKey(kNextHopId)));
+}
+
 TEST_F(NextHopManagerTest, VerifyTunnelNextHopStateTest)
 {
     ASSERT_TRUE(ResolveNextHopEntryDependency(kP4TunnelNextHopAppDbEntry1, kTunnelOid1));
 
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
+
     // Set up mock call.
     EXPECT_CALL(
         mock_sai_next_hop_,
-        create_next_hop(::testing::NotNull(), Eq(gSwitchId), Eq(3),
-                        Truly(std::bind(MatchCreateNextHopArgAttrList, std::placeholders::_1,
-                                        CreateAttributeListForNextHopObject(kP4TunnelNextHopAppDbEntry1, kTunnelOid1,
-                                                                            swss::IpAddress(kNeighborId1))))))
-        .WillOnce(DoAll(SetArgPointee<0>(kTunnelNextHopOid), Return(SAI_STATUS_SUCCESS)));
+        create_next_hops(
+            Eq(gSwitchId), Eq(1), Pointee(Eq(3)),
+            AttrArrayEq(sai_attrs_array_t{CreateAttributeListForNextHopObject(
+                kP4TunnelNextHopAppDbEntry1, kTunnelOid1,
+                swss::IpAddress(kNeighborId1))}),
+            Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), ::testing::NotNull(),
+            ::testing::NotNull()))
+        .WillOnce(DoAll(
+            SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
+            SetArgPointee<5>(kTunnelNextHopOid), Return(SAI_STATUS_SUCCESS)));
 
-    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddRequest(kP4TunnelNextHopAppDbEntry1));
+    EXPECT_THAT(CreateNextHops(std::vector<P4NextHopAppDbEntry>{
+                    kP4TunnelNextHopAppDbEntry1}),
+                ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
 
     auto p4_next_hop_entry = GetNextHopEntry(KeyGenerator::generateNextHopKey(kP4TunnelNextHopAppDbEntry1.next_hop_id));
     ASSERT_NE(p4_next_hop_entry, nullptr);

@@ -6,11 +6,13 @@
 #include <vector>
 
 #include "SaiAttributeList.h"
+#include "aclorch.h"
 #include "crmorch.h"
 #include "dbconnector.h"
 #include "logger.h"
 #include "orch.h"
 #include "p4orch.h"
+#include "p4orch/acl_util.h"
 #include "p4orch/p4orch_util.h"
 #include "sai_serialize.h"
 #include "switchorch.h"
@@ -25,11 +27,11 @@ using ::p4orch::kTableKeyDelimiter;
 
 extern sai_object_id_t gSwitchId;
 extern sai_acl_api_t *sai_acl_api;
-extern sai_udf_api_t *sai_udf_api;
-extern sai_switch_api_t *sai_switch_api;
+extern sai_udf_api_t* sai_udf_api;
 extern CrmOrch *gCrmOrch;
 extern P4Orch *gP4Orch;
 extern SwitchOrch *gSwitchOrch;
+extern AclOrch* gAclOrch;
 extern int gBatchSize;
 
 namespace p4orch
@@ -96,76 +98,79 @@ AclTableManager::~AclTableManager()
     }
 }
 
-ReturnCodeOr<std::vector<sai_attribute_t>> AclTableManager::getTableSaiAttrs(const P4AclTableDefinition &acl_table)
-{
-    std::vector<sai_attribute_t> acl_attr_list;
-    sai_attribute_t acl_attr;
-    acl_attr.id = SAI_ACL_TABLE_ATTR_ACL_STAGE;
-    acl_attr.value.s32 = acl_table.stage;
+ReturnCodeOr<std::vector<sai_attribute_t>> AclTableManager::getTableSaiAttrs(
+    P4AclTableDefinition& acl_table) {
+  std::vector<sai_attribute_t> acl_attr_list;
+  sai_attribute_t acl_attr;
+  acl_attr.id = SAI_ACL_TABLE_ATTR_ACL_STAGE;
+  acl_attr.value.s32 = acl_table.stage;
+  acl_attr_list.push_back(acl_attr);
+
+  if (acl_table.size > 0) {
+    acl_attr.id = SAI_ACL_TABLE_ATTR_SIZE;
+    acl_attr.value.u32 = acl_table.size;
     acl_attr_list.push_back(acl_attr);
+  }
 
-    if (acl_table.size > 0)
-    {
-        acl_attr.id = SAI_ACL_TABLE_ATTR_SIZE;
-        acl_attr.value.u32 = acl_table.size;
-        acl_attr_list.push_back(acl_attr);
+  std::set<sai_acl_table_attr_t> table_match_fields_to_add;
+  if (!acl_table.ip_type_bit_type_lookup.empty()) {
+    acl_attr.id = SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE;
+    acl_attr.value.booldata = true;
+    acl_attr_list.push_back(acl_attr);
+    table_match_fields_to_add.insert(SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE);
+  }
+
+  for (const auto& match_field : acl_table.sai_match_field_lookup) {
+    const auto& sai_match_field = fvValue(match_field);
+    // Avoid duplicate match attribute to add
+    if (table_match_fields_to_add.find(sai_match_field.table_attr) !=
+        table_match_fields_to_add.end())
+      continue;
+    acl_attr.id = sai_match_field.table_attr;
+    acl_attr.value.booldata = true;
+    acl_attr_list.push_back(acl_attr);
+    table_match_fields_to_add.insert(sai_match_field.table_attr);
+  }
+
+  for (const auto& match_fields : acl_table.composite_sai_match_fields_lookup) {
+    const auto& sai_match_fields = fvValue(match_fields);
+    for (const auto& sai_match_field : sai_match_fields) {
+      // Avoid duplicate match attribute to add
+      if (table_match_fields_to_add.find(sai_match_field.table_attr) !=
+          table_match_fields_to_add.end())
+        continue;
+      acl_attr.id = sai_match_field.table_attr;
+      acl_attr.value.booldata = true;
+      acl_attr_list.push_back(acl_attr);
+      table_match_fields_to_add.insert(sai_match_field.table_attr);
     }
+  }
 
-    std::set<acl_table_attr_union_t> table_match_fields_to_add;
-    if (!acl_table.ip_type_bit_type_lookup.empty())
-    {
-        acl_attr.id = SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE;
-        acl_attr.value.booldata = true;
-        acl_attr_list.push_back(acl_attr);
-        table_match_fields_to_add.insert(SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE);
+  // Add UDF group attributes
+  for (const auto& udf_group_idx : acl_table.udf_group_attr_index_lookup) {
+    acl_attr.id = SAI_ACL_TABLE_ATTR_USER_DEFINED_FIELD_GROUP_MIN +
+                  fvValue(udf_group_idx);
+    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_UDF_GROUP,
+                               fvField(udf_group_idx), &acl_attr.value.oid)) {
+      LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                           << "THe UDF group with id "
+                           << QuotedVar(fvField(udf_group_idx))
+                           << " was not found.");
     }
+    acl_attr_list.push_back(acl_attr);
+  }
 
-    for (const auto &match_field : acl_table.sai_match_field_lookup)
-    {
-        const auto &sai_match_field = fvValue(match_field);
-        // Avoid duplicate match attribute to add
-        if (table_match_fields_to_add.find(sai_match_field.table_attr) != table_match_fields_to_add.end())
-            continue;
-        acl_attr.id = sai_match_field.table_attr;
-        acl_attr.value.booldata = true;
-        acl_attr_list.push_back(acl_attr);
-        table_match_fields_to_add.insert(sai_match_field.table_attr);
-    }
-
-    for (const auto &match_fields : acl_table.composite_sai_match_fields_lookup)
-    {
-        const auto &sai_match_fields = fvValue(match_fields);
-        for (const auto &sai_match_field : sai_match_fields)
-        {
-            // Avoid duplicate match attribute to add
-            if (table_match_fields_to_add.find(sai_match_field.table_attr) != table_match_fields_to_add.end())
-                continue;
-            acl_attr.id = sai_match_field.table_attr;
-            acl_attr.value.booldata = true;
-            acl_attr_list.push_back(acl_attr);
-            table_match_fields_to_add.insert(sai_match_field.table_attr);
-        }
-    }
-
-    // Add UDF group attributes
-    for (const auto &udf_group_idx : acl_table.udf_group_attr_index_lookup)
-    {
-        acl_attr.id = SAI_ACL_TABLE_ATTR_USER_DEFINED_FIELD_GROUP_MIN + fvValue(udf_group_idx);
-        if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_UDF_GROUP, fvField(udf_group_idx), &acl_attr.value.oid))
-        {
-            LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-                                 << "THe UDF group with id " << QuotedVar(fvField(udf_group_idx)) << " was not found.");
-        }
-        acl_attr_list.push_back(acl_attr);
-    }
-
-    m_acl_action_list[0] = SAI_ACL_ACTION_TYPE_COUNTER;
+  if (gAclOrch->isAclActionListMandatoryOnTableCreation(
+          aclSaiStageAttrToEnumLookup.at(acl_table.stage))) {
     acl_attr.id = SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST;
-    acl_attr.value.s32list.count = 1;
-    acl_attr.value.s32list.list = m_acl_action_list;
+    acl_attr.value.s32list.count =
+        (uint32_t)acl_table.acl_action_type_list.size();
+    acl_attr.value.s32list.list =
+        (int32_t*)acl_table.acl_action_type_list.data();
     acl_attr_list.push_back(acl_attr);
+  }
 
-    return acl_attr_list;
+  return acl_attr_list;
 }
 
 ReturnCodeOr<std::vector<sai_attribute_t>> AclTableManager::getUdfSaiAttrs(const P4UdfField &udf_field)
@@ -216,86 +221,94 @@ void AclTableManager::enqueue(const std::string &table_name, const swss::KeyOpFi
     m_entries.push_back(entry);
 }
 
-void AclTableManager::drain()
-{
-    SWSS_LOG_ENTER();
+void AclTableManager::drainWithNotExecuted() {
+  drainMgmtWithNotExecuted(m_entries, m_publisher);
+}
 
-    for (const auto &key_op_fvs_tuple : m_entries)
-    {
-        std::string table_name;
-        std::string db_key;
-        parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &db_key);
-        SWSS_LOG_NOTICE("P4AclTableManager drain tuple for table %s", QuotedVar(table_name).c_str());
-        if (table_name != APP_P4RT_ACL_TABLE_DEFINITION_NAME)
-        {
-            ReturnCode status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                                << "Invalid table " << QuotedVar(table_name);
-            SWSS_LOG_ERROR("%s", status.message().c_str());
-            m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                 status,
-                                 /*replace=*/true);
-            continue;
-        }
-        const std::vector<swss::FieldValueTuple> &attributes = kfvFieldsValues(key_op_fvs_tuple);
+ReturnCode AclTableManager::drain() {
+  SWSS_LOG_ENTER();
 
-        ReturnCode status;
-        const std::string &operation = kfvOp(key_op_fvs_tuple);
-        if (operation == SET_COMMAND)
-        {
-            auto app_db_entry_or = deserializeAclTableDefinitionAppDbEntry(db_key, attributes);
-            if (!app_db_entry_or.ok())
-            {
-                status = app_db_entry_or.status();
-                SWSS_LOG_ERROR("Unable to deserialize APP DB entry with key %s: %s",
-                               QuotedVar(table_name + ":" + db_key).c_str(), status.message().c_str());
-                m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                     status,
-                                     /*replace=*/true);
-                continue;
-            }
-            auto &app_db_entry = *app_db_entry_or;
+  ReturnCode status;
+  while (!m_entries.empty()) {
+    auto key_op_fvs_tuple = m_entries.front();
+    m_entries.pop_front();
+    std::string table_name;
+    std::string db_key;
 
-            status = validateAclTableDefinitionAppDbEntry(app_db_entry);
-            if (!status.ok())
-            {
-                SWSS_LOG_ERROR("Validation failed for ACL definition APP DB entry with key %s: %s",
-                               QuotedVar(table_name + ":" + db_key).c_str(), status.message().c_str());
-                m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                     status,
-                                     /*replace=*/true);
-                continue;
-            }
-            auto *acl_table_definition = getAclTable(app_db_entry.acl_table_name);
-            if (acl_table_definition == nullptr)
-            {
-                SWSS_LOG_NOTICE("ACL table SET %s", app_db_entry.acl_table_name.c_str());
-                status = processAddTableRequest(app_db_entry);
-            }
-            else
-            {
-                // All attributes in sai_acl_table_attr_t are CREATE_ONLY.
-                status = ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
-                         << "Unable to update ACL table definition in APP DB entry with key "
-                         << QuotedVar(table_name + ":" + db_key)
-                         << " : All attributes in sai_acl_table_attr_t are CREATE_ONLY.";
-            }
-        }
-        else if (operation == DEL_COMMAND)
-        {
-            status = processDeleteTableRequest(db_key);
-        }
-        else
-        {
-            status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Unknown operation type " << QuotedVar(operation);
-        }
-        if (!status.ok())
-        {
-            SWSS_LOG_ERROR("Processed DEFINITION entry status: %s", status.message().c_str());
-        }
-        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple), status,
-                             /*replace=*/true);
+    parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &db_key);
+    SWSS_LOG_NOTICE("P4AclTableManager drain tuple for table %s",
+                    QuotedVar(table_name).c_str());
+    if (table_name != APP_P4RT_ACL_TABLE_DEFINITION_NAME) {
+      status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Invalid table " << QuotedVar(table_name);
+      SWSS_LOG_ERROR("%s", status.message().c_str());
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple), status,
+                           /*replace=*/true);
+      break;
     }
-    m_entries.clear();
+    const std::vector<swss::FieldValueTuple>& attributes =
+        kfvFieldsValues(key_op_fvs_tuple);
+
+    const std::string& operation = kfvOp(key_op_fvs_tuple);
+    if (operation == SET_COMMAND) {
+      auto app_db_entry_or =
+          deserializeAclTableDefinitionAppDbEntry(db_key, attributes);
+      if (!app_db_entry_or.ok()) {
+        status = app_db_entry_or.status();
+        SWSS_LOG_ERROR("Unable to deserialize APP DB entry with key %s: %s",
+                       QuotedVar(table_name + ":" + db_key).c_str(),
+                       status.message().c_str());
+        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                             kfvFieldsValues(key_op_fvs_tuple), status,
+                             /*replace=*/true);
+        break;
+      }
+      auto& app_db_entry = *app_db_entry_or;
+
+      status = validateAclTableDefinitionAppDbEntry(app_db_entry);
+      if (!status.ok()) {
+        SWSS_LOG_ERROR(
+            "Validation failed for ACL definition APP DB entry with key %s: %s",
+            QuotedVar(table_name + ":" + db_key).c_str(),
+            status.message().c_str());
+        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                             kfvFieldsValues(key_op_fvs_tuple), status,
+                             /*replace=*/true);
+        break;
+      }
+      auto* acl_table_definition = getAclTable(app_db_entry.acl_table_name);
+      if (acl_table_definition == nullptr) {
+        SWSS_LOG_NOTICE("ACL table SET %s",
+                        app_db_entry.acl_table_name.c_str());
+        status = processAddTableRequest(app_db_entry);
+      } else {
+        // All attributes in sai_acl_table_attr_t are CREATE_ONLY.
+        status =
+            ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
+            << "Unable to update ACL table definition in APP DB entry with key "
+            << QuotedVar(table_name + ":" + db_key)
+            << " : All attributes in sai_acl_table_attr_t are CREATE_ONLY.";
+      }
+    } else if (operation == DEL_COMMAND) {
+      status = processDeleteTableRequest(db_key);
+    } else {
+      status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Unknown operation type " << QuotedVar(operation);
+    }
+    if (!status.ok()) {
+      SWSS_LOG_ERROR("Processed DEFINITION entry status: %s",
+                     status.message().c_str());
+    }
+    m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                         kfvFieldsValues(key_op_fvs_tuple), status,
+                         /*replace=*/true);
+    if (!status.ok()) {
+      break;
+    }
+  }
+  drainWithNotExecuted();
+  return status;
 }
 
 ReturnCodeOr<P4AclTableDefinitionAppDbEntry> AclTableManager::deserializeAclTableDefinitionAppDbEntry(
@@ -444,8 +457,10 @@ ReturnCode AclTableManager::processAddTableRequest(const P4AclTableDefinitionApp
         build_match_rc.prepend("Failed to build ACL table definition match fields with table name " +
                                QuotedVar(app_db_entry.acl_table_name) + ": "));
 
-    auto build_action_rc = buildAclTableDefinitionActionFieldValues(app_db_entry.action_field_lookup,
-                                                                    &acl_table_definition.rule_action_field_lookup);
+    std::set<sai_acl_action_type_t> acl_action_type_set;
+    auto build_action_rc = buildAclTableDefinitionActionFieldValues(
+        app_db_entry.action_field_lookup,
+        &acl_table_definition.rule_action_field_lookup, &acl_action_type_set);
 
     LOG_AND_RETURN_IF_ERROR(
         build_action_rc.prepend("Failed to build ACL table definition action fields with table name " +
@@ -464,11 +479,37 @@ ReturnCode AclTableManager::processAddTableRequest(const P4AclTableDefinitionApp
     }
 
     auto build_action_color_rc = buildAclTableDefinitionActionColorFieldValues(
-        app_db_entry.packet_action_color_lookup, &acl_table_definition.rule_action_field_lookup,
-        &acl_table_definition.rule_packet_action_color_lookup);
+        app_db_entry.packet_action_color_lookup,
+        &acl_table_definition.rule_action_field_lookup,
+        &acl_table_definition.rule_packet_action_color_lookup,
+        &acl_action_type_set);
+
     LOG_AND_RETURN_IF_ERROR(build_action_color_rc.prepend("Failed to build ACL table definition "
                                                           "action color fields with table name " +
                                                           QuotedVar(app_db_entry.acl_table_name) + ": "));
+
+    if (!acl_table_definition.meter_unit.empty()) {
+      acl_action_type_set.insert(SAI_ACL_ACTION_TYPE_SET_POLICER);
+    }
+    if (!acl_table_definition.counter_unit.empty()) {
+      acl_action_type_set.insert(SAI_ACL_ACTION_TYPE_COUNTER);
+    }
+    for (sai_acl_action_type_t action_type : acl_action_type_set) {
+      if (gAclOrch->isAclActionListMandatoryOnTableCreation(
+              aclSaiStageAttrToEnumLookup.at(acl_table_definition.stage)) &&
+          !gAclOrch->isAclActionSupported(
+              aclSaiStageAttrToEnumLookup.at(acl_table_definition.stage),
+              action_type)) {
+        LOG_AND_RETURN_IF_ERROR(
+            ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+            << "Failed to add ACL action " << action_type
+            << " to ACL table "
+               "with table name "
+            << QuotedVar(app_db_entry.acl_table_name)
+            << ": the ACL action type is not supported by HW.");
+      }
+      acl_table_definition.acl_action_type_list.push_back(action_type);
+    }
 
     if (!acl_table_definition.udf_fields_lookup.empty())
     {
@@ -1092,23 +1133,45 @@ std::string AclTableManager::verifyStateCache(const P4AclTableDefinitionAppDbEnt
         msg << "Failed to build ACL table match field values for table " << QuotedVar(app_db_entry.acl_table_name);
         return msg.str();
     }
-    status = buildAclTableDefinitionActionFieldValues(app_db_entry.action_field_lookup,
-                                                      &acl_table_definition_entry.rule_action_field_lookup);
+    std::set<sai_acl_action_type_t> acl_action_type_set;
+    status = buildAclTableDefinitionActionFieldValues(
+        app_db_entry.action_field_lookup,
+        &acl_table_definition_entry.rule_action_field_lookup,
+        &acl_action_type_set);
     if (!status.ok())
     {
         std::stringstream msg;
         msg << "Failed to build ACL table action field values for table " << QuotedVar(app_db_entry.acl_table_name);
         return msg.str();
     }
-    status = buildAclTableDefinitionActionColorFieldValues(app_db_entry.packet_action_color_lookup,
-                                                           &acl_table_definition_entry.rule_action_field_lookup,
-                                                           &acl_table_definition_entry.rule_packet_action_color_lookup);
+    status = buildAclTableDefinitionActionColorFieldValues(
+        app_db_entry.packet_action_color_lookup,
+        &acl_table_definition_entry.rule_action_field_lookup,
+        &acl_table_definition_entry.rule_packet_action_color_lookup,
+        &acl_action_type_set);
     if (!status.ok())
     {
         std::stringstream msg;
         msg << "Failed to build ACL table action color field values for table "
             << QuotedVar(app_db_entry.acl_table_name);
         return msg.str();
+    }
+
+    if (!acl_table_definition_entry.meter_unit.empty()) {
+      acl_action_type_set.insert(SAI_ACL_ACTION_TYPE_SET_POLICER);
+    }
+    if (!acl_table_definition_entry.counter_unit.empty()) {
+      acl_action_type_set.insert(SAI_ACL_ACTION_TYPE_COUNTER);
+    }
+
+    std::set<sai_acl_action_type_t> table_actions(
+        acl_table->acl_action_type_list.begin(),
+        acl_table->acl_action_type_list.end());
+    if (table_actions != acl_action_type_set) {
+      std::stringstream msg;
+      msg << "ACL table action type list mismatch on table "
+          << QuotedVar(app_db_entry.acl_table_name);
+      return msg.str();
     }
 
     if (acl_table->composite_sai_match_fields_lookup != acl_table_definition_entry.composite_sai_match_fields_lookup)
@@ -1170,112 +1233,108 @@ std::string AclTableManager::verifyStateCache(const P4AclTableDefinitionAppDbEnt
     return "";
 }
 
-std::string AclTableManager::verifyStateAsicDb(const P4AclTableDefinition *acl_table)
-{
-    swss::DBConnector db("ASIC_DB", 0);
-    swss::Table table(&db, "ASIC_STATE");
+std::string AclTableManager::verifyStateAsicDb(
+    P4AclTableDefinition* acl_table) {
+  swss::DBConnector db("ASIC_DB", 0);
+  swss::Table table(&db, "ASIC_STATE");
 
-    // Verify table.
-    auto attrs_or = getTableSaiAttrs(*acl_table);
-    if (!attrs_or.ok())
-    {
-        return std::string("Failed to get SAI attrs: ") + attrs_or.status().message();
-    }
-    std::vector<sai_attribute_t> attrs = *attrs_or;
-    std::vector<swss::FieldValueTuple> exp =
-        saimeta::SaiAttributeList::serialize_attr_list(SAI_OBJECT_TYPE_ACL_TABLE, (uint32_t)attrs.size(), attrs.data(),
-                                                       /*countOnly=*/false);
-    std::string key =
-        sai_serialize_object_type(SAI_OBJECT_TYPE_ACL_TABLE) + ":" + sai_serialize_object_id(acl_table->table_oid);
-    std::vector<swss::FieldValueTuple> values;
-    if (!table.get(key, values))
-    {
+  // Verify table.
+  auto attrs_or = getTableSaiAttrs(*acl_table);
+  if (!attrs_or.ok()) {
+    return std::string("Failed to get SAI attrs: ") +
+           attrs_or.status().message();
+  }
+  std::vector<sai_attribute_t> attrs = *attrs_or;
+  std::vector<swss::FieldValueTuple> exp =
+      saimeta::SaiAttributeList::serialize_attr_list(
+          SAI_OBJECT_TYPE_ACL_TABLE, (uint32_t)attrs.size(), attrs.data(),
+          /*countOnly=*/false);
+  std::string key = sai_serialize_object_type(SAI_OBJECT_TYPE_ACL_TABLE) + ":" +
+                    sai_serialize_object_id(acl_table->table_oid);
+  std::vector<swss::FieldValueTuple> values;
+  if (!table.get(key, values)) {
+    return std::string("ASIC DB key not found ") + key;
+  }
+  std::string err_msg =
+      verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
+                  /*allow_unknown=*/false);
+  if (!err_msg.empty()) {
+    return err_msg;
+  }
+
+  // Verify group member.
+  attrs = getGroupMemSaiAttrs(*acl_table);
+  exp = saimeta::SaiAttributeList::serialize_attr_list(
+      SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER, (uint32_t)attrs.size(),
+      attrs.data(), /*countOnly=*/false);
+  key = sai_serialize_object_type(SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER) +
+        ":" + sai_serialize_object_id(acl_table->group_member_oid);
+  values.clear();
+  if (!table.get(key, values)) {
+    return std::string("ASIC DB key not found ") + key;
+  }
+  err_msg = verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
+                        /*allow_unknown=*/false);
+  if (!err_msg.empty()) {
+    return err_msg;
+  }
+
+  for (auto& udf_fields : acl_table->udf_fields_lookup) {
+    for (auto& udf_field : fvValue(udf_fields)) {
+      sai_object_id_t udf_group_oid;
+      if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_UDF_GROUP, udf_field.group_id,
+                                 &udf_group_oid)) {
+        return std::string("UDF group ") + udf_field.group_id +
+               " does not exist";
+      }
+      sai_object_id_t udf_oid;
+      if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_UDF, udf_field.udf_id,
+                                 &udf_oid)) {
+        return std::string("UDF ") + udf_field.udf_id + " does not exist";
+      }
+
+      // Verify UDF group.
+      attrs = getUdfGroupSaiAttrs(udf_field);
+      exp = saimeta::SaiAttributeList::serialize_attr_list(
+          SAI_OBJECT_TYPE_UDF_GROUP, (uint32_t)attrs.size(), attrs.data(),
+          /*countOnly=*/false);
+      key = sai_serialize_object_type(SAI_OBJECT_TYPE_UDF_GROUP) + ":" +
+            sai_serialize_object_id(udf_group_oid);
+      values.clear();
+      if (!table.get(key, values)) {
         return std::string("ASIC DB key not found ") + key;
-    }
-    std::string err_msg = verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
-                                      /*allow_unknown=*/false);
-    if (!err_msg.empty())
-    {
+      }
+      err_msg = verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
+                            /*allow_unknown=*/false);
+      if (!err_msg.empty()) {
         return err_msg;
-    }
+      }
 
-    // Verify group member.
-    attrs = getGroupMemSaiAttrs(*acl_table);
-    exp = saimeta::SaiAttributeList::serialize_attr_list(SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER, (uint32_t)attrs.size(),
-                                                         attrs.data(), /*countOnly=*/false);
-    key = sai_serialize_object_type(SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER) + ":" +
-          sai_serialize_object_id(acl_table->group_member_oid);
-    values.clear();
-    if (!table.get(key, values))
-    {
+      // Verify UDF.
+      attrs_or = getUdfSaiAttrs(udf_field);
+      if (!attrs_or.ok()) {
+        return std::string("Failed to get SAI attrs: ") +
+               attrs_or.status().message();
+      }
+      attrs = *attrs_or;
+      exp = saimeta::SaiAttributeList::serialize_attr_list(
+          SAI_OBJECT_TYPE_UDF, (uint32_t)attrs.size(), attrs.data(),
+          /*countOnly=*/false);
+      key = sai_serialize_object_type(SAI_OBJECT_TYPE_UDF) + ":" +
+            sai_serialize_object_id(udf_oid);
+      values.clear();
+      if (!table.get(key, values)) {
         return std::string("ASIC DB key not found ") + key;
-    }
-    err_msg = verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
-                          /*allow_unknown=*/false);
-    if (!err_msg.empty())
-    {
+      }
+      err_msg = verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
+                            /*allow_unknown=*/false);
+      if (!err_msg.empty()) {
         return err_msg;
+      }
     }
+  }
 
-    for (auto &udf_fields : acl_table->udf_fields_lookup)
-    {
-        for (auto &udf_field : fvValue(udf_fields))
-        {
-            sai_object_id_t udf_group_oid;
-            if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_UDF_GROUP, udf_field.group_id, &udf_group_oid))
-            {
-                return std::string("UDF group ") + udf_field.group_id + " does not exist";
-            }
-            sai_object_id_t udf_oid;
-            if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_UDF, udf_field.udf_id, &udf_oid))
-            {
-                return std::string("UDF ") + udf_field.udf_id + " does not exist";
-            }
-
-            // Verify UDF group.
-            attrs = getUdfGroupSaiAttrs(udf_field);
-            exp = saimeta::SaiAttributeList::serialize_attr_list(SAI_OBJECT_TYPE_UDF_GROUP, (uint32_t)attrs.size(),
-                                                                 attrs.data(),
-                                                                 /*countOnly=*/false);
-            key = sai_serialize_object_type(SAI_OBJECT_TYPE_UDF_GROUP) + ":" + sai_serialize_object_id(udf_group_oid);
-            values.clear();
-            if (!table.get(key, values))
-            {
-                return std::string("ASIC DB key not found ") + key;
-            }
-            err_msg = verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
-                                  /*allow_unknown=*/false);
-            if (!err_msg.empty())
-            {
-                return err_msg;
-            }
-
-            // Verify UDF.
-            attrs_or = getUdfSaiAttrs(udf_field);
-            if (!attrs_or.ok())
-            {
-                return std::string("Failed to get SAI attrs: ") + attrs_or.status().message();
-            }
-            attrs = *attrs_or;
-            exp = saimeta::SaiAttributeList::serialize_attr_list(SAI_OBJECT_TYPE_UDF, (uint32_t)attrs.size(),
-                                                                 attrs.data(),
-                                                                 /*countOnly=*/false);
-            key = sai_serialize_object_type(SAI_OBJECT_TYPE_UDF) + ":" + sai_serialize_object_id(udf_oid);
-            values.clear();
-            if (!table.get(key, values))
-            {
-                return std::string("ASIC DB key not found ") + key;
-            }
-            err_msg = verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
-                                  /*allow_unknown=*/false);
-            if (!err_msg.empty())
-            {
-                return err_msg;
-            }
-        }
-    }
-
-    return "";
+  return "";
 }
 
 } // namespace p4orch
