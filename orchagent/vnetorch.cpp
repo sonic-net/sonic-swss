@@ -1273,6 +1273,23 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 SWSS_LOG_ERROR("Failed to create fine grained next hop group for VNET %s", vnet.c_str());
                 return false;
             }
+            
+            NextHopGroupInfo next_hop_group_entry;
+            next_hop_group_entry.next_hop_group_id = next_hop_group_id;
+
+            for (auto nhid: next_hop_ids)
+            {
+                sai_object_id_t next_hop_group_member_id = nhopgroup_member_ids[nhopgroup_members_set.find(nhid)->second];
+                // Save the membership into next hop structure
+                next_hop_group_entry.active_members[nhopgroup_members_set.find(nhid)->second] = next_hop_group_member_id;
+            }
+            /*
+            * Initialize the next hop group structure with ref_count as 0. This
+            * count will increase once the route is successfully syncd.
+            */
+            next_hop_group_entry.ref_count = 0;
+            syncd_nexthop_groups_[vnet][nexthops] = next_hop_group_entry;
+
             NextHopGroupKey active_nhg = nexthops;
 
             auto it_route = syncd_tunnel_routes_[vnet].find(ipPrefix);
@@ -1280,15 +1297,31 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             for (auto vr_id : vr_set)
             {
                 bool route_status = true;
-
-                if (it_route == syncd_tunnel_routes_[vnet].end())
+                
+                // Remove route if the nexthop group has no active endpoint
+                if (syncd_nexthop_groups_[vnet][active_nhg].active_members.empty())
                 {
-                    route_status = add_route(vr_id, pfx, nh_id);
+                    if (it_route != syncd_tunnel_routes_[vnet].end())
+                    {
+                        NextHopGroupKey nhg = it_route->second.nhg_key;
+                        // Remove route when updating from a nhg with active member to another nhg without
+                        if (!syncd_nexthop_groups_[vnet][nhg].active_members.empty())
+                        {
+                            del_route(vr_id, pfx);
+                        }
+                    }
                 }
-                else
+                else 
                 {
-                    NextHopGroupKey nhg = it_route->second.nhg_key;
-                        route_status = update_route(vr_id, pfx, nh_id);
+                    if (it_route == syncd_tunnel_routes_[vnet].end())
+                    {
+                        route_status = add_route(vr_id, pfx, nh_id);
+                    }
+                    else
+                    {
+                        NextHopGroupKey nhg = it_route->second.nhg_key;
+                            route_status = update_route(vr_id, pfx, nh_id);
+                    }
                 }
 
                 if (!route_status)
@@ -1302,8 +1335,25 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 (monitoring == "" && it_route->second.nhg_key != nexthops))
             {
                 route_updated = true;
+                NextHopGroupKey nhg = it_route->second.nhg_key;
+                // In case of updating an existing route, decrease the reference count for the previous nexthop group
+                if (--syncd_nexthop_groups_[vnet][nhg].ref_count == 0)
+                {
+                    for (auto nh : nexthops.getNextHops())
+                    {
+                        vrf_obj->removeTunnelNextHop(nh);
+                        syncd_nexthop_groups_[vnet][nhg].active_members.erase(nh);
+                    }
+                    gFgNhgOrch->removeFgNhg(vrf_obj->getVRidIngress(), ipPrefix);
+                    syncd_nexthop_groups_[vnet].erase(nhg);
+                }
+                else
+                {
+                    syncd_nexthop_groups_[vnet][nhg].tunnel_routes.erase(ipPrefix);
+                }
                 vrf_obj->removeRoute(ipPrefix);
                 vrf_obj->removeProfile(ipPrefix);
+                }
             }
             if (!profile.empty())
             {
@@ -1311,6 +1361,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             }
             if (it_route == syncd_tunnel_routes_[vnet].end() || route_updated)
             {
+                syncd_nexthop_groups_[vnet][active_nhg].tunnel_routes.insert(ipPrefix);
                 VNetTunnelRouteEntry tunnel_route_entry;
                 tunnel_route_entry.nhg_key = active_nhg;
                 tunnel_route_entry.primary = nexthops;
@@ -1537,7 +1588,8 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             {
                 vrf_obj->removeTunnelNextHop(nhop);
             }
-
+            
+            syncd_nexthop_groups_[vnet].erase(nexthops);
             syncd_tunnel_routes_[vnet].erase(ipPrefix);
             if (syncd_tunnel_routes_[vnet].empty())
             {
