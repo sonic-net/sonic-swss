@@ -1275,7 +1275,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             }
             
             NextHopGroupInfo next_hop_group_entry;
-            next_hop_group_entry.next_hop_group_id = next_hop_group_id;
+            next_hop_group_entry.next_hop_group_id = nh_id;
 
             for (auto nhid: next_hop_ids)
             {
@@ -1353,7 +1353,6 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 }
                 vrf_obj->removeRoute(ipPrefix);
                 vrf_obj->removeProfile(ipPrefix);
-                }
             }
             if (!profile.empty())
             {
