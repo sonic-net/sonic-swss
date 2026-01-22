@@ -762,6 +762,7 @@ bool OrchDaemon::init()
 
         if(pfcDlrInit)
         {
+            SWSS_LOG_NOTICE("Starting dlr init handler for pfc watchdog");
             m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(
                         m_configDb,
                         pfc_wd_tables,
@@ -772,6 +773,7 @@ bool OrchDaemon::init()
         }
         else
         {
+            SWSS_LOG_NOTICE("Starting acl handler for pfc watchdog");
             m_orchList.push_back(new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
                         m_configDb,
                         pfc_wd_tables,
