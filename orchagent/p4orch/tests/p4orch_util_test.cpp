@@ -40,6 +40,12 @@ TEST(P4OrchUtilTest, KeyGeneratorTest)
     EXPECT_EQ("match/ether_type=0x0800:match/"
               "ipv6_dst=fdf8:f53b:82e4::53 & fdf8:f53b:82e4::53:priority=15",
               acl_rule_key);
+
+    auto ipv6_tunnel_term_key =
+        KeyGenerator::generateIpv6TunnelTermKey(
+          swss::IpAddress("::1"), swss::IpAddress("::1"), "vrf_id");
+    EXPECT_EQ(
+      "dst_ipv6_ip=::1:dst_ipv6_mask=::1", ipv6_tunnel_term_key);
 }
 
 TEST(P4OrchUtilTest, ParseP4RTKeyTest)
