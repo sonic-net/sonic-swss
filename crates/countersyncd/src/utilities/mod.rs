@@ -47,12 +47,12 @@ pub enum ChannelLabel {
 impl ChannelLabel {
     fn as_str(self) -> &'static str {
         match self {
-            ChannelLabel::ControlNetlinkToDataNetlink => "control_netlink->data_netlink_cmd",
-            ChannelLabel::DataNetlinkToIpfixRecords => "data_netlink->ipfix_records",
-            ChannelLabel::SwssToIpfixTemplates => "swss->ipfix_templates",
-            ChannelLabel::IpfixToStatsReporter => "ipfix->stats_reporter",
-            ChannelLabel::IpfixToCounterDb => "ipfix->counter_db",
-            ChannelLabel::IpfixToOtel => "ipfix->otel",
+            ChannelLabel::ControlNetlinkToDataNetlink => "control_netlink.data_netlink_cmd",
+            ChannelLabel::DataNetlinkToIpfixRecords => "data_netlink.ipfix_records",
+            ChannelLabel::SwssToIpfixTemplates => "swss.ipfix_templates",
+            ChannelLabel::IpfixToStatsReporter => "ipfix.stats_reporter",
+            ChannelLabel::IpfixToCounterDb => "ipfix.counter_db",
+            ChannelLabel::IpfixToOtel => "ipfix.otel",
         }
     }
 }
