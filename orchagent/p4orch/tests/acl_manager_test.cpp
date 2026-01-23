@@ -90,12 +90,13 @@ constexpr sai_object_id_t kUdfOid1 = 6001;
 constexpr char *kAclIngressTableName = "ACL_PUNT_TABLE";
 
 // Matches the policer sai_attribute_t[] argument.
-bool MatchSaiPolicerAttribute(const int attrs_size, const sai_meter_type_t expected_type,
-                              const sai_packet_action_t expected_gpa, const sai_packet_action_t expected_ypa,
-                              const sai_packet_action_t expected_rpa, const sai_uint64_t expected_cir,
-                              const sai_uint64_t expected_pir, const sai_uint64_t expected_cbs,
-                              const sai_uint64_t expected_pbs, const sai_attribute_t *attr_list)
-{
+bool MatchSaiPolicerAttributeInStormMode(const int attrs_size,
+                                         const sai_meter_type_t expected_type,
+                                         const sai_packet_action_t expected_gpa,
+                                         const sai_packet_action_t expected_rpa,
+                                         const sai_uint64_t expected_cir,
+                                         const sai_uint64_t expected_cbs,
+                                         const sai_attribute_t* attr_list) {
     if (attr_list == nullptr)
     {
         return false;
@@ -110,32 +111,14 @@ bool MatchSaiPolicerAttribute(const int attrs_size, const sai_meter_type_t expec
                 return false;
             }
             break;
-        case SAI_POLICER_ATTR_PBS:
-            if (attr_list[i].value.u64 != expected_pbs)
-            {
-                return false;
-            }
-            break;
         case SAI_POLICER_ATTR_CIR:
             if (attr_list[i].value.u64 != expected_cir)
             {
                 return false;
             }
             break;
-        case SAI_POLICER_ATTR_PIR:
-            if (attr_list[i].value.u64 != expected_pir)
-            {
-                return false;
-            }
-            break;
         case SAI_POLICER_ATTR_GREEN_PACKET_ACTION:
             if (attr_list[i].value.s32 != expected_gpa)
-            {
-                return false;
-            }
-            break;
-        case SAI_POLICER_ATTR_YELLOW_PACKET_ACTION:
-            if (attr_list[i].value.s32 != expected_ypa)
             {
                 return false;
             }
@@ -147,7 +130,7 @@ bool MatchSaiPolicerAttribute(const int attrs_size, const sai_meter_type_t expec
             }
             break;
         case SAI_POLICER_ATTR_MODE:
-            if (attr_list[i].value.s32 != SAI_POLICER_MODE_TR_TCM)
+            if (attr_list[i].value.s32 != SAI_POLICER_MODE_STORM_CONTROL)
             {
                 return false;
             }
@@ -474,11 +457,9 @@ void IsExpectedAclRuleMapping(const P4AclRule *acl_rule, const P4AclRuleAppDbEnt
     if (!table_def.meter_unit.empty())
     {
         EXPECT_TRUE(acl_rule->meter.enabled);
-        EXPECT_EQ(SAI_POLICER_MODE_TR_TCM, acl_rule->meter.mode);
+        EXPECT_EQ(SAI_POLICER_MODE_STORM_CONTROL, acl_rule->meter.mode);
         EXPECT_EQ(app_db_entry.meter.cir, acl_rule->meter.cir);
         EXPECT_EQ(app_db_entry.meter.cburst, acl_rule->meter.cburst);
-        EXPECT_EQ(app_db_entry.meter.pir, acl_rule->meter.pir);
-        EXPECT_EQ(app_db_entry.meter.pburst, acl_rule->meter.pburst);
         if (table_def.meter_unit == P4_METER_UNIT_BYTES)
         {
             EXPECT_EQ(SAI_METER_TYPE_BYTES, acl_rule->meter.type);
@@ -676,8 +657,6 @@ P4AclTableDefinitionAppDbEntry getDefaultAclTableDefAppDbEntry()
     app_db_entry.packet_action_color_lookup["punt_and_set_tc"].push_back(
         {.packet_action = P4_PACKET_ACTION_PUNT, .packet_color = EMPTY_STRING});
     app_db_entry.packet_action_color_lookup["punt_non_green_pk"].push_back(
-        {.packet_action = P4_PACKET_ACTION_PUNT, .packet_color = P4_PACKET_COLOR_YELLOW});
-    app_db_entry.packet_action_color_lookup["punt_non_green_pk"].push_back(
         {.packet_action = P4_PACKET_ACTION_PUNT, .packet_color = P4_PACKET_COLOR_RED});
     app_db_entry.action_field_lookup["redirect"].push_back(
         {.sai_action = P4_ACTION_REDIRECT, .p4_param_name = "target"});
@@ -729,10 +708,8 @@ P4AclTableDefinitionAppDbEntry getDefaultAclTableDefAppDbEntry()
     app_db_entry.action_field_lookup["qos_queue"].push_back(
         {.sai_action = P4_ACTION_SET_QOS_QUEUE, .p4_param_name = "cpu_queue"});
 
-
     // action/acl_rate_limit_copy = [
     //   {"action":"SAI_PACKET_ACTION_FORWARD","packet_color":"SAI_PACKET_COLOR_GREEN"},
-    //   {"action":"SAI_PACKET_ACTION_COPY_CANCEL","packet_color":"SAI_PACKET_COLOR_YELLOW"},
     //   {"action":"SAI_PACKET_ACTION_COPY_CANCEL","packet_color":"SAI_PACKET_COLOR_RED"},
     //   {"action":"QOS_QUEUE","param":"qos_queue"}
     // ]
@@ -742,31 +719,22 @@ P4AclTableDefinitionAppDbEntry getDefaultAclTableDefAppDbEntry()
        .packet_color = P4_PACKET_COLOR_GREEN});
   app_db_entry.packet_action_color_lookup["acl_rate_limit_copy"].push_back(
       {.packet_action = P4_PACKET_ACTION_COPY_CANCEL,
-       .packet_color = P4_PACKET_COLOR_YELLOW});
-  app_db_entry.packet_action_color_lookup["acl_rate_limit_copy"].push_back(
-      {.packet_action = P4_PACKET_ACTION_COPY_CANCEL,
        .packet_color = P4_PACKET_COLOR_RED});
   app_db_entry.action_field_lookup["acl_rate_limit_copy"].push_back(
       {.sai_action = P4_ACTION_SET_QOS_QUEUE, .p4_param_name = "qos_queue"});
 
-
-    
-    //   "action/acl_trap" = [
-    //     {"action": "SAI_PACKET_ACTION_TRAP", "packet_color":
-    //     "SAI_PACKET_COLOR_GREEN"},
-    //     {"action": "SAI_PACKET_ACTION_DROP", "packet_color":
-    //     "SAI_PACKET_COLOR_YELLOW"},
-    //     {"action": "SAI_PACKET_ACTION_DROP", "packet_color":
-    //     "SAI_PACKET_COLOR_RED"},
-    //     {"action": "QOS_QUEUE", "param": "queue"}
-    //   ]
-    app_db_entry.action_field_lookup["acl_trap"].push_back(
+  //   "action/acl_trap" = [
+  //     {"action": "SAI_PACKET_ACTION_TRAP", "packet_color":
+  //     "SAI_PACKET_COLOR_GREEN"},
+  //     {"action": "SAI_PACKET_ACTION_DROP", "packet_color":
+  //     "SAI_PACKET_COLOR_RED"},
+  //     {"action": "QOS_QUEUE", "param": "queue"}
+  //   ]
+  app_db_entry.action_field_lookup["acl_trap"].push_back(
         {.sai_action = P4_ACTION_SET_QOS_QUEUE, .p4_param_name = "queue"});
-    app_db_entry.packet_action_color_lookup["acl_trap"].push_back(
+  app_db_entry.packet_action_color_lookup["acl_trap"].push_back(
         {.packet_action = P4_PACKET_ACTION_PUNT, .packet_color = P4_PACKET_COLOR_GREEN});
-    app_db_entry.packet_action_color_lookup["acl_trap"].push_back(
-        {.packet_action = P4_PACKET_ACTION_DROP, .packet_color = P4_PACKET_COLOR_YELLOW});
-    app_db_entry.packet_action_color_lookup["acl_trap"].push_back(
+  app_db_entry.packet_action_color_lookup["acl_trap"].push_back(
         {.packet_action = P4_PACKET_ACTION_DROP, .packet_color = P4_PACKET_COLOR_RED});
     return app_db_entry;
 }
@@ -778,8 +746,6 @@ std::vector<swss::FieldValueTuple> getDefaultRuleFieldValueTuples()
     attributes.push_back(swss::FieldValueTuple{"param/traffic_class", "0x20"});
     attributes.push_back(swss::FieldValueTuple{"meter/cir", "80"});
     attributes.push_back(swss::FieldValueTuple{"meter/cburst", "80"});
-    attributes.push_back(swss::FieldValueTuple{"meter/pir", "200"});
-    attributes.push_back(swss::FieldValueTuple{"meter/pburst", "200"});
     attributes.push_back(swss::FieldValueTuple{"controller_metadata", "..."});
     return attributes;
 }
@@ -808,8 +774,6 @@ P4AclRuleAppDbEntry getDefaultAclRuleAppDbEntryWithoutAction()
     app_db_entry.meter.enabled = true;
     app_db_entry.meter.cir = 80;
     app_db_entry.meter.cburst = 80;
-    app_db_entry.meter.pir = 200;
-    app_db_entry.meter.pburst = 200;
     return app_db_entry;
 }
 
@@ -2575,8 +2539,6 @@ TEST_F(AclManagerTest, DeserializeAclRuleAppDbWithInvalidMeterFieldFails)
     attributes.push_back(swss::FieldValueTuple{kAction, "copy_and_set_tc"});
     attributes.push_back(swss::FieldValueTuple{"param/traffic_class", "0x20"});
     attributes.push_back(swss::FieldValueTuple{"meter/cburst", "80"});
-    attributes.push_back(swss::FieldValueTuple{"meter/pir", "200"});
-    attributes.push_back(swss::FieldValueTuple{"meter/pburst", "200"});
     const auto &acl_rule_json_key = "{\"match/ether_type\":\"0x0800\",\"match/"
                                     "ipv6_dst\":\"fdf8:f53b:82e4::53 & "
                                     "fdf8:f53b:82e4::53\",\"priority\":15}";
@@ -3102,11 +3064,14 @@ TEST_F(AclManagerTest, AclRuleWithColorPacketActionsButNoRateLimit)
         .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_policer_,
-                create_policer(_, Eq(gSwitchId), Eq(9),
-                               Truly(std::bind(MatchSaiPolicerAttribute, 9, SAI_METER_TYPE_PACKETS,
-                                               SAI_PACKET_ACTION_TRAP, SAI_PACKET_ACTION_DROP, SAI_PACKET_ACTION_DROP,
-                                               0x7fffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+                create_policer(_, Eq(gSwitchId), Eq(6),
+                               Truly(std::bind(
+                                   MatchSaiPolicerAttributeInStormMode, 6,
+                                   SAI_METER_TYPE_BYTES, SAI_PACKET_ACTION_TRAP,
+                                   SAI_PACKET_ACTION_DROP, 0x7fffffff,
+                                   0x1000021, std::placeholders::_1))))
+        .WillOnce(
+            DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddRuleRequest(acl_rule_key, app_db_entry));
     auto acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
     ASSERT_NE(nullptr, acl_rule);
@@ -3156,12 +3121,10 @@ TEST_F(AclManagerTest, AclRuleWithColorPacketActionsButWithRateLimit) {
   EXPECT_CALL(
       mock_sai_policer_,
       create_policer(
-	  _, Eq(gSwitchId), Eq(9),
-          Truly(std::bind(MatchSaiPolicerAttribute, 9, SAI_METER_TYPE_PACKETS,
-                          SAI_PACKET_ACTION_FORWARD,
-			  SAI_PACKET_ACTION_COPY_CANCEL,
-			  SAI_PACKET_ACTION_COPY_CANCEL,
-                          0x7fffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff,
+          _, Eq(gSwitchId), Eq(6),
+          Truly(std::bind(MatchSaiPolicerAttributeInStormMode, 6,
+                          SAI_METER_TYPE_BYTES, SAI_PACKET_ACTION_FORWARD,
+                          SAI_PACKET_ACTION_COPY_CANCEL, 0x7fffffff, 0x1000021,
                           std::placeholders::_1))))
       .WillOnce(
           DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
@@ -3858,11 +3821,9 @@ TEST_F(AclManagerTest, UpdateAclRuleWithActionMeterChange)
     app_db_entry.action_param_fvs["traffic_class"] = "2";
     app_db_entry.meter.cburst = 500;
     app_db_entry.meter.cir = 500;
-    app_db_entry.meter.pburst = 600;
-    app_db_entry.meter.pir = 600;
     // Update meter attribute for green packet action
     EXPECT_CALL(mock_sai_policer_, set_policer_attribute(Eq(kAclMeterOid1), _))
-        .Times(5)
+        .Times(3)
         .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_acl_, set_acl_entry_attribute(Eq(kAclIngressRuleOid1), _))
         .WillOnce(Return(SAI_STATUS_SUCCESS));
@@ -3879,8 +3840,6 @@ TEST_F(AclManagerTest, UpdateAclRuleWithActionMeterChange)
     EXPECT_EQ(SAI_PACKET_ACTION_COPY, acl_rule->meter.packet_color_actions[SAI_POLICER_ATTR_GREEN_PACKET_ACTION]);
     EXPECT_EQ(500, acl_rule->meter.cburst);
     EXPECT_EQ(500, acl_rule->meter.cir);
-    EXPECT_EQ(600, acl_rule->meter.pburst);
-    EXPECT_EQ(600, acl_rule->meter.pir);
     EXPECT_TRUE(p4_oid_mapper_->getOID(SAI_OBJECT_TYPE_POLICER, table_name_and_rule_key, &meter_oid));
     EXPECT_EQ(kAclMeterOid1, meter_oid);
     EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_POLICER, table_name_and_rule_key, &ref_cnt));
@@ -3890,7 +3849,7 @@ TEST_F(AclManagerTest, UpdateAclRuleWithActionMeterChange)
     app_db_entry.meter.enabled = false;
     // Update meter attribute for green packet action
     EXPECT_CALL(mock_sai_policer_, set_policer_attribute(Eq(kAclMeterOid1), _))
-        .Times(4)
+        .Times(2)
         .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessUpdateRuleRequest(app_db_entry, *acl_rule));
     acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
@@ -3904,10 +3863,8 @@ TEST_F(AclManagerTest, UpdateAclRuleWithActionMeterChange)
     EXPECT_TRUE(acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_TC].aclaction.enable);
     EXPECT_TRUE(p4_oid_mapper_->getOID(SAI_OBJECT_TYPE_POLICER, table_name_and_rule_key, &meter_oid));
     EXPECT_TRUE(acl_rule->meter.enabled);
-    EXPECT_EQ(0x7fffffff, acl_rule->meter.cburst);
+    EXPECT_EQ(0x1000021, acl_rule->meter.cburst);
     EXPECT_EQ(0x7fffffff, acl_rule->meter.cir);
-    EXPECT_EQ(0x7fffffff, acl_rule->meter.pburst);
-    EXPECT_EQ(0x7fffffff, acl_rule->meter.pir);
 
     // Update meter: enable rate limiting and reset green packet action
     app_db_entry.action = "punt_and_set_tc";
@@ -3915,7 +3872,7 @@ TEST_F(AclManagerTest, UpdateAclRuleWithActionMeterChange)
     // Update meter and rule: reset color packet action and update entry
     // attribute
     EXPECT_CALL(mock_sai_policer_, set_policer_attribute(Eq(kAclMeterOid1), _))
-        .Times(5)
+        .Times(3)
         .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_acl_, set_acl_entry_attribute(Eq(kAclIngressRuleOid1), _))
         .WillOnce(Return(SAI_STATUS_SUCCESS));
@@ -3931,8 +3888,6 @@ TEST_F(AclManagerTest, UpdateAclRuleWithActionMeterChange)
     EXPECT_TRUE(acl_rule->meter.packet_color_actions.empty());
     EXPECT_EQ(500, acl_rule->meter.cburst);
     EXPECT_EQ(500, acl_rule->meter.cir);
-    EXPECT_EQ(600, acl_rule->meter.pburst);
-    EXPECT_EQ(600, acl_rule->meter.pir);
     EXPECT_TRUE(p4_oid_mapper_->getOID(SAI_OBJECT_TYPE_POLICER, table_name_and_rule_key, &meter_oid));
     EXPECT_EQ(kAclMeterOid1, meter_oid);
     EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_POLICER, table_name_and_rule_key, &ref_cnt));
@@ -3956,8 +3911,6 @@ TEST_F(AclManagerTest, UpdateAclRuleWithActionMeterChange)
     EXPECT_FALSE(p4_oid_mapper_->getOID(SAI_OBJECT_TYPE_POLICER, table_name_and_rule_key, &meter_oid));
     EXPECT_EQ(0, acl_rule->meter.cburst);
     EXPECT_EQ(0, acl_rule->meter.cir);
-    EXPECT_EQ(0, acl_rule->meter.pburst);
-    EXPECT_EQ(0, acl_rule->meter.pir);
     EXPECT_TRUE(acl_rule->meter.packet_color_actions.empty());
     EXPECT_FALSE(acl_rule->meter.enabled);
 
@@ -4319,8 +4272,6 @@ TEST_F(AclManagerTest, UpdateAclRuleFailsWhenSaiCallFails)
     app_db_entry.action_param_fvs["traffic_class"] = "2";
     app_db_entry.meter.cburst = 500;
     app_db_entry.meter.cir = 500;
-    app_db_entry.meter.pburst = 600;
-    app_db_entry.meter.pir = 600;
     // Update meter attribute for green packet action
     EXPECT_CALL(mock_sai_policer_, set_policer_attribute(Eq(kAclMeterOid1), _))
         .WillOnce(Return(SAI_STATUS_SUCCESS))
@@ -4348,8 +4299,6 @@ TEST_F(AclManagerTest, UpdateAclRuleFailsWhenSaiCallFails)
     app_db_entry.action_param_fvs.erase("traffic_class");
     app_db_entry.meter.cburst = 80;
     app_db_entry.meter.cir = 80;
-    app_db_entry.meter.pburst = 200;
-    app_db_entry.meter.pir = 200;
     // Update meter attribute for green packet action
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessUpdateRuleRequest(app_db_entry, *acl_rule));
     acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
@@ -4793,8 +4742,6 @@ TEST_F(AclManagerTest, DoAclCounterStatsTaskSucceeds)
     EXPECT_FALSE(counters_table->hget(counter_stats_key, P4_COUNTER_STATS_GREEN_BYTES, stats));
     EXPECT_FALSE(counters_table->hget(counter_stats_key, P4_COUNTER_STATS_RED_PACKETS, stats));
     EXPECT_FALSE(counters_table->hget(counter_stats_key, P4_COUNTER_STATS_RED_BYTES, stats));
-    EXPECT_FALSE(counters_table->hget(counter_stats_key, P4_COUNTER_STATS_YELLOW_PACKETS, stats));
-    EXPECT_FALSE(counters_table->hget(counter_stats_key, P4_COUNTER_STATS_YELLOW_BYTES, stats));
 
     // Remove rule
     EXPECT_CALL(mock_sai_acl_, remove_acl_entry(Eq(kAclIngressRuleOid1))).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
@@ -4843,17 +4790,15 @@ TEST_F(AclManagerTest, DoAclCounterStatsTaskSucceeds)
     EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
     EXPECT_FALSE(counters_table->get(counter_stats_key, values));
 
-    // Install rule with packet color YELLOW and RED
+    // Install rule with packet color RED
     app_db_entry.action = "punt_non_green_pk";
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddRuleRequest(acl_rule_key, app_db_entry));
     // Populate counter stats in COUNTERS_DB
     EXPECT_CALL(mock_sai_policer_, get_policer_stats(Eq(kAclMeterOid1), _, _, _))
         .WillOnce(DoAll(Invoke([](sai_object_id_t policer_id, uint32_t number_of_counters,
                                   const sai_stat_id_t *counter_ids, uint64_t *counters) {
-                            counters[0] = 20;  // yellow_packets
-                            counters[1] = 200; // yellow_bytes
-                            counters[2] = 30;  // red_packets
-                            counters[3] = 300; // red_bytes
+                            counters[0] = 30;   // red_packets
+                            counters[1] = 300;  // red_bytes
                         }),
                         Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_acl_, get_acl_counter_attribute(Eq(kAclCounterOid1), _, _))
@@ -4863,11 +4808,7 @@ TEST_F(AclManagerTest, DoAclCounterStatsTaskSucceeds)
                         }),
                         Return(SAI_STATUS_SUCCESS)));
     DoAclCounterStatsTask();
-    // Only yellow/red_packets and yellow/red_bytes are populated in COUNTERS_DB
-    EXPECT_TRUE(counters_table->hget(counter_stats_key, P4_COUNTER_STATS_YELLOW_PACKETS, stats));
-    EXPECT_EQ("20", stats);
-    EXPECT_TRUE(counters_table->hget(counter_stats_key, P4_COUNTER_STATS_YELLOW_BYTES, stats));
-    EXPECT_EQ("200", stats);
+    // Only red_packets and red_bytes are populated in COUNTERS_DB
     EXPECT_TRUE(counters_table->hget(counter_stats_key, P4_COUNTER_STATS_RED_PACKETS, stats));
     EXPECT_EQ("30", stats);
     EXPECT_TRUE(counters_table->hget(counter_stats_key, P4_COUNTER_STATS_RED_BYTES, stats));
@@ -5438,8 +5379,6 @@ TEST_F(AclManagerTest, AclRuleVerifyStateTest)
     attributes.push_back(swss::FieldValueTuple{"param/target", gMirrorSession1});
     attributes.push_back(swss::FieldValueTuple{"meter/cir", "80"});
     attributes.push_back(swss::FieldValueTuple{"meter/cburst", "80"});
-    attributes.push_back(swss::FieldValueTuple{"meter/pir", "200"});
-    attributes.push_back(swss::FieldValueTuple{"meter/pburst", "200"});
     attributes.push_back(swss::FieldValueTuple{"controller_metadata", "..."});
     const auto& acl_rule_json_key =
         "{\"match/ether_type\":\"0x0800\",\"match/"
@@ -5508,10 +5447,9 @@ TEST_F(AclManagerTest, AclRuleVerifyStateTest)
     table.set(
         "SAI_OBJECT_TYPE_POLICER:oid:0x7d1",
         std::vector<swss::FieldValueTuple>{
-            swss::FieldValueTuple{"SAI_POLICER_ATTR_MODE", "SAI_POLICER_MODE_TR_TCM"},
+            swss::FieldValueTuple{"SAI_POLICER_ATTR_MODE", "SAI_POLICER_MODE_STORM_CONTROL"},
             swss::FieldValueTuple{"SAI_POLICER_ATTR_METER_TYPE", "SAI_METER_TYPE_BYTES"},
             swss::FieldValueTuple{"SAI_POLICER_ATTR_CBS", "80"}, swss::FieldValueTuple{"SAI_POLICER_ATTR_CIR", "80"},
-            swss::FieldValueTuple{"SAI_POLICER_ATTR_PIR", "200"}, swss::FieldValueTuple{"SAI_POLICER_ATTR_PBS", "200"},
             swss::FieldValueTuple{"SAI_POLICER_ATTR_GREEN_PACKET_ACTION", "SAI_PACKET_ACTION_COPY"}});
 
     // Verification should succeed with vaild key and value.
@@ -6022,10 +5960,9 @@ TEST_F(AclManagerTest, AclRuleVerifyStateAsicDbTest)
     table.set(
         "SAI_OBJECT_TYPE_POLICER:oid:0x7d1",
         std::vector<swss::FieldValueTuple>{
-            swss::FieldValueTuple{"SAI_POLICER_ATTR_MODE", "SAI_POLICER_MODE_TR_TCM"},
+            swss::FieldValueTuple{"SAI_POLICER_ATTR_MODE", "SAI_POLICER_MODE_STORM_CONTROL"},
             swss::FieldValueTuple{"SAI_POLICER_ATTR_METER_TYPE", "SAI_METER_TYPE_BYTES"},
             swss::FieldValueTuple{"SAI_POLICER_ATTR_CBS", "80"}, swss::FieldValueTuple{"SAI_POLICER_ATTR_CIR", "80"},
-            swss::FieldValueTuple{"SAI_POLICER_ATTR_PIR", "200"}, swss::FieldValueTuple{"SAI_POLICER_ATTR_PBS", "200"},
             swss::FieldValueTuple{"SAI_POLICER_ATTR_GREEN_PACKET_ACTION", "SAI_PACKET_ACTION_COPY"}});
 
     // Verification should succeed with correct ASIC DB values.
@@ -6079,10 +6016,9 @@ TEST_F(AclManagerTest, AclRuleVerifyStateAsicDbTest)
     table.set(
         "SAI_OBJECT_TYPE_POLICER:oid:0x7d1",
         std::vector<swss::FieldValueTuple>{
-            swss::FieldValueTuple{"SAI_POLICER_ATTR_MODE", "SAI_POLICER_MODE_TR_TCM"},
+            swss::FieldValueTuple{"SAI_POLICER_ATTR_MODE", "SAI_POLICER_MODE_STORM_CONTROL"},
             swss::FieldValueTuple{"SAI_POLICER_ATTR_METER_TYPE", "SAI_METER_TYPE_BYTES"},
             swss::FieldValueTuple{"SAI_POLICER_ATTR_CBS", "80"}, swss::FieldValueTuple{"SAI_POLICER_ATTR_CIR", "80"},
-            swss::FieldValueTuple{"SAI_POLICER_ATTR_PIR", "200"}, swss::FieldValueTuple{"SAI_POLICER_ATTR_PBS", "200"},
             swss::FieldValueTuple{"SAI_POLICER_ATTR_GREEN_PACKET_ACTION", "SAI_PACKET_ACTION_COPY"}});
 }
 
