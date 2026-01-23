@@ -82,6 +82,7 @@ constexpr char kPortsDelimiter = ',';
 constexpr char *kMatchPrefix = "match";
 constexpr char *kActionParamPrefix = "param";
 constexpr char *kMeterPrefix = "meter";
+constexpr char *kMeterMode = "mode";
 constexpr char *kMeterCir = "cir";
 constexpr char *kMeterCburst = "cburst";
 constexpr char *kMeterPir = "pir";
@@ -309,8 +310,10 @@ struct P4AclMeterAppDb
     uint64_t cburst;
     uint64_t pir;
     uint64_t pburst;
+    std::string mode;
 
-    P4AclMeterAppDb() : enabled(false)
+    //P4AclMeterAppDb() : enabled(false)
+    P4AclMeterAppDb() : enabled(false), cir(0), cburst(0), pir(0), pburst(0)
     {
     }
 };

@@ -75,7 +75,7 @@ struct P4AclMeter
 
     P4AclMeter()
         : enabled(false), meter_oid(SAI_NULL_OBJECT_ID), cir(0), cburst(0), pir(0), pburst(0),
-          type(SAI_METER_TYPE_PACKETS), mode(SAI_POLICER_MODE_TR_TCM)
+          type(SAI_METER_TYPE_PACKETS), mode(SAI_POLICER_MODE_STORM_CONTROL)
     {
     }
 
@@ -432,6 +432,10 @@ using P4AclRuleTables = std::map<std::string, std::map<std::string, P4AclRule>>;
 #define P4_COUNTER_STATS_RED_PACKETS "red_packets"
 #define P4_COUNTER_STATS_RED_BYTES "red_bytes"
 
+#define P4_POLICER_MODE_SR_TCM "sr_tcm"
+#define P4_POLICER_MODE_TR_TCM "tr_tcm"
+#define P4_POLICER_MODE_STORM "storm"
+
 #define P4_UDF_BASE_L2 "SAI_UDF_BASE_L2"
 #define P4_UDF_BASE_L3 "SAI_UDF_BASE_L3"
 #define P4_UDF_BASE_L4 "SAI_UDF_BASE_L4"
@@ -750,6 +754,12 @@ static const std::map<sai_acl_stage_t, acl_stage_type_t>
         {SAI_ACL_STAGE_INGRESS, ACL_STAGE_INGRESS},
         {SAI_ACL_STAGE_EGRESS, ACL_STAGE_EGRESS},
         {SAI_ACL_STAGE_PRE_INGRESS, ACL_STAGE_PRE_INGRESS},
+};
+
+static std::map<std::string, sai_policer_mode_t> policerModeLookup = {
+    {P4_POLICER_MODE_SR_TCM, SAI_POLICER_MODE_SR_TCM},
+    {P4_POLICER_MODE_TR_TCM, SAI_POLICER_MODE_TR_TCM},
+    {P4_POLICER_MODE_STORM, SAI_POLICER_MODE_STORM_CONTROL}
 };
 
 // Parse ACL table definition APP DB entry action field to P4ActionParamName
