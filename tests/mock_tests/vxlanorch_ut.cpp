@@ -29,20 +29,20 @@ namespace vxlanorch_test
 
     shared_ptr<swss::DBConnector> m_app_db;
     shared_ptr<swss::DBConnector> m_config_db;
-	shared_ptr<swss::DBConnector> m_state_db;
-	VxlanTunnelOrch *vxlan_tunnel_orch;
+    shared_ptr<swss::DBConnector> m_state_db;
+    VxlanTunnelOrch *vxlan_tunnel_orch;
 
     class VxlanOrchTest : public ::testing::Test
     {
-		public:
+        public:
 
-			VxlanOrchTest()
-			{
-			};
+            VxlanOrchTest()
+            {
+            };
 
-			~VxlanOrchTest()
-			{
-			};
+            ~VxlanOrchTest()
+            {
+            };
 
 
             void _hook_sai_apis()
@@ -96,68 +96,68 @@ namespace vxlanorch_test
             decltype(sai_tunnel_api->remove_tunnel_map_entry) saved_remove_tunnel_map_entry{};
             decltype(sai_tunnel_api->remove_tunnel_term_table_entry) saved_remove_tunnel_term_table_entry{};
 
-		void SetUp() override
-		{
-			// Init switch and create dependencies
-			m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
-			m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
-			m_state_db = make_shared<swss::DBConnector>("STATE_DB", 0);
 
-			map<string, string> profile = {
-				{ "SAI_VS_SWITCH_TYPE", "SAI_VS_SWITCH_TYPE_BCM56850" },
-				{ "KV_DEVICE_MAC_ADDRESS", "20:03:04:05:06:00" }
-			};
+            void SetUp() override
+            {
+                // Init switch and create dependencies
+                m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
+                m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
+                m_state_db = make_shared<swss::DBConnector>("STATE_DB", 0);
 
-			ut_helper::initSaiApi(profile);
-			_hook_sai_apis();
+                map<string, string> profile = {
+                    { "SAI_VS_SWITCH_TYPE", "SAI_VS_SWITCH_TYPE_BCM56850" },
+                    { "KV_DEVICE_MAC_ADDRESS", "20:03:04:05:06:00" }
+                };
 
-			sai_attribute_t attr;
+                ut_helper::initSaiApi(profile);
+                _hook_sai_apis();
 
-			attr.id = SAI_SWITCH_ATTR_INIT_SWITCH;
-			attr.value.booldata = true;
+                sai_attribute_t attr;
 
-			auto status = sai_switch_api->create_switch(&gSwitchId, 1, &attr);
-			ASSERT_EQ(status, SAI_STATUS_SUCCESS);
-		}
+                attr.id = SAI_SWITCH_ATTR_INIT_SWITCH;
+                attr.value.booldata = true;
 
-		void initSwitchOrch()
-		{
-			TableConnector stateDbSwitchTable(m_state_db.get(), "SWITCH_CAPABILITY");
-			TableConnector conf_asic_sensors(m_config_db.get(), CFG_ASIC_SENSORS_TABLE_NAME);
-			TableConnector app_switch_table(m_app_db.get(),  APP_SWITCH_TABLE_NAME);
-			TableConnector conf_suppress_asic_sdk_health_categories(m_config_db.get(), CFG_SUPPRESS_ASIC_SDK_HEALTH_EVENT_NAME);
+                auto status = sai_switch_api->create_switch(&gSwitchId, 1, &attr);
+                ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+            }
 
-			vector<TableConnector> switch_tables = {
-				conf_asic_sensors,
-				conf_suppress_asic_sdk_health_categories,
-				app_switch_table
-			};
+            void initSwitchOrch()
+            {
+                TableConnector stateDbSwitchTable(m_state_db.get(), "SWITCH_CAPABILITY");
+                TableConnector conf_asic_sensors(m_config_db.get(), CFG_ASIC_SENSORS_TABLE_NAME);
+                TableConnector app_switch_table(m_app_db.get(),  APP_SWITCH_TABLE_NAME);
+                TableConnector conf_suppress_asic_sdk_health_categories(m_config_db.get(), CFG_SUPPRESS_ASIC_SDK_HEALTH_EVENT_NAME);
 
-			ASSERT_EQ(gSwitchOrch, nullptr);
-			gSwitchOrch = new SwitchOrch(m_app_db.get(), switch_tables, stateDbSwitchTable);
-		}
+                vector<TableConnector> switch_tables = {
+                    conf_asic_sensors,
+                    conf_suppress_asic_sdk_health_categories,
+                    app_switch_table
+                };
 
-        void initVxlanOrch()
-        {
-            vxlan_tunnel_orch = new VxlanTunnelOrch(m_state_db.get(), m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME);
-            gDirectory.set(vxlan_tunnel_orch);
-        }
+                ASSERT_EQ(gSwitchOrch, nullptr);
+                gSwitchOrch = new SwitchOrch(m_app_db.get(), switch_tables, stateDbSwitchTable);
+            }
 
-        void TearDown() override
-        {
-			gDirectory.m_values.clear();
-            delete vxlan_tunnel_orch;
-            vxlan_tunnel_orch = nullptr;
-			delete gSwitchOrch;
-			gSwitchOrch = nullptr;
+            void initVxlanOrch()
+            {
+                vxlan_tunnel_orch = new VxlanTunnelOrch(m_state_db.get(), m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME);
+                gDirectory.set(vxlan_tunnel_orch);
+            }
 
-			//_unhook_sai_apis();
-			ut_helper::uninitSaiApi();
-		}
-	};
+            void TearDown() override
+            {
+                _unhook_sai_apis();
+                gDirectory.m_values.erase(typeid(VxlanTunnelOrch*).name());
+                // delete vxlan_tunnel_orch;
+                vxlan_tunnel_orch = nullptr;
+                delete gSwitchOrch;
+                gSwitchOrch = nullptr;
+                ut_helper::uninitSaiApi();
+            }
+    };
 
 
-	TEST_F(VxlanOrchTest, TunnelCreationFailure)
+    TEST_F(VxlanOrchTest, TunnelCreationFailure)
     {
         initSwitchOrch();
         initVxlanOrch();
@@ -190,50 +190,50 @@ namespace vxlanorch_test
                 //EXPECT_EQ(oid, SAI_NULL_OBJECT_ID);
                 vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
                 });
-        //vxlan_orch->delTunnel("vxlan_tunnel_1");
-        //delete tunnel;
-        //tunnel = nullptr;
+        vxlan_orch->delTunnel("vxlan_tunnel_1");
+        delete tunnel;
+        tunnel = nullptr;
     }
 
     /*
-    TEST_F(VxlanOrchTest, TunnelMapCreationFailure)
-    {
-        initSwitchOrch();
-        initVxlanOrch();
-        VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
-        VxlanTunnel* tunnel = nullptr;
+       TEST_F(VxlanOrchTest, TunnelMapCreationFailure)
+       {
+       initSwitchOrch();
+       initVxlanOrch();
+       VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+       VxlanTunnel* tunnel = nullptr;
 
-        auto src_ip = IpAddress("10.1.0.1");
-        auto dst_ip = IpAddress("20.1.0.1");
-        tunnel = new VxlanTunnel("vxlan_tunnel_1", src_ip, dst_ip, TNL_CREATION_SRC_CLI);
-        vxlan_orch->addTunnel("vxlan_tunnel_1", tunnel);
+       auto src_ip = IpAddress("10.1.0.1");
+       auto dst_ip = IpAddress("20.1.0.1");
+       tunnel = new VxlanTunnel("vxlan_tunnel_1", src_ip, dst_ip, TNL_CREATION_SRC_CLI);
+       vxlan_orch->addTunnel("vxlan_tunnel_1", tunnel);
 
-        EXPECT_CALL(mock_sai_tunnel_, create_tunnel_map(_, _, _, _))
-            .Times(4)
-            .WillRepeatedly(DoAll(
-                        SetArgPointee<0>(SAI_NULL_OBJECT_ID),
-                        Return(SAI_STATUS_FAILURE)
-                        ));
-        EXPECT_CALL(mock_sai_tunnel_, create_tunnel(_, _, _, _))
-            .WillOnce(DoAll(
-                        SetArgPointee<0>(SAI_NULL_OBJECT_ID),
-                        Return(SAI_STATUS_FAILURE)
-                        ));
+       EXPECT_CALL(mock_sai_tunnel_, create_tunnel_map(_, _, _, _))
+       .Times(4)
+       .WillRepeatedly(DoAll(
+       SetArgPointee<0>(SAI_NULL_OBJECT_ID),
+       Return(SAI_STATUS_FAILURE)
+       ));
+       EXPECT_CALL(mock_sai_tunnel_, create_tunnel(_, _, _, _))
+       .WillOnce(DoAll(
+       SetArgPointee<0>(SAI_NULL_OBJECT_ID),
+       Return(SAI_STATUS_FAILURE)
+       ));
 
-        EXPECT_CALL(mock_sai_tunnel_, create_tunnel_term_table_entry(_, _, _, _))
-            .WillOnce(DoAll(
-                        SetArgPointee<0>(vxlan_tunnel_term_table_entry_oid),
-                        Return(SAI_STATUS_SUCCESS)
-                        ));
-        EXPECT_CALL(mock_sai_tunnel_, create_tunnel_map_entry(_, _, _, _))
-            .Times(2)
-            .WillRepeatedly(DoAll(
-                        SetArgPointee<0>(SAI_NULL_OBJECT_ID),
-                        Return(SAI_STATUS_FAILURE)
-                        ));
-        EXPECT_NO_THROW({
-            vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
-            });
-    }
-    */
+       EXPECT_CALL(mock_sai_tunnel_, create_tunnel_term_table_entry(_, _, _, _))
+       .WillOnce(DoAll(
+       SetArgPointee<0>(vxlan_tunnel_term_table_entry_oid),
+       Return(SAI_STATUS_SUCCESS)
+       ));
+       EXPECT_CALL(mock_sai_tunnel_, create_tunnel_map_entry(_, _, _, _))
+       .Times(2)
+       .WillRepeatedly(DoAll(
+       SetArgPointee<0>(SAI_NULL_OBJECT_ID),
+       Return(SAI_STATUS_FAILURE)
+       ));
+       EXPECT_NO_THROW({
+       vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
+       });
+       }
+     */
 }

@@ -913,7 +913,10 @@ bool VxlanTunnel::createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src,
         else
         {
             // Undo canges in createMapperHw if create_tunnel fails.
-            deleteMapperHw(mapper_list, map_src);
+            ids_.tunnel_id = SAI_NULL_OBJECT_ID;
+            ids_.tunnel_term_id = SAI_NULL_OBJECT_ID;
+            active_ = false;
+            //deleteMapperHw(mapper_list, map_src);
             return false;
         }
 
