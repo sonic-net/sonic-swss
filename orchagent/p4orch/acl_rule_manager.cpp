@@ -144,13 +144,22 @@ std::vector<sai_attribute_t> getMeterSaiAttrs(const P4AclMeter &p4_acl_meter)
         meter_attr.value.u64 = p4_acl_meter.cir;
         meter_attrs.push_back(meter_attr);
 
-        meter_attr.id = SAI_POLICER_ATTR_PIR;
-        meter_attr.value.u64 = p4_acl_meter.pir;
-        meter_attrs.push_back(meter_attr);
+        if (p4_acl_meter.mode == SAI_POLICER_MODE_SR_TCM)
+        {
+            meter_attr.id = SAI_POLICER_ATTR_PBS;
+            meter_attr.value.u64 = p4_acl_meter.pburst;
+            meter_attrs.push_back(meter_attr);
+        }
+        else if (p4_acl_meter.mode == SAI_POLICER_MODE_TR_TCM)
+        {
+            meter_attr.id = SAI_POLICER_ATTR_PIR;
+            meter_attr.value.u64 = p4_acl_meter.pir;
+            meter_attrs.push_back(meter_attr);
 
-        meter_attr.id = SAI_POLICER_ATTR_PBS;
-        meter_attr.value.u64 = p4_acl_meter.pburst;
-        meter_attrs.push_back(meter_attr);
+            meter_attr.id = SAI_POLICER_ATTR_PBS;
+            meter_attr.value.u64 = p4_acl_meter.pburst;
+            meter_attrs.push_back(meter_attr);
+        }
     }
 
     for (const auto &packet_color_action : p4_acl_meter.packet_color_actions)
@@ -623,6 +632,11 @@ ReturnCodeOr<P4AclRuleAppDbEntry> AclRuleManager::deserializeAclRuleAppDbEntry(
         else if (prefix == kMeterPrefix)
         {
             const auto &meter_attr_name = tokenized_field[1];
+            if (meter_attr_name == kMeterMode)
+            {
+                app_db_entry.meter.mode = value;
+                continue;
+            }
             if (std::stoi(value) < 0)
             {
                 return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
@@ -664,6 +678,25 @@ ReturnCode AclRuleManager::validateAclRuleAppDbEntry(const P4AclRuleAppDbEntry &
     {
         return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
                << "ACL rule in table " << QuotedVar(app_db_entry.acl_table_name) << " is missing priority";
+    }
+    if (app_db_entry.meter.enabled && !app_db_entry.meter.mode.empty() &&
+        policerModeLookup.find(app_db_entry.meter.mode) == policerModeLookup.end())
+    {
+        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "ACL rule " << QuotedVar(app_db_entry.db_key)
+               << " has invalid policer mode:" << QuotedVar(app_db_entry.meter.mode);
+    }
+    // If meter/mode is empty, then OA will use storm mode by default.
+    // If meter/pir and meter/pburst present, they should be equal to meter/cir
+    // and meter/cburst.
+    if (app_db_entry.meter.enabled && app_db_entry.meter.mode.empty() &&
+        ((app_db_entry.meter.pir != 0 && app_db_entry.meter.cir != app_db_entry.meter.pir) ||
+         (app_db_entry.meter.pburst != 0 && app_db_entry.meter.cburst != app_db_entry.meter.pburst)))
+    {
+        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "ACL policer for " << QuotedVar(app_db_entry.db_key)
+                                                             << " in default single_rate_two_color mode has invalid "
+                                                                "cir:pir/cburst:pburst pairs, "
+                                                                "expected cir==pir, cburst==pburst.";
     }
     return ReturnCode();
 }
@@ -1471,11 +1504,22 @@ ReturnCode AclRuleManager::setMeterValue(const P4AclTableDefinition *acl_table, 
 {
     if (app_db_entry.meter.enabled)
     {
+        auto policer_mode_it = policerModeLookup.find(app_db_entry.meter.mode);
+        if (policer_mode_it != policerModeLookup.end())
+        {
+            acl_meter.mode = policer_mode_it->second;
+        }
         acl_meter.cir = app_db_entry.meter.cir;
         acl_meter.cburst = app_db_entry.meter.cburst;
-        acl_meter.pir = app_db_entry.meter.pir;
-        acl_meter.pburst = app_db_entry.meter.pburst;
-        acl_meter.mode = SAI_POLICER_MODE_TR_TCM;
+        if (acl_meter.mode == SAI_POLICER_MODE_SR_TCM)
+        {
+            acl_meter.pburst = app_db_entry.meter.pburst;
+        }
+        else if (acl_meter.mode == SAI_POLICER_MODE_TR_TCM)
+        {
+            acl_meter.pir = app_db_entry.meter.pir;
+            acl_meter.pburst = app_db_entry.meter.pburst;
+        }
         if (acl_table->meter_unit == P4_METER_UNIT_PACKETS)
         {
             acl_meter.type = SAI_METER_TYPE_PACKETS;
@@ -1498,17 +1542,22 @@ ReturnCode AclRuleManager::setMeterValue(const P4AclTableDefinition *acl_table, 
         acl_meter.packet_color_actions = action_color_it->second;
     }
 
-    // SAI_POLICER_MODE_TR_TCM mode is used by default.
+    if (acl_meter.mode == SAI_POLICER_MODE_STORM_CONTROL &&
+        acl_meter.packet_color_actions.find(SAI_POLICER_ATTR_YELLOW_PACKET_ACTION) !=
+            acl_meter.packet_color_actions.end())
+    {
+        acl_meter.packet_color_actions.erase(SAI_POLICER_ATTR_YELLOW_PACKET_ACTION);
+    }
+
+    // SAI_POLICER_MODE_STORM_CONTROL mode is used by default.
     // Meter rate limit config is not present for the ACL rule
     // Mark the packet as GREEN by setting rate limit to max.
     if (!acl_meter.packet_color_actions.empty() && !acl_meter.enabled)
     {
         acl_meter.enabled = true;
-        acl_meter.type = SAI_METER_TYPE_PACKETS;
-        acl_meter.cburst = 0x7fffffff;
+        acl_meter.type = SAI_METER_TYPE_BYTES;
+        acl_meter.cburst = 0x1000021;
         acl_meter.cir = 0x7fffffff;
-        acl_meter.pir = 0x7fffffff;
-        acl_meter.pburst = 0x7fffffff;
     }
 
     return ReturnCode();
@@ -2012,6 +2061,13 @@ ReturnCode AclRuleManager::processUpdateRuleRequest(const P4AclRuleAppDbEntry &a
     else if (old_acl_rule.meter.meter_oid != SAI_NULL_OBJECT_ID)
     {
         // Update meter attributes
+        if (acl_rule.meter.mode != old_acl_rule.meter.mode)
+        {
+            LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
+                                 << "Updating ACL rule meter mode is not supported for ACL entry: "
+                                 << QuotedVar(acl_rule.acl_rule_key) << " in table "
+                                 << QuotedVar(acl_rule.acl_table_name));
+        }
         auto status = updateAclMeter(acl_rule.meter, old_acl_rule.meter);
         if (!status.ok())
         {

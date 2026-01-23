@@ -128,10 +128,12 @@ class AclRuleManager : public ObjectManagerInterface
                               P4AclRule* acl_rule);
 
     // Get port object id by name for redirect action.
-    ReturnCode getRedirectActionPortOid(const std::string &target, sai_object_id_t *rediect_oid);
+    ReturnCode getRedirectActionPortOid(const std::string& target,
+                                        sai_object_id_t* rediect_oid);
 
     // Get next hop object id by name for redirect action.
-    ReturnCode getRedirectActionNextHopOid(const std::string &target, sai_object_id_t *rediect_oid);
+    ReturnCode getRedirectActionNextHopOid(const std::string& target,
+                                           sai_object_id_t* rediect_oid);
 
     // Create user defined trap for each cpu queue/trap group and program user
     // defined traps in hostif. Save the user defined trap oids in m_p4OidMapper
