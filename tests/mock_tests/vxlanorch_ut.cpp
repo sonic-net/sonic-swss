@@ -23,9 +23,10 @@ namespace vxlanorch_test
     using ::testing::Throw;
     using ::testing::StrictMock;
 
-    constexpr sai_object_id_t vxlan_tunnel_oid = 0x1234;
-    constexpr sai_object_id_t vxlan_tunnel_map_entry_oid = 0x1240;
+    constexpr sai_object_id_t vxlan_tunnel_oid = 0x1232;
+    constexpr sai_object_id_t vxlan_tunnel_map_oid = 0x1240;
     constexpr sai_object_id_t vxlan_tunnel_term_table_entry_oid = 0x1248;
+    constexpr sai_object_id_t vxlan_tunnel_map_entry_oid = 0x1256;
 
     shared_ptr<swss::DBConnector> m_app_db;
     shared_ptr<swss::DBConnector> m_config_db;
@@ -172,7 +173,7 @@ namespace vxlanorch_test
         EXPECT_CALL(mock_sai_tunnel_, create_tunnel_map(_, _, _, _))
             .Times(4)
             .WillRepeatedly(DoAll(
-                        SetArgPointee<0>(SAI_NULL_OBJECT_ID),
+                        SetArgPointee<0>(vxlan_tunnel_map_oid),
                         Return(SAI_STATUS_SUCCESS)
                         ));
         EXPECT_CALL(mock_sai_tunnel_, create_tunnel(_, _, _, _))
@@ -186,52 +187,87 @@ namespace vxlanorch_test
                         Return(SAI_STATUS_SUCCESS)
                         ));
         EXPECT_NO_THROW({
-                //sai_object_id_t oid = create_tunnel_map(MAP_T::VNI_TO_VLAN_ID);
-                //EXPECT_EQ(oid, SAI_NULL_OBJECT_ID);
                 vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
                 });
         vxlan_orch->delTunnel("vxlan_tunnel_1");
     }
 
-    /*
-       TEST_F(VxlanOrchTest, TunnelMapCreationFailure)
-       {
-       initSwitchOrch();
-       initVxlanOrch();
-       VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
-       VxlanTunnel* tunnel = nullptr;
+    TEST_F(VxlanOrchTest, TunnelMapCreationFailure)
+    {
+        initSwitchOrch();
+        initVxlanOrch();
+        VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+        VxlanTunnel* tunnel = nullptr;
 
-       auto src_ip = IpAddress("10.1.0.1");
-       auto dst_ip = IpAddress("20.1.0.1");
-       tunnel = new VxlanTunnel("vxlan_tunnel_1", src_ip, dst_ip, TNL_CREATION_SRC_CLI);
-       vxlan_orch->addTunnel("vxlan_tunnel_1", tunnel);
+        auto src_ip = IpAddress("10.1.0.1");
+        auto dst_ip = IpAddress("20.1.0.1");
+        tunnel = new VxlanTunnel("vxlan_tunnel_1", src_ip, dst_ip, TNL_CREATION_SRC_CLI);
+        vxlan_orch->addTunnel("vxlan_tunnel_1", tunnel);
 
-       EXPECT_CALL(mock_sai_tunnel_, create_tunnel_map(_, _, _, _))
-       .Times(4)
-       .WillRepeatedly(DoAll(
-       SetArgPointee<0>(SAI_NULL_OBJECT_ID),
-       Return(SAI_STATUS_FAILURE)
-       ));
-       EXPECT_CALL(mock_sai_tunnel_, create_tunnel(_, _, _, _))
-       .WillOnce(DoAll(
-       SetArgPointee<0>(SAI_NULL_OBJECT_ID),
-       Return(SAI_STATUS_FAILURE)
-       ));
+        EXPECT_CALL(mock_sai_tunnel_, create_tunnel_map(_, _, _, _))
+            .Times(4)
+            .WillRepeatedly(DoAll(
+                        SetArgPointee<0>(SAI_NULL_OBJECT_ID),
+                        Return(SAI_STATUS_FAILURE)
+                        ));
+        EXPECT_CALL(mock_sai_tunnel_, create_tunnel(_, _, _, _))
+            .WillOnce(DoAll(
+                        SetArgPointee<0>(SAI_NULL_OBJECT_ID),
+                        Return(SAI_STATUS_FAILURE)
+                        ));
+        EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_map(_))
+            .Times(4)
+            .WillRepeatedly(DoAll(
+                        Return(SAI_STATUS_FAILURE)
+                        ));
 
-       EXPECT_CALL(mock_sai_tunnel_, create_tunnel_term_table_entry(_, _, _, _))
-       .WillOnce(DoAll(
-       SetArgPointee<0>(vxlan_tunnel_term_table_entry_oid),
-       Return(SAI_STATUS_SUCCESS)
-       ));
-       EXPECT_CALL(mock_sai_tunnel_, create_tunnel_map_entry(_, _, _, _))
-       .Times(2)
-       .WillRepeatedly(DoAll(
-       SetArgPointee<0>(SAI_NULL_OBJECT_ID),
-       Return(SAI_STATUS_FAILURE)
-       ));
-       EXPECT_NO_THROW({
-       vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
-       });
-       }
-     */
+        EXPECT_NO_THROW({
+                vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
+                });
+        vxlan_orch->delTunnel("vxlan_tunnel_1");
+    }
+
+    TEST_F(VxlanOrchTest, TunnelTerminationCreateFailure)
+    {
+        initSwitchOrch();
+        initVxlanOrch();
+        VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+        VxlanTunnel* tunnel = nullptr;
+
+        auto src_ip = IpAddress("10.1.0.1");
+        auto dst_ip = IpAddress("20.1.0.1");
+        tunnel = new VxlanTunnel("vxlan_tunnel_1", src_ip, dst_ip, TNL_CREATION_SRC_CLI);
+        vxlan_orch->addTunnel("vxlan_tunnel_1", tunnel);
+
+        EXPECT_CALL(mock_sai_tunnel_, create_tunnel_map(_, _, _, _))
+            .Times(4)
+            .WillRepeatedly(DoAll(
+                        SetArgPointee<0>(vxlan_tunnel_map_oid),
+                        Return(SAI_STATUS_SUCCESS)
+                        ));
+        EXPECT_CALL(mock_sai_tunnel_, create_tunnel(_, _, _, _))
+            .WillOnce(DoAll(
+                        SetArgPointee<0>(vxlan_tunnel_oid),
+                        Return(SAI_STATUS_SUCCESS)
+                        ));
+        EXPECT_CALL(mock_sai_tunnel_, create_tunnel_term_table_entry(_, _, _, _))
+            .WillOnce(DoAll(
+                        SetArgPointee<0>(SAI_NULL_OBJECT_ID),
+                        Return(SAI_STATUS_FAILURE)
+                        ));
+        EXPECT_CALL(mock_sai_tunnel_, remove_tunnel(_))
+            .WillOnce(DoAll(
+                        Return(SAI_STATUS_SUCCESS)
+                        ));
+        EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_map(_))
+            .Times(4)
+            .WillRepeatedly(DoAll(
+                        Return(SAI_STATUS_SUCCESS)
+                        ));
+
+        EXPECT_NO_THROW({
+                vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
+                });
+        vxlan_orch->delTunnel("vxlan_tunnel_1");
+    }
 }
