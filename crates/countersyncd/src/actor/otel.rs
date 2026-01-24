@@ -34,6 +34,7 @@ use crate::message::{
     otel::OtelMetrics,
     saistats::SAIStatsMessage,
 };
+use crate::utilities::{record_comm_stats, ChannelLabel};
 
 const INITIAL_BACKOFF_DELAY_SECS: u64 = 1;
 const MAX_BACKOFF_DELAY_SECS: u64 = 10;
@@ -95,7 +96,7 @@ pub struct OtelActor {
     buffer: Vec<OtelMetrics>,
     buffered_counters: usize,
     flush_deadline: TokioInstant,
-    
+
     // Statistics tracking
     messages_received: u64,
     exports_performed: u64,
@@ -175,6 +176,10 @@ impl OtelActor {
                 stats_msg = self.stats_receiver.recv() => {
                     match stats_msg {
                         Some(stats) => {
+                            record_comm_stats(
+                                ChannelLabel::IpfixToOtel,
+                                self.stats_receiver.len(),
+                            );
                             self.handle_stats_message(stats).await?;
                             self.reset_flush_timer(&mut flush_timer);
                         }
@@ -273,7 +278,6 @@ impl OtelActor {
                 info!("Raw Gauge: {:#?}", gauge);
             }
         }
-        
     }
 
     // Exponential backoff

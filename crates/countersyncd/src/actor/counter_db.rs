@@ -6,6 +6,7 @@ use swss_common::{CxxString, DbConnector};
 use tokio::{select, sync::mpsc::Receiver, time::interval};
 
 use crate::message::saistats::SAIStatsMessage;
+use crate::utilities::{record_comm_stats, ChannelLabel};
 use crate::sai::{
     SaiBufferPoolStat, SaiIngressPriorityGroupStat, SaiObjectType, SaiPortStat, SaiQueueStat,
 };
@@ -176,6 +177,10 @@ impl CounterDBActor {
                 stats_msg = self.stats_receiver.recv() => {
                     match stats_msg {
                         Some(msg) => {
+                            record_comm_stats(
+                                ChannelLabel::IpfixToCounterDb,
+                                self.stats_receiver.len(),
+                            );
                             self.handle_stats_message(msg).await;
                         }
                         None => {
