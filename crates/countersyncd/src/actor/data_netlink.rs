@@ -22,6 +22,7 @@ use super::super::message::{
     buffer::SocketBufferMessage,
     netlink::{NetlinkCommand, SocketConnect},
 };
+use crate::utilities::{format_hex_lines, record_comm_stats, ChannelLabel};
 #[cfg(not(test))]
 use super::netlink_utils;
 
@@ -397,7 +398,7 @@ impl DataNetlinkActor {
             "Creating socket for family '{}' with group_id {}",
             family, group_id
         );
-        
+
         // Create a raw netlink socket using netlink-sys
         let mut socket = match Socket::new(NETLINK_GENERIC) {
             Ok(s) => s,
@@ -508,7 +509,7 @@ impl DataNetlinkActor {
             "Creating socket for family '{}' with group_id {}",
             family, group_id
         );
-        
+
         // Create a raw netlink socket
         let mut socket = match Socket::new(NETLINK_GENERIC) {
             Ok(s) => s,
@@ -662,7 +663,6 @@ impl DataNetlinkActor {
 
         // Try to receive with non-blocking mode (socket should already be set to non-blocking)
         debug!("Attempting to receive netlink message...");
-        
         #[cfg(not(test))]
         let result = {
             let fd = socket.as_raw_fd();
@@ -699,10 +699,18 @@ impl DataNetlinkActor {
                 // Resize buffer to actual received size
                 buffer.resize(size, 0);
 
+                if log::log_enabled!(log::Level::Debug) {
+                    let hex_dump = format_hex_lines(&buffer);
+                    debug!(
+                        "Raw netlink recv buffer ({} bytes):\n{}",
+                        size, hex_dump
+                    );
+                }
+
                 // Parse buffer which may contain multiple messages and/or incomplete messages
                 let messages = message_parser.parse_buffer(&buffer)?;
                 debug!("Parsed {} complete messages from {} bytes of data", messages.len(), size);
-                
+
                 Ok(messages)
             }
             size if size == 0 => {
@@ -802,6 +810,10 @@ impl DataNetlinkActor {
 
             // Check for pending commands first (non-blocking)
             if let Ok(command) = actor.command_recipient.try_recv() {
+                record_comm_stats(
+                    ChannelLabel::ControlNetlinkToDataNetlink,
+                    actor.command_recipient.len(),
+                );
                 match command {
                     NetlinkCommand::SocketConnect(SocketConnect { family, group }) => {
                         actor.reset(&family, &group);
@@ -831,19 +843,30 @@ impl DataNetlinkActor {
                             Ok(messages) => {
                                 consecutive_failures = 0; // Reset failure counter on successful receive
                                 actor.last_data_time = Instant::now(); // Update data reception timestamp
-                                
+
+
                                 if messages.is_empty() {
                                     debug!("Received data but no complete messages yet (partial message)");
                                 } else {
                                     debug!("Successfully parsed {} complete netlink messages", messages.len());
-                                    
+
                                     // Send each complete netlink message individually to all recipients
                                     // This ensures each IPFIX message (contained in one netlink message) 
                                     // is sent as a separate operation to the downstream actors
                                     for (i, message) in messages.iter().enumerate() {
+                                        if log::log_enabled!(log::Level::Debug) {
+                                            let hex_dump = format_hex_lines(message.as_ref());
+                                            debug!(
+                                                "Outgoing netlink payload {}/{} ({} bytes):\n{}",
+                                                i + 1,
+                                                messages.len(),
+                                                message.len(),
+                                                hex_dump
+                                            );
+                                        }
                                         debug!("Processing netlink message {}/{}: {} bytes", 
                                                i + 1, messages.len(), message.len());
-                                        
+
                                         // Send this single netlink message to all recipients
                                         for (j, recipient) in actor.buffer_recipients.iter().enumerate() {
                                             debug!("Sending netlink message {}/{} to recipient {}", 
@@ -858,7 +881,7 @@ impl DataNetlinkActor {
                                             }
                                         }
                                     }
-                                    
+
                                     debug!("Completed processing {} netlink messages, each sent individually", messages.len());
                                 }
                             }
@@ -1163,13 +1186,13 @@ pub mod test {
         let mock_msg = create_mock_netlink_message(b"TEST_PAYLOAD");
         let actual_len = 20 + b"TEST_PAYLOAD".len(); // 16 (nlmsg) + 4 (genl) + payload
         let mut parser = NetlinkMessageParser::new();
-        
+
         let result = parser.parse_buffer(&mock_msg[..actual_len]);
         assert!(result.is_ok());
 
         let messages = result.unwrap();
         assert_eq!(messages.len(), 1);
-        
+
         let payload = &messages[0];
         let payload_str = String::from_utf8(payload.to_vec()).unwrap();
         assert_eq!(payload_str, "TEST_PAYLOAD");
@@ -1200,7 +1223,7 @@ pub mod test {
 
         let result = parser.parse_buffer(&buffer);
         assert!(result.is_ok());
-        
+
         // Should have no complete messages due to insufficient data
         let messages = result.unwrap();
         assert!(messages.is_empty());
@@ -1210,24 +1233,24 @@ pub mod test {
     #[test]
     fn test_multiple_messages_in_buffer() {
         let mut combined_buffer = Vec::new();
-        
+
         // Create two messages
         let msg1 = create_mock_netlink_message(b"MESSAGE1");
         let msg1_len = 20 + b"MESSAGE1".len();
         let msg2 = create_mock_netlink_message(b"MESSAGE2");
         let msg2_len = 20 + b"MESSAGE2".len();
-        
+
         // Combine them in one buffer (simulate receiving multiple messages in one recv)
         combined_buffer.extend_from_slice(&msg1[..msg1_len]);
         combined_buffer.extend_from_slice(&msg2[..msg2_len]);
-        
+
         let mut parser = NetlinkMessageParser::new();
         let result = parser.parse_buffer(&combined_buffer);
         assert!(result.is_ok());
-        
+
         let messages = result.unwrap();
         assert_eq!(messages.len(), 2);
-        
+
         let payload1_str = String::from_utf8(messages[0].to_vec()).unwrap();
         let payload2_str = String::from_utf8(messages[1].to_vec()).unwrap();
         assert_eq!(payload1_str, "MESSAGE1");
@@ -1240,21 +1263,21 @@ pub mod test {
         let msg = create_mock_netlink_message(b"FRAGMENTED_MESSAGE");
         let msg_len = 20 + b"FRAGMENTED_MESSAGE".len();
         let mut parser = NetlinkMessageParser::new();
-        
+
         // Simulate first recv getting only part of the message
         let first_part = &msg[..15]; // Less than header size
         let result1 = parser.parse_buffer(first_part);
         assert!(result1.is_ok());
         let messages1 = result1.unwrap();
         assert!(messages1.is_empty()); // No complete messages yet
-        
+
         // Simulate second recv getting the rest
         let second_part = &msg[15..msg_len];
         let result2 = parser.parse_buffer(second_part);
         assert!(result2.is_ok());
         let messages2 = result2.unwrap();
         assert_eq!(messages2.len(), 1);
-        
+
         let payload_str = String::from_utf8(messages2[0].to_vec()).unwrap();
         assert_eq!(payload_str, "FRAGMENTED_MESSAGE");
     }
@@ -1263,35 +1286,35 @@ pub mod test {
     #[test]
     fn test_mixed_complete_and_partial() {
         let mut combined_buffer = Vec::new();
-        
+
         // First complete message
         let msg1 = create_mock_netlink_message(b"COMPLETE");
         let msg1_len = 20 + b"COMPLETE".len();
         combined_buffer.extend_from_slice(&msg1[..msg1_len]);
-        
+
         // Partial second message
         let msg2 = create_mock_netlink_message(b"PARTIAL_MSG");
         let msg2_len = 20 + b"PARTIAL_MSG".len();
         combined_buffer.extend_from_slice(&msg2[..25]); // Only part of second message
-        
+
         let mut parser = NetlinkMessageParser::new();
         let result1 = parser.parse_buffer(&combined_buffer);
         assert!(result1.is_ok());
-        
+
         let messages1 = result1.unwrap();
         assert_eq!(messages1.len(), 1); // Only first complete message
-        
+
         let payload1_str = String::from_utf8(messages1[0].to_vec()).unwrap();
         assert_eq!(payload1_str, "COMPLETE");
-        
+
         // Send remaining part of second message
         let remaining_part = &msg2[25..msg2_len];
         let result2 = parser.parse_buffer(remaining_part);
         assert!(result2.is_ok());
-        
+
         let messages2 = result2.unwrap();
         assert_eq!(messages2.len(), 1); // Second message now complete
-        
+
         let payload2_str = String::from_utf8(messages2[0].to_vec()).unwrap();
         assert_eq!(payload2_str, "PARTIAL_MSG");
     }
