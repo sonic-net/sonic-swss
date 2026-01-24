@@ -1339,12 +1339,13 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 // In case of updating an existing route, decrease the reference count for the previous nexthop group
                 if (--syncd_nexthop_groups_[vnet][nhg].ref_count == 0)
                 {
-                    for (auto nh : nexthops.getNextHops())
+                    for (auto nh : nhg.getNextHops())
                     {
-                        vrf_obj->removeTunnelNextHop(nh);
-                        syncd_nexthop_groups_[vnet][nhg].active_members.erase(nh);
+                        if (active_nhg.getNextHops().find(nh) == active_nhg.getNextHops().end())
+                        {
+                            vrf_obj->removeTunnelNextHop(nh);
+                        }
                     }
-                    gFgNhgOrch->removeFgNhg(vrf_obj->getVRidIngress(), ipPrefix);
                     syncd_nexthop_groups_[vnet].erase(nhg);
                 }
                 else
@@ -1366,6 +1367,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 tunnel_route_entry.primary = nexthops;
                 tunnel_route_entry.secondary = nexthops_secondary;
                 syncd_tunnel_routes_[vnet][ipPrefix] = tunnel_route_entry;
+                syncd_nexthop_groups_[vnet][active_nhg].ref_count++;
 
                 vrf_obj->addRoute(ipPrefix, active_nhg);
             }

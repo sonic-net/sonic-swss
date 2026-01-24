@@ -1659,11 +1659,11 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
     // todo navdhaj: case where route exists?
     SWSS_LOG_INFO("Route does not exist in routeorch, don't need to migrate route to fgnhgorch");
 
-    if (std::find(m_FgNhgs[fg_nhg_name].prefixes.begin(), m_FgNhgs[fg_nhg_name].prefixes.end(), ip_prefix) == m_FgNhgs[fg_nhg_name].prefixes.end())
+    if (m_fgNhgPrefixes.find(ip_prefix) == m_fgNhgPrefixes.end())
     {
         m_FgNhgs[fg_nhg_name].prefixes.push_back(ip_prefix);
+        m_fgNhgPrefixes[ip_prefix] = &m_FgNhgs[fg_nhg_name];
     }
-    m_fgNhgPrefixes[ip_prefix] = &m_FgNhgs[fg_nhg_name];
 
     // todo navdhaj: doing anything eith isnexthopidchanged?
     /* default isNextHopIdChanged to false so that sai route is unaffected
