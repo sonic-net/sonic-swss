@@ -7048,12 +7048,14 @@ bool PortsOrch::removeBridgePort(Port &port)
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-
-    if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_STRIP))
+    if (port.m_child_ports.empty())
     {
-        SWSS_LOG_ERROR("Failed to set %s for hostif of port %s",
-                hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], port.m_alias.c_str());
-        return false;
+        if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_STRIP))
+        {
+            SWSS_LOG_ERROR("Failed to set %s for hostif of port %s",
+                    hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], port.m_alias.c_str());
+            return false;
+        }
     }
     
     /* Remove STP ports before bridge port deletion*/
