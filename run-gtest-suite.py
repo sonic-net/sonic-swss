@@ -24,15 +24,7 @@ def main():
     else:
         test_args.append("--gtest_color=no")
 
-    # Avoid ASAN issues when running on a Bookworm container and Ubuntu host
-    readelf_process = subprocess.run(["readelf", "-l", args.test_binary[0]], text=True, capture_output=True, stdin=subprocess.DEVNULL)
-    interpreter = None
-    for line in readelf_process.stdout.splitlines():
-        if "Requesting program interpreter" not in line:
-            continue
-        interpreter = line.split(":")[1][1:-1]
-
-    test_process = subprocess.run([interpreter] + args.test_binary + test_args, stdin=subprocess.DEVNULL, stdout=args.log_file)
+    test_process = subprocess.run(args.test_binary + test_args, stdin=subprocess.DEVNULL, stdout=args.log_file)
 
     junit_xml = etree.parse(f"{args.test_name}_tr.xml")
     junit_xml_root = junit_xml.getroot()
