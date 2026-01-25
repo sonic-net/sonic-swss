@@ -245,7 +245,7 @@ jobs:
     inputs:
       testResultsFiles: '**/*_tr.xml'
       testRunTitle: gtest
-    condition: eq('${{ parameters.asan }}', false)
+    condition: ans(succeededOrFailed(), eq('${{ parameters.asan }}', false))
   - publish: $(System.DefaultWorkingDirectory)/
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive swss debian packages"

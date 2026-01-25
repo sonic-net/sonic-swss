@@ -6,15 +6,24 @@ from lxml import etree
 import sys
 
 
+def str2bool(value):
+    if isinstance(value, bool):
+        return value
+    if value == "yes":
+        return True
+    if value == "no":
+        return False
+    return argparse.ArgumentTypeError(f"Invalid boolean value: {value}")
+
 def main():
     parser = argparse.ArgumentParser(prog='run-gtest-suite')
     parser.add_argument('--test-name', type=str, required=True, help='The name of the test')
     parser.add_argument('--log-file', type=argparse.FileType('w'), required=True, help='The log file created by the test binary')
     parser.add_argument('--trs-file', type=argparse.FileType('w'), required=True, help='The trs file created by this script')
-    parser.add_argument('--color-tests', type=bool, help='Whether to produce color output or not')
-    parser.add_argument('--collect-skipped-logs', type=bool, help='Whether to include logs of skipped tests (unused)')
-    parser.add_argument('--expect-failure', type=bool, help='Unused')
-    parser.add_argument('--enable-hard-errors', type=bool, help='Unused')
+    parser.add_argument('--color-tests', type=str2bool, default=False, help='Whether to produce color output or not')
+    parser.add_argument('--collect-skipped-logs', type=str2bool, default=False, help='Whether to include logs of skipped tests (unused)')
+    parser.add_argument('--expect-failure', type=str2bool, default=False, help='Unused')
+    parser.add_argument('--enable-hard-errors', type=str2bool, default=False, help='Unused')
     parser.add_argument('test_binary', nargs='+')
     args = parser.parse_args()
 
@@ -24,7 +33,7 @@ def main():
     else:
         test_args.append("--gtest_color=no")
 
-    test_process = subprocess.run(args.test_binary + test_args, stdin=subprocess.DEVNULL, stdout=args.log_file)
+    test_process = subprocess.run(args.test_binary + test_args, stdin=subprocess.DEVNULL, stdout=args.log_file, stderr=subprocess.STDOUT)
 
     junit_xml = etree.parse(f"{args.test_name}_tr.xml")
     junit_xml_root = junit_xml.getroot()
