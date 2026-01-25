@@ -187,7 +187,8 @@ namespace vxlanorch_test
                         Return(SAI_STATUS_SUCCESS)
                         ));
         EXPECT_NO_THROW({
-                vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
+                bool result = vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
+                EXPECT_FALSE(result);
                 });
         vxlan_orch->delTunnel("vxlan_tunnel_1");
     }
@@ -222,7 +223,8 @@ namespace vxlanorch_test
                         ));
 
         EXPECT_NO_THROW({
-                vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
+                bool result = vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
+                EXPECT_FALSE(result);
                 });
         vxlan_orch->delTunnel("vxlan_tunnel_1");
     }
@@ -266,7 +268,8 @@ namespace vxlanorch_test
                         ));
 
         EXPECT_NO_THROW({
-                vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
+                bool result = vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
+                EXPECT_FALSE(result);
                 });
         vxlan_orch->delTunnel("vxlan_tunnel_1");
     }
@@ -305,9 +308,23 @@ namespace vxlanorch_test
                         SetArgPointee<0>(SAI_NULL_OBJECT_ID),
                         Return(SAI_STATUS_FAILURE)
                         ));
+        EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_term_table_entry(_))
+            .WillOnce(DoAll(
+                        Return(SAI_STATUS_SUCCESS)
+                        ));
+        EXPECT_CALL(mock_sai_tunnel_, remove_tunnel(_))
+            .WillOnce(DoAll(
+                        Return(SAI_STATUS_SUCCESS)
+                        ));
+        EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_map(_))
+            .Times(4)
+            .WillRepeatedly(DoAll(
+                        Return(SAI_STATUS_SUCCESS)
+                        ));
 
         EXPECT_NO_THROW({
-                vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
+                bool result = vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
+                EXPECT_FALSE(result);
                 });
         vxlan_orch->delTunnel("vxlan_tunnel_1");
     }
@@ -366,8 +383,10 @@ namespace vxlanorch_test
                         ));
 
         EXPECT_NO_THROW({
-                vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
-                vxlan_orch->removeVxlanTunnelMap("vxlan_tunnel_1", 1000);
+                bool result1 = vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
+                EXPECT_TRUE(result1);
+                bool result2 = vxlan_orch->removeVxlanTunnelMap("vxlan_tunnel_1", 1000);
+                EXPECT_TRUE(result2);
                 });
         vxlan_orch->delTunnel("vxlan_tunnel_1");
     }
@@ -426,8 +445,10 @@ namespace vxlanorch_test
                         ));
 
         EXPECT_NO_THROW({
-                vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
-                vxlan_orch->removeVxlanTunnelMap("vxlan_tunnel_1", 1000);
+                bool result1 = vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
+                EXPECT_TRUE(result1);
+                bool result2 = vxlan_orch->removeVxlanTunnelMap("vxlan_tunnel_1", 1000);
+                EXPECT_TRUE(result2);
                 });
         vxlan_orch->delTunnel("vxlan_tunnel_1");
     }

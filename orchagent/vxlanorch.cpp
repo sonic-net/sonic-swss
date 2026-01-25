@@ -1519,6 +1519,10 @@ bool VxlanTunnelOrch::createVxlanTunnelMap(string tunnelName, tunnel_map_type_t 
         {
             SWSS_LOG_ERROR("encap_id or decap_id NULL for tunnel: %s.",
                            tunnelName.c_str());
+            /*
+             * Clean up previously allocated resources
+             */
+            removeVxlanTunnelMap(tunnelName, vni);
             return false;
         }
 
@@ -2339,18 +2343,8 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
          * Create encap and decap mapper
          */
         entry.encap_id = tunnel_obj->addEncapMapperEntry(vrf_id, vni_id);
-        if (entry.encap_id == SAI_NULL_OBJECT_ID)
-        {
-            SWSS_LOG_ERROR("encap_id NULL for tunnel: %s.", tunnel_name.c_str());
-            return false;
-        }
         vrf_orch->increaseVrfRefCount(vrf_name);
         entry.decap_id = tunnel_obj->addDecapMapperEntry(vrf_id, vni_id);
-        if (entry.decap_id == SAI_NULL_OBJECT_ID)
-        {
-            SWSS_LOG_ERROR("decap_id NULL for tunnel: %s.", tunnel_name.c_str());
-            return false;
-        }
         vrf_orch->increaseVrfRefCount(vrf_name);
 
         SWSS_LOG_DEBUG("Vxlan tunnel encap entry '%" PRIx64 "' decap entry '0x%" PRIx64 "'",
