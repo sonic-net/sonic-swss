@@ -57,7 +57,7 @@ public:
     FlexCounterOrch(swss::DBConnector *db, std::vector<std::string> &tableNames);
     virtual ~FlexCounterOrch(void);
     bool getPortCountersState() const;
-    bool getPortAttrCountersState() const;
+    bool getPortPhyAttrCounterState() const;
     bool getPortBufferDropCountersState() const;
     bool getQueueCountersState() const;
     bool getQueueWatermarkCountersState() const;

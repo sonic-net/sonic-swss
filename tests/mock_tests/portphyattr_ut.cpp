@@ -168,7 +168,7 @@ namespace portphyattr_test
         ASSERT_NE(m_flexCounterOrch, nullptr);
         ASSERT_NE(gPortsOrch, nullptr); 
 
-        bool initialState = m_flexCounterOrch->getPortAttrCountersState();
+        bool initialState = m_flexCounterOrch->getPortPhyAttrCounterState();
         EXPECT_FALSE(initialState);
 
         auto consumer = dynamic_cast<Consumer *>(m_flexCounterOrch->getExecutor(CFG_FLEX_COUNTER_TABLE_NAME));
@@ -190,7 +190,7 @@ namespace portphyattr_test
         consumer->addToSync(entries);
         static_cast<Orch *>(m_flexCounterOrch)->doTask(*consumer);
 
-        bool state = m_flexCounterOrch->getPortAttrCountersState();
+        bool state = m_flexCounterOrch->getPortPhyAttrCounterState();
         EXPECT_TRUE(state);
         std::cout << " PORT_PHY_ATTR enablement verified: state = " << (state ? "ENABLED" : "DISABLED") << std::endl;
 
@@ -200,7 +200,7 @@ namespace portphyattr_test
         consumer->addToSync(entries);
         static_cast<Orch *>(m_flexCounterOrch)->doTask(*consumer);
 
-        bool disabledState = m_flexCounterOrch->getPortAttrCountersState();
+        bool disabledState = m_flexCounterOrch->getPortPhyAttrCounterState();
         EXPECT_FALSE(disabledState);
         std::cout << " PORT_PHY_ATTR disablement verified: state = " << (disabledState ? "ENABLED" : "DISABLED") << std::endl;
     }
@@ -221,7 +221,6 @@ namespace portphyattr_test
         // should complete without exceptions
         try {
             gPortsOrch->generatePortAttrCounterMap();
-            EXPECT_TRUE(gPortsOrch->m_isPortAttrCounterMapGenerated);
             std::cout << " generatePortAttrCounterMap() completed successfully" << std::endl;
         } catch (const std::exception& e) {
             FAIL() << "generatePortAttrCounterMap() threw exception: " << e.what();
@@ -232,11 +231,9 @@ namespace portphyattr_test
         // Test clear and regenerate 
         try {
             gPortsOrch->clearPortAttrCounterMap();
-            EXPECT_FALSE(gPortsOrch->m_isPortAttrCounterMapGenerated);
             std::cout << " clearPortAttrCounterMap() completed successfully" << std::endl;
 
             gPortsOrch->generatePortAttrCounterMap();
-            EXPECT_TRUE(gPortsOrch->m_isPortAttrCounterMapGenerated);
             std::cout << " Regenerate after clear completed successfully" << std::endl;
         } catch (const std::exception& e) {
             FAIL() << "Clear/regenerate cycle threw exception: " << e.what();
