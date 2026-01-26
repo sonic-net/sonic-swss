@@ -25,7 +25,7 @@ class MockSaiTunnel
 
     MOCK_METHOD1(remove_tunnel, sai_status_t(_In_ sai_object_id_t tunnel_id));
 
-    MOCK_METHOD1(remove_tunnel_map, sai_status_t(sai_object_id_t tunnel_map_id));
+    MOCK_METHOD1(remove_tunnel_map, sai_status_t(_In_ sai_object_id_t tunnel_map_id));
 
     MOCK_METHOD1(remove_tunnel_map_entry, sai_status_t(sai_object_id_t tunnel_map_entry_id));
 
