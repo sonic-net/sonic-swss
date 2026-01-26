@@ -757,6 +757,20 @@ template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::main) &serdes, 
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::post1) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::post2) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::post3) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::gb_line_pre1) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::gb_line_pre2) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::gb_line_pre3) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::gb_line_main) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::gb_line_post1) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::gb_line_post2) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::gb_line_post3) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::gb_system_pre1) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::gb_system_pre2) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::gb_system_pre3) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::gb_system_main) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::gb_system_post1) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::gb_system_post2) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::gb_system_post3) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::attn) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::ob_m2lp) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::ob_alev_out) &serdes, const std::string &field, const std::string &value) const;
@@ -1167,6 +1181,104 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         else if (field == PORT_POST3)
         {
             if (!this->parsePortSerdes(port.serdes.post3, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_GB_LINE_PRE1)
+        {
+            if (!this->parsePortSerdes(port.serdes.gb_line_pre1, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_GB_LINE_PRE2)
+        {
+            if (!this->parsePortSerdes(port.serdes.gb_line_pre2, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_GB_LINE_PRE3)
+        {
+            if (!this->parsePortSerdes(port.serdes.gb_line_pre3, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_GB_LINE_MAIN)
+        {
+            if (!this->parsePortSerdes(port.serdes.gb_line_main, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_GB_LINE_POST1)
+        {
+            if (!this->parsePortSerdes(port.serdes.gb_line_post1, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_GB_LINE_POST2)
+        {
+            if (!this->parsePortSerdes(port.serdes.gb_line_post2, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_GB_LINE_POST3)
+        {
+            if (!this->parsePortSerdes(port.serdes.gb_line_post3, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_GB_SYSTEM_PRE1)
+        {
+            if (!this->parsePortSerdes(port.serdes.gb_system_pre1, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_GB_SYSTEM_PRE2)
+        {
+            if (!this->parsePortSerdes(port.serdes.gb_system_pre2, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_GB_SYSTEM_PRE3)
+        {
+            if (!this->parsePortSerdes(port.serdes.gb_system_pre3, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_GB_SYSTEM_MAIN)
+        {
+            if (!this->parsePortSerdes(port.serdes.gb_system_main, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_GB_SYSTEM_POST1)
+        {
+            if (!this->parsePortSerdes(port.serdes.gb_system_post1, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_GB_SYSTEM_POST2)
+        {
+            if (!this->parsePortSerdes(port.serdes.gb_system_post2, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_GB_SYSTEM_POST3)
+        {
+            if (!this->parsePortSerdes(port.serdes.gb_system_post3, field, value))
             {
                 return false;
             }
