@@ -3,13 +3,11 @@
 //! This module defines data structures for converting SAI statistics
 //! to OpenTelemetry gauge format for export to observability systems.
 
-use std::sync::Arc;
 use crate::message::saistats::{SAIStat, SAIStats};
 use opentelemetry_proto::tonic::{
     common::v1::{KeyValue as ProtoKeyValue, AnyValue, any_value::Value},
     metrics::v1::{NumberDataPoint, number_data_point},
 };
-use log::{info, error, debug, warn};
 
 /// OpenTelemetry Gauge representation for SAI statistics
 ///
@@ -171,32 +169,12 @@ impl OtelMetrics {
     }
 }
 
-/// Type alias for Arc-wrapped OtelMetrics for efficient sharing
-pub type OtelMetricsMessage = Arc<OtelMetrics>;
-
-/// Extension trait for creating OtelMetricsMessage instances
-pub trait OtelMetricsMessageExt {
-    /// Converts OtelMetrics to Arc-wrapped message
-    fn into_message(self) -> OtelMetricsMessage;
-
-    /// Creates OtelMetricsMessage from SAI statistics
-    fn from_sai_stats(sai_stats: &SAIStats) -> OtelMetricsMessage;
-}
-
-impl OtelMetricsMessageExt for OtelMetrics {
-    fn into_message(self) -> OtelMetricsMessage {
-        Arc::new(self)
-    }
-
-    fn from_sai_stats(sai_stats: &SAIStats) -> OtelMetricsMessage {
-        Arc::new(OtelMetrics::from_sai_stats(sai_stats))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::message::saistats::{SAIStat, SAIStats, SAIStatsMessageExt};
+    use std::sync::Arc;
+    use crate::message::saistats::{SAIStat, SAIStats};
+    use log::{info, debug};
 
     /// Helper function to create test SAI statistics (similar to saistats.rs pattern)
     fn create_test_sai_stats(observation_time: u64, stat_count: usize) -> SAIStats {
@@ -336,11 +314,8 @@ mod tests {
     fn test_otel_metrics_message_creation() {
         let sai_stats = create_test_sai_stats(555555, 2);
 
-        // Test using into_message()
-        let otel_metrics = OtelMetrics::from_sai_stats(&sai_stats);
-        let message1 = otel_metrics.into_message();
-
-        // Test using from_sai_stats()
+        // Wrap metrics in Arc manually for sharing scenarios
+        let message1 = Arc::new(OtelMetrics::from_sai_stats(&sai_stats));
         let message2 = OtelMetrics::from_sai_stats(&sai_stats);
 
         assert_eq!(message1.service_name, message2.service_name);

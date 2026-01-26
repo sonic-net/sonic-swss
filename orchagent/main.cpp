@@ -17,6 +17,8 @@ extern "C" {
 #include <stdexcept>
 #include <stdlib.h>
 #include <string.h>
+#include <fstream>
+#include <nlohmann/json.hpp>
 
 #include <sys/time.h>
 #include <sairedis.h>
@@ -48,6 +50,8 @@ sai_object_id_t gUnderlayIfId;
 sai_object_id_t gSwitchId = SAI_NULL_OBJECT_ID;
 MacAddress gMacAddress;
 MacAddress gVxlanMacAddress;
+bool gOrchUnhealthy = false;
+string gSaiErrorString;
 
 extern size_t gMaxBulkSize;
 
@@ -78,6 +82,12 @@ string gMyHostName = "";
 string gMyAsicName = "";
 bool gTraditionalFlexCounter = false;
 uint32_t create_switch_timeout = 0;
+bool gMultiAsicVoq = false;
+
+bool isChassisDbInUse()
+{
+    return gMultiAsicVoq;
+}
 
 void usage()
 {
@@ -133,8 +143,7 @@ void syncd_apply_view()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to notify syncd APPLY_VIEW %d", status);
-        handleSaiFailure(SAI_API_SWITCH, "set", status);
-        return;
+        handleSaiFailure(SAI_API_SWITCH, "set", status, true);
     }
 }
 
@@ -208,6 +217,18 @@ void getCfgSwitchType(DBConnector *cfgDb, string &switch_type, string &switch_su
         SWSS_LOG_ERROR("System error in parsing switch subtype: %s", e.what());
     }
 
+}
+
+bool isChassisAppDbPresent()
+{
+    std::ifstream file(SonicDBConfig::DEFAULT_SONIC_DB_CONFIG_FILE);
+    if (!file.is_open()) return false;
+
+    nlohmann::json db_config;
+    file >> db_config;
+
+    return db_config.contains("DATABASES") &&
+           db_config["DATABASES"].contains("CHASSIS_APP_DB");
 }
 
 bool getSystemPortConfigList(DBConnector *cfgDb, DBConnector *appDb, vector<sai_system_port_config_t> &sysportcfglist)
@@ -352,6 +373,7 @@ int main(int argc, char **argv)
 
     SWSS_LOG_ENTER();
 
+    gOrchUnhealthy = false;
     WarmStart::initialize("orchagent", "swss");
     WarmStart::checkWarmStart("orchagent", "swss");
 
@@ -627,7 +649,18 @@ int main(int argc, char **argv)
 
         //Connect to CHASSIS_APP_DB in redis-server in control/supervisor card as per
         //connection info in database_config.json
-        chassis_app_db = make_shared<DBConnector>("CHASSIS_APP_DB", 0, true);
+        if (isChassisAppDbPresent())
+       	{
+            gMultiAsicVoq = true;
+            try
+            {
+                chassis_app_db = make_shared<DBConnector>("CHASSIS_APP_DB", 0, true);
+            }
+            catch (const std::exception& e)
+            {
+                SWSS_LOG_NOTICE("CHASSIS_APP_DB not available, operating in standalone VOQ mode");
+            }
+        }
     }
     else if (gMySwitchType == "fabric")
     {
@@ -744,8 +777,7 @@ int main(int argc, char **argv)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create a switch, rv:%d", status);
-        handleSaiFailure(SAI_API_SWITCH, "create", status);
-        return EXIT_FAILURE;
+        handleSaiFailure(SAI_API_SWITCH, "create", status, true);
     }
     SWSS_LOG_NOTICE("Create a switch, id:%" PRIu64, gSwitchId);
 
@@ -776,8 +808,7 @@ int main(int argc, char **argv)
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to get MAC address from switch, rv:%d", status);
-                handleSaiFailure(SAI_API_SWITCH, "get", status);
-                return EXIT_FAILURE;
+                handleSaiFailure(SAI_API_SWITCH, "get", status, true);
             }
             else
             {
@@ -792,8 +823,7 @@ int main(int argc, char **argv)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Fail to get switch virtual router ID %d", status);
-            handleSaiFailure(SAI_API_SWITCH, "get", status);
-            return EXIT_FAILURE;
+            handleSaiFailure(SAI_API_SWITCH, "get", status, true);
         }
 
         gVirtualRouterId = attr.value.oid;
@@ -865,8 +895,7 @@ int main(int argc, char **argv)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create underlay router interface %d", status);
-            handleSaiFailure(SAI_API_ROUTER_INTERFACE, "create", status);
-            return EXIT_FAILURE;
+            handleSaiFailure(SAI_API_ROUTER_INTERFACE, "create", status, true);
         }
 
         SWSS_LOG_NOTICE("Created underlay router interface ID %" PRIx64, gUnderlayIfId);
@@ -877,7 +906,7 @@ int main(int argc, char **argv)
     }
 
     shared_ptr<OrchDaemon> orchDaemon;
-
+    DBConnector *chassis_db = chassis_app_db.get();
     /*
      * Declare shared pointers for dpu specific databases.
      * These dpu databases exist on the npu for smartswitch.
@@ -894,7 +923,7 @@ int main(int argc, char **argv)
 
     else if (gMySwitchType != "fabric")
     {
-        orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get(), zmq_server.get());
+        orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db, chassis_db, zmq_server.get());
         if (gMySwitchType == "voq")
         {
             orchDaemon->setFabricEnabled(true);
@@ -904,7 +933,7 @@ int main(int argc, char **argv)
     }
     else
     {
-        orchDaemon = make_shared<FabricOrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get(), zmq_server.get());
+        orchDaemon = make_shared<FabricOrchDaemon>(&appl_db, &config_db, &state_db, chassis_db, zmq_server.get());
     }
 
     if (gRingMode) {

@@ -2,6 +2,7 @@
 mod actor;
 mod message;
 mod sai;
+mod utilities;
 
 // External dependencies
 use clap::Parser;
@@ -19,6 +20,10 @@ use crate::actor::{
     swss::SwssActor,
     otel::{OtelActor, OtelActorConfig},
 };
+
+// Internal exit codes
+use countersyncd::exit_codes::EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED;
+use crate::utilities::{set_comm_capacity, ChannelLabel};
 
 /// Initialize logging based on command line arguments
 fn init_logging(log_level: &str, log_format: &str) {
@@ -186,6 +191,22 @@ struct Args {
         help = "Set the channel capacity for otel actor"
     )]
     otel_capacity: usize,
+
+    /// Max counters to batch before exporting to OTLP
+    #[arg(
+        long,
+        default_value = "10000",
+        help = "Max counters to accumulate before forcing an OTLP export"
+    )]
+    otel_max_counters_per_export: usize,
+
+    /// Flush timeout for OTLP export in milliseconds
+    #[arg(
+        long,
+        default_value = "1000",
+        help = "Flush timeout (ms) for OTLP export batch"
+    )]
+    otel_flush_timeout_ms: u64,
 }
 
 #[tokio::main]
@@ -214,6 +235,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.enable_otel {
         info!("OpenTelemetry endpoint: {}", args.otel_endpoint);
         info!("OpenTelemetry console output: {}", args.otel_console);
+        info!(
+            "OpenTelemetry batching: max_counters_per_export={}, flush_timeout_ms={}",
+            args.otel_max_counters_per_export, args.otel_flush_timeout_ms
+        );
     }
     info!(
         "Channel capacities - ipfix_records: {}, stats_reporter: {}, counter_db: {}, otel: {}",
@@ -227,7 +252,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (stats_report_sender, stats_report_receiver) = channel(args.stats_reporter_capacity);
     let (counter_db_sender, counter_db_receiver) = channel(args.counter_db_capacity);
     let (otel_sender, otel_receiver) = channel(args.otel_capacity);
-    let (otel_shutdown_sender, otel_shutdown_receiver) = tokio::sync::oneshot::channel();
+    let (otel_shutdown_sender, _otel_shutdown_receiver) = tokio::sync::oneshot::channel();
+
+    set_comm_capacity(ChannelLabel::ControlNetlinkToDataNetlink, 10);
+    set_comm_capacity(ChannelLabel::DataNetlinkToIpfixRecords, args.data_netlink_capacity);
+    set_comm_capacity(ChannelLabel::SwssToIpfixTemplates, 10);
+    set_comm_capacity(ChannelLabel::IpfixToStatsReporter, args.stats_reporter_capacity);
+    set_comm_capacity(ChannelLabel::IpfixToCounterDb, args.counter_db_capacity);
+    set_comm_capacity(ChannelLabel::IpfixToOtel, args.otel_capacity);
 
     // Get netlink family and group configuration from SONiC constants
     let (family, group) = get_genl_family_group();
@@ -301,6 +333,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let otel_config = OtelActorConfig {
             print_to_console: args.otel_console,
             collector_endpoint: args.otel_endpoint.clone(),
+            max_counters_per_export: args.otel_max_counters_per_export,
+            flush_timeout: std::time::Duration::from_millis(args.otel_flush_timeout_ms),
         };
 
         // Add OTEL to ipfix recipients only when enabled
@@ -380,8 +414,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let otel_handle = if let Some(otel_actor) = otel_actor {
         Some(spawn(async move {
             info!("OpenTelemetry actor started");
-            OtelActor::run(otel_actor).await;
+            let result = OtelActor::run(otel_actor).await;
             info!("OpenTelemetry actor terminated");
+            result
         }))
     } else {
         info!("OpenTelemetry export disabled - not starting OpenTelemetry actor");
@@ -426,7 +461,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     counter_db_result.as_ref().unwrap(),
                     otel_result.as_ref().unwrap()
                 ),
-                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
+                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(Ok(())))
             )
         }
         (true, true, false) => {
@@ -454,7 +489,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     reporter_result.as_ref().unwrap(),
                     otel_result.as_ref().unwrap()
                 ),
-                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
+                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(Ok(())))
             )
         }
         (false, true, true) => {
@@ -468,7 +503,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     counter_db_result.as_ref().unwrap(),
                     otel_result.as_ref().unwrap()
                 ),
-                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
+                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(Ok(())))
             )
         }
         (true, false, false) => {
@@ -507,7 +542,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &swss_result,
                     otel_result.as_ref().unwrap()
                 ),
-                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
+                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(Ok(())))
             )
         }
         (false, false, false) => {
@@ -561,7 +596,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(e.into())
         } else if let Some(Err(e)) = otel_result {
             error!("OpenTelemetry actor failed: {:?}", e);
-            Err(e.into())
+            std::process::exit(EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED);
         } else {
             error!("Unknown actor failure");
             Err("Unknown actor failure".into())
