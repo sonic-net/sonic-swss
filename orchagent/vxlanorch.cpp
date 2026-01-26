@@ -1520,8 +1520,11 @@ bool VxlanTunnelOrch::createVxlanTunnelMap(string tunnelName, tunnel_map_type_t 
             SWSS_LOG_ERROR("encap_id or decap_id NULL for tunnel: %s.",
                            tunnelName.c_str());
             /*
-             * Clean up previously allocated resources
+             * Clean up previously allocated resources. The encap and decap entries
+             * need to be inserted so they get cleaned up properly later via
+             * remove_tunnel_map_entry().
              */
+            tunnel_obj->insertMapperEntry(encap_id, decap_id, vni);
             removeVxlanTunnelMap(tunnelName, vni);
             return false;
         }
