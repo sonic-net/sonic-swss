@@ -508,7 +508,6 @@ private:
     bool m_isPortCounterMapGenerated = false;
     bool m_isPortBufferDropCounterMapGenerated = false;
 
-    bool m_isPortAttrCounterMapGenerated = false;
     bool m_phy_attr_capability_checked = false;
     std::vector<sai_port_attr_t> m_supported_phy_attrs;
 
