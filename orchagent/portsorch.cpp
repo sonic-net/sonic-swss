@@ -3812,7 +3812,7 @@ bool PortsOrch::initPort(const PortConfig &port)
                                 CounterType::PORT, gbport_counter_stats, p.m_switch_id);
                 }
 
-                if (flex_counters_orch->getPortAttrCountersState())
+                if (flex_counters_orch->getPortPhyAttrCounterState())
                 {
                     if (!m_supported_phy_attrs.empty())
                     {
@@ -8436,12 +8436,12 @@ bool PortsOrch::verifyPortSupportsAllPhyAttr(sai_object_id_t port_id, const char
     // Query with count=0 to check if attribute is supported (expect BUFFER_OVERFLOW)
 
     // Check RX_SIGNAL_DETECT
-    sai_attribute_t test_attr;
-    test_attr.id = SAI_PORT_ATTR_RX_SIGNAL_DETECT;
-    test_attr.value.portlanelatchstatuslist.count = 0;
-    test_attr.value.portlanelatchstatuslist.list = nullptr;
+    sai_attribute_t port_attr;
+    port_attr.id = SAI_PORT_ATTR_RX_SIGNAL_DETECT;
+    port_attr.value.portlanelatchstatuslist.count = 0;
+    port_attr.value.portlanelatchstatuslist.list = nullptr;
 
-    sai_status_t status = sai_port_api->get_port_attribute(port_id, 1, &test_attr);
+    sai_status_t status = sai_port_api->get_port_attribute(port_id, 1, &port_attr);
     if (status != SAI_STATUS_BUFFER_OVERFLOW)
     {
         SWSS_LOG_ERROR("PORT_PHY_ATTR: Port %s does not support RX_SIGNAL_DETECT attribute (status=%d)",
@@ -8449,14 +8449,14 @@ bool PortsOrch::verifyPortSupportsAllPhyAttr(sai_object_id_t port_id, const char
         return false;
     }
     SWSS_LOG_DEBUG("PORT_PHY_ATTR: Port %s supports RX_SIGNAL_DETECT attribute (count=%d)",
-                   port_name, test_attr.value.portlanelatchstatuslist.count);
+                   port_name, port_attr.value.portlanelatchstatuslist.count);
 
     // Check FEC_ALIGNMENT_LOCK
-    test_attr.id = SAI_PORT_ATTR_FEC_ALIGNMENT_LOCK;
-    test_attr.value.portlanelatchstatuslist.count = 0;
-    test_attr.value.portlanelatchstatuslist.list = nullptr;
+    port_attr.id = SAI_PORT_ATTR_FEC_ALIGNMENT_LOCK;
+    port_attr.value.portlanelatchstatuslist.count = 0;
+    port_attr.value.portlanelatchstatuslist.list = nullptr;
 
-    status = sai_port_api->get_port_attribute(port_id, 1, &test_attr);
+    status = sai_port_api->get_port_attribute(port_id, 1, &port_attr);
     if (status != SAI_STATUS_BUFFER_OVERFLOW)
     {
         SWSS_LOG_ERROR("PORT_PHY_ATTR: Port %s does not support FEC_ALIGNMENT_LOCK attribute (status=%d)",
@@ -8464,14 +8464,14 @@ bool PortsOrch::verifyPortSupportsAllPhyAttr(sai_object_id_t port_id, const char
         return false;
     }
     SWSS_LOG_DEBUG("PORT_PHY_ATTR: Port %s supports FEC_ALIGNMENT_LOCK attribute (count=%d)",
-                   port_name, test_attr.value.portlanelatchstatuslist.count);
+                   port_name, port_attr.value.portlanelatchstatuslist.count);
 
     // Check RX_SNR
-    test_attr.id = SAI_PORT_ATTR_RX_SNR;
-    test_attr.value.portsnrlist.count = 0;
-    test_attr.value.portsnrlist.list = nullptr;
+    port_attr.id = SAI_PORT_ATTR_RX_SNR;
+    port_attr.value.portsnrlist.count = 0;
+    port_attr.value.portsnrlist.list = nullptr;
 
-    status = sai_port_api->get_port_attribute(port_id, 1, &test_attr);
+    status = sai_port_api->get_port_attribute(port_id, 1, &port_attr);
     if (status != SAI_STATUS_BUFFER_OVERFLOW)
     {
         SWSS_LOG_ERROR("PORT_PHY_ATTR: Port %s does not support RX_SNR attribute (status=%d)",
@@ -8479,23 +8479,17 @@ bool PortsOrch::verifyPortSupportsAllPhyAttr(sai_object_id_t port_id, const char
         return false;
     }
     SWSS_LOG_DEBUG("PORT_PHY_ATTR: Port %s supports RX_SNR attribute (count=%d)",
-                   port_name, test_attr.value.portsnrlist.count);
+                   port_name, port_attr.value.portsnrlist.count);
     return true;
 }
 
 void PortsOrch::generatePortAttrCounterMap()
 {
-    if (m_isPortAttrCounterMapGenerated)
-    {
-        return;
-    }
-
     queryPortAttrCapabilities();
 
     if (m_supported_phy_attrs.empty())
     {
         SWSS_LOG_WARN("PORT_PHY_ATTR: No PHY attributes supported on this platform");
-        m_isPortAttrCounterMapGenerated = true;
         return;
     }
 
@@ -8513,15 +8507,10 @@ void PortsOrch::generatePortAttrCounterMap()
         }
     }
 
-    m_isPortAttrCounterMapGenerated = true;
 }
 
 void PortsOrch::clearPortAttrCounterMap()
 {
-    if (!m_isPortAttrCounterMapGenerated)
-    {
-        return;
-    }
 
     for (const auto& it: m_portList)
     {
@@ -8536,7 +8525,6 @@ void PortsOrch::clearPortAttrCounterMap()
         port_phy_attr_manager.clearCounterIdList(it.second.m_port_id);
     }
 
-    m_isPortAttrCounterMapGenerated = false;
 }
 
 const std::vector<sai_port_attr_t>& PortsOrch::getPortAttrIds() const

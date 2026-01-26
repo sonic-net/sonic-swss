@@ -351,7 +351,7 @@ bool FlexCounterOrch::getPortCountersState() const
     return m_port_counter_enabled;
 }
 
-bool FlexCounterOrch::getPortAttrCountersState() const
+bool FlexCounterOrch::getPortPhyAttrCounterState() const
 {
     return m_port_phy_attr_enabled;
 }
