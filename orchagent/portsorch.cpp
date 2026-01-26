@@ -7643,10 +7643,7 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port, string end_point_ip)
     if (sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED &&
         port.m_type != Port::TUNNEL)
     {
-        if (!setPortPvid(port, DEFAULT_PORT_VLAN_ID))
-        {
-            return false;
-        }
+        setPortPvid(port, DEFAULT_PORT_VLAN_ID);
     }
 
     m_portList[port.m_alias] = port;
