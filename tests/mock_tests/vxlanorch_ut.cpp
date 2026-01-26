@@ -149,7 +149,7 @@ namespace vxlanorch_test
             {
                 _unhook_sai_apis();
                 gDirectory.m_values.erase(typeid(VxlanTunnelOrch*).name());
-                // delete vxlan_tunnel_orch;
+                delete vxlan_tunnel_orch;
                 vxlan_tunnel_orch = nullptr;
                 delete gSwitchOrch;
                 gSwitchOrch = nullptr;
