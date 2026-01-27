@@ -1648,7 +1648,31 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
             fg_nhg_name.c_str(), bucket_size, match_mode);
     isFineGrainedConfigured = true;
 
-    if (m_FgNhgs.find(fg_nhg_name) == m_FgNhgs.end())
+    // Check if bucket size changed for an existing FG NHG
+    bool bucket_size_changed = false;
+    if (m_FgNhgs.find(fg_nhg_name) != m_FgNhgs.end())
+    {
+        if (m_FgNhgs[fg_nhg_name].configured_bucket_size != bucket_size)
+        {
+            SWSS_LOG_NOTICE("Bucket size changed from %d to %d for %s, will recreate FG NHG",
+                          m_FgNhgs[fg_nhg_name].configured_bucket_size, bucket_size, fg_nhg_name.c_str());
+            bucket_size_changed = true;
+            
+            // Remove old FG NHG entry if it exists in syncd tables
+            if (m_syncdFGRouteTables.find(vrf_id) != m_syncdFGRouteTables.end() &&
+                m_syncdFGRouteTables.at(vrf_id).find(ipPrefix) != m_syncdFGRouteTables.at(vrf_id).end())
+            {
+                if (!removeFineGrainedNextHopGroup(&m_syncdFGRouteTables.at(vrf_id).at(ipPrefix)))
+                {
+                    SWSS_LOG_ERROR("Failed to remove old FG NHG with different bucket size");
+                    return false;
+                }
+                m_syncdFGRouteTables.at(vrf_id).erase(ipPrefix);
+            }
+        }
+    }
+    
+    if (m_FgNhgs.find(fg_nhg_name) == m_FgNhgs.end() || bucket_size_changed)
     {
         m_FgNhgs[fg_nhg_name] = fgNhgEntry;
     }
@@ -1670,7 +1694,9 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
      * when we return early with success */
     isNextHopIdChanged = false;
 
-    if (m_syncdFGRouteTables.find(vrf_id) != m_syncdFGRouteTables.end() &&
+    // Skip the early return check if bucket size changed - need to recreate
+    if (!bucket_size_changed &&
+        m_syncdFGRouteTables.find(vrf_id) != m_syncdFGRouteTables.end() &&
         m_syncdFGRouteTables.at(vrf_id).find(ipPrefix) != m_syncdFGRouteTables.at(vrf_id).end() &&
         m_syncdFGRouteTables.at(vrf_id).at(ipPrefix).nhg_key == nextHops)
     {
