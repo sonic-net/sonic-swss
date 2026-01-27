@@ -1083,7 +1083,9 @@ namespace flexcounter_test
         port_stat_manager.flush();
 
         /* SAIREDIS channel should have been called thrice, once for port1&port2&port5, port3&port4 and port6*/
-        ASSERT_EQ(mockFlexCounterOperationCallCount, 3);
+        // ASSERT_EQ(mockFlexCounterOperationCallCount, 3);
+        // Temporary fix for SNMP PFC counter issue: disabled bulk init requests for PORT counters
+        ASSERT_EQ(mockFlexCounterOperationCallCount, 6);
 
         ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, port6_oid,
                                      {
