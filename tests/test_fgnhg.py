@@ -230,12 +230,13 @@ def run_warm_reboot(dvs):
     dvs.runcmd(['sh', '-c', 'supervisorctl start neighsyncd'])
     dvs.runcmd(['sh', '-c', 'supervisorctl start restore_neighbors'])
 
-def verify_programmed_fg_state_db_entry(state_db, fg_nhg_prefix, nh_memb_exp_count):
+def verify_programmed_fg_state_db_entry(state_db, fg_nhg_prefix, nh_memb_exp_count, vnet_name="default"):
     memb_dict = nh_memb_exp_count
     keys = state_db.get_keys("FG_ROUTE_TABLE")
     assert len(keys) !=  0
+    expected_key = vnet_name + "|" + fg_nhg_prefix
     for key in keys:
-        if key != fg_nhg_prefix:
+        if key != expected_key:
             continue
         fvs = state_db.get_entry("FG_ROUTE_TABLE", key)
         assert fvs != {}
@@ -246,15 +247,16 @@ def verify_programmed_fg_state_db_entry(state_db, fg_nhg_prefix, nh_memb_exp_cou
     for idx,memb in memb_dict.items():
         assert memb == 0
 
-def verify_fg_state_db_for_even_distribution(state_db, fg_nhg_prefix, bucket_size, nh_ip_count):
+def verify_fg_state_db_for_even_distribution(state_db, fg_nhg_prefix, bucket_size, nh_ip_count, vnet_name="default"):
     def _access_function():
         false_ret = (False, '')
         ret = True
         keys = state_db.get_keys("FG_ROUTE_TABLE")
         if not keys:
             return false_ret
+        expected_key = vnet_name + "|" + fg_nhg_prefix
         for key in keys:
-            if key != fg_nhg_prefix:
+            if key != expected_key:
                 continue
             fvs = state_db.get_entry("FG_ROUTE_TABLE", key)
             if not fvs:
@@ -282,17 +284,17 @@ def verify_fg_state_db_for_even_distribution(state_db, fg_nhg_prefix, bucket_siz
     assert status, f"Member count distribution is uneven"
 
 def validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map, prev_memb_dict, num_exp_changes,
-                                fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size):
+                                fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size, vnet_name="default"):
     state_db_entry_memb_exp_count = {}
 
     for ip, cnt in nh_memb_exp_count.items():
         state_db_entry_memb_exp_count[ip + '@' + ip_to_if_map[ip]] = cnt
     next_memb_dict = verify_programmed_fg_asic_db_entry(asic_db,prev_memb_dict,num_exp_changes,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
-    verify_programmed_fg_state_db_entry(state_db, fg_nhg_prefix, state_db_entry_memb_exp_count)
+    verify_programmed_fg_state_db_entry(state_db, fg_nhg_prefix, state_db_entry_memb_exp_count, vnet_name)
     return next_memb_dict
 
 def program_route_and_validate_fine_grained_ecmp(app_db, asic_db, state_db, ip_to_if_map, prev_memb_dict, num_exp_changes,
-                            fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size):
+                            fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size, vnet_name="default"):
     ips = ""
     ifs = ""
     for ip in nh_memb_exp_count:
@@ -307,10 +309,10 @@ def program_route_and_validate_fine_grained_ecmp(app_db, asic_db, state_db, ip_t
     fvs = swsscommon.FieldValuePairs([("nexthop", ips), ("ifname", ifs)])
     ps.set(fg_nhg_prefix, fvs)
     new_memb_dict = validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
-                        prev_memb_dict, num_exp_changes, fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
+                        prev_memb_dict, num_exp_changes, fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size, vnet_name)
     return new_memb_dict
 
-def program_route_and_validate_distribtution(app_db, state_db, ip_to_if_map, fg_nhg_prefix, nh_ips, bucket_size):
+def program_route_and_validate_distribtution(app_db, state_db, ip_to_if_map, fg_nhg_prefix, nh_ips, bucket_size, vnet_name="default"):
     ips = ""
     ifs = ""
     for ip in nh_ips:
@@ -324,7 +326,7 @@ def program_route_and_validate_distribtution(app_db, state_db, ip_to_if_map, fg_
     ps = swsscommon.ProducerStateTable(app_db, ROUTE_TB)
     fvs = swsscommon.FieldValuePairs([("nexthop", ips), ("ifname", ifs)])
     ps.set(fg_nhg_prefix, fvs)
-    verify_fg_state_db_for_even_distribution(state_db, fg_nhg_prefix, bucket_size, len(nh_ips))
+    verify_fg_state_db_for_even_distribution(state_db, fg_nhg_prefix, bucket_size, len(nh_ips), vnet_name)
 
 def create_interface_n_fg_ecmp_config(dvs, nh_range_start, nh_range_end, fg_nhg_name):
     ip_to_if_map = {}
