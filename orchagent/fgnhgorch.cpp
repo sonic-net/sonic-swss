@@ -1110,7 +1110,8 @@ bool FgNhgOrch::setNewNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, FgNh
                 inactive_banks[i], ipPrefix.to_string().c_str());
     }
 
-    auto nexthopsMap = m_recoveryMap.find(ipPrefix.to_string());
+    string key = vnet + '|' + ipPrefix.to_string();
+    auto nexthopsMap = m_recoveryMap.find(key);
     if (nexthopsMap != m_recoveryMap.end()) {
         m_recoveryMap.erase(nexthopsMap);
     }
@@ -1127,7 +1128,8 @@ bool FgNhgOrch::sprayBankNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, c
 {
     sai_status_t status;
     bool isWarmReboot = false;
-    auto nexthopsMap = m_recoveryMap.find(ipPrefix.to_string());
+    string key = vnet + '|' + ipPrefix.to_string();
+    auto nexthopsMap = m_recoveryMap.find(key);
 
     SWSS_LOG_ENTER();
 
