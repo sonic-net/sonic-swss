@@ -184,7 +184,7 @@ def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor=
     if metric >= 0:
         attrs.append(('metric', str(metric)))
 
-    if consistent_hashing_buckets >= 0:
+    if consistent_hashing_buckets > 0:
         attrs.append(('consistent_hashing_buckets', str(consistent_hashing_buckets)))
 
     tbl = swsscommon.Table(conf_db, "VNET_ROUTE_TUNNEL")
@@ -1232,7 +1232,6 @@ class VnetVxlanVrfTunnel(object):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         
         vr_ids = self.vnet_route_ids(dvs, name)
-        count = len(vr_ids)
         
         new_routes = get_all_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, [])
         key = ''
