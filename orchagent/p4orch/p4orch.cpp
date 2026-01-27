@@ -349,3 +349,7 @@ GreTunnelManager *P4Orch::getGreTunnelManager()
 {
     return m_greTunnelManager.get();
 }
+
+void P4Orch::refreshPortStatus() {
+  m_wcmpManager->refreshPortOperStatus();
+}

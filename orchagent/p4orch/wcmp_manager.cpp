@@ -249,14 +249,12 @@ ReturnCode WcmpManager::fetchPortOperStatus(const std::string &port_name, sai_po
             SWSS_LOG_ERROR("Failed to get port object for port %s", port_name.c_str());
             return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM);
         }
-        // Get the oper-status of the port from hardware. In case of warm reboot,
-        // this ensures that actual state of the port oper-status is used to
-        // determine whether member associated with watch_port is to be created in
-        // SAI.
-        if (!gPortsOrch->getPortOperStatus(port, *oper_status))
-        {
-            RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL("Failed to get port oper-status for port " << port.m_alias);
-        }
+        // Get the oper-status of the port from PortsOrch. In case of warm reboot,
+        // this ensures that the oper-status before reboot is used to determine
+        // the watchport status of the member, thereby avoiding any ASIC operations
+        // during reconciliation.
+        *oper_status = port.m_oper_status;
+
         // Update port oper-status in local map
         updatePortOperStatusMap(port.m_alias, *oper_status);
     }
@@ -709,6 +707,23 @@ std::string WcmpManager::verifyStateAsicDb(P4WcmpGroupEntry* wcmp_group_entry) {
     return group_result;
   }
   return "";
+}
+
+void WcmpManager::refreshPortOperStatus() {
+  for (const auto& it : port_oper_status_map) {
+    Port port;
+    if (!gPortsOrch->getPort(it.first, port)) {
+      SWSS_LOG_ERROR("Failed to get port object for port %s",
+                     it.first.c_str());
+      continue;
+    }
+    // Update oper-status in local cache.
+    updatePortOperStatusMap(it.first, port.m_oper_status);
+    // Update watchport to ensure pruning/restoration logic is triggered based
+    // on the updated oper-status.
+    bool prune = port.m_oper_status != SAI_PORT_OPER_STATUS_UP;
+    updateWatchPort(it.first, prune);
+  }
 }
 
 } // namespace p4orch
