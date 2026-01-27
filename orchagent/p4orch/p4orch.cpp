@@ -376,3 +376,7 @@ GreTunnelManager *P4Orch::getGreTunnelManager()
 TunnelDecapGroupManager* P4Orch::getTunnelDecapGroupManager() {
   return m_tunnelDecapGroupManager.get();
 }
+
+void P4Orch::refreshPortStatus() {
+  m_wcmpManager->refreshPortOperStatus();
+}

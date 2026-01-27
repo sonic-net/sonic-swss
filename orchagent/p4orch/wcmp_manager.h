@@ -91,6 +91,9 @@ class WcmpManager : public ObjectManagerInterface
     // Inserts into/updates port_oper_status_map
     void updatePortOperStatusMap(const std::string &port, const sai_port_oper_status_t &status);
 
+    // Refreshes port oper-status with the latest values from PortsOrch.
+    void refreshPortOperStatus();
+
   private:
     // Gets the internal cached WCMP group entry by its key.
     // Return nullptr if corresponding WCMP group entry is not cached.

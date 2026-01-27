@@ -5,7 +5,7 @@ import json
 import util
 import l3
 import test_vrf
-
+import time
 
 class TestP4RTL3(object):
     def _set_up(self, dvs):
@@ -1442,7 +1442,7 @@ class TestP4RTL3(object):
         # Bring down the port.
         util.set_interface_status(dvs, if_name)
 
-        # Execute the warm reboot.
+        # Execute the warm reboot
         dvs.warm_restart_swss("true")
         dvs.stop_swss()
         dvs.start_swss()
