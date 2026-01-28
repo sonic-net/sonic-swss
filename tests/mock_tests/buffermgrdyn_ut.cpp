@@ -2074,10 +2074,13 @@ namespace buffermgrdyn_test
         testProfile.gearbox_model = "";
         m_dynamicBuffer->m_bufferProfileLookup[testProfile.name] = testProfile;
 
-        // TEST CASE 1: Normal mode - profiles should be refreshed
+        // TEST CASE 1: Normal mode with profiles not yet synced - should trigger retry
         // Set initial shared headroom pool size to 0 (disabled)
         m_dynamicBuffer->m_configuredSharedHeadroomPoolSize = "0";
         m_dynamicBuffer->m_shpProfilesToCheck.clear();
+
+        // Do NOT pre-populate APPL_STATE_DB - profiles are not synced yet
+        // This simulates the case where profiles are refreshed but not yet written to SAI
 
         // Update buffer pool with new shared headroom pool size
         vector<FieldValueTuple> fvVector = {
@@ -2093,23 +2096,41 @@ namespace buffermgrdyn_test
         EXPECT_EQ(m_dynamicBuffer->m_configuredSharedHeadroomPoolSize, "0")
             << "Initial SHP size should be 0";
 
-        // Call handleBufferPoolTable - should refresh profiles and populate m_shpProfilesToCheck
+        // Call handleBufferPoolTable - profiles will be refreshed but not synced, should return retry
         auto status = m_dynamicBuffer->handleBufferPoolTable(tuple);
+        EXPECT_EQ(status, task_process_status::task_need_retry)
+            << "Should return task_need_retry when profiles are refreshed but not synced to SAI";
 
-        // Verify that profiles were scheduled for checking
+        // Verify that profiles were scheduled for checking and SHP size was rolled back
         EXPECT_FALSE(m_dynamicBuffer->m_shpProfilesToCheck.empty())
             << "After SHP size change, m_shpProfilesToCheck should not be empty";
+        EXPECT_EQ(m_dynamicBuffer->m_configuredSharedHeadroomPoolSize, "0")
+            << "SHP size should be rolled back to 0 after retry";
 
-        // TEST CASE 2: Retry mode - only check SAI sync status without refreshing profiles
-        // Simulate that profiles are not yet synced to SAI
-        // Clear the APPL_STATE_DB to simulate profiles not synced
-        Table applStateBufferProfileTable(m_app_state_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
-        applStateBufferProfileTable.del(testProfile.name);
+        // TEST CASE 2: Sync profiles to SAI and retry - should succeed with first request
+        // Now simulate profiles synced to SAI
+        m_dynamicBuffer->m_applStateBufferProfileTable.set(testProfile.name, {
+            {"xoff", testProfile.xoff},
+            {"xon", testProfile.xon},
+            {"size", testProfile.size}
+        });
 
-        // Save current SHP size to verify it doesn't change during retry
-        string currentSHPSize = m_dynamicBuffer->m_configuredSharedHeadroomPoolSize;
+        // Retry the same request - should succeed now
+        status = m_dynamicBuffer->handleBufferPoolTable(tuple);
+        EXPECT_EQ(status, task_process_status::task_success)
+            << "Should succeed when profiles are synced to SAI (retry mode)";
 
-        // Try to update again while in retry mode (m_shpProfilesToCheck not empty)
+        // Verify that SHP size was updated and m_shpProfilesToCheck was cleared
+        EXPECT_EQ(m_dynamicBuffer->m_configuredSharedHeadroomPoolSize, "1048576")
+            << "SHP size should be updated after profiles are synced";
+        EXPECT_TRUE(m_dynamicBuffer->m_shpProfilesToCheck.empty())
+            << "m_shpProfilesToCheck should be cleared after successful sync";
+
+        // TEST CASE 3: Change SHP size again with profiles not synced - should retry
+        // Clear profiles from APPL_STATE_DB to simulate they haven't been synced yet
+        m_dynamicBuffer->m_applStateBufferProfileTable.del(testProfile.name);
+
+        // Try to update with different SHP size
         vector<FieldValueTuple> fvVector2 = {
             {"mode", "dynamic"},
             {"type", "ingress"},
@@ -2117,33 +2138,37 @@ namespace buffermgrdyn_test
         };
         KeyOpFieldsValuesTuple tuple2 = {INGRESS_LOSSLESS_PG_POOL_NAME, "SET", fvVector2};
 
-        // Call handleBufferPoolTable - should return task_need_retry because profiles not synced
         status = m_dynamicBuffer->handleBufferPoolTable(tuple2);
         EXPECT_EQ(status, task_process_status::task_need_retry)
-            << "Should return task_need_retry when profiles are not synced to SAI";
+            << "Should return task_need_retry when profiles are not synced after SHP size change";
 
-        // Verify that SHP size was not updated (rolled back)
-        EXPECT_EQ(m_dynamicBuffer->m_configuredSharedHeadroomPoolSize, currentSHPSize)
-            << "SHP size should not change during retry when profiles are not synced";
+        // Verify that SHP size was rolled back
+        EXPECT_EQ(m_dynamicBuffer->m_configuredSharedHeadroomPoolSize, "1048576")
+            << "SHP size should remain at previous value during retry";
+        EXPECT_FALSE(m_dynamicBuffer->m_shpProfilesToCheck.empty())
+            << "m_shpProfilesToCheck should not be empty during retry";
 
-        // TEST CASE 3: Profiles synced to SAI - should succeed
-        // Simulate profiles synced to SAI by setting values in APPL_STATE_DB
-        applStateBufferProfileTable.set(testProfile.name, {
+        // TEST CASE 4: Sync profiles again and retry - should succeed
+        // Update profile values in cache to match what would be calculated with new SHP
+        testProfile.xoff = "250";  // Simulating recalculated values
+        testProfile.size = "1200";
+        m_dynamicBuffer->m_bufferProfileLookup[testProfile.name] = testProfile;
+
+        // Simulate profiles synced to SAI with new values
+        m_dynamicBuffer->m_applStateBufferProfileTable.set(testProfile.name, {
             {"xoff", testProfile.xoff},
             {"xon", testProfile.xon},
             {"size", testProfile.size}
         });
 
-        // Call handleBufferPoolTable again - should succeed now
+        // Retry - should succeed now
         status = m_dynamicBuffer->handleBufferPoolTable(tuple2);
         EXPECT_EQ(status, task_process_status::task_success)
-            << "Should succeed when profiles are synced to SAI";
+            << "Should succeed when profiles are synced with new SHP size";
 
         // Verify that SHP size was updated
         EXPECT_EQ(m_dynamicBuffer->m_configuredSharedHeadroomPoolSize, "2097152")
-            << "SHP size should be updated after profiles are synced";
-
-        // Verify that m_shpProfilesToCheck was cleared after successful sync
+            << "SHP size should be updated to new value after profiles are synced";
         EXPECT_TRUE(m_dynamicBuffer->m_shpProfilesToCheck.empty())
             << "m_shpProfilesToCheck should be cleared after successful sync";
     }
@@ -2172,15 +2197,13 @@ namespace buffermgrdyn_test
         testProfile.lossless = true;
         m_dynamicBuffer->m_bufferProfileLookup[testProfile.name] = testProfile;
 
-        Table applStateBufferProfileTable(m_app_state_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
-
         // TEST CASE 1: Profile not in APPL_STATE_DB (xoff empty) - should return false
-        applStateBufferProfileTable.del(testProfile.name);
+        m_dynamicBuffer->m_applStateBufferProfileTable.del(testProfile.name);
         bool synced = m_dynamicBuffer->isLosslessProfileSyncedInSai(testProfile.name);
         EXPECT_FALSE(synced) << "Should return false when profile not in APPL_STATE_DB";
 
         // TEST CASE 2: xoff mismatch - should return false
-        applStateBufferProfileTable.set(testProfile.name, {
+        m_dynamicBuffer->m_applStateBufferProfileTable.set(testProfile.name, {
             {"xoff", "999"},  // Different from expected
             {"xon", testProfile.xon},
             {"size", testProfile.size}
@@ -2189,7 +2212,7 @@ namespace buffermgrdyn_test
         EXPECT_FALSE(synced) << "Should return false when xoff mismatches";
 
         // TEST CASE 3: xon mismatch - should return false
-        applStateBufferProfileTable.set(testProfile.name, {
+        m_dynamicBuffer->m_applStateBufferProfileTable.set(testProfile.name, {
             {"xoff", testProfile.xoff},
             {"xon", "999"},  // Different from expected
             {"size", testProfile.size}
@@ -2198,7 +2221,7 @@ namespace buffermgrdyn_test
         EXPECT_FALSE(synced) << "Should return false when xon mismatches";
 
         // TEST CASE 4: size mismatch - should return false
-        applStateBufferProfileTable.set(testProfile.name, {
+        m_dynamicBuffer->m_applStateBufferProfileTable.set(testProfile.name, {
             {"xoff", testProfile.xoff},
             {"xon", testProfile.xon},
             {"size", "999"}  // Different from expected
@@ -2207,7 +2230,7 @@ namespace buffermgrdyn_test
         EXPECT_FALSE(synced) << "Should return false when size mismatches";
 
         // TEST CASE 5: All fields match - should return true
-        applStateBufferProfileTable.set(testProfile.name, {
+        m_dynamicBuffer->m_applStateBufferProfileTable.set(testProfile.name, {
             {"xoff", testProfile.xoff},
             {"xon", testProfile.xon},
             {"size", testProfile.size}
@@ -2252,8 +2275,6 @@ namespace buffermgrdyn_test
         m_dynamicBuffer->m_bufferProfileLookup[profile1.name] = profile1;
         m_dynamicBuffer->m_bufferProfileLookup[profile2.name] = profile2;
 
-        Table applStateBufferProfileTable(m_app_state_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
-
         // TEST CASE 1: Empty list - should return success immediately
         m_dynamicBuffer->m_shpProfilesToCheck.clear();
         auto status = m_dynamicBuffer->checkPendingProfilesSyncStatus();
@@ -2262,12 +2283,12 @@ namespace buffermgrdyn_test
 
         // TEST CASE 2: All profiles synced - should return success and clear the list
         m_dynamicBuffer->m_shpProfilesToCheck = {profile1.name, profile2.name};
-        applStateBufferProfileTable.set(profile1.name, {
+        m_dynamicBuffer->m_applStateBufferProfileTable.set(profile1.name, {
             {"xoff", profile1.xoff},
             {"xon", profile1.xon},
             {"size", profile1.size}
         });
-        applStateBufferProfileTable.set(profile2.name, {
+        m_dynamicBuffer->m_applStateBufferProfileTable.set(profile2.name, {
             {"xoff", profile2.xoff},
             {"xon", profile2.xon},
             {"size", profile2.size}
@@ -2281,7 +2302,7 @@ namespace buffermgrdyn_test
 
         // TEST CASE 3: First profile not synced - should return task_need_retry
         m_dynamicBuffer->m_shpProfilesToCheck = {profile1.name, profile2.name};
-        applStateBufferProfileTable.del(profile1.name);  // First profile not synced
+        m_dynamicBuffer->m_applStateBufferProfileTable.del(profile1.name);  // First profile not synced
 
         status = m_dynamicBuffer->checkPendingProfilesSyncStatus();
         EXPECT_EQ(status, task_process_status::task_need_retry)
@@ -2290,19 +2311,19 @@ namespace buffermgrdyn_test
             << "Should not clear the profile list when sync is incomplete";
 
         // TEST CASE 4: Second profile not synced - should return task_need_retry
-        applStateBufferProfileTable.set(profile1.name, {
+        m_dynamicBuffer->m_applStateBufferProfileTable.set(profile1.name, {
             {"xoff", profile1.xoff},
             {"xon", profile1.xon},
             {"size", profile1.size}
         });
-        applStateBufferProfileTable.del(profile2.name);  // Second profile not synced
+        m_dynamicBuffer->m_applStateBufferProfileTable.del(profile2.name);  // Second profile not synced
 
         status = m_dynamicBuffer->checkPendingProfilesSyncStatus();
         EXPECT_EQ(status, task_process_status::task_need_retry)
             << "Should return task_need_retry when second profile is not synced";
 
         // TEST CASE 5: Fix the second profile and verify success
-        applStateBufferProfileTable.set(profile2.name, {
+        m_dynamicBuffer->m_applStateBufferProfileTable.set(profile2.name, {
             {"xoff", profile2.xoff},
             {"xon", profile2.xon},
             {"size", profile2.size}
@@ -2348,8 +2369,6 @@ namespace buffermgrdyn_test
         testProfile.gearbox_model = "";
         m_dynamicBuffer->m_bufferProfileLookup[testProfile.name] = testProfile;
 
-        Table applStateBufferProfileTable(m_app_state_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
-
         // TEST CASE 1: Enable SHP from disabled state
         m_dynamicBuffer->m_configuredSharedHeadroomPoolSize = "0";
         m_dynamicBuffer->m_shpProfilesToCheck.clear();
@@ -2362,7 +2381,7 @@ namespace buffermgrdyn_test
         KeyOpFieldsValuesTuple tuple = {INGRESS_LOSSLESS_PG_POOL_NAME, "SET", fvVector};
 
         // Simulate profiles are synced to SAI
-        applStateBufferProfileTable.set(testProfile.name, {
+        m_dynamicBuffer->m_applStateBufferProfileTable.set(testProfile.name, {
             {"xoff", testProfile.xoff},
             {"xon", testProfile.xon},
             {"size", testProfile.size}
@@ -2387,7 +2406,7 @@ namespace buffermgrdyn_test
         testProfile.xoff = "150";  // Simulating recalculated values
         testProfile.size = "900";
         m_dynamicBuffer->m_bufferProfileLookup[testProfile.name] = testProfile;
-        applStateBufferProfileTable.set(testProfile.name, {
+        m_dynamicBuffer->m_applStateBufferProfileTable.set(testProfile.name, {
             {"xoff", testProfile.xoff},
             {"xon", testProfile.xon},
             {"size", testProfile.size}
