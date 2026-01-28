@@ -61,6 +61,29 @@ class IpMulticastManager : public ObjectManagerInterface {
       const std::vector<swss::FieldValueTuple>& attributes,
       const std::string& table_name);
 
+  // Gets the internal cached IP multicast entry by its key.
+  // Return nullptr if corresponding entry is not cached.
+  P4IpMulticastEntry* getIpMulticastEntry(
+      const std::string& ip_multicast_entry_key);
+
+  // Returns the SAI IPMC entry (for multicast).
+  sai_ipmc_entry_t prepareSaiIpmcEntry(
+      const P4IpMulticastEntry& ip_multicast_entry) const;
+
+  // Creates and assigns the empty private RPF group, to be used for all
+  // IPMC entries.
+  ReturnCode createDefaultRpfGroup();
+
+  // We temporarily need a RPF group member and router interface.
+  // Creates and adds a single RPF group member to the default RPF group.
+  ReturnCode createDefaultRpfGroupMember();
+  // Creates a router interface object to be used by the RPF group member.
+  ReturnCode createRouterInterfaceForDefaultRpfGroupMember();
+
+  // Creates a list of IP multicast entries.
+  std::vector<ReturnCode> createIpMulticastEntries(
+      const std::vector<P4IpMulticastEntry>& ip_multicast_entries);
+
   // Internal cache of entries.
   P4IpMulticastTable m_ipMulticastTable;
 
@@ -68,6 +91,13 @@ class IpMulticastManager : public ObjectManagerInterface {
   VRFOrch* m_vrfOrch;
   ResponsePublisherInterface* m_publisher;
   std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
+
+  // OID for a valid RPF group, needed for creating IPMC entries.
+  // This group will be created on first entry add.  Ideally, this group would
+  // be empty, but at least one member is needed by the SDK at the moment.
+  sai_object_id_t ipmc_rpf_group_oid_ = SAI_NULL_OBJECT_ID;
+  sai_object_id_t unused_rpf_group_member_oid_ = SAI_NULL_OBJECT_ID;
+  sai_object_id_t rif_for_rpf_group_member_oid_ = SAI_NULL_OBJECT_ID;
 
   friend class IpMulticastManagerTest;
 };

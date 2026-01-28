@@ -46,6 +46,17 @@ namespace p4orch {
 
 namespace {
 
+constexpr char* kIpv4Address1 = "225.11.12.0";
+constexpr char* kIpv6Address1 = "ff00::2001:db8:1";
+constexpr char* kMulticastGroup1 = "0x1";
+constexpr char* kMulticastGroup2 = "0x2";
+constexpr sai_object_id_t kMulticastGroupOid1 = 0x101;
+constexpr sai_object_id_t kMulticastGroupOid2 = 0x102;
+
+constexpr sai_object_id_t kRpfGroupOid1 = 0x77;
+constexpr sai_object_id_t kRpfGroupMemberOid1 = 0x88;
+constexpr sai_object_id_t kRpfRouterInterfaceOid1 = 0x99;
+
 bool AddressCmp(const sai_ip_address_t* x, const sai_ip_address_t* y) {
   if (x->addr_family != y->addr_family) {
     return false;
@@ -54,6 +65,48 @@ bool AddressCmp(const sai_ip_address_t* x, const sai_ip_address_t* y) {
     return memcmp(&x->addr.ip4, &y->addr.ip4, sizeof(sai_ip4_t)) == 0;
   }
   return memcmp(&x->addr.ip6, &y->addr.ip6, sizeof(sai_ip6_t)) == 0;
+}
+
+// Matches two SAI attributes.
+bool MatchSaiAttribute(const sai_attribute_t& attr,
+                       const sai_attribute_t& exp_attr) {
+  if (exp_attr.id == SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION) {
+    if (attr.id != SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION ||
+        attr.value.s32 != exp_attr.value.s32) {
+      return false;
+    }
+  }
+  if (exp_attr.id == SAI_IPMC_ENTRY_ATTR_OUTPUT_GROUP_ID) {
+    if (attr.id != SAI_IPMC_ENTRY_ATTR_OUTPUT_GROUP_ID ||
+        attr.value.oid != exp_attr.value.oid) {
+      return false;
+    }
+  }
+  if (exp_attr.id == SAI_IPMC_ENTRY_ATTR_RPF_GROUP_ID) {
+    if (attr.id != SAI_IPMC_ENTRY_ATTR_RPF_GROUP_ID ||
+        attr.value.oid != exp_attr.value.oid) {
+      return false;
+    }
+  }
+  return true;
+}
+
+MATCHER_P(ArrayEq, array, "") {
+  for (size_t i = 0; i < array.size(); ++i) {
+    if (arg[i] != array[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+MATCHER_P(AttrArrayEq, array, "") {
+  for (size_t i = 0; i < array.size(); ++i) {
+    if (!MatchSaiAttribute(arg[i], array[i])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 void VerifyP4IpMulticastEntryEqual(const P4IpMulticastEntry& x,
@@ -66,6 +119,10 @@ void VerifyP4IpMulticastEntryEqual(const P4IpMulticastEntry& x,
   EXPECT_EQ(x.controller_metadata, y.controller_metadata);
   EXPECT_TRUE(
       AddressCmp(&x.sai_ipmc_entry.destination, &y.sai_ipmc_entry.destination));
+  EXPECT_TRUE(AddressCmp(&x.sai_ipmc_entry.source, &y.sai_ipmc_entry.source));
+  EXPECT_EQ(x.sai_ipmc_entry.switch_id, x.sai_ipmc_entry.switch_id);
+  EXPECT_EQ(x.sai_ipmc_entry.vr_id, x.sai_ipmc_entry.vr_id);
+  EXPECT_EQ(x.sai_ipmc_entry.type, x.sai_ipmc_entry.type);
 }
 
 }  // namespace
@@ -115,6 +172,23 @@ class IpMulticastManagerTest : public ::testing::Test {
     return ip_multicast_manager_.drain();
   }
 
+  P4IpMulticastEntry* GetIpMulticastEntry(
+      const std::string& ip_multicast_entry_key) {
+    return ip_multicast_manager_.getIpMulticastEntry(ip_multicast_entry_key);
+  }
+
+  // Function to fake adding a multicast group SAI object.
+  void AddMulticastGroup(const std::string multicast_group_id,
+                         const sai_object_id_t group_oid) {
+    p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_IPMC_GROUP, multicast_group_id,
+                          group_oid);
+  }
+
+  std::vector<ReturnCode> CreateIpMulticastEntries(
+      const std::vector<P4IpMulticastEntry>& ip_multicast_entries) {
+    return ip_multicast_manager_.createIpMulticastEntries(ip_multicast_entries);
+  }
+
   // Generates a P4IpMulticastEntry.
   P4IpMulticastEntry GenerateP4IpMulticastEntry(
       const std::string& vrf_id, const swss::IpAddress& ip_dst,
@@ -131,6 +205,50 @@ class IpMulticastManagerTest : public ::testing::Test {
     ip_multicast_entry.ip_multicast_entry_key =
         KeyGenerator::generateIpMulticastKey(ip_multicast_entry.vrf_id,
                                              ip_multicast_entry.ip_dst);
+    return ip_multicast_entry;
+  }
+
+  // Creates and adds an IP multicast entry for test.
+  P4IpMulticastEntry SetupIpMulticastEntry(
+      const std::string& vrf_id, const swss::IpAddress& ip_dst,
+      const std::string& multicast_group_id,
+      const sai_object_id_t multicast_group_oid,
+      const std::string& metadata = "", bool expect_rpf = true) {
+    auto ip_multicast_entry =
+        GenerateP4IpMulticastEntry(vrf_id, ip_dst, p4orch::kSetMulticastGroupId,
+                                   multicast_group_id, metadata);
+    // Create artificial multicast group object.
+    AddMulticastGroup(multicast_group_id, multicast_group_oid);
+    if (expect_rpf) {
+      EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, 7, _))
+          .WillOnce(DoAll(SetArgPointee<0>(kRpfRouterInterfaceOid1),
+                          Return(SAI_STATUS_SUCCESS)));
+      EXPECT_CALL(mock_sai_rpf_group_, create_rpf_group(_, _, 0, _))
+          .WillOnce(DoAll(SetArgPointee<0>(kRpfGroupOid1),
+                          Return(SAI_STATUS_SUCCESS)));
+      EXPECT_CALL(mock_sai_rpf_group_, create_rpf_group_member(_, _, 2, _))
+          .WillOnce(DoAll(SetArgPointee<0>(kRpfGroupMemberOid1),
+                          Return(SAI_STATUS_SUCCESS)));
+    }
+
+    std::vector<sai_attribute_t> exp_ipmc_attrs;
+    sai_attribute_t attr;
+    attr.id = SAI_IPMC_ENTRY_ATTR_PACKET_ACTION;
+    attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+    exp_ipmc_attrs.push_back(attr);
+    attr.id = SAI_IPMC_ENTRY_ATTR_OUTPUT_GROUP_ID;
+    attr.value.oid = multicast_group_oid;
+    exp_ipmc_attrs.push_back(attr);
+    attr.id = SAI_IPMC_ENTRY_ATTR_RPF_GROUP_ID;
+    attr.value.oid = kRpfGroupOid1;
+    exp_ipmc_attrs.push_back(attr);
+    EXPECT_CALL(mock_sai_ipmc_,
+                create_ipmc_entry(_, 3, AttrArrayEq(exp_ipmc_attrs)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+    EXPECT_THAT(CreateIpMulticastEntries(
+                    std::vector<P4IpMulticastEntry>{ip_multicast_entry}),
+                ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
     return ip_multicast_entry;
   }
 
@@ -243,6 +361,142 @@ TEST_F(IpMulticastManagerTest, DeserializeIpMulticastEntryExtraFieldFails) {
       key, attributes, APP_P4RT_IPV4_MULTICAST_TABLE_NAME);
   EXPECT_FALSE(ip_multicast_entry_or.ok());
   EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ip_multicast_entry_or.status());
+}
+
+TEST_F(IpMulticastManagerTest, CreateIpMulticastEntriesSuccess) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 =
+      SetupIpMulticastEntry(gVrfName, swss_ipv4_address, kMulticastGroup1,
+                            kMulticastGroupOid1, "meta_ipv4");
+  auto swss_ipv6_address = swss::IpAddress(kIpv6Address1);
+  auto entry2 = SetupIpMulticastEntry(gVrfName, swss_ipv6_address,
+                                      kMulticastGroup2, kMulticastGroupOid2,
+                                      "meta_ipv6", /*expect_rpf=*/false);
+
+  auto* entry1_ptr = GetIpMulticastEntry(entry1.ip_multicast_entry_key);
+  auto* entry2_ptr = GetIpMulticastEntry(entry2.ip_multicast_entry_key);
+  EXPECT_NE(entry1_ptr, nullptr);
+  EXPECT_NE(entry2_ptr, nullptr);
+
+  auto expect_ipv4 = GenerateP4IpMulticastEntry(gVrfName, swss_ipv4_address,
+                                                p4orch::kSetMulticastGroupId,
+                                                kMulticastGroup1, "meta_ipv4");
+  expect_ipv4.sai_ipmc_entry.switch_id = gSwitchId;
+  expect_ipv4.sai_ipmc_entry.vr_id = gVrfOrch->getVRFid(gVrfName);
+  expect_ipv4.sai_ipmc_entry.type = SAI_IPMC_ENTRY_TYPE_XG;
+  sai_ip_address_t sai_address_v4;
+  copy(sai_address_v4, swss_ipv4_address);
+  expect_ipv4.sai_ipmc_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+  expect_ipv4.sai_ipmc_entry.destination.addr.ip4 = sai_address_v4.addr.ip4;
+  expect_ipv4.sai_ipmc_entry.source.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+  expect_ipv4.sai_ipmc_entry.source.addr.ip4 = 0;
+  VerifyP4IpMulticastEntryEqual(expect_ipv4, *entry1_ptr);
+
+  auto expect_ipv6 = GenerateP4IpMulticastEntry(gVrfName, swss_ipv6_address,
+                                                p4orch::kSetMulticastGroupId,
+                                                kMulticastGroup2, "meta_ipv6");
+  expect_ipv6.sai_ipmc_entry.switch_id = gSwitchId;
+  expect_ipv6.sai_ipmc_entry.vr_id = gVrfOrch->getVRFid(gVrfName);
+  expect_ipv6.sai_ipmc_entry.type = SAI_IPMC_ENTRY_TYPE_XG;
+  sai_ip_address_t sai_address_v6;
+  copy(sai_address_v6, swss_ipv6_address);
+  expect_ipv6.sai_ipmc_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
+  memcpy(&expect_ipv6.sai_ipmc_entry.destination.addr.ip6,
+         &sai_address_v6.addr.ip6, sizeof(sai_ip6_t));
+  expect_ipv6.sai_ipmc_entry.source.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
+  memset(&expect_ipv6.sai_ipmc_entry.source.addr.ip6, 0, sizeof(sai_ip6_t));
+  VerifyP4IpMulticastEntryEqual(expect_ipv6, *entry2_ptr);
+}
+
+TEST_F(IpMulticastManagerTest, CreateIpMulticastEntriesFailToCreateRpfGroup) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto ipv4_multicast_entry = GenerateP4IpMulticastEntry(
+      gVrfName, swss_ipv4_address, p4orch::kSetMulticastGroupId,
+      kMulticastGroup1);
+  // Create artificial multicast group object.
+  AddMulticastGroup(kMulticastGroup1, kMulticastGroupOid1);
+  EXPECT_CALL(mock_sai_rpf_group_, create_rpf_group(_, _, 0, _))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  EXPECT_THAT(CreateIpMulticastEntries(
+                  std::vector<P4IpMulticastEntry>{ipv4_multicast_entry}),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN}));
+
+  auto* ipv4_multicast_entry_ptr =
+      GetIpMulticastEntry(ipv4_multicast_entry.ip_multicast_entry_key);
+  EXPECT_EQ(ipv4_multicast_entry_ptr, nullptr);
+}
+
+TEST_F(IpMulticastManagerTest, CreateIpMulticastEntriesFailToCreateRpfRif) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto ipv4_multicast_entry = GenerateP4IpMulticastEntry(
+      gVrfName, swss_ipv4_address, p4orch::kSetMulticastGroupId,
+      kMulticastGroup1);
+  // Create artificial multicast group object.
+  AddMulticastGroup(kMulticastGroup1, kMulticastGroupOid1);
+  EXPECT_CALL(mock_sai_rpf_group_, create_rpf_group(_, _, 0, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kRpfGroupOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, 7, _))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  EXPECT_THAT(CreateIpMulticastEntries(
+                  std::vector<P4IpMulticastEntry>{ipv4_multicast_entry}),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN}));
+
+  auto* ipv4_multicast_entry_ptr =
+      GetIpMulticastEntry(ipv4_multicast_entry.ip_multicast_entry_key);
+  EXPECT_EQ(ipv4_multicast_entry_ptr, nullptr);
+}
+
+TEST_F(IpMulticastManagerTest, CreateIpMulticastEntriesFailToCreateRpfMember) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto ipv4_multicast_entry = GenerateP4IpMulticastEntry(
+      gVrfName, swss_ipv4_address, p4orch::kSetMulticastGroupId,
+      kMulticastGroup1);
+  // Create artificial multicast group object.
+  AddMulticastGroup(kMulticastGroup1, kMulticastGroupOid1);
+  EXPECT_CALL(mock_sai_rpf_group_, create_rpf_group(_, _, 0, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kRpfGroupOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, 7, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kRpfRouterInterfaceOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_rpf_group_, create_rpf_group_member(_, _, 2, _))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  EXPECT_THAT(CreateIpMulticastEntries(
+                  std::vector<P4IpMulticastEntry>{ipv4_multicast_entry}),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN}));
+
+  auto* ipv4_multicast_entry_ptr =
+      GetIpMulticastEntry(ipv4_multicast_entry.ip_multicast_entry_key);
+  EXPECT_EQ(ipv4_multicast_entry_ptr, nullptr);
+}
+
+TEST_F(IpMulticastManagerTest, CreateIpMulticastEntriesMissingMulticastGroup) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto ipv4_multicast_entry = GenerateP4IpMulticastEntry(
+      gVrfName, swss_ipv4_address, p4orch::kSetMulticastGroupId,
+      kMulticastGroup1);
+  // Don't add multicast group.
+  EXPECT_CALL(mock_sai_rpf_group_, create_rpf_group(_, _, 0, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kRpfGroupOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, 7, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kRpfRouterInterfaceOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_rpf_group_, create_rpf_group_member(_, _, 2, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kRpfGroupMemberOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+
+  EXPECT_THAT(CreateIpMulticastEntries(
+                  std::vector<P4IpMulticastEntry>{ipv4_multicast_entry}),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_NOT_FOUND}));
+
+  auto* ipv4_multicast_entry_ptr =
+      GetIpMulticastEntry(ipv4_multicast_entry.ip_multicast_entry_key);
+  EXPECT_EQ(ipv4_multicast_entry_ptr, nullptr);
 }
 
 TEST_F(IpMulticastManagerTest, DrainNotImplemented) {
