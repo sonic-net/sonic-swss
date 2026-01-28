@@ -1126,6 +1126,11 @@ void MuxNbrHandler::updateTunnelRoute(NextHopKey nh, bool add)
     }
 }
 
+/**
+ * @brief Bulk set/updates nexthop id in the list of routes in bulk_ctx_list
+ * @param bulk_ctx_list A list of route contexts for bulk operation
+ * @return true on success, false on failure
+ */
 bool MuxNbrHandler::setBulkRouteNH(std::list<MuxRouteBulkContext>& bulk_ctx_list)
 {
     sai_status_t status;

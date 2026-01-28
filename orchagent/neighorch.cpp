@@ -70,6 +70,11 @@ NeighOrch::~NeighOrch()
     }
 }
 
+/**
+ * @brief Checks SAI layer's capability to support NO_HOST_ROUTE neighbor attribute.
+ *        Used for programming mux neighbors in prefix-route mode.
+ * @return true when attribute is supported else returns false
+ */
 bool NeighOrch::isNoHostRouteSupported()
 {
     static bool capability_checked = false;
@@ -1061,6 +1066,87 @@ void NeighOrch::getMuxNeighborsForPort(string port_name, NeighborTable& m_neighb
     }
 }
 
+bool NeighOrch::addPrefixRouteForNeighbor(const IpAddress& ip_address, const MacAddress& macAddress,
+                                           string& alias, sai_object_id_t next_hop_id)
+{
+    SWSS_LOG_ENTER();
+
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    sai_status_t status;
+    sai_object_id_t port_vrf_id = gVirtualRouterId;
+
+    Port port;
+    if (gPortsOrch->getPort(alias, port))
+    {
+        port_vrf_id = port.m_vr_id;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Port does not exist for %s!", alias.c_str());
+        return false;
+    }
+
+    sai_route_entry_t route_entry;
+    route_entry.vr_id = port_vrf_id;
+    route_entry.switch_id = gSwitchId;
+    IpPrefix ipNeighPfx = ip_address.to_string();
+    copy(route_entry.destination, ipNeighPfx);
+    subnet(route_entry.destination, route_entry.destination);
+
+    sai_attribute_t rt_attr;
+    vector<sai_attribute_t> rt_attrs;
+
+    // neighbors in mux standby state has DROP action
+    rt_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+    if (mux_orch->isNeighborActive(ip_address, macAddress, alias))
+    {
+        rt_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+    }
+    else
+    {
+        rt_attr.value.s32 = SAI_PACKET_ACTION_DROP;
+    }
+
+    rt_attrs.push_back(rt_attr);
+
+    rt_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+    rt_attr.value.oid = next_hop_id;
+    rt_attrs.push_back(rt_attr);
+
+    // if standalone mux route for this neighbor is created, then
+    // set the new attributes
+    if (mux_orch->isStandaloneTunnelRouteInstalled(ip_address))
+    {
+        for (auto& route_attr : rt_attrs)
+        {
+            status = sai_route_api->set_route_entry_attribute(&route_entry, &route_attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to set mux neigh route for %s with next_hop_id as 0x%" PRIx64 " rv:%d",
+                        ip_address.to_string().c_str(), next_hop_id, status);
+                return false;
+            }
+        }
+    }
+    else
+    {
+        status = sai_route_api->create_route_entry(&route_entry, (uint32_t)rt_attrs.size(), rt_attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to add mux neigh route for %s with next_hop_id as 0x%" PRIx64 ".",
+                    ip_address.to_string().c_str(), next_hop_id);
+            return false;
+        }
+        else
+        {
+            SWSS_LOG_INFO("Successfully added mux neigh route for %s with next_hop_id as 0x%" PRIx64 ".",
+                    ip_address.to_string().c_str(), next_hop_id);
+        }
+    }
+
+    return true;
+}
+
 bool NeighOrch::addNeighbor(NeighborContext& ctx)
 {
     SWSS_LOG_ENTER();
@@ -1279,75 +1365,10 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
             // full prefix route pointing to neighbor nh
             if (prefix_route)
             {
-                sai_object_id_t port_vrf_id;
-                port_vrf_id = gVirtualRouterId;
-
-                Port port;
-                if (gPortsOrch->getPort(alias, port))
-                {
-                    port_vrf_id = port.m_vr_id;
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Port does not exist for %s!", alias.c_str());
-                }
-
-                sai_route_entry_t route_entry;
-                route_entry.vr_id = port_vrf_id;
-                route_entry.switch_id = gSwitchId;
-                IpPrefix ipNeighPfx = ip_address.to_string();
-                copy(route_entry.destination, ipNeighPfx);
-                subnet(route_entry.destination, route_entry.destination);
-
                 sai_object_id_t next_hop_id = m_syncdNextHops[nhKey].next_hop_id;
-                sai_attribute_t rt_attr;
-                vector<sai_attribute_t> rt_attrs;
-
-                // neighbors in mux standby state has DROP action
-                rt_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
-                if (mux_orch->isNeighborActive(ip_address, macAddress, alias))
+                if (!addPrefixRouteForNeighbor(ip_address, macAddress, alias, next_hop_id))
                 {
-                    rt_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
-                }
-                else {
-                    rt_attr.value.s32 = SAI_PACKET_ACTION_DROP;
-                }
-
-                rt_attrs.push_back(rt_attr);
-
-                rt_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
-                rt_attr.value.oid = next_hop_id;
-                rt_attrs.push_back(rt_attr);
-
-                // if standalone mux route for this neighbor is created, then
-                // set the new attributes
-                if (mux_orch->isStandaloneTunnelRouteInstalled(ip_address))
-                {
-                    for (auto& route_attr : rt_attrs)
-                    {
-                        status = sai_route_api->set_route_entry_attribute(&route_entry, &route_attr);
-                        if (status != SAI_STATUS_SUCCESS)
-                        {
-                            SWSS_LOG_ERROR("Failed to set mux neigh route for %s with next_hop_id as 0x%" PRIx64 " rv:%d",
-                                    ip_address.to_string().c_str(), next_hop_id, status);
-                            return false;
-                        }
-                    }
-
-                }
-                else
-                {
-                    status = sai_route_api->create_route_entry(&route_entry, (uint32_t)rt_attrs.size(), rt_attrs.data());
-                    if (status != SAI_STATUS_SUCCESS)
-                    {
-                        SWSS_LOG_ERROR("Failed to add mux neigh route for %s  with next_hop_id as  0x%" PRIx64 " .",
-                        ip_address.to_string().c_str(), next_hop_id);
-                        return false;
-                    }
-                    else {
-                        SWSS_LOG_INFO(" Successfully added mux neigh route for %s with next_hop_id as 0x%" PRIx64 ". ",
-                        ip_address.to_string().c_str(), next_hop_id);
-                    }
+                    return false;
                 }
             }
 

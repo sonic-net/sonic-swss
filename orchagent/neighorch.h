@@ -147,6 +147,8 @@ private:
     bool setNextHopFlag(const NextHopKey &, const uint32_t);
     bool clearNextHopFlag(const NextHopKey &, const uint32_t);
 
+    bool addPrefixRouteForNeighbor(const IpAddress& ip_address, const MacAddress& macAddress,
+                                    string& alias, sai_object_id_t next_hop_id);
     void processFDBFlushUpdate(const FdbFlushUpdate &);
 
     void doTask(Consumer &consumer);
