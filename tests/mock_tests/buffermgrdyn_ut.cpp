@@ -2108,7 +2108,8 @@ namespace buffermgrdyn_test
         // Clear APPL_STATE_DB to simulate profiles not synced yet
         m_dynamicBuffer->m_applStateBufferProfileTable.del(testProfile.name);
 
-        // Try to update SHP size while in retry mode        vector<FieldValueTuple> fvVector = {
+        // Try to update SHP size while in retry mode
+        vector<FieldValueTuple> fvVector = {
             {"mode", "dynamic"},
             {"type", "ingress"},
             {"xoff", "2097152"}  // New size
