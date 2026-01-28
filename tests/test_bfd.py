@@ -11,6 +11,58 @@ class TestBfd(object):
         self.sdb = dvs.get_state_db()
         self.cdb = dvs.get_config_db()
 
+    def get_next_hop_oid(self, ip):
+        next_hop_keys = set(self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP"))
+        for next_hop_key in next_hop_keys:
+            fvs = self.adb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", next_hop_key)
+            if "SAI_NEXT_HOP_ATTR_IP" in fvs and fvs["SAI_NEXT_HOP_ATTR_IP"] == ip:
+                return next_hop_key
+        return "oid:0x0"
+
+    def add_neighbor(self, interface, ip, mac):
+        tbl = swsscommon.Table(self.cdb.db_connection, "NEIGH")
+        fvs = swsscommon.FieldValuePairs([("neigh", mac)])
+        tbl.set(interface + "|" + ip, fvs)
+        time.sleep(1)
+
+    def remove_neighbor(self, interface, ip, mac):
+        tbl = swsscommon.Table(self.cdb.db_connection, "NEIGH")
+        tbl._del(interface + "|" + ip)
+        time.sleep(1)
+
+    def create_l3_intf(self, interface, vrf_name):
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        initial_entries = set(tbl.getKeys())
+
+        tbl = swsscommon.Table(self.cdb.db_connection, "INTERFACE")
+        if len(vrf_name) == 0:
+            fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        else:
+            fvs = swsscommon.FieldValuePairs([("vrf_name", vrf_name)])
+        tbl.set(interface, fvs)
+        time.sleep(1)
+
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        current_entries = set(tbl.getKeys())
+        assert len(current_entries - initial_entries) == 1
+        return list(current_entries - initial_entries)[0]
+
+    def remove_l3_intf(self, interface):
+        tbl = swsscommon.Table(self.cdb.db_connection, "INTERFACE")
+        tbl._del(interface)
+        time.sleep(1)
+
+    def add_ip_address(self, interface, ip):
+        tbl = swsscommon.Table(self.cdb.db_connection, "INTERFACE")
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        tbl.set(interface + "|" + ip, fvs)
+        time.sleep(2) # IPv6 netlink message needs longer time
+
+    def remove_ip_address(self, interface, ip):
+        tbl = swsscommon.Table(self.cdb.db_connection, "INTERFACE")
+        tbl._del(interface + "|" + ip)
+        time.sleep(1)
+
     def get_exist_bfd_session(self):
         return set(self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION"))
 
@@ -617,6 +669,124 @@ class TestBfd(object):
         # Remove the BFD session
         self.remove_bfd_session("default:default:10.0.0.2")
         self.adb.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", session)
+
+    def test_addRemoveBfdSession_nexthop(self, dvs):
+        self.setup_db(dvs)
+
+        bfdSessions = self.get_exist_bfd_session()
+
+        # Create BFD session before adding nexthop, use NULL object id
+        fieldValues = {"local_addr": "10.0.0.1"}
+        self.create_bfd_session("default:Ethernet0:10.0.0.2", fieldValues)
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", len(bfdSessions) + 1)
+
+        # Checked created BFD session in ASIC_DB
+        createdSessions = self.get_exist_bfd_session() - bfdSessions
+        assert len(createdSessions) == 1
+
+        session = createdSessions.pop()
+        expected_adb_values = {
+            "SAI_BFD_SESSION_ATTR_SRC_IP_ADDRESS": "10.0.0.1",
+            "SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS": "10.0.0.2",
+            "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_ASYNC_ACTIVE",
+            "SAI_BFD_SESSION_ATTR_TOS": "192",
+            "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4",
+            "SAI_BFD_SESSION_ATTR_USE_NEXT_HOP": "true",
+            "SAI_BFD_SESSION_ATTR_NEXT_HOP_ID": "oid:0x0"
+        }
+        self.check_asic_bfd_session_value(session, expected_adb_values)
+
+        # Check STATE_DB entry related to the BFD session
+        expected_sdb_values = {"state": "Down", "type": "async_active", "local_addr" : "10.0.0.1", "tx_interval" :"1000",
+                                        "rx_interval" : "1000", "multiplier" : "10", "multihop": "false", "local_discriminator" : "15"}
+        self.check_state_bfd_session_value("default|Ethernet0|10.0.0.2", expected_sdb_values)
+
+        # Next hop id updated after adding neighbor
+        self.create_l3_intf("Ethernet0", "")
+        self.add_ip_address("Ethernet0", "10.0.0.1")
+        self.add_neighbor("Ethernet0", "10.0.0.2", "00:02:03:04:05:07")
+        next_hop_id = self.get_next_hop_oid("10.0.0.2")
+        assert next_hop_id != "oid:0x0"
+        expected_adb_values = {
+            "SAI_BFD_SESSION_ATTR_SRC_IP_ADDRESS": "10.0.0.1",
+            "SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS": "10.0.0.2",
+            "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_ASYNC_ACTIVE",
+            "SAI_BFD_SESSION_ATTR_TOS": "192",
+            "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4",
+            "SAI_BFD_SESSION_ATTR_USE_NEXT_HOP": "true",
+            "SAI_BFD_SESSION_ATTR_NEXT_HOP_ID": next_hop_id
+        }
+        self.check_asic_bfd_session_value(session, expected_adb_values)
+
+        # Next hop id removed after remove neighbor
+        self.remove_neighbor("Ethernet0", "10.0.0.2", "00:02:03:04:05:07")
+        self.remove_ip_address("Ethernet0", "10.0.0.1")
+        self.remove_l3_intf("Ethernet0")
+        expected_adb_values = {
+            "SAI_BFD_SESSION_ATTR_SRC_IP_ADDRESS": "10.0.0.1",
+            "SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS": "10.0.0.2",
+            "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_ASYNC_ACTIVE",
+            "SAI_BFD_SESSION_ATTR_TOS": "192",
+            "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4",
+            "SAI_BFD_SESSION_ATTR_USE_NEXT_HOP": "true",
+            "SAI_BFD_SESSION_ATTR_NEXT_HOP_ID": "oid:0x0"
+        }
+        self.check_asic_bfd_session_value(session, expected_adb_values)
+
+        # Remove the BFD session
+        self.remove_bfd_session("default:Ethernet0:10.0.0.2")
+        self.adb.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", session)
+
+
+        # Create BFD session after adding neighbor
+        self.create_l3_intf("Ethernet0", "")
+        self.add_ip_address("Ethernet0", "10.0.0.1")
+        self.add_neighbor("Ethernet0", "10.0.0.2", "00:02:03:04:05:07")
+
+        bfdSessions = self.get_exist_bfd_session()
+
+        # Create BFD session after adding nexthop, check next hop id
+        fieldValues = {"local_addr": "10.0.0.1"}
+        self.create_bfd_session("default:Ethernet0:10.0.0.2", fieldValues)
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", len(bfdSessions) + 1)
+
+        # Checked created BFD session in ASIC_DB
+        createdSessions = self.get_exist_bfd_session() - bfdSessions
+        assert len(createdSessions) == 1
+
+        session = createdSessions.pop()
+        next_hop_id = self.get_next_hop_oid("10.0.0.2")
+        assert next_hop_id != "oid:0x0"
+        expected_adb_values = {
+            "SAI_BFD_SESSION_ATTR_SRC_IP_ADDRESS": "10.0.0.1",
+            "SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS": "10.0.0.2",
+            "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_ASYNC_ACTIVE",
+            "SAI_BFD_SESSION_ATTR_TOS": "192",
+            "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4",
+            "SAI_BFD_SESSION_ATTR_USE_NEXT_HOP": "true",
+            "SAI_BFD_SESSION_ATTR_NEXT_HOP_ID": next_hop_id
+        }
+        self.check_asic_bfd_session_value(session, expected_adb_values)
+
+        # Check STATE_DB entry related to the BFD session
+        expected_sdb_values = {"state": "Down", "type": "async_active", "local_addr" : "10.0.0.1", "tx_interval" :"1000",
+                                        "rx_interval" : "1000", "multiplier" : "10", "multihop": "false", "local_discriminator" : "16"}
+        self.check_state_bfd_session_value("default|Ethernet0|10.0.0.2", expected_sdb_values)
+
+        # Send BFD session state notification to update BFD session state
+        self.update_bfd_session_state(dvs, session, "Up")
+        time.sleep(2)
+
+        # Confirm BFD session state in STATE_DB is updated as expected 
+        expected_sdb_values["state"] = "Up"
+        self.check_state_bfd_session_value("default|Ethernet0|10.0.0.2", expected_sdb_values)
+
+        # Remove the BFD session
+        self.remove_bfd_session("default:Ethernet0:10.0.0.2")
+        self.adb.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", session)
+        self.remove_neighbor("Ethernet0", "10.0.0.2", "00:02:03:04:05:07")
+        self.remove_ip_address("Ethernet0", "10.0.0.1")
+        self.remove_l3_intf("Ethernet0")
 
     def test_bfd_state_db_clear(self, dvs):
         self.setup_db(dvs)
