@@ -2297,9 +2297,7 @@ bool MuxOrch::handleMuxCfg(const Request& request)
 
         // Set neighbor_mode in state DB MUX_CABLE_TABLE
         std::string neighbor_mode_str = (nbr_handler_type == MuxNbrHandlerType::NBR_HANDLER_PREFIX_BASED) ? "prefix-route" : "host-route";
-        std::vector<FieldValueTuple> fvs;
-        fvs.emplace_back("neighbor_mode", neighbor_mode_str);
-        state_mux_cable_table_->set(port_name, fvs);
+        state_mux_cable_table_->hset(port_name, "neighbor_mode", neighbor_mode_str);
         SWSS_LOG_INFO("Set neighbor_mode '%s' for port '%s' in state DB", neighbor_mode_str.c_str(), port_name.c_str());
 
         // Add neighbors that were learned before this mux port was configured.
@@ -2721,10 +2719,7 @@ MuxStateOrch::MuxStateOrch(DBConnector *db, const std::string& tableName) :
 
 void MuxStateOrch::updateMuxState(string portName, string muxState)
 {
-    vector<FieldValueTuple> tuples;
-    FieldValueTuple tuple("state", muxState);
-    tuples.push_back(tuple);
-    mux_state_table_.set(portName, tuples);
+    mux_state_table_.hset(portName, "state", muxState);
 }
 
 bool MuxStateOrch::addOperation(const Request& request)
