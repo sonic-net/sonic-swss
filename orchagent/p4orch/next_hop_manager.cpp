@@ -27,46 +27,57 @@ extern sai_next_hop_api_t *sai_next_hop_api;
 extern CrmOrch *gCrmOrch;
 extern P4Orch *gP4Orch;
 
-P4NextHopEntry::P4NextHopEntry(const std::string &next_hop_id, const std::string &router_interface_id,
-                               const std::string &gre_tunnel_id, const swss::IpAddress &neighbor_id)
-    : next_hop_id(next_hop_id), router_interface_id(router_interface_id), gre_tunnel_id(gre_tunnel_id),
-      neighbor_id(neighbor_id)
-{
-    SWSS_LOG_ENTER();
-    next_hop_key = KeyGenerator::generateNextHopKey(next_hop_id);
+P4NextHopEntry::P4NextHopEntry(
+    const std::string& next_hop_id, const std::string& router_interface_id,
+    const std::string& gre_tunnel_id, const swss::IpAddress& neighbor_id,
+    bool disable_decrement_ttl, bool disable_src_mac_rewrite,
+    bool disable_dst_mac_rewrite, bool disable_vlan_rewrite)
+    : next_hop_id(next_hop_id),
+      router_interface_id(router_interface_id),
+      gre_tunnel_id(gre_tunnel_id),
+      neighbor_id(neighbor_id),
+      disable_decrement_ttl(disable_decrement_ttl),
+      disable_src_mac_rewrite(disable_src_mac_rewrite),
+      disable_dst_mac_rewrite(disable_dst_mac_rewrite),
+      disable_vlan_rewrite(disable_vlan_rewrite) {
+  SWSS_LOG_ENTER();
+  next_hop_key = KeyGenerator::generateNextHopKey(next_hop_id);
 }
 
 ReturnCode NextHopManager::validateAppDbEntry(
     const P4NextHopAppDbEntry& app_db_entry) {
   if (app_db_entry.action_str != p4orch::kSetIpNexthop &&
+      app_db_entry.action_str != p4orch::kSetIpNexthopAndDisableRewrites &&
       app_db_entry.action_str != p4orch::kSetNexthop &&
       app_db_entry.action_str != p4orch::kSetTunnelNexthop) {
     return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
            << "Invalid action " << QuotedVar(app_db_entry.action_str)
            << " of Nexthop App DB entry";
   }
-  if (app_db_entry.action_str == p4orch::kSetIpNexthop &&
+  if ((app_db_entry.action_str == p4orch::kSetIpNexthop ||
+       app_db_entry.action_str == p4orch::kSetIpNexthopAndDisableRewrites) &&
       app_db_entry.neighbor_id.isZero()) {
     return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
            << "Missing field "
            << QuotedVar(prependParamField(p4orch::kNeighborId))
-           << " for action " << QuotedVar(p4orch::kSetIpNexthop)
+           << " for action " << QuotedVar(app_db_entry.action_str)
            << " in table entry";
   }
   if (app_db_entry.action_str == p4orch::kSetIpNexthop ||
+      app_db_entry.action_str == p4orch::kSetIpNexthopAndDisableRewrites ||
       app_db_entry.action_str == p4orch::kSetNexthop) {
     if (!app_db_entry.gre_tunnel_id.empty()) {
       return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
              << "Unexpected field "
              << QuotedVar(prependParamField(p4orch::kTunnelId))
-             << " for action " << QuotedVar(p4orch::kSetIpNexthop)
+             << " for action " << QuotedVar(app_db_entry.action_str)
              << " in table entry";
     }
     if (app_db_entry.router_interface_id.empty()) {
       return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
              << "Missing field "
              << QuotedVar(prependParamField(p4orch::kRouterInterfaceId))
-             << " for action " << QuotedVar(p4orch::kSetIpNexthop)
+             << " for action " << QuotedVar(app_db_entry.action_str)
              << " in table entry";
     }
   }
@@ -187,6 +198,20 @@ ReturnCode NextHopManager::validateAppDbEntry(
   return ReturnCode();
 }
 
+ReturnCodeOr<bool> parseFlag(std::string name, std::string value) {
+  try {
+    int flag = std::stoi(value);
+    if (flag == 1)
+      return true;
+    else if (flag == 0)
+      return false;
+  } catch (std::exception& e) {
+    // Nothing
+  }
+  return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+         << "Invalid " << QuotedVar(name) << " value: " << QuotedVar(value);
+}
+
 std::vector<sai_attribute_t> NextHopManager::getSaiAttrs(
     const P4NextHopEntry& next_hop_entry) {
   std::vector<sai_attribute_t> next_hop_attrs;
@@ -223,6 +248,22 @@ std::vector<sai_attribute_t> NextHopManager::getSaiAttrs(
 
     next_hop_attr.id = SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID;
     next_hop_attr.value.oid = rif_oid;
+    next_hop_attrs.push_back(next_hop_attr);
+
+    next_hop_attr.id = SAI_NEXT_HOP_ATTR_DISABLE_DECREMENT_TTL;
+    next_hop_attr.value.booldata = next_hop_entry.disable_decrement_ttl;
+    next_hop_attrs.push_back(next_hop_attr);
+
+    next_hop_attr.id = SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE;
+    next_hop_attr.value.booldata = next_hop_entry.disable_src_mac_rewrite;
+    next_hop_attrs.push_back(next_hop_attr);
+
+    next_hop_attr.id = SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE;
+    next_hop_attr.value.booldata = next_hop_entry.disable_dst_mac_rewrite;
+    next_hop_attrs.push_back(next_hop_attr);
+
+    next_hop_attr.id = SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE;
+    next_hop_attr.value.booldata = next_hop_entry.disable_vlan_rewrite;
     next_hop_attrs.push_back(next_hop_attr);
   }
 
@@ -426,14 +467,35 @@ ReturnCodeOr<P4NextHopAppDbEntry> NextHopManager::deserializeP4NextHopAppDbEntry
         {
             app_db_entry.gre_tunnel_id = value;
         }
+        else if (field == prependParamField(p4orch::kDisableDecrementTtl))
+        {
+          ASSIGN_OR_RETURN(app_db_entry.disable_decrement_ttl,
+                           parseFlag(p4orch::kDisableDecrementTtl, value));
+        }
+        else if (field == prependParamField(p4orch::kDisableSrcMacRewrite))
+        {
+          ASSIGN_OR_RETURN(app_db_entry.disable_src_mac_rewrite,
+                           parseFlag(p4orch::kDisableSrcMacRewrite, value));
+        }
+        else if (field == prependParamField(p4orch::kDisableDstMacRewrite))
+        {
+          ASSIGN_OR_RETURN(app_db_entry.disable_dst_mac_rewrite,
+                           parseFlag(p4orch::kDisableDstMacRewrite, value));
+        }
+        else if (field == prependParamField(p4orch::kDisableVlanRewrite))
+        {
+          ASSIGN_OR_RETURN(app_db_entry.disable_vlan_rewrite,
+                           parseFlag(p4orch::kDisableVlanRewrite, value));
+        }
         else if (field == p4orch::kAction)
         {
-            app_db_entry.action_str = value;
+          app_db_entry.action_str = value;
         }
         else if (field != p4orch::kControllerMetadata)
         {
-            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                   << "Unexpected field " << QuotedVar(field) << " in table entry";
+          return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                 << "Unexpected field " << QuotedVar(field)
+                 << " in table entry";
         }
     }
 
@@ -451,10 +513,14 @@ std::vector<ReturnCode> NextHopManager::createNextHops(
   std::vector<ReturnCode> statuses(next_hop_entries.size());
 
   for (size_t i = 0; i < next_hop_entries.size(); ++i) {
-    entries.push_back(P4NextHopEntry(next_hop_entries[i].next_hop_id,
-                                     next_hop_entries[i].router_interface_id,
-                                     next_hop_entries[i].gre_tunnel_id,
-                                     next_hop_entries[i].neighbor_id));
+    entries.push_back(P4NextHopEntry(
+        next_hop_entries[i].next_hop_id,
+        next_hop_entries[i].router_interface_id,
+        next_hop_entries[i].gre_tunnel_id, next_hop_entries[i].neighbor_id,
+        next_hop_entries[i].disable_decrement_ttl,
+        next_hop_entries[i].disable_src_mac_rewrite,
+        next_hop_entries[i].disable_dst_mac_rewrite,
+        next_hop_entries[i].disable_vlan_rewrite));
     if (!entries[i].gre_tunnel_id.empty()) {
       auto gre_tunnel_or =
           gP4Orch->getGreTunnelManager()->getConstGreTunnelEntry(
@@ -729,6 +795,52 @@ std::string NextHopManager::verifyStateCache(const P4NextHopAppDbEntry &app_db_e
             << QuotedVar(app_db_entry.gre_tunnel_id) << " does not match internal cache "
             << QuotedVar(next_hop_entry->gre_tunnel_id) << " in nexthop manager.";
         return msg.str();
+    }
+    if (next_hop_entry->disable_decrement_ttl !=
+        app_db_entry.disable_decrement_ttl) {
+      std::stringstream msg;
+      msg << "Nexthop " << QuotedVar(app_db_entry.next_hop_id)
+          << " with flag disable_decrement_ttl set to "
+          << QuotedVar(app_db_entry.disable_decrement_ttl ? "true" : "false")
+          << " does not match internal cache "
+          << QuotedVar(next_hop_entry->disable_decrement_ttl ? "true" : "false")
+          << " in nexthop manager.";
+      return msg.str();
+    }
+    if (next_hop_entry->disable_src_mac_rewrite !=
+        app_db_entry.disable_src_mac_rewrite) {
+      std::stringstream msg;
+      msg << "Nexthop " << QuotedVar(app_db_entry.next_hop_id)
+          << " with flag disable_src_mac_rewrite set to "
+          << QuotedVar(app_db_entry.disable_src_mac_rewrite ? "true" : "false")
+          << " does not match internal cache "
+          << QuotedVar(next_hop_entry->disable_src_mac_rewrite ? "true"
+                                                               : "false")
+          << " in nexthop manager.";
+      return msg.str();
+    }
+    if (next_hop_entry->disable_dst_mac_rewrite !=
+        app_db_entry.disable_dst_mac_rewrite) {
+      std::stringstream msg;
+      msg << "Nexthop " << QuotedVar(app_db_entry.next_hop_id)
+          << " with flag disable_dst_mac_rewrite set to "
+          << QuotedVar(app_db_entry.disable_dst_mac_rewrite ? "true" : "false")
+          << " does not match internal cache "
+          << QuotedVar(next_hop_entry->disable_dst_mac_rewrite ? "true"
+                                                               : "false")
+          << " in nexthop manager.";
+      return msg.str();
+    }
+    if (next_hop_entry->disable_vlan_rewrite !=
+        app_db_entry.disable_vlan_rewrite) {
+      std::stringstream msg;
+      msg << "Nexthop " << QuotedVar(app_db_entry.next_hop_id)
+          << " with flag disable_vlan_rewrite set to "
+          << QuotedVar(app_db_entry.disable_vlan_rewrite ? "true" : "false")
+          << " does not match internal cache "
+          << QuotedVar(next_hop_entry->disable_vlan_rewrite ? "true" : "false")
+          << " in nexthop manager.";
+      return msg.str();
     }
     if (!next_hop_entry->gre_tunnel_id.empty())
     {
