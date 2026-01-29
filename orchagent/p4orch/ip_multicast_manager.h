@@ -66,6 +66,19 @@ class IpMulticastManager : public ObjectManagerInterface {
   P4IpMulticastEntry* getIpMulticastEntry(
       const std::string& ip_multicast_entry_key);
 
+  // Performs IP multicast entry validation.
+  ReturnCode validateIpMulticastEntry(
+      const P4IpMulticastEntry& ip_multicast_entry,
+      const std::string& operation);
+
+  // Performs IP multicast entry validation for SET command.
+  ReturnCode validateSetIpMulticastEntry(
+      const P4IpMulticastEntry& ip_multicast_entry);
+
+  // Performs IP multicast entry validation for DEL command.
+  ReturnCode validateDelIpMulticastEntry(
+      const P4IpMulticastEntry& ip_multicast_entry);
+
   // Returns the SAI IPMC entry (for multicast).
   sai_ipmc_entry_t prepareSaiIpmcEntry(
       const P4IpMulticastEntry& ip_multicast_entry) const;
@@ -91,6 +104,19 @@ class IpMulticastManager : public ObjectManagerInterface {
   // Deletes a list of IP multicast entries.
   std::vector<ReturnCode> deleteIpMulticastEntries(
       const std::vector<P4IpMulticastEntry>& ip_multicast_entries);
+
+  // Process a list of IP multicast entries by the given operation.
+  ReturnCode processIpMulticastEntries(
+      const std::vector<P4IpMulticastEntry>& ip_multicast_entries,
+      const std::vector<swss::KeyOpFieldsValuesTuple>& tuple_list,
+      const std::string& op, bool update);
+
+  // Verifies internal cache for an entry.
+  std::string verifyStateCache(const P4IpMulticastEntry& app_db_entry,
+                               const P4IpMulticastEntry* ip_multicast_entry);
+
+  // Verifies ASIC DB for an entry.
+  std::string verifyStateAsicDb(const P4IpMulticastEntry* ip_multicast_entry);
 
   // Internal cache of entries.
   P4IpMulticastTable m_ipMulticastTable;
