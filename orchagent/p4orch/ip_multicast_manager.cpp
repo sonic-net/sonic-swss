@@ -397,4 +397,115 @@ std::vector<ReturnCode> IpMulticastManager::createIpMulticastEntries(
   return statuses;
 }
 
+std::vector<ReturnCode> IpMulticastManager::updateIpMulticastEntries(
+    const std::vector<P4IpMulticastEntry>& ip_multicast_entries) {
+  SWSS_LOG_ENTER();
+  std::vector<ReturnCode> statuses(ip_multicast_entries.size());
+  fillStatusArrayWithNotExecuted(statuses, 0);
+
+  for (size_t i = 0; i < ip_multicast_entries.size(); ++i) {
+    const auto& ip_multicast_entry = ip_multicast_entries[i];
+    auto* old_ip_multicast_entry_ptr =
+        getIpMulticastEntry(ip_multicast_entry.ip_multicast_entry_key);
+
+    if (old_ip_multicast_entry_ptr == nullptr) {
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
+                    << "Unable to find IP multicast entry to update "
+                    << QuotedVar(ip_multicast_entry.ip_multicast_entry_key);
+      break;
+    }
+    // No change means nothing to do.
+    if (old_ip_multicast_entry_ptr->action == ip_multicast_entry.action &&
+        old_ip_multicast_entry_ptr->multicast_group_id ==
+            ip_multicast_entry.multicast_group_id) {
+      statuses[i] = ReturnCode()
+                    << "Entry "
+                    << QuotedVar(ip_multicast_entry.ip_multicast_entry_key)
+                    << " is already assigned to multicast_group_id "
+                    << QuotedVar(ip_multicast_entry.multicast_group_id);
+      continue;
+    }
+
+    // Fetch the multicast group OID.
+    sai_object_id_t group_oid = SAI_NULL_OBJECT_ID;
+    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_IPMC_GROUP,
+                               ip_multicast_entry.multicast_group_id,
+                               &group_oid)) {
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                    << "Unknown multicast group ID "
+                    << QuotedVar(ip_multicast_entry.multicast_group_id);
+      break;
+    }
+
+    // Update the multicast group OID attribute.
+    sai_attribute_t update_attr;
+    update_attr.id = SAI_IPMC_ENTRY_ATTR_OUTPUT_GROUP_ID;
+    update_attr.value.oid = group_oid;
+    statuses[i] = sai_ipmc_api->set_ipmc_entry_attribute(
+        &old_ip_multicast_entry_ptr->sai_ipmc_entry, &update_attr);
+    if (statuses[i] != SAI_STATUS_SUCCESS) {
+      break;
+    }
+
+    // TODO: Add with counter support.
+    // attr.id = SAI_IPMC_ENTRY_ATTR_COUNTER_ID;
+    // attr.value.oid = group_counter_oid;
+
+    // Bookkeeping
+    m_p4OidMapper->decreaseRefCount(
+        SAI_OBJECT_TYPE_IPMC_GROUP,
+        old_ip_multicast_entry_ptr->multicast_group_id);
+    m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                    ip_multicast_entry.multicast_group_id);
+    // We update the old entry object rather than updating maps.
+    old_ip_multicast_entry_ptr->multicast_group_id =
+        ip_multicast_entry.multicast_group_id;
+    old_ip_multicast_entry_ptr->controller_metadata =
+        ip_multicast_entry.controller_metadata;
+
+    statuses[i] = ReturnCode();
+  }
+  return statuses;
+}
+
+std::vector<ReturnCode> IpMulticastManager::deleteIpMulticastEntries(
+    const std::vector<P4IpMulticastEntry>& ip_multicast_entries) {
+  SWSS_LOG_ENTER();
+  std::vector<ReturnCode> statuses(ip_multicast_entries.size());
+  fillStatusArrayWithNotExecuted(statuses, 0);
+
+  for (size_t i = 0; i < ip_multicast_entries.size(); ++i) {
+    const auto& ip_multicast_entry = ip_multicast_entries[i];
+
+    auto* ip_multicast_entry_ptr =
+        getIpMulticastEntry(ip_multicast_entry.ip_multicast_entry_key);
+    if (ip_multicast_entry_ptr == nullptr) {
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                    << "IP multicast entry "
+                    << QuotedVar(ip_multicast_entry.ip_multicast_entry_key)
+                    << " does not exist in the internal cache";
+      break;
+    }
+
+    // Remove the entry
+    statuses[i] = sai_ipmc_api->remove_ipmc_entry(
+        &ip_multicast_entry_ptr->sai_ipmc_entry);
+    if (statuses[i] != SAI_STATUS_SUCCESS) {
+      break;
+    }
+
+    // Bookkeeping
+    m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                    ip_multicast_entry_ptr->multicast_group_id);
+    m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_IPMC_ENTRY,
+                            ip_multicast_entry.ip_multicast_entry_key);
+    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPMC_ENTRY);
+    m_vrfOrch->decreaseVrfRefCount(ip_multicast_entry.vrf_id);
+    m_ipMulticastTable.erase(ip_multicast_entry.ip_multicast_entry_key);
+
+    statuses[i] = ReturnCode();
+  }
+  return statuses;
+}
+
 }  // namespace p4orch

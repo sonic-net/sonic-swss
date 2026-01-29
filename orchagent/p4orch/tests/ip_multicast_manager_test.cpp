@@ -50,8 +50,12 @@ constexpr char* kIpv4Address1 = "225.11.12.0";
 constexpr char* kIpv6Address1 = "ff00::2001:db8:1";
 constexpr char* kMulticastGroup1 = "0x1";
 constexpr char* kMulticastGroup2 = "0x2";
+constexpr char* kMulticastGroup3 = "0x3";
+constexpr char* kMulticastGroup4 = "0x4";
 constexpr sai_object_id_t kMulticastGroupOid1 = 0x101;
 constexpr sai_object_id_t kMulticastGroupOid2 = 0x102;
+constexpr sai_object_id_t kMulticastGroupOid3 = 0x103;
+constexpr sai_object_id_t kMulticastGroupOid4 = 0x104;
 
 constexpr sai_object_id_t kRpfGroupOid1 = 0x77;
 constexpr sai_object_id_t kRpfGroupMemberOid1 = 0x88;
@@ -187,6 +191,16 @@ class IpMulticastManagerTest : public ::testing::Test {
   std::vector<ReturnCode> CreateIpMulticastEntries(
       const std::vector<P4IpMulticastEntry>& ip_multicast_entries) {
     return ip_multicast_manager_.createIpMulticastEntries(ip_multicast_entries);
+  }
+
+  std::vector<ReturnCode> UpdateIpMulticastEntries(
+      const std::vector<P4IpMulticastEntry>& ip_multicast_entries) {
+    return ip_multicast_manager_.updateIpMulticastEntries(ip_multicast_entries);
+  }
+
+  std::vector<ReturnCode> DeleteIpMulticastEntries(
+      const std::vector<P4IpMulticastEntry>& ip_multicast_entries) {
+    return ip_multicast_manager_.deleteIpMulticastEntries(ip_multicast_entries);
   }
 
   // Generates a P4IpMulticastEntry.
@@ -406,6 +420,15 @@ TEST_F(IpMulticastManagerTest, CreateIpMulticastEntriesSuccess) {
   expect_ipv6.sai_ipmc_entry.source.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
   memset(&expect_ipv6.sai_ipmc_entry.source.addr.ip6, 0, sizeof(sai_ip6_t));
   VerifyP4IpMulticastEntryEqual(expect_ipv6, *entry2_ptr);
+
+  uint32_t group1_ref_cnt = 777;
+  uint32_t group2_ref_cnt = 777;
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroup1, &group1_ref_cnt));
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroup2, &group2_ref_cnt));
+  EXPECT_EQ(group1_ref_cnt, 1);
+  EXPECT_EQ(group2_ref_cnt, 1);
 }
 
 TEST_F(IpMulticastManagerTest, CreateIpMulticastEntriesFailToCreateRpfGroup) {
@@ -497,6 +520,316 @@ TEST_F(IpMulticastManagerTest, CreateIpMulticastEntriesMissingMulticastGroup) {
   auto* ipv4_multicast_entry_ptr =
       GetIpMulticastEntry(ipv4_multicast_entry.ip_multicast_entry_key);
   EXPECT_EQ(ipv4_multicast_entry_ptr, nullptr);
+}
+
+TEST_F(IpMulticastManagerTest, DeleteIpMulticastEntriesSuccess) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 =
+      SetupIpMulticastEntry(gVrfName, swss_ipv4_address, kMulticastGroup1,
+                            kMulticastGroupOid1, "meta_ipv4");
+  auto swss_ipv6_address = swss::IpAddress(kIpv6Address1);
+  auto entry2 = SetupIpMulticastEntry(gVrfName, swss_ipv6_address,
+                                      kMulticastGroup2, kMulticastGroupOid2,
+                                      "meta_ipv6", /*expect_rpf=*/false);
+
+  // Now delete those entries.
+  EXPECT_CALL(mock_sai_ipmc_, remove_ipmc_entry(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_THAT(
+      DeleteIpMulticastEntries(std::vector<P4IpMulticastEntry>{entry1, entry2}),
+      ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS,
+                                      StatusCode::SWSS_RC_SUCCESS}));
+
+  // Expect entries to not be seen anymore.
+  auto* entry1_ptr = GetIpMulticastEntry(entry1.ip_multicast_entry_key);
+  auto* entry2_ptr = GetIpMulticastEntry(entry2.ip_multicast_entry_key);
+  EXPECT_EQ(entry1_ptr, nullptr);
+  EXPECT_EQ(entry2_ptr, nullptr);
+
+  EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_IPMC_ENTRY,
+                                        entry1.ip_multicast_entry_key));
+  EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_IPMC_ENTRY,
+                                        entry2.ip_multicast_entry_key));
+}
+
+TEST_F(IpMulticastManagerTest, DeleteIpMulticastEntriesSaiFailure) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 =
+      SetupIpMulticastEntry(gVrfName, swss_ipv4_address, kMulticastGroup1,
+                            kMulticastGroupOid1, "meta_ipv4");
+  auto swss_ipv6_address = swss::IpAddress(kIpv6Address1);
+  auto entry2 = SetupIpMulticastEntry(gVrfName, swss_ipv6_address,
+                                      kMulticastGroup2, kMulticastGroupOid2,
+                                      "meta_ipv6", /*expect_rpf=*/false);
+
+  // Now delete those entries, force a failure.
+  EXPECT_CALL(mock_sai_ipmc_, remove_ipmc_entry(_))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+  EXPECT_THAT(
+      DeleteIpMulticastEntries(std::vector<P4IpMulticastEntry>{entry1, entry2}),
+      ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN,
+                                      StatusCode::SWSS_RC_NOT_EXECUTED}));
+
+  // Since operation failed, expect entries to still be there.
+  auto* entry1_ptr = GetIpMulticastEntry(entry1.ip_multicast_entry_key);
+  auto* entry2_ptr = GetIpMulticastEntry(entry2.ip_multicast_entry_key);
+  EXPECT_NE(entry1_ptr, nullptr);
+  EXPECT_NE(entry2_ptr, nullptr);
+
+  EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_IPMC_ENTRY,
+                                       entry1.ip_multicast_entry_key));
+  EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_IPMC_ENTRY,
+                                       entry2.ip_multicast_entry_key));
+}
+
+TEST_F(IpMulticastManagerTest, DeleteIpMulticastEntriesMissingEntry) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 = GenerateP4IpMulticastEntry(gVrfName, swss_ipv4_address,
+                                           p4orch::kSetMulticastGroupId,
+                                           kMulticastGroup1);
+
+  auto swss_ipv6_address = swss::IpAddress(kIpv6Address1);
+  auto entry2 = SetupIpMulticastEntry(gVrfName, swss_ipv6_address,
+                                      kMulticastGroup2, kMulticastGroupOid2);
+
+  EXPECT_THAT(
+      DeleteIpMulticastEntries(std::vector<P4IpMulticastEntry>{entry1, entry2}),
+      ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_NOT_FOUND,
+                                      StatusCode::SWSS_RC_NOT_EXECUTED}));
+}
+
+TEST_F(IpMulticastManagerTest, UpdateIpMulticastEntriesSuccess) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 =
+      SetupIpMulticastEntry(gVrfName, swss_ipv4_address, kMulticastGroup1,
+                            kMulticastGroupOid1, "meta_ipv4");
+  auto swss_ipv6_address = swss::IpAddress(kIpv6Address1);
+  auto entry2 = SetupIpMulticastEntry(gVrfName, swss_ipv6_address,
+                                      kMulticastGroup2, kMulticastGroupOid2,
+                                      "meta_ipv6", /*expect_rpf=*/false);
+
+  // Now update those entries to point to new multicast groups.
+  auto entry3 = GenerateP4IpMulticastEntry(gVrfName, swss_ipv4_address,
+                                           p4orch::kSetMulticastGroupId,
+                                           kMulticastGroup3, "meta_ipv4_2");
+  auto entry4 = GenerateP4IpMulticastEntry(gVrfName, swss_ipv6_address,
+                                           p4orch::kSetMulticastGroupId,
+                                           kMulticastGroup4, "meta_ipv6_2");
+  // Create fake multicast group OIDs.
+  AddMulticastGroup(kMulticastGroup3, kMulticastGroupOid3);
+  AddMulticastGroup(kMulticastGroup4, kMulticastGroupOid4);
+
+  EXPECT_CALL(mock_sai_ipmc_, set_ipmc_entry_attribute(_, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_THAT(
+      UpdateIpMulticastEntries(std::vector<P4IpMulticastEntry>{entry3, entry4}),
+      ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS,
+                                      StatusCode::SWSS_RC_SUCCESS}));
+
+  // Expect entries to be associated with correct multicast group.
+  auto* entry_ptr_v4 = GetIpMulticastEntry(entry3.ip_multicast_entry_key);
+  auto* entry_ptr_v6 = GetIpMulticastEntry(entry4.ip_multicast_entry_key);
+  EXPECT_NE(entry_ptr_v4, nullptr);
+  EXPECT_NE(entry_ptr_v6, nullptr);
+
+  uint32_t group1_ref_cnt = 777;
+  uint32_t group2_ref_cnt = 777;
+  uint32_t group3_ref_cnt = 777;
+  uint32_t group4_ref_cnt = 777;
+
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroup1, &group1_ref_cnt));
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroup2, &group2_ref_cnt));
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroup3, &group3_ref_cnt));
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroup4, &group4_ref_cnt));
+  EXPECT_EQ(group1_ref_cnt, 0);
+  EXPECT_EQ(group2_ref_cnt, 0);
+  EXPECT_EQ(group3_ref_cnt, 1);
+  EXPECT_EQ(group4_ref_cnt, 1);
+
+  auto expect_ipv4 = GenerateP4IpMulticastEntry(
+      gVrfName, swss_ipv4_address, p4orch::kSetMulticastGroupId,
+      kMulticastGroup3, "meta_ipv4_2");
+  expect_ipv4.sai_ipmc_entry.switch_id = gSwitchId;
+  expect_ipv4.sai_ipmc_entry.vr_id = gVrfOrch->getVRFid(gVrfName);
+  expect_ipv4.sai_ipmc_entry.type = SAI_IPMC_ENTRY_TYPE_XG;
+  sai_ip_address_t sai_address_v4;
+  copy(sai_address_v4, swss_ipv4_address);
+  expect_ipv4.sai_ipmc_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+  expect_ipv4.sai_ipmc_entry.destination.addr.ip4 = sai_address_v4.addr.ip4;
+  expect_ipv4.sai_ipmc_entry.source.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+  expect_ipv4.sai_ipmc_entry.source.addr.ip4 = 0;
+  VerifyP4IpMulticastEntryEqual(expect_ipv4, *entry_ptr_v4);
+}
+
+TEST_F(IpMulticastManagerTest, UpdateIpMulticastEntriesNoChangeSuccess) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 =
+      SetupIpMulticastEntry(gVrfName, swss_ipv4_address, kMulticastGroup1,
+                            kMulticastGroupOid1, "meta_ipv4");
+
+  // Now update the entry, but have no changes.
+  EXPECT_THAT(UpdateIpMulticastEntries(std::vector<P4IpMulticastEntry>{entry1}),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
+
+  // Expect entries to be associated with correct multicast group.
+  auto* entry_ptr = GetIpMulticastEntry(entry1.ip_multicast_entry_key);
+  EXPECT_NE(entry_ptr, nullptr);
+
+  uint32_t group1_ref_cnt = 777;
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroup1, &group1_ref_cnt));
+  EXPECT_EQ(group1_ref_cnt, 1);
+}
+
+TEST_F(IpMulticastManagerTest, UpdateIpMulticastEntriesMissingEntry) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 = GenerateP4IpMulticastEntry(gVrfName, swss_ipv4_address,
+                                           p4orch::kSetMulticastGroupId,
+                                           kMulticastGroup1);
+
+  auto swss_ipv6_address = swss::IpAddress(kIpv6Address1);
+  auto entry2 = SetupIpMulticastEntry(gVrfName, swss_ipv6_address,
+                                      kMulticastGroup2, kMulticastGroupOid2);
+
+  EXPECT_THAT(
+      UpdateIpMulticastEntries(std::vector<P4IpMulticastEntry>{entry1, entry2}),
+      ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_INTERNAL,
+                                      StatusCode::SWSS_RC_NOT_EXECUTED}));
+}
+
+TEST_F(IpMulticastManagerTest, UpdateIpMulticastEntriesNoMulticastGroup) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 =
+      SetupIpMulticastEntry(gVrfName, swss_ipv4_address, kMulticastGroup1,
+                            kMulticastGroupOid1, "meta_ipv4");
+  auto swss_ipv6_address = swss::IpAddress(kIpv6Address1);
+  auto entry2 = SetupIpMulticastEntry(gVrfName, swss_ipv6_address,
+                                      kMulticastGroup2, kMulticastGroupOid2,
+                                      "meta_ipv6", /*expect_rpf=*/false);
+
+  // Now update those entries to point to new multicast groups.
+  auto entry3 = GenerateP4IpMulticastEntry(gVrfName, swss_ipv4_address,
+                                           p4orch::kSetMulticastGroupId,
+                                           kMulticastGroup3, "meta_ipv4_2");
+  auto entry4 = GenerateP4IpMulticastEntry(gVrfName, swss_ipv6_address,
+                                           p4orch::kSetMulticastGroupId,
+                                           kMulticastGroup4, "meta_ipv6_2");
+
+  // Do not create multicast groups for updates.
+
+  EXPECT_THAT(
+      UpdateIpMulticastEntries(std::vector<P4IpMulticastEntry>{entry3, entry4}),
+      ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_NOT_FOUND,
+                                      StatusCode::SWSS_RC_NOT_EXECUTED}));
+
+  // Expect no changes to entries.
+  auto* entry_ptr_v4 = GetIpMulticastEntry(entry3.ip_multicast_entry_key);
+  auto* entry_ptr_v6 = GetIpMulticastEntry(entry4.ip_multicast_entry_key);
+  EXPECT_NE(entry_ptr_v4, nullptr);
+  EXPECT_NE(entry_ptr_v6, nullptr);
+
+  uint32_t group1_ref_cnt = 777;
+  uint32_t group2_ref_cnt = 777;
+  uint32_t group3_ref_cnt = 777;
+  uint32_t group4_ref_cnt = 777;
+
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroup1, &group1_ref_cnt));
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroup2, &group2_ref_cnt));
+  EXPECT_FALSE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                          kMulticastGroup3, &group3_ref_cnt));
+  EXPECT_FALSE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                          kMulticastGroup4, &group4_ref_cnt));
+  EXPECT_EQ(group1_ref_cnt, 1);
+  EXPECT_EQ(group2_ref_cnt, 1);
+
+  auto expect_ipv4 = GenerateP4IpMulticastEntry(gVrfName, swss_ipv4_address,
+                                                p4orch::kSetMulticastGroupId,
+                                                kMulticastGroup1, "meta_ipv4");
+  expect_ipv4.sai_ipmc_entry.switch_id = gSwitchId;
+  expect_ipv4.sai_ipmc_entry.vr_id = gVrfOrch->getVRFid(gVrfName);
+  expect_ipv4.sai_ipmc_entry.type = SAI_IPMC_ENTRY_TYPE_XG;
+  sai_ip_address_t sai_address_v4;
+  copy(sai_address_v4, swss_ipv4_address);
+  expect_ipv4.sai_ipmc_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+  expect_ipv4.sai_ipmc_entry.destination.addr.ip4 = sai_address_v4.addr.ip4;
+  expect_ipv4.sai_ipmc_entry.source.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+  expect_ipv4.sai_ipmc_entry.source.addr.ip4 = 0;
+  VerifyP4IpMulticastEntryEqual(expect_ipv4, *entry_ptr_v4);
+}
+
+TEST_F(IpMulticastManagerTest, UpdateIpMulticastEntriesSaiFailure) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 =
+      SetupIpMulticastEntry(gVrfName, swss_ipv4_address, kMulticastGroup1,
+                            kMulticastGroupOid1, "meta_ipv4");
+  auto swss_ipv6_address = swss::IpAddress(kIpv6Address1);
+  auto entry2 = SetupIpMulticastEntry(gVrfName, swss_ipv6_address,
+                                      kMulticastGroup2, kMulticastGroupOid2,
+                                      "meta_ipv6", /*expect_rpf=*/false);
+
+  // Now update those entries to point to new multicast groups.
+  auto entry3 = GenerateP4IpMulticastEntry(gVrfName, swss_ipv4_address,
+                                           p4orch::kSetMulticastGroupId,
+                                           kMulticastGroup3, "meta_ipv4_2");
+  auto entry4 = GenerateP4IpMulticastEntry(gVrfName, swss_ipv6_address,
+                                           p4orch::kSetMulticastGroupId,
+                                           kMulticastGroup4, "meta_ipv6_2");
+  // Create fake multicast group OIDs.
+  AddMulticastGroup(kMulticastGroup3, kMulticastGroupOid3);
+  AddMulticastGroup(kMulticastGroup4, kMulticastGroupOid4);
+
+  EXPECT_CALL(mock_sai_ipmc_, set_ipmc_entry_attribute(_, _))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+  EXPECT_THAT(
+      UpdateIpMulticastEntries(std::vector<P4IpMulticastEntry>{entry3, entry4}),
+      ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN,
+                                      StatusCode::SWSS_RC_NOT_EXECUTED}));
+
+  // Expect entries to be associated with correct multicast group.
+  auto* entry_ptr_v4 = GetIpMulticastEntry(entry3.ip_multicast_entry_key);
+  auto* entry_ptr_v6 = GetIpMulticastEntry(entry4.ip_multicast_entry_key);
+  EXPECT_NE(entry_ptr_v4, nullptr);
+  EXPECT_NE(entry_ptr_v6, nullptr);
+
+  uint32_t group1_ref_cnt = 777;
+  uint32_t group2_ref_cnt = 777;
+  uint32_t group3_ref_cnt = 777;
+  uint32_t group4_ref_cnt = 777;
+
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroup1, &group1_ref_cnt));
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroup2, &group2_ref_cnt));
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroup3, &group3_ref_cnt));
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroup4, &group4_ref_cnt));
+  EXPECT_EQ(group1_ref_cnt, 1);
+  EXPECT_EQ(group2_ref_cnt, 1);
+  EXPECT_EQ(group3_ref_cnt, 0);
+  EXPECT_EQ(group4_ref_cnt, 0);
+
+  auto expect_ipv4 = GenerateP4IpMulticastEntry(gVrfName, swss_ipv4_address,
+                                                p4orch::kSetMulticastGroupId,
+                                                kMulticastGroup1, "meta_ipv4");
+  expect_ipv4.sai_ipmc_entry.switch_id = gSwitchId;
+  expect_ipv4.sai_ipmc_entry.vr_id = gVrfOrch->getVRFid(gVrfName);
+  expect_ipv4.sai_ipmc_entry.type = SAI_IPMC_ENTRY_TYPE_XG;
+  sai_ip_address_t sai_address_v4;
+  copy(sai_address_v4, swss_ipv4_address);
+  expect_ipv4.sai_ipmc_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+  expect_ipv4.sai_ipmc_entry.destination.addr.ip4 = sai_address_v4.addr.ip4;
+  expect_ipv4.sai_ipmc_entry.source.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+  expect_ipv4.sai_ipmc_entry.source.addr.ip4 = 0;
+  VerifyP4IpMulticastEntryEqual(expect_ipv4, *entry_ptr_v4);
 }
 
 TEST_F(IpMulticastManagerTest, DrainNotImplemented) {

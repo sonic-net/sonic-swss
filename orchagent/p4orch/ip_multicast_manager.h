@@ -84,6 +84,14 @@ class IpMulticastManager : public ObjectManagerInterface {
   std::vector<ReturnCode> createIpMulticastEntries(
       const std::vector<P4IpMulticastEntry>& ip_multicast_entries);
 
+  // Updates a list of IP multicast entries.
+  std::vector<ReturnCode> updateIpMulticastEntries(
+      const std::vector<P4IpMulticastEntry>& ip_multicast_entries);
+
+  // Deletes a list of IP multicast entries.
+  std::vector<ReturnCode> deleteIpMulticastEntries(
+      const std::vector<P4IpMulticastEntry>& ip_multicast_entries);
+
   // Internal cache of entries.
   P4IpMulticastTable m_ipMulticastTable;
 
