@@ -175,6 +175,16 @@ class IpMulticastManagerTest : public ::testing::Test {
     return ip_multicast_manager_.verifyState(key, tuples);
   }
 
+  std::string VerifyStateCache(const P4IpMulticastEntry& app_db_entry,
+                               const P4IpMulticastEntry* ip_multicast_entry) {
+    return ip_multicast_manager_.verifyStateCache(app_db_entry,
+                                                  ip_multicast_entry);
+  }
+
+  std::string VerifyStateAsicDb(const P4IpMulticastEntry* ip_multicast_entry) {
+    return ip_multicast_manager_.verifyStateAsicDb(ip_multicast_entry);
+  }
+
   void Enqueue(const std::string& table_name,
                const swss::KeyOpFieldsValuesTuple& entry) {
     ip_multicast_manager_.enqueue(table_name, entry);
@@ -1332,9 +1342,303 @@ TEST_F(IpMulticastManagerTest, DrainSwitchOpsWithFailure) {
   EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
 }
 
-TEST_F(IpMulticastManagerTest, VerifyStateNotImplemented) {
-  std::vector<swss::FieldValueTuple> tuples = {};
-  EXPECT_FALSE(VerifyState("key", tuples).empty());
+TEST_F(IpMulticastManagerTest, VerifyStateCacheSuccess) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 =
+      SetupIpMulticastEntry(gVrfName, swss_ipv4_address, kMulticastGroup1,
+                            kMulticastGroupOid1, "meta_ipv4");
+  auto* entry1_ptr = GetIpMulticastEntry(entry1.ip_multicast_entry_key);
+  ASSERT_NE(entry1_ptr, nullptr);
+  EXPECT_EQ(VerifyStateCache(entry1, entry1_ptr), "");
+}
+
+TEST_F(IpMulticastManagerTest, VerifyStateCacheUnknownVrf) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 =
+      SetupIpMulticastEntry(gVrfName, swss_ipv4_address, kMulticastGroup1,
+                            kMulticastGroupOid1, "meta_ipv4");
+  auto* entry1_ptr = GetIpMulticastEntry(entry1.ip_multicast_entry_key);
+  ASSERT_NE(entry1_ptr, nullptr);
+  auto entry2 = GenerateP4IpMulticastEntry("Unknown-VRF", swss_ipv4_address,
+                                           p4orch::kSetMulticastGroupId,
+                                           kMulticastGroup1, "meta_ipv4");
+  EXPECT_FALSE(VerifyStateCache(entry2, entry1_ptr).empty());
+}
+
+TEST_F(IpMulticastManagerTest, VerifyStateCacheMismatches) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 =
+      SetupIpMulticastEntry(gVrfName, swss_ipv4_address, kMulticastGroup1,
+                            kMulticastGroupOid1, "meta_ipv4");
+  auto* entry1_ptr = GetIpMulticastEntry(entry1.ip_multicast_entry_key);
+  ASSERT_NE(entry1_ptr, nullptr);
+
+  auto entry2 = GenerateP4IpMulticastEntry(gVrfName, swss_ipv4_address,
+                                           p4orch::kSetMulticastGroupId,
+                                           kMulticastGroup1, "meta_ipv4");
+  // Before changes, entries should verify.
+  EXPECT_EQ(VerifyStateCache(entry2, entry1_ptr), "");
+
+  // Key mismatch.
+  entry2.ip_multicast_entry_key = "mismatch";
+  EXPECT_FALSE(VerifyStateCache(entry2, entry1_ptr).empty());
+  entry2.ip_multicast_entry_key = entry1.ip_multicast_entry_key;
+
+  // VRF mismatch.
+  entry1_ptr->vrf_id = "mismatch";
+  EXPECT_FALSE(VerifyStateCache(entry2, entry1_ptr).empty());
+  entry1_ptr->vrf_id = entry2.vrf_id;
+
+  // ip_dst mismatch.
+  auto swss_ipv6_address = swss::IpAddress(kIpv6Address1);
+  entry2.ip_dst = swss_ipv6_address;
+  EXPECT_FALSE(VerifyStateCache(entry2, entry1_ptr).empty());
+  entry2.ip_dst = swss_ipv4_address;
+
+  // action mismatch.
+  entry1_ptr->action = "mismatch";
+  EXPECT_FALSE(VerifyStateCache(entry2, entry1_ptr).empty());
+  entry1_ptr->action = entry2.action;
+
+  // multicast_group_id mismatch.
+  entry1_ptr->multicast_group_id = "mismatch";
+  EXPECT_FALSE(VerifyStateCache(entry2, entry1_ptr).empty());
+  entry1_ptr->multicast_group_id = entry1.multicast_group_id;
+
+  // controller_metadata mismatch.
+  entry2.controller_metadata = "mismatch";
+  EXPECT_FALSE(VerifyStateCache(entry2, entry1_ptr).empty());
+  entry2.controller_metadata = entry1.controller_metadata;
+}
+
+TEST_F(IpMulticastManagerTest, VerifyStateAsicDbSuccess) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 =
+      SetupIpMulticastEntry(gVrfName, swss_ipv4_address, kMulticastGroup1,
+                            kMulticastGroupOid1, "meta_ipv4");
+  auto* entry1_ptr = GetIpMulticastEntry(entry1.ip_multicast_entry_key);
+  ASSERT_NE(entry1_ptr, nullptr);
+
+  // Setup ASIC DB.
+  swss::Table table(nullptr, "ASIC_STATE");
+  std::string asic_key =
+      "SAI_OBJECT_TYPE_IPMC_ENTRY:{"
+      "\"destination\":\"225.11.12.0\","
+      "\"source\":\"0.0.0.0\","
+      "\"switch_id\":\"oid:0x0\",\"type\":\"SAI_IPMC_ENTRY_TYPE_XG\","
+      "\"vr_id\":\"oid:0x6f\"}";
+
+  table.set(asic_key,
+            std::vector<swss::FieldValueTuple>{
+                swss::FieldValueTuple{"SAI_IPMC_ENTRY_ATTR_PACKET_ACTION",
+                                      "SAI_PACKET_ACTION_FORWARD"},
+                swss::FieldValueTuple{"SAI_IPMC_ENTRY_ATTR_OUTPUT_GROUP_ID",
+                                      "oid:0x101"}});
+  EXPECT_EQ(VerifyStateAsicDb(entry1_ptr), "");
+  table.del(asic_key);
+}
+
+TEST_F(IpMulticastManagerTest, VerifyStateAsicDbMissingKey) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 =
+      SetupIpMulticastEntry(gVrfName, swss_ipv4_address, kMulticastGroup1,
+                            kMulticastGroupOid1, "meta_ipv4");
+  auto* entry1_ptr = GetIpMulticastEntry(entry1.ip_multicast_entry_key);
+  ASSERT_NE(entry1_ptr, nullptr);
+
+  // Do not setup ASIC DB.
+  EXPECT_FALSE(VerifyStateAsicDb(entry1_ptr).empty());
+}
+
+TEST_F(IpMulticastManagerTest, VerifyStateAsicDbAttributeMismatch) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 =
+      SetupIpMulticastEntry(gVrfName, swss_ipv4_address, kMulticastGroup1,
+                            kMulticastGroupOid1, "meta_ipv4");
+  auto* entry1_ptr = GetIpMulticastEntry(entry1.ip_multicast_entry_key);
+  ASSERT_NE(entry1_ptr, nullptr);
+
+  // Setup ASIC DB.
+  swss::Table table(nullptr, "ASIC_STATE");
+  std::string asic_key =
+      "SAI_OBJECT_TYPE_IPMC_ENTRY:{"
+      "\"destination\":\"225.11.12.0\","
+      "\"source\":\"0.0.0.0\","
+      "\"switch_id\":\"oid:0x0\",\"type\":\"SAI_IPMC_ENTRY_TYPE_XG\","
+      "\"vr_id\":\"oid:0x6f\"}";
+
+  table.set(asic_key,
+            std::vector<swss::FieldValueTuple>{
+                swss::FieldValueTuple{"SAI_IPMC_ENTRY_ATTR_PACKET_ACTION",
+                                      "SAI_PACKET_ACTION_FORWARD"},
+                swss::FieldValueTuple{"SAI_IPMC_ENTRY_ATTR_OUTPUT_GROUP_ID",
+                                      "oid:0x888"}});  // This is unexpected.
+  EXPECT_FALSE(VerifyStateAsicDb(entry1_ptr).empty());
+  table.del(asic_key);
+}
+
+TEST_F(IpMulticastManagerTest, VerifyStateSuccess) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 =
+      SetupIpMulticastEntry(gVrfName, swss_ipv4_address, kMulticastGroup1,
+                            kMulticastGroupOid1, "meta_ipv4");
+  auto key_op_fvs = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, swss_ipv4_address, SET_COMMAND, p4orch::kSetMulticastGroupId,
+      kMulticastGroup1, "meta_ipv4");
+  const std::string db_key = std::string(APP_P4RT_TABLE_NAME) +
+                             kTableKeyDelimiter + kfvKey(key_op_fvs);
+
+  // Setup ASIC DB.
+  swss::Table table(nullptr, "ASIC_STATE");
+  std::string asic_key =
+      "SAI_OBJECT_TYPE_IPMC_ENTRY:{"
+      "\"destination\":\"225.11.12.0\","
+      "\"source\":\"0.0.0.0\","
+      "\"switch_id\":\"oid:0x0\",\"type\":\"SAI_IPMC_ENTRY_TYPE_XG\","
+      "\"vr_id\":\"oid:0x6f\"}";
+
+  table.set(asic_key,
+            std::vector<swss::FieldValueTuple>{
+                swss::FieldValueTuple{"SAI_IPMC_ENTRY_ATTR_PACKET_ACTION",
+                                      "SAI_PACKET_ACTION_FORWARD"},
+                swss::FieldValueTuple{"SAI_IPMC_ENTRY_ATTR_OUTPUT_GROUP_ID",
+                                      "oid:0x101"}});  // This is unexpected.
+
+  EXPECT_EQ(VerifyState(db_key, kfvFieldsValues(key_op_fvs)), "");
+  table.del(asic_key);
+}
+
+TEST_F(IpMulticastManagerTest, VerifyStateInvalidKey) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto key_op_fvs = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, swss_ipv4_address, SET_COMMAND, p4orch::kSetMulticastGroupId,
+      kMulticastGroup1, "meta_ipv4");
+  // No delimiter.
+  const std::string db_key = std::string(APP_P4RT_TABLE_NAME);
+  EXPECT_EQ(VerifyState(db_key, kfvFieldsValues(key_op_fvs)),
+            "Invalid key, missing delimiter: " + db_key);
+}
+
+TEST_F(IpMulticastManagerTest, VerifyStateNotP4rt) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto key_op_fvs = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, swss_ipv4_address, SET_COMMAND, p4orch::kSetMulticastGroupId,
+      kMulticastGroup1, "meta_ipv4");
+  const std::string db_key =
+      std::string("NOT_P4RT_TABLE") + kTableKeyDelimiter + kfvKey(key_op_fvs);
+  EXPECT_EQ(VerifyState(db_key, kfvFieldsValues(key_op_fvs)),
+            "Invalid key, unexpected P4RT table: " + db_key);
+}
+
+TEST_F(IpMulticastManagerTest, VerifyStateInvalidTable) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto key_op_fvs = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, swss_ipv4_address, SET_COMMAND, p4orch::kSetMulticastGroupId,
+      kMulticastGroup1, "meta_ipv4");
+
+  // Used wrong table name.
+  const std::string bad_key =
+      std::string(APP_P4RT_IPV4_TABLE_NAME) + kTableKeyDelimiter +
+      "{\"match/ipv4_dst\":\"225.11.12.0\",\"match/vrf_id\":\"b4-traffic\"}";
+
+  const std::string db_key =
+      std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter + bad_key;
+  EXPECT_EQ(VerifyState(db_key, kfvFieldsValues(key_op_fvs)),
+            "Invalid key, unexpected table name: " + db_key);
+}
+
+TEST_F(IpMulticastManagerTest, VerifyStateUnableToDeserialize) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto key_op_fvs = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, swss_ipv4_address, SET_COMMAND, p4orch::kSetMulticastGroupId,
+      kMulticastGroup1, "meta_ipv4");
+
+  // Bad IP address.
+  const std::string bad_key = std::string(APP_P4RT_IPV4_MULTICAST_TABLE_NAME) +
+                              kTableKeyDelimiter +
+                              "{\"match/ipv4_dst\":\"225.11.12.0.800\",\"match/"
+                              "vrf_id\":\"b4-traffic\"}";
+
+  const std::string db_key =
+      std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter + bad_key;
+  EXPECT_EQ(VerifyState(db_key, kfvFieldsValues(key_op_fvs)),
+            "Unable to deserialize key '" + db_key +
+                "': Invalid IP address '"
+                "225.11.12.0.800'");
+}
+
+TEST_F(IpMulticastManagerTest, VerifyStateEntryNotFound) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto key_op_fvs = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, swss_ipv4_address, SET_COMMAND, p4orch::kSetMulticastGroupId,
+      kMulticastGroup1, "meta_ipv4");
+  const std::string db_key = std::string(APP_P4RT_TABLE_NAME) +
+                             kTableKeyDelimiter + kfvKey(key_op_fvs);
+  EXPECT_EQ(VerifyState(db_key, kfvFieldsValues(key_op_fvs)),
+            "No entry found with key '" + db_key + "'");
+}
+
+TEST_F(IpMulticastManagerTest, VerifyStateCacheError) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 =
+      SetupIpMulticastEntry(gVrfName, swss_ipv4_address, kMulticastGroup1,
+                            kMulticastGroupOid1, "meta_ipv4");
+  auto key_op_fvs = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, swss_ipv4_address, SET_COMMAND, p4orch::kSetMulticastGroupId,
+      kMulticastGroup1, "meta_differs");
+  const std::string db_key = std::string(APP_P4RT_TABLE_NAME) +
+                             kTableKeyDelimiter + kfvKey(key_op_fvs);
+
+  // Setup ASIC DB.
+  swss::Table table(nullptr, "ASIC_STATE");
+  std::string asic_key =
+      "SAI_OBJECT_TYPE_IPMC_ENTRY:{"
+      "\"destination\":\"225.11.12.0\","
+      "\"source\":\"0.0.0.0\","
+      "\"switch_id\":\"oid:0x0\",\"type\":\"SAI_IPMC_ENTRY_TYPE_XG\","
+      "\"vr_id\":\"oid:0x6f\"}";
+
+  table.set(asic_key,
+            std::vector<swss::FieldValueTuple>{
+                swss::FieldValueTuple{"SAI_IPMC_ENTRY_ATTR_PACKET_ACTION",
+                                      "SAI_PACKET_ACTION_FORWARD"},
+                swss::FieldValueTuple{"SAI_IPMC_ENTRY_ATTR_OUTPUT_GROUP_ID",
+                                      "oid:0x101"}});  // This is unexpected.
+
+  EXPECT_FALSE(VerifyState(db_key, kfvFieldsValues(key_op_fvs)).empty());
+  table.del(asic_key);
+}
+
+TEST_F(IpMulticastManagerTest, VerifyStateAsicError) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 =
+      SetupIpMulticastEntry(gVrfName, swss_ipv4_address, kMulticastGroup1,
+                            kMulticastGroupOid1, "meta_ipv4");
+  auto key_op_fvs = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, swss_ipv4_address, SET_COMMAND, p4orch::kSetMulticastGroupId,
+      kMulticastGroup1, "meta_ipv4");
+  const std::string db_key = std::string(APP_P4RT_TABLE_NAME) +
+                             kTableKeyDelimiter + kfvKey(key_op_fvs);
+
+  // Don't setup ASIC DB.
+
+  EXPECT_FALSE(VerifyState(db_key, kfvFieldsValues(key_op_fvs)).empty());
+}
+
+TEST_F(IpMulticastManagerTest, VerifyStateCacheAndAsicError) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 =
+      SetupIpMulticastEntry(gVrfName, swss_ipv4_address, kMulticastGroup1,
+                            kMulticastGroupOid1, "meta_ipv4");
+  auto key_op_fvs = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, swss_ipv4_address, SET_COMMAND, p4orch::kSetMulticastGroupId,
+      kMulticastGroup1, "meta_differs");
+  const std::string db_key = std::string(APP_P4RT_TABLE_NAME) +
+                             kTableKeyDelimiter + kfvKey(key_op_fvs);
+
+  // Don't setup ASIC DB.
+
+  EXPECT_FALSE(VerifyState(db_key, kfvFieldsValues(key_op_fvs)).empty());
 }
 
 }  // namespace p4orch

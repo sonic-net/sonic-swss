@@ -237,7 +237,172 @@ ReturnCode IpMulticastManager::processIpMulticastEntries(
 std::string IpMulticastManager::verifyState(
     const std::string& key, const std::vector<swss::FieldValueTuple>& tuples) {
   SWSS_LOG_ENTER();
-  return "IpMulticastManager::verifyState is not implemented yet";
+
+  auto pos = key.find_first_of(kTableKeyDelimiter);
+  if (pos == std::string::npos) {
+    return std::string("Invalid key, missing delimiter: ") + key;
+  }
+  std::string p4rt_table = key.substr(0, pos);
+  std::string p4rt_key = key.substr(pos + 1);
+  if (p4rt_table != APP_P4RT_TABLE_NAME) {
+    return std::string("Invalid key, unexpected P4RT table: ") + key;
+  }
+  std::string table_name;
+  std::string key_content;
+  parseP4RTKey(p4rt_key, &table_name, &key_content);
+  if (table_name != APP_P4RT_IPV4_MULTICAST_TABLE_NAME &&
+      table_name != APP_P4RT_IPV6_MULTICAST_TABLE_NAME) {
+    return std::string("Invalid key, unexpected table name: ") + key;
+  }
+
+  ReturnCode status;
+  auto app_db_entry_or =
+      deserializeIpMulticastEntry(key_content, tuples, table_name);
+  if (!app_db_entry_or.ok()) {
+    status = app_db_entry_or.status();
+    std::stringstream msg;
+    msg << "Unable to deserialize key " << QuotedVar(key) << ": "
+        << status.message();
+    return msg.str();
+  }
+  auto& app_db_entry = *app_db_entry_or;
+
+  auto* ip_multicast_entry =
+      getIpMulticastEntry(app_db_entry.ip_multicast_entry_key);
+  if (ip_multicast_entry == nullptr) {
+    std::stringstream msg;
+    msg << "No entry found with key " << QuotedVar(key);
+    return msg.str();
+  }
+
+  std::string cache_result = verifyStateCache(app_db_entry, ip_multicast_entry);
+  std::string asic_db_result = verifyStateAsicDb(ip_multicast_entry);
+  if (cache_result.empty()) {
+    return asic_db_result;
+  }
+  if (asic_db_result.empty()) {
+    return cache_result;
+  }
+  return cache_result + "; " + asic_db_result;
+}
+
+// LINT.IfChange(verify_state_cache)
+std::string IpMulticastManager::verifyStateCache(
+    const P4IpMulticastEntry& app_db_entry,
+    const P4IpMulticastEntry* ip_multicast_entry) {
+  ReturnCode status = validateIpMulticastEntry(app_db_entry, SET_COMMAND);
+  if (!status.ok()) {
+    std::stringstream msg;
+    msg << "Validation failed for IP multicast DB entry with key "
+        << QuotedVar(app_db_entry.ip_multicast_entry_key) << ": "
+        << status.message();
+    return msg.str();
+  }
+  if (ip_multicast_entry->ip_multicast_entry_key !=
+      app_db_entry.ip_multicast_entry_key) {
+    std::stringstream msg;
+    msg << "IP multicast entry "
+        << QuotedVar(app_db_entry.ip_multicast_entry_key)
+        << " does not match internal cache "
+        << QuotedVar(ip_multicast_entry->ip_multicast_entry_key)
+        << " in IP multicast manager.";
+    return msg.str();
+  }
+  if (ip_multicast_entry->vrf_id != app_db_entry.vrf_id) {
+    std::stringstream msg;
+    msg << "IP multicast entry "
+        << QuotedVar(app_db_entry.ip_multicast_entry_key) << " with VRF "
+        << QuotedVar(app_db_entry.vrf_id) << " does not match internal cache "
+        << QuotedVar(ip_multicast_entry->vrf_id) << " in IP multicast manager.";
+    return msg.str();
+  }
+  if (ip_multicast_entry->ip_dst.to_string() !=
+      app_db_entry.ip_dst.to_string()) {
+    std::stringstream msg;
+    msg << "IP multicast entry "
+        << QuotedVar(app_db_entry.ip_multicast_entry_key)
+        << " with IP destination address "
+        << QuotedVar(app_db_entry.ip_dst.to_string())
+        << " does not match internal cache "
+        << QuotedVar(ip_multicast_entry->ip_dst.to_string())
+        << " in IP multicast manager.";
+    return msg.str();
+  }
+  if (ip_multicast_entry->action != app_db_entry.action) {
+    std::stringstream msg;
+    msg << "IP multicast entry "
+        << QuotedVar(app_db_entry.ip_multicast_entry_key) << " with action "
+        << QuotedVar(app_db_entry.action) << " does not match internal cache "
+        << QuotedVar(ip_multicast_entry->action) << " in IP multicast manager.";
+    return msg.str();
+  }
+  if (ip_multicast_entry->multicast_group_id !=
+      app_db_entry.multicast_group_id) {
+    std::stringstream msg;
+    msg << "IP multicast entry "
+        << QuotedVar(app_db_entry.ip_multicast_entry_key)
+        << " with multicast group ID "
+        << QuotedVar(app_db_entry.multicast_group_id)
+        << " does not match internal cache "
+        << QuotedVar(ip_multicast_entry->multicast_group_id)
+        << " in IP multicast manager.";
+    return msg.str();
+  }
+  if (ip_multicast_entry->controller_metadata !=
+      app_db_entry.controller_metadata) {
+    std::stringstream msg;
+    msg << "IP multicast entry "
+        << QuotedVar(app_db_entry.ip_multicast_entry_key)
+        << " with controller metadata "
+        << QuotedVar(app_db_entry.controller_metadata)
+        << " does not match internal cache "
+        << QuotedVar(ip_multicast_entry->controller_metadata)
+        << " in IP multicast manager.";
+    return msg.str();
+  }
+  return "";
+}
+// LINT.ThenChange()
+
+std::string IpMulticastManager::verifyStateAsicDb(
+    const P4IpMulticastEntry* ip_multicast_entry) {
+  std::vector<sai_attribute_t> exp_attrs;
+  sai_attribute_t attr;
+
+  attr.id = SAI_IPMC_ENTRY_ATTR_PACKET_ACTION;
+  attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+  exp_attrs.push_back(attr);
+
+  attr.id = SAI_IPMC_ENTRY_ATTR_OUTPUT_GROUP_ID;
+  attr.value.oid = SAI_NULL_OBJECT_ID;
+  m_p4OidMapper->getOID(SAI_OBJECT_TYPE_IPMC_GROUP,
+                        ip_multicast_entry->multicast_group_id,
+                        &attr.value.oid);
+  exp_attrs.push_back(attr);
+
+  // TODO: Add with counter support.
+  // attr.id = SAI_IPMC_ENTRY_ATTR_COUNTER_ID;
+  // attr.value.oid = group_counter_oid;
+  // attrs.push_back(attr);
+
+  std::vector<swss::FieldValueTuple> exp =
+      saimeta::SaiAttributeList::serialize_attr_list(
+          SAI_OBJECT_TYPE_IPMC_ENTRY, (uint32_t)exp_attrs.size(),
+          exp_attrs.data(), /*countOnly=*/false);
+
+  swss::DBConnector db("ASIC_DB", 0);
+  swss::Table table(&db, "ASIC_STATE");
+  std::string key =
+      sai_serialize_object_type(SAI_OBJECT_TYPE_IPMC_ENTRY) + ":" +
+      sai_serialize_ipmc_entry(prepareSaiIpmcEntry(*ip_multicast_entry));
+
+  std::vector<swss::FieldValueTuple> values;
+  if (!table.get(key, values)) {
+    return std::string("ASIC DB key not found ") + key;
+  }
+
+  return verifyAttrs(values, exp, /*opt=*/std::vector<swss::FieldValueTuple>{},
+                     /*allow_unknown=*/false);
 }
 
 ReturnCodeOr<P4IpMulticastEntry>

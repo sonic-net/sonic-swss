@@ -111,6 +111,13 @@ class IpMulticastManager : public ObjectManagerInterface {
       const std::vector<swss::KeyOpFieldsValuesTuple>& tuple_list,
       const std::string& op, bool update);
 
+  // Verifies internal cache for an entry.
+  std::string verifyStateCache(const P4IpMulticastEntry& app_db_entry,
+                               const P4IpMulticastEntry* ip_multicast_entry);
+
+  // Verifies ASIC DB for an entry.
+  std::string verifyStateAsicDb(const P4IpMulticastEntry* ip_multicast_entry);
+
   // Internal cache of entries.
   P4IpMulticastTable m_ipMulticastTable;
 
