@@ -65,18 +65,11 @@ void RecordResponse(const std::string &response_channel, const std::string &key,
 } // namespace
 
 ResponsePublisher::ResponsePublisher(const std::string &dbName, bool buffered, bool db_write_thread)
-    : m_db(std::make_unique<swss::DBConnector>(dbName, 0)), m_buffered(buffered)
+    : m_db(std::make_unique<swss::DBConnector>(dbName, 0)),
+      m_ntf_pipe(std::make_unique<swss::RedisPipeline>(m_db.get())),
+      m_db_pipe(std::make_unique<swss::RedisPipeline>(m_db.get())),
+      m_buffered(buffered)
 {
-    if (m_buffered)
-    {
-        m_ntf_pipe = std::make_unique<swss::RedisPipeline>(m_db.get());
-        m_db_pipe = std::make_unique<swss::RedisPipeline>(m_db.get());
-    }
-    else
-    {
-        m_ntf_pipe = std::make_unique<swss::RedisPipeline>(m_db.get(), 1);
-        m_db_pipe = std::make_unique<swss::RedisPipeline>(m_db.get(), 1);
-    }
     if (db_write_thread)
     {
         m_update_thread = std::unique_ptr<std::thread>(new std::thread(&ResponsePublisher::dbUpdateThread, this));
@@ -164,6 +157,11 @@ void ResponsePublisher::writeToDBInternal(const std::string &table, const std::s
     auto attrs = values;
     if (op == SET_COMMAND)
     {
+        if (m_directDbWrite)
+        {
+            applStateTable.set(key, attrs);
+            return;
+        }
         if (replace)
         {
             applStateTable.del(key);
