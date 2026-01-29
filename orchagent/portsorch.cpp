@@ -525,6 +525,15 @@ static void getPortSerdesAttr(PortSerdesAttrMap_t &map, const PortConfig &port)
         map[SAI_PORT_SERDES_ATTR_CUSTOM_COLLECTION] = SerdesValue(port.serdes.custom_collection.value);
     }
 
+    if (port.serdes.txpolarity.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_POLARITY] = SerdesValue(port.serdes.txpolarity.value);
+    }
+
+    if (port.serdes.rxpolarity.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_RX_POLARITY] = SerdesValue(port.serdes.rxpolarity.value);
+    }
 }
 
 static bool isPathTracingSupported()
@@ -4035,6 +4044,19 @@ void PortsOrch::registerPort(Port &p)
         auto wred_port_stats = generateCounterStats(wred_port_stat_ids, sai_serialize_port_stat);
         wred_port_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, wred_port_stats);
     }
+    //Add the Queue Counters
+    if ((flex_counters_orch->getQueueCountersState()) || (flex_counters_orch->getQueueWatermarkCountersState()))
+    {
+        auto maxQueueNumber = static_cast<uint32_t>(p.m_queue_ids.size());
+        addPortBufferQueueCounters(p, 0, maxQueueNumber-1, false);
+    }
+
+    //Add the PG Counters
+    if ((flex_counters_orch->getPgCountersState()) || (flex_counters_orch->getPgWatermarkCountersState()))
+    {
+        auto maxPgNumber = static_cast<uint32_t>(p.m_priority_group_ids.size());
+        addPortBufferPgCounters(p, 0, maxPgNumber-1);
+    }
 
     // If queue-related flex counters are already enabled, generate queue maps
     // for the newly added port so that usecases like dynamic port breakout works.
@@ -4119,6 +4141,20 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
 
     /* remove port name map from counter table */
     m_counterNameMapUpdater->delCounterNameMap(alias);
+
+    if((flex_counters_orch->getQueueCountersState()) || (flex_counters_orch->getQueueWatermarkCountersState()))
+    {
+        // Remove the Port Queues from COUNTERS_DB
+        auto maxQueueNumber = static_cast<uint32_t>(p.m_queue_ids.size());
+        deletePortBufferQueueCounters(p, 0, maxQueueNumber-1, false);
+    }
+
+    if ((flex_counters_orch->getPgCountersState()) || (flex_counters_orch->getPgWatermarkCountersState()))
+    {
+        // Remove the Priority Groups from COUNTERS_DB
+        auto maxPgNumber = static_cast<uint32_t>(p.m_priority_group_ids.size());
+        deletePortBufferPgCounters(p, 0, maxPgNumber-1);
+    }
 
     /* Remove the associated port serdes attribute */
     removePortSerdesAttribute(p.m_port_id);
@@ -4795,11 +4831,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             p.m_alias.c_str(), pCfg.speed.value
                         );
                     }
-                    else
-                    {
-                        /* Always update Gearbox speed on Gearbox ports */
-                        setGearboxPortsAttr(p, SAI_PORT_ATTR_SPEED, &pCfg.speed.value);
-                    }
                 }
 
                 if (pCfg.adv_speeds.is_set)
@@ -5087,6 +5118,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                         p.m_fec_mode = pCfg.fec.value;
                         p.m_override_fec = pCfg.fec.override_fec;
+                        p.m_fec_cfg = true;
                         m_portList[p.m_alias] = p;
 
                         SWSS_LOG_NOTICE(
@@ -8387,12 +8419,6 @@ void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues, b
 {
     SWSS_LOG_ENTER();
 
-    /* Create the Queue map in the Counter DB */
-    vector<FieldValueTuple> queueVector;
-    vector<FieldValueTuple> queuePortVector;
-    vector<FieldValueTuple> queueIndexVector;
-    vector<FieldValueTuple> queueTypeVector;
-
     auto toks = tokenize(queues, '-');
     auto startIndex = to_uint<uint32_t>(toks[0]);
     auto endIndex = startIndex;
@@ -8400,6 +8426,18 @@ void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues, b
     {
         endIndex = to_uint<uint32_t>(toks[1]);
     }
+    addPortBufferQueueCounters(port, startIndex, endIndex, skip_host_tx_queue);
+}
+
+void PortsOrch::addPortBufferQueueCounters(const Port &port, uint32_t startIndex, uint32_t endIndex, bool skip_host_tx_queue)
+{
+    SWSS_LOG_ENTER();
+
+    /* Create the Queue map in the Counter DB */
+    vector<FieldValueTuple> queueVector;
+    vector<FieldValueTuple> queuePortVector;
+    vector<FieldValueTuple> queueIndexVector;
+    vector<FieldValueTuple> queueTypeVector;
 
     for (auto queueIndex = startIndex; queueIndex <= endIndex; queueIndex++)
     {
@@ -8464,6 +8502,12 @@ void PortsOrch::removePortBufferQueueCounters(const Port &port, string queues, b
     {
         endIndex = to_uint<uint32_t>(toks[1]);
     }
+    deletePortBufferQueueCounters(port, startIndex, endIndex, skip_host_tx_queue);
+}
+
+void PortsOrch::deletePortBufferQueueCounters(const Port &port, uint32_t startIndex, uint32_t endIndex, bool skip_host_tx_queue)
+{
+    SWSS_LOG_ENTER();
 
     for (auto queueIndex = startIndex; queueIndex <= endIndex; queueIndex++)
     {
@@ -8581,12 +8625,6 @@ void PortsOrch::createPortBufferPgCounters(const Port& port, string pgs)
 {
     SWSS_LOG_ENTER();
 
-    /* Create the PG map in the Counter DB */
-    /* Add stat counters to flex_counter */
-    vector<FieldValueTuple> pgVector;
-    vector<FieldValueTuple> pgPortVector;
-    vector<FieldValueTuple> pgIndexVector;
-
     auto toks = tokenize(pgs, '-');
     auto startIndex = to_uint<uint32_t>(toks[0]);
     auto endIndex = startIndex;
@@ -8594,6 +8632,18 @@ void PortsOrch::createPortBufferPgCounters(const Port& port, string pgs)
     {
         endIndex = to_uint<uint32_t>(toks[1]);
     }
+    addPortBufferPgCounters(port, startIndex, endIndex);
+}
+
+void PortsOrch::addPortBufferPgCounters(const Port& port, uint32_t startIndex, uint32_t endIndex)
+{
+    SWSS_LOG_ENTER();
+
+    /* Create the PG map in the Counter DB */
+    /* Add stat counters to flex_counter */
+    vector<FieldValueTuple> pgVector;
+    vector<FieldValueTuple> pgPortVector;
+    vector<FieldValueTuple> pgIndexVector;
 
     for (auto pgIndex = startIndex; pgIndex <= endIndex; pgIndex++)
     {
@@ -8749,6 +8799,12 @@ void PortsOrch::removePortBufferPgCounters(const Port& port, string pgs)
     {
         endIndex = to_uint<uint32_t>(toks[1]);
     }
+    deletePortBufferPgCounters(port, startIndex, endIndex);
+}
+
+void PortsOrch::deletePortBufferPgCounters(const Port& port, uint32_t startIndex, uint32_t endIndex)
+{
+    SWSS_LOG_ENTER();
 
     for (auto pgIndex = startIndex; pgIndex <= endIndex; pgIndex++)
     {
