@@ -5,6 +5,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -101,12 +102,136 @@ void IpMulticastManager::enqueue(const std::string& table_name,
 
 ReturnCode IpMulticastManager::drain() {
   SWSS_LOG_ENTER();
-  return ReturnCode(StatusCode::SWSS_RC_SUCCESS)
-         << "IpMulticastManager::drain is not implemented yet";
+
+  std::vector<P4IpMulticastEntry> ip_multicast_list;
+  std::vector<swss::KeyOpFieldsValuesTuple> tuple_list;
+  std::unordered_set<std::string> ip_multicast_entry_list;
+
+  ReturnCode status;
+  std::string prev_op;
+  bool prev_update = false;
+  while (!m_entries.empty()) {
+    auto key_op_fvs_tuple = m_entries.front();
+    m_entries.pop_front();
+    std::string table_name;
+    std::string key;
+    parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &key);
+    const std::vector<swss::FieldValueTuple>& attributes =
+        kfvFieldsValues(key_op_fvs_tuple);
+
+    auto ip_multicast_entry_or =
+        deserializeIpMulticastEntry(key, attributes, table_name);
+    if (!ip_multicast_entry_or.ok()) {
+      status = ip_multicast_entry_or.status();
+      SWSS_LOG_ERROR("Unable to deserialize APP DB entry with key %s: %s",
+                     QuotedVar(table_name + ":" + key).c_str(),
+                     status.message().c_str());
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple), status,
+                           /*replace=*/true);
+      break;
+    }
+    auto& ip_multicast_entry = *ip_multicast_entry_or;
+
+    // A single batch should not modify the same entry more than once.
+    if (ip_multicast_entry_list.count(
+            ip_multicast_entry.ip_multicast_entry_key) != 0) {
+      status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "IP multicast entry has been included in the same batch";
+      SWSS_LOG_ERROR(
+          "%s: %s", status.message().c_str(),
+          QuotedVar(ip_multicast_entry.ip_multicast_entry_key).c_str());
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple), status,
+                           /*replace=*/true);
+      break;
+    }
+
+    const std::string& operation = kfvOp(key_op_fvs_tuple);
+    status = validateIpMulticastEntry(ip_multicast_entry, operation);
+    if (!status.ok()) {
+      SWSS_LOG_ERROR(
+          "Validation failed for IP multicast APP DB entry with key  %s: %s",
+          QuotedVar(table_name + ":" + key).c_str(), status.message().c_str());
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple), status,
+                           /*replace=*/true);
+      break;
+    }
+    ip_multicast_entry_list.insert(ip_multicast_entry.ip_multicast_entry_key);
+
+    auto* old_ip_multicast_entry_ptr =
+        getIpMulticastEntry(ip_multicast_entry.ip_multicast_entry_key);
+    bool update = (old_ip_multicast_entry_ptr != nullptr);
+    if (prev_op == "") {
+      prev_op = operation;
+      prev_update = update;
+    }
+    // Process the entries if the operation type changes.
+    if (operation != prev_op || update != prev_update) {
+      status = processIpMulticastEntries(ip_multicast_list, tuple_list, prev_op,
+                                         prev_update);
+      ip_multicast_list.clear();
+      tuple_list.clear();
+      prev_op = operation;
+      prev_update = update;
+    }
+
+    if (!status.ok()) {
+      // Return SWSS_RC_NOT_EXECUTED if failure has occured.
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple),
+                           ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED),
+                           /*replace=*/true);
+      break;
+    } else {
+      ip_multicast_list.push_back(ip_multicast_entry);
+      tuple_list.push_back(key_op_fvs_tuple);
+    }
+  }
+
+  if (!ip_multicast_list.empty()) {
+    ReturnCode rc = processIpMulticastEntries(ip_multicast_list, tuple_list,
+                                              prev_op, prev_update);
+    if (!rc.ok()) {
+      status = rc;
+    }
+  }
+  drainWithNotExecuted();
+  return status;
 }
 
 void IpMulticastManager::drainWithNotExecuted() {
   drainMgmtWithNotExecuted(m_entries, m_publisher);
+}
+
+ReturnCode IpMulticastManager::processIpMulticastEntries(
+    const std::vector<P4IpMulticastEntry>& ip_multicast_entries,
+    const std::vector<swss::KeyOpFieldsValuesTuple>& tuple_list,
+    const std::string& op, bool update) {
+  SWSS_LOG_ENTER();
+
+  ReturnCode status;
+  std::vector<ReturnCode> statuses;
+  // In syncd, bulk SAI calls use mode SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR.
+  if (op == SET_COMMAND) {
+    if (!update) {
+      statuses = createIpMulticastEntries(ip_multicast_entries);
+    } else {
+      statuses = updateIpMulticastEntries(ip_multicast_entries);
+    }
+  } else {
+    statuses = deleteIpMulticastEntries(ip_multicast_entries);
+  }
+  for (size_t i = 0; i < ip_multicast_entries.size(); ++i) {
+    m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(tuple_list[i]),
+                         kfvFieldsValues(tuple_list[i]), statuses[i],
+                         /*replace=*/true);
+    if (status.ok() && !statuses[i].ok()) {
+      status = statuses[i];
+    }
+  }
+  return status;
 }
 
 std::string IpMulticastManager::verifyState(
@@ -175,6 +300,90 @@ P4IpMulticastEntry* IpMulticastManager::getIpMulticastEntry(
     return nullptr;
   }
   return &m_ipMulticastTable[ip_multicast_entry_key];
+}
+
+// Performs IP multicast entry validation.
+ReturnCode IpMulticastManager::validateIpMulticastEntry(
+    const P4IpMulticastEntry& ip_multicast_entry,
+    const std::string& operation) {
+  SWSS_LOG_ENTER();
+
+  if (!ip_multicast_entry.vrf_id.empty() &&
+      !m_vrfOrch->isVRFexists(ip_multicast_entry.vrf_id)) {
+    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                         << "No VRF found with name "
+                         << QuotedVar(ip_multicast_entry.vrf_id));
+  }
+
+  if (operation == SET_COMMAND) {
+    return validateSetIpMulticastEntry(ip_multicast_entry);
+  } else if (operation == DEL_COMMAND) {
+    return validateDelIpMulticastEntry(ip_multicast_entry);
+  }
+  return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+         << "Unknown operation type " << QuotedVar(operation);
+}
+
+// Performs IP multicast entry validation for SET command.
+ReturnCode IpMulticastManager::validateSetIpMulticastEntry(
+    const P4IpMulticastEntry& ip_multicast_entry) {
+  SWSS_LOG_ENTER();
+
+  if (!ip_multicast_entry.action.empty() &&
+      ip_multicast_entry.action != p4orch::kSetMulticastGroupId) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Unsupported action " << QuotedVar(ip_multicast_entry.action);
+  }
+
+  if (ip_multicast_entry.multicast_group_id.empty()) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "The multicast_group_id is missing for "
+           << QuotedVar(ip_multicast_entry.ip_multicast_entry_key);
+  } else {
+    if (!m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                  ip_multicast_entry.multicast_group_id)) {
+      return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+             << "No multicast group ID found for "
+             << QuotedVar(ip_multicast_entry.multicast_group_id);
+    }
+  }
+
+  auto* ip_multicast_entry_ptr =
+      getIpMulticastEntry(ip_multicast_entry.ip_multicast_entry_key);
+  bool is_update = ip_multicast_entry_ptr != nullptr;
+  bool exist_in_mapper = m_p4OidMapper->existsOID(
+      SAI_OBJECT_TYPE_IPMC_ENTRY, ip_multicast_entry.ip_multicast_entry_key);
+
+  if (is_update && !exist_in_mapper) {
+    return ReturnCode(StatusCode::SWSS_RC_INTERNAL)
+           << "IP multicast entry exists in manager but does not exist in the "
+              "centralized map";
+  } else if (!is_update && exist_in_mapper) {
+    return ReturnCode(StatusCode::SWSS_RC_INTERNAL)
+           << "IP multicast entry does not exist in manager but does not exist "
+              "in the centralized map";
+  }
+  return ReturnCode();
+}
+
+// Performs IP multicast entry validation for DEL command.
+ReturnCode IpMulticastManager::validateDelIpMulticastEntry(
+    const P4IpMulticastEntry& ip_multicast_entry) {
+  SWSS_LOG_ENTER();
+  auto* ip_multicast_entry_ptr =
+      getIpMulticastEntry(ip_multicast_entry.ip_multicast_entry_key);
+  if (ip_multicast_entry_ptr == nullptr) {
+    return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+           << "IP multicast entry does not exist: "
+           << QuotedVar(ip_multicast_entry.ip_multicast_entry_key);
+  }
+
+  if (!m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_IPMC_ENTRY,
+                                ip_multicast_entry.ip_multicast_entry_key)) {
+    RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL(
+        "IP multicast entry does not exist in the centralized map");
+  }
+  return ReturnCode();
 }
 
 ReturnCode IpMulticastManager::createRouterInterfaceForDefaultRpfGroupMember() {

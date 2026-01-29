@@ -113,6 +113,18 @@ MATCHER_P(AttrArrayEq, array, "") {
   return true;
 }
 
+MATCHER_P(FieldValueTupleArrayEq, array, "") {
+  for (size_t i = 0; i < array.size(); ++i) {
+    if (fvField(arg[i]) != fvField(array[i])) {
+      return false;
+    }
+    if (fvValue(arg[i]) != fvValue(array[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
 void VerifyP4IpMulticastEntryEqual(const P4IpMulticastEntry& x,
                                    const P4IpMulticastEntry& y) {
   EXPECT_EQ(x.ip_multicast_entry_key, y.ip_multicast_entry_key);
@@ -181,6 +193,25 @@ class IpMulticastManagerTest : public ::testing::Test {
     return ip_multicast_manager_.getIpMulticastEntry(ip_multicast_entry_key);
   }
 
+  ReturnCode ValidateIpMulticastEntry(
+      const P4IpMulticastEntry& ip_multicast_entry,
+      const std::string& operation) {
+    return ip_multicast_manager_.validateIpMulticastEntry(ip_multicast_entry,
+                                                          operation);
+  }
+
+  ReturnCode ValidateSetIpMulticastEntry(
+      const P4IpMulticastEntry& ip_multicast_entry) {
+    return ip_multicast_manager_.validateSetIpMulticastEntry(
+        ip_multicast_entry);
+  }
+
+  ReturnCode ValidateDelIpMulticastEntry(
+      const P4IpMulticastEntry& ip_multicast_entry) {
+    return ip_multicast_manager_.validateDelIpMulticastEntry(
+        ip_multicast_entry);
+  }
+
   // Function to fake adding a multicast group SAI object.
   void AddMulticastGroup(const std::string multicast_group_id,
                          const sai_object_id_t group_oid) {
@@ -201,6 +232,40 @@ class IpMulticastManagerTest : public ::testing::Test {
   std::vector<ReturnCode> DeleteIpMulticastEntries(
       const std::vector<P4IpMulticastEntry>& ip_multicast_entries) {
     return ip_multicast_manager_.deleteIpMulticastEntries(ip_multicast_entries);
+  }
+
+  // Generates a KeyOpFieldsValuesTuple.
+  swss::KeyOpFieldsValuesTuple GenerateKeyOpFieldsValuesTuple(
+      const std::string& vrf_id, const swss::IpAddress& ip_dst,
+      const std::string& command, const std::string& action,
+      const std::string& action_param,
+      const std::string& controller_metadata = "") {
+    nlohmann::json j;
+    std::string key_prefix;
+    j[prependMatchField(p4orch::kVrfId)] = vrf_id;
+    if (ip_dst.isV4()) {
+      j[prependMatchField(p4orch::kIpv4Dst)] = ip_dst.to_string();
+      key_prefix =
+          std::string(APP_P4RT_IPV4_MULTICAST_TABLE_NAME) + kTableKeyDelimiter;
+    } else {
+      j[prependMatchField(p4orch::kIpv6Dst)] = ip_dst.to_string();
+      key_prefix =
+          std::string(APP_P4RT_IPV6_MULTICAST_TABLE_NAME) + kTableKeyDelimiter;
+    }
+    std::vector<swss::FieldValueTuple> attributes;
+    if (command == SET_COMMAND) {
+      attributes.push_back(swss::FieldValueTuple{p4orch::kAction, action});
+      if (action == p4orch::kSetMulticastGroupId) {
+        attributes.push_back(swss::FieldValueTuple{
+            prependParamField(p4orch::kMulticastGroupId), action_param});
+      }
+      if (!controller_metadata.empty()) {
+        attributes.push_back(swss::FieldValueTuple{p4orch::kControllerMetadata,
+                                                   controller_metadata});
+      }
+    }
+    return swss::KeyOpFieldsValuesTuple(key_prefix + j.dump(), command,
+                                        attributes);
   }
 
   // Generates a P4IpMulticastEntry.
@@ -375,6 +440,142 @@ TEST_F(IpMulticastManagerTest, DeserializeIpMulticastEntryExtraFieldFails) {
       key, attributes, APP_P4RT_IPV4_MULTICAST_TABLE_NAME);
   EXPECT_FALSE(ip_multicast_entry_or.ok());
   EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ip_multicast_entry_or.status());
+}
+
+TEST_F(IpMulticastManagerTest, ValidateSetIpMulticastEntrySuccess) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry_ipv4 = GenerateP4IpMulticastEntry(gVrfName, swss_ipv4_address,
+                                               p4orch::kSetMulticastGroupId,
+                                               kMulticastGroup1, "meta_ipv4");
+
+  auto swss_ipv6_address = swss::IpAddress(kIpv6Address1);
+  auto entry_ipv6 = GenerateP4IpMulticastEntry(gVrfName, swss_ipv6_address,
+                                               p4orch::kSetMulticastGroupId,
+                                               kMulticastGroup2, "meta_ipv6");
+
+  // Fake that multicast groups have been added
+  AddMulticastGroup(kMulticastGroup1, kMulticastGroupOid1);
+  AddMulticastGroup(kMulticastGroup2, kMulticastGroupOid2);
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ValidateIpMulticastEntry(entry_ipv4, SET_COMMAND));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ValidateIpMulticastEntry(entry_ipv6, SET_COMMAND));
+}
+
+TEST_F(IpMulticastManagerTest, ValidateDelIpMulticastEntrySuccess) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 =
+      SetupIpMulticastEntry(gVrfName, swss_ipv4_address, kMulticastGroup1,
+                            kMulticastGroupOid1, "meta_ipv4");
+  auto swss_ipv6_address = swss::IpAddress(kIpv6Address1);
+  auto entry2 = SetupIpMulticastEntry(gVrfName, swss_ipv6_address,
+                                      kMulticastGroup2, kMulticastGroupOid2,
+                                      "meta_ipv6", /*expect_rpf=*/false);
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ValidateIpMulticastEntry(entry1, DEL_COMMAND));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ValidateIpMulticastEntry(entry2, DEL_COMMAND));
+}
+
+TEST_F(IpMulticastManagerTest, ValidateIpMulticastEntryFailures) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry = GenerateP4IpMulticastEntry(gVrfName, swss_ipv4_address,
+                                          p4orch::kSetMulticastGroupId,
+                                          kMulticastGroup1, "meta_ipv4");
+  // Fake that multicast groups have been added
+  AddMulticastGroup(kMulticastGroup1, kMulticastGroupOid1);
+
+  // No VRF.
+  entry.vrf_id = "Unknown";
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND,
+            ValidateIpMulticastEntry(entry, SET_COMMAND));
+  entry.vrf_id = gVrfName;
+
+  // Invalid action.
+  entry.action = "Unknown-action";
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+            ValidateIpMulticastEntry(entry, SET_COMMAND));
+  entry.action = p4orch::kSetMulticastGroupId;
+
+  // Empty multicast group ID.
+  entry.multicast_group_id = "";
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+            ValidateIpMulticastEntry(entry, SET_COMMAND));
+  entry.multicast_group_id = kMulticastGroup1;
+
+  // No multicast group OID.
+  entry.multicast_group_id = kMulticastGroup2;
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND,
+            ValidateIpMulticastEntry(entry, SET_COMMAND));
+  entry.multicast_group_id = kMulticastGroup1;
+}
+
+TEST_F(IpMulticastManagerTest, ValidateSetIpMulticastEntryMissingInCentralMap) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry = SetupIpMulticastEntry(gVrfName, swss_ipv4_address,
+                                     kMulticastGroup1, kMulticastGroupOid1);
+  // Force missing from centralized mapper.
+  p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_IPMC_ENTRY,
+                          entry.ip_multicast_entry_key);
+  EXPECT_EQ(StatusCode::SWSS_RC_INTERNAL,
+            ValidateIpMulticastEntry(entry, SET_COMMAND));
+}
+
+TEST_F(IpMulticastManagerTest, ValidateSetIpMulticastEntryAlreadyExists) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry = GenerateP4IpMulticastEntry(gVrfName, swss_ipv4_address,
+                                          p4orch::kSetMulticastGroupId,
+                                          kMulticastGroup1, "meta_ipv4");
+  AddMulticastGroup(kMulticastGroup1, kMulticastGroupOid1);
+  // Force add to centralized mapper.
+  p4_oid_mapper_.setDummyOID(SAI_OBJECT_TYPE_IPMC_ENTRY,
+                             entry.ip_multicast_entry_key);
+  EXPECT_EQ(StatusCode::SWSS_RC_INTERNAL,
+            ValidateIpMulticastEntry(entry, SET_COMMAND));
+}
+
+TEST_F(IpMulticastManagerTest,
+       ValidateSetIpMulticastEntryMissingMulticastGroup) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry = GenerateP4IpMulticastEntry(gVrfName, swss_ipv4_address,
+                                          p4orch::kSetMulticastGroupId,
+                                          kMulticastGroup1, "meta_ipv4");
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND,
+            ValidateIpMulticastEntry(entry, SET_COMMAND));
+}
+
+TEST_F(IpMulticastManagerTest, ValidateDelIpMulticastEntryMissingEntry) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry = GenerateP4IpMulticastEntry(gVrfName, swss_ipv4_address,
+                                          p4orch::kSetMulticastGroupId,
+                                          kMulticastGroup1, "meta_ipv4");
+  AddMulticastGroup(kMulticastGroup1, kMulticastGroupOid1);
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND,
+            ValidateIpMulticastEntry(entry, DEL_COMMAND));
+}
+
+TEST_F(IpMulticastManagerTest, ValidateDelIpMulticastEntryNoIpmcEntry) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry = SetupIpMulticastEntry(gVrfName, swss_ipv4_address,
+                                     kMulticastGroup1, kMulticastGroupOid1);
+  // Force missing from centralized mapper.
+  p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_IPMC_ENTRY,
+                          entry.ip_multicast_entry_key);
+
+  EXPECT_EQ(StatusCode::SWSS_RC_INTERNAL,
+            ValidateIpMulticastEntry(entry, DEL_COMMAND));
+}
+
+TEST_F(IpMulticastManagerTest, ValidateIpMulticastEntryUnknownOperation) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 =
+      SetupIpMulticastEntry(gVrfName, swss_ipv4_address, kMulticastGroup1,
+                            kMulticastGroupOid1, "meta_ipv4");
+
+  // Fake that multicast groups have been added
+  AddMulticastGroup(kMulticastGroup1, kMulticastGroupOid1);
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+            ValidateIpMulticastEntry(entry1, "Unknown-operation"));
 }
 
 TEST_F(IpMulticastManagerTest, CreateIpMulticastEntriesSuccess) {
@@ -832,9 +1033,303 @@ TEST_F(IpMulticastManagerTest, UpdateIpMulticastEntriesSaiFailure) {
   VerifyP4IpMulticastEntryEqual(expect_ipv4, *entry_ptr_v4);
 }
 
-TEST_F(IpMulticastManagerTest, DrainNotImplemented) {
+TEST_F(IpMulticastManagerTest, DrainAddUpdateDeleteSuccess) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry = GenerateP4IpMulticastEntry(gVrfName, swss_ipv4_address,
+                                          p4orch::kSetMulticastGroupId,
+                                          kMulticastGroup1, "meta");
+
+  auto key_op_fvs_add = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, swss_ipv4_address, SET_COMMAND, p4orch::kSetMulticastGroupId,
+      kMulticastGroup1, "meta");
+  auto key_op_fvs_update = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, swss_ipv4_address, SET_COMMAND, p4orch::kSetMulticastGroupId,
+      kMulticastGroup2, "meta");
+  auto key_op_fvs_del = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, swss_ipv4_address, DEL_COMMAND, p4orch::kSetMulticastGroupId,
+      kMulticastGroup2, "meta");
+
+  // Fake that multicast groups have been added
+  AddMulticastGroup(kMulticastGroup1, kMulticastGroupOid1);
+  AddMulticastGroup(kMulticastGroup2, kMulticastGroupOid2);
+
+  // Add operation
+  Enqueue(APP_P4RT_IPV4_MULTICAST_TABLE_NAME, key_op_fvs_add);
+
+  EXPECT_CALL(mock_sai_rpf_group_, create_rpf_group(_, _, 0, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kRpfGroupOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, 7, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kRpfRouterInterfaceOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_rpf_group_, create_rpf_group_member(_, _, 2, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kRpfGroupMemberOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_ipmc_, create_ipmc_entry(_, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_add)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_add)),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)))
+      .Times(1);
   EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
-  EXPECT_EQ(StatusCode::SWSS_RC_NOT_EXECUTED, Drain(/*failure_before=*/true));
+
+  auto* read_entry = GetIpMulticastEntry(entry.ip_multicast_entry_key);
+  ASSERT_NE(read_entry, nullptr);
+
+  auto expect_entry = GenerateP4IpMulticastEntry(gVrfName, swss_ipv4_address,
+                                                 p4orch::kSetMulticastGroupId,
+                                                 kMulticastGroup1, "meta");
+  expect_entry.sai_ipmc_entry.switch_id = gSwitchId;
+  expect_entry.sai_ipmc_entry.vr_id = gVrfOrch->getVRFid(gVrfName);
+  expect_entry.sai_ipmc_entry.type = SAI_IPMC_ENTRY_TYPE_XG;
+  sai_ip_address_t sai_address_v4;
+  copy(sai_address_v4, swss_ipv4_address);
+  expect_entry.sai_ipmc_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+  expect_entry.sai_ipmc_entry.destination.addr.ip4 = sai_address_v4.addr.ip4;
+  expect_entry.sai_ipmc_entry.source.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+  expect_entry.sai_ipmc_entry.source.addr.ip4 = 0;
+
+  VerifyP4IpMulticastEntryEqual(expect_entry, *read_entry);
+  uint32_t ref_cnt = 777;
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(
+      SAI_OBJECT_TYPE_IPMC_GROUP, expect_entry.multicast_group_id, &ref_cnt));
+  EXPECT_EQ(1, ref_cnt);
+
+  // Update operation
+  Enqueue(APP_P4RT_IPV4_MULTICAST_TABLE_NAME, key_op_fvs_update);
+
+  EXPECT_CALL(mock_sai_ipmc_, set_ipmc_entry_attribute(_, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(
+      publisher_,
+      publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_update)),
+              FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_update)),
+              Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)))
+      .Times(1);
+
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
+
+  uint32_t ref_cnt1 = 777;
+  uint32_t ref_cnt2 = 777;
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroup1, &ref_cnt1));
+  EXPECT_EQ(0, ref_cnt1);
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroup2, &ref_cnt2));
+  EXPECT_EQ(1, ref_cnt2);
+
+  // Remove operation
+  Enqueue(APP_P4RT_IPV4_MULTICAST_TABLE_NAME, key_op_fvs_del);
+
+  EXPECT_CALL(mock_sai_ipmc_, remove_ipmc_entry(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_del)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_del)),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)))
+      .Times(1);
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
+
+  read_entry = GetIpMulticastEntry(entry.ip_multicast_entry_key);
+  ASSERT_EQ(read_entry, nullptr);
+  ref_cnt2 = 777;
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroup2, &ref_cnt2));
+  EXPECT_EQ(0, ref_cnt2);
+}
+
+TEST_F(IpMulticastManagerTest, DrainCannotDeserialize) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 = GenerateP4IpMulticastEntry(gVrfName, swss_ipv4_address,
+                                           p4orch::kSetMulticastGroupId,
+                                           kMulticastGroup1);
+  auto swss_ipv6_address = swss::IpAddress(kIpv6Address1);
+  auto entry2 = GenerateP4IpMulticastEntry(gVrfName, swss_ipv6_address,
+                                           p4orch::kSetMulticastGroupId,
+                                           kMulticastGroup2);
+
+  auto key_op_fvs_1 = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, swss_ipv4_address, SET_COMMAND, p4orch::kSetMulticastGroupId,
+      kMulticastGroup1);
+  kfvFieldsValues(key_op_fvs_1)
+      .push_back(swss::FieldValueTuple{"ExtraAttribute", "unexpected"});
+
+  auto key_op_fvs_2 = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, swss_ipv6_address, SET_COMMAND, p4orch::kSetMulticastGroupId,
+      kMulticastGroup2);
+
+  // Fake that multicast groups have been added
+  AddMulticastGroup(kMulticastGroup1, kMulticastGroupOid1);
+  AddMulticastGroup(kMulticastGroup2, kMulticastGroupOid2);
+
+  // Add operations.
+  Enqueue(APP_P4RT_IPV4_MULTICAST_TABLE_NAME, key_op_fvs_1);
+  Enqueue(APP_P4RT_IPV6_MULTICAST_TABLE_NAME, key_op_fvs_2);
+
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_1)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_1)),
+                      Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)))
+      .Times(1);
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_2)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_2)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)))
+      .Times(1);
+
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, Drain(/*failure_before=*/false));
+}
+
+TEST_F(IpMulticastManagerTest, DrainCannotHandleDuplicates) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 = GenerateP4IpMulticastEntry(gVrfName, swss_ipv4_address,
+                                           p4orch::kSetMulticastGroupId,
+                                           kMulticastGroup1);
+
+  auto key_op_fvs_1 = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, swss_ipv4_address, SET_COMMAND, p4orch::kSetMulticastGroupId,
+      kMulticastGroup1);
+  auto key_op_fvs_2 = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, swss_ipv4_address, SET_COMMAND, p4orch::kSetMulticastGroupId,
+      kMulticastGroup2);
+
+  // Fake that multicast groups have been added
+  AddMulticastGroup(kMulticastGroup1, kMulticastGroupOid1);
+  AddMulticastGroup(kMulticastGroup2, kMulticastGroupOid2);
+
+  // Add duplicates operations (just set different multicast group)
+  Enqueue(APP_P4RT_IPV4_MULTICAST_TABLE_NAME, key_op_fvs_1);
+  Enqueue(APP_P4RT_IPV4_MULTICAST_TABLE_NAME, key_op_fvs_2);
+
+  EXPECT_CALL(mock_sai_rpf_group_, create_rpf_group(_, _, 0, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kRpfGroupOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, 7, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kRpfRouterInterfaceOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_rpf_group_, create_rpf_group_member(_, _, 2, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kRpfGroupMemberOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_ipmc_, create_ipmc_entry(_, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_1)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_1)),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)))
+      .Times(1);
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_2)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_2)),
+                      Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)))
+      .Times(1);
+
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, Drain(/*failure_before=*/false));
+}
+
+TEST_F(IpMulticastManagerTest, DrainCannotValidateEntry) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 = GenerateP4IpMulticastEntry(gVrfName, swss_ipv4_address,
+                                           p4orch::kSetMulticastGroupId,
+                                           kMulticastGroup1);
+  auto swss_ipv6_address = swss::IpAddress(kIpv6Address1);
+  auto entry2 = GenerateP4IpMulticastEntry(gVrfName, swss_ipv6_address,
+                                           p4orch::kSetMulticastGroupId,
+                                           kMulticastGroup2);
+
+  auto key_op_fvs_1 = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, swss_ipv4_address, SET_COMMAND, p4orch::kSetMulticastGroupId,
+      kMulticastGroup1);
+
+  auto key_op_fvs_2 = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, swss_ipv6_address, SET_COMMAND, p4orch::kSetMulticastGroupId,
+      kMulticastGroup2);
+
+  // Do not add kMulticastGroup2 to force validation error.
+  AddMulticastGroup(kMulticastGroup2, kMulticastGroupOid2);
+
+  // Add operations.
+  Enqueue(APP_P4RT_IPV4_MULTICAST_TABLE_NAME, key_op_fvs_1);
+  Enqueue(APP_P4RT_IPV6_MULTICAST_TABLE_NAME, key_op_fvs_2);
+
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_1)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_1)),
+                      Eq(StatusCode::SWSS_RC_NOT_FOUND), Eq(true)))
+      .Times(1);
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_2)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_2)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)))
+      .Times(1);
+
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, Drain(/*failure_before=*/false));
+}
+
+TEST_F(IpMulticastManagerTest, DrainSwitchOpsWithFailure) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 = GenerateP4IpMulticastEntry(gVrfName, swss_ipv4_address,
+                                           p4orch::kSetMulticastGroupId,
+                                           kMulticastGroup1);
+
+  auto key_op_fvs_add = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, swss_ipv4_address, SET_COMMAND, p4orch::kSetMulticastGroupId,
+      kMulticastGroup1);
+
+  AddMulticastGroup(kMulticastGroup1, kMulticastGroupOid1);
+  AddMulticastGroup(kMulticastGroup2, kMulticastGroupOid2);
+
+  // Add operation
+  Enqueue(APP_P4RT_IPV4_MULTICAST_TABLE_NAME, key_op_fvs_add);
+
+  EXPECT_CALL(mock_sai_rpf_group_, create_rpf_group(_, _, 0, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kRpfGroupOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, 7, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kRpfRouterInterfaceOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_rpf_group_, create_rpf_group_member(_, _, 2, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kRpfGroupMemberOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_ipmc_, create_ipmc_entry(_, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_add)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_add)),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)))
+      .Times(1);
+
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
+
+  // Now enque a delete and an add, have the delete fail.
+  auto key_op_fvs_del = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, swss_ipv4_address, DEL_COMMAND, p4orch::kSetMulticastGroupId,
+      kMulticastGroup1);
+  auto swss_ipv6_address = swss::IpAddress(kIpv6Address1);
+  auto key_op_fvs_add_2 = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, swss_ipv6_address, SET_COMMAND, p4orch::kSetMulticastGroupId,
+      kMulticastGroup2);
+
+  Enqueue(APP_P4RT_IPV4_MULTICAST_TABLE_NAME, key_op_fvs_del);
+  Enqueue(APP_P4RT_IPV6_MULTICAST_TABLE_NAME, key_op_fvs_add_2);
+
+  // Force failure.
+  EXPECT_CALL(mock_sai_ipmc_, remove_ipmc_entry(_))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_del)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_del)),
+                      Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)))
+      .Times(1);
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_add_2)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_add_2)),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)))
+      .Times(1);
+
+  EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
 }
 
 TEST_F(IpMulticastManagerTest, VerifyStateNotImplemented) {
