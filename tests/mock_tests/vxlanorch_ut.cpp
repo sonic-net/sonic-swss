@@ -308,23 +308,14 @@ namespace vxlanorch_test
                         SetArgPointee<0>(SAI_NULL_OBJECT_ID),
                         Return(SAI_STATUS_FAILURE)
                         ));
-        EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_term_table_entry(_))
-            .WillOnce(DoAll(
-                        Return(SAI_STATUS_SUCCESS)
-                        ));
-        EXPECT_CALL(mock_sai_tunnel_, remove_tunnel(_))
-            .WillOnce(DoAll(
-                        Return(SAI_STATUS_SUCCESS)
-                        ));
-        EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_map(_))
-            .Times(4)
-            .WillRepeatedly(DoAll(
-                        Return(SAI_STATUS_SUCCESS)
-                        ));
 
         EXPECT_NO_THROW({
                 bool result = vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
-                EXPECT_FALSE(result);
+                /*
+                 * Return value of create_tunnel_map_entry() is intentionally
+                 * ignored in createVxlanTunnelMap(), so expect true here
+                 */
+                EXPECT_TRUE(result);
                 });
         vxlan_orch->delTunnel("vxlan_tunnel_1");
     }

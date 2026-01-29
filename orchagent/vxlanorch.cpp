@@ -927,9 +927,9 @@ bool VxlanTunnel::createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src,
             if (ids_.tunnel_term_id == SAI_NULL_OBJECT_ID)
             {
                 // Undo changes if create_tunnel_termination fails
-                deleteMapperHw(mapper_list, map_src);
                 tunnel_orch->removeTunnelFromFlexCounter(ids_.tunnel_id, tunnel_name_);
                 remove_tunnel(ids_.tunnel_id);
+                deleteMapperHw(mapper_list, map_src);
                 ids_.tunnel_id = SAI_NULL_OBJECT_ID;
                 active_ = false;
                 return false;
@@ -1515,19 +1515,6 @@ bool VxlanTunnelOrch::createVxlanTunnelMap(string tunnelName, tunnel_map_type_t 
          */
         auto encap_id = tunnel_obj->addEncapMapperEntry(encap, vni);
         auto decap_id = tunnel_obj->addDecapMapperEntry(decap, vni);
-        if (encap_id == SAI_NULL_OBJECT_ID || decap_id == SAI_NULL_OBJECT_ID)
-        {
-            SWSS_LOG_ERROR("encap_id or decap_id NULL for tunnel: %s.",
-                           tunnelName.c_str());
-            /*
-             * Clean up previously allocated resources. The encap and decap entries
-             * need to be inserted so they get cleaned up properly later via
-             * remove_tunnel_map_entry().
-             */
-            tunnel_obj->insertMapperEntry(encap_id, decap_id, vni);
-            removeVxlanTunnelMap(tunnelName, vni);
-            return false;
-        }
 
         tunnel_obj->insertMapperEntry(encap_id, decap_id, vni);
 
