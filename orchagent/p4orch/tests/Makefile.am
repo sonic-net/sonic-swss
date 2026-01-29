@@ -49,6 +49,7 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       $(P4ORCH_DIR)/mirror_session_manager.cpp \
 		       $(P4ORCH_DIR)/l3_admit_manager.cpp \
 		       $(P4ORCH_DIR)/l3_multicast_manager.cpp \
+		       $(P4ORCH_DIR)/ip_multicast_manager.cpp \
 		       $(P4ORCH_DIR)/ext_tables_manager.cpp \
 		       $(top_srcdir)/tests/mock_tests/fake_response_publisher.cpp \
 		       fake_portorch.cpp \
@@ -68,6 +69,7 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       return_code_test.cpp \
 		       route_manager_test.cpp \
 		       l3_multicast_manager_test.cpp \
+		       ip_multicast_manager_test.cpp \
 		       gre_tunnel_manager_test.cpp \
 		       next_hop_manager_test.cpp \
 		       wcmp_manager_test.cpp \
