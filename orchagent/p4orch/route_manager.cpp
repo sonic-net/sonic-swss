@@ -531,13 +531,17 @@ ReturnCode RouteManager::validateSetRouteEntry(const P4RouteEntry &route_entry)
 {
     auto *route_entry_ptr = getRouteEntry(route_entry.route_entry_key);
     bool exist_in_mapper = false;
-    if (route_entry.multicast_group_id.empty()) {
-      exist_in_mapper = m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_ROUTE_ENTRY,
-                                                 route_entry.route_entry_key);
-    } else {
-      exist_in_mapper = m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_IPMC_ENTRY,
-                                                 route_entry.route_entry_key);
-    }
+  auto action_to_check = route_entry.action;
+  if (route_entry_ptr != nullptr) {
+    action_to_check = route_entry_ptr->action;
+  }
+  if (action_to_check == p4orch::kSetMulticastGroupId) {
+    exist_in_mapper = m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_IPMC_ENTRY,
+                                               route_entry.route_entry_key);
+  } else {
+    exist_in_mapper = m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_ROUTE_ENTRY,
+                                               route_entry.route_entry_key);
+  }
     if (route_entry_ptr == nullptr && exist_in_mapper)
     {
         return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND) << "Route entry does not exist in manager but exists in the "

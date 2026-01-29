@@ -817,7 +817,7 @@ ReturnCode L3MulticastManager::validateSetMulticastRouterInterfaceEntry(
     // Confirm the RIF object ID exists in central mapper.
     std::string rif_key = KeyGenerator::generateMulticastRouterInterfaceRifKey(
         router_interface_entry_ptr->multicast_replica_port,
-        router_interface_entry_ptr->src_mac);
+        router_interface_entry_ptr->src_mac);	// No attributes provided on delete.
     bool exist_in_mapper =
         m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key);
     if (!exist_in_mapper) {
@@ -1278,9 +1278,10 @@ L3MulticastManager::deleteMulticastRouterInterfaceEntries(
   //    case, only remove the current entry from being associated with the RIF.
   for (size_t i = 0; i < entries.size(); ++i) {
     auto& entry = entries[i];
-    if (m_multicastRouterInterfaceTable.find(
-            entry.multicast_router_interface_entry_key) ==
-        m_multicastRouterInterfaceTable.end()) {
+    // Cannot assume that the src mac will be set on delete operation.
+    auto* old_entry_ptr = getMulticastRouterInterfaceEntry(
+        entry.multicast_router_interface_entry_key);
+    if (old_entry_ptr == nullptr) {
       statuses[i] = ReturnCode(StatusCode::SWSS_RC_UNKNOWN)
                     << "Multicast router interface entry is not known "
                     << QuotedVar(entry.multicast_router_interface_entry_key);
@@ -1288,7 +1289,7 @@ L3MulticastManager::deleteMulticastRouterInterfaceEntries(
     }
 
     // Confirm RIF OID was assigned.
-    sai_object_id_t rif_oid = getRifOid(&entry);
+    sai_object_id_t rif_oid = getRifOid(old_entry_ptr);
     if (rif_oid == SAI_NULL_OBJECT_ID) {
       std::stringstream err_msg;
       err_msg << "Multicast router interface entry is missing a RIF oid "
@@ -1343,7 +1344,7 @@ L3MulticastManager::deleteMulticastRouterInterfaceEntries(
       break;
     }
     std::string rif_key = KeyGenerator::generateMulticastRouterInterfaceRifKey(
-        entry.multicast_replica_port, entry.src_mac);
+        old_entry_ptr->multicast_replica_port, old_entry_ptr->src_mac);
 
     // If this is the last entry, delete the RIF.
     // Attempt to delete RIF at SAI layer before adjusting internal maps, in

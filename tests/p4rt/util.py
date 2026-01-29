@@ -55,8 +55,8 @@ def verify_response(consumer, key, attr_list, status, err_message = "SWSS_RC_SUC
   if consumer.peek() <= 0:
     consumer.readData()
   (op, data, values) = consumer.pop()
-  assert data == key
-  assert op == status
+  assert data == key, "data '%s' does not match key '%s'" % (data, key)
+  assert op == status, "op '%s' does not match status '%s'" % (op, status)
   assert len(values) >= 1
   assert values[0][0] == "err_str", "Unexpected status '%s' received, expected '%s'" % \
                 (values[0][0], "err_str")
