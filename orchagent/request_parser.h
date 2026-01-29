@@ -176,10 +176,11 @@ public:
     }
 
 protected:
-    Request(const request_description_t& request_description, const char key_separator)
+    Request(const request_description_t& request_description, const char key_separator, bool relaxed_attr_parsing = false)
         : request_description_(request_description),
           key_separator_(key_separator),
           is_parsed_(false),
+          relaxed_attr_parsing_(relaxed_attr_parsing),
           number_of_key_items_(request_description.key_item_types.size())
     {
     }
@@ -207,6 +208,8 @@ private:
     char key_separator_;
     bool is_parsed_;
     size_t number_of_key_items_;
+    // Enable if only interested in only a subset of attributes
+    bool relaxed_attr_parsing_;
 
     std::string table_name_;
     std::string operation_;
