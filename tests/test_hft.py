@@ -50,6 +50,19 @@ class TestHFT(object):
         fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
         tbl.set(key, fvs)
 
+    def create_hft_group_empty_group_name(self, dvs, profile_name="test"):
+        """Create HFT group in CONFIG_DB with empty group_name (invalid configuration)."""
+        config_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        tbl = swsscommon.Table(config_db, "HIGH_FREQUENCY_TELEMETRY_GROUP")
+
+        # Invalid key with only profile_name (no group_name)
+        key = profile_name
+        fvs = swsscommon.FieldValuePairs([
+            ("object_names", "Ethernet0"),
+            ("object_counters", "IF_IN_OCTETS")
+        ])
+        tbl.set(key, fvs)
+
     def delete_hft_profile(self, dvs, name="test"):
         """Delete HFT profile from CONFIG_DB."""
         config_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
@@ -61,6 +74,14 @@ class TestHFT(object):
         config_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         tbl = swsscommon.Table(config_db, "HIGH_FREQUENCY_TELEMETRY_GROUP")
         key = f"{profile_name}|{group_name}"
+        tbl._del(key)
+
+    def delete_hft_group_empty_group_name(self, dvs, profile_name="test"):
+        """Delete HFT group with empty group_name from CONFIG_DB."""
+        config_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        tbl = swsscommon.Table(config_db, "HIGH_FREQUENCY_TELEMETRY_GROUP")
+        # Key with only profile_name (no group_name)
+        key = profile_name
         tbl._del(key)
 
     def get_asic_db_objects(self, dvs):
@@ -89,6 +110,8 @@ class TestHFT(object):
             asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
         buffer_pool_tbl = swsscommon.Table(
             asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_POOL")
+        queue_tbl = swsscommon.Table(
+            asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_QUEUE")
 
         return {
             "tam_transport": self._get_table_entries(tam_transport_tbl),
@@ -103,7 +126,8 @@ class TestHFT(object):
                 hostif_trap_tbl),
             "host_trap_group": self._get_table_entries(host_trap_group_tbl),
             "ports": self._get_table_entries(ports_tbl),
-            "buffer_pool": self._get_table_entries(buffer_pool_tbl)
+            "buffer_pool": self._get_table_entries(buffer_pool_tbl),
+            "queues": self._get_table_entries(queue_tbl)
         }
 
     def _get_table_entries(self, table):
@@ -165,10 +189,19 @@ class TestHFT(object):
                 "SAI_TAM_TELEMETRY_TYPE_COUNTER_SUBSCRIPTION", \
                 "Expected tam telemetry type to be " \
                 "SAI_TAM_TELEMETRY_TYPE_COUNTER_SUBSCRIPTION"
-            assert tam_tel_type[
-                "SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS"] == \
-                "true", \
-                "Expected tam telemetry to be switch enable port stats"
+            enable_capability = False
+            enable_capability = enable_capability or tam_tel_type.get(
+                "SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS", "false") == \
+                "true"
+            enable_capability = enable_capability or tam_tel_type.get(
+                "SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_MMU_STATS", "false") == \
+                "true"
+            enable_capability = enable_capability or tam_tel_type.get(
+                "SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_OUTPUT_QUEUE_STATS", "false") == \
+                "true"
+            assert enable_capability, \
+                "Expected tam telemetry to have at least one enable " \
+                "capability set to true"
             assert tam_tel_type["SAI_TAM_TEL_TYPE_ATTR_MODE"] == \
                 "SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE", \
                 "Expected tam telemetry to be mode single type"
@@ -228,8 +261,8 @@ class TestHFT(object):
             # Fix: Use only the object ID
             subscription_oid = tam_counter_sub[
                 "SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_OBJECT_ID"]
-            assert (subscription_oid in asic_db["ports"] or subscription_oid in asic_db["buffer_pool"]), \
-                "Expected tam counter subscription to reference port"
+            assert (subscription_oid in asic_db["ports"] or subscription_oid in asic_db["buffer_pool"] or subscription_oid in asic_db["queues"]), \
+                "Expected tam counter subscription to reference port, buffer_pool, or queue"
 
             # Only check if we have counter subscriptions
             if counters_number > 0:
@@ -421,6 +454,49 @@ class TestHFT(object):
         self.delete_hft_group(dvs)
         self.delete_hft_profile(dvs)
 
+    def test_hft_stream_state_sync_to_state_db(self, dvs, testlog):
+        """Verify profile stream_state updates are synchronized to STATE_DB stream_status."""
+        profile_name = "test"
+        port_group_name = "PORT"
+        buffer_pool_group_name = "BUFFER_POOL"
+        port_session_key = f"{profile_name}|{port_group_name}"
+        buffer_pool_session_key = f"{profile_name}|{buffer_pool_group_name}"
+
+        state_db = swsscommon.DBConnector(6, dvs.redis_sock, 0)
+        state_tbl = swsscommon.Table(state_db, "HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE")
+
+        # 1) Insert config with stream_state=disabled
+        self.create_hft_profile(dvs, name=profile_name, status="disabled")
+        self.create_hft_group(dvs, profile_name=profile_name, group_name=port_group_name)
+        self.create_hft_group(
+            dvs,
+            profile_name=profile_name,
+            group_name=buffer_pool_group_name,
+            object_names="egress_lossless_pool",
+            object_counters="CURR_OCCUPANCY_BYTES",
+        )
+
+        # Allow orchagent to create the state entry.
+        time.sleep(3)
+
+        # 2) Update profile stream_state=enabled
+        self.create_hft_profile(dvs, name=profile_name, status="enabled")
+        time.sleep(3)
+
+        # 3) Verify both state DB entries have stream_status=enabled
+        for session_key in [port_session_key, buffer_pool_session_key]:
+            status, fvs = state_tbl.get(session_key)
+            assert status, f"Expected STATE_DB entry to exist for {session_key}"
+            entry = dict(fvs)
+            assert entry.get("stream_status") == "enabled", (
+                f"Expected stream_status=enabled for {session_key}, got {entry.get('stream_status')} (entry={entry})"
+            )
+
+        # Cleanup
+        self.delete_hft_group(dvs, profile_name=profile_name, group_name=port_group_name)
+        self.delete_hft_group(dvs, profile_name=profile_name, group_name=buffer_pool_group_name)
+        self.delete_hft_profile(dvs, name=profile_name)
+
     def test_hft_empty_fields_with_disabled_status(self, dvs, testlog):
         """Test HFT with empty object_names and object_counters when profile is disabled."""
         # Create HFT profile with disabled status
@@ -469,6 +545,27 @@ class TestHFT(object):
         self.delete_hft_group(dvs)
         self.delete_hft_profile(dvs)
 
+    def test_hft_buffer_queue_group(self, dvs, testlog):
+        """Test HFT with QUEUE (buffer queue) objects."""
+        self.create_hft_profile(dvs)
+        self.create_hft_group(dvs,
+                              group_name="QUEUE",
+                              object_names="Ethernet0|7",
+                              object_counters="PACKETS")
+
+        time.sleep(5)
+
+        asic_db = self.get_asic_db_objects(dvs)
+        self.verify_asic_db_objects(asic_db, groups=[(1, 1)])
+
+        self.delete_hft_group(dvs, group_name="QUEUE")
+        time.sleep(2)
+
+        asic_db = self.get_asic_db_objects(dvs)
+        self.verify_asic_db_objects(asic_db, groups=[])
+
+        self.delete_hft_profile(dvs)
+
     def test_hft_multiple_groups(self, dvs, testlog):
         """Test HFT with multiple groups and objects."""
         # Create HFT profile and groups
@@ -513,6 +610,103 @@ class TestHFT(object):
 
         # Clean up profile
         self.delete_hft_profile(dvs)
+
+    def test_hft_invalid_counters_no_orchagent_restart(self, dvs, testlog):
+        """Test that invalid object_counters don't cause orchagent to restart."""
+        # Get orchagent PID inside the DVS container and record it
+        (exitcode, out) = dvs.runcmd("pgrep -x orchagent")
+        if exitcode != 0 or not out.strip():
+            # orchagent not found; skip
+            return
+
+        original_pid = out.strip().splitlines()[0].strip()
+
+        # Create HFT profile and group with invalid counters
+        self.create_hft_profile(dvs)
+        self.create_hft_group(dvs, object_counters="INVALID_STATS1,INVALID_STATS2")
+
+        # Allow some time for processing; orchagent should not restart
+        time.sleep(5)
+
+        # Re-check orchagent PID inside the container
+        (exitcode, out) = dvs.runcmd("pgrep -x orchagent")
+        assert exitcode == 0 and out.strip(), "orchagent disappeared after applying invalid object_counters"
+
+        new_pid = out.strip().splitlines()[0].strip()
+
+        assert new_pid == original_pid, "orchagent restarted (PID changed) after applying invalid object_counters"
+
+        # Clean up created config
+        self.delete_hft_group(dvs)
+        self.delete_hft_profile(dvs)
+
+    def test_hft_empty_group_name_no_orchagent_restart(self, dvs, testlog):
+        """Test that empty group_name (invalid key format) doesn't cause orchagent to restart."""
+        # Get orchagent PID inside the DVS container and record it
+        (exitcode, out) = dvs.runcmd("pgrep -x orchagent")
+        if exitcode != 0 or not out.strip():
+            # orchagent not found; skip
+            return
+
+        original_pid = out.strip().splitlines()[0].strip()
+
+        # Create HFT profile and group with empty group_name (invalid key format)
+        self.create_hft_profile(dvs)
+        self.create_hft_group_empty_group_name(dvs)
+
+        # Allow some time for processing; orchagent should not restart
+        time.sleep(5)
+
+        # Re-check orchagent PID inside the container
+        (exitcode, out) = dvs.runcmd("pgrep -x orchagent")
+        assert exitcode == 0 and out.strip(), "orchagent disappeared after applying empty group_name"
+
+        new_pid = out.strip().splitlines()[0].strip()
+
+        assert new_pid == original_pid, "orchagent restarted (PID changed) after applying empty group_name"
+
+        # Clean up created config
+        self.delete_hft_group_empty_group_name(dvs)
+        self.delete_hft_profile(dvs)
+
+    def test_hft_empty_default_config_cleanup(self, dvs, testlog):
+        """Test that TAM_TELEMETRY objects are properly cleaned up when deleting 
+        a default HFT profile with empty object_names and object_counters."""  
+        # Create default HFT profile
+        self.create_hft_profile(dvs, name="default", status="enabled")
+        
+        # Create HFT group with empty object_names and object_counters
+        self.create_hft_group(dvs,
+                              profile_name="default",
+                              group_name="PORT",
+                              object_names="",
+                              object_counters="")
+
+        # Wait for processing
+        time.sleep(3)
+
+        # Get ASIC DB objects and verify TAM_TELEMETRY exists
+        asic_db = self.get_asic_db_objects(dvs)
+        assert len(asic_db["tam_telemetry"]) > 0, \
+            "Expected TAM_TELEMETRY object to exist before deletion"
+
+        # Delete profile first
+        self.delete_hft_profile(dvs, name="default")
+        
+        # Sleep for 1 second
+        time.sleep(1)
+        
+        # Delete group
+        self.delete_hft_group(dvs, profile_name="default", group_name="PORT")
+
+        # Wait for cleanup
+        time.sleep(2)
+
+        # Verify TAM_TELEMETRY object is deleted
+        asic_db = self.get_asic_db_objects(dvs)
+        assert len(asic_db["tam_telemetry"]) == 0, \
+            "Expected TAM_TELEMETRY object to be deleted after profile and group deletion"
+
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
