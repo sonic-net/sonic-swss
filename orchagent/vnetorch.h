@@ -316,6 +316,7 @@ const request_description_t vnet_route_description = {
         { "check_directly_connected", REQ_T_BOOL },
         { "rx_monitor_timer",       REQ_T_UINT },
         { "tx_monitor_timer",       REQ_T_UINT },
+        { "metric",                 REQ_T_UINT }
     },
     { }
 };
@@ -385,7 +386,7 @@ private:
 class VNetRouteRequest : public Request
 {
 public:
-    VNetRouteRequest() : Request(vnet_route_description, ':') { }
+    VNetRouteRequest() : Request(vnet_route_description, ':', true) { }
 };
 
 struct VNetNextHopUpdate
