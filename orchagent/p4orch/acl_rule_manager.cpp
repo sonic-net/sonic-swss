@@ -851,6 +851,7 @@ ReturnCode AclRuleManager::setMatchValue(const sai_acl_entry_attr_t attr_name,
         }
         break;
       }
+      case SAI_ACL_ENTRY_ATTR_FIELD_PORT_USER_META:
       case SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE:
       case SAI_ACL_ENTRY_ATTR_FIELD_L4_SRC_PORT:
       case SAI_ACL_ENTRY_ATTR_FIELD_L4_DST_PORT:
@@ -980,6 +981,7 @@ ReturnCode AclRuleManager::setMatchValue(const sai_acl_entry_attr_t attr_name,
         }
         break;
       }
+      case SAI_ACL_ENTRY_ATTR_FIELD_VLAN_USER_META:
       case SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI:
       case SAI_ACL_ENTRY_ATTR_FIELD_ROUTE_DST_USER_META:
       case SAI_ACL_ENTRY_ATTR_FIELD_ACL_USER_META:
