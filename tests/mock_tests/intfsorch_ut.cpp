@@ -140,8 +140,6 @@ namespace intfsorch_test
 
             auto* vnet_orch = new VNetOrch(m_app_db.get(), APP_VNET_TABLE_NAME);
             gDirectory.set(vnet_orch);
-            auto* cfg_vnet_rt_orch = new VNetCfgRouteOrch(m_config_db.get(), m_app_db.get(), cfg_vnet_tables);
-            gDirectory.set(cfg_vnet_rt_orch);
             auto* vnet_rt_orch = new VNetRouteOrch(m_app_db.get(), vnet_tables, vnet_orch);
             gDirectory.set(vnet_rt_orch);
             ASSERT_EQ(gVrfOrch, nullptr);
