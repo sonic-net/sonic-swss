@@ -255,8 +255,6 @@ bool OrchDaemon::init()
     vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME);
 
     gDirectory.set(vnet_orch);
-    VNetCfgRouteOrch *cfg_vnet_rt_orch = new VNetCfgRouteOrch(m_configDb, m_applDb, cfg_vnet_tables);
-    gDirectory.set(cfg_vnet_rt_orch);
     VNetRouteOrch *vnet_rt_orch = new VNetRouteOrch(m_applDb, vnet_tables, vnet_orch);
     gDirectory.set(vnet_rt_orch);
     VRFOrch *vrf_orch = new VRFOrch(m_applDb, APP_VRF_TABLE_NAME, m_stateDb, STATE_VRF_OBJECT_TABLE_NAME);
@@ -567,7 +565,6 @@ bool OrchDaemon::init()
     }
 
     m_orchList.push_back(vxlan_vrf_orch);
-    m_orchList.push_back(cfg_vnet_rt_orch);
     m_orchList.push_back(vnet_orch);
     m_orchList.push_back(vnet_rt_orch);
     m_orchList.push_back(gNatOrch);
