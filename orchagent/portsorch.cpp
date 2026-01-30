@@ -4785,11 +4785,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             p.m_alias.c_str(), pCfg.speed.value
                         );
                     }
-                    else
-                    {
-                        /* Always update Gearbox speed on Gearbox ports */
-                        setGearboxPortsAttr(p, SAI_PORT_ATTR_SPEED, &pCfg.speed.value);
-                    }
                 }
 
                 if (pCfg.adv_speeds.is_set)
@@ -5077,6 +5072,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                         p.m_fec_mode = pCfg.fec.value;
                         p.m_override_fec = pCfg.fec.override_fec;
+                        p.m_fec_cfg = true;
                         m_portList[p.m_alias] = p;
 
                         SWSS_LOG_NOTICE(
