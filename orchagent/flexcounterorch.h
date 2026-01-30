@@ -57,6 +57,7 @@ public:
     FlexCounterOrch(swss::DBConnector *db, std::vector<std::string> &tableNames);
     virtual ~FlexCounterOrch(void);
     bool getPortCountersState() const;
+    bool getPortPhyAttrCounterState() const;
     bool getPortBufferDropCountersState() const;
     bool getQueueCountersState() const;
     bool getQueueWatermarkCountersState() const;
@@ -74,6 +75,7 @@ public:
 private:
     void handleDeviceMetadataTable(Consumer &consumer);
     bool m_port_counter_enabled = false;
+    bool m_port_phy_attr_enabled = false;
     bool m_port_buffer_drop_counter_enabled = false;
     bool m_queue_enabled = false;
     bool m_queue_watermark_enabled = false;
