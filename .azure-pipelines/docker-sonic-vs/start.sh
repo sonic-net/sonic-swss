@@ -183,6 +183,8 @@ supervisorctl start nbrmgrd
 
 supervisorctl start vxlanmgrd
 
+supervisorctl start vnetmgrd
+
 supervisorctl start sflowmgrd
 
 supervisorctl start natmgrd
