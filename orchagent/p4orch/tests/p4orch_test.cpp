@@ -10,6 +10,8 @@
 #include "mock_sai_hostif.h"
 #include "mock_sai_ipmc.h"
 #include "mock_sai_ipmc_group.h"
+#include "mock_sai_l2mc.h"
+#include "mock_sai_l2mc_group.h"
 #include "mock_sai_neighbor.h"
 #include "mock_sai_next_hop.h"
 #include "mock_sai_route.h"
@@ -28,6 +30,8 @@ extern sai_hostif_api_t* sai_hostif_api;
 extern sai_switch_api_t* sai_switch_api;
 extern sai_ipmc_api_t* sai_ipmc_api;
 extern sai_ipmc_group_api_t* sai_ipmc_group_api;
+extern sai_l2mc_api_t* sai_l2mc_api;
+extern sai_l2mc_group_api_t* sai_l2mc_group_api;
 extern sai_bridge_api_t* sai_bridge_api;
 extern sai_router_interface_api_t* sai_router_intfs_api;
 extern sai_neighbor_api_t* sai_neighbor_api;
@@ -117,6 +121,26 @@ class P4OrchTest : public ::testing::Test {
         mock_set_rpf_group_member_attribute;
     sai_rpf_group_api->get_rpf_group_member_attribute =
         mock_get_rpf_group_member_attribute;
+    mock_sai_l2mc = &mock_sai_l2mc_;
+    sai_l2mc_api->create_l2mc_entry = mock_create_l2mc_entry;
+    sai_l2mc_api->remove_l2mc_entry = mock_remove_l2mc_entry;
+    sai_l2mc_api->set_l2mc_entry_attribute = mock_set_l2mc_entry_attribute;
+    sai_l2mc_api->get_l2mc_entry_attribute = mock_get_l2mc_entry_attribute;
+    mock_sai_l2mc_group = &mock_sai_l2mc_group_;
+    sai_l2mc_group_api->create_l2mc_group = mock_create_l2mc_group;
+    sai_l2mc_group_api->remove_l2mc_group = mock_remove_l2mc_group;
+    sai_l2mc_group_api->set_l2mc_group_attribute =
+        mock_set_l2mc_group_attribute;
+    sai_l2mc_group_api->get_l2mc_group_attribute =
+        mock_get_l2mc_group_attribute;
+    sai_l2mc_group_api->create_l2mc_group_member =
+        mock_create_l2mc_group_member;
+    sai_l2mc_group_api->remove_l2mc_group_member =
+        mock_remove_l2mc_group_member;
+    sai_l2mc_group_api->set_l2mc_group_member_attribute =
+        mock_set_l2mc_group_member_attribute;
+    sai_l2mc_group_api->get_l2mc_group_member_attribute =
+        mock_get_l2mc_group_member_attribute;
     mock_sai_bridge = &mock_sai_bridge_;
     sai_bridge_api->create_bridge = mock_create_bridge;
     sai_bridge_api->remove_bridge = mock_remove_bridge;
@@ -160,6 +184,8 @@ class P4OrchTest : public ::testing::Test {
   NiceMock<MockSaiIpmc> mock_sai_ipmc_;
   NiceMock<MockSaiRpfGroup> mock_sai_rpf_group_;
   NiceMock<MockSaiBridge> mock_sai_bridge_;
+  NiceMock<MockSaiL2mc> mock_sai_l2mc_;
+  NiceMock<MockSaiL2mcGroup> mock_sai_l2mc_group_;
   CoppOrch* copp_orch_;
 };
 
