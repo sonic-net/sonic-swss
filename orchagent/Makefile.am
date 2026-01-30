@@ -106,6 +106,7 @@ orchagent_SOURCES = \
             watermarkorch.cpp \
             notificationconsumerstatsorch.cpp \
             policerorch.cpp \
+            namelabelmapper.cpp \
             sfloworch.cpp \
             chassisorch.cpp \
             debugcounterorch.cpp \
