@@ -156,7 +156,14 @@ void Request::parseAttrs(const KeyOpFieldsValuesTuple& request)
         const auto item = request_description_.attr_item_types.find(fvField(*i));
         if (item == not_found)
         {
-            throw std::invalid_argument(std::string("Unknown attribute name: ") + fvField(*i));
+            if (!relaxed_attr_parsing_)
+            {
+                throw std::invalid_argument(std::string("Unknown attribute name: ") + fvField(*i));
+            }
+            else
+            {
+                continue;
+            }
         }
         attr_names_.insert(fvField(*i));
         switch(item->second)

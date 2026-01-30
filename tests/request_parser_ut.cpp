@@ -30,6 +30,12 @@ public:
     TestRequest1() : Request(request_description1, '|') { }
 };
 
+class TestRequest1_Relaxed : public Request
+{
+public:
+    TestRequest1_Relaxed() : Request(request_description1, '|', true) { }
+};
+
 const request_description_t request_description2 = {
     { REQ_T_STRING, REQ_T_MAC_ADDRESS, REQ_T_STRING },
     {
@@ -99,6 +105,37 @@ TEST(request_parser, simpleKey)
         EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_LOG);
         EXPECT_TRUE(request.getAttrSet("nlist") == (std::set<std::string>{"name1"}));
 
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Got unexpected exception";
+    }
+}
+
+TEST(request_parser, relaxedAttrParsing)
+{
+    KeyOpFieldsValuesTuple t {"key1", "SET",
+                                 {
+                                     { "v4", "true" },
+                                     { "v6", "true" },
+                                     { "src_mac", "02:03:04:05:06:07" },
+                                     { "ttl_action", "copy" },
+                                     { "ip_opt_action", "drop" },
+                                     { "l3_mc_action", "log" },
+                                     { "nlist", "name1" },
+                                     { "random", "whatever" }
+                                 }
+                             };
+
+    try
+    {
+        TestRequest1_Relaxed request;
+
+        EXPECT_NO_THROW(request.parse(t));
     }
     catch (const std::exception& e)
     {
