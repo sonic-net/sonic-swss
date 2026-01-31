@@ -1142,6 +1142,14 @@ bool NeighOrch::addPrefixRouteForNeighbor(const IpAddress& ip_address, const Mac
             SWSS_LOG_INFO("Successfully added mux neigh route for %s with next_hop_id as 0x%" PRIx64 ".",
                     ip_address.to_string().c_str(), next_hop_id);
         }
+        if (ipNeighPfx.isV4())
+        {
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+        }
+        else
+        {
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+        }
     }
 
     return true;
@@ -1477,6 +1485,14 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
             }
             else {
                 SWSS_LOG_INFO("Successfully Deleted mux neigh route for %s .", ip_address.to_string().c_str());
+                if (ipNeighPfx.isV4())
+                {
+                    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+                }
+                else
+                {
+                    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+                }
             }
         }
 

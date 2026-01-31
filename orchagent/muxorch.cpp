@@ -1327,6 +1327,20 @@ bool MuxPrefixBasedNbrHandler::enable(bool update_rt)
         /* Increment ref count for new NHs */
         gNeighOrch->increaseNextHopRefCount(nh_key, num_routes);
 
+        uint32_t nh_added;
+        // We do not need to remove tunnel nh as it was not added in the ECMP group.
+        // Just add the active nbr nh.
+
+        if (!gRouteOrch->validnexthopinNextHopGroup(nh_key, nh_added))
+        {
+            SWSS_LOG_ERROR("Adding NH failed for %s", nh_key.ip_address.to_string().c_str());
+            return false;
+        }
+        SWSS_LOG_INFO("Adding NH for %s, nh_added: %u", nh_key.ip_address.to_string().c_str(), nh_added);
+
+        /* Increment ref count for ECMP NH members */
+        gNeighOrch->increaseNextHopRefCount(nh_key, nh_added);
+
         if (update_rt)
         {
             updateTunnelRoute(nh_key, false);
@@ -1379,6 +1393,18 @@ bool MuxPrefixBasedNbrHandler::disable(sai_object_id_t tnh)
 
         /* Decrement ref count for old NHs */
         gNeighOrch->decreaseNextHopRefCount(nh_key, num_routes);
+
+        /* Invalidate current nexthop group by removing the neighbor NH */
+        uint32_t nh_removed;
+        if (!gRouteOrch->invalidnexthopinNextHopGroup(nh_key, nh_removed))
+        {
+            SWSS_LOG_ERROR("Removing existing NH failed for %s", nh_key.ip_address.to_string().c_str());
+            return false;
+        }
+        SWSS_LOG_INFO("Removing existing NH for %s, nh_removed: %u", nh_key.ip_address.to_string().c_str(), nh_removed);
+
+        /* Decrement ref count for ECMP NH members */
+        gNeighOrch->decreaseNextHopRefCount(nh_key, nh_removed);
 
         updateTunnelRoute(nh_key, true);
 
@@ -2111,6 +2137,25 @@ bool MuxOrch::isMuxNexthops(const NextHopGroupKey& nextHops)
         }
     }
     SWSS_LOG_INFO("No mux nexthop found");
+    return false;
+}
+
+bool MuxOrch::hasPrefixBasedMuxNexthop(const std::set<NextHopKey>& nextHops)
+{
+    for (const auto& nexthop : nextHops)
+    {
+        auto it = mux_nexthop_tb_.find(nexthop);
+        if (it == mux_nexthop_tb_.end())
+        {
+            continue;
+        }
+
+        if (isMuxCablePrefixBased(it->second))
+        {
+            return true;
+        }
+    }
+
     return false;
 }
 

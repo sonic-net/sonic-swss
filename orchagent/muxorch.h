@@ -281,6 +281,7 @@ public:
     void removeNexthop(NextHopKey);
     bool containsNextHop(const NextHopKey&);
     bool isMuxNexthops(const NextHopGroupKey&);
+    bool hasPrefixBasedMuxNexthop(const std::set<NextHopKey>&);
     string getNexthopMuxName(NextHopKey);
     sai_object_id_t getNextHopId(const NextHopKey&);
 

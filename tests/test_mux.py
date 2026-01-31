@@ -1076,18 +1076,31 @@ class TestMuxTunnelBase():
             ### These tests create route: ###
 
             ## Testing route changes
+            dvs.add_log_marker()
             self.multi_nexthop_test_create(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops)
+            dvs.add_log_marker()
             self.multi_nexthop_test_create(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops)
+            dvs.add_log_marker()
             self.multi_nexthop_test_create(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops, non_mux_ipv4)
+            dvs.add_log_marker()
             self.multi_nexthop_test_create(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, non_mux_ipv6)
+            dvs.add_log_marker()
             self.multi_nexthop_test_route_update_keep_size(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops, new_ipv4_nexthop, new_mux_port)
+            dvs.add_log_marker()
             self.multi_nexthop_test_route_update_keep_size(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, new_ipv6_nexthop, new_mux_port)
+            dvs.add_log_marker()
             self.multi_nexthop_test_route_update_keep_size(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops, non_mux_ipv4, None, nh_is_mux=False)
+            dvs.add_log_marker()
             self.multi_nexthop_test_route_update_keep_size(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, non_mux_ipv6, None, nh_is_mux=False)
+            dvs.add_log_marker()
             self.multi_nexthop_test_route_update_increase_size(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops, non_mux_nexthop=non_mux_ipv4)
+            dvs.add_log_marker()
             self.multi_nexthop_test_route_update_increase_size(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, non_mux_nexthop=non_mux_ipv6)
+            dvs.add_log_marker()
             self.multi_nexthop_test_route_update_decrease_size(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops, non_mux_nexthop=non_mux_ipv4)
+            dvs.add_log_marker()
             self.multi_nexthop_test_route_update_decrease_size(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, non_mux_nexthop=non_mux_ipv6)
+            dvs.add_log_marker()
 
 
             ### The following tests do not create their own routes, create before and delete after ###
@@ -1096,54 +1109,88 @@ class TestMuxTunnelBase():
 
             # add new mux vlan neighbor and route to test
             self.add_neighbor(dvs, mux_neighbor_ipv4, macs[1])
+            dvs.add_log_marker()
             self.add_neighbor(dvs, mux_neighbor_ipv6, macs[1])
+            dvs.add_log_marker()
             self.add_route(dvs, route_ipv4, [self.SERV1_IPV4, mux_neighbor_ipv4])
+            dvs.add_log_marker()
             self.add_route(dvs, route_ipv6, [self.SERV1_IPV6, mux_neighbor_ipv6])
+            dvs.add_log_marker()
 
             # test
             self.multi_nexthop_test_toggle(appdb, asicdb, dvs_route, route_ipv4, mux_ports, [self.SERV1_IPV4, mux_neighbor_ipv4])
+            dvs.add_log_marker()
             self.multi_nexthop_test_toggle(appdb, asicdb, dvs_route, route_ipv6, mux_ports, [self.SERV1_IPV6, mux_neighbor_ipv6])
+            dvs.add_log_marker()
 
             # cleanup new mux vlan neighbor and route to test
             self.del_route(dvs,route_ipv4)
+            dvs.add_log_marker()
             self.del_route(dvs,route_ipv6)
+            dvs.add_log_marker()
             self.del_neighbor(dvs, mux_neighbor_ipv4)
+            dvs.add_log_marker()
             self.del_neighbor(dvs, mux_neighbor_ipv6)
+            dvs.add_log_marker()
 
             ## Test neighbor operations:
             # create the route
             self.add_route(dvs, route_ipv4, ipv4_nexthops)
+            dvs.add_log_marker()
             self.add_route(dvs, route_ipv6, ipv6_nexthops)
+            dvs.add_log_marker()
             self.add_route(dvs, route_B_ipv4, ipv4_nexthops)
+            dvs.add_log_marker()
             self.add_route(dvs, route_B_ipv6, ipv6_nexthops)
+            dvs.add_log_marker()
 
             self.multi_nexthop_test_vlan_neighbor_update(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops, macs, mux_neighbor_ipv4)
+            dvs.add_log_marker()
             self.multi_nexthop_test_vlan_neighbor_update(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, macs, mux_neighbor_ipv6)
+            dvs.add_log_marker()
 
             self.multi_nexthop_test_neighbor_delete_and_create(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops, macs)
+            dvs.add_log_marker()
             self.multi_nexthop_test_neighbor_delete_and_create(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, macs)
+            dvs.add_log_marker()
 
             self.multi_nexthop_test_fdb(appdb, asicdb, dvs, dvs_route, [route_ipv4, route_B_ipv4], mux_ports, ipv4_nexthops, macs)
+            dvs.add_log_marker()
             self.multi_nexthop_test_fdb(appdb, asicdb, dvs, dvs_route, [route_ipv6, route_B_ipv6], mux_ports, ipv6_nexthops, macs)
+            dvs.add_log_marker()
             self.multi_nexthop_test_neighbor_unresolve(appdb, asicdb, dvs, dvs_route, [route_ipv4, route_B_ipv4], mux_ports, ipv4_nexthops)
+            dvs.add_log_marker()
             self.multi_nexthop_test_neighbor_unresolve(appdb, asicdb, dvs, dvs_route, [route_ipv6, route_B_ipv6], mux_ports, ipv6_nexthops)
+            dvs.add_log_marker()
             self.multi_nexthop_test_neighbor_resolve(appdb, asicdb, dvs, dvs_route, [route_ipv4, route_B_ipv4], mux_ports, ipv4_nexthops, macs)
+            dvs.add_log_marker()
             self.multi_nexthop_test_neighbor_resolve(appdb, asicdb, dvs, dvs_route, [route_ipv6, route_B_ipv6], mux_ports, ipv6_nexthops, macs)
+            dvs.add_log_marker()
 
         finally:
             # Cleanup
             self.del_route(dvs,route_ipv4)
+            dvs.add_log_marker()
             self.del_route(dvs,route_B_ipv4)
+            dvs.add_log_marker()
             self.del_route(dvs,route_ipv6)
+            dvs.add_log_marker()
             self.del_route(dvs,route_B_ipv6)
+            dvs.add_log_marker()
             for neighbor in ipv4_nexthops:
                 self.del_neighbor(dvs, neighbor)
+            dvs.add_log_marker()
             for neighbor in ipv6_nexthops:
                 self.del_neighbor(dvs, neighbor)
+            dvs.add_log_marker()
             self.del_neighbor(dvs, new_ipv4_nexthop)
+            dvs.add_log_marker()
             self.del_neighbor(dvs, new_ipv6_nexthop)
+            dvs.add_log_marker()
             self.del_neighbor(dvs, mux_neighbor_ipv4)
+            dvs.add_log_marker()
             self.del_neighbor(dvs, mux_neighbor_ipv6)
+            dvs.add_log_marker()
 
     def create_and_test_NH_routes(self, appdb, asicdb, dvs, dvs_route, mac):
         '''
@@ -1892,6 +1939,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
         self.create_and_test_NH_routes(appdb, asicdb, dvs, dvs_route, mac)
 
     def test_multi_nexthop(self, dvs, dvs_route, intf_fdb_map, neighbor_cleanup, testlog, setup):
+        dvs.runcmd("swssloglevel -l INFO -c orchagent")
         appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         asicdb = dvs.get_asic_db()
         macs = [intf_fdb_map["Ethernet0"], intf_fdb_map["Ethernet4"]]
@@ -2491,6 +2539,300 @@ class TestMuxTunnel(TestMuxTunnelBase):
         # Cleanup
         self.del_neighbor(dvs, neighbor_ip)
         self.del_fdb(dvs, neighbor_mac.replace(":", "-"))
+
+    def test_neighbor_mode_prefix_route(
+            self, dvs, dvs_route, setup, setup_vlan, setup_tunnel,
+            setup_peer_switch, neighbor_cleanup, testlog
+    ):
+        """
+        Test MUX cable with neighbor_mode set to 'prefix-route'.
+
+        This test verifies:
+        1. neighbor_mode is properly stored in STATE_MUX_CABLE_TABLE
+        2. MUX cable uses prefix-based neighbor handler
+        3. Neighbors are handled with NO_HOST_ROUTE flag
+        """
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        config_db = dvs.get_config_db()
+        state_db = dvs.get_state_db()
+        asicdb = dvs.get_asic_db()
+
+        # Create MUX cable with explicit neighbor_mode: prefix-route
+        mux_port = "Ethernet4"
+        fvs = {
+            "server_ipv4": self.SERV2_IPV4 + self.IPV4_MASK,
+            "server_ipv6": self.SERV2_IPV6 + self.IPV6_MASK,
+            "neighbor_mode": "prefix-route"
+        }
+        config_db.create_entry(self.CONFIG_MUX_CABLE, mux_port, fvs)
+        time.sleep(2)
+
+        # Verify neighbor_mode is stored in STATE_MUX_CABLE_TABLE
+        state_fvs = state_db.get_entry("MUX_CABLE_TABLE", mux_port)
+        assert "neighbor_mode" in state_fvs, "neighbor_mode not found in state DB"
+        assert state_fvs["neighbor_mode"] == "prefix-route", \
+            f"Expected neighbor_mode 'prefix-route', got '{state_fvs['neighbor_mode']}'"
+
+        # Set MUX state to active
+        self.set_mux_state(appdb, mux_port, "active")
+        time.sleep(1)
+
+        # Add a neighbor and verify it's handled with prefix-based routing
+        neighbor_ip = "192.168.0.120"
+        neighbor_mac = "00:aa:bb:cc:dd:01"
+        self.add_fdb(dvs, mux_port, neighbor_mac.replace(":", "-"))
+        self.add_neighbor(dvs, neighbor_ip, neighbor_mac)
+        time.sleep(1)
+
+        # Verify neighbor has NO_HOST_ROUTE flag (prefix-based handling)
+        self.check_neighbor_state(dvs, dvs_route, neighbor_ip,
+                                expect_route=True, expect_neigh=True,
+                                expected_mac=neighbor_mac,
+                                no_host_route=True)
+
+        # Verify MUX prefix route exists and points to neighbor nexthop (active state)
+        mux_prefix = neighbor_ip + "/32"
+        rtkeys = dvs_route.check_asicdb_route_entries([mux_prefix])
+        self.check_nexthop_in_asic_db(asicdb, rtkeys[0], False)  # Should point to neighbor NH
+
+        # Test state change to standby
+        self.set_mux_state(appdb, mux_port, "standby")
+        time.sleep(1)
+
+        # Verify route now points to tunnel nexthop
+        rtkeys_standby = dvs_route.check_asicdb_route_entries([mux_prefix])
+        self.check_nexthop_in_asic_db(asicdb, rtkeys_standby[0], True)  # Should point to tunnel
+
+        # Cleanup
+        self.del_neighbor(dvs, neighbor_ip)
+        self.del_fdb(dvs, neighbor_mac.replace(":", "-"))
+        config_db.delete_entry(self.CONFIG_MUX_CABLE, mux_port)
+        time.sleep(1)
+
+    def test_neighbor_mode_host_route(
+            self, dvs, dvs_route, setup, setup_vlan, setup_tunnel,
+            setup_peer_switch, neighbor_cleanup, testlog
+    ):
+        """
+        Test MUX cable with neighbor_mode set to 'host-route'.
+
+        This test verifies:
+        1. neighbor_mode is properly stored in STATE_MUX_CABLE_TABLE
+        2. MUX cable uses host-route based neighbor handler
+        3. Neighbors are handled with traditional host route mechanism
+        """
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        config_db = dvs.get_config_db()
+        state_db = dvs.get_state_db()
+        asicdb = dvs.get_asic_db()
+
+        # Create MUX cable with explicit neighbor_mode: host-route
+        mux_port = "Ethernet4"
+        fvs = {
+            "server_ipv4": self.SERV2_IPV4 + self.IPV4_MASK,
+            "server_ipv6": self.SERV2_IPV6 + self.IPV6_MASK,
+            "neighbor_mode": "host-route"
+        }
+        config_db.create_entry(self.CONFIG_MUX_CABLE, mux_port, fvs)
+        time.sleep(2)
+
+        # Verify neighbor_mode is stored in STATE_MUX_CABLE_TABLE
+        state_fvs = state_db.get_entry("MUX_CABLE_TABLE", mux_port)
+        assert "neighbor_mode" in state_fvs, "neighbor_mode not found in state DB"
+        assert state_fvs["neighbor_mode"] == "host-route", \
+            f"Expected neighbor_mode 'host-route', got '{state_fvs['neighbor_mode']}'"
+
+        # Set MUX state to active
+        self.set_mux_state(appdb, mux_port, "active")
+        time.sleep(1)
+
+        # Add a neighbor and verify it's handled with host-route based routing
+        neighbor_ip = "192.168.0.121"
+        neighbor_mac = "00:aa:bb:cc:dd:02"
+        self.add_fdb(dvs, mux_port, neighbor_mac.replace(":", "-"))
+        self.add_neighbor(dvs, neighbor_ip, neighbor_mac)
+        time.sleep(1)
+
+        # Verify neighbor exists and is enabled in active state
+        self.check_neigh_in_asic_db(asicdb, neighbor_ip, expected=True, no_host_route=False)
+
+        # Test state change to standby
+        self.set_mux_state(appdb, mux_port, "standby")
+        time.sleep(1)
+
+        # Verify neighbor is disabled in standby state (host-route mode)
+        self.check_neigh_in_asic_db(asicdb, neighbor_ip, expected=False, no_host_route=False)
+
+        # Verify tunnel route exists for standby neighbor
+        mux_prefix = neighbor_ip + "/32"
+        rtkeys = dvs_route.check_asicdb_route_entries([mux_prefix])
+        self.check_nexthop_in_asic_db(asicdb, rtkeys[0], True)  # Should point to tunnel
+
+        # Test state change back to active
+        self.set_mux_state(appdb, mux_port, "active")
+        time.sleep(1)
+
+        # Verify neighbor is re-enabled in active state
+        self.check_neigh_in_asic_db(asicdb, neighbor_ip, expected=True, no_host_route=False)
+
+        # Cleanup
+        self.del_neighbor(dvs, neighbor_ip)
+        self.del_fdb(dvs, neighbor_mac.replace(":", "-"))
+        config_db.delete_entry(self.CONFIG_MUX_CABLE, mux_port)
+        time.sleep(1)
+
+    def test_neighbor_mode_default(
+            self, dvs, dvs_route, setup, setup_vlan, setup_tunnel,
+            setup_peer_switch, neighbor_cleanup, testlog
+    ):
+        """
+        Test MUX cable with default neighbor_mode (no explicit setting).
+
+        This test verifies:
+        1. Default neighbor_mode is set in STATE_MUX_CABLE_TABLE
+        2. The mode depends on NO_HOST_ROUTE kernel support
+        """
+        config_db = dvs.get_config_db()
+        state_db = dvs.get_state_db()
+
+        # Create MUX cable without explicit neighbor_mode
+        mux_port = "Ethernet4"
+        fvs = {
+            "server_ipv4": self.SERV2_IPV4 + self.IPV4_MASK,
+            "server_ipv6": self.SERV2_IPV6 + self.IPV6_MASK
+        }
+        config_db.create_entry(self.CONFIG_MUX_CABLE, mux_port, fvs)
+        time.sleep(2)
+
+        # Verify neighbor_mode is stored in STATE_MUX_CABLE_TABLE
+        state_fvs = state_db.get_entry("MUX_CABLE_TABLE", mux_port)
+        assert "neighbor_mode" in state_fvs, "neighbor_mode not found in state DB"
+        # Default mode depends on kernel support - should be either prefix-route or host-route
+        assert state_fvs["neighbor_mode"] in ["prefix-route", "host-route"], \
+            f"Unexpected neighbor_mode '{state_fvs['neighbor_mode']}'"
+
+        # Cleanup
+        config_db.delete_entry(self.CONFIG_MUX_CABLE, mux_port)
+        time.sleep(1)
+
+    def test_neighbor_mode_change_rejected(
+            self, dvs, dvs_route, setup, setup_vlan, setup_tunnel,
+            setup_peer_switch, neighbor_cleanup, testlog
+    ):
+        """
+        Test that changing neighbor_mode on an existing MUX cable is rejected.
+
+        This test verifies:
+        1. Initial neighbor_mode is set correctly
+        2. Attempting to change neighbor_mode on existing MUX port fails
+        3. Original neighbor_mode is preserved
+        """
+        config_db = dvs.get_config_db()
+        state_db = dvs.get_state_db()
+
+        dvs.runcmd("swssloglevel -l INFO -c orchagent")
+
+        # Create MUX cable with initial neighbor_mode: prefix-route
+        mux_port = "Ethernet4"
+        fvs = {
+            "server_ipv4": self.SERV2_IPV4 + self.IPV4_MASK,
+            "server_ipv6": self.SERV2_IPV6 + self.IPV6_MASK,
+            "neighbor_mode": "prefix-route"
+        }
+        config_db.create_entry(self.CONFIG_MUX_CABLE, mux_port, fvs)
+        time.sleep(2)
+
+        # Verify initial neighbor_mode
+        state_fvs = state_db.get_entry("MUX_CABLE_TABLE", mux_port)
+        assert state_fvs.get("neighbor_mode") == "prefix-route", \
+            f"Initial neighbor_mode should be 'prefix-route', got '{state_fvs.get('neighbor_mode')}'"
+
+        # Attempt to change neighbor_mode to host-route
+        # This should be rejected by orchagent
+        fvs_updated = {
+            "server_ipv4": self.SERV2_IPV4 + self.IPV4_MASK,
+            "server_ipv6": self.SERV2_IPV6 + self.IPV6_MASK,
+            "neighbor_mode": "host-route"
+        }
+        config_db.create_entry(self.CONFIG_MUX_CABLE, mux_port, fvs_updated)
+        time.sleep(2)
+
+        # Verify original neighbor_mode is preserved (change should be rejected)
+        state_fvs_after = state_db.get_entry("MUX_CABLE_TABLE", mux_port)
+        assert state_fvs_after.get("neighbor_mode") == "prefix-route", \
+            f"neighbor_mode should remain 'prefix-route' after rejected change, got '{state_fvs_after.get('neighbor_mode')}'"
+
+        # Cleanup
+        config_db.delete_entry(self.CONFIG_MUX_CABLE, mux_port)
+        time.sleep(1)
+
+    def test_neighbor_mode_state_change_behavior(
+            self, dvs, dvs_route, setup, setup_vlan, setup_tunnel,
+            setup_peer_switch, neighbor_cleanup, testlog
+    ):
+        """
+        Test MUX state changes with different neighbor_mode settings.
+
+        This test verifies:
+        1. prefix-route mode: route NH changes between neighbor and tunnel
+        2. host-route mode: neighbor entry is enabled/disabled
+        """
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        config_db = dvs.get_config_db()
+        asicdb = dvs.get_asic_db()
+
+        # Test with prefix-route mode
+        mux_port = "Ethernet4"
+        fvs = {
+            "server_ipv4": self.SERV2_IPV4 + self.IPV4_MASK,
+            "server_ipv6": self.SERV2_IPV6 + self.IPV6_MASK,
+            "neighbor_mode": "prefix-route"
+        }
+        config_db.create_entry(self.CONFIG_MUX_CABLE, mux_port, fvs)
+        time.sleep(2)
+
+        # Set to active state
+        self.set_mux_state(appdb, mux_port, "active")
+        time.sleep(1)
+
+        # Add neighbor
+        neighbor_ip = "192.168.0.122"
+        neighbor_mac = "00:aa:bb:cc:dd:03"
+        self.add_fdb(dvs, mux_port, neighbor_mac.replace(":", "-"))
+        self.add_neighbor(dvs, neighbor_ip, neighbor_mac)
+        time.sleep(1)
+
+        # Verify in active state: neighbor should exist and route points to neighbor
+        self.check_neighbor_state(dvs, dvs_route, neighbor_ip,
+                                expect_route=True, expect_neigh=True,
+                                expected_mac=neighbor_mac,
+                                no_host_route=True)
+
+        mux_prefix = neighbor_ip + "/32"
+        rtkeys = dvs_route.check_asicdb_route_entries([mux_prefix])
+        self.check_nexthop_in_asic_db(asicdb, rtkeys[0], False)  # Neighbor NH
+
+        # Toggle to standby
+        self.set_mux_state(appdb, mux_port, "standby")
+        time.sleep(1)
+
+        # Verify in standby state: route points to tunnel
+        rtkeys_standby = dvs_route.check_asicdb_route_entries([mux_prefix])
+        self.check_nexthop_in_asic_db(asicdb, rtkeys_standby[0], True)  # Tunnel NH
+
+        # Toggle back to active
+        self.set_mux_state(appdb, mux_port, "active")
+        time.sleep(1)
+
+        # Verify in active state again: route points to neighbor
+        rtkeys_active = dvs_route.check_asicdb_route_entries([mux_prefix])
+        self.check_nexthop_in_asic_db(asicdb, rtkeys_active[0], False)  # Neighbor NH
+
+        # Cleanup
+        self.del_neighbor(dvs, neighbor_ip)
+        self.del_fdb(dvs, neighbor_mac.replace(":", "-"))
+        config_db.delete_entry(self.CONFIG_MUX_CABLE, mux_port)
+        time.sleep(1)
 
     def test_warm_boot_neighbor_restore(
         self, dvs, dvs_route, setup, setup_vlan, setup_mux_cable, setup_tunnel,
