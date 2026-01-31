@@ -14,6 +14,7 @@
 #include "dbconnector.h"
 #include "logger.h"
 #include "p4orch/p4orch_util.h"
+#include "portsorch.h"
 #include "sai_serialize.h"
 #include "swssnet.h"
 #include "table.h"
@@ -23,11 +24,10 @@ using ::p4orch::kTableKeyDelimiter;
 extern sai_object_id_t gSwitchId;
 extern sai_object_id_t gVirtualRouterId;
 
-extern sai_ipmc_api_t* sai_ipmc_api;
-extern sai_route_api_t *sai_route_api;
-extern sai_rpf_group_api_t* sai_rpf_group_api;
+extern sai_route_api_t* sai_route_api;
 
 extern CrmOrch *gCrmOrch;
+extern PortsOrch* gPortsOrch;
 
 extern size_t gMaxBulkSize;
 
@@ -36,9 +36,7 @@ namespace
 
 ReturnCode checkNextHopAndWcmpGroupAndRouteMetadataExistence(
     bool expected_next_hop_existence, bool expected_wcmp_group_existence,
-    bool expected_route_metadata_existence,
-    bool expected_multicast_group_id_existence,
-    const P4RouteEntry& route_entry) {
+    bool expected_route_metadata_existence, const P4RouteEntry& route_entry) {
   if (route_entry.nexthop_id.empty() && expected_next_hop_existence) {
     return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
            << "Empty nexthop_id for route with " << route_entry.action
@@ -69,18 +67,6 @@ ReturnCode checkNextHopAndWcmpGroupAndRouteMetadataExistence(
     return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
            << "Non-empty route_metadata for route with " << route_entry.action
            << " action";
-  }
-  if (route_entry.multicast_group_id.empty() &&
-      expected_multicast_group_id_existence) {
-    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-           << "Empty multicast_group_id for route with " << route_entry.action
-           << " action";
-  }
-  if (!route_entry.multicast_group_id.empty() &&
-      !expected_multicast_group_id_existence) {
-    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-           << "Non-empty multicast_group_id for route with "
-           << route_entry.action << " action";
   }
   return ReturnCode();
 }
@@ -329,50 +315,6 @@ sai_route_entry_t RouteManager::prepareSaiEntry(
   return sai_entry;
 }
 
-sai_ipmc_entry_t RouteManager::prepareSaiIpmcEntry(
-    const P4RouteEntry& route_entry) const {
-  sai_ipmc_entry_t sai_entry;
-  sai_entry.switch_id = gSwitchId;
-  sai_entry.vr_id = m_vrfOrch->getVRFid(route_entry.vrf_id);
-  sai_entry.type = SAI_IPMC_ENTRY_TYPE_XG;
-  // TODO: b/281706130.  We want a prefix, not IP address.
-  sai_ip_prefix_t sai_prefix;
-  copy(sai_prefix, route_entry.route_prefix);
-  if (sai_prefix.addr_family == SAI_IP_ADDR_FAMILY_IPV4) {
-    sai_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
-    sai_entry.destination.addr.ip4 = sai_prefix.addr.ip4;
-    sai_entry.source.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
-    sai_entry.source.addr.ip4 = 0;
-  } else {
-    sai_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
-    memcpy(&sai_entry.destination.addr.ip6, &sai_prefix.addr.ip6,
-           sizeof(sai_ip6_t));
-    sai_entry.source.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
-    memset(&sai_entry.source.addr.ip6, 0, sizeof(sai_ip6_t));
-  }
-  // copy(sai_entry.destination, route_entry.route_prefix);
-  // sai_entry.source;  // unused, but needs to be set
-  return sai_entry;
-}
-
-ReturnCode RouteManager::createDefaultRpfGroup() {
-  SWSS_LOG_ENTER();
-  empty_rpf_group_oid_ = SAI_NULL_OBJECT_ID;
-
-  std::vector<sai_attribute_t> attrs;
-  // No attributes are needed for RPF group creation.
-
-  sai_status_t status = sai_rpf_group_api->create_rpf_group(
-      &empty_rpf_group_oid_, gSwitchId, (uint32_t)attrs.size(), attrs.data());
-
-  if (status != SAI_STATUS_SUCCESS) {
-    SWSS_LOG_ERROR(
-        "Unable to create empty RPF group prior to creating IPMC entries");
-    return ReturnCode(status);
-  }
-  return ReturnCode();
-}
-
 bool RouteManager::mergeRouteEntry(const P4RouteEntry &dest, const P4RouteEntry &src, P4RouteEntry *ret)
 {
     SWSS_LOG_ENTER();
@@ -456,14 +398,10 @@ ReturnCodeOr<P4RouteEntry> RouteManager::deserializeRouteEntry(const std::string
         else if (field == prependParamField(p4orch::kRouteMetadata))
         {
             route_entry.route_metadata = value;
-        }
-    else if (field == prependParamField(p4orch::kMulticastGroupId)) {
-      route_entry.multicast_group_id = value;
-}
-        else if (field != p4orch::kControllerMetadata)
-        {
-            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                   << "Unexpected field " << QuotedVar(field) << " in " << table_name;
+        } else if (field != p4orch::kControllerMetadata) {
+          return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                 << "Unexpected field " << QuotedVar(field) << " in "
+                 << table_name;
         }
     }
 
@@ -506,16 +444,7 @@ ReturnCode RouteManager::validateRouteEntry(const P4RouteEntry &route_entry, con
     {
         return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND) << "No VRF found with name " << QuotedVar(route_entry.vrf_id);
     }
-    if (!route_entry.multicast_group_id.empty()) {
-      if (!m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_IPMC_GROUP,
-                                    route_entry.multicast_group_id)) {
-        return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-               << "No multicast group ID found for "
-               << QuotedVar(route_entry.multicast_group_id);
-      }
-      // There is no OID to check, since there is no OID associated with IPMC
-      // entries.
-    }
+
     if (operation == SET_COMMAND)
     {
         return validateSetRouteEntry(route_entry);
@@ -530,14 +459,8 @@ ReturnCode RouteManager::validateRouteEntry(const P4RouteEntry &route_entry, con
 ReturnCode RouteManager::validateSetRouteEntry(const P4RouteEntry &route_entry)
 {
     auto *route_entry_ptr = getRouteEntry(route_entry.route_entry_key);
-    bool exist_in_mapper = false;
-    if (route_entry.multicast_group_id.empty()) {
-      exist_in_mapper = m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_ROUTE_ENTRY,
-                                                 route_entry.route_entry_key);
-    } else {
-      exist_in_mapper = m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_IPMC_ENTRY,
-                                                 route_entry.route_entry_key);
-    }
+    bool exist_in_mapper = m_p4OidMapper->existsOID(
+        SAI_OBJECT_TYPE_ROUTE_ENTRY, route_entry.route_entry_key);
     if (route_entry_ptr == nullptr && exist_in_mapper)
     {
         return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND) << "Route entry does not exist in manager but exists in the "
@@ -563,54 +486,42 @@ ReturnCode RouteManager::validateSetRouteEntry(const P4RouteEntry &route_entry)
       RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
           /*expected_next_hop_existence=*/true,
           /*expected_wcmp_group_existence=*/false,
-          /*expected_route_metadata_existence=*/false,
-          /*expected_multicast_group_id_existence=*/false, route_entry));
+          /*expected_route_metadata_existence=*/false, route_entry));
     }
     else if (action == p4orch::kSetWcmpGroupId)
     {
       RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
           /*expected_next_hop_existence=*/false,
           /*expected_wcmp_group_existence=*/true,
-          /*expected_route_metadata_existence=*/false,
-          /*expected_multicast_group_id_existence=*/false, route_entry));
+          /*expected_route_metadata_existence=*/false, route_entry));
     }
     else if (action == p4orch::kSetNexthopIdAndMetadata)
     {
       RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
           /*expected_next_hop_existence=*/true,
           /*expected_wcmp_group_existence=*/false,
-          /*expected_route_metadata_existence=*/true,
-          /*expected_multicast_group_id_existence=*/false, route_entry));
+          /*expected_route_metadata_existence=*/true, route_entry));
     }
     else if (action == p4orch::kSetWcmpGroupIdAndMetadata)
     {
       RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
           /*expected_next_hop_existence=*/false,
           /*expected_wcmp_group_existence=*/true,
-          /*expected_route_metadata_existence=*/true,
-          /*expected_multicast_group_id_existence=*/false, route_entry));
+          /*expected_route_metadata_existence=*/true, route_entry));
     }
     else if (action == p4orch::kDrop || action == p4orch::kTrap)
     {
       RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
           /*expected_next_hop_existence=*/false,
           /*expected_wcmp_group_existence=*/false,
-          /*expected_route_metadata_existence=*/false,
-          /*expected_multicast_group_id_existence=*/false, route_entry));
+          /*expected_route_metadata_existence=*/false, route_entry));
     }
     else if (action == p4orch::kSetMetadataAndDrop)
     {
       RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
           /*expected_next_hop_existence=*/false,
           /*expected_wcmp_group_existence=*/false,
-          /*expected_route_metadata_existence=*/true,
-          /*expected_multicast_group_id_existence=*/false, route_entry));
-    } else if (action == p4orch::kSetMulticastGroupId) {
-      RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
-          /*expected_next_hop_existence=*/false,
-          /*expected_wcmp_group_existence=*/false,
-          /*expected_route_metadata_existence=*/false,
-          /*expected_multicast_group_id_existence=*/true, route_entry));
+          /*expected_route_metadata_existence=*/true, route_entry));
     } else {
       return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
              << "Invalid action " << QuotedVar(action);
@@ -635,22 +546,14 @@ ReturnCode RouteManager::validateSetRouteEntry(const P4RouteEntry &route_entry)
 
 ReturnCode RouteManager::validateDelRouteEntry(const P4RouteEntry &route_entry)
 {
-  auto* old_route_entry_ptr = getRouteEntry(route_entry.route_entry_key);
-  if (old_route_entry_ptr == nullptr) {
+  if (getRouteEntry(route_entry.route_entry_key) == nullptr) {
     return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
            << "Route entry does not exist";
   }
-  if (old_route_entry_ptr->multicast_group_id.empty() &&
-      !m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_ROUTE_ENTRY,
+  if (!m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_ROUTE_ENTRY,
                                 route_entry.route_entry_key)) {
     RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL(
         "Route entry does not exist in the centralized map");
-  }
-  if (!old_route_entry_ptr->multicast_group_id.empty() &&
-      !m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_IPMC_ENTRY,
-                                route_entry.route_entry_key)) {
-    RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL(
-        "Multicast route entry does not exist in the centralized map");
   }
     if (!route_entry.action.empty())
     {
@@ -667,10 +570,6 @@ ReturnCode RouteManager::validateDelRouteEntry(const P4RouteEntry &route_entry)
     if (!route_entry.route_metadata.empty())
     {
         return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Non-empty route_metadata for Del route";
-    }
-    if (!route_entry.multicast_group_id.empty()) {
-      return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-             << "Non-empty multicast_group_id for Del route";
     }
     return ReturnCode();
 }
@@ -821,238 +720,6 @@ std::vector<ReturnCode> RouteManager::createRouteEntries(const std::vector<P4Rou
     return statuses;
 }
 
-// Process a list of multicast route entries by the given operation.
-ReturnCode RouteManager::processRouteEntriesThatAssignMulticast(
-    const std::vector<P4RouteEntry>& route_entries,
-    const std::vector<swss::KeyOpFieldsValuesTuple>& tuple_list,
-    const std::string& op, bool update) {
-  SWSS_LOG_ENTER();
-
-  ReturnCode status;
-  std::vector<ReturnCode> statuses;
-  // In syncd, bulk SAI calls use mode SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR.
-  if (op == SET_COMMAND) {
-    if (!update) {
-      statuses = createMulticastRouteEntries(route_entries);
-    } else {
-      statuses = updateMulticastRouteEntries(route_entries);
-    }
-  } else {
-    statuses = deleteMulticastRouteEntries(route_entries);
-  }
-  for (size_t i = 0; i < route_entries.size(); ++i) {
-    m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(tuple_list[i]),
-                         kfvFieldsValues(tuple_list[i]), statuses[i],
-                         /*replace=*/true);
-    if (status.ok() && !statuses[i].ok()) {
-      status = statuses[i];
-    }
-  }
-  return status;
-}
-
-std::vector<ReturnCode> RouteManager::createMulticastRouteEntries(
-    const std::vector<P4RouteEntry>& route_entries) {
-  SWSS_LOG_ENTER();
-  std::vector<ReturnCode> statuses(route_entries.size());
-
-  // Before the first entry add, we have to create an empty RPF group.
-  if (empty_rpf_group_oid_ == SAI_NULL_OBJECT_ID) {
-    ReturnCode status = createDefaultRpfGroup();
-    if (!status.ok()) {
-      for (size_t i = 0; i < route_entries.size(); ++i) {
-        statuses[i] = status;
-      }
-      return statuses;
-    }
-    SWSS_LOG_INFO("Successfully created default RPF group with oid: %ld",
-                  empty_rpf_group_oid_);
-  }
-
-  for (size_t i = 0; i < route_entries.size(); ++i) {
-    const auto& route_entry = route_entries[i];
-
-    assert(route_entry.action == p4orch::kSetMulticastGroupId);
-    assert(!route_entry.multicast_group_id.empty());
-
-    sai_ipmc_entry_t sai_entry = prepareSaiIpmcEntry(route_entry);
-    std::vector<sai_attribute_t> attrs;
-    sai_attribute_t attr;
-    attr.id = SAI_IPMC_ENTRY_ATTR_PACKET_ACTION;
-    attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
-    attrs.push_back(attr);
-
-    // Fetch the multicast group OID.
-    sai_object_id_t group_oid = SAI_NULL_OBJECT_ID;
-    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_IPMC_GROUP,
-                               route_entry.multicast_group_id, &group_oid)) {
-      statuses[i] = ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-                    << "Unknown multicast group ID "
-                    << QuotedVar(route_entry.multicast_group_id);
-      for (size_t j = i + 1; j < route_entries.size(); ++j) {
-        statuses[j] = ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
-      }
-      break;
-    }
-
-    attr.id = SAI_IPMC_ENTRY_ATTR_OUTPUT_GROUP_ID;
-    attr.value.oid = group_oid;
-    attrs.push_back(attr);
-
-    // We have nothing to set this to, but it is a mandatory attribute for
-    // entry creation.
-    attr.id = SAI_IPMC_ENTRY_ATTR_RPF_GROUP_ID;
-    attr.value.oid = empty_rpf_group_oid_;
-    attrs.push_back(attr);
-
-    // TODO: Add with counter support.
-    // attr.id = SAI_IPMC_ENTRY_ATTR_COUNTER_ID;
-    // attr.value.oid = group_counter_oid;
-    // attrs.push_back(attr);
-
-    statuses[i] = sai_ipmc_api->create_ipmc_entry(
-        &sai_entry, (uint32_t)attrs.size(), attrs.data());
-    if (statuses[i] != SAI_STATUS_SUCCESS) {
-      for (size_t j = i + 1; j < route_entries.size(); ++j) {
-        statuses[j] = ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
-      }
-      break;
-    }
-
-    // Bookkeeping
-    m_routeTable[route_entry.route_entry_key] = route_entry;
-    m_routeTable[route_entry.route_entry_key].sai_ipmc_entry = sai_entry;
-    m_p4OidMapper->setDummyOID(SAI_OBJECT_TYPE_IPMC_ENTRY,
-                               route_entry.route_entry_key);
-    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPMC_ENTRY);
-    m_vrfOrch->increaseVrfRefCount(route_entry.vrf_id);
-    m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
-                                    route_entry.multicast_group_id);
-    statuses[i] = ReturnCode();
-  }
-  return statuses;
-}
-
-std::vector<ReturnCode> RouteManager::updateMulticastRouteEntries(
-    const std::vector<P4RouteEntry>& route_entries) {
-  SWSS_LOG_ENTER();
-  std::vector<ReturnCode> statuses(route_entries.size());
-
-  for (size_t i = 0; i < route_entries.size(); ++i) {
-    const auto& route_entry = route_entries[i];
-    auto* old_route_entry_ptr = getRouteEntry(route_entry.route_entry_key);
-
-    if (old_route_entry_ptr == nullptr) {
-      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                    << "Unable to find route entry to update "
-                    << QuotedVar(route_entry.route_entry_key);
-      for (size_t j = i + 1; j < route_entries.size(); ++j) {
-        statuses[j] = ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
-      }
-      break;
-    }
-    // No change means nothing to do.
-    if (old_route_entry_ptr->action == route_entry.action &&
-        old_route_entry_ptr->multicast_group_id ==
-            route_entry.multicast_group_id) {
-      statuses[i] = ReturnCode()
-                    << "Entry " << QuotedVar(route_entry.route_entry_key)
-                    << " is already assigned to multicast_group_id "
-                    << QuotedVar(route_entry.multicast_group_id);
-      continue;
-    }
-    // Do not support switching to a different action.  Do we need to?
-    if (old_route_entry_ptr->action != route_entry.action) {
-      statuses[i] =
-          ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
-          << "Changing from action " << QuotedVar(old_route_entry_ptr->action)
-          << " to action " << QuotedVar(route_entry.action) << " for entry "
-          << QuotedVar(route_entry.route_entry_key) << " is not supported.";
-      for (size_t j = i + 1; j < route_entries.size(); ++j) {
-        statuses[j] = ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
-      }
-      break;
-    }
-
-    // Fetch the multicast group OID.
-    sai_object_id_t group_oid = SAI_NULL_OBJECT_ID;
-    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_IPMC_GROUP,
-                               route_entry.multicast_group_id, &group_oid)) {
-      statuses[i] = ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-                    << "Unknown multicast group ID "
-                    << QuotedVar(route_entry.multicast_group_id);
-      for (size_t j = i + 1; j < route_entries.size(); ++j) {
-        statuses[j] = ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
-      }
-      break;
-    }
-
-    // Update the multicast group OID attribute.
-    sai_attribute_t update_attr;
-    update_attr.id = SAI_IPMC_ENTRY_ATTR_OUTPUT_GROUP_ID;
-    update_attr.value.oid = group_oid;
-    statuses[i] = sai_ipmc_api->set_ipmc_entry_attribute(
-        &old_route_entry_ptr->sai_ipmc_entry, &update_attr);
-    if (statuses[i] != SAI_STATUS_SUCCESS) {
-      for (size_t j = i + 1; j < route_entries.size(); ++j) {
-        statuses[j] = ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
-      }
-      break;
-    }
-
-    // TODO (b/286443840): Add with counter support.
-    // attr.id = SAI_IPMC_ENTRY_ATTR_COUNTER_ID;
-    // attr.value.oid = group_counter_oid;
-
-    // Bookkeeping
-    m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
-                                    old_route_entry_ptr->multicast_group_id);
-    m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
-                                    route_entry.multicast_group_id);
-    // We update the old entry object rather than updating maps.
-    old_route_entry_ptr->multicast_group_id = route_entry.multicast_group_id;
-
-    statuses[i] = ReturnCode();
-  }
-  return statuses;
-}
-
-std::vector<ReturnCode> RouteManager::deleteMulticastRouteEntries(
-    const std::vector<P4RouteEntry>& route_entries) {
-  SWSS_LOG_ENTER();
-  std::vector<ReturnCode> statuses(route_entries.size());
-
-  for (size_t i = 0; i < route_entries.size(); ++i) {
-    const auto& route_entry = route_entries[i];
-
-    auto* route_entry_ptr = getRouteEntry(route_entry.route_entry_key);
-    assert(route_entry_ptr->action == p4orch::kSetMulticastGroupId);
-    assert(!route_entry_ptr->multicast_group_id.empty());
-
-    // Remove the entry
-    statuses[i] = sai_ipmc_api->remove_ipmc_entry(
-        &route_entry_ptr->sai_ipmc_entry);
-    if (statuses[i] != SAI_STATUS_SUCCESS) {
-      for (size_t j = i + 1; j < route_entries.size(); ++j) {
-        statuses[j] = ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
-      }
-      break;
-    }
-
-    // Bookkeeping
-    m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
-                                    route_entry.multicast_group_id);
-    m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_IPMC_ENTRY,
-                            route_entry.route_entry_key);
-    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPMC_ENTRY);
-    m_vrfOrch->decreaseVrfRefCount(route_entry.vrf_id);
-    m_routeTable.erase(route_entry.route_entry_key);
-
-    statuses[i] = ReturnCode();
-  }
-  return statuses;
-}
-
 void RouteManager::updateRouteEntriesMeta(const P4RouteEntry &old_entry, const P4RouteEntry &new_entry)
 {
     if (getNexthopOid(old_entry, *m_p4OidMapper) != getNexthopOid(new_entry, *m_p4OidMapper))
@@ -1162,16 +829,6 @@ std::vector<ReturnCode> RouteManager::updateRouteEntries(const std::vector<P4Rou
             statuses[i] = ReturnCode();
             continue;
         }
-        // Cannot switch to multicast action for now.  Do we need to?
-        if (route_entry_ptr->action != route_entry.action &&
-            route_entry.action == p4orch::kSetMulticastGroupId) {
-          statuses[i] =
-              ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
-              << "Changing from action " << QuotedVar(route_entry_ptr->action)
-              << " to action " << QuotedVar(route_entry.action) << " for entry "
-              << QuotedVar(route_entry.route_entry_key) << " is not supported.";
-          continue;
-        }
         updaters[i] = std::unique_ptr<RouteUpdater>(new RouteUpdater(*route_entry_ptr, new_entry, m_p4OidMapper));
         indice[size++] = i;
     }
@@ -1270,7 +927,6 @@ ReturnCode RouteManager::drain() {
   ReturnCode status;
   std::string prev_op;
   bool prev_update = false;
-  bool prev_mcast_op = false;  // indication if handling multicast group
   while (!m_entries.empty()) {
     auto key_op_fvs_tuple = m_entries.front();
     m_entries.pop_front();
@@ -1320,29 +976,18 @@ ReturnCode RouteManager::drain() {
 
     auto* old_route_entry_ptr = getRouteEntry(route_entry.route_entry_key);
     bool update = (old_route_entry_ptr != nullptr);
-    bool mcast_op = !route_entry.multicast_group_id.empty() ||
-        (update && !old_route_entry_ptr->multicast_group_id.empty());
     if (prev_op == "") {
       prev_op = operation;
       prev_update = update;
-      prev_mcast_op = mcast_op;
     }
     // Process the entries if the operation type changes.
-    if (operation != prev_op || update != prev_update ||
-        mcast_op != prev_mcast_op) {
-      if (prev_mcast_op) {
-        status =
-            processRouteEntriesThatAssignMulticast(
-                route_list, tuple_list, prev_op, prev_update);
-      } else {
-        status =
-            processRouteEntries(route_list, tuple_list, prev_op, prev_update);
-      }
+    if (operation != prev_op || update != prev_update) {
+      status =
+          processRouteEntries(route_list, tuple_list, prev_op, prev_update);
       route_list.clear();
       tuple_list.clear();
       prev_op = operation;
       prev_update = update;
-      prev_mcast_op = mcast_op;
     }
 
     if (!status.ok()) {
@@ -1359,13 +1004,8 @@ ReturnCode RouteManager::drain() {
   }
 
   if (!route_list.empty()) {
-    ReturnCode rc;
-    if (prev_mcast_op) {
-      rc = processRouteEntriesThatAssignMulticast(
-          route_list, tuple_list, prev_op, prev_update);
-    } else {
-      rc = processRouteEntries(route_list, tuple_list, prev_op, prev_update);
-    }
+    ReturnCode rc =
+        processRouteEntries(route_list, tuple_list, prev_op, prev_update);
     if (!rc.ok()) {
       status = rc;
     }
@@ -1495,15 +1135,6 @@ std::string RouteManager::verifyStateCache(const P4RouteEntry &app_db_entry, con
             << QuotedVar(route_entry->route_metadata) << " in route manager.";
         return msg.str();
     }
-    if (route_entry->multicast_group_id != app_db_entry.multicast_group_id) {
-      std::stringstream msg;
-      msg << "Route entry " << QuotedVar(app_db_entry.route_entry_key)
-          << " with multicast group ID "
-          << QuotedVar(app_db_entry.multicast_group_id)
-          << " does not match internal cache "
-          << QuotedVar(route_entry->multicast_group_id) << " in route manager.";
-      return msg.str();
-    }
     return "";
 }
 
@@ -1539,20 +1170,6 @@ std::string RouteManager::verifyStateAsicDb(const P4RouteEntry *route_entry)
         } else {
           exp_attrs.push_back(attr);
         }
-    } else if (route_entry->action == p4orch::kSetMulticastGroupId) {
-      attr.id = SAI_IPMC_ENTRY_ATTR_PACKET_ACTION;
-      attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
-      exp_attrs.push_back(attr);
-
-      attr.id = SAI_IPMC_ENTRY_ATTR_OUTPUT_GROUP_ID;
-      attr.value.oid = SAI_NULL_OBJECT_ID;
-      m_p4OidMapper->getOID(SAI_OBJECT_TYPE_IPMC_GROUP,
-                            route_entry->multicast_group_id, &attr.value.oid);
-      exp_attrs.push_back(attr);
-      // TODO (b/286443840): Add with counter support.
-      // attr.id = SAI_IPMC_ENTRY_ATTR_COUNTER_ID;
-      // attr.value.oid = group_counter_oid;
-      // attrs.push_back(attr);
     } else {
       attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
       attr.value.oid = getNexthopOid(*route_entry, *m_p4OidMapper);
@@ -1585,8 +1202,6 @@ std::string RouteManager::verifyStateAsicDb(const P4RouteEntry *route_entry)
         attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
         attr.value.oid = SAI_NULL_OBJECT_ID;
         opt_attrs.push_back(attr);
-    } else if (route_entry->action == p4orch::kSetMulticastGroupId) {
-      // Nothing to do.
     } else {
       attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
       attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
@@ -1599,32 +1214,22 @@ std::string RouteManager::verifyStateAsicDb(const P4RouteEntry *route_entry)
       }
     }
 
-    sai_object_type_t objectType;
-    if (route_entry->multicast_group_id.empty()) {
-      objectType = SAI_OBJECT_TYPE_ROUTE_ENTRY;
-    } else {
-      objectType = SAI_OBJECT_TYPE_IPMC_ENTRY;
-    }
-
     std::vector<swss::FieldValueTuple> exp =
         saimeta::SaiAttributeList::serialize_attr_list(
-            objectType, (uint32_t)exp_attrs.size(), exp_attrs.data(),
+            SAI_OBJECT_TYPE_ROUTE_ENTRY, (uint32_t)exp_attrs.size(),
+            exp_attrs.data(),
             /*countOnly=*/false);
     std::vector<swss::FieldValueTuple> opt =
         saimeta::SaiAttributeList::serialize_attr_list(
-            objectType, (uint32_t)opt_attrs.size(), opt_attrs.data(),
+            SAI_OBJECT_TYPE_ROUTE_ENTRY, (uint32_t)opt_attrs.size(),
+            opt_attrs.data(),
             /*countOnly=*/false);
 
     swss::DBConnector db("ASIC_DB", 0);
     swss::Table table(&db, "ASIC_STATE");
-    std::string key;
-    if (route_entry->multicast_group_id.empty()) {
-      key = sai_serialize_object_type(SAI_OBJECT_TYPE_ROUTE_ENTRY) + ":" +
-            sai_serialize_route_entry(prepareSaiEntry(*route_entry));
-    } else {
-      key = sai_serialize_object_type(SAI_OBJECT_TYPE_IPMC_ENTRY) + ":" +
-            sai_serialize_ipmc_entry(prepareSaiIpmcEntry(*route_entry));
-    }
+    std::string key = sai_serialize_object_type(SAI_OBJECT_TYPE_ROUTE_ENTRY) +
+                      ":" +
+                      sai_serialize_route_entry(prepareSaiEntry(*route_entry));
     std::vector<swss::FieldValueTuple> values;
     if (!table.get(key, values))
     {
