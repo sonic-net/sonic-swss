@@ -438,7 +438,6 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
                     return task_process_status::task_need_retry;
                 }
 
-                m_policerOrch->increaseRefCount(fvValue(i));
                 entry.policer = fvValue(i);
             }
             else if (fvField(i) == MIRROR_SESSION_SRC_PORT)
@@ -506,6 +505,26 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
     m_syncdMirrors.emplace(key, entry);
     setSessionState(key, entry);
 
+    if (!entry.policer.empty())
+    {
+        m_policerOrch->increaseRefCount(entry.policer);
+    }
+
+    if (!entry.src_port.empty())
+    {
+        auto ports = tokenize(entry.src_port, ',');
+
+        for (auto alias : ports)
+        {
+            m_portsOrch->increasePortRefCount(alias);
+        }
+    }
+
+    if (!entry.dst_port.empty())
+    {
+      m_portsOrch->increasePortRefCount(entry.dst_port);
+    }
+
     if (entry.type == MIRROR_SESSION_SPAN && !entry.dst_port.empty())
     {
         auto &session1 = m_syncdMirrors.find(key)->second;
@@ -560,6 +579,21 @@ task_process_status MirrorOrch::deleteEntry(const string& name)
     if (!session.policer.empty())
     {
         m_policerOrch->decreaseRefCount(session.policer);
+    }
+
+    if (!session.src_port.empty())
+    {
+        auto ports = tokenize(session.src_port, ',');
+
+        for (auto alias : ports)
+        {
+            m_portsOrch->decreasePortRefCount(alias);
+        }
+    }
+
+    if (!session.dst_port.empty())
+    {
+        m_portsOrch->decreasePortRefCount(session.dst_port);
     }
 
     removeSessionState(name);
