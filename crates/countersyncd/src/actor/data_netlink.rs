@@ -10,13 +10,9 @@ use std::os::unix::io::{AsRawFd, RawFd};
 
 use log::{debug, info, warn};
 
-#[allow(unused_imports)]
-use neli::{
-    consts::socket::{Msg, NlFamily},
-    router::synchronous::NlRouter,
-    socket::NlSocket,
-    utils::Groups,
-};
+use netlink_sys::Socket;
+#[cfg(not(test))]
+use netlink_sys::{protocols::NETLINK_GENERIC, SocketAddr};
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::io;
@@ -25,6 +21,8 @@ use super::super::message::{
     buffer::SocketBufferMessage,
     netlink::{NetlinkCommand, SocketConnect},
 };
+#[cfg(not(test))]
+use super::netlink_utils;
 
 #[cfg(not(test))]
 type SocketType = NlSocket;
