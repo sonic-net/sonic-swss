@@ -1462,6 +1462,7 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList, std::vector
         removeDefaultVlanMembers();
         removeDefaultBridgePorts();
     }
+    removeNonDefaultConfig(oidList);
 
     SWSS_LOG_NOTICE("Created ports: %s", swss::join(',', oidList.begin(), oidList.end()).c_str());
 
@@ -1556,6 +1557,69 @@ bool PortsOrch::removePortBulk(const std::vector<sai_object_id_t> &portList)
     return true;
 }
 
+void PortsOrch::removeNonDefaultConfig(const std::vector<sai_object_id_t> &oidList)
+{
+    /* Get VLAN members in default VLAN */
+    vector<sai_object_id_t> vlan_member_list(m_portCount + m_systemPortCount);
+
+    sai_attribute_t bport_attr[2];
+    sai_attribute_t attr2;
+    sai_attribute_t attr;
+    attr.id = SAI_VLAN_ATTR_MEMBER_LIST;
+    attr.value.objlist.count = (uint32_t)vlan_member_list.size();
+    attr.value.objlist.list = vlan_member_list.data();
+
+    sai_status_t status = sai_vlan_api->get_vlan_attribute(m_defaultVlan, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get VLAN member list in default VLAN, rv:%d", status);
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_VLAN, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            throw runtime_error("PortsOrch initialization failure");
+        }
+    }
+
+    for (uint32_t i = 0; i < attr.value.objlist.count; i++)
+    {
+        attr2.id = SAI_VLAN_MEMBER_ATTR_BRIDGE_PORT_ID;
+
+        status = sai_vlan_api->get_vlan_member_attribute(vlan_member_list[i], 1 , &attr2);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to Get Vlan member %" PRIx64 " bridge port information, rv:%d",
+                            vlan_member_list[i], status);
+            continue;
+        }
+        bport_attr[0].id = SAI_BRIDGE_PORT_ATTR_TYPE;
+        bport_attr[1].id = SAI_BRIDGE_PORT_ATTR_PORT_ID;
+        status = sai_bridge_api->get_bridge_port_attribute(attr2.value.oid, 2, &bport_attr[0]);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to Get bridge port %" PRIx64 " type rv:%d",
+                    attr2.value.oid, status);
+            continue;
+        }
+        bool found = std::find(oidList.begin(), oidList.end(), bport_attr[1].value.oid) != oidList.end();
+        if ((bport_attr[0].value.s32 == SAI_BRIDGE_PORT_TYPE_PORT) && (true == found))
+        {
+            /* remove vlan member from default vlan */
+            status = sai_vlan_api->remove_vlan_member(vlan_member_list[i]);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to remove VLAN member, rv:%d", status);
+            }
+
+            /* remove bridge port */
+            status = sai_bridge_api->remove_bridge_port(attr2.value.oid);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to remove bridge port, rv:%d", status);
+            }
+        }
+    }
+
+}
 void PortsOrch::removeDefaultVlanMembers()
 {
     /* Get VLAN members in default VLAN */
