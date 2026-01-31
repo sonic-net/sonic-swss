@@ -29,10 +29,8 @@ struct P4RouteEntry
     std::string action;
     std::string nexthop_id;
     std::string wcmp_group;
-    std::string route_metadata; // go/gpins-pinball-vip-stats
-    std::string multicast_group_id;
+    std::string route_metadata;  // go/gpins-pinball-vip-stats
     sai_route_entry_t sai_route_entry;
-    sai_ipmc_entry_t sai_ipmc_entry;  // Used for multicast
 };
 
 // P4RouteTable: Route ID, P4RouteEntry
@@ -133,28 +131,8 @@ class RouteManager : public ObjectManagerInterface
     // Deletes a list of route entries.
     std::vector<ReturnCode> deleteRouteEntries(const std::vector<P4RouteEntry> &route_entries);
 
-    // Creates a list of multicast-typed route entries.
-    // We separate these out from normal route entries, because the SAI entry
-    // type is sai_ipmc_entry_t instead of the normal sai_route_entry_t.
-    std::vector<ReturnCode> createMulticastRouteEntries(
-        const std::vector<P4RouteEntry>& route_entries);
-
-    // Updates a list of multicast-typed route entries.
-    std::vector<ReturnCode> updateMulticastRouteEntries(
-        const std::vector<P4RouteEntry>& route_entries);
-
-    // Deletes a list of multicast-typed route entries.
-    std::vector<ReturnCode> deleteMulticastRouteEntries(
-        const std::vector<P4RouteEntry>& route_entries);
-
     // Process a list of route entries by the given operation.
     ReturnCode processRouteEntries(
-        const std::vector<P4RouteEntry>& route_entries,
-        const std::vector<swss::KeyOpFieldsValuesTuple>& tuple_list,
-        const std::string& op, bool update);
-
-    // Process a list of multicast route entries by the given operation.
-    ReturnCode processRouteEntriesThatAssignMulticast(
         const std::vector<P4RouteEntry>& route_entries,
         const std::vector<swss::KeyOpFieldsValuesTuple>& tuple_list,
         const std::string& op, bool update);
@@ -176,22 +154,12 @@ class RouteManager : public ObjectManagerInterface
     // Returns the SAI entry.
     sai_route_entry_t prepareSaiEntry(const P4RouteEntry& route_entry);
 
-    // Returns the SAI IPMC entry (for multicast).
-    sai_ipmc_entry_t prepareSaiIpmcEntry(const P4RouteEntry& route_entry) const;
-
-    // Creates and assigns the empty private RPF group, to be used for all
-    // IPMC entries.
-    ReturnCode createDefaultRpfGroup();
-
     P4RouteTable m_routeTable;
     P4OidMapper *m_p4OidMapper;
     VRFOrch *m_vrfOrch;
     EntityBulker<sai_route_api_t> m_routerBulker;
     ResponsePublisherInterface *m_publisher;
     std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
-    // OID for an empty RPF group, needed for creating IPMC entries.
-    // This group will be created on first entry add.
-    sai_object_id_t empty_rpf_group_oid_ = SAI_NULL_OBJECT_ID;
 
     friend class RouteManagerTest;
 };
