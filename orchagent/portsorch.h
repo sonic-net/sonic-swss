@@ -148,7 +148,7 @@ public:
     bool bake() override;
     void cleanPortTable(const vector<string>& keys);
     bool getBridgePort(sai_object_id_t id, Port &port);
-    bool setBridgePortLearningFDB(Port &port, sai_bridge_port_fdb_learning_mode_t mode);
+    bool setBridgePortLearnMode(Port &port, sai_bridge_port_fdb_learning_mode_t learn_mode);
     bool getPort(string alias, Port &port);
     bool getPort(sai_object_id_t id, Port &port);
     void increasePortRefCount(const string &alias);
@@ -414,8 +414,6 @@ private:
 
     bool addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id, bool isUp);
     bool setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip);
-
-    bool setBridgePortLearnMode(Port &port, sai_bridge_port_fdb_learning_mode_t learn_mode);
 
     bool addVlan(string vlan);
     bool removeVlan(Port vlan);

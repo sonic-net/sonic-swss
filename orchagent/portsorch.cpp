@@ -6934,31 +6934,6 @@ ReturnCode PortsOrch::removeSendToIngressHostIf()
     return ReturnCode();
 }
 
-bool PortsOrch::setBridgePortLearningFDB(Port &port, sai_bridge_port_fdb_learning_mode_t mode)
-{
-    // TODO: how to support 1D bridge?
-    if (port.m_type != Port::PHY) return false;
-
-    auto bridge_port_id = port.m_bridge_port_id;
-    if (bridge_port_id == SAI_NULL_OBJECT_ID) return false;
-
-    sai_attribute_t bport_attr;
-    bport_attr.id = SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE;
-    bport_attr.value.s32 = mode;
-    auto status = sai_bridge_api->set_bridge_port_attribute(bridge_port_id, &bport_attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to set bridge port %" PRIx64 " learning_mode attribute: %d", bridge_port_id, status);
-        task_process_status handle_status = handleSaiSetStatus(SAI_API_BRIDGE, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
-    }
-    SWSS_LOG_NOTICE("Disable FDB learning on bridge port %s(%" PRIx64 ")", port.m_alias.c_str(), bridge_port_id);
-    return true;
-}
-
 bool PortsOrch::addBridgePort(Port &port)
 {
     SWSS_LOG_ENTER();
