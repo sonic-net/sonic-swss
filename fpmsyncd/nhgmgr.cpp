@@ -14,7 +14,8 @@ NHGMgr::NHGMgr(RedisPipeline *pipeline, const std::string &nexthopTableName, con
 
 int NHGMgr::addNHGFull(NextHopGroupFull nhg) {
     int ret = 0;
-
+    SWSS_LOG_INFO("Receiving NHG %d, type %d", nhg.id, nhg.type);
+    dumpNHGGroupFull(nhg);
     // insert rib nhg in rib table
     RIBNHGEntry *entry;
     bool updated = false;
@@ -290,6 +291,24 @@ SonicGateWayNHGEntry *NHGMgr::getSonicNHGByRIBID(uint32_t id) {
 
 bool NHGMgr::isSonicGatewayNHGIDInUsed(sonicNhgObjType type, uint32_t id) {
     return m_sonic_id_manager.isSonicObjIDUsed(type, id);
+}
+
+void NHGMgr::dumpNHGGroupFull(fib::NextHopGroupFull nhg) {
+    SWSS_LOG_INFO("NHG ID %d, type %d, ifname %s", nhg.id, nhg.type, nhg.ifname.c_str());
+
+    if (nhg.type == fib::NEXTHOP_TYPE_IPV4 || nhg.type == fib::NEXTHOP_TYPE_IPV4_IFINDEX) {
+        char gateway[INET_ADDRSTRLEN] = {0};
+        inet_ntop(AF_INET, &nhg.gate.ipv4, gateway, INET_ADDRSTRLEN);
+        SWSS_LOG_INFO("   NHG gateway %s", gateway);
+    }
+    if (nhg.type == fib::NEXTHOP_TYPE_IPV6 || nhg.type == fib::NEXTHOP_TYPE_IPV6_IFINDEX) {
+        char gateway[INET6_ADDRSTRLEN] = {0};
+        inet_ntop(AF_INET6, &nhg.gate.ipv6, gateway, INET6_ADDRSTRLEN);
+        SWSS_LOG_INFO("   NHG gateway %s", gateway);
+    }
+    for (auto it = nhg.nh_grp_full_list.begin(); it != nhg.nh_grp_full_list.end(); it++) {
+        SWSS_LOG_INFO("   NHG ID %d, num_direct %d", it->id, it->num_direct);
+    }
 }
 
 bool SonicIDMgr::isSonicObjIDUsed(sonicNhgObjType type, uint32_t id) {
@@ -764,7 +783,7 @@ int RIBNHGEntry::setEntry(NextHopGroupFull nhg) {
         }
         m_group.insert(std::make_pair(it->id, it->weight));
     }
-    m_has_Sonic_obj = needCreateSonicGatewayNHGObj();
+    m_has_sonic_obj = needCreateSonicGatewayNHGObj();
     m_resolvedGroup = getResolvedGroupFromNHGFull(nhg);
 
     if (this->syncFvVector() != 0) {
@@ -789,6 +808,7 @@ int RIBNHGEntry::syncFvVector() {
     m_fvVector.clear();
 
     if (getNHGFields(m_nhg, nexthops, ifnames, weights, af) != 0) {
+        SWSS_LOG_ERROR("get nhg fields failed");
         return -1;
     }
     if (nexthops.empty() && m_nhg.nh_grp_full_list.size() > 0) {
@@ -836,8 +856,10 @@ int RIBNHGEntry::getNHGFields(NextHopGroupFull nhg, string &nexthop, string &ifn
         if (nhg.type == fib::NEXTHOP_TYPE_IPV6_IFINDEX || nhg.type == fib::NEXTHOP_TYPE_IPV6) {
             af = AF_INET6;
             return getNextHopFields(nhg, nexthop, ifnames, AF_INET6);
+        } else {
+            SWSS_LOG_ERROR("other nexthop type: %d", nhg.type);
+            return 0;
         }
-        return -1;
     }
 }
 
@@ -959,7 +981,7 @@ bool RIBNHGEntry::needCreateSonicGatewayNHGObj() {
 }
 
 bool RIBNHGEntry::hasSonicObj() {
-    return m_has_Sonic_obj;
+    return m_has_sonic_obj;
 }
 
 sonicNhgObjType RIBNHGEntry::getSonicObjType() {
