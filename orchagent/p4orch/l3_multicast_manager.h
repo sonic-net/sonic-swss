@@ -136,7 +136,6 @@ class L3MulticastManager : public ObjectManagerInterface {
       const P4MulticastReplicationEntry& multicast_replication_entry,
       const std::string& operation);
 
-  /*
   // Performs multicast replication entry validation for SET command.
   ReturnCode validateSetMulticastReplicationEntry(
       const P4MulticastReplicationEntry& multicast_router_interface_entry);
@@ -144,7 +143,6 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Performs multicast replication entry validation for DEL command.
   ReturnCode validateDelMulticastReplicationEntry(
       const P4MulticastReplicationEntry& multicast_router_interface_entry);
-  */
 
   // Processes a list of entries of the same operation type for the multicast
   // router interface table.
@@ -155,7 +153,6 @@ class L3MulticastManager : public ObjectManagerInterface {
       const std::deque<swss::KeyOpFieldsValuesTuple>& tuple_list,
       const std::string& op, bool update);
 
-  /*
   // Processes a list of entries of the same operation type for the replication
   // multicast table.
   // Returns an overall status code.
@@ -164,7 +161,6 @@ class L3MulticastManager : public ObjectManagerInterface {
       std::vector<P4MulticastReplicationEntry>& entries,
       const std::deque<swss::KeyOpFieldsValuesTuple>& tuple_list,
       const std::string& op, bool update);
-  */
 
   // Wrapper around SAI setup and call, for easy mocking.
   ReturnCode createRouterInterface(const std::string& rif_key,
@@ -198,22 +194,18 @@ class L3MulticastManager : public ObjectManagerInterface {
   std::vector<ReturnCode> addMulticastReplicationEntries(
       std::vector<P4MulticastReplicationEntry>& entries);
   // Update existing multicast replication table entries.
-  /*
   std::vector<ReturnCode> updateMulticastReplicationEntries(
       std::vector<P4MulticastReplicationEntry>& entries);
-  */
   // Delete existing multicast replication table entries.
   std::vector<ReturnCode> deleteMulticastReplicationEntries(
       const std::vector<P4MulticastReplicationEntry>& entries);
 
-  /*
   std::string verifyMulticastRouterInterfaceState(
       const std::string& key,
       const std::vector<swss::FieldValueTuple>& tuple);
   std::string verifyMulticastReplicationState(
       const std::string& key,
       const std::vector<swss::FieldValueTuple>& tuple);
-  */
 
   // Verifies internal cache for a multicast router interface entry.
   std::string verifyMulticastRouterInterfaceStateCache(
@@ -224,11 +216,9 @@ class L3MulticastManager : public ObjectManagerInterface {
       const P4MulticastReplicationEntry& app_db_entry,
       const P4MulticastReplicationEntry* multicast_replication_entry);
 
-  /*
   // Verifies ASIC DB for a multicast router interface entry.
   std::string verifyMulticastRouterInterfaceStateAsicDb(
       const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
-  */
   // Verifies ASIC DB for a multicast replication entry.
   std::string verifyMulticastReplicationStateAsicDb(
       const P4MulticastReplicationEntry* multicast_replication_entry);
@@ -251,12 +241,10 @@ class L3MulticastManager : public ObjectManagerInterface {
   // bookkeeping.
   sai_object_id_t getRifOid(
       const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
-  /*
   // Fetches the RIF OID that will be used by a given multicast repelication
   // entry.  This would be the value used by the replication group member.
   sai_object_id_t getRifOid(
       const P4MulticastReplicationEntry* multicast_replication_entry);
-  */
 
   // Internal cache of entries.
   P4MulticastRouterInterfaceTable m_multicastRouterInterfaceTable;
