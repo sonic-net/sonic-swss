@@ -3,6 +3,8 @@
 #include <inttypes.h>
 #include <iomanip>
 
+#include <nlohmann/json.hpp>
+
 #include "switchorch.h"
 #include "crmorch.h"
 #include "converter.h"
@@ -167,6 +169,7 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
     querySwitchPortMirrorCapability();
     querySwitchHashDefaults();
     setSwitchIcmpOffloadCapability();
+    querySwitchWcmpGroupCapability();
 
     auto executorT = new ExecutableTimer(m_sensorsPollerTimer, this, "ASIC_SENSORS_POLL_TIMER");
     Orch::addExecutor(executorT);
@@ -1968,6 +1971,84 @@ void SwitchOrch::querySwitchTpidCapability()
         }
         set_switch_capability(fvVector);
     }
+}
+
+void SwitchOrch::querySwitchWcmpGroupCapability()
+{
+    // The current implementation will fetch these
+    // capabilities from switch_capabilities.json. In the long-term, these
+    // capabilities will be fetched from SAI.
+    vector<FieldValueTuple> fvVector;
+    using json = nlohmann::json;
+    std::string json_file = SWITCH_CAPABILITY_JSON_FILE;
+    std::ifstream ifs(json_file);
+    if (ifs.fail())
+    {
+        // JSON file doesn't exist. Nothing else to do here.
+        SWSS_LOG_NOTICE("%s file not found", json_file.c_str());
+        return;
+    }
+    try
+    {
+        json json_file_info = json::parse(ifs);
+
+        // JSON file is in the following format:
+        // {
+        //     "SWITCH_CAPABILITY": {
+        //         "max_distinct_weights_per_group": 8,
+        //         "max_total_weight_per_group": 2047
+        //     }
+        // }
+        if (!json_file_info.is_object()) {
+            SWSS_LOG_ERROR(
+                "Failed to parse %s: Information isn't a JSON object",
+                json_file.c_str());
+            return;
+        }
+
+        // Parse each key in the JSON file and only process SWITCH_CAPABILITY
+        // since it contains the WCMP group capabilities.
+        bool key_found = false;
+        for (auto key_it = json_file_info.begin();
+             key_it != json_file_info.end(); ++key_it)
+        {
+            json keys = key_it.value();
+            if (key_it.key() == m_switchTable.getTableName())
+            {
+                // Parse each key inside SWITCH_CAPABILITY key.
+                for (auto k = keys.begin(); k != keys.end(); k++)
+                {
+                    if (!k.value().is_number())
+                    {
+                        SWSS_LOG_ERROR(
+                            "Failed to parse %s: Value for key %s is not a "
+                            "number", json_file.c_str(), k.key().c_str());
+                        continue;
+                    }
+                    int value = k.value().get<int>();
+                    fvVector.emplace_back(k.key(), std::to_string(value));
+                }
+                key_found = true;
+                break;
+            }
+        }
+        if (!key_found)
+        {
+            SWSS_LOG_ERROR(
+                "Failed to parse %s: %s key isn't present",
+                json_file.c_str(), m_switchTable.getTableName().c_str());
+            return;
+        }
+    }
+    catch (std::exception& ex)
+    {
+        SWSS_LOG_ERROR(
+            "Failed to parse %s: Exception encountered %s",
+            json_file.c_str(), ex.what());
+        return;
+    }
+
+    set_switch_capability(fvVector);
 }
 
 bool SwitchOrch::getSwitchHashOidSai(sai_object_id_t &oid, bool isEcmpHash) const
