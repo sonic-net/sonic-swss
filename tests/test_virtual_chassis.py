@@ -1317,10 +1317,9 @@ class TestVirtualChassis(object):
         remote_lc_switch_id = '2'
         test_prefix = "2.2.2.0/24"
         inband_port = "Ethernet0"
-        test_neigh_ip_1 = "10.8.105.50"
+        test_neigh_ip_1 = "10.8.106.50"
         test_neigh_dev_1 = "Ethernet4"
-        test_neigh_mac_1 = "00:0A:03:04:05:06"
-        test_neigh_dev_2 = "Ethernet8"
+        test_neigh_mac_1 = "00:0A:03:04:08:06"
 
         local_lc_dvs = self.get_lc_dvs(vct, local_lc_switch_id)
         remote_lc_dvs = self.get_lc_dvs(vct, remote_lc_switch_id)
@@ -1376,6 +1375,7 @@ class TestVirtualChassis(object):
         config_db.create_entry("MIRROR_SESSION", session, mirror_entry)
 
         time.sleep(5)
+        #check the mirror session is not active
         state_db = local_lc_dvs.get_state_db()
         state_db.wait_for_n_keys("MIRROR_SESSION_TABLE", 1)
         state_db.wait_for_field_match("MIRROR_SESSION_TABLE", session, {"status": "inactive"})
@@ -1384,6 +1384,7 @@ class TestVirtualChassis(object):
         state_db.wait_for_n_keys("MIRROR_SESSION_TABLE", 1)
         state_db.wait_for_field_match("MIRROR_SESSION_TABLE", session, {"status": "inactive"})
 
+        #Add the route for the mirror destination
         _, res = local_lc_dvs.runcmd(['sh', '-c', f"ip route add {test_prefix} nexthop via {test_neigh_ip_1}"])
         assert res == "", "Error configuring route"
 
@@ -1391,6 +1392,7 @@ class TestVirtualChassis(object):
         assert res == "", "Error configuring route"
         time.sleep(5)
 
+        #check the mirror session is active
         state_db = local_lc_dvs.get_state_db()
         state_db.wait_for_n_keys("MIRROR_SESSION_TABLE", 1)
         state_db.wait_for_field_match("MIRROR_SESSION_TABLE", session, {"status": "active"})
