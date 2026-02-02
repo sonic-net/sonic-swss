@@ -308,8 +308,8 @@ namespace swss {
 
     private:
         sonicNhgObjType m_sonic_obj_type = SONIC_NHG_OBJ_TYPE_NHG_NORMAL;
-        bool m_has_sonic_obj;
-        uint32_t m_rib_id = -1;
+        bool m_has_sonic_obj = false;
+        uint32_t m_rib_id = 0;
         RIBNHGTable *m_table = nullptr;
         string m_nexthop = "";
         string m_vpnSid = "";
@@ -324,7 +324,6 @@ namespace swss {
         set<uint32_t> m_dependents;
         uint32_t m_sonic_obj_id = 0;
         uint32_t m_sonic_gateway_nhg_id = 0;
-        bool m_has_Sonic_obj = false;
         bool m_is_single = true;
 
         int getNextHopGroupFields(NextHopGroupFull nhg, string &nexthops, string &weights);
@@ -437,6 +436,8 @@ namespace swss {
         SonicGateWayNHGEntry *getSonicNHGByRIBID(uint32_t id);
 
         SonicGateWayNHGEntry *getSonicNHGByKey(SonicGateWayNHGObjectKey key);
+
+        void dumpNHGGroupFull(NextHopGroupFull nhg);
 
     private:
         DBConnector *m_db;
