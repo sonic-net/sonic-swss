@@ -537,6 +537,7 @@ namespace flexcounter_test
         // Get SAI default ports to populate DB
         auto ports = ut_helper::getInitialSaiPorts();
         auto firstPortName = ports.begin()->first;
+        auto firstPortValues = ports.begin()->second;
 
         // Create test buffer pool
         poolTable.set(
@@ -742,8 +743,39 @@ namespace flexcounter_test
         // Do not check the content of port counter since it's large and varies among platforms.
         ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, oid, PORT_COUNTER_ID_LIST));
 
-        // create a routing interface
+        auto it = ports.begin();
+        it++;
+        auto secondPortName= it->first;
+        auto secondPortValues = it->second;
+        Port secondPort;
+        ASSERT_TRUE(gPortsOrch->getPort(secondPortName, secondPort));
+        auto second_oid = secondPort.m_port_id;
+
+
+        //Verify the Port Stats counter after DEL
         std::deque<KeyOpFieldsValuesTuple> entries;
+        auto port_consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        entries.push_back({secondPortName, "DEL",  {} });
+        port_consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        auto ret = gPortsOrch->getPort(secondPortName, secondPort);
+        if (ret == true)
+        {
+           // Temporary work around since remove_port fails in sonic-sairedis/vslib in remove_internal due
+           // to switch_create doesn't seem to be calling create_internal for the ports when it is called from
+           // portsorch removePort->sai_port_api.remove_port
+            gPortsOrch->removePortFromLanesMap(secondPortName);
+            gPortsOrch->removePortFromPortListMap(secondPort.m_port_id);
+            gPortsOrch->m_portConfigMap.erase(secondPortName);
+            gPortsOrch->m_portList.erase(secondPortName);
+            gPortsOrch->saiOidToAlias.erase(secondPort.m_port_id);
+
+        }
+        ASSERT_FALSE(gPortsOrch->getPort(secondPortName, secondPort));
+        ASSERT_FALSE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, second_oid, PORT_COUNTER_ID_LIST));
+
+        // create a routing interface
+        entries.clear();
         entries.push_back({firstPort.m_alias, "SET", { {"mtu", "9100"}}});
         auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
         consumer->addToSync(entries);
@@ -1034,12 +1066,28 @@ namespace flexcounter_test
 
         /* Should create ENI Counter stats for existing ENI's */
         m_DashOrch->handleFCStatusUpdate(true);
-        m_DashOrch->doTask(*(m_DashOrch->m_fc_update_timer));
+        // m_DashOrch->doTask(*(m_DashOrch->m_fc_update_timer));
         ASSERT_TRUE(checkFlexCounter(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, ENI_COUNTER_ID_LIST));
 
         /* This should delete the STATS */
         m_DashOrch->handleFCStatusUpdate(false);
         ASSERT_FALSE(checkFlexCounter(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, ENI_COUNTER_ID_LIST));
+    }
+
+    TEST_F(StandaloneFCTest, TestMeterStatusUpdate)
+    {
+        /* Add a mock ENI */
+        EniEntry tmp_entry;
+        tmp_entry.eni_id = 0x7008000000021;
+        m_DashOrch->eni_entries_["497f23d7-f0ac-4c99-a98f-59b470e8c7c"] = tmp_entry;
+
+        /* Should create Meter Counter stats for existing ENI's */
+        m_DashOrch->handleMeterFCStatusUpdate(true);
+        ASSERT_TRUE(checkFlexCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, DASH_METER_COUNTER_ID_LIST));
+
+        /* This should delete the STATS */
+        m_DashOrch->handleMeterFCStatusUpdate(false);
+        ASSERT_FALSE(checkFlexCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, DASH_METER_COUNTER_ID_LIST));
     }
 
     TEST_F(StandaloneFCTest, TestCaching)
@@ -1130,33 +1178,5 @@ namespace flexcounter_test
                                           "SAI_PORT_STAT_IF_OUT_ERRORS"
                                          }
                                      }));
-    }
-
-    class MeterStatFlexCounterTest : public MockOrchTest
-    {
-        virtual void PostSetUp() {
-            _hook_sai_switch_api();
-        }
-
-        virtual void PreTearDown() {
-           _unhook_sai_switch_api();
-        }
-    };
-
-    TEST_F(MeterStatFlexCounterTest, TestStatusUpdate)
-    {
-        /* Add a mock ENI */
-        EniEntry tmp_entry;
-        tmp_entry.eni_id = 0x7008000000021;
-        m_DashOrch->eni_entries_["497f23d7-f0ac-4c99-a98f-59b470e8c7c"] = tmp_entry;
-
-        /* Should create Meter Counter stats for existing ENI's */
-        m_DashMeterOrch->handleMeterFCStatusUpdate(true);
-        m_DashMeterOrch->doTask(*(m_DashMeterOrch->m_meter_fc_update_timer));
-        ASSERT_TRUE(checkFlexCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, DASH_METER_COUNTER_ID_LIST));
-
-        /* This should delete the STATS */
-        m_DashMeterOrch->handleMeterFCStatusUpdate(false);
-        ASSERT_FALSE(checkFlexCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, DASH_METER_COUNTER_ID_LIST));
     }
 }

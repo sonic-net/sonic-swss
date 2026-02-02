@@ -28,6 +28,8 @@ extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
 extern string                      gMySwitchType;
 extern string                      gMySwitchSubType;
+extern bool                        gOrchUnhealthy;
+extern string                      gSaiErrorString;
 
 extern void syncd_apply_view();
 /*
@@ -63,6 +65,7 @@ Srv6Orch *gSrv6Orch;
 FlowCounterRouteOrch *gFlowCounterRouteOrch;
 DebugCounterOrch *gDebugCounterOrch;
 MonitorOrch *gMonitorOrch;
+BfdMonitorOrch *gBfdMonitorOrch;
 TunnelDecapOrch *gTunneldecapOrch;
 StpOrch *gStpOrch;
 MuxOrch *gMuxOrch;
@@ -260,6 +263,8 @@ bool OrchDaemon::init()
     gDirectory.set(vrf_orch);
     gMonitorOrch = new MonitorOrch(m_stateDb, STATE_VNET_MONITOR_TABLE_NAME);
     gDirectory.set(gMonitorOrch);
+    gBfdMonitorOrch = new BfdMonitorOrch(m_stateDb, STATE_BFD_SESSION_TABLE_NAME);
+    gDirectory.set(gBfdMonitorOrch);
 
     const vector<string> chassis_frontend_tables = {
         CFG_PASS_THROUGH_ROUTE_TABLE_NAME,
@@ -471,7 +476,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gStpOrch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
@@ -865,7 +870,7 @@ void OrchDaemon::flush()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to flush redis pipeline %d", status);
-        handleSaiFailure(SAI_API_SWITCH, "set", status);
+        handleSaiFailure(SAI_API_SWITCH, "set", status, true);
     }
 
     /*
@@ -924,6 +929,15 @@ void OrchDaemon::start(long heartBeatInterval)
         int ret;
 
         ret = m_select->select(&s, SELECT_TIMEOUT);
+
+        /*
+         * Log an error message periodically if a previous SAI API call failed with
+         * an unrecoverable error.
+         */
+        if (gOrchUnhealthy)
+        {
+            SWSS_LOG_ERROR("%s", gSaiErrorString.c_str());
+        }
 
         auto tend = std::chrono::high_resolution_clock::now();
         heartBeat(tend, heartBeatInterval);
@@ -1335,7 +1349,8 @@ bool DpuOrchDaemon::init()
         APP_DASH_METER_POLICY_TABLE_NAME,
         APP_DASH_METER_RULE_TABLE_NAME
     };
-    DashMeterOrch *dash_meter_orch = new DashMeterOrch(m_dpu_appDb, dash_meter_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
+
+    DashMeterOrch *dash_meter_orch = new DashMeterOrch(m_dpu_appDb, dash_meter_tables, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_meter_orch);
 
     vector<string> dash_port_map_tables = {

@@ -155,7 +155,6 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 
     VxlanTunnelOrch* vxlan_tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     DashOrch* dash_orch = gDirectory.get<DashOrch*>();
-    DashMeterOrch* dash_meter_orch = gDirectory.get<DashMeterOrch*>();
     if (gPortsOrch && !gPortsOrch->allPortsReady())
     {
         return;
@@ -290,9 +289,9 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     {
                         dash_orch->handleFCStatusUpdate((value == "enable"));
                     }
-                    if (dash_meter_orch && (key == DASH_METER_KEY))
+                    if (dash_orch && (key == DASH_METER_KEY))
                     {
-                        dash_meter_orch->handleMeterFCStatusUpdate((value == "enable"));
+                        dash_orch->handleMeterFCStatusUpdate((value == "enable"));
                     }
                     if (gCoppOrch && (key == FLOW_CNT_TRAP_KEY))
                     {

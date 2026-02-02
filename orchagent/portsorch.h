@@ -207,7 +207,9 @@ public:
     void generateQueueMap(map<string, FlexCounterQueueStates> queuesStateVector);
     uint32_t getNumberOfPortSupportedQueueCounters(string port);
     void createPortBufferQueueCounters(const Port &port, string queues, bool skip_host_tx_queue=true);
+    void addPortBufferQueueCounters(const Port &port, uint32_t startIndex, uint32_t endIndex, bool skip_host_tx_queue=true);
     void removePortBufferQueueCounters(const Port &port, string queues, bool skip_host_tx_queue=true);
+    void deletePortBufferQueueCounters(const Port &port, uint32_t startIndex, uint32_t endIndex, bool skip_host_tx_queue=true);
     void addQueueFlexCounters(map<string, FlexCounterQueueStates> queuesStateVector);
     void addQueueWatermarkFlexCounters(map<string, FlexCounterQueueStates> queuesStateVector);
     void addWredQueueFlexCounters(map<string, FlexCounterQueueStates> queuesStateVector);
@@ -215,7 +217,9 @@ public:
     void generatePriorityGroupMap(map<string, FlexCounterPgStates> pgsStateVector);
     uint32_t getNumberOfPortSupportedPgCounters(string port);
     void createPortBufferPgCounters(const Port &port, string pgs);
+    void addPortBufferPgCounters(const Port& port, uint32_t startIndex, uint32_t endIndex);
     void removePortBufferPgCounters(const Port& port, string pgs);
+    void deletePortBufferPgCounters(const Port& port, uint32_t startIndex, uint32_t endIndex);
     void addPriorityGroupFlexCounters(map<string, FlexCounterPgStates> pgsStateVector);
     void addPriorityGroupWatermarkFlexCounters(map<string, FlexCounterPgStates> pgsStateVector);
 
@@ -464,6 +468,7 @@ private:
     bool setPortFecOverride(sai_object_id_t port_obj, bool override_fec);
     bool setPortPfcAsym(Port &port, sai_port_priority_flow_control_mode_t pfc_asym);
     bool getDestPortId(sai_object_id_t src_port_id, dest_port_type_t port_type, sai_object_id_t &des_port_id);
+    bool setPortMediaType(Port& port, const string &media_type);
 
     bool setBridgePortAdminStatus(sai_object_id_t id, bool up);
 
