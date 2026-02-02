@@ -102,6 +102,7 @@ orchagent_SOURCES = \
             flexcounterorch.cpp \
             watermarkorch.cpp \
             policerorch.cpp \
+	    namelabelmapper.cpp \
             sfloworch.cpp \
             chassisorch.cpp \
             debugcounterorch.cpp \
