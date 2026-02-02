@@ -3352,6 +3352,11 @@ bool PortsOrch::setGearboxPortAttr(const Port &port, dest_port_type_t port_type,
                         attr.id = SAI_PORT_ATTR_SPEED;
                         attr.value.u32 = speed;
                     }
+                    else
+                    {
+                        SWSS_LOG_NOTICE("BOX: Speed %d not supported for port %s", speed, port.m_alias.c_str());
+                        return false;
+                    }
                     SWSS_LOG_NOTICE("BOX: Set %s lane %s %d", port.m_alias.c_str(), speed_attr.c_str(), speed);
                     break;
                 case SAI_PORT_ATTR_MTU:
