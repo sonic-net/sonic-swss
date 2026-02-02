@@ -126,16 +126,184 @@ void L3MulticastManager::enqueue(const std::string& table_name,
 }
 
 ReturnCode L3MulticastManager::drain() {
-  // Have it return success to avoid problems in p4orch unit tests.
-  return ReturnCode(StatusCode::SWSS_RC_SUCCESS)
-         << "L3MulticastManager::drain is not implemented";
+  SWSS_LOG_ENTER();
+  // This manager subscribes to two tables.  We will drain pending entries
+  // based on the table.  A table-specific drain function will process entries
+  // associated with each table.
+  std::string prev_table;
+
+  // Pending tuples (unverified) to process for a given table.
+  std::deque<swss::KeyOpFieldsValuesTuple> tuple_list;
+  ReturnCode status;
+
+  while (!m_entries.empty()) {
+    auto key_op_fvs_tuple = m_entries.front();
+    m_entries.pop_front();
+    std::string table_name;
+    std::string key;
+    parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &key);
+
+    if (prev_table == "") {
+      prev_table = table_name;
+    }
+
+    // We have moved on to a different table, so drain the previous entries.
+    if (table_name != prev_table) {
+      if (prev_table == APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) {
+        // This drain function will drain unexecuted entries upon failure.
+        status = drainMulticastRouterInterfaceEntries(tuple_list);
+      } else if (prev_table == APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) {
+        // This drain function will drain unexecuted entries upon failure.
+        status = drainMulticastReplicationEntries(tuple_list);
+      } else {
+        status = ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED)
+                 << "Unexpected table " << QuotedVar(prev_table);
+        // Drain tuples associated with unknown table as not executed.
+        drainMgmtWithNotExecuted(tuple_list, m_publisher);
+      }
+      prev_table = table_name;
+    }
+    if (!status.ok()) {
+      // The entry we popped has not been processed yet.
+      // Return SWSS_RC_NOT_EXECUTED.
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple),
+                           ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED),
+                           /*replace=*/true);
+      break;
+    } else {
+      tuple_list.push_back(key_op_fvs_tuple);
+    }
+  }  // while
+
+  // If no failure, process any pending entries associated with the table.
+  if (status.ok() && !tuple_list.empty()) {
+    if (prev_table == APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) {
+      status = drainMulticastRouterInterfaceEntries(tuple_list);
+    } else if (prev_table == APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) {
+      status = drainMulticastReplicationEntries(tuple_list);
+    } else {
+      status = ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED)
+               << "Unexpected table " << QuotedVar(prev_table);
+      // Drain tuples associated with unknown table as not executed.
+      drainMgmtWithNotExecuted(tuple_list, m_publisher);
+    }
+  }
+  drainWithNotExecuted();  // drain the main queue
+  return status;
+}
+
+// Drain entries associated with the multicast router interface table.
+ReturnCode L3MulticastManager::drainMulticastRouterInterfaceEntries(
+    std::deque<swss::KeyOpFieldsValuesTuple>& router_interface_tuples) {
+  SWSS_LOG_ENTER();
+
+  ReturnCode status;
+  std::vector<P4MulticastRouterInterfaceEntry>
+      multicast_router_interface_entry_list;
+  std::deque<swss::KeyOpFieldsValuesTuple> tuple_list;
+
+  std::string prev_op;
+  bool prev_update = false;
+
+  while (!router_interface_tuples.empty()) {
+    auto key_op_fvs_tuple = router_interface_tuples.front();
+    router_interface_tuples.pop_front();
+    std::string table_name;
+    std::string key;
+    parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &key);
+    const std::vector<swss::FieldValueTuple>& attributes =
+        kfvFieldsValues(key_op_fvs_tuple);
+
+    // Form entry object
+    auto router_interface_entry_or =
+        deserializeMulticastRouterInterfaceEntry(key, attributes);
+
+    if (!router_interface_entry_or.ok()) {
+      status = router_interface_entry_or.status();
+      SWSS_LOG_ERROR("Unable to deserialize APP DB entry with key %s: %s",
+                     QuotedVar(table_name + ":" + key).c_str(),
+                     status.message().c_str());
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple), status,
+                           /*replace=*/true);
+      break;
+    }
+    auto& router_interface_entry = *router_interface_entry_or;
+
+    // Validate entry
+    const std::string& operation = kfvOp(key_op_fvs_tuple);
+    status = validateMulticastRouterInterfaceEntry(router_interface_entry,
+                                                   operation);
+    if (!status.ok()) {
+      SWSS_LOG_ERROR(
+          "Validation failed for router interface APP DB entry with key %s: %s",
+          QuotedVar(table_name + ":" + key).c_str(), status.message().c_str());
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple), status,
+                           /*replace=*/true);
+      break;
+    }
+
+    // Now, start processing batch of entries.
+    auto* router_interface_entry_ptr = getMulticastRouterInterfaceEntry(
+        router_interface_entry.multicast_router_interface_entry_key);
+    bool update = router_interface_entry_ptr != nullptr;
+
+    if (prev_op == "") {
+      prev_op = operation;
+      prev_update = update;
+    }
+    // Process the entries if the operation type changes.
+    if (operation != prev_op || update != prev_update) {
+      status = processMulticastRouterInterfaceEntries(
+          multicast_router_interface_entry_list, tuple_list, prev_op,
+          prev_update);
+      multicast_router_interface_entry_list.clear();
+      tuple_list.clear();
+      prev_op = operation;
+      prev_update = update;
+    }
+
+    if (!status.ok()) {
+      // Return SWSS_RC_NOT_EXECUTED if failure has occured.
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple),
+                           ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED),
+                           /*replace=*/true);
+      break;
+    } else {
+      multicast_router_interface_entry_list.push_back(router_interface_entry);
+      tuple_list.push_back(key_op_fvs_tuple);
+    }
+  }  // while
+
+  // Process any pending entries.
+  if (!multicast_router_interface_entry_list.empty()) {
+    auto rc = processMulticastRouterInterfaceEntries(
+        multicast_router_interface_entry_list, tuple_list, prev_op,
+        prev_update);
+    if (!rc.ok()) {
+      status = rc;
+    }
+  }
+  drainMgmtWithNotExecuted(router_interface_tuples, m_publisher);
+  return status;
+}
+
+// Drain entries associated with the multicast replication table, and those
+// only.
+ReturnCode L3MulticastManager::drainMulticastReplicationEntries(
+    std::deque<swss::KeyOpFieldsValuesTuple>& replication_tuples) {
+  return ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
+         << "L3MulticastManager::drainMulticastReplicationEntries is not "
+         << "implemented yet";
 }
 
 ReturnCodeOr<P4MulticastRouterInterfaceEntry>
 L3MulticastManager::deserializeMulticastRouterInterfaceEntry(
     const std::string& key,
-    const std::vector<swss::FieldValueTuple>& attributes,
-    const std::string& table_name) {
+    const std::vector<swss::FieldValueTuple>& attributes) {
   SWSS_LOG_ENTER();
 
   P4MulticastRouterInterfaceEntry router_interface_entry = {};
@@ -162,7 +330,7 @@ L3MulticastManager::deserializeMulticastRouterInterfaceEntry(
       if (value != p4orch::kSetSrcMac) {
         return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
                << "Unexpected action " << QuotedVar(value) << " in "
-               << table_name;
+               << APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME;
       }
     } else if (field == prependParamField(p4orch::kSrcMac)) {
       router_interface_entry.src_mac = swss::MacAddress(value);
@@ -170,7 +338,8 @@ L3MulticastManager::deserializeMulticastRouterInterfaceEntry(
       router_interface_entry.multicast_metadata = value;
     } else if (field != p4orch::kControllerMetadata) {
       return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-             << "Unexpected field " << QuotedVar(field) << " in " << table_name;
+             << "Unexpected field " << QuotedVar(field) << " in "
+             << APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME;
     }
   }
   return router_interface_entry;
@@ -179,8 +348,7 @@ L3MulticastManager::deserializeMulticastRouterInterfaceEntry(
 ReturnCodeOr<P4MulticastReplicationEntry>
 L3MulticastManager::deserializeMulticastReplicationEntry(
     const std::string& key,
-    const std::vector<swss::FieldValueTuple>& attributes,
-    const std::string& table_name) {
+    const std::vector<swss::FieldValueTuple>& attributes) {
   SWSS_LOG_ENTER();
   P4MulticastReplicationEntry replication_entry = {};
   try {
@@ -211,7 +379,8 @@ L3MulticastManager::deserializeMulticastReplicationEntry(
       replication_entry.multicast_metadata = value;
     } else if (field != p4orch::kControllerMetadata) {
       return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-             << "Unexpected field " << QuotedVar(field) << " in " << table_name;
+             << "Unexpected field " << QuotedVar(field) << " in "
+             << APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME;
     }
   }
   return replication_entry;
@@ -245,9 +414,25 @@ std::string L3MulticastManager::verifyMulticastReplicationState(
 ReturnCode L3MulticastManager::validateMulticastRouterInterfaceEntry(
     const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
     const std::string& operation) {
-  return ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
-         << "L3MulticastManager::verifyMulticastRouterInterfaceState is not "
-         << "implemented";
+  // Confirm match fields are populated.
+  if (multicast_router_interface_entry.multicast_replica_port.empty()) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "No match field entry multicast_replica_port provided";
+  }
+  if (multicast_router_interface_entry.multicast_replica_instance.empty()) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "No match field entry multicast_replica_instance provided";
+  }
+
+  if (operation == SET_COMMAND) {
+    return validateSetMulticastRouterInterfaceEntry(
+        multicast_router_interface_entry);
+  } else if (operation == DEL_COMMAND) {
+    return validateDelMulticastRouterInterfaceEntry(
+        multicast_router_interface_entry);
+  }
+  return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+         << "Unknown operation type " << QuotedVar(operation);
 }
 
 ReturnCode L3MulticastManager::validateMulticastReplicationEntry(
@@ -258,13 +443,112 @@ ReturnCode L3MulticastManager::validateMulticastReplicationEntry(
          << "implemented";
 }
 
+ReturnCode L3MulticastManager::validateSetMulticastRouterInterfaceEntry(
+    const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry) {
+  auto* router_interface_entry_ptr = getMulticastRouterInterfaceEntry(
+      multicast_router_interface_entry.multicast_router_interface_entry_key);
+
+  bool is_update_operation = router_interface_entry_ptr != nullptr;
+  if (is_update_operation) {
+    // Confirm RIF had SAI object ID.
+    if (router_interface_entry_ptr->router_interface_oid ==
+        SAI_OBJECT_TYPE_NULL) {
+      return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+             << "RIF was not assigned before updating multicast router "
+                "interface "
+                "entry with keys "
+             << QuotedVar(
+                    multicast_router_interface_entry.multicast_replica_port)
+             << " and "
+             << QuotedVar(multicast_router_interface_entry
+                              .multicast_replica_instance);
+    }
+
+    // Confirm we have a reference to the RIF object ID.
+    if (m_rifOidToRouterInterfaceEntries.find(
+            router_interface_entry_ptr->router_interface_oid) ==
+        m_rifOidToRouterInterfaceEntries.end()) {
+      return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+             << "Expected RIF OID is missing from map: "
+             << router_interface_entry_ptr->router_interface_oid;
+    }
+
+    // Confirm the RIF object ID exists in central mapper.
+    std::string rif_key = KeyGenerator::generateMulticastRouterInterfaceRifKey(
+        router_interface_entry_ptr->multicast_replica_port,
+        router_interface_entry_ptr->src_mac);
+    bool exist_in_mapper =
+        m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key);
+    if (!exist_in_mapper) {
+      return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+             << "Multicast router interface entry exists in manager but RIF "
+                "does "
+                "not exist in the centralized map";
+    }
+  }
+  // No additional validation required for add operation.
+  return ReturnCode();
+}
+
+ReturnCode L3MulticastManager::validateDelMulticastRouterInterfaceEntry(
+    const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry) {
+  auto* router_interface_entry_ptr = getMulticastRouterInterfaceEntry(
+      multicast_router_interface_entry.multicast_router_interface_entry_key);
+
+  // Can't delete what isn't there.
+  if (router_interface_entry_ptr == nullptr) {
+    return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+           << "Multicast router interface entry exists does not exist";
+  }
+
+  // Confirm we have a reference to the RIF object ID.
+  if (m_rifOidToRouterInterfaceEntries.find(
+          router_interface_entry_ptr->router_interface_oid) ==
+      m_rifOidToRouterInterfaceEntries.end()) {
+    return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+           << "Expected RIF OID is missing from map: "
+           << router_interface_entry_ptr->router_interface_oid;
+  }
+
+  // Confirm the RIF object ID exists in central mapper.
+  std::string rif_key = KeyGenerator::generateMulticastRouterInterfaceRifKey(
+      multicast_router_interface_entry.multicast_replica_port,
+      multicast_router_interface_entry.src_mac);
+  if (!m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key)) {
+    RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL(
+        "Multicast router interface entry does not exist in the central map");
+  }
+  return ReturnCode();
+}
+
 ReturnCode L3MulticastManager::processMulticastRouterInterfaceEntries(
     std::vector<P4MulticastRouterInterfaceEntry>& entries,
     const std::deque<swss::KeyOpFieldsValuesTuple>& tuple_list,
     const std::string& op, bool update) {
-  return ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
-         << "L3MulticastManager::processMulticastRouterInterfaceEntries is not "
-         << "implemented";
+  SWSS_LOG_ENTER();
+
+  ReturnCode status;
+  std::vector<ReturnCode> statuses;
+  // In syncd, bulk SAI calls use mode SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR.
+  if (op == SET_COMMAND) {
+    if (!update) {
+      statuses = addMulticastRouterInterfaceEntries(entries);
+    } else {
+      statuses = updateMulticastRouterInterfaceEntries(entries);
+    }
+  } else {
+    statuses = deleteMulticastRouterInterfaceEntries(entries);
+  }
+  // Check status of each entry.
+  for (size_t i = 0; i < entries.size(); ++i) {
+    m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(tuple_list[i]),
+                         kfvFieldsValues(tuple_list[i]), statuses[i],
+                         /*replace=*/true);
+    if (status.ok() && !statuses[i].ok()) {
+      status = statuses[i];
+    }
+  }
+  return status;
 }
 
 ReturnCode L3MulticastManager::createRouterInterface(
