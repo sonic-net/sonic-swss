@@ -1311,6 +1311,97 @@ class TestVirtualChassis(object):
                 value = stat_entry.get("SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP")
                 assert value == "0", "SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP is non zero in COUNTERS_DB"
 
+    def test_erspan_mirror(self, vct):
+        # test params
+        local_lc_switch_id = '0'
+        remote_lc_switch_id = '2'
+        test_prefix = "2.2.2.0/24"
+        inband_port = "Ethernet0"
+        test_neigh_ip_1 = "10.8.105.50"
+        test_neigh_dev_1 = "Ethernet4"
+        test_neigh_mac_1 = "00:0A:03:04:05:06"
+        test_neigh_dev_2 = "Ethernet8"
+
+        local_lc_dvs = self.get_lc_dvs(vct, local_lc_switch_id)
+        remote_lc_dvs = self.get_lc_dvs(vct, remote_lc_switch_id)
+
+        # config inband port
+        self.config_inbandif_port(vct, inband_port)
+
+        # add neighbor
+        self.configure_neighbor(local_lc_dvs, "add", test_neigh_ip_1, test_neigh_mac_1, test_neigh_dev_1)
+
+        time.sleep(10)
+
+        asic_db = remote_lc_dvs.get_asic_db()
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY", 1)
+        neighkeys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY")
+        assert len(neighkeys), "No neigh entries in ASIC_DB"
+
+        # Check for presence of the remote neighbor in ASIC_DB
+        remote_neigh = ""
+        for nkey in neighkeys:
+            ne = ast.literal_eval(nkey)
+            if ne['ip'] == test_neigh_ip_1:
+               remote_neigh = nkey
+               break
+
+        assert remote_neigh != "", "Remote neigh not found in ASIC_DB"
+
+        asic_db = remote_lc_dvs.get_asic_db()
+        nexthop_keys = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", 1)
+        assert len(nexthop_keys), "No Nexthop entries in ASIC_DB"
+
+        nexthop_entry = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nexthop_keys[0])
+        ip = nexthop_entry.get("SAI_NEXT_HOP_ATTR_IP")
+        assert ip != "", "Ip address not found for nexthop entry in asic db"
+
+        session = "TEST_SESSION"
+
+        mirror_entry = {
+            "src_ip": "1.1.1.1",
+            "dst_ip": "2.2.2.2",
+            "gre_type": "0x6558",
+            "dscp": "8",
+            "ttl": "100",
+            "queue": "0",
+            "direction": "BOTH"
+        }
+
+        # Configure the mirror session
+        config_db = local_lc_dvs.get_config_db()
+        config_db.create_entry("MIRROR_SESSION", session, mirror_entry)
+
+        config_db = remote_lc_dvs.get_config_db()
+        config_db.create_entry("MIRROR_SESSION", session, mirror_entry)
+
+        time.sleep(5)
+        state_db = local_lc_dvs.get_state_db()
+        state_db.wait_for_n_keys("MIRROR_SESSION_TABLE", 1)
+        state_db.wait_for_field_match("MIRROR_SESSION_TABLE", session, {"status": "inactive"})
+
+        state_db = remote_lc_dvs.get_state_db()
+        state_db.wait_for_n_keys("MIRROR_SESSION_TABLE", 1)
+        state_db.wait_for_field_match("MIRROR_SESSION_TABLE", session, {"status": "inactive"})
+
+        _, res = local_lc_dvs.runcmd(['sh', '-c', f"ip route add {test_prefix} nexthop via {test_neigh_ip_1}"])
+        assert res == "", "Error configuring route"
+
+        _, res = remote_lc_dvs.runcmd(['sh', '-c', f"ip route add {test_prefix} nexthop via {test_neigh_ip_1}"])
+        assert res == "", "Error configuring route"
+        time.sleep(5)
+
+        state_db = local_lc_dvs.get_state_db()
+        state_db.wait_for_n_keys("MIRROR_SESSION_TABLE", 1)
+        state_db.wait_for_field_match("MIRROR_SESSION_TABLE", session, {"status": "active"})
+
+        state_db = local_lc_dvs.get_state_db()
+        state_db.wait_for_n_keys("MIRROR_SESSION_TABLE", 1)
+        state_db.wait_for_field_match("MIRROR_SESSION_TABLE", session, {"status": "active"})
+
+        # Cleanup inband if configuration
+        self.del_inbandif_port(vct, inband_port)
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
