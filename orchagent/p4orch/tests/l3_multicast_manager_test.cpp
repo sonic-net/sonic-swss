@@ -38,7 +38,6 @@ using ::testing::StrictMock;
 extern sai_object_id_t gSwitchId;
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t gVrfOid;
-// extern sai_ipmc_api_t* sai_ipmc_api;
 extern sai_ipmc_group_api_t* sai_ipmc_group_api;
 extern sai_router_interface_api_t* sai_router_intfs_api;
 extern char* gVrfName;
@@ -67,6 +66,33 @@ constexpr sai_object_id_t kGroupOid3 = 0x3;
 constexpr sai_object_id_t kGroupMemberOid1 = 0x11;
 constexpr sai_object_id_t kGroupMemberOid2 = 0x12;
 constexpr sai_object_id_t kGroupMemberOid3 = 0x13;
+
+// Matches two SAI attributes.
+bool MatchSaiAttribute(const sai_attribute_t& attr,
+                       const sai_attribute_t& exp_attr) {
+  if (exp_attr.id == SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_GROUP_ID) {
+    if (attr.id != SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_GROUP_ID ||
+        attr.value.oid != exp_attr.value.oid) {
+      return false;
+    }
+  }
+  if (exp_attr.id == SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID) {
+    if (attr.id != SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID ||
+        attr.value.oid != exp_attr.value.oid) {
+      return false;
+    }
+  }
+  return true;
+}
+
+MATCHER_P(AttrArrayEq, array, "") {
+  for (size_t i = 0; i < array.size(); ++i) {
+    if (!MatchSaiAttribute(arg[i], array[i])) {
+      return false;
+    }
+  }
+  return true;
+}
 
 }  // namespace
 
@@ -137,6 +163,40 @@ class L3MulticastManagerTest : public ::testing::Test {
                   entries[0].multicast_router_interface_entry_key),
               nullptr);
     EXPECT_EQ(GetRifOid(&entries[0]), rif_oid);
+    return entry;
+  }
+
+  P4MulticastReplicationEntry SetupP4MulticastReplicationEntry(
+      const std::string& multicast_group_id, const std::string& port,
+      const std::string& instance, const sai_object_id_t group_oid,
+      const sai_object_id_t group_member_oid, bool expect_group_mock = true) {
+    std::vector<P4MulticastReplicationEntry> entries;
+    auto entry =
+        GenerateP4MulticastReplicationEntry(multicast_group_id, port, instance);
+    entries.push_back(entry);
+
+    if (expect_group_mock) {
+      EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group(_, _, _, _))
+          .WillOnce(
+              DoAll(SetArgPointee<0>(group_oid), Return(SAI_STATUS_SUCCESS)));
+    }
+    EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group_member(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(group_member_oid),
+                        Return(SAI_STATUS_SUCCESS)));
+
+    auto statuses = AddMulticastReplicationEntries(entries);
+    EXPECT_EQ(statuses.size(), 1);
+    EXPECT_TRUE(statuses[0].ok());
+
+    sai_object_id_t end_groupOid = SAI_NULL_OBJECT_ID;
+    p4_oid_mapper_.getOID(SAI_OBJECT_TYPE_IPMC_GROUP,
+                          entries[0].multicast_group_id, &end_groupOid);
+    sai_object_id_t end_groupMemberOid = SAI_NULL_OBJECT_ID;
+    p4_oid_mapper_.getOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
+                          entries[0].multicast_replication_key,
+                          &end_groupMemberOid);
+    EXPECT_EQ(end_groupOid, group_oid);
+    EXPECT_EQ(end_groupMemberOid, group_member_oid);
     return entry;
   }
 
@@ -309,6 +369,11 @@ class L3MulticastManagerTest : public ::testing::Test {
   std::vector<ReturnCode> DeleteMulticastReplicationEntries(
       std::vector<P4MulticastReplicationEntry>& entries) {
     return l3_multicast_manager_.deleteMulticastReplicationEntries(entries);
+  }
+
+  std::vector<ReturnCode> UpdateMulticastReplicationEntries(
+      std::vector<P4MulticastReplicationEntry>& entries) {
+    return l3_multicast_manager_.updateMulticastReplicationEntries(entries);
   }
 
   P4MulticastRouterInterfaceEntry* GetMulticastRouterInterfaceEntry(
@@ -738,6 +803,7 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
   EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
 }
 
 TEST_F(L3MulticastManagerTest,
@@ -759,6 +825,7 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
   EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
 }
 
 TEST_F(L3MulticastManagerTest,
@@ -780,6 +847,7 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
   EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
 }
 
 TEST_F(L3MulticastManagerTest, DeleteMulticastRouterInterfaceEntriesSaiFails) {
@@ -937,6 +1005,7 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
   EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
 }
 
 TEST_F(L3MulticastManagerTest,
@@ -965,6 +1034,7 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
   EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
 }
 
 TEST_F(L3MulticastManagerTest,
@@ -991,6 +1061,7 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
   EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
 }
 
 TEST_F(L3MulticastManagerTest,
@@ -1017,6 +1088,7 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
   EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
 }
 
 TEST_F(L3MulticastManagerTest,
@@ -1665,119 +1737,922 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, status);
 }
 
-// ---------- Temporary tests (implemented functions) -------------------------
+TEST_F(L3MulticastManagerTest, VerifyStateMulticastRouterInterfaceTestSuccess) {
+  auto entry = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
 
-TEST_F(L3MulticastManagerTest, NoGetMulticastRouterInterfaceEntry) {
-  auto entry = GenerateP4MulticastRouterInterfaceEntry(
-      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1));
-  P4MulticastRouterInterfaceEntry* actual_entry_ptr =
-      GetMulticastRouterInterfaceEntry(
-          entry.multicast_router_interface_entry_key);
-  ASSERT_EQ(actual_entry_ptr, nullptr);
-}
-
-TEST_F(L3MulticastManagerTest, NoGetMulticastReplicationEntry) {
-  auto entry = GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1");
-  P4MulticastReplicationEntry* actual_entry_ptr =
-      GetMulticastReplicationEntry(entry.multicast_replication_key);
-  ASSERT_EQ(actual_entry_ptr, nullptr);
-}
-
-TEST_F(L3MulticastManagerTest, NoGetRifOid) {
-  auto entry = GenerateP4MulticastRouterInterfaceEntry(
-      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1));
-  sai_object_id_t oid = GetRifOid(&entry);
-  ASSERT_EQ(oid, SAI_NULL_OBJECT_ID);
-}
-
-// ---------- Temporary tests (unimplemented functions) -----------------------
-
-TEST_F(L3MulticastManagerTest, NoVerifyState) {
-  EXPECT_FALSE(VerifyState(/*key=*/"1", /*tuple=*/{}).empty());
-}
-
-TEST_F(L3MulticastManagerTest, NoVerifyMulticastRouterInterfaceStateCache) {
-  auto entry1 = GenerateP4MulticastRouterInterfaceEntry(
-      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1));
-  auto entry2 = GenerateP4MulticastRouterInterfaceEntry(
-      "Ethernet2", "0x0", swss::MacAddress(kSrcMac1));
-  EXPECT_FALSE(
-      VerifyMulticastRouterInterfaceStateCache(entry1, &entry2).empty());
-}
-
-TEST_F(L3MulticastManagerTest, NoVerifyMulticastReplicationStateCache) {
-  auto entry1 = GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1");
-  auto entry2 = GenerateP4MulticastReplicationEntry("0x2", "Ethernet1", "0x1");
-  EXPECT_FALSE(VerifyMulticastReplicationStateCache(entry1, &entry2).empty());
-}
-
-TEST_F(L3MulticastManagerTest, NoValidateMulticastReplicationEntry) {
-  auto entry = GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1");
-  EXPECT_FALSE(ValidateMulticastReplicationEntry(entry, SET_COMMAND).ok());
-}
-
-TEST_F(L3MulticastManagerTest, NoCreateMulticastGroup) {
-  auto entry = GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1");
-  sai_object_id_t oid = SAI_NULL_OBJECT_ID;
-  EXPECT_FALSE(CreateMulticastGroup(entry, /*mcast_group_oid=*/&oid).ok());
-}
-
-TEST_F(L3MulticastManagerTest, NoDeleteMulticastGroup) {
-  auto entry = GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1");
-  sai_object_id_t oid = SAI_NULL_OBJECT_ID;
-  EXPECT_FALSE(DeleteMulticastGroup(
-                   /*multicast_group_id=*/"1", /*mcast_group_oid=*/oid)
-                   .ok());
-}
-
-TEST_F(L3MulticastManagerTest, NoCreateMulticastGroupMember) {
-  auto entry = GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1");
-  sai_object_id_t oid = SAI_NULL_OBJECT_ID;
-  EXPECT_FALSE(CreateMulticastGroupMember(entry, /*rif_oid=*/SAI_NULL_OBJECT_ID,
-                                          /*mcast_group_member_oid=*/&oid)
-                   .ok());
-}
-
-TEST_F(L3MulticastManagerTest, NoAddMulticastReplicationEntries) {
-  std::vector<P4MulticastReplicationEntry> entries;
-  auto rcs = AddMulticastReplicationEntries(entries);
-  ASSERT_EQ(rcs.size(), 1);
-  EXPECT_FALSE(rcs[0].ok());
-}
-
-TEST_F(L3MulticastManagerTest, NoDeleteMulticastReplicationEntries) {
-  std::vector<P4MulticastReplicationEntry> entries;
-  auto rcs = DeleteMulticastReplicationEntries(entries);
-  ASSERT_EQ(rcs.size(), 1);
-  EXPECT_FALSE(rcs[0].ok());
-}
-
-TEST_F(L3MulticastManagerTest, NoVerifyMulticastReplicationStateAsicDb) {
-  auto entry = GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1");
-  EXPECT_FALSE(VerifyMulticastReplicationStateAsicDb(&entry).empty());
-}
-
-TEST_F(L3MulticastManagerTest, DrainUnimplmentedPacketReplication) {
   const std::string match_key =
       R"({"match/multicast_replica_port":"Ethernet1",)"
       R"("match/multicast_replica_instance":"0x1"})";
   const std::string appl_db_key =
       std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
       kTableKeyDelimiter + match_key;
+  const std::string db_key = std::string(APP_P4RT_TABLE_NAME) +
+                           kTableKeyDelimiter + appl_db_key;
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+  attributes.push_back(swss::FieldValueTuple{
+      prependParamField(p4orch::kSrcMac), kSrcMac1});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
 
-  // Enqueue entry for create operation.
-  auto expect_entry = GenerateP4MulticastRouterInterfaceEntry(
-      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1));
-  expect_entry.router_interface_oid = kRifOid1;
-  auto start_rifOid = GetRifOid(&expect_entry);
-  EXPECT_EQ(start_rifOid, SAI_NULL_OBJECT_ID);
+  // Setup ASIC DB.
+  swss::Table table(nullptr, "ASIC_STATE");
+  table.set(
+      "SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID",
+                                "oid:0x0"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS",
+                                "00:01:02:03:04:05"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_TYPE",
+                                "SAI_ROUTER_INTERFACE_TYPE_PORT"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_PORT_ID",
+                                "oid:0x112233"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE",
+                                "true"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE",
+                                "true"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"}});
+
+  // Verification should succeed with vaild key and value.
+  EXPECT_EQ(VerifyState(db_key, attributes), "");
+}
+
+TEST_F(L3MulticastManagerTest,
+       VerifyStateMulticastRouterInterfaceTestMissingAsicDb) {
+  auto entry = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+
+  const std::string match_key =
+      R"({"match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string appl_db_key =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + match_key;
+  const std::string db_key = std::string(APP_P4RT_TABLE_NAME) +
+                           kTableKeyDelimiter + appl_db_key;
 
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
       swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+  // Use wrong source mac so state cache fails.
+  attributes.push_back(swss::FieldValueTuple{
+      prependParamField(p4orch::kSrcMac), kSrcMac2});
   attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  // Setup ASIC DB.
+  swss::Table table(nullptr, "ASIC_STATE");
+  table.set(
+      "SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID",
+                                "oid:0x0"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS",
+                                "00:01:02:03:04:05"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_TYPE",
+                                "SAI_ROUTER_INTERFACE_TYPE_PORT"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_PORT_ID",
+                                "oid:0x112233"},
+          // These should be true.
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE",
+                               "false"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE",
+                                "false"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"}});
+
+  // Verification should fail, since values do not match.
+  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+
+  // No key should also fail.
+  table.del("SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456");
+  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+}
+
+TEST_F(L3MulticastManagerTest, VerifyStateMulticastRouterInterfaceTestBadKeys) {
+  const std::string match_key =
+      R"({"match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string appl_db_key =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + match_key;
+  std::vector<swss::FieldValueTuple> attributes;
+
+  const std::string no_delim = "p4rttable";
+  EXPECT_EQ(VerifyState(no_delim, attributes),
+            "Invalid key, missing delimiter: p4rttable");
+
+  const std::string not_p4rt = std::string("Wrong") +
+                               kTableKeyDelimiter + appl_db_key;
+  EXPECT_EQ(VerifyState(not_p4rt, attributes),
+            "Invalid key, unexpected P4RT table: " + not_p4rt);
+
+  const std::string bad_appl_db_key =
+      std::string(APP_P4RT_TUNNEL_TABLE_NAME) + kTableKeyDelimiter + match_key;
+  const std::string bad_db_key = std::string(APP_P4RT_TABLE_NAME) +
+      kTableKeyDelimiter + bad_appl_db_key;
+  EXPECT_EQ(VerifyState(bad_db_key, attributes),
+            "Invalid key, unexpected table name: " + bad_db_key);
+}
+
+TEST_F(L3MulticastManagerTest,
+       VerifyStateMulticastRouterInterfaceTestBadEntries) {
+  const std::string bad_match_key =
+      R"({"match/multicast_replica_port":"Ethernet1"})";
+  const std::string bad_appl_db_key =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + bad_match_key;
+  const std::string bad_db_key = std::string(APP_P4RT_TABLE_NAME) +
+                           kTableKeyDelimiter + bad_appl_db_key;
+
+  const std::string match_key =
+      R"({"match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string appl_db_key =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + match_key;
+  const std::string db_key = std::string(APP_P4RT_TABLE_NAME) +
+                           kTableKeyDelimiter + appl_db_key;
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+  attributes.push_back(swss::FieldValueTuple{
+      prependParamField(p4orch::kSrcMac), kSrcMac1});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  EXPECT_EQ(VerifyState(bad_db_key, attributes),
+            "Unable to deserialize key '" + bad_match_key +
+            "': Failed to deserialize multicast router interface table key");
+
+  EXPECT_EQ(VerifyState(db_key, attributes),
+            "No entry found with key '" + match_key + "'");
+}
+
+TEST_F(L3MulticastManagerTest,
+       VerifyStateMulticastRouterInterfaceTestStateCacheFails) {
+  P4MulticastRouterInterfaceEntry internal_entry =
+      GenerateP4MulticastRouterInterfaceEntry(
+          "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), "meta1");
+  internal_entry.router_interface_oid = kRifOid1;
+
+  // Bad app db entry.
+  P4MulticastRouterInterfaceEntry missing_multicast_replica_port =
+      GenerateP4MulticastRouterInterfaceEntry(
+          "", "0x1", swss::MacAddress(kSrcMac1));
+  EXPECT_FALSE(VerifyMulticastRouterInterfaceStateCache(
+      missing_multicast_replica_port, &internal_entry).empty());
+
+  // Mismatch on key.
+  P4MulticastRouterInterfaceEntry key_mismatch =
+      GenerateP4MulticastRouterInterfaceEntry(
+          "Ethernet2", "0x1", swss::MacAddress(kSrcMac1), "meta1");
+  EXPECT_FALSE(VerifyMulticastRouterInterfaceStateCache(
+      key_mismatch, &internal_entry).empty());
+
+  // Mismatch on multicast_replica_port.
+  P4MulticastRouterInterfaceEntry port_mismatch =
+      GenerateP4MulticastRouterInterfaceEntry(
+          "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), "meta1");
+  port_mismatch.multicast_replica_port = "Ethernet2";
+  EXPECT_FALSE(VerifyMulticastRouterInterfaceStateCache(
+      port_mismatch, &internal_entry).empty());
+
+  // Mismatch on multicast_replica_instance.
+  P4MulticastRouterInterfaceEntry instance_mismatch =
+      GenerateP4MulticastRouterInterfaceEntry(
+          "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), "meta1");
+  instance_mismatch.multicast_replica_instance = "0x2";
+  EXPECT_FALSE(VerifyMulticastRouterInterfaceStateCache(
+      instance_mismatch, &internal_entry).empty());
+
+  // Mismatch on src_mac.
+  P4MulticastRouterInterfaceEntry mac_mismatch =
+      GenerateP4MulticastRouterInterfaceEntry(
+          "Ethernet1", "0x1", swss::MacAddress(kSrcMac2), "meta1");
+  EXPECT_FALSE(VerifyMulticastRouterInterfaceStateCache(
+      mac_mismatch, &internal_entry).empty());
+
+  // Mismatch on multicast_metadata.
+  P4MulticastRouterInterfaceEntry metadata_mismatch =
+      GenerateP4MulticastRouterInterfaceEntry(
+          "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), "meta2");
+  EXPECT_FALSE(VerifyMulticastRouterInterfaceStateCache(
+      metadata_mismatch, &internal_entry).empty());
+}
+
+TEST_F(L3MulticastManagerTest, CreateMulticastGroupFailureAlreadyInMapper) {
+  auto entry = GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1");
+  sai_object_id_t group_oid = kGroupOid1;
+  p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_IPMC_GROUP, "0x1", group_oid);
+
+  EXPECT_EQ(StatusCode::SWSS_RC_INTERNAL,
+            CreateMulticastGroup(entry, &group_oid));
+}
+
+TEST_F(L3MulticastManagerTest, DeleteMulticastGroupFailureNotInMapper) {
+  EXPECT_EQ(StatusCode::SWSS_RC_INTERNAL,
+            DeleteMulticastGroup("0x1", kGroupOid1));
+}
+
+TEST_F(L3MulticastManagerTest,
+       CreateMulticastGroupMemberFailureAlreadyInMapper) {
+  auto entry = GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1");
+  sai_object_id_t group_member_oid = kGroupMemberOid1;
+  p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
+                        entry.multicast_replication_key, group_member_oid);
+
+  EXPECT_EQ(StatusCode::SWSS_RC_INTERNAL,
+            CreateMulticastGroupMember(entry, kRifOid1, &group_member_oid));
+}
+
+TEST_F(L3MulticastManagerTest, CreateMulticastGroupMemberFailureNullRif) {
+  auto entry = GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1");
+  sai_object_id_t group_member_oid;
+
+  EXPECT_EQ(StatusCode::SWSS_RC_UNAVAIL,
+            CreateMulticastGroupMember(entry, SAI_OBJECT_TYPE_NULL,
+                                       &group_member_oid));
+}
+
+TEST_F(L3MulticastManagerTest, AddMulticastReplicationEntriesNoRifTest) {
+  std::vector<P4MulticastReplicationEntry> entries;
+  entries.push_back(
+      GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1"));
+  entries.push_back(
+      GenerateP4MulticastReplicationEntry("0x2", "Ethernet2", "0x2"));
+
+  std::vector<ReturnCode> statuses = AddMulticastReplicationEntries(entries);
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_UNAVAIL);
+  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+}
+
+TEST_F(L3MulticastManagerTest, AddMulticastReplicationEntriesOneAddTest) {
+  // Add router interface entry so have RIF.
+  auto rif_entry = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+
+  std::vector<P4MulticastReplicationEntry> entries;
+  entries.push_back(
+      GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1"));
+
+  EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kGroupOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group_member(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+
+  auto statuses = AddMulticastReplicationEntries(entries);
+  EXPECT_EQ(statuses.size(), 1);
+  for (size_t i = 0; i < statuses.size(); ++i) {
+    EXPECT_TRUE(statuses[i].ok());
+  }
+  EXPECT_EQ(entries[0].multicast_group_oid, kGroupOid1);
+  EXPECT_EQ(entries[0].multicast_group_member_oid, kGroupMemberOid1);
+  EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_IPMC_GROUP, "0x1"));
+
+  sai_object_id_t end_groupOid1 = SAI_NULL_OBJECT_ID;
+  p4_oid_mapper_.getOID(SAI_OBJECT_TYPE_IPMC_GROUP, "0x1", &end_groupOid1);
+  sai_object_id_t end_groupOid2 = SAI_NULL_OBJECT_ID;
+  p4_oid_mapper_.getOID(SAI_OBJECT_TYPE_IPMC_GROUP, "0x2", &end_groupOid2);
+  EXPECT_EQ(end_groupOid1, kGroupOid1);
+  EXPECT_EQ(end_groupOid2, SAI_NULL_OBJECT_ID);
+}
+
+TEST_F(L3MulticastManagerTest,
+       AddMulticastReplicationEntriesCreateGroupFailsTest) {
+  // Add router interface entry so have RIF.
+  auto rif_entry = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+
+  std::vector<P4MulticastReplicationEntry> entries;
+  entries.push_back(
+      GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1"));
+  entries.push_back(
+      GenerateP4MulticastReplicationEntry("0x2", "Ethernet2", "0x2"));
+
+  EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group(_, _, _, _))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  auto statuses = AddMulticastReplicationEntries(entries);
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_UNKNOWN);
+  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_IPMC_GROUP, "0x1"));
+  EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_IPMC_GROUP, "0x2"));
+}
+
+TEST_F(L3MulticastManagerTest,
+       AddMulticastReplicationEntriesCreateGroupMemberFailsTest) {
+  // Add router interface entry so have RIF.
+  auto rif_entry = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+
+  std::vector<P4MulticastReplicationEntry> entries;
+  entries.push_back(
+      GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1"));
+  entries.push_back(
+      GenerateP4MulticastReplicationEntry("0x2", "Ethernet2", "0x2"));
+
+  EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kGroupOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group_member(_, _, _, _))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+  EXPECT_CALL(mock_sai_ipmc_group_, remove_ipmc_group(kGroupOid1))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  auto statuses = AddMulticastReplicationEntries(entries);
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_UNKNOWN);
+  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+}
+
+TEST_F(L3MulticastManagerTest,
+       AddMulticastReplicationEntriesCreateGroupMemberFailsBackoutFailsTest) {
+  // Add router interface entry so have RIF.
+  auto rif_entry = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+
+  std::vector<P4MulticastReplicationEntry> entries;
+  entries.push_back(
+      GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1"));
+  entries.push_back(
+      GenerateP4MulticastReplicationEntry("0x2", "Ethernet2", "0x2"));
+
+  EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kGroupOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group_member(_, _, _, _))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+  EXPECT_CALL(mock_sai_ipmc_group_, remove_ipmc_group(kGroupOid1))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  auto statuses = AddMulticastReplicationEntries(entries);
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_UNKNOWN);
+  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+}
+
+TEST_F(L3MulticastManagerTest, DeleteMulticastReplicationEntriesNoEntry) {
+  std::vector<P4MulticastReplicationEntry> entries;
+  entries.push_back(
+      GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1"));
+  entries.push_back(
+      GenerateP4MulticastReplicationEntry("0x2", "Ethernet2", "0x2"));
+
+  // Can't delete what isn't there.
+  std::vector<ReturnCode> statuses = DeleteMulticastReplicationEntries(entries);
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_UNKNOWN);
+  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+}
+
+TEST_F(L3MulticastManagerTest, DeleteMulticastReplicationEntriesNoRif) {
+  // Add router interface entry so have RIF.
+  auto rif_entry = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  // Add entries to then be deleted.
+  auto group_entry1 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet1", "0x1", kGroupOid1, kGroupMemberOid1);
+  auto group_entry2 = SetupP4MulticastReplicationEntry(
+      "0x2", "Ethernet1", "0x1", kGroupOid2, kGroupMemberOid2);
+
+  // Unnaturally force RIFs to disappear.
+  std::string rif_key = KeyGenerator::generateMulticastRouterInterfaceRifKey(
+      "Ethernet1", swss::MacAddress(kSrcMac1));
+  ForceRemoveRifKey(rif_key);
+
+  // Attempt to delete.
+  std::vector<P4MulticastReplicationEntry> entries = {group_entry1,
+                                                      group_entry2};
+  auto statuses = DeleteMulticastReplicationEntries(entries);
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
+  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
+}
+
+TEST_F(L3MulticastManagerTest, DeleteMulticastReplicationEntriesNoGroupOid) {
+  // Add router interface entry so have RIF.
+  auto rif_entry = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  // Add entries to then be deleted.
+  auto group_entry1 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet1", "0x1", kGroupOid1, kGroupMemberOid1);
+  auto group_entry2 = SetupP4MulticastReplicationEntry(
+      "0x2", "Ethernet1", "0x1", kGroupOid2, kGroupMemberOid2);
+
+  // Unnaturally force multicast group OIDs to disappear.
+  p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_IPMC_GROUP,
+                          group_entry1.multicast_group_id);
+
+  // Attempt to delete.
+  std::vector<P4MulticastReplicationEntry> entries = {group_entry1,
+                                                      group_entry2};
+  auto statuses = DeleteMulticastReplicationEntries(entries);
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
+  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeleteMulticastReplicationEntriesNoGroupMembersFound) {
+  // Add router interface entry so have RIF.
+  auto rif_entry = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  // Add entries to then be deleted.
+  auto group_entry1 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet1", "0x1", kGroupOid1, kGroupMemberOid1);
+  auto group_entry2 = SetupP4MulticastReplicationEntry(
+      "0x2", "Ethernet1", "0x1", kGroupOid2, kGroupMemberOid2);
+
+  // Unnaturally force multicast group members to disappear.
+  ForceRemoveGroupMembers(group_entry1.multicast_group_id);
+
+  // Attempt to delete.
+  std::vector<P4MulticastReplicationEntry> entries = {group_entry1,
+                                                      group_entry2};
+  auto statuses = DeleteMulticastReplicationEntries(entries);
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
+  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeleteMulticastReplicationEntriesSpecificGroupMemberNotFound) {
+  // Add router interface entry so have RIF.
+  auto rif_entry = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  // Add entries to then be deleted.
+  auto group_entry1 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet1", "0x1", kGroupOid1, kGroupMemberOid1);
+  auto group_entry2 = SetupP4MulticastReplicationEntry(
+      "0x2", "Ethernet1", "0x1", kGroupOid2, kGroupMemberOid2);
+
+  // Unnaturally force multicast group members to disappear.
+  ForceRemoveSpecificGroupMember(group_entry1.multicast_group_id,
+                                 group_entry1.multicast_replication_key);
+
+  // Attempt to delete.
+  std::vector<P4MulticastReplicationEntry> entries = {group_entry1,
+                                                      group_entry2};
+  auto statuses = DeleteMulticastReplicationEntries(entries);
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
+  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeleteMulticastReplicationEntriesDeleteMemberButNotGroupSuccess) {
+  // Add router interface entries so have RIF.
+  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto rif_entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x2", swss::MacAddress(kSrcMac2), kRifOid2);
+  // Add entries to then be deleted.
+  auto group_entry1 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet1", "0x1", kGroupOid1, kGroupMemberOid1);
+  auto group_entry2 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet1", "0x2", kGroupOid1, kGroupMemberOid2,
+      /*expect_group_mock=*/false);
+
+  // Attempt to delete.
+  EXPECT_CALL(mock_sai_ipmc_group_, remove_ipmc_group_member(kGroupMemberOid1))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  std::vector<P4MulticastReplicationEntry> entries = {group_entry1};
+  auto statuses = DeleteMulticastReplicationEntries(entries);
+  EXPECT_EQ(statuses.size(), 1);
+  EXPECT_TRUE(statuses[0].ok());
+  EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_IPMC_GROUP, "0x1"));
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeleteMulticastReplicationEntriesWithActiveRouteEntriesFailure) {
+  // Add router interface entries so have RIF.
+  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto rif_entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x2", swss::MacAddress(kSrcMac2), kRifOid2);
+  // Add entries to then be deleted.
+  auto group_entry1 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet1", "0x1", kGroupOid1, kGroupMemberOid1);
+  auto group_entry2 = SetupP4MulticastReplicationEntry(
+      "0x2", "Ethernet2", "0x2", kGroupOid2, kGroupMemberOid2);
+
+  // Register that Route Entries are using this multicast group.
+  p4_oid_mapper_.increaseRefCount(SAI_OBJECT_TYPE_IPMC_GROUP, "0x1");
+
+  // Attempt to delete.  Expect failure, since multicast group is referenced.
+  std::vector<P4MulticastReplicationEntry> entries = {group_entry1,
+                                                      group_entry2};
+  auto statuses = DeleteMulticastReplicationEntries(entries);
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_IN_USE);
+  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_IPMC_GROUP, "0x1"));
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeleteMulticastReplicationEntriesDeleteMemberAndGroupSuccess) {
+  // Add router interface entries so have RIF.
+  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto rif_entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x2", swss::MacAddress(kSrcMac2), kRifOid2);
+  // Add entries to then be deleted.
+  auto group_entry1 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet1", "0x1", kGroupOid1, kGroupMemberOid1);
+  auto group_entry2 = SetupP4MulticastReplicationEntry(
+      "0x2", "Ethernet1", "0x2", kGroupOid2, kGroupMemberOid2);
+
+  // Attempt to delete.
+  EXPECT_CALL(mock_sai_ipmc_group_, remove_ipmc_group_member(kGroupMemberOid1))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_ipmc_group_, remove_ipmc_group(kGroupOid1))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  std::vector<P4MulticastReplicationEntry> entries = {group_entry1};
+  auto statuses = DeleteMulticastReplicationEntries(entries);
+  EXPECT_EQ(statuses.size(), 1);
+  EXPECT_TRUE(statuses[0].ok());
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeleteMulticastReplicationEntriesDeleteMemberFails) {
+  // Add router interface entries so have RIF.
+  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto rif_entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x2", swss::MacAddress(kSrcMac2), kRifOid2);
+  // Add entries to then be deleted.
+  auto group_entry1 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet1", "0x1", kGroupOid1, kGroupMemberOid1);
+  auto group_entry2 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet1", "0x2", kGroupOid1, kGroupMemberOid2,
+      /*expect_group_mock=*/false);
+
+  // Attempt to delete.
+  EXPECT_CALL(mock_sai_ipmc_group_, remove_ipmc_group_member(kGroupMemberOid1))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  std::vector<P4MulticastReplicationEntry> entries = {group_entry1,
+                                                      group_entry2};
+  auto statuses = DeleteMulticastReplicationEntries(entries);
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_UNKNOWN);
+  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+}
+
+// MIKE
+TEST_F(L3MulticastManagerTest,
+       DeleteMulticastReplicationEntriesDeleteGroupFailsReAddMemberSucceeds) {
+  // Add router interface entries so have RIF.
+  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto rif_entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x2", swss::MacAddress(kSrcMac2), kRifOid2);
+  // Add entries to then be deleted.
+  auto group_entry1 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet1", "0x1", kGroupOid1, kGroupMemberOid1);
+  auto group_entry2 = SetupP4MulticastReplicationEntry(
+      "0x2", "Ethernet1", "0x2", kGroupOid1, kGroupMemberOid2);
+
+  // Attempt to delete.
+  EXPECT_CALL(mock_sai_ipmc_group_, remove_ipmc_group_member(kGroupMemberOid1))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_ipmc_group_, remove_ipmc_group(kGroupOid1))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+  // We will change the group member OID to confirm it is updated properly.
+  EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group_member(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid3),
+                      Return(SAI_STATUS_SUCCESS)));
+
+  std::vector<P4MulticastReplicationEntry> entries = {group_entry1,
+                                                      group_entry2};
+  auto statuses = DeleteMulticastReplicationEntries(entries);
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_UNKNOWN);
+  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+
+  sai_object_id_t end_groupMemberOid = SAI_NULL_OBJECT_ID;
+  p4_oid_mapper_.getOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
+                        group_entry1.multicast_replication_key,
+                        &end_groupMemberOid);
+  EXPECT_EQ(end_groupMemberOid, kGroupMemberOid3);
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeleteMulticastReplicationEntriesDeleteGroupFailsReAddMemberFails) {
+  // Add router interface entries so have RIF.
+  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto rif_entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x2", swss::MacAddress(kSrcMac2), kRifOid2);
+  // Add entries to then be deleted.
+  auto group_entry1 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet1", "0x1", kGroupOid1, kGroupMemberOid1);
+  auto group_entry2 = SetupP4MulticastReplicationEntry(
+      "0x2", "Ethernet1", "0x2", kGroupOid1, kGroupMemberOid2);
+
+  // Attempt to delete.
+  EXPECT_CALL(mock_sai_ipmc_group_, remove_ipmc_group_member(kGroupMemberOid1))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_ipmc_group_, remove_ipmc_group(kGroupOid1))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+  EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group_member(_, _, _, _))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  std::vector<P4MulticastReplicationEntry> entries = {group_entry1,
+                                                      group_entry2};
+  auto statuses = DeleteMulticastReplicationEntries(entries);
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_UNKNOWN);
+  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+}
+
+TEST_F(L3MulticastManagerTest, UpdateMulticastReplicationEntriesTestSuccess) {
+  auto entry1 = GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1");
+  auto entry2 = GenerateP4MulticastReplicationEntry("0x2", "Ethernet1", "0x1");
+  std::vector<P4MulticastReplicationEntry> entries = {entry1, entry2};
+  auto statuses = UpdateMulticastReplicationEntries(entries);
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_SUCCESS);
+  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_SUCCESS);
+}
+
+TEST_F(L3MulticastManagerTest,
+       ValidateSetMulticastReplicationEntryEmptyMulticastGroupTest) {
+  // Add router interface entries so have RIF.
+  auto rif_entry = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
+
+  auto entry = GenerateP4MulticastReplicationEntry("", "Ethernet1", "0x0");
+  ReturnCode status = ValidateMulticastReplicationEntry(entry, SET_COMMAND);
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, status);
+}
+
+TEST_F(L3MulticastManagerTest,
+       ValidateSetMulticastReplicationEntryEmptyPortTest) {
+  // Add router interface entries so have RIF.
+  auto rif_entry = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
+
+  auto entry = GenerateP4MulticastReplicationEntry("0x1", "", "0x0");
+  ReturnCode status = ValidateMulticastReplicationEntry(entry, SET_COMMAND);
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, status);
+}
+
+TEST_F(L3MulticastManagerTest,
+       ValidateSetMulticastReplicationEntryEmptyEgressInstanceTest) {
+  // Add router interface entries so have RIF.
+  auto rif_entry = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
+
+  auto entry = GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "");
+  ReturnCode status = ValidateMulticastReplicationEntry(entry, SET_COMMAND);
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, status);
+}
+
+TEST_F(L3MulticastManagerTest,
+       ValidateSetMulticastReplicationEntryAddSuccessTest) {
+  // Add router interface entries so have RIF.
+  auto rif_entry = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
+
+  auto entry = GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x0");
+  ReturnCode status = ValidateMulticastReplicationEntry(entry, SET_COMMAND);
+  EXPECT_TRUE(status.ok());
+}
+
+TEST_F(L3MulticastManagerTest, ValidateSetMulticastReplicationEntryNoRifTest) {
+  // No RIF
+  auto entry = GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x0");
+  ReturnCode status = ValidateMulticastReplicationEntry(entry, SET_COMMAND);
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, status);
+}
+
+TEST_F(L3MulticastManagerTest, ValidateSetMulticastReplicationEntryUpdateTest) {
+  // Add router interface entries so have RIF.
+  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto rif_entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac2), kRifOid2);
+  // Setup multicast group entries.
+  auto group_entry1 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet1", "0x0", kGroupOid1, kGroupMemberOid1);
+  auto group_entry2 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet2", "0x0", kGroupOid1, kGroupMemberOid2,
+      /*expect_group_mock=*/false);
+
+  // Validate an existing multicast entry.
+  ReturnCode status =
+      ValidateMulticastReplicationEntry(group_entry1, SET_COMMAND);
+  EXPECT_TRUE(status.ok());
+}
+
+TEST_F(L3MulticastManagerTest,
+       ValidateSetMulticastReplicationEntryUpdateNoGroupOidInEntryTest) {
+  // Add router interface entries so have RIF.
+  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto rif_entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac2), kRifOid2);
+  // Setup multicast group entries.
+  auto group_entry1 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet1", "0x0", kGroupOid1, kGroupMemberOid1);
+  auto group_entry2 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet2", "0x0", kGroupOid1, kGroupMemberOid2,
+      /*expect_group_mock=*/false);
+
+  // Force clear the group OID from the entry to cause an error.
+  auto* actual_entry =
+      GetMulticastReplicationEntry(group_entry1.multicast_replication_key);
+  ASSERT_NE(actual_entry, nullptr);
+  actual_entry->multicast_group_oid = SAI_OBJECT_TYPE_NULL;
+
+  // Validate an existing multicast entry.
+  ReturnCode status =
+      ValidateMulticastReplicationEntry(group_entry1, SET_COMMAND);
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, status);
+  // Delete also fails.
+  status = ValidateMulticastReplicationEntry(group_entry1, DEL_COMMAND);
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, status);
+}
+
+TEST_F(L3MulticastManagerTest,
+       ValidateSetMulticastReplicationEntryUpdateNoGroupMemberOidInEntryTest) {
+  // Add router interface entries so have RIF.
+  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto rif_entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac2), kRifOid2);
+  // Setup multicast group entries.
+  auto group_entry1 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet1", "0x0", kGroupOid1, kGroupMemberOid1);
+  auto group_entry2 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet2", "0x0", kGroupOid1, kGroupMemberOid2,
+      /*expect_group_mock=*/false);
+
+  // Force clear the group member OID from the entry to cause an error.
+  auto* actual_entry =
+      GetMulticastReplicationEntry(group_entry1.multicast_replication_key);
+  ASSERT_NE(actual_entry, nullptr);
+  actual_entry->multicast_group_member_oid = SAI_OBJECT_TYPE_NULL;
+
+  // Validate an existing multicast entry.
+  ReturnCode status =
+      ValidateMulticastReplicationEntry(group_entry1, SET_COMMAND);
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, status);
+  // Delete also fails.
+  status = ValidateMulticastReplicationEntry(group_entry1, DEL_COMMAND);
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, status);
+}
+
+TEST_F(L3MulticastManagerTest,
+       ValidateSetMulticastReplicationEntryUpdateNoGroupOidTest) {
+  // Add router interface entries so have RIF.
+  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto rif_entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac2), kRifOid2);
+  // Setup multicast group entries.
+  auto group_entry1 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet1", "0x0", kGroupOid1, kGroupMemberOid1);
+  auto group_entry2 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet2", "0x0", kGroupOid1, kGroupMemberOid2,
+      /*expect_group_mock=*/false);
+
+  // Force remove the multicast group OID to cause an error.
+  p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_IPMC_GROUP,
+                          group_entry1.multicast_group_id);
+
+  // Validate an existing multicast entry.
+  ReturnCode status =
+      ValidateMulticastReplicationEntry(group_entry1, SET_COMMAND);
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, status);
+}
+
+TEST_F(L3MulticastManagerTest,
+       ValidateSetMulticastReplicationEntryUpdateNoGroupMemberOidTest) {
+  // Add router interface entries so have RIF.
+  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto rif_entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac2), kRifOid2);
+  // Setup multicast group entries.
+  auto group_entry1 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet1", "0x0", kGroupOid1, kGroupMemberOid1);
+  auto group_entry2 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet2", "0x0", kGroupOid1, kGroupMemberOid2,
+      /*expect_group_mock=*/false);
+
+  // Force remove the multicast group member OID to cause an error.
+  ForceRemoveGroupMembers(group_entry1.multicast_group_id);
+
+  // Validate an existing multicast entry.
+  ReturnCode status =
+      ValidateMulticastReplicationEntry(group_entry1, SET_COMMAND);
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, status);
+}
+
+TEST_F(L3MulticastManagerTest,
+       ValidateSetMulticastReplicationEntryUpdateNoGroupInMapperTest) {
+  // Add router interface entries so have RIF.
+  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto rif_entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac2), kRifOid2);
+  // Setup multicast group entries.
+  auto group_entry1 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet1", "0x0", kGroupOid1, kGroupMemberOid1);
+  auto group_entry2 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet2", "0x0", kGroupOid1, kGroupMemberOid2,
+      /*expect_group_mock=*/false);
+
+  // Force remove the multicast group OID from mapper to cause an error.
+  p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_IPMC_GROUP,
+                          group_entry1.multicast_group_id);
+
+  // Validate an existing multicast entry.
+  ReturnCode status =
+      ValidateMulticastReplicationEntry(group_entry1, SET_COMMAND);
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, status);
+  // Delete also fails.
+  status = ValidateMulticastReplicationEntry(group_entry1, DEL_COMMAND);
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, status);
+}
+
+TEST_F(L3MulticastManagerTest,
+       ValidateSetMulticastReplicationEntryUpdateNoGroupMemberInMapperTest) {
+  // Add router interface entries so have RIF.
+  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto rif_entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac2), kRifOid2);
+  // Setup multicast group entries.
+  auto group_entry1 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet1", "0x0", kGroupOid1, kGroupMemberOid1);
+  auto group_entry2 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet2", "0x0", kGroupOid1, kGroupMemberOid2,
+      /*expect_group_mock=*/false);
+
+  // Force remove the multicast group member OID from mapper to cause an error.
+  p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
+                          group_entry1.multicast_replication_key);
+
+  // Validate an existing multicast entry.
+  ReturnCode status =
+      ValidateMulticastReplicationEntry(group_entry1, SET_COMMAND);
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, status);
+  // Delete also fails.
+  status = ValidateMulticastReplicationEntry(group_entry1, DEL_COMMAND);
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, status);
+}
+
+TEST_F(L3MulticastManagerTest,
+       ValidateDelMulticastReplicationEntryDeleteUnknownTest) {
+  // Add router interface entries so have RIF.
+  auto rif_entry = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
+
+  auto entry = GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x0");
+  ReturnCode status = ValidateMulticastReplicationEntry(entry, DEL_COMMAND);
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, status);
+}
+
+TEST_F(L3MulticastManagerTest,
+       ValidateSetMulticastReplicationEntryUnknownCommandTest) {
+  // Add router interface entries so have RIF.
+  auto rif_entry = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
+
+  auto entry = GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x0");
+  ReturnCode status = ValidateMulticastReplicationEntry(entry, "do_things");
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, status);
+}
+
+TEST_F(L3MulticastManagerTest, DrainMulticastReplicationEntryAddSuccestTest) {
+  const std::string mac_match_key =
+      R"({"match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string mac_appl_db_key =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + mac_match_key;
+  std::vector<swss::FieldValueTuple> mac_attributes;
+  mac_attributes.push_back(
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+  mac_attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
-  attributes.push_back(
+  mac_attributes.push_back(
       swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
 
   const std::string group_match_key =
@@ -1791,24 +2666,1059 @@ TEST_F(L3MulticastManagerTest, DrainUnimplmentedPacketReplication) {
   group_attributes.push_back(
       swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
 
+  // Enqueue RIF creation and group member creation.
   Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
-          swss::KeyOpFieldsValuesTuple(appl_db_key, SET_COMMAND, attributes));
+          swss::KeyOpFieldsValuesTuple(mac_appl_db_key, SET_COMMAND,
+                                       mac_attributes));
   Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
           swss::KeyOpFieldsValuesTuple(group_appl_db_key, SET_COMMAND,
                                        group_attributes));
 
   EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(mac_appl_db_key),
+                                  Eq(mac_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kGroupOid1), Return(SAI_STATUS_SUCCESS)));
+  std::vector<sai_attribute_t> exp_member_attrs;
+  sai_attribute_t attr;
+  attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_GROUP_ID;
+  attr.value.oid = kGroupOid1;
+  exp_member_attrs.push_back(attr);
+  attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID;
+  attr.value.oid = kRifOid1;
+  exp_member_attrs.push_back(attr);
+
+  EXPECT_CALL(mock_sai_ipmc_group_,
+              create_ipmc_group_member(_, _, 2, AttrArrayEq(exp_member_attrs)))
+      .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME),
+                                  Eq(group_appl_db_key), Eq(group_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
+
+  auto expect_mac_entry = GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1));
+  expect_mac_entry.router_interface_oid = kRifOid1;
+  auto expect_group_entry =
+      GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1");
+  expect_group_entry.multicast_group_oid = kGroupOid1;
+  expect_group_entry.multicast_group_member_oid = kGroupMemberOid1;
+
+  auto* actual_mac_entry = GetMulticastRouterInterfaceEntry(
+      expect_mac_entry.multicast_router_interface_entry_key);
+  ASSERT_NE(nullptr, actual_mac_entry);
+  VerifyP4MulticastRouterInterfaceEntryEqual(expect_mac_entry,
+                                             *actual_mac_entry);
+  auto end_rifOid = GetRifOid(actual_mac_entry);
+  EXPECT_EQ(end_rifOid, kRifOid1);
+
+  auto* actual_group_entry = GetMulticastReplicationEntry(
+      expect_group_entry.multicast_replication_key);
+  ASSERT_NE(nullptr, actual_group_entry);
+  VerifyP4MulticastReplicationEntryEqual(expect_group_entry,
+                                         *actual_group_entry);
+
+  sai_object_id_t end_groupOid = SAI_NULL_OBJECT_ID;
+  p4_oid_mapper_.getOID(SAI_OBJECT_TYPE_IPMC_GROUP,
+                        actual_group_entry->multicast_group_id, &end_groupOid);
+  sai_object_id_t end_groupMemberOid = SAI_NULL_OBJECT_ID;
+  p4_oid_mapper_.getOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
+                        actual_group_entry->multicast_replication_key,
+                        &end_groupMemberOid);
+  EXPECT_EQ(end_groupOid, kGroupOid1);
+  EXPECT_EQ(end_groupMemberOid, kGroupMemberOid1);
+}
+
+TEST_F(L3MulticastManagerTest,
+       DrainMulticastReplicationEntryAddInvalidEntryTest) {
+  // Missing multicast_replica_port.
+  const std::string invalid_match_key =
+      R"({"match/multicast_group_id":"0x1",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string invalid_appl_db_key =
+      std::string(APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + invalid_match_key;
+
+  const std::string good_match_key =
+      R"({"match/multicast_group_id":"0x1",)"
+      R"("match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string good_appl_db_key =
+      std::string(APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + good_match_key;
+
+  std::vector<swss::FieldValueTuple> group_attributes;
+  group_attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  // Enqueue entry for create operation.
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(invalid_appl_db_key, SET_COMMAND,
+                                       group_attributes));
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(good_appl_db_key, SET_COMMAND,
+                                       group_attributes));
+
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(invalid_appl_db_key),
+                      Eq(group_attributes),
+                      Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(good_appl_db_key),
+                      Eq(group_attributes),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, Drain(/*failure_before=*/false));
+}
+
+TEST_F(L3MulticastManagerTest,
+       DrainMulticastReplicationEntryAddInvalidEntryEmptyFieldTest) {
+  // empty multicast_group_id
+  const std::string invalid_match_key =
+      R"({"match/multicast_group_id":"",)"
+      R"("match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string invalid_appl_db_key =
+      std::string(APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + invalid_match_key;
+
+  const std::string good_match_key =
+      R"({"match/multicast_group_id":"0x1",)"
+      R"("match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string good_appl_db_key =
+      std::string(APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + good_match_key;
+
+  std::vector<swss::FieldValueTuple> group_attributes;
+  group_attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  // Enqueue entry for create operation.
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(invalid_appl_db_key, SET_COMMAND,
+                                       group_attributes));
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(good_appl_db_key, SET_COMMAND,
+                                       group_attributes));
+
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(invalid_appl_db_key),
+                      Eq(group_attributes),
+                      Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(good_appl_db_key),
+                      Eq(group_attributes),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, Drain(/*failure_before=*/false));
+}
+
+TEST_F(L3MulticastManagerTest,
+       DrainMulticastReplicationEntryAddAndDeleteSuccestTest) {
+  const std::string mac_match_key =
+      R"({"match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string mac_appl_db_key =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + mac_match_key;
+  const std::string mac_match_key2 =
+      R"({"match/multicast_replica_port":"Ethernet2",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string mac_appl_db_key2 =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + mac_match_key2;
+  std::vector<swss::FieldValueTuple> mac_attributes;
+  mac_attributes.push_back(
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+  mac_attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
+  mac_attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  const std::string group_match_key =
+      R"({"match/multicast_group_id":"0x1",)"
+      R"("match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string group_appl_db_key =
+      std::string(APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + group_match_key;
+  std::vector<swss::FieldValueTuple> group_attributes;
+  group_attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  // Enqueue RIF creation and group member creation.
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(mac_appl_db_key, SET_COMMAND,
+                                       mac_attributes));
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(mac_appl_db_key2, SET_COMMAND,
+                                       mac_attributes));
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(group_appl_db_key, SET_COMMAND,
+                                       group_attributes));
+
+  EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(DoAll(SetArgPointee<0>(kRifOid2), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(mac_appl_db_key),
+                                  Eq(mac_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(mac_appl_db_key2),
+                                  Eq(mac_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kGroupOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group_member(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME),
+                                  Eq(group_appl_db_key), Eq(group_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
+
+  // Add another multicast group member (same group) and delete the first one.
+  const std::string group_match_key2 =
+      R"({"match/multicast_group_id":"0x1",)"
+      R"("match/multicast_replica_port":"Ethernet2",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string group_appl_db_key2 =
+      std::string(APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + group_match_key2;
+
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(group_appl_db_key2, SET_COMMAND,
+                                       group_attributes));
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(group_appl_db_key, DEL_COMMAND,
+                                       group_attributes));
+
+  EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group_member(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid2),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_ipmc_group_, remove_ipmc_group_member(kGroupMemberOid1))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME),
+                                  Eq(group_appl_db_key2), Eq(group_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME),
+                                  Eq(group_appl_db_key), Eq(group_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
+
+  auto expect_group_entry =
+      GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1");
+  auto expect_group_entry2 =
+      GenerateP4MulticastReplicationEntry("0x1", "Ethernet2", "0x1");
+  expect_group_entry2.multicast_group_oid = kGroupOid1;  // same group used
+  expect_group_entry2.multicast_group_member_oid = kGroupMemberOid2;
+
+  auto* actual_group_entry = GetMulticastReplicationEntry(
+      expect_group_entry.multicast_replication_key);
+  ASSERT_EQ(nullptr, actual_group_entry);  // entry was deleted
+  auto* actual_group_entry2 = GetMulticastReplicationEntry(
+      expect_group_entry2.multicast_replication_key);
+  ASSERT_NE(nullptr, actual_group_entry2);
+
+  VerifyP4MulticastReplicationEntryEqual(expect_group_entry2,
+                                         *actual_group_entry2);
+
+  sai_object_id_t end_groupOid2 = SAI_NULL_OBJECT_ID;
+  p4_oid_mapper_.getOID(SAI_OBJECT_TYPE_IPMC_GROUP,
+                        actual_group_entry2->multicast_group_id,
+                        &end_groupOid2);
+  sai_object_id_t end_groupMemberOid2 = SAI_NULL_OBJECT_ID;
+  p4_oid_mapper_.getOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
+                        actual_group_entry2->multicast_replication_key,
+                        &end_groupMemberOid2);
+  EXPECT_EQ(end_groupOid2, kGroupOid1);
+  EXPECT_EQ(end_groupMemberOid2, kGroupMemberOid2);
+}
+
+TEST_F(L3MulticastManagerTest,
+       DrainMulticastReplicationEntryAllOpsSuccestTest) {
+  const std::string mac_match_key =
+      R"({"match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string mac_appl_db_key =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + mac_match_key;
+  const std::string mac_match_key2 =
+      R"({"match/multicast_replica_port":"Ethernet2",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string mac_appl_db_key2 =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + mac_match_key2;
+  const std::string mac_match_key3 =
+      R"({"match/multicast_replica_port":"Ethernet3",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string mac_appl_db_key3 =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + mac_match_key3;
+  std::vector<swss::FieldValueTuple> mac_attributes;
+  mac_attributes.push_back(
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+  mac_attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
+  mac_attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  const std::string group_match_key =
+      R"({"match/multicast_group_id":"0x1",)"
+      R"("match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string group_appl_db_key =
+      std::string(APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + group_match_key;
+  const std::string group_match_key2 =
+      R"({"match/multicast_group_id":"0x1",)"
+      R"("match/multicast_replica_port":"Ethernet2",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string group_appl_db_key2 =
+      std::string(APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + group_match_key2;
+  std::vector<swss::FieldValueTuple> group_attributes;
+  group_attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  // Enqueue RIF creation and group member creation.
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(mac_appl_db_key, SET_COMMAND,
+                                       mac_attributes));
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(mac_appl_db_key2, SET_COMMAND,
+                                       mac_attributes));
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(mac_appl_db_key3, SET_COMMAND,
+                                       mac_attributes));
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(group_appl_db_key, SET_COMMAND,
+                                       group_attributes));
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(group_appl_db_key2, SET_COMMAND,
+                                       group_attributes));
+
+  EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(DoAll(SetArgPointee<0>(kRifOid2), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(DoAll(SetArgPointee<0>(kRifOid3), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(mac_appl_db_key),
+                                  Eq(mac_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(mac_appl_db_key2),
+                                  Eq(mac_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(mac_appl_db_key3),
+                                  Eq(mac_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kGroupOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group_member(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kGroupMemberOid1), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid2),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME),
+                                  Eq(group_appl_db_key), Eq(group_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME),
+                                  Eq(group_appl_db_key2), Eq(group_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
+
+  // Add another multicast group member (same group), update the first one, and
+  // delete the second one.
+  const std::string group_match_key3 =
+      R"({"match/multicast_group_id":"0x1",)"
+      R"("match/multicast_replica_port":"Ethernet3",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string group_appl_db_key3 =
+      std::string(APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + group_match_key3;
+
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(group_appl_db_key3, SET_COMMAND,
+                                       group_attributes));
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(group_appl_db_key, SET_COMMAND,
+                                       group_attributes));
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(group_appl_db_key2, DEL_COMMAND,
+                                       group_attributes));
+
+  EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group_member(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid3),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_ipmc_group_, remove_ipmc_group_member(kGroupMemberOid2))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME),
+                                  Eq(group_appl_db_key3), Eq(group_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME),
+                                  Eq(group_appl_db_key), Eq(group_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME),
+                                  Eq(group_appl_db_key2), Eq(group_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
+
+  auto expect_group_entry =
+      GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1");
+  expect_group_entry.multicast_group_oid = kGroupOid1;  // same group used
+  expect_group_entry.multicast_group_member_oid = kGroupMemberOid1;
+  auto expect_group_entry2 =
+      GenerateP4MulticastReplicationEntry("0x1", "Ethernet2", "0x1");
+  auto expect_group_entry3 =
+      GenerateP4MulticastReplicationEntry("0x1", "Ethernet3", "0x1");
+  expect_group_entry3.multicast_group_oid = kGroupOid1;  // same group used
+  expect_group_entry3.multicast_group_member_oid = kGroupMemberOid3;
+
+  auto* actual_group_entry = GetMulticastReplicationEntry(
+      expect_group_entry.multicast_replication_key);
+  ASSERT_NE(nullptr, actual_group_entry);
+  auto* actual_group_entry2 = GetMulticastReplicationEntry(
+      expect_group_entry2.multicast_replication_key);
+  ASSERT_EQ(nullptr, actual_group_entry2);  // entry was deleted
+  auto* actual_group_entry3 = GetMulticastReplicationEntry(
+      expect_group_entry3.multicast_replication_key);
+  ASSERT_NE(nullptr, actual_group_entry3);
+
+  VerifyP4MulticastReplicationEntryEqual(expect_group_entry,
+                                         *actual_group_entry);
+  VerifyP4MulticastReplicationEntryEqual(expect_group_entry3,
+                                         *actual_group_entry3);
+
+  sai_object_id_t end_groupOid = SAI_NULL_OBJECT_ID;
+  p4_oid_mapper_.getOID(SAI_OBJECT_TYPE_IPMC_GROUP,
+                        actual_group_entry->multicast_group_id, &end_groupOid);
+  sai_object_id_t end_groupMemberOid = SAI_NULL_OBJECT_ID;
+  p4_oid_mapper_.getOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
+                        actual_group_entry->multicast_replication_key,
+                        &end_groupMemberOid);
+  EXPECT_EQ(end_groupOid, kGroupOid1);
+  EXPECT_EQ(end_groupMemberOid, kGroupMemberOid1);
+
+  sai_object_id_t end_groupOid3 = SAI_NULL_OBJECT_ID;
+  p4_oid_mapper_.getOID(SAI_OBJECT_TYPE_IPMC_GROUP,
+                        actual_group_entry3->multicast_group_id,
+                        &end_groupOid3);
+  sai_object_id_t end_groupMemberOid3 = SAI_NULL_OBJECT_ID;
+  p4_oid_mapper_.getOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
+                        actual_group_entry3->multicast_replication_key,
+                        &end_groupMemberOid3);
+  EXPECT_EQ(end_groupOid3, kGroupOid1);
+  EXPECT_EQ(end_groupMemberOid3, kGroupMemberOid3);
+}
+
+TEST_F(L3MulticastManagerTest,
+       DrainMulticastReplicationEntryDeleteFailureTest) {
+  const std::string mac_match_key =
+      R"({"match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string mac_appl_db_key =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + mac_match_key;
+  const std::string mac_match_key2 =
+      R"({"match/multicast_replica_port":"Ethernet2",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string mac_appl_db_key2 =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + mac_match_key2;
+  const std::string mac_match_key3 =
+      R"({"match/multicast_replica_port":"Ethernet3",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string mac_appl_db_key3 =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + mac_match_key3;
+  std::vector<swss::FieldValueTuple> mac_attributes;
+  mac_attributes.push_back(
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+  mac_attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
+  mac_attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  const std::string group_match_key =
+      R"({"match/multicast_group_id":"0x1",)"
+      R"("match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string group_appl_db_key =
+      std::string(APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + group_match_key;
+  const std::string group_match_key2 =
+      R"({"match/multicast_group_id":"0x1",)"
+      R"("match/multicast_replica_port":"Ethernet2",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string group_appl_db_key2 =
+      std::string(APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + group_match_key2;
+  std::vector<swss::FieldValueTuple> group_attributes;
+  group_attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  // Enqueue RIF creation and group member creation.
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(mac_appl_db_key, SET_COMMAND,
+                                       mac_attributes));
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(mac_appl_db_key2, SET_COMMAND,
+                                       mac_attributes));
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(mac_appl_db_key3, SET_COMMAND,
+                                       mac_attributes));
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(group_appl_db_key, SET_COMMAND,
+                                       group_attributes));
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(group_appl_db_key2, SET_COMMAND,
+                                       group_attributes));
+
+  EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(DoAll(SetArgPointee<0>(kRifOid2), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(DoAll(SetArgPointee<0>(kRifOid3), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(mac_appl_db_key),
+                                  Eq(mac_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(mac_appl_db_key2),
+                                  Eq(mac_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(mac_appl_db_key3),
+                                  Eq(mac_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kGroupOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group_member(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kGroupMemberOid1), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid2),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME),
+                                  Eq(group_appl_db_key), Eq(group_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME),
+                                  Eq(group_appl_db_key2), Eq(group_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
+
+  // Request to delete unknown entry, should cause an error.
+  // Add another multicast group member (same group), attempt to delete an
+  // unknown entry, update the first entry, and delete the second one.
+  const std::string group_match_key3 =
+      R"({"match/multicast_group_id":"0x1",)"
+      R"("match/multicast_replica_port":"Ethernet3",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string group_appl_db_key3 =
+      std::string(APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + group_match_key3;
+
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(group_appl_db_key3, SET_COMMAND,
+                                       group_attributes));
+  // SAI delete failure
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(group_appl_db_key2, DEL_COMMAND,
+                                       group_attributes));
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(group_appl_db_key, SET_COMMAND,
+                                       group_attributes));
+
+  EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group_member(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid3),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_ipmc_group_, remove_ipmc_group_member(kGroupMemberOid2))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME),
+                                  Eq(group_appl_db_key3), Eq(group_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME),
+                                  Eq(group_appl_db_key2), Eq(group_attributes),
+                                  Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(group_appl_db_key),
+                      Eq(group_attributes),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
+}
+
+TEST_F(L3MulticastManagerTest,
+       DrainMulticastReplicationEntryDeleteFailureOnLastTest) {
+  const std::string mac_match_key =
+      R"({"match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string mac_appl_db_key =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + mac_match_key;
+  const std::string mac_match_key2 =
+      R"({"match/multicast_replica_port":"Ethernet2",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string mac_appl_db_key2 =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + mac_match_key2;
+  const std::string mac_match_key3 =
+      R"({"match/multicast_replica_port":"Ethernet3",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string mac_appl_db_key3 =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + mac_match_key3;
+  std::vector<swss::FieldValueTuple> mac_attributes;
+  mac_attributes.push_back(
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+  mac_attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
+  mac_attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  const std::string group_match_key =
+      R"({"match/multicast_group_id":"0x1",)"
+      R"("match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string group_appl_db_key =
+      std::string(APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + group_match_key;
+  const std::string group_match_key2 =
+      R"({"match/multicast_group_id":"0x1",)"
+      R"("match/multicast_replica_port":"Ethernet2",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string group_appl_db_key2 =
+      std::string(APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + group_match_key2;
+  std::vector<swss::FieldValueTuple> group_attributes;
+  group_attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  // Enqueue RIF creation and group member creation.
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(mac_appl_db_key, SET_COMMAND,
+                                       mac_attributes));
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(mac_appl_db_key2, SET_COMMAND,
+                                       mac_attributes));
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(mac_appl_db_key3, SET_COMMAND,
+                                       mac_attributes));
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(group_appl_db_key, SET_COMMAND,
+                                       group_attributes));
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(group_appl_db_key2, SET_COMMAND,
+                                       group_attributes));
+
+  EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(DoAll(SetArgPointee<0>(kRifOid2), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(DoAll(SetArgPointee<0>(kRifOid3), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(mac_appl_db_key),
+                                  Eq(mac_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(mac_appl_db_key2),
+                                  Eq(mac_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(mac_appl_db_key3),
+                                  Eq(mac_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kGroupOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group_member(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kGroupMemberOid1), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid2),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME),
+                                  Eq(group_appl_db_key), Eq(group_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME),
+                                  Eq(group_appl_db_key2), Eq(group_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
+
+  // Request to delete unknown entry, should cause an error.
+  // Add another multicast group member (same group), attempt to delete an
+  // unknown entry, update the first entry, and delete the second one.
+  const std::string group_match_key3 =
+      R"({"match/multicast_group_id":"0x1",)"
+      R"("match/multicast_replica_port":"Ethernet3",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string group_appl_db_key3 =
+      std::string(APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + group_match_key3;
+
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(group_appl_db_key3, SET_COMMAND,
+                                       group_attributes));
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(group_appl_db_key, SET_COMMAND,
+                                       group_attributes));
+  // SAI delete failure
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(group_appl_db_key2, DEL_COMMAND,
+                                       group_attributes));
+
+  EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group_member(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid3),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_ipmc_group_, remove_ipmc_group_member(kGroupMemberOid2))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME),
+                                  Eq(group_appl_db_key3), Eq(group_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME),
+                                  Eq(group_appl_db_key), Eq(group_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME),
+                                  Eq(group_appl_db_key2), Eq(group_attributes),
+                                  Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
+}
+
+TEST_F(L3MulticastManagerTest, DrainUnknownTable) {
+  const std::string match_key =
+      R"({"match/multicast_replica_port":"Ethernet4",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  // Unknown table (to this manager).
+  const std::string appl_db_key =
+      std::string(APP_P4RT_TUNNEL_TABLE_NAME) + kTableKeyDelimiter + match_key;
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac2});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(appl_db_key, SET_COMMAND, attributes));
   EXPECT_CALL(publisher_,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key), Eq(attributes),
-                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
-  EXPECT_EQ(StatusCode::SWSS_RC_UNIMPLEMENTED, Drain(/*failure_before=*/false));
-  auto* actual_entry = GetMulticastRouterInterfaceEntry(
-      expect_entry.multicast_router_interface_entry_key);
-  ASSERT_NE(nullptr, actual_entry);
-  VerifyP4MulticastRouterInterfaceEntryEqual(expect_entry, *actual_entry);
-  auto end_rifOid = GetRifOid(actual_entry);
-  EXPECT_EQ(end_rifOid, kRifOid1);
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_EXECUTED, Drain(/*failure_before=*/false));
+}
+
+TEST_F(L3MulticastManagerTest, DrainUnknownFirstTable) {
+  const std::string match_key =
+      R"({"match/multicast_replica_port":"Ethernet4",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  // Unknown table (to this manager).
+  const std::string appl_db_key_unknown =
+      std::string(APP_P4RT_TUNNEL_TABLE_NAME) + kTableKeyDelimiter + match_key;
+  const std::string appl_db_key =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + match_key;
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac2});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(appl_db_key_unknown, SET_COMMAND,
+                                       attributes));
+  Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(appl_db_key, SET_COMMAND, attributes));
+
+  EXPECT_CALL(
+      publisher_,
+      publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key_unknown), Eq(attributes),
+              Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key), Eq(attributes),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_EXECUTED, Drain(/*failure_before=*/false));
+}
+
+TEST_F(L3MulticastManagerTest, VerifyStateMulticastReplicationTestSuccess) {
+  // Add router interface entry so have RIF.
+  auto rif_entry = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  // Add entries to then be deleted.
+  auto group_entry = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet1", "0x1", kGroupOid1, kGroupMemberOid1);
+
+  const std::string match_key = R"({"match/multicast_group_id":"0x1",)"
+                                R"("match/multicast_replica_port":"Ethernet1",)"
+                                R"("match/multicast_replica_instance":"0x1"})";
+  const std::string appl_db_key =
+      std::string(APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + match_key;
+  const std::string db_key =
+      std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter + appl_db_key;
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  // Setup ASIC DB.
+  swss::Table table(nullptr, "ASIC_STATE");
+  table.set("SAI_OBJECT_TYPE_IPMC_GROUP:oid:0x1",
+            std::vector<swss::FieldValueTuple>{});
+  table.set(
+      "SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER:oid:0x11",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_GROUP_ID",
+                                "oid:0x1"},
+          swss::FieldValueTuple{"SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID",
+                                "oid:0x123456"}});
+
+  // Verification should succeed with vaild key and value.
+  EXPECT_EQ(VerifyState(db_key, attributes), "");
+}
+
+TEST_F(L3MulticastManagerTest, VerifyStateMulticastReplicationTestBadEntries) {
+  // no multicast_replica_port
+  const std::string bad_match_key =
+      R"({"match/multicast_group_id":"0x1",)"
+      R"("match/multicast_replica_instance":"0x1"})";
+  const std::string bad_appl_db_key =
+      std::string(APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + bad_match_key;
+  const std::string bad_db_key =
+      std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter + bad_appl_db_key;
+
+  const std::string match_key = R"({"match/multicast_group_id":"0x1",)"
+                                R"("match/multicast_replica_port":"Ethernet1",)"
+                                R"("match/multicast_replica_instance":"0x1"})";
+  const std::string appl_db_key =
+      std::string(APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + match_key;
+  const std::string db_key =
+      std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter + appl_db_key;
+
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  EXPECT_FALSE(VerifyState(bad_db_key, attributes).empty());
+  // No entry found.
+  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+}
+
+TEST_F(L3MulticastManagerTest,
+       VerifyStateMulticastReplicationTestStateCacheFails) {
+  // Need RIFs to be able to validate entries.
+  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto rif_entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x2", swss::MacAddress(kSrcMac1), kRifOid1,
+      /*expect_mock=*/false);
+  auto rif_entry3 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x1", swss::MacAddress(kSrcMac1), kRifOid2);
+
+  P4MulticastReplicationEntry internal_entry =
+      GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1");
+  internal_entry.multicast_group_oid = kGroupOid1;
+  internal_entry.multicast_group_member_oid = kGroupMemberOid1;
+
+  // Bad app db entry.
+  P4MulticastReplicationEntry missing_multicast_replica_port =
+      GenerateP4MulticastReplicationEntry("0x1", "", "0x1", "meta1");
+  EXPECT_FALSE(VerifyMulticastReplicationStateCache(
+                   missing_multicast_replica_port, &internal_entry)
+                   .empty());
+
+  // Mismatch on key.
+  P4MulticastReplicationEntry key_mismatch =
+      GenerateP4MulticastReplicationEntry("0x1", "Ethernet2", "0x1", "meta1");
+  EXPECT_FALSE(
+      VerifyMulticastReplicationStateCache(key_mismatch, &internal_entry)
+          .empty());
+
+  // Mismatch on multicast_group_id.
+  P4MulticastReplicationEntry group_id_mismatch =
+      GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1", "meta1");
+  group_id_mismatch.multicast_group_id = "0x2";
+  EXPECT_FALSE(
+      VerifyMulticastReplicationStateCache(group_id_mismatch, &internal_entry)
+          .empty());
+
+  // Mismatch on multicast_replica_port.
+  P4MulticastReplicationEntry multicast_replica_port_mismatch =
+      GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1", "meta1");
+  multicast_replica_port_mismatch.multicast_replica_port = "Ethernet2";
+  EXPECT_FALSE(VerifyMulticastReplicationStateCache(
+                   multicast_replica_port_mismatch, &internal_entry)
+                   .empty());
+
+  // Mismatch on multicast_replica_instance.
+  P4MulticastReplicationEntry multicast_replica_instance_mismatch =
+      GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1", "meta1");
+  multicast_replica_instance_mismatch.multicast_replica_instance = "0x2";
+  EXPECT_FALSE(VerifyMulticastReplicationStateCache(
+                   multicast_replica_instance_mismatch, &internal_entry)
+                   .empty());
+
+  // Mismatch on multicast_metadata.
+  P4MulticastReplicationEntry multicast_metadata_mismatch =
+      GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1", "meta2");
+  EXPECT_FALSE(VerifyMulticastReplicationStateCache(multicast_metadata_mismatch,
+                                                    &internal_entry)
+                   .empty());
+}
+
+TEST_F(L3MulticastManagerTest, VerifyStateMulticastReplicationMissingAsicDb) {
+  // Need RIFs to be able to validate entries.
+  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  // Add group entry.
+  auto group_entry1 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet1", "0x1", kGroupOid1, kGroupMemberOid1);
+
+  const std::string match_key = R"({"match/multicast_group_id":"0x1",)"
+                                R"("match/multicast_replica_port":"Ethernet1",)"
+                                R"("match/multicast_replica_instance":"0x1"})";
+  const std::string appl_db_key =
+      std::string(APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + match_key;
+  const std::string db_key =
+      std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter + appl_db_key;
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  // Setup ASIC DB.
+  swss::Table table(nullptr, "ASIC_STATE");
+  table.set("SAI_OBJECT_TYPE_IPMC_GROUP:oid:0x1",
+            std::vector<swss::FieldValueTuple>{});
+  table.set(
+      "SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER:oid:0x11",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_GROUP_ID",
+                                "oid:0x2"},  // this is wrong OID
+          swss::FieldValueTuple{"SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID",
+                                "oid:0x123456"}});
+
+  // Verification should fail, since ASIC DB attribute is wrong.
+  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+
+  // No key should also fail.
+  table.del("SAI_OBJECT_TYPE_IPMC_GROUP:oid:0x1");
+  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+
+  // Reset group, but delete group member
+  table.set("SAI_OBJECT_TYPE_IPMC_GROUP:oid:0x1",
+            std::vector<swss::FieldValueTuple>{});
+  table.del("SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER:oid:0x11");
+  // No key should also fail.
+  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+
+  // Reset group member, add extra attribute for group.
+  table.set("SAI_OBJECT_TYPE_IPMC_GROUP:oid:0x1",
+            std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{
+                "SAI_IPMC_SOMETHING_EXTRA", "oid:0x123456"}});
+  table.set(
+      "SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER:oid:0x11",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_GROUP_ID",
+                                "oid:0x1"},
+          swss::FieldValueTuple{"SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID",
+                                "oid:0x123456"}});
+  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+}
+
+TEST_F(L3MulticastManagerTest, VerifyStateMulticastReplicationAsicDbNoRif) {
+  P4MulticastReplicationEntry entry =
+      GenerateP4MulticastReplicationEntry("0x1", "Ethernet1", "0x1");
+  entry.multicast_group_oid = kGroupOid1;
+  entry.multicast_group_member_oid = kGroupMemberOid1;
+
+  EXPECT_FALSE(VerifyMulticastReplicationStateAsicDb(&entry).empty());
+}
+
+TEST_F(L3MulticastManagerTest, VerifyStateMulticastReplicationFailures) {
+  // Need RIFs to be able to validate entries.
+  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  // Add group entry.
+  auto group_entry1 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet1", "0x1", kGroupOid1, kGroupMemberOid1);
+
+  const std::string match_key = R"({"match/multicast_group_id":"0x1",)"
+                                R"("match/multicast_replica_port":"Ethernet1",)"
+                                R"("match/multicast_replica_instance":"0x1"})";
+  const std::string appl_db_key =
+      std::string(APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + match_key;
+  const std::string db_key =
+      std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter + appl_db_key;
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  // Setup ASIC DB.
+  swss::Table table(nullptr, "ASIC_STATE");
+  table.set("SAI_OBJECT_TYPE_IPMC_GROUP:oid:0x1",
+            std::vector<swss::FieldValueTuple>{});
+  table.set(
+      "SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER:oid:0x11",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_GROUP_ID",
+                                "oid:0x1"},
+          swss::FieldValueTuple{"SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID",
+                                "oid:0x123456"}});
+
+  // Force state cache failure by removing oid from mapper.
+  p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_IPMC_GROUP, "0x1");
+
+  // Verification should fail, since forced invalid state cache, ASIC DB is ok.
+  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+
+  // Force ASIC DB to be bad also.
+  table.del("SAI_OBJECT_TYPE_IPMC_GROUP:oid:0x1");
+  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeleteMulticastRouterInterfaceEntriesGroupStillUsing) {
+  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto rif_entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x2", swss::MacAddress(kSrcMac2), kRifOid2);
+  // Add group entry.
+  auto group_entry1 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet1", "0x1", kGroupOid1, kGroupMemberOid1);
+
+  // Try to delete RIF entries just added.  Expect failure, since the
+  // first RIF is in use.
+  std::vector<P4MulticastRouterInterfaceEntry> rif_entries = {rif_entry1,
+                                                              rif_entry2};
+  auto statuses = DeleteMulticastRouterInterfaceEntries(rif_entries);
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_IN_USE);
+  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+
+  // Since SAI call failed, internal state should still have references.
+  EXPECT_EQ(GetRifOid(&rif_entries[0]), kRifOid1);
+  EXPECT_EQ(GetRifOid(&rif_entries[1]), kRifOid2);
+}
+
+TEST_F(L3MulticastManagerTest,
+       UpdateMulticastRouterInterfaceEntriesUpdateRifInUseFails) {
+  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto rif_entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x2", swss::MacAddress(kSrcMac2), kRifOid2);
+  // Add group entry.
+  auto group_entry1 = SetupP4MulticastReplicationEntry(
+      "0x1", "Ethernet1", "0x1", kGroupOid1, kGroupMemberOid1);
+
+  // Attempt to update the original entries, which should result in an
+  // error, because a multicast group is still using the RIF.
+  std::vector<P4MulticastRouterInterfaceEntry> update_entries;
+  update_entries.push_back(GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac3)));
+  update_entries.push_back(GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x2", swss::MacAddress(kSrcMac4)));
+
+  auto statuses = UpdateMulticastRouterInterfaceEntries(update_entries);
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_IN_USE);
+  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
 }
 
 }  // namespace p4orch
