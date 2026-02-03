@@ -272,9 +272,13 @@ namespace swss {
 
         uint32_t getRIBID();
 
+        uint8_t getAddressFamily();
+
         string getNextHopStr();
 
         string getVPNSIDStr();
+
+        string getSegSrcStr();
 
         string getInterfaceNameStr();
 
@@ -293,28 +297,26 @@ namespace swss {
         }
 
         /* setter */
-        void
-        setSonicObjId(uint32_t id);
+        void setSonicObjId(uint32_t id);
 
         void setSonicGatewayObjId(uint32_t id);
 
-        int setEntry(NextHopGroupFull nhg);
+        int setEntry(NextHopGroupFull nhg, uint8_t af);
 
         void addDependentsMember(uint32_t id);
 
         void removeDependentsMember(uint32_t id);
 
-        int updateEntryFromNHGFull(NextHopGroupFull newNHG, bool &updated, bool &updatedDependency);
+        int updateEntryFromNHGFull(NextHopGroupFull newNHG, uint8_t newAF, bool &updated, bool &updatedDependency);
 
     private:
         sonicNhgObjType m_sonic_obj_type = SONIC_NHG_OBJ_TYPE_NHG_NORMAL;
-        bool m_has_sonic_obj = false;
         uint32_t m_rib_id = 0;
         RIBNHGTable *m_table = nullptr;
         string m_nexthop = "";
-        string m_vpnSid = "";
-        string m_segSrc = "";
         string m_ifName = "";
+        uint8_t m_af = 0;
+
         vector<FieldValueTuple> m_fvVector;
         NexthopMapKey m_key;
         NextHopGroupFull m_nhg;
@@ -323,16 +325,19 @@ namespace swss {
         set<uint32_t> m_depends;
         set<uint32_t> m_dependents;
         uint32_t m_sonic_obj_id = 0;
-        uint32_t m_sonic_gateway_nhg_id = 0;
         bool m_is_single = true;
 
-        int getNextHopGroupFields(NextHopGroupFull nhg, string &nexthops, string &weights);
+        /* Sonic Gateway Obj fields */
+        bool m_has_sonic_obj = false;
+        uint32_t m_sonic_gateway_nhg_id = 0;
+        string m_vpnSid = "";
+        string m_segSrc = "";
 
-        int getNextHopFields(NextHopGroupFull nhg, string &nexthops, string &ifnames, uint8_t af);
+        int getNextHopGroupFields(NextHopGroupFull nhg, string &nexthops, string &ifnames, string &weights);
 
-        int getNHGFields(NextHopGroupFull nhg, string &nexthop, string &ifnames, string &weights, uint8_t &af);
+        int getNextHopFields(NextHopGroupFull nhg, uint8_t af, string &nexthops, string &ifnames);
 
-        bool compareDependsAndDependents(const NextHopGroupFull *newNHG, const NextHopGroupFull *oldNHG);
+        int getNHGFields(NextHopGroupFull nhg, uint8_t af, string &nexthop, string &ifnames, string &weights);
 
         int syncFvVector();
 
@@ -354,11 +359,11 @@ namespace swss {
 
         };
 
-        int addEntry(NextHopGroupFull nhg);
+        int addEntry(NextHopGroupFull nhg, uint8_t af);
 
         int delEntry(uint32_t id);
 
-        int updateEntry(NextHopGroupFull nhg, bool &updated);
+        int updateEntry(NextHopGroupFull nhg, uint8_t af, bool &updated);
 
         RIBNHGEntry *getEntry(uint32_t id);
 
@@ -408,7 +413,7 @@ namespace swss {
             }
         };
 
-        int addNHGFull(NextHopGroupFull nhg);
+        int addNHGFull(NextHopGroupFull nhg, uint8_t af);
 
         int delNHGFull(uint32_t id);
 

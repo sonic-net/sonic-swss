@@ -6,15 +6,80 @@
 using namespace std;
 using namespace swss;
 
+static bool compareDependsAndDependents(const NextHopGroupFull *new_nhg, const NextHopGroupFull *oldNHG) {
+    if ((new_nhg->depends.size()) != (oldNHG->depends.size())) {
+        return false;
+    }
+    if ((new_nhg->dependents.size()) != (oldNHG->dependents.size())) {
+        return false;
+    }
+    set<int> new_nhg_depends;
+    set<int> old_nhg_depends;
+    set<int> new_nhg_dependents;
+    set<int> old_nhg_dependents;
+    for (auto it = new_nhg->depends.begin(); it != new_nhg->depends.end(); it++) {
+        new_nhg_depends.insert(*it);
+    }
+    for (auto it = new_nhg->dependents.begin(); it != new_nhg->dependents.end(); it++) {
+        new_nhg_dependents.insert(*it);
+    }
+    for (auto it = oldNHG->depends.begin(); it != oldNHG->depends.end(); it++) {
+        old_nhg_depends.insert(*it);
+        if (new_nhg_depends
+                    .find(*it) == new_nhg_depends.end()) {
+            return false;
+        }
+    }
+    for (auto it = oldNHG->dependents.begin(); it != oldNHG->dependents.end(); it++) {
+        old_nhg_dependents.insert(*it);
+        if (new_nhg_dependents
+                    .find(*it) == new_nhg_dependents.end()) {
+            return false;
+        }
+    }
+    for (auto it = new_nhg->depends.begin(); it != new_nhg->depends.end(); it++) {
+        if (old_nhg_depends
+                    .find(*it) == old_nhg_depends.end()) {
+            return false;
+        }
+    }
+    for (auto it = new_nhg->dependents.begin(); it != new_nhg->dependents.end(); it++) {
+        if (old_nhg_dependents
+                    .find(*it) == old_nhg_dependents.end()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool compareNHGFullList(const NextHopGroupFull *new_nhg, const NextHopGroupFull *oldNHG) {
+    if ((new_nhg->nh_grp_full_list.size()) != (oldNHG->nh_grp_full_list.size())) {
+        return false;
+    }
+    for (size_t i = 0; i < new_nhg->nh_grp_full_list.size(); i++){
+        if (new_nhg->nh_grp_full_list[i].id != oldNHG->nh_grp_full_list[i].id){
+            return false;
+        }
+        if (new_nhg->nh_grp_full_list[i].weight != oldNHG->nh_grp_full_list[i].weight){
+            return false;
+        }
+        if (new_nhg->nh_grp_full_list[i].num_direct != oldNHG->nh_grp_full_list[i].num_direct){
+            return false;
+        }
+    }
+
+    return true;
+}
+
 NHGMgr::NHGMgr(RedisPipeline *pipeline, const std::string &nexthopTableName, const std::string &picTableName, bool isStateTable) {
     m_rib_nhg_table = new RIBNHGTable(pipeline, nexthopTableName, isStateTable);
     m_sonic_nhg_table = new SonicNHGTable(pipeline, picTableName, isStateTable);
     m_sonic_id_manager.init({SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY, SONIC_NHG_OBJ_TYPE_NHG_NORMAL});
 }
 
-int NHGMgr::addNHGFull(NextHopGroupFull nhg) {
+int NHGMgr::addNHGFull(NextHopGroupFull nhg, uint8_t af) {
     int ret = 0;
-    SWSS_LOG_INFO("Receiving NHG %d, type %d", nhg.id, nhg.type);
+    SWSS_LOG_ERROR("Receiving NHG %d, type %d, af %d", nhg.id, nhg.type, af);
     dumpNHGGroupFull(nhg);
     // insert rib nhg in rib table
     RIBNHGEntry *entry;
@@ -28,14 +93,15 @@ int NHGMgr::addNHGFull(NextHopGroupFull nhg) {
         bool hasPreviousSonicObj = entry->hasSonicObj();
         uint32_t previousSonicGatewayObjID = entry->getSonicGatewayObjID();
         sonicNhgObjType previousType = entry->getSonicObjType();
-        ret = m_rib_nhg_table->updateEntry(nhg, updated);
+        ret = m_rib_nhg_table->updateEntry(nhg, af, updated);
         if (ret != 0) {
             SWSS_LOG_ERROR("Failed to update NHG %d", nhg.id);
             return ret;
         }
         entry = m_rib_nhg_table->getEntry(nhg.id);
         if (entry == nullptr) {
-            return ret;
+            SWSS_LOG_ERROR("Failed to get NHG after update %d", nhg.id);
+            return -1;
         }
         if (updated) {
             ret = m_rib_nhg_table->writeToDB(entry);
@@ -75,7 +141,7 @@ int NHGMgr::addNHGFull(NextHopGroupFull nhg) {
             }
         }
     } else {
-        ret = m_rib_nhg_table->addEntry(nhg);
+        ret = m_rib_nhg_table->addEntry(nhg, af);
         if (ret != 0) {
             SWSS_LOG_ERROR("Failed to add NHG %d", nhg.id);
             return ret;
@@ -294,20 +360,20 @@ bool NHGMgr::isSonicGatewayNHGIDInUsed(sonicNhgObjType type, uint32_t id) {
 }
 
 void NHGMgr::dumpNHGGroupFull(fib::NextHopGroupFull nhg) {
-    SWSS_LOG_INFO("NHG ID %d, type %d, ifname %s", nhg.id, nhg.type, nhg.ifname.c_str());
+    SWSS_LOG_ERROR("NHG ID %d, type %d, ifname %s", nhg.id, nhg.type, nhg.ifname.c_str());
 
     if (nhg.type == fib::NEXTHOP_TYPE_IPV4 || nhg.type == fib::NEXTHOP_TYPE_IPV4_IFINDEX) {
         char gateway[INET_ADDRSTRLEN] = {0};
         inet_ntop(AF_INET, &nhg.gate.ipv4, gateway, INET_ADDRSTRLEN);
-        SWSS_LOG_INFO("   NHG gateway %s", gateway);
+        SWSS_LOG_ERROR("   NHG gateway %s", gateway);
     }
     if (nhg.type == fib::NEXTHOP_TYPE_IPV6 || nhg.type == fib::NEXTHOP_TYPE_IPV6_IFINDEX) {
         char gateway[INET6_ADDRSTRLEN] = {0};
         inet_ntop(AF_INET6, &nhg.gate.ipv6, gateway, INET6_ADDRSTRLEN);
-        SWSS_LOG_INFO("   NHG gateway %s", gateway);
+        SWSS_LOG_ERROR("   NHG gateway %s", gateway);
     }
     for (auto it = nhg.nh_grp_full_list.begin(); it != nhg.nh_grp_full_list.end(); it++) {
-        SWSS_LOG_INFO("   NHG ID %d, num_direct %d", it->id, it->num_direct);
+        SWSS_LOG_ERROR("   NHG ID %d, num_direct %d", it->id, it->num_direct);
     }
 }
 
@@ -331,7 +397,7 @@ RIBNHGEntry *RIBNHGTable::getEntry(uint32_t id) {
     return it->second;
 }
 
-int RIBNHGEntry::updateEntryFromNHGFull(NextHopGroupFull newNhg, bool &updated, bool &updatedDependency) {
+int RIBNHGEntry::updateEntryFromNHGFull(NextHopGroupFull newNhg, uint8_t afNew ,bool &updated, bool &updatedDependency) {
 
     if (newNhg.weight != m_nhg.weight) {
         m_nhg.weight = newNhg.weight;
@@ -354,83 +420,26 @@ int RIBNHGEntry::updateEntryFromNHGFull(NextHopGroupFull newNhg, bool &updated, 
         m_nhg.dependents = newNhg.dependents;
         updatedDependency = true;
     }
+
+    if (!compareNHGFullList(&newNhg, &m_nhg)){
+        m_nhg.nh_grp_full_list = newNhg.nh_grp_full_list;
+        updated = true;
+    }
+
     string nexthopsOld, nexthopsNew = "";
     string ifnamesOld, ifnamesNew = "";
     string weightsOld, weightsNew = "";
-    uint8_t afOld, afNew = -1;
 
-    if (getNHGFields(m_nhg, nexthopsOld, ifnamesOld, weightsOld, afOld) != 0) {
-        return -1;
-    }
-
-    if (getNHGFields(newNhg, nexthopsNew, ifnamesNew, weightsNew, afNew) != 0) {
-        return -1;
-    }
-    if (nexthopsOld != nexthopsNew) {
-        updated = true;
-    }
-    if (ifnamesNew != ifnamesOld) {
-        updated = true;
-    }
-    if (weightsNew != weightsOld) {
-        updated = true;
-    }
-    if (afNew != afOld) {
+    if (afNew != m_af) {
         updated = true;
     }
     if (updated) {
-        int ret = this->setEntry(newNhg);
+        int ret = this->setEntry(newNhg, afNew);
         if (ret != 0) {
             return ret;
         }
     }
     return 0;
-}
-
-bool RIBNHGEntry::compareDependsAndDependents(const NextHopGroupFull *new_nhg, const NextHopGroupFull *oldNHG) {
-    if ((new_nhg->depends.size()) != (oldNHG->depends.size())) {
-        return false;
-    }
-    if ((new_nhg->dependents.size()) != (oldNHG->dependents.size())) {
-        return false;
-    }
-    set<int> new_nhg_depends;
-    set<int> old_nhg_depends;
-    set<int> new_nhg_dependents;
-    set<int> old_nhg_dependents;
-    for (auto it = new_nhg->depends.begin(); it != new_nhg->depends.end(); it++) {
-        new_nhg_depends.insert(*it);
-    }
-    for (auto it = new_nhg->dependents.begin(); it != new_nhg->dependents.end(); it++) {
-        new_nhg_dependents.insert(*it);
-    }
-    for (auto it = oldNHG->depends.begin(); it != oldNHG->depends.end(); it++) {
-        old_nhg_depends.insert(*it);
-        if (new_nhg_depends
-                    .find(*it) == new_nhg_depends.end()) {
-            return false;
-        }
-    }
-    for (auto it = oldNHG->dependents.begin(); it != oldNHG->dependents.end(); it++) {
-        old_nhg_dependents.insert(*it);
-        if (new_nhg_dependents
-                    .find(*it) == new_nhg_dependents.end()) {
-            return false;
-        }
-    }
-    for (auto it = new_nhg->depends.begin(); it != new_nhg->depends.end(); it++) {
-        if (old_nhg_depends
-                    .find(*it) == old_nhg_depends.end()) {
-            return false;
-        }
-    }
-    for (auto it = new_nhg->dependents.begin(); it != new_nhg->dependents.end(); it++) {
-        if (old_nhg_dependents
-                    .find(*it) == old_nhg_dependents.end()) {
-            return false;
-        }
-    }
-    return true;
 }
 
 uint32_t RIBNHGEntry::getSonicObjID() {
@@ -459,7 +468,7 @@ int RIBNHGTable::delEntry(uint32_t id) {
     return 0;
 }
 
-int RIBNHGTable::addEntry(NextHopGroupFull nhg) {
+int RIBNHGTable::addEntry(NextHopGroupFull nhg, uint8_t af) {
     if (m_nhg_map.find(nhg.id) != m_nhg_map.end()) {
         SWSS_LOG_ERROR("NextHop group id %d already exists.", nhg.id);
         return -1;
@@ -470,7 +479,7 @@ int RIBNHGTable::addEntry(NextHopGroupFull nhg) {
         SWSS_LOG_ERROR("Failed to create nhg entry for %d", nhg.id);
         return -1;
     }
-    int ret = entry->setEntry(nhg);
+    int ret = entry->setEntry(nhg, af);
     if (ret != 0) {
         delete entry;
         return -1;
@@ -485,7 +494,7 @@ int RIBNHGTable::addEntry(NextHopGroupFull nhg) {
     return 0;
 }
 
-int RIBNHGTable::updateEntry(NextHopGroupFull nhg, bool &updated) {
+int RIBNHGTable::updateEntry(NextHopGroupFull nhg, uint8_t af, bool &updated) {
     if (m_nhg_map.find(nhg.id) == m_nhg_map.end()) {
         SWSS_LOG_ERROR("NextHop group id %d not exists.", nhg.id);
         return -1;
@@ -496,7 +505,7 @@ int RIBNHGTable::updateEntry(NextHopGroupFull nhg, bool &updated) {
 
     bool updatedDependency = false;
     set<uint32_t> previous_depends = entry->getDependsID();
-    int ret = entry->updateEntryFromNHGFull(nhg, updated, updatedDependency);
+    int ret = entry->updateEntryFromNHGFull(nhg, af, updated, updatedDependency);
     if (ret != 0) {
         SWSS_LOG_ERROR("Failed to create nhg entry for %d", nhg.id);
         return -1;
@@ -535,17 +544,6 @@ void RIBNHGTable::removeNHGDependents(set<uint32_t> depends, uint32_t id) {
     }
 }
 
-/*
-bool RIBNHGTable::isNHGExist(string key)
-{
-    auto it = m_key_2_id_map.find(key);
-    if (it != m_key_2_id_map.end())
-    {
-        return true;
-    }
-    return false;
-}
-*/
 bool RIBNHGTable::isNHGExist(uint32_t id) {
     auto it = m_nhg_map.find(id);
     if (it != m_nhg_map.end()) {
@@ -682,10 +680,9 @@ int RIBNHGEntry::createSRv6GatewayObjFromRIBEntry(SonicGateWayNHGObject &sonicNh
 
     if (sonicNhgOut.groupMember.size() == 0) {
         sonicNhgOut.nexthop = m_nexthop;
-        // just for now
-        sonicNhgOut.segSrc = "1::1";
+        sonicNhgOut.segSrc = m_segSrc;
         sonicNhgOut.vpnSid = m_vpnSid;
-        sonicNhgOut.ifName = "unknown";
+        sonicNhgOut.ifName = m_ifName;
     }
 
     return 0;
@@ -762,10 +759,11 @@ void RIBNHGEntry::setNHGFull(NextHopGroupFull nhg) {
 }
 
 /* set an RIB Entry from a nexthopgroupfull */
-int RIBNHGEntry::setEntry(NextHopGroupFull nhg) {
+int RIBNHGEntry::setEntry(NextHopGroupFull nhg, uint8_t af) {
     m_key = NexthopMapKey(&nhg);
     m_rib_id = nhg.id;
     m_nhg = nhg;
+    m_af = af;
     //this->setNHGFull(nhg);
     for (auto it = nhg.depends.begin(); it != nhg.depends.end(); it++) {
         // validate group member
@@ -783,11 +781,12 @@ int RIBNHGEntry::setEntry(NextHopGroupFull nhg) {
         }
         m_group.insert(std::make_pair(it->id, it->weight));
     }
+
     m_has_sonic_obj = needCreateSonicGatewayNHGObj();
     m_resolvedGroup = getResolvedGroupFromNHGFull(nhg);
 
     if (this->syncFvVector() != 0) {
-        SWSS_LOG_ERROR("Failed to syncd fv vector for %d", nhg.id);
+        SWSS_LOG_ERROR("Failed to sync fv vector for %d", nhg.id);
         return -1;
     }
 
@@ -804,24 +803,23 @@ int RIBNHGEntry::syncFvVector() {
     string nexthops = "";
     string ifnames = "";
     string weights = "";
-    uint8_t af = -1;
     m_fvVector.clear();
 
-    if (getNHGFields(m_nhg, nexthops, ifnames, weights, af) != 0) {
+    if (getNHGFields(m_nhg, m_af, nexthops, ifnames, weights) != 0) {
         SWSS_LOG_ERROR("get nhg fields failed");
         return -1;
     }
-    if (nexthops.empty() && m_nhg.nh_grp_full_list.size() > 0) {
+    if (nexthops.empty() && m_nhg.nh_grp_full_list.size() > 0 && m_nhg.type != fib::NEXTHOP_TYPE_IFINDEX) {
         SWSS_LOG_ERROR("nexthop is empty");
         return -1;
     }
     if (nexthops.empty()) {
-        if (af == AF_INET) {
+        if (m_af == AF_INET) {
             nexthops = "0.0.0.0";
-        } else if (af == AF_INET6) {
+        } else if (m_af == AF_INET6) {
             nexthops = "::";
         } else {
-            SWSS_LOG_ERROR("sync fv vector failed");
+            SWSS_LOG_ERROR("sync fv vector failed, unsupported address family %d", m_af);
             return -1;
         }
     }
@@ -844,78 +842,62 @@ int RIBNHGEntry::syncFvVector() {
 }
 
 /* get fields from entry */
-int RIBNHGEntry::getNHGFields(NextHopGroupFull nhg, string &nexthop, string &ifnames, string &weights, uint8_t &af) {
+int RIBNHGEntry::getNHGFields(NextHopGroupFull nhg, uint8_t af, string &nexthop, string &ifnames, string &weights) {
     if (!m_is_single) {
-        return getNextHopGroupFields(nhg, nexthop, weights);
+        return getNextHopGroupFields(nhg, nexthop, ifnames, weights);
 
     } else {
-        if (nhg.type == fib::NEXTHOP_TYPE_IPV4_IFINDEX || nhg.type == fib::NEXTHOP_TYPE_IPV4) {
-            af = AF_INET;
-            return getNextHopFields(nhg, nexthop, ifnames, AF_INET);
-        }
-        if (nhg.type == fib::NEXTHOP_TYPE_IPV6_IFINDEX || nhg.type == fib::NEXTHOP_TYPE_IPV6) {
-            af = AF_INET6;
-            return getNextHopFields(nhg, nexthop, ifnames, AF_INET6);
-        } else {
-            SWSS_LOG_ERROR("other nexthop type: %d", nhg.type);
-            return 0;
-        }
+        return getNextHopFields(nhg, m_af, nexthop, ifnames);
     }
 }
 
 /* get fields from multi nexthopgroup entry */
-int RIBNHGEntry::getNextHopGroupFields(NextHopGroupFull nhg, string &nexthops, string &weights) {
-    unordered_map<uint32_t, uint8_t> resolved_group = getResolvedGroupFromNHGFull(nhg);
-    if (m_sonic_obj_type == SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY) {
-        for (const auto &nh: resolved_group) {
-            uint32_t id = nh.first;
-            string weight = to_string(nh.second);
-            if (!m_table->isNHGExist(id)) {
-                SWSS_LOG_ERROR("NextHop group is incomplete: %d", id);
-                return -1;
-            }
-            RIBNHGEntry *entry = this->m_table->getEntry(id);
-            if (!nexthops.empty()) {
-                nexthops += NHG_DELIMITER;
-                //ifnames += NHG_DELIMITER;
-                weights += NHG_DELIMITER;
+int RIBNHGEntry::getNextHopGroupFields(NextHopGroupFull nhg, string &nexthops, string &ifnames, string &weights) {
+    for (const auto &nh: m_resolvedGroup) {
+        uint32_t id = nh.first;
+        string weight = to_string(nh.second);
+        if (!m_table->isNHGExist(id)) {
+            SWSS_LOG_ERROR("NextHop group is incomplete: %d", id);
+            return -1;
+        }
+        RIBNHGEntry *entry = this->m_table->getEntry(id);
+        if (!nexthops.empty()) {
+            nexthops += NHG_DELIMITER;
+        }
+        if (!ifnames.empty()) {
+            ifnames += NHG_DELIMITER;
+        }
+        if (!weights.empty()) {
+            weights += NHG_DELIMITER;
+        }
+        nexthops += entry->getNextHopStr();
+        ifnames += entry->getInterfaceNameStr();
+        weights += weight;
+
+        /* SRv6 VPN SID */
+        if(m_sonic_obj_type == SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY){
+            if (!m_vpnSid.empty()){
                 m_vpnSid += NHG_DELIMITER;
             }
-            nexthops += entry->getNextHopStr();
-            weights += weight;
+            if(!m_segSrc.empty()){
+                m_segSrc += NHG_DELIMITER;
+            }
             m_vpnSid += entry->getVPNSIDStr();
+            m_segSrc += entry->getSegSrcStr();
         }
-    } else {
-        for (const auto &nh: resolved_group) {
-            uint32_t id = nh.first;
-            string weight = to_string(nh.second);
-            if (!m_table->isNHGExist(id)) {
-                SWSS_LOG_ERROR("NextHop group is incomplete: %d", id);
-                return -1;
-            }
-            RIBNHGEntry *entry = this->m_table->getEntry(id);
-            if (!nexthops.empty()) {
-                nexthops += NHG_DELIMITER;
-                //ifnames += NHG_DELIMITER;
-                weights += NHG_DELIMITER;
-            }
-            // nexthops += entry->m_nexthop.empty() ? (af == AF_INET ? "0.0.0.0" : "::") : entry->m_nexthop;
-            nexthops += entry->getNextHopStr();
-            weights += weight;
-        }
+
     }
     return 0;
 }
 
 /* get fields from single nexthop entry */
-int RIBNHGEntry::getNextHopFields(NextHopGroupFull nhg, string &nexthops, string &ifnames, uint8_t af) {
+int RIBNHGEntry::getNextHopFields(NextHopGroupFull nhg, uint8_t af, string &nexthops, string &ifnames) {
     if (af == AF_INET) {
         char gateway[INET_ADDRSTRLEN] = {0};
         inet_ntop(AF_INET, &nhg.gate.ipv4, gateway, INET_ADDRSTRLEN);
         nexthops = gateway;
         ifnames = nhg.ifname;
-    }
-    if (af == AF_INET6) {
+    }else if(af == AF_INET6) {
         char gateway[INET6_ADDRSTRLEN] = {0};
         inet_ntop(AF_INET6, &nhg.gate.ipv6, gateway, INET6_ADDRSTRLEN);
         nexthops = gateway;
@@ -926,18 +908,11 @@ int RIBNHGEntry::getNextHopFields(NextHopGroupFull nhg, string &nexthops, string
 
 /* get resolved group from nexthopgroupfull */
 unordered_map<uint32_t, uint8_t> RIBNHGEntry::getResolvedGroupFromNHGFull(NextHopGroupFull nhg) {
-    int preNumDirect = 0;
     unordered_map<uint32_t, uint8_t> ret;
-
     if (m_sonic_obj_type == SONIC_NHG_OBJ_TYPE_NHG_NORMAL) {
         for (auto nhg: nhg.nh_grp_full_list) {
             if (nhg.num_direct == 0) {
                 ret.insert(std::make_pair(nhg.id, nhg.weight));
-                if (preNumDirect != 0) {
-                    preNumDirect--;
-                }
-            } else {
-                preNumDirect = nhg.num_direct;
             }
         }
     } else if (m_sonic_obj_type == SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY) {
@@ -967,10 +942,13 @@ bool RIBNHGEntry::needCreateSonicGatewayNHGObj() {
     /* for srv6 gateway, check if we need to create single pic group obj */
     if (m_depends.size() != 0 && m_nhg.nh_srv6 != nullptr && m_nhg.nh_srv6->seg6_segs != nullptr) {
         char sid[INET6_ADDRSTRLEN] = {0};
+        char seg_src[INET6_ADDRSTRLEN] = {0};
         m_sonic_obj_type = SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY;
         inet_ntop(AF_INET6, &m_nhg.nh_srv6->seg6_segs->seg[0], sid, INET6_ADDRSTRLEN);
         m_vpnSid = sid;
+        inet_ntop(AF_INET6, &m_nhg.src, seg_src, INET6_ADDRSTRLEN);
         m_is_single = true;
+        m_segSrc = seg_src;
         return true;
     }
 
@@ -1002,6 +980,13 @@ void RIBNHGEntry::setSonicGatewayObjId(uint32_t id) {
 
 string RIBNHGEntry::getInterfaceNameStr() {
     return m_ifName;
+}
+
+uint8_t RIBNHGEntry::getAddressFamily() {
+    return m_af;
+}
+string RIBNHGEntry::getSegSrcStr() {
+    return m_segSrc;
 }
 
 NexthopMapKey::NexthopMapKey(const NextHopGroupFull *nhg) {
@@ -1261,38 +1246,54 @@ int SonicGateWayNHGEntry::syncFvVector() {
                 string vpnSids = "";
                 string ifnames = "";
                 string weights = "";
+                string segSrcs = "";
                 for (auto member: m_group) {
                     SonicGateWayNHGEntry *entry = m_table->getEntry(SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY, member.first);
                     if (entry == nullptr) {
                         SWSS_LOG_ERROR("SonicGateWayNHGObject is not exist: %d", member.first);
                         return -1;
                     }
+
                     SonicGateWayNHGObject nhg = entry->getNHG();
                     if (nhg.groupMember.size() > 0) {
                         SWSS_LOG_ERROR("SonicGateWayNHGObject member is a group: %d", member.first);
                         return -1;
                     }
+
                     if (!nexthops.empty()) {
                         nexthops += NHG_DELIMITER;
                     }
                     nexthops += nhg.nexthop;
+
                     if (!ifnames.empty()) {
                         ifnames += NHG_DELIMITER;
                     }
-                    ifnames += nhg.ifName;
+                    if (!nhg.ifName.empty()) {
+                        ifnames += nhg.ifName;
+                    } else {
+                        ifnames += "unknown";
+                    }
+
                     if (!vpnSids.empty()) {
                         vpnSids += NHG_DELIMITER;
                     }
                     vpnSids += nhg.vpnSid;
+
                     if (!weights.empty()) {
                         weights += NHG_DELIMITER;
                     }
                     weights += std::to_string(member.second);
+
+                    if (!segSrcs.empty()) {
+                        segSrcs += NHG_DELIMITER;
+                    }
+                    segSrcs += nhg.segSrc;
                 }
                 m_fvVector.push_back(FieldValueTuple("nexthop", nexthops));
                 m_fvVector.push_back(FieldValueTuple("ifname", ifnames));
                 m_fvVector.push_back(FieldValueTuple("weight", weights));
                 m_fvVector.push_back(FieldValueTuple("vpn_sid", vpnSids));
+                m_fvVector.push_back(FieldValueTuple("seg_src", segSrcs));
             }
             break;
         }
@@ -1344,6 +1345,7 @@ SonicGateWayNHGObject SonicGateWayNHGEntry::getNHG() {
 
 SonicGateWayNHGEntry::SonicGateWayNHGEntry(SonicNHGTable *mTable) : m_table(mTable) {
 }
+
 SonicGateWayNHGEntry::~SonicGateWayNHGEntry() {
     m_table = nullptr;
 }
