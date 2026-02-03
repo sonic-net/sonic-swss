@@ -219,6 +219,8 @@ class RouteSync : public NetMsg
 public:
     enum { MAX_ADDR_SIZE = 64 };
 
+    virtual ~RouteSync();
+
     RouteSync(RedisPipeline *pipeline);
 
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
@@ -253,9 +255,13 @@ public:
     /* Mark all routes from DB with offloaded flag */
     void markRoutesOffloaded(swss::DBConnector& db);
 
+    WarmStartHelper  m_warmStartHelper;
+
     void onFpmConnected(FpmInterface& fpm)
     {
-        m_fpmInterface = &fpm;
+        if (!m_fpmInterface) {
+            m_fpmInterface = &fpm;
+        }
     }
 
     void onFpmDisconnected()
@@ -279,8 +285,12 @@ private:
     ProducerStateTable  m_vnet_routeTable;
     /* vnet vxlan tunnel table */  
     ProducerStateTable  m_vnet_tunnelTable;
-    /* Warm start helper */
-    WarmStartHelper m_warmStartHelper;
+    /* EVPN Split Horizon Table */
+    ProducerStateTable  m_evpn_shlTable;
+    /* EVPN DF Table (Designated Forwarder) */
+    ProducerStateTable  m_evpn_dfTable;
+    /* EVPN ES Backup NextHopGroup Table */
+    ProducerStateTable  m_evpn_esBackupNhgTable;
     /* srv6 mySid table */
     ProducerStateTable m_srv6MySidTable; 
     /* srv6 sid list table */
@@ -325,6 +335,10 @@ private:
 
     /* Handle prefix route */
     void onEvpnRouteMsg(struct nlmsghdr *h, int len);
+    void onEvpnShlMsg(struct nlmsghdr *h, int len);
+    void onEvpnDfMsg(struct nlmsghdr *h, int len);
+    void onEvpnEsBackupNhgMsg(struct nlmsghdr *h, int len);
+    void onTcFilterMsg(struct nlmsghdr *h, int len);
 
     /* Handle routes containing an SRv6 nexthop */
     void onSrv6SteerRouteMsg(struct nlmsghdr *h, int len);

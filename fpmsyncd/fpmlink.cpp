@@ -50,6 +50,16 @@ bool FpmLink::isRawProcessing(struct nlmsghdr *h)
 
     if (h->nlmsg_type != RTM_NEWROUTE && h->nlmsg_type != RTM_DELROUTE)
     {
+        /*
+         * EVPN Split Horizon and DF role information are both sent using traffic
+         * classifier filters for ease-of-use without needing a new magic number
+         * type to be shared between FRR and FPM.
+         */
+        if (h->nlmsg_type == RTM_NEWTFILTER || h->nlmsg_type == RTM_DELTFILTER)
+        {
+            return true;
+        }
+
         return false;
     }
 
@@ -165,12 +175,16 @@ FpmLink::FpmLink(RouteSync *rsync, unsigned short port) :
     m_messageBuffer = new char[m_bufSize];
     m_sendBuffer = new char[m_bufSize];
 
-    m_routesync->onFpmConnected(*this);
+    if (m_routesync) {
+        m_routesync->onFpmConnected(*this);
+    }
 }
 
 FpmLink::~FpmLink()
 {
-    m_routesync->onFpmDisconnected();
+    if (m_routesync) {
+        m_routesync->onFpmDisconnected();
+    }
 
     delete[] m_messageBuffer;
     delete[] m_sendBuffer;
