@@ -1076,31 +1076,18 @@ class TestMuxTunnelBase():
             ### These tests create route: ###
 
             ## Testing route changes
-            dvs.add_log_marker()
             self.multi_nexthop_test_create(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops)
-            dvs.add_log_marker()
             self.multi_nexthop_test_create(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops)
-            dvs.add_log_marker()
             self.multi_nexthop_test_create(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops, non_mux_ipv4)
-            dvs.add_log_marker()
             self.multi_nexthop_test_create(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, non_mux_ipv6)
-            dvs.add_log_marker()
             self.multi_nexthop_test_route_update_keep_size(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops, new_ipv4_nexthop, new_mux_port)
-            dvs.add_log_marker()
             self.multi_nexthop_test_route_update_keep_size(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, new_ipv6_nexthop, new_mux_port)
-            dvs.add_log_marker()
             self.multi_nexthop_test_route_update_keep_size(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops, non_mux_ipv4, None, nh_is_mux=False)
-            dvs.add_log_marker()
             self.multi_nexthop_test_route_update_keep_size(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, non_mux_ipv6, None, nh_is_mux=False)
-            dvs.add_log_marker()
             self.multi_nexthop_test_route_update_increase_size(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops, non_mux_nexthop=non_mux_ipv4)
-            dvs.add_log_marker()
             self.multi_nexthop_test_route_update_increase_size(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, non_mux_nexthop=non_mux_ipv6)
-            dvs.add_log_marker()
             self.multi_nexthop_test_route_update_decrease_size(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops, non_mux_nexthop=non_mux_ipv4)
-            dvs.add_log_marker()
             self.multi_nexthop_test_route_update_decrease_size(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, non_mux_nexthop=non_mux_ipv6)
-            dvs.add_log_marker()
 
 
             ### The following tests do not create their own routes, create before and delete after ###
@@ -1109,88 +1096,54 @@ class TestMuxTunnelBase():
 
             # add new mux vlan neighbor and route to test
             self.add_neighbor(dvs, mux_neighbor_ipv4, macs[1])
-            dvs.add_log_marker()
             self.add_neighbor(dvs, mux_neighbor_ipv6, macs[1])
-            dvs.add_log_marker()
             self.add_route(dvs, route_ipv4, [self.SERV1_IPV4, mux_neighbor_ipv4])
-            dvs.add_log_marker()
             self.add_route(dvs, route_ipv6, [self.SERV1_IPV6, mux_neighbor_ipv6])
-            dvs.add_log_marker()
 
             # test
             self.multi_nexthop_test_toggle(appdb, asicdb, dvs_route, route_ipv4, mux_ports, [self.SERV1_IPV4, mux_neighbor_ipv4])
-            dvs.add_log_marker()
             self.multi_nexthop_test_toggle(appdb, asicdb, dvs_route, route_ipv6, mux_ports, [self.SERV1_IPV6, mux_neighbor_ipv6])
-            dvs.add_log_marker()
 
             # cleanup new mux vlan neighbor and route to test
             self.del_route(dvs,route_ipv4)
-            dvs.add_log_marker()
             self.del_route(dvs,route_ipv6)
-            dvs.add_log_marker()
             self.del_neighbor(dvs, mux_neighbor_ipv4)
-            dvs.add_log_marker()
             self.del_neighbor(dvs, mux_neighbor_ipv6)
-            dvs.add_log_marker()
 
             ## Test neighbor operations:
             # create the route
             self.add_route(dvs, route_ipv4, ipv4_nexthops)
-            dvs.add_log_marker()
             self.add_route(dvs, route_ipv6, ipv6_nexthops)
-            dvs.add_log_marker()
             self.add_route(dvs, route_B_ipv4, ipv4_nexthops)
-            dvs.add_log_marker()
             self.add_route(dvs, route_B_ipv6, ipv6_nexthops)
-            dvs.add_log_marker()
 
             self.multi_nexthop_test_vlan_neighbor_update(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops, macs, mux_neighbor_ipv4)
-            dvs.add_log_marker()
             self.multi_nexthop_test_vlan_neighbor_update(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, macs, mux_neighbor_ipv6)
-            dvs.add_log_marker()
 
             self.multi_nexthop_test_neighbor_delete_and_create(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops, macs)
-            dvs.add_log_marker()
             self.multi_nexthop_test_neighbor_delete_and_create(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, macs)
-            dvs.add_log_marker()
 
             self.multi_nexthop_test_fdb(appdb, asicdb, dvs, dvs_route, [route_ipv4, route_B_ipv4], mux_ports, ipv4_nexthops, macs)
-            dvs.add_log_marker()
             self.multi_nexthop_test_fdb(appdb, asicdb, dvs, dvs_route, [route_ipv6, route_B_ipv6], mux_ports, ipv6_nexthops, macs)
-            dvs.add_log_marker()
             self.multi_nexthop_test_neighbor_unresolve(appdb, asicdb, dvs, dvs_route, [route_ipv4, route_B_ipv4], mux_ports, ipv4_nexthops)
-            dvs.add_log_marker()
             self.multi_nexthop_test_neighbor_unresolve(appdb, asicdb, dvs, dvs_route, [route_ipv6, route_B_ipv6], mux_ports, ipv6_nexthops)
-            dvs.add_log_marker()
             self.multi_nexthop_test_neighbor_resolve(appdb, asicdb, dvs, dvs_route, [route_ipv4, route_B_ipv4], mux_ports, ipv4_nexthops, macs)
-            dvs.add_log_marker()
             self.multi_nexthop_test_neighbor_resolve(appdb, asicdb, dvs, dvs_route, [route_ipv6, route_B_ipv6], mux_ports, ipv6_nexthops, macs)
-            dvs.add_log_marker()
 
         finally:
             # Cleanup
             self.del_route(dvs,route_ipv4)
-            dvs.add_log_marker()
             self.del_route(dvs,route_B_ipv4)
-            dvs.add_log_marker()
             self.del_route(dvs,route_ipv6)
-            dvs.add_log_marker()
             self.del_route(dvs,route_B_ipv6)
-            dvs.add_log_marker()
             for neighbor in ipv4_nexthops:
                 self.del_neighbor(dvs, neighbor)
-            dvs.add_log_marker()
             for neighbor in ipv6_nexthops:
                 self.del_neighbor(dvs, neighbor)
-            dvs.add_log_marker()
             self.del_neighbor(dvs, new_ipv4_nexthop)
-            dvs.add_log_marker()
             self.del_neighbor(dvs, new_ipv6_nexthop)
-            dvs.add_log_marker()
             self.del_neighbor(dvs, mux_neighbor_ipv4)
-            dvs.add_log_marker()
             self.del_neighbor(dvs, mux_neighbor_ipv6)
-            dvs.add_log_marker()
 
     def create_and_test_NH_routes(self, appdb, asicdb, dvs, dvs_route, mac):
         '''
@@ -1939,7 +1892,6 @@ class TestMuxTunnel(TestMuxTunnelBase):
         self.create_and_test_NH_routes(appdb, asicdb, dvs, dvs_route, mac)
 
     def test_multi_nexthop(self, dvs, dvs_route, intf_fdb_map, neighbor_cleanup, testlog, setup):
-        dvs.runcmd("swssloglevel -l INFO -c orchagent")
         appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         asicdb = dvs.get_asic_db()
         macs = [intf_fdb_map["Ethernet0"], intf_fdb_map["Ethernet4"]]
