@@ -2602,6 +2602,7 @@ bool MuxOrch::bake()
     // Restore MUX neighbors from Redis during warm boot
     restoreMuxNeighbors();
 
+    Orch::bake();
     return true;
 }
 
