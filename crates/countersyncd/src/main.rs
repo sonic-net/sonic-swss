@@ -176,14 +176,6 @@ struct Args {
     )]
     otel_endpoint: String,
 
-    /// Enable OpenTelemetry console output
-    #[arg(
-        long,
-        default_value = "true",
-        help = "Print OpenTelemetry metrics to console"
-    )]
-    otel_console: bool,
-
     /// Channel capacity for otel communication
     #[arg(
         long,
@@ -234,7 +226,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("OpenTelemetry export enabled: {}", args.enable_otel);
     if args.enable_otel {
         info!("OpenTelemetry endpoint: {}", args.otel_endpoint);
-        info!("OpenTelemetry console output: {}", args.otel_console);
         info!(
             "OpenTelemetry batching: max_counters_per_export={}, flush_timeout_ms={}",
             args.otel_max_counters_per_export, args.otel_flush_timeout_ms
