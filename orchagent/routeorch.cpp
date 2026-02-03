@@ -55,6 +55,7 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
     SWSS_LOG_ENTER();
 
     m_publisher.setBuffered(true);
+    m_publisher.m_directDbWrite = true;
 
     sai_attribute_t attr;
     attr.id = SAI_SWITCH_ATTR_NUMBER_OF_ECMP_GROUPS;
