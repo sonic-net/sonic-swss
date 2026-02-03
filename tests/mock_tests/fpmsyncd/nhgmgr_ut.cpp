@@ -66,7 +66,7 @@ namespace ut_fpmsyncd
         /* Create a NextHopGroupFull object containing single ipv4 nexthop*/
         NextHopGroupFull nhg_obj = createSingleIPv4NextHopNHGFull("192.100.1.1", "120.0.0.1", 123);
         /* Send the object to the NhgMgr Add function */
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhg_obj), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhg_obj, AF_INET), 0);
 
         /* Get entry and Check that fpmsyncd created the correct entries in APP_DB */
         RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(nhg_obj.id);
@@ -94,7 +94,7 @@ namespace ut_fpmsyncd
         /* Create a NextHopGroupFull object containing single ipv6 nexthop*/
         NextHopGroupFull nhg_obj = createSingleIPv6NextHopNHGFull("fc00::1", "fc00::100");
         /* Send the object to the NhgMgr Add function */
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhg_obj), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhg_obj, AF_INET6), 0);
 
         /* Get entry and Check that fpmsyncd created the correct entries in APP_DB */
         RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(nhg_obj.id);
@@ -130,9 +130,9 @@ namespace ut_fpmsyncd
         NextHopGroupFull nhgObjC = createSingleIPv4NextHopNHGFull("192.100.1.1", "120.0.0.1", ribIDC);
         NextHopGroupFull nhgObjB1 = createSingleIPv4NextHopNHGFull("192.100.2.1", "120.0.2.1", ribIDB1);
         NextHopGroupFull nhgObjB2 = createSingleIPv4NextHopNHGFull("192.100.2.2", "120.0.2.2", ribIDB2);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjC), 0);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB1), 0);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB2), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjC, AF_INET), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB1, AF_INET), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB2, AF_INET), 0);
 
         RIBNHGEntry *entryC = m_nhgmgr->getRIBNHGEntryByRIBID(nhgObjC.id);
         RIBNHGEntry *entryB1 = m_nhgmgr->getRIBNHGEntryByRIBID(nhgObjB1.id);
@@ -181,7 +181,7 @@ namespace ut_fpmsyncd
         };
 
         /* Send the object to the NhgMgr Add function */
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB, AF_INET), 0);
         /* Check that fpmsyncd created the correct entries in APP_DB */
         RIBNHGEntry *entryB = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDB);
         ASSERT_NE(entryB, nullptr);
@@ -201,7 +201,7 @@ namespace ut_fpmsyncd
         }
 
         /* Send the object to the NhgMgr Add function */
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjA), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjA, AF_INET), 0);
         /* Check that fpmsyncd created the correct entries in APP_DB */
         RIBNHGEntry *entryA = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDA);
         ASSERT_NE(entryA, nullptr);
@@ -243,9 +243,9 @@ namespace ut_fpmsyncd
         NextHopGroupFull nhgObjC = createSingleIPv6NextHopNHGFull("fc00:1::1", "fc00:100::1", ribIDC);
         NextHopGroupFull nhgObjB1 = createSingleIPv6NextHopNHGFull("fc00:2::1", "fc00:200::1", ribIDB1);
         NextHopGroupFull nhgObjB2 = createSingleIPv6NextHopNHGFull("fc00:2::2", "fc00:200::2", ribIDB2);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjC), 0);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB1), 0);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB2), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjC, AF_INET6), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB1, AF_INET6), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB2, AF_INET6), 0);
 
         RIBNHGEntry *entryC = m_nhgmgr->getRIBNHGEntryByRIBID(nhgObjC.id);
         RIBNHGEntry *entryB1 = m_nhgmgr->getRIBNHGEntryByRIBID(nhgObjB1.id);
@@ -294,7 +294,7 @@ namespace ut_fpmsyncd
         };
 
         /* Send the object to the NhgMgr Add function */
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB, AF_INET6), 0);
         /* Check that fpmsyncd created the correct entries in APP_DB */
         RIBNHGEntry *entryB = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDB);
         ASSERT_NE(entryB, nullptr);
@@ -314,7 +314,7 @@ namespace ut_fpmsyncd
         }
 
         /* Send the object to the NhgMgr Add function */
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjA), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjA, AF_INET6), 0);
         /* Check that fpmsyncd created the correct entries in APP_DB */
         RIBNHGEntry *entryA = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDA);
         ASSERT_NE(entryA, nullptr);
@@ -348,7 +348,7 @@ namespace ut_fpmsyncd
         /* Create a NextHopGroupFull object containing single ipv4 nexthop*/
         NextHopGroupFull nhg_obj = createSingleIPv4NextHopNHGFull("192.100.1.1", "120.0.0.1", 1);
         /* Send the object to the NhgMgr Add function */
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhg_obj), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhg_obj, AF_INET), 0);
         /* Check that fpmsyncd created the correct entries in APP_DB */
         RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(nhg_obj.id);
         ASSERT_NE(entry, nullptr);
@@ -358,7 +358,7 @@ namespace ut_fpmsyncd
         // ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjID), "nexthop", nexthop), true);
         // ASSERT_EQ(nexthop, "192.100.1.1");
         // inet_pton(AF_INET, "122.0.0.1", &nhg_obj.gate.ipv4);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhg_obj), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhg_obj, AF_INET), 0);
         // ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjID), "nexthop", nexthop), true);
         // ASSERT_EQ(nexthop, "122.0.0.1");
         // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjID), true);
@@ -370,7 +370,7 @@ namespace ut_fpmsyncd
         /* Create a NextHopGroupFull object containing single ipv6 nexthop*/
         NextHopGroupFull nhg_obj = createSingleIPv6NextHopNHGFull("fc00::1", "fc00::100", 1);
         /* Send the object to the NhgMgr Add function */
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhg_obj), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhg_obj, AF_INET6), 0);
         /* Check that fpmsyncd created the correct entries in APP_DB */
         RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(nhg_obj.id);
         ASSERT_NE(entry, nullptr);
@@ -381,7 +381,7 @@ namespace ut_fpmsyncd
         // ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjID), "nexthop", nexthop), true);
         // ASSERT_EQ(nexthop, "fc00::1");
         // inet_pton(AF_INET6, "fc00::2", &nhg_obj.gate.ipv6);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhg_obj), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhg_obj, AF_INET6), 0);
         // ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjID), "nexthop", nexthop), true);
         // ASSERT_EQ(nexthop, "fc00::2");
         // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjID), true);
@@ -402,9 +402,9 @@ namespace ut_fpmsyncd
         NextHopGroupFull nhgObjC = createSingleIPv4NextHopNHGFull("192.100.1.1", "120.0.0.1", ribIDC);
         NextHopGroupFull nhgObjB1 = createSingleIPv4NextHopNHGFull("192.100.2.1", "120.0.2.1", ribIDB1);
         NextHopGroupFull nhgObjB2 = createSingleIPv4NextHopNHGFull("192.100.2.2", "120.0.2.2", ribIDB2);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjC), 0);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB1), 0);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB2), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjC, AF_INET), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB1, AF_INET), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB2, AF_INET), 0);
 
         RIBNHGEntry *entryC = m_nhgmgr->getRIBNHGEntryByRIBID(nhgObjC.id);
         RIBNHGEntry *entryB1 = m_nhgmgr->getRIBNHGEntryByRIBID(nhgObjB1.id);
@@ -451,7 +451,7 @@ namespace ut_fpmsyncd
         };
 
         /* Send the object to the NhgMgr Add function */
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB, AF_INET), 0);
         /* Check that fpmsyncd created the correct entries in APP_DB */
         RIBNHGEntry *entryB = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDB);
         ASSERT_NE(entryB, nullptr);
@@ -471,7 +471,7 @@ namespace ut_fpmsyncd
         }
 
         /* Send the object to the NhgMgr Add function */
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjA), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjA, AF_INET), 0);
         /* Check that fpmsyncd created the correct entries in APP_DB */
         RIBNHGEntry *entryA = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDA);
         ASSERT_NE(entryA, nullptr);
@@ -502,7 +502,7 @@ namespace ut_fpmsyncd
         };
         NextHopGroupFull nhgObjANew = createMultiNextHopNHGFull(nhgFullA, { { ribIDB, 12 }, { ribIDB1, 12 }, { ribIDB2, 12 } },
                                                                 { { ribIDB, 2 }, { ribIDB1, 0 }, { ribIDB2, 0 } }, dependsA, {}, ribIDA);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjANew), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjANew, AF_INET), 0);
         RIBNHGEntry *entryANew = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDA);
         ASSERT_NE(entryANew, nullptr);
         ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDA), true);
@@ -542,9 +542,9 @@ namespace ut_fpmsyncd
         NextHopGroupFull nhgObjC = createSingleIPv6NextHopNHGFull("fc00:1::1", "fc00:100::1", ribIDC);
         NextHopGroupFull nhgObjB1 = createSingleIPv6NextHopNHGFull("fc00:2::1", "fc00:200::1", ribIDB1);
         NextHopGroupFull nhgObjB2 = createSingleIPv6NextHopNHGFull("fc00:2::2", "fc00:200::2", ribIDB2);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjC), 0);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB1), 0);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB2), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjC, AF_INET6), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB1, AF_INET6), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB2, AF_INET6), 0);
 
         RIBNHGEntry *entryC = m_nhgmgr->getRIBNHGEntryByRIBID(nhgObjC.id);
         RIBNHGEntry *entryB1 = m_nhgmgr->getRIBNHGEntryByRIBID(nhgObjB1.id);
@@ -591,7 +591,7 @@ namespace ut_fpmsyncd
         };
 
         /* Send the object to the NhgMgr Add function */
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB, AF_INET6), 0);
         /* Check that fpmsyncd created the correct entries in APP_DB */
         RIBNHGEntry *entryB = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDB);
         ASSERT_NE(entryB, nullptr);
@@ -611,7 +611,7 @@ namespace ut_fpmsyncd
         }
 
         /* Send the object to the NhgMgr Add function */
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjA), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjA, AF_INET6), 0);
         /* Check that fpmsyncd created the correct entries in APP_DB */
         RIBNHGEntry *entryA = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDA);
         ASSERT_NE(entryA, nullptr);
@@ -642,7 +642,7 @@ namespace ut_fpmsyncd
         };
         NextHopGroupFull nhgObjANew = createMultiNextHopNHGFull(nhgFullA, { { ribIDB, 12 }, { ribIDB1, 12 }, { ribIDB2, 12 } },
                                                                 { { ribIDB, 2 }, { ribIDB1, 0 }, { ribIDB2, 0 } }, dependsA, {}, ribIDA);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjANew), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjANew, AF_INET6), 0);
         RIBNHGEntry *entryANew = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDA);
         ASSERT_NE(entryANew, nullptr);
         ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDA), true);
@@ -682,8 +682,8 @@ namespace ut_fpmsyncd
 
         NextHopGroupFull nhgObjB1 = createSingleSRv6VPNNextHopNHGFull(vpnSid.c_str(), segSrcB1.c_str(), nexthopB1.c_str(), ribIDB1);
         NextHopGroupFull nhgObjB2 = createSingleSRv6VPNNextHopNHGFull(vpnSid.c_str(), segSrcB2.c_str(), nexthopB2.c_str(), ribIDB2);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB1), 0);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB2), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB1, AF_INET6), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB2, AF_INET6), 0);
 
         RIBNHGEntry *entryB1 = m_nhgmgr->getRIBNHGEntryByRIBID(nhgObjB1.id);
         RIBNHGEntry *entryB2 = m_nhgmgr->getRIBNHGEntryByRIBID(nhgObjB2.id);
@@ -731,7 +731,7 @@ namespace ut_fpmsyncd
             { nexthopB1, "11" },
             { nexthopB2, "11" },
         };
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjA), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjA, AF_INET6), 0);
 
         /* Check that fpmsyncd created the correct entries in APP_DB */
         RIBNHGEntry *entryA = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDA);
@@ -778,8 +778,8 @@ namespace ut_fpmsyncd
         uint32_t ribIDB2 = 7;
         NextHopGroupFull nhgObjB1 = createSingleSRv6VPNNextHopNHGFull("1::1", "fc00:200::1", "fdee::1", ribIDB1);
         NextHopGroupFull nhgObjB2 = createSingleSRv6VPNNextHopNHGFull("1::1", "fcee:200::1", "fdff::1", ribIDB2);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB1), 0);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB2), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB1, AF_INET6), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB2, AF_INET6), 0);
 
         RIBNHGEntry *entryB1 = m_nhgmgr->getRIBNHGEntryByRIBID(nhgObjB1.id);
         RIBNHGEntry *entryB2 = m_nhgmgr->getRIBNHGEntryByRIBID(nhgObjB2.id);
@@ -819,7 +819,7 @@ namespace ut_fpmsyncd
             { "fdff::1", "11" },
         };
 
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjA), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjA, AF_INET6), 0);
 
         /* Check that fpmsyncd created the correct entries in APP_DB */
         RIBNHGEntry *entryA = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDA);
@@ -852,7 +852,7 @@ namespace ut_fpmsyncd
         nhgObjAUpdated.nh_grp_full_list[1] = B2;
 
         /* Send the updated object to the NhgMgr Add function (this should update the existing entry) */
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjAUpdated), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjAUpdated, AF_INET6), 0);
 
         /* Check that the vpn_sid field has been updated in the APP_DB */
         sonicNHGEntry = m_nhgmgr->getSonicNHGByRIBID(ribIDA);
@@ -889,10 +889,10 @@ namespace ut_fpmsyncd
         NextHopGroupFull nhgObjB2 = createSingleSRv6VPNNextHopNHGFull("1::1", "fc00:100::1", "fc00:100::1", ribIDB2);
         NextHopGroupFull nhgObjC1 = createSingleSRv6VPNNextHopNHGFull("2::2", "fc00:200::1", "fc00:200::1", ribIDC1);
         NextHopGroupFull nhgObjC2 = createSingleSRv6VPNNextHopNHGFull("2::2", "fc00:200::1", "fc00:200::1", ribIDC2);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB1), 0);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB2), 0);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjC1), 0);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjC2), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB1, AF_INET6), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB2, AF_INET6), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjC1, AF_INET6), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjC2, AF_INET6), 0);
 
         RIBNHGEntry *entryB1 = m_nhgmgr->getRIBNHGEntryByRIBID(nhgObjB1.id);
         RIBNHGEntry *entryB2 = m_nhgmgr->getRIBNHGEntryByRIBID(nhgObjB2.id);
@@ -956,8 +956,8 @@ namespace ut_fpmsyncd
         nhgObjC.nh_grp_full_list[1] = C2;
 
         /* Send the object to the NhgMgr Add function */
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjC), 0);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjC, AF_INET6), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB, AF_INET6), 0);
 
         /* Check that fpmsyncd created the correct entries in APP_DB for B */
         RIBNHGEntry *entryB = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDB);
@@ -1018,7 +1018,7 @@ namespace ut_fpmsyncd
                                                              { { ribIDB, 2 }, { ribIDB1, 0 }, { ribIDB2, 0 }, { ribIDC, 2 }, { ribIDC1, 0 }, { ribIDC2, 0 } },
                                                              dependsA, {}, ribIDA);
 
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjA), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjA, AF_INET6), 0);
 
         /* Check that fpmsyncd created the correct entries in APP_DB for NHG A */
         RIBNHGEntry *entryA = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDA);
