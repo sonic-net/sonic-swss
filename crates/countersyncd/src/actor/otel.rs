@@ -43,8 +43,6 @@ const MAX_EXPORT_RETRIES: u64 = 30;
 /// Configuration for the OtelActor
 #[derive(Debug, Clone)]
 pub struct OtelActorConfig {
-    /// Whether to print statistics to console
-    pub print_to_console: bool,
     /// OpenTelemetry collector endpoint
     pub collector_endpoint: String,
     /// Max counters to accumulate before forcing an export
@@ -56,7 +54,6 @@ pub struct OtelActorConfig {
 impl Default for OtelActorConfig {
     fn default() -> Self {
         Self {
-            print_to_console: true,
             collector_endpoint: "http://localhost:4317".to_string(),
             max_counters_per_export: 10_000,
             flush_timeout: Duration::from_secs(1),
@@ -139,8 +136,7 @@ impl OtelActor {
         };
 
         info!(
-            "OtelActor initialized - console: {}, endpoint: {}",
-            config.print_to_console,
+            "OtelActor initialized - endpoint: {}",
             config.collector_endpoint
         );
 
@@ -221,7 +217,7 @@ impl OtelActor {
         let otel_metrics = OtelMetrics::from_sai_stats(&stats);
         let counters_in_message = stats.stats.len();
 
-        if log::log_enabled!(log::Level::Debug){
+        if log::log_enabled!(log::Level::Debug) {
             self.print_otel_metrics(&otel_metrics).await;
         }
 

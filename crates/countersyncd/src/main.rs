@@ -331,7 +331,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Configure OpenTelemetry export with settings from command line arguments
     let otel_actor = if args.enable_otel {
         let otel_config = OtelActorConfig {
-            print_to_console: args.otel_console,
             collector_endpoint: args.otel_endpoint.clone(),
             max_counters_per_export: args.otel_max_counters_per_export,
             flush_timeout: std::time::Duration::from_millis(args.otel_flush_timeout_ms),
