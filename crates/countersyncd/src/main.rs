@@ -22,7 +22,7 @@ use crate::actor::{
 };
 
 // Internal exit codes
-use countersyncd::exit_codes::EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED;
+use countersyncd::exit_codes::{EXIT_FAILURE, EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED, EXIT_SUCCESS};
 use crate::utilities::{set_comm_capacity, ChannelLabel};
 
 /// Initialize logging based on command line arguments
@@ -82,6 +82,19 @@ fn init_logging(log_level: &str, log_format: &str) {
     }
 
     builder.init();
+}
+
+fn exit_on_join(name: &str, result: Result<(), tokio::task::JoinError>) -> ! {
+    match result {
+        Ok(()) => {
+            info!("{} actor exited normally; shutting down", name);
+            std::process::exit(EXIT_SUCCESS);
+        }
+        Err(e) => {
+            error!("{} actor join error: {:?}", name, e);
+            std::process::exit(EXIT_FAILURE);
+        }
+    }
 }
 
 /// SONiC High Frequency Telemetry Counter Sync Daemon
@@ -413,183 +426,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    // Wait for all actors to complete and handle any errors
-    let data_netlink_result = data_netlink_handle.await;
-    let control_netlink_result = control_netlink_handle.await;
-    let ipfix_result = ipfix_handle.await.map_err(|e| {
-        error!("IPFIX blocking task join error: {:?}", e);
-        e
-    });
-    let swss_result = swss_handle.await;
-    let reporter_result = if let Some(handle) = reporter_handle {
-        Some(handle.await)
-    } else {
-        None
-    };
-    let counter_db_result = if let Some(handle) = counter_db_handle {
-        Some(handle.await)
-    } else {
-        None
-    };
-    let otel_result = if let Some(handle) = otel_handle {
-        Some(handle.await)
-    } else {
-        None
-    };
+    // Exit the program as soon as any actor completes
+    let mut data_netlink_handle = data_netlink_handle;
+    let mut control_netlink_handle = control_netlink_handle;
+    let mut ipfix_handle = ipfix_handle;
+    let mut swss_handle = swss_handle;
+    let mut reporter_handle = reporter_handle;
+    let mut counter_db_handle = counter_db_handle;
+    let mut otel_handle = otel_handle;
 
-    // Handle results based on what actors were enabled
-    let all_successful = match (reporter_result.is_some(), counter_db_result.is_some(), otel_result.is_some()) {
-        (true, true, true) => {
-            // All optional actors enabled
-            matches!(
-                (
-                    &data_netlink_result,
-                    &control_netlink_result,
-                    &ipfix_result,
-                    &swss_result,
-                    reporter_result.as_ref().unwrap(),
-                    counter_db_result.as_ref().unwrap(),
-                    otel_result.as_ref().unwrap()
-                ),
-                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(Ok(())))
-            )
+    tokio::select! {
+        res = &mut data_netlink_handle => {
+            exit_on_join("Data netlink", res);
         }
-        (true, true, false) => {
-            // Stats reporter and counter DB enabled, OTEL disabled
-            matches!(
-                (
-                    &data_netlink_result,
-                    &control_netlink_result,
-                    &ipfix_result,
-                    &swss_result,
-                    reporter_result.as_ref().unwrap(),
-                    counter_db_result.as_ref().unwrap()
-                ),
-                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
-            )
+        res = &mut control_netlink_handle => {
+            exit_on_join("Control netlink", res);
         }
-        (true, false, true) => {
-            // Stats reporter and OTEL enabled, counter DB disabled
-            matches!(
-                (
-                    &data_netlink_result,
-                    &control_netlink_result,
-                    &ipfix_result,
-                    &swss_result,
-                    reporter_result.as_ref().unwrap(),
-                    otel_result.as_ref().unwrap()
-                ),
-                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(Ok(())))
-            )
+        res = &mut ipfix_handle => {
+            exit_on_join("IPFIX", res);
         }
-        (false, true, true) => {
-            // Counter DB and OTEL enabled, stats reporter disabled
-            matches!(
-                (
-                    &data_netlink_result,
-                    &control_netlink_result,
-                    &ipfix_result,
-                    &swss_result,
-                    counter_db_result.as_ref().unwrap(),
-                    otel_result.as_ref().unwrap()
-                ),
-                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(Ok(())))
-            )
+        res = &mut swss_handle => {
+            exit_on_join("SWSS", res);
         }
-        (true, false, false) => {
-            // Only stats reporter enabled
-            matches!(
-                (
-                    &data_netlink_result,
-                    &control_netlink_result,
-                    &ipfix_result,
-                    &swss_result,
-                    reporter_result.as_ref().unwrap()
-                ),
-                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
-            )
+        res = async { reporter_handle.as_mut().unwrap().await }, if reporter_handle.is_some() => {
+            exit_on_join("Stats reporter", res);
         }
-        (false, true, false) => {
-            // Only counter DB enabled
-            matches!(
-                (
-                    &data_netlink_result,
-                    &control_netlink_result,
-                    &ipfix_result,
-                    &swss_result,
-                    counter_db_result.as_ref().unwrap()
-                ),
-                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
-            )
+        res = async { counter_db_handle.as_mut().unwrap().await }, if counter_db_handle.is_some() => {
+            exit_on_join("Counter DB", res);
         }
-        (false, false, true) => {
-            // Only OTEL enabled
-            matches!(
-                (
-                    &data_netlink_result,
-                    &control_netlink_result,
-                    &ipfix_result,
-                    &swss_result,
-                    otel_result.as_ref().unwrap()
-                ),
-                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(Ok(())))
-            )
-        }
-        (false, false, false) => {
-            // None of the optional actors enabled
-            matches!(
-                (
-                    &data_netlink_result,
-                    &control_netlink_result,
-                    &ipfix_result,
-                    &swss_result
-                ),
-                (Ok(()), Ok(()), Ok(()), Ok(()))
-            )
-        }
-    };
-
-    if all_successful {
-        let status_msg = match (reporter_result.is_some(), counter_db_result.is_some(), otel_result.is_some()) {
-            (true, true, true) => "All actors completed successfully",
-            (true, true, false) => "All actors completed successfully (OpenTelemetry disabled)",
-            (true, false, true) => "All actors completed successfully (counter DB disabled)",
-            (false, true, true) => "All actors completed successfully (stats reporting disabled)",
-            (true, false, false) => "All actors completed successfully (counter DB and OpenTelemetry disabled)",
-            (false, true, false) => "All actors completed successfully (stats reporting and OpenTelemetry disabled)",
-            (false, false, true) => "All actors completed successfully (stats reporting and counter DB disabled)",
-            (false, false, false) => {
-                "All actors completed successfully (stats reporting, counter DB, and OpenTelemetry disabled)"
+        res = async { otel_handle.as_mut().unwrap().await }, if otel_handle.is_some() => {
+            match res {
+                Ok(Ok(())) => {
+                    info!("OpenTelemetry actor exited normally; shutting down");
+                    std::process::exit(EXIT_SUCCESS);
+                }
+                Ok(Err(e)) => {
+                    error!("OpenTelemetry actor failed: {:?}", e);
+                    std::process::exit(EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED);
+                }
+                Err(e) => {
+                    error!("OpenTelemetry actor join error: {:?}", e);
+                    std::process::exit(EXIT_FAILURE);
+                }
             }
-        };
-        info!("{}", status_msg);
-        Ok(())
-    } else {
-        // Check which actor failed
-        if let Err(e) = data_netlink_result {
-            error!("Data netlink actor failed: {:?}", e);
-            Err(e.into())
-        } else if let Err(e) = control_netlink_result {
-            error!("Control netlink actor failed: {:?}", e);
-            Err(e.into())
-        } else if let Err(e) = ipfix_result {
-            error!("IPFIX actor failed: {:?}", e);
-            Err(e.into())
-        } else if let Err(e) = swss_result {
-            error!("SWSS actor failed: {:?}", e);
-            Err(e.into())
-        } else if let Some(Err(e)) = reporter_result {
-            error!("Stats reporter actor failed: {:?}", e);
-            Err(e.into())
-        } else if let Some(Err(e)) = counter_db_result {
-            error!("Counter DB actor failed: {:?}", e);
-            Err(e.into())
-        } else if let Some(Err(e)) = otel_result {
-            error!("OpenTelemetry actor failed: {:?}", e);
-            std::process::exit(EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED);
-        } else {
-            error!("Unknown actor failure");
-            Err("Unknown actor failure".into())
         }
     }
 }
