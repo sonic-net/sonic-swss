@@ -7,6 +7,7 @@ mod utilities;
 // External dependencies
 use clap::Parser;
 use log::{error, info};
+use opentelemetry::ExportError;
 use std::time::Duration;
 use tokio::{spawn, sync::mpsc::channel};
 
@@ -92,6 +93,23 @@ fn exit_on_join(name: &str, result: Result<(), tokio::task::JoinError>) -> ! {
         }
         Err(e) => {
             error!("{} actor join error: {:?}", name, e);
+            std::process::exit(EXIT_FAILURE);
+        }
+    }
+}
+
+fn exit_on_otel_join(result: Result<Result<(), Box<dyn ExportError>>, tokio::task::JoinError>) -> ! {
+    match result {
+        Ok(Ok(())) => {
+            info!("OpenTelemetry actor exited normally; shutting down");
+            std::process::exit(EXIT_SUCCESS);
+        }
+        Ok(Err(e)) => {
+            error!("OpenTelemetry actor failed: {:?}", e);
+            std::process::exit(EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED);
+        }
+        Err(e) => {
+            error!("OpenTelemetry actor join error: {:?}", e);
             std::process::exit(EXIT_FAILURE);
         }
     }
@@ -359,13 +377,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting actor tasks...");
 
     // Spawn actor tasks
-    let data_netlink_handle = spawn(async move {
+    let mut data_netlink_handle = spawn(async move {
         info!("Data netlink actor started");
         DataNetlinkActor::run(data_netlink).await;
         info!("Data netlink actor terminated");
     });
 
-    let control_netlink_handle = spawn(async move {
+    let mut control_netlink_handle = spawn(async move {
         info!("Control netlink actor started");
         ControlNetlinkActor::run(control_netlink).await;
         info!("Control netlink actor terminated");
@@ -373,7 +391,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Use spawn_blocking to ensure IPFIX actor runs on a dedicated thread
     // This is important for thread-local variables
-    let ipfix_handle = tokio::task::spawn_blocking(move || {
+    let mut ipfix_handle = tokio::task::spawn_blocking(move || {
         info!("IPFIX actor started on dedicated thread");
         // Create a new runtime for async operations within this blocking thread
         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime for IPFIX actor");
@@ -383,14 +401,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("IPFIX actor terminated");
     });
 
-    let swss_handle = spawn(async move {
+    let mut swss_handle = spawn(async move {
         info!("SWSS actor started");
         SwssActor::run(swss).await;
         info!("SWSS actor terminated");
     });
 
     // Only spawn stats reporter if enabled
-    let reporter_handle = if let Some(stats_reporter) = stats_reporter {
+    let mut reporter_handle = if let Some(stats_reporter) = stats_reporter {
         Some(spawn(async move {
             info!("Stats reporter actor started");
             StatsReporterActor::run(stats_reporter).await;
@@ -402,7 +420,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Only spawn counter DB writer if enabled
-    let counter_db_handle = if let Some(counter_db) = counter_db {
+    let mut counter_db_handle = if let Some(counter_db) = counter_db {
         Some(spawn(async move {
             info!("Counter DB actor started");
             CounterDBActor::run(counter_db).await;
@@ -414,7 +432,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Only spawn OpenTelemetry actor if enabled
-    let otel_handle = if let Some(otel_actor) = otel_actor {
+    let mut otel_handle = if let Some(otel_actor) = otel_actor {
         Some(spawn(async move {
             info!("OpenTelemetry actor started");
             let result = OtelActor::run(otel_actor).await;
@@ -427,14 +445,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Exit the program as soon as any actor completes
-    let mut data_netlink_handle = data_netlink_handle;
-    let mut control_netlink_handle = control_netlink_handle;
-    let mut ipfix_handle = ipfix_handle;
-    let mut swss_handle = swss_handle;
-    let mut reporter_handle = reporter_handle;
-    let mut counter_db_handle = counter_db_handle;
-    let mut otel_handle = otel_handle;
-
     tokio::select! {
         res = &mut data_netlink_handle => {
             exit_on_join("Data netlink", res);
@@ -455,20 +465,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             exit_on_join("Counter DB", res);
         }
         res = async { otel_handle.as_mut().unwrap().await }, if otel_handle.is_some() => {
-            match res {
-                Ok(Ok(())) => {
-                    info!("OpenTelemetry actor exited normally; shutting down");
-                    std::process::exit(EXIT_SUCCESS);
-                }
-                Ok(Err(e)) => {
-                    error!("OpenTelemetry actor failed: {:?}", e);
-                    std::process::exit(EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED);
-                }
-                Err(e) => {
-                    error!("OpenTelemetry actor join error: {:?}", e);
-                    std::process::exit(EXIT_FAILURE);
-                }
-            }
+            exit_on_otel_join(res);
         }
     }
 }
