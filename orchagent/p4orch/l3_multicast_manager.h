@@ -98,7 +98,6 @@ class L3MulticastManager : public ObjectManagerInterface {
                           std::string& object_key) override;
 
  private:
-  /*
   // Drains entries associated with the multicast router interface table.
   ReturnCode drainMulticastRouterInterfaceEntries(
       std::deque<swss::KeyOpFieldsValuesTuple>& router_interface_tuples);
@@ -106,28 +105,24 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Drains entries associated with the multicast replication table.
   ReturnCode drainMulticastReplicationEntries(
       std::deque<swss::KeyOpFieldsValuesTuple>& replication_tuples);
-  */
 
   // Converts db table entry into P4MulticastRouterInterfaceEntry.
   ReturnCodeOr<P4MulticastRouterInterfaceEntry>
   deserializeMulticastRouterInterfaceEntry(
       const std::string& key,
-      const std::vector<swss::FieldValueTuple>& attributes,
-      const std::string& table_name);
+      const std::vector<swss::FieldValueTuple>& attributes);
 
   // Converts db table entry into P4MulticastReplicationEntry.
   ReturnCodeOr<P4MulticastReplicationEntry>
   deserializeMulticastReplicationEntry(
       const std::string& key,
-      const std::vector<swss::FieldValueTuple>& attributes,
-      const std::string& table_name);
+      const std::vector<swss::FieldValueTuple>& attributes);
 
   // Performs multicast router interface entry validation.
   ReturnCode validateMulticastRouterInterfaceEntry(
       const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
       const std::string& operation);
 
-  /*
   // Performs multicast router interface entry validation for SET command.
   ReturnCode validateSetMulticastRouterInterfaceEntry(
       const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry);
@@ -135,7 +130,6 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Performs multicast router interface entry validation for DEL command.
   ReturnCode validateDelMulticastRouterInterfaceEntry(
       const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry);
-  */
 
   // Performs multicast replication entry validation.
   ReturnCode validateMulticastReplicationEntry(
