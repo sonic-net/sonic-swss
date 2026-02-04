@@ -697,8 +697,8 @@ namespace ut_fpmsyncd
         // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB1), true);
         // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB2), true);
 
-        ASSERT_EQ(entryB1->hasSonicObj(), false);
-        ASSERT_EQ(entryB2->hasSonicObj(), false);
+        ASSERT_EQ(entryB1->hasSonicGatewayObj(), false);
+        ASSERT_EQ(entryB2->hasSonicGatewayObj(), false);
 
         ASSERT_EQ(entryB1->getSonicObjType(), swss::SONIC_NHG_OBJ_TYPE_NHG_NORMAL);
         ASSERT_EQ(entryB2->getSonicObjType(), swss::SONIC_NHG_OBJ_TYPE_NHG_NORMAL);
@@ -747,9 +747,9 @@ namespace ut_fpmsyncd
         ASSERT_EQ(nexthopA, entryA->getNextHopStr());
 
         /* Check the SRv6 NHG Object */
-        SonicGateWayNHGEntry *sonicNHGEntry = m_nhgmgr->getSonicNHGByRIBID(ribIDA);
+        SonicGateWayNHGEntry *sonicNHGEntry = m_nhgmgr->getSonicGatewayNHGByRIBID(ribIDA);
         ASSERT_NE(sonicNHGEntry, nullptr);
-        ASSERT_EQ(sonicNHGEntry->getSonicGateWayObjType(), swss::SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY);
+        ASSERT_EQ(sonicNHGEntry->getType(), swss::SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY);
         uint32_t sonicGatewayObjIDA = sonicNHGEntry->getSonicGateWayObjID();
         ASSERT_EQ(m_picContextTable->hget(to_string(sonicGatewayObjIDA), "nexthop", nexthops), true);
         ASSERT_EQ(m_picContextTable->hget(to_string(sonicGatewayObjIDA), "vpn_sid", vpnsids), true);
@@ -764,7 +764,7 @@ namespace ut_fpmsyncd
         std::vector<FieldValueTuple> fvs;
         ASSERT_EQ(m_picContextTable->get(to_string(sonicGatewayObjIDA), fvs), false);
         ASSERT_EQ(m_nhgmgr->getRIBNHGEntryByRIBID(ribIDA), nullptr);
-        ASSERT_EQ(m_nhgmgr->getSonicNHGByRIBID(ribIDA), nullptr);
+        ASSERT_EQ(m_nhgmgr->getSonicGatewayNHGByRIBID(ribIDA), nullptr);
     }
 
     /* Test update SRv6 VPN nexthop with new vpn_sid */
@@ -834,7 +834,7 @@ namespace ut_fpmsyncd
         // ASSERT_EQ("b::b", nexthops);
 
         /* Check the SRv6 NHG Object */
-        SonicGateWayNHGEntry *sonicNHGEntry = m_nhgmgr->getSonicNHGByRIBID(ribIDA);
+        SonicGateWayNHGEntry *sonicNHGEntry = m_nhgmgr->getSonicGatewayNHGByRIBID(ribIDA);
         ASSERT_NE(sonicNHGEntry, nullptr);
         uint32_t sonicGatewayObjID = sonicNHGEntry->getSonicGateWayObjID();
         ASSERT_EQ(m_picContextTable->hget(to_string(sonicGatewayObjID), "nexthop", nexthops), true);
@@ -855,7 +855,7 @@ namespace ut_fpmsyncd
         ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjAUpdated, AF_INET6), 0);
 
         /* Check that the vpn_sid field has been updated in the APP_DB */
-        sonicNHGEntry = m_nhgmgr->getSonicNHGByRIBID(ribIDA);
+        sonicNHGEntry = m_nhgmgr->getSonicGatewayNHGByRIBID(ribIDA);
         sonicGatewayObjID = sonicNHGEntry->getSonicGateWayObjID();
         ASSERT_EQ(m_picContextTable->hget(to_string(sonicGatewayObjID), "nexthop", nexthops), true);
         ASSERT_EQ(m_picContextTable->hget(to_string(sonicGatewayObjID), "vpn_sid", vpnsids), true);
@@ -972,9 +972,9 @@ namespace ut_fpmsyncd
         // ASSERT_EQ(nexthops, "b::b");
 
         /* Check the SRv6 VPN nexthop of B */
-        SonicGateWayNHGEntry *sonicNHGEntryB = m_nhgmgr->getSonicNHGByRIBID(ribIDB);
+        SonicGateWayNHGEntry *sonicNHGEntryB = m_nhgmgr->getSonicGatewayNHGByRIBID(ribIDB);
         ASSERT_NE(sonicNHGEntryB, nullptr);
-        ASSERT_EQ(sonicNHGEntryB->getSonicGateWayObjType(), swss::SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY);
+        ASSERT_EQ(sonicNHGEntryB->getType(), swss::SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY);
         uint32_t sonicGatewayObjIDB = sonicNHGEntryB->getSonicGateWayObjID();
         ASSERT_EQ(m_nhgmgr->isSonicGatewayNHGIDInUsed(swss::SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY, sonicGatewayObjIDB), true);
         ASSERT_EQ(m_picContextTable->hget(to_string(sonicGatewayObjIDB), "vpn_sid", vpnsids), true);
@@ -994,9 +994,9 @@ namespace ut_fpmsyncd
         // ASSERT_EQ(nexthops, "e::e");
 
         /* Check the SRv6 VPN nexthop of C */
-        SonicGateWayNHGEntry *sonicNHGEntryC = m_nhgmgr->getSonicNHGByRIBID(ribIDC);
+        SonicGateWayNHGEntry *sonicNHGEntryC = m_nhgmgr->getSonicGatewayNHGByRIBID(ribIDC);
         ASSERT_NE(sonicNHGEntryC, nullptr);
-        ASSERT_EQ(sonicNHGEntryC->getSonicGateWayObjType(), swss::SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY);
+        ASSERT_EQ(sonicNHGEntryC->getType(), swss::SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY);
         uint32_t sonicGatewayObjIDC = sonicNHGEntryC->getSonicGateWayObjID();
         ASSERT_EQ(m_nhgmgr->isSonicGatewayNHGIDInUsed(swss::SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY, sonicGatewayObjIDC), true);
         ASSERT_EQ(m_picContextTable->hget(to_string(sonicGatewayObjIDC), "vpn_sid", vpnsids), true);
@@ -1053,7 +1053,7 @@ namespace ut_fpmsyncd
             { "b::b", "1::1" },
             { "e::e", "2::2" },
         };
-        SonicGateWayNHGEntry *sonicNHGEntry = m_nhgmgr->getSonicNHGByRIBID(ribIDA);
+        SonicGateWayNHGEntry *sonicNHGEntry = m_nhgmgr->getSonicGatewayNHGByRIBID(ribIDA);
         uint32_t sonicGatewayObjID = sonicNHGEntry->getSonicGateWayObjID();
         ASSERT_NE(sonicNHGEntry, nullptr);
         ASSERT_EQ(m_picContextTable->hget(to_string(sonicGatewayObjID), "nexthop", nexthops), true);
@@ -1069,7 +1069,7 @@ namespace ut_fpmsyncd
 
         /* Remove the SRv6 NHG Object */
         ASSERT_EQ(m_nhgmgr->delNHGFull(ribIDA), 0);
-        ASSERT_EQ(m_nhgmgr->getSonicNHGByRIBID(ribIDA), nullptr);
+        ASSERT_EQ(m_nhgmgr->getSonicGatewayNHGByRIBID(ribIDA), nullptr);
         std::vector<FieldValueTuple> fvs;
         ASSERT_EQ(m_picContextTable->get(to_string(sonicGatewayObjID), fvs), false);
         ASSERT_EQ(m_nhgmgr->isSonicGatewayNHGIDInUsed(swss::SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY, sonicGatewayObjID), false);
