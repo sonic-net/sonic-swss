@@ -14,6 +14,7 @@ BUILDIMAGE = 'sonic-buildimage'
 VPP = 'sonic-platform-vpp'
 DASH_API = 'sonic-dash-api'
 
+# These values are obtained from the pipeline URLs, e.g. the pipeline for swsscommon is https://dev.azure.com/mssonic/build/_build?definitionId=9
 pipeline_id_map = {
     SAIREDIS: 12,
     COMMON: 465,
