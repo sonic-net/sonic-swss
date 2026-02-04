@@ -5,6 +5,8 @@ ARG USER
 ARG UID
 ARG GID
 ARG HOME
+ARG DEBIAN
+ARG BRANCH
 
 
 COPY container-setup.py custom-setup.sh /tmp/
@@ -14,7 +16,7 @@ RUN echo "${USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${USER}; chmod 0440 /
 RUN echo "* soft nofile 2048" >> /etc/security/limits.conf
 RUN mkdir --parents /__w; chown --recursive ${USER}:${USER} /__w
 
-RUN apt update; python3 /tmp/container-setup.py --branch ${BRANCH}; bash /tmp/custom-setup.sh
+RUN apt-get update; python3 /tmp/container-setup.py --branch ${BRANCH} --debian-version ${DEBIAN}; bash /tmp/custom-setup.sh
 
 USER ${USER}
 CMD ["sudo", "service", "ssh", "start", "-D"]

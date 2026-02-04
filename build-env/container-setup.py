@@ -128,7 +128,7 @@ def main(branch, debian_version):
         for pattern in deb_files_regex:
             debs_to_install += [os.path.join(".", x) for x in glob.glob(pattern, root_dir=work_dir)]
 
-        cmd = ["sudo", "env", "VPP_INSTALL_SKIP_SYSCTL=1", "/usr/bin/apt", "install", "-y"] + debs_to_install
+        cmd = ["sudo", "env", "VPP_INSTALL_SKIP_SYSCTL=1", "/usr/bin/apt-get", "install", "-y"] + debs_to_install
         subprocess.run(cmd, cwd=work_dir, stdout=subprocess.DEVNULL)
     except Exception:
         raise
