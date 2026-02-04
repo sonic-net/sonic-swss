@@ -91,7 +91,7 @@ def download_artifact(pipeline, filename, branch, debian_version):
     print("URL: {}".format(download_url))
 
     with open(filename, 'wb') as out_file:
-        res = requests.get(download_url, stream=True)
+        res = requests.get(download_url, stream=True, timeout=60)
         res.raise_for_status()
         content = res.content
         out_file.write(content)
