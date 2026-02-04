@@ -1089,7 +1089,7 @@ class AclManagerTest : public ::testing::Test
         return acl_rule_manager_->processAddRuleRequest(acl_rule_key, app_db_entry);
     }
 
-    ReturnCode ProcessUpdateRuleRequest(const P4AclRuleAppDbEntry &app_db_entry, const P4AclRule &old_acl_rule)
+    ReturnCode ProcessUpdateRuleRequest(const P4AclRuleAppDbEntry &app_db_entry, P4AclRule &old_acl_rule)
     {
         return acl_rule_manager_->processUpdateRuleRequest(app_db_entry, old_acl_rule);
     }
@@ -4255,6 +4255,47 @@ TEST_F(AclManagerTest, UpdateAclRuleWithVrfActionChange)
     // Check action field value
     EXPECT_EQ(1, acl_rule->action_fvs.size());
     EXPECT_EQ(gVirtualRouterId, acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_VRF].aclaction.parameter.oid);
+}
+
+TEST_F(AclManagerTest, UpdateAclRuleWithAclMetadataChange) {
+  ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+
+  auto app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
+  const auto& acl_rule_key =
+      KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
+  const auto& table_name_and_rule_key =
+      concatTableNameAndRuleKey(kAclIngressTableName, acl_rule_key);
+  app_db_entry.action = "set_metadata";
+  app_db_entry.action_param_fvs["acl_metadata"] = "1";
+  // Install rule
+  EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+  auto* acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+  ASSERT_NE(nullptr, acl_rule);
+
+  // Set new metadata
+  app_db_entry.action_param_fvs["acl_metadata"] = "2";
+  // Update rule
+  EXPECT_CALL(mock_sai_acl_,
+              set_acl_entry_attribute(Eq(kAclIngressRuleOid1), _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ProcessUpdateRuleRequest(app_db_entry, *acl_rule));
+  acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+  ASSERT_NE(nullptr, acl_rule);
+  // Check action field value
+  EXPECT_EQ(1, acl_rule->action_fvs.size());
+  EXPECT_EQ(2, acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA]
+                   .aclaction.parameter.u8);
+  app_db_entry.action_param_fvs["acl_metadata"] = "2";
 }
 
 TEST_F(AclManagerTest, UpdateAclRuleFailsWhenSaiCallFails)
