@@ -1066,8 +1066,8 @@ void NeighOrch::getMuxNeighborsForPort(string port_name, NeighborTable& m_neighb
     }
 }
 
-bool NeighOrch::addPrefixRouteForNeighbor(const IpAddress& ip_address, const MacAddress& macAddress,
-                                           string& alias, sai_object_id_t next_hop_id)
+bool NeighOrch::addPrefixRouteForNeighbor(const IpAddress& ip_address, string& alias,
+                                           sai_object_id_t next_hop_id, bool is_active)
 {
     SWSS_LOG_ENTER();
 
@@ -1098,7 +1098,7 @@ bool NeighOrch::addPrefixRouteForNeighbor(const IpAddress& ip_address, const Mac
 
     // neighbors in mux standby state has DROP action
     rt_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
-    if (mux_orch->isNeighborActive(ip_address, macAddress, alias))
+    if (is_active)
     {
         rt_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
     }
@@ -1155,6 +1155,38 @@ bool NeighOrch::addPrefixRouteForNeighbor(const IpAddress& ip_address, const Mac
     return true;
 }
 
+bool NeighOrch::removePrefixRouteForNeighbor(const IpAddress& ip_address, sai_object_id_t vrf_id)
+{
+    SWSS_LOG_ENTER();
+
+    IpPrefix ipNeighPfx = ip_address.to_string();
+    sai_route_entry_t route_entry;
+    route_entry.vr_id = vrf_id;
+    route_entry.switch_id = gSwitchId;
+    copy(route_entry.destination, ipNeighPfx);
+    subnet(route_entry.destination, route_entry.destination);
+
+    sai_status_t status = sai_route_api->remove_route_entry(&route_entry);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to delete mux neigh route for %s.", ip_address.to_string().c_str());
+        return false;
+    }
+
+    SWSS_LOG_INFO("Successfully deleted mux neigh route for %s.", ip_address.to_string().c_str());
+
+    if (ipNeighPfx.isV4())
+    {
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+    }
+    else
+    {
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+    }
+
+    return true;
+}
+
 bool NeighOrch::addNeighbor(NeighborContext& ctx)
 {
     SWSS_LOG_ENTER();
@@ -1190,35 +1222,34 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
     bool no_host_route = false;
     bool prefix_route = false;
+    bool is_nbr_active = true;
+
+    if ((ip_address.getAddrScope() == IpAddress::LINK_SCOPE) && (ip_address.isV4()))
+    {
+        /* Check if this prefix is a configured ip, if not allow */
+        IpPrefix ipll_prefix(ip_address.getV4Addr(), 16);
+        if (!m_intfsOrch->isPrefixSubnet (ipll_prefix, alias))
+        {
+            no_host_route = true;
+        }
+    }
 
     // Only set no_host_route if the capability is supported
     if (isNoHostRouteSupported())
     {
-        if (ip_address.getAddrScope() == IpAddress::LINK_SCOPE)
-        {
-            if (ip_address.isV4())
-            {
-                /* Check if this prefix is a configured ip, if not allow */
-                IpPrefix ipll_prefix(ip_address.getV4Addr(), 16);
-                if (!m_intfsOrch->isPrefixSubnet (ipll_prefix, alias))
-                {
-                    no_host_route = true;
-                }
-            }
-            else
-            {
-                /* For IPv6 link-local addresses, set no_host_route */
-                no_host_route = true;
-            }
-        }
-
-        // for active muxport neighbors we program with no-host-route
-        // and install full prefix route entry pointing to the neighbor nh
+        // muxport neighbors are programmed with no-host-route and
+        // a full prefix route entry pointing to the neighbor nh is added
         if (mux_orch && mux_orch->isMuxPortPrefixNbr(ip_address, macAddress, alias))
         {
             no_host_route = true;
             prefix_route = true;
         }
+    }
+
+    // Check if neighbor is active (only relevant for MUX neighbors)
+    if (mux_orch)
+    {
+        is_nbr_active = mux_orch->isNeighborActive(ip_address, macAddress, alias);
     }
 
     if (no_host_route)
@@ -1275,6 +1306,8 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
     }
 
     bool hw_config = isHwConfigured(neighborEntry);
+    // Neighbor is ready to be programmed if it's a prefix-mode neighbor OR if it's active
+    bool nbr_add_ready = (prefix_route || is_nbr_active);
 
     if (gMySwitchType == "voq")
     {
@@ -1284,106 +1317,95 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
         }
     }
 
-    if (!hw_config)
+    if (!hw_config && nbr_add_ready)
     {
-        // When prefix route is not enabled (capability not supported),
-        // only add mux neighbors if they are active
-        if (!prefix_route && mux_orch && !mux_orch->isNeighborActive(ip_address, macAddress, alias))
+        // prefix-route neighbors do not use bulk_op
+        if (bulk_op)
         {
-            SWSS_LOG_INFO("Skip adding inactive mux neighbor %s on %s (prefix route not supported)",
-                          ip_address.to_string().c_str(), alias.c_str());
+            SWSS_LOG_INFO("Adding neighbor entry %s on %s to bulker.", ip_address.to_string().c_str(), alias.c_str());
+            object_statuses.emplace_back();
+            gNeighBulker.create_entry(&object_statuses.back(), &neighbor_entry, (uint32_t)neighbor_attrs.size(), neighbor_attrs.data());
+            addNextHop(ctx);
+            return true;
         }
-        else
+
+        status = sai_neighbor_api->create_neighbor_entry(&neighbor_entry,
+                                   (uint32_t)neighbor_attrs.size(), neighbor_attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
         {
-
-            // prefix-route neighbors do not use bulk_op
-            if (bulk_op && !prefix_route)
+            if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
             {
-                SWSS_LOG_INFO("Adding neighbor entry %s on %s to bulker.", ip_address.to_string().c_str(), alias.c_str());
-                object_statuses.emplace_back();
-                gNeighBulker.create_entry(&object_statuses.back(), &neighbor_entry, (uint32_t)neighbor_attrs.size(), neighbor_attrs.data());
-                addNextHop(ctx);
+                SWSS_LOG_ERROR("Entry exists: neighbor %s on %s, rv:%d",
+                           macAddress.to_string().c_str(), alias.c_str(), status);
+                /* Returning True so as to skip retry */
                 return true;
-            }
-
-            status = sai_neighbor_api->create_neighbor_entry(&neighbor_entry,
-                                       (uint32_t)neighbor_attrs.size(), neighbor_attrs.data());
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
-                {
-                    SWSS_LOG_ERROR("Entry exists: neighbor %s on %s, rv:%d",
-                               macAddress.to_string().c_str(), alias.c_str(), status);
-                    /* Returning True so as to skip retry */
-                    return true;
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Failed to create neighbor %s on %s, rv:%d",
-                               macAddress.to_string().c_str(), alias.c_str(), status);
-                    task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEIGHBOR, status);
-                    if (handle_status != task_success)
-                    {
-                        return parseHandleSaiStatusFailure(handle_status);
-                    }
-                }
-            }
-            SWSS_LOG_NOTICE("Created neighbor ip %s, %s on %s", ip_address.to_string().c_str(),
-                    macAddress.to_string().c_str(), alias.c_str());
-            m_intfsOrch->increaseRouterIntfsRefCount(alias);
-
-            if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
-            {
-                gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
             }
             else
             {
-                gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
+                SWSS_LOG_ERROR("Failed to create neighbor %s on %s, rv:%d",
+                           macAddress.to_string().c_str(), alias.c_str(), status);
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEIGHBOR, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
+            }
+        }
+        SWSS_LOG_NOTICE("Created neighbor ip %s, %s on %s", ip_address.to_string().c_str(),
+                macAddress.to_string().c_str(), alias.c_str());
+        m_intfsOrch->increaseRouterIntfsRefCount(alias);
+
+        if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+        {
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
+        }
+        else
+        {
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
+        }
+
+        auto nhKey = NextHopKey(ip_address, alias);
+
+        if (!addNextHop(ctx))
+        {
+            status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to remove neighbor %s on %s, rv:%d",
+                               macAddress.to_string().c_str(), alias.c_str(), status);
+                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEIGHBOR, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
+            }
+            m_intfsOrch->decreaseRouterIntfsRefCount(alias);
+
+            if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
+            }
+            else
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
             }
 
-            auto nhKey = NextHopKey(ip_address, alias);
+            return false;
+        }
 
-            if (!addNextHop(ctx))
+        // full prefix route pointing to neighbor nh
+        if (prefix_route)
+        {
+            sai_object_id_t next_hop_id = m_syncdNextHops[nhKey].next_hop_id;
+            if (!addPrefixRouteForNeighbor(ip_address, alias, next_hop_id, is_nbr_active))
             {
-                status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
-                if (status != SAI_STATUS_SUCCESS)
-                {
-                    SWSS_LOG_ERROR("Failed to remove neighbor %s on %s, rv:%d",
-                                   macAddress.to_string().c_str(), alias.c_str(), status);
-                    task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEIGHBOR, status);
-                    if (handle_status != task_success)
-                    {
-                        return parseHandleSaiStatusFailure(handle_status);
-                    }
-                }
-                m_intfsOrch->decreaseRouterIntfsRefCount(alias);
-
-                if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
-                {
-                    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
-                }
-                else
-                {
-                    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
-                }
-
                 return false;
             }
-
-            // full prefix route pointing to neighbor nh
-            if (prefix_route)
-            {
-                sai_object_id_t next_hop_id = m_syncdNextHops[nhKey].next_hop_id;
-                if (!addPrefixRouteForNeighbor(ip_address, macAddress, alias, next_hop_id))
-                {
-                    return false;
-                }
-            }
-
-            hw_config = true;
         }
+
+        hw_config = true;
     }
-    else
+    else if (isHwConfigured(neighborEntry))
     {
         for (auto itr : neighbor_attrs)
         {
@@ -1471,29 +1493,7 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
         // remove the full prefix route
         if (m_syncdNeighbors[neighborEntry].prefix_route)
         {
-            IpPrefix ipNeighPfx = ip_address.to_string();
-            sai_route_entry_t route_entry;
-            route_entry.vr_id = port_vrf_id;
-            route_entry.switch_id = gSwitchId;
-            copy(route_entry.destination, ipNeighPfx);
-            subnet(route_entry.destination, route_entry.destination);
-
-            status = sai_route_api->remove_route_entry(&route_entry);
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_ERROR("Failed to delete mux neigh route for %s .", ip_address.to_string().c_str());
-            }
-            else {
-                SWSS_LOG_INFO("Successfully Deleted mux neigh route for %s .", ip_address.to_string().c_str());
-                if (ipNeighPfx.isV4())
-                {
-                    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
-                }
-                else
-                {
-                    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
-                }
-            }
+            removePrefixRouteForNeighbor(ip_address, port_vrf_id);
         }
 
         sai_neighbor_entry_t neighbor_entry;
@@ -1503,96 +1503,88 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
 
         sai_object_id_t next_hop_id = m_syncdNextHops[nexthop].next_hop_id;
 
-        // prefix-route neighbors do not use bulk_op
-        if (bulk_op && !m_syncdNeighbors[neighborEntry].prefix_route)
+        // prefix-route mux neighbors do not use bulk_op
+        if (bulk_op)
         {
             object_statuses.emplace_back();
             gNextHopBulker.remove_entry(&ctx.nexthop_status, next_hop_id);
             gNeighBulker.remove_entry(&object_statuses.back(), &neighbor_entry);
             return true;
         }
-        else
+
+        status = sai_next_hop_api->remove_next_hop(next_hop_id);
+        if (status != SAI_STATUS_SUCCESS)
         {
-            status = sai_next_hop_api->remove_next_hop(next_hop_id);
-            if (status != SAI_STATUS_SUCCESS)
+            /* When next hop is not found, we continue to remove neighbor entry. */
+            if (status == SAI_STATUS_ITEM_NOT_FOUND)
             {
-                /* When next hop is not found, we continue to remove neighbor entry. */
-                if (status == SAI_STATUS_ITEM_NOT_FOUND)
-                {
-                    SWSS_LOG_NOTICE("Next hop %s on %s doesn't exist, rv:%d",
-                                   ip_address.to_string().c_str(), alias.c_str(), status);
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Failed to remove next hop %s on %s, rv:%d",
-                                   ip_address.to_string().c_str(), alias.c_str(), status);
-                    task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP, status);
-                    if (handle_status != task_success)
-                    {
-                        return parseHandleSaiStatusFailure(handle_status);
-                    }
-                }
-            }
-
-            if (status != SAI_STATUS_ITEM_NOT_FOUND)
-            {
-                if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
-                {
-                    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
-                }
-                else
-                {
-                    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
-                }
-            }
-
-            SWSS_LOG_NOTICE("Removed next hop %s on %s",
-                            ip_address.to_string().c_str(), alias.c_str());
-
-            status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                if (status == SAI_STATUS_ITEM_NOT_FOUND)
-                {
-                    SWSS_LOG_NOTICE("Neighbor %s on %s already removed, rv:%d",
-                            m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str(), status);
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Failed to remove neighbor %s on %s, rv:%d",
-                            m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str(), status);
-                    task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEIGHBOR, status);
-                    if (handle_status != task_success)
-                    {
-                        return parseHandleSaiStatusFailure(handle_status);
-                    }
-                }
+                SWSS_LOG_NOTICE("Next hop %s on %s doesn't exist, rv:%d",
+                               ip_address.to_string().c_str(), alias.c_str(), status);
             }
             else
             {
-                if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+                SWSS_LOG_ERROR("Failed to remove next hop %s on %s, rv:%d",
+                               ip_address.to_string().c_str(), alias.c_str(), status);
+                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP, status);
+                if (handle_status != task_success)
                 {
-                    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
+                    return parseHandleSaiStatusFailure(handle_status);
                 }
-                else
-                {
-                    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
-                }
-
-                removeNextHop(ip_address, alias);
-                m_intfsOrch->decreaseRouterIntfsRefCount(alias);
-                SWSS_LOG_NOTICE("Removed neighbor %s on %s",
-                        m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str());
             }
         }
 
-        if (!ctx.bulk_op)
+        if (status != SAI_STATUS_ITEM_NOT_FOUND)
         {
+            if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
+            }
+            else
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
+            }
+        }
+
+        SWSS_LOG_NOTICE("Removed next hop %s on %s",
+                        ip_address.to_string().c_str(), alias.c_str());
+
+        status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            if (status == SAI_STATUS_ITEM_NOT_FOUND)
+            {
+                SWSS_LOG_NOTICE("Neighbor %s on %s already removed, rv:%d",
+                        m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str(), status);
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to remove neighbor %s on %s, rv:%d",
+                        m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str(), status);
+                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEIGHBOR, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
+            }
+        }
+        else
+        {
+            if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
+            }
+            else
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
+            }
+
             removeNextHop(ip_address, alias);
             m_intfsOrch->decreaseRouterIntfsRefCount(alias);
+            SWSS_LOG_NOTICE("Removed neighbor %s on %s",
+                    m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str());
         }
-    }
 
+    }
 
     /* Do not delete entry from cache if its disable request */
     if (disable)
@@ -2513,6 +2505,15 @@ bool NeighOrch::convertToPrefixBasedNbr(const NeighborEntry &neighborEntry, sai_
         SWSS_LOG_ERROR("Failed to create prefix route for neighbor %s on %s, rv:%d",
                        ip_address.to_string().c_str(), alias.c_str(), status);
         return false;
+    }
+
+    if (ipNeighPfx.isV4())
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+    }
+    else
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
     }
 
     // Update the neighbor data to mark it as prefix_route

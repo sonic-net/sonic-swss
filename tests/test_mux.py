@@ -5,7 +5,6 @@ import itertools
 
 from ipaddress import ip_network, ip_address, IPv4Address
 from swsscommon import swsscommon
-from dvslib.dvs_common import PollingConfig
 
 from mux_neigh_miss_tests import *
 
@@ -2493,143 +2492,299 @@ class TestMuxTunnel(TestMuxTunnelBase):
         self.del_neighbor(dvs, neighbor_ip)
         self.del_fdb(dvs, neighbor_mac.replace(":", "-"))
 
-    def test_warm_boot_mux_state(
-            self, dvs, dvs_route, setup_vlan, setup_mux_cable, setup_tunnel,
+    def test_neighbor_mode_prefix_route(
+            self, dvs, dvs_route, setup, setup_vlan, setup_tunnel,
             setup_peer_switch, neighbor_cleanup, testlog
     ):
         """
-        test mux initialization during warm boot.
+        Test MUX cable with neighbor_mode set to 'prefix-route'.
+
+        This test verifies:
+        1. neighbor_mode is properly stored in STATE_MUX_CABLE_TABLE
+        2. MUX cable uses prefix-based neighbor handler
+        3. Neighbors are handled with NO_HOST_ROUTE flag
         """
         appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-        apdb = dvs.get_app_db()
+        config_db = dvs.get_config_db()
+        state_db = dvs.get_state_db()
+        asicdb = dvs.get_asic_db()
+
+        # Create MUX cable with explicit neighbor_mode: prefix-route
+        mux_port = "Ethernet4"
+        fvs = {
+            "server_ipv4": self.SERV2_IPV4 + self.IPV4_MASK,
+            "server_ipv6": self.SERV2_IPV6 + self.IPV6_MASK,
+            "neighbor_mode": "prefix-route"
+        }
+        config_db.create_entry(self.CONFIG_MUX_CABLE, mux_port, fvs)
+        time.sleep(2)
+
+        # Verify neighbor_mode is stored in STATE_MUX_CABLE_TABLE
+        state_fvs = state_db.get_entry("MUX_CABLE_TABLE", mux_port)
+        assert "neighbor_mode" in state_fvs, "neighbor_mode not found in state DB"
+        assert state_fvs["neighbor_mode"] == "prefix-route", \
+            f"Expected neighbor_mode 'prefix-route', got '{state_fvs['neighbor_mode']}'"
+
+        # Set MUX state to active
+        self.set_mux_state(appdb, mux_port, "active")
+        time.sleep(1)
+
+        # Add a neighbor and verify it's handled with prefix-based routing
+        neighbor_ip = "192.168.0.120"
+        neighbor_mac = "00:aa:bb:cc:dd:01"
+        self.add_fdb(dvs, mux_port, neighbor_mac.replace(":", "-"))
+        self.add_neighbor(dvs, neighbor_ip, neighbor_mac)
+        time.sleep(1)
+
+        # Verify neighbor has NO_HOST_ROUTE flag (prefix-based handling)
+        self.check_neighbor_state(dvs, dvs_route, neighbor_ip,
+                                expect_route=True, expect_neigh=True,
+                                expected_mac=neighbor_mac,
+                                no_host_route=True)
+
+        # Verify MUX prefix route exists and points to neighbor nexthop (active state)
+        mux_prefix = neighbor_ip + "/32"
+        rtkeys = dvs_route.check_asicdb_route_entries([mux_prefix])
+        self.check_nexthop_in_asic_db(asicdb, rtkeys[0], False)  # Should point to neighbor NH
+
+        # Test state change to standby
+        self.set_mux_state(appdb, mux_port, "standby")
+        time.sleep(1)
+
+        # Verify route now points to tunnel nexthop
+        rtkeys_standby = dvs_route.check_asicdb_route_entries([mux_prefix])
+        self.check_nexthop_in_asic_db(asicdb, rtkeys_standby[0], True)  # Should point to tunnel
+
+        # Cleanup
+        self.del_neighbor(dvs, neighbor_ip)
+        self.del_fdb(dvs, neighbor_mac.replace(":", "-"))
+        config_db.delete_entry(self.CONFIG_MUX_CABLE, mux_port)
+        time.sleep(1)
+
+    def test_neighbor_mode_host_route(
+            self, dvs, dvs_route, setup, setup_vlan, setup_tunnel,
+            setup_peer_switch, neighbor_cleanup, testlog
+    ):
+        """
+        Test MUX cable with neighbor_mode set to 'host-route'.
+
+        This test verifies:
+        1. neighbor_mode is properly stored in STATE_MUX_CABLE_TABLE
+        2. MUX cable uses host-route based neighbor handler
+        3. Neighbors are handled with traditional host route mechanism
+        """
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        config_db = dvs.get_config_db()
+        state_db = dvs.get_state_db()
+        asicdb = dvs.get_asic_db()
+
+        # Create MUX cable with explicit neighbor_mode: host-route
+        mux_port = "Ethernet4"
+        fvs = {
+            "server_ipv4": self.SERV2_IPV4 + self.IPV4_MASK,
+            "server_ipv6": self.SERV2_IPV6 + self.IPV6_MASK,
+            "neighbor_mode": "host-route"
+        }
+        config_db.create_entry(self.CONFIG_MUX_CABLE, mux_port, fvs)
+        time.sleep(2)
+
+        # Verify neighbor_mode is stored in STATE_MUX_CABLE_TABLE
+        state_fvs = state_db.get_entry("MUX_CABLE_TABLE", mux_port)
+        assert "neighbor_mode" in state_fvs, "neighbor_mode not found in state DB"
+        assert state_fvs["neighbor_mode"] == "host-route", \
+            f"Expected neighbor_mode 'host-route', got '{state_fvs['neighbor_mode']}'"
+
+        # Set MUX state to active
+        self.set_mux_state(appdb, mux_port, "active")
+        time.sleep(1)
+
+        # Add a neighbor and verify it's handled with host-route based routing
+        neighbor_ip = "192.168.0.121"
+        neighbor_mac = "00:aa:bb:cc:dd:02"
+        self.add_fdb(dvs, mux_port, neighbor_mac.replace(":", "-"))
+        self.add_neighbor(dvs, neighbor_ip, neighbor_mac)
+        time.sleep(1)
+
+        # Verify neighbor exists and is enabled in active state
+        self.check_neigh_in_asic_db(asicdb, neighbor_ip, expected=True, no_host_route=False)
+
+        # Test state change to standby
+        self.set_mux_state(appdb, mux_port, "standby")
+        time.sleep(1)
+
+        # Verify neighbor is disabled in standby state (host-route mode)
+        self.check_neigh_in_asic_db(asicdb, neighbor_ip, expected=False, no_host_route=False)
+
+        # Verify tunnel route exists for standby neighbor
+        mux_prefix = neighbor_ip + "/32"
+        rtkeys = dvs_route.check_asicdb_route_entries([mux_prefix])
+        self.check_nexthop_in_asic_db(asicdb, rtkeys[0], True)  # Should point to tunnel
+
+        # Test state change back to active
+        self.set_mux_state(appdb, mux_port, "active")
+        time.sleep(1)
+
+        # Verify neighbor is re-enabled in active state
+        self.check_neigh_in_asic_db(asicdb, neighbor_ip, expected=True, no_host_route=False)
+
+        # Cleanup
+        self.del_neighbor(dvs, neighbor_ip)
+        self.del_fdb(dvs, neighbor_mac.replace(":", "-"))
+        config_db.delete_entry(self.CONFIG_MUX_CABLE, mux_port)
+        time.sleep(1)
+
+    def test_neighbor_mode_default(
+            self, dvs, dvs_route, setup, setup_vlan, setup_tunnel,
+            setup_peer_switch, neighbor_cleanup, testlog
+    ):
+        """
+        Test MUX cable with default neighbor_mode (no explicit setting).
+
+        This test verifies:
+        1. Default neighbor_mode is set in STATE_MUX_CABLE_TABLE
+        2. The mode depends on NO_HOST_ROUTE kernel support
+        """
         config_db = dvs.get_config_db()
         state_db = dvs.get_state_db()
 
-        # add INFO log setting in config db to get info logs across warmboot
-        logfvs = config_db.wait_for_entry("LOGGER", "orchagent")
-        logfvs["LOGLEVEL"] = "INFO"
-        config_db.update_entry("LOGGER", "orchagent", logfvs)
+        # Create MUX cable without explicit neighbor_mode
+        mux_port = "Ethernet4"
+        fvs = {
+            "server_ipv4": self.SERV2_IPV4 + self.IPV4_MASK,
+            "server_ipv6": self.SERV2_IPV6 + self.IPV6_MASK
+        }
+        config_db.create_entry(self.CONFIG_MUX_CABLE, mux_port, fvs)
+        time.sleep(2)
 
-        self.set_mux_state(appdb, "Ethernet0", "active")
-        self.set_mux_state(appdb, "Ethernet4", "active")
-        self.set_mux_state(appdb, "Ethernet8", "standby")
+        # Verify neighbor_mode is stored in STATE_MUX_CABLE_TABLE
+        state_fvs = state_db.get_entry("MUX_CABLE_TABLE", mux_port)
+        assert "neighbor_mode" in state_fvs, "neighbor_mode not found in state DB"
+        # Default mode depends on kernel support - should be either prefix-route or host-route
+        assert state_fvs["neighbor_mode"] in ["prefix-route", "host-route"], \
+            f"Unexpected neighbor_mode '{state_fvs['neighbor_mode']}'"
 
-        # Execute the warm reboot
-        dvs.runcmd("config warm_restart enable swss")
-        dvs.stop_swss()
-        dvs.start_swss()
-        dvs.runcmd(['sh', '-c', 'supervisorctl start restore_neighbors'])
+        # Cleanup
+        config_db.delete_entry(self.CONFIG_MUX_CABLE, mux_port)
+        time.sleep(1)
 
-        time.sleep(5)
-
-        fvs = apdb.get_entry(self.APP_MUX_CABLE, "Ethernet0")
-        for key in fvs:
-            if key == "state":
-                assert fvs[key] == "active", "Ethernet0 Mux state is not active after warm boot, state: {}".format(fvs[key])
-
-        fvs = apdb.get_entry(self.APP_MUX_CABLE, "Ethernet4")
-        for key in fvs:
-            if key == "state":
-                assert fvs[key] == "active", "Ethernet4 Mux state is not active after warm boot, state: {}".format(fvs[key])
-
-        fvs = apdb.get_entry(self.APP_MUX_CABLE, "Ethernet8")
-        for key in fvs:
-            if key == "state":
-                assert fvs[key] == "standby", "Ethernet8 Mux state is not standby after warm boot, state: {}".format(fvs[key])
-
-        # wait for some warm restart tables indicate reconciled
-        max_poll = PollingConfig(polling_interval=60, timeout=60, strict=True)
-        state_db.wait_for_field_match(swsscommon.STATE_WARM_RESTART_TABLE_NAME, "orchagent", {"state": "reconciled"},
-                                      polling_config=max_poll)
-        state_db.wait_for_field_match(swsscommon.STATE_WARM_RESTART_TABLE_NAME, "neighsyncd", {"state": "reconciled"},
-                                      polling_config=max_poll)
-
-    def test_warm_boot_neighbor_restore(
-        self, dvs, dvs_route, setup, setup_vlan, setup_mux_cable, setup_tunnel,
-        setup_peer_switch, neighbor_cleanup, testlog
+    def test_neighbor_mode_change_rejected(
+            self, dvs, dvs_route, setup, setup_vlan, setup_tunnel,
+            setup_peer_switch, neighbor_cleanup, testlog
     ):
-        """Test neighbors could be restored to correct state based on mux state after warm boot."""
+        """
+        Test that changing neighbor_mode on an existing MUX cable is rejected.
+
+        This test verifies:
+        1. Initial neighbor_mode is set correctly
+        2. Attempting to change neighbor_mode on existing MUX port fails
+        3. Original neighbor_mode is preserved
+        """
+        config_db = dvs.get_config_db()
+        state_db = dvs.get_state_db()
+
+        dvs.runcmd("swssloglevel -l INFO -c orchagent")
+
+        # Create MUX cable with initial neighbor_mode: prefix-route
+        mux_port = "Ethernet4"
+        fvs = {
+            "server_ipv4": self.SERV2_IPV4 + self.IPV4_MASK,
+            "server_ipv6": self.SERV2_IPV6 + self.IPV6_MASK,
+            "neighbor_mode": "prefix-route"
+        }
+        config_db.create_entry(self.CONFIG_MUX_CABLE, mux_port, fvs)
+        time.sleep(2)
+
+        # Verify initial neighbor_mode
+        state_fvs = state_db.get_entry("MUX_CABLE_TABLE", mux_port)
+        assert state_fvs.get("neighbor_mode") == "prefix-route", \
+            f"Initial neighbor_mode should be 'prefix-route', got '{state_fvs.get('neighbor_mode')}'"
+
+        # Attempt to change neighbor_mode to host-route
+        # This should be rejected by orchagent
+        fvs_updated = {
+            "server_ipv4": self.SERV2_IPV4 + self.IPV4_MASK,
+            "server_ipv6": self.SERV2_IPV6 + self.IPV6_MASK,
+            "neighbor_mode": "host-route"
+        }
+        config_db.create_entry(self.CONFIG_MUX_CABLE, mux_port, fvs_updated)
+        time.sleep(2)
+
+        # Verify original neighbor_mode is preserved (change should be rejected)
+        state_fvs_after = state_db.get_entry("MUX_CABLE_TABLE", mux_port)
+        assert state_fvs_after.get("neighbor_mode") == "prefix-route", \
+            f"neighbor_mode should remain 'prefix-route' after rejected change, got '{state_fvs_after.get('neighbor_mode')}'"
+
+        # Cleanup
+        config_db.delete_entry(self.CONFIG_MUX_CABLE, mux_port)
+        time.sleep(1)
+
+    def test_neighbor_mode_state_change_behavior(
+            self, dvs, dvs_route, setup, setup_vlan, setup_tunnel,
+            setup_peer_switch, neighbor_cleanup, testlog
+    ):
+        """
+        Test MUX state changes with different neighbor_mode settings.
+
+        This test verifies:
+        1. prefix-route mode: route NH changes between neighbor and tunnel
+        2. host-route mode: neighbor entry is enabled/disabled
+        """
         appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-        apdb = dvs.get_app_db()
+        config_db = dvs.get_config_db()
         asicdb = dvs.get_asic_db()
 
-        self.set_mux_state(appdb, "Ethernet0", "active")
-        self.set_mux_state(appdb, "Ethernet4", "active")
-        self.set_mux_state(appdb, "Ethernet8", "standby")
+        # Test with prefix-route mode
+        mux_port = "Ethernet4"
+        fvs = {
+            "server_ipv4": self.SERV2_IPV4 + self.IPV4_MASK,
+            "server_ipv6": self.SERV2_IPV6 + self.IPV6_MASK,
+            "neighbor_mode": "prefix-route"
+        }
+        config_db.create_entry(self.CONFIG_MUX_CABLE, mux_port, fvs)
+        time.sleep(2)
 
-        self.add_fdb(dvs, "Ethernet0", "00-00-00-00-00-01")
-        self.add_fdb(dvs, "Ethernet4", "00-00-00-00-00-02")
-        self.add_fdb(dvs, "Ethernet8", "00-00-00-00-00-03")
+        # Set to active state
+        self.set_mux_state(appdb, mux_port, "active")
+        time.sleep(1)
 
-        self.add_neighbor(dvs, self.SERV1_IPV4, "00:00:00:00:00:01")
-        self.add_neighbor(dvs, self.SERV1_IPV6, "00:00:00:00:00:01")
-        self.add_neighbor(dvs, self.NEIGH1_IPV4, "00:00:00:00:00:01")
-        self.add_neighbor(dvs, self.NEIGH1_IPV6, "00:00:00:00:00:01")
-        self.add_neighbor(dvs, self.SERV2_IPV4, "00:00:00:00:00:02")
-        self.add_neighbor(dvs, self.SERV2_IPV6, "00:00:00:00:00:02")
-        self.add_neighbor(dvs, self.NEIGH2_IPV4, "00:00:00:00:00:02")
-        self.add_neighbor(dvs, self.NEIGH2_IPV6, "00:00:00:00:00:02")
-        self.add_neighbor(dvs, self.SERV3_IPV4, "00:00:00:00:00:03")
-        self.add_neighbor(dvs, self.SERV3_IPV6, "00:00:00:00:00:03")
-        self.add_neighbor(dvs, self.NEIGH3_IPV4, "00:00:00:00:00:03")
-        self.add_neighbor(dvs, self.NEIGH3_IPV6, "00:00:00:00:00:03")
+        # Add neighbor
+        neighbor_ip = "192.168.0.122"
+        neighbor_mac = "00:aa:bb:cc:dd:03"
+        self.add_fdb(dvs, mux_port, neighbor_mac.replace(":", "-"))
+        self.add_neighbor(dvs, neighbor_ip, neighbor_mac)
+        time.sleep(1)
 
-        time.sleep(5)
+        # Verify in active state: neighbor should exist and route points to neighbor
+        self.check_neighbor_state(dvs, dvs_route, neighbor_ip,
+                                expect_route=True, expect_neigh=True,
+                                expected_mac=neighbor_mac,
+                                no_host_route=True)
 
-        self.check_neigh_in_asic_db(asicdb, self.SERV1_IPV4)
-        self.check_neigh_in_asic_db(asicdb, self.SERV1_IPV6)
-        self.check_neigh_in_asic_db(asicdb, self.NEIGH1_IPV4)
-        self.check_neigh_in_asic_db(asicdb, self.NEIGH1_IPV6)
-        self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV4)
-        self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV6)
-        self.check_neigh_in_asic_db(asicdb, self.NEIGH2_IPV4)
-        self.check_neigh_in_asic_db(asicdb, self.NEIGH2_IPV6)
-        dvs_route.check_asicdb_route_entries(
-            [
-                self.SERV3_IPV4 + self.IPV4_MASK,
-                self.SERV3_IPV6 + self.IPV6_MASK,
-                self.NEIGH3_IPV4 + self.IPV4_MASK,
-                self.NEIGH3_IPV6 + self.IPV6_MASK
-            ]
-        )
-        # Execute the warm reboot
-        dvs.runcmd("config warm_restart enable system")
-        dvs.stop_swss()
-        dvs.start_swss()
+        mux_prefix = neighbor_ip + "/32"
+        rtkeys = dvs_route.check_asicdb_route_entries([mux_prefix])
+        self.check_nexthop_in_asic_db(asicdb, rtkeys[0], False)  # Neighbor NH
 
-        time.sleep(5)
+        # Toggle to standby
+        self.set_mux_state(appdb, mux_port, "standby")
+        time.sleep(1)
 
-        fvs = apdb.get_entry(self.APP_MUX_CABLE, "Ethernet0")
-        for key in fvs:
-            if key == "state":
-                assert fvs[key] == "active", "Ethernet0 Mux state is not active after warm boot, state: {}".format(fvs[key])
+        # Verify in standby state: route points to tunnel
+        rtkeys_standby = dvs_route.check_asicdb_route_entries([mux_prefix])
+        self.check_nexthop_in_asic_db(asicdb, rtkeys_standby[0], True)  # Tunnel NH
 
-        fvs = apdb.get_entry(self.APP_MUX_CABLE, "Ethernet4")
-        for key in fvs:
-            if key == "state":
-                assert fvs[key] == "active", "Ethernet4 Mux state is not active after warm boot, state: {}".format(fvs[key])
+        # Toggle back to active
+        self.set_mux_state(appdb, mux_port, "active")
+        time.sleep(1)
 
-        fvs = apdb.get_entry(self.APP_MUX_CABLE, "Ethernet8")
-        for key in fvs:
-            if key == "state":
-                assert fvs[key] == "standby", "Ethernet8 Mux state is not standby after warm boot, state: {}".format(fvs[key])
+        # Verify in active state again: route points to neighbor
+        rtkeys_active = dvs_route.check_asicdb_route_entries([mux_prefix])
+        self.check_nexthop_in_asic_db(asicdb, rtkeys_active[0], False)  # Neighbor NH
 
-        self.check_neigh_in_asic_db(asicdb, self.SERV1_IPV4)
-        self.check_neigh_in_asic_db(asicdb, self.SERV1_IPV6)
-        self.check_neigh_in_asic_db(asicdb, self.NEIGH1_IPV4)
-        self.check_neigh_in_asic_db(asicdb, self.NEIGH1_IPV6)
-        self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV4)
-        self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV6)
-        self.check_neigh_in_asic_db(asicdb, self.NEIGH2_IPV4)
-        self.check_neigh_in_asic_db(asicdb, self.NEIGH2_IPV6)
-        dvs_route.check_asicdb_route_entries(
-            [
-                self.SERV3_IPV4 + self.IPV4_MASK,
-                self.SERV3_IPV6 + self.IPV6_MASK,
-                self.NEIGH3_IPV4 + self.IPV4_MASK,
-                self.NEIGH3_IPV6 + self.IPV6_MASK
-            ]
-        )
+        # Cleanup
+        self.del_neighbor(dvs, neighbor_ip)
+        self.del_fdb(dvs, neighbor_mac.replace(":", "-"))
+        config_db.delete_entry(self.CONFIG_MUX_CABLE, mux_port)
+        time.sleep(1)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

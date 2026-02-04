@@ -178,7 +178,7 @@ static sai_status_t remove_route(IpPrefix &pfx)
  * @param nexthop NextHopKey of the nexthop
  * @return SAI_STATUS_SUCCESS on success
  */
-static sai_status_t set_route(const IpPrefix& pfx, sai_object_id_t next_hop_id)
+static sai_status_t set_route(const IpPrefix& pfx, sai_object_id_t next_hop_id, bool mux_prefix_route=false)
 {
     /* set route entry to point to nh */
     sai_route_entry_t route_entry;
@@ -194,19 +194,22 @@ static sai_status_t set_route(const IpPrefix& pfx, sai_object_id_t next_hop_id)
     sai_status_t status = sai_route_api->set_route_entry_attribute(&route_entry, &route_attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set route entry %s nh 0x%" PRIx64 " rv:%d",
+        SWSS_LOG_ERROR("Failed to set route entry %s nh %" PRIx64 " rv:%d",
                 pfx.to_string().c_str(), next_hop_id, status);
     }
 
-    route_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
-    route_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
-
-    // set the PACKET_ACTION_FORWARD attrib
-    status = sai_route_api->set_route_entry_attribute(&route_entry, &route_attr);
-    if (status != SAI_STATUS_SUCCESS)
+    if (mux_prefix_route)
     {
-        SWSS_LOG_ERROR("Failed to set route entry action forward %s rv:%d",
-                pfx.to_string().c_str(), status);
+        route_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+        route_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+
+        // set the PACKET_ACTION_FORWARD attrib
+        status = sai_route_api->set_route_entry_attribute(&route_entry, &route_attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set route entry action forward %s rv:%d",
+                    pfx.to_string().c_str(), status);
+        }
     }
     return status;
 }
@@ -1224,7 +1227,7 @@ void MuxPrefixBasedNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, b
             // Only update route if prefix route exists (when check_prefix_route is true)
             if (!check_prefix_route || gNeighOrch->isPrefixNeighborNh(nh))
             {
-                status = set_route(pfx, local_nhid);
+                status = set_route(pfx, local_nhid, true);
                 if (status != SAI_STATUS_SUCCESS) {
                     SWSS_LOG_ERROR("Update Failed to set route entry %s to localnh",
                             pfx.to_string().c_str());
@@ -1246,7 +1249,7 @@ void MuxPrefixBasedNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, b
             // Only update route if prefix route exists (when check_prefix_route is true)
             if (!check_prefix_route || gNeighOrch->isPrefixNeighborNh(nh))
             {
-                status = set_route(pfx, tunnelId);
+                status = set_route(pfx, tunnelId, true);
                 if (status != SAI_STATUS_SUCCESS) {
                     SWSS_LOG_ERROR("Update Failed to set route entry %s to tnh",
                             pfx.to_string().c_str());
@@ -1740,12 +1743,6 @@ bool MuxOrch::isMuxPortPrefixNbr(const IpAddress& nbr, const MacAddress& mac, st
         }
     }
 
-    // check if cached mux neighbor is prefix nbr
-    if (isCachedMuxNeighbor(nbr, alias))
-    {
-        return true;
-    }
-
     if (mux_cable_tb_.empty())
     {
         return false;
@@ -1990,7 +1987,6 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
     }
 
     string alias = update.entry.alias;
-    bool is_mux_neighbor = false;
     string port, old_port;
 
     bool is_tunnel_route_installed = isStandaloneTunnelRouteInstalled(update.entry.ip_address);
@@ -2031,15 +2027,6 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
         if (ptr->isIpInSubnet(update.entry.ip_address))
         {
             ptr->updateNeighborFromEvent(update.entry, update.add);
-            is_mux_neighbor = true;
-            if (update.add)
-            {
-                saveNeighborToMuxTable(update.entry.ip_address, alias);
-            }
-            else
-            {
-                removeNeighborFromMuxTable(update.entry.ip_address, alias);
-            }
             return;
         }
     }
@@ -2061,7 +2048,6 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
         {
             return;
         }
-        is_mux_neighbor = true;
 
         addNexthop(update.entry);
     }
@@ -2073,7 +2059,6 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
             SWSS_LOG_INFO("port %s, nexthop %s", port.c_str(), it->second.c_str());
             port = it->second;
             removeNexthop(update.entry);
-            is_mux_neighbor = true;
         }
     }
 
@@ -2089,13 +2074,6 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
     {
         ptr = getMuxCable(port);
         ptr->updateNeighborFromEvent(update.entry, update.add);
-        is_mux_neighbor = true;
-    }
-
-    // Save MUX neighbors for warmboot
-    if (is_mux_neighbor)
-    {
-        saveNeighborToMuxTable(update.entry.ip_address, alias);
     }
 }
 
@@ -2254,10 +2232,8 @@ MuxOrch::MuxOrch(DBConnector *db, const std::vector<std::string> &tables,
     neigh_orch_->attach(this);
     fdb_orch_->attach(this);
 
-    // Initialize Redis for persisting MUX neighbors across warmboot
-    state_db_ = std::make_unique<DBConnector>("STATE_DB", 0);
-    mux_neighbors_table_ = std::make_unique<Table>(state_db_.get(), "MUX_NEIGHBORS");
-    state_mux_cable_table_ = std::make_unique<Table>(state_db_.get(), STATE_MUX_CABLE_TABLE_NAME);
+    std::unique_ptr<DBConnector> state_db = std::make_unique<DBConnector>("STATE_DB", 0);
+    state_mux_cable_table_ = std::make_unique<Table>(state_db.get(), STATE_MUX_CABLE_TABLE_NAME);
 }
 
 bool MuxOrch::handleMuxCfg(const Request& request)
@@ -2536,74 +2512,6 @@ void MuxOrch::removeStandaloneTunnelRoute(IpAddress neighborIp)
 bool MuxOrch::isStandaloneTunnelRouteInstalled(const IpAddress& neighborIp)
 {
     return standalone_tunnel_neighbors_.find(neighborIp) != standalone_tunnel_neighbors_.end();
-}
-
-void MuxOrch::restoreMuxNeighbors()
-{
-    SWSS_LOG_NOTICE("Restoring MUX neighbors from Redis");
-
-    cached_mux_neighbors_.clear();
-
-    std::vector<std::string> keys;
-    mux_neighbors_table_->getKeys(keys);
-
-    for (const auto& key : keys)
-    {
-        std::vector<FieldValueTuple> values;
-        if (mux_neighbors_table_->get(key, values))
-        {
-            std::string alias;
-            for (const auto& fv : values)
-            {
-                if (fvField(fv) == "alias")
-                {
-                    alias = fvValue(fv);
-                    break;
-                }
-            }
-
-            if (!alias.empty())
-            {
-                IpAddress ip(key);  // key is the IP address
-                cached_mux_neighbors_.insert(std::make_pair(ip, alias));
-            }
-        }
-    }
-
-    SWSS_LOG_NOTICE("Restored %zu MUX neighbors from Redis", cached_mux_neighbors_.size());
-}
-
-bool MuxOrch::isCachedMuxNeighbor(const IpAddress& ip, const string& alias) const
-{
-    return cached_mux_neighbors_.find(std::make_pair(ip, alias)) != cached_mux_neighbors_.end();
-}
-
-void MuxOrch::saveNeighborToMuxTable(const IpAddress& ip, const string& alias)
-{
-    std::string key = ip.to_string();
-    std::vector<FieldValueTuple> values;
-    values.emplace_back("alias", alias);
-    mux_neighbors_table_->set(key, values);
-}
-
-void MuxOrch::removeNeighborFromMuxTable(const IpAddress& ip, const string& alias)
-{
-    std::string key = ip.to_string();
-    mux_neighbors_table_->del(key);
-
-    // Also remove from in-memory cache
-    cached_mux_neighbors_.erase(std::make_pair(ip, alias));
-}
-
-bool MuxOrch::bake()
-{
-    SWSS_LOG_ENTER();
-
-    // Restore MUX neighbors from Redis during warm boot
-    restoreMuxNeighbors();
-
-    Orch::bake();
-    return true;
 }
 
 void MuxOrch::updateCachedNeighbors()

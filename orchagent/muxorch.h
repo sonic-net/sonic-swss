@@ -304,13 +304,6 @@ public:
     void updateCachedNeighbors();
     bool getMuxPort(const MacAddress&, const string&, string&);
 
-    void restoreMuxNeighbors();
-    void saveNeighborToMuxTable(const IpAddress& ip, const string& alias);
-    void removeNeighborFromMuxTable(const IpAddress& ip, const string& alias);
-    bool isCachedMuxNeighbor(const IpAddress& ip, const string& alias) const;
-
-    bool bake() override;
-
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
@@ -369,11 +362,7 @@ private:
 
     bool prefix_nbrs_supported_ = true;
 
-    // Redis table for persisting MUX neighbors across warm reboot
-    std::unique_ptr<DBConnector> state_db_;
-    std::unique_ptr<Table> mux_neighbors_table_;
     std::unique_ptr<Table> state_mux_cable_table_;
-    std::set<std::pair<IpAddress, std::string>> cached_mux_neighbors_;
 };
 
 const request_description_t mux_cable_request_description = {
