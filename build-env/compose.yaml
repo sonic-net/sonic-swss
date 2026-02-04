@@ -1,0 +1,28 @@
+services:
+    swss-bookworm:
+        container_name: swss-bookworm-master
+        image: "swss-bookworm-master:latest"
+        tty: true
+        volumes:
+            - ${HOME}:${HOME}
+        build:
+            args:
+                USER: ${USER}
+                HOME: ${HOME}
+                UID: ${UID:?Did you run the env_init.sh script?}
+                GID: ${GID:?Did you run the env_init.sh script?}
+                DEBIAN: bookworm
+                BRANCH: master
+            tags:
+                - "swss-bookworm-master:latest"
+        networks:
+            docker_net:
+                ipv4_address: 172.19.0.10
+
+networks:
+    docker_net:
+        driver: bridge
+        ipam:
+            config:
+            - subnet: 172.19.0.0/24
+              gateway: 172.19.0.1
