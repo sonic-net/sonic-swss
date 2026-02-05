@@ -708,7 +708,7 @@ std::unordered_set<std::string> PortsOrch::generateCounterStats(const vector<T> 
     return {};
 }
 
-const std::vector<sai_port_attr_t>& PortsOrch::getPortAttrIds() const
+const std::vector<sai_port_attr_t>& PortsOrch::getPortPhyAttrIds() const
 {
     static const std::vector<sai_port_attr_t> empty_vector = {};
     return empty_vector;

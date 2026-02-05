@@ -213,10 +213,10 @@ public:
     void generatePortCounterMap();
     void generatePortBufferDropCounterMap();
 
-    void generatePortAttrCounterMap();
-    void clearPortAttrCounterMap();
-    const std::vector<sai_port_attr_t>& getPortAttrIds() const;
-    void queryPortAttrCapabilities();
+    void generatePortPhyAttrCounterMap();
+    void clearPortPhyAttrCounterMap();
+    const std::vector<sai_port_attr_t>& getPortPhyAttrIds() const;
+    void queryPortPhyAttrCapabilities();
     bool verifyPortSupportsAllPhyAttr(sai_object_id_t port_id, const char* port_name);
 
     void generateWredPortCounterMap();
@@ -500,7 +500,6 @@ private:
     bool m_isPortCounterMapGenerated = false;
     bool m_isPortBufferDropCounterMapGenerated = false;
 
-    bool m_phy_attr_capability_checked = false;
     std::vector<sai_port_attr_t> m_supported_phy_attrs;
 
     bool isAutoNegEnabled(sai_object_id_t id);

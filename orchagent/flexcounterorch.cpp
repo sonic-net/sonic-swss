@@ -284,11 +284,11 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         if(value == "enable" && !m_port_phy_attr_enabled)
                         {
                             m_port_phy_attr_enabled = true;
-                            gPortsOrch->generatePortAttrCounterMap();
+                            gPortsOrch->generatePortPhyAttrCounterMap();
                         }
                         if (value == "disable" && m_port_phy_attr_enabled)
                         {
-                            gPortsOrch->clearPortAttrCounterMap();
+                            gPortsOrch->clearPortPhyAttrCounterMap();
                             m_port_phy_attr_enabled = false;
                         }
                     }
