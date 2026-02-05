@@ -164,6 +164,7 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
     initSensorsTable();
     querySwitchTpidCapability();
     querySwitchPortEgressSampleCapability();
+    querySwitchMirrorOnDropCapability();
     querySwitchPortMirrorCapability();
     querySwitchHashDefaults();
     setSwitchIcmpOffloadCapability();
@@ -1857,6 +1858,182 @@ void SwitchOrch::querySwitchPortEgressSampleCapability()
         }
         SWSS_LOG_NOTICE("port egress Sample capability %d", capability.set_implemented);
     }
+    set_switch_capability(fvVector);
+}
+
+void SwitchOrch::querySwitchMirrorOnDropCapability()
+{
+    vector<FieldValueTuple> fvVector;
+    sai_status_t status = SAI_STATUS_SUCCESS;
+    sai_attr_capability_t capability;
+
+    // Check enum value of SAI_TAM_EVENT_ATTR_TYPE
+    const auto* meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_TAM_EVENT,
+                                                      SAI_TAM_EVENT_ATTR_TYPE);
+    if (meta == nullptr)
+    {
+        SWSS_LOG_WARN("Could not get metadata for SAI_TAM_EVENT_ATTR_TYPE");
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "false");
+        set_switch_capability(fvVector);
+        return;
+    }
+
+    vector<int32_t> values_list(meta->enummetadata->valuescount);
+    sai_s32_list_t values;
+    values.count = static_cast<uint32_t>(values_list.size());
+    values.list = values_list.data();
+
+    status = sai_query_attribute_enum_values_capability(gSwitchId,
+                                                        SAI_OBJECT_TYPE_TAM_EVENT,
+                                                        SAI_TAM_EVENT_ATTR_TYPE,
+                                                        &values);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query TAM Event type capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "false");
+        set_switch_capability(fvVector);
+        return;
+    }
+
+    // check value.list include SAI_TAM_EVENT_TYPE_PACKET_DROP
+    bool tam_event_type_packet_drop_supported = false;
+    for (uint32_t i = 0; i < values.count; i++)
+    {
+        if (values.list[i] == SAI_TAM_EVENT_TYPE_PACKET_DROP)
+        {
+            tam_event_type_packet_drop_supported = true;
+            break;
+        }
+    }
+
+    if (!tam_event_type_packet_drop_supported)
+    {
+        SWSS_LOG_WARN("TAM Event type SAI_TAM_EVENT_TYPE_PACKET_DROP not supported");
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "false");
+        set_switch_capability(fvVector);
+        return;
+    }
+
+    // Check enum value of SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TYPE
+    meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
+                                                      SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TYPE);
+    if (meta == nullptr)
+    {
+        SWSS_LOG_WARN("Could not get metadata for SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TYPE");
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "false");
+        set_switch_capability(fvVector);
+        return;
+    }
+
+    values_list.resize(meta->enummetadata->valuescount);
+    values.count = static_cast<uint32_t>(values_list.size());
+    values.list = values_list.data();
+
+    status = sai_query_attribute_enum_values_capability(gSwitchId,
+                                                        SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
+                                                        SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TYPE,
+                                                        &values);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query TAM Hostif User Defined Trap type capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "false");
+        set_switch_capability(fvVector);
+        return;
+    }
+
+    // check value.list include SAI_HOSTIF_USER_DEFINED_TRAP_TYPE_TAM
+    bool hostif_user_defined_trap_type_tam_supported = false;
+    for (uint32_t i = 0; i < values.count; i++)
+    {
+        if (values.list[i] == SAI_HOSTIF_USER_DEFINED_TRAP_TYPE_TAM)
+        {
+            hostif_user_defined_trap_type_tam_supported = true;
+            break;
+        }
+    }
+
+    if (!hostif_user_defined_trap_type_tam_supported)
+    {
+        SWSS_LOG_WARN("TAM Hostif User Defined Trap type SAI_HOSTIF_USER_DEFINED_TRAP_TYPE_TAM not supported");
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "false");
+        set_switch_capability(fvVector);
+        return;
+    }
+
+    // Check capability for SAI_SWITCH_ATTR_TAM_OBJECT_ID
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SWITCH,
+                                            SAI_SWITCH_ATTR_TAM_OBJECT_ID, &capability);
+    if (status != SAI_STATUS_SUCCESS || capability.set_implemented != true)
+    {
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query switch TAM capability %d", status);
+        }
+        else
+        {
+            SWSS_LOG_WARN("Switch TAM capability not implemented");
+        }
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "false");
+        set_switch_capability(fvVector);
+        return;
+    }
+
+    // Check capability for SAI_TAM_COLLECTOR_ATTR_HOSTIF_TRAP
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_TAM_COLLECTOR,
+                                            SAI_TAM_COLLECTOR_ATTR_HOSTIF_TRAP, &capability);
+    if (status != SAI_STATUS_SUCCESS || capability.set_implemented != true)
+    {
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query TAM Collector capability %d", status);
+        }
+        else
+        {
+            SWSS_LOG_WARN("TAM Collector capability not implemented");
+        }
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "false");
+        set_switch_capability(fvVector);
+        return;
+    }
+
+    // Check capability for SAI_TAM_ATTR_EVENT_OBJECTS_LIST
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_TAM_EVENT,
+                                            SAI_TAM_ATTR_EVENT_OBJECTS_LIST, &capability);
+    if (status != SAI_STATUS_SUCCESS || capability.set_implemented != true)
+    {
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query TAM Event capability %d", status);
+        }
+        else
+        {
+            SWSS_LOG_WARN("TAM Event capability not implemented");
+        }
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "false");
+        set_switch_capability(fvVector);
+        return;
+    }
+
+    // Check capability for SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TRAP_GROUP
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
+                                            SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TRAP_GROUP, &capability);
+    if (status != SAI_STATUS_SUCCESS || capability.set_implemented != true)
+    {
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query TAM Event capability %d", status);
+        }
+        else
+        {
+            SWSS_LOG_WARN("TAM Event capability not implemented");
+        }
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "false");
+        set_switch_capability(fvVector);
+        return;
+    }
+
+    fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "true");
+    SWSS_LOG_NOTICE("Mirror on drop capability is supported");
     set_switch_capability(fvVector);
 }
 
