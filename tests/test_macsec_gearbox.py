@@ -49,16 +49,16 @@ class TestMacsecGearbox(object):
         port_name, phy_id = TestGearboxHelper.get_first_gearbox_port(gearbox)
 
         try:
-            TestGearboxHelper.configure_gearbox_macsec_support(dvs, gearbox, phy_id=phy_id, macsec_supported=None)
+            TestGearboxHelper.configure_gearbox_macsec_support(dvs, gearbox, phy_id=phy_id, macsec_supported=None, restart=True)
             TestMacsecHelper.enable_macsec_on_port(dvs, port_name=port_name, with_secure_channels=True)
 
-            assert TestMacsecHelper.verify_macsec_in_gb_asic_db(dvs, should_exist=True), (
-                "FAILED: MACsec objects should exist in GB_ASIC_DB "
+            assert TestMacsecHelper.verify_macsec_for_port_in_gb_asic_db(dvs, port_name, should_exist=True), (
+                f"FAILED: MACsec objects for {port_name} should exist in GB_ASIC_DB "
                 "when macsec_supported is absent"
             )
 
-            assert TestMacsecHelper.verify_macsec_in_asic_db(dvs, should_exist=False), (
-                "FAILED: MACsec objects should NOT exist in ASIC_DB "
+            assert TestMacsecHelper.verify_macsec_for_port_in_asic_db(dvs, port_name, should_exist=False), (
+                f"FAILED: MACsec objects for {port_name} should NOT exist in ASIC_DB "
                 "when using PHY backend"
             )
 
@@ -81,16 +81,16 @@ class TestMacsecGearbox(object):
         port_name, phy_id = TestGearboxHelper.get_first_gearbox_port(gearbox)
 
         try:
-            TestGearboxHelper.configure_gearbox_macsec_support(dvs, gearbox, phy_id=phy_id, macsec_supported=True)
+            TestGearboxHelper.configure_gearbox_macsec_support(dvs, gearbox, phy_id=phy_id, macsec_supported=True, restart=True)
             TestMacsecHelper.enable_macsec_on_port(dvs, port_name=port_name, with_secure_channels=True)
 
-            assert TestMacsecHelper.verify_macsec_in_gb_asic_db(dvs, should_exist=True), (
-                "FAILED: MACsec objects should exist in GB_ASIC_DB "
+            assert TestMacsecHelper.verify_macsec_for_port_in_gb_asic_db(dvs, port_name, should_exist=True), (
+                f"FAILED: MACsec objects for {port_name} should exist in GB_ASIC_DB "
                 "when macsec_supported=true"
             )
 
-            assert TestMacsecHelper.verify_macsec_in_asic_db(dvs, should_exist=False), (
-                "FAILED: MACsec objects should NOT exist in ASIC_DB "
+            assert TestMacsecHelper.verify_macsec_for_port_in_asic_db(dvs, port_name, should_exist=False), (
+                f"FAILED: MACsec objects for {port_name} should NOT exist in ASIC_DB "
                 "when using PHY backend"
             )
 
@@ -115,19 +115,82 @@ class TestMacsecGearbox(object):
 
         try:
             # Setup gearbox with macsec_supported=false
-            TestGearboxHelper.configure_gearbox_macsec_support(dvs, gearbox, phy_id=phy_id, macsec_supported=False)
+            TestGearboxHelper.configure_gearbox_macsec_support(dvs, gearbox, phy_id=phy_id, macsec_supported=False, restart=True)
             TestMacsecHelper.enable_macsec_on_port(dvs, port_name=port_name, with_secure_channels=True)
 
-            assert TestMacsecHelper.verify_macsec_in_asic_db(dvs, should_exist=True), (
-                "FAILED: MACsec objects should exist in ASIC_DB "
+            assert TestMacsecHelper.verify_macsec_for_port_in_asic_db(dvs, port_name, should_exist=True), (
+                f"FAILED: MACsec objects for {port_name} should exist in ASIC_DB "
                 "when macsec_supported=false"
             )
 
-            assert TestMacsecHelper.verify_macsec_in_gb_asic_db(dvs, should_exist=False), (
-                "FAILED: MACsec objects should NOT exist in GB_ASIC_DB "
+            assert TestMacsecHelper.verify_macsec_for_port_in_gb_asic_db(dvs, port_name, should_exist=False), (
+                f"FAILED: MACsec objects for {port_name} should NOT exist in GB_ASIC_DB "
                 "when macsec_supported=false"
             )
 
         finally:
             TestMacsecHelper.cleanup_macsec(dvs, port_name)
+
+    def test_macsec_mixed_phy_support(self, dvs, gearbox, gearbox_config):
+        """
+        Test mixed MACsec support across multiple PHYs.
+
+        This test validates the scenario where a platform owner enables macsec_supported
+        only for some gearbox PHYs, not all of them.
+
+        Args:
+            dvs: Docker Virtual Switch instance (pytest fixture)
+            gearbox: Gearbox fixture
+            gearbox_config: Gearbox config fixture (auto backup/restore)
+        """
+        # Reassign last interface from PHY 1 to PHY 2
+        phy1_interfaces = [
+            intf.get("name") for intf in gearbox.interfaces.values()
+            if str(intf.get("phy_id")) == "1"
+        ]
+        interface_to_reassign = phy1_interfaces[-1]
+
+        # Reassign interface to PHY 2 with macsec_supported=False
+        TestGearboxHelper.reassign_interface_to_phy(
+            dvs, interface_name=interface_to_reassign, new_phy_id=2, macsec_supported=False
+        )
+
+        # Set macsec_supported=True for PHY 1 and restart DVS
+        TestGearboxHelper.configure_gearbox_macsec_support(
+            dvs, gearbox, phy_id=1, macsec_supported=True, restart=True
+        )
+
+        gearbox_reloaded = Gearbox(dvs)
+
+        port1_name, _ = TestGearboxHelper.get_gearbox_port_by_phy(gearbox_reloaded, phy_id=1)
+        port2_name = interface_to_reassign
+
+        try:
+            TestMacsecHelper.enable_macsec_on_port(dvs, port_name=port1_name, with_secure_channels=True)
+            TestMacsecHelper.enable_macsec_on_port(dvs, port_name=port2_name, with_secure_channels=True)
+
+            # Verify MACsec keys are created in correct databases
+            # PHY 1 (macsec_supported=true) -> keys should be in GB_ASIC_DB ONLY
+            assert TestMacsecHelper.verify_macsec_for_port_in_gb_asic_db(dvs, port1_name, should_exist=True), (
+                f"FAILED: MACsec keys for {port1_name} (PHY 1) should exist in GB_ASIC_DB "
+                "when macsec_supported=true"
+            )
+            assert TestMacsecHelper.verify_macsec_for_port_in_asic_db(dvs, port1_name, should_exist=False), (
+                f"FAILED: MACsec keys for {port1_name} (PHY 1) should NOT exist in ASIC_DB "
+                "when macsec_supported=true (should be in GB_ASIC_DB only)"
+            )
+
+            # PHY 2 (macsec_supported=false) -> keys should be in ASIC_DB ONLY
+            assert TestMacsecHelper.verify_macsec_for_port_in_asic_db(dvs, port2_name, should_exist=True), (
+                f"FAILED: MACsec keys for {port2_name} (PHY 2) should exist in ASIC_DB "
+                "when macsec_supported=false"
+            )
+            assert TestMacsecHelper.verify_macsec_for_port_in_gb_asic_db(dvs, port2_name, should_exist=False), (
+                f"FAILED: MACsec keys for {port2_name} (PHY 2) should NOT exist in GB_ASIC_DB "
+                "when macsec_supported=false (should be in ASIC_DB only)"
+            )
+
+        finally:
+            TestMacsecHelper.cleanup_macsec(dvs, port1_name)
+            TestMacsecHelper.cleanup_macsec(dvs, port2_name)
 
