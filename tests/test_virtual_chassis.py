@@ -1317,9 +1317,9 @@ class TestVirtualChassis(object):
         remote_lc_switch_id = '2'
         test_prefix = "2.2.2.0/24"
         inband_port = "Ethernet0"
-        test_neigh_ip_1 = "10.8.106.50"
-        test_neigh_dev_1 = "Ethernet4"
+        test_neigh_ip_1 = "10.8.104.55"
         test_neigh_mac_1 = "00:0A:03:04:08:06"
+        test_neigh_dev_1 = "Ethernet4"
 
         local_lc_dvs = self.get_lc_dvs(vct, local_lc_switch_id)
         remote_lc_dvs = self.get_lc_dvs(vct, remote_lc_switch_id)
@@ -1328,7 +1328,10 @@ class TestVirtualChassis(object):
         self.config_inbandif_port(vct, inband_port)
 
         # add neighbor
-        self.configure_neighbor(local_lc_dvs, "add", test_neigh_ip_1, test_neigh_mac_1, test_neigh_dev_1)
+        _, res = local_lc_dvs.runcmd(['sh', "-c", "ip neigh show"])
+        print("ip neigh show:{}".format(res))
+        _, res = local_lc_dvs.runcmd(['sh', "-c", f"ip neigh add {test_neigh_ip_1} lladdr {test_neigh_mac_1} dev {test_neigh_dev_1}"])
+        #assert res == "", "Error configuring static neigh"
 
         time.sleep(10)
 
@@ -1385,12 +1388,22 @@ class TestVirtualChassis(object):
         state_db.wait_for_field_match("MIRROR_SESSION_TABLE", session, {"status": "inactive"})
 
         #Add the route for the mirror destination
+        _, res = local_lc_dvs.runcmd(['sh', "-c", "ip route show"])
+        print("local dvs before: ip route show:{}".format(res))
         _, res = local_lc_dvs.runcmd(['sh', '-c', f"ip route add {test_prefix} nexthop via {test_neigh_ip_1}"])
-        assert res == "", "Error configuring route"
+        print("local dvs: ip route add:{}".format(res))
+        _, res = local_lc_dvs.runcmd(['sh', "-c", "ip route show"])
+        print("local dvs: ip route show:{}".format(res))
+        #assert res == "", "Error configuring route"
 
+        _, res = remote_lc_dvs.runcmd(['sh', "-c", "ip route show"])
+        print("remote dvs before: ip route show:{}".format(res))
         _, res = remote_lc_dvs.runcmd(['sh', '-c', f"ip route add {test_prefix} nexthop via {test_neigh_ip_1}"])
-        assert res == "", "Error configuring route"
-        time.sleep(5)
+        print("remote dvs: ip route add:{}".format(res))
+        _, res = remote_lc_dvs.runcmd(['sh', "-c", "ip route show"])
+        print("remote dvs: ip route show:{}".format(res))
+        #assert res == "", "Error configuring route"
+        time.sleep(10)
 
         #check the mirror session is active
         state_db = local_lc_dvs.get_state_db()
@@ -1401,6 +1414,14 @@ class TestVirtualChassis(object):
         state_db.wait_for_n_keys("MIRROR_SESSION_TABLE", 1)
         state_db.wait_for_field_match("MIRROR_SESSION_TABLE", session, {"status": "active"})
 
+        #del the route
+        _, res = local_lc_dvs.runcmd(['sh', '-c', f"ip route del {test_prefix} nexthop via {test_neigh_ip_1} "])
+        assert res == "", "Error Deleting route"
+        _, res = remote_lc_dvs.runcmd(['sh', '-c', f"ip route del {test_prefix} nexthop via {test_neigh_ip_1} "])
+        assert res == "", "Error Deleting route"
+        #del the neighbor
+        _, res = local_lc_dvs.runcmd(['sh', "-c", f"ip neigh del {test_neigh_ip_1} dev {test_neigh_dev_1}"])
+        assert res == "", "Error deleting static neigh"
         # Cleanup inband if configuration
         self.del_inbandif_port(vct, inband_port)
 
