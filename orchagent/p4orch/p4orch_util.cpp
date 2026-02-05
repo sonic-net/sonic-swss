@@ -141,8 +141,7 @@ std::string KeyGenerator::generateRouteKey(const std::string &vrf_id, const swss
 
 std::string KeyGenerator::generateRouterInterfaceKey(const std::string &router_intf_id)
 {
-    std::map<std::string, std::string> fv_map = {{p4orch::kRouterInterfaceId, router_intf_id}};
-    return generateKey(fv_map);
+    return router_intf_id;
 }
 
 std::string KeyGenerator::generateNeighborKey(const std::string &router_intf_id, const swss::IpAddress &neighbor_id)
@@ -154,14 +153,12 @@ std::string KeyGenerator::generateNeighborKey(const std::string &router_intf_id,
 
 std::string KeyGenerator::generateNextHopKey(const std::string &next_hop_id)
 {
-    std::map<std::string, std::string> fv_map = {{p4orch::kNexthopId, next_hop_id}};
-    return generateKey(fv_map);
+    return next_hop_id;
 }
 
 std::string KeyGenerator::generateMirrorSessionKey(const std::string &mirror_session_id)
 {
-    std::map<std::string, std::string> fv_map = {{p4orch::kMirrorSessionId, mirror_session_id}};
-    return generateKey(fv_map);
+    return mirror_session_id;
 }
 
 std::string KeyGenerator::generateMulticastRouterInterfaceKey(
@@ -212,8 +209,7 @@ std::string KeyGenerator::generateMulticastRouterInterfaceRifKey(
 
 std::string KeyGenerator::generateWcmpGroupKey(const std::string &wcmp_group_id)
 {
-    std::map<std::string, std::string> fv_map = {{p4orch::kWcmpGroupId, wcmp_group_id}};
-    return generateKey(fv_map);
+    return wcmp_group_id;
 }
 
 std::string KeyGenerator::generateAclRuleKey(const std::map<std::string, std::string> &match_fields,
@@ -246,8 +242,7 @@ std::string KeyGenerator::generateL3AdmitKey(const swss::MacAddress &mac_address
 
 std::string KeyGenerator::generateTunnelKey(const std::string &tunnel_id)
 {
-    std::map<std::string, std::string> fv_map = {{p4orch::kTunnelId, tunnel_id}};
-    return generateKey(fv_map);
+    return tunnel_id;
 }
 
 std::string KeyGenerator::generateExtTableKey(const std::string &table_name, const std::string &table_key)
