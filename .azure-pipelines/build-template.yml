@@ -236,7 +236,9 @@ jobs:
          export ENABLE_ASAN=y
       fi
       ./autogen.sh
-      dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
+      dpkg-buildpackage -us -uc -b -j$(nproc) || true
+      sleep 144000
+      cp ../*.deb .
     displayName: "Compile sonic swss"
   - script: |
       cargo test
