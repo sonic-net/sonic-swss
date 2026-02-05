@@ -980,7 +980,9 @@ int RIBNHGEntry::setEntry(NextHopGroupFull nhg, uint8_t af) {
             return -1;
         }
         m_depends.insert(*it);
+        SWSS_LOG_ERROR("NextHop id %d add depends %d.", m_rib_id, *it);
     }
+
 
     // check the full list NHG entry and update m_group set
     for (auto it = nhg.nh_grp_full_list.begin(); it != nhg.nh_grp_full_list.end(); it++) {
@@ -990,6 +992,7 @@ int RIBNHGEntry::setEntry(NextHopGroupFull nhg, uint8_t af) {
             return -1;
         }
         m_group.insert(std::make_pair(it->id, it->weight));
+        SWSS_LOG_ERROR("NextHop id %d add group %d.", m_rib_id, it->id);
     }
 
     /*
@@ -1052,7 +1055,7 @@ int RIBNHGEntry::syncFvVector() {
         m_fvVector.push_back(wg);
     }
 
-    SWSS_LOG_INFO("NextHopGroup table set: nexthop[%s] ifname[%s] weight[%s]", m_nexthop.c_str(), m_ifName.c_str(),
+    SWSS_LOG_ERROR("NextHopGroup table set: nexthop[%s] ifname[%s] weight[%s]", m_nexthop.c_str(), m_ifName.c_str(),
                   m_weight.c_str());
     return 0;
 }
@@ -1061,11 +1064,13 @@ int RIBNHGEntry::syncFvVector() {
 int RIBNHGEntry::getNHGFields() {
 
     if (!m_is_single) {
+        SWSS_LOG_ERROR("multi nexthop group");
         // multi nexthop group
         return getNextHopGroupFields();
 
     } else {
         // single nexthop
+        SWSS_LOG_ERROR("single nexthop group");
         return getNextHopFields();
     }
 }
@@ -1106,9 +1111,11 @@ int RIBNHGEntry::getNextHopGroupFields() {
             weights += NHG_DELIMITER;
         }
         nexthops += entry->getNextHopStr();
+        SWSS_LOG_ERROR(" entry nexthop: [%s]", entry->getNextHopStr().c_str());
         ifnames += entry->getInterfaceNameStr();
+        SWSS_LOG_ERROR(" entry interface: [%s]", entry->getInterfaceNameStr().c_str());
         weights += weight;
-
+        SWSS_LOG_ERROR(" entry weight: [%s]", weight.c_str());
         /* SRv6 VPN SID */
         if(m_sonic_obj_type == SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY){
             if (!vpnSids.empty()){
@@ -1127,6 +1134,8 @@ int RIBNHGEntry::getNextHopGroupFields() {
     m_vpnSid = vpnSids;
     m_segSrc = segSrcs;
     m_weight = weights;
+    SWSS_LOG_ERROR("get NextHopGroup fields done, nexthop[%s] ifname[%s] weight[%s] vpnSid[%s] segSrc[%s]", m_nexthop.c_str(), m_ifName.c_str(),
+                  m_weight.c_str(), m_vpnSid.c_str(), m_segSrc.c_str());
     return 0;
 }
 
@@ -1204,6 +1213,7 @@ void RIBNHGEntry::needCreateSonicGatewayNHGObj() {
             m_sonic_obj_type = entry->getSonicObjType();
             m_is_single = false;
             m_has_sonic_gateway_obj = true;
+            SWSS_LOG_ERROR("NextHop id %d has sonic gateway obj, is multi nexthop group.", it->first);
             return;
         }
     }
@@ -1213,11 +1223,14 @@ void RIBNHGEntry::needCreateSonicGatewayNHGObj() {
         m_sonic_obj_type = SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY;
         m_is_single = true;
         m_has_sonic_gateway_obj = true;
+        SWSS_LOG_ERROR("NextHop id %d has sonic gateway obj, is single nexthop group.", m_rib_id);
         return;
     }
 
-    if (m_depends.size() > 1) {
+    /* not have sonic gateway obj, check the depends and group to determine if it is single nexthop group */
+    if (m_depends.size() > 0 || m_group.size() > 0) {
         m_is_single = false;
+        SWSS_LOG_ERROR("NextHop id %d has no sonic gateway obj, is single nexthop group.", m_rib_id);
     }
     return;
 }
