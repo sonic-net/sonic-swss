@@ -16,7 +16,7 @@ namespace mock_orch_test
         auto consumer = make_unique<Consumer>(
             new swss::ConsumerStateTable(m_app_db.get(), table_name),
             target_orch, table_name);
-        auto op = set ? SET_COMMAND : DEL_COMMAND;
+        std::string op = set ? SET_COMMAND : DEL_COMMAND;
         consumer->addToSync(
             swss::KeyOpFieldsValuesTuple(key, op, { { "pb", message.SerializeAsString() } }));
         target_orch->doTask(*consumer.get());
@@ -25,13 +25,13 @@ namespace mock_orch_test
         if (expect_empty)
         {
             EXPECT_EQ(it2, consumer->m_toSync.end())
-                << "Expected consumer to be empty after operation on table " << table_name
+                << "Expected consumer to be empty after " << op << " operation on table " << table_name
                 << " with key " << key;
         }
         else
         {
             EXPECT_NE(it2, consumer->m_toSync.end())
-                << "Expected consumer to not be empty after operation on table " << table_name
+                << "Expected consumer to not be empty after " << op << " operation on table " << table_name
                 << " with key " << key;
         }
     }
