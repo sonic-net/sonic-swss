@@ -23,6 +23,7 @@ extern MacAddress gMacAddress;
 
 // Fields name
 #define VXLAN_TUNNEL "vxlan_tunnel"
+#define VXLAN_TUNNEL_LIST "vxlan_tunnel_list"
 #define SOURCE_IP "src_ip"
 #define VNI "vni"
 #define VNET "vnet"
@@ -320,6 +321,7 @@ bool VxlanMgr::doVxlanCreateTask(const KeyOpFieldsValuesTuple & t)
     SWSS_LOG_ENTER();
 
     VxlanInfo info;
+    bool multiple_vxlan_tunnels = false;
     info.m_vnet = kfvKey(t);
     for (auto i : kfvFieldsValues(t))
     {
@@ -333,6 +335,17 @@ bool VxlanMgr::doVxlanCreateTask(const KeyOpFieldsValuesTuple & t)
         {
             info.m_vni = value;
         }
+        else if (field == VXLAN_TUNNEL_LIST)
+        {
+            multiple_vxlan_tunnels = true;
+        }
+    }
+
+    if (multiple_vxlan_tunnels)
+    {
+        SWSS_LOG_ERROR("Vnet %s has multiple vxlan tunnels, skipping vxlan creation",
+                       info.m_vnet.c_str());
+        return true;
     }
 
     // If all information of vnet has been set
