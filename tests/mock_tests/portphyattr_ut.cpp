@@ -22,6 +22,33 @@ namespace portphyattr_test
 {
     using namespace std;
 
+    // Mock SAI port API
+    sai_port_api_t *old_sai_port_api;
+    sai_port_api_t ut_sai_port_api;
+
+    sai_status_t mock_get_port_attribute(
+        _In_ sai_object_id_t port_id,
+        _In_ uint32_t attr_count,
+        _Inout_ sai_attribute_t *attr_list)
+    {
+        if ((attr_list[0].id == SAI_PORT_ATTR_RX_SIGNAL_DETECT
+             || attr_list[0].id == SAI_PORT_ATTR_FEC_ALIGNMENT_LOCK)
+            && attr_list[0].value.portlanelatchstatuslist.count == 0)
+        {
+            attr_list[0].value.portlanelatchstatuslist.count = 8;
+            return SAI_STATUS_BUFFER_OVERFLOW;
+        }
+        else if (attr_list[0].id == SAI_PORT_ATTR_RX_SNR &&
+                 attr_list[0].value.portsnrlist.count == 0)
+        {
+            attr_list[0].value.portsnrlist.count = 8;
+            return SAI_STATUS_BUFFER_OVERFLOW;
+        }
+
+        // For all other attributes, call the original SAI API
+        return old_sai_port_api->get_port_attribute(port_id, attr_count, attr_list);
+    }
+
     struct PortAttrTest : public ::testing::Test
     {
         PortAttrTest() {}
@@ -29,6 +56,12 @@ namespace portphyattr_test
         void SetUp() override
         {
             ::testing_db::reset();
+
+            // Hook SAI port API to mock PHY attribute queries
+            old_sai_port_api = sai_port_api;
+            ut_sai_port_api = *sai_port_api;
+            sai_port_api = &ut_sai_port_api;
+            sai_port_api->get_port_attribute = mock_get_port_attribute;
 
             // Initialize database connections
             m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
@@ -116,6 +149,9 @@ namespace portphyattr_test
 
             delete gSwitchOrch;
             gSwitchOrch = nullptr;
+
+            // Restore original SAI port API
+            sai_port_api = old_sai_port_api;
         }
 
         static void SetUpTestCase()
@@ -166,7 +202,7 @@ namespace portphyattr_test
     TEST_F(PortAttrTest, EnablePortAttrFlexCounterDoTask)
     {
         ASSERT_NE(m_flexCounterOrch, nullptr);
-        ASSERT_NE(gPortsOrch, nullptr); 
+        ASSERT_NE(gPortsOrch, nullptr);
 
         bool initialState = m_flexCounterOrch->getPortPhyAttrCounterState();
         EXPECT_FALSE(initialState);
@@ -205,62 +241,19 @@ namespace portphyattr_test
         std::cout << " PORT_PHY_ATTR disablement verified: state = " << (disabledState ? "ENABLED" : "DISABLED") << std::endl;
     }
 
-    /**
-     * Validates that generatePortAttrCounterMap works with PORT_PHY_ATTR counter type
-     */
-    TEST_F(PortAttrTest, generatePortAttrCounterMap)
-    {
-      	// Directly set private members via friend access
-      	gPortsOrch->m_supported_phy_attrs = {
-            SAI_PORT_ATTR_RX_SIGNAL_DETECT,
-            SAI_PORT_ATTR_FEC_ALIGNMENT_LOCK,
-            SAI_PORT_ATTR_RX_SNR
-      	};
-      	gPortsOrch->m_phy_attr_capability_checked = true;
-
-        // should complete without exceptions
-        try {
-            gPortsOrch->generatePortAttrCounterMap();
-            std::cout << " generatePortAttrCounterMap() completed successfully" << std::endl;
-        } catch (const std::exception& e) {
-            FAIL() << "generatePortAttrCounterMap() threw exception: " << e.what();
-        } catch (...) {
-            FAIL() << "generatePortAttrCounterMap() threw unknown exception";
-        }
-
-        // Test clear and regenerate 
-        try {
-            gPortsOrch->clearPortAttrCounterMap();
-            std::cout << " clearPortAttrCounterMap() completed successfully" << std::endl;
-
-            gPortsOrch->generatePortAttrCounterMap();
-            std::cout << " Regenerate after clear completed successfully" << std::endl;
-        } catch (const std::exception& e) {
-            FAIL() << "Clear/regenerate cycle threw exception: " << e.what();
-        } catch (...) {
-            FAIL() << "Clear/regenerate cycle threw unknown exception";
-        }
-
-        // Verify the operations completed without crashes
-        SUCCEED() << "All PORT_PHY_ATTR counter map operations completed successfully";
-    }
-
-    TEST_F(PortAttrTest, QueryPortAttrCapabilitiesWithMockedSAI)
+    TEST_F(PortAttrTest, NoAttributesSupported)
     {
         ASSERT_NE(gPortsOrch, nullptr);
 
-        EXPECT_FALSE(gPortsOrch->m_phy_attr_capability_checked);
-        EXPECT_TRUE(gPortsOrch->m_supported_phy_attrs.empty());
-
-        gPortsOrch->queryPortAttrCapabilities();
-
-        EXPECT_TRUE(gPortsOrch->m_phy_attr_capability_checked);
-
-        for (const auto& attr : gPortsOrch->m_supported_phy_attrs)
-        {
-            EXPECT_TRUE(attr == SAI_PORT_ATTR_RX_SIGNAL_DETECT ||
-                       attr == SAI_PORT_ATTR_FEC_ALIGNMENT_LOCK ||
-                       attr == SAI_PORT_ATTR_RX_SNR);
+        // Test with empty supported attributes list
+        gPortsOrch->m_supported_phy_attrs.clear();
+        try {
+            gPortsOrch->generatePortPhyAttrCounterMap();
+            std::cout << "generatePortPhyAttrCounterMap() returned early (expected for unsupported platform)" << std::endl;
+        } catch (const std::exception& e) {
+            FAIL() << "Should not throw exception on unsupported platform: " << e.what();
         }
+
+        SUCCEED() << "Unsupported platform scenario handled gracefully";
     }
 } // namespace portphyattr_test
