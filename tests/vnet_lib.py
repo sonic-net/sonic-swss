@@ -140,11 +140,11 @@ def delete_vnet_local_routes(dvs, prefix, vnet_name):
     time.sleep(2)
 
 
-def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", adv_prefix="", check_directly_connected=False):
-    set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac=mac, vni=vni, ep_monitor=ep_monitor, profile=profile, primary=primary, monitoring=monitoring, adv_prefix=adv_prefix, check_directly_connected=check_directly_connected)
+def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", rx_monitor_timer=-1, tx_monitor_timer=-1, adv_prefix="", check_directly_connected=False, metric=-1):
+    set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac=mac, vni=vni, ep_monitor=ep_monitor, profile=profile, primary=primary, monitoring=monitoring, rx_monitor_timer=rx_monitor_timer, tx_monitor_timer=tx_monitor_timer, adv_prefix=adv_prefix, check_directly_connected=check_directly_connected, metric=metric)
 
 
-def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", adv_prefix="", check_directly_connected=False):
+def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", rx_monitor_timer=-1, tx_monitor_timer=-1, adv_prefix="", check_directly_connected=False, metric=-1):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
     attrs = [
@@ -174,6 +174,15 @@ def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor=
 
     if check_directly_connected:
         attrs.append(('check_directly_connected', 'true'))
+
+    if rx_monitor_timer != -1:
+        attrs.append(('rx_monitor_timer', str(rx_monitor_timer)))
+
+    if tx_monitor_timer != -1:
+        attrs.append(('tx_monitor_timer', str(tx_monitor_timer)))
+
+    if metric >= 0:
+        attrs.append(('metric', str(metric)))
 
     tbl = swsscommon.Table(conf_db, "VNET_ROUTE_TUNNEL")
     fvs = swsscommon.FieldValuePairs(attrs)
@@ -953,6 +962,21 @@ class VnetVxlanVrfTunnel(object):
 
         self.rifs.remove(old_rif[0])
 
+    def check_default_vrf_route(self, dvs, ip_pref):
+        global def_vr_id
+
+        def _access_function():
+            route_entries = get_exist_entries(dvs, self.ASIC_ROUTE_ENTRY)
+            for route_entry in route_entries:
+                json_rt_entry = json.loads(route_entry)
+                if (json_rt_entry["dest"] == ip_pref and json_rt_entry['vr'] == def_vr_id):
+                    return (True, None)
+                else:
+                    continue
+            return (False, None)
+
+        wait_for_result(_access_function)
+
     def check_vnet_local_routes(self, dvs, name, vlan_subnet_route=False):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
@@ -1268,6 +1292,19 @@ class VnetVxlanVrfTunnel(object):
             self.routes.update(new_route)
             del self.nhg_ids[endpoint_str_primary]
             return new_route
+
+    def check_del_vnet_route_in_vnet(self, dvs, vnet_name, prefix):
+        vr_id = self.vr_map[vnet_name].get('ing')
+
+        def _access_function():
+            route_entries = get_exist_entries(dvs, self.ASIC_ROUTE_ENTRY)
+            for route_entry in route_entries:
+                rt_json = json.loads(route_entry)
+                if rt_json['vr'] == vr_id:
+                    if rt_json['dest'] == prefix:
+                        return (False, None)
+            return (True, None)
+        wait_for_result(_access_function)
 
     def check_del_vnet_routes(self, dvs, name, prefixes=[], absent=False):
         # TODO: Implement for VRF VNET

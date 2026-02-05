@@ -31,6 +31,7 @@ tests_INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib -I$
 tests_SOURCES = aclorch_ut.cpp \
                 aclorch_rule_ut.cpp \
                 portsorch_ut.cpp \
+                vxlanorch_ut.cpp \
                 routeorch_ut.cpp \
                 qosorch_ut.cpp \
                 bufferorch_ut.cpp \
@@ -41,6 +42,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 saispy_ut.cpp \
                 consumer_ut.cpp \
                 sfloworh_ut.cpp \
+                tunneldecaporch_ut.cpp \
                 ut_saihelper.cpp \
                 mock_orchagent_main.cpp \
                 mock_dbconnector.cpp \
@@ -78,7 +80,9 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_orch_test.cpp \
                 mock_dash_orch_test.cpp \
                 zmq_orch_ut.cpp \
+                retrycache_ut.cpp \
                 mock_saihelper.cpp \
+                mirrororch_ut.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
@@ -193,6 +197,7 @@ tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
 		 $(P4_ORCH_DIR)/mirror_session_manager.cpp \
 		 $(P4_ORCH_DIR)/gre_tunnel_manager.cpp \
 		 $(P4_ORCH_DIR)/l3_admit_manager.cpp \
+		 $(P4_ORCH_DIR)/l3_multicast_manager.cpp \
 		 $(P4_ORCH_DIR)/ext_tables_manager.cpp \
 		 $(P4_ORCH_DIR)/tests/mock_sai_switch.cpp
 

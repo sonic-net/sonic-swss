@@ -154,7 +154,7 @@ class DashAcl(object):
 
         for table in APPL_DB_TABLE_LIST:
             pst = ProduceStateTable(
-                self.dvs.get_app_db(), table
+                self.dvs.get_dpu_app_db(), table
             )
             table_variable_name = "app_{}".format(table.lower())
             # Based on swsscommon convention for table names, assume

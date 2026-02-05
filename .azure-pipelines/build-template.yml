@@ -91,7 +91,7 @@ jobs:
       vmImage: 'ubuntu-22.04'
 
   container:
-    image: sonicdev-microsoft.azurecr.io:443/${{ parameters.sonic_slave }}:latest
+    image: sonicdev-microsoft.azurecr.io:443/${{ parameters.sonic_slave }}:$(BUILD_BRANCH)-${{ parameters.arch }}
 
   steps:
   - checkout: self

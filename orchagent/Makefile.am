@@ -28,6 +28,7 @@ dist_swss_DATA = \
 		 pfc_detect_vs.lua \
 		 pfc_restore.lua \
 		 pfc_restore_cisco-8000.lua \
+		 pfc_detect_clounix.lua  \
 		 port_rates.lua \
 		 port_flr.lua \
 		 drop_monitor.lua \
@@ -156,6 +157,7 @@ orchagent_SOURCES += p4orch/p4orch.cpp \
 		     p4orch/wcmp_manager.cpp \
 		     p4orch/mirror_session_manager.cpp \
 		     p4orch/l3_admit_manager.cpp \
+		     p4orch/l3_multicast_manager.cpp \
  		     p4orch/ext_tables_manager.cpp
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
