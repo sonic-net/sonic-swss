@@ -261,6 +261,8 @@ bool OrchDaemon::init()
     gDirectory.set(vnet_rt_orch);
     VRFOrch *vrf_orch = new VRFOrch(m_applDb, APP_VRF_TABLE_NAME, m_stateDb, STATE_VRF_OBJECT_TABLE_NAME);
     gDirectory.set(vrf_orch);
+    VrrpOrch *vrrp_orch = new VrrpOrch(m_applDb, APP_VRRP_TABLE_NAME);
+    gDirectory.set(vrrp_orch);
     gMonitorOrch = new MonitorOrch(m_stateDb, STATE_VNET_MONITOR_TABLE_NAME);
     gDirectory.set(gMonitorOrch);
     gBfdMonitorOrch = new BfdMonitorOrch(m_stateDb, STATE_BFD_SESSION_TABLE_NAME);
@@ -549,6 +551,7 @@ bool OrchDaemon::init()
     m_orchList.push_back(gPbhOrch);
     m_orchList.push_back(chassis_frontend_orch);
     m_orchList.push_back(vrf_orch);
+    m_orchList.push_back(vrrp_orch);
     m_orchList.push_back(vxlan_tunnel_orch);
     m_orchList.push_back(evpn_nvo_orch);
     m_orchList.push_back(vxlan_tunnel_map_orch);
