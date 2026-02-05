@@ -166,6 +166,7 @@ impl OtelActor {
         info!("OtelActor started");
 
         let mut flush_timer = Box::pin(sleep_until(self.flush_deadline));
+        let mut run_error: Option<Box<dyn ExportError>> = None;
 
         loop {
             select! {
@@ -176,7 +177,10 @@ impl OtelActor {
                                 ChannelLabel::IpfixToOtel,
                                 self.stats_receiver.len(),
                             );
-                            self.handle_stats_message(stats).await?;
+                            if let Err(e) = self.handle_stats_message(stats).await {
+                                run_error = Some(e);
+                                break;
+                            }
                             self.reset_flush_timer(&mut flush_timer);
                         }
                         _none => {
@@ -186,7 +190,10 @@ impl OtelActor {
                     }
                 }
                 _ = &mut flush_timer => {
-                    self.flush_buffer().await?;
+                    if let Err(e) = self.flush_buffer().await {
+                        run_error = Some(e);
+                        break;
+                    }
                     self.reset_flush_timer(&mut flush_timer);
                 }
             }
@@ -199,9 +206,16 @@ impl OtelActor {
         }
 
         // Flush any remaining buffered metrics before shutdown
-        self.flush_buffer().await?;
+        if run_error.is_none() {
+            if let Err(e) = self.flush_buffer().await {
+                run_error = Some(e);
+            }
+        }
         self.shutdown().await;
-        Ok(())
+        match run_error {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
     /// Handle incoming SAI statistics message

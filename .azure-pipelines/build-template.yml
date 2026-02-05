@@ -236,10 +236,10 @@ jobs:
          export ENABLE_ASAN=y
       fi
       ./autogen.sh
-      dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
+      RUSTFLAGS=-Dwarnings dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
     displayName: "Compile sonic swss"
   - script: |
-      cargo test
+      RUSTFLAGS=-Dwarnings cargo test
     displayName: "Test countersyncd"
   - publish: $(System.DefaultWorkingDirectory)/
     artifact: ${{ parameters.artifact_name }}
