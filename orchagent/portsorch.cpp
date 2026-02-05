@@ -1079,6 +1079,9 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     /* Query Path Tracing capability */
     checkPathTracingCapability();
 
+    /* Query PORT_PHY_ATTR capabilities */
+    queryPortPhyAttrCapabilities();
+
     /* Initialize the stats capability in STATE_DB */
     initCounterCapabilities(gSwitchId);
 
@@ -8945,13 +8948,8 @@ void PortsOrch::generatePortBufferDropCounterMap()
     m_isPortBufferDropCounterMapGenerated = true;
 }
 
-void PortsOrch::queryPortAttrCapabilities()
+void PortsOrch::queryPortPhyAttrCapabilities()
 {
-    if (m_phy_attr_capability_checked)
-    {
-        return;
-    }
-
     for (const auto& attr_id : port_phy_attr_ids)
     {
         sai_attr_capability_t capability;
@@ -8979,8 +8977,6 @@ void PortsOrch::queryPortAttrCapabilities()
                             attr_name, status, capability.get_implemented);
         }
     }
-
-    m_phy_attr_capability_checked = true;
 }
 
 bool PortsOrch::verifyPortSupportsAllPhyAttr(sai_object_id_t port_id, const char* port_name)
@@ -9036,11 +9032,8 @@ bool PortsOrch::verifyPortSupportsAllPhyAttr(sai_object_id_t port_id, const char
     return true;
 }
 
-void PortsOrch::generatePortAttrCounterMap()
+void PortsOrch::generatePortPhyAttrCounterMap()
 {
-
-    queryPortAttrCapabilities();
-
     if (m_supported_phy_attrs.empty())
     {
         SWSS_LOG_WARN("PORT_PHY_ATTR: No PHY attributes supported on this platform");
@@ -9060,12 +9053,10 @@ void PortsOrch::generatePortAttrCounterMap()
                     CounterType::PORT_PHY_ATTR, port_phy_attr_stats);
         }
     }
-
 }
 
-void PortsOrch::clearPortAttrCounterMap()
+void PortsOrch::clearPortPhyAttrCounterMap()
 {
-
     for (const auto& it: m_portList)
     {
         // Clear counter stats only for PHY ports that were previously configured
@@ -9080,7 +9071,7 @@ void PortsOrch::clearPortAttrCounterMap()
     }
 }
 
-const std::vector<sai_port_attr_t>& PortsOrch::getPortAttrIds() const
+const std::vector<sai_port_attr_t>& PortsOrch::getPortPhyAttrIds() const
 {
     return port_phy_attr_ids;
 }
