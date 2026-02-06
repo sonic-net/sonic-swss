@@ -34,6 +34,7 @@ extern sai_object_id_t gSwitchId;
 
 #define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
 #define PORT_KEY                    "PORT"
+#define PORT_PHY_ATTR_KEY           "PORT_PHY_ATTR"
 #define PORT_BUFFER_DROP_KEY        "PORT_BUFFER_DROP"
 #define QUEUE_KEY                   "QUEUE"
 #define QUEUE_WATERMARK             "QUEUE_WATERMARK"
@@ -52,6 +53,7 @@ extern sai_object_id_t gSwitchId;
 unordered_map<string, string> flexCounterGroupMap =
 {
     {"PORT", PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {"PORT_PHY_ATTR", PORT_PHY_ATTR_FLEX_COUNTER_GROUP},
     {"PORT_RATES", PORT_RATE_COUNTER_FLEX_COUNTER_GROUP},
     {"PORT_BUFFER_DROP", PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP},
     {"QUEUE", QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
@@ -277,6 +279,19 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     {
                         gSrv6Orch->setCountersState((value == "enable"));
                     }
+                    if (gPortsOrch && (key == PORT_PHY_ATTR_KEY))
+                    {
+                        if(value == "enable" && !m_port_phy_attr_enabled)
+                        {
+                            m_port_phy_attr_enabled = true;
+                            gPortsOrch->generatePortPhyAttrCounterMap();
+                        }
+                        if (value == "disable" && m_port_phy_attr_enabled)
+                        {
+                            gPortsOrch->clearPortPhyAttrCounterMap();
+                            m_port_phy_attr_enabled = false;
+                        }
+                    }
 
                     if (gPortsOrch)
                     {
@@ -334,6 +349,11 @@ void FlexCounterOrch::doTask(SelectableTimer&)
 bool FlexCounterOrch::getPortCountersState() const
 {
     return m_port_counter_enabled;
+}
+
+bool FlexCounterOrch::getPortPhyAttrCounterState() const
+{
+    return m_port_phy_attr_enabled;
 }
 
 bool FlexCounterOrch::getPortBufferDropCountersState() const
