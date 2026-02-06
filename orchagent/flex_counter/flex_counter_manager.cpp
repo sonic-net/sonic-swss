@@ -53,6 +53,8 @@ const unordered_map<CounterType, string> FlexCounterManager::counter_id_field_lo
     { CounterType::DASH_METER,      DASH_METER_COUNTER_ID_LIST },
     { CounterType::SRV6,            SRV6_COUNTER_ID_LIST },
     { CounterType::SWITCH,          SWITCH_COUNTER_ID_LIST },
+    { CounterType::CP_DATA_CHANNEL, CP_DATA_CHANNEL_COUNTER_ID_LIST },
+    { CounterType::BULK_SYNC,       BULK_SYNC_COUNTER_ID_LIST },
 };
 
 FlexManagerDirectory g_FlexManagerDirectory;
