@@ -31,6 +31,8 @@
 
 #define SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP "SWITCH_STAT_COUNTER"
 
+#define SWITCH_CAPABILITY_JSON_FILE "/etc/sonic/switch_capabilities.json"
+
 struct WarmRestartCheck
 {
     bool    checkRestartReadyState;
@@ -95,6 +97,7 @@ private:
     void initSensorsTable();
     void querySwitchTpidCapability();
     void querySwitchPortEgressSampleCapability();
+    void querySwitchWcmpGroupCapability();
     void querySwitchPortMirrorCapability();
 
     // Statistics
