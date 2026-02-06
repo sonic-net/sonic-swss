@@ -235,8 +235,11 @@ jobs:
       if [ '${{ parameters.asan }}' == True ]; then
          export ENABLE_ASAN=y
       fi
+      git ls-files --others debian
       ./autogen.sh
       RUSTFLAGS=-Dwarnings dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
+      git ls-files --others debian
+      exit 1
     displayName: "Compile sonic swss"
   - script: |
       RUSTFLAGS=-Dwarnings cargo test
