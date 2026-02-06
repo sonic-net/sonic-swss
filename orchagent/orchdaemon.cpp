@@ -563,16 +563,6 @@ bool OrchDaemon::init()
 
     gShlOrch = new ShlOrch(shl_tbl_ctrs);
 
-    TableConnector appDbDfTable(m_applDb, "EVPN_DF_TABLE");
-    TableConnector confDbEvpnEsTable(m_configDb, "EVPN_ETHERNET_SEGMENT");
-
-    vector<TableConnector> evpn_df_es_table_connectors = {
-        appDbDfTable,
-        confDbEvpnEsTable,
-    };
-
-    gEvpnMhOrch = new EvpnMhOrch(evpn_df_es_table_connectors);
-
     //
     // Policy Based Hashing (PBH) orchestrator
     //
