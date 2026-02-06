@@ -1321,6 +1321,30 @@ void DashOrch::DashCounter<CounterType::DASH_METER>::fetchStats()
     }
 }
 
+template<>
+void DashOrch::DashCounter<CounterType::CP_DATA_CHANNEL>::fetchStats()
+{
+    counter_stats.clear();
+    auto stat_enum_list = queryAvailableCounterStats((sai_object_type_t)SAI_OBJECT_TYPE_HA_SET);
+    for (auto &stat_enum: stat_enum_list)
+    {
+        auto counter_id = static_cast<sai_ha_set_stat_t>(stat_enum);
+        counter_stats.insert(sai_serialize_ha_set_stat(counter_id));
+    }
+}
+
+template<>
+void DashOrch::DashCounter<CounterType::BULK_SYNC>::fetchStats()
+{
+    counter_stats.clear();
+    auto stat_enum_list = queryAvailableCounterStats((sai_object_type_t)SAI_OBJECT_TYPE_HA_SET);
+    for (auto &stat_enum: stat_enum_list)
+    {
+        auto counter_id = static_cast<sai_ha_set_stat_t>(stat_enum);
+        counter_stats.insert(sai_serialize_ha_set_stat(counter_id));
+    }
+}
+
 void DashOrch::addEniMapEntry(sai_object_id_t oid, const string &name) 
 {
     SWSS_LOG_ENTER();
