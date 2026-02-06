@@ -315,7 +315,12 @@ sai_object_id_t VNetVrfObject::getTunnelNextHop(NextHopKey& nh)
     nh_id = vxlan_orch->createNextHopTunnel(tun_name, nh.ip_address, nh.mac_address, nh.vni);
     if (nh_id == SAI_NULL_OBJECT_ID)
     {
-        throw std::runtime_error("NH Tunnel create failed for " + vnet_name_ + " ip " + nh.ip_address.to_string());
+        /*
+         * Log an error and return. Generic error handling and reporting
+         * is already done in createNextHopTunnel()
+         */
+        SWSS_LOG_ERROR("NH Tunnel create failed for '%s' ip '%s'",
+                vnet_name_.c_str(), nh.ip_address.to_string().c_str());
     }
 
     return nh_id;
