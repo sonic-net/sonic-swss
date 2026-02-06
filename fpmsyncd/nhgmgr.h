@@ -96,7 +96,7 @@ namespace swss {
         /*
          * compare operator of two SonicGateWayNHGObjectKey
          */
-        bool operator==(const SonicGateWayNHGObjectKey &b) {
+        bool operator==(const SonicGateWayNHGObjectKey &b) const {
             if (type != b.type) {
                 return false;
             }
@@ -122,7 +122,7 @@ namespace swss {
             return true;
         }
 
-        bool operator!=(const SonicGateWayNHGObjectKey &b) {
+        bool operator!=(const SonicGateWayNHGObjectKey &b) const {
             return !(*this == b);
         }
 
@@ -623,6 +623,21 @@ namespace swss {
         int setEntry(NextHopGroupFull nhg, uint8_t af);
 
         /*
+         * set the enable flag true of RIBNHGEntry
+         */
+        void enableNHG();
+
+        /*
+         * set the enable flag false of RIBNHGEntry
+         */
+        void disableNHG();
+
+        /*
+         * get the NHG enable status of RIBNHGEntry
+         */
+        bool getNhgEnableStatus();
+
+        /*
          * add dependents member of RIBNHGEntry into m_dependents
          */
         void addDependentsMember(uint32_t id);
@@ -725,6 +740,8 @@ namespace swss {
          */
         bool m_is_single = true;
 
+        bool m_has_member = false;
+
         /*
          * enable flag of the entry
          * default: true
@@ -781,7 +798,7 @@ namespace swss {
         /*
          * get the resolved group from NextHopGroupFull Object
          */
-        void getResolvedGroupFromNHGFull();
+        int getResolvedGroupFromNHGFull();
 
        /*
         * check if need create Sonic Gateway NHG Object and Sonic gateway object type
