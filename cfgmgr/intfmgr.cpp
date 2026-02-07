@@ -613,6 +613,45 @@ bool IntfMgr::setIntfGratArp(const string &alias, const string &grat_arp)
     return true;
 }
 
+bool IntfMgr::setArpReplyMode(const std::string &alias, const std::string &mode)
+{
+    stringstream cmd;
+    string res;
+    string arp_mode;
+
+    // 0 : reply_all
+    // 1 : reply_iface
+    // 2 : reply_subnet
+    // 8 : ignore_all
+
+    if (mode == "reply_all")
+    {
+        arp_mode = "0";
+    }
+    else if (mode == "reply_iface")
+    {
+        arp_mode = "1";
+    }
+    else if (mode == "reply_subnet")
+    {
+        arp_mode = "2";
+    }
+    else if (mode == "ignore_all")
+    {
+        arp_mode = "8";
+    }
+    else
+    {
+        SWSS_LOG_ERROR("arp reply mode  is invalid: \"%s\"", mode.c_str());
+        return false;
+    }
+    cmd << "sysctl -w net.ipv4.conf." << alias << ".arp_ignore=" << arp_mode;
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    SWSS_LOG_INFO("ARP reply mode set to \"%s\" on interface \"%s\"",  mode.c_str(), alias.c_str());
+
+    return true;
+}
+
 bool IntfMgr::setIntfProxyArp(const string &alias, const string &proxy_arp)
 {
     stringstream cmd;
@@ -777,6 +816,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
     string nat_zone = "";
     string proxy_arp = "";
     string grat_arp = "";
+    string arp_reply = "reply_subnet";
     string mpls = "";
     string ipv6_link_local_mode = "";
     string loopback_action = "";
@@ -805,6 +845,10 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         else if (field == "grat_arp")
         {
             grat_arp = value;
+        }
+        else if (field == "arp_reply")
+        {
+            arp_reply = value;
         }
         else if (field == "mpls")
         {
@@ -1048,6 +1092,12 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                 FieldValueTuple fvTuple("grat_arp", grat_arp);
                 data.push_back(fvTuple);
             }
+        }
+
+        if (!setArpReplyMode(alias, arp_reply))
+        {
+            SWSS_LOG_ERROR("Failed to set ARP reply to \"%s\" mode for the \"%s\" interface", arp_reply.c_str(), alias.c_str());
+            return false;
         }
 
         m_appIntfTableProducer.set(alias, data);
