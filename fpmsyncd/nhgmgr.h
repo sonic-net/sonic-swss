@@ -6,6 +6,7 @@
 #include "producerstatetable.h"
 #include <nexthopgroup/nexthopgroupfull.h>
 #include <nexthopgroup/nexthopgroupfull_json.h>
+#include <nexthopgroup/nexthopgroup_debug.h>
 
 #include <string.h>
 
