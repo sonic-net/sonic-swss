@@ -109,6 +109,31 @@ namespace swss
         Table::set(key, attrs, op, prefix);
     }
 
+    void Table::hset(const std::string &key,
+                    const std::string &field,
+                    const std::string &value,
+                    const std::string & /*op*/,
+                    const std::string & /*prefix*/)
+    {
+        auto &table = gDB[m_pipe->getDbId()][getTableName()];
+        std::vector<FieldValueTuple> &fvs = table[key];
+
+        // Search for field in fvs and update it if exists, else add new field value tuple
+        for (auto &it : fvs)
+        {
+            if (it.first == field)
+            {
+                it.second = value;
+                return;
+            }
+        }
+
+        // Add new field value tuple
+        FieldValueTuple tuple(field, value);
+        fvs.push_back(tuple);
+        table[key] = fvs;
+    }
+
     void Table::getKeys(std::vector<std::string> &keys)
     {
         keys.clear();
