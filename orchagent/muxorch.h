@@ -96,8 +96,7 @@ public:
 
     virtual bool enable(bool update_rt);
     virtual bool disable(sai_object_id_t);
-    virtual void update(NextHopKey nh, sai_object_id_t, bool = true, MuxState = MuxState::MUX_STATE_INIT,
-            bool check_prefix_route = false);
+    virtual void update(NextHopKey nh, sai_object_id_t, bool = true, MuxState = MuxState::MUX_STATE_INIT);
 
     virtual sai_object_id_t getNextHopId(const NextHopKey);
     MuxNeighbor getNeighbors() const { return neighbors_; };
@@ -126,8 +125,7 @@ public:
 
     bool enable(bool update_rt) override;
     bool disable(sai_object_id_t) override;
-    void update(NextHopKey nh, sai_object_id_t, bool = true, MuxState = MuxState::MUX_STATE_INIT,
-            bool check_prefix_route = false) override;
+    void update(NextHopKey nh, sai_object_id_t, bool = true, MuxState = MuxState::MUX_STATE_INIT) override;
 };
 
 // Mux Cable object
@@ -152,7 +150,6 @@ public:
 
     bool isIpInSubnet(IpAddress ip);
     void updateNeighbor(NextHopKey nh, bool add);
-    void updateNeighborFromEvent(NextHopKey nh, bool add);
     void updateRoutes();
     void updateRoutesForNextHop(NextHopKey nh);
     sai_object_id_t getNextHopId(const NextHopKey nh)

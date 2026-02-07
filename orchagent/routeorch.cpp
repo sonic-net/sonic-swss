@@ -1704,12 +1704,7 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops, const bool i
             continue;
         }
 
-        bool is_neighbor_nh = !nhop->first.isMplsNextHop() &&
-                              !nhop->first.isSrv6NextHop() &&
-                              (nhop->first.vni == 0) &&
-                              (nhop->first.mac_address == MacAddress());
-        bool is_prefix_neighbor = is_neighbor_nh && m_neighOrch->isPrefixNeighborNh(nhop->first);
-        if (is_prefix_neighbor && !m_neighOrch->hasNextHop(nhop->first))
+        if (m_neighOrch->isPrefixNeighborNh(nhop->first) && !m_neighOrch->hasNextHop(nhop->first))
         {
             SWSS_LOG_INFO("Skip NHG member remove for %s in group %" PRIx64 ": nexthop missing",
                           nhop->first.to_string().c_str(),

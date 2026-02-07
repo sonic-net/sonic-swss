@@ -24,7 +24,7 @@ EXTERN_MOCK_FNS
 namespace mux_rollback_test
 {
     DEFINE_SAI_API_MOCK(neighbor);
-    DEFINE_SAI_API_MOCK(route);
+    DEFINE_SAI_API_MOCK_SPECIFY_ENTRY_WITH_SET(route, route);
     DEFINE_SAI_GENERIC_API_MOCK(acl, acl_entry);
     DEFINE_SAI_GENERIC_API_OBJECT_BULK_MOCK(next_hop, next_hop);
     using ::testing::_;
@@ -41,12 +41,15 @@ namespace mux_rollback_test
     sai_bulk_remove_neighbor_entry_fn old_remove_neighbor_entries;
     sai_bulk_create_route_entry_fn old_create_route_entries;
     sai_bulk_remove_route_entry_fn old_remove_route_entries;
+    sai_bulk_set_route_entry_attribute_fn old_set_route_entries_attribute;
     sai_bulk_object_create_fn old_object_create;
     sai_bulk_object_remove_fn old_object_remove;
 
     class MuxRollbackTest : public MockOrchTest
     {
     protected:
+        std::string m_neighbor_mode = "host-route";
+
         void SetMuxStateFromAppDb(std::string state)
         {
             Table mux_cable_table = Table(m_app_db.get(), APP_MUX_CABLE_TABLE_NAME);
@@ -119,7 +122,7 @@ namespace mux_rollback_test
 
             mux_cable_table.set(TEST_INTERFACE, { { "server_ipv4", SERVER_IP1 + "/32" },
                                                   { "server_ipv6", "a::a/128" },
-                                                  { "neighbor_mode", "host-route" },
+                                                  { "neighbor_mode", m_neighbor_mode },
                                                   { "state", "auto" } });
 
             gPortsOrch->addExistingData(&port_table);
@@ -162,12 +165,14 @@ namespace mux_rollback_test
             old_object_remove = gNeighOrch->gNextHopBulker.remove_entries;
             old_create_route_entries = m_MuxCable->nbr_handler_->gRouteBulker.create_entries;
             old_remove_route_entries = m_MuxCable->nbr_handler_->gRouteBulker.remove_entries;
+            old_set_route_entries_attribute = m_MuxCable->nbr_handler_->gRouteBulker.set_entries_attribute;
             gNeighOrch->gNeighBulker.create_entries = mock_create_neighbor_entries;
             gNeighOrch->gNeighBulker.remove_entries = mock_remove_neighbor_entries;
             gNeighOrch->gNextHopBulker.create_entries = mock_create_next_hops;
             gNeighOrch->gNextHopBulker.remove_entries = mock_remove_next_hops;
             m_MuxCable->nbr_handler_->gRouteBulker.create_entries = mock_create_route_entries;
             m_MuxCable->nbr_handler_->gRouteBulker.remove_entries = mock_remove_route_entries;
+            m_MuxCable->nbr_handler_->gRouteBulker.set_entries_attribute = mock_set_route_entries_attribute;
         }
 
         void PreTearDown() override
@@ -183,6 +188,16 @@ namespace mux_rollback_test
             gNeighOrch->gNextHopBulker.remove_entries = old_object_remove;
             m_MuxCable->nbr_handler_->gRouteBulker.create_entries = old_create_route_entries;
             m_MuxCable->nbr_handler_->gRouteBulker.remove_entries = old_remove_route_entries;
+            m_MuxCable->nbr_handler_->gRouteBulker.set_entries_attribute = old_set_route_entries_attribute;
+        }
+    };
+
+    class MuxRollbackPrefixRouteTest : public MuxRollbackTest
+    {
+    public:
+        MuxRollbackPrefixRouteTest()
+        {
+            m_neighbor_mode = "prefix-route";
         }
     };
 
@@ -218,6 +233,19 @@ namespace mux_rollback_test
                 .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_NOT_FOUND)));
         }
         SetAndAssertMuxState(ACTIVE_STATE);
+    }
+
+    TEST_F(MuxRollbackPrefixRouteTest, StandbyToActiveSetRouteAttrNotFoundRollbackToStandby)
+    {
+        std::vector<sai_status_t> exp_status_not_found{SAI_STATUS_ITEM_NOT_FOUND};
+        std::vector<sai_status_t> exp_status_success{SAI_STATUS_SUCCESS};
+        EXPECT_CALL(*mock_sai_route_api, set_route_entries_attribute)
+            .WillOnce(DoAll(SetArrayArgument<4>(exp_status_not_found.begin(), exp_status_not_found.end()),
+                            Return(SAI_STATUS_ITEM_NOT_FOUND)))
+            .WillOnce(DoAll(SetArrayArgument<4>(exp_status_success.begin(), exp_status_success.end()),
+                            Return(SAI_STATUS_SUCCESS)));
+        SetMuxStateFromAppDb(ACTIVE_STATE);
+        EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
     }
 
     TEST_F(MuxRollbackTest, ActiveToStandbyRouteAlreadyExists)
