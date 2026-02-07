@@ -6,6 +6,69 @@
 using namespace std;
 using namespace swss;
 
+namespace {
+/*
+ * Thread-safe SWSS logger callback function.
+ * All sonic_fib log messages will be forwarded to SWSS logger.
+ */
+// ADD THIS ATTRIBUTE BEFORE THE FUNCTION DEFINITION:
+__attribute__((format(printf, 5, 0)))
+void swssLogBridge(fib::LogLevel level, const char* file, int line,
+                   const char* func, const char* format, va_list args) {
+    // Map fib levels → SWSS levels
+    swss::Logger::Priority swssLevel;
+    switch (level) {
+        case fib::LogLevel::DEBUG: swssLevel = swss::Logger::SWSS_DEBUG; break;
+        case fib::LogLevel::INFO:  swssLevel = swss::Logger::SWSS_NOTICE; break;
+        case fib::LogLevel::WARN:  swssLevel = swss::Logger::SWSS_WARN; break;
+        case fib::LogLevel::ERROR: swssLevel = swss::Logger::SWSS_ERROR; break;
+        default: swssLevel = swss::Logger::SWSS_WARN;
+    }
+
+    // TODO FIXME Force all to NOTICE for developing. Remove this line after log level mapping is verified.
+    swssLevel = swss::Logger::SWSS_NOTICE;
+
+    // Format message into buffer, max 2KB (adjust as needed)
+    constexpr size_t BUFFER_SIZE = 2048;
+    std::array<char, BUFFER_SIZE> buffer;
+
+    va_list args_copy;
+    va_copy(args_copy, args);
+    int len = vsnprintf(buffer.data(), buffer.size(), format, args_copy);
+    va_end(args_copy);
+
+    if (len < 0) {
+        // Formatting failed – log error with literal format
+        swss::Logger::getInstance().write(
+            swss::Logger::SWSS_ERROR,
+            "Log formatting failed (vsnprintf error)"
+        );
+        return;
+    }
+
+    if (static_cast<size_t>(len) >= buffer.size()) {
+        // Truncate gracefully with "..."
+        constexpr size_t trunc_len = BUFFER_SIZE - 4;
+        buffer[trunc_len] = '.';
+        buffer[trunc_len + 1] = '.';
+        buffer[trunc_len + 2] = '.';
+        buffer[trunc_len + 3] = '\0';
+    }
+
+    // Log with LITERAL format string "%s" → satisfies -Wformat-nonliteral
+    swss::Logger::getInstance().write(swssLevel, "%s", buffer.data());
+}
+
+} // anonymous namespace
+
+// Registration helper
+void registerSwssLogger() {
+    fib::registerLogCallback(swssLogBridge);
+    fib::setLogLevel(fib::LogLevel::DEBUG); // Or INFO for production as default
+    SWSS_LOG_NOTICE("FIB logging initialized, log level set to %d", 
+                    static_cast<int>(fib::getLogLevel()));
+}
+
 static bool compareDependsAndDependents(const NextHopGroupFull *new_nhg, const NextHopGroupFull *oldNHG) {
     if ((new_nhg->depends.size()) != (oldNHG->depends.size())) {
         return false;
@@ -75,6 +138,9 @@ NHGMgr::NHGMgr(RedisPipeline *pipeline, const std::string &nexthopTableName, con
     m_rib_nhg_table = new RIBNHGTable(pipeline, nexthopTableName, isStateTable);
     m_sonic_nhg_table = new SonicNHGTable(pipeline, picTableName, isStateTable);
     m_sonic_id_manager.init({SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY, SONIC_NHG_OBJ_TYPE_NHG_NORMAL});
+
+    // register SWSS logger as the callback for sonic_fib logs
+    registerSwssLogger();
 }
 
 int NHGMgr::addNHGFull(NextHopGroupFull nhg, uint8_t af) {
