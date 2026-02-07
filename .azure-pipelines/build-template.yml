@@ -241,6 +241,11 @@ jobs:
   - script: |
       RUSTFLAGS=-Dwarnings cargo test
     displayName: "Test countersyncd"
+  - task: PublishTestResults@2
+    inputs:
+      testResultsFiles: '**/*_tr.xml'
+      testRunTitle: gtest
+    condition: and(succeededOrFailed(), eq('${{ parameters.asan }}', false))
   - publish: $(System.DefaultWorkingDirectory)/
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive swss debian packages"
