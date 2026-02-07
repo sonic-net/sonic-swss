@@ -222,12 +222,23 @@ void MockOrchTest::SetUp()
     ut_orch_list.push_back((Orch **)&gCrmOrch);
     global_orch_list.insert((Orch **)&gCrmOrch);
 
+    vector<string> ars_tables = {
+        CFG_ARS_PROFILE_TABLE_NAME,
+        CFG_ARS_INTERFACE_TABLE_NAME,
+        CFG_ARS_OBJECT_TABLE_NAME,
+        CFG_ARS_NEXTHOP_TABLE_NAME
+    };
+    gArsOrch = new ArsOrch(m_config_db.get(), m_app_db.get(), m_state_db.get(), ars_tables, gVrfOrch);
+    gDirectory.set(gArsOrch);
+    ut_orch_list.push_back((Orch **)&gArsOrch);
+    global_orch_list.insert((Orch **)&gArsOrch);
+
     const int routeorch_pri = 5;
     vector<table_name_with_pri_t> route_tables = {
         { APP_ROUTE_TABLE_NAME, routeorch_pri },
         { APP_LABEL_ROUTE_TABLE_NAME, routeorch_pri }
     };
-    gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch, gSrv6Orch);
+    gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch, gSrv6Orch, gArsOrch);
     gDirectory.set(gRouteOrch);
     ut_orch_list.push_back((Orch **)&gRouteOrch);
     global_orch_list.insert((Orch **)&gRouteOrch);
