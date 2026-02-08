@@ -2,6 +2,7 @@
 #include <netinet/in.h>
 #include <netlink/route/link.h>
 #include <netlink/route/neighbour.h>
+#include <unistd.h>
 
 #include "logger.h"
 #include "dbconnector.h"
@@ -19,19 +20,28 @@
 using namespace std;
 using namespace swss;
 
-NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector *cfgDb) :
+#define VRF_PREFIX              "Vrf"
+#define TENMS                   10000
+
+NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector *cfgDb, DBConnector *appDb) :
     m_neighTable(pipelineAppDB, APP_NEIGH_TABLE_NAME),
+    m_routeTable(pipelineAppDB, APP_ROUTE_TABLE_NAME, false),
+    m_routeCheckTable(appDb, APP_ROUTE_TABLE_NAME),
     m_stateNeighRestoreTable(stateDb, STATE_NEIGH_RESTORE_TABLE_NAME),
     m_cfgInterfaceTable(cfgDb, CFG_INTF_TABLE_NAME),
     m_cfgLagInterfaceTable(cfgDb, CFG_LAG_INTF_TABLE_NAME),
     m_cfgVlanInterfaceTable(cfgDb, CFG_VLAN_INTF_TABLE_NAME),
-    m_cfgPeerSwitchTable(cfgDb, CFG_PEER_SWITCH_TABLE_NAME)
+    m_cfgPeerSwitchTable(cfgDb, CFG_PEER_SWITCH_TABLE_NAME),
+    m_nl_sock(NULL), m_link_cache(NULL)
 {
     m_AppRestartAssist = new AppRestartAssist(pipelineAppDB, "neighsyncd", "swss", DEFAULT_NEIGHSYNC_WARMSTART_TIMER);
     if (m_AppRestartAssist)
     {
         m_AppRestartAssist->registerAppTable(APP_NEIGH_TABLE_NAME, &m_neighTable);
     }
+    m_nl_sock = nl_socket_alloc();
+    nl_connect(m_nl_sock, NETLINK_ROUTE);
+    rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
 }
 
 NeighSync::~NeighSync()
@@ -41,6 +51,38 @@ NeighSync::~NeighSync()
         delete m_AppRestartAssist;
     }
 }
+
+/*
+ * Get interface/VRF name based on interface/VRF index
+ * @arg if_index          Interface/VRF index
+ * @arg if_name           String to store interface name
+ * @arg name_len          Length of destination string, including terminating zero byte
+ *
+ * Return true if we successfully gets the interface/VRF name.
+ */
+bool NeighSync::getIfName(int if_index, char *if_name, size_t name_len)
+{
+    if (!if_name || name_len == 0)
+    {
+        return false;
+    }
+
+    memset(if_name, 0, name_len);
+
+    /* Cannot get interface name. Possibly the interface gets re-created. */
+    if (!rtnl_link_i2name(m_link_cache, if_index, if_name, name_len))
+    {
+        /* Trying to refill cache */
+        nl_cache_refill(m_nl_sock, m_link_cache);
+        if (!rtnl_link_i2name(m_link_cache, if_index, if_name, name_len))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 
 // Check if neighbor table is restored in kernel
 bool NeighSync::isNeighRestoreDone()
@@ -83,6 +125,31 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     intfName = key;
     key+= ":";
 
+    /* Get the vrf name */
+    int ifindex = rtnl_neigh_get_ifindex(neigh);
+    char master_name[IFNAMSIZ] = {0};
+    if (ifindex > 0)
+    {
+        struct rtnl_link *link = rtnl_link_get(m_link_cache, ifindex);
+        if (!link)
+        {
+            /* Trying to refill cache */
+            nl_cache_refill(m_nl_sock, m_link_cache);
+            link = rtnl_link_get(m_link_cache, ifindex);
+        }
+
+        if (link)
+        {
+            int master_index = rtnl_link_get_master(link);
+            if (master_index)
+            {
+                /* Get the name of the master device */
+                getIfName(master_index, master_name, IFNAMSIZ);
+            }
+			rtnl_link_put(link);
+        }
+    }
+
     nl_addr2str(rtnl_neigh_get_dst(neigh), ipStr, MAX_ADDR_SIZE);
 
     /* Ignore IPv4 link-local addresses as neighbors if subtype is dualtor */
@@ -92,7 +159,6 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
         SWSS_LOG_INFO("Link Local address received on dualtor, ignoring for %s", ipStr);
         return;
     }
-
 
     /* Ignore IPv6 link-local addresses as neighbors, if ipv6 link local mode is disabled */
     if (family == IPV6_NAME && IN6_IS_ADDR_LINKLOCAL(nl_addr_get_binary_addr(rtnl_neigh_get_dst(neigh))))
@@ -112,6 +178,13 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     key+= ipStr;
 
     int state = rtnl_neigh_get_state(neigh);
+    /* Ignore probe msg */
+    if ((nlmsg_type == RTM_NEWNEIGH) && (state == NUD_PROBE))
+    {
+        return;
+    }
+
+    SWSS_LOG_INFO("Get neighbor msg %s, state %d, type %d", ipStr, state, nlmsg_type);
     if (state == NUD_NOARP)
     {
         /* For externally learned neighbors, e.g. VXLAN EVPN, we want to keep
@@ -139,9 +212,10 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
         }
     }
     else if ((nlmsg_type == RTM_DELNEIGH) ||
-             (state == NUD_INCOMPLETE) || (state == NUD_FAILED))
+             (state == NUD_INCOMPLETE) || (state == NUD_FAILED) || (state == NUD_NOARP))
     {
-	    delete_key = true;
+        /* NUD_NOARP means this neighbor is moved to remote, we should delete the local neighbor */
+        delete_key = true;
     }
 
     if (use_zero_mac)
@@ -185,6 +259,26 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
             m_neighTable.del(key);
             return;
         }
+
+        string hostRoute;
+        /* Always try to del the host route before add neighbor */
+        if (string(master_name).compare(0, 3, VRF_PREFIX) == 0)
+        {
+            hostRoute += master_name;
+            hostRoute += ":";
+            hostRoute += ipStr;
+
+            SWSS_LOG_INFO("Remove host route before adding neighbor %s", hostRoute.c_str());
+            m_routeTable.del(hostRoute);
+            vector<FieldValueTuple> values;
+            while (m_routeCheckTable.get(hostRoute, values))
+            {
+                SWSS_LOG_DEBUG("Host route still exists: %s", hostRoute.c_str());
+                m_routeTable.del(hostRoute);
+				usleep(TENMS);
+            }
+        }
+
         m_neighTable.set(key, fvVector);
     }
 }
