@@ -118,11 +118,11 @@ private:
 
     void updateAllLocalMac();
 
-    void macRefreshStateDB(int vlan, std::string kmac);
+    void macRefreshStateDB(int vlan, std::string kmac, uint8_t protocol);
 
     void updateMclagRemoteMac(struct m_fdb_info *info);
 
-    void updateMclagRemoteMacPort(int ifindex, int vlan, std::string mac);
+    void updateMclagRemoteMacPort(int ifindex, int vlan, std::string mac, uint8_t protocol);
 
     void macUpdateMclagRemoteCache(struct m_fdb_info *info);
 
@@ -135,7 +135,8 @@ private:
         NEXT_HOP_VALUE_TYPE nhtype;
         std::string type;
         unsigned int vni;
-        std::string  ifname;
+        std::string ifname;
+        uint8_t protocol;
         union {
             std::string remote_vtep;
             std::string nexthop_group;
@@ -158,7 +159,7 @@ private:
     std::unordered_map<int, intf> m_intf_info;
 
     void addLocalMac(std::string key, std::string op);
-    void macAddVxlan(std::string key, struct nl_addr *vtep, std::string type, uint32_t vni, std::string intf_name, std::string nexthop_group, NEXT_HOP_VALUE_TYPE dest_type);
+    void macAddVxlan(std::string key, struct nl_addr *vtep, std::string type, uint32_t vni, std::string intf_name, std::string nexthop_group, NEXT_HOP_VALUE_TYPE dest_type, uint8_t protocol);
     void macDelVxlan(std::string auxkey);
     void macDelVxlanDB(std::string key);
     void imetAddRoute(struct in_addr vtep, std::string ifname, uint32_t vni);
