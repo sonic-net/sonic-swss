@@ -244,6 +244,12 @@ std::string KeyGenerator::generateL3MulticastGroupKey(const std::string &multica
     return ss.str();
 }
 
+std::string KeyGenerator::generateL2MulticastGroupKey(
+    const std::string& l2_multicast_group_id) {
+  // L2 multicast group IDs are formatted just like L3 multicast group IDs.
+  return generateL3MulticastGroupKey(l2_multicast_group_id);
+}
+
 std::string KeyGenerator::generateWcmpGroupKey(const std::string &wcmp_group_id)
 {
     return wcmp_group_id;
