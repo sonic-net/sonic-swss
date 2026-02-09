@@ -59,8 +59,7 @@ int gFlexCounterDelaySec;
 #define WRED_PORT_KEY               "WRED_ECN_PORT"
 #define SRV6_KEY                    "SRV6"
 #define SWITCH_KEY                  "SWITCH"
-#define CP_DATA_CHANNEL_KEY        "CP_DATA_CHANNEL"
-#define BULK_SYNC_KEY              "BULK_SYNC"
+#define HA_SET_KEY                 "HA_SET"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
@@ -90,8 +89,7 @@ unordered_map<string, string> flexCounterGroupMap =
     {"WRED_ECN_QUEUE", WRED_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {SRV6_KEY, SRV6_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {SWITCH_KEY, SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP},
-    {CP_DATA_CHANNEL_KEY, CP_DATA_CHANNEL_STAT_COUNTER_FLEX_COUNTER_GROUP},
-    {BULK_SYNC_KEY, BULK_SYNC_STAT_COUNTER_FLEX_COUNTER_GROUP}
+    {HA_SET_KEY, HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP}
 };
 
 
@@ -295,13 +293,9 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     {
                         dash_orch->handleMeterFCStatusUpdate((value == "enable"));
                     }
-                    if (dash_orch && (key == CP_DATA_CHANNEL_KEY))
+                    if (dash_orch && (key == HA_SET_KEY))
                     {
-                        dash_orch->handleCPDataChannelFCStatusUpdate((value == "enable"));
-                    }
-                    if (dash_orch && (key == BULK_SYNC_KEY))
-                    {
-                        dash_orch->handleBulkSyncFCStatusUpdate((value == "enable"));
+                        dash_orch->handleHaSetFCStatusUpdate((value == "enable"));
                     }
                     if (gCoppOrch && (key == FLOW_CNT_TRAP_KEY))
                     {

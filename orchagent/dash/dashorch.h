@@ -31,11 +31,8 @@
 #define METER_STAT_COUNTER_FLEX_COUNTER_GROUP "METER_STAT_COUNTER"
 #define METER_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
 
-#define CP_DATA_CHANNEL_STAT_COUNTER_FLEX_COUNTER_GROUP "CP_DATA_CHANNEL_STAT_COUNTER"
-#define CP_DATA_CHANNEL_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
-
-#define BULK_SYNC_STAT_COUNTER_FLEX_COUNTER_GROUP "BULK_SYNC_STAT_COUNTER"
-#define BULK_SYNC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
+#define HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP "HA_SET_STAT_COUNTER"
+#define HA_SET_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
 
 #define DASH_RESULT_SUCCESS 0
 #define DASH_RESULT_FAILURE 1
@@ -183,11 +180,9 @@ private:
     void removeEniMapEntry(sai_object_id_t oid, const std::string& name);
     DashCounter<CounterType::ENI> EniCounter;
     DashCounter<CounterType::DASH_METER> MeterCounter;
-    DashCounter<CounterType::CP_DATA_CHANNEL> CPDataChannelCounter;
-    DashCounter<CounterType::BULK_SYNC> BulkSyncCounter;
+    DashCounter<CounterType::HA_SET> HaSetCounter;
 public:
     void handleFCStatusUpdate(bool is_enabled) { EniCounter.handleStatusUpdate(is_enabled, eni_entries_); }
     void handleMeterFCStatusUpdate(bool is_enabled) { MeterCounter.handleStatusUpdate(is_enabled, eni_entries_); }
-    void handleCPDataChannelFCStatusUpdate(bool is_enabled) { CPDataChannelCounter.handleStatusUpdate(is_enabled, eni_entries_); }
-    void handleBulkSyncFCStatusUpdate(bool is_enabled) { BulkSyncCounter.handleStatusUpdate(is_enabled, eni_entries_); }
+    void handleHaSetFCStatusUpdate(bool is_enabled);
 };

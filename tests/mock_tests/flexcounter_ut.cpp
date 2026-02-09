@@ -7,6 +7,9 @@
 #include "mock_orchagent_main.h"
 #include "mock_orch_test.h"
 #include "dashorch.h"
+#define private public
+#include "dashhaorch.h"
+#undef private
 #include "dashmeterorch.h"
 #include "mock_table.h"
 #include "notifier.h"
@@ -1090,30 +1093,17 @@ namespace flexcounter_test
         ASSERT_FALSE(checkFlexCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, DASH_METER_COUNTER_ID_LIST));
     }
 
-    TEST_F(StandaloneFCTest, TestCPDataChannelStatusUpdate)
+    TEST_F(StandaloneFCTest, TestHaSetStatusUpdate)
     {
-        EniEntry tmp_entry;
-        tmp_entry.eni_id = 0x7008000000022;
-        m_DashOrch->eni_entries_["497f23d7-f0ac-4c99-a98f-59b470e8c7d"] = tmp_entry;
+        HaSetEntry ha_set_entry;
+        ha_set_entry.ha_set_id = 0x7008000000022;
+        m_dashHaOrch->m_ha_set_entries["HA_SET_1"] = ha_set_entry;
 
-        m_DashOrch->handleCPDataChannelFCStatusUpdate(true);
-        ASSERT_TRUE(checkFlexCounter(CP_DATA_CHANNEL_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, CP_DATA_CHANNEL_COUNTER_ID_LIST));
+        m_DashOrch->handleHaSetFCStatusUpdate(true);
+        ASSERT_TRUE(checkFlexCounter(HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP, ha_set_entry.ha_set_id, HA_SET_COUNTER_ID_LIST));
 
-        m_DashOrch->handleCPDataChannelFCStatusUpdate(false);
-        ASSERT_FALSE(checkFlexCounter(CP_DATA_CHANNEL_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, CP_DATA_CHANNEL_COUNTER_ID_LIST));
-    }
-
-    TEST_F(StandaloneFCTest, TestBulkSyncStatusUpdate)
-    {
-        EniEntry tmp_entry;
-        tmp_entry.eni_id = 0x7008000000023;
-        m_DashOrch->eni_entries_["497f23d7-f0ac-4c99-a98f-59b470e8c7e"] = tmp_entry;
-
-        m_DashOrch->handleBulkSyncFCStatusUpdate(true);
-        ASSERT_TRUE(checkFlexCounter(BULK_SYNC_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, BULK_SYNC_COUNTER_ID_LIST));
-
-        m_DashOrch->handleBulkSyncFCStatusUpdate(false);
-        ASSERT_FALSE(checkFlexCounter(BULK_SYNC_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, BULK_SYNC_COUNTER_ID_LIST));
+        m_DashOrch->handleHaSetFCStatusUpdate(false);
+        ASSERT_FALSE(checkFlexCounter(HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP, ha_set_entry.ha_set_id, HA_SET_COUNTER_ID_LIST));
     }
 
     TEST_F(StandaloneFCTest, TestCaching)
