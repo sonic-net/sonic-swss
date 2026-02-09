@@ -134,9 +134,13 @@ class AclRuleManager : public ObjectManagerInterface
     ReturnCode getRedirectActionNextHopOid(const std::string& target,
                                            sai_object_id_t* redirect_oid);
 
-  // Get multicast group oid by name for redirection action.
-  ReturnCode getRedirectActionL3MulticastGroupOid(
-      const std::string& target, sai_object_id_t* redirect_oid);
+    // Get L2 multicast group oid by name for redirection action.
+    ReturnCode getRedirectActionL2MulticastGroupOid(
+        const std::string& target, sai_object_id_t* redirect_oid);
+
+    // Get multicast group oid by name for redirection action.
+    ReturnCode getRedirectActionL3MulticastGroupOid(
+        const std::string& target, sai_object_id_t* redirect_oid);
 
     // Create user defined trap for each cpu queue/trap group and program user
     // defined traps in hostif. Save the user defined trap oids in m_p4OidMapper

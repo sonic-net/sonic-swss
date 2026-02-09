@@ -410,6 +410,9 @@ class KeyGenerator
     static std::string generateIpMulticastKey(const std::string& vrf_id,
                                               const swss::IpAddress& ip_dst);
 
+    static std::string generateL2MulticastGroupKey(
+        const std::string& l2_multicast_group_id);
+
     static std::string generateL3MulticastGroupKey(
         const std::string& multicast_group_id);
 

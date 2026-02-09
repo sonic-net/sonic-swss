@@ -1111,6 +1111,20 @@ ReturnCode AclRuleManager::getRedirectActionL3MulticastGroupOid(const std::strin
     return ReturnCode();
 }
 
+ReturnCode AclRuleManager::getRedirectActionL2MulticastGroupOid(
+    const std::string& target, sai_object_id_t* redirect_oid) {
+  const auto& l2_multicast_group_key =
+      KeyGenerator::generateL2MulticastGroupKey(target);
+  if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_L2MC_GROUP, l2_multicast_group_key,
+                             redirect_oid)) {
+    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                         << "ACL Redirect action target L2 multicast group ID: "
+                         << QuotedVar(target)
+                         << " doesn't exist on the switch");
+  }
+  return ReturnCode();
+}
+
 ReturnCode AclRuleManager::setAllMatchFieldValues(const P4AclRuleAppDbEntry &app_db_entry,
                                                   const P4AclTableDefinition *acl_table, P4AclRule &acl_rule)
 {
@@ -1284,6 +1298,13 @@ ReturnCode AclRuleManager::setActionValue(const sai_acl_entry_attr_t attr_name, 
         value->aclaction.parameter.oid = redirect_oid;
         acl_rule->action_redirect_l3_multicast_group_key =
             KeyGenerator::generateL3MulticastGroupKey(attr_value);
+        break;
+      } else if (attr_type == SAI_OBJECT_TYPE_L2MC_GROUP) {
+        RETURN_IF_ERROR(
+            getRedirectActionL2MulticastGroupOid(attr_value, &redirect_oid));
+        value->aclaction.parameter.oid = redirect_oid;
+        acl_rule->action_redirect_l2_multicast_group_key =
+            KeyGenerator::generateL2MulticastGroupKey(attr_value);
         break;
       } else if (attr_type == SAI_OBJECT_TYPE_PORT) {
         auto port_status = getRedirectActionPortOid(attr_value, &redirect_oid);
@@ -1737,11 +1758,28 @@ ReturnCode AclRuleManager::updateAclRule(const P4AclRule &acl_rule, const P4AclR
     {
         m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP, acl_rule.action_redirect_nexthop_key);
     }
-    if (!acl_rule.action_redirect_l3_multicast_group_key.empty()) {
-    m_p4OidMapper->decreaseRefCount(
-        SAI_OBJECT_TYPE_IPMC_GROUP,
-        acl_rule.action_redirect_l3_multicast_group_key);
-  }
+    if (!old_acl_rule.action_redirect_l3_multicast_group_key.empty())
+    {
+        m_p4OidMapper->decreaseRefCount(
+                                        SAI_OBJECT_TYPE_IPMC_GROUP,
+                                        old_acl_rule.action_redirect_l3_multicast_group_key);
+    }
+    if (!acl_rule.action_redirect_l3_multicast_group_key.empty())
+    {
+        m_p4OidMapper->increaseRefCount(
+                                        SAI_OBJECT_TYPE_IPMC_GROUP,
+                                        acl_rule.action_redirect_l3_multicast_group_key);
+    }
+    if (!old_acl_rule.action_redirect_l2_multicast_group_key.empty()) {
+        m_p4OidMapper->decreaseRefCount(
+                                        SAI_OBJECT_TYPE_L2MC_GROUP,
+                                        old_acl_rule.action_redirect_l2_multicast_group_key);
+    }
+    if (!acl_rule.action_redirect_l2_multicast_group_key.empty()) {
+        m_p4OidMapper->increaseRefCount(
+                                        SAI_OBJECT_TYPE_L2MC_GROUP,
+                                        acl_rule.action_redirect_l2_multicast_group_key);
+    }
     for (const auto &mirror_session : old_acl_rule.action_mirror_sessions)
     {
         m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_MIRROR_SESSION, fvValue(mirror_session).key);
@@ -1857,6 +1895,17 @@ ReturnCode AclRuleManager::removeAclRule(const std::string &acl_table_name, cons
     {
         m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP, acl_rule->action_redirect_nexthop_key);
     }
+    if (!acl_rule->action_redirect_l3_multicast_group_key.empty())
+    {
+        m_p4OidMapper->decreaseRefCount(
+                                        SAI_OBJECT_TYPE_IPMC_GROUP,
+                                        acl_rule->action_redirect_l3_multicast_group_key);
+    }
+    if (!acl_rule->action_redirect_l2_multicast_group_key.empty()) {
+        m_p4OidMapper->decreaseRefCount(
+                                        SAI_OBJECT_TYPE_L2MC_GROUP,
+                                        acl_rule->action_redirect_l2_multicast_group_key);
+    }
     for (const auto &mirror_session : acl_rule->action_mirror_sessions)
     {
         m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_MIRROR_SESSION, fvValue(mirror_session).key);
@@ -1947,11 +1996,17 @@ ReturnCode AclRuleManager::processAddRuleRequest(const std::string &acl_rule_key
     {
         m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP, acl_rule.action_redirect_nexthop_key);
     }
-    if (!acl_rule.action_redirect_l3_multicast_group_key.empty()) {
-    m_p4OidMapper->increaseRefCount(
-        SAI_OBJECT_TYPE_IPMC_GROUP,
-        acl_rule.action_redirect_l3_multicast_group_key);
-  }
+    if (!acl_rule.action_redirect_l3_multicast_group_key.empty())
+    {
+        m_p4OidMapper->increaseRefCount(
+                                        SAI_OBJECT_TYPE_IPMC_GROUP,
+                                        acl_rule.action_redirect_l3_multicast_group_key);
+    }
+    if (!acl_rule.action_redirect_l2_multicast_group_key.empty()) {
+        m_p4OidMapper->increaseRefCount(
+                                        SAI_OBJECT_TYPE_L2MC_GROUP,
+                                        acl_rule.action_redirect_l2_multicast_group_key);
+    }
     for (const auto &mirror_session : acl_rule.action_mirror_sessions)
     {
         m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_MIRROR_SESSION, fvValue(mirror_session).key);
@@ -2402,16 +2457,29 @@ std::string AclRuleManager::verifyStateCache(const P4AclRuleAppDbEntry &app_db_e
         return msg.str();
     }
     if (acl_rule->action_redirect_l3_multicast_group_key !=
-      acl_rule_entry.action_redirect_l3_multicast_group_key) {
-    std::stringstream msg;
-    msg << "ACL rule " << QuotedVar(acl_rule_key)
-        << " with redirect L3 multicast group key "
-        << QuotedVar(acl_rule_entry.action_redirect_l3_multicast_group_key)
-        << " mismatch with internal cache "
-        << QuotedVar(acl_rule->action_redirect_l3_multicast_group_key)
-        << " in ACl rule manager.";
-    return msg.str();
-  }
+        acl_rule_entry.action_redirect_l3_multicast_group_key)
+    {
+        std::stringstream msg;
+        msg << "ACL rule " << QuotedVar(acl_rule_key)
+            << " with redirect L3 multicast group key "
+            << QuotedVar(acl_rule_entry.action_redirect_l3_multicast_group_key)
+            << " mismatch with internal cache "
+            << QuotedVar(acl_rule->action_redirect_l3_multicast_group_key)
+            << " in ACl rule manager.";
+        return msg.str();
+    }
+    if (acl_rule->action_redirect_l2_multicast_group_key !=
+        acl_rule_entry.action_redirect_l2_multicast_group_key)
+    {
+        std::stringstream msg;
+        msg << "ACL rule " << QuotedVar(acl_rule_key)
+            << " with redirect L2 multicast group key "
+            << QuotedVar(acl_rule_entry.action_redirect_l2_multicast_group_key)
+            << " mismatch with internal cache "
+            << QuotedVar(acl_rule->action_redirect_l2_multicast_group_key)
+            << " in ACl rule manager.";
+        return msg.str();
+    }
     if (acl_rule->action_mirror_sessions != acl_rule_entry.action_mirror_sessions)
     {
         std::stringstream msg;
