@@ -247,12 +247,10 @@ class L3MulticastManager : public ObjectManagerInterface {
   // bookkeeping.
   sai_object_id_t getRifOid(
       const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
-  /*
   // Fetches the RIF OID that will be used by a given multicast repelication
   // entry.  This would be the value used by the replication group member.
   sai_object_id_t getRifOid(
       const P4MulticastReplicationEntry* multicast_replication_entry);
-  */
 
   // Internal cache of entries.
   P4MulticastRouterInterfaceTable m_multicastRouterInterfaceTable;
