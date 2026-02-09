@@ -668,6 +668,10 @@ P4AclTableDefinitionAppDbEntry getDefaultAclTableDefAppDbEntry()
         {.sai_action = P4_ACTION_REDIRECT,
          .p4_param_name = "target",
          .sai_object_type = "SAI_OBJECT_TYPE_IPMC_GROUP"});
+    app_db_entry.action_field_lookup["redirect_l2mc"].push_back(
+        {.sai_action = P4_ACTION_REDIRECT,
+         .p4_param_name = "target",
+         .sai_object_type = "SAI_OBJECT_TYPE_L2MC_GROUP"});
     app_db_entry.action_field_lookup["redirect_port"].push_back(
         {.sai_action = P4_ACTION_REDIRECT,
          .p4_param_name = "target",
@@ -1984,6 +1988,11 @@ TEST_F(AclManagerTest, DeserializeValidAclTableDefAppDbSucceeds)
         "[{\"action\":\"SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT\","
         "\"param\":\"multicast_group_id\",\"object_type\":"
         "\"SAI_OBJECT_TYPE_IPMC_GROUP\"}]"});
+    attrs.push_back(swss::FieldValueTuple{
+        "action/redirect_to_l2mc",
+        "[{\"action\":\"SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT\","
+        "\"param\":\"multicast_group_id\",\"object_type\":"
+        "\"SAI_OBJECT_TYPE_L2MC_GROUP\"}]"});
     auto app_db_entry_or =
         DeserializeAclTableDefinitionAppDbEntry(kAclIngressTableName, attrs);
     EXPECT_TRUE(app_db_entry_or.ok());
@@ -2024,6 +2033,10 @@ TEST_F(AclManagerTest, DeserializeValidAclTableDefAppDbSucceeds)
               app_db_entry.action_field_lookup.find("redirect_to_ipmc")
                 ->second[0]
                 .sai_object_type);
+    EXPECT_EQ("SAI_OBJECT_TYPE_L2MC_GROUP",
+              app_db_entry.action_field_lookup.find("redirect_to_l2mc")
+                  ->second[0]
+                  .sai_object_type);
 }
 
 TEST_F(AclManagerTest, DeserializeAclTableDefAppDbWithInvalidJsonFails)
@@ -3398,68 +3411,104 @@ TEST_F(AclManagerTest, AclRuleWithValidAction)
     app_db_entry.action = "redirect_next_hop";
     app_db_entry.action_param_fvs["target"] = next_hop_id;
     // Install rule
-  EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
-      .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
-                      Return(SAI_STATUS_SUCCESS)));
-  EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
-      .WillOnce(Return(SAI_STATUS_SUCCESS));
-  EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
-      .WillOnce(
-          DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
-  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
-            ProcessAddRuleRequest(acl_rule_key, app_db_entry));
-  acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
-  ASSERT_NE(nullptr, acl_rule);
-  // Check action field value
-  EXPECT_EQ(/*next_hop_oid=*/1,
-            acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT]
-                .aclaction.parameter.oid);
-  // Remove rule
-  EXPECT_CALL(mock_sai_acl_, remove_acl_entry(Eq(kAclIngressRuleOid1)))
-      .WillOnce(Return(SAI_STATUS_SUCCESS));
-  EXPECT_CALL(mock_sai_acl_, remove_acl_counter(_))
-      .WillOnce(Return(SAI_STATUS_SUCCESS));
-  EXPECT_CALL(mock_sai_policer_, remove_policer(Eq(kAclMeterOid1)))
-      .WillOnce(Return(SAI_STATUS_SUCCESS));
-  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
-            ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
-  EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
+    EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
+        .WillOnce(
+            DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+    acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+    ASSERT_NE(nullptr, acl_rule);
+    // Check action field value
+    EXPECT_EQ(/*next_hop_oid=*/1,
+              acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT]
+                  .aclaction.parameter.oid);
+    // Remove rule
+    EXPECT_CALL(mock_sai_acl_, remove_acl_entry(Eq(kAclIngressRuleOid1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_acl_, remove_acl_counter(_))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_policer_, remove_policer(Eq(kAclMeterOid1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
+    EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
 
-  // Set up an L3 multicast group mapping
-  const std::string multicast_group_id = "0x1";
-  const auto& l3_multicast_group_key =
-      KeyGenerator::generateL3MulticastGroupKey(multicast_group_id);
-  p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_IPMC_GROUP, l3_multicast_group_key,
-                         /*ipmc_group_oid=*/7);
-  app_db_entry.action = "redirect_ipmc";
-  app_db_entry.action_param_fvs["target"] = multicast_group_id;
-  // Install rule
-  EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
-      .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
-                      Return(SAI_STATUS_SUCCESS)));
-  EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
-      .WillOnce(Return(SAI_STATUS_SUCCESS));
-  EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
-      .WillOnce(
-          DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
-  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
-            ProcessAddRuleRequest(acl_rule_key, app_db_entry));
-  acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
-  ASSERT_NE(nullptr, acl_rule);
-  // Check action field value
-  EXPECT_EQ(/*ipmc_group_oid=*/7,
-            acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT]
-                .aclaction.parameter.oid);
-  // Remove rule
-  EXPECT_CALL(mock_sai_acl_, remove_acl_entry(Eq(kAclIngressRuleOid1)))
-      .WillOnce(Return(SAI_STATUS_SUCCESS));
-  EXPECT_CALL(mock_sai_acl_, remove_acl_counter(_))
-      .WillOnce(Return(SAI_STATUS_SUCCESS));
-  EXPECT_CALL(mock_sai_policer_, remove_policer(Eq(kAclMeterOid1)))
-      .WillOnce(Return(SAI_STATUS_SUCCESS));
-  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
-            ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
-  EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
+    // Set up an L3 multicast group mapping
+    const std::string multicast_group_id = "0x1";
+    const auto& l3_multicast_group_key =
+        KeyGenerator::generateL3MulticastGroupKey(multicast_group_id);
+    p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_IPMC_GROUP, l3_multicast_group_key,
+                           /*ipmc_group_oid=*/7);
+    app_db_entry.action = "redirect_ipmc";
+    app_db_entry.action_param_fvs["target"] = multicast_group_id;
+    // Install rule
+    EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
+        .WillOnce(
+            DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+    acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+    ASSERT_NE(nullptr, acl_rule);
+    // Check action field value
+    EXPECT_EQ(/*ipmc_group_oid=*/7,
+              acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT]
+                  .aclaction.parameter.oid);
+    // Remove rule
+    EXPECT_CALL(mock_sai_acl_, remove_acl_entry(Eq(kAclIngressRuleOid1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_acl_, remove_acl_counter(_))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_policer_, remove_policer(Eq(kAclMeterOid1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
+    EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
+
+    // Set up an L2 multicast group mapping
+    const std::string l2_multicast_group_id = "0x2";
+    const auto& l2_multicast_group_key =
+        KeyGenerator::generateL2MulticastGroupKey(l2_multicast_group_id);
+    p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_L2MC_GROUP, l2_multicast_group_key,
+                           /*l2mc_group_oid=*/9);
+    app_db_entry.action = "redirect_l2mc";
+    app_db_entry.action_param_fvs["target"] = l2_multicast_group_id;
+    // Install rule
+    EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
+        .WillOnce(
+            DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+    acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+    ASSERT_NE(nullptr, acl_rule);
+    // Check action field value
+    EXPECT_EQ(/*l2mc_group_oid=*/9,
+              acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT]
+                  .aclaction.parameter.oid);
+    // Remove rule
+    EXPECT_CALL(mock_sai_acl_, remove_acl_entry(Eq(kAclIngressRuleOid1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_acl_, remove_acl_counter(_))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_policer_, remove_policer(Eq(kAclMeterOid1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
+    EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
 
     // Set endpoint Ip action
     app_db_entry.action = "endpoint_ip";
@@ -3782,6 +3831,22 @@ TEST_F(AclManagerTest,
       KeyGenerator::generateL3MulticastGroupKey(multicast_group_id);
   app_db_entry.action = "redirect_ipmc";
   app_db_entry.action_param_fvs["target"] = multicast_group_id;
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+            ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+}
+
+TEST_F(AclManagerTest,
+       AclRuleWithL2MulticastRedirectActionFailsWhenMulticastGroupNotFound) {
+  ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+  auto app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
+  const auto& acl_rule_key =
+      KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
+  // Set up an L2 multicast group mapping, but leave out fake OID mapping.
+  const std::string l2_multicast_group_id = "0x1";
+  const auto& l2_multicast_group_key =
+      KeyGenerator::generateL2MulticastGroupKey(l2_multicast_group_id);
+  app_db_entry.action = "redirect_l2mc";
+  app_db_entry.action_param_fvs["target"] = l2_multicast_group_id;
   EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
             ProcessAddRuleRequest(acl_rule_key, app_db_entry));
 }
@@ -4478,6 +4543,60 @@ TEST_F(AclManagerTest, UpdateAclRuleWithL3MulticastActionChange) {
   // Check action field value
   EXPECT_EQ(1, acl_rule->action_fvs.size());
   EXPECT_EQ(/*ipmc_group_oid=*/8,
+            acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT]
+                .aclaction.parameter.oid);
+}
+
+TEST_F(AclManagerTest, UpdateAclRuleWithL2MulticastActionChange) {
+  ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+  auto app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
+  const auto& acl_rule_key =
+      KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
+  // Set up an L2 multicast group mapping
+  const std::string l2_multicast_group_id = "0x5";
+  const auto& l2_multicast_group_key =
+      KeyGenerator::generateL2MulticastGroupKey(l2_multicast_group_id);
+  p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_L2MC_GROUP, l2_multicast_group_key,
+                         /*l2mc_group_oid=*/18);
+  app_db_entry.action = "redirect_l2mc";
+  app_db_entry.action_param_fvs["target"] = l2_multicast_group_id;
+
+  // Install rule
+  EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+  auto* acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+  ASSERT_NE(nullptr, acl_rule);
+  // Check action field value
+  EXPECT_EQ(/*l2mc_group_oid=*/18,
+            acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT]
+                .aclaction.parameter.oid);
+
+  // Update rule
+  const std::string l2_multicast_group_id2 = "0x6";
+  const auto& l2_multicast_group_key2 =
+      KeyGenerator::generateL2MulticastGroupKey(l2_multicast_group_id2);
+  p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_L2MC_GROUP, l2_multicast_group_key2,
+                         /*ipmc_group_oid=*/19);
+  app_db_entry.action_param_fvs["target"] = l2_multicast_group_id2;
+
+  EXPECT_CALL(mock_sai_acl_,
+              set_acl_entry_attribute(Eq(kAclIngressRuleOid1), _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ProcessUpdateRuleRequest(app_db_entry, *acl_rule));
+  acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+  ASSERT_NE(nullptr, acl_rule);
+  // Check action field value
+  EXPECT_EQ(1, acl_rule->action_fvs.size());
+  EXPECT_EQ(/*l2mc_group_oid=*/19,
             acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT]
                 .aclaction.parameter.oid);
 }
@@ -5902,6 +6021,15 @@ TEST_F(AclManagerTest, AclRuleVerifyStateTest)
     EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty());
     acl_rule->action_redirect_l3_multicast_group_key =
         saved_action_redirect_l3_multicast_group_key;
+
+    // Verification should fail if action kRedirectToIpmcGroup L2 multicast group
+    // ID key mismatches.
+    auto saved_action_redirect_l2_multicast_group_key =
+        acl_rule->action_redirect_l2_multicast_group_key;
+    acl_rule->action_redirect_l2_multicast_group_key = "0x9999";
+    EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty());
+    acl_rule->action_redirect_l2_multicast_group_key =
+        saved_action_redirect_l2_multicast_group_key;
 
     // Verification should fail if action mirror section mismatches.
     acl_rule->action_mirror_sessions[SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_EGRESS] = P4AclMirrorSession{};

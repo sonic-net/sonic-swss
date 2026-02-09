@@ -141,6 +141,7 @@ struct P4AclRule
 
     sai_uint32_t action_qos_queue_num;
     std::string action_redirect_nexthop_key;
+    std::string action_redirect_l2_multicast_group_key;
     std::string action_redirect_l3_multicast_group_key;
     // SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_INGRESS and
     // SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_EGRESS are allowed as key

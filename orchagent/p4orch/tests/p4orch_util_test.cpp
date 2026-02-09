@@ -36,6 +36,13 @@ TEST(P4OrchUtilTest, KeyGeneratorTest)
     // Invalid, expected to return group ID 0.
     EXPECT_EQ("0x0000", KeyGenerator::generateL3MulticastGroupKey("zzz"));
 
+    // L2 multicast group keys.
+    EXPECT_EQ("0x0003", KeyGenerator::generateL2MulticastGroupKey("0x3"));
+    EXPECT_EQ("0x0009", KeyGenerator::generateL2MulticastGroupKey("0X09"));
+    EXPECT_EQ("0x0021", KeyGenerator::generateL2MulticastGroupKey("33"));
+    // Invalid, expected to return group ID 0.
+    EXPECT_EQ("0x0000", KeyGenerator::generateL2MulticastGroupKey("invalid"));
+
     // Test with special characters.
     neighbor_key = KeyGenerator::generateNeighborKey("::===::", swss::IpAddress("::1"));
     EXPECT_EQ("neighbor_id=::1:router_interface_id=::===::", neighbor_key);

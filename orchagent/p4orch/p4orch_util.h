@@ -377,6 +377,8 @@ class KeyGenerator
         const std::string& multicast_replica_port,
         const swss::MacAddress& src_mac);
 
+    static std::string generateL2MulticastGroupKey(
+        const std::string& l2_multicast_group_id);
     static std::string generateL3MulticastGroupKey(
         const std::string& multicast_group_id);
 
