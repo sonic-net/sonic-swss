@@ -792,6 +792,134 @@ class TestAcl:
 
         assert not match_range_qualifier
 
+    def test_AclRulePriorityOrderProcessing(self, dvs_acl, l3_acl_table):
+        """
+        Test that ACL rules are processed in descending priority order (higher priority value first).
+        """
+        # Create rules with non-sequential priorities to test sorting
+        rule_priorities = ["100", "50", "200", "10", "150"]
+
+        config_qualifiers = {
+            "100": {"SRC_IP": "10.0.0.100/32"},
+            "50": {"SRC_IP": "10.0.0.50/32"},
+            "200": {"SRC_IP": "10.0.0.200/32"},
+            "10": {"SRC_IP": "10.0.0.10/32"},
+            "150": {"SRC_IP": "10.0.0.150/32"},
+        }
+
+        config_actions = {
+            "100": "DROP",
+            "50": "DROP",
+            "200": "DROP",
+            "10": "DROP",
+            "150": "DROP",
+        }
+
+        expected_sai_qualifiers = {
+            "100": {"SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP": dvs_acl.get_simple_qualifier_comparator("10.0.0.100&mask:255.255.255.255")},
+            "50": {"SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP": dvs_acl.get_simple_qualifier_comparator("10.0.0.50&mask:255.255.255.255")},
+            "200": {"SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP": dvs_acl.get_simple_qualifier_comparator("10.0.0.200&mask:255.255.255.255")},
+            "10": {"SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP": dvs_acl.get_simple_qualifier_comparator("10.0.0.10&mask:255.255.255.255")},
+            "150": {"SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP": dvs_acl.get_simple_qualifier_comparator("10.0.0.150&mask:255.255.255.255")},
+        }
+
+        # Create rules in random order
+        for priority in rule_priorities:
+            dvs_acl.create_acl_rule(L3_TABLE_NAME,
+                                    f"PRIORITY_ORDER_TEST_RULE_{priority}",
+                                    config_qualifiers[priority],
+                                    action=config_actions[priority],
+                                    priority=priority)
+            dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"PRIORITY_ORDER_TEST_RULE_{priority}", "Active")
+
+        # Verify all rules are created with correct priorities
+        dvs_acl.verify_acl_rule_set(rule_priorities, config_actions, expected_sai_qualifiers)
+
+        # Clean up
+        for priority in rule_priorities:
+            dvs_acl.remove_acl_rule(L3_TABLE_NAME, f"PRIORITY_ORDER_TEST_RULE_{priority}")
+            dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"PRIORITY_ORDER_TEST_RULE_{priority}", None)
+        dvs_acl.verify_no_acl_rules()
+
+    def test_AclRuleDeletionPriorityOrder(self, dvs_acl, l3_acl_table):
+        """
+        Test that ACL rules are deleted in ascending priority order (lower priority value first).
+        """
+        # Create rules with different priorities
+        rule_priorities = ["100", "50", "200", "10", "150"]
+
+        config_qualifiers = {
+            "100": {"DST_IP": "192.168.0.100/32"},
+            "50": {"DST_IP": "192.168.0.50/32"},
+            "200": {"DST_IP": "192.168.0.200/32"},
+            "10": {"DST_IP": "192.168.0.10/32"},
+            "150": {"DST_IP": "192.168.0.150/32"},
+        }
+
+        # Create all rules
+        for priority in rule_priorities:
+            dvs_acl.create_acl_rule(L3_TABLE_NAME,
+                                    f"DELETE_ORDER_TEST_RULE_{priority}",
+                                    config_qualifiers[priority],
+                                    action="FORWARD",
+                                    priority=priority)
+            dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"DELETE_ORDER_TEST_RULE_{priority}", "Active")
+
+        # Delete all rules at once (they should be deleted in ascending priority order)
+        for priority in rule_priorities:
+            dvs_acl.remove_acl_rule(L3_TABLE_NAME, f"DELETE_ORDER_TEST_RULE_{priority}")
+
+        # Verify all rules are deleted
+        for priority in rule_priorities:
+            dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"DELETE_ORDER_TEST_RULE_{priority}", None)
+        dvs_acl.verify_no_acl_rules()
+
+    def test_AclRuleMixedPriorityOperations(self, dvs_acl, l3_acl_table):
+        """
+        Test mixed SET and DEL operations with different priorities.
+        Verifies that DEL operations (ascending order) are processed before SET operations (descending order).
+        """
+        # First, create initial set of rules
+        initial_priorities = ["100", "50", "150"]
+
+        for priority in initial_priorities:
+            dvs_acl.create_acl_rule(L3_TABLE_NAME,
+                                    f"MIXED_OP_RULE_{priority}",
+                                    {"SRC_IP": f"10.0.{priority}.0/32"},
+                                    action="DROP",
+                                    priority=priority)
+            dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"MIXED_OP_RULE_{priority}", "Active")
+
+        # Now delete some and add new ones
+        # Delete rules with priority 50 and 150
+        dvs_acl.remove_acl_rule(L3_TABLE_NAME, "MIXED_OP_RULE_50")
+        dvs_acl.remove_acl_rule(L3_TABLE_NAME, "MIXED_OP_RULE_150")
+
+        # Add new rules with different priorities
+        new_priorities = ["200", "25", "75"]
+        for priority in new_priorities:
+            dvs_acl.create_acl_rule(L3_TABLE_NAME,
+                                    f"MIXED_OP_RULE_{priority}",
+                                    {"SRC_IP": f"10.0.{priority}.0/32"},
+                                    action="FORWARD",
+                                    priority=priority)
+            dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"MIXED_OP_RULE_{priority}", "Active")
+
+        # Verify final state: should have rules with priorities 100, 200, 25, 75
+        remaining_priorities = ["100", "200", "25", "75"]
+        for priority in remaining_priorities:
+            dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"MIXED_OP_RULE_{priority}", "Active")
+
+        # Verify deleted rules are gone
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, "MIXED_OP_RULE_50", None)
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, "MIXED_OP_RULE_150", None)
+
+        # Clean up
+        for priority in remaining_priorities:
+            dvs_acl.remove_acl_rule(L3_TABLE_NAME, f"MIXED_OP_RULE_{priority}")
+            dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"MIXED_OP_RULE_{priority}", None)
+        dvs_acl.verify_no_acl_rules()
+
 class TestAclCrmUtilization:
     @pytest.fixture(scope="class", autouse=True)
     def configure_crm_polling_interval_for_test(self, dvs):
