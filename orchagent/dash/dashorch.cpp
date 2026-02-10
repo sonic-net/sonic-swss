@@ -61,7 +61,6 @@ DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, DBConnector *app_
     ZmqOrch(db, tableName, zmqServer),
     EniCounter(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, ENI_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
     MeterCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, METER_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
-    HaSetCounter(HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, HA_SET_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false)
 {
     SWSS_LOG_ENTER();
 
@@ -80,35 +79,6 @@ void DashOrch::setDashHaOrch(DashHaOrch *dash_ha_orch)
     m_dash_ha_orch = dash_ha_orch;
 }
 
-void DashOrch::handleHaSetFCStatusUpdate(bool is_enabled)
-{
-    SWSS_LOG_ENTER();
-
-    bool prev_enabled = HaSetCounter.fc_status;
-    HaSetCounter.fc_status = is_enabled;
-
-    if (HaSetCounter.fc_status != prev_enabled)
-    {
-        if (m_dash_ha_orch == nullptr)
-        {
-            SWSS_LOG_WARN("DashHaOrch is not set, cannot update HA_SET flex counters");
-            return;
-        }
-
-        const auto& ha_set_entries = m_dash_ha_orch->getHaSetEntries();
-        for (const auto& entry : ha_set_entries)
-        {
-            if (HaSetCounter.fc_status)
-            {
-                HaSetCounter.addToFC(entry.second.ha_set_id, entry.first);
-            }
-            else
-            {
-                HaSetCounter.removeFromFC(entry.second.ha_set_id, entry.first);
-            }
-        }
-    }
-}
 
 bool DashOrch::getRouteTypeActions(dash::route_type::RoutingType routing_type, dash::route_type::RouteType& route_type)
 {
@@ -1347,18 +1317,6 @@ void DashOrch::DashCounter<CounterType::DASH_METER>::fetchStats()
     {
         auto counter_id = static_cast<sai_meter_bucket_entry_stat_t>(stat_enum);
         counter_stats.insert(sai_serialize_meter_bucket_entry_stat(counter_id));
-    }
-}
-
-template<>
-void DashOrch::DashCounter<CounterType::HA_SET>::fetchStats()
-{
-    counter_stats.clear();
-    auto stat_enum_list = queryAvailableCounterStats((sai_object_type_t)SAI_OBJECT_TYPE_HA_SET);
-    for (auto &stat_enum: stat_enum_list)
-    {
-        auto counter_id = static_cast<sai_ha_set_stat_t>(stat_enum);
-        counter_stats.insert(sai_serialize_ha_set_stat(counter_id));
     }
 }
 

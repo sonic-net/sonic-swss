@@ -59,7 +59,7 @@ int gFlexCounterDelaySec;
 #define WRED_PORT_KEY               "WRED_ECN_PORT"
 #define SRV6_KEY                    "SRV6"
 #define SWITCH_KEY                  "SWITCH"
-#define HA_SET_KEY                 "HA_SET"
+#define HA_SET_KEY                  "HA_SET"
 
 unordered_map<string, string> flexCounterGroupMap =
 {

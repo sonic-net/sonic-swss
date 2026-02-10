@@ -18,6 +18,9 @@
 
 #include "pbutils.h"
 
+#define HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP "HA_SET_STAT_COUNTER"
+#define HA_SET_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
+
 struct HaSetEntry
 {
     sai_object_id_t ha_set_id;
@@ -107,11 +110,13 @@ protected:
     swss::NotificationConsumer* m_haSetNotificationConsumer;
     swss::NotificationConsumer* m_haScopeNotificationConsumer;
 
+    DashCounter<CounterType::HA_SET> HaSetCounter;
 public:
     const HaSetTable& getHaSetEntries() const { return m_ha_set_entries; };
     const HaScopeTable& getHaScopeEntries() const { return m_ha_scope_entries; };
     const DashBfdSessionTable& getBfdSessionPendingCreation() const { return m_bfd_session_pending_creation; };
     virtual HaScopeEntry getHaScopeForEni(const std::string& eni);
+    void handleHaSetFCStatusUpdate(bool is_enabled);
 };
 
 #endif // DASHHAORCH_H
