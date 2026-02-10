@@ -316,6 +316,7 @@ bool DashHaOrch::addHaSetEntry(const std::string &key, const dash::ha_set::HaSet
         }
     }
     m_ha_set_entries[key] = HaSetEntry {sai_ha_set_oid, entry};
+    HaSetCounter.addToFC(sai_ha_set_oid, key);
     SWSS_LOG_NOTICE("Created HA Set object for %s", key.c_str());
 
     return true;
@@ -332,7 +333,7 @@ bool DashHaOrch::removeHaSetEntry(const std::string &key)
         SWSS_LOG_WARN("HA Set entry does not exist for %s", key.c_str());
         return true;
     }
-
+    HaSetCounter.removeFromFC(it->second.ha_set_id, key);
     sai_status_t status = sai_dash_ha_api->remove_ha_set(it->second.ha_set_id);
 
     if (status != SAI_STATUS_SUCCESS)
