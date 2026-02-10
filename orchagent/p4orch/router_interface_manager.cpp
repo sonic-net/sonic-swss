@@ -572,3 +572,30 @@ std::string RouterInterfaceManager::verifyStateAsicDb(const P4RouterInterfaceEnt
     return verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
                        /*allow_unknown=*/false);
 }
+
+void RouterInterfaceManager::setRouterIntfsMtu(const std::string& port,
+                                               uint32_t mtu) {
+  // Update MTU of all router interfaces that are mapped to this port.
+  SWSS_LOG_NOTICE(
+      "Update MTU to %u for all router interfaces mapped to port: %s", mtu,
+      port.c_str());
+  for (auto& it : m_routerIntfTable) {
+    if (it.second.port_name != port) {
+      continue;
+    }
+    sai_attribute_t attr;
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_MTU;
+    attr.value.u32 = mtu;
+    sai_status_t status = sai_router_intfs_api->set_router_interface_attribute(
+        it.second.router_interface_oid, &attr);
+    if (status != SAI_STATUS_SUCCESS) {
+      SWSS_LOG_ERROR(
+          "Failed to update MTU for router interface: %s (SAI_STATUS: %s)",
+          QuotedVar(it.second.router_interface_id).c_str(),
+          sai_serialize_status(status).c_str());
+      continue;
+    }
+    SWSS_LOG_NOTICE("Router interface: %s MTU updated to %u",
+                    QuotedVar(it.second.router_interface_id).c_str(), mtu);
+  }
+}

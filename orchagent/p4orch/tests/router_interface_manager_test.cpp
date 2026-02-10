@@ -244,6 +244,11 @@ class RouterInterfaceManagerTest : public ::testing::Test
         return router_intf_manager_.getRouterInterfaceEntry(router_intf_key);
     }
 
+    void SetRouterIntfsMtu(const std::string& port, uint32_t mtu) {
+    	router_intf_manager_.setRouterIntfsMtu(port, mtu);
+    }
+
+
     void ValidateRouterInterfaceEntry(const P4RouterInterfaceEntry &expected_entry)
     {
         const std::string router_intf_key =
@@ -1114,4 +1119,38 @@ TEST_F(RouterInterfaceManagerTest, VerifyStateAsicDbTest)
     router_intf_entry_ptr->port_name = "Ethernet8";
     EXPECT_FALSE(VerifyState(db_key, attributes).empty());
     router_intf_entry_ptr->port_name = "Ethernet7";
+}
+
+TEST_F(RouterInterfaceManagerTest, UpdateRifMtuWhenPortMtuChanges) {
+  // Create 2 router interfaces on different ports.
+  P4RouterInterfaceEntry router_intf_entry1(kRouterInterfaceId1, kPortName1,
+                                            kMacAddress1);
+  router_intf_entry1.router_interface_oid = kRouterInterfaceOid1;
+  AddRouterInterfaceEntry(router_intf_entry1, kPortOid1, kMtu1);
+  P4RouterInterfaceEntry router_intf_entry2(kRouterInterfaceId2, kPortName2,
+                                            kMacAddress2);
+  router_intf_entry2.router_interface_oid = kRouterInterfaceOid2;
+  AddRouterInterfaceEntry(router_intf_entry2, kPortOid2, kMtu2);
+  // Update MTU on first router interface.
+  sai_attribute_value_t attr_value;
+  attr_value.u32 = kMtu2;
+  std::unordered_map<sai_attr_id_t, sai_attribute_value_t> attr_list = {
+      {SAI_ROUTER_INTERFACE_ATTR_MTU, attr_value}};
+  EXPECT_CALL(mock_sai_router_intf_,
+              set_router_interface_attribute(
+                  Eq(router_intf_entry1.router_interface_oid),
+                  Truly(std::bind(MatchCreateRouterInterfaceAttributeList,
+                                  std::placeholders::_1, attr_list))))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  SetRouterIntfsMtu(kPortName1, kMtu2);
+  // Update MTU on second router interface which encounters a SAI failure.
+  attr_value.u32 = kMtu1;
+  attr_list[SAI_ROUTER_INTERFACE_ATTR_MTU] = attr_value;
+  EXPECT_CALL(mock_sai_router_intf_,
+              set_router_interface_attribute(
+                  Eq(router_intf_entry2.router_interface_oid),
+                  Truly(std::bind(MatchCreateRouterInterfaceAttributeList,
+                                  std::placeholders::_1, attr_list))))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+  SetRouterIntfsMtu(kPortName2, kMtu1);
 }
