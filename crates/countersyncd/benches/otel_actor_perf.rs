@@ -86,7 +86,6 @@ async fn run_stream(prepared: PreparedDataset, endpoint: String) -> (std::time::
     let (shutdown_tx, _shutdown_rx) = oneshot::channel();
 
     let cfg = OtelActorConfig {
-        print_to_console: false,
         collector_endpoint: endpoint,
         max_counters_per_export: 10_000,
         flush_timeout: Duration::from_secs(1),

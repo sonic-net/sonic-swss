@@ -142,7 +142,6 @@ async fn run_end_to_end(prepared: PreparedDataset, endpoint: String, exports_cou
     let counter_handle = tokio::spawn(async move { counter_actor.run().await });
 
     let otel_cfg = OtelActorConfig {
-        print_to_console: false,
         collector_endpoint: endpoint.clone(),
         max_counters_per_export: 10_000,
         flush_timeout: Duration::from_secs(1),
