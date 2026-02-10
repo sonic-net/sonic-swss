@@ -376,3 +376,7 @@ GreTunnelManager *P4Orch::getGreTunnelManager()
 TunnelDecapGroupManager* P4Orch::getTunnelDecapGroupManager() {
   return m_tunnelDecapGroupManager.get();
 }
+
+void P4Orch::setRouterIntfsMtu(const std::string& port, uint32_t mtu) {
+    m_routerIntfManager->setRouterIntfsMtu(port, mtu);
+}

@@ -55,6 +55,7 @@ class P4Orch : public Orch
     p4orch::WcmpManager *getWcmpManager();
     GreTunnelManager *getGreTunnelManager();
     TunnelDecapGroupManager* getTunnelDecapGroupManager();
+    void setRouterIntfsMtu(const std::string& port, uint32_t mtu);
     TablesInfo *tablesinfo = NULL;
 
     // m_p4TableToManagerMap: P4 APP DB table name, P4 Object Manager
