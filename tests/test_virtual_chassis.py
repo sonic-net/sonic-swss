@@ -95,6 +95,29 @@ class TestVirtualChassis(object):
                 _, res = dvs.runcmd(['sh', "-c", f"ip neigh del {test_neigh_ip} dev {test_neigh_dev}"])
                 assert res == "", "Error deleting static neigh"
 
+    def get_route_from_asic_db(self, dvs, ip_prefix):
+        # get the route entry
+        routes = dvs.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        # find the entry for the interested prefix
+        route_key = ""
+        for route in routes:
+            if ip_prefix in route:
+                route_key = route
+                break
+        return route_key
+
+    def get_route_from_app_db(self, dvs, ip_prefix):
+        # get the route entry
+        routes = dvs.get_app_db().get_keys("ROUTE_TABLE")
+        # find the entry for the interested prefix
+        print("Routes in App_db:{}".format(routes))
+        route_key = ""
+        for route in routes:
+            if ip_prefix in route:
+                route_key = route
+                break
+        return route_key
+
     def get_num_of_ecmp_paths_from_asic_db(self, dvs, ip_prefix):
         # get the route entry
         routes = dvs.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
@@ -126,6 +149,25 @@ class TestVirtualChassis(object):
                 count+=1
         
         return count
+
+    def get_syslog(self, dvs, marker, pattern):
+        (exitcode, log) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" " % (marker, pattern)])
+        return log
+
+    def check_syslog(self, dvs, marker, err_log, expected_cnt):
+        (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, err_log)])
+        assert num.strip() >= str(expected_cnt)
+
+    def print_mirror_sessions(self, dvs):
+        state_db = dvs.get_state_db()
+        mirrors = state_db.get_keys("MIRROR_SESSION_TABLE")
+        for mirror in mirrors:
+            mirror_entry = state_db.get_entry("MIRROR_SESSION_TABLE", mirror)
+            rt_prefix = mirror_entry.get("route_prefix", None)
+            nh = mirror_entry.get("next_hop_ip", None)
+            status = mirror_entry.get("status", None)
+            print("mirror session {} route_prefix {} nh {} status {}".format(mirror,rt_prefix,nh,status))
+        return
 
     def test_connectivity(self, vct):
         if vct is None:
@@ -1315,7 +1357,7 @@ class TestVirtualChassis(object):
         # test params
         local_lc_switch_id = '0'
         remote_lc_switch_id = '2'
-        test_prefix = "2.2.2.0/24"
+        test_prefix = "2.3.4.0/24"
         inband_port = "Ethernet0"
         test_neigh_ip_1 = "10.8.104.55"
         test_neigh_mac_1 = "00:0A:03:04:08:06"
@@ -1323,6 +1365,8 @@ class TestVirtualChassis(object):
 
         local_lc_dvs = self.get_lc_dvs(vct, local_lc_switch_id)
         remote_lc_dvs = self.get_lc_dvs(vct, remote_lc_switch_id)
+        local_marker = local_lc_dvs.add_log_marker()
+        remote_marker = remote_lc_dvs.add_log_marker()
 
         # config inband port
         self.config_inbandif_port(vct, inband_port)
@@ -1332,8 +1376,13 @@ class TestVirtualChassis(object):
         print("ip neigh show:{}".format(res))
         _, res = local_lc_dvs.runcmd(['sh', "-c", f"ip neigh add {test_neigh_ip_1} lladdr {test_neigh_mac_1} dev {test_neigh_dev_1}"])
         #assert res == "", "Error configuring static neigh"
+        _, res = local_lc_dvs.runcmd(['sh', "-c", "ip neigh show"])
+        print("local: ip neigh show: after{}".format(res))
 
         time.sleep(10)
+
+        _, res = remote_lc_dvs.runcmd(['sh', "-c", "ip neigh show"])
+        print("Remote: ip neigh show: after{}".format(res))
 
         asic_db = remote_lc_dvs.get_asic_db()
         asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY", 1)
@@ -1358,11 +1407,18 @@ class TestVirtualChassis(object):
         ip = nexthop_entry.get("SAI_NEXT_HOP_ATTR_IP")
         assert ip != "", "Ip address not found for nexthop entry in asic db"
 
+        route1 = self.get_route_from_app_db(local_lc_dvs, test_prefix)
+        print("route1:{}".format(route1))
+        #assert route == "", "Route found in Local APP_DB"
+        route2 = self.get_route_from_asic_db(remote_lc_dvs, test_prefix)
+        print("route2:{}".format(route2))
+        #assert route == "", "Route found in Local ASIC_DB"
+
         session = "TEST_SESSION"
 
         mirror_entry = {
             "src_ip": "1.1.1.1",
-            "dst_ip": "2.2.2.2",
+            "dst_ip": "2.3.4.5",
             "gre_type": "0x6558",
             "dscp": "8",
             "ttl": "100",
@@ -1378,6 +1434,9 @@ class TestVirtualChassis(object):
         config_db.create_entry("MIRROR_SESSION", session, mirror_entry)
 
         time.sleep(5)
+        self.print_mirror_sessions(local_lc_dvs)
+        self.print_mirror_sessions(remote_lc_dvs)
+
         #check the mirror session is not active
         state_db = local_lc_dvs.get_state_db()
         state_db.wait_for_n_keys("MIRROR_SESSION_TABLE", 1)
@@ -1387,25 +1446,61 @@ class TestVirtualChassis(object):
         state_db.wait_for_n_keys("MIRROR_SESSION_TABLE", 1)
         state_db.wait_for_field_match("MIRROR_SESSION_TABLE", session, {"status": "inactive"})
 
+        route3 = self.get_route_from_app_db(local_lc_dvs, test_prefix)
+        assert route3 == "", "Route found in Local APP_DB"
+        route4 = self.get_route_from_asic_db(local_lc_dvs, test_prefix)
+        assert route4 == "", "Route found in Local ASIC_DB"
+
+        route5 = self.get_route_from_app_db(remote_lc_dvs, test_prefix)
+        assert route5 == "", "Route found in remote APP_DB"
+        route6 = self.get_route_from_asic_db(remote_lc_dvs, test_prefix)
+        assert route6 == "", "Route found in Remote ASIC_DB"
+
         #Add the route for the mirror destination
         _, res = local_lc_dvs.runcmd(['sh', "-c", "ip route show"])
         print("local dvs before: ip route show:{}".format(res))
-        _, res = local_lc_dvs.runcmd(['sh', '-c', f"ip route add {test_prefix} nexthop via {test_neigh_ip_1}"])
+        _, res = local_lc_dvs.runcmd(['sh', '-c', f"ip route add {test_prefix} via {test_neigh_ip_1}"])
         print("local dvs: ip route add:{}".format(res))
         _, res = local_lc_dvs.runcmd(['sh', "-c", "ip route show"])
         print("local dvs: ip route show:{}".format(res))
         #assert res == "", "Error configuring route"
 
+        time.sleep(10)
+        route7 = self.get_route_from_app_db(local_lc_dvs, test_prefix)
+        assert route7 != "", "Route not found in Local APP_DB"
+        route8 = self.get_route_from_asic_db(local_lc_dvs, test_prefix)
+        assert route8 != "", "Route not found Local ASIC_DB"
+
+        #logs = self.get_syslog(local_lc_dvs, marker, "swss")
+        _, logs = local_lc_dvs.runcmd(['sh', '-c', "awk '/%s/,ENDFILE {print;}' /var/log/syslog" % (local_marker)])
+        print("syslog after Route Add in Local asic:{}".format(logs))
+        #exp_log = "Updating mirror session " + session + " with route " + test_prefix
+        #exp_log1 = "Updated mirror session state db " + session + " nexthop to"
+        #check_syslog(local_lc_dvs, marker, exp_log, 1)
+        #check_syslog(local_lc_dvs, marker, exp_log1, 1)
+
+
         _, res = remote_lc_dvs.runcmd(['sh', "-c", "ip route show"])
         print("remote dvs before: ip route show:{}".format(res))
-        _, res = remote_lc_dvs.runcmd(['sh', '-c', f"ip route add {test_prefix} nexthop via {test_neigh_ip_1}"])
+        _, res = remote_lc_dvs.runcmd(['sh', '-c', f"ip route add {test_prefix} via {test_neigh_ip_1}"])
         print("remote dvs: ip route add:{}".format(res))
         _, res = remote_lc_dvs.runcmd(['sh', "-c", "ip route show"])
         print("remote dvs: ip route show:{}".format(res))
         #assert res == "", "Error configuring route"
         time.sleep(10)
 
+        route9 = self.get_route_from_app_db(local_lc_dvs, test_prefix)
+        assert route9 != "", "Route not found in Remote APP_DB"
+        route10 = self.get_route_from_asic_db(remote_lc_dvs, test_prefix)
+        assert route10 != "", "Route not Asic found"
+        _, logs = remote_lc_dvs.runcmd(['sh', '-c', "awk '/%s/,ENDFILE {print;}' /var/log/syslog" % (remote_marker)])
+        print("syslog after Route Add in Local asic:{}".format(logs))
+        #check_syslog(remote_lc_dvs, marker, exp_log, 1)
+        #check_syslog(remote_lc_dvs, marker, exp_log1, 1)
+
         #check the mirror session is active
+        self.print_mirror_sessions(local_lc_dvs)
+        self.print_mirror_sessions(remote_lc_dvs)
         state_db = local_lc_dvs.get_state_db()
         state_db.wait_for_n_keys("MIRROR_SESSION_TABLE", 1)
         state_db.wait_for_field_match("MIRROR_SESSION_TABLE", session, {"status": "active"})
@@ -1413,17 +1508,26 @@ class TestVirtualChassis(object):
         state_db = local_lc_dvs.get_state_db()
         state_db.wait_for_n_keys("MIRROR_SESSION_TABLE", 1)
         state_db.wait_for_field_match("MIRROR_SESSION_TABLE", session, {"status": "active"})
+
+        #Delete the mirror session
+        config_db = local_lc_dvs.get_config_db()
+        config_db.delete_entry("MIRROR_SESSION", session)
+
+        config_db = remote_lc_dvs.get_config_db()
+        config_db.delete_entry("MIRROR_SESSION", session)
+        time.sleep(3)
 
         #del the route
-        _, res = local_lc_dvs.runcmd(['sh', '-c', f"ip route del {test_prefix} nexthop via {test_neigh_ip_1} "])
+        _, res = local_lc_dvs.runcmd(['sh', '-c', f"ip route del {test_prefix} via {test_neigh_ip_1} "])
         assert res == "", "Error Deleting route"
-        _, res = remote_lc_dvs.runcmd(['sh', '-c', f"ip route del {test_prefix} nexthop via {test_neigh_ip_1} "])
+        _, res = remote_lc_dvs.runcmd(['sh', '-c', f"ip route del {test_prefix} via {test_neigh_ip_1} "])
         assert res == "", "Error Deleting route"
         #del the neighbor
         _, res = local_lc_dvs.runcmd(['sh', "-c", f"ip neigh del {test_neigh_ip_1} dev {test_neigh_dev_1}"])
         assert res == "", "Error deleting static neigh"
         # Cleanup inband if configuration
         self.del_inbandif_port(vct, inband_port)
+        assert res != "", "Faking the failure to check the logs"
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
