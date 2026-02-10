@@ -45,6 +45,15 @@ class NameLabelMapper {
   // subtype = APPL_DB table name
   std::string generateKeyFromTableAndObjectName(std::string table_name,
                                                 std::string object_name);
+
+  // Add the unique label to an SAI attribute
+  // return true if the label was already present;
+  // return false if a new label is generated.
+  bool addLabelToAttr(sai_object_type_t object_type,
+                      const std::string& table_name, const std::string& key,
+                      sai_attribute_t& attr, sai_attr_id_t attr_id,
+                      std::string& mapper_key, std::string& label);
+
   // Save the all entries to state db
   void saveMapperToDb();
   // Read the all entries from state db
