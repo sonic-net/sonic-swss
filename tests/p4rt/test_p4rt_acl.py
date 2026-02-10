@@ -304,6 +304,7 @@ class TestP4RTAcl(object):
                 self._p4rt_udf_group_obj.SAI_UDF_GROUP_TYPE_GENERIC,
             ),
             (self._p4rt_udf_group_obj.SAI_UDF_GROUP_ATTR_LENGTH, "2"),
+            (self._p4rt_udf_group_obj.SAI_UDF_GROUP_ATTR_LABEL, "any_value")
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -319,6 +320,7 @@ class TestP4RTAcl(object):
                 self._p4rt_udf_group_obj.SAI_UDF_GROUP_TYPE_GENERIC,
             ),
             (self._p4rt_udf_group_obj.SAI_UDF_GROUP_ATTR_LENGTH, "2"),
+            (self._p4rt_udf_group_obj.SAI_UDF_GROUP_ATTR_LABEL, "any_value")
         ]
         util.verify_attr(fvs, attr_list)
 
