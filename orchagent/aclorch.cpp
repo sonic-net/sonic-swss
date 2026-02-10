@@ -1788,6 +1788,11 @@ bool AclRule::getCreateCounter() const
     return m_createCounter;
 }
 
+uint32_t AclRule::getPriority() const
+{
+    return m_priority;
+}
+
 shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOrch *dtel, const string& rule, const string& table, const KeyOpFieldsValuesTuple& data, MetaDataMgr * m_metadataMgr)
 {
     shared_ptr<AclRule> aclRule;
@@ -5512,6 +5517,21 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
+    // Structure to hold rule information with priority for sorting
+    struct RuleEntry {
+        SyncMap::iterator iter;
+        string key;
+        string table_id;
+        string rule_id;
+        string op;
+        uint32_t priority;
+        KeyOpFieldsValuesTuple tuple;
+    };
+
+    // Collect all rules and extract their priorities
+    vector<RuleEntry> setRules;
+    vector<RuleEntry> delRules;
+
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -5522,7 +5542,91 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
         string rule_id = key.substr(found + 1);
         string op = kfvOp(t);
 
-        SWSS_LOG_INFO("OP: %s, TABLE_ID: %s, RULE_ID: %s", op.c_str(), table_id.c_str(), rule_id.c_str());
+        RuleEntry entry;
+        entry.iter = it;
+        entry.key = key;
+        entry.table_id = table_id;
+        entry.rule_id = rule_id;
+        entry.op = op;
+        entry.tuple = t;
+        entry.priority = 0;
+
+        // Extract priority for both SET and DEL operations
+        for (const auto& fv : kfvFieldsValues(t))
+        {
+            string attr_name = to_upper(fvField(fv));
+            if (attr_name == "PRIORITY")
+            {
+                entry.priority = (uint32_t)stoul(fvValue(fv));
+                break;
+            }
+        }
+
+        if (op == SET_COMMAND)
+        {
+            setRules.push_back(entry);
+        }
+        else
+        {
+            delRules.push_back(entry);
+        }
+
+        it++;
+    }
+
+    // Sort SET rules by priority (higher priority value = higher priority, so descending order)
+    sort(setRules.begin(), setRules.end(), [](const RuleEntry& a, const RuleEntry& b) {
+        return a.priority > b.priority;
+    });
+
+    // Sort DEL rules by priority (lower priority values deleted first, so ascending order)
+    sort(delRules.begin(), delRules.end(), [](const RuleEntry& a, const RuleEntry& b) {
+        return a.priority < b.priority;
+    });
+
+    // Process DEL rules first (in ascending priority order)
+    for (auto& entry : delRules)
+    {
+        it = entry.iter;
+        string key = entry.key;
+        string table_id = entry.table_id;
+        string rule_id = entry.rule_id;
+        string op = entry.op;
+
+        SWSS_LOG_INFO("OP: %s, TABLE_ID: %s, RULE_ID: %s, PRIORITY: %u (processing DEL in ascending priority order)",
+                      op.c_str(), table_id.c_str(), rule_id.c_str(), entry.priority);
+
+        if (table_id.empty())
+        {
+            SWSS_LOG_WARN("ACL rule with RULE_ID: %s is not valid as TABLE_ID is empty", rule_id.c_str());
+            consumer.m_toSync.erase(it);
+            continue;
+        }
+
+        if (removeAclRule(table_id, rule_id))
+        {
+            removeAclRuleStatus(table_id, rule_id);
+            consumer.m_toSync.erase(it);
+        }
+        else
+        {
+            // Mark pending removal status if removeAclRule returns error
+            setAclRuleStatus(table_id, rule_id, AclObjectStatus::PENDING_REMOVAL);
+        }
+    }
+
+    // Process SET rules in priority order
+    for (auto& entry : setRules)
+    {
+        it = entry.iter;
+        KeyOpFieldsValuesTuple t = entry.tuple;
+        string key = entry.key;
+        string table_id = entry.table_id;
+        string rule_id = entry.rule_id;
+        string op = entry.op;
+
+        SWSS_LOG_INFO("OP: %s, TABLE_ID: %s, RULE_ID: %s, PRIORITY: %u (processing SET in descending priority order)",
+                      op.c_str(), table_id.c_str(), rule_id.c_str(), entry.priority);
 
         if (table_id.empty())
         {
@@ -5674,25 +5778,6 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 setAclRuleStatus(table_id, rule_id, AclObjectStatus::INACTIVE);
                 SWSS_LOG_ERROR("Failed to create ACL rule. Rule configuration is invalid");
             }
-        }
-        else if (op == DEL_COMMAND)
-        {
-            if (removeAclRule(table_id, rule_id))
-            {
-                removeAclRuleStatus(table_id, rule_id);
-                it = consumer.m_toSync.erase(it);
-            }
-            else
-            {
-                // Mark pending removal status if removeAclRule returns error
-                setAclRuleStatus(table_id, rule_id, AclObjectStatus::PENDING_REMOVAL);
-                it++;
-            }
-        }
-        else
-        {
-            it = consumer.m_toSync.erase(it);
-            SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
         }
     }
 }
