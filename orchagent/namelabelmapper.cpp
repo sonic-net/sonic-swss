@@ -97,7 +97,7 @@ bool NameLabelMapper::existsLabel(_In_ sai_object_type_t object_type, _In_ const
 
 std::string NameLabelMapper::generateKeyFromTableAndObjectName(std::string table_name, std::string object_name)
 {
-    return table_name + object_name;
+    return table_name + ":" + object_name;
 }
 
 std::string NameLabelMapper::generateUniqueLabel()
@@ -119,6 +119,20 @@ bool NameLabelMapper::allocateLabel(_In_ sai_object_type_t object_type, _In_ con
         return false;
     }
     return true;
+}
+
+bool NameLabelMapper::addLabelToAttr(sai_object_type_t object_type, const std::string &table_name,
+                                     const std::string &key, sai_attribute_t &attr, sai_attr_id_t attr_id,
+                                     std::string &mapper_key, std::string &label)
+{
+    mapper_key = generateKeyFromTableAndObjectName(table_name, key);
+    bool label_present = allocateLabel(object_type, mapper_key, label);
+    attr.id = attr_id;
+    auto size = sizeof(attr.value.chardata);
+    snprintf(attr.value.chardata, size, "%s", label.c_str());
+    SWSS_LOG_NOTICE("Add ATTR_LABEL %s for sai object %s for %s", label.c_str(),
+                    sai_serialize_object_type(object_type).c_str(), mapper_key.c_str());
+    return label_present;
 }
 
 std::string NameLabelMapper::dumpStateCache()
