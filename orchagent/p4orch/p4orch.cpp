@@ -380,3 +380,7 @@ TunnelDecapGroupManager* P4Orch::getTunnelDecapGroupManager() {
 void P4Orch::refreshPortStatus() {
   m_wcmpManager->refreshPortOperStatus();
 }
+
+void P4Orch::setRouterIntfsMtu(const std::string& port, uint32_t mtu) {
+    m_routerIntfManager->setRouterIntfsMtu(port, mtu);
+}
