@@ -84,6 +84,7 @@ extern bool gMultiAsicVoq;
 #define PORT_STATE_POLLING_SEC                            5
 #define PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS     1000
 #define PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS     60000
+#define PORT_PHY_ATTR_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
 #define QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
 #define QUEUE_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   60000
 #define PG_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   60000
@@ -221,6 +222,13 @@ static map<sai_queue_type_t, string> sai_queue_type_string_map =
     {SAI_QUEUE_TYPE_UNICAST, "SAI_QUEUE_TYPE_UNICAST"},
     {SAI_QUEUE_TYPE_MULTICAST, "SAI_QUEUE_TYPE_MULTICAST"},
     {SAI_QUEUE_TYPE_UNICAST_VOQ, "SAI_QUEUE_TYPE_UNICAST_VOQ"},
+};
+
+const vector<sai_port_attr_t> port_phy_attr_ids =
+{
+    SAI_PORT_ATTR_RX_SIGNAL_DETECT,     // RX signal detection per lane
+    SAI_PORT_ATTR_FEC_ALIGNMENT_LOCK,   // FEC alignment lock status per lane
+    SAI_PORT_ATTR_RX_SNR                // Receive Signal-to-Noise Ratio per lane
 };
 
 const vector<sai_port_stat_t> port_stat_ids =
@@ -708,6 +716,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         m_portStateTable(stateDb, STATE_PORT_TABLE_NAME),
         m_portOpErrTable(stateDb, STATE_PORT_OPER_ERR_TABLE_NAME),
         port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+        port_phy_attr_manager(PORT_PHY_ATTR_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_PHY_ATTR_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         gb_port_stat_manager(true,
                 PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
                 PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
@@ -720,6 +729,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         wred_queue_stat_manager(WRED_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         counter_managers({
                 ref(port_stat_manager),
+                ref(port_phy_attr_manager),
                 ref(port_buffer_drop_stat_manager),
                 ref(queue_stat_manager),
                 ref(queue_watermark_manager),
@@ -1074,6 +1084,9 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     /* Query Path Tracing capability */
     checkPathTracingCapability();
+
+    /* Query PORT_PHY_ATTR capabilities */
+    queryPortPhyAttrCapabilities();
 
     /* Initialize the stats capability in STATE_DB */
     initCounterCapabilities(gSwitchId);
@@ -4093,6 +4106,18 @@ void PortsOrch::registerPort(Port &p)
             gb_port_stat_manager.setCounterIdList(p.m_line_side_id,
                     CounterType::PORT, gbport_counter_stats, p.m_switch_id);
     }
+    if (flex_counters_orch->getPortPhyAttrCounterState())
+    {
+        if (!m_supported_phy_attrs.empty())
+        {
+            if (p.m_type == Port::Type::PHY && verifyPortSupportsAllPhyAttr(p.m_port_id, p.m_alias.c_str()))
+            {
+                auto port_phy_attr_stats = generateCounterStats(m_supported_phy_attrs, sai_serialize_port_attr);
+                port_phy_attr_manager.setCounterIdList(p.m_port_id,
+                        CounterType::PORT_PHY_ATTR, port_phy_attr_stats);
+            }
+        }
+    }
     if (flex_counters_orch->getPortBufferDropCountersState())
     {
         auto port_buffer_drop_stats = generateCounterStats(port_buffer_drop_stat_ids, sai_serialize_port_stat);
@@ -4197,6 +4222,13 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     if (flex_counters_orch->getWredPortCountersState())
     {
         wred_port_stat_manager.clearCounterIdList(p.m_port_id);
+    }
+    if (!m_supported_phy_attrs.empty())
+    {
+        if (p.m_type == Port::Type::PHY && verifyPortSupportsAllPhyAttr(p.m_port_id, p.m_alias.c_str()))
+        {
+            port_phy_attr_manager.clearCounterIdList(p.m_port_id);
+        }
     }
 
     /* remove port name map from counter table */
@@ -8955,6 +8987,134 @@ void PortsOrch::generatePortBufferDropCounterMap()
     }
 
     m_isPortBufferDropCounterMapGenerated = true;
+}
+
+void PortsOrch::queryPortPhyAttrCapabilities()
+{
+    for (const auto& attr_id : port_phy_attr_ids)
+    {
+        sai_attr_capability_t capability;
+
+        sai_status_t status = sai_query_attribute_capability(
+            gSwitchId,
+            SAI_OBJECT_TYPE_PORT,
+            attr_id,
+            &capability
+        );
+
+        auto meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_PORT, attr_id);
+        std::string attr_id_str = std::to_string(attr_id);
+        const char* attr_name = meta ? meta->attridname : attr_id_str.c_str();
+
+        if (status == SAI_STATUS_SUCCESS && capability.get_implemented)
+        {
+            m_supported_phy_attrs.push_back(attr_id);
+            SWSS_LOG_NOTICE("PORT_PHY_ATTR: Attribute %s is SUPPORTED for GET",
+                            attr_name);
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("PORT_PHY_ATTR: Attribute %s is NOT supported (status=%d, get_implemented=%d)",
+                            attr_name, status, capability.get_implemented);
+        }
+    }
+}
+
+bool PortsOrch::verifyPortSupportsAllPhyAttr(sai_object_id_t port_id, const char* port_name)
+{
+    // Verify port supports ALL SERDES attributes
+    // Query with count=0 to check if attribute is supported (expect BUFFER_OVERFLOW)
+
+    // Check RX_SIGNAL_DETECT
+    sai_attribute_t port_attr;
+    port_attr.id = SAI_PORT_ATTR_RX_SIGNAL_DETECT;
+    port_attr.value.portlanelatchstatuslist.count = 0;
+    port_attr.value.portlanelatchstatuslist.list = nullptr;
+
+    sai_status_t status = sai_port_api->get_port_attribute(port_id, 1, &port_attr);
+    if (status != SAI_STATUS_BUFFER_OVERFLOW)
+    {
+        SWSS_LOG_ERROR("PORT_PHY_ATTR: Port %s does not support RX_SIGNAL_DETECT attribute (status=%d)",
+                      port_name, status);
+        return false;
+    }
+    SWSS_LOG_DEBUG("PORT_PHY_ATTR: Port %s supports RX_SIGNAL_DETECT attribute (count=%d)",
+                   port_name, port_attr.value.portlanelatchstatuslist.count);
+
+    // Check FEC_ALIGNMENT_LOCK
+    port_attr.id = SAI_PORT_ATTR_FEC_ALIGNMENT_LOCK;
+    port_attr.value.portlanelatchstatuslist.count = 0;
+    port_attr.value.portlanelatchstatuslist.list = nullptr;
+
+    status = sai_port_api->get_port_attribute(port_id, 1, &port_attr);
+    if (status != SAI_STATUS_BUFFER_OVERFLOW)
+    {
+        SWSS_LOG_ERROR("PORT_PHY_ATTR: Port %s does not support FEC_ALIGNMENT_LOCK attribute (status=%d)",
+                      port_name, status);
+        return false;
+    }
+    SWSS_LOG_DEBUG("PORT_PHY_ATTR: Port %s supports FEC_ALIGNMENT_LOCK attribute (count=%d)",
+                   port_name, port_attr.value.portlanelatchstatuslist.count);
+
+    // Check RX_SNR
+    port_attr.id = SAI_PORT_ATTR_RX_SNR;
+    port_attr.value.portsnrlist.count = 0;
+    port_attr.value.portsnrlist.list = nullptr;
+
+    status = sai_port_api->get_port_attribute(port_id, 1, &port_attr);
+    if (status != SAI_STATUS_BUFFER_OVERFLOW)
+    {
+        SWSS_LOG_ERROR("PORT_PHY_ATTR: Port %s does not support RX_SNR attribute (status=%d)",
+                      port_name, status);
+        return false;
+    }
+    SWSS_LOG_DEBUG("PORT_PHY_ATTR: Port %s supports RX_SNR attribute (count=%d)",
+                   port_name, port_attr.value.portsnrlist.count);
+    return true;
+}
+
+void PortsOrch::generatePortPhyAttrCounterMap()
+{
+    if (m_supported_phy_attrs.empty())
+    {
+        SWSS_LOG_WARN("PORT_PHY_ATTR: No PHY attributes supported on this platform");
+        return;
+    }
+
+    auto port_phy_attr_stats = generateCounterStats(m_supported_phy_attrs, sai_serialize_port_attr);
+
+    for (const auto& it: m_portList)
+    {
+        if (it.second.m_type == Port::Type::PHY && verifyPortSupportsAllPhyAttr(it.second.m_port_id, it.second.m_alias.c_str()))
+        {
+            SWSS_LOG_DEBUG("PORT_PHY_ATTR: Setting counter ID list for port %s",
+                          it.second.m_alias.c_str());
+
+            port_phy_attr_manager.setCounterIdList(it.second.m_port_id,
+                    CounterType::PORT_PHY_ATTR, port_phy_attr_stats);
+        }
+    }
+}
+
+void PortsOrch::clearPortPhyAttrCounterMap()
+{
+    for (const auto& it: m_portList)
+    {
+        // Clear counter stats only for PHY ports that were previously configured
+        if (it.second.m_type != Port::Type::PHY)
+        {
+            continue;
+        }
+
+        SWSS_LOG_DEBUG("PORT_PHY_ATTR: Clearing counter ID list for port %s", it.second.m_alias.c_str());
+
+        port_phy_attr_manager.clearCounterIdList(it.second.m_port_id);
+    }
+}
+
+const std::vector<sai_port_attr_t>& PortsOrch::getPortPhyAttrIds() const
+{
+    return port_phy_attr_ids;
 }
 
 /****
