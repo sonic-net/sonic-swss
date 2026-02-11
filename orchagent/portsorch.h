@@ -29,6 +29,7 @@
 #define PORT_STAT_COUNTER_FLEX_COUNTER_GROUP "PORT_STAT_COUNTER"
 #define PORT_RATE_COUNTER_FLEX_COUNTER_GROUP "PORT_RATE_COUNTER"
 #define PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP "PORT_BUFFER_DROP_STAT"
+#define PORT_PHY_ATTR_FLEX_COUNTER_GROUP "PORT_PHY_ATTR"
 #define QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_STAT_COUNTER"
 #define QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_WATERMARK_STAT_COUNTER"
 #define PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_WATERMARK_STAT_COUNTER"
@@ -133,6 +134,14 @@ struct PortCapability
 
 typedef PortCapability<PortSupportedFecModes> PortFecModeCapability_t;
 
+extern const std::vector<sai_port_attr_t> port_phy_attr_ids;
+
+// Forward declaration for unit test friend class
+namespace portphyattr_test
+{
+class PortAttrTest;
+} // namespace portphyattr_test
+
 class PortsOrch : public Orch, public Subject
 {
 public:
@@ -217,6 +226,12 @@ public:
     void generatePortCounterMap();
     void generatePortBufferDropCounterMap();
 
+    void generatePortPhyAttrCounterMap();
+    void clearPortPhyAttrCounterMap();
+    const std::vector<sai_port_attr_t>& getPortPhyAttrIds() const;
+    void queryPortPhyAttrCapabilities();
+    bool verifyPortSupportsAllPhyAttr(sai_object_id_t port_id, const char* port_name);
+
     void generateWredPortCounterMap();
     void generateWredQueueCounterMap();
 
@@ -300,6 +315,7 @@ private:
     shared_ptr<DBConnector> m_notificationsDb;
 
     FlexCounterTaggedCachedManager<void> port_stat_manager;
+    FlexCounterTaggedCachedManager<void> port_phy_attr_manager;
     FlexCounterTaggedCachedManager<void> port_buffer_drop_stat_manager;
     FlexCounterTaggedCachedManager<sai_queue_type_t> queue_stat_manager;
     FlexCounterTaggedCachedManager<sai_queue_type_t> queue_watermark_manager;
@@ -505,6 +521,8 @@ private:
     bool m_isPortCounterMapGenerated = false;
     bool m_isPortBufferDropCounterMapGenerated = false;
 
+    std::vector<sai_port_attr_t> m_supported_phy_attrs;
+
     bool isAutoNegEnabled(sai_object_id_t id);
     task_process_status setPortAutoNeg(Port &port, bool autoneg);
     task_process_status setPortUnreliableLOS(Port &port, bool enabled);
@@ -616,5 +634,8 @@ private:
     // Port OA helper
     PortHelper m_portHlpr;
     bool m_isWarmRestoreStage = false;
+
+    // Friend declaration for unit tests
+    friend class portphyattr_test::PortAttrTest;
 };
 #endif /* SWSS_PORTSORCH_H */
