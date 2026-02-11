@@ -15,6 +15,7 @@
 #include "p4orch/ext_tables_manager.h"
 #include "p4orch/gre_tunnel_manager.h"
 #include "p4orch/l3_admit_manager.h"
+#include "p4orch/l3_multicast_manager.h"
 #include "p4orch/mirror_session_manager.h"
 #include "p4orch/neighbor_manager.h"
 #include "p4orch/next_hop_manager.h"
@@ -78,6 +79,7 @@ class P4Orch : public Orch
     std::unique_ptr<NeighborManager> m_neighborManager;
     std::unique_ptr<NextHopManager> m_nextHopManager;
     std::unique_ptr<RouteManager> m_routeManager;
+    std::unique_ptr<p4orch::L3MulticastManager> m_l3MulticastManager;
     std::unique_ptr<p4orch::MirrorSessionManager> m_mirrorSessionManager;
     std::unique_ptr<p4orch::AclTableManager> m_aclTableManager;
     std::unique_ptr<p4orch::AclRuleManager> m_aclRuleManager;

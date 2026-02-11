@@ -3275,16 +3275,60 @@ class TestVnetOrch(object):
         self.remove_ip_address("Ethernet12", "9.1.0.4/32")
         self.set_admin_status("Ethernet12", "down")
 
-
     '''
-    Test 33 - Test for DPU repairing (live update endpoint IPs) + local endpoint + custom bfd monitoring
+    Test 33 - Create vnet route tunnel with various metric values
     '''
     def test_vnet_orch_33(self, dvs, testlog):
         self.setup_db(dvs)
 
         vnet_obj = self.get_vnet_obj()
+
         tunnel_name = 'tunnel_33'
-        vnet_name = 'vnet33'
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
+        create_vnet_entry(dvs, 'Vnet33', tunnel_name, '10033', "")
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet33')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet33', '10033')
+
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
+
+        vnet_obj.fetch_exist_entries(dvs)
+        
+        for i in range(21):
+            create_vnet_routes(dvs, f'0.0.0.{i}/32', 'Vnet33', f'10.10.10.{i}', metric=i)
+            vnet_obj.check_vnet_routes(dvs, 'Vnet33', f'10.10.10.{i}', tunnel_name)
+            check_state_db_routes(dvs, 'Vnet33', f"0.0.0.{i}/32", [f'10.10.10.{i}'])
+
+            entry = self.cdb.get_entry("VNET_ROUTE_TUNNEL", f"Vnet33|0.0.0.{i}/32")
+            assert entry is not None and len(entry) > 0, f"VNET route entry not found in CONFIG DB."
+            assert int(entry.get('metric', -1)) == i, f"VNET route metric mismatch: expected {i}, got {entry.get('metric', -1)}."
+
+            # Clean-up vnet route
+            delete_vnet_routes(dvs, f"0.0.0.{i}/32", 'Vnet33')
+            vnet_obj.check_del_vnet_routes(dvs, 'Vnet33')
+
+            vnet_obj.fetch_exist_entries(dvs)
+
+        # Clean-up and verify remove flows
+        delete_vnet_entry(dvs, "Vnet33")
+        vnet_obj.check_del_vnet_entry(dvs, "Vnet33")
+
+        delete_vxlan_tunnel(dvs, tunnel_name)
+        vnet_obj.check_del_vxlan_tunnel(dvs)
+
+
+    '''
+    Test 34 - Test for DPU repairing (live update endpoint IPs) + local endpoint + custom bfd monitoring
+    '''
+    def test_vnet_orch_34(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        vnet_obj = self.get_vnet_obj()
+        tunnel_name = 'tunnel_34'
+        vnet_name = 'vnet34'
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
         vnet_obj.fetch_exist_entries(dvs)
@@ -3350,14 +3394,14 @@ class TestVnetOrch(object):
         self.set_admin_status("Ethernet4", "down")
 
     '''
-    Test 34 - Test for DPU repairing with DPUs under same NPUs (live update monitor IPs)
+    Test 35 - Test for DPU repairing with DPUs under same NPUs (live update monitor IPs)
     '''
-    def test_vnet_orch_34(self, dvs, testlog):
+    def test_vnet_orch_35(self, dvs, testlog):
         self.setup_db(dvs)
 
         vnet_obj = self.get_vnet_obj()
-        tunnel_name = 'tunnel_34'
-        vnet_name = 'vnet34'
+        tunnel_name = 'tunnel_35'
+        vnet_name = 'vnet35'
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
         vnet_obj.fetch_exist_entries(dvs)

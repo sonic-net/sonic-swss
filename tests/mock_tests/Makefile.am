@@ -31,6 +31,7 @@ tests_INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib -I$
 tests_SOURCES = aclorch_ut.cpp \
                 aclorch_rule_ut.cpp \
                 portsorch_ut.cpp \
+                vxlanorch_ut.cpp \
                 routeorch_ut.cpp \
                 qosorch_ut.cpp \
                 bufferorch_ut.cpp \
@@ -75,6 +76,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 twamporch_ut.cpp \
                 stporch_ut.cpp \
                 flexcounter_ut.cpp \
+                counternameupdater_ut.cpp \
                 mock_orch_test.cpp \
                 mock_dash_orch_test.cpp \
                 zmq_orch_ut.cpp \
@@ -195,6 +197,7 @@ tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
 		 $(P4_ORCH_DIR)/mirror_session_manager.cpp \
 		 $(P4_ORCH_DIR)/gre_tunnel_manager.cpp \
 		 $(P4_ORCH_DIR)/l3_admit_manager.cpp \
+		 $(P4_ORCH_DIR)/l3_multicast_manager.cpp \
 		 $(P4_ORCH_DIR)/ext_tables_manager.cpp \
 		 $(P4_ORCH_DIR)/tests/mock_sai_switch.cpp
 

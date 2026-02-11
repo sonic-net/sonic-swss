@@ -23,7 +23,9 @@ using ::p4orch::kTableKeyDelimiter;
 extern sai_object_id_t gSwitchId;
 extern sai_object_id_t gVirtualRouterId;
 
+extern sai_ipmc_api_t* sai_ipmc_api;
 extern sai_route_api_t *sai_route_api;
+extern sai_rpf_group_api_t* sai_rpf_group_api;
 
 extern CrmOrch *gCrmOrch;
 
@@ -314,6 +316,50 @@ sai_route_entry_t RouteManager::prepareSaiEntry(
   return sai_entry;
 }
 
+sai_ipmc_entry_t RouteManager::prepareSaiIpmcEntry(
+    const P4RouteEntry& route_entry) const {
+  sai_ipmc_entry_t sai_entry;
+  sai_entry.switch_id = gSwitchId;
+  sai_entry.vr_id = m_vrfOrch->getVRFid(route_entry.vrf_id);
+  sai_entry.type = SAI_IPMC_ENTRY_TYPE_XG;
+  // TODO: We want a prefix, not IP address.
+  sai_ip_prefix_t sai_prefix;
+  copy(sai_prefix, route_entry.route_prefix);
+  if (sai_prefix.addr_family == SAI_IP_ADDR_FAMILY_IPV4) {
+    sai_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+    sai_entry.destination.addr.ip4 = sai_prefix.addr.ip4;
+    sai_entry.source.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+    sai_entry.source.addr.ip4 = 0;
+  } else {
+    sai_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
+    memcpy(&sai_entry.destination.addr.ip6, &sai_prefix.addr.ip6,
+           sizeof(sai_ip6_t));
+    sai_entry.source.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
+    memset(&sai_entry.source.addr.ip6, 0, sizeof(sai_ip6_t));
+  }
+  // copy(sai_entry.destination, route_entry.route_prefix);
+  // sai_entry.source;  // unused, but needs to be set
+  return sai_entry;
+}
+
+ReturnCode RouteManager::createDefaultRpfGroup() {
+  SWSS_LOG_ENTER();
+  empty_rpf_group_oid_ = SAI_NULL_OBJECT_ID;
+
+  std::vector<sai_attribute_t> attrs;
+  // No attributes are needed for RPF group creation.
+
+  sai_status_t status = sai_rpf_group_api->create_rpf_group(
+      &empty_rpf_group_oid_, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+
+  if (status != SAI_STATUS_SUCCESS) {
+    SWSS_LOG_ERROR(
+        "Unable to create empty RPF group prior to creating IPMC entries");
+    return ReturnCode(status);
+  }
+  return ReturnCode();
+}
+
 bool RouteManager::mergeRouteEntry(const P4RouteEntry &dest, const P4RouteEntry &src, P4RouteEntry *ret)
 {
     SWSS_LOG_ENTER();
@@ -580,39 +626,24 @@ ReturnCode RouteManager::processRouteEntries(
   SWSS_LOG_ENTER();
 
   ReturnCode status;
+  std::vector<ReturnCode> statuses;
+
   // In syncd, bulk SAI calls use mode SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR.
   if (op == SET_COMMAND) {
     if (!update) {
-      auto statuses = createRouteEntries(route_entries);
-      for (size_t i = 0; i < route_entries.size(); ++i) {
-        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(tuple_list[i]),
-                             kfvFieldsValues(tuple_list[i]), statuses[i],
-                             /*replace=*/true);
-        if (status.ok() && !statuses[i].ok()) {
-          status = statuses[i];
-        }
-      }
+      statuses = createRouteEntries(route_entries);
     } else {
-      // TODO: Stop on first failure for batch update.
-      auto statuses = updateRouteEntries(route_entries);
-      for (size_t i = 0; i < route_entries.size(); ++i) {
-        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(tuple_list[i]),
-                             kfvFieldsValues(tuple_list[i]), statuses[i],
-                             /*replace=*/true);
-        if (status.ok() && !statuses[i].ok()) {
-          status = statuses[i];
-        }
-      }
+      statuses = updateRouteEntries(route_entries);
     }
   } else {
-    auto statuses = deleteRouteEntries(route_entries);
-    for (size_t i = 0; i < route_entries.size(); ++i) {
-      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(tuple_list[i]),
-                           kfvFieldsValues(tuple_list[i]), statuses[i],
-                           /*replace=*/true);
-      if (status.ok() && !statuses[i].ok()) {
-        status = statuses[i];
-      }
+    statuses = deleteRouteEntries(route_entries);
+  }
+  for (size_t i = 0; i < route_entries.size(); ++i) {
+    m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(tuple_list[i]),
+                         kfvFieldsValues(tuple_list[i]), statuses[i],
+                         /*replace=*/true);
+    if (status.ok() && !statuses[i].ok()) {
+      status = statuses[i];
     }
   }
 
@@ -717,6 +748,115 @@ std::vector<ReturnCode> RouteManager::createRouteEntries(const std::vector<P4Rou
     }
 
     return statuses;
+}
+
+// Process a list of multicast route entries by the given operation.
+ReturnCode RouteManager::processRouteEntriesThatAssignMulticast(
+    const std::vector<P4RouteEntry>& route_entries,
+    const std::vector<swss::KeyOpFieldsValuesTuple>& tuple_list,
+    const std::string& op, bool update) {
+  return ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
+         << "RouteManager::processRouteEntriesThatAssignMulticast is not "
+         << "implemented yet";
+}
+
+std::vector<ReturnCode> RouteManager::createMulticastRouteEntries(
+    const std::vector<P4RouteEntry>& route_entries) {
+  SWSS_LOG_ENTER();
+  std::vector<ReturnCode> statuses(route_entries.size());
+
+  // Before the first entry add, we have to create an empty RPF group.
+  if (empty_rpf_group_oid_ == SAI_NULL_OBJECT_ID) {
+    ReturnCode status = createDefaultRpfGroup();
+    if (!status.ok()) {
+      for (size_t i = 0; i < route_entries.size(); ++i) {
+        statuses[i] = status;
+      }
+      return statuses;
+    }
+  }
+
+  for (size_t i = 0; i < route_entries.size(); ++i) {
+    const auto& route_entry = route_entries[i];
+
+    assert(route_entry.action == p4orch::kSetMulticastGroupId);
+    assert(!route_entry.multicast_group_id.empty());
+
+    sai_ipmc_entry_t sai_entry = prepareSaiIpmcEntry(route_entry);
+    std::vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+    attr.id = SAI_IPMC_ENTRY_ATTR_PACKET_ACTION;
+    attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+    attrs.push_back(attr);
+
+    // Fetch the multicast group OID.
+    sai_object_id_t group_oid = SAI_NULL_OBJECT_ID;
+    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_IPMC_GROUP,
+                               route_entry.multicast_group_id, &group_oid)) {
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                    << "Unknown multicast group ID "
+                    << QuotedVar(route_entry.multicast_group_id);
+      for (size_t j = i + 1; j < route_entries.size(); ++j) {
+        statuses[j] = ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
+      }
+      break;
+    }
+
+    attr.id = SAI_IPMC_ENTRY_ATTR_OUTPUT_GROUP_ID;
+    attr.value.oid = group_oid;
+    attrs.push_back(attr);
+
+    // We have nothing to set this to, but it is a mandatory attribute for
+    // entry creation.
+    attr.id = SAI_IPMC_ENTRY_ATTR_RPF_GROUP_ID;
+    attr.value.oid = empty_rpf_group_oid_;
+    attrs.push_back(attr);
+
+    // TODO: Add with counter support.
+    // attr.id = SAI_IPMC_ENTRY_ATTR_COUNTER_ID;
+    // attr.value.oid = group_counter_oid;
+    // attrs.push_back(attr);
+
+    statuses[i] = sai_ipmc_api->create_ipmc_entry(
+        &sai_entry, (uint32_t)attrs.size(), attrs.data());
+    if (statuses[i] != SAI_STATUS_SUCCESS) {
+      for (size_t j = i + 1; j < route_entries.size(); ++j) {
+        statuses[j] = ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
+      }
+      break;
+    }
+
+    // Bookkeeping
+    m_routeTable[route_entry.route_entry_key] = route_entry;
+    m_routeTable[route_entry.route_entry_key].sai_ipmc_entry = sai_entry;
+    m_p4OidMapper->setDummyOID(SAI_OBJECT_TYPE_IPMC_ENTRY,
+                               route_entry.route_entry_key);
+    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPMC_ENTRY);
+    m_vrfOrch->increaseVrfRefCount(route_entry.vrf_id);
+    m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                    route_entry.multicast_group_id);
+    statuses[i] = ReturnCode();
+  }
+  return statuses;
+}
+
+std::vector<ReturnCode> RouteManager::updateMulticastRouteEntries(
+    const std::vector<P4RouteEntry>& route_entries) {
+  SWSS_LOG_ENTER();
+  std::vector<ReturnCode> rv;
+  rv.push_back(
+      ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
+      << "RouteManager::updateMulticastRouteEntries is not implemented yet");
+  return rv;
+}
+std::vector<ReturnCode> RouteManager::deleteMulticastRouteEntries(
+    const std::vector<P4RouteEntry>& route_entries) {
+  SWSS_LOG_ENTER();
+  std::vector<ReturnCode> rv;
+  rv.push_back(
+      ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
+      << "RouteManager::deleteMulticastRouteEntries is not implemented yet");
+  return rv;
 }
 
 void RouteManager::updateRouteEntriesMeta(const P4RouteEntry &old_entry, const P4RouteEntry &new_entry)
