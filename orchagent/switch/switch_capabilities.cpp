@@ -399,29 +399,57 @@ void SwitchCapabilities::querySwitchEcmpHashAttrCapabilities()
 {
     SWSS_LOG_ENTER();
 
-    sai_attr_capability_t attrCap;
-
-    auto status = queryAttrCapabilitiesSai(
-        attrCap, SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ECMP_HASH
+    sai_attr_capability_t ecmpCap;
+    auto ecmpStatus = queryAttrCapabilitiesSai(
+        ecmpCap, SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ECMP_HASH
     );
-    if (status != SAI_STATUS_SUCCESS)
+    if (ecmpStatus != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR(
+        SWSS_LOG_WARN(
             "Failed to get attribute(%s) capabilities",
             toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ECMP_HASH).c_str()
         );
+    }
+    else if (ecmpCap.get_implemented)
+    {
+        switchCapabilities.ecmpHash.isAttrSupported = true;
         return;
     }
 
-    if (!attrCap.get_implemented)
+    sai_attr_capability_t ecmpV4Cap;
+    auto ecmpV4Status = queryAttrCapabilitiesSai(
+        ecmpV4Cap, SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ECMP_HASH_IPV4
+    );
+    if (ecmpV4Status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_WARN(
-            "Attribute(%s) GET is not implemented in SAI",
-            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ECMP_HASH).c_str()
+        SWSS_LOG_ERROR(
+            "Failed to get attribute(%s) capabilities",
+            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ECMP_HASH_IPV4).c_str()
         );
         return;
     }
 
+    sai_attr_capability_t ecmpV6Cap;
+    auto ecmpV6Status = queryAttrCapabilitiesSai(
+        ecmpV6Cap, SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ECMP_HASH_IPV6
+    );
+    if (ecmpV6Status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR(
+            "Failed to get attribute(%s) capabilities",
+            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ECMP_HASH_IPV6).c_str()
+        );
+        return;
+    }
+
+    if (!ecmpV4Cap.get_implemented || !ecmpV6Cap.get_implemented)
+    {
+        SWSS_LOG_ERROR(
+            "One or more of required ECMP capabilities not supported %d, %d",
+            ecmpV4Cap.get_implemented, ecmpV6Cap.get_implemented
+        );
+        return;
+    }
     switchCapabilities.ecmpHash.isAttrSupported = true;
 }
 
@@ -440,14 +468,44 @@ void SwitchCapabilities::querySwitchLagHashAttrCapabilities()
             "Failed to get attribute(%s) capabilities",
             toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_LAG_HASH).c_str()
         );
+    }
+    else if (attrCap.get_implemented)
+    {
+        switchCapabilities.lagHash.isAttrSupported = true;
         return;
     }
 
-    if (!attrCap.get_implemented)
+    sai_attr_capability_t lagV4Cap;
+    auto lagV4Status = queryAttrCapabilitiesSai(
+        lagV4Cap, SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_LAG_HASH_IPV4
+    );
+    if (lagV4Status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_WARN(
-            "Attribute(%s) GET is not implemented in SAI",
-            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_LAG_HASH).c_str()
+        SWSS_LOG_ERROR(
+            "Failed to get attribute(%s) capabilities",
+            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_LAG_HASH_IPV4).c_str()
+        );
+        return;
+    }
+
+    sai_attr_capability_t lagV6Cap;
+    auto lagV6Status = queryAttrCapabilitiesSai(
+        lagV6Cap, SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_LAG_HASH_IPV6
+    );
+    if (lagV6Status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR(
+            "Failed to get attribute(%s) capabilities",
+            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_LAG_HASH_IPV6).c_str()
+        );
+        return;
+    }
+
+    if (!lagV4Cap.get_implemented || !lagV6Cap.get_implemented)
+    {
+        SWSS_LOG_ERROR(
+            "One or more of required LAG capabilities not supported %d, %d",
+            lagV4Cap.get_implemented, lagV6Cap.get_implemented
         );
         return;
     }
