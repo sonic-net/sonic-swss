@@ -103,6 +103,8 @@
 #define PORT_OBNLEV                "obnlev"
 #define PORT_REGN_BFM1P            "regn_bfm1p"
 #define PORT_REGN_BFM1N            "regn_bfm1n"
+#define PORT_TX_POLARITY            "txpolarity"
+#define PORT_RX_POLARITY            "rxpolarity"
 #define PORT_CUSTOM_SERDES_ATTRS   "custom_serdes_attrs"
 #define PORT_ROLE                  "role"
 #define PORT_ADMIN_STATUS          "admin_status"

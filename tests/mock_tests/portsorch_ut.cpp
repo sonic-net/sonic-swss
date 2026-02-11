@@ -1431,6 +1431,72 @@ namespace portsorch_test
         cleanupPorts(gPortsOrch);
     }
 
+    TEST_F(PortsOrchTest, PortSerdesPolarity)
+    {
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Port count: 32 Data + 1 CPU
+        ASSERT_EQ(gPortsOrch->getAllPorts().size(), ports.size() + 1);
+
+        // Generate port serdes config with polarity settings
+        std::deque<KeyOpFieldsValuesTuple> kfvList = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "txpolarity",    "0x1,0x0,0x1,0x0"          },
+                { "rxpolarity",    "0x0,0x1,0x0,0x1"          }
+            }
+        }};
+
+        // Refill consumer
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Get port
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+
+        // Verify txpolarity
+        std::vector<std::uint32_t> txpolarity = { 0x1, 0x0, 0x1, 0x0 };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_POLARITY), SerdesValue(txpolarity));
+
+        // Verify rxpolarity
+        std::vector<std::uint32_t> rxpolarity = { SAI_PORT_SERDES_POLARITY_NORMAL,
+                                                    SAI_PORT_SERDES_POLARITY_INVERTED,
+                                                    SAI_PORT_SERDES_POLARITY_NORMAL,
+                                                    SAI_PORT_SERDES_POLARITY_INVERTED };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_RX_POLARITY), SerdesValue(rxpolarity));
+
+        // Dump pending tasks
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        ASSERT_TRUE(taskList.empty());
+
+        // Cleanup ports
+        cleanupPorts(gPortsOrch);
+    }
+
     /**
      * Test that verifies admin-disable then admin-enable during setPortSerdesAttribute()
      */

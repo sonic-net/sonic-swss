@@ -778,6 +778,8 @@ template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::obplev) &serdes
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::obnlev) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::regn_bfm1p) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::regn_bfm1n) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::txpolarity) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::rxpolarity) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::custom_collection) &serdes, const std::string &field, const std::string &value) const;
 
 
@@ -1319,6 +1321,20 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         else if (field == PORT_REGN_BFM1P)
         {
             if (!this->parsePortSerdes(port.serdes.regn_bfm1p, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_TX_POLARITY)
+        {
+            if (!this->parsePortSerdes(port.serdes.txpolarity, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_RX_POLARITY)
+        {
+            if (!this->parsePortSerdes(port.serdes.rxpolarity, field, value))
             {
                 return false;
             }
