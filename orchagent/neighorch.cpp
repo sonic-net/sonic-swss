@@ -1772,9 +1772,6 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
 
     m_syncdNeighbors.erase(neighborEntry);
 
-    NeighborUpdate update = { neighborEntry, MacAddress(), false };
-    notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
-
     if(gMySwitchType == "voq")
     {
         //Sync the neighbor to delete from the CHASSIS_APP_DB

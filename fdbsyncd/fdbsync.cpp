@@ -329,6 +329,7 @@ void FdbSync::updateLocalMac (struct m_fdb_info *info)
 {
     char *op;
     char *type;
+    char *proto_string;
     string port_name = "";
     string key = info->vid + ":" + info->mac;
     short fdb_type;    /*dynamic or static*/
@@ -367,7 +368,6 @@ void FdbSync::updateLocalMac (struct m_fdb_info *info)
     const std::string cmds = std::string("")
         + " bridge fdb " + op + " " + info->mac + " dev "
         + port_name + " master " + type + " vlan " + info->vid.substr(4) + proto_string;
-        + " proto hw";
 
     std::string res;
     int ret = swss::exec(cmds, res);
@@ -720,7 +720,7 @@ void FdbSync::macDelVxlanDB(string key)
     fvVector.push_back(p);
 
     // If warmstart is in progress, we take all netlink changes into the cache map
-    if (isWarmStartInProgress())
+    if (m_AppRestartAssist->isWarmStartInProgress())
     {
         m_AppRestartAssist->insertToMap(APP_VXLAN_FDB_TABLE_NAME, key, fvVector, true);
         return;

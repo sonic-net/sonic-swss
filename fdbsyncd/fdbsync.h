@@ -137,7 +137,7 @@ private:
         unsigned int vni;
         std::string ifname;
         uint8_t protocol;
-        union {
+        struct {
             std::string remote_vtep;
             std::string nexthop_group;
             std::string ifname;
