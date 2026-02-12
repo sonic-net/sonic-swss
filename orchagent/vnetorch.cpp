@@ -2233,6 +2233,11 @@ void VNetRouteOrch::removeMonitoringSession(const string& vnet, const NextHopKey
     }
 
     monitor_info_[vnet][ipPrefix].erase(monitor_addr);
+
+    if (monitor_info_[vnet][ipPrefix].empty())
+    {
+        monitor_info_[vnet].erase(ipPrefix);
+    }
 }
 
 void VNetRouteOrch::setEndpointMonitor(const string& vnet, const map<NextHopKey, IpAddress>& monitors, NextHopGroupKey& nexthops, const string& monitoring, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer, IpPrefix& ipPrefix)
@@ -3422,8 +3427,7 @@ bool VNetRouteOrch::isCustomMonitorEndpointUpdated(const string& vnet, IpPrefix&
     bool monitor_endpoint_updated = false;
     for (auto it = monitor_info_[vnet][ipPrefix].begin(); it != monitor_info_[vnet][ipPrefix].end(); it++)
     {
-        if (it->second.monitoring_type != VNET_MONITORING_TYPE_CUSTOM &&
-            it->second.monitoring_type != VNET_MONITORING_TYPE_CUSTOM_BFD)
+        if (it->second.monitoring_type != VNET_MONITORING_TYPE_CUSTOM_BFD)
         {
             continue;
         }

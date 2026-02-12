@@ -3459,6 +3459,17 @@ class TestVnetOrch(object):
         check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.2'])
         check_routes_advertisement(dvs, "100.100.1.1/32")
 
+        # Re-pairing back to original remote and primary
+        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2', ep_monitor='9.1.0.1,10.1.0.1', primary ='9.1.0.1', monitoring='custom_bfd', adv_prefix='100.100.1.1/32', check_directly_connected=True, rx_monitor_timer=100, tx_monitor_timer=100)
+
+        check_del_bfd_session(dvs, ['10.1.0.3'])
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
+        update_bfd_session_state(dvs, '10.1.0.1', 'Up')
+        time.sleep(2)
+        route1 = vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1'], tunnel_name)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
+        check_routes_advertisement(dvs, "100.100.1.1/32")
+
         # Remove tunnel route 1
         delete_vnet_routes(dvs, "100.100.1.1/32", vnet_name)
         time.sleep(2)
@@ -3467,7 +3478,7 @@ class TestVnetOrch(object):
         check_remove_routes_advertisement(dvs, "100.100.1.1/32")
 
         # Confirm the monitor sessions are removed
-        check_del_bfd_session(dvs, ['9.1.0.1', '10.1.0.3'])
+        check_del_bfd_session(dvs, ['9.1.0.1', '10.1.0.1'])
 
         delete_vnet_entry(dvs, vnet_name)
         vnet_obj.check_del_vnet_entry(dvs, vnet_name)
