@@ -51,11 +51,11 @@ private:
     std::map<std::string, FlowDumpFilterEntry> m_filter_cache;
 };
 
-class FlowSyncHandler
+class FlowApiHandler
 {
 public:
-    FlowSyncHandler(swss::DBConnector *dpu_state_db, swss::SelectableTimer *timer);
-    virtual ~FlowSyncHandler() = default;
+    FlowApiHandler(swss::DBConnector *dpu_state_db, swss::SelectableTimer *timer);
+    virtual ~FlowApiHandler() = default;
 
     virtual bool initialize(const std::string &key, const std::vector<swss::FieldValueTuple> &attrs) = 0;
     virtual task_process_status handleSet(const std::string &table_name, const std::string &key, const std::vector<swss::FieldValueTuple> &attrs) = 0;
@@ -67,7 +67,6 @@ public:
     virtual std::string getKey() const { return m_key; }
     virtual bool isActive() const { return m_session_id != SAI_NULL_OBJECT_ID; }
     virtual swss::SelectableTimer* getTimer() const { return m_timer; }
-    virtual void clearKey() { m_key = ""; }
 
 protected:
     virtual task_process_status createSession() = 0;
@@ -86,7 +85,7 @@ protected:
     std::shared_ptr<swss::Table> m_state_table;
 };
 
-class BulkSyncHandler : public FlowSyncHandler
+class BulkSyncHandler : public FlowApiHandler
 {
 public:
     BulkSyncHandler(swss::DBConnector *dpu_state_db, swss::SelectableTimer *timer);
@@ -112,7 +111,7 @@ private:
     static constexpr uint32_t DEFAULT_TIMEOUT_SEC = 120;
 };
 
-class FlowDumpHandler : public FlowSyncHandler
+class FlowDumpHandler : public FlowApiHandler
 {
 public:
     FlowDumpHandler(swss::DBConnector *dpu_state_db, swss::SelectableTimer *timer, std::shared_ptr<FlowDumpFilterManager> filter_manager);
@@ -151,7 +150,7 @@ public:
     DashHaFlowOrch(swss::DBConnector *db, const std::vector<std::string> &tableNames, swss::DBConnector *app_state_db, swss::ZmqServer *zmqServer);
 
 protected:
-    std::map<std::string, std::shared_ptr<FlowSyncHandler>> m_handlers;
+    std::map<std::string, std::shared_ptr<FlowApiHandler>> m_handlers;
 
     std::unique_ptr<swss::DBConnector> m_dpuStateDb;
     swss::SelectableTimer* m_sync_timer;

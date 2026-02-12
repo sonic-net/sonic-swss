@@ -234,14 +234,14 @@ bool FlowDumpFilterManager::deleteFilterSAI(sai_object_id_t filter_id)
     return true;
 }
 
-FlowSyncHandler::FlowSyncHandler(DBConnector *dpu_state_db, SelectableTimer *timer) :
+FlowApiHandler::FlowApiHandler(DBConnector *dpu_state_db, SelectableTimer *timer) :
     m_session_id(SAI_NULL_OBJECT_ID),
     m_timer(timer)
 {
     m_state_table = make_shared<Table>(dpu_state_db, STATE_DASH_FLOW_SYNC_SESSION_STATE_TABLE_NAME);
 }
 
-void FlowSyncHandler::deleteSession()
+void FlowApiHandler::deleteSession()
 {
     SWSS_LOG_ENTER();
 
@@ -259,7 +259,7 @@ void FlowSyncHandler::deleteSession()
     }
 }
 
-bool FlowSyncHandler::deleteSessionSAI()
+bool FlowApiHandler::deleteSessionSAI()
 {
     SWSS_LOG_ENTER();
 
@@ -274,7 +274,7 @@ bool FlowSyncHandler::deleteSessionSAI()
     return true;
 }
 
-void FlowSyncHandler::updateState(const string &state, const string &key, vector<FieldValueTuple> fvs)
+void FlowApiHandler::updateState(const string &state, const string &key, vector<FieldValueTuple> fvs)
 {
     chrono::steady_clock::time_point creation_time;
     chrono::steady_clock::time_point last_state_time = chrono::steady_clock::now();
@@ -302,7 +302,7 @@ void FlowSyncHandler::updateState(const string &state, const string &key, vector
 }
 
 BulkSyncHandler::BulkSyncHandler(DBConnector *dpu_state_db, SelectableTimer *timer) :
-    FlowSyncHandler(dpu_state_db, timer)
+    FlowApiHandler(dpu_state_db, timer)
 {
 }
 
@@ -379,9 +379,7 @@ task_process_status BulkSyncHandler::handleSet(const string &table_name, const s
     if (isActive())
     {
         SWSS_LOG_ERROR("Flow sync session already exists: %s. Cannot create new session: %s", m_key.c_str(), key.c_str());
-        vector<FieldValueTuple> fvs;
-        fvs.push_back(FieldValueTuple("type", DashHaFlowOrch::SESSION_TYPE_BULK_SYNC));
-        FlowSyncHandler::updateState("failed", key, fvs);
+        FlowApiHandler::updateState("failed", key, {{"type", DashHaFlowOrch::SESSION_TYPE_BULK_SYNC}});
         return task_failed;
     }
 
@@ -390,17 +388,15 @@ task_process_status BulkSyncHandler::handleSet(const string &table_name, const s
     if (!initialize(key, attrs))
     {
         SWSS_LOG_ERROR("Failed to initialize BulkSyncHandler for key %s", key.c_str());
-        vector<FieldValueTuple> fvs;
-        fvs.push_back(FieldValueTuple("type", DashHaFlowOrch::SESSION_TYPE_BULK_SYNC));
-        FlowSyncHandler::updateState("failed", key, fvs);
-        clearKey();
+        FlowApiHandler::updateState("failed", key, {{"type", DashHaFlowOrch::SESSION_TYPE_BULK_SYNC}});
+        reset();
         return task_failed;
     }
 
     task_process_status status = createSession();
     if (status != task_success && status != task_need_retry)
     {
-        clearKey();
+        reset();
     }
 
     return status;
@@ -425,14 +421,14 @@ task_process_status BulkSyncHandler::createSession()
     if (m_target_server_ip.empty())
     {
         SWSS_LOG_ERROR("Missing target_server_ip for flow sync session %s", m_key.c_str());
-        FlowSyncHandler::updateState("failed", m_key, {{"type", DashHaFlowOrch::SESSION_TYPE_BULK_SYNC}});
+        FlowApiHandler::updateState("failed", m_key, {{"type", DashHaFlowOrch::SESSION_TYPE_BULK_SYNC}});
         return task_failed;
     }
 
     if (m_target_server_port == 0)
     {
         SWSS_LOG_ERROR("Missing or invalid target_server_port for flow sync session %s", m_key.c_str());
-        FlowSyncHandler::updateState("failed", m_key, {{"type", DashHaFlowOrch::SESSION_TYPE_BULK_SYNC}});
+        FlowApiHandler::updateState("failed", m_key, {{"type", DashHaFlowOrch::SESSION_TYPE_BULK_SYNC}});
         return task_failed;
     }
 
@@ -440,7 +436,7 @@ task_process_status BulkSyncHandler::createSession()
     if (session_id == SAI_NULL_OBJECT_ID)
     {
         SWSS_LOG_ERROR("Failed to create flow sync session %s", m_key.c_str());
-        FlowSyncHandler::updateState("failed", m_key, {{"type", DashHaFlowOrch::SESSION_TYPE_BULK_SYNC}});
+        FlowApiHandler::updateState("failed", m_key, {{"type", DashHaFlowOrch::SESSION_TYPE_BULK_SYNC}});
         return task_failed;
     }
 
@@ -452,7 +448,7 @@ task_process_status BulkSyncHandler::createSession()
     m_timer->setInterval(interval);
     m_timer->start();
 
-    FlowSyncHandler::updateState("created", m_key, {{"type", DashHaFlowOrch::SESSION_TYPE_BULK_SYNC}});
+    FlowApiHandler::updateState("created", m_key, {{"type", DashHaFlowOrch::SESSION_TYPE_BULK_SYNC}});
     SWSS_LOG_NOTICE("Created flow sync session %s with session_id 0x%lx, timeout %u sec", m_key.c_str(), session_id, m_timeout_sec);
 
     return task_success;
@@ -461,7 +457,7 @@ task_process_status BulkSyncHandler::createSession()
 void BulkSyncHandler::handleFinished()
 {
     SWSS_LOG_ENTER();
-    FlowSyncHandler::updateState("completed", m_key, {{"type", DashHaFlowOrch::SESSION_TYPE_BULK_SYNC}});
+    FlowApiHandler::updateState("completed", m_key, {{"type", DashHaFlowOrch::SESSION_TYPE_BULK_SYNC}});
     SWSS_LOG_NOTICE("Flow sync session %s completed successfully", m_key.c_str());
     deleteSession();
     reset();
@@ -470,7 +466,7 @@ void BulkSyncHandler::handleFinished()
 void BulkSyncHandler::handleTimeout()
 {
     SWSS_LOG_ENTER();
-    FlowSyncHandler::updateState("failed", m_key, {{"type", DashHaFlowOrch::SESSION_TYPE_BULK_SYNC}});
+    FlowApiHandler::updateState("failed", m_key, {{"type", DashHaFlowOrch::SESSION_TYPE_BULK_SYNC}});
     SWSS_LOG_WARN("Flow sync session %s timed out", m_key.c_str());
     deleteSession();
     reset();
@@ -509,7 +505,7 @@ sai_object_id_t BulkSyncHandler::createSessionSAI()
 }
 
 FlowDumpHandler::FlowDumpHandler(DBConnector *dpu_state_db, SelectableTimer *timer, std::shared_ptr<FlowDumpFilterManager> filter_manager) :
-    FlowSyncHandler(dpu_state_db, timer),
+    FlowApiHandler(dpu_state_db, timer),
     m_filter_manager(filter_manager)
 {
 }
@@ -591,7 +587,7 @@ task_process_status FlowDumpHandler::createSession()
     if (filter_ids.size() != m_required_filter_keys.size())
     {
         SWSS_LOG_INFO("Flow dump session %s waiting for filters to become available (%zu/%zu)", m_key.c_str(), filter_ids.size(), m_required_filter_keys.size());
-        FlowSyncHandler::updateState("pending", m_key, {{"type", DashHaFlowOrch::SESSION_TYPE_FLOW_DUMP}});
+        FlowApiHandler::updateState("pending", m_key, {{"type", DashHaFlowOrch::SESSION_TYPE_FLOW_DUMP}});
         return task_need_retry;
     }
 
@@ -599,7 +595,7 @@ task_process_status FlowDumpHandler::createSession()
     if (session_id == SAI_NULL_OBJECT_ID)
     {
         SWSS_LOG_ERROR("Failed to create flow dump session %s", m_key.c_str());
-        FlowSyncHandler::updateState("failed", m_key, {{"type", DashHaFlowOrch::SESSION_TYPE_FLOW_DUMP}});
+        FlowApiHandler::updateState("failed", m_key, {{"type", DashHaFlowOrch::SESSION_TYPE_FLOW_DUMP}});
         return task_failed;
     }
 
@@ -609,7 +605,7 @@ task_process_status FlowDumpHandler::createSession()
     m_timer->setInterval(interval);
     m_timer->start();
 
-    FlowSyncHandler::updateState("created", m_key, {{"type", DashHaFlowOrch::SESSION_TYPE_FLOW_DUMP}});
+    FlowApiHandler::updateState("created", m_key, {{"type", DashHaFlowOrch::SESSION_TYPE_FLOW_DUMP}});
 
     SWSS_LOG_NOTICE("Created flow dump session %s with session_id 0x%lx, timeout %u sec", m_key.c_str(), session_id, m_timeout_sec);
 
@@ -626,7 +622,7 @@ task_process_status FlowDumpHandler::handleSet(const string &table_name, const s
         if (isActive())
         {
             SWSS_LOG_ERROR("Flow dump session already exists: %s. Cannot create new session: %s", m_key.c_str(), key.c_str());
-            FlowSyncHandler::updateState("failed", key, {{"type", DashHaFlowOrch::SESSION_TYPE_FLOW_DUMP}});
+            FlowApiHandler::updateState("failed", key, {{"type", DashHaFlowOrch::SESSION_TYPE_FLOW_DUMP}});
             return task_failed;
         }
 
@@ -635,15 +631,15 @@ task_process_status FlowDumpHandler::handleSet(const string &table_name, const s
         if (!initialize(key, attrs))
         {
             SWSS_LOG_ERROR("Failed to initialize FlowDumpHandler for key %s", key.c_str());
-            FlowSyncHandler::updateState("failed", key, {{"type", DashHaFlowOrch::SESSION_TYPE_FLOW_DUMP}});
-            clearKey();
+            FlowApiHandler::updateState("failed", key, {{"type", DashHaFlowOrch::SESSION_TYPE_FLOW_DUMP}});
+            reset();
             return task_failed;
         }
 
         task_process_status status = createSession();
         if (status != task_success && status != task_need_retry)
         {
-            clearKey();
+            reset();
         }
         return status;
     }
@@ -682,7 +678,7 @@ void FlowDumpHandler::handleFinished()
     vector<FieldValueTuple> fvs;
     fvs.push_back(FieldValueTuple("type", DashHaFlowOrch::SESSION_TYPE_FLOW_DUMP));
     fvs.push_back(FieldValueTuple("output_file", m_output_file));
-    FlowSyncHandler::updateState("completed", m_key, fvs);
+    FlowApiHandler::updateState("completed", m_key, fvs);
     SWSS_LOG_NOTICE("Flow dump session %s completed successfully, output file: %s", m_key.c_str(), m_output_file.c_str());
 
     deleteSession();
@@ -693,7 +689,7 @@ void FlowDumpHandler::handleTimeout()
 {
     SWSS_LOG_ENTER();
 
-    FlowSyncHandler::updateState("failed", m_key, {{"type", DashHaFlowOrch::SESSION_TYPE_FLOW_DUMP}});
+    FlowApiHandler::updateState("failed", m_key, {{"type", DashHaFlowOrch::SESSION_TYPE_FLOW_DUMP}});
     deleteSession();
     reset();
 
