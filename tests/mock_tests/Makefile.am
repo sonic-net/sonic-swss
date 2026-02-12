@@ -131,6 +131,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/crmorch.cpp \
                 $(top_srcdir)/orchagent/request_parser.cpp \
                 $(top_srcdir)/orchagent/vrforch.cpp \
+                $(top_srcdir)/orchagent/vrrporch.cpp \
                 $(top_srcdir)/orchagent/countercheckorch.cpp \
                 $(top_srcdir)/orchagent/vxlanorch.cpp \
                 $(top_srcdir)/orchagent/tunneltermhelper.cpp \
