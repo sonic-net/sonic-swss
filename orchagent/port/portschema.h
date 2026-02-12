@@ -107,3 +107,8 @@
 #define PORT_MODE                  "mode"
 #define PORT_UNRELIABLE_LOS        "unreliable_los"
 #define PORT_MEDIA_TYPE            "media_type"
+#define PORT_MACSEC                "macsec"
+#define PORT_ASIC_PORT_NAME        "asic_port_name"
+#define PORT_CORE_ID               "core_id"
+#define PORT_CORE_PORT_ID          "core_port_id"
+#define PORT_NUM_VOQ               "num_voq"

@@ -1185,9 +1185,14 @@ task_process_status BufferOrch::processQueuePost(const QueueTask& task)
             }
             else
             {
-                if (gPortsOrch->isPortAdminUp(port_name))
+                /* In the Voq Switch, the admin status is set to True when the system port is added to the m_portList map
+                   and always True for remote System Port, so no need to check for remote system port*/
+                if (!((gMySwitchType == "voq") && (tokens.size() == 4)))
                 {
-                    SWSS_LOG_WARN("Queue profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
+                    if (gPortsOrch->isPortAdminUp(port_name))
+                    {
+                        SWSS_LOG_WARN("Queue profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
+                    }
                 }
             }
         }
