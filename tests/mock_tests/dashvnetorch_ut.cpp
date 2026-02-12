@@ -71,10 +71,16 @@ namespace dashvnetorch_test
         {
             InSequence seq;
             EXPECT_CALL(*mock_sai_dash_vnet_api, create_vnets).Times(1);
-            EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries).Times(1);
+            EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries).WillOnce(DoAll(
+                Return(SAI_STATUS_SUCCESS)
+            ));
             EXPECT_CALL(*mock_sai_dash_pa_validation_api, create_pa_validation_entries).Times(1);
-            EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries).Times(1);
-            EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, remove_outbound_ca_to_pa_entries).Times(2);
+            EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries).WillOnce(DoAll(
+                Return(SAI_STATUS_SUCCESS)
+            ));
+            EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, remove_outbound_ca_to_pa_entries).Times(2).WillRepeatedly(DoAll(
+                Return(SAI_STATUS_SUCCESS)
+            ));
             EXPECT_CALL(*mock_sai_dash_pa_validation_api, remove_pa_validation_entries).Times(1);
             EXPECT_CALL(*mock_sai_dash_vnet_api, remove_vnets).Times(1);
         }
