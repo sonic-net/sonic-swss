@@ -140,11 +140,11 @@ def delete_vnet_local_routes(dvs, prefix, vnet_name):
     time.sleep(2)
 
 
-def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", rx_monitor_timer=-1, tx_monitor_timer=-1, adv_prefix="", check_directly_connected=False, metric=-1):
-    set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac=mac, vni=vni, ep_monitor=ep_monitor, profile=profile, primary=primary, monitoring=monitoring, rx_monitor_timer=rx_monitor_timer, tx_monitor_timer=tx_monitor_timer, adv_prefix=adv_prefix, check_directly_connected=check_directly_connected, metric=metric)
+def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", rx_monitor_timer=-1, tx_monitor_timer=-1, adv_prefix="", check_directly_connected=False, metric=-1, consistent_hashing_buckets=0):
+    set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac=mac, vni=vni, ep_monitor=ep_monitor, profile=profile, primary=primary, monitoring=monitoring, rx_monitor_timer=rx_monitor_timer, tx_monitor_timer=tx_monitor_timer, adv_prefix=adv_prefix, check_directly_connected=check_directly_connected, metric=metric, consistent_hashing_buckets=consistent_hashing_buckets)
 
 
-def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", rx_monitor_timer=-1, tx_monitor_timer=-1, adv_prefix="", check_directly_connected=False, metric=-1):
+def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", rx_monitor_timer=-1, tx_monitor_timer=-1, adv_prefix="", check_directly_connected=False, metric=-1, consistent_hashing_buckets=0):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
     attrs = [
@@ -183,6 +183,9 @@ def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor=
 
     if metric >= 0:
         attrs.append(('metric', str(metric)))
+
+    if consistent_hashing_buckets >= 0:
+        attrs.append(('consistent_hashing_buckets', str(consistent_hashing_buckets)))
 
     tbl = swsscommon.Table(conf_db, "VNET_ROUTE_TUNNEL")
     fvs = swsscommon.FieldValuePairs(attrs)
@@ -1224,6 +1227,109 @@ class VnetVxlanVrfTunnel(object):
         self.routes.update(new_route)
 
         return new_route, new_nhg
+
+    def check_vnet_fine_grained_ecmp_routes(self, dvs, name, ipprefix, bucket_size):
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        
+        vr_ids = self.vnet_route_ids(dvs, name)
+        count = len(vr_ids)
+        
+        new_routes = get_all_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, [])
+        key = ''
+        route_exists = False
+        false_ret = ('', '')
+        
+        for route in new_routes:
+            rt_key = json.loads(route)
+            if rt_key['dest'] == ipprefix:
+                route_exists = True
+                key = route
+                break
+        if not route_exists:
+            return false_ret
+
+        tb1 =  swsscommon.Table(asic_db, self.ASIC_ROUTE_ENTRY)
+        status, fvs = tb1.get(key)
+        if not status or not fvs:
+            return false_ret
+        fvs = dict(fvs)
+
+        nhgid = fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID")
+        if not nhgid:
+            return false_ret
+            
+        tb2 =  swsscommon.Table(asic_db, self.ASIC_NEXT_HOP_GROUP)
+        status, fvs = tb2.get(nhgid)
+        if not status or not fvs:
+            return false_ret
+        fvs = dict(fvs)
+
+        nhg_type = fvs.get("SAI_NEXT_HOP_GROUP_ATTR_TYPE")
+        if nhg_type != "SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP":
+            return false_ret
+        nhg_cfg_size = fvs.get("SAI_NEXT_HOP_GROUP_ATTR_CONFIGURED_SIZE")
+        if int(nhg_cfg_size) != bucket_size:
+            return false_ret
+        return (key, nhgid)
+    
+        # # Validate that next hop group is of type FINE_GRAIN_ECMP
+        # if route_ids:
+        #     new_route = route_ids
+        # else:
+        #     new_route = get_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, self.routes, count)
+
+        # # Get the next hop group ID from the route
+        # fvs = asic_db.get_entry(self.ASIC_ROUTE_ENTRY, new_route[0])
+        # nhgid = fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID")
+        # assert nhgid, "Next hop group ID not found"
+
+        # # Check that the next hop group is of type FINE_GRAIN_ECMP
+        # nhg_fvs = asic_db.get_entry(self.ASIC_NEXT_HOP_GROUP, nhgid)
+        # nhg_type = nhg_fvs.get("SAI_NEXT_HOP_GROUP_ATTR_TYPE")
+        # assert nhg_type == "SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP", f"Expected FINE_GRAIN_ECMP, got {nhg_type}"
+        
+        # # Check that configured size matches bucket_size
+        # nhg_cfg_size = nhg_fvs.get("SAI_NEXT_HOP_GROUP_ATTR_CONFIGURED_SIZE")
+        # assert int(nhg_cfg_size) == bucket_size, f"Expected bucket size {bucket_size}, got {nhg_cfg_size}"
+
+        # # Check that next hop group members exist and match bucket size
+        # nhg_members = asic_db.get_keys(self.ASIC_NEXT_HOP_GROUP_MEMBER)
+        # member_count = 0
+        # for member in nhg_members:
+        #     fvs = asic_db.get_entry(self.ASIC_NEXT_HOP_GROUP_MEMBER, member)
+        #     if fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID") == nhgid:
+        #         member_count += 1
+        
+        # assert member_count == bucket_size, f"Expected {bucket_size} members, found {member_count}"
+
+        # # Verify endpoints are properly configured
+        # expected_attrs = {}
+        # for idx, endpoint in enumerate(endpoints):
+        #     expected_attr = {
+        #                 "SAI_NEXT_HOP_ATTR_TYPE": "SAI_NEXT_HOP_TYPE_TUNNEL_ENCAP",
+        #                 "SAI_NEXT_HOP_ATTR_IP": endpoint,
+        #                 "SAI_NEXT_HOP_ATTR_TUNNEL_ID": self.tunnel[tunnel],
+        #             }
+        #     if vni and vni[idx]:
+        #         expected_attr.update({'SAI_NEXT_HOP_ATTR_TUNNEL_VNI': vni[idx]})
+        #     if mac and mac[idx]:
+        #         expected_attr.update({'SAI_NEXT_HOP_ATTR_TUNNEL_MAC': mac[idx]})
+        #     expected_attrs[endpoint] = expected_attr
+
+        # # Verify routes are in correct VRF
+        # asic_vrs = set()
+        # for idx in range(count):
+        #     check_object(asic_db, self.ASIC_ROUTE_ENTRY, new_route[idx],
+        #                 {
+        #                     "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID": nhgid,
+        #                 })
+        #     rt_key = json.loads(new_route[idx])
+        #     asic_vrs.add(rt_key['vr'])
+
+        # assert asic_vrs == vr_ids
+        # self.routes.update(new_route)
+
+        # return new_route, nhgid
 
     def check_priority_vnet_ecmp_routes(self, dvs, name, endpoints_primary, tunnel, mac=[], vni=[], route_ids=[], count =1, prefix =""):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)

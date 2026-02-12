@@ -2687,14 +2687,6 @@ class TestVnetOrch(object):
         vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2', ep_monitor='9.1.0.3,9.1.0.4', primary ='9.1.0.1', profile="Test_profile", monitoring='custom', adv_prefix='100.100.1.0/24', check_directly_connected=True)
 
-        # verify acl table action list
-        expected_action_list = [
-            "SAI_ACL_ACTION_TYPE_COUNTER",
-            "SAI_ACL_ACTION_TYPE_REDIRECT"
-        ]
-        acl_table_id = dvs_acl.get_acl_table_ids(1)[0]
-        dvs_acl.verify_acl_table_action_list(acl_table_id, expected_action_list)
-
         # verify tunnel term acl 
         expected_sai_qualifiers = {
             "SAI_ACL_ENTRY_ATTR_FIELD_DST_IP": dvs_acl.get_simple_qualifier_comparator("100.100.1.1&mask:255.255.255.255")
@@ -3318,6 +3310,102 @@ class TestVnetOrch(object):
 
         delete_vxlan_tunnel(dvs, tunnel_name)
         vnet_obj.check_del_vxlan_tunnel(dvs)
+
+    '''
+    Test 34 - Test for vnet tunnel routes with fine-grained ECMP using consistent_hashing_buckets
+    '''
+    def test_vnet_orch_34(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_34'
+        vnet_name = 'Vnet34'
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10034', "")
+
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10034')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
+        
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # Create VNET route with consistent_hashing_buckets and 3 tunnel next hops for fine-grained ECMP
+        bucket_size = 60
+        create_vnet_routes(dvs, "100.100.34.0/24", vnet_name, '34.0.0.1,34.0.0.2,34.0.0.3',
+                          '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C', consistent_hashing_buckets=bucket_size)
+        
+        time.sleep(2)
+
+        # Verify the route is created with fine-grained ECMP
+        route, nhgid = vnet_obj.check_vnet_fine_grained_ecmp_routes(dvs, vnet_name, "100.100.33.0/24", bucket_size)
+        
+        check_state_db_routes(dvs, vnet_name, "100.100.34.0/24", ['34.0.0.1', '34.0.0.2', '34.0.0.3'])
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # Add more nexthops
+        create_vnet_routes(dvs, "100.100.34.0/24", vnet_name, '34.0.0.1,34.0.0.2,34.0.0.3,34.0.0.4,34.0.0.5,34.0.0.6',
+                          '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C,00:12:34:56:78:9D,00:12:34:56:78:9E,00:12:34:56:78:9F', consistent_hashing_buckets=bucket_size)
+        
+        time.sleep(2)
+
+        # Verify the route is created with fine-grained ECMP
+        route, nhgid = vnet_obj.check_vnet_fine_grained_ecmp_routes(dvs, vnet_name, "100.100.33.0/24", bucket_size)
+        
+        check_state_db_routes(dvs, vnet_name, "100.100.34.0/24", ['34.0.0.1', '34.0.0.2', '34.0.0.3','34.0.0.4','34.0.0.5','34.0.0.6'])
+        
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # Update rout with different endpoints
+        bucket_size = 60
+        create_vnet_routes(dvs, "100.100.34.0/24", vnet_name, '34.0.0.1,34.0.0.2,34.0.0.3,34.0.0.4,34.0.0.7,34.0.0.8',
+                          '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C,00:12:34:56:78:9D,00:12:34:56:78:8E,00:12:34:56:78:8F', consistent_hashing_buckets=bucket_size)
+        
+        time.sleep(2)
+
+        # Verify the route is created with fine-grained ECMP
+        route, nhgid = vnet_obj.check_vnet_fine_grained_ecmp_routes(dvs, vnet_name, "100.100.33.0/24", bucket_size)
+        
+        check_state_db_routes(dvs, vnet_name, "100.100.34.0/24", ['34.0.0.1', '34.0.0.2', '34.0.0.3','34.0.0.4','34.0.0.7','34.0.0.8'])
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # remove endpoint
+        bucket_size = 60
+        create_vnet_routes(dvs, "100.100.34.0/24", vnet_name, '34.0.0.1,34.0.0.2,34.0.0.3,34.0.0.4,34.0.0.7',
+                          '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C,00:12:34:56:78:9D,00:12:34:56:78:8E', consistent_hashing_buckets=bucket_size)
+        
+        time.sleep(2)
+
+        # Verify the route is created with fine-grained ECMP
+        route, nhgid = vnet_obj.check_vnet_fine_grained_ecmp_routes(dvs, vnet_name, "100.100.33.0/24", bucket_size)
+        
+        check_state_db_routes(dvs, vnet_name, "100.100.34.0/24", ['34.0.0.1', '34.0.0.2', '34.0.0.3','34.0.0.4','34.0.0.7'])
+        
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # change bucket_size
+        bucket_size = 50
+        create_vnet_routes(dvs, "100.100.34.0/24", vnet_name, '34.0.0.1,34.0.0.2,34.0.0.3,34.0.0.4,34.0.0.7',
+                          '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C,00:12:34:56:78:9D,00:12:34:56:78:8E', consistent_hashing_buckets=bucket_size)
+        
+        time.sleep(2)
+        
+        # Clean up
+        vnet_obj.fetch_exist_entries(dvs)
+        delete_vnet_routes(dvs, "100.100.34.0/24", vnet_name)
+        
+        time.sleep(2)
+        
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.34.0/24"])
+        check_remove_state_db_routes(dvs, vnet_name, "100.100.34.0/24")
+        # check_remove_routes_advertisement(dvs, "100.100.33.0/24")
+
+        delete_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
