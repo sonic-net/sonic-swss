@@ -9,5 +9,6 @@ pub struct SocketConnect {
 pub enum NetlinkCommand {
     Close,
     Reconnect,
+    SoftReconnect,
     SocketConnect(SocketConnect),
 }
