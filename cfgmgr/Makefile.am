@@ -5,7 +5,7 @@ LIBNL_LIBS = -lnl-genl-3 -lnl-route-3 -lnl-3
 SAIMETA_LIBS = -lsaimeta -lsaimetadata -lzmq
 COMMON_LIBS = -lswsscommon -lpthread
 
-bin_PROGRAMS = vlanmgrd teammgrd portmgrd intfmgrd buffermgrd vrfmgrd nbrmgrd vxlanmgrd sflowmgrd natmgrd coppmgrd tunnelmgrd macsecmgrd fabricmgrd stpmgrd
+bin_PROGRAMS = vlanmgrd teammgrd portmgrd intfmgrd buffermgrd vrfmgrd nbrmgrd vxlanmgrd vnetmgrd sflowmgrd natmgrd coppmgrd tunnelmgrd macsecmgrd fabricmgrd stpmgrd
 
 cfgmgrdir = $(datadir)/swss
 
@@ -71,6 +71,11 @@ nbrmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(LIBNL
 nbrmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(LIBNL_CPPFLAGS) $(CFLAGS_ASAN)
 nbrmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS) $(LIBNL_LIBS)
 
+vnetmgrd_SOURCES = vnetmgrd.cpp vnetmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
+vnetmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
+vnetmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
+vnetmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
+
 vxlanmgrd_SOURCES = vxlanmgrd.cpp vxlanmgr.cpp $(COMMON_ORCH_SOURCE) shellcmd.h
 vxlanmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 vxlanmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
@@ -117,6 +122,7 @@ buffermgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 vrfmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 nbrmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 vxlanmgrd_SOURCES +=  ../gcovpreload/gcovpreload.cpp
+vnetmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 sflowmgrd_SOURCES +=  ../gcovpreload/gcovpreload.cpp
 natmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 coppmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
@@ -134,6 +140,7 @@ buffermgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
 vrfmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
 nbrmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
 vxlanmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
+vnetmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
 sflowmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
 natmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
 coppmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp

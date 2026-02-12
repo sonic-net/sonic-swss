@@ -593,19 +593,4 @@ private:
     shared_ptr<VNetTunnelTermAcl> vnet_tunnel_term_acl_;
 };
 
-class VNetCfgRouteOrch : public Orch
-{
-public:
-    VNetCfgRouteOrch(DBConnector *db, DBConnector *appDb, vector<string> &tableNames);
-    using Orch::doTask;
-
-private:
-    void doTask(Consumer &consumer);
-
-    bool doVnetTunnelRouteTask(const KeyOpFieldsValuesTuple & t, const std::string & op);
-    bool doVnetRouteTask(const KeyOpFieldsValuesTuple & t, const std::string & op);
-
-    ProducerStateTable m_appVnetRouteTable, m_appVnetRouteTunnelTable;
-};
-
 #endif // __VNETORCH_H
