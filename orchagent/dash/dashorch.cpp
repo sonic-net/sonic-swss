@@ -60,7 +60,7 @@ static const std::unordered_map<string, sai_direction_lookup_entry_action_t> dir
 DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, DBConnector *app_state_db, ZmqServer *zmqServer) :
     ZmqOrch(db, tableName, zmqServer),
     EniCounter(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, ENI_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
-    MeterCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, METER_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+    MeterCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, METER_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false)
 {
     SWSS_LOG_ENTER();
 
@@ -78,7 +78,6 @@ void DashOrch::setDashHaOrch(DashHaOrch *dash_ha_orch)
     SWSS_LOG_ENTER();
     m_dash_ha_orch = dash_ha_orch;
 }
-
 
 bool DashOrch::getRouteTypeActions(dash::route_type::RoutingType routing_type, dash::route_type::RouteType& route_type)
 {
