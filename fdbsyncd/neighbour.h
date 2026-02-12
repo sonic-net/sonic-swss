@@ -52,7 +52,6 @@ enum {
 
 /* Extended flags under NDA_FLAGS_EXT */
 #define NTF_EXT_MH_PEER_SYNC	(1 << 2)
-#define NTF_EXT_REMOTE_ONLY		(1 << 3)
 
 /*
  *	Neighbor Cache Entry States.

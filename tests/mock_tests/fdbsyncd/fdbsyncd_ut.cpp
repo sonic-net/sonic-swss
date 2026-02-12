@@ -107,9 +107,7 @@ struct nlmsghdr *mac_route_msg(bool add, uint32_t nhid, char *remotevtep, int if
     rta = RTA_NEXT(rta, max_len);
     rta->rta_type = NDA_FLAGS_EXT;
     rta->rta_len = RTA_LENGTH(sizeof(uint32_t));
-    if (strlen(remotevtep) != 0) {
-        ext_flags |= NTF_EXT_REMOTE_ONLY;
-    } else {
+    if (strlen(remotevtep) == 0) {
         ext_flags |= NTF_EXT_MH_PEER_SYNC;
     }
     memcpy(RTA_DATA(rta), (void *)&ext_flags, sizeof(uint32_t));
@@ -488,11 +486,6 @@ TEST_F(FdbSyncdTest, testNetlinkMessageFlags)
     ndm->ndm_state = 0; // Not permanent or no-ARP
     ndm->ndm_flags = NTF_EXT_LEARNED; // Not externally learned
     nlmsg->nlmsg_type = RTM_NEWNEIGH;
-    rta = NDA_RTA(ndm);
-    rta->rta_type = NDA_FLAGS_EXT;
-    rta->rta_len = RTA_LENGTH(sizeof(uint32_t));
-    ext_flags = NTF_EXT_REMOTE_ONLY;
-    memcpy(RTA_DATA(rta), &ext_flags, sizeof(uint32_t));
     m_mockFdbSync.onMsgRaw(nlmsg);
     free(nlmsg);
 
@@ -825,10 +818,6 @@ struct nlmsghdr *create_mac_with_nhg_msg(bool add, uint32_t nhid, int ifindex,
     if (is_mh_sync)
     {
         ext_flags |= NTF_EXT_MH_PEER_SYNC;
-    }
-    else
-    {
-        ext_flags |= NTF_EXT_REMOTE_ONLY;
     }
     memcpy(RTA_DATA(rta), (void *)&ext_flags, sizeof(uint32_t));
     nlh->nlmsg_len += RTA_ALIGN(rta->rta_len);
