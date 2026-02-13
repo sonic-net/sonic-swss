@@ -103,8 +103,7 @@ private:
     bool setEniRoute(const std::string& eni, const dash::eni_route::EniRoute& entry);
     bool removeEniRoute(const std::string& eni);
 
-private:
-
+public:
     template<CounterType CT>
     struct DashCounter
     {
@@ -168,6 +167,7 @@ private:
         }
     };
 
+private:
     std::unique_ptr<swss::Table> m_eni_name_table;
     std::shared_ptr<swss::DBConnector> m_counter_db;
     std::shared_ptr<swss::DBConnector> m_asic_db;

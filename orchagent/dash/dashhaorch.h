@@ -55,7 +55,7 @@ protected:
     HaSetTable m_ha_set_entries;
     HaScopeTable m_ha_scope_entries;
     DashBfdSessionTable m_bfd_session_pending_creation;
-
+    
     DashOrch *m_dash_orch;
     BfdOrch *m_bfd_orch;
 
@@ -110,7 +110,43 @@ protected:
     swss::NotificationConsumer* m_haSetNotificationConsumer;
     swss::NotificationConsumer* m_haScopeNotificationConsumer;
 
-    DashCounter<CounterType::HA_SET> HaSetCounter;
+public:
+    struct DashHaCounter: DashOrch::DashCounter<CounterType::HA_SET>
+    {
+        DashHaCounter(const std::string& group_name, StatsMode stats_mode, uint polling_interval, bool enabled) 
+            : DashOrch::DashCounter<CounterType::HA_SET>(group_name, stats_mode, polling_interval, enabled) {}
+        
+        void fetchStats();
+        
+        void refreshStats(bool install, const HaSetTable& ha_set_entries)
+        {
+            for (auto it = ha_set_entries.begin(); it != ha_set_entries.end(); it++)
+            {
+                if (install)
+                {
+                    addToFC(it->second.ha_set_id, it->first);
+                }
+                else
+                {
+                    removeFromFC(it->second.ha_set_id, it->first);
+                }
+            }
+        }
+
+        void handleStatusUpdate(bool enabled, const HaSetTable& ha_set_entries)
+        {
+            bool prev_enabled = fc_status;
+            fc_status = enabled;
+            if (fc_status != prev_enabled)
+            {
+                refreshStats(fc_status, ha_set_entries);
+            }
+        }
+    };
+
+private:
+    DashHaCounter HaSetCounter;
+    
 public:
     const HaSetTable& getHaSetEntries() const { return m_ha_set_entries; };
     const HaScopeTable& getHaScopeEntries() const { return m_ha_scope_entries; };

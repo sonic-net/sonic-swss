@@ -1134,10 +1134,10 @@ namespace flexcounter_test
         auto ha_set_entry = m_dashHaOrch->getHaSetEntries().find("HA_SET_1");
         ASSERT_NE(ha_set_entry, m_dashHaOrch->getHaSetEntries().end());
 
-        m_DashOrch->handleHaSetFCStatusUpdate(true);
+        m_dashHaOrch->handleHaSetFCStatusUpdate(true);
         ASSERT_TRUE(checkFlexCounter(HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP, ha_set_entry->second.ha_set_id, HA_SET_COUNTER_ID_LIST));
 
-        m_DashOrch->handleHaSetFCStatusUpdate(false);
+        m_dashHaOrch->handleHaSetFCStatusUpdate(false);
         ASSERT_FALSE(checkFlexCounter(HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP, ha_set_entry->second.ha_set_id, HA_SET_COUNTER_ID_LIST));
 
         delete m_dashHaOrch;

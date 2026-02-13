@@ -1329,30 +1329,5 @@ void DashOrch::DashCounter<CounterType::HA_SET>::fetchStats()
 void DashHaOrch::handleHaSetFCStatusUpdate(bool is_enabled)
 {
     SWSS_LOG_ENTER();
-
-    bool prev_enabled = HaSetCounter.fc_status;
-    HaSetCounter.fc_status = is_enabled;
-
-    if (HaSetCounter.fc_status != prev_enabled)
-    {
-        if (m_dash_ha_orch == nullptr)
-        {
-            SWSS_LOG_WARN("DashHaOrch is not set, cannot update HA_SET flex counters");
-            return;
-        }
-
-        const auto& ha_set_entries = m_dash_ha_orch->getHaSetEntries();
-        for (const auto& entry : ha_set_entries)
-        {
-            if (HaSetCounter.fc_status)
-            {
-                HaSetCounter.addToFC(entry.second.ha_set_id, entry.first);
-            }
-            else
-            {
-                HaSetCounter.removeFromFC(entry.second.ha_set_id, entry.first);
-            }
-        }
-    }
+    HaSetCounter.handleStatusUpdate(is_enabled, m_ha_set_entries);
 }
-
