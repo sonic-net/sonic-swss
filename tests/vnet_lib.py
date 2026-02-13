@@ -140,11 +140,11 @@ def delete_vnet_local_routes(dvs, prefix, vnet_name):
     time.sleep(2)
 
 
-def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", rx_monitor_timer=-1, tx_monitor_timer=-1, adv_prefix="", check_directly_connected=False, metric=-1):
-    set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac=mac, vni=vni, ep_monitor=ep_monitor, profile=profile, primary=primary, monitoring=monitoring, rx_monitor_timer=rx_monitor_timer, tx_monitor_timer=tx_monitor_timer, adv_prefix=adv_prefix, check_directly_connected=check_directly_connected, metric=metric)
+def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", rx_monitor_timer=-1, tx_monitor_timer=-1, adv_prefix="", check_directly_connected=False, metric=-1, consistent_hashing_buckets=0):
+    set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac=mac, vni=vni, ep_monitor=ep_monitor, profile=profile, primary=primary, monitoring=monitoring, rx_monitor_timer=rx_monitor_timer, tx_monitor_timer=tx_monitor_timer, adv_prefix=adv_prefix, check_directly_connected=check_directly_connected, metric=metric, consistent_hashing_buckets=consistent_hashing_buckets)
 
 
-def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", rx_monitor_timer=-1, tx_monitor_timer=-1, adv_prefix="", check_directly_connected=False, metric=-1):
+def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", rx_monitor_timer=-1, tx_monitor_timer=-1, adv_prefix="", check_directly_connected=False, metric=-1, consistent_hashing_buckets=0):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
     attrs = [
@@ -183,6 +183,9 @@ def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor=
 
     if metric >= 0:
         attrs.append(('metric', str(metric)))
+
+    if consistent_hashing_buckets > 0:
+        attrs.append(('consistent_hashing_buckets', str(consistent_hashing_buckets)))
 
     tbl = swsscommon.Table(conf_db, "VNET_ROUTE_TUNNEL")
     fvs = swsscommon.FieldValuePairs(attrs)
