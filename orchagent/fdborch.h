@@ -67,6 +67,7 @@ struct FdbData
     */
     bool is_flush_pending = false;
 
+    /* Remote FDB related info */
     NEXT_HOP_VALUE_TYPE dest_type;
     string dest_value;
     string    esi;

@@ -2,7 +2,9 @@
 #include "neighbour.h"
 
 #include <string>
+#include <algorithm>
 #include <netinet/in.h>
+#include <linux/nexthop.h>
 #include <netlink/route/link.h>
 #include <netlink/route/neighbour.h>
 #include <netlink/route/link/vxlan.h>
@@ -27,6 +29,7 @@ using namespace swss;
 FdbSync::FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector *config_db) :
     m_fdbTable(pipelineAppDB, APP_VXLAN_FDB_TABLE_NAME),
     m_imetTable(pipelineAppDB, APP_VXLAN_REMOTE_VNI_TABLE_NAME),
+    m_l2NhgTable(pipelineAppDB, APP_L2_NEXTHOP_GROUP_TABLE_NAME),
     m_fdbStateTable(stateDb, STATE_FDB_TABLE_NAME),
     m_mclagRemoteFdbStateTable(stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME),
     m_cfgEvpnNvoTable(config_db, CFG_VXLAN_EVPN_NVO_TABLE_NAME)
@@ -1032,3 +1035,348 @@ void FdbSync::onMsg(int nlmsg_type, struct nl_object *obj)
     }
 }
 
+void FdbSync::onMsgNhg(struct nlmsghdr *msg)
+{
+    struct nhmsg *nhm = (struct nhmsg *)NLMSG_DATA(msg);
+    int len = (int)(msg->nlmsg_len - NLMSG_LENGTH(sizeof(*nhm)));
+
+    uint32_t nhid = 0;
+    bool has_gateway = false;
+    bool has_group = false;
+    bool has_oif = false;
+    struct in_addr v4addr;
+    struct in6_addr v6addr;
+    struct nexthop_grp *grp = NULL;
+    int grp_count = 0;
+
+    memset(&v4addr, 0, sizeof(v4addr));
+    memset(&v6addr, 0, sizeof(v6addr));
+
+    struct rtattr *rta = (struct rtattr *)((char *)nhm + NLMSG_ALIGN(sizeof(*nhm)));
+
+    for (; RTA_OK(rta, len); rta = RTA_NEXT(rta, len))
+    {
+        switch (rta->rta_type)
+        {
+        case NHA_ID:
+            nhid = *(uint32_t *)RTA_DATA(rta);
+            break;
+        case NHA_GATEWAY:
+            has_gateway = true;
+            if (nhm->nh_family == AF_INET)
+            {
+                memcpy(&v4addr, RTA_DATA(rta), sizeof(struct in_addr));
+            }
+            else if (nhm->nh_family == AF_INET6)
+            {
+                memcpy(&v6addr, RTA_DATA(rta), sizeof(struct in6_addr));
+            }
+            break;
+        case NHA_GROUP:
+            has_group = true;
+            grp = (struct nexthop_grp *)RTA_DATA(rta);
+            grp_count = (int)(RTA_PAYLOAD(rta) / sizeof(struct nexthop_grp));
+            break;
+        case NHA_OIF:
+            has_oif = true;
+            break;
+        case NHA_FDB:
+            /* Flag attribute, no data to extract */
+            break;
+        default:
+            break;
+        }
+    }
+
+    if (msg->nlmsg_type == RTM_NEWNEXTHOP)
+    {
+        /* Drop messages with OIF (not an L2 NHG we care about) */
+        if (has_oif)
+        {
+            SWSS_LOG_INFO("NHG %u has OIF, dropping", nhid);
+            return;
+        }
+
+        if (has_gateway)
+        {
+            char ip_str[INET6_ADDRSTRLEN] = {0};
+
+            if (nhm->nh_family == AF_INET)
+            {
+                inet_ntop(AF_INET, &v4addr, ip_str, sizeof(ip_str));
+
+                /* Filter out IPv4 link-local addresses (169.254.x.x) */
+                if ((ntohl(v4addr.s_addr) & 0xFFFF0000) == 0xA9FE0000)
+                {
+                    SWSS_LOG_INFO("NHG %u has link-local IPv4 address %s, dropping", nhid, ip_str);
+                    return;
+                }
+            }
+            else if (nhm->nh_family == AF_INET6)
+            {
+                inet_ntop(AF_INET6, &v6addr, ip_str, sizeof(ip_str));
+
+                /* Filter out IPv6 link-local addresses (fe80::) */
+                if (v6addr.s6_addr[0] == 0xfe && (v6addr.s6_addr[1] & 0xc0) == 0x80)
+                {
+                    SWSS_LOG_INFO("NHG %u has link-local IPv6 address %s, dropping", nhid, ip_str);
+                    return;
+                }
+            }
+            else
+            {
+                SWSS_LOG_INFO("NHG %u has unsupported address family %d, dropping", nhid, nhm->nh_family);
+                return;
+            }
+
+            std::string ip_string(ip_str);
+
+            /* Write to L2_NEXTHOP_GROUP_TABLE */
+            std::vector<FieldValueTuple> fvVector;
+            FieldValueTuple fv("remote_vtep", ip_string);
+            fvVector.push_back(fv);
+            m_l2NhgTable.set(to_string(nhid), fvVector);
+
+            /* Store in internal map */
+            l2_nhg_info info;
+            info.type = L2_NHG_TYPE_VTEP;
+            info.vtep_ip = ip_string;
+            m_l2NhgMap[nhid] = info;
+
+            SWSS_LOG_INFO("L2_NEXTHOP_GROUP_TABLE: ADD nhid=%u remote_vtep=%s", nhid, ip_string.c_str());
+        }
+        else if (has_group && grp != NULL && grp_count > 0)
+        {
+            /* Validate all member IDs exist in the internal map */
+            std::vector<uint32_t> member_ids;
+            for (int i = 0; i < grp_count; i++)
+            {
+                if (m_l2NhgMap.find(grp[i].id) == m_l2NhgMap.end())
+                {
+                    SWSS_LOG_INFO("NHG %u references unknown member %u, dropping", nhid, grp[i].id);
+                    return;
+                }
+                member_ids.push_back(grp[i].id);
+            }
+
+            /* Build comma-separated member ID string */
+            std::string nhg_str;
+            for (size_t i = 0; i < member_ids.size(); i++)
+            {
+                if (i > 0) nhg_str += ",";
+                nhg_str += to_string(member_ids[i]);
+            }
+
+            /* Write to L2_NEXTHOP_GROUP_TABLE */
+            std::vector<FieldValueTuple> fvVector;
+            FieldValueTuple fv("nexthop_group", nhg_str);
+            fvVector.push_back(fv);
+            m_l2NhgTable.set(to_string(nhid), fvVector);
+
+            /* Store in internal map */
+            l2_nhg_info info;
+            info.type = L2_NHG_TYPE_GROUP;
+            info.member_ids = member_ids;
+            m_l2NhgMap[nhid] = info;
+
+            SWSS_LOG_INFO("L2_NEXTHOP_GROUP_TABLE: ADD nhid=%u nexthop_group=%s", nhid, nhg_str.c_str());
+        }
+    }
+    else if (msg->nlmsg_type == RTM_DELNEXTHOP)
+    {
+        /* Delete from L2_NEXTHOP_GROUP_TABLE */
+        m_l2NhgTable.del(to_string(nhid));
+        m_l2NhgMap.erase(nhid);
+
+        SWSS_LOG_INFO("L2_NEXTHOP_GROUP_TABLE: DEL nhid=%u", nhid);
+
+        /* Update any GROUP entries that reference this deleted NHG ID */
+        std::vector<uint32_t> groups_to_delete;
+
+        for (auto &entry : m_l2NhgMap)
+        {
+            if (entry.second.type != L2_NHG_TYPE_GROUP)
+                continue;
+
+            auto &members = entry.second.member_ids;
+            auto it = std::find(members.begin(), members.end(), nhid);
+            if (it == members.end())
+                continue;
+
+            /* Remove this member from the group */
+            members.erase(it);
+
+            if (members.empty())
+            {
+                /* Group is now empty, mark for deletion */
+                groups_to_delete.push_back(entry.first);
+            }
+            else
+            {
+                /* Update the group's table entry with remaining members */
+                std::string nhg_str;
+                for (size_t i = 0; i < members.size(); i++)
+                {
+                    if (i > 0) nhg_str += ",";
+                    nhg_str += to_string(members[i]);
+                }
+
+                std::vector<FieldValueTuple> fvVector;
+                FieldValueTuple fv("nexthop_group", nhg_str);
+                fvVector.push_back(fv);
+                m_l2NhgTable.set(to_string(entry.first), fvVector);
+
+                SWSS_LOG_INFO("L2_NEXTHOP_GROUP_TABLE: UPDATE nhid=%u nexthop_group=%s", entry.first, nhg_str.c_str());
+            }
+        }
+
+        /* Delete empty groups */
+        for (auto gid : groups_to_delete)
+        {
+            m_l2NhgTable.del(to_string(gid));
+            m_l2NhgMap.erase(gid);
+            SWSS_LOG_INFO("L2_NEXTHOP_GROUP_TABLE: DEL empty group nhid=%u", gid);
+        }
+    }
+}
+
+void FdbSync::onMsgNbrRaw(struct nlmsghdr *msg)
+{
+    struct ndmsg *ndm = (struct ndmsg *)NLMSG_DATA(msg);
+    int len = (int)(msg->nlmsg_len - NLMSG_LENGTH(sizeof(*ndm)));
+
+    /* Only MAC routes (AF_BRIDGE) */
+    if (ndm->ndm_family != AF_BRIDGE)
+    {
+        return;
+    }
+
+    uint32_t nhid = 0;
+    uint16_t vlan_id = 0;
+    char macStr[MAX_ADDR_SIZE + 1] = {0};
+    bool has_nhid = false;
+    bool has_dst = false;
+    struct in_addr dst_v4 = {0};
+    uint32_t ext_flags __attribute__((unused)) = 0;
+
+    struct rtattr *rta = (struct rtattr *)((char *)ndm + NLMSG_ALIGN(sizeof(*ndm)));
+
+    for (; RTA_OK(rta, len); rta = RTA_NEXT(rta, len))
+    {
+        switch (rta->rta_type)
+        {
+        case NDA_NH_ID:
+            nhid = *(uint32_t *)RTA_DATA(rta);
+            has_nhid = true;
+            break;
+        case NDA_VLAN:
+            vlan_id = *(uint16_t *)RTA_DATA(rta);
+            break;
+        case NDA_LLADDR:
+            {
+                unsigned char *addr = (unsigned char *)RTA_DATA(rta);
+                snprintf(macStr, sizeof(macStr), "%02x:%02x:%02x:%02x:%02x:%02x",
+                         addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
+            }
+            break;
+        case NDA_DST:
+            has_dst = true;
+            if (RTA_PAYLOAD(rta) == sizeof(struct in_addr))
+            {
+                memcpy(&dst_v4, RTA_DATA(rta), sizeof(struct in_addr));
+            }
+            break;
+        case NDA_FLAGS_EXT:
+            ext_flags = *(uint32_t *)RTA_DATA(rta);
+            break;
+        default:
+            break;
+        }
+    }
+
+    int ifindex = ndm->ndm_ifindex;
+    bool isVxlanIntf = false;
+    string ifname;
+    uint32_t vni = 0;
+
+    if (m_intf_info.find(ifindex) != m_intf_info.end())
+    {
+        isVxlanIntf = true;
+        ifname = m_intf_info[ifindex].ifname;
+        vni = m_intf_info[ifindex].vni;
+    }
+
+    if (!isVxlanIntf)
+    {
+        return;
+    }
+
+    /* Build the vlan_id string from interface name */
+    string vlan_str;
+    size_t str_loc = ifname.rfind("-");
+    if (str_loc != string::npos)
+    {
+        vlan_str = "Vlan" + ifname.substr(str_loc + 1, string::npos);
+    }
+    else if (vlan_id > 0)
+    {
+        vlan_str = "Vlan" + to_string(vlan_id);
+    }
+    else
+    {
+        return;
+    }
+
+    string key = vlan_str + ":" + macStr;
+
+    bool delete_key = (msg->nlmsg_type == RTM_DELNEIGH);
+    int state = ndm->ndm_state;
+    if ((state == NUD_INCOMPLETE) || (state == NUD_FAILED))
+    {
+        delete_key = true;
+    }
+
+    string type = (state & NUD_NOARP) ? "static" : "dynamic";
+
+    if (delete_key)
+    {
+        macDelVxlan(key);
+        return;
+    }
+
+    if (has_nhid && nhid != 0)
+    {
+        /* MAC points to a nexthop group */
+        macAddVxlan(key, NULL, type, vni, ifname, to_string(nhid), NEXTHOPGROUP, RTPROT_UNSPEC);
+    }
+    else if (has_dst && dst_v4.s_addr != 0)
+    {
+        /* MAC points to a remote VTEP */
+        struct nl_addr *vtep_addr = nl_addr_build(AF_INET, &dst_v4, sizeof(dst_v4));
+        macAddVxlan(key, vtep_addr, type, vni, ifname, "0", VTEP, RTPROT_UNSPEC);
+        nl_addr_put(vtep_addr);
+    }
+}
+
+void FdbSync::onMsgRaw(struct nlmsghdr *msg)
+{
+    if (!msg)
+    {
+        SWSS_LOG_ERROR("Received NULL message");
+        return;
+    }
+
+    if (msg->nlmsg_type == RTM_NEWLINK)
+    {
+        struct nl_object *obj = (struct nl_object *)NLMSG_DATA(msg);
+        onMsg(msg->nlmsg_type, obj);
+    }
+    else if (msg->nlmsg_type == RTM_NEWNEIGH || msg->nlmsg_type == RTM_DELNEIGH)
+    {
+        onMsgNbrRaw(msg);
+    }
+    else if (msg->nlmsg_type == RTM_NEWNEXTHOP || msg->nlmsg_type == RTM_DELNEXTHOP)
+    {
+        onMsgNhg(msg);
+    }
+}

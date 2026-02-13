@@ -32,9 +32,9 @@ namespace evpnmhorch_test
         shared_ptr<swss::DBConnector> m_state_db;
         shared_ptr<swss::DBConnector> m_chassis_app_db;
 
-        FlexCounterOrch *m_FlexCounterOrch;
+        FlexCounterOrch *m_FlexCounterOrch = nullptr;
         sai_vlan_api_t ut_sai_vlan_api;
-        sai_vlan_api_t *org_sai_vlan_api;
+        sai_vlan_api_t *org_sai_vlan_api = nullptr;
 
         void _hook_sai_vlan_api()
         {

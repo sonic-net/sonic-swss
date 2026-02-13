@@ -1772,7 +1772,8 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
 
     m_syncdNeighbors.erase(neighborEntry);
 
-    if(gMySwitchType == "voq")
+    // TODO: added || isChassisDbInUse()) to Cisco PR
+    if (gMySwitchType == "voq" || isChassisDbInUse())
     {
         //Sync the neighbor to delete from the CHASSIS_APP_DB
         voqSyncDelNeigh(alias, ip_address);

@@ -2399,25 +2399,39 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
         && (h->nlmsg_type != RTM_DELSRV6LOCALSID)
         && (h->nlmsg_type != RTM_NEWTFILTER)
         && (h->nlmsg_type != RTM_DELTFILTER)
-        && !(h->nlmsg_type >= RTM_FPM_FIRST && h->nlmsg_type <= RTM_FPM_LAST)
-    )
+        && !(h->nlmsg_type >= RTM_FPM_FIRST && h->nlmsg_type <= RTM_FPM_LAST))
+    {
         return;
+    }
 
     /* Length validity. */
-    if (h->nlmsg_type == RTM_NEWNEXTHOP || h->nlmsg_type == RTM_DELNEXTHOP) {
+    switch (h->nlmsg_type)
+    {
+    case RTM_NEWNEXTHOP:
+    case RTM_DELNEXTHOP:
+    case RTM_NEWPICCONTEXT:
+    case RTM_DELPICCONTEXT:
         hdr_len = sizeof(struct nhmsg);
-    } else if (h->nlmsg_type == RTM_NEWPICCONTEXT || h->nlmsg_type == RTM_DELPICCONTEXT) {
-        hdr_len = sizeof(struct nhmsg);
-    } else if (h->nlmsg_type == RTM_NEWTFILTER || h->nlmsg_type == RTM_DELTFILTER) {
+        break;
+    case RTM_NEWTFILTER:
+    case RTM_DELTFILTER:
         hdr_len = sizeof(struct tcmsg);
-    } else if (h->nlmsg_type == RTM_FPM_ADD_EVPN_SHL || h->nlmsg_type == RTM_FPM_DEL_EVPN_SHL) {
+        break;
+    case RTM_FPM_ADD_EVPN_SHL:
+    case RTM_FPM_DEL_EVPN_SHL:
         hdr_len = sizeof(struct evpn_shl_msg);
-    } else if (h->nlmsg_type == RTM_FPM_ADD_EVPN_DF || h->nlmsg_type == RTM_FPM_DEL_EVPN_DF) {
+        break;
+    case RTM_FPM_ADD_EVPN_DF:
+    case RTM_FPM_DEL_EVPN_DF:
         hdr_len = sizeof(struct evpn_df_msg);
-    } else if (h->nlmsg_type == RTM_FPM_ADD_EVPN_ES_BACKUP_NHG || h->nlmsg_type == RTM_FPM_DEL_EVPN_ES_BACKUP_NHG) {
+        break;
+    case RTM_FPM_ADD_EVPN_ES_BACKUP_NHG:
+    case RTM_FPM_DEL_EVPN_ES_BACKUP_NHG:
         hdr_len = sizeof(struct evpn_backup_nhg_msg);
-    } else {
+        break;
+    default:
         hdr_len = sizeof(struct ndmsg);
+        break;
     }
 
     len = (int)(h->nlmsg_len - NLMSG_LENGTH(hdr_len));
@@ -2429,27 +2443,42 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
         return;
     }
 
-    if(h->nlmsg_type == RTM_NEWNEXTHOP || h->nlmsg_type == RTM_DELNEXTHOP)
+    switch (h->nlmsg_type)
     {
+    case RTM_NEWNEXTHOP:
+    case RTM_DELNEXTHOP:
         onNextHopMsg(h, len);
         return;
-    }
-    if(h->nlmsg_type == RTM_NEWPICCONTEXT || h->nlmsg_type == RTM_DELPICCONTEXT)
-    {
+    case RTM_NEWPICCONTEXT:
+    case RTM_DELPICCONTEXT:
         onPicContextMsg(h, len);
         return;
-    }
-    if ((h->nlmsg_type == RTM_NEWSRV6VPNROUTE)
-        || (h->nlmsg_type == RTM_DELSRV6VPNROUTE))
-    {
+    case RTM_NEWSRV6VPNROUTE:
+    case RTM_DELSRV6VPNROUTE:
         onSrv6VpnRouteMsg(h, len);
         return;
-    }
-    if ((h->nlmsg_type == RTM_NEWSRV6LOCALSID)
-        || (h->nlmsg_type == RTM_DELSRV6LOCALSID))
-    {
+    case RTM_NEWSRV6LOCALSID:
+    case RTM_DELSRV6LOCALSID:
         onSrv6MySidMsg(h, len);
         return;
+    case RTM_NEWTFILTER:
+    case RTM_DELTFILTER:
+        onTcFilterMsg(h, len);
+        return;
+    case RTM_FPM_ADD_EVPN_SHL:
+    case RTM_FPM_DEL_EVPN_SHL:
+        onEvpnShlMsg(h, len);
+        return;
+    case RTM_FPM_ADD_EVPN_DF:
+    case RTM_FPM_DEL_EVPN_DF:
+        onEvpnDfMsg(h, len);
+        return;
+    case RTM_FPM_ADD_EVPN_ES_BACKUP_NHG:
+    case RTM_FPM_DEL_EVPN_ES_BACKUP_NHG:
+        onEvpnEsBackupNhgMsg(h, len);
+        return;
+    default:
+        break;
     }
 
     if (h->nlmsg_type == RTM_NEWTFILTER || h->nlmsg_type == RTM_DELTFILTER)

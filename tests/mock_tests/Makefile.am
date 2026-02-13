@@ -31,7 +31,6 @@ tests_INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib -I$
 tests_SOURCES = aclorch_ut.cpp \
                 aclorch_rule_ut.cpp \
                 portsorch_ut.cpp \
-                vxlanorch_ut.cpp \
                 routeorch_ut.cpp \
                 qosorch_ut.cpp \
                 bufferorch_ut.cpp \
@@ -64,7 +63,6 @@ tests_SOURCES = aclorch_ut.cpp \
                 intfsorch_ut.cpp \
                 evpnmhorch_ut.cpp \
                 vxlanorch_ut.cpp \
-                evpnmhorch_ut.cpp \
                 mux_rollback_ut.cpp \
                 warmrestartassist_ut.cpp \
                 test_failure_handling.cpp \
@@ -96,6 +94,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 hftelorch_ut.cpp \
                 hftelorch_is_supported_sai_wrap.cpp \
                 shlorch_ut.cpp \
+                mock_sai_tunnel.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \

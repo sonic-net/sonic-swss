@@ -1110,6 +1110,8 @@ void FdbOrch::doTask(Consumer& consumer)
             fdbData.vni = vni;
             fdbData.is_flush_pending = false;
             fdbData.discard = discard;
+
+            // set entry port_name, which is used in mux fdb update logic
             entry.port_name = port;
             if (addFdbEntry(entry, port, fdbData))
             {

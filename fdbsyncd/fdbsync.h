@@ -2,6 +2,8 @@
 #define __FDBSYNC__
 
 #include <string>
+#include <vector>
+#include <unordered_map>
 #include <arpa/inet.h>
 #include "dbconnector.h"
 #include "producerstatetable.h"
@@ -55,9 +57,10 @@ public:
     enum { MAX_ADDR_SIZE = 64 };
 
     FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector *config_db);
-    ~FdbSync();
+    virtual ~FdbSync();
 
-    virtual void onMsg(int nlmsg_type, struct nl_object *obj);
+    virtual void onMsg(int nlmsg_type, struct nl_object *obj) override;
+    virtual void onMsgRaw(struct nlmsghdr *) override;
 
     bool isIntfRestoreDone();
 
@@ -94,6 +97,7 @@ public:
 private:
     ProducerStateTable m_fdbTable;
     ProducerStateTable m_imetTable;
+    ProducerStateTable m_l2NhgTable;
     SubscriberStateTable m_fdbStateTable;
     SubscriberStateTable m_mclagRemoteFdbStateTable;
     AppRestartAssist  *m_AppRestartAssist;
@@ -137,10 +141,15 @@ private:
         unsigned int vni;
         std::string ifname;
         uint8_t protocol;
-        struct {
-            std::string remote_vtep;
-            std::string nexthop_group;
-            std::string ifname;
+        struct AnonymousBuffer
+        {
+        public:
+            AnonymousBuffer() : remote_vtep(buffer), nexthop_group(buffer), ifname(buffer) {};
+            std::string &remote_vtep;
+            std::string &nexthop_group;
+            std::string &ifname;
+        private:
+            std::string buffer;
         } v;
     };
     std::unordered_map<std::string, m_mac_info> m_mac;
@@ -165,7 +174,22 @@ private:
     void imetAddRoute(struct in_addr vtep, std::string ifname, uint32_t vni);
     void imetDelRoute(struct in_addr vtep, std::string ifname, uint32_t vni);
     void onMsgNbr(int nlmsg_type, struct nl_object *obj);
+    void onMsgNbrRaw(struct nlmsghdr *msg);
     void onMsgLink(int nlmsg_type, struct nl_object *obj);
+    void onMsgNhg(struct nlmsghdr *msg);
+
+    enum L2NhgType {
+        L2_NHG_TYPE_VTEP,
+        L2_NHG_TYPE_GROUP,
+    };
+
+    struct l2_nhg_info
+    {
+        L2NhgType type;
+        std::string vtep_ip;                /* For VTEP type */
+        std::vector<uint32_t> member_ids;   /* For GROUP type */
+    };
+    std::unordered_map<uint32_t, l2_nhg_info> m_l2NhgMap;
 };
 
 }
