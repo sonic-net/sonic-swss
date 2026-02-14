@@ -103,13 +103,12 @@ bool swss::get_feature_status(std::string feature, bool default_value)
     return *enabled == "true";
 }
 
-std::shared_ptr<swss::ZmqClient> swss::create_local_zmq_client(std::string feature, bool default_value, std::string vrf)
+std::shared_ptr<swss::ZmqClient> swss::create_local_zmq_client(std::string feature, bool default_value)
 {
     auto enable = get_feature_status(feature, default_value);
     if (enable) {
-        std::string local_vrf = vrf.empty() ? "default" : vrf;
-        SWSS_LOG_NOTICE("Feature %s enabled, Create ZMQ client : %s, vrf: %s", feature.c_str(), ZMQ_LOCAL_ADDRESS, local_vrf.c_str());
-        return create_zmq_client(ZMQ_LOCAL_ADDRESS, vrf);
+        SWSS_LOG_NOTICE("Feature %s enabled, Create ZMQ client : %s", feature.c_str(), ZMQ_LOCAL_ADDRESS);
+        return create_zmq_client(ZMQ_LOCAL_ADDRESS);
     }
 
     return nullptr;
