@@ -59,14 +59,16 @@ constexpr auto DefaultRtProtoPath = "/etc/iproute2/rt_protos";
 
 class FieldValueTupleWrapperBase {
     public:
-    FieldValueTupleWrapperBase(const string & _key) : key(_key) {}
-    FieldValueTupleWrapperBase(const string && _key) : key(std::move(_key)) {}
+    FieldValueTupleWrapperBase(const string & _key, bool _nbZmqEnabled)
+        : key(_key), nbZmqEnabled(_nbZmqEnabled) {}
+    FieldValueTupleWrapperBase(const string && _key, bool _nbZmqEnabled)
+        : key(std::move(_key)), nbZmqEnabled(_nbZmqEnabled) {}
     virtual ~FieldValueTupleWrapperBase() = default;
 
     virtual vector<FieldValueTuple> fieldValueTupleVector() = 0;
 
     vector<KeyOpFieldsValuesTuple> KeyOpFieldsValuesTupleVector() {
-        // The following code calls the batched version of set() for the table.
+        // The non-ZMQ version of the code calls the batched version of set() for the table.
         // The reason for the DEL followed by a SET is that redis only overwrites
         // hashset fields that are explicitly set against a given key. It does leaves
         // previously set fields as is. If a route changes in such a way that earlier
@@ -74,6 +76,9 @@ class FieldValueTupleWrapperBase {
         // then we would like to atomically cleanup earlier fields and set the new
         // fields in the hash-set in redis.
         vector<KeyOpFieldsValuesTuple> kfvVector;
+        if(!nbZmqEnabled) {
+            kfvVector.push_back(KeyOpFieldsValuesTuple {key.c_str(), "DEL", {}});
+        }
         auto fvVector = fieldValueTupleVector();
         kfvVector.push_back(KeyOpFieldsValuesTuple {key.c_str(), "SET", fvVector});
         return kfvVector;
@@ -85,14 +90,24 @@ class FieldValueTupleWrapperBase {
     }
 
     string key = string();
+
+    protected:
+    bool nbZmqEnabled = false;
+
 };
 
 class RouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
     public:
-    RouteTableFieldValueTupleWrapper(const string & _key, string && _protocol) :
-          FieldValueTupleWrapperBase(_key), protocol(std::move(_protocol)) {}
-    RouteTableFieldValueTupleWrapper(const string && _key, string && _protocol) :
-          FieldValueTupleWrapperBase(std::move(_key)), protocol(std::move(_protocol)) {}
+    RouteTableFieldValueTupleWrapper(const string & _key,
+                                     string && _protocol,
+                                     bool _nbZmqEnabled) :
+          FieldValueTupleWrapperBase(_key, _nbZmqEnabled),
+          protocol(std::move(_protocol)) {}
+    RouteTableFieldValueTupleWrapper(const string && _key,
+                                     string && _protocol,
+                                     bool _nbZmqEnabled) :
+          FieldValueTupleWrapperBase(std::move(_key), _nbZmqEnabled),
+          protocol(std::move(_protocol)) {}
 
     vector<FieldValueTuple> fieldValueTupleVector() override;
 
@@ -111,11 +126,15 @@ class RouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
 
 class LabelRouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
     public:
-    LabelRouteTableFieldValueTupleWrapper(const string & _key, string && _protocol) :
-        FieldValueTupleWrapperBase(_key),
+    LabelRouteTableFieldValueTupleWrapper(const string & _key,
+                                          string && _protocol,
+                                          bool _nbZmqEnabled) :
+        FieldValueTupleWrapperBase(_key, _nbZmqEnabled),
         protocol(std::move(_protocol)) {}
-    LabelRouteTableFieldValueTupleWrapper(const string && _key, string && _protocol) :
-        FieldValueTupleWrapperBase(std::move(_key)),
+    LabelRouteTableFieldValueTupleWrapper(const string && _key,
+                                          string && _protocol,
+                                          bool _nbZmqEnabled) :
+        FieldValueTupleWrapperBase(std::move(_key), _nbZmqEnabled),
         protocol(std::move(_protocol)) {}
 
     vector<FieldValueTuple> fieldValueTupleVector() override;
@@ -130,9 +149,10 @@ class LabelRouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase 
 
 class VnetRouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
     public:
-    VnetRouteTableFieldValueTupleWrapper(const string & _key) : FieldValueTupleWrapperBase(_key) {}
-    VnetRouteTableFieldValueTupleWrapper(const string && _key)
-        : FieldValueTupleWrapperBase(std::move(_key)) {}
+    VnetRouteTableFieldValueTupleWrapper(const string & _key, bool _nbZmqEnabled)
+        : FieldValueTupleWrapperBase(_key, _nbZmqEnabled) {}
+    VnetRouteTableFieldValueTupleWrapper(const string && _key, bool _nbZmqEnabled)
+        : FieldValueTupleWrapperBase(std::move(_key), _nbZmqEnabled) {}
 
     vector<FieldValueTuple> fieldValueTupleVector() override;
 
@@ -142,9 +162,10 @@ class VnetRouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
 
 class VnetTunnelTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
     public:
-    VnetTunnelTableFieldValueTupleWrapper(const string & _key) : FieldValueTupleWrapperBase(_key) {}
-    VnetTunnelTableFieldValueTupleWrapper(const string && _key)
-        : FieldValueTupleWrapperBase(std::move(_key)) {}
+    VnetTunnelTableFieldValueTupleWrapper(const string & _key, bool _nbZmqEnabled)
+        : FieldValueTupleWrapperBase(_key, _nbZmqEnabled) {}
+    VnetTunnelTableFieldValueTupleWrapper(const string && _key, bool _nbZmqEnabled)
+        : FieldValueTupleWrapperBase(std::move(_key), _nbZmqEnabled) {}
 
     vector<FieldValueTuple> fieldValueTupleVector() override;
 
@@ -153,9 +174,10 @@ class VnetTunnelTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase 
 
 class NextHopGroupTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
     public:
-    NextHopGroupTableFieldValueTupleWrapper(const string & _key) : FieldValueTupleWrapperBase(_key) {}
-    NextHopGroupTableFieldValueTupleWrapper(const string && _key)
-        : FieldValueTupleWrapperBase(std::move(_key)) {}
+    NextHopGroupTableFieldValueTupleWrapper(const string & _key, bool _nbZmqEnabled)
+        : FieldValueTupleWrapperBase(_key, _nbZmqEnabled) {}
+    NextHopGroupTableFieldValueTupleWrapper(const string && _key, bool _nbZmqEnabled)
+        : FieldValueTupleWrapperBase(std::move(_key), _nbZmqEnabled) {}
 
     vector<FieldValueTuple> fieldValueTupleVector() override;
 
@@ -166,9 +188,10 @@ class NextHopGroupTableFieldValueTupleWrapper : public FieldValueTupleWrapperBas
 
 class Srv6MySidTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
     public:
-    Srv6MySidTableFieldValueTupleWrapper(const string & _key) : FieldValueTupleWrapperBase(_key) {}
-    Srv6MySidTableFieldValueTupleWrapper(const string && _key)
-       : FieldValueTupleWrapperBase(std::move(_key)) {}
+    Srv6MySidTableFieldValueTupleWrapper(const string & _key, bool _nbZmqEnabled)
+        : FieldValueTupleWrapperBase(_key, _nbZmqEnabled) {}
+    Srv6MySidTableFieldValueTupleWrapper(const string && _key, bool _nbZmqEnabled)
+       : FieldValueTupleWrapperBase(std::move(_key), _nbZmqEnabled) {}
 
     vector<FieldValueTuple> fieldValueTupleVector() override;
 
@@ -179,9 +202,10 @@ class Srv6MySidTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
 
 class Srv6SidListTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
     public:
-    Srv6SidListTableFieldValueTupleWrapper(const string & _key) : FieldValueTupleWrapperBase(_key) {}
-    Srv6SidListTableFieldValueTupleWrapper(const string && _key)
-       : FieldValueTupleWrapperBase(std::move(_key)) {}
+    Srv6SidListTableFieldValueTupleWrapper(const string & _key, bool _nbZmqEnabled)
+        : FieldValueTupleWrapperBase(_key, _nbZmqEnabled) {}
+    Srv6SidListTableFieldValueTupleWrapper(const string && _key, bool _nbZmqEnabled)
+       : FieldValueTupleWrapperBase(std::move(_key), _nbZmqEnabled) {}
 
     vector<FieldValueTuple> fieldValueTupleVector() override;
 
@@ -193,7 +217,7 @@ class RouteSync : public NetMsg
 public:
     enum { MAX_ADDR_SIZE = 64 };
 
-    RouteSync(RedisPipeline *pipeline);
+    RouteSync(RedisPipeline *pipeline, const std::string& zmqVrf = "");
 
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
@@ -375,6 +399,9 @@ private:
     void updatePicContextGroupDb(const NextHopGroup& nhg);
     void getNextHopGroupFields(const NextHopGroup& nhg, string& nexthops, string& ifnames, string& weights, uint8_t af = AF_INET);
     void getPicContextGroupFields(const NextHopGroup& nhg, struct NextHopField& nhField, uint8_t af = AF_INET);
+    bool isNbZmqEnabled() const {
+        return m_zmqClient != nullptr;
+    }
 
 };
 struct NextHopField {
