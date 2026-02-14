@@ -1313,21 +1313,3 @@ void DashHaOrch::processCachedBfdSessions()
         }
     }
 }
-
-template<>
-void DashOrch::DashCounter<CounterType::HA_SET>::fetchStats()
-{
-    counter_stats.clear();
-    auto stat_enum_list = queryAvailableCounterStats((sai_object_type_t)SAI_OBJECT_TYPE_HA_SET);
-    for (auto &stat_enum: stat_enum_list)
-    {
-        auto counter_id = static_cast<sai_ha_set_stat_t>(stat_enum);
-        counter_stats.insert(sai_serialize_ha_set_stat(counter_id));
-    }
-}
-
-void DashHaOrch::handleHaSetFCStatusUpdate(bool is_enabled)
-{
-    SWSS_LOG_ENTER();
-    HaSetCounter.handleStatusUpdate(is_enabled, m_ha_set_entries);
-}

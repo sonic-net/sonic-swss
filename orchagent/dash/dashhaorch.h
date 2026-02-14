@@ -13,19 +13,13 @@
 #include "sai_serialize.h"
 #include "notifications.h"
 
-#include "dash_api/ha_set.pb.h"
 #include "dash_api/ha_scope.pb.h"
 
 #include "pbutils.h"
+#include "dashhacounter.h"
 
 #define HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP "HA_SET_STAT_COUNTER"
 #define HA_SET_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
-
-struct HaSetEntry
-{
-    sai_object_id_t ha_set_id;
-    dash::ha_set::HaSet metadata;
-};
 
 struct HaScopeEntry
 {
@@ -37,7 +31,6 @@ struct HaScopeEntry
     std::time_t last_state_start_time;
 };
 
-typedef std::map<std::string, HaSetEntry> HaSetTable;
 typedef std::map<std::string, HaScopeEntry> HaScopeTable;
 typedef std::map<std::string, vector<swss::FieldValueTuple>> DashBfdSessionTable;
 
@@ -55,7 +48,7 @@ protected:
     HaSetTable m_ha_set_entries;
     HaScopeTable m_ha_scope_entries;
     DashBfdSessionTable m_bfd_session_pending_creation;
-    
+
     DashOrch *m_dash_orch;
     BfdOrch *m_bfd_orch;
 
@@ -110,40 +103,6 @@ protected:
     swss::NotificationConsumer* m_haSetNotificationConsumer;
     swss::NotificationConsumer* m_haScopeNotificationConsumer;
 
-public:
-    struct DashHaCounter: DashOrch::DashCounter<CounterType::HA_SET>
-    {
-        DashHaCounter(const std::string& group_name, StatsMode stats_mode, uint polling_interval, bool enabled) 
-            : DashOrch::DashCounter<CounterType::HA_SET>(group_name, stats_mode, polling_interval, enabled) {}
-        
-        void fetchStats();
-        
-        void refreshStats(bool install, const HaSetTable& ha_set_entries)
-        {
-            for (auto it = ha_set_entries.begin(); it != ha_set_entries.end(); it++)
-            {
-                if (install)
-                {
-                    addToFC(it->second.ha_set_id, it->first);
-                }
-                else
-                {
-                    removeFromFC(it->second.ha_set_id, it->first);
-                }
-            }
-        }
-
-        void handleStatusUpdate(bool enabled, const HaSetTable& ha_set_entries)
-        {
-            bool prev_enabled = fc_status;
-            fc_status = enabled;
-            if (fc_status != prev_enabled)
-            {
-                refreshStats(fc_status, ha_set_entries);
-            }
-        }
-    };
-
 private:
     DashHaCounter HaSetCounter;
     
@@ -152,7 +111,7 @@ public:
     const HaScopeTable& getHaScopeEntries() const { return m_ha_scope_entries; };
     const DashBfdSessionTable& getBfdSessionPendingCreation() const { return m_bfd_session_pending_creation; };
     virtual HaScopeEntry getHaScopeForEni(const std::string& eni);
-    void handleHaSetFCStatusUpdate(bool is_enabled);
+    void handleHaSetFCStatusUpdate(bool is_enabled) { HaSetCounter.handleStatusUpdate(is_enabled, m_ha_set_entries); }
 };
 
 #endif // DASHHAORCH_H
