@@ -29,6 +29,7 @@
 #define PORT_STAT_COUNTER_FLEX_COUNTER_GROUP "PORT_STAT_COUNTER"
 #define PORT_RATE_COUNTER_FLEX_COUNTER_GROUP "PORT_RATE_COUNTER"
 #define PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP "PORT_BUFFER_DROP_STAT"
+#define PORT_PHY_ATTR_FLEX_COUNTER_GROUP "PORT_PHY_ATTR"
 #define QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_STAT_COUNTER"
 #define QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_WATERMARK_STAT_COUNTER"
 #define PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_WATERMARK_STAT_COUNTER"
@@ -117,6 +118,13 @@ struct queueInfo
     sai_uint8_t index;
 };
 
+struct systemPortMapInfo
+{
+    sai_object_id_t system_port_id;
+    SystemPortInfo system_port_info;
+    bool info_valid = false;
+};
+
 template<typename T>
 struct PortCapability
 {
@@ -125,6 +133,14 @@ struct PortCapability
 };
 
 typedef PortCapability<PortSupportedFecModes> PortFecModeCapability_t;
+
+extern const std::vector<sai_port_attr_t> port_phy_attr_ids;
+
+// Forward declaration for unit test friend class
+namespace portphyattr_test
+{
+class PortAttrTest;
+} // namespace portphyattr_test
 
 class PortsOrch : public Orch, public Subject
 {
@@ -191,7 +207,9 @@ public:
     void generateQueueMap(map<string, FlexCounterQueueStates> queuesStateVector);
     uint32_t getNumberOfPortSupportedQueueCounters(string port);
     void createPortBufferQueueCounters(const Port &port, string queues, bool skip_host_tx_queue=true);
+    void addPortBufferQueueCounters(const Port &port, uint32_t startIndex, uint32_t endIndex, bool skip_host_tx_queue=true);
     void removePortBufferQueueCounters(const Port &port, string queues, bool skip_host_tx_queue=true);
+    void deletePortBufferQueueCounters(const Port &port, uint32_t startIndex, uint32_t endIndex, bool skip_host_tx_queue=true);
     void addQueueFlexCounters(map<string, FlexCounterQueueStates> queuesStateVector);
     void addQueueWatermarkFlexCounters(map<string, FlexCounterQueueStates> queuesStateVector);
     void addWredQueueFlexCounters(map<string, FlexCounterQueueStates> queuesStateVector);
@@ -199,12 +217,20 @@ public:
     void generatePriorityGroupMap(map<string, FlexCounterPgStates> pgsStateVector);
     uint32_t getNumberOfPortSupportedPgCounters(string port);
     void createPortBufferPgCounters(const Port &port, string pgs);
+    void addPortBufferPgCounters(const Port& port, uint32_t startIndex, uint32_t endIndex);
     void removePortBufferPgCounters(const Port& port, string pgs);
+    void deletePortBufferPgCounters(const Port& port, uint32_t startIndex, uint32_t endIndex);
     void addPriorityGroupFlexCounters(map<string, FlexCounterPgStates> pgsStateVector);
     void addPriorityGroupWatermarkFlexCounters(map<string, FlexCounterPgStates> pgsStateVector);
 
     void generatePortCounterMap();
     void generatePortBufferDropCounterMap();
+
+    void generatePortPhyAttrCounterMap();
+    void clearPortPhyAttrCounterMap();
+    const std::vector<sai_port_attr_t>& getPortPhyAttrIds() const;
+    void queryPortPhyAttrCapabilities();
+    bool verifyPortSupportsAllPhyAttr(sai_object_id_t port_id, const char* port_name);
 
     void generateWredPortCounterMap();
     void generateWredQueueCounterMap();
@@ -264,6 +290,7 @@ private:
     unique_ptr<Table> m_counterLagTable;
     unique_ptr<Table> m_portTable;
     unique_ptr<Table> m_sendToIngressPortTable;
+    unique_ptr<Table> m_systemPortTable;
     unique_ptr<Table> m_gearboxTable;
     unique_ptr<CounterNameMapUpdater> m_queueCounterNameMapUpdater;
     unique_ptr<Table> m_voqTable;
@@ -288,6 +315,7 @@ private:
     shared_ptr<DBConnector> m_notificationsDb;
 
     FlexCounterTaggedCachedManager<void> port_stat_manager;
+    FlexCounterTaggedCachedManager<void> port_phy_attr_manager;
     FlexCounterTaggedCachedManager<void> port_buffer_drop_stat_manager;
     FlexCounterTaggedCachedManager<sai_queue_type_t> queue_stat_manager;
     FlexCounterTaggedCachedManager<sai_queue_type_t> queue_watermark_manager;
@@ -440,6 +468,7 @@ private:
     bool setPortFecOverride(sai_object_id_t port_obj, bool override_fec);
     bool setPortPfcAsym(Port &port, sai_port_priority_flow_control_mode_t pfc_asym);
     bool getDestPortId(sai_object_id_t src_port_id, dest_port_type_t port_type, sai_object_id_t &des_port_id);
+    bool setPortMediaType(Port& port, const string &media_type);
 
     bool setBridgePortAdminStatus(sai_object_id_t id, bool up);
 
@@ -492,6 +521,8 @@ private:
     bool m_isPortCounterMapGenerated = false;
     bool m_isPortBufferDropCounterMapGenerated = false;
 
+    std::vector<sai_port_attr_t> m_supported_phy_attrs;
+
     bool isAutoNegEnabled(sai_object_id_t id);
     task_process_status setPortAutoNeg(Port &port, bool autoneg);
     task_process_status setPortUnreliableLOS(Port &port, bool enabled);
@@ -525,8 +556,7 @@ private:
 
     void getPortSerdesVal(const std::string& s, std::vector<uint32_t> &lane_values, int base = 16);
     bool setPortSerdesAttribute(sai_object_id_t port_id, sai_object_id_t switch_id,
-                                std::map<sai_port_serdes_attr_t, std::vector<uint32_t>> &serdes_attr);
-
+                                std::map<sai_port_serdes_attr_t, SerdesValue> &serdes_attr);
 
     void removePortSerdesAttribute(sai_object_id_t port_id);
 
@@ -544,10 +574,11 @@ private:
     map<string, Port::Role> m_recircPortRole;
 
     //map key is tuple of <attached_switch_id, core_index, core_port_index>
-    map<tuple<int, int, int>, sai_object_id_t> m_systemPortOidMap;
+    map<tuple<int, int, int>, systemPortMapInfo> m_systemPortOidMap;
     sai_uint32_t m_systemPortCount;
     bool getSystemPorts();
     bool addSystemPorts();
+    void updateSystemPort(Port &port);
     unique_ptr<Table> m_tableVoqSystemLagTable;
     unique_ptr<Table> m_tableVoqSystemLagMemberTable;
     void voqSyncAddLag(Port &lag);
@@ -603,5 +634,8 @@ private:
     // Port OA helper
     PortHelper m_portHlpr;
     bool m_isWarmRestoreStage = false;
+
+    // Friend declaration for unit tests
+    friend class portphyattr_test::PortAttrTest;
 };
 #endif /* SWSS_PORTSORCH_H */

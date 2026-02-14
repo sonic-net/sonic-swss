@@ -15,6 +15,9 @@
 #include <chrono>
 #include <math.h>
 
+using Clock = std::chrono::system_clock;
+using TimePoint = std::chrono::time_point<Clock>;
+
 #define FABRIC_POLLING_INTERVAL_DEFAULT   (30)
 #define FABRIC_PORT_PREFIX    "PORT"
 #define FABRIC_PORT_ERROR     0
@@ -23,7 +26,7 @@
 #define FABRIC_PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
 #define FABRIC_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP        "FABRIC_QUEUE_STAT_COUNTER"
 #define FABRIC_QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS  100000
-#define FABRIC_DEBUG_POLLING_INTERVAL_DEFAULT   (60)
+#define FABRIC_DEBUG_POLLING_INTERVAL_DEFAULT   (12)
 #define FABRIC_MONITOR_DATA "FABRIC_MONITOR_DATA"
 #define APPL_FABRIC_PORT_PREFIX "Fabric"
 #define SWITCH_DEBUG_COUNTER_FLEX_COUNTER_GROUP  "SWITCH_DEBUG_COUNTER"
@@ -32,9 +35,10 @@
 #define SWITCH_STANDARD_DROP_COUNTERS  "SWITCH_ID"
 
 // constants for link monitoring
+#define CHECK_TIME 120
 #define MAX_SKIP_CRCERR_ON_LNKUP_POLLS 20
 #define MAX_SKIP_FECERR_ON_LNKUP_POLLS 20
-// the follow constants will be replaced with the number in config_db
+// the follow  will be replaced with the number in config_db
 #define FEC_ISOLATE_POLLS 2
 #define FEC_UNISOLATE_POLLS 8
 #define ISOLATION_POLLS_CFG 1
@@ -425,6 +429,7 @@ void FabricPortsOrch::updateFabricDebugCounters()
         return;
     }
     now = time_now.tv_sec;
+    auto checkTime = Clock::now();
 
     uint64_t fecIsolatedPolls = FEC_ISOLATE_POLLS;            // monPollThreshIsolation
     uint64_t fecUnisolatePolls = FEC_UNISOLATE_POLLS;         // monPollThreshRecovery
@@ -566,6 +571,9 @@ void FabricPortsOrch::updateFabricDebugCounters()
         int cfgIsolated = 0;
         int isolated = 0;
         int origIsolated = 0;
+        int origPermIsolated = 0;
+        int permIsolate = 0;
+        int linkFlap = 0;
 
         // link status
         string lnkStatus = "down";
@@ -689,6 +697,12 @@ void FabricPortsOrch::updateFabricDebugCounters()
                 SWSS_LOG_INFO("port %s currently isolated: %s", key.c_str(),valuePt.c_str());
                 continue;
             }
+            if (fvField(val) == "PRM_ISOLATED")
+            {
+                origPermIsolated = to_uint<uint8_t>(valuePt);
+                SWSS_LOG_INFO("port %s perm isolated: %s", key.c_str(),valuePt.c_str());
+                continue;
+            }
             if (fvField(val) == "TEST_CRC_ERRORS")
             {
                 testCrcErrors = std::stoull(valuePt);
@@ -724,7 +738,7 @@ void FabricPortsOrch::updateFabricDebugCounters()
         SWSS_LOG_INFO("Port %d lnk down cnt %lld  handled: %lld", lane, (long long)lnkDownCnt, (long long)preLnkDwnCnt);
         if (lnkDownCnt != preLnkDwnCnt)
         {
-
+            linkFlap = checkDownCnt(key, checkTime) ? 1 : 0;
             bool clearCnt = false;
             if (origIsolated == 1 && cfgIsolated == 0)
             {
@@ -734,6 +748,11 @@ void FabricPortsOrch::updateFabricDebugCounters()
             SWSS_LOG_INFO("port %s about to clear counters.", key.c_str());
             SWSS_LOG_INFO("origIsolated %d isolated %d cfgIsolated %d clearCnt %s", origIsolated, isolated, cfgIsolated, clearCnt ? "true":"flase");
             clearFabricCnt(lane, clearCnt);
+
+            if (linkFlap > 0 )
+            {
+                SWSS_LOG_NOTICE("port %s possibly flapping %d", key.c_str(), linkFlap);
+            }
             updateStateDbTable(m_stateTable, key, "PORT_DOWN_COUNT_handled", lnkDownCnt);
             continue;
         }
@@ -843,71 +862,77 @@ void FabricPortsOrch::updateFabricDebugCounters()
         }
 
         // take care serdes link shut state setting
-        if (lnkStatus == "up")
+        // debug information
+        SWSS_LOG_INFO("port %s status up autoIsolated %d",
+                      key.c_str(), autoIsolated);
+        SWSS_LOG_INFO("consecutivePollsWithErrors %lld consecutivePollsWithFecErrs %lld",
+                      (long long)consecutivePollsWithErrors, (long long)consecutivePollsWithFecErrs);
+        SWSS_LOG_INFO("consecutivePollsWithNoErrors %lld consecutivePollsWithNoFecErrs %lld",
+                      (long long)consecutivePollsWithNoErrors, (long long)consecutivePollsWithNoFecErrs);
+        if (autoIsolated == 0 && (consecutivePollsWithErrors >= isolationPollsCfg
+                               || consecutivePollsWithFecErrs >= fecIsolatedPolls))
         {
-            // debug information
-            SWSS_LOG_INFO("port %s status up autoIsolated %d",
-                          key.c_str(), autoIsolated);
-            SWSS_LOG_INFO("consecutivePollsWithErrors %lld consecutivePollsWithFecErrs %lld",
-                          (long long)consecutivePollsWithErrors, (long long)consecutivePollsWithFecErrs);
-            SWSS_LOG_INFO("consecutivePollsWithNoErrors %lld consecutivePollsWithNoFecErrs %lld",
-                          (long long)consecutivePollsWithNoErrors, (long long)consecutivePollsWithNoFecErrs);
-            if (autoIsolated == 0 && (consecutivePollsWithErrors >= isolationPollsCfg
-                                   || consecutivePollsWithFecErrs >= fecIsolatedPolls))
+            // Link needs to be isolated.
+            SWSS_LOG_INFO("port %s auto isolated", key.c_str());
+            autoIsolated = 1;
+            permIsolate = addErrorTime(key, checkTime) ? 1 : 0;
+            if (origPermIsolated == 1)
             {
-                // Link needs to be isolated.
-                SWSS_LOG_INFO("port %s auto isolated", key.c_str());
-                autoIsolated = 1;
-                updateStateDbTable(m_stateTable, key, "AUTO_ISOLATED", autoIsolated);
-                SWSS_LOG_NOTICE("port %s set AUTO_ISOLATED %d", key.c_str(), autoIsolated);
+                permIsolate = 1;
             }
-            else if (autoIsolated == 1 && consecutivePollsWithNoErrors >= recoveryPollsCfg
-                  && consecutivePollsWithNoFecErrs >= fecUnisolatePolls)
-            {
-                // Link is isolated, but no longer needs to be.
-                SWSS_LOG_INFO("port %s healthy again", key.c_str());
-                autoIsolated = 0;
-                updateStateDbTable(m_stateTable, key, "AUTO_ISOLATED", autoIsolated);
-                SWSS_LOG_NOTICE("port %s set AUTO_ISOLATED %d", key.c_str(), autoIsolated);
-            }
-            if (cfgIsolated == 1)
-            {
-                isolated = 1;
-                SWSS_LOG_INFO("port %s keep isolated due to configuation",key.c_str());
-            }
-            else
-            {
-                if (autoIsolated == 1)
-                {
-                    isolated = 1;
-                    SWSS_LOG_INFO("port %s keep isolated due to autoisolation",key.c_str());
-                }
-                else
-                {
-                    isolated = 0;
-                    SWSS_LOG_INFO("port %s unisolated",key.c_str());
-                }
-            }
-            // if "ISOLATED" is true, Call SAI api here to actually isolated the link
-            // if "ISOLATED" is false, Call SAP api to actually unisolate the link
-
-            if (origIsolated != isolated)
-            {
-                bool setVal = false;
-                if (isolated == 1)
-                {
-                    setVal = true;
-                }
-                isolateFabricLink(lane, setVal);
-            }
-            else
-            {
-                SWSS_LOG_INFO( "Same isolation status for %d", lane);
-            }
+            SWSS_LOG_NOTICE("port %s get permIsolated", key.c_str() );
+            updateStateDbTable(m_stateTable, key, "AUTO_ISOLATED", autoIsolated);
+            SWSS_LOG_NOTICE("port %s set AUTO_ISOLATED %d", key.c_str(), autoIsolated);
+        }
+        else if (autoIsolated == 1 && consecutivePollsWithNoErrors >= recoveryPollsCfg
+              && consecutivePollsWithNoFecErrs >= fecUnisolatePolls)
+        {
+            // Link is isolated, but no longer needs to be.
+            SWSS_LOG_INFO("port %s healthy again", key.c_str());
+            autoIsolated = 0;
+            updateStateDbTable(m_stateTable, key, "AUTO_ISOLATED", autoIsolated);
+            SWSS_LOG_NOTICE("port %s set AUTO_ISOLATED %d", key.c_str(), autoIsolated);
+        }
+        if (cfgIsolated == 1)
+        {
+            isolated = 1;
+            SWSS_LOG_INFO("port %s keep isolated due to configuation",key.c_str());
         }
         else
         {
-            SWSS_LOG_INFO("link down");
+            if (autoIsolated == 1)
+            {
+                isolated = 1;
+                SWSS_LOG_INFO("port %s keep isolated due to autoisolation",key.c_str());
+            }
+            else
+            {
+                isolated = 0;
+                SWSS_LOG_INFO("port %s unisolated",key.c_str());
+            }
+        }
+        // if "ISOLATED" is true, Call SAI api here to actually isolated the link
+        // if "ISOLATED" is false, Call SAP api to actually unisolate the link
+
+        if (permIsolate == 1 || origPermIsolated == 1)
+        {
+            isolated = 1;
+            permIsolate = 1;
+            SWSS_LOG_INFO("port %s permentantly isolated %d",key.c_str(), permIsolate );
+        }
+
+        if (origIsolated != isolated)
+        {
+            bool setVal = false;
+            if (isolated == 1)
+            {
+                setVal = true;
+            }
+            isolateFabricLink(lane, setVal);
+        }
+        else
+        {
+            SWSS_LOG_INFO( "Same isolation status for %d", lane);
         }
 
         // Update state_db with link isolation data
@@ -917,6 +942,7 @@ void FabricPortsOrch::updateFabricDebugCounters()
         updateStateDbTable(m_stateTable, key, "POLL_WITH_NOFEC_ERRORS", consecutivePollsWithNoFecErrs);
         updateStateDbTable(m_stateTable, key, "CONFIG_ISOLATED", cfgIsolated);
         updateStateDbTable(m_stateTable, key, "ISOLATED", isolated);
+        updateStateDbTable(m_stateTable, key, "PRM_ISOLATED", permIsolate);
 
         // Update state_db with error rate
         valuePt = to_string(rxCells);
@@ -1021,10 +1047,6 @@ void FabricPortsOrch::updateFabricCapacity()
     // Init value for fabric capacity monitoring
     int capacity = 0;
     int downCapacity = 0;
-    string lnkStatus = "down";
-    string configIsolated = "0";
-    string isolated = "0";
-    string autoIsolated = "0";
     int operating_links = 0;
     int total_links = 0;
     int threshold = 100;
@@ -1062,6 +1084,10 @@ void FabricPortsOrch::updateFabricCapacity()
         string key = FABRIC_PORT_PREFIX + to_string(lane);
         std::vector<FieldValueTuple> values;
         string valuePt;
+        string lnkStatus = "down";
+        string configIsolated = "0";
+        string isolated = "0";
+        string autoIsolated = "0";
 
         // Get fabric serdes link status from STATE_DB
         bool exist = m_stateTable->get(key, values);
@@ -1498,6 +1524,7 @@ void FabricPortsOrch::doFabricPortTask(Consumer &consumer)
                     //     CONFIG_ISOLATED 0
                     //     ISOLATED 0
                     //     AUTO_ISOLATED 0
+                    //     PRM_ISOLATED 0
                     updateStateDbTable(m_stateTable, state_key, "FORCE_UN_ISOLATE", forceIsolateCnt);
                     updateStateDbTable(m_stateTable, state_key, "POLL_WITH_ERRORS", m_defaultPollWithErrors);
                     updateStateDbTable(m_stateTable, state_key, "POLL_WITH_NO_ERRORS", m_defaultPollWithNoErrors);
@@ -1506,6 +1533,8 @@ void FabricPortsOrch::doFabricPortTask(Consumer &consumer)
                     updateStateDbTable(m_stateTable, state_key, "CONFIG_ISOLATED", m_defaultConfigIsolated);
                     updateStateDbTable(m_stateTable, state_key, "ISOLATED", m_defaultIsolated);
                     updateStateDbTable(m_stateTable, state_key, "AUTO_ISOLATED", m_defaultAutoIsolated);
+                    updateStateDbTable(m_stateTable, state_key, "PRM_ISOLATED", m_defaultIsolated);
+                    linkQueues.clear();
 
                     // unisolate the link
                     bool setVal = false;
@@ -1599,4 +1628,93 @@ void FabricPortsOrch::createSwitchDropCounters(void)
     m_counterNameToSwitchStatMap->set("", switchNameSwitchCounterMap);
 
     switch_drop_counter_manager->setCounterIdList(gSwitchId, CounterType::SWITCH_DEBUG, counter_stats);
+}
+
+bool FabricPortsOrch::addErrorTime(const std::string& link, TimePoint now)
+{
+    bool permIsolate = false;
+    auto& timestamps = linkQueues[link];
+    std::time_t now_c = Clock::to_time_t(now);
+    SWSS_LOG_INFO("link: %s auto isolate at %s", link.c_str(), asctime(gmtime(&now_c)));
+
+    // Add new timestamp to the queue
+    timestamps.push(now);
+    // Check if we have at least 3 timestamps, and pop the old timestamps
+    auto last = timestamps.back();
+    auto first = timestamps.front();
+
+    auto diff = last - first;
+    auto checkPeriod = std::chrono::minutes(CHECK_TIME);
+    auto hours = checkPeriod.count();
+    SWSS_LOG_INFO("check time window: %lld", static_cast<long long>(hours) );
+    while (diff > checkPeriod)
+    {
+        timestamps.pop(); // Remove old timestamp
+        first = timestamps.front();
+        diff = std::chrono::duration_cast<std::chrono::minutes>(last - first);
+    }
+    if (timestamps.size() >= 3)
+    {
+        first = timestamps.front();
+        diff = last - first;
+
+        if (diff <= checkPeriod)
+        { // If within 2 hours
+            permIsolate = true;
+        } else {
+            SWSS_LOG_INFO("do not perm isolated the link");
+        }
+    } else {
+        SWSS_LOG_INFO("Not enough events yet");
+    }
+    auto ptTime = std::chrono::duration_cast<std::chrono::minutes>(diff).count();
+    if (permIsolate)
+    {
+       SWSS_LOG_INFO("Event queue size %u isolation within %lld, so perm isolated: %d",
+             static_cast<unsigned int>(timestamps.size()),
+             static_cast<long long>(ptTime), permIsolate);
+    }
+    SWSS_LOG_INFO("Add isolation event: check period diff %lld size %u perm: %d",
+          static_cast<long long>(ptTime),
+          static_cast<unsigned int>(timestamps.size()), permIsolate);
+    return permIsolate;
+}
+
+// The link status will shows down if the card get removed/power cycled
+// or link actually flaping. If the link get status down too many times
+// during the last several hours, say 2 hours, we consider the links mostly
+// flaky, and will try to isolate the link.
+bool FabricPortsOrch::checkDownCnt(const std::string& link, TimePoint now)
+{
+    bool linkFlapped = false;
+
+    auto& timestamps = linkQueues[link];
+    timestamps.push(now);
+
+    auto last = timestamps.back();
+    auto first = timestamps.front();
+    auto diff = last - first;
+    auto checkPeriod = std::chrono::minutes(CHECK_TIME);
+    while (diff > checkPeriod)
+    {
+        timestamps.pop(); // Remove old timestamp
+        first = timestamps.front();
+        diff = std::chrono::duration_cast<std::chrono::minutes>(last - first);
+    }
+    if (timestamps.size() >= 3)
+    {
+        first = timestamps.front();
+        diff = last - first;
+
+        if (diff <= checkPeriod)
+        { // If within 2 hours
+            linkFlapped = true;
+        } else {
+            SWSS_LOG_INFO("The link down may from peer cards gone");
+        }
+    } else {
+        SWSS_LOG_INFO("Not enough events to check yet");
+    }
+
+    return linkFlapped;
 }

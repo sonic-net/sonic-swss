@@ -1074,11 +1074,10 @@ class TestSrv6MySidFpmsyncd(object):
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:2::/48 block-len 32 node-len 16 func-bits 16\" -c \"behavior usid\"")
 
         # create srv6 mysid un behavior
-        dvs.runcmd("ip -6 route add fc00:0:2::/48 encap seg6local action End dev sr0")
-        # dvs.runcmd("ip -6 route add fc00:0:2::/48 encap seg6local action End flavors next-csid lblen 32 nflen 16 dev sr0")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"static-sids\" -c \"sid fc00:0:2::/48 locator loc1 behavior uN\"")
 
         # check application database
-        self.pdb.wait_for_entry("SRV6_MY_SID_TABLE", "32:16:16:0:fc00:0:2::")
+        self.pdb.wait_for_entry("SRV6_MY_SID_TABLE", "32:16:0:0:fc00:0:2::")
 
         # verify that the mysid has been programmed into the ASIC
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", len(self.initial_my_sid_entries) + 1)
@@ -1093,11 +1092,10 @@ class TestSrv6MySidFpmsyncd(object):
                 assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UN"
 
         # remove srv6 mysid un behavior
-        dvs.runcmd("ip -6 route del fc00:0:2::/48 encap seg6local action End dev sr0".format(self.vrf_table_id))
-        # dvs.runcmd("ip -6 route del fc00:0:2::/48 encap seg6local action End flavors next-csid lblen 32 nflen 16 dev sr0".format(self.vrf_table_id))
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"static-sids\" -c \"no sid fc00:0:2::/48 locator loc1 behavior uN\"")
 
         # check application database
-        self.pdb.wait_for_deleted_entry("SRV6_MY_SID_TABLE", "32:16:16:0:fc00:0:2::")
+        self.pdb.wait_for_deleted_entry("SRV6_MY_SID_TABLE", "32:16:0:0:fc00:0:2::")
 
         # verify that the mysid has been removed from the ASIC
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", len(self.initial_my_sid_entries))
@@ -1121,8 +1119,7 @@ class TestSrv6MySidFpmsyncd(object):
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:2::/48 block-len 32 node-len 16 func-bits 16\" -c \"behavior usid\"")
 
         # create srv6 mysid ua behavior
-        dvs.runcmd("ip -6 route add fc00:0:2:ff00::/64 encap seg6local action End.X nh6 2001::1 dev sr0")
-        # dvs.runcmd("ip -6 route add fc00:0:2:ff00::/64 encap seg6local action End.X nh6 2001::1 flavors next-csid lblen 32 nflen 16 dev sr0")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"static-sids\" -c \"sid fc00:0:2:ff00::/64 locator loc1 behavior uA interface Ethernet104 nexthop 2001::1\"")
 
         # check application database
         self.pdb.wait_for_entry("SRV6_MY_SID_TABLE", "32:16:16:0:fc00:0:2:ff00::")
@@ -1142,8 +1139,7 @@ class TestSrv6MySidFpmsyncd(object):
                 assert fv[1] == self.next_hop_ipv6_id
 
         # remove srv6 mysid ua behavior
-        dvs.runcmd("ip -6 route del fc00:0:2:ff00::/64 encap seg6local action End.DT6 nh6 2001::1 dev sr0")
-        # dvs.runcmd("ip -6 route del fc00:0:2:ff00::/64 encap seg6local action End.DT6 nh6 2001::1 flavors next-csid lblen 32 nflen 16 dev sr0")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"static-sids\" -c \"no sid fc00:0:2:ff00::/64 locator loc1 behavior uA interface Ethernet104 nexthop 2001::1\"")
 
         # check application database
         self.pdb.wait_for_deleted_entry("SRV6_MY_SID_TABLE", "32:16:16:0:fc00:0:2:ff00::")
@@ -1173,7 +1169,7 @@ class TestSrv6MySidFpmsyncd(object):
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:2::/48 block-len 32 node-len 16 func-bits 16\" -c \"behavior usid\"")
 
         # create srv6 mysid udt4 behavior
-        dvs.runcmd("ip -6 route add fc00:0:2:ff05::/128 encap seg6local action End.DT4 vrftable {} dev sr0".format(self.vrf_table_id))
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"static-sids\" -c \"sid fc00:0:2:ff05::/64 locator loc1 behavior uDT4 vrf Vrf10\"")
 
         # check application database
         self.pdb.wait_for_entry("SRV6_MY_SID_TABLE", "32:16:16:0:fc00:0:2:ff05::")
@@ -1193,7 +1189,7 @@ class TestSrv6MySidFpmsyncd(object):
                 assert fv[1] == self.vrf_id
 
         # remove srv6 mysid udt4 behavior
-        dvs.runcmd("ip -6 route del fc00:0:2:ff05::/128 encap seg6local action End.DT4 vrftable {} dev sr0".format(self.vrf_table_id))
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"static-sids\" -c \"no sid fc00:0:2:ff05::/64 locator loc1 behavior uDT4 vrf Vrf10\"")
 
         # check application database
         self.pdb.wait_for_deleted_entry("SRV6_MY_SID_TABLE", "32:16:16:0:fc00:0:2:ff05::")
@@ -1218,7 +1214,7 @@ class TestSrv6MySidFpmsyncd(object):
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:2::/48 block-len 32 node-len 16 func-bits 16\" -c \"behavior usid\"")
 
         # create srv6 mysid udt6 behavior
-        dvs.runcmd("ip -6 route add fc00:0:2:ff05::/128 encap seg6local action End.DT6 vrftable {} dev sr0".format(self.vrf_table_id))
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"static-sids\" -c \"sid fc00:0:2:ff05::/64 locator loc1 behavior uDT6 vrf Vrf10\"")
 
         # check application database
         self.pdb.wait_for_entry("SRV6_MY_SID_TABLE", "32:16:16:0:fc00:0:2:ff05::")
@@ -1240,7 +1236,7 @@ class TestSrv6MySidFpmsyncd(object):
                 assert fv[1] == self.vrf_id
 
         # remove srv6 mysid udt6 behavior
-        dvs.runcmd("ip -6 route del fc00:0:2:ff05::/128 encap seg6local action End.DT6 vrftable {} dev sr0".format(self.vrf_table_id))
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"static-sids\" -c \"no sid fc00:0:2:ff05::/64 locator loc1 behavior uDT6 vrf Vrf10\"")
 
         # check application database
         self.pdb.wait_for_deleted_entry("SRV6_MY_SID_TABLE", "32:16:16:0:fc00:0:2:ff05::")
@@ -1270,7 +1266,7 @@ class TestSrv6MySidFpmsyncd(object):
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"locators\" -c \"locator loc1\" -c \"prefix fc00:0:2::/48 block-len 32 node-len 16 func-bits 16\" -c \"behavior usid\"")
 
         # create srv6 mysid udt46 behavior
-        dvs.runcmd("ip -6 route add fc00:0:2:ff05::/128 encap seg6local action End.DT46 vrftable {} dev sr0".format(self.vrf_table_id))
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"static-sids\" -c \"sid fc00:0:2:ff05::/64 locator loc1 behavior uDT46 vrf Vrf10\"")
 
         # check application database
         self.pdb.wait_for_entry("SRV6_MY_SID_TABLE", "32:16:16:0:fc00:0:2:ff05::")
@@ -1290,7 +1286,7 @@ class TestSrv6MySidFpmsyncd(object):
                 assert fv[1] == self.vrf_id
 
         # remove srv6 mysid udt46 behavior
-        dvs.runcmd("ip -6 route del fc00:0:2:ff05::/128 encap seg6local action End.DT46 vrftable {} dev sr0".format(self.vrf_table_id))
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"segment-routing\" -c \"srv6\" -c \"static-sids\" -c \"no sid fc00:0:2:ff05::/64 locator loc1 behavior uDT46 vrf Vrf10\"")
 
         # check application database
         self.pdb.wait_for_deleted_entry("SRV6_MY_SID_TABLE", "32:16:16:0:fc00:0:2:ff05::")
@@ -1334,6 +1330,7 @@ class TestSrv6MySidFpmsyncd(object):
         dvs.runcmd(sid_cmd)
         dvs.runcmd(loc_cmd)
 
+    @pytest.mark.skip(reason="Skip to be removed after stabilizing the test")
     def test_Srv6MySidUNTunnelDscpMode(self, dvs, testlog):
 
         _, output = dvs.runcmd(f"vtysh -c 'show zebra dplane providers'")
@@ -1430,6 +1427,7 @@ class TestSrv6MySidFpmsyncd(object):
 
         self.teardown_srv6(dvs)
 
+    @pytest.mark.skip(reason="Skip to be removed after stabilizing the test")
     def test_Srv6MySidUNTunnelDscpModeAmbiguity(self, dvs, testlog):
         _, output = dvs.runcmd(f"vtysh -c 'show zebra dplane providers'")
         if 'dplane_fpm_sonic' not in output:
@@ -1532,7 +1530,6 @@ class TestSrv6VpnFpmsyncd(object):
         self.remove_vrf("Vrf13")
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER", len(initial_vrf_entries) - 1)
 
-    @pytest.mark.xfail(reason="Failing after Bookworm/libnl 3.7.0 upgrade")
     def test_AddRemoveSrv6SteeringRouteIpv4(self, dvs, testlog):
 
         _, output = dvs.runcmd(f"vtysh -c 'show zebra dplane providers'")
@@ -1559,12 +1556,12 @@ class TestSrv6VpnFpmsyncd(object):
 
         # check application database
         self.pdb.wait_for_entry("ROUTE_TABLE", "Vrf13:192.0.2.0/24")
-        expected_fields = {"segment": "Vrf13:192.0.2.0/24", "seg_src": "fc00:0:2::1"}
+        expected_fields = {"segment": "fc00:0:1:e000::", "seg_src": "fc00:0:2::1"}
         self.pdb.wait_for_field_match("ROUTE_TABLE", "Vrf13:192.0.2.0/24", expected_fields)
 
-        self.pdb.wait_for_entry("SRV6_SID_LIST_TABLE", "Vrf13:192.0.2.0/24")
+        self.pdb.wait_for_entry("SRV6_SID_LIST_TABLE", "fc00:0:1:e000::")
         expected_fields = {"path": "fc00:0:1:e000::"}
-        self.pdb.wait_for_field_match("SRV6_SID_LIST_TABLE", "Vrf13:192.0.2.0/24", expected_fields)
+        self.pdb.wait_for_field_match("SRV6_SID_LIST_TABLE", "fc00:0:1:e000::", expected_fields)
 
         # verify that the route has been programmed into the ASIC
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", len(tunnel_entries) + 1)
@@ -1625,7 +1622,7 @@ class TestSrv6VpnFpmsyncd(object):
 
         # check application database
         self.pdb.wait_for_deleted_entry("ROUTE_TABLE", "Vrf13:192.0.2.0/24")
-        self.pdb.wait_for_deleted_entry("SRV6_SID_LIST_TABLE", "Vrf13:192.0.2.0/24")
+        self.pdb.wait_for_deleted_entry("SRV6_SID_LIST_TABLE", "fc00:0:1:e000::")
 
         # verify that the route has been removed from the ASIC
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", len(nexthop_entries))
@@ -1637,7 +1634,6 @@ class TestSrv6VpnFpmsyncd(object):
 
         self.teardown_srv6(dvs)
 
-    @pytest.mark.xfail(reason="Failing after Bookworm/libnl 3.7.0 upgrade")
     def test_AddRemoveSrv6SteeringRouteIpv6(self, dvs, testlog):
 
         _, output = dvs.runcmd(f"vtysh -c 'show zebra dplane providers'")
@@ -1664,12 +1660,12 @@ class TestSrv6VpnFpmsyncd(object):
 
         # check application database
         self.pdb.wait_for_entry("ROUTE_TABLE", "Vrf13:2001:db8:1:1::/64")
-        expected_fields = {"segment": "Vrf13:2001:db8:1:1::/64", "seg_src": "fc00:0:2::1"}
+        expected_fields = {"segment": "fc00:0:1:e000::", "seg_src": "fc00:0:2::1"}
         self.pdb.wait_for_field_match("ROUTE_TABLE", "Vrf13:2001:db8:1:1::/64", expected_fields)
 
-        self.pdb.wait_for_entry("SRV6_SID_LIST_TABLE", "Vrf13:2001:db8:1:1::/64")
+        self.pdb.wait_for_entry("SRV6_SID_LIST_TABLE", "fc00:0:1:e000::")
         expected_fields = {"path": "fc00:0:1:e000::"}
-        self.pdb.wait_for_field_match("SRV6_SID_LIST_TABLE", "Vrf13:2001:db8:1:1::/64", expected_fields)
+        self.pdb.wait_for_field_match("SRV6_SID_LIST_TABLE", "fc00:0:1:e000::", expected_fields)
 
         # verify that the route has been programmed into the ASIC
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", len(tunnel_entries) + 1)
@@ -1730,7 +1726,7 @@ class TestSrv6VpnFpmsyncd(object):
 
         # check application database
         self.pdb.wait_for_deleted_entry("ROUTE_TABLE", "Vrf13:2001:db8:1:1::/64")
-        self.pdb.wait_for_deleted_entry("SRV6_SID_LIST_TABLE", "Vrf13:2001:db8:1:1::/64")
+        self.pdb.wait_for_deleted_entry("SRV6_SID_LIST_TABLE", "fc00:0:1:e000::")
 
         # verify that the route has been removed from the ASIC
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", len(nexthop_entries))

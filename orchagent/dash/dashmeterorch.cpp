@@ -23,39 +23,12 @@ extern sai_object_id_t gSwitchId;
 extern size_t gMaxBulkSize;
 extern CrmOrch *gCrmOrch;
 extern Directory<Orch*> gDirectory;
-extern bool gTraditionalFlexCounter;
 
-#define METER_FLEX_COUNTER_UPD_INTERVAL 1
-
-DashMeterOrch::DashMeterOrch(DBConnector *db, const vector<string> &tables, DashOrch *dash_orch, DBConnector *app_state_db, ZmqServer *zmqServer) :
-    m_meter_stat_manager(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, METER_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+DashMeterOrch::DashMeterOrch(DBConnector *db, const vector<string> &tables, DBConnector *app_state_db, ZmqServer *zmqServer) :
     meter_rule_bulker_(sai_dash_meter_api, gSwitchId, gMaxBulkSize),
-    ZmqOrch(db, tables, zmqServer),
-    m_dash_orch(dash_orch)
+    ZmqOrch(db, tables, zmqServer)
 {
     SWSS_LOG_ENTER();
-
-    m_counter_db = std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
-    m_asic_db = std::shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0));
-
-    if (gTraditionalFlexCounter)
-    {
-        m_vid_to_rid_table = std::make_unique<Table>(m_asic_db.get(), "VIDTORID");
-    }
-
-    auto intervT = timespec { .tv_sec = METER_FLEX_COUNTER_UPD_INTERVAL , .tv_nsec = 0 };
-    m_meter_fc_update_timer = new SelectableTimer(intervT);
-    auto executorT = new ExecutableTimer(m_meter_fc_update_timer, this, "METER_FLEX_COUNTER_UPD_TIMER");
-    Orch::addExecutor(executorT);
-
-    /* Fetch the meter bucket counter Ids */
-    m_meter_counter_stats.clear();
-    auto stat_enum_list = queryAvailableCounterStats((sai_object_type_t)SAI_OBJECT_TYPE_METER_BUCKET_ENTRY);
-    for (auto &stat_enum: stat_enum_list)
-    {
-        auto counter_id = static_cast<sai_meter_bucket_entry_stat_t>(stat_enum);
-        m_meter_counter_stats.emplace(sai_serialize_meter_bucket_entry_stat(counter_id));
-    }
 }
 
 sai_object_id_t DashMeterOrch::getMeterPolicyOid(const string& meter_policy) const
@@ -617,90 +590,5 @@ void DashMeterOrch::doTask(ConsumerBase& consumer)
     else
     {
         SWSS_LOG_ERROR("Unknown table: %s", tn.c_str());
-    }
-}
-
-void DashMeterOrch::addEniToMeterFC(sai_object_id_t oid, const string &name)
-{
-    if (!m_meter_fc_status) 
-    {
-        return;
-    }
-    auto was_empty = m_meter_stat_work_queue.empty();
-    m_meter_stat_work_queue[oid] = name;
-    if (was_empty)
-    {
-        m_meter_fc_update_timer->start();
-    }
-}
-
-void DashMeterOrch::removeEniFromMeterFC(sai_object_id_t oid, const string &name)
-{
-    SWSS_LOG_ENTER();
-
-    if (oid == SAI_NULL_OBJECT_ID)
-    {
-        SWSS_LOG_WARN("Cannot remove meter counter on NULL OID for eni %s", name.c_str());
-        return;
-    }
-    if (m_meter_stat_work_queue.find(oid) != m_meter_stat_work_queue.end())
-    {
-        m_meter_stat_work_queue.erase(oid);
-        return;
-    }
-
-    m_meter_stat_manager.clearCounterIdList(oid);
-    SWSS_LOG_INFO("Unregistering FC for ENI %s, oid %s", name.c_str(), sai_serialize_object_id(oid).c_str());
-}
-
-void DashMeterOrch::handleMeterFCStatusUpdate(bool enabled)
-{
-    DashOrch *dash_orch = gDirectory.get<DashOrch*>();
-    bool prev_enabled = m_meter_fc_status;
-    m_meter_fc_status = enabled; /* Update the status */
-    if (!enabled && prev_enabled)
-    {
-        m_meter_fc_update_timer->stop();
-        dash_orch->refreshMeterFCStats(false); /* Clear any existing FC entries */
-    }
-    else if (enabled && !prev_enabled)
-    {
-        dash_orch->refreshMeterFCStats(true);
-        m_meter_fc_update_timer->start();
-    }
-}
-
-void DashMeterOrch::doTask(SelectableTimer &timer)
-{
-    SWSS_LOG_ENTER();
-
-    if (!m_meter_fc_status)
-    {
-        m_meter_fc_update_timer->stop();
-        return ;
-    }
-
-    for (auto it = m_meter_stat_work_queue.begin(); it != m_meter_stat_work_queue.end(); )
-    {
-        string value;
-        const auto id = sai_serialize_object_id(it->first);
-        if (!gTraditionalFlexCounter || m_vid_to_rid_table->hget("", id, value))
-        {
-            SWSS_LOG_INFO("Registering FC for ENI %s, oid %s", it->second.c_str(), id.c_str());
-            std::vector<FieldValueTuple> eniNameFvs;
-            eniNameFvs.emplace_back(it->second, id);
-
-            m_meter_stat_manager.setCounterIdList(it->first, CounterType::DASH_METER, m_meter_counter_stats);
-            it = m_meter_stat_work_queue.erase(it);
-        }
-        else
-        {
-            ++it;
-        }
-    }
-
-    if (m_meter_stat_work_queue.empty())
-    {
-        m_meter_fc_update_timer->stop();
     }
 }
