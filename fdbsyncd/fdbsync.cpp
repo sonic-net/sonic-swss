@@ -629,7 +629,7 @@ void FdbSync::imetAddRoute(struct in_addr vtep, string vlan_str, uint32_t vni)
     }
 
     SWSS_LOG_INFO("%sIMET Add route key:%s vtep:%s %s", 
-            m_AppRestartAssist->isWarmStartInProgress() ? "WARM-RESTART:" : "",
+            (m_AppRestartAssist && m_AppRestartAssist->isWarmStartInProgress()) ? "WARM-RESTART:" : "",
             key.c_str(), inet_ntoa(vtep), vlan_id.c_str());
 
     std::vector<FieldValueTuple> fvVector;
@@ -637,7 +637,7 @@ void FdbSync::imetAddRoute(struct in_addr vtep, string vlan_str, uint32_t vni)
     fvVector.push_back(f);
 
     // If warmstart is in progress, we take all netlink changes into the cache map
-    if (m_AppRestartAssist->isWarmStartInProgress())
+    if (m_AppRestartAssist && m_AppRestartAssist->isWarmStartInProgress())
     {
         m_AppRestartAssist->insertToMap(APP_VXLAN_REMOTE_VNI_TABLE_NAME, key, fvVector, false);
         return;
@@ -658,7 +658,7 @@ void FdbSync::imetDelRoute(struct in_addr vtep, string vlan_str, uint32_t vni)
     }
 
     SWSS_LOG_INFO("%sIMET Del route key:%s vtep:%s %s", 
-            m_AppRestartAssist->isWarmStartInProgress() ? "WARM-RESTART:" : "", 
+            (m_AppRestartAssist && m_AppRestartAssist->isWarmStartInProgress()) ? "WARM-RESTART:" : "",
             key.c_str(), inet_ntoa(vtep), vlan_id.c_str());
 
     std::vector<FieldValueTuple> fvVector;
@@ -666,7 +666,7 @@ void FdbSync::imetDelRoute(struct in_addr vtep, string vlan_str, uint32_t vni)
     fvVector.push_back(f);
 
     // If warmstart is in progress, we take all netlink changes into the cache map
-    if (m_AppRestartAssist->isWarmStartInProgress())
+    if (m_AppRestartAssist && m_AppRestartAssist->isWarmStartInProgress())
     {
         m_AppRestartAssist->insertToMap(APP_VXLAN_REMOTE_VNI_TABLE_NAME, key, fvVector, true);
         return;
@@ -723,7 +723,7 @@ void FdbSync::macDelVxlanDB(string key)
     fvVector.push_back(p);
 
     // If warmstart is in progress, we take all netlink changes into the cache map
-    if (m_AppRestartAssist->isWarmStartInProgress())
+    if (m_AppRestartAssist && m_AppRestartAssist->isWarmStartInProgress())
     {
         m_AppRestartAssist->insertToMap(APP_VXLAN_FDB_TABLE_NAME, key, fvVector, true);
         return;
