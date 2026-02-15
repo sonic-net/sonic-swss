@@ -20,6 +20,9 @@ use crate::actor::{
     otel::{OtelActor, OtelActorConfig},
 };
 
+// Internal exit codes
+use countersyncd::exit_codes::EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED;
+
 /// Initialize logging based on command line arguments
 fn init_logging(log_level: &str, log_format: &str) {
     use env_logger::{Builder, Target, WriteStyle};
@@ -392,8 +395,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let otel_handle = if let Some(otel_actor) = otel_actor {
         Some(spawn(async move {
             info!("OpenTelemetry actor started");
-            OtelActor::run(otel_actor).await;
+            let result = OtelActor::run(otel_actor).await;
             info!("OpenTelemetry actor terminated");
+            result
         }))
     } else {
         info!("OpenTelemetry export disabled - not starting OpenTelemetry actor");
@@ -438,7 +442,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     counter_db_result.as_ref().unwrap(),
                     otel_result.as_ref().unwrap()
                 ),
-                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
+                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(Ok(())))
             )
         }
         (true, true, false) => {
@@ -466,7 +470,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     reporter_result.as_ref().unwrap(),
                     otel_result.as_ref().unwrap()
                 ),
-                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
+                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(Ok(())))
             )
         }
         (false, true, true) => {
@@ -480,7 +484,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     counter_db_result.as_ref().unwrap(),
                     otel_result.as_ref().unwrap()
                 ),
-                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
+                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()), Ok(Ok(())))
             )
         }
         (true, false, false) => {
@@ -519,7 +523,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &swss_result,
                     otel_result.as_ref().unwrap()
                 ),
-                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(()))
+                (Ok(()), Ok(()), Ok(()), Ok(()), Ok(Ok(())))
             )
         }
         (false, false, false) => {
@@ -573,7 +577,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(e.into())
         } else if let Some(Err(e)) = otel_result {
             error!("OpenTelemetry actor failed: {:?}", e);
-            Err(e.into())
+            std::process::exit(EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED);
         } else {
             error!("Unknown actor failure");
             Err("Unknown actor failure".into())
