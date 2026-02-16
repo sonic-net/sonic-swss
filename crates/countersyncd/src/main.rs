@@ -2,6 +2,7 @@
 mod actor;
 mod message;
 mod sai;
+mod utilities;
 
 // External dependencies
 use clap::Parser;
@@ -22,6 +23,7 @@ use crate::actor::{
 
 // Internal exit codes
 use countersyncd::exit_codes::EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED;
+use crate::utilities::{set_comm_capacity, ChannelLabel};
 
 /// Initialize logging based on command line arguments
 fn init_logging(log_level: &str, log_format: &str) {
@@ -242,6 +244,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (counter_db_sender, counter_db_receiver) = channel(args.counter_db_capacity);
     let (otel_sender, otel_receiver) = channel(args.otel_capacity);
     let (otel_shutdown_sender, _otel_shutdown_receiver) = tokio::sync::oneshot::channel();
+
+    set_comm_capacity(ChannelLabel::ControlNetlinkToDataNetlink, 10);
+    set_comm_capacity(ChannelLabel::DataNetlinkToIpfixRecords, args.data_netlink_capacity);
+    set_comm_capacity(ChannelLabel::SwssToIpfixTemplates, 10);
+    set_comm_capacity(ChannelLabel::IpfixToStatsReporter, args.stats_reporter_capacity);
+    set_comm_capacity(ChannelLabel::IpfixToCounterDb, args.counter_db_capacity);
+    set_comm_capacity(ChannelLabel::IpfixToOtel, args.otel_capacity);
 
     // Get netlink family and group configuration from SONiC constants
     let (family, group) = get_genl_family_group();
