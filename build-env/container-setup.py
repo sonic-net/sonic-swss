@@ -81,6 +81,10 @@ def get_artifact_url(pipeline, build_id, debian_version):
     url = artifact_url.format(build_id, artifact_name)
     print(url)
     res = requests.get(url)
+    if res.status_code != 200:
+        raise Exception(
+            f"Failed to fetch artifact info for {pipeline} (build {build_id}, artifact {artifact_name}): HTTP {res.status_code}"
+        )
     artifact_info = json.loads(res.content)
     return artifact_info['resource']['downloadUrl']
 
