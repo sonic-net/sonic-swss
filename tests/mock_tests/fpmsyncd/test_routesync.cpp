@@ -7,6 +7,7 @@
 #include "fpmsyncd/routesync.h"
 #include "fpmsyncd/fpmlink.h"
 #undef private
+#include "orch_zmq_config.h"
 
 #include <arpa/inet.h>
 #include <linux/rtnetlink.h>
@@ -94,6 +95,24 @@ public:
     const char* test_gateway = "192.168.1.1";
     const char* test_gateway_ = "192.168.1.2";
     const char* test_gateway__ = "192.168.1.3";
+};
+
+class FpmSyncdResponseTestWithZmqNb : public FpmSyncdResponseTest {
+    void SetUp() override
+    {
+        FpmSyncdResponseTest::SetUp();
+        // Simulate ZMQ being enabled by setting m_zmqClient to a non-null value
+        // We use a dummy shared_ptr (pointing to address 1) since we won't actually use it
+        // This makes isNbZmqEnabled() return true
+        m_mockRouteSync.m_zmqClient = shared_ptr<swss::ZmqClient>(reinterpret_cast<swss::ZmqClient*>(1), [](swss::ZmqClient*){});
+    }
+
+    void TearDown() override
+    {
+        // Reset m_zmqClient to nullptr
+        m_mockRouteSync.m_zmqClient = nullptr;
+        FpmSyncdResponseTest::TearDown();
+    }
 };
 
 TEST_F(FpmSyncdResponseTest, RouteResponseFeedbackV4)
@@ -367,6 +386,54 @@ TEST_F(FpmSyncdResponseTest, TestNextHopAdd)
 }
 
 TEST_F(FpmSyncdResponseTest, TestIPv6NextHopAdd)
+{
+    uint32_t test_id = 20;
+    const char* test_gateway = "2001:db8::1";
+    int32_t test_ifindex = 7;
+
+    struct nlmsghdr* nlh = createNewNextHopMsgHdr(test_ifindex, test_gateway, test_id, AF_INET6);
+    int expected_length = (int)(nlh->nlmsg_len - NLMSG_LENGTH(sizeof(struct nhmsg)));
+
+    EXPECT_CALL(m_mockRouteSync, getIfName(test_ifindex, _, _))
+        .WillOnce(DoAll(
+            [](int32_t, char* ifname, size_t size) {
+                strncpy(ifname, "Ethernet2", size);
+                ifname[size-1] = '\0';
+            },
+            Return(true)
+        ));
+
+    m_mockRouteSync.onNextHopMsg(nlh, expected_length);
+
+    Table nexthop_group_table(m_db.get(), APP_NEXTHOP_GROUP_TABLE_NAME);
+
+    vector<FieldValueTuple> fieldValues;
+    string key = to_string(test_id);
+    nexthop_group_table.get(key, fieldValues);
+
+    // onNextHopMsg only updates m_nh_groups unless the nhg is marked as installed
+    ASSERT_TRUE(fieldValues.empty());
+
+    // Update the nexthop group to mark it as installed and write to DB
+    m_mockRouteSync.installNextHopGroup(test_id);
+    nexthop_group_table.get(key, fieldValues);
+
+    string nexthop, ifname;
+    for (const auto& fv : fieldValues) {
+        if (fvField(fv) == "nexthop") {
+            nexthop = fvValue(fv);
+        } else if (fvField(fv) == "ifname") {
+            ifname = fvValue(fv);
+        }
+    }
+
+    EXPECT_EQ(nexthop, test_gateway);
+    EXPECT_EQ(ifname, "Ethernet2");
+
+    free(nlh);
+}
+
+TEST_F(FpmSyncdResponseTestWithZmqNb, TestIPv6NextHopAddZmqNb)
 {
     uint32_t test_id = 20;
     const char* test_gateway = "2001:db8::1";
@@ -912,6 +979,151 @@ TEST_F(FpmSyncdResponseTest, TestRouteMsgWithNHG)
     rtnl_route_put(test_route);
 }
 
+// Test for VnetTunnelTableFieldValueTupleWrapper with ZMQ enabled (line 1127)
+TEST_F(FpmSyncdResponseTest, TestVxlanTunnelRouteMsgWithZmqEnabled)
+{
+    // Simulate ZMQ being enabled by setting m_zmqClient to a non-null value
+    m_mockRouteSync.m_zmqClient = shared_ptr<swss::ZmqClient>(reinterpret_cast<swss::ZmqClient*>(1), [](swss::ZmqClient*){});
+
+    Table vnet_tunnel_table(m_db.get(), APP_VNET_RT_TUNNEL_TABLE_NAME);
+
+    // Create a VNET route with VXLAN interface
+    auto createVxlanTunnelRoute = [](const char* prefix, uint8_t prefixlen, uint32_t vnet_table_id) -> rtnl_route* {
+        rtnl_route* route = rtnl_route_alloc();
+        nl_addr* dst_addr;
+        nl_addr_parse(prefix, AF_INET, &dst_addr);
+        rtnl_route_set_dst(route, dst_addr);
+        rtnl_route_set_type(route, RTN_UNICAST);
+        rtnl_route_set_protocol(route, RTPROT_STATIC);
+        rtnl_route_set_family(route, AF_INET);
+        rtnl_route_set_scope(route, RT_SCOPE_UNIVERSE);
+        rtnl_route_set_table(route, vnet_table_id);
+        nl_addr_put(dst_addr);
+        return route;
+    };
+
+    const char* test_destipprefix = "192.168.10.0/24";
+    uint32_t vnet_table_id = 3000;
+    rtnl_route* test_route = createVxlanTunnelRoute(test_destipprefix, 24, vnet_table_id);
+
+    // Create a nexthop with VXLAN interface (starts with "vtep")
+    rtnl_nexthop* nh = rtnl_route_nh_alloc();
+    rtnl_route_nh_set_ifindex(nh, 30);
+    nl_addr* gateway_addr;
+    nl_addr_parse("10.0.0.1", AF_INET, &gateway_addr);
+    rtnl_route_nh_set_gateway(nh, gateway_addr);
+    nl_addr_put(gateway_addr);
+    rtnl_route_add_nexthop(test_route, nh);
+
+    // Mock getIfName to return VNET interface name
+    EXPECT_CALL(m_mockRouteSync, getIfName(vnet_table_id, _, _))
+        .WillOnce(DoAll(
+            [](int32_t, char* ifname, size_t size) {
+                strncpy(ifname, "Vnet300", size);
+                ifname[size-1] = '\0';
+            },
+            Return(true)
+        ));
+
+    // Mock getIfName for the VXLAN interface (starts with "Brvxlan")
+    EXPECT_CALL(m_mockRouteSync, getIfName(30, _, _))
+        .WillRepeatedly(DoAll(
+            [](int32_t, char* ifname, size_t size) {
+                strncpy(ifname, "Brvxlan100", size);  // VXLAN_IF_NAME_PREFIX is "Brvxlan"
+                ifname[size-1] = '\0';
+            },
+            Return(true)
+        ));
+
+    m_mockRouteSync.onMsg(RTM_NEWROUTE, (nl_object*)test_route);
+
+    // Verify the VXLAN tunnel route was written to the database
+    vector<FieldValueTuple> fvs;
+    std::string key = "Vnet300:192.168.10.0/24";
+    EXPECT_TRUE(vnet_tunnel_table.get(key, fvs));
+
+    // With ZMQ enabled, the endpoint field should be present
+    EXPECT_EQ(fvs.size(), 1);
+
+    // Build a map for easier verification
+    std::map<std::string, std::string> fieldMap;
+    for (const auto& fv : fvs) {
+        fieldMap[fvField(fv)] = fvValue(fv);
+    }
+
+    // Verify endpoint field is present
+    EXPECT_TRUE(fieldMap.find("endpoint") != fieldMap.end());
+    EXPECT_EQ(fieldMap["endpoint"], "10.0.0.1");
+
+    // Reset m_zmqClient to nullptr
+    m_mockRouteSync.m_zmqClient = nullptr;
+
+    rtnl_route_put(test_route);
+}
+TEST_F(FpmSyncdResponseTest, TestSrv6MySidMsgWithZmqEnabled)
+{
+    // Simulate ZMQ being enabled by setting m_zmqClient to a non-null value
+    m_mockRouteSync.m_zmqClient = shared_ptr<swss::ZmqClient>(reinterpret_cast<swss::ZmqClient*>(1), [](swss::ZmqClient*){});
+
+    Table srv6_mysid_table(m_db.get(), APP_SRV6_MY_SID_TABLE_NAME);
+
+    // Create an SRv6 My SID with End.DT4 action
+    IpAddress mysid = IpAddress("fc00:0:1:1::");
+    int8_t block_len = 32;
+    int8_t node_len = 16;
+    int8_t func_len = 16;
+    int8_t arg_len = 0;
+    uint32_t action = SRV6_LOCALSID_ACTION_END_DT4;
+    char vrf_name[] = "Vrf100";
+
+    struct nlmsg *nl_obj = create_srv6_mysid_nlmsg(
+        RTM_NEWSRV6LOCALSID,
+        &mysid,
+        block_len,
+        node_len,
+        func_len,
+        arg_len,
+        action,
+        vrf_name
+    );
+    if (!nl_obj) {
+        ADD_FAILURE() << "Failed to create SRv6 My SID message";
+        return;
+    }
+
+    // Call the target function
+    m_mockRouteSync.onSrv6MySidMsg(&nl_obj->n, nl_obj->n.nlmsg_len);
+
+    // Verify the SRv6 My SID was written to the database
+    vector<FieldValueTuple> fvs;
+    std::string key = "32:16:16:0:fc00:0:1:1::";
+    EXPECT_TRUE(srv6_mysid_table.get(key, fvs));
+
+    // With ZMQ enabled, all 3 fields should be present (action, vrf, adj)
+    EXPECT_EQ(fvs.size(), 3);
+
+    // Build a map for easier verification
+    std::map<std::string, std::string> fieldMap;
+    for (const auto& fv : fvs) {
+        fieldMap[fvField(fv)] = fvValue(fv);
+    }
+
+    // Verify all fields are present
+    EXPECT_TRUE(fieldMap.find("action") != fieldMap.end());
+    EXPECT_EQ(fieldMap["action"], "end.dt4");
+
+    EXPECT_TRUE(fieldMap.find("vrf") != fieldMap.end());
+    EXPECT_EQ(fieldMap["vrf"], "Vrf100");
+
+    // adj field should be present but empty
+    EXPECT_TRUE(fieldMap.find("adj") != fieldMap.end());
+    EXPECT_EQ(fieldMap["adj"], "");
+
+    // Reset m_zmqClient to nullptr
+    m_mockRouteSync.m_zmqClient = nullptr;
+
+    free(nl_obj);
+}
 
 TEST_F(FpmSyncdResponseTest, RouteResponseOnNoProto)
 {
@@ -2220,4 +2432,503 @@ TEST_F(FpmSyncdResponseTest, TestPicContext_NHG)
     free(nlh_2);
     free(nlh_3);
     free(group_nlh);
+}
+
+// ============================================================================
+// ZMQ-Enabled Integration Test Cases
+// ============================================================================
+// These tests verify that when ZMQ is enabled, RouteSync writes all fields
+// (including empty ones) to the database tables.
+// ============================================================================
+
+TEST_F(FpmSyncdResponseTest, TestRouteMsgWithZmqEnabled_AllFieldsIncluded)
+{
+    // Simulate ZMQ being enabled by setting m_zmqClient to a non-null value
+    // We use a dummy shared_ptr (pointing to address 1) since we won't actually use it
+    // This makes isNbZmqEnabled() return true
+    m_mockRouteSync.m_zmqClient = shared_ptr<swss::ZmqClient>(reinterpret_cast<swss::ZmqClient*>(1), [](swss::ZmqClient*){});
+
+    Table route_table(m_db.get(), APP_ROUTE_TABLE_NAME);
+
+    // Create a simple route
+    auto createRoute = [](const char* prefix, uint8_t prefixlen) -> rtnl_route* {
+        rtnl_route* route = rtnl_route_alloc();
+        nl_addr* dst_addr;
+        nl_addr_parse(prefix, AF_INET, &dst_addr);
+        rtnl_route_set_dst(route, dst_addr);
+        rtnl_route_set_type(route, RTN_UNICAST);
+        rtnl_route_set_protocol(route, RTPROT_BGP);
+        rtnl_route_set_family(route, AF_INET);
+        rtnl_route_set_scope(route, RT_SCOPE_UNIVERSE);
+        rtnl_route_set_table(route, RT_TABLE_MAIN);
+        nl_addr_put(dst_addr);
+        return route;
+    };
+
+    const char* test_destipprefix = "10.1.1.0";
+    rtnl_route* test_route = createRoute(test_destipprefix, 24);
+
+    // Create a nexthop
+    uint32_t test_nh_id = 1;
+    struct nlmsghdr* nlh = createNewNextHopMsgHdr(1, test_gateway, test_nh_id);
+
+    EXPECT_CALL(m_mockRouteSync, getIfName(1, _, _))
+        .WillOnce(DoAll(
+            [](int32_t, char* ifname, size_t size) {
+                strncpy(ifname, "Ethernet1", size);
+                ifname[size-1] = '\0';
+            },
+            Return(true)
+        ));
+
+    m_mockRouteSync.onNextHopMsg(nlh, (int)(nlh->nlmsg_len - NLMSG_LENGTH(sizeof(struct nhmsg))));
+    free(nlh);
+
+    rtnl_route_set_nh_id(test_route, test_nh_id);
+    m_mockRouteSync.onRouteMsg(RTM_NEWROUTE, (nl_object*)test_route, nullptr);
+
+    // Verify the route was written to the database
+    vector<FieldValueTuple> fvs;
+    EXPECT_TRUE(route_table.get(test_destipprefix, fvs));
+
+    // With ZMQ enabled, all 11 fields should be present (including empty ones)
+    EXPECT_EQ(fvs.size(), 11);
+
+    // Build a map for easier verification
+    std::map<std::string, std::string> fieldMap;
+    for (const auto& fv : fvs) {
+        fieldMap[fvField(fv)] = fvValue(fv);
+    }
+
+    // Verify non-empty fields
+    EXPECT_EQ(fieldMap["protocol"], "bgp");
+    EXPECT_EQ(fieldMap["nexthop"], test_gateway);
+    EXPECT_EQ(fieldMap["ifname"], "Ethernet1");
+    EXPECT_EQ(fieldMap["blackhole"], "false");  // Default value
+
+    // Verify empty fields are present
+    EXPECT_TRUE(fieldMap.count("nexthop_group") > 0);
+    EXPECT_EQ(fieldMap["nexthop_group"], "");
+    EXPECT_TRUE(fieldMap.count("mpls_nh") > 0);
+    EXPECT_EQ(fieldMap["mpls_nh"], "");
+    EXPECT_TRUE(fieldMap.count("weight") > 0);
+    EXPECT_EQ(fieldMap["weight"], "");
+    EXPECT_TRUE(fieldMap.count("vni_label") > 0);
+    EXPECT_EQ(fieldMap["vni_label"], "");
+    EXPECT_TRUE(fieldMap.count("router_mac") > 0);
+    EXPECT_EQ(fieldMap["router_mac"], "");
+    EXPECT_TRUE(fieldMap.count("segment") > 0);
+    EXPECT_EQ(fieldMap["segment"], "");
+    EXPECT_TRUE(fieldMap.count("seg_src") > 0);
+    EXPECT_EQ(fieldMap["seg_src"], "");
+
+    rtnl_route_put(test_route);
+
+    // Reset m_zmqClient to nullptr
+    m_mockRouteSync.m_zmqClient = nullptr;
+}
+
+TEST_F(FpmSyncdResponseTest, TestRouteMsgWithZmqDisabled_OnlyNonEmptyFields)
+{
+    // ZMQ is disabled by default in the fixture
+    Table route_table(m_db.get(), APP_ROUTE_TABLE_NAME);
+
+    // Create a simple route
+    auto createRoute = [](const char* prefix, uint8_t prefixlen) -> rtnl_route* {
+        rtnl_route* route = rtnl_route_alloc();
+        nl_addr* dst_addr;
+        nl_addr_parse(prefix, AF_INET, &dst_addr);
+        rtnl_route_set_dst(route, dst_addr);
+        rtnl_route_set_type(route, RTN_UNICAST);
+        rtnl_route_set_protocol(route, RTPROT_BGP);
+        rtnl_route_set_family(route, AF_INET);
+        rtnl_route_set_scope(route, RT_SCOPE_UNIVERSE);
+        rtnl_route_set_table(route, RT_TABLE_MAIN);
+        nl_addr_put(dst_addr);
+        return route;
+    };
+
+    const char* test_destipprefix = "10.2.2.0";
+    rtnl_route* test_route = createRoute(test_destipprefix, 24);
+
+    // Create a nexthop
+    uint32_t test_nh_id = 2;
+    struct nlmsghdr* nlh = createNewNextHopMsgHdr(1, test_gateway, test_nh_id);
+
+    EXPECT_CALL(m_mockRouteSync, getIfName(1, _, _))
+        .WillOnce(DoAll(
+            [](int32_t, char* ifname, size_t size) {
+                strncpy(ifname, "Ethernet2", size);
+                ifname[size-1] = '\0';
+            },
+            Return(true)
+        ));
+
+    m_mockRouteSync.onNextHopMsg(nlh, (int)(nlh->nlmsg_len - NLMSG_LENGTH(sizeof(struct nhmsg))));
+    free(nlh);
+
+    rtnl_route_set_nh_id(test_route, test_nh_id);
+    m_mockRouteSync.onRouteMsg(RTM_NEWROUTE, (nl_object*)test_route, nullptr);
+
+    // Verify the route was written to the database
+    vector<FieldValueTuple> fvs;
+    EXPECT_TRUE(route_table.get(test_destipprefix, fvs));
+
+    // With ZMQ disabled, only non-empty fields should be present
+    EXPECT_EQ(fvs.size(), 3);  // protocol, nexthop, ifname
+
+    // Build a map for easier verification
+    std::map<std::string, std::string> fieldMap;
+    for (const auto& fv : fvs) {
+        fieldMap[fvField(fv)] = fvValue(fv);
+    }
+
+    // Verify the non-empty fields
+    EXPECT_EQ(fieldMap["protocol"], "bgp");
+    EXPECT_EQ(fieldMap["nexthop"], test_gateway);
+    EXPECT_EQ(fieldMap["ifname"], "Ethernet2");
+
+    // Verify empty fields are NOT present
+    EXPECT_EQ(fieldMap.count("nexthop_group"), 0);
+    EXPECT_EQ(fieldMap.count("mpls_nh"), 0);
+    EXPECT_EQ(fieldMap.count("weight"), 0);
+    EXPECT_EQ(fieldMap.count("vni_label"), 0);
+    EXPECT_EQ(fieldMap.count("router_mac"), 0);
+    EXPECT_EQ(fieldMap.count("segment"), 0);
+    EXPECT_EQ(fieldMap.count("seg_src"), 0);
+
+    rtnl_route_put(test_route);
+}
+
+TEST_F(FpmSyncdResponseTest, TestLabelRouteMsgWithZmqEnabled_AllFieldsIncluded)
+{
+    // Simulate ZMQ being enabled by setting m_zmqClient to a non-null value
+    m_mockRouteSync.m_zmqClient = shared_ptr<swss::ZmqClient>(reinterpret_cast<swss::ZmqClient*>(1), [](swss::ZmqClient*){});
+
+    Table label_route_table(m_db.get(), APP_LABEL_ROUTE_TABLE_NAME);
+
+    // Create a label route (AF_MPLS)
+    auto createLabelRoute = [](const char* prefix, uint8_t prefixlen) -> rtnl_route* {
+        rtnl_route* route = rtnl_route_alloc();
+        nl_addr* dst_addr;
+        nl_addr_parse(prefix, AF_MPLS, &dst_addr);
+        rtnl_route_set_dst(route, dst_addr);
+        rtnl_route_set_type(route, RTN_UNICAST);
+        rtnl_route_set_protocol(route, RTPROT_STATIC);
+        rtnl_route_set_family(route, AF_MPLS);
+        rtnl_route_set_scope(route, RT_SCOPE_UNIVERSE);
+        rtnl_route_set_table(route, RT_TABLE_UNSPEC);  // Label routes must use RT_TABLE_UNSPEC
+        nl_addr_put(dst_addr);
+        return route;
+    };
+
+    const char* test_label = "100";
+    rtnl_route* test_route = createLabelRoute(test_label, 20);
+
+    // Create a nexthop for the label route
+    rtnl_nexthop* nh = rtnl_route_nh_alloc();
+    rtnl_route_nh_set_ifindex(nh, 1);
+    nl_addr* gateway_addr;
+    nl_addr_parse("10.0.0.1", AF_INET, &gateway_addr);
+    rtnl_route_nh_set_gateway(nh, gateway_addr);
+    nl_addr_put(gateway_addr);
+    rtnl_route_add_nexthop(test_route, nh);
+
+    // Mock getIfName to return interface name
+    EXPECT_CALL(m_mockRouteSync, getIfName(1, _, _))
+        .WillOnce(DoAll(
+            [](int32_t, char* ifname, size_t size) {
+                strncpy(ifname, "Ethernet0", size);
+                ifname[size-1] = '\0';
+            },
+            Return(true)
+        ));
+
+    m_mockRouteSync.onLabelRouteMsg(RTM_NEWROUTE, (nl_object*)test_route);
+
+    // Verify the label route was written to the database
+    vector<FieldValueTuple> fvs;
+    EXPECT_TRUE(label_route_table.get(test_label, fvs));
+
+    // With ZMQ enabled, all 6 fields should be present (including empty ones)
+    EXPECT_EQ(fvs.size(), 6);
+
+    // Build a map for easier verification
+    std::map<std::string, std::string> fieldMap;
+    for (const auto& fv : fvs) {
+        fieldMap[fvField(fv)] = fvValue(fv);
+    }
+
+    // Verify all fields are present
+    EXPECT_TRUE(fieldMap.find("protocol") != fieldMap.end());
+    EXPECT_EQ(fieldMap["protocol"], "static");
+
+    EXPECT_TRUE(fieldMap.find("blackhole") != fieldMap.end());
+    EXPECT_EQ(fieldMap["blackhole"], "false");
+
+    EXPECT_TRUE(fieldMap.find("nexthop") != fieldMap.end());
+    EXPECT_EQ(fieldMap["nexthop"], "10.0.0.1");
+
+    EXPECT_TRUE(fieldMap.find("ifname") != fieldMap.end());
+    EXPECT_EQ(fieldMap["ifname"], "Ethernet0");
+
+    // mpls_pop is always set to "1" for label routes
+    EXPECT_TRUE(fieldMap.find("mpls_pop") != fieldMap.end());
+    EXPECT_EQ(fieldMap["mpls_pop"], "1");
+
+    // mpls_nh should be present but empty
+    EXPECT_TRUE(fieldMap.find("mpls_nh") != fieldMap.end());
+    EXPECT_EQ(fieldMap["mpls_nh"], "");
+
+    // Reset m_zmqClient to nullptr
+    m_mockRouteSync.m_zmqClient = nullptr;
+
+    rtnl_route_put(test_route);
+}
+
+TEST_F(FpmSyncdResponseTest, TestLabelRouteMsgWithZmqDisabled_OnlyNonEmptyFields)
+{
+    // ZMQ is disabled by default in the fixture
+    Table label_route_table(m_db.get(), APP_LABEL_ROUTE_TABLE_NAME);
+
+    // Create a label route (AF_MPLS)
+    auto createLabelRoute = [](const char* prefix, uint8_t prefixlen) -> rtnl_route* {
+        rtnl_route* route = rtnl_route_alloc();
+        nl_addr* dst_addr;
+        nl_addr_parse(prefix, AF_MPLS, &dst_addr);
+        rtnl_route_set_dst(route, dst_addr);
+        rtnl_route_set_type(route, RTN_UNICAST);
+        rtnl_route_set_protocol(route, RTPROT_STATIC);
+        rtnl_route_set_family(route, AF_MPLS);
+        rtnl_route_set_scope(route, RT_SCOPE_UNIVERSE);
+        rtnl_route_set_table(route, RT_TABLE_UNSPEC);  // Label routes must use RT_TABLE_UNSPEC
+        nl_addr_put(dst_addr);
+        return route;
+    };
+
+    const char* test_label = "200";
+    rtnl_route* test_route = createLabelRoute(test_label, 20);
+
+    // Create a nexthop for the label route
+    rtnl_nexthop* nh = rtnl_route_nh_alloc();
+    rtnl_route_nh_set_ifindex(nh, 2);
+    nl_addr* gateway_addr;
+    nl_addr_parse("10.0.0.2", AF_INET, &gateway_addr);
+    rtnl_route_nh_set_gateway(nh, gateway_addr);
+    nl_addr_put(gateway_addr);
+    rtnl_route_add_nexthop(test_route, nh);
+
+    // Mock getIfName to return interface name
+    EXPECT_CALL(m_mockRouteSync, getIfName(2, _, _))
+        .WillOnce(DoAll(
+            [](int32_t, char* ifname, size_t size) {
+                strncpy(ifname, "Ethernet1", size);
+                ifname[size-1] = '\0';
+            },
+            Return(true)
+        ));
+
+    m_mockRouteSync.onLabelRouteMsg(RTM_NEWROUTE, (nl_object*)test_route);
+
+    // Verify the label route was written to the database
+    vector<FieldValueTuple> fvs;
+    EXPECT_TRUE(label_route_table.get(test_label, fvs));
+
+    // With ZMQ disabled, only non-empty fields should be present
+    // protocol, nexthop, ifname, mpls_pop (always set to "1")
+    // Note: blackhole is "false" by default and is excluded when ZMQ is disabled
+    EXPECT_EQ(fvs.size(), 4);
+
+    // Build a map for easier verification
+    std::map<std::string, std::string> fieldMap;
+    for (const auto& fv : fvs) {
+        fieldMap[fvField(fv)] = fvValue(fv);
+    }
+
+    // Verify only non-empty fields are present
+    EXPECT_TRUE(fieldMap.find("protocol") != fieldMap.end());
+    EXPECT_EQ(fieldMap["protocol"], "static");
+
+    EXPECT_TRUE(fieldMap.find("nexthop") != fieldMap.end());
+    EXPECT_EQ(fieldMap["nexthop"], "10.0.0.2");
+
+    EXPECT_TRUE(fieldMap.find("ifname") != fieldMap.end());
+    EXPECT_EQ(fieldMap["ifname"], "Ethernet1");
+
+    // mpls_pop is always set to "1" for label routes
+    EXPECT_TRUE(fieldMap.find("mpls_pop") != fieldMap.end());
+    EXPECT_EQ(fieldMap["mpls_pop"], "1");
+
+    // blackhole is "false" by default and is excluded when ZMQ is disabled
+    EXPECT_TRUE(fieldMap.find("blackhole") == fieldMap.end());
+
+    // mpls_nh should NOT be present when ZMQ is disabled and it's empty
+    EXPECT_TRUE(fieldMap.find("mpls_nh") == fieldMap.end());
+
+    rtnl_route_put(test_route);
+}
+
+// Note: SRv6 VPN routes (onSrv6VpnRouteMsg) do not use RouteTableFieldValueTupleWrapper
+// They directly create field-value tuples, so ZMQ flag doesn't affect them the same way.
+// Therefore, we don't add ZMQ tests for SRv6 VPN routes here.
+
+TEST_F(FpmSyncdResponseTest, TestVnetRouteMsgWithZmqEnabled_AllFieldsIncluded)
+{
+    // Simulate ZMQ being enabled by setting m_zmqClient to a non-null value
+    m_mockRouteSync.m_zmqClient = shared_ptr<swss::ZmqClient>(reinterpret_cast<swss::ZmqClient*>(1), [](swss::ZmqClient*){});
+
+    Table vnet_route_table(m_db.get(), APP_VNET_RT_TABLE_NAME);
+
+    // Create a VNET route
+    auto createVnetRoute = [](const char* prefix, uint8_t prefixlen, uint32_t vnet_table_id) -> rtnl_route* {
+        rtnl_route* route = rtnl_route_alloc();
+        nl_addr* dst_addr;
+        nl_addr_parse(prefix, AF_INET, &dst_addr);
+        rtnl_route_set_dst(route, dst_addr);
+        rtnl_route_set_type(route, RTN_UNICAST);
+        rtnl_route_set_protocol(route, RTPROT_STATIC);
+        rtnl_route_set_family(route, AF_INET);
+        rtnl_route_set_scope(route, RT_SCOPE_UNIVERSE);
+        rtnl_route_set_table(route, vnet_table_id);  // Set VNET table ID
+        nl_addr_put(dst_addr);
+        return route;
+    };
+
+    const char* test_destipprefix = "192.168.1.0/24";
+    uint32_t vnet_table_id = 1000;
+    rtnl_route* test_route = createVnetRoute(test_destipprefix, 24, vnet_table_id);
+
+    // Create a nexthop for the VNET route
+    rtnl_nexthop* nh = rtnl_route_nh_alloc();
+    rtnl_route_nh_set_ifindex(nh, 10);
+    nl_addr* gateway_addr;
+    nl_addr_parse("192.168.1.1", AF_INET, &gateway_addr);
+    rtnl_route_nh_set_gateway(nh, gateway_addr);
+    nl_addr_put(gateway_addr);
+    rtnl_route_add_nexthop(test_route, nh);
+
+    // Mock getIfName to return VNET interface name (starts with "Vnet")
+    EXPECT_CALL(m_mockRouteSync, getIfName(vnet_table_id, _, _))
+        .WillOnce(DoAll(
+            [](int32_t, char* ifname, size_t size) {
+                strncpy(ifname, "Vnet100", size);  // VNET_PREFIX is "Vnet"
+                ifname[size-1] = '\0';
+            },
+            Return(true)
+        ));
+
+    // Mock getIfName for the nexthop interface
+    EXPECT_CALL(m_mockRouteSync, getIfName(10, _, _))
+        .WillOnce(DoAll(
+            [](int32_t, char* ifname, size_t size) {
+                strncpy(ifname, "Ethernet100", size);
+                ifname[size-1] = '\0';
+            },
+            Return(true)
+        ));
+
+    m_mockRouteSync.onMsg(RTM_NEWROUTE, (nl_object*)test_route);
+
+    // Verify the VNET route was written to the database
+    vector<FieldValueTuple> fvs;
+    std::string key = "Vnet100:192.168.1.0/24";
+    EXPECT_TRUE(vnet_route_table.get(key, fvs));
+
+    // With ZMQ enabled, all 2 fields should be present (including empty ones if any)
+    EXPECT_EQ(fvs.size(), 2);
+
+    // Build a map for easier verification
+    std::map<std::string, std::string> fieldMap;
+    for (const auto& fv : fvs) {
+        fieldMap[fvField(fv)] = fvValue(fv);
+    }
+
+    // Verify all fields are present
+    EXPECT_TRUE(fieldMap.find("nexthop") != fieldMap.end());
+    EXPECT_EQ(fieldMap["nexthop"], "192.168.1.1");
+
+    EXPECT_TRUE(fieldMap.find("ifname") != fieldMap.end());
+    EXPECT_EQ(fieldMap["ifname"], "Ethernet100");
+
+    // Reset m_zmqClient to nullptr
+    m_mockRouteSync.m_zmqClient = nullptr;
+
+    rtnl_route_put(test_route);
+}
+
+TEST_F(FpmSyncdResponseTest, TestVnetRouteMsgWithZmqDisabled_OnlyNonEmptyFields)
+{
+    // ZMQ is disabled by default in the fixture
+    Table vnet_route_table(m_db.get(), APP_VNET_RT_TABLE_NAME);
+
+    // Create a VNET route with only ifname (no nexthop gateway)
+    auto createVnetRoute = [](const char* prefix, uint8_t prefixlen, uint32_t vnet_table_id) -> rtnl_route* {
+        rtnl_route* route = rtnl_route_alloc();
+        nl_addr* dst_addr;
+        nl_addr_parse(prefix, AF_INET, &dst_addr);
+        rtnl_route_set_dst(route, dst_addr);
+        rtnl_route_set_type(route, RTN_UNICAST);
+        rtnl_route_set_protocol(route, RTPROT_STATIC);
+        rtnl_route_set_family(route, AF_INET);
+        rtnl_route_set_scope(route, RT_SCOPE_LINK);  // Link scope for direct routes
+        rtnl_route_set_table(route, vnet_table_id);  // Set VNET table ID
+        nl_addr_put(dst_addr);
+        return route;
+    };
+
+    const char* test_destipprefix = "192.168.2.0/24";
+    uint32_t vnet_table_id = 2000;
+    rtnl_route* test_route = createVnetRoute(test_destipprefix, 24, vnet_table_id);
+
+    // Create a nexthop without gateway (direct route)
+    rtnl_nexthop* nh = rtnl_route_nh_alloc();
+    rtnl_route_nh_set_ifindex(nh, 20);
+    rtnl_route_add_nexthop(test_route, nh);
+
+    // Mock getIfName to return VNET interface name (starts with "Vnet")
+    EXPECT_CALL(m_mockRouteSync, getIfName(vnet_table_id, _, _))
+        .WillOnce(DoAll(
+            [](int32_t, char* ifname, size_t size) {
+                strncpy(ifname, "Vnet200", size);  // VNET_PREFIX is "Vnet"
+                ifname[size-1] = '\0';
+            },
+            Return(true)
+        ));
+
+    // Mock getIfName for the nexthop interface
+    EXPECT_CALL(m_mockRouteSync, getIfName(20, _, _))
+        .WillOnce(DoAll(
+            [](int32_t, char* ifname, size_t size) {
+                strncpy(ifname, "Ethernet200", size);
+                ifname[size-1] = '\0';
+            },
+            Return(true)
+        ));
+
+    m_mockRouteSync.onMsg(RTM_NEWROUTE, (nl_object*)test_route);
+
+    // Verify the VNET route was written to the database
+    vector<FieldValueTuple> fvs;
+    std::string key = "Vnet200:192.168.2.0/24";
+    EXPECT_TRUE(vnet_route_table.get(key, fvs));
+
+    // With ZMQ disabled, only non-empty fields should be present
+    // Note: Even for direct routes, getNextHopGw returns "0.0.0.0" for IPv4,
+    // so nexthop field will be present with that value
+    EXPECT_EQ(fvs.size(), 2);
+
+    // Build a map for easier verification
+    std::map<std::string, std::string> fieldMap;
+    for (const auto& fv : fvs) {
+        fieldMap[fvField(fv)] = fvValue(fv);
+    }
+
+    // Verify both fields are present
+    EXPECT_TRUE(fieldMap.find("ifname") != fieldMap.end());
+    EXPECT_EQ(fieldMap["ifname"], "Ethernet200");
+
+    EXPECT_TRUE(fieldMap.find("nexthop") != fieldMap.end());
+    EXPECT_EQ(fieldMap["nexthop"], "0.0.0.0");
+
+    rtnl_route_put(test_route);
 }
