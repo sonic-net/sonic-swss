@@ -121,10 +121,6 @@ def main(branch, debian_version):
 
             subprocess.run(cmd, cwd=work_dir, stdout=subprocess.DEVNULL)
 
-            if "common-lib" in filename:
-                cmd = ['bash', '-c', f"unzip -l {filename} | grep -oE 'common-lib/target/debs/bullseye/libproto.*deb$' | xargs unzip -o -j {filename}"]
-                subprocess.run(cmd, cwd=work_dir, stdout=subprocess.DEVNULL)
-
         debs_to_install = []
         for pattern in deb_files_regex:
             debs_to_install += [os.path.join(".", x) for x in glob.glob(pattern, root_dir=work_dir)]
