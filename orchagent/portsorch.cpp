@@ -3950,6 +3950,66 @@ string PortsOrch::getWredQueueFlexCounterTableKey(string key)
     return string(WRED_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
 }
 
+
+
+bool PortsOrch::querySupportedPortExtendedStats(sai_object_id_t port_id, vector<sai_port_stat_t>& stat_ids)
+{
+    sai_attr_capability_t capability;
+    bool extendedCountersSupported = true;
+    try
+    {
+        extendedCountersSupported = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT,
+                                            SAI_PORT_ATTR_PORT_STAT_EXTENDED,
+                                            &capability) == SAI_STATUS_SUCCESS;
+        if (!extendedCountersSupported)
+        {
+            SWSS_LOG_ERROR("querySupportedPortStats: attribute capability query failed for SAI_PORT_ATTR_PORT_STAT_EXTENDED");
+            SWSS_LOG_ERROR("Falling back to default port stat counters");
+            extendedCountersSupported = false;
+        } else {
+            SWSS_LOG_DEBUG("querySupportedPortStats: extendedCountersSupported is already true");
+        }
+    }
+    catch (const std::exception& e)
+    {
+        SWSS_LOG_ERROR("querySupportedPortStats: exception caught: %s", e.what());
+        extendedCountersSupported = true; // Default to true if query fails
+    }
+    
+    if (extendedCountersSupported)
+    {
+        sai_attribute_t attr;
+        attr.id = SAI_PORT_ATTR_PORT_STAT_EXTENDED;
+        
+        // Initialize with maximum size, then resize to actual
+        vector<sai_port_stat_t> supported_counters(DEFAULT_PORT_STAT_COUNTER_MAX);
+        attr.value.s32list.count = DEFAULT_PORT_STAT_COUNTER_MAX;
+        attr.value.s32list.list = reinterpret_cast<sai_int32_t*>(supported_counters.data());
+        
+        sai_status_t status = sai_port_api->get_port_attribute(port_id, 1, &attr);
+        if (status == SAI_STATUS_SUCCESS)
+        {
+            // Resize the vector to the actual number of counters returned
+            supported_counters.resize(attr.value.s32list.count);
+            stat_ids.assign(supported_counters.begin(), supported_counters.end());
+            SWSS_LOG_DEBUG("Queried %zu extended port stats for port 0x%" PRIx64, stat_ids.size(), port_id);
+            return true;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to query extended port stats for port 0x%" PRIx64 ", status: %d", port_id, status);
+        }
+    }
+    else
+    {
+        SWSS_LOG_DEBUG("Extended port stats not supported, using default port stat counters");
+    }
+    
+    // Fallback to default port stats
+    stat_ids = port_stat_ids;
+    return false;
+}
+
 bool PortsOrch::initExistingPort(const PortConfig& port)
 {
     SWSS_LOG_ENTER();
@@ -4067,7 +4127,17 @@ void PortsOrch::registerPort(Port &p)
     If they are enabled, install the counters immediately */
     if (flex_counters_orch->getPortCountersState())
     {
-        auto port_counter_stats = generateCounterStats(port_stat_ids, sai_serialize_port_stat);
+        std::vector<sai_port_stat_t> supported_port_stats;
+        if (querySupportedPortStats(p.m_port_id, supported_port_stats))
+        {
+            SWSS_LOG_DEBUG("Using extended port stats for port %s, stat count: %zu", p.m_alias.c_str(), supported_port_stats.size());
+        }
+        else
+        {
+            SWSS_LOG_DEBUG("Using default port stats for port %s", p.m_alias.c_str());
+            supported_port_stats = port_stat_ids;
+        }
+        auto port_counter_stats = generateCounterStats(supported_port_stats, sai_serialize_port_stat);
         port_stat_manager.setCounterIdList(p.m_port_id,
                 CounterType::PORT, port_counter_stats);
         auto gbport_counter_stats = generateCounterStats(gbport_stat_ids, sai_serialize_port_stat);
@@ -8904,11 +8974,21 @@ void PortsOrch::generatePortCounterMap()
     {
         return;
     }
-
-    auto port_counter_stats = generateCounterStats(port_stat_ids, sai_serialize_port_stat);
     auto gbport_counter_stats = generateCounterStats(gbport_stat_ids, sai_serialize_port_stat);
+    // For each PHY port, try to use extended port stats if supported; otherwise fall back to default port_stat_ids
     for (const auto& it: m_portList)
     {
+        if(querySupportedPortStats(it.second.m_port_id, stat_ids))
+        {
+            SWSS_LOG_DEBUG("generatePortCounterMap: Extended stat_ids.size()=%zu for port alias=%s",
+                        stat_ids.size(), it.second.m_alias.c_str());
+        }
+        else
+        {
+            SWSS_LOG_DEBUG("generatePortCounterMap: Using default port stats for port alias=%s", it.second.m_alias.c_str());
+            stat_ids = port_stat_ids;
+        }
+        auto port_counter_stats = generateCounterStats(stat_ids, sai_serialize_port_stat);
         // Set counter stats only for PHY ports to ensure syncd will not try to query the counter statistics from the HW for non-PHY ports.
         if (it.second.m_type != Port::Type::PHY)
         {
