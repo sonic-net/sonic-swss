@@ -104,8 +104,8 @@ private:
 
     void addEniMapEntry(sai_object_id_t oid, const std::string& name);
     void removeEniMapEntry(sai_object_id_t oid, const std::string& name);
-    DashCounter<CounterType::ENI> EniCounter;
-    DashCounter<CounterType::DASH_METER> MeterCounter;
+    DashEniCounter EniCounter;
+    DashMeterCounter MeterCounter;
 
 public:
     void handleFCStatusUpdate(bool is_enabled) { EniCounter.handleStatusUpdate(is_enabled, eni_entries_); }

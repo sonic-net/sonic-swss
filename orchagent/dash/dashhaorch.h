@@ -16,7 +16,6 @@
 #include "dash_api/ha_scope.pb.h"
 
 #include "pbutils.h"
-#include "dashhacounter.h"
 
 #define HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP "HA_SET_STAT_COUNTER"
 #define HA_SET_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
