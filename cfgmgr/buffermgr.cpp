@@ -343,6 +343,13 @@ void BufferMgr::doBufferTableTask(Consumer &consumer, ProducerStateTable &applTa
         string op = kfvOp(t);
         if (op == SET_COMMAND)
         {
+            if (m_warmStartAppTableKeys[applTable.getTableName()].find(key) != m_warmStartAppTableKeys[applTable.getTableName()].end())
+            {
+                m_warmStartAppTableKeys[applTable.getTableName()].erase(key);
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
             vector<FieldValueTuple> fvVector;
 
             SWSS_LOG_INFO("Inserting entry %s from CONFIG_DB to APPL_DB", key.c_str());
@@ -452,6 +459,44 @@ void BufferMgr::doPortQosTableTask(Consumer &consumer)
 void BufferMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
+
+    static bool warmStartInit = false;
+
+    //
+    // Prevent the BufferMgr from processing the entries which already exist in APPL_DB during warm restart.
+    //
+    if (warmStartInit == false)
+    {
+        m_warmStartAppTableKeys[APP_BUFFER_POOL_TABLE_NAME] = {};
+        m_warmStartAppTableKeys[APP_BUFFER_PROFILE_TABLE_NAME] = {};
+
+        WarmStart::initialize("buffermgrd", "swss");
+        WarmStart::checkWarmStart("buffermgrd", "swss");
+
+        bool isWarmStart = WarmStart::isWarmStart();
+
+        if (isWarmStart)
+        {
+            DBConnector applDb("APPL_DB", 0);
+            Table applBufferPoolTable(&applDb, APP_BUFFER_POOL_TABLE_NAME);
+            Table applBufferProfileTable(&applDb, APP_BUFFER_PROFILE_TABLE_NAME);
+
+            std::vector<std::string> keys;
+            applBufferPoolTable.getKeys(keys);
+            for (const auto& key : keys)
+            {
+                m_warmStartAppTableKeys[APP_BUFFER_POOL_TABLE_NAME].insert(key);
+            }
+
+            keys.clear();
+            applBufferProfileTable.getKeys(keys);
+            for (const auto& key : keys)
+            {
+                m_warmStartAppTableKeys[APP_BUFFER_PROFILE_TABLE_NAME].insert(key);
+            }
+        }
+        warmStartInit = true;
+    }
 
     string table_name = consumer.getTableName();
 
