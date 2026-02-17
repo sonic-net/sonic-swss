@@ -11,6 +11,7 @@
 #include "dbconnector.h"
 #include "intfsorch.h"
 #include "logger.h"
+#include "namelabelmapper.h"
 #include "orch.h"
 #include "p4orch.h"
 #include "p4orch/p4orch_util.h"
@@ -32,6 +33,7 @@ extern sai_hostif_api_t *sai_hostif_api;
 extern CrmOrch *gCrmOrch;
 extern PortsOrch *gPortsOrch;
 extern P4Orch *gP4Orch;
+extern NameLabelMapper* gLabelMapper;
 
 namespace p4orch
 {
@@ -413,19 +415,34 @@ ReturnCode AclRuleManager::removeAclCounter(const std::string &acl_table_name, c
     return ReturnCode();
 }
 
-ReturnCode AclRuleManager::createAclMeter(const P4AclMeter &p4_acl_meter, const std::string &meter_key,
-                                          sai_object_id_t *meter_oid)
-{
-    SWSS_LOG_ENTER();
+ReturnCode AclRuleManager::createAclMeter(P4AclMeter& p4_acl_meter,
+                                          const std::string& meter_key,
+                                          sai_object_id_t* meter_oid) {
+  SWSS_LOG_ENTER();
 
-    auto attrs = getMeterSaiAttrs(p4_acl_meter);
+  auto attrs = getMeterSaiAttrs(p4_acl_meter);
 
-    CHECK_ERROR_AND_LOG_AND_RETURN(
-        sai_policer_api->create_policer(meter_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data()),
-        "Failed to create ACL meter");
-    m_p4OidMapper->setOID(SAI_OBJECT_TYPE_POLICER, meter_key, *meter_oid);
-    SWSS_LOG_NOTICE("Suceeded to create ACL meter %s ", sai_serialize_object_id(*meter_oid).c_str());
-    return ReturnCode();
+  // Add label to the attributes to uniquely identify the policer.
+  sai_attribute_t attr;
+  std::string mapper_key;
+  std::string label;
+  bool label_present = gLabelMapper->addLabelToAttr(
+      SAI_OBJECT_TYPE_POLICER, APP_P4RT_TABLE_NAME, meter_key, attr,
+      SAI_POLICER_ATTR_LABEL, mapper_key, label);
+  attrs.push_back(attr);
+
+  CHECK_ERROR_AND_LOG_AND_RETURN(
+      sai_policer_api->create_policer(meter_oid, gSwitchId,
+                                      (uint32_t)attrs.size(), attrs.data()),
+      "Failed to create ACL meter");
+  m_p4OidMapper->setOID(SAI_OBJECT_TYPE_POLICER, meter_key, *meter_oid);
+  if (!label_present) {
+    gLabelMapper->setLabel(SAI_OBJECT_TYPE_POLICER, mapper_key, label);
+  }
+  p4_acl_meter.policer_label = label;
+  SWSS_LOG_NOTICE("Suceeded to create ACL meter %s ",
+                  sai_serialize_object_id(*meter_oid).c_str());
+  return ReturnCode();
 }
 
 ReturnCode AclRuleManager::updateAclMeter(const P4AclMeter &new_acl_meter, const P4AclMeter &old_acl_meter)
@@ -544,6 +561,9 @@ ReturnCode AclRuleManager::removeAclMeter(const std::string &meter_key)
     CHECK_ERROR_AND_LOG_AND_RETURN(sai_policer_api->remove_policer(meter_oid),
                                    "Failed to remove ACL meter for ACL rule " << QuotedVar(meter_key));
     m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_POLICER, meter_key);
+    std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+        APP_P4RT_TABLE_NAME, meter_key);
+    gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_POLICER, mapper_key);
     SWSS_LOG_NOTICE("Suceeded to remove ACL meter %s: %s ", QuotedVar(meter_key).c_str(),
                     sai_serialize_object_id(meter_oid).c_str());
     return ReturnCode();
@@ -2456,6 +2476,14 @@ std::string AclRuleManager::verifyStateCache(const P4AclRuleAppDbEntry &app_db_e
         if (!err_msg.empty())
         {
             return err_msg;
+        }
+        std::string mapper_key =
+            gLabelMapper->generateKeyFromTableAndObjectName(
+                APP_P4RT_TABLE_NAME, table_name_and_rule_key);
+        err_msg = gLabelMapper->verifyLabelMapping(
+            SAI_OBJECT_TYPE_POLICER, mapper_key, acl_rule->meter.policer_label);
+        if (!err_msg.empty()) {
+          return err_msg;
         }
     }
 

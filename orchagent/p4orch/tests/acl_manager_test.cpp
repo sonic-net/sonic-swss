@@ -1173,7 +1173,7 @@ TEST_F(AclManagerTest, DrainTableTuplesToProcessSetDelRequestSucceeds)
               DrainTableTuples(/*failure_before=*/false));
     EXPECT_EQ(nullptr, GetAclTable(kAclIngressTableName));
     EXPECT_EQ(gLabelMapper->existsLabel(SAI_OBJECT_TYPE_UDF_GROUP,
-                                        kUdfGroupMapperKey), true);
+                                        kUdfGroupMapperKey), false);
 }
 
 TEST_F(AclManagerTest, DrainTableTuplesToProcessUpdateRequestExpectFails)
@@ -3099,8 +3099,8 @@ TEST_F(AclManagerTest, AclRuleWithColorPacketActionsButNoRateLimit)
         .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_policer_,
-                create_policer(_, Eq(gSwitchId), Eq(9),
-                               Truly(std::bind(MatchSaiPolicerAttribute, 9, SAI_METER_TYPE_PACKETS,
+                create_policer(_, Eq(gSwitchId), Eq(10),
+                               Truly(std::bind(MatchSaiPolicerAttribute, 10, SAI_METER_TYPE_PACKETS,
                                                SAI_PACKET_ACTION_TRAP, SAI_PACKET_ACTION_DROP, SAI_PACKET_ACTION_DROP,
                                                0x7fffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff, std::placeholders::_1))))
         .WillOnce(DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
@@ -3153,8 +3153,8 @@ TEST_F(AclManagerTest, AclRuleWithColorPacketActionsButWithRateLimit) {
   EXPECT_CALL(
       mock_sai_policer_,
       create_policer(
-	  _, Eq(gSwitchId), Eq(9),
-          Truly(std::bind(MatchSaiPolicerAttribute, 9, SAI_METER_TYPE_PACKETS,
+	  _, Eq(gSwitchId), Eq(10),
+          Truly(std::bind(MatchSaiPolicerAttribute, 10, SAI_METER_TYPE_PACKETS,
                           SAI_PACKET_ACTION_FORWARD,
 			  SAI_PACKET_ACTION_COPY_CANCEL,
 			  SAI_PACKET_ACTION_COPY_CANCEL,
