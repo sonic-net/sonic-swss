@@ -1480,6 +1480,12 @@ namespace portsorch_test
         // Refill consumer
         consumer->addToSync(kfvSerdes);
 
+        // Initialize NPU_SI_SETTINGS_SYNC_STATUS in STATE_DB
+        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        state_port_table.set("Ethernet0", {
+            {"NPU_SI_SETTINGS_SYNC_STATUS", "NPU_SI_SETTINGS_NOTIFIED"}
+        });
+
         _hook_sai_port_api();
         uint32_t down_call_count = _sai_set_admin_state_down_count;
         uint32_t up_call_count = _sai_set_admin_state_up_count;
@@ -1491,6 +1497,20 @@ namespace portsorch_test
 
         ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
         ASSERT_TRUE(p.m_admin_state_up);
+
+        // Verify NPU_SI_SETTINGS_SYNC_STATUS is set by orchagent
+        std::vector<FieldValueTuple> values;
+        state_port_table.get("Ethernet0", values);
+        string npu_si_settings_sync_status_val = "INVALID";
+        for (auto &valueTuple : values)
+        {
+            if (fvField(valueTuple) == "NPU_SI_SETTINGS_SYNC_STATUS")
+            {
+                npu_si_settings_sync_status_val = fvValue(valueTuple);
+                break;
+            }
+        }
+        ASSERT_EQ(npu_si_settings_sync_status_val, "NPU_SI_SETTINGS_DONE");
 
         // Verify idriver
         std::vector<std::uint32_t> idriver = { 0x6, 0x6, 0x6, 0x6 };
