@@ -9,9 +9,9 @@ CXXFLAGS = -g -O0
 
 CFLAGS_SAI = -I /usr/include/sai
 
-TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher
+TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_response_publisher
 
-noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher
+noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_response_publisher
 
 LDADD_SAI = -lsaimeta -lsaimetadata -lsaivs -lsairedis
 
@@ -292,6 +292,24 @@ tests_fpmsyncd_CXXFLAGS = -Wl,-wrap,rtnl_link_i2name
 tests_fpmsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_fpmsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_fpmsyncd_INCLUDES)
 tests_fpmsyncd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
+        -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lgmock_main
+
+## fdbsyncd unit tests
+
+tests_fdbsyncd_SOURCES = fdbsyncd/fdbsyncd_ut.cpp \
+                         fdbsyncd/fake_warmstarthelper.cpp \
+                         fdbsyncd/fake_warmstartassist.cpp \
+                         fdbsyncd/fake_producerstatetable.cpp \
+                         fdbsyncd/fake_subscriberstatetable.cpp \
+                         mock_dbconnector.cpp \
+                         mock_table.cpp \
+                         $(top_srcdir)/warmrestart/ \
+                         $(top_srcdir)/fdbsyncd/fdbsync.cpp
+
+tests_fdbsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/tests_fdbsyncd -I$(top_srcdir)/lib -I$(top_srcdir)/warmrestart
+tests_fdbsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
+tests_fdbsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_fdbsyncd_INCLUDES)
+tests_fdbsyncd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lgmock_main
 
 ## response publisher unit tests
