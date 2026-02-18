@@ -21,6 +21,7 @@
 
 #include "dash/dashorch.h"
 #include "dash/dashmeterorch.h"
+#include "dash/dashhaorch.h"
 #include "flex_counter/flowcounterrouteorch.h"
 
 #include "flexcounterorch.h"
@@ -60,6 +61,7 @@ int gFlexCounterDelaySec;
 #define WRED_PORT_KEY               "WRED_ECN_PORT"
 #define SRV6_KEY                    "SRV6"
 #define SWITCH_KEY                  "SWITCH"
+#define HA_SET_KEY                  "HA_SET"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
@@ -89,7 +91,8 @@ unordered_map<string, string> flexCounterGroupMap =
     {"WRED_ECN_PORT", WRED_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"WRED_ECN_QUEUE", WRED_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {SRV6_KEY, SRV6_STAT_COUNTER_FLEX_COUNTER_GROUP},
-    {SWITCH_KEY, SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP}
+    {SWITCH_KEY, SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {HA_SET_KEY, HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP}
 };
 
 
@@ -155,6 +158,7 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 
     VxlanTunnelOrch* vxlan_tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     DashOrch* dash_orch = gDirectory.get<DashOrch*>();
+    DashHaOrch* dash_ha_orch = gDirectory.get<DashHaOrch*>();
     if (gPortsOrch && !gPortsOrch->allPortsReady())
     {
         return;
@@ -292,6 +296,10 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     if (dash_orch && (key == DASH_METER_KEY))
                     {
                         dash_orch->handleMeterFCStatusUpdate((value == "enable"));
+                    }
+                    if (dash_orch && (key == HA_SET_KEY))
+                    {
+                        dash_ha_orch->handleHaSetFCStatusUpdate((value == "enable"));
                     }
                     if (gCoppOrch && (key == FLOW_CNT_TRAP_KEY))
                     {

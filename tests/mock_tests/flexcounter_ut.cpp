@@ -1090,6 +1090,60 @@ namespace flexcounter_test
         ASSERT_FALSE(checkFlexCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, DASH_METER_COUNTER_ID_LIST));
     }
 
+    TEST_F(StandaloneFCTest, TestHaSetStatusUpdate)
+    {
+        vector<string> dash_ha_tables = {
+            APP_DASH_HA_SET_TABLE_NAME,
+            APP_DASH_HA_SCOPE_TABLE_NAME,
+            APP_BFD_SESSION_TABLE_NAME
+        };
+        m_dashHaOrch = new DashHaOrch(m_dpu_app_db.get(), dash_ha_tables, m_DashOrch, nullptr, m_dpu_app_state_db.get(), nullptr);
+
+        auto consumer = unique_ptr<Consumer>(new Consumer(
+            new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+            m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
+
+        consumer->addToSync(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        "HA_SET_1",
+                        SET_COMMAND,
+                        {
+                            {"version", "1"},
+                            {"vip_v4", "10.0.0.1"},
+                            {"vip_v6", "3:2::1:0"},
+                            {"owner", "dpu"},
+                            {"scope", "dpu"},
+                            {"local_npu_ip", "192.168.1.10"},
+                            {"local_ip", "192.168.2.1"},
+                            {"peer_ip", "192.168.2.2"},
+                            {"cp_data_channel_port", "4789"},
+                            {"dp_channel_dst_port", "4790"},
+                            {"dp_channel_src_port_min", "5000"},
+                            {"dp_channel_src_port_max", "6000"},
+                            {"dp_channel_probe_interval_ms", "1000"},
+                            {"dp_channel_probe_fail_threshold", "3"}
+                        }
+                    }
+                }
+            )
+        );
+        static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+
+        auto ha_set_entry = m_dashHaOrch->getHaSetEntries().find("HA_SET_1");
+        ASSERT_NE(ha_set_entry, m_dashHaOrch->getHaSetEntries().end());
+
+        m_dashHaOrch->handleHaSetFCStatusUpdate(true);
+        ASSERT_TRUE(checkFlexCounter(HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP, ha_set_entry->second.ha_set_id, HA_SET_COUNTER_ID_LIST));
+
+        m_dashHaOrch->handleHaSetFCStatusUpdate(false);
+        ASSERT_FALSE(checkFlexCounter(HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP, ha_set_entry->second.ha_set_id, HA_SET_COUNTER_ID_LIST));
+
+        delete m_dashHaOrch;
+        m_dashHaOrch = nullptr;
+    }
+
     TEST_F(StandaloneFCTest, TestCaching)
     {
         mockFlexCounterOperationCallCount = 0;
