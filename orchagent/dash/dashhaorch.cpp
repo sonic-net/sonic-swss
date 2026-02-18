@@ -163,6 +163,33 @@ bool DashHaOrch::register_ha_scope_notifier()
     return true;
 }
 
+bool DashHaOrch::isHaScopeAdminStateAttrSupported()
+{
+    SWSS_LOG_ENTER();
+
+    std::call_once(m_ha_scope_admin_state_attr_once_flag, [this]() {
+        sai_attr_capability_t capability;
+        sai_status_t status = sai_query_attribute_capability(
+                gSwitchId,
+                (sai_object_type_t)SAI_OBJECT_TYPE_HA_SCOPE,
+                SAI_HA_SCOPE_ATTR_ADMIN_STATE,
+                &capability);
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query SAI_HA_SCOPE_ATTR_ADMIN_STATE capability: %d", status);
+            m_ha_scope_admin_state_attr_supported = false;
+        }
+        else
+        {
+            m_ha_scope_admin_state_attr_supported =
+                    capability.set_implemented || capability.create_implemented;
+        }
+    });
+
+    return m_ha_scope_admin_state_attr_supported;
+}
+
 std::string DashHaOrch::getHaSetObjectKey(const sai_object_id_t ha_set_oid)
 {
     SWSS_LOG_ENTER();
@@ -499,10 +526,13 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     ha_role_attr.value.u16 = to_sai(entry.ha_role());
     ha_scope_attrs.push_back(ha_role_attr);
 
-    sai_attribute_t disabled_attr = {};
-    disabled_attr.id = SAI_HA_SCOPE_ATTR_ADMIN_STATE;
-    disabled_attr.value.booldata = !entry.disabled();
-    ha_scope_attrs.push_back(disabled_attr);
+    if (isHaScopeAdminStateAttrSupported())
+    {
+        sai_attribute_t disabled_attr = {};
+        disabled_attr.id = SAI_HA_SCOPE_ATTR_ADMIN_STATE;
+        disabled_attr.value.booldata = !entry.disabled();
+        ha_scope_attrs.push_back(disabled_attr);
+    }
 
     if (entry.has_vip_v4() && entry.vip_v4().has_ipv4())
     {
@@ -728,6 +758,12 @@ bool DashHaOrch::setHaScopeActivateRoleRequest(const std::string &key)
 bool DashHaOrch::setHaScopeDisabled(const std::string &key, bool disabled)
 {
     SWSS_LOG_ENTER();
+
+    if (!isHaScopeAdminStateAttrSupported())
+    {
+        m_ha_scope_entries[key].metadata.set_disabled(disabled);
+        return true;
+    }
 
     sai_object_id_t ha_scope_id = m_ha_scope_entries[key].ha_scope_id;
 
