@@ -280,11 +280,11 @@ void P4Orch::handlePortStatusChangeNotification(const std::string &op, const std
 
             if (status == SAI_PORT_OPER_STATUS_UP)
             {
-                m_wcmpManager->restorePrunedNextHops(port.m_alias);
+              m_wcmpManager->updateWatchPort(port.m_alias, false);
             }
             else
             {
-                m_wcmpManager->pruneNextHops(port.m_alias);
+              m_wcmpManager->updateWatchPort(port.m_alias, true);
             }
         }
 

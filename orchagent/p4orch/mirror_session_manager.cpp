@@ -119,70 +119,72 @@ ReturnCode MirrorSessionManager::drain() {
   return status;
 }
 
-ReturnCodeOr<std::vector<sai_attribute_t>> getSaiAttrs(const P4MirrorSessionEntry &mirror_session_entry)
-{
-    swss::Port port;
-    if (!gPortsOrch->getPort(mirror_session_entry.port, port))
-    {
-        LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-                             << "Failed to get port info for port " << QuotedVar(mirror_session_entry.port));
-    }
-    if (port.m_type != Port::Type::PHY)
-    {
-        LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                             << "Port " << QuotedVar(mirror_session_entry.port) << "'s type " << port.m_type
-                             << " is not physical and is invalid as destination "
-                                "port for mirror packet.");
-    }
+ReturnCodeOr<std::vector<sai_attribute_t>> prepareSaiAttrs(
+    const P4MirrorSessionEntry& mirror_session_entry) {
+  swss::Port port;
+  if (!gPortsOrch->getPort(mirror_session_entry.port, port)) {
+    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                         << "Failed to get port info for port "
+                         << QuotedVar(mirror_session_entry.port));
+  }
+  if (port.m_type != Port::Type::PHY) {
+    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                         << "Port " << QuotedVar(mirror_session_entry.port)
+                         << "'s type " << port.m_type
+                         << " is not physical and is invalid as destination "
+                            "port for mirror packet.");
+  }
 
-    std::vector<sai_attribute_t> attrs;
-    sai_attribute_t attr;
+  std::vector<sai_attribute_t> attrs;
+  sai_attribute_t attr;
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
-    attr.value.oid = port.m_port_id;
-    attrs.push_back(attr);
+  attr.id = SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
+  attr.value.oid = port.m_port_id;
+  attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_TYPE;
-    attr.value.s32 = SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE;
-    attrs.push_back(attr);
+  attr.id = SAI_MIRROR_SESSION_ATTR_TYPE;
+  attr.value.s32 = SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE;
+  attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_ERSPAN_ENCAPSULATION_TYPE;
-    attr.value.s32 = SAI_ERSPAN_ENCAPSULATION_TYPE_MIRROR_L3_GRE_TUNNEL;
-    attrs.push_back(attr);
+  attr.id = SAI_MIRROR_SESSION_ATTR_ERSPAN_ENCAPSULATION_TYPE;
+  attr.value.s32 = SAI_ERSPAN_ENCAPSULATION_TYPE_MIRROR_L3_GRE_TUNNEL;
+  attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION;
-    attr.value.u8 = MIRROR_SESSION_DEFAULT_IP_HDR_VER;
-    attrs.push_back(attr);
+  attr.id = SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION;
+  attr.value.u8 = MIRROR_SESSION_DEFAULT_IP_HDR_VER;
+  attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_TOS;
-    attr.value.u8 = mirror_session_entry.tos;
-    attrs.push_back(attr);
+  attr.id = SAI_MIRROR_SESSION_ATTR_TOS;
+  attr.value.u8 = mirror_session_entry.tos;
+  attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_TTL;
-    attr.value.u8 = mirror_session_entry.ttl;
-    attrs.push_back(attr);
+  attr.id = SAI_MIRROR_SESSION_ATTR_TTL;
+  attr.value.u8 = mirror_session_entry.ttl;
+  attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_SRC_IP_ADDRESS;
-    swss::copy(attr.value.ipaddr, mirror_session_entry.src_ip);
-    attrs.push_back(attr);
+  attr.id = SAI_MIRROR_SESSION_ATTR_SRC_IP_ADDRESS;
+  swss::copy(attr.value.ipaddr, mirror_session_entry.src_ip);
+  attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_DST_IP_ADDRESS;
-    swss::copy(attr.value.ipaddr, mirror_session_entry.dst_ip);
-    attrs.push_back(attr);
+  attr.id = SAI_MIRROR_SESSION_ATTR_DST_IP_ADDRESS;
+  swss::copy(attr.value.ipaddr, mirror_session_entry.dst_ip);
+  attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_SRC_MAC_ADDRESS;
-    memcpy(attr.value.mac, mirror_session_entry.src_mac.getMac(), sizeof(sai_mac_t));
-    attrs.push_back(attr);
+  attr.id = SAI_MIRROR_SESSION_ATTR_SRC_MAC_ADDRESS;
+  memcpy(attr.value.mac, mirror_session_entry.src_mac.getMac(),
+         sizeof(sai_mac_t));
+  attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS;
-    memcpy(attr.value.mac, mirror_session_entry.dst_mac.getMac(), sizeof(sai_mac_t));
-    attrs.push_back(attr);
+  attr.id = SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS;
+  memcpy(attr.value.mac, mirror_session_entry.dst_mac.getMac(),
+         sizeof(sai_mac_t));
+  attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE;
-    attr.value.u16 = GRE_PROTOCOL_ERSPAN;
-    attrs.push_back(attr);
+  attr.id = SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE;
+  attr.value.u16 = GRE_PROTOCOL_ERSPAN;
+  attrs.push_back(attr);
 
-    return attrs;
+  return attrs;
 }
 
 ReturnCodeOr<P4MirrorSessionAppDbEntry> MirrorSessionManager::deserializeP4MirrorSessionAppDbEntry(
@@ -372,7 +374,8 @@ ReturnCode MirrorSessionManager::createMirrorSession(P4MirrorSessionEntry mirror
                                                  << " already exists in centralized mapper");
     }
     // Prepare attributes for the SAI creation call.
-    ASSIGN_OR_RETURN(std::vector<sai_attribute_t> attrs, getSaiAttrs(mirror_session_entry));
+    ASSIGN_OR_RETURN(std::vector<sai_attribute_t> attrs,
+                     prepareSaiAttrs(mirror_session_entry));
 
     // Call SAI API.
     CHECK_ERROR_AND_LOG_AND_RETURN(
@@ -905,11 +908,11 @@ std::string MirrorSessionManager::verifyStateCache(const P4MirrorSessionAppDbEnt
 
 std::string MirrorSessionManager::verifyStateAsicDb(const P4MirrorSessionEntry *mirror_session_entry)
 {
-    auto attrs_or = getSaiAttrs(*mirror_session_entry);
-    if (!attrs_or.ok())
-    {
-        return std::string("Failed to get SAI attrs: ") + attrs_or.status().message();
-    }
+  auto attrs_or = prepareSaiAttrs(*mirror_session_entry);
+  if (!attrs_or.ok()) {
+    return std::string("Failed to get SAI attrs: ") +
+           attrs_or.status().message();
+  }
     std::vector<sai_attribute_t> attrs = *attrs_or;
     std::vector<swss::FieldValueTuple> exp = saimeta::SaiAttributeList::serialize_attr_list(
         SAI_OBJECT_TYPE_MIRROR_SESSION, (uint32_t)attrs.size(), attrs.data(),
