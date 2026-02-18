@@ -14,6 +14,7 @@
 #include "portsorch.h"
 #include "pfcwdorch.h"
 #include "routeorch.h"
+#include "schema.h"
 #include "srv6orch.h"
 #include "switchorch.h"
 #include "debugcounterorch.h"
@@ -200,6 +201,19 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         if (key == PORT_KEY || key.rfind("MACSEC", 0) == 0)
                         {
                             setFlexCounterGroupPollInterval(flexCounterGroupMap[key], value, true);
+                        }
+                    }
+                }
+                else if (field == SECONDARY_POLL_FACTOR_FIELD)
+                {
+                    // Only handle FLR_INTERVAL_FACTOR for PORT counter group
+                    if (key == PORT_KEY)
+                    {
+                        setFlexCounterGroupSecondaryPollFactor(flexCounterGroupMap[key], value);
+
+                        if (gPortsOrch && gPortsOrch->isGearboxEnabled())
+                        {
+                            setFlexCounterGroupSecondaryPollFactor(flexCounterGroupMap[key], value, true);
                         }
                     }
                 }

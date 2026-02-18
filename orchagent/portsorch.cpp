@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "portsorch.h"
+#include "flex_counter_manager.h"
 #include "intfsorch.h"
 #include "bufferorch.h"
 #include "neighorch.h"
@@ -815,6 +816,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
             // Register plugin for gearbox flex counter group
             setFlexCounterGroupParameter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                         PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS,
+                                        PORTS_ORCH_DEFAULT_SECONDARY_POLL_FACTOR,
                                         STATS_MODE_READ,
                                         PORT_PLUGIN_FIELD,
                                         gbPortRateSha,
@@ -853,24 +855,28 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     setFlexCounterGroupParameter(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                  QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS,
+                                 PORTS_ORCH_DEFAULT_SECONDARY_POLL_FACTOR,
                                  STATS_MODE_READ_AND_CLEAR,
                                  QUEUE_PLUGIN_FIELD,
                                  queueWmSha);
 
     setFlexCounterGroupParameter(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                  PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS,
+                                 PORTS_ORCH_DEFAULT_SECONDARY_POLL_FACTOR,
                                  STATS_MODE_READ_AND_CLEAR,
                                  PG_PLUGIN_FIELD,
                                  pgWmSha);
 
     setFlexCounterGroupParameter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                  PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS,
+                                 PORTS_ORCH_DEFAULT_SECONDARY_POLL_FACTOR,
                                  STATS_MODE_READ,
                                  PORT_PLUGIN_FIELD,
                                  portStatPlugins);
 
     setFlexCounterGroupParameter(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                  PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS,
+                                 PORTS_ORCH_DEFAULT_SECONDARY_POLL_FACTOR,
                                  STATS_MODE_READ);
 
     /* Get CPU port */

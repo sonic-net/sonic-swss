@@ -1,4 +1,5 @@
 #include "debugcounterorch.h"
+#include "flex_counter_manager.h"
 #include "portsorch.h"
 #include "rediscommand.h"
 #include "sai_serialize.h"
@@ -54,6 +55,7 @@ DebugCounterOrch::DebugCounterOrch(DBConnector *db, const vector<string>& table_
 
     setFlexCounterGroupParameter(DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP,
                              DEBUG_DROP_MONITOR_FLEX_COUNTER_POLLING_INTERVAL_MS,
+                             DEBUG_DROP_MONITOR_SECONDARY_POLL_FACTOR,
                              STATS_MODE_READ,
                              PORT_PLUGIN_FIELD,
                              dropMonitorSha);

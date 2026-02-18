@@ -25,6 +25,7 @@ void handleSaiFailure(sai_api_t api, std::string oper, sai_status_t status, bool
 
 void setFlexCounterGroupParameter(const std::string &group,
                                   const std::string &poll_interval,
+                                  const std::string &secondary_poll_factor,
                                   const std::string &stats_mode,
                                   const std::string &plugin_name="",
                                   const std::string &plugins="",
@@ -33,6 +34,9 @@ void setFlexCounterGroupParameter(const std::string &group,
 void setFlexCounterGroupPollInterval(const std::string &group,
                                      const std::string &poll_interval,
                                      bool is_gearbox=false);
+void setFlexCounterGroupSecondaryPollFactor(const std::string &group,
+                                            const std::string &secondary_poll_factor,
+                                            bool is_gearbox=false);
 void setFlexCounterGroupOperation(const std::string &group,
                                   const std::string &operation,
                                   bool is_gearbox=false);

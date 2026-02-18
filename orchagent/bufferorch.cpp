@@ -1,3 +1,4 @@
+#include "flex_counter_manager.h"
 #include "tokenize.h"
 #include "bufferorch.h"
 #include "directory.h"
@@ -246,6 +247,7 @@ void BufferOrch::initFlexCounterGroupTable(void)
 
     setFlexCounterGroupParameter(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                  BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS,
+                                 BUFFER_POOL_WATERMARK_DEFAULT_SECONDARY_POLL_FACTOR,
                                  "", // do not touch stats_mode
                                  BUFFER_POOL_PLUGIN_FIELD,
                                  bufferPoolWmSha);
