@@ -1,5 +1,9 @@
 #include "p4orch/p4orch_util.h"
 
+#include <iomanip>
+#include <sstream>
+#include <string>
+
 #include "p4orch/p4orch.h"
 #include "schema.h"
 
@@ -208,6 +212,33 @@ std::string KeyGenerator::generateMulticastRouterInterfaceRifKey(
                      p4orch::kFieldDelimiter + p4orch::kSrcMac,
                  src_mac.to_string());
   return generateKey(fv_map);
+}
+
+std::string KeyGenerator::generateL3MulticastGroupKey(
+    const std::string& multicast_group_id) {
+  // L3 multicast groups use the group ID directly as the key.  However,
+  // this is expected to be formatted as a 16-bit hex string, e.g. 0x0001.
+  int group_id = 0;
+  try {
+    if (multicast_group_id.rfind("0x") == 0 ||
+        multicast_group_id.rfind("0X") == 0) {
+      size_t processed = 0;
+      group_id = std::stoi(multicast_group_id, &processed, 16);
+    } else {
+      group_id = std::stoi(multicast_group_id);
+    }
+  } catch (std::exception& e) {
+    group_id = 0;  // invalid group ID
+  }
+  std::stringstream ss;
+  ss << "0x" << std::setfill('0') << std::setw(4) << std::hex << group_id;
+  return ss.str();
+}
+
+std::string KeyGenerator::generateL2MulticastGroupKey(
+    const std::string& l2_multicast_group_id) {
+  // L2 multicast group IDs are formatted just like L3 multicast group IDs.
+  return generateL3MulticastGroupKey(l2_multicast_group_id);
 }
 
 std::string KeyGenerator::generateWcmpGroupKey(const std::string &wcmp_group_id)
