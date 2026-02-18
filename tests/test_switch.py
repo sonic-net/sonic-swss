@@ -1,3 +1,4 @@
+import json
 import time
 import pytest
 
@@ -98,6 +99,92 @@ class TestSwitch(object):
 
         ecmp_lag_hash_offset_test(dvs, switch_oid, "10", "10")
 
+    '''
+    Test- Check WCMP group capabilities processing - negative tests.
+    '''
+    def test_wcmp_group_switch_capability_negative_tests(self, dvs, testlog):
+        def create_switch_capability_json(dvs, data, json_file):
+            json_string = json.dumps(data, indent=4)
+            dvs.runcmd(["sh", "-c", "echo '%s' > %s" % (json_string, json_file)])
+
+        def verify_negative_scenario_and_cleanup(dvs, statedb, json_file):
+            # Restart the containers so that SwitchOrch can read the switch
+            # capabilities JSON file during initialization.
+            dvs.restart()
+
+            # Verify that the corresponding attributes are present in STATE DB.
+            fvs = statedb.get_entry(
+                swsscommon.STATE_SWITCH_CAPABILITY_TABLE_NAME, "switch")
+            assert "max_total_weight_per_group" not in fvs
+            assert "max_distinct_weights_per_group" not in fvs
+
+            # Remove switch_capabilities.json as a part of cleanup.
+            dvs.runcmd(["rm %s" % (json_file)])
+
+        # Create switch_capabilities.json file.
+        # Values of the attributes are in string form which isn't allowed.
+        json_file = "/etc/sonic/switch_capabilities.json"
+        data = {
+            "SWITCH_CAPABILITY": {
+                "max_distinct_weights_per_group": "8",
+                "max_total_weight_per_group": "2047"
+            }
+        }
+        create_switch_capability_json(dvs, data, json_file)
+        statedb = dvs.get_state_db()
+        verify_negative_scenario_and_cleanup(dvs, statedb, json_file)
+
+        # Create switch_capabilities.json file.
+        # SWITCH_CAPABILITY is missing from the file.
+        data = {
+            "SWITCH": {
+                "max_distinct_weights_per_group": 8,
+                "max_total_weight_per_group": 2047
+            }
+        }
+        create_switch_capability_json(dvs, data, json_file)
+        verify_negative_scenario_and_cleanup(dvs, statedb, json_file)
+
+        # Create empty switch_capabilities.json file.
+        data = ""
+        create_switch_capability_json(dvs, data, json_file)
+        verify_negative_scenario_and_cleanup(dvs, statedb, json_file)
+
+    '''
+    Test- Check switch reports native WCMP group capabilities
+    '''
+    def test_wcmp_group_switch_capability(self, dvs, testlog):
+        # There is no switch_capababilities.json file by default. Hence, the
+        # corresponding parameters should also not be present in STATE DB.
+        statedb = dvs.get_state_db()
+        fvs = statedb.get_entry(
+            swsscommon.STATE_SWITCH_CAPABILITY_TABLE_NAME, "switch")
+        assert "max_total_weight_per_group" not in fvs
+        assert "max_distinct_weights_per_group" not in fvs
+
+        # Create switch_capabilities.json file.
+        data = {
+            "SWITCH_CAPABILITY": {
+                "max_distinct_weights_per_group": 8,
+                "max_total_weight_per_group": 2047
+            }
+        }
+        json_string = json.dumps(data, indent=4)
+        json_file = "/etc/sonic/switch_capabilities.json"
+        dvs.runcmd(["sh", "-c", "echo '%s' > %s" % (json_string, json_file)])
+
+        # Restart the containers so that SwitchOrch can read the switch
+        # capabilities JSON file during initialization.
+        dvs.restart()
+
+        # Verify that the corresponding attributes are present in STATE DB.
+        fvs = statedb.get_entry(
+            swsscommon.STATE_SWITCH_CAPABILITY_TABLE_NAME, "switch")
+        assert "max_total_weight_per_group" in fvs
+        assert "max_distinct_weights_per_group" in fvs
+
+        # Remove switch_capabilities.json as a part of cleanup.
+        dvs.runcmd(["rm %s" % (json_file)])
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
