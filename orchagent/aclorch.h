@@ -338,6 +338,7 @@ public:
     bool hasCounter() const;
     vector<sai_object_id_t> getInPorts() const;
     bool getCreateCounter() const;
+    uint32_t getPriority() const;
 
     const vector<AclRangeConfig>& getRangeConfig() const;
     static shared_ptr<AclRule> makeShared(AclOrch *acl,
