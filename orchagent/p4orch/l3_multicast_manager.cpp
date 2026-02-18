@@ -32,6 +32,7 @@ extern sai_object_id_t gSwitchId;
 extern sai_object_id_t gVirtualRouterId;
 extern sai_ipmc_group_api_t* sai_ipmc_group_api;
 extern sai_router_interface_api_t* sai_router_intfs_api;
+extern sai_bridge_api_t* sai_bridge_api;
 
 extern PortsOrch* gPortsOrch;
 
@@ -796,11 +797,10 @@ ReturnCode L3MulticastManager::validateL3SetMulticastRouterInterfaceEntry(
            << "RIF was not assigned before updating multicast router "
               "interface "
               "entry with keys "
-           << QuotedVar(
-                  multicast_router_interface_entry.multicast_replica_port)
+	   << QuotedVar(multicast_router_interface_entry.multicast_replica_port)
            << " and "
-           << QuotedVar(multicast_router_interface_entry
-                            .multicast_replica_instance);
+           << QuotedVar(
+                  multicast_router_interface_entry.multicast_replica_instance);
   }
 
   // Confirm we have a reference to the RIF object ID.
@@ -852,13 +852,15 @@ ReturnCode L3MulticastManager::validateSetMulticastRouterInterfaceEntry(
         router_interface_entry_ptr->action) {
       return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
              << "Multicast router interface entry with key "
-             << QuotedVar(multicast_router_interface_entry.multicast_router_interface_entry_key)
+	     << QuotedVar(multicast_router_interface_entry
+                              .multicast_router_interface_entry_key)
              << " cannot change action from "
-             << QuotedVar(router_interface_entry_ptr->action)
-             << " to " << QuotedVar(multicast_router_interface_entry.action);
+             << QuotedVar(router_interface_entry_ptr->action) << " to "
+             << QuotedVar(multicast_router_interface_entry.action);
     }
 
-    if (multicast_router_interface_entry.action == p4orch::kSetSrcMac) {
+    if (multicast_router_interface_entry.action ==
+        p4orch::kSetSrcMac) {
       return validateL3SetMulticastRouterInterfaceEntry(
           multicast_router_interface_entry, router_interface_entry_ptr);
     } else {
@@ -983,6 +985,42 @@ ReturnCode L3MulticastManager::processMulticastReplicationEntries(
     }
   }
   return status;
+}
+
+ReturnCode L3MulticastManager::createBridgePort(
+    P4MulticastRouterInterfaceEntry& entry, sai_object_id_t* bridge_port_oid) {
+  SWSS_LOG_ENTER();
+
+  Port port;
+  if (!gPortsOrch->getPort(entry.multicast_replica_port, port)) {
+    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                         << "Unable to find port object "
+                         << QuotedVar(entry.multicast_replica_port)
+                         << " to create bridge port");
+  }
+
+  std::vector<sai_attribute_t> attrs;
+  sai_attribute_t attr;
+
+  attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
+  attr.value.s32 = SAI_BRIDGE_PORT_TYPE_PORT;
+  attrs.push_back(attr);
+
+  attr.id = SAI_BRIDGE_PORT_ATTR_PORT_ID;
+  attr.value.oid = port.m_port_id;
+  attrs.push_back(attr);
+
+  sai_status_t status = sai_bridge_api->create_bridge_port(
+      bridge_port_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+
+  if (status != SAI_STATUS_SUCCESS) {
+    LOG_ERROR_AND_RETURN(
+        ReturnCode(status)
+        << "Failed to create bridge port for L2 multicast on port "
+        << QuotedVar(entry.multicast_replica_port));
+  }
+
+  return ReturnCode();
 }
 
 ReturnCode L3MulticastManager::createRouterInterface(
@@ -1113,6 +1151,26 @@ ReturnCode L3MulticastManager::deleteMulticastGroup(
 
 std::vector<ReturnCode> L3MulticastManager::addMulticastRouterInterfaceEntries(
     std::vector<P4MulticastRouterInterfaceEntry>& entries) {
+  SWSS_LOG_ENTER();
+  std::vector<ReturnCode> statuses(entries.size());
+  fillStatusArrayWithNotExecuted(statuses, 0);
+
+  for (size_t i = 0; i < entries.size(); ++i) {
+    auto& entry = entries[i];
+    if (entry.action == p4orch::kSetSrcMac) {
+      statuses[i] = addL3MulticastRouterInterfaceEntry(entry);
+    } else {
+      statuses[i] = addL2MulticastRouterInterfaceEntry(entry);
+    }
+    if (!statuses[i].ok()) {
+      break;
+    }
+  }
+  return statuses;
+}
+
+ReturnCode L3MulticastManager::addL3MulticastRouterInterfaceEntry(
+    P4MulticastRouterInterfaceEntry& entry) { 
   // There are two cases for add:
   // 1. The new entry (multicast_replica_port, multicast_replica_instance) will
   //    need a new RIF allocated.
@@ -1121,43 +1179,52 @@ std::vector<ReturnCode> L3MulticastManager::addMulticastRouterInterfaceEntries(
   // src mac, and src mac is the action parameter associated with a table entry.
   SWSS_LOG_ENTER();
 
-  std::vector<ReturnCode> statuses(entries.size());
-  fillStatusArrayWithNotExecuted(statuses, 0);
-  for (size_t i = 0; i < entries.size(); ++i) {
-    auto& entry = entries[i];
+  sai_object_id_t rif_oid = getRifOid(&entry);
+  if (rif_oid == SAI_NULL_OBJECT_ID) {
+    std::string rif_key = KeyGenerator::generateMulticastRouterInterfaceRifKey(
+        entry.multicast_replica_port, entry.src_mac);
 
-    sai_object_id_t rif_oid = getRifOid(&entry);
-    if (rif_oid == SAI_NULL_OBJECT_ID) {
-      std::string rif_key =
-          KeyGenerator::generateMulticastRouterInterfaceRifKey(
-              entry.multicast_replica_port, entry.src_mac);
+    RETURN_IF_ERROR(createRouterInterface(rif_key, entry, &rif_oid));
 
-      ReturnCode create_status =
-          createRouterInterface(rif_key, entry, &rif_oid);
-      statuses[i] = create_status;
-      if (!create_status.ok()) {
-        break;
-      }
+    gPortsOrch->increasePortRefCount(entry.multicast_replica_port);
+    m_p4OidMapper->setOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key, rif_oid);
+    m_rifOids[rif_key] = rif_oid;
+    m_rifOidToMulticastGroupMembers[rif_oid] = {};
+  }
 
-      gPortsOrch->increasePortRefCount(entry.multicast_replica_port);
-      m_p4OidMapper->setOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key, rif_oid);
-      m_rifOids[rif_key] = rif_oid;
-      m_rifOidToMulticastGroupMembers[rif_oid] = {};
-    }
+  // Operations done regardless of whether RIF was created or not.
+  // Set the entry RIF.
+  entry.router_interface_oid = rif_oid;
 
-    // Operations done regardless of whether RIF was created or not.
-    // Set the entry RIF.
-    entry.router_interface_oid = rif_oid;
+  // Update internal state.
+  m_multicastRouterInterfaceTable[entry.multicast_router_interface_entry_key] =
+      entry;
+  m_rifOidToRouterInterfaceEntries[rif_oid].push_back(entry);
+  return ReturnCode();
+}
 
-    // Update internal state.
-    m_multicastRouterInterfaceTable[entry
-                                        .multicast_router_interface_entry_key] =
-        entry;
-    m_rifOidToRouterInterfaceEntries[rif_oid].push_back(entry);
+ReturnCode L3MulticastManager::addL2MulticastRouterInterfaceEntry(
+    P4MulticastRouterInterfaceEntry& entry) {
+  // There are two cases for add:
+  // 1. The new entry (multicast_replica_port, multicast_replica_instance) will
+  //    need a new bridge port allocated.
+  // 2. The new entry will be able to use an existing bridge port.
+  // Recall that bridge ports depend only on the multicast_replica_port.
+  SWSS_LOG_ENTER();
 
-    statuses[i] = ReturnCode();
-  }  // for i
-  return statuses;
+  sai_object_id_t bridge_port_oid = getBridgePortOid(&entry);
+  if (bridge_port_oid == SAI_NULL_OBJECT_ID) {
+    RETURN_IF_ERROR(createBridgePort(entry, &bridge_port_oid));
+    gPortsOrch->increasePortRefCount(entry.multicast_replica_port);
+    m_p4OidMapper->setOID(SAI_OBJECT_TYPE_BRIDGE_PORT,
+                          entry.multicast_replica_port, bridge_port_oid);
+  }
+
+  // Operations done regardless of whether bridge port was created or not.
+  // Set the entry bridge port.
+  m_multicastRouterInterfaceTable[entry.multicast_router_interface_entry_key] =
+      entry;
+  return ReturnCode();
 }
 
 std::vector<ReturnCode>
@@ -1977,6 +2044,17 @@ sai_object_id_t L3MulticastManager::getRifOid(
     return SAI_NULL_OBJECT_ID;
   }
   return m_rifOids[rif_key];
+}
+
+// A bridge port is associated with an egress port.
+sai_object_id_t L3MulticastManager::getBridgePortOid(
+    const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry) {
+  sai_object_id_t bridge_port_oid = SAI_NULL_OBJECT_ID;
+  m_p4OidMapper->getOID(
+      SAI_OBJECT_TYPE_BRIDGE_PORT,
+      multicast_router_interface_entry->multicast_replica_port,
+      &bridge_port_oid);
+  return bridge_port_oid;
 }
 
 // A RIF is associated with an egress port and Ethernet src mac value.

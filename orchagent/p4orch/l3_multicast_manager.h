@@ -179,6 +179,8 @@ class L3MulticastManager : public ObjectManagerInterface {
       const std::string& op, bool update);
 
   // Wrapper around SAI setup and call, for easy mocking.
+  ReturnCode createBridgePort(P4MulticastRouterInterfaceEntry& entry,
+                              sai_object_id_t* bridge_port_oid);
   ReturnCode createRouterInterface(const std::string& rif_key,
                                    P4MulticastRouterInterfaceEntry& entry,
                                    sai_object_id_t* rif_oid);
@@ -199,6 +201,10 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Add new multicast router interface table entries.
   std::vector<ReturnCode> addMulticastRouterInterfaceEntries(
       std::vector<P4MulticastRouterInterfaceEntry>& entries);
+  ReturnCode addL3MulticastRouterInterfaceEntry(
+        P4MulticastRouterInterfaceEntry& entry);
+  ReturnCode addL2MulticastRouterInterfaceEntry(
+        P4MulticastRouterInterfaceEntry& entry);
   // Update existing multicast router interface table entries.
   std::vector<ReturnCode> updateMulticastRouterInterfaceEntries(
       std::vector<P4MulticastRouterInterfaceEntry>& entries);
@@ -265,6 +271,11 @@ class L3MulticastManager : public ObjectManagerInterface {
   // entry.  This would be the value used by the replication group member.
   sai_object_id_t getRifOid(
       const P4MulticastReplicationEntry* multicast_replication_entry);
+
+  // Fetches a bridge port OID for a port that will be used for L2 multicast
+  // group members.
+  sai_object_id_t getBridgePortOid(
+      const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
 
   // Internal cache of entries.
   P4MulticastRouterInterfaceTable m_multicastRouterInterfaceTable;

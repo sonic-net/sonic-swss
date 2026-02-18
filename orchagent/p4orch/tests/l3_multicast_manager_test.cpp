@@ -12,6 +12,7 @@
 
 #include "ipprefix.h"
 #include "mock_response_publisher.h"
+#include "mock_sai_bridge.h"
 #include "mock_sai_ipmc_group.h"
 #include "mock_sai_router_interface.h"
 #include "p4orch.h"
@@ -40,6 +41,8 @@ extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t gVrfOid;
 extern sai_ipmc_group_api_t* sai_ipmc_group_api;
 extern sai_router_interface_api_t* sai_router_intfs_api;
+extern sai_bridge_api_t* sai_bridge_api;
+
 extern char* gVrfName;
 extern PortsOrch* gPortsOrch;
 extern VRFOrch* gVrfOrch;
@@ -66,6 +69,9 @@ constexpr sai_object_id_t kGroupOid3 = 0x3;
 constexpr sai_object_id_t kGroupMemberOid1 = 0x11;
 constexpr sai_object_id_t kGroupMemberOid2 = 0x12;
 constexpr sai_object_id_t kGroupMemberOid3 = 0x13;
+
+constexpr sai_object_id_t kBridgePortOid1 = 0x101;
+constexpr sai_object_id_t kBridgePortOid2 = 0x102;
 
 // Matches two SAI attributes.
 bool MatchSaiAttribute(const sai_attribute_t& attr,
@@ -168,6 +174,35 @@ class L3MulticastManagerTest : public ::testing::Test {
     return entry;
   }
 
+  P4MulticastRouterInterfaceEntry SetupP4MulticastRouterInterfaceNoActionEntry(
+      const std::string& port, const std::string& instance,
+      const swss::MacAddress mac, const sai_object_id_t bridge_port_oid,
+      bool expect_mock = true) {
+    std::vector<P4MulticastRouterInterfaceEntry> entries;
+    auto entry = GenerateP4MulticastRouterInterfaceEntry(
+        port, instance, mac, /*multicast_metadata=*/"", p4orch::kNoAction);
+    entries.push_back(entry);
+
+    if (expect_mock) {
+      EXPECT_CALL(mock_sai_bridge_, create_bridge_port(_, _, Eq(2), _))
+          .WillOnce(
+              DoAll(SetArgPointee<0>(bridge_port_oid),
+                    Return(SAI_STATUS_SUCCESS)));
+    }
+
+    std::vector<ReturnCode> statuses =
+        AddMulticastRouterInterfaceEntries(entries);
+
+    EXPECT_EQ(statuses.size(), 1);
+    EXPECT_TRUE(statuses[0].ok());
+
+    EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                  entries[0].multicast_router_interface_entry_key),
+              nullptr);
+    EXPECT_EQ(GetBridgePortOid(&entries[0]), bridge_port_oid);
+    return entry;
+  }
+
   P4MulticastReplicationEntry SetupP4MulticastReplicationEntry(
       const std::string& multicast_group_id, const std::string& port,
       const std::string& instance, const sai_object_id_t group_oid,
@@ -241,6 +276,10 @@ class L3MulticastManagerTest : public ::testing::Test {
         mock_set_ipmc_group_member_attribute;
     sai_ipmc_group_api->get_ipmc_group_member_attribute =
         mock_get_ipmc_group_member_attribute;
+
+    mock_sai_bridge = &mock_sai_bridge_;
+    sai_bridge_api->create_bridge_port = mock_create_bridge_port;
+    sai_bridge_api->remove_bridge_port = mock_remove_bridge_port;
   }
 
   void Enqueue(const std::string& table_name,
@@ -351,6 +390,11 @@ class L3MulticastManagerTest : public ::testing::Test {
     return l3_multicast_manager_.createRouterInterface(rif_key, entry, rif_oid);
   }
 
+  ReturnCode CreateBridgePort(P4MulticastRouterInterfaceEntry& entry,
+                              sai_object_id_t* bridge_port_oid) {
+    return l3_multicast_manager_.createBridgePort(entry, bridge_port_oid);
+  }
+
   ReturnCode DeleteRouterInterface(const std::string& rif_key,
                                    sai_object_id_t rif_oid) {
     return l3_multicast_manager_.deleteRouterInterface(rif_key, rif_oid);
@@ -421,6 +465,12 @@ class L3MulticastManagerTest : public ::testing::Test {
     return l3_multicast_manager_.getRifOid(multicast_router_interface_entry);
   }
 
+  sai_object_id_t GetBridgePortOid(
+      const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry) {
+    return l3_multicast_manager_.getBridgePortOid(
+        multicast_router_interface_entry);
+  }
+
   // Unnatural function to add multicast replication entry reference to a RIF.
   void ForceAddMulticastGroupMember(
       const sai_object_id_t rif_oid,
@@ -458,6 +508,7 @@ class L3MulticastManagerTest : public ::testing::Test {
 
   StrictMock<MockSaiRouterInterface> mock_sai_router_intf_;
   StrictMock<MockSaiIpmcGroup> mock_sai_ipmc_group_;
+  StrictMock<MockSaiBridge> mock_sai_bridge_;
   StrictMock<MockResponsePublisher> publisher_;
   P4OidMapper p4_oid_mapper_;
   L3MulticastManager l3_multicast_manager_;
@@ -731,6 +782,75 @@ TEST_F(L3MulticastManagerTest,
   // First entry fails, second should not be executed.
   EXPECT_EQ(statuses[0].code(), StatusCode::SWSS_RC_UNKNOWN);
   EXPECT_EQ(statuses[1].code(), StatusCode::SWSS_RC_NOT_EXECUTED);
+}
+
+TEST_F(L3MulticastManagerTest,
+       AddMulticastRouterInterfaceEntryNoActionSuccess) {
+  auto entry = SetupP4MulticastRouterInterfaceNoActionEntry(
+      "Ethernet1", /*instance=*/"0x0", swss::MacAddress(kSrcMac1),
+      kBridgePortOid1);
+  EXPECT_EQ(kBridgePortOid1, GetBridgePortOid(&entry));
+}
+
+TEST_F(L3MulticastManagerTest,
+       AddMulticastRouterInterfaceEntryNoActionSaiFailure) {
+  std::vector<P4MulticastRouterInterfaceEntry> entries;
+  auto entry = GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet1", /*instance=*/"0x0", swss::MacAddress(kSrcMac1),
+      /*multicast_metadata=*/"", p4orch::kNoAction);
+  auto entry2 = GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet2", /*instance=*/"0x0", swss::MacAddress(kSrcMac2),
+      /*multicast_metadata=*/"", p4orch::kNoAction);
+  entries.push_back(entry);
+  entries.push_back(entry2);
+
+  EXPECT_CALL(mock_sai_bridge_, create_bridge_port(_, _, Eq(2), _))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  std::vector<ReturnCode> statuses =
+      AddMulticastRouterInterfaceEntries(entries);
+
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0].code(), StatusCode::SWSS_RC_UNKNOWN);
+  EXPECT_EQ(statuses[1].code(), StatusCode::SWSS_RC_NOT_EXECUTED);
+
+  EXPECT_EQ(GetMulticastRouterInterfaceEntry(
+                entries[0].multicast_router_interface_entry_key),
+            nullptr);
+  EXPECT_EQ(GetMulticastRouterInterfaceEntry(
+                entries[1].multicast_router_interface_entry_key),
+            nullptr);
+  EXPECT_EQ(GetBridgePortOid(&entries[0]), SAI_NULL_OBJECT_ID);
+  EXPECT_EQ(GetBridgePortOid(&entries[1]), SAI_NULL_OBJECT_ID);
+}
+
+TEST_F(L3MulticastManagerTest,
+       AddMulticastRouterInterfaceEntryNoActionInvalidPortFailure) {
+  std::vector<P4MulticastRouterInterfaceEntry> entries;
+  auto entry = GenerateP4MulticastRouterInterfaceEntry(
+      "InvalidPort", /*instance=*/"0x0", swss::MacAddress(kSrcMac1),
+      /*multicast_metadata=*/"", p4orch::kNoAction);
+  auto entry2 = GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet2", /*instance=*/"0x0", swss::MacAddress(kSrcMac2),
+      /*multicast_metadata=*/"", p4orch::kNoAction);
+  entries.push_back(entry);
+  entries.push_back(entry2);
+
+  std::vector<ReturnCode> statuses =
+      AddMulticastRouterInterfaceEntries(entries);
+
+  EXPECT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0].code(), StatusCode::SWSS_RC_NOT_FOUND);
+  EXPECT_EQ(statuses[1].code(), StatusCode::SWSS_RC_NOT_EXECUTED);
+
+  EXPECT_EQ(GetMulticastRouterInterfaceEntry(
+                entries[0].multicast_router_interface_entry_key),
+            nullptr);
+  EXPECT_EQ(GetMulticastRouterInterfaceEntry(
+                entries[1].multicast_router_interface_entry_key),
+            nullptr);
+  EXPECT_EQ(GetBridgePortOid(&entries[0]), SAI_NULL_OBJECT_ID);
+  EXPECT_EQ(GetBridgePortOid(&entries[1]), SAI_NULL_OBJECT_ID);
 }
 
 TEST_F(L3MulticastManagerTest, DeleteMulticastRouterInterfaceEntriesSuccess) {
