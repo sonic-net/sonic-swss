@@ -39,7 +39,7 @@ private:
     Table m_stateNeighRestoreTable, m_cfgPeerSwitchTable;
     ProducerStateTable m_neighTable;
     AppRestartAssist  *m_AppRestartAssist;
-    Table m_cfgVlanInterfaceTable, m_cfgLagInterfaceTable, m_cfgInterfaceTable;
+    Table m_cfgVlanInterfaceTable, m_cfgLagInterfaceTable, m_cfgInterfaceTable, m_cfgVlanSubInterfaceTable;
 
     bool isLinkLocalEnabled(const std::string &port);
 };

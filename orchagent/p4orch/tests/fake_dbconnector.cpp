@@ -9,7 +9,7 @@ namespace swss
 {
 
 static std::map<std::string, int> dbNameIdMap = {
-    {"APPL_DB", 0}, {"ASIC_DB", 1}, {"COUNTERS_DB", 2}, {"CONFIG_DB", 4}, {"FLEX_COUNTER_DB", 5}, {"STATE_DB", 6},
+    {"APPL_DB", 0}, {"ASIC_DB", 1}, {"COUNTERS_DB", 2}, {"CONFIG_DB", 4}, {"FLEX_COUNTER_DB", 5}, {"STATE_DB", 6}, {"CHASSIS_APP_DB", 12},
 };
 
 using DbDataT = std::map<int, std::map<std::string, std::map<std::string, std::string>>>;
