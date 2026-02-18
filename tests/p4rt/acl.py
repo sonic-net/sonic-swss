@@ -76,6 +76,7 @@ class P4RtAclRuleWrapper(util.DBInterface):
     METER_CBURST = "meter/cburst"
     METER_PIR = "meter/pir"
     METER_PBURST = "meter/pburst"
+    METER_MODE = "meter/mode"
 
 
 class P4RtAclCounterWrapper(util.DBInterface):
