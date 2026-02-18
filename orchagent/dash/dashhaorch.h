@@ -95,6 +95,9 @@ protected:
     std::unique_ptr<swss::Table> dash_ha_set_result_table_;
     std::unique_ptr<swss::Table> dash_ha_scope_result_table_;
 
+    std::shared_ptr<swss::DBConnector> m_counter_db;
+    std::unique_ptr<swss::Table> m_ha_set_name_table;
+
     std::unique_ptr<swss::DBConnector> m_dpuStateDbConnector;
     std::unique_ptr<swss::Table> m_dpuStateDbHaSetTable;
     std::unique_ptr<swss::Table> m_dpuStateDbHaScopeTable;
