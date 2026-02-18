@@ -734,6 +734,26 @@ class TestP4RTAcl(object):
         meter_pbs = "200"
         table_name_with_rule_key2 = table_name + ":" + rule_json_key2
 
+	# First attempt failed since no UserDefinedTrap is created for the CPU queue
+        attr_list = [
+            (self._p4rt_acl_rule_obj.ACTION, action),
+            ("param/cpu_queue", "30"), # No UserDefinedTrap created for the queue.
+            (self._p4rt_acl_rule_obj.METER_CIR, meter_cir),
+            (self._p4rt_acl_rule_obj.METER_CBURST, meter_cbs),
+            (self._p4rt_acl_rule_obj.METER_PIR, meter_pir),
+            (self._p4rt_acl_rule_obj.METER_PBURST, meter_pbs),
+        ]
+
+        self._p4rt_acl_rule_obj.set_app_db_entry(
+            table_name_with_rule_key2, attr_list)
+        util.verify_response(
+            self.response_consumer,
+            table_name_with_rule_key2,
+            attr_list,
+            "SWSS_RC_INVALID_PARAM",
+            "[OrchAgent] Invalid CPU queue number '30' for 'ACL_PUNT_TABLE_RULE_TEST'. Queue number 30 does not have UserDefinedTrap configured",
+        )
+
         attr_list = [
             (self._p4rt_acl_rule_obj.ACTION, action),
             ("param/cpu_queue", "5"),
