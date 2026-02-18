@@ -871,6 +871,9 @@ bool isDiffActionFieldValue(const sai_acl_entry_attr_t attr_name,
     case SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID: {
         return value.aclaction.parameter.oid != old_value.aclaction.parameter.oid;
     }
+    case SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA: {
+      return value.aclaction.parameter.u8 != old_value.aclaction.parameter.u8;
+    }
     case SAI_ACL_ENTRY_ATTR_ACTION_FLOOD:
     case SAI_ACL_ENTRY_ATTR_ACTION_DECREMENT_TTL:
     case SAI_ACL_ENTRY_ATTR_ACTION_SET_DO_NOT_LEARN: {

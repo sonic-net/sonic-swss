@@ -1936,8 +1936,7 @@ ReturnCode AclRuleManager::processDeleteRuleRequest(const std::string &acl_table
     return status;
 }
 
-ReturnCode AclRuleManager::processUpdateRuleRequest(const P4AclRuleAppDbEntry &app_db_entry,
-                                                    const P4AclRule &old_acl_rule)
+ReturnCode AclRuleManager::processUpdateRuleRequest(const P4AclRuleAppDbEntry& app_db_entry, P4AclRule& old_acl_rule)
 {
     SWSS_LOG_ENTER();
 
