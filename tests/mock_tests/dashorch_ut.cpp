@@ -217,13 +217,14 @@ namespace dashorch_test
         SetDashTable(APP_DASH_ENI_TABLE_NAME, "eni1", eni, false);
     }
 
-    TEST_F(DashOrchTest, CreateRemoveApplianceTrustedVnisSingle)
+    TEST_F(DashOrchTest, CreateRemoveApplianceTrustedVnisSingleValue)
     {
         int trusted_vni = 100;
         dash::appliance::Appliance appliance = BuildApplianceEntry();
-        appliance.mutable_trusted_vnis()->set_value(trusted_vni);
+        appliance.mutable_trusted_vnis_list()->Add()->set_value(trusted_vni);
 
         sai_global_trusted_vni_entry_t actual_entry;
+        sai_global_trusted_vni_entry_t removed_entry;
 
         EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_global_trusted_vni_entry)
             .WillOnce(
@@ -233,7 +234,7 @@ namespace dashorch_test
         EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_global_trusted_vni_entry)
             .WillOnce(
                 DoAll(
-                    SaveArgPointee<0>(&actual_entry),
+                    SaveArgPointee<0>(&removed_entry),
                     Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::remove_global_trusted_vni_entry)));
 
         SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance);
@@ -241,19 +242,19 @@ namespace dashorch_test
         EXPECT_EQ(actual_entry.vni_range.max, trusted_vni);
 
         SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, dash::appliance::Appliance(), false);
-        EXPECT_EQ(actual_entry.vni_range.min, trusted_vni);
-        EXPECT_EQ(actual_entry.vni_range.max, trusted_vni);
+        EXPECT_EQ(removed_entry.vni_range.min, trusted_vni);
+        EXPECT_EQ(removed_entry.vni_range.max, trusted_vni);
     }
 
-    TEST_F(DashOrchTest, CreateRemoveApplianceTrustedVnisRange)
+    TEST_F(DashOrchTest, CreateRemoveApplianceTrustedVnisSingleRange)
     {
         int min_trusted_vni = 500;
         int max_trusted_vni = 600;
         dash::appliance::Appliance appliance = BuildApplianceEntry();
-        appliance.mutable_trusted_vnis()->mutable_range()->set_min(min_trusted_vni);
-        appliance.mutable_trusted_vnis()->mutable_range()->set_max(max_trusted_vni);
+        appliance.mutable_trusted_vnis_list()->Add()->CopyFrom(GenVni(min_trusted_vni, max_trusted_vni));
 
         sai_global_trusted_vni_entry_t actual_entry;
+        sai_global_trusted_vni_entry_t removed_entry;
 
         EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_global_trusted_vni_entry)
             .WillOnce(
@@ -264,7 +265,7 @@ namespace dashorch_test
         EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_global_trusted_vni_entry)
             .WillOnce(
                 DoAll(
-                    SaveArgPointee<0>(&actual_entry),
+                    SaveArgPointee<0>(&removed_entry),
                     Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::remove_global_trusted_vni_entry)));
 
         SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance);
@@ -272,8 +273,100 @@ namespace dashorch_test
         EXPECT_EQ(actual_entry.vni_range.max, max_trusted_vni);
 
         SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, dash::appliance::Appliance(), false);
-        EXPECT_EQ(actual_entry.vni_range.min, min_trusted_vni);
-        EXPECT_EQ(actual_entry.vni_range.max, max_trusted_vni);
+        EXPECT_EQ(removed_entry.vni_range.min, min_trusted_vni);
+        EXPECT_EQ(removed_entry.vni_range.max, max_trusted_vni);
+    }
+
+    TEST_F(DashOrchTest, CreateRemoveApplianceTrustedVnisMixed)
+    {
+        int vni1 = 700;
+        int vni2_min = 800;
+        int vni2_max = 810;
+        int vni3 = 900;
+        int vni4_min = 1000;
+        int vni4_max = 1100;
+        dash::appliance::Appliance appliance = BuildApplianceEntry();
+        appliance.mutable_trusted_vnis_list()->Add()->set_value(vni1);
+        appliance.mutable_trusted_vnis_list()->Add()->CopyFrom(GenVni(vni2_min, vni2_max));
+        appliance.mutable_trusted_vnis_list()->Add()->set_value(vni3);
+        appliance.mutable_trusted_vnis_list()->Add()->CopyFrom(GenVni(vni4_min, vni4_max));
+
+        std::vector<sai_global_trusted_vni_entry_t> actual_entries(4);
+
+        {
+            InSequence seq;
+
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_global_trusted_vni_entry)
+                .WillOnce(
+                    DoAll(
+                        SaveArgPointee<0>(&actual_entries[0]),
+                        Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::create_global_trusted_vni_entry)));
+
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_global_trusted_vni_entry)
+                .WillOnce(
+                    DoAll(
+                        SaveArgPointee<0>(&actual_entries[1]),
+                        Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::create_global_trusted_vni_entry)));
+
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_global_trusted_vni_entry)
+                .WillOnce(
+                    DoAll(
+                        SaveArgPointee<0>(&actual_entries[2]),
+                        Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::create_global_trusted_vni_entry)));
+
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_global_trusted_vni_entry)
+                .WillOnce(
+                    DoAll(
+                        SaveArgPointee<0>(&actual_entries[3]),
+                        Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::create_global_trusted_vni_entry)));
+
+            // orchagent removes trusted VNIs in reverse order so we set the expectation in reverse order as well
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_global_trusted_vni_entry)
+                .WillOnce(
+                    DoAll(
+                        SaveArgPointee<0>(&actual_entries[3]),
+                        Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::remove_global_trusted_vni_entry)));
+
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_global_trusted_vni_entry)
+                .WillOnce(
+                    DoAll(
+                        SaveArgPointee<0>(&actual_entries[2]),
+                        Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::remove_global_trusted_vni_entry)));
+
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_global_trusted_vni_entry)
+                .WillOnce(
+                    DoAll(
+                        SaveArgPointee<0>(&actual_entries[1]),
+                        Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::remove_global_trusted_vni_entry)));
+
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_global_trusted_vni_entry)
+                .WillOnce(
+                    DoAll(
+                        SaveArgPointee<0>(&actual_entries[0]),
+                        Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::remove_global_trusted_vni_entry)));
+        }
+
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance);
+        EXPECT_EQ(actual_entries[0].vni_range.min, vni1);
+        EXPECT_EQ(actual_entries[0].vni_range.max, vni1);
+        EXPECT_EQ(actual_entries[1].vni_range.min, vni2_min);
+        EXPECT_EQ(actual_entries[1].vni_range.max, vni2_max);
+        EXPECT_EQ(actual_entries[2].vni_range.min, vni3);
+        EXPECT_EQ(actual_entries[2].vni_range.max, vni3);
+        EXPECT_EQ(actual_entries[3].vni_range.min, vni4_min);
+        EXPECT_EQ(actual_entries[3].vni_range.max, vni4_max);
+
+        actual_entries.clear();
+
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, dash::appliance::Appliance(), false);
+        EXPECT_EQ(actual_entries[0].vni_range.min, vni1);
+        EXPECT_EQ(actual_entries[0].vni_range.max, vni1);
+        EXPECT_EQ(actual_entries[1].vni_range.min, vni2_min);
+        EXPECT_EQ(actual_entries[1].vni_range.max, vni2_max);
+        EXPECT_EQ(actual_entries[2].vni_range.min, vni3);
+        EXPECT_EQ(actual_entries[2].vni_range.max, vni3);
+        EXPECT_EQ(actual_entries[3].vni_range.min, vni4_min);
+        EXPECT_EQ(actual_entries[3].vni_range.max, vni4_max);
     }
 
     TEST_F(DashOrchTest, CreateRemoveEniTrustedVnisSingle)
@@ -445,78 +538,6 @@ namespace dashorch_test
 
             eni.mutable_trusted_vnis()->CopyFrom(changed_vni);
             SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni);
-            VerifyTrustedVniEntry(removed_entry.vni_range, orig_vni);
-            VerifyTrustedVniEntry(actual_entry.vni_range, changed_vni);
-        }
-    }
-
-    TEST_P(DashOrchTest, ChangeApplianceTrustedVni)
-    {
-        ValueOrRange orig_vni, changed_vni;
-        std::tie(orig_vni, changed_vni) = GetParam();
-
-        dash::appliance::Appliance appliance = BuildApplianceEntry();
-        sai_global_trusted_vni_entry_t actual_entry;
-        sai_global_trusted_vni_entry_t removed_entry;
-        to_sai(changed_vni, removed_entry.vni_range);
-
-        {
-            InSequence seq;
-
-            // Initial set
-            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_global_trusted_vni_entry)
-                .WillOnce(
-                    DoAll(
-                        SaveArgPointee<0>(&actual_entry),
-                        Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::create_global_trusted_vni_entry)));
-
-            // We expect 3 additional changes, orig->changed, changed->orig, and orig->changed
-            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_global_trusted_vni_entry)
-                .WillOnce(
-                    DoAll(
-                        SaveArgPointee<0>(&removed_entry),
-                        Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::remove_global_trusted_vni_entry)));
-
-            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_global_trusted_vni_entry)
-                .WillOnce(
-                    DoAll(
-                        SaveArgPointee<0>(&actual_entry),
-                        Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::create_global_trusted_vni_entry)));
-
-            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_global_trusted_vni_entry)
-                .WillOnce(
-                    DoAll(
-                        SaveArgPointee<0>(&removed_entry),
-                        Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::remove_global_trusted_vni_entry)));
-
-            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_global_trusted_vni_entry)
-                .WillOnce(
-                    DoAll(
-                        SaveArgPointee<0>(&actual_entry),
-                        Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::create_global_trusted_vni_entry)));
-
-            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_global_trusted_vni_entry)
-                .WillOnce(
-                    DoAll(
-                        SaveArgPointee<0>(&removed_entry),
-                        Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::remove_global_trusted_vni_entry)));
-
-            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_global_trusted_vni_entry)
-                .WillOnce(
-                    DoAll(
-                        SaveArgPointee<0>(&actual_entry),
-                        Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::create_global_trusted_vni_entry)));
-        }
-
-        for (int i = 0; i < 2; i++)
-        {
-            appliance.mutable_trusted_vnis()->CopyFrom(orig_vni);
-            SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance);
-            VerifyTrustedVniEntry(removed_entry.vni_range, changed_vni);
-            VerifyTrustedVniEntry(actual_entry.vni_range, orig_vni);
-
-            appliance.mutable_trusted_vnis()->CopyFrom(changed_vni);
-            SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance);
             VerifyTrustedVniEntry(removed_entry.vni_range, orig_vni);
             VerifyTrustedVniEntry(actual_entry.vni_range, changed_vni);
         }
