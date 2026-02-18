@@ -270,7 +270,7 @@ class WcmpManagerTest : public ::testing::Test
         copp_orch_ = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
 
         std::vector<std::string> p4_tables{APP_P4RT_TABLE_NAME};
-        gP4Orch = new P4Orch(gAppDb, p4_tables, gVrfOrch, copp_orch_);
+        gP4Orch = new P4Orch(gAppDb, p4_tables, nullptr, gVrfOrch, copp_orch_);
         gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
     }
 

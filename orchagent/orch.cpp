@@ -865,7 +865,7 @@ void Orch::dumpPendingTasks(vector<string> &ts)
 
 void Orch::flushResponses()
 {
-    m_publisher.flush();
+    m_publisher.flush(false);
 }
 
 ref_resolve_status Orch::resolveFieldRefArray(

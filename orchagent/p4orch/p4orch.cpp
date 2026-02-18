@@ -31,8 +31,13 @@ extern PortsOrch *gPortsOrch;
 #define P4_EXT_COUNTERS_STATS_POLL_TIMER_NAME "P4_EXT_COUNTERS_STATS_POLL_TIMER"
 #define APP_P4RT_EXT_TABLES_MANAGER "EXT_TABLES_MANAGER"
 
-P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOrch *vrfOrch, CoppOrch *coppOrch)
-    : Orch(db, tableNames)
+P4Orch::P4Orch(swss::DBConnector* db, std::vector<std::string> tableNames,
+               ZmqServer* zmqServer, VRFOrch* vrfOrch, CoppOrch* coppOrch)
+    : ZmqOrch(db, tableNames, zmqServer, /*orderedQueue=*/true,
+              /*dbPersistence=*/false),
+      m_zmqServer(zmqServer),
+      m_publisher("APPL_DB", /*bool buffered=*/true,
+                  /*db_write_thread=*/true, zmqServer)
 {
     SWSS_LOG_ENTER();
 
@@ -100,22 +105,14 @@ P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOr
     Orch::addExecutor(ext_executor);
     m_extCounterStatsTimer->start();
 
-    // Add p4rt notification handling support
-    swss::DBConnector notificationsDb("ASIC_DB", 0);
-
-    m_p4rtNotificationConsumer =
-        new swss::NotificationConsumer(&notificationsDb, APP_P4RT_TABLE_NAME);
-    auto p4rtNotifier =
-        new Notifier(m_p4rtNotificationConsumer, this, "P4RT_NOTIFICATIONS");
-    Orch::addExecutor(p4rtNotifier);
-
     // Add port state change notification handling support
+    swss::DBConnector notificationsDb("ASIC_DB", 0);
     m_portStatusNotificationConsumer = new swss::NotificationConsumer(&notificationsDb, "NOTIFICATIONS");
     auto portStatusNotifier = new Notifier(m_portStatusNotificationConsumer, this, "PORT_STATUS_NOTIFICATIONS");
     Orch::addExecutor(portStatusNotifier);
 }
 
-void P4Orch::doTask(Consumer &consumer)
+void P4Orch::doTask(ConsumerBase &consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -131,14 +128,48 @@ void P4Orch::doTask(Consumer &consumer)
         return;
     }
 
+  // Warmboot scenario.
+  if (!consumer.m_toSync.empty()) {
     auto it = consumer.m_toSync.begin();
-    while (it != consumer.m_toSync.end())
-    {
-        enqueue(it->second);
-        it = consumer.m_toSync.erase(it);
+    while (it != consumer.m_toSync.end()) {
+      enqueue(it->second);
+      it = consumer.m_toSync.erase(it);
     }
     drain(SET_COMMAND);
-    m_publisher.flush();
+    m_publisher.flush(/*warmboot=*/true);
+  }
+
+  auto* zmq_consumer = dynamic_cast<ZmqConsumer*>(&consumer);
+  if (zmq_consumer == nullptr) {
+    return;
+  }
+
+  std::string prev_op = "";
+  ReturnCode status;
+  for (const auto& kco : zmq_consumer->m_queue) {
+    std::string op = kfvOp(kco);
+
+    // Call drain after grouping the same type of requests together.
+    if (op != prev_op && status.ok()) {
+      status = drain(prev_op);
+      prev_op = op;
+    }
+
+    // Stop enqueue if there is any failure.
+    if (status.ok()) {
+      enqueue(kco);
+    } else {
+      m_publisher.publish(APP_P4RT_TABLE_NAME, kfvKey(kco),
+                          kfvFieldsValues(kco),
+                          ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED),
+                          /*replace=*/true);
+    }
+  }
+  if (!prev_op.empty() && status.ok()) {
+    drain(prev_op);
+  }
+    m_publisher.flush(false);
+  zmq_consumer->m_queue.clear();
 }
 
 void P4Orch::doTask(swss::SelectableTimer &timer)
@@ -219,42 +250,6 @@ ReturnCode P4Orch::drain(const std::string& op) {
   return status;
 }
 
-void P4Orch::handleP4rtNotification(
-    const std::vector<swss::FieldValueTuple>& values) {
-  std::string prev_op = "";
-  ReturnCode status;
-  for (const auto& value : values) {
-    std::string op = DEL_COMMAND;
-    std::vector<swss::FieldValueTuple> vals;
-    if (!fvValue(value).empty()) {
-      op = SET_COMMAND;
-      JSon::readJson(fvValue(value), vals);
-    }
-    if (prev_op.empty()) {
-      prev_op = op;
-    }
-    swss::KeyOpFieldsValuesTuple key_op_fvs_tuple(fvField(value), op, vals);
-
-    // Call drain after grouping the same type of requests together.
-    if (op != prev_op && status.ok()) {
-      status = drain(prev_op);
-      prev_op = op;
-    }
-
-    // Stop enqueue if there is any failure.
-    if (status.ok()) {
-      enqueue(key_op_fvs_tuple);
-    } else {
-      m_publisher.publish(APP_P4RT_TABLE_NAME, fvField(value), vals,
-                          ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED),
-                          /*replace=*/true);
-    }
-  }
-  if (!prev_op.empty() && status.ok()) {
-    drain(prev_op);
-  }
-}
-
 void P4Orch::handlePortStatusChangeNotification(const std::string &op, const std::string &data)
 {
     if (op == "port_state_change")
@@ -307,9 +302,7 @@ void P4Orch::doTask(NotificationConsumer &consumer)
     consumer.pop(op, data, values);
 
 
-    if (&consumer == m_p4rtNotificationConsumer) {
-      handleP4rtNotification(values);
-    } else if (&consumer == m_portStatusNotificationConsumer) {
+    if (&consumer == m_portStatusNotificationConsumer) {
         handlePortStatusChangeNotification(op, data);
     }
 }
