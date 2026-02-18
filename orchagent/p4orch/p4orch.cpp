@@ -7,6 +7,7 @@
 
 #include "copporch.h"
 #include "logger.h"
+#include "namelabelmapper.h"
 #include "orch.h"
 #include "p4orch/acl_rule_manager.h"
 #include "p4orch/acl_table_manager.h"
@@ -25,8 +26,9 @@
 #include "sai_serialize.h"
 #include "timer.h"
 #include "timestamp.h"
-
+extern NameLabelMapper* gLabelMapper;
 extern PortsOrch *gPortsOrch;
+
 #define P4_ACL_COUNTERS_STATS_POLL_TIMER_NAME "P4_ACL_COUNTERS_STATS_POLL_TIMER"
 #define P4_EXT_COUNTERS_STATS_POLL_TIMER_NAME "P4_EXT_COUNTERS_STATS_POLL_TIMER"
 #define APP_P4RT_EXT_TABLES_MANAGER "EXT_TABLES_MANAGER"

@@ -286,6 +286,7 @@ class TestP4RTAcl(object):
                 self._p4rt_udf_group_obj.SAI_UDF_GROUP_TYPE_GENERIC,
             ),
             (self._p4rt_udf_group_obj.SAI_UDF_GROUP_ATTR_LENGTH, "2"),
+            (self._p4rt_udf_group_obj.SAI_UDF_GROUP_ATTR_LABEL, "any_value")
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -301,6 +302,7 @@ class TestP4RTAcl(object):
                 self._p4rt_udf_group_obj.SAI_UDF_GROUP_TYPE_GENERIC,
             ),
             (self._p4rt_udf_group_obj.SAI_UDF_GROUP_ATTR_LENGTH, "2"),
+            (self._p4rt_udf_group_obj.SAI_UDF_GROUP_ATTR_LABEL, "any_value")
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -504,6 +506,7 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_MODE, "SAI_POLICER_MODE_TR_TCM"),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CIR, meter_cir),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CBS, meter_cbs),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_LABEL, "any_value"),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_PIR, meter_pir),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_PBS, meter_pbs),
         ]
@@ -661,6 +664,7 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_MODE, "SAI_POLICER_MODE_TR_TCM"),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CIR, meter_cir),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CBS, meter_cbs),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_LABEL, "any_value"),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_PIR, meter_pir),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_PBS, meter_pbs),
             (
@@ -823,6 +827,7 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_MODE, "SAI_POLICER_MODE_TR_TCM"),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CIR, meter_cir),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CBS, meter_cbs),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_LABEL, "any_value"),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_PIR, meter_pir),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_PBS, meter_pbs),
         ]
@@ -1086,6 +1091,7 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_MODE, "SAI_POLICER_MODE_TR_TCM"),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CIR, meter_cir),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CBS, meter_cbs),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_LABEL, "any_value"),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_PIR, meter_pir),
             (self._p4rt_acl_meter_obj.SAI_ATTR_METER_PBS, meter_pbs),
         ]
