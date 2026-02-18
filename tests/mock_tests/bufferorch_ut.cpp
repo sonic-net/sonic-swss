@@ -485,6 +485,55 @@ namespace bufferorch_test
         gMockResponsePublisher.reset();
     }
 
+    TEST_F(BufferOrchTest, BufferOrchTestLosslessBufferProfilePublish)
+    {
+        gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        Table bufferProfileTable = Table(m_app_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
+
+        // Create a lossless buffer profile with xoff field
+        bufferProfileTable.set("test_lossless_profile",
+                               {
+                                   {"pool", "ingress_lossless_pool"},
+                                   {"dynamic_th", "0"},
+                                   {"size", "39936"},
+                                   {"xon", "19456"},
+                                   {"xoff", "20480"}
+                               });
+        gBufferOrch->addExistingData(&bufferProfileTable);
+        // Creating a new profile should publish the result
+        EXPECT_CALL(*gMockResponsePublisher, publish(
+            APP_BUFFER_PROFILE_TABLE_NAME,
+            "test_lossless_profile",
+            std::vector<FieldValueTuple>{
+                {"pool", "ingress_lossless_pool"},
+                {"dynamic_th", "0"},
+                {"size", "39936"},
+                {"xon", "19456"},
+                {"xoff", "20480"}
+            },
+            ReturnCode(SAI_STATUS_SUCCESS),
+            true)).Times(1);
+        static_cast<Orch *>(gBufferOrch)->doTask();
+
+        // Delete the lossless buffer profile
+        entries.push_back({"test_lossless_profile", "DEL", {}});
+        auto consumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PROFILE_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+        // Deleting a lossless profile should publish the result with empty fvs
+        EXPECT_CALL(*gMockResponsePublisher, publish(
+            APP_BUFFER_PROFILE_TABLE_NAME,
+            "test_lossless_profile",
+            std::vector<FieldValueTuple>{},
+            ReturnCode(SAI_STATUS_SUCCESS),
+            true)).Times(1);
+        static_cast<Orch *>(gBufferOrch)->doTask();
+
+        gMockResponsePublisher.reset();
+    }
+
     TEST_F(BufferOrchTest, BufferOrchTestBufferPgReferencingObjRemoveThenAdd)
     {
         _hook_sai_apis();
