@@ -357,3 +357,7 @@ GreTunnelManager *P4Orch::getGreTunnelManager()
 {
     return m_greTunnelManager.get();
 }
+
+void P4Orch::setRouterIntfsMtu(const std::string& port, uint32_t mtu) {
+  m_routerIntfManager->setRouterIntfsMtu(port, mtu);
+}
