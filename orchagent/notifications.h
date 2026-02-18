@@ -11,6 +11,7 @@ void on_bfd_session_state_change(uint32_t count, sai_bfd_session_state_notificat
 void on_twamp_session_event(uint32_t count, sai_twamp_session_event_notification_data_t *data);
 void on_ha_set_event(uint32_t count, sai_ha_set_event_data_t *data);
 void on_ha_scope_event(uint32_t count, sai_ha_scope_event_data_t *data);
+void on_flow_bulk_get_session_event(sai_object_id_t flow_bulk_session_id, uint32_t count, sai_flow_bulk_get_session_event_data_t *data);
 
 // The function prototype information can be found here:
 //      https://github.com/sonic-net/sonic-sairedis/blob/master/meta/NotificationSwitchShutdownRequest.cpp#L49
