@@ -1049,6 +1049,18 @@ ReturnCode L3MulticastManager::createRouterInterface(
   return ReturnCode();
 }
 
+ReturnCode L3MulticastManager::deleteBridgePort(
+    const std::string& port, sai_object_id_t bridge_port_oid) {
+  SWSS_LOG_ENTER();
+  auto sai_status = sai_bridge_api->remove_bridge_port(bridge_port_oid);
+  if (sai_status != SAI_STATUS_SUCCESS) {
+    LOG_ERROR_AND_RETURN(ReturnCode(sai_status)
+                         << "Failed to remove bridge port for "
+                         << QuotedVar(port).c_str());
+  }
+  return ReturnCode();
+}
+
 ReturnCode L3MulticastManager::deleteRouterInterface(const std::string& rif_key,
                                                      sai_object_id_t rif_oid) {
   SWSS_LOG_ENTER();
@@ -1221,7 +1233,8 @@ ReturnCode L3MulticastManager::addL2MulticastRouterInterfaceEntry(
   }
 
   // Operations done regardless of whether bridge port was created or not.
-  // Set the entry bridge port.
+  m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_BRIDGE_PORT,
+                                  entry.multicast_replica_port);
   m_multicastRouterInterfaceTable[entry.multicast_router_interface_entry_key] =
       entry;
   return ReturnCode();
@@ -1378,6 +1391,153 @@ L3MulticastManager::updateMulticastRouterInterfaceEntries(
   return statuses;
 }
 
+ReturnCode L3MulticastManager::deleteL2MulticastRouterInterfaceEntry(
+    const P4MulticastRouterInterfaceEntry* entry) {
+  SWSS_LOG_ENTER();
+
+  // There are two cases for removal:
+  // 1. This entry is the last one associated with the bridge port.  In such a
+  //    case, delete the bridge port and clear it from appropriate maps.
+  // 2. There will still be other entries associated with the bridge port.  In
+  //    such a case, only remove the current entry from being associated with
+  //    the brige port.
+
+  // Confirm bridge port OID was assigned.
+  sai_object_id_t bridge_port_oid = getBridgePortOid(entry);
+  if (bridge_port_oid == SAI_NULL_OBJECT_ID) {
+    std::stringstream err_msg;
+    err_msg << "Multicast router interface entry is missing a bridge port oid "
+            << QuotedVar(entry->multicast_router_interface_entry_key);
+    SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+    SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+    return ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
+  }
+
+  uint32_t bridge_port_ref_count = 2;
+  if (!m_p4OidMapper->getRefCount(SAI_OBJECT_TYPE_BRIDGE_PORT,
+                                  entry->multicast_replica_port,
+                                  &bridge_port_ref_count)) {
+    std::stringstream err_msg;
+    err_msg << "Unable to fetch reference count for bridge port "
+            << entry->multicast_replica_port;
+    SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+    SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+    return ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
+  }
+
+  // Only delete the bridge port if there will be no more entries associated
+  // with it after this entry's deletion.
+  if (bridge_port_ref_count <= 1) {
+    RETURN_IF_ERROR(
+        deleteBridgePort(entry->multicast_replica_port, bridge_port_oid));
+  }
+
+  // To successfully erase an OID when it is no longer used, the ref count must
+  // be 0.
+  m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_BRIDGE_PORT,
+                                  entry->multicast_replica_port);
+  if (bridge_port_ref_count <= 1) {
+    m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_BRIDGE_PORT,
+                            entry->multicast_replica_port);
+    gPortsOrch->decreasePortRefCount(entry->multicast_replica_port);
+  }
+
+  // Finally, remove the P4MulticastRouterInterfaceEntry.
+  m_multicastRouterInterfaceTable.erase(
+      entry->multicast_router_interface_entry_key);
+  return ReturnCode();
+}
+
+ReturnCode L3MulticastManager::deleteL3MulticastRouterInterfaceEntry(
+    const P4MulticastRouterInterfaceEntry* entry) {
+  SWSS_LOG_ENTER();
+  // There are two cases for removal:
+  // 1. This entry is the last one associated with the RIF.  In such a case,
+  //    delete the RIF and clear it from appropriate maps.
+  // 2. There will still be other entries associated with the RIF.  In such a
+  //    case, only remove the current entry from being associated with the RIF.
+
+  // Confirm RIF OID was assigned.
+  sai_object_id_t rif_oid = getRifOid(entry);
+  if (rif_oid == SAI_NULL_OBJECT_ID) {
+    std::stringstream err_msg;
+    err_msg << "Multicast router interface entry is missing a RIF oid "
+            << QuotedVar(entry->multicast_router_interface_entry_key);
+    SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+    SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+    return ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
+  }
+
+  // Confirm there are no more multicast group members using the RIF.
+  if (m_rifOidToMulticastGroupMembers.find(rif_oid) !=
+      m_rifOidToMulticastGroupMembers.end()) {
+    if (m_rifOidToMulticastGroupMembers[rif_oid].size() > 0) {
+      return ReturnCode(StatusCode::SWSS_RC_IN_USE)
+             << "RIF oid " << rif_oid << " cannot be deleted, because "
+             << "it is still used by multicast group members.";
+    }
+  }
+
+  // Confirm there is at least one P4MulticastRouterInterfaceEntry associated
+  // with the RIF.
+  if (m_rifOidToRouterInterfaceEntries.find(rif_oid) ==
+      m_rifOidToRouterInterfaceEntries.end()) {
+    std::stringstream err_msg;
+    err_msg << "RIF oid " << rif_oid << " missing from map for "
+            << QuotedVar(entry->multicast_router_interface_entry_key);
+    SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+    SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+    return ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
+  }
+  auto& entries_for_rif = m_rifOidToRouterInterfaceEntries[rif_oid];
+  auto entry_with_rif =
+      std::find_if(entries_for_rif.begin(), entries_for_rif.end(),
+                   [&](const P4MulticastRouterInterfaceEntry& x) {
+                     return x.multicast_router_interface_entry_key ==
+                            entry->multicast_router_interface_entry_key;
+                   });
+  if ((entry_with_rif == entries_for_rif.end()) ||
+      (m_multicastRouterInterfaceTable.find(
+           entry->multicast_router_interface_entry_key) ==
+       m_multicastRouterInterfaceTable.end())) {
+    std::stringstream err_msg;
+    err_msg << "Unable to find entry "
+            << QuotedVar(entry->multicast_router_interface_entry_key)
+            << " in map";
+    SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+    SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+    return ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
+  }
+  std::string rif_key = KeyGenerator::generateMulticastRouterInterfaceRifKey(
+      entry->multicast_replica_port, entry->src_mac);
+
+  // If this is the last entry, delete the RIF.
+  // Attempt to delete RIF at SAI layer before adjusting internal maps, in
+  // case there is an error.
+  if (entries_for_rif.size() == 1) {
+    RETURN_IF_ERROR(deleteRouterInterface(rif_key, rif_oid));
+
+    m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key);
+    gPortsOrch->decreasePortRefCount(entry->multicast_replica_port);
+
+    // Delete entry from list.
+    entries_for_rif.erase(entry_with_rif);
+    // Since RIF no longer in use, delete from maps.
+    m_rifOidToRouterInterfaceEntries.erase(rif_oid);
+    m_rifOidToMulticastGroupMembers.erase(rif_oid);
+    m_rifOids.erase(rif_key);
+  } else {
+    // Delete entry from list.
+    entries_for_rif.erase(entry_with_rif);
+  }
+
+  // Finally, remove the entry P4MulticastRouterInterfaceEntry.
+  m_multicastRouterInterfaceTable.erase(
+      entry->multicast_router_interface_entry_key);
+
+  return ReturnCode();
+}
+
 std::vector<ReturnCode>
 L3MulticastManager::deleteMulticastRouterInterfaceEntries(
     const std::vector<P4MulticastRouterInterfaceEntry>& entries) {
@@ -1385,100 +1545,28 @@ L3MulticastManager::deleteMulticastRouterInterfaceEntries(
   std::vector<ReturnCode> statuses(entries.size());
   fillStatusArrayWithNotExecuted(statuses, 0);
 
-  // There are two cases for removal:
-  // 1. This entry is the last one associated with the RIF.  In such a case,
-  //    delete the RIF and clear it from appropriate maps.
-  // 2. There will still be other entries associated with the RIF.  In such a
-  //    case, only remove the current entry from being associated with the RIF.
   for (size_t i = 0; i < entries.size(); ++i) {
     auto& entry = entries[i];
-    if (m_multicastRouterInterfaceTable.find(
-            entry.multicast_router_interface_entry_key) ==
-        m_multicastRouterInterfaceTable.end()) {
+
+    // Cannot assume that the src mac will be set on delete operation.
+    auto* old_entry_ptr = getMulticastRouterInterfaceEntry(
+        entry.multicast_router_interface_entry_key);
+    if (old_entry_ptr == nullptr) {
       statuses[i] = ReturnCode(StatusCode::SWSS_RC_UNKNOWN)
                     << "Multicast router interface entry is not known "
                     << QuotedVar(entry.multicast_router_interface_entry_key);
       break;
     }
 
-    // Confirm RIF OID was assigned.
-    sai_object_id_t rif_oid = getRifOid(&entry);
-    if (rif_oid == SAI_NULL_OBJECT_ID) {
-      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                    << "Multicast router interface entry is missing a RIF oid "
-                    << QuotedVar(entry.multicast_router_interface_entry_key);
-      break;
-    }
-
-    // Confirm there are no more multicast group members using the RIF.
-    if (m_rifOidToMulticastGroupMembers.find(rif_oid) !=
-        m_rifOidToMulticastGroupMembers.end()) {
-      if (m_rifOidToMulticastGroupMembers[rif_oid].size() > 0) {
-        statuses[i] = ReturnCode(StatusCode::SWSS_RC_IN_USE)
-                      << "RIF oid " << rif_oid << " cannot be deleted, because "
-                      << "it is still used by multicast group members.";
-        break;
-      }
-    }
-
-    // Confirm there is at least one P4MulticastRouterInterfaceEntry associated
-    // with the RIF.
-    if (m_rifOidToRouterInterfaceEntries.find(rif_oid) ==
-        m_rifOidToRouterInterfaceEntries.end()) {
-      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                    << "RIF oid " << rif_oid << " missing from map for "
-                    << QuotedVar(entry.multicast_router_interface_entry_key);
-      break;
-    }
-    auto& entries_for_rif = m_rifOidToRouterInterfaceEntries[rif_oid];
-    auto entry_with_rif =
-        std::find_if(entries_for_rif.begin(), entries_for_rif.end(),
-                     [&](const P4MulticastRouterInterfaceEntry& x) {
-                       return x.multicast_router_interface_entry_key ==
-                              entry.multicast_router_interface_entry_key;
-                     });
-    if ((entry_with_rif == entries_for_rif.end()) ||
-        (m_multicastRouterInterfaceTable.find(
-             entry.multicast_router_interface_entry_key) ==
-         m_multicastRouterInterfaceTable.end())) {
-      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                    << "Unable to find entry "
-                    << QuotedVar(entry.multicast_router_interface_entry_key)
-                    << " in map";
-      break;
-    }
-    std::string rif_key = KeyGenerator::generateMulticastRouterInterfaceRifKey(
-        entry.multicast_replica_port, entry.src_mac);
-
-    // If this is the last entry, delete the RIF.
-    // Attempt to delete RIF at SAI layer before adjusting internal maps, in
-    // case there is an error.
-    if (entries_for_rif.size() == 1) {
-      ReturnCode delete_status = deleteRouterInterface(rif_key, rif_oid);
-      statuses[i] = delete_status;
-      if (!delete_status.ok()) {
-        break;
-      }
-
-      m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key);
-      gPortsOrch->decreasePortRefCount(entry.multicast_replica_port);
-
-      // Delete entry from list.
-      entries_for_rif.erase(entry_with_rif);
-      // Since RIF no longer in use, delete from maps.
-      m_rifOidToRouterInterfaceEntries.erase(rif_oid);
-      m_rifOidToMulticastGroupMembers.erase(rif_oid);
-      m_rifOids.erase(rif_key);
+    if (old_entry_ptr->action == p4orch::kSetSrcMac) {
+      statuses[i] = deleteL3MulticastRouterInterfaceEntry(old_entry_ptr);
     } else {
-      // Delete entry from list.
-      entries_for_rif.erase(entry_with_rif);
+      statuses[i] = deleteL2MulticastRouterInterfaceEntry(old_entry_ptr);
     }
-
-    // Finally, remove the entry P4MulticastRouterInterfaceEntry.
-    m_multicastRouterInterfaceTable.erase(
-        entry.multicast_router_interface_entry_key);
-    statuses[i] = ReturnCode();
-  }  // for i
+    if (!statuses[i].ok()) {
+      break;
+    }
+  }
   return statuses;
 }
 
