@@ -501,9 +501,31 @@ class VxlanTunnel(object):
             ret = self.helper.get_key_with_attr(asic_db, self.ASIC_TUNNEL_MAP_ENTRY, expected_attributes_1)
             assert len(ret) == 0, "SIP TunnelMap entry not removed"
 
+    def check_vxlan_tunnel_state_table(self, dvs, src_ip, dst_ip):
+        state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+
+        expected_state_attributes = {
+            'src_ip': src_ip,
+            'dst_ip': dst_ip,
+            'tnl_src': 'EVPN',
+        }
+
+        ret = self.helper.get_key_with_attr(state_db, 'VXLAN_TUNNEL_TABLE', expected_state_attributes)
+        assert len(ret) > 0, "Tunnel Statetable entry not created"
+        assert len(ret) == 1, "More than 1 Tunn statetable entry created"
+        self.dip_tun_state_map[dst_ip] = ret[0]
+
+    def check_vxlan_tunnel_state_table_delete(self, dvs, dst_ip):
+        state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+        tbl = swsscommon.Table(state_db, 'VXLAN_TUNNEL_TABLE')
+        status, fvs = tbl.get(self.dip_tun_state_map[dst_ip])
+        assert status == False, "State Table entry not deleted"
+
+
     def check_vxlan_sip_tunnel_delete(self, dvs, tunnel_name, sip, ignore_bp = True):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
 
         tbl = swsscommon.Table(app_db, "VXLAN_TUNNEL_TABLE")
         status, fvs = tbl.get(self.tunnel_appdb[tunnel_name])
@@ -526,6 +548,10 @@ class VxlanTunnel(object):
         assert status == False, "SIP Tunnel mapper2 not deleted from ASIC_DB"
         status, fvs = tbl.get(self.tunnel_map_map[tunnel_name][3])
         assert status == False, "SIP Tunnel mapper3 not deleted from ASIC_DB"
+
+        tbl = swsscommon.Table(state_db, 'VXLAN_TUNNEL_TABLE')
+        status, fvs = tbl.get(tunnel_name)
+        assert status == False, "State Table entry not deleted"
 
         if not ignore_bp:
             tbl = swsscommon.Table(asic_db, self.ASIC_BRIDGE_PORT)
@@ -632,11 +658,8 @@ class VxlanTunnel(object):
 
     def check_vxlan_dip_tunnel_delete(self, dvs, dip):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-        state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
 
-        tbl = swsscommon.Table(state_db, 'VXLAN_TUNNEL_TABLE')
-        status, fvs = tbl.get(self.dip_tun_state_map[dip])
-        assert status == False, "State Table entry not deleted"
+        self.check_vxlan_tunnel_state_table_delete(dvs, dip)
 
         tbl = swsscommon.Table(asic_db, self.ASIC_TUNNEL_TABLE)
         status, fvs = tbl.get(self.dip_tunnel_map[dip])
@@ -648,19 +671,8 @@ class VxlanTunnel(object):
 
     def check_vxlan_dip_tunnel(self, dvs, vtep_name, src_ip, dip):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-        state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
 
-        expected_state_attributes = {
-            'src_ip': src_ip,
-            'dst_ip': dip,
-            'tnl_src': 'EVPN',
-        }
-
-        ret = self.helper.get_key_with_attr(state_db, 'VXLAN_TUNNEL_TABLE', expected_state_attributes)
-        assert len(ret) > 0, "Tunnel Statetable entry not created"
-        assert len(ret) == 1, "More than 1 Tunn statetable entry created"
-        self.dip_tun_state_map[dip] = ret[0]
-
+        self.check_vxlan_tunnel_state_table(dvs, src_ip, dip)
 
         tunnel_map_id = self.tunnel_map_map[vtep_name]
 
