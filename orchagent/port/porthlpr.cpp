@@ -697,6 +697,32 @@ bool PortHelper::parsePortLinkTraining(PortConfig &port, const std::string &fiel
     return true;
 }
 
+bool PortHelper::parsePortFastLinkup(PortConfig &port, const std::string &field, const std::string &value) const
+{
+    SWSS_LOG_ENTER();
+
+    if (value.empty())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): empty value is not allowed", field.c_str());
+        return false;
+    }
+    if (value == "true")
+    {
+        port.fast_linkup.value = true;
+    }
+    else if (value == "false")
+    {
+        port.fast_linkup.value = false;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): invalid value(%s)", field.c_str(), value.c_str());
+        return false;
+    }
+    port.fast_linkup.is_set = true;
+    return true;
+}
+
 template<typename T>
 bool PortHelper::parsePortSerdes(T &serdes, const std::string &field, const std::string &value) const
 {
@@ -1054,6 +1080,13 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         else if (field == PORT_LINK_TRAINING)
         {
             if (!this->parsePortLinkTraining(port, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_FAST_LINKUP)
+        {
+            if (!this->parsePortFastLinkup(port, field, value))
             {
                 return false;
             }

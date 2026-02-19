@@ -64,4 +64,5 @@ private:
     bool parsePortSubport(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortPtIntfId(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortPtTimestampTemplate(PortConfig &port, const std::string &field, const std::string &value) const;
+    bool parsePortFastLinkup(PortConfig &port, const std::string &field, const std::string &value) const;
 };

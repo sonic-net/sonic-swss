@@ -105,3 +105,4 @@
 #define PORT_FLAP_PENALTY          "flap_penalty"
 #define PORT_MODE                  "mode"
 #define PORT_UNRELIABLE_LOS        "unreliable_los"
+#define PORT_FAST_LINKUP           "fast_linkup"

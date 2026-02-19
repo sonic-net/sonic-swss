@@ -179,11 +179,13 @@ bool OrchDaemon::init()
     TableConnector conf_asic_sensors(m_configDb, CFG_ASIC_SENSORS_TABLE_NAME);
     TableConnector conf_switch_hash(m_configDb, CFG_SWITCH_HASH_TABLE_NAME);
     TableConnector conf_switch_trim(m_configDb, CFG_SWITCH_TRIMMING_TABLE_NAME);
+    TableConnector conf_switch_fast_linkup(m_configDb, CFG_SWITCH_FAST_LINKUP_TABLE_NAME);
     TableConnector conf_suppress_asic_sdk_health_categories(m_configDb, CFG_SUPPRESS_ASIC_SDK_HEALTH_EVENT_NAME);
 
     vector<TableConnector> switch_tables = {
         conf_switch_hash,
         conf_switch_trim,
+        conf_switch_fast_linkup,
         conf_asic_sensors,
         conf_suppress_asic_sdk_health_categories,
         app_switch_table
