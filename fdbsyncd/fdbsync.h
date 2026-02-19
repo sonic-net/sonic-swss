@@ -33,6 +33,13 @@ enum FDB_TYPE {
     FDB_TYPE_DYNAMIC = 2,
 };
 
+enum NEXT_HOP_VALUE_TYPE {
+    UNKNOWN = 0,
+    VTEP = 1,
+    NEXTHOPGROUP = 2,
+    IFNAME = 3,
+};
+
 struct m_fdb_info
 {
     std::string  mac;
@@ -125,10 +132,15 @@ private:
 
     struct m_mac_info
     {
-        std::string vtep;
+        NEXT_HOP_VALUE_TYPE nhtype;
         std::string type;
         unsigned int vni;
         std::string  ifname;
+        union {
+            std::string remote_vtep;
+            std::string nexthop_group;
+            std::string ifname;
+        } v;
     };
     std::unordered_map<std::string, m_mac_info> m_mac;
 
@@ -146,7 +158,7 @@ private:
     std::unordered_map<int, intf> m_intf_info;
 
     void addLocalMac(std::string key, std::string op);
-    void macAddVxlan(std::string key, struct in_addr vtep, std::string type, uint32_t vni, std::string intf_name);
+    void macAddVxlan(std::string key, struct nl_addr *vtep, std::string type, uint32_t vni, std::string intf_name, std::string nexthop_group, NEXT_HOP_VALUE_TYPE dest_type);
     void macDelVxlan(std::string auxkey);
     void macDelVxlanDB(std::string key);
     void imetAddRoute(struct in_addr vtep, std::string ifname, uint32_t vni);
