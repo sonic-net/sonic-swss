@@ -324,6 +324,7 @@ const request_description_t vnet_route_description = {
         { "rx_monitor_timer",       REQ_T_UINT },
         { "tx_monitor_timer",       REQ_T_UINT },
         { "pinned_state",           REQ_T_STRING_LIST },
+        { "metric",                 REQ_T_UINT }
     },
     { }
 };
@@ -393,7 +394,7 @@ private:
 class VNetRouteRequest : public Request
 {
 public:
-    VNetRouteRequest() : Request(vnet_route_description, ':') { }
+    VNetRouteRequest() : Request(vnet_route_description, ':', true) { }
 };
 
 struct VNetNextHopUpdate

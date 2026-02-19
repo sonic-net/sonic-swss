@@ -140,11 +140,11 @@ def delete_vnet_local_routes(dvs, prefix, vnet_name):
     time.sleep(2)
 
 
-def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", rx_monitor_timer=-1, tx_monitor_timer=-1, adv_prefix="", check_directly_connected=False, pinned_state=""):
-    set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac=mac, vni=vni, ep_monitor=ep_monitor, profile=profile, primary=primary, monitoring=monitoring, rx_monitor_timer=rx_monitor_timer, tx_monitor_timer=tx_monitor_timer, adv_prefix=adv_prefix, check_directly_connected=check_directly_connected, pinned_state=pinned_state)
+def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", rx_monitor_timer=-1, tx_monitor_timer=-1, adv_prefix="", check_directly_connected=False, metric=-1):
+    set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac=mac, vni=vni, ep_monitor=ep_monitor, profile=profile, primary=primary, monitoring=monitoring, rx_monitor_timer=rx_monitor_timer, tx_monitor_timer=tx_monitor_timer, adv_prefix=adv_prefix, check_directly_connected=check_directly_connected, pinned_state=pinned_state, metric=metric)
 
 
-def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", rx_monitor_timer=-1, tx_monitor_timer=-1, adv_prefix="", check_directly_connected=False, pinned_state=""):
+def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", rx_monitor_timer=-1, tx_monitor_timer=-1, adv_prefix="", check_directly_connected=False, pinned_state="", metric=-1):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
     attrs = [
@@ -183,6 +183,9 @@ def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor=
 
     if pinned_state:
         attrs.append(('pinned_state', pinned_state))
+
+    if metric >= 0:
+        attrs.append(('metric', str(metric)))
 
     tbl = swsscommon.Table(conf_db, "VNET_ROUTE_TUNNEL")
     fvs = swsscommon.FieldValuePairs(attrs)
