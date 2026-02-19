@@ -69,6 +69,7 @@ int main(int argc, char **argv)
         DBConnector appl_db("APPL_DB", 0);
         DBConnector state_db("STATE_DB", 0);
         ProducerStateTable p(&appl_db, APP_PORT_TABLE_NAME);
+        Table feature(&state_db, "FEATURE");
 
         Table cfgDeviceMetaDataTable(&cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
         if (!cfgDeviceMetaDataTable.hget("localhost", "switch_type", g_switchType))
@@ -133,6 +134,13 @@ int main(int argc, char **argv)
                     vector<FieldValueTuple> attrs = { finish_notice };
                     p.set("PortInitDone", attrs);
                     SWSS_LOG_NOTICE("PortInitDone");
+
+                    /*
+                     * Notify "System ready" feature that we are ok.
+                     */
+                    FieldValueTuple app_state("up_status", "true");
+                    vector<FieldValueTuple> feature_attrs = { app_state };
+                    feature.set("swss", feature_attrs);
 
                     g_init = true;
                 }
