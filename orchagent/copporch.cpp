@@ -188,8 +188,9 @@ const vector<sai_hostif_trap_type_t> default_trap_ids = {
 
 const uint HOSTIF_TRAP_COUNTER_POLLING_INTERVAL_MS = 10000;
 
-CoppOrch::CoppOrch(DBConnector* db, string tableName) :
-    Orch(db, tableName),
+CoppOrch::CoppOrch(DBConnector* appDb, DBConnector* cfgDb, const std::vector<std::string> &appTables,
+                   const std::vector<std::string> &cfgTables) :
+    Orch(appDb, cfgDb, appTables, cfgTables),
     m_counter_db(std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0))),
     m_asic_db(std::shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0))),
     m_state_db(std::shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0))),
@@ -507,6 +508,11 @@ bool CoppOrch::applyAttributesToTrapIds(sai_object_id_t trap_group_id,
 
         attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_TYPE;
         attr.value.s32 = trap_id;
+        attrs.push_back(attr);
+
+        attr.id = SAI_HOSTIF_TRAP_ATTR_EXCLUDE_PORT_LIST;
+        attr.value.objlist.list = excluded_port_ids.data();
+        attr.value.objlist.count = static_cast<uint32_t>(excluded_port_ids.size());
         attrs.push_back(attr);
 
         attrs.insert(attrs.end(), trap_id_attribs.begin(), trap_id_attribs.end());
@@ -877,15 +883,10 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
     return task_process_status::task_success;
 }
 
-void CoppOrch::doTask(Consumer &consumer)
+void CoppOrch::doAppdbTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
     string table_name = consumer.getTableName();
-
-    if (!gPortsOrch->allPortsReady())
-    {
-        return;
-    }
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -930,6 +931,141 @@ void CoppOrch::doTask(Consumer &consumer)
                 SWSS_LOG_ERROR("Invalid task status:%d", task_status);
                 return;
         }
+    }
+}
+
+void CoppOrch::excludedPortsUpdate()
+{
+    SWSS_LOG_ENTER();
+    for (auto it : m_syncdTrapIds)
+    {
+        sai_attribute_t attr;
+
+        attr.id = SAI_HOSTIF_TRAP_ATTR_EXCLUDE_PORT_LIST;
+        attr.value.objlist.list = excluded_port_ids.data();
+        attr.value.objlist.count = static_cast<uint32_t>(excluded_port_ids.size());
+
+        sai_status_t status = sai_hostif_api->set_hostif_trap_attribute(it.second.trap_obj, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to update trap obj %lX with port exclusion list rv:%d", it.second.trap_obj, status);
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_HOSTIF, status);
+            if (handle_status != task_success)
+            {
+                SWSS_LOG_ERROR("handleSaiSetStatus() Failed %d", handle_status);
+            }
+        }
+    }
+}
+
+void CoppOrch::excludePortsSet(const std::string &ports)
+{
+    SWSS_LOG_ENTER();
+    std::vector<std::string> portList = tokenize(ports, ',');
+    std::unordered_set<sai_object_id_t> portSet;
+
+    excluded_port_ids.clear();
+    for (auto port : portList)
+    {
+        Port p;
+        if (!gPortsOrch->getPort(port, p)) {
+            SWSS_LOG_ERROR("Port %s not found", port.c_str());
+            continue;
+        }
+        if (p.m_type != Port::PHY) {
+            SWSS_LOG_ERROR("Port %s is not a physical port", port.c_str());
+            continue;
+        }
+        portSet.insert(p.m_port_id);
+    }
+
+    SWSS_LOG_DEBUG("Excluding %ld ports from CoPP traps", portSet.size());
+
+    if (!portSet.empty())
+    {
+        std::copy(portSet.begin(), portSet.end(), std::back_inserter(excluded_port_ids));
+    }
+
+    excludedPortsUpdate();
+}
+
+void CoppOrch::excludedPortsClear()
+{
+    SWSS_LOG_ENTER();
+    excluded_port_ids.clear();
+    excludedPortsUpdate();
+}
+
+void CoppOrch::doConfigdbTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+    string table_name = consumer.getTableName();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+        string tableAttr = kfvKey(t);
+        string op = kfvOp(t);
+
+        if (tableAttr != "GLOBAL")
+        {
+            SWSS_LOG_ERROR("COPP_TRAP_EXCLUDE_PORTS unknown attribute %s", tableAttr.c_str());
+            goto consume;
+        }
+
+        if (op == SET_COMMAND)
+        {
+            for (auto i : kfvFieldsValues(t))
+            {
+                const std::string& field = fvField(i);
+                const std::string& value = fvValue(i);
+                SWSS_LOG_DEBUG("COPP_TRAP_EXCLUDE_PORTS SET %s key %s=%s", tableAttr.c_str(), field.c_str(), value.c_str());
+
+                if (field.empty())
+                {
+                    SWSS_LOG_DEBUG("COPP_TRAP_EXCLUDE_PORTS set empty");
+                    excludedPortsClear();
+                }
+                else if (field != "ports")
+                {
+                    SWSS_LOG_ERROR("COPP_TRAP_EXCLUDE_PORTS %s unknown key %s=%s", tableAttr.c_str(), field.c_str(), value.c_str());
+                    goto consume;
+                }
+                excludePortsSet(value.c_str());
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            SWSS_LOG_DEBUG("COPP_TRAP_EXCLUDE_PORTS DEL %s", tableAttr.c_str());
+            excludedPortsClear();
+        }
+        else
+        {
+            SWSS_LOG_ERROR("COPP_TRAP_EXCLUDE_PORTS unknown operation type %s", op.c_str());
+            goto consume;
+        }
+
+consume:
+        /* Consume */
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
+void CoppOrch::doTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+    string db_name = consumer.getDbName();
+
+    if (!gPortsOrch->allPortsReady())
+    {
+        return;
+    }
+
+    if (db_name == "CONFIG_DB") {
+        doConfigdbTask(consumer);
+    } else {
+        doAppdbTask(consumer);
     }
 }
 

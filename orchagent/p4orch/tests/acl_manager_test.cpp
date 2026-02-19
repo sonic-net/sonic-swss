@@ -904,7 +904,13 @@ class AclManagerTest : public ::testing::Test
         EXPECT_CALL(mock_sai_hostif_, create_hostif_table_entry(_, _, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
         EXPECT_CALL(mock_sai_hostif_, create_hostif_trap(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
         EXPECT_CALL(mock_sai_switch_, get_switch_attribute(_, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
-        copp_orch_ = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
+        std::vector<std::string> appCoppOrchTables = {
+            APP_COPP_TABLE_NAME
+        };
+        std::vector<std::string> cfgCoppOrchTables = {
+            CFG_COPP_TRAP_EXCLUDE_PORTS_TABLE_NAME
+        };
+        copp_orch_ = new CoppOrch(gAppDb, gConfigDb, appCoppOrchTables, cfgCoppOrchTables);
         // add trap group and genetlink for each CPU queue
         swss::Table app_copp_table(gAppDb, APP_COPP_TABLE_NAME);
         for (uint64_t queue_num = 1; queue_num <= P4_CPU_QUEUE_MAX_NUM; queue_num++)
@@ -1371,7 +1377,13 @@ TEST_F(AclManagerTest, DISABLED_CreatePuntTableFailsWhenUserTrapGroupOrHostifNot
         app_copp_table.del(GENL_PACKET_TRAP_GROUP_NAME_PREFIX + std::to_string(queue_num));
     }
     cleanupAclManagerTest();
-    copp_orch_ = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
+    std::vector<std::string> appCoppOrchTables = {
+        APP_COPP_TABLE_NAME
+    };
+    std::vector<std::string> cfgCoppOrchTables = {
+        CFG_COPP_TRAP_EXCLUDE_PORTS_TABLE_NAME
+    };
+    copp_orch_ = new CoppOrch(gAppDb, gConfigDb, appCoppOrchTables, cfgCoppOrchTables);
     setUpSwitchOrch();
     // Update p4orch to use new copp orch
     setUpP4Orch();

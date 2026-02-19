@@ -24,6 +24,7 @@ extern VRFOrch* gVrfOrch;
 extern std::unique_ptr<MockResponsePublisher> gMockResponsePublisher;
 extern VRFOrch* gVrfOrch;
 extern swss::DBConnector* gAppDb;
+extern swss::DBConnector* gConfigDb;
 extern sai_hostif_api_t* sai_hostif_api;
 extern sai_switch_api_t* sai_switch_api;
 extern sai_ipmc_api_t* sai_ipmc_api;
@@ -132,8 +133,13 @@ class P4OrchTest : public ::testing::Test {
     sai_bridge_api->get_bridge_port_stats = mock_get_bridge_port_stats;
     sai_bridge_api->get_bridge_port_stats_ext = mock_get_bridge_port_stats_ext;
     sai_bridge_api->clear_bridge_port_stats = mock_clear_bridge_port_stats;
-
-    copp_orch_ = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
+    std::vector<std::string> appCoppOrchTables = {
+        APP_COPP_TABLE_NAME
+    };
+    std::vector<std::string> cfgCoppOrchTables = {
+        CFG_COPP_TRAP_EXCLUDE_PORTS_TABLE_NAME
+    };
+    copp_orch_ = new CoppOrch(gAppDb, gConfigDb, appCoppOrchTables, cfgCoppOrchTables);
     std::vector<std::string> p4_tables{APP_P4RT_TABLE_NAME};
     gP4Orch = new P4Orch(gAppDb, p4_tables, gVrfOrch, copp_orch_);
     gMockResponsePublisher = std::make_unique<MockResponsePublisher>();

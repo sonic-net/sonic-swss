@@ -79,7 +79,8 @@ typedef std::map<sai_object_id_t, std::string> TrapObjectTrapNameMap;
 class CoppOrch : public Orch
 {
 public:
-    CoppOrch(swss::DBConnector* db, std::string tableName);
+    CoppOrch(swss::DBConnector *appDb, swss::DBConnector *configDb, const std::vector<std::string> &appTables,
+             const std::vector<std::string> &cfgTables);
     void generateHostIfTrapCounterIdList();
     void clearHostIfTrapCounterIdList();
 
@@ -113,6 +114,7 @@ protected:
     std::unique_ptr<Table> m_trapTable;
 
     std::unordered_set<sai_hostif_trap_type_t> supported_trap_ids;    
+    std::vector<sai_object_id_t> excluded_port_ids;
 
     FlexCounterManager m_trap_counter_manager;
 
@@ -170,6 +172,12 @@ protected:
 
     virtual void doTask(Consumer& consumer);
     void doTask(swss::SelectableTimer&) override;
+    void doAppdbTask(Consumer &consumer);
+    void doConfigdbTask(Consumer &consumer);
+    void excludedPortsUpdate();
+    void excludePortsSet(const std::string &ports);
+    void excludedPortsClear();
+
 };
 #endif /* SWSS_COPPORCH_H */
 
