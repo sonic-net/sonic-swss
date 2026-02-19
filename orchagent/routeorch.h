@@ -8,6 +8,7 @@
 #include "neighorch.h"
 #include "vxlanorch.h"
 #include "srv6orch.h"
+#include "arsorch.h"
 
 #include "ipaddress.h"
 #include "ipaddresses.h"
@@ -27,6 +28,7 @@
 
 #define LOOPBACK_PREFIX     "Loopback"
 #define VLAN_PREFIX         "Vlan"
+
 
 struct NextHopGroupMemberEntry
 {
@@ -89,6 +91,8 @@ struct RouteNhg
 
     bool operator==(const RouteNhg& rnhg)
        { return ((nhg_key == rnhg.nhg_key) && (nhg_index == rnhg.nhg_index) && (context_index == rnhg.context_index)); }
+    bool operator==(const NextHopGroupKey& other_key) 
+        { return nhg_key == other_key; }
     bool operator!=(const RouteNhg& rnhg) { return !(*this == rnhg); }
 };
 
@@ -120,8 +124,12 @@ typedef std::map<sai_object_id_t, LabelRouteTable> LabelRouteTables;
 typedef std::pair<sai_object_id_t, IpAddress> Host;
 /* NextHopObserverTable: Host, next hop observer entry */
 typedef std::map<Host, NextHopObserverEntry> NextHopObserverTable;
+/* Prefix: vrf_id, IpPrefix */
+typedef std::pair<sai_object_id_t, IpPrefix> Prefix;
 /* Single Nexthop to Routemap */
 typedef std::map<NextHopKey, std::set<RouteKey>> NextHopRouteTable;
+/* NexthopGroup set */
+typedef std::vector<RouteNhg> NhgTable;
 
 struct NextHopObserverEntry
 {
@@ -215,7 +223,7 @@ struct LabelRouteBulkContext
 class RouteOrch : public ZmqOrch, public Subject
 {
 public:
-    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, swss::ZmqServer *zmqServer = nullptr);
+    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, ArsOrch *arsOrch, swss::ZmqServer *zmqServer = nullptr);
 
     bool hasNextHopGroup(const NextHopGroupKey&) const;
     sai_object_id_t getNextHopGroupId(const NextHopGroupKey&);
@@ -231,7 +239,8 @@ public:
     int getNextHopGroupRefCount(const NextHopGroupKey& key) { return m_syncdNextHopGroups[key].ref_count; }
     std::set<std::pair<NextHopGroupKey, sai_object_id_t>> &getBulkNhgReducedRefCnt() { return m_bulkNhgReducedRefCnt; }
 
-    bool addNextHopGroup(const NextHopGroupKey&);
+    bool addNextHopGroup(const NextHopGroupKey&, sai_object_id_t vrf_id = gVirtualRouterId);
+    bool addNextHopGroup(const NextHopGroupKey&, std::vector<sai_attribute_t> &nhg_attrs, sai_object_id_t vrf_id = gVirtualRouterId);
     bool removeNextHopGroup(const NextHopGroupKey&, const bool is_default_route_nh_swap=false);
 
     bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
@@ -278,6 +287,7 @@ private:
     VRFOrch *m_vrfOrch;
     FgNhgOrch *m_fgNhgOrch;
     Srv6Orch *m_srv6Orch;
+    ArsOrch *m_arsOrch;
 
     unsigned int m_nextHopGroupCount;
     unsigned int m_maxNextHopGroupCount;

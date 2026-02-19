@@ -11106,6 +11106,63 @@ bool PortsOrch::setPortPtTam(const Port& port, sai_object_id_t tam_id)
     return true;
 }
 
+bool PortsOrch::setPortArsEnable(const Port& port, bool is_enable)
+{
+    SWSS_LOG_ENTER();
+    sai_attribute_t attr;
+
+    attr.id = SAI_PORT_ATTR_ARS_ENABLE;
+    attr.value.booldata = is_enable;
+    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR(
+            "Failed to %s ARS on port %s (OID 0x%" PRIx64 "): SAI status = %d",
+            is_enable ? "enable" : "disable",
+            port.m_alias.c_str(),
+            port.m_port_id,
+            status);
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    return true;
+}
+
+bool PortsOrch::setPortArsLoadScaling(const Port& port, const uint32_t scaling_factor)
+{
+    SWSS_LOG_ENTER();
+    sai_attribute_t attr;
+
+    /* Normalize port speed using SAI scaling factor if not provided
+     * 10G:1, 25G:2.5, 40G:4, 50G:5, 100G:10, 200G:20, 400G:40.*/
+    attr.value.u32 = (scaling_factor == 0) ? (port.m_speed / 10000) : scaling_factor;
+
+    attr.id = SAI_PORT_ATTR_ARS_PORT_LOAD_SCALING_FACTOR;
+    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR(
+            "Failed to set ARS load scaling factor (%u) on port %s (OID 0x%" PRIx64 "): SAI status = %d",
+            attr.value.u32,
+            port.m_alias.c_str(),
+            port.m_port_id,
+            status);
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    return true;
+}
+
 bool PortsOrch::createPtTam()
 {
     SWSS_LOG_ENTER();
