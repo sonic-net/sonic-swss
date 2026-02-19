@@ -176,7 +176,7 @@ void TunnelDecapOrch::doDecapTunnelTask(Consumer &consumer)
                     }
                     if (exists)
                     {
-                        SWSS_LOG_NOTICE("Skip setting ecn_mode since the SAI attribute SAI_TUNNEL_ATTR_DECAP_ECN_MODE is create only");
+                        SWSS_LOG_WARN("Skip setting ecn_mode since the SAI attribute SAI_TUNNEL_ATTR_DECAP_ECN_MODE is create only");
                         valid = false;
                         break;
                     }
