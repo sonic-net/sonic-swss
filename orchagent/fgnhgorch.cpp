@@ -216,11 +216,10 @@ void FgNhgOrch::calculateBankHashBucketStartIndices(FgNhgEntry *fgNhgEntry)
 }
 
 
-void FgNhgOrch::setStateDbRouteEntry(const string &vnet, const IpPrefix &ipPrefix, uint32_t index, NextHopKey nextHop)
+void FgNhgOrch::setStateDbRouteEntry(const string &key, uint32_t index, NextHopKey nextHop)
 {
     SWSS_LOG_ENTER();
 
-    string key = vnet + '|' + ipPrefix.to_string();
     string field = std::to_string(index);
     string value = nextHop.to_string();
 
@@ -1052,6 +1051,7 @@ bool FgNhgOrch::setNewNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, FgNh
     auto num_banks = fgNhgEntry->hash_bucket_indices.size();
     std::vector<uint32_t> active_banks;
     std::vector<uint32_t> inactive_banks;
+    string key = vnet + '|' + ipPrefix.to_string();
 
     for (uint32_t i = 0; i < num_banks; i++)
     {
@@ -1084,7 +1084,7 @@ bool FgNhgOrch::setNewNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, FgNh
     for (auto active_bank : active_banks)
     {
         syncd_fg_route_entry.inactive_to_active_map[active_bank] = active_bank;
-        if (!sprayBankNhgMembers(syncd_fg_route_entry, vnet, ipPrefix,
+        if (!sprayBankNhgMembers(syncd_fg_route_entry, key,
                 fgNhgEntry->hash_bucket_indices[active_bank], fgNhgEntry,
                 active_bank, bank_member_changes[active_bank],
                 nhopgroup_members_set))
@@ -1099,18 +1099,17 @@ bool FgNhgOrch::setNewNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, FgNh
         auto active_bank = active_banks[i % active_banks.size()];
         syncd_fg_route_entry.inactive_to_active_map[inactive_banks[i]] =
             active_bank;
-        if(!sprayBankNhgMembers(syncd_fg_route_entry, vnet, ipPrefix,
+        if(!sprayBankNhgMembers(syncd_fg_route_entry, key,
                 fgNhgEntry->hash_bucket_indices[inactive_banks[i]], fgNhgEntry,
                 inactive_banks[i], bank_member_changes[active_bank],
                 nhopgroup_members_set))
         {
             return false;
         }
-        SWSS_LOG_NOTICE("Bank# %d of FG next-hops is down for prefix %s",
-                inactive_banks[i], ipPrefix.to_string().c_str());
+        SWSS_LOG_NOTICE("Bank# %d of FG next-hops is down for key %s",
+                inactive_banks[i], key.c_str());
     }
 
-    string key = vnet + '|' + ipPrefix.to_string();
     auto nexthopsMap = m_recoveryMap.find(key);
     if (nexthopsMap != m_recoveryMap.end()) {
         m_recoveryMap.erase(nexthopsMap);
@@ -1121,15 +1120,13 @@ bool FgNhgOrch::setNewNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, FgNh
     return true;
 }
 
-bool FgNhgOrch::sprayBankNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, const string &vnet, 
-        const IpPrefix &ipPrefix, BankIndexRange hash_idx_range, FgNhgEntry *fgNhgEntry,
+bool FgNhgOrch::sprayBankNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, const string &warm_reboot_key, BankIndexRange hash_idx_range, FgNhgEntry *fgNhgEntry,
         uint32_t bank, BankMemberChanges &bank_member_change,
         std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set)
 {
     sai_status_t status;
     bool isWarmReboot = false;
-    string key = vnet + '|' + ipPrefix.to_string();
-    auto nexthopsMap = m_recoveryMap.find(key);
+    auto nexthopsMap = m_recoveryMap.find(warm_reboot_key);
 
     SWSS_LOG_ENTER();
 
@@ -1199,7 +1196,7 @@ bool FgNhgOrch::sprayBankNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, c
             }
         }
 
-        setStateDbRouteEntry(vnet, ipPrefix, bucket_idx, nh_memb_key);
+        setStateDbRouteEntry(key, bucket_idx, nh_memb_key);
         syncd_fg_route_entry.syncd_fgnhg_map[bank][nh_memb_key].push_back(bucket_idx);
         syncd_fg_route_entry.active_nexthops.insert(nh_memb_key);
         syncd_fg_route_entry.nhopgroup_members[bucket_idx] = next_hop_group_member_id;
@@ -1214,7 +1211,7 @@ bool FgNhgOrch::isRouteFineGrained(sai_object_id_t vrf_id, const IpPrefix &ipPre
 {
     SWSS_LOG_ENTER();
 
-    if (!isFineGrainedConfigured)
+    if (!isFineGrainedConfigured || (vrf_id != gVirtualRouterId))
     {
         SWSS_LOG_DEBUG("Route %s:%s vrf %" PRIx64 " NOT fine grained ECMP",
                         ipPrefix.to_string().c_str(), nextHops.to_string().c_str(), vrf_id);
@@ -1577,25 +1574,10 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
 }
 
 bool FgNhgOrch::setFgNhgTunnel(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, 
-                        const map<sai_object_id_t, NextHopKey>& nh_tunnel_ids, uint16_t consistent_hashing_buckets, 
+                        const map<NextHopKey, sai_object_id_t>& nhopgroup_members_set, NextHopGroupKey& nextHops, uint16_t consistent_hashing_buckets, 
                         sai_object_id_t &next_hop_id, map<NextHopKey, sai_object_id_t> &nhopgroup_member_ids)
 {
     SWSS_LOG_ENTER();
-
-    NextHopGroupKey nextHops;
-    std::map<NextHopKey, sai_object_id_t> nhopgroup_members_set;
-
-    std::string nhg_str;
-    for (const auto& member : nh_tunnel_ids)
-    {
-        if (!nhg_str.empty())
-        {
-            nhg_str += NHG_DELIMITER;
-        }
-        nhg_str += member.second.to_string(true, false);  // overlay_nh=true, srv6_nh=false
-        nhopgroup_members_set[member.second] = member.first;
-    }
-    nextHops = NextHopGroupKey(nhg_str, true, false); 
 
     FGMatchMode match_mode = FGMatchMode::PREFIX_BASED;
     uint32_t max_next_hops = consistent_hashing_buckets;
