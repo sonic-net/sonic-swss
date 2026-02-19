@@ -297,6 +297,13 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
         }
     }
 
+    SWSS_LOG_INFO("BFD: update nexthop id, next hop %s on %s, next_hop_id %llu",
+                    nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str(), static_cast<unsigned long long>(next_hop_id));
+    if (gBfdOrch)
+    {
+        gBfdOrch->updateNextHopId(nexthop.alias, nexthop.ip_address, next_hop_id);
+    }
+
     SWSS_LOG_NOTICE("Created next hop %s on %s",
                     nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
     if (m_neighborToResolve.find(nexthop) != m_neighborToResolve.end())
@@ -1287,6 +1294,13 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
         copy(neighbor_entry.ip_address, ip_address);
 
         sai_object_id_t next_hop_id = m_syncdNextHops[nexthop].next_hop_id;
+
+        SWSS_LOG_INFO("BFD: removeNeighbor, next hop %s on %s, next_hop_id %llu",
+                        nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str(), static_cast<unsigned long long>(next_hop_id));
+        if (gBfdOrch) 
+        {
+            gBfdOrch->updateNextHopId(nexthop.alias, nexthop.ip_address, SAI_NULL_OBJECT_ID);
+        }
 
         if (bulk_op)
         {

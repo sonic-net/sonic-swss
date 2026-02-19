@@ -1,5 +1,6 @@
 #include "bfdorch.h"
 #include "intfsorch.h"
+#include "neighorch.h"
 #include "vrforch.h"
 #include "converter.h"
 #include "swssnet.h"
@@ -26,6 +27,7 @@ extern sai_bfd_api_t*       sai_bfd_api;
 extern sai_object_id_t      gSwitchId;
 extern sai_object_id_t      gVirtualRouterId;
 extern PortsOrch*           gPortsOrch;
+extern NeighOrch*           gNeighOrch;
 extern sai_switch_api_t*    sai_switch_api;
 extern Directory<Orch*>     gDirectory;
 extern string               gMySwitchType;
@@ -302,6 +304,42 @@ bool BfdOrch::register_bfd_state_change_notification(void)
     return true;
 }
 
+void BfdOrch::updateNextHopId(string alias, IpAddress peer_address, sai_object_id_t next_hop_id)
+{
+    const string key = get_app_db_key("default", alias, peer_address);
+    if (bfd_inject_next_hop_lookup.find(key) == bfd_inject_next_hop_lookup.end())
+    {
+        SWSS_LOG_DEBUG("BFD session %s does not exist or not inject_next_hop", key.c_str());
+        return;
+    }
+    if ((bfd_inject_next_hop_lookup[key].next_hop_id == next_hop_id)) //no update
+    {
+        SWSS_LOG_DEBUG("BFD session %s no change on next_hop_id, skip", key.c_str());
+        return;
+    }
+
+    auto bfd_session_id = bfd_inject_next_hop_lookup[key].bfd_session_id;
+    if (bfd_session_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Failed to update next hop id, bfd session %s id is null", key.c_str());
+        return;
+    }
+
+    SWSS_LOG_INFO("BFD: update nexthop id, next hop %s on %s, next_hop_id %llu",
+                    peer_address.to_string().c_str(), alias.c_str(), static_cast<unsigned long long>(next_hop_id));
+
+    sai_attribute_t attr;
+    attr.id = SAI_BFD_SESSION_ATTR_NEXT_HOP_ID;
+    attr.value.oid = next_hop_id;
+    sai_status_t status = sai_bfd_api->set_bfd_session_attribute(bfd_session_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to update bfd session attribute %s, rv:%d", key.c_str(), status);
+        return;
+    }
+    bfd_inject_next_hop_lookup[key].next_hop_id = next_hop_id;
+}
+
 bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple>& data)
 {
     if (!register_state_change_notif)
@@ -345,13 +383,20 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     uint8_t multiplier = BFD_SESSION_DEFAULT_DETECT_MULTIPLIER;
     uint8_t tos = BFD_SESSION_DEFAULT_TOS;
     bool multihop = false;
-    MacAddress dst_mac;
+    MacAddress dst_mac = MacAddress("00:00:00:00:00:00");
+    MacAddress src_mac = MacAddress("00:00:00:00:00:00");
     bool dst_mac_provided = false;
+    bool src_mac_provided = false;
     bool src_ip_provided = false;
+    bool inject_next_hop = false;
 
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
     vector<FieldValueTuple> fvVector;
+
+    BfdInjectNextHop bfd_inject_next_hop;
+    bfd_inject_next_hop.alias = alias;
+    bfd_inject_next_hop.next_hop_id = SAI_NULL_OBJECT_ID;
 
     for (auto i : data)
     {
@@ -386,6 +431,11 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
                 continue;
             }
             bfd_session_type = session_type_map.at(value);
+        }
+        else if (fvField(i) == "src_mac")
+        {
+            src_mac = MacAddress(value);
+            src_mac_provided = true;
         }
         else if (fvField(i) == "dst_mac")
         {
@@ -481,42 +531,66 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
 
     if (alias != "default")
     {
-        Port port;
-        if (!gPortsOrch->getPort(alias, port))
-        {
-            SWSS_LOG_ERROR("Failed to locate port %s", alias.c_str());
-            return false;
-        }
-
         if (!dst_mac_provided)
         {
-            SWSS_LOG_ERROR("Failed to create BFD session %s: destination MAC address required when hardware lookup not valid",
-                            key.c_str());
-            return true;
-        }
+            attr.id = SAI_BFD_SESSION_ATTR_USE_NEXT_HOP;
+            attr.value.booldata = true;
+            attrs.emplace_back(attr);
 
-        if (vrf_name != "default")
+            sai_object_id_t next_hop_id = SAI_NULL_OBJECT_ID;
+            attr.id = SAI_BFD_SESSION_ATTR_NEXT_HOP_ID;
+            NextHopKey nexthop_key = NextHopKey(peer_address, alias);
+
+            //For UT, not null at runtime
+            if (gNeighOrch)
+            {
+                next_hop_id = gNeighOrch->getLocalNextHopId(nexthop_key);
+            }
+            attr.value.oid = next_hop_id;
+            attrs.emplace_back(attr);
+            bfd_inject_next_hop.next_hop_id = attr.value.oid;
+            inject_next_hop = true;
+            SWSS_LOG_NOTICE("BFD: create bfd session using nexthop_id %llu", static_cast<unsigned long long>(next_hop_id));
+        }
+        else
         {
-            SWSS_LOG_ERROR("Failed to create BFD session %s: vrf is not supported when hardware lookup not valid",
-                            key.c_str());
-            return true;
+            Port port;
+            if (!gPortsOrch->getPort(alias, port))
+            {
+                SWSS_LOG_ERROR("Failed to locate port %s", alias.c_str());
+                return false;
+            }
+
+            if (vrf_name != "default")
+            {
+                SWSS_LOG_ERROR("Failed to create BFD session %s: vrf is not supported when hardware lookup not valid",
+                                key.c_str());
+                return true;
+            }
+
+            attr.id = SAI_BFD_SESSION_ATTR_HW_LOOKUP_VALID;
+            attr.value.booldata = false;
+            attrs.emplace_back(attr);
+
+            attr.id = SAI_BFD_SESSION_ATTR_PORT;
+            attr.value.oid = port.m_port_id;
+            attrs.emplace_back(attr);
+
+            attr.id = SAI_BFD_SESSION_ATTR_SRC_MAC_ADDRESS;
+            if (src_mac_provided)
+            {
+                memcpy(attr.value.mac, src_mac.getMac(), sizeof(sai_mac_t));
+            }
+            else
+            {
+                memcpy(attr.value.mac, port.m_mac.getMac(), sizeof(sai_mac_t));
+            }
+            attrs.emplace_back(attr);
+
+            attr.id = SAI_BFD_SESSION_ATTR_DST_MAC_ADDRESS;
+            memcpy(attr.value.mac, dst_mac.getMac(), sizeof(sai_mac_t));
+            attrs.emplace_back(attr);
         }
-
-        attr.id = SAI_BFD_SESSION_ATTR_HW_LOOKUP_VALID;
-        attr.value.booldata = false;
-        attrs.emplace_back(attr);
-
-        attr.id = SAI_BFD_SESSION_ATTR_PORT;
-        attr.value.oid = port.m_port_id;
-        attrs.emplace_back(attr);
-
-        attr.id = SAI_BFD_SESSION_ATTR_SRC_MAC_ADDRESS;
-        memcpy(attr.value.mac, port.m_mac.getMac(), sizeof(sai_mac_t));
-        attrs.emplace_back(attr);
-
-        attr.id = SAI_BFD_SESSION_ATTR_DST_MAC_ADDRESS;
-        memcpy(attr.value.mac, dst_mac.getMac(), sizeof(sai_mac_t));
-        attrs.emplace_back(attr);
     }
     else
     {
@@ -565,6 +639,12 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     m_stateBfdSessionTable.set(state_db_key, fvVector);
     bfd_session_map[key] = bfd_session_id;
     bfd_session_lookup[bfd_session_id] = {state_db_key, SAI_BFD_SESSION_STATE_DOWN};
+
+    if (inject_next_hop)
+    {
+        bfd_inject_next_hop.bfd_session_id = bfd_session_id;
+        bfd_inject_next_hop_lookup[key] = bfd_inject_next_hop;
+    }
 
     BfdUpdate update;
     update.peer = state_db_key;
@@ -629,6 +709,7 @@ bool BfdOrch::remove_bfd_session(const string& key)
     m_stateBfdSessionTable.del(bfd_session_lookup[bfd_session_id].peer);
     bfd_session_map.erase(key);
     bfd_session_lookup.erase(bfd_session_id);
+    bfd_inject_next_hop_lookup.erase(key);
 
     return true;
 }
@@ -636,6 +717,11 @@ bool BfdOrch::remove_bfd_session(const string& key)
 string BfdOrch::get_state_db_key(const string& vrf_name, const string& alias, const IpAddress& peer_address)
 {
     return vrf_name + state_db_key_delimiter + alias + state_db_key_delimiter + peer_address.to_string();
+}
+
+string BfdOrch::get_app_db_key(const string& vrf_name, const string& alias, const IpAddress& peer_address)
+{
+    return vrf_name + delimiter + alias + delimiter + peer_address.to_string();
 }
 
 uint32_t BfdOrch::bfd_gen_id(void)
