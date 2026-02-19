@@ -1022,6 +1022,12 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         m_defaultVlan = attrs[1].value.oid;
     }
 
+    //Fast link-up per-port attribute support
+    if (gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_FAST_LINKUP_ENABLED))
+    {
+        m_fastLinkupPortAttrSupported = true;
+    }
+
     if (gMySwitchType != "dpu")
     {
         // System Ports not supported on dpu
@@ -3498,6 +3504,28 @@ bool PortsOrch::getPortAdvSpeeds(const Port& port, bool remote, string& adv_spee
     return rc;
 }
 
+task_process_status PortsOrch::setPortFastLinkupEnabled(Port &port, bool enable)
+{
+    SWSS_LOG_ENTER();
+
+    if (!m_fastLinkupPortAttrSupported)
+    {
+        SWSS_LOG_NOTICE("Fast link-up is not supported on this platform");
+        return task_success;
+    }
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_FAST_LINKUP_ENABLED;
+    attr.value.booldata = enable;
+    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set fast_linkup %d on port %s", enable, port.m_alias.c_str());
+        return handleSaiSetStatus(SAI_API_PORT, status);
+    }
+    SWSS_LOG_INFO("Set port %s fast_linkup %s", port.m_alias.c_str(), enable ? "true" : "false");
+    return task_success;
+}
+
 task_process_status PortsOrch::setPortUnreliableLOS(Port &port, bool enabled)
 {
     SWSS_LOG_ENTER();
@@ -4753,6 +4781,19 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             "Set port %s link training to %s",
                             p.m_alias.c_str(), m_portHlpr.getLinkTrainingStr(pCfg).c_str()
                         );
+                    }
+                }
+
+                // Handle fast_linkup boolean
+                if (pCfg.fast_linkup.is_set)
+                {
+                    auto status = setPortFastLinkupEnabled(p, pCfg.fast_linkup.value);
+                    // For fast_linkup attribute, task_need_retry is not a meaningful return, so treat any failure as a permanent failure and erase the task.
+                    if (status != task_success)
+                    {
+                        SWSS_LOG_ERROR("Failed to set port %s fast_linkup to %s", p.m_alias.c_str(), pCfg.fast_linkup.value ? "true" : "false");
+                        it = taskMap.erase(it);
+                        continue;
                     }
                 }
 
