@@ -103,6 +103,31 @@ ReturnCodeOr<std::vector<sai_attribute_t>> prepareRifSaiAttrs(
   return attrs;
 }
 
+// Create the vector of SAI attributes for creating a new bridge port object.
+ReturnCodeOr<std::vector<sai_attribute_t>> prepareBridgePortSaiAttrs(
+    const P4MulticastRouterInterfaceEntry& entry) {
+  Port port;
+  if (!gPortsOrch->getPort(entry.multicast_replica_port, port)) {
+    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                         << "Unable to find port object "
+                         << QuotedVar(entry.multicast_replica_port)
+                         << " to create bridge port");
+  }
+
+  std::vector<sai_attribute_t> attrs;
+  sai_attribute_t attr;
+
+  attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
+  attr.value.s32 = SAI_BRIDGE_PORT_TYPE_PORT;
+  attrs.push_back(attr);
+
+  attr.id = SAI_BRIDGE_PORT_ATTR_PORT_ID;
+  attr.value.oid = port.m_port_id;
+  attrs.push_back(attr);
+
+  return attrs;
+}
+
 // Create the vector of SAI attributes for creating a new multicast group
 // member object.
 std::vector<sai_attribute_t> prepareMulticastGroupMemberSaiAttrs(
@@ -428,6 +453,7 @@ L3MulticastManager::deserializeMulticastRouterInterfaceEntry(
       KeyGenerator::generateMulticastRouterInterfaceKey(
           router_interface_entry.multicast_replica_port,
           router_interface_entry.multicast_replica_instance);
+  router_interface_entry.src_mac = swss::MacAddress("00:00:00:00:00:00");
 
   for (const auto& it : attributes) {
     const auto& field = fvField(it);
@@ -442,6 +468,7 @@ L3MulticastManager::deserializeMulticastRouterInterfaceEntry(
       }
     } else if (field == prependParamField(p4orch::kSrcMac)) {
       router_interface_entry.src_mac = swss::MacAddress(value);
+      router_interface_entry.has_src_mac = true;
     } else if (field == prependParamField(p4orch::kMulticastMetadata)) {
       router_interface_entry.multicast_metadata = value;
     } else if (field != p4orch::kControllerMetadata) {
@@ -827,11 +854,20 @@ ReturnCode L3MulticastManager::validateL3SetMulticastRouterInterfaceEntry(
   return ReturnCode();
 }
 
-ReturnCode L3MulticastManager::validateL2SetMulticastRouterInterfaceEntry(
+ReturnCode L3MulticastManager::validateL2MulticastRouterInterfaceEntry(
     const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
     const P4MulticastRouterInterfaceEntry* router_interface_entry_ptr) {
-  // TODO: This needs to be implemented.
-  return ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED);
+  // Confirm bridge port ID exists in central mapper.
+  sai_object_id_t bridge_port_oid =
+      getBridgePortOid(router_interface_entry_ptr);
+  if (bridge_port_oid == SAI_NULL_OBJECT_ID) {
+    return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+           << "Multicast router interface entry exists in manager but bridge "
+           << "port for "
+           << QuotedVar(router_interface_entry_ptr->multicast_replica_port)
+           << " does not exist in the centralized map";
+  }
+  return ReturnCode();
 }
 
 ReturnCode L3MulticastManager::validateSetMulticastRouterInterfaceEntry(
@@ -843,6 +879,13 @@ ReturnCode L3MulticastManager::validateSetMulticastRouterInterfaceEntry(
   if (multicast_router_interface_entry.action.empty()) {
     return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
            << "Multicast router interface entry did not specify an action.";
+  }
+
+  // Confirm src_mac is populated.
+  if (multicast_router_interface_entry.action == p4orch::kSetSrcMac &&
+      !multicast_router_interface_entry.has_src_mac) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Multicast router interface entry did not specify a src mac.";
   }
 
   bool is_update_operation = router_interface_entry_ptr != nullptr;
@@ -864,19 +907,12 @@ ReturnCode L3MulticastManager::validateSetMulticastRouterInterfaceEntry(
       return validateL3SetMulticastRouterInterfaceEntry(
           multicast_router_interface_entry, router_interface_entry_ptr);
     } else {
-      return validateL2SetMulticastRouterInterfaceEntry(
+      return validateL2MulticastRouterInterfaceEntry(
           multicast_router_interface_entry, router_interface_entry_ptr);
     }
   }
   // No additional validation required for add operation.
   return ReturnCode();
-}
-
-ReturnCode L3MulticastManager::validateL2DelMulticastRouterInterfaceEntry(
-    const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
-    const P4MulticastRouterInterfaceEntry* router_interface_entry_ptr) {
-  // TODO: This needs to be implemented.
-  return ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED);
 }
 
 ReturnCode L3MulticastManager::validateL3DelMulticastRouterInterfaceEntry(
@@ -920,7 +956,7 @@ ReturnCode L3MulticastManager::validateDelMulticastRouterInterfaceEntry(
     return validateL3DelMulticastRouterInterfaceEntry(
         multicast_router_interface_entry, router_interface_entry_ptr);
   } else {
-    return validateL2DelMulticastRouterInterfaceEntry(
+    return validateL2MulticastRouterInterfaceEntry(
         multicast_router_interface_entry, router_interface_entry_ptr);
   }
 
@@ -990,25 +1026,8 @@ ReturnCode L3MulticastManager::processMulticastReplicationEntries(
 ReturnCode L3MulticastManager::createBridgePort(
     P4MulticastRouterInterfaceEntry& entry, sai_object_id_t* bridge_port_oid) {
   SWSS_LOG_ENTER();
-
-  Port port;
-  if (!gPortsOrch->getPort(entry.multicast_replica_port, port)) {
-    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-                         << "Unable to find port object "
-                         << QuotedVar(entry.multicast_replica_port)
-                         << " to create bridge port");
-  }
-
-  std::vector<sai_attribute_t> attrs;
-  sai_attribute_t attr;
-
-  attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
-  attr.value.s32 = SAI_BRIDGE_PORT_TYPE_PORT;
-  attrs.push_back(attr);
-
-  attr.id = SAI_BRIDGE_PORT_ATTR_PORT_ID;
-  attr.value.oid = port.m_port_id;
-  attrs.push_back(attr);
+  ASSIGN_OR_RETURN(std::vector<sai_attribute_t> attrs,
+                   prepareBridgePortSaiAttrs(entry));
 
   sai_status_t status = sai_bridge_api->create_bridge_port(
       bridge_port_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
@@ -1256,6 +1275,13 @@ L3MulticastManager::updateMulticastRouterInterfaceEntries(
                     << "Multicast router interface entry is missing "
                     << QuotedVar(entry.multicast_router_interface_entry_key);
       break;
+    }
+
+    // Since action kNoAction, used to setup L2 multicast bridge ports, does not
+    // have any parameters, there is nothing to update.
+    if (old_entry_ptr->action == p4orch::kNoAction) {
+      statuses[i] = ReturnCode();
+      continue;
     }
 
     // No change to src mac means there is nothing to do.
@@ -1923,9 +1949,8 @@ std::string L3MulticastManager::verifyMulticastRouterInterfaceStateCache(
     return m_p4OidMapper->verifyOIDMapping(
         SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key,
         multicast_router_interface_entry->router_interface_oid);
-  } else {
-    return "SWSS_RC_UNIMPLEMENTED";
   }
+  return "";
 }
 
 std::string L3MulticastManager::verifyMulticastRouterInterfaceStateAsicDb(
@@ -1969,8 +1994,31 @@ std::string L3MulticastManager::verifyL3MulticastRouterInterfaceStateAsicDb(
 
 std::string L3MulticastManager::verifyL2MulticastRouterInterfaceStateAsicDb(
     const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry) {
-  // TODO: This needs to be implemented.
-  return "SWSS_RC_UNIMPLEMENTED";
+  auto attrs_or = prepareBridgePortSaiAttrs(*multicast_router_interface_entry);
+  if (!attrs_or.ok()) {
+    return std::string("Failed to get multicast router interface SAI attrs: ") +
+           attrs_or.status().message();
+  }
+  std::vector<sai_attribute_t> attrs = *attrs_or;
+  std::vector<swss::FieldValueTuple> exp =
+      saimeta::SaiAttributeList::serialize_attr_list(
+          SAI_OBJECT_TYPE_BRIDGE_PORT, (uint32_t)attrs.size(), attrs.data(),
+          /*countOnly=*/false);
+
+  sai_object_id_t bridge_port_oid =
+      getBridgePortOid(multicast_router_interface_entry);
+
+  swss::DBConnector db("ASIC_DB", 0);
+  swss::Table table(&db, "ASIC_STATE");
+  std::string key = sai_serialize_object_type(SAI_OBJECT_TYPE_BRIDGE_PORT) +
+                    ":" + sai_serialize_object_id(bridge_port_oid);
+  std::vector<swss::FieldValueTuple> values;
+  if (!table.get(key, values)) {
+    return std::string("ASIC DB key not found ") + key;
+  }
+
+  return verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
+                     /*allow_unknown=*/false);
 }
 
 std::string L3MulticastManager::verifyMulticastReplicationStateCache(

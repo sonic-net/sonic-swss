@@ -26,6 +26,7 @@ struct P4MulticastRouterInterfaceEntry {
   std::string multicast_replica_port;
   std::string multicast_replica_instance;
   swss::MacAddress src_mac;
+  bool has_src_mac = false;
   std::string action;
   std::string multicast_metadata;
   sai_object_id_t router_interface_oid = SAI_OBJECT_TYPE_NULL;
@@ -137,13 +138,10 @@ class L3MulticastManager : public ObjectManagerInterface {
   ReturnCode validateL3SetMulticastRouterInterfaceEntry(
       const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
       const P4MulticastRouterInterfaceEntry* router_interface_entry_ptr);
-  ReturnCode validateL2SetMulticastRouterInterfaceEntry(
-      const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
-      const P4MulticastRouterInterfaceEntry* router_interface_entry_ptr);
   ReturnCode validateL3DelMulticastRouterInterfaceEntry(
       const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
       const P4MulticastRouterInterfaceEntry* router_interface_entry_ptr);
-  ReturnCode validateL2DelMulticastRouterInterfaceEntry(
+  ReturnCode validateL2MulticastRouterInterfaceEntry(
       const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
       const P4MulticastRouterInterfaceEntry* router_interface_entry_ptr);
 
