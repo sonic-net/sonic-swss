@@ -136,7 +136,6 @@ class L3MulticastManager : public ObjectManagerInterface {
       const P4MulticastReplicationEntry& multicast_replication_entry,
       const std::string& operation);
 
-  /*
   // Performs multicast replication entry validation for SET command.
   ReturnCode validateSetMulticastReplicationEntry(
       const P4MulticastReplicationEntry& multicast_router_interface_entry);
@@ -144,7 +143,6 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Performs multicast replication entry validation for DEL command.
   ReturnCode validateDelMulticastReplicationEntry(
       const P4MulticastReplicationEntry& multicast_router_interface_entry);
-  */
 
   // Processes a list of entries of the same operation type for the multicast
   // router interface table.
@@ -155,7 +153,6 @@ class L3MulticastManager : public ObjectManagerInterface {
       const std::deque<swss::KeyOpFieldsValuesTuple>& tuple_list,
       const std::string& op, bool update);
 
-  /*
   // Processes a list of entries of the same operation type for the replication
   // multicast table.
   // Returns an overall status code.
@@ -164,7 +161,6 @@ class L3MulticastManager : public ObjectManagerInterface {
       std::vector<P4MulticastReplicationEntry>& entries,
       const std::deque<swss::KeyOpFieldsValuesTuple>& tuple_list,
       const std::string& op, bool update);
-  */
 
   // Wrapper around SAI setup and call, for easy mocking.
   ReturnCode createRouterInterface(const std::string& rif_key,
@@ -198,10 +194,8 @@ class L3MulticastManager : public ObjectManagerInterface {
   std::vector<ReturnCode> addMulticastReplicationEntries(
       std::vector<P4MulticastReplicationEntry>& entries);
   // Update existing multicast replication table entries.
-  /*
   std::vector<ReturnCode> updateMulticastReplicationEntries(
       std::vector<P4MulticastReplicationEntry>& entries);
-  */
   // Delete existing multicast replication table entries.
   std::vector<ReturnCode> deleteMulticastReplicationEntries(
       const std::vector<P4MulticastReplicationEntry>& entries);
