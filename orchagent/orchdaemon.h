@@ -64,6 +64,7 @@
 #include "high_frequency_telemetry/hftelorch.h"
 #include <sairedis.h>
 #include "shlorch.h"
+#include "arsorch.h"
 
 using namespace swss;
 
