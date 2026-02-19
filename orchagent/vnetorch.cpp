@@ -1154,12 +1154,12 @@ bool VNetRouteOrch::selectFgNextHopGroup(const string& vnet,
     // This function returns the next hop group which is to be used to in the hardware
     // for fine grained ECMP tunnel routes.
 
-    std::map<sai_object_id_t, NextHopKey> nhopgroup_members_set;
+    std::map<NextHopKey, sai_object_id_t> nhopgroup_members_set;
 
     for (auto nh : nexthops.getNextHops())
     {
         sai_object_id_t next_hop_id = vrf_obj->getTunnelNextHop(nh);
-        nhopgroup_members_set[next_hop_id] = nh;
+        nhopgroup_members_set[nh] = next_hop_id;
     }
 
     sai_object_id_t nh_id;
@@ -1167,7 +1167,7 @@ bool VNetRouteOrch::selectFgNextHopGroup(const string& vnet,
 
     sai_object_id_t vrf_id;
     vnet_orch_->getVrfIdByVnetName(vnet, vrf_id);
-    if (!gFgNhgOrch->setFgNhgTunnel(vrf_id, ipPrefix, nhopgroup_members_set, consistent_hashing_buckets, nh_id, nhopgroup_member_ids))
+    if (!gFgNhgOrch->setFgNhgTunnel(vrf_id, ipPrefix, nhopgroup_members_set, nexthops, consistent_hashing_buckets, nh_id, nhopgroup_member_ids))
     {
         SWSS_LOG_ERROR("Failed to create fine grained next hop group for VNET %s", vnet.c_str());
         return false;
