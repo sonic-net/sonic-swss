@@ -25,7 +25,8 @@ static sai_acl_action_type_t AclEntryActionToAclAction(
 }
 
 bool parseAclTableAppDbActionField(const std::string &aggr_actions_str, std::vector<P4ActionParamName> *action_list,
-                                   std::vector<P4PacketActionWithColor> *action_color_list)
+                                   std::vector<P4PacketActionWithColor>* action_color_list,
+                                   std::vector<P4ActionWithColorParam>* action_color_param_list)
 {
     try
     {
@@ -44,26 +45,45 @@ bool parseAclTableAppDbActionField(const std::string &aggr_actions_str, std::vec
                 SWSS_LOG_ERROR("Invalid ACL table definition action %s, missing 'action':\n", aggr_actions_str.c_str());
                 return false;
             }
-            if (aclPacketActionLookup.find(sai_action_it.value()) == aclPacketActionLookup.end())
-            {
+            auto action_param_it = action_item.find(kActionParamPrefix);
+
+            if (aclPacketActionLookup.find(sai_action_it.value()) !=
+                aclPacketActionLookup.end()) {
+              auto packet_color_it = action_item.find(kPacketColor);
+              P4PacketActionWithColor packet_action_with_color;
+              packet_action_with_color.packet_action = sai_action_it.value();
+              if (packet_color_it != action_item.end() &&
+                  !packet_color_it.value().is_null()) {
+                packet_action_with_color.packet_color = packet_color_it.value();
+              }
+              action_color_list->push_back(packet_action_with_color);
+            } else if (aclActionPolicerAttrLookup.find(sai_action_it.value()) !=
+                       aclActionPolicerAttrLookup.end()) {
+              P4ActionWithColorParam action_with_color_param;
+              action_with_color_param.sai_action = sai_action_it.value();
+              auto action_color_it = action_item.find(kPacketColor);
+              if (action_color_it == action_item.end() || action_color_it.value().is_null()) {
+                SWSS_LOG_ERROR(
+                      "Invalid ACL table definition action %s, must specify color for action %s \n",
+                      aggr_actions_str.c_str(), action_with_color_param.sai_action.c_str());
+                  return false;
+              }
+              action_with_color_param.packet_color = action_color_it.value();
+              if (action_param_it == action_item.end() || action_param_it.value().is_null()) {
+                SWSS_LOG_ERROR(
+                      "Invalid ACL table definition action %s, must specify param for action %s \n",
+                      aggr_actions_str.c_str(), action_with_color_param.sai_action.c_str());
+                  return false;
+              }
+              action_with_color_param.p4_param_name = action_param_it.value();
+              action_color_param_list->push_back(action_with_color_param);
+            } else {
                 action_with_param.sai_action = sai_action_it.value();
-                auto action_param_it = action_item.find(kActionParamPrefix);
                 if (action_param_it != action_item.end() && !action_param_it.value().is_null())
                 {
                     action_with_param.p4_param_name = action_param_it.value();
                 }
                 action_list->push_back(action_with_param);
-            }
-            else
-            {
-                auto packet_color_it = action_item.find(kPacketColor);
-                P4PacketActionWithColor packet_action_with_color;
-                packet_action_with_color.packet_action = sai_action_it.value();
-                if (packet_color_it != action_item.end() && !packet_color_it.value().is_null())
-                {
-                    packet_action_with_color.packet_color = packet_color_it.value();
-                }
-                action_color_list->push_back(packet_action_with_color);
             }
         }
         return true;
@@ -602,6 +622,45 @@ ReturnCode buildAclTableDefinitionActionColorFieldValues(
                << action_color.packet_color;
       }
       aggr_sai_action_color[packet_color_it->second] = packet_action_it->second;
+      acl_action_type_set->insert(SAI_ACL_ACTION_TYPE_SET_POLICER);
+    }
+  }
+
+  return ReturnCode();
+}
+
+ReturnCode buildAclTableDefinitionActionColorParamFieldValues(
+    const std::map<std::string, std::vector<P4ActionWithColorParam>>&
+        action_color_param_lookup,
+    std::map<std::string,
+             std::map<sai_policer_attr_t, std::vector<SaiColorWithParam>>>*
+        aggr_action_color_param_lookup,
+    std::set<sai_acl_action_type_t>* acl_action_type_set) {
+  for (const auto& aggr_action_color_param : action_color_param_lookup) {
+    auto& aggr_sai_action_color_param =
+        (*aggr_action_color_param_lookup)[fvField(aggr_action_color_param)];
+    for (const auto& action_color_param : fvValue(aggr_action_color_param)) {
+      auto sai_action_it =
+          aclActionPolicerAttrLookup.find(action_color_param.sai_action);
+      if (sai_action_it == aclActionPolicerAttrLookup.end()) {
+        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "ACL table policer action is invalid: "
+               << action_color_param.sai_action;
+      }
+
+      SaiColorWithParam sai_color_param;
+      auto sai_color_it =
+          aclPacketColorLookup.find(action_color_param.packet_color);
+      if (sai_color_it == aclPacketColorLookup.end()) {
+        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "ACL table packet color is invalid: "
+               << action_color_param.packet_color;
+      }
+      sai_color_param.color = sai_color_it->second;
+      sai_color_param.param_name = action_color_param.p4_param_name;
+
+      aggr_sai_action_color_param[sai_action_it->second].push_back(
+          sai_color_param);
       acl_action_type_set->insert(SAI_ACL_ACTION_TYPE_SET_POLICER);
     }
   }

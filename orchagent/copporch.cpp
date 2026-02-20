@@ -4,22 +4,24 @@ extern "C" {
 #include <saiswitch.h>
 }
 
-#include "sai.h"
+#include <inttypes.h>
+
+#include <algorithm>
+#include <iostream>
+#include <sstream>
+
 #include "copporch.h"
-#include "portsorch.h"
+#include "directory.h"
 #include "flexcounterorch.h"
-#include "tokenize.h"
+#include "flow_counter_handler.h"
 #include "logger.h"
+#include "namelabelmapper.h"
+#include "portsorch.h"
+#include "sai.h"
 #include "sai_serialize.h"
 #include "schema.h"
-#include "directory.h"
-#include "flow_counter_handler.h"
 #include "timer.h"
-
-#include <inttypes.h>
-#include <sstream>
-#include <iostream>
-#include <algorithm>
+#include "tokenize.h"
 
 using namespace swss;
 using namespace std;
@@ -32,6 +34,7 @@ extern sai_object_id_t      gSwitchId;
 extern PortsOrch*           gPortsOrch;
 extern Directory<Orch*>     gDirectory;
 extern bool                 gIsNatSupported;
+extern NameLabelMapper* gLabelMapper;
 extern bool                 gTraditionalFlexCounter;
 
 #define FLEX_COUNTER_UPD_INTERVAL 1
@@ -573,6 +576,9 @@ bool CoppOrch::removePolicer(string trap_group_name)
 
     SWSS_LOG_NOTICE("Remove policer for trap group %s", trap_group_name.c_str());
     m_trap_group_policer_map.erase(m_trap_group_map[trap_group_name]);
+    std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+        APP_COPP_TABLE_NAME, trap_group_name);
+    gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_POLICER, mapper_key);
     return true;
 }
 
@@ -601,6 +607,15 @@ bool CoppOrch::createPolicer(string trap_group_name, vector<sai_attribute_t> &po
     sai_object_id_t policer_id;
     sai_status_t sai_status;
 
+    // Add label to the attributes to uniquely identify the policer.
+    sai_attribute_t label_attr;
+    std::string mapper_key;
+    std::string label;
+    bool label_present = gLabelMapper->addLabelToAttr(
+        SAI_OBJECT_TYPE_POLICER, APP_COPP_TABLE_NAME, trap_group_name,
+        label_attr, SAI_POLICER_ATTR_LABEL, mapper_key, label);
+    policer_attribs.push_back(label_attr);
+
     sai_status = sai_policer_api->create_policer(&policer_id, gSwitchId, (uint32_t)policer_attribs.size(), policer_attribs.data());
     if (sai_status != SAI_STATUS_SUCCESS)
     {
@@ -611,9 +626,11 @@ bool CoppOrch::createPolicer(string trap_group_name, vector<sai_attribute_t> &po
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-
-    SWSS_LOG_NOTICE("Create policer for trap group %s", trap_group_name.c_str());
-
+    if (!label_present) {
+      gLabelMapper->setLabel(SAI_OBJECT_TYPE_POLICER, mapper_key, label);
+      SWSS_LOG_NOTICE("Create policer for trap group %s",
+                      trap_group_name.c_str());
+    }
     sai_attribute_t attr;
     attr.id = SAI_HOSTIF_TRAP_GROUP_ATTR_POLICER;
     attr.value.oid = policer_id;

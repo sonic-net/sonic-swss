@@ -56,7 +56,7 @@ extern sai_object_id_t kMirrorSessionOid1;
 extern char *gMirrorSession2;
 extern sai_object_id_t kMirrorSessionOid2;
 extern bool gIsNatSupported;
-extern NameLabelMapper *gLabelMapper;
+extern NameLabelMapper* gLabelMapper;
 
 namespace p4orch
 {
@@ -90,8 +90,20 @@ constexpr sai_object_id_t kUdfGroupOid1 = 4001;
 constexpr sai_object_id_t kUdfMatchOid1 = 5001;
 constexpr sai_object_id_t kUdfOid1 = 6001;
 constexpr char *kAclIngressTableName = "ACL_PUNT_TABLE";
+
 std::string kUdfGroupMapperKey = "P4RT_TABLE:ACL_PUNT_TABLE-udf2-0";
 std::string kUdfGroupMapperLabel = "1706901078193258";
+std::string kAclCounterMapperKey1 =
+    "P4RT_TABLE:ACL_PUNT_TABLE:match/ether_type=0x0800:match/"
+    "ipv6_dst=fdf8:f53b:82e4::53 & fdf8:f53b:82e4::53:priority=15";
+std::string kAclCounterLabel1 = "1707179015354132";
+std::string kAclCounterMapperKey2 =
+    "P4RT_TABLE:ACL_PUNT_TABLE:match/arp_tpa=0xff112231:match/"
+    "ether_type=0x0800:match/in_ports=Ethernet1,Ethernet2:match/"
+    "ipmc_table_hit=0x1:match/ipv6_dst=fdf8:f53b:82e4::53 & "
+    "fdf8:f53b:82e4::53:match/out_ports=Ethernet4,Ethernet5:match/"
+    "vrf_id=b4-traffic:priority=15";
+std::string kAclCounterLabel2 = "1708458300499045";
 
 // Matches the policer sai_attribute_t[] argument.
 bool MatchSaiPolicerAttribute(const int attrs_size, const sai_meter_type_t expected_type,
@@ -167,6 +179,54 @@ bool MatchSaiPolicerAttribute(const int attrs_size, const sai_meter_type_t expec
         }
     }
     return true;
+}
+
+// Matches the policer sai_qos_map_list_t value.
+bool MatchSaiPolicerAttributeForwardingQueues(
+    const int attrs_size, sai_qos_map_list_t expected_mcast_qos_map,
+    sai_qos_map_list_t expected_ucast_qos_map,
+    const sai_attribute_t* attr_list) {
+  if (attr_list == nullptr) {
+    return false;
+  }
+
+  sai_qos_map_list_t& expected_qos_map = expected_mcast_qos_map;
+  for (int i = 0; i < attrs_size; ++i) {
+    if (attr_list[i].id ==
+            SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION ||
+        attr_list[i].id ==
+            SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION) {
+      attr_list[i].id ==
+              SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION
+          ? expected_qos_map = expected_mcast_qos_map
+          : expected_qos_map = expected_ucast_qos_map;
+
+      auto attr = attr_list[i];
+      if (attr.value.qosmap.count != expected_qos_map.count) return false;
+
+      if (attr.value.qosmap.count == 0 && attr.value.qosmap.list == NULL)
+        return true;
+
+      for (uint32_t j = 0; j < attr.value.qosmap.count; ++j) {
+        if (attr.value.qosmap.list[j].value.tc != 0 ||
+            attr.value.qosmap.list[j].value.dscp != 0 ||
+            attr.value.qosmap.list[j].value.dot1p != 0 ||
+            attr.value.qosmap.list[j].value.prio != 0 ||
+            attr.value.qosmap.list[j].value.pg != 0 ||
+            attr.value.qosmap.list[j].value.mpls_exp != 0 ||
+            attr.value.qosmap.list[j].value.fc != 0)
+          return false;
+
+        if (attr.value.qosmap.list[j].key.color !=
+                expected_qos_map.list[j].key.color ||
+            attr.value.qosmap.list[j].value.queue_index !=
+                expected_qos_map.list[j].value.queue_index)
+          return false;
+      }
+      return true;
+    }
+  }
+  return false;
 }
 
 // Check the ACL stage sai_attribute_t list for ACL table group
@@ -750,7 +810,6 @@ P4AclTableDefinitionAppDbEntry getDefaultAclTableDefAppDbEntry()
       {.sai_action = P4_ACTION_SET_QOS_QUEUE, .p4_param_name = "qos_queue"});
 
 
-    
     //   "action/acl_trap" = [
     //     {"action": "SAI_PACKET_ACTION_TRAP", "packet_color":
     //     "SAI_PACKET_COLOR_GREEN"},
@@ -768,6 +827,46 @@ P4AclTableDefinitionAppDbEntry getDefaultAclTableDefAppDbEntry()
         {.packet_action = P4_PACKET_ACTION_DROP, .packet_color = P4_PACKET_COLOR_YELLOW});
     app_db_entry.packet_action_color_lookup["acl_trap"].push_back(
         {.packet_action = P4_PACKET_ACTION_DROP, .packet_color = P4_PACKET_COLOR_RED});
+
+    //   "action/set_forwarding_queues" = [
+    //     {"action": "SAI_PACKET_ACTION_FORWARD", "packet_color":
+    //     "SAI_PACKET_COLOR_GREEN"},
+    //     {"action": "SAI_PACKET_ACTION_DENY", "packet_color":
+    //     "SAI_PACKET_COLOR_RED"},
+    //     {"action": "QOS_QUEUE", "param": "cpu_queue"},
+    //     {"action":
+    //     "SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION",
+    //     "packet_color": "SAI_PACKET_COLOR_GREEN", "param":
+    //     "green_multicast_queue"},
+    //     {"action":
+    //     "SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION",
+    //     "packet_color": "SAI_PACKET_COLOR_RED", "param": "red_multicast_queue"}
+    //   ]
+    app_db_entry.action_field_lookup["set_forwarding_queues"].push_back(
+      {.sai_action = P4_ACTION_SET_QOS_QUEUE,
+       .p4_param_name = "cpu_queue"});
+    app_db_entry.packet_action_color_lookup["set_forwarding_queues"].push_back(
+      {.packet_action = P4_PACKET_ACTION_FORWARD,
+       .packet_color = P4_PACKET_COLOR_GREEN});
+  app_db_entry.packet_action_color_lookup["set_forwarding_queues"].push_back(
+      {.packet_action = P4_PACKET_ACTION_DENY,
+       .packet_color = P4_PACKET_COLOR_RED});
+  app_db_entry.action_color_param_lookup["set_forwarding_queues"].push_back(
+      {.sai_action = P4_ACTION_SET_MULTICAST_QOS_QUEUE,
+       .packet_color = P4_PACKET_COLOR_GREEN,
+       .p4_param_name = "green_multicast_queue"});
+  app_db_entry.action_color_param_lookup["set_forwarding_queues"].push_back(
+      {.sai_action = P4_ACTION_SET_MULTICAST_QOS_QUEUE,
+       .packet_color = P4_PACKET_COLOR_RED,
+       .p4_param_name = "red_multicast_queue"});
+  app_db_entry.action_color_param_lookup["set_forwarding_queues"].push_back(
+      {.sai_action = P4_ACTION_SET_UNICAST_QOS_QUEUE,
+       .packet_color = P4_PACKET_COLOR_GREEN,
+       .p4_param_name = "green_unicast_queue"});
+  app_db_entry.action_color_param_lookup["set_forwarding_queues"].push_back(
+      {.sai_action = P4_ACTION_SET_UNICAST_QOS_QUEUE,
+       .packet_color = P4_PACKET_COLOR_RED,
+       .p4_param_name = "red_unicast_queue"});
     return app_db_entry;
 }
 
@@ -901,7 +1000,12 @@ class AclManagerTest : public ::testing::Test
         sai_udf_api->remove_udf_match = remove_udf_match;
         sai_udf_api->create_udf_match = create_udf_match;
 
-        gLabelMapper->setLabel(SAI_OBJECT_TYPE_UDF_GROUP, kUdfGroupMapperKey, kUdfGroupMapperLabel);
+        gLabelMapper->setLabel(SAI_OBJECT_TYPE_UDF_GROUP, kUdfGroupMapperKey,
+                               kUdfGroupMapperLabel);
+        gLabelMapper->setLabel(SAI_OBJECT_TYPE_ACL_COUNTER, kAclCounterMapperKey1,
+                               kAclCounterLabel1);
+        gLabelMapper->setLabel(SAI_OBJECT_TYPE_ACL_COUNTER, kAclCounterMapperKey2,
+                               kAclCounterLabel2);
     }
 
     void setUpCoppOrch()
@@ -1155,8 +1259,9 @@ TEST_F(AclManagerTest, DrainTableTuplesToProcessSetDelRequestSucceeds)
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
               DrainTableTuples(/*failure_before=*/false));
     EXPECT_NE(nullptr, GetAclTable(kAclIngressTableName));
-    EXPECT_EQ(gLabelMapper->existsLabel(SAI_OBJECT_TYPE_UDF_GROUP,
-                                        kUdfGroupMapperKey), true);
+    EXPECT_EQ(
+        gLabelMapper->existsLabel(SAI_OBJECT_TYPE_UDF_GROUP, kUdfGroupMapperKey),
+        true);
 
     // Drain table tuples to process DEL request
     EXPECT_CALL(mock_sai_acl_, remove_acl_table(Eq(kAclTableIngressOid))).WillOnce(Return(SAI_STATUS_SUCCESS));
@@ -1172,8 +1277,9 @@ TEST_F(AclManagerTest, DrainTableTuplesToProcessSetDelRequestSucceeds)
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
               DrainTableTuples(/*failure_before=*/false));
     EXPECT_EQ(nullptr, GetAclTable(kAclIngressTableName));
-    EXPECT_EQ(gLabelMapper->existsLabel(SAI_OBJECT_TYPE_UDF_GROUP,
-                                        kUdfGroupMapperKey), true);
+    EXPECT_EQ(
+        gLabelMapper->existsLabel(SAI_OBJECT_TYPE_UDF_GROUP, kUdfGroupMapperKey),
+        false);
 }
 
 TEST_F(AclManagerTest, DrainTableTuplesToProcessUpdateRequestExpectFails)
@@ -1922,6 +2028,24 @@ TEST_F(AclManagerTest, CreatePuntTableWithInvalidPacketColorFieldFails)
 
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessAddTableRequest(app_db_entry));
     EXPECT_EQ(nullptr, GetAclTable(app_db_entry.acl_table_name));
+
+    // Invalid action field for action with color and param
+    app_db_entry.action_color_param_lookup["invalid_action"].push_back(
+        {.sai_action = "INVALID",
+         .packet_color = P4_PACKET_COLOR_GREEN,
+         .p4_param_name = "green_multicast_queue"});
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              ProcessAddTableRequest(app_db_entry));
+    EXPECT_EQ(nullptr, GetAclTable(app_db_entry.acl_table_name));
+
+    // Invalid color field for action with color and param
+    app_db_entry.action_color_param_lookup["invalid_action"].push_back(
+        {.sai_action = P4_ACTION_SET_MULTICAST_QOS_QUEUE,
+         .packet_color = "INVALID",
+         .p4_param_name = "green_multicast_queue"});
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              ProcessAddTableRequest(app_db_entry));
+    EXPECT_EQ(nullptr, GetAclTable(app_db_entry.acl_table_name));
 }
 
 TEST_F(AclManagerTest, CreateAclGroupMemberFailsWhenAclGroupWasNotFound)
@@ -1938,6 +2062,13 @@ TEST_F(AclManagerTest, CreateAclGroupMemberFailsWhenAclGroupWasNotFound)
 
 TEST_F(AclManagerTest, DeserializeValidAclTableDefAppDbSucceeds)
 {
+    auto attrs = getDefaultTableDefFieldValueTuples();
+    attrs.push_back(
+        swss::FieldValueTuple{"action/set_multicast_qos_queue",
+                              "[{\"action\":\"SAI_POLICER_ATTR_COLORED_PACKET_"
+                              "SET_MCAST_COS_QUEUE_ACTION\",\"packet_color\":"
+                              "\"SAI_PACKET_COLOR_GREEN\","
+                              "\"param\":\"green_multicast_queue\"}]"});
     auto app_db_entry_or =
         DeserializeAclTableDefinitionAppDbEntry(kAclIngressTableName, getDefaultTableDefFieldValueTuples());
     EXPECT_TRUE(app_db_entry_or.ok());
@@ -1974,6 +2105,19 @@ TEST_F(AclManagerTest, DeserializeValidAclTableDefAppDbSucceeds)
     EXPECT_EQ(P4_PACKET_ACTION_PUNT,
               app_db_entry.packet_action_color_lookup.find("punt_and_set_tc")->second[0].packet_action);
     EXPECT_EQ(EMPTY_STRING, app_db_entry.packet_action_color_lookup.find("punt_and_set_tc")->second[0].packet_color);
+    EXPECT_EQ(
+        "SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION",
+        app_db_entry.action_color_param_lookup.find("set_multicast_qos_queue")
+            ->second[0]
+            .sai_action);
+    EXPECT_EQ(P4_PACKET_COLOR_GREEN, app_db_entry.action_color_param_lookup
+                                         .find("set_multicast_qos_queue")
+                                         ->second[0]
+                                         .packet_color);
+    EXPECT_EQ("green_multicast_queue", app_db_entry.action_color_param_lookup
+                                           .find("set_multicast_qos_queue")
+                                           ->second[0]
+                                           .p4_param_name);
 }
 
 TEST_F(AclManagerTest, DeserializeAclTableDefAppDbWithInvalidJsonFails)
@@ -1998,6 +2142,26 @@ TEST_F(AclManagerTest, DeserializeAclTableDefAppDbWithInvalidJsonFails)
     attributes.pop_back();
     attributes.push_back(swss::FieldValueTuple{"action/drop_and_set_tc", "[\"action\":\"SAI_PACKET_ACTION_COPY\"]"});
     EXPECT_FALSE(DeserializeAclTableDefinitionAppDbEntry(acl_table_name, attributes).ok());
+
+    // No color for SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION
+    attributes.pop_back();
+    attributes.push_back(
+        swss::FieldValueTuple{"action/set_multicast_qos_queue",
+                              "[{\"action\":\"SAI_POLICER_ATTR_COLORED_PACKET_"
+                              "SET_MCAST_COS_QUEUE_ACTION\","
+                              "\"param\":\"green_multicast_queue\"}]"});
+    EXPECT_FALSE(
+        DeserializeAclTableDefinitionAppDbEntry(acl_table_name, attributes).ok());
+
+    // No param for SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION
+    attributes.pop_back();
+    attributes.push_back(
+        swss::FieldValueTuple{"action/set_multicast_qos_queue",
+                              "[{\"action\":\"SAI_POLICER_ATTR_COLORED_PACKET_"
+                              "SET_MCAST_COS_QUEUE_ACTION\",\"packet_color\":"
+                              "\"SAI_PACKET_COLOR_GREEN\"}]"});
+    EXPECT_FALSE(
+        DeserializeAclTableDefinitionAppDbEntry(acl_table_name, attributes).ok());
 }
 
 TEST_F(AclManagerTest, DeserializeAclTableDefAppDbWithInvalidSizeFails)
@@ -2506,6 +2670,9 @@ TEST_F(AclManagerTest, DrainRuleTuplesToProcessSetDelRequestSucceeds)
     EXPECT_EQ(kAclIngressRuleOid1, acl_rule->acl_entry_oid);
     EXPECT_EQ(rule_tuple_key, acl_rule->db_key);
 
+    EXPECT_TRUE(gLabelMapper->existsLabel(SAI_OBJECT_TYPE_ACL_COUNTER,
+                                          kAclCounterMapperKey1));
+
     // Drain ACL rule tuple to process DEL request
     attributes.clear();
     EnqueueRuleTuple(std::string(kAclIngressTableName),
@@ -2521,6 +2688,9 @@ TEST_F(AclManagerTest, DrainRuleTuplesToProcessSetDelRequestSucceeds)
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
               DrainRuleTuples(/*failure_before=*/false));
     EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
+
+    EXPECT_FALSE(gLabelMapper->existsLabel(SAI_OBJECT_TYPE_ACL_COUNTER,
+                                           kAclCounterMapperKey1));
 }
 
 TEST_F(AclManagerTest, DrainRuleTuplesToProcessSetRequestInvalidTableNameRuleKeyFails)
@@ -3099,8 +3269,8 @@ TEST_F(AclManagerTest, AclRuleWithColorPacketActionsButNoRateLimit)
         .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_policer_,
-                create_policer(_, Eq(gSwitchId), Eq(9),
-                               Truly(std::bind(MatchSaiPolicerAttribute, 9, SAI_METER_TYPE_PACKETS,
+                create_policer(_, Eq(gSwitchId), Eq(10),
+                               Truly(std::bind(MatchSaiPolicerAttribute, 10, SAI_METER_TYPE_PACKETS,
                                                SAI_PACKET_ACTION_TRAP, SAI_PACKET_ACTION_DROP, SAI_PACKET_ACTION_DROP,
                                                0x7fffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff, std::placeholders::_1))))
         .WillOnce(DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
@@ -3153,8 +3323,8 @@ TEST_F(AclManagerTest, AclRuleWithColorPacketActionsButWithRateLimit) {
   EXPECT_CALL(
       mock_sai_policer_,
       create_policer(
-	  _, Eq(gSwitchId), Eq(9),
-          Truly(std::bind(MatchSaiPolicerAttribute, 9, SAI_METER_TYPE_PACKETS,
+	  _, Eq(gSwitchId), Eq(10),
+          Truly(std::bind(MatchSaiPolicerAttribute, 10, SAI_METER_TYPE_PACKETS,
                           SAI_PACKET_ACTION_FORWARD,
 			  SAI_PACKET_ACTION_COPY_CANCEL,
 			  SAI_PACKET_ACTION_COPY_CANCEL,
@@ -3170,6 +3340,167 @@ TEST_F(AclManagerTest, AclRuleWithColorPacketActionsButWithRateLimit) {
   EXPECT_EQ(gUserDefinedTrapStartOid + queue_num - P4_CPU_QUEUE_MIN_NUM + 1,
             acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID]
                 .aclaction.parameter.oid);
+}
+
+TEST_F(AclManagerTest, AclRuleWithActionToSetMeteredForwardingQueues) {
+  ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+
+  // Create app_db_entry with color packet action, but no rate limit attributes
+  P4AclRuleAppDbEntry app_db_entry;
+  app_db_entry.acl_table_name = kAclIngressTableName;
+  app_db_entry.priority = 100;
+  // ACL rule match fields
+  app_db_entry.match_fvs["ether_type"] = "0x0800";
+  app_db_entry.match_fvs["ipv6_dst"] = "fdf8:f53b:82e4::53";
+  app_db_entry.match_fvs["ether_dst"] = "AA:BB:CC:DD:EE:FF";
+  app_db_entry.match_fvs["ether_src"] = "AA:BB:CC:DD:EE:FF";
+  app_db_entry.match_fvs["ipv6_next_header"] = "1";
+  app_db_entry.match_fvs["src_ipv6_64bit"] = "fdf8:f53b:82e4::";
+  app_db_entry.match_fvs["arp_tpa"] = "0xff112231";
+  app_db_entry.match_fvs["udf2"] = "0x9876 & 0xAAAA";
+  app_db_entry.db_key =
+      "ACL_PUNT_TABLE:{\"match/ether_type\": \"0x0800\",\"match/ipv6_dst\": "
+      "\"fdf8:f53b:82e4::53\",\"match/ether_dst\": \"AA:BB:CC:DD:EE:FF\", "
+      "\"match/ether_src\": \"AA:BB:CC:DD:EE:FF\", \"match/ipv6_next_header\": "
+      "\"1\", \"match/src_ipv6_64bit\": "
+      "\"fdf8:f53b:82e4::\",\"match/arp_tpa\": \"0xff112231\",\"match/udf2\": "
+      "\"0x9876 & 0xAAAA\",\"priority\":100}";
+
+  const auto& acl_rule_key =
+      KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
+
+  // Set user defined trap for QOS_QUEUE, and metered forwarding qos queues.
+  int green_multicast_queue_num = 1;
+  int red_multicast_queue_num = 2;
+  int green_unicast_queue_num = 3;
+  int red_unicast_queue_num = 4;
+  int cpu_queue_num = 9;
+  app_db_entry.action = "set_forwarding_queues";
+  app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(cpu_queue_num);
+  app_db_entry.action_param_fvs["green_multicast_queue"] =
+      std::to_string(green_multicast_queue_num);
+  app_db_entry.action_param_fvs["red_multicast_queue"] =
+      std::to_string(red_multicast_queue_num);
+  app_db_entry.action_param_fvs["green_unicast_queue"] =
+      std::to_string(green_unicast_queue_num);
+  app_db_entry.action_param_fvs["red_unicast_queue"] =
+      std::to_string(red_unicast_queue_num);
+
+  sai_qos_map_list_t multicast_qos_map_list;
+  sai_qos_map_t multicast_qos_map;
+  std::vector<sai_qos_map_t> multicast_map_list;
+
+  /* Add green multicast packet map. */
+  memset(&multicast_qos_map, 0, sizeof(multicast_qos_map));
+  multicast_qos_map.key.color = SAI_PACKET_COLOR_GREEN;
+  multicast_qos_map.value.queue_index =
+      (sai_queue_index_t)green_multicast_queue_num;
+  multicast_map_list.push_back(multicast_qos_map);
+  /* Add red multicast packet map. */
+  memset(&multicast_qos_map, 0, sizeof(multicast_qos_map));
+  multicast_qos_map.key.color = SAI_PACKET_COLOR_RED;
+  multicast_qos_map.value.queue_index =
+      (sai_queue_index_t)red_multicast_queue_num;
+  multicast_map_list.push_back(multicast_qos_map);
+  /* Set up sai_qos_map_list_t. */
+  multicast_qos_map_list.count = (uint32_t)multicast_map_list.size();
+  multicast_qos_map_list.list = multicast_map_list.data();
+
+  sai_qos_map_list_t unicast_qos_map_list;
+  sai_qos_map_t unicast_qos_map;
+  std::vector<sai_qos_map_t> unicast_map_list;
+
+  /* Add green unicast packet map. */
+  memset(&unicast_qos_map, 0, sizeof(unicast_qos_map));
+  unicast_qos_map.key.color = SAI_PACKET_COLOR_GREEN;
+  unicast_qos_map.value.queue_index =
+      (sai_queue_index_t)green_unicast_queue_num;
+  unicast_map_list.push_back(unicast_qos_map);
+  /* Add red unicast packet map. */
+  memset(&unicast_qos_map, 0, sizeof(unicast_qos_map));
+  unicast_qos_map.key.color = SAI_PACKET_COLOR_RED;
+  unicast_qos_map.value.queue_index = (sai_queue_index_t)red_unicast_queue_num;
+  unicast_map_list.push_back(unicast_qos_map);
+  /* Set up sai_qos_map_list_t. */
+  unicast_qos_map_list.count = (uint32_t)unicast_map_list.size();
+  unicast_qos_map_list.list = unicast_map_list.data();
+
+  // Install rule
+  EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_policer_,
+              create_policer(
+                  _, Eq(gSwitchId), Eq(9),
+                  Truly(std::bind(MatchSaiPolicerAttributeForwardingQueues, 9,
+                                  multicast_qos_map_list, unicast_qos_map_list,
+                                  std::placeholders::_1))))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+  auto acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+  ASSERT_NE(nullptr, acl_rule);
+
+  sai_object_id_t meter_oid;
+  uint32_t ref_cnt;
+  const auto& table_name_and_rule_key =
+      concatTableNameAndRuleKey(kAclIngressTableName, acl_rule_key);
+  auto sai_attr = static_cast<sai_policer_attr_t>(
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION);
+  // Check action field value
+  EXPECT_FALSE(acl_rule->meter.packet_metered_queues.empty());
+  EXPECT_NE(acl_rule->meter.packet_metered_queues.find(sai_attr),
+            acl_rule->meter.packet_metered_queues.end());
+  EXPECT_EQ(2, acl_rule->meter.packet_metered_queues[sai_attr].size());
+  EXPECT_EQ(SAI_PACKET_COLOR_GREEN,
+            acl_rule->meter.packet_metered_queues[sai_attr][0].key.color);
+  EXPECT_EQ(
+      green_multicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][0].value.queue_index);
+  EXPECT_EQ(SAI_PACKET_COLOR_RED,
+            acl_rule->meter.packet_metered_queues[sai_attr][1].key.color);
+  EXPECT_EQ(
+      red_multicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][1].value.queue_index);
+
+  sai_attr = static_cast<sai_policer_attr_t>(
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION);
+  // Check action field value
+  EXPECT_FALSE(acl_rule->meter.packet_metered_queues.empty());
+  EXPECT_NE(acl_rule->meter.packet_metered_queues.find(sai_attr),
+            acl_rule->meter.packet_metered_queues.end());
+  EXPECT_EQ(2, acl_rule->meter.packet_metered_queues[sai_attr].size());
+  EXPECT_EQ(SAI_PACKET_COLOR_GREEN,
+            acl_rule->meter.packet_metered_queues[sai_attr][0].key.color);
+  EXPECT_EQ(
+      green_unicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][0].value.queue_index);
+  EXPECT_EQ(SAI_PACKET_COLOR_RED,
+            acl_rule->meter.packet_metered_queues[sai_attr][1].key.color);
+  EXPECT_EQ(
+      red_unicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][1].value.queue_index);
+
+  EXPECT_TRUE(p4_oid_mapper_->getOID(SAI_OBJECT_TYPE_POLICER,
+                                     table_name_and_rule_key, &meter_oid));
+  EXPECT_EQ(kAclMeterOid1, meter_oid);
+  EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_POLICER,
+                                          table_name_and_rule_key, &ref_cnt));
+  EXPECT_EQ(1, ref_cnt);
+
+  // Remove rule
+  EXPECT_CALL(mock_sai_acl_, remove_acl_entry(Eq(kAclIngressRuleOid1)))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_acl_, remove_acl_counter(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_policer_, remove_policer(Eq(kAclMeterOid1)))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
+  EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
 }
 
 TEST_F(AclManagerTest, AclRuleWithMockedPacketAction) {
@@ -3613,6 +3944,202 @@ TEST_F(AclManagerTest, AclRuleWithVrfAction)
     EXPECT_CALL(mock_sai_policer_, remove_policer(Eq(kAclMeterOid1))).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
     EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
+}
+
+TEST_F(AclManagerTest, AclRuleWithMeteredForwardingQueues) {
+  ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+
+  auto app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
+  const auto& acl_rule_key =
+      KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
+  sai_object_id_t meter_oid;
+  uint32_t ref_cnt;
+  const auto& table_name_and_rule_key =
+      concatTableNameAndRuleKey(kAclIngressTableName, acl_rule_key);
+
+  // Set user defined trap for QOS_QUEUE, and metered forwarding qos queues.
+  int green_multicast_queue_num = 1;
+  int red_multicast_queue_num = 2;
+  int green_unicast_queue_num = 3;
+  int red_unicast_queue_num = 4;
+  int cpu_queue_num = 9;
+  app_db_entry.action = "set_forwarding_queues";
+  app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(cpu_queue_num);
+  app_db_entry.action_param_fvs["green_multicast_queue"] =
+      std::to_string(green_multicast_queue_num);
+  app_db_entry.action_param_fvs["red_multicast_queue"] =
+      std::to_string(red_multicast_queue_num);
+  app_db_entry.action_param_fvs["green_unicast_queue"] =
+      std::to_string(green_unicast_queue_num);
+  app_db_entry.action_param_fvs["red_unicast_queue"] =
+      std::to_string(red_unicast_queue_num);
+
+  sai_qos_map_list_t multicast_qos_map_list;
+  sai_qos_map_t multicast_qos_map;
+  std::vector<sai_qos_map_t> multicast_map_list;
+
+  /* Add green multicast packet map. */
+  memset(&multicast_qos_map, 0, sizeof(multicast_qos_map));
+  multicast_qos_map.key.color = SAI_PACKET_COLOR_GREEN;
+  multicast_qos_map.value.queue_index =
+      (sai_queue_index_t)green_multicast_queue_num;
+  multicast_map_list.push_back(multicast_qos_map);
+  /* Add red multicast packet map. */
+  memset(&multicast_qos_map, 0, sizeof(multicast_qos_map));
+  multicast_qos_map.key.color = SAI_PACKET_COLOR_RED;
+  multicast_qos_map.value.queue_index =
+      (sai_queue_index_t)red_multicast_queue_num;
+  multicast_map_list.push_back(multicast_qos_map);
+  /* Set up sai_qos_map_list_t. */
+  multicast_qos_map_list.count = (uint32_t)multicast_map_list.size();
+  multicast_qos_map_list.list = multicast_map_list.data();
+
+  sai_qos_map_list_t unicast_qos_map_list;
+  sai_qos_map_t unicast_qos_map;
+  std::vector<sai_qos_map_t> unicast_map_list;
+
+  /* Add green unicast packet map. */
+  memset(&unicast_qos_map, 0, sizeof(unicast_qos_map));
+  unicast_qos_map.key.color = SAI_PACKET_COLOR_GREEN;
+  unicast_qos_map.value.queue_index =
+      (sai_queue_index_t)green_unicast_queue_num;
+  unicast_map_list.push_back(unicast_qos_map);
+  /* Add red unicast packet map. */
+  memset(&unicast_qos_map, 0, sizeof(unicast_qos_map));
+  unicast_qos_map.key.color = SAI_PACKET_COLOR_RED;
+  unicast_qos_map.value.queue_index = (sai_queue_index_t)red_unicast_queue_num;
+  unicast_map_list.push_back(unicast_qos_map);
+  /* Set up sai_qos_map_list_t. */
+  unicast_qos_map_list.count = (uint32_t)unicast_map_list.size();
+  unicast_qos_map_list.list = unicast_map_list.data();
+
+  EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_policer_,
+              create_policer(
+                  _, Eq(gSwitchId), Eq(9),
+                  Truly(std::bind(MatchSaiPolicerAttributeForwardingQueues, 9,
+                                  multicast_qos_map_list, unicast_qos_map_list,
+                                  std::placeholders::_1))))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+
+  auto* acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+  auto sai_attr = static_cast<sai_policer_attr_t>(
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION);
+  ASSERT_NE(nullptr, acl_rule);
+  // Check action field value
+  EXPECT_FALSE(acl_rule->meter.packet_metered_queues.empty());
+  EXPECT_NE(acl_rule->meter.packet_metered_queues.find(sai_attr),
+            acl_rule->meter.packet_metered_queues.end());
+  EXPECT_EQ(2, acl_rule->meter.packet_metered_queues[sai_attr].size());
+  EXPECT_EQ(SAI_PACKET_COLOR_GREEN,
+            acl_rule->meter.packet_metered_queues[sai_attr][0].key.color);
+  EXPECT_EQ(
+      green_multicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][0].value.queue_index);
+  EXPECT_EQ(SAI_PACKET_COLOR_RED,
+            acl_rule->meter.packet_metered_queues[sai_attr][1].key.color);
+  EXPECT_EQ(
+      red_multicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][1].value.queue_index);
+
+  sai_attr = static_cast<sai_policer_attr_t>(
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION);
+  // Check action field value
+  EXPECT_FALSE(acl_rule->meter.packet_metered_queues.empty());
+  EXPECT_NE(acl_rule->meter.packet_metered_queues.find(sai_attr),
+            acl_rule->meter.packet_metered_queues.end());
+  EXPECT_EQ(2, acl_rule->meter.packet_metered_queues[sai_attr].size());
+  EXPECT_EQ(SAI_PACKET_COLOR_GREEN,
+            acl_rule->meter.packet_metered_queues[sai_attr][0].key.color);
+  EXPECT_EQ(
+      green_unicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][0].value.queue_index);
+  EXPECT_EQ(SAI_PACKET_COLOR_RED,
+            acl_rule->meter.packet_metered_queues[sai_attr][1].key.color);
+  EXPECT_EQ(
+      red_unicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][1].value.queue_index);
+
+  EXPECT_TRUE(p4_oid_mapper_->getOID(SAI_OBJECT_TYPE_POLICER,
+                                     table_name_and_rule_key, &meter_oid));
+  EXPECT_EQ(kAclMeterOid1, meter_oid);
+  EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_POLICER,
+                                          table_name_and_rule_key, &ref_cnt));
+  EXPECT_EQ(1, ref_cnt);
+
+  // Remove rule
+  EXPECT_CALL(mock_sai_acl_, remove_acl_entry(Eq(kAclIngressRuleOid1)))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_acl_, remove_acl_counter(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_policer_, remove_policer(Eq(kAclMeterOid1)))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
+  EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
+}
+
+TEST_F(AclManagerTest,
+       AclRuleWithMeteredForwardingQueuesInvalidParamNameFails) {
+  ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+
+  auto app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
+  const auto& acl_rule_key =
+      KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
+
+  int cpu_queue_num = 9;
+  app_db_entry.action = "set_forwarding_queues";
+  app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(cpu_queue_num);
+  app_db_entry.action_param_fvs["invalid_param_name"] = "1";
+  app_db_entry.action_param_fvs["red_multicast_queue"] = "2";
+  app_db_entry.action_param_fvs["green_unicast_queue"] = "3";
+  app_db_entry.action_param_fvs["red_unicast_queue"] = "4";
+
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+            ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+}
+
+TEST_F(AclManagerTest,
+       AclRuleWithMeteredForwardingQueuesInvalidParamValueFails) {
+  ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+
+  auto app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
+  const auto& acl_rule_key =
+      KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
+
+  int cpu_queue_num = 9;
+  app_db_entry.action = "set_forwarding_queues";
+  app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(cpu_queue_num);
+  app_db_entry.action_param_fvs["green_multicast_queue"] =
+      "invalid queue number";
+  app_db_entry.action_param_fvs["red_multicast_queue"] = "invalid queue number";
+  app_db_entry.action_param_fvs["green_unicast_queue"] = "3";
+  app_db_entry.action_param_fvs["red_unicast_queue"] = "4";
+
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+            ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+}
+
+TEST_F(AclManagerTest, AclRuleWithMeteredForwardingQueuesNoParamFails) {
+  ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+
+  auto app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
+  const auto& acl_rule_key =
+      KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
+
+  int cpu_queue_num = 9;
+  app_db_entry.action = "set_forwarding_queues";
+  app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(cpu_queue_num);
+
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+            ProcessAddRuleRequest(acl_rule_key, app_db_entry));
 }
 
 TEST_F(AclManagerTest, AclRuleWithIpTypeBitEncoding)
@@ -4219,6 +4746,479 @@ TEST_F(AclManagerTest, UpdateAclRuleWithActionMeterChange)
     EXPECT_TRUE(acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID].aclaction.enable);
     EXPECT_EQ(gUserDefinedTrapStartOid + queue_num,
               acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID].aclaction.parameter.oid);
+}
+
+TEST_F(AclManagerTest, UpdateAclRuleWithMeteredForwardingQueueChange) {
+  ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+
+  auto app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
+  const auto& acl_rule_key =
+      KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
+  sai_object_id_t meter_oid;
+  uint32_t ref_cnt;
+  const auto& table_name_and_rule_key =
+      concatTableNameAndRuleKey(kAclIngressTableName, acl_rule_key);
+
+  // Set user defined trap for QOS_QUEUE, and metered forwarding qos queues.
+  int green_multicast_queue_num = 1;
+  int red_multicast_queue_num = 2;
+  int green_unicast_queue_num = 3;
+  int red_unicast_queue_num = 4;
+  int cpu_queue_num = 9;
+  app_db_entry.action = "set_forwarding_queues";
+  app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(cpu_queue_num);
+  app_db_entry.action_param_fvs["green_multicast_queue"] =
+      std::to_string(green_multicast_queue_num);
+  app_db_entry.action_param_fvs["red_multicast_queue"] =
+      std::to_string(red_multicast_queue_num);
+  app_db_entry.action_param_fvs["green_unicast_queue"] =
+      std::to_string(green_unicast_queue_num);
+  app_db_entry.action_param_fvs["red_unicast_queue"] =
+      std::to_string(red_unicast_queue_num);
+
+  sai_qos_map_list_t multicast_qos_map_list;
+  sai_qos_map_t multicast_qos_map;
+  std::vector<sai_qos_map_t> multicast_map_list;
+
+  /* Add green multicast packet map. */
+  memset(&multicast_qos_map, 0, sizeof(multicast_qos_map));
+  multicast_qos_map.key.color = SAI_PACKET_COLOR_GREEN;
+  multicast_qos_map.value.queue_index =
+      (sai_queue_index_t)green_multicast_queue_num;
+  multicast_map_list.push_back(multicast_qos_map);
+  /* Add red multicast packet map. */
+  memset(&multicast_qos_map, 0, sizeof(multicast_qos_map));
+  multicast_qos_map.key.color = SAI_PACKET_COLOR_RED;
+  multicast_qos_map.value.queue_index =
+      (sai_queue_index_t)red_multicast_queue_num;
+  multicast_map_list.push_back(multicast_qos_map);
+  /* Set up sai_qos_map_list_t. */
+  multicast_qos_map_list.count = (uint32_t)multicast_map_list.size();
+  multicast_qos_map_list.list = multicast_map_list.data();
+
+  sai_qos_map_list_t unicast_qos_map_list;
+  sai_qos_map_t unicast_qos_map;
+  std::vector<sai_qos_map_t> unicast_map_list;
+
+  /* Add green unicast packet map. */
+  memset(&unicast_qos_map, 0, sizeof(unicast_qos_map));
+  unicast_qos_map.key.color = SAI_PACKET_COLOR_GREEN;
+  unicast_qos_map.value.queue_index =
+      (sai_queue_index_t)green_unicast_queue_num;
+  unicast_map_list.push_back(unicast_qos_map);
+  /* Add red unicast packet map. */
+  memset(&unicast_qos_map, 0, sizeof(unicast_qos_map));
+  unicast_qos_map.key.color = SAI_PACKET_COLOR_RED;
+  unicast_qos_map.value.queue_index = (sai_queue_index_t)red_unicast_queue_num;
+  unicast_map_list.push_back(unicast_qos_map);
+  /* Set up sai_qos_map_list_t. */
+  unicast_qos_map_list.count = (uint32_t)unicast_map_list.size();
+  unicast_qos_map_list.list = unicast_map_list.data();
+
+  EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_policer_,
+              create_policer(
+                  _, Eq(gSwitchId), Eq(9),
+                  Truly(std::bind(MatchSaiPolicerAttributeForwardingQueues, 9,
+                                  multicast_qos_map_list, unicast_qos_map_list,
+                                  std::placeholders::_1))))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+
+  auto* acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+  auto sai_attr = static_cast<sai_policer_attr_t>(
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION);
+  ASSERT_NE(nullptr, acl_rule);
+  // Check action field value
+  EXPECT_FALSE(acl_rule->meter.packet_metered_queues.empty());
+  EXPECT_NE(acl_rule->meter.packet_metered_queues.find(sai_attr),
+            acl_rule->meter.packet_metered_queues.end());
+  EXPECT_EQ(2, acl_rule->meter.packet_metered_queues[sai_attr].size());
+  EXPECT_EQ(SAI_PACKET_COLOR_GREEN,
+            acl_rule->meter.packet_metered_queues[sai_attr][0].key.color);
+  EXPECT_EQ(
+      green_multicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][0].value.queue_index);
+  EXPECT_EQ(SAI_PACKET_COLOR_RED,
+            acl_rule->meter.packet_metered_queues[sai_attr][1].key.color);
+  EXPECT_EQ(
+      red_multicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][1].value.queue_index);
+
+  sai_attr = static_cast<sai_policer_attr_t>(
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION);
+  // Check action field value
+  EXPECT_FALSE(acl_rule->meter.packet_metered_queues.empty());
+  EXPECT_NE(acl_rule->meter.packet_metered_queues.find(sai_attr),
+            acl_rule->meter.packet_metered_queues.end());
+  EXPECT_EQ(2, acl_rule->meter.packet_metered_queues[sai_attr].size());
+  EXPECT_EQ(SAI_PACKET_COLOR_GREEN,
+            acl_rule->meter.packet_metered_queues[sai_attr][0].key.color);
+  EXPECT_EQ(
+      green_unicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][0].value.queue_index);
+  EXPECT_EQ(SAI_PACKET_COLOR_RED,
+            acl_rule->meter.packet_metered_queues[sai_attr][1].key.color);
+  EXPECT_EQ(
+      red_unicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][1].value.queue_index);
+
+  sai_attr = static_cast<sai_policer_attr_t>(
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION);
+  // Check action field value
+  EXPECT_FALSE(acl_rule->meter.packet_metered_queues.empty());
+  EXPECT_NE(acl_rule->meter.packet_metered_queues.find(sai_attr),
+            acl_rule->meter.packet_metered_queues.end());
+  EXPECT_EQ(2, acl_rule->meter.packet_metered_queues[sai_attr].size());
+  EXPECT_EQ(SAI_PACKET_COLOR_GREEN,
+            acl_rule->meter.packet_metered_queues[sai_attr][0].key.color);
+  EXPECT_EQ(
+      green_unicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][0].value.queue_index);
+  EXPECT_EQ(SAI_PACKET_COLOR_RED,
+            acl_rule->meter.packet_metered_queues[sai_attr][1].key.color);
+  EXPECT_EQ(
+      red_unicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][1].value.queue_index);
+
+  EXPECT_TRUE(p4_oid_mapper_->getOID(SAI_OBJECT_TYPE_POLICER,
+                                     table_name_and_rule_key, &meter_oid));
+  EXPECT_EQ(kAclMeterOid1, meter_oid);
+  EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_POLICER,
+                                          table_name_and_rule_key, &ref_cnt));
+  EXPECT_EQ(1, ref_cnt);
+
+  // Update rule.
+  green_multicast_queue_num = 5;
+  red_multicast_queue_num = 6;
+
+  app_db_entry.action = "set_forwarding_queues";
+  app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(cpu_queue_num);
+  app_db_entry.action_param_fvs["green_multicast_queue"] =
+      std::to_string(green_multicast_queue_num);
+  app_db_entry.action_param_fvs["red_multicast_queue"] =
+      std::to_string(red_multicast_queue_num);
+
+  multicast_map_list.clear();
+  /* Add green multicast packet map. */
+  memset(&multicast_qos_map, 0, sizeof(multicast_qos_map));
+  multicast_qos_map.key.color = SAI_PACKET_COLOR_GREEN;
+  multicast_qos_map.value.queue_index =
+      (sai_queue_index_t)green_multicast_queue_num;
+  multicast_map_list.push_back(multicast_qos_map);
+  /* Add red multicast packet map. */
+  memset(&multicast_qos_map, 0, sizeof(multicast_qos_map));
+  multicast_qos_map.key.color = SAI_PACKET_COLOR_RED;
+  multicast_qos_map.value.queue_index =
+      (sai_queue_index_t)red_multicast_queue_num;
+  multicast_map_list.push_back(multicast_qos_map);
+  /* Set up sai_qos_map_list_t. */
+  multicast_qos_map_list.count = (uint32_t)multicast_map_list.size();
+  multicast_qos_map_list.list = multicast_map_list.data();
+
+  /* Add green unicast packet map. */
+  memset(&unicast_qos_map, 0, sizeof(unicast_qos_map));
+  unicast_qos_map.key.color = SAI_PACKET_COLOR_GREEN;
+  unicast_qos_map.value.queue_index =
+      (sai_queue_index_t)green_unicast_queue_num;
+  unicast_map_list.push_back(unicast_qos_map);
+  /* Add red unicast packet map. */
+  memset(&unicast_qos_map, 0, sizeof(unicast_qos_map));
+  unicast_qos_map.key.color = SAI_PACKET_COLOR_RED;
+  unicast_qos_map.value.queue_index = (sai_queue_index_t)red_unicast_queue_num;
+  unicast_map_list.push_back(unicast_qos_map);
+  /* Set up sai_qos_map_list_t. */
+  unicast_qos_map_list.count = (uint32_t)unicast_map_list.size();
+  unicast_qos_map_list.list = unicast_map_list.data();
+
+  // Update rule success.
+  EXPECT_CALL(mock_sai_policer_, set_policer_attribute(Eq(kAclMeterOid1), _))
+      .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_policer_,
+              set_policer_attribute(
+                  Eq(kAclMeterOid1),
+                  Truly(std::bind(MatchSaiPolicerAttributeForwardingQueues, 1,
+                                  multicast_qos_map_list, unicast_qos_map_list,
+                                  std::placeholders::_1))))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ProcessUpdateRuleRequest(app_db_entry, *acl_rule));
+
+  acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+  ASSERT_NE(nullptr, acl_rule);
+  // Check action field value
+  sai_attr = static_cast<sai_policer_attr_t>(
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION);
+  ASSERT_NE(nullptr, acl_rule);
+  // Check action field value
+  EXPECT_FALSE(acl_rule->meter.packet_metered_queues.empty());
+  EXPECT_NE(acl_rule->meter.packet_metered_queues.find(sai_attr),
+            acl_rule->meter.packet_metered_queues.end());
+  EXPECT_EQ(2, acl_rule->meter.packet_metered_queues[sai_attr].size());
+  EXPECT_EQ(SAI_PACKET_COLOR_GREEN,
+            acl_rule->meter.packet_metered_queues[sai_attr][0].key.color);
+  EXPECT_EQ(
+      green_multicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][0].value.queue_index);
+  EXPECT_EQ(SAI_PACKET_COLOR_RED,
+            acl_rule->meter.packet_metered_queues[sai_attr][1].key.color);
+  EXPECT_EQ(
+      red_multicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][1].value.queue_index);
+
+  sai_attr = static_cast<sai_policer_attr_t>(
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION);
+  // Check action field value
+  EXPECT_FALSE(acl_rule->meter.packet_metered_queues.empty());
+  EXPECT_NE(acl_rule->meter.packet_metered_queues.find(sai_attr),
+            acl_rule->meter.packet_metered_queues.end());
+  EXPECT_EQ(2, acl_rule->meter.packet_metered_queues[sai_attr].size());
+  EXPECT_EQ(SAI_PACKET_COLOR_GREEN,
+            acl_rule->meter.packet_metered_queues[sai_attr][0].key.color);
+  EXPECT_EQ(
+      green_unicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][0].value.queue_index);
+  EXPECT_EQ(SAI_PACKET_COLOR_RED,
+            acl_rule->meter.packet_metered_queues[sai_attr][1].key.color);
+  EXPECT_EQ(
+      red_unicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][1].value.queue_index);
+
+  EXPECT_TRUE(p4_oid_mapper_->getOID(SAI_OBJECT_TYPE_POLICER,
+                                     table_name_and_rule_key, &meter_oid));
+  EXPECT_EQ(kAclMeterOid1, meter_oid);
+  EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_POLICER,
+                                          table_name_and_rule_key, &ref_cnt));
+  EXPECT_EQ(1, ref_cnt);
+
+  // No policer update if new rule has the same queues in different order.
+  app_db_entry.action = "set_forwarding_queues";
+  app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(cpu_queue_num);
+  app_db_entry.action_param_fvs["red_multicast_queue"] =
+      std::to_string(red_multicast_queue_num);
+  app_db_entry.action_param_fvs["green_multicast_queue"] =
+      std::to_string(green_multicast_queue_num);
+  app_db_entry.action_param_fvs["red_unicast_queue"] =
+      std::to_string(red_unicast_queue_num);
+  app_db_entry.action_param_fvs["green_unicast_queue"] =
+      std::to_string(green_unicast_queue_num);
+
+  EXPECT_CALL(mock_sai_policer_, set_policer_attribute(_, _)).Times(0);
+  EXPECT_CALL(mock_sai_policer_, set_policer_attribute(_, _)).Times(0);
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ProcessUpdateRuleRequest(app_db_entry, *acl_rule));
+
+  // Update rule fails with no param.
+  app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
+  app_db_entry.action = "set_forwarding_queues";
+  app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(cpu_queue_num);
+
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+            ProcessUpdateRuleRequest(app_db_entry, *acl_rule));
+
+  // Update rule fails when update meter attribute fails.
+  app_db_entry.action_param_fvs["green_multicast_queue"] =
+      std::to_string(green_multicast_queue_num + 1);
+  app_db_entry.action_param_fvs["red_multicast_queue"] =
+      std::to_string(red_multicast_queue_num + 1);
+  app_db_entry.action_param_fvs["red_unicast_queue"] =
+      std::to_string(red_unicast_queue_num + 1);
+  app_db_entry.action_param_fvs["green_unicast_queue"] =
+      std::to_string(green_unicast_queue_num + 1);
+
+  EXPECT_CALL(mock_sai_policer_, set_policer_attribute(Eq(kAclMeterOid1), _))
+      .WillOnce(Return(SAI_STATUS_NOT_SUPPORTED));
+  EXPECT_EQ(StatusCode::SWSS_RC_UNIMPLEMENTED,
+            ProcessUpdateRuleRequest(app_db_entry, *acl_rule));
+
+  acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+  ASSERT_NE(nullptr, acl_rule);
+  // Check action field value
+  sai_attr = static_cast<sai_policer_attr_t>(
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION);
+  ASSERT_NE(nullptr, acl_rule);
+  // Check action field value
+  EXPECT_FALSE(acl_rule->meter.packet_metered_queues.empty());
+  EXPECT_NE(acl_rule->meter.packet_metered_queues.find(sai_attr),
+            acl_rule->meter.packet_metered_queues.end());
+  EXPECT_EQ(2, acl_rule->meter.packet_metered_queues[sai_attr].size());
+  EXPECT_EQ(SAI_PACKET_COLOR_GREEN,
+            acl_rule->meter.packet_metered_queues[sai_attr][0].key.color);
+  EXPECT_EQ(
+      green_multicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][0].value.queue_index);
+  EXPECT_EQ(SAI_PACKET_COLOR_RED,
+            acl_rule->meter.packet_metered_queues[sai_attr][1].key.color);
+  EXPECT_EQ(
+      red_multicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][1].value.queue_index);
+
+  sai_attr = static_cast<sai_policer_attr_t>(
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION);
+  // Check action field value
+  EXPECT_FALSE(acl_rule->meter.packet_metered_queues.empty());
+  EXPECT_NE(acl_rule->meter.packet_metered_queues.find(sai_attr),
+            acl_rule->meter.packet_metered_queues.end());
+  EXPECT_EQ(2, acl_rule->meter.packet_metered_queues[sai_attr].size());
+  EXPECT_EQ(SAI_PACKET_COLOR_GREEN,
+            acl_rule->meter.packet_metered_queues[sai_attr][0].key.color);
+  EXPECT_EQ(
+      green_unicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][0].value.queue_index);
+  EXPECT_EQ(SAI_PACKET_COLOR_RED,
+            acl_rule->meter.packet_metered_queues[sai_attr][1].key.color);
+  EXPECT_EQ(
+      red_unicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][1].value.queue_index);
+
+  EXPECT_TRUE(p4_oid_mapper_->getOID(SAI_OBJECT_TYPE_POLICER,
+                                     table_name_and_rule_key, &meter_oid));
+  EXPECT_EQ(kAclMeterOid1, meter_oid);
+  EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_POLICER,
+                                          table_name_and_rule_key, &ref_cnt));
+  EXPECT_EQ(1, ref_cnt);
+
+  // Update rule with different action.
+  app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
+  int queue_num = 9;
+  app_db_entry.action = "qos_queue";
+  app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(queue_num);
+
+  multicast_qos_map_list.count = 0;
+  multicast_qos_map_list.list = NULL;
+
+  EXPECT_CALL(mock_sai_policer_, set_policer_attribute(Eq(kAclMeterOid1), _))
+      .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_policer_,
+              set_policer_attribute(
+                  Eq(kAclMeterOid1),
+                  Truly(std::bind(MatchSaiPolicerAttributeForwardingQueues, 1,
+                                  multicast_qos_map_list, unicast_qos_map_list,
+                                  std::placeholders::_1))))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ProcessUpdateRuleRequest(app_db_entry, *acl_rule));
+
+  acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+  ASSERT_NE(nullptr, acl_rule);
+  // Check action field value
+  EXPECT_TRUE(acl_rule->meter.packet_metered_queues.empty());
+
+  EXPECT_TRUE(p4_oid_mapper_->getOID(SAI_OBJECT_TYPE_POLICER,
+                                     table_name_and_rule_key, &meter_oid));
+  EXPECT_EQ(kAclMeterOid1, meter_oid);
+  EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_POLICER,
+                                          table_name_and_rule_key, &ref_cnt));
+  EXPECT_EQ(1, ref_cnt);
+
+  // Update rule overwrite previous action.
+  app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
+  app_db_entry.action = "set_forwarding_queues";
+  app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(cpu_queue_num);
+  app_db_entry.action_param_fvs["green_multicast_queue"] =
+      std::to_string(green_multicast_queue_num);
+  app_db_entry.action_param_fvs["red_multicast_queue"] =
+      std::to_string(red_multicast_queue_num);
+
+  app_db_entry.action_param_fvs["green_unicast_queue"] =
+      std::to_string(green_unicast_queue_num);
+  app_db_entry.action_param_fvs["red_unicast_queue"] =
+      std::to_string(red_unicast_queue_num);
+
+  multicast_map_list.clear();
+  /* Add green multicast packet map. */
+  memset(&multicast_qos_map, 0, sizeof(multicast_qos_map));
+  multicast_qos_map.key.color = SAI_PACKET_COLOR_GREEN;
+  multicast_qos_map.value.queue_index =
+      (sai_queue_index_t)green_multicast_queue_num;
+  multicast_map_list.push_back(multicast_qos_map);
+  /* Add red multicast packet map. */
+  memset(&multicast_qos_map, 0, sizeof(multicast_qos_map));
+  multicast_qos_map.key.color = SAI_PACKET_COLOR_RED;
+  multicast_qos_map.value.queue_index =
+      (sai_queue_index_t)red_multicast_queue_num;
+  multicast_map_list.push_back(multicast_qos_map);
+  /* Set up sai_qos_map_list_t. */
+  multicast_qos_map_list.count = (uint32_t)multicast_map_list.size();
+  multicast_qos_map_list.list = multicast_map_list.data();
+
+  /* Add green unicast packet map. */
+  memset(&unicast_qos_map, 0, sizeof(unicast_qos_map));
+  unicast_qos_map.key.color = SAI_PACKET_COLOR_GREEN;
+  unicast_qos_map.value.queue_index =
+      (sai_queue_index_t)green_unicast_queue_num;
+  unicast_map_list.push_back(unicast_qos_map);
+  /* Add red unicast packet map. */
+  memset(&unicast_qos_map, 0, sizeof(unicast_qos_map));
+  unicast_qos_map.key.color = SAI_PACKET_COLOR_RED;
+  unicast_qos_map.value.queue_index = (sai_queue_index_t)red_unicast_queue_num;
+  unicast_map_list.push_back(unicast_qos_map);
+  /* Set up sai_qos_map_list_t. */
+  unicast_qos_map_list.count = (uint32_t)unicast_map_list.size();
+  unicast_qos_map_list.list = unicast_map_list.data();
+
+  EXPECT_CALL(mock_sai_policer_,
+              set_policer_attribute(
+                  Eq(kAclMeterOid1),
+                  Truly(std::bind(MatchSaiPolicerAttributeForwardingQueues, 1,
+                                  multicast_qos_map_list, unicast_qos_map_list,
+                                  std::placeholders::_1))))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ProcessUpdateRuleRequest(app_db_entry, *acl_rule));
+
+  acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+  ASSERT_NE(nullptr, acl_rule);
+  // Check action field value
+  sai_attr = static_cast<sai_policer_attr_t>(
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION);
+  ASSERT_NE(nullptr, acl_rule);
+  // Check action field value
+  EXPECT_FALSE(acl_rule->meter.packet_metered_queues.empty());
+  EXPECT_NE(acl_rule->meter.packet_metered_queues.find(sai_attr),
+            acl_rule->meter.packet_metered_queues.end());
+  EXPECT_EQ(2, acl_rule->meter.packet_metered_queues[sai_attr].size());
+  EXPECT_EQ(SAI_PACKET_COLOR_GREEN,
+            acl_rule->meter.packet_metered_queues[sai_attr][0].key.color);
+  EXPECT_EQ(
+      green_multicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][0].value.queue_index);
+  EXPECT_EQ(SAI_PACKET_COLOR_RED,
+            acl_rule->meter.packet_metered_queues[sai_attr][1].key.color);
+  EXPECT_EQ(
+      red_multicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][1].value.queue_index);
+
+  sai_attr = static_cast<sai_policer_attr_t>(
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION);
+  // Check action field value
+  EXPECT_FALSE(acl_rule->meter.packet_metered_queues.empty());
+  EXPECT_NE(acl_rule->meter.packet_metered_queues.find(sai_attr),
+            acl_rule->meter.packet_metered_queues.end());
+  EXPECT_EQ(2, acl_rule->meter.packet_metered_queues[sai_attr].size());
+  EXPECT_EQ(SAI_PACKET_COLOR_GREEN,
+            acl_rule->meter.packet_metered_queues[sai_attr][0].key.color);
+  EXPECT_EQ(
+      green_unicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][0].value.queue_index);
+  EXPECT_EQ(SAI_PACKET_COLOR_RED,
+            acl_rule->meter.packet_metered_queues[sai_attr][1].key.color);
+  EXPECT_EQ(
+      red_unicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][1].value.queue_index);
+
+  EXPECT_TRUE(p4_oid_mapper_->getOID(SAI_OBJECT_TYPE_POLICER,
+                                     table_name_and_rule_key, &meter_oid));
+  EXPECT_EQ(kAclMeterOid1, meter_oid);
+  EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_POLICER,
+                                          table_name_and_rule_key, &ref_cnt));
+  EXPECT_EQ(1, ref_cnt);
 }
 
 #pragma GCC diagnostic pop
@@ -5291,7 +6291,8 @@ TEST_F(AclManagerTest, AclTableVerifyStateTest)
               std::vector<swss::FieldValueTuple>{
                   swss::FieldValueTuple{"SAI_UDF_GROUP_ATTR_TYPE", "SAI_UDF_GROUP_TYPE_GENERIC"},
                   swss::FieldValueTuple{"SAI_UDF_GROUP_ATTR_LENGTH", "2"},
-                  swss::FieldValueTuple{"SAI_UDF_GROUP_ATTR_LABEL", kUdfGroupMapperLabel}});
+                  swss::FieldValueTuple{"SAI_UDF_GROUP_ATTR_LABEL",
+                                        kUdfGroupMapperLabel}});
     table.set("SAI_OBJECT_TYPE_UDF:oid:0x1771",
               std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"SAI_UDF_ATTR_GROUP_ID", "oid:0xfa1"},
                                                  swss::FieldValueTuple{"SAI_UDF_ATTR_MATCH_ID", "oid:0x1389"},
@@ -5415,6 +6416,13 @@ TEST_F(AclManagerTest, AclTableVerifyStateTest)
     EXPECT_FALSE(VerifyTableState(db_key, attributes).empty());
     acl_table->rule_packet_action_color_lookup.erase("invalid");
 
+    // Verification should fail if rule packet action color param lookup
+    // mismatches.
+    acl_table->rule_action_color_param_lookup["invalid"] =
+        std::map<sai_policer_attr_t, std::vector<SaiColorWithParam>>{};
+    EXPECT_FALSE(VerifyTableState(db_key, attributes).empty());
+    acl_table->rule_action_color_param_lookup.erase("invalid");
+
     // Verification should fail if group member OID mapping mismatches.
     auto saved_group_member_oid = acl_table->group_member_oid;
     acl_table->group_member_oid = 0;
@@ -5426,6 +6434,211 @@ TEST_F(AclManagerTest, AclTableVerifyStateTest)
     acl_table->table_oid = 0;
     EXPECT_FALSE(VerifyTableState(db_key, attributes).empty());
     acl_table->table_oid = saved_table_oid;
+}
+
+TEST_F(AclManagerTest, AclRuleVerifyStateWithMeteredQosQueuesTest) {
+  ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+  std::vector<swss::FieldValueTuple> attributes;
+  // Add set_forwarding_queues action.
+  attributes.push_back(swss::FieldValueTuple{kAction, "set_forwarding_queues"});
+  attributes.push_back(swss::FieldValueTuple{"param/cpu_queue", "10"});
+  attributes.push_back(
+      swss::FieldValueTuple{"param/green_multicast_queue", "1"});
+  attributes.push_back(swss::FieldValueTuple{"param/red_multicast_queue", "2"});
+  attributes.push_back(swss::FieldValueTuple{"param/green_unicast_queue", "3"});
+  attributes.push_back(swss::FieldValueTuple{"param/red_unicast_queue", "4"});
+  attributes.push_back(swss::FieldValueTuple{"meter/cir", "80"});
+  attributes.push_back(swss::FieldValueTuple{"meter/cburst", "80"});
+  attributes.push_back(swss::FieldValueTuple{"controller_metadata", "..."});
+  const auto& acl_rule_json_key =
+      "{\"match/ether_type\":\"0x0800\",\"match/"
+      "ipv6_dst\":\"fdf8:f53b:82e4::53 & "
+      "fdf8:f53b:82e4::53\",\"match/arp_tpa\": \"0xff112231\", "
+      "\"match/in_ports\": \"Ethernet1,Ethernet2\", \"match/out_ports\": "
+      "\"Ethernet4,Ethernet5\", \"priority\":15,\"match/ipmc_table_hit\":"
+      "\"0x1\",\"match/vrf_id\":\"b4-traffic\"}";
+  std::string mapper_key =
+      "P4RT_TABLE:ACL_PUNT_TABLE:match/arp_tpa=0xff112231:match/"
+      "ether_type=0x0800:match/in_ports=Ethernet1,Ethernet2:match/"
+      "ipmc_table_hit=0x1:match/ipv6_dst=fdf8:f53b:82e4::53 & "
+      "fdf8:f53b:82e4::53:match/out_ports=Ethernet4,Ethernet5:match/"
+      "vrf_id=b4-traffic:priority=15";
+
+  const auto& rule_tuple_key = std::string(kAclIngressTableName) +
+                               kTableKeyDelimiter + acl_rule_json_key;
+  EnqueueRuleTuple(
+      std::string(kAclIngressTableName),
+      swss::KeyOpFieldsValuesTuple({rule_tuple_key, SET_COMMAND, attributes}));
+  EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(
+      *gMockResponsePublisher,
+      publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key), Eq(attributes),
+              Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            DrainRuleTuples(/*failure_before=*/false));
+
+  // Setup ASIC DB.
+  swss::Table table(nullptr, "ASIC_STATE");
+  table.set(
+      "SAI_OBJECT_TYPE_ACL_ENTRY:oid:0x3e9",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_TABLE_ID",
+                                "oid:0x7000000000606"},
+          swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_PRIORITY", "15"},
+          swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_ADMIN_STATE", "true"},
+          swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6",
+                                "fdf8:f53b:82e4::53&mask:fdf8:f53b:82e4::53"},
+          swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE",
+                                "2048&mask:0xffff"},
+          swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_TYPE",
+                                "SAI_ACL_IP_TYPE_ANY&mask:0xffffffffffffffff"},
+          swss::FieldValueTuple{
+              "SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN",
+              "2:255,17&mask:2:0xff,0xff"},
+          swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_VRF_ID", "oid:0x6f"},
+          swss::FieldValueTuple{
+              "SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT", "true"},
+          swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1",
+                                "2:34,49&mask:2:0xff,0xff"},
+          swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS",
+                                "2:oid:0x112233,oid:0x1fed3"},
+          swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORTS",
+                                "2:oid:0x9988,oid:0x56789abcdef"},
+          swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER",
+                                "oid:0x7d1"},
+          swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_ACTION_COUNTER", "oid:0x0"},
+          swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID",
+                                "oid:0x33"}});
+  table.set("SAI_OBJECT_TYPE_ACL_COUNTER:oid:0x0",
+            std::vector<swss::FieldValueTuple>{
+                swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_TABLE_ID",
+                                      "oid:0x7000000000606"},
+                swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_ENABLE_BYTE_COUNT",
+                                      "true"},
+                swss::FieldValueTuple{
+                    "SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT", "true"},
+                swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_LABEL",
+                                      kAclCounterLabel2}});
+  std::string label;
+  EXPECT_TRUE(
+      gLabelMapper->getLabel(SAI_OBJECT_TYPE_POLICER, mapper_key, label));
+  table.set(
+      "SAI_OBJECT_TYPE_POLICER:oid:0x7d1",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_POLICER_ATTR_MODE",
+                                "SAI_POLICER_MODE_STORM_CONTROL"},
+          swss::FieldValueTuple{"SAI_POLICER_ATTR_METER_TYPE",
+                                "SAI_METER_TYPE_BYTES"},
+          swss::FieldValueTuple{"SAI_POLICER_ATTR_CBS", "80"},
+          swss::FieldValueTuple{"SAI_POLICER_ATTR_CIR", "80"},
+          swss::FieldValueTuple{"SAI_POLICER_ATTR_LABEL", label.c_str()},
+          swss::FieldValueTuple{"SAI_POLICER_ATTR_GREEN_PACKET_ACTION",
+                                "SAI_PACKET_ACTION_FORWARD"},
+          swss::FieldValueTuple{"SAI_POLICER_ATTR_RED_PACKET_ACTION",
+                                "SAI_PACKET_ACTION_DENY"},
+          swss::FieldValueTuple{
+              "SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION",
+              "{\"count\":2,\"list\":[{\"key\":{\"color\":\"SAI_PACKET_COLOR_"
+              "GREEN\",\"dot1p\":0,\"dscp\":0,\"fc\":0,\"mpls_exp\":0,\"pg\":0,"
+              "\"prio\":0,\"qidx\":0,\"tc\":0},\"value\":{\"color\":\"SAI_"
+              "PACKET_COLOR_GREEN\",\"dot1p\":0,\"dscp\":0,\"fc\":0,\"mpls_"
+              "exp\":0,\"pg\":0,\"prio\":0,\"qidx\":1,\"tc\":0}},{\"key\":{"
+              "\"color\":\"SAI_PACKET_COLOR_RED\",\"dot1p\":0,\"dscp\":0,"
+              "\"fc\":0,\"mpls_exp\":0,\"pg\":0,\"prio\":0,\"qidx\":0,\"tc\":0}"
+              ",\"value\":{\"color\":\"SAI_PACKET_COLOR_GREEN\",\"dot1p\":0,"
+              "\"dscp\":0,\"fc\":0,\"mpls_exp\":0,\"pg\":0,\"prio\":0,\"qidx\":"
+              "2,\"tc\":0}}]}"},
+          swss::FieldValueTuple{
+              "SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION",
+              "{\"count\":2,\"list\":[{\"key\":{\"color\":\"SAI_PACKET_COLOR_"
+              "GREEN\",\"dot1p\":0,\"dscp\":0,\"fc\":0,\"mpls_exp\":0,\"pg\":0,"
+              "\"prio\":0,\"qidx\":0,\"tc\":0},\"value\":{\"color\":\"SAI_"
+              "PACKET_COLOR_GREEN\",\"dot1p\":0,\"dscp\":0,\"fc\":0,\"mpls_"
+              "exp\":0,\"pg\":0,\"prio\":0,\"qidx\":3,\"tc\":0}},{\"key\":{"
+              "\"color\":\"SAI_PACKET_COLOR_RED\",\"dot1p\":0,\"dscp\":0,"
+              "\"fc\":0,\"mpls_exp\":0,\"pg\":0,\"prio\":0,\"qidx\":0,\"tc\":0}"
+              ",\"value\":{\"color\":\"SAI_PACKET_COLOR_GREEN\",\"dot1p\":0,"
+              "\"dscp\":0,\"fc\":0,\"mpls_exp\":0,\"pg\":0,\"prio\":0,\"qidx\":"
+              "4,\"tc\":0}}]}"}});
+
+  // Verification should be skipped with ACL table entry for ACL rule
+  // verification.
+  const std::string table_db_key = std::string(APP_P4RT_TABLE_NAME) +
+                                   kTableKeyDelimiter +
+                                   APP_P4RT_ACL_TABLE_DEFINITION_NAME +
+                                   kTableKeyDelimiter + kAclIngressTableName;
+  EXPECT_EQ(VerifyRuleState(table_db_key, std::vector<swss::FieldValueTuple>{}),
+            "");
+
+  // Verification should succeed with vaild key and value.
+  const std::string db_key =
+      std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter + rule_tuple_key;
+  EXPECT_EQ(VerifyRuleState(db_key, attributes), "");
+
+  const auto& acl_rule_key =
+      "match/arp_tpa=0xff112231:match/ether_type=0x0800:match/"
+      "in_ports=Ethernet1,Ethernet2:match/ipmc_table_hit=0x1:"
+      "match/ipv6_dst=fdf8:f53b:82e4::53 & "
+      "fdf8:f53b:82e4::53:match/out_ports=Ethernet4,Ethernet5:match/"
+      "vrf_id=b4-traffic:priority=15";
+  auto* acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+  ASSERT_NE(acl_rule, nullptr);
+
+  // Verification should fail if packet_metered_queues doesn't match.
+  auto saved_metered_multicast_qos_queues =
+      acl_rule->meter.packet_metered_queues[static_cast<sai_policer_attr_t>(
+          SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION)];
+  acl_rule->meter
+      .packet_metered_queues[static_cast<sai_policer_attr_t>(
+          SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION)]
+      .clear();
+  EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty());
+  acl_rule->meter.packet_metered_queues[static_cast<sai_policer_attr_t>(
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION)] =
+      saved_metered_multicast_qos_queues;
+
+  saved_metered_multicast_qos_queues =
+      acl_rule->meter.packet_metered_queues[static_cast<sai_policer_attr_t>(
+          SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION)];
+  acl_rule->meter
+      .packet_metered_queues[static_cast<sai_policer_attr_t>(
+          SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION)][0]
+      .value.queue_index = 13;
+  EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty());
+  acl_rule->meter.packet_metered_queues[static_cast<sai_policer_attr_t>(
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION)] =
+      saved_metered_multicast_qos_queues;
+
+  auto saved_metered_unicast_qos_queues =
+      acl_rule->meter.packet_metered_queues[static_cast<sai_policer_attr_t>(
+          SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION)];
+  acl_rule->meter
+      .packet_metered_queues[static_cast<sai_policer_attr_t>(
+          SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION)]
+      .clear();
+  EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty());
+  acl_rule->meter.packet_metered_queues[static_cast<sai_policer_attr_t>(
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION)] =
+      saved_metered_unicast_qos_queues;
+
+  saved_metered_unicast_qos_queues =
+      acl_rule->meter.packet_metered_queues[static_cast<sai_policer_attr_t>(
+          SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION)];
+  acl_rule->meter
+      .packet_metered_queues[static_cast<sai_policer_attr_t>(
+          SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION)][0]
+      .value.queue_index = 13;
+  EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty());
+  acl_rule->meter.packet_metered_queues[static_cast<sai_policer_attr_t>(
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION)] =
+      saved_metered_unicast_qos_queues;
 }
 
 TEST_F(AclManagerTest, AclRuleVerifyStateTest)
@@ -5502,7 +6715,9 @@ TEST_F(AclManagerTest, AclRuleVerifyStateTest)
               std::vector<swss::FieldValueTuple>{
                   swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_TABLE_ID", "oid:0x7000000000606"},
                   swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_ENABLE_BYTE_COUNT", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT", "true"}});
+                  swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT", "true"},
+                  swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_LABEL",
+                                        kAclCounterLabel2}});
     table.set(
         "SAI_OBJECT_TYPE_POLICER:oid:0x7d1",
         std::vector<swss::FieldValueTuple>{
@@ -5886,7 +7101,8 @@ TEST_F(AclManagerTest, AclTableVerifyStateAsicDbTest)
               std::vector<swss::FieldValueTuple>{
                   swss::FieldValueTuple{"SAI_UDF_GROUP_ATTR_TYPE", "SAI_UDF_GROUP_TYPE_GENERIC"},
                   swss::FieldValueTuple{"SAI_UDF_GROUP_ATTR_LENGTH", "2"},
-                  swss::FieldValueTuple{"SAI_UDF_GROUP_ATTR_LABEL", kUdfGroupMapperLabel}});
+                  swss::FieldValueTuple{"SAI_UDF_GROUP_ATTR_LABEL",
+                                        kUdfGroupMapperLabel}});
     table.set("SAI_OBJECT_TYPE_UDF:oid:0x1771",
               std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"SAI_UDF_ATTR_GROUP_ID", "oid:0xfa1"},
                                                  swss::FieldValueTuple{"SAI_UDF_ATTR_MATCH_ID", "oid:0x1389"},
@@ -5959,7 +7175,8 @@ TEST_F(AclManagerTest, AclTableVerifyStateAsicDbTest)
               std::vector<swss::FieldValueTuple>{
                   swss::FieldValueTuple{"SAI_UDF_GROUP_ATTR_TYPE", "SAI_UDF_GROUP_TYPE_GENERIC"},
                   swss::FieldValueTuple{"SAI_UDF_GROUP_ATTR_LENGTH", "2"},
-                  swss::FieldValueTuple{"SAI_UDF_GROUP_ATTR_LABEL", kUdfGroupMapperLabel}});
+                  swss::FieldValueTuple{"SAI_UDF_GROUP_ATTR_LABEL",
+                                        kUdfGroupMapperLabel}});
 
     // Verification should fail if udf mismatch.
     table.set("SAI_OBJECT_TYPE_UDF:oid:0x1771",
@@ -6018,7 +7235,9 @@ TEST_F(AclManagerTest, AclRuleVerifyStateAsicDbTest)
               std::vector<swss::FieldValueTuple>{
                   swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_TABLE_ID", "oid:0x7000000000606"},
                   swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_ENABLE_BYTE_COUNT", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT", "true"}});
+                  swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT", "true"},
+                  swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_LABEL",
+                                        kAclCounterLabel1}});
     table.set(
         "SAI_OBJECT_TYPE_POLICER:oid:0x7d1",
         std::vector<swss::FieldValueTuple>{
@@ -6055,8 +7274,12 @@ TEST_F(AclManagerTest, AclRuleVerifyStateAsicDbTest)
             swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_ACTION_COUNTER", "oid:0xbb9"}});
 
     // Verification should fail if counter entry mismatch.
-    table.set("SAI_OBJECT_TYPE_ACL_COUNTER:oid:0xbb9",
-              std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_TABLE_ID", "oid:0x0"}});
+    table.set(
+        "SAI_OBJECT_TYPE_ACL_COUNTER:oid:0xbb9",
+        std::vector<swss::FieldValueTuple>{
+            swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_TABLE_ID", "oid:0x0"},
+            swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_LABEL",
+                                  kAclCounterLabel1}});
     EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty());
 
     // Verification should fail if counter entry is missing.
@@ -6066,7 +7289,9 @@ TEST_F(AclManagerTest, AclRuleVerifyStateAsicDbTest)
               std::vector<swss::FieldValueTuple>{
                   swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_TABLE_ID", "oid:0x7000000000606"},
                   swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_ENABLE_BYTE_COUNT", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT", "true"}});
+                  swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT", "true"},
+                  swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_LABEL",
+                                        kAclCounterLabel1}});
 
     // Verification should fail if meter entry mismatch.
     table.set("SAI_OBJECT_TYPE_POLICER:oid:0x7d1",

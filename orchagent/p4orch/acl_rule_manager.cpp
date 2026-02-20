@@ -11,6 +11,7 @@
 #include "dbconnector.h"
 #include "intfsorch.h"
 #include "logger.h"
+#include "namelabelmapper.h"
 #include "orch.h"
 #include "p4orch.h"
 #include "p4orch/p4orch_util.h"
@@ -32,6 +33,7 @@ extern sai_hostif_api_t *sai_hostif_api;
 extern CrmOrch *gCrmOrch;
 extern PortsOrch *gPortsOrch;
 extern P4Orch *gP4Orch;
+extern NameLabelMapper* gLabelMapper;
 
 namespace p4orch
 {
@@ -96,8 +98,9 @@ std::vector<sai_attribute_t> getRuleSaiAttrs(const P4AclRule &acl_rule)
     return acl_entry_attrs;
 }
 
-std::vector<sai_attribute_t> getCounterSaiAttrs(const P4AclRule &acl_rule)
-{
+std::vector<sai_attribute_t> getCounterSaiAttrs(const P4AclRule& acl_rule,
+                                                std::string& mapper_key,
+                                                std::string& counter_label) {
     sai_attribute_t attr;
     std::vector<sai_attribute_t> counter_attrs;
     attr.id = SAI_ACL_COUNTER_ATTR_TABLE_ID;
@@ -118,10 +121,23 @@ std::vector<sai_attribute_t> getCounterSaiAttrs(const P4AclRule &acl_rule)
         counter_attrs.push_back(attr);
     }
 
+    // Add label to uniquely identify acl counters.
+    const std::string counter_key =
+      concatTableNameAndRuleKey(acl_rule.acl_table_name, acl_rule.acl_rule_key);
+
+    bool label_present = gLabelMapper->addLabelToAttr(
+        SAI_OBJECT_TYPE_ACL_COUNTER, APP_P4RT_TABLE_NAME, counter_key, attr,
+        SAI_ACL_COUNTER_ATTR_LABEL, mapper_key, counter_label);
+
+    if (label_present) {
+      mapper_key = "";
+    }
+    counter_attrs.push_back(attr);
+
     return counter_attrs;
 }
 
-std::vector<sai_attribute_t> getMeterSaiAttrs(const P4AclMeter &p4_acl_meter)
+std::vector<sai_attribute_t> getMeterSaiAttrs(P4AclMeter& p4_acl_meter)
 {
     std::vector<sai_attribute_t> meter_attrs;
     sai_attribute_t meter_attr;
@@ -157,6 +173,17 @@ std::vector<sai_attribute_t> getMeterSaiAttrs(const P4AclMeter &p4_acl_meter)
     {
         meter_attr.id = fvField(packet_color_action);
         meter_attr.value.s32 = fvValue(packet_color_action);
+        meter_attrs.push_back(meter_attr);
+    }
+
+    for (auto& metered_queues : p4_acl_meter.packet_metered_queues)
+    {
+        meter_attr.id = fvField(metered_queues);
+
+        sai_qos_map_list_t qos_map_list;
+        qos_map_list.count = (uint32_t)fvValue(metered_queues).size();
+        qos_map_list.list = fvValue(metered_queues).data();
+        meter_attr.value.qosmap = qos_map_list;
         meter_attrs.push_back(meter_attr);
     }
 
@@ -373,8 +400,10 @@ ReturnCode AclRuleManager::createAclCounter(const std::string &acl_table_name, c
                                             const P4AclRule &acl_rule, sai_object_id_t *counter_oid)
 {
     SWSS_LOG_ENTER();
+    std::string mapper_key;
+    std::string counter_label;
 
-    auto attrs = getCounterSaiAttrs(acl_rule);
+    auto attrs = getCounterSaiAttrs(acl_rule, mapper_key, counter_label);
 
     CHECK_ERROR_AND_LOG_AND_RETURN(
         sai_acl_api->create_acl_counter(counter_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data()),
@@ -383,6 +412,12 @@ ReturnCode AclRuleManager::createAclCounter(const std::string &acl_table_name, c
     m_p4OidMapper->setOID(SAI_OBJECT_TYPE_ACL_COUNTER, counter_key, *counter_oid);
     gCrmOrch->incCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_COUNTER, acl_rule.acl_table_oid);
     m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_ACL_TABLE, acl_table_name);
+
+    if (mapper_key != "")
+    {
+      gLabelMapper->setLabel(SAI_OBJECT_TYPE_ACL_COUNTER, mapper_key,
+                             counter_label);
+    }
     return ReturnCode();
 }
 
@@ -409,23 +444,42 @@ ReturnCode AclRuleManager::removeAclCounter(const std::string &acl_table_name, c
     gCrmOrch->decCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_COUNTER, table_oid);
     m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_ACL_COUNTER, counter_key);
     m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_ACL_TABLE, acl_table_name);
+    gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_ACL_COUNTER,
+                             gLabelMapper->generateKeyFromTableAndObjectName(
+                                 APP_P4RT_TABLE_NAME, counter_key));
+
     SWSS_LOG_NOTICE("Removing record about the counter %s from the DB", sai_serialize_object_id(counter_oid).c_str());
     return ReturnCode();
 }
 
-ReturnCode AclRuleManager::createAclMeter(const P4AclMeter &p4_acl_meter, const std::string &meter_key,
-                                          sai_object_id_t *meter_oid)
-{
-    SWSS_LOG_ENTER();
+ReturnCode AclRuleManager::createAclMeter(P4AclMeter& p4_acl_meter,
+                                          const std::string& meter_key,
+                                          sai_object_id_t* meter_oid) {
+  SWSS_LOG_ENTER();
 
-    auto attrs = getMeterSaiAttrs(p4_acl_meter);
+  auto attrs = getMeterSaiAttrs(p4_acl_meter);
 
-    CHECK_ERROR_AND_LOG_AND_RETURN(
-        sai_policer_api->create_policer(meter_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data()),
-        "Failed to create ACL meter");
-    m_p4OidMapper->setOID(SAI_OBJECT_TYPE_POLICER, meter_key, *meter_oid);
-    SWSS_LOG_NOTICE("Suceeded to create ACL meter %s ", sai_serialize_object_id(*meter_oid).c_str());
-    return ReturnCode();
+  // Add label to the attributes to uniquely identify the policer.
+  sai_attribute_t attr;
+  std::string mapper_key;
+  std::string label;
+  bool label_present = gLabelMapper->addLabelToAttr(
+      SAI_OBJECT_TYPE_POLICER, APP_P4RT_TABLE_NAME, meter_key, attr,
+      SAI_POLICER_ATTR_LABEL, mapper_key, label);
+  attrs.push_back(attr);
+
+  CHECK_ERROR_AND_LOG_AND_RETURN(
+      sai_policer_api->create_policer(meter_oid, gSwitchId,
+                                      (uint32_t)attrs.size(), attrs.data()),
+      "Failed to create ACL meter");
+  m_p4OidMapper->setOID(SAI_OBJECT_TYPE_POLICER, meter_key, *meter_oid);
+  if (!label_present) {
+    gLabelMapper->setLabel(SAI_OBJECT_TYPE_POLICER, mapper_key, label);
+  }
+  p4_acl_meter.policer_label = label;
+  SWSS_LOG_NOTICE("Suceeded to create ACL meter %s ",
+                  sai_serialize_object_id(*meter_oid).c_str());
+  return ReturnCode();
 }
 
 ReturnCode AclRuleManager::updateAclMeter(const P4AclMeter &new_acl_meter, const P4AclMeter &old_acl_meter)
@@ -503,6 +557,87 @@ ReturnCode AclRuleManager::updateAclMeter(const P4AclMeter &new_acl_meter, const
         rollback_attrs.push_back(meter_attr);
     }
 
+    // Already set policer attributes may need to be reset to null.
+    std::set<sai_policer_attr_t> metered_queues_to_reset;
+    for (const auto& metered_queues : old_acl_meter.packet_metered_queues)
+    {
+      metered_queues_to_reset.insert(fvField(metered_queues));
+    }
+
+    std::map<sai_policer_attr_t, std::vector<sai_qos_map_t>>
+        old_packet_metered_queues = old_acl_meter.packet_metered_queues;
+    std::map<sai_policer_attr_t, std::vector<sai_qos_map_t>>
+        new_packet_metered_queues = new_acl_meter.packet_metered_queues;
+
+    for (auto& metered_queues : new_packet_metered_queues) {
+      auto it = old_packet_metered_queues.find(fvField(metered_queues));
+
+      // Find policer attributes that are not set, or already set but the value
+      // should be updated.
+      bool update = true;
+      if (it != old_packet_metered_queues.end() &&
+          it->second.size() == fvValue(metered_queues).size()) {
+        update = false;
+        for (size_t i = 0; i < it->second.size(); ++i) {
+          if (it->second[i].key.color != fvValue(metered_queues)[i].key.color ||
+              it->second[i].value.queue_index !=
+                  fvValue(metered_queues)[i].value.queue_index) {
+            update = true;
+            break;
+          }
+        }
+      }
+
+      if (update) {
+        meter_attr.id = fvField(metered_queues);
+        sai_qos_map_list_t qos_map_list;
+        qos_map_list.count = (uint32_t)fvValue(metered_queues).size();
+        qos_map_list.list = fvValue(metered_queues).data();
+        meter_attr.value.qosmap = qos_map_list;
+        meter_attrs.push_back(meter_attr);
+
+        // Keep record of the old value so that we can rollback in case of update
+        // failure.
+        if (it == old_packet_metered_queues.end()) {
+          sai_qos_map_list_t qos_map_list;
+          qos_map_list.count = 0;
+          qos_map_list.list = NULL;
+          meter_attr.value.qosmap = qos_map_list;
+        } else {
+          sai_qos_map_list_t qos_map_list;
+          qos_map_list.count = (uint32_t)it->second.size();
+          qos_map_list.list = it->second.data();
+          meter_attr.value.qosmap = qos_map_list;
+        }
+        rollback_attrs.push_back(meter_attr);
+      }
+
+      // If an already set policer attribute is being updated, then it need not be
+      // reset to null.
+      if (it != old_packet_metered_queues.end()) {
+        metered_queues_to_reset.erase(fvField(metered_queues));
+      }
+    }
+
+    // For already set policer attributes that are not found in updated
+    // attributes, reset to null.
+    for (const auto& metered_queues : metered_queues_to_reset) {
+      meter_attr.id = metered_queues;
+      sai_qos_map_list_t qos_map_list;
+      qos_map_list.count = 0;
+      qos_map_list.list = NULL;
+      meter_attr.value.qosmap = qos_map_list;
+      meter_attrs.push_back(meter_attr);
+
+      // Keep record of the old values of the attributes to be reset so that we
+      // can rollback if update fails.
+      auto it = old_packet_metered_queues.find(metered_queues);
+      qos_map_list.count = (uint32_t)it->second.size();
+      qos_map_list.list = it->second.data();
+      meter_attr.value.qosmap = qos_map_list;
+      rollback_attrs.push_back(meter_attr);
+    }
+
     ReturnCode status;
     int i;
     for (i = 0; i < static_cast<int>(meter_attrs.size()); ++i)
@@ -544,6 +679,9 @@ ReturnCode AclRuleManager::removeAclMeter(const std::string &meter_key)
     CHECK_ERROR_AND_LOG_AND_RETURN(sai_policer_api->remove_policer(meter_oid),
                                    "Failed to remove ACL meter for ACL rule " << QuotedVar(meter_key));
     m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_POLICER, meter_key);
+    std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+        APP_P4RT_TABLE_NAME, meter_key);
+    gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_POLICER, mapper_key);
     SWSS_LOG_NOTICE("Suceeded to remove ACL meter %s: %s ", QuotedVar(meter_key).c_str(),
                     sai_serialize_object_id(meter_oid).c_str());
     return ReturnCode();
@@ -1494,6 +1632,45 @@ ReturnCode AclRuleManager::setMeterValue(const P4AclTableDefinition *acl_table, 
     if (action_color_it != acl_table->rule_packet_action_color_lookup.end() && !action_color_it->second.empty())
     {
         acl_meter.packet_color_actions = action_color_it->second;
+    }
+
+    const auto& rule_action_color_param_it =
+        acl_table->rule_action_color_param_lookup.find(app_db_entry.action);
+    if (rule_action_color_param_it !=
+            acl_table->rule_action_color_param_lookup.end() &&
+        !rule_action_color_param_it->second.empty()) {
+      for (auto& color_param_it : rule_action_color_param_it->second) {
+        for (auto& color_param : color_param_it.second) {
+          if (!color_param.param_name.empty()) {
+            const auto& param_value_it =
+                app_db_entry.action_param_fvs.find(color_param.param_name);
+            if (param_value_it == app_db_entry.action_param_fvs.end()) {
+              ReturnCode status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                                  << "No action param found for action "
+                                  << app_db_entry.action;
+              return status;
+            }
+            if (!param_value_it->second.empty()) {
+              uint8_t queue_num;
+              try {
+                queue_num = to_uint<uint8_t>(param_value_it->second);
+              } catch (std::exception& e) {
+                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                       << "Action attribute " << QuotedVar(color_param.param_name)
+                       << " is invalid, Expect integer but got "
+                       << QuotedVar(param_value_it->second);
+              }
+
+              sai_qos_map_t qos_map;
+              memset(&qos_map, 0, sizeof(qos_map));
+              qos_map.key.color = color_param.color;
+              qos_map.value.queue_index = queue_num;
+              acl_meter.packet_metered_queues[color_param_it.first].push_back(
+                  qos_map);
+            }
+          }
+        }
+      }
     }
 
     // SAI_POLICER_MODE_TR_TCM mode is used by default.
@@ -2457,6 +2634,14 @@ std::string AclRuleManager::verifyStateCache(const P4AclRuleAppDbEntry &app_db_e
         {
             return err_msg;
         }
+        std::string mapper_key =
+            gLabelMapper->generateKeyFromTableAndObjectName(
+                APP_P4RT_TABLE_NAME, table_name_and_rule_key);
+        err_msg = gLabelMapper->verifyLabelMapping(
+            SAI_OBJECT_TYPE_POLICER, mapper_key, acl_rule->meter.policer_label);
+        if (!err_msg.empty()) {
+          return err_msg;
+        }
     }
 
     return "";
@@ -2487,9 +2672,11 @@ std::string AclRuleManager::verifyStateAsicDb(const P4AclRule *acl_rule)
     }
 
     // Verify counter.
+    std::string mapper_key;
+    std::string counter_label;
     if (acl_rule->counter.packets_enabled || acl_rule->counter.bytes_enabled)
     {
-        attrs = getCounterSaiAttrs(*acl_rule);
+        attrs = getCounterSaiAttrs(*acl_rule, mapper_key, counter_label);
         exp = saimeta::SaiAttributeList::serialize_attr_list(SAI_OBJECT_TYPE_ACL_COUNTER, (uint32_t)attrs.size(),
                                                              attrs.data(),
                                                              /*countOnly=*/false);
@@ -2511,7 +2698,8 @@ std::string AclRuleManager::verifyStateAsicDb(const P4AclRule *acl_rule)
     // Verify meter.
     if (acl_rule->meter.enabled)
     {
-        attrs = getMeterSaiAttrs(acl_rule->meter);
+        auto meter = acl_rule->meter;
+        attrs = getMeterSaiAttrs(meter);
         exp = saimeta::SaiAttributeList::serialize_attr_list(SAI_OBJECT_TYPE_POLICER, (uint32_t)attrs.size(),
                                                              attrs.data(),
                                                              /*countOnly=*/false);

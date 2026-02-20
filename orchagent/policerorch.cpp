@@ -1,8 +1,10 @@
-#include "sai.h"
 #include "policerorch.h"
 
-#include "converter.h"
 #include <inttypes.h>
+
+#include "converter.h"
+#include "namelabelmapper.h"
+#include "sai.h"
 
 using namespace std;
 using namespace swss;
@@ -12,6 +14,7 @@ extern sai_port_api_t *sai_port_api;
 
 extern sai_object_id_t gSwitchId;
 extern PortsOrch* gPortsOrch;
+extern NameLabelMapper* gLabelMapper;
 
 #define ETHERNET_PREFIX "Ethernet"
 
@@ -223,18 +226,30 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
         // Create a new policer
         if (!update)
         {
-            sai_status_t status = sai_policer_api->create_policer(
-                    &policer_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_ERROR("Failed to create policer %s, rv:%d",
-                        storm_policer_name.c_str(), status);
-                if (handleSaiCreateStatus(SAI_API_POLICER, status) == task_need_retry)
-                {
-                    return task_process_status::task_need_retry;
-                }
-            }
+          // Add label to the attributes to uniquely identify the policer.
+          sai_attribute_t attr;
+          std::string mapper_key;
+          std::string label;
+          bool label_present = gLabelMapper->addLabelToAttr(
+              SAI_OBJECT_TYPE_POLICER, CFG_PORT_STORM_CONTROL_TABLE_NAME,
+              storm_policer_name, attr, SAI_POLICER_ATTR_LABEL, mapper_key,
+              label);
+          attrs.push_back(attr);
 
+          sai_status_t status = sai_policer_api->create_policer(
+              &policer_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+          if (status != SAI_STATUS_SUCCESS) {
+            SWSS_LOG_ERROR("Failed to create policer %s, rv:%d",
+                           storm_policer_name.c_str(), status);
+            if (handleSaiCreateStatus(SAI_API_POLICER, status) ==
+                task_need_retry) {
+              return task_process_status::task_need_retry;
+            }
+            }
+            if (!label_present) {
+              gLabelMapper->setLabel(SAI_OBJECT_TYPE_POLICER, mapper_key,
+                                     label);
+            }
             SWSS_LOG_DEBUG("Created storm-control policer %s", storm_policer_name.c_str());
             m_syncdPolicers[storm_policer_name] = policer_id;
             m_policerRefCounts[storm_policer_name] = 0;
@@ -304,10 +319,15 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
                 /*TODO: Just doing a syslog. */
             }
 
-            SWSS_LOG_NOTICE("Removed policer %s as set_port_attribute for %s failed", 
-                    storm_policer_name.c_str(),interface_name.c_str());
+            SWSS_LOG_NOTICE(
+                "Removed policer %s as set_port_attribute for %s failed",
+                storm_policer_name.c_str(), interface_name.c_str());
             m_syncdPolicers.erase(storm_policer_name);
             m_policerRefCounts.erase(storm_policer_name);
+            gLabelMapper->eraseLabel(
+                SAI_OBJECT_TYPE_POLICER,
+                gLabelMapper->generateKeyFromTableAndObjectName(
+                    CFG_PORT_STORM_CONTROL_TABLE_NAME, storm_policer_name));
 
             return task_process_status::task_need_retry;
         }
@@ -367,6 +387,10 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
         SWSS_LOG_NOTICE("Removed policer %s", storm_policer_name.c_str());
         m_syncdPolicers.erase(storm_policer_name);
         m_policerRefCounts.erase(storm_policer_name);
+        gLabelMapper->eraseLabel(
+            SAI_OBJECT_TYPE_POLICER,
+            gLabelMapper->generateKeyFromTableAndObjectName(
+                CFG_PORT_STORM_CONTROL_TABLE_NAME, storm_policer_name));
     }
     return task_process_status::task_success;
 }
@@ -494,6 +518,15 @@ void PolicerOrch::doTask(Consumer &consumer)
                             missing mandatory fields", key.c_str());
                 }
 
+                // Add label to the attributes to uniquely identify the policer.
+                sai_attribute_t attr;
+                std::string mapper_key;
+                std::string label;
+                bool label_present = gLabelMapper->addLabelToAttr(
+                    SAI_OBJECT_TYPE_POLICER, CFG_POLICER_TABLE_NAME, key, attr,
+                    SAI_POLICER_ATTR_LABEL, mapper_key, label);
+                attrs.push_back(attr);
+
                 sai_object_id_t policer_id;
                 sai_status_t status = sai_policer_api->create_policer(
                     &policer_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
@@ -506,6 +539,10 @@ void PolicerOrch::doTask(Consumer &consumer)
                         it++;
                         continue;
                     }
+                }
+                if (!label_present) {
+                  gLabelMapper->setLabel(SAI_OBJECT_TYPE_POLICER, mapper_key,
+                                         label);
                 }
 
                 SWSS_LOG_NOTICE("Created policer %s", key.c_str());
@@ -583,6 +620,11 @@ void PolicerOrch::doTask(Consumer &consumer)
             SWSS_LOG_NOTICE("Removed policer %s", key.c_str());
             m_syncdPolicers.erase(key);
             m_policerRefCounts.erase(key);
+            gLabelMapper->eraseLabel(
+                SAI_OBJECT_TYPE_POLICER,
+                gLabelMapper->generateKeyFromTableAndObjectName(
+                    CFG_POLICER_TABLE_NAME, key));
+
             it = consumer.m_toSync.erase(it);
         }
     }

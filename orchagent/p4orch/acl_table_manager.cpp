@@ -385,7 +385,8 @@ ReturnCodeOr<P4AclTableDefinitionAppDbEntry> AclTableManager::deserializeAclTabl
         else if (tokenized_field[0] == kAction)
         {
             if (!parseAclTableAppDbActionField(value, &app_db_entry.action_field_lookup[p4_field],
-                                               &app_db_entry.packet_action_color_lookup[p4_field]))
+                                               &app_db_entry.packet_action_color_lookup[p4_field],
+                                               &app_db_entry.action_color_param_lookup[p4_field]))
             {
                 return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
                        << "Error parsing ACL table definition action " << QuotedVar(field) << ":" << QuotedVar(value);
@@ -498,6 +499,16 @@ ReturnCode AclTableManager::processAddTableRequest(const P4AclTableDefinitionApp
     LOG_AND_RETURN_IF_ERROR(build_action_color_rc.prepend("Failed to build ACL table definition "
                                                           "action color fields with table name " +
                                                           QuotedVar(app_db_entry.acl_table_name) + ": "));
+
+    auto build_action_color_param_rc =
+        buildAclTableDefinitionActionColorParamFieldValues(
+            app_db_entry.action_color_param_lookup,
+            &acl_table_definition.rule_action_color_param_lookup,
+            &acl_action_type_set);
+    LOG_AND_RETURN_IF_ERROR(build_action_color_param_rc.prepend(
+        "Failed to build ACL table definition "
+        "action color param fields with table name " +
+        QuotedVar(app_db_entry.acl_table_name) + ": "));
 
     if (!acl_table_definition.meter_unit.empty()) {
       acl_action_type_set.insert(SAI_ACL_ACTION_TYPE_SET_POLICER);
@@ -1182,7 +1193,17 @@ std::string AclTableManager::verifyStateCache(const P4AclTableDefinitionAppDbEnt
             << QuotedVar(app_db_entry.acl_table_name);
         return msg.str();
     }
-
+    status = buildAclTableDefinitionActionColorParamFieldValues(
+        app_db_entry.action_color_param_lookup,
+        &acl_table_definition_entry.rule_action_color_param_lookup,
+        &acl_action_type_set);
+    if (!status.ok()) {
+      std::stringstream msg;
+      msg << "Failed to build ACL table action color param field values for "
+             "table "
+          << QuotedVar(app_db_entry.acl_table_name);
+      return msg.str();
+    }
     if (!acl_table_definition_entry.meter_unit.empty()) {
       acl_action_type_set.insert(SAI_ACL_ACTION_TYPE_SET_POLICER);
     }
@@ -1241,6 +1262,14 @@ std::string AclTableManager::verifyStateCache(const P4AclTableDefinitionAppDbEnt
         std::stringstream msg;
         msg << "Rule packet action color lookup mismatch on ACL table " << QuotedVar(app_db_entry.acl_table_name);
         return msg.str();
+    }
+    if (acl_table->rule_action_color_param_lookup !=
+        acl_table_definition_entry.rule_action_color_param_lookup)
+    {
+      std::stringstream msg;
+      msg << "Rule packet action color param lookup mismatch on ACL table "
+          << QuotedVar(app_db_entry.acl_table_name);
+      return msg.str();
     }
 
     std::string err_msg = m_p4OidMapper->verifyOIDMapping(SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER,
