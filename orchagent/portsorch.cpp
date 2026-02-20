@@ -39,6 +39,7 @@
 #include "stringutility.h"
 #include "subscriberstatetable.h"
 #include "warm_restart.h"
+#include "orchdaemon.h"
 
 #include "saitam.h"
 
@@ -71,6 +72,7 @@ extern string gMyAsicName;
 extern event_handle_t g_events_handle;
 extern bool isChassisDbInUse();
 extern bool gMultiAsicVoq;
+extern L2mcOrch *gL2mcOrch;
 
 // defines ------------------------------------------------------------------------------------------------------------
 
@@ -5626,7 +5628,7 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
 
         if (!getPort(port_alias, port))
         {
-            SWSS_LOG_DEBUG("%s is not not yet created, delaying", port_alias.c_str());
+            SWSS_LOG_INFO("%s is not not yet created, delaying", port_alias.c_str());
             it++;
             continue;
         }
@@ -5664,24 +5666,24 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
+            bool ret = true;
+
             if (vlan.m_members.find(port_alias) != vlan.m_members.end())
             {
-                if (removeVlanMember(vlan, port))
-                {
-                    if (m_portVlanMember[port.m_alias].empty())
-                    {
-                        removeBridgePort(port);
-                    }
-                    it = consumer.m_toSync.erase(it);
-                }
-                else
-                {
-                    it++;
-                }
+                ret = removeVlanMember(vlan, port);
+            }
+            if ((ret == true) && m_portVlanMember[port.m_alias].empty())
+            {
+                ret = removeBridgePort(port);
+            }
+            if (ret == true)
+            {
+                it = consumer.m_toSync.erase(it);
             }
             else
-                /* Cannot locate the VLAN */
-                it = consumer.m_toSync.erase(it);
+            {
+                it++;
+            }
         }
         else
         {
@@ -7030,6 +7032,13 @@ bool PortsOrch::removeBridgePort(Port &port)
     /* Remove STP ports before bridge port deletion*/
     gStpOrch->removeStpPorts(port);
 
+    /* Remove L2MC ports before bridge port deletion*/
+    if (port.m_l2mc_count != 0)
+    {
+        SWSS_LOG_NOTICE("port %s still has references to a Layer 2 multicast group member.", port.m_alias.c_str());
+        return false;
+    }
+
     //Flush the FDB entires corresponding to the port
     gFdbOrch->flushFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
     SWSS_LOG_INFO("Flush FDB entries for port %s", port.m_alias.c_str());
@@ -7175,6 +7184,12 @@ bool PortsOrch::removeVlan(Port vlan)
     if(vlan.m_stp_id != -1)
     {
         gStpOrch->removeVlanFromStpInstance(vlan.m_alias, 0);
+    }
+    
+    if(!gL2mcOrch->removeL2mcFromVlan(vlan.m_alias))
+    {
+        SWSS_LOG_ERROR("Fail Remove %s l2mc", vlan.m_alias.c_str());
+        return false;
     }
 
     sai_status_t status = sai_vlan_api->remove_vlan(vlan.m_vlan_info.vlan_oid);
@@ -7582,6 +7597,10 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port, string end_point_ip)
     {
         return removeVlanEndPointIp(vlan, port, end_point_ip);
     }
+
+    gL2mcOrch->removeMrouterPortFromL2mcEntries(vlan.m_alias,port.m_alias,"V4");
+    gL2mcOrch->removeMrouterPortFromL2mcEntries(vlan.m_alias,port.m_alias,"V6");
+    
     sai_object_id_t vlan_member_id;
     sai_vlan_tagging_mode_t sai_tagging_mode;
     auto vlan_member = m_portVlanMember[port.m_alias].find(vlan.m_vlan_info.vlan_id);
