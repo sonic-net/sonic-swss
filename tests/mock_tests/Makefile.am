@@ -1,4 +1,4 @@
-FLEX_CTR_DIR = $(top_srcdir)/orchagent/flex_counter
+ FLEX_CTR_DIR = $(top_srcdir)/orchagent/flex_counter
 DEBUG_CTR_DIR = $(top_srcdir)/orchagent/debug_counter
 P4_ORCH_DIR = $(top_srcdir)/orchagent/p4orch
 DASH_ORCH_DIR = $(top_srcdir)/orchagent/dash
@@ -198,7 +198,8 @@ tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
 		 $(P4_ORCH_DIR)/mirror_session_manager.cpp \
 		 $(P4_ORCH_DIR)/gre_tunnel_manager.cpp \
 		 $(P4_ORCH_DIR)/l3_admit_manager.cpp \
-		 $(P4_ORCH_DIR)/l3_multicast_manager.cpp \
+                 $(P4_ORCH_DIR)/l3_multicast_manager.cpp \
+                 $(P4_ORCH_DIR)/tunnel_decap_group_manager.cpp\
 		 $(P4_ORCH_DIR)/ext_tables_manager.cpp \
 		 $(P4_ORCH_DIR)/tests/mock_sai_switch.cpp
 
