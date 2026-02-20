@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <time.h>
+#include <random>
 #include <inttypes.h>
 #include <algorithm>
 #include "routeorch.h"
@@ -1958,9 +1959,11 @@ void RouteOrch::addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextH
     if (next_hop_set.empty())
         return;
 
-    /* Randomly pick an address from the set */
+    /* Randomly pick an address from the set using a robust RNG */
+    static thread_local std::mt19937 rng(std::random_device{}());
+    std::uniform_int_distribution<size_t> dist(0, next_hop_set.size() - 1);
     auto it = next_hop_set.begin();
-    advance(it, rand() % next_hop_set.size());
+    std::advance(it, dist(rng));
 
     /* Set the route's temporary next hop to be the randomly picked one */
     NextHopGroupKey tmp_next_hop((*it).to_string());
