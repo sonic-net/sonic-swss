@@ -17,17 +17,21 @@ class P4RtTunnelDecapWrapper(util.DBInterface):
 
     ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY"
     SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TUNNEL_TYPE = "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TUNNEL_TYPE"
+    SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_SRC_IP = "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_SRC_IP"
+    SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_SRC_IP_MASK = "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_SRC_IP_MASK"
     SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TYPE = "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TYPE"
     SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP = "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP"
     SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP_MASK = "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP_MASK"
     SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_VR_ID = "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_VR_ID"
     SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID = "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID"
-
-    def generate_app_db_key(self, ipv6):
-        d = {}
-        d[util.prepend_match_field("dst_ipv6")] = ipv6
-        key = json.dumps(d, separators=(",", ":"))
-        return self.TBL_NAME + ":" + key
+        
+    def generate_app_db_key(self, src_ipv6, dst_ipv6):
+         d = {}
+         d[util.prepend_match_field("src_ipv6")] = src_ipv6
+         d[util.prepend_match_field("dst_ipv6")] = dst_ipv6
+        
+         key = json.dumps(d, separators=(",", ":"))
+         return self.TBL_NAME + ":" + key
 
 class TestP4RTunnelDecap(object):
     def _set_up(self, dvs):
@@ -36,7 +40,7 @@ class TestP4RTunnelDecap(object):
 
         self._p4rt_tunnel_decap_wrapper.set_up_databases(dvs)
         self._response_consumer = swsscommon.NotificationConsumer(
-            self._p4rt_tunnel_decap_wrapper.appl_db, "APPL_DB_" + swsscommon.APP_P4RT_TABLE_NAME + "_RESPONSE_CHANNEL")
+           self._p4rt_tunnel_decap_wrapper.appl_db, "APPL_DB_" + swsscommon.APP_P4RT_TABLE_NAME + "_RESPONSE_CHANNEL")
 
     def _set_vrf(self, dvs):
         # Create VRF.
@@ -62,19 +66,19 @@ class TestP4RTunnelDecap(object):
             self._p4rt_tunnel_decap_wrapper.asic_db, self._p4rt_tunnel_decap_wrapper.ASIC_DB_TBL_NAME)
 
         # 1. Create tunnel decap group
-        ipv6 = "2001:db8:3c4d:15::&ffff:ffff:ffff:ffff::"
+        src_ipv6 = "4001:db8:3c4d:17::&ffff:ffff:ffff:ffff::"
+        dst_ipv6 = "2001:db8:3c4d:15::&ffff:ffff:ffff:ffff::"
         action = "mark_for_tunnel_decap_and_set_vrf"
         vrf_id = "b4-traffic"
 
         attr_list_in_app_db = [(self._p4rt_tunnel_decap_wrapper.ACTION, action),
                                (util.prepend_param_field(
                                    self._p4rt_tunnel_decap_wrapper.VRF_ID), vrf_id)]
-        tunnel_decap_group_key = self._p4rt_tunnel_decap_wrapper.generate_app_db_key(ipv6)
+        tunnel_decap_group_key = self._p4rt_tunnel_decap_wrapper.generate_app_db_key(src_ipv6, dst_ipv6)
         self._p4rt_tunnel_decap_wrapper.set_app_db_entry(
             tunnel_decap_group_key, attr_list_in_app_db)
         util.verify_response(
             self._response_consumer, tunnel_decap_group_key, attr_list_in_app_db, "SWSS_RC_SUCCESS")
-
         # Query application database for tunnel decap group entries
         appl_tunnel_decap_group_entries = util.get_keys(
             self._p4rt_tunnel_decap_wrapper.appl_db,
@@ -109,12 +113,14 @@ class TestP4RTunnelDecap(object):
         assert status == True
 
         # Get oid of dummy tunnel
-        dummy_tunnel_oid = fvs[5][1]
+        dummy_tunnel_oid = fvs[7][1]
         assert dummy_tunnel_oid != None
 
         expected_attr_list_in_asic_db = [
             (self._p4rt_tunnel_decap_wrapper.SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TUNNEL_TYPE, "SAI_TUNNEL_TYPE_IPINIP"),
             (self._p4rt_tunnel_decap_wrapper.SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TYPE, "SAI_TUNNEL_TERM_TABLE_ENTRY_TYPE_MP2MP"),
+            (self._p4rt_tunnel_decap_wrapper.SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_SRC_IP, "4001:db8:3c4d:17::"),
+            (self._p4rt_tunnel_decap_wrapper.SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_SRC_IP_MASK, "ffff:ffff:ffff:ffff::"),
             (self._p4rt_tunnel_decap_wrapper.SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP, "2001:db8:3c4d:15::"),
             (self._p4rt_tunnel_decap_wrapper.SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP_MASK, "ffff:ffff:ffff:ffff::"),
             (self._p4rt_tunnel_decap_wrapper.SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_VR_ID, self.vrf_state['entry_id']),
@@ -156,14 +162,15 @@ class TestP4RTunnelDecap(object):
         self._set_up(dvs)
 
         # Create tunnel decap group
-        ipv6 = "2001:db8:3c4d:15::&ffff:ffff:ffff:ffff::"
+        src_ipv6 = "5001:db8:3c4d:7::&ffff:ffff:ffff:ffff::"
+        dst_ipv6 = "2001:db8:3c4d:15::&ffff:ffff:ffff:ffff::"
         action = "mark_for_tunnel_decap_and_set_vrf"
         vrf_id = "b4-traffic"
 
         attr_list_in_app_db = [(self._p4rt_tunnel_decap_wrapper.ACTION, action),
                                (util.prepend_param_field(
                                    self._p4rt_tunnel_decap_wrapper.VRF_ID), vrf_id)]
-        tunnel_decap_group_key = self._p4rt_tunnel_decap_wrapper.generate_app_db_key(ipv6)
+        tunnel_decap_group_key = self._p4rt_tunnel_decap_wrapper.generate_app_db_key(src_ipv6, dst_ipv6)
         self._p4rt_tunnel_decap_wrapper.set_app_db_entry(
             tunnel_decap_group_key, attr_list_in_app_db)
         util.verify_response(
@@ -186,9 +193,9 @@ class TestP4RTunnelDecap(object):
         # Initialize database connectors
         self._set_up(dvs)
 
-        ipv6 = "2001:db8:3c4d:15::&ffff:ffff:ffff:ffff::"
-
-        tunnel_decap_group_key = self._p4rt_tunnel_decap_wrapper.generate_app_db_key(ipv6)
+        src_ipv6 = "3001:db8:3c4d:11::&ffff:ffff:ffff:ffff::"
+        dst_ipv6 = "2001:db8:3c4d:15::&ffff:ffff:ffff:ffff::"
+        tunnel_decap_group_key = self._p4rt_tunnel_decap_wrapper.generate_app_db_key(src_ipv6, dst_ipv6)
 
         # Remove tunnel decap group fails
         self._p4rt_tunnel_decap_wrapper.remove_app_db_entry(
@@ -196,5 +203,6 @@ class TestP4RTunnelDecap(object):
         util.verify_response(
             self._response_consumer, tunnel_decap_group_key, [], "SWSS_RC_NOT_FOUND",
             "[OrchAgent] Ipv6 tunnel termination table entry with key "
-            "'dst_ipv6_ip=2001:db8:3c4d:15:::dst_ipv6_mask=ffff:ffff:ffff:ffff::' "
+            "'dst_ipv6_ip=2001:db8:3c4d:15:::dst_ipv6_mask=ffff:ffff:ffff:ffff:::"
+            "src_ipv6_ip=3001:db8:3c4d:11:::src_ipv6_mask=ffff:ffff:ffff:ffff::' "
             "does not exist in tunnel decap group manager")
