@@ -1,6 +1,7 @@
 #ifndef DASHHAORCH_H
 #define DASHHAORCH_H
 #include <map>
+#include <mutex>
 
 #include "dbconnector.h"
 #include "dashorch.h"
@@ -71,6 +72,7 @@ protected:
     bool setHaScopeFlowReconcileRequest(const  std::string &key);
     bool setHaScopeActivateRoleRequest(const std::string &key);
     bool setHaScopeDisabled(const std::string &key, bool disabled);
+    bool isHaScopeAdminStateAttrSupported();
     bool setEniHaScopeId(const sai_object_id_t eni_id, const sai_object_id_t ha_scope_id);
     bool register_ha_set_notifier();
     bool register_ha_scope_notifier();
@@ -106,6 +108,9 @@ protected:
 
     swss::NotificationConsumer* m_haSetNotificationConsumer;
     swss::NotificationConsumer* m_haScopeNotificationConsumer;
+
+    bool m_ha_scope_admin_state_attr_supported = false;
+    std::once_flag m_ha_scope_admin_state_attr_once_flag;
 
 public:
     const HaSetTable& getHaSetEntries() const { return m_ha_set_entries; };

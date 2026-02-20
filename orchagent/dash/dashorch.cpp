@@ -99,6 +99,32 @@ bool DashOrch::hasApplianceEntry()
     return !appliance_entries_.empty();
 }
 
+bool DashOrch::isHaFlowOwnerAttrSupported()
+{
+    SWSS_LOG_ENTER();
+
+    std::call_once(m_ha_flow_owner_attr_once_flag, [this]() {
+        sai_attr_capability_t capability;
+        sai_status_t status = sai_query_attribute_capability(
+                gSwitchId,
+                (sai_object_type_t)SAI_OBJECT_TYPE_ENI,
+                SAI_ENI_ATTR_IS_HA_FLOW_OWNER,
+                &capability);
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query SAI_ENI_ATTR_IS_HA_FLOW_OWNER capability: %d", status);
+            m_ha_flow_owner_attr_supported = false;
+        }
+        else
+        {
+            m_ha_flow_owner_attr_supported = capability.set_implemented || capability.create_implemented;
+        }
+    });
+
+    return m_ha_flow_owner_attr_supported;
+}
+
 bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::appliance::Appliance &entry)
 {
     SWSS_LOG_ENTER();
@@ -650,25 +676,31 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
             eni_attrs.push_back(eni_attr);
             SWSS_LOG_INFO("Setting HA Scope ID %" PRIx64 " for ENI %s", ha_scope_entry.ha_scope_id, eni.c_str());
 
-            // Set HA flow owner based on HA role
-            eni_attr.id = SAI_ENI_ATTR_IS_HA_FLOW_OWNER;
-            if (ha_scope_entry.metadata.ha_role() == dash::types::HA_ROLE_ACTIVE || ha_scope_entry.metadata.ha_role() == dash::types::HA_ROLE_STANDALONE)
+            if (isHaFlowOwnerAttrSupported())
             {
-                eni_attr.value.booldata = true;
-                SWSS_LOG_INFO("Setting HA flow owner to true (ACTIVE) for ENI %s", eni.c_str());
-            }
-            else if (ha_scope_entry.metadata.ha_role() == dash::types::HA_ROLE_STANDBY)
-            {
-                eni_attr.value.booldata = false;
-                SWSS_LOG_INFO("Setting HA flow owner to false (STANDBY) for ENI %s", eni.c_str());
+                eni_attr.id = SAI_ENI_ATTR_IS_HA_FLOW_OWNER;
+                if (ha_scope_entry.metadata.ha_role() == dash::types::HA_ROLE_ACTIVE || ha_scope_entry.metadata.ha_role() == dash::types::HA_ROLE_STANDALONE)
+                {
+                    eni_attr.value.booldata = true;
+                    SWSS_LOG_INFO("Setting HA flow owner to true (ACTIVE) for ENI %s", eni.c_str());
+                }
+                else if (ha_scope_entry.metadata.ha_role() == dash::types::HA_ROLE_STANDBY)
+                {
+                    eni_attr.value.booldata = false;
+                    SWSS_LOG_INFO("Setting HA flow owner to false (STANDBY) for ENI %s", eni.c_str());
+                }
+                else
+                {
+                    // For other roles (DEAD, SWITCHING_TO_ACTIVE), default to false
+                    eni_attr.value.booldata = false;
+                    SWSS_LOG_INFO("Setting HA flow owner to false (role: %s) for ENI %s", dash::types::HaRole_Name(ha_scope_entry.metadata.ha_role()).c_str(), eni.c_str());
+                }
+                eni_attrs.push_back(eni_attr);
             }
             else
             {
-                // For other roles (DEAD, SWITCHING_TO_ACTIVE), default to false
-                eni_attr.value.booldata = false;
-                SWSS_LOG_INFO("Setting HA flow owner to false (role: %s) for ENI %s", dash::types::HaRole_Name(ha_scope_entry.metadata.ha_role()).c_str(), eni.c_str());
+                SWSS_LOG_INFO("SAI_ENI_ATTR_IS_HA_FLOW_OWNER not supported, skipping for ENI %s", eni.c_str());
             }
-            eni_attrs.push_back(eni_attr);
         }
         else
         {

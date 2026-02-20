@@ -102,6 +102,7 @@ private:
     bool removeQosEntry(const std::string& qos_name);
     bool setEniRoute(const std::string& eni, const dash::eni_route::EniRoute& entry);
     bool removeEniRoute(const std::string& eni);
+    bool isHaFlowOwnerAttrSupported();
 
 private:
 
@@ -172,6 +173,8 @@ private:
     std::shared_ptr<swss::DBConnector> m_counter_db;
     std::shared_ptr<swss::DBConnector> m_asic_db;
     DashHaOrch* m_dash_ha_orch = nullptr;
+    bool m_ha_flow_owner_attr_supported = false;
+    std::once_flag m_ha_flow_owner_attr_once_flag;
 
     void addEniMapEntry(sai_object_id_t oid, const std::string& name);
     void removeEniMapEntry(sai_object_id_t oid, const std::string& name);
