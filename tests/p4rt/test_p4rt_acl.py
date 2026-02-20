@@ -63,10 +63,20 @@ class TestP4RTAcl(object):
         self._p4rt_udf_match_obj.set_up_databases(dvs)
         self._p4rt_udf_obj.set_up_databases(dvs)
 
-        self.response_consumer = swsscommon.NotificationConsumer(
-            self._p4rt_acl_table_definition_obj.appl_db, "APPL_DB_" +
-            swsscommon.APP_P4RT_TABLE_NAME + "_RESPONSE_CHANNEL"
-        )
+    def _cleanup(self):   
+        self._p4rt_acl_group_member_obj.clean_up()
+        self._p4rt_acl_group_obj.clean_up()
+        self._p4rt_acl_table_definition_obj.clean_up()
+        self._p4rt_acl_rule_obj.clean_up()
+        self._p4rt_acl_counter_obj.clean_up()
+        self._p4rt_acl_meter_obj.clean_up()
+        self._p4rt_trap_group_obj.clean_up()
+        self._p4rt_user_trap_obj.clean_up()
+        self._p4rt_hostif_obj.clean_up()
+        self._p4rt_hostif_table_entry_obj.clean_up()
+        self._p4rt_udf_group_obj.clean_up()
+        self._p4rt_udf_match_obj.clean_up()
+        self._p4rt_udf_obj.clean_up()
 
     @pytest.mark.skip(reason="p4orch is not enabled")
     def test_AclRulesAddUpdateDelPass(self, dvs, testlog):
@@ -211,8 +221,7 @@ class TestP4RTAcl(object):
         self._p4rt_acl_table_definition_obj.set_app_db_entry(
             self._p4rt_acl_table_definition_obj.TBL_NAME + ":" + table_name, attr_list
         )
-        util.verify_response(
-            self.response_consumer,
+        self._p4rt_acl_table_definition_obj.verify_response(
             self._p4rt_acl_table_definition_obj.TBL_NAME + ":" + table_name,
             attr_list,
             "SWSS_RC_SUCCESS",
@@ -430,8 +439,7 @@ class TestP4RTAcl(object):
 
         self._p4rt_acl_rule_obj.set_app_db_entry(
             table_name_with_rule_key1, attr_list)
-        util.verify_response(
-            self.response_consumer,
+        self._p4rt_acl_rule_obj.verify_response(
             table_name_with_rule_key1,
             attr_list,
             "SWSS_RC_SUCCESS",
@@ -587,8 +595,7 @@ class TestP4RTAcl(object):
 
         self._p4rt_acl_rule_obj.set_app_db_entry(
             table_name_with_rule_key1, attr_list)
-        util.verify_response(
-            self.response_consumer,
+        self._p4rt_acl_rule_obj.verify_response(
             table_name_with_rule_key1,
             attr_list,
             "SWSS_RC_SUCCESS",
@@ -765,8 +772,7 @@ class TestP4RTAcl(object):
 
         self._p4rt_acl_rule_obj.set_app_db_entry(
             table_name_with_rule_key2, attr_list)
-        util.verify_response(
-            self.response_consumer,
+        self._p4rt_acl_rule_obj.verify_response(
             table_name_with_rule_key2,
             attr_list,
             "SWSS_RC_SUCCESS",
@@ -947,8 +953,7 @@ class TestP4RTAcl(object):
 
         self._p4rt_acl_rule_obj.set_app_db_entry(
             table_name_with_rule_key3, attr_list)
-        util.verify_response(
-            self.response_consumer,
+        self._p4rt_acl_rule_obj.verify_response(
             table_name_with_rule_key3,
             attr_list,
             "SWSS_RC_SUCCESS",
@@ -1059,8 +1064,7 @@ class TestP4RTAcl(object):
 
         self._p4rt_acl_rule_obj.set_app_db_entry(
             table_name_with_rule_key2, attr_list)
-        util.verify_response(
-            self.response_consumer,
+        self._p4rt_acl_rule_obj.verify_response(
             table_name_with_rule_key2,
             attr_list,
             "SWSS_RC_SUCCESS",
@@ -1147,8 +1151,8 @@ class TestP4RTAcl(object):
 
         # remove ACL rule 3
         self._p4rt_acl_rule_obj.remove_app_db_entry(table_name_with_rule_key3)
-        util.verify_response(
-            self.response_consumer, table_name_with_rule_key3, [], "SWSS_RC_SUCCESS"
+        self._p4rt_acl_rule_obj.verify_response(
+            table_name_with_rule_key3, [], "SWSS_RC_SUCCESS"
         )
 
         # query application database for ACL rules
@@ -1190,8 +1194,8 @@ class TestP4RTAcl(object):
 
         # remove ACL rule 1
         self._p4rt_acl_rule_obj.remove_app_db_entry(table_name_with_rule_key1)
-        util.verify_response(
-            self.response_consumer, table_name_with_rule_key1, [], "SWSS_RC_SUCCESS"
+        self._p4rt_acl_rule_obj.verify_response(
+            table_name_with_rule_key1, [], "SWSS_RC_SUCCESS"
         )
 
         # query application database for ACL rules
@@ -1241,8 +1245,8 @@ class TestP4RTAcl(object):
 
         # remove ACL rule 2
         self._p4rt_acl_rule_obj.remove_app_db_entry(table_name_with_rule_key2)
-        util.verify_response(
-            self.response_consumer, table_name_with_rule_key2, [], "SWSS_RC_SUCCESS"
+        self._p4rt_acl_rule_obj.verify_response(
+            table_name_with_rule_key2, [], "SWSS_RC_SUCCESS"
         )
 
         # query application database for ACL rules
@@ -1294,8 +1298,7 @@ class TestP4RTAcl(object):
         self._p4rt_acl_table_definition_obj.remove_app_db_entry(
             self._p4rt_acl_table_definition_obj.TBL_NAME + ":" + table_name
         )
-        util.verify_response(
-            self.response_consumer,
+        self._p4rt_acl_table_definition_obj.verify_response(
             self._p4rt_acl_table_definition_obj.TBL_NAME + ":" + table_name,
             [],
             "SWSS_RC_SUCCESS",
@@ -1333,6 +1336,8 @@ class TestP4RTAcl(object):
         )
         assert status == False
 
+        self._cleanup()
+
     def test_AclRuleAddWithoutTableDefinitionFails(self, dvs, testlog):
         # initialize ACL table objects and database connectors
         self._set_up(dvs)
@@ -1368,8 +1373,7 @@ class TestP4RTAcl(object):
 
         self._p4rt_acl_rule_obj.set_app_db_entry(
             table_name_with_rule_key, attr_list)
-        util.verify_response(
-            self.response_consumer,
+        self._p4rt_acl_rule_obj.verify_response(
             table_name_with_rule_key,
             attr_list,
             "SWSS_RC_INVALID_PARAM",
@@ -1381,7 +1385,7 @@ class TestP4RTAcl(object):
             self._p4rt_acl_rule_obj.appl_db,
             self._p4rt_acl_rule_obj.APP_DB_TBL_NAME + ":" + table_name,
         )
-        assert len(acl_rules) == len(original_appl_acl_rules) + 1
+        assert len(acl_rules) == len(original_appl_acl_rules)
 
         # query application database for newly created ACL rule
         (status, fvs) = util.get_key(
@@ -1389,8 +1393,7 @@ class TestP4RTAcl(object):
             self._p4rt_acl_table_definition_obj.APP_DB_TBL_NAME,
             table_name_with_rule_key,
         )
-        assert status == True
-        util.verify_attr(fvs, attr_list)
+        assert status == False
 
         # query ASIC database for ACL rules
         acl_asic_rules = util.get_keys(
@@ -1404,9 +1407,5 @@ class TestP4RTAcl(object):
         ]
         assert len(rule_asic_db_keys) == 0
 
-        # cleanup application database
-        tbl = swsscommon.Table(
-            self._p4rt_acl_table_definition_obj.appl_db,
-            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME,
-        )
-        tbl._del(table_name_with_rule_key)
+        self._cleanup()
+
