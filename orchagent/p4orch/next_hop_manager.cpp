@@ -198,20 +198,6 @@ ReturnCode NextHopManager::validateAppDbEntry(
   return ReturnCode();
 }
 
-ReturnCodeOr<bool> parseFlag(std::string name, std::string value) {
-  try {
-    int flag = std::stoi(value);
-    if (flag == 1)
-      return true;
-    else if (flag == 0)
-      return false;
-  } catch (std::exception& e) {
-    // Nothing
-  }
-  return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-         << "Invalid " << QuotedVar(name) << " value: " << QuotedVar(value);
-}
-
 std::vector<sai_attribute_t> NextHopManager::getSaiAttrs(
     const P4NextHopEntry& next_hop_entry) {
   std::vector<sai_attribute_t> next_hop_attrs;
