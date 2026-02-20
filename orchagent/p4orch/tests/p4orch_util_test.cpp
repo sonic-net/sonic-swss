@@ -130,4 +130,40 @@ TEST(P4OrchUtilTest, VerifyAttrsTest)
             .empty());
 }
 
+TEST(P4OrchUtilTest, ParseFlagTest) {
+  const std::string name = "name";
+  auto flag_or = parseFlag(name, "0x1");
+  EXPECT_TRUE(flag_or.ok());
+  EXPECT_EQ(true, *flag_or);
+
+  flag_or = parseFlag(name, "0X1");
+  EXPECT_TRUE(flag_or.ok());
+  EXPECT_EQ(true, *flag_or);
+
+  flag_or = parseFlag(name, "0x0");
+  EXPECT_TRUE(flag_or.ok());
+  EXPECT_EQ(false, *flag_or);
+
+  flag_or = parseFlag(name, "0X0");
+  EXPECT_TRUE(flag_or.ok());
+  EXPECT_EQ(false, *flag_or);
+
+  flag_or = parseFlag(name, "1");
+  EXPECT_TRUE(flag_or.ok());
+  EXPECT_EQ(true, *flag_or);
+
+  flag_or = parseFlag(name, "0");
+  EXPECT_TRUE(flag_or.ok());
+  EXPECT_EQ(false, *flag_or);
+
+  flag_or = parseFlag(name, "0xinvalid");
+  EXPECT_FALSE(flag_or.ok());
+
+  flag_or = parseFlag(name, "0Xinvalid");
+  EXPECT_FALSE(flag_or.ok());
+
+  flag_or = parseFlag(name, "invalid");
+  EXPECT_FALSE(flag_or.ok());
+}
+
 } // namespace

@@ -354,6 +354,9 @@ std::string verifyAttrs(const std::vector<swss::FieldValueTuple> &targets,
 void drainMgmtWithNotExecuted(std::deque<swss::KeyOpFieldsValuesTuple>& entries,
                               ResponsePublisherInterface* publisher);
 
+// Helper function to parse an int or hex int from a string to a bool.
+ReturnCodeOr<bool> parseFlag(const std::string& name, const std::string& value);
+
 // class KeyGenerator includes member functions to generate keys for entries
 // stored in P4 Orch managers.
 class KeyGenerator
