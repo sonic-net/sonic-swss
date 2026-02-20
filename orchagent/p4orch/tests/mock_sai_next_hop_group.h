@@ -6,7 +6,6 @@
 extern "C"
 {
 #include "sai.h"
-#include "sainexthopgroup.h"
 }
 
 // Mock class including mock functions mapping to SAI next hop group's
@@ -56,7 +55,8 @@ class MockSaiNextHopGroup
     MOCK_METHOD1(remove_next_hop_group_member, sai_status_t(_In_ sai_object_id_t next_hop_group_member_id));
 
     MOCK_METHOD2(set_next_hop_group_member_attribute,
-                 sai_status_t(_In_ sai_object_id_t next_hop_group_member_id, _In_ const sai_attribute_t *attr));
+                 sai_status_t(_In_ sai_object_id_t next_hop_group_member_id,
+                              _In_ const sai_attribute_t* attr));
 
     MOCK_METHOD7(create_next_hop_groups,
                sai_status_t(_In_ sai_object_id_t switch_id,
