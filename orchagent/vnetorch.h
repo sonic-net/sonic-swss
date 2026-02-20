@@ -40,14 +40,15 @@ typedef enum
 const request_description_t vnet_request_description = {
     { REQ_T_STRING },
     {
-        { "src_mac",            REQ_T_MAC_ADDRESS },
-        { "vxlan_tunnel",       REQ_T_SET },
-        { "vni",                REQ_T_UINT },
-        { "peer_list",          REQ_T_SET },
-        { "guid",               REQ_T_STRING },
-        { "scope",              REQ_T_STRING },
-        { "advertise_prefix",   REQ_T_BOOL},
-        { "overlay_dmac",       REQ_T_MAC_ADDRESS},
+        { "src_mac",                 REQ_T_MAC_ADDRESS },
+        { "vxlan_tunnel",            REQ_T_STRING },
+        { "vxlan_tunnel_list",       REQ_T_SET },
+        { "vni",                     REQ_T_UINT },
+        { "peer_list",               REQ_T_SET },
+        { "guid",                    REQ_T_STRING },
+        { "scope",                   REQ_T_STRING },
+        { "advertise_prefix",        REQ_T_BOOL},
+        { "overlay_dmac",            REQ_T_MAC_ADDRESS},
 
     },
     { "vxlan_tunnel", "vni" } // mandatory attributes

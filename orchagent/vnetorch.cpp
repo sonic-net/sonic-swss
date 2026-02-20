@@ -538,33 +538,33 @@ bool VNetOrch::addOperation(const Request& request)
     {
         VNetObject_T obj;
         auto it = vnet_table_.find(vnet_name);
+        set<string> tunnels;
         if (isVnetExecVrf())
         {
             VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
 
-            if (!tunnel_list.empty())
-            {
-                for (const auto& tunnel_name : tunnel_list)
-                {
-                    if (!vxlan_orch->isTunnelExists(tunnel_name))
-                    {
-                        SWSS_LOG_WARN("Vxlan tunnel '%s' doesn't exist", tunnel_name.c_str());
-                        return false;
-                    }
-                }
-            }
-            else if(!tunnel.empty())
-            {
-                if (!vxlan_orch->isTunnelExists(tunnel))
-                {
-                    SWSS_LOG_WARN("Vxlan tunnel '%s' doesn't exist", tunnel.c_str());
-                    return false;
-                }
-            }
-            else
+            if (tunnel_list.empty() && tunnel.empty())
             {
                 SWSS_LOG_ERROR("Vxlan tunnel or tunnel list must be specified for VNET '%s'", vnet_name.c_str());
                 return false;
+            }
+
+            if (!tunnel_list.empty())
+            {
+                tunnels = tunnel_list;
+            }
+            else
+            {
+                tunnels.insert(tunnel);
+            }
+
+            for (const auto& tun_name : tunnels)
+            {
+                if (!vxlan_orch->isTunnelExists(tun_name))
+                {
+                    SWSS_LOG_WARN("Vxlan tunnel '%s' doesn't exist", tun_name.c_str());
+                    return false;
+                }
             }
 
             if (it == std::end(vnet_table_))
@@ -573,30 +573,21 @@ bool VNetOrch::addOperation(const Request& request)
                 {
                     VNetInfoMultiTunnel vnet_info = { tunnel_list, vni, peer_list, scope, advertise_prefix, overlay_dmac };
                     obj = createObject<VNetVrfObject>(vnet_name, vnet_info, attrs);
-
-                    VNetVrfObject *vrf_obj = dynamic_cast<VNetVrfObject*>(obj.get());
-                    for (const auto& tun_name : tunnel_list)
-                    {
-                        if (!vxlan_orch->createVxlanTunnelMap(tun_name, TUNNEL_MAP_T_VIRTUAL_ROUTER, vni,
-                                                        vrf_obj->getEncapMapId(), vrf_obj->getDecapMapId(), VXLAN_ENCAP_TTL))
-                        {
-                            SWSS_LOG_ERROR("VNET '%s', tunnel '%s', map create failed",
-                                        vnet_name.c_str(), tun_name.c_str());
-                            return false;
-                        }
-                    }
                 }
                 else
                 {
                     VNetInfo vnet_info = { tunnel, vni, peer_list, scope, advertise_prefix, overlay_dmac };
                     obj = createObject<VNetVrfObject>(vnet_name, vnet_info, attrs);
+                }
 
-                    VNetVrfObject *vrf_obj = dynamic_cast<VNetVrfObject*>(obj.get());
-                    if (!vxlan_orch->createVxlanTunnelMap(tunnel, TUNNEL_MAP_T_VIRTUAL_ROUTER, vni,
-                                                        vrf_obj->getEncapMapId(), vrf_obj->getDecapMapId(), VXLAN_ENCAP_TTL))
+                VNetVrfObject *vrf_obj = dynamic_cast<VNetVrfObject*>(obj.get());
+                for (const auto& tun_name : tunnels)
+                {
+                    if (!vxlan_orch->createVxlanTunnelMap(tun_name, TUNNEL_MAP_T_VIRTUAL_ROUTER, vni,
+                                                    vrf_obj->getEncapMapId(), vrf_obj->getDecapMapId(), VXLAN_ENCAP_TTL))
                     {
                         SWSS_LOG_ERROR("VNET '%s', tunnel '%s', map create failed",
-                                    vnet_name.c_str(), tunnel.c_str());
+                                    vnet_name.c_str(), tun_name.c_str());
                         return false;
                     }
                 }
