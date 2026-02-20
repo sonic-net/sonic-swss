@@ -824,7 +824,8 @@ bool OrchDaemon::init()
     m_orchList.push_back(&CounterCheckOrch::getInstance(m_configDb));
 
     vector<string> p4rt_tables = {APP_P4RT_TABLE_NAME};
-    gP4Orch = new P4Orch(m_applDb, p4rt_tables, vrf_orch, gCoppOrch);
+    m_p4OrchZmqServer = new swss::ZmqServer(m_p4OrchZmqServerEp, "", false, true);
+    gP4Orch = new P4Orch(m_applDb, p4rt_tables, m_p4OrchZmqServer, vrf_orch, gCoppOrch);
     m_orchList.push_back(gP4Orch);
 
     TableConnector confDbTwampTable(m_configDb, CFG_TWAMP_SESSION_TABLE_NAME);
