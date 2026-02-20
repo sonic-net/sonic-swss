@@ -69,6 +69,7 @@ struct P4AclMeter
     sai_uint64_t cburst;
     sai_uint64_t pir;
     sai_uint64_t pburst;
+    std::string policer_label;
 
     std::map<sai_policer_attr_t, sai_packet_action_t> packet_color_actions;
 
