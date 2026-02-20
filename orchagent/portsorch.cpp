@@ -759,6 +759,9 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     m_sendToIngressPortTable = unique_ptr<Table>(new Table(db, APP_SEND_TO_INGRESS_PORT_TABLE_NAME));
     m_systemPortTable = unique_ptr<Table>(new Table(db, APP_SYSTEM_PORT_TABLE_NAME));
 
+    /* Get the LAG member APP DB table */
+    m_lagMemberTable = unique_ptr<Table>(new Table(db, APP_LAG_MEMBER_TABLE_NAME));
+
     /* Initialize gearbox */
     m_gearboxTable = unique_ptr<Table>(new Table(db, "_GEARBOX_TABLE"));
 
@@ -10829,6 +10832,35 @@ bool PortsOrch::decrFdbCount(const std::string& alias, int count)
     return true;
 }
 
+void PortsOrch::setLagMemberState(Port &port, bool enabled)
+{
+    SWSS_LOG_ENTER();
+
+    /* Check if this port is a LAG member */
+    if (!port.m_lag_id || !port.m_lag_member_id)
+    {
+        SWSS_LOG_WARN("The port %s is not part of a LAG", port.m_alias.c_str());
+        return;
+    }
+
+    Port lag_p;
+    if (!getPort(port.m_lag_id, lag_p))
+    {
+        SWSS_LOG_ERROR("Failed to get lag port object for port id 0x%" PRIx64, port.m_lag_id);
+        return;
+    }
+
+    std::string m_lagName = lag_p.m_alias.c_str();
+    string key = m_lagName + ":" + port.m_alias.c_str();
+    vector<FieldValueTuple> v;
+    FieldValueTuple l("status", enabled ? "enabled" : "disabled");
+    v.push_back(l);
+    m_lagMemberTable->set(key, v);
+
+    SWSS_LOG_INFO("Set LAG member %s with status %s",
+            port.m_alias.c_str(), enabled ? "enabled" : "disabled");
+}
+
 void PortsOrch::setMACsecEnabledState(sai_object_id_t port_id, bool enabled)
 {
     SWSS_LOG_ENTER();
@@ -10853,6 +10885,9 @@ void PortsOrch::setMACsecEnabledState(sai_object_id_t port_id, bool enabled)
     {
         setPortMtu(p, p.m_mtu);
     }
+
+    /* if the port is a lag member port set state */
+    setLagMemberState(p, enabled);
 }
 
 bool PortsOrch::isMACsecPort(sai_object_id_t port_id) const

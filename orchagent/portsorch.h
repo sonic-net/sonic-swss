@@ -283,6 +283,7 @@ public:
 
     bool setPortPtIntfId(const Port& port, sai_uint16_t intf_id);
     bool setPortPtTimestampTemplate(const Port& port, sai_port_path_tracing_timestamp_type_t ts_type);
+    void setLagMemberState(Port &port, bool enabled);
 
 private:
     unique_ptr<CounterNameMapUpdater> m_counterNameMapUpdater;
@@ -301,6 +302,7 @@ private:
     unique_ptr<Table> m_pgPortTable;
     unique_ptr<Table> m_pgIndexTable;
     unique_ptr<Table> m_stateBufferMaximumValueTable;
+    unique_ptr<Table> m_lagMemberTable;
     Table m_portStateTable;
     Table m_portOpErrTable;
 
