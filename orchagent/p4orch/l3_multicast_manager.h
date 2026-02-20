@@ -26,6 +26,8 @@ struct P4MulticastRouterInterfaceEntry {
   std::string multicast_replica_port;
   std::string multicast_replica_instance;
   swss::MacAddress src_mac;
+  bool has_src_mac = false;
+  std::string action;
   std::string multicast_metadata;
   sai_object_id_t router_interface_oid = SAI_OBJECT_TYPE_NULL;
 
@@ -33,10 +35,12 @@ struct P4MulticastRouterInterfaceEntry {
   P4MulticastRouterInterfaceEntry(const std::string& port,
                                   const std::string& instance,
                                   const swss::MacAddress& mac,
+				  const std::string& action,
                                   const std::string& metadata)
       : multicast_replica_port(port),
         multicast_replica_instance(instance),
         src_mac(mac),
+	action(action),
         multicast_metadata(metadata) {}
 };
 
@@ -131,6 +135,16 @@ class L3MulticastManager : public ObjectManagerInterface {
   ReturnCode validateDelMulticastRouterInterfaceEntry(
       const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry);
 
+  ReturnCode validateL3SetMulticastRouterInterfaceEntry(
+      const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
+      const P4MulticastRouterInterfaceEntry* router_interface_entry_ptr);
+  ReturnCode validateL3DelMulticastRouterInterfaceEntry(
+      const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
+      const P4MulticastRouterInterfaceEntry* router_interface_entry_ptr);
+  ReturnCode validateL2MulticastRouterInterfaceEntry(
+      const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
+      const P4MulticastRouterInterfaceEntry* router_interface_entry_ptr);
+
   // Performs multicast replication entry validation.
   ReturnCode validateMulticastReplicationEntry(
       const P4MulticastReplicationEntry& multicast_replication_entry,
@@ -163,6 +177,10 @@ class L3MulticastManager : public ObjectManagerInterface {
       const std::string& op, bool update);
 
   // Wrapper around SAI setup and call, for easy mocking.
+  ReturnCode createBridgePort(P4MulticastRouterInterfaceEntry& entry,
+                              sai_object_id_t* bridge_port_oid);
+  ReturnCode deleteBridgePort(const std::string& port,
+                              sai_object_id_t bridge_port_oid);
   ReturnCode createRouterInterface(const std::string& rif_key,
                                    P4MulticastRouterInterfaceEntry& entry,
                                    sai_object_id_t* rif_oid);
@@ -183,12 +201,20 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Add new multicast router interface table entries.
   std::vector<ReturnCode> addMulticastRouterInterfaceEntries(
       std::vector<P4MulticastRouterInterfaceEntry>& entries);
+  ReturnCode addL3MulticastRouterInterfaceEntry(
+        P4MulticastRouterInterfaceEntry& entry);
+  ReturnCode addL2MulticastRouterInterfaceEntry(
+        P4MulticastRouterInterfaceEntry& entry);
   // Update existing multicast router interface table entries.
   std::vector<ReturnCode> updateMulticastRouterInterfaceEntries(
       std::vector<P4MulticastRouterInterfaceEntry>& entries);
   // Delete existing multicast router interface table entries.
   std::vector<ReturnCode> deleteMulticastRouterInterfaceEntries(
       const std::vector<P4MulticastRouterInterfaceEntry>& entries);
+  ReturnCode deleteL3MulticastRouterInterfaceEntry(
+      const P4MulticastRouterInterfaceEntry* entry);
+  ReturnCode deleteL2MulticastRouterInterfaceEntry(
+      const P4MulticastRouterInterfaceEntry* entry);
 
   // Add new multicast replication table entries.
   std::vector<ReturnCode> addMulticastReplicationEntries(
@@ -219,6 +245,10 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Verifies ASIC DB for a multicast router interface entry.
   std::string verifyMulticastRouterInterfaceStateAsicDb(
       const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
+  std::string verifyL3MulticastRouterInterfaceStateAsicDb(
+      const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
+  std::string verifyL2MulticastRouterInterfaceStateAsicDb(
+      const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
   // Verifies ASIC DB for a multicast replication entry.
   std::string verifyMulticastReplicationStateAsicDb(
       const P4MulticastReplicationEntry* multicast_replication_entry);
@@ -245,6 +275,11 @@ class L3MulticastManager : public ObjectManagerInterface {
   // entry.  This would be the value used by the replication group member.
   sai_object_id_t getRifOid(
       const P4MulticastReplicationEntry* multicast_replication_entry);
+
+  // Fetches a bridge port OID for a port that will be used for L2 multicast
+  // group members.
+  sai_object_id_t getBridgePortOid(
+      const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
 
   // Internal cache of entries.
   P4MulticastRouterInterfaceTable m_multicastRouterInterfaceTable;
