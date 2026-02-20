@@ -119,7 +119,7 @@ jobs:
   - script: |
       set -ex
       # install packages for vs test
-      sudo pip3 install pytest flaky exabgp docker redis lcov_cobertura
+      sudo pip3 install pytest flaky exabgp docker lcov_cobertura
 
       # install other dependencies
       sudo apt-get -o DPkg::Lock::Timeout=600 install -y net-tools \
@@ -127,11 +127,9 @@ jobs:
           vlan \
           libzmq3-dev \
           libzmq5 \
-          libboost-serialization1.74.0 \
-          libboost1.74-dev \
-          libboost-dev \
           libhiredis0.14 \
-          libpcre3-dev
+          libpcre3-dev \
+          python3-redis
 
       sudo .azure-pipelines/build_and_install_module.sh
 
@@ -143,7 +141,7 @@ jobs:
 
       sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/libprotobuf*_amd64.deb $(Build.ArtifactStagingDirectory)/download/libprotobuf-lite*_amd64.deb $(Build.ArtifactStagingDirectory)/download/python3-protobuf*_amd64.deb
       sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/libdashapi*.deb
-      sudo dpkg -i --force-confask,confnew $(Build.ArtifactStagingDirectory)/download/libswsscommon_1.0.0_amd64.deb || apt-get install -f
+      sudo dpkg -i --force-confask,confnew $(Build.ArtifactStagingDirectory)/download/libswsscommon_1.0.0_amd64.deb || sudo apt-get install -y -f
       sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/python3-swsscommon_1.0.0_amd64.deb
     displayName: "Install dependencies"
 
