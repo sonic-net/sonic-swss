@@ -519,7 +519,7 @@ namespace copporch_test
             const auto &trapGroupIdMap = Portal::CoppOrchInternal::getTrapGroupIdMap(coppOrch.get());
             const auto &cit2 = trapGroupIdMap.find(SAI_HOSTIF_TRAP_TYPE_TTL_ERROR);
             EXPECT_TRUE(cit2 != trapGroupIdMap.end());
-            ASSERT_EQ(trapGroupIdMap.size(), 1);
+            ASSERT_EQ(trapGroupIdMap.size(), 2);
         }
     }
 
@@ -589,7 +589,7 @@ namespace copporch_test
             const auto &trapGroupIdMap = Portal::CoppOrchInternal::getTrapGroupIdMap(coppOrch.get());
             const auto &cit2 = trapGroupIdMap.find(SAI_HOSTIF_TRAP_TYPE_TTL_ERROR);
             EXPECT_TRUE(cit2 != trapGroupIdMap.end());
-            ASSERT_EQ(trapGroupIdMap.size(), 1);
+            ASSERT_EQ(trapGroupIdMap.size(), 2);
         }
     }
 }
