@@ -7,6 +7,8 @@ INGRESS_STAGE = "SAI_ACL_STAGE_INGRESS"
 EGRESS_STAGE = "SAI_ACL_STAGE_EGRESS"
 PRE_INGRESS_STAGE = "SAI_ACL_STAGE_PRE_INGRESS"
 
+APP_DB_TBL_NAME = swsscommon.APP_P4RT_TABLE_NAME
+
 class P4RtAclTableDefinitionWrapper(util.DBInterface):
     """Interface to interact with APP DB and ASIC DB tables for P4RT ACL table definition object."""
 
@@ -25,7 +27,6 @@ class P4RtAclTableDefinitionWrapper(util.DBInterface):
     SAI_ACL_TABLE_ATTR_SIZE = "SAI_ACL_TABLE_ATTR_SIZE"
 
     # table name in APP_DB and attribute fields
-    APP_DB_TBL_NAME = swsscommon.APP_P4RT_TABLE_NAME
     TBL_NAME = swsscommon.APP_P4RT_ACL_TABLE_DEFINITION_NAME
     STAGE_FIELD = "stage"
     PRIORITY_FIELD = "priority"
@@ -70,7 +71,6 @@ class P4RtAclRuleWrapper(util.DBInterface):
     SAI_ATTR_ACTION_SET_USER_TRAP_ID = "SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID"
 
     # table name in APP_DB and attribute fields
-    APP_DB_TBL_NAME = swsscommon.APP_P4RT_TABLE_NAME
     ACTION = "action"
     METER_CIR = "meter/cir"
     METER_CBURST = "meter/cburst"
@@ -81,6 +81,7 @@ class P4RtAclRuleWrapper(util.DBInterface):
 class P4RtAclCounterWrapper(util.DBInterface):
     """Interface to interact with APP DB and ASIC DB tables for P4RT ACL counter object."""
 
+
     # table name in ASIC_DB and SAI constants
     ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_ACL_COUNTER"
     SAI_ATTR_TABLE_ID = "SAI_ACL_COUNTER_ATTR_TABLE_ID"
@@ -90,6 +91,7 @@ class P4RtAclCounterWrapper(util.DBInterface):
 
 class P4RtAclMeterWrapper(util.DBInterface):
     """Interface in ASIC DB tables for P4RT ACL policer object."""
+
 
     # table name in ASIC_DB and SAI constants
     ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_POLICER"
@@ -106,6 +108,7 @@ class P4RtAclMeterWrapper(util.DBInterface):
 
 class P4RtAclGroupWrapper(util.DBInterface):
     """Interface in ASIC DB tables for P4RT ACL group object."""
+
 
     # table name in ASIC_DB and SAI constants
     ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP"
