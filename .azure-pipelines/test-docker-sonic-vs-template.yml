@@ -142,7 +142,7 @@ jobs:
 
       sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/libprotobuf*_amd64.deb $(Build.ArtifactStagingDirectory)/download/libprotobuf-lite*_amd64.deb $(Build.ArtifactStagingDirectory)/download/python3-protobuf*_amd64.deb
       sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/libdashapi*.deb
-      sudo dpkg -i --force-confask,confnew $(Build.ArtifactStagingDirectory)/download/libswsscommon_1.0.0_amd64.deb || sudo apt-get install -f
+      sudo dpkg -i --force-confask,confnew $(Build.ArtifactStagingDirectory)/download/libswsscommon_1.0.0_amd64.deb || sudo apt-get install -y -f
       sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/python3-swsscommon_1.0.0_amd64.deb
     displayName: "Install dependencies"
 
