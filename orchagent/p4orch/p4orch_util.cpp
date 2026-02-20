@@ -132,6 +132,30 @@ void drainMgmtWithNotExecuted(std::deque<swss::KeyOpFieldsValuesTuple>& entries,
   return;
 }
 
+ReturnCodeOr<bool> parseFlag(const std::string& name,
+                             const std::string& value) {
+  try {
+    if (value.rfind("0x") == 0 || value.rfind("0X") == 0) {
+      size_t processed = 0;
+      int flag = std::stoi(value, &processed, 16);
+      if (flag == 1 && processed > 2)
+        return true;
+      else if (flag == 0 && processed > 2)
+        return false;
+    } else {
+      int flag = std::stoi(value);
+      if (flag == 1)
+        return true;
+      else if (flag == 0)
+        return false;
+    }
+  } catch (std::exception& e) {
+    // Nothing
+  }
+  return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+         << "Invalid " << QuotedVar(name) << " value: " << QuotedVar(value);
+}
+
 std::string KeyGenerator::generateRouteKey(const std::string &vrf_id, const swss::IpPrefix &ip_prefix)
 {
     std::map<std::string, std::string> fv_map = {
