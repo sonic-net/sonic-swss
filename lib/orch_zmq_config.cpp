@@ -75,7 +75,7 @@ std::shared_ptr<swss::ZmqServer> swss::create_zmq_server(std::string zmq_address
 
     // To prevent message loss between ZmqServer's bind operation and the creation of ZmqProducerStateTable,
     // use lazy binding and call bind() only after the handler has been registered.
-    return std::make_shared<ZmqServer>(zmq_address, vrf, true);
+    return std::make_shared<ZmqServer>(zmq_address, vrf, true, /*one_to_one*/true);
 }
 
 bool swss::get_feature_status(std::string feature, bool default_value)

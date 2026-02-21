@@ -6,141 +6,162 @@ import json
 
 
 def _set_up_appl_db(dvs):
-  """ Initializes application database connector."""
-  return swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+    """ Initializes application database connector."""
+    return swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
 
 def _set_up_asic_db(dvs):
-  """ Initializes ASIC database connector."""
-  return swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+    """ Initializes ASIC database connector."""
+    return swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
 
 def _set_up_appl_state_db(dvs):
-  """ Initializes APPL STATE database connector."""
-  return swsscommon.DBConnector(swsscommon.APPL_STATE_DB, dvs.redis_sock, 0)
+    """ Initializes APPL STATE database connector."""
+    return swsscommon.DBConnector(swsscommon.APPL_STATE_DB, dvs.redis_sock, 0)
 
 
 def get_keys(db, tbl_name):
-  """ Retrieves keys from given database and table."""
-  tbl = swsscommon.Table(db, tbl_name)
-  return tbl.getKeys()
+    """ Retrieves keys from given database and table."""
+    tbl = swsscommon.Table(db, tbl_name)
+    return tbl.getKeys()
 
 
 def get_key(db, tbl_name, key):
-  """ Retrieves entry corresponding to given key in given database and table."""
-  tbl = swsscommon.Table(db, tbl_name)
-  return tbl.get(key)
+    """ Retrieves entry corresponding to given key in given database and table."""
+    tbl = swsscommon.Table(db, tbl_name)
+    return tbl.get(key)
 
 
 def verify_attr(fvs, attr_list):
-  """ Verifies attribute list for given key in a database table."""
-  assert len(fvs) == len(attr_list), "Unexpected size: '%d' received, expected '%d'" % \
-                (len(fvs), len(attr_list))
-  d = dict(attr_list)
-  for fv in fvs:
-    if fv[0] in d:
-      assert fv[1] == d[fv[0]], "Unexpected value of attribute '%s': '%s' received, expected '%s'" % \
-                (fv[0], fv[1], d[fv[0]])
-    else:
-      assert False, "Unexpected attribute '%s' received" % (fv[0])
+    """ Verifies attribute list for given key in a database table."""
+    assert len(fvs) == len(attr_list), "Unexpected size: '%d' received, expected '%d'" % \
+                  (len(fvs), len(attr_list))
+    d = dict(attr_list)
+    for fv in fvs:
+      if fv[0] in d:
+        assert fv[1] == d[fv[0]], "Unexpected value of attribute '%s': '%s' received, expected '%s'" % \
+                  (fv[0], fv[1], d[fv[0]])
+      else:
+        assert False, "Unexpected attribute '%s' received" % (fv[0])
 
 def prepend_match_field(match_field):
-  return "match/" + match_field
+    return "match/" + match_field
 
 def prepend_param_field(param_field):
-  return "param/" + param_field
+    return "param/" + param_field
+
 
 def verify_response(consumer, key, attr_list, status, err_message = "SWSS_RC_SUCCESS"):
-  """ Verifies a response."""
-  if consumer.peek() <= 0:
-    consumer.readData()
-  (op, data, values) = consumer.pop()
-  assert data == key
-  assert op == status
-  assert len(values) >= 1
-  assert values[0][0] == "err_str", "Unexpected status '%s' received, expected '%s'" % \
-                (values[0][0], "err_str")
-  assert values[0][1] == err_message, "Unexpected message '%s' received, expected '%s'" % \
-                (values[0][1], err_message)
-  values = values[1:]
-  verify_attr(values, attr_list)
+    """ Verifies a response."""
+    if consumer.peek() <= 0:
+      consumer.readData()
+    (op, data, values) = consumer.pop()
+    assert data == key
+    assert op == status
+    assert len(values) >= 1
+    assert values[0][0] == "err_str", "Unexpected status '%s' received, expected '%s'" % \
+                  (values[0][0], "err_str")
+    assert values[0][1] == err_message, "Unexpected message '%s' received, expected '%s'" % \
+                  (values[0][1], err_message)
+    values = values[1:]
+    verify_attr(values, attr_list)
 
 
 def p4rt_verify_response(consumer, send_op, send_data, send_attrs, key):
-  while consumer.peek() <= 0:
-     consumer.readData()
-  (rcvd_op, rcvd_data, rcvd_values) = consumer.pop()
-  assert rcvd_op == send_op, f"Expected rcvd_op={send_op}, got {rcvd_op}"
-  assert rcvd_data == send_data, f"Expected rcvd_data={send_data}, got {rcvd_data}"
-  if send_op == "SET":
-     rkey, rcvd_json = rcvd_values[0]
-     rcvd_attr_list = json.loads(rcvd_json)
-     rcvd_attrs_dict = dict(zip(rcvd_attr_list[0::2], rcvd_attr_list[1::2]))
-     expected_attrs_dict = dict(send_attrs)
-     assert rcvd_attrs_dict == expected_attrs_dict, f"Expected attributes={expected_attrs_dict}, but got={rcvd_attrs_dict}"
-  elif send_op == "DEL":
-     assert rcvd_values[0][0] == key, f"Expected key={key}, got {rcvd_values[0][0]}"
-     assert rcvd_values[0][1] == "", f"Expected empty value, got {rcvd_values[0][1]}"
+    while consumer.peek() <= 0:
+       consumer.readData()
+    (rcvd_op, rcvd_data, rcvd_values) = consumer.pop()
+    assert rcvd_op == send_op, f"Expected rcvd_op={send_op}, got {rcvd_op}"
+    assert rcvd_data == send_data, f"Expected rcvd_data={send_data}, got {rcvd_data}"
+    if send_op == "SET":
+       rkey, rcvd_json = rcvd_values[0]
+       rcvd_attr_list = json.loads(rcvd_json)
+       rcvd_attrs_dict = dict(zip(rcvd_attr_list[0::2], rcvd_attr_list[1::2]))
+       expected_attrs_dict = dict(send_attrs)
+       assert rcvd_attrs_dict == expected_attrs_dict, f"Expected attributes={expected_attrs_dict}, but got={rcvd_attrs_dict}"
+    elif send_op == "DEL":
+       assert rcvd_values[0][0] == key, f"Expected key={key}, got {rcvd_values[0][0]}"
+       assert rcvd_values[0][1] == "", f"Expected empty value, got {rcvd_values[0][1]}"
 
 
 def check_syslog(dvs, marker, process, err_log, expected_cnt):
-  """ Checks syslog on dvs docker.
+    """ Checks syslog on dvs docker.
 
-  Scans /var/log/syslog for expected count (expected_cnt) of the error
-  log(err_log). Filters Logs starting at timestamp marked by "marker" based on
-  the given process.
-  """
-  (exitcode, num) = dvs.runcmd([
-      "sh", "-c",
-      "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep %s | grep -E \'%s\' | wc -l"
-      % (marker, process, err_log)
-  ])
-  assert num.strip() == str(expected_cnt)
+    Scans /var/log/syslog for expected count (expected_cnt) of the error
+    log(err_log). Filters Logs starting at timestamp marked by "marker" based on
+    the given process.
+    """
+    (exitcode, num) = dvs.runcmd([
+        "sh", "-c",
+        "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep %s | grep -E \'%s\' | wc -l"
+        % (marker, process, err_log)
+    ])
+    assert num.strip() == str(expected_cnt)
 
 def get_port_oid_by_name(dvs, port_name):
-  counters_db = swsscommon.DBConnector(swsscommon.COUNTERS_DB, dvs.redis_sock, 0)
-  port_map_tbl = swsscommon.Table(counters_db, "COUNTERS_PORT_NAME_MAP")
-  port_oid = None
-  for k in port_map_tbl.get("")[1]:
-        if k[0] == port_name:
-            port_oid = k[1]
-  return port_oid
+    counters_db = swsscommon.DBConnector(swsscommon.COUNTERS_DB, dvs.redis_sock, 0)
+    port_map_tbl = swsscommon.Table(counters_db, "COUNTERS_PORT_NAME_MAP")
+    port_oid = None
+    for k in port_map_tbl.get("")[1]:
+          if k[0] == port_name:
+              port_oid = k[1]
+    return port_oid
 
 def initialize_interface(dvs, port_name, ip):
-  dvs.port_admin_set(port_name, "up")
-  dvs.interface_ip_add(port_name, ip)
+    dvs.port_admin_set(port_name, "up")
+    dvs.interface_ip_add(port_name, ip)
 
 def set_interface_status(dvs, if_name, status = "down", server = 0):
-  dvs.servers[0].runcmd("ip link set {} dev {}".format(status, if_name)) == 0
-  time.sleep(1)
+    dvs.servers[0].runcmd("ip link set {} dev {}".format(status, if_name)) == 0
+    time.sleep(1)
 
 class DBInterface(object):
-  """ Interface to interact with different redis databases on dvs."""
+    """ Interface to interact with different redis databases on dvs."""
 
-  # common attribute fields for L3 objects
-  ACTION_FIELD = "action"
+    # common attribute fields for L3 objects
+    ACTION_FIELD = "action"
 
-  def set_up_databases(self, dvs):
-    self.appl_db = _set_up_appl_db(dvs)
-    self.asic_db = _set_up_asic_db(dvs)
-    self.appl_state_db = _set_up_appl_state_db(dvs)
+    def set_up_databases(self, dvs):
+        self.appl_db = _set_up_appl_db(dvs)
+        self.asic_db = _set_up_asic_db(dvs)
+        self.appl_state_db = _set_up_appl_state_db(dvs)
+        self.zmq = swsscommon.ZmqClient("ipc://" + dvs.zmq_sock, 5000)
+        self.zmq_db = swsscommon.DBConnector("APPL_DB", 0)
+        self.zmq_tbl = swsscommon.ZmqProducerStateTable(
+            self.zmq_db, self.APP_DB_TBL_NAME, self.zmq)
 
-  def set_app_db_entry(self, key, attr_list):
-    fvs = swsscommon.FieldValuePairs(attr_list)
-    tbl = swsscommon.ProducerStateTable(self.appl_db, self.APP_DB_TBL_NAME)
-    tbl.set(key, fvs)
-    time.sleep(1)
+    def set_app_db_entry(self, key, attr_list):
+        fvs = swsscommon.FieldValuePairs(attr_list)
+        self.zmq_tbl.set(key, fvs)
+        time.sleep(0.2)
+        self.zmq_wait()
 
-  def remove_app_db_entry(self, key):
-    tbl = swsscommon.ProducerStateTable(self.appl_db, self.APP_DB_TBL_NAME)
-    tbl._del(key)
-    time.sleep(1)
+    def remove_app_db_entry(self, key):
+        import sys
+        self.zmq_tbl.delete(key)
+        self.zmq_wait()
 
-  # Get list of original entries in redis on init.
-  def get_original_redis_entries(self, db_list):
-    self._original_entries = {}
-    for i in db_list:
-      db = i[0]
-      table = i[1]
-      self._original_entries["{}:{}".format(db, table)]= get_keys(db, table)
+    def zmq_wait(self):
+        kcos = swsscommon.zmqWait(self.zmq_tbl)
+        assert len(kcos) == 1
+        (self.zmq_data, self.zmq_values) = kcos[0]
 
+    def verify_response(self, key, attr_list, status, err_message="SWSS_RC_SUCCESS"):
+        assert self.zmq_data == key, "data '%s' does not match key '%s'" % (
+            self.zmq_data, key)
+        assert len(self.zmq_values) >= 1
+        assert self.zmq_values[0][0] == status, "received status '%s' does not match status '%s'" % (
+            self.zmq_values[0][0], status)
+        assert self.zmq_values[0][1] == err_message, "Unexpected message '%s' received, expected '%s'" % (
+            self.zmq_values[0][1], err_message)
+        values = self.zmq_values[1:]
+        verify_attr(values, attr_list)
+
+    # Get list of original entries in redis on init.
+    def get_original_redis_entries(self, db_list):
+        self._original_entries = {}
+        for i in db_list:
+            db = i[0]
+            table = i[1]
+            self._original_entries["{}:{}".format(
+                db, table)] = get_keys(db, table)
