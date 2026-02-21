@@ -70,7 +70,7 @@ sudo apt-get install -y net-tools bridge-utils vlan libzmq3-dev libzmq5 \
 sudo apt install -y python3-pip net-tools bridge-utils ethtool vlan \
   libnl-nf-3-200 libnl-cli-3-200
 
-sudo pip3 install docker pytest flaky redis distro dataclasses fstring \
+sudo pip3 install docker pytest flaky "redis==7.1.1" distro dataclasses fstring \
   exabgp docker lcov_cobertura
 ```
 
