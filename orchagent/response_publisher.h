@@ -60,6 +60,11 @@ class ResponsePublisher : public ResponsePublisherInterface
      */
     void setBuffered(bool buffered);
 
+
+    // When true, write attributes directly to DB without merge logic.
+    // When false (default), check for existing keys and filter NULL-valued attributes.
+    bool m_directDbWrite = false;
+
   private:
     struct entry
     {
