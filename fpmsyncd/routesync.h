@@ -243,6 +243,8 @@ public:
     }
 
 private:
+    /* ApplDB connector */
+    shared_ptr<DBConnector> m_appDb;
     /* ZMQ client */
     shared_ptr<ZmqClient> m_zmqClient;
     /* regular route table */
@@ -375,6 +377,8 @@ private:
     void updatePicContextGroupDb(const NextHopGroup& nhg);
     void getNextHopGroupFields(const NextHopGroup& nhg, string& nexthops, string& ifnames, string& weights, uint8_t af = AF_INET);
     void getPicContextGroupFields(const NextHopGroup& nhg, struct NextHopField& nhField, uint8_t af = AF_INET);
+
+    bool getSrv6SidListsFromRoute(string &routeTableKey, string &sidlists);
 
 };
 struct NextHopField {
