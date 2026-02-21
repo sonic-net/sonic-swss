@@ -84,7 +84,9 @@ class AclRuleManager : public ObjectManagerInterface
                                 const P4AclRule &acl_rule, sai_object_id_t *counter_oid);
 
     // Create an ACL meter.
-    ReturnCode createAclMeter(const P4AclMeter &p4_acl_meter, const std::string &meter_key, sai_object_id_t *meter_oid);
+    ReturnCode createAclMeter(P4AclMeter& p4_acl_meter,
+                              const std::string& meter_key,
+                              sai_object_id_t* meter_oid);
 
     // Remove an ACL counter.
     ReturnCode removeAclCounter(const std::string &acl_table_name, const std::string &counter_key);

@@ -39,7 +39,7 @@ def verify_attr(fvs, attr_list):
   d = dict(attr_list)
   for fv in fvs:
     if fv[0] in d:
-      assert fv[1] == d[fv[0]], "Unexpected value of attribute '%s': '%s' received, expected '%s'" % \
+      assert fv[1] == d[fv[0]] or d[fv[0]] == "any_value", "Unexpected value of attribute '%s': '%s' received, expected '%s'" % \
                 (fv[0], fv[1], d[fv[0]])
     else:
       assert False, "Unexpected attribute '%s' received" % (fv[0])
