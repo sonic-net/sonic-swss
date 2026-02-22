@@ -4,6 +4,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "macaddress.h"
@@ -40,6 +41,22 @@ struct P4MulticastRouterInterfaceEntry {
         multicast_metadata(metadata) {}
 };
 
+struct P4Replica {
+  std::string multicast_group_id;
+  std::string port;
+  std::string instance;
+  std::string key;
+
+  P4Replica() = default;
+  P4Replica(const std::string& group_id,
+            const std::string& port_name,
+            const std::string& instance_number)
+      : multicast_group_id(group_id), port(port_name),
+        instance(instance_number) {
+    key = group_id + ":" + port_name + ":" + instance_number;
+  }
+};
+
 // Table entries for replication_multicast_table.
 struct P4MulticastReplicationEntry {
   std::string multicast_replication_key;  // Unique key of the entry.
@@ -61,13 +78,33 @@ struct P4MulticastReplicationEntry {
         multicast_metadata(metadata) {}
 };
 
+// Table entries for replication_multicast_group_table.
+struct P4MulticastGroupEntry {
+  std::string multicast_group_id;  // Also a unique key for the entry.
+  std::vector<P4Replica> replicas;
+  std::string multicast_metadata;
+  std::string controller_metadata;
+  sai_object_id_t multicast_group_oid = SAI_OBJECT_TYPE_NULL;
+  std::unordered_map<std::string, sai_object_id_t> member_oids;
+
+  P4MulticastGroupEntry() = default;
+  P4MulticastGroupEntry(const std::string& group_id,
+                        const std::string& metadata)
+      : multicast_group_id(group_id), multicast_metadata(metadata) {}
+};
+
 // P4MulticastRouterInterfaceTable:
 //   Multicast router interface key, P4MulticastRouterInterfaceEntry
 typedef std::unordered_map<std::string, P4MulticastRouterInterfaceEntry>
     P4MulticastRouterInterfaceTable;
+// To remove
 // P4MulticastReplicationTable: Replication key, P4MulticastReplicationEntry
 typedef std::unordered_map<std::string, P4MulticastReplicationEntry>
     P4MulticastReplicationTable;
+
+// P4MulticastGroupTable: Replication key, P4MulticastGroupEntry
+typedef std::unordered_map<std::string, P4MulticastGroupEntry>
+P4MulticastGroupTable;
 
 // The L3MulticastManager handles updates to two P4 tables:
 // * The "fixed" table multicast_router_interface_table, which defines a single
@@ -112,9 +149,16 @@ class L3MulticastManager : public ObjectManagerInterface {
       const std::string& key,
       const std::vector<swss::FieldValueTuple>& attributes);
 
+  // To remove.
   // Converts db table entry into P4MulticastReplicationEntry.
   ReturnCodeOr<P4MulticastReplicationEntry>
   deserializeMulticastReplicationEntry(
+      const std::string& key,
+      const std::vector<swss::FieldValueTuple>& attributes);
+
+  // Converts db table entry into P4MulticastGroupEntry.
+  ReturnCodeOr<P4MulticastGroupEntry>
+  deserializeMulticastGroupEntry(
       const std::string& key,
       const std::vector<swss::FieldValueTuple>& attributes);
 
@@ -131,18 +175,34 @@ class L3MulticastManager : public ObjectManagerInterface {
   ReturnCode validateDelMulticastRouterInterfaceEntry(
       const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry);
 
+  // To remove.
   // Performs multicast replication entry validation.
   ReturnCode validateMulticastReplicationEntry(
       const P4MulticastReplicationEntry& multicast_replication_entry,
       const std::string& operation);
 
+  // Performs multicast replication entry validation.
+  ReturnCode validateMulticastGroupEntry(
+      const P4MulticastGroupEntry& multicast_group_entry,
+      const std::string& operation);
+
+  // To remove.
   // Performs multicast replication entry validation for SET command.
   ReturnCode validateSetMulticastReplicationEntry(
       const P4MulticastReplicationEntry& multicast_router_interface_entry);
 
+  // Performs multicast replication entry validation for SET command.
+  ReturnCode validateSetMulticastGroupEntry(
+      const P4MulticastGroupEntry& multicast_group_entry);
+
+  // To remove.
   // Performs multicast replication entry validation for DEL command.
   ReturnCode validateDelMulticastReplicationEntry(
       const P4MulticastReplicationEntry& multicast_router_interface_entry);
+
+  // Performs multicast replication entry validation for DEL command.
+  ReturnCode validateDelMulticastGroupEntry(
+      const P4MulticastGroupEntry& multicast_group_entry);
 
   // Processes a list of entries of the same operation type for the multicast
   // router interface table.
@@ -169,16 +229,27 @@ class L3MulticastManager : public ObjectManagerInterface {
   ReturnCode deleteRouterInterface(const std::string& rif_key,
                                    sai_object_id_t rif_oid);
 
+  // To remove.
   // Wrapper around SAI setup and call to create multicast group.
   ReturnCode createMulticastGroup(P4MulticastReplicationEntry& entry,
                                   sai_object_id_t* mcast_group_oid);
+  // Wrapper around SAI setup and call to create multicast group.
+  ReturnCode createMulticastGroup(P4MulticastGroupEntry& entry,
+                                  sai_object_id_t* mcast_group_oid);
+
   ReturnCode deleteMulticastGroup(const std::string& multicast_group_id,
                                   sai_object_id_t mcast_group_oid);
 
+  // To remove.
   // Wrapper around SAI setup and call to create multicast group members.
   ReturnCode createMulticastGroupMember(
       const P4MulticastReplicationEntry& entry, const sai_object_id_t rif_oid,
       sai_object_id_t* mcast_group_member_oid);
+
+  // Wrapper around SAI setup and call to create multicast group members.
+  ReturnCode createMulticastGroupMember(
+      const P4Replica& replica, const sai_object_id_t group_oid,
+      const sai_object_id_t rif_oid, sai_object_id_t* mcast_group_member_oid);
 
   // Add new multicast router interface table entries.
   std::vector<ReturnCode> addMulticastRouterInterfaceEntries(
@@ -199,6 +270,20 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Delete existing multicast replication table entries.
   std::vector<ReturnCode> deleteMulticastReplicationEntries(
       const std::vector<P4MulticastReplicationEntry>& entries);
+
+  // Add new multicast group table entries.
+  std::vector<ReturnCode> addMulticastGroupEntries(
+      std::vector<P4MulticastGroupEntry>& entries);
+
+  // Used during failure scenarios where we try to revert to the previous state.
+  ReturnCode restoreDeletedGroupMembers(
+      const std::vector<P4Replica>& deleted_replicas,
+      const std::unordered_map<std::string, sai_object_id_t>& replica_rif_map,
+      const sai_object_id_t group_oid, const std::string& error_message,
+      P4MulticastGroupEntry* old_entry);
+  // Delete existing multicast group table entries.
+  std::vector<ReturnCode> deleteMulticastGroupEntries(
+      const std::vector<P4MulticastGroupEntry>& entries);
 
   std::string verifyMulticastRouterInterfaceState(
       const std::string& key,
@@ -229,10 +314,16 @@ class L3MulticastManager : public ObjectManagerInterface {
   P4MulticastRouterInterfaceEntry* getMulticastRouterInterfaceEntry(
       const std::string& multicast_router_interface_entry_key);
 
+  // To remove.
   // Gets the internal cached multicast replication entry.
   // Return nullptr if corresponding multicast replication entry is not cached.
   P4MulticastReplicationEntry* getMulticastReplicationEntry(
       const std::string& multicast_replication_key);
+
+  // Gets the internal cached multicast group entry.
+  // Return nullptr if corresponding multicast group entry is not cached.
+  P4MulticastGroupEntry* getMulticastGroupEntry(
+      const std::string& multicast_group_id);
 
   // Fetches the RIF OID for a given multicast router interface entry.
   // Return SAI_NULL_OBJECT_ID if not found.
@@ -241,14 +332,21 @@ class L3MulticastManager : public ObjectManagerInterface {
   // bookkeeping.
   sai_object_id_t getRifOid(
       const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
-  // Fetches the RIF OID that will be used by a given multicast repelication
+  // To remove.
+  // Fetches the RIF OID that will be used by a given multicast replication
   // entry.  This would be the value used by the replication group member.
   sai_object_id_t getRifOid(
       const P4MulticastReplicationEntry* multicast_replication_entry);
 
+  // Fetches the RIF OID that will be used by a given multicast replica.
+  // This would be the value used by the group member.
+  sai_object_id_t getRifOid(const P4Replica& replica);
+
   // Internal cache of entries.
   P4MulticastRouterInterfaceTable m_multicastRouterInterfaceTable;
+  // To remove.
   P4MulticastReplicationTable m_multicastReplicationTable;
+  P4MulticastGroupTable m_multicastGroupEntryTable;
 
   // Several maps to keep track of entry relationships.
 
@@ -263,8 +361,8 @@ class L3MulticastManager : public ObjectManagerInterface {
   // RIF OIDs -> multicast group members using the RIF.
   std::unordered_map<sai_object_id_t, std::unordered_set<std::string>>
       m_rifOidToMulticastGroupMembers;
-  // multicast group IDs -> set of member entries (P4MulticastReplicationEntry
-  // keys)
+  // To remove.
+  // multicast group IDs -> set of member entries (P4MulticastGroupEntry keys)
   std::unordered_map<std::string, std::unordered_set<std::string>>
       m_multicastGroupMembers;
 
