@@ -433,6 +433,49 @@ class TestHFT(object):
         self.delete_hft_group(dvs)
         self.delete_hft_profile(dvs)
 
+    def test_hft_stream_state_sync_to_state_db(self, dvs, testlog):
+        """Verify profile stream_state updates are synchronized to STATE_DB stream_status."""
+        profile_name = "test"
+        port_group_name = "PORT"
+        buffer_pool_group_name = "BUFFER_POOL"
+        port_session_key = f"{profile_name}|{port_group_name}"
+        buffer_pool_session_key = f"{profile_name}|{buffer_pool_group_name}"
+
+        state_db = swsscommon.DBConnector(6, dvs.redis_sock, 0)
+        state_tbl = swsscommon.Table(state_db, "HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE")
+
+        # 1) Insert config with stream_state=disabled
+        self.create_hft_profile(dvs, name=profile_name, status="disabled")
+        self.create_hft_group(dvs, profile_name=profile_name, group_name=port_group_name)
+        self.create_hft_group(
+            dvs,
+            profile_name=profile_name,
+            group_name=buffer_pool_group_name,
+            object_names="egress_lossless_pool",
+            object_counters="CURR_OCCUPANCY_BYTES",
+        )
+
+        # Allow orchagent to create the state entry.
+        time.sleep(3)
+
+        # 2) Update profile stream_state=enabled
+        self.create_hft_profile(dvs, name=profile_name, status="enabled")
+        time.sleep(3)
+
+        # 3) Verify both state DB entries have stream_status=enabled
+        for session_key in [port_session_key, buffer_pool_session_key]:
+            status, fvs = state_tbl.get(session_key)
+            assert status, f"Expected STATE_DB entry to exist for {session_key}"
+            entry = dict(fvs)
+            assert entry.get("stream_status") == "enabled", (
+                f"Expected stream_status=enabled for {session_key}, got {entry.get('stream_status')} (entry={entry})"
+            )
+
+        # Cleanup
+        self.delete_hft_group(dvs, profile_name=profile_name, group_name=port_group_name)
+        self.delete_hft_group(dvs, profile_name=profile_name, group_name=buffer_pool_group_name)
+        self.delete_hft_profile(dvs, name=profile_name)
+
     def test_hft_empty_fields_with_disabled_status(self, dvs, testlog):
         """Test HFT with empty object_names and object_counters when profile is disabled."""
         # Create HFT profile with disabled status
