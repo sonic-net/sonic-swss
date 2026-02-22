@@ -38,6 +38,7 @@ extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 extern Srv6Orch *gSrv6Orch;
 extern SwitchOrch *gSwitchOrch;
 extern sai_object_id_t gSwitchId;
+extern string gMySwitchType;
 
 int gFlexCounterDelaySec;
 
@@ -500,7 +501,9 @@ map<string, FlexCounterQueueStates> FlexCounterOrch::getQueueConfigurations()
 
     map<string, FlexCounterQueueStates> queuesStateVector;
 
-    if (!isCreateOnlyConfigDbBuffers())
+    // For VOQ chassis, flexcounterorch adds the Queue Counters for all egress and VOQ queues of all front panel and system ports
+    // to  the FLEX_COUNTER_DB irrespective of BUFFER_QUEUE configuration.
+    if ((!isCreateOnlyConfigDbBuffers()) || (gMySwitchType == "voq"))
     {
         FlexCounterQueueStates flexCounterQueueState(0);
         queuesStateVector.insert(make_pair(createAllAvailableBuffersStr, flexCounterQueueState));
