@@ -1338,6 +1338,21 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
                 return false;
             }
         }
+        else if (field == PORT_MACSEC)
+        {
+            /* Placeholder to prevent warning. Parsed by macsecorch.*/
+            SWSS_LOG_INFO("Parsing %s", field.c_str());
+        }
+        else if (field == PORT_ASIC_PORT_NAME)
+        {
+            /* Placeholder to prevent warning. Not used by orchagent.*/
+            SWSS_LOG_INFO("Parsing %s", field.c_str());
+        }
+        else if ((field == PORT_CORE_ID) || (field == PORT_CORE_PORT_ID) || (field == PORT_NUM_VOQ))
+        {
+            /* Placeholder to prevent warning. These fields are taken from SYSTEM_PORT*/
+            SWSS_LOG_INFO("Parsing %s", field.c_str());
+        }
         else
         {
             SWSS_LOG_WARN("Unknown field(%s): skipping ...", field.c_str());
