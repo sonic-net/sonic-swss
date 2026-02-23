@@ -199,7 +199,8 @@ class ApplDbValidator(DVSDatabase):
                 if not m:
                     continue
                 assert int(m.group(1)) > 0
-        except Exception:
+        except RuntimeError:
+            # Redis connection may already be closed during test cleanup
             pass
 
 
