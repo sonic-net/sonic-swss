@@ -316,6 +316,7 @@ const request_description_t vnet_route_description = {
         { "check_directly_connected", REQ_T_BOOL },
         { "rx_monitor_timer",       REQ_T_UINT },
         { "tx_monitor_timer",       REQ_T_UINT },
+        { "metric",                 REQ_T_UINT }
     },
     { }
 };
@@ -385,7 +386,7 @@ private:
 class VNetRouteRequest : public Request
 {
 public:
-    VNetRouteRequest() : Request(vnet_route_description, ':') { }
+    VNetRouteRequest() : Request(vnet_route_description, ':', true) { }
 };
 
 struct VNetNextHopUpdate
@@ -539,6 +540,12 @@ private:
                             const string& monitoring, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer,
                             IpPrefix& ipPrefix);
     void delEndpointMonitor(const string& vnet, NextHopGroupKey& nexthops, IpPrefix& ipPrefix);
+    void delEndpointMonitor(const string& vnet, const std::map<NextHopKey, IpAddress>& monitors, IpPrefix& ipPrefix);
+
+    bool isCustomMonitorEndpointUpdated(const string& vnet, IpPrefix& ipPrefix,
+                                  const std::map<NextHopKey, IpAddress>& monitors);
+    void getCustomMonitors(const string& vnet, const IpPrefix& ipPrefix, const NextHopGroupKey& nexthops, std::map<NextHopKey, IpAddress>& monitors);
+
     void postRouteState(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& profile);
     void removeRouteState(const string& vnet, IpPrefix& ipPrefix);
     void addRouteAdvertisement(IpPrefix& ipPrefix, string& profile);

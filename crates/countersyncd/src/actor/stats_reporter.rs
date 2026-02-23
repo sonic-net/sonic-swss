@@ -13,6 +13,7 @@ use super::super::message::saistats::SAIStatsMessage;
 use crate::sai::{
     SaiBufferPoolStat, SaiIngressPriorityGroupStat, SaiObjectType, SaiPortStat, SaiQueueStat,
 };
+use crate::utilities::{record_comm_stats, ChannelLabel};
 
 /// Unique key for identifying a specific counter based on the triplet
 /// (object_name, type_id, stat_id)
@@ -479,6 +480,10 @@ impl<W: OutputWriter> StatsReporterActor<W> {
                 stats_msg = actor.stats_receiver.recv() => {
                     match stats_msg {
                         Some(stats) => {
+                            record_comm_stats(
+                                ChannelLabel::IpfixToStatsReporter,
+                                actor.stats_receiver.len(),
+                            );
                             actor.update_stats(stats);
                         }
                         None => {
