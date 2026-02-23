@@ -379,6 +379,10 @@ SaiOffloadHandlerStatus SaiOffloadSessionHandler<SaiOrchHandlerClass, T>::handle
         {
             memcpy(val_smac.mac, port.m_mac.getMac(), sizeof(sai_mac_t));
         }
+        else
+        {
+            val_smac = smac_it->second;
+        }
         m_attr_val_map[src_mac_attr_id] = val_smac;
     }
     else
