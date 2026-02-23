@@ -10,7 +10,6 @@
 #include "p4orch/p4orch_util.h"
 #include "response_publisher_interface.h"
 #include "return_code.h"
-#include "vrforch.h"
 extern "C" {
 #include "sai.h"
 }
@@ -19,10 +18,8 @@ extern "C" {
 // tunnel termination table entry. Example:
 // P4RT:FIXED_IPV6_TUNNEL_TERMINATION_TABLE:{"match/dst_ipv6_64bit":
 //   "2607:f8b0:c145:9300:: & ffff:ffff:ffff:ff00::",
-//   "match/src_ipv6_64bit":"2607:f8b0:c145:9300:: & ffff:ffff:ffff:ff00::"}
-//   "action" = "mark_for_tunnel_decap_and_set_vrf",
-//   "param/vrf_id" = "b4-traffic",
-//   "controller_metadata" = "..."
+//   "match/src_ipv6_64bit":"2607:f8b0:c145:9300:: & ffff:ffff:ffff:ff00::",
+//   "priority":2030} "action" = "tunnel_decap", "controller_metadata" = "..."
 // LINT.IfChange
 struct Ipv6TunnelTermTableEntry {
   // Unique key of this entry.
@@ -34,19 +31,16 @@ struct Ipv6TunnelTermTableEntry {
   swss::IpAddress src_ipv6_mask;
   swss::IpAddress dst_ipv6_ip;
   swss::IpAddress dst_ipv6_mask;
-  // Action
-  std::string vrf_id;
+  sai_uint32_t priority;
 
   // SAI OID associated with this entry.
   sai_object_id_t ipv6_tunnel_term_oid = SAI_NULL_OBJECT_ID;
-  // SAI OID of the vrf_id for SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_VR_ID
-  sai_object_id_t vrf_oid = SAI_NULL_OBJECT_ID;
 
    Ipv6TunnelTermTableEntry(const swss::IpAddress& src_ipv6_ip,
                             const swss::IpAddress& src_ipv6_mask,
                             const swss::IpAddress& dst_ipv6_ip,
                             const swss::IpAddress& dst_ipv6_mask,
-                            const std::string& vrf_id);
+                            const sai_uint32_t& priority);
 };
 // LINT.ThenChange(tunnel_decap_group_manager.cpp:verify_state_cache)
 
@@ -55,7 +49,7 @@ struct Ipv6TunnelTermTableEntry {
 // IPv6 tunnel termination table entry SAI object accordingly.
 class TunnelDecapGroupManager : public ObjectManagerInterface {
  public:
-  TunnelDecapGroupManager(P4OidMapper* p4oidMapper, VRFOrch* vrfOrch,
+  TunnelDecapGroupManager(P4OidMapper* p4oidMapper,
                           ResponsePublisherInterface* publisher);
 
   virtual ~TunnelDecapGroupManager() = default;
@@ -118,7 +112,6 @@ class TunnelDecapGroupManager : public ObjectManagerInterface {
 
   // Owners of pointers below must outlive this class's instance.
   P4OidMapper* m_p4OidMapper;
-  VRFOrch* m_vrfOrch;
   ResponsePublisherInterface* m_publisher;
   std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
 
