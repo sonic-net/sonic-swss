@@ -4649,10 +4649,22 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         }
                         if (p.m_cap_an < 1)
                         {
-                            SWSS_LOG_ERROR("%s: autoneg is not supported (cap=%d)", p.m_alias.c_str(), p.m_cap_an);
-                            // autoneg is not supported, don't retry
-                            it = taskMap.erase(it);
-                            continue;
+                            if (pCfg.autoneg.value == true)
+                            {
+                                SWSS_LOG_ERROR("%s: autoneg is not supported (cap=%d)", p.m_alias.c_str(), p.m_cap_an);
+                                // autoneg is not supported, don't retry
+                                it = taskMap.erase(it);
+                                continue;
+                            }
+                            else
+                            {
+                                // Auto-negotiation config "off" is valid for ports that do not support AN.
+                                // In this case, we should continue retrying other port configurations
+                                // (e.g., admin state and speed). Set m_an_cfg to prevent AN programming
+                                // attempts in subsequent retries.
+                                m_portList[p.m_alias].m_an_cfg = true;
+                                continue;
+                            }
                         }
                         if (p.m_admin_state_up)
                         {

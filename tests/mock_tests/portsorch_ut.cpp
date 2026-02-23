@@ -58,6 +58,7 @@ namespace portsorch_test
     uint32_t _sai_set_port_tpid_count;
     int32_t _sai_port_fec_mode;
     vector<sai_port_fec_mode_t> mock_port_fec_modes = {SAI_PORT_FEC_MODE_RS, SAI_PORT_FEC_MODE_FC};
+    bool mock_port_an_not_supported = false;
 
     sai_status_t _ut_stub_sai_get_port_attribute(
         _In_ sai_object_id_t port_id,
@@ -90,6 +91,12 @@ namespace portsorch_test
         else if (attr_count== 1 && attr_list[0].id == SAI_PORT_ATTR_OPER_STATUS)
         {
             attr_list[0].value.u32 = (uint32_t)SAI_PORT_OPER_STATUS_UP;
+            status = SAI_STATUS_SUCCESS;
+        }
+        else if (attr_count == 1 && attr_list[0].id == SAI_PORT_ATTR_SUPPORTED_AUTO_NEG_MODE)
+        {
+            // Mock autoneg capability
+            attr_list[0].value.booldata = !mock_port_an_not_supported;
             status = SAI_STATUS_SUCCESS;
         }
         else
@@ -2695,6 +2702,102 @@ namespace portsorch_test
         ASSERT_TRUE(ts.empty());
 
         mock_port_fec_modes = old_mock_port_fec_modes;
+        _unhook_sai_port_api();
+    }
+
+    /*
+     * Test case: Port doesn't support autoneg (m_cap_an = 0)
+     * This test covers the code path when port autoneg capability is not supported
+     * Scenario 1: autoneg=on should fail and erase task
+     * Scenario 2: autoneg=off should set m_an_cfg and continue to process speed and admin state
+     **/
+    TEST_F(PortsOrchTest, PortAutoNegNotSupported)
+    {
+        _hook_sai_port_api();
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        // Mock the port to not support autoneg
+        mock_port_an_not_supported = true;
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Verify the port was created with capability initialized to -1
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        ASSERT_EQ(port.m_cap_an, -1);  // Initial value before capability check
+
+        // Scenario 1: Try to enable autoneg on a port that doesn't support it
+        // This should fail and erase the task (don't retry)
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"autoneg", "on"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        entries.clear();
+
+        // Verify the task was erased (no pending tasks)
+        vector<string> ts;
+        gPortsOrch->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        // Verify the port capability was initialized and autoneg was NOT set
+        gPortsOrch->getPort("Ethernet0", port);
+        ASSERT_EQ(port.m_cap_an, 0);  // Capability should be 0 (not supported)
+        ASSERT_FALSE(port.m_an_cfg);  // m_an_cfg should remain false since autoneg config failed
+
+        // Scenario 2: Set autoneg to off on a port that doesn't support it
+        // Along with speed and admin state configuration
+        // This should succeed and set m_an_cfg to true, then continue to apply speed and admin
+
+        gPortsOrch->getPort("Ethernet0", port);
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"autoneg", "off"},
+                               {"speed", "100000"},
+                               {"admin_status", "up"}
+                           }});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        entries.clear();
+
+        // Verify the task was processed (no pending tasks)
+        ts.clear();
+        gPortsOrch->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        // Verify m_an_cfg was set to true to prevent further AN programming attempts
+        gPortsOrch->getPort("Ethernet0", port);
+        ASSERT_EQ(port.m_cap_an, 0);  // Capability should still be 0
+        ASSERT_TRUE(port.m_an_cfg);   // m_an_cfg should be true now
+        ASSERT_FALSE(port.m_autoneg); // autoneg should be false (off)
+
+        // Verify speed was actually configured
+        ASSERT_EQ(port.m_speed, 100000);  // Speed should be updated to 100G
+
+        // Verify admin state was actually configured
+        ASSERT_TRUE(port.m_admin_state_up);  // Admin state should be up
+
+        // Reset mock state
+        mock_port_an_not_supported = false;
         _unhook_sai_port_api();
     }
 
