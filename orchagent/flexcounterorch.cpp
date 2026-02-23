@@ -297,7 +297,7 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     {
                         dash_orch->handleMeterFCStatusUpdate((value == "enable"));
                     }
-                    if (dash_orch && (key == HA_SET_KEY))
+                    if (dash_ha_orch && (key == HA_SET_KEY))
                     {
                         dash_ha_orch->handleHaSetFCStatusUpdate((value == "enable"));
                     }
