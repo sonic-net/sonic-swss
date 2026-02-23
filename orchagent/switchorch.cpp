@@ -57,7 +57,8 @@ const map<string, sai_switch_attr_t> switch_attribute_map =
 const map<string, sai_switch_tunnel_attr_t> switch_tunnel_attribute_map =
 {
     {"vxlan_sport", SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT},
-    {"vxlan_mask",  SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_MASK}
+    {"vxlan_mask", SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_MASK},
+    {"vxlan_security",  SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_SECURITY}
 };
 
 const map<string, sai_packet_action_t> packet_action_map =
@@ -519,6 +520,9 @@ sai_status_t SwitchOrch::setSwitchTunnelVxlanParams(swss::FieldValueTuple &val)
         attr.id = SAI_SWITCH_TUNNEL_ATTR_TUNNEL_VXLAN_UDP_SPORT_MODE;
         attr.value.s32 = SAI_TUNNEL_VXLAN_UDP_SPORT_MODE_USER_DEFINED;
         attrs.push_back(attr);
+        attr.id = SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_SECURITY;
+        attr.value.booldata = false;
+        attrs.push_back(attr);
 
         status = sai_switch_api->create_switch_tunnel(&m_switchTunnelId, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
 
@@ -539,6 +543,9 @@ sai_status_t SwitchOrch::setSwitchTunnelVxlanParams(swss::FieldValueTuple &val)
             break;
         case SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_MASK:
             attr.value.u8 = to_uint<uint8_t>(value);
+            break;
+        case SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_SECURITY:
+            attr.value.booldata = to_uint<bool>(value);
             break;
         default:
             SWSS_LOG_ERROR("Invalid switch tunnel attribute id %d", attr.id);
