@@ -51,11 +51,11 @@ TEST(P4OrchUtilTest, KeyGeneratorTest)
 
     auto ipv6_tunnel_term_key =
         KeyGenerator::generateIpv6TunnelTermKey(
-        swss::IpAddress("::1"), swss::IpAddress("::1"), swss::IpAddress("::2"),
-        swss::IpAddress("::2"));
-    EXPECT_EQ(
-        "dst_ipv6_ip=::2:dst_ipv6_mask=::2:src_ipv6_ip=::1:src_ipv6_mask=::1",
-        ipv6_tunnel_term_key);
+             swss::IpAddress("::1"), swss::IpAddress("::1"), swss::IpAddress("::2"),
+             swss::IpAddress("::2"));
+         EXPECT_EQ("dst_ipv6_ip=::2:dst_ipv6_mask=::2:src_ipv6_ip=::1:src_"
+                   "ipv6_mask=::1",
+                   ipv6_tunnel_term_key);
 }
 
 TEST(P4OrchUtilTest, ParseP4RTKeyTest)

@@ -110,7 +110,7 @@ constexpr char* kDisableDecrementTtl = "disable_decrement_ttl";
 constexpr char* kDisableSrcMacRewrite = "disable_src_mac_rewrite";
 constexpr char* kDisableDstMacRewrite = "disable_dst_mac_rewrite";
 constexpr char* kDisableVlanRewrite = "disable_vlan_rewrite";
-constexpr char* kIpv6TunnelTermAction = "mark_for_tunnel_decap_and_set_vrf";
+constexpr char* kIpv6TunnelTermAction = "tunnel_decap";
 constexpr char* kDecapSrcIpv6 = "src_ipv6";
 constexpr char* kDecapDstIpv6 = "dst_ipv6";
 constexpr char* kDecapSrcIpv6Ip = "src_ipv6_ip";
@@ -335,8 +335,8 @@ struct Ipv6TunnelTermAppDbEntry
   swss::IpAddress src_ipv6_mask;
   swss::IpAddress dst_ipv6_ip;
   swss::IpAddress dst_ipv6_mask;
+  uint32_t priority;
   // Action
-  std::string vrf_id;
   std::string action_str;
 };
 
