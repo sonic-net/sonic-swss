@@ -314,6 +314,7 @@ struct Ipv6TunnelTermAppDbEntry
   swss::IpAddress src_ipv6_mask;
   swss::IpAddress dst_ipv6_ip;
   swss::IpAddress dst_ipv6_mask;
+  uint32_t priority;
   // Action
   std::string action_str;
 };

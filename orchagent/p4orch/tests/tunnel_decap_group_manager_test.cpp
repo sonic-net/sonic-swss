@@ -52,7 +52,7 @@ constexpr sai_object_id_t kIpv6TunnelTermEntryOid3 = 0x13;
 
 constexpr char* kIpv6TunnelTermAppDbKey1 =
  R"({"match/src_ipv6":"4001:db8:3c4d:19::&ffff:ffff:ffff:ffff::",)"
-  R"("match/dst_ipv6":"2001:db8:3c4d:15::&ffff:ffff:ffff:ffff::"})";
+ R"("match/dst_ipv6":"2001:db8:3c4d:15::&ffff:ffff:ffff:ffff::","priority":2030})";
 constexpr char* kIpv6TunnelTermAppDbSrcIp1 = "4001:db8:3c4d:19::";
 constexpr char* kIpv6TunnelTermAppDbSrcMask1 = "ffff:ffff:ffff:ffff::";
 constexpr char* kIpv6TunnelTermAppDbSrcIpMask1 =
@@ -76,6 +76,8 @@ constexpr char* kIpv6TunnelTermAppDbDstIp3 = "2001:db8::";
 constexpr char* kIpv6TunnelTermAppDbDstMask3 = "ffff:ffff::";
 constexpr char* kIpv6TunnelTermAppDbDstIpMask3 = "2001:db8::&ffff:ffff::";
 
+constexpr uint32_t kPriority = 2030;
+
 MATCHER_P(ArrayEq, array, "") {
   for (size_t i = 0; i < array.size(); ++i) {
     if (arg[i] != array[i]) {
@@ -91,18 +93,21 @@ const Ipv6TunnelTermAppDbEntry kIpv6TunnelTermAppDbEntry1{
     /*src_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcMask1),
     /*dst_ipv6_ip=*/swss::IpAddress(kIpv6TunnelTermAppDbDstIp1),
     /*dst_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbDstMask1),
+    /*priority=*/2030,
     /*action_str=*/"tunnel_decap"};
 const Ipv6TunnelTermAppDbEntry kIpv6TunnelTermAppDbEntry2{
     /*src_ipv6_ip=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcIp2),
     /*src_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcMask2),
     /*dst_ipv6_ip=*/swss::IpAddress(kIpv6TunnelTermAppDbDstIp2),
     /*dst_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbDstMask2),
+    /*priority=*/2030,
     /*action_str=*/"tunnel_decap"};
 const Ipv6TunnelTermAppDbEntry kIpv6TunnelTermAppDbEntry3{
     /*src_ipv6_ip=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcIp3),
     /*src_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcMask3),
     /*dst_ipv6_ip=*/swss::IpAddress(kIpv6TunnelTermAppDbDstIp3),
     /*dst_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbDstMask3),
+    /*priority=*/2030,
     /*action_str=*/"tunnel_decap"};
 
 bool MatchSaiAttrList(const sai_attribute_t* attr_list,
@@ -155,6 +160,12 @@ bool MatchSaiAttrList(const sai_attribute_t* attr_list,
         }
         break;
       }
+      case SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_PRIORITY: {
+        if (attr_list[i].value.u32 != expected_attr_list[i].value.u32) {
+          return false;
+        }
+        break;
+      }
       default:
         return false;
     }
@@ -202,6 +213,10 @@ std::vector<sai_attribute_t> CreateSaiAttrs(
 
   attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP_MASK;
   swss::copy(attr.value.ipaddr, app_entry.dst_ipv6_mask);
+  attrs.push_back(attr);
+
+  attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_PRIORITY;
+  attr.value.u32 = app_entry.priority;
   attrs.push_back(attr);
 
   attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID;
@@ -323,6 +338,7 @@ TunnelDecapGroupManagerTest::AddIpv6TunnelTermAppDbEntry1() {
   EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                        ipv6_tunnel_term_entry_key));
 
+
   return GetIpv6TunnelTermEntry(ipv6_tunnel_term_entry_key);
 }
 
@@ -337,7 +353,8 @@ bool TunnelDecapGroupManagerTest::ValidateIpv6TunnelTermEntryAdd(
 
   if (ipv6_tunnel_term_entry == nullptr ||
       ipv6_tunnel_term_entry->dst_ipv6_ip != app_db_entry.dst_ipv6_ip ||
-      ipv6_tunnel_term_entry->dst_ipv6_mask != app_db_entry.dst_ipv6_mask) {
+      ipv6_tunnel_term_entry->dst_ipv6_mask != app_db_entry.dst_ipv6_mask ||
+      ipv6_tunnel_term_entry->priority != app_db_entry.priority) {
     return false;
   }
 
@@ -348,6 +365,7 @@ TEST_F(TunnelDecapGroupManagerTest, DrainValidAppEntryShouldSucceed) {
   nlohmann::json j;
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask1;
   j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask1;
+  j[p4orch::kPriority] = kIpv6TunnelTermAppDbEntry1.priority;
 
   std::vector<swss::FieldValueTuple> fvs{
       {p4orch::kAction, p4orch::kIpv6TunnelTermAction}};
@@ -394,6 +412,7 @@ TEST_F(TunnelDecapGroupManagerTest, DrainDuplicateSetRequestShouldFail) {
   nlohmann::json j;
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask1;
   j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask1;
+  j[p4orch::kPriority] = kIpv6TunnelTermAppDbEntry1.priority;
 
   std::vector<swss::FieldValueTuple> fvs{
       {p4orch::kAction, p4orch::kIpv6TunnelTermAction}};
@@ -423,15 +442,17 @@ TEST_F(TunnelDecapGroupManagerTest, DrainDuplicateSetRequestShouldFail) {
 
   EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                        ipv6_tunnel_term_entry_key));
+
 }
 
 TEST_F(TunnelDecapGroupManagerTest, DrainEntryDeserializeFail) {
   nlohmann::json j;
   j[prependMatchField(p4orch::kDecapDstIpv6)] =
       R"({"match/dst_ipv6":"2001:db8:3c4d:15::"})";
+  j[p4orch::kPriority] = kPriority;
 
   std::vector<swss::FieldValueTuple> fvs{
-      {p4orch::kAction, p4orch::kIpv6TunnelTermAction}};
+     {p4orch::kAction, p4orch::kIpv6TunnelTermAction}};
 
   swss::KeyOpFieldsValuesTuple app_db_entry(
       std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
@@ -451,9 +472,9 @@ TEST_F(TunnelDecapGroupManagerTest, DrainEntryValidateFail) {
   nlohmann::json j;
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask1;
   j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask1;
+  j[p4orch::kPriority] = kPriority;
 
-  std::vector<swss::FieldValueTuple> fvs{
-      {p4orch::kAction, "invalid action"}};
+  std::vector<swss::FieldValueTuple> fvs{{p4orch::kAction, "invalid action"}};
 
   swss::KeyOpFieldsValuesTuple app_db_entry(
       std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
@@ -477,6 +498,7 @@ TEST_F(TunnelDecapGroupManagerTest,
   nlohmann::json j;
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask1;
   j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask1;
+  j[p4orch::kPriority] = kPriority;
 
   std::vector<swss::FieldValueTuple> fvs{
       {p4orch::kAction, p4orch::kIpv6TunnelTermAction}};
@@ -508,15 +530,16 @@ TEST_F(TunnelDecapGroupManagerTest,
 
   EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                         ipv6_tunnel_term_entry_key));
+
 }
 
 TEST_F(TunnelDecapGroupManagerTest, DrainInvalidAppEntryShouldFail) {
   nlohmann::json j;
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask1;
   j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask1;
+  j[p4orch::kPriority] = kPriority;
 
-  std::vector<swss::FieldValueTuple> fvs = {
-      {p4orch::kAction, "invalid action"}};
+  std::vector<swss::FieldValueTuple> fvs{{p4orch::kAction, "invalid action"}};
 
   swss::KeyOpFieldsValuesTuple app_db_entry = {
       std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
@@ -541,11 +564,31 @@ TEST_F(TunnelDecapGroupManagerTest, DrainInvalidAppEntryShouldFail) {
   EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                         ipv6_tunnel_term_entry_key));
 
+  // Invalid priority field.
+  j[p4orch::kPriority] = "invalid";
+
+  fvs = {{p4orch::kAction, p4orch::kIpv6TunnelTermAction}};
+
+  app_db_entry = {std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
+                      kTableKeyDelimiter + j.dump(),
+                  SET_COMMAND, fvs};
+
+  Enqueue(app_db_entry);
+
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                      Eq(kfvFieldsValues(app_db_entry)),
+                      Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, Drain(/*failure_before=*/false));
+  EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
+                                        ipv6_tunnel_term_entry_key));
+
+
   // Invalid match field.
   j[prependMatchField(p4orch::kDecapDstIpv6)] = "0.0.0.0";
+  j[p4orch::kPriority] = kPriority;
 
-  fvs = {
-      {p4orch::kAction, p4orch::kIpv6TunnelTermAction}};
+  fvs = {{p4orch::kAction, p4orch::kIpv6TunnelTermAction}};
 
   app_db_entry = {std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
                       kTableKeyDelimiter + j.dump(),
@@ -561,6 +604,7 @@ TEST_F(TunnelDecapGroupManagerTest, DrainInvalidAppEntryShouldFail) {
 
   EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                         ipv6_tunnel_term_entry_key));
+
 }
 
 TEST_F(TunnelDecapGroupManagerTest, DrainNotExecuted) {
@@ -571,18 +615,21 @@ TEST_F(TunnelDecapGroupManagerTest, DrainNotExecuted) {
   nlohmann::json j;
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask1;
   j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask1;
+  j[p4orch::kPriority] = kPriority;
   swss::KeyOpFieldsValuesTuple app_db_entry_1(
       std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
           kTableKeyDelimiter + j.dump(),
       SET_COMMAND, fvs);
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask2;
   j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask2;
+  j[p4orch::kPriority] = kPriority;
   swss::KeyOpFieldsValuesTuple app_db_entry_2(
       std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
           kTableKeyDelimiter + j.dump(),
       SET_COMMAND, fvs);
  j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask3;
  j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask3;
+ j[p4orch::kPriority] = kPriority;
   swss::KeyOpFieldsValuesTuple app_db_entry_3(
       std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
           kTableKeyDelimiter + j.dump(),
@@ -634,6 +681,7 @@ TEST_F(TunnelDecapGroupManagerTest, DrainNotExecuted) {
                                         ipv6_tunnel_term_entry_key_2));
   EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                         ipv6_tunnel_term_entry_key_3));
+
 }
 
 TEST_F(TunnelDecapGroupManagerTest, DrainStopOnFirstFailureCreate) {
@@ -644,18 +692,21 @@ TEST_F(TunnelDecapGroupManagerTest, DrainStopOnFirstFailureCreate) {
   nlohmann::json j;
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask1;
   j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask1;
+  j[p4orch::kPriority] = kPriority;
   swss::KeyOpFieldsValuesTuple app_db_entry_1(
       std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
           kTableKeyDelimiter + j.dump(),
       SET_COMMAND, fvs);
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask2;
   j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask2;
+  j[p4orch::kPriority] = kPriority;
   swss::KeyOpFieldsValuesTuple app_db_entry_2(
       std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
           kTableKeyDelimiter + j.dump(),
       SET_COMMAND, fvs);
  j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask3;
  j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask3;
+ j[p4orch::kPriority] = kPriority;
   swss::KeyOpFieldsValuesTuple app_db_entry_3(
       std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
           kTableKeyDelimiter + j.dump(),
@@ -787,23 +838,29 @@ TEST_F(TunnelDecapGroupManagerTest, DrainStopOnFirstFailureDel) {
                                        ipv6_tunnel_term_entry_key_3));
 
   std::vector<swss::FieldValueTuple> fvs{
-      {p4orch::kAction, p4orch::kIpv6TunnelTermAction}};
+     {p4orch::kAction, p4orch::kIpv6TunnelTermAction}};
 
   nlohmann::json j;
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask1;
   j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask1;
+  j[p4orch::kPriority] = kPriority;
+
   swss::KeyOpFieldsValuesTuple app_db_entry_1(
       std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
           kTableKeyDelimiter + j.dump(),
       DEL_COMMAND, fvs);
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask2;
   j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask2;
+  j[p4orch::kPriority] = kPriority;
+
   swss::KeyOpFieldsValuesTuple app_db_entry_2(
       std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
           kTableKeyDelimiter + j.dump(),
       DEL_COMMAND, fvs);
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask3;
   j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask3;
+  j[p4orch::kPriority] = kPriority;
+
   swss::KeyOpFieldsValuesTuple app_db_entry_3(
       std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
           kTableKeyDelimiter + j.dump(),
@@ -843,22 +900,26 @@ TEST_F(TunnelDecapGroupManagerTest, DrainStopOnFirstFailureDel) {
                                        ipv6_tunnel_term_entry_key_2));
   EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                        ipv6_tunnel_term_entry_key_3));
+
 }
 
 TEST_F(TunnelDecapGroupManagerTest, DrainStopOnFirstFailureDifferentTypes) {
 
   std::vector<swss::FieldValueTuple> fvs{
-      {p4orch::kAction, p4orch::kIpv6TunnelTermAction}};
+     {p4orch::kAction, p4orch::kIpv6TunnelTermAction}};
 
   nlohmann::json j;
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask1;
   j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask1;
+  j[p4orch::kPriority] = kPriority;
+
   swss::KeyOpFieldsValuesTuple app_db_entry_1(
       std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
           kTableKeyDelimiter + j.dump(),
       SET_COMMAND, fvs);
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask2;
   j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask2;
+  j[p4orch::kPriority] = kPriority;
   swss::KeyOpFieldsValuesTuple app_db_entry_2(
       std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
           kTableKeyDelimiter + j.dump(),
@@ -927,12 +988,16 @@ TEST_F(TunnelDecapGroupManagerTest, DrainDifferentTypesWithDuplicateSetFails) {
   nlohmann::json j;
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask1;
   j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask1;
+  j[p4orch::kPriority] = kPriority;
+
   swss::KeyOpFieldsValuesTuple app_db_entry_1(
       std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
           kTableKeyDelimiter + j.dump(),
       SET_COMMAND, fvs);
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask2;
   j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask2;
+  j[p4orch::kPriority] = kPriority;
+
   swss::KeyOpFieldsValuesTuple app_db_entry_2(
       std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
           kTableKeyDelimiter + j.dump(),
@@ -970,6 +1035,7 @@ TEST_F(TunnelDecapGroupManagerTest, DrainDifferentTypesWithDuplicateSetFails) {
                                        ipv6_tunnel_term_entry_key_1));
   EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                         ipv6_tunnel_term_entry_key_2));
+
 }
 
 TEST_F(TunnelDecapGroupManagerTest, GetIpv6TunnelTermEntrySucceed) {
@@ -1033,6 +1099,7 @@ TEST_F(TunnelDecapGroupManagerTest,
 
   EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                         ipv6_tunnel_term_entry_key));
+
 }
 
 TEST_F(TunnelDecapGroupManagerTest, RemoveIpv6TunnelTermEntriesSucceed) {
@@ -1057,6 +1124,7 @@ TEST_F(TunnelDecapGroupManagerTest, RemoveIpv6TunnelTermEntriesSucceed) {
 
   EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                         ipv6_tunnel_term_entry_key));
+
 }
 
 TEST_F(TunnelDecapGroupManagerTest,
@@ -1082,6 +1150,7 @@ TEST_F(TunnelDecapGroupManagerTest,
 
   EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                        ipv6_tunnel_term_entry_key));
+
 }
 
 TEST_F(TunnelDecapGroupManagerTest,
@@ -1106,7 +1175,8 @@ TEST_F(TunnelDecapGroupManagerTest,
   std::vector<swss::FieldValueTuple> attributes = {
       swss::FieldValueTuple(p4orch::kAction, p4orch::kIpv6TunnelTermAction)};
 
-  auto result_or = DeserializeIpv6TunnelTermAppDbEntry("{}", attributes);
+  auto result_or =
+      DeserializeIpv6TunnelTermAppDbEntry(R"({"priority":2030})", attributes);
   ASSERT_TRUE(result_or.ok());
   auto result = *result_or;
   EXPECT_EQ(result.src_ipv6_ip, swss::IpAddress("0:0:0:0:0:0:0:0"));
@@ -1116,16 +1186,16 @@ TEST_F(TunnelDecapGroupManagerTest,
 }
 
 TEST_F(TunnelDecapGroupManagerTest,
-       DeserializeIpv6TunnelTermAppDbEntryInvalidMatchKeyFormat) {
+       DeserializeIpv6TunnelTermAppDbEntryInvalidPriorityFormat) {
   std::vector<swss::FieldValueTuple> attributes = {
       swss::FieldValueTuple(p4orch::kAction, p4orch::kIpv6TunnelTermAction)};
 
-  EXPECT_FALSE(DeserializeIpv6TunnelTermAppDbEntry(
-                   R"({"match/dst_ipv6":"2001:db8:3c4d:15::"})", attributes)
-                   .ok());
+  EXPECT_FALSE(
+      DeserializeIpv6TunnelTermAppDbEntry(R"({"priority":invalid})", attributes)
+          .ok());
 }
 TEST_F(TunnelDecapGroupManagerTest,
-       DeserializeIpv6TunnelTermAppDbEntryInvalidMatchKeyFormat2) {
+       DeserializeIpv6TunnelTermAppDbEntryInvalidMatchKeyFormat) {
   std::vector<swss::FieldValueTuple> attributes = {
       swss::FieldValueTuple(p4orch::kAction, p4orch::kIpv6TunnelTermAction)};
   // Missing the mask.
@@ -1160,6 +1230,7 @@ TEST_F(TunnelDecapGroupManagerTest,
       /*src_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcMask1),
       /*dst_ipv6_ip=*/swss::IpAddress("2001:db8:3c4d:15::"),
       /*dst_ipv6_mask=*/swss::IpAddress("ffff:ffff:ffff:ffff::"),
+      /*priority=*/2030,
       /*action_str=*/"invalid_action"};
 
   EXPECT_FALSE(
@@ -1172,6 +1243,7 @@ TEST_F(TunnelDecapGroupManagerTest, ValidateIpv6TunnelTermAppDbEntryDstIPisV4) {
       /*src_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcMask1),
       /*dst_ipv6_ip=*/swss::IpAddress("0.0.0.1"),
       /*dst_ipv6_mask=*/swss::IpAddress("ffff:ffff:ffff:ffff::"),
+      /*priority=*/2030,
       /*action_str=*/"tunnel_decap"};
 
   EXPECT_FALSE(
@@ -1185,6 +1257,7 @@ TEST_F(TunnelDecapGroupManagerTest,
       /*src_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcMask1),
       /*dst_ipv6_ip=*/swss::IpAddress("2001:db8:3c4d:15::"),
       /*dst_ipv6_mask=*/swss::IpAddress("0.0.0.1"),
+      /*priority=*/2030,
       /*action_str=*/"tunnel_decap"};
 
   EXPECT_FALSE(
@@ -1196,7 +1269,9 @@ TEST_F(TunnelDecapGroupManagerTest, ValidateIpv6TunnelTermAppDbEntrySrcIPisV4) {
       /*src_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcMask1),
       /*dst_ipv6_ip=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcIp1),
       /*dst_ipv6_mask=*/swss::IpAddress("ffff:ffff:ffff:ffff::"),
+      /*priority=*/2030,
       /*action_str=*/"tunnel_decap"};
+
   EXPECT_FALSE(
       ValidateIpv6TunnelTermAppDbEntry(app_db_entry, SET_COMMAND).ok());
 }
@@ -1207,7 +1282,9 @@ TEST_F(TunnelDecapGroupManagerTest,
       /*src_ipv6_mask=*/swss::IpAddress("255.255.255.255"),
       /*dst_ipv6_ip=*/swss::IpAddress("2001:db8:3c4d:15::"),
       /*dst_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcMask1),
+      /*priority=*/2030,
       /*action_str=*/"tunnel_decap"};
+
   EXPECT_FALSE(
       ValidateIpv6TunnelTermAppDbEntry(app_db_entry, SET_COMMAND).ok());
 }
@@ -1220,6 +1297,7 @@ TEST_F(TunnelDecapGroupManagerTest,
       /*src_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcMask1),  
      /*dst_ipv6_ip=*/swss::IpAddress("0:0:0:0:0:0:0:0"),
       /*dst_ipv6_mask=*/swss::IpAddress("0:0:0:0:0:0:0:0"),
+      /*priority=*/2030,
       /*action_str=*/"tunnel_decap"};
 
   EXPECT_TRUE(ValidateIpv6TunnelTermAppDbEntry(app_db_entry, SET_COMMAND).ok());
@@ -1232,6 +1310,7 @@ TEST_F(TunnelDecapGroupManagerTest,
       /*src_ipv6_mask=*/swss::IpAddress("0:0:0:0:0:0:0:0"),
       /*dst_ipv6_ip=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcIp1),
       /*dst_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcMask1),
+      /*priority=*/2030,
       /*action_str=*/"tunnel_decap"};
   EXPECT_TRUE(ValidateIpv6TunnelTermAppDbEntry(app_db_entry, SET_COMMAND).ok());
 }
@@ -1322,12 +1401,16 @@ TEST_F(TunnelDecapGroupManagerTest, VerifyStateTest) {
           swss::FieldValueTuple{"SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP_MASK",
                                 "ffff:ffff:ffff:ffff::"},
           swss::FieldValueTuple{
-              "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID",
-              "oid:0x10"}});
+              "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID", "oid:0x10"},
+          swss::FieldValueTuple{
+              "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_PRIORITY",
+              std::to_string(kIpv6TunnelTermAppDbEntry1.priority)}});
 
   nlohmann::json j;
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask1;
   j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask1;
+  j[p4orch::kPriority] = kPriority;
+
   const std::string db_key = std::string(APP_P4RT_TABLE_NAME) +
                              kTableKeyDelimiter +
                              APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME +
@@ -1355,6 +1438,8 @@ TEST_F(TunnelDecapGroupManagerTest, VerifyStateTest) {
 
   // Verification should fail if entry does not exist.
   j[prependMatchField(p4orch::kDecapDstIpv6)] = "invalid";
+  j[p4orch::kPriority] = kPriority;
+
   EXPECT_FALSE(VerifyState(std::string(APP_P4RT_TABLE_NAME) +
                                kTableKeyDelimiter +
                                APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME +
@@ -1386,6 +1471,11 @@ TEST_F(TunnelDecapGroupManagerTest, VerifyStateTest) {
   ipv6_tunnel_term_table_entry->dst_ipv6_mask = swss::IpAddress("1.1.1.1");
   EXPECT_FALSE(VerifyState(db_key, attributes).empty());
   ipv6_tunnel_term_table_entry->dst_ipv6_mask = saved_dst_ipv6_mask;
+
+  auto saved_priority = ipv6_tunnel_term_table_entry->priority;
+  ipv6_tunnel_term_table_entry->priority += 1;
+  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+  ipv6_tunnel_term_table_entry->priority = saved_priority;
 
   const std::string ipv6_tunnel_term_entry_key =
        KeyGenerator::generateIpv6TunnelTermKey(
@@ -1423,12 +1513,16 @@ TEST_F(TunnelDecapGroupManagerTest, VerifyStateAsicDbTest) {
           swss::FieldValueTuple{"SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP_MASK",
                                 "ffff:ffff:ffff:ffff::"},
           swss::FieldValueTuple{
-              "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID",
-              "oid:0x10"}});
+              "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID", "oid:0x10"},
+          swss::FieldValueTuple{
+              "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_PRIORITY",
+              std::to_string(kIpv6TunnelTermAppDbEntry1.priority)}});
 
   nlohmann::json j;
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask1; 
   j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask1;
+  j[p4orch::kPriority] = kPriority;
+
   const std::string db_key = std::string(APP_P4RT_TABLE_NAME) +
                              kTableKeyDelimiter +
                              APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME +
@@ -1463,8 +1557,10 @@ TEST_F(TunnelDecapGroupManagerTest, VerifyStateAsicDbTest) {
           swss::FieldValueTuple{"SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP_MASK",
                                 "ffff:ffff:ffff:ffff::"},
           swss::FieldValueTuple{
-              "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID",
-              "oid:0x10"}});
+              "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID", "oid:0x10"},
+          swss::FieldValueTuple{
+              "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_PRIORITY",
+              std::to_string(kIpv6TunnelTermAppDbEntry1.priority)}});
 
   ipv6_tunnel_term_table_entry->dst_ipv6_ip = swss::IpAddress("1.2.3.4");
   EXPECT_FALSE(VerifyState(db_key, attributes).empty());

@@ -18,9 +18,8 @@ extern "C" {
 // tunnel termination table entry. Example:
 // P4RT:FIXED_IPV6_TUNNEL_TERMINATION_TABLE:{"match/dst_ipv6_64bit":
 //   "2607:f8b0:c145:9300:: & ffff:ffff:ffff:ff00::",
-//   "match/src_ipv6_64bit":"2607:f8b0:c145:9300:: & ffff:ffff:ffff:ff00::"}
-//   "action" = "tunnel_decap",
-//   "controller_metadata" = "..."
+//   "match/src_ipv6_64bit":"2607:f8b0:c145:9300:: & ffff:ffff:ffff:ff00::",
+//   "priority":2030} "action" = "tunnel_decap", "controller_metadata" = "..."
 // LINT.IfChange
 struct Ipv6TunnelTermTableEntry {
   // Unique key of this entry.
@@ -32,6 +31,7 @@ struct Ipv6TunnelTermTableEntry {
   swss::IpAddress src_ipv6_mask;
   swss::IpAddress dst_ipv6_ip;
   swss::IpAddress dst_ipv6_mask;
+  sai_uint32_t priority;
 
   // SAI OID associated with this entry.
   sai_object_id_t ipv6_tunnel_term_oid = SAI_NULL_OBJECT_ID;
@@ -39,7 +39,8 @@ struct Ipv6TunnelTermTableEntry {
    Ipv6TunnelTermTableEntry(const swss::IpAddress& src_ipv6_ip,
                             const swss::IpAddress& src_ipv6_mask,
                             const swss::IpAddress& dst_ipv6_ip,
-                            const swss::IpAddress& dst_ipv6_mask);
+                            const swss::IpAddress& dst_ipv6_mask,
+                            const sai_uint32_t& priority);
 };
 // LINT.ThenChange(tunnel_decap_group_manager.cpp:verify_state_cache)
 

@@ -88,6 +88,10 @@ std::vector<sai_attribute_t> prepareSaiAttrs(
   swss::copy(attr.value.ipaddr, ipv6_tunnel_term_entry.dst_ipv6_mask);
   attrs.push_back(attr);
 
+  attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_PRIORITY;
+  attr.value.u32 = ipv6_tunnel_term_entry.priority;
+  attrs.push_back(attr);
+
   if (dummyTunnelId == SAI_NULL_OBJECT_ID)
     dummyTunnelId = create_dummy_tunnel();
 
@@ -164,8 +168,9 @@ ReturnCode TunnelDecapGroupManager::validateIpv6TunnelTermAppDbEntry(
   SWSS_LOG_ENTER();
     Ipv6TunnelTermTableEntry entry = Ipv6TunnelTermTableEntry(
              app_db_entry.src_ipv6_ip, app_db_entry.src_ipv6_mask,
-             app_db_entry.dst_ipv6_ip, app_db_entry.dst_ipv6_mask);
- 
+             app_db_entry.dst_ipv6_ip, app_db_entry.dst_ipv6_mask,
+             app_db_entry.priority);
+
   if (operation == SET_COMMAND) {
     RETURN_IF_ERROR(validateIpv6TunnelTermAppDbEntry(app_db_entry));
     if (getIpv6TunnelTermEntry(entry.ipv6_tunnel_term_key) == nullptr) {
@@ -176,7 +181,6 @@ ReturnCode TunnelDecapGroupManager::validateIpv6TunnelTermAppDbEntry(
             << QuotedVar(entry.ipv6_tunnel_term_key)
             << " already exists in centralized mapper");
       }
-
     }
   } else if (operation == DEL_COMMAND) {
     // Check the existence of the Ipv6 tunnel termination table entry in tunnel
@@ -212,11 +216,13 @@ ReturnCode TunnelDecapGroupManager::validateIpv6TunnelTermAppDbEntry(
 
 Ipv6TunnelTermTableEntry::Ipv6TunnelTermTableEntry(
     const swss::IpAddress& src_ipv6_ip, const swss::IpAddress& src_ipv6_mask,
-    const swss::IpAddress& dst_ipv6_ip, const swss::IpAddress& dst_ipv6_mask)
+    const swss::IpAddress& dst_ipv6_ip, const swss::IpAddress& dst_ipv6_mask,
+    const sai_uint32_t& priority)
      : src_ipv6_ip(src_ipv6_ip),
       src_ipv6_mask(src_ipv6_mask),
       dst_ipv6_ip(dst_ipv6_ip),
-      dst_ipv6_mask(dst_ipv6_mask) {
+      dst_ipv6_mask(dst_ipv6_mask),
+      priority(priority) {
    SWSS_LOG_ENTER();
   ipv6_tunnel_term_key = KeyGenerator::generateIpv6TunnelTermKey(
    src_ipv6_ip, src_ipv6_mask, dst_ipv6_ip, dst_ipv6_mask);
@@ -367,6 +373,13 @@ TunnelDecapGroupManager::deserializeIpv6TunnelTermAppDbEntry(
       app_db_entry.dst_ipv6_ip = swss::IpAddress(trim(ip_and_mask[0]));
       app_db_entry.dst_ipv6_mask = swss::IpAddress(trim(ip_and_mask[1]));
     }
+    auto priority_j = j[p4orch::kPriority];
+    if (!priority_j.is_number_unsigned()) {
+      return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+             << "Invalid Ipv6 tunnel termination table entry priority type: "
+                "should be uint32_t";
+    }
+    app_db_entry.priority = static_cast<uint32_t>(priority_j);
   } catch (std::exception& ex) {
     return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
            << "Failed to deserialize Ipv6 tunnel termination table entry "
@@ -404,7 +417,8 @@ std::vector<ReturnCode> TunnelDecapGroupManager::createIpv6TunnelTermEntries(
     entries.push_back( Ipv6TunnelTermTableEntry(ipv6_tunnel_term_entries[i].src_ipv6_ip,
                        ipv6_tunnel_term_entries[i].src_ipv6_mask,
                        ipv6_tunnel_term_entries[i].dst_ipv6_ip,
-                       ipv6_tunnel_term_entries[i].dst_ipv6_mask));
+                       ipv6_tunnel_term_entries[i].dst_ipv6_mask,
+                       ipv6_tunnel_term_entries[i].priority));
 
     sai_attrs[i] = prepareSaiAttrs(entries[i]);
   }
@@ -653,6 +667,14 @@ std::string TunnelDecapGroupManager::verifyStateCache(
         << " does not match internal cache "
         << QuotedVar(ipv6_tunnel_term_entry->dst_ipv6_mask.to_string())
         << " in Tunnel Decap Group manager.";
+    return msg.str();
+  }
+  if (ipv6_tunnel_term_entry->priority != app_db_entry.priority) {
+    std::stringstream msg;
+    msg << "Ipv6 tunnel termination table "
+        << QuotedVar(ipv6_tunnel_term_entry_key) << " with priority "
+        << app_db_entry.priority << " does not match internal cache "
+        << ipv6_tunnel_term_entry->priority << " in IPv6 tunnel decap manager.";
     return msg.str();
   }
 

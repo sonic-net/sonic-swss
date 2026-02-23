@@ -12,6 +12,7 @@ class P4RtTunnelDecapWrapper(util.DBInterface):
     APP_DB_TBL_NAME = swsscommon.APP_P4RT_TABLE_NAME
     TBL_NAME = swsscommon.APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME
     ACTION = "action"
+    PRIORITY = "priority"
 
     ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY"
     SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TUNNEL_TYPE = "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TUNNEL_TYPE"
@@ -21,12 +22,14 @@ class P4RtTunnelDecapWrapper(util.DBInterface):
     SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP = "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP"
     SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP_MASK = "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP_MASK"
     SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID = "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID"
-        
-    def generate_app_db_key(self, src_ipv6, dst_ipv6):
+    SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_PRIORITY = "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_PRIORITY"
+
+    def generate_app_db_key(self, src_ipv6, dst_ipv6, priority):
          d = {}
          d[util.prepend_match_field("src_ipv6")] = src_ipv6
          d[util.prepend_match_field("dst_ipv6")] = dst_ipv6
-        
+         d[self.PRIORITY] = priority
+
          key = json.dumps(d, separators=(",", ":"))
          return self.TBL_NAME + ":" + key
 
@@ -54,9 +57,10 @@ class TestP4RTunnelDecap(object):
         src_ipv6 = "4001:db8:3c4d:17::&ffff:ffff:ffff:ffff::"
         dst_ipv6 = "2001:db8:3c4d:15::&ffff:ffff:ffff:ffff::"
         action = "tunnel_decap"
+        priority = 2030
 
         attr_list_in_app_db = [(self._p4rt_tunnel_decap_wrapper.ACTION, action)]
-        tunnel_decap_group_key = self._p4rt_tunnel_decap_wrapper.generate_app_db_key(src_ipv6, dst_ipv6)
+        tunnel_decap_group_key = self._p4rt_tunnel_decap_wrapper.generate_app_db_key(src_ipv6, dst_ipv6, priority)
 
         self._p4rt_tunnel_decap_wrapper.set_app_db_entry(
             tunnel_decap_group_key, attr_list_in_app_db)
@@ -106,7 +110,10 @@ class TestP4RTunnelDecap(object):
             (self._p4rt_tunnel_decap_wrapper.SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_SRC_IP_MASK, "ffff:ffff:ffff:ffff::"),
             (self._p4rt_tunnel_decap_wrapper.SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP, "2001:db8:3c4d:15::"),
             (self._p4rt_tunnel_decap_wrapper.SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP_MASK, "ffff:ffff:ffff:ffff::"),
-            (self._p4rt_tunnel_decap_wrapper.SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID, dummy_tunnel_oid)
+            (self._p4rt_tunnel_decap_wrapper.SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_PRIORITY,
+             str(priority)),
+            (self._p4rt_tunnel_decap_wrapper.SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID,
+             dummy_tunnel_oid),
         ]
         util.verify_attr(fvs, expected_attr_list_in_asic_db)
 
@@ -152,9 +159,10 @@ class TestP4RTunnelDecap(object):
         src_ipv6 = "5001:db8:3c4d:7::&ffff:ffff:ffff:ffff::"
         dst_ipv6 = "2001:db8:3c4d:15::&ffff:ffff:ffff:ffff::"
         action = "tunnel_decap"
+        priority = 2030
 
         attr_list_in_app_db = [(self._p4rt_tunnel_decap_wrapper.ACTION, action)]
-        tunnel_decap_group_key = self._p4rt_tunnel_decap_wrapper.generate_app_db_key(src_ipv6, dst_ipv6)
+        tunnel_decap_group_key = self._p4rt_tunnel_decap_wrapper.generate_app_db_key(src_ipv6, dst_ipv6, priority)
         self._p4rt_tunnel_decap_wrapper.set_app_db_entry(
             tunnel_decap_group_key, attr_list_in_app_db)
         util.verify_response(
@@ -184,7 +192,9 @@ class TestP4RTunnelDecap(object):
 
         src_ipv6 = "3001:db8:3c4d:11::&ffff:ffff:ffff:ffff::"
         dst_ipv6 = "2001:db8:3c4d:15::&ffff:ffff:ffff:ffff::"
-        tunnel_decap_group_key = self._p4rt_tunnel_decap_wrapper.generate_app_db_key(src_ipv6, dst_ipv6)
+        priority = 2030
+
+        tunnel_decap_group_key = self._p4rt_tunnel_decap_wrapper.generate_app_db_key(src_ipv6, dst_ipv6, priority)
 
         # Remove tunnel decap group fails
         self._p4rt_tunnel_decap_wrapper.remove_app_db_entry(
