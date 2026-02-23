@@ -30,6 +30,7 @@ struct NeighborData
     MacAddress    mac;
     bool          hw_configured = false; // False means, entry is not written to HW
     uint32_t      voq_encap_index = 0;
+    bool          prefix_route = false; // True means full prefix route is created for this neighbor
 };
 
 /* NeighborTable: NeighborEntry, neighbor MAC address */
@@ -88,6 +89,8 @@ public:
     bool getNeighborEntry(const NextHopKey&, NeighborEntry&, MacAddress&);
     bool getNeighborEntry(const IpAddress&, NeighborEntry&, MacAddress&);
 
+    const NeighborTable& getNeighborTable() const { return m_syncdNeighbors; }
+
     bool enableNeighbor(const NeighborEntry&);
     bool disableNeighbor(const NeighborEntry&);
     bool enableNeighbors(std::list<NeighborContext>&);
@@ -106,12 +109,18 @@ public:
     bool addInbandNeighbor(string alias, IpAddress ip_address);
     bool delInbandNeighbor(string alias, IpAddress ip_address);
 
+    bool convertToPrefixBasedNbr(const NeighborEntry &neighborEntry, sai_object_id_t tunnel_nexthop_id = SAI_NULL_OBJECT_ID);
+    bool isPrefixNeighbor(const NeighborEntry &neighborEntry) const;
+    bool isPrefixNeighborNh(const NextHopKey &nextHopKey) const;
+
     void resolveNeighbor(const NeighborEntry &);
     void updateSrv6Nexthop(const NextHopKey &, const sai_object_id_t &);
     bool ifChangeInformRemoteNextHop(const string &, bool);
     void getMuxNeighborsForPort(string port_name, NeighborTable &m_neighbors);
 
     void clearBulkers();
+    
+    bool isNoHostRouteSupported();
 
 private:
     PortsOrch *m_portsOrch;
@@ -138,6 +147,9 @@ private:
     bool setNextHopFlag(const NextHopKey &, const uint32_t);
     bool clearNextHopFlag(const NextHopKey &, const uint32_t);
 
+    bool addPrefixRouteForNeighbor(const IpAddress& ip_address, string& alias,
+                                    sai_object_id_t next_hop_id, bool is_active);
+    bool removePrefixRouteForNeighbor(const IpAddress& ip_address, sai_object_id_t vrf_id);
     void processFDBFlushUpdate(const FdbFlushUpdate &);
 
     void doTask(Consumer &consumer);
