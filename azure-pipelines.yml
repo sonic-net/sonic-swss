@@ -97,6 +97,45 @@ stages:
       artifact_name: sonic-swss-${{ parameters.debian_version }}.arm64
       archive_gcov: false
 
+- stage: BuildTrixie
+  dependsOn: BuildArm
+  condition: succeeded('BuildArm')
+  jobs:
+  - template: .azure-pipelines/build-template.yml
+    parameters:
+      arch: amd64
+      pool: sonicso1ES-amd64
+      sonic_slave: sonic-slave-trixie
+      common_lib_artifact_name: common-lib
+      swss_common_artifact_name: sonic-swss-common-trixie
+      sairedis_artifact_name: sonic-sairedis-trixie
+      artifact_name: sonic-swss-trixie
+      archive_gcov: false
+
+  - template: .azure-pipelines/build-template.yml
+    parameters:
+      arch: armhf
+      timeout: 240
+      pool: sonicso1ES-armhf
+      sonic_slave: sonic-slave-trixie
+      common_lib_artifact_name: common-lib.armhf
+      swss_common_artifact_name: sonic-swss-common-trixie.armhf
+      sairedis_artifact_name: sonic-sairedis-trixie.armhf
+      artifact_name: sonic-swss-trixie.armhf
+      archive_gcov: false
+
+  - template: .azure-pipelines/build-template.yml
+    parameters:
+      arch: arm64
+      timeout: 240
+      pool: sonicso1ES-arm64
+      sonic_slave: sonic-slave-trixie
+      common_lib_artifact_name: common-lib.arm64
+      swss_common_artifact_name: sonic-swss-common-trixie.arm64
+      sairedis_artifact_name: sonic-sairedis-trixie.arm64
+      artifact_name: sonic-swss-trixie.arm64
+      archive_gcov: false
+
 - stage: BuildDocker
   dependsOn: Build
   condition: succeeded('Build')

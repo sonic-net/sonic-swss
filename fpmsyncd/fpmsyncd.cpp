@@ -1,6 +1,8 @@
 #include <iostream>
 #include <inttypes.h>
+#include <sys/stat.h>
 #include "logger.h"
+#include "routesync.h"
 #include "select.h"
 #include "selectabletimer.h"
 #include "netdispatcher.h"
@@ -97,7 +99,13 @@ int main(int argc, char **argv)
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELLINK, &sync);
 
-    rtnl_route_read_protocol_names(DefaultRtProtoPath);
+    struct stat st;
+
+    if (stat(DefaultRtProtoPath, &st) == 0) {
+        rtnl_route_read_protocol_names(DefaultRtProtoPath);
+    } else if (stat(OverrideRtProtoPath, &st) == 0) {
+        rtnl_route_read_protocol_names(OverrideRtProtoPath);
+    }
     nlmsg_set_default_size(FPM_MAX_MSG_LEN);
 
     std::string suppressionEnabledStr;

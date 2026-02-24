@@ -75,8 +75,13 @@ class FpmSyncdResponseTest : public ::testing::Test
 public:
     void SetUp() override
     {
+        struct stat st;
         testing_db::reset();
-        EXPECT_EQ(rtnl_route_read_protocol_names(DefaultRtProtoPath), 0);
+        if (stat(DefaultRtProtoPath, &st) == 0) {
+            EXPECT_EQ(rtnl_route_read_protocol_names(DefaultRtProtoPath), 0);
+        } else if (stat(OverrideRtProtoPath, &st) == 0) {
+            EXPECT_EQ(rtnl_route_read_protocol_names(OverrideRtProtoPath), 0);
+        }
         m_routeSync.setSuppressionEnabled(true);
     }
 
