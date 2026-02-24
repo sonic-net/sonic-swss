@@ -1057,7 +1057,11 @@ public:
     {
         resetMockWarmStartHelper();  // Reset warm restart state before each test
         testing_db::reset();
-        EXPECT_EQ(rtnl_route_read_protocol_names(DefaultRtProtoPath), 0);
+        if (stat(DefaultRtProtoPath, &st) == 0) {
+            EXPECT_EQ(rtnl_route_read_protocol_names(DefaultRtProtoPath), 0);
+        } else if (stat(OverrideRtProtoPath, &st) == 0) {
+            EXPECT_EQ(rtnl_route_read_protocol_names(OverrideRtProtoPath), 0);
+        }
     }
 
     void TearDown() override
