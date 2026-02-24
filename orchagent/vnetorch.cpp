@@ -1163,11 +1163,10 @@ bool VNetRouteOrch::selectFgNextHopGroup(const string& vnet,
     }
 
     sai_object_id_t nh_id;
-    std::map<NextHopKey, sai_object_id_t> nhopgroup_member_ids;
 
     sai_object_id_t vrf_id;
     vnet_orch_->getVrfIdByVnetName(vnet, vrf_id);
-    if (!gFgNhgOrch->setFgNhgTunnel(vrf_id, ipPrefix, nhopgroup_members_set, nexthops, consistent_hashing_buckets, nh_id, nhopgroup_member_ids))
+    if (!gFgNhgOrch->setFgNhgTunnel(vrf_id, ipPrefix, nhopgroup_members_set, nexthops, consistent_hashing_buckets, nh_id))
     {
         SWSS_LOG_ERROR("Failed to create fine grained next hop group for VNET %s", vnet.c_str());
         return false;
@@ -1176,10 +1175,6 @@ bool VNetRouteOrch::selectFgNextHopGroup(const string& vnet,
     NextHopGroupInfo next_hop_group_entry;
     next_hop_group_entry.next_hop_group_id = nh_id;
 
-    for (auto& member : nhopgroup_member_ids)
-    {
-        next_hop_group_entry.active_members[member.first] = member.second;
-    }
     /*
     * Initialize the next hop group structure with ref_count as 0. This
     * count will increase once the route is successfully syncd.

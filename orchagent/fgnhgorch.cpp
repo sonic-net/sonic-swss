@@ -1585,7 +1585,7 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
 
 bool FgNhgOrch::setFgNhgTunnel(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, 
                         map<NextHopKey, sai_object_id_t>& nhopgroup_members_set, NextHopGroupKey& nextHops, uint16_t consistent_hashing_buckets, 
-                        sai_object_id_t &next_hop_id, map<NextHopKey, sai_object_id_t> &nhopgroup_member_ids)
+                        sai_object_id_t &next_hop_id)
 {
     SWSS_LOG_ENTER();
 
@@ -1617,10 +1617,11 @@ bool FgNhgOrch::setFgNhgTunnel(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
 
     IpPrefix ip_prefix = ipPrefix;
 
-    if (m_fgNhgPrefixes.find(ip_prefix) == m_fgNhgPrefixes.end())
+    if (std::find(m_FgNhgs[fg_nhg_name].prefixes.begin(), 
+                  m_FgNhgs[fg_nhg_name].prefixes.end(), 
+                  ip_prefix) == m_FgNhgs[fg_nhg_name].prefixes.end())
     {
         m_FgNhgs[fg_nhg_name].prefixes.push_back(ip_prefix);
-        m_fgNhgPrefixes[ip_prefix] = &m_FgNhgs[fg_nhg_name];
     }
 
     if (m_syncdFGRouteTables.find(vrf_id) != m_syncdFGRouteTables.end() &&
@@ -1664,8 +1665,7 @@ bool FgNhgOrch::setFgNhgTunnel(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
 
         if (syncd_fg_route_entry_it == m_syncdFGRouteTables.at(vrf_id).end())
         {
-            bank_member_changes[m_FgNhgs[fg_nhg_name].next_hops[nhk.ip_address].bank].
-                nhs_to_add.push_back(nhk);
+            bank_member_changes[0].nhs_to_add.push_back(nhk);
             next_hop_to_add = true;
         }
         else
@@ -1731,22 +1731,6 @@ bool FgNhgOrch::setFgNhgTunnel(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
 
     m_syncdFGRouteTables[vrf_id][ipPrefix].nhg_key = nextHops;
     next_hop_id =  m_syncdFGRouteTables[vrf_id][ipPrefix].next_hop_group_id;
-
-    FGNextHopGroupEntry &syncd_fg_entry = m_syncdFGRouteTables[vrf_id][ipPrefix];
-
-    for (const auto& member : syncd_fg_entry.syncd_fgnhg_map[0])
-    {
-        const NextHopKey& nhk = member.first;
-        const auto& bucket_list = member.second;
-        if (!bucket_list.empty())
-        {
-            uint32_t bucket_idx = bucket_list[0];
-            if (bucket_idx < syncd_fg_entry.nhopgroup_members.size())
-            {
-                nhopgroup_member_ids[nhk] = syncd_fg_entry.nhopgroup_members[bucket_idx];
-            }
-        }
-    }
 
     return true;
 }
