@@ -38,6 +38,7 @@ namespace dashorch_test
         }
     };
 
+    DEFINE_SAI_GENERIC_APIS_MOCK(dash_appliance, dash_appliance)
     DEFINE_SAI_GENERIC_APIS_MOCK(dash_eni, eni)
     DEFINE_SAI_ENTRY_APIS_MOCK(dash_trusted_vni, global_trusted_vni, eni_trusted_vni)
     DEFINE_SAI_ENTRY_APIS_MOCK(dash_direction_lookup, direction_lookup)
@@ -86,6 +87,7 @@ namespace dashorch_test
         
         void ApplySaiMock()
         {
+            INIT_SAI_API_MOCK(dash_appliance);
             INIT_SAI_API_MOCK(dash_eni);
             INIT_SAI_API_MOCK(dash_trusted_vni);
             INIT_SAI_API_MOCK(dash_direction_lookup);
@@ -105,6 +107,7 @@ namespace dashorch_test
             DEINIT_SAI_API_MOCK(dash_direction_lookup);
             DEINIT_SAI_API_MOCK(dash_trusted_vni);
             DEINIT_SAI_API_MOCK(dash_eni);
+            DEINIT_SAI_API_MOCK(dash_appliance);
         }
 
         public:
@@ -277,6 +280,47 @@ namespace dashorch_test
         EXPECT_EQ(removed_entry.vni_range.max, max_trusted_vni);
     }
 
+    TEST_F(DashOrchTest, CreateRemoveApplianceTrustedVniCreateFail)
+    {
+        dash::appliance::Appliance appliance = BuildApplianceEntry();
+        appliance.mutable_trusted_vnis_list()->Add()->set_value(100);
+
+        {
+            InSequence seq;
+            EXPECT_CALL(*mock_sai_dash_appliance_api, create_dash_appliance).Times(1);
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_global_trusted_vni_entry)
+                .WillOnce(Return(SAI_STATUS_FAILURE));
+
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_global_trusted_vni_entry)
+                .Times(0);
+            EXPECT_CALL(*mock_sai_dash_appliance_api, remove_dash_appliance)
+                .Times(1);
+        }
+
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance, true, false);
+    }
+
+    TEST_F(DashOrchTest, CreateRemoveApplianceTrustedVniRemoveFail)
+    {
+        dash::appliance::Appliance appliance = BuildApplianceEntry();
+        appliance.mutable_trusted_vnis_list()->Add()->set_value(100);
+        EXPECT_CALL(*mock_sai_dash_appliance_api, remove_dash_appliance).Times(0);
+        {
+            InSequence seq;
+            EXPECT_CALL(*mock_sai_dash_appliance_api, create_dash_appliance).Times(1);
+
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_global_trusted_vni_entry)
+                .Times(1);
+
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_global_trusted_vni_entry)
+                .WillOnce(Return(SAI_STATUS_FAILURE));
+
+        }
+
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance);
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, dash::appliance::Appliance(), false, false);
+    }
+
     TEST_F(DashOrchTest, CreateRemoveApplianceTrustedVnisMixed)
     {
         int vni1 = 700;
@@ -434,6 +478,53 @@ namespace dashorch_test
         SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, dash::eni::Eni(), false);
         EXPECT_EQ(removed_entry.vni_range.min, min_trusted_vni);
         EXPECT_EQ(removed_entry.vni_range.max, max_trusted_vni);
+    }
+
+    TEST_F(DashOrchTest, CreateRemoveEniTrustedVniCreateFail)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+
+        dash::eni::Eni eni = BuildEniEntry();
+        eni.mutable_trusted_vnis_list()->Add()->set_value(200);
+        EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_eni_trusted_vni_entry).Times(0);
+
+        {
+            InSequence seq;
+            EXPECT_CALL(*mock_sai_dash_eni_api, create_eni).Times(1);
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_eni_trusted_vni_entry)
+                .WillOnce(Return(SAI_STATUS_FAILURE));
+
+            EXPECT_CALL(*mock_sai_dash_eni_api, remove_eni)
+                .Times(1);
+        }
+
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni, true, false);
+    }
+
+    TEST_F(DashOrchTest, CreateRemoveEniTrustedVniRemoveFail)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+
+        dash::eni::Eni eni = BuildEniEntry();
+        eni.mutable_trusted_vnis_list()->Add()->set_value(200);
+        EXPECT_CALL(*mock_sai_dash_eni_api, remove_eni).Times(0);
+
+        {
+            InSequence seq;
+            EXPECT_CALL(*mock_sai_dash_eni_api, create_eni).Times(1);
+
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_eni_trusted_vni_entry)
+                .Times(1);
+
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_eni_trusted_vni_entry)
+                .WillOnce(Return(SAI_STATUS_FAILURE));
+
+        }
+
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni);
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, dash::eni::Eni(), false, false);
     }
 
     TEST_F(DashOrchTest, CreateRemoveEniTrustedVnisMixed)
