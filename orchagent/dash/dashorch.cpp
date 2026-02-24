@@ -956,6 +956,7 @@ bool DashOrch::removeEniTrustedVnis(const std::string& eni, const EniEntry& entr
         if (!to_sai(vni_range_pb, vni_range))
         {
             SWSS_LOG_ERROR("Failed to convert trusted vni range for ENI %s", entry.metadata.eni_id().c_str());
+            success = false;
             continue;
         }
 
