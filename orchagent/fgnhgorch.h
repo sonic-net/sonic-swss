@@ -162,6 +162,7 @@ private:
                     uint32_t bank, std::vector<BankMemberChanges> bank_member_changes,
                     std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const string &vnet, const IpPrefix&);
     void calculateBankHashBucketStartIndices(FgNhgEntry *fgNhgEntry);
+    string getWarmRebootStateDbKey(const string &vnet, const IpPrefix &ipPrefix);
     void setStateDbRouteEntry(const string &key, uint32_t index, NextHopKey nextHop);
     bool writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry, uint32_t index, sai_object_id_t nh_oid,
                      const string &vnet, const IpPrefix &ipPrefix, NextHopKey nextHop);

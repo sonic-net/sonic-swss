@@ -216,6 +216,15 @@ void FgNhgOrch::calculateBankHashBucketStartIndices(FgNhgEntry *fgNhgEntry)
 }
 
 
+string FgNhgOrch::getWarmRebootStateDbKey(const string &vnet, const IpPrefix &ipPrefix)
+{
+    if (vnet.empty())
+    {
+        return ipPrefix.to_string();
+    }
+    return vnet + state_db_key_delimiter + ipPrefix.to_string();
+}
+
 void FgNhgOrch::setStateDbRouteEntry(const string &key, uint32_t index, NextHopKey nextHop)
 {
     SWSS_LOG_ENTER();
@@ -225,7 +234,7 @@ void FgNhgOrch::setStateDbRouteEntry(const string &key, uint32_t index, NextHopK
 
     m_stateWarmRestartRouteTable.hset(key, field, value);
 
-    SWSS_LOG_INFO("Set state db entry for vnet and ip prefix %s next hop %s with index %d",
+    SWSS_LOG_INFO("Set state db entry for key %s next hop %s with index %d",
                   key.c_str(), value.c_str(), index);
 }
 
@@ -233,6 +242,7 @@ bool FgNhgOrch::writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry,
         const string &vnet, const IpPrefix &ipPrefix, NextHopKey nextHop)
 {
     SWSS_LOG_ENTER();
+    string key = getWarmRebootStateDbKey(vnet, ipPrefix);
 
     sai_attribute_t nhgm_attr;
     nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
@@ -902,7 +912,7 @@ bool FgNhgOrch::setInactiveBankToNextAvailableActiveBank(FGNextHopGroupEntry *sy
             syncd_fg_route_entry->next_hop_group_id = rif_next_hop_id;
 
             // remove state_db entry
-            string key = vnet + '|' + ipPrefix.to_string();
+            string key = getWarmRebootStateDbKey(vnet, ipPrefix);
             m_stateWarmRestartRouteTable.del(key);
             // Clear data structures
             syncd_fg_route_entry->syncd_fgnhg_map.clear();
@@ -1051,7 +1061,7 @@ bool FgNhgOrch::setNewNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, FgNh
     auto num_banks = fgNhgEntry->hash_bucket_indices.size();
     std::vector<uint32_t> active_banks;
     std::vector<uint32_t> inactive_banks;
-    string key = vnet + '|' + ipPrefix.to_string();
+    string key = getWarmRebootStateDbKey(vnet, ipPrefix);
 
     for (uint32_t i = 0; i < num_banks; i++)
     {
@@ -1783,7 +1793,7 @@ bool FgNhgOrch::removeFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
         // remove state_db entry
         string vnet;
         getVnetNameByVrfId(vrf_id, vnet);
-        string key = vnet + '|' + ipPrefix.to_string();
+        string key = getWarmRebootStateDbKey(vnet, ipPrefix);
         m_stateWarmRestartRouteTable.del(key);
     }
 
@@ -2352,7 +2362,7 @@ bool FgNhgOrch::getVnetNameByVrfId(sai_object_id_t vrf_id, std::string& vnet_nam
 
     if (!vnet_orch->getVnetNameByVrfId(vrf_id, vnet_name) && vrf_id == gVirtualRouterId)
     {
-        vnet_name = "default";
+        vnet_name = "";
         return false;
     }
     return true;
