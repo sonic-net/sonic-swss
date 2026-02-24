@@ -605,6 +605,7 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
     string object_name = kfvKey(tuple);
     string op = kfvOp(tuple);
     string pool_name;
+    bool is_lossless = false;
 
     SWSS_LOG_DEBUG("KEY: %s, OP: %s", object_name.c_str(), op.c_str());
 
@@ -678,6 +679,7 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
                 attr.value.u64 = (uint64_t)stoul(value);
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XOFF_TH;
                 attribs.push_back(attr);
+                is_lossless = true;
             }
             else if (field == buffer_size_field_name)
             {
@@ -817,6 +819,18 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
 
         // Add reference to the buffer pool object
         setObjectReference(m_buffer_type_maps, map_type_name, object_name, buffer_pool_field_name, pool_name);
+
+        // Publish the result for lossless buffer profile
+        if (is_lossless)
+        {
+            vector<FieldValueTuple> fvs;
+            for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
+            {
+                fvs.emplace_back(fvField(*i), fvValue(*i));
+            }
+            SWSS_LOG_INFO("Publishing the result after applying lossless buffer profile %s to SAI", object_name.c_str());
+            m_publisher.publish(APP_BUFFER_PROFILE_TABLE_NAME, object_name, fvs, ReturnCode(SAI_STATUS_SUCCESS), true);
+        }
     }
     else if (op == DEL_COMMAND)
     {
@@ -827,6 +841,17 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
             (*(m_buffer_type_maps[map_type_name]))[object_name].m_pendingRemove = true;
 
             return task_process_status::task_need_retry;
+        }
+
+        // Check if the profile being deleted is a lossless profile before deletion
+        BufferProfileConfig cfg;
+        if (m_bufHlpr.getBufferConfig(cfg, object_name))
+        {
+            auto &fieldValueMap = cfg.fieldValueMap;
+            if (fieldValueMap.find(buffer_xoff_field_name) != fieldValueMap.end())
+            {
+                is_lossless = true;
+            }
         }
 
         if (SAI_NULL_OBJECT_ID != sai_object)
@@ -846,6 +871,14 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
         SWSS_LOG_NOTICE("Remove buffer profile %s with type %s", object_name.c_str(), map_type_name.c_str());
         removeObject(m_buffer_type_maps, map_type_name, object_name);
         m_bufHlpr.delBufferProfileConfig(object_name);
+
+        // Publish the result for lossless buffer profile deletion
+        if (is_lossless)
+        {
+            vector<FieldValueTuple> fvs;
+            SWSS_LOG_INFO("Publishing the result after removing lossless buffer profile %s", object_name.c_str());
+            m_publisher.publish(APP_BUFFER_PROFILE_TABLE_NAME, object_name, fvs, ReturnCode(SAI_STATUS_SUCCESS), true);
+        }
     }
     else
     {
