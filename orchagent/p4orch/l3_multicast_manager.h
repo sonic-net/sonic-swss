@@ -139,9 +139,9 @@ class L3MulticastManager : public ObjectManagerInterface {
   ReturnCode drainMulticastRouterInterfaceEntries(
       std::deque<swss::KeyOpFieldsValuesTuple>& router_interface_tuples);
 
-  // Drains entries associated with the multicast replication table.
-  ReturnCode drainMulticastReplicationEntries(
-      std::deque<swss::KeyOpFieldsValuesTuple>& replication_tuples);
+  // Drains entries associated with the multicast group table.
+  ReturnCode drainMulticastGroupEntries(
+      std::deque<swss::KeyOpFieldsValuesTuple>& group_entry_tuples);
 
   // Converts db table entry into P4MulticastRouterInterfaceEntry.
   ReturnCodeOr<P4MulticastRouterInterfaceEntry>
@@ -213,12 +213,12 @@ class L3MulticastManager : public ObjectManagerInterface {
       const std::deque<swss::KeyOpFieldsValuesTuple>& tuple_list,
       const std::string& op, bool update);
 
-  // Processes a list of entries of the same operation type for the replication
-  // multicast table.
+  // Processes a list of entries of the same operation type for the multicast
+  // group table.
   // Returns an overall status code.
   // This method also sends the response to the application.
-  ReturnCode processMulticastReplicationEntries(
-      std::vector<P4MulticastReplicationEntry>& entries,
+  ReturnCode processMulticastGroupEntries(
+      std::vector<P4MulticastGroupEntry>& entries,
       const std::deque<swss::KeyOpFieldsValuesTuple>& tuple_list,
       const std::string& op, bool update);
 
@@ -274,7 +274,9 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Add new multicast group table entries.
   std::vector<ReturnCode> addMulticastGroupEntries(
       std::vector<P4MulticastGroupEntry>& entries);
-
+  // Update existing multicast group table entries.
+  std::vector<ReturnCode> updateMulticastGroupEntries(
+      std::vector<P4MulticastGroupEntry>& entries);
   // Used during failure scenarios where we try to revert to the previous state.
   ReturnCode restoreDeletedGroupMembers(
       const std::vector<P4Replica>& deleted_replicas,
@@ -288,7 +290,7 @@ class L3MulticastManager : public ObjectManagerInterface {
   std::string verifyMulticastRouterInterfaceState(
       const std::string& key,
       const std::vector<swss::FieldValueTuple>& tuple);
-  std::string verifyMulticastReplicationState(
+  std::string verifyMulticastGroupState(
       const std::string& key,
       const std::vector<swss::FieldValueTuple>& tuple);
 
@@ -297,16 +299,16 @@ class L3MulticastManager : public ObjectManagerInterface {
       const P4MulticastRouterInterfaceEntry& app_db_entry,
       const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
   // Verifies internal cache for a multicast replication entry.
-  std::string verifyMulticastReplicationStateCache(
-      const P4MulticastReplicationEntry& app_db_entry,
-      const P4MulticastReplicationEntry* multicast_replication_entry);
+  std::string verifyMulticastGroupStateCache(
+      const P4MulticastGroupEntry& app_db_entry,
+      const P4MulticastGroupEntry* multicast_group_entry);
 
   // Verifies ASIC DB for a multicast router interface entry.
   std::string verifyMulticastRouterInterfaceStateAsicDb(
       const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
   // Verifies ASIC DB for a multicast replication entry.
-  std::string verifyMulticastReplicationStateAsicDb(
-      const P4MulticastReplicationEntry* multicast_replication_entry);
+  std::string verifyMulticastGroupStateAsicDb(
+      const P4MulticastGroupEntry* multicast_group_entry);
 
   // Gets the internal cached multicast router interface entry.
   // Return nullptr if corresponding multicast router interface entry is not

@@ -28,7 +28,7 @@ class P4RtL3MulticastRouterInterfaceWrapper(util.DBInterface):
 
   # Default router interface attribute values.
   DEFAULT_PORT_ID = "Ethernet8"
-  DEFAULT_INSTANCE = "0"
+  DEFAULT_INSTANCE = "0x0"
   DEFAULT_SRC_MAC = "00:11:22:33:44:55"
   DEFAULT_ACTION = "set_multicast_src_mac"
 
@@ -58,8 +58,8 @@ class P4RtL3MulticastRouterInterfaceWrapper(util.DBInterface):
     return mcast_router_intf_key, attr_list
 
 
-class P4RtL3MulticastReplicationWrapper(util.DBInterface):
-  """Interface to interact with APP DB and ASIC DB tables for P4RT L3 multicast replication object."""
+class P4RtL3MulticastGroupWrapper(util.DBInterface):
+  """Interface to interact with APP DB and ASIC DB tables for P4RT L3 multicast group object."""
 
   # Database and SAI constants.
   APP_DB_TBL_NAME = swsscommon.APP_P4RT_TABLE_NAME
@@ -71,39 +71,34 @@ class P4RtL3MulticastReplicationWrapper(util.DBInterface):
   SAI_ATTR_IPMC_OUTPUT_ID = "SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID"
 
   # Default router interface attribute values.
-  DEFAULT_GROUP_ID = "0"
-  DEFAULT_PORT_ID = "Ethernet8"
-  DEFAULT_INSTANCE = "0"
+  DEFAULT_GROUP_ID = "0x1"
+  DEFAULT_REPLICAS = [("Ethernet8", "0x0")]
 
   CONTROLLER_METADATA = "controller_metadata"
   DEFAULT_METADATA = "my_metadata"
 
-  def generate_app_db_key(self, multicast_group_id, multicast_replica_port,
-                          multicast_replica_instance):
-    d = {}
-    d[util.prepend_match_field("multicast_group_id")] = (
-        multicast_group_id)
-    d[util.prepend_match_field("multicast_replica_port")] = (
-        multicast_replica_port)
-    d[util.prepend_match_field("multicast_replica_instance")] = (
-        multicast_replica_instance)
-    key = json.dumps(d, separators=(",", ":"))
-    return self.TBL_NAME + ":" + key
+  def generate_app_db_key(self, multicast_group_id):
+    return self.TBL_NAME + ":" + multicast_group_id
 
-  # Create default multicast group member.
-  def create_multicast_group_member(self, group_id=None, port_id=None,
-                                    instance=None):
+  # Create default multicast group entry.
+  def create_multicast_group_entry(self, group_id=None, replicas=None):
     group_id = group_id or self.DEFAULT_GROUP_ID
-    port_id = port_id or self.DEFAULT_PORT_ID
-    instance = instance or self.DEFAULT_INSTANCE
-    # Hmm, we need attributes, otherwise this is treated as a delete?
-    attr_list = [
-        (self.CONTROLLER_METADATA, self.DEFAULT_METADATA),
-    ]
-    mcast_replication_key = self.generate_app_db_key(group_id, port_id,
-                                                     instance)
-    self.set_app_db_entry(mcast_replication_key, attr_list)
-    return mcast_replication_key, attr_list
+    if replicas is None:
+      local_replicas = [x for x in self.DEFAULT_REPLICAS]
+    else:
+      local_replicas = replicas
+
+    replica_dicts = []
+    for port_name, instance in local_replicas:
+      replica_dicts.append(
+          "{\"multicast_replica_instance\":\"" + instance  + "\"" +
+          ",\"multicast_replica_port\":\"" + port_name + "\"}")
+    replica_json_array = "[" + ",".join(replica_dicts) + "]"
+    attr_list = [("replicas", replica_json_array)]
+
+    mcast_group_key = self.generate_app_db_key(group_id)
+    self.set_app_db_entry(mcast_group_key, attr_list)
+    return mcast_group_key, attr_list
 
 
 class P4RtL3MulticastRouteWrapper(util.DBInterface):
@@ -129,7 +124,7 @@ class P4RtL3MulticastRouteWrapper(util.DBInterface):
   # Default router interface attribute values.
   DEFAULT_ACTION = "set_multicast_group_id"
   SET_NEXT_HOP_ID_ACTION = "set_nexthop_id"
-  DEFAULT_GROUP_ID = "0"
+  DEFAULT_GROUP_ID = "0x1"
   DEFAULT_VRF_ID = "b4-traffic"
   DEFAULT_DST_V6 = "2001:db8:3:4:5:6:7:8"
   DEFAULT_DST_V4 = "10.11.12.0"
