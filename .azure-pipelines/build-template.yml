@@ -79,6 +79,9 @@ parameters:
   type: boolean
   default: false
 
+- name: debian_version
+  type: string
+
 jobs:
 - job:
   displayName: ${{ parameters.arch }}
@@ -91,7 +94,7 @@ jobs:
       vmImage: 'ubuntu-22.04'
 
   container:
-    image: sonicdev-microsoft.azurecr.io:443/${{ parameters.sonic_slave }}:$(BUILD_BRANCH)-${{ parameters.arch }}
+    image: sonicdev-microsoft.azurecr.io:443/sonic-slave-${{ parameters.debian_version }}:$(BUILD_BRANCH)-${{ parameters.arch }}
 
   steps:
   - checkout: self
@@ -156,15 +159,15 @@ jobs:
       runBranch: 'refs/heads/${{ parameters.common_lib_artifact_branch }}'
       path: $(Build.ArtifactStagingDirectory)/download/common
       patterns: |
-        target/debs/bookworm/libnl-3-200_*.deb
-        target/debs/bookworm/libnl-3-dev_*.deb
-        target/debs/bookworm/libnl-genl-3-200_*.deb
-        target/debs/bookworm/libnl-genl-3-dev_*.deb
-        target/debs/bookworm/libnl-route-3-200_*.deb
-        target/debs/bookworm/libnl-route-3-dev_*.deb
-        target/debs/bookworm/libnl-nf-3-200_*.deb
-        target/debs/bookworm/libnl-nf-3-dev_*.deb
-        target/debs/bookworm/libyang_*.deb
+        target/debs/${{ parameters.debian_version }}/libnl-3-200_*.deb
+        target/debs/${{ parameters.debian_version }}/libnl-3-dev_*.deb
+        target/debs/${{ parameters.debian_version }}/libnl-genl-3-200_*.deb
+        target/debs/${{ parameters.debian_version }}/libnl-genl-3-dev_*.deb
+        target/debs/${{ parameters.debian_version }}/libnl-route-3-200_*.deb
+        target/debs/${{ parameters.debian_version }}/libnl-route-3-dev_*.deb
+        target/debs/${{ parameters.debian_version }}/libnl-nf-3-200_*.deb
+        target/debs/${{ parameters.debian_version }}/libnl-nf-3-dev_*.deb
+        target/debs/${{ parameters.debian_version }}/libyang_*.deb
     displayName: "Download common libs"
   - task: DownloadPipelineArtifact@2
     inputs:

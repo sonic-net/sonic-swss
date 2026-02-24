@@ -105,6 +105,8 @@ int main(int argc, char **argv)
         rtnl_route_read_protocol_names(DefaultRtProtoPath);
     } else if (stat(OverrideRtProtoPath, &st) == 0) {
         rtnl_route_read_protocol_names(OverrideRtProtoPath);
+    } else {
+        SWSS_LOG_WARN("No file containing route protocol names found, ignoring");
     }
     nlmsg_set_default_size(FPM_MAX_MSG_LEN);
 

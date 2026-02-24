@@ -52,6 +52,7 @@ stages:
       swss_common_artifact_name: sonic-swss-common-${{ parameters.debian_version }}
       sairedis_artifact_name: sonic-sairedis-${{ parameters.debian_version }}
       artifact_name: sonic-swss-${{ parameters.debian_version }}
+      debian_version: ${{ parameters.debian_version }}
       archive_pytests: true
       archive_gcov: true
 
@@ -67,6 +68,7 @@ stages:
       swss_common_artifact_name: sonic-swss-common-${{ parameters.debian_version }}
       sairedis_artifact_name: sonic-sairedis-${{ parameters.debian_version }}
       artifact_name: sonic-swss-asan-${{ parameters.debian_version }}
+      debian_version: ${{ parameters.debian_version }}
       asan: true
 
 - stage: BuildArm
@@ -83,6 +85,7 @@ stages:
       swss_common_artifact_name: sonic-swss-common-${{ parameters.debian_version }}.armhf
       sairedis_artifact_name: sonic-sairedis-${{ parameters.debian_version }}.armhf
       artifact_name: sonic-swss-${{ parameters.debian_version }}.armhf
+      debian_version: ${{ parameters.debian_version }}
       archive_gcov: false
 
   - template: .azure-pipelines/build-template.yml
@@ -95,6 +98,7 @@ stages:
       swss_common_artifact_name: sonic-swss-common-${{ parameters.debian_version }}.arm64
       sairedis_artifact_name: sonic-sairedis-${{ parameters.debian_version }}.arm64
       artifact_name: sonic-swss-${{ parameters.debian_version }}.arm64
+      debian_version: ${{ parameters.debian_version }}
       archive_gcov: false
 
 - stage: BuildTrixie
@@ -110,6 +114,7 @@ stages:
       swss_common_artifact_name: sonic-swss-common-trixie
       sairedis_artifact_name: sonic-sairedis-trixie
       artifact_name: sonic-swss-trixie
+      debian_version: trixie
       archive_gcov: false
 
   - template: .azure-pipelines/build-template.yml
@@ -122,6 +127,7 @@ stages:
       swss_common_artifact_name: sonic-swss-common-trixie.armhf
       sairedis_artifact_name: sonic-sairedis-trixie.armhf
       artifact_name: sonic-swss-trixie.armhf
+      debian_version: trixie
       archive_gcov: false
 
   - template: .azure-pipelines/build-template.yml
@@ -134,6 +140,7 @@ stages:
       swss_common_artifact_name: sonic-swss-common-trixie.arm64
       sairedis_artifact_name: sonic-sairedis-trixie.arm64
       artifact_name: sonic-swss-trixie.arm64
+      debian_version: trixie
       archive_gcov: false
 
 - stage: BuildDocker
