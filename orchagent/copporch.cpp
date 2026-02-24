@@ -510,10 +510,13 @@ bool CoppOrch::applyAttributesToTrapIds(sai_object_id_t trap_group_id,
         attr.value.s32 = trap_id;
         attrs.push_back(attr);
 
-        attr.id = SAI_HOSTIF_TRAP_ATTR_EXCLUDE_PORT_LIST;
-        attr.value.objlist.list = excluded_port_ids.data();
-        attr.value.objlist.count = static_cast<uint32_t>(excluded_port_ids.size());
-        attrs.push_back(attr);
+        if (!excluded_port_ids.empty())
+        {
+            attr.id = SAI_HOSTIF_TRAP_ATTR_EXCLUDE_PORT_LIST;
+            attr.value.objlist.list = excluded_port_ids.data();
+            attr.value.objlist.count = static_cast<uint32_t>(excluded_port_ids.size());
+            attrs.push_back(attr);
+        }
 
         attrs.insert(attrs.end(), trap_id_attribs.begin(), trap_id_attribs.end());
 
@@ -968,11 +971,13 @@ void CoppOrch::excludePortsSet(const std::string &ports)
     for (auto port : portList)
     {
         Port p;
-        if (!gPortsOrch->getPort(port, p)) {
+        if (!gPortsOrch->getPort(port, p))
+        {
             SWSS_LOG_ERROR("Port %s not found", port.c_str());
             continue;
         }
-        if (p.m_type != Port::PHY) {
+        if (p.m_type != Port::PHY)
+        {
             SWSS_LOG_ERROR("Port %s is not a physical port", port.c_str());
             continue;
         }
@@ -1008,9 +1013,9 @@ void CoppOrch::doConfigdbTask(Consumer &consumer)
         string tableAttr = kfvKey(t);
         string op = kfvOp(t);
 
-        if (tableAttr != "GLOBAL")
+        if (table_name != CFG_COPP_TRAP_EXCLUDE_PORTS_TABLE_NAME || tableAttr != "GLOBAL")
         {
-            SWSS_LOG_ERROR("COPP_TRAP_EXCLUDE_PORTS unknown attribute %s", tableAttr.c_str());
+            SWSS_LOG_ERROR("%s unknown attribute %s", table_name.c_cstr(), tableAttr.c_str());
             goto consume;
         }
 
@@ -1062,9 +1067,12 @@ void CoppOrch::doTask(Consumer &consumer)
         return;
     }
 
-    if (db_name == "CONFIG_DB") {
+    if (db_name == "CONFIG_DB")
+    {
         doConfigdbTask(consumer);
-    } else {
+    }
+    else
+    {
         doAppdbTask(consumer);
     }
 }
