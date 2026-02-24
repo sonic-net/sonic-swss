@@ -1060,6 +1060,7 @@ class WarmRestartRouteSyncTest : public ::testing::Test
 public:
     void SetUp() override
     {
+        struct stat st;
         resetMockWarmStartHelper();  // Reset warm restart state before each test
         testing_db::reset();
         if (stat(DefaultRtProtoPath, &st) == 0) {
