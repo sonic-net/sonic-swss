@@ -1613,15 +1613,7 @@ bool FgNhgOrch::setFgNhgTunnel(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
     if (m_FgNhgs.find(fg_nhg_name) == m_FgNhgs.end())
     {
         m_FgNhgs[fg_nhg_name] = fgNhgEntry;
-    }
-
-    IpPrefix ip_prefix = ipPrefix;
-
-    if (std::find(m_FgNhgs[fg_nhg_name].prefixes.begin(), 
-                  m_FgNhgs[fg_nhg_name].prefixes.end(), 
-                  ip_prefix) == m_FgNhgs[fg_nhg_name].prefixes.end())
-    {
-        m_FgNhgs[fg_nhg_name].prefixes.push_back(ip_prefix);
+        m_FgNhgs[fg_nhg_name].prefixes.push_back(ipPrefix);
     }
 
     if (m_syncdFGRouteTables.find(vrf_id) != m_syncdFGRouteTables.end() &&
@@ -1793,6 +1785,59 @@ bool FgNhgOrch::removeFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
     return true;
 }
 
+bool FgNhgOrch::removeFgNhgTunnel(sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
+{
+    SWSS_LOG_ENTER();
+
+    if (!isFineGrainedConfigured)
+    {
+        return true;
+    }
+
+    auto it_route_table = m_syncdFGRouteTables.find(vrf_id);
+    if (it_route_table == m_syncdFGRouteTables.end())
+    {
+        SWSS_LOG_INFO("No route table found for %s, vrf_id 0x%" PRIx64,
+                ipPrefix.to_string().c_str(), vrf_id);
+        return true;
+    }
+
+    auto it_route = it_route_table->second.find(ipPrefix);
+    if (it_route == it_route_table->second.end())
+    {
+        SWSS_LOG_INFO("Failed to find route entry, vrf_id 0x%" PRIx64 ", prefix %s", vrf_id,
+                ipPrefix.to_string().c_str());
+        return true;
+    }
+
+    FGNextHopGroupEntry *syncd_fg_route_entry = &(it_route->second);
+    if (!removeFineGrainedNextHopGroup(syncd_fg_route_entry))
+    {
+        SWSS_LOG_ERROR("Failed to clean-up fine grained ECMP SAI group");
+        return false;
+    }
+
+    // remove state_db entry
+    string vnet;
+    getVnetNameByVrfId(vrf_id, vnet);
+    string key = getWarmRebootStateDbKey(vnet, ipPrefix);
+    m_stateWarmRestartRouteTable.del(key);
+
+    // remove from m_FgNhgs
+    std::string fg_nhg_name = "FG_NHG_" + std::to_string(vrf_id) + "_" + ipPrefix.to_string();
+    m_fgNhgs.erase(fg_nhg_name);
+
+    it_route_table->second.erase(it_route);
+    if (it_route_table->second.size() == 0)
+    {
+        m_syncdFGRouteTables.erase(vrf_id);
+        m_vrfOrch->decreaseVrfRefCount(vrf_id);
+    }
+    SWSS_LOG_NOTICE("All banks of FG next-hops are down for vrf_id 0x%" PRIx64 ", prefix %s", vrf_id,
+            ipPrefix.to_string().c_str());
+
+    return true;
+}
 
 vector<FieldValueTuple> FgNhgOrch::generateRouteTableFromNhgKey(NextHopGroupKey nhg)
 {

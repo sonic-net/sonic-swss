@@ -934,7 +934,7 @@ bool VNetRouteOrch::removeFgNextHopGroup(const string& vnet, const NextHopGroupK
     SWSS_LOG_ENTER();
 
     sai_object_id_t vr_id = vrf_obj->getVRidIngress();
-    if (!gFgNhgOrch->removeFgNhg(vr_id, ipPrefix))
+    if (!gFgNhgOrch->removeFgNhgTunnel(vr_id, ipPrefix))
     {
         SWSS_LOG_ERROR("Failed to remove fine grained next hop group for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
         return false;
@@ -1616,7 +1616,6 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             return true;
         }
         NextHopGroupKey nhg = it_route->second.nhg_key;
-        auto last_nhg_size = nhg.getSize();
         
         for (auto vr_id : vr_set)
         {
@@ -3464,8 +3463,8 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     if (vnet_orch_->isVnetExecVrf())
     {
         sai_object_id_t vr_id;
-        getVrfIdByVnetName(vnet_name, vr_id);
-        if (consistent_hashing_buckets > 0 || gFgNhgOrch->syncdContainsFgNhg(vr_id, ipPrefix))
+        vnet_orch_->getVrfIdByVnetName(vnet_name, vr_id);
+        if (consistent_hashing_buckets > 0 || gFgNhgOrch->syncdContainsFgNhg(vr_id, ip_pfx))
         {
             return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, nhg, op, consistent_hashing_buckets);
         }
