@@ -261,7 +261,7 @@ bool FgNhgOrch::writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry,
         }
     }
 
-    setStateDbRouteEntry(vnet, ipPrefix, index, nextHop);
+    setStateDbRouteEntry(key, index, nextHop);
     return true;
 }
 
@@ -1206,7 +1206,7 @@ bool FgNhgOrch::sprayBankNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, c
             }
         }
 
-        setStateDbRouteEntry(key, bucket_idx, nh_memb_key);
+        setStateDbRouteEntry(warm_reboot_key, bucket_idx, nh_memb_key);
         syncd_fg_route_entry.syncd_fgnhg_map[bank][nh_memb_key].push_back(bucket_idx);
         syncd_fg_route_entry.active_nexthops.insert(nh_memb_key);
         syncd_fg_route_entry.nhopgroup_members[bucket_idx] = next_hop_group_member_id;
@@ -1584,7 +1584,7 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
 }
 
 bool FgNhgOrch::setFgNhgTunnel(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, 
-                        const map<NextHopKey, sai_object_id_t>& nhopgroup_members_set, NextHopGroupKey& nextHops, uint16_t consistent_hashing_buckets, 
+                        map<NextHopKey, sai_object_id_t>& nhopgroup_members_set, NextHopGroupKey& nextHops, uint16_t consistent_hashing_buckets, 
                         sai_object_id_t &next_hop_id, map<NextHopKey, sai_object_id_t> &nhopgroup_member_ids)
 {
     SWSS_LOG_ENTER();
