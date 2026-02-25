@@ -184,7 +184,11 @@ void RouteSync::setRouteWithWarmRestart(FieldValueTupleWrapperBase & fvw,
     }
     else
     {
-        m_warmStartHelper.insertRefreshMap(fvw.KeyOpFieldsValuesTupleVector()[0]);
+        if(isNbZmqEnabled()) {
+            m_warmStartHelper.insertRefreshMap(fvw.KeyOpFieldsValuesTupleVector()[0]);
+        } else {
+            m_warmStartHelper.insertRefreshMap(fvw.KeyOpFieldsValuesTupleVector()[1]);
+        }
     }
 }
 
@@ -196,7 +200,7 @@ void RouteSync::setTable(FieldValueTupleWrapperBase & fvw,
 }
 
 void RouteSync::delWithWarmRestart(FieldValueTupleWrapperBase && fvw,
-				   ProducerStateTable & table) {
+                                   ProducerStateTable & table) {
     bool warmRestartInProgress = m_warmStartHelper.inProgress();
     if (!warmRestartInProgress) {
         table.del(fvw.key);
@@ -877,7 +881,7 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     {
         SWSS_LOG_INFO("RouteTable del msg: %s", destipprefix);
         delWithWarmRestart(
-            RouteTableFieldValueTupleWrapper{std::move(destipprefix), std::string()},
+            RouteTableFieldValueTupleWrapper{std::move(destipprefix), std::string(), isNbZmqEnabled()},
             *m_routeTable);
         return;
     }
@@ -934,7 +938,7 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     SWSS_LOG_INFO("RouteTable set EVPN msg: %s vtep:%s vni:%s mac:%s intf:%s protocol:%s",
                   destipprefix, nexthops.c_str(), vni_list.c_str(), mac_list.c_str(), intf_list.c_str(),
                   proto_str.c_str());
-    RouteTableFieldValueTupleWrapper fvw{std::move(destipprefix), std::move(proto_str)};
+    RouteTableFieldValueTupleWrapper fvw{std::move(destipprefix), std::move(proto_str), isNbZmqEnabled()};
     fvw.nexthop = std::move(nexthops);
     fvw.ifname = std::move(intf_list);
     fvw.vni_label = std::move(vni_list);
@@ -1019,17 +1023,56 @@ bool RouteSync::getSrv6VpnRouteNextHop(struct nlmsghdr *h, int received_bytes,
 vector<FieldValueTuple>
 RouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
     vector<FieldValueTuple> fvVector;
-    fvVector.push_back(FieldValueTuple("protocol", protocol.c_str()));
-    fvVector.push_back(FieldValueTuple("blackhole", blackhole.c_str()));
-    fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
-    fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
-    fvVector.push_back(FieldValueTuple("nexthop_group", nexthop_group.c_str()));
-    fvVector.push_back(FieldValueTuple("mpls_nh", mpls_nh.c_str()));
-    fvVector.push_back(FieldValueTuple("weight", weight.c_str()));
-    fvVector.push_back(FieldValueTuple("vni_label", vni_label.c_str()));
-    fvVector.push_back(FieldValueTuple("router_mac", router_mac.c_str()));
-    fvVector.push_back(FieldValueTuple("segment", segment.c_str()));
-    fvVector.push_back(FieldValueTuple("seg_src", seg_src.c_str()));
+    // If Northbound ZMQ is enabled, simply send all the fields even if the value is
+    // empty. The duplication of code between ZMQ and non-ZMQ is deliberate. This way
+    // for the ZMQ case we can avoid an if check for every field attribute.
+    if(nbZmqEnabled) {
+        fvVector.push_back(FieldValueTuple("protocol", protocol.c_str()));
+        fvVector.push_back(FieldValueTuple("blackhole", blackhole.c_str()));
+        fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
+        fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
+        fvVector.push_back(FieldValueTuple("nexthop_group", nexthop_group.c_str()));
+        fvVector.push_back(FieldValueTuple("mpls_nh", mpls_nh.c_str()));
+        fvVector.push_back(FieldValueTuple("weight", weight.c_str()));
+        fvVector.push_back(FieldValueTuple("vni_label", vni_label.c_str()));
+        fvVector.push_back(FieldValueTuple("router_mac", router_mac.c_str()));
+        fvVector.push_back(FieldValueTuple("segment", segment.c_str()));
+        fvVector.push_back(FieldValueTuple("seg_src", seg_src.c_str()));
+    } else {
+        if (protocol != string()) {
+            fvVector.push_back(FieldValueTuple("protocol", protocol.c_str()));
+        }
+        if (blackhole != string("false")) {
+            fvVector.push_back(FieldValueTuple("blackhole", blackhole.c_str()));
+        }
+        if (nexthop != string()) {
+            fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
+        }
+        if (ifname != string()) {
+            fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
+        }
+        if (nexthop_group != string()) {
+            fvVector.push_back(FieldValueTuple("nexthop_group", nexthop_group.c_str()));
+        }
+        if (mpls_nh != string()) {
+            fvVector.push_back(FieldValueTuple("mpls_nh", mpls_nh.c_str()));
+        }
+        if (weight != string()) {
+            fvVector.push_back(FieldValueTuple("weight", weight.c_str()));
+        }
+        if (vni_label != string()) {
+            fvVector.push_back(FieldValueTuple("vni_label", vni_label.c_str()));
+        }
+        if (router_mac != string()) {
+            fvVector.push_back(FieldValueTuple("router_mac", router_mac.c_str()));
+        }
+        if (segment != string()) {
+            fvVector.push_back(FieldValueTuple("segment", segment.c_str()));
+        }
+        if (seg_src != string()) {
+            fvVector.push_back(FieldValueTuple("seg_src", seg_src.c_str()));
+        }
+    }
     // Return value optimization will avoid copy of the following vector
     return fvVector;
 }
@@ -1039,12 +1082,36 @@ RouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
 vector<FieldValueTuple>
 LabelRouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
     vector<FieldValueTuple> fvVector;
-    fvVector.push_back(FieldValueTuple("protocol", protocol.c_str()));
-    fvVector.push_back(FieldValueTuple("blackhole", blackhole.c_str()));
-    fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
-    fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
-    fvVector.push_back(FieldValueTuple("mpls_nh", mpls_nh.c_str()));
-    fvVector.push_back(FieldValueTuple("mpls_pop", mpls_pop.c_str()));
+    // If Northbound ZMQ is enabled, simply send all the fields even if the value is
+    // empty. The duplication of code between ZMQ and non-ZMQ is deliberate. This way
+    // for the ZMQ case we can avoid an if check for every field attribute.
+    if(nbZmqEnabled) {
+        fvVector.push_back(FieldValueTuple("protocol", protocol.c_str()));
+        fvVector.push_back(FieldValueTuple("blackhole", blackhole.c_str()));
+        fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
+        fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
+        fvVector.push_back(FieldValueTuple("mpls_nh", mpls_nh.c_str()));
+        fvVector.push_back(FieldValueTuple("mpls_pop", mpls_pop.c_str()));
+    } else {
+        if (protocol != string()) {
+            fvVector.push_back(FieldValueTuple("protocol", protocol.c_str()));
+        }
+        if (blackhole != string("false")) {
+            fvVector.push_back(FieldValueTuple("blackhole", blackhole.c_str()));
+        }
+        if (nexthop != string()) {
+            fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
+        }
+        if (ifname != string()) {
+            fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
+        }
+        if (mpls_nh != string()) {
+            fvVector.push_back(FieldValueTuple("mpls_nh", mpls_nh.c_str()));
+        }
+        if (mpls_pop != string()) {
+            fvVector.push_back(FieldValueTuple("mpls_pop", mpls_pop.c_str()));
+        }
+    }
     return fvVector;
 }
 
@@ -1053,8 +1120,20 @@ LabelRouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
 vector<FieldValueTuple>
 VnetRouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
     vector<FieldValueTuple> fvVector;
-    fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
-    fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
+    // If Northbound ZMQ is enabled, simply send all the fields even if the value is
+    // empty. The duplication of code between ZMQ and non-ZMQ is deliberate. This way
+    // for the ZMQ case we can avoid an if check for every field attribute.
+    if(nbZmqEnabled) {
+        fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
+        fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
+    } else {
+        if (nexthop != string()) {
+            fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
+        }
+        if (ifname != string()) {
+            fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
+        }
+    }
     return fvVector;
 }
 
@@ -1063,7 +1142,16 @@ VnetRouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
 vector<FieldValueTuple>
 VnetTunnelTableFieldValueTupleWrapper::fieldValueTupleVector() {
     vector<FieldValueTuple> fvVector;
-    fvVector.push_back(FieldValueTuple("endpoint", endpoint.c_str()));
+    // If Northbound ZMQ is enabled, simply send all the fields even if the value is
+    // empty. The duplication of code between ZMQ and non-ZMQ is deliberate. This way
+    // for the ZMQ case we can avoid an if check for every field attribute.
+    if(nbZmqEnabled) {
+        fvVector.push_back(FieldValueTuple("endpoint", endpoint.c_str()));
+    } else {
+        if (endpoint != string()) {
+            fvVector.push_back(FieldValueTuple("endpoint", endpoint.c_str()));
+        }
+    }
     return fvVector;
 }
 
@@ -1072,9 +1160,24 @@ VnetTunnelTableFieldValueTupleWrapper::fieldValueTupleVector() {
 vector<FieldValueTuple>
 NextHopGroupTableFieldValueTupleWrapper::fieldValueTupleVector() {
     vector<FieldValueTuple> fvVector;
-    fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
-    fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
-    fvVector.push_back(FieldValueTuple("weight", weight.c_str()));
+    // If Northbound ZMQ is enabled, simply send all the fields even if the value is
+    // empty. The duplication of code between ZMQ and non-ZMQ is deliberate. This way
+    // for the ZMQ case we can avoid an if check for every field attribute.
+    if(nbZmqEnabled) {
+        fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
+        fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
+        fvVector.push_back(FieldValueTuple("weight", weight.c_str()));
+    } else {
+        if (nexthop != string()) {
+            fvVector.push_back(FieldValueTuple("nexthop", nexthop.c_str()));
+        }
+        if (ifname != string()) {
+            fvVector.push_back(FieldValueTuple("ifname", ifname.c_str()));
+        }
+        if (weight != string()) {
+            fvVector.push_back(FieldValueTuple("weight", weight.c_str()));
+        }
+    }
     return fvVector;
 }
 
@@ -1083,9 +1186,24 @@ NextHopGroupTableFieldValueTupleWrapper::fieldValueTupleVector() {
 vector<FieldValueTuple>
 Srv6MySidTableFieldValueTupleWrapper::fieldValueTupleVector() {
     vector<FieldValueTuple> fvVector;
-    fvVector.push_back(FieldValueTuple("action", action.c_str()));
-    fvVector.push_back(FieldValueTuple("vrf", vrf.c_str()));
-    fvVector.push_back(FieldValueTuple("adj", adj.c_str()));
+    // If Northbound ZMQ is enabled, simply send all the fields even if the value is
+    // empty. The duplication of code between ZMQ and non-ZMQ is deliberate. This way
+    // for the ZMQ case we can avoid an if check for every field attribute.
+    if(nbZmqEnabled) {
+        fvVector.push_back(FieldValueTuple("action", action.c_str()));
+        fvVector.push_back(FieldValueTuple("vrf", vrf.c_str()));
+        fvVector.push_back(FieldValueTuple("adj", adj.c_str()));
+    } else {
+        if (action != string()) {
+            fvVector.push_back(FieldValueTuple("action", action.c_str()));
+        }
+        if (vrf != string()) {
+            fvVector.push_back(FieldValueTuple("vrf", vrf.c_str()));
+        }
+        if (adj != string()) {
+            fvVector.push_back(FieldValueTuple("adj", adj.c_str()));
+        }
+    }
     return fvVector;
 }
 
@@ -1094,7 +1212,16 @@ Srv6MySidTableFieldValueTupleWrapper::fieldValueTupleVector() {
 vector<FieldValueTuple>
 Srv6SidListTableFieldValueTupleWrapper::fieldValueTupleVector() {
     vector<FieldValueTuple> fvVector;
-    fvVector.push_back(FieldValueTuple("path", path.c_str()));
+    // If Northbound ZMQ is enabled, simply send all the fields even if the value is
+    // empty. The duplication of code between ZMQ and non-ZMQ is deliberate. This way
+    // for the ZMQ case we can avoid an if check for every field attribute.
+    if(nbZmqEnabled) {
+        fvVector.push_back(FieldValueTuple("path", path.c_str()));
+    } else {
+        if (path != string()) {
+            fvVector.push_back(FieldValueTuple("path", path.c_str()));
+        }
+    }
     return fvVector;
 }
 
@@ -1266,7 +1393,7 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
 
         SWSS_LOG_INFO("SRV6 RouteTable del msg: %s", routeTableKeyStr.c_str());
         delWithWarmRestart(
-            RouteTableFieldValueTupleWrapper{std::move(routeTableKeyStr), std::string()},
+            RouteTableFieldValueTupleWrapper{std::move(routeTableKeyStr), std::string(), isNbZmqEnabled()},
             *m_routeTable);
 
         auto it = m_srv6_sidlist_refcnt.find(srv6SidListTableKey);
@@ -1317,7 +1444,7 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
             boost::algorithm::replace_all(pathStr, "|", ",");
 
             /* First time we see this SID list: program it into ApplDB and initialize the refcount to 1 */
-            Srv6SidListTableFieldValueTupleWrapper fvw{srv6SidListTableKey};
+            Srv6SidListTableFieldValueTupleWrapper fvw{srv6SidListTableKey, isNbZmqEnabled()};
             fvw.path = pathStr;
 
             setTable(fvw, m_srv6SidListTable);
@@ -1334,7 +1461,7 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
         SWSS_LOG_INFO("SRV6 RouteTable set msg: %s vpn_sid:%s src_addr:%s",
                       routeTableKeyStr.c_str(), vpn_sid_str.c_str(),
                       src_addr_str.empty() ? "NONE" : src_addr_str.c_str());
-        RouteTableFieldValueTupleWrapper rfvw{std::move(routeTableKeyStr), ""};
+        RouteTableFieldValueTupleWrapper rfvw{std::move(routeTableKeyStr), "", isNbZmqEnabled()};
         rfvw.segment = std::move(srv6SidListTableKey);
 
         if (!src_addr_str.empty())
@@ -1547,7 +1674,7 @@ void RouteSync::onSrv6MySidMsg(struct nlmsghdr *h, int len)
         return;
     }
 
-    Srv6MySidTableFieldValueTupleWrapper fvw{my_sid_table_key};
+    Srv6MySidTableFieldValueTupleWrapper fvw{my_sid_table_key, isNbZmqEnabled()};
     fvw.action = std::move(action_str);
     if (!vrf_str.empty())
     {
@@ -1722,7 +1849,7 @@ void RouteSync::onSrv6VpnRouteMsg(struct nlmsghdr *h, int len)
     {
         SWSS_LOG_INFO("RouteTable del msg: %s", routeTableKey);
         delWithWarmRestart(
-            RouteTableFieldValueTupleWrapper{std::move(routeTableKey), std::string()},
+            RouteTableFieldValueTupleWrapper{std::move(routeTableKey), std::string(), isNbZmqEnabled()},
             *m_routeTable);
         return;
     }
@@ -2048,7 +2175,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
     if (nlmsg_type == RTM_DELROUTE)
     {
         SWSS_LOG_INFO("RouteTable del msg: %s", destipprefix);
-        delWithWarmRestart(RouteTableFieldValueTupleWrapper{std::move(destipprefix), ""},
+        delWithWarmRestart(RouteTableFieldValueTupleWrapper{std::move(destipprefix), "", isNbZmqEnabled()},
                            *m_routeTable);
         return;
 
@@ -2072,7 +2199,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
         case RTN_BLACKHOLE:
         {
             SWSS_LOG_INFO("RouteTable set blackhole msg: %s", destipprefix);
-            RouteTableFieldValueTupleWrapper fvw {std::move(destipprefix), std::move(proto_str)};
+            RouteTableFieldValueTupleWrapper fvw {std::move(destipprefix), std::move(proto_str), isNbZmqEnabled()};
             fvw.blackhole = "true";
             setRouteWithWarmRestart(fvw, *m_routeTable);
             return;
@@ -2090,7 +2217,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
             return;
     }
 
-    RouteTableFieldValueTupleWrapper fvw {destipprefix, std::move(proto_str)};
+    RouteTableFieldValueTupleWrapper fvw {destipprefix, std::move(proto_str), isNbZmqEnabled()};
     string gw_list;
     string intf_list;
     string mpls_list;
@@ -2151,7 +2278,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
                 SWSS_LOG_DEBUG("Skip routes to eth0 or docker0 or eth1-midplane: %s %s %s",
                             destipprefix, gw_list.c_str(), intf_list.c_str());
                 SWSS_LOG_INFO("RouteTable del msg for eth0/docker0/eth1-midplane route: %s", destipprefix);
-                delWithWarmRestart(RouteTableFieldValueTupleWrapper{std::move(destipprefix), ""},
+                delWithWarmRestart(RouteTableFieldValueTupleWrapper{std::move(destipprefix), "", isNbZmqEnabled()},
                                    *m_routeTable);
                 return;
             }
@@ -2557,8 +2684,8 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
     {
         SWSS_LOG_INFO("LabelRouteTable del msg: %s", destaddr);
         delWithWarmRestart(
-	    LabelRouteTableFieldValueTupleWrapper{std::move(destaddr), std::string()},
-	    *m_label_routeTable);
+            LabelRouteTableFieldValueTupleWrapper{std::move(destaddr), std::string(), isNbZmqEnabled()},
+            *m_label_routeTable);
         return;
     }
     else if (nlmsg_type != RTM_NEWROUTE)
@@ -2588,7 +2715,7 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
         case RTN_BLACKHOLE:
         {
             SWSS_LOG_INFO("LabelRouteTable set blackhole msg: %s", destaddr);
-            LabelRouteTableFieldValueTupleWrapper fvw{std::move(destaddr), std::move(proto_str)};
+            LabelRouteTableFieldValueTupleWrapper fvw{std::move(destaddr), std::move(proto_str), isNbZmqEnabled()};
             fvw.blackhole = "true";
             setRouteWithWarmRestart(fvw, *m_label_routeTable);
             return;
@@ -2621,7 +2748,7 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
 
     SWSS_LOG_INFO("LabelRouteTable set msg: %s %s %s %s", destaddr,
                   gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
-    LabelRouteTableFieldValueTupleWrapper fvw{std::move(destaddr), std::move(proto_str)};
+    LabelRouteTableFieldValueTupleWrapper fvw{std::move(destaddr), std::move(proto_str), isNbZmqEnabled()};
     fvw.nexthop = std::move(gw_list);
     fvw.ifname = std::move(intf_list);
     fvw.mpls_pop = "1";
@@ -2713,7 +2840,7 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vne
     {
         SWSS_LOG_DEBUG("%s set msg: %s %s",
                        APP_VNET_RT_TUNNEL_TABLE_NAME, vnet_dip.c_str(), nexthops.c_str());
-        VnetTunnelTableFieldValueTupleWrapper fvw{std::move(vnet_dip)};
+        VnetTunnelTableFieldValueTupleWrapper fvw{std::move(vnet_dip), isNbZmqEnabled()};
         fvw.endpoint = std::move(nexthops);
         setTable(fvw, m_vnet_tunnelTable);
         return;
@@ -2721,7 +2848,7 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vne
     /* Regular VNET route */
     else
     {
-        VnetRouteTableFieldValueTupleWrapper fvw{vnet_dip};
+        VnetRouteTableFieldValueTupleWrapper fvw{vnet_dip, isNbZmqEnabled()};
         fvw.ifname = ifnames;
 
         /* If the route has at least one next hop gateway, e.g., nexthops does not only have ',' */
@@ -3308,7 +3435,7 @@ void RouteSync::updateNextHopGroupDb(const NextHopGroup& nhg)
                   key.c_str(), nexthops.c_str(), ifnames.c_str(),
                   weights.empty() ? "NONE": weights.c_str());
 
-    NextHopGroupTableFieldValueTupleWrapper fvw{std::move(key)};
+    NextHopGroupTableFieldValueTupleWrapper fvw{std::move(key), isNbZmqEnabled()};
     fvw.nexthop = std::move(nexthops);
     fvw.ifname = std::move(ifnames);
     if(!weights.empty())
