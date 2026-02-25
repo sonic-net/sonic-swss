@@ -3291,7 +3291,7 @@ std::string L3MulticastManager::verifyL3MulticastRouterInterfaceStateAsicDb(
     return rif_str;
   }
 
-  // TODO(b/353398275): Remove this if block when kSetMulticastSrcMac removed
+  // TODO: Remove this if block when kSetMulticastSrcMac removed
   // Legacy action doesn't set a next hop.
   if (multicast_router_interface_entry->action == p4orch::kSetMulticastSrcMac) {
     return "";
