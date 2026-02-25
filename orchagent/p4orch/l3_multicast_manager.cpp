@@ -31,6 +31,7 @@ using ::p4orch::kTableKeyDelimiter;
 extern sai_object_id_t gSwitchId;
 extern sai_object_id_t gVirtualRouterId;
 extern sai_ipmc_group_api_t* sai_ipmc_group_api;
+extern sai_l2mc_group_api_t* sai_l2mc_group_api;
 extern sai_router_interface_api_t* sai_router_intfs_api;
 extern sai_bridge_api_t* sai_bridge_api;
 
@@ -142,6 +143,25 @@ std::vector<sai_attribute_t> prepareMulticastGroupMemberSaiAttrs(
 
   attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID;
   attr.value.oid = rif_oid;
+  attrs.push_back(attr);
+
+  return attrs;
+}
+
+// Create the vector of SAI attributes for creating a new L2 multicast group
+// member object.
+std::vector<sai_attribute_t> prepareL2MulticastGroupMemberSaiAttrs(
+    const sai_object_id_t multicast_group_oid,
+    const sai_object_id_t bridge_port_oid) {
+  std::vector<sai_attribute_t> attrs;
+  sai_attribute_t attr;
+
+  attr.id = SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_GROUP_ID;
+  attr.value.oid = multicast_group_oid;
+  attrs.push_back(attr);
+
+  attr.id = SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_OUTPUT_ID;
+  attr.value.oid = bridge_port_oid;
   attrs.push_back(attr);
 
   return attrs;
@@ -459,7 +479,8 @@ L3MulticastManager::deserializeMulticastRouterInterfaceEntry(
     const auto& field = fvField(it);
     const auto& value = fvValue(it);
     if (field == p4orch::kAction) {
-      if (value == p4orch::kSetSrcMac || value == p4orch::kNoAction) {
+      if (value == p4orch::kSetSrcMac ||
+          value == p4orch::kL2MulticastPassthrough) {
         router_interface_entry.action = value;
       } else {
         return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
@@ -728,21 +749,95 @@ ReturnCode L3MulticastManager::validateMulticastGroupEntry(
          << "Unknown operation type " << QuotedVar(operation);
 }
 
+ReturnCodeOr<bool> L3MulticastManager::validateReplicas(
+    const P4MulticastGroupEntry& entry) {
+  SWSS_LOG_ENTER();
+  // To figure out if we're dealing with L2 or IP multicast groups, we have to
+  // check each replica against the `multicast_router_interface_table` entry's
+  // action.  If it's `l2_multicast_passthrough`, it's an L2 group.  Otherwise,
+  // it's an IP group.
+  int ipmc_count = 0;
+  int ipmc_rif_oid_count = 0;
+  int l2_count = 0;
+  int l2_bridge_port_oid_count = 0;
+  for (auto& replica : entry.replicas) {
+    auto table_key = KeyGenerator::generateMulticastRouterInterfaceKey(
+        replica.port, replica.instance);
+    auto* router_interface_entry_ptr =
+        getMulticastRouterInterfaceEntry(table_key);
+
+    if (router_interface_entry_ptr == nullptr) {
+      return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+             << "No corresponding "
+             << APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME
+             << " entry found for multicast group "
+             << QuotedVar(replica.multicast_group_id) << " replica "
+             << QuotedVar(replica.key);
+    } else if (router_interface_entry_ptr->action ==
+               p4orch::kSetSrcMac) {
+      ipmc_count++;
+      if (getRifOid(replica) != SAI_NULL_OBJECT_ID) {
+        ipmc_rif_oid_count++;
+      }
+    } else if (router_interface_entry_ptr->action ==
+               p4orch::kL2MulticastPassthrough) {
+      l2_count++;
+      if (getBridgePortOid(replica) != SAI_NULL_OBJECT_ID) {
+        l2_bridge_port_oid_count++;
+      }
+    }
+  }
+
+  // No mixing and matching group member types allowed.
+  if (ipmc_count != 0 && l2_count != 0) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Multicast group " << QuotedVar(entry.multicast_group_id)
+           << " has a mix of IPMC (" << ipmc_count << ") and L2 " << "("
+           << l2_count << ") replicas.";
+  }
+  // All members must have an associated entry.
+  if ((ipmc_count + l2_count) != static_cast<int>(entry.replicas.size())) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Multicast group " << QuotedVar(entry.multicast_group_id)
+           << " has replicas missing associated entries in table "
+           << APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME << " (missing "
+           << (entry.replicas.size() - l2_count - ipmc_count) << ")";
+  }
+
+  if (ipmc_count != 0) {
+    // Verify have RIF OID for each replica.
+    if (ipmc_count != ipmc_rif_oid_count) {
+      return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+             << "Multicast group " << QuotedVar(entry.multicast_group_id)
+             << " has " << (ipmc_count - ipmc_rif_oid_count)
+             << " replicas that do not have an associated RIF programmed yet";
+    }
+    return true;  // IPMC group
+  } else {
+    // Verify have Bridge port OID for each replica.
+    if (l2_count != l2_bridge_port_oid_count) {
+      return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+             << "Multicast group " << QuotedVar(entry.multicast_group_id)
+             << " has " << (l2_count - l2_bridge_port_oid_count)
+             << " replicas that do not have an associated bridge port "
+             << "programmed yet";
+    }
+    return false;  // L2 group
+  }
+}
+
 ReturnCode L3MulticastManager::validateSetMulticastGroupEntry(
     const P4MulticastGroupEntry& multicast_group_entry) {
 
   auto* group_entry_ptr = getMulticastGroupEntry(
       multicast_group_entry.multicast_group_id);
 
-  // Check that all replicas have a RIF object available.
-  for (auto& replica : multicast_group_entry.replicas) {
-    sai_object_id_t rif_oid = getRifOid(replica);
-    if (rif_oid == SAI_NULL_OBJECT_ID) {
-      return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-          << "Multicast group member "
-          << QuotedVar(replica.key)
-          << " does not have an associated RIF available yet";
-    }
+  ASSIGN_OR_RETURN(bool is_ipmc, validateReplicas(multicast_group_entry));
+  sai_object_type_t sai_group_type = SAI_OBJECT_TYPE_IPMC_GROUP;
+  sai_object_type_t sai_group_member_type = SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER;
+  if (!is_ipmc) {
+    sai_group_type = SAI_OBJECT_TYPE_L2MC_GROUP;
+    sai_group_member_type = SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER;
   }
 
   bool is_update_operation = group_entry_ptr != nullptr;
@@ -756,7 +851,7 @@ ReturnCode L3MulticastManager::validateSetMulticastGroupEntry(
     }
 
     // Confirm we have references to the multicast group in internal maps.
-    if (!m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_IPMC_GROUP,
+    if (!m_p4OidMapper->existsOID(sai_group_type,
                                   group_entry_ptr->multicast_group_id)) {
       return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
           << "Expected multicast group is missing from oid map: "
@@ -768,8 +863,8 @@ ReturnCode L3MulticastManager::validateSetMulticastGroupEntry(
     // For add, confirm the member did not have an oid.
     // For update, confirm the member had an oid.
     for (auto& replica : multicast_group_entry.replicas) {
-      bool member_exists_in_mapper = m_p4OidMapper->existsOID(
-          SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER, replica.key);
+      bool member_exists_in_mapper =
+          m_p4OidMapper->existsOID(sai_group_member_type, replica.key);
       if (group_entry_ptr->member_oids.find(replica.key) ==
           group_entry_ptr->member_oids.end()) {  // Add member.
         if (member_exists_in_mapper) {
@@ -805,6 +900,14 @@ ReturnCode L3MulticastManager::validateDelMulticastGroupEntry(
         << multicast_group_entry.multicast_group_id;
   }
 
+  ASSIGN_OR_RETURN(bool is_ipmc, validateReplicas(*group_entry_ptr));
+  sai_object_type_t sai_group_type = SAI_OBJECT_TYPE_IPMC_GROUP;
+  sai_object_type_t sai_group_member_type = SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER;
+  if (!is_ipmc) {
+    sai_group_type = SAI_OBJECT_TYPE_L2MC_GROUP;
+    sai_group_member_type = SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER;
+  }
+
   // Confirm multicast group had SAI object ID.
   if (group_entry_ptr->multicast_group_oid == SAI_OBJECT_TYPE_NULL) {
     return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
@@ -813,7 +916,7 @@ ReturnCode L3MulticastManager::validateDelMulticastGroupEntry(
   }
 
   // Confirm the multicast object ID exists in central mapper.
-  if (!m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_IPMC_GROUP,
+  if (!m_p4OidMapper->existsOID(sai_group_type,
                                 group_entry_ptr->multicast_group_id)) {
     return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
         << "Multicast group does not exist in central mapper: "
@@ -828,8 +931,7 @@ ReturnCode L3MulticastManager::validateDelMulticastGroupEntry(
           << "Multicast group member OID was not assigned before deleting: "
           << QuotedVar(replica.key);
     }
-    if (!m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
-                                  replica.key)) {
+    if (!m_p4OidMapper->existsOID(sai_group_member_type, replica.key)) {
       return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
           << "Multicast group member does not exist in the central mapper: "
           << QuotedVar(replica.key);
@@ -1203,6 +1305,87 @@ ReturnCode L3MulticastManager::deleteMulticastGroup(
   return ReturnCode();
 }
 
+ReturnCode L3MulticastManager::createL2MulticastGroup(
+    P4MulticastGroupEntry& entry, sai_object_id_t* mcast_group_oid) {
+  SWSS_LOG_ENTER();
+  // Confirm we haven't already created a multicast group for this.
+  if (m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_L2MC_GROUP,
+                               entry.multicast_group_id)) {
+    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INTERNAL)
+                         << "L2 multicast group to be added with group ID "
+                         << QuotedVar(entry.multicast_group_id).c_str()
+                         << " already exists in the centralized map");
+  }
+
+  // Create L2 multicast group SAI object.
+  // There are no required attributes to create a group.
+  std::vector<sai_attribute_t> attrs;
+  auto sai_status = sai_l2mc_group_api->create_l2mc_group(
+      mcast_group_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+  if (sai_status != SAI_STATUS_SUCCESS) {
+    LOG_ERROR_AND_RETURN(ReturnCode(sai_status)
+                         << "Failed to create L2 multicast group for group ID: "
+                         << QuotedVar(entry.multicast_group_id).c_str());
+  }
+  return ReturnCode();
+}
+
+ReturnCode L3MulticastManager::createL2MulticastGroupMember(
+    const P4Replica& replica, const sai_object_id_t group_oid,
+    const sai_object_id_t bridge_port_oid,
+    sai_object_id_t* mcast_group_member_oid) {
+  SWSS_LOG_ENTER();
+  // Confirm we haven't already created a L2 multicast group member for this.
+  if (m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER,
+                               replica.key)) {
+    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INTERNAL)
+                         << "L2 multicast group member to be added "
+                         << QuotedVar(replica.key).c_str()
+                         << " already exists in the centralized map");
+  }
+
+  if (bridge_port_oid == SAI_NULL_OBJECT_ID) {
+    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_UNAVAIL)
+                         << "L2 multicast group member "
+                         << QuotedVar(replica.key).c_str()
+                         << " cannot be added because there is no associated "
+                            "bridge port available");
+  }
+
+  // Create L2 multicast group member SAI object.
+  std::vector<sai_attribute_t> attrs =
+      prepareL2MulticastGroupMemberSaiAttrs(group_oid, bridge_port_oid);
+
+  auto sai_status = sai_l2mc_group_api->create_l2mc_group_member(
+      mcast_group_member_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+  if (sai_status != SAI_STATUS_SUCCESS) {
+    LOG_ERROR_AND_RETURN(ReturnCode(sai_status)
+                         << "Failed to create L2 multicast group member for: "
+                         << QuotedVar(replica.key).c_str());
+  }
+  return ReturnCode();
+}
+
+ReturnCode L3MulticastManager::deleteL2MulticastGroup(
+    const std::string& multicast_group_id, sai_object_id_t mcast_group_oid) {
+  SWSS_LOG_ENTER();
+  // Confirm we have a multicast group to delete.
+  if (!m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_L2MC_GROUP,
+                                multicast_group_id)) {
+    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INTERNAL)
+                         << "L2 multicast group to be deleted with group ID "
+                         << QuotedVar(multicast_group_id).c_str()
+                         << " does not exist in the centralized map");
+  }
+  auto sai_status = sai_l2mc_group_api->remove_l2mc_group(mcast_group_oid);
+  if (sai_status != SAI_STATUS_SUCCESS) {
+    LOG_ERROR_AND_RETURN(ReturnCode(sai_status)
+                         << "Failed to delete L2 multicast group with ID: "
+                         << QuotedVar(multicast_group_id).c_str());
+  }
+  return ReturnCode();
+}
+
 std::vector<ReturnCode> L3MulticastManager::addMulticastRouterInterfaceEntries(
     std::vector<P4MulticastRouterInterfaceEntry>& entries) {
   SWSS_LOG_ENTER();
@@ -1300,9 +1483,9 @@ L3MulticastManager::updateMulticastRouterInterfaceEntries(
       break;
     }
 
-    // Since action kNoAction, used to setup L2 multicast bridge ports, does not
-    // have any parameters, there is nothing to update.
-    if (old_entry_ptr->action == p4orch::kNoAction) {
+    // Since action kL2MulticastPassthrough, used to setup L2 multicast bridge
+    // ports, does not have any parameters, there is nothing to update.
+    if (old_entry_ptr->action == p4orch::kL2MulticastPassthrough) {
       statuses[i] = ReturnCode();
       continue;
     }
@@ -1619,6 +1802,198 @@ L3MulticastManager::deleteMulticastRouterInterfaceEntries(
   return statuses;
 }
 
+ReturnCode L3MulticastManager::addIpMulticastGroup(
+    P4MulticastGroupEntry& entry) {
+  SWSS_LOG_ENTER();
+
+  // Create the multicast group.
+  sai_object_id_t mcast_group_oid = SAI_NULL_OBJECT_ID;
+  RETURN_IF_ERROR(createMulticastGroup(entry, &mcast_group_oid));
+
+  // Update internal book-keeping for new multicast group.
+  m_p4OidMapper->setOID(SAI_OBJECT_TYPE_IPMC_GROUP, entry.multicast_group_id,
+                        mcast_group_oid);
+  // The group OID needs to be associated with the entry to be able to create
+  // the group member.
+  entry.multicast_group_oid = mcast_group_oid;
+
+  // Next, create the group members.  If there's a failure, back out.
+  // Instead of updating internal state as members are created, wait until all
+  // members have been created to simplify back-out.
+  std::unordered_map<std::string, sai_object_id_t> created_member_map;
+  std::unordered_map<std::string, sai_object_id_t> member_rif_map;
+  for (auto& replica : entry.replicas) {
+    sai_object_id_t rif_oid = getRifOid(replica);
+
+    // Create the group member.
+    sai_object_id_t mcast_group_member_oid;
+    ReturnCode create_member_status = createMulticastGroupMember(
+        replica, mcast_group_oid, rif_oid, &mcast_group_member_oid);
+
+    if (!create_member_status.ok()) {
+      // Back out creation of members that were just created.
+      for (auto& created_members : created_member_map) {
+        sai_status_t member_delete_status =
+            sai_ipmc_group_api->remove_ipmc_group_member(
+                created_members.second);
+        if (member_delete_status != SAI_STATUS_SUCCESS) {
+          // All kinds of bad.  The delete failed, and we have to leave a
+          // dangling allocated multicast group.  We are going to need outside
+          // help to repair this.  Leave the create status as the original
+          // failure code returned.
+          std::stringstream err_msg;
+          err_msg << "Multicast group member creation failed, and we were "
+                  << "unable to backout creation of previous members.";
+          SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+          SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+          // Cannot proceed to try to back out creation of group.
+          return create_member_status;
+        }
+      }
+
+      // Back out multicast group creation.
+      ReturnCode backout_status =
+          deleteMulticastGroup(entry.multicast_group_id, mcast_group_oid);
+
+      if (!backout_status.ok()) {
+        // All kinds of bad.  Since the delete failed, we should leave
+        // the bookkeeping in place, but we are going to need outside help to
+        // repair this.  Leave the create status as the failure code returned.
+        std::stringstream err_msg;
+        err_msg << "Multicast group member creation failed, and we were "
+                << "unable to backout creation of the multicast group.";
+        SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+        SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      } else {
+        // Back out multicast group state.
+        entry.multicast_group_oid = SAI_NULL_OBJECT_ID;
+        m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                entry.multicast_group_id);
+      }
+      // Stop trying to create replicas.  Return the first error.
+      return create_member_status;
+    }
+    // We successfully created a group member.
+    created_member_map[replica.key] = mcast_group_member_oid;
+    member_rif_map[replica.key] = rif_oid;
+    // We defer additional book-keeping until all replicas are created.
+  }  // for replica
+
+  // Finish with book keeping.
+
+  // Update state for created group members.
+  for (auto& created_members : created_member_map) {
+    m_p4OidMapper->setOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
+                          created_members.first, created_members.second);
+    entry.member_oids[created_members.first] = created_members.second;
+    auto rif_oid = member_rif_map.at(created_members.first);
+    m_rifOidToMulticastGroupMembers[rif_oid].insert(created_members.first);
+  }
+
+  // Update internal state.
+  m_multicastGroupEntryTable[entry.multicast_group_id] = entry;
+  return ReturnCode();
+}
+
+ReturnCode L3MulticastManager::addL2MulticastGroup(
+    P4MulticastGroupEntry& entry) {
+  SWSS_LOG_ENTER();
+
+  // Create the multicast group.
+  sai_object_id_t mcast_group_oid = SAI_NULL_OBJECT_ID;
+  RETURN_IF_ERROR(createL2MulticastGroup(entry, &mcast_group_oid));
+
+  // Update internal book-keeping for new multicast group.
+  m_p4OidMapper->setOID(SAI_OBJECT_TYPE_L2MC_GROUP, entry.multicast_group_id,
+                        mcast_group_oid);
+  // The group OID needs to be associated with the entry to be able to create
+  // the group member.
+  entry.multicast_group_oid = mcast_group_oid;
+
+  // Next, create the group members.  If there's a failure, back out.
+  // Instead of updating internal state as members are created, wait until all
+  // members have been created to simplify back-out.
+  std::unordered_map<std::string, sai_object_id_t> created_member_map;
+  std::unordered_map<std::string, sai_object_id_t> member_bridge_port_map;
+  for (auto& replica : entry.replicas) {
+    sai_object_id_t bridge_port_oid = getBridgePortOid(replica);
+
+    // Create the group member.
+    sai_object_id_t mcast_group_member_oid;
+    ReturnCode create_member_status = createL2MulticastGroupMember(
+        replica, mcast_group_oid, bridge_port_oid, &mcast_group_member_oid);
+
+    if (!create_member_status.ok()) {
+      // Back out creation of members that were just created.
+      for (auto& created_members : created_member_map) {
+        sai_status_t member_delete_status =
+            sai_l2mc_group_api->remove_l2mc_group_member(
+                created_members.second);
+        if (member_delete_status != SAI_STATUS_SUCCESS) {
+          // All kinds of bad.  The delete failed, and we have to leave a
+          // dangling allocated multicast group.  We are going to need outside
+          // help to repair this.  Leave the create status as the original
+          // failure code returned.
+          std::stringstream err_msg;
+          err_msg << "L2 multicast group member creation failed, and we were "
+                  << "unable to backout creation of previous members.";
+          SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+          SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+          // Cannot proceed to try to back out creation of group.
+          return create_member_status;
+        }
+      }
+
+      // Back out multicast group creation.
+      ReturnCode backout_status =
+          deleteL2MulticastGroup(entry.multicast_group_id, mcast_group_oid);
+
+      if (!backout_status.ok()) {
+        // All kinds of bad.  Since the delete failed, we should leave
+        // the bookkeeping in place, but we are going to need outside help to
+        // repair this.  Leave the create status as the failure code returned.
+        std::stringstream err_msg;
+        err_msg << "L2 multicast group member creation failed, and we were "
+                << "unable to backout creation of the multicast group.";
+        SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+        SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      } else {
+        // Back out multicast group state.
+        entry.multicast_group_oid = SAI_NULL_OBJECT_ID;
+        m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_L2MC_GROUP,
+                                entry.multicast_group_id);
+      }
+      // Stop trying to create replicas.  Return the first error.
+      return create_member_status;
+    }
+    // We successfully created a group member.
+    created_member_map[replica.key] = mcast_group_member_oid;
+    member_bridge_port_map[replica.key] = bridge_port_oid;
+    // We defer additional book-keeping until all replicas are created.
+  }  // for replica
+
+  // Finish with book keeping.
+
+  // Update state for created group members.
+  for (auto& replica : entry.replicas) {
+    // TODO: Need to increase ref count for bridge port, i think?
+    m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_BRIDGE_PORT, replica.port);
+  }
+  for (auto& created_members : created_member_map) {
+    m_p4OidMapper->setOID(SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER,
+                          created_members.first, created_members.second);
+    entry.member_oids[created_members.first] = created_members.second;
+
+    // TODO: ????
+    // auto bridge_oid = member_bridge_port_map.at(created_members.first);
+    // m_rifOidToMulticastGroupMembers[rif_oid].insert(created_members.first);
+  }
+
+  // Update internal state.
+  m_multicastGroupEntryTable[entry.multicast_group_id] = entry;
+  return ReturnCode();
+}
+
 std::vector<ReturnCode> L3MulticastManager::addMulticastGroupEntries(
     std::vector<P4MulticastGroupEntry>& entries) {
   // An add operation creates the multicast group OID, since the multicast
@@ -1630,112 +2005,23 @@ std::vector<ReturnCode> L3MulticastManager::addMulticastGroupEntries(
   for (size_t i = 0; i < entries.size(); ++i) {
     auto& entry = entries[i];
 
-    // To avoid needing to back-out later, confirm RIF OIDs exist up front.
-    for (auto& replica : entry.replicas) {
-      sai_object_id_t rif_oid = getRifOid(replica);
-      if (rif_oid == SAI_NULL_OBJECT_ID) {
-        statuses[i] = ReturnCode(StatusCode::SWSS_RC_UNAVAIL)
-            << "Cannot add group member "
-            << QuotedVar(replica.key)
-            << "because associated RIF has not be created.";
-        return statuses;
-      }
-    }
-
-    // Create the multicast group.
-    sai_object_id_t mcast_group_oid = SAI_NULL_OBJECT_ID;
-    ReturnCode create_status = createMulticastGroup(entry, &mcast_group_oid);
-    statuses[i] = create_status;
-    if (!create_status.ok()) {
-      SWSS_LOG_ERROR("Unable to create multicast group for %s",
-                     entry.multicast_group_id.c_str());
+    // To avoid needing to back-out later, confirm RIF or bridge port OIDs
+    // exist up front.
+    ReturnCodeOr<bool> is_ipmc_or = validateReplicas(entry);
+    if (!is_ipmc_or.ok()) {
+      statuses[i] = is_ipmc_or.status();
       break;
     }
-    // Update internal book-keeping for new multicast group.
-    m_p4OidMapper->setOID(SAI_OBJECT_TYPE_IPMC_GROUP,
-                          entry.multicast_group_id,
-                          mcast_group_oid);
-    // The group OID needs to be associated with the entry to be able to create
-    // the group member.
-    entry.multicast_group_oid = mcast_group_oid;
-
-    // Next, create the group members.  If there's a failure, back out.
-    // Instead of updating internal state as members are created, wait until all
-    // members have been created to simplify back-out.
-    std::unordered_map<std::string, sai_object_id_t> created_member_map;
-    std::unordered_map<std::string, sai_object_id_t> member_rif_map;
-    for (auto& replica : entry.replicas) {
-      sai_object_id_t rif_oid = getRifOid(replica);
-
-      // Create the group member.
-      sai_object_id_t mcast_group_member_oid;
-      ReturnCode create_member_status = createMulticastGroupMember(
-          replica, mcast_group_oid, rif_oid, &mcast_group_member_oid);
-      statuses[i] = create_member_status;
-
-      if (!create_member_status.ok()) {
-        // Back out creation of members that were just created.
-        for (auto& created_members : created_member_map) {
-          sai_status_t member_delete_status =
-              sai_ipmc_group_api->remove_ipmc_group_member(
-                  created_members.second);
-          if (member_delete_status != SAI_STATUS_SUCCESS) {
-            // All kinds of bad.  The delete failed, and we have to leave a
-            // dangling allocated multicast group.  We are going to need outside
-            // help to repair this.  Leave the create status as the original
-            // failure code returned.
-            std::stringstream err_msg;
-            err_msg << "Multicast group member creation failed, and we were "
-                    << "unable to backout creation of previous members.";
-            SWSS_LOG_ERROR("%s", err_msg.str().c_str());
-            SWSS_RAISE_CRITICAL_STATE(err_msg.str());
-            // Cannot proceed to try to back out creation of group.
-            return statuses;
-          }
-        }
-
-        // Back out multicast group creation.
-        ReturnCode backout_status = deleteMulticastGroup(
-            entry.multicast_group_id, mcast_group_oid);
-
-        if (!backout_status.ok()) {
-          // All kinds of bad.  Since the delete failed, we should leave
-          // the bookkeeping in place, but we are going to need outside help to
-          // repair this.  Leave the create status as the failure code returned.
-          std::stringstream err_msg;
-          err_msg << "Multicast group member creation failed, and we were "
-                  << "unable to backout creation of the multicast group.";
-          SWSS_LOG_ERROR("%s", err_msg.str().c_str());
-          SWSS_RAISE_CRITICAL_STATE(err_msg.str());
-        } else {
-          // Back out multicast group state.
-          entry.multicast_group_oid = SAI_NULL_OBJECT_ID;
-          m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_IPMC_GROUP,
-                                  entry.multicast_group_id);
-        }
-        return statuses;  // Stop trying to create replicas.
-      }
-      // We successfully created a group member.
-      created_member_map[replica.key] = mcast_group_member_oid;
-      member_rif_map[replica.key] = rif_oid;
-      // We defer additional book-keeping until all replicas are created.
-    } // for replica
-
-    // Finish with book keeping.
-
-    // Update state for created group members.
-    for (auto& created_members : created_member_map) {
-      m_p4OidMapper->setOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
-                            created_members.first, created_members.second);
-      entry.member_oids[created_members.first] = created_members.second;
-      auto rif_oid = member_rif_map.at(created_members.first);
-      m_rifOidToMulticastGroupMembers[rif_oid].insert(created_members.first);
+    bool is_ipmc = *is_ipmc_or;
+    if (is_ipmc) {
+      statuses[i] = addIpMulticastGroup(entry);
+    } else {
+      statuses[i] = addL2MulticastGroup(entry);
     }
-
-    // Update internal state.
-    m_multicastGroupEntryTable[entry.multicast_group_id] = entry;
-    statuses[i] = ReturnCode();
-  } // for i
+    if (!statuses[i].ok()) {
+      break;
+    }
+  }  // for i
   return statuses;
 }
 
@@ -2485,6 +2771,14 @@ sai_object_id_t L3MulticastManager::getRifOid(const P4Replica& replica) {
     return SAI_NULL_OBJECT_ID;
   }
   return m_rifOids[rif_key];
+}
+
+// A Bridge port is associated with an egress port.
+sai_object_id_t L3MulticastManager::getBridgePortOid(const P4Replica& replica) {
+  sai_object_id_t bridge_port_oid = SAI_NULL_OBJECT_ID;
+  m_p4OidMapper->getOID(SAI_OBJECT_TYPE_BRIDGE_PORT, replica.port,
+                        &bridge_port_oid);
+  return bridge_port_oid;
 }
 
 }  // namespace p4orch

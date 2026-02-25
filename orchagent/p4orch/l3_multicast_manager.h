@@ -209,6 +209,18 @@ class L3MulticastManager : public ObjectManagerInterface {
       const P4Replica& replica, const sai_object_id_t group_oid,
       const sai_object_id_t rif_oid, sai_object_id_t* mcast_group_member_oid);
 
+  // Wrapper around SAI setup and call to create L2 multicast group.
+  ReturnCode createL2MulticastGroup(P4MulticastGroupEntry& entry,
+                                    sai_object_id_t* mcast_group_oid);
+
+  ReturnCode deleteL2MulticastGroup(const std::string& multicast_group_id,
+                                    sai_object_id_t mcast_group_oid);
+
+  ReturnCode createL2MulticastGroupMember(
+      const P4Replica& replica, const sai_object_id_t group_oid,
+      const sai_object_id_t bridge_port_oid,
+      sai_object_id_t* mcast_group_member_oid);
+
   // Add new multicast router interface table entries.
   std::vector<ReturnCode> addMulticastRouterInterfaceEntries(
       std::vector<P4MulticastRouterInterfaceEntry>& entries);
@@ -230,6 +242,9 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Add new multicast group table entries.
   std::vector<ReturnCode> addMulticastGroupEntries(
       std::vector<P4MulticastGroupEntry>& entries);
+  // Separate add logic for IP vs. L2 multicast groups.
+  ReturnCode addIpMulticastGroup(P4MulticastGroupEntry& entry);
+  ReturnCode addL2MulticastGroup(P4MulticastGroupEntry& entry);
   // Update existing multicast group table entries.
   std::vector<ReturnCode> updateMulticastGroupEntries(
       std::vector<P4MulticastGroupEntry>& entries);
@@ -292,6 +307,18 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Fetches the RIF OID that will be used by a given multicast replica.
   // This would be the value used by the group member.
   sai_object_id_t getRifOid(const P4Replica& replica);
+
+  // Fetches the Bridge port OID that will be used by a given L2 multicast
+  // replica.
+  sai_object_id_t getBridgePortOid(const P4Replica& replica);
+
+  // Validates that replicas to be programmed have an associated RIF object
+  // (if they are IPMC replicas) or bridge port objects (if they are L2
+  // replicas).  If a replica is missing an object or if the replicas are not
+  // consistent, returns an invalid status.  Otherwise, returns a Boolean
+  // indicating if the replicas are for IPMC (true) or if the replicas are for
+  // L2 (false).
+  ReturnCodeOr<bool> validateReplicas(const P4MulticastGroupEntry& entry);
 
   // Fetches a bridge port OID for a port that will be used for L2 multicast
   // group members.
