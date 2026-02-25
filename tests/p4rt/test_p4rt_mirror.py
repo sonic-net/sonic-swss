@@ -20,10 +20,23 @@ class P4RtMirrorSessionWrapper(util.DBInterface):
     TTL = "ttl"
     TOS = "tos"
 
+    MONITOR_PORT = "monitor_port"
+    MONITOR_FAILOVER_PORT = "monitor_failover_port"
+    MIRROR_ENCAP_SRC_IP = "mirror_encap_src_ip"
+    MIRROR_ENCAP_DST_IP = "mirror_encap_dst_ip"
+    MIRROR_ENCAP_SRC_MAC = "mirror_encap_src_mac"
+    MIRROR_ENCAP_DST_MAC = "mirror_encap_dst_mac"
+    MIRROR_ENCAP_UDP_SRC_PORT = "mirror_encap_udp_src_port"
+    MIRROR_ENCAP_UDP_DST_PORT = "mirror_encap_udp_dst_port"
+    MIRROR_ENCAP_VLAN_ID = "mirror_encap_vlan_id"
+    ACTION_MIRROR_AS_IPV4_ERSPAN = "mirror_as_ipv4_erspan"
+    ACTION_MIRROR_WITH_VLAN_TAG_AND_IPFIX_ENCAPSULATION = "mirror_with_vlan_tag_and_ipfix_encapsulation"
+
     ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION"
     SAI_MIRROR_SESSION_ATTR_MONITOR_PORT = "SAI_MIRROR_SESSION_ATTR_MONITOR_PORT"
     SAI_MIRROR_SESSION_ATTR_TYPE = "SAI_MIRROR_SESSION_ATTR_TYPE"
     SAI_MIRROR_SESSION_ATTR_ERSPAN_ENCAPSULATION_TYPE = "SAI_MIRROR_SESSION_ATTR_ERSPAN_ENCAPSULATION_TYPE"
+    SAI_MIRROR_SESSION_ATTR_IPFIX_ENCAPSULATION_TYPE = "SAI_MIRROR_SESSION_ATTR_IPFIX_ENCAPSULATION_TYPE"
     SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION = "SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION"
     SAI_MIRROR_SESSION_ATTR_TOS = "SAI_MIRROR_SESSION_ATTR_TOS"
     SAI_MIRROR_SESSION_ATTR_TTL = "SAI_MIRROR_SESSION_ATTR_TTL"
@@ -32,6 +45,11 @@ class P4RtMirrorSessionWrapper(util.DBInterface):
     SAI_MIRROR_SESSION_ATTR_SRC_MAC_ADDRESS = "SAI_MIRROR_SESSION_ATTR_SRC_MAC_ADDRESS"
     SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS = "SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS"
     SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE = "SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE"
+
+    SAI_MIRROR_SESSION_ATTR_VLAN_TPID = "SAI_MIRROR_SESSION_ATTR_VLAN_TPID"
+    SAI_MIRROR_SESSION_ATTR_VLAN_ID = "SAI_MIRROR_SESSION_ATTR_VLAN_ID"
+    SAI_MIRROR_SESSION_ATTR_UDP_SRC_PORT = "SAI_MIRROR_SESSION_ATTR_UDP_SRC_PORT"
+    SAI_MIRROR_SESSION_ATTR_UDP_DST_PORT = "SAI_MIRROR_SESSION_ATTR_UDP_DST_PORT"
 
     def generate_app_db_key(self, mirror_session_id):
         d = {}
@@ -61,7 +79,7 @@ class TestP4RTMirror(object):
 
         # 1. Create mirror session
         mirror_session_id = "mirror_session1"
-        action = "mirror_as_ipv4_erspan"
+        action = self._p4rt_mirror_session_wrapper.ACTION_MIRROR_AS_IPV4_ERSPAN
         port = "Ethernet8"
         src_ip = "10.206.196.31"
         dst_ip = "172.20.0.203"
@@ -177,6 +195,167 @@ class TestP4RTMirror(object):
             mirror_session_key)
         util.verify_response(
             self._response_consumer, mirror_session_key, [], "SWSS_RC_SUCCESS")
+
+        # Query application database for mirror entries
+        appl_mirror_entries = util.get_keys(
+            self._p4rt_mirror_session_wrapper.appl_db,
+            self._p4rt_mirror_session_wrapper.APP_DB_TBL_NAME + ":" + self._p4rt_mirror_session_wrapper.TBL_NAME)
+        assert len(appl_mirror_entries) == len(original_appl_mirror_entries)
+
+        # Query application database for the deleted mirror key
+        (status, fvs) = util.get_key(self._p4rt_mirror_session_wrapper.appl_db,
+                                     self._p4rt_mirror_session_wrapper.APP_DB_TBL_NAME,
+                                     mirror_session_key)
+        assert status == False
+
+        # Query ASIC database for mirror entries
+        asic_mirror_entries = util.get_keys(self._p4rt_mirror_session_wrapper.asic_db,
+                                            self._p4rt_mirror_session_wrapper.ASIC_DB_TBL_NAME)
+        assert len(asic_mirror_entries) == len(original_asic_mirror_entries)
+
+        # Query ASIC state database for the deleted mirror key
+        (status, fvs) = util.get_key(self._p4rt_mirror_session_wrapper.asic_db,
+                                     self._p4rt_mirror_session_wrapper.ASIC_DB_TBL_NAME,
+                                     asic_db_key)
+        assert status == False
+
+    def test_MirrorSessionAddModifyAndDeleteIpfix(self, dvs, testlog):
+        # Initialize database connectors
+        self._set_up(dvs)
+
+        # Maintain list of original Application and ASIC DB entries before adding
+        # new mirror session
+        original_appl_mirror_entries = util.get_keys(
+            self._p4rt_mirror_session_wrapper.appl_db,
+            self._p4rt_mirror_session_wrapper.APP_DB_TBL_NAME + ":" + self._p4rt_mirror_session_wrapper.TBL_NAME)
+        original_asic_mirror_entries = util.get_keys(
+            self._p4rt_mirror_session_wrapper.asic_db, self._p4rt_mirror_session_wrapper.ASIC_DB_TBL_NAME)
+
+        # 1. Create mirror session
+        mirror_session_id = "mirror_session1"
+        action = self._p4rt_mirror_session_wrapper.ACTION_MIRROR_WITH_VLAN_TAG_AND_IPFIX_ENCAPSULATION
+        port = "Ethernet8"
+        failover_port = "Ethernet4"
+        src_ip = "1100:db8:3:4:5:6:7:8"
+        dst_ip = "2200:db8:3:4:5:6:7:8"
+        src_mac = "00:02:03:04:05:06"
+        dst_mac = "00:1A:11:17:5F:80"
+        vlan_id = "0x1234"
+        udp_src_port = "0x80"
+        udp_dst_port = "0x90"
+
+        attr_list_in_app_db = [(self._p4rt_mirror_session_wrapper.ACTION, action),
+                               (util.prepend_param_field(
+                                   self._p4rt_mirror_session_wrapper.MONITOR_PORT), port),
+                               (util.prepend_param_field(
+                                   self._p4rt_mirror_session_wrapper.MONITOR_FAILOVER_PORT), failover_port),
+                               (util.prepend_param_field(
+                                   self._p4rt_mirror_session_wrapper.MIRROR_ENCAP_SRC_IP), src_ip),
+                               (util.prepend_param_field(
+                                   self._p4rt_mirror_session_wrapper.MIRROR_ENCAP_DST_IP), dst_ip),
+                               (util.prepend_param_field(
+                                   self._p4rt_mirror_session_wrapper.MIRROR_ENCAP_SRC_MAC), src_mac),
+                               (util.prepend_param_field(
+                                   self._p4rt_mirror_session_wrapper.MIRROR_ENCAP_DST_MAC), dst_mac),
+                               (util.prepend_param_field(
+                                   self._p4rt_mirror_session_wrapper.MIRROR_ENCAP_UDP_SRC_PORT), udp_src_port),
+                               (util.prepend_param_field(
+                                   self._p4rt_mirror_session_wrapper.MIRROR_ENCAP_UDP_DST_PORT), udp_dst_port),
+                               (util.prepend_param_field(self._p4rt_mirror_session_wrapper.MIRROR_ENCAP_VLAN_ID), vlan_id)]
+        mirror_session_key = self._p4rt_mirror_session_wrapper.generate_app_db_key(
+            mirror_session_id)
+        self._p4rt_mirror_session_wrapper.set_app_db_entry(
+            mirror_session_key, attr_list_in_app_db)
+        self._p4rt_mirror_session_wrapper.verify_response(
+            mirror_session_key, attr_list_in_app_db, "SWSS_RC_SUCCESS")
+
+        # Query application database for mirror entries
+        appl_mirror_entries = util.get_keys(
+            self._p4rt_mirror_session_wrapper.appl_db,
+            self._p4rt_mirror_session_wrapper.APP_DB_TBL_NAME + ":" + self._p4rt_mirror_session_wrapper.TBL_NAME)
+        assert len(appl_mirror_entries) == len(
+            original_appl_mirror_entries) + 1
+
+        # Query application database for newly created mirror key
+        (status, fvs) = util.get_key(self._p4rt_mirror_session_wrapper.appl_db,
+                                     self._p4rt_mirror_session_wrapper.APP_DB_TBL_NAME,
+                                     mirror_session_key)
+        assert status == True
+        util.verify_attr(fvs, attr_list_in_app_db)
+
+        # Query ASIC database for mirror entries
+        asic_mirror_entries = util.get_keys(self._p4rt_mirror_session_wrapper.asic_db,
+                                            self._p4rt_mirror_session_wrapper.ASIC_DB_TBL_NAME)
+        assert len(asic_mirror_entries) == len(
+            original_asic_mirror_entries) + 1
+
+        # Query ASIC database for newly created mirror key
+        asic_db_key = None
+        for key in asic_mirror_entries:
+            # Get newly created entry
+            if key not in original_asic_mirror_entries:
+                asic_db_key = key
+                break
+        assert asic_db_key is not None
+        (status, fvs) = util.get_key(self._p4rt_mirror_session_wrapper.asic_db,
+                                     self._p4rt_mirror_session_wrapper.ASIC_DB_TBL_NAME,
+                                     asic_db_key)
+        assert status == True
+
+        # Get oid of Ethernet8
+        port_oid = util.get_port_oid_by_name(dvs, port)
+        assert port_oid != None
+
+        # TPID and TOS are hardcoded to values 0x8100 and 0, respectively.
+        expected_attr_list_in_asic_db = [
+            (self._p4rt_mirror_session_wrapper.SAI_MIRROR_SESSION_ATTR_MONITOR_PORT, port_oid),
+            (self._p4rt_mirror_session_wrapper.SAI_MIRROR_SESSION_ATTR_TYPE,
+                "SAI_MIRROR_SESSION_TYPE_IPFIX"),
+            (self._p4rt_mirror_session_wrapper.SAI_MIRROR_SESSION_ATTR_IPFIX_ENCAPSULATION_TYPE,
+                "SAI_IPFIX_ENCAPSULATION_TYPE_EXTENDED"),
+            (self._p4rt_mirror_session_wrapper.SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION, "6"),
+            (self._p4rt_mirror_session_wrapper.SAI_MIRROR_SESSION_ATTR_TOS, "0"),
+            (self._p4rt_mirror_session_wrapper.SAI_MIRROR_SESSION_ATTR_VLAN_TPID, "33024"),
+            (self._p4rt_mirror_session_wrapper.SAI_MIRROR_SESSION_ATTR_VLAN_ID, "4660"),
+            (self._p4rt_mirror_session_wrapper.SAI_MIRROR_SESSION_ATTR_SRC_IP_ADDRESS, src_ip),
+            (self._p4rt_mirror_session_wrapper.SAI_MIRROR_SESSION_ATTR_DST_IP_ADDRESS, dst_ip),
+            (self._p4rt_mirror_session_wrapper.SAI_MIRROR_SESSION_ATTR_SRC_MAC_ADDRESS, src_mac),
+            (self._p4rt_mirror_session_wrapper.SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS, dst_mac),
+            (self._p4rt_mirror_session_wrapper.SAI_MIRROR_SESSION_ATTR_UDP_SRC_PORT, "128"),
+            (self._p4rt_mirror_session_wrapper.SAI_MIRROR_SESSION_ATTR_UDP_DST_PORT, "144"),
+        ]
+        util.verify_attr(fvs, expected_attr_list_in_asic_db)
+
+        # 2. Modify the existing mirror session.
+        new_dst_mac = "00:1A:11:17:5F:FF"
+        attr_list_in_app_db[6] = (util.prepend_param_field(
+            self._p4rt_mirror_session_wrapper.MIRROR_ENCAP_DST_MAC), new_dst_mac)
+        self._p4rt_mirror_session_wrapper.set_app_db_entry(
+            mirror_session_key, attr_list_in_app_db)
+        self._p4rt_mirror_session_wrapper.verify_response(
+            mirror_session_key, attr_list_in_app_db, "SWSS_RC_SUCCESS")
+
+        # Query application database for the modified mirror key
+        (status, fvs) = util.get_key(self._p4rt_mirror_session_wrapper.appl_db,
+                                     self._p4rt_mirror_session_wrapper.APP_DB_TBL_NAME,
+                                     mirror_session_key)
+        assert status == True
+        util.verify_attr(fvs, attr_list_in_app_db)
+
+        # Query ASIC DB about the modified mirror session.
+        expected_attr_list_in_asic_db[10] = (
+            self._p4rt_mirror_session_wrapper.SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS, new_dst_mac)
+        (status, fvs) = util.get_key(self._p4rt_mirror_session_wrapper.asic_db,
+                                     self._p4rt_mirror_session_wrapper.ASIC_DB_TBL_NAME,
+                                     asic_db_key)
+        assert status == True
+        util.verify_attr(fvs, expected_attr_list_in_asic_db)
+
+        # 3. Delete the mirror session.
+        self._p4rt_mirror_session_wrapper.remove_app_db_entry(
+            mirror_session_key)
+        self._p4rt_mirror_session_wrapper.verify_response(
+            mirror_session_key, [], "SWSS_RC_SUCCESS")
 
         # Query application database for mirror entries
         appl_mirror_entries = util.get_keys(

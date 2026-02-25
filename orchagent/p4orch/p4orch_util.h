@@ -27,14 +27,19 @@ namespace p4orch
 constexpr char *kTablePrefixEXT = "EXT_";
 constexpr char *kRouterInterfaceId = "router_interface_id";
 constexpr char *kPort = "port";
+constexpr char* kMonitorPort = "monitor_port";
+constexpr char* kMonitorFailoverPort = "monitor_failover_port";
 constexpr char *kInPort = "in_port";
 constexpr char *kSrcMac = "src_mac";
+constexpr char* kMirrorEncapSrcMac = "mirror_encap_src_mac";
 constexpr char *kAction = "action";
 constexpr char *kActions = "actions";
 constexpr char *kWeight = "weight";
 constexpr char *kWatchPort = "watch_port";
 constexpr char *kNeighborId = "neighbor_id";
 constexpr char *kDstMac = "dst_mac";
+constexpr char* kMirrorEncapDstMac = "mirror_encap_dst_mac";
+constexpr char* kMirrorEncapVlanId = "mirror_encap_vlan_id";
 constexpr char *kNexthopId = "nexthop_id";
 constexpr char *kTunnelId = "tunnel_id";
 constexpr char *kVrfId = "vrf_id";
@@ -82,11 +87,17 @@ constexpr char *kAclUdfOffset = "offset";
 constexpr char *kMirrorSessionId = "mirror_session_id";
 constexpr char *kSrcIp = "src_ip";
 constexpr char *kDstIp = "dst_ip";
+constexpr char* kMirrorEncapSrcIp = "mirror_encap_src_ip";
+constexpr char* kMirrorEncapDstIp = "mirror_encap_dst_ip";
+constexpr char* kMirrorEncapUdpSrcPort = "mirror_encap_udp_src_port";
+constexpr char* kMirrorEncapUdpDstPort = "mirror_encap_udp_dst_port";
 constexpr char *kEncapSrcIp = "encap_src_ip";
 constexpr char *kEncapDstIp = "encap_dst_ip";
 constexpr char *kTtl = "ttl";
 constexpr char *kTos = "tos";
 constexpr char *kMirrorAsIpv4Erspan = "mirror_as_ipv4_erspan";
+constexpr char* kMirrorWithVlanTagAndIpfixEncapsulation =
+    "mirror_with_vlan_tag_and_ipfix_encapsulation";
 constexpr char *kL3AdmitAction = "admit_to_l3";
 constexpr char *kTunnelAction = "mark_for_p2p_tunnel_encap";
 
@@ -218,6 +229,9 @@ struct P4MirrorSessionAppDbEntry
     // Key (match field)
     std::string mirror_session_id;
 
+    std::string action;
+    bool has_action = false;
+
     // fields (action parameters)
     std::string port;
     bool has_port = false;
@@ -239,6 +253,18 @@ struct P4MirrorSessionAppDbEntry
 
     uint8_t tos = 0;
     bool has_tos = false;
+
+    std::string failover_port;
+    bool has_failover_port = false;
+
+    uint16_t vlan_id = 0;
+    bool has_vlan_id = false;
+
+    uint16_t udp_src_port = 0;
+    bool has_udp_src_port = false;
+
+    uint16_t udp_dst_port = 0;
+    bool has_udp_dst_port = false;
 };
 
 struct P4ActionParamName

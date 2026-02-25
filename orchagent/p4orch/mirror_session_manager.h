@@ -19,6 +19,7 @@ extern "C"
 
 #define MIRROR_SESSION_DEFAULT_IP_HDR_VER 4
 #define GRE_PROTOCOL_ERSPAN 0x88be
+#define MIRROR_SESSION_DEFAULT_VLAN_TPID 0x8100
 
 namespace p4orch
 {
@@ -30,14 +31,24 @@ class MirrorSessionManagerTest;
 struct P4MirrorSessionEntry
 {
     P4MirrorSessionEntry(const std::string &mirror_session_key, sai_object_id_t mirror_session_oid,
-                         const std::string &mirror_session_id, const std::string &port, const swss::IpAddress &src_ip,
+                         const std::string &mirror_session_id,
+                         const std::string& action, const std::string& port,
+                         const swss::IpAddress& src_ip,
                          const swss::IpAddress &dst_ip, const swss::MacAddress &src_mac,
-                         const swss::MacAddress &dst_mac, uint8_t ttl, uint8_t tos)
+                         const swss::MacAddress &dst_mac, uint8_t ttl,
+                         uint8_t tos, const std::string& failover_port,
+                         const uint16_t vlan_id, const uint16_t udp_src_port,
+                         const uint16_t udp_dst_port)
         : mirror_session_key(mirror_session_key), mirror_session_oid(mirror_session_oid),
-          mirror_session_id(mirror_session_id), port(port), src_ip(src_ip), dst_ip(dst_ip), src_mac(src_mac),
-          dst_mac(dst_mac), ttl(ttl), tos(tos)
-    {
-    }
+          mirror_session_id(mirror_session_id),
+          action(action),
+          port(port), src_ip(src_ip), dst_ip(dst_ip), src_mac(src_mac),
+          dst_mac(dst_mac), ttl(ttl),
+          tos(tos),
+          failover_port(failover_port),
+          vlan_id(vlan_id),
+          udp_src_port(udp_src_port),
+          udp_dst_port(udp_dst_port) {}
 
     P4MirrorSessionEntry(const P4MirrorSessionEntry &) = default;
 
@@ -45,8 +56,11 @@ struct P4MirrorSessionEntry
     {
         return mirror_session_key == entry.mirror_session_key && mirror_session_oid == entry.mirror_session_oid &&
                mirror_session_id == entry.mirror_session_id && port == entry.port && src_ip == entry.src_ip &&
-               dst_ip == entry.dst_ip && src_mac == entry.src_mac && dst_mac == entry.dst_mac && ttl == entry.ttl &&
-               tos == entry.tos;
+               dst_ip == entry.dst_ip && src_mac == entry.src_mac && dst_mac == entry.dst_mac &&
+               ttl == entry.ttl && tos == entry.tos &&
+               failover_port == entry.failover_port && vlan_id == entry.vlan_id &&
+               udp_src_port == entry.udp_src_port &&
+               udp_dst_port == entry.udp_dst_port;
     }
 
     std::string mirror_session_key;
@@ -56,6 +70,7 @@ struct P4MirrorSessionEntry
 
     // Match field in table
     std::string mirror_session_id;
+    std::string action;
     // Action parameters
     std::string port;
     swss::IpAddress src_ip;
@@ -64,6 +79,11 @@ struct P4MirrorSessionEntry
     swss::MacAddress dst_mac;
     uint8_t ttl = 0;
     uint8_t tos = 0;
+    // New fields for mirror_with_vlan_tag_and_ipfix_encapsulation
+    std::string failover_port;
+    uint16_t vlan_id = 0;
+    uint16_t udp_src_port = 0;
+    uint16_t udp_dst_port = 0;
 };
 
 // MirrorSessionManager is responsible for programming mirror session intents in
@@ -97,6 +117,14 @@ class MirrorSessionManager : public ObjectManagerInterface
 
     P4MirrorSessionEntry *getMirrorSessionEntry(const std::string &mirror_session_key);
 
+    ReturnCode validateMirrorSessionEntry(
+      const P4MirrorSessionAppDbEntry& mirror_session_entry,
+      const std::string& operation);
+    ReturnCode validateSetMirrorSessionEntry(
+      const P4MirrorSessionAppDbEntry& mirror_session_entry);
+    ReturnCode validateDelMirrorSessionEntry(
+      const P4MirrorSessionAppDbEntry& mirror_session_entry);
+
     ReturnCode processAddRequest(const P4MirrorSessionAppDbEntry &app_db_entry);
     ReturnCode createMirrorSession(P4MirrorSessionEntry mirror_session_entry);
 
@@ -109,6 +137,12 @@ class MirrorSessionManager : public ObjectManagerInterface
     ReturnCode setDstMac(const swss::MacAddress &new_dst_mac, P4MirrorSessionEntry *existing_mirror_session_entry);
     ReturnCode setTtl(uint8_t new_ttl, P4MirrorSessionEntry *existing_mirror_session_entry);
     ReturnCode setTos(uint8_t new_tos, P4MirrorSessionEntry *existing_mirror_session_entry);
+    ReturnCode setVlanId(uint16_t new_vlan_id,
+                         P4MirrorSessionEntry* existing_mirror_session_entry);
+    ReturnCode setUdpSrcPort(uint16_t new_udp_src_port,
+                             P4MirrorSessionEntry* existing_mirror_session_entry);
+    ReturnCode setUdpDstPort(uint16_t new_udp_dst_port,
+                             P4MirrorSessionEntry* existing_mirror_session_entry);
     ReturnCode setMirrorSessionEntry(const P4MirrorSessionEntry &intent_mirror_session_entry,
                                      P4MirrorSessionEntry *existing_mirror_session_entry);
 
