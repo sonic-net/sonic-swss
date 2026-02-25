@@ -69,7 +69,7 @@ struct P4AclMeter
     sai_uint64_t cburst;
     sai_uint64_t pir;
     sai_uint64_t pburst;
-
+    std::string policer_label;
     std::map<sai_policer_attr_t, sai_packet_action_t> packet_color_actions;
 
     P4AclMeter()
@@ -434,11 +434,9 @@ using P4AclRuleTables = std::map<std::string, std::map<std::string, P4AclRule>>;
 #define P4_COUNTER_STATS_RED_PACKETS "red_packets"
 #define P4_COUNTER_STATS_RED_BYTES "red_bytes"
 
+#define P4_POLICER_MODE_SINGLE_RATE_THREE_COLOR "single_rate_three_color"
+#define P4_POLICER_MODE_TWO_RATE_THREE_COLOR "two_rate_three_color"
 #define P4_POLICER_MODE_SINGLE_RATE_TWO_COLOR "single_rate_two_color"
-
-#define P4_POLICER_MODE_SR_TCM "sr_tcm"
-#define P4_POLICER_MODE_TR_TCM "tr_tcm"
-#define P4_POLICER_MODE_STORM "storm"
 
 #define P4_UDF_BASE_L2 "SAI_UDF_BASE_L2"
 #define P4_UDF_BASE_L3 "SAI_UDF_BASE_L3"
@@ -762,8 +760,8 @@ static const std::map<sai_acl_stage_t, acl_stage_type_t>
 };
 
 static std::map<std::string, sai_policer_mode_t> policerModeLookup = {
-    {P4_POLICER_MODE_SR_TCM, SAI_POLICER_MODE_SR_TCM},
-    {P4_POLICER_MODE_TR_TCM, SAI_POLICER_MODE_TR_TCM},
+    {P4_POLICER_MODE_SINGLE_RATE_THREE_COLOR, SAI_POLICER_MODE_SR_TCM},
+    {P4_POLICER_MODE_TWO_RATE_THREE_COLOR, SAI_POLICER_MODE_TR_TCM},
     {P4_POLICER_MODE_SINGLE_RATE_TWO_COLOR, SAI_POLICER_MODE_STORM_CONTROL}
 };
 

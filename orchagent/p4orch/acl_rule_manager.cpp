@@ -160,6 +160,16 @@ std::vector<sai_attribute_t> getMeterSaiAttrs(const P4AclMeter &p4_acl_meter)
         meter_attr.value.u64 = p4_acl_meter.pburst;
         meter_attrs.push_back(meter_attr);
         }
+
+        /* TBD b/323361512 #3
+        if (gLabelMapper->isLabelValid(p4_acl_meter.policer_label)) {
+          meter_attr.id = SAI_POLICER_ATTR_LABEL;
+          auto size = sizeof(meter_attr.value.chardata);
+          snprintf(meter_attr.value.chardata, size, "%s",
+                   p4_acl_meter.policer_label.c_str());
+          meter_attrs.push_back(meter_attr);
+        }
+       */
     }
 
     for (const auto &packet_color_action : p4_acl_meter.packet_color_actions)
@@ -2148,6 +2158,7 @@ ReturnCode AclRuleManager::processUpdateRuleRequest(const P4AclRuleAppDbEntry &a
         }
         updated_meter = true;
         acl_rule.meter.meter_oid = old_acl_rule.meter.meter_oid;
+        acl_rule.meter.policer_label = old_acl_rule.meter.policer_label;
     }
 
     auto status = updateAclRule(acl_rule, old_acl_rule, acl_entry_attrs, rollback_attrs);
