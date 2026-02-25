@@ -197,6 +197,11 @@ int main(int argc, char *argv[])
     gBatchSize = DEFAULT_BATCH_SIZE;
     testing::InitGoogleTest(&argc, argv);
 
+    swss::Table logging_table(nullptr, CFG_LOGGER_TABLE_NAME);
+    logging_table.hset("SWSS", DAEMON_LOGLEVEL, "NOTICE");
+    logging_table.hset("SWSS", DAEMON_LOGOUTPUT, "STDOUT");
+    swss::Logger::linkToDb("SWSS", [](std::string, std::string) {}, "NOTICE");
+
     sai_router_interface_api_t router_intfs_api;
     sai_neighbor_api_t neighbor_api;
     sai_next_hop_api_t next_hop_api;
