@@ -739,8 +739,8 @@ class TestP4RTL3MulticastGroup(object):
     util.verify_response(
         self.response_consumer, mcast_group_key, attr_list,
         "SWSS_RC_NOT_FOUND",
-        ("[OrchAgent] Multicast group member '0x1:Ethernet8:0x0' "
-         "does not have an associated RIF available yet"))
+        ("[OrchAgent] No corresponding FIXED_MULTICAST_ROUTER_INTERFACE_TABLE "
+             "entry found for multicast group '0x1' replica '0x1:Ethernet8:0x0'"))
 
     # Check that asic entries remain unchanged.
     mcast_group_asic_entries = util.get_keys(
