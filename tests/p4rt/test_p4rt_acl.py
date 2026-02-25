@@ -142,13 +142,16 @@ class TestP4RTAcl(object):
         )
 
         # Verify APP DB trap groups for QOS_QUEUE
-        genetlink_name = "genl_packet"
+        genetlink_name = "genl_packet_q{}"
         genetlink_mcgrp_name = "packets"
 
         for queue_num in range(1, 9):
             attr_list = [
                 (self._p4rt_trap_group_obj.QUEUE, str(queue_num)),
-                (self._p4rt_trap_group_obj.HOSTIF_NAME, genetlink_name),
+                (
+                    self._p4rt_trap_group_obj.HOSTIF_NAME,
+                    genetlink_name.format(str(queue_num)),
+                ),
                 (
                     self._p4rt_trap_group_obj.HOSTIF_GENETLINK_MCGRP_NAME,
                     genetlink_mcgrp_name,
@@ -457,7 +460,7 @@ class TestP4RTAcl(object):
             ("param/traffic_class", "1"),
             (self._p4rt_acl_rule_obj.METER_CIR, meter_cir),
             (self._p4rt_acl_rule_obj.METER_CBURST, meter_cbs),
-            (self._p4rt_acl_rule_obj.METER_MODE, "storm"),
+            (self._p4rt_acl_rule_obj.METER_MODE, "single_rate_two_color"),
         ]
 
         self._p4rt_acl_rule_obj.set_app_db_entry(
@@ -1213,7 +1216,7 @@ class TestP4RTAcl(object):
             '[OrchAgent] ACL rule \'ACL_PUNT_TABLE_RULE_TEST:{"match/is_ip":"0x1","match/ether_type":"0x0800 & 0xFFFF","match/ether_dst":"AA:BB:CC:DD:EE:11 & FF:FF:FF:FF:FF:FF","priority":100}\' has invalid policer mode:\'tcm\'',
         )
 
-        # Second attempt failed with since pir!=cir or pburst!=cburst in default storm mode
+        # Second attempt failed with since pir!=cir or pburst!=cburst in default single_rate_two_color mode
         attr_list = [
             (self._p4rt_acl_rule_obj.ACTION, action),
             ("param/qos_queue", "7"),
@@ -1229,7 +1232,7 @@ class TestP4RTAcl(object):
             table_name_with_rule_key4,
             attr_list,
             "SWSS_RC_INVALID_PARAM",
-            '[OrchAgent] ACL policer for \'ACL_PUNT_TABLE_RULE_TEST:{"match/is_ip":"0x1","match/ether_type":"0x0800 & 0xFFFF","match/ether_dst":"AA:BB:CC:DD:EE:11 & FF:FF:FF:FF:FF:FF","priority":100}\' in default storm mode has invalid cir:pir/cburst:pburst pairs, expected cir==pir, cburst==pburst.',
+            '[OrchAgent] ACL policer for \'ACL_PUNT_TABLE_RULE_TEST:{"match/is_ip":"0x1","match/ether_type":"0x0800 & 0xFFFF","match/ether_dst":"AA:BB:CC:DD:EE:11 & FF:FF:FF:FF:FF:FF","priority":100}\' in default single_rate_two_color mode has invalid cir:pir/cburst:pburst pairs, expected cir==pir, cburst==pburst.',
         )
 
         attr_list = [
@@ -1237,7 +1240,7 @@ class TestP4RTAcl(object):
             ("param/qos_queue", "7"),
             (
                 self._p4rt_acl_rule_obj.METER_MODE,
-                "tr_tcm",
+                "two_rate_three_color",
             ),  # Two Rate, Three Code Marker
             (self._p4rt_acl_rule_obj.METER_CIR, meter_cir),
             (self._p4rt_acl_rule_obj.METER_CBURST, meter_cbs),
@@ -1320,13 +1323,13 @@ class TestP4RTAcl(object):
         ]
         util.verify_attr(fvs, attr_list)
 
-        # Update ACL rule 4 to sr_tcm policer mode is not supported
+        # Update ACL rule 4 to single_rate_three_color policer mode is not supported
         attr_list = [
             (self._p4rt_acl_rule_obj.ACTION, action),
             ("param/qos_queue", "7"),
             (
                 self._p4rt_acl_rule_obj.METER_MODE,
-                "sr_tcm",
+                "single_rate_three_color",
             ),  # Single Rate, Three Code Marker
             (self._p4rt_acl_rule_obj.METER_CIR, meter_cir),
             (self._p4rt_acl_rule_obj.METER_CBURST, meter_cbs),
