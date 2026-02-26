@@ -4,7 +4,9 @@
 
 #include "json.h"
 #include "ut_helper.h"
+#define private public
 #include "mock_orchagent_main.h"
+#undef private
 #include "mock_table.h"
 #include "notifier.h"
 #include "mock_sai_bridge.h"
@@ -112,6 +114,9 @@ namespace portsorch_test
     uint32_t set_pt_timestamp_template_failures = 0;
     uint32_t set_port_tam_failures = 0;
     bool set_link_event_damping_success = true;
+    bool set_fast_linkup_success = true;
+    uint32_t _sai_set_fast_linkup_count;
+    bool _sai_fast_linkup_enabled = false;
     uint32_t _sai_set_link_event_damping_algorithm_count;
     uint32_t _sai_set_link_event_damping_config_count;
     int32_t _sai_link_event_damping_algorithm = 0;
@@ -185,6 +190,17 @@ namespace portsorch_test
         else if (attr[0].id == SAI_PORT_ATTR_TPID)
         {
             _sai_set_port_tpid_count++;
+        }
+        else if (attr[0].id == SAI_PORT_ATTR_FAST_LINKUP_ENABLED)
+        {
+            _sai_set_fast_linkup_count++;
+            _sai_fast_linkup_enabled = attr[0].value.booldata;
+
+            if (!set_fast_linkup_success)
+            {
+                return SAI_STATUS_FAILURE;
+            }
+            return SAI_STATUS_SUCCESS;
         }
         else if (attr[0].id == SAI_REDIS_PORT_ATTR_LINK_EVENT_DAMPING_ALGORITHM)
         {
@@ -2271,6 +2287,74 @@ namespace portsorch_test
         gPortsOrch->dumpPendingTasks(ts);
         ASSERT_TRUE(ts.empty());
 
+        _unhook_sai_port_api();
+    }
+
+    TEST_F(PortsOrchTest, FastLinkupUnsupportedReturnsSuccess)
+    {
+        _hook_sai_port_api();
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+
+        gPortsOrch->m_fastLinkupPortAttrSupported = false;
+        uint32_t current_sai_api_call_count = _sai_set_fast_linkup_count;
+
+        auto status = gPortsOrch->setPortFastLinkupEnabled(port, true);
+        ASSERT_EQ(status, task_success);
+        ASSERT_EQ(_sai_set_fast_linkup_count, current_sai_api_call_count);
+
+        _unhook_sai_port_api();
+    }
+
+    TEST_F(PortsOrchTest, FastLinkupFailureDropsTask)
+    {
+        _hook_sai_port_api();
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        gPortsOrch->m_fastLinkupPortAttrSupported = true;
+        set_fast_linkup_success = false;
+
+        uint32_t current_fast_linkup_call_count = _sai_set_fast_linkup_count;
+
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"fast_linkup", "true"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        entries.clear();
+
+        ASSERT_EQ(_sai_set_fast_linkup_count, ++current_fast_linkup_call_count);
+
+        vector<string> ts;
+        gPortsOrch->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        set_fast_linkup_success = true;
         _unhook_sai_port_api();
     }
 
