@@ -8993,7 +8993,7 @@ bool PortsOrch::verifyPortSupportsAllPhyAttr(sai_object_id_t port_id, const char
     sai_status_t status = sai_port_api->get_port_attribute(port_id, 1, &port_attr);
     if (status != SAI_STATUS_BUFFER_OVERFLOW)
     {
-        SWSS_LOG_ERROR("PORT_PHY_ATTR: Port %s does not support RX_SIGNAL_DETECT attribute (status=%d)",
+        SWSS_LOG_NOTICE("PORT_PHY_ATTR: Port %s does not support RX_SIGNAL_DETECT attribute (status=%d)",
                       port_name, status);
         return false;
     }
@@ -9008,7 +9008,7 @@ bool PortsOrch::verifyPortSupportsAllPhyAttr(sai_object_id_t port_id, const char
     status = sai_port_api->get_port_attribute(port_id, 1, &port_attr);
     if (status != SAI_STATUS_BUFFER_OVERFLOW)
     {
-        SWSS_LOG_ERROR("PORT_PHY_ATTR: Port %s does not support FEC_ALIGNMENT_LOCK attribute (status=%d)",
+        SWSS_LOG_NOTICE("PORT_PHY_ATTR: Port %s does not support FEC_ALIGNMENT_LOCK attribute (status=%d)",
                       port_name, status);
         return false;
     }
@@ -9023,7 +9023,7 @@ bool PortsOrch::verifyPortSupportsAllPhyAttr(sai_object_id_t port_id, const char
     status = sai_port_api->get_port_attribute(port_id, 1, &port_attr);
     if (status != SAI_STATUS_BUFFER_OVERFLOW)
     {
-        SWSS_LOG_ERROR("PORT_PHY_ATTR: Port %s does not support RX_SNR attribute (status=%d)",
+        SWSS_LOG_NOTICE("PORT_PHY_ATTR: Port %s does not support RX_SNR attribute (status=%d)",
                       port_name, status);
         return false;
     }
