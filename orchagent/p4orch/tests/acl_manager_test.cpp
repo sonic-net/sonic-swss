@@ -1,6 +1,5 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-
 #include <map>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -3157,7 +3156,7 @@ TEST_F(AclManagerTest, AclRuleWithColorPacketActionsButWithRateLimit) {
   auto acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
   ASSERT_NE(nullptr, acl_rule);
   // Check action field value
-  EXPECT_EQ(gUserDefinedTrapStartOid + queue_num - P4_CPU_QUEUE_MIN_NUM + 1,
+  EXPECT_EQ(gUserDefinedTrapStartOid + queue_num - P4_CPU_QUEUE_MIN_NUM ,
             acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID]
                 .aclaction.parameter.oid);
 }
@@ -4493,8 +4492,7 @@ TEST_F(AclManagerTest, UpdateAclRuleFailsWhenSaiCallFails)
     EXPECT_FALSE(acl_rule->meter.enabled);
 }
 
-TEST_F(AclManagerTest, CreateAclRuleWithInvalidActionFails)
-{
+TEST_F(AclManagerTest, CreateAclRuleWithInvalidActionFails) {
     ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
     auto app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
     const auto &acl_rule_key = KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "15");
@@ -4547,7 +4545,7 @@ TEST_F(AclManagerTest, CreateAclRuleWithInvalidActionFails)
     app_db_entry.action_param_fvs.erase("target");
     // Invalid cpu queue number
     app_db_entry.action = "qos_queue";
-    app_db_entry.action_param_fvs["cpu_queue"] = "18";
+    app_db_entry.action_param_fvs["cpu_queue"] = "47";
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessAddRuleRequest(acl_rule_key, app_db_entry));
     app_db_entry.action_param_fvs["cpu_queue"] = "invalid";
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessAddRuleRequest(acl_rule_key, app_db_entry));

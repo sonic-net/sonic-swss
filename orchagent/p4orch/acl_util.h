@@ -428,11 +428,8 @@ using P4AclRuleTables = std::map<std::string, std::map<std::string, P4AclRule>>;
 #define GENL_PACKET_TRAP_GROUP_NAME_PREFIX "trap.group.cpu.queue."
 
 #define EMPTY_STRING ""
-
-// TODO :  To avoid existing p4 tests failure, extend the queue
-// temporarily, should set to 7-14 later.
-#define P4_CPU_QUEUE_MIN_NUM 1 // 7
-#define P4_CPU_QUEUE_MAX_NUM 15 // 14
+#define P4_CPU_QUEUE_MIN_NUM 0
+#define P4_CPU_QUEUE_MAX_NUM 46
 
 #define IPV6_SINGLE_WORD_BYTES_LENGTH 4
 #define BYTE_BITWIDTH 8
