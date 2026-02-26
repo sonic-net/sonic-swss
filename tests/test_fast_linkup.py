@@ -38,6 +38,16 @@ class TestFastLinkupSwss(object):
         # FAST_LINKUP_POLLING_TIMER_RANGE / FAST_LINKUP_GUARD_TIMER_RANGE may be absent on platforms without ranges
 
     def test_global_config_applies_sai(self, dvs, testlog):
+        # Skip when platform does not support fast linkup (e.g. VS in DVS tests)
+        state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+        cap_tbl = swsscommon.Table(state_db, "SWITCH_CAPABILITY")
+        status, fvs = cap_tbl.get("switch")
+        if not status:
+            pytest.skip("SWITCH_CAPABILITY not found")
+        cap_map = {k: v for k, v in fvs}
+        if cap_map.get("FAST_LINKUP_CAPABLE") != "true":
+            pytest.skip("Fast linkup not capable on this platform")
+
         # Apply global config via CONFIG_DB and expect ASIC DB attrs set
         app_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
         set_cfg_entry(app_db, "SWITCH_FAST_LINKUP", "GLOBAL",
@@ -58,6 +68,8 @@ class TestFastLinkupSwss(object):
         cap_tbl = swsscommon.Table(state_db, "SWITCH_CAPABILITY")
         status, fvs = cap_tbl.get("switch")
         cap_map = {k: v for k, v in fvs} if status else {}
+        if cap_map.get("FAST_LINKUP_CAPABLE") != "true":
+            pytest.skip("Fast linkup not capable on this platform")
         poll_rng = cap_map.get("FAST_LINKUP_POLLING_TIMER_RANGE")
         guard_rng = cap_map.get("FAST_LINKUP_GUARD_TIMER_RANGE")
         if poll_rng and guard_rng:
