@@ -175,6 +175,19 @@ jobs:
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
+      project: ${{ parameters.common_lib_artifact_project }}
+      pipeline: ${{ parameters.common_lib_artifact_pipeline }}
+      artifact: ${{ parameters.common_lib_artifact_name }}
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/${{ parameters.common_lib_artifact_branch }}'
+      path: $(Build.ArtifactStagingDirectory)/download/common
+      patterns: |
+        target/debs/${{ parameters.debian_version }}/libpcre3_*.deb
+    displayName: "Download Trixie-specific common libs"
+    condition: eq('${{ parameters.debian_version }}', 'trixie')
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      source: specific
       project: build
       pipeline: sonic-net.sonic-dash-api
       artifact: ${{ parameters.dash_artifact_name }}
