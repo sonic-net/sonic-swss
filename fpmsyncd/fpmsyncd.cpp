@@ -100,14 +100,13 @@ int main(int argc, char **argv)
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELLINK, &sync);
 
     struct stat st;
+    auto routeProtoFilePath = DefaultRtProtoPath;
 
-    if (stat(DefaultRtProtoPath, &st) == 0) {
-        rtnl_route_read_protocol_names(DefaultRtProtoPath);
-    } else if (stat(OverrideRtProtoPath, &st) == 0) {
-        rtnl_route_read_protocol_names(OverrideRtProtoPath);
-    } else {
-        SWSS_LOG_WARN("No file containing route protocol names found, ignoring");
+    if (stat(OverrideRtProtoPath, &st) == 0) {
+        routeProtoFilePath = OverrideRtProtoPath;
     }
+
+    rtnl_route_read_protocol_names(routeProtoFilePath);
     nlmsg_set_default_size(FPM_MAX_MSG_LEN);
 
     std::string suppressionEnabledStr;
