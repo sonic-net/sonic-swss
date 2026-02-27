@@ -14,19 +14,27 @@ class P4RtRouterInterfaceWrapper(util.DBInterface):
     SAI_ATTR_SRC_MAC = "SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS"
     SAI_ATTR_TYPE = "SAI_ROUTER_INTERFACE_ATTR_TYPE"
     SAI_ATTR_TYPE_PORT = "SAI_ROUTER_INTERFACE_TYPE_PORT"
+    SAI_ATTR_TYPE_SUB_PORT = "SAI_ROUTER_INTERFACE_TYPE_SUB_PORT"
     SAI_ATTR_MTU = "SAI_ROUTER_INTERFACE_ATTR_MTU"
     SAI_ATTR_PORT_ID = "SAI_ROUTER_INTERFACE_ATTR_PORT_ID"
     SAI_ATTR_DEFAULT_MTU = "9100"
+    SAI_ATTR_OUTER_VLAN_ID = "SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID"
+    SAI_ATTR_VIRTUAL_ROUTER_ID = "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID"
+    SAI_ATTR_V4_MCAST_ENABLE = "SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE"
+    SAI_ATTR_V6_MCAST_ENABLE = "SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE"
 
     # attribute fields for router interface object
     PORT_FIELD = "port"
     SRC_MAC_FIELD = "src_mac"
+    VLAN_ID = "vlan_id"
 
     # default router interface attribute values
     DEFAULT_ROUTER_INTERFACE_ID = "16"
     DEFAULT_PORT_ID = "Ethernet8"
     DEFAULT_SRC_MAC = "00:11:22:33:44:55"
     DEFAULT_ACTION = "set_port_and_src_mac"
+    DEFAULT_VLAN_ID = "0x41"
+    VLAN_ID_ACTION = "set_port_and_src_mac_and_vlan_id"
 
     def get_default_loopback_oid(self):
         rif_entries = util.get_keys(self.asic_db, self.ASIC_DB_TBL_NAME)
@@ -74,17 +82,21 @@ class P4RtRouterInterfaceWrapper(util.DBInterface):
 
     # create default router interface
     def create_router_interface(
-        self, router_interace_id=None, port_id=None, src_mac=None, action=None
+        self, router_interace_id=None, port_id=None, src_mac=None, action=None,
+        vlan_id=None
     ):
         router_interface_id = router_interace_id or self.DEFAULT_ROUTER_INTERFACE_ID
         port_id = port_id or self.DEFAULT_PORT_ID
         src_mac = src_mac or self.DEFAULT_SRC_MAC
         action = action or self.DEFAULT_ACTION
+        vlan_id = vlan_id or self.DEFAULT_VLAN_ID
         attr_list = [
             (util.prepend_param_field(self.PORT_FIELD), port_id),
             (util.prepend_param_field(self.SRC_MAC_FIELD), src_mac),
             (self.ACTION_FIELD, action),
         ]
+        if action == self.VLAN_ID_ACTION:
+            attr_list.append((util.prepend_param_field(self.VLAN_ID), vlan_id))
         router_intf_key = self.generate_app_db_key(router_interface_id)
         self.set_app_db_entry(router_intf_key, attr_list)
         return router_interface_id, router_intf_key, attr_list
