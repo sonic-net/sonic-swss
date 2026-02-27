@@ -2594,6 +2594,16 @@ TEST_F(AclManagerTest, DeserializeAclRuleAppDbWithInvalidMeterFieldFails)
     attributes.pop_back();
     attributes.push_back(swss::FieldValueTuple{"undefined", "80"});
     EXPECT_FALSE(DeserializeAclRuleAppDbEntry(acl_table_name, acl_rule_json_key, attributes).ok());
+
+    // ACL rule has invalid cir value in meter field
+    attributes.pop_back();
+    attributes.push_back(swss::FieldValueTuple{"meter/cir", "18446744073709551616"});
+    EXPECT_FALSE(DeserializeAclRuleAppDbEntry(acl_table_name, acl_rule_json_key, attributes).ok());
+
+    // ACL rule has max uint64 cir value in meter field
+    attributes.pop_back();
+    attributes.push_back(swss::FieldValueTuple{"meter/cir", "18446744073709551615"});
+    EXPECT_TRUE(DeserializeAclRuleAppDbEntry(acl_table_name, acl_rule_json_key, attributes).ok());
 }
 
 TEST_F(AclManagerTest, DrainRuleTuplesWithInvalidCommand)
@@ -3151,7 +3161,7 @@ TEST_F(AclManagerTest, AclRuleWithColorPacketActionsButWithRateLimit) {
   auto acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
   ASSERT_NE(nullptr, acl_rule);
   // Check action field value
-  EXPECT_EQ(gUserDefinedTrapStartOid + queue_num - P4_CPU_QUEUE_MIN_NUM + 1,
+  EXPECT_EQ(gUserDefinedTrapStartOid + queue_num - P4_CPU_QUEUE_MIN_NUM  ,
             acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID]
                 .aclaction.parameter.oid);
 }
@@ -4541,7 +4551,7 @@ TEST_F(AclManagerTest, CreateAclRuleWithInvalidActionFails)
     app_db_entry.action_param_fvs.erase("target");
     // Invalid cpu queue number
     app_db_entry.action = "qos_queue";
-    app_db_entry.action_param_fvs["cpu_queue"] = "18";
+    app_db_entry.action_param_fvs["cpu_queue"] = "48";
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessAddRuleRequest(acl_rule_key, app_db_entry));
     app_db_entry.action_param_fvs["cpu_queue"] = "invalid";
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessAddRuleRequest(acl_rule_key, app_db_entry));

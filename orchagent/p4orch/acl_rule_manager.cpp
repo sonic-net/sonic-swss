@@ -627,36 +627,35 @@ ReturnCodeOr<P4AclRuleAppDbEntry> AclRuleManager::deserializeAclRuleAppDbEntry(
         else if (prefix == kMeterPrefix)
         {
             const auto &meter_attr_name = tokenized_field[1];
-            if (std::stoi(value) < 0)
-            {
-                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                       << "Invalid ACL meter field value " << QuotedVar(field) << ": " << QuotedVar(value);
-            }
-            if (meter_attr_name == kMeterCir)
-            {
-                app_db_entry.meter.cir = std::stoi(value);
-            }
-            else if (meter_attr_name == kMeterCburst)
-            {
-                app_db_entry.meter.cburst = std::stoi(value);
-            }
-            else if (meter_attr_name == kMeterPir)
-            {
-                app_db_entry.meter.pir = std::stoi(value);
-            }
-            else if (meter_attr_name == kMeterPburst)
-            {
-                app_db_entry.meter.pburst = std::stoi(value);
-            }
-            else
-            {
-                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Unknown ACL meter field " << QuotedVar(field);
-            }
-            app_db_entry.meter.enabled = true;
-        }
-        else
-        {
-            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Unknown ACL rule field " << QuotedVar(field);
+            try {
+                auto value_node = nlohmann::json::parse(value);
+                if (!value_node.is_number_unsigned()) {
+                  return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                     << "Invalid ACL meter field value " << QuotedVar(field) << ": "
+                     << QuotedVar(value) << " - Expect a uint64_t.";
+               }
+               uint64_t meter_value = std::stoull(value);
+               if (meter_attr_name == kMeterCir) {
+                  app_db_entry.meter.cir = meter_value;
+               } else if (meter_attr_name == kMeterCburst) {
+                   app_db_entry.meter.cburst = meter_value;
+               } else if (meter_attr_name == kMeterPir) {
+                   app_db_entry.meter.pir = meter_value;
+               } else if (meter_attr_name == kMeterPburst) {
+                   app_db_entry.meter.pburst = meter_value;
+               } else {
+                  return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                    << "Unknown ACL meter field " << QuotedVar(field);
+               }
+           } catch (std::exception& e) {
+             return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                 << "Invalid ACL meter field value " << QuotedVar(field) << ": "
+                 << QuotedVar(value) << " - Expect a uint64_t.";
+           }
+           app_db_entry.meter.enabled = true;
+        } else  {
+            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Unknown ACL rule field " << QuotedVar(field);
         }
     }
     return app_db_entry;
