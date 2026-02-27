@@ -15,6 +15,7 @@
  */
 
 #include <assert.h>
+#include <cstdint>
 #include <iostream>
 #include <vector>
 #include <unordered_map>
@@ -3169,8 +3170,8 @@ void NatOrch::queryCounters(void)
 
     if (queried_entries)
     {
-        SWSS_LOG_DEBUG("Time spent in querying counters for %u NAT/NAPT entries = %lu secs, %lu msecs",
-                       queried_entries, time_spent.tv_sec, (time_spent.tv_nsec / 1000000UL));
+        SWSS_LOG_DEBUG("Time spent in querying counters for %u NAT/NAPT entries = %" PRIdMAX " secs, %lu msecs",
+                       queried_entries, (int64_t) time_spent.tv_sec, (time_spent.tv_nsec / 1000000UL));
     }
 }
 
@@ -3434,8 +3435,8 @@ void NatOrch::queryHitBits(void)
 
     if (queried_entries)
     {
-        SWSS_LOG_DEBUG("Time spent in querying hardware hit-bits for %u NAT/NAPT entries = %lu secs, %lu msecs",
-                       queried_entries, time_spent.tv_sec, (time_spent.tv_nsec / 1000000UL));
+        SWSS_LOG_DEBUG("Time spent in querying hardware hit-bits for %u NAT/NAPT entries = %" PRIdMAX " secs, %lu msecs",
+                       queried_entries, (int64_t) time_spent.tv_sec, (time_spent.tv_nsec / 1000000UL));
     }
 }
 

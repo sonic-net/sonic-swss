@@ -53,6 +53,10 @@ static std::pair<bool, FILE*> cb_fopen(const char *pathname, const char *mode)
     }
 }
 
+// On 32-bit architectures, if 64-bit file offsets/support for large files is
+// enabled, then fopen is a macro that maps to fopen64. Don't redefine fopen
+// in that case.
+#if not(defined _FILE_OFFSET_BITS && _FILE_OFFSET_BITS == 64)
 FILE* fopen(const char *pathname, const char *mode)
 {
     if (callback_fopen)
@@ -67,6 +71,7 @@ FILE* fopen(const char *pathname, const char *mode)
         (FILE*  (*)(const char *, const char *))(dlsym (RTLD_NEXT, "fopen"));
     return realfunc(pathname, mode);
 }
+#endif
 
 FILE* fopen64(const char *pathname, const char *mode)
 {

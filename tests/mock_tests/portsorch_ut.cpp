@@ -790,11 +790,11 @@ namespace portsorch_test
         // mock a redis reply for notification, it notifies that Ehernet0 is going to up
         for (uint32_t count=0; count < 5; count++) {
             sai_port_oper_status_t oper_status = (count % 2 == 0) ? SAI_PORT_OPER_STATUS_UP : SAI_PORT_OPER_STATUS_DOWN;
-            mockReply = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply = (redisReply *)calloc(1, sizeof(redisReply));
             mockReply->type = REDIS_REPLY_ARRAY;
             mockReply->elements = 3; // REDIS_PUBLISH_MESSAGE_ELEMNTS
-            mockReply->element = (redisReply **)calloc(sizeof(redisReply *), mockReply->elements);
-            mockReply->element[2] = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply->element = (redisReply **)calloc(mockReply->elements, sizeof(redisReply *));
+            mockReply->element[2] = (redisReply *)calloc(1, sizeof(redisReply));
             mockReply->element[2]->type = REDIS_REPLY_STRING;
             sai_port_oper_status_notification_t port_oper_status;
             memset(&port_oper_status, 0, sizeof(port_oper_status));
@@ -890,11 +890,11 @@ namespace portsorch_test
         // mock a redis reply for notification, it notifies that Ehernet0 is going to up
         for (uint32_t count=0; count < errors.size(); count++) {
             sai_port_oper_status_t oper_status = SAI_PORT_OPER_STATUS_DOWN;
-            mockReply = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply = (redisReply *)calloc(1, sizeof(redisReply));
             mockReply->type = REDIS_REPLY_ARRAY;
             mockReply->elements = 3; // REDIS_PUBLISH_MESSAGE_ELEMNTS
-            mockReply->element = (redisReply **)calloc(sizeof(redisReply *), mockReply->elements);
-            mockReply->element[2] = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply->element = (redisReply **)calloc(mockReply->elements, sizeof(redisReply *));
+            mockReply->element[2] = (redisReply *)calloc(1, sizeof(redisReply));
             mockReply->element[2]->type = REDIS_REPLY_STRING;
             sai_port_oper_status_notification_t port_oper_status;
             memset(&port_oper_status, 0, sizeof(port_oper_status));
@@ -4399,11 +4399,11 @@ namespace portsorch_test
         auto consumer = exec->getNotificationConsumer();
 
         // mock a redis reply for notification, it notifies that Ehernet0 is going to up
-        mockReply = (redisReply *)calloc(sizeof(redisReply), 1);
+        mockReply = (redisReply *)calloc(1, sizeof(redisReply));
         mockReply->type = REDIS_REPLY_ARRAY;
         mockReply->elements = 3; // REDIS_PUBLISH_MESSAGE_ELEMNTS
-        mockReply->element = (redisReply **)calloc(sizeof(redisReply *), mockReply->elements);
-        mockReply->element[2] = (redisReply *)calloc(sizeof(redisReply), 1);
+        mockReply->element = (redisReply **)calloc(mockReply->elements, sizeof(redisReply *));
+        mockReply->element[2] = (redisReply *)calloc(1, sizeof(redisReply));
         mockReply->element[2]->type = REDIS_REPLY_STRING;
         sai_port_oper_status_notification_t port_oper_status;
         port_oper_status.port_id = port.m_port_id;
