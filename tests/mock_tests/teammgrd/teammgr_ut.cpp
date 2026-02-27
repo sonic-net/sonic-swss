@@ -56,7 +56,7 @@ static std::pair<bool, FILE*> cb_fopen(const char *pathname, const char *mode)
 // On 32-bit architectures, if 64-bit file offsets/support for large files is
 // enabled, then fopen is a macro that maps to fopen64. Don't redefine fopen
 // in that case.
-#ifndef fopen
+#if not(defined _FILE_OFFSET_BITS && _FILE_OFFSET_BITS == 64)
 FILE* fopen(const char *pathname, const char *mode)
 {
     if (callback_fopen)
