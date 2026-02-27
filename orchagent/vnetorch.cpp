@@ -46,6 +46,12 @@ extern MacAddress gVxlanMacAddress;
 extern BfdOrch *gBfdOrch;
 extern SwitchOrch *gSwitchOrch;
 extern TunnelDecapOrch *gTunneldecapOrch;
+
+#define VXLAN_NAME_PREFIX              "Vxlan"
+#define MAX_VXLAN_TUNNELS              2
+#define MAX_IPv4_VXLAN_TUNNELS         1
+#define MAX_IPv6_VXLAN_TUNNELS         1
+
 /*
  * VRF Modeling and VNetVrf class definitions
  */
@@ -357,10 +363,10 @@ string VNetVrfObject::getTunnelNameForNextHop(const NextHopKey& nh)
     }
 
     auto nh_ip_family = nh.ip_address.isV4() ? AF_INET : AF_INET6;
-    auto tunnel_list = getTunnelList();
+    auto tunnels = getTunnelNames();
     VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
 
-    for (string tunnel_name : tunnel_list)
+    for (string tunnel_name : tunnels)
     {
         auto tun_obj = vxlan_orch->getVxlanTunnel(tunnel_name);
         auto tun_ip_family = tun_obj->getSrcIP().isV4() ? AF_INET : AF_INET6;
@@ -558,6 +564,8 @@ bool VNetOrch::addOperation(const Request& request)
                 tunnels.insert(tunnel);
             }
 
+            auto ipv4_tun_count = 0;
+            auto ipv6_tun_count = 0;
             for (const auto& tun_name : tunnels)
             {
                 if (!vxlan_orch->isTunnelExists(tun_name))
@@ -565,6 +573,22 @@ bool VNetOrch::addOperation(const Request& request)
                     SWSS_LOG_WARN("Vxlan tunnel '%s' doesn't exist", tun_name.c_str());
                     return false;
                 }
+
+                if (vxlan_orch->getVxlanTunnel(tun_name)->getSrcIP().isV4())
+                {
+                    ipv4_tun_count++;
+                }
+                else
+                {
+                    ipv6_tun_count++;
+                }
+            }
+
+            if (ipv4_tun_count > MAX_IPv4_VXLAN_TUNNELS || ipv6_tun_count > MAX_IPv6_VXLAN_TUNNELS
+                || tunnels.size() > MAX_VXLAN_TUNNELS)
+            {
+                SWSS_LOG_ERROR("Too many vxlan tunnels for VNET '%s'", vnet_name.c_str());
+                return false;
             }
 
             if (it == std::end(vnet_table_))
@@ -660,8 +684,8 @@ bool VNetOrch::delOperation(const Request& request)
                 return false;
             }
 
-            set<string> tunnel_list = vrf_obj->getTunnelList();
-            for (const auto& tunnel : tunnel_list)
+            set<string> tunnels = vrf_obj->getTunnelNames();
+            for (const auto& tunnel : tunnels)
             {
                 if (!vxlan_orch->removeVxlanTunnelMap(tunnel, vrf_obj->getVni()))
                 {

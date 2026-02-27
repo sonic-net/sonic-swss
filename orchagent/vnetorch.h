@@ -51,7 +51,7 @@ const request_description_t vnet_request_description = {
         { "overlay_dmac",            REQ_T_MAC_ADDRESS},
 
     },
-    { "vxlan_tunnel", "vni" } // mandatory attributes
+    { "vni" } // mandatory attributes
 };
 
 enum class VNET_EXEC
@@ -143,8 +143,13 @@ public:
         return tunnel_;
     }
 
-    const set<string>& getTunnelList() const
+    set<string>& getTunnelNames() const
     {
+        if (!tunnel_.empty())
+        {
+            return set<string>{tunnel_};
+        }
+
         return tunnel_list_;
     }
 
@@ -303,9 +308,9 @@ public:
         return vnet_table_.at(name)->getTunnelName();
     }
 
-    const set<string>& getTunnelList(const std::string& name) const
+    const set<string>& getTunnelNames(const std::string& name) const
     {
-        return vnet_table_.at(name)->getTunnelList();
+        return vnet_table_.at(name)->getTunnelNames();
     }
 
     string getTunnelNameForNextHop(const std::string& vnet_name, const NextHopKey& nh) const
