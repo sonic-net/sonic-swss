@@ -500,6 +500,7 @@ class TestBuffer(object):
             if orig_fvs_port:
                 self.config_db.delete_entry("PORT", self.INTF)
 
+            assert orig_fvs_port is not None, "Expected PORT entry to exist for {}".format(self.INTF)
             fvs_port = orig_fvs_port.copy()
 
             fvs_port["speed"] = test_speed
