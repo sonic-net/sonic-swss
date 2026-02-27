@@ -439,8 +439,9 @@ using P4AclRuleTables = std::map<std::string, std::map<std::string, P4AclRule>>;
 #define GENL_PACKET_TRAP_GROUP_NAME_PREFIX "trap.group.cpu.queue."
 
 #define EMPTY_STRING ""
+
 #define P4_CPU_QUEUE_MIN_NUM 0
-#define P4_CPU_QUEUE_MAX_NUM 46
+#define P4_CPU_QUEUE_MAX_NUM 47
 
 #define IPV6_SINGLE_WORD_BYTES_LENGTH 4
 #define BYTE_BITWIDTH 8
