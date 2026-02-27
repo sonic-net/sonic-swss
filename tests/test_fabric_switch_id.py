@@ -8,7 +8,8 @@ class TestFabricSwitchId(object):
             return (int(out.strip()) >= 1, None)
         max_poll = PollingConfig(polling_interval=5, timeout=600, strict=True)
         wait_for_result(do_check_syslog, polling_config=max_poll)
-
+        
+    @pytest.mark.skip(reason="Covered by mock test: InvalidFabricSwitchId_Handling")
     def test_invalid_fabric_switch_id(self, vst):
         # Find supervisor dvs.
         dvs = None
