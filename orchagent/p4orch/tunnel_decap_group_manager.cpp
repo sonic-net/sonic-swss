@@ -25,7 +25,6 @@ using ::p4orch::kTableKeyDelimiter;
 extern sai_object_id_t gSwitchId;
 extern sai_tunnel_api_t* sai_tunnel_api;
 extern sai_object_id_t gUnderlayIfId;
-static sai_object_id_t dummyTunnelId = SAI_NULL_OBJECT_ID;
 
 namespace {
 
@@ -46,6 +45,10 @@ sai_object_id_t create_dummy_tunnel(void) {
   attr.value.oid = gUnderlayIfId;
   tunnel_attrs.push_back(attr);
 
+  attr.id = SAI_TUNNEL_ATTR_DECAP_DSCP_MODE;
+  attr.value.oid = SAI_TUNNEL_DSCP_MODE_PIPE_MODEL;
+  tunnel_attrs.push_back(attr);
+
   sai_object_id_t tunnel_id = SAI_NULL_OBJECT_ID;
   sai_status_t status = sai_tunnel_api->create_tunnel(
       &tunnel_id, gSwitchId, static_cast<uint32_t>(tunnel_attrs.size()),
@@ -55,7 +58,10 @@ sai_object_id_t create_dummy_tunnel(void) {
   return tunnel_id;
 }
 
-std::vector<sai_attribute_t> prepareSaiAttrs(
+}  // namespace
+
+
+std::vector<sai_attribute_t> TunnelDecapGroupManager::prepareSaiAttrs(
     const Ipv6TunnelTermTableEntry& ipv6_tunnel_term_entry) {
   std::vector<sai_attribute_t> attrs;
   sai_attribute_t attr;
@@ -92,21 +98,19 @@ std::vector<sai_attribute_t> prepareSaiAttrs(
   attr.value.u32 = ipv6_tunnel_term_entry.priority;
   attrs.push_back(attr);
 
-  if (dummyTunnelId == SAI_NULL_OBJECT_ID)
-    dummyTunnelId = create_dummy_tunnel();
+  if (m_dummyTunnelId == SAI_NULL_OBJECT_ID)
+    m_dummyTunnelId = create_dummy_tunnel();
 
   // Currently specifying a tunnel object is mendatory in SAI,
   // but it is unclear for what purpose. Our use case should
   // technically not require it.
   // As a workaround, we use a dummy object ID here.
   attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID;
-  attr.value.oid = dummyTunnelId;
+  attr.value.oid = m_dummyTunnelId;
   attrs.push_back(attr);
 
   return attrs;
 }
-
-}  // namespace
 
 TunnelDecapGroupManager::TunnelDecapGroupManager(
     P4OidMapper* p4oidMapper, ResponsePublisherInterface* publisher) {

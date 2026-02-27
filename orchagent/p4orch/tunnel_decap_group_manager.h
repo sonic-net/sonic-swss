@@ -16,9 +16,9 @@ extern "C" {
 
 // Ipv6TunnelTermTableEntry holds TunnelDecapGroupManager's internal cache of
 // tunnel termination table entry. Example:
-// P4RT:FIXED_IPV6_TUNNEL_TERMINATION_TABLE:{"match/dst_ipv6_64bit":
+// P4RT:FIXED_IPV6_TUNNEL_TERMINATION_TABLE:{"match/dst_ipv6":
 //   "2607:f8b0:c145:9300:: & ffff:ffff:ffff:ff00::",
-//   "match/src_ipv6_64bit":"2607:f8b0:c145:9300:: & ffff:ffff:ffff:ff00::",
+//   "match/src_ipv6":"2607:f8b0:c145:9300:: & ffff:ffff:ffff:ff00::",
 //   "priority":2030} "action" = "tunnel_decap", "controller_metadata" = "..."
 // LINT.IfChange
 struct Ipv6TunnelTermTableEntry {
@@ -66,9 +66,12 @@ class TunnelDecapGroupManager : public ObjectManagerInterface {
                           std::string& object_key) override;
 
  private:
-  // Gets the internal cached IPv6 tunnel termination table entry by its key.
-  // Return nullptr if corresponding IPv6 tunnel termination table entry is
-  // not cached.
+  std::vector<sai_attribute_t> prepareSaiAttrs(
+      const Ipv6TunnelTermTableEntry& ipv6_tunnel_term_entry);
+
+  // Gets the internal cached IPv6 tunnel termination table entry by its
+  // key. Return nullptr if corresponding IPv6 tunnel termination table
+  // entry is not cached.
   Ipv6TunnelTermTableEntry* getIpv6TunnelTermEntry(
       const std::string& ipv6_tunnel_term_key);
 
@@ -114,6 +117,7 @@ class TunnelDecapGroupManager : public ObjectManagerInterface {
   P4OidMapper* m_p4OidMapper;
   ResponsePublisherInterface* m_publisher;
   std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
+  sai_object_id_t m_dummyTunnelId = SAI_NULL_OBJECT_ID;
 
   friend class TunnelDecapGroupManagerTest;
 };
