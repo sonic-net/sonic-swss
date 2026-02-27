@@ -22,14 +22,18 @@ struct P4RouterInterfaceEntry
     std::string router_interface_id;
     std::string port_name;
     swss::MacAddress src_mac_address;
+    uint16_t vlan_id = 0;
+    bool has_vlan_id = false;
     sai_object_id_t router_interface_oid = 0;
 
     P4RouterInterfaceEntry() = default;
     P4RouterInterfaceEntry(const std::string &router_intf_id, const std::string &port,
-                           const swss::MacAddress &mac_address)
-        : router_interface_id(router_intf_id), port_name(port), src_mac_address(mac_address)
-    {
-    }
+                           const swss::MacAddress& mac_address,
+                           uint16_t vlan_id, bool has_vlan)
+        : router_interface_id(router_intf_id), port_name(port), 
+          src_mac_address(mac_address),
+          vlan_id(vlan_id),
+          has_vlan_id(has_vlan) {}
 };
 
 // P4RouterInterfaceTable: Router Interface key, P4RouterInterfaceEntry
