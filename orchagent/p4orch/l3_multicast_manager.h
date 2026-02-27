@@ -225,9 +225,9 @@ class L3MulticastManager : public ObjectManagerInterface {
   std::vector<ReturnCode> addMulticastRouterInterfaceEntries(
       std::vector<P4MulticastRouterInterfaceEntry>& entries);
   ReturnCode addL3MulticastRouterInterfaceEntry(
-        P4MulticastRouterInterfaceEntry& entry);
+      P4MulticastRouterInterfaceEntry& entry);      
   ReturnCode addL2MulticastRouterInterfaceEntry(
-        P4MulticastRouterInterfaceEntry& entry);
+      P4MulticastRouterInterfaceEntry& entry);
   // Update existing multicast router interface table entries.
   std::vector<ReturnCode> updateMulticastRouterInterfaceEntries(
       std::vector<P4MulticastRouterInterfaceEntry>& entries);
@@ -243,20 +243,36 @@ class L3MulticastManager : public ObjectManagerInterface {
   std::vector<ReturnCode> addMulticastGroupEntries(
       std::vector<P4MulticastGroupEntry>& entries);
   // Separate add logic for IP vs. L2 multicast groups.
-  ReturnCode addIpMulticastGroup(P4MulticastGroupEntry& entry);
-  ReturnCode addL2MulticastGroup(P4MulticastGroupEntry& entry);
+  ReturnCode addIpMulticastGroupEntry(P4MulticastGroupEntry& entry);
+  ReturnCode addL2MulticastGroupEntry(P4MulticastGroupEntry& entry);
   // Update existing multicast group table entries.
   std::vector<ReturnCode> updateMulticastGroupEntries(
       std::vector<P4MulticastGroupEntry>& entries);
+  // Separate add logic for IP vs. L2 multicast groups.
+  ReturnCode updateIpMulticastGroupEntry(P4MulticastGroupEntry& entry,
+                                         P4MulticastGroupEntry* old_entry);
+  ReturnCode updateL2MulticastGroupEntry(P4MulticastGroupEntry& entry,
+                                         P4MulticastGroupEntry* old_entry);
   // Used during failure scenarios where we try to revert to the previous state.
   ReturnCode restoreDeletedGroupMembers(
       const std::vector<P4Replica>& deleted_replicas,
       const std::unordered_map<std::string, sai_object_id_t>& replica_rif_map,
       const sai_object_id_t group_oid, const std::string& error_message,
       P4MulticastGroupEntry* old_entry);
+
   // Delete existing multicast group table entries.
   std::vector<ReturnCode> deleteMulticastGroupEntries(
       const std::vector<P4MulticastGroupEntry>& entries);
+  // Separate add logic for IP vs. L2 multicast groups.
+  ReturnCode deleteIpMulticastGroupEntry(P4MulticastGroupEntry& entry);
+  ReturnCode deleteL2MulticastGroupEntry(P4MulticastGroupEntry& entry);
+
+  ReturnCode restoreDeletedL2GroupMembers(
+      const std::vector<P4Replica>& deleted_replicas,
+      const std::unordered_map<std::string, sai_object_id_t>&
+          replica_bridge_port_map,
+      const sai_object_id_t group_oid, const std::string& error_message,
+      P4MulticastGroupEntry* old_entry);
 
   std::string verifyMulticastRouterInterfaceState(
       const std::string& key,
