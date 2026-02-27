@@ -46,7 +46,7 @@ def get_asic_route_key(asic_db, ipprefix):
     assert route_exists
     return key
 
-def validate_asic_nhg_fine_grained_ecmp(asic_db, ipprefix, size):
+def validate_asic_nhg_fine_grained_ecmp(asic_db, ipprefix, size, vr=None):
     def _access_function():
         false_ret = (False, '')
         keys = asic_db.get_keys(ASIC_ROUTE_TB)
@@ -55,8 +55,10 @@ def validate_asic_nhg_fine_grained_ecmp(asic_db, ipprefix, size):
         for k in keys:
             rt_key = json.loads(k)
             if rt_key['dest'] == ipprefix:
-                route_exists = True
-                key = k
+                if vr is None or rt_key.get('vr') == vr:
+                    route_exists = True
+                    key = k
+                    break
         if not route_exists:
             return false_ret
 

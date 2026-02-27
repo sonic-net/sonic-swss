@@ -1825,7 +1825,7 @@ bool FgNhgOrch::removeFgNhgTunnel(sai_object_id_t vrf_id, const IpPrefix &ipPref
 
     // remove from m_FgNhgs
     std::string fg_nhg_name = "FG_NHG_" + std::to_string(vrf_id) + "_" + ipPrefix.to_string();
-    m_fgNhgs.erase(fg_nhg_name);
+    m_FgNhgs.erase(fg_nhg_name);
 
     it_route_table->second.erase(it_route);
     if (it_route_table->second.size() == 0)

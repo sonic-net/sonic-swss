@@ -3344,13 +3344,16 @@ class TestVnetOrch(object):
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
         
         vnet_obj.fetch_exist_entries(dvs)
+        
+        # Get VR ID for vnet
+        vr_id = vnet_obj.vr_map[vnet_name]['ing']
 
         # Create VNET route with consistent_hashing_buckets and 3 tunnel next hops for fine-grained ECMP
         create_vnet_routes(dvs, fg_nhg_prefix, vnet_name, '36.0.0.1,36.0.0.2,36.0.0.3',
                           '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C', consistent_hashing_buckets=bucket_size)
 
         asic_db.wait_for_n_keys(test_fgnhg.ASIC_NHG_MEMB, bucket_size)
-        nhgid = test_fgnhg.validate_asic_nhg_fine_grained_ecmp(asic_db, fg_nhg_prefix, bucket_size)
+        nhgid = test_fgnhg.validate_asic_nhg_fine_grained_ecmp(asic_db, fg_nhg_prefix, bucket_size, vr_id)
         
         nh_oid_map = test_fgnhg.get_nh_oid_map(asic_db)
         
@@ -3427,17 +3430,45 @@ class TestVnetOrch(object):
         memb_dict = test_fgnhg.validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
                             memb_dict, 10, fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size, vnet_name)
         
+        # create route for new vnet with same IP space
+        vnet_name_2 = 'Vnet37'
+        create_vnet_entry(dvs, vnet_name_2, tunnel_name, '10037', "")
+        
+        vnet_obj.check_vnet_entry(dvs, vnet_name_2)
+        
+        # Get VR ID for vnet_name_2
+        vr_id_2 = vnet_obj.vr_map[vnet_name_2]['ing']
+        
+        create_vnet_routes(dvs, fg_nhg_prefix, vnet_name_2, '36.0.0.1,36.0.0.2,36.0.0.3',
+                          '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C', consistent_hashing_buckets=bucket_size)
+        
+        asic_db.wait_for_n_keys(test_fgnhg.ASIC_NHG_MEMB, bucket_size)
+        nhgid = test_fgnhg.validate_asic_nhg_fine_grained_ecmp(asic_db, fg_nhg_prefix, bucket_size, vr_id_2)
+        
+        check_state_db_routes(dvs, vnet_name_2, fg_nhg_prefix, ['36.0.0.1', '36.0.0.2', '36.0.0.3'])
+
+        num_exp_changes = 60
+        nh_memb_exp_count = {'36.0.0.1': 20, '36.0.0.2': 20, '36.0.0.3': 20}
+        prev_memb_dict = {}
+        memb_dict = test_fgnhg.validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
+                            prev_memb_dict, num_exp_changes, fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size, vnet_name_2)
+
         # Clean up
         vnet_obj.fetch_exist_entries(dvs)
         delete_vnet_routes(dvs, fg_nhg_prefix, vnet_name)
+        delete_vnet_routes(dvs, fg_nhg_prefix, vnet_name_2)
         
         time.sleep(2)
         
         vnet_obj.check_del_vnet_routes(dvs, vnet_name, [fg_nhg_prefix])
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name_2, [fg_nhg_prefix])
         check_remove_state_db_routes(dvs, vnet_name, fg_nhg_prefix)
+        check_remove_state_db_routes(dvs, vnet_name_2, fg_nhg_prefix)
 
         delete_vnet_entry(dvs, vnet_name)
+        delete_vnet_entry(dvs, vnet_name_2)
         vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name_2)
         delete_vxlan_tunnel(dvs, tunnel_name)
 
 # Add Dummy always-pass test at end as workaroud
