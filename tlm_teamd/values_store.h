@@ -41,11 +41,13 @@ private:
     std::vector<std::string> update_storage(const HashOfRecords & storage);
     void update_db(const HashOfRecords & storage, const std::vector<std::string> & keys_to_refresh);
     void extract_values(const std::string & lag_name, json_t * root, HashOfRecords & storage);
+    void extract_values_static(const std::string & lag_name, json_t * root, HashOfRecords & storage);
 
     HashOfRecords m_storage;  // our main storage
     const swss::DBConnector * m_db;
 
     const std::vector<std::pair<std::string, ValuesStore::json_type>> m_lag_paths = {
+        { "setup.runner_name",           ValuesStore::json_type::string  },
         { "setup.kernel_team_mode_name", ValuesStore::json_type::string  },
         { "setup.pid",                   ValuesStore::json_type::integer },
         { "runner.active",               ValuesStore::json_type::boolean },
@@ -70,4 +72,19 @@ private:
         { "runner.selected",                   ValuesStore::json_type::boolean },
         { "runner.state",                      ValuesStore::json_type::string  },
     };
+
+    const std::vector<std::pair<std::string, ValuesStore::json_type>> m_lag_static_paths = {
+        { "setup.runner_name",           ValuesStore::json_type::string  },
+        { "setup.kernel_team_mode_name", ValuesStore::json_type::string  },
+        { "setup.pid",                   ValuesStore::json_type::integer },
+        { "team_device.ifinfo.dev_addr", ValuesStore::json_type::string  },
+        { "team_device.ifinfo.ifindex",  ValuesStore::json_type::integer },
+    };
+    const std::vector<std::pair<std::string, ValuesStore::json_type>> m_member_static_paths = {
+        { "ifinfo.dev_addr",                   ValuesStore::json_type::string  },
+        { "ifinfo.ifindex",                    ValuesStore::json_type::integer },
+        { "link.up",                           ValuesStore::json_type::boolean },
+        { "link_watches.list.link_watch_0.up", ValuesStore::json_type::boolean },
+    };
+
 };
