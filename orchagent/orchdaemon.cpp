@@ -812,7 +812,7 @@ bool OrchDaemon::init()
             SAI_QUEUE_ATTR_PAUSE_STATUS,
         };
 
-        m_orchList.push_back(new PfcWdSwOrch<PfcWdSaiDlrInitHandler, PfcWdActionHandler>(
+        m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdActionHandler>(
                     m_configDb,
                     pfc_wd_tables,
                     portStatIds,
