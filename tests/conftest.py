@@ -1950,16 +1950,17 @@ def manage_dvs(request) -> str:
 
     yield update_dvs
 
-    if graceful_stop:
+    if graceful_stop and dvs is not None:
         dvs.stop_swss()
         dvs.stop_syncd()
 
-    dvs.get_logs()
-    dvs.destroy()
+    if dvs is not None:
+        dvs.get_logs()
+        dvs.destroy()
 
-    if dvs.persistent:
-        dvs.runcmd("mv /etc/sonic/config_db.json.orig /etc/sonic/config_db.json")
-        dvs.ctn_restart()
+        if dvs.persistent:
+            dvs.runcmd("mv /etc/sonic/config_db.json.orig /etc/sonic/config_db.json")
+            dvs.ctn_restart()
 
 @pytest.fixture(scope="module")
 def dvs(request, manage_dvs) -> DockerVirtualSwitch:
