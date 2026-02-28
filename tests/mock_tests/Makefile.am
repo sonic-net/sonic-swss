@@ -31,6 +31,7 @@ tests_INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib -I$
 tests_SOURCES = aclorch_ut.cpp \
                 aclorch_rule_ut.cpp \
                 portsorch_ut.cpp \
+                vxlanorch_ut.cpp \
                 routeorch_ut.cpp \
                 qosorch_ut.cpp \
                 bufferorch_ut.cpp \
@@ -75,6 +76,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 twamporch_ut.cpp \
                 stporch_ut.cpp \
                 flexcounter_ut.cpp \
+                portphyattr_ut.cpp \
+                counternameupdater_ut.cpp \
                 mock_orch_test.cpp \
                 mock_dash_orch_test.cpp \
                 zmq_orch_ut.cpp \

@@ -97,3 +97,9 @@ tests/tests.trs
 tests/mock_tests/**/*log
 tests/mock_tests/**/*trs
 orchagent/p4orch/tests/p4orch_tests
+
+# Build Environment #
+###################
+
+build-env/.env
+build-env/custom-setup.sh
