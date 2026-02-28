@@ -37,12 +37,13 @@ def main():
 
     junit_xml = etree.parse(f"{args.test_name}_tr.xml")
     junit_xml_root = junit_xml.getroot()
-    for testsuite in junit_xml_root.getchildren():
+    # This code matches how gtest structures the results in its junit output format.
+    for testsuite in junit_xml_root:
         testsuite_name = testsuite.get("name")
-        for testcase in testsuite.getchildren():
+        for testcase in testsuite:
             testcase_name = testcase.get("name")
             was_skipped = testcase.get("result") == "suppressed"
-            has_failed = len(testcase.getchildren()) > 0
+            has_failed = len(list(testcase)) > 0
             result = "SKIP" if was_skipped else "FAIL" if has_failed else "PASS"
             print(f":test-result: {result} {testsuite_name}:{testcase_name}", file=args.trs_file)
 
