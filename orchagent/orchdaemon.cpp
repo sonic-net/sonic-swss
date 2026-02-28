@@ -1034,7 +1034,13 @@ void OrchDaemon::start(long heartBeatInterval)
                         for (auto& pair: gPortsOrch->getAllPorts())
                         {
                             auto& port = pair.second;
-                            gPortsOrch->setBridgePortLearningFDB(port, SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE);
+                            // TODO: how to support 1D bridge?
+                            if (port.m_type != Port::PHY)
+                            {
+                                continue;
+                            }
+
+                            gPortsOrch->setBridgePortLearnMode(port, SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE);
                         }
                     }
 
