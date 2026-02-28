@@ -72,7 +72,7 @@ extern event_handle_t g_events_handle;
 extern bool isChassisDbInUse();
 extern bool gMultiAsicVoq;
 
-// defines ------------------------------------------------------------------------------------------------------------
+// defines ---------------------------------- YANM
 
 #define DEFAULT_SYSTEM_PORT_MTU 9100
 #define VLAN_PREFIX         "Vlan"
