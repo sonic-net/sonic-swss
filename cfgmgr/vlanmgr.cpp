@@ -139,6 +139,8 @@ bool VlanMgr::addHostVlan(int vlan_id)
       + ECHO_CMD + " 0 > /proc/sys/net/ipv4/conf/" + VLAN_PREFIX + std::to_string(vlan_id) + "/arp_evict_nocarrier";
     swss::exec(echo_cmd, res);
 
+    addVlanArpReply(vlan_id);
+
     return true;
 }
 
@@ -158,6 +160,20 @@ bool VlanMgr::removeHostVlan(int vlan_id)
     EXEC_WITH_ERROR_THROW(cmds, res);
 
     return true;
+}
+
+void VlanMgr::addVlanArpReply(int vlan_id)
+{
+    // set default vlan arp_ignore to 2(reply_subnet)
+    stringstream arp_cmd;
+    arp_cmd << "sysctl -w net/ipv4/conf/Vlan" << std::to_string(vlan_id) << "/arp_ignore=2";
+
+    std::string res;
+    int ret = swss::exec(arp_cmd.str(), res);
+    if (ret)
+    {
+        SWSS_LOG_ERROR("Command '%s' failed with rc %d, arp_reply is not supported", arp_cmd.str().c_str(), ret);
+    }
 }
 
 bool VlanMgr::setHostVlanAdminState(int vlan_id, const string &admin_status)
