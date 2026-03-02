@@ -245,6 +245,7 @@ struct P4ActionParamName
 {
     std::string sai_action;
     std::string p4_param_name;
+    std::string sai_object_type;
 };
 
 struct P4PacketActionWithColor

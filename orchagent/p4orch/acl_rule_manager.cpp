@@ -1340,6 +1340,52 @@ ReturnCode AclRuleManager::setAllActionFieldValues(const P4AclRuleAppDbEntry &ap
         return status;
     }
     SaiActionWithParam sai_action_param;
+    // Convert metered action to unmetered actions if rate limit is disabled.
+    const std::unordered_map<sai_policer_attr_t, sai_acl_entry_attr_t>
+        kMeteredActionTranslationMap = {
+            {SAI_POLICER_ATTR_GREEN_PACKET_ACTION,
+             SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION},
+        };
+    if (!app_db_entry.meter.enabled) {
+      const auto& action_color_it =
+          acl_table->rule_packet_action_color_lookup.find(app_db_entry.action);
+      if (action_color_it != acl_table->rule_packet_action_color_lookup.end() &&
+          !action_color_it->second.empty()) {
+        auto gp_action =
+            action_color_it->second.find(SAI_POLICER_ATTR_GREEN_PACKET_ACTION);
+        if (gp_action == action_color_it->second.end()) {
+          ReturnCode status =
+              ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+              << "Invalid P4 ACL action " << QuotedVar(app_db_entry.action)
+              << " - no metered action defined for green packets.";
+          return status;
+        }
+        sai_action_param.action = kMeteredActionTranslationMap.at(
+            SAI_POLICER_ATTR_GREEN_PACKET_ACTION);
+        sai_action_param.param_value = sai_serialize_enum(
+            gp_action->second, &sai_metadata_enum_sai_packet_action_t);
+        sai_action_param.object_type = SAI_NULL_OBJECT_ID;
+        LOG_AND_RETURN_IF_ERROR(setActionValue(
+            sai_action_param.action, sai_action_param.param_value,
+            sai_action_param.object_type,
+            &acl_rule.action_fvs[sai_action_param.action], &acl_rule));
+      }
+      const auto& rule_action_color_param_it =
+          acl_table->rule_action_color_param_lookup.find(app_db_entry.action);
+      if (rule_action_color_param_it !=
+              acl_table->rule_action_color_param_lookup.end() &&
+          !rule_action_color_param_it->second.empty()) {
+        // TODO : Convert multi/unicast queue metered action to
+        // unmetered action.
+        ReturnCode status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                            << "Invalid P4 ACL action "
+                            << QuotedVar(app_db_entry.action)
+                            << " - no unmetered action specified for metered "
+                               "multi/uni cast queue actions.";
+        return status;
+      }
+    }
+
     for (const auto &action_param : action_param_list_it->second)
     {
         sai_action_param.action = action_param.action;
@@ -1359,18 +1405,17 @@ ReturnCode AclRuleManager::setAllActionFieldValues(const P4AclRuleAppDbEntry &ap
                 sai_action_param.param_value = param_value_it->second;
             }
         }
-        auto set_action_rc = setActionValue(sai_action_param.action, sai_action_param.param_value,
-                                            &acl_rule.action_fvs[sai_action_param.action], &acl_rule);
-        if (!set_action_rc.ok())
-        {
-            return set_action_rc;
-        }
+        LOG_AND_RETURN_IF_ERROR(setActionValue(
+            sai_action_param.action, sai_action_param.param_value,
+            sai_action_param.object_type,
+            &acl_rule.action_fvs[sai_action_param.action], &acl_rule));
     }
     return ReturnCode();
 }
 
 ReturnCode AclRuleManager::setActionValue(const sai_acl_entry_attr_t attr_name,
                                           const std::string& attr_value,
+                                          const sai_object_id_t attr_type,
                                           sai_attribute_value_t* value,
                                           P4AclRule* acl_rule) {
   switch (attr_name) {
@@ -1628,6 +1673,10 @@ ReturnCode AclRuleManager::setMeterValue(const P4AclTableDefinition *acl_table, 
         }
         acl_meter.enabled = true;
     }
+    // If rate limit is diabled, drop metered packet actions.
+    // Metered actions should be transformed to unmetered actions.
+    if (!acl_meter.enabled) return ReturnCode();
+
     const auto &action_color_it = acl_table->rule_packet_action_color_lookup.find(app_db_entry.action);
     if (action_color_it != acl_table->rule_packet_action_color_lookup.end() && !action_color_it->second.empty())
     {
@@ -1671,19 +1720,6 @@ ReturnCode AclRuleManager::setMeterValue(const P4AclTableDefinition *acl_table, 
           }
         }
       }
-    }
-
-    // SAI_POLICER_MODE_TR_TCM mode is used by default.
-    // Meter rate limit config is not present for the ACL rule
-    // Mark the packet as GREEN by setting rate limit to max.
-    if (!acl_meter.packet_color_actions.empty() && !acl_meter.enabled)
-    {
-        acl_meter.enabled = true;
-        acl_meter.type = SAI_METER_TYPE_PACKETS;
-        acl_meter.cburst = 0x7fffffff;
-        acl_meter.cir = 0x7fffffff;
-        acl_meter.pir = 0x7fffffff;
-        acl_meter.pburst = 0x7fffffff;
     }
 
     return ReturnCode();

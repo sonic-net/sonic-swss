@@ -126,6 +126,7 @@ class AclRuleManager : public ObjectManagerInterface
     // Validate and set an action attribute in an ACL rule.
     ReturnCode setActionValue(const sai_acl_entry_attr_t attr_name,
                               const std::string& attr_value,
+                              const sai_object_id_t attr_type,
                               sai_attribute_value_t* value,
                               P4AclRule* acl_rule);
 

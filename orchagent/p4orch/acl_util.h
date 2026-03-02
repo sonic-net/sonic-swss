@@ -185,6 +185,7 @@ struct SaiActionWithParam
   sai_acl_entry_attr_t action;
   std::string param_name;
   std::string param_value;
+  sai_object_id_t object_type = SAI_NULL_OBJECT_ID;
 
   bool operator==(const SaiActionWithParam& entry) const {
     return action == entry.action && param_name == entry.param_name &&
