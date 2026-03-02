@@ -5260,6 +5260,41 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
+                // Helper lambda to program serdes with admin state management
+                auto programSerdes = [&](
+                    sai_object_id_t port_id,
+                    sai_object_id_t switch_id,
+                    map<sai_port_serdes_attr_t, SerdesValue> &serdes_attr,
+                    const char* serdes_type_name) -> bool
+                {
+                    if (p.m_admin_state_up)
+                    {
+                        /* Bring port down before applying serdes attribute */
+                        if (!setPortAdminStatus(p, false))
+                        {
+                            SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set %s serdes attr",
+                                          p.m_alias.c_str(), serdes_type_name);
+                            return false;
+                        }
+
+                        p.m_admin_state_up = false;
+                        m_portList[p.m_alias] = p;
+                    }
+
+                    if (setPortSerdesAttribute(port_id, switch_id, serdes_attr))
+                    {
+                        SWSS_LOG_NOTICE("Successfully set %s serdes tunings for port %s",
+                                       serdes_type_name, p.m_alias.c_str());
+                        return true;
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to set %s serdes tunings for port %s",
+                                      serdes_type_name, p.m_alias.c_str());
+                        return false;
+                    }
+                };
+
                 if (!serdes_attr.empty())
                 {
                     if (p.m_link_training)
@@ -5270,32 +5305,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                     else
                     {
-                        if (p.m_admin_state_up)
+                        if (!programSerdes(p.m_port_id, gSwitchId, serdes_attr, "ASIC"))
                         {
-                                /* Bring port down before applying serdes attribute*/
-                                if (!setPortAdminStatus(p, false))
-                                {
-                                    SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set serdes attr", p.m_alias.c_str());
-                                    it++;
-                                    continue;
-                                }
-
-                                p.m_admin_state_up = false;
-                                m_portList[p.m_alias] = p;
-                        }
-
-                        if (setPortSerdesAttribute(p.m_port_id, gSwitchId, serdes_attr))
-                        {
-                            SWSS_LOG_NOTICE("Set port %s SI settings is successful", p.m_alias.c_str());
-                            p.m_serdes_attrs = serdes_attr;
-                            m_portList[p.m_alias] = p;
-                        }
-                        else
-                        {
-                            SWSS_LOG_ERROR("Failed to set port %s SI settings", p.m_alias.c_str());
                             it++;
                             continue;
                         }
+                        p.m_serdes_attrs = serdes_attr;
+                        m_portList[p.m_alias] = p;
                     }
                 }
                 if (pCfg.media_type.is_set)
@@ -5316,27 +5332,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (p.m_line_side_id && !line_serdes_attr.empty())
                 {
-                    if (p.m_admin_state_up)
+                    if (!programSerdes(p.m_line_side_id, p.m_switch_id, line_serdes_attr, "gearbox line-side"))
                     {
-                            /* Bring port down before applying serdes attribute*/
-                            if (!setPortAdminStatus(p, false))
-                            {
-                                SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set gb line serdes attr", p.m_alias.c_str());
-                                it++;
-                                continue;
-                            }
-
-                            p.m_admin_state_up = false;
-                            m_portList[p.m_alias] = p;
-                    }
-
-                    if (setPortSerdesAttribute(p.m_line_side_id, p.m_switch_id, line_serdes_attr))
-                    {
-                        SWSS_LOG_NOTICE("Successfully set line-side gearbox tunings for port %s", p.m_alias.c_str());
-                    }
-                    else
-                    {
-                        SWSS_LOG_ERROR("Failed to set line-side gearbox tunings for port %s", p.m_alias.c_str());
                         it++;
                         continue;
                     }
@@ -5344,27 +5341,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (p.m_system_side_id && !system_serdes_attr.empty())
                 {
-                    if (p.m_admin_state_up)
+                    if (!programSerdes(p.m_system_side_id, p.m_switch_id, system_serdes_attr, "gearbox system-side"))
                     {
-                            /* Bring port down before applying serdes attribute*/
-                            if (!setPortAdminStatus(p, false))
-                            {
-                                SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set gb system serdes attr", p.m_alias.c_str());
-                                it++;
-                                continue;
-                            }
-
-                            p.m_admin_state_up = false;
-                            m_portList[p.m_alias] = p;
-                    }
-
-                    if (setPortSerdesAttribute(p.m_system_side_id, p.m_switch_id, system_serdes_attr))
-                    {
-                        SWSS_LOG_NOTICE("Successfully set system-side gearbox tunings for port %s", p.m_alias.c_str());
-                    }
-                    else
-                    {
-                        SWSS_LOG_ERROR("Failed to set system-side gearbox tunings for port %s", p.m_alias.c_str());
                         it++;
                         continue;
                     }
