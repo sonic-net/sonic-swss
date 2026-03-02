@@ -855,6 +855,8 @@ void FdbOrch::doTask(Consumer& consumer)
                 }
             }
 
+            // set entry port_name, which is used in mux fdb update logic
+            entry.port_name = port;
 
             FdbData fdbData;
             fdbData.bridge_port_id = SAI_NULL_OBJECT_ID;

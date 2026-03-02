@@ -52,6 +52,7 @@ std::map<string, std::map<size_t, string>> queue_port_flags;
 
 BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *stateDb, vector<string> &tableNames) :
     Orch(applDb, tableNames),
+    m_counterNameMapUpdater(new CounterNameMapUpdater("COUNTERS_DB", COUNTERS_BUFFER_POOL_NAME_MAP)),
     m_countersDb(new DBConnector("COUNTERS_DB", 0)),
     m_stateBufferMaximumValueTable(stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE)
 {
@@ -542,7 +543,7 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
             // Specifically, we push the buffer pool name to oid mapping upon the creation of the oid
             // In pg and queue case, this mapping installment is deferred to FlexCounterOrch at a reception of field
             // "FLEX_COUNTER_STATUS"
-            m_countersDb->hset(COUNTERS_BUFFER_POOL_NAME_MAP, object_name, sai_serialize_object_id(sai_object));
+            m_counterNameMapUpdater->setCounterNameMap(object_name, sai_object);
         }
 
         // Only publish the result when shared headroom pool is enabled and it has been successfully applied to SAI
@@ -582,7 +583,7 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
         }
         auto it_to_delete = (m_buffer_type_maps[map_type_name])->find(object_name);
         (m_buffer_type_maps[map_type_name])->erase(it_to_delete);
-        m_countersDb->hdel(COUNTERS_BUFFER_POOL_NAME_MAP, object_name);
+        m_counterNameMapUpdater->delCounterNameMap(object_name);
 
         vector<FieldValueTuple> fvs;
         m_publisher.publish(APP_BUFFER_POOL_TABLE_NAME, object_name, fvs, ReturnCode(SAI_STATUS_SUCCESS), true);
@@ -604,6 +605,7 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
     string object_name = kfvKey(tuple);
     string op = kfvOp(tuple);
     string pool_name;
+    bool is_lossless = false;
 
     SWSS_LOG_DEBUG("KEY: %s, OP: %s", object_name.c_str(), op.c_str());
 
@@ -677,6 +679,7 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
                 attr.value.u64 = (uint64_t)stoul(value);
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XOFF_TH;
                 attribs.push_back(attr);
+                is_lossless = true;
             }
             else if (field == buffer_size_field_name)
             {
@@ -779,7 +782,7 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
                 }
             }
 
-            for (auto &attribute : attribs)
+            for (auto &attribute : attribs_to_retry)
             {
                 sai_status = sai_buffer_api->set_buffer_profile_attribute(sai_object, &attribute);
                 if (SAI_STATUS_SUCCESS != sai_status)
@@ -816,6 +819,18 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
 
         // Add reference to the buffer pool object
         setObjectReference(m_buffer_type_maps, map_type_name, object_name, buffer_pool_field_name, pool_name);
+
+        // Publish the result for lossless buffer profile
+        if (is_lossless)
+        {
+            vector<FieldValueTuple> fvs;
+            for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
+            {
+                fvs.emplace_back(fvField(*i), fvValue(*i));
+            }
+            SWSS_LOG_INFO("Publishing the result after applying lossless buffer profile %s to SAI", object_name.c_str());
+            m_publisher.publish(APP_BUFFER_PROFILE_TABLE_NAME, object_name, fvs, ReturnCode(SAI_STATUS_SUCCESS), true);
+        }
     }
     else if (op == DEL_COMMAND)
     {
@@ -826,6 +841,17 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
             (*(m_buffer_type_maps[map_type_name]))[object_name].m_pendingRemove = true;
 
             return task_process_status::task_need_retry;
+        }
+
+        // Check if the profile being deleted is a lossless profile before deletion
+        BufferProfileConfig cfg;
+        if (m_bufHlpr.getBufferConfig(cfg, object_name))
+        {
+            auto &fieldValueMap = cfg.fieldValueMap;
+            if (fieldValueMap.find(buffer_xoff_field_name) != fieldValueMap.end())
+            {
+                is_lossless = true;
+            }
         }
 
         if (SAI_NULL_OBJECT_ID != sai_object)
@@ -845,6 +871,14 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
         SWSS_LOG_NOTICE("Remove buffer profile %s with type %s", object_name.c_str(), map_type_name.c_str());
         removeObject(m_buffer_type_maps, map_type_name, object_name);
         m_bufHlpr.delBufferProfileConfig(object_name);
+
+        // Publish the result for lossless buffer profile deletion
+        if (is_lossless)
+        {
+            vector<FieldValueTuple> fvs;
+            SWSS_LOG_INFO("Publishing the result after removing lossless buffer profile %s", object_name.c_str());
+            m_publisher.publish(APP_BUFFER_PROFILE_TABLE_NAME, object_name, fvs, ReturnCode(SAI_STATUS_SUCCESS), true);
+        }
     }
     else
     {
@@ -1102,18 +1136,21 @@ task_process_status BufferOrch::processQueuePost(const QueueTask& task)
                 else if (gMySwitchType != "voq")
                 {
                     auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
-                    auto queues = tokens[1];
-                    if (!queueContext.counter_was_added && queueContext.counter_needs_to_add &&
-                        (flexCounterOrch->getQueueCountersState() || flexCounterOrch->getQueueWatermarkCountersState()))
+                    if (flexCounterOrch->isCreateOnlyConfigDbBuffers())
                     {
-                        SWSS_LOG_INFO("Creating counters for %s %zd", port_name.c_str(), ind);
-                        gPortsOrch->createPortBufferQueueCounters(port, queues);
-                    }
-                    else if (queueContext.counter_was_added && !queueContext.counter_needs_to_add &&
-                                (flexCounterOrch->getQueueCountersState() || flexCounterOrch->getQueueWatermarkCountersState()))
-                    {
-                        SWSS_LOG_INFO("Removing counters for %s %zd", port_name.c_str(), ind);
-                        gPortsOrch->removePortBufferQueueCounters(port, queues);
+                        auto queues = tokens[1];
+                        if (!queueContext.counter_was_added && queueContext.counter_needs_to_add &&
+                            (flexCounterOrch->getQueueCountersState() || flexCounterOrch->getQueueWatermarkCountersState()))
+                        {
+                            SWSS_LOG_INFO("Creating counters for %s %zd", port_name.c_str(), ind);
+                            gPortsOrch->createPortBufferQueueCounters(port, queues);
+                        }
+                        else if (queueContext.counter_was_added && !queueContext.counter_needs_to_add &&
+                                    (flexCounterOrch->getQueueCountersState() || flexCounterOrch->getQueueWatermarkCountersState()))
+                        {
+                            SWSS_LOG_INFO("Removing counters for %s %zd", port_name.c_str(), ind);
+                            gPortsOrch->removePortBufferQueueCounters(port, queues);
+                        }
                     }
                 }
             }
@@ -1470,18 +1507,21 @@ task_process_status BufferOrch::processPriorityGroupPost(const PriorityGroupTask
                 else
                 {
                     auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
-                    auto pgs = tokens[1];
-                    if (!pg.counter_was_added && pg.counter_needs_to_add &&
-                        (flexCounterOrch->getPgCountersState() || flexCounterOrch->getPgWatermarkCountersState()))
+                    if (flexCounterOrch->isCreateOnlyConfigDbBuffers())
                     {
-                        SWSS_LOG_INFO("Creating counters for priority group %s %zd", port_name.c_str(), ind);
-                        gPortsOrch->createPortBufferPgCounters(port, pgs);
-                    }
-                    else if (pg.counter_was_added && !pg.counter_needs_to_add &&
-                                (flexCounterOrch->getPgCountersState() || flexCounterOrch->getPgWatermarkCountersState()))
-                    {
-                        SWSS_LOG_INFO("Removing counters for priority group %s %zd", port_name.c_str(), ind);
-                        gPortsOrch->removePortBufferPgCounters(port, pgs);
+                        auto pgs = tokens[1];
+                        if (!pg.counter_was_added && pg.counter_needs_to_add &&
+                            (flexCounterOrch->getPgCountersState() || flexCounterOrch->getPgWatermarkCountersState()))
+                        {
+                            SWSS_LOG_INFO("Creating counters for priority group %s %zd", port_name.c_str(), ind);
+                            gPortsOrch->createPortBufferPgCounters(port, pgs);
+                        }
+                        else if (pg.counter_was_added && !pg.counter_needs_to_add &&
+                                    (flexCounterOrch->getPgCountersState() || flexCounterOrch->getPgWatermarkCountersState()))
+                        {
+                            SWSS_LOG_INFO("Removing counters for priority group %s %zd", port_name.c_str(), ind);
+                            gPortsOrch->removePortBufferPgCounters(port, pgs);
+                        }
                     }
                 }
             }

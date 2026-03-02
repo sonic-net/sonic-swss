@@ -1,0 +1,276 @@
+{
+    "DEVICE_METADATA": {
+        "localhost": {
+            "asic_name" : "Asic0",
+            "switch_type": "voq",
+            "switch_id": "0",
+            "max_cores": "8"
+        }
+    },
+    "SYSTEM_PORT": {
+        "VS|Asic0|Cpu0": {
+            "speed": "10000",
+            "system_port_id": "0",
+            "switch_id": "0",
+            "core_index": "0",
+            "num_voq":8,
+            "core_port_index": "0"
+        },
+        "VS|Asic0|Ethernet0": {
+            "speed": "40000",
+            "system_port_id": "1",
+            "switch_id": "0",
+            "core_index": "0",
+            "num_voq":8,
+            "core_port_index": "1"
+        },
+        "VS|Asic0|Ethernet4": {
+            "speed": "40000",
+            "system_port_id": "2",
+            "switch_id": "0",
+            "core_index": "0",
+            "num_voq":8,
+            "core_port_index": "2"
+        },
+        "VS|Asic0|Ethernet8": {
+            "speed": "40000",
+            "system_port_id": "3",
+            "switch_id": "0",
+            "core_index": "0",
+            "num_voq":8,
+            "core_port_index": "3"
+        },
+        "VS|Asic0|Ethernet12": {
+            "speed": "40000",
+            "system_port_id": "4",
+            "switch_id": "0",
+            "core_index": "0",
+            "num_voq":8,
+            "core_port_index": "4"
+        },
+        "VS|Asic0|Ethernet16": {
+            "speed": "40000",
+            "system_port_id": "5",
+            "switch_id": "0",
+            "core_index": "0",
+            "num_voq":8,
+            "core_port_index": "5"
+        },
+        "VS|Asic0|Ethernet20": {
+            "speed": "40000",
+            "system_port_id": "6",
+            "switch_id": "0",
+            "core_index": "0",
+            "num_voq":8,
+            "core_port_index": "6"
+        },
+        "VS|Asic0|Ethernet24": {
+            "speed": "40000",
+            "system_port_id": "7",
+            "switch_id": "0",
+            "core_index": "0",
+            "num_voq":8,
+            "core_port_index": "7"
+        },
+        "VS|Asic0|Ethernet28": {
+            "speed": "40000",
+            "system_port_id": "8",
+            "switch_id": "0",
+            "core_index": "0",
+            "num_voq":8,
+            "core_port_index": "8"
+        },
+        "VS|Asic0|Ethernet32": {
+            "speed": "40000",
+            "system_port_id": "9",
+            "switch_id": "0",
+            "core_index": "0",
+            "num_voq":8,
+            "core_port_index": "9"
+        },
+        "VS|Asic0|Ethernet36": {
+            "speed": "40000",
+            "system_port_id": "10",
+            "switch_id": "0",
+            "core_index": "0",
+            "num_voq":8,
+            "core_port_index": "10"
+        },
+        "VS|Asic0|Ethernet40": {
+            "speed": "40000",
+            "system_port_id": "11",
+            "switch_id": "0",
+            "core_index": "0",
+            "num_voq":8,
+            "core_port_index": "11"
+        },
+        "VS|Asic0|Ethernet44": {
+            "speed": "40000",
+            "system_port_id": "12",
+            "switch_id": "0",
+            "core_index": "0",
+            "num_voq":8,
+            "core_port_index": "12"
+        },
+        "VS|Asic0|Ethernet48": {
+            "speed": "40000",
+            "system_port_id": "13",
+            "switch_id": "0",
+            "core_index": "0",
+            "num_voq":8,
+            "core_port_index": "13"
+        },
+        "VS|Asic0|Ethernet52": {
+            "speed": "40000",
+            "system_port_id": "14",
+            "switch_id": "0",
+            "core_index": "0",
+            "num_voq":8,
+            "core_port_index": "14"
+        },
+        "VS|Asic0|Ethernet56": {
+            "speed": "40000",
+            "system_port_id": "15",
+            "switch_id": "0",
+            "core_index": "0",
+            "num_voq":8,
+            "core_port_index": "15"
+        },
+        "VS|Asic0|Ethernet60": {
+            "speed": "40000",
+            "system_port_id": "16",
+            "switch_id": "0",
+            "core_index": "0",
+            "num_voq":8,
+            "core_port_index": "16"
+        },
+        "VS|Asic0|Ethernet64": {
+            "speed": "40000",
+            "system_port_id": "17",
+            "switch_id": "0",
+            "core_index": "1",
+            "num_voq":8,
+            "core_port_index": "1"
+        },
+        "VS|Asic0|Ethernet68": {
+            "speed": "40000",
+            "system_port_id": "18",
+            "switch_id": "0",
+            "core_index": "1",
+            "num_voq":8,
+            "core_port_index": "2"
+        },
+        "VS|Asic0|Ethernet72": {
+            "speed": "40000",
+            "system_port_id": "19",
+            "switch_id": "0",
+            "core_index": "1",
+            "num_voq":8,
+            "core_port_index": "3"
+        },
+        "VS|Asic0|Ethernet76": {
+            "speed": "40000",
+            "system_port_id": "20",
+            "switch_id": "0",
+            "core_index": "1",
+            "num_voq":8,
+            "core_port_index": "4"
+        },
+        "VS|Asic0|Ethernet80": {
+            "speed": "40000",
+            "system_port_id": "21",
+            "switch_id": "0",
+            "core_index": "1",
+            "num_voq":8,
+            "core_port_index": "5"
+        },
+        "VS|Asic0|Ethernet84": {
+            "speed": "40000",
+            "system_port_id": "22",
+            "switch_id": "0",
+            "core_index": "1",
+            "num_voq":8,
+            "core_port_index": "6"
+        },
+        "VS|Asic0|Ethernet88": {
+            "speed": "40000",
+            "system_port_id": "23",
+            "switch_id": "0",
+            "core_index": "1",
+            "num_voq":8,
+            "core_port_index": "7"
+        },
+        "VS|Asic0|Ethernet92": {
+            "speed": "40000",
+            "system_port_id": "24",
+            "switch_id": "0",
+            "core_index": "1",
+            "num_voq":8,
+            "core_port_index": "8"
+        },
+        "VS|Asic0|Ethernet96": {
+            "speed": "40000",
+            "system_port_id": "25",
+            "switch_id": "0",
+            "core_index": "1",
+            "num_voq":8,
+            "core_port_index": "9"
+        },
+        "VS|Asic0|Ethernet100": {
+            "speed": "40000",
+            "system_port_id": "26",
+            "switch_id": "0",
+            "core_index": "1",
+            "num_voq":8,
+            "core_port_index": "10"
+        },
+        "VS|Asic0|Ethernet104": {
+            "speed": "40000",
+            "system_port_id": "27",
+            "switch_id": "0",
+            "core_index": "1",
+            "num_voq":8,
+            "core_port_index": "11"
+        },
+        "VS|Asic0|Ethernet108": {
+            "speed": "40000",
+            "system_port_id": "28",
+            "switch_id": "0",
+            "core_index": "1",
+            "num_voq":8,
+            "core_port_index": "12"
+        },
+        "VS|Asic0|Ethernet112": {
+            "speed": "40000",
+            "system_port_id": "29",
+            "switch_id": "0",
+            "core_index": "1",
+            "num_voq":8,
+            "core_port_index": "13"
+        },
+        "VS|Asic0|Ethernet116": {
+            "speed": "40000",
+            "system_port_id": "30",
+            "switch_id": "0",
+            "core_index": "1",
+            "num_voq":8,
+            "core_port_index": "14"
+        },
+        "VS|Asic0|Ethernet120": {
+            "speed": "40000",
+            "system_port_id": "31",
+            "switch_id": "0",
+            "core_index": "1",
+            "num_voq":8,
+            "core_port_index": "15"
+        },
+        "VS|Asic0|Ethernet124": {
+            "speed": "40000",
+            "system_port_id": "32",
+            "switch_id": "0",
+            "core_index": "1",
+            "num_voq":8,
+            "core_port_index": "16"
+        }
+    }
+}

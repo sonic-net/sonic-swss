@@ -1,5 +1,6 @@
 #pragma once
 
+#include <deque>
 #include <iomanip>
 #include <map>
 #include <set>
@@ -11,6 +12,8 @@
 #include "ipaddress.h"
 #include "ipprefix.h"
 #include "macaddress.h"
+#include "response_publisher_interface.h"
+#include "return_code.h"
 #include "table.h"
 extern "C"
 {
@@ -23,8 +26,11 @@ namespace p4orch
 // Field names in P4RT APP DB entry.
 constexpr char *kTablePrefixEXT = "EXT_";
 constexpr char *kRouterInterfaceId = "router_interface_id";
+constexpr char* kMulticastGroupId = "multicast_group_id";
 constexpr char *kPort = "port";
 constexpr char *kInPort = "in_port";
+constexpr char* kMulticastReplicaPort = "multicast_replica_port";
+constexpr char* kMulticastReplicaInstance = "multicast_replica_instance";
 constexpr char *kSrcMac = "src_mac";
 constexpr char *kAction = "action";
 constexpr char *kActions = "actions";
@@ -39,8 +45,11 @@ constexpr char *kIpv4Dst = "ipv4_dst";
 constexpr char *kIpv6Dst = "ipv6_dst";
 constexpr char *kWcmpGroupId = "wcmp_group_id";
 constexpr char *kRouteMetadata = "route_metadata";
+constexpr char* kMulticastMetadata = "multicast_metadata";
 constexpr char *kSetNexthopId = "set_nexthop_id";
 constexpr char *kSetWcmpGroupId = "set_wcmp_group_id";
+constexpr char* kSetMulticastGroupId = "set_multicast_group_id";
+constexpr char* kSetSrcMac = "set_src_mac";
 constexpr char *kSetNexthopIdAndMetadata = "set_nexthop_id_and_metadata";
 constexpr char *kSetWcmpGroupIdAndMetadata = "set_wcmp_group_id_and_metadata";
 constexpr char *kSetMetadataAndDrop = "set_metadata_and_drop";
@@ -330,6 +339,10 @@ std::string verifyAttrs(const std::vector<swss::FieldValueTuple> &targets,
                         const std::vector<swss::FieldValueTuple> &exp, const std::vector<swss::FieldValueTuple> &opt,
                         bool allow_unknown);
 
+// Helper function to drain all entries in the manager without execution.
+void drainMgmtWithNotExecuted(std::deque<swss::KeyOpFieldsValuesTuple>& entries,
+                              ResponsePublisherInterface* publisher);
+
 // class KeyGenerator includes member functions to generate keys for entries
 // stored in P4 Orch managers.
 class KeyGenerator
@@ -346,6 +359,19 @@ class KeyGenerator
     static std::string generateNextHopKey(const std::string &next_hop_id);
 
     static std::string generateMirrorSessionKey(const std::string &mirror_session_id);
+
+    static std::string generateMulticastRouterInterfaceKey(
+        const std::string& multicast_replica_port,
+        const std::string& multicast_replica_instance);
+
+    static std::string generateMulticastReplicationKey(
+        const std::string& multicast_group_id,
+        const std::string& multicast_replica_port,
+        const std::string& multicast_replica_instance);
+
+    static std::string generateMulticastRouterInterfaceRifKey(
+        const std::string& multicast_replica_port,
+        const swss::MacAddress& src_mac);
 
     static std::string generateWcmpGroupKey(const std::string &wcmp_group_id);
 

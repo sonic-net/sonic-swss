@@ -28,6 +28,8 @@ extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
 extern string                      gMySwitchType;
 extern string                      gMySwitchSubType;
+extern bool                        gOrchUnhealthy;
+extern string                      gSaiErrorString;
 
 extern void syncd_apply_view();
 /*
@@ -63,6 +65,7 @@ Srv6Orch *gSrv6Orch;
 FlowCounterRouteOrch *gFlowCounterRouteOrch;
 DebugCounterOrch *gDebugCounterOrch;
 MonitorOrch *gMonitorOrch;
+BfdMonitorOrch *gBfdMonitorOrch;
 TunnelDecapOrch *gTunneldecapOrch;
 StpOrch *gStpOrch;
 MuxOrch *gMuxOrch;
@@ -260,6 +263,8 @@ bool OrchDaemon::init()
     gDirectory.set(vrf_orch);
     gMonitorOrch = new MonitorOrch(m_stateDb, STATE_VNET_MONITOR_TABLE_NAME);
     gDirectory.set(gMonitorOrch);
+    gBfdMonitorOrch = new BfdMonitorOrch(m_stateDb, STATE_BFD_SESSION_TABLE_NAME);
+    gDirectory.set(gBfdMonitorOrch);
 
     const vector<string> chassis_frontend_tables = {
         CFG_PASS_THROUGH_ROUTE_TABLE_NAME,
@@ -377,7 +382,7 @@ bool OrchDaemon::init()
 
     TableConnector stateDbMirrorSession(m_stateDb, STATE_MIRROR_SESSION_TABLE_NAME);
     TableConnector confDbMirrorSession(m_configDb, CFG_MIRROR_SESSION_TABLE_NAME);
-    gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, gPolicerOrch);
+    gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, gPolicerOrch, gSwitchOrch);
 
     TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_TABLE_NAME);
     TableConnector confDbAclTableType(m_configDb, CFG_ACL_TABLE_TYPE_TABLE_NAME);
@@ -419,7 +424,8 @@ bool OrchDaemon::init()
 
     vector<string> debug_counter_tables = {
         CFG_DEBUG_COUNTER_TABLE_NAME,
-        CFG_DEBUG_COUNTER_DROP_REASON_TABLE_NAME
+        CFG_DEBUG_COUNTER_DROP_REASON_TABLE_NAME,
+        CFG_DEBUG_DROP_MONITOR_TABLE_NAME
     };
 
     gDebugCounterOrch = new DebugCounterOrch(m_configDb, debug_counter_tables, 1000);
@@ -470,7 +476,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gStpOrch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
@@ -591,7 +597,8 @@ bool OrchDaemon::init()
     }
 
     vector<string> flex_counter_tables = {
-        CFG_FLEX_COUNTER_TABLE_NAME
+        CFG_FLEX_COUNTER_TABLE_NAME,
+        CFG_DEVICE_METADATA_TABLE_NAME
     };
 
     auto* flexCounterOrch = new FlexCounterOrch(m_configDb, flex_counter_tables);
@@ -645,6 +652,7 @@ bool OrchDaemon::init()
     }
     else if ((platform == MRVL_TL_PLATFORM_SUBSTRING)
 	     || (platform == MRVL_PRST_PLATFORM_SUBSTRING)
+             || (platform == CLX_PLATFORM_SUBSTRING)
              || (platform == BFN_PLATFORM_SUBSTRING)
              || (platform == NPS_PLATFORM_SUBSTRING))
     {
@@ -679,6 +687,7 @@ bool OrchDaemon::init()
 
         if ((platform == MRVL_PRST_PLATFORM_SUBSTRING) ||
 	    (platform == MRVL_TL_PLATFORM_SUBSTRING) ||
+	    (platform == CLX_PLATFORM_SUBSTRING) ||
 	    (platform == NPS_PLATFORM_SUBSTRING))
         {
             m_orchList.push_back(new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
@@ -861,12 +870,27 @@ void OrchDaemon::flush()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to flush redis pipeline %d", status);
-        handleSaiFailure(SAI_API_SWITCH, "set", status);
+        handleSaiFailure(SAI_API_SWITCH, "set", status, true);
     }
 
-    for (auto* orch: m_orchList)
+    /*
+     * Don't flush if ringbuffer is enable and it is not empty or Idle. Ring buffer thread
+     * could trigger notification update.
+     *
+     * Flush would be triggered later after SELECT_TIMEOUT in main thread again
+     * for avoiding race condition.
+     */
+    if (gRingBuffer &&(!gRingBuffer->IsEmpty() || !gRingBuffer->IsIdle()))
     {
-        orch->flushResponses();
+        gRingBuffer->notify();
+        SWSS_LOG_WARN("Skip Flush waiting for RingBuffer empty");
+    }
+    else
+    {
+        for (auto* orch: m_orchList)
+        {
+            orch->flushResponses();
+        }
     }
 }
 
@@ -905,6 +929,15 @@ void OrchDaemon::start(long heartBeatInterval)
         int ret;
 
         ret = m_select->select(&s, SELECT_TIMEOUT);
+
+        /*
+         * Log an error message periodically if a previous SAI API call failed with
+         * an unrecoverable error.
+         */
+        if (gOrchUnhealthy)
+        {
+            SWSS_LOG_ERROR("%s", gSaiErrorString.c_str());
+        }
 
         auto tend = std::chrono::high_resolution_clock::now();
         heartBeat(tend, heartBeatInterval);
@@ -1022,6 +1055,8 @@ void OrchDaemon::start(long heartBeatInterval)
  */
 bool OrchDaemon::warmRestoreAndSyncUp()
 {
+    SWSS_LOG_ENTER();
+
     WarmStart::setWarmStartState("orchagent", WarmStart::INITIALIZED);
 
     for (Orch *o : m_orchList)
@@ -1262,7 +1297,7 @@ bool DpuOrchDaemon::init()
         APP_DASH_VNET_TABLE_NAME,
         APP_DASH_VNET_MAPPING_TABLE_NAME
     };
-    DashVnetOrch *dash_vnet_orch = new DashVnetOrch(m_applDb, dash_vnet_tables, m_dpu_appstateDb, dash_zmq_server);
+    DashVnetOrch *dash_vnet_orch = new DashVnetOrch(m_dpu_appDb, dash_vnet_tables, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_vnet_orch);
 
     vector<string> dash_tables = {
@@ -1273,15 +1308,16 @@ bool DpuOrchDaemon::init()
         APP_DASH_QOS_TABLE_NAME
     };
 
-    DashOrch *dash_orch = new DashOrch(m_applDb, dash_tables, m_dpu_appstateDb, dash_zmq_server);
+    DashOrch *dash_orch = new DashOrch(m_dpu_appDb, dash_tables, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_orch);
 
     vector<string> dash_ha_tables = {
         APP_DASH_HA_SET_TABLE_NAME,
-        APP_DASH_HA_SCOPE_TABLE_NAME
+        APP_DASH_HA_SCOPE_TABLE_NAME,
+        APP_BFD_SESSION_TABLE_NAME
     };
 
-    DashHaOrch *dash_ha_orch = new DashHaOrch(m_dpu_appDb, dash_ha_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
+    DashHaOrch *dash_ha_orch = new DashHaOrch(m_dpu_appDb, dash_ha_tables, dash_orch, gBfdOrch, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_ha_orch);
 
     vector<string> dash_route_tables = {
@@ -1290,7 +1326,7 @@ bool DpuOrchDaemon::init()
         APP_DASH_ROUTE_GROUP_TABLE_NAME
     };
 
-    DashRouteOrch *dash_route_orch = new DashRouteOrch(m_applDb, dash_route_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
+    DashRouteOrch *dash_route_orch = new DashRouteOrch(m_dpu_appDb, dash_route_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_route_orch);
 
     vector<string> dash_acl_tables = {
@@ -1300,27 +1336,28 @@ bool DpuOrchDaemon::init()
         APP_DASH_ACL_GROUP_TABLE_NAME,
         APP_DASH_ACL_RULE_TABLE_NAME
     };
-    DashAclOrch *dash_acl_orch = new DashAclOrch(m_applDb, dash_acl_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
+    DashAclOrch *dash_acl_orch = new DashAclOrch(m_dpu_appDb, dash_acl_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_acl_orch);
 
     vector<string> dash_tunnel_tables = {
         APP_DASH_TUNNEL_TABLE_NAME
     };
-    DashTunnelOrch *dash_tunnel_orch = new DashTunnelOrch(m_applDb, dash_tunnel_tables, m_dpu_appstateDb, dash_zmq_server);
+    DashTunnelOrch *dash_tunnel_orch = new DashTunnelOrch(m_dpu_appDb, dash_tunnel_tables, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_tunnel_orch);
 
     vector<string> dash_meter_tables = {
         APP_DASH_METER_POLICY_TABLE_NAME,
         APP_DASH_METER_RULE_TABLE_NAME
     };
-    DashMeterOrch *dash_meter_orch = new DashMeterOrch(m_applDb, dash_meter_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
+
+    DashMeterOrch *dash_meter_orch = new DashMeterOrch(m_dpu_appDb, dash_meter_tables, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_meter_orch);
 
     vector<string> dash_port_map_tables = {
         APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME,
         APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME
     };
-    DashPortMapOrch *dash_port_map_orch = new DashPortMapOrch(m_applDb, dash_port_map_tables, m_dpu_appstateDb, dash_zmq_server);
+    DashPortMapOrch *dash_port_map_orch = new DashPortMapOrch(m_dpu_appDb, dash_port_map_tables, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_port_map_orch);
 
     addOrchList(dash_acl_orch);
