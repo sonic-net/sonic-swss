@@ -30,7 +30,6 @@ struct P4MulticastRouterInterfaceEntry {
   bool has_src_mac = false;
   std::string action;
   std::string multicast_metadata;
-  sai_object_id_t router_interface_oid = SAI_OBJECT_TYPE_NULL;
 
   P4MulticastRouterInterfaceEntry() = default;
   P4MulticastRouterInterfaceEntry(const std::string& port,
@@ -67,8 +66,8 @@ struct P4MulticastGroupEntry {
   std::vector<P4Replica> replicas;
   std::string multicast_metadata;
   std::string controller_metadata;
-  sai_object_id_t multicast_group_oid = SAI_OBJECT_TYPE_NULL;
-  std::unordered_map<std::string, sai_object_id_t> member_oids;
+  // Used as a quick lookup for what replicas are in use.
+  std::unordered_set<std::string> replica_keys;
 
   P4MulticastGroupEntry() = default;
   P4MulticastGroupEntry(const std::string& group_id,
@@ -245,6 +244,10 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Separate add logic for IP vs. L2 multicast groups.
   ReturnCode addIpMulticastGroupEntry(P4MulticastGroupEntry& entry);
   ReturnCode addL2MulticastGroupEntry(P4MulticastGroupEntry& entry);
+  // TODO : We need to create a temporary l2mc entry to force
+  // syncd to create the l2mc group SAI object.
+  ReturnCode activateL2MulticastGroup(const sai_object_id_t l2mc_group_oid);
+
   // Update existing multicast group table entries.
   std::vector<ReturnCode> updateMulticastGroupEntries(
       std::vector<P4MulticastGroupEntry>& entries);
@@ -345,19 +348,10 @@ class L3MulticastManager : public ObjectManagerInterface {
   P4MulticastRouterInterfaceTable m_multicastRouterInterfaceTable;
   P4MulticastGroupTable m_multicastGroupEntryTable;
 
-  // Several maps to keep track of entry relationships.
-
-  // Egress port / router interface key -> RIF OID.
-  // Note that we ignore multicast_replica_instance, because that is for
-  // controller bookkeeping.
-  std::unordered_map<std::string, sai_object_id_t> m_rifOids;
-  // RIF OIDs -> which router interface entries are using it.
-  std::unordered_map<sai_object_id_t,
-                     std::vector<P4MulticastRouterInterfaceEntry>>
-      m_rifOidToRouterInterfaceEntries;
-  // RIF OIDs -> multicast group members using the RIF.
-  std::unordered_map<sai_object_id_t, std::unordered_set<std::string>>
-      m_rifOidToMulticastGroupMembers;
+  // Helpful reference count map that indicates how many group members are using
+  // a particular multicast_router_interface_table entry.
+  // Maps multicast_router_interface_table entry key to count.
+  std::unordered_map<std::string, int> m_multicastRifEntryRefCount;
 
   P4OidMapper* m_p4OidMapper;
   VRFOrch* m_vrfOrch;
