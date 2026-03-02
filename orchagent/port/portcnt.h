@@ -200,7 +200,7 @@ public:
             bool is_set = false;
         } rxpolarity; // Port serdes RX polarity
 
-    } serdes; // Port serdes
+    } serdes, serdes_gb_line, serdes_gb_system; // Port serdes (ASIC port, gearbox line-side, gearbox system-side)
 
     struct {
         swss::Port::Role value;

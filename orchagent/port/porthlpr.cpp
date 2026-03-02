@@ -25,6 +25,9 @@ typedef decltype(PortConfig::link_event_damping_config) PortDampingConfig_t;
 
 // constants ----------------------------------------------------------------------------------------------------------
 
+static const std::string GB_LINE_PREFIX = "gb_line_";
+static const std::string GB_SYSTEM_PREFIX = "gb_system_";
+
 static const std::uint32_t minPortSpeed = 1;
 static const std::uint32_t maxPortSpeed = 1600000;
 
@@ -960,6 +963,20 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         const auto &field = cit.first;
         const auto &value = cit.second;
 
+        std::string serdes_field = field;
+        PortSerdes_t *serdes = &port.serdes;
+
+        if (field.rfind(GB_LINE_PREFIX, 0) == 0)
+        {
+            serdes_field = field.substr(GB_LINE_PREFIX.size());
+            serdes = &port.serdes_gb_line;
+        } 
+        else if (field.rfind(GB_SYSTEM_PREFIX, 0) == 0)
+        {
+            serdes_field = field.substr(GB_SYSTEM_PREFIX.size());
+            serdes = &port.serdes_gb_system;
+        }
+
         if (field == PORT_ALIAS)
         {
             if (!this->parsePortAlias(port, field, value))
@@ -1065,135 +1082,135 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
                 return false;
             }
         }
-        else if (field == PORT_PREEMPHASIS)
+        else if (serdes_field == PORT_PREEMPHASIS)
         {
-            if (!this->parsePortSerdes(port.serdes.preemphasis, field, value))
+            if (!this->parsePortSerdes(serdes->preemphasis, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_IDRIVER)
+        else if (serdes_field == PORT_IDRIVER)
         {
-            if (!this->parsePortSerdes(port.serdes.idriver, field, value))
+            if (!this->parsePortSerdes(serdes->idriver, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_IPREDRIVER)
+        else if (serdes_field == PORT_IPREDRIVER)
         {
-            if (!this->parsePortSerdes(port.serdes.ipredriver, field, value))
+            if (!this->parsePortSerdes(serdes->ipredriver, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_PRE1)
+        else if (serdes_field == PORT_PRE1)
         {
-            if (!this->parsePortSerdes(port.serdes.pre1, field, value))
+            if (!this->parsePortSerdes(serdes->pre1, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_PRE2)
+        else if (serdes_field == PORT_PRE2)
         {
-            if (!this->parsePortSerdes(port.serdes.pre2, field, value))
+            if (!this->parsePortSerdes(serdes->pre2, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_PRE3)
+        else if (serdes_field == PORT_PRE3)
         {
-            if (!this->parsePortSerdes(port.serdes.pre3, field, value))
+            if (!this->parsePortSerdes(serdes->pre3, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_MAIN)
+        else if (serdes_field == PORT_MAIN)
         {
-            if (!this->parsePortSerdes(port.serdes.main, field, value))
+            if (!this->parsePortSerdes(serdes->main, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_POST1)
+        else if (serdes_field == PORT_POST1)
         {
-            if (!this->parsePortSerdes(port.serdes.post1, field, value))
+            if (!this->parsePortSerdes(serdes->post1, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_POST2)
+        else if (serdes_field == PORT_POST2)
         {
-            if (!this->parsePortSerdes(port.serdes.post2, field, value))
+            if (!this->parsePortSerdes(serdes->post2, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_POST3)
+        else if (serdes_field == PORT_POST3)
         {
-            if (!this->parsePortSerdes(port.serdes.post3, field, value))
+            if (!this->parsePortSerdes(serdes->post3, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_ATTN)
+        else if (serdes_field == PORT_ATTN)
         {
-            if (!this->parsePortSerdes(port.serdes.attn, field, value))
+            if (!this->parsePortSerdes(serdes->attn, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_OB_M2LP)
+        else if (serdes_field == PORT_OB_M2LP)
         {
-            if (!this->parsePortSerdes(port.serdes.ob_m2lp, field, value))
+            if (!this->parsePortSerdes(serdes->ob_m2lp, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_OB_ALEV_OUT)
+        else if (serdes_field == PORT_OB_ALEV_OUT)
         {
-            if (!this->parsePortSerdes(port.serdes.ob_alev_out, field, value))
+            if (!this->parsePortSerdes(serdes->ob_alev_out, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_OBPLEV)
+        else if (serdes_field == PORT_OBPLEV)
         {
-            if (!this->parsePortSerdes(port.serdes.obplev, field, value))
+            if (!this->parsePortSerdes(serdes->obplev, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_OBNLEV)
+        else if (serdes_field == PORT_OBNLEV)
         {
-            if (!this->parsePortSerdes(port.serdes.obnlev, field, value))
+            if (!this->parsePortSerdes(serdes->obnlev, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_REGN_BFM1P)
+        else if (serdes_field == PORT_REGN_BFM1P)
         {
-            if (!this->parsePortSerdes(port.serdes.regn_bfm1p, field, value))
+            if (!this->parsePortSerdes(serdes->regn_bfm1p, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_TX_POLARITY)
+        else if (serdes_field == PORT_TX_POLARITY)
         {
-            if (!this->parsePortSerdes(port.serdes.txpolarity, field, value))
+            if (!this->parsePortSerdes(serdes->txpolarity, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_RX_POLARITY)
+        else if (serdes_field == PORT_RX_POLARITY)
         {
-            if (!this->parsePortSerdes(port.serdes.rxpolarity, field, value))
+            if (!this->parsePortSerdes(serdes->rxpolarity, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_REGN_BFM1N)
+        else if (serdes_field == PORT_REGN_BFM1N)
         {
-            if (!this->parsePortSerdes(port.serdes.regn_bfm1n, field, value))
+            if (!this->parsePortSerdes(serdes->regn_bfm1n, field, value))
             {
                 return false;
             }
