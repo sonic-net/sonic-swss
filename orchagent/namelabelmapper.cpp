@@ -22,7 +22,7 @@ bool NameLabelMapper::setLabel(_In_ sai_object_type_t object_type,
                                _In_ std::string& label) {
   SWSS_LOG_ENTER();
   if (existsLabel(object_type, key)) {
-    SWSS_LOG_ERROR(
+    SWSS_LOG_NOTICE(
         "Key %s with SAI object type %d already exists in label mapper",
         key.c_str(), object_type);
     return false;
