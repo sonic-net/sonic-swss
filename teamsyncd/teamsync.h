@@ -13,7 +13,7 @@
 
 #define TEAMSYNCD_APP_NAME  "teamsyncd"
 // seconds
-const uint32_t DEFAULT_WR_PENDING_TIMEOUT = 70;
+const uint32_t DEFAULT_WR_PENDING_TIMEOUT = 120;
 
 using namespace std::chrono;
 
