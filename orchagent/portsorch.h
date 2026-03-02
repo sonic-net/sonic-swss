@@ -133,6 +133,13 @@ struct PortCapability
 
 typedef PortCapability<PortSupportedFecModes> PortFecModeCapability_t;
 
+namespace gearbox_test
+{
+struct GearboxPortsOrchTest;
+struct GearboxEnabledPortsOrchTest;
+struct GearboxFullCoverageTest;
+} // namespace gearbox_test
+
 class PortsOrch : public Orch, public Subject
 {
 public:
@@ -613,5 +620,8 @@ private:
     // Port OA helper
     PortHelper m_portHlpr;
     bool m_isWarmRestoreStage = false;
+    friend struct gearbox_test::GearboxPortsOrchTest;
+    friend struct gearbox_test::GearboxEnabledPortsOrchTest;
+    friend struct gearbox_test::GearboxFullCoverageTest;
 };
 #endif /* SWSS_PORTSORCH_H */

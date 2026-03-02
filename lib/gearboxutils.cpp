@@ -53,6 +53,12 @@ bool GearboxUtils::platformHasGearbox()
 {
     bool ret = false;
 
+    /* Allow unit tests to enable gearbox without config file (set GEARBOX_UT_TEST_ENABLE=1) */
+    if (getenv("GEARBOX_UT_TEST_ENABLE"))
+    {
+        return true;
+    }
+
     if (access("/usr/share/sonic/hwsku/gearbox_config.json", F_OK) != -1)
     {
         ret = true;
