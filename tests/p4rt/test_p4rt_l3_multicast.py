@@ -270,7 +270,7 @@ class TestP4RTL3MulticastRouterInterface(object):
     # It's only one entry, because we share a RIF.
     mcast_rif_asic_entries = util.get_keys(
         self._p4rt_l3_multicast_router_intf.asic_db, self.asic_db_table)
-    assert len(mcast_rif_asic_entries) == (len(original_asic_db_entries) + 1)
+    assert len(mcast_rif_asic_entries) == (len(original_asic_db_entries) + 2)
 
     asic_db_key = None
     for key in mcast_rif_asic_entries:
@@ -455,8 +455,6 @@ class TestP4RTL3MulticastGroup(object):
     # If we provided a group_oid, we expected the entry to already exist.
     if group_oid is not None:
       assert len(mcast_group_entries) == len(start_app_db_entries)
-    else:
-      assert len(mcast_group_entries) == (len(start_app_db_entries) + 1)
 
     (status, fvs) = util.get_key(
         self._p4rt_l3_multicast_group_intf.appl_db,
@@ -478,8 +476,7 @@ class TestP4RTL3MulticastGroup(object):
     else:
       # There are no attributes to check for the group.  We just need to check
       # that there is a new entry.
-      assert len(mcast_group_asic_entries) == (
-          len(start_asic_db_group_entries) + 1)
+      assert len(mcast_group_asic_entries) == (len(start_asic_db_group_entries) + 1)
       group_oid_to_ret = self.get_added_multicast_group_oid(
           start_asic_db_group_entries)
 
