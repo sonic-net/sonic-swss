@@ -196,20 +196,6 @@ std::string KeyGenerator::generateMulticastReplicationKey(
   return generateKey(fv_map);
 }
 
-std::string KeyGenerator::generateMulticastRouterInterfaceRifKey(
-    const std::string& multicast_replica_port,
-    const swss::MacAddress& src_mac) {
-  std::map<std::string, std::string> fv_map = {};
-
-  fv_map.emplace(std::string(p4orch::kMatchPrefix) + p4orch::kFieldDelimiter +
-                     p4orch::kMulticastReplicaPort,
-                 multicast_replica_port);
-  fv_map.emplace(std::string(p4orch::kActionParamPrefix) +
-                     p4orch::kFieldDelimiter + p4orch::kSrcMac,
-                 src_mac.to_string());
-  return generateKey(fv_map);
-}
-
 std::string KeyGenerator::generateWcmpGroupKey(const std::string &wcmp_group_id)
 {
     std::map<std::string, std::string> fv_map = {{p4orch::kWcmpGroupId, wcmp_group_id}};

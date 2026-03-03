@@ -371,10 +371,6 @@ class KeyGenerator
         const std::string& multicast_replica_port,
         const std::string& multicast_replica_instance);
 
-    static std::string generateMulticastRouterInterfaceRifKey(
-        const std::string& multicast_replica_port,
-        const swss::MacAddress& src_mac);
-
     static std::string generateWcmpGroupKey(const std::string &wcmp_group_id);
 
     static std::string generateAclRuleKey(const std::map<std::string, std::string> &match_fields,

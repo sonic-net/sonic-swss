@@ -190,8 +190,7 @@ class L3MulticastManager : public ObjectManagerInterface {
                               sai_object_id_t* bridge_port_oid);
   ReturnCode deleteBridgePort(const std::string& port,
                               sai_object_id_t bridge_port_oid);
-  ReturnCode createRouterInterface(const std::string& rif_key,
-                                   P4MulticastRouterInterfaceEntry& entry,
+  ReturnCode createRouterInterface(P4MulticastRouterInterfaceEntry& entry,
                                    sai_object_id_t* rif_oid);
   ReturnCode deleteRouterInterface(const std::string& rif_key,
                                    sai_object_id_t rif_oid);
@@ -303,6 +302,10 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Verifies ASIC DB for a multicast group entry.
   std::string verifyMulticastGroupStateAsicDb(
       const P4MulticastGroupEntry* multicast_group_entry);
+  std::string verifyIpMulticastGroupStateAsicDb(
+      const P4MulticastGroupEntry* multicast_group_entry);
+  std::string verifyL2MulticastGroupStateAsicDb(
+      const P4MulticastGroupEntry* multicast_group_entry);
 
   // Gets the internal cached multicast router interface entry.
   // Return nullptr if corresponding multicast router interface entry is not
@@ -347,11 +350,6 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Internal cache of entries.
   P4MulticastRouterInterfaceTable m_multicastRouterInterfaceTable;
   P4MulticastGroupTable m_multicastGroupEntryTable;
-
-  // Helpful reference count map that indicates how many group members are using
-  // a particular multicast_router_interface_table entry.
-  // Maps multicast_router_interface_table entry key to count.
-  std::unordered_map<std::string, int> m_multicastRifEntryRefCount;
 
   P4OidMapper* m_p4OidMapper;
   VRFOrch* m_vrfOrch;
