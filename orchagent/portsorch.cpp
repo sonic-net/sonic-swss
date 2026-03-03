@@ -5264,7 +5264,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 auto programSerdes = [&](
                     sai_object_id_t port_id,
                     sai_object_id_t switch_id,
-                    map<sai_port_serdes_attr_t, SerdesValue> &serdes_attr,
+                    PortSerdesAttrMap_t &serdes_attr,
                     const char* serdes_type_name) -> bool
                 {
                     if (p.m_admin_state_up)
