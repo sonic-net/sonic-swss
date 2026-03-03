@@ -394,7 +394,7 @@ class DockerVirtualSwitch:
                 cr_prefix = os.environ['DEFAULT_CONTAINER_REGISTRY'].rstrip("/") + "/"
             else:
                 cr_prefix = ''
-            self.ctn_sw = self.client.containers.run(cr_prefix + "debian:jessie",
+            self.ctn_sw = self.client.containers.run(cr_prefix + "debian:bookworm",
                                                      privileged=True,
                                                      detach=True,
                                                      command="bash",
