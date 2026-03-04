@@ -39,9 +39,6 @@ using sai_attrs_array_t =
 
 extern sai_object_id_t gSwitchId;
 extern sai_object_id_t gUnderlayIfId;
-extern sai_object_id_t gVrfOid;
-extern char* gVrfName;
-extern VRFOrch* gVrfOrch;
 extern sai_tunnel_api_t* sai_tunnel_api;
 extern sai_router_interface_api_t* sai_router_intfs_api;
 extern MockSaiTunnel* mock_sai_tunnel;
@@ -94,22 +91,19 @@ const Ipv6TunnelTermAppDbEntry kIpv6TunnelTermAppDbEntry1{
     /*src_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcMask1),
     /*dst_ipv6_ip=*/swss::IpAddress(kIpv6TunnelTermAppDbDstIp1),
     /*dst_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbDstMask1),
-    /*vrf_id=*/gVrfName,
-    /*action_str=*/"mark_for_tunnel_decap_and_set_vrf"};
+    /*action_str=*/"tunnel_decap"};
 const Ipv6TunnelTermAppDbEntry kIpv6TunnelTermAppDbEntry2{
     /*src_ipv6_ip=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcIp2),
     /*src_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcMask2),
     /*dst_ipv6_ip=*/swss::IpAddress(kIpv6TunnelTermAppDbDstIp2),
     /*dst_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbDstMask2),
-    /*vrf_id=*/gVrfName,
-    /*action_str=*/"mark_for_tunnel_decap_and_set_vrf"};
+    /*action_str=*/"tunnel_decap"};
 const Ipv6TunnelTermAppDbEntry kIpv6TunnelTermAppDbEntry3{
     /*src_ipv6_ip=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcIp3),
     /*src_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcMask3),
     /*dst_ipv6_ip=*/swss::IpAddress(kIpv6TunnelTermAppDbDstIp3),
     /*dst_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbDstMask3),
-    /*vrf_id=*/gVrfName,
-    /*action_str=*/"mark_for_tunnel_decap_and_set_vrf"};
+    /*action_str=*/"tunnel_decap"};
 
 bool MatchSaiAttrList(const sai_attribute_t* attr_list,
                       const std::vector<sai_attribute_t>& expected_attr_list) {
@@ -210,10 +204,6 @@ std::vector<sai_attribute_t> CreateSaiAttrs(
   swss::copy(attr.value.ipaddr, app_entry.dst_ipv6_mask);
   attrs.push_back(attr);
 
-  attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_VR_ID;
-  attr.value.oid = gVrfOid;
-  attrs.push_back(attr);
-
   attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID;
   attr.value.oid = kDummyTunnelOid;
   attrs.push_back(attr);
@@ -224,7 +214,7 @@ std::vector<sai_attribute_t> CreateSaiAttrs(
 class TunnelDecapGroupManagerTest : public ::testing::Test {
  protected:
   TunnelDecapGroupManagerTest()
-      : tunnel_decap_group_manager_(&p4_oid_mapper_, gVrfOrch, &publisher_) {}
+      : tunnel_decap_group_manager_(&p4_oid_mapper_, &publisher_) {}
 
   void SetUp() override {
     // Set up mock stuff for SAI tunnel API structure.
@@ -308,12 +298,11 @@ class TunnelDecapGroupManagerTest : public ::testing::Test {
 
 Ipv6TunnelTermTableEntry*
 TunnelDecapGroupManagerTest::AddIpv6TunnelTermAppDbEntry1() {
-  uint32_t vrf_prev_ref_count = gVrfOrch->getVrfRefCount(gVrfName);
 
   // Set up mock call.
   EXPECT_CALL(mock_sai_tunnel_,
               create_tunnel_term_table_entry(
-                  ::testing::NotNull(), Eq(gSwitchId), Eq(8),
+                  ::testing::NotNull(), Eq(gSwitchId), Eq(7),
                   AttrListEq(CreateSaiAttrs(kIpv6TunnelTermAppDbEntry1))))
       .WillOnce(DoAll(SetArgPointee<0>(kIpv6TunnelTermEntryOid1),
                       Return(SAI_STATUS_SUCCESS)));
@@ -334,8 +323,6 @@ TunnelDecapGroupManagerTest::AddIpv6TunnelTermAppDbEntry1() {
   EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                        ipv6_tunnel_term_entry_key));
 
-  EXPECT_THAT(gVrfOrch->getVrfRefCount(gVrfName), Eq(vrf_prev_ref_count + 1));
-
   return GetIpv6TunnelTermEntry(ipv6_tunnel_term_entry_key);
 }
 
@@ -350,8 +337,7 @@ bool TunnelDecapGroupManagerTest::ValidateIpv6TunnelTermEntryAdd(
 
   if (ipv6_tunnel_term_entry == nullptr ||
       ipv6_tunnel_term_entry->dst_ipv6_ip != app_db_entry.dst_ipv6_ip ||
-      ipv6_tunnel_term_entry->dst_ipv6_mask != app_db_entry.dst_ipv6_mask ||
-      ipv6_tunnel_term_entry->vrf_id != app_db_entry.vrf_id) {
+      ipv6_tunnel_term_entry->dst_ipv6_mask != app_db_entry.dst_ipv6_mask) {
     return false;
   }
 
@@ -363,11 +349,8 @@ TEST_F(TunnelDecapGroupManagerTest, DrainValidAppEntryShouldSucceed) {
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask1;
   j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask1;
 
-  uint32_t vrf_prev_ref_count = gVrfOrch->getVrfRefCount(gVrfName);
-
   std::vector<swss::FieldValueTuple> fvs{
-      {p4orch::kAction, p4orch::kIpv6TunnelTermAction},
-      {prependParamField(p4orch::kVrfId), kIpv6TunnelTermAppDbEntry1.vrf_id}};
+      {p4orch::kAction, p4orch::kIpv6TunnelTermAction}};
 
   swss::KeyOpFieldsValuesTuple app_db_entry(
       std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
@@ -379,7 +362,7 @@ TEST_F(TunnelDecapGroupManagerTest, DrainValidAppEntryShouldSucceed) {
   // Set up mock call.
   EXPECT_CALL(mock_sai_tunnel_,
               create_tunnel_term_table_entry(
-                  ::testing::NotNull(), Eq(gSwitchId), Eq(8),
+                  ::testing::NotNull(), Eq(gSwitchId), Eq(7),
                   AttrListEq(CreateSaiAttrs(kIpv6TunnelTermAppDbEntry1))))
       .WillOnce(DoAll(SetArgPointee<0>(kIpv6TunnelTermEntryOid1),
                       Return(SAI_STATUS_SUCCESS)));
@@ -402,7 +385,6 @@ TEST_F(TunnelDecapGroupManagerTest, DrainValidAppEntryShouldSucceed) {
   EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                        ipv6_tunnel_term_entry_key));
 
-  EXPECT_THAT(gVrfOrch->getVrfRefCount(gVrfName), Eq(vrf_prev_ref_count + 1));
 }
 
 TEST_F(TunnelDecapGroupManagerTest, DrainDuplicateSetRequestShouldFail) {
@@ -413,11 +395,8 @@ TEST_F(TunnelDecapGroupManagerTest, DrainDuplicateSetRequestShouldFail) {
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask1;
   j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask1;
 
-  uint32_t vrf_prev_ref_count = gVrfOrch->getVrfRefCount(gVrfName);
-
   std::vector<swss::FieldValueTuple> fvs{
-      {p4orch::kAction, p4orch::kIpv6TunnelTermAction},
-      {prependParamField(p4orch::kVrfId), kIpv6TunnelTermAppDbEntry1.vrf_id}};
+      {p4orch::kAction, p4orch::kIpv6TunnelTermAction}};
 
   swss::KeyOpFieldsValuesTuple app_db_entry(
       std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
@@ -444,8 +423,6 @@ TEST_F(TunnelDecapGroupManagerTest, DrainDuplicateSetRequestShouldFail) {
 
   EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                        ipv6_tunnel_term_entry_key));
-
-  EXPECT_THAT(gVrfOrch->getVrfRefCount(gVrfName), Eq(vrf_prev_ref_count));
 }
 
 TEST_F(TunnelDecapGroupManagerTest, DrainEntryDeserializeFail) {
@@ -454,8 +431,7 @@ TEST_F(TunnelDecapGroupManagerTest, DrainEntryDeserializeFail) {
       R"({"match/dst_ipv6":"2001:db8:3c4d:15::"})";
 
   std::vector<swss::FieldValueTuple> fvs{
-      {p4orch::kAction, p4orch::kIpv6TunnelTermAction},
-      {prependParamField(p4orch::kVrfId), kIpv6TunnelTermAppDbEntry1.vrf_id}};
+      {p4orch::kAction, p4orch::kIpv6TunnelTermAction}};
 
   swss::KeyOpFieldsValuesTuple app_db_entry(
       std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
@@ -477,8 +453,7 @@ TEST_F(TunnelDecapGroupManagerTest, DrainEntryValidateFail) {
   j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask1;
 
   std::vector<swss::FieldValueTuple> fvs{
-      {p4orch::kAction, "invalid action"},
-      {prependParamField(p4orch::kVrfId), kIpv6TunnelTermAppDbEntry1.vrf_id}};
+      {p4orch::kAction, "invalid action"}};
 
   swss::KeyOpFieldsValuesTuple app_db_entry(
       std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
@@ -503,11 +478,8 @@ TEST_F(TunnelDecapGroupManagerTest,
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask1;
   j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask1;
 
-  uint32_t vrf_prev_ref_count = gVrfOrch->getVrfRefCount(gVrfName);
-
   std::vector<swss::FieldValueTuple> fvs{
-      {p4orch::kAction, p4orch::kIpv6TunnelTermAction},
-      {prependParamField(p4orch::kVrfId), kIpv6TunnelTermAppDbEntry1.vrf_id}};
+      {p4orch::kAction, p4orch::kIpv6TunnelTermAction}};
 
   swss::KeyOpFieldsValuesTuple app_db_entry(
       std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
@@ -536,8 +508,6 @@ TEST_F(TunnelDecapGroupManagerTest,
 
   EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                         ipv6_tunnel_term_entry_key));
-
-  EXPECT_THAT(gVrfOrch->getVrfRefCount(gVrfName), Eq(vrf_prev_ref_count - 1));
 }
 
 TEST_F(TunnelDecapGroupManagerTest, DrainInvalidAppEntryShouldFail) {
@@ -545,11 +515,8 @@ TEST_F(TunnelDecapGroupManagerTest, DrainInvalidAppEntryShouldFail) {
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask1;
   j[prependMatchField(p4orch::kDecapDstIpv6)] = kIpv6TunnelTermAppDbDstIpMask1;
 
-  uint32_t vrf_prev_ref_count = gVrfOrch->getVrfRefCount(gVrfName);
-
   std::vector<swss::FieldValueTuple> fvs = {
-      {p4orch::kAction, "invalid action"},
-      {prependParamField(p4orch::kVrfId), kIpv6TunnelTermAppDbEntry1.vrf_id}};
+      {p4orch::kAction, "invalid action"}};
 
   swss::KeyOpFieldsValuesTuple app_db_entry = {
       std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
@@ -574,14 +541,11 @@ TEST_F(TunnelDecapGroupManagerTest, DrainInvalidAppEntryShouldFail) {
   EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                         ipv6_tunnel_term_entry_key));
 
-  EXPECT_THAT(gVrfOrch->getVrfRefCount(gVrfName), Eq(vrf_prev_ref_count));
-
   // Invalid match field.
   j[prependMatchField(p4orch::kDecapDstIpv6)] = "0.0.0.0";
 
   fvs = {
-      {p4orch::kAction, p4orch::kIpv6TunnelTermAction},
-      {prependParamField(p4orch::kVrfId), kIpv6TunnelTermAppDbEntry1.vrf_id}};
+      {p4orch::kAction, p4orch::kIpv6TunnelTermAction}};
 
   app_db_entry = {std::string(APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME) +
                       kTableKeyDelimiter + j.dump(),
@@ -597,16 +561,12 @@ TEST_F(TunnelDecapGroupManagerTest, DrainInvalidAppEntryShouldFail) {
 
   EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                         ipv6_tunnel_term_entry_key));
-
-  EXPECT_THAT(gVrfOrch->getVrfRefCount(gVrfName), Eq(vrf_prev_ref_count));
 }
 
 TEST_F(TunnelDecapGroupManagerTest, DrainNotExecuted) {
-  uint32_t vrf_prev_ref_count = gVrfOrch->getVrfRefCount(gVrfName);
 
   std::vector<swss::FieldValueTuple> fvs{
-      {p4orch::kAction, p4orch::kIpv6TunnelTermAction},
-      {prependParamField(p4orch::kVrfId), gVrfName}};
+      {p4orch::kAction, p4orch::kIpv6TunnelTermAction}};
 
   nlohmann::json j;
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask1;
@@ -674,16 +634,12 @@ TEST_F(TunnelDecapGroupManagerTest, DrainNotExecuted) {
                                         ipv6_tunnel_term_entry_key_2));
   EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                         ipv6_tunnel_term_entry_key_3));
-
-  EXPECT_THAT(gVrfOrch->getVrfRefCount(gVrfName), Eq(vrf_prev_ref_count));
 }
 
 TEST_F(TunnelDecapGroupManagerTest, DrainStopOnFirstFailureCreate) {
-  uint32_t vrf_prev_ref_count = gVrfOrch->getVrfRefCount(gVrfName);
 
   std::vector<swss::FieldValueTuple> fvs{
-      {p4orch::kAction, p4orch::kIpv6TunnelTermAction},
-      {prependParamField(p4orch::kVrfId), gVrfName}};
+      {p4orch::kAction, p4orch::kIpv6TunnelTermAction}};
 
   nlohmann::json j;
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask1;
@@ -712,13 +668,13 @@ TEST_F(TunnelDecapGroupManagerTest, DrainStopOnFirstFailureCreate) {
   // Set up mock call.
   EXPECT_CALL(mock_sai_tunnel_,
               create_tunnel_term_table_entry(
-                  ::testing::NotNull(), Eq(gSwitchId), Eq(8),
+                  ::testing::NotNull(), Eq(gSwitchId), Eq(7),
                   AttrListEq(CreateSaiAttrs(kIpv6TunnelTermAppDbEntry1))))
       .WillOnce(DoAll(SetArgPointee<0>(kIpv6TunnelTermEntryOid1),
                       Return(SAI_STATUS_SUCCESS)));
   EXPECT_CALL(mock_sai_tunnel_,
               create_tunnel_term_table_entry(
-                  ::testing::NotNull(), Eq(gSwitchId), Eq(8),
+                  ::testing::NotNull(), Eq(gSwitchId), Eq(7),
                   AttrListEq(CreateSaiAttrs(kIpv6TunnelTermAppDbEntry2))))
       .WillOnce(Return(SAI_STATUS_FAILURE));
   EXPECT_CALL(publisher_,
@@ -764,16 +720,14 @@ TEST_F(TunnelDecapGroupManagerTest, DrainStopOnFirstFailureCreate) {
   EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                         ipv6_tunnel_term_entry_key_3));
 
-  EXPECT_THAT(gVrfOrch->getVrfRefCount(gVrfName), Eq(vrf_prev_ref_count + 1));
 }
 
 TEST_F(TunnelDecapGroupManagerTest, DrainStopOnFirstFailureDel) {
-  uint32_t vrf_prev_ref_count = gVrfOrch->getVrfRefCount(gVrfName);
 
   // Set up mock call.
   EXPECT_CALL(mock_sai_tunnel_,
               create_tunnel_term_table_entry(
-                  ::testing::NotNull(), Eq(gSwitchId), Eq(8),
+                  ::testing::NotNull(), Eq(gSwitchId), Eq(7),
                   AttrListEq(CreateSaiAttrs(kIpv6TunnelTermAppDbEntry1))))
       .WillOnce(DoAll(SetArgPointee<0>(kIpv6TunnelTermEntryOid1),
                       Return(SAI_STATUS_SUCCESS)));
@@ -784,7 +738,7 @@ TEST_F(TunnelDecapGroupManagerTest, DrainStopOnFirstFailureDel) {
 
   EXPECT_CALL(mock_sai_tunnel_,
               create_tunnel_term_table_entry(
-                  ::testing::NotNull(), Eq(gSwitchId), Eq(8),
+                  ::testing::NotNull(), Eq(gSwitchId), Eq(7),
                   AttrListEq(CreateSaiAttrs(kIpv6TunnelTermAppDbEntry2))))
       .WillOnce(DoAll(SetArgPointee<0>(kIpv6TunnelTermEntryOid2),
                       Return(SAI_STATUS_SUCCESS)));
@@ -795,7 +749,7 @@ TEST_F(TunnelDecapGroupManagerTest, DrainStopOnFirstFailureDel) {
 
   EXPECT_CALL(mock_sai_tunnel_,
               create_tunnel_term_table_entry(
-                  ::testing::NotNull(), Eq(gSwitchId), Eq(8),
+                  ::testing::NotNull(), Eq(gSwitchId), Eq(7),
                   AttrListEq(CreateSaiAttrs(kIpv6TunnelTermAppDbEntry3))))
       .WillOnce(DoAll(SetArgPointee<0>(kIpv6TunnelTermEntryOid3),
                       Return(SAI_STATUS_SUCCESS)));
@@ -833,8 +787,7 @@ TEST_F(TunnelDecapGroupManagerTest, DrainStopOnFirstFailureDel) {
                                        ipv6_tunnel_term_entry_key_3));
 
   std::vector<swss::FieldValueTuple> fvs{
-      {p4orch::kAction, p4orch::kIpv6TunnelTermAction},
-      {prependParamField(p4orch::kVrfId), gVrfName}};
+      {p4orch::kAction, p4orch::kIpv6TunnelTermAction}};
 
   nlohmann::json j;
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask1;
@@ -890,16 +843,12 @@ TEST_F(TunnelDecapGroupManagerTest, DrainStopOnFirstFailureDel) {
                                        ipv6_tunnel_term_entry_key_2));
   EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                        ipv6_tunnel_term_entry_key_3));
-
-  EXPECT_THAT(gVrfOrch->getVrfRefCount(gVrfName), Eq(vrf_prev_ref_count + 2));
 }
 
 TEST_F(TunnelDecapGroupManagerTest, DrainStopOnFirstFailureDifferentTypes) {
-  uint32_t vrf_prev_ref_count = gVrfOrch->getVrfRefCount(gVrfName);
 
   std::vector<swss::FieldValueTuple> fvs{
-      {p4orch::kAction, p4orch::kIpv6TunnelTermAction},
-      {prependParamField(p4orch::kVrfId), gVrfName}};
+      {p4orch::kAction, p4orch::kIpv6TunnelTermAction}};
 
   nlohmann::json j;
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask1;
@@ -922,13 +871,13 @@ TEST_F(TunnelDecapGroupManagerTest, DrainStopOnFirstFailureDifferentTypes) {
   // Set up mock call.
   EXPECT_CALL(mock_sai_tunnel_,
               create_tunnel_term_table_entry(
-                  ::testing::NotNull(), Eq(gSwitchId), Eq(8),
+                  ::testing::NotNull(), Eq(gSwitchId), Eq(7),
                   AttrListEq(CreateSaiAttrs(kIpv6TunnelTermAppDbEntry2))))
       .WillOnce(DoAll(SetArgPointee<0>(kIpv6TunnelTermEntryOid2),
                       Return(SAI_STATUS_SUCCESS)));
   EXPECT_CALL(mock_sai_tunnel_,
               create_tunnel_term_table_entry(
-                  ::testing::NotNull(), Eq(gSwitchId), Eq(8),
+                  ::testing::NotNull(), Eq(gSwitchId), Eq(7),
                   AttrListEq(CreateSaiAttrs(kIpv6TunnelTermAppDbEntry1))))
       .WillOnce(Return(SAI_STATUS_FAILURE));
   EXPECT_CALL(publisher_,
@@ -966,18 +915,14 @@ TEST_F(TunnelDecapGroupManagerTest, DrainStopOnFirstFailureDifferentTypes) {
   EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                        ipv6_tunnel_term_entry_key_2));
 
-  EXPECT_THAT(gVrfOrch->getVrfRefCount(gVrfName), Eq(vrf_prev_ref_count + 1));
 }
 
 TEST_F(TunnelDecapGroupManagerTest, DrainDifferentTypesWithDuplicateSetFails) {
   auto* ipv6_tunnel_term_table_entry = AddIpv6TunnelTermAppDbEntry1();
   ASSERT_NE(ipv6_tunnel_term_table_entry, nullptr);
 
-  uint32_t vrf_prev_ref_count = gVrfOrch->getVrfRefCount(gVrfName);
-
   std::vector<swss::FieldValueTuple> fvs{
-      {p4orch::kAction, p4orch::kIpv6TunnelTermAction},
-      {prependParamField(p4orch::kVrfId), gVrfName}};
+      {p4orch::kAction, p4orch::kIpv6TunnelTermAction}};
 
   nlohmann::json j;
   j[prependMatchField(p4orch::kDecapSrcIpv6)] = kIpv6TunnelTermAppDbSrcIpMask1;
@@ -1025,8 +970,6 @@ TEST_F(TunnelDecapGroupManagerTest, DrainDifferentTypesWithDuplicateSetFails) {
                                        ipv6_tunnel_term_entry_key_1));
   EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                         ipv6_tunnel_term_entry_key_2));
-
-  EXPECT_THAT(gVrfOrch->getVrfRefCount(gVrfName), Eq(vrf_prev_ref_count));
 }
 
 TEST_F(TunnelDecapGroupManagerTest, GetIpv6TunnelTermEntrySucceed) {
@@ -1037,12 +980,11 @@ TEST_F(TunnelDecapGroupManagerTest, GetIpv6TunnelTermEntrySucceed) {
 }
 
 TEST_F(TunnelDecapGroupManagerTest, CreateIpv6TunnelTermEntriesSucceed) {
-  uint32_t vrf_prev_ref_count = gVrfOrch->getVrfRefCount(gVrfName);
 
   // Set up mock call.
   EXPECT_CALL(mock_sai_tunnel_,
               create_tunnel_term_table_entry(
-                  ::testing::NotNull(), Eq(gSwitchId), Eq(8),
+                  ::testing::NotNull(), Eq(gSwitchId), Eq(7),
                   AttrListEq(CreateSaiAttrs(kIpv6TunnelTermAppDbEntry1))))
       .WillOnce(DoAll(SetArgPointee<0>(kIpv6TunnelTermEntryOid1),
                       Return(SAI_STATUS_SUCCESS)));
@@ -1063,17 +1005,15 @@ TEST_F(TunnelDecapGroupManagerTest, CreateIpv6TunnelTermEntriesSucceed) {
   EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                        ipv6_tunnel_term_entry_key));
 
-  EXPECT_THAT(gVrfOrch->getVrfRefCount(gVrfName), Eq(vrf_prev_ref_count + 1));
 }
 
 TEST_F(TunnelDecapGroupManagerTest,
        CreateIpv6TunnelTermEntriesShouldFailWhenTunnelSaiCallFails) {
-  uint32_t vrf_prev_ref_count = gVrfOrch->getVrfRefCount(gVrfName);
 
   // Set up mock call.
   EXPECT_CALL(mock_sai_tunnel_,
               create_tunnel_term_table_entry(
-                  ::testing::NotNull(), Eq(gSwitchId), Eq(8),
+                  ::testing::NotNull(), Eq(gSwitchId), Eq(7),
                   AttrListEq(CreateSaiAttrs(kIpv6TunnelTermAppDbEntry1))))
       .WillOnce(DoAll(SetArgPointee<0>(kIpv6TunnelTermEntryOid1),
                       Return(SAI_STATUS_FAILURE)));
@@ -1093,15 +1033,11 @@ TEST_F(TunnelDecapGroupManagerTest,
 
   EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                         ipv6_tunnel_term_entry_key));
-
-  EXPECT_THAT(gVrfOrch->getVrfRefCount(gVrfName), Eq(vrf_prev_ref_count));
 }
 
 TEST_F(TunnelDecapGroupManagerTest, RemoveIpv6TunnelTermEntriesSucceed) {
   auto* ipv6_tunnel_term_table_entry = AddIpv6TunnelTermAppDbEntry1();
   ASSERT_NE(ipv6_tunnel_term_table_entry, nullptr);
-
-  uint32_t vrf_prev_ref_count = gVrfOrch->getVrfRefCount(gVrfName);
 
   // Set up mock call.
   EXPECT_CALL(mock_sai_tunnel_,
@@ -1121,16 +1057,12 @@ TEST_F(TunnelDecapGroupManagerTest, RemoveIpv6TunnelTermEntriesSucceed) {
 
   EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                         ipv6_tunnel_term_entry_key));
-
-  EXPECT_THAT(gVrfOrch->getVrfRefCount(gVrfName), Eq(vrf_prev_ref_count - 1));
 }
 
 TEST_F(TunnelDecapGroupManagerTest,
        RemoveIpv6TunnelTermEntriesShouldFailWhenTunnelSaiCallFails) {
   auto* ipv6_tunnel_term_table_entry = AddIpv6TunnelTermAppDbEntry1();
   ASSERT_NE(ipv6_tunnel_term_table_entry, nullptr);
-
-  uint32_t vrf_prev_ref_count = gVrfOrch->getVrfRefCount(gVrfName);
 
   // Set up mock call.
   EXPECT_CALL(mock_sai_tunnel_,
@@ -1150,15 +1082,12 @@ TEST_F(TunnelDecapGroupManagerTest,
 
   EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
                                        ipv6_tunnel_term_entry_key));
-
-  EXPECT_THAT(gVrfOrch->getVrfRefCount(gVrfName), Eq(vrf_prev_ref_count));
 }
 
 TEST_F(TunnelDecapGroupManagerTest,
        DeserializeIpv6TunnelTermAppDbEntrySucceedForValidEntry) {
   std::vector<swss::FieldValueTuple> attributes = {
-      swss::FieldValueTuple(p4orch::kAction, p4orch::kIpv6TunnelTermAction),
-      swss::FieldValueTuple(prependParamField(p4orch::kVrfId), gVrfName)};
+      swss::FieldValueTuple(p4orch::kAction, p4orch::kIpv6TunnelTermAction)};
 
   auto result_or =
       DeserializeIpv6TunnelTermAppDbEntry(kIpv6TunnelTermAppDbKey1, attributes);
@@ -1175,8 +1104,7 @@ TEST_F(TunnelDecapGroupManagerTest,
 TEST_F(TunnelDecapGroupManagerTest,
        DeserializeIpv6TunnelTermAppDbEntrySucceedForEmptyMatchField) {
   std::vector<swss::FieldValueTuple> attributes = {
-      swss::FieldValueTuple(p4orch::kAction, p4orch::kIpv6TunnelTermAction),
-      swss::FieldValueTuple(prependParamField(p4orch::kVrfId), gVrfName)};
+      swss::FieldValueTuple(p4orch::kAction, p4orch::kIpv6TunnelTermAction)};
 
   auto result_or = DeserializeIpv6TunnelTermAppDbEntry("{}", attributes);
   ASSERT_TRUE(result_or.ok());
@@ -1190,8 +1118,7 @@ TEST_F(TunnelDecapGroupManagerTest,
 TEST_F(TunnelDecapGroupManagerTest,
        DeserializeIpv6TunnelTermAppDbEntryInvalidMatchKeyFormat) {
   std::vector<swss::FieldValueTuple> attributes = {
-      swss::FieldValueTuple(p4orch::kAction, p4orch::kIpv6TunnelTermAction),
-      swss::FieldValueTuple(prependParamField(p4orch::kVrfId), gVrfName)};
+      swss::FieldValueTuple(p4orch::kAction, p4orch::kIpv6TunnelTermAction)};
 
   EXPECT_FALSE(DeserializeIpv6TunnelTermAppDbEntry(
                    R"({"match/dst_ipv6":"2001:db8:3c4d:15::"})", attributes)
@@ -1200,8 +1127,7 @@ TEST_F(TunnelDecapGroupManagerTest,
 TEST_F(TunnelDecapGroupManagerTest,
        DeserializeIpv6TunnelTermAppDbEntryInvalidMatchKeyFormat2) {
   std::vector<swss::FieldValueTuple> attributes = {
-      swss::FieldValueTuple(p4orch::kAction, p4orch::kIpv6TunnelTermAction),
-      swss::FieldValueTuple(prependParamField(p4orch::kVrfId), gVrfName)};
+      swss::FieldValueTuple(p4orch::kAction, p4orch::kIpv6TunnelTermAction)};
   // Missing the mask.
   EXPECT_FALSE(DeserializeIpv6TunnelTermAppDbEntry(
                    R"({"match/src_ipv6":"2001:db8:3c4d:15::"})", attributes)
@@ -1226,19 +1152,6 @@ TEST_F(TunnelDecapGroupManagerTest,
           .ok());
 }
 
-// If vrf_id is empty, the default VRF will be used.
-TEST_F(TunnelDecapGroupManagerTest,
-       ValidateIpv6TunnelTermAppDbEntryEmptyVrfID) {
-  const Ipv6TunnelTermAppDbEntry app_db_entry{
-       /*src_ipv6_ip=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcIp1),
-      /*src_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcMask1),
-      /*dst_ipv6_ip=*/swss::IpAddress("2001:db8:3c4d:15::"),
-      /*dst_ipv6_mask=*/swss::IpAddress("ffff:ffff:ffff:ffff::"),
-      /*vrf_id=*/"",
-      /*action_str=*/"mark_for_tunnel_decap_and_set_vrf"};
-
-  EXPECT_TRUE(ValidateIpv6TunnelTermAppDbEntry(app_db_entry, SET_COMMAND).ok());
-}
 
 TEST_F(TunnelDecapGroupManagerTest,
        ValidateIpv6TunnelTermAppDbEntryInvalidAction) {
@@ -1247,22 +1160,7 @@ TEST_F(TunnelDecapGroupManagerTest,
       /*src_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcMask1),
       /*dst_ipv6_ip=*/swss::IpAddress("2001:db8:3c4d:15::"),
       /*dst_ipv6_mask=*/swss::IpAddress("ffff:ffff:ffff:ffff::"),
-      /*vrf_id=*/gVrfName,
       /*action_str=*/"invalid_action"};
-
-  EXPECT_FALSE(
-      ValidateIpv6TunnelTermAppDbEntry(app_db_entry, SET_COMMAND).ok());
-}
-
-TEST_F(TunnelDecapGroupManagerTest,
-       ValidateIpv6TunnelTermAppDbEntryNonxistVrf) {
-  const Ipv6TunnelTermAppDbEntry app_db_entry{
-      /*src_ipv6_ip=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcIp1),
-      /*src_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcMask1),
-      /*dst_ipv6_ip=*/swss::IpAddress("2001:db8:3c4d:15::"),
-      /*dst_ipv6_mask=*/swss::IpAddress("ffff:ffff:ffff:ffff::"),
-      /*vrf_id=*/"nonexist_vrf_id",
-      /*action_str=*/"mark_for_tunnel_decap_and_set_vrf"};
 
   EXPECT_FALSE(
       ValidateIpv6TunnelTermAppDbEntry(app_db_entry, SET_COMMAND).ok());
@@ -1274,8 +1172,7 @@ TEST_F(TunnelDecapGroupManagerTest, ValidateIpv6TunnelTermAppDbEntryDstIPisV4) {
       /*src_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcMask1),
       /*dst_ipv6_ip=*/swss::IpAddress("0.0.0.1"),
       /*dst_ipv6_mask=*/swss::IpAddress("ffff:ffff:ffff:ffff::"),
-      /*vrf_id=*/gVrfName,
-      /*action_str=*/"mark_for_tunnel_decap_and_set_vrf"};
+      /*action_str=*/"tunnel_decap"};
 
   EXPECT_FALSE(
       ValidateIpv6TunnelTermAppDbEntry(app_db_entry, SET_COMMAND).ok());
@@ -1288,8 +1185,7 @@ TEST_F(TunnelDecapGroupManagerTest,
       /*src_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcMask1),
       /*dst_ipv6_ip=*/swss::IpAddress("2001:db8:3c4d:15::"),
       /*dst_ipv6_mask=*/swss::IpAddress("0.0.0.1"),
-      /*vrf_id=*/gVrfName,
-      /*action_str=*/"mark_for_tunnel_decap_and_set_vrf"};
+      /*action_str=*/"tunnel_decap"};
 
   EXPECT_FALSE(
       ValidateIpv6TunnelTermAppDbEntry(app_db_entry, SET_COMMAND).ok());
@@ -1300,8 +1196,7 @@ TEST_F(TunnelDecapGroupManagerTest, ValidateIpv6TunnelTermAppDbEntrySrcIPisV4) {
       /*src_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcMask1),
       /*dst_ipv6_ip=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcIp1),
       /*dst_ipv6_mask=*/swss::IpAddress("ffff:ffff:ffff:ffff::"),
-      /*vrf_id=*/gVrfName,
-      /*action_str=*/"mark_for_tunnel_decap_and_set_vrf"};
+      /*action_str=*/"tunnel_decap"};
   EXPECT_FALSE(
       ValidateIpv6TunnelTermAppDbEntry(app_db_entry, SET_COMMAND).ok());
 }
@@ -1312,8 +1207,7 @@ TEST_F(TunnelDecapGroupManagerTest,
       /*src_ipv6_mask=*/swss::IpAddress("255.255.255.255"),
       /*dst_ipv6_ip=*/swss::IpAddress("2001:db8:3c4d:15::"),
       /*dst_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcMask1),
-      /*vrf_id=*/gVrfName,
-      /*action_str=*/"mark_for_tunnel_decap_and_set_vrf"};
+      /*action_str=*/"tunnel_decap"};
   EXPECT_FALSE(
       ValidateIpv6TunnelTermAppDbEntry(app_db_entry, SET_COMMAND).ok());
 }
@@ -1326,8 +1220,7 @@ TEST_F(TunnelDecapGroupManagerTest,
       /*src_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcMask1),  
      /*dst_ipv6_ip=*/swss::IpAddress("0:0:0:0:0:0:0:0"),
       /*dst_ipv6_mask=*/swss::IpAddress("0:0:0:0:0:0:0:0"),
-      /*vrf_id=*/gVrfName,
-      /*action_str=*/"mark_for_tunnel_decap_and_set_vrf"};
+      /*action_str=*/"tunnel_decap"};
 
   EXPECT_TRUE(ValidateIpv6TunnelTermAppDbEntry(app_db_entry, SET_COMMAND).ok());
 }
@@ -1339,8 +1232,7 @@ TEST_F(TunnelDecapGroupManagerTest,
       /*src_ipv6_mask=*/swss::IpAddress("0:0:0:0:0:0:0:0"),
       /*dst_ipv6_ip=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcIp1),
       /*dst_ipv6_mask=*/swss::IpAddress(kIpv6TunnelTermAppDbSrcMask1),
-      /*vrf_id=*/gVrfName,
-      /*action_str=*/"mark_for_tunnel_decap_and_set_vrf"};
+      /*action_str=*/"tunnel_decap"};
   EXPECT_TRUE(ValidateIpv6TunnelTermAppDbEntry(app_db_entry, SET_COMMAND).ok());
 }
 
@@ -1429,8 +1321,6 @@ TEST_F(TunnelDecapGroupManagerTest, VerifyStateTest) {
                                 "2001:db8:3c4d:15::"},
           swss::FieldValueTuple{"SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP_MASK",
                                 "ffff:ffff:ffff:ffff::"},
-          swss::FieldValueTuple{"SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_VR_ID",
-                                "oid:0x6f"},
           swss::FieldValueTuple{
               "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID",
               "oid:0x10"}});
@@ -1444,8 +1334,7 @@ TEST_F(TunnelDecapGroupManagerTest, VerifyStateTest) {
                              kTableKeyDelimiter + j.dump();
 
   std::vector<swss::FieldValueTuple> attributes = {
-      swss::FieldValueTuple(p4orch::kAction, p4orch::kIpv6TunnelTermAction),
-      swss::FieldValueTuple(prependParamField(p4orch::kVrfId), gVrfName)};
+      swss::FieldValueTuple(p4orch::kAction, p4orch::kIpv6TunnelTermAction)};
 
   EXPECT_EQ(VerifyState(db_key, attributes), "");
 
@@ -1498,11 +1387,6 @@ TEST_F(TunnelDecapGroupManagerTest, VerifyStateTest) {
   EXPECT_FALSE(VerifyState(db_key, attributes).empty());
   ipv6_tunnel_term_table_entry->dst_ipv6_mask = saved_dst_ipv6_mask;
 
-  auto saved_vrf_id = ipv6_tunnel_term_table_entry->vrf_id;
-  ipv6_tunnel_term_table_entry->vrf_id = "invalid";
-  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
-  ipv6_tunnel_term_table_entry->vrf_id = saved_vrf_id;
-
   const std::string ipv6_tunnel_term_entry_key =
        KeyGenerator::generateIpv6TunnelTermKey(
           kIpv6TunnelTermAppDbEntry1.src_ipv6_ip,
@@ -1538,8 +1422,6 @@ TEST_F(TunnelDecapGroupManagerTest, VerifyStateAsicDbTest) {
                                 "2001:db8:3c4d:15::"},
           swss::FieldValueTuple{"SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP_MASK",
                                 "ffff:ffff:ffff:ffff::"},
-          swss::FieldValueTuple{"SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_VR_ID",
-                                "oid:0x6f"},
           swss::FieldValueTuple{
               "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID",
               "oid:0x10"}});
@@ -1553,8 +1435,7 @@ TEST_F(TunnelDecapGroupManagerTest, VerifyStateAsicDbTest) {
                              kTableKeyDelimiter + j.dump();
 
   std::vector<swss::FieldValueTuple> attributes = {
-      swss::FieldValueTuple(p4orch::kAction, p4orch::kIpv6TunnelTermAction),
-      swss::FieldValueTuple(prependParamField(p4orch::kVrfId), gVrfName)};
+      swss::FieldValueTuple(p4orch::kAction, p4orch::kIpv6TunnelTermAction)};
 
   EXPECT_EQ(VerifyState(db_key, attributes), "");
 
@@ -1581,8 +1462,6 @@ TEST_F(TunnelDecapGroupManagerTest, VerifyStateAsicDbTest) {
                                 "2001:db8:3c4d:15::"},
           swss::FieldValueTuple{"SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP_MASK",
                                 "ffff:ffff:ffff:ffff::"},
-          swss::FieldValueTuple{"SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_VR_ID",
-                                "oid:0x6f"},
           swss::FieldValueTuple{
               "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID",
               "oid:0x10"}});

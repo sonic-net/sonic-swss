@@ -95,7 +95,7 @@ constexpr char *kTos = "tos";
 constexpr char *kMirrorAsIpv4Erspan = "mirror_as_ipv4_erspan";
 constexpr char *kL3AdmitAction = "admit_to_l3";
 constexpr char *kTunnelAction = "mark_for_p2p_tunnel_encap";
-constexpr char* kIpv6TunnelTermAction = "mark_for_tunnel_decap_and_set_vrf";
+constexpr char* kIpv6TunnelTermAction = "tunnel_decap";
 constexpr char* kDecapSrcIpv6 = "src_ipv6";
 constexpr char* kDecapDstIpv6 = "dst_ipv6";
 constexpr char* kDecapSrcIpv6Ip = "src_ipv6_ip";
@@ -315,7 +315,6 @@ struct Ipv6TunnelTermAppDbEntry
   swss::IpAddress dst_ipv6_ip;
   swss::IpAddress dst_ipv6_mask;
   // Action
-  std::string vrf_id;
   std::string action_str;
 };
 
