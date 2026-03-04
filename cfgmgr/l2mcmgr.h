@@ -9,7 +9,7 @@
 #include <thread>
 #include <vector>
 
-#include "../../sonic-l2mcd/include/l2mcd_ipc.h" 
+#include "l2mcd_ipc.h"
 #include <sys/stat.h>
 #include "dbconnector.h"
 #include "netmsg.h"
@@ -53,7 +53,6 @@ public:
     int isPortInitComplete(DBConnector *app_db);
     int getL2McPortList(DBConnector *state_db);
     int getL2McCfgParams(DBConnector *cfgDb);
-    bool isRestoreDone();
     void waitTillReadyToReconcile();
     void waitForPortsReady(int timeout_sec);
   

@@ -19,6 +19,8 @@ using namespace swss;
 #define UNTAGGED 0
 
 #define L2MCD_MAX_SIZE 16318
+#define PORT_INIT_MAX_RETRY 180
+#define RECONCILE_WARMSTART_MAX_RETRY  60
 
 static char buffer[L2MCD_MAX_SIZE] = {0};
 
@@ -1035,6 +1037,14 @@ int L2McMgr::isPortInitComplete(DBConnector *app_db)
     long cnt = 0;
 
     while(!portInit) {
+
+        if (cnt > PORT_INIT_MAX_RETRY)
+        {
+            SWSS_LOG_ERROR("Port init check timeout! Max retry(%d) reached, cnt=%ld", 
+                           PORT_INIT_MAX_RETRY, cnt);
+            portInit = false;
+            break;
+        }
         Table portTable(app_db, APP_PORT_TABLE_NAME);
         std::vector<FieldValueTuple> tuples;
         portInit = portTable.get("PortInitDone", tuples);
@@ -1044,7 +1054,6 @@ int L2McMgr::isPortInitComplete(DBConnector *app_db)
         sleep(1);
         cnt++;
     }
-    sleep(5);
     SWSS_LOG_NOTICE("PORT_INIT_DONE : %d %ld", portInit, cnt);
     return portInit;
 }
@@ -1545,16 +1554,40 @@ void L2McMgr::doL2McProcRemoteEntries(string op, string key, string key_seperato
     msg = (L2MCD_CONFIG_MSG *)buffer;
 
     size_t pos=key.find(key_seperator.c_str());
+    if (pos == std::string::npos) {
+        SWSS_LOG_ERROR("Invalid key format: missing separator");
+        return;
+    }
     auto vlan_name = key.substr(0,pos);
     auto pos1 = key.find(key_seperator.c_str(), pos+1);
+    if (pos1 == std::string::npos) {
+        SWSS_LOG_ERROR("Invalid key format: missing saddr field");
+        return;
+    }
     auto saddr = key.substr(pos+1, pos1-pos-1);
     auto pos2 = key.find(key_seperator.c_str(), pos1+1);
+    if (pos1 == std::string::npos) {
+        SWSS_LOG_ERROR("Invalid key format: missing gaddr field");
+        return;
+    }
     auto gaddr = key.substr(pos1+1, pos2-pos1-1);
     auto pos3 = key.find(key_seperator.c_str(), pos2+1);
+    if (pos3 == std::string::npos) {
+        SWSS_LOG_ERROR("Invalid key format: missing iname field");
+        return;
+    }
     auto iname = key.substr(pos2+1, pos3-pos2-1);
     auto pos4 = key.find(key_seperator.c_str(), pos3+1);
+    if (pos4 == std::string::npos) {
+        SWSS_LOG_ERROR("Invalid key format: missing type field");
+        return;
+    }
     auto type = key.substr(pos3+1, pos4-pos3-1);
     auto pos5 = key.find(key_seperator.c_str(), pos4+1);
+    if (pos5 == std::string::npos) {
+        SWSS_LOG_ERROR("Invalid key format: missing leave field");
+        return;
+    }
     auto leave = key.substr(pos4+1, pos5-pos4-1);
     msg->vlan_id = (unsigned int) stoi(vlan_name.substr(4));
     memcpy(msg->saddr,saddr.c_str(), L2MCD_IP_ADDR_STR_SIZE);
@@ -1619,14 +1652,34 @@ void L2McMgr::doL2McProcRemoteMrouterEntries(string op, string key, string key_s
 
     SWSS_LOG_ENTER();
     size_t pos=key.find(key_seperator.c_str());
+    if (pos == std::string::npos) {
+        SWSS_LOG_ERROR("Invalid key format: missing separator");
+        return;
+    }
     auto vlan_name = key.substr(0,pos);
     auto pos1 = key.find(key_seperator.c_str(), pos+1);
+    if (pos == std::string::npos) {
+        SWSS_LOG_ERROR("Invalid key format: iname separator");
+        return;
+    }
     auto iname = key.substr(pos+1, pos1-pos-1);
     auto pos2 = key.find(key_seperator.c_str(), pos1+1);
+    if (pos2 == std::string::npos) {
+        SWSS_LOG_ERROR("Invalid key format: type separator");
+        return;
+    }
     auto type = key.substr(pos1+1, pos2-pos1-1);
     auto pos3 = key.find(key_seperator.c_str(), pos2+1);
+    if (pos3 == std::string::npos) {
+        SWSS_LOG_ERROR("Invalid key format: leave separator");
+        return;
+    }
     auto leave = key.substr(pos2+1, pos3-pos2-1);
     auto pos4 = key.find(key_seperator.c_str(), pos3+1);
+    if (pos4 == std::string::npos) {
+        SWSS_LOG_ERROR("Invalid key format: proctol separator");
+        return;
+    }
     auto proctol = key.substr(pos3+1, pos4-pos3-1);
     msg->vlan_id = (unsigned int) stoi(vlan_name.substr(4));
     msg->count=1;
@@ -1762,19 +1815,32 @@ void L2McMgr::doTask(NotificationConsumer &consumer)
 
 void L2McMgr::waitTillReadyToReconcile()
 {
-    for (;;)
-    {
+    long cnt = 0;
+    bool reconciled = false;
+
+    while (!reconciled) {
+        if (cnt > RECONCILE_WARMSTART_MAX_RETRY ) {
+            SWSS_LOG_ERROR("Vlanmgrd reconcile check timeout! Max retry(%d) reached, cnt=%ld", 
+                           RECONCILE_WARMSTART_MAX_RETRY, cnt);
+            break;
+        }
+
         WarmStart::WarmStartState state;
         WarmStart::getWarmStartState("vlanmgrd", state);
 
-        if ((WarmStart::REPLAYED == state) ||
-            (WarmStart::RECONCILED == state))
-        {
-            SWSS_LOG_INFO("Vlanmgrd Reconciled %d", (int) state);
-            return;
+        if ((WarmStart::REPLAYED == state) || (WarmStart::RECONCILED == state)) {
+            reconciled = true;
+            break;
         }
-        SWSS_LOG_INFO("Vlanmgrd NOT Reconciled %d", (int) state);            
         sleep(1);
+        cnt++;
+    }
+
+    if (reconciled) {
+        SWSS_LOG_NOTICE("Vlanmgrd Reconciled successfully after %ld retries", cnt);
+    } else {
+        SWSS_LOG_WARN("Vlanmgrd failed to reach REPLAYED/RECONCILED state after max retries. "
+                     "Continuing with current state.");
     }
     return;
 }
