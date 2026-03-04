@@ -40,14 +40,15 @@ typedef enum
 const request_description_t vnet_request_description = {
     { REQ_T_STRING },
     {
-        { "src_mac",            REQ_T_MAC_ADDRESS },
-        { "vxlan_tunnel",       REQ_T_STRING },
-        { "vni",                REQ_T_UINT },
-        { "peer_list",          REQ_T_SET },
-        { "guid",               REQ_T_STRING },
-        { "scope",              REQ_T_STRING },
-        { "advertise_prefix",   REQ_T_BOOL},
-        { "overlay_dmac",       REQ_T_MAC_ADDRESS},
+        { "src_mac",                 REQ_T_MAC_ADDRESS },
+        { "vxlan_tunnel",            REQ_T_STRING },
+        { "vxlan_tunnel_list",       REQ_T_SET },
+        { "vni",                     REQ_T_UINT },
+        { "peer_list",               REQ_T_SET },
+        { "guid",                    REQ_T_STRING },
+        { "scope",                   REQ_T_STRING },
+        { "advertise_prefix",        REQ_T_BOOL},
+        { "overlay_dmac",            REQ_T_MAC_ADDRESS},
 
     },
     { "vxlan_tunnel", "vni" } // mandatory attributes
@@ -70,6 +71,16 @@ enum class VR_TYPE
 struct VNetInfo
 {
     string tunnel;
+    uint32_t vni;
+    set<string> peers;
+    string scope;
+    bool advertise_prefix;
+    swss::MacAddress overlay_dmac;
+};
+
+struct VNetInfoMultiTunnel
+{
+    set<string> tunnels;
     uint32_t vni;
     set<string> peers;
     string scope;
@@ -104,7 +115,16 @@ public:
                scope_(vnetInfo.scope),
                advertise_prefix_(vnetInfo.advertise_prefix),
                overlay_dmac_(vnetInfo.overlay_dmac)
-               { }
+               {}
+
+    VNetObject(const VNetInfoMultiTunnel& vnetInfo) :
+               tunnel_list_(vnetInfo.tunnels),
+               peer_list_(vnetInfo.peers),
+               vni_(vnetInfo.vni),
+               scope_(vnetInfo.scope),
+               advertise_prefix_(vnetInfo.advertise_prefix),
+               overlay_dmac_(vnetInfo.overlay_dmac)
+               {}
 
     virtual bool updateObj(vector<sai_attribute_t>&) = 0;
 
@@ -121,6 +141,16 @@ public:
     string getTunnelName() const
     {
         return tunnel_;
+    }
+
+    const set<string>& getTunnelList() const
+    {
+        return tunnel_list_;
+    }
+
+    bool IsMultiTunnelVnet() const
+    {
+        return !tunnel_list_.empty();
     }
 
     uint32_t getVni() const
@@ -153,6 +183,7 @@ public:
 private:
     set<string> peer_list_ = {};
     string tunnel_;
+    set<string> tunnel_list_ = {};
     uint32_t vni_;
     string scope_;
     bool advertise_prefix_;
@@ -173,6 +204,8 @@ class VNetVrfObject : public VNetObject
 {
 public:
     VNetVrfObject(const string& vnet, const VNetInfo& vnetInfo, vector<sai_attribute_t>& attrs);
+
+    VNetVrfObject(const string& vnet, const VNetInfoMultiTunnel& vnetInfo, vector<sai_attribute_t>& attrs);
 
     sai_object_id_t getVRidIngress() const;
 
@@ -220,6 +253,7 @@ public:
 
     sai_object_id_t getTunnelNextHop(NextHopKey& nh);
     bool removeTunnelNextHop(NextHopKey& nh);
+    string getTunnelNameForNextHop(const NextHopKey& nh);
     void increaseNextHopRefCount(const nextHop&);
     void decreaseNextHopRefCount(const nextHop&);
 
@@ -269,6 +303,17 @@ public:
         return vnet_table_.at(name)->getTunnelName();
     }
 
+    const set<string>& getTunnelList(const std::string& name) const
+    {
+        return vnet_table_.at(name)->getTunnelList();
+    }
+
+    string getTunnelNameForNextHop(const std::string& vnet_name, const NextHopKey& nh) const
+    {
+        auto *vnet_object = getTypePtr<VNetVrfObject>(vnet_name);
+        return vnet_object->getTunnelNameForNextHop(nh);
+    }
+
     bool getAdvertisePrefix(const std::string& name) const
     {
         return vnet_table_.at(name)->getAdvertisePrefix();
@@ -293,6 +338,8 @@ private:
 
     template <class T>
     std::unique_ptr<T> createObject(const string&, const VNetInfo&, vector<sai_attribute_t>&);
+    template <class T>
+    std::unique_ptr<T> createObject(const string&, const VNetInfoMultiTunnel&, vector<sai_attribute_t>&);
 
     VNetTable vnet_table_;
     VNetRequest request_;
