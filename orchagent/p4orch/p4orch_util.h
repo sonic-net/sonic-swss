@@ -96,6 +96,13 @@ constexpr char *kTos = "tos";
 constexpr char *kMirrorAsIpv4Erspan = "mirror_as_ipv4_erspan";
 constexpr char *kL3AdmitAction = "admit_to_l3";
 constexpr char *kTunnelAction = "mark_for_p2p_tunnel_encap";
+constexpr char* kIpv6TunnelTermAction = "tunnel_decap";
+constexpr char* kDecapSrcIpv6 = "src_ipv6";
+constexpr char* kDecapDstIpv6 = "dst_ipv6";
+constexpr char* kDecapSrcIpv6Ip = "src_ipv6_ip";
+constexpr char* kDecapSrcIpv6Mask = "src_ipv6_mask";
+constexpr char* kDecapDstIpv6Ip = "dst_ipv6_ip";
+constexpr char* kDecapDstIpv6Mask = "dst_ipv6_mask";
 
 // Field names in P4RT TABLE DEFINITION APP DB entry.
 constexpr char *kTables = "tables";
@@ -301,6 +308,18 @@ struct P4AclRuleAppDbEntry
     P4AclMeterAppDb meter;
 };
 
+struct Ipv6TunnelTermAppDbEntry
+{
+  // Match
+  swss::IpAddress src_ipv6_ip;
+  swss::IpAddress src_ipv6_mask;
+  swss::IpAddress dst_ipv6_ip;
+  swss::IpAddress dst_ipv6_mask;
+  uint32_t priority;
+  // Action
+  std::string action_str;
+};
+
 struct DepObject
 {
     sai_object_type_t sai_object;
@@ -384,6 +403,10 @@ class KeyGenerator
                                           const uint32_t &priority);
 
     static std::string generateTunnelKey(const std::string &tunnel_id);
+
+    static std::string generateIpv6TunnelTermKey(const swss::IpAddress& src_ipv6_ip,
+                                                 const swss::IpAddress& src_ipv6_mask,
+                                                 const swss::IpAddress& dst_ipv6_ip, const swss::IpAddress& dst_ipv6_mask);
 
     static std::string generateExtTableKey(const std::string &table_name, const std::string &table_key);
 
