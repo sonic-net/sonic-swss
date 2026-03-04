@@ -168,6 +168,25 @@ static bool compareNHGSRv6Fields(const NextHopGroupFull *new_nhg, const NextHopG
         return false;
     }
 
+    // Compare seg6_segs (vpn_sid)
+    bool new_has_segs = (new_nhg->nh_srv6->seg6_segs != nullptr);
+    bool old_has_segs = (oldNHG->nh_srv6->seg6_segs != nullptr);
+    if (new_has_segs != old_has_segs) {
+        return false;
+    }
+    if (new_has_segs && old_has_segs) {
+        if (new_nhg->nh_srv6->seg6_segs->num_segs != oldNHG->nh_srv6->seg6_segs->num_segs) {
+            return false;
+        }
+        for (uint8_t i = 0; i < new_nhg->nh_srv6->seg6_segs->num_segs; i++) {
+            if (memcmp(&new_nhg->nh_srv6->seg6_segs->seg[i],
+                       &oldNHG->nh_srv6->seg6_segs->seg[i],
+                       sizeof(struct in6_addr)) != 0) {
+                return false;
+            }
+        }
+    }
+
     return true;
 }
 
@@ -185,19 +204,19 @@ NHGMgr::NHGMgr(RedisPipeline *pipeline, const std::string &nexthopTableName, con
  */
 int NHGMgr::addNHGFull(NextHopGroupFull nhg, uint8_t af) {
 
-    SWSS_LOG_DEBUG("Receiving NHG %d, type %d, af %d", nhg.id, nhg.type, af);
+    SWSS_LOG_NOTICE("Receiving NHG %d, type %d, af %d", nhg.id, nhg.type, af);
     dumpNHGGroupFull(nhg);
 
     int ret = 0;
     if (m_rib_nhg_table->isNHGExist(nhg.id)) {
-        SWSS_LOG_DEBUG("NHG %d already exists, need to update", nhg.id);
+        SWSS_LOG_NOTICE("NHG %d already exists, need to update", nhg.id);
         ret = updateExistingNHGFull(nhg, af);
         if (ret != 0){
             SWSS_LOG_ERROR("Failed to update NHG %d", nhg.id);
             return ret;
         }
     } else {
-        SWSS_LOG_DEBUG("NHG %d not found, create new entry", nhg.id);
+        SWSS_LOG_NOTICE("NHG %d not found, create new entry", nhg.id);
         ret = addNewNHGFull(nhg, af);
         if (ret != 0){
             SWSS_LOG_ERROR("Failed to add NHG %d", nhg.id);
@@ -244,12 +263,14 @@ int NHGMgr::addNewNHGFull(NextHopGroupFull nhg, uint8_t af) {
             SWSS_LOG_ERROR("Failed to write to DB for %d", nhg.id);
             return ret;
         }
+        SWSS_LOG_NOTICE("Create sonic NHG for %d, sonic id %d", nhg.id, sonicId);
     }
 
     /*
      * Create Sonic gateway objet if needed
      */
     if (entry->hasSonicGatewayObj()) {
+        SWSS_LOG_NOTICE("Create sonic gateway object for NHG %d", nhg.id);
         SonicGateWayNHGObjectKey key;
         ret = SonicGateWayNHGObjectKey::createSonicGateWayNHGObjectKey(entry, key);
         if (ret != 0) {
@@ -423,6 +444,7 @@ int NHGMgr::createSonicGatewayNHGObject(RIBNHGEntry *entry) {
 
     // set the sonic gateway nhg id of rib entry
     entry->setSonicGatewayObjId(sonicGatewayNHGID);
+    SWSS_LOG_NOTICE("Create sonic gateway nhg object for %d, sonic gateway id: %d, type: %d", entry->getRIBID(), sonicGatewayNHGID, entry->getSonicObjType());
     return 0;
 }
 
@@ -570,20 +592,28 @@ bool NHGMgr::isSonicGatewayNHGIDInUsed(sonicNhgObjType type, uint32_t id) {
  * dump NHG group full for debugging
  */
 void NHGMgr::dumpNHGGroupFull(fib::NextHopGroupFull nhg) {
-    SWSS_LOG_DEBUG("NHG ID %d, type %d, ifname %s", nhg.id, nhg.type, nhg.ifname.c_str());
+    SWSS_LOG_NOTICE("NHG ID %d, type %d, ifname %s", nhg.id, nhg.type, nhg.ifname.c_str());
 
     if (nhg.type == fib::NEXTHOP_TYPE_IPV4 || nhg.type == fib::NEXTHOP_TYPE_IPV4_IFINDEX) {
         char gateway[INET_ADDRSTRLEN] = {0};
         inet_ntop(AF_INET, &nhg.gate.ipv4, gateway, INET_ADDRSTRLEN);
-        SWSS_LOG_DEBUG("   gateway %s", gateway);
+        SWSS_LOG_NOTICE("   gateway %s", gateway);
     }
     if (nhg.type == fib::NEXTHOP_TYPE_IPV6 || nhg.type == fib::NEXTHOP_TYPE_IPV6_IFINDEX) {
         char gateway[INET6_ADDRSTRLEN] = {0};
         inet_ntop(AF_INET6, &nhg.gate.ipv6, gateway, INET6_ADDRSTRLEN);
-        SWSS_LOG_DEBUG("   gateway %s", gateway);
+        SWSS_LOG_NOTICE("   gateway %s", gateway);
     }
     for (auto it = nhg.nh_grp_full_list.begin(); it != nhg.nh_grp_full_list.end(); it++) {
-        SWSS_LOG_DEBUG("   group member %d, num_direct %d", it->id, it->num_direct);
+        SWSS_LOG_NOTICE("   group member %d, num_direct %d", it->id, it->num_direct);
+    }
+    if (nhg.nh_srv6 != nullptr && nhg.nh_srv6->seg6_segs != nullptr){
+        char seg_str[INET6_ADDRSTRLEN] = {0};
+        inet_ntop(AF_INET6, &nhg.nh_srv6->seg6_segs->seg[0], seg_str, INET6_ADDRSTRLEN);
+        SWSS_LOG_NOTICE("   srv6 seg6_segs %s", seg_str);
+        char seg_src[INET6_ADDRSTRLEN] = {0};
+        inet_ntop(AF_INET6, &nhg.src, seg_src, INET6_ADDRSTRLEN);
+        SWSS_LOG_NOTICE("   srv6 seg_src %s", seg_src);
     }
 }
 
@@ -719,6 +749,7 @@ int RIBNHGTable::addEntry(NextHopGroupFull nhg, uint8_t af) {
         SWSS_LOG_ERROR("Failed to create nhg entry for %d", nhg.id);
         return -1;
     }
+
     int ret = entry->setEntry(nhg, af);
     if (ret != 0) {
         delete entry;
@@ -889,16 +920,29 @@ int RIBNHGEntry::createSRv6GatewayObjFromRIBEntry(SonicGateWayNHGObject &sonicNh
     sonicNhgOut.type = SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY;
     sonicNhgOut.id = getSonicGatewayObjID();
 
-    // get the group member
-    for (auto it = m_group.begin(); it != m_group.end(); it++) {
-        RIBNHGEntry *memberEntry = m_table->getEntry(it->first);
+    // If this entry has its own SRv6 VPN fields, use them directly.
+    // (single-hop or self-contained SRv6 VPN nexthop)
+    if (m_nhg.nh_srv6 != nullptr && m_nhg.nh_srv6->seg6_segs != nullptr) {
+        sonicNhgOut.nexthop = m_nexthop;
+        sonicNhgOut.segSrc = m_segSrc;
+        sonicNhgOut.vpnSid = m_vpnSid;
+        sonicNhgOut.ifName = m_ifName;
+        return 0;
+    }
+
+    // Multi-hop: only collect direct depends (m_depends) that have sonic gateway obj as group members.
+    // Use weight from m_group map.
+    for (auto dep_id: m_depends) {
+        RIBNHGEntry *memberEntry = m_table->getEntry(dep_id);
         if (memberEntry == nullptr) {
-            SWSS_LOG_ERROR("RIBNHGEntry is not exist: %d", it->first);
+            SWSS_LOG_ERROR("RIBNHGEntry is not exist: %d", dep_id);
             return -1;
         }
         if (memberEntry->hasSonicGatewayObj() && memberEntry->getSonicObjType() == SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY) {
             if (memberEntry->getSonicGatewayObjID() != 0) {
-                sonicNhgOut.groupMember.push_back(std::make_pair(memberEntry->getSonicGatewayObjID(), it->second));
+                auto git = m_group.find(dep_id);
+                uint8_t weight = (git != m_group.end()) ? git->second : 1;
+                sonicNhgOut.groupMember.push_back(std::make_pair(memberEntry->getSonicGatewayObjID(), weight));
             }
         }
     }
@@ -980,7 +1024,7 @@ int RIBNHGEntry::setEntry(NextHopGroupFull nhg, uint8_t af) {
             return -1;
         }
         m_depends.insert(*it);
-        SWSS_LOG_DEBUG("NextHop id %d add depends %d.", m_rib_id, *it);
+        SWSS_LOG_NOTICE("NextHop id %d add depends %d.", m_rib_id, *it);
     }
 
 
@@ -992,7 +1036,7 @@ int RIBNHGEntry::setEntry(NextHopGroupFull nhg, uint8_t af) {
             return -1;
         }
         m_group.insert(std::make_pair(it->id, it->weight));
-        SWSS_LOG_DEBUG("NextHop id %d add group %d.", m_rib_id, it->id);
+        SWSS_LOG_NOTICE("NextHop id %d add group %d.", m_rib_id, it->id);
     }
 
     /*
@@ -1058,7 +1102,7 @@ int RIBNHGEntry::syncFvVector() {
         m_fvVector.push_back(wg);
     }
 
-    SWSS_LOG_DEBUG("NextHopGroup table set: nexthop[%s] ifname[%s] weight[%s]", m_nexthop.c_str(), m_ifName.c_str(),
+    SWSS_LOG_NOTICE("NextHopGroup table set: nexthop[%s] ifname[%s] weight[%s]", m_nexthop.c_str(), m_ifName.c_str(),
                   m_weight.c_str());
     return 0;
 }
@@ -1067,13 +1111,13 @@ int RIBNHGEntry::syncFvVector() {
 int RIBNHGEntry::getNHGFields() {
 
     if (m_has_member) {
-        SWSS_LOG_DEBUG("multi nexthop group");
+        SWSS_LOG_NOTICE("multi nexthop group");
         // nexthop with group member
         return getNextHopGroupFields();
 
     } else {
         // nexthop without group member
-        SWSS_LOG_DEBUG("single nexthop group");
+        SWSS_LOG_NOTICE("single nexthop group");
         return getNextHopFields();
     }
 }
@@ -1114,21 +1158,22 @@ int RIBNHGEntry::getNextHopGroupFields() {
             weights += NHG_DELIMITER;
         }
         nexthops += entry->getNextHopStr();
-        SWSS_LOG_DEBUG(" entry nexthop: [%s]", entry->getNextHopStr().c_str());
+        SWSS_LOG_NOTICE(" entry nexthop: [%s]", entry->getNextHopStr().c_str());
         ifnames += entry->getInterfaceNameStr();
-        SWSS_LOG_DEBUG(" entry interface: [%s]", entry->getInterfaceNameStr().c_str());
+        SWSS_LOG_NOTICE(" entry interface: [%s]", entry->getInterfaceNameStr().c_str());
         weights += weight;
-        SWSS_LOG_DEBUG(" entry weight: [%s]", weight.c_str());
+        SWSS_LOG_NOTICE(" entry weight: [%s]", weight.c_str());
         /* SRv6 VPN SID */
         if(m_sonic_obj_type == SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY){
             if (!vpnSids.empty()){
                 vpnSids += NHG_DELIMITER;
             }
-            if(!m_segSrc.empty()){
+            if(!segSrcs.empty()){
                 segSrcs += NHG_DELIMITER;
             }
             vpnSids += entry->getVPNSIDStr();
             segSrcs += entry->getSegSrcStr();
+            SWSS_LOG_NOTICE(" entry vpnSid: [%s], segSrc: [%s]", vpnSids.c_str(), segSrcs.c_str());
         }
 
     }
@@ -1137,7 +1182,7 @@ int RIBNHGEntry::getNextHopGroupFields() {
     m_vpnSid = vpnSids;
     m_segSrc = segSrcs;
     m_weight = weights;
-    SWSS_LOG_DEBUG("get NextHopGroup fields done, nexthop[%s] ifname[%s] weight[%s] vpnSid[%s] segSrc[%s]", m_nexthop.c_str(), m_ifName.c_str(),
+    SWSS_LOG_NOTICE("get NextHopGroup fields done, nexthop[%s] ifname[%s] weight[%s] vpnSid[%s] segSrc[%s]", m_nexthop.c_str(), m_ifName.c_str(),
                   m_weight.c_str(), m_vpnSid.c_str(), m_segSrc.c_str());
     return 0;
 }
@@ -1170,10 +1215,16 @@ int RIBNHGEntry::getNextHopFields() {
     if (m_sonic_obj_type == SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY) {
         char sid[INET6_ADDRSTRLEN] = {0};
         char seg_src[INET6_ADDRSTRLEN] = {0};
-        inet_ntop(AF_INET6, &m_nhg.nh_srv6->seg6_segs->seg[0], sid, INET6_ADDRSTRLEN);
-        m_vpnSid = sid;
-        inet_ntop(AF_INET6, &m_nhg.src, seg_src, INET6_ADDRSTRLEN);
-        m_segSrc = seg_src;
+        if (m_nhg.nh_srv6 != nullptr && m_nhg.nh_srv6->seg6_segs != nullptr){
+            inet_ntop(AF_INET6, &m_nhg.nh_srv6->seg6_segs->seg[0], sid, INET6_ADDRSTRLEN);
+            m_vpnSid = sid;
+            inet_ntop(AF_INET6, &m_nhg.src, seg_src, INET6_ADDRSTRLEN);
+            m_segSrc = seg_src;
+        }else{
+            SWSS_LOG_ERROR("single nexthop id %d type srv6 gateway has no seg6_segs", m_rib_id);
+            return -1;
+        }
+
     }
     return 0;
 }
@@ -1190,17 +1241,19 @@ int RIBNHGEntry::getResolvedGroupFromNHGFull() {
         for (auto nhg: m_nhg.nh_grp_full_list) {
             if (nhg.num_direct == 0) {
                 m_resolvedGroup.insert(std::make_pair(nhg.id, nhg.weight));
+                SWSS_LOG_NOTICE("NextHop id %d add resolved group %d.", m_rib_id, nhg.id);
             }
         }
     } else if (m_sonic_obj_type == SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY) {
-        for (auto nhg: m_group){
-            RIBNHGEntry *entry = m_table->getEntry(nhg.first);
+        for (auto nhg: m_nhg.nh_grp_full_list){
+            RIBNHGEntry *entry = m_table->getEntry(nhg.id);
             if (entry == nullptr){
-                SWSS_LOG_ERROR("NextHop id %d in group not found.", nhg.first);
+                SWSS_LOG_ERROR("NextHop id %d in group not found.", nhg.id);
                 return -1;
             }
             if (entry->hasSonicGatewayObj()){
-                m_resolvedGroup.insert(std::make_pair(nhg.first, nhg.second));
+                m_resolvedGroup.insert(std::make_pair(nhg.id, nhg.weight));
+                SWSS_LOG_NOTICE("NextHop id %d add resolved group %d, type %d.", m_rib_id, nhg.id, entry->getSonicObjType());
             }
         }
     }
@@ -1234,16 +1287,20 @@ void RIBNHGEntry::needCreateSonicGatewayNHGObj() {
         if (entry->hasSonicGatewayObj()) {
             m_sonic_obj_type = entry->getSonicObjType();
             m_has_sonic_gateway_obj = true;
-            SWSS_LOG_ERROR("NextHop id %d has sonic gateway obj, is multi nexthop group.", it->first);
+            SWSS_LOG_NOTICE("NextHop id %d has sonic gateway obj, is multi nexthop group.", it->first);
             return;
         }
     }
 
-    /* for srv6 gateway, check if we need to create single pic group obj */
-    if (m_group.size() != 0 && m_nhg.nh_srv6 != nullptr && m_nhg.nh_srv6->seg6_segs != nullptr) {
+    /*
+     * For srv6 gateway, any nexthop with nh_srv6 and seg6_segs should create a sonic gateway obj.
+     * This covers both single-hop SRv6 VPN nexthops (no group members) and
+     * recursive SRv6 VPN nexthops that carry their own SRv6 VPN info.
+     */
+    if (m_nhg.nh_srv6 != nullptr && m_nhg.nh_srv6->seg6_segs != nullptr && CHECK_FLAG(m_nhg.nhg_flags, NEXTHOP_GROUP_RECEIVED_FLAG)) {
         m_sonic_obj_type = SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY;
         m_has_sonic_gateway_obj = true;
-        SWSS_LOG_ERROR("NextHop id %d has sonic gateway obj, is single nexthop group.", m_rib_id);
+        SWSS_LOG_NOTICE("NextHop id %d has sonic gateway obj.", m_rib_id);
         return;
     }
 
@@ -1304,14 +1361,17 @@ uint8_t RIBNHGEntry::getAddressFamily() {
 string RIBNHGEntry::getSegSrcStr() {
     return m_segSrc;
 }
+
 void RIBNHGEntry::enableNHG() {
     m_enable = true;
     return ;
 }
+
 void RIBNHGEntry::disableNHG() {
     m_enable = false;
     return ;
 }
+
 bool RIBNHGEntry::getNhgEnableStatus() {
     return m_enable;
 }
