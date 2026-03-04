@@ -18,6 +18,8 @@ extern "C" {
 #include "sai.h"
 }
 
+#define FLEX_COUNTER_DEFAULT_SECONDARY_POLL_FACTOR 0
+
 enum class StatsMode
 {
     READ,
@@ -64,6 +66,7 @@ class FlexCounterManager
                 const StatsMode stats_mode,
                 const uint polling_interval,
                 const bool enabled,
+                const uint secondary_poll_factor = 0,
                 swss::FieldValueTuple fv_plugin = std::make_pair("",""));
 
         FlexCounterManager()
@@ -75,6 +78,7 @@ class FlexCounterManager
                 const StatsMode stats_mode,
                 const uint polling_interval,
                 const bool enabled,
+                const uint secondary_poll_factor = 0,
                 swss::FieldValueTuple fv_plugin = std::make_pair("",""));
 
         FlexCounterManager(const FlexCounterManager&) = delete;
@@ -82,6 +86,7 @@ class FlexCounterManager
         virtual ~FlexCounterManager();
 
         void updateGroupPollingInterval(const uint polling_interval);
+        void updateGroupSecondaryPollFactor(const uint secondary_poll_factor);
         void enableFlexCounterGroup();
         void disableFlexCounterGroup();
 
@@ -107,6 +112,11 @@ class FlexCounterManager
             return polling_interval;
         }
 
+        const uint& getSecondaryPollFactor() const
+        {
+            return secondary_poll_factor;
+        }
+
         const bool& getEnabled() const
         {
             return enabled;
@@ -123,6 +133,7 @@ class FlexCounterManager
         StatsMode stats_mode;
         uint polling_interval;
         bool enabled;
+        uint secondary_poll_factor;
         swss::FieldValueTuple fv_plugin;
         std::unordered_map<sai_object_id_t, sai_object_id_t> installed_counters;
         bool is_gearbox;
@@ -218,8 +229,9 @@ class FlexCounterCachedManager : public FlexCounterManager
                 const StatsMode stats_mode,
                 const uint polling_interval,
                 const bool enabled,
+                const uint secondary_poll_factor = 0,
                 swss::FieldValueTuple fv_plugin = std::make_pair("","")) :
-            FlexCounterManager(group_name, stats_mode, polling_interval, enabled, fv_plugin)
+            FlexCounterManager(group_name, stats_mode, polling_interval, enabled, secondary_poll_factor, fv_plugin)
         {
         }
 
@@ -294,8 +306,9 @@ class FlexCounterTaggedCachedManager : public FlexCounterCachedManager
                 const StatsMode stats_mode,
                 const uint polling_interval,
                 const bool enabled,
+                const uint secondary_poll_factor = 0,
                 swss::FieldValueTuple fv_plugin = std::make_pair("","")) :
-            FlexCounterCachedManager(group_name, stats_mode, polling_interval, enabled, fv_plugin)
+            FlexCounterCachedManager(group_name, stats_mode, polling_interval, enabled, secondary_poll_factor, fv_plugin)
         {
         }
 
@@ -328,15 +341,16 @@ class FlexCounterTaggedCachedManager : public FlexCounterCachedManager
 
 template <typename TagType>
 class FlexCounterTaggedCachedManager<TagType, typename std::enable_if_t<std::is_enum<TagType>::value>> : public FlexCounterCachedManager
-{
+{ 
     public:
         FlexCounterTaggedCachedManager(
                 const std::string& group_name,
                 const StatsMode stats_mode,
                 const uint polling_interval,
                 const bool enabled,
+                const uint secondary_poll_factor = 0,
                 swss::FieldValueTuple fv_plugin = std::make_pair("","")) :
-            FlexCounterCachedManager(group_name, stats_mode, polling_interval, enabled, fv_plugin)
+            FlexCounterCachedManager(group_name, stats_mode, polling_interval, enabled, secondary_poll_factor, fv_plugin)
         {
         }
 
@@ -376,8 +390,8 @@ class FlexManagerDirectory
 {
     public:
         FlexCounterManager* createFlexCounterManager(const std::string& group_name, const StatsMode stats_mode,
-                                                     const uint polling_interval, const bool enabled,
-                                                     swss::FieldValueTuple fv_plugin = std::make_pair("",""));
+                                                     const uint polling_interval, bool enabled,
+                                                     const uint secondary_poll_factor = 0, swss::FieldValueTuple fv_plugin = std::make_pair("",""));
     private:
         std::unordered_map<std::string, FlexCounterManager*>  m_managers;
 };

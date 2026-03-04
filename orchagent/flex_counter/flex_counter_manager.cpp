@@ -1,5 +1,6 @@
 #include "flex_counter_manager.h"
 
+#include <string>
 #include <vector>
 
 #include "schema.h"
@@ -62,6 +63,7 @@ FlexCounterManager *FlexManagerDirectory::createFlexCounterManager(const string&
                                                                    const StatsMode stats_mode,
                                                                    const uint polling_interval,
                                                                    const bool enabled,
+                                                                   const uint secondary_poll_factor,
                                                                    FieldValueTuple fv_plugin)
 {
     if (m_managers.find(group_name) != m_managers.end())
@@ -78,6 +80,12 @@ FlexCounterManager *FlexManagerDirectory::createFlexCounterManager(const string&
                           group_name.c_str());
             return NULL;
         }
+        if (secondary_poll_factor != m_managers[group_name]->getSecondaryPollFactor())
+        {
+            SWSS_LOG_ERROR("Secondary poll factor mismatch with alreasy created flex counter manager %s",
+                          group_name.c_str());
+            return NULL;
+        }
         if (enabled != m_managers[group_name]->getEnabled())
         {
             SWSS_LOG_ERROR("Enabled field mismatch with already created flex counter manager %s",
@@ -87,7 +95,7 @@ FlexCounterManager *FlexManagerDirectory::createFlexCounterManager(const string&
         return m_managers[group_name];
     }
     FlexCounterManager *fc_manager = new FlexCounterManager(group_name, stats_mode, polling_interval,
-                                                            enabled, fv_plugin);
+                                                            enabled, secondary_poll_factor, fv_plugin);
     m_managers[group_name] = fc_manager;
     return fc_manager;
 }
@@ -97,9 +105,10 @@ FlexCounterManager::FlexCounterManager(
         const StatsMode stats_mode,
         const uint polling_interval,
         const bool enabled,
+        const uint secondary_poll_factor,
         FieldValueTuple fv_plugin) :
     FlexCounterManager(false, group_name, stats_mode,
-            polling_interval, enabled, fv_plugin)
+            polling_interval, secondary_poll_factor, enabled, fv_plugin)
 {
 }
 
@@ -109,10 +118,12 @@ FlexCounterManager::FlexCounterManager(
         const StatsMode stats_mode,
         const uint polling_interval,
         const bool enabled,
+        const uint secondary_poll_factor,
         FieldValueTuple fv_plugin) :
     group_name(group_name),
     stats_mode(stats_mode),
     polling_interval(polling_interval),
+    secondary_poll_factor(secondary_poll_factor),
     enabled(enabled),
     fv_plugin(fv_plugin),
     is_gearbox(is_gearbox)
@@ -144,6 +155,7 @@ void FlexCounterManager::applyGroupConfiguration()
 
     setFlexCounterGroupParameter(group_name,
                                  std::to_string(polling_interval),
+                                 std::to_string(secondary_poll_factor),
                                  stats_mode_lookup.at(stats_mode),
                                  fvField(fv_plugin),
                                  fvValue(fv_plugin),
@@ -160,6 +172,17 @@ void FlexCounterManager::updateGroupPollingInterval(
 
     SWSS_LOG_DEBUG("Set polling interval for flex counter group '%s' to %d ms.",
             group_name.c_str(), polling_interval);
+}
+
+void FlexCounterManager::updateGroupSecondaryPollFactor(
+        const uint secondary_poll_factor)
+{
+    SWSS_LOG_ENTER();
+
+    setFlexCounterGroupSecondaryPollFactor(group_name, std::to_string(secondary_poll_factor), is_gearbox);
+
+    SWSS_LOG_DEBUG("Set secondary poll factor for flex counter group '%s' to %d.",
+            group_name.c_str(), secondary_poll_factor);
 }
 
 // enableFlexCounterGroup will do nothing if the flex counter group is already
