@@ -69,5 +69,6 @@ namespace mock_orch_test
         virtual void PostSetUp();
         virtual void PreTearDown();
         virtual void ApplySaiMock();
+        void initTestLogger(const std::string &appName = "mock_tests", int minPrio = swss::Logger::SWSS_INFO);
     };
 }

@@ -103,22 +103,6 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
 {
     SWSS_LOG_ENTER();
 
-    auto it = appliance_entries_.find(appliance_id);
-
-    if (it != appliance_entries_.end())
-    {
-        if (!MessageDifferencer::Equivalent(it->second.metadata.trusted_vnis(), entry.trusted_vnis()))
-        {
-            SWSS_LOG_INFO("Appliance Entry %s already exists with different trusted vnis", appliance_id.c_str());
-            removeApplianceTrustedVni(appliance_id, it->second.metadata);
-            addApplianceTrustedVni(appliance_id, entry);
-        }
-        else
-        {
-            SWSS_LOG_WARN("Appliance Entry already exists for %s", appliance_id.c_str());
-        }
-        return true;
-    }
     if (!appliance_entries_.empty())
     {
         SWSS_LOG_ERROR("Appliance entry is a singleton and already exists");
@@ -205,42 +189,59 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
         }
     }
     appliance_entries_[appliance_id] = ApplianceEntry { sai_appliance_id, entry };
+    // clear out the trusted VNIs list. They will be readded by addApplianceTrustedVni() after successful creation to ensure that internal cache state is consistent with SAI state
+    appliance_entries_[appliance_id].metadata.clear_trusted_vnis_list();
     SWSS_LOG_NOTICE("Created appliance, vip and direction lookup entries for %s", appliance_id.c_str());
 
-    if (entry.has_trusted_vnis())
+    if (!entry.trusted_vnis_list().empty())
     {
-        addApplianceTrustedVni(appliance_id, entry);
+        bool all_trusted_vnis_added = addApplianceTrustedVni(appliance_id, entry);
+        if (!all_trusted_vnis_added)
+        {
+            SWSS_LOG_ERROR("Failed to add all trusted vni entries for appliance %s. Removing appliance entry.", appliance_id.c_str());
+            removeApplianceEntry(appliance_id);
+            return false;
+        }
     }
 
     return true;
 }
 
-void DashOrch::addApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance& entry)
+bool DashOrch::addApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance& entry)
 {
     SWSS_LOG_ENTER();
     sai_global_trusted_vni_entry_t trusted_vni_entry;
     trusted_vni_entry.switch_id = gSwitchId;
     sai_u32_range_t vni_range;
-    if (!to_sai(entry.trusted_vnis(), vni_range))
-    {
-        SWSS_LOG_ERROR("Failed to convert trusted vni range for appliance");
-        return;
-    }
+    bool success = true;
 
-    trusted_vni_entry.vni_range = vni_range;
-    sai_status_t status = sai_dash_trusted_vni_api->create_global_trusted_vni_entry(&trusted_vni_entry, 0, NULL);
-    if (status != SAI_STATUS_SUCCESS)
+    for (int i = 0; i < entry.trusted_vnis_list_size(); i++)
     {
-        SWSS_LOG_ERROR("Failed to create global trusted vni entry with range %u-%u for appliance", vni_range.min, vni_range.max);
-        task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_TRUSTED_VNI, status);
-        if (handle_status != task_success)
+        const auto& vni_range_pb = entry.trusted_vnis_list(i);
+        if (!to_sai(vni_range_pb, vni_range))
         {
-            parseHandleSaiStatusFailure(handle_status);
+            SWSS_LOG_ERROR("Failed to convert trusted vni range for appliance");
+            success = false;
+            continue;
         }
+        trusted_vni_entry.vni_range = vni_range;
+        sai_status_t status = sai_dash_trusted_vni_api->create_global_trusted_vni_entry(&trusted_vni_entry, 0, NULL);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create global trusted vni entry with range %u-%u for appliance", vni_range.min, vni_range.max);
+            task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_TRUSTED_VNI, status);
+            if (handle_status != task_success)
+            {
+                parseHandleSaiStatusFailure(handle_status);
+                success = false;
+                continue;
+            }
+        }
+        SWSS_LOG_NOTICE("Created global trusted vni entry for appliance with range %u-%u",
+                        vni_range.min, vni_range.max);
+        appliance_entries_[appliance_id].metadata.mutable_trusted_vnis_list()->Add()->CopyFrom(vni_range_pb);
     }
-    appliance_entries_[appliance_id].metadata.mutable_trusted_vnis()->CopyFrom(entry.trusted_vnis());
-    SWSS_LOG_NOTICE("Created global trusted vni entry for appliance with range %u-%u",
-                    vni_range.min, vni_range.max);
+    return success;
 }
 
 bool DashOrch::removeApplianceEntry(const string& appliance_id)
@@ -256,6 +257,17 @@ bool DashOrch::removeApplianceEntry(const string& appliance_id)
     }
 
     const auto& entry = appliance_entries_[appliance_id].metadata;
+
+    if (!entry.trusted_vnis_list().empty())
+    {
+        bool all_trusted_vnis_removed = removeApplianceTrustedVni(appliance_id, entry);
+        if (!all_trusted_vnis_removed)
+        {
+            SWSS_LOG_ERROR("Failed to remove all trusted vni entries for appliance %s.", appliance_id.c_str());
+            return false;
+        }
+    }
+
     sai_vip_entry_t vip_entry;
     vip_entry.switch_id = gSwitchId;
     if (!to_sai(entry.sip(), vip_entry.vip))
@@ -302,46 +314,47 @@ bool DashOrch::removeApplianceEntry(const string& appliance_id)
         }
     }
 
-    if (entry.has_trusted_vnis())
-    {
-        removeApplianceTrustedVni(appliance_id, entry);
-    }
-
     appliance_entries_.erase(appliance_id);
     SWSS_LOG_NOTICE("Removed appliance, vip and direction lookup entries for %s", appliance_id.c_str());
-
-
     return true;
 }
 
-void DashOrch::removeApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance& entry)
+bool DashOrch::removeApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance& entry)
 {
     SWSS_LOG_ENTER();
     sai_global_trusted_vni_entry_t trusted_vni_entry;
     trusted_vni_entry.switch_id = gSwitchId;
     sai_u32_range_t vni_range;
+    bool success = true;
 
-    if (!to_sai(entry.trusted_vnis(), vni_range))
+    // iterate backwards since we use RemoveLast() to remove the trusted vni entries from internal cache as SAI entries are removed, to ensure the internal cache state is consistent with SAI state in case of failure in the middle of the loop
+    for (int i = entry.trusted_vnis_list_size() - 1; i >= 0; i--)
     {
-        SWSS_LOG_ERROR("Failed to convert trusted vni range for appliance");
-        return;
-    }
-
-    trusted_vni_entry.vni_range = vni_range;
-    sai_status_t status = sai_dash_trusted_vni_api->remove_global_trusted_vni_entry(&trusted_vni_entry);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to remove global trusted vni entry with range %u-%u for appliance", vni_range.min, vni_range.max);
-        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t)SAI_API_DASH_TRUSTED_VNI, status);
-        if (handle_status != task_success)
+        const auto& vni_range_pb = entry.trusted_vnis_list(i);
+        if (!to_sai(vni_range_pb, vni_range))
         {
-            parseHandleSaiStatusFailure(handle_status);
+            SWSS_LOG_ERROR("Failed to convert trusted vni range for appliance");
+            success = false;
+            continue;
         }
+        trusted_vni_entry.vni_range = vni_range;
+        sai_status_t status = sai_dash_trusted_vni_api->remove_global_trusted_vni_entry(&trusted_vni_entry);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove global trusted vni entry with range %u-%u for appliance", vni_range.min, vni_range.max);
+            task_process_status handle_status = handleSaiRemoveStatus((sai_api_t)SAI_API_DASH_TRUSTED_VNI, status);
+            if (handle_status != task_success)
+            {
+                parseHandleSaiStatusFailure(handle_status);
+                success = false;
+                continue;
+            }
+        }
+        SWSS_LOG_NOTICE("Removed global trusted vni entry for appliance with range %u-%u",
+                        vni_range.min, vni_range.max);
+        appliance_entries_[appliance_id].metadata.mutable_trusted_vnis_list()->RemoveLast();
     }
-
-    appliance_entries_[appliance_id].metadata.clear_trusted_vnis();
-    SWSS_LOG_NOTICE("Removed global trusted vni entry for appliance with range %u-%u",
-                    vni_range.min, vni_range.max);
+    return success;
 }
 
 void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
@@ -754,33 +767,43 @@ bool DashOrch::addEniAddrMapEntry(const string& eni, const EniEntry& entry)
     return true;
 }
 
-void DashOrch::addEniTrustedVnis(const std::string& eni, const EniEntry& entry)
+bool DashOrch::addEniTrustedVnis(const std::string& eni, const EniEntry& entry)
 {
     SWSS_LOG_ENTER();
     sai_eni_trusted_vni_entry_t trusted_vni_entry;
     trusted_vni_entry.switch_id = gSwitchId;
     trusted_vni_entry.eni_id = entry.eni_id;
     sai_u32_range_t vni_range;
-    if (!to_sai(entry.metadata.trusted_vnis(), vni_range))
-    {
-        SWSS_LOG_ERROR("Failed to convert trusted vni range for ENI %s", entry.metadata.eni_id().c_str());
-        return;
-    }
-    trusted_vni_entry.vni_range = vni_range;
+    bool success = true;
 
-    sai_status_t status = sai_dash_trusted_vni_api->create_eni_trusted_vni_entry(&trusted_vni_entry, 0, NULL);
-    if (status != SAI_STATUS_SUCCESS)
+    for (int i = 0; i < entry.metadata.trusted_vnis_list_size(); i++)
     {
-        SWSS_LOG_ERROR("Failed to create ENI trusted vni entry with range %u-%u for ENI %s", vni_range.min, vni_range.max, entry.metadata.eni_id().c_str());
-        task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_TRUSTED_VNI, status);
-        if (handle_status != task_success)
+        dash::types::ValueOrRange vni_range_pb = entry.metadata.trusted_vnis_list(i);
+        if (!to_sai(vni_range_pb, vni_range))
         {
-            parseHandleSaiStatusFailure(handle_status);
+            SWSS_LOG_ERROR("Failed to convert trusted vni range for ENI %s", entry.metadata.eni_id().c_str());
+            success = false;
+            continue;
         }
+        trusted_vni_entry.vni_range = vni_range;
+
+        sai_status_t status = sai_dash_trusted_vni_api->create_eni_trusted_vni_entry(&trusted_vni_entry, 0, NULL);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create ENI trusted vni entry with range %u-%u for ENI %s", vni_range.min, vni_range.max, entry.metadata.eni_id().c_str());
+            task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_TRUSTED_VNI, status);
+            if (handle_status != task_success)
+            {
+                parseHandleSaiStatusFailure(handle_status);
+                success = false;
+                continue;
+            }
+        }
+        eni_entries_[eni].metadata.mutable_trusted_vnis_list()->Add()->CopyFrom(vni_range_pb);
+        SWSS_LOG_NOTICE("Created ENI trusted vni entry for ENI %s with range %u-%u",
+                        entry.metadata.eni_id().c_str(), vni_range.min, vni_range.max);
     }
-    eni_entries_[eni].metadata.mutable_trusted_vnis()->CopyFrom(entry.metadata.trusted_vnis());
-    SWSS_LOG_NOTICE("Created ENI trusted vni entry for ENI %s with range %u-%u",
-                    entry.metadata.eni_id().c_str(), vni_range.min, vni_range.max);
+    return success;
 }
 
 bool DashOrch::addEni(const string& eni, EniEntry &entry)
@@ -791,13 +814,6 @@ bool DashOrch::addEni(const string& eni, EniEntry &entry)
     if (it != eni_entries_.end())
     {
         bool changed = false;
-        if (!MessageDifferencer::Equivalent(it->second.metadata.trusted_vnis(), entry.metadata.trusted_vnis()))
-        {
-            SWSS_LOG_INFO("ENI %s trusted vnis have changed", eni.c_str());
-            removeEniTrustedVnis(eni, it->second);
-            addEniTrustedVnis(eni, entry);
-            changed = true;
-        }
         if (it->second.metadata.admin_state() != entry.metadata.admin_state())
         {
             SWSS_LOG_INFO("ENI %s already exists, updating admin state", eni.c_str());
@@ -815,10 +831,18 @@ bool DashOrch::addEni(const string& eni, EniEntry &entry)
         return false;
     }
     eni_entries_[eni] = entry;
+    // clear out the trusted VNIs list. They will be readded by addEniTrustedVni() after successful creation to ensure that internal cache state is consistent with SAI state
+    eni_entries_[eni].metadata.clear_trusted_vnis_list();
 
-    if (entry.metadata.has_trusted_vnis())
+    if (!entry.metadata.trusted_vnis_list().empty())
     {
-        addEniTrustedVnis(eni, entry);
+        bool all_trusted_vnis_added = addEniTrustedVnis(eni, entry);
+        if (!all_trusted_vnis_added)
+        {
+            SWSS_LOG_ERROR("Failed to add all trusted vni entries for ENI %s. Removing ENI entry.", eni.c_str());
+            removeEni(eni);
+            return false;
+        }
     }
 
     return true;
@@ -917,34 +941,43 @@ bool DashOrch::removeEniAddrMapEntry(const string& eni)
     return true;
 }
 
-void DashOrch::removeEniTrustedVnis(const std::string& eni, const EniEntry& entry)
+bool DashOrch::removeEniTrustedVnis(const std::string& eni, const EniEntry& entry)
 {
     SWSS_LOG_ENTER();
     sai_eni_trusted_vni_entry_t trusted_vni_entry;
     trusted_vni_entry.switch_id = gSwitchId;
     trusted_vni_entry.eni_id = entry.eni_id;
     sai_u32_range_t vni_range;
+    bool success = true;
 
-    if (!to_sai(entry.metadata.trusted_vnis(), vni_range))
+    for (int i = entry.metadata.trusted_vnis_list_size() - 1; i >= 0; i--)
     {
-        SWSS_LOG_ERROR("Failed to convert trusted vni range for ENI %s", entry.metadata.eni_id().c_str());
-        return;
-    }
-
-    trusted_vni_entry.vni_range = vni_range;
-    sai_status_t status = sai_dash_trusted_vni_api->remove_eni_trusted_vni_entry(&trusted_vni_entry);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to remove ENI trusted vni entry with range %u-%u for ENI %s", vni_range.min, vni_range.max, entry.metadata.eni_id().c_str());
-        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t)SAI_API_DASH_TRUSTED_VNI, status);
-        if (handle_status != task_success)
+        dash::types::ValueOrRange vni_range_pb = entry.metadata.trusted_vnis_list(i);
+        if (!to_sai(vni_range_pb, vni_range))
         {
-            parseHandleSaiStatusFailure(handle_status);
+            SWSS_LOG_ERROR("Failed to convert trusted vni range for ENI %s", entry.metadata.eni_id().c_str());
+            success = false;
+            continue;
         }
+
+        trusted_vni_entry.vni_range = vni_range;
+        sai_status_t status = sai_dash_trusted_vni_api->remove_eni_trusted_vni_entry(&trusted_vni_entry);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove ENI trusted vni entry with range %u-%u for ENI %s", vni_range.min, vni_range.max, entry.metadata.eni_id().c_str());
+            task_process_status handle_status = handleSaiRemoveStatus((sai_api_t)SAI_API_DASH_TRUSTED_VNI, status);
+            if (handle_status != task_success)
+            {
+                parseHandleSaiStatusFailure(handle_status);
+                success = false;
+                continue;
+            }
+        }
+        eni_entries_[eni].metadata.mutable_trusted_vnis_list()->RemoveLast();
+        SWSS_LOG_NOTICE("Removed ENI trusted vni entry for ENI %s with range %u-%u",
+                        entry.metadata.eni_id().c_str(), vni_range.min, vni_range.max);
     }
-    eni_entries_[eni].metadata.clear_trusted_vnis();
-    SWSS_LOG_NOTICE("Removed ENI trusted vni entry for ENI %s with range %u-%u",
-                    entry.metadata.eni_id().c_str(), vni_range.min, vni_range.max);
+    return success;
 }
 
 bool DashOrch::removeEni(const string& eni)
@@ -957,9 +990,14 @@ bool DashOrch::removeEni(const string& eni)
         return true;
     }
 
-    if (eni_entries_[eni].metadata.has_trusted_vnis())
+    if (!eni_entries_[eni].metadata.trusted_vnis_list().empty())
     {
-        removeEniTrustedVnis(eni, eni_entries_[eni]);
+        bool all_trusted_vnis_removed = removeEniTrustedVnis(eni, eni_entries_[eni]);
+        if (!all_trusted_vnis_removed)
+        {
+            SWSS_LOG_ERROR("Failed to remove all trusted vni entries for ENI %s.", eni.c_str());
+            return false;
+        }
     }
 
     if (!removeEniAddrMapEntry(eni) || !removeEniObject(eni))
