@@ -4390,6 +4390,64 @@ void PortsOrch::doSendToIngressPortTask(Consumer &consumer)
     }
 }
 
+// Helper function to program serdes with admin state management
+bool PortsOrch::programSerdes(
+    Port &port,
+    sai_object_id_t port_id,
+    sai_object_id_t switch_id,
+    PortSerdesAttrMap_t &serdes_attr)
+{
+    // Validate port_id and determine serdes type
+    const char* serdes_type_name;
+    if (port_id == port.m_port_id)
+    {
+        serdes_type_name = "ASIC";
+    }
+    else if (port_id == port.m_line_side_id)
+    {
+        serdes_type_name = "gearbox line-side";
+    }
+    else if (port_id == port.m_system_side_id)
+    {
+        serdes_type_name = "gearbox system-side";
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Invalid port_id 0x%" PRIx64 " does not belong to port %s "
+                      "(port_id: 0x%" PRIx64 ", line_side_id: 0x%" PRIx64 ", system_side_id: 0x%" PRIx64 ")",
+                      port_id, port.m_alias.c_str(),
+                      port.m_port_id, port.m_line_side_id, port.m_system_side_id);
+        return false;
+    }
+
+    if (port.m_admin_state_up)
+    {
+        /* Bring port down before applying serdes attribute */
+        if (!setPortAdminStatus(port, false))
+        {
+            SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set %s serdes attr",
+                          port.m_alias.c_str(), serdes_type_name);
+            return false;
+        }
+
+        port.m_admin_state_up = false;
+        m_portList[port.m_alias] = port;
+    }
+
+    if (setPortSerdesAttribute(port_id, switch_id, serdes_attr))
+    {
+        SWSS_LOG_NOTICE("Successfully set %s serdes tunings for port %s",
+                       serdes_type_name, port.m_alias.c_str());
+        return true;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to set %s serdes tunings for port %s",
+                      serdes_type_name, port.m_alias.c_str());
+        return false;
+    }
+}
+
 void PortsOrch::doPortTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -5260,41 +5318,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
-                // Helper lambda to program serdes with admin state management
-                auto programSerdes = [&](
-                    sai_object_id_t port_id,
-                    sai_object_id_t switch_id,
-                    PortSerdesAttrMap_t &serdes_attr,
-                    const char* serdes_type_name) -> bool
-                {
-                    if (p.m_admin_state_up)
-                    {
-                        /* Bring port down before applying serdes attribute */
-                        if (!setPortAdminStatus(p, false))
-                        {
-                            SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set %s serdes attr",
-                                          p.m_alias.c_str(), serdes_type_name);
-                            return false;
-                        }
-
-                        p.m_admin_state_up = false;
-                        m_portList[p.m_alias] = p;
-                    }
-
-                    if (setPortSerdesAttribute(port_id, switch_id, serdes_attr))
-                    {
-                        SWSS_LOG_NOTICE("Successfully set %s serdes tunings for port %s",
-                                       serdes_type_name, p.m_alias.c_str());
-                        return true;
-                    }
-                    else
-                    {
-                        SWSS_LOG_ERROR("Failed to set %s serdes tunings for port %s",
-                                      serdes_type_name, p.m_alias.c_str());
-                        return false;
-                    }
-                };
-
                 if (!serdes_attr.empty())
                 {
                     if (p.m_link_training)
@@ -5305,7 +5328,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                     else
                     {
-                        if (!programSerdes(p.m_port_id, gSwitchId, serdes_attr, "ASIC"))
+                        if (!programSerdes(p, p.m_port_id, gSwitchId, serdes_attr))
                         {
                             it++;
                             continue;
@@ -5332,7 +5355,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (p.m_line_side_id && !line_serdes_attr.empty())
                 {
-                    if (!programSerdes(p.m_line_side_id, p.m_switch_id, line_serdes_attr, "gearbox line-side"))
+                    if (!programSerdes(p, p.m_line_side_id, p.m_switch_id, line_serdes_attr))
                     {
                         it++;
                         continue;
@@ -5341,7 +5364,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (p.m_system_side_id && !system_serdes_attr.empty())
                 {
-                    if (!programSerdes(p.m_system_side_id, p.m_switch_id, system_serdes_attr, "gearbox system-side"))
+                    if (!programSerdes(p, p.m_system_side_id, p.m_switch_id, system_serdes_attr))
                     {
                         it++;
                         continue;
