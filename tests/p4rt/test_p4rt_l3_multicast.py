@@ -419,6 +419,10 @@ def test_L2MulticastRouterInterfaceAddDelete(self, dvs, testlog):
                 self._p4rt_l3_multicast_router_intf.SAI_BRIDGE_PORT_TYPE_PORT),
             (self._p4rt_l3_multicast_router_intf.SAI_BRIDGE_PORT_ATTR_PORT_ID,
                 port_oid),
+            (self._p4rt_l3_multicast_router_intf.SAI_BRIDGE_PORT_ATTR_ADMIN_STATE,
+             "true"),
+            (self._p4rt_l3_multicast_router_intf.SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE,
+             self._p4rt_l3_multicast_router_intf.SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE),
             ]
     util.verify_attr(fvs, attr_list)
 
