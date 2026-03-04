@@ -128,6 +128,14 @@ ReturnCodeOr<std::vector<sai_attribute_t>> prepareBridgePortSaiAttrs(
   attr.value.oid = port.m_port_id;
   attrs.push_back(attr);
 
+  attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
+  attr.value.booldata = true;
+  attrs.push_back(attr);
+
+  attr.id = SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE;
+  attr.value.s32 = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE;
+  attrs.push_back(attr);
+
   return attrs;
 }
 
@@ -482,7 +490,8 @@ L3MulticastManager::deserializeMulticastRouterInterfaceEntry(
     const auto& value = fvValue(it);
     if (field == p4orch::kAction) {
       if (value == p4orch::kSetSrcMac ||
-          value == p4orch::kL2MulticastPassthrough) {
+	  value == p4orch::kL2MulticastPassthrough ||
+          value == p4orch::kMulticastL2Passthrough) {
         router_interface_entry.action = value;
       } else {
         return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
@@ -756,7 +765,7 @@ ReturnCodeOr<bool> L3MulticastManager::validateReplicas(
   SWSS_LOG_ENTER();
   // To figure out if we're dealing with L2 or IP multicast groups, we have to
   // check each replica against the `multicast_router_interface_table` entry's
-  // action.  If it's `l2_multicast_passthrough`, it's an L2 group.  Otherwise,
+  // action.  If it's `multicast_l2_passthrough`, it's an L2 group.  Otherwise,
   // it's an IP group.
   int ipmc_count = 0;
   int ipmc_rif_oid_count = 0;
@@ -782,7 +791,9 @@ ReturnCodeOr<bool> L3MulticastManager::validateReplicas(
         ipmc_rif_oid_count++;
       }
     } else if (router_interface_entry_ptr->action ==
-               p4orch::kL2MulticastPassthrough) {
+	       p4orch::kL2MulticastPassthrough ||
+               router_interface_entry_ptr->action ==
+                   p4orch::kMulticastL2Passthrough) {
       l2_count++;
       if (getBridgePortOid(replica) != SAI_NULL_OBJECT_ID) {
         l2_bridge_port_oid_count++;
@@ -1412,9 +1423,10 @@ L3MulticastManager::updateMulticastRouterInterfaceEntries(
       break;
     }
 
-    // Since action kL2MulticastPassthrough, used to setup L2 multicast bridge
+    // Since action kMulticastL2Passthrough, used to setup L2 multicast bridge
     // ports, does not have any parameters, there is nothing to update.
-    if (old_entry_ptr->action == p4orch::kL2MulticastPassthrough) {
+    if (old_entry_ptr->action == p4orch::kL2MulticastPassthrough ||
+        old_entry_ptr->action == p4orch::kMulticastL2Passthrough) {
       statuses[i] = ReturnCode();
       continue;
     }
