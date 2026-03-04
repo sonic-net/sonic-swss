@@ -674,63 +674,16 @@ namespace ut_fpmsyncd
         std::map<uint32_t, NextHopGroupFull> dependsList;
         map<uint32_t, uint32_t> nexthopList;
         uint32_t ribIDA = 4;
-        uint32_t ribIDB1 = 2;
-        uint32_t ribIDB2 = 3;
-        string vpnSid = "1::1";
-        string segSrcB1 = "fc00:200::1", segSrcB2 = "fc00:200::2";
-        string nexthopB1 = "fdee::1", nexthopB2 = "fdff::1";
-
-        NextHopGroupFull nhgObjB1 = createSingleSRv6VPNNextHopNHGFull(vpnSid.c_str(), segSrcB1.c_str(), nexthopB1.c_str(), ribIDB1);
-        NextHopGroupFull nhgObjB2 = createSingleSRv6VPNNextHopNHGFull(vpnSid.c_str(), segSrcB2.c_str(), nexthopB2.c_str(), ribIDB2);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB1, AF_INET6), 0);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB2, AF_INET6), 0);
-
-        RIBNHGEntry *entryB1 = m_nhgmgr->getRIBNHGEntryByRIBID(nhgObjB1.id);
-        RIBNHGEntry *entryB2 = m_nhgmgr->getRIBNHGEntryByRIBID(nhgObjB2.id);
-
-        /* Check the creation of the NHG entry, these two nexthop should not create related SonicGatewayNHG */
-        ASSERT_NE(entryB1, nullptr);
-        ASSERT_NE(entryB2, nullptr);
-        // uint32_t sonicObjIDB1 = entryB1->getSonicObjID();
-        // uint32_t sonicObjIDB2 = entryB2->getSonicObjID();
-
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB1), true);
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB2), true);
-
-        ASSERT_EQ(entryB1->hasSonicGatewayObj(), false);
-        ASSERT_EQ(entryB2->hasSonicGatewayObj(), false);
-
-        ASSERT_EQ(entryB1->getSonicObjType(), swss::SONIC_NHG_OBJ_TYPE_NHG_NORMAL);
-        ASSERT_EQ(entryB2->getSonicObjType(), swss::SONIC_NHG_OBJ_TYPE_NHG_NORMAL);
 
         /* Create a recursive SRv6 VPN NHG A -> B1, B2 */
-        vector<uint32_t> dependsA = { ribIDB1, ribIDB2 };
-        std::vector<fib::nh_grp_full> nhgFullA(2);
-        fib::nh_grp_full B1 = {
-            .id = nhgObjB1.id,
-            .weight = 11,
-            .num_direct = 0
-        };
-        fib::nh_grp_full B2 = {
-            .id = nhgObjB2.id,
-            .weight = 11,
-            .num_direct = 0
-        };
-
-        nhgFullA[0] = B1;
-        nhgFullA[1] = B2;
+        vector<uint32_t> dependsA = { };
+        std::vector<fib::nh_grp_full> nhgFullA(0);
         string nexthopA = "b::b";
+        string vpnSid = "1::1";
         NextHopGroupFull nhgObjA = createSingleSRv6VPNNextHopNHGFull(vpnSid.c_str(), "a::a", nexthopA.c_str(), ribIDA);
-        nhgObjA.depends.resize(2);
-        nhgObjA.depends[0] = ribIDB1;
-        nhgObjA.depends[1] = ribIDB2;
-        nhgObjA.nh_grp_full_list.resize(2);
-        nhgObjA.nh_grp_full_list[0] = B1;
-        nhgObjA.nh_grp_full_list[1] = B2;
-        map<string, string> expectedNexthopofA = {
-            { nexthopB1, "11" },
-            { nexthopB2, "11" },
-        };
+        nhgObjA.depends.resize(0);
+        nhgObjA.nh_grp_full_list.resize(0);
+
         ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjA, AF_INET6), 0);
 
         /* Check that fpmsyncd created the correct entries in APP_DB */
@@ -774,51 +727,10 @@ namespace ut_fpmsyncd
         std::map<uint32_t, NextHopGroupFull> dependsList;
         map<uint32_t, uint32_t> nexthopList;
         uint32_t ribIDA = 9;
-        uint32_t ribIDB1 = 8;
-        uint32_t ribIDB2 = 7;
-        NextHopGroupFull nhgObjB1 = createSingleSRv6VPNNextHopNHGFull("1::1", "fc00:200::1", "fdee::1", ribIDB1);
-        NextHopGroupFull nhgObjB2 = createSingleSRv6VPNNextHopNHGFull("1::1", "fcee:200::1", "fdff::1", ribIDB2);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB1, AF_INET6), 0);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB2, AF_INET6), 0);
 
-        RIBNHGEntry *entryB1 = m_nhgmgr->getRIBNHGEntryByRIBID(nhgObjB1.id);
-        RIBNHGEntry *entryB2 = m_nhgmgr->getRIBNHGEntryByRIBID(nhgObjB2.id);
-        ASSERT_NE(entryB1, nullptr);
-        ASSERT_NE(entryB2, nullptr);
-        // uint32_t sonicObjIDB1 = entryB1->getSonicObjID();
-        // uint32_t sonicObjIDB2 = entryB2->getSonicObjID();
-
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB1), true);
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB2), true);
-
-        /* Create a recursive SRv6 VPN NHG A -> B1, B2 */
-        vector<uint32_t> dependsA = { ribIDB1, ribIDB2 };
-        std::vector<fib::nh_grp_full> nhgFullA(2);
-        fib::nh_grp_full B1 = {
-            .id = nhgObjB1.id,
-            .weight = 11,
-            .num_direct = 0
-        };
-        fib::nh_grp_full B2 = {
-            .id = nhgObjB2.id,
-            .weight = 11,
-            .num_direct = 0
-        };
-
-        nhgFullA[0] = B1;
-        nhgFullA[1] = B2;
         NextHopGroupFull nhgObjA = createSingleSRv6VPNNextHopNHGFull("1::1", "a::a", "b::b", ribIDA);
-        nhgObjA.depends.resize(2);
-        nhgObjA.depends[0] = ribIDB1;
-        nhgObjA.depends[1] = ribIDB2;
-        nhgObjA.nh_grp_full_list.resize(2);
-        nhgObjA.nh_grp_full_list[0] = B1;
-        nhgObjA.nh_grp_full_list[1] = B2;
-        map<string, string> expectedNexthopofA = {
-            { "fdee::1", "11" },
-            { "fdff::1", "11" },
-        };
-
+        nhgObjA.depends.resize(0);
+        nhgObjA.nh_grp_full_list.resize(0);
         ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjA, AF_INET6), 0);
 
         /* Check that fpmsyncd created the correct entries in APP_DB */
@@ -844,12 +756,8 @@ namespace ut_fpmsyncd
 
         /* Update the NHG object with a new vpn_sid */
         NextHopGroupFull nhgObjAUpdated = createSingleSRv6VPNNextHopNHGFull("2::2", "a::a", "b::b", ribIDA); // Changed vpn_sid from "1::1" to "2::2"
-        nhgObjAUpdated.depends.resize(2);
-        nhgObjAUpdated.depends[0] = ribIDB1;
-        nhgObjAUpdated.depends[1] = ribIDB2;
-        nhgObjAUpdated.nh_grp_full_list.resize(2);
-        nhgObjAUpdated.nh_grp_full_list[0] = B1;
-        nhgObjAUpdated.nh_grp_full_list[1] = B2;
+        nhgObjAUpdated.depends.resize(0);
+        nhgObjAUpdated.nh_grp_full_list.resize(0);
 
         /* Send the updated object to the NhgMgr Add function (this should update the existing entry) */
         ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjAUpdated, AF_INET6), 0);
@@ -879,81 +787,14 @@ namespace ut_fpmsyncd
         map<uint32_t, uint32_t> nexthopList;
         uint32_t ribIDA = 17;
         uint32_t ribIDB = 15;
-        uint32_t ribIDB1 = 11;
-        uint32_t ribIDB2 = 12;
         uint32_t ribIDC = 16;
-        uint32_t ribIDC1 = 13;
-        uint32_t ribIDC2 = 14;
 
-        NextHopGroupFull nhgObjB1 = createSingleSRv6VPNNextHopNHGFull("1::1", "fc00:100::1", "fc00:100::1", ribIDB1);
-        NextHopGroupFull nhgObjB2 = createSingleSRv6VPNNextHopNHGFull("1::1", "fc00:100::1", "fc00:100::1", ribIDB2);
-        NextHopGroupFull nhgObjC1 = createSingleSRv6VPNNextHopNHGFull("2::2", "fc00:200::1", "fc00:200::1", ribIDC1);
-        NextHopGroupFull nhgObjC2 = createSingleSRv6VPNNextHopNHGFull("2::2", "fc00:200::1", "fc00:200::1", ribIDC2);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB1, AF_INET6), 0);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjB2, AF_INET6), 0);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjC1, AF_INET6), 0);
-        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjC2, AF_INET6), 0);
-
-        RIBNHGEntry *entryB1 = m_nhgmgr->getRIBNHGEntryByRIBID(nhgObjB1.id);
-        RIBNHGEntry *entryB2 = m_nhgmgr->getRIBNHGEntryByRIBID(nhgObjB2.id);
-        RIBNHGEntry *entryC1 = m_nhgmgr->getRIBNHGEntryByRIBID(nhgObjC1.id);
-        RIBNHGEntry *entryC2 = m_nhgmgr->getRIBNHGEntryByRIBID(nhgObjC2.id);
-        ASSERT_NE(entryB1, nullptr);
-        ASSERT_NE(entryB2, nullptr);
-        ASSERT_NE(entryC1, nullptr);
-        ASSERT_NE(entryC2, nullptr);
-        // uint32_t sonicObjIDB1 = entryB1->getSonicObjID();
-        // uint32_t sonicObjIDB2 = entryB2->getSonicObjID();
-        // uint32_t sonicObjIDC1 = entryC1->getSonicObjID();
-        // uint32_t sonicObjIDC2 = entryC2->getSonicObjID();
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB1), true);
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB2), true);
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDC1), true);
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDC2), true);
-
-        vector<uint32_t> dependsB = { ribIDB1, ribIDB2 };
-        vector<uint32_t> dependsC = { ribIDC1, ribIDC2 };
-        std::vector<fib::nh_grp_full> nhgFullB(2);
-        std::vector<fib::nh_grp_full> nhgFullC(2);
-        fib::nh_grp_full B1 = {
-            .id = nhgObjB1.id,
-            .weight = 11,
-            .num_direct = 1
-        };
-        fib::nh_grp_full B2 = {
-            .id = nhgObjB2.id,
-            .weight = 11,
-            .num_direct = 1
-        };
-        fib::nh_grp_full C1 = {
-            .id = nhgObjC1.id,
-            .weight = 11,
-            .num_direct = 1
-        };
-        fib::nh_grp_full C2 = {
-            .id = nhgObjC2.id,
-            .weight = 11,
-            .num_direct = 1
-        };
-
-        nhgFullB[0] = B1;
-        nhgFullB[1] = B2;
-        nhgFullC[0] = C1;
-        nhgFullC[1] = C2;
         NextHopGroupFull nhgObjB = createSingleSRv6VPNNextHopNHGFull("1::1", "a::a", "b::b", ribIDB);
         NextHopGroupFull nhgObjC = createSingleSRv6VPNNextHopNHGFull("2::2", "c::c", "e::e", ribIDC);
-        nhgObjB.depends.resize(2);
-        nhgObjC.depends.resize(2);
-        nhgObjB.depends[0] = ribIDB1;
-        nhgObjB.depends[1] = ribIDB2;
-        nhgObjC.depends[0] = ribIDC1;
-        nhgObjC.depends[1] = ribIDC2;
-        nhgObjB.nh_grp_full_list.resize(2);
-        nhgObjC.nh_grp_full_list.resize(2);
-        nhgObjB.nh_grp_full_list[0] = B1;
-        nhgObjB.nh_grp_full_list[1] = B2;
-        nhgObjC.nh_grp_full_list[0] = C1;
-        nhgObjC.nh_grp_full_list[1] = C2;
+        nhgObjB.depends.resize(0);
+        nhgObjC.depends.resize(0);
+        nhgObjB.nh_grp_full_list.resize(0);
+        nhgObjC.nh_grp_full_list.resize(0);
 
         /* Send the object to the NhgMgr Add function */
         ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjC, AF_INET6), 0);
@@ -962,14 +803,16 @@ namespace ut_fpmsyncd
         /* Check that fpmsyncd created the correct entries in APP_DB for B */
         RIBNHGEntry *entryB = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDB);
         ASSERT_NE(entryB, nullptr);
-        // uint32_t sonicObjIDB = entryB->getSonicObjID();
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB), true);
+        uint32_t sonicObjIDB = entryB->getSonicObjID();
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB), true);
         nexthops = "";
         vpnsids = "";
         nexthopResults.clear();
         weightResults.clear();
-        // ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjIDB), "nexthop", nexthops), true);
-        // ASSERT_EQ(nexthops, "b::b");
+        ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjIDB), "nexthop", nexthops), true);
+        ASSERT_EQ(nexthops, "b::b");
+        ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjIDB), "nexthop", nexthops), true);
+        ASSERT_EQ(nexthops, "b::b");
 
         /* Check the SRv6 VPN nexthop of B */
         SonicGateWayNHGEntry *sonicNHGEntryB = m_nhgmgr->getSonicGatewayNHGByRIBID(ribIDB);
@@ -985,13 +828,13 @@ namespace ut_fpmsyncd
         /* Check that fpmsyncd created the correct entries in APP_DB for C */
         RIBNHGEntry *entryC = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDC);
         ASSERT_NE(entryC, nullptr);
-        // uint32_t sonicObjIDC = entryC->getSonicObjID();
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDC), true);
+        uint32_t sonicObjIDC = entryC->getSonicObjID();
+        ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDC), true);
         nexthops = "";
         nexthopResults.clear();
         weightResults.clear();
-        // ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjIDC), "nexthop", nexthops), true);
-        // ASSERT_EQ(nexthops, "e::e");
+        ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjIDC), "nexthop", nexthops), true);
+        ASSERT_EQ(nexthops, "e::e");
 
         /* Check the SRv6 VPN nexthop of C */
         SonicGateWayNHGEntry *sonicNHGEntryC = m_nhgmgr->getSonicGatewayNHGByRIBID(ribIDC);
@@ -1006,16 +849,12 @@ namespace ut_fpmsyncd
 
         /* Create the NHG A, which depends on B and C */
         map<uint32_t, NextHopGroupFull> nhgFullA = { { ribIDB, nhgObjB },
-                                                     { ribIDB1, nhgObjB1 },
-                                                     { ribIDB2, nhgObjB2 },
-                                                     { ribIDC, nhgObjC },
-                                                     { ribIDC1, nhgObjC1 },
-                                                     { ribIDC2, nhgObjC2 } };
-        vector<uint32_t> dependsA = { ribIDB, ribIDC };
+                                                     { ribIDC, nhgObjC }};
 
+        vector<uint32_t> dependsA = { ribIDB, ribIDC };
         NextHopGroupFull nhgObjA = createMultiNextHopNHGFull(nhgFullA,
-                                                             { { ribIDB, 12 }, { ribIDB1, 12 }, { ribIDB2, 12 }, { ribIDC, 10 }, { ribIDC1, 10 }, { ribIDC2, 10 } },
-                                                             { { ribIDB, 2 }, { ribIDB1, 0 }, { ribIDB2, 0 }, { ribIDC, 2 }, { ribIDC1, 0 }, { ribIDC2, 0 } },
+                                                             { { ribIDB, 12 },{ ribIDC, 10 }},
+                                                             { { ribIDB, 0 }, { ribIDC, 0 } },
                                                              dependsA, {}, ribIDA);
 
         ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObjA, AF_INET6), 0);

@@ -542,7 +542,7 @@ namespace ut_fpmsyncd
         fib::g_addr rmap_src_in;
         std::uint8_t weight_in = 1;
         std::uint8_t flags_in = 0;
-        std::uint32_t nhg_flags_in = 1024;
+        std::uint32_t nhg_flags_in = 0;
         bool has_srv6 = false;
         bool has_seg6_segs = false;
         fib::nexthop_srv6 *nh_srv6_in = NULL;
@@ -574,7 +574,7 @@ namespace ut_fpmsyncd
         fib::g_addr rmap_src_in;
         std::uint8_t weight_in = 1;
         std::uint8_t flags_in = 0;
-        std::uint32_t nhg_flags_in = 1024;
+        std::uint32_t nhg_flags_in = 0;
         bool has_srv6 = false;
         bool has_seg6_segs = false;
         fib::nexthop_srv6 *nh_srv6_in = NULL;
@@ -593,7 +593,7 @@ namespace ut_fpmsyncd
         std::call_once(srand_flag, srand_init);
         std::uint32_t id_in = id;
         std::uint32_t key_in = rand() % 10000 + 1;
-        std::uint32_t nhg_flags_in = 1024;
+        std::uint32_t nhg_flags_in = 0;
         std::vector<nh_grp_full> nh_grp_full_list_in;
         std::vector<uint32_t> depends_in;
         std::vector<uint32_t> dependents_in;
