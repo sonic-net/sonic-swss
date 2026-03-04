@@ -11,6 +11,9 @@
 #include <string.h>
 
 #define NHG_DELIMITER ','
+#define NEXTHOP_GROUP_RECEIVED_FLAG (1 << 10)
+#define CHECK_FLAG(V,F)      ((V) & (F))
+
 using namespace std;
 
 
@@ -596,6 +599,9 @@ namespace swss {
          * check if RIBNHGEntry need write to DB
          */
         bool isEntryNeedOffload() {
+            if (m_sonic_obj_type == SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY){
+                return true;
+            }
             return !m_is_single;
         }
 
