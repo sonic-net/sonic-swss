@@ -503,6 +503,7 @@ void SwitchOrch::setSwitchNonSaiAttributes(swss::FieldValueTuple &val)
         return;
     }
 }
+
 sai_status_t SwitchOrch::setSwitchTunnelVxlanParams(swss::FieldValueTuple &val)
 {
     auto attribute = fvField(val);
@@ -545,7 +546,20 @@ sai_status_t SwitchOrch::setSwitchTunnelVxlanParams(swss::FieldValueTuple &val)
             attr.value.u8 = to_uint<uint8_t>(value);
             break;
         case SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_SECURITY:
-            attr.value.booldata = to_uint<bool>(value);
+            // Config must use string "true" or "false"
+            if (value == "true")
+            {
+                attr.value.booldata = true;
+            }
+            else if (value == "false")
+            {
+                attr.value.booldata = false;
+            }
+            else
+            {
+                SWSS_LOG_ERROR("vxlan_security invalid value '%s' (use string \"true\" or \"false\"); defaulting to false", value.c_str());
+                attr.value.booldata = false;
+            }
             break;
         default:
             SWSS_LOG_ERROR("Invalid switch tunnel attribute id %d", attr.id);
