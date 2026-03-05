@@ -1182,6 +1182,11 @@ bool VNetRouteOrch::selectFgNextHopGroup(const string& vnet,
     next_hop_group_entry.ref_count = 0;
     syncd_nexthop_groups_[vnet][nexthops] = next_hop_group_entry;
 
+    for (auto nh : nexthops.getNextHops())
+    {
+        syncd_nexthop_groups_[vnet][nexthops].active_members[nh] = SAI_NULL_OBJECT_ID;
+    }
+
     nexthops_selected = nexthops;
     return true;
 }
@@ -1605,6 +1610,8 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
 
             vrf_obj->addRoute(ipPrefix, active_nhg);
         }
+        string profile = "";
+        postRouteState(vnet, ipPrefix, active_nhg, profile);
     }
     else if (op == DEL_COMMAND)
     {
@@ -1648,6 +1655,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         }
 
         vrf_obj->removeRoute(ipPrefix);
+        removeRouteState(vnet, ipPrefix);
     }
     return true;
 }
