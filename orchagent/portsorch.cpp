@@ -42,6 +42,9 @@
 
 #include "saitam.h"
 
+#define APP_P4RT_VLAN_TABLE_NAME "VLAN_TABLE_P4"
+#include "p4orch/p4orch_util.h"
+
 extern sai_switch_api_t *sai_switch_api;
 extern sai_bridge_api_t *sai_bridge_api;
 extern sai_port_api_t *sai_port_api;
@@ -5618,11 +5621,17 @@ void PortsOrch::doVlanTask(Consumer &consumer)
         auto &t = it->second;
 
         string key = kfvKey(t);
+        auto attrs = kfvFieldsValues(t);
+        const std::string table_name = consumer.getTableName();
 
         /* Ensure the key starts with "Vlan" otherwise ignore */
         if (strncmp(key.c_str(), VLAN_PREFIX, 4))
         {
-            SWSS_LOG_ERROR("Invalid key format. No 'Vlan' prefix: %s", key.c_str());
+            ReturnCode rc = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                            << "Invalid key format. No 'Vlan' prefix "
+                            << QuotedVar(key);
+            SWSS_LOG_ERROR("%s", rc.message().c_str());
+            m_publisher.publish(table_name, key, attrs, rc);
             it = consumer.m_toSync.erase(it);
             continue;
         }
@@ -5663,9 +5672,20 @@ void PortsOrch::doVlanTask(Consumer &consumer)
              */
             if (m_portList.find(vlan_alias) == m_portList.end())
             {
-                if (!addVlan(vlan_alias))
+                if (!addVlan(vlan_alias, /*disable_learning_and_flooding=*/ table_name == APP_P4RT_VLAN_TABLE_NAME))
                 {
-                    it++;
+                    if (table_name == APP_P4RT_VLAN_TABLE_NAME)
+                    {
+                        ReturnCode unk_rc = ReturnCode(StatusCode::SWSS_RC_UNKNOWN)
+                                            << "Failed to create VLAN "
+                                            << "for " << QuotedVar(vlan_alias);
+                        m_publisher.publish(table_name, key, attrs, unk_rc);
+                        it = consumer.m_toSync.erase(it);
+                    }
+                    else
+                    {
+                        it++;  // Allow this to remain pending.
+                    }
                     continue;
                 }
             }
@@ -5674,6 +5694,9 @@ void PortsOrch::doVlanTask(Consumer &consumer)
             Port vl;
             if (!getPort(vlan_alias, vl))
             {
+                // This cannot actually happen, since the addVlan step above
+                // creates the Port object and adds it to m_portList when it
+                // returns true.
                 SWSS_LOG_ERROR("Failed to get VLAN %s", vlan_alias.c_str());
             }
             else
@@ -5703,11 +5726,14 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                         // No need to fail in case of error as this is for monitoring VLAN.
                         // Error message is printed by "createVlanHostIntf" so just handle failure gracefully.
                         it = consumer.m_toSync.erase(it);
+                        // To go along with comment above, we return success
+                        // for this failure scenario.
+                        m_publisher.publish(table_name, key, attrs, ReturnCode());
                         continue;
                     }
                 }
             }
-
+            m_publisher.publish(table_name, key, attrs, ReturnCode());
             it = consumer.m_toSync.erase(it);
         }
         else if (op == DEL_COMMAND)
@@ -5716,13 +5742,31 @@ void PortsOrch::doVlanTask(Consumer &consumer)
             getPort(vlan_alias, vlan);
 
             if (removeVlan(vlan))
+            {
+                m_publisher.publish(table_name, key, attrs, ReturnCode());
                 it = consumer.m_toSync.erase(it);
+            }
             else
-                it++;
+            {
+                if (table_name == APP_P4RT_VLAN_TABLE_NAME)
+                {
+                    ReturnCode unk_rc = ReturnCode(StatusCode::SWSS_RC_UNKNOWN)
+                                        << "Failed to remove VLAN "
+                                        << QuotedVar(vlan_alias);
+                    m_publisher.publish(table_name, key, attrs, unk_rc);
+                    it = consumer.m_toSync.erase(it);
+                } else {
+                    it++;  // Allow this to remain pending.
+                }
+            }
         }
         else
         {
-            SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+            ReturnCode rc = ReturnCode(StatusCode::SWSS_RC_UNKNOWN)
+                            << "Unknown operation type "
+                            << QuotedVar(op);
+            SWSS_LOG_ERROR("%s", rc.message().c_str());
+            m_publisher.publish(table_name, key, attrs, rc);
             it = consumer.m_toSync.erase(it);
         }
     }
@@ -7244,7 +7288,7 @@ bool PortsOrch::setBridgePortLearnMode(Port &port, sai_bridge_port_fdb_learning_
     return true;
 }
 
-bool PortsOrch::addVlan(string vlan_alias)
+bool PortsOrch::addVlan(string vlan_alias, bool disable_learning_and_flooding)
 {
     SWSS_LOG_ENTER();
 
@@ -7252,10 +7296,27 @@ bool PortsOrch::addVlan(string vlan_alias)
 
     sai_vlan_id_t vlan_id = (uint16_t)stoi(vlan_alias.substr(4));
     sai_attribute_t attr;
+    std::vector<sai_attribute_t> attrs;
     attr.id = SAI_VLAN_ATTR_VLAN_ID;
     attr.value.u16 = vlan_id;
+    attrs.push_back(attr);
+    if (disable_learning_and_flooding)
+    {
+        attr.id = SAI_VLAN_ATTR_LEARN_DISABLE;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
+        attr.id = SAI_VLAN_ATTR_UNKNOWN_UNICAST_FLOOD_CONTROL_TYPE;
+        attr.value.s32 = SAI_VLAN_FLOOD_CONTROL_TYPE_NONE;
+        attrs.push_back(attr);
+        attr.id = SAI_VLAN_ATTR_UNKNOWN_MULTICAST_FLOOD_CONTROL_TYPE;
+        attr.value.s32 = SAI_VLAN_FLOOD_CONTROL_TYPE_NONE;
+        attrs.push_back(attr);
+        attr.id = SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE;
+        attr.value.s32 = SAI_VLAN_FLOOD_CONTROL_TYPE_NONE;
+        attrs.push_back(attr);
+    }
 
-    sai_status_t status = sai_vlan_api->create_vlan(&vlan_oid, gSwitchId, 1, &attr);
+    sai_status_t status = sai_vlan_api->create_vlan(&vlan_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
 
     if (status != SAI_STATUS_SUCCESS)
     {
