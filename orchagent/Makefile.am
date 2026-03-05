@@ -131,6 +131,7 @@ orchagent_SOURCES = \
             dash/dashportmaporch.cpp \
             twamporch.cpp \
             stporch.cpp \
+            l2mcorch.cpp\
             nexthopkey.cpp \
             macsecpost.cpp \
             high_frequency_telemetry/hftelorch.cpp \
