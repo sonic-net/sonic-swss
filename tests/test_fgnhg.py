@@ -32,17 +32,18 @@ def remove_entry(db, table, key):
     db.delete_entry(table, key)
     db.wait_for_deleted_entry(table,key)
 
-def get_asic_route_key(asic_db, ipprefix):
+def get_asic_route_key(asic_db, ipprefix, vr=None):
     route_exists = False
     key = ''
     keys = asic_db.get_keys(ASIC_ROUTE_TB)
     for k in keys:
         rt_key = json.loads(k)
-
         if rt_key['dest'] == ipprefix:
-            route_exists = True
-            key = k
-            break
+            if vr is None or rt_key.get('vr') == vr:
+                route_exists = True
+                key = k
+                break
+        
     assert route_exists
     return key
 
