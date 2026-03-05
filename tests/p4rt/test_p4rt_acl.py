@@ -1377,7 +1377,7 @@ class TestP4RTAcl(object):
             table_name_with_rule_key,
             attr_list,
             "SWSS_RC_INVALID_PARAM",
-            "[OrchAgent] Failed to find P4Orch Manager for ACL_PUNT_TABLE_RULE_TEST P4RT DB table",
+            '[OrchAgent] Failed to find P4Orch Manager for key ACL_PUNT_TABLE_RULE_TEST:{"match/ether_type":"0x0800","match/ether_dst":"00:1a:11:17:5f:80","match/src_ipv6_64bit":"fdf8:f53b:82e4::","match/arp_tpa":"0xff665543","priority":100}',
         )
 
         # query application database for ACL rules
