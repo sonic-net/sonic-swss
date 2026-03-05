@@ -1157,9 +1157,10 @@ bool FgNhgOrch::sprayBankNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, c
             nh_memb_key = nexthopsMap->second[bucket_idx];
             SWSS_LOG_INFO("Recovering nexthop %s with bucket_idx %d", nh_memb_key.ip_address.to_string().c_str(), bucket_idx);
             // case nhps in bank are all down
-            if (fgNhgEntry->next_hops[nh_memb_key.ip_address].bank != bank)
+            auto ip_bank = fgNhgEntry->match_mode == FGMatchMode::PREFIX_BASED ? 0 : fgNhgEntry->next_hops[nh_memb_key.ip_address].bank;
+            if (ip_bank != bank)
             {
-                syncd_fg_route_entry.inactive_to_active_map[bank] = fgNhgEntry->next_hops[nh_memb_key.ip_address].bank;
+                syncd_fg_route_entry.inactive_to_active_map[bank] = ip_bank;
             }
         }
         else
@@ -1594,11 +1595,22 @@ bool FgNhgOrch::setFgNhgTunnel(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
     uint32_t bucket_size = consistent_hashing_buckets;
     std::string fg_nhg_name = "FG_NHG_" + std::to_string(vrf_id) + "_" + ipPrefix.to_string();
 
+    std::string vnet;
+    getVnetNameByVrfId(vrf_id, vnet);
+    string key = getWarmRebootStateDbKey(vnet, ipPrefix);
+
     if (bucket_size < 1)
     {
         SWSS_LOG_ERROR("Received bucket_size which is < 1 for key %s",
                 fg_nhg_name.c_str());
         return true;
+    }
+
+    if (nhopgroup_members_set.size() >= max_next_hops)
+    {
+        SWSS_LOG_ERROR("Number of next-hops exceed max_next_hops %d for key %s",
+            max_next_hops, fg_nhg_name.c_str());
+        return false;
     }
 
     FgNhgEntry fgNhgEntry;
@@ -1640,20 +1652,6 @@ bool FgNhgOrch::setFgNhgTunnel(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
     for (const auto& member : nhopgroup_members_set)
     {
         const NextHopKey& nhk = member.first;
-        if (m_FgNhgs[fg_nhg_name].next_hops.find(nhk.ip_address) == m_FgNhgs[fg_nhg_name].next_hops.end())
-        {
-            if(m_FgNhgs[fg_nhg_name].next_hops.size() >= m_FgNhgs[fg_nhg_name].max_next_hops)
-            {
-                SWSS_LOG_WARN("Next-hop %s exceeds max_next_hops %d for prefix %s, skipping",
-                        nhk.to_string().c_str(), m_FgNhgs[fg_nhg_name].max_next_hops, ipPrefix.to_string().c_str());
-                continue;
-            }
-            FGNextHopInfo fg_nh_info = {0, "", LINK_UP}; // prefix_based match_mode uses single bank 0
-
-            m_FgNhgs[fg_nhg_name].next_hops[nhk.ip_address] = fg_nh_info;
-            SWSS_LOG_INFO("Next-hop %s alias %s added to Fine Grained next-hop group member list for prefix %s",
-                    nhk.ip_address.to_string().c_str(), nhk.alias.c_str(), ipPrefix.to_string().c_str());
-        }
 
         if (syncd_fg_route_entry_it == m_syncdFGRouteTables.at(vrf_id).end())
         {
@@ -1666,16 +1664,11 @@ bool FgNhgOrch::setFgNhgTunnel(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
             if (syncd_fg_route_entry->active_nexthops.find(nhk) ==
                 syncd_fg_route_entry->active_nexthops.end())
             {
-                bank_member_changes[m_FgNhgs[fg_nhg_name].next_hops[nhk.ip_address].bank].
-                    nhs_to_add.push_back(nhk);
+                bank_member_changes[0].nhs_to_add.push_back(nhk);
                 next_hop_to_add = true;
             }
         }
     }
-
-    std::string vnet;
-    getVnetNameByVrfId(vrf_id, vnet);
-    string key = getWarmRebootStateDbKey(vnet, ipPrefix);
 
     if (syncd_fg_route_entry_it != m_syncdFGRouteTables.at(vrf_id).end())
     {
@@ -1687,13 +1680,11 @@ bool FgNhgOrch::setFgNhgTunnel(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
         {
             if (nhopgroup_members_set.find(nhk) == nhopgroup_members_set.end())
             {
-                bank_member_changes[m_FgNhgs[fg_nhg_name].next_hops[nhk.ip_address].bank].
-                    nhs_to_del.push_back(nhk);
+                bank_member_changes[0].nhs_to_del.push_back(nhk);
             }
             else
             {
-                bank_member_changes[m_FgNhgs[fg_nhg_name].next_hops[nhk.ip_address].bank].
-                    active_nhs.push_back(nhk);
+                bank_member_changes[0].active_nhs.push_back(nhk);
             }
         }
 
