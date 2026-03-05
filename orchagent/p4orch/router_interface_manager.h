@@ -63,14 +63,21 @@ class RouterInterfaceManager : public ObjectManagerInterface
   private:
     ReturnCodeOr<P4RouterInterfaceAppDbEntry> deserializeRouterIntfEntry(
         const std::string &key, const std::vector<swss::FieldValueTuple> &attributes);
+    ReturnCode validateRouterInterfaceAppDbEntry(
+        const P4RouterInterfaceAppDbEntry& app_db_entry);
+    ReturnCode validateRouterInterfaceEntryOperation(
+        const P4RouterInterfaceAppDbEntry& app_db_entry, const std::string& operation);
     P4RouterInterfaceEntry *getRouterInterfaceEntry(const std::string &router_intf_key);
-    ReturnCode createRouterInterface(const std::string &router_intf_key, P4RouterInterfaceEntry &router_intf_entry);
-    ReturnCode removeRouterInterface(const std::string &router_intf_key);
-    ReturnCode setSourceMacAddress(P4RouterInterfaceEntry *router_intf_entry, const swss::MacAddress &mac_address);
-    ReturnCode processAddRequest(const P4RouterInterfaceAppDbEntry &app_db_entry, const std::string &router_intf_key);
-    ReturnCode processUpdateRequest(const P4RouterInterfaceAppDbEntry &app_db_entry,
-                                    P4RouterInterfaceEntry *router_intf_entry);
-    ReturnCode processDeleteRequest(const std::string &router_intf_key);
+    std::vector<ReturnCode> createRouterInterfaces(
+        const std::vector<P4RouterInterfaceAppDbEntry>& router_intf_entries);
+    std::vector<ReturnCode> removeRouterInterfaces(
+        const std::vector<P4RouterInterfaceAppDbEntry>& router_intf_entries);
+    std::vector<ReturnCode> updateRouterInterfaces(
+        const std::vector<P4RouterInterfaceAppDbEntry>& router_intf_entries);
+    ReturnCode processEntries(
+        const std::vector<P4RouterInterfaceAppDbEntry>& entries,
+        const std::vector<swss::KeyOpFieldsValuesTuple>& tuple_list,
+        const std::string& op, bool update);
     std::string verifyStateCache(const P4RouterInterfaceAppDbEntry &app_db_entry,
                                  const P4RouterInterfaceEntry *router_intf_entry);
     std::string verifyStateAsicDb(const P4RouterInterfaceEntry *router_intf_entry);

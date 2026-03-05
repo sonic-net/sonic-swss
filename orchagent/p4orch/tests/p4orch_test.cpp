@@ -65,6 +65,14 @@ class P4OrchTest : public ::testing::Test {
         mock_set_router_interface_attribute;
     sai_router_intfs_api->get_router_interface_attribute =
         mock_get_router_interface_attribute;
+    sai_router_intfs_api->create_router_interfaces =
+        mock_create_router_interfaces;
+    sai_router_intfs_api->remove_router_interfaces =
+        mock_remove_router_interfaces;
+    sai_router_intfs_api->set_router_interfaces_attribute =
+        mock_set_router_interfaces_attribute;
+    sai_router_intfs_api->get_router_interfaces_attribute =
+        mock_get_router_interfaces_attribute;
     mock_sai_neighbor = &mock_sai_neighbor_;
     sai_neighbor_api->create_neighbor_entry = mock_create_neighbor_entry;
     sai_neighbor_api->remove_neighbor_entry = mock_remove_neighbor_entry;
@@ -430,8 +438,11 @@ TEST_F(P4OrchTest, ProcessP4NotificationStopOnFirstFailureDifferentTypes) {
   EXPECT_CALL(*gMockResponsePublisher,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(ritf_key_2), Eq(ritf_attrs),
                       Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
-  EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(_))
-      .WillOnce(Return(SAI_STATUS_FAILURE));
+  std::vector<sai_status_t> exp_status{SAI_STATUS_FAILURE,
+                                       SAI_STATUS_NOT_EXECUTED};
+  EXPECT_CALL(mock_sai_router_intf_, remove_router_interfaces(_, _, _, _))
+      .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()),
+                      Return(SAI_STATUS_FAILURE)));
   std::vector<swss::FieldValueTuple> exp_values;
   EXPECT_CALL(*gMockResponsePublisher,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(ritf_key_1), Eq(exp_values),
