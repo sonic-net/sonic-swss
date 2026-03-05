@@ -3505,6 +3505,7 @@ class TestVnetOrch(object):
         bucket_size = 60
 
         vnet_obj.fetch_exist_entries(dvs)
+        initial_nhop_count = len(asic_db.get_keys(vnet_obj.ASIC_NEXT_HOP))
 
         create_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
         create_vnet_entry(dvs, vnet_name, tunnel_name, '10036', "")
@@ -3515,7 +3516,6 @@ class TestVnetOrch(object):
         
         vnet_obj.fetch_exist_entries(dvs)
         
-        # Get VR ID for vnet
         vr_id = vnet_obj.vr_map[vnet_name]['ing']
 
         # Create VNET route with consistent_hashing_buckets and 3 tunnel next hops for fine-grained ECMP
@@ -3612,7 +3612,7 @@ class TestVnetOrch(object):
         create_vnet_routes(dvs, fg_nhg_prefix, vnet_name_2, '36.0.0.1,36.0.0.2,36.0.0.3',
                           '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C', consistent_hashing_buckets=bucket_size)
         
-        asic_db.wait_for_n_keys(test_fgnhg.ASIC_NHG_MEMB, bucket_size)
+        asic_db.wait_for_n_keys(test_fgnhg.ASIC_NHG_MEMB, 120)
         nhgid = test_fgnhg.validate_asic_nhg_fine_grained_ecmp(asic_db, fg_nhg_prefix, bucket_size, vr_id_2)
         
         check_state_db_routes(dvs, vnet_name_2, fg_nhg_prefix, ['36.0.0.1', '36.0.0.2', '36.0.0.3'])
@@ -3625,6 +3625,9 @@ class TestVnetOrch(object):
 
         # Clean up
         vnet_obj.fetch_exist_entries(dvs)
+        asic_rt_key_1 = test_fgnhg.get_asic_route_key(asic_db, fg_nhg_prefix, vr_id)
+        asic_rt_key_2 = test_fgnhg.get_asic_route_key(asic_db, fg_nhg_prefix, vr_id_2)
+        
         delete_vnet_routes(dvs, fg_nhg_prefix, vnet_name)
         delete_vnet_routes(dvs, fg_nhg_prefix, vnet_name_2)
         
@@ -3635,11 +3638,21 @@ class TestVnetOrch(object):
         check_remove_state_db_routes(dvs, vnet_name, fg_nhg_prefix)
         check_remove_state_db_routes(dvs, vnet_name_2, fg_nhg_prefix)
 
+        asic_db.wait_for_n_keys(test_fgnhg.ASIC_NHG_MEMB, 0)
+        asic_db.wait_for_n_keys(test_fgnhg.ASIC_NHG, 0)
+        asic_db.wait_for_n_keys(vnet_obj.ASIC_NEXT_HOP, initial_nhop_count)
+        
+        asic_db.wait_for_deleted_entry(test_fgnhg.ASIC_ROUTE_TB, asic_rt_key_1)
+        asic_db.wait_for_deleted_entry(test_fgnhg.ASIC_ROUTE_TB, asic_rt_key_2)
+        state_db.wait_for_n_keys("FG_ROUTE_TABLE", 0)
+
         delete_vnet_entry(dvs, vnet_name)
         delete_vnet_entry(dvs, vnet_name_2)
         vnet_obj.check_del_vnet_entry(dvs, vnet_name)
         vnet_obj.check_del_vnet_entry(dvs, vnet_name_2)
+        
         delete_vxlan_tunnel(dvs, tunnel_name)
+        vnet_obj.check_del_vxlan_tunnel(dvs)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
