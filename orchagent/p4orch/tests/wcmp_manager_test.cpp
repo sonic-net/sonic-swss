@@ -57,6 +57,8 @@ constexpr char *kWcmpGroupId1 = "group-1";
 constexpr char *kWcmpGroupId2 = "group-2";
 constexpr char* kWcmpGroupId3 = "group-3";
 constexpr sai_object_id_t kWcmpGroupOid1 = 10;
+constexpr sai_object_id_t kWcmpGroupOid2 = 20;
+constexpr sai_object_id_t kWcmpGroupOid3 = 30;
 constexpr char *kNexthopId1 = "ju1u32m1.atl11:qe-3/7";
 constexpr sai_object_id_t kNexthopOid1 = 1;
 constexpr char *kNexthopId2 = "ju1u32m2.atl11:qe-3/7";
@@ -68,6 +70,43 @@ const std::string kNexthopKey1 = KeyGenerator::generateNextHopKey(kNexthopId1);
 const std::string kNexthopKey2 = KeyGenerator::generateNextHopKey(kNexthopId2);
 const std::string kNexthopKey3 = KeyGenerator::generateNextHopKey(kNexthopId3);
 
+bool MatchSaiAttribute(const sai_attribute_t& attr,
+                       const sai_attribute_t& exp_attr) {
+  if (exp_attr.id == SAI_NEXT_HOP_GROUP_ATTR_TYPE) {
+    if (attr.id != SAI_NEXT_HOP_GROUP_ATTR_TYPE ||
+        exp_attr.value.s32 != attr.value.s32) {
+      return false;
+    }
+  }
+  if (exp_attr.id == SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST) {
+    if (attr.id != SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST) {
+      return false;
+    }
+    if (exp_attr.value.objlist.count != attr.value.objlist.count) {
+      return false;
+    }
+    for (uint32_t i = 0; i < exp_attr.value.objlist.count; ++i) {
+      if (exp_attr.value.objlist.list[i] != attr.value.objlist.list[i]) {
+        return false;
+      }
+    }
+  }
+  if (exp_attr.id == SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST) {
+    if (attr.id != SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST) {
+      return false;
+    }
+    if (exp_attr.value.u32list.count != attr.value.u32list.count) {
+      return false;
+    }
+    for (uint32_t i = 0; i < exp_attr.value.u32list.count; ++i) {
+      if (exp_attr.value.u32list.list[i] != attr.value.u32list.list[i]) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 MATCHER_P(ArrayEq, array, "") {
   for (size_t i = 0; i < array.size(); ++i) {
     if (arg[i] != array[i]) {
@@ -77,44 +116,21 @@ MATCHER_P(ArrayEq, array, "") {
   return true;
 }
 
-// Matches the next hop group type sai_attribute_t argument.
-bool MatchSaiNextHopGroupAttribute(const sai_attribute_t* attr,
-                                   const P4WcmpGroupEntry& entry, bool update) {
-  if (attr == nullptr) {
-    return false;
-  }
-  int attr_size = 2;
-  if (!update) {
-    attr_size = 3;
-    if (attr[0].id != SAI_NEXT_HOP_GROUP_ATTR_TYPE ||
-        attr[0].value.s32 != SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS) {
+MATCHER_P(AttrArrayEq, array, "") {
+  for (size_t i = 0; i < array.size(); ++i) {
+    if (!MatchSaiAttribute(arg[i], array[i])) {
       return false;
     }
   }
-  if (attr[attr_size - 2].id != SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST ||
-      attr[attr_size - 1].id !=
-          SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST) {
-    return false;
-  }
+  return true;
+}
 
-  uint32_t count = 0;
-  std::vector<sai_object_id_t> nexthop_ids;
-  std::vector<uint32_t> nexthop_weights;
-  for (const auto& member : entry.wcmp_group_members) {
-    if (!member->pruned) {
-      nexthop_ids.push_back(member->next_hop_oid);
-      nexthop_weights.push_back(member->weight);
-      count++;
-    }
-  }
-  if (attr[attr_size - 2].value.objlist.count != count ||
-      attr[attr_size - 1].value.u32list.count != count) {
-    return false;
-  }
-  for (uint32_t i = 0; i < count; ++i) {
-    if (attr[attr_size - 2].value.objlist.list[i] != nexthop_ids[i] ||
-        attr[attr_size - 1].value.u32list.list[i] != nexthop_weights[i]) {
-      return false;
+  MATCHER_P(AttrArrayArrayEq, array, "") {
+  for (size_t i = 0; i < array.size(); ++i) {
+    for (size_t j = 0; j < array[i].size(); j++) {
+      if (!MatchSaiAttribute(arg[i][j], array[i][j])) {
+        return false;
+      }
     }
   }
   return true;
@@ -138,6 +154,7 @@ void VerifyWcmpGroupEntry(const P4WcmpGroupEntry &expect_entry, const P4WcmpGrou
         VerifyWcmpGroupMemberEntry(gm->next_hop_id, gm->weight, wcmp_entry.wcmp_group_members[i]);
     }
 }
+
 } // namespace
 
 class WcmpManagerTest : public ::testing::Test
@@ -174,6 +191,8 @@ class WcmpManagerTest : public ::testing::Test
         sai_next_hop_group_api->remove_next_hop_group = remove_next_hop_group;
         sai_next_hop_group_api->set_next_hop_groups_attribute =
             set_next_hop_groups_attribute;
+        sai_next_hop_group_api->create_next_hop_groups = create_next_hop_groups;
+        sai_next_hop_group_api->remove_next_hop_groups = remove_next_hop_groups;
         sai_next_hop_group_api->set_next_hop_group_member_attribute =
             set_next_hop_group_member_attribute;
 
@@ -216,9 +235,24 @@ class WcmpManagerTest : public ::testing::Test
         return wcmp_group_manager_->verifyState(key, tuple);
     }
 
-    ReturnCode ProcessAddRequest(P4WcmpGroupEntry *app_db_entry)
-    {
-        return wcmp_group_manager_->processAddRequest(app_db_entry);
+    ReturnCode ValidateWcmpGroupEntry(const P4WcmpGroupEntry& app_db_entry,
+                                      const std::string& operation) {
+      return wcmp_group_manager_->validateWcmpGroupEntry(app_db_entry, operation);
+    }
+
+    std::vector<ReturnCode> CreateWcmpGroups(
+        std::vector<P4WcmpGroupEntry>& entries) {
+      return wcmp_group_manager_->createWcmpGroups(entries);
+    }
+
+    std::vector<ReturnCode> RemoveWcmpGroups(
+        const std::vector<P4WcmpGroupEntry>& entries) {
+      return wcmp_group_manager_->removeWcmpGroups(entries);
+    }
+
+    std::vector<ReturnCode> UpdateWcmpGroups(
+        std::vector<P4WcmpGroupEntry>& entries) {
+      return wcmp_group_manager_->updateWcmpGroups(entries);
     }
 
     void HandlePortStatusChangeNotification(const std::string &op, const std::string &data)
@@ -254,16 +288,6 @@ class WcmpManagerTest : public ::testing::Test
         return false;
     }
 
-    ReturnCode ProcessUpdateRequest(P4WcmpGroupEntry *app_db_entry)
-    {
-        return wcmp_group_manager_->processUpdateRequest(app_db_entry);
-    }
-
-    ReturnCode RemoveWcmpGroup(const std::string &wcmp_group_id)
-    {
-        return wcmp_group_manager_->removeWcmpGroup(wcmp_group_id);
-    }
-
     P4WcmpGroupEntry *GetWcmpGroupEntry(const std::string &wcmp_group_id)
     {
         return wcmp_group_manager_->getWcmpGroupEntry(wcmp_group_id);
@@ -275,14 +299,14 @@ class WcmpManagerTest : public ::testing::Test
         return wcmp_group_manager_->deserializeP4WcmpGroupAppDbEntry(key, attributes);
     }
 
-    // Adds the WCMP group entry via WcmpManager::ProcessAddRequest(). This
-    // function also takes care of all the dependencies of the WCMP group entry.
+    // Adds the WCMP group entry. This function also takes care of all the
+    // dependencies of the WCMP group entry.
     // Returns a valid pointer to WCMP group entry on success.
     P4WcmpGroupEntry AddWcmpGroupEntry1();
     P4WcmpGroupEntry AddWcmpGroupEntryWithWatchport(const std::string &port, const bool oper_up = false);
     P4WcmpGroupEntry getDefaultWcmpGroupEntryForTest();
-    std::shared_ptr<P4WcmpGroupMemberEntry> createWcmpGroupMemberEntry(const std::string &next_hop_id,
-                                                                       const int weight);
+    std::shared_ptr<P4WcmpGroupMemberEntry> createWcmpGroupMemberEntry(
+        const std::string& next_hop_id, const int weight, sai_object_id_t oid);
     std::shared_ptr<P4WcmpGroupMemberEntry> createWcmpGroupMemberEntryWithWatchport(const std::string &next_hop_id,
                                                                                     const int weight,
                                                                                     const std::string &watch_port,
@@ -307,11 +331,13 @@ P4WcmpGroupEntry WcmpManagerTest::getDefaultWcmpGroupEntryForTest()
     gm1->wcmp_group_id = kWcmpGroupId1;
     gm1->next_hop_id = kNexthopId1;
     gm1->weight = 2;
+    gm1->next_hop_oid = kNexthopOid1;
     app_db_entry.wcmp_group_members.push_back(gm1);
     std::shared_ptr<P4WcmpGroupMemberEntry> gm2 = std::make_shared<P4WcmpGroupMemberEntry>();
     gm2->wcmp_group_id = kWcmpGroupId1;
     gm2->next_hop_id = kNexthopId2;
     gm2->weight = 1;
+    gm2->next_hop_oid = kNexthopOid2;
     app_db_entry.wcmp_group_members.push_back(gm2);
     return app_db_entry;
 }
@@ -325,20 +351,48 @@ P4WcmpGroupEntry WcmpManagerTest::AddWcmpGroupEntryWithWatchport(const std::stri
     gm1->weight = 2;
     gm1->watch_port = port;
     gm1->wcmp_group_id = kWcmpGroupId1;
+    gm1->next_hop_oid = kNexthopOid1;
     if (!oper_up) {
       gm1->pruned = true;
     }
     app_db_entry.wcmp_group_members.push_back(gm1);
     p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1, kNexthopOid1);
+
+    std::vector<sai_object_id_t> member_oids{kNexthopOid1};
+    std::vector<uint32_t> member_weights{2};
+    if (!oper_up) {
+      member_oids.clear();
+      member_weights.clear();
+    }
+    std::vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
+    attr.value.s32 = SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS;
+    attrs.push_back(attr);
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+    attr.value.objlist.count = static_cast<uint32_t>(member_oids.size());
+    attr.value.objlist.list = member_oids.data();
+    attrs.push_back(attr);
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+    attr.value.u32list.count = static_cast<uint32_t>(member_weights.size());
+    attr.value.u32list.list = member_weights.data();
+    attrs.push_back(attr);
+
+    std::vector<sai_object_id_t> exp_oids{kWcmpGroupOid1};
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
     EXPECT_CALL(
         mock_sai_next_hop_group_,
-        create_next_hop_group(_, Eq(gSwitchId), Eq(3),
-                              Truly(std::bind(MatchSaiNextHopGroupAttribute,
-                                              std::placeholders::_1,
-                                              app_db_entry, /*update=*/false))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupOid1),
+        create_next_hop_groups(
+            Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+            AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{attrs}),
+            Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(exp_oids.begin(), exp_oids.end()),
+                        SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
                         Return(SAI_STATUS_SUCCESS)));
-    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddRequest(&app_db_entry));
+
+    std::vector<P4WcmpGroupEntry> entries{app_db_entry};
+    EXPECT_THAT(CreateWcmpGroups(entries),
+                ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
     EXPECT_NE(nullptr, GetWcmpGroupEntry(kWcmpGroupId1));
     return app_db_entry;
 }
@@ -348,28 +402,53 @@ P4WcmpGroupEntry WcmpManagerTest::AddWcmpGroupEntry1()
     P4WcmpGroupEntry app_db_entry = getDefaultWcmpGroupEntryForTest();
     p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1, kNexthopOid1);
     p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey2, kNexthopOid2);
-    p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey3,
-                           kNexthopOid3);
+
+    std::vector<sai_object_id_t> member_oids{kNexthopOid1, kNexthopOid2};
+    std::vector<uint32_t> member_weights{2, 1};
+    std::vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
+    attr.value.s32 = SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS;
+    attrs.push_back(attr);
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+    attr.value.objlist.count = static_cast<uint32_t>(member_oids.size());
+    attr.value.objlist.list = member_oids.data();
+    attrs.push_back(attr);
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+    attr.value.u32list.count = static_cast<uint32_t>(member_weights.size());
+    attr.value.u32list.list = member_weights.data();
+    attrs.push_back(attr);
+
+    std::vector<sai_object_id_t> exp_oids{kWcmpGroupOid1};
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
     EXPECT_CALL(
         mock_sai_next_hop_group_,
-        create_next_hop_group(_, Eq(gSwitchId), Eq(3),
-                              Truly(std::bind(MatchSaiNextHopGroupAttribute,
-                                              std::placeholders::_1,
-                                              app_db_entry, /*update=*/false))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupOid1),
+        create_next_hop_groups(
+            Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+            AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{attrs}),
+            Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(exp_oids.begin(), exp_oids.end()),
+                        SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
                         Return(SAI_STATUS_SUCCESS)));
-    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddRequest(&app_db_entry));
+
+    std::vector<P4WcmpGroupEntry> entries{app_db_entry};
+    EXPECT_THAT(CreateWcmpGroups(entries),
+                ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
     EXPECT_NE(nullptr, GetWcmpGroupEntry(kWcmpGroupId1));
     return app_db_entry;
 }
 
 // Create a WCMP group member with the requested attributes
 std::shared_ptr<P4WcmpGroupMemberEntry> WcmpManagerTest::createWcmpGroupMemberEntry(const std::string &next_hop_id,
-                                                                                    const int weight)
+                                                                                    const int weight,
+                                                                                    sai_object_id_t oid)
 {
     std::shared_ptr<P4WcmpGroupMemberEntry> gm = std::make_shared<P4WcmpGroupMemberEntry>();
     gm->next_hop_id = next_hop_id;
     gm->weight = weight;
+    gm->next_hop_oid = oid;
+    p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP,
+                           KeyGenerator::generateNextHopKey(next_hop_id), oid);
     return gm;
 }
 
@@ -384,6 +463,7 @@ std::shared_ptr<P4WcmpGroupMemberEntry> WcmpManagerTest::createWcmpGroupMemberEn
     gm->weight = weight;
     gm->watch_port = watch_port;
     gm->wcmp_group_id = wcmp_group_id;
+    gm->next_hop_oid = next_hop_oid;
     p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP, KeyGenerator::generateNextHopKey(next_hop_id), next_hop_oid);
     return gm;
 }
@@ -395,9 +475,11 @@ TEST_F(WcmpManagerTest, CreateWcmpGroup)
                                      .wcmp_group_members = {},
                                      .nexthop_ids = {},
                                      .nexthop_weights = {}};
-    std::shared_ptr<P4WcmpGroupMemberEntry> gm_entry1 = createWcmpGroupMemberEntry(kNexthopId1, 2);
+    std::shared_ptr<P4WcmpGroupMemberEntry> gm_entry1 =
+        createWcmpGroupMemberEntry(kNexthopId1, 2, kNexthopOid1);
     expect_entry.wcmp_group_members.push_back(gm_entry1);
-    std::shared_ptr<P4WcmpGroupMemberEntry> gm_entry2 = createWcmpGroupMemberEntry(kNexthopId2, 1);
+    std::shared_ptr<P4WcmpGroupMemberEntry> gm_entry2 =
+        createWcmpGroupMemberEntry(kNexthopId2, 1, kNexthopOid2);
     expect_entry.wcmp_group_members.push_back(gm_entry2);
     VerifyWcmpGroupEntry(expect_entry, *GetWcmpGroupEntry(kWcmpGroupId1));
 }
@@ -408,9 +490,15 @@ TEST_F(WcmpManagerTest, CreateWcmpGroupFailsWhenCreateGroupSaiCallFails)
     app_db_entry.wcmp_group_members.pop_back();
     p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1, kNexthopOid1);
     // WCMP group creation fails when one of the group member creation fails
-    EXPECT_CALL(mock_sai_next_hop_group_, create_next_hop_group(_, _, _, _)).WillOnce(Return(SAI_STATUS_TABLE_FULL));
+    std::vector<sai_status_t> exp_status{SAI_STATUS_TABLE_FULL};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                create_next_hop_groups(_, _, _, _, _, _, _))
+        .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
+                        Return(SAI_STATUS_TABLE_FULL)));
 
-    EXPECT_EQ(StatusCode::SWSS_RC_FULL, ProcessAddRequest(&app_db_entry));
+    std::vector<P4WcmpGroupEntry> entries{app_db_entry};
+    EXPECT_THAT(CreateWcmpGroups(entries),
+                ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_FULL}));
     std::string key = KeyGenerator::generateWcmpGroupKey(kWcmpGroupId1);
     auto *wcmp_group_entry_ptr = GetWcmpGroupEntry(kWcmpGroupId1);
     EXPECT_EQ(nullptr, wcmp_group_entry_ptr);
@@ -420,26 +508,51 @@ TEST_F(WcmpManagerTest, CreateWcmpGroupFailsWhenCreateGroupSaiCallFails)
     EXPECT_EQ(0, ref_cnt);
 }
 
-TEST_F(WcmpManagerTest, RemoveWcmpGroupFailsWhenRefcountIsGtThanZero)
-{
-    AddWcmpGroupEntry1();
+TEST_F(WcmpManagerTest, ValidateRemoveFailsWhenRefcountIsGtThanZero) {
+  P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntry1();
     p4_oid_mapper_->increaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, KeyGenerator::generateWcmpGroupKey(kWcmpGroupId1));
-    EXPECT_EQ(StatusCode::SWSS_RC_IN_USE, RemoveWcmpGroup(kWcmpGroupId1));
-    EXPECT_NE(nullptr, GetWcmpGroupEntry(kWcmpGroupId1));
+    EXPECT_EQ(StatusCode::SWSS_RC_IN_USE,
+              ValidateWcmpGroupEntry(app_db_entry, DEL_COMMAND));
 }
 
-TEST_F(WcmpManagerTest, RemoveWcmpGroupFailsWhenNotExist)
-{
-    EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, RemoveWcmpGroup(kWcmpGroupId1));
+TEST_F(WcmpManagerTest, ValidateRemoveFailsWhenNotExist) {
+  P4WcmpGroupEntry wcmp_group = {.wcmp_group_id = kWcmpGroupId1,
+                                 .wcmp_group_members = {},
+                                 .nexthop_ids = {},
+                                 .nexthop_weights = {}};
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND,
+            ValidateWcmpGroupEntry(wcmp_group, DEL_COMMAND));
+}
+
+TEST_F(WcmpManagerTest, ValidateRemoveFailsWhenNotExistInMapper) {
+  P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntry1();
+  p4_oid_mapper_->decreaseRefCount(
+      SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+      KeyGenerator::generateWcmpGroupKey(kWcmpGroupId1));
+  p4_oid_mapper_->eraseOID(SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+                           KeyGenerator::generateWcmpGroupKey(kWcmpGroupId1));
+  EXPECT_EQ(StatusCode::SWSS_RC_INTERNAL,
+            ValidateWcmpGroupEntry(app_db_entry, DEL_COMMAND));
 }
 
 TEST_F(WcmpManagerTest, RemoveWcmpGroupFailsWhenSaiCallFails)
 {
   P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntry1();
+
+  std::vector<sai_status_t> exp_status{SAI_STATUS_FAILURE};
   EXPECT_CALL(mock_sai_next_hop_group_,
-              remove_next_hop_group(Eq(kWcmpGroupOid1)))
-      .WillOnce(Return(SAI_STATUS_FAILURE));
-  EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, RemoveWcmpGroup(kWcmpGroupId1));
+              remove_next_hop_groups(
+                  Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1}),
+                  Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+      .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()),
+                      Return(SAI_STATUS_FAILURE)));
+
+  EXPECT_THAT(RemoveWcmpGroups(std::vector<P4WcmpGroupEntry>{
+                  P4WcmpGroupEntry{.wcmp_group_id = kWcmpGroupId1,
+                                   .wcmp_group_members = {},
+                                   .nexthop_ids = {},
+                                   .nexthop_weights = {}}}),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN}));
 }
 
 TEST_F(WcmpManagerTest, UpdateWcmpGroupMembersSucceed)
@@ -452,11 +565,24 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupMembersSucceed)
                                  .nexthop_ids = {},
                                  .nexthop_weights = {}};
   std::shared_ptr<P4WcmpGroupMemberEntry> gm1 =
-      createWcmpGroupMemberEntry(kNexthopId1, 3);
+      createWcmpGroupMemberEntry(kNexthopId1, 3, kNexthopOid1);
   std::shared_ptr<P4WcmpGroupMemberEntry> gm2 =
-      createWcmpGroupMemberEntry(kNexthopId2, 15);
+      createWcmpGroupMemberEntry(kNexthopId2, 15, kNexthopOid2);
   wcmp_group.wcmp_group_members.push_back(gm1);
   wcmp_group.wcmp_group_members.push_back(gm2);
+
+  std::vector<sai_object_id_t> member_oids_1{kNexthopOid1, kNexthopOid2};
+  std::vector<uint32_t> member_weights_1{3, 15};
+  std::vector<sai_attribute_t> attrs_1;
+  sai_attribute_t attr;
+  attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+  attr.value.objlist.count = static_cast<uint32_t>(member_oids_1.size());
+  attr.value.objlist.list = member_oids_1.data();
+  attrs_1.push_back(attr);
+  attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+  attr.value.u32list.count = static_cast<uint32_t>(member_weights_1.size());
+  attr.value.u32list.list = member_weights_1.data();
+  attrs_1.push_back(attr);
 
   std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS};
 
@@ -465,13 +591,13 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupMembersSucceed)
       set_next_hop_groups_attribute(
           Eq(2),
           ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1, kWcmpGroupOid1}),
-          Truly(std::bind(MatchSaiNextHopGroupAttribute, std::placeholders::_1,
-                          wcmp_group, /*update=*/true)),
-          _, _))
+          AttrArrayEq(attrs_1), _, _))
       .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
                       Return(SAI_STATUS_SUCCESS)));
 
-  EXPECT_TRUE(ProcessUpdateRequest(&wcmp_group).ok());
+  std::vector<P4WcmpGroupEntry> entries{wcmp_group};
+  EXPECT_THAT(UpdateWcmpGroups(entries),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
   VerifyWcmpGroupEntry(wcmp_group, *GetWcmpGroupEntry(kWcmpGroupId1));
   uint32_t wcmp_group_refcount = 0;
   uint32_t nexthop_refcount = 0;
@@ -486,21 +612,33 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupMembersSucceed)
   EXPECT_EQ(1, nexthop_refcount);
   // Remove group member with nexthop_id=kNexthopId1
   wcmp_group.wcmp_group_members.clear();
-  gm2 = createWcmpGroupMemberEntry(kNexthopId2, 15);
+  gm2 = createWcmpGroupMemberEntry(kNexthopId2, 15, kNexthopOid2);
   wcmp_group.wcmp_group_members.push_back(gm2);
+
+  std::vector<sai_object_id_t> member_oids_2{kNexthopOid2};
+  std::vector<uint32_t> member_weights_2{15};
+  std::vector<sai_attribute_t> attrs_2;
+  attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+  attr.value.objlist.count = static_cast<uint32_t>(member_oids_2.size());
+  attr.value.objlist.list = member_oids_2.data();
+  attrs_2.push_back(attr);
+  attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+  attr.value.u32list.count = static_cast<uint32_t>(member_weights_2.size());
+  attr.value.u32list.list = member_weights_2.data();
+  attrs_2.push_back(attr);
 
   EXPECT_CALL(
       mock_sai_next_hop_group_,
       set_next_hop_groups_attribute(
           Eq(2),
           ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1, kWcmpGroupOid1}),
-          Truly(std::bind(MatchSaiNextHopGroupAttribute, std::placeholders::_1,
-                          wcmp_group, /*update=*/true)),
-          _, _))
+          AttrArrayEq(attrs_2), _, _))
       .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
                       Return(SAI_STATUS_SUCCESS)));
 
-  EXPECT_TRUE(ProcessUpdateRequest(&wcmp_group).ok());
+  entries = std::vector<P4WcmpGroupEntry>{wcmp_group};
+  EXPECT_THAT(UpdateWcmpGroups(entries),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
   VerifyWcmpGroupEntry(wcmp_group, *GetWcmpGroupEntry(kWcmpGroupId1));
   ASSERT_TRUE(p4_oid_mapper_->getRefCount(
       SAI_OBJECT_TYPE_NEXT_HOP_GROUP, kWcmpGroupKey1, &wcmp_group_refcount));
@@ -514,24 +652,36 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupMembersSucceed)
   // Add group member with nexthop_id=kNexthopId1 and weight=20
   wcmp_group.wcmp_group_members.clear();
   std::shared_ptr<P4WcmpGroupMemberEntry> updated_gm2 =
-      createWcmpGroupMemberEntry(kNexthopId2, 15);
+      createWcmpGroupMemberEntry(kNexthopId2, 15, kNexthopOid2);
   std::shared_ptr<P4WcmpGroupMemberEntry> updated_gm1 =
-      createWcmpGroupMemberEntry(kNexthopId1, 20);
+      createWcmpGroupMemberEntry(kNexthopId1, 20, kNexthopOid1);
   wcmp_group.wcmp_group_members.push_back(updated_gm1);
   wcmp_group.wcmp_group_members.push_back(updated_gm2);
+
+  std::vector<sai_object_id_t> member_oids_3{kNexthopOid1, kNexthopOid2};
+  std::vector<uint32_t> member_weights_3{20, 15};
+  std::vector<sai_attribute_t> attrs_3;
+  attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+  attr.value.objlist.count = static_cast<uint32_t>(member_oids_3.size());
+  attr.value.objlist.list = member_oids_3.data();
+  attrs_3.push_back(attr);
+  attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+  attr.value.u32list.count = static_cast<uint32_t>(member_weights_3.size());
+  attr.value.u32list.list = member_weights_3.data();
+  attrs_3.push_back(attr);
 
   EXPECT_CALL(
       mock_sai_next_hop_group_,
       set_next_hop_groups_attribute(
           Eq(2),
           ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1, kWcmpGroupOid1}),
-          Truly(std::bind(MatchSaiNextHopGroupAttribute, std::placeholders::_1,
-                          wcmp_group, /*update=*/true)),
-          _, _))
+          AttrArrayEq(attrs_3), _, _))
       .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
                       Return(SAI_STATUS_SUCCESS)));
 
-  EXPECT_TRUE(ProcessUpdateRequest(&wcmp_group).ok());
+  entries = std::vector<P4WcmpGroupEntry>{wcmp_group};
+  EXPECT_THAT(UpdateWcmpGroups(entries),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
   VerifyWcmpGroupEntry(wcmp_group, *GetWcmpGroupEntry(kWcmpGroupId1));
   ASSERT_TRUE(p4_oid_mapper_->getRefCount(
       SAI_OBJECT_TYPE_NEXT_HOP_GROUP, kWcmpGroupKey1, &wcmp_group_refcount));
@@ -546,18 +696,30 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupMembersSucceed)
   // Update WCMP without group members
   wcmp_group.wcmp_group_members.clear();
 
+  std::vector<sai_object_id_t> member_oids_4{};
+  std::vector<uint32_t> member_weights_4{};
+  std::vector<sai_attribute_t> attrs_4;
+  attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+  attr.value.objlist.count = static_cast<uint32_t>(member_oids_4.size());
+  attr.value.objlist.list = member_oids_4.data();
+  attrs_4.push_back(attr);
+  attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+  attr.value.u32list.count = static_cast<uint32_t>(member_weights_4.size());
+  attr.value.u32list.list = member_weights_4.data();
+  attrs_4.push_back(attr);
+
   EXPECT_CALL(
       mock_sai_next_hop_group_,
       set_next_hop_groups_attribute(
           Eq(2),
           ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1, kWcmpGroupOid1}),
-          Truly(std::bind(MatchSaiNextHopGroupAttribute, std::placeholders::_1,
-                          wcmp_group, /*update=*/true)),
-          _, _))
+          AttrArrayEq(attrs_4), _, _))
       .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
                       Return(SAI_STATUS_SUCCESS)));
 
-  EXPECT_TRUE(ProcessUpdateRequest(&wcmp_group).ok());
+  entries = std::vector<P4WcmpGroupEntry>{wcmp_group};
+  EXPECT_THAT(UpdateWcmpGroups(entries),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
   VerifyWcmpGroupEntry(wcmp_group, *GetWcmpGroupEntry(kWcmpGroupId1));
   ASSERT_TRUE(p4_oid_mapper_->getRefCount(
       SAI_OBJECT_TYPE_NEXT_HOP_GROUP, kWcmpGroupKey1, &wcmp_group_refcount));
@@ -580,15 +742,29 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupFailsWhenSaiCallFails) {
                                  .nexthop_ids = {},
                                  .nexthop_weights = {}};
   std::shared_ptr<P4WcmpGroupMemberEntry> gm1 =
-      createWcmpGroupMemberEntry(kNexthopId1, 3);
+      createWcmpGroupMemberEntry(kNexthopId1, 3, kNexthopOid1);
   std::shared_ptr<P4WcmpGroupMemberEntry> gm2 =
-      createWcmpGroupMemberEntry(kNexthopId2, 10);
+      createWcmpGroupMemberEntry(kNexthopId2, 10, kNexthopOid2);
   std::shared_ptr<P4WcmpGroupMemberEntry> gm3 =
-      createWcmpGroupMemberEntry(kNexthopId3, 30);
+      createWcmpGroupMemberEntry(kNexthopId3, 30, kNexthopOid3);
 
   wcmp_group.wcmp_group_members.push_back(gm1);
   wcmp_group.wcmp_group_members.push_back(gm2);
   wcmp_group.wcmp_group_members.push_back(gm3);
+
+  std::vector<sai_object_id_t> member_oids{kNexthopOid1, kNexthopOid2,
+                                           kNexthopOid3};
+  std::vector<uint32_t> member_weights{3, 10, 30};
+  std::vector<sai_attribute_t> attrs;
+  sai_attribute_t attr;
+  attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+  attr.value.objlist.count = static_cast<uint32_t>(member_oids.size());
+  attr.value.objlist.list = member_oids.data();
+  attrs.push_back(attr);
+  attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+  attr.value.u32list.count = static_cast<uint32_t>(member_weights.size());
+  attr.value.u32list.list = member_weights.data();
+  attrs.push_back(attr);
 
   std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS};
 
@@ -597,13 +773,13 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupFailsWhenSaiCallFails) {
       set_next_hop_groups_attribute(
           Eq(2),
           ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1, kWcmpGroupOid1}),
-          Truly(std::bind(MatchSaiNextHopGroupAttribute, std::placeholders::_1,
-                          wcmp_group, /*update=*/true)),
-          _, _))
+          AttrArrayEq(attrs), _, _))
       .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
                       Return(SAI_STATUS_SUCCESS)));
 
-  EXPECT_TRUE(ProcessUpdateRequest(&wcmp_group).ok());
+  std::vector<P4WcmpGroupEntry> entries{wcmp_group};
+  EXPECT_THAT(UpdateWcmpGroups(entries),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
   VerifyWcmpGroupEntry(wcmp_group, *GetWcmpGroupEntry(kWcmpGroupId1));
   uint32_t wcmp_group_refcount = 0;
   uint32_t nexthop_refcount = 0;
@@ -625,6 +801,18 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupFailsWhenSaiCallFails) {
   wcmp_group.wcmp_group_members.push_back(gm1);
   wcmp_group.wcmp_group_members.push_back(gm3);
 
+  std::vector<sai_object_id_t> member_oids_2{kNexthopOid1, kNexthopOid3};
+  std::vector<uint32_t> member_weights_2{3, 30};
+  std::vector<sai_attribute_t> attrs_2;
+  attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+  attr.value.objlist.count = static_cast<uint32_t>(member_oids_2.size());
+  attr.value.objlist.list = member_oids_2.data();
+  attrs_2.push_back(attr);
+  attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+  attr.value.u32list.count = static_cast<uint32_t>(member_weights_2.size());
+  attr.value.u32list.list = member_weights_2.data();
+  attrs_2.push_back(attr);
+
   exp_status = std::vector<sai_status_t>{SAI_STATUS_OBJECT_IN_USE,
                                          SAI_STATUS_OBJECT_IN_USE};
   EXPECT_CALL(
@@ -632,12 +820,12 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupFailsWhenSaiCallFails) {
       set_next_hop_groups_attribute(
           Eq(2),
           ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1, kWcmpGroupOid1}),
-          Truly(std::bind(MatchSaiNextHopGroupAttribute, std::placeholders::_1,
-                          wcmp_group, /*update=*/true)),
-          _, _))
+          AttrArrayEq(attrs_2), _, _))
       .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
                       Return(SAI_STATUS_OBJECT_IN_USE)));
-  EXPECT_EQ(StatusCode::SWSS_RC_IN_USE, ProcessUpdateRequest(&wcmp_group));
+  entries = std::vector<P4WcmpGroupEntry>{wcmp_group};
+  EXPECT_THAT(UpdateWcmpGroups(entries),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_IN_USE}));
   P4WcmpGroupEntry expected_wcmp_group = {.wcmp_group_id = kWcmpGroupId1,
                                           .wcmp_group_members = {},
                                           .nexthop_ids = {},
@@ -803,8 +991,12 @@ TEST_F(WcmpManagerTest, WcmpGroupCreateAndDeleteInDrainSucceeds)
 
     Enqueue(swss::KeyOpFieldsValuesTuple(kKeyPrefix + j.dump(), SET_COMMAND, attributes));
 
-    EXPECT_CALL(mock_sai_next_hop_group_, create_next_hop_group(_, _, _, _))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupOid1),
+    std::vector<sai_object_id_t> exp_oids{kWcmpGroupOid1};
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                create_next_hop_groups(_, _, _, _, _, _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(exp_oids.begin(), exp_oids.end()),
+                        SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
                         Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(
         *gMockResponsePublisher,
@@ -821,8 +1013,14 @@ TEST_F(WcmpManagerTest, WcmpGroupCreateAndDeleteInDrainSucceeds)
     EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey2, &ref_cnt));
     EXPECT_EQ(1, ref_cnt);
 
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group(Eq(kWcmpGroupOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    std::vector<sai_status_t> exp_status_1{SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                remove_next_hop_groups(
+                    Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1}),
+                    Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_status_1.begin(), exp_status_1.end()),
+                  Return(SAI_STATUS_SUCCESS)));
     attributes.clear();
     Enqueue(swss::KeyOpFieldsValuesTuple(kKeyPrefix + j.dump(), DEL_COMMAND, attributes));
     EXPECT_CALL(
@@ -856,8 +1054,12 @@ TEST_F(WcmpManagerTest, WcmpGroupCreateAndUpdateInDrainSucceeds)
     attributes.push_back(swss::FieldValueTuple{p4orch::kActions, actions.dump()});
     // Create WCMP group with member {next_hop_id=kNexthopId1, weight=1}
     Enqueue(swss::KeyOpFieldsValuesTuple(kKeyPrefix + j.dump(), SET_COMMAND, attributes));
-    EXPECT_CALL(mock_sai_next_hop_group_, create_next_hop_group(_, _, _, _))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupOid1),
+    std::vector<sai_object_id_t> exp_oids{kWcmpGroupOid1};
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                create_next_hop_groups(_, _, _, _, _, _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(exp_oids.begin(), exp_oids.end()),
+                        SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
                         Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(
         *gMockResponsePublisher,
@@ -878,20 +1080,30 @@ TEST_F(WcmpManagerTest, WcmpGroupCreateAndUpdateInDrainSucceeds)
     // Update WCMP group with exact same members.
     Enqueue(swss::KeyOpFieldsValuesTuple(kKeyPrefix + j.dump(), SET_COMMAND, attributes));
 
-    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS,
-                                         SAI_STATUS_SUCCESS};
+    std::vector<sai_object_id_t> member_oids_1{kNexthopOid1};
+    std::vector<uint32_t> member_weights_1{1};
+    std::vector<sai_attribute_t> attrs_1;
+    sai_attribute_t attr;
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+    attr.value.objlist.count = static_cast<uint32_t>(member_oids_1.size());
+    attr.value.objlist.list = member_oids_1.data();
+    attrs_1.push_back(attr);
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+    attr.value.u32list.count = static_cast<uint32_t>(member_weights_1.size());
+    attr.value.u32list.list = member_weights_1.data();
+    attrs_1.push_back(attr);
+
+    std::vector<sai_status_t> exp_status_1{SAI_STATUS_SUCCESS,
+                                           SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
                 set_next_hop_groups_attribute(
                     Eq(2),
                     ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1,
                                                          kWcmpGroupOid1}),
-                    Truly(std::bind(MatchSaiNextHopGroupAttribute,
-                                    std::placeholders::_1,
-                                    *wcmp_group_entry_ptr, /*update=*/true)),
-                    _, _))
-        .WillOnce(
-            DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
-                  Return(SAI_STATUS_SUCCESS)));
+                    AttrArrayEq(attrs_1), _, _))
+                .WillOnce(
+                    DoAll(SetArrayArgument<4>(exp_status_1.begin(), exp_status_1.end()),
+                          Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(
         *gMockResponsePublisher,
         publish(Eq(APP_P4RT_TABLE_NAME), Eq(kKeyPrefix + j.dump()),
@@ -913,7 +1125,6 @@ TEST_F(WcmpManagerTest, WcmpGroupCreateAndUpdateInDrainSucceeds)
     attributes.clear();
     attributes.push_back(swss::FieldValueTuple{p4orch::kActions, actions.dump()});
     Enqueue(swss::KeyOpFieldsValuesTuple(kKeyPrefix + j.dump(), SET_COMMAND, attributes));
-
     auto exp_group = *wcmp_group_entry_ptr;
     exp_group.wcmp_group_members =
         std::vector<std::shared_ptr<P4WcmpGroupMemberEntry>>{
@@ -921,17 +1132,28 @@ TEST_F(WcmpManagerTest, WcmpGroupCreateAndUpdateInDrainSucceeds)
     exp_group.wcmp_group_members[0]->next_hop_id = kNexthopId2;
     exp_group.wcmp_group_members[0]->weight = 1;
     exp_group.wcmp_group_members[0]->next_hop_oid = kNexthopOid2;
+
+    std::vector<sai_object_id_t> member_oids_2{kNexthopOid2};
+    std::vector<uint32_t> member_weights_2{1};
+    std::vector<sai_attribute_t> attrs_2;
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+    attr.value.objlist.count = static_cast<uint32_t>(member_oids_2.size());
+    attr.value.objlist.list = member_oids_2.data();
+    attrs_2.push_back(attr);
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+    attr.value.u32list.count = static_cast<uint32_t>(member_weights_2.size());
+    attr.value.u32list.list = member_weights_2.data();
+    attrs_2.push_back(attr);
+
     EXPECT_CALL(
         mock_sai_next_hop_group_,
         set_next_hop_groups_attribute(
             Eq(2),
             ArrayEq(
                 std::vector<sai_object_id_t>{kWcmpGroupOid1, kWcmpGroupOid1}),
-            Truly(std::bind(MatchSaiNextHopGroupAttribute,
-                            std::placeholders::_1, exp_group, /*update=*/true)),
-            _, _))
+            AttrArrayEq(attrs_2), _, _))
         .WillOnce(
-            DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
+            DoAll(SetArrayArgument<4>(exp_status_1.begin(), exp_status_1.end()),
                   Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(
         *gMockResponsePublisher,
@@ -963,17 +1185,28 @@ TEST_F(WcmpManagerTest, WcmpGroupCreateAndUpdateInDrainSucceeds)
     exp_group.wcmp_group_members[0]->next_hop_id = kNexthopId2;
     exp_group.wcmp_group_members[0]->weight = 2;
     exp_group.wcmp_group_members[0]->next_hop_oid = kNexthopOid2;
+
+    std::vector<sai_object_id_t> member_oids_3{kNexthopOid2};
+    std::vector<uint32_t> member_weights_3{2};
+    std::vector<sai_attribute_t> attrs_3;
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+    attr.value.objlist.count = static_cast<uint32_t>(member_oids_3.size());
+    attr.value.objlist.list = member_oids_3.data();
+    attrs_3.push_back(attr);
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+    attr.value.u32list.count = static_cast<uint32_t>(member_weights_3.size());
+    attr.value.u32list.list = member_weights_3.data();
+    attrs_3.push_back(attr);
+
     EXPECT_CALL(
         mock_sai_next_hop_group_,
         set_next_hop_groups_attribute(
             Eq(2),
             ArrayEq(
                 std::vector<sai_object_id_t>{kWcmpGroupOid1, kWcmpGroupOid1}),
-            Truly(std::bind(MatchSaiNextHopGroupAttribute,
-                            std::placeholders::_1, exp_group, /*update=*/true)),
-            _, _))
+            AttrArrayEq(attrs_3), _, _))
         .WillOnce(
-            DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
+            DoAll(SetArrayArgument<4>(exp_status_1.begin(), exp_status_1.end()),
                   Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(
         *gMockResponsePublisher,
@@ -1009,9 +1242,11 @@ TEST_F(WcmpManagerTest, DeserializeWcmpGroup)
     auto &wcmp_group_entry = *wcmp_group_entry_or;
     P4WcmpGroupEntry expect_entry = {};
     expect_entry.wcmp_group_id = "group-a";
-    std::shared_ptr<P4WcmpGroupMemberEntry> gm_entry1 = createWcmpGroupMemberEntry(kNexthopId1, 2);
+    std::shared_ptr<P4WcmpGroupMemberEntry> gm_entry1 =
+        createWcmpGroupMemberEntry(kNexthopId1, 2, kNexthopOid1);
     expect_entry.wcmp_group_members.push_back(gm_entry1);
-    std::shared_ptr<P4WcmpGroupMemberEntry> gm_entry2 = createWcmpGroupMemberEntry(kNexthopId2, 1);
+    std::shared_ptr<P4WcmpGroupMemberEntry> gm_entry2 =
+        createWcmpGroupMemberEntry(kNexthopId2, 1, kNexthopOid2);
     expect_entry.wcmp_group_members.push_back(gm_entry2);
     VerifyWcmpGroupEntry(expect_entry, wcmp_group_entry);
 }
@@ -1138,21 +1373,28 @@ TEST_F(WcmpManagerTest, ValidateWcmpGroupEntryWithInvalidWatchportAttributeFails
     EXPECT_EQ(0, ref_cnt);
 }
 
-TEST_F(WcmpManagerTest, CreateWcmpGroupFailsWithNonFrontPanelPortAsWatchport) {
+TEST_F(WcmpManagerTest, ValidateCreateFailsWithNonFrontPanelPortAsWatchport) {
   p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1, kNexthopOid1);
+  p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey2, kNexthopOid2);
   P4WcmpGroupEntry app_db_entry = getDefaultWcmpGroupEntryForTest();
   app_db_entry.wcmp_group_members[0]->watch_port = "PortChannel001";
-
   EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
-            ProcessAddRequest(&app_db_entry));
-  std::string key = KeyGenerator::generateWcmpGroupKey(kWcmpGroupId1);
-  auto* wcmp_group_entry_ptr = GetWcmpGroupEntry(kWcmpGroupId1);
-  EXPECT_EQ(nullptr, wcmp_group_entry_ptr);
-  EXPECT_FALSE(p4_oid_mapper_->existsOID(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, key));
-  uint32_t ref_cnt;
-  EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_NEXT_HOP,
-                                          kNexthopKey1, &ref_cnt));
-  EXPECT_EQ(0, ref_cnt);
+            ValidateWcmpGroupEntry(app_db_entry, SET_COMMAND));
+}
+
+TEST_F(WcmpManagerTest, ValidateCreateFailsWithInvalidWeight) {
+  p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1, kNexthopOid1);
+  p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey2, kNexthopOid2);
+  P4WcmpGroupEntry app_db_entry = getDefaultWcmpGroupEntryForTest();
+  app_db_entry.wcmp_group_members[0]->weight = -1;
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+            ValidateWcmpGroupEntry(app_db_entry, SET_COMMAND));
+}
+
+TEST_F(WcmpManagerTest, ValidateCreateFailsWithNexthopNotFound) {
+  P4WcmpGroupEntry app_db_entry = getDefaultWcmpGroupEntryForTest();
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND,
+            ValidateWcmpGroupEntry(app_db_entry, SET_COMMAND));
 }
 
 TEST_F(WcmpManagerTest, PruneNextHopSucceeds)
@@ -1165,6 +1407,20 @@ TEST_F(WcmpManagerTest, PruneNextHopSucceeds)
 
     bool pruned = app_db_entry.wcmp_group_members[0]->pruned;
     app_db_entry.wcmp_group_members[0]->pruned = true;
+
+    std::vector<sai_object_id_t> member_oids{};
+    std::vector<uint32_t> member_weights{};
+    std::vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+    attr.value.objlist.count = static_cast<uint32_t>(member_oids.size());
+    attr.value.objlist.list = member_oids.data();
+    attrs.push_back(attr);
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+    attr.value.u32list.count = static_cast<uint32_t>(member_weights.size());
+    attr.value.u32list.list = member_weights.data();
+    attrs.push_back(attr);
+
     std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS,
                                          SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
@@ -1172,10 +1428,7 @@ TEST_F(WcmpManagerTest, PruneNextHopSucceeds)
                     Eq(2),
                     ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1,
                                                          kWcmpGroupOid1}),
-                    Truly(std::bind(MatchSaiNextHopGroupAttribute,
-                                    std::placeholders::_1, app_db_entry,
-                                    /*update=*/true)),
-                    _, _))
+                    AttrArrayEq(attrs), _, _))
         .WillOnce(
             DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
                   Return(SAI_STATUS_SUCCESS)));
@@ -1198,15 +1451,27 @@ TEST_F(WcmpManagerTest, PruneNextHopFails) {
 
   bool pruned = app_db_entry.wcmp_group_members[0]->pruned;
   app_db_entry.wcmp_group_members[0]->pruned = true;
+
+  std::vector<sai_object_id_t> member_oids{};
+  std::vector<uint32_t> member_weights{};
+  std::vector<sai_attribute_t> attrs;
+  sai_attribute_t attr;
+  attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+  attr.value.objlist.count = static_cast<uint32_t>(member_oids.size());
+  attr.value.objlist.list = member_oids.data();
+  attrs.push_back(attr);
+  attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+  attr.value.u32list.count = static_cast<uint32_t>(member_weights.size());
+  attr.value.u32list.list = member_weights.data();
+  attrs.push_back(attr);
+
   std::vector<sai_status_t> exp_status{SAI_STATUS_FAILURE, SAI_STATUS_FAILURE};
   EXPECT_CALL(
       mock_sai_next_hop_group_,
       set_next_hop_groups_attribute(
           Eq(2),
           ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1, kWcmpGroupOid1}),
-          Truly(std::bind(MatchSaiNextHopGroupAttribute, std::placeholders::_1,
-                          app_db_entry, /*update=*/true)),
-          _, _))
+          AttrArrayEq(attrs), _, _))
       .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
                       Return(SAI_STATUS_FAILURE)));
   app_db_entry.wcmp_group_members[0]->pruned = pruned;
@@ -1231,6 +1496,20 @@ TEST_F(WcmpManagerTest, RestorePrunedNextHopSucceeds)
 
     bool pruned = app_db_entry.wcmp_group_members[0]->pruned;
     app_db_entry.wcmp_group_members[0]->pruned = false;
+
+    std::vector<sai_object_id_t> member_oids{kNexthopOid1};
+    std::vector<uint32_t> member_weights{2};
+    std::vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+    attr.value.objlist.count = static_cast<uint32_t>(member_oids.size());
+    attr.value.objlist.list = member_oids.data();
+    attrs.push_back(attr);
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+    attr.value.u32list.count = static_cast<uint32_t>(member_weights.size());
+    attr.value.u32list.list = member_weights.data();
+    attrs.push_back(attr);
+
     std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS,
                                          SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
@@ -1238,10 +1517,7 @@ TEST_F(WcmpManagerTest, RestorePrunedNextHopSucceeds)
                     Eq(2),
                     ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1,
                                                          kWcmpGroupOid1}),
-                    Truly(std::bind(MatchSaiNextHopGroupAttribute,
-                                    std::placeholders::_1, app_db_entry,
-                                    /*update=*/true)),
-                    _, _))
+                    AttrArrayEq(attrs), _, _))
         .WillOnce(
             DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
                   Return(SAI_STATUS_SUCCESS)));
@@ -1265,6 +1541,20 @@ TEST_F(WcmpManagerTest, RestorePrunedNextHopFails) {
 
   bool pruned = app_db_entry.wcmp_group_members[0]->pruned;
   app_db_entry.wcmp_group_members[0]->pruned = false;
+
+  std::vector<sai_object_id_t> member_oids{kNexthopOid1};
+  std::vector<uint32_t> member_weights{2};
+  std::vector<sai_attribute_t> attrs;
+  sai_attribute_t attr;
+  attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+  attr.value.objlist.count = static_cast<uint32_t>(member_oids.size());
+  attr.value.objlist.list = member_oids.data();
+  attrs.push_back(attr);
+  attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+  attr.value.u32list.count = static_cast<uint32_t>(member_weights.size());
+  attr.value.u32list.list = member_weights.data();
+  attrs.push_back(attr);
+
   std::vector<sai_status_t> exp_status{SAI_STATUS_FAILURE, SAI_STATUS_FAILURE};
 
   EXPECT_CALL(
@@ -1272,9 +1562,7 @@ TEST_F(WcmpManagerTest, RestorePrunedNextHopFails) {
       set_next_hop_groups_attribute(
           Eq(2),
           ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1, kWcmpGroupOid1}),
-          Truly(std::bind(MatchSaiNextHopGroupAttribute, std::placeholders::_1,
-                          app_db_entry, /*update=*/true)),
-          _, _))
+          AttrArrayEq(attrs), _, _))
       .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
                       Return(SAI_STATUS_FAILURE)));
   app_db_entry.wcmp_group_members[0]->pruned = pruned;
@@ -1296,6 +1584,20 @@ TEST_F(WcmpManagerTest, RemoveWcmpGroupAfterPruningSucceeds)
 
     bool pruned = app_db_entry.wcmp_group_members[0]->pruned;
     app_db_entry.wcmp_group_members[0]->pruned = true;
+
+    std::vector<sai_object_id_t> member_oids{};
+    std::vector<uint32_t> member_weights{};
+    std::vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+    attr.value.objlist.count = static_cast<uint32_t>(member_oids.size());
+    attr.value.objlist.list = member_oids.data();
+    attrs.push_back(attr);
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+    attr.value.u32list.count = static_cast<uint32_t>(member_weights.size());
+    attr.value.u32list.list = member_weights.data();
+    attrs.push_back(attr);
+
     std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS,
                                          SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
@@ -1303,10 +1605,7 @@ TEST_F(WcmpManagerTest, RemoveWcmpGroupAfterPruningSucceeds)
                     Eq(2),
                     ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1,
                                                          kWcmpGroupOid1}),
-                    Truly(std::bind(MatchSaiNextHopGroupAttribute,
-                                    std::placeholders::_1, app_db_entry,
-                                    /*update=*/true)),
-                    _, _))
+                    AttrArrayEq(attrs), _, _))
         .WillOnce(
             DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
                   Return(SAI_STATUS_SUCCESS)));
@@ -1318,9 +1617,20 @@ TEST_F(WcmpManagerTest, RemoveWcmpGroupAfterPruningSucceeds)
 
     // Remove Wcmp group. No SAI call for member removal is expected as it is
     // already pruned.
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group(Eq(kWcmpGroupOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, RemoveWcmpGroup(kWcmpGroupId1));
+    std::vector<sai_status_t> exp_status_1{SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                remove_next_hop_groups(
+                    Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1}),
+                    Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_status_1.begin(), exp_status_1.end()),
+                  Return(SAI_STATUS_SUCCESS)));
+    EXPECT_THAT(RemoveWcmpGroups(std::vector<P4WcmpGroupEntry>{
+                    P4WcmpGroupEntry{.wcmp_group_id = kWcmpGroupId1,
+                                     .wcmp_group_members = {},
+                                     .nexthop_ids = {},
+                                     .nexthop_weights = {}}}),
+                ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], false, 0));
 }
 
@@ -1335,9 +1645,19 @@ TEST_F(WcmpManagerTest, RemoveWcmpGroupWithOperationallyDownWatchportSucceeds)
 
     // Remove Wcmp group. No SAI call for member removal is expected as it is
     // already pruned.
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group(Eq(kWcmpGroupOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, RemoveWcmpGroup(kWcmpGroupId1));
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                remove_next_hop_groups(
+                    Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1}),
+                    Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_THAT(RemoveWcmpGroups(std::vector<P4WcmpGroupEntry>{
+                    P4WcmpGroupEntry{.wcmp_group_id = kWcmpGroupId1,
+                                     .wcmp_group_members = {},
+                                     .nexthop_ids = {},
+                                     .nexthop_weights = {}}}),
+                ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], false, 0));
 }
 
@@ -1357,9 +1677,19 @@ TEST_F(WcmpManagerTest, RemoveNextHopWithPrunedMember)
 
     // Remove Wcmp group. No SAI call for member removal is expected as it is
     // already pruned.
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group(Eq(kWcmpGroupOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, RemoveWcmpGroup(kWcmpGroupId1));
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                remove_next_hop_groups(
+                    Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1}),
+                    Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_THAT(RemoveWcmpGroups(std::vector<P4WcmpGroupEntry>{
+                    P4WcmpGroupEntry{.wcmp_group_id = kWcmpGroupId1,
+                                     .wcmp_group_members = {},
+                                     .nexthop_ids = {},
+                                     .nexthop_weights = {}}}),
+                ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], false, 0));
 
     // Verify that the next hop reference count is now 0.
@@ -1385,6 +1715,20 @@ TEST_F(WcmpManagerTest, RemoveNextHopWithRestoredPrunedMember)
     // Restore member associated with port.
     bool pruned = app_db_entry.wcmp_group_members[0]->pruned;
     app_db_entry.wcmp_group_members[0]->pruned = false;
+
+    std::vector<sai_object_id_t> member_oids{kNexthopOid1};
+    std::vector<uint32_t> member_weights{2};
+    std::vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+    attr.value.objlist.count = static_cast<uint32_t>(member_oids.size());
+    attr.value.objlist.list = member_oids.data();
+    attrs.push_back(attr);
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+    attr.value.u32list.count = static_cast<uint32_t>(member_weights.size());
+    attr.value.u32list.list = member_weights.data();
+    attrs.push_back(attr);
+
     std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS,
                                          SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
@@ -1392,10 +1736,7 @@ TEST_F(WcmpManagerTest, RemoveNextHopWithRestoredPrunedMember)
                     Eq(2),
                     ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1,
                                                          kWcmpGroupOid1}),
-                    Truly(std::bind(MatchSaiNextHopGroupAttribute,
-                                    std::placeholders::_1, app_db_entry,
-                                    /*update=*/true)),
-                    _, _))
+                    AttrArrayEq(attrs), _, _))
         .WillOnce(
             DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
                   Return(SAI_STATUS_SUCCESS)));
@@ -1410,9 +1751,20 @@ TEST_F(WcmpManagerTest, RemoveNextHopWithRestoredPrunedMember)
     EXPECT_EQ(1, ref_cnt);
 
     // Remove Wcmp group.
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group(Eq(kWcmpGroupOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, RemoveWcmpGroup(kWcmpGroupId1));
+    std::vector<sai_status_t> exp_status_1{SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                remove_next_hop_groups(
+                    Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1}),
+                    Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_status_1.begin(), exp_status_1.end()),
+                  Return(SAI_STATUS_SUCCESS)));
+    EXPECT_THAT(RemoveWcmpGroups(std::vector<P4WcmpGroupEntry>{
+                    P4WcmpGroupEntry{.wcmp_group_id = kWcmpGroupId1,
+                                     .wcmp_group_members = {},
+                                     .nexthop_ids = {},
+                                     .nexthop_weights = {}}}),
+                ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], false, 0));
 
     // Verify that the next hop reference count is now 0.
@@ -1436,6 +1788,20 @@ TEST_F(WcmpManagerTest, VerifyNextHopRefCountWhenMemberPruned)
     // Prune member associated with port.
     bool pruned = app_db_entry.wcmp_group_members[0]->pruned;
     app_db_entry.wcmp_group_members[0]->pruned = true;
+
+    std::vector<sai_object_id_t> member_oids{};
+    std::vector<uint32_t> member_weights{};
+    std::vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+    attr.value.objlist.count = static_cast<uint32_t>(member_oids.size());
+    attr.value.objlist.list = member_oids.data();
+    attrs.push_back(attr);
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+    attr.value.u32list.count = static_cast<uint32_t>(member_weights.size());
+    attr.value.u32list.list = member_weights.data();
+    attrs.push_back(attr);
+
     std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS,
                                          SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
@@ -1443,10 +1809,7 @@ TEST_F(WcmpManagerTest, VerifyNextHopRefCountWhenMemberPruned)
                     Eq(2),
                     ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1,
                                                          kWcmpGroupOid1}),
-                    Truly(std::bind(MatchSaiNextHopGroupAttribute,
-                                    std::placeholders::_1, app_db_entry,
-                                    /*update=*/true)),
-                    _, _))
+                    AttrArrayEq(attrs), _, _))
         .WillOnce(
             DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
                   Return(SAI_STATUS_SUCCESS)));
@@ -1476,6 +1839,19 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupWithOperationallyUpWatchportMemberSucceed
         createWcmpGroupMemberEntryWithWatchport(kNexthopId2, 1, port_name, kWcmpGroupId1, kNexthopOid2);
     updated_app_db_entry.wcmp_group_members.push_back(updated_gm);
 
+    std::vector<sai_object_id_t> member_oids{kNexthopOid2};
+    std::vector<uint32_t> member_weights{1};
+    std::vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+    attr.value.objlist.count = static_cast<uint32_t>(member_oids.size());
+    attr.value.objlist.list = member_oids.data();
+    attrs.push_back(attr);
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+    attr.value.u32list.count = static_cast<uint32_t>(member_weights.size());
+    attr.value.u32list.list = member_weights.data();
+    attrs.push_back(attr);
+
     std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS,
                                          SAI_STATUS_SUCCESS};
 
@@ -1484,15 +1860,14 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupWithOperationallyUpWatchportMemberSucceed
                     Eq(2),
                     ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1,
                                                          kWcmpGroupOid1}),
-                    Truly(std::bind(MatchSaiNextHopGroupAttribute,
-                                    std::placeholders::_1, updated_app_db_entry,
-                                    /*update=*/true)),
-                    _, _))
+                    AttrArrayEq(attrs), _, _))
         .WillOnce(
             DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
                   Return(SAI_STATUS_SUCCESS)));
 
-    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessUpdateRequest(&updated_app_db_entry));
+    std::vector<P4WcmpGroupEntry> entries{updated_app_db_entry};
+    EXPECT_THAT(UpdateWcmpGroups(entries),
+                ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], false, 1));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(updated_gm, true, 1));
     EXPECT_FALSE(app_db_entry.wcmp_group_members[0]->pruned);
@@ -1514,7 +1889,21 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupWithOperationallyDownWatchportMemberSucce
     updated_app_db_entry.wcmp_group_id = kWcmpGroupId1;
     std::shared_ptr<P4WcmpGroupMemberEntry> updated_gm =
         createWcmpGroupMemberEntryWithWatchport(kNexthopId2, 1, port_name, kWcmpGroupId1, kNexthopOid2);
+    updated_gm->pruned = true;
     updated_app_db_entry.wcmp_group_members.push_back(updated_gm);
+
+    std::vector<sai_object_id_t> member_oids{};
+    std::vector<uint32_t> member_weights{};
+    std::vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+    attr.value.objlist.count = static_cast<uint32_t>(member_oids.size());
+    attr.value.objlist.list = member_oids.data();
+    attrs.push_back(attr);
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+    attr.value.u32list.count = static_cast<uint32_t>(member_weights.size());
+    attr.value.u32list.list = member_weights.data();
+    attrs.push_back(attr);
 
     std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS,
                                          SAI_STATUS_SUCCESS};
@@ -1523,18 +1912,16 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupWithOperationallyDownWatchportMemberSucce
                     Eq(2),
                     ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1,
                                                          kWcmpGroupOid1}),
-                    Truly(std::bind(MatchSaiNextHopGroupAttribute,
-                                    std::placeholders::_1, updated_app_db_entry,
-                                    /*update=*/true)),
-                    _, _))
+                    AttrArrayEq(attrs), _, _))
         .WillOnce(
             DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
                   Return(SAI_STATUS_SUCCESS)));
 
-    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessUpdateRequest(&updated_app_db_entry));
+    std::vector<P4WcmpGroupEntry> entries{updated_app_db_entry};
+    EXPECT_THAT(UpdateWcmpGroups(entries),
+                ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], false, 1));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(updated_gm, true, 1));
-    EXPECT_TRUE(updated_gm->pruned);
 }
 
 TEST_F(WcmpManagerTest, PruneAfterWcmpGroupUpdateSucceeds)
@@ -1551,6 +1938,20 @@ TEST_F(WcmpManagerTest, PruneAfterWcmpGroupUpdateSucceeds)
     std::shared_ptr<P4WcmpGroupMemberEntry> updated_gm =
         createWcmpGroupMemberEntryWithWatchport(kNexthopId1, 10, port_name, kWcmpGroupId1, kNexthopOid1);
     updated_app_db_entry.wcmp_group_members.push_back(updated_gm);
+
+    std::vector<sai_object_id_t> member_oids_1{kNexthopOid1};
+    std::vector<uint32_t> member_weights_1{10};
+    std::vector<sai_attribute_t> attrs_1;
+    sai_attribute_t attr;
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+    attr.value.objlist.count = static_cast<uint32_t>(member_oids_1.size());
+    attr.value.objlist.list = member_oids_1.data();
+    attrs_1.push_back(attr);
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+    attr.value.u32list.count = static_cast<uint32_t>(member_weights_1.size());
+    attr.value.u32list.list = member_weights_1.data();
+    attrs_1.push_back(attr);
+
     std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS,
                                          SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
@@ -1558,15 +1959,14 @@ TEST_F(WcmpManagerTest, PruneAfterWcmpGroupUpdateSucceeds)
                     Eq(2),
                     ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1,
                                                          kWcmpGroupOid1}),
-                    Truly(std::bind(MatchSaiNextHopGroupAttribute,
-                                    std::placeholders::_1, updated_app_db_entry,
-                                    /*update=*/true)),
-                    _, _))
+                    AttrArrayEq(attrs_1), _, _))
         .WillOnce(
             DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
                   Return(SAI_STATUS_SUCCESS)));
 
-    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessUpdateRequest(&updated_app_db_entry));
+    std::vector<P4WcmpGroupEntry> entries{updated_app_db_entry};
+    EXPECT_THAT(UpdateWcmpGroups(entries),
+                ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], false, 1));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(updated_app_db_entry.wcmp_group_members[0], true, 1));
     EXPECT_FALSE(updated_app_db_entry.wcmp_group_members[0]->pruned);
@@ -1574,15 +1974,25 @@ TEST_F(WcmpManagerTest, PruneAfterWcmpGroupUpdateSucceeds)
     // Prune members associated with port.
     bool pruned = updated_app_db_entry.wcmp_group_members[0]->pruned;
     updated_app_db_entry.wcmp_group_members[0]->pruned = true;
+
+    std::vector<sai_object_id_t> member_oids_2{};
+    std::vector<uint32_t> member_weights_2{};
+    std::vector<sai_attribute_t> attrs_2;
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+    attr.value.objlist.count = static_cast<uint32_t>(member_oids_2.size());
+    attr.value.objlist.list = member_oids_2.data();
+    attrs_2.push_back(attr);
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+    attr.value.u32list.count = static_cast<uint32_t>(member_weights_2.size());
+    attr.value.u32list.list = member_weights_2.data();
+    attrs_2.push_back(attr);
+
     EXPECT_CALL(mock_sai_next_hop_group_,
                 set_next_hop_groups_attribute(
                     Eq(2),
                     ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1,
                                                          kWcmpGroupOid1}),
-                    Truly(std::bind(MatchSaiNextHopGroupAttribute,
-                                    std::placeholders::_1, updated_app_db_entry,
-                                    /*update=*/true)),
-                    _, _))
+                    AttrArrayEq(attrs_2), _, _))
         .WillOnce(
             DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
                   Return(SAI_STATUS_SUCCESS)));
@@ -1597,9 +2007,20 @@ TEST_F(WcmpManagerTest, PruneAfterWcmpGroupUpdateSucceeds)
     // RemoveWcmpGroupWithOperationallyDownWatchportSucceeds verfies that SAI call
     // for pruned member is not made on group removal. Hence, the member must be
     // removed from SAI during prune.
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group(Eq(kWcmpGroupOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, RemoveWcmpGroup(kWcmpGroupId1));
+    std::vector<sai_status_t> exp_status_1{SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                remove_next_hop_groups(
+                    Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1}),
+                    Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_status_1.begin(), exp_status_1.end()),
+                  Return(SAI_STATUS_SUCCESS)));
+    EXPECT_THAT(RemoveWcmpGroups(std::vector<P4WcmpGroupEntry>{
+                    P4WcmpGroupEntry{.wcmp_group_id = kWcmpGroupId1,
+                                     .wcmp_group_members = {},
+                                     .nexthop_ids = {},
+                                     .nexthop_weights = {}}}),
+                ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(updated_app_db_entry.wcmp_group_members[0], false, 0));
 }
 
@@ -1618,7 +2039,21 @@ TEST_F(WcmpManagerTest, PrunedMemberUpdateOnRestoreSucceeds)
     updated_app_db_entry.wcmp_group_id = kWcmpGroupId1;
     std::shared_ptr<P4WcmpGroupMemberEntry> updated_gm =
         createWcmpGroupMemberEntryWithWatchport(kNexthopId1, 10, port_name, kWcmpGroupId1, kNexthopOid1);
+    updated_gm->pruned = true;
     updated_app_db_entry.wcmp_group_members.push_back(updated_gm);
+
+    std::vector<sai_object_id_t> member_oids_1{};
+    std::vector<uint32_t> member_weights_1{};
+    std::vector<sai_attribute_t> attrs_1;
+    sai_attribute_t attr;
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+    attr.value.objlist.count = static_cast<uint32_t>(member_oids_1.size());
+    attr.value.objlist.list = member_oids_1.data();
+    attrs_1.push_back(attr);
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+    attr.value.u32list.count = static_cast<uint32_t>(member_weights_1.size());
+    attr.value.u32list.list = member_weights_1.data();
+    attrs_1.push_back(attr);
 
     std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS,
                                          SAI_STATUS_SUCCESS};
@@ -1627,36 +2062,40 @@ TEST_F(WcmpManagerTest, PrunedMemberUpdateOnRestoreSucceeds)
                     Eq(2),
                     ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1,
                                                          kWcmpGroupOid1}),
-                    Truly(std::bind(MatchSaiNextHopGroupAttribute,
-                                    std::placeholders::_1, updated_app_db_entry,
-                                    /*update=*/true)),
-                    _, _))
+                    AttrArrayEq(attrs_1), _, _))
         .WillOnce(
             DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
                   Return(SAI_STATUS_SUCCESS)));
 
-    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessUpdateRequest(&updated_app_db_entry));
+    std::vector<P4WcmpGroupEntry> entries{updated_app_db_entry};
+    EXPECT_THAT(UpdateWcmpGroups(entries),
+                ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS}));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], false, 1));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(updated_app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(updated_app_db_entry.wcmp_group_members[0]->pruned);
 
     // Restore members associated with port.
     // Verify that the weight of the restored member is updated.
-    bool pruned = updated_app_db_entry.wcmp_group_members[0]->pruned;
-    updated_app_db_entry.wcmp_group_members[0]->pruned = false;
+    std::vector<sai_object_id_t> member_oids_2{kNexthopOid1};
+    std::vector<uint32_t> member_weights_2{10};
+    std::vector<sai_attribute_t> attrs_2;
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+    attr.value.objlist.count = static_cast<uint32_t>(member_oids_2.size());
+    attr.value.objlist.list = member_oids_2.data();
+    attrs_2.push_back(attr);
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+    attr.value.u32list.count = static_cast<uint32_t>(member_weights_2.size());
+    attr.value.u32list.list = member_weights_2.data();
+    attrs_2.push_back(attr);
+
     EXPECT_CALL(mock_sai_next_hop_group_,
                 set_next_hop_groups_attribute(
                     Eq(2),
                     ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1,
                                                          kWcmpGroupOid1}),
-                    Truly(std::bind(MatchSaiNextHopGroupAttribute,
-                                    std::placeholders::_1, updated_app_db_entry,
-                                    /*update=*/true)),
-                    _, _))
+                    AttrArrayEq(attrs_2), _, _))
         .WillOnce(
             DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
                   Return(SAI_STATUS_SUCCESS)));
-    updated_app_db_entry.wcmp_group_members[0]->pruned = pruned;
 
     RestorePrunedNextHops(port_name);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(updated_app_db_entry.wcmp_group_members[0], true, 1));
@@ -1677,8 +2116,19 @@ TEST_F(WcmpManagerTest, WatchportStateChangetoOperDownSucceeds)
     std::string data = "[{\"port_id\":\"oid:0x56789abcdff\",\"port_state\":\"SAI_PORT_OPER_"
                        "STATUS_DOWN\",\"port_error_status\":\"0\"}]";
 
-    bool pruned = app_db_entry.wcmp_group_members[0]->pruned;
-    app_db_entry.wcmp_group_members[0]->pruned = false;
+    std::vector<sai_object_id_t> member_oids{};
+    std::vector<uint32_t> member_weights{};
+    std::vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+    attr.value.objlist.count = static_cast<uint32_t>(member_oids.size());
+    attr.value.objlist.list = member_oids.data();
+    attrs.push_back(attr);
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+    attr.value.u32list.count = static_cast<uint32_t>(member_weights.size());
+    attr.value.u32list.list = member_weights.data();
+    attrs.push_back(attr);
+
     std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS,
                                          SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
@@ -1686,14 +2136,10 @@ TEST_F(WcmpManagerTest, WatchportStateChangetoOperDownSucceeds)
                     Eq(2),
                     ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1,
                                                          kWcmpGroupOid1}),
-                    Truly(std::bind(MatchSaiNextHopGroupAttribute,
-                                    std::placeholders::_1, app_db_entry,
-                                    /*update=*/true)),
-                    _, _))
+                    AttrArrayEq(attrs), _, _))
         .WillOnce(
             DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
                   Return(SAI_STATUS_SUCCESS)));
-    app_db_entry.wcmp_group_members[0]->pruned = pruned;
 
     HandlePortStatusChangeNotification(op, data);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
@@ -1717,8 +2163,19 @@ TEST_F(WcmpManagerTest, WatchportStateChangeToOperUpSucceeds)
     std::string data = "[{\"port_id\":\"oid:0x112233\",\"port_state\":\"SAI_PORT_OPER_"
                        "STATUS_UP\",\"port_error_status\":\"0\"}]";
 
-    bool pruned = app_db_entry.wcmp_group_members[0]->pruned;
-    app_db_entry.wcmp_group_members[0]->pruned = true;
+    std::vector<sai_object_id_t> member_oids{kNexthopOid1};
+    std::vector<uint32_t> member_weights{2};
+    std::vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+    attr.value.objlist.count = static_cast<uint32_t>(member_oids.size());
+    attr.value.objlist.list = member_oids.data();
+    attrs.push_back(attr);
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+    attr.value.u32list.count = static_cast<uint32_t>(member_weights.size());
+    attr.value.u32list.list = member_weights.data();
+    attrs.push_back(attr);
+
     std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS,
                                          SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
@@ -1726,14 +2183,10 @@ TEST_F(WcmpManagerTest, WatchportStateChangeToOperUpSucceeds)
                     Eq(2),
                     ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1,
                                                          kWcmpGroupOid1}),
-                    Truly(std::bind(MatchSaiNextHopGroupAttribute,
-                                    std::placeholders::_1, app_db_entry,
-                                    /*update=*/true)),
-                    _, _))
+                    AttrArrayEq(attrs), _, _))
         .WillOnce(
             DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
                   Return(SAI_STATUS_SUCCESS)));
-    app_db_entry.wcmp_group_members[0]->pruned = pruned;
 
     HandlePortStatusChangeNotification(op, data);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
@@ -1761,6 +2214,279 @@ TEST_F(WcmpManagerTest,
   EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0],
                                              true, 1));
   EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
+}
+
+TEST_F(WcmpManagerTest, WcmpGroupDrainStopOnFirstFailureDelete) {
+  p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1, kNexthopOid1);
+  p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey2, kNexthopOid2);
+  P4WcmpGroupEntry entry_1 = getDefaultWcmpGroupEntryForTest();
+  entry_1.wcmp_group_id = kWcmpGroupId1;
+  P4WcmpGroupEntry entry_2 = getDefaultWcmpGroupEntryForTest();
+  entry_2.wcmp_group_id = kWcmpGroupId2;
+  P4WcmpGroupEntry entry_3 = getDefaultWcmpGroupEntryForTest();
+  entry_3.wcmp_group_id = kWcmpGroupId3;
+  std::vector<sai_object_id_t> exp_oids{kWcmpGroupOid1, kWcmpGroupOid2,
+                                        kWcmpGroupOid3};
+  std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS,
+                                       SAI_STATUS_SUCCESS};
+  EXPECT_CALL(mock_sai_next_hop_group_,
+              create_next_hop_groups(_, _, _, _, _, _, _))
+      .WillOnce(DoAll(SetArrayArgument<5>(exp_oids.begin(), exp_oids.end()),
+                      SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
+                      Return(SAI_STATUS_SUCCESS)));
+  std::vector<P4WcmpGroupEntry> entries{entry_1, entry_2, entry_3};
+  EXPECT_THAT(CreateWcmpGroups(entries),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS,
+                                              StatusCode::SWSS_RC_SUCCESS,
+                                              StatusCode::SWSS_RC_SUCCESS}));
+
+  const std::string kKeyPrefix =
+      std::string(APP_P4RT_WCMP_GROUP_TABLE_NAME) + kTableKeyDelimiter;
+  std::vector<swss::FieldValueTuple> attributes;
+  nlohmann::json j;
+  j[prependMatchField(p4orch::kWcmpGroupId)] = kWcmpGroupId1;
+  std::string key_1 = kKeyPrefix + j.dump();
+  Enqueue(swss::KeyOpFieldsValuesTuple(key_1, DEL_COMMAND, attributes));
+  j[prependMatchField(p4orch::kWcmpGroupId)] = kWcmpGroupId2;
+  std::string key_2 = kKeyPrefix + j.dump();
+  Enqueue(swss::KeyOpFieldsValuesTuple(key_2, DEL_COMMAND, attributes));
+  j[prependMatchField(p4orch::kWcmpGroupId)] = kWcmpGroupId3;
+  std::string key_3 = kKeyPrefix + j.dump();
+  Enqueue(swss::KeyOpFieldsValuesTuple(key_3, DEL_COMMAND, attributes));
+
+  std::vector<sai_status_t> exp_status_del{
+      SAI_STATUS_SUCCESS, SAI_STATUS_FAILURE, SAI_STATUS_NOT_EXECUTED};
+  EXPECT_CALL(mock_sai_next_hop_group_,
+              remove_next_hop_groups(
+                  Eq(3),
+                  ArrayEq(std::vector<sai_object_id_t>{
+                      kWcmpGroupOid1, kWcmpGroupOid2, kWcmpGroupOid3}),
+                  Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+      .WillOnce(DoAll(
+          SetArrayArgument<3>(exp_status_del.begin(), exp_status_del.end()),
+          Return(SAI_STATUS_FAILURE)));
+
+  EXPECT_CALL(*gMockResponsePublisher,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(key_1), Eq(attributes),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(*gMockResponsePublisher,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(key_2), Eq(attributes),
+                      Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
+  EXPECT_CALL(*gMockResponsePublisher,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(key_3), Eq(attributes),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+
+  EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
+  EXPECT_EQ(nullptr, GetWcmpGroupEntry(kWcmpGroupId1));
+  EXPECT_NE(nullptr, GetWcmpGroupEntry(kWcmpGroupId2));
+  EXPECT_NE(nullptr, GetWcmpGroupEntry(kWcmpGroupId3));
+}
+
+TEST_F(WcmpManagerTest, WcmpGroupDrainStopOnFirstFailureUpdate) {
+  p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1, kNexthopOid1);
+  p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey2, kNexthopOid2);
+  P4WcmpGroupEntry entry_1 = getDefaultWcmpGroupEntryForTest();
+  entry_1.wcmp_group_id = kWcmpGroupId1;
+  P4WcmpGroupEntry entry_2 = getDefaultWcmpGroupEntryForTest();
+  entry_2.wcmp_group_id = kWcmpGroupId2;
+  P4WcmpGroupEntry entry_3 = getDefaultWcmpGroupEntryForTest();
+  entry_3.wcmp_group_id = kWcmpGroupId3;
+  std::vector<sai_object_id_t> exp_oids{kWcmpGroupOid1, kWcmpGroupOid2,
+                                        kWcmpGroupOid3};
+  std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS,
+                                       SAI_STATUS_SUCCESS};
+  EXPECT_CALL(mock_sai_next_hop_group_,
+              create_next_hop_groups(_, _, _, _, _, _, _))
+      .WillOnce(DoAll(SetArrayArgument<5>(exp_oids.begin(), exp_oids.end()),
+                      SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
+                      Return(SAI_STATUS_SUCCESS)));
+  std::vector<P4WcmpGroupEntry> entries{entry_1, entry_2, entry_3};
+  EXPECT_THAT(CreateWcmpGroups(entries),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS,
+                                              StatusCode::SWSS_RC_SUCCESS,
+                                              StatusCode::SWSS_RC_SUCCESS}));
+
+  const std::string kKeyPrefix =
+      std::string(APP_P4RT_WCMP_GROUP_TABLE_NAME) + kTableKeyDelimiter;
+  std::vector<swss::FieldValueTuple> attributes;
+  nlohmann::json actions;
+  nlohmann::json action;
+  action[p4orch::kAction] = p4orch::kSetNexthopId;
+  action[prependParamField(p4orch::kNexthopId)] = kNexthopId1;
+  actions.push_back(action);
+  action[prependParamField(p4orch::kNexthopId)] = kNexthopId2;
+  actions.push_back(action);
+  attributes.push_back(swss::FieldValueTuple{p4orch::kActions, actions.dump()});
+  nlohmann::json j;
+  j[prependMatchField(p4orch::kWcmpGroupId)] = kWcmpGroupId1;
+  std::string key_1 = kKeyPrefix + j.dump();
+  Enqueue(swss::KeyOpFieldsValuesTuple(key_1, SET_COMMAND, attributes));
+  j[prependMatchField(p4orch::kWcmpGroupId)] = kWcmpGroupId2;
+  std::string key_2 = kKeyPrefix + j.dump();
+  Enqueue(swss::KeyOpFieldsValuesTuple(key_2, SET_COMMAND, attributes));
+  j[prependMatchField(p4orch::kWcmpGroupId)] = kWcmpGroupId3;
+  std::string key_3 = kKeyPrefix + j.dump();
+  Enqueue(swss::KeyOpFieldsValuesTuple(key_3, SET_COMMAND, attributes));
+
+  std::vector<sai_object_id_t> member_oids{kNexthopOid1, kNexthopOid2};
+  std::vector<uint32_t> member_weights{1, 1};
+  sai_attribute_t attr_1, attr_2;
+  attr_1.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+  attr_1.value.objlist.count = static_cast<uint32_t>(member_oids.size());
+  attr_1.value.objlist.list = member_oids.data();
+  attr_2.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+  attr_2.value.u32list.count = static_cast<uint32_t>(member_weights.size());
+  attr_2.value.u32list.list = member_weights.data();
+
+  std::vector<sai_status_t> exp_status_update{
+      SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS,      SAI_STATUS_FAILURE,
+      SAI_STATUS_FAILURE, SAI_STATUS_NOT_EXECUTED, SAI_STATUS_NOT_EXECUTED};
+  EXPECT_CALL(mock_sai_next_hop_group_,
+              set_next_hop_groups_attribute(
+                  Eq(6),
+                  ArrayEq(std::vector<sai_object_id_t>{
+                      kWcmpGroupOid1, kWcmpGroupOid1, kWcmpGroupOid2,
+                      kWcmpGroupOid2, kWcmpGroupOid3, kWcmpGroupOid3}),
+                  AttrArrayEq(std::vector<sai_attribute_t>{
+                      attr_1, attr_2, attr_1, attr_2, attr_1, attr_2}),
+                  _, _))
+      .WillOnce(DoAll(SetArrayArgument<4>(exp_status_update.begin(),
+                                          exp_status_update.end()),
+                      Return(SAI_STATUS_FAILURE)));
+
+  EXPECT_CALL(*gMockResponsePublisher,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(key_1), Eq(attributes),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(*gMockResponsePublisher,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(key_2), Eq(attributes),
+                      Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
+  EXPECT_CALL(*gMockResponsePublisher,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(key_3), Eq(attributes),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+
+  EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
+  EXPECT_NE(nullptr, GetWcmpGroupEntry(kWcmpGroupId1));
+  EXPECT_NE(nullptr, GetWcmpGroupEntry(kWcmpGroupId2));
+  EXPECT_NE(nullptr, GetWcmpGroupEntry(kWcmpGroupId3));
+  std::shared_ptr<P4WcmpGroupMemberEntry> gm1 =
+      createWcmpGroupMemberEntry(kNexthopId1, 1, kNexthopOid1);
+  std::shared_ptr<P4WcmpGroupMemberEntry> gm2 =
+      createWcmpGroupMemberEntry(kNexthopId2, 1, kNexthopOid2);
+  std::shared_ptr<P4WcmpGroupMemberEntry> gm3 =
+      createWcmpGroupMemberEntry(kNexthopId1, 2, kNexthopOid1);
+  entry_1.wcmp_group_members.clear();
+  entry_1.wcmp_group_members.push_back(gm1);
+  entry_1.wcmp_group_members.push_back(gm2);
+  entry_2.wcmp_group_members.clear();
+  entry_2.wcmp_group_members.push_back(gm3);
+  entry_2.wcmp_group_members.push_back(gm2);
+  entry_3.wcmp_group_members.clear();
+  entry_3.wcmp_group_members.push_back(gm3);
+  entry_3.wcmp_group_members.push_back(gm2);
+  VerifyWcmpGroupEntry(entry_1, *GetWcmpGroupEntry(entry_1.wcmp_group_id));
+  VerifyWcmpGroupEntry(entry_2, *GetWcmpGroupEntry(entry_2.wcmp_group_id));
+  VerifyWcmpGroupEntry(entry_3, *GetWcmpGroupEntry(entry_3.wcmp_group_id));
+}
+
+TEST_F(WcmpManagerTest, WcmpGroupDrainStopOnFirstFailureMixedType) {
+  p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1, kNexthopOid1);
+  p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey2, kNexthopOid2);
+  P4WcmpGroupEntry entry_1 = getDefaultWcmpGroupEntryForTest();
+  entry_1.wcmp_group_id = kWcmpGroupId1;
+  P4WcmpGroupEntry entry_2 = getDefaultWcmpGroupEntryForTest();
+  entry_2.wcmp_group_id = kWcmpGroupId2;
+  std::vector<sai_object_id_t> exp_oids{kWcmpGroupOid1, kWcmpGroupOid2};
+  std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS};
+  EXPECT_CALL(mock_sai_next_hop_group_,
+              create_next_hop_groups(_, _, _, _, _, _, _))
+      .WillOnce(DoAll(SetArrayArgument<5>(exp_oids.begin(), exp_oids.end()),
+                      SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
+                      Return(SAI_STATUS_SUCCESS)));
+  std::vector<P4WcmpGroupEntry> entries{entry_1, entry_2};
+  EXPECT_THAT(CreateWcmpGroups(entries),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS,
+                                              StatusCode::SWSS_RC_SUCCESS}));
+
+  const std::string kKeyPrefix =
+      std::string(APP_P4RT_WCMP_GROUP_TABLE_NAME) + kTableKeyDelimiter;
+  std::vector<swss::FieldValueTuple> attributes;
+  nlohmann::json actions;
+  nlohmann::json action;
+  action[p4orch::kAction] = p4orch::kSetNexthopId;
+  action[prependParamField(p4orch::kNexthopId)] = kNexthopId1;
+  actions.push_back(action);
+  action[prependParamField(p4orch::kNexthopId)] = kNexthopId2;
+  actions.push_back(action);
+  attributes.push_back(swss::FieldValueTuple{p4orch::kActions, actions.dump()});
+  nlohmann::json j;
+  j[prependMatchField(p4orch::kWcmpGroupId)] = kWcmpGroupId3;
+  std::string key_3 = kKeyPrefix + j.dump();
+  Enqueue(swss::KeyOpFieldsValuesTuple(key_3, SET_COMMAND, attributes));
+  j[prependMatchField(p4orch::kWcmpGroupId)] = kWcmpGroupId1;
+  std::string key_1 = kKeyPrefix + j.dump();
+  Enqueue(swss::KeyOpFieldsValuesTuple(key_1, SET_COMMAND, attributes));
+  j[prependMatchField(p4orch::kWcmpGroupId)] = kWcmpGroupId2;
+  std::string key_2 = kKeyPrefix + j.dump();
+  Enqueue(swss::KeyOpFieldsValuesTuple(key_2, DEL_COMMAND,
+                                       std::vector<swss::FieldValueTuple>{}));
+
+  std::vector<sai_object_id_t> member_oids{kNexthopOid1, kNexthopOid2};
+  std::vector<uint32_t> member_weights{1, 1};
+  std::vector<sai_attribute_t> attrs;
+  sai_attribute_t attr_1, attr_2;
+  attr_1.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
+  attr_1.value.s32 = SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS;
+  attrs.push_back(attr_1);
+  attr_1.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+  attr_1.value.objlist.count = static_cast<uint32_t>(member_oids.size());
+  attr_1.value.objlist.list = member_oids.data();
+  attrs.push_back(attr_1);
+  attr_2.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+  attr_2.value.u32list.count = static_cast<uint32_t>(member_weights.size());
+  attr_2.value.u32list.list = member_weights.data();
+  attrs.push_back(attr_2);
+
+  std::vector<sai_object_id_t> exp_oids_create{kWcmpGroupOid3};
+  std::vector<sai_status_t> exp_status_create{SAI_STATUS_SUCCESS};
+  EXPECT_CALL(
+      mock_sai_next_hop_group_,
+      create_next_hop_groups(
+          Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+          AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{attrs}),
+          Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+      .WillOnce(DoAll(
+          SetArrayArgument<5>(exp_oids_create.begin(), exp_oids_create.end()),
+          SetArrayArgument<6>(exp_status_create.begin(),
+                              exp_status_create.end()),
+          Return(SAI_STATUS_SUCCESS)));
+
+  std::vector<sai_status_t> exp_status_update{SAI_STATUS_FAILURE,
+                                              SAI_STATUS_FAILURE};
+  EXPECT_CALL(
+      mock_sai_next_hop_group_,
+      set_next_hop_groups_attribute(
+          Eq(2),
+          ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1, kWcmpGroupOid1}),
+          AttrArrayEq(std::vector<sai_attribute_t>{attr_1, attr_2}), _, _))
+      .WillOnce(DoAll(SetArrayArgument<4>(exp_status_update.begin(),
+                                          exp_status_update.end()),
+                      Return(SAI_STATUS_FAILURE)));
+
+  EXPECT_CALL(*gMockResponsePublisher,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(key_3), Eq(attributes),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(*gMockResponsePublisher,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(key_1), Eq(attributes),
+                      Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
+  EXPECT_CALL(*gMockResponsePublisher,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(key_2),
+                      Eq(std::vector<swss::FieldValueTuple>{}),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+
+  EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
+  EXPECT_NE(nullptr, GetWcmpGroupEntry(kWcmpGroupId1));
+  EXPECT_NE(nullptr, GetWcmpGroupEntry(kWcmpGroupId2));
+  EXPECT_NE(nullptr, GetWcmpGroupEntry(kWcmpGroupId3));
 }
 
 TEST_F(WcmpManagerTest, VerifyStateTest)
