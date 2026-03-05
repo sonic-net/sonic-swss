@@ -330,9 +330,9 @@ std::vector<ReturnCode> NeighborManager::updateNeighbors(
   for (size_t i = 0; i < neighbor_entries.size(); ++i) {
     entries[i] = getNeighborEntry(KeyGenerator::generateNeighborKey(
         neighbor_entries[i].router_intf_id, neighbor_entries[i].neighbor_id));
+    statuses[i] = ReturnCode();
     if (!neighbor_entries[i].is_set_dst_mac ||
         entries[i]->dst_mac_address == neighbor_entries[i].dst_mac_address) {
-      statuses[i] = ReturnCode();
       continue;
     }
     sai_entries[size] = entries[i]->neigh_entry;
