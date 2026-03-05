@@ -2277,11 +2277,11 @@ void QosOrch::doTask(Consumer &consumer)
         {
             case task_process_status::task_success :
                 it = consumer.m_toSync.erase(it);
-                break;
+                return;
             case task_process_status::task_invalid_entry :
                 SWSS_LOG_ERROR("Failed to process invalid QOS task");
                 it = consumer.m_toSync.erase(it);
-                break;
+                return;
             case task_process_status::task_failed :
                 SWSS_LOG_ERROR("Failed to process QOS task, drop it");
                 it = consumer.m_toSync.erase(it);
@@ -2289,11 +2289,11 @@ void QosOrch::doTask(Consumer &consumer)
             case task_process_status::task_need_retry :
                 SWSS_LOG_INFO("Failed to process QOS task, retry it");
                 it++;
-                break;
+                return;
             default:
                 SWSS_LOG_ERROR("Invalid task status %d", task_status);
                 it = consumer.m_toSync.erase(it);
-                break;
+                return;
         }
     }
 }
