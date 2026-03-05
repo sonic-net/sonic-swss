@@ -31,6 +31,7 @@ constexpr char *kPort = "port";
 constexpr char *kInPort = "in_port";
 constexpr char* kMulticastReplicaPort = "multicast_replica_port";
 constexpr char* kMulticastReplicaInstance = "multicast_replica_instance";
+constexpr char* kReplicas = "replicas";
 constexpr char *kSrcMac = "src_mac";
 constexpr char *kAction = "action";
 constexpr char *kActions = "actions";

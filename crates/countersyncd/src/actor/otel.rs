@@ -43,8 +43,6 @@ const MAX_EXPORT_RETRIES: u64 = 30;
 /// Configuration for the OtelActor
 #[derive(Debug, Clone)]
 pub struct OtelActorConfig {
-    /// Whether to print statistics to console
-    pub print_to_console: bool,
     /// OpenTelemetry collector endpoint
     pub collector_endpoint: String,
     /// Max counters to accumulate before forcing an export
@@ -56,7 +54,6 @@ pub struct OtelActorConfig {
 impl Default for OtelActorConfig {
     fn default() -> Self {
         Self {
-            print_to_console: true,
             collector_endpoint: "http://localhost:4317".to_string(),
             max_counters_per_export: 10_000,
             flush_timeout: Duration::from_secs(1),
@@ -139,8 +136,7 @@ impl OtelActor {
         };
 
         info!(
-            "OtelActor initialized - console: {}, endpoint: {}",
-            config.print_to_console,
+            "OtelActor initialized - endpoint: {}",
             config.collector_endpoint
         );
 
@@ -170,6 +166,7 @@ impl OtelActor {
         info!("OtelActor started");
 
         let mut flush_timer = Box::pin(sleep_until(self.flush_deadline));
+        let mut run_error: Option<Box<dyn ExportError>> = None;
 
         loop {
             select! {
@@ -180,7 +177,10 @@ impl OtelActor {
                                 ChannelLabel::IpfixToOtel,
                                 self.stats_receiver.len(),
                             );
-                            self.handle_stats_message(stats).await?;
+                            if let Err(e) = self.handle_stats_message(stats).await {
+                                run_error = Some(e);
+                                break;
+                            }
                             self.reset_flush_timer(&mut flush_timer);
                         }
                         _none => {
@@ -190,7 +190,10 @@ impl OtelActor {
                     }
                 }
                 _ = &mut flush_timer => {
-                    self.flush_buffer().await?;
+                    if let Err(e) = self.flush_buffer().await {
+                        run_error = Some(e);
+                        break;
+                    }
                     self.reset_flush_timer(&mut flush_timer);
                 }
             }
@@ -203,9 +206,16 @@ impl OtelActor {
         }
 
         // Flush any remaining buffered metrics before shutdown
-        self.flush_buffer().await?;
+        if run_error.is_none() {
+            if let Err(e) = self.flush_buffer().await {
+                run_error = Some(e);
+            }
+        }
         self.shutdown().await;
-        Ok(())
+        match run_error {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
     /// Handle incoming SAI statistics message
@@ -221,7 +231,7 @@ impl OtelActor {
         let otel_metrics = OtelMetrics::from_sai_stats(&stats);
         let counters_in_message = stats.stats.len();
 
-        if self.config.print_to_console {
+        if log::log_enabled!(log::Level::Debug) {
             self.print_otel_metrics(&otel_metrics).await;
         }
 
@@ -245,7 +255,7 @@ impl OtelActor {
     async fn print_otel_metrics(&mut self, otel_metrics: &OtelMetrics) {
         self.console_reports += 1;
 
-        info!(
+        debug!(
             "[OTel Report #{}] Service: {}, Scope: {} v{}, Total Gauges: {}, Messages Received: {}, Exports: {} (Failures: {})",
             self.console_reports,
             otel_metrics.service_name,
@@ -258,24 +268,24 @@ impl OtelActor {
         );
 
         if !otel_metrics.is_empty() {
-            info!("Gauge Metrics:");
+            debug!("Gauge Metrics:");
             for (index, gauge) in otel_metrics.gauges.iter().enumerate() {
                 let data_point = &gauge.data_points[0];
 
-                info!("[{:3}] Gauge: {}", index + 1, gauge.name);
-                info!("Value: {}", data_point.value);
-                info!("Unit: {}", gauge.unit);
-                info!("Time: {}ns", data_point.time_unix_nano);
-                info!("Description: {}", gauge.description);
+                debug!("[{:3}] Gauge: {}", index + 1, gauge.name);
+                debug!("Value: {}", data_point.value);
+                debug!("Unit: {}", gauge.unit);
+                debug!("Time: {}ns", data_point.time_unix_nano);
+                debug!("Description: {}", gauge.description);
 
                 if !data_point.attributes.is_empty() {
-                    info!("Attributes:");
+                    debug!("Attributes:");
                     for attr in &data_point.attributes {
-                        info!("  - {}={}", attr.key, attr.value);
+                        debug!("  - {}={}", attr.key, attr.value);
                     }
                 }
 
-                info!("Raw Gauge: {:#?}", gauge);
+                debug!("Raw Gauge: {:#?}", gauge);
             }
         }
     }
