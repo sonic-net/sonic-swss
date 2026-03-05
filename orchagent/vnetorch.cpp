@@ -1583,13 +1583,9 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             // In case of updating an existing route, decrease the reference count for the previous nexthop group
             if (--syncd_nexthop_groups_[vnet][nhg].ref_count == 0)
             {
-                // only remove the inactive tunnel NHs as the FG NHG has already been updated
                 for (auto nh : nhg.getNextHops())
                 {
-                    if (active_nhg.getNextHops().find(nh) == active_nhg.getNextHops().end())
-                    {
-                        vrf_obj->removeTunnelNextHop(nh);
-                    }
+                    vrf_obj->removeTunnelNextHop(nh);
                 }
                 syncd_nexthop_groups_[vnet].erase(nhg);
             }
