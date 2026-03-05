@@ -103,22 +103,29 @@ class WcmpManager : public ObjectManagerInterface
     ReturnCodeOr<P4WcmpGroupEntry> deserializeP4WcmpGroupAppDbEntry(
         const std::string &key, const std::vector<swss::FieldValueTuple> &attributes);
 
-    // Perform validation on WCMP group entry. Return a SWSS status code
-    ReturnCode validateWcmpGroupEntry(const P4WcmpGroupEntry &app_db_entry);
+    // Performs validation on WCMP group entry. Returns a SWSS status code
+    ReturnCode validateWcmpGroupEntry(const P4WcmpGroupEntry& app_db_entry,
+                                      const std::string& operation);
 
-    // Processes add operation for an entry.
-    ReturnCode processAddRequest(P4WcmpGroupEntry *app_db_entry);
+    // Processes a list of entries of the same operation type.
+    // Returns an overall status code.
+    // This method also sends the response to the application.
+    ReturnCode processEntries(
+        std::vector<P4WcmpGroupEntry>& entries,
+        const std::vector<swss::KeyOpFieldsValuesTuple>& tuple_list,
+        const std::string& op, bool update);
 
-    // Creates an WCMP group in the WCMP group table.
-    // validateWcmpGroupEntry() is required in caller function before
-    // createWcmpGroup() is called
-    ReturnCode createWcmpGroup(P4WcmpGroupEntry *wcmp_group_entry);
+    // Creates a list of WCMP groups in the WCMP group table.
+    std::vector<ReturnCode> createWcmpGroups(
+        std::vector<P4WcmpGroupEntry>& entries);
 
-    // Processes update operation for a WCMP group entry.
-    ReturnCode processUpdateRequest(P4WcmpGroupEntry *wcmp_group_entry);
+    // Deletes a list of WCMP groups in the WCMP group table.
+    std::vector<ReturnCode> removeWcmpGroups(
+        const std::vector<P4WcmpGroupEntry>& entries);
 
-    // Deletes a WCMP group in the WCMP group table.
-    ReturnCode removeWcmpGroup(const std::string &wcmp_group_id);
+    // Updates a list of WCMP groups in the WCMP group table.
+    std::vector<ReturnCode> updateWcmpGroups(
+        std::vector<P4WcmpGroupEntry>& entries);
 
     // Fetches oper-status of port using port_oper_status_map or SAI.
     ReturnCode fetchPortOperStatus(const std::string &port, sai_port_oper_status_t *oper_status);
