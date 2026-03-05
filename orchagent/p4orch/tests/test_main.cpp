@@ -7,18 +7,19 @@ extern "C"
 
 #include <vector>
 
+#include "aclorch.h"
 #include "copporch.h"
 #include "crmorch.h"
 #include "dbconnector.h"
 #include "directory.h"
 #include "flowcounterrouteorch.h"
+#include "gtest/gtest.h"
 #include "mock_sai_virtual_router.h"
 #include "p4orch.h"
 #include "portsorch.h"
 #include "sai_serialize.h"
 #include "switchorch.h"
 #include "vrforch.h"
-#include "gtest/gtest.h"
 
 using ::testing::StrictMock;
 
@@ -34,9 +35,15 @@ char *gMirrorSession1 = "mirror-session-1";
 sai_object_id_t kMirrorSessionOid1 = 9001;
 char *gMirrorSession2 = "mirror-session-2";
 sai_object_id_t kMirrorSessionOid2 = 9002;
-sai_object_id_t gUnderlayIfId;
+sai_object_id_t gUnderlayIfId = 0x101;
 string gMyAsicName = "";
 event_handle_t g_events_handle;
+
+bool gMultiAsicVoq = false;
+bool isChassisDbInUse()
+{
+    return gMultiAsicVoq;
+}
 
 #define DEFAULT_BATCH_SIZE 128
 #define DEFAULT_MAX_BULK_SIZE 1000
@@ -47,6 +54,7 @@ bool gIsNatSupported = false;
 bool gTraditionalFlexCounter = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 
+AclOrch* gAclOrch;
 PortsOrch *gPortsOrch;
 CrmOrch *gCrmOrch;
 P4Orch *gP4Orch;
@@ -76,6 +84,10 @@ sai_udf_api_t *sai_udf_api;
 sai_tunnel_api_t *sai_tunnel_api;
 sai_my_mac_api_t *sai_my_mac_api;
 sai_counter_api_t *sai_counter_api;
+sai_ipmc_api_t* sai_ipmc_api;
+sai_ipmc_group_api_t* sai_ipmc_group_api;
+sai_rpf_group_api_t* sai_rpf_group_api;
+sai_bridge_api_t* sai_bridge_api;
 sai_generic_programmable_api_t *sai_generic_programmable_api;
 
 task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context)
@@ -114,6 +126,7 @@ using ::testing::StrictMock;
 
 void CreatePort(const std::string port_name, const uint32_t speed, const uint32_t mtu, const sai_object_id_t port_oid,
                 Port::Type port_type = Port::PHY, const sai_port_oper_status_t oper_status = SAI_PORT_OPER_STATUS_DOWN,
+                const sai_object_id_t vlan_oid = 0,
                 const sai_object_id_t vrouter_id = gVirtualRouterId, const bool admin_state_up = true)
 {
     Port port(port_name, port_type);
@@ -130,6 +143,7 @@ void CreatePort(const std::string port_name, const uint32_t speed, const uint32_
     port.m_vr_id = vrouter_id;
     port.m_admin_state_up = admin_state_up;
     port.m_oper_status = oper_status;
+    if (port_type == Port::SUBPORT) port.m_vlan_info.vlan_oid = vlan_oid;
 
     gPortsOrch->setPort(port_name, port);
 }
@@ -154,6 +168,9 @@ void SetupPorts()
                /*mtu=*/9100, /*port_oid=*/0x5678, /*port_type*/ Port::MGMT);
     CreatePort(/*port_name=*/"Ethernet9", /*speed=*/50000,
                /*mtu=*/9100, /*port_oid=*/0x56789abcfff, Port::PHY, SAI_PORT_OPER_STATUS_UNKNOWN);
+    CreatePort(/*port_name=*/"Ethernet10", /*speed=*/50000,
+               /*mtu=*/9100, /*port_oid=*/0xabcfff, Port::SUBPORT, SAI_PORT_OPER_STATUS_DOWN, 
+               /*vlan_oid=*/0xffffff);
 }
 
 void AddVrf()
@@ -196,6 +213,10 @@ int main(int argc, char *argv[])
     sai_my_mac_api_t my_mac_api;
     sai_tunnel_api_t tunnel_api;
     sai_counter_api_t counter_api;
+    sai_ipmc_api_t ipmc_api;
+    sai_ipmc_group_api_t ipmc_group_api;
+    sai_rpf_group_api_t rpf_group_api;
+    sai_bridge_api_t bridge_api;
     sai_generic_programmable_api_t generic_programmable_api;
     sai_router_intfs_api = &router_intfs_api;
     sai_neighbor_api = &neighbor_api;
@@ -213,6 +234,10 @@ int main(int argc, char *argv[])
     sai_my_mac_api = &my_mac_api;
     sai_tunnel_api = &tunnel_api;
     sai_counter_api = &counter_api;
+    sai_ipmc_api = &ipmc_api;
+    sai_ipmc_group_api = &ipmc_group_api;
+    sai_rpf_group_api = &rpf_group_api;
+    sai_bridge_api = &bridge_api;
     sai_generic_programmable_api = &generic_programmable_api;
 
     swss::DBConnector appl_db("APPL_DB", 0);
@@ -236,6 +261,11 @@ int main(int argc, char *argv[])
     FlowCounterRouteOrch flow_counter_route_orch(gConfigDb, std::vector<std::string>{});
     gFlowCounterRouteOrch = &flow_counter_route_orch;
     gDirectory.set(static_cast<FlowCounterRouteOrch *>(&flow_counter_route_orch));
+
+    std::vector<TableConnector> acl_tables;
+    AclOrch aclOrch(acl_tables, gStateDb, gSwitchOrch, gPortsOrch, NULL, NULL,
+                    NULL, NULL);
+    gAclOrch = &aclOrch;
 
     // Setup ports for all tests.
     SetupPorts();

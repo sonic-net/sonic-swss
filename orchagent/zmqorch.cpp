@@ -9,14 +9,11 @@ void ZmqConsumer::execute()
 {
     SWSS_LOG_ENTER();
 
-    size_t update_size = 0;
     auto table = static_cast<swss::ZmqConsumerStateTable*>(getSelectable());
-    do
-    {
-        std::deque<KeyOpFieldsValuesTuple> entries;
-        table->pops(entries);
-        update_size = addToSync(entries);
-    } while (update_size != 0);
+
+    std::deque<KeyOpFieldsValuesTuple> entries;
+    table->pops(entries);
+    addToSync(entries);
 
     drain();
 }

@@ -138,6 +138,7 @@ void Srv6Orch::initializeCounters()
     m_counter_update_timer = new SelectableTimer(timespec { .tv_sec = SRV6_FLEX_COUNTER_UPDATE_TIMER , .tv_nsec = 0 });
     auto et = new ExecutableTimer(m_counter_update_timer, this, "SRV6_FLEX_COUNTER_UPDATE_TIMER");
     Orch::addExecutor(et);
+    createRetryCache(APP_PIC_CONTEXT_TABLE_NAME);
 }
 
 bool Srv6Orch::queryMySidCountersCapability() const
@@ -1827,6 +1828,10 @@ void Srv6Orch::decreasePicContextIdRefCount(const std::string &index)
         SWSS_LOG_ERROR("Unexpected refcount decrease for context id %s", index.c_str());
     else
         --srv6_pic_context_table_[index].ref_count;
+
+    if (srv6_pic_context_table_[index].ref_count == 0) {
+        notifyRetry(this, APP_PIC_CONTEXT_TABLE_NAME, make_constraint(RETRY_CST_PIC_REF, index));
+    }
 }
 
 void Srv6Orch::increasePrefixAggIdRefCount(const NextHopGroupKey &nhg)
@@ -2304,6 +2309,7 @@ task_process_status Srv6Orch::doTaskPicContextTable(const KeyOpFieldsValuesTuple
         }
 
         srv6_pic_context_table_[key] = pci;
+        notifyRetry(gRouteOrch, APP_ROUTE_TABLE_NAME, make_constraint(RETRY_CST_PIC, key));
     }
     else if (op == DEL_COMMAND)
     {
@@ -2314,6 +2320,10 @@ task_process_status Srv6Orch::doTaskPicContextTable(const KeyOpFieldsValuesTuple
         }
         else if (it->second.ref_count != 0)
         {
+            if (addToRetry(APP_PIC_CONTEXT_TABLE_NAME, Task(tuple), make_constraint(RETRY_CST_PIC_REF, key)))
+            {
+                return task_ignore;
+            }
             SWSS_LOG_INFO("Unable to delete context id %s, because it is referenced %u times", key.c_str(), it->second.ref_count);
             return task_need_retry;
         }

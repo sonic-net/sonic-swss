@@ -8,7 +8,7 @@ parameters:
 - name: pool
   type: string
   values:
-  - sonicbld-1es
+  - sonicso1ES-amd64
   - default
   default: default
 
@@ -51,7 +51,7 @@ jobs:
     DIFF_COVER_ENABLE: 'true'
 
   container:
-    image: sonicdev-microsoft.azurecr.io:443/${{ parameters.sonic_slave }}:latest
+    image: sonicdev-microsoft.azurecr.io:443/${{ parameters.sonic_slave }}:$(BUILD_BRANCH)-${{ parameters.arch }}
   
 
   steps:

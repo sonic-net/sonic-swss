@@ -449,7 +449,7 @@ namespace aclorch_test
 
             ASSERT_EQ(gMirrorOrch, nullptr);
             gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession,
-                                         gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch);
+                                         gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch, gSwitchOrch);
 
             auto consumer = unique_ptr<Consumer>(new Consumer(
                 new swss::ConsumerStateTable(m_app_db.get(), APP_PORT_TABLE_NAME, 1, 1), gPortsOrch, APP_PORT_TABLE_NAME));

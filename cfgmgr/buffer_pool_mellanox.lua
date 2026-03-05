@@ -22,6 +22,7 @@ local total_port = 0
 
 local mgmt_pool_size = 256 * 1024
 local egress_mirror_headroom = 10 * 1024
+local modification_descriptors_pool_size = 0
 
 -- The set of ports with 8 lanes
 local port_set_8lanes = {}
@@ -185,6 +186,23 @@ end
 -- Main --
 -- Connect to CONFIG_DB
 redis.call('SELECT', config_db)
+
+-- Check if platform is SPC6 or later and set modification descriptors pool size
+-- Extract model number from platform string (e.g., "sn6600" -> 6600, "sn5800" -> 5800, "sn10600" -> 10600)
+-- Use (%d+) pattern to capture one or more digits for extensibility (handles future multi-digit series like sn10xxx, sn11xxx)
+local platform = redis.call('HGET', 'DEVICE_METADATA|localhost', 'platform')
+if platform then
+    local model_str = string.match(platform, "sn(%d+)")
+    if model_str then
+        local model_number = tonumber(model_str)
+        -- SPC6 or later models (>= 6000 excludes SPC5 models like 5400/5800, includes SPC6+ like 6600/7xxx/10xxx)
+        -- Reserve 32MB for modification descriptors pool
+        if model_number and model_number >= 6000 then
+            modification_descriptors_pool_size = 32 * 1024 * 1024
+            egress_mirror_headroom  = 0
+        end
+    end
+end
 
 -- Parse all the pools and seperate them according to the direction
 local ipools = {}
@@ -384,7 +402,7 @@ accumulative_occupied_buffer = accumulative_occupied_buffer + accumulative_manag
 
 -- Accumulate sizes for egress mirror and management pool
 local accumulative_egress_mirror_overhead = admin_up_port * egress_mirror_headroom
-accumulative_occupied_buffer = accumulative_occupied_buffer + accumulative_egress_mirror_overhead + mgmt_pool_size
+accumulative_occupied_buffer = accumulative_occupied_buffer + accumulative_egress_mirror_overhead + mgmt_pool_size + modification_descriptors_pool_size
 
 -- Switch to CONFIG_DB
 redis.call('SELECT', config_db)
@@ -475,5 +493,6 @@ table.insert(result, "debug:shp_enabled:" .. tostring(shp_enabled))
 table.insert(result, "debug:shp_size:" .. shp_size)
 table.insert(result, "debug:total port:" .. total_port .. " ports with 8 lanes:" .. port_count_8lanes)
 table.insert(result, "debug:admin up port:" .. admin_up_port .. " admin up ports with 8 lanes:" .. admin_up_8lanes_port)
+table.insert(result, "debug:modification_descriptors_pool_size:" .. modification_descriptors_pool_size)
 
 return result

@@ -86,7 +86,7 @@ namespace orchdaemon_test
     {
         orchd->enableRingBuffer();
 
-        // verify ring buffer is created  
+        // verify ring buffer is created
         EXPECT_TRUE(Executor::gRingBuffer != nullptr);
         EXPECT_TRUE(Executor::gRingBuffer == Orch::gRingBuffer);
 
@@ -169,12 +169,54 @@ namespace orchdaemon_test
 
     TEST_F(OrchDaemonTest, TestRedisFlushFailure)
     {
-        InSequence s;
 
-        EXPECT_CALL(mock_sai_switch_, set_switch_attribute( _, _)).WillOnce(Return(SAI_STATUS_FAILURE));
-        EXPECT_CALL(mock_sai_switch_, set_switch_attribute(_, _));
+        ASSERT_DEATH(
+            {
+                InSequence s;
 
+                EXPECT_CALL(mock_sai_switch_, set_switch_attribute(_, _))
+                .WillOnce(Return(SAI_STATUS_FAILURE));
+                EXPECT_CALL(mock_sai_switch_, set_switch_attribute(_, _));
+
+                orchd->flush();
+            },
+            ".*"
+        );
+    }
+
+    TEST_F(OrchDaemonTest, TestFlushWithRingBufferEntry)
+    {
+        // Allow one or more calls to set_switch_attribute
+        EXPECT_CALL(mock_sai_switch_, set_switch_attribute(testing::_, testing::_))
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+        orchd->enableRingBuffer();
+
+        auto gRingBuffer = orchd->gRingBuffer;
+
+        std::vector<std::string> tables = {"ROUTE_TABLE", "OTHER_TABLE"};
+        auto orch = make_shared<Orch>(&appl_db, tables);
+        auto route_consumer = dynamic_cast<Consumer *>(orch->getExecutor("ROUTE_TABLE"));
+
+        EXPECT_TRUE(gRingBuffer->serves("ROUTE_TABLE"));
+
+        int x = 0;
+
+        gRingBuffer->thread_created = true; // set the flag to assume the ring thread is created (actually not)
+        route_consumer->processAnyTask([&](){x=5;});
+
+       // Ring is not empty, flush would not be triggered
         orchd->flush();
+        EXPECT_TRUE(!gRingBuffer->IsEmpty() && x==0);
+        AnyTask task;
+        gRingBuffer->pop(task);
+        task();
+        // hence the task needs to be popped and explicitly executed
+        EXPECT_TRUE(gRingBuffer->IsEmpty() && x==5);
+       // Ring is empty, flush would be triggered
+        orchd->flush();
+
+        orchd->disableRingBuffer();
     }
 
 }

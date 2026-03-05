@@ -106,7 +106,9 @@ namespace ut_fpmsyncd
         uint16_t table_id,
         uint8_t prefixlen,
         uint8_t address_family,
-        uint8_t rtm_type)
+        uint8_t rtm_type,
+        uint32_t nhg_id,
+        uint32_t pic_id)
     {
         struct rtattr *nest;
 
@@ -191,6 +193,16 @@ namespace ut_fpmsyncd
                          vpn_sid->getV6Addr(), 16))
             return NULL;
 
+        /* Add PIC_ID */
+        if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj), ROUTE_ENCAP_SRV6_PIC_ID,
+                           pic_id))
+            return NULL;
+
+        /* Add NHG_ID */
+        if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj), ROUTE_ENCAP_SRV6_NH_ID,
+                           nhg_id))
+            return NULL;
+
         nl_attr_nest_end(&nl_obj->n, nest);
 
         return nl_obj;
@@ -207,6 +219,7 @@ namespace ut_fpmsyncd
         uint32_t action,
         char *vrf,
         IpAddress *adj,
+        char *intf,
         uint16_t table_id,
         uint8_t prefixlen,
         uint8_t address_family    
@@ -343,6 +356,13 @@ namespace ut_fpmsyncd
                                     adj->getV6Addr(), 16))
                         return NULL;
                 }
+                if (intf)
+                {
+                    if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
+                                    SRV6_LOCALSID_IFNAME,
+                                    intf, (uint32_t)strlen(intf)))
+                        return NULL;
+                }
 				break;
 			case SRV6_LOCALSID_ACTION_END_T:
 				if (!nl_attr_put32(&nl_obj->n, sizeof(*nl_obj),
@@ -438,6 +458,13 @@ namespace ut_fpmsyncd
                     if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
                                     SRV6_LOCALSID_NH6,
                                     adj->getV6Addr(), 16))
+                        return NULL;
+                }
+                if (intf)
+                {
+                    if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
+                                    SRV6_LOCALSID_IFNAME,
+                                    intf, (uint32_t)strlen(intf)))
                         return NULL;
                 }
 				break;
