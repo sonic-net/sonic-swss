@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "copporch.h"
+#include "eventexecutor.h"
 #include "logger.h"
 #include "orch.h"
 #include "p4orch/acl_rule_manager.h"
@@ -43,6 +44,14 @@ P4Orch::P4Orch(swss::DBConnector* db, std::vector<std::string> tableNames,
 {
     SWSS_LOG_ENTER();
 
+    // Add watchport event handling support
+    // This is a low priority event that shouldn't block other high priority
+    // requests
+    m_watchportEvent = new swss::SelectableEvent(/*pri=*/-1);
+    auto watchportEventExecutor =
+        new EventExecutor(m_watchportEvent, this, "WATCHPORT_EVENT");
+    Orch::addExecutor(watchportEventExecutor);
+
     m_tablesDefnManager = std::make_unique<TablesDefnManager>(&m_p4OidMapper, &m_publisher);
     m_routerIntfManager = std::make_unique<RouterInterfaceManager>(&m_p4OidMapper, &m_publisher);
     m_neighborManager = std::make_unique<NeighborManager>(&m_p4OidMapper, &m_publisher);
@@ -56,7 +65,8 @@ P4Orch::P4Orch(swss::DBConnector* db, std::vector<std::string> tableNames,
     m_mirrorSessionManager = std::make_unique<p4orch::MirrorSessionManager>(&m_p4OidMapper, &m_publisher);
     m_aclTableManager = std::make_unique<p4orch::AclTableManager>(&m_p4OidMapper, &m_publisher);
     m_aclRuleManager = std::make_unique<p4orch::AclRuleManager>(&m_p4OidMapper, vrfOrch, coppOrch, &m_publisher);
-    m_wcmpManager = std::make_unique<p4orch::WcmpManager>(&m_p4OidMapper, &m_publisher);
+    m_wcmpManager = std::make_unique<p4orch::WcmpManager>(
+        &m_p4OidMapper, &m_publisher, m_watchportEvent);
     m_l3AdmitManager = std::make_unique<L3AdmitManager>(&m_p4OidMapper, &m_publisher);
     m_tunnelDecapGroupManager = std::make_unique<TunnelDecapGroupManager>(
         &m_p4OidMapper, vrfOrch, &m_publisher);
@@ -330,6 +340,18 @@ void P4Orch::doTask(NotificationConsumer &consumer)
     if (&consumer == m_portStatusNotificationConsumer) {
         handlePortStatusChangeNotification(op, data);
     }
+}
+
+void P4Orch::doTask(swss::SelectableEvent& event) {
+  SWSS_LOG_ENTER();
+
+  if (!gPortsOrch->allPortsReady()) {
+    return;
+  }
+
+  if (&event == m_watchportEvent) {
+    m_wcmpManager->processWatchPortEvent();
+  }
 }
 
 bool P4Orch::addAclTableToManagerMapping(const std::string &acl_table_name)
