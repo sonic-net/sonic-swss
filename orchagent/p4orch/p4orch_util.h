@@ -51,6 +51,7 @@ constexpr char *kSetNexthopId = "set_nexthop_id";
 constexpr char *kSetWcmpGroupId = "set_wcmp_group_id";
 constexpr char* kSetMulticastGroupId = "set_multicast_group_id";
 constexpr char* kSetSrcMac = "set_src_mac";
+constexpr char* kSetMulticastSrcMac = "set_multicast_src_mac";
 constexpr char *kSetNexthopIdAndMetadata = "set_nexthop_id_and_metadata";
 constexpr char *kSetWcmpGroupIdAndMetadata = "set_wcmp_group_id_and_metadata";
 constexpr char *kSetMetadataAndDrop = "set_metadata_and_drop";

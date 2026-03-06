@@ -188,9 +188,9 @@ ReturnCode L3MulticastManager::drain() {
       if (prev_table == APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) {
         // This drain function will drain unexecuted entries upon failure.
         status = drainMulticastRouterInterfaceEntries(tuple_list);
-      } else if (prev_table == APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) {
+      } else if (prev_table == APP_P4RT_REPLICATION_IP_MULTICAST_TABLE_NAME) {
         // This drain function will drain unexecuted entries upon failure.
-        status = drainMulticastReplicationEntries(tuple_list);
+	status = drainMulticastGroupEntries(tuple_list);
       } else {
         status = ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED)
                  << "Unexpected table " << QuotedVar(prev_table);
@@ -216,8 +216,8 @@ ReturnCode L3MulticastManager::drain() {
   if (status.ok() && !tuple_list.empty()) {
     if (prev_table == APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) {
       status = drainMulticastRouterInterfaceEntries(tuple_list);
-    } else if (prev_table == APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) {
-      status = drainMulticastReplicationEntries(tuple_list);
+    } else if (prev_table == APP_P4RT_REPLICATION_IP_MULTICAST_TABLE_NAME) {
+      status = drainMulticastGroupEntries(tuple_list);
     } else {
       status = ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED)
                << "Unexpected table " << QuotedVar(prev_table);
@@ -329,19 +329,19 @@ ReturnCode L3MulticastManager::drainMulticastRouterInterfaceEntries(
 
 // Drain entries associated with the multicast replication table, and those
 // only.
-ReturnCode L3MulticastManager::drainMulticastReplicationEntries(
-    std::deque<swss::KeyOpFieldsValuesTuple>& replication_tuples) {
+ReturnCode L3MulticastManager::drainMulticastGroupEntries(
+    std::deque<swss::KeyOpFieldsValuesTuple>& group_entry_tuples) {
   SWSS_LOG_ENTER();
   ReturnCode status;
-  std::vector<P4MulticastReplicationEntry> multicast_replication_entry_list;
+  std::vector<P4MulticastGroupEntry> multicast_group_entry_list;
   std::deque<swss::KeyOpFieldsValuesTuple> tuple_list;
 
   std::string prev_op;
   bool prev_update = false;
 
-  while (!replication_tuples.empty()) {
-    auto key_op_fvs_tuple = replication_tuples.front();
-    replication_tuples.pop_front();
+  while (!group_entry_tuples.empty()) {
+    auto key_op_fvs_tuple = group_entry_tuples.front();
+    group_entry_tuples.pop_front();
     std::string table_name;
     std::string key;
     parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &key);
@@ -349,11 +349,11 @@ ReturnCode L3MulticastManager::drainMulticastReplicationEntries(
         kfvFieldsValues(key_op_fvs_tuple);
 
     // Form entry object
-    auto replication_entry_or =
-        deserializeMulticastReplicationEntry(key, attributes);
+    auto group_entry_or = deserializeMulticastGroupEntry(
+        key, attributes);
 
-    if (!replication_entry_or.ok()) {
-      status = replication_entry_or.status();
+    if (!group_entry_or.ok()) {
+      status = group_entry_or.status();
       SWSS_LOG_ERROR("Unable to deserialize APP DB entry with key %s: %s",
                      QuotedVar(table_name + ":" + key).c_str(),
                      status.message().c_str());
@@ -362,14 +362,14 @@ ReturnCode L3MulticastManager::drainMulticastReplicationEntries(
                            /*replace=*/true);
       break;
     }
-    auto& replication_entry = *replication_entry_or;
+    auto& group_entry = *group_entry_or;
 
     // Validate entry
     const std::string& operation = kfvOp(key_op_fvs_tuple);
-    status = validateMulticastReplicationEntry(replication_entry, operation);
+    status = validateMulticastGroupEntry(group_entry, operation);
     if (!status.ok()) {
       SWSS_LOG_ERROR(
-          "Validation failed for replication APP DB entry with key  %s: %s",
+	  "Validation failed for APP DB group entry with key  %s: %s",
           QuotedVar(table_name + ":" + key).c_str(), status.message().c_str());
       m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
                            kfvFieldsValues(key_op_fvs_tuple), status,
@@ -378,9 +378,9 @@ ReturnCode L3MulticastManager::drainMulticastReplicationEntries(
     }
 
     // Now, start processing batch of entries.
-    auto* replication_entry_ptr = getMulticastReplicationEntry(
-        replication_entry.multicast_replication_key);
-    bool update = replication_entry_ptr != nullptr;
+    auto* group_entry_ptr = getMulticastGroupEntry(
+      group_entry.multicast_group_id);
+    bool update = group_entry_ptr != nullptr;
 
     if (prev_op == "") {
       prev_op = operation;
@@ -388,9 +388,9 @@ ReturnCode L3MulticastManager::drainMulticastReplicationEntries(
     }
     // Process the entries if the operation type changes.
     if (operation != prev_op || update != prev_update) {
-      status = processMulticastReplicationEntries(
-          multicast_replication_entry_list, tuple_list, prev_op, prev_update);
-      multicast_replication_entry_list.clear();
+      status = processMulticastGroupEntries(
+          multicast_group_entry_list, tuple_list, prev_op, prev_update);
+      multicast_group_entry_list.clear();
       tuple_list.clear();
       prev_op = operation;
       prev_update = update;
@@ -404,21 +404,21 @@ ReturnCode L3MulticastManager::drainMulticastReplicationEntries(
                            /*replace=*/true);
       break;
     } else {
-      multicast_replication_entry_list.push_back(replication_entry);
+      multicast_group_entry_list.push_back(group_entry);
       tuple_list.push_back(key_op_fvs_tuple);
     }
   }  // while
 
   // Process any pending entries.
-  if (!multicast_replication_entry_list.empty()) {
-    auto rc = processMulticastReplicationEntries(
-        multicast_replication_entry_list, tuple_list, prev_op, prev_update);
+  if (!multicast_group_entry_list.empty()) {
+    auto rc = processMulticastGroupEntries(
+        multicast_group_entry_list, tuple_list, prev_op, prev_update);
     if (!rc.ok()) {
       status = rc;
     }
   }
 
-  drainMgmtWithNotExecuted(replication_tuples, m_publisher);
+  drainMgmtWithNotExecuted(group_entry_tuples, m_publisher);
   return status;
 }
 
@@ -449,7 +449,7 @@ L3MulticastManager::deserializeMulticastRouterInterfaceEntry(
     const auto& field = fvField(it);
     const auto& value = fvValue(it);
     if (field == p4orch::kAction) {
-      if (value != p4orch::kSetSrcMac) {
+      if (value != p4orch::kSetMulticastSrcMac) {
         return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
                << "Unexpected action " << QuotedVar(value) << " in "
                << APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME;
@@ -502,7 +502,7 @@ L3MulticastManager::deserializeMulticastReplicationEntry(
     } else if (field != p4orch::kControllerMetadata) {
       return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
              << "Unexpected field " << QuotedVar(field) << " in "
-             << APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME;
+             << APP_P4RT_REPLICATION_IP_MULTICAST_TABLE_NAME;
     }
   }
   return replication_entry;
@@ -605,7 +605,7 @@ L3MulticastManager::deserializeMulticastGroupEntry(
     } else {
       return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
              << "Unexpected field " << QuotedVar(field) << " in "
-             << APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME;
+             << APP_P4RT_REPLICATION_IP_MULTICAST_TABLE_NAME;
     }
 
   }
@@ -634,8 +634,8 @@ std::string L3MulticastManager::verifyState(
   parseP4RTKey(p4rt_key, &table_name, &key_content);
   if (table_name == APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) {
     return verifyMulticastRouterInterfaceState(key_content, tuple);
-  } else if (table_name == APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) {
-    return verifyMulticastReplicationState(key_content, tuple);
+  } else if (table_name == APP_P4RT_REPLICATION_IP_MULTICAST_TABLE_NAME) {
+    return verifyMulticastGroupState(key_content, tuple);
   } else {
     return std::string("Invalid key, unexpected table name: ") + key;
   }
@@ -680,10 +680,11 @@ std::string L3MulticastManager::verifyMulticastRouterInterfaceState(
   return cache_result + "; " + asic_db_result;
 }
 
-std::string L3MulticastManager::verifyMulticastReplicationState(
+std::string L3MulticastManager::verifyMulticastGroupState(
     const std::string& key,
     const std::vector<swss::FieldValueTuple>& tuple) {
-  auto app_db_entry_or = deserializeMulticastReplicationEntry(key, tuple);
+  auto app_db_entry_or = deserializeMulticastGroupEntry(
+      key, tuple);
   if (!app_db_entry_or.ok()) {
     ReturnCode status = app_db_entry_or.status();
     std::stringstream msg;
@@ -693,22 +694,18 @@ std::string L3MulticastManager::verifyMulticastReplicationState(
   }
   auto& app_db_entry = *app_db_entry_or;
 
-  const std::string replication_entry_key =
-      KeyGenerator::generateMulticastReplicationKey(
-          app_db_entry.multicast_group_id, app_db_entry.multicast_replica_port,
-          app_db_entry.multicast_replica_instance);
-  auto* replication_entry_ptr =
-      getMulticastReplicationEntry(replication_entry_key);
-  if (replication_entry_ptr == nullptr) {
+  auto* group_entry_ptr = getMulticastGroupEntry(
+      app_db_entry.multicast_group_id);
+  if (group_entry_ptr == nullptr) {
     std::stringstream msg;
     msg << "No entry found with key " << QuotedVar(key);
     return msg.str();
   }
 
-  std::string cache_result =
-      verifyMulticastReplicationStateCache(app_db_entry, replication_entry_ptr);
-  std::string asic_db_result =
-      verifyMulticastReplicationStateAsicDb(replication_entry_ptr);
+  std::string cache_result = verifyMulticastGroupStateCache(
+      app_db_entry, group_entry_ptr);
+  std::string asic_db_result = verifyMulticastGroupStateAsicDb(
+      group_entry_ptr);
   if (cache_result.empty()) {
     return asic_db_result;
   }
@@ -1102,7 +1099,7 @@ ReturnCode L3MulticastManager::validateDelMulticastRouterInterfaceEntry(
   // Confirm the RIF object ID exists in central mapper.
   std::string rif_key = KeyGenerator::generateMulticastRouterInterfaceRifKey(
       multicast_router_interface_entry.multicast_replica_port,
-      multicast_router_interface_entry.src_mac);
+      router_interface_entry_ptr->src_mac);  // No attributes provided on delete.
   if (!m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key)) {
     RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL(
         "Multicast router interface entry does not exist in the central map");
@@ -1140,8 +1137,8 @@ ReturnCode L3MulticastManager::processMulticastRouterInterfaceEntries(
   return status;
 }
 
-ReturnCode L3MulticastManager::processMulticastReplicationEntries(
-    std::vector<P4MulticastReplicationEntry>& entries,
+ReturnCode L3MulticastManager::processMulticastGroupEntries(
+    std::vector<P4MulticastGroupEntry>& entries,
     const std::deque<swss::KeyOpFieldsValuesTuple>& tuple_list,
     const std::string& op, bool update) {
   SWSS_LOG_ENTER();
@@ -1151,12 +1148,12 @@ ReturnCode L3MulticastManager::processMulticastReplicationEntries(
   // In syncd, bulk SAI calls use mode SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR.
   if (op == SET_COMMAND) {
     if (!update) {
-      statuses = addMulticastReplicationEntries(entries);
+      statuses = addMulticastGroupEntries(entries);
     } else {
-      statuses = updateMulticastReplicationEntries(entries);
+      statuses = updateMulticastGroupEntries(entries);
     }
   } else {
-    statuses = deleteMulticastReplicationEntries(entries);
+    statuses = deleteMulticastGroupEntries(entries);
   }
   // Check status of each entry.
   for (size_t i = 0; i < entries.size(); ++i) {
@@ -1416,9 +1413,12 @@ L3MulticastManager::updateMulticastRouterInterfaceEntries(
     auto* old_entry_ptr = getMulticastRouterInterfaceEntry(
         entry.multicast_router_interface_entry_key);
     if (old_entry_ptr == nullptr) {
-      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                    << "Multicast router interface entry is missing "
+      std::stringstream err_msg;
+            err_msg << "Multicast router interface entry is missing "
                     << QuotedVar(entry.multicast_router_interface_entry_key);
+	    SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+	    SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+	    statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
       break;
     }
 
@@ -1437,20 +1437,24 @@ L3MulticastManager::updateMulticastRouterInterfaceEntries(
         KeyGenerator::generateMulticastRouterInterfaceRifKey(
             old_entry_ptr->multicast_replica_port, old_entry_ptr->src_mac);
     if (old_rif_oid == SAI_NULL_OBJECT_ID) {
-      statuses[i] =
-          ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-          << "Multicast router interface entry is missing a RIF oid "
-          << QuotedVar(old_entry_ptr->multicast_router_interface_entry_key);
+      std::stringstream err_msg;
+      err_msg << "Multicast router interface entry is missing a RIF oid "
+              << QuotedVar(old_entry_ptr->multicast_router_interface_entry_key);
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
       break;
     }
 
     // Fetch the vector P4MulticastRouterInterfaceEntry associated with the RIF.
     if (m_rifOidToRouterInterfaceEntries.find(old_rif_oid) ==
         m_rifOidToRouterInterfaceEntries.end()) {
-      statuses[i] =
-          ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-          << "RIF oid " << old_rif_oid << " missing from map for "
-          << QuotedVar(old_entry_ptr->multicast_router_interface_entry_key);
+      std::stringstream err_msg;
+      err_msg << "RIF oid " << old_rif_oid << " missing from map for "
+              << QuotedVar(old_entry_ptr->multicast_router_interface_entry_key);
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
       break;
     }
     auto& old_entries_for_rif = m_rifOidToRouterInterfaceEntries[old_rif_oid];
@@ -1464,11 +1468,13 @@ L3MulticastManager::updateMulticastRouterInterfaceEntries(
         (m_multicastRouterInterfaceTable.find(
              old_entry_ptr->multicast_router_interface_entry_key) ==
          m_multicastRouterInterfaceTable.end())) {
-      statuses[i] =
-          ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-          << "Unable to find entry "
-          << QuotedVar(old_entry_ptr->multicast_router_interface_entry_key)
-          << " in map";
+      std::stringstream err_msg;
+      err_msg << "Unable to find entry "
+              << QuotedVar(old_entry_ptr->multicast_router_interface_entry_key)
+              << " in map";
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
       break;
     }
 
@@ -1569,9 +1575,10 @@ L3MulticastManager::deleteMulticastRouterInterfaceEntries(
   //    case, only remove the current entry from being associated with the RIF.
   for (size_t i = 0; i < entries.size(); ++i) {
     auto& entry = entries[i];
-    if (m_multicastRouterInterfaceTable.find(
-            entry.multicast_router_interface_entry_key) ==
-        m_multicastRouterInterfaceTable.end()) {
+    // Cannot assume that the src mac will be set on delete operation.
+    auto* old_entry_ptr = getMulticastRouterInterfaceEntry(
+        entry.multicast_router_interface_entry_key);
+    if (old_entry_ptr == nullptr) {
       statuses[i] = ReturnCode(StatusCode::SWSS_RC_UNKNOWN)
                     << "Multicast router interface entry is not known "
                     << QuotedVar(entry.multicast_router_interface_entry_key);
@@ -1579,11 +1586,14 @@ L3MulticastManager::deleteMulticastRouterInterfaceEntries(
     }
 
     // Confirm RIF OID was assigned.
-    sai_object_id_t rif_oid = getRifOid(&entry);
+    sai_object_id_t rif_oid = getRifOid(old_entry_ptr);
     if (rif_oid == SAI_NULL_OBJECT_ID) {
-      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                    << "Multicast router interface entry is missing a RIF oid "
-                    << QuotedVar(entry.multicast_router_interface_entry_key);
+      std::stringstream err_msg;
+      err_msg << "Multicast router interface entry is missing a RIF oid "
+              << QuotedVar(entry.multicast_router_interface_entry_key);
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
       break;
     }
 
@@ -1602,9 +1612,12 @@ L3MulticastManager::deleteMulticastRouterInterfaceEntries(
     // with the RIF.
     if (m_rifOidToRouterInterfaceEntries.find(rif_oid) ==
         m_rifOidToRouterInterfaceEntries.end()) {
-      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                    << "RIF oid " << rif_oid << " missing from map for "
-                    << QuotedVar(entry.multicast_router_interface_entry_key);
+      std::stringstream err_msg;
+      err_msg << "RIF oid " << rif_oid << " missing from map for "
+              << QuotedVar(entry.multicast_router_interface_entry_key);
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
       break;
     }
     auto& entries_for_rif = m_rifOidToRouterInterfaceEntries[rif_oid];
@@ -1618,14 +1631,17 @@ L3MulticastManager::deleteMulticastRouterInterfaceEntries(
         (m_multicastRouterInterfaceTable.find(
              entry.multicast_router_interface_entry_key) ==
          m_multicastRouterInterfaceTable.end())) {
-      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                    << "Unable to find entry "
-                    << QuotedVar(entry.multicast_router_interface_entry_key)
-                    << " in map";
+      std::stringstream err_msg;
+      err_msg << "Unable to find entry "
+              << QuotedVar(entry.multicast_router_interface_entry_key)
+              << " in map";
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
       break;
     }
     std::string rif_key = KeyGenerator::generateMulticastRouterInterfaceRifKey(
-        entry.multicast_replica_port, entry.src_mac);
+        old_entry_ptr->multicast_replica_port, old_entry_ptr->src_mac);
 
     // If this is the last entry, delete the RIF.
     // Attempt to delete RIF at SAI layer before adjusting internal maps, in
@@ -1896,6 +1912,209 @@ std::vector<ReturnCode> L3MulticastManager::updateMulticastReplicationEntries(
   return statuses;
 }
 
+std::vector<ReturnCode> L3MulticastManager::updateMulticastGroupEntries(
+    std::vector<P4MulticastGroupEntry>& entries) {
+  // An update operation has to figure out what replicas associated with the
+  // multicast group have been added, deleted, or left unchanged.
+  // Replicas will be deleted before new ones are added, to avoid the
+  // possibility of resource exhaustion.
+
+  SWSS_LOG_ENTER();
+  std::vector<ReturnCode> statuses(entries.size());
+  fillStatusArrayWithNotExecuted(statuses, 0);
+
+  for (size_t i = 0; i < entries.size(); ++i) {
+    auto& entry = entries[i];
+
+    // Confirm old entry exists.
+    auto *old_entry_ptr = getMulticastGroupEntry(entry.multicast_group_id);
+    if (old_entry_ptr == nullptr) {
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_UNKNOWN)
+                    << "Multicast group entry is not known "
+                    << QuotedVar(entry.multicast_group_id);
+      break;
+    }
+
+    // Fetch the group OID.
+    sai_object_id_t old_group_oid = SAI_NULL_OBJECT_ID;
+    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_IPMC_GROUP,
+                               old_entry_ptr->multicast_group_id,
+                               &old_group_oid)) {
+      std::stringstream err_msg;
+      err_msg << "Unable to fetch multicast group oid for group "
+              << old_entry_ptr->multicast_group_id;
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
+                    << err_msg.str();
+      break;
+    }
+
+    std::vector<P4Replica> replicas_to_add;
+    for (auto& replica : entry.replicas) {
+      // New replica is not part of existing replicas.
+      if (old_entry_ptr->member_oids.find(replica.key) ==
+          old_entry_ptr->member_oids.end()) {
+        replicas_to_add.push_back(replica);
+      }
+    }
+
+    std::vector<P4Replica> replicas_to_delete;
+    for (auto& replica : old_entry_ptr->replicas) {
+      // Existing replica is not part of new replicas.
+      if (entry.member_oids.find(replica.key) == entry.member_oids.end()) {
+        replicas_to_delete.push_back(replica);
+      }
+    }
+
+    // Replicas in both old and new entries can be left untouched (no-op).
+
+    // First, delete replicas.
+    std::vector<P4Replica> deleted_replicas;
+    std::unordered_map<std::string, sai_object_id_t> replica_rif_map;
+
+    for (auto& replica : replicas_to_delete) {
+      // Fetch the RIF used by the member.
+      sai_object_id_t old_rif_oid = getRifOid(replica);
+      if (old_rif_oid == SAI_NULL_OBJECT_ID) {
+        std::stringstream err_msg;
+        err_msg << "Cannot find RIF oid associated with group member to delete "
+                << QuotedVar(replica.key);
+        SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+        SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+        statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
+        return statuses;
+      }
+      replica_rif_map[replica.key] = old_rif_oid;
+
+      // Fetch the member OID.
+      if (old_entry_ptr->member_oids.find(replica.key) ==
+          old_entry_ptr->member_oids.end()) {
+        std::stringstream err_msg;
+        err_msg << "Cannot find oid associated with group member to delete "
+                << QuotedVar(replica.key);
+        SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+        SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+        statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
+        return statuses;
+      }
+      sai_object_id_t old_group_member_oid =
+          old_entry_ptr->member_oids.at(replica.key);
+
+      // Delete group member
+      sai_status_t member_delete_status =
+          sai_ipmc_group_api->remove_ipmc_group_member(old_group_member_oid);
+      if (member_delete_status != SAI_STATUS_SUCCESS) {
+        statuses[i] = member_delete_status;
+
+        // Attempt to re-add deleted group members.
+        ReturnCode restore_status = restoreDeletedGroupMembers(deleted_replicas,
+                                                               replica_rif_map,
+                                                               old_group_oid,
+                                                               replica.key,
+                                                               old_entry_ptr);
+        if (!restore_status.ok()) {
+          SWSS_LOG_ERROR("%s", restore_status.message().c_str());
+          SWSS_RAISE_CRITICAL_STATE(restore_status.message());
+        }
+        // We still return the original failure when we successfully back
+        // out changes.
+        return statuses;
+      }
+      // Update internal state to reflect successful delete.
+      m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
+                              replica.key);
+      old_entry_ptr->member_oids.erase(replica.key);
+      m_rifOidToMulticastGroupMembers[old_rif_oid].erase(replica.key);
+      deleted_replicas.push_back(replica);
+    }  // for replica (to delete)
+
+    // Second add new replicas.
+    std::vector<P4Replica> added_replicas;
+
+    for (auto& replica : replicas_to_add) {
+      // Fetch the RIF used by the member.
+      sai_object_id_t new_rif_oid = getRifOid(replica);
+      if (new_rif_oid == SAI_NULL_OBJECT_ID) {
+        std::stringstream err_msg;
+        err_msg << "Cannot find RIF oid associated with group member to add "
+                << QuotedVar(replica.key);
+        SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+        SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+        statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
+        return statuses;
+      }
+      replica_rif_map[replica.key] = new_rif_oid;
+
+      // Create the group member.
+      sai_object_id_t mcast_group_member_oid;
+      ReturnCode create_member_status = createMulticastGroupMember(
+          replica, old_group_oid, new_rif_oid, &mcast_group_member_oid);
+
+      if (!create_member_status.ok()) {
+        statuses[i] = create_member_status;
+
+        // Backout members added.
+        for (auto& added_replica : added_replicas) {
+          sai_status_t member_delete_status =
+              sai_ipmc_group_api->remove_ipmc_group_member(
+                  old_entry_ptr->member_oids[added_replica.key]);
+          if (member_delete_status != SAI_STATUS_SUCCESS) {
+            // All kinds of bad
+            std::stringstream err_msg;
+            err_msg << "Cannot revert to previous state, because added replica "
+                    << QuotedVar(added_replica.key)
+                    << " cannot be deleted";
+            SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+            SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+            return statuses;
+          }
+          // Update state based on successful removal.
+          m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
+                                  added_replica.key);
+          old_entry_ptr->member_oids.erase(added_replica.key);
+          m_rifOidToMulticastGroupMembers[
+              replica_rif_map.at(added_replica.key)].erase(added_replica.key);
+        }
+
+        // Attempt to re-add deleted group members.
+        ReturnCode restore_status = restoreDeletedGroupMembers(deleted_replicas,
+                                                               replica_rif_map,
+                                                               old_group_oid,
+                                                               replica.key,
+                                                               old_entry_ptr);
+        if (!restore_status.ok()) {
+          SWSS_LOG_ERROR("%s", restore_status.message().c_str());
+          SWSS_RAISE_CRITICAL_STATE(restore_status.message());
+        }
+        // We still return the original failure when we successfully back
+        // out changes.
+        return statuses;
+      }
+
+      // Update internal state to reflect successful add.
+      m_p4OidMapper->setOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
+                            replica.key, mcast_group_member_oid);
+      old_entry_ptr->member_oids[replica.key] = mcast_group_member_oid;
+      m_rifOidToMulticastGroupMembers[new_rif_oid].insert(replica.key);
+      added_replicas.push_back(replica);
+
+    }  // for replica (to add)
+
+    // Final bookkeeping.
+    // Since we updated the original entry in place, we need to replace the
+    // replicas and metadata with the new state.
+    old_entry_ptr->replicas.clear();
+    old_entry_ptr->replicas.insert(old_entry_ptr->replicas.end(),
+                                   entry.replicas.begin(),
+                                   entry.replicas.end());
+    old_entry_ptr->controller_metadata = entry.controller_metadata;
+    old_entry_ptr->multicast_metadata = entry.multicast_metadata;
+    statuses[i] = ReturnCode();
+  } // for i
+  return statuses;
+}
+
 std::vector<ReturnCode> L3MulticastManager::deleteMulticastReplicationEntries(
     const std::vector<P4MulticastReplicationEntry>& entries) {
   // There are two cases for removal:
@@ -1925,10 +2144,12 @@ std::vector<ReturnCode> L3MulticastManager::deleteMulticastReplicationEntries(
     // Fetch the RIF the member is associated with.
     sai_object_id_t old_rif_oid = getRifOid(old_entry_ptr);
     if (old_rif_oid == SAI_NULL_OBJECT_ID) {
-      statuses[i] =
-          ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-          << "Cannot find RIF oid associated with group member to delete "
+      std::stringstream err_msg;
+      err_msg << "Cannot find RIF oid associated with group member to delete "
           << QuotedVar(old_entry_ptr->multicast_replication_key);
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
       break;
     }
 
@@ -1942,19 +2163,25 @@ std::vector<ReturnCode> L3MulticastManager::deleteMulticastReplicationEntries(
                           &old_group_member_oid);
     if (old_group_oid == SAI_NULL_OBJECT_ID ||
         old_group_member_oid == SAI_NULL_OBJECT_ID) {
-      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                    << "Multicast replication entry is missing a multicast "
-                    << "group OID or a multicast group member OID "
-                    << QuotedVar(entry.multicast_replication_key);
+      std::stringstream err_msg;
+      err_msg << "Multicast replication entry is missing a multicast "
+              << "group OID or a multicast group member OID "
+              << QuotedVar(entry.multicast_replication_key);
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
       break;
     }
 
     // Fetch group members associated with multicast group
     if (m_multicastGroupMembers.find(old_entry_ptr->multicast_group_id) ==
         m_multicastGroupMembers.end()) {
-      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                    << "Cannot find members associated with multicast group "
-                    << " id " << old_entry_ptr->multicast_group_id;
+      std::stringstream err_msg;
+      err_msg << "Cannot find members associated with multicast group id "
+              << old_entry_ptr->multicast_group_id;
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
       break;
     }
     auto& group_members_set =
@@ -1962,10 +2189,13 @@ std::vector<ReturnCode> L3MulticastManager::deleteMulticastReplicationEntries(
     auto member_cnt = group_members_set.size();
     if (group_members_set.count(old_entry_ptr->multicast_replication_key) !=
         1) {
-      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                    << "Member " << old_entry_ptr->multicast_replication_key
-                    << " was not associated with multicast group id "
-                    << old_entry_ptr->multicast_group_id;
+      std::stringstream err_msg;
+      err_msg << "Member " << old_entry_ptr->multicast_replication_key
+              << " was not associated with multicast group id "
+              << old_entry_ptr->multicast_group_id;
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
       break;
     }
 
@@ -1978,10 +2208,14 @@ std::vector<ReturnCode> L3MulticastManager::deleteMulticastReplicationEntries(
       if (!m_p4OidMapper->getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
                                       old_entry_ptr->multicast_group_id,
                                       &route_entry_ref_count)) {
-        statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                      << "Unable to fetch reference count for multicast "
-                      << "group " << old_entry_ptr->multicast_group_id;
-        break;
+	std::stringstream err_msg;
+          err_msg << "Unable to fetch reference count for multicast group "
+                  << old_entry_ptr->multicast_group_id;
+          SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+          SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+          statuses[i] = ReturnCode(StatusCode::SWSS_RC_INTERNAL)
+                        << err_msg.str();
+	  break;
       }
 
       if (route_entry_ref_count != 0) {
@@ -2331,105 +2565,115 @@ std::string L3MulticastManager::verifyMulticastRouterInterfaceStateAsicDb(
                      /*allow_unknown=*/false);
 }
 
-std::string L3MulticastManager::verifyMulticastReplicationStateCache(
-    const P4MulticastReplicationEntry& app_db_entry,
-    const P4MulticastReplicationEntry* multicast_replication_entry) {
-  const std::string replication_entry_key =
-      KeyGenerator::generateMulticastReplicationKey(
-          app_db_entry.multicast_group_id, app_db_entry.multicast_replica_port,
-          app_db_entry.multicast_replica_instance);
+std::string L3MulticastManager::verifyMulticastGroupStateCache(
+    const P4MulticastGroupEntry& app_db_entry,
+    const P4MulticastGroupEntry* multicast_group_entry) {
 
-  ReturnCode status =
-      validateMulticastReplicationEntry(app_db_entry, SET_COMMAND);
+  ReturnCode status = validateMulticastGroupEntry(app_db_entry,
+                                                  SET_COMMAND);
   if (!status.ok()) {
     std::stringstream msg;
-    msg << "Validation failed for multicast replication DB entry with key "
-        << QuotedVar(replication_entry_key) << ": " << status.message();
+    msg << "Validation failed for multicast group DB entry with key "
+        << QuotedVar(app_db_entry.multicast_group_id) << ": "
+        << status.message();
     return msg.str();
   }
-  if (multicast_replication_entry->multicast_replication_key !=
-      app_db_entry.multicast_replication_key) {
-    std::stringstream msg;
-    msg << "Multicast replication entry key "
-        << QuotedVar(app_db_entry.multicast_replication_key)
-        << " does not match internal cache "
-        << QuotedVar(multicast_replication_entry->multicast_replication_key)
-        << " in l3 multicast manager for replication entry.";
-    return msg.str();
-  }
-  if (multicast_replication_entry->multicast_group_id !=
+  if (multicast_group_entry->multicast_group_id !=
       app_db_entry.multicast_group_id) {
     std::stringstream msg;
     msg << "Multicast group ID " << QuotedVar(app_db_entry.multicast_group_id)
         << " does not match internal cache "
-        << QuotedVar(multicast_replication_entry->multicast_group_id)
-        << " in l3 multicast manager for replication entry.";
+        << QuotedVar(multicast_group_entry->multicast_group_id)
+        << " in l3 multicast manager for group entry.";
     return msg.str();
   }
-  if (multicast_replication_entry->multicast_replica_port !=
-      app_db_entry.multicast_replica_port) {
+
+  // Check replicas
+  if (app_db_entry.replicas.size() != multicast_group_entry->replicas.size()) {
     std::stringstream msg;
-    msg << "Output port name " << QuotedVar(app_db_entry.multicast_replica_port)
-        << " does not match internal cache "
-        << QuotedVar(multicast_replication_entry->multicast_replica_port)
-        << " in l3 multicast manager for replication entry.";
+    msg << "Multicast group ID " << QuotedVar(app_db_entry.multicast_group_id)
+        << " has a different number of replicas than internal cache.";
     return msg.str();
   }
-  if (multicast_replication_entry->multicast_replica_instance !=
-      app_db_entry.multicast_replica_instance) {
-    std::stringstream msg;
-    msg << "Egress instance "
-        << QuotedVar(app_db_entry.multicast_replica_instance)
-        << " does not match internal cache "
-        << QuotedVar(multicast_replication_entry->multicast_replica_instance)
-        << " in l3 multicast manager for replication entry.";
-    return msg.str();
+  std::unordered_set<std::string> replica_keys;
+  for (auto& replica : multicast_group_entry->replicas) {
+    replica_keys.insert(replica.key);
   }
-  if (multicast_replication_entry->multicast_metadata !=
+  for (auto& replica : app_db_entry.replicas) {
+    // Check we have the P4Replica object.
+    if (replica_keys.find(replica.key) == replica_keys.end()) {
+      std::stringstream msg;
+      msg << "Replica " << QuotedVar(replica.key)
+          << " is missing from internal cache for multicast group "
+          << QuotedVar(multicast_group_entry->multicast_group_id)
+          << " in l3 multicast manager for group entry.";
+      return msg.str();
+    }
+    // Check we have the replica in the member_oids map.
+    if (multicast_group_entry->member_oids.find(replica.key) ==
+        multicast_group_entry->member_oids.end()) {
+      std::stringstream msg;
+      msg << "Replica " << QuotedVar(replica.key)
+          << " is missing from internal member oid map for multicast group "
+          << QuotedVar(multicast_group_entry->multicast_group_id)
+          << " in l3 multicast manager for group entry.";
+      return msg.str();
+    }
+  }
+
+  if (multicast_group_entry->multicast_metadata !=
       app_db_entry.multicast_metadata) {
     std::stringstream msg;
     msg << "Multicast metadata " << QuotedVar(app_db_entry.multicast_metadata)
         << " does not match internal cache "
-        << QuotedVar(multicast_replication_entry->multicast_metadata)
-        << " in l3 multicast manager for replication entry.";
+        << QuotedVar(multicast_group_entry->multicast_metadata)
+        << " in l3 multicast manager for group entry.";
     return msg.str();
   }
+  if (multicast_group_entry->controller_metadata !=
+      app_db_entry.controller_metadata) {
+    std::stringstream msg;
+    msg << "Controller metadata " << QuotedVar(app_db_entry.controller_metadata)
+        << " does not match internal cache "
+        << QuotedVar(multicast_group_entry->controller_metadata)
+        << " in l3 multicast manager for group entry.";
+    return msg.str();
+  }
+
   std::string group_msg = m_p4OidMapper->verifyOIDMapping(
       SAI_OBJECT_TYPE_IPMC_GROUP,
-      multicast_replication_entry->multicast_group_id,
-      multicast_replication_entry->multicast_group_oid);
+      multicast_group_entry->multicast_group_id,
+      multicast_group_entry->multicast_group_oid);
   if (!group_msg.empty()) {
     return group_msg;
   }
-  return m_p4OidMapper->verifyOIDMapping(
-      SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
-      multicast_replication_entry->multicast_replication_key,
-      multicast_replication_entry->multicast_group_member_oid);
+
+  // Check group member OIDs for replicas.
+  for (auto& kv : multicast_group_entry->member_oids) {
+    std::string group_member_msg = m_p4OidMapper->verifyOIDMapping(
+        SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER, kv.first, kv.second);
+    if (!group_member_msg.empty()) {
+      return group_member_msg;
+    }
+  }
+  return "";
 }
 
-std::string L3MulticastManager::verifyMulticastReplicationStateAsicDb(
-    const P4MulticastReplicationEntry* multicast_replication_entry) {
-  // Confirm have RIF.
-  sai_object_id_t rif_oid = getRifOid(multicast_replication_entry);
-  if (rif_oid == SAI_NULL_OBJECT_ID) {
-    std::stringstream msg;
-    msg << "Unable to find RIF associated with multicast entry "
-        << QuotedVar(multicast_replication_entry->multicast_replication_key);
-    return msg.str();
-  }
+std::string L3MulticastManager::verifyMulticastGroupStateAsicDb(
+    const P4MulticastGroupEntry* multicast_group_entry) {
 
   // Confirm group settings.
   std::vector<sai_attribute_t> group_attrs;  // no required attributes
   std::vector<swss::FieldValueTuple> exp =
       saimeta::SaiAttributeList::serialize_attr_list(
-          SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER, (uint32_t)group_attrs.size(),
+	  SAI_OBJECT_TYPE_IPMC_GROUP, (uint32_t)group_attrs.size(),
           group_attrs.data(), /*countOnly=*/false);
 
   swss::DBConnector db("ASIC_DB", 0);
   swss::Table table(&db, "ASIC_STATE");
   std::string key =
       sai_serialize_object_type(SAI_OBJECT_TYPE_IPMC_GROUP) + ":" +
-      sai_serialize_object_id(multicast_replication_entry->multicast_group_oid);
+      sai_serialize_object_id(multicast_group_entry->multicast_group_oid);
   std::vector<swss::FieldValueTuple> values;
   if (!table.get(key, values)) {
     return std::string("ASIC DB key not found ") + key;
@@ -2442,20 +2686,43 @@ std::string L3MulticastManager::verifyMulticastReplicationStateAsicDb(
   }
 
   // Confirm group member settings.
-  auto member_attrs = prepareMulticastGroupMemberSaiAttrs(
-      *multicast_replication_entry, rif_oid);
-  exp = saimeta::SaiAttributeList::serialize_attr_list(
-      SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER, (uint32_t)member_attrs.size(),
-      member_attrs.data(), /*countOnly=*/false);
-  key = sai_serialize_object_type(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER) + ":" +
-        sai_serialize_object_id(
-            multicast_replication_entry->multicast_group_member_oid);
-  values.clear();
-  if (!table.get(key, values)) {
-    return std::string("ASIC DB key not found ") + key;
+  for (auto& replica : multicast_group_entry->replicas) {
+    // Confirm have RIF for each replica.
+    sai_object_id_t rif_oid = getRifOid(replica);
+    if (rif_oid == SAI_NULL_OBJECT_ID) {
+      std::stringstream msg;
+      msg << "Unable to find RIF associated with replica "
+          << QuotedVar(replica.key)
+          << " for multicast group "
+          << QuotedVar(multicast_group_entry->multicast_group_id);
+      return msg.str();
+    }
+
+    sai_object_id_t group_member_oid = SAI_NULL_OBJECT_ID;
+    if (multicast_group_entry->member_oids.find(replica.key) !=
+        multicast_group_entry->member_oids.end()) {
+      group_member_oid = multicast_group_entry->member_oids.at(replica.key);
+    }
+
+    auto member_attrs = prepareMulticastGroupMemberSaiAttrs(
+        multicast_group_entry->multicast_group_oid, rif_oid);
+    exp = saimeta::SaiAttributeList::serialize_attr_list(
+              SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER, (uint32_t)member_attrs.size(),
+              member_attrs.data(), /*countOnly=*/false);
+    key = sai_serialize_object_type(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER) + ":" +
+          sai_serialize_object_id(group_member_oid);
+    values.clear();
+    if (!table.get(key, values)) {
+      return std::string("ASIC DB key not found ") + key;
+    }
+    std::string group_member_msg = verifyAttrs(
+        values, exp, std::vector<swss::FieldValueTuple>{},
+        /*allow_unknown=*/false);
+    if (!group_member_msg.empty()) {
+      return group_member_msg;
+    }
   }
-  return verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
-                     /*allow_unknown=*/false);
+  return "";
 }
 
 P4MulticastRouterInterfaceEntry*
@@ -2503,12 +2770,14 @@ sai_object_id_t L3MulticastManager::getRifOid(
 }
 
 // A RIF is associated with an egress port and Ethernet src mac value.
-sai_object_id_t L3MulticastManager::getRifOid(const P4Replica& replica) {
+  sai_object_id_t L3MulticastManager::getRifOid(
+    const P4MulticastReplicationEntry* multicast_replication_entry) {
 
   // Get router interface entry for out port and egress instance.
   const std::string router_interface_key =
       KeyGenerator::generateMulticastRouterInterfaceKey(
-          replica.port, replica.instance);
+          multicast_replication_entry->multicast_replica_port,
+          multicast_replication_entry->multicast_replica_instance);
   auto* router_interface_entry_ptr =
       getMulticastRouterInterfaceEntry(router_interface_key);
   if (router_interface_entry_ptr == nullptr) {
@@ -2525,13 +2794,12 @@ sai_object_id_t L3MulticastManager::getRifOid(const P4Replica& replica) {
 }
 
 // A RIF is associated with an egress port and Ethernet src mac value.
-sai_object_id_t L3MulticastManager::getRifOid(
-    const P4MulticastReplicationEntry* multicast_replication_entry) {
+sai_object_id_t L3MulticastManager::getRifOid(const P4Replica& replica) {
+
   // Get router interface entry for out port and egress instance.
   const std::string router_interface_key =
       KeyGenerator::generateMulticastRouterInterfaceKey(
-          multicast_replication_entry->multicast_replica_port,
-          multicast_replication_entry->multicast_replica_instance);
+          replica.port, replica.instance);
   auto* router_interface_entry_ptr =
       getMulticastRouterInterfaceEntry(router_interface_key);
   if (router_interface_entry_ptr == nullptr) {
