@@ -65,6 +65,7 @@ constexpr char *kStage = "stage";
 constexpr char *kSize = "size";
 constexpr char *kPriority = "priority";
 constexpr char *kPacketColor = "packet_color";
+constexpr char* kObjectType = "object_type";
 constexpr char *kMeterUnit = "meter/unit";
 constexpr char *kCounterUnit = "counter/unit";
 constexpr char kFieldDelimiter = '/';
@@ -74,6 +75,7 @@ constexpr char kPortsDelimiter = ',';
 constexpr char *kMatchPrefix = "match";
 constexpr char *kActionParamPrefix = "param";
 constexpr char *kMeterPrefix = "meter";
+constexpr char* kMeterMode = "mode";
 constexpr char *kMeterCir = "cir";
 constexpr char *kMeterCburst = "cburst";
 constexpr char *kMeterPir = "pir";
@@ -266,6 +268,7 @@ struct P4ActionParamName
 {
     std::string sai_action;
     std::string p4_param_name;
+    std::string sai_object_type;  // optionally included for some sai_actions.
 };
 
 struct P4PacketActionWithColor
@@ -296,6 +299,7 @@ struct P4AclMeterAppDb
     uint64_t cburst;
     uint64_t pir;
     uint64_t pburst;
+    std::string mode;
 
     P4AclMeterAppDb() : enabled(false)
     {
@@ -397,6 +401,11 @@ class KeyGenerator
     static std::string generateMulticastRouterInterfaceRifKey(
         const std::string& multicast_replica_port,
         const swss::MacAddress& src_mac);
+
+    static std::string generateL2MulticastGroupKey(
+        const std::string& l2_multicast_group_id);
+    static std::string generateL3MulticastGroupKey(
+        const std::string& multicast_group_id);
 
     static std::string generateWcmpGroupKey(const std::string &wcmp_group_id);
 
