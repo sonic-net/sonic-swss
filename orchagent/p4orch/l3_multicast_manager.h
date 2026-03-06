@@ -28,20 +28,14 @@ struct P4MulticastRouterInterfaceEntry {
   std::string multicast_replica_instance;
   swss::MacAddress src_mac;
   bool has_src_mac = false;
+  swss::MacAddress dst_mac;
+  bool has_dst_mac = false;
+  uint16_t vlan_id = 0;
+  bool has_vlan_id = false;
   std::string action;
   std::string multicast_metadata;
 
   P4MulticastRouterInterfaceEntry() = default;
-  P4MulticastRouterInterfaceEntry(const std::string& port,
-                                  const std::string& instance,
-                                  const swss::MacAddress& mac,
-				  const std::string& action,
-                                  const std::string& metadata)
-      : multicast_replica_port(port),
-        multicast_replica_instance(instance),
-        src_mac(mac),
-	action(action),
-        multicast_metadata(metadata) {}
 };
 
 struct P4Replica {

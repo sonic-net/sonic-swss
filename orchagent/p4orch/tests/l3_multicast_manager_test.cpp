@@ -66,6 +66,12 @@ constexpr char* kSrcMac3 = "10:20:30:40:50:60";
 constexpr char* kSrcMac4 = "15:25:35:45:55:65";
 constexpr char* kSrcMac5 = "10:20:30:40:50:60";
 
+constexpr char* kDstMac0 = "00:00:00:00:00:00";
+constexpr char* kDstMac1 = "00:11:22:33:44:55";
+
+constexpr char* kVlanId1 = "0x041";
+constexpr uint16_t kVlanIdNum1 = 65;
+
 constexpr sai_object_id_t kRifOid1 = 0x123456;
 constexpr sai_object_id_t kRifOid2 = 0x22789a;
 constexpr sai_object_id_t kRifOid3 = 0x33feed;
@@ -168,8 +174,46 @@ class L3MulticastManagerTest : public ::testing::Test {
         multicast_replica_instance;
     router_interface_entry.action = action;
     router_interface_entry.src_mac = src_mac;
-    router_interface_entry.has_src_mac =
-        action != p4orch::kMulticastL2Passthrough;
+    router_interface_entry.has_src_mac = action == p4orch::kSetSrcMac;
+    router_interface_entry.multicast_metadata = multicast_metadata;
+    router_interface_entry.multicast_router_interface_entry_key =
+        KeyGenerator::generateMulticastRouterInterfaceKey(
+            router_interface_entry.multicast_replica_port,
+            router_interface_entry.multicast_replica_instance);
+    return router_interface_entry;
+  }
+
+  P4MulticastRouterInterfaceEntry
+  GenerateP4MulticastRouterInterfaceEntryByAction(
+      const std::string& multicast_replica_port,
+      const std::string& multicast_replica_instance,
+      const swss::MacAddress src_mac, const swss::MacAddress dst_mac,
+      const uint16_t vlan_id, const std::string& multicast_metadata = "",
+      const std::string& action = p4orch::kSetSrcMac) {
+    P4MulticastRouterInterfaceEntry router_interface_entry = {};
+    router_interface_entry.multicast_replica_port = multicast_replica_port;
+    router_interface_entry.multicast_replica_instance =
+        multicast_replica_instance;
+    router_interface_entry.action = action;
+
+    if (action != p4orch::kL2MulticastPassthrough &&
+        action != p4orch::kMulticastL2Passthrough) {
+      router_interface_entry.src_mac = src_mac;
+      router_interface_entry.has_src_mac = true;
+    }
+
+    if (action == p4orch::kMulticastSetSrcMacAndDstMacAndVlanId) {
+      router_interface_entry.dst_mac = dst_mac;
+      router_interface_entry.has_dst_mac = true;
+    }
+
+    if (action == p4orch::kMulticastSetSrcMacAndVlanId ||
+        action == p4orch::kMulticastSetSrcMacAndDstMacAndVlanId) {
+      router_interface_entry.vlan_id = vlan_id;
+      router_interface_entry.has_vlan_id = true;
+    }
+
+    router_interface_entry.has_src_mac = action == p4orch::kSetSrcMac;
     router_interface_entry.multicast_metadata = multicast_metadata;
     router_interface_entry.multicast_router_interface_entry_key =
         KeyGenerator::generateMulticastRouterInterfaceKey(
@@ -401,6 +445,11 @@ class L3MulticastManagerTest : public ::testing::Test {
     EXPECT_EQ(x.multicast_replica_instance, y.multicast_replica_instance);
     EXPECT_EQ(
         0, memcmp(x.src_mac.getMac(), y.src_mac.getMac(), sizeof(sai_mac_t)));
+    EXPECT_EQ(
+        0, memcmp(x.dst_mac.getMac(), y.dst_mac.getMac(), sizeof(sai_mac_t)));
+    EXPECT_EQ(x.vlan_id, y.vlan_id);
+    EXPECT_EQ(x.action, y.action);
+    EXPECT_EQ(x.multicast_metadata, y.multicast_metadata);
   }
 
   void VerifyP4MulticastGroupEntryEqual(
@@ -708,6 +757,295 @@ TEST_F(L3MulticastManagerTest,
       DeserializeMulticastRouterInterfaceEntry(key, attributes);
   EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
             router_interface_entry_or.status());
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeserializeMulticastRouterInterfaceEntrySetMulticastSrcMac) {
+  std::string key = R"({"match/multicast_replica_port":"Ethernet2",)"
+                    R"("match/multicast_replica_instance":"0x0"})";
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
+  attributes.push_back(swss::FieldValueTuple{
+      prependParamField(p4orch::kMulticastMetadata), "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  auto router_interface_entry_or =
+      DeserializeMulticastRouterInterfaceEntry(key, attributes);
+  EXPECT_TRUE(router_interface_entry_or.ok());
+  auto& router_interface_entry = *router_interface_entry_or;
+  auto expect_entry = GenerateP4MulticastRouterInterfaceEntryByAction(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, "meta1",
+      p4orch::kSetSrcMac);
+  VerifyP4MulticastRouterInterfaceEntryEqual(expect_entry,
+                                             router_interface_entry);
+  EXPECT_TRUE(
+      ValidateMulticastRouterInterfaceEntry(router_interface_entry, SET_COMMAND)
+          .ok());
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeserializeMulticastRouterInterfaceEntryMulticastSetSrcMac) {
+  std::string key = R"({"match/multicast_replica_port":"Ethernet2",)"
+                    R"("match/multicast_replica_instance":"0x0"})";
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
+  attributes.push_back(swss::FieldValueTuple{
+      prependParamField(p4orch::kMulticastMetadata), "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  auto router_interface_entry_or =
+      DeserializeMulticastRouterInterfaceEntry(key, attributes);
+  EXPECT_TRUE(router_interface_entry_or.ok());
+  auto& router_interface_entry = *router_interface_entry_or;
+  auto expect_entry = GenerateP4MulticastRouterInterfaceEntryByAction(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, "meta1",
+      p4orch::kMulticastSetSrcMac);
+  VerifyP4MulticastRouterInterfaceEntryEqual(expect_entry,
+                                             router_interface_entry);
+  EXPECT_TRUE(
+      ValidateMulticastRouterInterfaceEntry(router_interface_entry, SET_COMMAND)
+          .ok());
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeserializeMulticastRouterInterfaceEntryMulticastSetSrcMacAndVlanId) {
+  std::string key = R"({"match/multicast_replica_port":"Ethernet2",)"
+                    R"("match/multicast_replica_instance":"0x0"})";
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(swss::FieldValueTuple{
+      p4orch::kAction, p4orch::kMulticastSetSrcMacAndVlanId});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kVlanId), kVlanId1});
+  attributes.push_back(swss::FieldValueTuple{
+      prependParamField(p4orch::kMulticastMetadata), "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  auto router_interface_entry_or =
+      DeserializeMulticastRouterInterfaceEntry(key, attributes);
+  EXPECT_TRUE(router_interface_entry_or.ok());
+  auto& router_interface_entry = *router_interface_entry_or;
+  auto expect_entry = GenerateP4MulticastRouterInterfaceEntryByAction(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/kVlanIdNum1, "meta1",
+      p4orch::kMulticastSetSrcMacAndVlanId);
+  VerifyP4MulticastRouterInterfaceEntryEqual(expect_entry,
+                                             router_interface_entry);
+  EXPECT_TRUE(
+      ValidateMulticastRouterInterfaceEntry(router_interface_entry, SET_COMMAND)
+          .ok());
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeserializeMulticastRouterInterfaceEntryMulticastSetSrcMacAndInvVlanId) {
+  std::string key = R"({"match/multicast_replica_port":"Ethernet2",)"
+                    R"("match/multicast_replica_instance":"0x0"})";
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(swss::FieldValueTuple{
+      p4orch::kAction, p4orch::kMulticastSetSrcMacAndVlanId});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kVlanId), "NaN"});
+  attributes.push_back(swss::FieldValueTuple{
+      prependParamField(p4orch::kMulticastMetadata), "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  auto router_interface_entry_or =
+      DeserializeMulticastRouterInterfaceEntry(key, attributes);
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+            router_interface_entry_or.status());
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeserializeMulticastRouterInterfaceEntryMulticastSetSrcMacAndDstVlanId) {
+  std::string key = R"({"match/multicast_replica_port":"Ethernet2",)"
+                    R"("match/multicast_replica_instance":"0x0"})";
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(swss::FieldValueTuple{
+      p4orch::kAction, p4orch::kMulticastSetSrcMacAndDstMacAndVlanId});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kDstMac), kDstMac1});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kVlanId), kVlanId1});
+  attributes.push_back(swss::FieldValueTuple{
+      prependParamField(p4orch::kMulticastMetadata), "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  auto router_interface_entry_or =
+      DeserializeMulticastRouterInterfaceEntry(key, attributes);
+  EXPECT_TRUE(router_interface_entry_or.ok());
+  auto& router_interface_entry = *router_interface_entry_or;
+  auto expect_entry = GenerateP4MulticastRouterInterfaceEntryByAction(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac1), /*vlan_id=*/kVlanIdNum1, "meta1",
+      p4orch::kMulticastSetSrcMacAndDstMacAndVlanId);
+  VerifyP4MulticastRouterInterfaceEntryEqual(expect_entry,
+                                             router_interface_entry);
+  EXPECT_TRUE(
+      ValidateMulticastRouterInterfaceEntry(router_interface_entry, SET_COMMAND)
+          .ok());
+}
+
+TEST_F(L3MulticastManagerTest,
+       ValidateMulticastRouterInterfaceEntryMulticastFailsIfDstMacMissing) {
+  std::string key = R"({"match/multicast_replica_port":"Ethernet2",)"
+                    R"("match/multicast_replica_instance":"0x0"})";
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(swss::FieldValueTuple{
+      p4orch::kAction, p4orch::kMulticastSetSrcMacAndDstMacAndVlanId});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kVlanId), kVlanId1});
+  attributes.push_back(swss::FieldValueTuple{
+      prependParamField(p4orch::kMulticastMetadata), "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  auto router_interface_entry_or =
+      DeserializeMulticastRouterInterfaceEntry(key, attributes);
+  EXPECT_TRUE(router_interface_entry_or.ok());
+  auto& router_interface_entry = *router_interface_entry_or;
+  EXPECT_EQ(ValidateMulticastRouterInterfaceEntry(router_interface_entry,
+                                                  SET_COMMAND),
+            StatusCode::SWSS_RC_INVALID_PARAM);
+}
+
+TEST_F(L3MulticastManagerTest,
+       ValidateMulticastRouterInterfaceEntryMulticastFailsIfVlanIdMissing) {
+  std::string key = R"({"match/multicast_replica_port":"Ethernet2",)"
+                    R"("match/multicast_replica_instance":"0x0"})";
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(swss::FieldValueTuple{
+      p4orch::kAction, p4orch::kMulticastSetSrcMacAndVlanId});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kDstMac), kDstMac1});
+
+  auto router_interface_entry_or =
+      DeserializeMulticastRouterInterfaceEntry(key, attributes);
+  EXPECT_TRUE(router_interface_entry_or.ok());
+  auto& router_interface_entry = *router_interface_entry_or;
+  EXPECT_EQ(ValidateMulticastRouterInterfaceEntry(router_interface_entry,
+                                                  SET_COMMAND),
+            StatusCode::SWSS_RC_INVALID_PARAM);
+
+  std::vector<swss::FieldValueTuple> attributes2;
+  attributes2.push_back(swss::FieldValueTuple{
+      p4orch::kAction, p4orch::kMulticastSetSrcMacAndDstMacAndVlanId});
+  attributes2.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
+  attributes2.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kDstMac), kDstMac1});
+
+  auto router_interface_entry_or2 =
+      DeserializeMulticastRouterInterfaceEntry(key, attributes2);
+  EXPECT_TRUE(router_interface_entry_or2.ok());
+  auto& router_interface_entry2 = *router_interface_entry_or2;
+  EXPECT_EQ(ValidateMulticastRouterInterfaceEntry(router_interface_entry2,
+                                                  SET_COMMAND),
+            StatusCode::SWSS_RC_INVALID_PARAM);
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeserializeMulticastRouterInterfaceEntryMulticastSetSrcMacPreserve) {
+  std::string key = R"({"match/multicast_replica_port":"Ethernet2",)"
+                    R"("match/multicast_replica_instance":"0x0"})";
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(swss::FieldValueTuple{
+      p4orch::kAction, p4orch::kMulticastSetSrcMacAndPreserveIngressVlanId});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
+  attributes.push_back(swss::FieldValueTuple{
+      prependParamField(p4orch::kMulticastMetadata), "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  auto router_interface_entry_or =
+      DeserializeMulticastRouterInterfaceEntry(key, attributes);
+  EXPECT_TRUE(router_interface_entry_or.ok());
+  auto& router_interface_entry = *router_interface_entry_or;
+  auto expect_entry = GenerateP4MulticastRouterInterfaceEntryByAction(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, "meta1",
+      p4orch::kMulticastSetSrcMacAndPreserveIngressVlanId);
+  VerifyP4MulticastRouterInterfaceEntryEqual(expect_entry,
+                                             router_interface_entry);
+  EXPECT_TRUE(
+      ValidateMulticastRouterInterfaceEntry(router_interface_entry, SET_COMMAND)
+          .ok());
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeserializeMulticastRouterInterfaceEntryL2MulticastPassthrough) {
+  std::string key = R"({"match/multicast_replica_port":"Ethernet2",)"
+                    R"("match/multicast_replica_instance":"0x0"})";
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kL2MulticastPassthrough});
+  attributes.push_back(swss::FieldValueTuple{
+      prependParamField(p4orch::kMulticastMetadata), "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  auto router_interface_entry_or =
+      DeserializeMulticastRouterInterfaceEntry(key, attributes);
+  EXPECT_TRUE(router_interface_entry_or.ok());
+  auto& router_interface_entry = *router_interface_entry_or;
+  auto expect_entry = GenerateP4MulticastRouterInterfaceEntryByAction(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac0),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, "meta1",
+      p4orch::kL2MulticastPassthrough);
+  VerifyP4MulticastRouterInterfaceEntryEqual(expect_entry,
+                                             router_interface_entry);
+  EXPECT_TRUE(
+      ValidateMulticastRouterInterfaceEntry(router_interface_entry, SET_COMMAND)
+          .ok());
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeserializeMulticastRouterInterfaceEntryMulticastL2Passthrough) {
+  std::string key = R"({"match/multicast_replica_port":"Ethernet2",)"
+                    R"("match/multicast_replica_instance":"0x0"})";
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastL2Passthrough});
+  attributes.push_back(swss::FieldValueTuple{
+      prependParamField(p4orch::kMulticastMetadata), "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  auto router_interface_entry_or =
+      DeserializeMulticastRouterInterfaceEntry(key, attributes);
+  EXPECT_TRUE(router_interface_entry_or.ok());
+  auto& router_interface_entry = *router_interface_entry_or;
+  auto expect_entry = GenerateP4MulticastRouterInterfaceEntryByAction(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac0),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, "meta1",
+      p4orch::kMulticastL2Passthrough);
+  VerifyP4MulticastRouterInterfaceEntryEqual(expect_entry,
+                                             router_interface_entry);
+  EXPECT_TRUE(
+      ValidateMulticastRouterInterfaceEntry(router_interface_entry, SET_COMMAND)
+          .ok());
 }
 
 TEST_F(L3MulticastManagerTest, DeserializeMulticastGroupEntryTest) {

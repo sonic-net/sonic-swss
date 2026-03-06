@@ -484,12 +484,24 @@ L3MulticastManager::deserializeMulticastRouterInterfaceEntry(
           router_interface_entry.multicast_replica_port,
           router_interface_entry.multicast_replica_instance);
   router_interface_entry.src_mac = swss::MacAddress("00:00:00:00:00:00");
+  router_interface_entry.dst_mac = swss::MacAddress("00:00:00:00:00:00");
+  router_interface_entry.vlan_id = 0;
 
   for (const auto& it : attributes) {
     const auto& field = fvField(it);
     const auto& value = fvValue(it);
+    // Note: The kSetSrcMac action is deprecated.  This action is used
+    // for the original IP multicast implementation approach where multicast
+    // replicas are output to a multicast RIF.  The new IP multicast actions
+    // will continue to create a RIF, but they will also create a next hop and
+    // neighbor entry.  The next hop object becomes the output target for a
+    // multicast replica.
     if (field == p4orch::kAction) {
       if (value == p4orch::kSetSrcMac ||
+	  value == p4orch::kMulticastSetSrcMac ||
+          value == p4orch::kMulticastSetSrcMacAndVlanId ||
+          value == p4orch::kMulticastSetSrcMacAndDstMacAndVlanId ||
+          value == p4orch::kMulticastSetSrcMacAndPreserveIngressVlanId ||
 	  value == p4orch::kL2MulticastPassthrough ||
           value == p4orch::kMulticastL2Passthrough) {
         router_interface_entry.action = value;
@@ -501,6 +513,19 @@ L3MulticastManager::deserializeMulticastRouterInterfaceEntry(
     } else if (field == prependParamField(p4orch::kSrcMac)) {
       router_interface_entry.src_mac = swss::MacAddress(value);
       router_interface_entry.has_src_mac = true;
+    } else if (field == prependParamField(p4orch::kDstMac)) {
+      router_interface_entry.dst_mac = swss::MacAddress(value);
+      router_interface_entry.has_dst_mac = true;
+    } else if (field == prependParamField(p4orch::kVlanId)) {
+      try {
+        router_interface_entry.vlan_id =
+            static_cast<uint16_t>(std::stoul(value, 0, /*base=*/16));
+        router_interface_entry.has_vlan_id = true;
+      } catch (std::exception& ex) {
+        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Invalid Vlan ID " << QuotedVar(value) << " of field "
+               << QuotedVar(field);
+      }
     } else if (field == prependParamField(p4orch::kMulticastMetadata)) {
       router_interface_entry.multicast_metadata = value;
     } else if (field != p4orch::kControllerMetadata) {
@@ -978,10 +1003,37 @@ ReturnCode L3MulticastManager::validateSetMulticastRouterInterfaceEntry(
   }
 
   // Confirm src_mac is populated.
-  if (multicast_router_interface_entry.action == p4orch::kSetSrcMac &&
-      !multicast_router_interface_entry.has_src_mac) {
+  bool need_src_mac =
+      multicast_router_interface_entry.action == p4orch::kSetSrcMac ||
+      multicast_router_interface_entry.action == p4orch::kMulticastSetSrcMac ||
+      multicast_router_interface_entry.action ==
+          p4orch::kMulticastSetSrcMacAndVlanId ||
+      multicast_router_interface_entry.action ==
+          p4orch::kMulticastSetSrcMacAndDstMacAndVlanId ||
+      multicast_router_interface_entry.action ==
+          p4orch::kMulticastSetSrcMacAndPreserveIngressVlanId;
+  bool need_dst_mac = multicast_router_interface_entry.action ==
+                      p4orch::kMulticastSetSrcMacAndDstMacAndVlanId;
+  bool need_vlan_id = multicast_router_interface_entry.action ==
+                          p4orch::kMulticastSetSrcMacAndVlanId ||
+                      multicast_router_interface_entry.action ==
+                          p4orch::kMulticastSetSrcMacAndDstMacAndVlanId;
+
+  if (need_src_mac && !multicast_router_interface_entry.has_src_mac) {
     return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
            << "Multicast router interface entry did not specify a src mac.";
+  }
+
+  // Confirm dst_mac is populated.
+  if (need_dst_mac && !multicast_router_interface_entry.has_dst_mac) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Multicast router interface entry did not specify a dst mac.";
+  }
+
+  // Confirm vlan_id is populated.
+  if (need_vlan_id && !multicast_router_interface_entry.has_vlan_id) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Multicast router interface entry did not specify a Vlan ID.";
   }
 
   bool is_update_operation = router_interface_entry_ptr != nullptr;
@@ -999,11 +1051,13 @@ ReturnCode L3MulticastManager::validateSetMulticastRouterInterfaceEntry(
     }
 
     if (multicast_router_interface_entry.action ==
-        p4orch::kSetSrcMac) {
-      return validateL3SetMulticastRouterInterfaceEntry(
+            p4orch::kL2MulticastPassthrough ||
+        multicast_router_interface_entry.action ==
+            p4orch::kMulticastL2Passthrough) {
+      return validateL2MulticastRouterInterfaceEntry(
           multicast_router_interface_entry, router_interface_entry_ptr);
     } else {
-      return validateL2MulticastRouterInterfaceEntry(
+      return validateL3SetMulticastRouterInterfaceEntry(
           multicast_router_interface_entry, router_interface_entry_ptr);
     }
   }
