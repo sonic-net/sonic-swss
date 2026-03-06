@@ -759,6 +759,11 @@ bool AclTableTypeParser::parse(const std::string& key,
 
         SWSS_LOG_DEBUG("field %s, value %s", field.c_str(), value.c_str());
 
+        // Counter action is always implicitly added because OA creates ACL counter
+        // unconditionally during rule creation (createCounter()), so the ACL table
+        // must have SAI_ACL_ACTION_TYPE_COUNTER in its action type list.
+        builder.withAction(AclEntryActionToAclAction(SAI_ACL_ENTRY_ATTR_ACTION_COUNTER));
+
         if (field == ACL_TABLE_TYPE_MATCHES)
         {
             if (!parseAclTableTypeMatches(value, builder))
