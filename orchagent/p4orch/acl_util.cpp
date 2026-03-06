@@ -52,6 +52,21 @@ bool parseAclTableAppDbActionField(const std::string &aggr_actions_str, std::vec
                 {
                     action_with_param.p4_param_name = action_param_it.value();
                 }
+                auto object_type_it = action_item.find(kObjectType);
+                if (object_type_it != action_item.end() &&
+                    !object_type_it.value().is_null()) {
+                  if (aclObjectTypeLookup.find(object_type_it.value()) ==
+                      aclObjectTypeLookup.end()) {
+                    std::string ot = object_type_it.value();
+                    SWSS_LOG_ERROR(
+                        "Invalid ACL table definition action %s, unknown object type "
+                        "'%s'\n",
+                        aggr_actions_str.c_str(), ot.c_str());
+                    return false;
+                  } else {
+                    action_with_param.sai_object_type = object_type_it.value();
+                         }
+                 }
                 action_list->push_back(action_with_param);
             }
             else
@@ -552,6 +567,17 @@ ReturnCode buildAclTableDefinitionActionFieldValues(
       }
       action_with_param.action = rule_action_it->second;
       action_with_param.param_name = single_action.p4_param_name;
+      if (!single_action.sai_object_type.empty()) {
+        auto object_type_it =
+            aclObjectTypeLookup.find(single_action.sai_object_type);
+        if (object_type_it == aclObjectTypeLookup.end()) {
+          return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                 << "ACL table action " << single_action.sai_action
+                 << " specifies an unknown sai object type "
+                 << single_action.sai_object_type;
+        }
+        action_with_param.object_type = object_type_it->second;
+      }
       aggr_sai_actions.push_back(action_with_param);
       acl_action_type_set->insert(
           AclEntryActionToAclAction(rule_action_it->second));
