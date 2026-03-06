@@ -59,6 +59,7 @@ constexpr char *kSetIpNexthop = "set_ip_nexthop";
 constexpr char* kSetIpNexthopAndDisableRewrites =
     "set_ip_nexthop_and_disable_rewrites";
 constexpr char *kSetTunnelNexthop = "set_p2p_tunnel_encap_nexthop";
+constexpr char* kL2MulticastPassthrough = "l2_multicast_passthrough";
 constexpr char *kDrop = "drop";
 constexpr char *kTrap = "trap";
 constexpr char *kStage = "stage";
@@ -393,10 +394,6 @@ class KeyGenerator
         const std::string& multicast_group_id,
         const std::string& multicast_replica_port,
         const std::string& multicast_replica_instance);
-
-    static std::string generateMulticastRouterInterfaceRifKey(
-        const std::string& multicast_replica_port,
-        const swss::MacAddress& src_mac);
 
     static std::string generateWcmpGroupKey(const std::string &wcmp_group_id);
 

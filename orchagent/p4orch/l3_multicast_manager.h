@@ -27,17 +27,20 @@ struct P4MulticastRouterInterfaceEntry {
   std::string multicast_replica_port;
   std::string multicast_replica_instance;
   swss::MacAddress src_mac;
+  bool has_src_mac = false;
+  std::string action;
   std::string multicast_metadata;
-  sai_object_id_t router_interface_oid = SAI_OBJECT_TYPE_NULL;
 
   P4MulticastRouterInterfaceEntry() = default;
   P4MulticastRouterInterfaceEntry(const std::string& port,
                                   const std::string& instance,
                                   const swss::MacAddress& mac,
+				  const std::string& action,
                                   const std::string& metadata)
       : multicast_replica_port(port),
         multicast_replica_instance(instance),
         src_mac(mac),
+	action(action),
         multicast_metadata(metadata) {}
 };
 
@@ -57,35 +60,14 @@ struct P4Replica {
   }
 };
 
-// Table entries for replication_multicast_table.
-struct P4MulticastReplicationEntry {
-  std::string multicast_replication_key;  // Unique key of the entry.
-  std::string multicast_group_id;
-  std::string multicast_replica_port;
-  std::string multicast_replica_instance;
-  std::string multicast_metadata;
-  sai_object_id_t multicast_group_oid = SAI_OBJECT_TYPE_NULL;
-  sai_object_id_t multicast_group_member_oid = SAI_OBJECT_TYPE_NULL;
-
-  P4MulticastReplicationEntry() = default;
-  P4MulticastReplicationEntry(const std::string& group_id,
-                              const std::string& port,
-                              const std::string& instance,
-                              const std::string& metadata)
-      : multicast_group_id(group_id),
-        multicast_replica_port(port),
-        multicast_replica_instance(instance),
-        multicast_metadata(metadata) {}
-};
-
 // Table entries for replication_multicast_group_table.
 struct P4MulticastGroupEntry {
   std::string multicast_group_id;  // Also a unique key for the entry.
   std::vector<P4Replica> replicas;
   std::string multicast_metadata;
   std::string controller_metadata;
-  sai_object_id_t multicast_group_oid = SAI_OBJECT_TYPE_NULL;
-  std::unordered_map<std::string, sai_object_id_t> member_oids;
+  // Used as a quick lookup for what replicas are in use.
+  std::unordered_set<std::string> replica_keys;
 
   P4MulticastGroupEntry() = default;
   P4MulticastGroupEntry(const std::string& group_id,
@@ -97,12 +79,8 @@ struct P4MulticastGroupEntry {
 //   Multicast router interface key, P4MulticastRouterInterfaceEntry
 typedef std::unordered_map<std::string, P4MulticastRouterInterfaceEntry>
     P4MulticastRouterInterfaceTable;
-// To remove
-// P4MulticastReplicationTable: Replication key, P4MulticastReplicationEntry
-typedef std::unordered_map<std::string, P4MulticastReplicationEntry>
-    P4MulticastReplicationTable;
 
-// P4MulticastGroupTable: Replication key, P4MulticastGroupEntry
+// P4MulticastGroupTable: multicast group ID, P4MulticastGroupEntry
 typedef std::unordered_map<std::string, P4MulticastGroupEntry>
 P4MulticastGroupTable;
 
@@ -111,11 +89,9 @@ P4MulticastGroupTable;
 //   action set_src_mac to map output port and egress instance ID to a Ethernet
 //   source MAC address to use for replicated packets.  Entries in this table
 //   create router interface (RIF) objects in the ASIC.
-// * The new "packet replication" table replication_multicast_table, which
-//   is modeled as an action-less table, where the table key of
-//   multicast group ID, egress instance, and output port will create entries
-//   in the ASIC's packet replication table.  Packet replication defines a
-//   one-to-many mapping from multicast group IDs to replicas.
+// * The new "multicast group" table replication_multicast_table, which
+//   is modeled as an action-less table, where the table key is the multicast
+//   group ID and the field values indicate the replicas.
 
 class L3MulticastManager : public ObjectManagerInterface {
  public:
@@ -139,20 +115,13 @@ class L3MulticastManager : public ObjectManagerInterface {
   ReturnCode drainMulticastRouterInterfaceEntries(
       std::deque<swss::KeyOpFieldsValuesTuple>& router_interface_tuples);
 
-  // Drains entries associated with the multicast replication table.
-  ReturnCode drainMulticastReplicationEntries(
-      std::deque<swss::KeyOpFieldsValuesTuple>& replication_tuples);
+  // Drains entries associated with the multicast group table.
+  ReturnCode drainMulticastGroupEntries(
+      std::deque<swss::KeyOpFieldsValuesTuple>& group_entry_tuples);
 
   // Converts db table entry into P4MulticastRouterInterfaceEntry.
   ReturnCodeOr<P4MulticastRouterInterfaceEntry>
   deserializeMulticastRouterInterfaceEntry(
-      const std::string& key,
-      const std::vector<swss::FieldValueTuple>& attributes);
-
-  // To remove.
-  // Converts db table entry into P4MulticastReplicationEntry.
-  ReturnCodeOr<P4MulticastReplicationEntry>
-  deserializeMulticastReplicationEntry(
       const std::string& key,
       const std::vector<swss::FieldValueTuple>& attributes);
 
@@ -175,32 +144,26 @@ class L3MulticastManager : public ObjectManagerInterface {
   ReturnCode validateDelMulticastRouterInterfaceEntry(
       const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry);
 
-  // To remove.
-  // Performs multicast replication entry validation.
-  ReturnCode validateMulticastReplicationEntry(
-      const P4MulticastReplicationEntry& multicast_replication_entry,
-      const std::string& operation);
+  ReturnCode validateL3SetMulticastRouterInterfaceEntry(
+      const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
+      const P4MulticastRouterInterfaceEntry* router_interface_entry_ptr);
+  ReturnCode validateL3DelMulticastRouterInterfaceEntry(
+      const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
+      const P4MulticastRouterInterfaceEntry* router_interface_entry_ptr);
+  ReturnCode validateL2MulticastRouterInterfaceEntry(
+      const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
+      const P4MulticastRouterInterfaceEntry* router_interface_entry_ptr);
 
-  // Performs multicast replication entry validation.
+  // Performs multicast group entry validation.
   ReturnCode validateMulticastGroupEntry(
       const P4MulticastGroupEntry& multicast_group_entry,
       const std::string& operation);
 
-  // To remove.
-  // Performs multicast replication entry validation for SET command.
-  ReturnCode validateSetMulticastReplicationEntry(
-      const P4MulticastReplicationEntry& multicast_router_interface_entry);
-
-  // Performs multicast replication entry validation for SET command.
+  // Performs multicast group entry validation for SET command.
   ReturnCode validateSetMulticastGroupEntry(
       const P4MulticastGroupEntry& multicast_group_entry);
 
-  // To remove.
-  // Performs multicast replication entry validation for DEL command.
-  ReturnCode validateDelMulticastReplicationEntry(
-      const P4MulticastReplicationEntry& multicast_router_interface_entry);
-
-  // Performs multicast replication entry validation for DEL command.
+  // Performs multicast group entry validation for DEL command.
   ReturnCode validateDelMulticastGroupEntry(
       const P4MulticastGroupEntry& multicast_group_entry);
 
@@ -213,26 +176,25 @@ class L3MulticastManager : public ObjectManagerInterface {
       const std::deque<swss::KeyOpFieldsValuesTuple>& tuple_list,
       const std::string& op, bool update);
 
-  // Processes a list of entries of the same operation type for the replication
-  // multicast table.
+  // Processes a list of entries of the same operation type for the multicast
+  // group table.
   // Returns an overall status code.
   // This method also sends the response to the application.
-  ReturnCode processMulticastReplicationEntries(
-      std::vector<P4MulticastReplicationEntry>& entries,
+  ReturnCode processMulticastGroupEntries(
+      std::vector<P4MulticastGroupEntry>& entries,
       const std::deque<swss::KeyOpFieldsValuesTuple>& tuple_list,
       const std::string& op, bool update);
 
   // Wrapper around SAI setup and call, for easy mocking.
-  ReturnCode createRouterInterface(const std::string& rif_key,
-                                   P4MulticastRouterInterfaceEntry& entry,
+  ReturnCode createBridgePort(P4MulticastRouterInterfaceEntry& entry,
+                              sai_object_id_t* bridge_port_oid);
+  ReturnCode deleteBridgePort(const std::string& port,
+                              sai_object_id_t bridge_port_oid);
+  ReturnCode createRouterInterface(P4MulticastRouterInterfaceEntry& entry,
                                    sai_object_id_t* rif_oid);
   ReturnCode deleteRouterInterface(const std::string& rif_key,
                                    sai_object_id_t rif_oid);
 
-  // To remove.
-  // Wrapper around SAI setup and call to create multicast group.
-  ReturnCode createMulticastGroup(P4MulticastReplicationEntry& entry,
-                                  sai_object_id_t* mcast_group_oid);
   // Wrapper around SAI setup and call to create multicast group.
   ReturnCode createMulticastGroup(P4MulticastGroupEntry& entry,
                                   sai_object_id_t* mcast_group_oid);
@@ -240,55 +202,84 @@ class L3MulticastManager : public ObjectManagerInterface {
   ReturnCode deleteMulticastGroup(const std::string& multicast_group_id,
                                   sai_object_id_t mcast_group_oid);
 
-  // To remove.
-  // Wrapper around SAI setup and call to create multicast group members.
-  ReturnCode createMulticastGroupMember(
-      const P4MulticastReplicationEntry& entry, const sai_object_id_t rif_oid,
-      sai_object_id_t* mcast_group_member_oid);
-
   // Wrapper around SAI setup and call to create multicast group members.
   ReturnCode createMulticastGroupMember(
       const P4Replica& replica, const sai_object_id_t group_oid,
       const sai_object_id_t rif_oid, sai_object_id_t* mcast_group_member_oid);
 
+  // Wrapper around SAI setup and call to create L2 multicast group.
+  ReturnCode createL2MulticastGroup(P4MulticastGroupEntry& entry,
+                                    sai_object_id_t* mcast_group_oid);
+
+  ReturnCode deleteL2MulticastGroup(const std::string& multicast_group_id,
+                                    sai_object_id_t mcast_group_oid);
+
+  ReturnCode createL2MulticastGroupMember(
+      const P4Replica& replica, const sai_object_id_t group_oid,
+      const sai_object_id_t bridge_port_oid,
+      sai_object_id_t* mcast_group_member_oid);
+
   // Add new multicast router interface table entries.
   std::vector<ReturnCode> addMulticastRouterInterfaceEntries(
       std::vector<P4MulticastRouterInterfaceEntry>& entries);
+  ReturnCode addL3MulticastRouterInterfaceEntry(
+      P4MulticastRouterInterfaceEntry& entry);      
+  ReturnCode addL2MulticastRouterInterfaceEntry(
+      P4MulticastRouterInterfaceEntry& entry);
   // Update existing multicast router interface table entries.
   std::vector<ReturnCode> updateMulticastRouterInterfaceEntries(
       std::vector<P4MulticastRouterInterfaceEntry>& entries);
   // Delete existing multicast router interface table entries.
   std::vector<ReturnCode> deleteMulticastRouterInterfaceEntries(
       const std::vector<P4MulticastRouterInterfaceEntry>& entries);
-
-  // Add new multicast replication table entries.
-  std::vector<ReturnCode> addMulticastReplicationEntries(
-      std::vector<P4MulticastReplicationEntry>& entries);
-  // Update existing multicast replication table entries.
-  std::vector<ReturnCode> updateMulticastReplicationEntries(
-      std::vector<P4MulticastReplicationEntry>& entries);
-  // Delete existing multicast replication table entries.
-  std::vector<ReturnCode> deleteMulticastReplicationEntries(
-      const std::vector<P4MulticastReplicationEntry>& entries);
+  ReturnCode deleteL3MulticastRouterInterfaceEntry(
+      const P4MulticastRouterInterfaceEntry* entry);
+  ReturnCode deleteL2MulticastRouterInterfaceEntry(
+      const P4MulticastRouterInterfaceEntry* entry);
 
   // Add new multicast group table entries.
   std::vector<ReturnCode> addMulticastGroupEntries(
       std::vector<P4MulticastGroupEntry>& entries);
+  // Separate add logic for IP vs. L2 multicast groups.
+  ReturnCode addIpMulticastGroupEntry(P4MulticastGroupEntry& entry);
+  ReturnCode addL2MulticastGroupEntry(P4MulticastGroupEntry& entry);
+  // TODO : We need to create a temporary l2mc entry to force
+  // syncd to create the l2mc group SAI object.
+  ReturnCode activateL2MulticastGroup(const sai_object_id_t l2mc_group_oid);
 
+  // Update existing multicast group table entries.
+  std::vector<ReturnCode> updateMulticastGroupEntries(
+      std::vector<P4MulticastGroupEntry>& entries);
+  // Separate add logic for IP vs. L2 multicast groups.
+  ReturnCode updateIpMulticastGroupEntry(P4MulticastGroupEntry& entry,
+                                         P4MulticastGroupEntry* old_entry);
+  ReturnCode updateL2MulticastGroupEntry(P4MulticastGroupEntry& entry,
+                                         P4MulticastGroupEntry* old_entry);
   // Used during failure scenarios where we try to revert to the previous state.
   ReturnCode restoreDeletedGroupMembers(
       const std::vector<P4Replica>& deleted_replicas,
       const std::unordered_map<std::string, sai_object_id_t>& replica_rif_map,
       const sai_object_id_t group_oid, const std::string& error_message,
       P4MulticastGroupEntry* old_entry);
+
   // Delete existing multicast group table entries.
   std::vector<ReturnCode> deleteMulticastGroupEntries(
       const std::vector<P4MulticastGroupEntry>& entries);
+  // Separate add logic for IP vs. L2 multicast groups.
+  ReturnCode deleteIpMulticastGroupEntry(P4MulticastGroupEntry& entry);
+  ReturnCode deleteL2MulticastGroupEntry(P4MulticastGroupEntry& entry);
+
+  ReturnCode restoreDeletedL2GroupMembers(
+      const std::vector<P4Replica>& deleted_replicas,
+      const std::unordered_map<std::string, sai_object_id_t>&
+          replica_bridge_port_map,
+      const sai_object_id_t group_oid, const std::string& error_message,
+      P4MulticastGroupEntry* old_entry);
 
   std::string verifyMulticastRouterInterfaceState(
       const std::string& key,
       const std::vector<swss::FieldValueTuple>& tuple);
-  std::string verifyMulticastReplicationState(
+  std::string verifyMulticastGroupState(
       const std::string& key,
       const std::vector<swss::FieldValueTuple>& tuple);
 
@@ -296,29 +287,31 @@ class L3MulticastManager : public ObjectManagerInterface {
   std::string verifyMulticastRouterInterfaceStateCache(
       const P4MulticastRouterInterfaceEntry& app_db_entry,
       const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
-  // Verifies internal cache for a multicast replication entry.
-  std::string verifyMulticastReplicationStateCache(
-      const P4MulticastReplicationEntry& app_db_entry,
-      const P4MulticastReplicationEntry* multicast_replication_entry);
+  // Verifies internal cache for a multicast group entry.
+  std::string verifyMulticastGroupStateCache(
+      const P4MulticastGroupEntry& app_db_entry,
+      const P4MulticastGroupEntry* multicast_group_entry);
 
   // Verifies ASIC DB for a multicast router interface entry.
   std::string verifyMulticastRouterInterfaceStateAsicDb(
       const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
-  // Verifies ASIC DB for a multicast replication entry.
-  std::string verifyMulticastReplicationStateAsicDb(
-      const P4MulticastReplicationEntry* multicast_replication_entry);
+  std::string verifyL3MulticastRouterInterfaceStateAsicDb(
+      const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
+  std::string verifyL2MulticastRouterInterfaceStateAsicDb(
+      const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
+  // Verifies ASIC DB for a multicast group entry.
+  std::string verifyMulticastGroupStateAsicDb(
+      const P4MulticastGroupEntry* multicast_group_entry);
+  std::string verifyIpMulticastGroupStateAsicDb(
+      const P4MulticastGroupEntry* multicast_group_entry);
+  std::string verifyL2MulticastGroupStateAsicDb(
+      const P4MulticastGroupEntry* multicast_group_entry);
 
   // Gets the internal cached multicast router interface entry.
   // Return nullptr if corresponding multicast router interface entry is not
   // cached.
   P4MulticastRouterInterfaceEntry* getMulticastRouterInterfaceEntry(
       const std::string& multicast_router_interface_entry_key);
-
-  // To remove.
-  // Gets the internal cached multicast replication entry.
-  // Return nullptr if corresponding multicast replication entry is not cached.
-  P4MulticastReplicationEntry* getMulticastReplicationEntry(
-      const std::string& multicast_replication_key);
 
   // Gets the internal cached multicast group entry.
   // Return nullptr if corresponding multicast group entry is not cached.
@@ -332,39 +325,31 @@ class L3MulticastManager : public ObjectManagerInterface {
   // bookkeeping.
   sai_object_id_t getRifOid(
       const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
-  // To remove.
-  // Fetches the RIF OID that will be used by a given multicast replication
-  // entry.  This would be the value used by the replication group member.
-  sai_object_id_t getRifOid(
-      const P4MulticastReplicationEntry* multicast_replication_entry);
 
   // Fetches the RIF OID that will be used by a given multicast replica.
   // This would be the value used by the group member.
   sai_object_id_t getRifOid(const P4Replica& replica);
 
+  // Fetches the Bridge port OID that will be used by a given L2 multicast
+  // replica.
+  sai_object_id_t getBridgePortOid(const P4Replica& replica);
+
+  // Validates that replicas to be programmed have an associated RIF object
+  // (if they are IPMC replicas) or bridge port objects (if they are L2
+  // replicas).  If a replica is missing an object or if the replicas are not
+  // consistent, returns an invalid status.  Otherwise, returns a Boolean
+  // indicating if the replicas are for IPMC (true) or if the replicas are for
+  // L2 (false).
+  ReturnCodeOr<bool> validateReplicas(const P4MulticastGroupEntry& entry);
+
+  // Fetches a bridge port OID for a port that will be used for L2 multicast
+  // group members.
+  sai_object_id_t getBridgePortOid(
+      const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
+
   // Internal cache of entries.
   P4MulticastRouterInterfaceTable m_multicastRouterInterfaceTable;
-  // To remove.
-  P4MulticastReplicationTable m_multicastReplicationTable;
   P4MulticastGroupTable m_multicastGroupEntryTable;
-
-  // Several maps to keep track of entry relationships.
-
-  // Egress port / router interface key -> RIF OID.
-  // Note that we ignore multicast_replica_instance, because that is for
-  // controller bookkeeping.
-  std::unordered_map<std::string, sai_object_id_t> m_rifOids;
-  // RIF OIDs -> which router interface entries are using it.
-  std::unordered_map<sai_object_id_t,
-                     std::vector<P4MulticastRouterInterfaceEntry>>
-      m_rifOidToRouterInterfaceEntries;
-  // RIF OIDs -> multicast group members using the RIF.
-  std::unordered_map<sai_object_id_t, std::unordered_set<std::string>>
-      m_rifOidToMulticastGroupMembers;
-  // To remove.
-  // multicast group IDs -> set of member entries (P4MulticastGroupEntry keys)
-  std::unordered_map<std::string, std::unordered_set<std::string>>
-      m_multicastGroupMembers;
 
   P4OidMapper* m_p4OidMapper;
   VRFOrch* m_vrfOrch;
