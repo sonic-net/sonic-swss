@@ -29,6 +29,7 @@
 #include "p4orch/wcmp_manager.h"
 #include "response_publisher.h"
 #include "return_code.h"
+#include "selectableevent.h"
 #include "vrforch.h"
 #include "zmqorch.h"
 
@@ -70,6 +71,7 @@ class P4Orch : public ZmqOrch
     void doTask(swss::NotificationConsumer &consumer);
     ObjectManagerInterface* findManager(const std::string key,
                                         std::string& table_name);
+    void doTask(swss::SelectableEvent& event);
     void enqueue(const swss::KeyOpFieldsValuesTuple& entry);
     ReturnCode drain();
     void handlePortStatusChangeNotification(const std::string &op, const std::string &data);
@@ -79,6 +81,7 @@ class P4Orch : public ZmqOrch
 
     swss::SelectableTimer *m_aclCounterStatsTimer;
     swss::SelectableTimer *m_extCounterStatsTimer;
+    swss::SelectableEvent* m_watchportEvent;
     P4OidMapper m_p4OidMapper;
     std::unique_ptr<TablesDefnManager> m_tablesDefnManager;
     std::unique_ptr<RouterInterfaceManager> m_routerIntfManager;
