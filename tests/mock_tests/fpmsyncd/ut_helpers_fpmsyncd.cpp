@@ -570,6 +570,7 @@ namespace ut_fpmsyncd
         fib::g_addr rmap_src_in;
         std::uint8_t weight_in = 1;
         std::uint8_t flags_in = 0;
+        std::uint32_t nhg_flags_in = 1024;
         bool has_srv6 = false;
         bool has_seg6_segs = false;
         fib::nexthop_srv6 *nh_srv6_in = NULL;
@@ -579,7 +580,7 @@ namespace ut_fpmsyncd
         std::vector<uint32_t> depends_in;
         NextHopGroupFull nhg = NextHopGroupFull(id_in, key_in, type_in, vrf_id_in, ifindex_t_in, ifname_in, depends_in, dependents_in,
                                                 label_type_in, bh_type_in, gateway_in, src_in, rmap_src_in, weight_in,
-                                                flags_in, has_srv6, has_seg6_segs, nh_srv6_in, nh_seg6_segs_in, nh_segs_in);
+                                                flags_in, nhg_flags_in, has_srv6, has_seg6_segs, nh_srv6_in, nh_seg6_segs_in, nh_segs_in);
         return nhg;
     }
 
@@ -601,6 +602,7 @@ namespace ut_fpmsyncd
         fib::g_addr rmap_src_in;
         std::uint8_t weight_in = 1;
         std::uint8_t flags_in = 0;
+        std::uint32_t nhg_flags_in = 1024;
         bool has_srv6 = false;
         bool has_seg6_segs = false;
         fib::nexthop_srv6 *nh_srv6_in = NULL;
@@ -610,7 +612,7 @@ namespace ut_fpmsyncd
         std::vector<uint32_t> depends_in;
         NextHopGroupFull nhg = NextHopGroupFull(id_in, key_in, type_in, vrf_id_in, ifindex_t_in, ifname_in, depends_in, dependents_in,
                                                 label_type_in, bh_type_in, gateway_in, src_in, rmap_src_in, weight_in,
-                                                flags_in, has_srv6, has_seg6_segs, nh_srv6_in, nh_seg6_segs_in, nh_segs_in);
+                                                flags_in, nhg_flags_in, has_srv6, has_seg6_segs, nh_srv6_in, nh_seg6_segs_in, nh_segs_in);
         return nhg;
     }
 
@@ -619,6 +621,7 @@ namespace ut_fpmsyncd
         std::call_once(srand_flag, srand_init);
         std::uint32_t id_in = id;
         std::uint32_t key_in = rand() % 10000 + 1;
+        std::uint32_t nhg_flags_in = 1024;
         std::vector<nh_grp_full> nh_grp_full_list_in;
         std::vector<uint32_t> depends_in;
         std::vector<uint32_t> dependents_in;
@@ -631,7 +634,7 @@ namespace ut_fpmsyncd
             nh_grp_full_list_in.push_back(ngf);
         }
 
-        NextHopGroupFull nhg = NextHopGroupFull(id_in, key_in, nh_grp_full_list_in, depends, dependents);
+        NextHopGroupFull nhg = NextHopGroupFull(id_in, key_in, nhg_flags_in, nh_grp_full_list_in, depends, dependents);
         return nhg;
     }
 
@@ -653,6 +656,7 @@ namespace ut_fpmsyncd
         fib::g_addr rmap_src_in;
         std::uint8_t weight_in = 1;
         std::uint8_t flags_in = 0;
+        std::uint32_t nhg_flags_in = 1024;
         bool has_srv6 = true;
         bool has_seg6_segs = true;
         fib::nexthop_srv6 *nh_srv6_in = new fib::nexthop_srv6();
@@ -666,7 +670,7 @@ namespace ut_fpmsyncd
         std::vector<uint32_t> depends_in;
         NextHopGroupFull nhg = NextHopGroupFull(id_in, key_in, type_in, vrf_id_in, ifindex_t_in, ifname_in, depends_in, dependents_in,
                                                 label_type_in, bh_type_in, gateway_in, src_in, rmap_src_in, weight_in,
-                                                flags_in, has_srv6, has_seg6_segs, nh_srv6_in, nh_seg6_segs_in, nh_segs_in);
+                                                flags_in, nhg_flags_in, has_srv6, has_seg6_segs, nh_srv6_in, nh_seg6_segs_in, nh_segs_in);
         return nhg;
     }
     vector<string> splitResults(string result, string delimiter)
