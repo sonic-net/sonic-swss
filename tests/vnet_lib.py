@@ -518,6 +518,14 @@ def check_state_db_routes(dvs, vnet, prefix, endpoints):
         assert fvs['state'] == 'inactive'
 
 
+def check_vnet_route_exists(dvs, vnet, prefix):
+    state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+    tbl =  swsscommon.Table(state_db, "VNET_ROUTE_TUNNEL_TABLE")
+    
+    status, fvs = tbl.get(vnet + '|' + prefix)
+    assert status, f"Route {vnet}|{prefix} not found in STATE_DB"
+
+
 def check_remove_state_db_routes(dvs, vnet, prefix):
     state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
     tbl =  swsscommon.Table(state_db, "VNET_ROUTE_TUNNEL_TABLE")

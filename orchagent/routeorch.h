@@ -160,9 +160,11 @@ struct RouteBulkContext
     {
     }
 
-    // Disable any copy constructors
+    // Disable copy but allow move
     RouteBulkContext(const RouteBulkContext&) = delete;
-    RouteBulkContext(RouteBulkContext&&) = delete;
+    RouteBulkContext& operator=(const RouteBulkContext&) = delete;
+    RouteBulkContext(RouteBulkContext&&) = default;
+    RouteBulkContext& operator=(RouteBulkContext&&) = default;
 
     void clear()
     {
@@ -271,6 +273,10 @@ public:
     bool checkNextHopGroupCount();
     const RouteTables& getSyncdRoutes() const { return m_syncdRoutes; }
 
+    EntityBulker<sai_route_api_t>           gRouteBulker;
+    EntityBulker<sai_mpls_api_t>            gLabelRouteBulker;
+    ObjectBulker<sai_next_hop_group_api_t>  gNextHopGroupMemberBulker;
+
 private:
     SwitchOrch *m_switchOrch;
     NeighOrch *m_neighOrch;
@@ -301,10 +307,6 @@ private:
     std::vector<NextHopGroupKey> m_bulkSrv6NhgReducedVec;
 
     NextHopObserverTable m_nextHopObservers;
-
-    EntityBulker<sai_route_api_t>           gRouteBulker;
-    EntityBulker<sai_mpls_api_t>            gLabelRouteBulker;
-    ObjectBulker<sai_next_hop_group_api_t>  gNextHopGroupMemberBulker;
 
     void addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
 
