@@ -26,6 +26,7 @@
 #include "p4orch/wcmp_manager.h"
 #include "response_publisher.h"
 #include "return_code.h"
+#include "selectableevent.h"
 #include "vrforch.h"
 
 static const std::map<std::string, std::string> FixedTablesMap = {
@@ -61,6 +62,7 @@ class P4Orch : public Orch
     void doTask(Consumer &consumer);
     void doTask(swss::SelectableTimer &timer);
     void doTask(swss::NotificationConsumer &consumer);
+    void doTask(swss::SelectableEvent& event);
     void enqueue(const swss::KeyOpFieldsValuesTuple& entry);
     ReturnCode drain(const std::string& op);
     void handleP4rtNotification(const std::vector<swss::FieldValueTuple>& values);
@@ -72,6 +74,7 @@ class P4Orch : public Orch
 
     swss::SelectableTimer *m_aclCounterStatsTimer;
     swss::SelectableTimer *m_extCounterStatsTimer;
+    swss::SelectableEvent* m_watchportEvent;
     P4OidMapper m_p4OidMapper;
     std::unique_ptr<TablesDefnManager> m_tablesDefnManager;
     std::unique_ptr<RouterInterfaceManager> m_routerIntfManager;

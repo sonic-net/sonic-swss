@@ -7,7 +7,9 @@ import l3
 import test_vrf
 import time
 
+
 class TestP4RTL3(object):
+
     def _set_up(self, dvs):
         self._p4rt_router_intf_obj = l3.P4RtRouterInterfaceWrapper()
         self._p4rt_gre_tunnel_obj = l3.P4RtGreTunnelWrapper()
@@ -1805,6 +1807,300 @@ class TestP4RTL3(object):
         assert len(wcmp_group_entries) == (
             self._p4rt_wcmp_group_obj.get_original_asic_db_group_entries_count()
         )
+
+        # Delete next hop.
+        self._p4rt_nexthop_obj.remove_app_db_entry(nexthop_key)
+
+        # Delete neighbor.
+        self._p4rt_neighbor_obj.remove_app_db_entry(neighbor_key)
+
+        # Delete router interface.
+        self._p4rt_router_intf_obj.remove_app_db_entry(router_intf_key)
+
+    def test_LargeWatchportOperations(self, dvs, testlog):
+        # Initialize L3 objects and database connectors.
+        self._set_up(dvs)
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+
+        # Maintain original WCMP group entries for ASIC DB.
+        original_wcmp_group_entries = util.get_keys(
+            self._p4rt_wcmp_group_obj.asic_db,
+            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
+        )
+        db_list = (
+            (self._p4rt_nexthop_obj.asic_db,
+             self._p4rt_nexthop_obj.ASIC_DB_TBL_NAME),
+        )
+        self._p4rt_nexthop_obj.get_original_redis_entries(db_list)
+
+        # Bring up the port.
+        port_name = "Ethernet0"
+        if_name = "eth0"
+        util.initialize_interface(dvs, port_name, "10.0.0.0/31")
+        util.set_interface_status(dvs, if_name, "up")
+
+        # Create router interface.
+        (
+            router_interface_id,
+            router_intf_key,
+            attr_list,
+        ) = self._p4rt_router_intf_obj.create_router_interface()
+        self._p4rt_router_intf_obj.verify_response(
+            router_intf_key, attr_list, "SWSS_RC_SUCCESS"
+        )
+
+        # Create neighbor.
+        neighbor_id, neighbor_key, attr_list = self._p4rt_neighbor_obj.create_neighbor()
+        self._p4rt_neighbor_obj.verify_response(
+            neighbor_key, attr_list, "SWSS_RC_SUCCESS"
+        )
+
+        # Create nexthop.
+        nexthop_id, nexthop_key, attr_list = self._p4rt_nexthop_obj.create_next_hop()
+        self._p4rt_nexthop_obj.verify_response(
+            nexthop_key, attr_list, "SWSS_RC_SUCCESS"
+        )
+        # Get nexthop_oid of newly created nexthop.
+        nexthop_oid = self._p4rt_nexthop_obj.get_newly_created_nexthop_oid()
+        assert nexthop_oid is not None
+
+        # Create 40 wcmp groups with one member.
+        # Watchport operations will complete the 40 group update in two iterations.
+        wcmp_group_keys = []
+        for i in range(40):
+            wcmp_group_id = "group-" + str(i)
+            (
+                wcmp_group_id,
+                wcmp_group_key,
+                attr_list,
+            ) = self._p4rt_wcmp_group_obj.create_wcmp_group(wcmp_group_id=wcmp_group_id, watch_port=port_name)
+            self._p4rt_wcmp_group_obj.verify_response(
+                wcmp_group_key, attr_list, "SWSS_RC_SUCCESS"
+            )
+            wcmp_group_keys.append(wcmp_group_key)
+
+        # Query ASIC database for wcmp group entries.
+        wcmp_group_entries = util.get_keys(
+            self._p4rt_wcmp_group_obj.asic_db,
+            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
+        )
+        assert len(wcmp_group_entries) == len(original_wcmp_group_entries) + 40
+
+        # Query ASIC database for newly created wcmp groups.
+        for group in wcmp_group_entries:
+            if group not in original_wcmp_group_entries:
+                (status, fvs) = util.get_key(
+                    self._p4rt_wcmp_group_obj.asic_db,
+                    self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
+                    group,
+                )
+                assert status == True
+                asic_attr_list = [
+                    (
+                        self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_TYPE,
+                        (
+                            self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS
+                        ),
+                    ),
+                    (
+                        self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_LIST,
+                        "1:" + nexthop_oid,
+                    ),
+                    (
+                        self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
+                        "1:" + str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
+                    )
+                ]
+                util.verify_attr(fvs, asic_attr_list)
+
+        # Bring down the port.
+        util.set_interface_status(dvs, if_name)
+        time.sleep(3)
+
+        # Expect 40 groups to be updated in ASIC DB.
+        for group in wcmp_group_entries:
+            if group not in original_wcmp_group_entries:
+                (status, fvs) = util.get_key(
+                    self._p4rt_wcmp_group_obj.asic_db,
+                    self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
+                    group,
+                )
+                assert status == True
+                asic_attr_list = [
+                    (
+                        self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_TYPE,
+                        (
+                            self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS
+                        ),
+                    ),
+                    (
+                        self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_LIST,
+                        "0:null",
+                    ),
+                    (
+                        self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
+                        "0:null",
+                    )
+                ]
+                util.verify_attr(fvs, asic_attr_list)
+
+        # Delete the 40 wcmp groups
+        for wcmp_group_key in wcmp_group_keys:
+            self._p4rt_wcmp_group_obj.remove_app_db_entry(wcmp_group_key)
+
+        # Delete next hop.
+        self._p4rt_nexthop_obj.remove_app_db_entry(nexthop_key)
+
+        # Delete neighbor.
+        self._p4rt_neighbor_obj.remove_app_db_entry(neighbor_key)
+
+        # Delete router interface.
+        self._p4rt_router_intf_obj.remove_app_db_entry(router_intf_key)
+
+    def test_LargeWatchportOperationsWithRequests(self, dvs, testlog):
+        # Initialize L3 objects and database connectors.
+        self._set_up(dvs)
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+
+        # Maintain original WCMP group entries for ASIC DB.
+        original_wcmp_group_entries = util.get_keys(
+            self._p4rt_wcmp_group_obj.asic_db,
+            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
+        )
+        db_list = (
+            (self._p4rt_nexthop_obj.asic_db,
+             self._p4rt_nexthop_obj.ASIC_DB_TBL_NAME),
+        )
+        self._p4rt_nexthop_obj.get_original_redis_entries(db_list)
+
+        # Bring up the port.
+        port_name = "Ethernet0"
+        if_name = "eth0"
+        util.initialize_interface(dvs, port_name, "10.0.0.0/31")
+        util.set_interface_status(dvs, if_name, "up")
+
+        # Create router interface.
+        (
+            router_interface_id,
+            router_intf_key,
+            attr_list,
+        ) = self._p4rt_router_intf_obj.create_router_interface()
+        self._p4rt_router_intf_obj.verify_response(
+            router_intf_key, attr_list, "SWSS_RC_SUCCESS"
+        )
+
+        # Create neighbor.
+        neighbor_id, neighbor_key, attr_list = self._p4rt_neighbor_obj.create_neighbor()
+        self._p4rt_neighbor_obj.verify_response(
+            neighbor_key, attr_list, "SWSS_RC_SUCCESS"
+        )
+
+        # Create nexthop.
+        nexthop_id, nexthop_key, attr_list = self._p4rt_nexthop_obj.create_next_hop()
+        self._p4rt_nexthop_obj.verify_response(
+            nexthop_key, attr_list, "SWSS_RC_SUCCESS"
+        )
+        # Get nexthop_oid of newly created nexthop.
+        nexthop_oid = self._p4rt_nexthop_obj.get_newly_created_nexthop_oid()
+        assert nexthop_oid is not None
+
+        # Create 40 wcmp groups with one member.
+        # Watchport operations will complete the 40 group update in two iterations.
+        wcmp_group_keys = []
+        for i in range(40):
+            wcmp_group_id = "group-" + str(i)
+            (
+                wcmp_group_id,
+                wcmp_group_key,
+                attr_list,
+            ) = self._p4rt_wcmp_group_obj.create_wcmp_group(wcmp_group_id=wcmp_group_id, watch_port=port_name)
+            self._p4rt_wcmp_group_obj.verify_response(
+                wcmp_group_key, attr_list, "SWSS_RC_SUCCESS"
+            )
+            wcmp_group_keys.append(wcmp_group_key)
+
+        # Query ASIC database for wcmp group entries.
+        wcmp_group_entries = util.get_keys(
+            self._p4rt_wcmp_group_obj.asic_db,
+            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
+        )
+        assert len(wcmp_group_entries) == len(original_wcmp_group_entries) + 40
+
+        # Query ASIC database for newly created wcmp groups.
+        for group in wcmp_group_entries:
+            if group not in original_wcmp_group_entries:
+                (status, fvs) = util.get_key(
+                    self._p4rt_wcmp_group_obj.asic_db,
+                    self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
+                    group,
+                )
+                assert status == True
+                asic_attr_list = [
+                    (
+                        self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_TYPE,
+                        (
+                            self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS
+                        ),
+                    ),
+                    (
+                        self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_LIST,
+                        "1:" + nexthop_oid,
+                    ),
+                    (
+                        self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
+                        "1:" + str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
+                    )
+                ]
+                util.verify_attr(fvs, asic_attr_list)
+
+        # Bring down the port.
+        util.set_interface_status(dvs, if_name)
+
+        # Program 30 of the groups
+        for i in range(30):
+            wcmp_group_id = "group-" + str(i)
+            action = self._p4rt_wcmp_group_obj.DEFAULT_ACTION
+            action1 = {
+                self._p4rt_wcmp_group_obj.ACTION_FIELD: action,
+            }
+            actions = [action1]
+            attr_list = [
+                (self._p4rt_wcmp_group_obj.ACTIONS_FIELD, json.dumps(actions))]
+            wcmp_group_key = self._p4rt_wcmp_group_obj.generate_app_db_key(
+                wcmp_group_id)
+            self._p4rt_wcmp_group_obj.set_app_db_entry(
+                wcmp_group_key, attr_list)
+
+        # Expect 40 groups to be updated in ASIC DB.
+        for group in wcmp_group_entries:
+            if group not in original_wcmp_group_entries:
+                (status, fvs) = util.get_key(
+                    self._p4rt_wcmp_group_obj.asic_db,
+                    self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
+                    group,
+                )
+                assert status == True
+                asic_attr_list = [
+                    (
+                        self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_TYPE,
+                        (
+                            self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS
+                        ),
+                    ),
+                    (
+                        self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_LIST,
+                        "0:null",
+                    ),
+                    (
+                        self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
+                        "0:null",
+                    )
+                ]
+                util.verify_attr(fvs, asic_attr_list)
+
+        # Delete the 40 wcmp groups
+        for wcmp_group_key in wcmp_group_keys:
+            self._p4rt_wcmp_group_obj.remove_app_db_entry(wcmp_group_key)
 
         # Delete next hop.
         self._p4rt_nexthop_obj.remove_app_db_entry(nexthop_key)
