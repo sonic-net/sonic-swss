@@ -444,6 +444,11 @@ void BufferMgr::doPortQosTableTask(Consumer &consumer)
                 doSpeedUpdateTask(port_name);
             }
         }
+        else if (op == DEL_COMMAND)
+        {
+            SWSS_LOG_INFO("Port %s removed from PORT_QOS_MAP, clearing PFC status", port_name.c_str());
+            m_portPfcStatus.erase(port_name);
+        }
         it = consumer.m_toSync.erase(it);
     }
 
