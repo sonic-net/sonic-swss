@@ -955,47 +955,35 @@ void HFTelProfile::updateTemplates(sai_object_id_t tam_tel_type_obj)
         SWSS_LOG_THROW("The object type is not found");
     }
 
-    // Estimate the template size
-    auto counters = m_sai_tam_counter_subscription_objs.find(object_type);
-    if (counters == m_sai_tam_counter_subscription_objs.end())
-    {
-        SWSS_LOG_THROW("The counter subscription object is not found");
-    }
-    size_t counters_count = 0;
-    for (const auto &item : counters->second)
-    {
-        counters_count += item.second.size();
-    }
-
-    const size_t COUNTER_SIZE (8LLU);
-    const size_t IPFIX_TEMPLATE_MAX_SIZE (0xffffLLU);
-    const size_t IPFIX_HEADER_SIZE (16LLU);
-    const size_t IPFIX_TEMPLATE_METADATA_SIZE (12LLU);
-    const size_t IPFIX_TEMPLATE_MAX_STATS_COUNT (((IPFIX_TEMPLATE_MAX_SIZE - IPFIX_HEADER_SIZE - IPFIX_TEMPLATE_METADATA_SIZE) / COUNTER_SIZE) - 1LLU);
-    size_t estimated_template_size = (counters_count / IPFIX_TEMPLATE_MAX_STATS_COUNT + 1) * IPFIX_TEMPLATE_MAX_SIZE;
-
-    vector<uint8_t> buffer(estimated_template_size, 0);
-
+    // Query the required buffer size first by passing count=0 and list=nullptr,
+    // then allocate and fetch the actual data.
     sai_attribute_t attr;
     attr.id = SAI_TAM_TEL_TYPE_ATTR_IPFIX_TEMPLATES;
-    attr.value.u8list.count = static_cast<uint32_t>(buffer.size());
-    attr.value.u8list.list = buffer.data();
+    attr.value.u8list.count = 0;
+    attr.value.u8list.list = nullptr;
 
     auto status = sai_tam_api->get_tam_tel_type_attribute(tam_tel_type_obj, 1, &attr);
-    if (status == SAI_STATUS_BUFFER_OVERFLOW)
+    if (status != SAI_STATUS_SUCCESS && status != SAI_STATUS_BUFFER_OVERFLOW)
     {
-        buffer.resize(attr.value.u8list.count);
-        attr.value.u8list.list = buffer.data();
-        status = sai_tam_api->get_tam_tel_type_attribute(tam_tel_type_obj, 1, &attr);
-    }
-
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_THROW("Failed to get the TAM telemetry type object %s attributes: %d",
+        SWSS_LOG_THROW("Failed to query the IPFIX template size for TAM telemetry type object %s: %d",
                        sai_serialize_object_id(tam_tel_type_obj).c_str(), status);
     }
 
-    buffer.resize(attr.value.u8list.count);
+    vector<uint8_t> buffer;
+    if (status == SAI_STATUS_BUFFER_OVERFLOW && attr.value.u8list.count > 0)
+    {
+        buffer.resize(attr.value.u8list.count, 0);
+        attr.value.u8list.list = buffer.data();
+        status = sai_tam_api->get_tam_tel_type_attribute(tam_tel_type_obj, 1, &attr);
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_THROW("Failed to get the TAM telemetry type object %s attributes: %d",
+                           sai_serialize_object_id(tam_tel_type_obj).c_str(), status);
+        }
+
+        buffer.resize(attr.value.u8list.count);
+    }
 
     m_sai_tam_tel_type_templates[object_type] = move(buffer);
 }
