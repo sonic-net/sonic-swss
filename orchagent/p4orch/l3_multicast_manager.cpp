@@ -449,7 +449,7 @@ L3MulticastManager::deserializeMulticastRouterInterfaceEntry(
     const auto& field = fvField(it);
     const auto& value = fvValue(it);
     if (field == p4orch::kAction) {
-      if (value != p4orch::kSetSrcMac) {
+      if (value != p4orch::kSetMulticastSrcMac) {
         return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
                << "Unexpected action " << QuotedVar(value) << " in "
                << APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME;

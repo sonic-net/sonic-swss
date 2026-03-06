@@ -556,7 +556,7 @@ TEST_F(L3MulticastManagerTest, DeserializeMulticastRouterInterfaceEntryTest) {
                     R"("match/multicast_replica_instance":"0x0"})";
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
   attributes.push_back(swss::FieldValueTuple{
@@ -611,7 +611,7 @@ TEST_F(L3MulticastManagerTest,
                     R"("match/multicast_replica_instance":"0x0"})";
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
   attributes.push_back(swss::FieldValueTuple{"extra_attr", "extra_attr_val"});
@@ -1403,7 +1403,7 @@ TEST_F(L3MulticastManagerTest, DrainMulticastRouterInterfaceEntryAdd) {
 
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac2});
   attributes.push_back(
@@ -1453,7 +1453,7 @@ TEST_F(L3MulticastManagerTest,
 
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
   attributes.push_back(
@@ -1522,7 +1522,7 @@ TEST_F(L3MulticastManagerTest,
 
   std::vector<swss::FieldValueTuple> attributes1;
   attributes1.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
   attributes1.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
   attributes1.push_back(
@@ -1530,7 +1530,7 @@ TEST_F(L3MulticastManagerTest,
 
   std::vector<swss::FieldValueTuple> attributes2;
   attributes2.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
   attributes2.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac2});
   attributes2.push_back(
@@ -1585,7 +1585,7 @@ TEST_F(L3MulticastManagerTest, DrainMulticastRouterInterfaceEntryInvalidAdd) {
 
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
 
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac2});
@@ -1620,7 +1620,7 @@ TEST_F(L3MulticastManagerTest,
 
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac2});
   attributes.push_back(
@@ -1654,7 +1654,7 @@ TEST_F(L3MulticastManagerTest,
 
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac2});
   attributes.push_back(
@@ -1701,7 +1701,7 @@ TEST_F(L3MulticastManagerTest,
   // Enqueue entry for create operation.
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac2});
   attributes.push_back(
@@ -1726,7 +1726,7 @@ TEST_F(L3MulticastManagerTest,
 
   std::vector<swss::FieldValueTuple> attributes2;
   attributes2.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
   attributes2.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac3});
   attributes2.push_back(
@@ -1764,7 +1764,7 @@ TEST_F(L3MulticastManagerTest,
 
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
 
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
@@ -1791,7 +1791,7 @@ TEST_F(L3MulticastManagerTest, DrainFirstEntryFailurePublishesCorrectNumber) {
 
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac2});
   attributes.push_back(
@@ -1968,7 +1968,7 @@ TEST_F(L3MulticastManagerTest, VerifyStateMulticastRouterInterfaceTestSuccess) {
                            kTableKeyDelimiter + appl_db_key;
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
   attributes.push_back(swss::FieldValueTuple{
       prependParamField(p4orch::kSrcMac), kSrcMac1});
   attributes.push_back(
@@ -2013,7 +2013,7 @@ TEST_F(L3MulticastManagerTest,
 
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
   // Use wrong source mac so state cache fails.
   attributes.push_back(swss::FieldValueTuple{
       prependParamField(p4orch::kSrcMac), kSrcMac2});
@@ -2094,7 +2094,7 @@ TEST_F(L3MulticastManagerTest,
                            kTableKeyDelimiter + appl_db_key;
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
   attributes.push_back(swss::FieldValueTuple{
       prependParamField(p4orch::kSrcMac), kSrcMac1});
   attributes.push_back(
@@ -2954,7 +2954,7 @@ TEST_F(L3MulticastManagerTest, DrainMulticastReplicationEntryAddSuccestTest) {
       kTableKeyDelimiter + mac_match_key;
   std::vector<swss::FieldValueTuple> mac_attributes;
   mac_attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
   mac_attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
   mac_attributes.push_back(
@@ -3137,7 +3137,7 @@ TEST_F(L3MulticastManagerTest,
       kTableKeyDelimiter + mac_match_key2;
   std::vector<swss::FieldValueTuple> mac_attributes;
   mac_attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
   mac_attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
   mac_attributes.push_back(
@@ -3265,7 +3265,7 @@ TEST_F(L3MulticastManagerTest,
       kTableKeyDelimiter + mac_match_key3;
   std::vector<swss::FieldValueTuple> mac_attributes;
   mac_attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
   mac_attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
   mac_attributes.push_back(
@@ -3441,7 +3441,7 @@ TEST_F(L3MulticastManagerTest,
       kTableKeyDelimiter + mac_match_key3;
   std::vector<swss::FieldValueTuple> mac_attributes;
   mac_attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
   mac_attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
   mac_attributes.push_back(
@@ -3573,7 +3573,7 @@ TEST_F(L3MulticastManagerTest,
       kTableKeyDelimiter + mac_match_key3;
   std::vector<swss::FieldValueTuple> mac_attributes;
   mac_attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
   mac_attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
   mac_attributes.push_back(
@@ -3691,7 +3691,7 @@ TEST_F(L3MulticastManagerTest, DrainUnknownTable) {
       std::string(APP_P4RT_TUNNEL_TABLE_NAME) + kTableKeyDelimiter + match_key;
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac2});
   attributes.push_back(
@@ -3717,7 +3717,7 @@ TEST_F(L3MulticastManagerTest, DrainUnknownFirstTable) {
       kTableKeyDelimiter + match_key;
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac2});
   attributes.push_back(

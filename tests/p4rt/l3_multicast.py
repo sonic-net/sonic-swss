@@ -30,7 +30,7 @@ class P4RtL3MulticastRouterInterfaceWrapper(util.DBInterface):
   DEFAULT_PORT_ID = "Ethernet8"
   DEFAULT_INSTANCE = "0"
   DEFAULT_SRC_MAC = "00:11:22:33:44:55"
-  DEFAULT_ACTION = "set_src_mac"
+  DEFAULT_ACTION = "set_multicast_src_mac"
 
   def generate_app_db_key(self, multicast_replica_port,
                           multicast_replica_instance):
