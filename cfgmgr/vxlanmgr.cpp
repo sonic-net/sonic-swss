@@ -36,6 +36,8 @@ extern MacAddress gMacAddress;
 #define VLAN "vlan"
 #define DST_IP "dst_ip"
 #define SOURCE_VTEP "source_vtep"
+#define VXLAN_DELETE_BATCH_SIZE_INITIAL 1
+#define VXLAN_DELETE_BATCH_SIZE_MAX 500
 
 static std::string getVxlanName(const swss::VxlanMgr::VxlanInfo & info)
 {
@@ -1216,26 +1218,72 @@ void VxlanMgr::restoreVxlanNetDevices()
 
 void VxlanMgr::clearAllVxlanDevices()
 {
-    for (auto it = m_vxlanNetDevices.begin(); it != m_vxlanNetDevices.end();)
+    if (m_vxlanNetDevices.empty())
     {
-        std::string netdev_name = it->first;
-        std::string netdev_type = it->second;
-        SWSS_LOG_INFO("Deleting Stale NetDevice %s, type: %s\n", netdev_name.c_str(), netdev_type.c_str());
-        VxlanInfo info;
-        std::string res;
-        if (netdev_type.compare(VXLAN))
-        {
-            info.m_vxlan = netdev_name;
-            downVxlanNetdevice(netdev_name);
-            cmdDeleteVxlan(info, res);
-        }
-        else if(netdev_type.compare(VXLAN_IF))
-        {
-            info.m_vxlanIf = netdev_name;
-            cmdDeleteVxlanIf(info, res);
-        }
-        it = m_vxlanNetDevices.erase(it);
+        SWSS_LOG_NOTICE("No vxlan devices to clear");
+        return;
     }
+
+    const size_t total_devices = m_vxlanNetDevices.size();
+    size_t processed = 0;
+    std::vector<std::string> batch_devices;
+    unsigned int current_batch_size = VXLAN_DELETE_BATCH_SIZE_INITIAL;
+    batch_devices.reserve(VXLAN_DELETE_BATCH_SIZE_MAX);
+    int batch_num = 0;
+    
+    for (const auto& device : m_vxlanNetDevices)
+    {
+        const std::string& netdev_name = device.first;
+        const std::string& netdev_type = device.second;
+        
+        std::string dev_cmd;
+        if (netdev_type == VXLAN)
+        {
+            dev_cmd = "(" + std::string(IP_CMD) + " link set dev " + shellquote(netdev_name) + 
+                     " down 2>/dev/null || true; " + std::string(IP_CMD) + " link del dev " + 
+                     shellquote(netdev_name) + " 2>/dev/null || true) &";
+        }
+        else if (netdev_type == VXLAN_IF)
+        {
+            dev_cmd = "(" + std::string(IP_CMD) + " link del " + shellquote(netdev_name) + 
+                     " 2>/dev/null || true) &";
+        }
+        
+        batch_devices.push_back(dev_cmd);
+        
+        if (batch_devices.size() >= current_batch_size || processed + batch_devices.size() >= total_devices)
+        {
+            batch_num++;
+            
+            std::ostringstream batch_cmd;
+            batch_cmd << BASH_CMD << " -c '";
+            for (size_t i = 0; i < batch_devices.size(); ++i)
+            {
+                if (i > 0) batch_cmd << " ";
+                batch_cmd << batch_devices[i];
+            }
+            batch_cmd << " wait'";
+            
+            SWSS_LOG_NOTICE("Batch %d: deleting %zu devices in parallel (batch_size=%u, progress: %zu/%zu)", 
+                           batch_num, batch_devices.size(), current_batch_size, processed + batch_devices.size(), total_devices);
+            
+            std::string res;
+            int ret = swss::exec(batch_cmd.str(), res);
+            if (ret != 0)
+            {
+                SWSS_LOG_WARN("Batch %d deletion errors: %s", batch_num, res.c_str());
+            }
+            
+            processed += batch_devices.size();
+            batch_devices.clear();
+            
+            unsigned int increment = std::max(1U, current_batch_size >> 2);
+            current_batch_size = std::min(current_batch_size + increment, static_cast<unsigned int>(VXLAN_DELETE_BATCH_SIZE_MAX));
+        }
+    }
+    
+    m_vxlanNetDevices.clear();
+    SWSS_LOG_NOTICE("Cleared %zu vxlan devices in %d batches", total_devices, batch_num);
 }
 
 void VxlanMgr::disableLearningForAllVxlanNetdevices()
