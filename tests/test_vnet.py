@@ -3488,6 +3488,374 @@ class TestVnetOrch(object):
         self.remove_ip_address("Ethernet4", "9.1.0.1/32")
         self.set_admin_status("Ethernet4", "down")
 
+    '''
+    Test 36 - Bulk route scale validation
+    '''
+    def test_vnet_orch_36(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        vnet_obj = self.get_vnet_obj()
+        
+        tunnel_name = 'tunnel_bulk_scale'
+        vnet_name = 'Vnet_bulk_scale'
+        num_routes = 50
+        
+        # Shared endpoints for all routes (should create only 1 NHG)
+        endpoints = ['10.1.0.1', '10.1.0.2', '10.1.0.3']
+        
+        vnet_obj.fetch_exist_entries(dvs)
+        
+        # Setup infrastructure
+        create_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '7000', "")
+        
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '7000')
+        
+        # Get baseline counts
+        vnet_obj.fetch_exist_entries(dvs)
+        routes_baseline = len(vnet_obj.routes)
+        nhgs_baseline = get_exist_entries(dvs, vnet_obj.ASIC_NEXT_HOP_GROUP)
+        
+        # Create 50 routes to shared endpoints
+        route_prefixes = [f'192.168.{i}.0/24' for i in range(num_routes)]
+        
+        for prefix in route_prefixes:
+            create_vnet_routes(dvs, prefix, vnet_name, ','.join(endpoints))
+        
+        time.sleep(2)
+        
+        # Verify all routes programmed in ASIC_DB
+        vnet_obj.fetch_exist_entries(dvs)
+        routes_after_add = len(vnet_obj.routes)
+        routes_added = routes_after_add - routes_baseline
+        
+        assert routes_added == num_routes, \
+            f"Expected {num_routes} routes in ASIC_DB, got {routes_added}"
+        
+        # Verify NHG sharing (should be only 1 NHG for all routes)
+        nhgs_after_add = get_exist_entries(dvs, vnet_obj.ASIC_NEXT_HOP_GROUP)
+        nhgs_new = [nhg for nhg in nhgs_after_add if nhg not in nhgs_baseline]
+        assert len(nhgs_new) == 1, \
+            f"All routes should share one NHG, got {len(nhgs_new)} NHGs"
+        
+        # Verify all routes in STATE_DB
+        for prefix in route_prefixes:
+            check_state_db_routes(dvs, vnet_name, prefix, endpoints)
+        
+        # Cleanup - bulk delete
+        for prefix in route_prefixes:
+            delete_vnet_routes(dvs, prefix, vnet_name)
+        
+        time.sleep(2)
+        
+        # Verify cleanup
+        vnet_obj.fetch_exist_entries(dvs)
+        routes_final = len(vnet_obj.routes)
+        nhgs_final = get_exist_entries(dvs, vnet_obj.ASIC_NEXT_HOP_GROUP)
+        nhgs_final_filtered = [nhg for nhg in nhgs_final if nhg not in nhgs_baseline]
+        
+        assert routes_final == routes_baseline, \
+            f"All routes should be deleted, expected {routes_baseline}, got {routes_final}"
+        assert len(nhgs_final_filtered) == 0, \
+            f"NHG should be deleted when all routes removed, got {len(nhgs_final_filtered)}"
+        
+        # Cleanup infrastructure
+        delete_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
+
+    '''
+    Test 37 - Bulk mixed operations
+    '''
+    def test_vnet_orch_37(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        vnet_obj = self.get_vnet_obj()
+        
+        tunnel_name = 'tunnel_mixed'
+        vnet_name = 'Vnet_mixed'
+        
+        vnet_obj.fetch_exist_entries(dvs)
+        
+        # Setup infrastructure
+        create_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '8000', "")
+        
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '8000')
+        
+        # Get baseline route count
+        vnet_obj.fetch_exist_entries(dvs)
+        routes_baseline = len(vnet_obj.routes)
+        
+        # Setup: create initial 10 routes
+        initial_routes = [f'10.0.{i}.0/24' for i in range(10)]
+        for prefix in initial_routes:
+            create_vnet_routes(dvs, prefix, vnet_name, '10.1.0.1')
+        
+        time.sleep(2)
+        
+        # Verify initial routes created
+        for prefix in initial_routes:
+            check_state_db_routes(dvs, vnet_name, prefix, ['10.1.0.1'])
+        
+        # Batch operation: add + update + delete
+        new_routes = [f'20.0.{i}.0/24' for i in range(10)]
+        update_routes = initial_routes[:5]  # Change endpoints
+        delete_routes = initial_routes[5:]  # Delete these
+        
+        # Execute mixed operations 
+        for prefix in new_routes:
+            create_vnet_routes(dvs, prefix, vnet_name, '10.1.0.2')
+        
+        for prefix in update_routes:
+            set_vnet_routes(dvs, prefix, vnet_name, '10.1.0.3')  # Change endpoint
+        
+        for prefix in delete_routes:
+            delete_vnet_routes(dvs, prefix, vnet_name)
+        
+        time.sleep(2)
+        
+        # Verify: new routes added
+        for prefix in new_routes:
+            check_state_db_routes(dvs, vnet_name, prefix, ['10.1.0.2'])
+        
+        # Verify: updated routes have new endpoint
+        for prefix in update_routes:
+            check_state_db_routes(dvs, vnet_name, prefix, ['10.1.0.3'])
+        
+        # Verify: deleted routes gone
+        for prefix in delete_routes:
+            check_remove_state_db_routes(dvs, vnet_name, prefix)
+        
+        # Verify route count in ASIC_DB
+        # Started with 10, added 10, deleted 5 = 15 routes (relative to baseline)
+        vnet_obj.fetch_exist_entries(dvs)
+        routes_current = len(vnet_obj.routes)
+        routes_delta = routes_current - routes_baseline
+        assert routes_delta == 15, \
+            f"Expected 15 routes relative to baseline (10 initial + 10 new - 5 deleted), got {routes_delta}"
+        
+        # Cleanup: delete all remaining routes
+        for prefix in new_routes + update_routes:
+            delete_vnet_routes(dvs, prefix, vnet_name)
+        
+        time.sleep(2)
+        
+        # Cleanup infrastructure
+        delete_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
+
+    '''
+    Test 38 - Route programming deferred until dependency is resolved
+    '''
+    def test_vnet_orch_38(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_dep'
+        vnet_name = 'Vnet_dep'
+        route_prefixes = [f'192.168.100.{i}/32' for i in range(1, 21)]
+        endpoint = '10.100.100.1'
+
+        # Ensure dependencies do NOT exist
+        vnet_obj.fetch_exist_entries(dvs)
+
+        for route_prefix in route_prefixes:
+            create_vnet_routes(dvs, route_prefix, vnet_name, endpoint)
+
+        time.sleep(2)
+
+        # Routes should NOT be programmed yet (ASIC DB should not have them)
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        route_tbl = swsscommon.Table(asic_db, vnet_obj.ASIC_ROUTE_ENTRY)
+        route_keys = set(route_tbl.getKeys())
+        for route_prefix in route_prefixes:
+            found = False
+            for key in route_keys:
+                if route_prefix in key:
+                    found = True
+            assert not found, f"Route {route_prefix} should not be programmed before dependencies are resolved"
+
+        # Now create dependencies using vnet_lib API
+        create_vxlan_tunnel(dvs, tunnel_name, '10.100.100.100')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10001', "")
+
+        time.sleep(2)
+
+        # Now all routes should be programmed
+        route_tbl = swsscommon.Table(asic_db, vnet_obj.ASIC_ROUTE_ENTRY)
+        route_keys = set(route_tbl.getKeys())
+        for route_prefix in route_prefixes:
+            found = False
+            for key in route_keys:
+                if route_prefix in key:
+                    found = True
+            assert found, f"Route {route_prefix} should be programmed after dependencies are resolved"
+
+        # Clean up using vnet_lib API
+        for route_prefix in route_prefixes:
+            delete_vnet_routes(dvs, route_prefix, vnet_name)
+        delete_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
+
+    '''
+    Test 39 - Bulk route delete with custom monitoring cleanup
+    '''
+    def test_vnet_orch_39(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        vnet_obj = self.get_vnet_obj()
+        
+        tunnel_name = 'tunnel_mbulk'
+        vnet_name = 'Vnet_mbulk'
+        num_routes = 20
+        
+        vnet_obj.fetch_exist_entries(dvs)
+        
+        # Setup infrastructure
+        create_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '5000', "")
+        
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '5000')
+        
+        # Create routes with custom monitoring
+        routes = [f'100.{i}.1.1/32' for i in range(num_routes)]
+        for i, prefix in enumerate(routes):
+            primary = f'9.{i}.0.1,9.{i}.0.2'
+            secondary = f'9.{i}.0.3,9.{i}.0.4'
+            monitors = f'9.{i}.1.1,9.{i}.1.2,9.{i}.1.3,9.{i}.1.4'
+            create_vnet_routes(dvs, prefix, vnet_name, 
+                              primary + ',' + secondary,
+                              ep_monitor=monitors,
+                              primary=primary,
+                              monitoring='custom')
+        
+        time.sleep(2)
+        
+        # Bring monitors up
+        for i, prefix in enumerate(routes):
+            for j in range(1, 5):
+                update_monitor_session_state(dvs, f'9.{i}.1.{j}', prefix, 'up')
+        
+        time.sleep(2)
+        
+        # Verify routes programmed in STATE_DB
+        for prefix in routes:
+            check_vnet_route_exists(dvs, vnet_name, prefix)
+        
+        # Bulk delete all routes
+        for prefix in routes:
+            delete_vnet_routes(dvs, prefix, vnet_name)
+        
+        time.sleep(2)
+        
+        # CRITICAL: Verify ALL monitor sessions deleted
+        app_db = dvs.get_app_db()
+        monitor_keys = app_db.get_keys("VNET_MONITOR_TABLE")
+        
+        for i, prefix in enumerate(routes):
+            for j in range(1, 5):
+                monitor_key = f'9.{i}.1.{j}:{prefix}'
+                assert monitor_key not in monitor_keys, \
+                    f"Monitor {monitor_key} should be deleted after bulk route deletion"
+        
+        # Verify routes deleted from STATE_DB
+        for prefix in routes:
+            check_remove_state_db_routes(dvs, vnet_name, prefix)
+        
+        # Cleanup
+        delete_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
+
+    '''
+    Test 40 - Bulk NHG reference counting
+    '''
+    def test_vnet_orch_40(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        vnet_obj = self.get_vnet_obj()
+        
+        tunnel_name = 'tunnel_nhg_bulk'
+        vnet_name = 'Vnet_nhg_bulk'
+        
+        endpoints_A = ['10.1.0.1', '10.1.0.2']
+        endpoints_B = ['10.2.0.1', '10.2.0.2']
+        
+        routes_A = [f'100.0.{i}.0/24' for i in range(50)]
+        routes_B = [f'200.0.{i}.0/24' for i in range(50)]
+        
+        vnet_obj.fetch_exist_entries(dvs)
+        
+        # Setup infrastructure
+        create_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '6000', "")
+        
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '6000')
+        
+        # Get baseline NHG count
+        vnet_obj.fetch_exist_entries(dvs)
+        nhgs_baseline = get_exist_entries(dvs, vnet_obj.ASIC_NEXT_HOP_GROUP)
+        
+        # Create routes to A
+        for prefix in routes_A:
+            create_vnet_routes(dvs, prefix, vnet_name, ','.join(endpoints_A))
+        
+        time.sleep(2)
+        
+        # Create routes to B
+        for prefix in routes_B:
+            create_vnet_routes(dvs, prefix, vnet_name, ','.join(endpoints_B))
+        
+        time.sleep(2)
+        
+        # Should have 2 NHGs (one for A, one for B)
+        nhgs_initial = get_exist_entries(dvs, vnet_obj.ASIC_NEXT_HOP_GROUP)
+        nhgs_initial_filtered = [nhg for nhg in nhgs_initial if nhg not in nhgs_baseline]
+        assert len(nhgs_initial_filtered) == 2, f"Expected 2 NHGs, got {len(nhgs_initial_filtered)}"
+        
+        # Update 25 routes from A to B
+        for prefix in routes_A[:25]:
+            set_vnet_routes(dvs, prefix, vnet_name, ','.join(endpoints_B))
+        
+        time.sleep(2)
+        
+        # Still 2 NHGs, but refcounts changed
+        # NHG_A: 25 routes, NHG_B: 75 routes
+        nhgs_after_update = get_exist_entries(dvs, vnet_obj.ASIC_NEXT_HOP_GROUP)
+        nhgs_after_update_filtered = [nhg for nhg in nhgs_after_update if nhg not in nhgs_baseline]
+        assert len(nhgs_after_update_filtered) == 2, f"Expected 2 NHGs after update, got {len(nhgs_after_update_filtered)}"
+        
+        # Delete remaining 25 routes to A (routes_A[25:])
+        for prefix in routes_A[25:]:
+            delete_vnet_routes(dvs, prefix, vnet_name)
+        
+        time.sleep(2)
+        
+        # NHG_A should be deleted (refcount=0)
+        nhgs_after_delete = get_exist_entries(dvs, vnet_obj.ASIC_NEXT_HOP_GROUP)
+        nhgs_after_delete_filtered = [nhg for nhg in nhgs_after_delete if nhg not in nhgs_baseline]
+        assert len(nhgs_after_delete_filtered) == 1, \
+            f"Expected 1 NHG after deleting all routes to A (NHG A should be removed), got {len(nhgs_after_delete_filtered)}"
+        
+        # Cleanup: delete remaining routes
+        for prefix in routes_A[:25] + routes_B:
+            delete_vnet_routes(dvs, prefix, vnet_name)
+        
+        time.sleep(2)
+        
+        # All NHGs should be gone
+        nhgs_cleanup = get_exist_entries(dvs, vnet_obj.ASIC_NEXT_HOP_GROUP)
+        nhgs_cleanup_filtered = [nhg for nhg in nhgs_cleanup if nhg not in nhgs_baseline]
+        assert len(nhgs_cleanup_filtered) == 0, \
+            f"Expected 0 NHGs after cleanup, got {len(nhgs_cleanup_filtered)}"
+        
+        # Cleanup infrastructure
+        delete_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
