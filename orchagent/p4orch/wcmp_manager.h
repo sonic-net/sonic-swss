@@ -17,6 +17,7 @@ extern "C"
 {
 #include "sai.h"
 }
+#include "selectableevent.h"
 
 namespace p4orch
 {
@@ -24,6 +25,8 @@ namespace test
 {
 class WcmpManagerTest;
 } // namespace test
+
+constexpr uint32_t kMaxWatchportGroupBulkSize = 30;
 
 struct P4WcmpGroupMemberEntry
 {
@@ -69,8 +72,8 @@ struct P4WcmpGroupEntry
 class WcmpManager : public ObjectManagerInterface
 {
   public:
-   WcmpManager(P4OidMapper* p4oidMapper,
-               ResponsePublisherInterface* publisher)
+   WcmpManager(P4OidMapper* p4oidMapper, ResponsePublisherInterface* publisher,
+               swss::SelectableEvent* watchport_event)
        : m_asic_db("ASIC_DB", 0), m_asic_state_table(&m_asic_db, "ASIC_STATE") {
      SWSS_LOG_ENTER();
 
@@ -78,6 +81,8 @@ class WcmpManager : public ObjectManagerInterface
      m_p4OidMapper = p4oidMapper;
      assert(publisher != nullptr);
      m_publisher = publisher;
+     assert(watchport_event != nullptr);
+     m_watchport_event = watchport_event;
    }
 
     virtual ~WcmpManager() = default;
@@ -90,7 +95,13 @@ class WcmpManager : public ObjectManagerInterface
                             std::string &object_key) override;
 
     // Prunes or restores next hop members.
+    // This call only queues the group update event into m_watchport_groups.
+    // The real watchport update will happen in processWatchPortEvent().
     void updateWatchPort(const std::string& port, bool prune);
+
+    // Process group update in m_watchport_groups, maximum of
+    // kMaxWatchportGroupBulkSize groups per call.
+    void processWatchPortEvent();
 
     // Inserts into/updates port_oper_status_map
     void updatePortOperStatusMap(const std::string &port, const sai_port_oper_status_t &status);
@@ -129,7 +140,7 @@ class WcmpManager : public ObjectManagerInterface
 
     // Updates a list of WCMP groups in the WCMP group table.
     std::vector<ReturnCode> updateWcmpGroups(
-        std::vector<P4WcmpGroupEntry>& entries);
+        std::vector<P4WcmpGroupEntry>& entries, bool watchport = false);
 
     // Fetches oper-status of port using port_oper_status_map or SAI.
     ReturnCode fetchPortOperStatus(const std::string &port, sai_port_oper_status_t *oper_status);
@@ -169,6 +180,11 @@ class WcmpManager : public ObjectManagerInterface
     swss::DBConnector m_asic_db;
     swss::Table m_asic_state_table;
     ResponsePublisherInterface* m_publisher;
+    swss::SelectableEvent* m_watchport_event;
+
+    // A set that stores the groups that need to be updated due to watchport
+    // events.
+    std::unordered_set<std::string> m_watchport_groups;
 
     friend class p4orch::test::WcmpManagerTest;
 };
