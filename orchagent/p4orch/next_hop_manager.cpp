@@ -391,6 +391,14 @@ ReturnCodeOr<P4NextHopAppDbEntry> NextHopManager::deserializeP4NextHopAppDbEntry
 
     P4NextHopAppDbEntry app_db_entry = {};
     app_db_entry.neighbor_id = swss::IpAddress("0.0.0.0");
+    
+   #ifdef GOOGLE_ONLY
+    // Modify the default value of next hop disable vlan
+    // rewrite to be true when software-assisted Congestion
+    // Signaling (CSIG) is supported.
+    app_db_entry.disable_vlan_rewrite =
+     (m_csig_supported == "sw_assist");
+   #endif // GOOGLE_ONLY
 
     try
     {

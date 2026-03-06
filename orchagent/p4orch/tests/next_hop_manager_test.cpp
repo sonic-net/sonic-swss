@@ -44,6 +44,7 @@ extern MockSaiNextHop *mock_sai_next_hop;
 extern P4Orch *gP4Orch;
 extern VRFOrch *gVrfOrch;
 extern swss::DBConnector *gAppDb;
+extern swss::DBConnector* gConfigDb;
 extern sai_hostif_api_t *sai_hostif_api;
 extern sai_switch_api_t *sai_switch_api;
 extern sai_next_hop_api_t *sai_next_hop_api;
@@ -1545,3 +1546,94 @@ TEST_F(NextHopManagerTest, VerifyStateAsicDbTest)
                                            swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_IP", "10.0.0.1"},
                                            swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID", "oid:0x1"}});
 }
+
+#ifdef GOOGLE_ONLY
+ TEST_F(NextHopManagerTest, CreateNextHopWithCsigSwAssistSupported) {
+  // Verify that disable_vlan_rewrite is true when software-assisted
+  // CSIG is supported.
+  swss::Table csig_table(gConfigDb, "HST_CONFIG");
+  std::vector<swss::FieldValueTuple> csig_supported_fv = {
+    swss::FieldValueTuple{"CSIG_SUPPORTED", "sw_assist"}};
+  csig_table.set("GLOBAL", csig_supported_fv);
+  next_hop_manager_.setCsigSupported();
+  nlohmann::json j;
+  j[prependMatchField(p4orch::kNexthopId)] = kNextHopId;
+  std::vector<swss::FieldValueTuple> fvs{
+      {p4orch::kAction, p4orch::kSetIpNexthop},
+      {prependParamField(p4orch::kNeighborId), kNeighborId1},
+      {prependParamField(p4orch::kRouterInterfaceId), kRouterInterfaceId1}};
+  swss::KeyOpFieldsValuesTuple app_db_entry(
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+  Enqueue(app_db_entry);
+  ASSERT_TRUE(ResolveNextHopEntryDependency(kP4NextHopAppDbEntry1,
+                                            kRouterInterfaceOid1));
+  std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
+  P4NextHopAppDbEntry expected_app_db_entry = kP4NextHopAppDbEntry1;
+  expected_app_db_entry.disable_vlan_rewrite = true;
+  // Set up mock call.
+  EXPECT_CALL(
+      mock_sai_next_hop_,
+      create_next_hops(
+          Eq(gSwitchId), Eq(1), Pointee(Eq(7)),
+          AttrArrayEq(sai_attrs_array_t{CreateAttributeListForNextHopObject(
+              expected_app_db_entry, kRouterInterfaceOid1)}),
+          Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), ::testing::NotNull(),
+          ::testing::NotNull()))
+      .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
+                      SetArgPointee<5>(kNextHopOid),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                      Eq(kfvFieldsValues(app_db_entry)),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
+  auto* p4_next_hop_entry = GetNextHopEntry(
+      KeyGenerator::generateNextHopKey(kP4NextHopAppDbEntry1.next_hop_id));
+  ASSERT_NE(p4_next_hop_entry, nullptr);
+  EXPECT_TRUE(p4_next_hop_entry->disable_vlan_rewrite);
+}
+ TEST_F(NextHopManagerTest, CreateNextHopWithCsigSwAssistNotSupported) {
+  // Verify that disable_vlan_rewrite is false when software-assisted
+  // CSIG is not supported.
+  swss::Table csig_table(gConfigDb, "HST_CONFIG");
+  std::vector<swss::FieldValueTuple> csig_supported_fv = {
+    swss::FieldValueTuple{"CSIG_SUPPORTED", "none"}};
+  csig_table.set("GLOBAL", csig_supported_fv);
+  next_hop_manager_.setCsigSupported();
+  nlohmann::json j;
+  j[prependMatchField(p4orch::kNexthopId)] = kNextHopId;
+  std::vector<swss::FieldValueTuple> fvs{
+      {p4orch::kAction, p4orch::kSetIpNexthop},
+      {prependParamField(p4orch::kNeighborId), kNeighborId1},
+      {prependParamField(p4orch::kRouterInterfaceId), kRouterInterfaceId1}};
+  swss::KeyOpFieldsValuesTuple app_db_entry(
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
+      SET_COMMAND, fvs);
+  Enqueue(app_db_entry);
+  ASSERT_TRUE(ResolveNextHopEntryDependency(kP4NextHopAppDbEntry1,
+                                            kRouterInterfaceOid1));
+  std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
+  // Set up mock call.
+  EXPECT_CALL(
+      mock_sai_next_hop_,
+      create_next_hops(
+          Eq(gSwitchId), Eq(1), Pointee(Eq(7)),
+          AttrArrayEq(sai_attrs_array_t{CreateAttributeListForNextHopObject(
+              kP4NextHopAppDbEntry1, kRouterInterfaceOid1)}),
+          Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), ::testing::NotNull(),
+          ::testing::NotNull()))
+      .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()),
+                      SetArgPointee<5>(kNextHopOid),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(app_db_entry)),
+                      Eq(kfvFieldsValues(app_db_entry)),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
+  auto* p4_next_hop_entry = GetNextHopEntry(
+      KeyGenerator::generateNextHopKey(kP4NextHopAppDbEntry1.next_hop_id));
+  ASSERT_NE(p4_next_hop_entry, nullptr);
+  EXPECT_FALSE(p4_next_hop_entry->disable_vlan_rewrite);
+}
+#endif // GOOGLE_ONLY

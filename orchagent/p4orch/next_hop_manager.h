@@ -53,6 +53,9 @@ class NextHopManager : public ObjectManagerInterface
         m_p4OidMapper = p4oidMapper;
         assert(publisher != nullptr);
         m_publisher = publisher;
+   #ifdef GOOGLE_ONLY
+         setCsigSupported();
+   #endif // GOOGLE_ONLY
     }
 
     virtual ~NextHopManager() = default;
@@ -63,7 +66,18 @@ class NextHopManager : public ObjectManagerInterface
     std::string verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple) override;
     ReturnCode getSaiObject(const std::string &json_key, sai_object_type_t &object_type,
                             std::string &object_key) override;
-
+ 
+ #ifdef GOOGLE_ONLY
+   // Helper method for CSIG supported behavior.
+   void setCsigSupported() {
+     swss::DBConnector config_db("CONFIG_DB", 0);
+     swss::Table csig_table(&config_db, "HST_CONFIG");
+     if (!csig_table.hget("GLOBAL", "CSIG_SUPPORTED", m_csig_supported)) {
+        m_csig_supported = "none";
+    }
+   }
+ #endif // GOOGLE_ONLY
+ 
   private:
     // Gets the internal cached next hop entry by its key.
     // Return nullptr if corresponding next hop entry is not cached.
@@ -109,6 +123,10 @@ class NextHopManager : public ObjectManagerInterface
     P4OidMapper *m_p4OidMapper;
     ResponsePublisherInterface *m_publisher;
     std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
+  #ifdef GOOGLE_ONLY
+    // CSIG Supported db entry
+    std::string m_csig_supported;
+  #endif // GOOGLE_ONLY
 
     friend class NextHopManagerTest;
 };
