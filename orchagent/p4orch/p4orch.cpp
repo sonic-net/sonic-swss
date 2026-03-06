@@ -35,13 +35,14 @@ extern PortsOrch *gPortsOrch;
 
 P4Orch::P4Orch(swss::DBConnector* db, std::vector<std::string> tableNames,
                ZmqServer* zmqServer, VRFOrch* vrfOrch, CoppOrch* coppOrch)
-    : ZmqOrch(db, tableNames, zmqServer, /*orderedQueue=*/true,
-              /*dbPersistence=*/false),
+    : ZmqOrch(db, tableNames, zmqServer, /*dbPersistence=*/false),
       m_zmqServer(zmqServer),
       m_publisher("APPL_DB", /*bool buffered=*/true,
                   /*db_write_thread=*/true, zmqServer)
 {
     SWSS_LOG_ENTER();
+
+    setOrderedQueueForAllConsumers(/*orderedQueue=*/true);
 
     m_tablesDefnManager = std::make_unique<TablesDefnManager>(&m_p4OidMapper, &m_publisher);
     m_routerIntfManager = std::make_unique<RouterInterfaceManager>(&m_p4OidMapper, &m_publisher);
@@ -161,7 +162,7 @@ void P4Orch::doTask(ConsumerBase &consumer)
     ObjectManagerInterface* prev_manager = nullptr;
     std::string p4rt_table_name;
     ReturnCode status;
-    for (const auto& kco : zmq_consumer->m_queue) {
+    for (const auto& kco : zmq_consumer->m_toSyncQueue) {
         std::string op = kfvOp(kco);
 
     ObjectManagerInterface* manager = findManager(kfvKey(kco), p4rt_table_name);
@@ -186,28 +187,28 @@ void P4Orch::doTask(ConsumerBase &consumer)
       prev_manager = manager;
     }
 
-        // Call drain after grouping the same type of requests together.
+    // Call drain after grouping the same type of requests together.
     if (op != prev_op || prev_manager != manager) {
       status = prev_manager->drain();
             prev_op = op; 
       prev_manager = manager;
-        }
-
-        if (status.ok()) {
-      prev_manager->enqueue(p4rt_table_name, kco);
-        } else {
-           m_publisher.publish(APP_P4RT_TABLE_NAME, kfvKey(kco),
-                               kfvFieldsValues(kco),
-                               ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED),
-                               /*replace=*/true);
-      prev_manager = nullptr;
-        }
     }
-  if (prev_manager != nullptr) {
-    prev_manager->drain();
-    }   
+
+    if (status.ok()) {
+      prev_manager->enqueue(p4rt_table_name, kco);
+    } else {
+      m_publisher.publish(APP_P4RT_TABLE_NAME, kfvKey(kco),
+                          kfvFieldsValues(kco),
+                          ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED),
+                          /*replace=*/true);
+      prev_manager = nullptr;
+      }
+    }
+    if (prev_manager != nullptr) {
+      prev_manager->drain();
+    }
     m_publisher.flush();
-    zmq_consumer->m_queue.clear();
+    zmq_consumer->m_toSyncQueue.clear();
 }
 
 void P4Orch::doTask(swss::SelectableTimer &timer)
