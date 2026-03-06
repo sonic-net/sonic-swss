@@ -404,10 +404,13 @@ void SwitchOrch::doCfgSensorsTableTask(Consumer &consumer)
             {
                 if (fvField(fvt) == "admin_status")
                 {
-                    if (fvValue(fvt) == "enable" && !m_sensorsPollerEnabled)
+                    if (fvValue(fvt) == "enable")
                     {
-                        m_sensorsPollerTimer->start();
-                        m_sensorsPollerEnabled = true;
+                        if (!m_sensorsPollerEnabled)
+                        {
+                            m_sensorsPollerTimer->start();
+                            m_sensorsPollerEnabled = true;
+                        }
                     }
                     else if (fvValue(fvt) == "disable")
                     {

@@ -1,3 +1,4 @@
+import os
 import json
 import time
 import pytest
@@ -40,6 +41,9 @@ def check_object(db, table, key, expected_attributes):
             assert expected_attributes[name] == value, "Wrong value %s for the attribute %s = %s" % \
                                                (value, name, expected_attributes[name])
 
+def check_syslog(dvs, marker, err_log, expected_cnt):
+    (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, err_log)])
+    assert num.strip() >= str(expected_cnt)
 
 def vxlan_switch_test(dvs, oid, port, mac, mask, sport):
     app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
@@ -66,6 +70,22 @@ def vxlan_switch_test(dvs, oid, port, mac, mask, sport):
     )
 
 
+def switch_asic_sensors_test(dvs, table, key):
+    marker = dvs.add_log_marker()
+    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    sensor_table = swsscommon.Table(config_db, table)
+    # Enable the sensor
+    create_entry(sensor_table, key, [('admin_status', 'enable')])
+    time.sleep(2)
+    # Enable the sensor again (no-op)
+    create_entry(sensor_table, key, [('admin_status', 'enable')])
+    time.sleep(2)
+    # Disable the sensor
+    create_entry(sensor_table, key, [('admin_status', 'disable')])
+    time.sleep(2)
+    # No error messages expected
+    check_syslog(dvs, marker, "ASIC sensors : unsupported operation for poller state", 0)
+
 def ecmp_lag_hash_offset_test(dvs, oid, lag_offset, ecmp_offset):
     app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
     create_entry_pst(
@@ -88,6 +108,9 @@ def ecmp_lag_hash_offset_test(dvs, oid, lag_offset, ecmp_offset):
 
 
 class TestSwitch(object):
+    ASIC_SENSORS = "ASIC_SENSORS"
+    ASIC_SENSORS_POLLER_STATUS = "ASIC_SENSORS_POLLER_STATUS"
+
     '''
     Test- Check switch attributes
     '''
@@ -96,6 +119,9 @@ class TestSwitch(object):
         vxlan_switch_test(dvs, switch_oid, "12345", "00:01:02:03:04:05", "20", "54321")
 
         vxlan_switch_test(dvs, switch_oid, "56789", "00:0A:0B:0C:0D:0E", "15", "56789")
+
+        switch_asic_sensors_test(
+            dvs, self.ASIC_SENSORS, self.ASIC_SENSORS_POLLER_STATUS)
 
         ecmp_lag_hash_offset_test(dvs, switch_oid, "10", "10")
 

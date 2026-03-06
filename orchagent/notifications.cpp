@@ -30,6 +30,7 @@ void on_port_state_change(uint32_t count, sai_port_oper_status_notification_t *d
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
+        SWSS_LOG_INFO("Received port state change notification.");
         swss::DBConnector db("ASIC_DB", 0);
         swss::NotificationProducer port_state_change(&db, "NOTIFICATIONS");
         std::string sdata = sai_serialize_port_oper_status_ntf(count, data);
