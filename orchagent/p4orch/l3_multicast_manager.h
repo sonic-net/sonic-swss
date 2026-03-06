@@ -34,6 +34,7 @@ struct P4MulticastRouterInterfaceEntry {
   bool has_vlan_id = false;
   std::string action;
   std::string multicast_metadata;
+  sai_neighbor_entry_t sai_neighbor_entry;
 
   P4MulticastRouterInterfaceEntry() = default;
 };
@@ -186,6 +187,12 @@ class L3MulticastManager : public ObjectManagerInterface {
                               sai_object_id_t bridge_port_oid);
   ReturnCode createRouterInterface(P4MulticastRouterInterfaceEntry& entry,
                                    sai_object_id_t* rif_oid);
+  ReturnCode createNextHop(P4MulticastRouterInterfaceEntry& entry,
+                           const sai_object_id_t rif_oid,
+                           sai_object_id_t* next_hop_oid);
+  ReturnCode createNeighborEntry(
+    P4MulticastRouterInterfaceEntry& entry, const sai_object_id_t rif_oid);
+
   ReturnCode deleteRouterInterface(const std::string& rif_key,
                                    sai_object_id_t rif_oid);
 
@@ -314,15 +321,22 @@ class L3MulticastManager : public ObjectManagerInterface {
 
   // Fetches the RIF OID for a given multicast router interface entry.
   // Return SAI_NULL_OBJECT_ID if not found.
-  // A RIF is unique for each egress multicast_replica_port and Ethernet
-  // src mac pair.  The multicast_replica_instance is ignored as controller
-  // bookkeeping.
+  // A RIF is unique for each egress multicast_replica_port and
+  // multicast_replica_instance.
   sai_object_id_t getRifOid(
+      const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
+
+  // Fetches the Next hop OID for a given multicast router interface entry.
+  sai_object_id_t getNextHopOid(
       const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
 
   // Fetches the RIF OID that will be used by a given multicast replica.
   // This would be the value used by the group member.
   sai_object_id_t getRifOid(const P4Replica& replica);
+
+  // Fetches the Next hop OID that will be used by a given multicast replica.
+  // This would be the value used by the group member.
+  sai_object_id_t getNextHopOid(const P4Replica& replica);
 
   // Fetches the Bridge port OID that will be used by a given L2 multicast
   // replica.

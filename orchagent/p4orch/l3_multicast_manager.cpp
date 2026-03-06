@@ -33,6 +33,8 @@ extern sai_object_id_t gVirtualRouterId;
 extern sai_ipmc_group_api_t* sai_ipmc_group_api;
 extern sai_l2mc_api_t* sai_l2mc_api;
 extern sai_l2mc_group_api_t* sai_l2mc_group_api;
+extern sai_neighbor_api_t* sai_neighbor_api;
+extern sai_next_hop_api_t* sai_next_hop_api;
 extern sai_router_interface_api_t* sai_router_intfs_api;
 extern sai_bridge_api_t* sai_bridge_api;
 extern sai_switch_api_t* sai_switch_api;
@@ -42,6 +44,14 @@ extern PortsOrch* gPortsOrch;
 namespace p4orch {
 
 namespace {
+
+// Placeholder values  to enable creation of next hop objects and neighbor
+// entries.  The link local IP address is effectively a don't care for our use
+// case.  The default neighbor MAC address will be ignored, except in the case
+// where we re-write the destination MAC.  When we do re-write the MAC address,
+// the value will be provided by the P4 action.
+constexpr char* kLinkLocalIpv4Address = "169.254.0.1";
+constexpr char* kNeighborMacAddress = "00:00:00:00:00:01";
 
 void fillStatusArrayWithNotExecuted(std::vector<ReturnCode>& array,
                                     size_t startIndex) {
@@ -62,6 +72,11 @@ ReturnCodeOr<std::vector<sai_attribute_t>> prepareRifSaiAttrs(
         << QuotedVar(multicast_router_interface_entry.multicast_replica_port));
   }
 
+  bool use_vlan = multicast_router_interface_entry.action ==
+                      p4orch::kMulticastSetSrcMacAndVlanId ||
+                  multicast_router_interface_entry.action ==
+                      p4orch::kMulticastSetSrcMacAndDstMacAndVlanId;
+
   std::vector<sai_attribute_t> attrs;
   sai_attribute_t attr;
   // Map all P4 router interfaces to default VRF as virtual router is mandatory
@@ -71,7 +86,11 @@ ReturnCodeOr<std::vector<sai_attribute_t>> prepareRifSaiAttrs(
   attrs.push_back(attr);
 
   attr.id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
-  attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_PORT;
+  if (use_vlan) {
+    attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_SUB_PORT;
+  } else {
+    attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_PORT;
+  }
   attrs.push_back(attr);
   if (port.m_type != Port::PHY) {
     // If we need to support LAG, VLAN, or other types, we can make this a
@@ -80,6 +99,12 @@ ReturnCodeOr<std::vector<sai_attribute_t>> prepareRifSaiAttrs(
     // sonic-swss/orchagent/p4orch/router_interface_manager.cpp;l=90
     LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
                          << "Unexpected port type: " << port.m_type);
+  }
+
+  if (use_vlan) {
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID;
+    attr.value.u16 = multicast_router_interface_entry.vlan_id;
+    attrs.push_back(attr);
   }
 
   attr.id = SAI_ROUTER_INTERFACE_ATTR_PORT_ID;
@@ -101,6 +126,77 @@ ReturnCodeOr<std::vector<sai_attribute_t>> prepareRifSaiAttrs(
 
   attr.id = SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE;
   attr.value.booldata = true;
+  attrs.push_back(attr);
+
+  return attrs;
+}
+
+std::vector<sai_attribute_t> prepareNeighborEntrySaiAttrs(
+    const swss::MacAddress& dst_mac) {
+  std::vector<sai_attribute_t> attrs;
+  sai_attribute_t attr;
+
+  attr.id = SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS;
+  memcpy(attr.value.mac, dst_mac.getMac(), sizeof(sai_mac_t));
+  attrs.push_back(attr);
+
+  attr.id = SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE;
+  attr.value.booldata = true;
+  attrs.push_back(attr);
+
+  return attrs;
+}
+
+sai_neighbor_entry_t prepareSaiNeighborEntry(const sai_object_id_t rif_oid) {
+  sai_neighbor_entry_t neigh_entry;
+  neigh_entry.switch_id = gSwitchId;
+  neigh_entry.rif_id = rif_oid;
+  // IP address is required, but we don't care what's value is as long as it is
+  // consistent with the next hop object we create.
+  swss::IpAddress link_local_ip = swss::IpAddress(kLinkLocalIpv4Address);
+  swss::copy(neigh_entry.ip_address, link_local_ip);
+  return neigh_entry;
+}
+
+// Create the vector of SAI attributes for creating a new next hop object.
+std::vector<sai_attribute_t> prepareNextHopSaiAttrs(
+    const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
+    const sai_object_id_t rif_oid) {
+  std::vector<sai_attribute_t> attrs;
+  sai_attribute_t attr;
+
+  attr.id = SAI_NEXT_HOP_ATTR_TYPE;
+  attr.value.s32 = SAI_NEXT_HOP_TYPE_IPMC;
+  attrs.push_back(attr);
+
+  attr.id = SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID;
+  attr.value.oid = rif_oid;
+  attrs.push_back(attr);
+
+  // IP address is required, but we don't care what's value is as long as it is
+  // consistent with the neighbor entry we create.
+  swss::IpAddress link_local_ip = swss::IpAddress(kLinkLocalIpv4Address);
+  attr.id = SAI_NEXT_HOP_ATTR_IP;
+  swss::copy(attr.value.ipaddr, link_local_ip);
+  attrs.push_back(attr);
+
+  attr.id = SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE;
+  attr.value.booldata = false;  // All actions write the source MAC.
+  attrs.push_back(attr);
+
+  attr.id = SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE;
+  // Only the kMulticastSetSrcMacAndDstMacAndVlanId writes dst mac.
+  attr.value.booldata = multicast_router_interface_entry.action !=
+                        p4orch::kMulticastSetSrcMacAndDstMacAndVlanId;
+  attrs.push_back(attr);
+
+  bool write_vlan = multicast_router_interface_entry.action ==
+                        p4orch::kMulticastSetSrcMacAndVlanId ||
+                    multicast_router_interface_entry.action ==
+                        p4orch::kMulticastSetSrcMacAndDstMacAndVlanId;
+
+  attr.id = SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE;
+  attr.value.booldata = !write_vlan;
   attrs.push_back(attr);
 
   return attrs;
@@ -484,7 +580,7 @@ L3MulticastManager::deserializeMulticastRouterInterfaceEntry(
           router_interface_entry.multicast_replica_port,
           router_interface_entry.multicast_replica_instance);
   router_interface_entry.src_mac = swss::MacAddress("00:00:00:00:00:00");
-  router_interface_entry.dst_mac = swss::MacAddress("00:00:00:00:00:00");
+  router_interface_entry.dst_mac = swss::MacAddress(kNeighborMacAddress);
   router_interface_entry.vlan_id = 0;
 
   for (const auto& it : attributes) {
@@ -809,8 +905,10 @@ ReturnCodeOr<bool> L3MulticastManager::validateReplicas(
              << " entry found for multicast group "
              << QuotedVar(replica.multicast_group_id) << " replica "
              << QuotedVar(replica.key);
-    } else if (router_interface_entry_ptr->action ==
-               p4orch::kSetSrcMac) {
+    } else if (router_interface_entry_ptr->action !=
+                   p4orch::kL2MulticastPassthrough &&
+               router_interface_entry_ptr->action !=
+                   p4orch::kMulticastL2Passthrough) {
       ipmc_count++;
       if (getRifOid(replica) != SAI_NULL_OBJECT_ID) {
         ipmc_rif_oid_count++;
@@ -1094,11 +1192,12 @@ ReturnCode L3MulticastManager::validateDelMulticastRouterInterfaceEntry(
            << "Multicast router interface entry exists does not exist";
   }
 
-  if (router_interface_entry_ptr->action == p4orch::kSetSrcMac) {
-    return validateL3DelMulticastRouterInterfaceEntry(
+  if (router_interface_entry_ptr->action == p4orch::kL2MulticastPassthrough ||
+      router_interface_entry_ptr->action == p4orch::kMulticastL2Passthrough) {
+    return validateL2MulticastRouterInterfaceEntry(
         multicast_router_interface_entry, router_interface_entry_ptr);
   } else {
-    return validateL2MulticastRouterInterfaceEntry(
+    return validateL3DelMulticastRouterInterfaceEntry(
         multicast_router_interface_entry, router_interface_entry_ptr);
   }
 
@@ -1206,6 +1305,72 @@ ReturnCode L3MulticastManager::createRouterInterface(
     LOG_ERROR_AND_RETURN(
         ReturnCode(sai_status)
         << "Failed to create router interface for multicast router interface "
+        << "table: "
+        << QuotedVar(entry.multicast_router_interface_entry_key).c_str());
+  }
+  return ReturnCode();
+}
+
+ReturnCode L3MulticastManager::createNeighborEntry(
+    P4MulticastRouterInterfaceEntry& entry, const sai_object_id_t rif_oid) {
+  SWSS_LOG_ENTER();
+
+  std::vector<sai_attribute_t> attrs =
+      prepareNeighborEntrySaiAttrs(entry.dst_mac);
+
+  entry.sai_neighbor_entry = prepareSaiNeighborEntry(rif_oid);
+
+  auto sai_status = sai_neighbor_api->create_neighbor_entry(
+      &entry.sai_neighbor_entry, (uint32_t)attrs.size(), attrs.data());
+  if (sai_status != SAI_STATUS_SUCCESS) {
+    LOG_ERROR_AND_RETURN(
+        ReturnCode(sai_status)
+        << "Failed to create neighbor entry multicast router interface "
+        << "table: "
+        << QuotedVar(entry.multicast_router_interface_entry_key).c_str());
+  }
+  return ReturnCode();
+}
+
+ReturnCode L3MulticastManager::createNextHop(
+    P4MulticastRouterInterfaceEntry& entry, const sai_object_id_t rif_oid,
+    sai_object_id_t* next_hop_oid) {
+  SWSS_LOG_ENTER();
+
+  // Confirm we haven't already created a next hop for this.
+  if (m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_NEXT_HOP,
+                               entry.multicast_router_interface_entry_key)) {
+    RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL(
+        "Next hop to be used by multicast router interface table "
+        << QuotedVar(entry.multicast_router_interface_entry_key)
+        << " already exists in the centralized map");
+  }
+
+  RETURN_IF_ERROR(createNeighborEntry(entry, rif_oid));
+
+  // Create next hop SAI object.
+  std::vector<sai_attribute_t> attrs = prepareNextHopSaiAttrs(entry, rif_oid);
+  auto sai_status = sai_next_hop_api->create_next_hop(
+      next_hop_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+  if (sai_status != SAI_STATUS_SUCCESS) {
+    // Back-out creation of neighbor entry.
+    sai_status_t del_status =
+        sai_neighbor_api->remove_neighbor_entry(&entry.sai_neighbor_entry);
+
+    if (del_status != SAI_STATUS_SUCCESS) {
+      // All kinds of bad.  The delete failed, and we have to leave a
+      // dangling neighbor entry.
+      std::stringstream err_msg;
+      err_msg << "Next hop creation failed, and we were "
+              << "unable to backout creation of the neighbor entry."
+              << QuotedVar(entry.multicast_router_interface_entry_key);
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+    }
+
+    LOG_ERROR_AND_RETURN(
+        ReturnCode(sai_status)
+        << "Failed to create next hop for multicast router interface "
         << "table: "
         << QuotedVar(entry.multicast_router_interface_entry_key).c_str());
   }
@@ -1412,10 +1577,11 @@ std::vector<ReturnCode> L3MulticastManager::addMulticastRouterInterfaceEntries(
 
   for (size_t i = 0; i < entries.size(); ++i) {
     auto& entry = entries[i];
-    if (entry.action == p4orch::kSetSrcMac) {
-      statuses[i] = addL3MulticastRouterInterfaceEntry(entry);
-    } else {
+    if (entry.action == p4orch::kL2MulticastPassthrough ||
+        entry.action == p4orch::kMulticastL2Passthrough) {
       statuses[i] = addL2MulticastRouterInterfaceEntry(entry);
+    } else {
+      statuses[i] = addL3MulticastRouterInterfaceEntry(entry);
     }
     if (!statuses[i].ok()) {
       break;
@@ -1431,11 +1597,42 @@ ReturnCode L3MulticastManager::addL3MulticastRouterInterfaceEntry(
 
   sai_object_id_t rif_oid = SAI_NULL_OBJECT_ID;
   RETURN_IF_ERROR(createRouterInterface(entry, &rif_oid));
-  gPortsOrch->increasePortRefCount(entry.multicast_replica_port);
+
+  // Need to set RIF in mapper in case have to back out.
   m_p4OidMapper->setOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
                         entry.multicast_router_interface_entry_key, rif_oid);
 
+  // For re-factoring purposes, only the new actions will setup the next hop.
+  if (entry.action != p4orch::kSetSrcMac) {
+    sai_object_id_t next_hop_oid = SAI_NULL_OBJECT_ID;
+    ReturnCode nh_status = createNextHop(entry, rif_oid, &next_hop_oid);
+    if (!nh_status.ok()) {
+      ReturnCode del_status = deleteRouterInterface(
+          entry.multicast_router_interface_entry_key, rif_oid);
+      m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                              entry.multicast_router_interface_entry_key);
+      if (!del_status.ok()) {
+        // All kinds of bad.  The delete failed, and we have to leave a
+        // dangling allocated RIF
+        std::stringstream err_msg;
+        err_msg << "Next hop creation failed, and we were "
+                << "unable to backout creation of the RIF for "
+                << QuotedVar(entry.multicast_router_interface_entry_key);
+        SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+        SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      }
+
+      // Return original failure.
+      return nh_status;
+    }
+    m_p4OidMapper->setOID(SAI_OBJECT_TYPE_NEXT_HOP,
+                          entry.multicast_router_interface_entry_key,
+                          next_hop_oid);
+  }
+
   // Update internal state.
+  gPortsOrch->increasePortRefCount(entry.multicast_replica_port);
+
   m_multicastRouterInterfaceTable[entry.multicast_router_interface_entry_key] =
       entry;
   return ReturnCode();
@@ -1639,10 +1836,12 @@ L3MulticastManager::deleteMulticastRouterInterfaceEntries(
       break;
     }
 
-    if (old_entry_ptr->action == p4orch::kSetSrcMac) {
-      statuses[i] = deleteL3MulticastRouterInterfaceEntry(old_entry_ptr);
-    } else {
+    if (old_entry_ptr->action == p4orch::kL2MulticastPassthrough ||
+        old_entry_ptr->action == p4orch::kMulticastL2Passthrough) {
+
       statuses[i] = deleteL2MulticastRouterInterfaceEntry(old_entry_ptr);
+    } else {
+      statuses[i] = deleteL3MulticastRouterInterfaceEntry(old_entry_ptr);
     }
     if (!statuses[i].ok()) {
       break;
@@ -2718,7 +2917,10 @@ std::string L3MulticastManager::verifyMulticastRouterInterfaceStateCache(
     return msg.str();
   }
 
-  if (multicast_router_interface_entry->action == p4orch::kSetSrcMac) {
+  if (multicast_router_interface_entry->action !=
+          p4orch::kL2MulticastPassthrough &&
+      multicast_router_interface_entry->action !=
+          p4orch::kMulticastL2Passthrough) {
     sai_object_id_t rif_oid = getRifOid(multicast_router_interface_entry);
     return m_p4OidMapper->verifyOIDMapping(
         SAI_OBJECT_TYPE_ROUTER_INTERFACE,
@@ -2730,11 +2932,14 @@ std::string L3MulticastManager::verifyMulticastRouterInterfaceStateCache(
 
 std::string L3MulticastManager::verifyMulticastRouterInterfaceStateAsicDb(
     const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry) {
-  if (multicast_router_interface_entry->action == p4orch::kSetSrcMac) {
-    return verifyL3MulticastRouterInterfaceStateAsicDb(
+  if (multicast_router_interface_entry->action ==
+          p4orch::kL2MulticastPassthrough ||
+      multicast_router_interface_entry->action ==
+          p4orch::kMulticastL2Passthrough) {
+    return verifyL2MulticastRouterInterfaceStateAsicDb(
         multicast_router_interface_entry);
   } else {
-    return verifyL2MulticastRouterInterfaceStateAsicDb(
+    return verifyL3MulticastRouterInterfaceStateAsicDb(
         multicast_router_interface_entry);
   }
 }
@@ -3021,6 +3226,16 @@ sai_object_id_t L3MulticastManager::getRifOid(
   return rif_oid;
 }
 
+sai_object_id_t L3MulticastManager::getNextHopOid(
+    const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry) {
+  sai_object_id_t next_hop_oid = SAI_NULL_OBJECT_ID;
+  m_p4OidMapper->getOID(
+      SAI_OBJECT_TYPE_NEXT_HOP,
+      multicast_router_interface_entry->multicast_router_interface_entry_key,
+      &next_hop_oid);
+  return next_hop_oid;
+}
+
 // A bridge port is associated with an egress port.
 sai_object_id_t L3MulticastManager::getBridgePortOid(
     const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry) {
@@ -3051,6 +3266,25 @@ sai_object_id_t L3MulticastManager::getRifOid(const P4Replica& replica) {
   sai_object_id_t rif_oid = SAI_NULL_OBJECT_ID;
   m_p4OidMapper->getOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key, &rif_oid);
   return rif_oid;
+}
+
+sai_object_id_t L3MulticastManager::getNextHopOid(const P4Replica& replica) {
+  // Get router interface entry for out port and egress instance.
+  const std::string router_interface_key =
+      KeyGenerator::generateMulticastRouterInterfaceKey(replica.port,
+                                                        replica.instance);
+  auto* router_interface_entry_ptr =
+      getMulticastRouterInterfaceEntry(router_interface_key);
+  if (router_interface_entry_ptr == nullptr) {
+    return SAI_NULL_OBJECT_ID;
+  }
+  // Use that to generate RIF key.
+  std::string rif_key = KeyGenerator::generateMulticastRouterInterfaceKey(
+      router_interface_entry_ptr->multicast_replica_port,
+      router_interface_entry_ptr->multicast_replica_instance);
+  sai_object_id_t next_hop_oid = SAI_NULL_OBJECT_ID;
+  m_p4OidMapper->getOID(SAI_OBJECT_TYPE_NEXT_HOP, rif_key, &next_hop_oid);
+  return next_hop_oid;
 }
 
 // A Bridge port is associated with an egress port.
