@@ -59,6 +59,7 @@ constexpr char *kSetIpNexthop = "set_ip_nexthop";
 constexpr char* kSetIpNexthopAndDisableRewrites =
     "set_ip_nexthop_and_disable_rewrites";
 constexpr char *kSetTunnelNexthop = "set_p2p_tunnel_encap_nexthop";
+constexpr char* kL2MulticastPassthrough = "l2_multicast_passthrough";
 constexpr char *kDrop = "drop";
 constexpr char *kTrap = "trap";
 constexpr char *kStage = "stage";
