@@ -1027,6 +1027,7 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
   EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
 }
 
 TEST_F(L3MulticastManagerTest,
@@ -1048,6 +1049,7 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
   EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
 }
 
 TEST_F(L3MulticastManagerTest,
@@ -1069,6 +1071,7 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
   EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
 }
 
 TEST_F(L3MulticastManagerTest, DeleteMulticastRouterInterfaceEntriesSaiFails) {
@@ -1226,6 +1229,7 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
   EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
 }
 
 TEST_F(L3MulticastManagerTest,
@@ -1254,6 +1258,7 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
   EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
 }
 
 TEST_F(L3MulticastManagerTest,
@@ -1280,6 +1285,7 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
   EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
 }
 
 TEST_F(L3MulticastManagerTest,
@@ -1306,6 +1312,7 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
   EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+  // TODO: Expect critical state.
 }
 
 TEST_F(L3MulticastManagerTest,
@@ -3151,6 +3158,7 @@ TEST_F(L3MulticastManagerTest,
       std::string(APP_P4RT_REPLICATION_L2_MULTICAST_TABLE_NAME) +
       kTableKeyDelimiter + group_match_key;
   std::vector<swss::FieldValueTuple> group_attributes;
+  std::vector<swss::FieldValueTuple> group_attributes_del;
   group_attributes.push_back(
       swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
 
@@ -3199,7 +3207,7 @@ TEST_F(L3MulticastManagerTest,
                                        group_attributes));
   Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
           swss::KeyOpFieldsValuesTuple(group_appl_db_key, DEL_COMMAND,
-                                       group_attributes));
+                                       group_attributes_del));
 
   EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group_member(_, _, _, _))
       .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid2),
@@ -3210,7 +3218,7 @@ TEST_F(L3MulticastManagerTest,
                                   Eq(group_appl_db_key2), Eq(group_attributes),
                                   Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
   EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME),
-                                  Eq(group_appl_db_key), Eq(group_attributes),
+                                  Eq(group_appl_db_key), Eq(group_attributes_del),
                                   Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
   EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
