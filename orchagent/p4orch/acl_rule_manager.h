@@ -71,7 +71,7 @@ class AclRuleManager : public ObjectManagerInterface
     ReturnCode processDeleteRuleRequest(const std::string &acl_table_name, const std::string &acl_rule_key);
 
     // Processes update operation for an ACL rule.
-    ReturnCode processUpdateRuleRequest(const P4AclRuleAppDbEntry &app_db_entry, const P4AclRule &old_acl_rule);
+    ReturnCode processUpdateRuleRequest(const P4AclRuleAppDbEntry &app_db_entry, P4AclRule &old_acl_rule);
 
     // Set counters stats for an ACL rule in COUNTERS_DB.
     ReturnCode setAclRuleCounterStats(const P4AclRule &acl_rule);
@@ -116,16 +116,13 @@ class AclRuleManager : public ObjectManagerInterface
                                        P4AclRule &acl_rule);
 
     // Validate and set a match attribute in an ACL rule.
-    ReturnCode setMatchValue(
-        const sai_acl_entry_attr_t attr_name, const std::string& attr_value,
-        sai_attribute_value_t* value, P4AclRule* acl_rule,
-        const std::string& ip_type_bit_type = EMPTY_STRING);
+    ReturnCode setMatchValue(const sai_acl_entry_attr_t attr_name, const std::string &attr_value,
+                             sai_attribute_value_t *value, P4AclRule *acl_rule,
+                             const std::string &ip_type_bit_type = EMPTY_STRING);
 
     // Validate and set an action attribute in an ACL rule.
-    ReturnCode setActionValue(const sai_acl_entry_attr_t attr_name,
-                              const std::string& attr_value,
-                              sai_attribute_value_t* value,
-                              P4AclRule* acl_rule);
+    ReturnCode setActionValue(const sai_acl_entry_attr_t attr_name, const std::string &attr_value,
+                              sai_attribute_value_t *value, P4AclRule *acl_rule);
 
     // Get port object id by name for redirect action.
     ReturnCode getRedirectActionPortOid(const std::string &target, sai_object_id_t *rediect_oid);
