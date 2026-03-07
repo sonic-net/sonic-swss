@@ -1,4 +1,5 @@
 #include "p4orch/acl_table_manager.h"
+#include "namelabelmapper.h"
 
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -32,6 +33,7 @@ extern CrmOrch *gCrmOrch;
 extern P4Orch *gP4Orch;
 extern SwitchOrch *gSwitchOrch;
 extern AclOrch* gAclOrch;
+extern NameLabelMapper *gLabelMapper;
 extern int gBatchSize;
 
 namespace p4orch
@@ -58,8 +60,9 @@ std::vector<sai_attribute_t> getGroupMemSaiAttrs(const P4AclTableDefinition &acl
     return acl_mem_attrs;
 }
 
-std::vector<sai_attribute_t> getUdfGroupSaiAttrs(const P4UdfField &udf_field)
-{
+std::vector<sai_attribute_t> getUdfGroupSaiAttrs(const P4UdfField& udf_field,
+                                                 bool& label_present,
+                                                 std::string& group_label) {
     std::vector<sai_attribute_t> udf_group_attrs;
     sai_attribute_t udf_group_attr;
     udf_group_attr.id = SAI_UDF_GROUP_ATTR_TYPE;
@@ -68,6 +71,14 @@ std::vector<sai_attribute_t> getUdfGroupSaiAttrs(const P4UdfField &udf_field)
 
     udf_group_attr.id = SAI_UDF_GROUP_ATTR_LENGTH;
     udf_group_attr.value.u16 = udf_field.length;
+    udf_group_attrs.push_back(udf_group_attr);
+
+    // Add label to uniquely identify udf group.
+    std::string mapper_key;
+    label_present = gLabelMapper->addLabelToAttr(
+                                                 SAI_OBJECT_TYPE_UDF_GROUP, APP_P4RT_TABLE_NAME,
+                                                 udf_field.group_id, udf_group_attr, SAI_UDF_GROUP_ATTR_LABEL,
+                                                 mapper_key, group_label);
     udf_group_attrs.push_back(udf_group_attr);
 
     return udf_group_attrs;
@@ -598,13 +609,24 @@ ReturnCode AclTableManager::createUdfGroup(const P4UdfField &udf_field)
 {
     SWSS_LOG_ENTER();
     sai_object_id_t udf_group_oid;
-    auto attrs = getUdfGroupSaiAttrs(udf_field);
+    bool label_present;
+    std::string group_label;
+
+    auto attrs = getUdfGroupSaiAttrs(udf_field, label_present, group_label);
 
     CHECK_ERROR_AND_LOG_AND_RETURN(
         sai_udf_api->create_udf_group(&udf_group_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data()),
         "Failed to create UDF group " << QuotedVar(udf_field.group_id)
                                       << " from SAI call sai_udf_api->create_udf_group");
     m_p4OidMapper->setOID(SAI_OBJECT_TYPE_UDF_GROUP, udf_field.group_id, udf_group_oid);
+
+    std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+                                                                             APP_P4RT_TABLE_NAME, udf_field.group_id);
+    if (!label_present)
+    {
+        gLabelMapper->setLabel(SAI_OBJECT_TYPE_UDF_GROUP, mapper_key, group_label);
+    }
+
     SWSS_LOG_INFO("Suceeded to create UDF group %s with object ID %s ", QuotedVar(udf_field.group_id).c_str(),
                   sai_serialize_object_id(udf_group_oid).c_str());
     return ReturnCode();
@@ -636,6 +658,10 @@ ReturnCode AclTableManager::removeUdfGroup(const std::string &udf_group_id)
     CHECK_ERROR_AND_LOG_AND_RETURN(sai_udf_api->remove_udf_group(group_oid),
                                    "Failed to remove UDF group with id " << QuotedVar(udf_group_id));
     m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_UDF_GROUP, udf_group_id);
+    gLabelMapper->eraseLabel(
+                SAI_OBJECT_TYPE_UDF_GROUP,
+                gLabelMapper->generateKeyFromTableAndObjectName(
+                     APP_P4RT_TABLE_NAME, udf_group_id));
 
     SWSS_LOG_NOTICE("Suceeded to remove UDF group %s: %s", QuotedVar(udf_group_id).c_str(),
                     sai_serialize_object_id(group_oid).c_str());
@@ -1293,8 +1319,10 @@ std::string AclTableManager::verifyStateAsicDb(
         return std::string("UDF ") + udf_field.udf_id + " does not exist";
       }
 
+      bool label_present;
+      std::string group_label;
       // Verify UDF group.
-      attrs = getUdfGroupSaiAttrs(udf_field);
+      attrs = getUdfGroupSaiAttrs(udf_field, label_present, group_label);
       exp = saimeta::SaiAttributeList::serialize_attr_list(
           SAI_OBJECT_TYPE_UDF_GROUP, (uint32_t)attrs.size(), attrs.data(),
           /*countOnly=*/false);
