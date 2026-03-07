@@ -448,9 +448,8 @@ bool PortsOrch::setBridgePortLearnMode(Port &port, sai_bridge_port_fdb_learning_
     return true;
 }
 
-bool PortsOrch::addVlan(string vlan)
-{
-    return true;
+bool PortsOrch::addVlan(string vlan, bool disable_learning_and_flooding) {
+  return true;
 }
 
 bool PortsOrch::removeVlan(Port vlan)

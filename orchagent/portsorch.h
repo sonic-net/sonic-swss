@@ -433,7 +433,7 @@ private:
 
     bool setBridgePortLearnMode(Port &port, sai_bridge_port_fdb_learning_mode_t learn_mode);
 
-    bool addVlan(string vlan);
+    bool addVlan(string vlan, bool disable_learning_and_flooding = false);
     bool removeVlan(Port vlan);
 
     bool addLag(string lag, uint32_t spa_id, int32_t switch_id);
