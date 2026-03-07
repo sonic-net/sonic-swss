@@ -44,6 +44,7 @@ enum class CounterType
     DASH_METER,
     SRV6,
     SWITCH,
+    HA_SET,
 };
 
 extern bool gTraditionalFlexCounter;
