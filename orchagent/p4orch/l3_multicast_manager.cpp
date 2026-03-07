@@ -1178,6 +1178,23 @@ ReturnCode L3MulticastManager::validateL3DelMulticastRouterInterfaceEntry(
                   multicast_router_interface_entry.multicast_replica_instance);
   }
 
+  if (router_interface_entry_ptr->action == p4orch::kMulticastSetSrcMac ||
+      router_interface_entry_ptr->action ==
+          p4orch::kMulticastSetSrcMacAndVlanId ||
+      router_interface_entry_ptr->action ==
+          p4orch::kMulticastSetSrcMacAndDstMacAndVlanId ||
+      router_interface_entry_ptr->action ==
+          p4orch::kMulticastSetSrcMacAndPreserveIngressVlanId) {
+    // Confirm the next hop object ID exists in central mapper.
+    if (getNextHopOid(router_interface_entry_ptr) == SAI_OBJECT_TYPE_NULL) {
+      return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+             << "Next hop was not assigned before updating multicast router "
+                "interface entry with key "
+             << QuotedVar(multicast_router_interface_entry
+                              .multicast_router_interface_entry_key);
+    }
+  }
+
   return ReturnCode();
 }
 
@@ -1386,6 +1403,68 @@ ReturnCode L3MulticastManager::deleteBridgePort(
                          << "Failed to remove bridge port for "
                          << QuotedVar(port).c_str());
   }
+  return ReturnCode();
+}
+
+ReturnCode L3MulticastManager::deleteNextHop(
+    P4MulticastRouterInterfaceEntry* entry,
+    const sai_object_id_t next_hop_oid) {
+  SWSS_LOG_ENTER();
+  // Confirm we have a next hop to be deleted.
+  if (!m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_NEXT_HOP,
+                                entry->multicast_router_interface_entry_key)) {
+    LOG_ERROR_AND_RETURN(
+        ReturnCode(StatusCode::SWSS_RC_INTERNAL)
+        << "Next hop to be deleted by multicast router interface table "
+        << QuotedVar(entry->multicast_router_interface_entry_key)
+        << " does not exist in the centralized map");
+  }
+  auto sai_status = sai_next_hop_api->remove_next_hop(next_hop_oid);
+  if (sai_status != SAI_STATUS_SUCCESS) {
+    LOG_ERROR_AND_RETURN(
+        ReturnCode(sai_status)
+        << "Failed to remove next hop for multicast router interface "
+        << "table: "
+        << QuotedVar(entry->multicast_router_interface_entry_key).c_str());
+  }
+
+  // Erase OID from mapper.  We do this here in case neighbor entry delete fails
+  // and we have to re-add the next hop.
+  m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_NEXT_HOP,
+                          entry->multicast_router_interface_entry_key);
+
+  sai_status_t del_status =
+      sai_neighbor_api->remove_neighbor_entry(&entry->sai_neighbor_entry);
+  if (del_status != SAI_STATUS_SUCCESS) {
+    // Attempt to re-add next hop just deleted.
+    sai_object_id_t rif_oid = getRifOid(entry);
+    sai_object_id_t new_next_hop_oid = SAI_NULL_OBJECT_ID;
+    std::vector<sai_attribute_t> attrs =
+        prepareNextHopSaiAttrs(*entry, rif_oid);
+    auto add_status = sai_next_hop_api->create_next_hop(
+        &new_next_hop_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+    if (add_status != SAI_STATUS_SUCCESS) {
+      // All kinds of bad.  The create failed, and we couldn't restore the
+      // previous system state.
+      std::stringstream err_msg;
+      err_msg << "Neighbor entry delete failed, and we were unable to re-add "
+              << "the next hop object that had been removed for "
+              << QuotedVar(entry->multicast_router_interface_entry_key);
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+    } else {
+      // Re-add was successful.
+      m_p4OidMapper->setOID(SAI_OBJECT_TYPE_NEXT_HOP,
+                            entry->multicast_router_interface_entry_key,
+                            new_next_hop_oid);
+    }
+    // Return original error.
+    return ReturnCode(del_status)
+           << "Failed to remove neighbor entry for multicast router interface "
+           << "table: "
+           << QuotedVar(entry->multicast_router_interface_entry_key).c_str();
+  }
+
   return ReturnCode();
 }
 
@@ -1772,7 +1851,7 @@ ReturnCode L3MulticastManager::deleteL2MulticastRouterInterfaceEntry(
 }
 
 ReturnCode L3MulticastManager::deleteL3MulticastRouterInterfaceEntry(
-    const P4MulticastRouterInterfaceEntry* entry) {
+    P4MulticastRouterInterfaceEntry* entry) {
   SWSS_LOG_ENTER();
   // RIFs are no longer shared by multiple table entries, so confirm entry is
   // no longer referenced by multicast replicas.
@@ -1800,11 +1879,44 @@ ReturnCode L3MulticastManager::deleteL3MulticastRouterInterfaceEntry(
            << "group members";
   }
 
+  // For re-factoring purposes, only the new actions will setup the next hop.
+  if (entry->action != p4orch::kSetMulticastSrcMac) {
+    sai_object_id_t next_hop_oid = getNextHopOid(entry);
+    RETURN_IF_ERROR(deleteNextHop(entry, next_hop_oid));
+    // deleteNextHop deletes next hop OID from oid mapper.
+  }
+
   // Delete the RIF.
   // Attempt to delete RIF at SAI layer before adjusting internal maps, in
   // case there is an error.
-  RETURN_IF_ERROR(deleteRouterInterface(
-      entry->multicast_router_interface_entry_key, rif_oid));
+  ReturnCode del_rif_rc = deleteRouterInterface(
+      entry->multicast_router_interface_entry_key, rif_oid);
+
+  if (!del_rif_rc.ok()) {
+    if (entry->action != p4orch::kSetMulticastSrcMac) {
+      // Try to restore next hop
+      sai_object_id_t new_next_hop_oid = SAI_NULL_OBJECT_ID;
+      ReturnCode nh_status = createNextHop(*entry, rif_oid, &new_next_hop_oid);
+      if (!nh_status.ok()) {
+        // All kinds of bad.  The create failed, and we couldn't restore the
+        // previous system state.
+        std::stringstream err_msg;
+        err_msg
+            << "Router interface delete failed, and we were unable to re-add "
+            << "the next hop object that had been removed for "
+            << QuotedVar(entry->multicast_router_interface_entry_key);
+        SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+        SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+      } else {
+        // Re-add was successful.
+        m_p4OidMapper->setOID(SAI_OBJECT_TYPE_NEXT_HOP,
+                              entry->multicast_router_interface_entry_key,
+                              new_next_hop_oid);
+      }
+    }
+    return del_rif_rc;
+  }
+
   m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
                           entry->multicast_router_interface_entry_key);
   gPortsOrch->decreasePortRefCount(entry->multicast_replica_port);
