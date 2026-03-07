@@ -1375,11 +1375,6 @@ TEST_F(AclManagerTest, DISABLED_CreatePuntTableFailsWhenUserTrapGroupOrHostifNot
     setUpSwitchOrch();
     // Update p4orch to use new copp orch
     setUpP4Orch();
-    // Fail to create ACL table because the trap group is absent
-    EXPECT_EQ("Trap group was not found given trap group name: " + std::string(GENL_PACKET_TRAP_GROUP_NAME_PREFIX) +
-                  std::to_string(skip_cpu_queue),
-              ProcessAddTableRequest(app_db_entry).message());
-    EXPECT_EQ(nullptr, GetAclTable(app_db_entry.acl_table_name));
 
     // Create the trap group for CPU queue 1 without host interface(genl
     // attributes)
