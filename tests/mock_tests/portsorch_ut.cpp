@@ -541,6 +541,8 @@ namespace portsorch_test
                 app_switch_table
             };
 
+            ASSERT_EQ(gCrmOrch, nullptr);
+            gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
             ASSERT_EQ(gSwitchOrch, nullptr);
             gSwitchOrch = new SwitchOrch(m_app_db.get(), switch_tables, stateDbSwitchTable);
 
@@ -695,8 +697,11 @@ namespace portsorch_test
             gQosOrch = nullptr;
             delete gSwitchOrch;
             gSwitchOrch = nullptr;
+            delete gCrmOrch;
+            gCrmOrch = nullptr;
             delete gMlagOrch;
             gMlagOrch = nullptr;
+
             // clear orchs saved in directory
             gDirectory.m_values.clear();
         }
