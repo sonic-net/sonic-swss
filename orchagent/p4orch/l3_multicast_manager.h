@@ -233,6 +233,8 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Update existing multicast router interface table entries.
   std::vector<ReturnCode> updateMulticastRouterInterfaceEntries(
       std::vector<P4MulticastRouterInterfaceEntry>& entries);
+  ReturnCode setDstMac(const swss::MacAddress& new_dst_mac,
+                       P4MulticastRouterInterfaceEntry* existing_entry);
   // Delete existing multicast router interface table entries.
   std::vector<ReturnCode> deleteMulticastRouterInterfaceEntries(
       const std::vector<P4MulticastRouterInterfaceEntry>& entries);

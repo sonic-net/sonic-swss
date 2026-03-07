@@ -16,6 +16,8 @@ class P4RtL3MulticastRouterInterfaceWrapper(util.DBInterface):
   SAI_ATTR_SRC_MAC = "SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS"
   SAI_ATTR_TYPE = "SAI_ROUTER_INTERFACE_ATTR_TYPE"
   SAI_ATTR_TYPE_PORT = "SAI_ROUTER_INTERFACE_TYPE_PORT"
+  SAI_ATTR_TYPE_SUB_PORT = "SAI_ROUTER_INTERFACE_TYPE_SUB_PORT"
+  SAI_ATTR_OUTER_VLAN_ID = "SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID"
   SAI_ATTR_MTU = "SAI_ROUTER_INTERFACE_ATTR_MTU"
   SAI_ATTR_PORT_ID = "SAI_ROUTER_INTERFACE_ATTR_PORT_ID"
   SAI_ATTR_V4_MCAST_ENABLE = "SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE"
@@ -30,15 +32,38 @@ class P4RtL3MulticastRouterInterfaceWrapper(util.DBInterface):
   SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE = "SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE"
   SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE = "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE"
 
+  NEXT_HOP_ASIC_DB_TABLE_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP"
+  SAI_NEXT_HOP_ATTR_TYPE = "SAI_NEXT_HOP_ATTR_TYPE"
+  SAI_NEXT_HOP_ATTR_TYPE_IPMC = "SAI_NEXT_HOP_TYPE_IPMC"
+  SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID = "SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID"
+  SAI_NEXT_HOP_ATTR_IP = "SAI_NEXT_HOP_ATTR_IP"
+  SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE = "SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE"
+  SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE = "SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE"
+  SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE = "SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE"
+
+  NEIGHBOR_ENTRY_ASIC_DB_TABLE_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY"
+  SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS = "SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS"
+  SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE = "SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE"
+
   # Attribute fields for multicast router interface entry.
   ACTION_FIELD = "action"
   SRC_MAC_FIELD = "src_mac"
+  DST_MAC_FIELD = "dst_mac"
+  VLAN_ID_FIELD = "vlan_id"
 
   # Default router interface attribute values.
   DEFAULT_PORT_ID = "Ethernet8"
   DEFAULT_INSTANCE = "0x0"
+  UNUSED_MAC_ADDRESS = "00:00:00:00:00:01"
   DEFAULT_SRC_MAC = "00:11:22:33:44:55"
+  DEFAULT_DST_MAC = "00:AA:BB:CC:DD:EE"
+  DEFAULT_VLAN_ID = "0x123"
+  # TODO: Make default action multicast_set_src_mac
   DEFAULT_ACTION = "set_multicast_src_mac"
+  MULTICAST_SET_SRC_MAC = "multicast_set_src_mac"
+  MULTICAST_SET_SRC_MAC_AND_VLAN_ID = "multicast_set_src_mac_and_vlan_id"
+  MULTICAST_SET_SRC_MAC_AND_DST_MAC_AND_VLAN_ID = "multicast_set_src_mac_and_dst_mac_and_vlan_id"
+  MULTICAST_SET_SRC_MAC_AND_PRESERVE_INGRESS_VLAN_ID = "multicast_set_src_mac_and_preserve_ingress_vlan_id"
 
   def generate_app_db_key(self, multicast_replica_port,
                           multicast_replica_instance):
@@ -65,7 +90,45 @@ class P4RtL3MulticastRouterInterfaceWrapper(util.DBInterface):
     self.set_app_db_entry(mcast_router_intf_key, attr_list)
     return mcast_router_intf_key, attr_list
 
+  # Create router interface for new multicast actions.
+  def create_router_interface_with_next_hop(self, port_id=None, instance=None,
+                                            src_mac=None, dst_mac=None,
+                                            vlan_id=None, action=None):
+    port_id = port_id or self.DEFAULT_PORT_ID
+    instance = instance or self.DEFAULT_INSTANCE
+    src_mac = src_mac or self.DEFAULT_SRC_MAC
+    dst_mac = dst_mac or self.DEFAULT_DST_MAC
+    vlan_id = vlan_id or self.DEFAULT_VLAN_ID
+    action = action or self.MULTICAST_SET_SRC_MAC
+    attr_list = []
 
+    if action == self.MULTICAST_SET_SRC_MAC:
+      attr_list = [
+        (util.prepend_param_field(self.SRC_MAC_FIELD), src_mac),
+        (self.ACTION_FIELD, action),
+      ]
+    elif action == self.MULTICAST_SET_SRC_MAC_AND_VLAN_ID:
+      attr_list = [
+        (util.prepend_param_field(self.SRC_MAC_FIELD), src_mac),
+        (util.prepend_param_field(self.VLAN_ID_FIELD), vlan_id),
+        (self.ACTION_FIELD, action),
+      ]
+    elif action == self.MULTICAST_SET_SRC_MAC_AND_DST_MAC_AND_VLAN_ID:
+      attr_list = [
+        (util.prepend_param_field(self.SRC_MAC_FIELD), src_mac),
+        (util.prepend_param_field(self.DST_MAC_FIELD), dst_mac),
+        (util.prepend_param_field(self.VLAN_ID_FIELD), vlan_id),
+        (self.ACTION_FIELD, action),
+      ]
+    elif action == self.MULTICAST_SET_SRC_MAC_AND_PRESERVE_INGRESS_VLAN_ID:
+      attr_list = [
+        (util.prepend_param_field(self.SRC_MAC_FIELD), src_mac),
+        (self.ACTION_FIELD, action),
+      ]
+    mcast_router_intf_key = self.generate_app_db_key(port_id, instance)
+    self.set_app_db_entry(mcast_router_intf_key, attr_list)
+    return mcast_router_intf_key, attr_list
+    
 class P4RtL3MulticastGroupWrapper(util.DBInterface):
   """Interface to interact with APP DB and ASIC DB tables for P4RT L3 multicast group object."""
 

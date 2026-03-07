@@ -72,9 +72,12 @@ constexpr char* kSrcMac5 = "10:20:30:40:50:60";
 
 constexpr char* kDstMac0 = "00:00:00:00:00:01";
 constexpr char* kDstMac1 = "00:11:22:33:44:55";
+constexpr char* kDstMac2 = "00:66:77:88:99:aa";
 
 constexpr char* kVlanId1 = "0x041";
+constexpr char* kVlanId2 = "0x042";
 constexpr uint16_t kVlanIdNum1 = 65;
+constexpr uint16_t kVlanIdNum2 = 66;
 
 constexpr char* kLinkLocalIpv4Address = "169.254.0.1";
 constexpr char* kNeighborMacAddress = "00:00:00:00:00:01";
@@ -282,6 +285,10 @@ bool MatchSaiSwitchAttr(const sai_attr_id_t expected_switch_attr,
 
 MATCHER_P(RifAttrEq, attr, "") { return MatchRifSaiAttribute(*arg, *attr); }
 
+MATCHER_P(NeighborAttrEq, attr, "") {
+  return MatchNeighborSaiAttribute(*arg, *attr);
+}
+
 MATCHER_P(IpmcAttrArrayEq, array, "") {
   for (size_t i = 0; i < array.size(); ++i) {
     if (!MatchIpmcSaiAttribute(arg[i], array[i])) {
@@ -389,7 +396,6 @@ class L3MulticastManagerTest : public ::testing::Test {
       router_interface_entry.has_vlan_id = true;
     }
 
-    router_interface_entry.has_src_mac = action == p4orch::kSetSrcMac;
     router_interface_entry.multicast_metadata = multicast_metadata;
     router_interface_entry.multicast_router_interface_entry_key =
         KeyGenerator::generateMulticastRouterInterfaceKey(
@@ -817,6 +823,9 @@ class L3MulticastManagerTest : public ::testing::Test {
     mock_sai_neighbor = &mock_sai_neighbor_;
     sai_neighbor_api->create_neighbor_entry = mock_create_neighbor_entry;
     sai_neighbor_api->remove_neighbor_entry = mock_remove_neighbor_entry;
+
+    sai_neighbor_api->set_neighbor_entry_attribute =
+        mock_set_neighbor_entry_attribute;
 
     mock_sai_switch = &mock_sai_switch_;
     sai_switch_api->get_switch_attribute = mock_get_switch_attribute;
@@ -2509,11 +2518,6 @@ TEST_F(L3MulticastManagerTest,
                               NextHopAttrArrayEq(exp_nh_attrs)))
       .WillOnce(Return(SAI_STATUS_FAILURE));
 
-  // Expect to enter critical state.
-  EXPECT_CALL(*gMockStateHelper,
-              ReportComponentState(Eq(swss::ComponentState::kError), _))
-      .WillRepeatedly(Return(true));
-
   std::vector<P4MulticastRouterInterfaceEntry> entries = {entry1};
   std::vector<ReturnCode> statuses =
       DeleteMulticastRouterInterfaceEntries(entries);
@@ -2589,11 +2593,6 @@ TEST_F(L3MulticastManagerTest,
               create_neighbor_entry(_, Eq(exp_neigh_attrs.size()),
                                     NeighborAttrArrayEq(exp_neigh_attrs)))
       .WillOnce(Return(SAI_STATUS_FAILURE));
-
-  // Expect to enter critical state.
-  EXPECT_CALL(*gMockStateHelper,
-              ReportComponentState(Eq(swss::ComponentState::kError), _))
-      .WillRepeatedly(Return(true));
 
   std::vector<P4MulticastRouterInterfaceEntry> entries = {entry1};
   std::vector<ReturnCode> statuses =
@@ -2926,6 +2925,254 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
   EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
+}
+
+TEST_F(L3MulticastManagerTest, UpdateMulticastRouterInterfaceCannotChangeVlan) {
+  auto entry1 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), kVlanIdNum1,
+      p4orch::kMulticastSetSrcMacAndVlanId, kRifOid1, kNextHopOid1);
+
+  entry1.vlan_id = kVlanIdNum2;
+  std::vector<P4MulticastRouterInterfaceEntry> entries = {entry1};
+  std::vector<ReturnCode> statuses =
+      UpdateMulticastRouterInterfaceEntries(entries);
+
+  ASSERT_EQ(statuses.size(), 1);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_UNIMPLEMENTED);
+
+  // Expect entry to have not changed.
+  auto* actual_entry = GetMulticastRouterInterfaceEntry(
+      entry1.multicast_router_interface_entry_key);
+  ASSERT_NE(nullptr, actual_entry);
+  EXPECT_EQ(actual_entry->vlan_id, kVlanIdNum1);
+}
+
+TEST_F(L3MulticastManagerTest,
+       UpdateMulticastRouterInterfaceUpdateDstMacSuccess) {
+  auto entry1 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac1), kVlanIdNum1,
+      p4orch::kMulticastSetSrcMacAndDstMacAndVlanId, kRifOid1, kNextHopOid1);
+
+  auto update_entry1 = GenerateP4MulticastRouterInterfaceEntryByAction(
+      "Ethernet1", /*instance=*/"0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac2), kVlanIdNum1, "metadata",
+      p4orch::kMulticastSetSrcMacAndDstMacAndVlanId);
+
+  sai_attribute_t attr;
+  attr.id = SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS;
+  memcpy(attr.value.mac, swss::MacAddress(kDstMac2).getMac(),
+         sizeof(sai_mac_t));
+
+  EXPECT_CALL(mock_sai_neighbor_,
+              set_neighbor_entry_attribute(_, NeighborAttrEq(&attr)))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  std::vector<P4MulticastRouterInterfaceEntry> entries = {update_entry1};
+  std::vector<ReturnCode> statuses =
+      UpdateMulticastRouterInterfaceEntries(entries);
+
+  ASSERT_EQ(statuses.size(), 1);
+  EXPECT_TRUE(statuses[0].ok());
+
+  // Expect entry to have changed.
+  auto* actual_entry = GetMulticastRouterInterfaceEntry(
+      entry1.multicast_router_interface_entry_key);
+  ASSERT_NE(nullptr, actual_entry);
+  EXPECT_EQ(actual_entry->dst_mac.to_string(), kDstMac2);
+}
+
+TEST_F(L3MulticastManagerTest,
+       UpdateMulticastRouterInterfaceUpdateDstMacFails) {
+  auto entry1 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", /*instance=*/"0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac1), kVlanIdNum1,
+      p4orch::kMulticastSetSrcMacAndDstMacAndVlanId, kRifOid1, kNextHopOid1);
+
+  auto update_entry1 = GenerateP4MulticastRouterInterfaceEntryByAction(
+      "Ethernet1", /*instance=*/"0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac2), kVlanIdNum1, "metadata",
+      p4orch::kMulticastSetSrcMacAndDstMacAndVlanId);
+
+  sai_attribute_t attr;
+  attr.id = SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS;
+  memcpy(attr.value.mac, swss::MacAddress(kDstMac2).getMac(),
+         sizeof(sai_mac_t));
+
+  EXPECT_CALL(mock_sai_neighbor_,
+              set_neighbor_entry_attribute(_, NeighborAttrEq(&attr)))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  std::vector<P4MulticastRouterInterfaceEntry> entries = {update_entry1};
+  std::vector<ReturnCode> statuses =
+      UpdateMulticastRouterInterfaceEntries(entries);
+
+  ASSERT_EQ(statuses.size(), 1);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_UNKNOWN);
+
+  // Expect entry to have not changed.
+  auto* actual_entry = GetMulticastRouterInterfaceEntry(
+      entry1.multicast_router_interface_entry_key);
+  ASSERT_NE(nullptr, actual_entry);
+  EXPECT_EQ(actual_entry->dst_mac.to_string(), kDstMac1);
+}
+
+TEST_F(L3MulticastManagerTest,
+       UpdateMulticastRouterInterfaceUpdateSrcMacAndDstMacSuccess) {
+  auto entry1 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", /*instance=*/"0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac1), kVlanIdNum1,
+      p4orch::kMulticastSetSrcMacAndDstMacAndVlanId, kRifOid1, kNextHopOid1);
+
+  auto update_entry1 = GenerateP4MulticastRouterInterfaceEntryByAction(
+      "Ethernet1", /*instance=*/"0x0001", swss::MacAddress(kSrcMac2),
+      swss::MacAddress(kDstMac2), kVlanIdNum1, "metadata",
+      p4orch::kMulticastSetSrcMacAndDstMacAndVlanId);
+
+  sai_attribute_t rif_attr;
+  rif_attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
+  memcpy(rif_attr.value.mac, swss::MacAddress(kSrcMac2).getMac(),
+         sizeof(sai_mac_t));
+
+  EXPECT_CALL(mock_sai_router_intf_,
+              set_router_interface_attribute(kRifOid1, RifAttrEq(&rif_attr)))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  sai_attribute_t attr;
+  attr.id = SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS;
+  memcpy(attr.value.mac, swss::MacAddress(kDstMac2).getMac(),
+         sizeof(sai_mac_t));
+
+  EXPECT_CALL(mock_sai_neighbor_,
+              set_neighbor_entry_attribute(_, NeighborAttrEq(&attr)))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  std::vector<P4MulticastRouterInterfaceEntry> entries = {update_entry1};
+  std::vector<ReturnCode> statuses =
+      UpdateMulticastRouterInterfaceEntries(entries);
+
+  ASSERT_EQ(statuses.size(), 1);
+  EXPECT_TRUE(statuses[0].ok());
+
+  // Expect entry to have changed.
+  auto* actual_entry = GetMulticastRouterInterfaceEntry(
+      entry1.multicast_router_interface_entry_key);
+  ASSERT_NE(nullptr, actual_entry);
+  EXPECT_EQ(actual_entry->src_mac.to_string(), kSrcMac2);
+  EXPECT_EQ(actual_entry->dst_mac.to_string(), kDstMac2);
+}
+
+TEST_F(L3MulticastManagerTest,
+       UpdateMulticastRouterInterfaceUpdateSrcMacAndDstMacSrcMacFails) {
+  auto entry1 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac1), kVlanIdNum1,
+      p4orch::kMulticastSetSrcMacAndDstMacAndVlanId, kRifOid1, kNextHopOid1);
+
+  auto update_entry1 = GenerateP4MulticastRouterInterfaceEntryByAction(
+      "Ethernet1", /*instance=*/"0x0001", swss::MacAddress(kSrcMac2),
+      swss::MacAddress(kDstMac2), kVlanIdNum1, "metadata",
+      p4orch::kMulticastSetSrcMacAndDstMacAndVlanId);
+
+  sai_attribute_t rif_attr;
+  rif_attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
+  memcpy(rif_attr.value.mac, swss::MacAddress(kSrcMac2).getMac(),
+         sizeof(sai_mac_t));
+
+  EXPECT_CALL(mock_sai_router_intf_,
+              set_router_interface_attribute(kRifOid1, RifAttrEq(&rif_attr)))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  sai_attribute_t attr;
+  attr.id = SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS;
+  memcpy(attr.value.mac, swss::MacAddress(kDstMac2).getMac(),
+         sizeof(sai_mac_t));
+
+  sai_attribute_t restore_attr;
+  restore_attr.id = SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS;
+  memcpy(restore_attr.value.mac, swss::MacAddress(kDstMac1).getMac(),
+         sizeof(sai_mac_t));
+
+  // We will see successful change for dst mac.
+  EXPECT_CALL(mock_sai_neighbor_,
+              set_neighbor_entry_attribute(_, NeighborAttrEq(&attr)))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  // We will allow the dst mac value to be restored successfully.
+  EXPECT_CALL(mock_sai_neighbor_,
+              set_neighbor_entry_attribute(_, NeighborAttrEq(&restore_attr)))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  std::vector<P4MulticastRouterInterfaceEntry> entries = {update_entry1};
+  std::vector<ReturnCode> statuses =
+      UpdateMulticastRouterInterfaceEntries(entries);
+
+  ASSERT_EQ(statuses.size(), 1);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_UNKNOWN);
+
+  // Expect entry to have not changed.
+  auto* actual_entry = GetMulticastRouterInterfaceEntry(
+      entry1.multicast_router_interface_entry_key);
+  ASSERT_NE(nullptr, actual_entry);
+  EXPECT_EQ(actual_entry->src_mac.to_string(), kSrcMac1);
+  EXPECT_EQ(actual_entry->dst_mac.to_string(), kDstMac1);
+}
+
+TEST_F(L3MulticastManagerTest,
+       UpdateMulticastRouterInterfaceUpdateSrcMacAndDstMacSrcMacRestoreFails) {
+  auto entry1 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac1), kVlanIdNum1,
+      p4orch::kMulticastSetSrcMacAndDstMacAndVlanId, kRifOid1, kNextHopOid1);
+
+  auto update_entry1 = GenerateP4MulticastRouterInterfaceEntryByAction(
+      "Ethernet1", /*instance=*/"0x0001", swss::MacAddress(kSrcMac2),
+      swss::MacAddress(kDstMac2), kVlanIdNum1, "metadata",
+      p4orch::kMulticastSetSrcMacAndDstMacAndVlanId);
+
+  sai_attribute_t rif_attr;
+  rif_attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
+  memcpy(rif_attr.value.mac, swss::MacAddress(kSrcMac2).getMac(),
+         sizeof(sai_mac_t));
+
+  EXPECT_CALL(mock_sai_router_intf_,
+              set_router_interface_attribute(kRifOid1, RifAttrEq(&rif_attr)))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  sai_attribute_t attr;
+  attr.id = SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS;
+  memcpy(attr.value.mac, swss::MacAddress(kDstMac2).getMac(),
+         sizeof(sai_mac_t));
+
+  sai_attribute_t restore_attr;
+  restore_attr.id = SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS;
+  memcpy(restore_attr.value.mac, swss::MacAddress(kDstMac1).getMac(),
+         sizeof(sai_mac_t));
+
+  // We will see successful change for dst mac.
+  EXPECT_CALL(mock_sai_neighbor_,
+              set_neighbor_entry_attribute(_, NeighborAttrEq(&attr)))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  // Unable to restore previous value of dst mac.
+  EXPECT_CALL(mock_sai_neighbor_,
+              set_neighbor_entry_attribute(_, NeighborAttrEq(&restore_attr)))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  std::vector<P4MulticastRouterInterfaceEntry> entries = {update_entry1};
+  std::vector<ReturnCode> statuses =
+      UpdateMulticastRouterInterfaceEntries(entries);
+
+  ASSERT_EQ(statuses.size(), 1);
+  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_UNKNOWN);
+
+  // Expect entry to have not changed.
+  auto* actual_entry = GetMulticastRouterInterfaceEntry(
+      entry1.multicast_router_interface_entry_key);
+  ASSERT_NE(nullptr, actual_entry);
+  EXPECT_EQ(actual_entry->src_mac.to_string(), kSrcMac1);
+  EXPECT_EQ(actual_entry->dst_mac.to_string(), kDstMac1);
 }
 
 TEST_F(L3MulticastManagerTest, DrainMulticastRouterInterfaceEntryAdd) {
@@ -6463,6 +6710,24 @@ TEST_F(L3MulticastManagerTest,
 
   ReturnCode status = ValidateMulticastGroupEntry(entry, DEL_COMMAND);
   EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, status);
+}
+
+TEST_F(L3MulticastManagerTest,
+       ValidateSetMulticastRouterInterfaceEntryMissingNextHop) {
+  auto entry1 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, p4orch::kMulticastSetSrcMac,
+      kRifOid1, kNextHopOid1);
+
+  // Exercise update path.
+  entry1.src_mac = swss::MacAddress(kSrcMac2);
+  EXPECT_TRUE(ValidateMulticastRouterInterfaceEntry(entry1, SET_COMMAND).ok());
+
+  // Force delete next hop OID and expect failure.
+  p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_NEXT_HOP,
+                          entry1.multicast_router_interface_entry_key);
+
+  EXPECT_FALSE(ValidateMulticastRouterInterfaceEntry(entry1, SET_COMMAND).ok());
 }
 
 TEST_F(L3MulticastManagerTest, ValidateDelMulticastGroupEntryMissingNextHop) {
