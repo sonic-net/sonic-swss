@@ -134,12 +134,11 @@ void SwitchOrch::set_switch_pfc_dlr_init_capability()
         SWSS_LOG_INFO("Queue level PFC DLR INIT configuration is not supported");
         m_PfcDlrInitEnable = false;
         fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE, "false");
-    }
-    else 
-    {
-        SWSS_LOG_INFO("Queue level PFC DLR INIT configuration is supported");
-        m_PfcDlrInitEnable = true;
-        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE, "true");
+    } else {
+      SWSS_LOG_INFO("Queue level PFC DLR INIT configuration is supported");
+      m_PfcDlrInitEnable = true;
+      fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE,
+                            "true");
     }
     set_switch_capability(fvVector);
 }
@@ -2037,17 +2036,12 @@ bool SwitchOrch::querySwitchCapability(sai_object_type_t sai_object, sai_attr_id
     {
         SWSS_LOG_WARN("Could not query switch level DSCP to TC map %d", status);
         return false;
-    }
-    else 
-    {
-        if (capability.set_implemented)
-        {
-            return true;
-        }
-        else 
-        {
-            return false;
-        }
+    } else {
+      if (capability.set_implemented) {
+        return true;
+      } else {
+        return false;
+      }
     }
 }
 

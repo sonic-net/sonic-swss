@@ -69,8 +69,21 @@ struct P4AclMeter
     sai_uint64_t cburst;
     sai_uint64_t pir;
     sai_uint64_t pburst;
+    std::string policer_label;
 
     std::map<sai_policer_attr_t, sai_packet_action_t> packet_color_actions;
+
+    /* The map to look up the color to QOS queue mapping for QOS queue related
+       SAI policer attributes. Example:
+
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION ->
+          SAI_PACKET_COLOR_GREEN -> 0
+          SAI_PACKET_COLOR_RED -> 1
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION ->
+          SAI_PACKET_COLOR_GREEN -> 1
+          SAI_PACKET_COLOR_RED -> 0 */
+    std::map<sai_policer_attr_t, std::vector<sai_qos_map_t>>
+        packet_metered_queues;
 
     P4AclMeter()
         : enabled(false), meter_oid(SAI_NULL_OBJECT_ID), cir(0), cburst(0), pir(0), pburst(0),
@@ -80,6 +93,20 @@ struct P4AclMeter
 
     bool operator==(const P4AclMeter &entry) const
     {
+        for (const auto& metered_queues : packet_metered_queues) {
+          auto it = entry.packet_metered_queues.find(fvField(metered_queues));
+          if (it == entry.packet_metered_queues.end() ||
+              fvValue(metered_queues).size() != it->second.size()) {
+            return false;
+          }
+          for (size_t i = 0; i < it->second.size(); ++i) {
+            if (it->second[i].key.color != fvValue(metered_queues)[i].key.color ||
+                it->second[i].value.queue_index !=
+                    fvValue(metered_queues)[i].value.queue_index)
+              return false;
+          }
+        }
+
         return enabled == entry.enabled && type == entry.type && mode == entry.mode && cir == entry.cir &&
                cburst == entry.cburst && pir == entry.pir && pburst == entry.pburst &&
                packet_color_actions == entry.packet_color_actions;
@@ -170,6 +197,19 @@ struct SaiActionWithParam
     }
 };
 
+struct SaiColorWithParam {
+  sai_packet_color_t color;
+  std::string param_name;
+
+  bool operator==(const SaiColorWithParam& entry) const {
+    return color == entry.color && param_name == entry.param_name;
+  }
+
+  bool operator!=(const SaiColorWithParam& entry) const {
+    return !(*this == entry);
+  }
+};
+
 struct SaiMatchField
 {
   sai_acl_entry_attr_t entry_attr;
@@ -233,6 +273,20 @@ struct P4AclTableDefinition
     std::map<std::string, std::string> ip_type_bit_type_lookup;
     std::map<std::string, std::vector<SaiActionWithParam>> rule_action_field_lookup;
     std::map<std::string, std::map<sai_policer_attr_t, sai_packet_action_t>> rule_packet_action_color_lookup;
+
+    /* The map to look up QOS queue related SAI policer attribute by action name.
+       Example:
+
+      QOS_QUEUE_ACTION ->
+          SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION ->
+              {SAI_PACKET_COLOR_GREEN, "green_multicast_queue"}
+              {SAI_PACKET_COLOR_RED, "red_multicast_queue"}
+          SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION ->
+              {SAI_PACKET_COLOR_GREEN, "green_multicast_queue"}
+              {SAI_PACKET_COLOR_RED, "red_multicast_queue"} */
+    std::map<std::string,
+             std::map<sai_policer_attr_t, std::vector<SaiColorWithParam>>>
+        rule_action_color_param_lookup;
     std::vector<sai_acl_action_type_t> acl_action_type_list;
 
     P4AclTableDefinition() = default;
@@ -247,10 +301,13 @@ struct P4UserDefinedTrapHostifTableEntry
     sai_object_id_t user_defined_trap;
     sai_object_id_t hostif_table_entry;
     P4UserDefinedTrapHostifTableEntry()
-        : user_defined_trap(SAI_NULL_OBJECT_ID), hostif_table_entry(SAI_NULL_OBJECT_ID) {};
+        : user_defined_trap(SAI_NULL_OBJECT_ID),
+          hostif_table_entry(SAI_NULL_OBJECT_ID) {};
 };
 
 using acl_rule_attr_lookup_t = std::map<std::string, sai_acl_entry_attr_t>;
+using acl_rule_policer_attr_lookup_t =
+    std::map<std::string, sai_policer_attr_t>;
 using acl_table_attr_lookup_t = std::map<std::string, sai_acl_table_attr_t>;
 using acl_table_attr_format_lookup_t = std::map<sai_acl_table_attr_t, Format>;
 using acl_packet_action_lookup_t = std::map<std::string, sai_packet_action_t>;
@@ -353,6 +410,16 @@ using P4AclRuleTables = std::map<std::string, std::map<std::string, P4AclRule>>;
 #define P4_ACTION_SET_VRF "SAI_ACL_ENTRY_ATTR_ACTION_SET_VRF"
 #define P4_ACTION_SET_ACL_META_DATA "SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA"
 #define P4_ACTION_SET_QOS_QUEUE "QOS_QUEUE"
+#ifndef SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION
+#define SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION (sai_policer_attr_t)0x10000001
+#endif
+
+#ifndef SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION
+#define SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION (sai_policer_attr_t)0x10000002
+#endif
+
+#define P4_ACTION_SET_MULTICAST_QOS_QUEUE "SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION"
+#define P4_ACTION_SET_UNICAST_QOS_QUEUE "SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION"
 
 #define P4_PACKET_ACTION_FORWARD "SAI_PACKET_ACTION_FORWARD"
 #define P4_PACKET_ACTION_DROP "SAI_PACKET_ACTION_DROP"
@@ -653,6 +720,15 @@ static const acl_rule_attr_lookup_t aclActionLookup = {
     {P4_ACTION_SET_ACL_META_DATA, SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA},
 };
 
+static const acl_rule_policer_attr_lookup_t aclActionPolicerAttrLookup = {
+    {P4_ACTION_SET_MULTICAST_QOS_QUEUE,
+     static_cast<sai_policer_attr_t>(
+         SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION)},
+    {P4_ACTION_SET_UNICAST_QOS_QUEUE,
+     static_cast<sai_policer_attr_t>(
+         SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION)},
+};
+
 static const acl_packet_color_policer_attr_lookup_t aclPacketColorPolicerAttrLookup = {
     {P4_PACKET_COLOR_GREEN, SAI_POLICER_ATTR_GREEN_PACKET_ACTION},
     {P4_PACKET_COLOR_YELLOW, SAI_POLICER_ATTR_YELLOW_PACKET_ACTION},
@@ -734,7 +810,8 @@ static const std::map<sai_acl_stage_t, acl_stage_type_t>
 // Parse ACL table definition APP DB entry action field to P4ActionParamName
 // action_list and P4PacketActionWithColor action_color_list
 bool parseAclTableAppDbActionField(const std::string &aggr_actions_str, std::vector<P4ActionParamName> *action_list,
-                                   std::vector<P4PacketActionWithColor> *action_color_list);
+                                   std::vector<P4PacketActionWithColor>* action_color_list,
+                                   std::vector<P4ActionWithColorParam>* action_color_param_list);
 
 // Validate and set match field with kind:sai_field. Caller methods are
 // responsible to verify the kind before calling this method
@@ -794,6 +871,14 @@ ReturnCode buildAclTableDefinitionActionColorFieldValues(
         aggr_sai_actions_lookup,
     std::map<std::string, std::map<sai_policer_attr_t, sai_packet_action_t>>*
         aggr_sai_action_color_lookup,
+    std::set<sai_acl_action_type_t>* acl_action_type_set);
+
+ReturnCode buildAclTableDefinitionActionColorParamFieldValues(
+    const std::map<std::string, std::vector<P4ActionWithColorParam>>&
+        action_color_param_lookup,
+    std::map<std::string,
+             std::map<sai_policer_attr_t, std::vector<SaiColorWithParam>>>*
+        aggr_action_color_param_lookup,
     std::set<sai_acl_action_type_t>* acl_action_type_set);
 
 // Set IP_TYPE in match field
