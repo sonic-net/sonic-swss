@@ -155,6 +155,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/cfgmgr/portmgr.cpp \
                 $(top_srcdir)/cfgmgr/sflowmgr.cpp \
                 $(top_srcdir)/orchagent/zmqorch.cpp \
+                $(top_srcdir)/orchagent/namelabelmapper.cpp \
                 $(top_srcdir)/orchagent/dash/dashenifwdorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashenifwdinfo.cpp \
                 $(top_srcdir)/orchagent/dash/dashaclorch.cpp \
