@@ -42,6 +42,7 @@ constexpr char *kDstMac = "dst_mac";
 constexpr char *kNexthopId = "nexthop_id";
 constexpr char *kTunnelId = "tunnel_id";
 constexpr char *kVrfId = "vrf_id";
+constexpr char* kVlanId = "vlan_id";
 constexpr char *kIpv4Dst = "ipv4_dst";
 constexpr char *kIpv6Dst = "ipv6_dst";
 constexpr char *kWcmpGroupId = "wcmp_group_id";
@@ -183,8 +184,10 @@ struct P4RouterInterfaceAppDbEntry
     std::string router_interface_id;
     std::string port_name;
     swss::MacAddress src_mac_address;
+    uint16_t vlan_id = 0;
     bool is_set_port_name = false;
     bool is_set_src_mac = false;
+    bool is_set_vlan_id = false;
 };
 
 struct P4NeighborAppDbEntry

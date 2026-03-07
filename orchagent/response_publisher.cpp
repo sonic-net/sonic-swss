@@ -64,11 +64,14 @@ void RecordResponse(const std::string &response_channel, const std::string &key,
 
 } // namespace
 
-ResponsePublisher::ResponsePublisher(const std::string &dbName, bool buffered, bool db_write_thread)
+ResponsePublisher::ResponsePublisher(const std::string& dbName, bool buffered,
+                                     bool db_write_thread,
+                                     swss::ZmqServer* zmqServer)
     : m_db(std::make_unique<swss::DBConnector>(dbName, 0)),
       m_ntf_pipe(std::make_unique<swss::RedisPipeline>(m_db.get())),
       m_db_pipe(std::make_unique<swss::RedisPipeline>(m_db.get())),
-      m_buffered(buffered)
+      m_buffered(buffered),
+      m_zmqServer(zmqServer)
 {
     if (db_write_thread)
     {
@@ -94,23 +97,40 @@ void ResponsePublisher::publish(const std::string &table, const std::string &key
                                 const std::vector<swss::FieldValueTuple> &intent_attrs, const ReturnCode &status,
                                 const std::vector<swss::FieldValueTuple> &state_attrs, bool replace)
 {
-    std::string response_channel = "APPL_DB_" + table + "_RESPONSE_CHANNEL";
-    swss::NotificationProducer notificationProducer{m_ntf_pipe.get(), response_channel, m_buffered};
-
     auto intent_attrs_copy = intent_attrs;
     // Add error message as the first field-value-pair.
     swss::FieldValueTuple err_str("err_str", PrependedComponent(status) + status.message());
     intent_attrs_copy.insert(intent_attrs_copy.begin(), err_str);
-    // Sends the response to the notification channel.
-    notificationProducer.send(status.codeStr(), key, intent_attrs_copy);
+  std::string response_channel = "APPL_DB_" + table + "_RESPONSE_CHANNEL";
+
+  if (m_enable_db_write_and_notify) {
+    if (m_zmqServer != nullptr) {
+        auto intent_attrs_zmq_copy = intent_attrs;
+        // Add status code and error message as the first field-value-pair.
+        swss::FieldValueTuple fvs(status.codeStr(),
+                                PrependedComponent(status) + status.message());
+        intent_attrs_zmq_copy.insert(intent_attrs_zmq_copy.begin(), fvs);
+        // Queue the response.
+        responses[table].push_back(
+            swss::KeyOpFieldsValuesTuple{key, SET_COMMAND,
+                intent_attrs_zmq_copy});
+    } else {
+        // Sends the response to the notification channel.
+        swss::NotificationProducer notificationProducer{
+            m_ntf_pipe.get(), response_channel, m_buffered};
+        notificationProducer.send(status.codeStr(), key, intent_attrs_copy);
+    }
+  }
+
     RecordResponse(response_channel, key, intent_attrs_copy, status.codeStr());
 
-    // Write to the DB only if:
+    // Write to the DB only if: m_enable_db_write_and_notify is true and:
     // 1) A write operation is being performed and state attributes are specified.
-    // 2) A successful delete operation.
-    if ((intent_attrs.size() && state_attrs.size()) || (status.ok() && !intent_attrs.size()))
-    {
-        writeToDB(table, key, state_attrs, intent_attrs.size() ? SET_COMMAND : DEL_COMMAND, replace);
+    // 2) OR a successful delete operation.
+    if (m_enable_db_write_and_notify &&
+       ((intent_attrs.size() && state_attrs.size()) ||
+       (status.ok() && !intent_attrs.size()))) {
+           writeToDB(table, key, state_attrs, intent_attrs.size() ? SET_COMMAND : DEL_COMMAND, replace);
     }
 }
 
@@ -201,9 +221,15 @@ void ResponsePublisher::writeToDBInternal(const std::string &table, const std::s
     }
 }
 
-void ResponsePublisher::flush()
-{
+void ResponsePublisher::flush() {
+  if (m_zmqServer != nullptr) {
+    for (const auto& response : responses) {
+      m_zmqServer->sendMsg("APPL_DB", response.first, response.second);
+    }
+    responses.clear();
+  } else {
     m_ntf_pipe->flush();
+  }
     if (m_update_thread != nullptr)
     {
         {
@@ -252,4 +278,8 @@ void ResponsePublisher::dbUpdateThread()
             writeToDBInternal(e.table, e.key, e.values, e.op, e.replace);
         }
     }
+}
+
+void ResponsePublisher::setEnableDbWriteAndNotify(bool enable_db_write_and_notify) {
+  m_enable_db_write_and_notify = enable_db_write_and_notify;
 }

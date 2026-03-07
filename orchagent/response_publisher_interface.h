@@ -32,4 +32,6 @@ class ResponsePublisherInterface
     virtual void writeToDB(const std::string &table, const std::string &key,
                            const std::vector<swss::FieldValueTuple> &values, const std::string &op,
                            bool replace = false) = 0;
+    // Flag to enable/disable DB write and notification.
+    virtual void setEnableDbWriteAndNotify(bool enable_db_write_and_notify) = 0;
 };
