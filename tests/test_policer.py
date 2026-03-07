@@ -27,7 +27,7 @@ class TestPolicer(object):
 
         (status, fvs) = tbl.get(policer_entries[0])
         assert status == True
-        assert len(fvs) == 5
+        assert len(fvs) == 6
         for fv in fvs:
             if fv[0] == "SAI_POLICER_ATTR_CBS":
                 assert fv[1] == "600"
@@ -39,6 +39,8 @@ class TestPolicer(object):
                 assert fv[1] == "SAI_POLICER_MODE_SR_TCM"
             if fv[0] == "SAI_POLICER_ATTR_METER_TYPE":
                 assert fv[1] == "SAI_METER_TYPE_PACKETS"
+            if fv[0] == "SAI_POLICER_ATTR_LABEL":
+                assert len(fv[1]) >= 16  and len(fv[1]) <= 32
 
         # update cir
         tbl = swsscommon.Table(dvs.cdb, "POLICER")
@@ -50,7 +52,7 @@ class TestPolicer(object):
         tbl = swsscommon.Table(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_POLICER")
         (status, fvs) = tbl.get(policer_entries[0])
         assert status == True
-        assert len(fvs) == 5
+        assert len(fvs) == 6
         for fv in fvs:
             if fv[0] == "SAI_POLICER_ATTR_CBS":
                 assert fv[1] == "600"
@@ -62,6 +64,8 @@ class TestPolicer(object):
                 assert fv[1] == "SAI_POLICER_MODE_SR_TCM"
             if fv[0] == "SAI_POLICER_ATTR_METER_TYPE":
                 assert fv[1] == "SAI_METER_TYPE_PACKETS"
+            if fv[0] == "SAI_POLICER_ATTR_LABEL":
+                assert len(fv[1]) >= 16  and len(fv[1]) <= 32
 
         # remove policer
         tbl = swsscommon.Table(dvs.cdb, "POLICER")

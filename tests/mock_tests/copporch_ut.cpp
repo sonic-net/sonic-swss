@@ -7,6 +7,8 @@
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
 
+extern NameLabelMapper *gLabelMapper;
+
 using namespace swss;
 
 namespace copporch_test
@@ -18,6 +20,7 @@ namespace copporch_test
         {
             this->appDb = std::make_shared<DBConnector>("APPL_DB", 0);
             this->coppOrch = std::make_shared<CoppOrch>(this->appDb.get(), APP_COPP_TABLE_NAME);
+            gLabelMapper = new NameLabelMapper();
         }
         ~MockCoppOrch() = default;
 

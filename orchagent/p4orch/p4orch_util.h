@@ -266,12 +266,19 @@ struct P4ActionParamName
 {
     std::string sai_action;
     std::string p4_param_name;
+    std::string sai_object_type;
 };
 
 struct P4PacketActionWithColor
 {
     std::string packet_action;
     std::string packet_color;
+};
+
+struct P4ActionWithColorParam {
+  std::string sai_action;
+  std::string packet_color;
+  std::string p4_param_name;
 };
 
 struct P4AclTableDefinitionAppDbEntry
@@ -285,6 +292,8 @@ struct P4AclTableDefinitionAppDbEntry
     std::map<std::string, std::string> match_field_lookup;
     std::map<std::string, std::vector<P4ActionParamName>> action_field_lookup;
     std::map<std::string, std::vector<P4PacketActionWithColor>> packet_action_color_lookup;
+    std::map<std::string, std::vector<P4ActionWithColorParam>>
+        action_color_param_lookup;
     std::string meter_unit;
     std::string counter_unit;
 };
