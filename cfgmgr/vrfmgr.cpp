@@ -14,6 +14,8 @@
 #define TABLE_LOCAL_PREF 1001 // after l3mdev-table
 #define MGMT_VRF_TABLE_ID 5000
 #define MGMT_VRF          "mgmt"
+#define VRF_DELETE_BATCH_SIZE_INITIAL 1
+#define VRF_DELETE_BATCH_SIZE_MAX 500
 
 using namespace swss;
 
@@ -47,6 +49,7 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
     string vrfName;
     uint32_t table;
     IpShowRowType rowType = LINK_ROW;
+    vector<string> vrfsToDelete;
     const auto& rows = tokenize(res, '\n');
     for (const auto& row : rows)
     {
@@ -78,19 +81,62 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
                         break;
                     }
 
-                    SWSS_LOG_NOTICE("Remove vrf device %s", vrfName.c_str());
-                    cmd.str("");
-                    cmd.clear();
-                    cmd << IP_CMD << " link del " << vrfName;
-                    int ret = swss::exec(cmd.str(), res);
-                    if (ret)
-                    {
-                        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
-                    }
+                    vrfsToDelete.push_back(vrfName);
                 }
                 rowType = LINK_ROW;
                 break;
         }
+    }
+
+    if (!vrfsToDelete.empty())
+    {
+        const size_t total_vrfs = vrfsToDelete.size();
+        size_t processed = 0;
+        vector<string> batch_vrfs;
+        unsigned int current_batch_size = VRF_DELETE_BATCH_SIZE_INITIAL;
+        batch_vrfs.reserve(VRF_DELETE_BATCH_SIZE_MAX);
+        int batch_num = 0;
+        
+        for (const auto& vrf : vrfsToDelete)
+        {
+            batch_vrfs.push_back(vrf);
+            
+            if (batch_vrfs.size() >= current_batch_size || processed + batch_vrfs.size() >= total_vrfs)
+            {
+                batch_num++;
+                
+                cmd.str("");
+                cmd.clear();
+                cmd << BASH_CMD << " -c '(";
+                
+                for (size_t i = 0; i < batch_vrfs.size(); i++)
+                {
+                    if (i > 0) cmd << " ";
+                    cmd << IP_CMD << " link del " << shellquote(batch_vrfs[i]) 
+                        << " 2>/dev/null &";
+                }
+                cmd << " wait) 2>&1'";
+                
+                SWSS_LOG_NOTICE("Batch %d: deleting %zu VRFs in parallel (batch_size=%u, progress: %zu/%zu)", 
+                               batch_num, batch_vrfs.size(), current_batch_size, 
+                               processed + batch_vrfs.size(), total_vrfs);
+                
+                int ret = swss::exec(cmd.str(), res);
+                if (ret != 0 && !res.empty())
+                {
+                    SWSS_LOG_WARN("Batch %d deletion errors: %s", batch_num, res.c_str());
+                }
+                
+                processed += batch_vrfs.size();
+                batch_vrfs.clear();
+                
+                unsigned int increment = std::max(1U, current_batch_size >> 2);
+                current_batch_size = std::min(current_batch_size + increment, static_cast<unsigned int>(VRF_DELETE_BATCH_SIZE_MAX));
+            }
+        }
+        
+        SWSS_LOG_NOTICE("Completed deletion of %zu VRF devices in %d batches", 
+                       total_vrfs, batch_num);
     }
 
     cmd.str("");
