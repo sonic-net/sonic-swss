@@ -647,11 +647,17 @@ P4AclTableDefinitionAppDbEntry getDefaultAclTableDefAppDbEntry()
 
     // Action field mapping, from P4 action to SAI action
     app_db_entry.action_field_lookup["set_packet_action"].push_back(
-        {.sai_action = P4_ACTION_PACKET_ACTION, .p4_param_name = "packet_action"});
+        {.sai_action = P4_ACTION_PACKET_ACTION,
+         .p4_param_name = "packet_action",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["copy_and_set_tc"].push_back(
-        {.sai_action = P4_ACTION_SET_TRAFFIC_CLASS, .p4_param_name = "traffic_class"});
+        {.sai_action = P4_ACTION_SET_TRAFFIC_CLASS,
+         .p4_param_name = "traffic_class",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["punt_and_set_tc"].push_back(
-        {.sai_action = P4_ACTION_SET_TRAFFIC_CLASS, .p4_param_name = "traffic_class"});
+        {.sai_action = P4_ACTION_SET_TRAFFIC_CLASS,
+         .p4_param_name = "traffic_class",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.packet_action_color_lookup["copy_and_set_tc"].push_back(
         {.packet_action = P4_PACKET_ACTION_COPY, .packet_color = P4_PACKET_COLOR_GREEN});
     app_db_entry.packet_action_color_lookup["punt_and_set_tc"].push_back(
@@ -659,54 +665,117 @@ P4AclTableDefinitionAppDbEntry getDefaultAclTableDefAppDbEntry()
     app_db_entry.packet_action_color_lookup["punt_non_green_pk"].push_back(
         {.packet_action = P4_PACKET_ACTION_PUNT, .packet_color = P4_PACKET_COLOR_RED});
     app_db_entry.action_field_lookup["redirect"].push_back(
-        {.sai_action = P4_ACTION_REDIRECT, .p4_param_name = "target"});
+        {.sai_action = P4_ACTION_REDIRECT,
+         .p4_param_name = "target",
+         .sai_object_type = EMPTY_STRING});
+  app_db_entry.action_field_lookup["redirect_ipmc"].push_back(
+        {.sai_action = P4_ACTION_REDIRECT,
+         .p4_param_name = "target",
+         .sai_object_type = "SAI_OBJECT_TYPE_IPMC_GROUP"});
+  app_db_entry.action_field_lookup["redirect_port"].push_back(
+        {.sai_action = P4_ACTION_REDIRECT,
+         .p4_param_name = "target",
+         .sai_object_type = "SAI_OBJECT_TYPE_PORT"});
+  app_db_entry.action_field_lookup["redirect_next_hop"].push_back(
+        {.sai_action = P4_ACTION_REDIRECT,
+         .p4_param_name = "target",
+         .sai_object_type = "SAI_OBJECT_TYPE_NEXT_HOP"});
     app_db_entry.action_field_lookup["endpoint_ip"].push_back(
-        {.sai_action = P4_ACTION_ENDPOINT_IP, .p4_param_name = "ip_address"});
+        {.sai_action = P4_ACTION_ENDPOINT_IP,
+         .p4_param_name = "ip_address",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["mirror_ingress"].push_back(
-        {.sai_action = P4_ACTION_MIRROR_INGRESS, .p4_param_name = "target"});
+        {.sai_action = P4_ACTION_MIRROR_INGRESS,
+         .p4_param_name = "target",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["mirror_egress"].push_back(
-        {.sai_action = P4_ACTION_MIRROR_EGRESS, .p4_param_name = "target"});
+        {.sai_action = P4_ACTION_MIRROR_EGRESS,
+         .p4_param_name = "target",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_packet_color"].push_back(
-        {.sai_action = P4_ACTION_SET_PACKET_COLOR, .p4_param_name = "packet_color"});
+        {.sai_action = P4_ACTION_SET_PACKET_COLOR,
+         .p4_param_name = "packet_color",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_src_mac"].push_back(
-        {.sai_action = P4_ACTION_SET_SRC_MAC, .p4_param_name = "mac_address"});
+        {.sai_action = P4_ACTION_SET_SRC_MAC,
+         .p4_param_name = "mac_address",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_dst_mac"].push_back(
-        {.sai_action = P4_ACTION_SET_DST_MAC, .p4_param_name = "mac_address"});
+        {.sai_action = P4_ACTION_SET_DST_MAC,
+         .p4_param_name = "mac_address",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_src_ip"].push_back(
-        {.sai_action = P4_ACTION_SET_SRC_IP, .p4_param_name = "ip_address"});
+        {.sai_action = P4_ACTION_SET_SRC_IP,
+         .p4_param_name = "ip_address",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_dst_ip"].push_back(
-        {.sai_action = P4_ACTION_SET_DST_IP, .p4_param_name = "ip_address"});
+        {.sai_action = P4_ACTION_SET_DST_IP,
+         .p4_param_name = "ip_address",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_src_ipv6"].push_back(
-        {.sai_action = P4_ACTION_SET_SRC_IPV6, .p4_param_name = "ip_address"});
+        {.sai_action = P4_ACTION_SET_SRC_IPV6,
+         .p4_param_name = "ip_address",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_dst_ipv6"].push_back(
-        {.sai_action = P4_ACTION_SET_DST_IPV6, .p4_param_name = "ip_address"});
+        {.sai_action = P4_ACTION_SET_DST_IPV6,
+         .p4_param_name = "ip_address",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_dscp_and_ecn"].push_back(
-        {.sai_action = P4_ACTION_SET_DSCP, .p4_param_name = "dscp"});
+        {.sai_action = P4_ACTION_SET_DSCP,
+         .p4_param_name = "dscp",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_dscp_and_ecn"].push_back(
-        {.sai_action = P4_ACTION_SET_ECN, .p4_param_name = "ecn"});
+        {.sai_action = P4_ACTION_SET_ECN,
+         .p4_param_name = "ecn",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_inner_vlan"].push_back(
-        {.sai_action = P4_ACTION_SET_INNER_VLAN_PRIORITY, .p4_param_name = "vlan_pri"});
+        {.sai_action = P4_ACTION_SET_INNER_VLAN_PRIORITY,
+         .p4_param_name = "vlan_pri",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_inner_vlan"].push_back(
-        {.sai_action = P4_ACTION_SET_INNER_VLAN_ID, .p4_param_name = "vlan_id"});
+        {.sai_action = P4_ACTION_SET_INNER_VLAN_ID,
+         .p4_param_name = "vlan_id",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_outer_vlan"].push_back(
-        {.sai_action = P4_ACTION_SET_OUTER_VLAN_PRIORITY, .p4_param_name = "vlan_pri"});
+        {.sai_action = P4_ACTION_SET_OUTER_VLAN_PRIORITY,
+         .p4_param_name = "vlan_pri",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_outer_vlan"].push_back(
-        {.sai_action = P4_ACTION_SET_OUTER_VLAN_ID, .p4_param_name = "vlan_id"});
+        {.sai_action = P4_ACTION_SET_OUTER_VLAN_ID,
+         .p4_param_name = "vlan_id",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_l4_src_port"].push_back(
-        {.sai_action = P4_ACTION_SET_L4_SRC_PORT, .p4_param_name = "port"});
+        {.sai_action = P4_ACTION_SET_L4_SRC_PORT,
+         .p4_param_name = "port",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_l4_dst_port"].push_back(
-        {.sai_action = P4_ACTION_SET_L4_DST_PORT, .p4_param_name = "port"});
-    app_db_entry.action_field_lookup["flood"].push_back({.sai_action = P4_ACTION_FLOOD, .p4_param_name = EMPTY_STRING});
+        {.sai_action = P4_ACTION_SET_L4_DST_PORT,
+         .p4_param_name = "port",
+         .sai_object_type = EMPTY_STRING});
+    app_db_entry.action_field_lookup["flood"].push_back(
+        {.sai_action = P4_ACTION_FLOOD,
+         .p4_param_name = EMPTY_STRING,
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["decrement_ttl"].push_back(
-        {.sai_action = P4_ACTION_DECREMENT_TTL, .p4_param_name = EMPTY_STRING});
+        {.sai_action = P4_ACTION_DECREMENT_TTL,
+         .p4_param_name = EMPTY_STRING,
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["do_not_learn"].push_back(
-        {.sai_action = P4_ACTION_SET_DO_NOT_LEARN, .p4_param_name = EMPTY_STRING});
-    app_db_entry.action_field_lookup["set_vrf"].push_back({.sai_action = P4_ACTION_SET_VRF, .p4_param_name = "vrf"});
+        {.sai_action = P4_ACTION_SET_DO_NOT_LEARN,
+         .p4_param_name = EMPTY_STRING,
+         .sai_object_type = EMPTY_STRING});
+    app_db_entry.action_field_lookup["set_vrf"].push_back(
+        {.sai_action = P4_ACTION_SET_VRF,
+         .p4_param_name = "vrf",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_metadata"].push_back(
-      {.sai_action = P4_ACTION_SET_ACL_META_DATA,
-       .p4_param_name = "acl_metadata"});
+        {.sai_action = P4_ACTION_SET_ACL_META_DATA,
+         .p4_param_name = "acl_metadata",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["qos_queue"].push_back(
-        {.sai_action = P4_ACTION_SET_QOS_QUEUE, .p4_param_name = "cpu_queue"});
+        {.sai_action = P4_ACTION_SET_QOS_QUEUE,
+         .p4_param_name = "cpu_queue",
+         .sai_object_type = EMPTY_STRING});
 
     // action/acl_rate_limit_copy = [
     //   {"action":"SAI_PACKET_ACTION_FORWARD","packet_color":"SAI_PACKET_COLOR_GREEN"},
@@ -715,24 +784,30 @@ P4AclTableDefinitionAppDbEntry getDefaultAclTableDefAppDbEntry()
     // ]
 
     app_db_entry.packet_action_color_lookup["acl_rate_limit_copy"].push_back(
-      {.packet_action = P4_PACKET_ACTION_FORWARD,
-       .packet_color = P4_PACKET_COLOR_GREEN});
-  app_db_entry.packet_action_color_lookup["acl_rate_limit_copy"].push_back(
-      {.packet_action = P4_PACKET_ACTION_COPY_CANCEL,
-       .packet_color = P4_PACKET_COLOR_RED});
-  app_db_entry.action_field_lookup["acl_rate_limit_copy"].push_back(
-      {.sai_action = P4_ACTION_SET_QOS_QUEUE, .p4_param_name = "qos_queue"});
+        {.packet_action = P4_PACKET_ACTION_FORWARD, .packet_color = P4_PACKET_COLOR_GREEN});
+    app_db_entry.packet_action_color_lookup["acl_rate_limit_copy"].push_back(
+        {.packet_action = P4_PACKET_ACTION_COPY_CANCEL, .packet_color = P4_PACKET_COLOR_YELLOW});
+    app_db_entry.packet_action_color_lookup["acl_rate_limit_copy"].push_back(
+        {.packet_action = P4_PACKET_ACTION_COPY_CANCEL, .packet_color = P4_PACKET_COLOR_RED});
+    app_db_entry.action_field_lookup["acl_rate_limit_copy"].push_back(
+        {.sai_action = P4_ACTION_SET_QOS_QUEUE,
+         .p4_param_name = "qos_queue",
+         .sai_object_type = EMPTY_STRING});
 
-  //   "action/acl_trap" = [
-  //     {"action": "SAI_PACKET_ACTION_TRAP", "packet_color":
-  //     "SAI_PACKET_COLOR_GREEN"},
-  //     {"action": "SAI_PACKET_ACTION_DROP", "packet_color":
-  //     "SAI_PACKET_COLOR_RED"},
-  //     {"action": "QOS_QUEUE", "param": "queue"}
-  //   ]
-  app_db_entry.action_field_lookup["acl_trap"].push_back(
-        {.sai_action = P4_ACTION_SET_QOS_QUEUE, .p4_param_name = "queue"});
-  app_db_entry.packet_action_color_lookup["acl_trap"].push_back(
+    //   "action/acl_trap" = [
+    //     {"action": "SAI_PACKET_ACTION_TRAP", "packet_color":
+    //     "SAI_PACKET_COLOR_GREEN"},
+    //     {"action": "SAI_PACKET_ACTION_DROP", "packet_color":
+    //     "SAI_PACKET_COLOR_YELLOW"},
+    //     {"action": "SAI_PACKET_ACTION_DROP", "packet_color":
+    //     "SAI_PACKET_COLOR_RED"},
+    //     {"action": "QOS_QUEUE", "param": "queue"}
+    //   ]
+    app_db_entry.action_field_lookup["acl_trap"].push_back(
+        {.sai_action = P4_ACTION_SET_QOS_QUEUE,
+         .p4_param_name = "queue",
+         .sai_object_type = EMPTY_STRING});
+    app_db_entry.packet_action_color_lookup["acl_trap"].push_back(
         {.packet_action = P4_PACKET_ACTION_PUNT, .packet_color = P4_PACKET_COLOR_GREEN});
   app_db_entry.packet_action_color_lookup["acl_trap"].push_back(
         {.packet_action = P4_PACKET_ACTION_DROP, .packet_color = P4_PACKET_COLOR_RED});
@@ -1412,6 +1487,14 @@ TEST_F(AclManagerTest, CreateIngressPuntTableFailsWhenCapabilityExceeds)
     EXPECT_EQ(StatusCode::SWSS_RC_FULL, ProcessAddTableRequest(app_db_entry));
 }
 
+TEST_F(AclManagerTest, CreateIngressTableFailsWhenRedirectObjectTypeUnknown)
+{
+    auto app_db_entry = getDefaultAclTableDefAppDbEntry();
+    app_db_entry.action_field_lookup["redirect_ipmc_error"].push_back(
+        {.sai_action = P4_ACTION_REDIRECT, .p4_param_name = "target", .sai_object_type = "SAI_OBJECT_TYPE_UNKNOWN"});
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessAddTableRequest(app_db_entry));
+}
+
 TEST_F(AclManagerTest, CreateIngressPuntTableFailsWhenFailedToCreateTableGroupMember)
 {
     auto app_db_entry = getDefaultAclTableDefAppDbEntry();
@@ -1882,7 +1965,9 @@ TEST_F(AclManagerTest, CreatePuntTableWithInvalidActionFieldFails)
 
     // Invalid action field
     app_db_entry.action_field_lookup["random_action"].push_back(
-        {.sai_action = "RANDOM_ACTION", .p4_param_name = "DUMMY"});
+        {.sai_action = "RANDOM_ACTION",
+         .p4_param_name = "DUMMY",
+         .sai_object_type = EMPTY_STRING});
 
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessAddTableRequest(app_db_entry));
     EXPECT_EQ(nullptr, GetAclTable(app_db_entry.acl_table_name));
@@ -1924,8 +2009,15 @@ TEST_F(AclManagerTest, CreateAclGroupMemberFailsWhenAclGroupWasNotFound)
 
 TEST_F(AclManagerTest, DeserializeValidAclTableDefAppDbSucceeds)
 {
+    auto attrs = getDefaultTableDefFieldValueTuples();
+    attrs.push_back(swss::FieldValueTuple{
+        "action/redirect_to_ipmc",
+        "[{\"action\":\"SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT\","
+        "\"param\":\"multicast_group_id\",\"object_type\":"
+        "\"SAI_OBJECT_TYPE_IPMC_GROUP\"}]"});
     auto app_db_entry_or =
-        DeserializeAclTableDefinitionAppDbEntry(kAclIngressTableName, getDefaultTableDefFieldValueTuples());
+        DeserializeAclTableDefinitionAppDbEntry(kAclIngressTableName, attrs);
+
     EXPECT_TRUE(app_db_entry_or.ok());
     auto &app_db_entry = *app_db_entry_or;
     EXPECT_EQ(kAclIngressTableName, app_db_entry.acl_table_name);
@@ -1960,6 +2052,10 @@ TEST_F(AclManagerTest, DeserializeValidAclTableDefAppDbSucceeds)
     EXPECT_EQ(P4_PACKET_ACTION_PUNT,
               app_db_entry.packet_action_color_lookup.find("punt_and_set_tc")->second[0].packet_action);
     EXPECT_EQ(EMPTY_STRING, app_db_entry.packet_action_color_lookup.find("punt_and_set_tc")->second[0].packet_color);
+    EXPECT_EQ("SAI_OBJECT_TYPE_IPMC_GROUP",
+              app_db_entry.action_field_lookup.find("redirect_to_ipmc")
+                  ->second[0]
+                  .sai_object_type);
 }
 
 TEST_F(AclManagerTest, DeserializeAclTableDefAppDbWithInvalidJsonFails)
@@ -1983,7 +2079,19 @@ TEST_F(AclManagerTest, DeserializeAclTableDefAppDbWithInvalidJsonFails)
 
     attributes.pop_back();
     attributes.push_back(swss::FieldValueTuple{"action/drop_and_set_tc", "[\"action\":\"SAI_PACKET_ACTION_COPY\"]"});
-    EXPECT_FALSE(DeserializeAclTableDefinitionAppDbEntry(acl_table_name, attributes).ok());
+    EXPECT_FALSE(
+        DeserializeAclTableDefinitionAppDbEntry(acl_table_name, attributes)
+            .ok());
+
+    // Invalid object type.
+    attributes.pop_back();
+    attributes.push_back(swss::FieldValueTuple{
+        "action/redirect_to_ipmc",
+        "[{\"action\":\"SAI_ACL_ENTRY_ATTR_ACTION_"
+        "REDIRECT\",\"param\":\"multicast_group_id\",\"object_type\":"
+        "\"SAI_OBJECT_TYPE_UNKNOWN\"}]"});
+    EXPECT_FALSE(
+        DeserializeAclTableDefinitionAppDbEntry(acl_table_name, attributes).ok());
 }
 
 TEST_F(AclManagerTest, DeserializeAclTableDefAppDbWithInvalidSizeFails)
@@ -3097,12 +3205,12 @@ TEST_F(AclManagerTest, AclRuleWithColorPacketActionsButNoRateLimit)
         .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_policer_,
-                create_policer(_, Eq(gSwitchId), Eq(6),
-                               Truly(std::bind(
-                                   MatchSaiPolicerAttributeInStormMode, 6,
-                                   SAI_METER_TYPE_BYTES, SAI_PACKET_ACTION_TRAP,
-                                   SAI_PACKET_ACTION_DROP, 0x7fffffff,
-                                   0x1000021, std::placeholders::_1))))
+                create_policer(
+                    _, Eq(gSwitchId), Eq(6),
+                    Truly(std::bind(MatchSaiPolicerAttributeInStormMode, 6,
+                                    SAI_METER_TYPE_BYTES, SAI_PACKET_ACTION_TRAP,
+                                    SAI_PACKET_ACTION_DROP, 0x7fffffff, 0x1000021,
+                                    std::placeholders::_1))))
         .WillOnce(
             DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddRuleRequest(acl_rule_key, app_db_entry));
@@ -3149,26 +3257,22 @@ TEST_F(AclManagerTest, AclRuleWithColorPacketActionsButWithRateLimit) {
       .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
                       Return(SAI_STATUS_SUCCESS)));
 
-  EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
-      .WillOnce(Return(SAI_STATUS_SUCCESS));
-  EXPECT_CALL(
-      mock_sai_policer_,
-      create_policer(
-          _, Eq(gSwitchId), Eq(6),
-          Truly(std::bind(MatchSaiPolicerAttributeInStormMode, 6,
-                          SAI_METER_TYPE_BYTES, SAI_PACKET_ACTION_FORWARD,
-                          SAI_PACKET_ACTION_COPY_CANCEL, 0x7fffffff, 0x1000021,
-                          std::placeholders::_1))))
-      .WillOnce(
-          DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
-  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
-            ProcessAddRuleRequest(acl_rule_key, app_db_entry));
-  auto acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
-  ASSERT_NE(nullptr, acl_rule);
-  // Check action field value
-  EXPECT_EQ(gUserDefinedTrapStartOid + queue_num - P4_CPU_QUEUE_MIN_NUM + 1,
-            acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID]
-                .aclaction.parameter.oid);
+    EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(
+        mock_sai_policer_,
+        create_policer(
+            _, Eq(gSwitchId), Eq(6),
+            Truly(std::bind(MatchSaiPolicerAttributeInStormMode, 6,
+                            SAI_METER_TYPE_BYTES, SAI_PACKET_ACTION_FORWARD,
+                            SAI_PACKET_ACTION_COPY_CANCEL, 0x7fffffff, 0x1000021,
+                            std::placeholders::_1))))
+        .WillOnce(DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+    auto acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+    ASSERT_NE(nullptr, acl_rule);
+    // Check action field value
+    EXPECT_EQ(gUserDefinedTrapStartOid + queue_num - P4_CPU_QUEUE_MIN_NUM + 1,
+              acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID].aclaction.parameter.oid);
 }
 
 TEST_F(AclManagerTest, AclRuleWithMockedPacketAction) {
@@ -3280,6 +3384,37 @@ TEST_F(AclManagerTest, AclRuleWithValidAction)
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
     EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
 
+    // Repeat, redirect to port, but specify an object type.
+    app_db_entry.action = "redirect_port";
+    app_db_entry.action_param_fvs["target"] = "Ethernet7";
+    // Install rule
+    EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
+        .WillOnce(
+            DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+    acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+    ASSERT_NE(nullptr, acl_rule);
+    // Check action field value
+    EXPECT_EQ(/*port_oid=*/0x1234,
+              acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT]
+                  .aclaction.parameter.oid);
+    // Remove rule
+    EXPECT_CALL(mock_sai_acl_, remove_acl_entry(Eq(kAclIngressRuleOid1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_acl_, remove_acl_counter(_))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_policer_, remove_policer(Eq(kAclMeterOid1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
+    EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
+
     // Set up an next hop mapping
     const std::string next_hop_id = "ju1u32m1.atl11:qe-3/7";
     const auto &next_hop_key = KeyGenerator::generateNextHopKey(next_hop_id);
@@ -3303,6 +3438,73 @@ TEST_F(AclManagerTest, AclRuleWithValidAction)
     EXPECT_CALL(mock_sai_acl_, remove_acl_counter(_)).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_policer_, remove_policer(Eq(kAclMeterOid1))).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
+    EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
+
+    // Repeat next hop rule, but specify an object type.
+    app_db_entry.action = "redirect_next_hop";
+    app_db_entry.action_param_fvs["target"] = next_hop_id;
+    // Install rule
+    EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
+        .WillOnce(
+            DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+    acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+    ASSERT_NE(nullptr, acl_rule);
+    // Check action field value
+    EXPECT_EQ(/*next_hop_oid=*/1,
+              acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT]
+                  .aclaction.parameter.oid);
+    // Remove rule
+    EXPECT_CALL(mock_sai_acl_, remove_acl_entry(Eq(kAclIngressRuleOid1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_acl_, remove_acl_counter(_))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_policer_, remove_policer(Eq(kAclMeterOid1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
+    EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
+
+    // Set up an L3 multicast group mapping
+    const std::string multicast_group_id = "0x1";
+    const auto& l3_multicast_group_key =
+        KeyGenerator::generateL3MulticastGroupKey(multicast_group_id);
+    p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_IPMC_GROUP, l3_multicast_group_key,
+                           /*ipmc_group_oid=*/7);
+    app_db_entry.action = "redirect_ipmc";
+    app_db_entry.action_param_fvs["target"] = multicast_group_id;
+    // Install rule
+    EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
+        .WillOnce(
+            DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+    acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+    ASSERT_NE(nullptr, acl_rule);
+    // Check action field value
+    EXPECT_EQ(/*ipmc_group_oid=*/7,
+              acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT]
+                  .aclaction.parameter.oid);
+    // Remove rule
+    EXPECT_CALL(mock_sai_acl_, remove_acl_entry(Eq(kAclIngressRuleOid1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_acl_, remove_acl_counter(_))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_policer_, remove_policer(Eq(kAclMeterOid1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
     EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
 
     // Set endpoint Ip action
@@ -3612,6 +3814,19 @@ TEST_F(AclManagerTest, AclRuleWithVrfAction)
     EXPECT_CALL(mock_sai_policer_, remove_policer(Eq(kAclMeterOid1))).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
     EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
+}
+
+TEST_F(AclManagerTest,
+       AclRuleWithL3MulticastRedirectActionFailsWhenMulticastGroupNotFound) {
+    ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+    auto app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
+    const auto &acl_rule_key = KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
+    // Set up an L3 multicast group mapping, but leave out fake OID mapping.
+    const std::string multicast_group_id = "0x1";
+    const auto &l3_multicast_group_key = KeyGenerator::generateL3MulticastGroupKey(multicast_group_id);
+    app_db_entry.action = "redirect_ipmc";
+    app_db_entry.action_param_fvs["target"] = multicast_group_id;
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessAddRuleRequest(acl_rule_key, app_db_entry));
 }
 
 TEST_F(AclManagerTest, AclRuleWithIpTypeBitEncoding)
@@ -4256,6 +4471,47 @@ TEST_F(AclManagerTest, UpdateAclRuleWithVrfActionChange)
     EXPECT_EQ(gVirtualRouterId, acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_VRF].aclaction.parameter.oid);
 }
 
+TEST_F(AclManagerTest, UpdateAclRuleWithL3MulticastActionChange) {
+  ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+  auto app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
+  const auto& acl_rule_key =
+      KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
+  // Set up an L3 multicast group mapping
+  const std::string multicast_group_id = "0x1";
+  const auto &l3_multicast_group_key = KeyGenerator::generateL3MulticastGroupKey(multicast_group_id);
+  p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_IPMC_GROUP, l3_multicast_group_key,
+                         /*ipmc_group_oid=*/7);
+  app_db_entry.action = "redirect_ipmc";
+  app_db_entry.action_param_fvs["target"] = multicast_group_id;
+
+  // Install rule
+  EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+  auto *acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+  ASSERT_NE(nullptr, acl_rule);
+  // Check action field value
+  EXPECT_EQ(/*ipmc_group_oid=*/7, acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT].aclaction.parameter.oid);
+
+  // Update rule
+  const std::string multicast_group_id2 = "0x2";
+  const auto &l3_multicast_group_key2 = KeyGenerator::generateL3MulticastGroupKey(multicast_group_id2);
+  p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_IPMC_GROUP, l3_multicast_group_key2,
+                         /*ipmc_group_oid=*/8);
+  app_db_entry.action_param_fvs["target"] = multicast_group_id2;
+
+  EXPECT_CALL(mock_sai_acl_, set_acl_entry_attribute(Eq(kAclIngressRuleOid1), _)).WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessUpdateRuleRequest(app_db_entry, *acl_rule));
+  acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+  ASSERT_NE(nullptr, acl_rule);
+  // Check action field value
+  EXPECT_EQ(1, acl_rule->action_fvs.size());
+  EXPECT_EQ(/*ipmc_group_oid=*/8, acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT].aclaction.parameter.oid);
+}
+
 TEST_F(AclManagerTest, UpdateAclRuleFailsWhenSaiCallFails)
 {
     ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
@@ -4500,7 +4756,20 @@ TEST_F(AclManagerTest, CreateAclRuleWithInvalidActionFails)
     app_db_entry.action_param_fvs["target"] = next_hop_id;
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessAddRuleRequest(acl_rule_key, app_db_entry));
     app_db_entry.action_param_fvs.erase("target");
+    // Similar check when the object type is specified.
+    app_db_entry.action = "redirect_next_hop";
+    app_db_entry.action_param_fvs["target"] = next_hop_id;
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+    app_db_entry.action_param_fvs.erase("target");
     // ACL rule has redirect action with wrong port type
+    app_db_entry.action = "redirect";
+    app_db_entry.action_param_fvs["target"] = "Ethernet8";
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+    app_db_entry.action_param_fvs.erase("target");
+    // Similar check when the object type is specified.
+    app_db_entry.action = "redirect_port";
     app_db_entry.action_param_fvs["target"] = "Ethernet8";
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessAddRuleRequest(acl_rule_key, app_db_entry));
     app_db_entry.action_param_fvs.erase("target");
@@ -5654,6 +5923,15 @@ TEST_F(AclManagerTest, AclRuleVerifyStateTest)
     acl_rule->action_redirect_nexthop_key = 111;
     EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty());
     acl_rule->action_redirect_nexthop_key = saved_action_redirect_nexthop_key;
+
+    // Verification should fail if action kRedirectToIpmcGroup L3 multicast group
+    // ID key mismatches.
+    auto saved_action_redirect_l3_multicast_group_key =
+        acl_rule->action_redirect_l3_multicast_group_key;
+    acl_rule->action_redirect_l3_multicast_group_key = "0x7777";
+    EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty());
+    acl_rule->action_redirect_l3_multicast_group_key =
+        saved_action_redirect_l3_multicast_group_key;
 
     // Verification should fail if action mirror section mismatches.
     acl_rule->action_mirror_sessions[SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_EGRESS] = P4AclMirrorSession{};
