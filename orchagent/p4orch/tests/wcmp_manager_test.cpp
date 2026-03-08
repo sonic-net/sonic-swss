@@ -29,6 +29,7 @@ extern P4Orch *gP4Orch;
 extern VRFOrch *gVrfOrch;
 extern std::unique_ptr<MockResponsePublisher> gMockResponsePublisher;
 extern swss::DBConnector *gAppDb;
+extern swss::DBConnector *gConfigDb;
 extern sai_object_id_t gSwitchId;
 extern sai_next_hop_group_api_t *sai_next_hop_group_api;
 extern sai_hostif_api_t *sai_hostif_api;
@@ -267,7 +268,13 @@ class WcmpManagerTest : public ::testing::Test
         EXPECT_CALL(mock_sai_hostif_, create_hostif_table_entry(_, _, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
         EXPECT_CALL(mock_sai_hostif_, create_hostif_trap(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
         EXPECT_CALL(mock_sai_switch_, get_switch_attribute(_, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
-        copp_orch_ = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
+        std::vector<std::string> appCoppOrchTables = {
+            APP_COPP_TABLE_NAME
+        };
+        std::vector<std::string> cfgCoppOrchTables = {
+            CFG_COPP_TRAP_EXCLUDE_PORTS_TABLE_NAME
+        };
+        copp_orch_ = new CoppOrch(gAppDb, gConfigDb, appCoppOrchTables, cfgCoppOrchTables);
 
         std::vector<std::string> p4_tables{APP_P4RT_TABLE_NAME};
         gP4Orch = new P4Orch(gAppDb, p4_tables, gVrfOrch, copp_orch_);

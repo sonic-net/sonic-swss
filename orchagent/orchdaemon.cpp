@@ -317,7 +317,13 @@ bool OrchDaemon::init()
     gNhgOrch = new NhgOrch(m_applDb, APP_NEXTHOP_GROUP_TABLE_NAME);
     gCbfNhgOrch = new CbfNhgOrch(m_applDb, APP_CLASS_BASED_NEXT_HOP_GROUP_TABLE_NAME);
 
-    gCoppOrch = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
+    vector<string> appCoppOrchTables = {
+            APP_COPP_TABLE_NAME
+    };
+    vector<string> cfgCoppOrchTables = {
+            CFG_COPP_TRAP_EXCLUDE_PORTS_TABLE_NAME
+    };
+    gCoppOrch = new CoppOrch(m_applDb, m_configDb, appCoppOrchTables, cfgCoppOrchTables);
 
     vector<string> tunnel_tables = {
         APP_TUNNEL_DECAP_TABLE_NAME,
