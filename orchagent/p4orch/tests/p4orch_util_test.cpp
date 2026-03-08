@@ -37,6 +37,13 @@ TEST(P4OrchUtilTest, KeyGeneratorTest)
         "b4-traffic", swss::IpAddress("::1"));
     EXPECT_EQ("ipv6_dst=::1:vrf_id=b4-traffic", ipv6_multicast_key);
 
+    // L3 multicast group keys.
+  EXPECT_EQ("0x0001", KeyGenerator::generateL3MulticastGroupKey("0x1"));
+  EXPECT_EQ("0x0002", KeyGenerator::generateL3MulticastGroupKey("0X02"));
+  EXPECT_EQ("0x0011", KeyGenerator::generateL3MulticastGroupKey("17"));
+  // Invalid, expected to return group ID 0.
+  EXPECT_EQ("0x0000", KeyGenerator::generateL3MulticastGroupKey("zzz"));
+
     // Test with special characters.
     neighbor_key = KeyGenerator::generateNeighborKey("::===::", swss::IpAddress("::1"));
     EXPECT_EQ("neighbor_id=::1:router_interface_id=::===::", neighbor_key);

@@ -1059,40 +1059,53 @@ ReturnCode AclRuleManager::setMatchValue(const sai_acl_entry_attr_t attr_name,
   return ReturnCode();
 }
 
-ReturnCode AclRuleManager::getRedirectActionPortOid(const std::string &target, sai_object_id_t *rediect_oid)
-{
-    // Try to parse physical port and LAG first
-    Port port;
-    if (gPortsOrch->getPort(target, port))
-    {
-        if (port.m_type == Port::PHY)
-        {
-            *rediect_oid = port.m_port_id;
-            return ReturnCode();
-        }
-        else if (port.m_type == Port::LAG)
-        {
-            *rediect_oid = port.m_lag_id;
-            return ReturnCode();
-        }
-        else
-        {
-            LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                                 << "Wrong port type for REDIRECT action. Only "
-                                    "physical ports and LAG ports are supported");
-        }
-    }
-    return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND) << "Port " << QuotedVar(target) << " not found.";
+ReturnCode AclRuleManager::getRedirectActionPortOid(
+    const std::string& target, sai_object_id_t* redirect_oid) {
+  // Try to parse physical port and LAG first
+  Port port;
+  if (gPortsOrch->getPort(target, port))
+  {
+      if (port.m_type == Port::PHY)
+      {
+          *redirect_oid = port.m_port_id;
+          return ReturnCode();
+      }
+      else if (port.m_type == Port::LAG)
+      {
+          *redirect_oid = port.m_lag_id;
+          return ReturnCode();
+      }
+      else
+      {
+          LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                               << "Wrong port type for REDIRECT action. Only "
+                                  "physical ports and LAG ports are supported");
+      }
+  }
+  return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND) << "Port " << QuotedVar(target) << " not found.";
 }
 
-ReturnCode AclRuleManager::getRedirectActionNextHopOid(const std::string &target, sai_object_id_t *rediect_oid)
+ReturnCode AclRuleManager::getRedirectActionNextHopOid(const std::string &target, sai_object_id_t *redirect_oid)
 {
     // Try to get nexthop object id
     const auto &next_hop_key = KeyGenerator::generateNextHopKey(target);
-    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_NEXT_HOP, next_hop_key, rediect_oid))
+    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_NEXT_HOP, next_hop_key, redirect_oid))
     {
         LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
                              << "ACL Redirect action target next hop ip: " << QuotedVar(target)
+                             << " doesn't exist on the switch");
+    }
+    return ReturnCode();
+}
+
+ReturnCode AclRuleManager::getRedirectActionL3MulticastGroupOid(const std::string &target,
+                                                                sai_object_id_t *redirect_oid)
+{
+    const auto &multicast_group_key = KeyGenerator::generateL3MulticastGroupKey(target);
+    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_IPMC_GROUP, multicast_group_key, redirect_oid))
+    {
+        LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                             << "ACL Redirect action target multicast group ID: " << QuotedVar(target)
                              << " doesn't exist on the switch");
     }
     return ReturnCode();
@@ -1214,6 +1227,7 @@ ReturnCode AclRuleManager::setAllActionFieldValues(const P4AclRuleAppDbEntry &ap
         sai_action_param.action = action_param.action;
         sai_action_param.param_name = action_param.param_name;
         sai_action_param.param_value = action_param.param_value;
+        sai_action_param.object_type = action_param.object_type;
         if (!action_param.param_name.empty())
         {
             const auto &param_value_it = app_db_entry.action_param_fvs.find(action_param.param_name);
@@ -1228,8 +1242,10 @@ ReturnCode AclRuleManager::setAllActionFieldValues(const P4AclRuleAppDbEntry &ap
                 sai_action_param.param_value = param_value_it->second;
             }
         }
-        auto set_action_rc = setActionValue(sai_action_param.action, sai_action_param.param_value,
-                                            &acl_rule.action_fvs[sai_action_param.action], &acl_rule);
+        auto set_action_rc = setActionValue(
+            sai_action_param.action, sai_action_param.param_value,
+            sai_action_param.object_type,
+            &acl_rule.action_fvs[sai_action_param.action], &acl_rule);
         if (!set_action_rc.ok())
         {
             return set_action_rc;
@@ -1238,11 +1254,12 @@ ReturnCode AclRuleManager::setAllActionFieldValues(const P4AclRuleAppDbEntry &ap
     return ReturnCode();
 }
 
-ReturnCode AclRuleManager::setActionValue(const sai_acl_entry_attr_t attr_name,
-                                          const std::string& attr_value,
-                                          sai_attribute_value_t* value,
-                                          P4AclRule* acl_rule) {
-  switch (attr_name) {
+ReturnCode AclRuleManager::setActionValue(const sai_acl_entry_attr_t attr_name, const std::string &attr_value,
+                                          const sai_object_id_t attr_type,
+                                          sai_attribute_value_t *value, P4AclRule *acl_rule)
+{
+    switch (attr_name)
+    {
     case SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION: {
         const auto it = aclPacketActionLookup.find(attr_value);
         if (it != aclPacketActionLookup.end())
@@ -1259,6 +1276,36 @@ ReturnCode AclRuleManager::setActionValue(const sai_acl_entry_attr_t attr_name,
     }
     case SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT: {
         sai_object_id_t redirect_oid;
+
+        // Use the attr_type to disambiguate what we are redirecting to.
+      if (attr_type == SAI_OBJECT_TYPE_IPMC_GROUP) {
+        RETURN_IF_ERROR(
+            getRedirectActionL3MulticastGroupOid(attr_value, &redirect_oid));
+        value->aclaction.parameter.oid = redirect_oid;
+        acl_rule->action_redirect_l3_multicast_group_key =
+            KeyGenerator::generateL3MulticastGroupKey(attr_value);
+        break;
+      } else if (attr_type == SAI_OBJECT_TYPE_PORT) {
+        auto port_status = getRedirectActionPortOid(attr_value, &redirect_oid);
+        if (port_status.ok()) {
+          value->aclaction.parameter.oid = redirect_oid;
+          break;
+        } else if (port_status.code() == StatusCode::SWSS_RC_IN_USE) {
+          return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                 << port_status.message();
+        } else {
+          return port_status;
+        }
+        break;
+      } else if (attr_type == SAI_OBJECT_TYPE_NEXT_HOP) {
+        RETURN_IF_ERROR(getRedirectActionNextHopOid(attr_value, &redirect_oid));
+        value->aclaction.parameter.oid = redirect_oid;
+        acl_rule->action_redirect_nexthop_key =
+            KeyGenerator::generateNextHopKey(attr_value);
+        break;
+      }
+
+      // If object type was not set, use original fall-through chain for now.
         if (getRedirectActionPortOid(attr_value, &redirect_oid).ok())
         {
             value->aclaction.parameter.oid = redirect_oid;
@@ -1690,6 +1737,11 @@ ReturnCode AclRuleManager::updateAclRule(const P4AclRule &acl_rule, const P4AclR
     {
         m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP, acl_rule.action_redirect_nexthop_key);
     }
+    if (!acl_rule.action_redirect_l3_multicast_group_key.empty()) {
+    m_p4OidMapper->decreaseRefCount(
+        SAI_OBJECT_TYPE_IPMC_GROUP,
+        acl_rule.action_redirect_l3_multicast_group_key);
+  }
     for (const auto &mirror_session : old_acl_rule.action_mirror_sessions)
     {
         m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_MIRROR_SESSION, fvValue(mirror_session).key);
@@ -1895,6 +1947,11 @@ ReturnCode AclRuleManager::processAddRuleRequest(const std::string &acl_rule_key
     {
         m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP, acl_rule.action_redirect_nexthop_key);
     }
+    if (!acl_rule.action_redirect_l3_multicast_group_key.empty()) {
+    m_p4OidMapper->increaseRefCount(
+        SAI_OBJECT_TYPE_IPMC_GROUP,
+        acl_rule.action_redirect_l3_multicast_group_key);
+  }
     for (const auto &mirror_session : acl_rule.action_mirror_sessions)
     {
         m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_MIRROR_SESSION, fvValue(mirror_session).key);
@@ -2344,6 +2401,17 @@ std::string AclRuleManager::verifyStateCache(const P4AclRuleAppDbEntry &app_db_e
             << QuotedVar(acl_rule->action_redirect_nexthop_key) << " in ACl rule manager.";
         return msg.str();
     }
+    if (acl_rule->action_redirect_l3_multicast_group_key !=
+      acl_rule_entry.action_redirect_l3_multicast_group_key) {
+    std::stringstream msg;
+    msg << "ACL rule " << QuotedVar(acl_rule_key)
+        << " with redirect L3 multicast group key "
+        << QuotedVar(acl_rule_entry.action_redirect_l3_multicast_group_key)
+        << " mismatch with internal cache "
+        << QuotedVar(acl_rule->action_redirect_l3_multicast_group_key)
+        << " in ACl rule manager.";
+    return msg.str();
+  }
     if (acl_rule->action_mirror_sessions != acl_rule_entry.action_mirror_sessions)
     {
         std::stringstream msg;
