@@ -102,7 +102,7 @@ namespace hftelprofile_ut
             alignas(HFTelProfile) unsigned char buf[sizeof(HFTelProfile)];
             HFTelProfile *p = nullptr;
 
-            void init(HFTelProfile::sai_guard_t &guard, sai_object_id_t tel_oid)
+            void init(HFTelProfile::sai_guard_t &guard)
             {
                 /*
                  * Zero the storage so any incidental reads of uninitialised
@@ -137,7 +137,7 @@ namespace hftelprofile_ut
     TEST_F(UpdateTemplatesTest, BufferOverflow_ThenSuccess)
     {
         Stub s;
-        s.init(guard, fake_tel_type_oid);
+        s.init(guard);
 
         g_mock.first_call_status  = SAI_STATUS_BUFFER_OVERFLOW;
         g_mock.first_call_count   = 4;
@@ -156,7 +156,7 @@ namespace hftelprofile_ut
     TEST_F(UpdateTemplatesTest, Success_EmptyTemplate)
     {
         Stub s;
-        s.init(guard, fake_tel_type_oid);
+        s.init(guard);
 
         g_mock.first_call_status = SAI_STATUS_SUCCESS;
         g_mock.first_call_count  = 0;
@@ -171,7 +171,7 @@ namespace hftelprofile_ut
     TEST_F(UpdateTemplatesTest, FirstCall_UnexpectedFailure)
     {
         Stub s;
-        s.init(guard, fake_tel_type_oid);
+        s.init(guard);
 
         g_mock.first_call_status = SAI_STATUS_FAILURE;
 
@@ -182,7 +182,7 @@ namespace hftelprofile_ut
     TEST_F(UpdateTemplatesTest, SecondCall_Failure)
     {
         Stub s;
-        s.init(guard, fake_tel_type_oid);
+        s.init(guard);
 
         g_mock.first_call_status  = SAI_STATUS_BUFFER_OVERFLOW;
         g_mock.first_call_count   = 4;
@@ -195,7 +195,7 @@ namespace hftelprofile_ut
     TEST_F(UpdateTemplatesTest, UnknownOID_Throws)
     {
         Stub s;
-        s.init(guard, fake_tel_type_oid);
+        s.init(guard);
 
         sai_object_id_t bad_oid = 0xDEAD;
         EXPECT_THROW(s.p->updateTemplates(bad_oid), runtime_error);
