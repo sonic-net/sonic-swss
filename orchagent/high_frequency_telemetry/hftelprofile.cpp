@@ -663,6 +663,7 @@ sai_object_id_t HFTelProfile::getTAMReportObjID(sai_object_type_t object_type)
 
     attr.id = SAI_TAM_REPORT_ATTR_REPORT_INTERVAL_UNIT;
     attr.value.s32 = SAI_TAM_REPORT_INTERVAL_UNIT_USEC;
+    attrs.push_back(attr);
 
     handleSaiCreateStatus(
         SAI_API_TAM,
