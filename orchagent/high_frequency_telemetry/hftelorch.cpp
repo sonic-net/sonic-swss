@@ -115,16 +115,16 @@ void HFTelOrch::locallyNotify(const CounterNameMapUpdater::Message &msg)
     SWSS_LOG_NOTICE("The counter table %s is updated, operation %d, object %s",
                     msg.m_table_name,
                     msg.m_operation,
-                    msg.m_operation == CounterNameMapUpdater::SET ? msg.m_set.m_counter_name : msg.m_del.m_counter_name);
+                    msg.m_counter_name.c_str());
 
     // Update the local cache
     if (msg.m_operation == CounterNameMapUpdater::SET)
     {
-        m_counter_name_cache[counter_itr->second][msg.m_set.m_counter_name] = msg.m_set.m_oid;
+        m_counter_name_cache[counter_itr->second][msg.m_counter_name] = msg.m_oid;
     }
     else if (msg.m_operation == CounterNameMapUpdater::DEL)
     {
-        m_counter_name_cache[counter_itr->second].erase(msg.m_del.m_counter_name);
+        m_counter_name_cache[counter_itr->second].erase(msg.m_counter_name);
     }
 
     // Update the profile
@@ -136,24 +136,24 @@ void HFTelOrch::locallyNotify(const CounterNameMapUpdater::Message &msg)
     for (auto profile_itr = type_itr->second.begin(); profile_itr != type_itr->second.end(); profile_itr++)
     {
         auto profile = *profile_itr;
-        const char *counter_name = msg.m_operation == CounterNameMapUpdater::SET ? msg.m_set.m_counter_name : msg.m_del.m_counter_name;
+        const auto &counter_name = msg.m_counter_name;
 
         if (!profile->canBeUpdated(counter_itr->second))
         {
             // TODO: Here is a potential issue, we might need to retry the task.
             // Because the Syncd is generating the configuration(template),
             // we cannot update the monitor objects at this time.
-            SWSS_LOG_WARN("The high frequency telemetry profile %s is not ready to be updated, but the object %s want to be updated", profile->getProfileName().c_str(), counter_name);
+            SWSS_LOG_WARN("The high frequency telemetry profile %s is not ready to be updated, but the object %s want to be updated", profile->getProfileName().c_str(), counter_name.c_str());
             continue;
         }
 
         if (msg.m_operation == CounterNameMapUpdater::SET)
         {
-            profile->setObjectSAIID(counter_itr->second, counter_name, msg.m_set.m_oid);
+            profile->setObjectSAIID(counter_itr->second, counter_name.c_str(), msg.m_oid);
         }
         else if (msg.m_operation == CounterNameMapUpdater::DEL)
         {
-            profile->delObjectSAIID(counter_itr->second, counter_name);
+            profile->delObjectSAIID(counter_itr->second, counter_name.c_str());
         }
         else
         {
