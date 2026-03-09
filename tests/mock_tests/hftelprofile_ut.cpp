@@ -1,12 +1,22 @@
-#include "ut_helper.h"
-#include "mock_orchagent_main.h"
-#include <gtest/gtest.h>
+// Pre-include standard library and third-party headers that conflict with
+// the #define private public hack (they use 'private' internally).
+#include <sstream>
+#include <string>
+#include <vector>
+#include <map>
+#include <unordered_map>
+#include <set>
+#include <memory>
 
 #define private public
 #define protected public
 #include "high_frequency_telemetry/hftelprofile.h"
 #undef private
 #undef protected
+
+#include "ut_helper.h"
+#include "mock_orchagent_main.h"
+#include <gtest/gtest.h>
 
 extern sai_tam_api_t *sai_tam_api;
 
@@ -113,7 +123,7 @@ namespace hftelprofile_ut
 
                 /* Placement-new the containers and strings that may be
                  * accessed (directly or via logging) by updateTemplates(). */
-                new (&p->m_profile_name) string();
+                new (const_cast<string*>(&p->m_profile_name)) string();
                 new (&p->m_sai_tam_tel_type_objs)
                     decay_t<decltype(p->m_sai_tam_tel_type_objs)>();
                 new (&p->m_sai_tam_tel_type_templates)
