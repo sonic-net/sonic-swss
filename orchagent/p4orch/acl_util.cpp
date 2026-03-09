@@ -978,6 +978,7 @@ bool isDiffMatchFieldValue(const sai_acl_entry_attr_t attr_name,
       return value.aclfield.data.oid != old_value.aclfield.data.oid;
     }
     case SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT:
+    case SAI_ACL_ENTRY_ATTR_FIELD_ROUTE_NPU_META_DST_HIT:
     {
         return value.aclfield.data.booldata != old_value.aclfield.data.booldata;
     }
