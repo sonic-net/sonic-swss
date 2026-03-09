@@ -123,7 +123,7 @@ namespace hftelprofile_ut
                  * scalar members are safe (e.g. m_poll_interval).
                  */
                 memset(buf, 0, sizeof(buf));
-                p = reinterpret_cast<HFTelProfile *>(buf);
+                p = reinterpret_cast<HFTelProfile *>(static_cast<void *>(buf));
 
                 /* Placement-new the containers and strings that may be
                  * accessed (directly or via logging) by updateTemplates(). */
