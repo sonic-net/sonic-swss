@@ -622,7 +622,7 @@ L3MulticastManager::deserializeMulticastRouterInterfaceEntry(
                << "Invalid Vlan ID " << QuotedVar(value) << " of field "
                << QuotedVar(field);
       }
-    } else if (field == prependParamField(p4orch::kMulticastMetadata)) {
+    } else if (field == p4orch::kMulticastMetadata) {
       router_interface_entry.multicast_metadata = value;
     } else if (field != p4orch::kControllerMetadata) {
       return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
@@ -3051,8 +3051,8 @@ std::string L3MulticastManager::verifyMulticastRouterInterfaceStateCache(
           app_db_entry.multicast_replica_port,
           app_db_entry.multicast_replica_instance);
 
-  ReturnCode status = validateMulticastRouterInterfaceEntry(app_db_entry,
-                                                            SET_COMMAND);
+  ReturnCode status =
+      validateMulticastRouterInterfaceEntry(app_db_entry, SET_COMMAND);
   if (!status.ok()) {
     std::stringstream msg;
     msg << "Validation failed for multicast router interface DB entry with key "
@@ -3065,7 +3065,8 @@ std::string L3MulticastManager::verifyMulticastRouterInterfaceStateCache(
     msg << "Multicast router interface interface entry key "
         << QuotedVar(app_db_entry.multicast_router_interface_entry_key)
         << " does not match internal cache "
-        << QuotedVar(multicast_router_interface_entry->multicast_router_interface_entry_key)
+        << QuotedVar(multicast_router_interface_entry
+                         ->multicast_router_interface_entry_key)
         << " in l3 multicast manager.";
     return msg.str();
   }
@@ -3100,6 +3101,23 @@ std::string L3MulticastManager::verifyMulticastRouterInterfaceStateCache(
         << " in l3 multicast manager.";
     return msg.str();
   }
+  if (multicast_router_interface_entry->dst_mac.to_string() !=
+      app_db_entry.dst_mac.to_string()) {
+    std::stringstream msg;
+    msg << "Dst MAC " << QuotedVar(app_db_entry.dst_mac.to_string())
+        << " does not match internal cache "
+        << QuotedVar(multicast_router_interface_entry->dst_mac.to_string())
+        << " in l3 multicast manager.";
+    return msg.str();
+  }
+  if (multicast_router_interface_entry->vlan_id != app_db_entry.vlan_id) {
+    std::stringstream msg;
+    msg << "Vlan ID '" << app_db_entry.vlan_id
+        << "' does not match internal cache '"
+        << multicast_router_interface_entry->vlan_id
+        << "' in l3 multicast manager.";
+    return msg.str();
+  }
   if (multicast_router_interface_entry->multicast_metadata !=
       app_db_entry.multicast_metadata) {
     std::stringstream msg;
@@ -3115,11 +3133,31 @@ std::string L3MulticastManager::verifyMulticastRouterInterfaceStateCache(
       multicast_router_interface_entry->action !=
           p4orch::kMulticastL2Passthrough) {
     sai_object_id_t rif_oid = getRifOid(multicast_router_interface_entry);
-    return m_p4OidMapper->verifyOIDMapping(
+    std::string rif_str = m_p4OidMapper->verifyOIDMapping(
         SAI_OBJECT_TYPE_ROUTER_INTERFACE,
         multicast_router_interface_entry->multicast_router_interface_entry_key,
         rif_oid);
+    if (!rif_str.empty()) {
+      return rif_str;
+    }
   }
+  if (multicast_router_interface_entry->action == p4orch::kMulticastSetSrcMac ||
+      multicast_router_interface_entry->action ==
+          p4orch::kMulticastSetSrcMacAndVlanId ||
+      multicast_router_interface_entry->action ==
+          p4orch::kMulticastSetSrcMacAndDstMacAndVlanId ||
+      multicast_router_interface_entry->action ==
+          p4orch::kMulticastSetSrcMacAndPreserveIngressVlanId) {
+    sai_object_id_t nh_oid = getNextHopOid(multicast_router_interface_entry);
+    std::string nh_str = m_p4OidMapper->verifyOIDMapping(
+        SAI_OBJECT_TYPE_NEXT_HOP,
+        multicast_router_interface_entry->multicast_router_interface_entry_key,
+        nh_oid);
+    if (!nh_str.empty()) {
+      return nh_str;
+    }
+  }
+
   return "";
 }
 
@@ -3161,7 +3199,59 @@ std::string L3MulticastManager::verifyL3MulticastRouterInterfaceStateAsicDb(
     return std::string("ASIC DB key not found ") + key;
   }
 
-  return verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
+  std::string rif_str =
+      verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
+                  /*allow_unknown=*/false);
+  if (!rif_str.empty()) {
+    return rif_str;
+  }
+
+  // Legacy action doesn't set a next hop.
+  if (multicast_router_interface_entry->action == p4orch::kSetSrcMac) {
+    return "";
+  }
+
+  auto nh_attrs =
+      prepareNextHopSaiAttrs(*multicast_router_interface_entry, rif_oid);
+  std::vector<swss::FieldValueTuple> nh_exp =
+      saimeta::SaiAttributeList::serialize_attr_list(
+          SAI_OBJECT_TYPE_NEXT_HOP, (uint32_t)nh_attrs.size(), nh_attrs.data(),
+          /*countOnly=*/false);
+
+  sai_object_id_t nh_oid = getNextHopOid(multicast_router_interface_entry);
+
+  std::string nh_key = sai_serialize_object_type(SAI_OBJECT_TYPE_NEXT_HOP) +
+                       ":" + sai_serialize_object_id(nh_oid);
+  std::vector<swss::FieldValueTuple> nh_values;
+  if (!table.get(nh_key, nh_values)) {
+    return std::string("ASIC DB key not found ") + nh_key;
+  }
+
+  std::string nh_str =
+      verifyAttrs(nh_values, nh_exp, std::vector<swss::FieldValueTuple>{},
+                  /*allow_unknown=*/false);
+  if (!nh_str.empty()) {
+    return nh_str;
+  }
+
+  auto neigh_attrs =
+      prepareNeighborEntrySaiAttrs(multicast_router_interface_entry->dst_mac);
+  std::vector<swss::FieldValueTuple> neigh_exp =
+      saimeta::SaiAttributeList::serialize_attr_list(
+          SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, (uint32_t)neigh_attrs.size(),
+          neigh_attrs.data(),
+          /*countOnly=*/false);
+  sai_neighbor_entry_t neigh_entry = prepareSaiNeighborEntry(rif_oid);
+  std::string neigh_key =
+      sai_serialize_object_type(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY) + ":" +
+      sai_serialize_neighbor_entry(neigh_entry);
+  std::vector<swss::FieldValueTuple> neigh_values;
+  if (!table.get(neigh_key, neigh_values)) {
+    return std::string("ASIC DB key not found ") + neigh_key;
+  }
+
+  return verifyAttrs(neigh_values, neigh_exp,
+                     std::vector<swss::FieldValueTuple>{},
                      /*allow_unknown=*/false);
 }
 

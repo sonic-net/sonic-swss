@@ -1040,8 +1040,8 @@ TEST_F(L3MulticastManagerTest, DeserializeMulticastRouterInterfaceEntryTest) {
       swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
-  attributes.push_back(swss::FieldValueTuple{
-      prependParamField(p4orch::kMulticastMetadata), "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kMulticastMetadata, "meta1"});
   attributes.push_back(
       swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
 
@@ -1112,8 +1112,8 @@ TEST_F(L3MulticastManagerTest,
       swss::FieldValueTuple{p4orch::kAction, p4orch::kSetSrcMac});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
-  attributes.push_back(swss::FieldValueTuple{
-      prependParamField(p4orch::kMulticastMetadata), "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kMulticastMetadata, "meta1"});
   attributes.push_back(
       swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
 
@@ -1141,8 +1141,8 @@ TEST_F(L3MulticastManagerTest,
       swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
-  attributes.push_back(swss::FieldValueTuple{
-      prependParamField(p4orch::kMulticastMetadata), "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kMulticastMetadata, "meta1"});
   attributes.push_back(
       swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
 
@@ -1172,8 +1172,8 @@ TEST_F(L3MulticastManagerTest,
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kVlanId), kVlanId1});
-  attributes.push_back(swss::FieldValueTuple{
-      prependParamField(p4orch::kMulticastMetadata), "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kMulticastMetadata, "meta1"});
   attributes.push_back(
       swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
 
@@ -1203,8 +1203,8 @@ TEST_F(L3MulticastManagerTest,
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kVlanId), "NaN"});
-  attributes.push_back(swss::FieldValueTuple{
-      prependParamField(p4orch::kMulticastMetadata), "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kMulticastMetadata, "meta1"});
   attributes.push_back(
       swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
 
@@ -1227,8 +1227,8 @@ TEST_F(L3MulticastManagerTest,
       swss::FieldValueTuple{prependParamField(p4orch::kDstMac), kDstMac1});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kVlanId), kVlanId1});
-  attributes.push_back(swss::FieldValueTuple{
-      prependParamField(p4orch::kMulticastMetadata), "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kMulticastMetadata, "meta1"});
   attributes.push_back(
       swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
 
@@ -1258,8 +1258,8 @@ TEST_F(L3MulticastManagerTest,
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kVlanId), kVlanId1});
-  attributes.push_back(swss::FieldValueTuple{
-      prependParamField(p4orch::kMulticastMetadata), "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kMulticastMetadata, "meta1"});
   attributes.push_back(
       swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
 
@@ -1318,8 +1318,8 @@ TEST_F(L3MulticastManagerTest,
       p4orch::kAction, p4orch::kMulticastSetSrcMacAndPreserveIngressVlanId});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
-  attributes.push_back(swss::FieldValueTuple{
-      prependParamField(p4orch::kMulticastMetadata), "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kMulticastMetadata, "meta1"});
   attributes.push_back(
       swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
 
@@ -1345,8 +1345,8 @@ TEST_F(L3MulticastManagerTest,
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
       swss::FieldValueTuple{p4orch::kAction, p4orch::kL2MulticastPassthrough});
-  attributes.push_back(swss::FieldValueTuple{
-      prependParamField(p4orch::kMulticastMetadata), "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kMulticastMetadata, "meta1"});
   attributes.push_back(
       swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
 
@@ -1372,8 +1372,8 @@ TEST_F(L3MulticastManagerTest,
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
       swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastL2Passthrough});
-  attributes.push_back(swss::FieldValueTuple{
-      prependParamField(p4orch::kMulticastMetadata), "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kMulticastMetadata, "meta1"});
   attributes.push_back(
       swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
 
@@ -3814,6 +3814,386 @@ TEST_F(L3MulticastManagerTest, VerifyStateMulticastRouterInterfaceTestSuccess) {
 }
 
 TEST_F(L3MulticastManagerTest,
+       VerifyStateMulticastRouterInterfaceTestNextHopSuccess) {
+  auto internal_entry = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac1), kVlanIdNum1,
+      p4orch::kMulticastSetSrcMacAndDstMacAndVlanId, kRifOid1, kNextHopOid1);
+
+  const std::string match_key =
+      R"({"match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x0001"})";
+  const std::string appl_db_key =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + match_key;
+  const std::string db_key =
+      std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter + appl_db_key;
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(swss::FieldValueTuple{
+      p4orch::kAction, p4orch::kMulticastSetSrcMacAndDstMacAndVlanId});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kDstMac), kDstMac1});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kVlanId), kVlanId1});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kMulticastMetadata, "metadata"});
+
+  // Setup ASIC DB.
+  swss::Table table(nullptr, "ASIC_STATE");
+  table.set(
+      "SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID",
+                                "oid:0x0"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS",
+                                "00:01:02:03:04:05"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_TYPE",
+                                "SAI_ROUTER_INTERFACE_TYPE_SUB_PORT"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID",
+                                "65"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_PORT_ID",
+                                "oid:0x112233"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE",
+                                "true"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE",
+                                "true"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"}});
+
+  table.set(
+      "SAI_OBJECT_TYPE_NEXT_HOP:oid:0x100a",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_TYPE",
+                                "SAI_NEXT_HOP_TYPE_IPMC"},
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID",
+                                "oid:0x123456"},
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_IP", kLinkLocalIpv4Address},
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE",
+                                "false"},
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE",
+                                "false"},
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE",
+                                "false"}});
+
+  table.set(
+      "SAI_OBJECT_TYPE_NEIGHBOR_ENTRY:{\"ip\":\"169.254.0.1\",\"rif\":\"oid:"
+      "0x123456\",\"switch_id\":\"oid:0x0\"}",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS",
+                                "00:11:22:33:44:55"},
+          swss::FieldValueTuple{"SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE",
+                                "true"}});
+  // Verification should succeed with vaild key and value.
+  EXPECT_EQ(VerifyState(db_key, attributes), "");
+  table.del("SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456");
+  table.del("SAI_OBJECT_TYPE_NEXT_HOP:oid:0x100a");
+  table.del(
+      "SAI_OBJECT_TYPE_NEIGHBOR_ENTRY:{\"ip\":\"169.254.0.1\",\"rif\":\"oid:"
+      "0x123456\",\"switch_id\":\"oid:0x0\"}");
+}
+
+TEST_F(L3MulticastManagerTest,
+       VerifyStateMulticastRouterInterfaceTestNextHopFailIfAsicKeyMissing) {
+  auto internal_entry = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac1), kVlanIdNum1,
+      p4orch::kMulticastSetSrcMacAndDstMacAndVlanId, kRifOid1, kNextHopOid1);
+
+  const std::string match_key =
+      R"({"match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x0001"})";
+  const std::string appl_db_key =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + match_key;
+  const std::string db_key =
+      std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter + appl_db_key;
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(swss::FieldValueTuple{
+      p4orch::kAction, p4orch::kMulticastSetSrcMacAndDstMacAndVlanId});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kDstMac), kDstMac1});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kVlanId), kVlanId1});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kMulticastMetadata, "metadata"});
+
+  // Setup ASIC DB.
+  swss::Table table(nullptr, "ASIC_STATE");
+  table.set(
+      "SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID",
+                                "oid:0x0"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS",
+                                "00:01:02:03:04:05"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_TYPE",
+                                "SAI_ROUTER_INTERFACE_TYPE_SUB_PORT"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID",
+                                "65"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_PORT_ID",
+                                "oid:0x112233"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE",
+                                "true"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE",
+                                "true"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"}});
+
+  // Next hop key and values is missing.
+  table.set(
+      "SAI_OBJECT_TYPE_NEIGHBOR_ENTRY:{\"ip\":\"169.254.0.1\",\"rif\":\"oid:"
+      "0x123456\",\"switch_id\":\"oid:0x0\"}",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS",
+                                "00:11:22:33:44:55"},
+          swss::FieldValueTuple{"SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE",
+                                "true"}});
+  // Verification should succeed with vaild key and value.
+  EXPECT_NE(VerifyState(db_key, attributes), "");
+  table.del("SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456");
+  table.del(
+      "SAI_OBJECT_TYPE_NEIGHBOR_ENTRY:{\"ip\":\"169.254.0.1\",\"rif\":\"oid:"
+      "0x123456\",\"switch_id\":\"oid:0x0\"}");
+}
+
+TEST_F(L3MulticastManagerTest,
+       VerifyStateMulticastRouterInterfaceTestNextHopFailsIfAsicMismatch) {
+  auto internal_entry = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac1), kVlanIdNum1,
+      p4orch::kMulticastSetSrcMacAndDstMacAndVlanId, kRifOid1, kNextHopOid1);
+
+  const std::string match_key =
+      R"({"match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x0001"})";
+  const std::string appl_db_key =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + match_key;
+  const std::string db_key =
+      std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter + appl_db_key;
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(swss::FieldValueTuple{
+      p4orch::kAction, p4orch::kMulticastSetSrcMacAndDstMacAndVlanId});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kDstMac), kDstMac1});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kVlanId), kVlanId1});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kMulticastMetadata, "metadata"});
+
+  // Setup ASIC DB.
+  swss::Table table(nullptr, "ASIC_STATE");
+  table.set(
+      "SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID",
+                                "oid:0x0"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS",
+                                "00:01:02:03:04:05"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_TYPE",
+                                "SAI_ROUTER_INTERFACE_TYPE_SUB_PORT"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID",
+                                "65"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_PORT_ID",
+                                "oid:0x112233"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE",
+                                "true"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE",
+                                "true"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"}});
+
+  table.set(
+      "SAI_OBJECT_TYPE_NEXT_HOP:oid:0x100a",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_TYPE",
+                                "SAI_NEXT_HOP_TYPE_IPMC"},
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID",
+                                "oid:0x123456"},
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_IP", kLinkLocalIpv4Address},
+          // This should be false.
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE",
+                                "true"},
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE",
+                                "false"},
+          // This should be false.
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE",
+                                "true"}});
+
+  table.set(
+      "SAI_OBJECT_TYPE_NEIGHBOR_ENTRY:{\"ip\":\"169.254.0.1\",\"rif\":\"oid:"
+      "0x123456\",\"switch_id\":\"oid:0x0\"}",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS",
+                                "00:11:22:33:44:55"},
+          swss::FieldValueTuple{"SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE",
+                                "true"}});
+  // Verification should succeed with vaild key and value.
+  EXPECT_NE(VerifyState(db_key, attributes), "");
+  table.del("SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456");
+  table.del("SAI_OBJECT_TYPE_NEXT_HOP:oid:0x100a");
+  table.del(
+      "SAI_OBJECT_TYPE_NEIGHBOR_ENTRY:{\"ip\":\"169.254.0.1\",\"rif\":\"oid:"
+      "0x123456\",\"switch_id\":\"oid:0x0\"}");
+}
+
+TEST_F(L3MulticastManagerTest,
+       VerifyStateMulticastRouterInterfaceTestNextHopFailsIfNeighbKeyMissing) {
+  auto internal_entry = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac1), kVlanIdNum1,
+      p4orch::kMulticastSetSrcMacAndDstMacAndVlanId, kRifOid1, kNextHopOid1);
+
+  const std::string match_key =
+      R"({"match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x0001"})";
+  const std::string appl_db_key =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + match_key;
+  const std::string db_key =
+      std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter + appl_db_key;
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(swss::FieldValueTuple{
+      p4orch::kAction, p4orch::kMulticastSetSrcMacAndDstMacAndVlanId});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kDstMac), kDstMac1});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kVlanId), kVlanId1});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kMulticastMetadata, "metadata"});
+
+  // Setup ASIC DB.
+  swss::Table table(nullptr, "ASIC_STATE");
+  table.set(
+      "SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID",
+                                "oid:0x0"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS",
+                                "00:01:02:03:04:05"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_TYPE",
+                                "SAI_ROUTER_INTERFACE_TYPE_SUB_PORT"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID",
+                                "65"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_PORT_ID",
+                                "oid:0x112233"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE",
+                                "true"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE",
+                                "true"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"}});
+
+  table.set(
+      "SAI_OBJECT_TYPE_NEXT_HOP:oid:0x100a",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_TYPE",
+                                "SAI_NEXT_HOP_TYPE_IPMC"},
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID",
+                                "oid:0x123456"},
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_IP", kLinkLocalIpv4Address},
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE",
+                                "false"},
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE",
+                                "false"},
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE",
+                                "false"}});
+
+  // Neighbor key is missing.
+
+  // Verification should succeed with vaild key and value.
+  EXPECT_NE(VerifyState(db_key, attributes), "");
+  table.del("SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456");
+  table.del("SAI_OBJECT_TYPE_NEXT_HOP:oid:0x100a");
+}
+
+TEST_F(L3MulticastManagerTest,
+       VerifyStateMulticastRouterInterfaceTestNextHopFailsIfNeighAsicMismatch) {
+  auto internal_entry = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac1), kVlanIdNum1,
+      p4orch::kMulticastSetSrcMacAndDstMacAndVlanId, kRifOid1, kNextHopOid1);
+
+  const std::string match_key =
+      R"({"match/multicast_replica_port":"Ethernet1",)"
+      R"("match/multicast_replica_instance":"0x0001"})";
+  const std::string appl_db_key =
+      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
+      kTableKeyDelimiter + match_key;
+  const std::string db_key =
+      std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter + appl_db_key;
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(swss::FieldValueTuple{
+      p4orch::kAction, p4orch::kMulticastSetSrcMacAndDstMacAndVlanId});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kDstMac), kDstMac1});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kVlanId), kVlanId1});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kMulticastMetadata, "metadata"});
+
+  // Setup ASIC DB.
+  swss::Table table(nullptr, "ASIC_STATE");
+  table.set(
+      "SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID",
+                                "oid:0x0"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS",
+                                "00:01:02:03:04:05"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_TYPE",
+                                "SAI_ROUTER_INTERFACE_TYPE_SUB_PORT"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID",
+                                "65"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_PORT_ID",
+                                "oid:0x112233"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE",
+                                "true"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE",
+                                "true"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"}});
+
+  table.set(
+      "SAI_OBJECT_TYPE_NEXT_HOP:oid:0x100a",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_TYPE",
+                                "SAI_NEXT_HOP_TYPE_IPMC"},
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID",
+                                "oid:0x123456"},
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_IP", kLinkLocalIpv4Address},
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE",
+                                "false"},
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE",
+                                "false"},
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE",
+                                "false"}});
+
+  table.set(
+      "SAI_OBJECT_TYPE_NEIGHBOR_ENTRY:{\"ip\":\"169.254.0.1\",\"rif\":\"oid:"
+      "0x123456\",\"switch_id\":\"oid:0x0\"}",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS",
+                                "00:11:22:33:44:55"},
+          // This should be true.
+          swss::FieldValueTuple{"SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE",
+                                "false"}});
+
+  // Verification should succeed with vaild key and value.
+  EXPECT_NE(VerifyState(db_key, attributes), "");
+  table.del("SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456");
+  table.del("SAI_OBJECT_TYPE_NEXT_HOP:oid:0x100a");
+  table.del(
+      "SAI_OBJECT_TYPE_NEIGHBOR_ENTRY:{\"ip\":\"169.254.0.1\",\"rif\":\"oid:"
+      "0x123456\",\"switch_id\":\"oid:0x0\"}");
+}
+
+TEST_F(L3MulticastManagerTest,
        VerifyStateMulticastRouterInterfaceNoActionSuccess) {
   auto entry = SetupP4MulticastRouterInterfaceNoActionEntry(
       "Ethernet1", /*instance=*/"0x0", kBridgePortOid1);
@@ -4019,52 +4399,122 @@ TEST_F(L3MulticastManagerTest,
 TEST_F(L3MulticastManagerTest,
        VerifyStateMulticastRouterInterfaceTestStateCacheFails) {
   P4MulticastRouterInterfaceEntry internal_entry =
-      GenerateP4MulticastRouterInterfaceEntry(
-          "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), "meta1");
+      GenerateP4MulticastRouterInterfaceEntryByAction(
+          "Ethernet1", /*instance=*/"0x0001", swss::MacAddress(kSrcMac1),
+          swss::MacAddress(kDstMac1), kVlanIdNum1, "meta1",
+          p4orch::kMulticastSetSrcMacAndDstMacAndVlanId);
 
   // Bad app db entry.
   P4MulticastRouterInterfaceEntry missing_multicast_replica_port =
-      GenerateP4MulticastRouterInterfaceEntry(
-          "", "0x1", swss::MacAddress(kSrcMac1));
+      GenerateP4MulticastRouterInterfaceEntryByAction(
+          /*port=*/"", /*instance=*/"0x0001", swss::MacAddress(kSrcMac1),
+          swss::MacAddress(kDstMac1), kVlanIdNum1, "meta1",
+          p4orch::kMulticastSetSrcMacAndDstMacAndVlanId);
   EXPECT_FALSE(VerifyMulticastRouterInterfaceStateCache(
       missing_multicast_replica_port, &internal_entry).empty());
 
   // Mismatch on key.
   P4MulticastRouterInterfaceEntry key_mismatch =
-      GenerateP4MulticastRouterInterfaceEntry(
-          "Ethernet2", "0x1", swss::MacAddress(kSrcMac1), "meta1");
+      GenerateP4MulticastRouterInterfaceEntryByAction(
+          "Ethernet2", /*instance=*/"0x0001", swss::MacAddress(kSrcMac1),
+          swss::MacAddress(kDstMac1), kVlanIdNum1, "meta1",
+          p4orch::kMulticastSetSrcMacAndDstMacAndVlanId);
   EXPECT_FALSE(VerifyMulticastRouterInterfaceStateCache(
       key_mismatch, &internal_entry).empty());
 
   // Mismatch on multicast_replica_port.
   P4MulticastRouterInterfaceEntry port_mismatch =
-      GenerateP4MulticastRouterInterfaceEntry(
-          "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), "meta1");
+      GenerateP4MulticastRouterInterfaceEntryByAction(
+          "Ethernet1", /*instance=*/"0x0001", swss::MacAddress(kSrcMac1),
+          swss::MacAddress(kDstMac1), kVlanIdNum1, "meta1",
+          p4orch::kMulticastSetSrcMacAndDstMacAndVlanId);
   port_mismatch.multicast_replica_port = "Ethernet2";
   EXPECT_FALSE(VerifyMulticastRouterInterfaceStateCache(
       port_mismatch, &internal_entry).empty());
 
   // Mismatch on multicast_replica_instance.
   P4MulticastRouterInterfaceEntry instance_mismatch =
-      GenerateP4MulticastRouterInterfaceEntry(
-          "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), "meta1");
+      GenerateP4MulticastRouterInterfaceEntryByAction(
+          "Ethernet1", /*instance=*/"0x0001", swss::MacAddress(kSrcMac1),
+          swss::MacAddress(kDstMac1), kVlanIdNum1, "meta1",
+          p4orch::kMulticastSetSrcMacAndDstMacAndVlanId);
+  instance_mismatch.multicast_replica_instance = "0x0002";
   instance_mismatch.multicast_replica_instance = "0x2";
   EXPECT_FALSE(VerifyMulticastRouterInterfaceStateCache(
       instance_mismatch, &internal_entry).empty());
 
   // Mismatch on src_mac.
-  P4MulticastRouterInterfaceEntry mac_mismatch =
-      GenerateP4MulticastRouterInterfaceEntry(
-          "Ethernet1", "0x1", swss::MacAddress(kSrcMac2), "meta1");
-  EXPECT_FALSE(VerifyMulticastRouterInterfaceStateCache(
-      mac_mismatch, &internal_entry).empty());
+   P4MulticastRouterInterfaceEntry smac_mismatch =
+      GenerateP4MulticastRouterInterfaceEntryByAction(
+          "Ethernet1", /*instance=*/"0x0001", swss::MacAddress(kSrcMac2),
+          swss::MacAddress(kDstMac1), kVlanIdNum1, "meta1",
+          p4orch::kMulticastSetSrcMacAndDstMacAndVlanId);
+  EXPECT_FALSE(
+      VerifyMulticastRouterInterfaceStateCache(smac_mismatch, &internal_entry)
+          .empty());
+
+  // Mismatch on dst_mac.
+  P4MulticastRouterInterfaceEntry dmac_mismatch =
+      GenerateP4MulticastRouterInterfaceEntryByAction(
+          "Ethernet1", /*instance=*/"0x0001", swss::MacAddress(kSrcMac1),
+          swss::MacAddress(kDstMac2), kVlanIdNum1, "meta1",
+          p4orch::kMulticastSetSrcMacAndDstMacAndVlanId);
+  EXPECT_FALSE(
+      VerifyMulticastRouterInterfaceStateCache(dmac_mismatch, &internal_entry)
+          .empty());
+
+  P4MulticastRouterInterfaceEntry vlan_mismatch =
+      GenerateP4MulticastRouterInterfaceEntryByAction(
+          "Ethernet1", /*instance=*/"0x0001", swss::MacAddress(kSrcMac1),
+          swss::MacAddress(kDstMac1), kVlanIdNum2, "meta1",
+          p4orch::kMulticastSetSrcMacAndDstMacAndVlanId);
+  EXPECT_FALSE(
+      VerifyMulticastRouterInterfaceStateCache(vlan_mismatch, &internal_entry)
+          .empty());
 
   // Mismatch on multicast_metadata.
   P4MulticastRouterInterfaceEntry metadata_mismatch =
-      GenerateP4MulticastRouterInterfaceEntry(
-          "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), "meta2");
-  EXPECT_FALSE(VerifyMulticastRouterInterfaceStateCache(
-      metadata_mismatch, &internal_entry).empty());
+      GenerateP4MulticastRouterInterfaceEntryByAction(
+          "Ethernet1", /*instance=*/"0x0001", swss::MacAddress(kSrcMac1),
+          swss::MacAddress(kDstMac1), kVlanIdNum1, "meta2",
+          p4orch::kMulticastSetSrcMacAndDstMacAndVlanId);
+  EXPECT_FALSE(VerifyMulticastRouterInterfaceStateCache(metadata_mismatch,
+                                                        &internal_entry)
+                   .empty());
+}
+
+TEST_F(L3MulticastManagerTest,
+       VerifyStateMulticastRouterInterfaceTestStateCacheMissingOidsFail) {
+  auto internal_entry = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac1), kVlanIdNum1,
+      p4orch::kMulticastSetSrcMacAndDstMacAndVlanId, kRifOid1, kNextHopOid1);
+
+  EXPECT_TRUE(
+      VerifyMulticastRouterInterfaceStateCache(internal_entry, &internal_entry)
+          .empty());
+
+  // Remove rif OID to cause failure.
+  p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                          internal_entry.multicast_router_interface_entry_key);
+  EXPECT_FALSE(
+      VerifyMulticastRouterInterfaceStateCache(internal_entry, &internal_entry)
+          .empty());
+
+  // Restore and verify.
+  p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                        internal_entry.multicast_router_interface_entry_key,
+                        kRifOid1);
+  EXPECT_TRUE(
+      VerifyMulticastRouterInterfaceStateCache(internal_entry, &internal_entry)
+          .empty());
+
+  // Remove next hop OID.
+  p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_NEXT_HOP,
+                          internal_entry.multicast_router_interface_entry_key);
+  EXPECT_FALSE(
+      VerifyMulticastRouterInterfaceStateCache(internal_entry, &internal_entry)
+          .empty());
 }
 
 TEST_F(L3MulticastManagerTest, DeleteMulticastGroupFailureNotInMapper) {
