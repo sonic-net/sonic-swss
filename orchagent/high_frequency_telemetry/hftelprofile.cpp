@@ -315,7 +315,7 @@ void HFTelProfile::setStatsIDs(const string &group_name, const set<string> &obje
     if (itr == m_groups.end() || itr->first != sai_object_type)
     {
         HFTelGroup group(group_name);
-        group.updateStatsIDs(stats_ids_set);
+        group.updateStatsIDs(std::move(stats_ids_set));
         m_groups.insert(itr, {sai_object_type, move(group)});
     }
     else
@@ -324,7 +324,7 @@ void HFTelProfile::setStatsIDs(const string &group_name, const set<string> &obje
         {
             return;
         }
-        itr->second.updateStatsIDs(stats_ids_set);
+        itr->second.updateStatsIDs(std::move(stats_ids_set));
     }
 
     // TODO: In the phase 2, we don't need to stop the stream before update the stats
