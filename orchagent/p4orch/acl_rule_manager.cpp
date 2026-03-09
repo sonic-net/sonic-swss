@@ -767,7 +767,7 @@ ReturnCode AclRuleManager::setMatchValue(const sai_acl_entry_attr_t attr_name,
                                          const std::string& ip_type_bit_type) {
   SWSS_LOG_ENTER();
   try {
-    switch (attr_name) {
+    switch ((int)attr_name) {
       case SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS: {
         const auto& ports = tokenize(attr_value, kPortsDelimiter);
         if (ports.empty()) {
@@ -852,6 +852,7 @@ ReturnCode AclRuleManager::setMatchValue(const sai_acl_entry_attr_t attr_name,
         break;
       }
       case SAI_ACL_ENTRY_ATTR_FIELD_PORT_USER_META:
+      case SAI_ACL_ENTRY_ATTR_FIELD_OUTER_TPID:
       case SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE:
       case SAI_ACL_ENTRY_ATTR_FIELD_L4_SRC_PORT:
       case SAI_ACL_ENTRY_ATTR_FIELD_L4_DST_PORT:

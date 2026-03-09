@@ -667,6 +667,8 @@ P4AclTableDefinitionAppDbEntry getDefaultAclTableDefAppDbEntry()
     app_db_entry.match_field_lookup["port_user_meta"] =
       BuildMatchFieldJsonStrKindSaiField(P4_MATCH_PORT_USER_META);
 
+    app_db_entry.match_field_lookup["outer_tpid"] =
+        BuildMatchFieldJsonStrKindSaiField(P4_MATCH_OUTER_TPID);
     // Action field mapping, from P4 action to SAI action
     app_db_entry.action_field_lookup["set_packet_action"].push_back(
         {.sai_action = P4_ACTION_PACKET_ACTION, .p4_param_name = "packet_action"});
@@ -2848,6 +2850,7 @@ TEST_F(AclManagerTest, AclRuleWithValidMatchFields)
     app_db_entry.match_fvs["vlan_user_meta"] = "0x100 & 0x1F0";
     app_db_entry.match_fvs["port_user_meta"] = "0x0044";
     app_db_entry.match_fvs["route_table_hit"] = "0x1";
+    app_db_entry.match_fvs["outer_tpid"] = "0x9900";
 
     const auto &acl_rule_key = KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
 
@@ -3073,6 +3076,13 @@ TEST_F(AclManagerTest, AclRuleWithValidMatchFields)
     EXPECT_EQ(true,
               acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_ROUTE_NPU_META_DST_HIT]
                   .aclfield.data.booldata);
+    EXPECT_EQ(0x9900,
+              acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_OUTER_TPID]
+                  .aclfield.data.u16);
+    EXPECT_EQ(0xFFFF,
+              acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_OUTER_TPID]
+                  .aclfield.mask.u16);
+
     // Check action field value
     EXPECT_EQ(SAI_PACKET_ACTION_TRAP,
               acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION].aclaction.parameter.s32);
