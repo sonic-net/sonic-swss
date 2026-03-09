@@ -327,6 +327,13 @@ using P4AclRuleTables = std::map<std::string, std::map<std::string, P4AclRule>>;
 #define P4_MATCH_VLAN_USER_META "SAI_ACL_TABLE_ATTR_FIELD_VLAN_USER_META"
 #define P4_MATCH_PORT_USER_META "SAI_ACL_TABLE_ATTR_FIELD_PORT_USER_META"
 #define P4_MATCH_ROUTE_TABLE_HIT "SAI_ACL_TABLE_ATTR_FIELD_ROUTE_NPU_META_DST_HIT"
+#define P4_MATCH_OUTER_TPID "SAI_ACL_TABLE_ATTR_FIELD_OUTER_TPID"
+#ifndef SAI_ACL_TABLE_ATTR_FIELD_OUTER_TPID
+#define SAI_ACL_TABLE_ATTR_FIELD_OUTER_TPID (sai_acl_table_attr_t)0x4e
+#endif
+#ifndef SAI_ACL_ENTRY_ATTR_FIELD_OUTER_TPID
+#define SAI_ACL_ENTRY_ATTR_FIELD_OUTER_TPID (sai_acl_entry_attr_t)0x4e
+#endif
 
 #define P4_ACTION_PACKET_ACTION "SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION"
 #define P4_ACTION_REDIRECT "SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT"
@@ -499,6 +506,7 @@ static const acl_table_attr_lookup_t aclMatchTableAttrLookup = {
     {P4_MATCH_VLAN_USER_META, SAI_ACL_TABLE_ATTR_FIELD_VLAN_USER_META},
     {P4_MATCH_PORT_USER_META, SAI_ACL_TABLE_ATTR_FIELD_PORT_USER_META},
     {P4_MATCH_ROUTE_TABLE_HIT, SAI_ACL_TABLE_ATTR_FIELD_ROUTE_NPU_META_DST_HIT},
+    {P4_MATCH_OUTER_TPID, SAI_ACL_TABLE_ATTR_FIELD_OUTER_TPID},
 };
 
 static const acl_table_attr_format_lookup_t aclMatchTableAttrFormatLookup = {
@@ -554,6 +562,7 @@ static const acl_table_attr_format_lookup_t aclMatchTableAttrFormatLookup = {
     {SAI_ACL_TABLE_ATTR_FIELD_VLAN_USER_META, Format::HEX_STRING},
     {SAI_ACL_TABLE_ATTR_FIELD_PORT_USER_META, Format::HEX_STRING},
     {SAI_ACL_TABLE_ATTR_FIELD_ROUTE_NPU_META_DST_HIT, Format::HEX_STRING},
+    {SAI_ACL_TABLE_ATTR_FIELD_OUTER_TPID, Format::HEX_STRING},
 };
 
 static const acl_table_attr_lookup_t aclCompositeMatchTableAttrLookup = {
@@ -616,6 +625,7 @@ static const acl_rule_attr_lookup_t aclMatchEntryAttrLookup = {
     {P4_MATCH_VLAN_USER_META, SAI_ACL_ENTRY_ATTR_FIELD_VLAN_USER_META},
     {P4_MATCH_PORT_USER_META, SAI_ACL_ENTRY_ATTR_FIELD_PORT_USER_META},
     {P4_MATCH_ROUTE_TABLE_HIT, SAI_ACL_ENTRY_ATTR_FIELD_ROUTE_NPU_META_DST_HIT},
+    {P4_MATCH_OUTER_TPID, SAI_ACL_ENTRY_ATTR_FIELD_OUTER_TPID},
 };
 
 static const acl_rule_attr_lookup_t aclCompositeMatchEntryAttrLookup = {
