@@ -2080,7 +2080,7 @@ void SwitchOrch::setFastLinkupCapability()
     sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
     if (status == SAI_STATUS_SUCCESS)
     {
-        m_fastLinkupCap.has_ranges = true;
+        m_fastLinkupCap.has_polling_range = true;
         m_fastLinkupCap.polling_min = attr.value.u16range.min;
         m_fastLinkupCap.polling_max = attr.value.u16range.max;
         fvVector.emplace_back(
@@ -2096,7 +2096,7 @@ void SwitchOrch::setFastLinkupCapability()
     status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
     if (status == SAI_STATUS_SUCCESS)
     {
-        m_fastLinkupCap.has_ranges = true;
+        m_fastLinkupCap.has_guard_range = true;
         m_fastLinkupCap.guard_min = attr.value.u16range.min;
         m_fastLinkupCap.guard_max = attr.value.u16range.max;
         fvVector.emplace_back(
@@ -2121,7 +2121,7 @@ bool SwitchOrch::setSwitchFastLinkup(const FastLinkupConfig &cfg)
     }
 
     // Validate ranges if known
-    if (cfg.has_polling && m_fastLinkupCap.has_ranges)
+    if (cfg.has_polling && m_fastLinkupCap.has_polling_range)
     {
         if (cfg.polling_time < m_fastLinkupCap.polling_min || cfg.polling_time > m_fastLinkupCap.polling_max)
         {
@@ -2129,7 +2129,7 @@ bool SwitchOrch::setSwitchFastLinkup(const FastLinkupConfig &cfg)
             return false;
         }
     }
-    if (cfg.has_guard && m_fastLinkupCap.has_ranges)
+    if (cfg.has_guard && m_fastLinkupCap.has_guard_range)
     {
         if (cfg.guard_time < m_fastLinkupCap.guard_min || cfg.guard_time > m_fastLinkupCap.guard_max)
         {

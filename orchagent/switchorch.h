@@ -126,7 +126,8 @@ private:
     struct FastLinkupCapabilities
     {
         bool supported = false;
-        bool has_ranges = false;
+        bool has_polling_range = false;
+        bool has_guard_range = false;
         uint16_t polling_min = 0, polling_max = 0;
         uint16_t guard_min = 0, guard_max = 0;
     };
