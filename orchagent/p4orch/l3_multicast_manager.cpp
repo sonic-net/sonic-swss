@@ -242,8 +242,8 @@ ReturnCodeOr<std::vector<sai_attribute_t>> prepareBridgePortSaiAttrs(
 // Create the vector of SAI attributes for creating a new multicast group
 // member object.
 std::vector<sai_attribute_t> prepareMulticastGroupMemberSaiAttrs(
-    const sai_object_id_t multicast_group_oid,
-    const sai_object_id_t rif_oid) {
+    const sai_object_id_t multicast_group_oid, const sai_object_id_t rif_oid,
+    const sai_object_id_t next_hop_oid) {
   std::vector<sai_attribute_t> attrs;
   sai_attribute_t attr;
 
@@ -251,9 +251,15 @@ std::vector<sai_attribute_t> prepareMulticastGroupMemberSaiAttrs(
   attr.value.oid = multicast_group_oid;
   attrs.push_back(attr);
 
-  attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID;
-  attr.value.oid = rif_oid;
-  attrs.push_back(attr);
+  if (next_hop_oid == SAI_NULL_OBJECT_ID) {
+    attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID;
+    attr.value.oid = rif_oid;
+    attrs.push_back(attr);
+  } else {
+    attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_NEXT_HOP;
+    attr.value.oid = next_hop_oid;
+    attrs.push_back(attr);
+  }
 
   return attrs;
 }
@@ -1554,9 +1560,12 @@ ReturnCode L3MulticastManager::createMulticastGroupMember(
         << " cannot be added because there is no associated RIF available");
   }
 
+  // Ok to be null, since some actions do not allocate a next hop.
+  sai_object_id_t next_hop_oid = getNextHopOid(replica);
+
   // Create Multicast group member SAI object.
-  std::vector<sai_attribute_t> attrs = prepareMulticastGroupMemberSaiAttrs(
-      group_oid, rif_oid);
+  std::vector<sai_attribute_t> attrs =
+      prepareMulticastGroupMemberSaiAttrs(group_oid, rif_oid, next_hop_oid);
 
   auto sai_status = sai_ipmc_group_api->create_ipmc_group_member(
       mcast_group_member_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
@@ -3390,8 +3399,11 @@ std::string L3MulticastManager::verifyIpMulticastGroupStateAsicDb(
     m_p4OidMapper->getOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER, replica.key,
                           &group_member_oid);
 
-    auto member_attrs =
-        prepareMulticastGroupMemberSaiAttrs(ipmc_group_oid, rif_oid);
+    // Ok to be null, since some actions do not allocate a next hop.
+    sai_object_id_t next_hop_oid = getNextHopOid(replica);
+
+    auto member_attrs = prepareMulticastGroupMemberSaiAttrs(
+        ipmc_group_oid, rif_oid, next_hop_oid);
     std::vector<swss::FieldValueTuple> exp =
         saimeta::SaiAttributeList::serialize_attr_list(
             SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER, (uint32_t)member_attrs.size(),

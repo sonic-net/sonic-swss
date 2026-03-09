@@ -136,6 +136,12 @@ bool MatchIpmcSaiAttribute(const sai_attribute_t& attr,
       return false;
     }
   }
+  if (exp_attr.id == SAI_IPMC_GROUP_MEMBER_ATTR_NEXT_HOP) {
+    if (attr.id != SAI_IPMC_GROUP_MEMBER_ATTR_NEXT_HOP ||
+        attr.value.oid != exp_attr.value.oid) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -5236,6 +5242,63 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(final_entry2, nullptr);
 }
 
+TEST_F(L3MulticastManagerTest, ConfirmAddMulticastGroupEntryWithNextHop) {
+  auto rif_entry1 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, p4orch::kMulticastSetSrcMac,
+      kRifOid1, kNextHopOid1);
+  auto rif_entry2 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, p4orch::kMulticastSetSrcMac,
+      kRifOid1, kNextHopOid2);
+
+  P4Replica replica1 = P4Replica("0x0001", "Ethernet1", "0x0001");
+  P4Replica replica2 = P4Replica("0x0001", "Ethernet2", "0x0001");
+
+  auto entry1 = GenerateP4MulticastGroupEntry("0x0001", {replica1, replica2});
+  std::vector<P4MulticastGroupEntry> entries = {entry1};
+
+  EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kGroupOid1), Return(SAI_STATUS_SUCCESS)));
+
+  // First group member.
+  std::vector<sai_attribute_t> exp_member_attrs1;
+  sai_attribute_t attr;
+  attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_GROUP_ID;
+  attr.value.oid = kGroupOid1;
+  exp_member_attrs1.push_back(attr);
+  attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_NEXT_HOP;
+  attr.value.oid = kNextHopOid1;
+  exp_member_attrs1.push_back(attr);
+  EXPECT_CALL(
+      mock_sai_ipmc_group_,
+      create_ipmc_group_member(_, _, 2, IpmcAttrArrayEq(exp_member_attrs1)))
+      .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+
+  // Second group member.
+  std::vector<sai_attribute_t> exp_member_attrs2;
+  attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_GROUP_ID;
+  attr.value.oid = kGroupOid1;
+  exp_member_attrs2.push_back(attr);
+  attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_NEXT_HOP;
+  attr.value.oid = kNextHopOid2;
+  exp_member_attrs2.push_back(attr);
+  EXPECT_CALL(
+      mock_sai_ipmc_group_,
+      create_ipmc_group_member(_, _, 2, IpmcAttrArrayEq(exp_member_attrs2)))
+      .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid2),
+                      Return(SAI_STATUS_SUCCESS)));
+
+  auto statuses = AddMulticastGroupEntries(entries);
+  EXPECT_EQ(statuses.size(), 1);
+  EXPECT_TRUE(statuses[0].ok());
+
+  auto* final_entry1 = GetMulticastGroupEntry("0x0001");
+  EXPECT_NE(final_entry1, nullptr);
+}
+
 TEST_F(L3MulticastManagerTest, DeleteMulticastGroupEntriesNoEntry) {
   auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
       "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
@@ -8250,6 +8313,45 @@ TEST_F(L3MulticastManagerTest, VerifyStateMulticastGroupTestSuccess) {
                                 "oid:0x1"},
           swss::FieldValueTuple{"SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID",
                                 "oid:0x123456"}});
+
+  // Verification should succeed with vaild key and value.
+  EXPECT_EQ(VerifyState(db_key, attributes), "");
+  table.del("SAI_OBJECT_TYPE_IPMC_GROUP:oid:0x1");
+  table.del("SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER:oid:0x11");
+}
+
+TEST_F(L3MulticastManagerTest,
+       VerifyStateMulticastGroupWithNextHopTestSuccess) {
+  // Add router interface entry so have RIF and next hop.
+  auto rif_entry1 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, p4orch::kMulticastSetSrcMac,
+      kRifOid1, kNextHopOid1);
+  // Add multicast group.
+  P4Replica replica1 = P4Replica("0x0001", "Ethernet1", "0x0001");
+  auto group_entry = SetupP4MulticastGroupEntry("0x0001", {replica1},
+                                                kGroupOid1, {kGroupMemberOid1});
+
+  const std::string appl_db_key =
+      std::string(APP_P4RT_REPLICATION_IP_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + "0x0001";
+  const std::string db_key =
+      std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter + appl_db_key;
+  std::vector<swss::FieldValueTuple> attributes;
+  const std::string json_array = R"([{"multicast_replica_instance":"0x0001",)"
+                                 R"("multicast_replica_port":"Ethernet1"}])";
+  attributes.push_back(swss::FieldValueTuple{"replicas", json_array});
+
+  // Setup ASIC DB.
+  swss::Table table(nullptr, "ASIC_STATE");
+  table.set("SAI_OBJECT_TYPE_IPMC_GROUP:oid:0x1",
+            std::vector<swss::FieldValueTuple>{});
+  table.set("SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER:oid:0x11",
+            std::vector<swss::FieldValueTuple>{
+                swss::FieldValueTuple{
+                    "SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_GROUP_ID", "oid:0x1"},
+                swss::FieldValueTuple{"SAI_IPMC_GROUP_MEMBER_ATTR_NEXT_HOP",
+                                      "oid:0x100a"}});
 
   // Verification should succeed with vaild key and value.
   EXPECT_EQ(VerifyState(db_key, attributes), "");
