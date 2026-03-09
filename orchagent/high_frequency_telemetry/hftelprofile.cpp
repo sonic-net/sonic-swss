@@ -451,8 +451,12 @@ void HFTelProfile::clearGroup(const std::string &group_name)
         m_groups.erase(itr);
     }
     m_sai_tam_tel_type_templates.erase(sai_object_type);
-    m_sai_tam_tel_type_states.erase(m_sai_tam_tel_type_objs[sai_object_type]);
-    m_sai_tam_tel_type_objs.erase(sai_object_type);
+    auto tel_type_itr = m_sai_tam_tel_type_objs.find(sai_object_type);
+    if (tel_type_itr != m_sai_tam_tel_type_objs.end())
+    {
+        m_sai_tam_tel_type_states.erase(tel_type_itr->second);
+        m_sai_tam_tel_type_objs.erase(tel_type_itr);
+    }
     m_sai_tam_report_objs.erase(sai_object_type);
     m_sai_tam_counter_subscription_objs.erase(sai_object_type);
     m_name_sai_map.erase(sai_object_type);
