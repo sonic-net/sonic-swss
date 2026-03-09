@@ -1030,12 +1030,13 @@ ReturnCode AclRuleManager::setMatchValue(const sai_acl_entry_attr_t attr_name,
         }
         break;
       }
-      case SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT: {
+      case SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT:
+      case SAI_ACL_ENTRY_ATTR_FIELD_ROUTE_NPU_META_DST_HIT: {
         const std::vector<std::string>& value_and_mask =
             tokenize(attr_value, kDataMaskDelimiter);
         uint8_t hit_value = to_uint<uint8_t>(trim(value_and_mask[0]));
         if (value_and_mask.size() > 1) {
-          SWSS_LOG_INFO("Mask ignored for IPMC table hit field.");
+          SWSS_LOG_INFO("Mask ignored for IPMC/route table hit field.");
         }
         value->aclfield.data.booldata = hit_value != 0;
         break;
