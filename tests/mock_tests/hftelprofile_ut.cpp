@@ -86,7 +86,11 @@ namespace hftelprofile_ut
 
         void SetUp() override
         {
-            ASSERT_NE(sai_tam_api, nullptr);
+            if (sai_tam_api == nullptr)
+            {
+                static sai_tam_api_t default_tam_api{};
+                sai_tam_api = &default_tam_api;
+            }
             ut_api   = *sai_tam_api;
             orig_api =  sai_tam_api;
             ut_api.get_tam_tel_type_attribute = mock_get_tam_tel_type_attribute;
