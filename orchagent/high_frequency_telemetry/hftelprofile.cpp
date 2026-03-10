@@ -982,6 +982,7 @@ void HFTelProfile::updateTemplates(sai_object_id_t tam_tel_type_obj)
                            sai_serialize_object_id(tam_tel_type_obj).c_str(), status);
         }
 
+        // SAI may return fewer bytes than originally requested.
         buffer.resize(attr.value.u8list.count);
     }
 
