@@ -76,6 +76,10 @@ impl NetlinkMessageParser {
         }
     }
 
+    fn nlmsg_align(len: usize) -> usize {
+        (len + 3) & !3
+    }
+
     /// Parse buffer that may contain multiple complete and/or incomplete netlink messages
     /// Returns a vector of complete message payloads, where each payload represents 
     /// one complete netlink message (which contains one complete IPFIX message)
@@ -131,9 +135,14 @@ impl NetlinkMessageParser {
                 break;
             }
 
-            // Extract complete message
+            let aligned_nl_len = Self::nlmsg_align(nl_len);
+
+            // Extract complete message without trailing alignment padding
             let message_data = self.incomplete_buffer[offset..offset + nl_len].to_vec();
-            debug!("Found complete message: offset={}, length={}", offset, nl_len);
+            debug!(
+                "Found complete message: offset={}, length={}, aligned_length={}",
+                offset, nl_len, aligned_nl_len
+            );
 
             // Extract payload from this message
             match Self::extract_payload_from_slice(&message_data) {
@@ -147,7 +156,7 @@ impl NetlinkMessageParser {
                 }
             }
 
-            offset += nl_len;
+            offset += aligned_nl_len;
         }
 
         // Keep remaining incomplete data for next recv
@@ -1017,6 +1026,15 @@ pub mod test {
         msg
     }
 
+    fn append_aligned_mock_netlink_message(buffer: &mut Vec<u8>, payload: &[u8]) {
+        let msg = create_mock_netlink_message(payload);
+        let msg_len = 20 + payload.len();
+        let aligned_len = (msg_len + 3) & !3;
+
+        buffer.extend_from_slice(&msg[..msg_len]);
+        buffer.resize(buffer.len() + (aligned_len - msg_len), 0);
+    }
+
     // Use atomic counter instead of unsafe static mut for thread safety
     static SOCKET_COUNT: AtomicUsize = AtomicUsize::new(0);
 
@@ -1255,6 +1273,25 @@ pub mod test {
         let payload2_str = String::from_utf8(messages[1].to_vec()).unwrap();
         assert_eq!(payload1_str, "MESSAGE1");
         assert_eq!(payload2_str, "MESSAGE2");
+    }
+
+    /// Tests handling multiple aligned messages where the first message length
+    /// is not a multiple of 4 and therefore requires netlink padding.
+    #[test]
+    fn test_multiple_aligned_messages_in_buffer() {
+        let mut combined_buffer = Vec::new();
+
+        append_aligned_mock_netlink_message(&mut combined_buffer, b"A");
+        append_aligned_mock_netlink_message(&mut combined_buffer, b"SECOND");
+
+        let mut parser = NetlinkMessageParser::new();
+        let result = parser.parse_buffer(&combined_buffer);
+        assert!(result.is_ok());
+
+        let messages = result.unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(String::from_utf8(messages[0].to_vec()).unwrap(), "A");
+        assert_eq!(String::from_utf8(messages[1].to_vec()).unwrap(), "SECOND");
     }
 
     /// Tests handling fragmented messages across multiple recv operations.
