@@ -77,7 +77,7 @@ impl SwssActor {
         } = actor;
         let (event_sender, mut event_receiver) = mpsc::channel(32);
 
-        let _reader_thread = thread::Builder::new()
+        let _reader_thread = match thread::Builder::new()
             .name("countersyncd-swss".to_string())
             .spawn(move || {
                 #[cfg(test)]
@@ -119,8 +119,13 @@ impl SwssActor {
 
                 #[cfg(test)]
                 debug!("SwssActor reader thread terminated after {} iterations", iteration_count);
-            })
-            .expect("Failed to spawn SwssActor reader thread");
+            }) {
+                Ok(handle) => handle,
+                Err(e) => {
+                    error!("Failed to spawn SwssActor reader thread: {}", e);
+                    return;
+                }
+            };
 
         while let Some(event) = event_receiver.recv().await {
             match event {

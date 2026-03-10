@@ -815,8 +815,7 @@ impl DataNetlinkActor {
                                         if log::log_enabled!(log::Level::Debug) {
                                             let hex_dump = format_hex_lines(message.as_ref());
                                             debug!(
-                                                "Outgoing netlink payload {}/{} ({} bytes):
-{}",
+                                                "Outgoing netlink payload {}/{} ({} bytes):\n{}",
                                                 i + 1,
                                                 messages.len(),
                                                 message.len(),
