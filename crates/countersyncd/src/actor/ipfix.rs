@@ -630,10 +630,14 @@ impl IpfixActor {
             }
         }
 
-        // Store object names if provided
+        // Update object name mapping for the session key.
+        // A missing object_names field means the latest template update no longer
+        // provides object name mapping, so any stale value must be cleared.
         if let Some(object_names) = &templates.object_names {
             self.object_names_map
                 .insert(templates.key.clone(), object_names.clone());
+        } else {
+            self.object_names_map.remove(&templates.key);
         }
 
         let cache_ref = Self::get_cache();
@@ -1216,15 +1220,64 @@ mod test {
             .map(|msg| Arc::try_unwrap(msg).expect("single-owner test stats"))
             .collect();
 
-        let all_object_names: Vec<&str> = stats
-            .iter()
-            .flat_map(|msg| msg.stats.iter().map(|s| s.object_name.as_str()))
-            .collect();
+        let session_a_names = ["Ethernet0", "Ethernet1"];
+        let session_b_names = ["Ethernet8", "Ethernet12"];
+        let mut saw_session_a = false;
+        let mut saw_session_b = false;
 
-        assert!(all_object_names.contains(&"Ethernet0"));
-        assert!(all_object_names.contains(&"Ethernet1"));
-        assert!(all_object_names.contains(&"Ethernet8"));
-        assert!(all_object_names.contains(&"Ethernet12"));
+        for msg in &stats {
+            let names: Vec<&str> = msg.stats.iter().map(|s| s.object_name.as_str()).collect();
+
+            let only_session_a = names.iter().all(|name| session_a_names.contains(name));
+            let only_session_b = names.iter().all(|name| session_b_names.contains(name));
+
+            assert!(
+                only_session_a || only_session_b,
+                "record mixes object names from multiple templates: {:?}",
+                names
+            );
+
+            saw_session_a |= only_session_a;
+            saw_session_b |= only_session_b;
+        }
+
+        assert!(saw_session_a, "did not observe any stats for session A/template 256");
+        assert!(saw_session_b, "did not observe any stats for session B/template 257");
+    }
+
+    #[test]
+    fn test_template_update_without_object_names_clears_stale_mapping() {
+        let (_template_sender, template_receiver) = tokio::sync::mpsc::channel(1000);
+        let (_buffer_sender, buffer_receiver) = tokio::sync::mpsc::channel(1000);
+        let mut actor = IpfixActor::new(template_receiver, buffer_receiver);
+
+        let template_bytes: [u8; 44] = [
+            0x00, 0x0A, 0x00, 0x2C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x02, 0x00, 0x1C, 0x01, 0x00, 0x00, 0x03, 0x01, 0x45, 0x00, 0x08,
+            0x80, 0x01, 0x00, 0x08, 0x00, 0x01, 0x00, 0x02, 0x80, 0x02, 0x00, 0x08, 0x80, 0x03,
+            0x80, 0x04,
+        ];
+
+        actor.handle_template(IPFixTemplatesMessage::new(
+            String::from("session_a"),
+            Arc::new(Vec::from(template_bytes)),
+            Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
+        ));
+        assert_eq!(
+            actor.object_names_map.get("session_a"),
+            Some(&vec!["Ethernet0".to_string(), "Ethernet1".to_string()])
+        );
+
+        actor.handle_template(IPFixTemplatesMessage::new(
+            String::from("session_a"),
+            Arc::new(Vec::from(template_bytes)),
+            None,
+        ));
+
+        assert!(
+            actor.object_names_map.get("session_a").is_none(),
+            "stale object_names should be cleared when a template update omits them"
+        );
     }
 
     #[tokio::test]
