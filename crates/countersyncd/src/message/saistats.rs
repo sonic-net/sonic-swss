@@ -91,15 +91,12 @@ impl SAIStat {
             }
         };
 
-        // Resolve object name from label. Prefer explicit object_ids mapping when available,
-        // and fall back to the legacy 1-based positional mapping for backward compatibility.
+        // Resolve object name from label via object_ids.
         let object_name = if let Some(index) = object_ids.iter().position(|object_id| *object_id == label) {
             object_names
                 .get(index)
                 .cloned()
                 .unwrap_or_else(|| format!("unknown_{}", label))
-        } else if object_ids.is_empty() && label > 0 && (label as usize) <= object_names.len() {
-            object_names[(label - 1) as usize].clone()
         } else {
             format!("unknown_{}", label)
         };
@@ -264,9 +261,9 @@ mod tests {
         let value = create_byte_value(12345);
         let object_names = vec!["Ethernet0".to_string(), "Ethernet1".to_string()];
 
-        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names, &[]);
+        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names, &[1, 2]);
 
-        assert_eq!(stat.object_name, "Ethernet1"); // label 2 -> index 1 (1-based)
+        assert_eq!(stat.object_name, "Ethernet1");
         assert_eq!(stat.type_id, 0x1234);
         assert_eq!(stat.stat_id, 0);
         assert_eq!(stat.counter, 12345);
@@ -280,9 +277,9 @@ mod tests {
         let value = create_byte_value(99999);
         let object_names = vec!["Ethernet0".to_string()];
 
-        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names, &[]);
+        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names, &[1]);
 
-        assert_eq!(stat.object_name, "Ethernet0"); // label 1 -> index 0 (1-based)
+        assert_eq!(stat.object_name, "Ethernet0");
         assert_eq!(stat.type_id, 0x1234 + EXTENSIONS_RANGE_BASE);
         assert_eq!(stat.stat_id, 0x0567 + EXTENSIONS_RANGE_BASE);
         assert_eq!(stat.counter, 99999);
@@ -295,7 +292,7 @@ mod tests {
         let value = DataRecordValue::Bytes(short_bytes);
         let object_names = vec!["Ethernet0".to_string()];
 
-        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names, &[]);
+        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names, &[1]);
 
         assert_eq!(stat.object_name, "Ethernet0");
         assert_eq!(stat.counter, 0x1234); // Should be padded correctly
@@ -307,7 +304,7 @@ mod tests {
         let value = DataRecordValue::String("test".to_string());
         let object_names = vec!["Ethernet0".to_string()];
 
-        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names, &[]);
+        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names, &[1]);
 
         assert_eq!(stat.object_name, "Ethernet0");
         assert_eq!(stat.counter, 0); // Should default to 0 for non-byte values
@@ -444,7 +441,7 @@ mod tests {
         let value = create_byte_value(555);
         let object_names = vec!["Ethernet0".to_string()];
 
-        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names, &[]);
+        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names, &[1]);
 
         // Should use saturating_add to prevent overflow
         assert_eq!(stat.type_id, 0x7FFF + EXTENSIONS_RANGE_BASE);
