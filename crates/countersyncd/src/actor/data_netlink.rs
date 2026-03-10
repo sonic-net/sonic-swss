@@ -156,7 +156,8 @@ impl NetlinkMessageParser {
                 }
             }
 
-            offset += aligned_nl_len;
+            let remaining = self.incomplete_buffer.len() - offset;
+            offset += usize::min(aligned_nl_len, remaining);
         }
 
         // Keep remaining incomplete data for next recv
@@ -1029,7 +1030,7 @@ pub mod test {
     fn append_aligned_mock_netlink_message(buffer: &mut Vec<u8>, payload: &[u8]) {
         let msg = create_mock_netlink_message(payload);
         let msg_len = 20 + payload.len();
-        let aligned_len = (msg_len + 3) & !3;
+        let aligned_len = NetlinkMessageParser::nlmsg_align(msg_len);
 
         buffer.extend_from_slice(&msg[..msg_len]);
         buffer.resize(buffer.len() + (aligned_len - msg_len), 0);
