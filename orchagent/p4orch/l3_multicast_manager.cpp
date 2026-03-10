@@ -251,15 +251,17 @@ std::vector<sai_attribute_t> prepareMulticastGroupMemberSaiAttrs(
   attr.value.oid = multicast_group_oid;
   attrs.push_back(attr);
 
+  // TODO: Once remove deprecated action kSetMulticastSrcMac,
+  // this should only assign SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID to be the
+  // next_hop_oid.
+  attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID;
+
   if (next_hop_oid == SAI_NULL_OBJECT_ID) {
-    attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID;
     attr.value.oid = rif_oid;
-    attrs.push_back(attr);
   } else {
-    attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_NEXT_HOP;
     attr.value.oid = next_hop_oid;
-    attrs.push_back(attr);
   }
+  attrs.push_back(attr);
 
   return attrs;
 }
