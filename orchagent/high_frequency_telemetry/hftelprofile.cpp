@@ -867,7 +867,7 @@ void HFTelProfile::deployCounterSubscription(sai_object_type_t object_type, sai_
     attrs.push_back(attr);
 
     attr.id = SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_STAT_ID;
-    attr.value.oid = stat_id;
+    attr.value.u32 = static_cast<uint32_t>(stat_id);
     attrs.push_back(attr);
 
     attr.id = SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_LABEL;
