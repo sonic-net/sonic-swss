@@ -1,7 +1,7 @@
 use super::super::message::ipfix::IPFixTemplatesMessage;
 use swss_common::{DbConnector, KeyOperation, SubscriberStateTable};
 
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::Sender;
@@ -232,7 +232,7 @@ impl SwssActor {
         let templates = Arc::new(session_data.session_config.clone());
 
         // Parse object_names if present
-        let object_names = if session_data.object_names.is_empty() {
+        let object_names: Option<Vec<String>> = if session_data.object_names.is_empty() {
             None
         } else {
             Some(
@@ -248,13 +248,45 @@ impl SwssActor {
         let object_ids = if session_data.object_ids.is_empty() {
             None
         } else {
-            Some(
-                session_data
-                    .object_ids
-                    .split(',')
-                    .filter_map(|s| s.trim().parse::<u16>().ok())
-                    .collect(),
-            )
+            let mut parsed_object_ids = Vec::new();
+            for token in session_data.object_ids.split(',') {
+                let trimmed = token.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                match trimmed.parse::<u16>() {
+                    Ok(object_id) => parsed_object_ids.push(object_id),
+                    Err(e) => {
+                        warn!(
+                            "Invalid object_ids entry '{}' for session {}: {}. Ignoring object_ids for this update",
+                            trimmed,
+                            key,
+                            e
+                        );
+                        parsed_object_ids.clear();
+                        break;
+                    }
+                }
+            }
+
+            if parsed_object_ids.is_empty() {
+                None
+            } else if let Some(names) = object_names.as_ref() {
+                if names.len() != parsed_object_ids.len() {
+                    warn!(
+                        "object_ids/object_names length mismatch for session {}: {} ids vs {} names. Ignoring object_ids for this update",
+                        key,
+                        parsed_object_ids.len(),
+                        names.len()
+                    );
+                    None
+                } else {
+                    Some(parsed_object_ids)
+                }
+            } else {
+                Some(parsed_object_ids)
+            }
         };
 
         let message = IPFixTemplatesMessage::new(key.to_string(), templates, object_names, object_ids);
