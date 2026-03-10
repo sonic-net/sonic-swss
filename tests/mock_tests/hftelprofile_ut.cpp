@@ -187,6 +187,22 @@ namespace hftelprofile_ut
         EXPECT_TRUE(tpl.empty());
     }
 
+    /* ---- BUFFER_OVERFLOW with count=0 stores an empty template ---- */
+    TEST_F(UpdateTemplatesTest, BufferOverflow_EmptyTemplate)
+    {
+        Stub s;
+        s.init(guard);
+
+        g_mock.first_call_status = SAI_STATUS_BUFFER_OVERFLOW;
+        g_mock.first_call_count  = 0;
+
+        ASSERT_NO_THROW(s.p->updateTemplates(fake_tel_type_oid));
+
+        auto &tpl = s.p->m_sai_tam_tel_type_templates[SAI_OBJECT_TYPE_PORT];
+        EXPECT_TRUE(tpl.empty());
+        EXPECT_EQ(g_mock.call_count, 1);
+    }
+
     /* ---- First query fails with unexpected status ---- */
     TEST_F(UpdateTemplatesTest, FirstCall_UnexpectedFailure)
     {
