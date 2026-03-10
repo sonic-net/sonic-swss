@@ -71,7 +71,7 @@ class AclRuleManager : public ObjectManagerInterface
     ReturnCode processDeleteRuleRequest(const std::string &acl_table_name, const std::string &acl_rule_key);
 
     // Processes update operation for an ACL rule.
-    ReturnCode processUpdateRuleRequest(const P4AclRuleAppDbEntry &app_db_entry, const P4AclRule &old_acl_rule);
+    ReturnCode processUpdateRuleRequest(const P4AclRuleAppDbEntry &app_db_entry, P4AclRule &old_acl_rule);
 
     // Set counters stats for an ACL rule in COUNTERS_DB.
     ReturnCode setAclRuleCounterStats(const P4AclRule &acl_rule);
