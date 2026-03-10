@@ -31,7 +31,6 @@ using ::testing::Truly;
 
 extern sai_object_id_t gSwitchId;
 extern sai_my_mac_api_t *sai_my_mac_api;
-extern MockSaiMyMac *mock_sai_my_mac;
 
 namespace
 {

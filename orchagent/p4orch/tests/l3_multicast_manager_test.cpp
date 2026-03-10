@@ -16,6 +16,7 @@
 #include "mock_sai_ipmc_group.h"
 #include "mock_sai_l2mc.h"
 #include "mock_sai_l2mc_group.h"
+#include "mock_sai_my_mac.h"
 #include "mock_sai_neighbor.h"
 #include "mock_sai_next_hop.h"
 #include "mock_sai_router_interface.h"
@@ -54,6 +55,7 @@ extern sai_bridge_api_t* sai_bridge_api;
 extern sai_neighbor_api_t* sai_neighbor_api;
 extern sai_next_hop_api_t* sai_next_hop_api;
 extern sai_switch_api_t* sai_switch_api;
+extern sai_my_mac_api_t* sai_my_mac_api;
 
 extern char* gVrfName;
 extern PortsOrch* gPortsOrch;
@@ -107,6 +109,8 @@ constexpr sai_object_id_t kBridgePortOid3 = 0x103;
 constexpr sai_object_id_t kBridgePortOid4 = 0x104;
 
 constexpr sai_object_id_t kDefaultVlanOid = 0x201;
+
+constexpr sai_object_id_t kDefaultMyMacOid = 0x301;
 
 bool MacCmp(const sai_mac_t* x, const sai_mac_t* y) {
   return memcmp(x, y, sizeof(sai_mac_t)) == 0;
@@ -451,11 +455,18 @@ class L3MulticastManagerTest : public ::testing::Test {
       const std::string& port, const std::string& instance,
       const swss::MacAddress src_mac, const swss::MacAddress dst_mac,
       const uint16_t vlan_id, const std::string& action,
-      const sai_object_id_t rif_oid, const sai_object_id_t next_hop_oid) {
+      const sai_object_id_t rif_oid, const sai_object_id_t next_hop_oid,
+      bool expect_mac_mock = true) {
     std::vector<P4MulticastRouterInterfaceEntry> entries;
     auto entry = GenerateP4MulticastRouterInterfaceEntryByAction(
         port, instance, src_mac, dst_mac, vlan_id, "metadata", action);
     entries.push_back(entry);
+
+    if (expect_mac_mock) {
+      EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, gSwitchId, Eq(2), _))
+          .WillOnce(DoAll(SetArgPointee<0>(kDefaultMyMacOid),
+                          Return(SAI_STATUS_SUCCESS)));
+    }
 
     EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(rif_oid), Return(SAI_STATUS_SUCCESS)));
@@ -652,7 +663,8 @@ class L3MulticastManagerTest : public ::testing::Test {
 
   std::vector<sai_attribute_t> PrepareRifSaiAttrs(
       const sai_object_id_t port_oid, uint32_t mtu, bool use_vlan,
-      uint16_t vlan_id, swss::MacAddress src_mac) {
+      uint16_t vlan_id, swss::MacAddress src_mac,
+      const sai_object_id_t my_mac_oid, bool use_my_mac) {
     std::vector<sai_attribute_t> attrs;
     sai_attribute_t attr;
     attr.id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
@@ -692,6 +704,12 @@ class L3MulticastManagerTest : public ::testing::Test {
     attr.id = SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE;
     attr.value.booldata = true;
     attrs.push_back(attr);
+
+    if (use_my_mac) {
+      attr.id = SAI_ROUTER_INTERFACE_ATTR_MY_MAC;
+      attr.value.oid = my_mac_oid;
+      attrs.push_back(attr);
+    }
 
     return attrs;
   }
@@ -829,6 +847,9 @@ class L3MulticastManagerTest : public ::testing::Test {
 
     mock_sai_switch = &mock_sai_switch_;
     sai_switch_api->get_switch_attribute = mock_get_switch_attribute;
+
+    mock_sai_my_mac = &mock_sai_my_mac_;
+    sai_my_mac_api->create_my_mac = mock_create_my_mac;
   }
 
   void Enqueue(const std::string& table_name,
@@ -1026,7 +1047,8 @@ class L3MulticastManagerTest : public ::testing::Test {
   StrictMock<MockSaiNeighbor> mock_sai_neighbor_;
   StrictMock<MockSaiNextHop> mock_sai_next_hop_;
   StrictMock<MockSaiL2mcGroup> mock_sai_l2mc_group_;
-   StrictMock<MockSaiSwitch> mock_sai_switch_;
+  StrictMock<MockSaiSwitch> mock_sai_switch_;
+  StrictMock<MockSaiMyMac> mock_sai_my_mac_;
   StrictMock<MockResponsePublisher> publisher_;
   P4OidMapper p4_oid_mapper_;
   L3MulticastManager l3_multicast_manager_;
@@ -1571,6 +1593,20 @@ TEST_F(L3MulticastManagerTest, CreateRouterInterfaceFailure) {
             CreateRouterInterface(entry, &rif_oid));
 }
 
+TEST_F(L3MulticastManagerTest, CreateRouterInterfaceMyMacFailure) {
+  auto entry = GenerateP4MulticastRouterInterfaceEntryByAction(
+      "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, "metadata",
+      p4orch::kMulticastSetSrcMac);
+  sai_object_id_t rif_oid;
+
+  EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, gSwitchId, Eq(2), _))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+
+  EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN,
+            CreateRouterInterface(entry, &rif_oid));
+}
+
 TEST_F(L3MulticastManagerTest, CreateRouterInterfaceAttributeFailures) {
   auto entry = GenerateP4MulticastRouterInterfaceEntry(
       "Ethernet7", "0x5", swss::MacAddress(kSrcMac5));
@@ -1785,9 +1821,13 @@ TEST_F(L3MulticastManagerTest,
       p4orch::kMulticastSetSrcMac);
   entries.push_back(entry);
 
+  EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, gSwitchId, Eq(2), _))
+      .WillOnce(DoAll(SetArgPointee<0>(kDefaultMyMacOid),
+                      Return(SAI_STATUS_SUCCESS)));
   std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
       /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/false,
-      /*vlan_id=*/0, swss::MacAddress(kSrcMac1));
+      /*vlan_id=*/0, swss::MacAddress(kSrcMac1), kDefaultMyMacOid,
+      /*use_my_mac=*/true);
   EXPECT_CALL(mock_sai_router_intf_,
               create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
                                       RifAttrArrayEq(exp_rif_attrs)))
@@ -1860,9 +1900,12 @@ TEST_F(L3MulticastManagerTest,
       p4orch::kMulticastSetSrcMacAndVlanId);
   entries.push_back(entry);
 
+  EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, gSwitchId, Eq(2), _))
+      .WillOnce(DoAll(SetArgPointee<0>(kDefaultMyMacOid),
+                      Return(SAI_STATUS_SUCCESS)));
   std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
       /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/true, kVlanIdNum1,
-      swss::MacAddress(kSrcMac1));
+      swss::MacAddress(kSrcMac1), kDefaultMyMacOid, /*use_my_mac=*/true);
   EXPECT_CALL(mock_sai_router_intf_,
               create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
                                       RifAttrArrayEq(exp_rif_attrs)))
@@ -1923,9 +1966,12 @@ TEST_F(
       p4orch::kMulticastSetSrcMacAndDstMacAndVlanId);
   entries.push_back(entry);
 
+  EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, gSwitchId, Eq(2), _))
+      .WillOnce(DoAll(SetArgPointee<0>(kDefaultMyMacOid),
+                      Return(SAI_STATUS_SUCCESS)));
   std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
       /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/true, kVlanIdNum1,
-      swss::MacAddress(kSrcMac1));
+      swss::MacAddress(kSrcMac1), kDefaultMyMacOid, /*use_my_mac=*/true);
   EXPECT_CALL(mock_sai_router_intf_,
               create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
                                       RifAttrArrayEq(exp_rif_attrs)))
@@ -1986,9 +2032,13 @@ TEST_F(L3MulticastManagerTest,
       p4orch::kMulticastSetSrcMacAndPreserveIngressVlanId);
   entries.push_back(entry);
 
+  EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, gSwitchId, Eq(2), _))
+      .WillOnce(DoAll(SetArgPointee<0>(kDefaultMyMacOid),
+                      Return(SAI_STATUS_SUCCESS)));
   std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
       /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/false,
-      /*vlan_id=*/0, swss::MacAddress(kSrcMac1));
+      /*vlan_id=*/0, swss::MacAddress(kSrcMac1), kDefaultMyMacOid,
+      /*use_my_mac=*/true);
   EXPECT_CALL(mock_sai_router_intf_,
               create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
                                       RifAttrArrayEq(exp_rif_attrs)))
@@ -2036,9 +2086,13 @@ TEST_F(L3MulticastManagerTest,
       p4orch::kMulticastSetSrcMac);
   entries.push_back(entry);
 
+  EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, gSwitchId, Eq(2), _))
+      .WillOnce(DoAll(SetArgPointee<0>(kDefaultMyMacOid),
+                      Return(SAI_STATUS_SUCCESS)));
   std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
       /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/false,
-      /*vlan_id=*/0, swss::MacAddress(kSrcMac1));
+      /*vlan_id=*/0, swss::MacAddress(kSrcMac1), kDefaultMyMacOid,
+      /*use_my_mac=*/true);
   EXPECT_CALL(mock_sai_router_intf_,
               create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
                                       RifAttrArrayEq(exp_rif_attrs)))
@@ -2073,9 +2127,13 @@ TEST_F(L3MulticastManagerTest,
       p4orch::kMulticastSetSrcMac);
   entries.push_back(entry);
 
+  EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, gSwitchId, Eq(2), _))
+      .WillOnce(DoAll(SetArgPointee<0>(kDefaultMyMacOid),
+                      Return(SAI_STATUS_SUCCESS)));
   std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
       /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/false,
-      /*vlan_id=*/0, swss::MacAddress(kSrcMac1));
+      /*vlan_id=*/0, swss::MacAddress(kSrcMac1), kDefaultMyMacOid,
+      /*use_my_mac=*/true);
   EXPECT_CALL(mock_sai_router_intf_,
               create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
                                       RifAttrArrayEq(exp_rif_attrs)))
@@ -2110,9 +2168,13 @@ TEST_F(L3MulticastManagerTest,
       p4orch::kMulticastSetSrcMac);
   entries.push_back(entry);
 
+  EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, gSwitchId, Eq(2), _))
+      .WillOnce(DoAll(SetArgPointee<0>(kDefaultMyMacOid),
+                      Return(SAI_STATUS_SUCCESS)));
   std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
       /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/false,
-      /*vlan_id=*/0, swss::MacAddress(kSrcMac1));
+      /*vlan_id=*/0, swss::MacAddress(kSrcMac1), kDefaultMyMacOid,
+      /*use_my_mac=*/true);
   EXPECT_CALL(mock_sai_router_intf_,
               create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
                                       RifAttrArrayEq(exp_rif_attrs)))
@@ -2144,9 +2206,13 @@ TEST_F(L3MulticastManagerTest, AddMulticastRouterInterfaceEntryNextHopFails) {
       p4orch::kMulticastSetSrcMac);
   entries.push_back(entry);
 
+  EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, gSwitchId, Eq(2), _))
+      .WillOnce(DoAll(SetArgPointee<0>(kDefaultMyMacOid),
+                      Return(SAI_STATUS_SUCCESS)));
   std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
       /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/false,
-      /*vlan_id=*/0, swss::MacAddress(kSrcMac1));
+      /*vlan_id=*/0, swss::MacAddress(kSrcMac1), kDefaultMyMacOid,
+      /*use_my_mac=*/true);
   EXPECT_CALL(mock_sai_router_intf_,
               create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
                                       RifAttrArrayEq(exp_rif_attrs)))
@@ -2192,9 +2258,13 @@ TEST_F(L3MulticastManagerTest,
       p4orch::kMulticastSetSrcMac);
   entries.push_back(entry);
 
+  EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, gSwitchId, Eq(2), _))
+      .WillOnce(DoAll(SetArgPointee<0>(kDefaultMyMacOid),
+                      Return(SAI_STATUS_SUCCESS)));
   std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
       /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/false,
-      /*vlan_id=*/0, swss::MacAddress(kSrcMac1));
+      /*vlan_id=*/0, swss::MacAddress(kSrcMac1), kDefaultMyMacOid,
+      /*use_my_mac=*/true);
   EXPECT_CALL(mock_sai_router_intf_,
               create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
                                       RifAttrArrayEq(exp_rif_attrs)))
@@ -3859,6 +3929,8 @@ TEST_F(L3MulticastManagerTest,
                                 "true"},
           swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE",
                                 "true"},
+	  swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MY_MAC",
+                                "oid:0x301"},
           swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"}});
 
   table.set(
@@ -5244,7 +5316,7 @@ TEST_F(L3MulticastManagerTest, ConfirmAddMulticastGroupEntryWithNextHop) {
   auto rif_entry2 = SetupNewP4MulticastRouterInterfaceEntry(
       "Ethernet2", "0x0001", swss::MacAddress(kSrcMac1),
       swss::MacAddress(kDstMac0), /*vlan_id=*/0, p4orch::kMulticastSetSrcMac,
-      kRifOid1, kNextHopOid2);
+      kRifOid1, kNextHopOid2, /*expect_mac_mock=*/false);
 
   P4Replica replica1 = P4Replica("0x0001", "Ethernet1", "0x0001");
   P4Replica replica2 = P4Replica("0x0001", "Ethernet2", "0x0001");
