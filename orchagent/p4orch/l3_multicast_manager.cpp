@@ -603,11 +603,13 @@ L3MulticastManager::deserializeMulticastRouterInterfaceEntry(
     // neighbor entry.  The next hop object becomes the output target for a
     // multicast replica.
     if (field == p4orch::kAction) {
+    // TODO: Remove deprecated action kSetMulticastSrcMac
       if (value == p4orch::kSetSrcMac ||
 	  value == p4orch::kMulticastSetSrcMac ||
           value == p4orch::kMulticastSetSrcMacAndVlanId ||
           value == p4orch::kMulticastSetSrcMacAndDstMacAndVlanId ||
           value == p4orch::kMulticastSetSrcMacAndPreserveIngressVlanId ||
+	  // TODO: Remove deprecated action kL2MulticastPassthrough
 	  value == p4orch::kL2MulticastPassthrough ||
           value == p4orch::kMulticastL2Passthrough) {
         router_interface_entry.action = value;
@@ -915,6 +917,7 @@ ReturnCodeOr<bool> L3MulticastManager::validateReplicas(
              << " entry found for multicast group "
              << QuotedVar(replica.multicast_group_id) << " replica "
              << QuotedVar(replica.key);
+    // TODO: Remove condition for kL2MulticastPassthrough
     } else if (router_interface_entry_ptr->action !=
                    p4orch::kL2MulticastPassthrough &&
                router_interface_entry_ptr->action !=
@@ -923,6 +926,7 @@ ReturnCodeOr<bool> L3MulticastManager::validateReplicas(
       if (getRifOid(replica) != SAI_NULL_OBJECT_ID) {
         ipmc_rif_oid_count++;
       }
+    // TODO: Remove condition for kL2MulticastPassthrough
     } else if (router_interface_entry_ptr->action ==
 	       p4orch::kL2MulticastPassthrough ||
                router_interface_entry_ptr->action ==
@@ -1129,6 +1133,7 @@ ReturnCode L3MulticastManager::validateSetMulticastRouterInterfaceEntry(
 
   // Confirm src_mac is populated.
   bool need_src_mac =
+  // TODO: Remove deprecated action kSetMulticastSrcMac
       multicast_router_interface_entry.action == p4orch::kSetSrcMac ||
       multicast_router_interface_entry.action == p4orch::kMulticastSetSrcMac ||
       multicast_router_interface_entry.action ==
@@ -1175,6 +1180,7 @@ ReturnCode L3MulticastManager::validateSetMulticastRouterInterfaceEntry(
              << QuotedVar(multicast_router_interface_entry.action);
     }
 
+    // TODO: Remove condition for kL2MulticastPassthrough
     if (multicast_router_interface_entry.action ==
             p4orch::kL2MulticastPassthrough ||
         multicast_router_interface_entry.action ==
@@ -1236,6 +1242,7 @@ ReturnCode L3MulticastManager::validateDelMulticastRouterInterfaceEntry(
            << "Multicast router interface entry exists does not exist";
   }
 
+  // TODO: Remove condition for kL2MulticastPassthrough
   if (router_interface_entry_ptr->action == p4orch::kL2MulticastPassthrough ||
       router_interface_entry_ptr->action == p4orch::kMulticastL2Passthrough) {
     return validateL2MulticastRouterInterfaceEntry(
@@ -1686,6 +1693,7 @@ std::vector<ReturnCode> L3MulticastManager::addMulticastRouterInterfaceEntries(
 
   for (size_t i = 0; i < entries.size(); ++i) {
     auto& entry = entries[i];
+    // TODO: Remove condition for kL2MulticastPassthrough
     if (entry.action == p4orch::kL2MulticastPassthrough ||
         entry.action == p4orch::kMulticastL2Passthrough) {
       statuses[i] = addL2MulticastRouterInterfaceEntry(entry);
@@ -1712,6 +1720,7 @@ ReturnCode L3MulticastManager::addL3MulticastRouterInterfaceEntry(
                         entry.multicast_router_interface_entry_key, rif_oid);
 
   // For re-factoring purposes, only the new actions will setup the next hop.
+  // TODO: Make if unconditional when kSetMulticastSrcMac removed
   if (entry.action != p4orch::kSetSrcMac) {
     sai_object_id_t next_hop_oid = SAI_NULL_OBJECT_ID;
     ReturnCode nh_status = createNextHop(entry, rif_oid, &next_hop_oid);
@@ -1807,6 +1816,7 @@ L3MulticastManager::updateMulticastRouterInterfaceEntries(
 
     // Since action kMulticastL2Passthrough, used to setup L2 multicast bridge
     // ports, does not have any parameters, there is nothing to update.
+    // TODO: Remove condition for kL2MulticastPassthrough
     if (old_entry_ptr->action == p4orch::kL2MulticastPassthrough ||
         old_entry_ptr->action == p4orch::kMulticastL2Passthrough) {
       statuses[i] = ReturnCode();
@@ -1973,6 +1983,7 @@ ReturnCode L3MulticastManager::deleteL3MulticastRouterInterfaceEntry(
            << "group members";
   }
 
+  // TODO: Make if unconditional when kSetMulticastSrcMac removed
   // For re-factoring purposes, only the new actions will setup the next hop.
   if (entry->action != p4orch::kSetSrcMac) {
     sai_object_id_t next_hop_oid = getNextHopOid(entry);
@@ -1987,6 +1998,7 @@ ReturnCode L3MulticastManager::deleteL3MulticastRouterInterfaceEntry(
       entry->multicast_router_interface_entry_key, rif_oid);
 
   if (!del_rif_rc.ok()) {
+  // TODO: Make if unconditional when kSetMulticastSrcMac removed
     if (entry->action != p4orch::kSetSrcMac) {
       // Try to restore next hop
       sai_object_id_t new_next_hop_oid = SAI_NULL_OBJECT_ID;
@@ -2042,6 +2054,7 @@ L3MulticastManager::deleteMulticastRouterInterfaceEntries(
       break;
     }
 
+    // TODO: Remove condition for kL2MulticastPassthrough
     if (old_entry_ptr->action == p4orch::kL2MulticastPassthrough ||
         old_entry_ptr->action == p4orch::kMulticastL2Passthrough) {
 
@@ -3141,6 +3154,7 @@ std::string L3MulticastManager::verifyMulticastRouterInterfaceStateCache(
     return msg.str();
   }
 
+  // TODO: Remove condition for kL2MulticastPassthrough
   if (multicast_router_interface_entry->action !=
           p4orch::kL2MulticastPassthrough &&
       multicast_router_interface_entry->action !=
@@ -3176,6 +3190,7 @@ std::string L3MulticastManager::verifyMulticastRouterInterfaceStateCache(
 
 std::string L3MulticastManager::verifyMulticastRouterInterfaceStateAsicDb(
     const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry) {
+  // TODO: Remove condition for kL2MulticastPassthrough
   if (multicast_router_interface_entry->action ==
           p4orch::kL2MulticastPassthrough ||
       multicast_router_interface_entry->action ==
@@ -3219,6 +3234,7 @@ std::string L3MulticastManager::verifyL3MulticastRouterInterfaceStateAsicDb(
     return rif_str;
   }
 
+  // TODO: Remove this if block when kSetMulticastSrcMac removed
   // Legacy action doesn't set a next hop.
   if (multicast_router_interface_entry->action == p4orch::kSetSrcMac) {
     return "";
