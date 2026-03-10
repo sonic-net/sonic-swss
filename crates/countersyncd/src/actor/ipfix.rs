@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::LinkedList, rc::Rc, time::SystemTime};
+use std::{cell::RefCell, collections::HashMap as StdHashMap, collections::LinkedList, rc::Rc, time::SystemTime};
 
 use ahash::{HashMap, HashMapExt};
 use byteorder::{ByteOrder, NetworkEndian};
@@ -503,6 +503,8 @@ pub struct IpfixActor {
     object_names_map: HashMap<String, Vec<String>>,
     /// Mapping from message key to object IDs aligned positionally with object_names
     object_ids_map: HashMap<String, Vec<u16>>,
+    /// Precomputed lookup from object ID/label to object name for O(1) stat resolution
+    object_id_name_map: StdHashMap<String, StdHashMap<u16, String>>,
 }
 
 impl IpfixActor {
@@ -528,6 +530,7 @@ impl IpfixActor {
             applied_templates_map: HashMap::new(),
             object_names_map: HashMap::new(),
             object_ids_map: HashMap::new(),
+            object_id_name_map: StdHashMap::new(),
         }
     }
 
@@ -638,6 +641,19 @@ impl IpfixActor {
             self.object_ids_map.remove(&templates.key);
         }
 
+        if let (Some(object_names), Some(object_ids)) = (&templates.object_names, &templates.object_ids) {
+            self.object_id_name_map.insert(
+                templates.key.clone(),
+                object_ids
+                    .iter()
+                    .copied()
+                    .zip(object_names.iter().cloned())
+                    .collect(),
+            );
+        } else {
+            self.object_id_name_map.remove(&templates.key);
+        }
+
         let cache_ref = Self::get_cache();
         let cache = cache_ref.borrow_mut();
         let mut read_size: usize = 0;
@@ -706,6 +722,7 @@ impl IpfixActor {
         // Remove object metadata for this key
         self.object_names_map.remove(key);
         self.object_ids_map.remove(key);
+        self.object_id_name_map.remove(key);
 
         debug!("Template deletion completed for key: {}", key);
     }
@@ -885,20 +902,12 @@ impl IpfixActor {
                                 }
                             }
 
-                            // Get object names for this template key
-                            let object_names = template_key
+                            let object_name_lookup = template_key
                                 .as_ref()
-                                .and_then(|key| self.object_names_map.get(key))
-                                .map(|names| names.as_slice())
-                                .unwrap_or(&[]);
-                            let object_ids = template_key
-                                .as_ref()
-                                .and_then(|key| self.object_ids_map.get(key))
-                                .map(|ids| ids.as_slice())
-                                .unwrap_or(&[]);
+                                .and_then(|key| self.object_id_name_map.get(key));
 
                             // Create SAIStat directly
-                            let stat = SAIStat::from_ipfix(field_spec, val, object_names, object_ids);
+                            let stat = SAIStat::from_ipfix(field_spec, val, object_name_lookup);
                             debug!("Created SAIStat: {:?}", stat);
                             final_stats.push(stat);
                         }
