@@ -501,6 +501,8 @@ pub struct IpfixActor {
     applied_templates_map: HashMap<String, Vec<u16>>,
     /// Mapping from message key to object names for converting label IDs
     object_names_map: HashMap<String, Vec<String>>,
+    /// Mapping from message key to object IDs aligned positionally with object_names
+    object_ids_map: HashMap<String, Vec<u16>>,
 }
 
 impl IpfixActor {
@@ -525,6 +527,7 @@ impl IpfixActor {
             temporary_templates_map: HashMap::new(),
             applied_templates_map: HashMap::new(),
             object_names_map: HashMap::new(),
+            object_ids_map: HashMap::new(),
         }
     }
 
@@ -608,8 +611,8 @@ impl IpfixActor {
         };
 
         debug!(
-            "Processing IPFIX templates for key: {}, object_names: {:?}",
-            templates.key, templates.object_names
+            "Processing IPFIX templates for key: {}, object_names: {:?}, object_ids: {:?}",
+            templates.key, templates.object_names, templates.object_ids
         );
 
         // Add detailed debug logging for template content if debug level is enabled
@@ -621,10 +624,18 @@ impl IpfixActor {
             }
         }
 
-        // Store object names if provided
         if let Some(object_names) = &templates.object_names {
             self.object_names_map
                 .insert(templates.key.clone(), object_names.clone());
+        } else {
+            self.object_names_map.remove(&templates.key);
+        }
+
+        if let Some(object_ids) = &templates.object_ids {
+            self.object_ids_map
+                .insert(templates.key.clone(), object_ids.clone());
+        } else {
+            self.object_ids_map.remove(&templates.key);
         }
 
         let cache_ref = Self::get_cache();
@@ -692,8 +703,9 @@ impl IpfixActor {
         self.temporary_templates_map
             .retain(|_, msg_key| msg_key != key);
 
-        // Remove object names for this key
+        // Remove object metadata for this key
         self.object_names_map.remove(key);
+        self.object_ids_map.remove(key);
 
         debug!("Template deletion completed for key: {}", key);
     }
@@ -879,9 +891,14 @@ impl IpfixActor {
                                 .and_then(|key| self.object_names_map.get(key))
                                 .map(|names| names.as_slice())
                                 .unwrap_or(&[]);
+                            let object_ids = template_key
+                                .as_ref()
+                                .and_then(|key| self.object_ids_map.get(key))
+                                .map(|ids| ids.as_slice())
+                                .unwrap_or(&[]);
 
                             // Create SAIStat directly
-                            let stat = SAIStat::from_ipfix(field_spec, val, object_names);
+                            let stat = SAIStat::from_ipfix(field_spec, val, object_names, object_ids);
                             debug!("Created SAIStat: {:?}", stat);
                             final_stats.push(stat);
                         }
@@ -1216,6 +1233,7 @@ mod test {
                 String::from("test_key"),
                 Arc::new(Vec::from(template_bytes)),
                 Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
+                Some(vec![1, 2]),
             ))
             .await
             .unwrap();

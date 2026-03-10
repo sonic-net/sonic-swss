@@ -15,7 +15,7 @@ use ipfixrw::parser::{DataRecordValue, FieldSpecifier};
 /// information about switch hardware counters and their current values.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SAIStat {
-    /// Object name corresponding to the label ID (1-based index from object_names)
+    /// Object name corresponding to the label/object ID mapping
     pub object_name: String,
     /// SAI object type identifier (with possible extensions)
     pub type_id: u32,
@@ -39,7 +39,8 @@ impl SAIStat {
     ///
     /// * `field_spec` - IPFIX field specifier containing identifiers
     /// * `value` - IPFIX data record value containing counter data
-    /// * `object_names` - Vector of object names (1-based indexing)
+    /// * `object_names` - Vector of object names
+    /// * `object_ids` - Vector of object IDs aligned positionally with object_names
     ///
     /// # Returns
     ///
@@ -48,6 +49,7 @@ impl SAIStat {
         field_spec: &FieldSpecifier,
         value: &DataRecordValue,
         object_names: &[String],
+        object_ids: &[u16],
     ) -> Self {
         let enterprise_number = field_spec.enterprise_number.unwrap_or(0);
         let label = field_spec.information_element_identifier;
@@ -89,12 +91,16 @@ impl SAIStat {
             }
         };
 
-        // Resolve object name from label
-        let object_name = if label > 0 && (label as usize) <= object_names.len() {
-            // Convert 1-based label to 0-based index
+        // Resolve object name from label. Prefer explicit object_ids mapping when available,
+        // and fall back to the legacy 1-based positional mapping for backward compatibility.
+        let object_name = if let Some(index) = object_ids.iter().position(|object_id| *object_id == label) {
+            object_names
+                .get(index)
+                .cloned()
+                .unwrap_or_else(|| format!("unknown_{}", label))
+        } else if object_ids.is_empty() && label > 0 && (label as usize) <= object_names.len() {
             object_names[(label - 1) as usize].clone()
         } else {
-            // Fallback to label number if object name not found
             format!("unknown_{}", label)
         };
 
@@ -258,7 +264,7 @@ mod tests {
         let value = create_byte_value(12345);
         let object_names = vec!["Ethernet0".to_string(), "Ethernet1".to_string()];
 
-        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names);
+        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names, &[]);
 
         assert_eq!(stat.object_name, "Ethernet1"); // label 2 -> index 1 (1-based)
         assert_eq!(stat.type_id, 0x1234);
@@ -274,7 +280,7 @@ mod tests {
         let value = create_byte_value(99999);
         let object_names = vec!["Ethernet0".to_string()];
 
-        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names);
+        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names, &[]);
 
         assert_eq!(stat.object_name, "Ethernet0"); // label 1 -> index 0 (1-based)
         assert_eq!(stat.type_id, 0x1234 + EXTENSIONS_RANGE_BASE);
@@ -289,7 +295,7 @@ mod tests {
         let value = DataRecordValue::Bytes(short_bytes);
         let object_names = vec!["Ethernet0".to_string()];
 
-        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names);
+        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names, &[]);
 
         assert_eq!(stat.object_name, "Ethernet0");
         assert_eq!(stat.counter, 0x1234); // Should be padded correctly
@@ -301,7 +307,7 @@ mod tests {
         let value = DataRecordValue::String("test".to_string());
         let object_names = vec!["Ethernet0".to_string()];
 
-        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names);
+        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names, &[]);
 
         assert_eq!(stat.object_name, "Ethernet0");
         assert_eq!(stat.counter, 0); // Should default to 0 for non-byte values
@@ -313,7 +319,7 @@ mod tests {
         let value = create_byte_value(1000);
         let object_names = vec!["Ethernet0".to_string(), "Ethernet1".to_string()]; // Only 2 objects
 
-        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names);
+        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names, &[]);
 
         assert_eq!(stat.object_name, "unknown_5"); // Fallback for invalid label
         assert_eq!(stat.type_id, 1);
@@ -327,11 +333,25 @@ mod tests {
         let value = create_byte_value(1000);
         let object_names = vec!["Ethernet0".to_string()];
 
-        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names);
+        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names, &[]);
 
         assert_eq!(stat.object_name, "unknown_0"); // Fallback for zero label
         assert_eq!(stat.type_id, 1);
         assert_eq!(stat.stat_id, 2);
+        assert_eq!(stat.counter, 1000);
+    }
+
+
+    #[test]
+    fn test_sai_stat_from_ipfix_uses_object_ids_mapping() {
+        let field_spec = create_field_spec(20, Some(0x00010002));
+        let value = create_byte_value(1000);
+        let object_names = vec!["Ethernet0".to_string(), "Ethernet8".to_string()];
+        let object_ids = vec![10, 20];
+
+        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names, &object_ids);
+
+        assert_eq!(stat.object_name, "Ethernet8");
         assert_eq!(stat.counter, 1000);
     }
 
@@ -424,7 +444,7 @@ mod tests {
         let value = create_byte_value(555);
         let object_names = vec!["Ethernet0".to_string()];
 
-        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names);
+        let stat = SAIStat::from_ipfix(&field_spec, &value, &object_names, &[]);
 
         // Should use saturating_add to prevent overflow
         assert_eq!(stat.type_id, 0x7FFF + EXTENSIONS_RANGE_BASE);
