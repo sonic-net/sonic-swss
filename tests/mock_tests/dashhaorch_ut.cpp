@@ -586,11 +586,11 @@ namespace dashhaorch_ut
 
         void HaSetEvent(sai_ha_set_event_t event_type)
         {
-            mockReply = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply = (redisReply *)calloc(1, sizeof(redisReply));
             mockReply->type = REDIS_REPLY_ARRAY;
             mockReply->elements = 3; // REDIS_PUBLISH_MESSAGE_ELEMNTS
-            mockReply->element = (redisReply **)calloc(sizeof(redisReply *), mockReply->elements);
-            mockReply->element[2] = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply->element = (redisReply **)calloc(mockReply->elements, sizeof(redisReply *));
+            mockReply->element[2] = (redisReply *)calloc(1, sizeof(redisReply));
             mockReply->element[2]->type = REDIS_REPLY_STRING;
 
             sai_ha_set_event_data_t event;
@@ -624,11 +624,11 @@ namespace dashhaorch_ut
                         sai_dash_ha_role_t ha_role,
                         sai_dash_ha_state_t ha_state)
         {
-            mockReply = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply = (redisReply *)calloc(1, sizeof(redisReply));
             mockReply->type = REDIS_REPLY_ARRAY;
             mockReply->elements = 3; // REDIS_PUBLISH_MESSAGE_ELEMNTS
-            mockReply->element = (redisReply **)calloc(sizeof(redisReply *), mockReply->elements);
-            mockReply->element[2] = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply->element = (redisReply **)calloc(mockReply->elements, sizeof(redisReply *));
+            mockReply->element[2] = (redisReply *)calloc(1, sizeof(redisReply));
             mockReply->element[2]->type = REDIS_REPLY_STRING;
 
             sai_ha_scope_event_data_t event;

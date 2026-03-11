@@ -20,6 +20,7 @@ use super::super::message::{
     ipfix::IPFixTemplatesMessage,
     saistats::{SAIStat, SAIStats, SAIStatsMessage},
 };
+use crate::utilities::{record_comm_stats, ChannelLabel};
 
 /// Helper functions for debug logging formatting
 impl IpfixActor {
@@ -114,25 +115,25 @@ impl IpfixActor {
     /// Formatted string representation of the sets within the message
     fn format_ipfix_sets_for_debug(message_data: &[u8]) -> String {
         let mut result = String::new();
-        
+
         // Skip IPFIX message header (16 bytes) to get to sets
         if message_data.len() < 16 {
             result.push_str("    Error: Message too short for IPFIX header\n");
             return result;
         }
-        
+
         let mut offset = 16; // Start after IPFIX header
         let mut set_count = 0;
-        
+
         result.push_str("    Sets within message:\n");
-        
+
         while offset + 4 <= message_data.len() {
             // Each set starts with 4-byte header: set_id (2 bytes) + length (2 bytes)
             let set_id = NetworkEndian::read_u16(&message_data[offset..offset + 2]);
             let set_length = NetworkEndian::read_u16(&message_data[offset + 2..offset + 4]);
-            
+
             set_count += 1;
-            
+
             // Validate set length
             if set_length < 4 {
                 result.push_str(&format!(
@@ -141,7 +142,7 @@ impl IpfixActor {
                 ));
                 break;
             }
-            
+
             if offset + set_length as usize > message_data.len() {
                 result.push_str(&format!(
                     "      Set {}: TRUNCATED (set_id={}, length={}, exceeds message boundary)\n",
@@ -149,7 +150,7 @@ impl IpfixActor {
                 ));
                 break;
             }
-            
+
             // Determine set type based on set_id
             let set_type = if set_id == 2 {
                 "Template Set"
@@ -160,12 +161,12 @@ impl IpfixActor {
             } else {
                 "Reserved/Unknown"
             };
-            
+
             result.push_str(&format!(
                 "      Set {} (offset: {}, set_id: {}, length: {} bytes, type: {})\n",
                 set_count, offset, set_id, set_length, set_type
             ));
-            
+
             // For data sets, show complete structure info
             if set_id >= 256 && set_length > 4 {
                 let data_length = set_length as usize - 4; // Exclude 4-byte set header
@@ -174,7 +175,7 @@ impl IpfixActor {
                     "        Data payload: {} bytes",
                     data_length
                 ));
-                
+
                 // Show complete data payload
                 if data_length > 0 {
                     let data_bytes = &message_data[data_start..data_start + data_length];
@@ -183,7 +184,7 @@ impl IpfixActor {
                         .map(|b| format!("{:02x}", b))
                         .collect::<Vec<_>>()
                         .join(" ");
-                    
+
                     // Format with line breaks for better readability if data is long
                     if data_length <= 32 {
                         // Short data on single line
@@ -208,17 +209,17 @@ impl IpfixActor {
                     result.push_str("\n");
                 }
             }
-            
+
             // Move to next set
             offset += set_length as usize;
         }
-        
+
         if set_count == 0 {
             result.push_str("      No valid sets found\n");
         } else {
             result.push_str(&format!("      Total sets: {}\n", set_count));
         }
-        
+
         result
     }
 
@@ -549,6 +550,15 @@ impl IpfixActor {
         });
     }
 
+    /// Returns true if the template is still known (temporary or applied).
+    fn is_template_known(&self, template_id: u16) -> bool {
+        self.temporary_templates_map.contains_key(&template_id)
+            || self
+                .applied_templates_map
+                .values()
+                .any(|ids| ids.contains(&template_id))
+    }
+
     /// Moves a template from temporary to applied state when it's used in data records.
     ///
     /// # Arguments
@@ -749,11 +759,24 @@ impl IpfixActor {
                 }
             };
 
+            let mut should_drop_message = false;
+
             data_message.sets.iter().for_each(|set| {
                 if let ipfixrw::parser::Records::Data { set_id, data: _ } = set.records {
                     self.update_applied_template(set_id);
+                    if !self.is_template_known(set_id) {
+                        should_drop_message = true;
+                    }
                 }
             });
+
+            if should_drop_message {
+                debug!(
+                    "Dropping IPFIX data message because template was deleted or unknown"
+                );
+                read_size += len as usize;
+                continue;
+            }
             let datarecords: Vec<&DataRecord> = data_message.iter_data_records().collect();
             let mut observation_time: Option<u64>;
 
@@ -899,6 +922,10 @@ impl IpfixActor {
                 templates = actor.template_recipient.recv() => {
                     match templates {
                         Some(templates) => {
+                            record_comm_stats(
+                                ChannelLabel::SwssToIpfixTemplates,
+                                actor.template_recipient.len(),
+                            );
                             actor.handle_template(templates);
                         },
                         None => {
@@ -909,6 +936,10 @@ impl IpfixActor {
                 record = actor.record_recipient.recv() => {
                     match record {
                         Some(record) => {
+                            record_comm_stats(
+                                ChannelLabel::DataNetlinkToIpfixRecords,
+                                actor.record_recipient.len(),
+                            );
                             let messages = actor.handle_record(record);
                             for recipient in &actor.saistats_recipients {
                                 for message in &messages {

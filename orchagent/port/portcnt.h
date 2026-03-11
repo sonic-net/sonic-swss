@@ -196,11 +196,21 @@ public:
         } unreliable_los; // Port unreliable_los
 
         struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } txpolarity; // Port serdes TX polarity
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } rxpolarity; // Port serdes RX polarity
+
+        struct {
             std::string value;
             bool is_set = false;
         } custom_collection; // Port serdes custom_collection
 
-    } serdes; // Port serdes
+    } serdes, serdes_gb_line, serdes_gb_system; // Port serdes (ASIC port, gearbox line-side, gearbox system-side)
 
     struct {
         swss::Port::Role value;
