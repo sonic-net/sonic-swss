@@ -1236,6 +1236,11 @@ void IntfMgr::doPortTableTask(const string& key, vector<FieldValueTuple> data, s
             {
                 SWSS_LOG_INFO("Port %s Admin %s", key.c_str(), value.c_str());
                 updateSubIntfAdminStatus(key, value);
+
+                if (value == "up")
+                {
+                    replayLLIntfAddresses(key);
+                }
             }
             else if (field == "mtu")
             {
@@ -1254,4 +1259,40 @@ bool IntfMgr::enableIpv6Flag(const string &alias)
     int ret = swss::exec(cmd.str(), temp_res);
     SWSS_LOG_INFO("disable_ipv6 flag is set to 0 for iface: %s, cmd: %s, ret: %d", alias.c_str(), cmd.str().c_str(), ret);
     return (ret == 0) ? true : false;
+}
+
+void IntfMgr::replayLLIntfAddresses(const string &alias)
+{
+    // Determine which CONFIG_DB table to use based on interface type
+    Table *cfgTable;
+    if (!alias.compare(0, strlen(VLAN_PREFIX), VLAN_PREFIX))
+    {
+        cfgTable = &m_cfgVlanIntfTable;
+    }
+    else if (!alias.compare(0, strlen(LAG_PREFIX), LAG_PREFIX))
+    {
+        cfgTable = &m_cfgLagIntfTable;
+    }
+    else
+    {
+        cfgTable = &m_cfgIntfTable;
+    }
+
+    vector<string> keys;
+    cfgTable->getKeys(keys);
+
+    for (const auto &key : keys)
+    {
+        auto tokens = tokenize(key, config_db_key_delimiter);
+        if (tokens.size() == 2 && tokens[0] == alias)
+        {
+            IpPrefix ipPrefix(tokens[1]);
+            if (!ipPrefix.isV4() && ipPrefix.getIp().getAddrScope() == IpAddress::AddrScope::LINK_SCOPE)
+            {
+                setIntfIp(alias, "add", ipPrefix);
+                SWSS_LOG_INFO("Replayed IPv6 link-local address %s on interface %s after admin up",
+                    tokens[1].c_str(), alias.c_str());
+            }
+        }
+    }
 }

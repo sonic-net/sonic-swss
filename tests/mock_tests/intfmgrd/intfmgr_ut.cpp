@@ -127,4 +127,84 @@ namespace intfmgr_ut
         intfmgr.m_statePortTable.set("Ethernet64.10", values, "SET", "");
         EXPECT_THROW(intfmgr.setHostSubIntfAdminStatus("Ethernet64.10", "up", "up"), std::runtime_error);
     }
+
+    TEST_F(IntfMgrTest, testReplayLLIpv6AddressOnAdminUp){
+        Ethernet0IPv6Set = true;
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+
+        /* Add an IPv6 link-local address entry in CONFIG_DB INTERFACE table */
+        std::vector<swss::FieldValueTuple> values;
+        values.emplace_back("family", "IPv6");
+        intfmgr.m_cfgIntfTable.set("Ethernet0|fe80::1/64", values, "SET", "");
+
+        /* Also add a global IPv6 address — this should NOT be replayed */
+        values.clear();
+        values.emplace_back("family", "IPv6");
+        intfmgr.m_cfgIntfTable.set("Ethernet0|2001::8/64", values, "SET", "");
+
+        /* Also add an IPv4 address — this should NOT be replayed */
+        values.clear();
+        values.emplace_back("family", "IPv4");
+        intfmgr.m_cfgIntfTable.set("Ethernet0|10.0.0.1/31", values, "SET", "");
+
+        mockCallArgs.clear();
+
+        /* Simulate admin up by calling doPortTableTask */
+        std::vector<swss::FieldValueTuple> portData;
+        portData.emplace_back("admin_status", "up");
+        intfmgr.doPortTableTask("Ethernet0", portData, "SET");
+
+        /* Verify that only IPv6 link-local address add was called */
+        int ipv6_ll_add_called = 0;
+        int ipv6_global_add_called = 0;
+        int ipv4_add_called = 0;
+        for (const auto &cmd : mockCallArgs)
+        {
+            if (cmd.find("/sbin/ip -6 address \"add\"") != std::string::npos &&
+                cmd.find("fe80::1/64") != std::string::npos)
+            {
+                ipv6_ll_add_called++;
+            }
+            if (cmd.find("/sbin/ip -6 address \"add\"") != std::string::npos &&
+                cmd.find("2001::8/64") != std::string::npos)
+            {
+                ipv6_global_add_called++;
+            }
+            if (cmd.find("/sbin/ip address \"add\"") != std::string::npos &&
+                cmd.find("10.0.0.1/31") != std::string::npos)
+            {
+                ipv4_add_called++;
+            }
+        }
+        ASSERT_EQ(ipv6_ll_add_called, 1);
+        ASSERT_EQ(ipv6_global_add_called, 0);
+        ASSERT_EQ(ipv4_add_called, 0);
+    }
+
+    TEST_F(IntfMgrTest, testNoReplayLLOnAdminDown){
+        Ethernet0IPv6Set = true;
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+
+        /* Add an IPv6 link-local address entry in CONFIG_DB INTERFACE table */
+        std::vector<swss::FieldValueTuple> values;
+        values.emplace_back("family", "IPv6");
+        intfmgr.m_cfgIntfTable.set("Ethernet0|fe80::1/64", values, "SET", "");
+
+        mockCallArgs.clear();
+
+        /* Simulate admin down — should NOT trigger replay */
+        std::vector<swss::FieldValueTuple> portData;
+        portData.emplace_back("admin_status", "down");
+        intfmgr.doPortTableTask("Ethernet0", portData, "SET");
+
+        int ipv6_add_called = 0;
+        for (const auto &cmd : mockCallArgs)
+        {
+            if (cmd.find("/sbin/ip -6 address \"add\"") != std::string::npos)
+            {
+                ipv6_add_called++;
+            }
+        }
+        ASSERT_EQ(ipv6_add_called, 0);
+    }
 }
