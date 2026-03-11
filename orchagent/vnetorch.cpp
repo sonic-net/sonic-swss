@@ -1161,8 +1161,8 @@ bool VNetRouteOrch::selectFgNextHopGroup(const string& vnet,
                                        NextHopGroupKey& nexthops,
                                        IpPrefix& ipPrefix,
                                        VNetVrfObject *vrf_obj,
-                                       NextHopGroupKey& nexthops_selected,
-                                       const uint16_t consistent_hashing_buckets)
+                                       const uint16_t consistent_hashing_buckets,
+                                       bool& isNextHopIdChanged)
 {
     // This function returns the next hop group which is to be used to in the hardware
     // for fine grained ECMP tunnel routes.
@@ -1179,12 +1179,12 @@ bool VNetRouteOrch::selectFgNextHopGroup(const string& vnet,
 
     sai_object_id_t vrf_id;
     vnet_orch_->getVrfIdByVnetName(vnet, vrf_id);
-    if (!gFgNhgOrch->setFgNhgTunnel(vrf_id, ipPrefix, nhopgroup_members_set, nexthops, consistent_hashing_buckets, nh_id))
+    if (!gFgNhgOrch->setFgNhgTunnel(vrf_id, ipPrefix, nhopgroup_members_set, nexthops, consistent_hashing_buckets, nh_id, isNextHopIdChanged))
     {
         SWSS_LOG_ERROR("Failed to create fine grained next hop group for VNET %s", vnet.c_str());
         return false;
     }
-    
+
     NextHopGroupInfo next_hop_group_entry;
     next_hop_group_entry.next_hop_group_id = nh_id;
 
@@ -1200,7 +1200,6 @@ bool VNetRouteOrch::selectFgNextHopGroup(const string& vnet,
         syncd_nexthop_groups_[vnet][nexthops].active_members[nh] = SAI_NULL_OBJECT_ID;
     }
 
-    nexthops_selected = nexthops;
     return true;
 }
 
@@ -1578,14 +1577,14 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
     if (op == SET_COMMAND)
     {
         sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
-        NextHopGroupKey active_nhg("", true);
+        bool isNextHopIdChanged = false;
 
-        if (!selectFgNextHopGroup(vnet, nexthops, ipPrefix, vrf_obj, active_nhg, consistent_hashing_buckets))
+        if (!selectFgNextHopGroup(vnet, nexthops, ipPrefix, vrf_obj, consistent_hashing_buckets, isNextHopIdChanged))
         {
             return true;
         }
 
-        nh_id = syncd_nexthop_groups_[vnet][active_nhg].next_hop_group_id;
+        nh_id = syncd_nexthop_groups_[vnet][nexthops].next_hop_group_id;
 
         auto it_route = syncd_tunnel_routes_[vnet].find(ipPrefix);
         for (auto vr_id : vr_set)
@@ -1596,7 +1595,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             {
                 route_status = add_route(vr_id, pfx, nh_id);
             }
-            else
+            else if (isNextHopIdChanged)
             {
                 route_status = update_route(vr_id, pfx, nh_id);
             }
@@ -1632,17 +1631,17 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         }
         if (it_route == syncd_tunnel_routes_[vnet].end() || route_updated)
         {
-            syncd_nexthop_groups_[vnet][active_nhg].tunnel_routes.insert(ipPrefix);
+            syncd_nexthop_groups_[vnet][nexthops].tunnel_routes.insert(ipPrefix);
             VNetTunnelRouteEntry tunnel_route_entry;
-            tunnel_route_entry.nhg_key = active_nhg;
+            tunnel_route_entry.nhg_key = nexthops;
             tunnel_route_entry.primary = nexthops;
             syncd_tunnel_routes_[vnet][ipPrefix] = tunnel_route_entry;
-            syncd_nexthop_groups_[vnet][active_nhg].ref_count++;
+            syncd_nexthop_groups_[vnet][nexthops].ref_count++;
 
-            vrf_obj->addRoute(ipPrefix, active_nhg);
+            vrf_obj->addRoute(ipPrefix, nexthops);
         }
         string profile = "";
-        postRouteState(vnet, ipPrefix, active_nhg, profile);
+        postRouteState(vnet, ipPrefix, nexthops, profile);
     }
     else if (op == DEL_COMMAND)
     {

@@ -532,7 +532,7 @@ private:
     bool selectNextHopGroup(const string&, NextHopGroupKey&, NextHopGroupKey&, const string&, const int32_t, const int32_t, IpPrefix&,
                             VNetVrfObject *vrf_obj, NextHopGroupKey&,
                             const std::map<NextHopKey,IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
-    bool selectFgNextHopGroup(const string&, NextHopGroupKey&, IpPrefix&, VNetVrfObject *vrf_obj, NextHopGroupKey&, const uint16_t consistent_hashing_buckets);
+    bool selectFgNextHopGroup(const string&, NextHopGroupKey&, IpPrefix&, VNetVrfObject *vrf_obj, const uint16_t consistent_hashing_buckets, bool &isNextHopIdChanged);
 
     void createBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer);
     void removeBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
