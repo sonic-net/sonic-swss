@@ -84,6 +84,11 @@ impl SwssActor {
                 let mut iteration_count = 0;
 
                 loop {
+                    if event_sender.is_closed() {
+                        debug!("SwssActor event receiver closed, terminating reader thread");
+                        break;
+                    }
+
                     #[cfg(test)]
                     {
                         iteration_count += 1;
