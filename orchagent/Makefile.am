@@ -18,16 +18,17 @@ dist_swss_DATA = \
 		 nvda_port_trim_drop.lua \
 		 eliminate_events.lua \
 		 rif_rates.lua \
-		 pfc_detect_marvell_teralynx.lua  \
+		 pfc_detect_marvell-teralynx.lua  \
 		 pfc_detect_mellanox.lua  \
 		 pfc_detect_broadcom.lua \
-		 pfc_detect_marvell_prestera.lua \
+		 pfc_detect_marvell-prestera.lua \
 		 pfc_detect_barefoot.lua \
 		 pfc_detect_nephos.lua \
 		 pfc_detect_cisco-8000.lua \
 		 pfc_detect_vs.lua \
 		 pfc_restore.lua \
 		 pfc_restore_cisco-8000.lua \
+		 pfc_detect_clounix.lua  \
 		 port_rates.lua \
 		 port_flr.lua \
 		 drop_monitor.lua \
@@ -155,7 +156,10 @@ orchagent_SOURCES += p4orch/p4orch.cpp \
 		     p4orch/acl_rule_manager.cpp \
 		     p4orch/wcmp_manager.cpp \
 		     p4orch/mirror_session_manager.cpp \
+                     p4orch/tunnel_decap_group_manager.cpp \
 		     p4orch/l3_admit_manager.cpp \
+		     p4orch/l3_multicast_manager.cpp \
+		     p4orch/ip_multicast_manager.cpp \
  		     p4orch/ext_tables_manager.cpp
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)

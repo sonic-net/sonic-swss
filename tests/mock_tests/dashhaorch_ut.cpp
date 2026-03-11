@@ -148,6 +148,31 @@ namespace dashhaorch_ut
             static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
         }
 
+        void UpdatePeerIp(std::string peer_ip)
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
+
+            std::vector<std::pair<std::string, std::string>> fields = {{"version", "2"}};
+            if (!peer_ip.empty()) {
+                fields.push_back({"peer_ip", peer_ip});
+            }
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            SET_COMMAND,
+                            fields
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
         void InvalidIpAddresses()
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
@@ -561,11 +586,11 @@ namespace dashhaorch_ut
 
         void HaSetEvent(sai_ha_set_event_t event_type)
         {
-            mockReply = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply = (redisReply *)calloc(1, sizeof(redisReply));
             mockReply->type = REDIS_REPLY_ARRAY;
             mockReply->elements = 3; // REDIS_PUBLISH_MESSAGE_ELEMNTS
-            mockReply->element = (redisReply **)calloc(sizeof(redisReply *), mockReply->elements);
-            mockReply->element[2] = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply->element = (redisReply **)calloc(mockReply->elements, sizeof(redisReply *));
+            mockReply->element[2] = (redisReply *)calloc(1, sizeof(redisReply));
             mockReply->element[2]->type = REDIS_REPLY_STRING;
 
             sai_ha_set_event_data_t event;
@@ -599,11 +624,11 @@ namespace dashhaorch_ut
                         sai_dash_ha_role_t ha_role,
                         sai_dash_ha_state_t ha_state)
         {
-            mockReply = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply = (redisReply *)calloc(1, sizeof(redisReply));
             mockReply->type = REDIS_REPLY_ARRAY;
             mockReply->elements = 3; // REDIS_PUBLISH_MESSAGE_ELEMNTS
-            mockReply->element = (redisReply **)calloc(sizeof(redisReply *), mockReply->elements);
-            mockReply->element[2] = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply->element = (redisReply **)calloc(mockReply->elements, sizeof(redisReply *));
+            mockReply->element[2] = (redisReply *)calloc(1, sizeof(redisReply));
             mockReply->element[2]->type = REDIS_REPLY_STRING;
 
             sai_ha_scope_event_data_t event;
@@ -682,6 +707,23 @@ namespace dashhaorch_ut
         .WillOnce(Return(SAI_STATUS_SUCCESS));
 
         RemoveHaSet();
+    }
+
+    TEST_F(DashHaOrchTest, UpdatePeerIp)
+    {
+        CreateHaSet();
+        UpdatePeerIp("192.168.2.100");
+
+        auto ha_set_entry = m_dashHaOrch->getHaSetEntries().find("HA_SET_1");
+        dash::types::IpAddress peer_ip;
+        to_pb("192.168.2.100", peer_ip);
+        EXPECT_EQ(to_string(ha_set_entry->second.metadata.peer_ip()), to_string(peer_ip));
+
+        UpdatePeerIp("invalid_ip");
+        EXPECT_EQ(to_string(ha_set_entry->second.metadata.peer_ip()), to_string(peer_ip));
+
+        UpdatePeerIp("");
+        EXPECT_EQ(to_string(ha_set_entry->second.metadata.peer_ip()), to_string(peer_ip));
     }
 
     TEST_F(DashHaOrchTest, InvalidIpAddresses)

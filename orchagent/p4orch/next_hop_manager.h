@@ -32,12 +32,22 @@ struct P4NextHopEntry
     std::string router_interface_id;
     std::string gre_tunnel_id;
     swss::IpAddress neighbor_id;
+    bool disable_decrement_ttl = false;
+    bool disable_src_mac_rewrite = false;
+    bool disable_dst_mac_rewrite = false;
+    bool disable_vlan_rewrite = false;
 
     // SAI OID associated with this entry.
     sai_object_id_t next_hop_oid = SAI_NULL_OBJECT_ID;
 
-    P4NextHopEntry(const std::string &next_hop_id, const std::string &router_interface_id,
-                   const std::string &gre_tunnel_id, const swss::IpAddress &neighbor_id);
+    P4NextHopEntry(const std::string& next_hop_id,
+                   const std::string& router_interface_id,
+                   const std::string& gre_tunnel_id,
+                   const swss::IpAddress& neighbor_id,
+                   bool disable_decrement_ttl = false,
+                   bool disable_src_mac_rewrite = false,
+                   bool disable_dst_mac_rewrite = false,
+                   bool disable_vlan_rewrite = false);
 };
 
 // NextHopManager listens to changes in table APP_P4RT_NEXTHOP_TABLE_NAME and
@@ -73,20 +83,24 @@ class NextHopManager : public ObjectManagerInterface
     ReturnCodeOr<P4NextHopAppDbEntry> deserializeP4NextHopAppDbEntry(
         const std::string &key, const std::vector<swss::FieldValueTuple> &attributes);
 
-    // Processes add operation for an entry.
-    ReturnCode processAddRequest(const P4NextHopAppDbEntry &app_db_entry);
+    ReturnCode validateAppDbEntry(const P4NextHopAppDbEntry& app_db_entry);
 
-    // Creates an next hop in the next hop table. Return true on success.
-    ReturnCode createNextHop(P4NextHopEntry &next_hop_entry);
+    ReturnCode validateAppDbEntry(const P4NextHopAppDbEntry& app_db_entry,
+                                  const std::string& operation);
 
-    // Processes update operation for an entry.
-    ReturnCode processUpdateRequest(const P4NextHopAppDbEntry &app_db_entry, P4NextHopEntry *next_hop_entry);
+    // Creates a next hop in the next hop table.
+    std::vector<ReturnCode> createNextHops(
+        const std::vector<P4NextHopAppDbEntry>& next_hop_entries);
+
+    // Deletes a next hop in the next hop table.
+    std::vector<ReturnCode> removeNextHops(
+        const std::vector<P4NextHopAppDbEntry>& next_hop_entries);
 
     // Processes delete operation for an entry.
-    ReturnCode processDeleteRequest(const std::string &next_hop_key);
-
-    // Deletes an next hop in the next hop table. Return true on success.
-    ReturnCode removeNextHop(const std::string &next_hop_key);
+    ReturnCode processEntries(
+        const std::vector<P4NextHopAppDbEntry>& next_hop_entries,
+        const std::vector<swss::KeyOpFieldsValuesTuple>& tuple_list,
+        const std::string& op, bool update);
 
     // Verifies internal cache for an entry.
     std::string verifyStateCache(const P4NextHopAppDbEntry &app_db_entry, const P4NextHopEntry *next_hop_entry);
@@ -95,7 +109,8 @@ class NextHopManager : public ObjectManagerInterface
     std::string verifyStateAsicDb(const P4NextHopEntry *next_hop_entry);
 
     // Returns the SAI attributes for an entry.
-    ReturnCodeOr<std::vector<sai_attribute_t>> getSaiAttrs(const P4NextHopEntry &next_hop_entry);
+    std::vector<sai_attribute_t> getSaiAttrs(
+        const P4NextHopEntry& next_hop_entry);
 
     // m_nextHopTable: next_hop_key, P4NextHopEntry
     std::unordered_map<std::string, P4NextHopEntry> m_nextHopTable;

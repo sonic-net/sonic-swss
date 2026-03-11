@@ -126,6 +126,35 @@ namespace swss
             table->second.erase(key);
         }
     }
+
+    void Table::hdel(const std::string &key, const std::string &field, const std::string &op, const std::string &prefix)
+    {
+        auto &table = gDB[m_pipe->getDbId()][getTableName()];
+        auto key_iter = table.find(key);
+        if (key_iter == table.end())
+        {
+            return;
+        }
+
+        auto &attrs = key_iter->second;
+        std::vector<FieldValueTuple> new_attrs;
+        for (const auto &attr : attrs)
+        {
+            if (attr.first != field)
+            {
+                new_attrs.push_back(attr);
+            }
+        }
+
+        if (new_attrs.empty())
+        {
+            table.erase(key);
+        }
+        else
+        {
+            table[key] = new_attrs;
+        }
+    }
     
     void ProducerStateTable::set(const std::string &key,
                                  const std::vector<FieldValueTuple> &values,
