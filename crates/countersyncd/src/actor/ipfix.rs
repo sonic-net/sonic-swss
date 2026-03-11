@@ -499,10 +499,6 @@ pub struct IpfixActor {
     temporary_templates_map: HashMap<u16, String>,
     /// Mapping from message key to template IDs for applied templates
     applied_templates_map: HashMap<String, Vec<u16>>,
-    /// Mapping from message key to object names for converting label IDs
-    object_names_map: HashMap<String, Vec<String>>,
-    /// Mapping from message key to object IDs aligned positionally with object_names
-    object_ids_map: HashMap<String, Vec<u16>>,
     /// Precomputed lookup from object ID/label to object name for O(1) stat resolution
     object_id_name_map: StdHashMap<String, StdHashMap<u16, String>>,
 }
@@ -528,8 +524,6 @@ impl IpfixActor {
             record_recipient,
             temporary_templates_map: HashMap::new(),
             applied_templates_map: HashMap::new(),
-            object_names_map: HashMap::new(),
-            object_ids_map: HashMap::new(),
             object_id_name_map: StdHashMap::new(),
         }
     }
@@ -627,29 +621,25 @@ impl IpfixActor {
             }
         }
 
-        if let Some(object_names) = &templates.object_names {
-            self.object_names_map
-                .insert(templates.key.clone(), object_names.clone());
-        } else {
-            self.object_names_map.remove(&templates.key);
-        }
-
-        if let Some(object_ids) = &templates.object_ids {
-            self.object_ids_map
-                .insert(templates.key.clone(), object_ids.clone());
-        } else {
-            self.object_ids_map.remove(&templates.key);
-        }
-
         if let (Some(object_names), Some(object_ids)) = (&templates.object_names, &templates.object_ids) {
-            self.object_id_name_map.insert(
-                templates.key.clone(),
-                object_ids
-                    .iter()
-                    .copied()
-                    .zip(object_names.iter().cloned())
-                    .collect(),
-            );
+            if object_ids.len() == object_names.len() {
+                self.object_id_name_map.insert(
+                    templates.key.clone(),
+                    object_ids
+                        .iter()
+                        .copied()
+                        .zip(object_names.iter().cloned())
+                        .collect(),
+                );
+            } else {
+                warn!(
+                    "IPFIX template object_ids/object_names length mismatch for key {}: ids={}, names={}. Skipping object_id_name_map entry.",
+                    templates.key,
+                    object_ids.len(),
+                    object_names.len()
+                );
+                self.object_id_name_map.remove(&templates.key);
+            }
         } else {
             self.object_id_name_map.remove(&templates.key);
         }
@@ -720,8 +710,6 @@ impl IpfixActor {
             .retain(|_, msg_key| msg_key != key);
 
         // Remove object metadata for this key
-        self.object_names_map.remove(key);
-        self.object_ids_map.remove(key);
         self.object_id_name_map.remove(key);
 
         debug!("Template deletion completed for key: {}", key);
