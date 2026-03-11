@@ -1584,11 +1584,15 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
     return true;
 }
 
-bool FgNhgOrch::setFgNhgTunnel(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, 
-                        map<NextHopKey, sai_object_id_t>& nhopgroup_members_set, NextHopGroupKey& nextHops, uint16_t consistent_hashing_buckets, 
-                        sai_object_id_t &next_hop_id)
+bool FgNhgOrch::setFgNhgTunnel(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
+                        map<NextHopKey, sai_object_id_t>& nhopgroup_members_set, NextHopGroupKey& nextHops, uint16_t consistent_hashing_buckets,
+                        sai_object_id_t &next_hop_id, bool &isNextHopIdChanged)
 {
     SWSS_LOG_ENTER();
+
+    /* default isNextHopIdChanged to false so that sai route is unaffected
+     * when we return early with success */
+    isNextHopIdChanged = false;
 
     FGMatchMode match_mode = FGMatchMode::PREFIX_BASED;
     uint32_t max_next_hops = consistent_hashing_buckets;
@@ -1697,6 +1701,7 @@ bool FgNhgOrch::setFgNhgTunnel(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
     else
     {
         /* New route + nhg addition */
+        isNextHopIdChanged = true;
         FGNextHopGroupEntry syncd_fg_route_entry;
         if (next_hop_to_add)
         {
