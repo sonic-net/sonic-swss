@@ -792,7 +792,7 @@ class TestAcl:
 
         assert not match_range_qualifier
 
-    def test_AclRulePriorityOrderProcessing(self, dvs_acl, l3_acl_table):
+    def test_AclRulePriorityOrderProcessing(self, dvs, dvs_acl, l3_acl_table):
         """
         Test that ACL rules are processed in descending priority order (higher priority value first).
         """
@@ -823,6 +823,9 @@ class TestAcl:
             "150": {"SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP": dvs_acl.get_simple_qualifier_comparator("10.0.0.150&mask:255.255.255.255")},
         }
 
+        # Add log marker before creating rules
+        marker = dvs.add_log_marker()
+
         # Create rules in random order
         for priority in rule_priorities:
             dvs_acl.create_acl_rule(L3_TABLE_NAME,
@@ -835,13 +838,30 @@ class TestAcl:
         # Verify all rules are created with correct priorities
         dvs_acl.verify_acl_rule_set(rule_priorities, config_actions, expected_sai_qualifiers)
 
+        # Verify the order of SET operations in syslog (should be descending: 200, 150, 100, 50, 10)
+        expected_order = ["200", "150", "100", "50", "10"]
+        (exitcode, log_output) = dvs.runcmd(
+            ['sh', '-c', f"awk '/{marker}/,ENDFILE {{print;}}' /var/log/syslog | grep 'processing SET in descending priority order'"])
+
+        # Extract priorities from log lines in order
+        log_lines = log_output.strip().split('\n') if log_output.strip() else []
+        actual_order = []
+        for line in log_lines:
+            for priority in expected_order:
+                if f"PRIORITY_ORDER_TEST_RULE_{priority}" in line and f"PRIORITY: {priority}" in line:
+                    actual_order.append(priority)
+                    break
+
+        # Verify the rules were processed in descending priority order
+        assert actual_order == expected_order, f"Expected order {expected_order}, but got {actual_order}"
+
         # Clean up
         for priority in rule_priorities:
             dvs_acl.remove_acl_rule(L3_TABLE_NAME, f"PRIORITY_ORDER_TEST_RULE_{priority}")
             dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"PRIORITY_ORDER_TEST_RULE_{priority}", None)
         dvs_acl.verify_no_acl_rules()
 
-    def test_AclRuleDeletionPriorityOrder(self, dvs_acl, l3_acl_table):
+    def test_AclRuleDeletionPriorityOrder(self, dvs, dvs_acl, l3_acl_table):
         """
         Test that ACL rules are deleted in ascending priority order (lower priority value first).
         """
@@ -865,6 +885,9 @@ class TestAcl:
                                     priority=priority)
             dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"DELETE_ORDER_TEST_RULE_{priority}", "Active")
 
+        # Add log marker before deleting rules
+        marker = dvs.add_log_marker()
+
         # Delete all rules at once (they should be deleted in ascending priority order)
         for priority in rule_priorities:
             dvs_acl.remove_acl_rule(L3_TABLE_NAME, f"DELETE_ORDER_TEST_RULE_{priority}")
@@ -874,7 +897,24 @@ class TestAcl:
             dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"DELETE_ORDER_TEST_RULE_{priority}", None)
         dvs_acl.verify_no_acl_rules()
 
-    def test_AclRuleMixedPriorityOperations(self, dvs_acl, l3_acl_table):
+        # Verify the order of DEL operations in syslog (should be ascending: 10, 50, 100, 150, 200)
+        expected_order = ["10", "50", "100", "150", "200"]
+        (exitcode, log_output) = dvs.runcmd(
+            ['sh', '-c', f"awk '/{marker}/,ENDFILE {{print;}}' /var/log/syslog | grep 'processing DEL in ascending priority order'"])
+
+        # Extract priorities from log lines in order
+        log_lines = log_output.strip().split('\n') if log_output.strip() else []
+        actual_order = []
+        for line in log_lines:
+            for priority in expected_order:
+                if f"DELETE_ORDER_TEST_RULE_{priority}" in line and f"PRIORITY: {priority}" in line:
+                    actual_order.append(priority)
+                    break
+
+        # Verify the rules were processed in ascending priority order
+        assert actual_order == expected_order, f"Expected DEL order {expected_order}, but got {actual_order}"
+
+    def test_AclRuleMixedPriorityOperations(self, dvs, dvs_acl, l3_acl_table):
         """
         Test mixed SET and DEL operations with different priorities.
         Verifies that DEL operations (ascending order) are processed before SET operations (descending order).
@@ -889,6 +929,9 @@ class TestAcl:
                                     action="DROP",
                                     priority=priority)
             dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"MIXED_OP_RULE_{priority}", "Active")
+
+        # Add log marker before mixed operations
+        marker = dvs.add_log_marker()
 
         # Now delete some and add new ones
         # Delete rules with priority 50 and 150
@@ -913,6 +956,43 @@ class TestAcl:
         # Verify deleted rules are gone
         dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, "MIXED_OP_RULE_50", None)
         dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, "MIXED_OP_RULE_150", None)
+
+        # Verify the order of operations in syslog
+        # DEL operations should be processed first (in ascending order: 50, 150)
+        # Then SET operations (in descending order: 200, 75, 25)
+        (exitcode, log_output) = dvs.runcmd(
+            ['sh', '-c', f"awk '/{marker}/,ENDFILE {{print;}}' /var/log/syslog | grep -E 'processing (DEL|SET) in (ascending|descending) priority order'"])
+
+        log_lines = log_output.strip().split('\n') if log_output.strip() else []
+
+        # Extract operation type and priority from each log line
+        operations = []
+        for line in log_lines:
+            if "MIXED_OP_RULE_" in line:
+                if "processing DEL" in line:
+                    if "MIXED_OP_RULE_50" in line and "PRIORITY: 50" in line:
+                        operations.append(("DEL", "50"))
+                    elif "MIXED_OP_RULE_150" in line and "PRIORITY: 150" in line:
+                        operations.append(("DEL", "150"))
+                elif "processing SET" in line:
+                    if "MIXED_OP_RULE_200" in line and "PRIORITY: 200" in line:
+                        operations.append(("SET", "200"))
+                    elif "MIXED_OP_RULE_75" in line and "PRIORITY: 75" in line:
+                        operations.append(("SET", "75"))
+                    elif "MIXED_OP_RULE_25" in line and "PRIORITY: 25" in line:
+                        operations.append(("SET", "25"))
+
+        # Expected order: DEL operations first (ascending: 50, 150), then SET operations (descending: 200, 75, 25)
+        expected_operations = [
+            ("DEL", "50"),
+            ("DEL", "150"),
+            ("SET", "200"),
+            ("SET", "75"),
+            ("SET", "25")
+        ]
+
+        # Verify the operations were processed in the correct order
+        assert operations == expected_operations, f"Expected operation order {expected_operations}, but got {operations}"
 
         # Clean up
         for priority in remaining_priorities:

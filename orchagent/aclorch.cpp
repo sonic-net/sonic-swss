@@ -5525,7 +5525,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
         string rule_id;
         string op;
         uint32_t priority;
-        KeyOpFieldsValuesTuple tuple;
+        const KeyOpFieldsValuesTuple* tuple;
     };
 
     // Collect all rules and extract their priorities
@@ -5535,12 +5535,12 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        KeyOpFieldsValuesTuple t = it->second;
-        string key = kfvKey(t);
+        const KeyOpFieldsValuesTuple* data_ptr = &(it->second);
+        string key = kfvKey(*data_ptr);
         size_t found = key.find(consumer.getConsumerTable()->getTableNameSeparator().c_str());
         string table_id = key.substr(0, found);
         string rule_id = key.substr(found + 1);
-        string op = kfvOp(t);
+        string op = kfvOp(*data_ptr);
 
         RuleEntry entry;
         entry.iter = it;
@@ -5548,32 +5548,48 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
         entry.table_id = table_id;
         entry.rule_id = rule_id;
         entry.op = op;
-        entry.tuple = t;
+        entry.tuple = data_ptr;
         entry.priority = 0;
 
-        // Extract priority for both SET and DEL operations
-        for (const auto& fv : kfvFieldsValues(t))
-        {
-            string attr_name = to_upper(fvField(fv));
-            if (attr_name == "PRIORITY")
-            {
-                entry.priority = (uint32_t)stoul(fvValue(fv));
-                break;
-            }
-        }
-
+        // Extract priority based on operation type
         if (op == SET_COMMAND)
         {
+            // For SET operations, extract priority from field values
+            for (const auto& fv : kfvFieldsValues(*data_ptr))
+            {
+                string attr_name = to_upper(fvField(fv));
+                if (attr_name == "PRIORITY")
+                {
+                    entry.priority = (uint32_t)stoul(fvValue(fv));
+                    break;
+                }
+            }
             setRules.push_back(entry);
+        }
+        else if (op == DEL_COMMAND)
+        {
+            // Redis DEL operations do not carry field values, only the key is present.
+            // Look up priority from existing in-memory rule map
+            auto existingRule = getAclRule(table_id, rule_id);
+            if (existingRule)
+            {
+                entry.priority = existingRule->getPriority();
+            }
+            delRules.push_back(entry);
         }
         else
         {
-            delRules.push_back(entry);
+            SWSS_LOG_ERROR("Unknown operation type %s for ACL rule %s", op.c_str(), key.c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
         }
-
         it++;
     }
 
+    // Optimization: Sort rules by priority to minimize hardware TCAM shifting.
+    // This priority-based sorting is specifically optimized for bulk-update scenarios.
+    // In low-load scenarios with few entries, the shifting overhead is minimal, but in high-scale
+    // updates, this reduces programming time by ensuring rules are sent to SAI in priority order.
     // Sort SET rules by priority (higher priority value = higher priority, so descending order)
     sort(setRules.begin(), setRules.end(), [](const RuleEntry& a, const RuleEntry& b) {
         return a.priority > b.priority;
@@ -5584,6 +5600,8 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
         return a.priority < b.priority;
     });
 
+    // Note: All DEL operations are processed before SET operations
+    // to facilitate priority-based sorting and ensure correct rule re-programming.
     // Process DEL rules first (in ascending priority order)
     for (auto& entry : delRules)
     {
@@ -5619,7 +5637,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
     for (auto& entry : setRules)
     {
         it = entry.iter;
-        KeyOpFieldsValuesTuple t = entry.tuple;
+        const KeyOpFieldsValuesTuple& t = *(entry.tuple);
         string key = entry.key;
         string table_id = entry.table_id;
         string rule_id = entry.rule_id;
