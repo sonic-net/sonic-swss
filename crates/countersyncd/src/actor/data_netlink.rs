@@ -76,6 +76,7 @@ impl NetlinkMessageParser {
         }
     }
 
+    /// Mirrors `NLMSG_ALIGN` from `linux/netlink.h` by rounding lengths up to the next 4-byte boundary.
     fn nlmsg_align(len: usize) -> usize {
         (len + 3) & !3
     }
