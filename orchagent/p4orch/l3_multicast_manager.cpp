@@ -489,8 +489,26 @@ ReturnCode L3MulticastManager::drainMulticastGroupEntries(
     }
     auto& group_entry = *group_entry_or;
 
-    // Validate entry
+    // Validate replicas and cache the group type
     const std::string& operation = kfvOp(key_op_fvs_tuple);
+    if (operation == SET_COMMAND) {
+      ReturnCodeOr<bool> is_ipmc_or = validateReplicas(group_entry);
+      if (!is_ipmc_or.ok()) {
+        status = is_ipmc_or.status();
+        SWSS_LOG_ERROR(
+            "Replica validation failed for APP DB group entry with key  %s: %s",
+            QuotedVar(table_name + ":" + key).c_str(),
+            is_ipmc_or.status().message().c_str());
+        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                             kfvFieldsValues(key_op_fvs_tuple),
+                             is_ipmc_or.status(),
+                             /*replace=*/true);
+        break;
+      }
+      group_entry.is_ipmc = *is_ipmc_or;
+    }
+
+    // Validate entry
     status = validateMulticastGroupEntry(group_entry, operation);
     if (!status.ok()) {
       SWSS_LOG_ERROR(
@@ -811,6 +829,17 @@ std::string L3MulticastManager::verifyMulticastGroupState(
   }
   auto& app_db_entry = *app_db_entry_or;
 
+  // Validate replicas and set the group type
+  ReturnCodeOr<bool> is_ipmc_or = validateReplicas(app_db_entry);
+  if (!is_ipmc_or.ok()) {
+    std::stringstream msg;
+    msg << "Replica validation failed for multicast group DB entry with key "
+        << QuotedVar(app_db_entry.multicast_group_id) << ": "
+        << is_ipmc_or.status().message();
+    return msg.str();
+  }
+  app_db_entry.is_ipmc = *is_ipmc_or;
+
   auto* group_entry_ptr = getMulticastGroupEntry(
       app_db_entry.multicast_group_id);
   if (group_entry_ptr == nullptr) {
@@ -884,6 +913,12 @@ ReturnCodeOr<bool> L3MulticastManager::validateReplicas(
   int ipmc_rif_oid_count = 0;
   int l2_count = 0;
   int l2_bridge_port_oid_count = 0;
+  // We don't support empty group.
+  if (entry.replicas.empty()) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Multicast group " << QuotedVar(entry.multicast_group_id)
+           << " has empty replicas.";
+  }
   for (auto& replica : entry.replicas) {
     auto table_key = KeyGenerator::generateMulticastRouterInterfaceKey(
         replica.port, replica.instance);
@@ -962,10 +997,9 @@ ReturnCode L3MulticastManager::validateSetMulticastGroupEntry(
   auto* group_entry_ptr = getMulticastGroupEntry(
       multicast_group_entry.multicast_group_id);
 
-  ASSIGN_OR_RETURN(bool is_ipmc, validateReplicas(multicast_group_entry));
   sai_object_type_t sai_group_type = SAI_OBJECT_TYPE_IPMC_GROUP;
   sai_object_type_t sai_group_member_type = SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER;
-  if (!is_ipmc) {
+  if (!multicast_group_entry.is_ipmc) {
     sai_group_type = SAI_OBJECT_TYPE_L2MC_GROUP;
     sai_group_member_type = SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER;
   }
@@ -1022,10 +1056,9 @@ ReturnCode L3MulticastManager::validateDelMulticastGroupEntry(
         << multicast_group_entry.multicast_group_id;
   }
 
-  ASSIGN_OR_RETURN(bool is_ipmc, validateReplicas(*group_entry_ptr));
   sai_object_type_t sai_group_type = SAI_OBJECT_TYPE_IPMC_GROUP;
   sai_object_type_t sai_group_member_type = SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER;
-  if (!is_ipmc) {
+  if (!group_entry_ptr->is_ipmc) {
     sai_group_type = SAI_OBJECT_TYPE_L2MC_GROUP;
     sai_group_member_type = SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER;
   }
@@ -2357,25 +2390,7 @@ std::vector<ReturnCode> L3MulticastManager::addMulticastGroupEntries(
   fillStatusArrayWithNotExecuted(statuses, 0);
   for (size_t i = 0; i < entries.size(); ++i) {
     auto& entry = entries[i];
-
-    if (entry.replicas.size() == 0) {
-      // We cannot create a group with no members, since there is no way to
-      // determine if it is IP or L2 multicast.
-      statuses[i] = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                    << "Multicast group " << QuotedVar(entry.multicast_group_id)
-                    << "specified no replicas";
-      break;
-    }
-
-    // To avoid needing to back-out later, confirm RIF or bridge port OIDs
-    // exist up front.
-    ReturnCodeOr<bool> is_ipmc_or = validateReplicas(entry);
-    if (!is_ipmc_or.ok()) {
-      statuses[i] = is_ipmc_or.status();
-      break;
-    }
-    bool is_ipmc = *is_ipmc_or;
-    if (is_ipmc) {
+    if (entry.is_ipmc) {
       statuses[i] = addIpMulticastGroupEntry(entry);
     } else {
       statuses[i] = addL2MulticastGroupEntry(entry);
@@ -2718,20 +2733,8 @@ std::vector<ReturnCode> L3MulticastManager::updateMulticastGroupEntries(
       break;
     }
 
-    // To avoid needing to back-out later, confirm RIF or bridge port OIDs
-    // exist up front.
-    ReturnCodeOr<bool> is_ipmc_or = validateReplicas(entry);
-    ReturnCodeOr<bool> is_ipmc_old_or = validateReplicas(*old_entry_ptr);
-    if (!is_ipmc_or.ok()) {
-      statuses[i] = is_ipmc_or.status();
-      break;
-    }
-    if (!is_ipmc_old_or.ok()) {
-      statuses[i] = is_ipmc_old_or.status();
-      break;
-    }
-    bool is_ipmc = *is_ipmc_or;
-    bool is_ipmc_old = *is_ipmc_old_or;
+    bool is_ipmc = entry.is_ipmc;
+    bool is_ipmc_old = old_entry_ptr->is_ipmc;
     // Check that the update operation does not switch between IP and L2.
     // This is not supported, because it requires changing the SAI group from/to
     // IPMC and L2 multicast group types.
@@ -3049,15 +3052,7 @@ std::vector<ReturnCode> L3MulticastManager::deleteMulticastGroupEntries(
       break;
     }
 
-    // To avoid needing to back-out later, confirm RIF or bridge port OIDs
-    // exist up front.
-    ReturnCodeOr<bool> is_ipmc_or = validateReplicas(*old_entry_ptr);
-    if (!is_ipmc_or.ok()) {
-      statuses[i] = is_ipmc_or.status();
-      break;
-    }
-    bool is_ipmc = *is_ipmc_or;
-    if (is_ipmc) {
+    if (old_entry_ptr->is_ipmc) {
       statuses[i] = deleteIpMulticastGroupEntry(*old_entry_ptr);
     } else {
       statuses[i] = deleteL2MulticastGroupEntry(*old_entry_ptr);
@@ -3355,6 +3350,15 @@ std::string L3MulticastManager::verifyMulticastGroupStateCache(
     return msg.str();
   }
 
+  if (multicast_group_entry->is_ipmc != app_db_entry.is_ipmc) {
+    std::stringstream msg;
+    msg << "Multicast group type(is_ipmc) " << app_db_entry.is_ipmc
+        << " does not match internal cache "
+        << QuotedVar(multicast_group_entry->multicast_group_id)
+        << " in l3 multicast manager for group entry.";
+    return msg.str();
+  }
+
   // Check replicas
   if (app_db_entry.replicas.size() != multicast_group_entry->replicas.size() ||
       app_db_entry.replica_keys.size() !=
@@ -3393,14 +3397,6 @@ std::string L3MulticastManager::verifyMulticastGroupStateCache(
         << " does not match internal cache "
         << QuotedVar(multicast_group_entry->controller_metadata)
         << " in l3 multicast manager for group entry.";
-    return msg.str();
-  }
-
-  auto is_ipmc_or = validateReplicas(*multicast_group_entry);
-  if (!is_ipmc_or.ok()) {
-    std::stringstream msg;
-    msg << "Unable to determine multicast group type for "
-        << QuotedVar(multicast_group_entry->multicast_group_id);
     return msg.str();
   }
 
@@ -3514,15 +3510,7 @@ std::string L3MulticastManager::verifyL2MulticastGroupStateAsicDb(
 
 std::string L3MulticastManager::verifyMulticastGroupStateAsicDb(
     const P4MulticastGroupEntry* multicast_group_entry) {
-  auto is_ipmc_or = validateReplicas(*multicast_group_entry);
-  if (!is_ipmc_or.ok()) {
-    std::stringstream msg;
-    msg << "Unable to determine multicast group type for "
-        << QuotedVar(multicast_group_entry->multicast_group_id);
-    return msg.str();
-  }
-  bool is_ipmc = *is_ipmc_or;
-  if (is_ipmc) {
+  if (multicast_group_entry->is_ipmc) {
     return verifyIpMulticastGroupStateAsicDb(multicast_group_entry);
   } else {
     return verifyL2MulticastGroupStateAsicDb(multicast_group_entry);
