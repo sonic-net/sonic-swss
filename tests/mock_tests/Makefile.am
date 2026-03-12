@@ -75,6 +75,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 dashportmaporch_ut.cpp \
                 twamporch_ut.cpp \
                 stporch_ut.cpp \
+                srv6orch_ut.cpp \
                 flexcounter_ut.cpp \
                 portphyattr_ut.cpp \
                 counternameupdater_ut.cpp \
