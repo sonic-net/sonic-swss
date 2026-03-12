@@ -96,7 +96,7 @@ ReturnCodeOr<std::vector<sai_attribute_t>> prepareRifSaiAttrs(
     attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_PORT;
   }
   attrs.push_back(attr);
-  if (port.m_type != Port::PHY) {
+  if (port.m_type != Port::PHY && port.m_type != Port::CPU) {
     // If we need to support LAG, VLAN, or other types, we can make this a
     // case statement like:
     // https://source.corp.google.com/h/nss/codesearch/+/master:third_party/
