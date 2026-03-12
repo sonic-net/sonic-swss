@@ -9,6 +9,7 @@ use tokio::sync::mpsc::{self, Sender};
 const SOCK_PATH: &str = "/var/run/redis/redis.sock";
 const STATE_DB_ID: i32 = 6;
 const STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE: &str = "HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE";
+const SWSS_EVENT_CHANNEL_CAPACITY: usize = 32;
 
 /// SwssActor is responsible for monitoring SONiC orchestrator agent (orchagent)
 /// messages through the state database. It specifically listens for
@@ -75,7 +76,7 @@ impl SwssActor {
             mut session_table,
             template_recipient,
         } = actor;
-        let (event_sender, mut event_receiver) = mpsc::channel(32);
+        let (event_sender, mut event_receiver) = mpsc::channel(SWSS_EVENT_CHANNEL_CAPACITY);
 
         let _reader_thread = match thread::Builder::new()
             .name("countersyncd-swss".to_string())
@@ -175,7 +176,10 @@ impl SwssActor {
                         }
                         Ok(events)
                     }
-                    Err(e) => Err(format!("Error popping items from session table: {}", e)),
+                    Err(e) => {
+                        error!("Error popping items from session table: {}", e);
+                        Ok(events)
+                    }
                 },
                 swss_common::SelectResult::Timeout => {
                     debug!("Timeout waiting for session table updates");
@@ -235,7 +239,6 @@ impl SwssActor {
     /// # Arguments
     /// * `key` - Session key (e.g., "test|PORT")  
     /// * `field_values` - HashMap of field-value pairs from the state DB
-    #[cfg(test)]
     async fn handle_session_update(
         &mut self,
         key: &str,
@@ -286,7 +289,6 @@ impl SwssActor {
     /// # Arguments
     /// * `key` - Session identifier
     /// * `session_data` - Parsed session configuration
-    #[cfg(test)]
     async fn validate_and_process_session(
         &mut self,
         key: &str,
@@ -358,7 +360,6 @@ impl SwssActor {
     ///
     /// # Arguments
     /// * `key` - Session key that was deleted
-    #[cfg(test)]
     async fn handle_session_delete(&mut self, key: &str) {
         Self::process_session_delete(&self.template_recipient, key).await;
     }

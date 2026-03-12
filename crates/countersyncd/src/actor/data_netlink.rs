@@ -55,8 +55,8 @@ const DEBUG_LOG_INTERVAL: u32 = 3000; // 3000 * 10ms = 30 seconds
 /// WouldBlock debug logging interval (in iterations) - log WouldBlock every minute
 const WOULDBLOCK_LOG_INTERVAL: u32 = 6000; // 6000 * 10ms = 1 minute
 
-/// Socket readiness check timeout in milliseconds
-const SOCKET_READINESS_TIMEOUT_MS: u64 = 10;
+/// Poll interval (ms) for trying a non-blocking netlink recv on the data socket.
+const SOCKET_POLL_INTERVAL_MS: u64 = 10;
 
 /// Maximum size for buffering incomplete messages (1MB)
 const MAX_INCOMPLETE_MESSAGE_SIZE: usize = 1024 * 1024;
@@ -665,6 +665,7 @@ impl DataNetlinkActor {
         #[cfg(not(test))]
         let result = {
             let fd = socket.as_raw_fd();
+            // Safe on the Tokio worker because the fd is already configured as non-blocking.
             unsafe {
                 libc::recv(
                     fd,
@@ -748,7 +749,7 @@ impl DataNetlinkActor {
         );
         let mut heartbeat_counter = 0u32;
         let mut consecutive_failures = 0u32;
-        let mut poll_interval = interval(Duration::from_millis(SOCKET_READINESS_TIMEOUT_MS));
+        let mut poll_interval = interval(Duration::from_millis(SOCKET_POLL_INTERVAL_MS));
         poll_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         loop {
