@@ -58,6 +58,7 @@ struct P4Replica {
 // Table entries for replication_multicast_group_table.
 struct P4MulticastGroupEntry {
   std::string multicast_group_id;  // Also a unique key for the entry.
+  bool is_ipmc;
   std::vector<P4Replica> replicas;
   std::string multicast_metadata;
   std::string controller_metadata;
