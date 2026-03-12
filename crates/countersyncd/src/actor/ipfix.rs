@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap as StdHashMap, collections::LinkedList, rc::Rc, time::SystemTime};
+use std::{cell::RefCell, collections::LinkedList, rc::Rc, time::SystemTime};
 
 use ahash::{HashMap, HashMapExt};
 use byteorder::{ByteOrder, NetworkEndian};
@@ -500,7 +500,7 @@ pub struct IpfixActor {
     /// Mapping from message key to template IDs for applied templates
     applied_templates_map: HashMap<String, Vec<u16>>,
     /// Precomputed lookup from object ID/label to object name for O(1) stat resolution
-    object_id_name_map: StdHashMap<String, StdHashMap<u16, String>>,
+    object_id_name_map: HashMap<String, HashMap<u16, String>>,
 }
 
 impl IpfixActor {
@@ -524,7 +524,7 @@ impl IpfixActor {
             record_recipient,
             temporary_templates_map: HashMap::new(),
             applied_templates_map: HashMap::new(),
-            object_id_name_map: StdHashMap::new(),
+            object_id_name_map: HashMap::new(),
         }
     }
 
@@ -623,14 +623,28 @@ impl IpfixActor {
 
         if let (Some(object_names), Some(object_ids)) = (&templates.object_names, &templates.object_ids) {
             if object_ids.len() == object_names.len() {
-                self.object_id_name_map.insert(
-                    templates.key.clone(),
-                    object_ids
-                        .iter()
-                        .copied()
-                        .zip(object_names.iter().cloned())
-                        .collect(),
-                );
+                let mut lookup = HashMap::with_capacity(object_ids.len());
+                let mut has_duplicate_object_id = false;
+
+                for (object_id, object_name) in object_ids.iter().copied().zip(object_names.iter().cloned()) {
+                    if let Some(previous_name) = lookup.insert(object_id, object_name.clone()) {
+                        warn!(
+                            "IPFIX template key {} contains duplicate object_id {} ({} -> {}). Skipping object_id_name_map entry to avoid ambiguous label resolution.",
+                            templates.key,
+                            object_id,
+                            previous_name,
+                            object_name
+                        );
+                        has_duplicate_object_id = true;
+                        break;
+                    }
+                }
+
+                if has_duplicate_object_id {
+                    self.object_id_name_map.remove(&templates.key);
+                } else {
+                    self.object_id_name_map.insert(templates.key.clone(), lookup);
+                }
             } else {
                 warn!(
                     "IPFIX template object_ids/object_names length mismatch for key {}: ids={}, names={}. Skipping object_id_name_map entry.",

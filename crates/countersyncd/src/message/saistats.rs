@@ -4,8 +4,9 @@
 //! extracted from IPFIX data records. SAI statistics contain information
 //! about switch hardware counters and performance metrics.
 
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
+use ahash::HashMap;
 use byteorder::{ByteOrder, NetworkEndian};
 use ipfixrw::parser::{DataRecordValue, FieldSpecifier};
 
@@ -349,6 +350,17 @@ mod tests {
         let stat = SAIStat::from_ipfix(&field_spec, &value, Some(&object_name_lookup));
 
         assert_eq!(stat.object_name, "Ethernet8");
+        assert_eq!(stat.counter, 1000);
+    }
+
+    #[test]
+    fn test_sai_stat_from_ipfix_without_lookup_uses_unknown_label() {
+        let field_spec = create_field_spec(20, Some(0x00010002));
+        let value = create_byte_value(1000);
+
+        let stat = SAIStat::from_ipfix(&field_spec, &value, None);
+
+        assert_eq!(stat.object_name, "unknown_20");
         assert_eq!(stat.counter, 1000);
     }
 
