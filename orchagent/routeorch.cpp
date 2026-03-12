@@ -34,6 +34,7 @@ extern ArsOrch *gArsOrch;
 
 extern size_t gMaxBulkSize;
 extern string gMySwitchType;
+extern bool gEnableFibSuppress;
 
 /* Default maximum number of next hop groups */
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
@@ -3383,6 +3384,11 @@ void RouteOrch::decNhgRefCount(const std::string &nhg_index, const std::string &
 void RouteOrch::publishRouteState(const RouteBulkContext& ctx, const ReturnCode& status)
 {
     SWSS_LOG_ENTER();
+
+    if (!gEnableFibSuppress)
+    {
+        return;
+    }
 
     std::vector<FieldValueTuple> fvs;
 
