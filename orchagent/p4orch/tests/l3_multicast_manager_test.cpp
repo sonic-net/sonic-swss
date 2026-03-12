@@ -417,7 +417,8 @@ class L3MulticastManagerTest : public ::testing::Test {
     group_entry.multicast_group_id = multicast_group_id;
     group_entry.is_ipmc = is_ipmc;
     for (auto& r : replicas) {
-      group_entry.replicas.push_back(r);
+      group_entry.replicas.push_back(std::vector<P4Replica>{r});
+      group_entry.active_replicas.push_back(r);
       group_entry.replica_keys.insert(r.key);
     }
     group_entry.multicast_metadata = multicast_metadata;
@@ -782,21 +783,12 @@ class L3MulticastManagerTest : public ::testing::Test {
       const P4MulticastGroupEntry& x, const P4MulticastGroupEntry& y) {
     EXPECT_EQ(x.multicast_group_id, y.multicast_group_id);
 
-    EXPECT_EQ(x.replicas.size(), y.replicas.size());
-    if (x.replicas.size() == y.replicas.size()) {
-      for (size_t i = 0; i < x.replicas.size(); ++i) {
-        EXPECT_EQ(x.replicas.at(i).port, y.replicas.at(i).port);
-        EXPECT_EQ(x.replicas.at(i).instance, y.replicas.at(i).instance);
-      }
-    }
+    EXPECT_EQ(x.replicas, y.replicas);
+    EXPECT_EQ(x.active_replicas, y.active_replicas);
+    EXPECT_EQ(x.replica_keys, y.replica_keys);
 
     EXPECT_EQ(x.multicast_metadata, y.multicast_metadata);
     EXPECT_EQ(x.controller_metadata, y.controller_metadata);
-
-    EXPECT_EQ(x.replica_keys.size(), y.replica_keys.size());
-    for (auto& key : x.replica_keys) {
-      EXPECT_NE(y.replica_keys.find(key), y.replica_keys.end());
-    }
   }
 
   void SetUp() override {
@@ -1418,8 +1410,16 @@ TEST_F(L3MulticastManagerTest, DeserializeMulticastGroupEntryTest) {
       R"("multicast_replica_port":"Ethernet1"},)"
       R"({"multicast_replica_instance":"0x0",)"
       R"("multicast_replica_port":"Ethernet2"}])";
+  const std::string backup_array = 
+      R"([[{"multicast_replica_instance":"0x0",)"
+      R"("multicast_replica_port":"Ethernet3"},)"
+      R"({"multicast_replica_instance":"0x0",)"
+      R"("multicast_replica_port":"Ethernet4"}],)"
+      R"([]])";
+
   attributes.push_back(
       swss::FieldValueTuple{"replicas", json_array});
+  attributes.push_back(swss::FieldValueTuple{"backups", backup_array});
   attributes.push_back(
       swss::FieldValueTuple{p4orch::kMulticastMetadata, "meta1"});
   attributes.push_back(
@@ -1429,11 +1429,19 @@ TEST_F(L3MulticastManagerTest, DeserializeMulticastGroupEntryTest) {
       key, attributes);
   ASSERT_TRUE(replication_entry_or.ok());
   auto& replication_entry = *replication_entry_or;
+  replication_entry.active_replicas =
+      std::vector<P4Replica>{P4Replica("0x1", "Ethernet1", "0x0"),
+                             P4Replica("0x1", "Ethernet2", "0x0")};
   auto expect_entry = GenerateP4MulticastGroupEntry(
     "0x1",
     {P4Replica("0x1", "Ethernet1", "0x0"),
      P4Replica("0x1", "Ethernet2", "0x0")},
     "meta1", "so_meta");
+
+  expect_entry.replicas[0].push_back(P4Replica("0x1", "Ethernet3", "0x0"));
+  expect_entry.replicas[0].push_back(P4Replica("0x1", "Ethernet4", "0x0"));
+  expect_entry.replica_keys.insert("0x1:Ethernet3:0x0");
+  expect_entry.replica_keys.insert("0x1:Ethernet4:0x0");
   VerifyP4MulticastGroupEntryEqual(expect_entry, replication_entry);
 }
 
@@ -1539,6 +1547,114 @@ TEST_F(L3MulticastManagerTest,
 
   auto replication_entry_or = DeserializeMulticastGroupEntry(
       key, attributes);
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, replication_entry_or.status());
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeserializeMulticastGroupEntryBackupsNotJsonTest) {
+  std::string key = "0x1";
+  std::vector<swss::FieldValueTuple> attributes;
+  const std::string json_array = R"([{"multicast_replica_instance":"0x0",)"
+                                 R"("multicast_replica_port":"Ethernet1"},)"
+                                 R"({"multicast_replica_instance":"0x0",)"
+                                 R"("multicast_replica_port":"Ethernet2"}])";
+  attributes.push_back(swss::FieldValueTuple{"replicas", json_array});
+  attributes.push_back(swss::FieldValueTuple{"backups", "[[[%%%###"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kMulticastMetadata, "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  auto replication_entry_or = DeserializeMulticastGroupEntry(key, attributes);
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, replication_entry_or.status());
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeserializeMulticastGroupEntryBackupsNotAnArrayTest) {
+  std::string key = "0x1";
+  std::vector<swss::FieldValueTuple> attributes;
+  const std::string json_array = R"([{"multicast_replica_instance":"0x0",)"
+                                 R"("multicast_replica_port":"Ethernet1"},)"
+                                 R"({"multicast_replica_instance":"0x0",)"
+                                 R"("multicast_replica_port":"Ethernet2"}])";
+  attributes.push_back(swss::FieldValueTuple{"replicas", json_array});
+  attributes.push_back(swss::FieldValueTuple{"backups", "{\"a\":\"b\"}"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kMulticastMetadata, "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  auto replication_entry_or = DeserializeMulticastGroupEntry(key, attributes);
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, replication_entry_or.status());
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeserializeMulticastGroupEntryBackupsMissingPortTest) {
+  std::string key = "0x1";
+  std::vector<swss::FieldValueTuple> attributes;
+  const std::string json_array = R"([{"multicast_replica_instance":"0x0",)"
+                                 R"("multicast_replica_port":"Ethernet1"},)"
+                                 R"({"multicast_replica_instance":"0x0",)"
+                                 R"("multicast_replica_port":"Ethernet2"}])";
+  const std::string backup_array = R"([[{"multicast_replica_instance":"0x0"},)"
+                                   R"({"multicast_replica_instance":"0x0",)"
+                                   R"("multicast_replica_port":"Ethernet3"}],)"
+                                   R"([]])";
+  attributes.push_back(swss::FieldValueTuple{"replicas", json_array});
+  attributes.push_back(swss::FieldValueTuple{"backups", backup_array});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kMulticastMetadata, "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  auto replication_entry_or = DeserializeMulticastGroupEntry(key, attributes);
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, replication_entry_or.status());
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeserializeMulticastGroupEntryBackupsMismatchLengthTest) {
+  std::string key = "0x1";
+  std::vector<swss::FieldValueTuple> attributes;
+  const std::string json_array = R"([{"multicast_replica_instance":"0x0",)"
+                                 R"("multicast_replica_port":"Ethernet1"},)"
+                                 R"({"multicast_replica_instance":"0x0",)"
+                                 R"("multicast_replica_port":"Ethernet2"}])";
+  const std::string backup_array = R"([[{"multicast_replica_instance":"0x0",)"
+                                   R"("multicast_replica_port":"Ethernet3"},)"
+                                   R"({"multicast_replica_instance":"0x0",)"
+                                   R"("multicast_replica_port":"Ethernet4"}])";
+  attributes.push_back(swss::FieldValueTuple{"replicas", json_array});
+  attributes.push_back(swss::FieldValueTuple{"backups", backup_array});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kMulticastMetadata, "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  auto replication_entry_or = DeserializeMulticastGroupEntry(key, attributes);
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, replication_entry_or.status());
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeserializeMulticastGroupEntryDuplicateBackupsTest) {
+  std::string key = "0x1";
+  std::vector<swss::FieldValueTuple> attributes;
+  const std::string json_array = R"([{"multicast_replica_instance":"0x0",)"
+                                 R"("multicast_replica_port":"Ethernet1"},)"
+                                 R"({"multicast_replica_instance":"0x0",)"
+                                 R"("multicast_replica_port":"Ethernet2"}])";
+  const std::string backup_array = R"([[{"multicast_replica_instance":"0x0",)"
+                                   R"("multicast_replica_port":"Ethernet3"},)"
+                                   R"({"multicast_replica_instance":"0x0",)"
+                                   R"("multicast_replica_port":"Ethernet2"}],)"
+                                   R"([]])";
+  attributes.push_back(swss::FieldValueTuple{"replicas", json_array});
+  attributes.push_back(swss::FieldValueTuple{"backups", backup_array});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kMulticastMetadata, "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  auto replication_entry_or = DeserializeMulticastGroupEntry(key, attributes);
   EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, replication_entry_or.status());
 }
 

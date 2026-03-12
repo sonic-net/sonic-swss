@@ -53,13 +53,24 @@ struct P4Replica {
         instance(instance_number) {
     key = group_id + ":" + port_name + ":" + instance_number;
   }
+
+  bool operator==(const P4Replica& replica) const {
+    return multicast_group_id == replica.multicast_group_id &&
+           port == replica.port && instance == replica.instance &&
+           key == replica.key;
+  }
 };
 
 // Table entries for replication_multicast_group_table.
 struct P4MulticastGroupEntry {
   std::string multicast_group_id;  // Also a unique key for the entry.
   bool is_ipmc;
-  std::vector<P4Replica> replicas;
+  // For each group member, there is a list of replicas to choose.
+  // We should choose the first replica that is up in the list.
+  // If no replica is up, we select the first replica in the list.
+  std::vector<std::vector<P4Replica>> replicas;
+  // The active replicas that the group is using.
+  std::vector<P4Replica> active_replicas;
   std::string multicast_metadata;
   std::string controller_metadata;
   // Used as a quick lookup for what replicas are in use.
@@ -162,6 +173,9 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Performs multicast group entry validation for DEL command.
   ReturnCode validateDelMulticastGroupEntry(
       const P4MulticastGroupEntry& multicast_group_entry);
+
+  // Select the replicas to be used in a group.
+  void setActiveReplicas(P4MulticastGroupEntry& multicast_group_entry);
 
   // Processes a list of entries of the same operation type for the multicast
   // router interface table.

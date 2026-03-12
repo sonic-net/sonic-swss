@@ -263,6 +263,49 @@ std::vector<sai_attribute_t> prepareL2MulticastGroupMemberSaiAttrs(
   return attrs;
 }
 
+ReturnCodeOr<std::vector<P4Replica>> deserializeReplicas(
+    const std::string& group_id, const nlohmann::json& replica_json) {
+  std::vector<P4Replica> replicas;
+  if (!replica_json.is_array()) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Invalid multicast replicas JSON, expecting an array.";
+  }
+
+  for (auto& replica_map : replica_json) {
+    std::string port_name;
+    std::string instance;
+
+    if (replica_map.find(p4orch::kMulticastReplicaPort) != replica_map.end()) {
+      port_name = replica_map.at(p4orch::kMulticastReplicaPort);
+    } else {
+      return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+             << "Failed to deserialize multicast replica, "
+             << p4orch::kMulticastReplicaPort
+             << " is missing: " << QuotedVar(replica_map.dump());
+    }
+
+    if (replica_map.find(p4orch::kMulticastReplicaInstance) !=
+        replica_map.end()) {
+      instance = replica_map.at(p4orch::kMulticastReplicaInstance);
+    } else {
+      return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+             << "Failed to deserialize multicast replica, "
+             << p4orch::kMulticastReplicaInstance
+             << " is missing: " << QuotedVar(replica_map.dump());
+    }
+
+    if (port_name.empty() || instance.empty()) {
+      return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+             << "Invalid multicast group table replica: "
+             << QuotedVar(replica_map.dump());
+    }
+
+    P4Replica replica = P4Replica(group_id, port_name, instance);
+    replicas.push_back(replica);
+  }
+  return replicas;
+}
+
 }  // namespace
 
 L3MulticastManager::L3MulticastManager(P4OidMapper* mapper, VRFOrch* vrfOrch,
@@ -520,6 +563,11 @@ ReturnCode L3MulticastManager::drainMulticastGroupEntries(
       break;
     }
 
+    // Select replicas to use.
+    if (operation == SET_COMMAND) {
+      setActiveReplicas(group_entry);
+    }
+
     // Now, start processing batch of entries.
     auto* group_entry_ptr = getMulticastGroupEntry(
       group_entry.multicast_group_id);
@@ -652,6 +700,20 @@ L3MulticastManager::deserializeMulticastRouterInterfaceEntry(
          },
          ...
       ],
+      "backups": [
+         [
+            {
+               "multicast_replica_instance": "0x1",
+               "multicast_replica_port": "Ethernet4"
+            },
+            {
+               "multicast_replica_instance": "0x1",
+               "multicast_replica_port": "Ethernet6"
+            }
+         ],
+         [],
+         ...
+      ],
       "controller_metadata" = "...",  // optional
       "multicast_metadata" = "...",   // optional
   }
@@ -664,6 +726,8 @@ L3MulticastManager::deserializeMulticastGroupEntry(
 
   P4MulticastGroupEntry group_entry = {};
   group_entry.multicast_group_id = key;
+  std::vector<P4Replica> primary_replicas;
+  std::vector<std::vector<P4Replica>> backup_replicas;
 
   for (const auto& it : attributes) {
     const auto& field = fvField(it);
@@ -677,64 +741,39 @@ L3MulticastManager::deserializeMulticastGroupEntry(
     } else if (field == p4orch::kReplicas) {
       try {
         nlohmann::json replica_json = nlohmann::json::parse(value);
-        if (!replica_json.is_array()) {
-          return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                 << "Invalid L3 multicast replicas " << QuotedVar(value)
-                 << ", expecting an array.";
+        auto primary_replicas_or =
+            deserializeReplicas(group_entry.multicast_group_id, replica_json);
+        if (!primary_replicas_or.ok()) {
+          return primary_replicas_or.status();
+        } else {
+          primary_replicas = *primary_replicas_or;
         }
-
-        for (auto& replica_map : replica_json) {
-          std::string port_name;
-          std::string instance;
-
-          if (replica_map.find(p4orch::kMulticastReplicaPort) !=
-              replica_map.end()) {
-            port_name = replica_map.at(p4orch::kMulticastReplicaPort);
-          } else {
-            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                   << "Failed to deserialize multicast replica, "
-                   << p4orch::kMulticastReplicaPort
-                   << " is missing: "
-                   << QuotedVar(value);
-          }
-
-          if (replica_map.find(p4orch::kMulticastReplicaInstance) !=
-              replica_map.end()) {
-            instance = replica_map.at(p4orch::kMulticastReplicaInstance);
-          } else {
-            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                   << "Failed to deserialize multicast replica, "
-                   << p4orch::kMulticastReplicaInstance
-                   << " is missing: "
-                   << QuotedVar(value);
-          }
-
-          if (port_name.empty() || instance.empty()) {
-            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                   << "Invalid multicast group table replica "
-                   << QuotedVar(value)
-                   << " for key "
-                   << QuotedVar(key);
-          }
-
-          P4Replica replica = P4Replica(group_entry.multicast_group_id,
-                                        port_name,
-                                        instance);
-	  if (group_entry.replica_keys.find(replica.key) !=
-              group_entry.replica_keys.end()) {
-            // Duplicate replica invalid
-            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                   << "Duplicate multicast group table replica "
-                   << QuotedVar(field)
-                   << " for key "
-                   << QuotedVar(key);
-          }
-          group_entry.replicas.push_back(replica);
-	  group_entry.replica_keys.insert(replica.key);
-        }  // for replica_map
       } catch (std::exception& ex) {
         return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
                << "Failed to deserialize multicast replication table replicas "
+               << value;
+      }
+    } else if (field == p4orch::kBackups) {
+      
+      try {
+        nlohmann::json replica_json = nlohmann::json::parse(value);
+        if (!replica_json.is_array()) {
+          return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                 << "Invalid multicast replicas JSON, expecting an array.";
+        }
+        for (auto& backups : replica_json) {
+          auto backup_replicas_or =
+              deserializeReplicas(group_entry.multicast_group_id, backups);
+          if (!backup_replicas_or.ok()) {
+            return backup_replicas_or.status();
+          } else {
+            backup_replicas.push_back(*backup_replicas_or);
+          }
+        }
+      } catch (std::exception& ex) {
+        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Failed to deserialize multicast replication table backup "
+                  "replicas "
                << value;
       }
     } else {
@@ -742,8 +781,40 @@ L3MulticastManager::deserializeMulticastGroupEntry(
              << "Unexpected field " << QuotedVar(field) << " in "
              << APP_P4RT_REPLICATION_IP_MULTICAST_TABLE_NAME;
     }
-
   }
+
+  if (!backup_replicas.empty() &&
+      backup_replicas.size() != primary_replicas.size()) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Mismatch length in primary and backup replicas for key "
+           << QuotedVar(key);
+  }
+
+  for (size_t i = 0; i < primary_replicas.size(); ++i) {
+    if (group_entry.replica_keys.find(primary_replicas[i].key) !=
+        group_entry.replica_keys.end()) {
+      // Duplicate replica invalid
+      return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+             << "Duplicate multicast group table replica for key "
+             << QuotedVar(key);
+    }
+    group_entry.replicas.push_back(std::vector<P4Replica>{primary_replicas[i]});
+    group_entry.replica_keys.insert(primary_replicas[i].key);
+    if (!backup_replicas.empty()) {
+      for (const auto& replica : backup_replicas[i]) {
+        if (group_entry.replica_keys.find(replica.key) !=
+            group_entry.replica_keys.end()) {
+          // Duplicate replica invalid
+          return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                 << "Duplicate multicast group table replica for key "
+                 << QuotedVar(key);
+        }
+        group_entry.replicas[i].push_back(replica);
+        group_entry.replica_keys.insert(replica.key);
+      }
+    }
+  }
+
   return group_entry;
 }
 
@@ -919,36 +990,38 @@ ReturnCodeOr<bool> L3MulticastManager::validateReplicas(
            << "Multicast group " << QuotedVar(entry.multicast_group_id)
            << " has empty replicas.";
   }
-  for (auto& replica : entry.replicas) {
-    auto table_key = KeyGenerator::generateMulticastRouterInterfaceKey(
-        replica.port, replica.instance);
-    auto* router_interface_entry_ptr =
-        getMulticastRouterInterfaceEntry(table_key);
+  for (auto& replica_list : entry.replicas) {
+    for (auto& replica : replica_list) {
+      auto table_key = KeyGenerator::generateMulticastRouterInterfaceKey(
+          replica.port, replica.instance);
+      auto* router_interface_entry_ptr =
+          getMulticastRouterInterfaceEntry(table_key);
 
-    if (router_interface_entry_ptr == nullptr) {
-      return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-             << "No corresponding "
-             << APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME
-             << " entry found for multicast group "
-             << QuotedVar(replica.multicast_group_id) << " replica "
-             << QuotedVar(replica.key);
-    // TODO: Remove condition for kL2MulticastPassthrough
-    } else if (router_interface_entry_ptr->action !=
-                   p4orch::kL2MulticastPassthrough &&
-               router_interface_entry_ptr->action !=
-                   p4orch::kMulticastL2Passthrough) {
-      ipmc_count++;
-      if (getRifOid(replica) != SAI_NULL_OBJECT_ID) {
-        ipmc_rif_oid_count++;
-      }
-    // TODO: Remove condition for kL2MulticastPassthrough
-    } else if (router_interface_entry_ptr->action ==
-	       p4orch::kL2MulticastPassthrough ||
-               router_interface_entry_ptr->action ==
-                   p4orch::kMulticastL2Passthrough) {
-      l2_count++;
-      if (getBridgePortOid(replica) != SAI_NULL_OBJECT_ID) {
-        l2_bridge_port_oid_count++;
+      if (router_interface_entry_ptr == nullptr) {
+        return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+               << "No corresponding "
+               << APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME
+               << " entry found for multicast group "
+               << QuotedVar(replica.multicast_group_id) << " replica "
+               << QuotedVar(replica.key);
+        // TODO: Remove condition for kL2MulticastPassthrough
+      } else if (router_interface_entry_ptr->action !=
+                     p4orch::kL2MulticastPassthrough &&
+                 router_interface_entry_ptr->action !=
+                     p4orch::kMulticastL2Passthrough) {
+        ipmc_count++;
+        if (getRifOid(replica) != SAI_NULL_OBJECT_ID) {
+          ipmc_rif_oid_count++;
+        }
+        // TODO: Remove condition for kL2MulticastPassthrough
+      } else if (router_interface_entry_ptr->action ==
+                     p4orch::kL2MulticastPassthrough ||
+                 router_interface_entry_ptr->action ==
+                     p4orch::kMulticastL2Passthrough) {
+        l2_count++;
+        if (getBridgePortOid(replica) != SAI_NULL_OBJECT_ID) {
+          l2_bridge_port_oid_count++;
+        }
       }
     }
   }
@@ -959,14 +1032,6 @@ ReturnCodeOr<bool> L3MulticastManager::validateReplicas(
            << "Multicast group " << QuotedVar(entry.multicast_group_id)
            << " has a mix of IPMC (" << ipmc_count << ") and L2 " << "("
            << l2_count << ") replicas.";
-  }
-  // All members must have an associated entry.
-  if ((ipmc_count + l2_count) != static_cast<int>(entry.replicas.size())) {
-    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-           << "Multicast group " << QuotedVar(entry.multicast_group_id)
-           << " has replicas missing associated entries in table "
-           << APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME << " (missing "
-           << (entry.replicas.size() - l2_count - ipmc_count) << ")";
   }
 
   if (ipmc_count != 0) {
@@ -1018,23 +1083,25 @@ ReturnCode L3MulticastManager::validateSetMulticastGroupEntry(
     // An update operation may add or delete members.
     // For add, confirm the member did not have an oid.
     // For update, confirm the member had an oid.
-    for (auto& replica : multicast_group_entry.replicas) {
-      bool member_exists_in_mapper =
-          m_p4OidMapper->existsOID(sai_group_member_type, replica.key);
-      if (group_entry_ptr->replica_keys.find(replica.key) ==
-          group_entry_ptr->replica_keys.end()) {  // Add member.
-        if (member_exists_in_mapper) {
-          LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-              << "Multicast group member to add "
-              << QuotedVar(replica.key)
-              << " already exists in the central mapper.");
-        }
-      } else {  // Update member.
-        if (!member_exists_in_mapper) {
-          LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-              << "Multicast group member to delete "
-              << QuotedVar(replica.key)
-              << " does not exist in the central mapper.");
+    for (auto& replica_list : multicast_group_entry.replicas) {
+      for (auto& replica : replica_list) {
+        bool member_exists_in_mapper =
+            m_p4OidMapper->existsOID(sai_group_member_type, replica.key);
+        if (group_entry_ptr->replica_keys.find(replica.key) ==
+            group_entry_ptr->replica_keys.end()) {  // Add member.
+          if (member_exists_in_mapper) {
+            LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INTERNAL)
+                                 << "Multicast group member to add "
+                                 << QuotedVar(replica.key)
+                                 << " already exists in the central mapper.");
+          }
+        } else {  // Update member.
+          if (!member_exists_in_mapper) {
+            LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INTERNAL)
+                                 << "Multicast group member to delete "
+                                 << QuotedVar(replica.key)
+                                 << " does not exist in the central mapper.");
+          }
         }
       }
     }
@@ -1072,7 +1139,7 @@ ReturnCode L3MulticastManager::validateDelMulticastGroupEntry(
   }
 
   // Confirm members had member OIDs.
-  for (auto& replica : group_entry_ptr->replicas) {
+  for (auto& replica : group_entry_ptr->active_replicas) {
     if (!m_p4OidMapper->existsOID(sai_group_member_type, replica.key)) {
       return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
           << "Multicast group member does not exist in the central mapper: "
@@ -1080,6 +1147,15 @@ ReturnCode L3MulticastManager::validateDelMulticastGroupEntry(
     }
   }
   return ReturnCode();
+}
+
+void L3MulticastManager::setActiveReplicas(
+    P4MulticastGroupEntry& multicast_group_entry) {
+  // TODO: Implement active replica selection for IP multicast
+  // group. Currently just select the primary replica.
+  for (const auto& replica_list : multicast_group_entry.replicas) {
+    multicast_group_entry.active_replicas.push_back(replica_list[0]);
+  }
 }
 
 ReturnCode L3MulticastManager::validateL3SetMulticastRouterInterfaceEntry(
@@ -2119,7 +2195,7 @@ ReturnCode L3MulticastManager::addIpMulticastGroupEntry(
   // Instead of updating internal state as members are created, wait until all
   // members have been created to simplify back-out.
   std::unordered_map<std::string, sai_object_id_t> created_member_map;
-  for (auto& replica : entry.replicas) {
+  for (auto& replica : entry.active_replicas) {
     sai_object_id_t rif_oid = getRifOid(replica);
 
     // Create the group member.
@@ -2183,7 +2259,7 @@ ReturnCode L3MulticastManager::addIpMulticastGroupEntry(
   }
 
   // Group members reference multicast_router_interface entries.
-  for (auto& replica : entry.replicas) {
+  for (auto& replica : entry.active_replicas) {
     const std::string router_interface_key =
         KeyGenerator::generateMulticastRouterInterfaceKey(replica.port,
                                                           replica.instance);
@@ -2303,7 +2379,7 @@ ReturnCode L3MulticastManager::addL2MulticastGroupEntry(
   // members have been created to simplify back-out.
   std::unordered_map<std::string, sai_object_id_t> created_member_map;
   std::unordered_map<std::string, sai_object_id_t> member_bridge_port_map;
-  for (auto& replica : entry.replicas) {
+  for (auto& replica : entry.active_replicas) {
     sai_object_id_t bridge_port_oid = getBridgePortOid(replica);
 
     // Create the group member.
@@ -2363,7 +2439,7 @@ ReturnCode L3MulticastManager::addL2MulticastGroupEntry(
 
   // Update state for created group members.
   // Group members reference multicast_router_interface entries.
-  for (auto& replica : entry.replicas) {
+  for (auto& replica : entry.active_replicas) {
     const std::string router_interface_key =
         KeyGenerator::generateMulticastRouterInterfaceKey(replica.port,
                                                           replica.instance);
@@ -2419,7 +2495,7 @@ ReturnCode L3MulticastManager::updateIpMulticastGroupEntry(
   }
 
   std::vector<P4Replica> replicas_to_add;
-  for (auto& replica : entry.replicas) {
+  for (auto& replica : entry.active_replicas) {
     // New replica is not part of existing replicas.
     if (old_entry->replica_keys.find(replica.key) ==
         old_entry->replica_keys.end()) {
@@ -2428,7 +2504,7 @@ ReturnCode L3MulticastManager::updateIpMulticastGroupEntry(
   }
 
   std::vector<P4Replica> replicas_to_delete;
-  for (auto& replica : old_entry->replicas) {
+  for (auto& replica : old_entry->active_replicas) {
     // Existing replica is not part of new replicas.
     if (entry.replica_keys.find(replica.key) == entry.replica_keys.end()) {
       replicas_to_delete.push_back(replica);
@@ -2542,17 +2618,8 @@ ReturnCode L3MulticastManager::updateIpMulticastGroupEntry(
 
   }  // for replica (to add)
 
-  // Final bookkeeping.
-  // Since we updated the original entry in place, we need to replace the
-  // replicas and metadata with the new state.
-  old_entry->replicas.clear();
-  old_entry->replicas.insert(old_entry->replicas.end(), entry.replicas.begin(),
-                             entry.replicas.end());
-  old_entry->replica_keys.clear();
-  old_entry->replica_keys.insert(entry.replica_keys.begin(),
-                                 entry.replica_keys.end());
-  old_entry->controller_metadata = entry.controller_metadata;
-  old_entry->multicast_metadata = entry.multicast_metadata;
+  // Final bookkeeping. Updated the original entry in place.
+  *old_entry = entry;
   return ReturnCode();
 }
 
@@ -2573,7 +2640,7 @@ ReturnCode L3MulticastManager::updateL2MulticastGroupEntry(
   }
 
   std::vector<P4Replica> replicas_to_add;
-  for (auto& replica : entry.replicas) {
+  for (auto& replica : entry.active_replicas) {
     // New replica is not part of existing replicas.
     if (old_entry->replica_keys.find(replica.key) ==
         old_entry->replica_keys.end()) {
@@ -2582,7 +2649,7 @@ ReturnCode L3MulticastManager::updateL2MulticastGroupEntry(
   }
 
   std::vector<P4Replica> replicas_to_delete;
-  for (auto& replica : old_entry->replicas) {
+  for (auto& replica : old_entry->active_replicas) {
     // Existing replica is not part of new replicas.
     if (entry.replica_keys.find(replica.key) == entry.replica_keys.end()) {
       replicas_to_delete.push_back(replica);
@@ -2696,17 +2763,8 @@ ReturnCode L3MulticastManager::updateL2MulticastGroupEntry(
 
   }  // for replica (to add)
 
-  // Final bookkeeping.
-  // Since we updated the original entry in place, we need to replace the
-  // replicas and metadata with the new state.
-  old_entry->replicas.clear();
-  old_entry->replicas.insert(old_entry->replicas.end(), entry.replicas.begin(),
-                             entry.replicas.end());
-  old_entry->replica_keys.clear();
-  old_entry->replica_keys.insert(entry.replica_keys.begin(),
-                                 entry.replica_keys.end());
-  old_entry->controller_metadata = entry.controller_metadata;
-  old_entry->multicast_metadata = entry.multicast_metadata;
+  // Final bookkeeping. Updated the original entry in place.
+  *old_entry = entry;
   return ReturnCode();
 }
 
@@ -2864,7 +2922,7 @@ ReturnCode L3MulticastManager::deleteIpMulticastGroupEntry(
   // re-allocation does not necessarily result in the same OID.
   std::vector<P4Replica> deleted_replicas;
   std::unordered_map<std::string, sai_object_id_t> replica_rif_map;
-  for (auto& replica : entry.replicas) {
+  for (auto& replica : entry.active_replicas) {
     // Fetch the RIF used by the member.
     sai_object_id_t old_rif_oid = getRifOid(replica);
     replica_rif_map[replica.key] = old_rif_oid;
@@ -2965,7 +3023,7 @@ ReturnCode L3MulticastManager::deleteL2MulticastGroupEntry(
   // re-allocation does not necessarily result in the same OID.
   std::vector<P4Replica> deleted_replicas;
   std::unordered_map<std::string, sai_object_id_t> replica_bridge_port_map;
-  for (auto& replica : entry.replicas) {
+  for (auto& replica : entry.active_replicas) {
     // Fetch the bridge port used by the member.
     sai_object_id_t old_bridge_port_oid = getBridgePortOid(replica);
     replica_bridge_port_map[replica.key] = old_bridge_port_oid;
@@ -3360,24 +3418,26 @@ std::string L3MulticastManager::verifyMulticastGroupStateCache(
   }
 
   // Check replicas
-  if (app_db_entry.replicas.size() != multicast_group_entry->replicas.size() ||
-      app_db_entry.replica_keys.size() !=
-          multicast_group_entry->replica_keys.size()) {
+   if (app_db_entry.replicas != multicast_group_entry->replicas ||
+      app_db_entry.replica_keys != multicast_group_entry->replica_keys) {
+
     std::stringstream msg;
     msg << "Multicast group ID " << QuotedVar(app_db_entry.multicast_group_id)
-        << " has a different number of replicas than internal cache.";
+        << " has a different replicas than internal cache.";
     return msg.str();
   }
-  for (auto& replica : app_db_entry.replicas) {
-    // Check we have the P4Replica object.
-    if (multicast_group_entry->replica_keys.find(replica.key) ==
-        multicast_group_entry->replica_keys.end()) {
-      std::stringstream msg;
-      msg << "Replica " << QuotedVar(replica.key)
-          << " is missing from internal cache for multicast group "
-          << QuotedVar(multicast_group_entry->multicast_group_id)
-          << " in l3 multicast manager for group entry.";
-      return msg.str();
+  for (auto& replica_list : app_db_entry.replicas) {
+    for (auto& replica : replica_list) {
+      // Check we have the P4Replica object.
+      if (multicast_group_entry->replica_keys.find(replica.key) ==
+          multicast_group_entry->replica_keys.end()) {
+        std::stringstream msg;
+        msg << "Replica " << QuotedVar(replica.key)
+            << " is missing from internal cache for multicast group "
+            << QuotedVar(multicast_group_entry->multicast_group_id)
+            << " in l3 multicast manager for group entry.";
+        return msg.str();
+      }
     }
   }
 
@@ -3424,7 +3484,7 @@ std::string L3MulticastManager::verifyIpMulticastGroupStateAsicDb(
   // We check group members and their attributes below.
 
   // Confirm group member settings.
-  for (auto& replica : multicast_group_entry->replicas) {
+  for (auto& replica : multicast_group_entry->active_replicas) {
     // Confirm have RIF for each replica.
     sai_object_id_t rif_oid = getRifOid(replica);
 
@@ -3478,7 +3538,7 @@ std::string L3MulticastManager::verifyL2MulticastGroupStateAsicDb(
   // We check group members and their attributes below.
 
   // Confirm group member settings.
-  for (auto& replica : multicast_group_entry->replicas) {
+  for (auto& replica : multicast_group_entry->active_replicas) {
     // Confirm have RIF for each replica.
     sai_object_id_t bridge_port_oid = getBridgePortOid(replica);
 
