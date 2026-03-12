@@ -14,6 +14,8 @@
 #include "schema.h"
 #include "warm_restart.h"
 
+#include "buffer/bufferschema.h"
+
 /*
  * Some Tips
  * 1. All keys in this file are in format of APPL_DB key.
@@ -40,6 +42,7 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
         m_applBufferPoolTable(applDb, APP_BUFFER_POOL_TABLE_NAME),
         m_applStateBufferPoolTable(applStateDb, APP_BUFFER_POOL_TABLE_NAME),
         m_applBufferProfileTable(applDb, APP_BUFFER_PROFILE_TABLE_NAME),
+        m_applStateBufferProfileTable(applStateDb, APP_BUFFER_PROFILE_TABLE_NAME),
         m_applBufferObjectTables{ProducerStateTable(applDb, APP_BUFFER_PG_TABLE_NAME), ProducerStateTable(applDb, APP_BUFFER_QUEUE_TABLE_NAME)},
         m_applBufferProfileListTables{ProducerStateTable(applDb, APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME), ProducerStateTable(applDb, APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME)},
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
@@ -51,6 +54,7 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
         m_bufferPoolReady(false),
         m_bufferObjectsPending(true),
         m_bufferCompletelyInitialized(false),
+        m_bufferProfileApplDbWritten(false),
         m_mmuSizeNumber(0)
 {
     SWSS_LOG_ENTER();
@@ -852,8 +856,16 @@ void BufferMgrDynamic::checkSharedBufferPoolSize(bool force_update_during_initia
         }
     }
 
-    if (!m_mmuSize.empty())
+    // Execute recalculateSharedBufferPool when MMU size is available, and avoid extra recalculation in startup.
+    // Logic:
+    // - Non-warm start: execute as soon as MMU size is available.
+    // - Warm start: execute if buffer is completely initialized OR buffer pools are not ready.
+    if (!m_mmuSize.empty() &&
+        (!WarmStart::isWarmStart() ||
+         (WarmStart::isWarmStart() && (m_bufferCompletelyInitialized || !m_bufferPoolReady))))
+    {
         recalculateSharedBufferPool();
+    }
 }
 
 // For buffer pool, only size can be updated on-the-fly
@@ -896,12 +908,17 @@ void BufferMgrDynamic::updateBufferProfileToDb(const string &name, const buffer_
         }
         fvVector.emplace_back("xoff", profile.xoff);
     }
+    if (!profile.packet_discard_action.empty())
+    {
+        fvVector.emplace_back(BUFFER_PROFILE_PACKET_DISCARD_ACTION, profile.packet_discard_action);
+    }
     fvVector.emplace_back("size", profile.size);
     fvVector.emplace_back("pool", profile.pool_name);
     fvVector.emplace_back(mode, profile.threshold);
 
     m_applBufferProfileTable.set(name, fvVector);
     m_stateBufferProfileTable.set(name, fvVector);
+    m_bufferProfileApplDbWritten = true;
 }
 
 // Database operation
@@ -1041,6 +1058,15 @@ bool BufferMgrDynamic::isHeadroomResourceValid(const string &port, const buffer_
     // port: used to fetch the maximum headroom size
     // profile: the profile referenced by the new_pg (if provided) or all PGs
     // new_pg: which pg is newly added?
+
+    // Skip headroom validation only during warm start while initialization is incomplete.
+    // - Non-warm start: never skip.
+    // - Warm start: skip only if initialization has not completed.
+    if (WarmStart::isWarmStart() &&
+        !m_bufferCompletelyInitialized)
+    {
+        return true;
+    }
 
     if (!profile.lossless && new_pg.empty())
     {
@@ -1624,6 +1650,7 @@ void BufferMgrDynamic::refreshSharedHeadroomPool(bool enable_state_updated_by_ra
     {
         SWSS_LOG_NOTICE("Updating dynamic buffer profiles due to shared headroom pool state updated");
 
+        vector<string> profilesToCheck;
         for (auto it = m_bufferProfileLookup.begin(); it != m_bufferProfileLookup.end(); ++it)
         {
             auto &name = it->first;
@@ -1638,12 +1665,27 @@ void BufferMgrDynamic::refreshSharedHeadroomPool(bool enable_state_updated_by_ra
                           profile.speed.c_str(), profile.cable_length.c_str(), profile.port_mtu.c_str(), profile.gearbox_model.c_str());
             // recalculate the headroom size
             calculateHeadroomSize(profile);
+            m_bufferProfileApplDbWritten = false;
             if (task_process_status::task_success != doUpdateBufferProfileForSize(profile, false))
             {
                 SWSS_LOG_ERROR("Failed to update buffer profile %s when toggle shared headroom pool. See previous message for detail. Please adjust the configuration manually", name.c_str());
             }
+            // Record profiles that need SAI sync check
+            // Only check when profile is actually written to APPL_DB
+            // Skip check if invoked by handleDefaultLossLessBufferParam (enable_state_updated_by_ratio is true)
+            if (m_portInitDone && !enable_state_updated_by_ratio && m_bufferProfileApplDbWritten)
+            {
+                profilesToCheck.push_back(name);
+            }
         }
         SWSS_LOG_NOTICE("Updating dynamic buffer profiles finished");
+
+        // Save profiles that need SAI sync check to member variable
+        // The caller is responsible for checking SAI sync status
+        if (!profilesToCheck.empty())
+        {
+            m_shpProfilesToCheck = profilesToCheck;
+        }
     }
 
     if (shp_enabled_by_size)
@@ -2006,6 +2048,77 @@ bool BufferMgrDynamic::isSharedHeadroomPoolEnabledInSai()
     }
 
     return true;
+}
+
+bool BufferMgrDynamic::isLosslessProfileSyncedInSai(const string &profileName)
+{
+    auto profileRef = m_bufferProfileLookup.find(profileName);
+    if (profileRef == m_bufferProfileLookup.end())
+    {
+        // Profile not found in cache, no need to check
+        return true;
+    }
+
+    const auto &profile = profileRef->second;
+
+    // Check xoff field
+    string xoff;
+    m_applStateBufferProfileTable.hget(profileName, "xoff", xoff);
+    if (xoff.empty())
+    {
+        SWSS_LOG_INFO("Lossless buffer profile %s has not been applied to SAI yet, retrying", profileName.c_str());
+        return false;
+    }
+    if (xoff != profile.xoff)
+    {
+        SWSS_LOG_INFO("Lossless buffer profile %s xoff mismatch (expected %s, got %s), retrying",
+                      profileName.c_str(), profile.xoff.c_str(), xoff.c_str());
+        return false;
+    }
+
+    // Check xon field
+    string xon;
+    m_applStateBufferProfileTable.hget(profileName, "xon", xon);
+    if (xon != profile.xon)
+    {
+        SWSS_LOG_INFO("Lossless buffer profile %s xon mismatch (expected %s, got %s), retrying",
+                      profileName.c_str(), profile.xon.c_str(), xon.c_str());
+        return false;
+    }
+
+    // Check size field
+    string size;
+    m_applStateBufferProfileTable.hget(profileName, "size", size);
+    if (size != profile.size)
+    {
+        SWSS_LOG_INFO("Lossless buffer profile %s size mismatch (expected %s, got %s), retrying",
+                      profileName.c_str(), profile.size.c_str(), size.c_str());
+        return false;
+    }
+
+    SWSS_LOG_DEBUG("Lossless buffer profile %s has been synced to SAI (xoff %s, xon %s, size %s)",
+                   profileName.c_str(), xoff.c_str(), xon.c_str(), size.c_str());
+    return true;
+}
+
+task_process_status BufferMgrDynamic::checkPendingProfilesSyncStatus()
+{
+    SWSS_LOG_NOTICE("Checking SAI sync status for %zu profiles", m_shpProfilesToCheck.size());
+    m_applBufferProfileTable.flush();
+
+    for (const auto &profileName : m_shpProfilesToCheck)
+    {
+        if (!isLosslessProfileSyncedInSai(profileName))
+        {
+            SWSS_LOG_NOTICE("BUFFER_PROFILE %s is still waiting to be synced to SAI", profileName.c_str());
+            return task_process_status::task_need_retry;
+        }
+    }
+
+    // All profiles synced successfully
+    SWSS_LOG_NOTICE("All profiles synced to SAI successfully");
+    m_shpProfilesToCheck.clear();
+    return task_process_status::task_success;
 }
 
 task_process_status BufferMgrDynamic::handleCableLenTable(KeyOpFieldsValuesTuple &tuple)
@@ -2463,8 +2576,38 @@ task_process_status BufferMgrDynamic::handleBufferPoolTable(KeyOpFieldsValuesTup
                     }
                 }
 
-                m_configuredSharedHeadroomPoolSize = newSHPSize;
-                refreshSharedHeadroomPool(false, isSHPEnabledBySize != willSHPBeEnabledBySize);
+                // Check if we are in retry mode (profiles waiting for SAI sync)
+                if (!m_shpProfilesToCheck.empty())
+                {
+                    // Retry mode: only check SAI sync status, don't refresh profiles
+                    SWSS_LOG_NOTICE("Retry mode: checking pending profiles");
+                    auto status = checkPendingProfilesSyncStatus();
+                    if (status == task_process_status::task_need_retry)
+                    {
+                        return task_process_status::task_need_retry;
+                    }
+                    // Profiles synced successfully, update configuration and continue
+                    m_configuredSharedHeadroomPoolSize = newSHPSize;
+                }
+                else
+                {
+                    // Not retry mode: refresh profiles
+                    string oldSHPSize = m_configuredSharedHeadroomPoolSize;
+                    m_configuredSharedHeadroomPoolSize = newSHPSize;
+                    refreshSharedHeadroomPool(false, isSHPEnabledBySize != willSHPBeEnabledBySize);
+
+                    // Check if there are profiles waiting for SAI sync
+                    if (!m_shpProfilesToCheck.empty())
+                    {
+                        auto status = checkPendingProfilesSyncStatus();
+                        if (status == task_process_status::task_need_retry)
+                        {
+                            // Rollback configuration change
+                            m_configuredSharedHeadroomPoolSize = oldSHPSize;
+                            return task_process_status::task_need_retry;
+                        }
+                    }
+                }
             }
             else if (!newSHPSize.empty())
             {
@@ -2650,6 +2793,10 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
                     profileApp.lossless = true;
                     profileApp.direction = BUFFER_INGRESS;
                 }
+            }
+            else if (field == BUFFER_PROFILE_PACKET_DISCARD_ACTION)
+            {
+                profileApp.packet_discard_action = value;
             }
             SWSS_LOG_INFO("Inserting BUFFER_PROFILE table field %s value %s", field.c_str(), value.c_str());
         }

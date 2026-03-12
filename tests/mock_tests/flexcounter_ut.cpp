@@ -7,6 +7,7 @@
 #include "mock_orchagent_main.h"
 #include "mock_orch_test.h"
 #include "dashorch.h"
+#include "dashmeterorch.h"
 #include "mock_table.h"
 #include "notifier.h"
 #define private public
@@ -229,14 +230,14 @@ namespace flexcounter_test
 
         for (auto pgCounterManager : pgCounterManagers)
         {
-            ASSERT_TRUE(pgCounterManager->cached_objects.pending_sai_objects.empty());
+            ASSERT_TRUE(pgCounterManager->cached_objects.pending_objects_map.empty());
         }
 
         for (auto queueCounterManager : queueCounterManagers)
         {
             for (auto it : queueCounterManager->cached_objects)
             {
-                ASSERT_TRUE(it.second.pending_sai_objects.empty());
+                ASSERT_TRUE(it.second.pending_objects_map.empty());
             }
         }
     }
@@ -273,13 +274,7 @@ namespace flexcounter_test
         sai_switch_api = pold_sai_switch_api;
     }
 
-    enum class StartType
-    {
-        Cold,
-        Warm,
-    };
-
-    struct FlexCounterTest : public ::testing::TestWithParam<std::tuple<bool, bool, StartType>>
+    struct FlexCounterTest : public ::testing::TestWithParam<std::tuple<bool, bool, uint32_t>>
     {
         shared_ptr<swss::DBConnector> m_app_db;
         shared_ptr<swss::DBConnector> m_config_db;
@@ -289,7 +284,6 @@ namespace flexcounter_test
         shared_ptr<swss::DBConnector> m_asic_db;
         shared_ptr<swss::DBConnector> m_flex_counter_db;
         bool create_only_config_db_buffers;
-        StartType m_start_type;
 
         FlexCounterTest()
         {
@@ -316,7 +310,7 @@ namespace flexcounter_test
 
             gTraditionalFlexCounter = get<0>(GetParam());
             create_only_config_db_buffers = get<1>(GetParam());
-            m_start_type = get<2>(GetParam());
+            gFlexCounterDelaySec = get<2>(GetParam());
 
             if (gTraditionalFlexCounter)
             {
@@ -363,17 +357,7 @@ namespace flexcounter_test
                 CFG_FLEX_COUNTER_TABLE_NAME
             };
 
-            if (m_start_type == StartType::Warm)
-            {
-                WarmStart::getInstance().m_enabled = true;
-            }
-
             auto* flexCounterOrch = new FlexCounterOrch(m_config_db.get(), flex_counter_tables);
-
-            if (m_start_type == StartType::Warm)
-            {
-                WarmStart::getInstance().m_enabled = false;
-            }
 
             gDirectory.set(flexCounterOrch);
 
@@ -440,6 +424,9 @@ namespace flexcounter_test
             gDirectory.m_values.clear();
 
             _unhook_sai_switch_api();
+
+            // reset flex counter delay sec
+            gFlexCounterDelaySec = 0;
         }
 
         static void SetUpTestCase()
@@ -497,6 +484,12 @@ namespace flexcounter_test
     TEST_P(FlexCounterTest, CounterTest)
     {
         // Check flex counter database after system initialization
+        ASSERT_TRUE(checkFlexCounterGroup(SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                          {
+                                              {STATS_MODE_FIELD, STATS_MODE_READ},
+                                              {POLL_INTERVAL_FIELD, "60000"},
+                                              {FLEX_COUNTER_STATUS_FIELD, "disable"}
+                                          }));
         ASSERT_TRUE(checkFlexCounterGroup(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
                                               {STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR},
@@ -544,6 +537,7 @@ namespace flexcounter_test
         // Get SAI default ports to populate DB
         auto ports = ut_helper::getInitialSaiPorts();
         auto firstPortName = ports.begin()->first;
+        auto firstPortValues = ports.begin()->second;
 
         // Create test buffer pool
         poolTable.set(
@@ -620,6 +614,7 @@ namespace flexcounter_test
 
         // Enable and check counters
         const std::vector<FieldValueTuple> values({ {FLEX_COUNTER_STATUS_FIELD, "enable"} });
+        flexCounterCfg.set("SWITCH", values);
         flexCounterCfg.set("PG_WATERMARK", values);
         flexCounterCfg.set("QUEUE_WATERMARK", values);
         flexCounterCfg.set("QUEUE", values);
@@ -633,7 +628,7 @@ namespace flexcounter_test
         flexCounterOrch->addExistingData(&flexCounterCfg);
         static_cast<Orch *>(flexCounterOrch)->doTask();
 
-        if (m_start_type == StartType::Warm)
+        if (gFlexCounterDelaySec > 0)
         {
             // Expire timer
             flexCounterOrch->doTask(*flexCounterOrch->m_delayTimer);
@@ -642,6 +637,12 @@ namespace flexcounter_test
 
         isNoPendingCounterObjects();
 
+        ASSERT_TRUE(checkFlexCounterGroup(SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                          {
+                                              {POLL_INTERVAL_FIELD, "60000"},
+                                              {STATS_MODE_FIELD, STATS_MODE_READ},
+                                              {FLEX_COUNTER_STATUS_FIELD, "enable"}
+                                          }));
         ASSERT_TRUE(checkFlexCounterGroup(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
                                               {POLL_INTERVAL_FIELD, "60000"},
@@ -695,6 +696,13 @@ namespace flexcounter_test
         Port firstPort;
         gPortsOrch->getPort(firstPortName, firstPort);
         auto pgOid = firstPort.m_priority_group_ids[3];
+        ASSERT_TRUE(checkFlexCounter(SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP, gSwitchId,
+                                     {
+                                         {SWITCH_COUNTER_ID_LIST,
+                                          "SAI_SWITCH_STAT_TX_TRIM_PACKETS,"
+                                          "SAI_SWITCH_STAT_DROPPED_TRIM_PACKETS"
+                                         }
+                                     }));
         ASSERT_TRUE(checkFlexCounter(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP, pgOid,
                                      {
                                          {PG_COUNTER_ID_LIST,
@@ -718,6 +726,9 @@ namespace flexcounter_test
         ASSERT_TRUE(checkFlexCounter(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, queueOid,
                                      {
                                          {QUEUE_COUNTER_ID_LIST,
+                                          "SAI_QUEUE_STAT_TX_TRIM_PACKETS,"
+                                          "SAI_QUEUE_STAT_DROPPED_TRIM_PACKETS,"
+                                          "SAI_QUEUE_STAT_TRIM_PACKETS,"
                                           "SAI_QUEUE_STAT_DROPPED_BYTES,SAI_QUEUE_STAT_DROPPED_PACKETS,"
                                           "SAI_QUEUE_STAT_BYTES,SAI_QUEUE_STAT_PACKETS"
                                          }
@@ -732,8 +743,39 @@ namespace flexcounter_test
         // Do not check the content of port counter since it's large and varies among platforms.
         ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, oid, PORT_COUNTER_ID_LIST));
 
-        // create a routing interface
+        auto it = ports.begin();
+        it++;
+        auto secondPortName= it->first;
+        auto secondPortValues = it->second;
+        Port secondPort;
+        ASSERT_TRUE(gPortsOrch->getPort(secondPortName, secondPort));
+        auto second_oid = secondPort.m_port_id;
+
+
+        //Verify the Port Stats counter after DEL
         std::deque<KeyOpFieldsValuesTuple> entries;
+        auto port_consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        entries.push_back({secondPortName, "DEL",  {} });
+        port_consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        auto ret = gPortsOrch->getPort(secondPortName, secondPort);
+        if (ret == true)
+        {
+           // Temporary work around since remove_port fails in sonic-sairedis/vslib in remove_internal due
+           // to switch_create doesn't seem to be calling create_internal for the ports when it is called from
+           // portsorch removePort->sai_port_api.remove_port
+            gPortsOrch->removePortFromLanesMap(secondPortName);
+            gPortsOrch->removePortFromPortListMap(secondPort.m_port_id);
+            gPortsOrch->m_portConfigMap.erase(secondPortName);
+            gPortsOrch->m_portList.erase(secondPortName);
+            gPortsOrch->saiOidToAlias.erase(secondPort.m_port_id);
+
+        }
+        ASSERT_FALSE(gPortsOrch->getPort(secondPortName, secondPort));
+        ASSERT_FALSE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, second_oid, PORT_COUNTER_ID_LIST));
+
+        // create a routing interface
+        entries.clear();
         entries.push_back({firstPort.m_alias, "SET", { {"mtu", "9100"}}});
         auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
         consumer->addToSync(entries);
@@ -991,18 +1033,20 @@ namespace flexcounter_test
         FlexCounterTests,
         FlexCounterTest,
         ::testing::Values(
-            std::make_tuple(false, true, StartType::Cold),
-            std::make_tuple(false, false, StartType::Cold),
-            std::make_tuple(true, true, StartType::Cold),
-            std::make_tuple(true, false, StartType::Cold),
-            std::make_tuple(false, true, StartType::Warm),
-            std::make_tuple(false, false, StartType::Warm),
-            std::make_tuple(true, true, StartType::Warm),
-            std::make_tuple(true, false, StartType::Warm))
+            // traditional_flex_counter, create_only_config_db_buffers, flex_counter_delay_sec
+            std::make_tuple(false, true, 0),
+            std::make_tuple(false, false, 0),
+            std::make_tuple(true, true, 0),
+            std::make_tuple(true, false, 0),
+            std::make_tuple(false, true, 120),
+            std::make_tuple(false, false, 120),
+            std::make_tuple(true, true, 120),
+            std::make_tuple(true, false, 120)
+        )
     );
 
     using namespace mock_orch_test;
-    class EniStatFlexCounterTest : public MockOrchTest
+    class StandaloneFCTest : public MockOrchTest
     {
         virtual void PostSetUp() {
             _hook_sai_switch_api();
@@ -1013,7 +1057,7 @@ namespace flexcounter_test
         }
     };
 
-    TEST_F(EniStatFlexCounterTest, TestStatusUpdate)
+    TEST_F(StandaloneFCTest, TestEniStatusUpdate)
     {
         /* Add a mock ENI */
         EniEntry tmp_entry;
@@ -1022,11 +1066,117 @@ namespace flexcounter_test
 
         /* Should create ENI Counter stats for existing ENI's */
         m_DashOrch->handleFCStatusUpdate(true);
-        m_DashOrch->doTask(*(m_DashOrch->m_fc_update_timer));
+        // m_DashOrch->doTask(*(m_DashOrch->m_fc_update_timer));
         ASSERT_TRUE(checkFlexCounter(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, ENI_COUNTER_ID_LIST));
 
         /* This should delete the STATS */
         m_DashOrch->handleFCStatusUpdate(false);
         ASSERT_FALSE(checkFlexCounter(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, ENI_COUNTER_ID_LIST));
+    }
+
+    TEST_F(StandaloneFCTest, TestMeterStatusUpdate)
+    {
+        /* Add a mock ENI */
+        EniEntry tmp_entry;
+        tmp_entry.eni_id = 0x7008000000021;
+        m_DashOrch->eni_entries_["497f23d7-f0ac-4c99-a98f-59b470e8c7c"] = tmp_entry;
+
+        /* Should create Meter Counter stats for existing ENI's */
+        m_DashOrch->handleMeterFCStatusUpdate(true);
+        ASSERT_TRUE(checkFlexCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, DASH_METER_COUNTER_ID_LIST));
+
+        /* This should delete the STATS */
+        m_DashOrch->handleMeterFCStatusUpdate(false);
+        ASSERT_FALSE(checkFlexCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, DASH_METER_COUNTER_ID_LIST));
+    }
+
+    TEST_F(StandaloneFCTest, TestCaching)
+    {
+        mockFlexCounterOperationCallCount = 0;
+
+        /* Disable traditional FC since caching is only used for FC config through SAIREDIS channel */
+        gTraditionalFlexCounter = false;
+        FlexCounterTaggedCachedManager<void> port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, 1000, false);
+
+        // Create two port OIDs
+        sai_object_id_t port1_oid = 0x100000000000d;
+        sai_object_id_t port2_oid = 0x100000000000e;
+        sai_object_id_t port3_oid = 0x100000000000f;
+        sai_object_id_t port4_oid = 0x1000000000010;
+        sai_object_id_t port5_oid = 0x100000000000a;
+        sai_object_id_t port6_oid = 0x100000000000b;
+        // Different counter stats for each port
+        std::unordered_set<string> type1_stats = {
+            "SAI_PORT_STAT_IF_IN_OCTETS",
+            "SAI_PORT_STAT_IF_IN_ERRORS"
+        };
+        std::unordered_set<string> type2_stats = {
+            "SAI_PORT_STAT_IF_OUT_OCTETS",
+            "SAI_PORT_STAT_IF_OUT_ERRORS"
+        };
+        std::unordered_set<string> type3_stats = {
+            "SAI_PORT_STAT_IF_IN_OCTETS",
+            "SAI_PORT_STAT_IF_OUT_ERRORS"
+        };
+
+        // Set counter IDs for both ports
+        port_stat_manager.setCounterIdList(port1_oid, CounterType::PORT, type1_stats);
+        port_stat_manager.setCounterIdList(port2_oid, CounterType::PORT, type1_stats);
+        port_stat_manager.setCounterIdList(port6_oid, CounterType::PORT, type3_stats);
+        port_stat_manager.setCounterIdList(port3_oid, CounterType::PORT, type2_stats);
+        port_stat_manager.setCounterIdList(port4_oid, CounterType::PORT, type2_stats);
+        port_stat_manager.setCounterIdList(port5_oid, CounterType::PORT, type1_stats);
+
+        // Flush the counters
+        port_stat_manager.flush();
+
+        /* SAIREDIS channel should have been called thrice, once for port1&port2&port5, port3&port4 and port6*/
+        ASSERT_EQ(mockFlexCounterOperationCallCount, 3);
+
+        ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, port6_oid,
+                                     {
+                                         {PORT_COUNTER_ID_LIST,
+                                          "SAI_PORT_STAT_IF_IN_OCTETS,"
+                                          "SAI_PORT_STAT_IF_OUT_ERRORS"
+                                         }
+                                     }));
+        ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, port5_oid,
+                                     {
+                                         {PORT_COUNTER_ID_LIST,
+                                          "SAI_PORT_STAT_IF_IN_OCTETS,"
+                                          "SAI_PORT_STAT_IF_IN_ERRORS"
+                                         }
+                                     }));
+        ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, port1_oid,
+                                     {
+                                         {PORT_COUNTER_ID_LIST,
+                                          "SAI_PORT_STAT_IF_IN_OCTETS,"
+                                          "SAI_PORT_STAT_IF_IN_ERRORS"
+                                         }
+                                     }));
+
+        ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, port2_oid,
+                                     {
+                                         {PORT_COUNTER_ID_LIST,
+                                          "SAI_PORT_STAT_IF_IN_OCTETS,"
+                                          "SAI_PORT_STAT_IF_IN_ERRORS"
+                                         }
+                                     }));
+
+        ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, port3_oid,
+                                     {
+                                         {PORT_COUNTER_ID_LIST,
+                                          "SAI_PORT_STAT_IF_OUT_OCTETS,"
+                                          "SAI_PORT_STAT_IF_OUT_ERRORS"
+                                         }
+                                     }));
+
+        ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, port4_oid,
+                                     {
+                                         {PORT_COUNTER_ID_LIST,
+                                          "SAI_PORT_STAT_IF_OUT_OCTETS,"
+                                          "SAI_PORT_STAT_IF_OUT_ERRORS"
+                                         }
+                                     }));
     }
 }

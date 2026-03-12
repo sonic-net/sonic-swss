@@ -30,7 +30,9 @@ struct P4RouteEntry
     std::string nexthop_id;
     std::string wcmp_group;
     std::string route_metadata; // go/gpins-pinball-vip-stats
+    std::string multicast_group_id;
     sai_route_entry_t sai_route_entry;
+    sai_ipmc_entry_t sai_ipmc_entry;  // Used for multicast
 };
 
 // P4RouteTable: Route ID, P4RouteEntry
@@ -49,9 +51,9 @@ class RouteUpdater
 
     P4RouteEntry getOldEntry() const;
     P4RouteEntry getNewEntry() const;
-    sai_route_entry_t getSaiEntry() const;
+    sai_route_entry_t prepareSaiEntry() const;
     // Returns the next SAI attribute that should be performed.
-    sai_attribute_t getSaiAttr() const;
+    sai_attribute_t prepareSaiAttr() const;
     // Updates the state by the given SAI result.
     // Returns true if all operations are completed.
     // This method will raise critical state if a recovery action fails.
@@ -59,14 +61,21 @@ class RouteUpdater
     // Returns the overall status of the route update.
     // This method should only be called after UpdateResult returns true.
     ReturnCode getStatus() const;
+    // Returns a list of SAI attributes that the update needs to preform from
+    // the current state to the final state. If the updater is in revert mode,
+    // the final state is the old route entry.
+    std::vector<sai_attribute_t> GetSaiAttrList() const;
 
-  private:
+   private:
     // Updates the action index.
     // Returns true if there are no more actions.
     bool updateIdx();
+    bool updateIdx(int& idx) const;
     // Checks if the current action should be performed or not.
     // Returns true if the action should be performed.
-    bool checkAction() const;
+    bool checkAction(int idx) const;
+    // Returns the SAI attribute that should be performed by the given index.
+    sai_attribute_t prepareSaiAttr(int idx) const;
 
     P4OidMapper *m_p4OidMapper;
     P4RouteEntry m_oldRoute;
@@ -84,7 +93,8 @@ class RouteManager : public ObjectManagerInterface
     virtual ~RouteManager() = default;
 
     void enqueue(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry) override;
-    void drain() override;
+    ReturnCode drain() override;
+    void drainWithNotExecuted() override;
     std::string verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple) override;
     ReturnCode getSaiObject(const std::string &json_key, sai_object_type_t &object_type,
                             std::string &object_key) override;
@@ -123,6 +133,32 @@ class RouteManager : public ObjectManagerInterface
     // Deletes a list of route entries.
     std::vector<ReturnCode> deleteRouteEntries(const std::vector<P4RouteEntry> &route_entries);
 
+    // Creates a list of multicast-typed route entries.
+    // We separate these out from normal route entries, because the SAI entry
+    // type is sai_ipmc_entry_t instead of the normal sai_route_entry_t.
+    std::vector<ReturnCode> createMulticastRouteEntries(
+        const std::vector<P4RouteEntry>& route_entries);
+
+    // Updates a list of multicast-typed route entries.
+    std::vector<ReturnCode> updateMulticastRouteEntries(
+        const std::vector<P4RouteEntry>& route_entries);
+
+    // Deletes a list of multicast-typed route entries.
+    std::vector<ReturnCode> deleteMulticastRouteEntries(
+        const std::vector<P4RouteEntry>& route_entries);
+
+    // Process a list of route entries by the given operation.
+    ReturnCode processRouteEntries(
+        const std::vector<P4RouteEntry>& route_entries,
+        const std::vector<swss::KeyOpFieldsValuesTuple>& tuple_list,
+        const std::string& op, bool update);
+
+    // Process a list of multicast route entries by the given operation.
+    ReturnCode processRouteEntriesThatAssignMulticast(
+        const std::vector<P4RouteEntry>& route_entries,
+        const std::vector<swss::KeyOpFieldsValuesTuple>& tuple_list,
+        const std::string& op, bool update);
+
     // On a successful route entry update, updates the reference counters and
     // internal data.
     void updateRouteEntriesMeta(const P4RouteEntry &old_entry, const P4RouteEntry &new_entry);
@@ -138,7 +174,14 @@ class RouteManager : public ObjectManagerInterface
     std::string verifyStateAsicDb(const P4RouteEntry *route_entry);
 
     // Returns the SAI entry.
-    sai_route_entry_t getSaiEntry(const P4RouteEntry &route_entry);
+    sai_route_entry_t prepareSaiEntry(const P4RouteEntry& route_entry);
+
+    // Returns the SAI IPMC entry (for multicast).
+    sai_ipmc_entry_t prepareSaiIpmcEntry(const P4RouteEntry& route_entry) const;
+
+    // Creates and assigns the empty private RPF group, to be used for all
+    // IPMC entries.
+    ReturnCode createDefaultRpfGroup();
 
     P4RouteTable m_routeTable;
     P4OidMapper *m_p4OidMapper;
@@ -146,6 +189,9 @@ class RouteManager : public ObjectManagerInterface
     EntityBulker<sai_route_api_t> m_routerBulker;
     ResponsePublisherInterface *m_publisher;
     std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
+    // OID for an empty RPF group, needed for creating IPMC entries.
+    // This group will be created on first entry add.
+    sai_object_id_t empty_rpf_group_oid_ = SAI_NULL_OBJECT_ID;
 
     friend class RouteManagerTest;
 };

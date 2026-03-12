@@ -36,20 +36,24 @@ const unordered_map<bool, string> FlexCounterManager::status_lookup =
 
 const unordered_map<CounterType, string> FlexCounterManager::counter_id_field_lookup =
 {
-    { CounterType::PORT_DEBUG,      PORT_DEBUG_COUNTER_ID_LIST },
-    { CounterType::SWITCH_DEBUG,    SWITCH_DEBUG_COUNTER_ID_LIST },
-    { CounterType::PORT,            PORT_COUNTER_ID_LIST },
-    { CounterType::QUEUE,           QUEUE_COUNTER_ID_LIST },
-    { CounterType::QUEUE_ATTR,      QUEUE_ATTR_ID_LIST },
-    { CounterType::PRIORITY_GROUP,  PG_COUNTER_ID_LIST },
-    { CounterType::MACSEC_SA_ATTR,  MACSEC_SA_ATTR_ID_LIST },
-    { CounterType::MACSEC_SA,       MACSEC_SA_COUNTER_ID_LIST },
-    { CounterType::MACSEC_FLOW,     MACSEC_FLOW_COUNTER_ID_LIST },
-    { CounterType::ACL_COUNTER,     ACL_COUNTER_ATTR_ID_LIST },
-    { CounterType::TUNNEL,          TUNNEL_COUNTER_ID_LIST },
-    { CounterType::HOSTIF_TRAP,     FLOW_COUNTER_ID_LIST },
-    { CounterType::ROUTE,           FLOW_COUNTER_ID_LIST },
-    { CounterType::ENI,             ENI_COUNTER_ID_LIST },
+    { CounterType::PORT_DEBUG,          PORT_DEBUG_COUNTER_ID_LIST },
+    { CounterType::PORT_PHY_ATTR,       PORT_PHY_ATTR_ID_LIST },
+    { CounterType::SWITCH_DEBUG,        SWITCH_DEBUG_COUNTER_ID_LIST },
+    { CounterType::PORT,                PORT_COUNTER_ID_LIST },
+    { CounterType::QUEUE,               QUEUE_COUNTER_ID_LIST },
+    { CounterType::QUEUE_ATTR,          QUEUE_ATTR_ID_LIST },
+    { CounterType::PRIORITY_GROUP,      PG_COUNTER_ID_LIST },
+    { CounterType::MACSEC_SA_ATTR,      MACSEC_SA_ATTR_ID_LIST },
+    { CounterType::MACSEC_SA,           MACSEC_SA_COUNTER_ID_LIST },
+    { CounterType::MACSEC_FLOW,         MACSEC_FLOW_COUNTER_ID_LIST },
+    { CounterType::ACL_COUNTER,         ACL_COUNTER_ATTR_ID_LIST },
+    { CounterType::TUNNEL,              TUNNEL_COUNTER_ID_LIST },
+    { CounterType::HOSTIF_TRAP,         FLOW_COUNTER_ID_LIST },
+    { CounterType::ROUTE,               FLOW_COUNTER_ID_LIST },
+    { CounterType::ENI,                 ENI_COUNTER_ID_LIST },
+    { CounterType::DASH_METER,          DASH_METER_COUNTER_ID_LIST },
+    { CounterType::SRV6,                SRV6_COUNTER_ID_LIST },
+    { CounterType::SWITCH,              SWITCH_COUNTER_ID_LIST },
 };
 
 FlexManagerDirectory g_FlexManagerDirectory;
@@ -233,7 +237,7 @@ void FlexCounterManager::clearCounterIdList(const sai_object_id_t object_id)
     auto counter_it = installed_counters.find(object_id);
     if (counter_it == installed_counters.end())
     {
-        SWSS_LOG_WARN("No counters found on object '%" PRIu64 "' in group '%s'.",
+        SWSS_LOG_INFO("No counters found on object '%" PRIu64 "' in group '%s'.",
                 object_id,
                 group_name.c_str());
         return;

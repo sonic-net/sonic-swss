@@ -7,6 +7,9 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <bitset>
+#include <vector>
+#include <string>
+#include <unordered_set>
 
 #include "dbconnector.h"
 #include "netmsg.h"
@@ -31,9 +34,9 @@
 #define MAX_VLANS 4096
 
 // Maximum number of instances supported
-#define L2_INSTANCE_MAX            MAX_VLANS
-#define STP_DEFAULT_MAX_INSTANCES  255
-#define INVALID_INSTANCE           -1
+#define L2_INSTANCE_MAX             MAX_VLANS
+#define STP_DEFAULT_MAX_INSTANCES   255
+#define INVALID_INSTANCE            -1
 
 #define GET_FIRST_FREE_INST_ID(_idx) \
     while (_idx < (int)l2InstPool.size() && l2InstPool.test(_idx)) ++_idx; \
@@ -49,7 +52,15 @@
 typedef enum L2_PROTO_MODE {
     L2_NONE,
     L2_PVSTP,
-} L2_PROTO_MODE;
+    L2_MSTP
+}L2_PROTO_MODE;
+
+
+typedef enum LinkType {
+    AUTO =              0,      // Auto
+    POINT_TO_POINT =    1,      // Point-to-point
+    SHARED =            2       // Shared
+} LinkType;
 
 typedef enum STP_MSG_TYPE {
     STP_INVALID_MSG,
@@ -60,6 +71,9 @@ typedef enum STP_MSG_TYPE {
     STP_PORT_CONFIG,
     STP_VLAN_MEM_CONFIG,
     STP_STPCTL_MSG,
+    STP_MST_GLOBAL_CONFIG,
+    STP_MST_INST_CONFIG,
+    STP_MST_INST_PORT_CONFIG,
     STP_MAX_MSG
 } STP_MSG_TYPE;
 
@@ -86,6 +100,7 @@ typedef enum STP_CTL_TYPE {
 typedef struct STP_IPC_MSG {
     int          msg_type;
     unsigned int msg_len;
+    L2_PROTO_MODE proto_mode;
     char         data[0];
 } ALIGNED(4) STP_IPC_MSG;
 
@@ -150,22 +165,26 @@ typedef struct VLAN_ATTR {
     uint8_t padding[3];
 } ALIGNED(4) VLAN_ATTR;
 
+typedef struct VLAN_LIST{
+    uint16_t    vlan_id;
+}VLAN_LIST;
+
 typedef struct STP_PORT_CONFIG_MSG {
-    uint8_t opcode; // enable/disable
-    char    intf_name[IFNAMSIZ];
-    uint8_t enabled;
-    uint8_t root_guard;
-    uint8_t bpdu_guard;
-    uint8_t bpdu_guard_do_disable;
-    uint8_t portfast;
-    uint8_t uplink_fast;
-    // Add 2 bytes padding for alignment
-    uint16_t padding;
-    int      path_cost;
-    int      priority;
-    int      count;
-    VLAN_ATTR vlan_list[0];
-} ALIGNED(4) STP_PORT_CONFIG_MSG;
+    uint8_t     opcode;             // enable/disable
+    char        intf_name[IFNAMSIZ];
+    uint8_t     enabled;
+    uint8_t     root_guard;
+    uint8_t     bpdu_guard;
+    uint8_t     bpdu_guard_do_disable;
+    uint8_t     portfast;           // PVST only
+    uint8_t     uplink_fast;        // PVST only
+    uint8_t     edge_port;          // MSTP only
+    LinkType    link_type;          // MSTP only
+    int         path_cost;
+    int         priority;
+    int         count;
+    VLAN_ATTR   vlan_list[0];
+} STP_PORT_CONFIG_MSG;;
 
 typedef struct STP_VLAN_MEM_CONFIG_MSG {
     uint8_t opcode;   // enable/disable
@@ -180,6 +199,32 @@ typedef struct STP_VLAN_MEM_CONFIG_MSG {
     int     priority;
 } ALIGNED(4) STP_VLAN_MEM_CONFIG_MSG;
 
+typedef struct STP_MST_GLOBAL_CONFIG_MSG {
+    uint8_t     opcode; // enable/disable
+    uint32_t    revision_number;
+    char        name[32];
+    uint8_t     forward_delay;
+    uint8_t     hello_time;
+    uint8_t     max_age;
+    uint8_t     max_hops;
+}__attribute__ ((packed))STP_MST_GLOBAL_CONFIG_MSG;
+
+typedef struct STP_MST_INST_CONFIG_MSG {
+    uint8_t         opcode;     // enable/disable
+    uint16_t        mst_id;     // MST instance ID
+    int             priority;   // Bridge priority
+    uint16_t        vlan_count; // Number of VLANs in this instance
+    VLAN_LIST       vlan_list[0]; // Flexible array for VLAN IDs
+}__attribute__((packed)) STP_MST_INST_CONFIG_MSG;
+
+typedef struct STP_MST_INST_PORT_CONFIG_MSG {
+    uint8_t     opcode;         // enable/disable
+    char        intf_name[IFNAMSIZ];  // Interface name
+    uint16_t    mst_id;         // MST instance ID
+    int         path_cost;      // Path cost
+    int         priority;       // Port priority
+} __attribute__((packed)) STP_MST_INST_PORT_CONFIG_MSG;
+
 namespace swss {
 
 class StpMgr : public Orch
@@ -193,7 +238,7 @@ public:
     int  sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data);
     MacAddress macAddress;
     bool isPortInitDone(DBConnector *app_db);
-    uint16_t getStpMaxInstances(void);
+    uint16_t getStpMaxInstances(void);    
 
 private:
     Table m_cfgStpGlobalTable;
@@ -206,6 +251,9 @@ private:
     Table m_stateVlanMemberTable;
     Table m_stateLagTable;
     Table m_stateStpTable;
+    Table m_cfgMstGlobalTable;
+    Table m_cfgMstInstTable;
+    Table m_cfgMstInstPortTable;
 
     std::bitset<L2_INSTANCE_MAX> l2InstPool;
     int stpd_fd;
@@ -219,6 +267,7 @@ private:
     bool stpVlanTask;
     bool stpVlanPortTask;
     bool stpPortTask;
+    bool stpMstInstTask;
 
     void doTask(Consumer &consumer);
     void doStpGlobalTask(Consumer &consumer);
@@ -227,6 +276,9 @@ private:
     void doStpPortTask(Consumer &consumer);
     void doVlanMemUpdateTask(Consumer &consumer);
     void doLagMemUpdateTask(Consumer &consumer);
+    void doStpMstGlobalTask(Consumer &consumer);
+    void doStpMstInstTask(Consumer &consumer);
+    void doStpMstInstPortTask(Consumer &consumer);
 
     bool isVlanStateOk(const std::string &alias);
     bool isLagStateOk(const std::string &alias);
@@ -238,17 +290,19 @@ private:
     int allocL2Instance(uint32_t vlan_id);
     void deallocL2Instance(uint32_t vlan_id);
     bool isLagEmpty(const std::string &key);
-
-    // The rest of the methods remain unchanged except we replaced the old approach with alignment-based approach
-    void processStpPortAttr(const std::string op,
-                            std::vector<FieldValueTuple> &tupEntry,
-                            const std::string intfName);
-    void processStpVlanPortAttr(const std::string op,
-                                uint32_t vlan_id,
-                                const std::string intfName,
-                                std::vector<FieldValueTuple> &tupEntry);
+    void processStpPortAttr(const std::string op, std::vector<FieldValueTuple>&tupEntry, const std::string intfName);
+    void processStpVlanPortAttr(const std::string op, uint32_t vlan_id, const std::string intfName,
+                    std::vector<FieldValueTuple>&tupEntry);
+    void processStpMstInstPortAttr(const std::string op, uint16_t mst_id, const std::string intfName,
+                                       std::vector<FieldValueTuple>&tupEntry);
+    std::vector<uint16_t> parseVlanList(const std::string &vlanStr);
+    void updateVlanInstanceMap(int instance, const std::vector<uint16_t>&newVlanList, bool operation);
+    bool isInstanceMapped(uint16_t instance);
+    std::vector<std::string> getVlanAliasesForInstance(uint16_t instance);
+    
+    
 };
 
-} // namespace swss
-
+}
 #endif
+
