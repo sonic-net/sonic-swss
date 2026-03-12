@@ -61,6 +61,7 @@ extern int gBatchSize;
 
 bool gRingMode = false;
 bool gSyncMode = false;
+bool gEnableFibSuppress = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 string gAsicInstance;
 
@@ -92,7 +93,7 @@ bool isChassisDbInUse()
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-A] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF] [-I heart_beat_interval] [-R] [-M]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-A] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF] [-I heart_beat_interval] [-R] [-M] [-F]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    Bit 0: sairedis.rec, Bit 1: swss.rec, Bit 2: responsepublisher.rec. For example:" << endl;
@@ -118,6 +119,7 @@ void usage()
     cout << "    -I heart_beat_interval: Heart beat interval in millisecond (default 10)" << endl;
     cout << "    -R enable the ring thread feature" << endl;
     cout << "    -M enable SAI MACSec POST" << endl;
+    cout << "    -F enable BGP FIB suppression" << endl;
 }
 
 void sighup_handler(int signo)
@@ -470,7 +472,7 @@ int main(int argc, char **argv)
     // Disable SAI MACSec POST by default. Use option -M to enable it.
     bool macsec_post_enabled = false;
 
-    while ((opt = getopt(argc, argv, "b:m:r:Af:j:d:i:hsz:k:q:c:t:v:I:R:M")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:Af:j:d:i:hsz:k:q:c:t:v:I:R:MF")) != -1)
     {
         switch (opt)
         {
@@ -594,6 +596,9 @@ int main(int argc, char **argv)
             break;
          case 'M':
             macsec_post_enabled = true;
+            break;
+        case 'F':
+            gEnableFibSuppress = true;
             break;
         default: /* '?' */
             exit(EXIT_FAILURE);
