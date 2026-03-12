@@ -181,10 +181,6 @@ class L3MulticastManager : public ObjectManagerInterface {
       const std::string& op, bool update);
 
   // Wrapper around SAI setup and call, for easy mocking.
-  ReturnCode createBridgePort(P4MulticastRouterInterfaceEntry& entry,
-                              sai_object_id_t* bridge_port_oid);
-  ReturnCode deleteBridgePort(const std::string& port,
-                              sai_object_id_t bridge_port_oid);
   ReturnCode createRouterInterface(P4MulticastRouterInterfaceEntry& entry,
                                    sai_object_id_t* rif_oid);
   ReturnCode createNextHop(P4MulticastRouterInterfaceEntry& entry,

@@ -36,7 +36,6 @@ extern sai_l2mc_group_api_t* sai_l2mc_group_api;
 extern sai_neighbor_api_t* sai_neighbor_api;
 extern sai_next_hop_api_t* sai_next_hop_api;
 extern sai_router_interface_api_t* sai_router_intfs_api;
-extern sai_bridge_api_t* sai_bridge_api;
 extern sai_switch_api_t* sai_switch_api;
 extern sai_my_mac_api_t* sai_my_mac_api;
 
@@ -213,39 +212,6 @@ std::vector<sai_attribute_t> prepareNextHopSaiAttrs(
 
   attr.id = SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE;
   attr.value.booldata = !write_vlan;
-  attrs.push_back(attr);
-
-  return attrs;
-}
-
-// Create the vector of SAI attributes for creating a new bridge port object.
-ReturnCodeOr<std::vector<sai_attribute_t>> prepareBridgePortSaiAttrs(
-    const P4MulticastRouterInterfaceEntry& entry) {
-  Port port;
-  if (!gPortsOrch->getPort(entry.multicast_replica_port, port)) {
-    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-                         << "Unable to find port object "
-                         << QuotedVar(entry.multicast_replica_port)
-                         << " to create bridge port");
-  }
-
-  std::vector<sai_attribute_t> attrs;
-  sai_attribute_t attr;
-
-  attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
-  attr.value.s32 = SAI_BRIDGE_PORT_TYPE_PORT;
-  attrs.push_back(attr);
-
-  attr.id = SAI_BRIDGE_PORT_ATTR_PORT_ID;
-  attr.value.oid = port.m_port_id;
-  attrs.push_back(attr);
-
-  attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
-  attr.value.booldata = true;
-  attrs.push_back(attr);
-
-  attr.id = SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE;
-  attr.value.s32 = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE;
   attrs.push_back(attr);
 
   return attrs;
@@ -1329,25 +1295,6 @@ ReturnCode L3MulticastManager::processMulticastGroupEntries(
   return status;
 }
 
-ReturnCode L3MulticastManager::createBridgePort(
-    P4MulticastRouterInterfaceEntry& entry, sai_object_id_t* bridge_port_oid) {
-  SWSS_LOG_ENTER();
-  ASSIGN_OR_RETURN(std::vector<sai_attribute_t> attrs,
-                   prepareBridgePortSaiAttrs(entry));
-
-  sai_status_t status = sai_bridge_api->create_bridge_port(
-      bridge_port_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
-
-  if (status != SAI_STATUS_SUCCESS) {
-    LOG_ERROR_AND_RETURN(
-        ReturnCode(status)
-        << "Failed to create bridge port for L2 multicast on port "
-        << QuotedVar(entry.multicast_replica_port));
-  }
-
-  return ReturnCode();
-}
-
 ReturnCode L3MulticastManager::createDefaultMyMac() {
   SWSS_LOG_ENTER();
 
@@ -1470,18 +1417,6 @@ ReturnCode L3MulticastManager::createNextHop(
         << "Failed to create next hop for multicast router interface "
         << "table: "
         << QuotedVar(entry.multicast_router_interface_entry_key).c_str());
-  }
-  return ReturnCode();
-}
-
-ReturnCode L3MulticastManager::deleteBridgePort(
-    const std::string& port, sai_object_id_t bridge_port_oid) {
-  SWSS_LOG_ENTER();
-  auto sai_status = sai_bridge_api->remove_bridge_port(bridge_port_oid);
-  if (sai_status != SAI_STATUS_SUCCESS) {
-    LOG_ERROR_AND_RETURN(ReturnCode(sai_status)
-                         << "Failed to remove bridge port for "
-                         << QuotedVar(port).c_str());
   }
   return ReturnCode();
 }
@@ -1809,12 +1744,23 @@ ReturnCode L3MulticastManager::addL2MulticastRouterInterfaceEntry(
   // is used (but a different instance).
   SWSS_LOG_ENTER();
 
-  sai_object_id_t bridge_port_oid = SAI_NULL_OBJECT_ID;
-  RETURN_IF_ERROR(createBridgePort(entry, &bridge_port_oid));
-  gPortsOrch->increasePortRefCount(entry.multicast_replica_port);
+  Port port;
+  if (!gPortsOrch->getPort(entry.multicast_replica_port, port)) {
+    LOG_ERROR_AND_RETURN(
+        ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+        << "Failed to get port info for multicast_replica_port "
+        << QuotedVar(entry.multicast_replica_port));
+  }
+  if (!gPortsOrch->addBridgePort(port)) {
+    LOG_ERROR_AND_RETURN(
+        ReturnCode(StatusCode::SWSS_RC_INTERNAL)
+        << "Failed to create bridge port for multicast_replica_port "
+        << QuotedVar(entry.multicast_replica_port));
+  }
+  gPortsOrch->increaseBridgePortRefCount(port);
   m_p4OidMapper->setOID(SAI_OBJECT_TYPE_BRIDGE_PORT,
                         entry.multicast_router_interface_entry_key,
-                        bridge_port_oid);
+                        port.m_bridge_port_id);
   m_multicastRouterInterfaceTable[entry.multicast_router_interface_entry_key] =
       entry;
   return ReturnCode();
@@ -1987,12 +1933,21 @@ ReturnCode L3MulticastManager::deleteL2MulticastRouterInterfaceEntry(
            << "group members";
   }
 
-  RETURN_IF_ERROR(
-      deleteBridgePort(entry->multicast_replica_port, bridge_port_oid));
+  Port port;
+  gPortsOrch->getPort(entry->multicast_replica_port, port);
+  gPortsOrch->decreaseBridgePortRefCount(port);
+  if (gPortsOrch->getBridgePortReferenceCount(port) == 0) {
+    if (!gPortsOrch->removeBridgePort(port)) {
+      gPortsOrch->increaseBridgePortRefCount(port);
+      LOG_ERROR_AND_RETURN(
+          ReturnCode(StatusCode::SWSS_RC_INTERNAL)
+          << "Failed to delete bridge port for multicast_replica_port "
+          << QuotedVar(entry->multicast_replica_port));
+    }
+  }
 
   m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_BRIDGE_PORT,
                           entry->multicast_router_interface_entry_key);
-  gPortsOrch->decreasePortRefCount(entry->multicast_replica_port);
 
   // Finally, remove the P4MulticastRouterInterfaceEntry.
   m_multicastRouterInterfaceTable.erase(
@@ -3333,12 +3288,31 @@ std::string L3MulticastManager::verifyL3MulticastRouterInterfaceStateAsicDb(
 
 std::string L3MulticastManager::verifyL2MulticastRouterInterfaceStateAsicDb(
     const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry) {
-  auto attrs_or = prepareBridgePortSaiAttrs(*multicast_router_interface_entry);
-  if (!attrs_or.ok()) {
-    return std::string("Failed to get multicast router interface SAI attrs: ") +
-           attrs_or.status().message();
+  Port port;
+  if (!gPortsOrch->getPort(
+          multicast_router_interface_entry->multicast_replica_port, port)) {
+    return std::string("Unable to find port object ") +
+           multicast_router_interface_entry->multicast_replica_port;
   }
-  std::vector<sai_attribute_t> attrs = *attrs_or;
+
+  std::vector<sai_attribute_t> attrs;
+  sai_attribute_t attr;
+
+  attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
+  attr.value.s32 = SAI_BRIDGE_PORT_TYPE_PORT;
+  attrs.push_back(attr);
+
+  attr.id = SAI_BRIDGE_PORT_ATTR_PORT_ID;
+  attr.value.oid = port.m_port_id;
+  attrs.push_back(attr);
+
+  attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
+  attr.value.booldata = true;
+  attrs.push_back(attr);
+
+  attr.id = SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE;
+  attr.value.s32 = port.m_learn_mode;
+  attrs.push_back(attr);
   std::vector<swss::FieldValueTuple> exp =
       saimeta::SaiAttributeList::serialize_attr_list(
           SAI_OBJECT_TYPE_BRIDGE_PORT, (uint32_t)attrs.size(), attrs.data(),
