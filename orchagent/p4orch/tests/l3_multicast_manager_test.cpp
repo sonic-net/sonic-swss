@@ -410,9 +410,10 @@ class L3MulticastManagerTest : public ::testing::Test {
       const std::string& multicast_group_id,
       const std::vector<P4Replica>& replicas,
       const std::string& multicast_metadata = "",
-      const std::string& controller_metadata = "") {
+      const std::string& controller_metadata = "", bool is_ipmc = true) {
     P4MulticastGroupEntry group_entry = {};
     group_entry.multicast_group_id = multicast_group_id;
+    group_entry.is_ipmc = is_ipmc;
     for (auto& r : replicas) {
       group_entry.replicas.push_back(r);
       group_entry.replica_keys.insert(r.key);
@@ -568,7 +569,9 @@ class L3MulticastManagerTest : public ::testing::Test {
       const std::vector<sai_object_id_t>& group_member_oids,
       const std::vector<sai_object_id_t>& bridge_port_oids,
       bool expect_group_mock = true) {
-    auto entry = GenerateP4MulticastGroupEntry(multicast_group_id, replicas);
+    auto entry = GenerateP4MulticastGroupEntry(
+        multicast_group_id, replicas, /*multicast_metadata=*/"",
+        /*controller_metadata=*/"", /*is_ipmc=*/false);
     std::vector<P4MulticastGroupEntry> entries = {entry};
 
     if (expect_group_mock) {
@@ -922,6 +925,13 @@ class L3MulticastManagerTest : public ::testing::Test {
   ReturnCode ValidateMulticastGroupEntry(
       const P4MulticastGroupEntry& multicast_group_entry,
       const std::string& operation) {
+    if (operation == SET_COMMAND) {
+      auto status =
+          l3_multicast_manager_.validateReplicas(multicast_group_entry);
+      if (!status.ok()) {
+        return status.status();
+      }
+    }
     return l3_multicast_manager_.validateMulticastGroupEntry(
         multicast_group_entry, operation);
   }
@@ -4509,42 +4519,6 @@ TEST_F(L3MulticastManagerTest, DeleteMulticastGroupFailureNotInMapper) {
             DeleteMulticastGroup("0x1", kGroupOid1));
 }
 
-TEST_F(L3MulticastManagerTest, AddMulticastGroupEntriesNoRifTest) {
-  auto entry1 = GenerateP4MulticastGroupEntry(
-    "0x1",
-    {P4Replica("0x1", "Ethernet1", "0x0"),
-     P4Replica("0x1", "Ethernet2", "0x0")});
-  auto entry2 = GenerateP4MulticastGroupEntry(
-    "0x2",
-    {P4Replica("0x2", "Ethernet1", "0x0"),
-     P4Replica("0x2", "Ethernet2", "0x0")});
-  std::vector<P4MulticastGroupEntry> entries = {entry1, entry2};
-
-  std::vector<ReturnCode> statuses = AddMulticastGroupEntries(entries);
-  EXPECT_EQ(statuses.size(), 2);
-  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_NOT_FOUND);
-  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
-}
-
-TEST_F(L3MulticastManagerTest, AddMulticastGroupEntriesNoReplicasIsRejected) {
-  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
-      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
-  auto rif_entry2 = SetupP4MulticastRouterInterfaceEntry(
-      "Ethernet2", "0x0", swss::MacAddress(kSrcMac2), kRifOid2);
-
-  auto entry1 = GenerateP4MulticastGroupEntry("0x0001", {});
-
-  auto entry2 = GenerateP4MulticastGroupEntry(
-      "0x0002", {P4Replica("0x0002", "Ethernet1", "0x0"),
-                 P4Replica("0x0002", "Ethernet2", "0x0")});
-  std::vector<P4MulticastGroupEntry> entries = {entry1, entry2};
-
-  std::vector<ReturnCode> statuses = AddMulticastGroupEntries(entries);
-  EXPECT_EQ(statuses.size(), 2);
-  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INVALID_PARAM);
-  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
-}
-
 TEST_F(L3MulticastManagerTest, AddMulticastGroupEntriesIpmcGroupAlreadyExists) {
   auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
       "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
@@ -4800,8 +4774,12 @@ TEST_F(L3MulticastManagerTest, AddL2MulticastGroupEntriesGroupSaiFailure) {
   P4Replica replica1 = P4Replica("0x0001", "Ethernet1", "0x0");
   P4Replica replica2 = P4Replica("0x0002", "Ethernet2", "0x0");
 
-  auto entry1 = GenerateP4MulticastGroupEntry("0x0001", {replica1});
-  auto entry2 = GenerateP4MulticastGroupEntry("0x0002", {replica2});
+  auto entry1 = GenerateP4MulticastGroupEntry(
+      "0x0001", {replica1}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
+  auto entry2 = GenerateP4MulticastGroupEntry(
+      "0x0002", {replica2}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
   std::vector<P4MulticastGroupEntry> entries = {entry1, entry2};
 
   EXPECT_CALL(mock_sai_l2mc_group_, create_l2mc_group(_, _, Eq(0), _))
@@ -4829,8 +4807,12 @@ TEST_F(L3MulticastManagerTest,
   P4Replica replica1 = P4Replica("0x0001", "Ethernet1", "0x0");
   P4Replica replica2 = P4Replica("0x0002", "Ethernet2", "0x0");
 
-  auto entry1 = GenerateP4MulticastGroupEntry("0x0001", {replica1});
-  auto entry2 = GenerateP4MulticastGroupEntry("0x0002", {replica2});
+  auto entry1 = GenerateP4MulticastGroupEntry(
+      "0x0001", {replica1}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
+  auto entry2 = GenerateP4MulticastGroupEntry(
+      "0x0002", {replica2}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
   std::vector<P4MulticastGroupEntry> entries = {entry1, entry2};
 
   // Externally add group to map.
@@ -4858,8 +4840,12 @@ TEST_F(L3MulticastManagerTest,
   P4Replica replica1 = P4Replica("0x0001", "Ethernet1", "0x0");
   P4Replica replica2 = P4Replica("0x0002", "Ethernet2", "0x0");
 
-  auto entry1 = GenerateP4MulticastGroupEntry("0x0001", {replica1});
-  auto entry2 = GenerateP4MulticastGroupEntry("0x0002", {replica2});
+  auto entry1 = GenerateP4MulticastGroupEntry(
+      "0x0001", {replica1}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
+  auto entry2 = GenerateP4MulticastGroupEntry(
+      "0x0002", {replica2}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
   std::vector<P4MulticastGroupEntry> entries = {entry1, entry2};
 
   // Externally add group to map.
@@ -4909,8 +4895,12 @@ TEST_F(L3MulticastManagerTest,
   P4Replica replica2 = P4Replica("0x0001", "Ethernet2", "0x0");
   P4Replica replica3 = P4Replica("0x0002", "Ethernet3", "0x0");
 
-  auto entry1 = GenerateP4MulticastGroupEntry("0x0001", {replica1, replica2});
-  auto entry2 = GenerateP4MulticastGroupEntry("0x0002", {replica3});
+  auto entry1 = GenerateP4MulticastGroupEntry(
+      "0x0001", {replica1, replica2}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
+  auto entry2 = GenerateP4MulticastGroupEntry(
+      "0x0002", {replica3}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
   std::vector<P4MulticastGroupEntry> entries = {entry1, entry2};
 
   // Expect to create L2 multicast group and then back it out.
@@ -4962,8 +4952,12 @@ TEST_F(L3MulticastManagerTest,
   P4Replica replica2 = P4Replica("0x0001", "Ethernet2", "0x0");
   P4Replica replica3 = P4Replica("0x0002", "Ethernet3", "0x0");
 
-  auto entry1 = GenerateP4MulticastGroupEntry("0x0001", {replica1, replica2});
-  auto entry2 = GenerateP4MulticastGroupEntry("0x0002", {replica3});
+  auto entry1 = GenerateP4MulticastGroupEntry(
+      "0x0001", {replica1, replica2}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
+  auto entry2 = GenerateP4MulticastGroupEntry(
+      "0x0002", {replica3}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
   std::vector<P4MulticastGroupEntry> entries = {entry1, entry2};
 
   // Expect to create L2 multicast group and then back it out.
@@ -5013,8 +5007,12 @@ TEST_F(L3MulticastManagerTest,
   P4Replica replica2 = P4Replica("0x0001", "Ethernet2", "0x0");
   P4Replica replica3 = P4Replica("0x0002", "Ethernet3", "0x0");
 
-  auto entry1 = GenerateP4MulticastGroupEntry("0x0001", {replica1, replica2});
-  auto entry2 = GenerateP4MulticastGroupEntry("0x0002", {replica3});
+  auto entry1 = GenerateP4MulticastGroupEntry(
+      "0x0001", {replica1, replica2}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
+  auto entry2 = GenerateP4MulticastGroupEntry(
+      "0x0002", {replica3}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
   std::vector<P4MulticastGroupEntry> entries = {entry1, entry2};
 
   // Expect to create L2 multicast group and then back it out.
@@ -5066,8 +5064,12 @@ TEST_F(L3MulticastManagerTest,
   P4Replica replica2 = P4Replica("0x0001", "Ethernet2", "0x0");
   P4Replica replica3 = P4Replica("0x0002", "Ethernet3", "0x0");
 
-  auto entry1 = GenerateP4MulticastGroupEntry("0x0001", {replica1, replica2});
-  auto entry2 = GenerateP4MulticastGroupEntry("0x0002", {replica3});
+  auto entry1 = GenerateP4MulticastGroupEntry(
+      "0x0001", {replica1, replica2}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
+  auto entry2 = GenerateP4MulticastGroupEntry(
+      "0x0002", {replica3}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
   std::vector<P4MulticastGroupEntry> entries = {entry1, entry2};
 
   // Expect to create L2 multicast group and then back it out.
@@ -5103,8 +5105,12 @@ TEST_F(L3MulticastManagerTest,
   P4Replica replica2 = P4Replica("0x0001", "Ethernet2", "0x0");
   P4Replica replica3 = P4Replica("0x0002", "Ethernet3", "0x0");
 
-  auto entry1 = GenerateP4MulticastGroupEntry("0x0001", {replica1, replica2});
-  auto entry2 = GenerateP4MulticastGroupEntry("0x0002", {replica3});
+  auto entry1 = GenerateP4MulticastGroupEntry(
+      "0x0001", {replica1, replica2}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
+  auto entry2 = GenerateP4MulticastGroupEntry(
+      "0x0002", {replica3}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
   std::vector<P4MulticastGroupEntry> entries = {entry1, entry2};
 
   // Expect to create L2 multicast group and then back it out.
@@ -5140,8 +5146,12 @@ TEST_F(L3MulticastManagerTest,
   P4Replica replica2 = P4Replica("0x0001", "Ethernet2", "0x0");
   P4Replica replica3 = P4Replica("0x0002", "Ethernet3", "0x0");
 
-  auto entry1 = GenerateP4MulticastGroupEntry("0x0001", {replica1, replica2});
-  auto entry2 = GenerateP4MulticastGroupEntry("0x0002", {replica3});
+  auto entry1 = GenerateP4MulticastGroupEntry(
+      "0x0001", {replica1, replica2}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
+  auto entry2 = GenerateP4MulticastGroupEntry(
+      "0x0002", {replica3}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
   std::vector<P4MulticastGroupEntry> entries = {entry1, entry2};
 
   // Expect to create L2 multicast group and then back it out.
@@ -5185,8 +5195,12 @@ TEST_F(L3MulticastManagerTest,
   P4Replica replica2 = P4Replica("0x0001", "Ethernet2", "0x0");
   P4Replica replica3 = P4Replica("0x0002", "Ethernet3", "0x0");
 
-  auto entry1 = GenerateP4MulticastGroupEntry("0x0001", {replica1, replica2});
-  auto entry2 = GenerateP4MulticastGroupEntry("0x0002", {replica3});
+  auto entry1 = GenerateP4MulticastGroupEntry(
+      "0x0001", {replica1, replica2}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
+  auto entry2 = GenerateP4MulticastGroupEntry(
+      "0x0002", {replica3}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
   std::vector<P4MulticastGroupEntry> entries = {entry1, entry2};
 
   // Expect to create L2 multicast group and then back it out.
@@ -5646,44 +5660,18 @@ TEST_F(L3MulticastManagerTest, DeleteL2MulticastGroupEntriesNoEntry) {
   P4Replica replica1 = P4Replica("0x0001", "Ethernet1", "0x0");
   P4Replica replica2 = P4Replica("0x0002", "Ethernet2", "0x0");
 
-  auto entry1 = GenerateP4MulticastGroupEntry("0x0001", {replica1});
-  auto entry2 = GenerateP4MulticastGroupEntry("0x0002", {replica2});
+  auto entry1 = GenerateP4MulticastGroupEntry(
+      "0x0001", {replica1}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
+  auto entry2 = GenerateP4MulticastGroupEntry(
+      "0x0002", {replica2}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
 
   // Can't delete what isn't there.
   std::vector<P4MulticastGroupEntry> entries = {entry1, entry2};
   auto statuses = DeleteMulticastGroupEntries(entries);
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_UNKNOWN);
-  EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
-}
-
-TEST_F(L3MulticastManagerTest, DeleteL2MulticastGroupEntriesNoBridgePort) {
-  auto bridge_entry1 = SetupP4MulticastRouterInterfaceNoActionEntry(
-      "Ethernet1", /*instance=*/"0x0", kBridgePortOid1);
-  auto bridge_entry2 = SetupP4MulticastRouterInterfaceNoActionEntry(
-      "Ethernet2", /*instance=*/"0x0", kBridgePortOid2);
-
-  P4Replica replica1 = P4Replica("0x0001", "Ethernet1", "0x0");
-  P4Replica replica2 = P4Replica("0x0002", "Ethernet2", "0x0");
-
-  auto entry1 = SetupP4L2MulticastGroupEntry(
-      "0x0001", {replica1}, kGroupOid1, {kGroupMemberOid1}, {kBridgePortOid1});
-  auto entry2 = SetupP4L2MulticastGroupEntry(
-      "0x0002", {replica2}, kGroupOid2, {kGroupMemberOid2}, {kBridgePortOid2});
-
-  // Force delete bridge port OID.
-  p4_oid_mapper_.decreaseRefCount(
-      SAI_OBJECT_TYPE_BRIDGE_PORT,
-      bridge_entry1.multicast_router_interface_entry_key);
-  p4_oid_mapper_.eraseOID(
-      SAI_OBJECT_TYPE_BRIDGE_PORT,
-      bridge_entry1.multicast_router_interface_entry_key);
-
-  // Attempt to delete.
-  std::vector<P4MulticastGroupEntry> entries = {entry1, entry2};
-  auto statuses = DeleteMulticastGroupEntries(entries);
-  EXPECT_EQ(statuses.size(), 2);
-  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_NOT_FOUND);
   EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
 }
 
@@ -6078,8 +6066,9 @@ TEST_F(L3MulticastManagerTest, UpdateMulticastGroupEntriesFailsIfTypeChanges) {
                                  {kGroupMemberOid1, kGroupMemberOid2});
 
   // Attempt to switch from IP to L2 multicast group type.
-  auto group_entry2 =
-      GenerateP4MulticastGroupEntry("0x0001", {replica3, replica4});
+  auto group_entry2 = GenerateP4MulticastGroupEntry(
+      "0x0001", {replica3, replica4}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
 
   std::vector<P4MulticastGroupEntry> entries = {group_entry2};
   auto statuses = UpdateMulticastGroupEntries(entries);
@@ -6511,7 +6500,9 @@ TEST_F(L3MulticastManagerTest, UpdateL2MulticastGroupEntriesTestSuccess) {
       {kGroupMemberOid1, kGroupMemberOid2}, {kBridgePortOid1, kBridgePortOid2});
 
   // Should leave replica1 untouched, delete replica2, and add replica3.
-  auto entry2 = GenerateP4MulticastGroupEntry("0x0001", {replica1, replica3});
+  auto entry2 = GenerateP4MulticastGroupEntry(
+      "0x0001", {replica1, replica3}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
 
   EXPECT_CALL(mock_sai_l2mc_group_, remove_l2mc_group_member(kGroupMemberOid2))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
@@ -6546,8 +6537,9 @@ TEST_F(L3MulticastManagerTest, UpdateL2MulticastGroupEntriesTestSuccess) {
 
   auto* group_entry_ptr = GetMulticastGroupEntry("0x0001");
   ASSERT_NE(group_entry_ptr, nullptr);
-  auto expect_entry =
-      GenerateP4MulticastGroupEntry("0x0001", {replica1, replica3});
+  auto expect_entry = GenerateP4MulticastGroupEntry(
+      "0x0001", {replica1, replica3}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
   VerifyP4MulticastGroupEntryEqual(expect_entry, *group_entry_ptr);
 }
 
@@ -6591,55 +6583,15 @@ TEST_F(L3MulticastManagerTest, UpdateL2MulticastGroupEntriesMissingGroupOid) {
   p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_L2MC_GROUP, "0x0001");
 
   // Want to leave replica1 untouched, delete replica2, and add replica3.
-  auto entry2 = GenerateP4MulticastGroupEntry("0x0001", {replica1, replica3});
+  auto entry2 = GenerateP4MulticastGroupEntry(
+      "0x0001", {replica1, replica3}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
 
   std::vector<P4MulticastGroupEntry> entries = {entry2, entry1};
   auto statuses = UpdateMulticastGroupEntries(entries);
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_INTERNAL);
   EXPECT_EQ(statuses[1], StatusCode::SWSS_RC_NOT_EXECUTED);
-}
-
-TEST_F(L3MulticastManagerTest,
-       UpdateL2MulticastGroupEntriesMissingBridgePortError) {
-  auto bridge_entry1 = SetupP4MulticastRouterInterfaceNoActionEntry(
-      "Ethernet1", /*instance=*/"0x0", kBridgePortOid1);
-  auto bridge_entry2 = SetupP4MulticastRouterInterfaceNoActionEntry(
-      "Ethernet2", /*instance=*/"0x0", kBridgePortOid2);
-  auto bridge_entry3 = SetupP4MulticastRouterInterfaceNoActionEntry(
-      "Ethernet3", /*instance=*/"0x0", kBridgePortOid3);
-
-  P4Replica replica1 = P4Replica("0x0001", "Ethernet1", "0x0");
-  P4Replica replica2 = P4Replica("0x0001", "Ethernet2", "0x0");
-  P4Replica replica3 = P4Replica("0x0001", "Ethernet3", "0x0");
-
-  auto entry1 = SetupP4L2MulticastGroupEntry(
-      "0x0001", {replica1, replica2}, kGroupOid1,
-      {kGroupMemberOid1, kGroupMemberOid2}, {kBridgePortOid1, kBridgePortOid2});
-
-  // Unnaturally force bridge port for replica2 to disappear.
-  p4_oid_mapper_.decreaseRefCount(
-      SAI_OBJECT_TYPE_BRIDGE_PORT,
-      bridge_entry2.multicast_router_interface_entry_key);
-  p4_oid_mapper_.eraseOID(
-      SAI_OBJECT_TYPE_BRIDGE_PORT,
-      bridge_entry2.multicast_router_interface_entry_key);
-
-  // Want to leave replica1 untouched, delete replica2, and add replica3.
-  auto entry2 = GenerateP4MulticastGroupEntry("0x0001", {replica1, replica3});
-
-  std::vector<P4MulticastGroupEntry> entries = {entry2};
-  auto statuses = UpdateMulticastGroupEntries(entries);
-  EXPECT_EQ(statuses.size(), 1);
-  EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_NOT_FOUND);
-
-  EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_L2MC_GROUP, "0x0001"));
-  EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER,
-                                       replica1.key));
-  EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER,
-                                       replica2.key));
-  EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER,
-                                        replica3.key));
 }
 
 TEST_F(L3MulticastManagerTest,
@@ -6660,7 +6612,9 @@ TEST_F(L3MulticastManagerTest,
       {kGroupMemberOid1, kGroupMemberOid2}, {kBridgePortOid1, kBridgePortOid2});
 
   // Want to delete replicas 1 and 2, and add replica3.
-  auto entry2 = GenerateP4MulticastGroupEntry("0x0001", {replica3});
+  auto entry2 = GenerateP4MulticastGroupEntry(
+      "0x0001", {replica3}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
 
   EXPECT_CALL(mock_sai_l2mc_group_, remove_l2mc_group_member(kGroupMemberOid1))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
@@ -6696,8 +6650,9 @@ TEST_F(L3MulticastManagerTest,
 
   auto* group_entry_ptr = GetMulticastGroupEntry("0x0001");
   ASSERT_NE(group_entry_ptr, nullptr);
-  auto expect_entry =
-      GenerateP4MulticastGroupEntry("0x0001", {replica1, replica2});
+  auto expect_entry = GenerateP4MulticastGroupEntry(
+      "0x0001", {replica1, replica2}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
   VerifyP4MulticastGroupEntryEqual(expect_entry, *group_entry_ptr);
 }
 
@@ -6719,7 +6674,9 @@ TEST_F(L3MulticastManagerTest,
       {kGroupMemberOid1, kGroupMemberOid2}, {kBridgePortOid1, kBridgePortOid2});
 
   // Want to delete replicas 1 and 2, and add replica3.
-  auto entry2 = GenerateP4MulticastGroupEntry("0x0001", {replica3});
+  auto entry2 = GenerateP4MulticastGroupEntry(
+      "0x0001", {replica3}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
 
   EXPECT_CALL(mock_sai_l2mc_group_, remove_l2mc_group_member(kGroupMemberOid1))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
@@ -6774,7 +6731,9 @@ TEST_F(L3MulticastManagerTest,
       {kGroupMemberOid1, kGroupMemberOid2}, {kBridgePortOid1, kBridgePortOid2});
 
   // Want to delete replica1 and replica2.  Want to add replica3 and replica4.
-  auto entry2 = GenerateP4MulticastGroupEntry("0x0001", {replica3, replica4});
+  auto entry2 = GenerateP4MulticastGroupEntry(
+      "0x0001", {replica3, replica4}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
 
   // Remove replica1 and replica2.
   EXPECT_CALL(mock_sai_l2mc_group_, remove_l2mc_group_member(kGroupMemberOid1))
@@ -6854,8 +6813,9 @@ TEST_F(L3MulticastManagerTest,
 
   auto* group_entry_ptr = GetMulticastGroupEntry("0x0001");
   ASSERT_NE(group_entry_ptr, nullptr);
-  auto expect_entry =
-      GenerateP4MulticastGroupEntry("0x0001", {replica1, replica2});
+  auto expect_entry = GenerateP4MulticastGroupEntry(
+      "0x0001", {replica1, replica2}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
   VerifyP4MulticastGroupEntryEqual(expect_entry, *group_entry_ptr);
 }
 
@@ -6880,7 +6840,9 @@ TEST_F(L3MulticastManagerTest,
       {kGroupMemberOid1, kGroupMemberOid2}, {kBridgePortOid1, kBridgePortOid2});
 
   // Want to delete replica1 and replica2.  Want to add replica3 and replica4.
-  auto entry2 = GenerateP4MulticastGroupEntry("0x0001", {replica3, replica4});
+  auto entry2 = GenerateP4MulticastGroupEntry(
+      "0x0001", {replica3, replica4}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
 
   // Remove replica1 and replica2.
   EXPECT_CALL(mock_sai_l2mc_group_, remove_l2mc_group_member(kGroupMemberOid1))
@@ -6955,7 +6917,9 @@ TEST_F(L3MulticastManagerTest,
       {kGroupMemberOid1, kGroupMemberOid2}, {kBridgePortOid1, kBridgePortOid2});
 
   // Want to delete replica1 and replica2.  Want to add replica3 and replica4.
-  auto entry2 = GenerateP4MulticastGroupEntry("0x0001", {replica3, replica4});
+  auto entry2 = GenerateP4MulticastGroupEntry(
+      "0x0001", {replica3, replica4}, /*multicast_metadata=*/"",
+      /*controller_metadata=*/"", /*is_ipmc=*/false);
 
   // Remove replica1 and replica2.
   EXPECT_CALL(mock_sai_l2mc_group_, remove_l2mc_group_member(kGroupMemberOid1))
@@ -7149,6 +7113,17 @@ TEST_F(L3MulticastManagerTest,
   // Delete also fails.
   status = ValidateMulticastGroupEntry(group_entry1, DEL_COMMAND);
   EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, status);
+}
+
+TEST_F(L3MulticastManagerTest, ValidateSetMulticastGroupEntryEmptyReplicaTest) {
+  auto group_entry1 = SetupP4MulticastGroupEntry("0x1", {}, kGroupOid1, {});
+
+  // Empty replica group should fail validation
+  ReturnCode status = ValidateMulticastGroupEntry(group_entry1, SET_COMMAND);
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, status);
+  // Delete should pass validation
+  status = ValidateMulticastGroupEntry(group_entry1, DEL_COMMAND);
+  EXPECT_TRUE(status.ok());
 }
 
 TEST_F(L3MulticastManagerTest,
@@ -8245,7 +8220,8 @@ TEST_F(L3MulticastManagerTest, DrainL2MulticastGroupEntryAddSuccessTest) {
   EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
   auto expect_group_entry = GenerateP4MulticastGroupEntry(
-      "0x0001", {replica1, replica2}, "multicast_meta", "controller_meta");
+      "0x0001", {replica1, replica2}, "multicast_meta", "controller_meta",
+      /*is_ipmc=*/false);
 
   auto* actual_group_entry =
       GetMulticastGroupEntry(expect_group_entry.multicast_group_id);
@@ -8396,6 +8372,13 @@ TEST_F(L3MulticastManagerTest, VerifyStateMulticastGroupTestStateCacheFails) {
                                     "controller_meta");
   EXPECT_FALSE(VerifyMulticastGroupStateCache(
                    empty_group_id, &internal_entry).empty());
+  
+  // Different group type.
+  P4MulticastGroupEntry different_group_type = GenerateP4MulticastGroupEntry(
+      "0x1", {replica1}, "multi_meta", "controller_meta", /*is_ipmc=*/false);
+  EXPECT_FALSE(
+      VerifyMulticastGroupStateCache(different_group_type, &internal_entry)
+          .empty());
 
   // Missing replica.
   P4MulticastGroupEntry missing_replica =
