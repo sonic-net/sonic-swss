@@ -427,7 +427,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_BRIDGE_PORT_ATTR_ADMIN_STATE,
          "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE,
-         self._p4rt_l3_multicast_router_intf.SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE),
+         self._p4rt_l3_multicast_router_intf.SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW),
     ]
     util.verify_attr(fvs, attr_list)
 
