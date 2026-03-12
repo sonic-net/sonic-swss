@@ -85,10 +85,21 @@ fn init_logging(log_level: &str, log_format: &str) {
     builder.init();
 }
 
+#[derive(Debug)]
 struct SupervisorExit {
     actor_name: &'static str,
     exit_code: i32,
     message: String,
+}
+
+fn describe_join_error(e: tokio::task::JoinError) -> String {
+    if e.is_panic() {
+        format!("task panicked: {}", e)
+    } else if e.is_cancelled() {
+        format!("task was cancelled: {}", e)
+    } else {
+        format!("task join error: {}", e)
+    }
 }
 
 fn classify_join(name: &'static str, result: Result<(), tokio::task::JoinError>) -> SupervisorExit {
@@ -96,34 +107,35 @@ fn classify_join(name: &'static str, result: Result<(), tokio::task::JoinError>)
         Ok(()) => SupervisorExit {
             actor_name: name,
             exit_code: EXIT_FAILURE,
-            message: format!("{} actor exited unexpectedly", name),
+            message: "exited unexpectedly".to_string(),
         },
         Err(e) => SupervisorExit {
             actor_name: name,
             exit_code: EXIT_FAILURE,
-            message: format!("{} actor join error: {:?}", name, e),
+            message: describe_join_error(e),
         },
     }
 }
 
 fn classify_otel_join(
+    name: &'static str,
     result: Result<Result<(), Box<dyn ExportError>>, tokio::task::JoinError>,
 ) -> SupervisorExit {
     match result {
         Ok(Ok(())) => SupervisorExit {
-            actor_name: "OpenTelemetry",
+            actor_name: name,
             exit_code: EXIT_FAILURE,
-            message: "OpenTelemetry actor exited unexpectedly".to_string(),
+            message: "exited unexpectedly".to_string(),
         },
         Ok(Err(e)) => SupervisorExit {
-            actor_name: "OpenTelemetry",
+            actor_name: name,
             exit_code: EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED,
-            message: format!("OpenTelemetry actor failed: {:?}", e),
+            message: format!("export failed after retries: {:?}", e),
         },
         Err(e) => SupervisorExit {
-            actor_name: "OpenTelemetry",
+            actor_name: name,
             exit_code: EXIT_FAILURE,
-            message: format!("OpenTelemetry actor join error: {:?}", e),
+            message: describe_join_error(e),
         },
     }
 }
@@ -478,7 +490,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             classify_join("Counter DB", res)
         }
         res = async { otel_handle.as_mut().unwrap().await }, if otel_handle.is_some() => {
-            classify_otel_join(res)
+            classify_otel_join("OpenTelemetry", res)
         }
     };
 
