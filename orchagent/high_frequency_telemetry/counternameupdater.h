@@ -20,12 +20,12 @@ public:
 
     struct Message
     {
-        const char* m_table_name;
+        std::string m_table_name;
         OPERATION m_operation;
         // Use a string to own the counter name, avoiding dangling pointers
         // when the caller's local string goes out of scope.
         std::string m_counter_name;
-        sai_object_id_t m_oid; // Only valid for SET operation
+        sai_object_id_t m_oid = SAI_NULL_OBJECT_ID; // Only valid for SET operation
     };
 
     CounterNameMapUpdater(const std::string &db_name, const std::string &table_name);

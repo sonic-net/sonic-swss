@@ -22,7 +22,7 @@ void CounterNameMapUpdater::setCounterNameMap(const std::string &counter_name, s
     if (gHFTOrch)
     {
         Message msg;
-        msg.m_table_name = m_table_name.c_str();
+        msg.m_table_name = m_table_name;
         msg.m_operation = OPERATION::SET;
         msg.m_counter_name = unify_counter_name(counter_name);
         msg.m_oid = oid;
@@ -55,7 +55,7 @@ void CounterNameMapUpdater::delCounterNameMap(const std::string &counter_name)
     if (gHFTOrch)
     {
         Message msg;
-        msg.m_table_name = m_table_name.c_str();
+        msg.m_table_name = m_table_name;
         msg.m_operation = OPERATION::DEL;
         msg.m_counter_name = unify_counter_name(counter_name);
         gHFTOrch->locallyNotify(msg);

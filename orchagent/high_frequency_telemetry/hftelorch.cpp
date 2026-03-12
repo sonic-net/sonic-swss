@@ -108,12 +108,12 @@ void HFTelOrch::locallyNotify(const CounterNameMapUpdater::Message &msg)
     auto counter_itr = HFTelOrch::SUPPORT_COUNTER_TABLES.find(msg.m_table_name);
     if (counter_itr == HFTelOrch::SUPPORT_COUNTER_TABLES.end())
     {
-        SWSS_LOG_WARN("The counter table %s is not supported by high frequency telemetry", msg.m_table_name);
+        SWSS_LOG_WARN("The counter table %s is not supported by high frequency telemetry", msg.m_table_name.c_str());
         return;
     }
 
     SWSS_LOG_NOTICE("The counter table %s is updated, operation %d, object %s",
-                    msg.m_table_name,
+                    msg.m_table_name.c_str(),
                     msg.m_operation,
                     msg.m_counter_name.c_str());
 
@@ -581,9 +581,13 @@ void HFTelOrch::createNetlinkChannel(const string &genl_family, const string &ge
     strncpy(attr.value.chardata, genl_group.c_str(), sizeof(attr.value.chardata));
     attrs.push_back(attr);
 
-    handleSaiCreateStatus(
-        SAI_API_HOSTIF,
-        sai_hostif_api->create_hostif(&m_sai_hostif_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data()));
+    if (handleSaiCreateStatus(
+            SAI_API_HOSTIF,
+            sai_hostif_api->create_hostif(&m_sai_hostif_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data())) != task_success)
+    {
+        deleteNetlinkChannel();
+        return;
+    }
 
     // Create hostif user defined trap object
     attrs.clear();
@@ -592,9 +596,13 @@ void HFTelOrch::createNetlinkChannel(const string &genl_family, const string &ge
     attr.value.s32 = SAI_HOSTIF_USER_DEFINED_TRAP_TYPE_TAM;
     attrs.push_back(attr);
 
-    handleSaiCreateStatus(
-        SAI_API_HOSTIF,
-        sai_hostif_api->create_hostif_user_defined_trap(&m_sai_hostif_user_defined_trap_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data()));
+    if (handleSaiCreateStatus(
+            SAI_API_HOSTIF,
+            sai_hostif_api->create_hostif_user_defined_trap(&m_sai_hostif_user_defined_trap_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data())) != task_success)
+    {
+        deleteNetlinkChannel();
+        return;
+    }
 
     // Create hostif table entry object
     attrs.clear();
@@ -615,9 +623,13 @@ void HFTelOrch::createNetlinkChannel(const string &genl_family, const string &ge
     attr.value.oid = m_sai_hostif_obj;
     attrs.push_back(attr);
 
-    handleSaiCreateStatus(
-        SAI_API_HOSTIF,
-        sai_hostif_api->create_hostif_table_entry(&m_sai_hostif_table_entry_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data()));
+    if (handleSaiCreateStatus(
+            SAI_API_HOSTIF,
+            sai_hostif_api->create_hostif_table_entry(&m_sai_hostif_table_entry_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data())) != task_success)
+    {
+        deleteNetlinkChannel();
+        return;
+    }
 }
 
 void HFTelOrch::deleteNetlinkChannel()
