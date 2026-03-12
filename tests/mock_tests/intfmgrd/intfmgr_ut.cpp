@@ -132,20 +132,26 @@ namespace intfmgr_ut
         Ethernet0IPv6Set = true;
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
 
-        /* Add an IPv6 link-local address entry in CONFIG_DB INTERFACE table */
+        /* Set portStateTable and stateIntfTable so doIntfAddrTask proceeds */
         std::vector<swss::FieldValueTuple> values;
-        values.emplace_back("family", "IPv6");
-        intfmgr.m_cfgIntfTable.set("Ethernet0|fe80::1/64", values, "SET", "");
+        values.emplace_back("state", "ok");
+        intfmgr.m_statePortTable.set("Ethernet0", values, "SET", "");
+        values.clear();
+        values.emplace_back("vrf", "");
+        intfmgr.m_stateIntfTable.set("Ethernet0", values, "SET", "");
+
+        /* Add an IPv6 link-local address via doIntfAddrTask to populate the cache */
+        const std::vector<std::string> llKeys = {"Ethernet0", "fe80::1/64"};
+        const std::vector<swss::FieldValueTuple> emptyData;
+        intfmgr.doIntfAddrTask(llKeys, emptyData, "SET");
 
         /* Also add a global IPv6 address — this should NOT be replayed */
-        values.clear();
-        values.emplace_back("family", "IPv6");
-        intfmgr.m_cfgIntfTable.set("Ethernet0|2001::8/64", values, "SET", "");
+        const std::vector<std::string> globalKeys = {"Ethernet0", "2001::8/64"};
+        intfmgr.doIntfAddrTask(globalKeys, emptyData, "SET");
 
         /* Also add an IPv4 address — this should NOT be replayed */
-        values.clear();
-        values.emplace_back("family", "IPv4");
-        intfmgr.m_cfgIntfTable.set("Ethernet0|10.0.0.1/31", values, "SET", "");
+        const std::vector<std::string> ipv4Keys = {"Ethernet0", "10.0.0.1/31"};
+        intfmgr.doIntfAddrTask(ipv4Keys, emptyData, "SET");
 
         mockCallArgs.clear();
 
@@ -185,10 +191,18 @@ namespace intfmgr_ut
         Ethernet0IPv6Set = true;
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
 
-        /* Add an IPv6 link-local address entry in CONFIG_DB INTERFACE table */
+        /* Set portStateTable and stateIntfTable so doIntfAddrTask proceeds */
         std::vector<swss::FieldValueTuple> values;
-        values.emplace_back("family", "IPv6");
-        intfmgr.m_cfgIntfTable.set("Ethernet0|fe80::1/64", values, "SET", "");
+        values.emplace_back("state", "ok");
+        intfmgr.m_statePortTable.set("Ethernet0", values, "SET", "");
+        values.clear();
+        values.emplace_back("vrf", "");
+        intfmgr.m_stateIntfTable.set("Ethernet0", values, "SET", "");
+
+        /* Add an IPv6 link-local address via doIntfAddrTask to populate the cache */
+        const std::vector<std::string> llKeys = {"Ethernet0", "fe80::1/64"};
+        const std::vector<swss::FieldValueTuple> emptyData;
+        intfmgr.doIntfAddrTask(llKeys, emptyData, "SET");
 
         mockCallArgs.clear();
 

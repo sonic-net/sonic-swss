@@ -1120,6 +1120,11 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
 
         setIntfIp(alias, "add", ip_prefix);
 
+        if (!ip_prefix.isV4() && ip_prefix.getIp().getAddrScope() == IpAddress::AddrScope::LINK_SCOPE)
+        {
+            m_intfLLAddresses[alias].insert(ip_prefix.to_string());
+        }
+
         std::vector<FieldValueTuple> fvVector;
         FieldValueTuple f("family", ip_prefix.isV4() ? IPV4_NAME : IPV6_NAME);
 
@@ -1136,6 +1141,19 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
     else if (op == DEL_COMMAND)
     {
         setIntfIp(alias, "del", ip_prefix);
+
+        if (!ip_prefix.isV4() && ip_prefix.getIp().getAddrScope() == IpAddress::AddrScope::LINK_SCOPE)
+        {
+            auto it = m_intfLLAddresses.find(alias);
+            if (it != m_intfLLAddresses.end())
+            {
+                it->second.erase(ip_prefix.to_string());
+                if (it->second.empty())
+                {
+                    m_intfLLAddresses.erase(it);
+                }
+            }
+        }
 
         // Don't send ipv4 link local config to AppDB and Orchagent
         if ((ip_prefix.isV4() == false) || (ip_prefix.getIp().getAddrScope() != IpAddress::AddrScope::LINK_SCOPE))
@@ -1237,7 +1255,7 @@ void IntfMgr::doPortTableTask(const string& key, vector<FieldValueTuple> data, s
                 SWSS_LOG_INFO("Port %s Admin %s", key.c_str(), value.c_str());
                 updateSubIntfAdminStatus(key, value);
 
-                if (value == "up")
+                if (value == "up" && m_intfLLAddresses.count(key) > 0)
                 {
                     replayLLIntfAddresses(key);
                 }
@@ -1263,36 +1281,17 @@ bool IntfMgr::enableIpv6Flag(const string &alias)
 
 void IntfMgr::replayLLIntfAddresses(const string &alias)
 {
-    // Determine which CONFIG_DB table to use based on interface type
-    Table *cfgTable;
-    if (!alias.compare(0, strlen(VLAN_PREFIX), VLAN_PREFIX))
+    auto it = m_intfLLAddresses.find(alias);
+    if (it == m_intfLLAddresses.end())
     {
-        cfgTable = &m_cfgVlanIntfTable;
-    }
-    else if (!alias.compare(0, strlen(LAG_PREFIX), LAG_PREFIX))
-    {
-        cfgTable = &m_cfgLagIntfTable;
-    }
-    else
-    {
-        cfgTable = &m_cfgIntfTable;
+        return;
     }
 
-    vector<string> keys;
-    cfgTable->getKeys(keys);
-
-    for (const auto &key : keys)
+    for (const auto &addr : it->second)
     {
-        auto tokens = tokenize(key, config_db_key_delimiter);
-        if (tokens.size() == 2 && tokens[0] == alias)
-        {
-            IpPrefix ipPrefix(tokens[1]);
-            if (!ipPrefix.isV4() && ipPrefix.getIp().getAddrScope() == IpAddress::AddrScope::LINK_SCOPE)
-            {
-                setIntfIp(alias, "add", ipPrefix);
-                SWSS_LOG_INFO("Replayed IPv6 link-local address %s on interface %s after admin up",
-                    tokens[1].c_str(), alias.c_str());
-            }
-        }
+        IpPrefix ipPrefix(addr);
+        setIntfIp(alias, "add", ipPrefix);
+        SWSS_LOG_INFO("Replayed IPv6 link-local address %s on interface %s after admin up",
+            addr.c_str(), alias.c_str());
     }
 }

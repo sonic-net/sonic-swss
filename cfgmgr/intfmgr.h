@@ -37,6 +37,7 @@ private:
     std::set<std::string> m_loopbackIntfList;
     std::set<std::string> m_pendingReplayIntfList;
     std::set<std::string> m_ipv6LinkLocalModeList;
+    std::map<std::string, std::set<std::string>> m_intfLLAddresses;
     std::string mySwitchType;
 
     void setIntfIp(const std::string &alias, const std::string &opCmd, const IpPrefix &ipPrefix);
