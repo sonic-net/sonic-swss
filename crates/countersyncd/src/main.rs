@@ -104,11 +104,14 @@ fn describe_join_error(e: tokio::task::JoinError) -> String {
 
 fn classify_join(name: &'static str, result: Result<(), tokio::task::JoinError>) -> SupervisorExit {
     match result {
-        Ok(()) => SupervisorExit {
-            actor_name: name,
-            exit_code: EXIT_FAILURE,
-            message: "exited unexpectedly".to_string(),
-        },
+        Ok(()) => {
+            // Actors are expected to run indefinitely; a normal return is treated as an unexpected exit.
+            SupervisorExit {
+                actor_name: name,
+                exit_code: EXIT_FAILURE,
+                message: "exited unexpectedly".to_string(),
+            }
+        }
         Err(e) => SupervisorExit {
             actor_name: name,
             exit_code: EXIT_FAILURE,
@@ -122,11 +125,14 @@ fn classify_otel_join(
     result: Result<Result<(), Box<dyn ExportError>>, tokio::task::JoinError>,
 ) -> SupervisorExit {
     match result {
-        Ok(Ok(())) => SupervisorExit {
-            actor_name: name,
-            exit_code: EXIT_FAILURE,
-            message: "exited unexpectedly".to_string(),
-        },
+        Ok(Ok(())) => {
+            // OpenTelemetry is also a long-running actor; a normal return is treated as an unexpected exit.
+            SupervisorExit {
+                actor_name: name,
+                exit_code: EXIT_FAILURE,
+                message: "exited unexpectedly".to_string(),
+            }
+        }
         Ok(Err(e)) => SupervisorExit {
             actor_name: name,
             exit_code: EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED,
