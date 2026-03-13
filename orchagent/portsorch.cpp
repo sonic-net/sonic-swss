@@ -4119,11 +4119,12 @@ void PortsOrch::registerPort(Port &p)
     }
     if (flex_counters_orch->getPortPhyAttrCounterState())
     {
-        if (!m_supported_phy_attrs.empty())
+        if (!m_supported_phy_attrs.empty() && p.m_type == Port::Type::PHY)
         {
-            if (p.m_type == Port::Type::PHY && verifyPortSupportsAllPhyAttr(p.m_port_id, p.m_alias.c_str()))
+            auto supported_attrs = getPortPhySupportedAttrs(p.m_port_id, p.m_alias.c_str());
+            if (!supported_attrs.empty())
             {
-                auto port_phy_attr_stats = generateCounterStats(m_supported_phy_attrs, sai_serialize_port_attr);
+                auto port_phy_attr_stats = generateCounterStats(supported_attrs, sai_serialize_port_attr);
                 port_phy_attr_manager.setCounterIdList(p.m_port_id,
                         CounterType::PORT_PHY_ATTR, port_phy_attr_stats);
             }
@@ -4134,11 +4135,14 @@ void PortsOrch::registerPort(Port &p)
     {
         if (!m_supported_phy_serdes_attrs.empty() &&
             p.m_type == Port::Type::PHY &&
-            port_serdes_id != SAI_NULL_OBJECT_ID &&
-            supportsPortPhySerdesAttr(port_serdes_id, p.m_alias.c_str()))
+            port_serdes_id != SAI_NULL_OBJECT_ID)
         {
-            auto port_attr_serdes_stats = generateCounterStats(m_supported_phy_serdes_attrs, sai_serialize_port_serdes_attr);
-            port_phy_serdes_attr_manager.setCounterIdList(port_serdes_id, CounterType::PORT_PHY_SERDES_ATTR, port_attr_serdes_stats);
+            auto supported_attrs = getPortPhySerdesSupportedAttrs(port_serdes_id, p.m_alias.c_str());
+            if (!supported_attrs.empty())
+            {
+                auto port_attr_serdes_stats = generateCounterStats(supported_attrs, sai_serialize_port_serdes_attr);
+                port_phy_serdes_attr_manager.setCounterIdList(port_serdes_id, CounterType::PORT_PHY_SERDES_ATTR, port_attr_serdes_stats);
+            }
         }
     }
 
@@ -4247,12 +4251,9 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     {
         wred_port_stat_manager.clearCounterIdList(p.m_port_id);
     }
-    if (!m_supported_phy_attrs.empty())
+    if (!m_supported_phy_attrs.empty() && p.m_type == Port::Type::PHY)
     {
-        if (p.m_type == Port::Type::PHY && verifyPortSupportsAllPhyAttr(p.m_port_id, p.m_alias.c_str()))
-        {
-            port_phy_attr_manager.clearCounterIdList(p.m_port_id);
-        }
+        port_phy_attr_manager.clearCounterIdList(p.m_port_id);
     }
 
     /* Get port serdes id for this port from local cached map */
@@ -4265,8 +4266,7 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
 
     if (!m_supported_phy_serdes_attrs.empty() &&
         p.m_type == Port::Type::PHY &&
-        port_serdes_id != SAI_NULL_OBJECT_ID &&
-        supportsPortPhySerdesAttr(port_serdes_id, p.m_alias.c_str()))
+        port_serdes_id != SAI_NULL_OBJECT_ID)
     {
         port_phy_serdes_attr_manager.clearCounterIdList(port_serdes_id);
     }
@@ -9107,57 +9107,67 @@ void PortsOrch::queryPortPhyAttrCapabilities()
     }
 }
 
-bool PortsOrch::verifyPortSupportsAllPhyAttr(sai_object_id_t port_id, const char* port_name)
+std::vector<sai_port_attr_t> PortsOrch::getPortPhySupportedAttrs(sai_object_id_t port_id, const char* port_name)
 {
-    // Verify port supports ALL SERDES attributes
-    // Query with count=0 to check if attribute is supported (expect BUFFER_OVERFLOW)
+    std::vector<sai_port_attr_t> supported_attrs;
 
-    // Check RX_SIGNAL_DETECT
-    sai_attribute_t port_attr;
-    port_attr.id = SAI_PORT_ATTR_RX_SIGNAL_DETECT;
-    port_attr.value.portlanelatchstatuslist.count = 0;
-    port_attr.value.portlanelatchstatuslist.list = nullptr;
+    // Lambda function to check attribute support and handle logging
+    auto checkPortPhyAttrSupport = [&](sai_attribute_t& port_attr, const char* attr_name) {
+        sai_status_t status = sai_port_api->get_port_attribute(port_id, 1, &port_attr);
+        if (status == SAI_STATUS_BUFFER_OVERFLOW)
+        {
+            supported_attrs.push_back(static_cast<sai_port_attr_t>(port_attr.id));
+            SWSS_LOG_DEBUG("PORT_PHY_ATTR: Port %s supports %s attribute",
+                           port_name, attr_name);
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("PORT_PHY_ATTR: Port %s does not support %s attribute (status=%d)",
+                          port_name, attr_name, status);
+        }
+    };
 
-    sai_status_t status = sai_port_api->get_port_attribute(port_id, 1, &port_attr);
-    if (status != SAI_STATUS_BUFFER_OVERFLOW)
+    // Iterate through platform-supported attributes and check if this port supports them
+    for (const auto& attr_id : m_supported_phy_attrs)
     {
-        SWSS_LOG_NOTICE("PORT_PHY_ATTR: Port %s does not support RX_SIGNAL_DETECT attribute (status=%d)",
-                      port_name, status);
-        return false;
+        sai_attribute_t port_attr;
+        switch (attr_id)
+        {
+            case SAI_PORT_ATTR_RX_SIGNAL_DETECT:
+            {
+                port_attr.id = SAI_PORT_ATTR_RX_SIGNAL_DETECT;
+                port_attr.value.portlanelatchstatuslist.count = 0;
+                port_attr.value.portlanelatchstatuslist.list = nullptr;
+                checkPortPhyAttrSupport(port_attr, "SAI_PORT_ATTR_RX_SIGNAL_DETECT");
+                break;
+            }
+
+            case SAI_PORT_ATTR_FEC_ALIGNMENT_LOCK:
+            {
+                port_attr.id = SAI_PORT_ATTR_FEC_ALIGNMENT_LOCK;
+                port_attr.value.portlanelatchstatuslist.count = 0;
+                port_attr.value.portlanelatchstatuslist.list = nullptr;
+                checkPortPhyAttrSupport(port_attr, "SAI_PORT_ATTR_FEC_ALIGNMENT_LOCK");
+                break;
+            }
+
+            case SAI_PORT_ATTR_RX_SNR:
+            {
+                port_attr.id = SAI_PORT_ATTR_RX_SNR;
+                port_attr.value.portsnrlist.count = 0;
+                port_attr.value.portsnrlist.list = nullptr;
+                checkPortPhyAttrSupport(port_attr, "SAI_PORT_ATTR_RX_SNR");
+                break;
+            }
+
+            default:
+                SWSS_LOG_WARN("PORT_PHY_ATTR: Unknown attribute %d in m_supported_phy_attrs for port %s",
+                    attr_id, port_name);
+                break;
+        }
     }
-    SWSS_LOG_DEBUG("PORT_PHY_ATTR: Port %s supports RX_SIGNAL_DETECT attribute (count=%d)",
-                   port_name, port_attr.value.portlanelatchstatuslist.count);
 
-    // Check FEC_ALIGNMENT_LOCK
-    port_attr.id = SAI_PORT_ATTR_FEC_ALIGNMENT_LOCK;
-    port_attr.value.portlanelatchstatuslist.count = 0;
-    port_attr.value.portlanelatchstatuslist.list = nullptr;
-
-    status = sai_port_api->get_port_attribute(port_id, 1, &port_attr);
-    if (status != SAI_STATUS_BUFFER_OVERFLOW)
-    {
-        SWSS_LOG_NOTICE("PORT_PHY_ATTR: Port %s does not support FEC_ALIGNMENT_LOCK attribute (status=%d)",
-                      port_name, status);
-        return false;
-    }
-    SWSS_LOG_DEBUG("PORT_PHY_ATTR: Port %s supports FEC_ALIGNMENT_LOCK attribute (count=%d)",
-                   port_name, port_attr.value.portlanelatchstatuslist.count);
-
-    // Check RX_SNR
-    port_attr.id = SAI_PORT_ATTR_RX_SNR;
-    port_attr.value.portsnrlist.count = 0;
-    port_attr.value.portsnrlist.list = nullptr;
-
-    status = sai_port_api->get_port_attribute(port_id, 1, &port_attr);
-    if (status != SAI_STATUS_BUFFER_OVERFLOW)
-    {
-        SWSS_LOG_NOTICE("PORT_PHY_ATTR: Port %s does not support RX_SNR attribute (status=%d)",
-                      port_name, status);
-        return false;
-    }
-    SWSS_LOG_DEBUG("PORT_PHY_ATTR: Port %s supports RX_SNR attribute (count=%d)",
-                   port_name, port_attr.value.portsnrlist.count);
-    return true;
+    return supported_attrs;
 }
 
 void PortsOrch::generatePortPhyAttrCounterMap()
@@ -9168,17 +9178,20 @@ void PortsOrch::generatePortPhyAttrCounterMap()
         return;
     }
 
-    auto port_phy_attr_stats = generateCounterStats(m_supported_phy_attrs, sai_serialize_port_attr);
-
     for (const auto& it: m_portList)
     {
-        if (it.second.m_type == Port::Type::PHY && verifyPortSupportsAllPhyAttr(it.second.m_port_id, it.second.m_alias.c_str()))
+        if (it.second.m_type == Port::Type::PHY)
         {
-            SWSS_LOG_DEBUG("PORT_PHY_ATTR: Setting counter ID list for port %s",
-                          it.second.m_alias.c_str());
+            auto supported_attrs = getPortPhySupportedAttrs(it.second.m_port_id, it.second.m_alias.c_str());
+            if (!supported_attrs.empty())
+            {
+                auto port_phy_attr_stats = generateCounterStats(supported_attrs, sai_serialize_port_attr);
+                SWSS_LOG_DEBUG("PORT_PHY_ATTR: Setting counter ID list for port %s",
+                              it.second.m_alias.c_str());
 
-            port_phy_attr_manager.setCounterIdList(it.second.m_port_id,
-                    CounterType::PORT_PHY_ATTR, port_phy_attr_stats);
+                port_phy_attr_manager.setCounterIdList(it.second.m_port_id,
+                        CounterType::PORT_PHY_ATTR, port_phy_attr_stats);
+            }
         }
     }
 }
@@ -9250,38 +9263,58 @@ void PortsOrch::queryPortPhySerdesAttrCapabilities()
     }
 }
 
-bool PortsOrch::supportsPortPhySerdesAttr(sai_object_id_t port_serdes_id, const char* port_name)
+std::vector<sai_port_serdes_attr_t> PortsOrch::getPortPhySerdesSupportedAttrs(sai_object_id_t port_serdes_id, const char* port_name)
 {
-    sai_status_t status;
-    sai_attribute_t test_attr;
+    std::vector<sai_port_serdes_attr_t> supported_attrs;
 
-    // Check SAI_PORT_SERDES_ATTR_RX_VGA
-    test_attr.id = SAI_PORT_SERDES_ATTR_RX_VGA;
-    test_attr.value.u32list.count = 0;
-    test_attr.value.u32list.list = nullptr;
+    // Lambda function to check attribute support and handle logging
+    auto checkPortPhySerdesAttrSupport = [&](sai_attribute_t& test_attr, const char* attr_name) {
+        sai_status_t status = sai_port_api->get_port_serdes_attribute(port_serdes_id, 1, &test_attr);
+        if (status == SAI_STATUS_BUFFER_OVERFLOW)
+        {
+            supported_attrs.push_back(static_cast<sai_port_serdes_attr_t>(test_attr.id));
+            SWSS_LOG_DEBUG("PORT_PHY_SERDES_ATTR: Port %s supports %s attribute",
+                port_name, attr_name);
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("PORT_PHY_SERDES_ATTR: Port %s does not support %s attribute (status=%d)",
+                port_name, attr_name, status);
+        }
+    };
 
-    status = sai_port_api->get_port_serdes_attribute(port_serdes_id, 1, &test_attr);
-    if (status != SAI_STATUS_BUFFER_OVERFLOW)
+    // Iterate through platform-supported attributes and check if this port supports them
+    for (const auto& attr_id : m_supported_phy_serdes_attrs)
     {
-        SWSS_LOG_ERROR("PORT_PHY_SERDES_ATTR: Port %s does not support SAI_PORT_SERDES_ATTR_RX_VGA attribute (status=%d)",
-            port_name, status);
-        return false; 
+        sai_attribute_t test_attr;
+        switch (attr_id)
+        {
+            case SAI_PORT_SERDES_ATTR_RX_VGA:
+            {
+                test_attr.id = SAI_PORT_SERDES_ATTR_RX_VGA;
+                test_attr.value.u32list.count = 0;
+                test_attr.value.u32list.list = nullptr;
+                checkPortPhySerdesAttrSupport(test_attr, "SAI_PORT_SERDES_ATTR_RX_VGA");
+                break;
+            }
+
+            case SAI_PORT_SERDES_ATTR_TX_FIR_TAPS_LIST:
+            {
+                test_attr.id = SAI_PORT_SERDES_ATTR_TX_FIR_TAPS_LIST;
+                test_attr.value.portserdestaps.count = 0;
+                test_attr.value.portserdestaps.list = nullptr;
+                checkPortPhySerdesAttrSupport(test_attr, "SAI_PORT_SERDES_ATTR_TX_FIR_TAPS_LIST");
+                break;
+            }
+
+            default:
+                SWSS_LOG_WARN("PORT_PHY_SERDES_ATTR: Unknown attribute %d in m_supported_phy_serdes_attrs for port %s",
+                    attr_id, port_name);
+                break;
+        }
     }
 
-    // Check SAI_PORT_SERDES_ATTR_TX_FIR_TAPS_LIST
-    test_attr.id = SAI_PORT_SERDES_ATTR_TX_FIR_TAPS_LIST;
-    test_attr.value.portserdestaps.count = 0;
-    test_attr.value.portserdestaps.list = nullptr;
-
-    status = sai_port_api->get_port_serdes_attribute(port_serdes_id, 1, &test_attr);
-    if (status != SAI_STATUS_BUFFER_OVERFLOW)
-    {
-        SWSS_LOG_ERROR("PORT_PHY_SERDES_ATTR: Port %s does not support SAI_PORT_SERDES_ATTR_TX_FIR_TAPS_LIST attribute (status=%d)",
-            port_name, status);
-        return false;
-    }
-
-    return true;
+    return supported_attrs;
   }
 
 void PortsOrch::generatePortPhySerdesAttrCounterMap()
@@ -9291,8 +9324,6 @@ void PortsOrch::generatePortPhySerdesAttrCounterMap()
         SWSS_LOG_WARN("PORT_PHY_SERDES_ATTR: No PORT SERDES attributes supported on this platform");
         return;
     }
-
-    auto port_serdes_attr_stats = generateCounterStats(m_supported_phy_serdes_attrs, sai_serialize_port_serdes_attr);
 
     for (const auto& it: m_portList)
     {
@@ -9315,8 +9346,10 @@ void PortsOrch::generatePortPhySerdesAttrCounterMap()
                 continue;
             }
 
-            if (supportsPortPhySerdesAttr(port_serdes_id, port_name))
+            auto supported_attrs = getPortPhySerdesSupportedAttrs(port_serdes_id, port_name);
+            if (!supported_attrs.empty())
             {
+                auto port_serdes_attr_stats = generateCounterStats(supported_attrs, sai_serialize_port_serdes_attr);
                 SWSS_LOG_DEBUG("PORT_PHY_SERDES_ATTR: Setting counter ID list for port %s", port_name);
                 port_phy_serdes_attr_manager.setCounterIdList(port_serdes_id,
                     CounterType::PORT_PHY_SERDES_ATTR, port_serdes_attr_stats);
@@ -10118,12 +10151,15 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id, sai_object_id_t 
     Port p;
     if (flex_counters_orch->getPortPhySerdesAttrCountersState() &&
         !m_supported_phy_serdes_attrs.empty() &&
-        getPort(port_id, p) && p.m_type == Port::Type::PHY &&
-        supportsPortPhySerdesAttr(port_serdes_id, p.m_alias.c_str()))
+        getPort(port_id, p) && p.m_type == Port::Type::PHY)
     {
-            auto port_attr_serdes_stats = generateCounterStats(m_supported_phy_serdes_attrs, sai_serialize_port_serdes_attr);
+        auto supported_attrs = getPortPhySerdesSupportedAttrs(port_serdes_id, p.m_alias.c_str());
+        if (!supported_attrs.empty())
+        {
+            auto port_attr_serdes_stats = generateCounterStats(supported_attrs, sai_serialize_port_serdes_attr);
             port_phy_serdes_attr_manager.setCounterIdList(port_serdes_id,
                     CounterType::PORT_PHY_SERDES_ATTR, port_attr_serdes_stats);
+        }
     }
 
     return true;

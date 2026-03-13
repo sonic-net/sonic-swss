@@ -30,6 +30,9 @@ namespace portphyserdesattr_test
     sai_port_api_t ut_sai_port_api;
     sai_port_api_t *pold_sai_port_api;
 
+    // Test mode flag for partial attribute support testing
+    bool g_test_partial_support_mode = false;
+
     // Mock SAI get_port_serdes_attribute to simulate SERDES capability checks
     sai_status_t _ut_stub_sai_get_port_serdes_attribute(
         _In_ sai_object_id_t port_serdes_id,
@@ -48,6 +51,12 @@ namespace portphyserdesattr_test
             }
             else if (attr_list[0].id == SAI_PORT_SERDES_ATTR_TX_FIR_TAPS_LIST)
             {
+                // In partial support mode, simulate TX_FIR_TAPS_LIST as NOT supported
+                if (g_test_partial_support_mode)
+                {
+                    return SAI_STATUS_NOT_SUPPORTED;
+                }
+
                 // Simulate that TX_FIR_TAPS_LIST is supported with 4 lanes
                 attr_list[0].value.portserdestaps.count = 4;
                 return SAI_STATUS_BUFFER_OVERFLOW;
@@ -378,7 +387,8 @@ namespace portphyserdesattr_test
             return;
         }
 
-        if (!gPortsOrch->supportsPortPhySerdesAttr(port_serdes_id, port.m_alias.c_str()))
+        auto supported_attrs = gPortsOrch->getPortPhySerdesSupportedAttrs(port_serdes_id, port.m_alias.c_str());
+        if (supported_attrs.empty())
         {
             SUCCEED();
             return;
@@ -411,6 +421,74 @@ namespace portphyserdesattr_test
         fieldValues.clear();
         bool entryExistsAfterClear = flexCounterTable->get(key, fieldValues);
         EXPECT_FALSE(entryExistsAfterClear);
+    }
+
+    TEST_F(PortSerdesAttrTest, PartialAttributeSupport_OnlyRxVgaSupported)
+    {
+        ASSERT_NE(gPortsOrch, nullptr);
+
+        // Enable partial support mode: only RX_VGA supported, TX_FIR_TAPS_LIST not supported
+        g_test_partial_support_mode = true;
+
+        auto flexCounterDb = make_shared<swss::DBConnector>("FLEX_COUNTER_DB", 0);
+        auto flexCounterTable = make_shared<swss::Table>(flexCounterDb.get(), "FLEX_COUNTER_TABLE");
+
+        // Generate counter map with partial support
+        gPortsOrch->generatePortPhySerdesAttrCounterMap();
+
+        // Flush cached flex counters to trigger the mock SAI API which writes to FLEX_COUNTER_DB
+        gPortsOrch->flushCounters();
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+
+        sai_object_id_t port_serdes_id = gPortsOrch->getPortSerdesIdFromPortId(port.m_port_id);
+
+        if (port_serdes_id == SAI_NULL_OBJECT_ID)
+        {
+            g_test_partial_support_mode = false;
+            SUCCEED() << "Port does not have a valid SERDES ID, skipping verification";
+            return;
+        }
+
+        // Verify that only RX_VGA is in the supported list
+        auto supported_attrs = gPortsOrch->getPortPhySerdesSupportedAttrs(port_serdes_id, port.m_alias.c_str());
+        EXPECT_FALSE(supported_attrs.empty());
+        EXPECT_EQ(supported_attrs.size(), 1);
+        EXPECT_EQ(supported_attrs[0], SAI_PORT_SERDES_ATTR_RX_VGA);
+
+        std::string key = "PORT_PHY_SERDES_ATTR:" + sai_serialize_object_id(port_serdes_id);
+
+        std::vector<FieldValueTuple> fieldValues;
+        bool entryExists = flexCounterTable->get(key, fieldValues);
+
+        EXPECT_TRUE(entryExists);
+
+        if (entryExists)
+        {
+            bool foundCounterList = false;
+            for (const auto &fv : fieldValues)
+            {
+                if (fvField(fv) == "PORT_PHY_SERDES_ATTR_ID_LIST")
+                {
+                    foundCounterList = true;
+                    std::string counterList = fvValue(fv);
+
+                    // Should contain RX_VGA
+                    EXPECT_TRUE(counterList.find("SAI_PORT_SERDES_ATTR_RX_VGA") != std::string::npos);
+
+                    // Should NOT contain TX_FIR_TAPS_LIST
+                    EXPECT_TRUE(counterList.find("SAI_PORT_SERDES_ATTR_TX_FIR_TAPS_LIST") == std::string::npos);
+
+                    std::cout << "Partial support verified: counter list = " << counterList << std::endl;
+                }
+            }
+            EXPECT_TRUE(foundCounterList);
+        }
+
+        // Cleanup
+        gPortsOrch->clearPortPhySerdesAttrCounterMap();
+        g_test_partial_support_mode = false;
     }
 } // namespace portphyserdesattr_test
 

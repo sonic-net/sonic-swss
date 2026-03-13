@@ -236,14 +236,14 @@ public:
     void clearPortPhyAttrCounterMap();
     const std::vector<sai_port_attr_t>& getPortPhyAttrIds() const;
     void queryPortPhyAttrCapabilities();
-    bool verifyPortSupportsAllPhyAttr(sai_object_id_t port_id, const char* port_name);
+    std::vector<sai_port_attr_t> getPortPhySupportedAttrs(sai_object_id_t port_id, const char* port_name);
 
     sai_object_id_t getPortSerdesIdFromPortId(sai_object_id_t port_id);
     void generatePortPhySerdesAttrCounterMap();
     void clearPortPhySerdesAttrCounterMap();
     const std::vector<sai_port_serdes_attr_t>& getPortPhySerdesAttrIds() const;
     void queryPortPhySerdesAttrCapabilities();
-    bool supportsPortPhySerdesAttr(sai_object_id_t port_serdes_id, const char* port_name);
+    std::vector<sai_port_serdes_attr_t> getPortPhySerdesSupportedAttrs(sai_object_id_t port_serdes_id, const char* port_name);
 
     void generateWredPortCounterMap();
     void generateWredQueueCounterMap();
