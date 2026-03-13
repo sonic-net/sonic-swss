@@ -12,7 +12,7 @@
 #include "netmsg.h"
 #include "macaddress.h"
 #include "exec.h"
-#include "fdbsync.h"
+#include "fdbsyncd/fdbsync.h"
 #include "warm_restart.h"
 #include "errno.h"
 

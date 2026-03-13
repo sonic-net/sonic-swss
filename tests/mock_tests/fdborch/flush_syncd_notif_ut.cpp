@@ -1,11 +1,11 @@
 #include "../ut_helper.h"
 #include "../mock_orchagent_main.h"
 #include "../mock_table.h"
-#include "port.h"
+#include "orchagent/port.h"
 #define private public // Need to modify internal cache
-#include "portsorch.h"
-#include "fdborch.h"
-#include "crmorch.h"
+#include "orchagent/portsorch.h"
+#include "orchagent/fdborch.h"
+#include "orchagent/crmorch.h"
 #undef private
 #include "json.h"
 #include "sai_serialize.h"

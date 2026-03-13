@@ -12,8 +12,8 @@
 #include "ipaddress.h"
 #include "ipprefix.h"
 #include "macaddress.h"
-#include "response_publisher_interface.h"
-#include "return_code.h"
+#include "orchagent/response_publisher_interface.h"
+#include "orchagent/return_code.h"
 #include "table.h"
 extern "C"
 {

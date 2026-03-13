@@ -40,7 +40,6 @@ public:
 
         return static_cast<U>(m_values.at(type_name));
     }
-
     class iterator : public std::iterator<std::input_iterator_tag, B>
     {
     public:

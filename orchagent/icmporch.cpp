@@ -6,13 +6,13 @@
  */
 
 #include "converter.h"
-#include "swssnet.h"
-#include "notifier.h"
+#include "orchagent/swssnet.h"
+#include "orchagent/notifier.h"
 #include "sai_serialize.h"
-#include "directory.h"
-#include "notifications.h"
+#include "orchagent/directory.h"
+#include "orchagent/notifications.h"
 #include "icmporch.h"
-#include "switchorch.h"
+#include "orchagent/switchorch.h"
 #include <string>
 
 using namespace std;

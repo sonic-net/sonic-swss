@@ -4,14 +4,14 @@
 #include "producerstatetable.h"
 #include "tokenize.h"
 #include "ipprefix.h"
-#include "intfmgr.h"
+#include "cfgmgr/intfmgr.h"
 #include "exec.h"
-#include "shellcmd.h"
+#include "cfgmgr/shellcmd.h"
 #include "macaddress.h"
 #include "warm_restart.h"
 #include "subscriberstatetable.h"
 #include <swss/redisutility.h>
-#include "subintf.h"
+#include "lib/subintf.h"
 
 using namespace std;
 using namespace swss;

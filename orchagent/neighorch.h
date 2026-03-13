@@ -1,18 +1,18 @@
 #ifndef SWSS_NEIGHORCH_H
 #define SWSS_NEIGHORCH_H
 
-#include "orch.h"
-#include "observer.h"
-#include "portsorch.h"
-#include "intfsorch.h"
-#include "fdborch.h"
+#include "orchagent/orch.h"
+#include "orchagent/observer.h"
+#include "orchagent/portsorch.h"
+#include "orchagent/intfsorch.h"
+#include "orchagent/fdborch.h"
 
 #include "ipaddress.h"
-#include "nexthopkey.h"
+#include "orchagent/nexthopkey.h"
 #include "producerstatetable.h"
 #include "schema.h"
-#include "bfdorch.h"
-#include "bulker.h"
+#include "orchagent/bfdorch.h"
+#include "orchagent/bulker.h"
 
 #define NHFLAGS_IFDOWN                  0x1 // nexthop's outbound i/f is down
 

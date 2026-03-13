@@ -6,7 +6,7 @@ extern "C"
 #include <map>
 #include <string>
 
-#include "portsorch.h"
+#include "orchagent/portsorch.h"
 
 sai_object_id_t gBridgePortOid;
 

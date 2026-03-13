@@ -1,4 +1,4 @@
-#include "p4orch/router_interface_manager.h"
+#include "orchagent/p4orch/router_interface_manager.h"
 
 #include <map>
 #include <memory>
@@ -10,14 +10,14 @@
 
 #include "SaiAttributeList.h"
 #include "dbconnector.h"
-#include "directory.h"
+#include "orchagent/directory.h"
 #include "logger.h"
-#include "orch.h"
-#include "p4orch/p4orch_util.h"
-#include "portsorch.h"
+#include "orchagent/orch.h"
+#include "orchagent/p4orch/p4orch_util.h"
+#include "orchagent/portsorch.h"
 #include "sai_serialize.h"
 #include "table.h"
-#include "vrforch.h"
+#include "orchagent/vrforch.h"
 
 using ::p4orch::kTableKeyDelimiter;
 

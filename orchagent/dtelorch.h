@@ -1,9 +1,9 @@
 #ifndef SWSS_DTELORCH_H
 #define SWSS_DTELORCH_H
 
-#include "orch.h"
+#include "orchagent/orch.h"
 #include "producerstatetable.h"
-#include "portsorch.h"
+#include "orchagent/portsorch.h"
 
 #include <map>
 #include <inttypes.h>

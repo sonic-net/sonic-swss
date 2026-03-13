@@ -1,4 +1,4 @@
-#include "nexthopkey.h"
+#include "orchagent/nexthopkey.h"
 
 std::size_t hash_value(const NextHopKey& obj) {
     std::size_t nh_hash = 0;

@@ -1,4 +1,4 @@
-#include "l3_multicast_manager.h"
+#include "orchagent/p4orch/l3_multicast_manager.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -11,21 +11,22 @@
 #include <vector>
 
 #include "ipprefix.h"
-#include "mock_response_publisher.h"
-#include "mock_sai_ipmc_group.h"
 #include "mock_sai_l2mc.h"
 #include "mock_sai_l2mc_group.h"
 #include "mock_sai_my_mac.h"
 #include "mock_sai_neighbor.h"
 #include "mock_sai_next_hop.h"
-#include "mock_sai_router_interface.h"
 #include "mock_sai_switch.h"
-#include "p4orch.h"
-#include "p4orch/p4orch_util.h"
-#include "portsorch.h"
-#include "return_code.h"
-#include "swssnet.h"
-#include "vrforch.h"
+#include "orchagent/p4orch/tests/mock_sai_bridge.h"
+#include "orchagent/p4orch/tests/mock_response_publisher.h"
+#include "orchagent/p4orch/tests/mock_sai_ipmc_group.h"
+#include "orchagent/p4orch/tests/mock_sai_router_interface.h"
+#include "orchagent/p4orch/p4orch.h"
+#include "orchagent/p4orch/p4orch_util.h"
+#include "orchagent/portsorch.h"
+#include "orchagent/return_code.h"
+#include "orchagent/swssnet.h"
+#include "orchagent/vrforch.h"
 
 extern "C" {
 #include "sai.h"

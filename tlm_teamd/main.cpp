@@ -7,9 +7,9 @@
 #include <dbconnector.h>
 #include <subscriberstatetable.h>
 
-#include "teamdctl_mgr.h"
-#include "values_store.h"
-#include "subintf.h"
+#include "tlm_teamd/teamdctl_mgr.h"
+#include "tlm_teamd/values_store.h"
+#include "lib/subintf.h"
 
 
 bool g_run = true;

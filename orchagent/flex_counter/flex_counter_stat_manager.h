@@ -1,7 +1,7 @@
 #ifndef ORCHAGENT_FLEX_COUNTER_STAT_MANAGER_H
 #define ORCHAGENT_FLEX_COUNTER_STAT_MANAGER_H
 
-#include "flex_counter_manager.h"
+#include "orchagent/flex_counter/flex_counter_manager.h"
 
 // FlexCounterStatManager allows users to manage a group of flex counters
 // where the objects have highly variable sets of stats to track.

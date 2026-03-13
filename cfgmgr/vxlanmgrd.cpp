@@ -11,8 +11,8 @@
 #include "schema.h"
 #include "macaddress.h"
 #include "producerstatetable.h"
-#include "vxlanmgr.h"
-#include "shellcmd.h"
+#include "cfgmgr/vxlanmgr.h"
+#include "cfgmgr/shellcmd.h"
 #include "warm_restart.h"
 
 using namespace std;

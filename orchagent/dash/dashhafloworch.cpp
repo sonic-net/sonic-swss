@@ -1,15 +1,15 @@
 #include "dashhafloworch.h"
 
-#include "orch.h"
+#include "orchagent/orch.h"
 #include "sai.h"
 #include "saiextensions.h"
-#include "saihelper.h"
+#include "orchagent/saihelper.h"
 #include "table.h"
 #include "taskworker.h"
 #include "converter.h"
 #include "ipaddress.h"
 #include "macaddress.h"
-#include "swssnet.h"
+#include "orchagent/swssnet.h"
 #include "schema.h"
 
 #include <chrono>

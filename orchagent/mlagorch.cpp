@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#include "portsorch.h"
-#include "mlagorch.h"
+#include "orchagent/portsorch.h"
+#include "orchagent/mlagorch.h"
 
 using namespace std;
 using namespace swss;

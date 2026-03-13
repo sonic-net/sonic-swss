@@ -1,4 +1,4 @@
-#include "mock_sai_router_interface.h"
+#include "orchagent/p4orch/tests/mock_sai_router_interface.h"
 
 MockSaiRouterInterface *mock_sai_router_intf;
 

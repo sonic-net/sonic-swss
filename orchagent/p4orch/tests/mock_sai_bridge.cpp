@@ -1,4 +1,4 @@
-#include "mock_sai_bridge.h"
+#include "orchagent/p4orch/tests/mock_sai_bridge.h"
 
 MockSaiBridge* mock_sai_bridge;
 

@@ -21,8 +21,8 @@
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "warm_restart.h"
-#include "gearboxparser.h"
-#include "gearboxutils.h"
+#include "gearsyncd/gearboxparser.h"
+#include "lib/gearboxutils.h"
 #include "schema.h"
 
 #include <unistd.h>

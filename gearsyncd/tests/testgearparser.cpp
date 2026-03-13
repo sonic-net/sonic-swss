@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "gearboxparser.h"
+#include "gearsyncd/gearboxparser.h"
 #include <iostream>
 #include <unistd.h>
 #include "cunit/Basic.h"

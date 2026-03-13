@@ -1,5 +1,5 @@
-#include "copporch.h"
-#include "flowcounterrouteorch.h"
+#include "orchagent/copporch.h"
+#include "orchagent/flex_counter/flowcounterrouteorch.h"
 
 extern size_t gMaxBulkSize;
 extern sai_route_api_t *sai_route_api;

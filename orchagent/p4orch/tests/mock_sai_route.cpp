@@ -1,4 +1,4 @@
-#include "mock_sai_route.h"
+#include "orchagent/p4orch/tests/mock_sai_route.h"
 
 MockSaiRoute* mock_sai_route;
 

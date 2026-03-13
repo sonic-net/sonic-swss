@@ -1,13 +1,13 @@
 #include "dbconnector.h"
-#include "directory.h"
-#include "flow_counter_handler.h"
+#include "orchagent/directory.h"
+#include "orchagent/flex_counter/flow_counter_handler.h"
 #include "logger.h"
-#include "routeorch.h"
-#include "flowcounterrouteorch.h"
+#include "orchagent/routeorch.h"
+#include "orchagent/flex_counter/flowcounterrouteorch.h"
 #include "schema.h"
-#include "swssnet.h"
+#include "orchagent/swssnet.h"
 #include "table.h"
-#include "vnetorch.h"
+#include "orchagent/vnetorch.h"
 
 #include <string>
 

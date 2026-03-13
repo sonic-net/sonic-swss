@@ -1,6 +1,6 @@
 ORCHAGENT_DIR = $(top_srcdir)/orchagent
 P4ORCH_DIR = $(ORCHAGENT_DIR)/p4orch
-INCLUDES = -I $(top_srcdir) -I $(ORCHAGENT_DIR) -I $(P4ORCH_DIR) -I $(top_srcdir)/lib -I $(ORCHAGENT_DIR)/flex_counter
+INCLUDES = -I $(top_srcdir)
 
 CFLAGS_SAI = -I /usr/include/sai
 

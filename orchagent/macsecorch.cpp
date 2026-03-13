@@ -1,6 +1,6 @@
-#include "macsecorch.h"
-#include "macsecpost.h"
-#include "notifier.h"
+#include "orchagent/macsecorch.h"
+#include "orchagent/macsecpost.h"
+#include "orchagent/notifier.h"
 
 #include <macaddress.h>
 #include <sai_serialize.h>

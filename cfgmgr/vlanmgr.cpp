@@ -2,10 +2,10 @@
 #include "logger.h"
 #include "producerstatetable.h"
 #include "macaddress.h"
-#include "vlanmgr.h"
+#include "cfgmgr/vlanmgr.h"
 #include "exec.h"
 #include "tokenize.h"
-#include "shellcmd.h"
+#include "cfgmgr/shellcmd.h"
 #include "warm_restart.h"
 #include <swss/redisutility.h>
 

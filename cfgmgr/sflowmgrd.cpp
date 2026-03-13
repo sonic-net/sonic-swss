@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "exec.h"
-#include "sflowmgr.h"
+#include "cfgmgr/sflowmgr.h"
 #include "schema.h"
 #include "select.h"
 

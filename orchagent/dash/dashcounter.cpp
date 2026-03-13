@@ -3,7 +3,7 @@
 #include "dashhaorch.h"
 #include "sai.h"
 #include "saiextensions.h"
-#include "saihelper.h"
+#include "orchagent/saihelper.h"
 
 template<>
 void DashCounter<CounterType::ENI, EniTable>::fetchStats()

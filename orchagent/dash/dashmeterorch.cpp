@@ -2,16 +2,16 @@
 #include <swss/stringutility.h>
 #include <swss/redisutility.h>
 #include <swss/ipaddress.h>
-#include <swssnet.h>
+#include <orchagent/swssnet.h>
 
-#include "directory.h"
-#include "dashmeterorch.h"
+#include "orchagent/directory.h"
+#include "orchagent/dash/dashmeterorch.h"
 #include "taskworker.h"
-#include "pbutils.h"
-#include "crmorch.h"
+#include "orchagent/dash/pbutils.h"
+#include "orchagent/crmorch.h"
 #include "sai.h"
 #include "saiextensions.h"
-#include "saihelper.h"
+#include "orchagent/saihelper.h"
 
 using namespace std;
 using namespace swss;

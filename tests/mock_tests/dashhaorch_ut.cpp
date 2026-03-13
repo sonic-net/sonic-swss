@@ -3,8 +3,8 @@
 #include "mock_sai_api.h"
 #include "gtest/gtest.h"
 #include "gmock/gmock.h"
-#include "dash/dashhaorch.h"
-#include "pbutils.h"
+#include "orchagent/dash/dashhaorch.h"
+#include "orchagent/dash/pbutils.h"
 using namespace ::testing;
 
 extern redisReply *mockReply;

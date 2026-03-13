@@ -1,4 +1,4 @@
-#include "p4orch/l3_admit_manager.h"
+#include "orchagent/p4orch/l3_admit_manager.h"
 
 #include <map>
 #include <nlohmann/json.hpp>
@@ -9,9 +9,9 @@
 #include "SaiAttributeList.h"
 #include "dbconnector.h"
 #include "logger.h"
-#include "p4orch/p4orch_util.h"
-#include "portsorch.h"
-#include "return_code.h"
+#include "orchagent/p4orch/p4orch_util.h"
+#include "orchagent/portsorch.h"
+#include "orchagent/return_code.h"
 #include "sai_serialize.h"
 #include "table.h"
 #include "tokenize.h"

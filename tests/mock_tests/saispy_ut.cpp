@@ -1,5 +1,5 @@
 #include "gtest/gtest.h"
-#include "saispy.h"
+#include "tests/mock_tests/saispy.h"
 
 #include "sai.h"
 

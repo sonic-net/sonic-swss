@@ -1,19 +1,19 @@
 // Make selected privates visible for unit testing
 #define private public
-#include "directory.h"
+#include "orchagent/directory.h"
 #undef private
 
 #define protected public
-#include "orch.h"
+#include "orchagent/orch.h"
 #undef protected
 
 #define private public
-#include "switchorch.h"
+#include "orchagent/switchorch.h"
 #undef private
 
-#include "portsorch.h"
+#include "orchagent/portsorch.h"
 #define private public
-#include "mirrororch.h"
+#include "orchagent/mirrororch.h"
 #undef private
 #include "mock_orch_test.h"
 

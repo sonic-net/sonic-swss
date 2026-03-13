@@ -3,7 +3,7 @@
 #include <swss/selectable.h>
 #include <libnl3/netlink/netlink.h>
 
-#include "fpm/fpm.h"
+#include "fpmsyncd/fpm/fpm.h"
 
 namespace swss
 {

@@ -1,6 +1,6 @@
 #include "hftelutils.h"
 
-#include <saihelper.h>
+#include <orchagent/saihelper.h>
 #include <swss/logger.h>
 
 #include <boost/algorithm/string.hpp>

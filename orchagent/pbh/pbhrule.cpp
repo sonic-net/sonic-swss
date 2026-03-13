@@ -1,6 +1,6 @@
 #include "sai_serialize.h"
 
-#include "pbhrule.h"
+#include "orchagent/pbh/pbhrule.h"
 
 AclRulePbh::AclRulePbh(AclOrch *pAclOrch, string rule, string table, bool createCounter) :
     AclRule(pAclOrch, rule, table, createCounter)

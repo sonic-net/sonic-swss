@@ -6,11 +6,11 @@
 #include "unordered_map"
 #include "dbconnector.h"
 #include "set"
-#include "orch.h"
-#include "crmorch.h"
-#include "routeorch.h"
-#include "nexthopgroupkey.h"
-#include "bulker.h"
+#include "orchagent/orch.h"
+#include "orchagent/crmorch.h"
+#include "orchagent/routeorch.h"
+#include "orchagent/nexthopgroupkey.h"
+#include "orchagent/bulker.h"
 
 using namespace std;
 

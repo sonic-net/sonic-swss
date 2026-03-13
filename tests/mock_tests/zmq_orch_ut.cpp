@@ -4,13 +4,13 @@
 #include <unistd.h>
 #include "schema.h"
 #include "ut_helper.h"
-#include "orch_zmq_config.h"
+#include "lib/orch_zmq_config.h"
 #include "dbconnector.h"
 #include "mock_table.h"
 
 #define protected public
-#include "orch.h"
-#include "zmqorch.h"
+#include "orchagent/orch.h"
+#include "orchagent/zmqorch.h"
 #undef protected
 
 #define MAX_RETRY     10

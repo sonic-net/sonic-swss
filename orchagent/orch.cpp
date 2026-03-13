@@ -1,10 +1,10 @@
 #include <stdexcept>
 #include <thread>
 #include "timestamp.h"
-#include "orch.h"
+#include "orchagent/orch.h"
 
 #include "subscriberstatetable.h"
-#include "portsorch.h"
+#include "orchagent/portsorch.h"
 #include "tokenize.h"
 #include "logger.h"
 #include "consumerstatetable.h"

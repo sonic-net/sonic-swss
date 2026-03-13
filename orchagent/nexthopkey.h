@@ -11,8 +11,8 @@ extern "C"
 
 #include "ipaddress.h"
 #include "tokenize.h"
-#include "label.h"
-#include "intfsorch.h"
+#include "orchagent/label.h"
+#include "orchagent/intfsorch.h"
 
 #define LABELSTACK_DELIMITER '+'
 #define NH_DELIMITER '@'

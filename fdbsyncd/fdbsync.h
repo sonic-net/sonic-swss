@@ -7,7 +7,7 @@
 #include "producerstatetable.h"
 #include "subscriberstatetable.h"
 #include "netmsg.h"
-#include "warmRestartAssist.h"
+#include "warmrestart/warmRestartAssist.h"
 
 /*
  * Default timer interval for fdbsyncd reconcillation 

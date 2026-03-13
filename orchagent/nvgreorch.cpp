@@ -1,8 +1,8 @@
-#include "orch.h"
-#include "nvgreorch.h"
-#include "request_parser.h"
-#include "swssnet.h"
-#include "directory.h"
+#include "orchagent/orch.h"
+#include "orchagent/nvgreorch.h"
+#include "orchagent/request_parser.h"
+#include "orchagent/swssnet.h"
+#include "orchagent/directory.h"
 
 #define NVGRE_VSID_MAX_VALUE 16777214
 

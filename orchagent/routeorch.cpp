@@ -3,16 +3,16 @@
 #include <time.h>
 #include <inttypes.h>
 #include <algorithm>
-#include "routeorch.h"
-#include "nhgorch.h"
-#include "tunneldecaporch.h"
-#include "cbf/cbfnhgorch.h"
+#include "orchagent/routeorch.h"
+#include "orchagent/nhgorch.h"
+#include "orchagent/tunneldecaporch.h"
+#include "orchagent/cbf/cbfnhgorch.h"
 #include "logger.h"
-#include "flowcounterrouteorch.h"
-#include "muxorch.h"
-#include "swssnet.h"
-#include "crmorch.h"
-#include "directory.h"
+#include "orchagent/flex_counter/flowcounterrouteorch.h"
+#include "orchagent/muxorch.h"
+#include "orchagent/swssnet.h"
+#include "orchagent/crmorch.h"
+#include "orchagent/directory.h"
 
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t gSwitchId;

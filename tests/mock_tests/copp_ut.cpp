@@ -2,8 +2,8 @@
 #include <string>
 #include "schema.h"
 #include "warm_restart.h"
-#include "ut_helper.h"
-#include "coppmgr.h"
+#include "tests/mock_tests/ut_helper.h"
+#include "cfgmgr/coppmgr.h"
 #include <fstream>
 #include <streambuf>
 

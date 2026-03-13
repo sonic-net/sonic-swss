@@ -1,10 +1,10 @@
 #ifndef SWSS_MACSECSORCH_H
 #define SWSS_MACSECSORCH_H
 
-#include "orch.h"
+#include "orchagent/orch.h"
 
-#include "portsorch.h"
-#include "flex_counter_manager.h"
+#include "orchagent/portsorch.h"
+#include "orchagent/flex_counter/flex_counter_manager.h"
 
 #include <dbconnector.h>
 #include <swss/schema.h>

@@ -1,5 +1,5 @@
-#include "ut_helper.h"
-#include "flowcounterrouteorch.h"
+#include "tests/mock_tests/ut_helper.h"
+#include "orchagent/flex_counter/flowcounterrouteorch.h"
 
 extern sai_object_id_t gSwitchId;
 

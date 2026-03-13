@@ -3,9 +3,9 @@
 #include <memory>
 
 #include "sai.h"
-#include "orch.h"
-#include "request_parser.h"
-#include "portsorch.h"
+#include "orchagent/orch.h"
+#include "orchagent/request_parser.h"
+#include "orchagent/portsorch.h"
 
 typedef enum {
     MAP_T_VLAN = 0,

@@ -1,23 +1,23 @@
-#include "p4orch.h"
+#include "orchagent/p4orch/p4orch.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <string>
 
-#include "mock_response_publisher.h"
-#include "mock_sai_bridge.h"
-#include "mock_sai_hostif.h"
-#include "mock_sai_ipmc.h"
-#include "mock_sai_ipmc_group.h"
-#include "mock_sai_l2mc.h"
-#include "mock_sai_l2mc_group.h"
-#include "mock_sai_neighbor.h"
-#include "mock_sai_next_hop.h"
-#include "mock_sai_route.h"
-#include "mock_sai_router_interface.h"
-#include "mock_sai_rpf_group.h"
-#include "mock_sai_switch.h"
+#include "orchagent/p4orch/tests/mock_response_publisher.h"
+#include "orchagent/p4orch/tests/mock_sai_bridge.h"
+#include "orchagent/p4orch/tests/mock_sai_hostif.h"
+#include "orchagent/p4orch/tests/mock_sai_ipmc.h"
+#include "orchagent/p4orch/tests/mock_sai_ipmc_group.h"
+#include "orchagent/p4orch/tests/mock_sai_l2mc.h"
+#include "orchagent/p4orch/tests/mock_sai_l2mc_group.h"
+#include "orchagent/p4orch/tests/mock_sai_neighbor.h"
+#include "orchagent/p4orch/tests/mock_sai_next_hop.h"
+#include "orchagent/p4orch/tests/mock_sai_route.h"
+#include "orchagent/p4orch/tests/mock_sai_router_interface.h"
+#include "orchagent/p4orch/tests/mock_sai_rpf_group.h"
+#include "orchagent/p4orch/tests/mock_sai_switch.h"
 
 using ::p4orch::kTableKeyDelimiter;
 

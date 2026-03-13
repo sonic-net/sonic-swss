@@ -5,9 +5,9 @@
 #include <net/if.h>
 
 #include "logger.h"
-#include "tunnelmgr.h"
+#include "cfgmgr/tunnelmgr.h"
 #include "tokenize.h"
-#include "shellcmd.h"
+#include "cfgmgr/shellcmd.h"
 #include "exec.h"
 #include "warm_restart.h"
 

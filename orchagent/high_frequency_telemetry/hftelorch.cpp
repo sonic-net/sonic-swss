@@ -1,14 +1,14 @@
 #include "hftelorch.h"
 #include "hftelutils.h"
 
-#include "notifications.h"
+#include "orchagent/notifications.h"
 
 #include <swss/schema.h>
 #include <swss/redisutility.h>
 #include <swss/stringutility.h>
 #include <swss/tokenize.h>
-#include <saihelper.h>
-#include <notifier.h>
+#include <orchagent/saihelper.h>
+#include <orchagent/notifier.h>
 
 #include <yaml-cpp/yaml.h>
 #include <boost/algorithm/string/join.hpp>

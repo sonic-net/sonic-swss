@@ -1,12 +1,12 @@
 #define protected public
-#include "orch.h"
-#include "orchdaemon.h"
+#include "orchagent/orch.h"
+#include "orchagent/orchdaemon.h"
 #undef protected
 #include "dbconnector.h"
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
-#include "mock_sai_switch.h"
-#include "saihelper.h"
+#include "orchagent/p4orch/tests/mock_sai_switch.h"
+#include "orchagent/saihelper.h"
 
 extern sai_switch_api_t* sai_switch_api;
 sai_switch_api_t test_sai_switch;

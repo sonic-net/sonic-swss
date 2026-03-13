@@ -1,13 +1,13 @@
 #include <limits.h>
 #include <inttypes.h>
 #include <unordered_map>
-#include "pfcwdorch.h"
+#include "orchagent/pfcwdorch.h"
 #include "sai_serialize.h"
-#include "portsorch.h"
+#include "orchagent/portsorch.h"
 #include "converter.h"
 #include "redisapi.h"
 #include "select.h"
-#include "notifier.h"
+#include "orchagent/notifier.h"
 #include "schema.h"
 #include "subscriberstatetable.h"
 

@@ -11,9 +11,9 @@
 #include <sai.h>
 #include <logger.h>
 #include <dbconnector.h>
-#include <bulker.h>
-#include <orch.h>
-#include "zmqorch.h"
+#include <orchagent/bulker.h>
+#include <orchagent/orch.h>
+#include "orchagent/zmqorch.h"
 #include "zmqserver.h"
 
 #include "dashorch.h"

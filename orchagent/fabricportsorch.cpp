@@ -1,4 +1,4 @@
-#include "fabricportsorch.h"
+#include "orchagent/fabricportsorch.h"
 
 #include <inttypes.h>
 #include <fstream>
@@ -8,8 +8,8 @@
 #include "logger.h"
 #include "schema.h"
 #include "sai_serialize.h"
-#include "timer.h"
-#include "saihelper.h"
+#include "orchagent/timer.h"
+#include "orchagent/saihelper.h"
 #include "converter.h"
 #include "stringutility.h"
 #include <chrono>

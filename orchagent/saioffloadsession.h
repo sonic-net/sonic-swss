@@ -11,7 +11,7 @@
 #include <string>
 #include <tuple>
 #include <unordered_map>
-#include "portsorch.h"
+#include "orchagent/portsorch.h"
 #include "vrforch.h"
 
 using namespace std;

@@ -1,4 +1,4 @@
-#include "mock_sai_l2mc.h"
+#include "orchagent/p4orch/tests/mock_sai_l2mc.h"
 MockSaiL2mc* mock_sai_l2mc;
 sai_status_t mock_create_l2mc_entry(
     _In_ const sai_l2mc_entry_t* l2mc_entry,

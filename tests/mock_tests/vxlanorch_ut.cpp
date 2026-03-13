@@ -1,11 +1,11 @@
 #define private public
-#include "directory.h"
+#include "orchagent/directory.h"
 #undef private
 #define protected public
-#include "orch.h"
+#include "orchagent/orch.h"
 #undef protected
 #define private public
-#include "vxlanorch.h"
+#include "orchagent/vxlanorch.h"
 #undef private
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"

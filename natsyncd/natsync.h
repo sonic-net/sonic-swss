@@ -21,7 +21,7 @@
 #include "producerstatetable.h"
 #include "notificationproducer.h"
 #include "netmsg.h"
-#include "warmRestartAssist.h"
+#include "warmrestart/warmRestartAssist.h"
 #include "ipaddress.h"
 #include "nfnetlink.h"
 #include <linux/netfilter/nfnetlink_conntrack.h>

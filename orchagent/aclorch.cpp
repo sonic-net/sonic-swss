@@ -3,16 +3,16 @@
 #include <unordered_map>
 #include <algorithm>
 #include <sstream>
-#include "aclorch.h"
+#include "orchagent/aclorch.h"
 #include "logger.h"
 #include "schema.h"
 #include "ipprefix.h"
 #include "converter.h"
 #include "tokenize.h"
-#include "timer.h"
-#include "crmorch.h"
+#include "orchagent/timer.h"
+#include "orchagent/crmorch.h"
 #include "sai_serialize.h"
-#include "directory.h"
+#include "orchagent/directory.h"
 
 using namespace std;
 using namespace swss;

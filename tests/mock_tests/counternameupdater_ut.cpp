@@ -4,7 +4,7 @@
 #include <gtest/gtest.h>
 
 #define private public
-#include "high_frequency_telemetry/counternameupdater.h"
+#include "orchagent/high_frequency_telemetry/counternameupdater.h"
 #undef private
 
 extern HFTelOrch *gHFTOrch;

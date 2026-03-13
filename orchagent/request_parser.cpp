@@ -9,8 +9,8 @@
 #include "sai.h"
 #include "macaddress.h"
 #include "ipaddress.h"
-#include "orch.h"
-#include "request_parser.h"
+#include "orchagent/orch.h"
+#include "orchagent/request_parser.h"
 
 using namespace std;
 using namespace swss;

@@ -2,7 +2,7 @@
 #include <gtest/gtest.h>
 #include <string>
 #include <iostream>
-#include "swssnet.h"
+#include "orchagent/swssnet.h"
 
 using namespace std;
 using namespace swss;

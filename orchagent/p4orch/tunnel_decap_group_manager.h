@@ -5,15 +5,15 @@
 #include <unordered_map>
 
 #include "dbconnector.h"
-#include "orch.h"
-#include "p4orch/object_manager_interface.h"
-#include "p4orch/p4oidmapper.h"
-#include "p4orch/p4orch_util.h"
-#include "response_publisher_interface.h"
-#include "return_code.h"
-#include "vrforch.h"
 #include "table.h"
 
+#include "orchagent/orch.h"
+#include "orchagent/p4orch/object_manager_interface.h"
+#include "orchagent/p4orch/p4oidmapper.h"
+#include "orchagent/p4orch/p4orch_util.h"
+#include "orchagent/response_publisher_interface.h"
+#include "orchagent/return_code.h"
+#include "orchagent/vrforch.h"
 extern "C" {
 #include "sai.h"
 }

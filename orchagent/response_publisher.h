@@ -12,8 +12,8 @@
 
 #include "dbconnector.h"
 #include "notificationproducer.h"
-#include "recorder.h"
-#include "response_publisher_interface.h"
+#include "lib/recorder.h"
+#include "orchagent/response_publisher_interface.h"
 #include "table.h"
 #include "zmqserver.h"
 

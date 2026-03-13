@@ -1,9 +1,9 @@
 #include "tokenize.h"
-#include "qosorch.h"
+#include "orchagent/qosorch.h"
 #include "logger.h"
-#include "crmorch.h"
+#include "orchagent/crmorch.h"
 #include "sai_serialize.h"
-#include "cbf/nhgmaporch.h"
+#include "orchagent/cbf/nhgmaporch.h"
 
 #include <inttypes.h>
 #include <stdlib.h>
