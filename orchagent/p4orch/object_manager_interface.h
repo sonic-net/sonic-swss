@@ -1,7 +1,7 @@
 #pragma once
 
-#include "orch.h"
-#include "return_code.h"
+#include "orchagent/orch.h"
+#include "orchagent/return_code.h"
 
 class ObjectManagerInterface
 {

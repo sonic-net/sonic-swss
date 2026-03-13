@@ -29,8 +29,8 @@
 #include "macaddress.h"
 #include "producerstatetable.h"
 #include "notificationproducer.h"
-#include "natmgr.h"
-#include "shellcmd.h"
+#include "cfgmgr/natmgr.h"
+#include "cfgmgr/shellcmd.h"
 #include "warm_restart.h"
 
 using namespace std;

@@ -14,7 +14,7 @@
 #include "tokenize.h"
 #include "logger.h"
 
-#include "pbhorch.h"
+#include "orchagent/pbhorch.h"
 
 template<typename K, typename V>
 using umap_t = std::unordered_map<K, V>;

@@ -2,7 +2,7 @@
 
 #include <unordered_set>
 #include <unordered_map>
-#include "recorder.h"
+#include "lib/recorder.h"
 #include "rediscommand.h"
 
 using namespace swss;

@@ -1,8 +1,8 @@
 #ifndef SWSS_BFDORCH_H
 #define SWSS_BFDORCH_H
 
-#include "orch.h"
-#include "observer.h"
+#include "orchagent/orch.h"
+#include "orchagent/observer.h"
 
 struct BfdUpdate
 {

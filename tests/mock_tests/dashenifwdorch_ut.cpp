@@ -4,7 +4,7 @@
 #include "mock_table.h"
 #define protected public
 #define private public
-#include "dash/dashenifwdorch.h"
+#include "orchagent/dash/dashenifwdorch.h"
 #undef public
 #undef protected
 

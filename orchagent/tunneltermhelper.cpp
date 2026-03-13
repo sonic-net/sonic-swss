@@ -1,7 +1,7 @@
 #include "tunneltermhelper.h"
 #include "swss/ipaddress.h"
 #include "swss/ipprefix.h"
-#include "directory.h"
+#include "orchagent/directory.h"
 
 extern Directory<Orch*> gDirectory;
 extern PortsOrch *gPortsOrch;

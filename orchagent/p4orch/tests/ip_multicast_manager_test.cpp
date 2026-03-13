@@ -1,4 +1,4 @@
-#include "ip_multicast_manager.h"
+#include "orchagent/p4orch/ip_multicast_manager.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -10,16 +10,16 @@
 #include <vector>
 
 #include "ipaddress.h"
-#include "mock_response_publisher.h"
-#include "mock_sai_ipmc.h"
-#include "mock_sai_router_interface.h"
-#include "mock_sai_rpf_group.h"
-#include "p4orch.h"
-#include "p4orch/p4orch_util.h"
-#include "portsorch.h"
-#include "return_code.h"
-#include "swssnet.h"
-#include "vrforch.h"
+#include "orchagent/p4orch/tests/mock_response_publisher.h"
+#include "orchagent/p4orch/tests/mock_sai_ipmc.h"
+#include "orchagent/p4orch/tests/mock_sai_router_interface.h"
+#include "orchagent/p4orch/tests/mock_sai_rpf_group.h"
+#include "orchagent/p4orch/p4orch.h"
+#include "orchagent/p4orch/p4orch_util.h"
+#include "orchagent/portsorch.h"
+#include "orchagent/return_code.h"
+#include "orchagent/swssnet.h"
+#include "orchagent/vrforch.h"
 
 using ::p4orch::kTableKeyDelimiter;
 

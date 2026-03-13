@@ -4,10 +4,10 @@
 #include <unordered_map>
 #include <set>
 #include <memory>
-#include "request_parser.h"
-#include "portsorch.h"
-#include "vrforch.h"
-#include "timer.h"
+#include "orchagent/request_parser.h"
+#include "orchagent/portsorch.h"
+#include "orchagent/vrforch.h"
+#include "orchagent/timer.h"
 
 enum class MAP_T
 {

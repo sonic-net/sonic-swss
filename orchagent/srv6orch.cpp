@@ -3,15 +3,15 @@
 #include <inttypes.h>
 #include <iterator>
 
-#include "routeorch.h"
+#include "orchagent/routeorch.h"
 #include "logger.h"
-#include "srv6orch.h"
+#include "orchagent/srv6orch.h"
 #include "sai_serialize.h"
-#include "crmorch.h"
+#include "orchagent/crmorch.h"
 #include "subscriberstatetable.h"
 #include "redisutility.h"
-#include "flex_counter_manager.h"
-#include "flow_counter_handler.h"
+#include "orchagent/flex_counter/flex_counter_manager.h"
+#include "orchagent/flex_counter/flow_counter_handler.h"
 
 using namespace std;
 using namespace swss;

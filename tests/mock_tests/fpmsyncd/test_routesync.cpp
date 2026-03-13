@@ -7,7 +7,7 @@
 #include "fpmsyncd/routesync.h"
 #include "fpmsyncd/fpmlink.h"
 #undef private
-#include "orch_zmq_config.h"
+#include "lib/orch_zmq_config.h"
 
 #include <arpa/inet.h>
 #include <linux/rtnetlink.h>

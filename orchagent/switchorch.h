@@ -1,9 +1,9 @@
 #pragma once
 
-#include "acltable.h"
-#include "orch.h"
-#include "timer.h"
-#include "flex_counter/flex_counter_manager.h"
+#include "orchagent/acltable.h"
+#include "orchagent/orch.h"
+#include "orchagent/timer.h"
+#include "orchagent/flex_counter/flex_counter_manager.h"
 #include "switch/switch_capabilities.h"
 #include "switch/switch_helper.h"
 #include "switch/trimming/capabilities.h"

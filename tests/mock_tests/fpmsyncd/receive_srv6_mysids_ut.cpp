@@ -8,8 +8,8 @@
 #include "ipaddress.h"
 
 #define private public // Need to modify internal cache
-#include "fpmlink.h"
-#include "routesync.h"
+#include "fpmsyncd/fpmlink.h"
+#include "fpmsyncd/routesync.h"
 #undef private
 
 using namespace swss;

@@ -2,10 +2,10 @@
 #include <gmock/gmock.h>
 
 #define private public // make Directory::m_values available to clean it.
-#include "directory.h"
+#include "orchagent/directory.h"
 #undef private
 #define protected public
-#include "orch.h"
+#include "orchagent/orch.h"
 #undef protected
 #include "ut_helper.h"
 #include "dbconnector.h"
@@ -14,9 +14,9 @@
 #include "mock_orch_test.h"
 #include "mock_table.h"
 #define private public
-#include "stporch.h"
+#include "orchagent/stporch.h"
 #undef private
-#include "mock_sai_stp.h"
+#include "orchagent/p4orch/tests/mock_sai_stp.h"
 
 
 namespace stporch_test

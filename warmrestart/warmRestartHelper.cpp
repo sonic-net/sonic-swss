@@ -1,7 +1,7 @@
 #include <cassert>
 #include <sstream>
 
-#include "warmRestartHelper.h"
+#include "warmrestart/warmRestartHelper.h"
 
 
 using namespace swss;

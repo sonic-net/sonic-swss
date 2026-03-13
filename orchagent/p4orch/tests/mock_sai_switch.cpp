@@ -1,4 +1,4 @@
-#include "mock_sai_switch.h"
+#include "orchagent/p4orch/tests/mock_sai_switch.h"
 
 MockSaiSwitch *mock_sai_switch;
 

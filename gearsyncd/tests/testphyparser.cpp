@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "phyparser.h"
+#include "gearsyncd/phyparser.h"
 #include <iostream>
 #include <unistd.h>
 #include "cunit/Basic.h"

@@ -1,11 +1,11 @@
-#include "p4orch/acl_util.h"
+#include "orchagent/p4orch/acl_util.h"
 
 #include <nlohmann/json.hpp>
 
 #include "converter.h"
 #include "logger.h"
 #include "sai_serialize.h"
-#include "saihelper.h"
+#include "orchagent/saihelper.h"
 #include "table.h"
 #include "tokenize.h"
 

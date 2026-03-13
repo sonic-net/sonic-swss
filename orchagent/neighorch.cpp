@@ -1,13 +1,13 @@
 #include <assert.h>
-#include "neighorch.h"
+#include "orchagent/neighorch.h"
 #include "logger.h"
-#include "swssnet.h"
-#include "crmorch.h"
-#include "routeorch.h"
-#include "directory.h"
-#include "muxorch.h"
+#include "orchagent/swssnet.h"
+#include "orchagent/crmorch.h"
+#include "orchagent/routeorch.h"
+#include "orchagent/directory.h"
+#include "orchagent/muxorch.h"
 #include "subscriberstatetable.h"
-#include "nhgorch.h"
+#include "orchagent/nhgorch.h"
 
 extern sai_neighbor_api_t*         sai_neighbor_api;
 extern sai_next_hop_api_t*         sai_next_hop_api;

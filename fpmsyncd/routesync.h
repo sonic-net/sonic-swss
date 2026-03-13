@@ -7,8 +7,8 @@
 #include "zmqproducerstatetable.h"
 #include "netmsg.h"
 #include "linkcache.h"
-#include "fpminterface.h"
-#include "warmRestartHelper.h"
+#include "fpmsyncd/fpminterface.h"
+#include "warmrestart/warmRestartHelper.h"
 #include <string.h>
 #include <bits/stdc++.h>
 #include <linux/version.h>

@@ -3,7 +3,7 @@
 #include "mock_sai_api.h"
 #include "gtest/gtest.h"
 #include "gmock/gmock.h"
-#include "dash/dashhafloworch.h"
+#include "orchagent/dash/dashhafloworch.h"
 using namespace ::testing;
 using ::testing::DoAll;
 using ::testing::SetArgPointee;

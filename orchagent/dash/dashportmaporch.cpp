@@ -1,9 +1,9 @@
-#include "dashportmaporch.h"
-#include "orch.h"
+#include "orchagent/dash/dashportmaporch.h"
+#include "orchagent/orch.h"
 #include "dashorch.h"
 #include "taskworker.h"
-#include "bulker.h"
-#include "pbutils.h"
+#include "orchagent/bulker.h"
+#include "orchagent/dash/pbutils.h"
 
 extern size_t gMaxBulkSize;
 extern sai_dash_outbound_port_map_api_t *sai_dash_outbound_port_map_api;

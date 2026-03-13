@@ -6,19 +6,19 @@
 
 #include "dbconnector.h"
 #include "dashorch.h"
-#include "bfdorch.h"
-#include "zmqorch.h"
+#include "orchagent/bfdorch.h"
+#include "orchagent/zmqorch.h"
 #include "zmqserver.h"
 #include "saitypes.h"
-#include "notifier.h"
-#include "directory.h"
+#include "orchagent/notifier.h"
+#include "orchagent/directory.h"
 #include "sai_serialize.h"
-#include "notifications.h"
+#include "orchagent/notifications.h"
 
 #include "dash_api/ha_set.pb.h"
 #include "dash_api/ha_scope.pb.h"
 
-#include "pbutils.h"
+#include "orchagent/dash/pbutils.h"
 
 #define HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP "HA_SET_STAT_COUNTER"
 #define HA_SET_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 10000

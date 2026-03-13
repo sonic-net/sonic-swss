@@ -18,9 +18,9 @@
 #ifndef __ISOLATIONGROUPORCH_H__
 #define __ISOLATIONGROUPORCH_H__
 
-#include "orch.h"
-#include "port.h"
-#include "observer.h"
+#include "orchagent/orch.h"
+#include "orchagent/port.h"
+#include "orchagent/observer.h"
 
 #define ISOLATION_GRP_DESCRIPTION       "DESCRIPTION"
 #define ISOLATION_GRP_TYPE              "TYPE"

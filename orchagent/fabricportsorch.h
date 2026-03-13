@@ -3,11 +3,11 @@
 
 #include <map>
 
-#include "orch.h"
-#include "observer.h"
-#include "observer.h"
+#include "orchagent/orch.h"
+#include "orchagent/observer.h"
+#include "orchagent/observer.h"
 #include "producertable.h"
-#include "flex_counter_manager.h"
+#include "orchagent/flex_counter/flex_counter_manager.h"
 
 using Clock = std::chrono::system_clock;
 using TimePoint = std::chrono::time_point<Clock>;

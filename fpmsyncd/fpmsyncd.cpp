@@ -2,14 +2,14 @@
 #include <inttypes.h>
 #include <sys/stat.h>
 #include "logger.h"
-#include "routesync.h"
+#include "fpmsyncd/routesync.h"
 #include "select.h"
 #include "selectabletimer.h"
 #include "netdispatcher.h"
 #include "netlink.h"
 #include "notificationconsumer.h"
 #include "subscriberstatetable.h"
-#include "warmRestartHelper.h"
+#include "warmrestart/warmRestartHelper.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/fpmsyncd.h"
 #include "fpmsyncd/routesync.h"

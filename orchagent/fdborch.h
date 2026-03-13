@@ -1,9 +1,9 @@
 #ifndef SWSS_FDBORCH_H
 #define SWSS_FDBORCH_H
 
-#include "orch.h"
-#include "observer.h"
-#include "portsorch.h"
+#include "orchagent/orch.h"
+#include "orchagent/observer.h"
+#include "orchagent/portsorch.h"
 
 enum FdbOrigin
 {

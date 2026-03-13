@@ -1,4 +1,4 @@
-#include "l3_admit_manager.h"
+#include "orchagent/p4orch/l3_admit_manager.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -8,12 +8,12 @@
 #include <string>
 #include <unordered_map>
 
-#include "mock_response_publisher.h"
-#include "mock_sai_my_mac.h"
-#include "p4oidmapper.h"
-#include "p4orch/p4orch_util.h"
-#include "p4orch_util.h"
-#include "return_code.h"
+#include "orchagent/p4orch/tests/mock_response_publisher.h"
+#include "orchagent/p4orch/tests/mock_sai_my_mac.h"
+#include "orchagent/p4orch/p4oidmapper.h"
+#include "orchagent/p4orch/p4orch_util.h"
+#include "orchagent/p4orch/p4orch_util.h"
+#include "orchagent/return_code.h"
 extern "C"
 {
 #include "sai.h"

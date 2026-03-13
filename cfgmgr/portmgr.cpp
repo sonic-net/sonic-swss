@@ -3,9 +3,9 @@
 #include "producerstatetable.h"
 #include "tokenize.h"
 #include "ipprefix.h"
-#include "portmgr.h"
+#include "cfgmgr/portmgr.h"
 #include "exec.h"
-#include "shellcmd.h"
+#include "cfgmgr/shellcmd.h"
 #include <swss/redisutility.h>
 
 using namespace std;

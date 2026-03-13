@@ -4,7 +4,7 @@
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "logger.h"
-#include "orch_zmq_config.h"
+#include "lib/orch_zmq_config.h"
 
 using namespace std;
 using namespace swss;

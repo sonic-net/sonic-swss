@@ -1,7 +1,7 @@
 #include "hftelorch_is_supported_sai_wrap.h"
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
-#include "high_frequency_telemetry/hftelorch.h"
+#include "orchagent/high_frequency_telemetry/hftelorch.h"
 #include <gtest/gtest.h>
 
 namespace hftelorch_test

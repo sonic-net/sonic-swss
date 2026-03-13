@@ -1,6 +1,6 @@
 #ifndef MOCK_SAI_API_H
 #define MOCK_SAI_API_H
-#include "mock_orchagent_main.h"
+#include "tests/mock_tests/mock_orchagent_main.h"
 #include <gmock/gmock.h>
 
 /*

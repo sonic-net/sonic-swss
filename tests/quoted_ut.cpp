@@ -11,7 +11,7 @@
 #include <thread>
 #include <unistd.h>
 #include "recorder.h"
-#include "swssnet.h"
+#include "orchagent/swssnet.h"
 #include "cfgmgr/shellcmd.h"
 
 using namespace std;

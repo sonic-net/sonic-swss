@@ -1,10 +1,10 @@
 #ifndef SWSS_INTFSORCH_H
 #define SWSS_INTFSORCH_H
 
-#include "orch.h"
-#include "portsorch.h"
-#include "vrforch.h"
-#include "timer.h"
+#include "orchagent/orch.h"
+#include "orchagent/portsorch.h"
+#include "orchagent/vrforch.h"
+#include "orchagent/timer.h"
 
 #include "ipaddresses.h"
 #include "ipprefix.h"

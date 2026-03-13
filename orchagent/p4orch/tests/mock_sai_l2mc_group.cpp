@@ -1,4 +1,4 @@
-#include "mock_sai_l2mc_group.h"
+#include "orchagent/p4orch/tests/mock_sai_l2mc_group.h"
 MockSaiL2mcGroup* mock_sai_l2mc_group;
 sai_status_t mock_create_l2mc_group(
     _Out_ sai_object_id_t* l2mc_group_id,

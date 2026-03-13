@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "gearparserbase.h"
+#include "gearsyncd/gearparserbase.h"
 #include <iostream>
 #include <fstream>
 #include <sstream>

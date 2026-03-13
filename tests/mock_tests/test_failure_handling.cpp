@@ -1,5 +1,5 @@
-#include "saihelper.h"
-#include "ut_helper.h"
+#include "orchagent/saihelper.h"
+#include "tests/mock_tests/ut_helper.h"
 #include <sys/mman.h>
 
 extern sai_switch_api_t *sai_switch_api;

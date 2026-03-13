@@ -1,6 +1,6 @@
 #include <inttypes.h>
 #include <vector>
-#include "flow_counter_handler.h"
+#include "orchagent/flex_counter/flow_counter_handler.h"
 #include "logger.h"
 #include "sai_serialize.h"
 

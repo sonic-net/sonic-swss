@@ -7,15 +7,15 @@
 #include <vector>
 
 #include "dbconnector.h"
-#include "zmqorch.h"
+#include "orchagent/zmqorch.h"
 #include "zmqserver.h"
 #include "saitypes.h"
-#include "notifier.h"
-#include "directory.h"
+#include "orchagent/notifier.h"
+#include "orchagent/directory.h"
 #include "sai_serialize.h"
-#include "notifications.h"
-#include "timer.h"
-#include "orch.h"
+#include "orchagent/notifications.h"
+#include "orchagent/timer.h"
+#include "orchagent/orch.h"
 
 extern sai_dash_flow_api_t* sai_dash_flow_api;
 extern sai_object_id_t gSwitchId;

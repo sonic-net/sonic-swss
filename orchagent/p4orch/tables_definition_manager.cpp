@@ -1,4 +1,4 @@
-#include "p4orch/tables_definition_manager.h"
+#include "orchagent/p4orch/tables_definition_manager.h"
 
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -7,11 +7,11 @@
 #include <utility>
 #include <vector>
 
-#include "directory.h"
+#include "orchagent/directory.h"
 #include "logger.h"
-#include "orch.h"
-#include "p4orch/p4orch.h"
-#include "p4orch/p4orch_util.h"
+#include "orchagent/orch.h"
+#include "orchagent/p4orch/p4orch.h"
+#include "orchagent/p4orch/p4orch_util.h"
 #include "tokenize.h"
 extern "C"
 {

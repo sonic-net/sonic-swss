@@ -1,9 +1,9 @@
 #pragma once
 
-#include "cbf/cbfnhgorch.h"
+#include "orchagent/cbf/cbfnhgorch.h"
 #include "vector"
-#include "portsorch.h"
-#include "routeorch.h"
+#include "orchagent/portsorch.h"
+#include "orchagent/routeorch.h"
 
 using namespace std;
 

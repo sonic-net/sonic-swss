@@ -1,11 +1,11 @@
-#include "debugcounterorch.h"
-#include "portsorch.h"
+#include "orchagent/debugcounterorch.h"
+#include "orchagent/portsorch.h"
 #include "rediscommand.h"
 #include "sai_serialize.h"
 #include "schema.h"
-#include "drop_counter.h"
+#include "orchagent/debug_counter/drop_counter.h"
 #include <memory>
-#include "observer.h"
+#include "orchagent/observer.h"
 
 using std::string;
 using std::unordered_map;

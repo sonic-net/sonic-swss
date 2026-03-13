@@ -20,9 +20,9 @@
 #include "selectabletimer.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
-#include "orch.h"
+#include "orchagent/orch.h"
 #include "notificationproducer.h"
-#include "timer.h"
+#include "orchagent/timer.h"
 #include <unistd.h>
 #include <set>
 #include <map>

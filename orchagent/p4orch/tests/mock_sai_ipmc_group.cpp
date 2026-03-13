@@ -1,4 +1,4 @@
-#include "mock_sai_ipmc_group.h"
+#include "orchagent/p4orch/tests/mock_sai_ipmc_group.h"
 
 MockSaiIpmcGroup* mock_sai_ipmc_group;
 

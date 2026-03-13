@@ -19,8 +19,8 @@ extern "C" {
 #include <net/if.h>
 #include "timestamp.h"
 #include "sai_serialize.h"
-#include "saihelper.h"
-#include "orch.h"
+#include "orchagent/saihelper.h"
+#include "orchagent/orch.h"
 
 using namespace std;
 using namespace swss;

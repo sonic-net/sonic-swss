@@ -1,11 +1,11 @@
 #include <string.h>
 #include <inttypes.h>
-#include "tunneldecaporch.h"
-#include "portsorch.h"
-#include "crmorch.h"
+#include "orchagent/tunneldecaporch.h"
+#include "orchagent/portsorch.h"
+#include "orchagent/crmorch.h"
 #include "logger.h"
-#include "swssnet.h"
-#include "qosorch.h"
+#include "orchagent/swssnet.h"
+#include "orchagent/qosorch.h"
 #include "subscriberstatetable.h"
 
 using namespace std;

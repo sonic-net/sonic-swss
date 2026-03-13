@@ -1,4 +1,4 @@
-#include "p4orch/acl_table_manager.h"
+#include "orchagent/p4orch/acl_table_manager.h"
 
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -6,19 +6,17 @@
 #include <vector>
 
 #include "SaiAttributeList.h"
-#include "aclorch.h"
-#include "crmorch.h"
-#include "dbconnector.h"
-#include "logger.h"
 #include "orchagent/aclorch.h"
 #include "orchagent/crmorch.h"
-#include "orch.h"
+#include "dbconnector.h"
+#include "logger.h"
 #include "p4orch.h"
-#include "p4orch/acl_util.h"
+#include "orchagent/orch.h"
 #include "orchagent/p4orch/p4orch.h"
-#include "p4orch/p4orch_util.h"
+#include "orchagent/p4orch/acl_util.h"
+#include "orchagent/p4orch/p4orch_util.h"
 #include "sai_serialize.h"
-#include "switchorch.h"
+#include "orchagent/switchorch.h"
 #include "table.h"
 #include "tokenize.h"
 extern "C"

@@ -1,4 +1,4 @@
-#include "mock_sai_udf.h"
+#include "orchagent/p4orch/tests/mock_sai_udf.h"
 
 MockSaiUdf *mock_sai_udf;
 

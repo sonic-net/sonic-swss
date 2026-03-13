@@ -5,26 +5,26 @@
 #include <warm_restart.h>
 #include <sai_serialize.h>
 
-#include "notifier.h"
-#include "directory.h"
+#include "orchagent/notifier.h"
+#include "orchagent/directory.h"
 
-#include "bufferorch.h"
-#include "copporch.h"
-#include "macsecorch.h"
-#include "portsorch.h"
-#include "pfcwdorch.h"
-#include "routeorch.h"
+#include "orchagent/bufferorch.h"
+#include "orchagent/copporch.h"
+#include "orchagent/macsecorch.h"
+#include "orchagent/portsorch.h"
+#include "orchagent/pfcwdorch.h"
+#include "orchagent/routeorch.h"
 #include "srv6orch.h"
-#include "switchorch.h"
-#include "debugcounterorch.h"
-#include "fabricportsorch.h"
+#include "orchagent/switchorch.h"
+#include "orchagent/debugcounterorch.h"
+#include "orchagent/fabricportsorch.h"
 
 #include "dash/dashorch.h"
 #include "dash/dashmeterorch.h"
 #include "dash/dashhaorch.h"
 #include "flex_counter/flowcounterrouteorch.h"
 
-#include "flexcounterorch.h"
+#include "orchagent/flexcounterorch.h"
 
 extern sai_port_api_t *sai_port_api;
 extern sai_switch_api_t *sai_switch_api;

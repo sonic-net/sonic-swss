@@ -1,4 +1,4 @@
-#include "mock_sai_next_hop.h"
+#include "orchagent/p4orch/tests/mock_sai_next_hop.h"
 
 MockSaiNextHop* mock_sai_next_hop;
 
