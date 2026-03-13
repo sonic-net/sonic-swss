@@ -459,7 +459,8 @@ L3MulticastManager::deserializeMulticastRouterInterfaceEntry(
     const auto& field = fvField(it);
     const auto& value = fvValue(it);
     if (field == p4orch::kAction) {
-      if (value == p4orch::kSetMulticastSrcMac || value == p4orch::kNoAction) {
+      if (value == p4orch::kSetMulticastSrcMac ||
+          value == p4orch::kL2MulticastPassthrough) {
         router_interface_entry.action = value;
       } else {
         return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
@@ -1302,9 +1303,9 @@ L3MulticastManager::updateMulticastRouterInterfaceEntries(
       break;
     }
 
-    // Since action kNoAction, used to setup L2 multicast bridge ports, does not
-    // have any parameters, there is nothing to update.
-    if (old_entry_ptr->action == p4orch::kNoAction) {
+    // Since action kL2MulticastPassthrough, used to setup L2 multicast bridge
+    // ports, does not have any parameters, there is nothing to update.
+    if (old_entry_ptr->action == p4orch::kL2MulticastPassthrough) {
       statuses[i] = ReturnCode();
       continue;
     }
