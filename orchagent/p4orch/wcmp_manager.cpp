@@ -110,11 +110,11 @@ ReturnCode WcmpManager::validateWcmpGroupEntry(const P4WcmpGroupEntry &app_db_en
         if (!wcmp_group_member->watch_port.empty())
         {
             Port port;
-            if (!gPortsOrch->getPort(wcmp_group_member->watch_port, port))
+            if (!gPortsOrch->getPort(wcmp_group_member->watch_port, port) ||
+                !gPortsOrch->isFrontPanelPort(port))
             {
-                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                       << "Invalid watch_port field " << wcmp_group_member->watch_port
-                       << ": should be a valid port name.";
+              return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                     << ": should be a valid front panel port name.";
             }
         }
     }
