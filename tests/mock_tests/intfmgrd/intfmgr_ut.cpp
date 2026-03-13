@@ -127,4 +127,117 @@ namespace intfmgr_ut
         intfmgr.m_statePortTable.set("Ethernet64.10", values, "SET", "");
         EXPECT_THROW(intfmgr.setHostSubIntfAdminStatus("Ethernet64.10", "up", "up"), std::runtime_error);
     }
+
+    TEST_F(IntfMgrTest, testReplayLLIpv6AddressOnAdminUp){
+        Ethernet0IPv6Set = true;
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+
+        /* Set portStateTable and stateIntfTable so doIntfAddrTask proceeds */
+        std::vector<swss::FieldValueTuple> values;
+        values.emplace_back("state", "ok");
+        intfmgr.m_statePortTable.set("Ethernet0", values, "SET", "");
+        values.clear();
+        values.emplace_back("vrf", "");
+        intfmgr.m_stateIntfTable.set("Ethernet0", values, "SET", "");
+
+        /* Add an IPv6 link-local address via doIntfAddrTask to populate the cache */
+        const std::vector<std::string> llKeys = {"Ethernet0", "fe80::1/64"};
+        const std::vector<swss::FieldValueTuple> emptyData;
+        intfmgr.doIntfAddrTask(llKeys, emptyData, "SET");
+
+        /* Also add a global IPv6 address — this should NOT be replayed */
+        const std::vector<std::string> globalKeys = {"Ethernet0", "2001::8/64"};
+        intfmgr.doIntfAddrTask(globalKeys, emptyData, "SET");
+
+        /* Also add an IPv4 address — this should NOT be replayed */
+        const std::vector<std::string> ipv4Keys = {"Ethernet0", "10.0.0.1/31"};
+        intfmgr.doIntfAddrTask(ipv4Keys, emptyData, "SET");
+
+        mockCallArgs.clear();
+
+        /* Simulate admin up by calling doPortTableTask */
+        std::vector<swss::FieldValueTuple> portData;
+        portData.emplace_back("admin_status", "up");
+        intfmgr.doPortTableTask("Ethernet0", portData, "SET");
+
+        /* Verify that only IPv6 link-local address add was called */
+        int ipv6_ll_add_called = 0;
+        int ipv6_global_add_called = 0;
+        int ipv4_add_called = 0;
+        for (const auto &cmd : mockCallArgs)
+        {
+            if (cmd.find("/sbin/ip -6 address \"add\"") != std::string::npos &&
+                cmd.find("fe80::1/64") != std::string::npos)
+            {
+                ipv6_ll_add_called++;
+            }
+            if (cmd.find("/sbin/ip -6 address \"add\"") != std::string::npos &&
+                cmd.find("2001::8/64") != std::string::npos)
+            {
+                ipv6_global_add_called++;
+            }
+            if (cmd.find("/sbin/ip address \"add\"") != std::string::npos &&
+                cmd.find("10.0.0.1/31") != std::string::npos)
+            {
+                ipv4_add_called++;
+            }
+        }
+        ASSERT_EQ(ipv6_ll_add_called, 1);
+        ASSERT_EQ(ipv6_global_add_called, 0);
+        ASSERT_EQ(ipv4_add_called, 0);
+
+        /* Now delete the link-local address and verify it is no longer replayed */
+        intfmgr.doIntfAddrTask(llKeys, emptyData, "DEL");
+        ASSERT_EQ(intfmgr.m_intfLLAddresses.count("Ethernet0"), 0u);
+
+        mockCallArgs.clear();
+        intfmgr.doPortTableTask("Ethernet0", portData, "SET");
+
+        ipv6_ll_add_called = 0;
+        for (const auto &cmd : mockCallArgs)
+        {
+            if (cmd.find("/sbin/ip -6 address \"add\"") != std::string::npos &&
+                cmd.find("fe80::1/64") != std::string::npos)
+            {
+                ipv6_ll_add_called++;
+            }
+        }
+        ASSERT_EQ(ipv6_ll_add_called, 0);
+    }
+
+    TEST_F(IntfMgrTest, testNoReplayLLOnAdminDown){
+        Ethernet0IPv6Set = true;
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+
+        /* Set portStateTable and stateIntfTable so doIntfAddrTask proceeds */
+        std::vector<swss::FieldValueTuple> values;
+        values.emplace_back("state", "ok");
+        intfmgr.m_statePortTable.set("Ethernet0", values, "SET", "");
+        values.clear();
+        values.emplace_back("vrf", "");
+        intfmgr.m_stateIntfTable.set("Ethernet0", values, "SET", "");
+
+        /* Add an IPv6 link-local address via doIntfAddrTask to populate the cache */
+        const std::vector<std::string> llKeys = {"Ethernet0", "fe80::1/64"};
+        const std::vector<swss::FieldValueTuple> emptyData;
+        intfmgr.doIntfAddrTask(llKeys, emptyData, "SET");
+
+        mockCallArgs.clear();
+
+        /* Simulate admin down — should NOT trigger replay */
+        std::vector<swss::FieldValueTuple> portData;
+        portData.emplace_back("admin_status", "down");
+        intfmgr.doPortTableTask("Ethernet0", portData, "SET");
+
+        int ipv6_add_called = 0;
+        for (const auto &cmd : mockCallArgs)
+        {
+            if (cmd.find("/sbin/ip -6 address \"add\"") != std::string::npos)
+            {
+                ipv6_add_called++;
+            }
+        }
+        ASSERT_EQ(ipv6_add_called, 0);
+    }
+
 }
