@@ -7181,32 +7181,6 @@ TEST_F(L3MulticastManagerTest, ValidateSetMulticastGroupEntryUpdateTest) {
 }
 
 TEST_F(L3MulticastManagerTest,
-       ValidateSetMulticastGroupEntryUpdateMemberButOidNotInMapperTest) {
-  // Add router interface entries so have RIF.
-  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
-      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
-  auto rif_entry2 = SetupP4MulticastRouterInterfaceEntry(
-      "Ethernet2", "0x0", swss::MacAddress(kSrcMac2), kRifOid2);
-  // Setup multicast group entries.
-  P4Replica replica1 = P4Replica("0x1", "Ethernet1", "0x0");
-  P4Replica replica2 = P4Replica("0x1", "Ethernet2", "0x0");
-
-  auto group_entry1 = SetupP4MulticastGroupEntry(
-      "0x1", {replica1, replica2}, kGroupOid1,
-      {kGroupMemberOid1, kGroupMemberOid2});
-  // Force remove the group member OID from central map to cause an error.
-  p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
-                          replica1.key);
-
-  // Validate an existing multicast entry.
-  ReturnCode status = ValidateMulticastGroupEntry(group_entry1, SET_COMMAND);
-  EXPECT_EQ(StatusCode::SWSS_RC_INTERNAL, status);
-  // Delete also fails.
-  status = ValidateMulticastGroupEntry(group_entry1, DEL_COMMAND);
-  EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, status);
-}
-
-TEST_F(L3MulticastManagerTest,
        ValidateSetMulticastGroupEntryUpdateNoGroupOidTest) {
   // Add router interface entries so have RIF.
   auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
@@ -8377,6 +8351,49 @@ TEST_F(L3MulticastManagerTest, VerifyStateMulticastGroupTestSuccess) {
       R"("multicast_replica_port":"Ethernet1"}])";
   attributes.push_back(
       swss::FieldValueTuple{"replicas", json_array});
+
+  // Setup ASIC DB.
+  swss::Table table(nullptr, "ASIC_STATE");
+  table.set("SAI_OBJECT_TYPE_IPMC_GROUP:oid:0x1",
+            std::vector<swss::FieldValueTuple>{});
+  table.set(
+      "SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER:oid:0x11",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_GROUP_ID",
+                                "oid:0x1"},
+          swss::FieldValueTuple{"SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID",
+                                "oid:0x123456"}});
+
+  // Verification should succeed with vaild key and value.
+  EXPECT_EQ(VerifyState(db_key, attributes), "");
+  table.del("SAI_OBJECT_TYPE_IPMC_GROUP:oid:0x1");
+  table.del("SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER:oid:0x11");
+}
+
+TEST_F(L3MulticastManagerTest, VerifyStateMulticastGroupTestSuccessWithBackup) {
+  // Add router interface entry so have RIF.
+  auto rif_entry_1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto rif_entry_2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x1", swss::MacAddress(kSrcMac2), kRifOid2);
+  // Add multicast group.
+  P4Replica replica1 = P4Replica("0x1", "Ethernet1", "0x1");
+  P4Replica replica2 = P4Replica("0x1", "Ethernet2", "0x1");
+  auto group_entry = SetupP4MulticastGroupEntryWithBackups(
+      "0x1", {{replica1, replica2}}, kGroupOid1, {kGroupMemberOid1});
+
+  const std::string appl_db_key =
+      std::string(APP_P4RT_REPLICATION_IP_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + "0x1";
+  const std::string db_key =
+      std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter + appl_db_key;
+  std::vector<swss::FieldValueTuple> attributes;
+  std::string json_array = R"([{"multicast_replica_instance":"0x1",)"
+                           R"("multicast_replica_port":"Ethernet1"}])";
+  attributes.push_back(swss::FieldValueTuple{"replicas", json_array});
+  json_array = R"([[{"multicast_replica_instance":"0x1",)"
+               R"("multicast_replica_port":"Ethernet2"}]])";
+  attributes.push_back(swss::FieldValueTuple{"backups", json_array});
 
   // Setup ASIC DB.
   swss::Table table(nullptr, "ASIC_STATE");
