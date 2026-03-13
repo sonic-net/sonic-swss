@@ -185,6 +185,24 @@ namespace intfmgr_ut
         ASSERT_EQ(ipv6_ll_add_called, 1);
         ASSERT_EQ(ipv6_global_add_called, 0);
         ASSERT_EQ(ipv4_add_called, 0);
+
+        /* Now delete the link-local address and verify it is no longer replayed */
+        intfmgr.doIntfAddrTask(llKeys, emptyData, "DEL");
+        ASSERT_EQ(intfmgr.m_intfLLAddresses.count("Ethernet0"), 0u);
+
+        mockCallArgs.clear();
+        intfmgr.doPortTableTask("Ethernet0", portData, "SET");
+
+        ipv6_ll_add_called = 0;
+        for (const auto &cmd : mockCallArgs)
+        {
+            if (cmd.find("/sbin/ip -6 address \"add\"") != std::string::npos &&
+                cmd.find("fe80::1/64") != std::string::npos)
+            {
+                ipv6_ll_add_called++;
+            }
+        }
+        ASSERT_EQ(ipv6_ll_add_called, 0);
     }
 
     TEST_F(IntfMgrTest, testNoReplayLLOnAdminDown){
@@ -221,4 +239,5 @@ namespace intfmgr_ut
         }
         ASSERT_EQ(ipv6_add_called, 0);
     }
+
 }
