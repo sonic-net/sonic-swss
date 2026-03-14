@@ -44,14 +44,21 @@
 #include "macsecorch.h"
 #include "p4orch/p4orch.h"
 #include "bfdorch.h"
+#include "icmporch.h"
 #include "srv6orch.h"
 #include "nvgreorch.h"
 #include "twamporch.h"
 #include "stporch.h"
+#include "dash/dashenifwdorch.h"
 #include "dash/dashaclorch.h"
 #include "dash/dashorch.h"
 #include "dash/dashrouteorch.h"
+#include "dash/dashtunnelorch.h"
 #include "dash/dashvnetorch.h"
+#include "dash/dashhaorch.h"
+#include "dash/dashmeterorch.h"
+#include "dash/dashportmaporch.h"
+#include "high_frequency_telemetry/hftelorch.h"
 #include <sairedis.h>
 
 using namespace swss;
@@ -102,7 +109,7 @@ public:
 
     std::thread ring_thread;
 
-private:
+protected:
     DBConnector *m_applDb;
     DBConnector *m_configDb;
     DBConnector *m_stateDb;
@@ -134,4 +141,14 @@ private:
     DBConnector *m_configDb;
 };
 
+
+class DpuOrchDaemon : public OrchDaemon
+{
+public:
+    DpuOrchDaemon(DBConnector *, DBConnector *, DBConnector *, DBConnector *, DBConnector *, DBConnector *, ZmqServer *);
+    bool init() override;
+private:
+    DBConnector *m_dpu_appDb;
+    DBConnector *m_dpu_appstateDb;
+};
 #endif /* SWSS_ORCHDAEMON_H */

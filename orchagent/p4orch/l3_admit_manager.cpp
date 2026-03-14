@@ -54,6 +54,13 @@ ReturnCodeOr<std::vector<sai_attribute_t>> getSaiAttrs(const P4L3AdmitEntry &l3_
             LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
                                  << "Failed to get port info for port " << QuotedVar(l3_admit_entry.port_name));
         }
+	if (port.m_type != Port::Type::PHY) {
+          LOG_ERROR_AND_RETURN(
+              ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
+              << "Port " << QuotedVar(l3_admit_entry.port_name) << "'s type "
+              << port.m_type
+              << " is not physical and is not supported for L3 Admit entry.");
+        }
         l3_admit_attr.id = SAI_MY_MAC_ATTR_PORT_ID;
         l3_admit_attr.value.oid = port.m_port_id;
         l3_admit_attrs.push_back(l3_admit_attr);
@@ -75,66 +82,70 @@ void L3AdmitManager::enqueue(const std::string &table_name, const swss::KeyOpFie
     m_entries.push_back(entry);
 }
 
-void L3AdmitManager::drain()
-{
-    SWSS_LOG_ENTER();
+void L3AdmitManager::drainWithNotExecuted() {
+  drainMgmtWithNotExecuted(m_entries, m_publisher);
+}
 
-    for (const auto &key_op_fvs_tuple : m_entries)
-    {
-        std::string table_name;
-        std::string key;
-        parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &key);
-        const std::vector<swss::FieldValueTuple> &attributes = kfvFieldsValues(key_op_fvs_tuple);
+ReturnCode L3AdmitManager::drain() {
+  SWSS_LOG_ENTER();
 
-        ReturnCode status;
-        auto app_db_entry_or = deserializeP4L3AdmitAppDbEntry(key, attributes);
-        if (!app_db_entry_or.ok())
-        {
-            status = app_db_entry_or.status();
-            SWSS_LOG_ERROR("Unable to deserialize APP DB entry with key %s: %s",
-                           QuotedVar(table_name + ":" + key).c_str(), status.message().c_str());
-            m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                 status,
-                                 /*replace=*/true);
-            continue;
-        }
-        auto &app_db_entry = *app_db_entry_or;
+  ReturnCode status;
+  while (!m_entries.empty()) {
+    auto key_op_fvs_tuple = m_entries.front();
+    m_entries.pop_front();
+    std::string table_name;
+    std::string key;
+    parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &key);
+    const std::vector<swss::FieldValueTuple>& attributes =
+        kfvFieldsValues(key_op_fvs_tuple);
 
-        const std::string l3_admit_key =
-            KeyGenerator::generateL3AdmitKey(app_db_entry.mac_address_data, app_db_entry.mac_address_mask,
-                                             app_db_entry.port_name, app_db_entry.priority);
-
-        // Fulfill the operation.
-        const std::string &operation = kfvOp(key_op_fvs_tuple);
-        if (operation == SET_COMMAND)
-        {
-            auto *l3_admit_entry = getL3AdmitEntry(l3_admit_key);
-            if (l3_admit_entry == nullptr)
-            {
-                // Create new l3 admit.
-                status = processAddRequest(app_db_entry, l3_admit_key);
-            }
-            else
-            {
-                // Duplicate l3 admit entry, no-op
-                status = ReturnCode(StatusCode::SWSS_RC_SUCCESS)
-                         << "L3 Admit entry with the same key received: " << QuotedVar(l3_admit_key);
-            }
-        }
-        else if (operation == DEL_COMMAND)
-        {
-            // Delete l3 admit.
-            status = processDeleteRequest(l3_admit_key);
-        }
-        else
-        {
-            status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Unknown operation type " << QuotedVar(operation);
-            SWSS_LOG_ERROR("%s", status.message().c_str());
-        }
-        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple), status,
-                             /*replace=*/true);
+    auto app_db_entry_or = deserializeP4L3AdmitAppDbEntry(key, attributes);
+    if (!app_db_entry_or.ok()) {
+      status = app_db_entry_or.status();
+      SWSS_LOG_ERROR("Unable to deserialize APP DB entry with key %s: %s",
+                     QuotedVar(table_name + ":" + key).c_str(),
+                     status.message().c_str());
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple), status,
+                           /*replace=*/true);
+      break;
     }
-    m_entries.clear();
+    auto& app_db_entry = *app_db_entry_or;
+
+    const std::string l3_admit_key = KeyGenerator::generateL3AdmitKey(
+        app_db_entry.mac_address_data, app_db_entry.mac_address_mask,
+        app_db_entry.port_name, app_db_entry.priority);
+
+    // Fulfill the operation.
+    const std::string& operation = kfvOp(key_op_fvs_tuple);
+    if (operation == SET_COMMAND) {
+      auto* l3_admit_entry = getL3AdmitEntry(l3_admit_key);
+      if (l3_admit_entry == nullptr) {
+        // Create new l3 admit.
+        status = processAddRequest(app_db_entry, l3_admit_key);
+      } else {
+        // Duplicate l3 admit entry, no-op
+        status = ReturnCode(StatusCode::SWSS_RC_SUCCESS)
+                 << "L3 Admit entry with the same key received: "
+                 << QuotedVar(l3_admit_key);
+      }
+    } else if (operation == DEL_COMMAND) {
+      // Delete l3 admit.
+      status = processDeleteRequest(l3_admit_key);
+    } else {
+      status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Unknown operation type " << QuotedVar(operation);
+      SWSS_LOG_ERROR("%s", status.message().c_str());
+    }
+    m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                         kfvFieldsValues(key_op_fvs_tuple), status,
+                         /*replace=*/true);
+    if (!status.ok()) {
+      break;
+    }
+  }
+  drainWithNotExecuted();
+  return status;
 }
 
 P4L3AdmitEntry *L3AdmitManager::getL3AdmitEntry(const std::string &l3_admit_key)
@@ -196,9 +207,21 @@ ReturnCodeOr<P4L3AdmitAppDbEntry> L3AdmitManager::deserializeP4L3AdmitAppDbEntry
 
         // "match/in_port":"Ethernet0"
         if (j.find(prependMatchField(p4orch::kInPort)) != j.end())
-        {
-            app_db_entry.port_name = j[prependMatchField(p4orch::kInPort)];
-        }
+	{
+		std::string in_port = j[prependMatchField(p4orch::kInPort)];
+		swss::Port port;
+		if (!gPortsOrch->getPort(in_port, port)) {
+			return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+				<< "Failed to get port info for port " << QuotedVar(in_port);
+		}
+		if (port.m_type != Port::Type::PHY) {
+			return ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
+				<< "Port " << QuotedVar(in_port) << "'s type " << port.m_type
+				<< " is not physical and is not supported for "
+				"L3 Admit entry.";
+		}
+		app_db_entry.port_name = j[prependMatchField(p4orch::kInPort)];
+	}
     }
     catch (std::exception &ex)
     {

@@ -9,14 +9,11 @@ void ZmqConsumer::execute()
 {
     SWSS_LOG_ENTER();
 
-    size_t update_size = 0;
     auto table = static_cast<swss::ZmqConsumerStateTable*>(getSelectable());
-    do
-    {
-        std::deque<KeyOpFieldsValuesTuple> entries;
-        table->pops(entries);
-        update_size = addToSync(entries);
-    } while (update_size != 0);
+
+    std::deque<KeyOpFieldsValuesTuple> entries;
+    table->pops(entries);
+    addToSync(entries);
 
     drain();
 }
@@ -37,9 +34,18 @@ ZmqOrch::ZmqOrch(DBConnector *db, const vector<string> &tableNames, ZmqServer *z
     }
 }
 
+
+ZmqOrch::ZmqOrch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with_pri, ZmqServer *zmqServer)
+{
+    for (const auto& it : tableNames_with_pri)
+    {
+        addConsumer(db, it.first, it.second, zmqServer);
+    }
+}
+
 void ZmqOrch::addConsumer(DBConnector *db, string tableName, int pri, ZmqServer *zmqServer)
 {
-    if (db->getDbId() == APPL_DB)
+    if (db->getDbId() == APPL_DB || db->getDbId() == DPU_APPL_DB)
     {
         if (zmqServer != nullptr)
         {

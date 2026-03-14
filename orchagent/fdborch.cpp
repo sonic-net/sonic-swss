@@ -855,6 +855,8 @@ void FdbOrch::doTask(Consumer& consumer)
                 }
             }
 
+            // set entry port_name, which is used in mux fdb update logic
+            entry.port_name = port;
 
             FdbData fdbData;
             fdbData.bridge_port_id = SAI_NULL_OBJECT_ID;
@@ -1205,6 +1207,12 @@ void FdbOrch::updatePortOperState(const PortOperStateUpdate& update)
     if (update.operStatus == SAI_PORT_OPER_STATUS_DOWN)
     {
         swss::Port p = update.port;
+        if (gMlagOrch->isMlagInterface(p.m_alias))
+        {
+            SWSS_LOG_NOTICE("Ignoring fdb flush on MCLAG port:%s", p.m_alias.c_str());
+            return;
+        }
+
         if (p.m_bridge_port_id != SAI_NULL_OBJECT_ID)
         {
             flushFDBEntries(p.m_bridge_port_id, SAI_NULL_OBJECT_ID);

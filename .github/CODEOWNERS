@@ -20,18 +20,18 @@
 /cfgmgr/teammgr*       @judyjoseph
 
 # Buffer Management, PFC
-/orchagent/bufferorch* @neethajohn
-/orchagent/qosorch*    @neethajohn
-/orchagent/pfc*        @neethajohn
-/cfgmgr/buffer*        @neethajohn
+/orchagent/bufferorch* @kperumalbfn
+/orchagent/qosorch*    @kperumalbfn
+/orchagent/pfc*        @kperumalbfn
+/cfgmgr/buffer*        @kperumalbfn
 
 # Chassis
 /orchagent/fabricportsorch* @abdosi @judyjoseph
 /tests/test_virtual_chassis.py @abdosi @judyjoseph
 
-# Vnet Orch
-/orchagent/vnet*       @siqbal1986
+# Mux Orch
+/orchagent/mux*        @Ndancejic
 
 # Acl Orch
-/orchagent/acl*        @siqbal1986
+/orchagent/acl*        @bingwang-ms
 

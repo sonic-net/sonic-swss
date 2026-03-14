@@ -1,6 +1,7 @@
 #pragma once
 
 #include <condition_variable>
+#include <list>
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -60,6 +61,11 @@ class ResponsePublisher : public ResponsePublisherInterface
      */
     void setBuffered(bool buffered);
 
+
+    // When true, write attributes directly to DB without merge logic.
+    // When false (default), check for existing keys and filter NULL-valued attributes.
+    bool m_directDbWrite = false;
+
   private:
     struct entry
     {
@@ -93,7 +99,7 @@ class ResponsePublisher : public ResponsePublisherInterface
     bool m_buffered{false};
     // Thread to write to DB.
     std::unique_ptr<std::thread> m_update_thread;
-    std::queue<entry> m_queue;
+    std::queue<entry, std::list<entry>> m_queue;
     mutable std::mutex m_lock;
     std::condition_variable m_signal;
 };

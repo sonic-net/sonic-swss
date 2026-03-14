@@ -2,6 +2,7 @@
 #include <limits.h>
 #include <unordered_map>
 #include <algorithm>
+#include <sstream>
 #include "aclorch.h"
 #include "logger.h"
 #include "schema.h"
@@ -51,6 +52,8 @@ extern Directory<Orch*> gDirectory;
 
 const int TCP_PROTOCOL_NUM = 6; // TCP protocol number
 
+#define MAC_EXACT_MATCH "ff:ff:ff:ff:ff:ff"
+
 acl_rule_attr_lookup_t aclMatchLookup =
 {
     { MATCH_IN_PORTS,          SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS },
@@ -79,6 +82,9 @@ acl_rule_attr_lookup_t aclMatchLookup =
     { MATCH_TUNNEL_VNI,        SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI },
     { MATCH_INNER_ETHER_TYPE,  SAI_ACL_ENTRY_ATTR_FIELD_INNER_ETHER_TYPE },
     { MATCH_INNER_IP_PROTOCOL, SAI_ACL_ENTRY_ATTR_FIELD_INNER_IP_PROTOCOL },
+    { MATCH_INNER_SRC_MAC,     SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_MAC },
+    { MATCH_INNER_DST_MAC,     SAI_ACL_ENTRY_ATTR_FIELD_INNER_DST_MAC },
+    { MATCH_INNER_SRC_IP,      SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP},
     { MATCH_INNER_L4_SRC_PORT, SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_SRC_PORT },
     { MATCH_INNER_L4_DST_PORT, SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_DST_PORT },
     { MATCH_BTH_OPCODE,        SAI_ACL_ENTRY_ATTR_FIELD_BTH_OPCODE},
@@ -104,6 +110,12 @@ static acl_rule_attr_lookup_t aclL3ActionLookup =
     { ACTION_PACKET_ACTION,                    SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION },
     { ACTION_REDIRECT_ACTION,                  SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT },
     { ACTION_DO_NOT_NAT_ACTION,                SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT },
+    { ACTION_DISABLE_TRIM,                     SAI_ACL_ENTRY_ATTR_ACTION_PACKET_TRIM_DISABLE }
+};
+
+static acl_rule_attr_lookup_t aclInnerActionLookup =
+{
+    { ACTION_INNER_SRC_MAC_REWRITE_ACTION,  SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC},
 };
 
 static acl_rule_attr_lookup_t aclMirrorStageLookup =
@@ -630,7 +642,7 @@ void AclRule::TunnelNH::load(const std::string& target)
 
 void AclRule::TunnelNH::parse(const std::string& target)
 {
-    /* Supported Format: endpoint_ip@tunnel_name */
+    /* Expected Format: endpoint_ip@tunnel_name[,vni][,mac] */
     auto at_pos = target.find('@');
     if (at_pos == std::string::npos)
     {
@@ -638,7 +650,29 @@ void AclRule::TunnelNH::parse(const std::string& target)
     }
 
     endpoint_ip = swss::IpAddress(target.substr(0, at_pos));
-    tunnel_name = target.substr(at_pos + 1);
+    std::stringstream ss(target.substr(at_pos + 1));
+
+    vector<string> components;
+    while (ss.good())
+    {
+        std::string substr;
+        getline(ss, substr, ',');
+        components.push_back(substr);
+    }
+    if (components.empty())
+    {
+        throw std::logic_error("Invalid format for Tunnel Next Hop");
+    }
+
+    tunnel_name = components[0];
+    if (components.size() >= 2)
+    {
+        vni = static_cast<uint32_t>(std::stoul(components[1]));
+    }
+    if (components.size() == 3)
+    {
+        mac = swss::MacAddress(components[2]);
+    }
 }
 
 void AclRule::TunnelNH::clear()
@@ -647,6 +681,7 @@ void AclRule::TunnelNH::clear()
     VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
     vxlan_orch->removeNextHopTunnel(tunnel_name, endpoint_ip, mac, vni);
 }
+
 
 string AclTableType::getName() const
 {
@@ -802,9 +837,14 @@ bool AclTableTypeParser::parseAclTableTypeActions(const std::string& value, AclT
         auto dtelAction = aclDTelActionLookup.find(action);
         auto otherAction = aclOtherActionLookup.find(action);
         auto metadataAction = aclMetadataDscpActionLookup.find(action);
+        auto innerAction = aclInnerActionLookup.find(action);
         if (l3Action != aclL3ActionLookup.end())
         {
             saiActionAttr = l3Action->second;
+        }
+        else if (innerAction != aclInnerActionLookup.end())
+        {
+            saiActionAttr = innerAction->second;
         }
         else if (mirrorAction != aclMirrorStageLookup.end())
         {
@@ -906,7 +946,14 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
         }
         else if (attr_name == MATCH_TUNNEL_TERM)
         {
-            matchData.data.booldata = (attr_name == "true");
+            matchData.data.booldata = (to_upper(attr_value) == "TRUE");;
+        }
+        else if (attr_name == MATCH_INNER_DST_MAC || attr_name == MATCH_INNER_SRC_MAC)
+        {
+            swss::MacAddress mac(attr_value);
+            swss::MacAddress mask(MAC_EXACT_MATCH);
+            memcpy(matchData.data.mac, mac.getMac(), sizeof(sai_mac_t));
+            memcpy(matchData.mask.mac, mask.getMac(), sizeof(sai_mac_t));
         }
         else if (attr_name == MATCH_IN_PORTS)
         {
@@ -1048,7 +1095,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
             matchData.data.u8 = to_uint<uint8_t>(attr_value);
             matchData.mask.u8 = 0xFF;
         }
-        else if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP)
+        else if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP || attr_name == MATCH_INNER_SRC_IP)
         {
             IpPrefix ip(attr_value);
 
@@ -1757,6 +1804,10 @@ shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOr
         {
             return make_shared<AclRulePacket>(acl, rule, table);
         }
+        else if (aclInnerActionLookup.find(action) != aclInnerActionLookup.cend())
+        {
+            return make_shared<AclRuleInnerSrcMacRewrite>(acl, rule, table);
+        }
         else if (acl->isUsingEgrSetDscp(table) || table == EGR_SET_DSCP_TABLE_ID)
         {
             return make_shared<AclRuleUnderlaySetDscp>(acl, rule, table, m_metadataMgr);
@@ -1989,6 +2040,12 @@ bool AclRulePacket::validateAddAction(string attr_name, string _attr_value)
             actionData.parameter.booldata = true;
             action_str = ACTION_DO_NOT_NAT_ACTION;
         }
+        // handle PACKET_ACTION_DISABLE_TRIM in ACTION_PACKET_ACTION
+        else if (attr_value == PACKET_ACTION_DISABLE_TRIM)
+        {
+            actionData.parameter.booldata = true;
+            action_str = ACTION_DISABLE_TRIM;
+        }
         else
         {
             return false;
@@ -2120,6 +2177,70 @@ void AclRulePacket::onUpdate(SubjectType, void *)
 {
     // Do nothing
 }
+
+AclRuleInnerSrcMacRewrite::AclRuleInnerSrcMacRewrite(AclOrch *aclOrch, string rule, string table, bool createCounter) :
+         AclRule(aclOrch, rule, table, createCounter)
+ {
+ }
+
+ bool AclRuleInnerSrcMacRewrite::validateAddAction(string attr_name, string _attr_value)
+ {
+    SWSS_LOG_ENTER();
+
+    sai_acl_action_data_t actionData;
+
+    auto action_str = attr_name;
+
+    if (attr_name == ACTION_INNER_SRC_MAC_REWRITE_ACTION)
+    {
+        if (!_attr_value.empty())
+        {
+            MacAddress inner_src_mac_addr;
+            try
+            {
+                inner_src_mac_addr = MacAddress(_attr_value);
+            }
+            catch (invalid_argument &e)
+            {
+                SWSS_LOG_ERROR("Invalid Mac Address %s", _attr_value.c_str());
+                return false;
+            }
+
+            memcpy(actionData.parameter.mac, inner_src_mac_addr.getMac(), sizeof(sai_mac_t));
+            action_str = ACTION_INNER_SRC_MAC_REWRITE_ACTION;
+            SWSS_LOG_INFO("Converting the Mac address %s to SAI acl action parameter", _attr_value.c_str());
+        }
+
+        else
+        {
+            return false;
+        }
+    }
+    else
+    {
+        return false;
+    }
+
+    actionData.enable = true;
+    return setAction(aclInnerActionLookup[action_str], actionData);
+ }
+
+ bool AclRuleInnerSrcMacRewrite::validate()
+ {
+    SWSS_LOG_ENTER();
+
+    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() != 1 )
+    {
+        return false;
+    }
+
+    return true;
+ }
+
+ void AclRuleInnerSrcMacRewrite::onUpdate(SubjectType type, void *cntx)
+ {
+    //do nothing
+ }
 
 AclRuleMirror::AclRuleMirror(AclOrch *aclOrch, MirrorOrch *mirror, string rule, string table) :
         AclRule(aclOrch, rule, table),
@@ -2424,7 +2545,7 @@ void AclRuleUnderlaySetDscp::onUpdate(SubjectType, void *)
 {
     // Do nothing
 }
-        
+
 AclTable::AclTable(AclOrch *pAclOrch, string id) noexcept : m_pAclOrch(pAclOrch), id(id)
 {
 
@@ -3243,9 +3364,10 @@ AclRange *AclRange::create(sai_acl_range_type_t type, int min, int max)
         // work around to avoid syncd termination on SAI error due to max count of ranges reached
         // can be removed when syncd start passing errors to the SAI callers
         char *platform = getenv("platform");
-        if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
+        if (platform)
         {
-            if (m_ranges.size() >= MLNX_MAX_RANGES_COUNT)
+            if ((strstr(platform, MLNX_PLATFORM_SUBSTRING) && m_ranges.size() >= MLNX_MAX_RANGES_COUNT) ||
+                (strstr(platform, CLX_PLATFORM_SUBSTRING) && m_ranges.size() >= CLNX_MAX_RANGES_COUNT))
             {
                 SWSS_LOG_ERROR("Maximum numbers of ACL ranges reached");
                 return NULL;
@@ -3302,11 +3424,11 @@ bool AclRange::remove(sai_object_id_t *oids, int oidsCnt)
 {
     SWSS_LOG_ENTER();
 
-    for (int oidIdx = 0; oidIdx < oidsCnt; oidsCnt++)
+    for (int oidIdx = 0; oidIdx < oidsCnt; oidIdx++)
     {
         for (auto it : m_ranges)
         {
-            if (it.second->m_oid == oids[oidsCnt])
+            if (it.second->m_oid == oids[oidIdx])
             {
                 return it.second->remove();
             }
@@ -3368,6 +3490,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
             platform == MRVL_TL_PLATFORM_SUBSTRING ||
             platform == NPS_PLATFORM_SUBSTRING ||
             platform == XS_PLATFORM_SUBSTRING ||
+            platform == CLX_PLATFORM_SUBSTRING ||
             platform == VS_PLATFORM_SUBSTRING)
     {
         m_mirrorTableCapabilities =
@@ -3422,6 +3545,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
         platform == CISCO_8000_PLATFORM_SUBSTRING ||
         platform == MRVL_PRST_PLATFORM_SUBSTRING ||
         platform == XS_PLATFORM_SUBSTRING ||
+        platform == CLX_PLATFORM_SUBSTRING ||
         (platform == BRCM_PLATFORM_SUBSTRING && sub_platform == BRCM_DNX_PLATFORM_SUBSTRING))
     {
         m_isCombinedMirrorV6Table = false;
@@ -3942,7 +4066,7 @@ void AclOrch::putAclActionCapabilityInDB(acl_stage_type_t stage)
     {
         metadataActionLookup = aclMetadataDscpActionLookup;
     }
-    for (const auto& action_map: {aclL3ActionLookup, aclMirrorStageLookup, aclDTelActionLookup, metadataActionLookup})
+    for (const auto& action_map: {aclL3ActionLookup, aclMirrorStageLookup, aclDTelActionLookup, metadataActionLookup, aclInnerActionLookup})
     {
         for (const auto& it: action_map)
         {
@@ -4321,7 +4445,7 @@ EgressSetDscpTableStatus AclOrch::addEgrSetDscpTable(string table_id, AclTable &
         if (!isAclMetaDataSupported())
         {
             SWSS_LOG_ERROR("Platform does not support MARK_META/MARK_METAV6 tables.");
-            return EgressSetDscpTableStatus::EGRESS_SET_DSCP_TABLE_NOT_SUPPORTED; 
+            return EgressSetDscpTableStatus::EGRESS_SET_DSCP_TABLE_NOT_SUPPORTED;
         }
         AclTable egrSetDscpTable(this);
 
@@ -5464,7 +5588,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 {
                     bHasTCPFlag = true;
                 }
-                if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP)
+                if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP || attr_name == MATCH_INNER_SRC_IP)
                 {
                     bHasIPV4 = true;
                 }

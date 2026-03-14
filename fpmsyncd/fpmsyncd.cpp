@@ -1,6 +1,8 @@
 #include <iostream>
 #include <inttypes.h>
+#include <sys/stat.h>
 #include "logger.h"
+#include "routesync.h"
 #include "select.h"
 #include "selectabletimer.h"
 #include "netdispatcher.h"
@@ -97,7 +99,14 @@ int main(int argc, char **argv)
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELLINK, &sync);
 
-    rtnl_route_read_protocol_names(DefaultRtProtoPath);
+    struct stat st;
+    auto routeProtoFilePath = DefaultRtProtoPath;
+
+    if (stat(OverrideRtProtoPath, &st) == 0) {
+        routeProtoFilePath = OverrideRtProtoPath;
+    }
+
+    rtnl_route_read_protocol_names(routeProtoFilePath);
     nlmsg_set_default_size(FPM_MAX_MSG_LEN);
 
     std::string suppressionEnabledStr;
@@ -141,11 +150,11 @@ int main(int argc, char **argv)
             }
 
             /* If warm-restart feature is enabled, execute 'restoration' logic */
-            bool warmStartEnabled = sync.m_warmStartHelper.checkAndStart();
+            bool warmStartEnabled = sync.getWarmStartHelper().checkAndStart();
             if (warmStartEnabled)
             {
                 /* Obtain warm-restart timer defined for routing application */
-                time_t warmRestartIval = sync.m_warmStartHelper.getRestartTimer();
+                time_t warmRestartIval = sync.getWarmStartHelper().getRestartTimer();
                 if (!warmRestartIval)
                 {
                     warmStartTimer.setInterval(timespec{DEFAULT_ROUTING_RESTART_INTERVAL, 0});
@@ -156,7 +165,7 @@ int main(int argc, char **argv)
                 }
 
                 /* Execute restoration instruction and kick off warm-restart timer */
-                if (sync.m_warmStartHelper.runRestoration())
+                if (sync.getWarmStartHelper().runRestoration())
                 {
                     warmStartTimer.start();
                     s.addSelectable(&warmStartTimer);
@@ -171,7 +180,7 @@ int main(int argc, char **argv)
             }
             else
             {
-                sync.m_warmStartHelper.setState(WarmStart::WSDISABLED);
+                sync.getWarmStartHelper().setState(WarmStart::WSDISABLED);
             }
 
             gSelectTimeout = INFINITE;
@@ -209,7 +218,7 @@ int main(int argc, char **argv)
                 }
                 else if (temps == &eoiuCheckTimer)
                 {
-                    if (sync.m_warmStartHelper.inProgress())
+                    if (sync.getWarmStartHelper().inProgress())
                     {
                         if (eoiuFlagsSet(bgpStateTable))
                         {
@@ -308,7 +317,7 @@ int main(int argc, char **argv)
                         sync.onRouteResponse(key, fieldValues);
                     }
                 }
-                else if (!warmStartEnabled || sync.m_warmStartHelper.isReconciled())
+                else if (!warmStartEnabled || sync.getWarmStartHelper().isReconciled())
                 {
                     flushPipeline(pipeline);
                 }
@@ -317,11 +326,6 @@ int main(int argc, char **argv)
         catch (FpmLink::FpmConnectionClosedException &e)
         {
             cout << "Connection lost, reconnecting..." << endl;
-        }
-        catch (const exception& e)
-        {
-            cout << "Exception \"" << e.what() << "\" had been thrown in daemon" << endl;
-            return 0;
         }
     }
 

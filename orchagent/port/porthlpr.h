@@ -19,6 +19,7 @@ public:
     bool fecIsOverrideRequired(const std::string &str) const;
 
     std::string getAutonegStr(const PortConfig &port) const;
+    std::string getUnreliableLosStr(const PortConfig &port) const;
     std::string getPortInterfaceTypeStr(const PortConfig &port) const;
     std::string getAdvInterfaceTypesStr(const PortConfig &port) const;
     std::string getFecStr(const PortConfig &port) const;
@@ -38,6 +39,14 @@ private:
     template<typename T>
     bool parsePortSerdes(T &serdes, const std::string &field, const std::string &value) const;
 
+    template<typename T>
+    typename std::enable_if<std::is_same<decltype(T::value), std::string>::value, bool>::type
+    parseSerdesValueImpl(T &serdes, const std::string &field, const std::string &value) const;
+
+    template<typename T>
+    typename std::enable_if<std::is_same<decltype(T::value), std::vector<std::uint32_t>>::value, bool>::type
+    parseSerdesValueImpl(T &serdes, const std::string &field, const std::string &value) const;
+
     bool parsePortLinkEventDampingAlgorithm(PortConfig &port, const std::string &field, const std::string &value) const;
     template<typename T>
     bool parsePortLinkEventDampingConfig(T &damping_config_attr, const std::string &field, const std::string &value) const;
@@ -47,6 +56,7 @@ private:
     bool parsePortLanes(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortSpeed(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortAutoneg(PortConfig &port, const std::string &field, const std::string &value) const;
+    bool parsePortUnreliableLos(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortAdvSpeeds(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortInterfaceType(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortAdvInterfaceTypes(PortConfig &port, const std::string &field, const std::string &value) const;
@@ -62,4 +72,5 @@ private:
     bool parsePortSubport(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortPtIntfId(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortPtTimestampTemplate(PortConfig &port, const std::string &field, const std::string &value) const;
+    bool parsePortMediaType(PortConfig &port, const std::string &field, const std::string &value) const;
 };
