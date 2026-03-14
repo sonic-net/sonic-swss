@@ -30,21 +30,23 @@ public:
     EvpnMhOrch(vector<TableConnector> &connectors);
     ~EvpnMhOrch();
 
-    bool isPortInterfaceAssociatedToEs(const std::string &port_name);
-    bool isPortAndVlanAssociatedToEs(const std::string &port_name, sai_vlan_id_t vlan_id);
-    bool isInterfaceDF(const std::string &port_name, sai_vlan_id_t vlan_id);
+    bool isPortInterfaceAssociatedToEs(const std::string port_name);
+    bool isPortAndVlanAssociatedToEs(const std::string port_name, const sai_vlan_id_t vlan_id);
+    bool isInterfaceDF(const std::string port_name, const sai_vlan_id_t vlan_id);
 
 private:
+    vector<Table *> m_appTables;
+
     std::map<std::string, struct EsCacheEntry *> m_esDataMap;
     std::map<std::string, bool> m_esIntfMap;
 
     struct EsCacheEntry *getEsCache(const std::string &key);
     struct EsCacheEntry *getEsCacheForPort(const std::string &key);
-    bool updateEsCache(string &key, KeyOpFieldsValuesTuple &t);
-    bool deleteEsCache(string &key);
+    void updateEsCache(string &key, KeyOpFieldsValuesTuple &t);
+    void deleteEsCache(string &key);
     void doEvpnEsDfTask(Consumer &consumer);
     void doEvpnEsIntfTask(Consumer &consumer);
-    bool vlanMembersApplyNonDF(string port_name);
+    void vlanMembersApplyNonDF(string port_name);
     std::string stripVlanFromInterfaceName(const std::string interfaceName);
 
     void doTask(Consumer &consumer);
