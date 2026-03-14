@@ -178,7 +178,7 @@ void SetupPorts()
     CreatePort(/*port_name=*/"Ethernet9", /*speed=*/50000,
                /*mtu=*/9100, /*port_oid=*/0x56789abcfff, Port::PHY, SAI_PORT_OPER_STATUS_UNKNOWN);
     CreatePort(/*port_name=*/"Ethernet10", /*speed=*/50000,
-               /*mtu=*/9100, /*port_oid=*/0xabcfff, Port::SUBPORT, SAI_PORT_OPER_STATUS_DOWN, 
+               /*mtu=*/9100, /*port_oid=*/0xabcfff, Port::SUBPORT, SAI_PORT_OPER_STATUS_DOWN,
                /*vlan_oid=*/0xffffff,
                /*vlan_id=*/2);
 }
@@ -217,7 +217,7 @@ int main(int argc, char *argv[])
     sai_next_hop_api_t next_hop_api;
     sai_next_hop_group_api_t next_hop_group_api;
     sai_route_api_t route_api;
-    sai_mpls_api_t mpls_api; 
+    sai_mpls_api_t mpls_api;
     sai_acl_api_t acl_api;
     sai_policer_api_t policer_api;
     sai_virtual_router_api_t virtual_router_api;
@@ -284,7 +284,7 @@ int main(int argc, char *argv[])
         { APP_ROUTE_TABLE_NAME,        routeorch_pri },
         { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
     };
-    RouteOrch route_orch(gAppDb, route_tables, NULL, NULL, NULL, NULL, NULL);
+    RouteOrch route_orch(gAppDb, route_tables, NULL, NULL, NULL, NULL, NULL, NULL);
     gRouteOrch = &route_orch;
     gDirectory.set(static_cast<RouteOrch *>(&route_orch));
 

@@ -140,13 +140,10 @@ namespace fdborch_vxlan_ut
 
             ASSERT_EQ(gIntfsOrch, nullptr);
 
-#if 0
             vector<table_name_with_pri_t> intf_tables = {
-                { APP_INTF_TABLE_NAME,  IntfsOrch::intfsorch_pri},
-                { APP_SAG_TABLE_NAME,   IntfsOrch::intfsorch_pri}
+                { APP_INTF_TABLE_NAME,  IntfsOrch::intfsorch_pri}
             };
-#endif
-            gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch, m_chassis_app_db.get());
+            gIntfsOrch = new IntfsOrch(m_app_db.get(), intf_tables, gVrfOrch, m_chassis_app_db.get());
             ASSERT_EQ(gNeighOrch, nullptr);
             gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, m_portsOrch.get(), m_chassis_app_db.get());
 
