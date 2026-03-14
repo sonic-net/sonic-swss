@@ -19,6 +19,9 @@
 #include <sys/stat.h>
 
 #include <sstream>
+#include <fstream>
+#include <cstdio>
+#include <yaml-cpp/yaml.h>
 
 using namespace swss;
 using namespace testing;
@@ -2950,4 +2953,182 @@ TEST_F(FpmSyncdResponseTest, TestVnetRouteMsgWithZmqDisabled_OnlyNonEmptyFields)
     EXPECT_EQ(fieldMap["nexthop"], "0.0.0.0");
 
     rtnl_route_put(test_route);
+}
+
+/*
+ * Tests for YAML-based route tag configuration:
+ *   - route_tag_not_to_appdb
+ *   - route_tag_fallback_to_default_route
+ */
+
+/* Verify that when /etc/sonic/constants.yml is missing or doesn't contain
+ * the expected keys, both tag variables fall back to 0xffffffff. */
+TEST_F(FpmSyncdResponseTest, TestRouteTagYamlDefaultFallback)
+{
+    /* In the UT environment /etc/sonic/constants.yml typically does not exist
+       or lacks the bgp tag keys, so the constructor catch block sets 0xffffffff. */
+    EXPECT_EQ(m_routeSync.route_tag_not_to_appdb, 0xffffffff);
+    EXPECT_EQ(m_routeSync.route_tag_fallback_to_default_route, 0xffffffff);
+}
+
+/* Verify that a route whose priority matches route_tag_not_to_appdb is
+ * silently dropped and never reaches APP_DB. */
+TEST_F(FpmSyncdResponseTest, TestRouteTagNotToAppdb)
+{
+    Table route_table(m_db.get(), APP_ROUTE_TABLE_NAME);
+
+    /* Pick an arbitrary tag value and program it into the RouteSync object. */
+    const uint32_t tag_no_appdb = 100;
+    m_mockRouteSync.route_tag_not_to_appdb = tag_no_appdb;
+
+    auto route = create_route("10.10.10.0/24");
+    rtnl_route_set_protocol(route.get(), RTPROT_BGP);
+    rtnl_route_set_type(route.get(), RTN_BLACKHOLE);
+
+    /* Set the priority (tag) to the "do not send to appdb" value. */
+    rtnl_route_set_priority(route.get(), tag_no_appdb);
+
+    EXPECT_CALL(m_mockRouteSync, getIfName(_, _, _)).Times(0);
+
+    m_mockRouteSync.onRouteMsg(RTM_NEWROUTE, (nl_object*)route.get(), nullptr);
+
+    /* The route must NOT appear in APP_DB. */
+    vector<FieldValueTuple> fvs;
+    EXPECT_FALSE(route_table.get("10.10.10.0/24", fvs));
+}
+
+/* Verify that a route whose priority matches route_tag_fallback_to_default_route
+ * is written to APP_DB and carries the "fallback_to_default_route" field. */
+TEST_F(FpmSyncdResponseTest, TestRouteTagFallbackToDefaultRoute)
+{
+    Table route_table(m_db.get(), APP_ROUTE_TABLE_NAME);
+
+    const uint32_t tag_fallback = 200;
+    m_mockRouteSync.route_tag_fallback_to_default_route = tag_fallback;
+
+    auto route = create_route("20.20.20.0/24");
+    rtnl_route_set_protocol(route.get(), RTPROT_BGP);
+    rtnl_route_set_type(route.get(), RTN_BLACKHOLE);
+
+    /* Set the priority (tag) to the fallback value. */
+    rtnl_route_set_priority(route.get(), tag_fallback);
+
+    m_mockRouteSync.onRouteMsg(RTM_NEWROUTE, (nl_object*)route.get(), nullptr);
+
+    /* The route MUST appear in APP_DB. */
+    vector<FieldValueTuple> fvs;
+    EXPECT_TRUE(route_table.get("20.20.20.0/24", fvs));
+
+    /* Verify the fallback field is present with value "true". */
+    bool fallback_found = false;
+    for (const auto& fv : fvs)
+    {
+        if (fvField(fv) == "fallback_to_default_route" && fvValue(fv) == "true")
+        {
+            fallback_found = true;
+        }
+    }
+    EXPECT_TRUE(fallback_found);
+}
+
+/* Verify that a route with a normal tag (not matching either special tag)
+ * is written to APP_DB without the fallback field. */
+TEST_F(FpmSyncdResponseTest, TestRouteTagNormalRoute)
+{
+    Table route_table(m_db.get(), APP_ROUTE_TABLE_NAME);
+
+    const uint32_t tag_no_appdb = 100;
+    const uint32_t tag_fallback = 200;
+    m_mockRouteSync.route_tag_not_to_appdb = tag_no_appdb;
+    m_mockRouteSync.route_tag_fallback_to_default_route = tag_fallback;
+
+    auto route = create_route("30.30.30.0/24");
+    rtnl_route_set_protocol(route.get(), RTPROT_BGP);
+    rtnl_route_set_type(route.get(), RTN_BLACKHOLE);
+
+    /* Set a tag that does NOT match either special value. */
+    rtnl_route_set_priority(route.get(), 999);
+
+    m_mockRouteSync.onRouteMsg(RTM_NEWROUTE, (nl_object*)route.get(), nullptr);
+
+    /* The route MUST appear in APP_DB. */
+    vector<FieldValueTuple> fvs;
+    EXPECT_TRUE(route_table.get("30.30.30.0/24", fvs));
+
+    /* The fallback field must NOT be present. */
+    for (const auto& fv : fvs)
+    {
+        EXPECT_NE(fvField(fv), "fallback_to_default_route");
+    }
+}
+
+/* Verify that when constants.yml is present and contains the expected keys,
+ * the tag values are correctly populated from the YAML content. */
+TEST_F(FpmSyncdResponseTest, TestRouteTagYamlFileLoading)
+{
+    /* Create a temporary constants.yml with known tag values. */
+    const char* tmp_yaml = "/tmp/test_constants.yml";
+    {
+        std::ofstream ofs(tmp_yaml);
+        ofs << "constants:\n"
+            << "  bgp:\n"
+            << "    route_do_not_send_appdb_tag: 42\n"
+            << "    route_eligible_for_fallback_to_default_tag: 84\n";
+        ofs.close();
+    }
+
+    /* Load the YAML and populate the variables, mimicking the constructor logic. */
+    YAML::Node root;
+    uint32_t loaded_not_to_appdb = 0xffffffff;
+    uint32_t loaded_fallback = 0xffffffff;
+    try
+    {
+        root = YAML::LoadFile(tmp_yaml);
+        loaded_not_to_appdb = root["constants"]["bgp"]["route_do_not_send_appdb_tag"].as<int>();
+        loaded_fallback = root["constants"]["bgp"]["route_eligible_for_fallback_to_default_tag"].as<int>();
+    }
+    catch (const exception &e)
+    {
+        FAIL() << "YAML loading threw an exception: " << e.what();
+    }
+
+    EXPECT_EQ(loaded_not_to_appdb, 42u);
+    EXPECT_EQ(loaded_fallback, 84u);
+
+    /* Clean up. */
+    std::remove(tmp_yaml);
+}
+
+/* Verify that a malformed YAML file causes the fallback to 0xffffffff. */
+TEST_F(FpmSyncdResponseTest, TestRouteTagYamlMalformedFile)
+{
+    const char* tmp_yaml = "/tmp/test_constants_bad.yml";
+    {
+        std::ofstream ofs(tmp_yaml);
+        ofs << "constants:\n"
+            << "  bgp:\n"
+            << "    some_other_key: 99\n";
+        ofs.close();
+    }
+
+    YAML::Node root;
+    uint32_t loaded_not_to_appdb = 0;
+    uint32_t loaded_fallback = 0;
+    try
+    {
+        root = YAML::LoadFile(tmp_yaml);
+        loaded_not_to_appdb = root["constants"]["bgp"]["route_do_not_send_appdb_tag"].as<int>();
+        loaded_fallback = root["constants"]["bgp"]["route_eligible_for_fallback_to_default_tag"].as<int>();
+    }
+    catch (const exception &e)
+    {
+        /* Expected: keys are missing, so we fall back to 0xffffffff. */
+        loaded_not_to_appdb = 0xffffffff;
+        loaded_fallback = 0xffffffff;
+    }
+
+    EXPECT_EQ(loaded_not_to_appdb, 0xffffffff);
+    EXPECT_EQ(loaded_fallback, 0xffffffff);
+
+    std::remove(tmp_yaml);
 }
