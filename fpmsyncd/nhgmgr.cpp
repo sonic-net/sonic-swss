@@ -1218,7 +1218,7 @@ int RIBNHGEntry::getNextHopFields() {
         if (m_nhg.nh_srv6 != nullptr && m_nhg.nh_srv6->seg6_segs != nullptr){
             inet_ntop(AF_INET6, &m_nhg.nh_srv6->seg6_segs->seg[0], sid, INET6_ADDRSTRLEN);
             m_vpnSid = sid;
-            inet_ntop(AF_INET6, &m_nhg.src, seg_src, INET6_ADDRSTRLEN);
+            inet_ntop(AF_INET6, &m_nhg.nh_srv6->seg6_src, seg_src, INET6_ADDRSTRLEN);
             m_segSrc = seg_src;
         }else{
             SWSS_LOG_ERROR("single nexthop id %d type srv6 gateway has no seg6_segs", m_rib_id);
