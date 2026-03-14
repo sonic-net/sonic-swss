@@ -269,7 +269,7 @@ int main(int argc, char *argv[])
         { APP_ROUTE_TABLE_NAME,        routeorch_pri },
         { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
     };
-    RouteOrch route_orch(gAppDb, route_tables, NULL, NULL, NULL, NULL, NULL);
+    RouteOrch route_orch(gAppDb, route_tables, NULL, NULL, NULL, NULL, NULL, NULL);
     gRouteOrch = &route_orch;
     gDirectory.set(static_cast<RouteOrch *>(&route_orch));
 
