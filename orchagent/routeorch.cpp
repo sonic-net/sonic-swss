@@ -1483,6 +1483,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
     std::map<sai_object_id_t, set<NextHopKey>> nhopgroup_shared_set;
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
     sai_object_id_t mux_tunnel_nh_id = mux_orch->getTunnelNextHopId();
+    bool has_mux_prefix_rt_nh = mux_orch->hasPrefixBasedMuxNexthop(next_hop_set);
 
     /* Assert each IP address exists in m_syncdNextHops table,
      * and add the corresponding next_hop_id to next_hop_ids. */
@@ -1513,6 +1514,12 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         if (next_hop_id != mux_tunnel_nh_id)
         {
             valid_next_hops_for_refcount.insert(it);
+        }
+        else if (has_mux_prefix_rt_nh)
+        {
+            // skip using tunnel nh in NHG for prefix based mux nbrs
+            SWSS_LOG_INFO("Skipping tunnel nh in NHG %s", nexthops.to_string().c_str());
+            continue;
         }
 
         // skip next hop group member create for neighbor from down port
@@ -1693,6 +1700,15 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops, const bool i
         {
             SWSS_LOG_WARN("NHFLAGS_IFDOWN set for next hop group member %s with next_hop_id %" PRIx64,
                            nhop->first.to_string().c_str(), nhop->second.next_hop_id);
+            nhop = nhgm.erase(nhop);
+            continue;
+        }
+
+        if (m_neighOrch->isPrefixNeighborNh(nhop->first) && !m_neighOrch->hasNextHop(nhop->first))
+        {
+            SWSS_LOG_INFO("Skip NHG member remove for %s in group %" PRIx64 ": nexthop missing",
+                          nhop->first.to_string().c_str(),
+                          next_hop_group_entry->second.next_hop_group_id);
             nhop = nhgm.erase(nhop);
             continue;
         }
