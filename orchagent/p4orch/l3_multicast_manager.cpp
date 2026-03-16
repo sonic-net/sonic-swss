@@ -131,13 +131,9 @@ ReturnCodeOr<std::vector<sai_attribute_t>> prepareRifSaiAttrs(
   attr.value.booldata = true;
   attrs.push_back(attr);
 
-  // For NSF purposes, we cannot add the new SAI_ROUTER_INTERFACE_ATTR_MY_MAC,
-  // a CREATE_ONLY attribute, for the deprecated action.
-  if (multicast_router_interface_entry.action != p4orch::kSetSrcMac) {
-    attr.id = SAI_ROUTER_INTERFACE_ATTR_MY_MAC;
-    attr.value.oid = my_mac_oid;
-    attrs.push_back(attr);
-  }
+  attr.id = SAI_ROUTER_INTERFACE_ATTR_MY_MAC;
+  attr.value.oid = my_mac_oid;
+  attrs.push_back(attr);
 
   return attrs;
 }
@@ -220,7 +216,7 @@ std::vector<sai_attribute_t> prepareNextHopSaiAttrs(
 // Create the vector of SAI attributes for creating a new multicast group
 // member object.
 std::vector<sai_attribute_t> prepareMulticastGroupMemberSaiAttrs(
-    const sai_object_id_t multicast_group_oid, const sai_object_id_t rif_oid,
+    const sai_object_id_t multicast_group_oid,
     const sai_object_id_t next_hop_oid) {
   std::vector<sai_attribute_t> attrs;
   sai_attribute_t attr;
@@ -229,16 +225,9 @@ std::vector<sai_attribute_t> prepareMulticastGroupMemberSaiAttrs(
   attr.value.oid = multicast_group_oid;
   attrs.push_back(attr);
 
-  // TODO: Once remove deprecated action kSetMulticastSrcMac,
-  // this should only assign SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID to be the
-  // next_hop_oid.
   attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID;
+  attr.value.oid = next_hop_oid;
 
-  if (next_hop_oid == SAI_NULL_OBJECT_ID) {
-    attr.value.oid = rif_oid;
-  } else {
-    attr.value.oid = next_hop_oid;
-  }
   attrs.push_back(attr);
 
   return attrs;
@@ -642,21 +631,11 @@ L3MulticastManager::deserializeMulticastRouterInterfaceEntry(
   for (const auto& it : attributes) {
     const auto& field = fvField(it);
     const auto& value = fvValue(it);
-    // Note: The kSetSrcMac action is deprecated.  This action is used
-    // for the original IP multicast implementation approach where multicast
-    // replicas are output to a multicast RIF.  The new IP multicast actions
-    // will continue to create a RIF, but they will also create a next hop and
-    // neighbor entry.  The next hop object becomes the output target for a
-    // multicast replica.
     if (field == p4orch::kAction) {
-    // TODO: Remove deprecated action kSetMulticastSrcMac
-      if (value == p4orch::kSetSrcMac ||
-	  value == p4orch::kMulticastSetSrcMac ||
+      if (value == p4orch::kMulticastSetSrcMac ||
           value == p4orch::kMulticastSetSrcMacAndVlanId ||
           value == p4orch::kMulticastSetSrcMacAndDstMacAndVlanId ||
           value == p4orch::kMulticastSetSrcMacAndPreserveIngressVlanId ||
-	  // TODO: Remove deprecated action kL2MulticastPassthrough
-	  value == p4orch::kL2MulticastPassthrough ||
           value == p4orch::kMulticastL2Passthrough) {
         router_interface_entry.action = value;
       } else {
@@ -1004,20 +983,14 @@ ReturnCodeOr<bool> L3MulticastManager::validateReplicas(
                << " entry found for multicast group "
                << QuotedVar(replica.multicast_group_id) << " replica "
                << QuotedVar(replica.key);
-        // TODO: Remove condition for kL2MulticastPassthrough
       } else if (router_interface_entry_ptr->action !=
-                     p4orch::kL2MulticastPassthrough &&
-                 router_interface_entry_ptr->action !=
-                     p4orch::kMulticastL2Passthrough) {
+		     p4orch::kMulticastL2Passthrough) {
         ipmc_count++;
         if (getRifOid(replica) != SAI_NULL_OBJECT_ID) {
           ipmc_rif_oid_count++;
         }
-        // TODO: Remove condition for kL2MulticastPassthrough
       } else if (router_interface_entry_ptr->action ==
-                     p4orch::kL2MulticastPassthrough ||
-                 router_interface_entry_ptr->action ==
-                     p4orch::kMulticastL2Passthrough) {
+		     p4orch::kMulticastL2Passthrough) {
         l2_count++;
         if (getBridgePortOid(replica) != SAI_NULL_OBJECT_ID) {
           l2_bridge_port_oid_count++;
@@ -1194,8 +1167,6 @@ ReturnCode L3MulticastManager::validateSetMulticastRouterInterfaceEntry(
 
   // Confirm src_mac is populated.
   bool need_src_mac =
-  // TODO: Remove deprecated action kSetMulticastSrcMac
-      multicast_router_interface_entry.action == p4orch::kSetSrcMac ||
       multicast_router_interface_entry.action == p4orch::kMulticastSetSrcMac ||
       multicast_router_interface_entry.action ==
           p4orch::kMulticastSetSrcMacAndVlanId ||
@@ -1241,11 +1212,8 @@ ReturnCode L3MulticastManager::validateSetMulticastRouterInterfaceEntry(
              << QuotedVar(multicast_router_interface_entry.action);
     }
 
-    // TODO: Remove condition for kL2MulticastPassthrough
     if (multicast_router_interface_entry.action ==
-            p4orch::kL2MulticastPassthrough ||
-        multicast_router_interface_entry.action ==
-            p4orch::kMulticastL2Passthrough) {
+        p4orch::kMulticastL2Passthrough) {
       return validateL2MulticastRouterInterfaceEntry(
           multicast_router_interface_entry, router_interface_entry_ptr);
     } else {
@@ -1303,9 +1271,7 @@ ReturnCode L3MulticastManager::validateDelMulticastRouterInterfaceEntry(
            << "Multicast router interface entry exists does not exist";
   }
 
-  // TODO: Remove condition for kL2MulticastPassthrough
-  if (router_interface_entry_ptr->action == p4orch::kL2MulticastPassthrough ||
-      router_interface_entry_ptr->action == p4orch::kMulticastL2Passthrough) {
+  if (router_interface_entry_ptr->action == p4orch::kMulticastL2Passthrough) {
     return validateL2MulticastRouterInterfaceEntry(
         multicast_router_interface_entry, router_interface_entry_ptr);
   } else {
@@ -1405,10 +1371,7 @@ ReturnCode L3MulticastManager::createRouterInterface(
     P4MulticastRouterInterfaceEntry& entry, sai_object_id_t* rif_oid) {
   SWSS_LOG_ENTER();
 
-  // For NSF purposes, we cannot add the new SAI_ROUTER_INTERFACE_ATTR_MY_MAC,
-  // a CREATE_ONLY attribute, for the deprecated action.
-  if (entry.action != p4orch::kSetSrcMac &&
-      m_my_mac_oid == SAI_NULL_OBJECT_ID) {
+  if (m_my_mac_oid == SAI_NULL_OBJECT_ID) {
     RETURN_IF_ERROR(createDefaultMyMac());
   }
 
@@ -1629,12 +1592,11 @@ ReturnCode L3MulticastManager::createMulticastGroupMember(
         << " cannot be added because there is no associated RIF available");
   }
 
-  // Ok to be null, since some actions do not allocate a next hop.
   sai_object_id_t next_hop_oid = getNextHopOid(replica);
 
   // Create Multicast group member SAI object.
   std::vector<sai_attribute_t> attrs =
-      prepareMulticastGroupMemberSaiAttrs(group_oid, rif_oid, next_hop_oid);
+      prepareMulticastGroupMemberSaiAttrs(group_oid, next_hop_oid);
 
   auto sai_status = sai_ipmc_group_api->create_ipmc_group_member(
       mcast_group_member_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
@@ -1755,9 +1717,7 @@ std::vector<ReturnCode> L3MulticastManager::addMulticastRouterInterfaceEntries(
 
   for (size_t i = 0; i < entries.size(); ++i) {
     auto& entry = entries[i];
-    // TODO: Remove condition for kL2MulticastPassthrough
-    if (entry.action == p4orch::kL2MulticastPassthrough ||
-        entry.action == p4orch::kMulticastL2Passthrough) {
+    if (entry.action == p4orch::kMulticastL2Passthrough) {
       statuses[i] = addL2MulticastRouterInterfaceEntry(entry);
     } else {
       statuses[i] = addL3MulticastRouterInterfaceEntry(entry);
@@ -1781,34 +1741,35 @@ ReturnCode L3MulticastManager::addL3MulticastRouterInterfaceEntry(
   m_p4OidMapper->setOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
                         entry.multicast_router_interface_entry_key, rif_oid);
 
-  // For re-factoring purposes, only the new actions will setup the next hop.
-  // TODO: Make if unconditional when kSetMulticastSrcMac removed
-  if (entry.action != p4orch::kSetSrcMac) {
-    sai_object_id_t next_hop_oid = SAI_NULL_OBJECT_ID;
-    ReturnCode nh_status = createNextHop(entry, rif_oid, &next_hop_oid);
-    if (!nh_status.ok()) {
-      ReturnCode del_status = deleteRouterInterface(
-          entry.multicast_router_interface_entry_key, rif_oid);
-      m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
-                              entry.multicast_router_interface_entry_key);
-      if (!del_status.ok()) {
-        // All kinds of bad.  The delete failed, and we have to leave a
-        // dangling allocated RIF
-        std::stringstream err_msg;
-        err_msg << "Next hop creation failed, and we were "
-                << "unable to backout creation of the RIF for "
-                << QuotedVar(entry.multicast_router_interface_entry_key);
-        SWSS_LOG_ERROR("%s", err_msg.str().c_str());
-        SWSS_RAISE_CRITICAL_STATE(err_msg.str());
-      }
-
-      // Return original failure.
-      return nh_status;
+  sai_object_id_t next_hop_oid = SAI_NULL_OBJECT_ID;
+  std::string nexthop_label;
+  ReturnCode nh_status =
+      createNextHop(entry, rif_oid, next_hop_oid, nexthop_label);
+  if (!nh_status.ok()) {
+    ReturnCode del_status = deleteRouterInterface(
+        entry.multicast_router_interface_entry_key, rif_oid);
+    m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                            entry.multicast_router_interface_entry_key);
+    gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE, mapper_key);
+    if (!del_status.ok()) {
+      // All kinds of bad.  The delete failed, and we have to leave a
+      // dangling allocated RIF
+      std::stringstream err_msg;
+      err_msg << "Next hop creation failed, and we were "
+              << "unable to backout creation of the RIF for "
+              << QuotedVar(entry.multicast_router_interface_entry_key);
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
     }
-    m_p4OidMapper->setOID(SAI_OBJECT_TYPE_NEXT_HOP,
-                          entry.multicast_router_interface_entry_key,
-                          next_hop_oid);
+
+    // Return original failure.
+    return nh_status;
+
   }
+  m_p4OidMapper->setOID(SAI_OBJECT_TYPE_NEXT_HOP,
+                        entry.multicast_router_interface_entry_key,
+                        next_hop_oid);
+  gLabelMapper->setLabel(SAI_OBJECT_TYPE_NEXT_HOP, mapper_key, nexthop_label);
 
   // Update internal state.
   gPortsOrch->increasePortRefCount(entry.multicast_replica_port);
@@ -1889,9 +1850,7 @@ L3MulticastManager::updateMulticastRouterInterfaceEntries(
 
     // Since action kMulticastL2Passthrough, used to setup L2 multicast bridge
     // ports, does not have any parameters, there is nothing to update.
-    // TODO: Remove condition for kL2MulticastPassthrough
-    if (old_entry_ptr->action == p4orch::kL2MulticastPassthrough ||
-        old_entry_ptr->action == p4orch::kMulticastL2Passthrough) {
+    if (old_entry_ptr->action == p4orch::kMulticastL2Passthrough) {
       statuses[i] = ReturnCode();
       continue;
     }
@@ -2065,13 +2024,9 @@ ReturnCode L3MulticastManager::deleteL3MulticastRouterInterfaceEntry(
            << "group members";
   }
 
-  // TODO: Make if unconditional when kSetMulticastSrcMac removed
-  // For re-factoring purposes, only the new actions will setup the next hop.
-  if (entry->action != p4orch::kSetSrcMac) {
-    sai_object_id_t next_hop_oid = getNextHopOid(entry);
-    RETURN_IF_ERROR(deleteNextHop(entry, next_hop_oid));
-    // deleteNextHop deletes next hop OID from oid mapper.
-  }
+  sai_object_id_t next_hop_oid = getNextHopOid(entry);
+  RETURN_IF_ERROR(deleteNextHop(entry, next_hop_oid));
+  // deleteNextHop deletes next hop OID from oid mapper.
 
   // Delete the RIF.
   // Attempt to delete RIF at SAI layer before adjusting internal maps, in
@@ -2080,27 +2035,27 @@ ReturnCode L3MulticastManager::deleteL3MulticastRouterInterfaceEntry(
       entry->multicast_router_interface_entry_key, rif_oid);
 
   if (!del_rif_rc.ok()) {
-  // TODO: Make if unconditional when kSetMulticastSrcMac removed
-    if (entry->action != p4orch::kSetSrcMac) {
-      // Try to restore next hop
-      sai_object_id_t new_next_hop_oid = SAI_NULL_OBJECT_ID;
-      ReturnCode nh_status = createNextHop(*entry, rif_oid, &new_next_hop_oid);
-      if (!nh_status.ok()) {
-        // All kinds of bad.  The create failed, and we couldn't restore the
-        // previous system state.
-        std::stringstream err_msg;
-        err_msg
-            << "Router interface delete failed, and we were unable to re-add "
-            << "the next hop object that had been removed for "
-            << QuotedVar(entry->multicast_router_interface_entry_key);
-        SWSS_LOG_ERROR("%s", err_msg.str().c_str());
-        SWSS_RAISE_CRITICAL_STATE(err_msg.str());
-      } else {
-        // Re-add was successful.
-        m_p4OidMapper->setOID(SAI_OBJECT_TYPE_NEXT_HOP,
-                              entry->multicast_router_interface_entry_key,
-                              new_next_hop_oid);
-      }
+    // Try to restore next hop
+    sai_object_id_t new_next_hop_oid = SAI_NULL_OBJECT_ID;
+    std::string nexthop_label;
+    ReturnCode nh_status =
+        createNextHop(*entry, rif_oid, new_next_hop_oid, nexthop_label);
+    if (!nh_status.ok()) {
+      // All kinds of bad.  The create failed, and we couldn't restore the
+      // previous system state.
+      std::stringstream err_msg;
+      err_msg << "Router interface delete failed, and we were unable to re-add "
+              << "the next hop object that had been removed for "
+              << QuotedVar(entry->multicast_router_interface_entry_key);
+      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
+      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
+    } else {
+      // Re-add was successful.
+      m_p4OidMapper->setOID(SAI_OBJECT_TYPE_NEXT_HOP,
+                            entry->multicast_router_interface_entry_key,
+                            new_next_hop_oid);
+      gLabelMapper->setLabel(SAI_OBJECT_TYPE_NEXT_HOP, mapper_key,
+                             nexthop_label);
     }
     return del_rif_rc;
   }
@@ -2136,9 +2091,7 @@ L3MulticastManager::deleteMulticastRouterInterfaceEntries(
       break;
     }
 
-    // TODO: Remove condition for kL2MulticastPassthrough
-    if (old_entry_ptr->action == p4orch::kL2MulticastPassthrough ||
-        old_entry_ptr->action == p4orch::kMulticastL2Passthrough) {
+    if (old_entry_ptr->action == p4orch::kMulticastL2Passthrough) {
 
       statuses[i] = deleteL2MulticastRouterInterfaceEntry(old_entry_ptr);
     } else {
@@ -3180,11 +3133,8 @@ std::string L3MulticastManager::verifyMulticastRouterInterfaceStateCache(
     return msg.str();
   }
 
-  // TODO: Remove condition for kL2MulticastPassthrough
   if (multicast_router_interface_entry->action !=
-          p4orch::kL2MulticastPassthrough &&
-      multicast_router_interface_entry->action !=
-          p4orch::kMulticastL2Passthrough) {
+	  p4orch::kMulticastL2Passthrough) {
     sai_object_id_t rif_oid = getRifOid(multicast_router_interface_entry);
     std::string rif_str = m_p4OidMapper->verifyOIDMapping(
         SAI_OBJECT_TYPE_ROUTER_INTERFACE,
@@ -3216,11 +3166,8 @@ std::string L3MulticastManager::verifyMulticastRouterInterfaceStateCache(
 
 std::string L3MulticastManager::verifyMulticastRouterInterfaceStateAsicDb(
     const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry) {
-  // TODO: Remove condition for kL2MulticastPassthrough
   if (multicast_router_interface_entry->action ==
-          p4orch::kL2MulticastPassthrough ||
-      multicast_router_interface_entry->action ==
-          p4orch::kMulticastL2Passthrough) {
+	  p4orch::kMulticastL2Passthrough) {
     return verifyL2MulticastRouterInterfaceStateAsicDb(
         multicast_router_interface_entry);
   } else {
@@ -3259,12 +3206,6 @@ std::string L3MulticastManager::verifyL3MulticastRouterInterfaceStateAsicDb(
                   /*allow_unknown=*/false);
   if (!rif_str.empty()) {
     return rif_str;
-  }
-
-  // TODO: Remove this if block when kSetMulticastSrcMac removed
-  // Legacy action doesn't set a next hop.
-  if (multicast_router_interface_entry->action == p4orch::kSetSrcMac) {
-    return "";
   }
 
   auto nh_attrs =
@@ -3457,18 +3398,15 @@ std::string L3MulticastManager::verifyIpMulticastGroupStateAsicDb(
 
   // Confirm group member settings.
   for (auto& replica : multicast_group_entry->active_replicas) {
-    // Confirm have RIF for each replica.
-    sai_object_id_t rif_oid = getRifOid(replica);
 
     sai_object_id_t group_member_oid = SAI_NULL_OBJECT_ID;
     m_p4OidMapper->getOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER, replica.key,
                           &group_member_oid);
 
-    // Ok to be null, since some actions do not allocate a next hop.
     sai_object_id_t next_hop_oid = getNextHopOid(replica);
 
-    auto member_attrs = prepareMulticastGroupMemberSaiAttrs(
-        ipmc_group_oid, rif_oid, next_hop_oid);
+    auto member_attrs =
+        prepareMulticastGroupMemberSaiAttrs(ipmc_group_oid, next_hop_oid);
     std::vector<swss::FieldValueTuple> exp =
         saimeta::SaiAttributeList::serialize_attr_list(
             SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER, (uint32_t)member_attrs.size(),
