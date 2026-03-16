@@ -65,7 +65,10 @@ NbrMgr::NbrMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
                               TableConsumable::DEFAULT_POP_BATCH_SIZE, default_orch_pri);
     auto consumer = new Consumer(consumerStateTable, this, APP_NEIGH_RESOLVE_TABLE_NAME);
     Orch::addExecutor(consumer);
-          
+
+    /* Reconcile any pending entries in NEIGH_RESOLVE_TABLE from before restart */
+    reconcileNeighResolveTable(appDb);
+
     string swtype;
     Table cfgDeviceMetaDataTable(cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
     if(cfgDeviceMetaDataTable.hget("localhost", "switch_type", swtype))
@@ -224,6 +227,46 @@ vector<string> NbrMgr::parseAliasIp(const string &app_db_nbr_tbl_key, const char
     ret.push_back(ip_address);
 
     return ret;
+}
+
+void NbrMgr::reconcileNeighResolveTable(DBConnector *appDb)
+{
+    SWSS_LOG_ENTER();
+
+    Table neighResolveTable(appDb, APP_NEIGH_RESOLVE_TABLE_NAME);
+    vector<string> keys;
+    neighResolveTable.getKeys(keys);
+
+    if (keys.empty())
+    {
+        SWSS_LOG_INFO("No pending entries in NEIGH_RESOLVE_TABLE");
+        return;
+    }
+
+    SWSS_LOG_NOTICE("Reconciling %zu pending entries in NEIGH_RESOLVE_TABLE", keys.size());
+
+    for (const auto &key : keys)
+    {
+        vector<string> parsedKeys = parseAliasIp(key, ":");
+        if (parsedKeys.size() != 2)
+        {
+            SWSS_LOG_ERROR("Failed to parse NEIGH_RESOLVE_TABLE key '%s'", key.c_str());
+            continue;
+        }
+
+        MacAddress mac;
+        IpAddress ip(parsedKeys[1]);
+        string alias(parsedKeys[0]);
+
+        if (!setNeighbor(alias, ip, mac))
+        {
+            SWSS_LOG_WARN("Neigh entry resolve failed for '%s' during reconciliation", key.c_str());
+        }
+        else
+        {
+            SWSS_LOG_INFO("Reconciled NEIGH_RESOLVE entry '%s'", key.c_str());
+        }
+    }
 }
 
 void NbrMgr::doResolveNeighTask(Consumer &consumer)
