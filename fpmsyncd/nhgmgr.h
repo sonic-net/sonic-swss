@@ -28,6 +28,15 @@ namespace swss {
     class RIBNHGEntry;
     struct SonicGateWayNHGObject;
 
+    struct SonicNHGObjectInfo {
+        uint32_t id = 0;
+        uint32_t refCount = 0;
+        SonicNHGObjectInfo()  {
+        }
+        SonicNHGObjectInfo(uint32_t id, uint32_t refCount) : id(id), refCount(refCount) {
+        }
+    };
+
     /* There are two types of nexthop key, one is zebra type, another is sonic type, not implemented */
     enum nexthopKeyType {
         NEXTHOP_KEY_TYPE_ZEBRA = 1,
@@ -36,27 +45,38 @@ namespace swss {
 
     /* Type of sonic nexthop object */
     enum sonicNhgObjType {
+
+        /* NEXTHOP_GROUP_TABLE type */
         SONIC_NHG_OBJ_TYPE_NHG_NORMAL = 0,
+
+        /* PIC_CONTEXT_TABLE type */
         SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY = 1,
         SONIC_NHG_OBJ_TYPE_NHG_VXLAN = 2,
     };
 
     /* Key Object used to hash Sonic Gateway nexthop object */
-    struct SonicGateWayNHGObjectKey {
+    struct SonicNHGObjectKey {
         vector<std::pair<uint32_t, uint32_t>> groupMember;
         string nexthop;
         string vpnSid;
         string segSrc;
+        string ifName;
         sonicNhgObjType type;
 
-        bool operator<(const SonicGateWayNHGObjectKey &key) const {
+        bool operator<(const SonicNHGObjectKey &key) const {
             if (key.type < type) {
                 return true;
             }
             if (key.nexthop < nexthop) {
                 return true;
             }
-            if (key.vpnSid < vpnSid) {
+            if (key.type == SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY && key.vpnSid < vpnSid) {
+                return true;
+            }
+            if (key.segSrc < segSrc) {
+                return true;
+            }
+            if (key.ifName < ifName) {
                 return true;
             }
             vector<std::pair<uint32_t, uint32_t>> keyGroupMember = key.groupMember;
@@ -97,19 +117,22 @@ namespace swss {
         }
 
         /*
-         * compare operator of two SonicGateWayNHGObjectKey
+         * compare operator of two SonicNHGObjectKey
          */
-        bool operator==(const SonicGateWayNHGObjectKey &b) const {
+        bool operator==(const SonicNHGObjectKey &b) const {
             if (type != b.type) {
                 return false;
             }
             if (nexthop != b.nexthop) {
                 return false;
             }
-            if (vpnSid != b.vpnSid) {
+            if (type == SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY && vpnSid != b.vpnSid) {
                 return false;
             }
             if (segSrc != b.segSrc) {
+                return false;
+            }
+            if (ifName != b.ifName) {
                 return false;
             }
             if (groupMember.size() != b.groupMember.size()) {
@@ -125,13 +148,15 @@ namespace swss {
             return true;
         }
 
-        bool operator!=(const SonicGateWayNHGObjectKey &b) const {
+        bool operator!=(const SonicNHGObjectKey &b) const {
             return !(*this == b);
         }
 
-        static SonicGateWayNHGObjectKey createSonicGateWayNHGObjectKey(SonicGateWayNHGObject obj);
+        static SonicNHGObjectKey createSonicSRv6GateWayNHGObjectKey(SonicGateWayNHGObject obj);
 
-        static int createSonicGateWayNHGObjectKey(RIBNHGEntry *entry, SonicGateWayNHGObjectKey &key_out);
+        static int createSonicSRv6GateWayNHGObjectKey(RIBNHGEntry *entry, SonicNHGObjectKey &key_out);
+
+        static void createSonicNormalNHGObjectKey(RIBNHGEntry *entry, SonicNHGObjectKey &key_out);
     };
 
     /* Sonic Gateway nexthop object */
@@ -306,10 +331,10 @@ namespace swss {
         SonicGateWayNHGObject getNHG();
 
         /*
-         * get the SonicGateWayNHGObjectKey of SonicGateWayNHGEntry
-         * SonicGateWayNHGObjectKey is used to map the SonicGateWayNHGObject from Object fields
+         * get the SonicNHGObjectKey of SonicGateWayNHGEntry
+         * SonicNHGObjectKey is used to map the SonicGateWayNHGObject from Object fields
          */
-        SonicGateWayNHGObjectKey getSonicGateWayObjKey() {
+        SonicNHGObjectKey getSonicGateWayObjKey() {
             return m_sonic_obj_key;
         };
 
@@ -345,7 +370,7 @@ namespace swss {
         /*
          * Sonic Gateway Object Key of the entry
          */
-        SonicGateWayNHGObjectKey m_sonic_obj_key;
+        SonicNHGObjectKey m_sonic_obj_key;
 
         /*
          * NexthopMapKey, not used for now
@@ -434,9 +459,9 @@ namespace swss {
         void delEntry(sonicNhgObjType type, uint32_t id);
 
         /*
-         * get entry from SonicNHGTable by SonicGateWayNHGObjectKey
+         * get entry from SonicNHGTable by SonicNHGObjectKey
          */
-        SonicGateWayNHGEntry *getEntry(SonicGateWayNHGObjectKey key);
+        SonicGateWayNHGEntry *getEntry(SonicNHGObjectKey key);
 
         /*
          * get entry from SonicNHGTable by type and sonic object id
@@ -473,9 +498,9 @@ namespace swss {
 
         /*
          * All Sonic Gateway NHG Objects map of the table
-         * contain <SonicGateWayNHGObjectKey, entry> pair
+         * contain <SonicNHGObjectKey, entry> pair
          */
-        std::map<SonicGateWayNHGObjectKey, SonicGateWayNHGEntry *> m_sonic_nhg_map;
+        std::map<SonicNHGObjectKey, SonicGateWayNHGEntry *> m_sonic_nhg_map;
 
         /*
          * PIC context table
@@ -598,11 +623,8 @@ namespace swss {
         /*
          * check if RIBNHGEntry need write to DB
          */
-        bool isEntryNeedOffload() {
-            if (m_sonic_obj_type == SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY){
-                return true;
-            }
-            return !m_is_single;
+        bool needCreateSonicObject() {
+            return m_create_sonic_nhg_obj;
         }
 
         /*
@@ -653,6 +675,9 @@ namespace swss {
          */
         void removeDependentsMember(uint32_t id);
 
+        SonicNHGObjectKey getSonicNHGObjectKey(){
+            return m_sonic_nhg_key;
+        }
         /*
          * update entry from NextHopGroupFull Object
          * out: updated, true if the entry is updated
@@ -780,6 +805,12 @@ namespace swss {
 
         string m_weight = "";
 
+        bool m_create_sonic_nhg_obj = false;
+
+        /*
+         * Sonic NHG Object key of the entry
+         */
+        SonicNHGObjectKey m_sonic_nhg_key;
 
         /*
          * calculate FV vector fields of multi NHG entry
@@ -809,7 +840,12 @@ namespace swss {
        /*
         * check if need create Sonic Gateway NHG Object and Sonic gateway object type
         */
-        void needCreateSonicGatewayNHGObj();
+        void checkNeedCreateSonicGatewayNHGObj();
+
+        /*
+         * check if need create Sonic Gateway NHG Object
+         */
+        void checkNeedCreateSonicNHGObj();
     };
 
     /* RIB NHG table */
@@ -852,7 +888,7 @@ namespace swss {
         int writeToDB(RIBNHGEntry *entry);
 
         // remove the NHG entry from DB
-        void removeFromDB(RIBNHGEntry *entry);
+        void removeFromDB(uint32_t id);
 
         // clean up all the entry the table
         void cleanUp();
@@ -860,8 +896,28 @@ namespace swss {
         // dump the table contents, not implemented
         void dump_table(string &ret);
 
+        // insert created Sonic NHG Object into m_created_nhg_map
+        void insertCreatedNHGObject(SonicNHGObjectKey key, uint32_t id);
+
+        // get created Sonic NHG Object ID from m_created_nhg_map, return 0 if not exist
+        int getCreatedNHGObjectID(SonicNHGObjectKey key);
+
+        void addSonicNHGObjectRef(SonicNHGObjectKey key);
+
+        void removeSonicNHGObjectRef(SonicNHGObjectKey key);
+
+        void setSonicIDManager(SonicIDMgr *sonic_id_manager){
+            m_sonic_id_manager = sonic_id_manager;
+        }
+
     private:
+        SonicIDMgr *m_sonic_id_manager = nullptr;
+
         map<uint32_t, RIBNHGEntry *> m_nhg_map;
+
+        /* store created Sonic NHG Object */
+        map<SonicNHGObjectKey, SonicNHGObjectInfo> m_created_nhg_map;
+
         ProducerStateTable m_nexthop_groupTable;
     };
 
@@ -900,8 +956,8 @@ namespace swss {
         // get SonicGateWayNHGEntry by RIB id
         SonicGateWayNHGEntry *getSonicGatewayNHGByRIBID(uint32_t id);
 
-        // get SonicGateWayNHGEntry by SonicGateWayNHGObjectKey
-        SonicGateWayNHGEntry *getSonicGatewayNHGByKey(SonicGateWayNHGObjectKey key);
+        // get SonicGateWayNHGEntry by SonicNHGObjectKey
+        SonicGateWayNHGEntry *getSonicGatewayNHGByKey(SonicNHGObjectKey key);
 
         // Not implemented
         void dump_sonic_nhg_table(string &ret);
