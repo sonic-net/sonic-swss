@@ -636,6 +636,8 @@ L3MulticastManager::deserializeMulticastRouterInterfaceEntry(
           value == p4orch::kMulticastSetSrcMacAndVlanId ||
           value == p4orch::kMulticastSetSrcMacAndDstMacAndVlanId ||
           value == p4orch::kMulticastSetSrcMacAndPreserveIngressVlanId ||
+	  // TODO: Remove deprecated action kL2MulticastPassthrough
+          value == p4orch::kL2MulticastPassthrough ||
           value == p4orch::kMulticastL2Passthrough) {
         router_interface_entry.action = value;
       } else {
@@ -983,14 +985,20 @@ ReturnCodeOr<bool> L3MulticastManager::validateReplicas(
                << " entry found for multicast group "
                << QuotedVar(replica.multicast_group_id) << " replica "
                << QuotedVar(replica.key);
+	// TODO: Remove condition for kL2MulticastPassthrough
       } else if (router_interface_entry_ptr->action !=
-		     p4orch::kMulticastL2Passthrough) {
+	             p4orch::kL2MulticastPassthrough &&
+                 router_interface_entry_ptr->action !=
+                     p4orch::kMulticastL2Passthrough) {
         ipmc_count++;
         if (getRifOid(replica) != SAI_NULL_OBJECT_ID) {
           ipmc_rif_oid_count++;
         }
+        // TODO: Remove condition for kL2MulticastPassthrough
       } else if (router_interface_entry_ptr->action ==
-		     p4orch::kMulticastL2Passthrough) {
+	             p4orch::kL2MulticastPassthrough ||
+                 router_interface_entry_ptr->action ==
+                     p4orch::kMulticastL2Passthrough) {
         l2_count++;
         if (getBridgePortOid(replica) != SAI_NULL_OBJECT_ID) {
           l2_bridge_port_oid_count++;
@@ -1212,8 +1220,11 @@ ReturnCode L3MulticastManager::validateSetMulticastRouterInterfaceEntry(
              << QuotedVar(multicast_router_interface_entry.action);
     }
 
+    // TODO: Remove condition for kL2MulticastPassthrough
     if (multicast_router_interface_entry.action ==
-        p4orch::kMulticastL2Passthrough) {
+	p4orch::kL2MulticastPassthrough ||
+        multicast_router_interface_entry.action ==
+            p4orch::kMulticastL2Passthrough) {
       return validateL2MulticastRouterInterfaceEntry(
           multicast_router_interface_entry, router_interface_entry_ptr);
     } else {
@@ -1271,7 +1282,9 @@ ReturnCode L3MulticastManager::validateDelMulticastRouterInterfaceEntry(
            << "Multicast router interface entry exists does not exist";
   }
 
-  if (router_interface_entry_ptr->action == p4orch::kMulticastL2Passthrough) {
+  // TODO: Remove condition for kL2MulticastPassthrough
+  if (router_interface_entry_ptr->action == p4orch::kL2MulticastPassthrough ||
+      router_interface_entry_ptr->action == p4orch::kMulticastL2Passthrough) {
     return validateL2MulticastRouterInterfaceEntry(
         multicast_router_interface_entry, router_interface_entry_ptr);
   } else {
@@ -1717,7 +1730,9 @@ std::vector<ReturnCode> L3MulticastManager::addMulticastRouterInterfaceEntries(
 
   for (size_t i = 0; i < entries.size(); ++i) {
     auto& entry = entries[i];
-    if (entry.action == p4orch::kMulticastL2Passthrough) {
+    // TODO: Remove condition for kL2MulticastPassthrough
+    if (entry.action == p4orch::kL2MulticastPassthrough ||
+        entry.action == p4orch::kMulticastL2Passthrough) {
       statuses[i] = addL2MulticastRouterInterfaceEntry(entry);
     } else {
       statuses[i] = addL3MulticastRouterInterfaceEntry(entry);
@@ -1850,7 +1865,9 @@ L3MulticastManager::updateMulticastRouterInterfaceEntries(
 
     // Since action kMulticastL2Passthrough, used to setup L2 multicast bridge
     // ports, does not have any parameters, there is nothing to update.
-    if (old_entry_ptr->action == p4orch::kMulticastL2Passthrough) {
+    // TODO: Remove condition for kL2MulticastPassthrough
+    if (old_entry_ptr->action == p4orch::kL2MulticastPassthrough ||
+        old_entry_ptr->action == p4orch::kMulticastL2Passthrough) {
       statuses[i] = ReturnCode();
       continue;
     }
@@ -2091,7 +2108,9 @@ L3MulticastManager::deleteMulticastRouterInterfaceEntries(
       break;
     }
 
-    if (old_entry_ptr->action == p4orch::kMulticastL2Passthrough) {
+    // TODO: Remove condition for kL2MulticastPassthrough
+    if (old_entry_ptr->action == p4orch::kL2MulticastPassthrough ||
+        old_entry_ptr->action == p4orch::kMulticastL2Passthrough) {
 
       statuses[i] = deleteL2MulticastRouterInterfaceEntry(old_entry_ptr);
     } else {
@@ -3133,8 +3152,12 @@ std::string L3MulticastManager::verifyMulticastRouterInterfaceStateCache(
     return msg.str();
   }
 
+  // TODO: Remove condition for kL2MulticastPassthrough
   if (multicast_router_interface_entry->action !=
-	  p4orch::kMulticastL2Passthrough) {
+	  p4orch::kL2MulticastPassthrough &&
+      multicast_router_interface_entry->action !=
+          p4orch::kMulticastL2Passthrough) {
+
     sai_object_id_t rif_oid = getRifOid(multicast_router_interface_entry);
     std::string rif_str = m_p4OidMapper->verifyOIDMapping(
         SAI_OBJECT_TYPE_ROUTER_INTERFACE,
@@ -3166,8 +3189,12 @@ std::string L3MulticastManager::verifyMulticastRouterInterfaceStateCache(
 
 std::string L3MulticastManager::verifyMulticastRouterInterfaceStateAsicDb(
     const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry) {
+  // TODO: Remove condition for kL2MulticastPassthrough
   if (multicast_router_interface_entry->action ==
-	  p4orch::kMulticastL2Passthrough) {
+	  p4orch::kL2MulticastPassthrough ||
+      multicast_router_interface_entry->action ==
+          p4orch::kMulticastL2Passthrough) {
+
     return verifyL2MulticastRouterInterfaceStateAsicDb(
         multicast_router_interface_entry);
   } else {

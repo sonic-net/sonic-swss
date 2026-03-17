@@ -383,7 +383,8 @@ class L3MulticastManagerTest : public ::testing::Test {
         multicast_replica_instance;
     router_interface_entry.action = action;
 
-    if (action != p4orch::kMulticastL2Passthrough) {
+    if (action != p4orch::kL2MulticastPassthrough &&
+        action != p4orch::kMulticastL2Passthrough) {
       router_interface_entry.src_mac = src_mac;
       router_interface_entry.has_src_mac = true;
     }
@@ -1323,6 +1324,33 @@ TEST_F(L3MulticastManagerTest,
       "Ethernet2", "0x0", swss::MacAddress(kSrcMac1),
       swss::MacAddress(kDstMac0), /*vlan_id=*/0, "meta1",
       p4orch::kMulticastSetSrcMacAndPreserveIngressVlanId);
+  VerifyP4MulticastRouterInterfaceEntryEqual(expect_entry,
+                                             router_interface_entry);
+  EXPECT_TRUE(
+      ValidateMulticastRouterInterfaceEntry(router_interface_entry, SET_COMMAND)
+          .ok());
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeserializeMulticastRouterInterfaceEntryL2MulticastPassthrough) {
+  std::string key = R"({"match/multicast_replica_port":"Ethernet2",)"
+                    R"("match/multicast_replica_instance":"0x0"})";
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kL2MulticastPassthrough});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kMulticastMetadata, "meta1"});
+  attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
+
+  auto router_interface_entry_or =
+      DeserializeMulticastRouterInterfaceEntry(key, attributes);
+  EXPECT_TRUE(router_interface_entry_or.ok());
+  auto& router_interface_entry = *router_interface_entry_or;
+  auto expect_entry = GenerateP4MulticastRouterInterfaceEntryByAction(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac0),
+      swss::MacAddress(kDstMac0), /*vlan_id=*/0, "meta1",
+      p4orch::kL2MulticastPassthrough);
   VerifyP4MulticastRouterInterfaceEntryEqual(expect_entry,
                                              router_interface_entry);
   EXPECT_TRUE(

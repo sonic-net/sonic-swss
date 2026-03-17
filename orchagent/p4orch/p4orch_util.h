@@ -58,6 +58,7 @@ constexpr char *kSetMetadataAndDrop = "set_metadata_and_drop";
 constexpr char *kSetNexthop = "set_nexthop";
 constexpr char *kSetIpNexthop = "set_ip_nexthop";
 constexpr char *kSetTunnelNexthop = "set_p2p_tunnel_encap_nexthop";
+constexpr char* kL2MulticastPassthrough = "l2_multicast_passthrough";
 constexpr char* kMulticastL2Passthrough = "multicast_l2_passthrough";
 constexpr char* kMulticastSetSrcMac = "multicast_set_src_mac";
 constexpr char* kMulticastSetSrcMacAndVlanId = "multicast_set_src_mac_and_vlan_id";
