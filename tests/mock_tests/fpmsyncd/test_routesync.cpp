@@ -2951,3 +2951,81 @@ TEST_F(FpmSyncdResponseTest, TestVnetRouteMsgWithZmqDisabled_OnlyNonEmptyFields)
 
     rtnl_route_put(test_route);
 }
+
+/*
+ * Tests for the early-return path when getIfName() fails on a route whose
+ * master device (VRF/VNET) has been deleted. The fix in onMsg() logs at
+ * INFO for RTM_DELROUTE (benign post-deletion cleanup) and at ERROR for
+ * RTM_NEWROUTE (unexpected), then returns without writing to APP_DB.
+ */
+TEST_F(FpmSyncdResponseTest, RouteDeleteOnMissingVrfDeviceLogsInfoAndSkips)
+{
+    Table route_table(m_db.get(), APP_ROUTE_TABLE_NAME);
+    Table vnet_route_table(m_db.get(), APP_VNET_RT_TABLE_NAME);
+
+    auto createRoute = [](const char* prefix, uint32_t table_id) -> rtnl_route* {
+        rtnl_route* route = rtnl_route_alloc();
+        nl_addr* dst_addr;
+        nl_addr_parse(prefix, AF_INET, &dst_addr);
+        rtnl_route_set_dst(route, dst_addr);
+        rtnl_route_set_type(route, RTN_UNICAST);
+        rtnl_route_set_protocol(route, RTPROT_STATIC);
+        rtnl_route_set_family(route, AF_INET);
+        rtnl_route_set_scope(route, RT_SCOPE_UNIVERSE);
+        rtnl_route_set_table(route, table_id);
+        nl_addr_put(dst_addr);
+        return route;
+    };
+
+    const char* test_prefix = "10.99.0.0/24";
+    uint32_t stale_table_id = 9999;
+    rtnl_route* test_route = createRoute(test_prefix, stale_table_id);
+
+    EXPECT_CALL(m_mockRouteSync, getIfName(stale_table_id, _, _))
+        .WillOnce(Return(false));
+
+    m_mockRouteSync.onMsg(RTM_DELROUTE, (nl_object*)test_route);
+
+    /* Early return: nothing should be written to either route table. */
+    vector<FieldValueTuple> fvs;
+    EXPECT_FALSE(route_table.get("Vrf9999:" + std::string(test_prefix), fvs));
+    EXPECT_FALSE(vnet_route_table.get("Vnet9999:" + std::string(test_prefix), fvs));
+
+    rtnl_route_put(test_route);
+}
+
+TEST_F(FpmSyncdResponseTest, RouteAddOnMissingVrfDeviceLogsErrorAndSkips)
+{
+    Table route_table(m_db.get(), APP_ROUTE_TABLE_NAME);
+    Table vnet_route_table(m_db.get(), APP_VNET_RT_TABLE_NAME);
+
+    auto createRoute = [](const char* prefix, uint32_t table_id) -> rtnl_route* {
+        rtnl_route* route = rtnl_route_alloc();
+        nl_addr* dst_addr;
+        nl_addr_parse(prefix, AF_INET, &dst_addr);
+        rtnl_route_set_dst(route, dst_addr);
+        rtnl_route_set_type(route, RTN_UNICAST);
+        rtnl_route_set_protocol(route, RTPROT_STATIC);
+        rtnl_route_set_family(route, AF_INET);
+        rtnl_route_set_scope(route, RT_SCOPE_UNIVERSE);
+        rtnl_route_set_table(route, table_id);
+        nl_addr_put(dst_addr);
+        return route;
+    };
+
+    const char* test_prefix = "10.99.1.0/24";
+    uint32_t stale_table_id = 9998;
+    rtnl_route* test_route = createRoute(test_prefix, stale_table_id);
+
+    EXPECT_CALL(m_mockRouteSync, getIfName(stale_table_id, _, _))
+        .WillOnce(Return(false));
+
+    m_mockRouteSync.onMsg(RTM_NEWROUTE, (nl_object*)test_route);
+
+    /* Early return: nothing should be written to either route table. */
+    vector<FieldValueTuple> fvs;
+    EXPECT_FALSE(route_table.get("Vrf9998:" + std::string(test_prefix), fvs));
+    EXPECT_FALSE(vnet_route_table.get("Vnet9998:" + std::string(test_prefix), fvs));
+
+    rtnl_route_put(test_route);
+}
