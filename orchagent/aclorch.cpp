@@ -63,6 +63,14 @@ acl_rule_attr_lookup_t aclMatchLookup =
     { MATCH_DST_IP,            SAI_ACL_ENTRY_ATTR_FIELD_DST_IP },
     { MATCH_SRC_IPV6,          SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6 },
     { MATCH_DST_IPV6,          SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6 },
+    { MATCH_SRC_IPV6_WORD3,    SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD3 },
+    { MATCH_SRC_IPV6_WORD2,    SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD2 },
+    { MATCH_SRC_IPV6_WORD1,    SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD1 },
+    { MATCH_SRC_IPV6_WORD0,    SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD0 },
+    { MATCH_DST_IPV6_WORD3,    SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD3 },
+    { MATCH_DST_IPV6_WORD2,    SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD2 },
+    { MATCH_DST_IPV6_WORD1,    SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD1 },
+    { MATCH_DST_IPV6_WORD0,    SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD0 },
     { MATCH_L4_SRC_PORT,       SAI_ACL_ENTRY_ATTR_FIELD_L4_SRC_PORT },
     { MATCH_L4_DST_PORT,       SAI_ACL_ENTRY_ATTR_FIELD_L4_DST_PORT },
     { MATCH_ETHER_TYPE,        SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE },
@@ -217,6 +225,46 @@ static acl_table_action_list_lookup_t defaultAclActionList =
     {
         // L3V6
         TABLE_TYPE_L3V6,
+        {
+            {
+                ACL_STAGE_INGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                    SAI_ACL_ACTION_TYPE_REDIRECT
+                }
+            },
+            {
+                ACL_STAGE_EGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                    SAI_ACL_ACTION_TYPE_REDIRECT
+                }
+            }
+        }
+    },
+    {
+        // L3V6UpperLite
+        TABLE_TYPE_L3V6UPPERLITE,
+        {
+            {
+                ACL_STAGE_INGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                    SAI_ACL_ACTION_TYPE_REDIRECT
+                }
+            },
+            {
+                ACL_STAGE_EGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                    SAI_ACL_ACTION_TYPE_REDIRECT
+                }
+            }
+        }
+    },
+    {
+        // L3V6Lite
+        TABLE_TYPE_L3V6LITE,
         {
             {
                 ACL_STAGE_INGRESS,
@@ -3658,6 +3706,50 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
         m_metaDataMgr.populateRange(metadataMin, metadataMax);
 
     }
+
+    // Query IPv6 word field capabilities
+    {
+        sai_attr_capability_t capability;
+        sai_status_t status;
+
+        const vector<pair<sai_acl_entry_attr_t, string>> ipv6_word_fields = {
+            {SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD3, "SRC_IPV6_WORD3"},
+            {SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD2, "SRC_IPV6_WORD2"},
+            {SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD1, "SRC_IPV6_WORD1"},
+            {SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD0, "SRC_IPV6_WORD0"},
+            {SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD3, "DST_IPV6_WORD3"},
+            {SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD2, "DST_IPV6_WORD2"},
+            {SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD1, "DST_IPV6_WORD1"},
+            {SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD0, "DST_IPV6_WORD0"}
+        };
+
+        for (const auto& field : ipv6_word_fields)
+        {
+            status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_ACL_ENTRY, field.first, &capability);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_WARN("Could not query %s capability: %d", field.second.c_str(), status);
+            }
+            else
+            {
+                if (capability.create_implemented && capability.set_implemented)
+                {
+                    SWSS_LOG_NOTICE("ACL field %s is supported (create: %d, set: %d)",
+                                   field.second.c_str(),
+                                   capability.create_implemented,
+                                   capability.set_implemented);
+                }
+                else
+                {
+                    SWSS_LOG_WARN("ACL field %s has limited support (create: %d, set: %d)",
+                                 field.second.c_str(),
+                                 capability.create_implemented,
+                                 capability.set_implemented);
+                }
+            }
+        }
+    }
+
     // Store the capabilities in state database
     // TODO: Move this part of the code into syncd
     vector<FieldValueTuple> fvVector;
@@ -3758,6 +3850,27 @@ void AclOrch::initDefaultTableTypes(const string& platform, const string& sub_pl
             .build()
     );
 
+    addAclTableType(
+        builder.withName(TABLE_TYPE_L3V6UPPERLITE)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_LAG)
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6_WORD3))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6_WORD2))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6_WORD3))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6_WORD2))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER))
+            .build()
+    );
+
+    addAclTableType(
+        builder.withName(TABLE_TYPE_L3V6LITE)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_LAG)
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER))
+            .build()
+    );
 
     addAclTableType(
         builder.withName(TABLE_TYPE_L3V4V6)

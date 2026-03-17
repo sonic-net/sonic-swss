@@ -12,6 +12,16 @@ L3V6_TABLE_NAME = "L3_V6_TEST"
 L3V6_BIND_PORTS = ["Ethernet0", "Ethernet4", "Ethernet8"]
 L3V6_RULE_NAME = "L3V6_TEST_RULE"
 
+L3V6UPPERLITE_TABLE_TYPE = "L3V6UpperLite"
+L3V6UPPERLITE_TABLE_NAME = "L3_V6_UPPER_LITE_TEST"
+L3V6UPPERLITE_BIND_PORTS = ["Ethernet0", "Ethernet4", "Ethernet8"]
+L3V6UPPERLITE_RULE_NAME = "L3V6UPPERLITE_TEST_RULE"
+
+L3V6LITE_TABLE_TYPE = "L3V6Lite"
+L3V6LITE_TABLE_NAME = "L3_V6_LITE_TEST"
+L3V6LITE_BIND_PORTS = ["Ethernet0", "Ethernet4", "Ethernet8"]
+L3V6LITE_RULE_NAME = "L3V6LITE_TEST_RULE"
+
 MCLAG_TABLE_TYPE = "MCLAG"
 MCLAG_TABLE_NAME = "MCLAG_TEST"
 MCLAG_BIND_PORTS = ["Ethernet0", "Ethernet4", "Ethernet8", "Ethernet12"]
@@ -44,6 +54,28 @@ class TestAcl:
             yield dvs_acl.get_acl_table_ids(1)[0]
         finally:
             dvs_acl.remove_acl_table(L3V6_TABLE_NAME)
+            dvs_acl.verify_acl_table_count(0)
+
+    @pytest.fixture
+    def l3v6upperlite_acl_table(self, dvs_acl):
+        try:
+            dvs_acl.create_acl_table(L3V6UPPERLITE_TABLE_NAME,
+                                     L3V6UPPERLITE_TABLE_TYPE,
+                                     L3V6UPPERLITE_BIND_PORTS)
+            yield dvs_acl.get_acl_table_ids(1)[0]
+        finally:
+            dvs_acl.remove_acl_table(L3V6UPPERLITE_TABLE_NAME)
+            dvs_acl.verify_acl_table_count(0)
+
+    @pytest.fixture
+    def l3v6lite_acl_table(self, dvs_acl):
+        try:
+            dvs_acl.create_acl_table(L3V6LITE_TABLE_NAME,
+                                     L3V6LITE_TABLE_TYPE,
+                                     L3V6LITE_BIND_PORTS)
+            yield dvs_acl.get_acl_table_ids(1)[0]
+        finally:
+            dvs_acl.remove_acl_table(L3V6LITE_TABLE_NAME)
             dvs_acl.verify_acl_table_count(0)
 
     @pytest.fixture
@@ -577,6 +609,158 @@ class TestAcl:
         dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
         # Verify the STATE_DB entry is removed
         dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, None)
+        dvs_acl.verify_no_acl_rules()
+
+    def test_L3V6UpperLiteAclRuleIPv6Word(self, dvs_acl, l3v6upperlite_acl_table):
+        config_qualifiers = {
+            "SRC_IPV6_WORD3": "0x20010db8/0xffffffff",
+            "DST_IPV6_WORD2": "0x00000001/0xffffffff"
+        }
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD3": dvs_acl.get_simple_qualifier_comparator("538976440&mask:4294967295"),
+            "SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD2": dvs_acl.get_simple_qualifier_comparator("1&mask:4294967295")
+        }
+
+        dvs_acl.create_acl_rule(L3V6UPPERLITE_TABLE_NAME, L3V6UPPERLITE_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V6UPPERLITE_TABLE_NAME, L3V6UPPERLITE_RULE_NAME, "Active")
+
+        dvs_acl.remove_acl_rule(L3V6UPPERLITE_TABLE_NAME, L3V6UPPERLITE_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V6UPPERLITE_TABLE_NAME, L3V6UPPERLITE_RULE_NAME, None)
+        dvs_acl.verify_no_acl_rules()
+
+    def test_L3V6UpperLiteAclRuleNextHeader(self, dvs_acl, l3v6upperlite_acl_table):
+        config_qualifiers = {"NEXT_HEADER": "17"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_IPV6_NEXT_HEADER": dvs_acl.get_simple_qualifier_comparator("17&mask:0xff")
+        }
+
+        dvs_acl.create_acl_rule(L3V6UPPERLITE_TABLE_NAME, L3V6UPPERLITE_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V6UPPERLITE_TABLE_NAME, L3V6UPPERLITE_RULE_NAME, "Active")
+
+        dvs_acl.remove_acl_rule(L3V6UPPERLITE_TABLE_NAME, L3V6UPPERLITE_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V6UPPERLITE_TABLE_NAME, L3V6UPPERLITE_RULE_NAME, None)
+        dvs_acl.verify_no_acl_rules()
+
+    def test_L3V6UpperLiteAclRuleIPType(self, dvs_acl, l3v6upperlite_acl_table):
+        config_qualifiers = {"IP_TYPE": "IPV6ANY"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_TYPE": dvs_acl.get_simple_qualifier_comparator("SAI_ACL_IP_TYPE_IPV6ANY&mask:0xffffffffffffffff")
+        }
+
+        dvs_acl.create_acl_rule(L3V6UPPERLITE_TABLE_NAME, L3V6UPPERLITE_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V6UPPERLITE_TABLE_NAME, L3V6UPPERLITE_RULE_NAME, "Active")
+
+        dvs_acl.remove_acl_rule(L3V6UPPERLITE_TABLE_NAME, L3V6UPPERLITE_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V6UPPERLITE_TABLE_NAME, L3V6UPPERLITE_RULE_NAME, None)
+        dvs_acl.verify_no_acl_rules()
+
+    def test_L3V6UpperLiteAclRuleIPv6WordDrop(self, dvs_acl, l3v6upperlite_acl_table):
+        config_qualifiers = {
+            "SRC_IPV6_WORD3": "0x20010db8/0xffffffff",
+            "DST_IPV6_WORD3": "0x20010db8/0xffffffff"
+        }
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD3": dvs_acl.get_simple_qualifier_comparator("538976440&mask:4294967295"),
+            "SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD3": dvs_acl.get_simple_qualifier_comparator("538976440&mask:4294967295")
+        }
+
+        dvs_acl.create_acl_rule(L3V6UPPERLITE_TABLE_NAME, L3V6UPPERLITE_RULE_NAME, config_qualifiers, action="DROP")
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers, action="DROP")
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V6UPPERLITE_TABLE_NAME, L3V6UPPERLITE_RULE_NAME, "Active")
+
+        dvs_acl.remove_acl_rule(L3V6UPPERLITE_TABLE_NAME, L3V6UPPERLITE_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V6UPPERLITE_TABLE_NAME, L3V6UPPERLITE_RULE_NAME, None)
+        dvs_acl.verify_no_acl_rules()
+
+    def test_L3V6UpperLiteAclRuleNextHeaderForward(self, dvs_acl, l3v6upperlite_acl_table):
+        config_qualifiers = {"NEXT_HEADER": "6"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_IPV6_NEXT_HEADER": dvs_acl.get_simple_qualifier_comparator("6&mask:0xff")
+        }
+
+        dvs_acl.create_acl_rule(L3V6UPPERLITE_TABLE_NAME, L3V6UPPERLITE_RULE_NAME, config_qualifiers, action="FORWARD")
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers, action="FORWARD")
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V6UPPERLITE_TABLE_NAME, L3V6UPPERLITE_RULE_NAME, "Active")
+
+        dvs_acl.remove_acl_rule(L3V6UPPERLITE_TABLE_NAME, L3V6UPPERLITE_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V6UPPERLITE_TABLE_NAME, L3V6UPPERLITE_RULE_NAME, None)
+        dvs_acl.verify_no_acl_rules()
+
+    def test_L3V6LiteAclRuleIPType(self, dvs_acl, l3v6lite_acl_table):
+        config_qualifiers = {"IP_TYPE": "IPV6ANY"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_TYPE": dvs_acl.get_simple_qualifier_comparator("SAI_ACL_IP_TYPE_IPV6ANY&mask:0xffffffffffffffff")
+        }
+
+        dvs_acl.create_acl_rule(L3V6LITE_TABLE_NAME, L3V6LITE_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V6LITE_TABLE_NAME, L3V6LITE_RULE_NAME, "Active")
+
+        dvs_acl.remove_acl_rule(L3V6LITE_TABLE_NAME, L3V6LITE_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V6LITE_TABLE_NAME, L3V6LITE_RULE_NAME, None)
+        dvs_acl.verify_no_acl_rules()
+
+    def test_L3V6LiteAclRuleNextHeader(self, dvs_acl, l3v6lite_acl_table):
+        config_qualifiers = {"NEXT_HEADER": "58"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_IPV6_NEXT_HEADER": dvs_acl.get_simple_qualifier_comparator("58&mask:0xff")
+        }
+
+        dvs_acl.create_acl_rule(L3V6LITE_TABLE_NAME, L3V6LITE_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V6LITE_TABLE_NAME, L3V6LITE_RULE_NAME, "Active")
+
+        dvs_acl.remove_acl_rule(L3V6LITE_TABLE_NAME, L3V6LITE_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V6LITE_TABLE_NAME, L3V6LITE_RULE_NAME, None)
+        dvs_acl.verify_no_acl_rules()
+
+    def test_L3V6LiteAclRuleIPTypeDrop(self, dvs_acl, l3v6lite_acl_table):
+        config_qualifiers = {"IP_TYPE": "IPV6ANY"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_TYPE": dvs_acl.get_simple_qualifier_comparator("SAI_ACL_IP_TYPE_IPV6ANY&mask:0xffffffffffffffff")
+        }
+
+        dvs_acl.create_acl_rule(L3V6LITE_TABLE_NAME, L3V6LITE_RULE_NAME, config_qualifiers, action="DROP")
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers, action="DROP")
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V6LITE_TABLE_NAME, L3V6LITE_RULE_NAME, "Active")
+
+        dvs_acl.remove_acl_rule(L3V6LITE_TABLE_NAME, L3V6LITE_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V6LITE_TABLE_NAME, L3V6LITE_RULE_NAME, None)
+        dvs_acl.verify_no_acl_rules()
+
+    def test_L3V6LiteAclRuleNextHeaderForward(self, dvs_acl, l3v6lite_acl_table):
+        config_qualifiers = {"NEXT_HEADER": "17"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_IPV6_NEXT_HEADER": dvs_acl.get_simple_qualifier_comparator("17&mask:0xff")
+        }
+
+        dvs_acl.create_acl_rule(L3V6LITE_TABLE_NAME, L3V6LITE_RULE_NAME, config_qualifiers, action="FORWARD")
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers, action="FORWARD")
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V6LITE_TABLE_NAME, L3V6LITE_RULE_NAME, "Active")
+
+        dvs_acl.remove_acl_rule(L3V6LITE_TABLE_NAME, L3V6LITE_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V6LITE_TABLE_NAME, L3V6LITE_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
     def test_InsertAclRuleBetweenPriorities(self, dvs_acl, l3_acl_table):
