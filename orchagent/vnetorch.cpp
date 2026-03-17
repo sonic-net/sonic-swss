@@ -1637,6 +1637,8 @@ bool VNetRouteOrch::setAndDeleteRoutesWithRouteOrch(const sai_object_id_t vr_id,
         if (gRouteOrch->removeRoutePost(ctx))
         {
             SWSS_LOG_NOTICE("Route %s removed via routeorch for vnet %s", ipPrefix.to_string().c_str(), vnet_name.c_str());
+            // Cleanup VRF if empty.
+            gRouteOrch->cleanupVrfTable(vr_id);
         }
         else
         {
