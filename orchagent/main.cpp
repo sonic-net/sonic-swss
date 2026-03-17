@@ -412,7 +412,7 @@ int main(int argc, char **argv)
                 // Limit asic instance string max length
                 size_t len = strnlen(optarg, SAI_MAX_HARDWARE_ID_LEN);
                 // Check if input is longer and warn
-                if (len == SAI_MAX_HARDWARE_ID_LEN && optarg[len+1] != '\0')
+                if (len == SAI_MAX_HARDWARE_ID_LEN && optarg[len] != '\0')
                 {
                     SWSS_LOG_WARN("ASIC instance_id length > SAI_MAX_HARDWARE_ID_LEN, LIMITING !!");
                 }
