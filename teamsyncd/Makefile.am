@@ -12,7 +12,7 @@ teamsyncd_SOURCES = teamsyncd.cpp teamsync.cpp
 
 teamsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)
 teamsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)
-teamsyncd_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lhiredis -lswsscommon -lteam
+teamsyncd_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lhiredis -lswsscommon -lteam -lteamdctl
 
 if GCOV_ENABLED
 teamsyncd_SOURCES += ../gcovpreload/gcovpreload.cpp
