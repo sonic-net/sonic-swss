@@ -76,10 +76,12 @@ tests_SOURCES = aclorch_ut.cpp \
                 stporch_ut.cpp \
                 flexcounter_ut.cpp \
                 hftelprofile_ut.cpp \
+                portphyattr_ut.cpp \
                 mock_orch_test.cpp \
                 mock_dash_orch_test.cpp \
                 zmq_orch_ut.cpp \
                 mock_saihelper.cpp \
+                mirrororch_ut.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
