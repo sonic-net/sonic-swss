@@ -9,9 +9,9 @@ CXXFLAGS = -g -O0
 
 CFLAGS_SAI = -I /usr/include/sai
 
-TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher
+TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher tests_teamsyncd
 
-noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher
+noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher tests_teamsyncd
 
 LDADD_SAI = -lsaimeta -lsaimetadata -lsaivs -lsairedis
 
@@ -199,6 +199,8 @@ tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
 		 $(P4_ORCH_DIR)/gre_tunnel_manager.cpp \
 		 $(P4_ORCH_DIR)/l3_admit_manager.cpp \
 		 $(P4_ORCH_DIR)/l3_multicast_manager.cpp \
+                 $(P4_ORCH_DIR)/tunnel_decap_group_manager.cpp\
+		 $(P4_ORCH_DIR)/ip_multicast_manager.cpp \
 		 $(P4_ORCH_DIR)/ext_tables_manager.cpp \
 		 $(P4_ORCH_DIR)/tests/mock_sai_switch.cpp
 
@@ -310,3 +312,12 @@ tests_response_publisher_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CF
 tests_response_publisher_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_response_publisher_INCLUDES)
 tests_response_publisher_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread
+
+tests_teamsyncd_SOURCES = teamsync_ut.cpp \
+                          $(top_srcdir)/teamsyncd/teamsync.cpp
+
+tests_teamsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/teamsyncd
+tests_teamsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
+tests_teamsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_teamsyncd_INCLUDES)
+tests_teamsyncd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 \
+        -lswsscommon -lgtest -lgtest_main -lpthread -lteam -lteamdctl
