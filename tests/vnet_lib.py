@@ -529,6 +529,42 @@ def check_remove_state_db_routes(dvs, vnet, prefix):
     assert vnet + '|' + prefix not in keys
 
 
+def check_vnet_obj_in_state_db(dvs, vnet_name):
+    state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+    tbl = swsscommon.Table(state_db, "VRF_OBJECT_TABLE")
+    status, fvs = tbl.get(vnet_name)
+    assert status, "VNET '%s' not found in VRF_OBJECT_TABLE" % vnet_name
+    fvs = dict(fvs)
+    assert fvs.get('state') == 'ok', "VNET '%s' state is not 'ok' in VRF_OBJECT_TABLE" % vnet_name
+
+
+def wait_for_vnet_obj_in_state_db(dvs, vnet_name):
+    state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+    tbl = swsscommon.Table(state_db, "VRF_OBJECT_TABLE")
+
+    def _access_function():
+        status, fvs = tbl.get(vnet_name)
+        if not status:
+            return (False, None)
+        fvs = dict(fvs)
+        return (fvs.get('state') == 'ok', fvs)
+
+    wait_for_result(_access_function,
+                    failure_message="VNET '%s' not found in VRF_OBJECT_TABLE" % vnet_name)
+
+
+def wait_for_vnet_obj_removed_from_state_db(dvs, vnet_name):
+    state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+    tbl = swsscommon.Table(state_db, "VRF_OBJECT_TABLE")
+
+    def _access_function():
+        keys = tbl.getKeys()
+        return (vnet_name not in keys, None)
+
+    wait_for_result(_access_function,
+                    failure_message="VNET '%s' still in VRF_OBJECT_TABLE" % vnet_name)
+
+
 def check_routes_advertisement(dvs, prefix, profile=""):
     state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
     tbl =  swsscommon.Table(state_db, "ADVERTISE_NETWORK_TABLE")

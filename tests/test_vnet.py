@@ -3575,6 +3575,64 @@ class TestVnetOrch(object):
         self.remove_ip_address("Ethernet4", "9.1.0.1/32")
         self.set_admin_status("Ethernet4", "down")
 
+    '''
+    Test 37 - Delete VNET while routes are still present.
+    Verifies that VNetOrch writes to STATE_VRF_OBJECT_TABLE on VNET creation,
+    defers VNET deletion until routes are removed, and properly cleans up.
+
+    Without the fix (VNetOrch STATE_VRF_OBJECT_TABLE support), the
+    wait_for_vnet_obj_in_state_db() call will fail because VNetOrch
+    never wrote to that table.
+    '''
+    def test_vnet_orch_37(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_37'
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '10.10.10.37')
+        create_vnet_entry(dvs, 'Vnet_5037', tunnel_name, '5037', "")
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet_5037')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet_5037', '5037')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '10.10.10.37')
+
+        wait_for_vnet_obj_in_state_db(dvs, 'Vnet_5037')
+
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, "100.200.1.1/32", 'Vnet_5037', '10.10.10.51')
+        vnet_obj.check_vnet_routes(dvs, 'Vnet_5037', '10.10.10.51', tunnel_name)
+        check_state_db_routes(dvs, 'Vnet_5037', "100.200.1.1/32", ['10.10.10.51'])
+
+        create_vnet_routes(dvs, "100.200.2.1/32", 'Vnet_5037', '10.10.10.52')
+        vnet_obj.check_vnet_routes(dvs, 'Vnet_5037', '10.10.10.52', tunnel_name)
+        check_state_db_routes(dvs, 'Vnet_5037', "100.200.2.1/32", ['10.10.10.52'])
+
+        delete_vnet_entry(dvs, 'Vnet_5037')
+
+        time.sleep(2)
+        check_vnet_obj_in_state_db(dvs, 'Vnet_5037')
+
+        delete_vnet_routes(dvs, "100.200.1.1/32", 'Vnet_5037')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet_5037', ["100.200.1.1/32"])
+        check_remove_state_db_routes(dvs, 'Vnet_5037', "100.200.1.1/32")
+
+        delete_vnet_routes(dvs, "100.200.2.1/32", 'Vnet_5037')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet_5037', ["100.200.2.1/32"])
+        check_remove_state_db_routes(dvs, 'Vnet_5037', "100.200.2.1/32")
+
+        wait_for_vnet_obj_removed_from_state_db(dvs, 'Vnet_5037')
+
+        app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        route_tbl = swsscommon.Table(app_db, "VNET_ROUTE_TUNNEL_TABLE")
+        keys = route_tbl.getKeys()
+        stale_routes = [k for k in keys if k.startswith('Vnet_5037:')]
+        assert len(stale_routes) == 0, "Stale VNET routes in APP_DB: %s" % stale_routes
+
+        delete_vxlan_tunnel(dvs, tunnel_name)
+        vnet_obj.check_del_vxlan_tunnel(dvs)
+
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
