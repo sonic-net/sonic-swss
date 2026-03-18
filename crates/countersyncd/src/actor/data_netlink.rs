@@ -249,6 +249,8 @@ pub struct DataNetlinkActor {
     command_recipient: Receiver<NetlinkCommand>,
     /// Message parser for handling multiple and fragmented netlink messages
     message_parser: NetlinkMessageParser,
+    /// Netlink socket receive buffer size in bytes (0 = OS default). Reduces ENOBUFS when set.
+    netlink_rcvbuf_bytes: usize,
 }
 
 impl DataNetlinkActor {
@@ -259,11 +261,17 @@ impl DataNetlinkActor {
     /// * `family` - The generic netlink family name
     /// * `group` - The multicast group name
     /// * `command_recipient` - Channel for receiving control commands
+    /// * `netlink_rcvbuf_bytes` - Socket SO_RCVBUF size in bytes (0 = OS default). Larger values reduce ENOBUFS under high HFT load.
     ///
     /// # Returns
     ///
     /// A new DataNetlinkActor instance with an initial connection attempt
-    pub fn new(family: &str, group: &str, command_recipient: Receiver<NetlinkCommand>) -> Self {
+    pub fn new(
+        family: &str,
+        group: &str,
+        command_recipient: Receiver<NetlinkCommand>,
+        netlink_rcvbuf_bytes: usize,
+    ) -> Self {
         let nl_resolver = Self::create_nl_resolver();
         let mut actor = DataNetlinkActor {
             family: family.to_string(),
@@ -274,6 +282,7 @@ impl DataNetlinkActor {
             buffer_recipients: LinkedList::new(),
             command_recipient,
             message_parser: NetlinkMessageParser::new(),
+            netlink_rcvbuf_bytes,
         };
 
         // Use instance method for initial connection
@@ -301,6 +310,34 @@ impl DataNetlinkActor {
     #[cfg(not(test))]
     fn create_nl_resolver() -> Option<Socket> {
         netlink_utils::create_nl_resolver()
+    }
+
+    /// Sets SO_RCVBUF on the netlink socket to reduce ENOBUFS under high HFT load.
+    #[cfg(not(test))]
+    fn set_socket_rcvbuf(socket: &mut Socket, bytes: usize) {
+        if bytes == 0 {
+            return;
+        }
+        let fd = socket.as_raw_fd();
+        let v: libc::c_int = bytes.try_into().unwrap_or(libc::c_int::MAX);
+        let ret = unsafe {
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_RCVBUF,
+                &v as *const _ as *const libc::c_void,
+                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            )
+        };
+        if ret != 0 {
+            warn!(
+                "Failed to set netlink SO_RCVBUF to {}: {:?}",
+                bytes,
+                std::io::Error::last_os_error()
+            );
+        } else {
+            info!("Set netlink socket SO_RCVBUF to {} bytes", bytes);
+        }
     }
 
     /// Mock netlink resolver for testing.
@@ -362,7 +399,7 @@ impl DataNetlinkActor {
                         }
                     } else {
                         // Fallback to creating temporary socket
-                        return Self::connect_fallback(family, group);
+                        return Self::connect_fallback(family, group, self.netlink_rcvbuf_bytes);
                     }
                 }
             }
@@ -390,7 +427,7 @@ impl DataNetlinkActor {
                 }
             } else {
                 // Fallback to creating temporary socket
-                return Self::connect_fallback(family, group);
+                return Self::connect_fallback(family, group, self.netlink_rcvbuf_bytes);
             }
         };
 
@@ -432,6 +469,8 @@ impl DataNetlinkActor {
             return None;
         }
 
+        Self::set_socket_rcvbuf(&mut socket, self.netlink_rcvbuf_bytes);
+
         info!(
             "Successfully connected to family '{}', group '{}' with group_id: {}",
             family, group, group_id
@@ -457,7 +496,11 @@ impl DataNetlinkActor {
 
     /// Fallback connection method when shared router is not available.
     #[cfg(not(test))]
-    fn connect_fallback(family: &str, group: &str) -> Option<SocketType> {
+    fn connect_fallback(
+        family: &str,
+        group: &str,
+        netlink_rcvbuf_bytes: usize,
+    ) -> Option<SocketType> {
         debug!(
             "Using fallback connection for family '{}', group '{}'",
             family, group
@@ -540,6 +583,8 @@ impl DataNetlinkActor {
             warn!("Failed to set non-blocking mode: {:?}", e);
             return None;
         }
+
+        Self::set_socket_rcvbuf(&mut socket, netlink_rcvbuf_bytes);
 
         info!(
             "Successfully connected to family '{}', group '{}' with group_id: {}",
@@ -1123,7 +1168,7 @@ pub mod test {
         let (command_sender, command_receiver) = channel(1);
         let (buffer_sender, mut buffer_receiver) = channel(1);
 
-        let mut actor = DataNetlinkActor::new("family", "group", command_receiver);
+        let mut actor = DataNetlinkActor::new("family", "group", command_receiver, 0);
         actor.add_recipient(buffer_sender);
 
         let task = spawn(DataNetlinkActor::run(actor));

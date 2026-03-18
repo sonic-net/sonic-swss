@@ -179,6 +179,14 @@ struct Args {
     )]
     comm_stats_interval: u64,
 
+    /// Netlink socket receive buffer size in bytes (0 = OS default). Increase to reduce ENOBUFS under high HFT load.
+    #[arg(
+        long,
+        default_value = "4194304",
+        help = "Netlink SO_RCVBUF size in bytes (0 = default). Use 4MB or higher if you see 'Netlink receive buffer full (ENOBUFS)'"
+    )]
+    netlink_rcvbuf: usize,
+
     /// Channel capacity for data_netlink to ipfix communication (IPFIX records)
     #[arg(
         long,
@@ -302,7 +310,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Using netlink family: '{}', group: '{}'", family, group);
 
     // Initialize and configure actors
-    let mut data_netlink = DataNetlinkActor::new(family.as_str(), group.as_str(), command_receiver);
+    let mut data_netlink = DataNetlinkActor::new(
+        family.as_str(),
+        group.as_str(),
+        command_receiver,
+        args.netlink_rcvbuf,
+    );
     data_netlink.add_recipient(ipfix_record_sender);
 
     let control_netlink = ControlNetlinkActor::new(family.as_str(), command_sender);
