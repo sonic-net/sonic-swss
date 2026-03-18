@@ -6294,4 +6294,43 @@ namespace vnetorch_test
 
         delVxlanTunnel("tunnel_ip2me");
     }
+
+    // vrfmgrd polls this row via isVrfObjExist() and defers delLink() until
+    // VNetOrch clears it on successful delOperation.
+    TEST_F(VNetOrchTest, VnetAddDelStateVrfObjectTableLifecycle)
+    {
+        swss::Table state_vrf_obj_table(m_state_db.get(),
+                                        STATE_VRF_OBJECT_TABLE_NAME);
+
+        std::vector<swss::FieldValueTuple> fvs;
+        EXPECT_FALSE(state_vrf_obj_table.get("Vnet_ut", fvs));
+
+        setVxlanTunnel("tunnel_ut", "10.1.0.1");
+        setVnet("Vnet_ut", "tunnel_ut", "5037", "");
+
+        EXPECT_TRUE(m_vnetOrch->isVnetExists("Vnet_ut"));
+
+        fvs.clear();
+        ASSERT_TRUE(state_vrf_obj_table.get("Vnet_ut", fvs))
+            << "STATE_VRF_OBJECT_TABLE['Vnet_ut'] missing after addOperation";
+        bool seen_state_ok = false;
+        for (const auto &fv : fvs)
+        {
+            if (fvField(fv) == "state" && fvValue(fv) == "ok")
+            {
+                seen_state_ok = true;
+                break;
+            }
+        }
+        EXPECT_TRUE(seen_state_ok)
+            << "Expected STATE_VRF_OBJECT_TABLE['Vnet_ut']['state'] == 'ok'";
+
+        delVnet("Vnet_ut");
+
+        EXPECT_FALSE(m_vnetOrch->isVnetExists("Vnet_ut"));
+
+        fvs.clear();
+        EXPECT_FALSE(state_vrf_obj_table.get("Vnet_ut", fvs))
+            << "STATE_VRF_OBJECT_TABLE['Vnet_ut'] still present after delOperation";
+    }
 }

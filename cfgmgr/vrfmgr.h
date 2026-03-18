@@ -42,6 +42,14 @@ private:
     std::set<uint32_t> m_freeTables;
     VRFNameVNIMapTable m_vrfVniMapTable;
 
+    /*
+     * Per-VNET retry counter for the delete-time wait on VNetOrch
+     * STATE_VRF_OBJECT_TABLE handshake. Used to emit a rate-limited
+     * SWSS_LOG_WARN if a VNET delete is deferred for an unreasonably long
+     * time, so a stuck handshake fails loudly instead of hanging silently.
+     */
+    std::unordered_map<std::string, uint32_t> m_vnetDelRetries;
+
     Table m_stateVrfTable, m_stateVrfObjectTable;
     ProducerStateTable m_appVrfTableProducer, m_appVnetTableProducer, m_appVxlanVrfTableProducer;
 };
