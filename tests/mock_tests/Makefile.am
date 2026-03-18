@@ -9,9 +9,9 @@ CXXFLAGS = -g -O0
 
 CFLAGS_SAI = -I /usr/include/sai
 
-TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher tests_nbrmgrd
+TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
 
-noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher tests_nbrmgrd
+noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
 
 LDADD_SAI = -lsaimeta -lsaimetadata -lsaivs -lsairedis
 
@@ -332,6 +332,14 @@ tests_nbrmgrd_SOURCES = nbrmgrd/nbrmgr_ut.cpp \
 tests_nbrmgrd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/cfgmgr -I$(top_srcdir)/lib
 tests_nbrmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_nbrmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_nbrmgrd_INCLUDES)
-tests_nbrmgrd_CXXFLAGS = -Wl,-wrap,nl_socket_alloc -Wl,-wrap,nl_connect -Wl,-wrap,nl_send_auto -Wl,-wrap,if_nametoindex
+tests_nbrmgrd_CXXFLAGS = -Wl,-wrap,nl_socket_alloc -Wl,-wrap,nl_connect -Wl,-wrap,nl_send_auto -Wl,-wrap,if_nametoindex -Wl,-wrap,nlmsg_alloc
 tests_nbrmgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lgmock_main
+tests_teamsyncd_SOURCES = teamsync_ut.cpp \
+                          $(top_srcdir)/teamsyncd/teamsync.cpp
+
+tests_teamsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/teamsyncd
+tests_teamsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
+tests_teamsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_teamsyncd_INCLUDES)
+tests_teamsyncd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 \
+        -lswsscommon -lgtest -lgtest_main -lpthread -lteam -lteamdctl

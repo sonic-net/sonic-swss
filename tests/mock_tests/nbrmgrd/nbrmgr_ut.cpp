@@ -41,6 +41,20 @@ int __wrap_nl_send_auto(struct nl_sock *sk, struct nl_msg *msg)
     return 0;
 }
 
+/* Control whether nlmsg_alloc returns NULL to simulate setNeighbor failure */
+static bool mock_nlmsg_alloc_fail = false;
+
+struct nl_msg *__wrap_nlmsg_alloc(void)
+{
+    if (mock_nlmsg_alloc_fail)
+    {
+        return nullptr;
+    }
+    /* Call real implementation */
+    struct nl_msg *__real_nlmsg_alloc(void);
+    return __real_nlmsg_alloc();
+}
+
 unsigned int __wrap_if_nametoindex(const char *ifname)
 {
     /* Return a dummy interface index */
@@ -73,6 +87,7 @@ namespace nbrmgr_ut
 
             mockCallArgs.clear();
             neighResolvedKeys.clear();
+            mock_nlmsg_alloc_fail = false;
             callback = noop_cb;
         }
     };
@@ -142,5 +157,48 @@ namespace nbrmgr_ut
         swss::NbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
 
         /* Verify construction completes - IPv6 entries are reconciled */
+    }
+
+    /*
+     * Test that entries with invalid key format (no ':' separator)
+     * are skipped during reconciliation.
+     */
+    TEST_F(NbrMgrTest, ReconcileInvalidKeyFormat)
+    {
+        std::vector<std::string> cfg_nbr_tables = {CFG_NEIGH_TABLE_NAME};
+
+        swss::Table neighResolveTable(m_app_db.get(), APP_NEIGH_RESOLVE_TABLE_NAME);
+        std::vector<swss::FieldValueTuple> fvs;
+        /* Valid entry */
+        neighResolveTable.set("Ethernet0:10.0.0.1", fvs);
+        /* Invalid entry - no ':' separator */
+        neighResolveTable.set("InvalidKeyNoSeparator", fvs);
+
+        std::vector<std::string> keys;
+        neighResolveTable.getKeys(keys);
+        ASSERT_EQ(keys.size(), 2u);
+
+        /* Should not crash; invalid key is skipped, valid key is processed */
+        swss::NbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
+    }
+
+    /*
+     * Test that setNeighbor failure during reconciliation is handled
+     * gracefully (logs warning, continues with remaining entries).
+     */
+    TEST_F(NbrMgrTest, ReconcileSetNeighborFailure)
+    {
+        std::vector<std::string> cfg_nbr_tables = {CFG_NEIGH_TABLE_NAME};
+
+        swss::Table neighResolveTable(m_app_db.get(), APP_NEIGH_RESOLVE_TABLE_NAME);
+        std::vector<swss::FieldValueTuple> fvs;
+        neighResolveTable.set("Ethernet0:10.0.0.1", fvs);
+        neighResolveTable.set("Ethernet4:10.0.0.3", fvs);
+
+        /* Force nlmsg_alloc to fail, causing setNeighbor to return false */
+        mock_nlmsg_alloc_fail = true;
+
+        /* Should not crash; failures are logged as warnings */
+        swss::NbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
     }
 }

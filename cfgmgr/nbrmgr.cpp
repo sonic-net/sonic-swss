@@ -247,12 +247,13 @@ void NbrMgr::reconcileNeighResolveTable(DBConnector *appDb)
 
     for (const auto &key : keys)
     {
-        vector<string> parsedKeys = parseAliasIp(key, ":");
-        if (parsedKeys.size() != 2)
+        if (key.find(':') == string::npos)
         {
             SWSS_LOG_ERROR("Failed to parse NEIGH_RESOLVE_TABLE key '%s'", key.c_str());
             continue;
         }
+
+        vector<string> parsedKeys = parseAliasIp(key, ":");
 
         MacAddress mac;
         IpAddress ip(parsedKeys[1]);
