@@ -337,7 +337,7 @@ void MockOrchTest::SetUp()
     gDirectory.set(m_VxlanTunnelOrch);
     ut_orch_list.push_back((Orch **)&m_VxlanTunnelOrch);
 
-    m_vnetOrch = new VNetOrch(m_app_db.get(), APP_VNET_TABLE_NAME);
+    m_vnetOrch = new VNetOrch(m_app_db.get(), APP_VNET_TABLE_NAME, m_state_db.get());
     gDirectory.set(m_vnetOrch);
     ut_orch_list.push_back((Orch **)&m_vnetOrch);
 
