@@ -56,8 +56,8 @@ const DEBUG_LOG_INTERVAL: u32 = 3000; // 3000 * 10ms = 30 seconds
 /// WouldBlock debug logging interval (in iterations) - log WouldBlock every minute
 const WOULDBLOCK_LOG_INTERVAL: u32 = 6000; // 6000 * 10ms = 1 minute
 
-/// Socket readiness check timeout in milliseconds
-const SOCKET_READINESS_TIMEOUT_MS: u64 = 10;
+/// Default socket readiness poll interval (ms) when not configured via CLI.
+const DEFAULT_SOCKET_READINESS_TIMEOUT_MS: u64 = 5;
 
 /// Maximum size for buffering incomplete messages (1MB)
 const MAX_INCOMPLETE_MESSAGE_SIZE: usize = 1024 * 1024;
@@ -251,6 +251,8 @@ pub struct DataNetlinkActor {
     message_parser: NetlinkMessageParser,
     /// Netlink socket receive buffer size in bytes (0 = OS default). Reduces ENOBUFS when set.
     netlink_rcvbuf_bytes: usize,
+    /// Socket readiness poll interval in milliseconds. Shorter than HFT interval reduces ENOBUFS.
+    socket_readiness_timeout_ms: u64,
 }
 
 impl DataNetlinkActor {
@@ -262,6 +264,7 @@ impl DataNetlinkActor {
     /// * `group` - The multicast group name
     /// * `command_recipient` - Channel for receiving control commands
     /// * `netlink_rcvbuf_bytes` - Socket SO_RCVBUF size in bytes (0 = OS default). Larger values reduce ENOBUFS under high HFT load.
+    /// * `socket_readiness_timeout_ms` - Poll interval in ms for socket readiness. Shorter than HFT interval (e.g. 10 ms) reduces ENOBUFS.
     ///
     /// # Returns
     ///
@@ -271,6 +274,7 @@ impl DataNetlinkActor {
         group: &str,
         command_recipient: Receiver<NetlinkCommand>,
         netlink_rcvbuf_bytes: usize,
+        socket_readiness_timeout_ms: u64,
     ) -> Self {
         let nl_resolver = Self::create_nl_resolver();
         let mut actor = DataNetlinkActor {
@@ -283,6 +287,7 @@ impl DataNetlinkActor {
             command_recipient,
             message_parser: NetlinkMessageParser::new(),
             netlink_rcvbuf_bytes,
+            socket_readiness_timeout_ms,
         };
 
         // Use instance method for initial connection
@@ -880,7 +885,7 @@ impl DataNetlinkActor {
             }
 
             // Check socket readiness with configurable timeout to allow periodic checks
-            match Self::check_socket_readiness(SOCKET_READINESS_TIMEOUT_MS).await {
+            match Self::check_socket_readiness(actor.socket_readiness_timeout_ms).await {
                 Ok(data_ready) => {
                     // Only try to receive data if we have a socket and data is ready
                     if actor.socket.is_some() && data_ready {
@@ -934,7 +939,10 @@ impl DataNetlinkActor {
                                 // Handle specific errors
                                 if let Some(os_error) = e.raw_os_error() {
                                     if os_error == ENOBUFS {
-                                        warn!("Netlink receive buffer full (ENOBUFS). Consider increasing buffer size or processing messages faster. Error: {:?}", e);
+                                        warn!(
+                                            "Netlink receive buffer full (ENOBUFS). poll_interval_ms={}. Consider reducing --socket-readiness-timeout-ms or increasing buffer. Error: {:?}",
+                                            actor.socket_readiness_timeout_ms, e
+                                        );
                                         // Don't disconnect on ENOBUFS, just continue
                                         continue;
                                     }
@@ -975,7 +983,7 @@ impl DataNetlinkActor {
                 Err(e) => {
                     warn!("Poll error: {:?}", e);
                     // Wait a bit before retrying to avoid busy loop on persistent poll errors
-                    sleep(Duration::from_millis(SOCKET_READINESS_TIMEOUT_MS));
+                    sleep(Duration::from_millis(actor.socket_readiness_timeout_ms));
                 }
             }
         }
@@ -1168,7 +1176,7 @@ pub mod test {
         let (command_sender, command_receiver) = channel(1);
         let (buffer_sender, mut buffer_receiver) = channel(1);
 
-        let mut actor = DataNetlinkActor::new("family", "group", command_receiver, 0);
+        let mut actor = DataNetlinkActor::new("family", "group", command_receiver, 0, DEFAULT_SOCKET_READINESS_TIMEOUT_MS);
         actor.add_recipient(buffer_sender);
 
         let task = spawn(DataNetlinkActor::run(actor));

@@ -187,6 +187,14 @@ struct Args {
     )]
     netlink_rcvbuf: usize,
 
+    /// Socket readiness poll interval in milliseconds. Shorter than HFT sample interval (e.g. 10 ms) reduces ENOBUFS.
+    #[arg(
+        long,
+        default_value = "5",
+        help = "Poll interval in ms for netlink socket readiness. Default 5"
+    )]
+    socket_readiness_timeout_ms: u64,
+
     /// Channel capacity for data_netlink to ipfix communication (IPFIX records)
     #[arg(
         long,
@@ -283,6 +291,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.comm_stats_interval
     );
     info!(
+        "Socket readiness poll interval: {} ms",
+        args.socket_readiness_timeout_ms
+    );
+    info!(
         "Channel capacities - ipfix_records: {}, stats_reporter: {}, counter_db: {}, otel: {}",
         args.data_netlink_capacity, args.stats_reporter_capacity, args.counter_db_capacity, args.otel_capacity
     );
@@ -315,6 +327,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         group.as_str(),
         command_receiver,
         args.netlink_rcvbuf,
+        args.socket_readiness_timeout_ms,
     );
     data_netlink.add_recipient(ipfix_record_sender);
 
