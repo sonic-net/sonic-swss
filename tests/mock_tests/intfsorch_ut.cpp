@@ -138,7 +138,7 @@ namespace intfsorch_test
                 CFG_VNET_RT_TUNNEL_TABLE_NAME
             };
 
-            auto* vnet_orch = new VNetOrch(m_app_db.get(), APP_VNET_TABLE_NAME);
+            auto* vnet_orch = new VNetOrch(m_app_db.get(), APP_VNET_TABLE_NAME, m_state_db.get());
             gDirectory.set(vnet_orch);
             auto* cfg_vnet_rt_orch = new VNetCfgRouteOrch(m_config_db.get(), m_app_db.get(), cfg_vnet_tables);
             gDirectory.set(cfg_vnet_rt_orch);
