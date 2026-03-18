@@ -24,7 +24,7 @@ use crate::actor::{
 
 // Internal exit codes
 use countersyncd::exit_codes::{EXIT_FAILURE, EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED, EXIT_SUCCESS};
-use crate::utilities::{set_comm_capacity, ChannelLabel};
+use crate::utilities::{set_comm_capacity, set_comm_log_interval_secs, ChannelLabel};
 
 /// Initialize logging based on command line arguments
 fn init_logging(log_level: &str, log_format: &str) {
@@ -171,6 +171,14 @@ struct Args {
     )]
     log_format: String,
 
+    /// Interval (seconds) between periodic comm stats log lines (channel queue stats)
+    #[arg(
+        long,
+        default_value = "600",
+        help = "Interval in seconds for logging comm stats (channel lengths). Use a shorter value (e.g. 60) when verifying HFT processing slowness"
+    )]
+    comm_stats_interval: u64,
+
     /// Channel capacity for data_netlink to ipfix communication (IPFIX records)
     #[arg(
         long,
@@ -263,9 +271,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     info!(
+        "Comm stats log interval: {} seconds",
+        args.comm_stats_interval
+    );
+    info!(
         "Channel capacities - ipfix_records: {}, stats_reporter: {}, counter_db: {}, otel: {}",
         args.data_netlink_capacity, args.stats_reporter_capacity, args.counter_db_capacity, args.otel_capacity
     );
+
+    set_comm_log_interval_secs(args.comm_stats_interval);
 
     // Create communication channels between actors with configurable capacities
     let (command_sender, command_receiver) = channel(10); // Keep small buffer for commands
