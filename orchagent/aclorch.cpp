@@ -62,6 +62,14 @@ acl_rule_attr_lookup_t aclMatchLookup =
     { MATCH_DST_IP,            SAI_ACL_ENTRY_ATTR_FIELD_DST_IP },
     { MATCH_SRC_IPV6,          SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6 },
     { MATCH_DST_IPV6,          SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6 },
+    { MATCH_SRC_IPV6_WORD3,    SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD3 },
+    { MATCH_SRC_IPV6_WORD2,    SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD2 },
+    { MATCH_SRC_IPV6_WORD1,    SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD1 },
+    { MATCH_SRC_IPV6_WORD0,    SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD0 },
+    { MATCH_DST_IPV6_WORD3,    SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD3 },
+    { MATCH_DST_IPV6_WORD2,    SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD2 },
+    { MATCH_DST_IPV6_WORD1,    SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD1 },
+    { MATCH_DST_IPV6_WORD0,    SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD0 },
     { MATCH_L4_SRC_PORT,       SAI_ACL_ENTRY_ATTR_FIELD_L4_SRC_PORT },
     { MATCH_L4_DST_PORT,       SAI_ACL_ENTRY_ATTR_FIELD_L4_DST_PORT },
     { MATCH_ETHER_TYPE,        SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE },
@@ -216,6 +224,46 @@ static acl_table_action_list_lookup_t defaultAclActionList =
     {
         // L3V6
         TABLE_TYPE_L3V6,
+        {
+            {
+                ACL_STAGE_INGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                    SAI_ACL_ACTION_TYPE_REDIRECT
+                }
+            },
+            {
+                ACL_STAGE_EGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                    SAI_ACL_ACTION_TYPE_REDIRECT
+                }
+            }
+        }
+    },
+    {
+        // L3V6UpperLite
+        TABLE_TYPE_L3V6UPPERLITE,
+        {
+            {
+                ACL_STAGE_INGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                    SAI_ACL_ACTION_TYPE_REDIRECT
+                }
+            },
+            {
+                ACL_STAGE_EGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                    SAI_ACL_ACTION_TYPE_REDIRECT
+                }
+            }
+        }
+    },
+    {
+        // L3V6Lite
+        TABLE_TYPE_L3V6LITE,
         {
             {
                 ACL_STAGE_INGRESS,
@@ -1092,8 +1140,48 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
                 SWSS_LOG_ERROR("IP type is not v6 type");
                 return false;
             }
-            memcpy(matchData.data.ip6, ip.getIp().getV6Addr(), 16);
-            memcpy(matchData.mask.ip6, ip.getMask().getV6Addr(), 16);
+
+            // Get the full 16-byte IPv6 address and mask
+            const uint8_t *ipv6_addr = ip.getIp().getV6Addr();
+            const uint8_t *ipv6_mask = ip.getMask().getV6Addr();
+
+            // Check if this table type uses IPv6 word fields instead of full IPv6
+            string table_type = m_pTable->type.getName();
+            if (table_type == TABLE_TYPE_L3V6UPPERLITE)
+            {
+                // For L3V6UpperLite tables, automatically split IPv6 address into upper words
+                // and create separate match entries for WORD3 and WORD2
+                // Extract WORD3 (bits 127:96, bytes 0-3)
+                sai_acl_field_data_t word3Data{};
+                word3Data.enable = true;
+                memset(word3Data.data.ip6, 0, sizeof(sai_ip6_t));
+                memset(word3Data.mask.ip6, 0, sizeof(sai_ip6_t));
+                memcpy(word3Data.data.ip6, ipv6_addr, 4);
+                memcpy(word3Data.mask.ip6, ipv6_mask, 4);
+
+                string word3_attr = (attr_name == MATCH_SRC_IPV6) ? MATCH_SRC_IPV6_WORD3 : MATCH_DST_IPV6_WORD3;
+                if (!setMatch(aclMatchLookup[word3_attr], word3Data))
+                {
+                    return false;
+                }
+
+                // Extract WORD2 (bits 95:64, bytes 4-7)
+                sai_acl_field_data_t word2Data{};
+                word2Data.enable = true;
+                memset(word2Data.data.ip6, 0, sizeof(sai_ip6_t));
+                memset(word2Data.mask.ip6, 0, sizeof(sai_ip6_t));
+                memcpy(word2Data.data.ip6, ipv6_addr + 4, 4);
+                memcpy(word2Data.mask.ip6, ipv6_mask + 4, 4);
+
+                string word2_attr = (attr_name == MATCH_SRC_IPV6) ? MATCH_SRC_IPV6_WORD2 : MATCH_DST_IPV6_WORD2;
+                return setMatch(aclMatchLookup[word2_attr], word2Data);
+            }
+            else
+            {
+                // For other table types, use the full IPv6 address
+                memcpy(matchData.data.ip6, ipv6_addr, 16);
+                memcpy(matchData.mask.ip6, ipv6_mask, 16);
+            }
         }
         else if ((attr_name == MATCH_L4_SRC_PORT_RANGE) || (attr_name == MATCH_L4_DST_PORT_RANGE))
         {
@@ -3632,6 +3720,50 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
         m_metaDataMgr.populateRange(metadataMin, metadataMax);
 
     }
+
+    // Query IPv6 word field capabilities
+    {
+        sai_attr_capability_t capability;
+        sai_status_t status;
+
+        const vector<pair<sai_acl_entry_attr_t, string>> ipv6_word_fields = {
+            {SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD3, "SRC_IPV6_WORD3"},
+            {SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD2, "SRC_IPV6_WORD2"},
+            {SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD1, "SRC_IPV6_WORD1"},
+            {SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD0, "SRC_IPV6_WORD0"},
+            {SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD3, "DST_IPV6_WORD3"},
+            {SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD2, "DST_IPV6_WORD2"},
+            {SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD1, "DST_IPV6_WORD1"},
+            {SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD0, "DST_IPV6_WORD0"}
+        };
+
+        for (const auto& field : ipv6_word_fields)
+        {
+            status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_ACL_ENTRY, field.first, &capability);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_WARN("Could not query %s capability: %d", field.second.c_str(), status);
+            }
+            else
+            {
+                if (capability.create_implemented && capability.set_implemented)
+                {
+                    SWSS_LOG_NOTICE("ACL field %s is supported (create: %d, set: %d)",
+                                   field.second.c_str(),
+                                   capability.create_implemented,
+                                   capability.set_implemented);
+                }
+                else
+                {
+                    SWSS_LOG_WARN("ACL field %s has limited support (create: %d, set: %d)",
+                                 field.second.c_str(),
+                                 capability.create_implemented,
+                                 capability.set_implemented);
+                }
+            }
+        }
+    }
+
     // Store the capabilities in state database
     // TODO: Move this part of the code into syncd
     vector<FieldValueTuple> fvVector;
@@ -3732,6 +3864,27 @@ void AclOrch::initDefaultTableTypes(const string& platform, const string& sub_pl
             .build()
     );
 
+    addAclTableType(
+        builder.withName(TABLE_TYPE_L3V6UPPERLITE)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_LAG)
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6_WORD3))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6_WORD2))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6_WORD3))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6_WORD2))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER))
+            .build()
+    );
+
+    addAclTableType(
+        builder.withName(TABLE_TYPE_L3V6LITE)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_LAG)
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER))
+            .build()
+    );
 
     addAclTableType(
         builder.withName(TABLE_TYPE_L3V4V6)
