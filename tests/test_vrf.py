@@ -254,7 +254,7 @@ class TestVrf(object):
 
         initial_entries_cnt = self.how_many_entries_exist(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
 
-        maximum_vrf_cnt = 999
+        maximum_vrf_cnt = 4096
 
         def create_entry(self, tbl, key, pairs):
             fvs = swsscommon.FieldValuePairs(pairs)
