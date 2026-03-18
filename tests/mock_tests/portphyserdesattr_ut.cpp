@@ -33,6 +33,20 @@ namespace portphyserdesattr_test
     // Test mode flag for partial attribute support testing
     bool g_test_partial_support_mode = false;
 
+    // RAII guard to ensure g_test_partial_support_mode is always restored
+    class PartialSupportModeGuard
+    {
+    public:
+        PartialSupportModeGuard()
+        {
+            g_test_partial_support_mode = true;
+        }
+        ~PartialSupportModeGuard()
+        {
+            g_test_partial_support_mode = false;
+        }
+    };
+
     // Mock SAI get_port_serdes_attribute to simulate SERDES capability checks
     sai_status_t _ut_stub_sai_get_port_serdes_attribute(
         _In_ sai_object_id_t port_serdes_id,
@@ -354,7 +368,7 @@ namespace portphyserdesattr_test
     {
         ASSERT_NE(gPortsOrch, nullptr);
 
-	// queryPortPhySerdesAttrCapabilities() is called  in PortsOrch Contructor
+	// queryPortPhySerdesAttrCapabilities() is called  in PortsOrch Constructor
         ASSERT_FALSE(gPortsOrch->m_supported_phy_serdes_attrs.empty());
 
         for (const auto& attr : gPortsOrch->m_supported_phy_serdes_attrs)
@@ -428,7 +442,7 @@ namespace portphyserdesattr_test
         ASSERT_NE(gPortsOrch, nullptr);
 
         // Enable partial support mode: only RX_VGA supported, TX_FIR_TAPS_LIST not supported
-        g_test_partial_support_mode = true;
+        PartialSupportModeGuard partialSupportGuard;
 
         auto flexCounterDb = make_shared<swss::DBConnector>("FLEX_COUNTER_DB", 0);
         auto flexCounterTable = make_shared<swss::Table>(flexCounterDb.get(), "FLEX_COUNTER_TABLE");
@@ -446,7 +460,6 @@ namespace portphyserdesattr_test
 
         if (port_serdes_id == SAI_NULL_OBJECT_ID)
         {
-            g_test_partial_support_mode = false;
             SUCCEED() << "Port does not have a valid SERDES ID, skipping verification";
             return;
         }
@@ -488,7 +501,6 @@ namespace portphyserdesattr_test
 
         // Cleanup
         gPortsOrch->clearPortPhySerdesAttrCounterMap();
-        g_test_partial_support_mode = false;
     }
 } // namespace portphyserdesattr_test
 

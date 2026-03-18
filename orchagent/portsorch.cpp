@@ -4081,23 +4081,22 @@ void PortsOrch::registerPort(Port &p)
 
     /* Get Port Serdes Id of this port*/
     sai_object_id_t port_serdes_id = SAI_NULL_OBJECT_ID;
-    port_serdes_id = getPortSerdesIdFromPortId(p.m_port_id);
+    if (p.m_type == Port::Type::PHY) {
+        port_serdes_id = getPortSerdesIdFromPortId(p.m_port_id);
+    }
 
     /* Add port serdes to port mapping */
-    if (p.m_type == Port::Type::PHY)
+    if (port_serdes_id != SAI_NULL_OBJECT_ID)
     {
-        if (port_serdes_id != SAI_NULL_OBJECT_ID)
-        {
-            // Store in memory map
-            m_portIdToSerdesId[p.m_port_id] = port_serdes_id;
+        // Store in memory map
+        m_portIdToSerdesId[p.m_port_id] = port_serdes_id;
 
-            // Store in COUNTERS_DB
-            FieldValueTuple serdes_tuple(sai_serialize_object_id(port_serdes_id),
-                sai_serialize_object_id(p.m_port_id));
-            vector<FieldValueTuple> serdes_fields;
-            serdes_fields.push_back(serdes_tuple);
-            m_portSerdesIdToPortIdTable->set("", serdes_fields);
-        }
+        // Store in COUNTERS_DB
+        FieldValueTuple serdes_tuple(sai_serialize_object_id(port_serdes_id),
+            sai_serialize_object_id(p.m_port_id));
+        vector<FieldValueTuple> serdes_fields;
+        serdes_fields.push_back(serdes_tuple);
+        m_portSerdesIdToPortIdTable->set("", serdes_fields);
     }
 
     // Install a flex counter for this port to track stats
