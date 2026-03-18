@@ -1142,8 +1142,11 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
             }
 
             // Get the full 16-byte IPv6 address and mask
-            const uint8_t *ipv6_addr = ip.getIp().getV6Addr();
-            const uint8_t *ipv6_mask = ip.getMask().getV6Addr();
+            // Store temporary objects to avoid dangling pointers
+            auto ipv6_ip = ip.getIp();
+            auto ipv6_mask_obj = ip.getMask();
+            const uint8_t *ipv6_addr = ipv6_ip.getV6Addr();
+            const uint8_t *ipv6_mask = ipv6_mask_obj.getV6Addr();
 
             // Check if this table type uses IPv6 word fields instead of full IPv6
             string table_type = m_pTable->type.getName();
