@@ -71,6 +71,7 @@ StpOrch *gStpOrch;
 MuxOrch *gMuxOrch;
 IcmpOrch *gIcmpOrch;
 HFTelOrch *gHFTOrch;
+TamOrch *gTamOrch;
 
 bool gIsNatSupported = false;
 event_handle_t g_events_handle;
@@ -610,6 +611,18 @@ bool OrchDaemon::init()
     vector<string> pfc_wd_tables = {
         CFG_PFC_WD_TABLE_NAME
     };
+
+    vector<string> tam_tables = {
+        CFG_TAM_TABLE_NAME,
+        CFG_TAM_COLLECTOR_TABLE_NAME,
+        CFG_TAM_FLOW_GROUP_TABLE_NAME,
+        CFG_TAM_SESSION_TABLE_NAME
+    };
+    TableConnector stateDbTamTable(m_stateDb, STATE_TAM_DROP_MONITOR_SESSION_TABLE_NAME);
+    gTamOrch = new TamOrch(m_configDb, tam_tables, stateDbTamTable, gAclOrch, gPortsOrch, vrf_orch,
+                   gRouteOrch, gNeighOrch, gFdbOrch);
+    m_orchList.push_back(gTamOrch);
+    gDirectory.set(gTamOrch);
 
     if ((platform == MLNX_PLATFORM_SUBSTRING)  || (platform == VS_PLATFORM_SUBSTRING))
     {

@@ -178,7 +178,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/high_frequency_telemetry/hftelprofile.cpp \
                 $(top_srcdir)/orchagent/high_frequency_telemetry/counternameupdater.cpp \
                 $(top_srcdir)/orchagent/high_frequency_telemetry/hftelutils.cpp \
-                $(top_srcdir)/orchagent/high_frequency_telemetry/hftelgroup.cpp
+                $(top_srcdir)/orchagent/high_frequency_telemetry/hftelgroup.cpp \
+		$(top_srcdir)/orchagent/tamorch.cpp
 
 
 tests_SOURCES += $(FLEX_CTR_DIR)/flex_counter_manager.cpp $(FLEX_CTR_DIR)/flex_counter_stat_manager.cpp $(FLEX_CTR_DIR)/flow_counter_handler.cpp $(FLEX_CTR_DIR)/flowcounterrouteorch.cpp
