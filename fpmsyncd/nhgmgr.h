@@ -361,6 +361,22 @@ namespace swss {
          */
         int setEntry(SonicGateWayNHGObject nhg);
 
+        /*
+         * add the ref count of the entry
+         */
+        void addRefCount();
+
+        /*
+         * subtract the ref count of the entry
+         */
+        void subRefCount();
+
+        /*
+         * get the ref count of the entry
+         */
+        uint32_t getRefCount() {
+            return m_ref_count;
+        };
     private:
         /*
          * RIB ID of the entry
@@ -417,6 +433,11 @@ namespace swss {
          * DB FV vector of the entry
          */
         vector<FieldValueTuple> m_fvVector;
+
+        /*
+         * ref count of the entry
+         */
+        uint32_t m_ref_count = 1;
 
         /*
          * set the value of entry from SonicGateWayNHGObject for SRv6 Gateway Object
