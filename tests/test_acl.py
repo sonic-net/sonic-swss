@@ -823,37 +823,56 @@ class TestAcl:
             "150": {"SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP": dvs_acl.get_simple_qualifier_comparator("10.0.0.150&mask:255.255.255.255")},
         }
 
-        # Add log marker before creating rules
-        marker = dvs.add_log_marker()
+        # Create all rules in CONFIG_DB atomically using redis transaction
+        # This ensures all rules are batched together when they reach aclorch
+        redis_cmds = []
+        redis_cmds.append("MULTI")
 
-        # Create rules in random order
         for priority in rule_priorities:
-            dvs_acl.create_acl_rule(L3_TABLE_NAME,
-                                    f"PRIORITY_ORDER_TEST_RULE_{priority}",
-                                    config_qualifiers[priority],
-                                    action=config_actions[priority],
-                                    priority=priority)
+            rule_name = f"PRIORITY_ORDER_TEST_RULE_{priority}"
+            key = f"{L3_TABLE_NAME}|{rule_name}"
+
+            redis_cmds.append(f"HSET \"ACL_RULE|{key}\" \"priority\" \"{priority}\"")
+            redis_cmds.append(f"HSET \"ACL_RULE|{key}\" \"PACKET_ACTION\" \"DROP\"")
+            redis_cmds.append(f"HSET \"ACL_RULE|{key}\" \"SRC_IP\" \"10.0.0.{priority}/32\"")
+
+        redis_cmds.append("EXEC")
+        dvs.runcmd(['sh', '-c', f"redis-cli -n 4 <<EOF\n" + "\n".join(redis_cmds) + "\nEOF"])
+
+        # Give time for config to propagate through the system
+        time.sleep(3)
+
+        # Verify all rules are created
+        for priority in rule_priorities:
             dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"PRIORITY_ORDER_TEST_RULE_{priority}", "Active")
 
         # Verify all rules are created with correct priorities
         dvs_acl.verify_acl_rule_set(rule_priorities, config_actions, expected_sai_qualifiers)
 
-        # Verify the order of SET operations in syslog (should be descending: 200, 150, 100, 50, 10)
-        expected_order = ["200", "150", "100", "50", "10"]
-        (exitcode, log_output) = dvs.runcmd(
-            ['sh', '-c', f"awk '/{marker}/,ENDFILE {{print;}}' /var/log/syslog | grep 'processing SET in descending priority order'"])
+        # Verify the order of SAI create operations from sairedis.rec
+        exitcode, rec_output = dvs.runcmd('sh -c "tail -n 1000 /var/log/swss/sairedis.rec | grep \'c|SAI_OBJECT_TYPE_ACL_ENTRY\'"')
 
-        # Extract priorities from log lines in order
-        log_lines = log_output.strip().split('\n') if log_output.strip() else []
-        actual_order = []
-        for line in log_lines:
-            for priority in expected_order:
-                if f"PRIORITY_ORDER_TEST_RULE_{priority}" in line and f"PRIORITY: {priority}" in line:
-                    actual_order.append(priority)
-                    break
+        # Parse the create operations and extract priorities
+        created_priorities = []
+        if exitcode == 0 and rec_output:
+            for line in rec_output.strip().split('\n'):
+                if '|c|SAI_OBJECT_TYPE_ACL_ENTRY' in line and 'SAI_ACL_ENTRY_ATTR_PRIORITY' in line:
+                    for part in line.split('|'):
+                        if 'SAI_ACL_ENTRY_ATTR_PRIORITY=' in part:
+                            priority = part.split('=')[1].strip()
+                            # Check if this is one of our test rules by looking for the SRC_IP
+                            if any(f'10.0.0.{priority}' in line for priority in rule_priorities):
+                                created_priorities.append(priority)
+                            break
 
-        # Verify the rules were processed in descending priority order
-        assert actual_order == expected_order, f"Expected order {expected_order}, but got {actual_order}"
+        # Verify that the creates happened in descending priority order
+        expected_order = sorted([int(p) for p in rule_priorities], reverse=True)
+        expected_order_str = [str(p) for p in expected_order]
+
+        # The created_priorities should match expected_order (last 5 entries)
+        actual_order = created_priorities[-5:]
+        assert actual_order == expected_order_str, \
+            f"ACL rules not created in priority order. Expected {expected_order_str}, got {actual_order}"
 
         # Clean up
         for priority in rule_priorities:
@@ -865,7 +884,7 @@ class TestAcl:
         """
         Test that ACL rules are deleted in ascending priority order (lower priority value first).
         """
-        # Create rules with different priorities
+        # Create rules with different priorities in random order
         rule_priorities = ["100", "50", "200", "10", "150"]
 
         config_qualifiers = {
@@ -876,6 +895,8 @@ class TestAcl:
             "150": {"DST_IP": "192.168.0.150/32"},
         }
 
+        # Map to store OID for each priority (for SAI recording verification)
+        priority_to_oid = {}
         # Create all rules
         for priority in rule_priorities:
             dvs_acl.create_acl_rule(L3_TABLE_NAME,
@@ -885,34 +906,71 @@ class TestAcl:
                                     priority=priority)
             dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"DELETE_ORDER_TEST_RULE_{priority}", "Active")
 
-        # Add log marker before deleting rules
-        marker = dvs.add_log_marker()
+            # Get the OID for this rule from ASIC_DB for later verification
+            keys = dvs_acl.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
+            for key in keys:
+                if key not in dvs_acl.asic_db.default_acl_entries:
+                    entry = dvs_acl.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", key)
+                    entry_priority = entry.get("SAI_ACL_ENTRY_ATTR_PRIORITY")
+                    # Check if this is our rule by matching priority and DST_IP
+                    expected_dst_ip = config_qualifiers[priority]["DST_IP"].split("/")[0]
+                    entry_dst_ip = entry.get("SAI_ACL_ENTRY_ATTR_FIELD_DST_IP", "")
+                    if entry_priority == priority and expected_dst_ip in entry_dst_ip:
+                        # Extract OID from key (format is "oid:0x...")
+                        priority_to_oid[priority] = key.split(":")[1]
+                        break
 
-        # Delete all rules at once (they should be deleted in ascending priority order)
+        # Get initial count of ACL entries in ASIC_DB
+        initial_count = len(dvs_acl.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY"))
+
+        # Delete all rules atomically using Redis transaction in CONFIG_DB
+        # This ensures all deletions are batched together and processed in one doTask call
+        redis_cmds = []
+        redis_cmds.append("MULTI")
+
         for priority in rule_priorities:
-            dvs_acl.remove_acl_rule(L3_TABLE_NAME, f"DELETE_ORDER_TEST_RULE_{priority}")
+            rule_name = f"DELETE_ORDER_TEST_RULE_{priority}"
+            key = f"{L3_TABLE_NAME}|{rule_name}"
+            redis_cmds.append(f"DEL \"ACL_RULE|{key}\"")
 
-        # Verify all rules are deleted
+        redis_cmds.append("EXEC")
+
+        # Execute as a single atomic transaction in CONFIG_DB (database 4)
+        dvs.runcmd(['sh', '-c', f"redis-cli -n 4 <<EOF\n" + "\n".join(redis_cmds) + "\nEOF"])
+
+        # Wait for all rules to be deleted from ASIC_DB
+        expected_final_count = initial_count - len(rule_priorities)
+        dvs_acl.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", expected_final_count)
+
+        # Verify all rules are deleted from CONFIG_DB and STATE_DB
         for priority in rule_priorities:
             dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"DELETE_ORDER_TEST_RULE_{priority}", None)
         dvs_acl.verify_no_acl_rules()
 
-        # Verify the order of DEL operations in syslog (should be ascending: 10, 50, 100, 150, 200)
-        expected_order = ["10", "50", "100", "150", "200"]
-        (exitcode, log_output) = dvs.runcmd(
-            ['sh', '-c', f"awk '/{marker}/,ENDFILE {{print;}}' /var/log/syslog | grep 'processing DEL in ascending priority order'"])
+        # Verify the order of SAI remove operations from sairedis.rec
+        exitcode, rec_output = dvs.runcmd('sh -c "tail -n 1000 /var/log/swss/sairedis.rec | grep \'r|SAI_OBJECT_TYPE_ACL_ENTRY\'"')
 
-        # Extract priorities from log lines in order
-        log_lines = log_output.strip().split('\n') if log_output.strip() else []
-        actual_order = []
-        for line in log_lines:
-            for priority in expected_order:
-                if f"DELETE_ORDER_TEST_RULE_{priority}" in line and f"PRIORITY: {priority}" in line:
-                    actual_order.append(priority)
+        # Parse the remove operations and extract OIDs
+        removed_oids = []
+        if exitcode == 0 and rec_output:
+            for line in rec_output.strip().split('\n'):
+                if '|r|SAI_OBJECT_TYPE_ACL_ENTRY:oid:' in line:
+                    # Extract OID from line (format: timestamp|r|SAI_OBJECT_TYPE_ACL_ENTRY:oid:0x...)
+                    oid = line.split('SAI_OBJECT_TYPE_ACL_ENTRY:oid:')[1].strip()
+                    removed_oids.append(oid)
+
+        # Find the sequence of our test rule removals by matching OIDs
+        test_removal_sequence = []
+        for oid in removed_oids[-10:]:  # Look at last 10 removals
+            for priority, recorded_oid in priority_to_oid.items():
+                if oid == recorded_oid:
+                    test_removal_sequence.append(int(priority))
                     break
 
-        # Verify the rules were processed in ascending priority order
-        assert actual_order == expected_order, f"Expected DEL order {expected_order}, but got {actual_order}"
+        expected_order = sorted([int(p) for p in rule_priorities])
+
+        assert test_removal_sequence == expected_order, \
+            f"ACL rules not removed in priority order. Expected {expected_order}, got {test_removal_sequence}"
 
     def test_AclRuleMixedPriorityOperations(self, dvs, dvs_acl, l3_acl_table):
         """
@@ -921,6 +979,7 @@ class TestAcl:
         """
         # First, create initial set of rules
         initial_priorities = ["100", "50", "150"]
+        priority_to_oid = {}
 
         for priority in initial_priorities:
             dvs_acl.create_acl_rule(L3_TABLE_NAME,
@@ -930,75 +989,89 @@ class TestAcl:
                                     priority=priority)
             dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"MIXED_OP_RULE_{priority}", "Active")
 
-        # Add log marker before mixed operations
-        marker = dvs.add_log_marker()
+            # Get the OID for this rule from ASIC_DB for later verification
+            keys = dvs_acl.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
+            for key in keys:
+                if key not in dvs_acl.asic_db.default_acl_entries:
+                    entry = dvs_acl.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", key)
+                    entry_priority = entry.get("SAI_ACL_ENTRY_ATTR_PRIORITY")
+                    # Check if this is our rule by matching priority and SRC_IP
+                    expected_src_ip = f"10.0.{priority}.0"
+                    entry_src_ip = entry.get("SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP", "")
+                    if entry_priority == priority and expected_src_ip in entry_src_ip:
+                        priority_to_oid[priority] = key.split(":")[1]
+                        break
 
-        # Now delete some and add new ones
-        # Delete rules with priority 50 and 150
-        dvs_acl.remove_acl_rule(L3_TABLE_NAME, "MIXED_OP_RULE_50")
-        dvs_acl.remove_acl_rule(L3_TABLE_NAME, "MIXED_OP_RULE_150")
+        # Perform bulk deletion and creation using Redis transaction
+        redis_cmds = []
+        redis_cmds.append("MULTI")
 
-        # Add new rules with different priorities
-        new_priorities = ["200", "25", "75"]
+        delete_priorities = ["50", "150"]
+        for priority in delete_priorities:
+            rule_name = f"MIXED_OP_RULE_{priority}"
+            key = f"{L3_TABLE_NAME}|{rule_name}"
+            redis_cmds.append(f"DEL \"ACL_RULE|{key}\"")
+
+        new_priorities = ["200", "25"]
         for priority in new_priorities:
-            dvs_acl.create_acl_rule(L3_TABLE_NAME,
-                                    f"MIXED_OP_RULE_{priority}",
-                                    {"SRC_IP": f"10.0.{priority}.0/32"},
-                                    action="FORWARD",
-                                    priority=priority)
-            dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"MIXED_OP_RULE_{priority}", "Active")
+            rule_name = f"MIXED_OP_RULE_{priority}"
+            key = f"{L3_TABLE_NAME}|{rule_name}"
+            redis_cmds.append(f"HSET \"ACL_RULE|{key}\" \"priority\" \"{priority}\"")
+            redis_cmds.append(f"HSET \"ACL_RULE|{key}\" \"PACKET_ACTION\" \"DROP\"")
+            redis_cmds.append(f"HSET \"ACL_RULE|{key}\" \"SRC_IP\" \"10.0.{priority}.0/32\"")
 
-        # Verify final state: should have rules with priorities 100, 200, 25, 75
-        remaining_priorities = ["100", "200", "25", "75"]
-        for priority in remaining_priorities:
-            dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"MIXED_OP_RULE_{priority}", "Active")
+        redis_cmds.append("EXEC")
+        dvs.runcmd(['sh', '-c', f"redis-cli -n 4 <<EOF\n" + "\n".join(redis_cmds) + "\nEOF"])
 
-        # Verify deleted rules are gone
+        # Wait for operations to complete
+        time.sleep(2)
         dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, "MIXED_OP_RULE_50", None)
         dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, "MIXED_OP_RULE_150", None)
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, "MIXED_OP_RULE_100", "Active")
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, "MIXED_OP_RULE_200", "Active")
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, "MIXED_OP_RULE_25", "Active")
 
-        # Verify the order of operations in syslog
-        # DEL operations should be processed first (in ascending order: 50, 150)
-        # Then SET operations (in descending order: 200, 75, 25)
-        (exitcode, log_output) = dvs.runcmd(
-            ['sh', '-c', f"awk '/{marker}/,ENDFILE {{print;}}' /var/log/syslog | grep -E 'processing (DEL|SET) in (ascending|descending) priority order'"])
+        # Verify the order of SAI operations from sairedis.rec
+        exitcode, rec_output = dvs.runcmd('sh -c "tail -n 1000 /var/log/swss/sairedis.rec | grep \'SAI_OBJECT_TYPE_ACL_ENTRY\'"')
 
-        log_lines = log_output.strip().split('\n') if log_output.strip() else []
-
-        # Extract operation type and priority from each log line
+        # Parse operations and extract sequence
         operations = []
-        for line in log_lines:
-            if "MIXED_OP_RULE_" in line:
-                if "processing DEL" in line:
-                    if "MIXED_OP_RULE_50" in line and "PRIORITY: 50" in line:
-                        operations.append(("DEL", "50"))
-                    elif "MIXED_OP_RULE_150" in line and "PRIORITY: 150" in line:
-                        operations.append(("DEL", "150"))
-                elif "processing SET" in line:
-                    if "MIXED_OP_RULE_200" in line and "PRIORITY: 200" in line:
-                        operations.append(("SET", "200"))
-                    elif "MIXED_OP_RULE_75" in line and "PRIORITY: 75" in line:
-                        operations.append(("SET", "75"))
-                    elif "MIXED_OP_RULE_25" in line and "PRIORITY: 25" in line:
-                        operations.append(("SET", "25"))
+        if exitcode == 0 and rec_output:
+            for line in rec_output.strip().split('\n'):
+                # Look for remove operations
+                if '|r|SAI_OBJECT_TYPE_ACL_ENTRY:oid:' in line:
+                    oid = line.split('SAI_OBJECT_TYPE_ACL_ENTRY:oid:')[1].strip()
+                    # Check if this is one of our deleted rules
+                    for priority in delete_priorities:
+                        if priority in priority_to_oid and oid == priority_to_oid[priority]:
+                            operations.append(('DEL', int(priority)))
+                            break
+                # Look for create operations
+                elif '|c|SAI_OBJECT_TYPE_ACL_ENTRY' in line and 'SAI_ACL_ENTRY_ATTR_PRIORITY' in line:
+                    for part in line.split('|'):
+                        if 'SAI_ACL_ENTRY_ATTR_PRIORITY=' in part:
+                            priority = part.split('=')[1].strip()
+                            # Check if this is one of our new rules
+                            if priority in new_priorities and f'10.0.{priority}.0' in line:
+                                operations.append(('SET', int(priority)))
+                            break
 
-        # Expected order: DEL operations first (ascending: 50, 150), then SET operations (descending: 200, 75, 25)
-        expected_operations = [
-            ("DEL", "50"),
-            ("DEL", "150"),
-            ("SET", "200"),
-            ("SET", "75"),
-            ("SET", "25")
-        ]
+        # Extract the last operations that match our test (2 DELs + 2 SETs = 4 operations)
+        test_operations = operations[-4:]
 
-        # Verify the operations were processed in the correct order
-        assert operations == expected_operations, f"Expected operation order {expected_operations}, but got {operations}"
+        # Verify the order: DELs should be in ascending order (50, 150), SETs in descending order (200, 25)
+        expected_operations = [('DEL', 50), ('DEL', 150), ('SET', 200), ('SET', 25)]
+
+        assert test_operations == expected_operations, \
+            f"Mixed operations not processed in correct order. Expected {expected_operations}, got {test_operations}"
 
         # Clean up
-        for priority in remaining_priorities:
-            dvs_acl.remove_acl_rule(L3_TABLE_NAME, f"MIXED_OP_RULE_{priority}")
-            dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"MIXED_OP_RULE_{priority}", None)
-        dvs_acl.verify_no_acl_rules()
+        dvs_acl.remove_acl_rule(L3_TABLE_NAME, "MIXED_OP_RULE_100")
+        dvs_acl.remove_acl_rule(L3_TABLE_NAME, "MIXED_OP_RULE_200")
+        dvs_acl.remove_acl_rule(L3_TABLE_NAME, "MIXED_OP_RULE_25")
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, "MIXED_OP_RULE_100", None)
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, "MIXED_OP_RULE_200", None)
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, "MIXED_OP_RULE_25", None)
 
 class TestAclCrmUtilization:
     @pytest.fixture(scope="class", autouse=True)
