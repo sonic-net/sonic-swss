@@ -245,27 +245,38 @@ void NbrMgr::reconcileNeighResolveTable(DBConnector *appDb)
 
     SWSS_LOG_NOTICE("Reconciling %zu pending entries in NEIGH_RESOLVE_TABLE", keys.size());
 
+    string tableSeparator = neighResolveTable.getTableNameSeparator();
+
     for (const auto &key : keys)
     {
-        if (key.find(':') == string::npos)
+        try
         {
-            SWSS_LOG_ERROR("Failed to parse NEIGH_RESOLVE_TABLE key '%s'", key.c_str());
+            if (key.find(tableSeparator) == string::npos)
+            {
+                SWSS_LOG_ERROR("Failed to parse NEIGH_RESOLVE_TABLE key '%s'", key.c_str());
+                continue;
+            }
+
+            vector<string> parsedKeys = parseAliasIp(key, tableSeparator.c_str());
+
+            MacAddress mac;
+            IpAddress ip(parsedKeys[1]);
+            string alias(parsedKeys[0]);
+
+            if (!setNeighbor(alias, ip, mac))
+            {
+                SWSS_LOG_WARN("Neigh entry resolve failed for '%s' during reconciliation", key.c_str());
+            }
+            else
+            {
+                SWSS_LOG_INFO("Reconciled NEIGH_RESOLVE entry '%s'", key.c_str());
+            }
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("Exception during reconciliation of NEIGH_RESOLVE_TABLE key '%s': %s",
+                           key.c_str(), e.what());
             continue;
-        }
-
-        vector<string> parsedKeys = parseAliasIp(key, ":");
-
-        MacAddress mac;
-        IpAddress ip(parsedKeys[1]);
-        string alias(parsedKeys[0]);
-
-        if (!setNeighbor(alias, ip, mac))
-        {
-            SWSS_LOG_WARN("Neigh entry resolve failed for '%s' during reconciliation", key.c_str());
-        }
-        else
-        {
-            SWSS_LOG_INFO("Reconciled NEIGH_RESOLVE entry '%s'", key.c_str());
         }
     }
 }
