@@ -104,15 +104,13 @@ ReturnCode GreTunnelManager::validateGreTunnelAppDbEntry(
 }
 
 ReturnCode GreTunnelManager::validateGreTunnelAppDbEntry(
-    const P4GreTunnelAppDbEntry& app_db_entry,
-    const std::string& operation) {
+    const P4GreTunnelAppDbEntry& app_db_entry, const std::string& operation) {
   SWSS_LOG_ENTER();
 
-  P4GreTunnelEntry entry = P4GreTunnelEntry(app_db_entry.tunnel_id,
-                                            app_db_entry.router_interface_id,
-                                            app_db_entry.encap_src_ip,
-                                            app_db_entry.encap_dst_ip,
-                                            app_db_entry.encap_dst_ip);
+  P4GreTunnelEntry entry =
+      P4GreTunnelEntry(app_db_entry.tunnel_id, app_db_entry.router_interface_id,
+                       app_db_entry.encap_src_ip, app_db_entry.encap_dst_ip,
+                       app_db_entry.encap_dst_ip);
 
   const auto router_interface_key =
       KeyGenerator::generateRouterInterfaceKey(entry.router_interface_id);
@@ -120,8 +118,7 @@ ReturnCode GreTunnelManager::validateGreTunnelAppDbEntry(
   if (operation == SET_COMMAND) {
     RETURN_IF_ERROR(validateGreTunnelAppDbEntry(app_db_entry));
     if (getGreTunnelEntry(entry.tunnel_key) == nullptr) {
-      if (m_p4OidMapper->existsOID(
-          SAI_OBJECT_TYPE_TUNNEL, entry.tunnel_key)) {
+      if (m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_TUNNEL, entry.tunnel_key)) {
         RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL(
             "GRE tunnel with key " << QuotedVar(entry.tunnel_key)
                                    << " already exists in centralized mapper");
@@ -136,6 +133,18 @@ ReturnCode GreTunnelManager::validateGreTunnelAppDbEntry(
                              << "Router intf "
                              << QuotedVar(entry.router_interface_id)
                              << " does not exist");
+      }
+      // From centralized mapper, get neighbor key that GRE tunnel
+      // depends on.
+      const auto neighbor_key = KeyGenerator::generateNeighborKey(
+          entry.router_interface_id, entry.neighbor_id);
+      if (!m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY,
+                                    neighbor_key)) {
+        LOG_ERROR_AND_RETURN(
+            ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+            << "Neighbor with rif=" << QuotedVar(entry.router_interface_id)
+            << ", neighbor_ip=" << QuotedVar(entry.neighbor_id.to_string())
+            << " does not exist");
       }
     }
   } else if (operation == DEL_COMMAND) {
@@ -157,10 +166,10 @@ ReturnCode GreTunnelManager::validateGreTunnelAppDbEntry(
           << QuotedVar(entry.tunnel_key));
     }
     if (ref_count > 0) {
-      LOG_ERROR_AND_RETURN(
-          ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-          << "GRE tunnel " << QuotedVar(entry.tunnel_key)
-          << " referenced by other objects (ref_count = " << ref_count);
+      LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                           << "GRE tunnel " << QuotedVar(entry.tunnel_key)
+                           << " referenced by other objects (ref_count = "
+                           << ref_count);
     }
   }
 
@@ -268,13 +277,13 @@ ReturnCode GreTunnelManager::drain() {
 
     if (operation == SET_COMMAND && update) {
       status = ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
-          << "Currently GRE tunnel doesn't support update by SAI."
-          << "GRE tunnel key " << QuotedVar(tunnel_key);
+               << "Currently GRE tunnel doesn't support update by SAI."
+               << "GRE tunnel key " << QuotedVar(tunnel_key);
       SWSS_LOG_ERROR("%s", status.message().c_str());
 
       m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
                          kfvFieldsValues(key_op_fvs_tuple), status,
-                         /*replace=*/true);
+                           /*replace=*/true);
       break;
     } else {
         entry_list.push_back(app_db_entry);
@@ -381,8 +390,8 @@ std::vector<ReturnCode> GreTunnelManager::createGreTunnels(
   std::vector<P4GreTunnelEntry> entries;
   std::vector<std::string> router_interface_keys(gre_tunnel_entries.size());
   std::vector<sai_object_id_t> tunnel_oids(gre_tunnel_entries.size());
-  std::vector<std::vector<sai_attribute_t>>
-      sai_attrs(gre_tunnel_entries.size());
+  std::vector<std::vector<sai_attribute_t>> sai_attrs(
+      gre_tunnel_entries.size());
   std::vector<uint32_t> attrs_cnt(gre_tunnel_entries.size());
   std::vector<const sai_attribute_t*> attrs_ptr(gre_tunnel_entries.size());
   std::vector<sai_status_t> object_statuses(gre_tunnel_entries.size());
@@ -390,18 +399,16 @@ std::vector<ReturnCode> GreTunnelManager::createGreTunnels(
 
   for (size_t i = 0; i < gre_tunnel_entries.size(); ++i) {
     statuses[i] = StatusCode::SWSS_RC_UNKNOWN;
-    entries.push_back(
-        P4GreTunnelEntry(gre_tunnel_entries[i].tunnel_id,
-                         gre_tunnel_entries[i].router_interface_id,
-                         gre_tunnel_entries[i].encap_src_ip,
-                         gre_tunnel_entries[i].encap_dst_ip,
-                         gre_tunnel_entries[i].encap_dst_ip));
+    entries.push_back(P4GreTunnelEntry(
+        gre_tunnel_entries[i].tunnel_id,
+        gre_tunnel_entries[i].router_interface_id,
+        gre_tunnel_entries[i].encap_src_ip, gre_tunnel_entries[i].encap_dst_ip,
+        gre_tunnel_entries[i].encap_dst_ip));
 
     // From centralized mapper, get OID of router interface that GRE tunnel
     // depends on.
-    router_interface_keys[i] =
-        KeyGenerator::generateRouterInterfaceKey(
-            entries[i].router_interface_id);
+    router_interface_keys[i] = KeyGenerator::generateRouterInterfaceKey(
+        entries[i].router_interface_id);
     m_p4OidMapper->getOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
                           router_interface_keys[i],
                           &entries[i].underlay_if_oid);
@@ -419,13 +426,10 @@ std::vector<ReturnCode> GreTunnelManager::createGreTunnels(
 
 
   // Call bulk SAI API.
-  sai_tunnel_api->create_tunnels(gSwitchId,
-                                 (uint32_t)entries.size(),
-                                 attrs_cnt.data(),
-                                 attrs_ptr.data(),
+  sai_tunnel_api->create_tunnels(gSwitchId, (uint32_t)entries.size(),
+                                 attrs_cnt.data(), attrs_ptr.data(),
                                  SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR,
-                                 tunnel_oids.data(),
-                                 object_statuses.data());
+                                 tunnel_oids.data(), object_statuses.data());
 
   for (size_t i = 0; i < gre_tunnel_entries.size(); ++i) {
     CHECK_ERROR_AND_LOG(object_statuses[i],
@@ -440,6 +444,12 @@ std::vector<ReturnCode> GreTunnelManager::createGreTunnels(
       // On successful creation, increment ref count.
       m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
                                       router_interface_keys[i]);
+
+      // On successful creation, increment ref count on neighbor object.
+      m_p4OidMapper->increaseRefCount(
+          SAI_OBJECT_TYPE_NEIGHBOR_ENTRY,
+          KeyGenerator::generateNeighborKey(entries[i].router_interface_id,
+                                            entries[i].neighbor_id));
 
       // Add created entry to internal table.
       m_greTunnelTable.emplace(entries[i].tunnel_key, entries[i]);
@@ -478,24 +488,27 @@ std::vector<ReturnCode> GreTunnelManager::removeGreTunnels(
   }
 
   // Call bulk SAI API.
-  sai_tunnel_api->remove_tunnels((uint32_t)gre_tunnel_entries.size(),
-                                 tunnel_oids.data(),
-                                 SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR,
-                                 object_statuses.data());
+  sai_tunnel_api->remove_tunnels(
+      (uint32_t)gre_tunnel_entries.size(), tunnel_oids.data(),
+      SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, object_statuses.data());
 
   for (size_t i = 0; i < gre_tunnel_entries.size(); ++i) {
-    CHECK_ERROR_AND_LOG(object_statuses[i],
-                        "Failed to remove GRE tunnel "
-                        << QuotedVar(entries[i]->tunnel_key));
+    CHECK_ERROR_AND_LOG(
+        object_statuses[i],
+        "Failed to remove GRE tunnel " << QuotedVar(entries[i]->tunnel_key));
 
     if (object_statuses[i] == SAI_STATUS_SUCCESS) {
       statuses[i] = StatusCode::SWSS_RC_SUCCESS;
 
       // On successful deletion, decrement ref count.
+      m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                      KeyGenerator::generateRouterInterfaceKey(
+                                          entries[i]->router_interface_id));
+      // On successful deletion, decrement ref count on Neighbor Key.
       m_p4OidMapper->decreaseRefCount(
-          SAI_OBJECT_TYPE_ROUTER_INTERFACE,
-          KeyGenerator::generateRouterInterfaceKey(
-              entries[i]->router_interface_id));
+          SAI_OBJECT_TYPE_NEIGHBOR_ENTRY,
+          KeyGenerator::generateNeighborKey(entries[i]->router_interface_id,
+                                            entries[i]->neighbor_id));
 
       // Remove the key to OID map to centralized mapper.
       m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_TUNNEL, entries[i]->tunnel_key);
@@ -527,8 +540,9 @@ ReturnCode GreTunnelManager::processEntries(
     } else {
       // Should never happen, as validateGreTunnelAppDbEntry() should fail if
       // the operation is update.
-      LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
-        << "Currently GRE tunnel doesn't support update by SAI.");
+      LOG_ERROR_AND_RETURN(
+          ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
+          << "Currently GRE tunnel doesn't support update by SAI.");
     }
   } else {
     statuses = removeGreTunnels(entries);

@@ -12,6 +12,7 @@
 #include "p4orch/acl_table_manager.h"
 #include "p4orch/ext_tables_manager.h"
 #include "p4orch/gre_tunnel_manager.h"
+#include "p4orch/ip_multicast_manager.h"
 #include "p4orch/l3_admit_manager.h"
 #include "p4orch/l3_multicast_manager.h"
 #include "p4orch/neighbor_manager.h"
@@ -20,6 +21,7 @@
 #include "p4orch/route_manager.h"
 #include "p4orch/router_interface_manager.h"
 #include "p4orch/tables_definition_manager.h"
+#include "p4orch/tunnel_decap_group_manager.h"
 #include "portsorch.h"
 #include "return_code.h"
 #include "sai_serialize.h"
@@ -43,12 +45,16 @@ P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOr
     m_nextHopManager = std::make_unique<NextHopManager>(&m_p4OidMapper, &m_publisher);
     m_l3MulticastManager = std::make_unique<p4orch::L3MulticastManager>(
         &m_p4OidMapper, vrfOrch, &m_publisher);
+    m_ipMulticastManager = std::make_unique<p4orch::IpMulticastManager>(
+        &m_p4OidMapper, vrfOrch, &m_publisher);
     m_routeManager = std::make_unique<RouteManager>(&m_p4OidMapper, vrfOrch, &m_publisher);
     m_mirrorSessionManager = std::make_unique<p4orch::MirrorSessionManager>(&m_p4OidMapper, &m_publisher);
     m_aclTableManager = std::make_unique<p4orch::AclTableManager>(&m_p4OidMapper, &m_publisher);
     m_aclRuleManager = std::make_unique<p4orch::AclRuleManager>(&m_p4OidMapper, vrfOrch, coppOrch, &m_publisher);
     m_wcmpManager = std::make_unique<p4orch::WcmpManager>(&m_p4OidMapper, &m_publisher);
     m_l3AdmitManager = std::make_unique<L3AdmitManager>(&m_p4OidMapper, &m_publisher);
+    m_tunnelDecapGroupManager = std::make_unique<TunnelDecapGroupManager>(
+        &m_p4OidMapper, vrfOrch, &m_publisher);
     m_extTablesManager = std::make_unique<ExtTablesManager>(&m_p4OidMapper, vrfOrch, &m_publisher);
 
     m_p4TableToManagerMap[APP_P4RT_TABLES_DEFINITION_TABLE_NAME] = m_tablesDefnManager.get();
@@ -58,6 +64,10 @@ P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOr
     m_p4TableToManagerMap[APP_P4RT_NEXTHOP_TABLE_NAME] = m_nextHopManager.get();
     m_p4TableToManagerMap[APP_P4RT_IPV4_TABLE_NAME] = m_routeManager.get();
     m_p4TableToManagerMap[APP_P4RT_IPV6_TABLE_NAME] = m_routeManager.get();
+    m_p4TableToManagerMap[APP_P4RT_IPV4_MULTICAST_TABLE_NAME] =
+        m_ipMulticastManager.get();
+    m_p4TableToManagerMap[APP_P4RT_IPV6_MULTICAST_TABLE_NAME] =
+        m_ipMulticastManager.get();
     m_p4TableToManagerMap[APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME] =
         m_l3MulticastManager.get();
     m_p4TableToManagerMap[APP_P4RT_REPLICATION_IP_MULTICAST_TABLE_NAME] =
@@ -66,6 +76,8 @@ P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOr
     m_p4TableToManagerMap[APP_P4RT_ACL_TABLE_DEFINITION_NAME] = m_aclTableManager.get();
     m_p4TableToManagerMap[APP_P4RT_WCMP_GROUP_TABLE_NAME] = m_wcmpManager.get();
     m_p4TableToManagerMap[APP_P4RT_L3_ADMIT_TABLE_NAME] = m_l3AdmitManager.get();
+    m_p4TableToManagerMap[APP_P4RT_IPV6_TUNNEL_TERMINATION_TABLE_NAME] =
+        m_tunnelDecapGroupManager.get();
     m_p4TableToManagerMap[APP_P4RT_EXT_TABLES_MANAGER] = m_extTablesManager.get();
 
     m_p4ManagerAddPrecedence.push_back(m_tablesDefnManager.get());
@@ -75,11 +87,13 @@ P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOr
     m_p4ManagerAddPrecedence.push_back(m_nextHopManager.get());
     m_p4ManagerAddPrecedence.push_back(m_wcmpManager.get());
     m_p4ManagerAddPrecedence.push_back(m_l3MulticastManager.get());
+    m_p4ManagerAddPrecedence.push_back(m_ipMulticastManager.get());
     m_p4ManagerAddPrecedence.push_back(m_routeManager.get());
     m_p4ManagerAddPrecedence.push_back(m_mirrorSessionManager.get());
     m_p4ManagerAddPrecedence.push_back(m_aclTableManager.get());
     m_p4ManagerAddPrecedence.push_back(m_aclRuleManager.get());
     m_p4ManagerAddPrecedence.push_back(m_l3AdmitManager.get());
+    m_p4ManagerAddPrecedence.push_back(m_tunnelDecapGroupManager.get());
     m_p4ManagerAddPrecedence.push_back(m_extTablesManager.get());
     for (auto* manager : m_p4ManagerAddPrecedence) {
       m_p4ManagerDelPrecedence.insert(m_p4ManagerDelPrecedence.begin(), manager);
@@ -253,6 +267,7 @@ void P4Orch::handleP4rtNotification(
   if (!prev_op.empty() && status.ok()) {
     drain(prev_op);
   }
+  m_publisher.flush();
 }
 
 void P4Orch::handlePortStatusChangeNotification(const std::string &op, const std::string &data)
@@ -356,4 +371,8 @@ p4orch::WcmpManager *P4Orch::getWcmpManager()
 GreTunnelManager *P4Orch::getGreTunnelManager()
 {
     return m_greTunnelManager.get();
+}
+
+TunnelDecapGroupManager* P4Orch::getTunnelDecapGroupManager() {
+  return m_tunnelDecapGroupManager.get();
 }
