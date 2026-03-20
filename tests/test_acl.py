@@ -12,12 +12,12 @@ L3V6_TABLE_NAME = "L3_V6_TEST"
 L3V6_BIND_PORTS = ["Ethernet0", "Ethernet4", "Ethernet8"]
 L3V6_RULE_NAME = "L3V6_TEST_RULE"
 
-L3V6UPPERLITE_TABLE_TYPE = "L3V6UpperLite"
+L3V6UPPERLITE_TABLE_TYPE = "L3V6UPPERLITE"
 L3V6UPPERLITE_TABLE_NAME = "L3_V6_UPPER_LITE_TEST"
 L3V6UPPERLITE_BIND_PORTS = ["Ethernet0", "Ethernet4", "Ethernet8"]
 L3V6UPPERLITE_RULE_NAME = "L3V6UPPERLITE_TEST_RULE"
 
-L3V6LITE_TABLE_TYPE = "L3V6Lite"
+L3V6LITE_TABLE_TYPE = "L3V6LITE"
 L3V6LITE_TABLE_NAME = "L3_V6_LITE_TEST"
 L3V6LITE_BIND_PORTS = ["Ethernet0", "Ethernet4", "Ethernet8"]
 L3V6LITE_RULE_NAME = "L3V6LITE_TEST_RULE"
@@ -729,9 +729,9 @@ class TestAcl:
         }
         expected_sai_qualifiers = {
             "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD3": dvs_acl.get_simple_qualifier_comparator("2001:db8::&mask:ffff:ffff::"),
-            "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD2": dvs_acl.get_simple_qualifier_comparator("1234:5678::&mask:ffff:ffff::"),
+            "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD2": dvs_acl.get_simple_qualifier_comparator("0:0:1234:5678::&mask:0:0:ffff:ffff::"),
             "SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD3": dvs_acl.get_simple_qualifier_comparator("fd00:abcd::&mask:ffff:ffff::"),
-            "SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD2": dvs_acl.get_simple_qualifier_comparator("ef01:2345::&mask:ffff:ffff::")
+            "SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD2": dvs_acl.get_simple_qualifier_comparator("0:0:ef01:2345::&mask:0:0:ffff:ffff::")
         }
 
         dvs_acl.create_acl_rule(L3V6UPPERLITE_TABLE_NAME, L3V6UPPERLITE_RULE_NAME, config_qualifiers)
@@ -752,9 +752,9 @@ class TestAcl:
         }
         expected_sai_qualifiers = {
             "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD3": dvs_acl.get_simple_qualifier_comparator("2001:db8::&mask:ffff:ffff::"),
-            "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD2": dvs_acl.get_simple_qualifier_comparator("85a3:4f5e::&mask:ffff:ffff::"),
+            "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD2": dvs_acl.get_simple_qualifier_comparator("0:0:85a3:4f5e::&mask:0:0:ffff:ffff::"),
             "SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD3": dvs_acl.get_simple_qualifier_comparator("fe80::&mask:ffff:ffff::"),
-            "SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD2": dvs_acl.get_simple_qualifier_comparator("0:1::&mask:ffff:ffff::")
+            "SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6_WORD2": dvs_acl.get_simple_qualifier_comparator("0:0:0:1::&mask:0:0:ffff:ffff::")
         }
 
         dvs_acl.create_acl_rule(L3V6UPPERLITE_TABLE_NAME, L3V6UPPERLITE_RULE_NAME, config_qualifiers, action="DROP")
@@ -774,7 +774,7 @@ class TestAcl:
         }
         expected_sai_qualifiers = {
             "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD3": dvs_acl.get_simple_qualifier_comparator("3ffe:1900::&mask:ffff:ffff::"),
-            "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD2": dvs_acl.get_simple_qualifier_comparator("4545:3::&mask:ffff:ffff::")
+            "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6_WORD2": dvs_acl.get_simple_qualifier_comparator("0:0:4545:3::&mask:0:0:ffff:ffff::")
         }
 
         dvs_acl.create_acl_rule(L3V6UPPERLITE_TABLE_NAME, L3V6UPPERLITE_RULE_NAME, config_qualifiers)

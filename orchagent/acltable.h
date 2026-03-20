@@ -25,8 +25,8 @@ extern "C" {
 
 #define TABLE_TYPE_L3                   "L3"
 #define TABLE_TYPE_L3V6                 "L3V6"
-#define TABLE_TYPE_L3V6LITE             "L3V6Lite"
-#define TABLE_TYPE_L3V6UPPERLITE        "L3V6UpperLite"
+#define TABLE_TYPE_L3V6LITE             "L3V6LITE"
+#define TABLE_TYPE_L3V6UPPERLITE        "L3V6UPPERLITE"
 #define TABLE_TYPE_L3V4V6               "L3V4V6"
 #define TABLE_TYPE_MIRROR               "MIRROR"
 #define TABLE_TYPE_MIRRORV6             "MIRRORV6"

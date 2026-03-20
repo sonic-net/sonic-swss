@@ -1196,8 +1196,8 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
                 word2Data.enable = true;
                 memset(word2Data.data.ip6, 0, sizeof(sai_ip6_t));
                 memset(word2Data.mask.ip6, 0, sizeof(sai_ip6_t));
-                memcpy(word2Data.data.ip6, ipv6_addr + 4, 4);
-                memcpy(word2Data.mask.ip6, ipv6_mask + 4, 4);
+                memcpy(word2Data.data.ip6 + 4, ipv6_addr + 4, 4);
+                memcpy(word2Data.mask.ip6 + 4, ipv6_mask + 4, 4);
 
                 string word2_attr = (attr_name == MATCH_SRC_IPV6) ? MATCH_SRC_IPV6_WORD2 : MATCH_DST_IPV6_WORD2;
                 return setMatch(aclMatchLookup[word2_attr], word2Data);
