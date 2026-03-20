@@ -344,6 +344,21 @@ namespace portsorch_test
         _In_ sai_object_id_t port_serdes_id)
     {
         _sai_remove_port_serdes_calls.push_back(port_serdes_id);
+
+        // Erase any port-to-serdes mappings that reference this serdes ID,
+        // so subsequent SAI_PORT_ATTR_PORT_SERDES_ID queries reflect removal.
+        for (auto it = _port_to_serdes_map.begin(); it != _port_to_serdes_map.end(); )
+        {
+            if (it->second == port_serdes_id)
+            {
+                it = _port_to_serdes_map.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+
         return SAI_STATUS_SUCCESS;
     }
 
