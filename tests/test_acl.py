@@ -65,7 +65,7 @@ class TestAcl:
                 matches=["ACL_IP_TYPE", "SRC_IPV6_WORD3", "SRC_IPV6_WORD2", "DST_IPV6_WORD3", "DST_IPV6_WORD2", "IPV6_NEXT_HEADER"],
                 bpoint_types=["PORT", "PORTCHANNEL"],
                 actions=["PACKET_ACTION", "REDIRECT"]
-            )            
+            )
             dvs_acl.create_acl_table(L3V6UPPERLITE_TABLE_NAME,
                                      L3V6UPPERLITE_TABLE_TYPE,
                                      L3V6UPPERLITE_BIND_PORTS)
@@ -84,7 +84,7 @@ class TestAcl:
                 matches=["ACL_IP_TYPE", "IPV6_NEXT_HEADER"],
                 bpoint_types=["PORT", "PORTCHANNEL"],
                 actions=["PACKET_ACTION", "REDIRECT"]
-            )            
+            )
             dvs_acl.create_acl_table(L3V6LITE_TABLE_NAME,
                                      L3V6LITE_TABLE_TYPE,
                                      L3V6LITE_BIND_PORTS)
