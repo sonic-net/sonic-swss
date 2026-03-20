@@ -27,8 +27,10 @@ const string SWSS_CONFIG_DIR    = "/etc/swss/config.d/";
 
 void usage()
 {
-    cout << "Usage: swssconfig [FILE...]" << endl;
+    cout << "Usage: swssconfig [OPTIONS] [FILE...]" << endl;
     cout << "       (default config folder is /etc/swss/config.d/)" << endl;
+    cout << "Options:" << endl;
+    cout << "  -e, --endpoint ENDPOINT    ZMQ endpoint address (e.g., tcp://localhost or tcp://127.0.0.1)" << endl;
 }
 
 void dump_db_item(KeyOpFieldsValuesTuple &db_item)
@@ -66,9 +68,12 @@ shared_ptr<ProducerStateTable> get_table(unordered_map<string, shared_ptr<Produc
     return p_table;
 }
 
-bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items, set<string>  &zmq_tables, std::shared_ptr<ZmqClient> zmq_client)
+bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items, set<string>  &zmq_tables, std::shared_ptr<ZmqClient> zmq_client, bool use_custom_endpoint)
 {
-    DBConnector db("APPL_DB", 0, false);
+    // If custom endpoint is used, it's for DPU Orchagent - use DPU_APPL_DB
+    // Otherwise use APPL_DB
+    string db_name = use_custom_endpoint ? "DPU_APPL_DB" : "APPL_DB";
+    DBConnector db(db_name, 0, true);
     RedisPipeline pipeline(&db); // dtor of RedisPipeline will automatically flush data
     unordered_map<string, shared_ptr<ProducerStateTable>> table_map;
 
@@ -193,28 +198,43 @@ vector<string> read_directory(const string &path)
 int main(int argc, char **argv)
 {
     vector<string> files;
-    if (argc == 1)
+    string zmq_endpoint = ZMQ_LOCAL_ADDRESS;
+    
+    // Parse command-line arguments
+    for (int i = 1; i < argc; i++)
     {
-        files = read_directory(SWSS_CONFIG_DIR);
-    }
-    if (argc == 2 && !strcmp(argv[1], "-h"))
-    {
-        usage();
-        exit(EXIT_SUCCESS);
-    }
-    else
-    {
-        for (auto i = 1; i < argc; i++)
+        if (!strcmp(argv[i], "-e") || !strcmp(argv[i], "--endpoint"))
+        {
+            if (i + 1 < argc)
+            {
+                zmq_endpoint = string(argv[++i]);
+            }
+            else
+            {
+                cerr << "Error: -e/--endpoint requires an argument" << endl;
+                usage();
+                exit(EXIT_FAILURE);
+            }
+        }
+        else
         {
             files.push_back(string(argv[i]));
         }
     }
+    
+    // If no files specified, use default directory
+    if (files.empty())
+    {
+        files = read_directory(SWSS_CONFIG_DIR);
+    }
 
     auto zmq_tables = load_zmq_tables();
     std::shared_ptr<ZmqClient> zmq_client = nullptr;
+
+    bool use_custom_endpoint = (zmq_endpoint != ZMQ_LOCAL_ADDRESS);
     if (zmq_tables.size() > 0)
     {
-        zmq_client = create_zmq_client(ZMQ_LOCAL_ADDRESS);
+        zmq_client = create_zmq_client(zmq_endpoint);
     }
 
     for (auto i : files)
@@ -238,7 +258,7 @@ int main(int argc, char **argv)
                 return EXIT_FAILURE;
             }
 
-            if (!write_db_data(db_items, zmq_tables, zmq_client))
+            if (!write_db_data(db_items, zmq_tables, zmq_client, use_custom_endpoint))
             {
                 SWSS_LOG_ERROR("Failed applying data from JSON file %s", i.c_str());
                 return EXIT_FAILURE;
