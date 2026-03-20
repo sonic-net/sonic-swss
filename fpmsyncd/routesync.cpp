@@ -1539,7 +1539,7 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
                 boost::algorithm::replace_all(pathStr, "|", ",");
 
                 /* First time we see this SID list: program it into ApplDB and initialize the refcount to 1 */
-                Srv6SidListTableFieldValueTupleWrapper fvw{sidlist};
+                Srv6SidListTableFieldValueTupleWrapper fvw{sidlist, isNbZmqEnabled()};
                 fvw.path = pathStr;
 
                 setTable(fvw, m_srv6SidListTable);
