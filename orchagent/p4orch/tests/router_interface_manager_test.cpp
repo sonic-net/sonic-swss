@@ -51,16 +51,19 @@ const swss::MacAddress kMacAddress1("00:01:02:03:04:05");
 
 constexpr char *kRouterInterfaceId2 = "Ethernet20";
 constexpr sai_object_id_t kRouterInterfaceOid2 = 0x51411;
-constexpr sai_object_id_t kVlanOid2 = 0xffffff;
 const swss::MacAddress kMacAddress2("00:ff:ee:dd:cc:bb");
 
 const swss::MacAddress kZeroMacAddress("00:00:00:00:00:00");
+
+constexpr uint16_t kVlanId0 = 0;
+constexpr uint16_t kVlanId1 = 0x123;
+constexpr uint16_t kVlanId2 = 0x2;
 
 constexpr char *kRouterIntfAppDbKey = R"({"match/router_interface_id":"intf-3/4"})";
 
 std::unordered_map<sai_attr_id_t, sai_attribute_value_t> CreateRouterInterfaceAttributeList(
     const sai_object_id_t &virtual_router_oid, const swss::MacAddress mac_address, const sai_object_id_t &port_oid,
-    const uint32_t mtu, const bool sub_port = false, const sai_object_id_t& vlan_oid = 0)
+    const uint32_t mtu, const bool sub_port = false, const uint16_t vlan_id = 0)
 {
     std::unordered_map<sai_attr_id_t, sai_attribute_value_t> attr_list;
     sai_attribute_value_t attr_value;
@@ -76,7 +79,7 @@ std::unordered_map<sai_attr_id_t, sai_attribute_value_t> CreateRouterInterfaceAt
 
     if (sub_port)
     {
-        attr_value.oid = vlan_oid;
+	attr_value.u16 = vlan_id;
         attr_list[SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID] = attr_value;
 
         attr_value.s32 = SAI_ROUTER_INTERFACE_TYPE_SUB_PORT;
@@ -155,9 +158,9 @@ bool MatchCreateRouterInterfaceAttributeList(
             break;
 
         case SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID:
-            if (attr_list[i].value.oid !=
+            if (attr_list[i].value.u16 !=
                 expected_attr_list.at(SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID)
-                    .oid)
+                    .u16)
             {
               return false;
             }
@@ -302,14 +305,14 @@ class RouterInterfaceManagerTest : public ::testing::Test
     }
 
     void AddRouterInterfaceEntry(P4RouterInterfaceEntry &router_intf_entry, const sai_object_id_t port_oid,
-                                 const uint32_t mtu, const bool sub_port = false, const sai_object_id_t vlan_oid = 0)
+                                 const uint32_t mtu, const bool sub_port = false, const uint16_t vlan_id = 0)
     {
         EXPECT_CALL(mock_sai_router_intf_,
                     create_router_interface(
                         ::testing::NotNull(), Eq(gSwitchId), sub_port ? Eq(8) : Eq(7),
                         Truly(std::bind(MatchCreateRouterInterfaceAttributeList, std::placeholders::_1,
                                         CreateRouterInterfaceAttributeList(
-                                            gVirtualRouterId, router_intf_entry.src_mac_address, port_oid, mtu, sub_port, vlan_oid)))))
+                                            gVirtualRouterId, router_intf_entry.src_mac_address, port_oid, mtu, sub_port, vlan_id)))))
             .WillOnce(DoAll(SetArgPointee<0>(router_intf_entry.router_interface_oid), Return(SAI_STATUS_SUCCESS)));
 
         const std::string router_intf_key =
@@ -325,7 +328,8 @@ class RouterInterfaceManagerTest : public ::testing::Test
 
 TEST_F(RouterInterfaceManagerTest, CreateRouterInterfaceValidAttributes)
 {
-    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1);
+    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1, kVlanId0,
+                                           /*has_vlan=*/false);
     AddRouterInterfaceEntry(router_intf_entry, kPortOid1, kMtu1);
 
     ValidateRouterInterfaceEntry(router_intf_entry);
@@ -334,21 +338,24 @@ TEST_F(RouterInterfaceManagerTest, CreateRouterInterfaceValidAttributes)
 TEST_F(RouterInterfaceManagerTest, CreateRouterInterfaceWithSubport)
 {
     P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName10,
-                                             kMacAddress1);
+                                             kMacAddress1, kVlanId0,
+                                           /*has_vlan=*/false);
     AddRouterInterfaceEntry(router_intf_entry, kPortOid10, kMtu10, true,
-                            kVlanOid2);
+		            kVlanId2);
 
     ValidateRouterInterfaceEntry(router_intf_entry);
 }
 
 TEST_F(RouterInterfaceManagerTest, CreateRouterInterfaceEntryExistsInManager)
 {
-    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1);
+    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1, kVlanId0,
+                                           /*has_vlan=*/false);
     router_intf_entry.router_interface_oid = kRouterInterfaceOid1;
     AddRouterInterfaceEntry(router_intf_entry, kPortOid1, kMtu1);
 
     // Same router interface key with different attributes
-    P4RouterInterfaceEntry new_entry(router_intf_entry.router_interface_id, kPortName2, kMacAddress2);
+    P4RouterInterfaceEntry new_entry(router_intf_entry.router_interface_id, kPortName2, kMacAddress2, kVlanId0,
+                                   /*has_vlan=*/false);
     const std::string router_intf_key = KeyGenerator::generateRouterInterfaceKey(router_intf_entry.router_interface_id);
     EXPECT_EQ(StatusCode::SWSS_RC_EXISTS, CreateRouterInterface(router_intf_key, new_entry));
 
@@ -360,7 +367,8 @@ TEST_F(RouterInterfaceManagerTest, CreateRouterInterfaceEntryExistsInP4OidMapper
 {
     const std::string router_intf_key = KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId2);
     p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE, router_intf_key, kRouterInterfaceOid2);
-    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId2, kPortName2, kMacAddress2);
+    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId2, kPortName2, kMacAddress2, kVlanId0,
+                                           /*has_vlan=*/false);
 
     // TODO: Expect critical state.
     EXPECT_EQ(StatusCode::SWSS_RC_INTERNAL, CreateRouterInterface(router_intf_key, router_intf_entry));
@@ -377,7 +385,8 @@ TEST_F(RouterInterfaceManagerTest, CreateRouterInterfaceEntryExistsInP4OidMapper
 TEST_F(RouterInterfaceManagerTest, CreateRouterInterfaceInvalidPort)
 {
     const std::string invalid_port_name = "xyz";
-    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId2, invalid_port_name, kMacAddress2);
+    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId2, invalid_port_name, kMacAddress2,
+                                           kVlanId0, /*has_vlan=*/false);
 
     EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND,
               CreateRouterInterface(KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId2), router_intf_entry));
@@ -406,7 +415,8 @@ TEST_F(RouterInterfaceManagerTest, CreateRouterInterfaceNoMacAddress)
 
 TEST_F(RouterInterfaceManagerTest, CreateRouterInterfaceSaiApiFails)
 {
-    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1);
+    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1, kVlanId0,
+                                           /*has_vlan=*/false);
     EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _)).WillOnce(Return(SAI_STATUS_FAILURE));
 
     EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN,
@@ -418,7 +428,8 @@ TEST_F(RouterInterfaceManagerTest, CreateRouterInterfaceSaiApiFails)
 
 TEST_F(RouterInterfaceManagerTest, RemoveRouterInterfaceExistingInterface)
 {
-    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId2, kPortName2, kMacAddress2);
+    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId2, kPortName2, kMacAddress2, kVlanId0,
+                                           /*has_vlan=*/false);
     router_intf_entry.router_interface_oid = kRouterInterfaceOid2;
     AddRouterInterfaceEntry(router_intf_entry, kPortOid2, kMtu2);
 
@@ -439,7 +450,8 @@ TEST_F(RouterInterfaceManagerTest, RemoveRouterInterfaceNonExistingInterface)
 
 TEST_F(RouterInterfaceManagerTest, RemoveRouterInterfaceNonZeroRefCount)
 {
-    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId2, kPortName2, kMacAddress2);
+    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId2, kPortName2, kMacAddress2, kVlanId0,
+                                           /*has_vlan=*/false);
     router_intf_entry.router_interface_oid = kRouterInterfaceOid2;
     AddRouterInterfaceEntry(router_intf_entry, kPortOid2, kMtu2);
 
@@ -453,7 +465,8 @@ TEST_F(RouterInterfaceManagerTest, RemoveRouterInterfaceNonZeroRefCount)
 
 TEST_F(RouterInterfaceManagerTest, RemoveRouterInterfaceSaiApiFails)
 {
-    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId2, kPortName2, kMacAddress2);
+    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId2, kPortName2, kMacAddress2, kVlanId0,
+                                           /*has_vlan=*/false);
     router_intf_entry.router_interface_oid = kRouterInterfaceOid2;
     AddRouterInterfaceEntry(router_intf_entry, kPortOid2, kMtu2);
 
@@ -468,7 +481,8 @@ TEST_F(RouterInterfaceManagerTest, RemoveRouterInterfaceSaiApiFails)
 
 TEST_F(RouterInterfaceManagerTest, SetSourceMacAddressModifyMacAddress)
 {
-    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1);
+    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1, kVlanId0,
+                                           /*has_vlan=*/false);
     router_intf_entry.router_interface_oid = kRouterInterfaceOid1;
 
     sai_attribute_value_t attr_value;
@@ -487,7 +501,8 @@ TEST_F(RouterInterfaceManagerTest, SetSourceMacAddressModifyMacAddress)
 
 TEST_F(RouterInterfaceManagerTest, SetSourceMacAddressIdempotent)
 {
-    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1);
+    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1, kVlanId0,
+                                           /*has_vlan=*/false);
 
     // SAI API not being called makes the operation idempotent.
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, SetSourceMacAddress(&router_intf_entry, kMacAddress1));
@@ -496,7 +511,8 @@ TEST_F(RouterInterfaceManagerTest, SetSourceMacAddressIdempotent)
 
 TEST_F(RouterInterfaceManagerTest, SetSourceMacAddressSaiApiFails)
 {
-    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1);
+    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1, kVlanId0,
+                                           /*has_vlan=*/false);
     router_intf_entry.router_interface_oid = kRouterInterfaceOid1;
 
     sai_attribute_value_t attr_value;
@@ -531,8 +547,9 @@ TEST_F(RouterInterfaceManagerTest, ProcessAddRequestValidAppDbParams)
     const std::string router_intf_key = KeyGenerator::generateRouterInterfaceKey(app_db_entry.router_interface_id);
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddRequest(app_db_entry, router_intf_key));
 
-    P4RouterInterfaceEntry router_intf_entry(app_db_entry.router_interface_id, app_db_entry.port_name,
-                                             app_db_entry.src_mac_address);
+    P4RouterInterfaceEntry router_intf_entry(
+      app_db_entry.router_interface_id, app_db_entry.port_name,
+      app_db_entry.src_mac_address, kVlanId0, /*has_vlan=*/false);
     router_intf_entry.router_interface_oid = kRouterInterfaceOid1;
     ValidateRouterInterfaceEntry(router_intf_entry);
 }
@@ -563,7 +580,8 @@ TEST_F(RouterInterfaceManagerTest, ProcessAddRequestInvalidPortName)
 
 TEST_F(RouterInterfaceManagerTest, ProcessUpdateRequestSetSourceMacAddress)
 {
-    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1);
+    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1, kVlanId0,
+                                           /*has_vlan=*/false);
     router_intf_entry.router_interface_oid = kRouterInterfaceOid1;
     AddRouterInterfaceEntry(router_intf_entry, kPortOid1, kMtu1);
 
@@ -597,7 +615,8 @@ TEST_F(RouterInterfaceManagerTest, ProcessUpdateRequestSetSourceMacAddress)
 
 TEST_F(RouterInterfaceManagerTest, ProcessUpdateRequestSetPortNameIdempotent)
 {
-    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1);
+    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1, kVlanId0,
+                                           /*has_vlan=*/false);
     router_intf_entry.router_interface_oid = kRouterInterfaceOid1;
     AddRouterInterfaceEntry(router_intf_entry, kPortOid1, kMtu1);
 
@@ -620,7 +639,8 @@ TEST_F(RouterInterfaceManagerTest, ProcessUpdateRequestSetPortNameIdempotent)
 
 TEST_F(RouterInterfaceManagerTest, ProcessUpdateRequestSetPortName)
 {
-    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1);
+    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1, kVlanId0,
+                                           /*has_vlan=*/false);
     router_intf_entry.router_interface_oid = kRouterInterfaceOid1;
     AddRouterInterfaceEntry(router_intf_entry, kPortOid1, kMtu1);
 
@@ -643,7 +663,8 @@ TEST_F(RouterInterfaceManagerTest, ProcessUpdateRequestSetPortName)
 
 TEST_F(RouterInterfaceManagerTest, ProcessUpdateRequestMacAddrAndPort)
 {
-    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1);
+    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1, kVlanId0,
+                                           /*has_vlan=*/false);
     router_intf_entry.router_interface_oid = kRouterInterfaceOid1;
     AddRouterInterfaceEntry(router_intf_entry, kPortOid1, kMtu1);
 
@@ -667,7 +688,8 @@ TEST_F(RouterInterfaceManagerTest, ProcessUpdateRequestMacAddrAndPort)
 
 TEST_F(RouterInterfaceManagerTest, ProcessDeleteRequestExistingInterface)
 {
-    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1);
+    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1, kVlanId0,
+                                           /*has_vlan=*/false);
     router_intf_entry.router_interface_oid = kRouterInterfaceOid1;
     AddRouterInterfaceEntry(router_intf_entry, kPortOid1, kMtu1);
 
@@ -688,7 +710,8 @@ TEST_F(RouterInterfaceManagerTest, ProcessDeleteRequestNonExistingInterface)
 
 TEST_F(RouterInterfaceManagerTest, ProcessDeleteRequestInterfaceNotExistInMapper)
 {
-    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1);
+    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1, kVlanId0,
+                                           /*has_vlan=*/false);
     router_intf_entry.router_interface_oid = kRouterInterfaceOid1;
     AddRouterInterfaceEntry(router_intf_entry, kPortOid1, kMtu1);
 
@@ -715,6 +738,46 @@ TEST_F(RouterInterfaceManagerTest, DeserializeRouterIntfEntryValidAttributes)
     EXPECT_EQ(app_db_entry.src_mac_address, kMacAddress1);
     EXPECT_TRUE(app_db_entry.is_set_port_name);
     EXPECT_TRUE(app_db_entry.is_set_src_mac);
+    EXPECT_FALSE(app_db_entry.is_set_vlan_id);
+}
+
+TEST_F(RouterInterfaceManagerTest,
+       DeserializeRouterIntfEntryWithVlanValidAttributes) {
+  const std::vector<swss::FieldValueTuple> attributes = {
+      swss::FieldValueTuple(p4orch::kAction,
+                            "set_port_and_src_mac_and_vlan_id"),
+      swss::FieldValueTuple(prependParamField(p4orch::kPort), kPortName1),
+      swss::FieldValueTuple(prependParamField(p4orch::kSrcMac),
+                            kMacAddress1.to_string()),
+      swss::FieldValueTuple(prependParamField(p4orch::kVlanId), "0x123"),
+  };
+
+  auto app_db_entry_or =
+      DeserializeRouterIntfEntry(kRouterIntfAppDbKey, attributes);
+  EXPECT_TRUE(app_db_entry_or.ok());
+  auto& app_db_entry = *app_db_entry_or;
+  EXPECT_EQ(app_db_entry.router_interface_id, kRouterInterfaceId1);
+  EXPECT_EQ(app_db_entry.port_name, kPortName1);
+  EXPECT_EQ(app_db_entry.src_mac_address, kMacAddress1);
+  EXPECT_EQ(app_db_entry.vlan_id, kVlanId1);
+  EXPECT_TRUE(app_db_entry.is_set_port_name);
+  EXPECT_TRUE(app_db_entry.is_set_src_mac);
+  EXPECT_TRUE(app_db_entry.is_set_vlan_id);
+}
+
+TEST_F(RouterInterfaceManagerTest, DeserializeRouterIntfEntryWithInvalidVlan) {
+  const std::vector<swss::FieldValueTuple> attributes = {
+      swss::FieldValueTuple(p4orch::kAction,
+                            "set_port_and_src_mac_and_vlan_id"),
+      swss::FieldValueTuple(prependParamField(p4orch::kPort), kPortName1),
+      swss::FieldValueTuple(prependParamField(p4orch::kSrcMac),
+                            kMacAddress1.to_string()),
+      swss::FieldValueTuple(prependParamField(p4orch::kVlanId), "invalid"),
+  };
+
+  auto app_db_entry_or =
+      DeserializeRouterIntfEntry(kRouterIntfAppDbKey, attributes);
+  EXPECT_FALSE(app_db_entry_or.ok());
 }
 
 TEST_F(RouterInterfaceManagerTest, DeserializeRouterIntfEntryInvalidKeyFormat)
@@ -842,7 +905,8 @@ TEST_F(RouterInterfaceManagerTest, DrainValidAttributes)
                                     Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
-    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1);
+    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1, kVlanId0,
+                                           /*has_vlan=*/false);
     router_intf_entry.router_interface_oid = kRouterInterfaceOid1;
     ValidateRouterInterfaceEntry(router_intf_entry);
 
@@ -871,6 +935,90 @@ TEST_F(RouterInterfaceManagerTest, DrainValidAttributes)
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
     ValidateRouterInterfaceEntryNotPresent(router_intf_entry.router_interface_id);
+}
+
+TEST_F(RouterInterfaceManagerTest, DrainValidAttributesWithVlan) {
+  const std::string appl_db_key =
+      std::string(APP_P4RT_ROUTER_INTERFACE_TABLE_NAME) + kTableKeyDelimiter +
+      std::string(kRouterIntfAppDbKey);
+
+  // Enqueue entry for create operation.
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kPort), kPortName1});
+  attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac),
+                                             kMacAddress1.to_string()});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kVlanId), "0x123"});
+  Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key, SET_COMMAND, attributes));
+
+  EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kRouterInterfaceOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key), Eq(attributes),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
+
+  P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1,
+                                           kMacAddress1, kVlanId1,
+                                           /*has_vlan=*/true);
+  router_intf_entry.router_interface_oid = kRouterInterfaceOid1;
+  ValidateRouterInterfaceEntry(router_intf_entry);
+
+  // Enqueue entry for update operation, but don't change VLAN ID.
+  attributes.clear();
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kPort), kPortName1});
+  attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac),
+                                             kMacAddress2.to_string()});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kVlanId), "0x123"});
+  Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key, SET_COMMAND, attributes));
+
+  EXPECT_CALL(mock_sai_router_intf_, set_router_interface_attribute(_, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key), Eq(attributes),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
+
+  router_intf_entry.src_mac_address = kMacAddress2;
+  ValidateRouterInterfaceEntry(router_intf_entry);
+
+  // Enqueue entry for delete operation.
+  attributes.clear();
+  Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key, DEL_COMMAND, attributes));
+
+  EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key), Eq(attributes),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
+
+  ValidateRouterInterfaceEntryNotPresent(router_intf_entry.router_interface_id);
+}
+
+TEST_F(RouterInterfaceManagerTest, DrainInvalidAttributesWithVlan) {
+  const std::string appl_db_key =
+      std::string(APP_P4RT_ROUTER_INTERFACE_TABLE_NAME) + kTableKeyDelimiter +
+      std::string(kRouterIntfAppDbKey);
+
+  // Enqueue entry for create operation.
+  std::vector<swss::FieldValueTuple> attributes;
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kPort), kPortName1});
+  // Missing src mac should result in failure.
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kVlanId), "0x123"});
+  Enqueue(swss::KeyOpFieldsValuesTuple(appl_db_key, SET_COMMAND, attributes));
+
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key), Eq(attributes),
+                      Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, Drain(/*failure_before=*/false));
 }
 
 TEST_F(RouterInterfaceManagerTest, DrainInvalidAppDbEntryKey)
@@ -1030,7 +1178,8 @@ TEST_F(RouterInterfaceManagerTest, DrainStopOnFirstFailure) {
 
 TEST_F(RouterInterfaceManagerTest, VerifyStateTest)
 {
-    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1);
+    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1, kVlanId0,
+                                           /*has_vlan=*/false);
     router_intf_entry.router_interface_oid = kRouterInterfaceOid1;
     AddRouterInterfaceEntry(router_intf_entry, kPortOid1, kMtu1);
 
@@ -1101,9 +1250,97 @@ TEST_F(RouterInterfaceManagerTest, VerifyStateTest)
     EXPECT_FALSE(VerifyState(db_key, attributes).empty());
 }
 
+TEST_F(RouterInterfaceManagerTest, VerifyStateWithVlanTest) {
+  P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1,
+                                           kMacAddress1, kVlanId1,
+                                           /*has_vlan=*/true);
+  router_intf_entry.router_interface_oid = kRouterInterfaceOid1;
+  AddRouterInterfaceEntry(router_intf_entry, kPortOid1, kMtu1, /*subport=*/true,
+                          kVlanId1);
+
+  // Setup ASIC DB.
+  swss::Table table(nullptr, "ASIC_STATE");
+  table.set(
+      "SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x295100",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID",
+                                "oid:0x0"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS",
+                                "00:01:02:03:04:05"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_TYPE",
+                                "SAI_ROUTER_INTERFACE_TYPE_SUB_PORT"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID",
+                                "291"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_PORT_ID",
+                                "oid:0x112233"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE",
+                                "true"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE",
+                                "true"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"}});
+
+  const std::string db_key = std::string(APP_P4RT_TABLE_NAME) +
+                             kTableKeyDelimiter +
+                             APP_P4RT_ROUTER_INTERFACE_TABLE_NAME +
+                             kTableKeyDelimiter + kRouterIntfAppDbKey;
+  std::vector<swss::FieldValueTuple> attributes;
+
+  // Verification should succeed with vaild key and value.
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kPort), kPortName1});
+  attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac),
+                                             kMacAddress1.to_string()});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kVlanId), "0x123"});
+  EXPECT_EQ(VerifyState(db_key, attributes), "");
+
+  // Verification should fail if ASIC DB table has a mismatch on VLAN.
+  table.del("SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x295100");
+  table.set(
+      "SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x295100",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID",
+                                "oid:0x0"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS",
+                                "00:01:02:03:04:05"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_TYPE",
+                                "SAI_ROUTER_INTERFACE_TYPE_SUB_PORT"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID",
+                                "700"},  // This should be 291.
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_PORT_ID",
+                                "oid:0x112233"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE",
+                                "true"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE",
+                                "true"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"}});
+  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+
+  // Missing VLAN ID should fail verification.
+  attributes.clear();
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kPort), kPortName1});
+  attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac),
+                                             kMacAddress1.to_string()});
+  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+
+  // Different VLAN ID should fail verification.
+  attributes.clear();
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kPort), kPortName1});
+  attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac),
+                                             kMacAddress1.to_string()});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kVlanId), "0x321"});
+  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+
+  table.del("SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x295100");
+}
+
 TEST_F(RouterInterfaceManagerTest, VerifyStateAsicDbTest)
 {
-    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, "Ethernet7", kMacAddress1);
+    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, "Ethernet7", kMacAddress1, kVlanId0,
+                                           /*has_vlan=*/false);
     router_intf_entry.router_interface_oid = kRouterInterfaceOid1;
     AddRouterInterfaceEntry(router_intf_entry, 0x1234, 9100);
 
@@ -1157,10 +1394,12 @@ TEST_F(RouterInterfaceManagerTest, VerifyStateAsicDbTest)
 TEST_F(RouterInterfaceManagerTest, UpdateRifMtuWhenPortMtuChanges)
 {
     // Create 2 router interfaces on different ports.
-    P4RouterInterfaceEntry router_intf_entry1(kRouterInterfaceId1, kPortName1, kMacAddress1);
+    P4RouterInterfaceEntry router_intf_entry1(kRouterInterfaceId1, kPortName1, kMacAddress1, kVlanId0,
+                                            /*has_vlan=*/false);
     router_intf_entry1.router_interface_oid = kRouterInterfaceOid1;
     AddRouterInterfaceEntry(router_intf_entry1, kPortOid1, kMtu1);
-    P4RouterInterfaceEntry router_intf_entry2(kRouterInterfaceId2, kPortName2, kMacAddress2);
+    P4RouterInterfaceEntry router_intf_entry2(kRouterInterfaceId2, kPortName2, kMacAddress2, kVlanId0,
+                                            /*has_vlan=*/false);
     router_intf_entry2.router_interface_oid = kRouterInterfaceOid2;
     AddRouterInterfaceEntry(router_intf_entry2, kPortOid2, kMtu2);
     // Update MTU on first router interface.

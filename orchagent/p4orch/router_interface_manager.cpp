@@ -53,6 +53,14 @@ ReturnCode validateRouterInterfaceAppDbEntry(const P4RouterInterfaceAppDbEntry &
                << "Invalid source mac address " << QuotedVar(app_db_entry.src_mac_address.to_string());
     }
 
+    // If VLAN is going to be set, port and src mac also have to be set.
+    if (app_db_entry.is_set_vlan_id) {
+      if (!app_db_entry.is_set_port_name || !app_db_entry.is_set_src_mac) {
+        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "To set a VLAN, a port and source mac address must be provided";
+      }
+    }
+
     return ReturnCode();
 }
 
@@ -83,40 +91,55 @@ ReturnCodeOr<std::vector<sai_attribute_t>> prepareSaiAttrs(
     attrs.push_back(attr);
   }
 
-  attr.id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
-  switch (port.m_type) {
-    case Port::PHY:
+  if (router_intf_entry.has_vlan_id) {
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
+    attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_SUB_PORT;
+    attrs.push_back(attr);
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_PORT_ID;
+    attr.value.oid = port.m_port_id;
+    attrs.push_back(attr);
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID;
+    attr.value.u16 = router_intf_entry.vlan_id;
+    attrs.push_back(attr);
+  } else {
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
+    switch (port.m_type) {
+      case Port::PHY:
         attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_PORT;
         attrs.push_back(attr);
         attr.id = SAI_ROUTER_INTERFACE_ATTR_PORT_ID;
         attr.value.oid = port.m_port_id;
         break;
-    case Port::LAG:
+      case Port::LAG:
         attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_PORT;
         attrs.push_back(attr);
         attr.id = SAI_ROUTER_INTERFACE_ATTR_PORT_ID;
         attr.value.oid = port.m_lag_id;
         break;
-    case Port::VLAN:
+      case Port::VLAN:
         attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_VLAN;
         attrs.push_back(attr);
         attr.id = SAI_ROUTER_INTERFACE_ATTR_VLAN_ID;
         attr.value.oid = port.m_vlan_info.vlan_oid;
         break;
-    case Port::SUBPORT:
+      case Port::SUBPORT:
         attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_SUB_PORT;
         attrs.push_back(attr);
         attr.id = SAI_ROUTER_INTERFACE_ATTR_PORT_ID;
         attr.value.oid = port.m_port_id;
         attrs.push_back(attr);
         attr.id = SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID;
-        attr.value.oid = port.m_vlan_info.vlan_oid;
+        attr.value.u16 = port.m_vlan_info.vlan_id;
         break;
 
-    default:
-        LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Unsupported port type: " << port.m_type);
-  }
-    attrs.push_back(attr);
+      default:
+        LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                             << "Unsupported port type: " << port.m_type);
+      }
+      attrs.push_back(attr);
+    }
 
     // Enable multicast.
     attr.id = SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE;
@@ -174,6 +197,20 @@ ReturnCodeOr<P4RouterInterfaceAppDbEntry> RouterInterfaceManager::deserializeRou
                        << "Invalid MAC address " << QuotedVar(value) << " of field " << QuotedVar(field);
             }
             app_db_entry.is_set_src_mac = true;
+	} 
+	else if (field == prependParamField(p4orch::kVlanId)) {
+            try 
+	    {
+                app_db_entry.vlan_id =
+                static_cast<uint16_t>(std::stoul(value, 0, /*base=*/16));
+	    }
+            catch (std::exception& ex) 
+	    {
+                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                       << "Invalid VLAN ID " << QuotedVar(value) << " of field "
+                       << QuotedVar(field);
+            }
+            app_db_entry.is_set_vlan_id = true;
         }
         else if (field != p4orch::kAction && field != p4orch::kControllerMetadata)
         {
@@ -300,8 +337,10 @@ ReturnCode RouterInterfaceManager::processAddRequest(const P4RouterInterfaceAppD
                              << QuotedVar(app_db_entry.router_interface_id));
     }
 
-    P4RouterInterfaceEntry router_intf_entry(app_db_entry.router_interface_id, app_db_entry.port_name,
-                                             app_db_entry.src_mac_address);
+    P4RouterInterfaceEntry router_intf_entry(
+      app_db_entry.router_interface_id, app_db_entry.port_name,
+      app_db_entry.src_mac_address, app_db_entry.vlan_id,
+      app_db_entry.is_set_vlan_id);
     auto status = createRouterInterface(router_intf_key, router_intf_entry);
     if (!status.ok())
     {
@@ -337,6 +376,20 @@ ReturnCode RouterInterfaceManager::processUpdateRequest(const P4RouterInterfaceA
                            QuotedVar(router_intf_entry->router_interface_id).c_str());
             return status;
         }
+    }
+
+    // Similar to port ID above, VLAN ID is a CREATE_ONLY parameter in SAI.
+    if (app_db_entry.is_set_vlan_id != router_intf_entry->has_vlan_id ||
+        (router_intf_entry->has_vlan_id &&
+         app_db_entry.vlan_id != router_intf_entry->vlan_id)) {
+        LOG_ERROR_AND_RETURN(
+          ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
+          << "Updating VLAN ID for existing router interface is not "
+             "supported. Cannot update VLAN ID from "
+          << QuotedVar(std::to_string(router_intf_entry->vlan_id)) << " to "
+          << QuotedVar(std::to_string(app_db_entry.vlan_id))
+          << " for router interface "
+          << QuotedVar(router_intf_entry->router_interface_id));
     }
 
     return ReturnCode();
@@ -552,6 +605,20 @@ std::string RouterInterfaceManager::verifyStateCache(const P4RouterInterfaceAppD
         msg << "Source MAC address " << app_db_entry.src_mac_address.to_string() << " does not match internal cache "
             << router_intf_entry->src_mac_address.to_string() << " in router interface manager.";
         return msg.str();
+    }
+    if (router_intf_entry->has_vlan_id != app_db_entry.is_set_vlan_id) {
+      std::stringstream msg;
+      msg << "Setting a VLAN ID " << app_db_entry.is_set_vlan_id
+          << " does not match internal cache " << router_intf_entry->has_vlan_id
+          << " in router interface manager.";
+      return msg.str();
+    }
+    if (router_intf_entry->vlan_id != app_db_entry.vlan_id) {
+      std::stringstream msg;
+      msg << "VLAN ID " << app_db_entry.vlan_id
+          << " does not match internal cache " << router_intf_entry->vlan_id
+          << " in router interface manager.";
+      return msg.str();
     }
     return m_p4OidMapper->verifyOIDMapping(SAI_OBJECT_TYPE_ROUTER_INTERFACE, router_intf_key,
                                            router_intf_entry->router_interface_oid);
