@@ -27,7 +27,12 @@ const unordered_set<string> DebugCounter::supported_debug_counter_attributes =
     COUNTER_ALIAS,
     COUNTER_TYPE,
     COUNTER_DESCRIPTION,
-    COUNTER_GROUP
+    COUNTER_GROUP,
+    // Drop counter specific attributes for drop monitor feature
+    DROP_MONITOR_STATUS,
+    DROP_MONITOR_DROP_COUNT_THRESHOLD,
+    DROP_MONITOR_INCIDENT_COUNT_THRESHOLD,
+    DROP_MONITOR_WINDOW
 };
 
 const std::unordered_map<std::string, sai_debug_counter_type_t> DebugCounter::debug_counter_type_lookup =

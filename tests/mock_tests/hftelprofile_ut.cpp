@@ -126,7 +126,13 @@ namespace hftelprofile_ut
                 p = reinterpret_cast<HFTelProfile *>(static_cast<void *>(buf));
 
                 /* Placement-new the containers and strings that may be
-                 * accessed (directly or via logging) by updateTemplates(). */
+                 * accessed (directly or via logging) by updateTemplates().
+                 * Today that means:
+                 *   - m_profile_name
+                 *   - m_sai_tam_tel_type_objs
+                 *   - m_sai_tam_tel_type_templates
+                 * If updateTemplates() starts touching additional members,
+                 * extend this partial construction accordingly. */
                 new (const_cast<string*>(&p->m_profile_name)) string();
                 new (&p->m_sai_tam_tel_type_objs)
                     decay_t<decltype(p->m_sai_tam_tel_type_objs)>();
@@ -179,6 +185,22 @@ namespace hftelprofile_ut
 
         auto &tpl = s.p->m_sai_tam_tel_type_templates[SAI_OBJECT_TYPE_PORT];
         EXPECT_TRUE(tpl.empty());
+    }
+
+    /* ---- BUFFER_OVERFLOW with count=0 stores an empty template ---- */
+    TEST_F(UpdateTemplatesTest, BufferOverflow_EmptyTemplate)
+    {
+        Stub s;
+        s.init(guard);
+
+        g_mock.first_call_status = SAI_STATUS_BUFFER_OVERFLOW;
+        g_mock.first_call_count  = 0;
+
+        ASSERT_NO_THROW(s.p->updateTemplates(fake_tel_type_oid));
+
+        auto &tpl = s.p->m_sai_tam_tel_type_templates[SAI_OBJECT_TYPE_PORT];
+        EXPECT_TRUE(tpl.empty());
+        EXPECT_EQ(g_mock.call_count, 1);
     }
 
     /* ---- First query fails with unexpected status ---- */

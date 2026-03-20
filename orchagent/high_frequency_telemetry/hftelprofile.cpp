@@ -957,7 +957,7 @@ void HFTelProfile::updateTemplates(sai_object_id_t tam_tel_type_obj)
 
     // Query the required buffer size first by passing count=0 and list=nullptr,
     // then allocate and fetch the actual data.
-    sai_attribute_t attr;
+    sai_attribute_t attr{};
     attr.id = SAI_TAM_TEL_TYPE_ATTR_IPFIX_TEMPLATES;
     attr.value.u8list.count = 0;
     attr.value.u8list.list = nullptr;
@@ -982,6 +982,7 @@ void HFTelProfile::updateTemplates(sai_object_id_t tam_tel_type_obj)
                            sai_serialize_object_id(tam_tel_type_obj).c_str(), status);
         }
 
+        // SAI may return fewer bytes than originally requested.
         buffer.resize(attr.value.u8list.count);
     }
 
