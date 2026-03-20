@@ -59,23 +59,39 @@ class TestAcl:
     @pytest.fixture
     def l3v6upperlite_acl_table(self, dvs_acl):
         try:
+            # Create the ACL table type if it doesn't exist in the test environment
+            dvs_acl.create_acl_table_type(
+                L3V6UPPERLITE_TABLE_TYPE,
+                matches=["ACL_IP_TYPE", "IPV6_NEXT_HEADER"],
+                bpoint_types=["PORT", "PORTCHANNEL"],
+                actions=["PACKET_ACTION", "REDIRECT"]
+            )            
             dvs_acl.create_acl_table(L3V6UPPERLITE_TABLE_NAME,
                                      L3V6UPPERLITE_TABLE_TYPE,
                                      L3V6UPPERLITE_BIND_PORTS)
             yield dvs_acl.get_acl_table_ids(1)[0]
         finally:
             dvs_acl.remove_acl_table(L3V6UPPERLITE_TABLE_NAME)
+            dvs_acl.remove_acl_table_type(L3V6UPPERLITE_TABLE_TYPE)
             dvs_acl.verify_acl_table_count(0)
 
     @pytest.fixture
     def l3v6lite_acl_table(self, dvs_acl):
         try:
+            # Create the ACL table type if it doesn't exist in the test environment
+            dvs_acl.create_acl_table_type(
+                L3V6LITE_TABLE_TYPE,
+                matches=["ACL_IP_TYPE", "IPV6_NEXT_HEADER"],
+                bpoint_types=["PORT", "PORTCHANNEL"],
+                actions=["PACKET_ACTION", "REDIRECT"]
+            )            
             dvs_acl.create_acl_table(L3V6LITE_TABLE_NAME,
                                      L3V6LITE_TABLE_TYPE,
                                      L3V6LITE_BIND_PORTS)
             yield dvs_acl.get_acl_table_ids(1)[0]
         finally:
             dvs_acl.remove_acl_table(L3V6LITE_TABLE_NAME)
+            dvs_acl.remove_acl_table_type(L3V6LITE_TABLE_TYPE)
             dvs_acl.verify_acl_table_count(0)
 
     @pytest.fixture
