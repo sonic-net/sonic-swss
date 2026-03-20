@@ -41,6 +41,14 @@ namespace neighorch_test
 
         void LearnNeighbor(std::string vlan, std::string ip, std::string mac)
         {
+            /* 
+             * Inject the neighbor IP's subnet into IntfsOrch data so that the
+             * VLAN subnet check in NeighOrch::doTask() passes.  We use
+             * const_cast to bypass IntfsOrch's overlap validation which
+             * would reject the same /24 on multiple VLANs in one VRF.
+             */
+            auto& intfses = const_cast<IntfsTable&>(gIntfsOrch->getSyncdIntfses());
+            intfses[vlan].ip_addresses.insert(IpPrefix(ip + "/24"));
             Table neigh_table = Table(m_app_db.get(), APP_NEIGH_TABLE_NAME);
             string key = vlan + neigh_table.getTableNameSeparator() + ip;
             neigh_table.set(key, { { "neigh", mac }, { "family", "IPv4" } });

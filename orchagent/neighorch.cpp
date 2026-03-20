@@ -953,6 +953,36 @@ void NeighOrch::doTask(Consumer &consumer)
                 continue;
             }
 
+            /* 
+             * For VLAN interfaces, verify the neighbor IP belongs to a configured subnet.
+             * This prevents learning neighbor entries with IPs outside the VLAN's subnets.
+             * Link-local addresses are exempted as they are valid on any interface.
+             */
+            if (p.m_type == Port::VLAN && ip_address.getAddrScope() != IpAddress::LINK_SCOPE)
+            {
+                bool in_subnet = false;
+                const auto& syncdIntfses = m_intfsOrch->getSyncdIntfses();
+                auto it_intf = syncdIntfses.find(alias);
+                if (it_intf != syncdIntfses.end())
+                {
+                    for (const auto& prefix : it_intf->second.ip_addresses)
+                    {
+                        if (prefix.isAddressInSubnet(ip_address))
+                        {
+                            in_subnet = true;
+                            break;
+                        }
+                    }
+                }
+                if (!in_subnet)
+                {
+                    SWSS_LOG_NOTICE("Neighbor %s not in any subnet of VLAN interface %s, skipping",
+                                    ip_address.to_string().c_str(), alias.c_str());
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+            }
+
             MacAddress mac_address;
             for (auto i = kfvFieldsValues(t).begin();
                  i  != kfvFieldsValues(t).end(); i++)
