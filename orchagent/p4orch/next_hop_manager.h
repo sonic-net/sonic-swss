@@ -32,12 +32,22 @@ struct P4NextHopEntry
     std::string router_interface_id;
     std::string gre_tunnel_id;
     swss::IpAddress neighbor_id;
+    bool disable_decrement_ttl = false;
+    bool disable_src_mac_rewrite = false;
+    bool disable_dst_mac_rewrite = false;
+    bool disable_vlan_rewrite = false;
 
     // SAI OID associated with this entry.
     sai_object_id_t next_hop_oid = SAI_NULL_OBJECT_ID;
 
-    P4NextHopEntry(const std::string &next_hop_id, const std::string &router_interface_id,
-                   const std::string &gre_tunnel_id, const swss::IpAddress &neighbor_id);
+    P4NextHopEntry(const std::string& next_hop_id,
+                   const std::string& router_interface_id,
+                   const std::string& gre_tunnel_id,
+                   const swss::IpAddress& neighbor_id,
+                   bool disable_decrement_ttl = false,
+                   bool disable_src_mac_rewrite = false,
+                   bool disable_dst_mac_rewrite = false,
+                   bool disable_vlan_rewrite = false);
 };
 
 // NextHopManager listens to changes in table APP_P4RT_NEXTHOP_TABLE_NAME and
