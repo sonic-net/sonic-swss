@@ -132,6 +132,12 @@ class TestMuxTunnelBase():
         confdb.create_entry("VLAN_INTERFACE", self.VLAN_1000, fvs)
         confdb.create_entry("VLAN_INTERFACE", "Vlan1000|192.168.0.1/24", fvs)
         confdb.create_entry("VLAN_INTERFACE", "Vlan1000|fc02:1000::1/64", fvs)
+        confdb.create_entry("VLAN_INTERFACE", "Vlan1000|192.168.1.1/24", fvs)
+        confdb.create_entry("VLAN_INTERFACE", "Vlan1000|fc02:1001::1/64", fvs)
+        confdb.create_entry("VLAN_INTERFACE", "Vlan1000|11.11.11.1/24", fvs)
+        confdb.create_entry("VLAN_INTERFACE", "Vlan1000|2222::1/64", fvs)
+        confdb.create_entry("VLAN_INTERFACE", "Vlan1000|192.170.0.1/24", fvs)
+        confdb.create_entry("VLAN_INTERFACE", "Vlan1000|fc02:1000:100::1/64", fvs)
 
         dvs.port_admin_set("Ethernet0", "up")
         dvs.port_admin_set("Ethernet4", "up")
