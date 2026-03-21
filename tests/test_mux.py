@@ -5,8 +5,9 @@ import itertools
 
 from ipaddress import ip_network, ip_address, IPv4Address
 from swsscommon import swsscommon
+from dvslib.dvs_common import PollingConfig
 
-from mux_neigh_miss_tests import *
+from mux_neigh_miss_hostroute_tests import *
 
 def create_fvs(**kwargs):
     return swsscommon.FieldValuePairs(list(kwargs.items()))
@@ -1750,6 +1751,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
     def test_multi_nexthop(self, dvs, dvs_route, intf_fdb_map, neighbor_cleanup, testlog, setup):
         appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        dvs.runcmd("swssloglevel -l INFO -c orchagent")
         asicdb = dvs.get_asic_db()
         macs = [intf_fdb_map["Ethernet0"], intf_fdb_map["Ethernet4"]]
         new_mac = intf_fdb_map["Ethernet8"]
@@ -1805,7 +1807,6 @@ class TestMuxTunnel(TestMuxTunnelBase):
             self, dvs, dvs_route, setup_vlan, setup_tunnel, setup,
             setup_peer_switch, neighbor_cleanup, testlog
     ):
-        config_db = dvs.get_config_db()
         appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
         test_ip = self.SERV1_SOC_IPV4
@@ -1863,6 +1864,12 @@ class TestMuxTunnel(TestMuxTunnelBase):
         """
         appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         apdb = dvs.get_app_db()
+        state_db = dvs.get_state_db()
+        config_db = dvs.get_config_db()
+
+        logfvs = config_db.wait_for_entry("LOGGER", "orchagent")
+        logfvs["LOGLEVEL"] = "INFO"
+        config_db.update_entry("LOGGER", "orchagent", logfvs)
 
         self.set_mux_state(appdb, "Ethernet0", "active")
         self.set_mux_state(appdb, "Ethernet4", "active")
@@ -1891,6 +1898,13 @@ class TestMuxTunnel(TestMuxTunnelBase):
             if key == "state":
                 assert fvs[key] == "standby", "Ethernet8 Mux state is not standby after warm boot, state: {}".format(fvs[key])
 
+        # wait for some warm restart tables indicate reconciled
+        max_poll = PollingConfig(polling_interval=60, timeout=600, strict=True)
+        state_db.wait_for_field_match(swsscommon.STATE_WARM_RESTART_TABLE_NAME, "orchagent", {"state": "reconciled"},
+                                      polling_config=max_poll)
+        state_db.wait_for_field_match(swsscommon.STATE_WARM_RESTART_TABLE_NAME, "neighsyncd", {"state": "reconciled"},
+                                      polling_config=max_poll)
+
     def test_warm_boot_neighbor_restore(
         self, dvs, dvs_route, setup, setup_vlan, setup_mux_cable, setup_tunnel,
         setup_peer_switch, neighbor_cleanup, testlog
@@ -1899,6 +1913,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
         appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         apdb = dvs.get_app_db()
         asicdb = dvs.get_asic_db()
+        dvs.runcmd("swssloglevel -l INFO -c orchagent")
 
         self.set_mux_state(appdb, "Ethernet0", "active")
         self.set_mux_state(appdb, "Ethernet4", "active")

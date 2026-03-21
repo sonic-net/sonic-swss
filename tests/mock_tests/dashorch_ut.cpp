@@ -335,7 +335,8 @@ namespace dashorch_test
         appliance.mutable_trusted_vnis_list()->Add()->set_value(vni3);
         appliance.mutable_trusted_vnis_list()->Add()->CopyFrom(GenVni(vni4_min, vni4_max));
 
-        std::vector<sai_global_trusted_vni_entry_t> actual_entries(4);
+        std::vector<sai_global_trusted_vni_entry_t> created_entries(4);
+        std::vector<sai_global_trusted_vni_entry_t> removed_entries(4);
 
         {
             InSequence seq;
@@ -343,74 +344,72 @@ namespace dashorch_test
             EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_global_trusted_vni_entry)
                 .WillOnce(
                     DoAll(
-                        SaveArgPointee<0>(&actual_entries[0]),
+                        SaveArgPointee<0>(&created_entries[0]),
                         Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::create_global_trusted_vni_entry)));
 
             EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_global_trusted_vni_entry)
                 .WillOnce(
                     DoAll(
-                        SaveArgPointee<0>(&actual_entries[1]),
+                        SaveArgPointee<0>(&created_entries[1]),
                         Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::create_global_trusted_vni_entry)));
 
             EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_global_trusted_vni_entry)
                 .WillOnce(
                     DoAll(
-                        SaveArgPointee<0>(&actual_entries[2]),
+                        SaveArgPointee<0>(&created_entries[2]),
                         Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::create_global_trusted_vni_entry)));
 
             EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_global_trusted_vni_entry)
                 .WillOnce(
                     DoAll(
-                        SaveArgPointee<0>(&actual_entries[3]),
+                        SaveArgPointee<0>(&created_entries[3]),
                         Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::create_global_trusted_vni_entry)));
 
             // orchagent removes trusted VNIs in reverse order so we set the expectation in reverse order as well
             EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_global_trusted_vni_entry)
                 .WillOnce(
                     DoAll(
-                        SaveArgPointee<0>(&actual_entries[3]),
+                        SaveArgPointee<0>(&removed_entries[3]),
                         Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::remove_global_trusted_vni_entry)));
 
             EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_global_trusted_vni_entry)
                 .WillOnce(
                     DoAll(
-                        SaveArgPointee<0>(&actual_entries[2]),
+                        SaveArgPointee<0>(&removed_entries[2]),
                         Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::remove_global_trusted_vni_entry)));
 
             EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_global_trusted_vni_entry)
                 .WillOnce(
                     DoAll(
-                        SaveArgPointee<0>(&actual_entries[1]),
+                        SaveArgPointee<0>(&removed_entries[1]),
                         Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::remove_global_trusted_vni_entry)));
 
             EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_global_trusted_vni_entry)
                 .WillOnce(
                     DoAll(
-                        SaveArgPointee<0>(&actual_entries[0]),
+                        SaveArgPointee<0>(&removed_entries[0]),
                         Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::remove_global_trusted_vni_entry)));
         }
 
         SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance);
-        EXPECT_EQ(actual_entries[0].vni_range.min, vni1);
-        EXPECT_EQ(actual_entries[0].vni_range.max, vni1);
-        EXPECT_EQ(actual_entries[1].vni_range.min, vni2_min);
-        EXPECT_EQ(actual_entries[1].vni_range.max, vni2_max);
-        EXPECT_EQ(actual_entries[2].vni_range.min, vni3);
-        EXPECT_EQ(actual_entries[2].vni_range.max, vni3);
-        EXPECT_EQ(actual_entries[3].vni_range.min, vni4_min);
-        EXPECT_EQ(actual_entries[3].vni_range.max, vni4_max);
-
-        actual_entries.clear();
+        EXPECT_EQ(created_entries[0].vni_range.min, vni1);
+        EXPECT_EQ(created_entries[0].vni_range.max, vni1);
+        EXPECT_EQ(created_entries[1].vni_range.min, vni2_min);
+        EXPECT_EQ(created_entries[1].vni_range.max, vni2_max);
+        EXPECT_EQ(created_entries[2].vni_range.min, vni3);
+        EXPECT_EQ(created_entries[2].vni_range.max, vni3);
+        EXPECT_EQ(created_entries[3].vni_range.min, vni4_min);
+        EXPECT_EQ(created_entries[3].vni_range.max, vni4_max);
 
         SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, dash::appliance::Appliance(), false);
-        EXPECT_EQ(actual_entries[0].vni_range.min, vni1);
-        EXPECT_EQ(actual_entries[0].vni_range.max, vni1);
-        EXPECT_EQ(actual_entries[1].vni_range.min, vni2_min);
-        EXPECT_EQ(actual_entries[1].vni_range.max, vni2_max);
-        EXPECT_EQ(actual_entries[2].vni_range.min, vni3);
-        EXPECT_EQ(actual_entries[2].vni_range.max, vni3);
-        EXPECT_EQ(actual_entries[3].vni_range.min, vni4_min);
-        EXPECT_EQ(actual_entries[3].vni_range.max, vni4_max);
+        EXPECT_EQ(removed_entries[0].vni_range.min, vni1);
+        EXPECT_EQ(removed_entries[0].vni_range.max, vni1);
+        EXPECT_EQ(removed_entries[1].vni_range.min, vni2_min);
+        EXPECT_EQ(removed_entries[1].vni_range.max, vni2_max);
+        EXPECT_EQ(removed_entries[2].vni_range.min, vni3);
+        EXPECT_EQ(removed_entries[2].vni_range.max, vni3);
+        EXPECT_EQ(removed_entries[3].vni_range.min, vni4_min);
+        EXPECT_EQ(removed_entries[3].vni_range.max, vni4_max);
     }
 
     TEST_F(DashOrchTest, CreateRemoveEniTrustedVnisSingleValue)
@@ -544,7 +543,8 @@ namespace dashorch_test
         eni.mutable_trusted_vnis_list()->Add()->set_value(vni3);
         eni.mutable_trusted_vnis_list()->Add()->CopyFrom(GenVni(vni4_min, vni4_max));
 
-        std::vector<sai_eni_trusted_vni_entry_t> actual_entries(4);
+        std::vector<sai_eni_trusted_vni_entry_t> created_entries(4);
+        std::vector<sai_eni_trusted_vni_entry_t> removed_entries(4);
 
         {
             InSequence seq;
@@ -552,74 +552,72 @@ namespace dashorch_test
             EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_eni_trusted_vni_entry)
                 .WillOnce(
                     DoAll(
-                        SaveArgPointee<0>(&actual_entries[0]),
+                        SaveArgPointee<0>(&created_entries[0]),
                         Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::create_eni_trusted_vni_entry)));
 
             EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_eni_trusted_vni_entry)
                 .WillOnce(
                     DoAll(
-                        SaveArgPointee<0>(&actual_entries[1]),
+                        SaveArgPointee<0>(&created_entries[1]),
                         Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::create_eni_trusted_vni_entry)));
 
             EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_eni_trusted_vni_entry)
                 .WillOnce(
                     DoAll(
-                        SaveArgPointee<0>(&actual_entries[2]),
+                        SaveArgPointee<0>(&created_entries[2]),
                         Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::create_eni_trusted_vni_entry)));
 
             EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_eni_trusted_vni_entry)
                 .WillOnce(
                     DoAll(
-                        SaveArgPointee<0>(&actual_entries[3]),
+                        SaveArgPointee<0>(&created_entries[3]),
                         Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::create_eni_trusted_vni_entry)));
 
             // orchagent removes trusted VNIs in reverse order so we set the expectation in reverse order as well
             EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_eni_trusted_vni_entry)
                 .WillOnce(
                     DoAll(
-                        SaveArgPointee<0>(&actual_entries[3]),
+                        SaveArgPointee<0>(&removed_entries[3]),
                         Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::remove_eni_trusted_vni_entry)));
 
             EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_eni_trusted_vni_entry)
                 .WillOnce(
                     DoAll(
-                        SaveArgPointee<0>(&actual_entries[2]),
+                        SaveArgPointee<0>(&removed_entries[2]),
                         Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::remove_eni_trusted_vni_entry)));
 
             EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_eni_trusted_vni_entry)
                 .WillOnce(
                     DoAll(
-                        SaveArgPointee<0>(&actual_entries[1]),
+                        SaveArgPointee<0>(&removed_entries[1]),
                         Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::remove_eni_trusted_vni_entry)));
 
             EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_eni_trusted_vni_entry)
                 .WillOnce(
                     DoAll(
-                        SaveArgPointee<0>(&actual_entries[0]),
+                        SaveArgPointee<0>(&removed_entries[0]),
                         Invoke(old_sai_dash_trusted_vni_api, &sai_dash_trusted_vni_api_t::remove_eni_trusted_vni_entry)));
         }
 
         SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni);
-        EXPECT_EQ(actual_entries[0].vni_range.min, vni1);
-        EXPECT_EQ(actual_entries[0].vni_range.max, vni1);
-        EXPECT_EQ(actual_entries[1].vni_range.min, vni2_min);
-        EXPECT_EQ(actual_entries[1].vni_range.max, vni2_max);
-        EXPECT_EQ(actual_entries[2].vni_range.min, vni3);
-        EXPECT_EQ(actual_entries[2].vni_range.max, vni3);
-        EXPECT_EQ(actual_entries[3].vni_range.min, vni4_min);
-        EXPECT_EQ(actual_entries[3].vni_range.max, vni4_max);
-
-        actual_entries.clear();
+        EXPECT_EQ(created_entries[0].vni_range.min, vni1);
+        EXPECT_EQ(created_entries[0].vni_range.max, vni1);
+        EXPECT_EQ(created_entries[1].vni_range.min, vni2_min);
+        EXPECT_EQ(created_entries[1].vni_range.max, vni2_max);
+        EXPECT_EQ(created_entries[2].vni_range.min, vni3);
+        EXPECT_EQ(created_entries[2].vni_range.max, vni3);
+        EXPECT_EQ(created_entries[3].vni_range.min, vni4_min);
+        EXPECT_EQ(created_entries[3].vni_range.max, vni4_max);
 
         SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, dash::eni::Eni(), false);
-        EXPECT_EQ(actual_entries[0].vni_range.min, vni1);
-        EXPECT_EQ(actual_entries[0].vni_range.max, vni1);
-        EXPECT_EQ(actual_entries[1].vni_range.min, vni2_min);
-        EXPECT_EQ(actual_entries[1].vni_range.max, vni2_max);
-        EXPECT_EQ(actual_entries[2].vni_range.min, vni3);
-        EXPECT_EQ(actual_entries[2].vni_range.max, vni3);
-        EXPECT_EQ(actual_entries[3].vni_range.min, vni4_min);
-        EXPECT_EQ(actual_entries[3].vni_range.max, vni4_max);
+        EXPECT_EQ(removed_entries[0].vni_range.min, vni1);
+        EXPECT_EQ(removed_entries[0].vni_range.max, vni1);
+        EXPECT_EQ(removed_entries[1].vni_range.min, vni2_min);
+        EXPECT_EQ(removed_entries[1].vni_range.max, vni2_max);
+        EXPECT_EQ(removed_entries[2].vni_range.min, vni3);
+        EXPECT_EQ(removed_entries[2].vni_range.max, vni3);
+        EXPECT_EQ(removed_entries[3].vni_range.min, vni4_min);
+        EXPECT_EQ(removed_entries[3].vni_range.max, vni4_max);
     }
 
     TEST_F(DashOrchTest, DuplicateSetEniTrustedVniSingle)

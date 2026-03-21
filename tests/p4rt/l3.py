@@ -238,18 +238,31 @@ class P4RtNextHopWrapper(util.DBInterface):
     TBL_NAME = swsscommon.APP_P4RT_NEXTHOP_TABLE_NAME
     ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP"
     SAI_ATTR_TYPE = "SAI_NEXT_HOP_ATTR_TYPE"
+    SAI_ATTR_TYPE_IP = "SAI_NEXT_HOP_TYPE_IP"
     SAI_ATTR_IP = "SAI_NEXT_HOP_ATTR_IP"
     SAI_ATTR_TUNNEL_ENCAP = "SAI_NEXT_HOP_TYPE_TUNNEL_ENCAP"
     SAI_ATTR_ROUTER_INTF_OID = "SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID"
     SAI_ATTR_TUNNEL_OID = "SAI_NEXT_HOP_ATTR_TUNNEL_ID"
+    SAI_ATTR_DISABLE_DECREMENT_TTL = "SAI_NEXT_HOP_ATTR_DISABLE_DECREMENT_TTL"
+    SAI_ATTR_DISABLE_SRC_MAC_REWRITE = (
+        "SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE")
+    SAI_ATTR_DISABLE_DST_MAC_REWRITE = (
+        "SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE")
+    SAI_ATTR_DISABLE_VLAN_REWRITE = "SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE"
 
     # attribute fields for nexthop object
     RIF_FIELD = "router_interface_id"
     NEIGHBOR_ID_FIELD = "neighbor_id"
     TUNNEL_ID_FIELD = "tunnel_id"
+    DISABLE_DECREMENT_TTL_FIELD = "disable_decrement_ttl"
+    DISABLE_SRC_MAC_REWRITE_FIELD = "disable_src_mac_rewrite"
+    DISABLE_DST_MAC_REWRITE_FIELD = "disable_dst_mac_rewrite"
+    DISABLE_VLAN_REWRITE_FIELD = "disable_vlan_rewrite"
 
     # default next hop attribute values
     DEFAULT_ACTION = "set_ip_nexthop"
+    SET_IP_NEXTHOP_AND_DISABLE_REWRITES_ACTION = (
+        "set_ip_nexthop_and_disable_rewrites")
     DEFAULT_NEXTHOP_ID = "8"
     DEFAULT_ROUTER_INTERFACE_ID = "16"
     DEFAULT_IPV4_NEIGHBOR_ID = "12.0.0.1"
@@ -274,6 +287,10 @@ class P4RtNextHopWrapper(util.DBInterface):
         nexthop_id=None,
         ipv4=True,
         tunnel_id=None,
+        disable_decrement_ttl=0,
+        disable_src_mac_rewrite=0,
+        disable_dst_mac_rewrite=0,
+        disable_vlan_rewrite=0
     ):
         action = action or (self.DEFAULT_ACTION if tunnel_id == None else self.TUNNEL_ACTION)
         router_interface_id = router_interface_id or self.DEFAULT_ROUTER_INTERFACE_ID
@@ -283,9 +300,22 @@ class P4RtNextHopWrapper(util.DBInterface):
             neighbor_id = neighbor_id or self.DEFAULT_IPV6_NEIGHBOR_ID
         nexthop_id = nexthop_id or self.DEFAULT_NEXTHOP_ID
         attr_list = [(self.ACTION_FIELD, action)]
-        if action == self.DEFAULT_ACTION:
+        if (action == self.DEFAULT_ACTION or
+            action == self.SET_IP_NEXTHOP_AND_DISABLE_REWRITES_ACTION):
             attr_list.append((util.prepend_param_field(self.RIF_FIELD), router_interface_id))
             attr_list.append((util.prepend_param_field(self.NEIGHBOR_ID_FIELD), neighbor_id))
+            attr_list.append((util.prepend_param_field(
+                self.DISABLE_DECREMENT_TTL_FIELD),
+                str(disable_decrement_ttl)))
+            attr_list.append((util.prepend_param_field(
+                self.DISABLE_SRC_MAC_REWRITE_FIELD),
+                str(disable_src_mac_rewrite)))
+            attr_list.append((util.prepend_param_field(
+                self.DISABLE_DST_MAC_REWRITE_FIELD),
+                str(disable_dst_mac_rewrite)))
+            attr_list.append((util.prepend_param_field(
+                self.DISABLE_VLAN_REWRITE_FIELD),
+                str(disable_vlan_rewrite)))
         if tunnel_id != None:
             attr_list.append((util.prepend_param_field(self.TUNNEL_ID_FIELD), tunnel_id))
         nexthop_key = self.generate_app_db_key(nexthop_id)
@@ -310,6 +340,20 @@ class P4RtNextHopWrapper(util.DBInterface):
                 nexthop_oid = key
                 break
         return nexthop_oid
+
+    def get_newly_created_asic_db_key(self):
+        asic_db_key = None
+        nexthop_entries = util.get_keys(self.asic_db, self.ASIC_DB_TBL_NAME)
+        for key in nexthop_entries:
+            if (
+                key
+                not in self._original_entries[
+                    "%s:%s" % (self.asic_db, self.ASIC_DB_TBL_NAME)
+                ]
+            ):
+                asic_db_key = key
+                break
+        return asic_db_key
 
     def get_original_appl_db_entries_count(self):
         return len(
@@ -561,6 +605,7 @@ class P4RtRouteWrapper(util.DBInterface):
     # 'get_original_redis_entries' before fetching asic db key of newly created
     # route.
     def get_newly_created_asic_db_key(self):
+        asic_db_key = None
         route_entries = util.get_keys(self.asic_db, self.ASIC_DB_TBL_NAME)
         for key in route_entries:
             if (
