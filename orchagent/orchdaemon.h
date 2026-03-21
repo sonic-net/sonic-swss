@@ -116,6 +116,10 @@ protected:
     DBConnector *m_chassisAppDb;
     ZmqServer *m_zmqServer;
 
+    // Use a dedicated zmq server for p4Orch.
+    const std::string m_p4OrchZmqServerEp = "ipc:///zmq_swss/p4orch_zmq_swss_ep";
+    ZmqServer *m_p4OrchZmqServer = nullptr;
+
     bool m_fabricEnabled = false;
     bool m_fabricPortStatEnabled = true;
     bool m_fabricQueueStatEnabled = true;

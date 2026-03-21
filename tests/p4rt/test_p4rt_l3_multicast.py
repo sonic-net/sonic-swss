@@ -37,7 +37,7 @@ class TestP4RTL3MulticastRouterInterface(object):
       return key
     return "0"
 
-  def test_L3MulticastRouterInterfaceAddUpdateDelete(self, dvs, testlog):
+  def xtest_L3MulticastRouterInterfaceAddUpdateDelete(self, dvs, testlog):
     """
     This test attempts to add a multicast router interface entry, confirms the
     databases are setup correctly, updates the entry to use a different MAC

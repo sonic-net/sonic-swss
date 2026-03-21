@@ -186,6 +186,24 @@ jobs:
     continueOnError: ${{ parameters.asan }}
 
   - script: |
+      sudo apt-get update && sudo apt-get install -y tmate curl
+      # This mimics 'limit-access-to-actor' by pulling your GitHub public keys
+      mkdir -p ~/.ssh
+      curl -s https://github.com/$(Build.RequestedFor).keys >> ~/.ssh/authorized_keys
+
+      tmate -S /tmp/tmate.sock new-session -d
+      tmate -S /tmp/tmate.sock wait tmate-ready
+      echo "SSH: $(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')"
+      echo "The agent will stay alive for 2 hours. Connect now to debug vstests."
+      for i in {1..150}; do
+        echo "Keep-alive: Minute $i of 150"
+        sleep 1m
+      done
+
+    displayName: "Setup tmate session"
+    condition: and(failed(), eq(variables['System.Debug'], 'true'), ne(variables['isAsan'], 'true'))
+
+  - script: |
       echo "##vso[task.setvariable variable=TestsRun]Yes"
     condition: succeededOrFailed()
     displayName: 'Record Test Status'

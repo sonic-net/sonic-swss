@@ -8,6 +8,7 @@
 #include "warm_restart.h"
 #include <iostream>
 #include "orch_zmq_config.h"
+#include <sys/stat.h>
 
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
@@ -824,7 +825,18 @@ bool OrchDaemon::init()
     m_orchList.push_back(&CounterCheckOrch::getInstance(m_configDb));
 
     vector<string> p4rt_tables = {APP_P4RT_TABLE_NAME};
-    gP4Orch = new P4Orch(m_applDb, p4rt_tables, vrf_orch, gCoppOrch);
+    m_p4OrchZmqServer = new swss::ZmqServer(m_p4OrchZmqServerEp, "", false, true);
+
+    // --- NEW CHANGES ---
+    // 2. Strip "ipc://" from the endpoint string to get the raw Linux file path
+    // "ipc://" is exactly 6 characters, so substr(6) returns "/zmq_swss/p4orch_zmq_swss_ep"
+    std::string socketFilePath = m_p4OrchZmqServerEp.substr(6);
+    
+    // 3. Grant global read/write permissions so the CI test runner can connect
+    chmod(socketFilePath.c_str(), 0777);
+    // --- NEW CHANGES END ---
+
+    gP4Orch = new P4Orch(m_applDb, p4rt_tables, m_p4OrchZmqServer, vrf_orch, gCoppOrch);
     m_orchList.push_back(gP4Orch);
 
     TableConnector confDbTwampTable(m_configDb, CFG_TWAMP_SESSION_TABLE_NAME);
