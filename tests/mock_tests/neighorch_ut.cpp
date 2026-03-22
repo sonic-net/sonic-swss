@@ -276,4 +276,30 @@ namespace neighorch_test
         gPortsOrch->m_portList.erase(VLAN_2000);
         LearnNeighbor(VLAN_2000, TEST_IP, MAC2);
     }
+
+    TEST_F(NeighOrchTest, VlanNeighborNotInSubnetSkipped)
+    {
+        /* 
+         * Verify that a neighbor whose IP does not belong to any configured
+         *  subnet on the VLAN interface is silently skipped (not programmed). 
+         */
+        static const string OUT_OF_SUBNET_IP = "172.16.0.50";
+
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).Times(0);
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).Times(0);
+
+        /*
+         * Expect the neighbor entry to be not added as the IP doesn't fall in
+         * the configured VLAN subnet.
+         */
+        Table neigh_table = Table(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+        string key = VLAN_1000 + neigh_table.getTableNameSeparator() + OUT_OF_SUBNET_IP;
+        neigh_table.set(key, { { "neigh", MAC1 }, { "family", "IPv4" } });
+        gNeighOrch->addExistingData(&neigh_table);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+        neigh_table.del(key);
+
+        NeighborEntry entry = { IpAddress(OUT_OF_SUBNET_IP), VLAN_1000 };
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(entry), 0);
+    }
 }
