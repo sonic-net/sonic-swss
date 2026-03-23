@@ -56,8 +56,6 @@ const DEBUG_LOG_INTERVAL: u32 = 3000; // 3000 * 10ms = 30 seconds
 /// WouldBlock debug logging interval (in iterations) - log WouldBlock every minute
 const WOULDBLOCK_LOG_INTERVAL: u32 = 6000; // 6000 * 10ms = 1 minute
 
-/// Default socket readiness poll interval (ms) when not configured via CLI.
-const DEFAULT_SOCKET_READINESS_TIMEOUT_MS: u64 = 5;
 
 /// Maximum size for buffering incomplete messages (1MB)
 const MAX_INCOMPLETE_MESSAGE_SIZE: usize = 1024 * 1024;
@@ -1176,7 +1174,7 @@ pub mod test {
         let (command_sender, command_receiver) = channel(1);
         let (buffer_sender, mut buffer_receiver) = channel(1);
 
-        let mut actor = DataNetlinkActor::new("family", "group", command_receiver, 0, DEFAULT_SOCKET_READINESS_TIMEOUT_MS);
+        let mut actor = DataNetlinkActor::new("family", "group", command_receiver, 0, 5);
         actor.add_recipient(buffer_sender);
 
         let task = spawn(DataNetlinkActor::run(actor));
