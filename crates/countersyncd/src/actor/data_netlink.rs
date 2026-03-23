@@ -47,14 +47,14 @@ const MAX_LOCAL_RECONNECT_ATTEMPTS: u32 = 3;
 /// Socket health check timeout - if no data received for this duration, socket is considered unhealthy
 const SOCKET_HEALTH_TIMEOUT_SECS: u64 = 60;
 
-/// Heartbeat logging interval (in iterations) - log every 5 minutes at 10ms per iteration
-const HEARTBEAT_LOG_INTERVAL: u32 = 30000; // 30000 * 10ms = 5 minutes
+/// Heartbeat logging interval (in iterations) - log every 5 minutes at 5ms per iteration
+const HEARTBEAT_LOG_INTERVAL: u32 = 60000; // 60000 * 5ms = 5 minutes
 
 /// Debug logging interval (in iterations) - log debug info every 30 seconds
-const DEBUG_LOG_INTERVAL: u32 = 3000; // 3000 * 10ms = 30 seconds
+const DEBUG_LOG_INTERVAL: u32 = 6000; // 6000 * 5ms = 30 seconds
 
 /// WouldBlock debug logging interval (in iterations) - log WouldBlock every minute
-const WOULDBLOCK_LOG_INTERVAL: u32 = 6000; // 6000 * 10ms = 1 minute
+const WOULDBLOCK_LOG_INTERVAL: u32 = 12000; // 12000 * 5ms = 1 minute
 
 
 /// Maximum size for buffering incomplete messages (1MB)
