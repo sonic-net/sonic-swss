@@ -205,7 +205,9 @@ static sai_object_id_t create_tunnel(
     const IpAddress* p_src_ip,
     sai_object_id_t tc_to_dscp_map_id,
     sai_object_id_t tc_to_queue_map_id,
-    string dscp_mode_name)
+    string dscp_mode_name,
+    const string& ecn_mode_name,
+    const string& encap_ecn_mode_name)
 {
     sai_status_t status;
 
@@ -271,6 +273,35 @@ static sai_object_id_t create_tunnel(
         attr.id = SAI_TUNNEL_ATTR_DECAP_DSCP_MODE;
         attr.value.s32 = dscp_mode;
         tunnel_attrs.push_back(attr);
+    }
+
+    /* ECN: same semantics as TunnelDecapOrch::addDecapTunnel (CONFIG TUNNEL / APP TUNNEL_DECAP_TABLE) */
+    if (ecn_mode_name == "copy_from_outer")
+    {
+        attr.id = SAI_TUNNEL_ATTR_DECAP_ECN_MODE;
+        attr.value.s32 = SAI_TUNNEL_DECAP_ECN_MODE_COPY_FROM_OUTER;
+        tunnel_attrs.push_back(attr);
+    }
+    else if (ecn_mode_name == "standard")
+    {
+        attr.id = SAI_TUNNEL_ATTR_DECAP_ECN_MODE;
+        attr.value.s32 = SAI_TUNNEL_DECAP_ECN_MODE_STANDARD;
+        tunnel_attrs.push_back(attr);
+    }
+    else if (!ecn_mode_name.empty())
+    {
+        SWSS_LOG_ERROR("Invalid mux tunnel ecn_mode '%s'", ecn_mode_name.c_str());
+    }
+
+    if (encap_ecn_mode_name == "standard")
+    {
+        attr.id = SAI_TUNNEL_ATTR_ENCAP_ECN_MODE;
+        attr.value.s32 = SAI_TUNNEL_ENCAP_ECN_MODE_STANDARD;
+        tunnel_attrs.push_back(attr);
+    }
+    else if (!encap_ecn_mode_name.empty())
+    {
+        SWSS_LOG_ERROR("Unsupported mux tunnel encap_ecn_mode '%s'", encap_ecn_mode_name.c_str());
     }
 
     attr.id = SAI_TUNNEL_ATTR_LOOPBACK_PACKET_ACTION;
@@ -1841,6 +1872,18 @@ bool MuxOrch::handlePeerSwitch(const Request& request)
             SWSS_LOG_NOTICE("dscp_mode for tunnel %s is not available. Will not be applied", MUX_TUNNEL);
         }
 
+        string ecn_mode_name = decap_orch_->getEcnMode(MUX_TUNNEL);
+        if (ecn_mode_name == "")
+        {
+            SWSS_LOG_NOTICE("ecn_mode for tunnel %s is not available. ECN SAI attrs will not be set", MUX_TUNNEL);
+        }
+
+        string encap_ecn_mode_name = decap_orch_->getEncapEcnMode(MUX_TUNNEL);
+        if (encap_ecn_mode_name == "")
+        {
+            SWSS_LOG_NOTICE("encap_ecn_mode for tunnel %s is not available. Encap ECN will not be set", MUX_TUNNEL);
+        }
+
         // Read tc_to_dscp_map_id of MuxTunnel0 from decap_orch
         sai_object_id_t tc_to_dscp_map_id = SAI_NULL_OBJECT_ID;
         decap_orch_->getQosMapId(MUX_TUNNEL, encap_tc_to_dscp_field_name, tc_to_dscp_map_id);
@@ -1856,7 +1899,8 @@ bool MuxOrch::handlePeerSwitch(const Request& request)
             SWSS_LOG_NOTICE("tc_to_queue_map_id for tunnel %s is not available. Will not be applied", MUX_TUNNEL);
         }
 
-        mux_tunnel_id_ = create_tunnel(&peer_ip, &dst_ip, tc_to_dscp_map_id, tc_to_queue_map_id, dscp_mode_name);
+        mux_tunnel_id_ = create_tunnel(&peer_ip, &dst_ip, tc_to_dscp_map_id, tc_to_queue_map_id, dscp_mode_name,
+                                       ecn_mode_name, encap_ecn_mode_name);
         mux_peer_switch_ = peer_ip;
         SWSS_LOG_NOTICE("Mux peer ip '%s' was added, peer name '%s'",
                          peer_ip.to_string().c_str(), peer_name.c_str());
