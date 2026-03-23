@@ -348,8 +348,33 @@ impl DataNetlinkActor {
                 bytes,
                 std::io::Error::last_os_error()
             );
+            return;
+        }
+
+        // Read back the actual value — Linux may cap it at net.core.rmem_max and doubles it internally.
+        let mut actual: libc::c_int = 0;
+        let mut len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+        let ret = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_RCVBUF,
+                &mut actual as *mut _ as *mut libc::c_void,
+                &mut len,
+            )
+        };
+        if ret != 0 {
+            warn!(
+                "Failed to read back SO_RCVBUF: {:?}",
+                std::io::Error::last_os_error()
+            );
         } else {
-            info!("Set netlink socket SO_RCVBUF to {} bytes", bytes);
+            info!(
+                "Netlink SO_RCVBUF: requested={} bytes, actual={} bytes{}",
+                bytes,
+                actual,
+                if (actual as usize) < bytes { " (capped by net.core.rmem_max — consider raising it)" } else { "" }
+            );
         }
     }
 
