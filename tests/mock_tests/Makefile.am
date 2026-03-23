@@ -79,6 +79,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 portphyattr_ut.cpp \
 		portphyserdesattr_ut.cpp \
                 counternameupdater_ut.cpp \
+                hftelprofile_ut.cpp \
                 mock_orch_test.cpp \
                 mock_dash_orch_test.cpp \
                 zmq_orch_ut.cpp \
