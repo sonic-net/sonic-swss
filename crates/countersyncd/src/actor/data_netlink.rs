@@ -1462,6 +1462,22 @@ pub mod test {
             assert!(!group.is_empty());
         }
     }
+
+    #[test]
+    fn test_netlink_rcvbuf_stored_on_construction() {
+        let (_, command_receiver) = channel(1);
+        let actor = DataNetlinkActor::new("family", "group", command_receiver, 4194304, 5);
+        assert_eq!(actor.netlink_rcvbuf_bytes, 4194304);
+    }
+
+    #[test]
+    fn test_log_interval_cadence_at_default_poll_ms() {
+        const DEFAULT_POLL_MS: u64 = 5;
+        assert_eq!(HEARTBEAT_LOG_INTERVAL as u64 * DEFAULT_POLL_MS, 5 * 60 * 1000);  // 5 minutes
+        assert_eq!(DEBUG_LOG_INTERVAL as u64 * DEFAULT_POLL_MS, 30 * 1000);           // 30 seconds
+        assert_eq!(WOULDBLOCK_LOG_INTERVAL as u64 * DEFAULT_POLL_MS, 60 * 1000);      // 1 minute
+    }
+
 }
 
 /// Reads the Generic Netlink family and group names from the configuration file.
