@@ -44,14 +44,14 @@ int __wrap_nl_send_auto(struct nl_sock *sk, struct nl_msg *msg)
 /* Control whether nlmsg_alloc returns NULL to simulate setNeighbor failure */
 static bool mock_nlmsg_alloc_fail = false;
 
+struct nl_msg *__real_nlmsg_alloc(void);
+
 struct nl_msg *__wrap_nlmsg_alloc(void)
 {
     if (mock_nlmsg_alloc_fail)
     {
         return nullptr;
     }
-    /* Call real implementation */
-    struct nl_msg *__real_nlmsg_alloc(void);
     return __real_nlmsg_alloc();
 }
 
