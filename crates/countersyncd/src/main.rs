@@ -191,7 +191,8 @@ struct Args {
     #[arg(
         long,
         default_value = "5",
-        help = "Poll interval in ms for netlink socket readiness. Default 5"
+        value_parser = clap::value_parser!(u64).range(1..),
+        help = "Poll interval in ms for netlink socket readiness. Default 5, minimum 1"
     )]
     socket_readiness_timeout_ms: u64,
 
