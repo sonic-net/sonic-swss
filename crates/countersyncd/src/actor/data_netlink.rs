@@ -322,7 +322,17 @@ impl DataNetlinkActor {
             return;
         }
         let fd = socket.as_raw_fd();
-        let v: libc::c_int = bytes.try_into().unwrap_or(libc::c_int::MAX);
+        let v: libc::c_int = match bytes.try_into() {
+            Ok(v) => v,
+            Err(_) => {
+                warn!(
+                    "netlink_rcvbuf {} exceeds c_int::MAX, clamping to {}",
+                    bytes,
+                    libc::c_int::MAX
+                );
+                libc::c_int::MAX
+            }
+        };
         let ret = unsafe {
             libc::setsockopt(
                 fd,
