@@ -32,7 +32,8 @@ class AclTableManager : public ObjectManagerInterface
     virtual ~AclTableManager();
 
     void enqueue(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry) override;
-    void drain() override;
+    ReturnCode drain() override;
+    void drainWithNotExecuted() override;
     std::string verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple) override;
     ReturnCode getSaiObject(const std::string &json_key, sai_object_type_t &object_type,
                             std::string &object_key) override;
@@ -102,10 +103,11 @@ class AclTableManager : public ObjectManagerInterface
                                  const P4AclTableDefinition *acl_table);
 
     // Verifies ASIC DB for an entry.
-    std::string verifyStateAsicDb(const P4AclTableDefinition *acl_table);
+    std::string verifyStateAsicDb(P4AclTableDefinition* acl_table);
 
     // Returns ACl table SAI attributes.
-    ReturnCodeOr<std::vector<sai_attribute_t>> getTableSaiAttrs(const P4AclTableDefinition &acl_table);
+    ReturnCodeOr<std::vector<sai_attribute_t>> getTableSaiAttrs(
+        P4AclTableDefinition& acl_table);
 
     // Returns UDF SAI attributes.
     ReturnCodeOr<std::vector<sai_attribute_t>> getUdfSaiAttrs(const P4UdfField &udf_field);
@@ -115,9 +117,6 @@ class AclTableManager : public ObjectManagerInterface
     P4AclTableDefinitions m_aclTableDefinitions;
     std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
     std::map<sai_acl_stage_t, std::vector<std::string>> m_aclTablesByStage;
-
-    // Always add counter action in ACL table action list during creation
-    int32_t m_acl_action_list[1];
 
     friend class p4orch::test::AclManagerTest;
 };

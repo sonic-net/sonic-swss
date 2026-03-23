@@ -4,10 +4,13 @@
 #include <swss/ipaddress.h>
 #include <swssnet.h>
 
+#include "directory.h"
 #include "dashmeterorch.h"
 #include "taskworker.h"
 #include "pbutils.h"
 #include "crmorch.h"
+#include "sai.h"
+#include "saiextensions.h"
 #include "saihelper.h"
 
 using namespace std;
@@ -19,12 +22,11 @@ extern sai_dash_meter_api_t* sai_dash_meter_api;
 extern sai_object_id_t gSwitchId;
 extern size_t gMaxBulkSize;
 extern CrmOrch *gCrmOrch;
+extern Directory<Orch*> gDirectory;
 
-
-DashMeterOrch::DashMeterOrch(DBConnector *db, const vector<string> &tables, DashOrch *dash_orch, DBConnector *app_state_db, ZmqServer *zmqServer) :
+DashMeterOrch::DashMeterOrch(DBConnector *db, const vector<string> &tables, DBConnector *app_state_db, ZmqServer *zmqServer) :
     meter_rule_bulker_(sai_dash_meter_api, gSwitchId, gMaxBulkSize),
-    ZmqOrch(db, tables, zmqServer),
-    m_dash_orch(dash_orch)
+    ZmqOrch(db, tables, zmqServer)
 {
     SWSS_LOG_ENTER();
 }

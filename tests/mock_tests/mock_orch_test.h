@@ -59,6 +59,8 @@ namespace mock_orch_test
         DashHaOrch *m_dashHaOrch;
         DashRouteOrch *m_DashRouteOrch;
         DashTunnelOrch *m_DashTunnelOrch;
+        DashPortMapOrch *m_dashPortMapOrch;
+        DashMeterOrch *m_DashMeterOrch;
 
         void PrepareSai();
         void SetUp();
@@ -67,5 +69,6 @@ namespace mock_orch_test
         virtual void PostSetUp();
         virtual void PreTearDown();
         virtual void ApplySaiMock();
+        void initTestLogger(const std::string &appName = "mock_tests", int minPrio = swss::Logger::SWSS_INFO);
     };
 }

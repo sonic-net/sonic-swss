@@ -10,6 +10,22 @@ void MockOrchTest::PostSetUp() {}
 void MockOrchTest::PreTearDown() {}
 void MockOrchTest::ApplySaiMock() {}
 
+void MockOrchTest::initTestLogger(const std::string &appName, int minPrio)
+{
+    const char *syslogStdout = std::getenv("SWSS_SYSLOG_STDOUT");
+    if (syslogStdout != nullptr && std::string(syslogStdout) == "1")
+    {
+        static std::once_flag loggerInitFlag;
+
+        std::call_once(loggerInitFlag, [&appName]() {
+            swss::Logger::linkToDbNative(appName);
+        });
+
+        swss::Logger::swssOutputNotify("orchagent", "STDOUT");
+        swss::Logger::setMinPrio(static_cast<swss::Logger::Priority>(minPrio));
+    }
+}
+
 void MockOrchTest::PrepareSai()
 {
     sai_attribute_t attr;
@@ -61,6 +77,8 @@ void MockOrchTest::PrepareSai()
 
 void MockOrchTest::SetUp()
 {
+    initTestLogger();
+
     map<string, string> profile = {
         { "SAI_VS_SWITCH_TYPE", "SAI_VS_SWITCH_TYPE_BCM56850" },
         { "KV_DEVICE_MAC_ADDRESS", "20:03:04:05:06:00" }
@@ -234,7 +252,7 @@ void MockOrchTest::SetUp()
 
     TableConnector stateDbMirrorSession(m_state_db.get(), STATE_MIRROR_SESSION_TABLE_NAME);
     TableConnector confDbMirrorSession(m_config_db.get(), CFG_MIRROR_SESSION_TABLE_NAME);
-    gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, gPolicerOrch);
+    gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, gPolicerOrch, gSwitchOrch);
     gDirectory.set(gMirrorOrch);
     ut_orch_list.push_back((Orch **)&gMirrorOrch);
     global_orch_list.insert((Orch **)&gMirrorOrch);
@@ -250,6 +268,15 @@ void MockOrchTest::SetUp()
     m_DashOrch = new DashOrch(m_app_db.get(), dash_tables, m_dpu_app_state_db.get(), nullptr);
     gDirectory.set(m_DashOrch);
     ut_orch_list.push_back((Orch **)&m_DashOrch);
+
+    vector<string> dash_meter_tables = {
+        APP_DASH_METER_POLICY_TABLE_NAME,
+        APP_DASH_METER_RULE_TABLE_NAME
+    };
+
+    m_DashMeterOrch = new DashMeterOrch(m_app_db.get(), dash_meter_tables, m_dpu_app_state_db.get(), nullptr);
+    gDirectory.set(m_DashMeterOrch);
+    ut_orch_list.push_back((Orch **)&m_DashMeterOrch);
 
     TableConnector confDbAclTable(m_config_db.get(), CFG_ACL_TABLE_TABLE_NAME);
     TableConnector confDbAclTableType(m_config_db.get(), CFG_ACL_TABLE_TYPE_TABLE_NAME);
@@ -301,14 +328,6 @@ void MockOrchTest::SetUp()
     gDirectory.set(m_dashVnetOrch);
     ut_orch_list.push_back((Orch **)&m_dashVnetOrch);
 
-    vector<string> dash_ha_tables = {
-        APP_DASH_HA_SET_TABLE_NAME,
-        APP_DASH_HA_SCOPE_TABLE_NAME
-    };
-    m_dashHaOrch = new DashHaOrch(m_dpu_app_db.get(), dash_ha_tables, m_DashOrch, m_dpu_app_state_db.get(), nullptr);
-    gDirectory.set(m_dashHaOrch);
-    ut_orch_list.push_back((Orch **)&m_dashHaOrch);
-
     vector<string> dash_route_tables = {
         APP_DASH_ROUTE_TABLE_NAME,
         APP_DASH_ROUTE_RULE_TABLE_NAME,
@@ -325,6 +344,14 @@ void MockOrchTest::SetUp()
     m_DashTunnelOrch= new DashTunnelOrch(m_app_db.get(), dash_tunnel_tables, m_dpu_app_state_db.get(), nullptr);
     gDirectory.set(m_DashTunnelOrch);
     ut_orch_list.push_back((Orch **)&m_DashTunnelOrch);
+
+    vector<string> dash_port_map_tables = {
+        APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME,
+        APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME
+    };
+    m_dashPortMapOrch = new DashPortMapOrch(m_app_db.get(), dash_port_map_tables, m_dpu_app_state_db.get(), nullptr);
+    gDirectory.set(m_dashPortMapOrch);
+    ut_orch_list.push_back((Orch **)&m_dashPortMapOrch);
 
     ApplyInitialConfigs();
     PostSetUp();

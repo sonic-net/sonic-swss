@@ -8,12 +8,14 @@
 #include <bitset>
 #include <tuple>
 
+#include "aclorch.h"
 #include "request_parser.h"
 #include "ipaddresses.h"
 #include "producerstatetable.h"
 #include "observer.h"
 #include "nexthopgroupkey.h"
 #include "bfdorch.h"
+#include "tunneltermhelper.h"
 
 #define VNET_BITMAP_SIZE 32
 #define VNET_TUNNEL_SIZE 40960
@@ -21,6 +23,9 @@
 #define VNET_NEIGHBOR_MAX 0xffff
 #define VXLAN_ENCAP_TTL 128
 #define VNET_BITMAP_RIF_MTU 9100
+
+#define VNET_MONITORING_TYPE_CUSTOM "custom"
+#define VNET_MONITORING_TYPE_CUSTOM_BFD "custom_bfd"
 
 extern sai_object_id_t gVirtualRouterId;
 
@@ -202,8 +207,8 @@ public:
     bool updateObj(vector<sai_attribute_t>&);
 
     bool addRoute(IpPrefix& ipPrefix, NextHopGroupKey& nexthops);
-    bool addRoute(IpPrefix& ipPrefix, nextHop& nh);
-    bool removeRoute(IpPrefix& ipPrefix);
+    bool addRoute(IpPrefix& ipPrefix, nextHop& nh, bool increaseRefCount = true);
+    bool removeRoute(IpPrefix& ipPrefix, bool decreaseRefCount = true);
 
     void addProfile(IpPrefix& ipPrefix, string& profile);
     void removeProfile(IpPrefix& ipPrefix);
@@ -309,6 +314,9 @@ const request_description_t vnet_route_description = {
         { "monitoring",             REQ_T_STRING },
         { "adv_prefix",             REQ_T_IP_PREFIX },
         { "check_directly_connected", REQ_T_BOOL },
+        { "rx_monitor_timer",       REQ_T_UINT },
+        { "tx_monitor_timer",       REQ_T_UINT },
+        { "metric",                 REQ_T_UINT }
     },
     { }
 };
@@ -319,6 +327,22 @@ const request_description_t monitor_state_request_description = {
                 { "state",  REQ_T_STRING },
             },
             { "state" }
+};
+
+const request_description_t custom_bfd_request_description = {
+            { REQ_T_STRING, REQ_T_STRING, REQ_T_IP, },
+            {
+                { "type",               REQ_T_STRING },
+                { "async_active",       REQ_T_STRING },
+                { "local_discriminator", REQ_T_STRING },
+                { "local_addr",         REQ_T_IP },
+                { "tx_interval",        REQ_T_UINT },
+                { "rx_interval",        REQ_T_UINT },
+                { "multiplier",         REQ_T_UINT },
+                { "multihop",           REQ_T_BOOL },
+                { "state",              REQ_T_STRING },
+            },
+            { }
 };
 
 class MonitorStateRequest : public Request
@@ -340,10 +364,29 @@ private:
     MonitorStateRequest request_;
 };
 
+class CustomBfdRequest : public Request
+{
+public:
+    CustomBfdRequest() : Request(custom_bfd_request_description, '|') { }
+};
+
+class BfdMonitorOrch : public Orch2
+{
+public:
+    BfdMonitorOrch(swss::DBConnector *db, std::string tableName);
+    virtual ~BfdMonitorOrch(void);
+
+private:
+    virtual bool addOperation(const Request& request);
+    virtual bool delOperation(const Request& request);
+
+    CustomBfdRequest request_;
+};
+
 class VNetRouteRequest : public Request
 {
 public:
-    VNetRouteRequest() : Request(vnet_route_description, ':') { }
+    VNetRouteRequest() : Request(vnet_route_description, ':', true) { }
 };
 
 struct VNetNextHopUpdate
@@ -378,10 +421,14 @@ struct BfdSessionInfo
     sai_bfd_session_state_t bfd_state;
     std::string vnet;
     NextHopKey endpoint;
+
+    bool custom_bfd = false;
 };
 
 struct MonitorSessionInfo
 {
+    std::string monitoring_type = VNET_MONITORING_TYPE_CUSTOM;
+    sai_bfd_session_state_t custom_bfd_state;
     monitor_session_state_t state;
     NextHopKey endpoint;
     int ref_count;
@@ -389,11 +436,14 @@ struct MonitorSessionInfo
 
 struct MonitorUpdate
 {
+    std::string monitoring_type = VNET_MONITORING_TYPE_CUSTOM;
+    sai_bfd_session_state_t custom_bfd_state;
     monitor_session_state_t state;
     IpAddress monitor;
     IpPrefix prefix;
     std::string vnet;
 };
+
 struct VNetTunnelRouteEntry
 {
     // The nhg_key is the key for the next hop group which is currently active in hardware.
@@ -405,11 +455,42 @@ struct VNetTunnelRouteEntry
     NextHopGroupKey secondary;
 };
 
+struct VNetLocEpAclRule
+{
+    swss::IpPrefix vip;
+    swss::IpAddress nh_ip;
+    std::string rule_name;
+};
+
 typedef std::map<NextHopGroupKey, NextHopGroupInfo> VNetNextHopGroupInfoTable;
 typedef std::map<IpPrefix, VNetTunnelRouteEntry> VNetTunnelRouteTable;
 typedef std::map<IpAddress, BfdSessionInfo> BfdSessionTable;
 typedef std::map<IpPrefix, std::map<IpAddress, MonitorSessionInfo>> MonitorSessionTable;
 typedef std::map<IpAddress, VNetNextHopInfo> VNetEndpointInfoTable;
+
+class VNetTunnelTermAcl
+{
+public:
+    VNetTunnelTermAcl(DBConnector *cfgDb, DBConnector *appDb);
+
+    bool createAclRule(const string vnet_name, swss::IpPrefix& vip, swss::IpAddress nh_ip);
+    bool removeAclRule(const string vnet_name, swss::IpPrefix& vip);
+    std::function<std::string(const std::string&, const std::string&)> concat =
+        [](const std::string &a, const std::string &b) { return a + "," + b; };
+    bool getAclRule(const string vnet_name, const swss::IpPrefix& vip, VNetLocEpAclRule& rule_found);
+
+protected:
+
+    void lazyInit();
+
+    std::shared_ptr<TunnelTermHelper> ctx_;
+
+    bool acl_table_initialized_ = false;
+    unique_ptr<swss::ProducerStateTable> acl_table_;
+    unique_ptr<swss::ProducerStateTable> acl_table_type_;
+    unique_ptr<swss::ProducerStateTable> acl_rule_table_;
+    std::map<std::string, std::vector<VNetLocEpAclRule>> vnet_loc_ep_acl_rule_map_;
+};
 
 class VNetRouteOrch : public Orch2, public Subject, public Observer
 {
@@ -424,6 +505,7 @@ public:
 
     void update(SubjectType, void *);
     void updateMonitorState(string& op, const IpPrefix& prefix , const IpAddress& endpoint, string state);
+    void updateCustomBfdState(const IpAddress& monitoring_ip, const string& state);
     void updateAllMonitoringSession(const string& vnet);
 
 private:
@@ -445,17 +527,25 @@ private:
                             const string& monitoring);
     NextHopGroupKey getActiveNHSet(const string&, NextHopGroupKey&, const IpPrefix& );
 
-    bool selectNextHopGroup(const string&, NextHopGroupKey&, NextHopGroupKey&, const string&, IpPrefix&,
+    bool selectNextHopGroup(const string&, NextHopGroupKey&, NextHopGroupKey&, const string&, const int32_t, const int32_t, IpPrefix&,
                             VNetVrfObject *vrf_obj, NextHopGroupKey&,
                             const std::map<NextHopKey,IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
-    void createBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
+    void createBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer);
     void removeBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
+    void createCustomBFDMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& monitor_addr, IpPrefix& ipPrefix, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer);
     void createMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr, IpPrefix& ipPrefix);
     void removeMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr, IpPrefix& ipPrefix);
     void setEndpointMonitor(const string& vnet, const map<NextHopKey, IpAddress>& monitors, NextHopGroupKey& nexthops,
-                            const string& monitoring, IpPrefix& ipPrefix);
+                            const string& monitoring, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer,
+                            IpPrefix& ipPrefix);
     void delEndpointMonitor(const string& vnet, NextHopGroupKey& nexthops, IpPrefix& ipPrefix);
+    void delEndpointMonitor(const string& vnet, const std::map<NextHopKey, IpAddress>& monitors, IpPrefix& ipPrefix);
+
+    bool isCustomMonitorEndpointUpdated(const string& vnet, IpPrefix& ipPrefix,
+                                  const std::map<NextHopKey, IpAddress>& monitors);
+    void getCustomMonitors(const string& vnet, const IpPrefix& ipPrefix, const NextHopGroupKey& nexthops, std::map<NextHopKey, IpAddress>& monitors);
+
     void postRouteState(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& profile);
     void removeRouteState(const string& vnet, IpPrefix& ipPrefix);
     void addRouteAdvertisement(IpPrefix& ipPrefix, string& profile);
@@ -467,9 +557,13 @@ private:
     void createSubnetDecapTerm(const IpPrefix &ipPrefix);
     void removeSubnetDecapTerm(const IpPrefix &ipPrefix);
 
+    bool setAndDeleteRoutesWithRouteOrch(const sai_object_id_t vr_id, const IpPrefix& ipPrefix,
+                                        const NextHopGroupKey& nhg, const string& op);
+
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op, string& profile,
-                    const string& monitoring, NextHopGroupKey& nexthops_secondary, const IpPrefix& adv_prefix,
+                    const string& monitoring, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer,
+                    NextHopGroupKey& nexthops_secondary, const IpPrefix& adv_prefix,
                     const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
     template<typename T>
@@ -496,10 +590,13 @@ private:
     ProducerStateTable bfd_session_producer_;
     ProducerStateTable app_tunnel_decap_term_producer_;
     unique_ptr<Table> monitor_session_producer_;
+    shared_ptr<DBConnector> config_db_;
     shared_ptr<DBConnector> state_db_;
     shared_ptr<DBConnector> app_db_;
     unique_ptr<Table> state_vnet_rt_tunnel_table_;
     unique_ptr<Table> state_vnet_rt_adv_table_;
+
+    shared_ptr<VNetTunnelTermAcl> vnet_tunnel_term_acl_;
 };
 
 class VNetCfgRouteOrch : public Orch

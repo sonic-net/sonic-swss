@@ -39,6 +39,13 @@ typedef sai_status_t (*sai_bulk_set_inbound_routing_entry_attribute_fn) (
         _In_ sai_bulk_op_error_mode_t mode,
         _Out_ sai_status_t *object_statuses);
 
+typedef sai_status_t (*sai_bulk_set_outbound_port_map_port_range_entry_attribute_fn) (
+        _In_ uint32_t object_count,
+        _In_ const sai_outbound_port_map_port_range_entry_t *entry,
+        _In_ const sai_attribute_t *attr_list,
+        _In_ sai_bulk_op_error_mode_t mode,
+        _Out_ sai_status_t *object_statuses);
+
 static inline bool operator==(const sai_ip_prefix_t& a, const sai_ip_prefix_t& b)
 {
     if (a.addr_family != b.addr_family) return false;
@@ -136,6 +143,15 @@ static inline bool operator==(const sai_outbound_routing_entry_t& a, const sai_o
     return a.switch_id == b.switch_id
         && a.outbound_routing_group_id == b.outbound_routing_group_id
         && a.destination == b.destination
+        ;
+}
+
+static inline bool operator==(const sai_outbound_port_map_port_range_entry_t& a, const sai_outbound_port_map_port_range_entry_t& b)
+{
+    return a.switch_id == b.switch_id
+        && a.outbound_port_map_id == b.outbound_port_map_id
+        && a.dst_port_range.min == b.dst_port_range.min
+        && a.dst_port_range.max == b.dst_port_range.max
         ;
 }
 
@@ -276,6 +292,20 @@ namespace std
             return seed;
         }
     };
+
+    template <>
+    struct hash<sai_outbound_port_map_port_range_entry_t>
+    {
+        size_t operator()(const sai_outbound_port_map_port_range_entry_t& a) const noexcept
+        {
+            size_t seed = 0;
+            boost::hash_combine(seed, a.switch_id);
+            boost::hash_combine(seed, a.outbound_port_map_id);
+            boost::hash_combine(seed, a.dst_port_range.min);
+            boost::hash_combine(seed, a.dst_port_range.max);
+            return seed;
+        }
+    };
 }
 
 // SAI typedef which is not available in SAI 1.5
@@ -338,8 +368,7 @@ struct SaiBulkerTraits<sai_next_hop_group_api_t>
     using set_entry_attribute_fn = sai_set_next_hop_group_member_attribute_fn;
     using bulk_create_entry_fn = sai_bulk_object_create_fn;
     using bulk_remove_entry_fn = sai_bulk_object_remove_fn;
-    // TODO: wait until available in SAI
-    //using bulk_set_entry_attribute_fn = sai_bulk_object_set_attribute_fn;
+    using bulk_set_entry_attribute_fn = sai_bulk_object_set_attribute_fn;
 };
 
 template<>
@@ -352,8 +381,7 @@ struct SaiBulkerTraits<sai_next_hop_api_t>
     using set_entry_attribute_fn = sai_set_next_hop_attribute_fn;
     using bulk_create_entry_fn = sai_bulk_object_create_fn;
     using bulk_remove_entry_fn = sai_bulk_object_remove_fn;
-    // TODO: wait until available in SAI
-    //using bulk_set_entry_attribute_fn = sai_bulk_object_set_attribute_fn;
+    using bulk_set_entry_attribute_fn = sai_bulk_object_set_attribute_fn;
 };
 
 template<>
@@ -392,6 +420,7 @@ struct SaiBulkerTraits<sai_dash_meter_api_t>
     using set_entry_attribute_fn = sai_set_meter_rule_attribute_fn;
     using bulk_create_entry_fn = sai_bulk_object_create_fn;
     using bulk_remove_entry_fn = sai_bulk_object_remove_fn;
+    using bulk_set_entry_attribute_fn = sai_bulk_object_set_attribute_fn;
 };
 
 template<>
@@ -404,6 +433,7 @@ struct SaiBulkerTraits<sai_dash_vnet_api_t>
     using set_entry_attribute_fn = sai_set_vnet_attribute_fn;
     using bulk_create_entry_fn = sai_bulk_object_create_fn;
     using bulk_remove_entry_fn = sai_bulk_object_remove_fn;
+    using bulk_set_entry_attribute_fn = sai_bulk_object_set_attribute_fn;
 };
 
 template<>
@@ -465,6 +495,20 @@ struct SaiBulkerTraits<sai_dash_tunnel_api_t>
     using api_t = sai_dash_tunnel_api_t;
     using bulk_create_entry_fn = sai_bulk_object_create_fn;
     using bulk_remove_entry_fn = sai_bulk_object_remove_fn;
+    using bulk_set_entry_attribute_fn = sai_bulk_object_set_attribute_fn;
+};
+
+template<>
+struct SaiBulkerTraits<sai_dash_outbound_port_map_api_t>
+{
+    // Need to bulk port map objects and port map range entries from the same DASH API
+    // entry_t, bulk_create/remove_entry_fn are only used by EntityBulker so we can use them for
+    // port map port range bulking w/o affecting port map object bulking
+    using api_t = sai_dash_outbound_port_map_api_t;
+    using entry_t = sai_outbound_port_map_port_range_entry_t;
+    using bulk_create_entry_fn = sai_bulk_create_outbound_port_map_port_range_entry_fn;
+    using bulk_remove_entry_fn = sai_bulk_remove_outbound_port_map_port_range_entry_fn;
+    using bulk_set_entry_attribute_fn = sai_bulk_set_outbound_port_map_port_range_entry_attribute_fn;
 };
 
 template <typename T>
@@ -505,6 +549,7 @@ public:
             return *object_status;
         }
 
+        create_order.push_back(it->first);
         auto& attrs = it->second.first;
         attrs.insert(attrs.end(), attr_list, attr_list + attr_count);
         it->second.second = object_status;
@@ -550,6 +595,7 @@ public:
         auto rc = removing_entries.emplace(std::piecewise_construct,
                 std::forward_as_tuple(*entry),
                 std::forward_as_tuple(object_status));
+        remove_order.push_back(rc.first->first);
         bool inserted = rc.second;
         SWSS_LOG_INFO("EntityBulker.remove_entry %zu, %d\n", removing_entries.size(), inserted);
 
@@ -569,11 +615,14 @@ public:
         assert(attr);
         if (!attr) throw std::invalid_argument("attr is null");
 
-        // Insert or find the key (entry)
-        auto& attrs = setting_entries.emplace(std::piecewise_construct,
+        auto rc = setting_entries.emplace(std::piecewise_construct,
                 std::forward_as_tuple(*entry),
-                std::forward_as_tuple()
-        ).first->second;
+                std::forward_as_tuple());
+        auto it = rc.first;
+        set_order.push_back(it->first);
+
+        // Insert or find the key (entry)
+        auto& attrs = it->second;
 
         // Insert attr
         attrs.emplace_back(std::piecewise_construct,
@@ -589,10 +638,14 @@ public:
         {
             std::vector<Te> rs;
 
-            for (auto& i: removing_entries)
+            for (auto const& entry : remove_order)
             {
-                auto const& entry = i.first;
-                sai_status_t *object_status = i.second;
+                auto i = removing_entries.find(entry);
+                if (i == removing_entries.end())
+                {
+                    continue;
+                }
+                sai_status_t *object_status = i->second;
                 if (*object_status == SAI_STATUS_NOT_EXECUTED)
                 {
                     rs.push_back(entry);
@@ -606,6 +659,7 @@ public:
             flush_removing_entries(rs);
 
             removing_entries.clear();
+            remove_order.clear();
         }
 
         // Creating
@@ -615,11 +669,15 @@ public:
             std::vector<sai_attribute_t const*> tss;
             std::vector<uint32_t> cs;
 
-            for (auto const& i: creating_entries)
+            for (auto const& entry : create_order)
             {
-                auto const& entry = i.first;
-                auto const& attrs = i.second.first;
-                sai_status_t *object_status = i.second.second;
+                auto i = creating_entries.find(entry);
+                if (i == creating_entries.end())
+                {
+                    continue;
+                }
+                auto const& attrs = i->second.first;
+                sai_status_t *object_status = i->second.second;
                 if (*object_status == SAI_STATUS_NOT_EXECUTED)
                 {
                     rs.push_back(entry);
@@ -635,6 +693,7 @@ public:
             flush_creating_entries(rs, tss, cs);
 
             creating_entries.clear();
+            create_order.clear();
         }
 
         // Setting
@@ -643,11 +702,24 @@ public:
             std::vector<Te> rs;
             std::vector<sai_attribute_t> ts;
             std::vector<sai_status_t*> status_vector;
+            // Use a set to keep track of the entries that have been processed.
+            std::unordered_set<Te> entries;
 
-            for (auto const& i: setting_entries)
+            for (auto const& entry : set_order)
             {
-                auto const& entry = i.first;
-                auto const& attrs = i.second;
+                // Skip the entry if it is alreay processed.
+                // All attributes of an entry are processed in the first run.
+                if (entries.count(entry) != 0)
+                {
+                    continue;
+                }
+                auto i = setting_entries.find(entry);
+                if (i == setting_entries.end())
+                {
+                    continue;
+                }
+                entries.insert(entry);
+                auto const& attrs = i->second;
                 for (auto const& ia: attrs)
                 {
                     auto const& attr = ia.first;
@@ -668,6 +740,7 @@ public:
             flush_setting_entries(rs, ts, status_vector);
 
             setting_entries.clear();
+            set_order.clear();
         }
     }
 
@@ -676,6 +749,9 @@ public:
         removing_entries.clear();
         creating_entries.clear();
         setting_entries.clear();
+        remove_order.clear();
+        create_order.clear();
+        set_order.clear();
     }
 
     size_t creating_entries_count() const
@@ -703,6 +779,12 @@ public:
         return removing_entries.find(entry) != removing_entries.end();
     }
 
+    bool bulk_entry_pending_removal_or_set(const Te& entry) const
+    {
+        return removing_entries.find(entry) != removing_entries.end() ||
+               setting_entries.find(entry) != setting_entries.end();
+    }
+
 private:
     std::unordered_map<                                     // A map of
             Te,                                             // entry ->
@@ -726,6 +808,10 @@ private:
             Te,                                             // entry ->
             sai_status_t *                                  // OUT object_status
     >                                                       removing_entries;
+
+    std::vector<Te>                                         create_order;
+    std::vector<Te>                                         set_order;
+    std::vector<Te>                                         remove_order;
 
     size_t max_bulk_size;
 
@@ -921,6 +1007,14 @@ inline EntityBulker<sai_dash_outbound_routing_api_t>::EntityBulker(sai_dash_outb
     set_entries_attribute = nullptr;
 }
 
+template <>
+inline EntityBulker<sai_dash_outbound_port_map_api_t>::EntityBulker(sai_dash_outbound_port_map_api_t *api, size_t max_bulk_size) : max_bulk_size(max_bulk_size)
+{
+    create_entries = api->create_outbound_port_map_port_range_entries;
+    remove_entries = api->remove_outbound_port_map_port_range_entries;
+    set_entries_attribute = nullptr;
+}
+
 template <typename T>
 class ObjectBulker
 {
@@ -978,8 +1072,6 @@ public:
         return *object_status;
     }
 
-    // TODO: wait until available in SAI
-    /*
     sai_status_t set_entry_attribute(
         _In_ sai_object_id_t object_id,
         _In_ const sai_attribute_t *attr)
@@ -993,14 +1085,15 @@ public:
         else
         {
             // Create a new key if not exists in the map
-            setting_entries.emplace(std::piecewise_construct,
+            auto& attrs = setting_entries.emplace(std::piecewise_construct,
                 std::forward_as_tuple(object_id),
-                std::forward_as_tuple(1, *attr));
+                std::forward_as_tuple()).first->second;
+
+            attrs.emplace_back(*attr);
         }
 
         return SAI_STATUS_SUCCESS;
     }
-    */
 
     void flush()
     {
@@ -1056,9 +1149,6 @@ public:
             creating_entries.clear();
         }
 
-        // Setting
-        // TODO: wait until available in SAI
-        /*
         if (!setting_entries.empty())
         {
             std::vector<sai_object_id_t> rs;
@@ -1083,7 +1173,6 @@ public:
 
             setting_entries.clear();
         }
-        */
     }
 
     void clear()
@@ -1135,21 +1224,17 @@ private:
     >>                                                      creating_entries;
 
     std::unordered_map<                                     // A map of
-            sai_object_id_t,                                // object_id -> (OUT object_status, attributes)
-            std::pair<
-                    sai_status_t *,
-                    std::vector<sai_attribute_t>
-            >
+            sai_object_id_t,                                // object_id -> attrs
+            std::vector<sai_attribute_t>
     >                                                       setting_entries;
 
                                                             // A map of
                                                             // object_id -> object_status
     std::unordered_map<sai_object_id_t, sai_status_t *>     removing_entries;
 
-    typename Ts::bulk_create_entry_fn                       create_entries;
-    typename Ts::bulk_remove_entry_fn                       remove_entries;
-    // TODO: wait until available in SAI
-    //typename Ts::bulk_set_entry_attribute_fn                set_entries_attribute;
+    sai_bulk_object_create_fn                               create_entries;
+    sai_bulk_object_remove_fn                               remove_entries;
+    sai_bulk_object_set_attribute_fn                        set_entries_attribute;
 
     std::unordered_map<sai_object_id_t, sai_status_t>       create_statuses;
 
@@ -1223,8 +1308,6 @@ private:
         return status;
     }
 
-    // TODO: wait until available in SAI
-    /*
     sai_status_t flush_setting_entries(
         _Inout_ std::vector<sai_object_id_t> &rs,
         _Inout_ std::vector<sai_attribute_t> &ts)
@@ -1235,8 +1318,8 @@ private:
         }
         size_t count = rs.size();
         std::vector<sai_status_t> statuses(count);
-        sai_status_t status = (*set_entries_attribute)((uint32_t)count, rs.data(), ts.data()
-            , SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, statuses.data());
+        sai_status_t status = (*set_entries_attribute)((uint32_t)count, rs.data(), ts.data(),
+                               SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, statuses.data());
         if (status == SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_INFO("ObjectBulker.flush setting_entries %zu\n", count);
@@ -1252,7 +1335,6 @@ private:
 
         return status;
     }
-     */
 };
 
 template <>
@@ -1262,8 +1344,7 @@ inline ObjectBulker<sai_next_hop_group_api_t>::ObjectBulker(SaiBulkerTraits<sai_
 {
     create_entries = api->create_next_hop_group_members;
     remove_entries = api->remove_next_hop_group_members;
-    // TODO: wait until available in SAI
-    //set_entries_attribute = ;
+    set_entries_attribute = api->set_next_hop_group_members_attribute;
 }
 
 template <>
@@ -1273,8 +1354,7 @@ inline ObjectBulker<sai_next_hop_api_t>::ObjectBulker(SaiBulkerTraits<sai_next_h
 {
     create_entries = api->create_next_hops;
     remove_entries = api->remove_next_hops;
-    // TODO: wait until available in SAI
-    //set_entries_attribute = ;
+    set_entries_attribute = api->set_next_hops_attribute;
 }
 
 template <>
@@ -1284,6 +1364,7 @@ inline ObjectBulker<sai_dash_vnet_api_t>::ObjectBulker(SaiBulkerTraits<sai_dash_
 {
     create_entries = api->create_vnets;
     remove_entries = api->remove_vnets;
+    set_entries_attribute = nullptr;
 }
 
 template <>
@@ -1293,6 +1374,7 @@ inline ObjectBulker<sai_dash_meter_api_t>::ObjectBulker(SaiBulkerTraits<sai_dash
 {
     create_entries = api->create_meter_rules;
     remove_entries = api->remove_meter_rules;
+    set_entries_attribute = nullptr;
 }
 
 template <>
@@ -1305,14 +1387,17 @@ inline ObjectBulker<sai_dash_tunnel_api_t>::ObjectBulker(SaiBulkerTraits<sai_das
         case SAI_OBJECT_TYPE_DASH_TUNNEL:
             create_entries = api->create_dash_tunnels;
             remove_entries = api->remove_dash_tunnels;
+            set_entries_attribute = nullptr;
             break;
         case SAI_OBJECT_TYPE_DASH_TUNNEL_MEMBER:
             create_entries = api->create_dash_tunnel_members;
             remove_entries = api->remove_dash_tunnel_members;
+            set_entries_attribute = nullptr;
             break;
         case SAI_OBJECT_TYPE_DASH_TUNNEL_NEXT_HOP:
             create_entries = api->create_dash_tunnel_next_hops;
             remove_entries = api->remove_dash_tunnel_next_hops;
+            set_entries_attribute = nullptr;
             break;
         default:
             std::string type_str = sai_serialize_object_type((sai_object_type_t) object_type);
@@ -1320,4 +1405,13 @@ inline ObjectBulker<sai_dash_tunnel_api_t>::ObjectBulker(SaiBulkerTraits<sai_das
             ss << "Invalid object type for sai_dash_tunnel_api_t: " << type_str;
             throw std::invalid_argument(ss.str());
     }
+}
+
+template <>
+inline ObjectBulker<sai_dash_outbound_port_map_api_t>::ObjectBulker(SaiBulkerTraits<sai_dash_outbound_port_map_api_t>::api_t *api, sai_object_id_t switch_id, size_t max_bulk_size) :
+    switch_id(switch_id),
+    max_bulk_size(max_bulk_size)
+{
+    create_entries = api->create_outbound_port_maps;
+    remove_entries = api->remove_outbound_port_maps;
 }

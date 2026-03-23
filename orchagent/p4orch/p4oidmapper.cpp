@@ -1,6 +1,7 @@
 #include "p4oidmapper.h"
 
 #include <limits>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
 
@@ -12,19 +13,9 @@ extern "C"
 #include "sai.h"
 }
 
-namespace
-{
+using ::nlohmann::json;
 
-std::string convertToDBField(_In_ const sai_object_type_t object_type, _In_ const std::string &key)
-{
-    return sai_serialize_object_type(object_type) + ":" + key;
-}
-
-} // namespace
-
-P4OidMapper::P4OidMapper() : m_db("APPL_STATE_DB", 0), m_table(&m_db, "P4RT_KEY_TO_OID")
-{
-}
+P4OidMapper::P4OidMapper() : m_db("APPL_STATE_DB", 0) {}
 
 bool P4OidMapper::setOID(_In_ sai_object_type_t object_type, _In_ const std::string &key, _In_ sai_object_id_t oid,
                          _In_ uint32_t ref_count)
@@ -38,7 +29,6 @@ bool P4OidMapper::setOID(_In_ sai_object_type_t object_type, _In_ const std::str
     }
 
     m_oidTables[object_type][key] = {oid, ref_count};
-    m_table.hset("", convertToDBField(object_type, key), sai_serialize_object_id(oid));
     return true;
 }
 
@@ -107,7 +97,6 @@ bool P4OidMapper::eraseOID(_In_ sai_object_type_t object_type, _In_ const std::s
     }
 
     m_oidTables[object_type].erase(key);
-    m_table.hdel("", convertToDBField(object_type, key));
     return true;
 }
 
@@ -116,7 +105,6 @@ void P4OidMapper::eraseAllOIDs(_In_ sai_object_type_t object_type)
     SWSS_LOG_ENTER();
 
     m_oidTables[object_type].clear();
-    m_table.del("");
 }
 
 size_t P4OidMapper::getNumEntries(_In_ sai_object_type_t object_type) const
@@ -200,20 +188,25 @@ std::string P4OidMapper::verifyOIDMapping(_In_ sai_object_type_t object_type, _I
             << sai_serialize_object_id(mapper_oid);
         return msg.str();
     }
-    std::string db_oid;
-    if (!m_table.hget("", convertToDBField(object_type, key), db_oid))
-    {
-        std::stringstream msg;
-        msg << "OID not found in mapper DB for key " << key;
-        return msg.str();
-    }
-    if (db_oid != sai_serialize_object_id(oid))
-    {
-        std::stringstream msg;
-        msg << "OID mismatched in mapper DB for key " << key << ": " << db_oid << " vs "
-            << sai_serialize_object_id(oid);
-        return msg.str();
-    }
 
     return "";
+}
+
+std::string P4OidMapper::dumpStateCache() {
+  json cache = json({});
+  for (int i = 0; i < SAI_OBJECT_TYPE_MAX; i++) {
+    if (m_oidTables[i].empty()) {
+      continue;
+    }
+
+    json oid_mapper_j = json({});
+    for (const auto& kv_pair : m_oidTables[i]) {
+      MapperEntry m = kv_pair.second;
+      json mapper_entry_j = {{"sai_oid", sai_serialize_object_id(m.sai_oid)}, {"ref_count", m.ref_count}};
+      oid_mapper_j[kv_pair.first] = mapper_entry_j;
+    }
+    std::string sai_object_type = sai_serialize_object_type(static_cast<sai_object_type_t>(i));
+    cache[sai_object_type] = oid_mapper_j;
+  }
+  return cache.dump(4);
 }

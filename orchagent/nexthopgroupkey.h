@@ -2,6 +2,7 @@
 #define SWSS_NEXTHOPGROUPKEY_H
 
 #include "nexthopkey.h"
+#include <boost/functional/hash.hpp>
 
 class NextHopGroupKey
 {
@@ -244,6 +245,19 @@ private:
     bool m_overlay_nexthops = false;
     bool m_srv6_nexthops = false;
     bool m_srv6_vpn = false;
+
+    // Support std::unordered_map
+    template <typename T>
+    friend class std::hash; 
 };
+
+namespace std {
+    template <>
+    struct hash<NextHopGroupKey> {
+        size_t operator()(const NextHopGroupKey& obj) const {
+            return boost::hash_range(obj.m_nexthops.begin(), obj.m_nexthops.end());
+        }
+    };
+}
 
 #endif /* SWSS_NEXTHOPGROUPKEY_H */
