@@ -171,8 +171,8 @@ private:
     void macAddVxlan(std::string key, struct nl_addr *vtep, std::string type, uint32_t vni, std::string intf_name, std::string nexthop_group, NEXT_HOP_VALUE_TYPE dest_type, uint8_t protocol);
     void macDelVxlan(std::string auxkey);
     void macDelVxlanDB(std::string key);
-    void imetAddRoute(struct in_addr vtep, std::string ifname, uint32_t vni);
-    void imetDelRoute(struct in_addr vtep, std::string ifname, uint32_t vni);
+    void imetAddRoute(struct nl_addr *vtep, std::string ifname, uint32_t vni);
+    void imetDelRoute(struct nl_addr *vtep, std::string ifname, uint32_t vni);
     void onMsgNbr(int nlmsg_type, struct nl_object *obj);
     void onMsgNbrRaw(struct nlmsghdr *msg);
     void onMsgLink(int nlmsg_type, struct nl_object *obj);
