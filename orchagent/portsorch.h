@@ -560,6 +560,9 @@ private:
 
     void removePortSerdesAttribute(sai_object_id_t port_id);
 
+    bool programSerdes(Port &port, sai_object_id_t port_id, sai_object_id_t switch_id,
+                       std::map<sai_port_serdes_attr_t, SerdesValue> &serdes_attr);
+
     bool getSaiAclBindPointType(Port::Type                type,
                                 sai_acl_bind_point_type_t &sai_acl_bind_type);
 
