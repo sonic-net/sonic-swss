@@ -1,4 +1,5 @@
 #include <string.h>
+#include <algorithm>
 #include "logger.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
@@ -112,8 +113,7 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
                 for (size_t i = 0; i < batch_vrfs.size(); i++)
                 {
                     if (i > 0) cmd << " ";
-                    cmd << IP_CMD << " link del " << shellquote(batch_vrfs[i]) 
-                        << " 2>/dev/null &";
+                    cmd << IP_CMD << " link del " << shellquote(batch_vrfs[i]) << " &";
                 }
                 cmd << " wait) 2>&1'";
                 
@@ -121,10 +121,10 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
                                batch_num, batch_vrfs.size(), current_batch_size, 
                                processed + batch_vrfs.size(), total_vrfs);
                 
-                int ret = swss::exec(cmd.str(), res);
-                if (ret != 0 && !res.empty())
+                swss::exec(cmd.str(), res);
+                if (!res.empty())
                 {
-                    SWSS_LOG_WARN("Batch %d deletion errors: %s", batch_num, res.c_str());
+                    SWSS_LOG_WARN("Batch %d: deletion errors: %s", batch_num, res.c_str());
                 }
                 
                 processed += batch_vrfs.size();

@@ -5,6 +5,7 @@ import pytest
 
 from swsscommon import swsscommon
 from pprint import pprint
+from dvslib.dvs_common import wait_for_result, PollingConfig
 
 
 class TestVrf(object):
@@ -278,18 +279,24 @@ class TestVrf(object):
         
         # Kill vrfmgrd process to trigger restart
         dvs.runcmd(['sh', '-c', "pkill -9 vrfmgrd"])
-        time.sleep(1)
         
         # Restart vrfmgrd via supervisorctl
         dvs.runcmd(['sh', '-c', "supervisorctl restart vrfmgrd"])
-        time.sleep(10)
         
-        # Verify all stale VRFs were deleted
-        _, output = dvs.runcmd(['sh', '-c', 
-            "ip link show type vrf | grep -c '^[0-9]' || true"])
-        final_vrf_count = int(output.strip()) if output.strip() else 0
-        assert final_vrf_count == initial_vrf_count, \
-            f"Expected {initial_vrf_count} VRFs after cleanup, found {final_vrf_count}"
+        # Poll until all stale VRFs are cleaned up
+        def _check_stale_vrfs_cleaned():
+            _, output = dvs.runcmd(['sh', '-c',
+                "ip link show type vrf | grep -c '^[0-9]' || true"])
+            current = int(output.strip()) if output.strip() else 0
+            return (current == initial_vrf_count, current)
+
+        polling_config = PollingConfig(polling_interval=1, timeout=30, strict=True)
+        wait_for_result(
+            _check_stale_vrfs_cleaned,
+            polling_config=polling_config,
+            failure_message=f"Stale VRFs not cleaned up within {polling_config.timeout}s; "
+                           f"expected {initial_vrf_count} VRFs",
+        )
 
     @pytest.mark.xfail(reason="Test unstable, blocking PR builds")
     def test_VRFMgr_Capacity(self, dvs, testlog):

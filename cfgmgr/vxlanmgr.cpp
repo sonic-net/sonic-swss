@@ -1240,13 +1240,13 @@ void VxlanMgr::clearAllVxlanDevices()
         if (netdev_type == VXLAN)
         {
             dev_cmd = "(" + std::string(IP_CMD) + " link set dev " + shellquote(netdev_name) + 
-                     " down 2>/dev/null || true; " + std::string(IP_CMD) + " link del dev " + 
-                     shellquote(netdev_name) + " 2>/dev/null || true) &";
+                     " down || true; " + std::string(IP_CMD) + " link del dev " + 
+                     shellquote(netdev_name) + " || true) &";
         }
         else if (netdev_type == VXLAN_IF)
         {
             dev_cmd = "(" + std::string(IP_CMD) + " link del " + shellquote(netdev_name) + 
-                     " 2>/dev/null || true) &";
+                     " || true) &";
         }
         
         batch_devices.push_back(dev_cmd);
@@ -1256,22 +1256,22 @@ void VxlanMgr::clearAllVxlanDevices()
             batch_num++;
             
             std::ostringstream batch_cmd;
-            batch_cmd << BASH_CMD << " -c '";
+            batch_cmd << BASH_CMD << " -c '(";
             for (size_t i = 0; i < batch_devices.size(); ++i)
             {
                 if (i > 0) batch_cmd << " ";
                 batch_cmd << batch_devices[i];
             }
-            batch_cmd << " wait'";
+            batch_cmd << " wait) 2>&1'";
             
             SWSS_LOG_NOTICE("Batch %d: deleting %zu devices in parallel (batch_size=%u, progress: %zu/%zu)", 
                            batch_num, batch_devices.size(), current_batch_size, processed + batch_devices.size(), total_devices);
             
             std::string res;
-            int ret = swss::exec(batch_cmd.str(), res);
-            if (ret != 0)
+            swss::exec(batch_cmd.str(), res);
+            if (!res.empty())
             {
-                SWSS_LOG_WARN("Batch %d deletion errors: %s", batch_num, res.c_str());
+                SWSS_LOG_WARN("Batch %d: deletion errors: %s", batch_num, res.c_str());
             }
             
             processed += batch_devices.size();
