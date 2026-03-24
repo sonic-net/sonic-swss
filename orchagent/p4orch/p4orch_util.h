@@ -51,6 +51,7 @@ constexpr char *kSetNexthopId = "set_nexthop_id";
 constexpr char *kSetWcmpGroupId = "set_wcmp_group_id";
 constexpr char* kSetMulticastGroupId = "set_multicast_group_id";
 constexpr char* kSetSrcMac = "set_src_mac";
+constexpr char* kSetMulticastSrcMac = "set_multicast_src_mac";
 constexpr char *kSetNexthopIdAndMetadata = "set_nexthop_id_and_metadata";
 constexpr char *kSetWcmpGroupIdAndMetadata = "set_wcmp_group_id_and_metadata";
 constexpr char *kSetMetadataAndDrop = "set_metadata_and_drop";
@@ -59,6 +60,7 @@ constexpr char *kSetIpNexthop = "set_ip_nexthop";
 constexpr char* kSetIpNexthopAndDisableRewrites =
     "set_ip_nexthop_and_disable_rewrites";
 constexpr char *kSetTunnelNexthop = "set_p2p_tunnel_encap_nexthop";
+constexpr char* kNoAction = "no_action";
 constexpr char *kDrop = "drop";
 constexpr char *kTrap = "trap";
 constexpr char *kStage = "stage";
@@ -103,7 +105,10 @@ constexpr char* kDisableSrcMacRewrite = "disable_src_mac_rewrite";
 constexpr char* kDisableDstMacRewrite = "disable_dst_mac_rewrite";
 constexpr char* kDisableVlanRewrite = "disable_vlan_rewrite";
 constexpr char* kIpv6TunnelTermAction = "mark_for_tunnel_decap_and_set_vrf";
+constexpr char* kDecapSrcIpv6 = "src_ipv6";
 constexpr char* kDecapDstIpv6 = "dst_ipv6";
+constexpr char* kDecapSrcIpv6Ip = "src_ipv6_ip";
+constexpr char* kDecapSrcIpv6Mask = "src_ipv6_mask";
 constexpr char* kDecapDstIpv6Ip = "dst_ipv6_ip";
 constexpr char* kDecapDstIpv6Mask = "dst_ipv6_mask";
 
@@ -318,6 +323,8 @@ struct P4AclRuleAppDbEntry
 struct Ipv6TunnelTermAppDbEntry
 {
   // Match
+  swss::IpAddress src_ipv6_ip;
+  swss::IpAddress src_ipv6_mask;
   swss::IpAddress dst_ipv6_ip;
   swss::IpAddress dst_ipv6_mask;
   // Action
@@ -398,6 +405,9 @@ class KeyGenerator
         const std::string& multicast_replica_port,
         const swss::MacAddress& src_mac);
 
+    static std::string generateIpMulticastKey(const std::string& vrf_id,
+                                              const swss::IpAddress& ip_dst);
+
     static std::string generateWcmpGroupKey(const std::string &wcmp_group_id);
 
     static std::string generateAclRuleKey(const std::map<std::string, std::string> &match_fields,
@@ -409,9 +419,10 @@ class KeyGenerator
 
     static std::string generateTunnelKey(const std::string &tunnel_id);
 
-    static std::string generateIpv6TunnelTermKey(const swss::IpAddress &dst_ipv6_ip,
-                                                 const swss::IpAddress &dst_ipv6_mask,
-                                                 const std::string& vrf_id);
+    static std::string generateIpv6TunnelTermKey(const swss::IpAddress& src_ipv6_ip,
+                                                 const swss::IpAddress& src_ipv6_mask,
+                                                 const swss::IpAddress& dst_ipv6_ip,
+                                                 const swss::IpAddress& dst_ipv6_mask);
 
     static std::string generateExtTableKey(const std::string &table_name, const std::string &table_key);
 

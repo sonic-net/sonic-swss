@@ -11,9 +11,9 @@
 #include "warm_restart.h"
 
 #define VRF_TABLE_START 1001
-#define VRF_TABLE_END 2000
+#define VRF_TABLE_END 5097
 #define TABLE_LOCAL_PREF 1001 // after l3mdev-table
-#define MGMT_VRF_TABLE_ID 5000
+#define MGMT_VRF_TABLE_ID 6000
 #define MGMT_VRF          "mgmt"
 #define VRF_DELETE_BATCH_SIZE_INITIAL 1
 #define VRF_DELETE_BATCH_SIZE_MAX 500

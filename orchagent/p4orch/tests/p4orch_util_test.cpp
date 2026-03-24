@@ -4,6 +4,7 @@
 
 #include <string>
 
+#include "ipaddress.h"
 #include "ipprefix.h"
 #include "swssnet.h"
 
@@ -29,6 +30,13 @@ TEST(P4OrchUtilTest, KeyGeneratorTest)
     ipv6_route_key = KeyGenerator::generateRouteKey("b4-traffic", swss::IpPrefix("::/0"));
     EXPECT_EQ("ipv6_dst=::/0:vrf_id=b4-traffic", ipv6_route_key);
 
+    std::string ipv4_multicast_key = KeyGenerator::generateIpMulticastKey(
+        "b4-traffic", swss::IpAddress("127.0.0.1"));
+    EXPECT_EQ("ipv4_dst=127.0.0.1:vrf_id=b4-traffic", ipv4_multicast_key);
+    std::string ipv6_multicast_key = KeyGenerator::generateIpMulticastKey(
+        "b4-traffic", swss::IpAddress("::1"));
+    EXPECT_EQ("ipv6_dst=::1:vrf_id=b4-traffic", ipv6_multicast_key);
+
     // Test with special characters.
     neighbor_key = KeyGenerator::generateNeighborKey("::===::", swss::IpAddress("::1"));
     EXPECT_EQ("neighbor_id=::1:router_interface_id=::===::", neighbor_key);
@@ -43,9 +51,11 @@ TEST(P4OrchUtilTest, KeyGeneratorTest)
 
     auto ipv6_tunnel_term_key =
         KeyGenerator::generateIpv6TunnelTermKey(
-          swss::IpAddress("::1"), swss::IpAddress("::1"), "vrf_id");
+        swss::IpAddress("::1"), swss::IpAddress("::1"), swss::IpAddress("::2"),
+        swss::IpAddress("::2"));
     EXPECT_EQ(
-      "dst_ipv6_ip=::1:dst_ipv6_mask=::1", ipv6_tunnel_term_key);
+        "dst_ipv6_ip=::2:dst_ipv6_mask=::2:src_ipv6_ip=::1:src_ipv6_mask=::1",
+        ipv6_tunnel_term_key);
 }
 
 TEST(P4OrchUtilTest, ParseP4RTKeyTest)
