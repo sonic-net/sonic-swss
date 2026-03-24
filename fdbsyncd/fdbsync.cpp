@@ -618,10 +618,11 @@ bool FdbSync::checkDelImet(string key, uint32_t vni)
     return ret;
 }
 
-void FdbSync::imetAddRoute(struct in_addr vtep, string vlan_str, uint32_t vni)
+void FdbSync::imetAddRoute(struct nl_addr *vtep, string vlan_str, uint32_t vni)
 {
+    char buf[MAX_ADDR_SIZE + 1] = {0};
     string vlan_id = "Vlan" + vlan_str;
-    string key = vlan_id + ":" + inet_ntoa(vtep);
+    string key = vlan_id + ":" + nl_addr2str(vtep, buf, sizeof(buf));
 
     if (!checkImetExist(key, vni))
     {
@@ -630,7 +631,7 @@ void FdbSync::imetAddRoute(struct in_addr vtep, string vlan_str, uint32_t vni)
 
     SWSS_LOG_INFO("%sIMET Add route key:%s vtep:%s %s", 
             (m_AppRestartAssist && m_AppRestartAssist->isWarmStartInProgress()) ? "WARM-RESTART:" : "",
-            key.c_str(), inet_ntoa(vtep), vlan_id.c_str());
+            key.c_str(), nl_addr2str(vtep, buf, sizeof(buf)), vlan_id.c_str());
 
     std::vector<FieldValueTuple> fvVector;
     FieldValueTuple f("vni", to_string(vni));
@@ -647,10 +648,11 @@ void FdbSync::imetAddRoute(struct in_addr vtep, string vlan_str, uint32_t vni)
     return;
 }
 
-void FdbSync::imetDelRoute(struct in_addr vtep, string vlan_str, uint32_t vni)
+void FdbSync::imetDelRoute(struct nl_addr *vtep, string vlan_str, uint32_t vni)
 {
+    char buf[MAX_ADDR_SIZE + 1] = {0};
     string vlan_id = "Vlan" + vlan_str;
-    string key = vlan_id + ":" + inet_ntoa(vtep);
+    string key = vlan_id + ":" + nl_addr2str(vtep, buf, sizeof(buf));
 
     if (!checkDelImet(key, vni))
     {
@@ -659,7 +661,7 @@ void FdbSync::imetDelRoute(struct in_addr vtep, string vlan_str, uint32_t vni)
 
     SWSS_LOG_INFO("%sIMET Del route key:%s vtep:%s %s", 
             (m_AppRestartAssist && m_AppRestartAssist->isWarmStartInProgress()) ? "WARM-RESTART:" : "",
-            key.c_str(), inet_ntoa(vtep), vlan_id.c_str());
+            key.c_str(), nl_addr2str(vtep, buf, sizeof(buf)), vlan_id.c_str());
 
     std::vector<FieldValueTuple> fvVector;
     FieldValueTuple f("vni", to_string(vni));
@@ -842,9 +844,9 @@ void FdbSync::macDelVxlan(string key)
 
 void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj)
 {
+    char buf[MAX_ADDR_SIZE + 1] = {0};
     char macStr[MAX_ADDR_SIZE + 1] = {0};
     struct rtnl_neigh *neigh = (struct rtnl_neigh *)obj;
-    struct in_addr vtep = {0};
     int vlan = 0, ifindex = 0;
     uint32_t vni = 0;
     nl_addr *vtep_addr;
@@ -931,9 +933,7 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj)
     }
     else
     {
-        /* Currently we only support ipv4 tunnel endpoints */
-        vtep.s_addr = *(uint32_t *)nl_addr_get_binary_addr(vtep_addr);
-        SWSS_LOG_INFO("Tunnel IP %s Int%d", inet_ntoa(vtep), *(uint32_t *)nl_addr_get_binary_addr(vtep_addr));
+        SWSS_LOG_INFO("Tunnel IP %s", nl_addr2str(vtep_addr, buf, sizeof(buf)));
     }
 
     int state = rtnl_neigh_get_state(neigh);
@@ -956,19 +956,16 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj)
     /* Handling IMET routes */
     if (MacAddress(macStr) == MacAddress("00:00:00:00:00:00"))
     {
-        if (vtep.s_addr)
-        {
             string vlan_str = ifname.substr(str_loc+1, string::npos);
 
             if (!delete_key)
             {
-                imetAddRoute(vtep, vlan_str, vni);
+                imetAddRoute(vtep_addr, vlan_str, vni);
             }
             else
             {
-                imetDelRoute(vtep, vlan_str, vni);
+                imetDelRoute(vtep_addr, vlan_str, vni);
             }
-        }
         return;
     }
 
@@ -1257,6 +1254,8 @@ void FdbSync::onMsgNbrRaw(struct nlmsghdr *msg)
     bool has_nhid = false;
     bool has_dst = false;
     struct in_addr dst_v4 = {0};
+    struct in6_addr dst_v6 = {};
+    int dst_family = AF_UNSPEC;
     uint32_t ext_flags __attribute__((unused)) = 0;
 
     struct rtattr *rta = (struct rtattr *)((char *)ndm + NLMSG_ALIGN(sizeof(*ndm)));
@@ -1284,6 +1283,12 @@ void FdbSync::onMsgNbrRaw(struct nlmsghdr *msg)
             if (RTA_PAYLOAD(rta) == sizeof(struct in_addr))
             {
                 memcpy(&dst_v4, RTA_DATA(rta), sizeof(struct in_addr));
+                dst_family = AF_INET;
+            }
+            else if (RTA_PAYLOAD(rta) == sizeof(struct in6_addr))
+            {
+                memcpy(&dst_v6, RTA_DATA(rta), sizeof(struct in6_addr));
+                dst_family = AF_INET6;
             }
             break;
         case NDA_FLAGS_EXT:
@@ -1349,10 +1354,17 @@ void FdbSync::onMsgNbrRaw(struct nlmsghdr *msg)
         /* MAC points to a nexthop group */
         macAddVxlan(key, NULL, type, vni, ifname, to_string(nhid), NEXTHOPGROUP, RTPROT_UNSPEC);
     }
-    else if (has_dst && dst_v4.s_addr != 0)
+    else if (has_dst && dst_family == AF_INET && dst_v4.s_addr != 0)
     {
-        /* MAC points to a remote VTEP */
+        /* MAC points to a remote IPv4 VTEP */
         struct nl_addr *vtep_addr = nl_addr_build(AF_INET, &dst_v4, sizeof(dst_v4));
+        macAddVxlan(key, vtep_addr, type, vni, ifname, "0", VTEP, RTPROT_UNSPEC);
+        nl_addr_put(vtep_addr);
+    }
+    else if (has_dst && dst_family == AF_INET6)
+    {
+        /* MAC points to a remote IPv6 VTEP */
+        struct nl_addr *vtep_addr = nl_addr_build(AF_INET6, &dst_v6, sizeof(dst_v6));
         macAddVxlan(key, vtep_addr, type, vni, ifname, "0", VTEP, RTPROT_UNSPEC);
         nl_addr_put(vtep_addr);
     }
