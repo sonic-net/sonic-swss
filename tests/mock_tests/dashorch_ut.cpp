@@ -24,18 +24,31 @@ namespace dashorch_test
     {
     public:
         MockDashHaOrch(DBConnector *db, const std::vector<std::string> &tableNames, DashOrch *dash_orch, BfdOrch *bfd_orch, DBConnector *app_state_db, ZmqServer *zmqServer)
-            : DashHaOrch(db, tableNames, dash_orch, bfd_orch, app_state_db, zmqServer) {}
+            : DashHaOrch(db, tableNames, dash_orch, bfd_orch, app_state_db, zmqServer), m_ha_role_for_eni(dash::types::HA_ROLE_ACTIVE) {}
+
+        void setHaRoleForEni(dash::types::HaRole role) { m_ha_role_for_eni = role; }
 
         HaScopeEntry getHaScopeForEni(const std::string& eni) override
         {
             HaScopeEntry entry;
 
             entry.ha_scope_id = 0x123456789ABCDEF0ULL;
-            entry.metadata.set_ha_role(dash::types::HA_ROLE_ACTIVE);
+            entry.metadata.set_ha_role(m_ha_role_for_eni);
             entry.metadata.set_disabled(false);
 
             return entry;
         }
+
+    private:
+        dash::types::HaRole m_ha_role_for_eni;
+    };
+
+    class TestableDashOrch : public DashOrch
+    {
+    public:
+        TestableDashOrch(swss::DBConnector* db, std::vector<std::string>& tables, swss::DBConnector* app_state_db, swss::ZmqServer* zmqServer)
+            : DashOrch(db, tables, app_state_db, zmqServer) {}
+        bool isHaFlowOwnerAttrSupported() override { return false; }
     };
 
     DEFINE_SAI_GENERIC_APIS_MOCK(dash_appliance, dash_appliance)
@@ -82,9 +95,10 @@ namespace dashorch_test
         }
     }
     class DashOrchTest : public MockDashOrchTest, public ::testing::WithParamInterface<std::tuple<ValueOrRange, ValueOrRange>> {
-    private:
+    protected:
         std::unique_ptr<MockDashHaOrch> m_mock_dash_ha_orch;
-        
+
+    private:
         void ApplySaiMock()
         {
             INIT_SAI_API_MOCK(dash_appliance);
@@ -96,9 +110,8 @@ namespace dashorch_test
 
         void PostSetUp()
         {
-            // Skip HA orch mocking for now since the dummy value returned by getHaScopeForEni is causing ENI creation to fail.
-            // m_mock_dash_ha_orch = std::make_unique<MockDashHaOrch>(m_dpu_app_db.get(), std::vector<std::string>{APP_DASH_HA_SET_TABLE_NAME, APP_DASH_HA_SCOPE_TABLE_NAME}, m_DashOrch, nullptr, m_dpu_app_state_db.get(), nullptr);
-            // m_DashOrch->setDashHaOrch(m_mock_dash_ha_orch.get());
+            // Mock is not created here so tests that only need DashOrch (e.g. trusted VNI tests) are not
+            // affected by the dummy getHaScopeForEni(). The two tests that need the mock create it locally.
         }
 
         void PreTearDown() override
@@ -151,6 +164,16 @@ namespace dashorch_test
                     }
                 }
                 return ;
+            }
+            void VerifyHaFlowOwner(std::vector<sai_attribute_t> &actual_attrs, bool expected_value)
+            {
+                for (auto attr : actual_attrs) {
+                    if (attr.id == SAI_ENI_ATTR_IS_HA_FLOW_OWNER) {
+                        EXPECT_EQ(attr.value.booldata, expected_value);
+                        return;
+                    }
+                }
+                FAIL() << "SAI_ENI_ATTR_IS_HA_FLOW_OWNER not found in attributes";
             }
     };
 
@@ -680,5 +703,77 @@ namespace dashorch_test
         appliance.set_outbound_direction_lookup("src_mac");
         SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance);
         VerifyDirectionLookup(actual_attrs, SAI_DIRECTION_LOOKUP_ENTRY_ACTION_SET_OUTBOUND_DIRECTION);
+    }
+
+    TEST_F(DashOrchTest, CreateEniWithHaScopeStandbyRole)
+    {
+        m_mock_dash_ha_orch = std::make_unique<MockDashHaOrch>(m_dpu_app_db.get(), std::vector<std::string>{APP_DASH_HA_SET_TABLE_NAME, APP_DASH_HA_SCOPE_TABLE_NAME}, m_DashOrch, nullptr, m_dpu_app_state_db.get(), nullptr);
+        m_DashOrch->setDashHaOrch(m_mock_dash_ha_orch.get());
+
+        CreateApplianceEntry();
+        CreateVnet();
+        m_mock_dash_ha_orch->setHaRoleForEni(dash::types::HA_ROLE_STANDBY);
+
+        std::vector<sai_attribute_t> actual_attrs;
+        EXPECT_CALL(*mock_sai_dash_eni_api, create_eni).Times(1).WillOnce(
+            DoAll(
+                [&actual_attrs](sai_object_id_t *eni_id, sai_object_id_t switch_id, uint32_t attr_count, const sai_attribute_t *attr_list) {
+                    actual_attrs.assign(attr_list, attr_list + attr_count);
+                },
+                Invoke(old_sai_dash_eni_api, &sai_dash_eni_api_t::create_eni)));
+
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, BuildEniEntry());
+        VerifyHaFlowOwner(actual_attrs, false);
+
+        m_DashOrch->setDashHaOrch(nullptr);
+    }
+
+    TEST_F(DashOrchTest, CreateEniWithHaScopeOtherRole)
+    {
+        m_mock_dash_ha_orch = std::make_unique<MockDashHaOrch>(m_dpu_app_db.get(), std::vector<std::string>{APP_DASH_HA_SET_TABLE_NAME, APP_DASH_HA_SCOPE_TABLE_NAME}, m_DashOrch, nullptr, m_dpu_app_state_db.get(), nullptr);
+        m_DashOrch->setDashHaOrch(m_mock_dash_ha_orch.get());
+
+        CreateApplianceEntry();
+        CreateVnet();
+        m_mock_dash_ha_orch->setHaRoleForEni(dash::types::HA_ROLE_SWITCHING_TO_ACTIVE);
+
+        std::vector<sai_attribute_t> actual_attrs;
+        EXPECT_CALL(*mock_sai_dash_eni_api, create_eni).Times(1).WillOnce(
+            DoAll(
+                [&actual_attrs](sai_object_id_t *eni_id, sai_object_id_t switch_id, uint32_t attr_count, const sai_attribute_t *attr_list) {
+                    actual_attrs.assign(attr_list, attr_list + attr_count);
+                },
+                Invoke(old_sai_dash_eni_api, &sai_dash_eni_api_t::create_eni)));
+
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, BuildEniEntry());
+        VerifyHaFlowOwner(actual_attrs, false);
+
+        m_DashOrch->setDashHaOrch(nullptr);
+    }
+
+    class DashOrchTestHaFlowOwnerNotSupported : public DashOrchTest
+    {
+    protected:
+        DashOrch* CreateDashOrch(swss::DBConnector* app_db, const std::vector<std::string>& dash_tables, swss::DBConnector* state_db, swss::ZmqServer* zmq) override
+        {
+            return new TestableDashOrch(app_db, const_cast<std::vector<std::string>&>(dash_tables), state_db, zmq);
+        }
+    };
+
+    TEST_F(DashOrchTestHaFlowOwnerNotSupported, CreateEniWhenHaFlowOwnerAttrNotSupported)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+
+        std::vector<sai_attribute_t> actual_attrs;
+        EXPECT_CALL(*mock_sai_dash_eni_api, create_eni).Times(1).WillOnce(
+            DoAll(
+                [&actual_attrs](sai_object_id_t *eni_id, sai_object_id_t switch_id, uint32_t attr_count, const sai_attribute_t *attr_list) {
+                    actual_attrs.assign(attr_list, attr_list + attr_count);
+                },
+                Invoke(old_sai_dash_eni_api, &sai_dash_eni_api_t::create_eni)));
+
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, BuildEniEntry());
+        VerifyNoAttribute(actual_attrs, SAI_ENI_ATTR_IS_HA_FLOW_OWNER);
     }
 }
