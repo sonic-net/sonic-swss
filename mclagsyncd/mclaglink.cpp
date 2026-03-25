@@ -562,7 +562,7 @@ void MclagLink::mclagsyncdSendFdbEntries(std::deque<KeyOpFieldsValuesTuple> &ent
         {
             if (fvField(i) == "port")
             {
-                memcpy(info.port_name, fvValue(i).c_str(), fvValue(i).length());
+                memcpy(info.port_name, fvValue(i).c_str(), std::min(fvValue(i).length(), sizeof(info.port_name) - 1));
             }
             if (fvField(i) == "type")
             {
@@ -1038,7 +1038,7 @@ void MclagLink::mclagsyncdSendMclagIfaceCfg(std::deque<KeyOpFieldsValuesTuple> &
             deleteLocalIfPortIsolate(mclag_ifaces);
         }
 
-        memcpy(cfg_info.mclag_iface, mclag_ifaces.c_str(), mclag_ifaces.size());
+        memcpy(cfg_info.mclag_iface, mclag_ifaces.c_str(), std::min(mclag_ifaces.size(), sizeof(cfg_info.mclag_iface) - 1));
         po_names.push_back(mclag_ifaces);
 
         SWSS_LOG_DEBUG("domain_id:%d optype:%d mclag_ifaces:%s", cfg_info.domain_id, cfg_info.op_type, cfg_info.mclag_iface); 
@@ -1131,7 +1131,7 @@ void MclagLink::mclagsyncdSendMclagUniqueIpCfg(std::deque<KeyOpFieldsValuesTuple
             cfg_info.op_type = MCLAG_CFG_OPER_DEL;
         }
 
-        memcpy(cfg_info.mclag_unique_ip_ifname, unique_ip_ifnames.c_str(), unique_ip_ifnames.size());
+        memcpy(cfg_info.mclag_unique_ip_ifname, unique_ip_ifnames.c_str(), std::min(unique_ip_ifnames.size(), sizeof(cfg_info.mclag_unique_ip_ifname) - 1));
 
         SWSS_LOG_NOTICE("optype:%d mclag_unique_ip_ifname:%s", cfg_info.op_type, cfg_info.mclag_unique_ip_ifname);
 
