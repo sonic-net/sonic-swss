@@ -1158,3 +1158,247 @@ bool NextHopGroup::invalidateNextHop(const NextHopKey& nh_key)
 
     return true;
 }
+
+/* ----------------------------------------------------------------------- */
+/* Protection NHG management APIs                                          */
+/* ----------------------------------------------------------------------- */
+
+bool NhgOrch::isHwProtectionSupported()
+{
+    static bool checked = false;
+    static bool supported = false;
+
+    if (checked)
+    {
+        return supported;
+    }
+
+    checked = true;
+
+    const auto *meta = sai_metadata_get_attr_metadata(
+                           SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+                           SAI_NEXT_HOP_GROUP_ATTR_TYPE);
+    if (!meta || !meta->isenum)
+    {
+        SWSS_LOG_NOTICE("Cannot query NHG type enum metadata");
+        return false;
+    }
+
+    vector<int32_t> values_list(meta->enummetadata->valuescount);
+    sai_s32_list_t values;
+    values.count = static_cast<uint32_t>(values_list.size());
+    values.list = values_list.data();
+
+    sai_status_t status = sai_query_attribute_enum_values_capability(
+                              gSwitchId,
+                              SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+                              SAI_NEXT_HOP_GROUP_ATTR_TYPE,
+                              &values);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_NOTICE("Failed to query NHG type capabilities, rv: %d", status);
+        return false;
+    }
+
+    for (uint32_t i = 0; i < values.count; i++)
+    {
+        if (values.list[i] == SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION)
+        {
+            supported = true;
+            break;
+        }
+    }
+
+    SWSS_LOG_NOTICE("SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION is %s",
+                    supported ? "supported" : "not supported");
+    return supported;
+}
+
+bool NhgOrch::createProtNhg(const string &key,
+                             const vector<NextHopKey> &primary_nhs,
+                             const NextHopKey &standby_nh,
+                             sai_object_id_t standby_nh_id)
+{
+    SWSS_LOG_ENTER();
+
+    if (primary_nhs.empty())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s requires at least one primary NH", key.c_str());
+        return false;
+    }
+
+    if (m_protNhgs.find(key) != m_protNhgs.end())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s already exists", key.c_str());
+        return false;
+    }
+
+    if (gRouteOrch->getNhgCount() + NhgBase::getSyncedCount() >=
+        gRouteOrch->getMaxNhgCount())
+    {
+        SWSS_LOG_ERROR("NHG capacity exhausted, cannot create protection NHG %s",
+                       key.c_str());
+        return false;
+    }
+
+    auto nhg = make_unique<ProtNhg>(key, primary_nhs, standby_nh, standby_nh_id);
+
+    if (!nhg->sync())
+    {
+        SWSS_LOG_ERROR("Failed to sync protection NHG %s", key.c_str());
+        return false;
+    }
+
+    m_protNhgs.emplace(key, NhgEntry<ProtNhg>(move(nhg)));
+
+    string primary_str;
+    for (const auto &nh : primary_nhs)
+    {
+        if (!primary_str.empty())
+        {
+            primary_str += ", ";
+        }
+        primary_str += nh.to_string();
+    }
+
+    SWSS_LOG_NOTICE("Created protection NHG %s (primaries: [%s], standby: %s)",
+                    key.c_str(),
+                    primary_str.c_str(),
+                    standby_nh.to_string().c_str());
+
+    return true;
+}
+
+bool NhgOrch::removeProtNhg(const string &key)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_protNhgs.find(key);
+    if (it == m_protNhgs.end())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s does not exist", key.c_str());
+        return false;
+    }
+
+    if (it->second.ref_count > 0)
+    {
+        SWSS_LOG_ERROR("Protection NHG %s still referenced (ref_count=%u)",
+                       key.c_str(), it->second.ref_count);
+        return false;
+    }
+
+    if (!it->second.nhg->remove())
+    {
+        SWSS_LOG_ERROR("Failed to remove protection NHG %s from SAI", key.c_str());
+        return false;
+    }
+
+    m_protNhgs.erase(it);
+
+    SWSS_LOG_NOTICE("Removed protection NHG %s", key.c_str());
+
+    return true;
+}
+
+bool NhgOrch::hasProtNhg(const string &key) const
+{
+    SWSS_LOG_ENTER();
+    return m_protNhgs.find(key) != m_protNhgs.end();
+}
+
+const ProtNhg& NhgOrch::getProtNhg(const string &key) const
+{
+    SWSS_LOG_ENTER();
+    return *m_protNhgs.at(key).nhg;
+}
+
+sai_object_id_t NhgOrch::getProtNhgId(const string &key) const
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_protNhgs.find(key);
+    if (it == m_protNhgs.end())
+    {
+        return SAI_NULL_OBJECT_ID;
+    }
+
+    return it->second.nhg->getId();
+}
+
+bool NhgOrch::setProtNhgAdminRole(const string &key, sai_int32_t admin_role)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_protNhgs.find(key);
+    if (it == m_protNhgs.end())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s does not exist", key.c_str());
+        return false;
+    }
+
+    return it->second.nhg->setAdminRole(admin_role);
+}
+
+bool NhgOrch::setProtNhgMonitoredObject(const string &key,
+                                         const NextHopKey &nh_key,
+                                         sai_object_id_t monitored_oid)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_protNhgs.find(key);
+    if (it == m_protNhgs.end())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s does not exist", key.c_str());
+        return false;
+    }
+
+    return it->second.nhg->updateMemberMonitoredObject(nh_key, monitored_oid);
+}
+
+bool NhgOrch::getProtNhgMemberObservedRole(
+    const string &key,
+    const NextHopKey &nh_key,
+    sai_next_hop_group_member_observed_role_t &observed_role) const
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_protNhgs.find(key);
+    if (it == m_protNhgs.end())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s does not exist", key.c_str());
+        return false;
+    }
+
+    return it->second.nhg->getMemberObservedRole(nh_key, observed_role);
+}
+
+bool NhgOrch::getProtNhgAllObservedRoles(
+    const string &key,
+    map<NextHopKey, sai_next_hop_group_member_observed_role_t> &observed_roles) const
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_protNhgs.find(key);
+    if (it == m_protNhgs.end())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s does not exist", key.c_str());
+        return false;
+    }
+
+    return it->second.nhg->getAllMemberObservedRoles(observed_roles);
+}
+
+void NhgOrch::incProtNhgRefCount(const string &key)
+{
+    SWSS_LOG_ENTER();
+    ++m_protNhgs.at(key).ref_count;
+}
+
+void NhgOrch::decProtNhgRefCount(const string &key)
+{
+    SWSS_LOG_ENTER();
+
+    auto &entry = m_protNhgs.at(key);
+    assert(entry.ref_count > 0);
+    --entry.ref_count;
+}

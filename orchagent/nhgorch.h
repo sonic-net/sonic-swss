@@ -1,6 +1,7 @@
 #pragma once
 
 #include "cbf/cbfnhgorch.h"
+#include "protnhg.h"
 #include "vector"
 #include "portsorch.h"
 #include "routeorch.h"
@@ -129,6 +130,61 @@ public:
     bool validateNextHop(const NextHopKey& nh_key);
     bool invalidateNextHop(const NextHopKey& nh_key);
 
+    /* Check if hardware supports protection NHG type. */
+    bool isHwProtectionSupported();
+
+    /*
+     * Protection NHG APIs.
+     * MuxOrch is the primary consumer of these for dual-ToR hardware
+     * protection switching. Capacity accounting is shared with ECMP NHGs.
+     */
+
+    /* Create a protection NHG with one or more primary and one standby next hop.
+     * standby_nh_id: optional pre-resolved SAI OID for the standby NH
+     *                (e.g., tunnel NH not registered in NeighOrch).
+     */
+    bool createProtNhg(const string &key,
+                       const vector<NextHopKey> &primary_nhs,
+                       const NextHopKey &standby_nh,
+                       sai_object_id_t standby_nh_id = SAI_NULL_OBJECT_ID);
+
+    /* Remove a protection NHG by key. */
+    bool removeProtNhg(const string &key);
+
+    /* Check if a protection NHG exists. */
+    bool hasProtNhg(const string &key) const;
+
+    /* Get a const reference to a protection NHG. */
+    const ProtNhg& getProtNhg(const string &key) const;
+
+    /* Get the SAI object ID of a protection NHG. */
+    sai_object_id_t getProtNhgId(const string &key) const;
+
+    /* Toggle admin role (auto / force primary / force standby). */
+    bool setProtNhgAdminRole(const string &key, sai_int32_t admin_role);
+
+    /* Update the monitored object on a protection NHG member. */
+    bool setProtNhgMonitoredObject(const string &key,
+                                   const NextHopKey &nh_key,
+                                   sai_object_id_t monitored_oid);
+
+    /* Query the hardware-observed role (active/inactive) of a protection NHG member. */
+    bool getProtNhgMemberObservedRole(const string &key,
+                                      const NextHopKey &nh_key,
+                                      sai_next_hop_group_member_observed_role_t &observed_role) const;
+
+    /* Query observed roles for all synced members of a protection NHG. */
+    bool getProtNhgAllObservedRoles(
+        const string &key,
+        map<NextHopKey, sai_next_hop_group_member_observed_role_t> &observed_roles) const;
+
+    /* Ref counting for protection NHGs. */
+    void incProtNhgRefCount(const string &key);
+    void decProtNhgRefCount(const string &key);
+
 private:
     void doTask(Consumer& consumer) override;
+
+    /* Storage for protection NHGs, keyed by a string identifier (e.g., port name). */
+    unordered_map<string, NhgEntry<ProtNhg>> m_protNhgs;
 };

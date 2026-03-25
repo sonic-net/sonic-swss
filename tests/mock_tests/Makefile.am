@@ -62,6 +62,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 orchdaemon_ut.cpp \
                 intfsorch_ut.cpp \
                 mux_rollback_ut.cpp \
+                protnhg_ut.cpp \
                 warmrestartassist_ut.cpp \
                 test_failure_handling.cpp \
                 switchorch_ut.cpp \
@@ -97,6 +98,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/fgnhgorch.cpp \
                 $(top_srcdir)/orchagent/nhgbase.cpp \
                 $(top_srcdir)/orchagent/nhgorch.cpp \
+                $(top_srcdir)/orchagent/protnhg.cpp \
                 $(top_srcdir)/orchagent/cbf/cbfnhgorch.cpp \
                 $(top_srcdir)/orchagent/cbf/nhgmaporch.cpp \
                 $(top_srcdir)/orchagent/neighorch.cpp \
