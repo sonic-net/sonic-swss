@@ -64,6 +64,7 @@ int gFlexCounterDelaySec;
 #define SRV6_KEY                    "SRV6"
 #define SWITCH_KEY                  "SWITCH"
 #define HA_SET_KEY                  "HA_SET"
+#define LLR_KEY                     "LLR"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
@@ -95,7 +96,8 @@ unordered_map<string, string> flexCounterGroupMap =
     {"WRED_ECN_QUEUE", WRED_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {SRV6_KEY, SRV6_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {SWITCH_KEY, SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP},
-    {HA_SET_KEY, HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP}
+    {HA_SET_KEY, HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {LLR_KEY, LLR_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP}
 };
 
 
@@ -279,6 +281,11 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                             gPortsOrch->generateQueueMap(getQueueConfigurations());
                             m_wred_queue_counter_enabled = true;
                             gPortsOrch->addWredQueueFlexCounters(getQueueConfigurations());
+                        }
+                        else if (key == LLR_KEY)
+                        {
+                            gPortsOrch->generateLlrPortCounterMap();
+                            m_llr_port_counter_enabled = true;
                         }
                     }
                     if(gIntfsOrch && (key == RIF_KEY) && (value == "enable"))
