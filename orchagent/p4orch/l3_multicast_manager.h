@@ -27,6 +27,7 @@ struct P4MulticastRouterInterfaceEntry {
   std::string multicast_replica_port;
   std::string multicast_replica_instance;
   swss::MacAddress src_mac;
+  std::string action;
   std::string multicast_metadata;
   sai_object_id_t router_interface_oid = SAI_OBJECT_TYPE_NULL;
 
@@ -34,10 +35,12 @@ struct P4MulticastRouterInterfaceEntry {
   P4MulticastRouterInterfaceEntry(const std::string& port,
                                   const std::string& instance,
                                   const swss::MacAddress& mac,
+                                  const std::string& action,
                                   const std::string& metadata)
       : multicast_replica_port(port),
         multicast_replica_instance(instance),
         src_mac(mac),
+        action(action),
         multicast_metadata(metadata) {}
 };
 
@@ -48,10 +51,10 @@ struct P4Replica {
   std::string key;
 
   P4Replica() = default;
-  P4Replica(const std::string& group_id,
-            const std::string& port_name,
+  P4Replica(const std::string& group_id, const std::string& port_name,
             const std::string& instance_number)
-      : multicast_group_id(group_id), port(port_name),
+      : multicast_group_id(group_id),
+        port(port_name),
         instance(instance_number) {
     key = group_id + ":" + port_name + ":" + instance_number;
   }
@@ -79,7 +82,7 @@ typedef std::unordered_map<std::string, P4MulticastRouterInterfaceEntry>
 
 // P4MulticastGroupTable: multicast group ID, P4MulticastGroupEntry
 typedef std::unordered_map<std::string, P4MulticastGroupEntry>
-P4MulticastGroupTable;
+    P4MulticastGroupTable;
 
 // The L3MulticastManager handles updates to two P4 tables:
 // * The "fixed" table multicast_router_interface_table, which defines a single
@@ -125,8 +128,7 @@ class L3MulticastManager : public ObjectManagerInterface {
       const std::vector<swss::FieldValueTuple>& attributes);
 
   // Converts db table entry into P4MulticastGroupEntry.
-  ReturnCodeOr<P4MulticastGroupEntry>
-  deserializeMulticastGroupEntry(
+  ReturnCodeOr<P4MulticastGroupEntry> deserializeMulticastGroupEntry(
       const std::string& key,
       const std::vector<swss::FieldValueTuple>& attributes);
 
@@ -142,6 +144,19 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Performs multicast router interface entry validation for DEL command.
   ReturnCode validateDelMulticastRouterInterfaceEntry(
       const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry);
+
+  ReturnCode validateL3SetMulticastRouterInterfaceEntry(
+      const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
+      const P4MulticastRouterInterfaceEntry* router_interface_entry_ptr);
+  ReturnCode validateL2SetMulticastRouterInterfaceEntry(
+      const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
+      const P4MulticastRouterInterfaceEntry* router_interface_entry_ptr);
+  ReturnCode validateL3DelMulticastRouterInterfaceEntry(
+      const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
+      const P4MulticastRouterInterfaceEntry* router_interface_entry_ptr);
+  ReturnCode validateL2DelMulticastRouterInterfaceEntry(
+      const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
+      const P4MulticastRouterInterfaceEntry* router_interface_entry_ptr);
 
   // Performs multicast group entry validation.
   ReturnCode validateMulticastGroupEntry(
@@ -175,6 +190,8 @@ class L3MulticastManager : public ObjectManagerInterface {
       const std::string& op, bool update);
 
   // Wrapper around SAI setup and call, for easy mocking.
+  ReturnCode createBridgePort(P4MulticastRouterInterfaceEntry& entry,
+                              sai_object_id_t* bridge_port_oid);
   ReturnCode createRouterInterface(const std::string& rif_key,
                                    P4MulticastRouterInterfaceEntry& entry,
                                    sai_object_id_t* rif_oid);
@@ -196,6 +213,10 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Add new multicast router interface table entries.
   std::vector<ReturnCode> addMulticastRouterInterfaceEntries(
       std::vector<P4MulticastRouterInterfaceEntry>& entries);
+  ReturnCode addL3MulticastRouterInterfaceEntry(
+        P4MulticastRouterInterfaceEntry& entry);
+  ReturnCode addL2MulticastRouterInterfaceEntry(
+        P4MulticastRouterInterfaceEntry& entry);
   // Update existing multicast router interface table entries.
   std::vector<ReturnCode> updateMulticastRouterInterfaceEntries(
       std::vector<P4MulticastRouterInterfaceEntry>& entries);
@@ -220,11 +241,9 @@ class L3MulticastManager : public ObjectManagerInterface {
       const std::vector<P4MulticastGroupEntry>& entries);
 
   std::string verifyMulticastRouterInterfaceState(
-      const std::string& key,
-      const std::vector<swss::FieldValueTuple>& tuple);
+      const std::string& key, const std::vector<swss::FieldValueTuple>& tuple);
   std::string verifyMulticastGroupState(
-      const std::string& key,
-      const std::vector<swss::FieldValueTuple>& tuple);
+      const std::string& key, const std::vector<swss::FieldValueTuple>& tuple);
 
   // Verifies internal cache for a multicast router interface entry.
   std::string verifyMulticastRouterInterfaceStateCache(
@@ -237,6 +256,10 @@ class L3MulticastManager : public ObjectManagerInterface {
 
   // Verifies ASIC DB for a multicast router interface entry.
   std::string verifyMulticastRouterInterfaceStateAsicDb(
+      const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
+  std::string verifyL3MulticastRouterInterfaceStateAsicDb(
+      const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
+  std::string verifyL2MulticastRouterInterfaceStateAsicDb(
       const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
   // Verifies ASIC DB for a multicast group entry.
   std::string verifyMulticastGroupStateAsicDb(
@@ -264,6 +287,11 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Fetches the RIF OID that will be used by a given multicast replica.
   // This would be the value used by the group member.
   sai_object_id_t getRifOid(const P4Replica& replica);
+
+  // Fetches a bridge port OID for a port that will be used for L2 multicast
+  // group members.
+  sai_object_id_t getBridgePortOid(
+      const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
 
   // Internal cache of entries.
   P4MulticastRouterInterfaceTable m_multicastRouterInterfaceTable;
