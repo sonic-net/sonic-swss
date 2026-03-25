@@ -25,6 +25,7 @@ private:
     Table m_cfgSendToIngressPortTable;
     Table m_cfgLagMemberTable;
     Table m_statePortTable;
+    Table m_appLagMemberTable;
     ProducerStateTable m_appPortTable;
     ProducerStateTable m_appSendToIngressPortTable;
 
@@ -37,6 +38,7 @@ private:
     bool setPortMtu(const std::string &alias, const std::string &mtu);
     bool setPortAdminStatus(const std::string &alias, const bool up);
     bool isPortStateOk(const std::string &alias);
+    bool isPortPartOfLag(const std::string &alias);
 };
 
 }
