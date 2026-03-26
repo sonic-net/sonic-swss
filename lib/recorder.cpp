@@ -100,6 +100,11 @@ RecWriter::~RecWriter()
 
 void RecWriter::record(const std::string& val)
 {
+    record(swss::getTimestamp(), val);
+}
+
+void RecWriter::record(const std::string& timestamp, const std::string& val)
+{
     if (!isRecord())
     {
         return ;
@@ -109,7 +114,7 @@ void RecWriter::record(const std::string& val)
         setRotate(false);
         logfileReopen();
     }
-    record_ofs << swss::getTimestamp() << "|" << val << std::endl;
+    record_ofs << timestamp << "|" << val << std::endl;
 }
 
 

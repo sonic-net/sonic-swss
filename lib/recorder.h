@@ -39,6 +39,7 @@ public:
     virtual ~RecWriter();
     void startRec(bool exit_if_failure);
     void record(const std::string& val);
+    void record(const std::string& timestamp, const std::string& val);
 
 protected:
     void logfileReopen();

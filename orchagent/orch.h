@@ -175,6 +175,7 @@ public:
 
     /* record the tuple */
     void recordTuple(const swss::KeyOpFieldsValuesTuple &tuple);
+    void recordTuples(const std::deque<swss::KeyOpFieldsValuesTuple> &entries);
 
     void addToSync(const swss::KeyOpFieldsValuesTuple &entry, bool onRetry=false);
 
@@ -191,6 +192,9 @@ public:
 
     size_t refillToSync();
     size_t refillToSync(swss::Table* table);
+
+private:
+    void addToSyncInternal(const swss::KeyOpFieldsValuesTuple &entry, bool onRetry, bool recordTask);
 };
 
 class RingBuffer

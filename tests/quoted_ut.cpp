@@ -1,7 +1,12 @@
 #include <arpa/inet.h>
 #include <gtest/gtest.h>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
 #include <string>
 #include <iostream>
+#include <unistd.h>
+#include "recorder.h"
 #include "swssnet.h"
 #include "cfgmgr/shellcmd.h"
 
@@ -37,4 +42,36 @@ TEST(quoted, copy1_v6)
     key = "$(echo hi)";
     cmd4 << "cat /sys/class/net/" << shellquote(key) << "/operstate";
     EXPECT_EQ(cmd4.str(), "cat /sys/class/net/\"\\$(echo hi)\"/operstate");
+}
+
+TEST(recorder, preservesProvidedTimestamp)
+{
+    char dir_template[] = "/tmp/swss-recorder-ut-XXXXXX";
+    auto dir = mkdtemp(dir_template);
+    ASSERT_NE(dir, nullptr);
+
+    const string dirname(dir);
+    const string filename = "recorder-ut.rec";
+    const string fullpath = dirname + "/" + filename;
+    const string timestamp = "2026-03-25.17:13:05.185522";
+    const string payload = "CFG_TEST_TABLE:key|SET|field:value";
+
+    RecWriter writer;
+    writer.setRecord(true);
+    writer.setLocation(dirname);
+    writer.setFileName(filename);
+    writer.startRec(true);
+    writer.record(timestamp, payload);
+
+    ifstream ifs(fullpath);
+    ASSERT_TRUE(ifs.is_open());
+
+    string line;
+    string last_line;
+    while (getline(ifs, line))
+    {
+        last_line = line;
+    }
+
+    EXPECT_EQ(last_line, timestamp + "|" + payload);
 }

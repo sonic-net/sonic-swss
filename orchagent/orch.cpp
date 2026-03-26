@@ -1,6 +1,7 @@
 #include <inttypes.h>
 #include <stdexcept>
 #include <sys/time.h>
+#include <thread>
 #include "timestamp.h"
 #include "orch.h"
 
@@ -14,6 +15,134 @@
 #include "sai_serialize.h"
 
 using namespace swss;
+
+namespace
+{
+
+struct AsyncSwssRecordEntry
+{
+    struct timeval received_time;
+    std::string prefix;
+    KeyOpFieldsValuesTuple tuple;
+};
+
+class AsyncSwssRecorder
+{
+public:
+    static AsyncSwssRecorder& instance()
+    {
+        static AsyncSwssRecorder recorder;
+        return recorder;
+    }
+
+    void enqueue(const std::string& prefix, const KeyOpFieldsValuesTuple& tuple)
+    {
+        if (!Recorder::Instance().swss.isRecord())
+        {
+            return;
+        }
+
+        struct timeval received_time;
+        gettimeofday(&received_time, nullptr);
+
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_queue.push_back({received_time, prefix, tuple});
+        }
+        m_signal.notify_one();
+    }
+
+    void enqueueBatch(const std::string& prefix, const std::deque<KeyOpFieldsValuesTuple>& entries)
+    {
+        if (!Recorder::Instance().swss.isRecord() || entries.empty())
+        {
+            return;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            for (const auto& entry : entries)
+            {
+                struct timeval received_time;
+                gettimeofday(&received_time, nullptr);
+                m_queue.push_back({received_time, prefix, entry});
+            }
+        }
+        m_signal.notify_one();
+    }
+
+    ~AsyncSwssRecorder()
+    {
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_shutdown = true;
+        }
+        m_signal.notify_one();
+        m_worker.join();
+    }
+
+private:
+    AsyncSwssRecorder()
+        : m_worker(&AsyncSwssRecorder::drain, this)
+    {
+    }
+
+    std::string formatTimestamp(const struct timeval& tv) const
+    {
+        char buffer[64];
+        struct tm tm_info;
+        localtime_r(&tv.tv_sec, &tm_info);
+
+        size_t size = strftime(buffer, 32, "%Y-%m-%d.%T.", &tm_info);
+        snprintf(&buffer[size], 32, "%06" PRIu64, static_cast<uint64_t>(tv.tv_usec));
+
+        return std::string(buffer);
+    }
+
+    std::string serialize(const AsyncSwssRecordEntry& entry) const
+    {
+        std::string s = entry.prefix + kfvKey(entry.tuple) + "|" + kfvOp(entry.tuple);
+        for (const auto& fv : kfvFieldsValues(entry.tuple))
+        {
+            s += "|" + fvField(fv) + ":" + fvValue(fv);
+        }
+        return s;
+    }
+
+    void drain()
+    {
+        while (true)
+        {
+            std::deque<AsyncSwssRecordEntry> pending;
+            {
+                std::unique_lock<std::mutex> lock(m_mutex);
+                m_signal.wait(lock, [this]() {
+                    return m_shutdown || !m_queue.empty();
+                });
+
+                if (m_shutdown && m_queue.empty())
+                {
+                    break;
+                }
+
+                pending.swap(m_queue);
+            }
+
+            for (const auto& entry : pending)
+            {
+                Recorder::Instance().swss.record(formatTimestamp(entry.received_time), serialize(entry));
+            }
+        }
+    }
+
+    std::mutex m_mutex;
+    std::condition_variable m_signal;
+    std::deque<AsyncSwssRecordEntry> m_queue;
+    std::thread m_worker;
+    bool m_shutdown = false;
+};
+
+} // namespace
 
 int gBatchSize = 0;
 
@@ -242,16 +371,27 @@ size_t ConsumerBase::addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValue
 
 void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry, bool onRetry)
 {
+    addToSyncInternal(entry, onRetry, true);
+}
+
+void ConsumerBase::addToSyncInternal(const KeyOpFieldsValuesTuple &entry, bool onRetry, bool recordTask)
+{
     SWSS_LOG_ENTER();
 
     string key = kfvKey(entry);
     string op  = kfvOp(entry);
 
-    if (!onRetry)
-        /* Record incoming tasks */
-        Recorder::Instance().swss.record(dumpTuple(entry));
-    else
-        Recorder::Instance().retry.record(dumpTuple(entry).append(DECACHE));
+    if (recordTask)
+    {
+        if (!onRetry)
+        {
+            recordTuple(entry);
+        }
+        else
+        {
+            Recorder::Instance().retry.record(dumpTuple(entry).append(DECACHE));
+        }
+    }
 
     auto retryCache = getOrch() ? getOrch()->getRetryCache(getName()) : nullptr;
 
@@ -396,9 +536,14 @@ size_t ConsumerBase::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries
 {
     SWSS_LOG_ENTER();
 
+    if (!onRetry)
+    {
+        recordTuples(entries);
+    }
+
     for (auto& entry: entries)
     {
-        addToSync(entry, onRetry);
+        addToSyncInternal(entry, onRetry, onRetry);
     }
 
     return entries.size();
@@ -472,6 +617,20 @@ string ConsumerBase::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
     }
 
     return s;
+}
+
+void ConsumerBase::recordTuple(const KeyOpFieldsValuesTuple &tuple)
+{
+    AsyncSwssRecorder::instance().enqueue(
+        getTableName() + getConsumerTable()->getTableNameSeparator(),
+        tuple);
+}
+
+void ConsumerBase::recordTuples(const std::deque<KeyOpFieldsValuesTuple> &entries)
+{
+    AsyncSwssRecorder::instance().enqueueBatch(
+        getTableName() + getConsumerTable()->getTableNameSeparator(),
+        entries);
 }
 
 void ConsumerBase::dumpPendingTasks(vector<string> &ts)
