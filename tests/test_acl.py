@@ -799,14 +799,6 @@ class TestAcl:
         # Create rules with non-sequential priorities to test sorting
         rule_priorities = ["100", "50", "200", "10", "150"]
 
-        config_qualifiers = {
-            "100": {"SRC_IP": "10.0.0.100/32"},
-            "50": {"SRC_IP": "10.0.0.50/32"},
-            "200": {"SRC_IP": "10.0.0.200/32"},
-            "10": {"SRC_IP": "10.0.0.10/32"},
-            "150": {"SRC_IP": "10.0.0.150/32"},
-        }
-
         config_actions = {
             "100": "DROP",
             "50": "DROP",
@@ -878,6 +870,85 @@ class TestAcl:
         for priority in rule_priorities:
             dvs_acl.remove_acl_rule(L3_TABLE_NAME, f"PRIORITY_ORDER_TEST_RULE_{priority}")
             dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"PRIORITY_ORDER_TEST_RULE_{priority}", None)
+        dvs_acl.verify_no_acl_rules()
+
+    def test_AclRuleInvalidPriorityHandling(self, dvs, dvs_acl, l3_acl_table):
+        """
+        Test that ACL rules with invalid priority values are properly rejected and logged,
+        while valid rules in the same batch are still processed correctly.
+        """
+        # Create a mix of valid and invalid priority rules
+        test_cases = [
+            ("100", True),           # Valid priority
+            ("abc", False),          # Invalid: non-numeric
+            ("50", True),            # Valid priority
+            ("99999999999", False),  # Invalid: exceeds UINT32_MAX
+            ("200", True),           # Valid priority
+            ("10.5", False),         # Invalid: decimal number
+            ("150", True),           # Valid priority
+        ]
+
+        valid_priorities = [tc[0] for tc in test_cases if tc[1]]
+        invalid_priorities = [tc[0] for tc in test_cases if not tc[1]]
+
+        config_actions = {p: "DROP" for p in valid_priorities}
+        expected_sai_qualifiers = {
+            p: {"SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP": dvs_acl.get_simple_qualifier_comparator(f"10.0.0.{p}&mask:255.255.255.255")}
+            for p in valid_priorities
+        }
+
+        # Create all rules (valid and invalid) in CONFIG_DB atomically
+        redis_cmds = []
+        redis_cmds.append("MULTI")
+
+        for priority, is_valid in test_cases:
+            rule_name = f"INVALID_PRIO_TEST_RULE_{priority.replace('.', '_')}"
+            key = f"{L3_TABLE_NAME}|{rule_name}"
+
+            redis_cmds.append(f"HSET \"ACL_RULE|{key}\" \"priority\" \"{priority}\"")
+            redis_cmds.append(f"HSET \"ACL_RULE|{key}\" \"PACKET_ACTION\" \"DROP\"")
+            redis_cmds.append(f"HSET \"ACL_RULE|{key}\" \"SRC_IP\" \"10.0.0.{priority}/32\"")
+
+        redis_cmds.append("EXEC")
+        dvs.runcmd(['sh', '-c', f"redis-cli -n 4 <<EOF\n" + "\n".join(redis_cmds) + "\nEOF"])
+
+        # Give time for config to propagate
+        time.sleep(3)
+
+        # Verify that only valid priority rules are created
+        for priority in valid_priorities:
+            rule_name = f"INVALID_PRIO_TEST_RULE_{priority}"
+            dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, rule_name, "Active")
+
+        # Verify that invalid priority rules are NOT created (should be None or not exist)
+        for priority in invalid_priorities:
+            rule_name = f"INVALID_PRIO_TEST_RULE_{priority.replace('.', '_')}"
+            # The rule should not exist in ASIC_DB
+            dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, rule_name, None)
+
+        # Verify valid rules are created with correct attributes
+        dvs_acl.verify_acl_rule_set(valid_priorities, config_actions, expected_sai_qualifiers)
+
+        # Check syslog for error messages about invalid priorities
+        exitcode, log_output = dvs.runcmd('sh -c "grep -i \'Invalid ACL rule priority\' /var/log/syslog | tail -20"')
+
+        # We should see error logs for each invalid priority
+        if exitcode == 0 and log_output:
+            for invalid_prio in invalid_priorities:
+                assert invalid_prio in log_output, \
+                    f"Expected error log for invalid priority '{invalid_prio}' not found in syslog"
+
+        # Clean up valid rules
+        for priority in valid_priorities:
+            rule_name = f"INVALID_PRIO_TEST_RULE_{priority}"
+            dvs_acl.remove_acl_rule(L3_TABLE_NAME, rule_name)
+            dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, rule_name, None)
+
+        # Clean up invalid rules from CONFIG_DB (they should still be there)
+        for priority in invalid_priorities:
+            rule_name = f"INVALID_PRIO_TEST_RULE_{priority.replace('.', '_')}"
+            dvs_acl.remove_acl_rule(L3_TABLE_NAME, rule_name)
+
         dvs_acl.verify_no_acl_rules()
 
     def test_AclRuleDeletionPriorityOrder(self, dvs, dvs_acl, l3_acl_table):

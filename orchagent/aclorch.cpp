@@ -5554,15 +5554,43 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
         // Extract priority based on operation type
         if (op == SET_COMMAND)
         {
+            bool invalidPriority = false;
             // For SET operations, extract priority from field values
             for (const auto& fv : kfvFieldsValues(*data_ptr))
             {
                 string attr_name = to_upper(fvField(fv));
                 if (attr_name == "PRIORITY")
                 {
-                    entry.priority = (uint32_t)stoul(fvValue(fv));
+                    const string &prioStr = fvValue(fv);
+                    try
+                    {
+                        size_t idx = 0;
+                        unsigned long prio = stoul(prioStr, &idx, 10);
+                        if (idx != prioStr.length() || prio > UINT32_MAX)
+                        {
+                            SWSS_LOG_ERROR("Invalid ACL rule priority '%s' for rule %s in table %s",
+                                         prioStr.c_str(), rule_id.c_str(), table_id.c_str());
+                            invalidPriority = true;
+                        }
+                        else
+                        {
+                            entry.priority = static_cast<uint32_t>(prio);
+                        }
+                    }
+                    catch (const std::exception &e)
+                    {
+                        SWSS_LOG_ERROR("Exception parsing ACL rule priority '%s' for rule %s in table %s: %s",
+                                     prioStr.c_str(), rule_id.c_str(), table_id.c_str(), e.what());
+                        invalidPriority = true;
+                    }
                     break;
                 }
+            }
+            if (invalidPriority)
+            {
+                // Treat invalid priority as invalid entry: log and skip processing this rule
+                it++;
+                continue;
             }
             setRules.push_back(entry);
         }
