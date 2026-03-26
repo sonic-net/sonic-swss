@@ -13,7 +13,8 @@ fpmsyncd_SOURCES = fpmsyncd.cpp fpmlink.cpp routesync.cpp nhgmgr.cpp routesendco
 
 fpmsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)
 fpmsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)
-fpmsyncd_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lswsscommon -ljemalloc
+fpmsyncd_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lswsscommon -ljemalloc -lnexthopgroup
+
 
 if !ASAN_ENABLED
 check-local: fpmsyncd
