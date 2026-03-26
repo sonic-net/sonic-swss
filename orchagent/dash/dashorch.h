@@ -84,24 +84,26 @@ private:
     void doTaskEniRouteTable(ConsumerBase &consumer);
     void doTaskRouteGroupTable(ConsumerBase &consumer);
     bool addApplianceEntry(const std::string& appliance_id, const dash::appliance::Appliance &entry);
-    void addApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance& entry);
+    bool addApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance& entry);
     bool removeApplianceEntry(const std::string& appliance_id);
-    void removeApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance& entry);
+    bool removeApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance& entry);
     bool addRoutingTypeEntry(const dash::route_type::RoutingType &routing_type, const dash::route_type::RouteType &entry);
     bool removeRoutingTypeEntry(const dash::route_type::RoutingType &routing_type);
     bool addEniObject(const std::string& eni, EniEntry& entry);
     bool addEniAddrMapEntry(const std::string& eni, const EniEntry& entry);
-    void addEniTrustedVnis(const std::string& eni, const EniEntry& entry);
+    bool addEniTrustedVnis(const std::string& eni, const EniEntry& entry);
     bool addEni(const std::string& eni, EniEntry &entry);
     bool removeEniObject(const std::string& eni);
     bool removeEniAddrMapEntry(const std::string& eni);
-    void removeEniTrustedVnis(const std::string& eni, const EniEntry& entry);
+    bool removeEniTrustedVnis(const std::string& eni, const EniEntry& entry);
     bool removeEni(const std::string& eni);
     bool setEniAdminState(const std::string& eni, const EniEntry& entry);
     bool addQosEntry(const std::string& qos_name, const dash::qos::Qos &entry);
     bool removeQosEntry(const std::string& qos_name);
     bool setEniRoute(const std::string& eni, const dash::eni_route::EniRoute& entry);
     bool removeEniRoute(const std::string& eni);
+protected:
+    virtual bool isHaFlowOwnerAttrSupported();
 
 private:
 
@@ -172,6 +174,8 @@ private:
     std::shared_ptr<swss::DBConnector> m_counter_db;
     std::shared_ptr<swss::DBConnector> m_asic_db;
     DashHaOrch* m_dash_ha_orch = nullptr;
+    bool m_ha_flow_owner_attr_supported = false;
+    std::once_flag m_ha_flow_owner_attr_once_flag;
 
     void addEniMapEntry(sai_object_id_t oid, const std::string& name);
     void removeEniMapEntry(sai_object_id_t oid, const std::string& name);
