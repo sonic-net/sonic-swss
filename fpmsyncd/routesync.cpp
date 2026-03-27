@@ -2321,7 +2321,6 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
         fvw.fallback_to_default_route = "true";
     }
 
-    if (!warmRestartInProgress)
     setRouteWithWarmRestart(fvw, *m_routeTable);
     if (nhg_id)
     {
