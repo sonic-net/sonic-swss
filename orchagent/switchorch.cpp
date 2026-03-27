@@ -1981,7 +1981,7 @@ void SwitchOrch::querySwitchMirrorOnDropCapability()
     // Check capability for SAI_TAM_COLLECTOR_ATTR_HOSTIF_TRAP
     status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_TAM_COLLECTOR,
                                             SAI_TAM_COLLECTOR_ATTR_HOSTIF_TRAP, &capability);
-    if (status != SAI_STATUS_SUCCESS || capability.set_implemented != true)
+    if (status != SAI_STATUS_SUCCESS || capability.create_implemented != true)
     {
         if (status != SAI_STATUS_SUCCESS)
         {
@@ -1999,7 +1999,7 @@ void SwitchOrch::querySwitchMirrorOnDropCapability()
     // Check capability for SAI_TAM_ATTR_EVENT_OBJECTS_LIST
     status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_TAM_EVENT,
                                             SAI_TAM_ATTR_EVENT_OBJECTS_LIST, &capability);
-    if (status != SAI_STATUS_SUCCESS || capability.set_implemented != true)
+    if (status != SAI_STATUS_SUCCESS || capability.create_implemented != true)
     {
         if (status != SAI_STATUS_SUCCESS)
         {
@@ -2017,7 +2017,7 @@ void SwitchOrch::querySwitchMirrorOnDropCapability()
     // Check capability for SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TRAP_GROUP
     status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
                                             SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TRAP_GROUP, &capability);
-    if (status != SAI_STATUS_SUCCESS || capability.set_implemented != true)
+    if (status != SAI_STATUS_SUCCESS || capability.create_implemented != true)
     {
         if (status != SAI_STATUS_SUCCESS)
         {
