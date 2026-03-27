@@ -144,13 +144,15 @@ void P4Orch::doTask(ConsumerBase &consumer)
 
     // Warmboot scenario.
     if (!consumer.m_toSync.empty()) {
+        // Do not need to write same entries to DB during warmboot.
+        m_publisher.setEnableDbWriteAndNotify(/*enable_db_write_and_notify=*/false);
         auto it = consumer.m_toSync.begin();
         while (it != consumer.m_toSync.end()) {
            enqueue(it->second);
            it = consumer.m_toSync.erase(it);
         }
         drain(SET_COMMAND);
-        m_publisher.flush(/*warmboot=*/true);
+        m_publisher.setEnableDbWriteAndNotify(/*enable_db_write_and_notify=*/true);
     }   
 
     auto* zmq_consumer = dynamic_cast<ZmqConsumer*>(&consumer);
@@ -182,7 +184,7 @@ void P4Orch::doTask(ConsumerBase &consumer)
     if (!prev_op.empty() && status.ok()) {
         drain(prev_op);
     }   
-    m_publisher.flush(false);
+    m_publisher.flush();
     zmq_consumer->m_queue.clear();
 }
 
