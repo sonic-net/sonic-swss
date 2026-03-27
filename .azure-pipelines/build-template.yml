@@ -104,6 +104,9 @@ jobs:
     clean: true
     submodules: true
   - script: |
+      sudo sysctl vm.mmap_rnd_bits
+    displayName: "Print bits before anything"
+  - script: |
       set -xe
       sudo apt-get update
       sudo apt-get install -y \
@@ -252,6 +255,8 @@ jobs:
       if [ '${{ parameters.asan }}' == True ]; then
          export ENABLE_ASAN=y
       fi
+      sudo sysctl vm.mmap_rnd_bits
+      exit 1
       ./autogen.sh
       RUSTFLAGS=-Dwarnings dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
     displayName: "Compile sonic swss"
