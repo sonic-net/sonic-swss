@@ -124,6 +124,7 @@ class RouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
     string router_mac = string();
     string segment = string();
     string seg_src = string();
+    string fallback_to_default_route = string("false");
 };
 
 class LabelRouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {

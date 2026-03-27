@@ -1030,6 +1030,7 @@ RouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
         fvVector.push_back(FieldValueTuple("router_mac", router_mac.c_str()));
         fvVector.push_back(FieldValueTuple("segment", segment.c_str()));
         fvVector.push_back(FieldValueTuple("seg_src", seg_src.c_str()));
+        fvVector.push_back(FieldValueTuple("fallback_to_default_route", fallback_to_default_route.c_str()));
     } else {
         if (protocol != string()) {
             fvVector.push_back(FieldValueTuple("protocol", protocol.c_str()));
@@ -1063,6 +1064,9 @@ RouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
         }
         if (seg_src != string()) {
             fvVector.push_back(FieldValueTuple("seg_src", seg_src.c_str()));
+        }
+        if (fallback_to_default_route != string("false")) {
+            fvVector.push_back(FieldValueTuple("fallback_to_default_route", fallback_to_default_route.c_str()));
         }
     }
     // Return value optimization will avoid copy of the following vector
@@ -2314,8 +2318,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
 
     if (route_eligible_for_fallback_to_default_route)
     {
-        FieldValueTuple tag("fallback_to_default_route", "true");
-        fvVector.push_back(tag);
+        fvw.fallback_to_default_route = "true";
     }
 
     if (!warmRestartInProgress)
