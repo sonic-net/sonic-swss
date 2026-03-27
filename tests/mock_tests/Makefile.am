@@ -313,7 +313,7 @@ tests_response_publisher_INCLUDES = $(tests_INCLUDES)
 tests_response_publisher_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_response_publisher_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_response_publisher_INCLUDES)
 tests_response_publisher_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
-        -lswsscommon -lswsscommon --lyaml-cpp -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread
+        -lswsscommon -lswsscommon -lyaml-cpp -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread
 
 tests_teamsyncd_SOURCES = teamsync_ut.cpp \
                           $(top_srcdir)/teamsyncd/teamsync.cpp
