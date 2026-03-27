@@ -842,14 +842,17 @@ void FdbSync::macDelVxlan(string key)
     }
 }
 
-void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj)
+void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h)
 {
     char buf[MAX_ADDR_SIZE + 1] = {0};
     char macStr[MAX_ADDR_SIZE + 1] = {0};
     struct rtnl_neigh *neigh = (struct rtnl_neigh *)obj;
+    struct rtattr *tb[NDA_MAX + 1] = {0};
+    struct ndmsg *nm;
     int vlan = 0, ifindex = 0;
     uint32_t vni = 0;
-    nl_addr *vtep_addr;
+    string nexthop_group = "0";
+    nl_addr *vtep_addr = nullptr;
     string ifname;
     string key;
     bool delete_key = false;
@@ -857,7 +860,7 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj)
     string type = "";
     string vlan_id = "";
     bool isVxlanIntf = false;
-    uint8_t protocol = RTPROT_UNSPEC;
+    NEXT_HOP_VALUE_TYPE dest_type = UNKNOWN;
 
     if ((nlmsg_type != RTM_NEWNEIGH) && (nlmsg_type != RTM_GETNEIGH) &&
         (nlmsg_type != RTM_DELNEIGH))
@@ -865,11 +868,40 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj)
         return;
     }
 
+    /* Parse raw attributes to extract NDA_NH_ID and NDA_FLAGS_EXT */
+    nm = (struct ndmsg *)NLMSG_DATA(h);
+    int attr_len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(*nm)));
+    struct rtattr *rta = (struct rtattr *)((char *)nm + NLMSG_ALIGN(sizeof(*nm)));
+    for (; RTA_OK(rta, attr_len); rta = RTA_NEXT(rta, attr_len))
+    {
+        if (rta->rta_type <= NDA_MAX)
+            tb[rta->rta_type] = rta;
+    }
+
+    int state = rtnl_neigh_get_state(neigh);
+    if ((nlmsg_type == RTM_DELNEIGH) || (state == NUD_INCOMPLETE) ||
+        (state == NUD_FAILED))
+    {
+        delete_key = true;
+    }
+
     /* Only MAC route is to be supported */
     if (rtnl_neigh_get_family(neigh) != AF_BRIDGE)
     {
         return;
     }
+
+    nl_addr2str(rtnl_neigh_get_lladdr(neigh), macStr, MAX_ADDR_SIZE);
+
+    if (tb[NDA_NH_ID])
+    {
+        nexthop_group = std::to_string(*(uint32_t *)RTA_DATA(tb[NDA_NH_ID]));
+        if (nexthop_group != "0")
+        {
+            dest_type = NEXTHOPGROUP;
+        }
+    }
+
     ifindex = rtnl_neigh_get_ifindex(neigh);
     if (m_intf_info.find(ifindex) != m_intf_info.end())
     {
@@ -877,17 +909,14 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj)
         ifname = m_intf_info[ifindex].ifname;
     }
 
-    nl_addr2str(rtnl_neigh_get_lladdr(neigh), macStr, MAX_ADDR_SIZE);
-
     if (isVxlanIntf == false)
     {
         if (nlmsg_type == RTM_NEWNEIGH)
         {
             int vid = rtnl_neigh_get_vlan(neigh);
-            int state = rtnl_neigh_get_state(neigh);
             if (state & NUD_PERMANENT)
             {
-                updateMclagRemoteMacPort(ifindex, vid, macStr, protocol);
+                updateMclagRemoteMacPort(ifindex, vid, macStr, RTPROT_UNSPEC);
             }
         }
 
@@ -921,26 +950,30 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj)
         vlan = rtnl_neigh_get_vlan(neigh);
         if (m_isEvpnNvoExist)
         {
-            macRefreshStateDB(vlan, macStr, protocol);
+            macRefreshStateDB(vlan, macStr, RTPROT_UNSPEC);
         }
         return;
     }
 
-    vtep_addr = rtnl_neigh_get_dst(neigh);
-    if (vtep_addr == NULL)
+    /*
+     * dest_type is not required for delete messages. It is skipped so that the
+     * bridge fdb delete goes through as it does not contain the NDA_DST attribute.
+     *
+     * VTEP can only be applicable if dest_type is not NEXTHOPGROUP
+     */
+    if (nlmsg_type != RTM_DELNEIGH && dest_type != NEXTHOPGROUP)
     {
-        return;
-    }
-    else
-    {
-        SWSS_LOG_INFO("Tunnel IP %s", nl_addr2str(vtep_addr, buf, sizeof(buf)));
-    }
-
-    int state = rtnl_neigh_get_state(neigh);
-    if ((nlmsg_type == RTM_DELNEIGH) || (state == NUD_INCOMPLETE) ||
-        (state == NUD_FAILED))
-    {
-        delete_key = true;
+        vtep_addr = rtnl_neigh_get_dst(neigh);
+        if (vtep_addr == NULL)
+        {
+            SWSS_LOG_INFO("Remote VTEP MAC sent without NDA_DST attribute");
+            return;
+        }
+        else
+        {
+            SWSS_LOG_INFO("Tunnel IP %s", nl_addr2str(vtep_addr, buf, sizeof(buf)));
+            dest_type = VTEP;
+        }
     }
 
     if (state & NUD_NOARP)
@@ -956,26 +989,26 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj)
     /* Handling IMET routes */
     if (MacAddress(macStr) == MacAddress("00:00:00:00:00:00"))
     {
-            string vlan_str = ifname.substr(str_loc+1, string::npos);
+        string vlan_str = ifname.substr(str_loc+1, string::npos);
 
-            if (!delete_key)
-            {
-                imetAddRoute(vtep_addr, vlan_str, vni);
-            }
-            else
-            {
-                imetDelRoute(vtep_addr, vlan_str, vni);
-            }
+        if (!delete_key)
+        {
+            imetAddRoute(vtep_addr, vlan_str, vni);
+        }
+        else
+        {
+            imetDelRoute(vtep_addr, vlan_str, vni);
+        }
         return;
     }
 
-    key+= vlan_id;
-    key+= ":";
-    key+= macStr;
+    key += vlan_id;
+    key += ":";
+    key += macStr;
 
     if (!delete_key)
     {
-        macAddVxlan(key, vtep_addr, type, vni, ifname, "0", VTEP, protocol);
+        macAddVxlan(key, vtep_addr, type, vni, ifname, nexthop_group, dest_type, RTPROT_UNSPEC);
     }
     else
     {
@@ -1016,20 +1049,12 @@ void FdbSync::onMsgLink(int nlmsg_type, struct nl_object *obj)
 
 void FdbSync::onMsg(int nlmsg_type, struct nl_object *obj)
 {
-    if ((nlmsg_type != RTM_NEWLINK) &&
-        (nlmsg_type != RTM_NEWNEIGH) && (nlmsg_type != RTM_DELNEIGH))
+    if (nlmsg_type != RTM_NEWLINK)
     {
         SWSS_LOG_DEBUG("netlink: unhandled event: %d", nlmsg_type);
         return;
     }
-    if (nlmsg_type == RTM_NEWLINK)
-    {
-        onMsgLink(nlmsg_type, obj);
-    }
-    else
-    {
-        onMsgNbr(nlmsg_type, obj);
-    }
+    onMsgLink(nlmsg_type, obj);
 }
 
 void FdbSync::onMsgNhg(struct nlmsghdr *msg)
@@ -1237,158 +1262,37 @@ void FdbSync::onMsgNhg(struct nlmsghdr *msg)
     }
 }
 
-void FdbSync::onMsgNbrRaw(struct nlmsghdr *msg)
+void FdbSync::onMsgRaw(struct nlmsghdr *h)
 {
-    struct ndmsg *ndm = (struct ndmsg *)NLMSG_DATA(msg);
-    int len = (int)(msg->nlmsg_len - NLMSG_LENGTH(sizeof(*ndm)));
-
-    /* Only MAC routes (AF_BRIDGE) */
-    if (ndm->ndm_family != AF_BRIDGE)
-    {
-        return;
-    }
-
-    uint32_t nhid = 0;
-    uint16_t vlan_id = 0;
-    char macStr[MAX_ADDR_SIZE + 1] = {0};
-    bool has_nhid = false;
-    bool has_dst = false;
-    struct in_addr dst_v4 = {0};
-    struct in6_addr dst_v6 = {};
-    int dst_family = AF_UNSPEC;
-    uint32_t ext_flags __attribute__((unused)) = 0;
-
-    struct rtattr *rta = (struct rtattr *)((char *)ndm + NLMSG_ALIGN(sizeof(*ndm)));
-
-    for (; RTA_OK(rta, len); rta = RTA_NEXT(rta, len))
-    {
-        switch (rta->rta_type)
-        {
-        case NDA_NH_ID:
-            nhid = *(uint32_t *)RTA_DATA(rta);
-            has_nhid = true;
-            break;
-        case NDA_VLAN:
-            vlan_id = *(uint16_t *)RTA_DATA(rta);
-            break;
-        case NDA_LLADDR:
-            {
-                unsigned char *addr = (unsigned char *)RTA_DATA(rta);
-                snprintf(macStr, sizeof(macStr), "%02x:%02x:%02x:%02x:%02x:%02x",
-                         addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
-            }
-            break;
-        case NDA_DST:
-            has_dst = true;
-            if (RTA_PAYLOAD(rta) == sizeof(struct in_addr))
-            {
-                memcpy(&dst_v4, RTA_DATA(rta), sizeof(struct in_addr));
-                dst_family = AF_INET;
-            }
-            else if (RTA_PAYLOAD(rta) == sizeof(struct in6_addr))
-            {
-                memcpy(&dst_v6, RTA_DATA(rta), sizeof(struct in6_addr));
-                dst_family = AF_INET6;
-            }
-            break;
-        case NDA_FLAGS_EXT:
-            ext_flags = *(uint32_t *)RTA_DATA(rta);
-            break;
-        default:
-            break;
-        }
-    }
-
-    int ifindex = ndm->ndm_ifindex;
-    bool isVxlanIntf = false;
-    string ifname;
-    uint32_t vni = 0;
-
-    if (m_intf_info.find(ifindex) != m_intf_info.end())
-    {
-        isVxlanIntf = true;
-        ifname = m_intf_info[ifindex].ifname;
-        vni = m_intf_info[ifindex].vni;
-    }
-
-    if (!isVxlanIntf)
-    {
-        return;
-    }
-
-    /* Build the vlan_id string from interface name */
-    string vlan_str;
-    size_t str_loc = ifname.rfind("-");
-    if (str_loc != string::npos)
-    {
-        vlan_str = "Vlan" + ifname.substr(str_loc + 1, string::npos);
-    }
-    else if (vlan_id > 0)
-    {
-        vlan_str = "Vlan" + to_string(vlan_id);
-    }
-    else
-    {
-        return;
-    }
-
-    string key = vlan_str + ":" + macStr;
-
-    bool delete_key = (msg->nlmsg_type == RTM_DELNEIGH);
-    int state = ndm->ndm_state;
-    if ((state == NUD_INCOMPLETE) || (state == NUD_FAILED))
-    {
-        delete_key = true;
-    }
-
-    string type = (state & NUD_NOARP) ? "static" : "dynamic";
-
-    if (delete_key)
-    {
-        macDelVxlan(key);
-        return;
-    }
-
-    if (has_nhid && nhid != 0)
-    {
-        /* MAC points to a nexthop group */
-        macAddVxlan(key, NULL, type, vni, ifname, to_string(nhid), NEXTHOPGROUP, RTPROT_UNSPEC);
-    }
-    else if (has_dst && dst_family == AF_INET && dst_v4.s_addr != 0)
-    {
-        /* MAC points to a remote IPv4 VTEP */
-        struct nl_addr *vtep_addr = nl_addr_build(AF_INET, &dst_v4, sizeof(dst_v4));
-        macAddVxlan(key, vtep_addr, type, vni, ifname, "0", VTEP, RTPROT_UNSPEC);
-        nl_addr_put(vtep_addr);
-    }
-    else if (has_dst && dst_family == AF_INET6)
-    {
-        /* MAC points to a remote IPv6 VTEP */
-        struct nl_addr *vtep_addr = nl_addr_build(AF_INET6, &dst_v6, sizeof(dst_v6));
-        macAddVxlan(key, vtep_addr, type, vni, ifname, "0", VTEP, RTPROT_UNSPEC);
-        nl_addr_put(vtep_addr);
-    }
-}
-
-void FdbSync::onMsgRaw(struct nlmsghdr *msg)
-{
-    if (!msg)
+    if (!h)
     {
         SWSS_LOG_ERROR("Received NULL message");
         return;
     }
 
-    if (msg->nlmsg_type == RTM_NEWLINK)
+    SWSS_LOG_INFO("onMsgRaw: Received message type: %d", h->nlmsg_type);
+
+    if (h->nlmsg_type == RTM_NEWNEXTHOP || h->nlmsg_type == RTM_DELNEXTHOP)
     {
-        struct nl_object *obj = (struct nl_object *)NLMSG_DATA(msg);
-        onMsg(msg->nlmsg_type, obj);
+        int len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(struct nhmsg)));
+        if (len < 0)
+        {
+            SWSS_LOG_ERROR("%s: Message received from netlink is of a broken size %d %zu",
+                           __PRETTY_FUNCTION__, h->nlmsg_len,
+                           (size_t)NLMSG_LENGTH(sizeof(struct nhmsg)));
+            return;
+        }
+        onMsgNhg(h);
     }
-    else if (msg->nlmsg_type == RTM_NEWNEIGH || msg->nlmsg_type == RTM_DELNEIGH)
+    else if (h->nlmsg_type == RTM_NEWNEIGH || h->nlmsg_type == RTM_DELNEIGH)
     {
-        onMsgNbrRaw(msg);
-    }
-    else if (msg->nlmsg_type == RTM_NEWNEXTHOP || msg->nlmsg_type == RTM_DELNEXTHOP)
-    {
-        onMsgNhg(msg);
+        struct rtnl_neigh *neigh;
+        int ret = rtnl_neigh_parse(h, &neigh);
+        if (ret != 0)
+        {
+            return;
+        }
+        onMsgNbr(h->nlmsg_type, (nl_object *)neigh, h);
+        rtnl_neigh_put(neigh);
     }
 }

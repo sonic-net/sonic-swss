@@ -173,8 +173,7 @@ private:
     void macDelVxlanDB(std::string key);
     void imetAddRoute(struct nl_addr *vtep, std::string ifname, uint32_t vni);
     void imetDelRoute(struct nl_addr *vtep, std::string ifname, uint32_t vni);
-    void onMsgNbr(int nlmsg_type, struct nl_object *obj);
-    void onMsgNbrRaw(struct nlmsghdr *msg);
+    void onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h);
     void onMsgLink(int nlmsg_type, struct nl_object *obj);
     void onMsgNhg(struct nlmsghdr *msg);
 
