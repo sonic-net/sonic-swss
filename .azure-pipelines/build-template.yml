@@ -104,11 +104,12 @@ jobs:
     clean: true
     submodules: true
   - script: |
+      set -xe
       sudo apt-get update
       sudo apt-get install -y \
         libhiredis-dev \
         libzmq3-dev \
-        swig4.0 \
+        swig \
         libdbus-1-dev \
         libteam-dev \
         libyaml-cpp-dev
