@@ -39,22 +39,6 @@ extern SwitchOrch *gSwitchOrch;
 extern PortsOrch *gPortsOrch;
 
 template <typename DropHandler, typename ForwardHandler>
-template <typename T>
-unordered_set<string> PfcWdSwOrch<DropHandler, ForwardHandler>::counterIdsToStr(
-    const vector<T> ids, string (*convert)(T))
-{
-    SWSS_LOG_ENTER();
-    unordered_set<string> counterIdSet;
-
-    for (const auto& i: ids)
-    {
-        counterIdSet.emplace(convert(i));
-    }
-
-    return counterIdSet;
-}
-
-template <typename DropHandler, typename ForwardHandler>
 task_process_status PfcWdSwOrch<DropHandler, ForwardHandler>::createEntry(const string& key,
         const vector<FieldValueTuple>& data)
 {
@@ -256,7 +240,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
 
     if (!c_portStatIds.empty())
     {
-        auto portStatIdSet = filterPfcCounters(counterIdsToStr(c_portStatIds, &sai_serialize_port_stat), losslessTc);
+        auto portStatIdSet = filterPfcCounters(PfcWdBaseOrch::counterIdsToStr(c_portStatIds, &sai_serialize_port_stat), losslessTc);
         this->m_pfcwdFlexCounterManager->setCounterIdList(port.m_port_id, CounterType::PORT, portStatIdSet, SAI_OBJECT_TYPE_PORT);
     }
 
@@ -283,13 +267,13 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
 
         if (!c_queueStatIds.empty())
         {
-            auto queueStatIdSet = counterIdsToStr(c_queueStatIds, sai_serialize_queue_stat);
+            auto queueStatIdSet = PfcWdBaseOrch::counterIdsToStr(c_queueStatIds, sai_serialize_queue_stat);
             this->m_pfcwdFlexCounterManager->setCounterIdList(queueId, CounterType::QUEUE, queueStatIdSet, SAI_OBJECT_TYPE_QUEUE);
         }
 
         if (!c_queueAttrIds.empty())
         {
-            auto queueAttrIdSet = counterIdsToStr(c_queueAttrIds, sai_serialize_queue_attr);
+            auto queueAttrIdSet = PfcWdBaseOrch::counterIdsToStr(c_queueAttrIds, sai_serialize_queue_attr);
             (dynamic_cast<FlexCounterManager*>(this->m_pfcwdFlexCounterManager.get()))->setCounterIdList(queueId, CounterType::QUEUE_ATTR, queueAttrIdSet);
         }
 
