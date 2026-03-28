@@ -91,6 +91,7 @@ orchagent_SOURCES = \
             switchorch.cpp \
             pfcwdorch.cpp \
             pfcwdsworch.cpp \
+            pfcwdhworch.cpp \
             pfcactionhandler.cpp \
             crmorch.cpp \
             request_parser.cpp \
