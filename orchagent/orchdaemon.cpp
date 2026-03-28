@@ -760,8 +760,31 @@ bool OrchDaemon::init()
             }
         }
 
-        if(pfcDlrInit)
+        // Check if SKU supports PFC hardware watchdog
+        bool pfcHwWdSupportedSku = gSwitchOrch->isHwPfcWdSupportedSku();
+
+        if (pfcHwWdSupportedSku)
         {
+            SWSS_LOG_NOTICE("HWSKU '%s' supports PFC hardware watchdog", gSwitchOrch->getHwSku().c_str());
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("HWSKU '%s' does not support PFC hardware watchdog", gSwitchOrch->getHwSku().c_str());
+        }
+
+        if (pfcDlrInit && pfcHwWdSupportedSku)
+        {
+            SWSS_LOG_NOTICE("Starting hardware-based pfc watchdog");
+            m_orchList.push_back(new PfcWdHwOrch(
+                        m_configDb,
+                        pfc_wd_tables,
+                        portStatIds,
+                        queueStatIds,
+                        queueAttrIds));
+        }
+        else if(pfcDlrInit)
+        {
+            SWSS_LOG_NOTICE("Starting dlr init handler for pfc watchdog");
             m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(
                         m_configDb,
                         pfc_wd_tables,
@@ -772,6 +795,7 @@ bool OrchDaemon::init()
         }
         else
         {
+            SWSS_LOG_NOTICE("Starting acl handler for pfc watchdog");
             m_orchList.push_back(new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
                         m_configDb,
                         pfc_wd_tables,

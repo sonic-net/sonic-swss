@@ -127,6 +127,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/switchorch.cpp \
                 $(top_srcdir)/orchagent/pfcwdorch.cpp \
                 $(top_srcdir)/orchagent/pfcwdsworch.cpp \
+                $(top_srcdir)/orchagent/pfcwdhworch.cpp \
                 $(top_srcdir)/orchagent/pfcactionhandler.cpp \
                 $(top_srcdir)/orchagent/policerorch.cpp \
                 $(top_srcdir)/orchagent/crmorch.cpp \
