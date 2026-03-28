@@ -351,4 +351,26 @@ namespace switchorch_test
         sai_timespec_t timestamp = {.tv_sec = 172479515853275099, .tv_nsec = 538710245};
         checkAsicSdkHealthEvent(timestamp);
     }
+
+    TEST_F(SwitchOrchTest, HwPfcWdSkuDetection)
+    {
+        initSwitchOrch();
+
+        // Supported SKUs
+        gSwitchOrch->m_hwSku = "nh-4010-48y8c";
+        ASSERT_TRUE(gSwitchOrch->isHwPfcWdSupportedSku());
+
+        gSwitchOrch->m_hwSku = "NH-4010-VARIANT";  // case-insensitive
+        ASSERT_TRUE(gSwitchOrch->isHwPfcWdSupportedSku());
+
+        // Unsupported SKUs
+        gSwitchOrch->m_hwSku = "nh-3010-x";
+        ASSERT_FALSE(gSwitchOrch->isHwPfcWdSupportedSku());
+
+        gSwitchOrch->m_hwSku = "non-existent-sku";
+        ASSERT_FALSE(gSwitchOrch->isHwPfcWdSupportedSku());
+
+        gSwitchOrch->m_hwSku = "";
+        ASSERT_FALSE(gSwitchOrch->isHwPfcWdSupportedSku());
+    }
 }
