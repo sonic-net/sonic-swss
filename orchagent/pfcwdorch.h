@@ -64,6 +64,10 @@ public:
 protected:
     virtual bool startWdActionOnQueue(const string &event, sai_object_id_t queueId, const string &info="") = 0;
 
+    // ========================================================================
+    // Helper functions used in both SW and HW watchdog implementations
+    // ========================================================================
+
     // Get lossless TCs for a port based on PFC mask
     bool getLosslessTcsForPort(const Port& port, set<uint8_t>& losslessTc);
 
@@ -75,6 +79,18 @@ protected:
     // Report PFC storm restored event
     void report_pfc_restored(sai_object_id_t queueId, sai_object_id_t portId,
                             uint8_t queueIndex, const string& portAlias);
+
+    // Helper to convert counter IDs to string set for FlexCounter
+    template <typename T>
+    static unordered_set<string> counterIdsToStr(const vector<T> ids, string (*convert)(T))
+    {
+        unordered_set<string> counterIdSet;
+        for (const auto& i: ids)
+        {
+            counterIdSet.emplace(convert(i));
+        }
+        return counterIdSet;
+    }
 
     string m_platform = "";
     shared_ptr<FlexCounterTaggedCachedManager<sai_object_type_t>> m_pfcwdFlexCounterManager;
