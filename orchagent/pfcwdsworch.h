@@ -56,8 +56,6 @@ private:
         shared_ptr<PfcWdActionHandler> handler = { nullptr };
     };
 
-    template <typename T>
-    static unordered_set<string> counterIdsToStr(const vector<T> ids, string (*convert)(T));
     bool registerInWdDb(const Port& port,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action, string pfcStatHistory);
     void unregisterFromWdDb(const Port& port);
