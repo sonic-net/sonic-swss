@@ -60,6 +60,12 @@ bool FpmLink::isRawProcessing(struct nlmsghdr *h)
             return true;
         }
 
+        /* RTM_FPM_* private message types for EVPN MH (SHL, DF, backup NHG) */
+        if (h->nlmsg_type >= RTM_FPM_FIRST && h->nlmsg_type <= RTM_FPM_LAST)
+        {
+            return true;
+        }
+
         return false;
     }
 
