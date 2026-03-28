@@ -25,6 +25,7 @@ extern "C" {
 #define PFC_WD_DETECTION_TIME           "detection_time"
 #define PFC_WD_RESTORATION_TIME         "restoration_time"
 #define PFC_STAT_HISTORY                "pfc_stat_history"
+#define PFC_WD_DLR_PACKET_ACTION        "DLR_PACKET_ACTION"
 
 // Default timer limits in milliseconds, overridable via getTimerRange()
 #define PFC_WD_DETECTION_TIME_MAX       (5 * 1000)
@@ -74,7 +75,7 @@ public:
     static string serializeAction(const PfcWdAction &action);
 
     virtual task_process_status createEntry(const string& key, const vector<FieldValueTuple>& data);
-    task_process_status deleteEntry(const string& name);
+    virtual task_process_status deleteEntry(const string& name);
     PfcWdAction getPfcDlrPacketAction() { return m_pfcDlrPacketAction; }
     void setPfcDlrPacketAction(PfcWdAction action) { m_pfcDlrPacketAction = action; }
 
@@ -83,6 +84,18 @@ protected:
 
     // Supported timer limits. False defers the entry for retry.
     virtual bool getTimerRange(PfcWdTimerRange& range) const;
+
+    void updateStateTable(const string &field, const string &value)
+    {
+        string key = m_stateTable->getTableName() + m_stateTable->getTableNameSeparator() + "PFC_WD";
+        m_stateDb->hset(key, field, value);
+    }
+
+    void updateDlrPacketActionInStateTable()
+    {
+        string dlrAction = PfcWdBaseOrch::serializeAction(this->getPfcDlrPacketAction());
+        this->updateStateTable(PFC_WD_DLR_PACKET_ACTION, dlrAction);
+    }
 
     // ========================================================================
     // Helper functions used in both SW and HW watchdog implementations
@@ -100,7 +113,10 @@ protected:
     void report_pfc_restored(sai_object_id_t queueId, sai_object_id_t portId,
                             uint8_t queueIndex, const string& portAlias);
 
-    // Helper to convert counter IDs to string set for FlexCounter
+    string m_platform = "";
+    shared_ptr<FlexCounterTaggedCachedManager<sai_object_type_t>> m_pfcwdFlexCounterManager;
+
+    // Convert counter IDs to string set for FlexCounter
     template <typename T>
     static unordered_set<string> counterIdsToStr(const vector<T> ids, string (*convert)(T))
     {
@@ -112,13 +128,12 @@ protected:
         return counterIdSet;
     }
 
-    string m_platform = "";
-    shared_ptr<FlexCounterTaggedCachedManager<sai_object_type_t>> m_pfcwdFlexCounterManager;
-
 private:
 
     shared_ptr<DBConnector> m_countersDb = nullptr;
     shared_ptr<Table> m_countersTable = nullptr;
+    shared_ptr<DBConnector> m_stateDb = nullptr;
+    shared_ptr<Table> m_stateTable = nullptr;
     PfcWdAction m_pfcDlrPacketAction = PfcWdAction::PFC_WD_ACTION_UNKNOWN;
     std::set<std::string> m_pfcwd_ports;
 };
