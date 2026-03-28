@@ -28,8 +28,12 @@
 #define MATCH_OUT_PORTS         "OUT_PORTS"
 #define MATCH_SRC_IP            "SRC_IP"
 #define MATCH_DST_IP            "DST_IP"
+#define MATCH_SRC_IP_MASK       "SRC_IP_MASK"
+#define MATCH_DST_IP_MASK       "DST_IP_MASK"
 #define MATCH_SRC_IPV6          "SRC_IPV6"
 #define MATCH_DST_IPV6          "DST_IPV6"
+#define MATCH_SRC_IPV6_MASK     "SRC_IPV6_MASK"
+#define MATCH_DST_IPV6_MASK     "DST_IPV6_MASK"
 #define MATCH_L4_SRC_PORT       "L4_SRC_PORT"
 #define MATCH_L4_DST_PORT       "L4_DST_PORT"
 #define MATCH_ETHER_TYPE        "ETHER_TYPE"
@@ -340,6 +344,9 @@ public:
     bool getCreateCounter() const;
 
     const vector<AclRangeConfig>& getRangeConfig() const;
+
+    bool processPendingIpFields();
+
     static shared_ptr<AclRule> makeShared(AclOrch *acl,
                                         MirrorOrch *mirror,
                                         DTelOrch *dtel,
@@ -387,6 +394,9 @@ protected:
 
     vector<AclRangeConfig> m_rangeConfig;
     vector<AclRange*> m_ranges;
+
+    std::map<std::string, std::string> m_pendingIpFields;
+    std::map<std::string, std::string> m_pendingIpMasks;
 
 private:
     bool m_createCounter;

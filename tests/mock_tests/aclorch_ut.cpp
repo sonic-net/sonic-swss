@@ -2242,8 +2242,7 @@ namespace aclorch_test
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "900");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1100&mask:0xffffffff");
 
-        // SRC IP SAI attribute is updated even though the match is not validated
-        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP), "12.13.12.12&mask:255.255.255.0");
+        // SRC_IP match was rejected (not in table type) so it is not set in SAI
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "2.3.2.2&mask:255.255.248.0");
         ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC), "60:30:34:AB:CD:EF");
 
@@ -2363,5 +2362,202 @@ namespace aclorch_test
         });
         orch->doAclRuleTask(ruleKofvt);
         ASSERT_NE(orch->getAclRule(aclTableName, aclRuleName), nullptr);
+    }
+
+    // Verify that SRC_IP/DST_IP with a separate _MASK field creates the correct SAI
+    // attribute (arbitrary mask, not just prefix-length notation).
+    // Also verifies backward compatibility: CIDR notation (/prefix) still works.
+    TEST_F(AclOrchTest, AclRule_ArbitraryIpv4Mask)
+    {
+        const string acl_table_id = "acl_table_1";
+        const string acl_rule_id  = "acl_rule_1";
+
+        auto orch = createAclOrch();
+
+        auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id,
+                SET_COMMAND,
+                { { ACL_TABLE_DESCRIPTION, "TEST" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_L3 },
+                  { ACL_TABLE_STAGE, STAGE_INGRESS },
+                  { ACL_TABLE_PORTS, "1,2" } } } });
+        orch->doAclTableTask(kvfAclTable);
+
+        const auto &acl_tables = orch->getAclTables();
+        auto acl_table_oid = orch->getTableById(acl_table_id);
+        ASSERT_NE(acl_table_oid, SAI_NULL_OBJECT_ID);
+        const auto &acl_table = acl_tables.at(acl_table_oid);
+
+        auto addRule = [&](const vector<FieldValueTuple> &extra_fields)
+        {
+            auto kofvt = deque<KeyOpFieldsValuesTuple>(
+                { { acl_table_id + "|" + acl_rule_id,
+                    SET_COMMAND,
+                    [&]() {
+                        vector<FieldValueTuple> fvs = {
+                            { RULE_PRIORITY, "100" },
+                            { ACTION_PACKET_ACTION, PACKET_ACTION_DROP },
+                        };
+                        fvs.insert(fvs.end(), extra_fields.begin(), extra_fields.end());
+                        return fvs;
+                    }() } });
+            orch->doAclRuleTask(kofvt);
+        };
+
+        auto delRule = [&]()
+        {
+            auto kofvt = deque<KeyOpFieldsValuesTuple>(
+                { { acl_table_id + "|" + acl_rule_id, DEL_COMMAND, {} } });
+            orch->doAclRuleTask(kofvt);
+            ASSERT_EQ(acl_table.rules.find(acl_rule_id), acl_table.rules.end());
+        };
+
+        // SRC_IP plain address + SRC_IP_MASK
+        addRule({ { MATCH_SRC_IP, "192.168.1.1" }, { MATCH_SRC_IP_MASK, "255.255.255.0" } });
+        ASSERT_NE(acl_table.rules.find(acl_rule_id), acl_table.rules.end());
+        ASSERT_EQ(getAclRuleSaiAttribute(*acl_table.rules.at(acl_rule_id), SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP),
+                  "192.168.1.1&mask:255.255.255.0");
+        delRule();
+
+        // DST_IP plain address + DST_IP_MASK
+        addRule({ { MATCH_DST_IP, "10.0.0.1" }, { MATCH_DST_IP_MASK, "255.0.0.0" } });
+        ASSERT_NE(acl_table.rules.find(acl_rule_id), acl_table.rules.end());
+        ASSERT_EQ(getAclRuleSaiAttribute(*acl_table.rules.at(acl_rule_id), SAI_ACL_ENTRY_ATTR_FIELD_DST_IP),
+                  "10.0.0.1&mask:255.0.0.0");
+        delRule();
+
+        // Backward compat: CIDR notation still works
+        addRule({ { MATCH_SRC_IP, "192.168.0.0/16" } });
+        ASSERT_NE(acl_table.rules.find(acl_rule_id), acl_table.rules.end());
+        ASSERT_EQ(getAclRuleSaiAttribute(*acl_table.rules.at(acl_rule_id), SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP),
+                  "192.168.0.0&mask:255.255.0.0");
+        delRule();
+    }
+
+    // Verify that SRC_IPV6/DST_IPV6 with a separate _MASK field creates the correct SAI
+    // attribute with an arbitrary IPv6 mask.
+    TEST_F(AclOrchTest, AclRule_ArbitraryIpv6Mask)
+    {
+        const string acl_table_id = "acl_table_1";
+        const string acl_rule_id  = "acl_rule_1";
+
+        auto orch = createAclOrch();
+
+        auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id,
+                SET_COMMAND,
+                { { ACL_TABLE_DESCRIPTION, "TEST" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_L3V6 },
+                  { ACL_TABLE_STAGE, STAGE_INGRESS },
+                  { ACL_TABLE_PORTS, "1,2" } } } });
+        orch->doAclTableTask(kvfAclTable);
+
+        const auto &acl_tables = orch->getAclTables();
+        auto acl_table_oid = orch->getTableById(acl_table_id);
+        ASSERT_NE(acl_table_oid, SAI_NULL_OBJECT_ID);
+        const auto &acl_table = acl_tables.at(acl_table_oid);
+
+        auto addRule = [&](const vector<FieldValueTuple> &extra_fields)
+        {
+            auto kofvt = deque<KeyOpFieldsValuesTuple>(
+                { { acl_table_id + "|" + acl_rule_id,
+                    SET_COMMAND,
+                    [&]() {
+                        vector<FieldValueTuple> fvs = {
+                            { RULE_PRIORITY, "100" },
+                            { ACTION_PACKET_ACTION, PACKET_ACTION_DROP },
+                        };
+                        fvs.insert(fvs.end(), extra_fields.begin(), extra_fields.end());
+                        return fvs;
+                    }() } });
+            orch->doAclRuleTask(kofvt);
+        };
+
+        auto delRule = [&]()
+        {
+            auto kofvt = deque<KeyOpFieldsValuesTuple>(
+                { { acl_table_id + "|" + acl_rule_id, DEL_COMMAND, {} } });
+            orch->doAclRuleTask(kofvt);
+            ASSERT_EQ(acl_table.rules.find(acl_rule_id), acl_table.rules.end());
+        };
+
+        // SRC_IPV6 plain address + SRC_IPV6_MASK
+        addRule({ { MATCH_SRC_IPV6, "2001:db8::1" }, { MATCH_SRC_IPV6_MASK, "ffff:ffff::" } });
+        ASSERT_NE(acl_table.rules.find(acl_rule_id), acl_table.rules.end());
+        ASSERT_EQ(getAclRuleSaiAttribute(*acl_table.rules.at(acl_rule_id), SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6),
+                  "2001:db8::1&mask:ffff:ffff::");
+        delRule();
+
+        // DST_IPV6 plain address + DST_IPV6_MASK
+        addRule({ { MATCH_DST_IPV6, "fe80::1" }, { MATCH_DST_IPV6_MASK, "ffff::" } });
+        ASSERT_NE(acl_table.rules.find(acl_rule_id), acl_table.rules.end());
+        ASSERT_EQ(getAclRuleSaiAttribute(*acl_table.rules.at(acl_rule_id), SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6),
+                  "fe80::1&mask:ffff::");
+        delRule();
+
+        // Backward compat: CIDR notation still works
+        addRule({ { MATCH_SRC_IPV6, "2001:db8::/32" } });
+        ASSERT_NE(acl_table.rules.find(acl_rule_id), acl_table.rules.end());
+        ASSERT_EQ(getAclRuleSaiAttribute(*acl_table.rules.at(acl_rule_id), SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6),
+                  "2001:db8::&mask:ffff:ffff::");
+        delRule();
+    }
+
+    // Verify that L3V6 ACL tables automatically have IN_PORTS capability at ingress
+    // and OUT_PORTS capability at egress via stageMandatoryMatchFields.
+    // Rules are not required to use these fields; they are just enabled on the table.
+    TEST_F(AclOrchTest, L3V6Acl_StagePortMatchCapability)
+    {
+        auto orch = createAclOrch();
+
+        // Ingress L3V6 table: SAI table attributes must include FIELD_IN_PORTS.
+        {
+            const string acl_table_id = "l3v6_ingress_table";
+            auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+                { { acl_table_id,
+                    SET_COMMAND,
+                    { { ACL_TABLE_DESCRIPTION, "L3V6 ingress" },
+                      { ACL_TABLE_TYPE, TABLE_TYPE_L3V6 },
+                      { ACL_TABLE_STAGE, STAGE_INGRESS },
+                      { ACL_TABLE_PORTS, "1,2" } } } });
+            orch->doAclTableTask(kvfAclTable);
+
+            auto acl_table_oid = orch->getTableById(acl_table_id);
+            ASSERT_NE(acl_table_oid, SAI_NULL_OBJECT_ID);
+
+            const auto &acl_table = orch->getAclTables().at(acl_table_oid);
+            const auto &matches = acl_table.type.getMatches();
+            ASSERT_NE(matches.find(SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS), matches.end())
+                << "L3V6 ingress table must have FIELD_IN_PORTS as a mandatory match";
+
+            auto kvfDel = deque<KeyOpFieldsValuesTuple>(
+                { { acl_table_id, DEL_COMMAND, {} } });
+            orch->doAclTableTask(kvfDel);
+        }
+
+        // Egress L3V6 table: SAI table attributes must include FIELD_OUT_PORTS.
+        {
+            const string acl_table_id = "l3v6_egress_table";
+            auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+                { { acl_table_id,
+                    SET_COMMAND,
+                    { { ACL_TABLE_DESCRIPTION, "L3V6 egress" },
+                      { ACL_TABLE_TYPE, TABLE_TYPE_L3V6 },
+                      { ACL_TABLE_STAGE, STAGE_EGRESS },
+                      { ACL_TABLE_PORTS, "1,2" } } } });
+            orch->doAclTableTask(kvfAclTable);
+
+            auto acl_table_oid = orch->getTableById(acl_table_id);
+            ASSERT_NE(acl_table_oid, SAI_NULL_OBJECT_ID);
+
+            const auto &acl_table = orch->getAclTables().at(acl_table_oid);
+            const auto &matches = acl_table.type.getMatches();
+            ASSERT_NE(matches.find(SAI_ACL_TABLE_ATTR_FIELD_OUT_PORTS), matches.end())
+                << "L3V6 egress table must have FIELD_OUT_PORTS as a mandatory match";
+
+            auto kvfDel = deque<KeyOpFieldsValuesTuple>(
+                { { acl_table_id, DEL_COMMAND, {} } });
+            orch->doAclTableTask(kvfDel);
+        }
     }
 } // namespace nsAclOrchTest

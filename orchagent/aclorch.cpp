@@ -61,8 +61,12 @@ acl_rule_attr_lookup_t aclMatchLookup =
     { MATCH_OUT_PORTS,         SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORTS },
     { MATCH_SRC_IP,            SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP },
     { MATCH_DST_IP,            SAI_ACL_ENTRY_ATTR_FIELD_DST_IP },
+    { MATCH_SRC_IP_MASK,       SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP },
+    { MATCH_DST_IP_MASK,       SAI_ACL_ENTRY_ATTR_FIELD_DST_IP },
     { MATCH_SRC_IPV6,          SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6 },
     { MATCH_DST_IPV6,          SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6 },
+    { MATCH_SRC_IPV6_MASK,     SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6 },
+    { MATCH_DST_IPV6_MASK,     SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6 },
     { MATCH_L4_SRC_PORT,       SAI_ACL_ENTRY_ATTR_FIELD_L4_SRC_PORT },
     { MATCH_L4_DST_PORT,       SAI_ACL_ENTRY_ATTR_FIELD_L4_DST_PORT },
     { MATCH_ETHER_TYPE,        SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE },
@@ -470,13 +474,15 @@ static acl_table_match_field_lookup_t stageMandatoryMatchFields =
             {
                 ACL_STAGE_INGRESS,
                 {
-                    SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE
+                    SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE,
+                    SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS
                 }
             },
             {
                 ACL_STAGE_EGRESS,
                 {
-                    SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE
+                    SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE,
+                    SAI_ACL_TABLE_ATTR_FIELD_OUT_PORTS
                 }
             }
         }
@@ -1097,26 +1103,53 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
         }
         else if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP || attr_name == MATCH_INNER_SRC_IP)
         {
-            IpPrefix ip(attr_value);
-
-            if (!ip.isV4())
+            if (attr_value.find('/') != string::npos)
             {
-                SWSS_LOG_ERROR("IP type is not v4 type");
-                return false;
+                IpPrefix ip(attr_value);
+                if (!ip.isV4())
+                {
+                    SWSS_LOG_ERROR("IP type is not v4 type");
+                    return false;
+                }
+                matchData.data.ip4 = ip.getIp().getV4Addr();
+                matchData.mask.ip4 = ip.getMask().getV4Addr();
             }
-            matchData.data.ip4 = ip.getIp().getV4Addr();
-            matchData.mask.ip4 = ip.getMask().getV4Addr();
+            else
+            {
+                m_pendingIpFields[attr_name] = attr_value;
+                return true;
+            }
+        }
+        else if (attr_name == MATCH_SRC_IP_MASK || attr_name == MATCH_DST_IP_MASK)
+        {
+            string ip_field = attr_name.substr(0, attr_name.length() - 5);
+            m_pendingIpMasks[ip_field] = attr_value;
+            return true;
         }
         else if (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6)
         {
-            IpPrefix ip(attr_value);
-            if (ip.isV4())
+            if (attr_value.find('/') != string::npos)
             {
-                SWSS_LOG_ERROR("IP type is not v6 type");
-                return false;
+                IpPrefix ip(attr_value);
+                if (ip.isV4())
+                {
+                    SWSS_LOG_ERROR("IP type is not v6 type");
+                    return false;
+                }
+                memcpy(matchData.data.ip6, ip.getIp().getV6Addr(), 16);
+                memcpy(matchData.mask.ip6, ip.getMask().getV6Addr(), 16);
             }
-            memcpy(matchData.data.ip6, ip.getIp().getV6Addr(), 16);
-            memcpy(matchData.mask.ip6, ip.getMask().getV6Addr(), 16);
+            else
+            {
+                m_pendingIpFields[attr_name] = attr_value;
+                return true;
+            }
+        }
+        else if (attr_name == MATCH_SRC_IPV6_MASK || attr_name == MATCH_DST_IPV6_MASK)
+        {
+            string ip_field = attr_name.substr(0, attr_name.length() - 5);
+            m_pendingIpMasks[ip_field] = attr_value;
+            return true;
         }
         else if ((attr_name == MATCH_L4_SRC_PORT_RANGE) || (attr_name == MATCH_L4_DST_PORT_RANGE))
         {
@@ -1248,6 +1281,70 @@ bool AclRule::processIpType(string type, sai_uint32_t &ip_type)
 
     ip_type = it->second;
 
+    return true;
+}
+
+bool AclRule::processPendingIpFields()
+{
+    SWSS_LOG_ENTER();
+
+    for (const auto& entry : m_pendingIpFields)
+    {
+        const string& field = entry.first;
+        const string& addr  = entry.second;
+
+        sai_acl_field_data_t matchData{};
+        matchData.enable = true;
+
+        bool isV6 = (field == MATCH_SRC_IPV6 || field == MATCH_DST_IPV6);
+
+        try
+        {
+            auto maskIt = m_pendingIpMasks.find(field);
+
+            if (!isV6)
+            {
+                IpAddress ip(addr);
+                matchData.data.ip4 = ip.getV4Addr();
+                if (maskIt != m_pendingIpMasks.end())
+                {
+                    IpAddress mask(maskIt->second);
+                    matchData.mask.ip4 = mask.getV4Addr();
+                }
+                else
+                {
+                    matchData.mask.ip4 = 0xFFFFFFFF;
+                }
+            }
+            else
+            {
+                IpAddress ip(addr);
+                memcpy(matchData.data.ip6, ip.getV6Addr(), 16);
+                if (maskIt != m_pendingIpMasks.end())
+                {
+                    IpAddress mask(maskIt->second);
+                    memcpy(matchData.mask.ip6, mask.getV6Addr(), 16);
+                }
+                else
+                {
+                    memset(matchData.mask.ip6, 0xFF, 16);
+                }
+            }
+        }
+        catch (exception& e)
+        {
+            SWSS_LOG_ERROR("Failed to process IP field %s=%s: %s", field.c_str(), addr.c_str(), e.what());
+            return false;
+        }
+
+        if (!setMatch(aclMatchLookup[field], matchData))
+        {
+            return false;
+        }
+    }
+
+    m_pendingIpFields.clear();
+    m_pendingIpMasks.clear();
     return true;
 }
 
@@ -1709,6 +1806,7 @@ bool AclRule::setMatch(sai_acl_entry_attr_t matchId, sai_acl_field_data_t matchD
 
     if (!m_pTable->validateAclRuleMatch(matchId, *this))
     {
+        m_matches.erase(matchId);
         return false;
     }
 
@@ -2229,7 +2327,7 @@ AclRuleInnerSrcMacRewrite::AclRuleInnerSrcMacRewrite(AclOrch *aclOrch, string ru
  {
     SWSS_LOG_ENTER();
 
-    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() != 1 )
+    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() != 1)
     {
         return false;
     }
@@ -5171,6 +5269,11 @@ bool AclOrch::updateAclRule(shared_ptr<AclRule> updatedRule)
         return false;
     }
 
+    if (!updatedRule->processPendingIpFields())
+    {
+        return false;
+    }
+
     if (!m_AclTables[tableOid].updateRule(updatedRule))
     {
         return false;
@@ -5654,7 +5757,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             }
 
             // validate and create ACL rule
-            if (bAllAttributesOk && newRule->validate())
+            if (bAllAttributesOk && newRule->processPendingIpFields() && newRule->validate())
             {
                 if (addAclRule(newRule, table_id))
                 {
