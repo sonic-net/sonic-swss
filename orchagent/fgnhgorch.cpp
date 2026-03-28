@@ -673,7 +673,19 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
                  * other available nhs, but for cases where # hash buckets is not
                  * divisible by # of nhs, simple round robin can make the hash bucket
                  * distribution non-ideal, thereby nhs can attract unequal traffic */
-                if (bank_fgnhg_map->at(*it).size() == exp_bucket_size)
+                if (bank_fgnhg_map->at(*it).size() > exp_bucket_size)
+                {
+                    // NH already has more than its fair share from a prior redistribution 
+                    if (num_nhs_with_one_more > 0)
+                    {
+                        num_nhs_with_one_more--;
+                    }
+                    SWSS_LOG_INFO("%s already has %zu buckets (> %d), skip assigning more, bkt_idx(%d)",
+                                  (*it).to_string().c_str(), bank_fgnhg_map->at(*it).size(),
+                                  exp_bucket_size, bkt_idx);
+                    remove_nh = true;
+                }
+                else if (bank_fgnhg_map->at(*it).size() == exp_bucket_size)
                 {
                     if (num_nhs_with_one_more == 0)
                     {

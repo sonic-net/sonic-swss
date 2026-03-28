@@ -1617,7 +1617,6 @@ class TestFineGrainedNextHopGroup(object):
         # cleanup all entries
         remove_interface_n_fg_ecmp_config(dvs, 0, NUM_NHs+NUM_NHs_non_fgnhg, fg_nhg_name)
 
-
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
