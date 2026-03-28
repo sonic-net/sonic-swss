@@ -2513,8 +2513,8 @@ TEST_F(FpmSyncdResponseTest, TestRouteMsgWithZmqEnabled_AllFieldsIncluded)
     vector<FieldValueTuple> fvs;
     EXPECT_TRUE(route_table.get(test_destipprefix, fvs));
 
-    // With ZMQ enabled, all 11 fields should be present (including empty ones)
-    EXPECT_EQ(fvs.size(), 11);
+    // With ZMQ enabled, all 12 fields should be present (including empty ones)
+    EXPECT_EQ(fvs.size(), 12);
 
     // Build a map for easier verification
     std::map<std::string, std::string> fieldMap;
@@ -2543,6 +2543,8 @@ TEST_F(FpmSyncdResponseTest, TestRouteMsgWithZmqEnabled_AllFieldsIncluded)
     EXPECT_EQ(fieldMap["segment"], "");
     EXPECT_TRUE(fieldMap.count("seg_src") > 0);
     EXPECT_EQ(fieldMap["seg_src"], "");
+    EXPECT_TRUE(fieldMap.count("fallback_to_default_route") > 0);
+    EXPECT_EQ(fieldMap["fallback_to_default_route"], "false");  // Default value
 
     rtnl_route_put(test_route);
 
@@ -3006,9 +3008,14 @@ TEST_F(FpmSyncdResponseTest, TestRouteTagFallbackToDefaultRoute)
     const uint32_t tag_fallback = 200;
     m_mockRouteSync.route_tag_fallback_to_default_route = tag_fallback;
 
+    /* Use a unicast route — blackhole routes return before the fallback
+     * logic is applied, so the combination is not a valid scenario. */
     auto route = create_route("20.20.20.0/24");
     rtnl_route_set_protocol(route.get(), RTPROT_BGP);
-    rtnl_route_set_type(route.get(), RTN_BLACKHOLE);
+    rtnl_route_set_type(route.get(), RTN_UNICAST);
+
+    auto nh = create_nexthop("10.0.0.1");
+    rtnl_route_add_nexthop(route.get(), nh);
 
     /* Set the priority (tag) to the fallback value. */
     rtnl_route_set_priority(route.get(), tag_fallback);
