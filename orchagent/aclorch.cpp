@@ -1350,6 +1350,11 @@ bool AclRule::processPendingIpFields()
 
 bool AclRule::create()
 {
+    if (!processPendingIpFields())
+    {
+        return false;
+    }
+
     if (m_createCounter && !createCounter())
     {
         return false;
