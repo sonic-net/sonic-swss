@@ -8,14 +8,36 @@
 #include "notificationconsumer.h"
 #include "timer.h"
 #include "events.h"
+#include "table.h"
 
 extern "C" {
 #include "sai.h"
 }
 
+// ============================================================================
+// Global macros used across base and derived classes (PfcWdBaseOrch,
+// PfcWdSwOrch, PfcWdHwOrch)
+// ============================================================================
+
+// State and configuration table identifiers
 #define PFC_WD_FLEX_COUNTER_GROUP       "PFC_WD"
+#define PFC_WD_GLOBAL                   "GLOBAL"
+#define PFC_WD_RECOVERY_MECHANISM       "RECOVERY_MECHANISM"
+#define PFC_WD_RECOVERY_SOFTWARE        "SOFTWARE"
+#define PFC_WD_RECOVERY_HARDWARE        "HARDWARE"
+#define PFC_WD_DLR_PACKET_ACTION        "DLR_PACKET_ACTION"
 #define PFC_WD_TC_MAX                   8
-#define PFC_WD_DLR_PACKET_ACTION        "dlr_packet_action"
+
+#define PFC_WD_ACTION                   "action"
+#define PFC_WD_DETECTION_TIME           "detection_time"
+#define PFC_WD_RESTORATION_TIME         "restoration_time"
+#define PFC_STAT_HISTORY                "pfc_stat_history"
+
+// Timer limits in milliseconds
+#define PFC_WD_DETECTION_TIME_MAX       (5 * 1000)
+#define PFC_WD_DETECTION_TIME_MIN       100
+#define PFC_WD_RESTORATION_TIME_MAX     (60 * 1000)
+#define PFC_WD_RESTORATION_TIME_MIN     100
 
 const string pfc_wd_flex_counter_group = PFC_WD_FLEX_COUNTER_GROUP;
 
@@ -52,6 +74,16 @@ public:
     shared_ptr<DBConnector> getCountersDb(void)
     {
         return m_countersDb;
+    }
+
+    shared_ptr<Table> getStateTable(void)
+    {
+        return m_stateTable;
+    }
+
+    shared_ptr<DBConnector> getStateDb(void)
+    {
+        return m_stateDb;
     }
 
     static PfcWdAction deserializeAction(const string& key);
