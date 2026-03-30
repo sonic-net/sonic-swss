@@ -200,7 +200,190 @@ bool PfcWdHwOrch::determineTimerGranularity(uint32_t timeValue, uint32_t hwMin, 
 task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<FieldValueTuple>& data)
 {
     SWSS_LOG_ENTER();
-    // TODO: Implementation
+
+    // GLOBAL configuration not supported for hardware watchdog
+    if (key == PFC_WD_GLOBAL)
+    {
+        SWSS_LOG_WARN("GLOBAL configuration is not supported for hardware-based PFC watchdog");
+
+        for (const auto& field : data)
+        {
+            SWSS_LOG_WARN("Field '%s' with value '%s' is not supported for hardware-based PFC watchdog",
+                         fvField(field).c_str(), fvValue(field).c_str());
+        }
+
+        return task_process_status::task_invalid_entry;
+    }
+
+    uint32_t detectionTime = 0;
+    uint32_t restorationTime = 0;
+    // Default action is drop
+    PfcWdAction action = PfcWdAction::PFC_WD_ACTION_DROP;
+    string pfcStatHistory = "disable";
+    Port port;
+
+    if (!gPortsOrch->getPort(key, port))
+    {
+        SWSS_LOG_ERROR("Invalid port interface %s", key.c_str());
+        return task_process_status::task_invalid_entry;
+    }
+
+    if (port.m_type != Port::PHY)
+    {
+        SWSS_LOG_ERROR("Interface %s is not physical port", key.c_str());
+        return task_process_status::task_invalid_entry;
+    }
+
+    // Parse configuration fields
+    for (auto i : data)
+    {
+        const auto &field = fvField(i);
+        const auto &value = fvValue(i);
+
+        try
+        {
+            if (field == PFC_WD_DETECTION_TIME)
+            {
+                detectionTime = static_cast<uint32_t>(stoul(value));
+
+                // Check detection time is within supported range
+                if (m_detectionTimeMin > 0 && m_detectionTimeMax > 0)
+                {
+                    if (detectionTime < m_detectionTimeMin)
+                    {
+                        SWSS_LOG_ERROR("Detection time %u ms is below minimum supported value %u ms on port %s",
+                                      detectionTime, m_detectionTimeMin, key.c_str());
+                        return task_process_status::task_invalid_entry;
+                    }
+
+                    if (detectionTime > m_detectionTimeMax)
+                    {
+                        SWSS_LOG_ERROR("Detection time %u ms exceeds maximum supported value %u ms on port %s",
+                                      detectionTime, m_detectionTimeMax, key.c_str());
+                        return task_process_status::task_invalid_entry;
+                    }
+                }
+            }
+            else if (field == PFC_WD_RESTORATION_TIME)
+            {
+                restorationTime = static_cast<uint32_t>(stoul(value));
+
+                // Check restoration time is within supported range
+                if (m_restorationTimeMin > 0 && m_restorationTimeMax > 0)
+                {
+                    if (restorationTime < m_restorationTimeMin)
+                    {
+                        SWSS_LOG_ERROR("Restoration time %u ms is below minimum supported value %u ms on port %s",
+                                      restorationTime, m_restorationTimeMin, key.c_str());
+                        return task_process_status::task_invalid_entry;
+                    }
+
+                    if (restorationTime > m_restorationTimeMax)
+                    {
+                        SWSS_LOG_ERROR("Restoration time %u ms exceeds maximum supported value %u ms on port %s",
+                                      restorationTime, m_restorationTimeMax, key.c_str());
+                        return task_process_status::task_invalid_entry;
+                    }
+                }
+            }
+            else if (field == PFC_WD_ACTION)
+            {
+                action = deserializeAction(value);
+                if (action == PfcWdAction::PFC_WD_ACTION_UNKNOWN)
+                {
+                    SWSS_LOG_ERROR("Invalid PFC Watchdog action %s", value.c_str());
+                    return task_process_status::task_invalid_entry;
+                }
+            }
+            else if (field == PFC_STAT_HISTORY)
+            {
+                pfcStatHistory = value;
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Unknown PFC Watchdog configuration field %s", field.c_str());
+                return task_process_status::task_invalid_entry;
+            }
+        }
+        catch (const invalid_argument& e)
+        {
+            SWSS_LOG_ERROR("Failed to parse PFC Watchdog %s attribute %s invalid argument error",
+                          key.c_str(), field.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+        catch (const out_of_range& e)
+        {
+            SWSS_LOG_ERROR("Failed to parse PFC Watchdog %s attribute %s out of range error",
+                          key.c_str(), field.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+        catch (...)
+        {
+            SWSS_LOG_ERROR("Failed to parse PFC Watchdog %s attribute %s. Unknown error has been occurred",
+                          key.c_str(), field.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+    }
+
+    // Validation
+    if (detectionTime == 0)
+    {
+        SWSS_LOG_ERROR("%s missing", PFC_WD_DETECTION_TIME);
+        return task_process_status::task_invalid_entry;
+    }
+    if (pfcStatHistory != "enable" && pfcStatHistory != "disable")
+    {
+        SWSS_LOG_ERROR("%s is invalid value for %s", pfcStatHistory.c_str(), PFC_STAT_HISTORY);
+        return task_process_status::task_invalid_entry;
+    }
+
+    // All ports must use the same switch-level PFC DLR packet action.
+    // Action can only change when no ports are configured, or when
+    // reconfiguring the single existing port.
+    PfcWdAction currentAction = this->getPfcDlrPacketAction();
+
+    bool isSinglePortReconfiguration = (m_hwWdPorts.size() == 1 &&
+                                        m_hwWdPorts.find(port.m_alias) != m_hwWdPorts.end());
+
+    if (currentAction != PfcWdAction::PFC_WD_ACTION_UNKNOWN &&
+        currentAction != action &&
+        !isSinglePortReconfiguration)
+    {
+        SWSS_LOG_ERROR("PFC DLR packet action mismatch on port %s: current=%s, requested=%s. "
+                      "All ports must use the same action. "
+                      "Action can only be changed when no ports are configured or when reconfiguring the only configured port.",
+                      port.m_alias.c_str(),
+                      serializeAction(currentAction).c_str(),
+                      serializeAction(action).c_str());
+        return task_process_status::task_invalid_entry;
+    }
+
+    // Check if port is already configured and has any queue in stormed state
+    if (m_hwWdPorts.find(port.m_alias) != m_hwWdPorts.end())
+    {
+        if (isPortInStormedState(port))
+        {
+            SWSS_LOG_ERROR("Cannot modify PFC watchdog configuration on port %s: port is in stormed state. "
+                          "Wait for storm to pass before making changes.",
+                          port.m_alias.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+    }
+
+    // Hardware watchdog doesn't support in-place updates, so stop
+    // existing configuration before applying new one
+    SWSS_LOG_INFO("Attempting to disable any existing hardware PFC watchdog on port %s before applying new configuration",
+                  port.m_alias.c_str());
+    stopWdOnPort(port);
+
+    if (!startWdOnPort(port, detectionTime, restorationTime, action, pfcStatHistory))
+    {
+        SWSS_LOG_ERROR("Failed to start PFC Watchdog on port %s", port.m_alias.c_str());
+        return task_process_status::task_need_retry;
+    }
+
+    SWSS_LOG_NOTICE("Started PFC Watchdog on port %s", port.m_alias.c_str());
+    // Port is tracked in m_hwWdPorts by configureHwWatchdog
     return task_process_status::task_success;
 }
 
@@ -235,11 +418,15 @@ task_process_status PfcWdHwOrch::deleteEntry(const string& key)
 }
 
 bool PfcWdHwOrch::startWdOnPort(const Port& port,
-        uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action, string pfcStatHistory)
+	    uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action, string pfcStatHistory)
 {
-    SWSS_LOG_ENTER();
-    // TODO: Implementation
-    return false;
+	SWSS_LOG_ENTER();
+
+	// For hardware-based watchdog, all hardware programming and flex counter
+	// registration are handled in configureHwWatchdog()/initializeQueueStats().
+	// Any existing configuration is cleaned up via stopWdOnPort() before this
+	// function is invoked from createEntry().
+	return configureHwWatchdog(port, detectionTime, restorationTime, action);
 }
 
 bool PfcWdHwOrch::stopWdOnPort(const Port& port)
@@ -266,25 +453,179 @@ bool PfcWdHwOrch::readBackTimerValue(const Port& port, sai_port_attr_t attrId,
                                      const set<uint8_t>& losslessTc, uint32_t expected,
                                      uint32_t& actual, const string& timerName)
 {
-    SWSS_LOG_ENTER();
-    // TODO: Implementation
-    return false;
+    vector<sai_map_t> readBack(PFC_WD_TC_MAX);
+    for (uint32_t i = 0; i < PFC_WD_TC_MAX; i++)
+    {
+        readBack[i].key = i;
+        readBack[i].value = 0;
+    }
+
+    sai_attribute_t attr;
+    attr.id = attrId;
+    attr.value.maplist.count = PFC_WD_TC_MAX;
+    attr.value.maplist.list = readBack.data();
+
+    sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+    if (status == SAI_STATUS_SUCCESS && attr.value.maplist.count > 0)
+    {
+        for (uint32_t i = 0; i < attr.value.maplist.count; i++)
+        {
+            uint8_t tcKey = static_cast<uint8_t>(attr.value.maplist.list[i].key);
+            if (losslessTc.find(tcKey) != losslessTc.end())
+            {
+                actual = attr.value.maplist.list[i].value;
+                break;
+            }
+        }
+
+        if (actual != expected)
+        {
+            SWSS_LOG_WARN("%s time mismatch on port %s: sent %u, hardware has %u",
+                          timerName.c_str(), port.m_alias.c_str(), expected, actual);
+        }
+        return true;
+    }
+    else
+    {
+        SWSS_LOG_WARN("Failed to read back %s time on port %s (status: %d)",
+                      timerName.c_str(), port.m_alias.c_str(), status);
+        return false;
+    }
 }
 
 bool PfcWdHwOrch::configureHwWatchdog(const Port& port, uint32_t detectionTime,
                                       uint32_t restorationTime, PfcWdAction action)
 {
     SWSS_LOG_ENTER();
-    // TODO: Implementation
-    return false;
+
+    SWSS_LOG_NOTICE("Configuring hardware watchdog on port %s: detection=%ums, restoration=%ums, action=%s",
+                    port.m_alias.c_str(), detectionTime, restorationTime, serializeAction(action).c_str());
+
+    // Validate port has lossless TCs before configuring hardware
+    set<uint8_t> losslessTc;
+    if (!getLosslessTcsForPort(port, losslessTc))
+    {
+        SWSS_LOG_NOTICE("No lossless TC found on port %s", port.m_alias.c_str());
+        writeFailureStatus(port);
+        return false;
+    }
+
+    // Cleanup handler called on configuration failure
+    auto handleFailure = [this, &port](const string& errorMsg) -> bool {
+        SWSS_LOG_ERROR("%s", errorMsg.c_str());
+        disableHwWatchdog(port);
+        writeFailureStatus(port);
+        return false;
+    };
+
+    // Configure switch-level action if needed
+    if (!configureSwitchAction(port, action, handleFailure))
+    {
+        return false;
+    }
+
+    // Configure timer granularity if supported
+    uint32_t timerGranularity = 0;
+    if (!configureTimerGranularity(port, detectionTime, timerGranularity, handleFailure))
+    {
+        return false;
+    }
+
+    // Configure detection and restoration intervals
+    if (!configureTimerIntervals(port, losslessTc, detectionTime, restorationTime, handleFailure))
+    {
+        return false;
+    }
+
+    // Enable deadlock detection/recovery on queues
+    if (!enableDldrOnLosslessQueues(port, losslessTc, detectionTime, restorationTime, handleFailure))
+    {
+        return false;
+    }
+
+    // Initialize queue statistics in COUNTERS_DB
+    initializeQueueStats(port, losslessTc);
+
+    // Track this port
+    m_hwWdPorts.insert(port.m_alias);
+
+    SWSS_LOG_NOTICE("Successfully configured hardware PFC watchdog on port %s with %zu lossless TCs",
+                   port.m_alias.c_str(), losslessTc.size());
+
+    // Read back and verify timer values from hardware
+    uint32_t actualHwDetectionTime = detectionTime;
+    uint32_t actualHwRestorationTime = restorationTime;
+
+    readBackTimerValue(port, SAI_PORT_ATTR_PFC_TC_DLD_INTERVAL, losslessTc,
+                      detectionTime, actualHwDetectionTime, "Detection");
+    readBackTimerValue(port, SAI_PORT_ATTR_PFC_TC_DLR_INTERVAL, losslessTc,
+                      restorationTime, actualHwRestorationTime, "Restoration");
+
+    // Write success to STATE_DB
+    vector<FieldValueTuple> fvs;
+    fvs.emplace_back("recovery_type", "hardware");
+    fvs.emplace_back("status", "configured");
+    fvs.emplace_back("hw_detection_time", to_string(actualHwDetectionTime));
+    fvs.emplace_back("hw_restoration_time", to_string(actualHwRestorationTime));
+    fvs.emplace_back("configured_detection_time", to_string(detectionTime));
+    fvs.emplace_back("configured_restoration_time", to_string(restorationTime));
+
+    // Add granularity field if port-level granularity is supported
+    if (m_portLevelGranularitySupported && timerGranularity > 0)
+    {
+        fvs.emplace_back("detection_granularity", to_string(timerGranularity));
+    }
+
+    fvs.emplace_back("action", serializeAction(action));
+    m_pfcWdHwStateTable->set(port.m_alias, fvs);
+
+    return true;
 }
 
 bool PfcWdHwOrch::configureSwitchAction(const Port& port, PfcWdAction action,
                                         const function<bool(const string&)>& handleFailure)
 {
     SWSS_LOG_ENTER();
-    // TODO: Implementation
-    return false;
+
+    // Only set action if not already configured
+    if (this->getPfcDlrPacketAction() != PfcWdAction::PFC_WD_ACTION_UNKNOWN)
+    {
+        return true;
+    }
+
+    sai_packet_action_t sai_action;
+    if (action == PfcWdAction::PFC_WD_ACTION_DROP)
+    {
+        sai_action = SAI_PACKET_ACTION_DROP;
+    }
+    else if (action == PfcWdAction::PFC_WD_ACTION_FORWARD || action == PfcWdAction::PFC_WD_ACTION_ALERT)
+    {
+        sai_action = SAI_PACKET_ACTION_FORWARD;
+    }
+    else
+    {
+        return handleFailure("Unsupported PFC DLR packet action: " + serializeAction(action));
+    }
+
+    sai_attribute_t attr;
+    attr.id = SAI_SWITCH_ATTR_PFC_DLR_PACKET_ACTION;
+    attr.value.u32 = sai_action;
+
+    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        return handleFailure("Failed to set switch level PFC DLR packet action to " +
+                           serializeAction(action) + " on port " + port.m_alias +
+                           ": " + to_string(status));
+    }
+
+    SWSS_LOG_NOTICE("Set PFC DLR packet action to %s at switch level (SAI action: %d)",
+                   serializeAction(action).c_str(), sai_action);
+
+    this->setPfcDlrPacketAction(action);
+    this->updateDlrPacketActionInStateTable();
+
+    return true;
 }
 
 bool PfcWdHwOrch::configureTimerGranularity(const Port& port, uint32_t detectionTime,
@@ -292,8 +633,52 @@ bool PfcWdHwOrch::configureTimerGranularity(const Port& port, uint32_t detection
                                             const function<bool(const string&)>& handleFailure)
 {
     SWSS_LOG_ENTER();
-    // TODO: Implementation
-    return false;
+
+    // SAI_PORT_ATTR_PFC_TC_DLD_TIMER_INTERVAL only applies to detection timer
+    if (!m_portLevelGranularitySupported)
+    {
+        SWSS_LOG_INFO("Port-level granularity not supported on port %s, ASIC will configure best available granularity",
+                     port.m_alias.c_str());
+        timerGranularity = 0;
+        return true;
+    }
+
+    // Find granularity that supports the detection time
+    if (!determineTimerGranularity(detectionTime, m_detectionTimeMin, m_detectionTimeMax, timerGranularity))
+    {
+        return handleFailure("Failed to determine suitable timer granularity for detection time " +
+                           to_string(detectionTime) + " ms on port " + port.m_alias);
+    }
+
+    SWSS_LOG_INFO("Using timer granularity %u ms for detection time %u ms on port %s",
+                 timerGranularity, detectionTime, port.m_alias.c_str());
+
+    // Build map with granularity for all TCs (0-7)
+    std::vector<sai_map_t> granularity_map_list;
+    for (uint8_t tc = 0; tc < PFC_WD_TC_MAX; tc++)
+    {
+        sai_map_t gran_map;
+        gran_map.key = tc;
+        gran_map.value = timerGranularity;
+        granularity_map_list.push_back(gran_map);
+    }
+
+    sai_attribute_t attr_granularity;
+    attr_granularity.id = SAI_PORT_ATTR_PFC_TC_DLD_TIMER_INTERVAL;
+    attr_granularity.value.maplist.count = static_cast<uint32_t>(granularity_map_list.size());
+    attr_granularity.value.maplist.list = granularity_map_list.data();
+
+    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr_granularity);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        return handleFailure("Failed to set PFC DLR timer granularity to " + to_string(timerGranularity) +
+                           " ms on port " + port.m_alias + ": " + to_string(status));
+    }
+
+    SWSS_LOG_NOTICE("Set PFC DLD timer granularity to %u ms for detection timer on port %s",
+                   timerGranularity, port.m_alias.c_str());
+
+    return true;
 }
 
 bool PfcWdHwOrch::configureTimerIntervals(const Port& port, const set<uint8_t>& losslessTc,
@@ -301,8 +686,57 @@ bool PfcWdHwOrch::configureTimerIntervals(const Port& port, const set<uint8_t>& 
                                           const function<bool(const string&)>& handleFailure)
 {
     SWSS_LOG_ENTER();
-    // TODO: Implementation
-    return false;
+
+    // Build map lists for detection and restoration intervals
+    std::vector<sai_map_t> dld_map_list;
+    std::vector<sai_map_t> dlr_map_list;
+
+    for (auto tc : losslessTc)
+    {
+        sai_map_t dld_map;
+        dld_map.key = tc;
+        dld_map.value = detectionTime;
+        dld_map_list.push_back(dld_map);
+
+        sai_map_t dlr_map;
+        dlr_map.key = tc;
+        dlr_map.value = restorationTime;
+        dlr_map_list.push_back(dlr_map);
+    }
+
+    // Set detection interval on port
+    sai_attribute_t attr_dld;
+    attr_dld.id = SAI_PORT_ATTR_PFC_TC_DLD_INTERVAL;
+    attr_dld.value.maplist.count = static_cast<uint32_t>(dld_map_list.size());
+    attr_dld.value.maplist.list = dld_map_list.data();
+
+    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr_dld);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        return handleFailure("Failed to set PFC DLD interval on port " + port.m_alias +
+                           ": " + to_string(status));
+    }
+
+    SWSS_LOG_NOTICE("Set PFC DLD (detection) interval on port %s to %u ms for %zu TCs",
+                   port.m_alias.c_str(), detectionTime, losslessTc.size());
+
+    // Set restoration interval on port
+    sai_attribute_t attr_dlr;
+    attr_dlr.id = SAI_PORT_ATTR_PFC_TC_DLR_INTERVAL;
+    attr_dlr.value.maplist.count = static_cast<uint32_t>(dlr_map_list.size());
+    attr_dlr.value.maplist.list = dlr_map_list.data();
+
+    status = sai_port_api->set_port_attribute(port.m_port_id, &attr_dlr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        return handleFailure("Failed to set PFC DLR interval on port " + port.m_alias +
+                           ": " + to_string(status));
+    }
+
+    SWSS_LOG_NOTICE("Set PFC DLR (restoration) interval on port %s to %u ms for %zu TCs",
+                   port.m_alias.c_str(), restorationTime, losslessTc.size());
+
+    return true;
 }
 
 bool PfcWdHwOrch::enableDldrOnLosslessQueues(const Port& port, const set<uint8_t>& losslessTc,
@@ -310,14 +744,131 @@ bool PfcWdHwOrch::enableDldrOnLosslessQueues(const Port& port, const set<uint8_t
                                              const function<bool(const string&)>& handleFailure)
 {
     SWSS_LOG_ENTER();
-    // TODO: Implementation
-    return false;
+
+    // Enable PFC DLDR on each lossless queue
+    for (auto tc : losslessTc)
+    {
+        if (tc >= port.m_queue_ids.size())
+        {
+            SWSS_LOG_ERROR("TC %d exceeds queue count %zu on port %s",
+                          tc, port.m_queue_ids.size(), port.m_alias.c_str());
+            continue;
+        }
+
+        sai_object_id_t queueId = port.m_queue_ids[tc];
+
+        sai_attribute_t attr_enable;
+        attr_enable.id = SAI_QUEUE_ATTR_ENABLE_PFC_DLDR;
+        attr_enable.value.booldata = true;
+
+        sai_status_t status = sai_queue_api->set_queue_attribute(queueId, &attr_enable);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            return handleFailure("Failed to enable PFC DLDR on port " + port.m_alias +
+                               " queue " + to_string(tc) + " (0x" +
+                               sai_serialize_object_id(queueId) + "): " + to_string(status));
+        }
+
+        SWSS_LOG_NOTICE("Enabled PFC DLDR on port %s TC %d queue 0x%" PRIx64 " (detection: %u ms, restoration: %u ms)",
+                       port.m_alias.c_str(), tc, queueId, detectionTime, restorationTime);
+    }
+
+    return true;
 }
 
 void PfcWdHwOrch::initializeQueueStats(const Port& port, const set<uint8_t>& losslessTc)
 {
     SWSS_LOG_ENTER();
-    // TODO: Implementation
+
+    // For each lossless queue, register PFC_WD FlexCounters, initialize
+    // watchdog counters, and populate the queue→port mapping.
+    for (auto tc : losslessTc)
+    {
+        if (tc >= port.m_queue_ids.size())
+        {
+            continue;
+        }
+
+        sai_object_id_t queueId = port.m_queue_ids[tc];
+        string queueIdStr = sai_serialize_object_id(queueId);
+
+        // Register queue stats/attributes in the dedicated PFC_WD FlexCounter group.
+        if (m_pfcwdFlexCounterManager)
+        {
+            if (!c_queueStatIds.empty())
+            {
+                auto queueStatIdSet = PfcWdBaseOrch::counterIdsToStr(c_queueStatIds, sai_serialize_queue_stat);
+                if (queueStatIdSet.empty())
+                {
+                    SWSS_LOG_WARN("Failed to convert queue stat IDs for queue 0x%" PRIx64 " on port %s",
+                                  queueId, port.m_alias.c_str());
+                }
+                else
+                {
+                    m_pfcwdFlexCounterManager->setCounterIdList(queueId,
+                                                                 CounterType::QUEUE,
+                                                                 queueStatIdSet,
+                                                                 SAI_OBJECT_TYPE_QUEUE);
+                    SWSS_LOG_DEBUG("Registered %zu queue stats for queue 0x%" PRIx64 " on port %s",
+                                   queueStatIdSet.size(), queueId, port.m_alias.c_str());
+                }
+            }
+
+            if (!c_queueAttrIds.empty())
+            {
+                auto queueAttrIdSet = PfcWdBaseOrch::counterIdsToStr(c_queueAttrIds, sai_serialize_queue_attr);
+                if (queueAttrIdSet.empty())
+                {
+                    SWSS_LOG_WARN("Failed to convert queue attr IDs for queue 0x%" PRIx64 " on port %s",
+                                  queueId, port.m_alias.c_str());
+                }
+                else
+                {
+                    auto *fcMgr = dynamic_cast<FlexCounterManager*>(m_pfcwdFlexCounterManager.get());
+                    if (fcMgr)
+                    {
+                        fcMgr->setCounterIdList(queueId,
+                                                CounterType::QUEUE_ATTR,
+                                                queueAttrIdSet);
+                        SWSS_LOG_DEBUG("Registered %zu queue attrs for queue 0x%" PRIx64 " on port %s",
+                                       queueAttrIdSet.size(), queueId, port.m_alias.c_str());
+                    }
+                    else
+                    {
+                        SWSS_LOG_WARN("PFC WD FlexCounter manager is not FlexCounterManager for queue 0x%" PRIx64 " on port %s",
+                                      queueId, port.m_alias.c_str());
+                    }
+                }
+            }
+        }
+
+        // Add to queue→port mapping for fast lookup in the notification callback.
+        PortQueueInfo info;
+        info.port_id = port.m_port_id;
+        info.port_alias = port.m_alias;
+        info.queue_index = tc;
+        m_queueToPortMap[queueId] = info;
+
+        // Initialize PFC WD counters in COUNTERS_DB (status operational, packet counters cleared).
+        // Preserve existing detect/restore counts from warm-reboot if present.
+        auto stats = getQueueStats(queueIdStr);
+        stats.operational = true;
+        stats.txPkt = 0;
+        stats.txDropPkt = 0;
+        stats.rxPkt = 0;
+        stats.rxDropPkt = 0;
+        stats.txPktLast = 0;
+        stats.txDropPktLast = 0;
+        stats.rxPktLast = 0;
+        stats.rxDropPktLast = 0;
+        updateQueueStats(queueIdStr, stats);
+
+        SWSS_LOG_DEBUG("Initialized PFC watchdog stats for port %s queue TC%d (0x%" PRIx64 ")",
+                      port.m_alias.c_str(), tc, queueId);
+    }
+
+    SWSS_LOG_NOTICE("Initialized PFC watchdog flex counters and stats for %zu lossless queues on port %s",
+                   losslessTc.size(), port.m_alias.c_str());
 }
 
 bool PfcWdHwOrch::disableHwWatchdog(const Port& port)
