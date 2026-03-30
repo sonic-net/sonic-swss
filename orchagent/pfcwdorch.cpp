@@ -11,27 +11,17 @@
 #include "schema.h"
 #include "subscriberstatetable.h"
 
-#define PFC_WD_GLOBAL                   "GLOBAL"
-#define PFC_WD_ACTION                   "action"
-#define PFC_WD_DETECTION_TIME           "detection_time"
-#define PFC_WD_RESTORATION_TIME         "restoration_time"
-#define PFC_STAT_HISTORY                "pfc_stat_history"
 #define BIG_RED_SWITCH_FIELD            "BIG_RED_SWITCH"
 #define PFC_WD_IN_STORM                 "storm"
-
-#define PFC_WD_DETECTION_TIME_MAX       (5 * 1000)
-#define PFC_WD_DETECTION_TIME_MIN       100
-#define PFC_WD_RESTORATION_TIME_MAX     (60 * 1000)
-#define PFC_WD_RESTORATION_TIME_MIN     100
 #define PFC_WD_POLL_TIMEOUT             5000
 #define SAI_PORT_STAT_PFC_PREFIX        "SAI_PORT_STAT_PFC_"
-#define PFC_WD_TC_MAX 8
 #define COUNTER_CHECK_POLL_TIMEOUT_SEC  1
 
 extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t* sai_switch_api;
 extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
+extern sai_buffer_api_t *sai_buffer_api;
 
 extern event_handle_t g_events_handle;
 
@@ -42,6 +32,8 @@ PfcWdBaseOrch::PfcWdBaseOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),
     m_countersDb(new DBConnector("COUNTERS_DB", 0)),
     m_countersTable(new Table(m_countersDb.get(), COUNTERS_TABLE)),
+    m_stateDb(new DBConnector("STATE_DB", 0)),
+    m_stateTable(new Table(m_stateDb.get(), PFC_WD_STATE_TABLE)),
     m_platform(getenv("platform") ? getenv("platform") : "")
 {
     SWSS_LOG_ENTER();
@@ -50,6 +42,10 @@ PfcWdBaseOrch::PfcWdBaseOrch(DBConnector *db, vector<string> &tableNames):
         SWSS_LOG_ERROR("Platform environment variable is not defined");
         return;
     }
+
+    // Add PfcDlrPacketAction to state table
+    string dlrAction = PfcWdBaseOrch::serializeAction(this->getPfcDlrPacketAction());
+    this->updateStateTable(PFC_WD_DLR_PACKET_ACTION, dlrAction);
 }
 
 

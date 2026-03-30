@@ -421,6 +421,11 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
             m_applDb.get(), APP_PFC_WD_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE, default_orch_pri);
     auto ssConsumer = new Consumer(ssTable, this, APP_PFC_WD_TABLE_NAME);
     Orch::addExecutor(ssConsumer);
+
+    // Write to STATE_DB to indicate software-based PFC watchdog recovery
+    this->updateStateTable(PFC_WD_RECOVERY_MECHANISM, PFC_WD_RECOVERY_SOFTWARE);
+
+    SWSS_LOG_NOTICE("PFC Watchdog software-based recovery mechanism registered in STATE_DB");
 }
 
 template <typename DropHandler, typename ForwardHandler>
