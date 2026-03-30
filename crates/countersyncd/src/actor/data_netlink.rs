@@ -315,69 +315,6 @@ impl DataNetlinkActor {
         netlink_utils::create_nl_resolver()
     }
 
-    /// Sets SO_RCVBUF on the netlink socket to reduce ENOBUFS under high HFT load.
-    #[cfg(not(test))]
-    fn set_socket_rcvbuf(socket: &mut Socket, bytes: usize) {
-        if bytes == 0 {
-            return;
-        }
-        let fd = socket.as_raw_fd();
-        let v: libc::c_int = match bytes.try_into() {
-            Ok(v) => v,
-            Err(_) => {
-                warn!(
-                    "netlink_rcvbuf {} exceeds c_int::MAX, clamping to {}",
-                    bytes,
-                    libc::c_int::MAX
-                );
-                libc::c_int::MAX
-            }
-        };
-        let ret = unsafe {
-            libc::setsockopt(
-                fd,
-                libc::SOL_SOCKET,
-                libc::SO_RCVBUF,
-                &v as *const _ as *const libc::c_void,
-                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
-            )
-        };
-        if ret != 0 {
-            warn!(
-                "Failed to set netlink SO_RCVBUF to {}: {:?}",
-                bytes,
-                std::io::Error::last_os_error()
-            );
-            return;
-        }
-
-        // Read back the actual value — Linux may cap it at net.core.rmem_max and doubles it internally.
-        let mut actual: libc::c_int = 0;
-        let mut len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
-        let ret = unsafe {
-            libc::getsockopt(
-                fd,
-                libc::SOL_SOCKET,
-                libc::SO_RCVBUF,
-                &mut actual as *mut _ as *mut libc::c_void,
-                &mut len,
-            )
-        };
-        if ret != 0 {
-            warn!(
-                "Failed to read back SO_RCVBUF: {:?}",
-                std::io::Error::last_os_error()
-            );
-        } else {
-            info!(
-                "Netlink SO_RCVBUF: requested={} bytes, actual={} bytes{}",
-                bytes,
-                actual,
-                if (actual as usize) < bytes { " (capped by net.core.rmem_max — consider raising it)" } else { "" }
-            );
-        }
-    }
-
     /// Mock netlink resolver for testing.
     #[cfg(test)]
     fn create_nl_resolver() -> Option<Socket> {
@@ -507,7 +444,7 @@ impl DataNetlinkActor {
             return None;
         }
 
-        Self::set_socket_rcvbuf(&mut socket, self.netlink_rcvbuf_bytes);
+        netlink_utils::set_socket_rcvbuf(&socket, self.netlink_rcvbuf_bytes);
 
         info!(
             "Successfully connected to family '{}', group '{}' with group_id: {}",
@@ -622,7 +559,7 @@ impl DataNetlinkActor {
             return None;
         }
 
-        Self::set_socket_rcvbuf(&mut socket, netlink_rcvbuf_bytes);
+        netlink_utils::set_socket_rcvbuf(&socket, netlink_rcvbuf_bytes);
 
         info!(
             "Successfully connected to family '{}', group '{}' with group_id: {}",
