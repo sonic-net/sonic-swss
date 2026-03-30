@@ -4796,4 +4796,96 @@ namespace portsorch_test
 
         ASSERT_FALSE(port.m_init);
     }
+
+    /*
+     * Verify that deleting a VLAN which was never created (not in m_portList)
+     * is handled gracefully: the DEL entry is consumed from m_toSync and no
+     * crash.
+     */
+    struct PortsOrchDanglingDeleteTests : PortsOrchTest {};
+    TEST_F(PortsOrchDanglingDeleteTests, VlanDeleteNonExistentIsSkipped)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port port;
+        ASSERT_FALSE(gPortsOrch->getPort("Vlan100", port));
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Vlan100", DEL_COMMAND, {}});
+
+        auto vlanConsumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_VLAN_TABLE_NAME));
+        vlanConsumer->addToSync(entries);
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        vector<string> ts;
+        vlanConsumer->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        ASSERT_FALSE(gPortsOrch->getPort("Vlan100", port));
+    }
+
+    /*
+     * Verify the normal VLAN create-then-delete path still works, contrasting
+     * with the non-existent VLAN deletion above.
+     */
+    struct PortsOrchCreateThenDeleteTests : PortsOrchTest {};
+    TEST_F(PortsOrchCreateThenDeleteTests, VlanCreateThenDelete)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Vlan200", SET_COMMAND, {
+            {"admin_status", "up"},
+            {"mtu", "9100"}
+        }});
+
+        auto vlanConsumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_VLAN_TABLE_NAME));
+        vlanConsumer->addToSync(entries);
+        entries.clear();
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port vlan;
+        ASSERT_TRUE(gPortsOrch->getPort("Vlan200", vlan));
+        ASSERT_EQ(vlan.m_type, Port::VLAN);
+
+        entries.push_back({"Vlan200", DEL_COMMAND, {}});
+        vlanConsumer->addToSync(entries);
+        entries.clear();
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        vector<string> ts;
+        vlanConsumer->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        ASSERT_FALSE(gPortsOrch->getPort("Vlan200", vlan));
+    }
 }
