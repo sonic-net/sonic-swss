@@ -21,7 +21,6 @@ using namespace swss;
 
 /* select() function timeout retry time */
 #define SELECT_TIMEOUT 1000
-#define PFC_WD_POLL_MSECS 100
 
 #define APP_FABRIC_MONITOR_PORT_TABLE_NAME      "FABRIC_PORT_TABLE"
 #define APP_FABRIC_MONITOR_DATA_TABLE_NAME      "FABRIC_MONITOR_TABLE"
@@ -755,6 +754,7 @@ bool OrchDaemon::init()
         static const vector<sai_queue_stat_t> queueStatIds =
         {
             SAI_QUEUE_STAT_PACKETS,
+            SAI_QUEUE_STAT_DROPPED_PACKETS,
             SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES,
         };
 

@@ -11,11 +11,6 @@
 #include "schema.h"
 #include "subscriberstatetable.h"
 
-#define BIG_RED_SWITCH_FIELD            "BIG_RED_SWITCH"
-#define PFC_WD_IN_STORM                 "storm"
-#define PFC_WD_POLL_TIMEOUT             5000
-#define SAI_PORT_STAT_PFC_PREFIX        "SAI_PORT_STAT_PFC_"
-#define COUNTER_CHECK_POLL_TIMEOUT_SEC  1
 
 extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t* sai_switch_api;
