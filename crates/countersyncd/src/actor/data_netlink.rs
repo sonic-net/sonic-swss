@@ -47,14 +47,14 @@ const MAX_LOCAL_RECONNECT_ATTEMPTS: u32 = 3;
 /// Socket health check timeout - if no data received for this duration, socket is considered unhealthy
 const SOCKET_HEALTH_TIMEOUT_SECS: u64 = 60;
 
-/// Heartbeat logging interval (in iterations) - log every 5 minutes at 5ms per iteration
-const HEARTBEAT_LOG_INTERVAL: u32 = 60000; // 60000 * 5ms = 5 minutes
+/// Target duration for heartbeat log (5 minutes).
+const HEARTBEAT_TARGET_MS: u64 = 5 * 60 * 1000;
 
-/// Debug logging interval (in iterations) - log debug info every 30 seconds
-const DEBUG_LOG_INTERVAL: u32 = 6000; // 6000 * 5ms = 30 seconds
+/// Target duration for debug log (30 seconds).
+const DEBUG_TARGET_MS: u64 = 30 * 1000;
 
-/// WouldBlock debug logging interval (in iterations) - log WouldBlock every minute
-const WOULDBLOCK_LOG_INTERVAL: u32 = 12000; // 12000 * 5ms = 1 minute
+/// Target duration for WouldBlock log (1 minute).
+const WOULDBLOCK_TARGET_MS: u64 = 60 * 1000;
 
 
 /// Maximum size for buffering incomplete messages (1MB)
@@ -806,16 +806,20 @@ impl DataNetlinkActor {
         );
         let mut heartbeat_counter = 0u32;
         let mut consecutive_failures = 0u32;
+        let poll_ms = actor.socket_readiness_timeout_ms.max(1);
+        let heartbeat_interval = (HEARTBEAT_TARGET_MS / poll_ms).max(1) as u32;
+        let debug_interval = (DEBUG_TARGET_MS / poll_ms).max(1) as u32;
+        let wouldblock_interval = (WOULDBLOCK_TARGET_MS / poll_ms).max(1) as u32;
 
         loop {
             // Log heartbeat every 5 minutes to show the actor is running
             heartbeat_counter += 1;
-            if heartbeat_counter % HEARTBEAT_LOG_INTERVAL == 0 {
+            if heartbeat_counter % heartbeat_interval == 0 {
                 info!("DataNetlinkActor is running normally - waiting for data messages");
             }
 
             // More frequent debug info about socket status
-            if heartbeat_counter % DEBUG_LOG_INTERVAL == 0 {
+            if heartbeat_counter % debug_interval == 0 {
                 debug!(
                     "DataNetlinkActor heartbeat: socket={}, recipients={}, failures={}",
                     actor.socket.is_some(),
@@ -921,7 +925,7 @@ impl DataNetlinkActor {
                                 // Check if it's WouldBlock using standard ErrorKind
                                 if e.kind() == io::ErrorKind::WouldBlock {
                                     // No data available right now, continue normally
-                                    if heartbeat_counter % WOULDBLOCK_LOG_INTERVAL == 0 {
+                                    if heartbeat_counter % wouldblock_interval == 0 {
                                         debug!("No netlink data available (WouldBlock) - socket is connected but no messages from kernel");
                                     }
                                 } else {
@@ -945,7 +949,7 @@ impl DataNetlinkActor {
                         }
                     } else if actor.socket.is_none() {
                         // No socket available, log this periodically but don't spam
-                        if heartbeat_counter % DEBUG_LOG_INTERVAL == 0 {
+                        if heartbeat_counter % debug_interval == 0 {
                             debug!("No socket available - waiting for reconnect command from ControlNetlinkActor");
                         }
                     }
@@ -1408,11 +1412,16 @@ pub mod test {
     }
 
     #[test]
-    fn test_log_interval_cadence_at_default_poll_ms() {
-        const DEFAULT_POLL_MS: u64 = 5;
-        assert_eq!(HEARTBEAT_LOG_INTERVAL as u64 * DEFAULT_POLL_MS, 5 * 60 * 1000);  // 5 minutes
-        assert_eq!(DEBUG_LOG_INTERVAL as u64 * DEFAULT_POLL_MS, 30 * 1000);           // 30 seconds
-        assert_eq!(WOULDBLOCK_LOG_INTERVAL as u64 * DEFAULT_POLL_MS, 60 * 1000);      // 1 minute
+    fn test_log_interval_cadence() {
+        // Verify that computed intervals match target durations for various poll rates.
+        for poll_ms in [1u64, 5, 10, 50, 100] {
+            let heartbeat = (HEARTBEAT_TARGET_MS / poll_ms).max(1);
+            let debug = (DEBUG_TARGET_MS / poll_ms).max(1);
+            let wouldblock = (WOULDBLOCK_TARGET_MS / poll_ms).max(1);
+            assert_eq!(heartbeat * poll_ms, HEARTBEAT_TARGET_MS, "poll_ms={}", poll_ms);
+            assert_eq!(debug * poll_ms, DEBUG_TARGET_MS, "poll_ms={}", poll_ms);
+            assert_eq!(wouldblock * poll_ms, WOULDBLOCK_TARGET_MS, "poll_ms={}", poll_ms);
+        }
     }
 
 }
