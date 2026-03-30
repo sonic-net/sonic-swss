@@ -175,7 +175,8 @@ struct Args {
     #[arg(
         long,
         default_value = "600",
-        help = "Interval in seconds for logging comm stats (channel lengths). Use a shorter value (e.g. 60) when verifying HFT processing slowness"
+        value_parser = clap::value_parser!(u64).range(1..),
+        help = "Interval in seconds for logging comm stats (channel lengths). Use a shorter value (e.g. 60) when verifying HFT processing slowness. Minimum 1"
     )]
     comm_stats_interval: u64,
 
@@ -508,5 +509,55 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         res = async { otel_handle.as_mut().unwrap().await }, if otel_handle.is_some() => {
             exit_on_otel_join(res);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    fn parse(args: &[&str]) -> Result<Args, clap::Error> {
+        Args::try_parse_from(args)
+    }
+
+    #[test]
+    fn test_defaults() {
+        let args = parse(&["countersyncd"]).unwrap();
+        assert_eq!(args.socket_readiness_timeout_ms, 5);
+        assert_eq!(args.netlink_rcvbuf, 4194304);
+        assert_eq!(args.comm_stats_interval, 600);
+        assert_eq!(args.stats_interval, 10);
+        assert!(!args.enable_stats);
+        assert!(!args.enable_counter_db);
+        assert!(!args.enable_otel);
+    }
+
+    #[test]
+    fn test_socket_readiness_timeout_zero_rejected() {
+        assert!(parse(&["countersyncd", "--socket-readiness-timeout-ms", "0"]).is_err());
+    }
+
+    #[test]
+    fn test_socket_readiness_timeout_custom() {
+        let args = parse(&["countersyncd", "--socket-readiness-timeout-ms", "10"]).unwrap();
+        assert_eq!(args.socket_readiness_timeout_ms, 10);
+    }
+
+    #[test]
+    fn test_netlink_rcvbuf_zero_accepted() {
+        let args = parse(&["countersyncd", "--netlink-rcvbuf", "0"]).unwrap();
+        assert_eq!(args.netlink_rcvbuf, 0);
+    }
+
+    #[test]
+    fn test_comm_stats_interval_custom() {
+        let args = parse(&["countersyncd", "--comm-stats-interval", "60"]).unwrap();
+        assert_eq!(args.comm_stats_interval, 60);
+    }
+
+    #[test]
+    fn test_unknown_flag_rejected() {
+        assert!(parse(&["countersyncd", "--unknown-flag"]).is_err());
     }
 }
