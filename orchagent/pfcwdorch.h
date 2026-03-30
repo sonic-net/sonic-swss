@@ -8,14 +8,21 @@
 #include "notificationconsumer.h"
 #include "timer.h"
 #include "events.h"
+#include "table.h"
 
 extern "C" {
 #include "sai.h"
 }
 
 // ============================================================================
-// Global macros used across base and derived classes
+// Global macros used across base and derived classes (PfcWdBaseOrch,
+// PfcWdSwOrch, PfcWdHwOrch)
 // ============================================================================
+
+#define PFC_WD_RECOVERY_MECHANISM       "RECOVERY_MECHANISM"
+#define PFC_WD_RECOVERY_SOFTWARE        "SOFTWARE"
+#define PFC_WD_RECOVERY_HARDWARE        "HARDWARE"
+#define PFC_WD_TC_MAX                   8
 
 // State and configuration table identifiers
 #define PFC_WD_FLEX_COUNTER_GROUP       "PFC_WD"
@@ -69,6 +76,16 @@ public:
     shared_ptr<DBConnector> getCountersDb(void)
     {
         return m_countersDb;
+    }
+
+    shared_ptr<Table> getStateTable(void)
+    {
+        return m_stateTable;
+    }
+
+    shared_ptr<DBConnector> getStateDb(void)
+    {
+        return m_stateDb;
     }
 
     static PfcWdAction deserializeAction(const string& key);
