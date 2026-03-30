@@ -206,9 +206,32 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
 
 task_process_status PfcWdHwOrch::deleteEntry(const string& key)
 {
-    SWSS_LOG_ENTER();
-    // TODO: Implementation
-    return task_process_status::task_success;
+	SWSS_LOG_ENTER();
+
+	Port port;
+	if (!gPortsOrch->getPort(key, port))
+	{
+		SWSS_LOG_ERROR("Invalid port interface %s", key.c_str());
+		return task_process_status::task_invalid_entry;
+	}
+
+	// If hardware watchdog is configured on this port, disallow deletion
+	// while any lossless queue is still in stormed state.
+	if (m_hwWdPorts.find(port.m_alias) != m_hwWdPorts.end())
+	{
+		if (isPortInStormedState(port))
+		{
+			SWSS_LOG_ERROR(
+				"Cannot delete PFC watchdog configuration on port %s: port is in stormed state. "
+				"Wait for storm to pass before making changes.",
+				port.m_alias.c_str());
+			return task_process_status::task_invalid_entry;
+		}
+	}
+
+	// Delegate to base implementation to stop watchdog on the port and
+	// update common bookkeeping.
+	return PfcWdBaseOrch::deleteEntry(key);
 }
 
 bool PfcWdHwOrch::startWdOnPort(const Port& port,
@@ -222,8 +245,8 @@ bool PfcWdHwOrch::startWdOnPort(const Port& port,
 bool PfcWdHwOrch::stopWdOnPort(const Port& port)
 {
     SWSS_LOG_ENTER();
-    // TODO: Implementation
-    return false;
+
+    return disableHwWatchdog(port);
 }
 
 void PfcWdHwOrch::doTask(SelectableTimer &timer)
@@ -300,20 +323,156 @@ void PfcWdHwOrch::initializeQueueStats(const Port& port, const set<uint8_t>& los
 bool PfcWdHwOrch::disableHwWatchdog(const Port& port)
 {
     SWSS_LOG_ENTER();
-    // TODO: Implementation
-    return false;
+
+    SWSS_LOG_NOTICE("Disabling hardware watchdog on port %s", port.m_alias.c_str());
+
+    // Get lossless TCs for this port
+    std::set<uint8_t> losslessTc;
+    if (!getLosslessTcsForPort(port, losslessTc))
+    {
+        SWSS_LOG_NOTICE("No lossless TC found on port %s", port.m_alias.c_str());
+        return true;  // Nothing to disable
+    }
+
+    // Disable PFC DLDR on each lossless queue and remove from queue→port mapping
+    for (auto tc : losslessTc)
+    {
+        if (tc >= port.m_queue_ids.size())
+        {
+            SWSS_LOG_ERROR("TC %d exceeds queue count %zu on port %s",
+                          tc, port.m_queue_ids.size(), port.m_alias.c_str());
+            continue;
+        }
+
+        sai_object_id_t queueId = port.m_queue_ids[tc];
+
+        sai_attribute_t attr_enable;
+        attr_enable.id = SAI_QUEUE_ATTR_ENABLE_PFC_DLDR;
+        attr_enable.value.booldata = false;
+
+        sai_status_t status = sai_queue_api->set_queue_attribute(queueId, &attr_enable);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to disable PFC DLDR on port %s queue %d (0x%" PRIx64 "): %d",
+                          port.m_alias.c_str(), tc, queueId, status);
+        }
+        else
+        {
+            SWSS_LOG_INFO("Disabled PFC DLDR on port %s TC %d queue 0x%" PRIx64,
+                         port.m_alias.c_str(), tc, queueId);
+        }
+
+        // Clear this queue's registration in the dedicated PFC_WD FlexCounter group.
+        if (m_pfcwdFlexCounterManager)
+        {
+            m_pfcwdFlexCounterManager->clearCounterIdList(queueId, SAI_OBJECT_TYPE_QUEUE);
+            SWSS_LOG_DEBUG("Cleared FlexCounter registration for queue 0x%" PRIx64 " on port %s",
+                           queueId, port.m_alias.c_str());
+        }
+
+        // Remove from queue→port mapping
+        m_queueToPortMap.erase(queueId);
+
+        // Remove baseline stats
+        m_queueBaselineStats.erase(queueId);
+        SWSS_LOG_DEBUG("Removed baseline stats for queue 0x%" PRIx64, queueId);
+    }
+
+    // Clear detection and restoration intervals on port level
+    std::vector<sai_map_t> empty_map_list;
+
+    // Clear detection interval
+    sai_attribute_t attr_dld;
+    attr_dld.id = SAI_PORT_ATTR_PFC_TC_DLD_INTERVAL;
+    attr_dld.value.maplist.count = 0;
+    attr_dld.value.maplist.list = nullptr;
+
+    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr_dld);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Failed to clear PFC DLD interval on port %s: %d", port.m_alias.c_str(), status);
+    }
+
+    // Clear restoration interval
+    sai_attribute_t attr_dlr;
+    attr_dlr.id = SAI_PORT_ATTR_PFC_TC_DLR_INTERVAL;
+    attr_dlr.value.maplist.count = 0;
+    attr_dlr.value.maplist.list = nullptr;
+
+    status = sai_port_api->set_port_attribute(port.m_port_id, &attr_dlr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Failed to clear PFC DLR interval on port %s: %d", port.m_alias.c_str(), status);
+    }
+
+    // Remove port from tracking set
+    m_hwWdPorts.erase(port.m_alias);
+
+    // Remove entry from STATE_DB
+    m_pfcWdHwStateTable->del(port.m_alias);
+
+    // If no ports have hardware watchdog configured, reset action to unknown
+    if (m_hwWdPorts.empty())
+    {
+        this->setPfcDlrPacketAction(PfcWdAction::PFC_WD_ACTION_UNKNOWN);
+        this->updateDlrPacketActionInStateTable();
+        SWSS_LOG_NOTICE("All hardware PFC watchdog ports disabled, reset action to UNKNOWN");
+    }
+
+    SWSS_LOG_NOTICE("Successfully disabled hardware PFC watchdog on port %s",
+                   port.m_alias.c_str());
+
+    return true;
 }
 
 void PfcWdHwOrch::writeFailureStatus(const Port& port)
 {
-    SWSS_LOG_ENTER();
-    // TODO: Implementation
+    vector<FieldValueTuple> fvs;
+    fvs.emplace_back("recovery_type", "hardware");
+    fvs.emplace_back("status", "failed");
+    m_pfcWdHwStateTable->set(port.m_alias, fvs);
 }
 
 bool PfcWdHwOrch::isPortInStormedState(const Port& port)
 {
     SWSS_LOG_ENTER();
-    // TODO: Implementation
+
+    // Get PFC mask to identify lossless queues
+    uint8_t pfcMask = 0;
+    if (!gPortsOrch->getPortPfcWatchdogStatus(port.m_port_id, &pfcMask))
+    {
+        SWSS_LOG_WARN("Failed to get PFC mask on port %s", port.m_alias.c_str());
+        return false;
+    }
+
+    // Check each lossless queue to see if any is in stormed state
+    for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
+    {
+        if ((pfcMask & (1 << i)) == 0)
+        {
+            continue;  // Skip non-lossless queues
+        }
+
+        if (i >= port.m_queue_ids.size())
+        {
+            continue;
+        }
+
+        sai_object_id_t queueId = port.m_queue_ids[i];
+        string queueIdStr = sai_serialize_object_id(queueId);
+
+        // Get queue statistics
+        auto stats = getQueueStats(queueIdStr);
+
+        // If operational is false, the queue is in stormed state
+        if (!stats.operational)
+        {
+            SWSS_LOG_WARN("Port %s has queue %d (0x%" PRIx64 ") in stormed state",
+                         port.m_alias.c_str(), i, queueId);
+            return true;
+        }
+    }
+
     return false;
 }
 
