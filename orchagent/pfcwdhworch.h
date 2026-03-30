@@ -99,7 +99,7 @@ private:
     const vector<sai_port_stat_t> c_portStatIds;
     const vector<sai_queue_stat_t> c_queueStatIds;
     const vector<sai_queue_attr_t> c_queueAttrIds;
-
+	
     // Hardware timer ranges
     uint32_t m_detectionTimeMin;
     uint32_t m_detectionTimeMax;
