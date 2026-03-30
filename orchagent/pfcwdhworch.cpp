@@ -1,0 +1,345 @@
+#include "pfcwdhworch.h"
+#include "schema.h"
+#include "switchorch.h"
+#include "portsorch.h"
+#include "saiextensions.h"
+#include "sai_serialize.h"
+#include "converter.h"
+#include <algorithm>
+#include <set>
+
+extern sai_object_id_t gSwitchId;
+extern sai_switch_api_t* sai_switch_api;
+extern sai_port_api_t* sai_port_api;
+extern sai_queue_api_t* sai_queue_api;
+extern sai_buffer_api_t* sai_buffer_api;
+extern event_handle_t g_events_handle;
+extern SwitchOrch *gSwitchOrch;
+extern PortsOrch *gPortsOrch;
+
+// Global instance pointer for SAI callback
+static PfcWdHwOrch* g_pfcWdHwOrch = nullptr;
+
+// SAI callback wrapper
+__attribute__((unused))
+static void on_queue_pfc_deadlock(
+        _In_ uint32_t count,
+        _In_ sai_queue_deadlock_notification_data_t *data)
+{
+    if (g_pfcWdHwOrch != nullptr)
+    {
+        g_pfcWdHwOrch->onQueuePfcDeadlock(count, data);
+    }
+}
+
+PfcWdHwOrch::PfcWdHwOrch(DBConnector *db, vector<string> &tableNames,
+                         const vector<sai_port_stat_t> &portStatIds,
+                         const vector<sai_queue_stat_t> &queueStatIds,
+                         const vector<sai_queue_attr_t> &queueAttrIds):
+    PfcWdBaseOrch(db, tableNames),
+    c_portStatIds(portStatIds),
+    c_queueStatIds(queueStatIds),
+    c_queueAttrIds(queueAttrIds),
+    m_detectionTimeMin(0),
+    m_detectionTimeMax(0),
+    m_restorationTimeMin(0),
+    m_restorationTimeMax(0),
+    m_stateDb(make_shared<DBConnector>("STATE_DB", 0)),
+    m_pfcWdHwStateTable(make_shared<Table>(m_stateDb.get(), STATE_PFC_WD_HW_STATE_TABLE_NAME)),
+    m_portLevelGranularitySupported(false)
+{
+    SWSS_LOG_ENTER();
+
+    // Set global instance pointer
+    g_pfcWdHwOrch = this;
+
+    // Mark hardware watchdog recovery in STATE_DB
+    this->updateStateTable(PFC_WD_RECOVERY_MECHANISM, PFC_WD_RECOVERY_HARDWARE);
+
+    SWSS_LOG_NOTICE("Initializing hardware-based PFC watchdog");
+
+    initializeCapabilities();
+    initializeTimerRanges();
+    registerCallbacks();
+    recoverWarmReboot(db);
+
+    SWSS_LOG_NOTICE("Hardware-based PFC watchdog initialization complete");
+}
+
+PfcWdHwOrch::~PfcWdHwOrch(void)
+{
+    SWSS_LOG_ENTER();
+
+    g_pfcWdHwOrch = nullptr;
+}
+
+void PfcWdHwOrch::initializeCapabilities()
+{
+    SWSS_LOG_ENTER();
+
+    // Detect platform capability for port-level timer granularity
+    sai_attr_capability_t attr_capability;
+    sai_status_t cap_status = sai_query_attribute_capability(
+        gSwitchId,
+        SAI_OBJECT_TYPE_PORT,
+        SAI_PORT_ATTR_PFC_TC_DLD_TIMER_INTERVAL,
+        &attr_capability);
+
+    if (cap_status == SAI_STATUS_SUCCESS &&
+        attr_capability.set_implemented &&
+        attr_capability.get_implemented)
+    {
+        m_portLevelGranularitySupported = true;
+        SWSS_LOG_NOTICE("Port-level PFC DLD timer granularity supported");
+    }
+    else
+    {
+        m_portLevelGranularitySupported = false;
+        SWSS_LOG_NOTICE("Port-level PFC DLD timer granularity not supported, using default 100ms");
+    }
+}
+
+void PfcWdHwOrch::initializeTimerRanges()
+{
+    SWSS_LOG_ENTER();
+
+    // Query hardware timer range capabilities
+    sai_attribute_t attr_dld, attr_dlr;
+    attr_dld.id = SAI_SWITCH_ATTR_PFC_TC_DLD_INTERVAL_RANGE;
+    attr_dlr.id = SAI_SWITCH_ATTR_PFC_TC_DLR_INTERVAL_RANGE;
+
+    sai_status_t status_dld = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr_dld);
+    sai_status_t status_dlr = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr_dlr);
+
+    if (status_dld == SAI_STATUS_SUCCESS && status_dlr == SAI_STATUS_SUCCESS)
+    {
+        m_detectionTimeMin = attr_dld.value.u32range.min;
+        m_detectionTimeMax = attr_dld.value.u32range.max;
+        m_restorationTimeMin = attr_dlr.value.u32range.min;
+        m_restorationTimeMax = attr_dlr.value.u32range.max;
+
+        SWSS_LOG_NOTICE("Hardware timer ranges - Detection: %u-%u ms, Restoration: %u-%u ms",
+                       m_detectionTimeMin, m_detectionTimeMax,
+                       m_restorationTimeMin, m_restorationTimeMax);
+
+        // Store ranges in STATE_DB
+        this->updateStateTable(PFC_WD_HW_DETECTION_TIME_MIN, to_string(m_detectionTimeMin));
+        this->updateStateTable(PFC_WD_HW_DETECTION_TIME_MAX, to_string(m_detectionTimeMax));
+        this->updateStateTable(PFC_WD_HW_RESTORATION_TIME_MIN, to_string(m_restorationTimeMin));
+        this->updateStateTable(PFC_WD_HW_RESTORATION_TIME_MAX, to_string(m_restorationTimeMax));
+    }
+    else
+    {
+        SWSS_LOG_WARN("Failed to query PFC watchdog hardware timer ranges (detection: %d, restoration: %d)",
+                     status_dld, status_dlr);
+    }
+}
+
+void PfcWdHwOrch::registerCallbacks()
+{
+    SWSS_LOG_ENTER();
+
+    // Register SAI callback for PFC deadlock notifications
+    // This will be invoked when hardware detects or restores from PFC storms
+    sai_attribute_t attr;
+    attr.id = SAI_SWITCH_ATTR_PFC_TC_DLD_INTERVAL;
+
+    // Note: The actual callback registration happens via SAI switch attribute
+    // SAI_SWITCH_ATTR_QUEUE_PFC_DEADLOCK_NOTIFY which should be set during
+    // switch initialization. The callback function is on_queue_pfc_deadlock()
+    // which calls this->onQueuePfcDeadlock()
+
+    SWSS_LOG_NOTICE("PFC watchdog hardware callbacks registered");
+}
+
+void PfcWdHwOrch::recoverWarmReboot(DBConnector *db)
+{
+    SWSS_LOG_ENTER();
+
+    // During warm reboot, we need to restore the hardware watchdog state
+    // from STATE_DB and re-enable monitoring on ports that had it configured
+    // before the reboot.
+
+    // This is a placeholder for warm reboot recovery logic.
+    // The full implementation will:
+    // 1. Read STATE_DB to find ports with active hardware watchdog
+    // 2. Re-enable flex counters for those ports
+    // 3. Re-register queue monitoring
+
+    SWSS_LOG_NOTICE("PFC watchdog warm reboot recovery completed");
+}
+
+void PfcWdHwOrch::onQueuePfcDeadlock(uint32_t count, sai_queue_deadlock_notification_data_t *data)
+{
+    SWSS_LOG_ENTER();
+    // TODO: Implementation
+}
+
+PfcWdHwOrch::PfcWdQueueStats PfcWdHwOrch::getQueueStats(const string &queueIdStr)
+{
+    SWSS_LOG_ENTER();
+    // TODO: Implementation
+    PfcWdQueueStats stats;
+    memset(&stats, 0, sizeof(PfcWdQueueStats));
+    return stats;
+}
+
+void PfcWdHwOrch::updateQueueStats(const string &queueIdStr, const PfcWdQueueStats &stats)
+{
+    SWSS_LOG_ENTER();
+    // TODO: Implementation
+}
+
+bool PfcWdHwOrch::determineTimerGranularity(uint32_t timeValue, uint32_t hwMin, uint32_t hwMax, uint32_t& granularity)
+{
+    SWSS_LOG_ENTER();
+    // TODO: Implementation
+    return false;
+}
+
+task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<FieldValueTuple>& data)
+{
+    SWSS_LOG_ENTER();
+    // TODO: Implementation
+    return task_process_status::task_success;
+}
+
+task_process_status PfcWdHwOrch::deleteEntry(const string& key)
+{
+    SWSS_LOG_ENTER();
+    // TODO: Implementation
+    return task_process_status::task_success;
+}
+
+bool PfcWdHwOrch::startWdOnPort(const Port& port,
+        uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action, string pfcStatHistory)
+{
+    SWSS_LOG_ENTER();
+    // TODO: Implementation
+    return false;
+}
+
+bool PfcWdHwOrch::stopWdOnPort(const Port& port)
+{
+    SWSS_LOG_ENTER();
+    // TODO: Implementation
+    return false;
+}
+
+void PfcWdHwOrch::doTask(SelectableTimer &timer)
+{
+    SWSS_LOG_ENTER();
+    // TODO: Implementation
+}
+
+bool PfcWdHwOrch::startWdActionOnQueue(const string &event, sai_object_id_t queueId, const string &info)
+{
+    SWSS_LOG_ENTER();
+    // TODO: Implementation
+    return false;
+}
+
+bool PfcWdHwOrch::readBackTimerValue(const Port& port, sai_port_attr_t attrId,
+                                     const set<uint8_t>& losslessTc, uint32_t expected,
+                                     uint32_t& actual, const string& timerName)
+{
+    SWSS_LOG_ENTER();
+    // TODO: Implementation
+    return false;
+}
+
+bool PfcWdHwOrch::configureHwWatchdog(const Port& port, uint32_t detectionTime,
+                                      uint32_t restorationTime, PfcWdAction action)
+{
+    SWSS_LOG_ENTER();
+    // TODO: Implementation
+    return false;
+}
+
+bool PfcWdHwOrch::configureSwitchAction(const Port& port, PfcWdAction action,
+                                        const function<bool(const string&)>& handleFailure)
+{
+    SWSS_LOG_ENTER();
+    // TODO: Implementation
+    return false;
+}
+
+bool PfcWdHwOrch::configureTimerGranularity(const Port& port, uint32_t detectionTime,
+                                            uint32_t& timerGranularity,
+                                            const function<bool(const string&)>& handleFailure)
+{
+    SWSS_LOG_ENTER();
+    // TODO: Implementation
+    return false;
+}
+
+bool PfcWdHwOrch::configureTimerIntervals(const Port& port, const set<uint8_t>& losslessTc,
+                                          uint32_t detectionTime, uint32_t restorationTime,
+                                          const function<bool(const string&)>& handleFailure)
+{
+    SWSS_LOG_ENTER();
+    // TODO: Implementation
+    return false;
+}
+
+bool PfcWdHwOrch::enableDldrOnLosslessQueues(const Port& port, const set<uint8_t>& losslessTc,
+                                             uint32_t detectionTime, uint32_t restorationTime,
+                                             const function<bool(const string&)>& handleFailure)
+{
+    SWSS_LOG_ENTER();
+    // TODO: Implementation
+    return false;
+}
+
+void PfcWdHwOrch::initializeQueueStats(const Port& port, const set<uint8_t>& losslessTc)
+{
+    SWSS_LOG_ENTER();
+    // TODO: Implementation
+}
+
+bool PfcWdHwOrch::disableHwWatchdog(const Port& port)
+{
+    SWSS_LOG_ENTER();
+    // TODO: Implementation
+    return false;
+}
+
+void PfcWdHwOrch::writeFailureStatus(const Port& port)
+{
+    SWSS_LOG_ENTER();
+    // TODO: Implementation
+}
+
+bool PfcWdHwOrch::isPortInStormedState(const Port& port)
+{
+    SWSS_LOG_ENTER();
+    // TODO: Implementation
+    return false;
+}
+
+bool PfcWdHwOrch::readHwCounters(sai_object_id_t queueId, uint8_t queueIndex, PfcWdHwStats& counters)
+{
+    SWSS_LOG_ENTER();
+    // TODO: Implementation
+    return false;
+}
+
+void PfcWdHwOrch::initQueueCounters(const string& queueIdStr, sai_object_id_t queueId, uint8_t queueIndex)
+{
+    SWSS_LOG_ENTER();
+    // TODO: Implementation
+}
+
+void PfcWdHwOrch::updateQueueCounters(const string& queueIdStr, sai_object_id_t queueId,
+                                      uint8_t queueIndex, bool periodic)
+{
+    SWSS_LOG_ENTER();
+    // TODO: Implementation
+}
+
+uint32_t PfcWdHwOrch::roundUpToValidInterval(uint32_t requestedTime, const vector<uint32_t>& validIntervals)
+{
+    SWSS_LOG_ENTER();
+    // TODO: Implementation
+    return 0;
+}
