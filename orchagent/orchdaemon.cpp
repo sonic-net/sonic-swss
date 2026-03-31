@@ -19,7 +19,6 @@ using namespace swss;
 
 /* select() function timeout retry time */
 #define SELECT_TIMEOUT 1000
-#define PFC_WD_POLL_MSECS 100
 
 #define APP_FABRIC_MONITOR_PORT_TABLE_NAME      "FABRIC_PORT_TABLE"
 #define APP_FABRIC_MONITOR_DATA_TABLE_NAME      "FABRIC_MONITOR_TABLE"
@@ -734,6 +733,7 @@ bool OrchDaemon::init()
         static const vector<sai_queue_stat_t> queueStatIds =
         {
             SAI_QUEUE_STAT_PACKETS,
+            SAI_QUEUE_STAT_DROPPED_PACKETS,
             SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES,
         };
 
@@ -760,8 +760,31 @@ bool OrchDaemon::init()
             }
         }
 
-        if(pfcDlrInit)
+        // Check if SKU supports PFC hardware watchdog
+        bool pfcHwWdSupportedSku = gSwitchOrch->isHwPfcWdSupportedSku();
+
+        if (pfcHwWdSupportedSku)
         {
+            SWSS_LOG_NOTICE("HWSKU '%s' supports PFC hardware watchdog", gSwitchOrch->getHwSku().c_str());
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("HWSKU '%s' does not support PFC hardware watchdog", gSwitchOrch->getHwSku().c_str());
+        }
+
+        if (pfcDlrInit && pfcHwWdSupportedSku)
+        {
+            SWSS_LOG_NOTICE("Starting hardware-based pfc watchdog");
+            m_orchList.push_back(new PfcWdHwOrch(
+                        m_configDb,
+                        pfc_wd_tables,
+                        portStatIds,
+                        queueStatIds,
+                        queueAttrIds));
+        }
+        else if(pfcDlrInit)
+        {
+            SWSS_LOG_NOTICE("Starting dlr init handler for pfc watchdog");
             m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(
                         m_configDb,
                         pfc_wd_tables,
@@ -772,6 +795,7 @@ bool OrchDaemon::init()
         }
         else
         {
+            SWSS_LOG_NOTICE("Starting acl handler for pfc watchdog");
             m_orchList.push_back(new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
                         m_configDb,
                         pfc_wd_tables,

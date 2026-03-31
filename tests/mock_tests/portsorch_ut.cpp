@@ -70,6 +70,22 @@ namespace portsorch_test
     sai_object_id_t _sai_create_port_serdes_fail_for_port_id = SAI_NULL_OBJECT_ID;
     std::map<sai_object_id_t, sai_object_id_t> _port_to_serdes_map;
 
+    // HW PFCWD tracking - declare before functions that use them
+    uint32_t _sai_pfc_dld_range_min = 10;
+    uint32_t _sai_pfc_dld_range_max = 1500;
+    uint32_t _sai_pfc_dlr_range_min = 100;
+    uint32_t _sai_pfc_dlr_range_max = 1000;
+    sai_queue_pfc_deadlock_notification_fn _sai_captured_deadlock_callback = nullptr;
+    map<sai_object_id_t, uint32_t> _sai_port_dld_intervals;
+    map<sai_object_id_t, uint32_t> _sai_port_dlr_intervals;
+    map<sai_object_id_t, bool> _sai_queue_dldr_enabled;  // Track actual DLDR state per queue
+
+    // Failure injection flags for PFC watchdog SAI calls
+    bool _sai_fail_switch_dlr_packet_action = false;
+    bool _sai_fail_port_dld_interval = false;
+    bool _sai_fail_port_dlr_interval = false;
+    bool _sai_fail_queue_dldr_enable = false;
+
     sai_status_t _ut_stub_sai_get_port_attribute(
         _In_ sai_object_id_t port_id,
         _In_ uint32_t attr_count,
@@ -111,6 +127,34 @@ namespace portsorch_test
                 attr_list[0].value.oid = it->second;
             } else {
                 attr_list[0].value.oid = SAI_NULL_OBJECT_ID;
+            }
+            status = SAI_STATUS_SUCCESS;
+        }
+        else if (attr_count == 1 && attr_list[0].id == SAI_PORT_ATTR_PFC_TC_DLD_INTERVAL)
+        {
+            auto it = _sai_port_dld_intervals.find(port_id);
+            if (it != _sai_port_dld_intervals.end() &&
+                attr_list[0].value.maplist.count > 0 &&
+                attr_list[0].value.maplist.list != nullptr)
+            {
+                for (uint32_t i = 0; i < attr_list[0].value.maplist.count; i++)
+                {
+                    attr_list[0].value.maplist.list[i].value = it->second;
+                }
+            }
+            status = SAI_STATUS_SUCCESS;
+        }
+        else if (attr_count == 1 && attr_list[0].id == SAI_PORT_ATTR_PFC_TC_DLR_INTERVAL)
+        {
+            auto it = _sai_port_dlr_intervals.find(port_id);
+            if (it != _sai_port_dlr_intervals.end() &&
+                attr_list[0].value.maplist.count > 0 &&
+                attr_list[0].value.maplist.list != nullptr)
+            {
+                for (uint32_t i = 0; i < attr_list[0].value.maplist.count; i++)
+                {
+                    attr_list[0].value.maplist.list[i].value = it->second;
+                }
             }
             status = SAI_STATUS_SUCCESS;
         }
@@ -219,6 +263,38 @@ namespace portsorch_test
         {
             _sai_set_port_tpid_count++;
         }
+        else if (attr[0].id == SAI_PORT_ATTR_PFC_TC_DLD_INTERVAL)
+        {
+            if (_sai_fail_port_dld_interval)
+            {
+                return SAI_STATUS_FAILURE;
+            }
+            if (attr[0].value.maplist.count == 0)
+            {
+                _sai_port_dld_intervals.erase(port_id);
+            }
+            else if (attr[0].value.maplist.list != nullptr)
+            {
+                _sai_port_dld_intervals[port_id] = attr[0].value.maplist.list[0].value;
+            }
+            return SAI_STATUS_SUCCESS;
+        }
+        else if (attr[0].id == SAI_PORT_ATTR_PFC_TC_DLR_INTERVAL)
+        {
+            if (_sai_fail_port_dlr_interval)
+            {
+                return SAI_STATUS_FAILURE;
+            }
+            if (attr[0].value.maplist.count == 0)
+            {
+                _sai_port_dlr_intervals.erase(port_id);
+            }
+            else if (attr[0].value.maplist.list != nullptr)
+            {
+                _sai_port_dlr_intervals[port_id] = attr[0].value.maplist.list[0].value;
+            }
+            return SAI_STATUS_SUCCESS;
+        }
         else if (attr[0].id == SAI_REDIS_PORT_ATTR_LINK_EVENT_DAMPING_ALGORITHM)
         {
             _sai_set_link_event_damping_algorithm_count++;
@@ -274,6 +350,18 @@ namespace portsorch_test
             attr_list[0].value.s32list.count = i;
             status = SAI_STATUS_SUCCESS;
         }
+        else if (attr_count == 1 && attr_list[0].id == SAI_SWITCH_ATTR_PFC_TC_DLD_INTERVAL_RANGE)
+        {
+            attr_list[0].value.u32range.min = _sai_pfc_dld_range_min;
+            attr_list[0].value.u32range.max = _sai_pfc_dld_range_max;
+            status = SAI_STATUS_SUCCESS;
+        }
+        else if (attr_count == 1 && attr_list[0].id == SAI_SWITCH_ATTR_PFC_TC_DLR_INTERVAL_RANGE)
+        {
+            attr_list[0].value.u32range.min = _sai_pfc_dlr_range_min;
+            attr_list[0].value.u32range.max = _sai_pfc_dlr_range_max;
+            status = SAI_STATUS_SUCCESS;
+        }
         else
         {
             status = pold_sai_switch_api->get_switch_attribute(switch_id, attr_count, attr_list);
@@ -285,6 +373,7 @@ namespace portsorch_test
     int32_t *_sai_syncd_notification_event;
     uint32_t _sai_switch_dlr_packet_action_count;
     uint32_t _sai_switch_dlr_packet_action;
+
     sai_status_t _ut_stub_sai_set_switch_attribute(
         _In_ sai_object_id_t switch_id,
         _In_ const sai_attribute_t *attr)
@@ -297,8 +386,18 @@ namespace portsorch_test
 	else if (attr[0].id == SAI_SWITCH_ATTR_PFC_DLR_PACKET_ACTION)
         {
 	    _sai_switch_dlr_packet_action_count++;
+	    if (_sai_fail_switch_dlr_packet_action)
+	    {
+	        return SAI_STATUS_FAILURE;
+	    }
 	    _sai_switch_dlr_packet_action = attr[0].value.s32;
 	}
+        else if (attr[0].id == SAI_SWITCH_ATTR_QUEUE_PFC_DEADLOCK_NOTIFY)
+        {
+            _sai_captured_deadlock_callback =
+                reinterpret_cast<sai_queue_pfc_deadlock_notification_fn>(attr[0].value.ptr);
+            return SAI_STATUS_SUCCESS;
+        }
         return pold_sai_switch_api->set_switch_attribute(switch_id, attr);
     }
 
@@ -421,6 +520,14 @@ namespace portsorch_test
                 _sai_set_queue_attr_count--;
             }
         }
+        else if (attr->id == SAI_QUEUE_ATTR_ENABLE_PFC_DLDR)
+        {
+            if (_sai_fail_queue_dldr_enable)
+            {
+                return SAI_STATUS_FAILURE;
+            }
+            _sai_queue_dldr_enabled[queue_id] = attr->value.booldata;
+        }
         return SAI_STATUS_SUCCESS;
     }
 
@@ -431,6 +538,17 @@ namespace portsorch_test
         _In_ uint32_t attr_count,
         _Inout_ sai_attribute_t *attr_list)
     {
+        for (auto i = 0u; i < attr_count; i++)
+        {
+            if (attr_list[i].id == SAI_QUEUE_ATTR_ENABLE_PFC_DLDR)
+            {
+                // Return the actual DLDR state for this queue
+                auto it = _sai_queue_dldr_enabled.find(queue_id);
+                attr_list[i].value.booldata = (it != _sai_queue_dldr_enabled.end()) ? it->second : false;
+                return SAI_STATUS_SUCCESS;
+            }
+        }
+
         if (_sai_mock_queue_attr)
         {
             _sai_get_queue_attr_count++;
@@ -4796,4 +4914,945 @@ namespace portsorch_test
 
         ASSERT_FALSE(port.m_init);
     }
+
+// ============================================================================
+// PFC Hardware Watchdog Tests
+// ============================================================================
+
+struct PfcWdHwOrchTest : public PortsOrchTest
+{
+    static const vector<sai_port_stat_t>  s_portStatIds;
+    static const vector<sai_queue_stat_t> s_queueStatIds;
+    static const vector<sai_queue_attr_t> s_queueAttrIds;
+
+    void SetUp() override
+    {
+        // Initialize logger to output to stdout/stderr
+        swss::Logger::getInstance().setMinPrio(swss::Logger::SWSS_NOTICE);
+
+        PortsOrchTest::SetUp();
+
+        // Set platform environment variable required by PfcWdBaseOrch constructor
+        setenv("platform", "broadcom", 1);
+
+        // SAI hooks must be in place before PfcWdHwOrch constructor so that
+        // initializeTimerRanges() and registerCallbacks() see the stubs.
+        _hook_sai_switch_api();
+        _hook_sai_port_api();
+        _hook_sai_queue_api();
+
+        // Reset hw-specific counters for each test
+        _sai_switch_dlr_packet_action_count = 0;
+        _sai_captured_deadlock_callback = nullptr;
+        _sai_port_dld_intervals.clear();
+        _sai_port_dlr_intervals.clear();
+        _sai_queue_dldr_enabled.clear();
+
+        vector<string> pfc_wd_tables = { CFG_PFC_WD_TABLE_NAME };
+        gPfcWdHwOrch = new PfcWdHwOrch(
+            m_config_db.get(), pfc_wd_tables,
+            s_portStatIds, s_queueStatIds, s_queueAttrIds);
+    }
+
+    void TearDown() override
+    {
+        delete gPfcWdHwOrch;
+        gPfcWdHwOrch = nullptr;
+        _unhook_sai_queue_api();
+        _unhook_sai_port_api();
+        _unhook_sai_switch_api();
+        unsetenv("platform");
+        PortsOrchTest::TearDown();
+    }
+
+    // Reset all PFC watchdog failure injection flags
+    void resetPfcWdFailureFlags()
+    {
+        _sai_fail_switch_dlr_packet_action = false;
+        _sai_fail_port_dld_interval = false;
+        _sai_fail_port_dlr_interval = false;
+        _sai_fail_queue_dldr_enable = false;
+    }
+
+    // Populate APP_PORT_TABLE, run portsorch, assert allPortsReady.
+    void bringUpPorts()
+    {
+        Table portTable(m_app_db.get(), APP_PORT_TABLE_NAME);
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+            portTable.set(it.first, it.second);
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone",   { { "lanes", "0" } });
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        ASSERT_TRUE(gPortsOrch->allPortsReady());
+    }
+
+    // Enable PFC on given queues for the named port via PORT_QOS_MAP.
+    void enablePfcOnPort(const string &portName, const string &queues = "3,4")
+    {
+        deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ portName, "SET",
+            { { "pfc_enable", queues }, { "pfcwd_sw_enable", queues } } });
+        auto consumer = dynamic_cast<Consumer *>(
+            gQosOrch->getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gQosOrch)->doTask();
+    }
+
+    // Push a DEL entry to the hw orch consumer and run doTask().
+    void deleteHwWdEntry(const string &port)
+    {
+        deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ port, "DEL", {} });
+        auto consumer = dynamic_cast<Consumer *>(
+            gPfcWdHwOrch->getExecutor(CFG_PFC_WD_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPfcWdHwOrch)->doTask();
+    }
+};
+
+const vector<sai_port_stat_t> PfcWdHwOrchTest::s_portStatIds = {
+    SAI_PORT_STAT_PFC_0_ON2OFF_RX_PKTS,
+    SAI_PORT_STAT_PFC_1_ON2OFF_RX_PKTS,
+    SAI_PORT_STAT_PFC_2_ON2OFF_RX_PKTS,
+    SAI_PORT_STAT_PFC_3_ON2OFF_RX_PKTS,
+    SAI_PORT_STAT_PFC_4_ON2OFF_RX_PKTS,
+    SAI_PORT_STAT_PFC_5_ON2OFF_RX_PKTS,
+    SAI_PORT_STAT_PFC_6_ON2OFF_RX_PKTS,
+    SAI_PORT_STAT_PFC_7_ON2OFF_RX_PKTS,
+};
+const vector<sai_queue_stat_t> PfcWdHwOrchTest::s_queueStatIds = {
+    SAI_QUEUE_STAT_PACKETS,
+    SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES,
+};
+const vector<sai_queue_attr_t> PfcWdHwOrchTest::s_queueAttrIds = {
+    SAI_QUEUE_ATTR_PAUSE_STATUS,
+};
+
+TEST_F(PfcWdHwOrchTest, GlobalConfigRejected)
+{
+    // Capture the return status
+    auto status = gPfcWdHwOrch->createEntry("GLOBAL",
+        { { "poll_interval", "200" } });
+
+    // Verify GLOBAL config returns invalid_entry status
+    ASSERT_EQ(status, task_process_status::task_invalid_entry);
+
+    // GLOBAL configuration should be rejected for hardware-based PFC watchdog
+    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("GLOBAL"), 0u);
+}
+
+TEST_F(PfcWdHwOrchTest, NonPhysicalPortRejected)
+{
+    // Create a LAG port (non-physical)
+    auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_LAG_TABLE_NAME));
+    deque<KeyOpFieldsValuesTuple> entries;
+    entries.push_back({"PortChannel01", "SET", {}});
+    consumer->addToSync(entries);
+    static_cast<Orch *>(gPortsOrch)->doTask();
+
+    // Try to configure PFC watchdog on LAG port
+    auto status = gPfcWdHwOrch->createEntry("PortChannel01",
+        { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    // Non-physical port should be rejected
+    ASSERT_EQ(status, task_process_status::task_invalid_entry);
+    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("PortChannel01"), 0u);
+}
+
+TEST_F(PfcWdHwOrchTest, InvalidPortRejected)
+{
+    auto status = gPfcWdHwOrch->createEntry("EthernetNonExistent",
+        { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    ASSERT_EQ(status, task_process_status::task_invalid_entry);
+    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("EthernetNonExistent"), 0u);
+}
+
+TEST_F(PfcWdHwOrchTest, DeleteEntryValidation)
+{
+    // Delete non-existent port
+    auto status = gPfcWdHwOrch->deleteEntry("EthernetNonExistent");
+    ASSERT_EQ(status, task_process_status::task_invalid_entry);
+}
+
+TEST_F(PfcWdHwOrchTest, TimeRangeValidation)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+
+    struct TimeRangeTestCase {
+        string name;
+        uint32_t detectionMin;
+        uint32_t detectionMax;
+        uint32_t restorationMin;
+        uint32_t restorationMax;
+        string requestedDetection;
+        string requestedRestoration;
+    };
+
+    vector<TimeRangeTestCase> testCases = {
+        {
+            "DetectionTimeBelowMin",
+            200,   // min
+            5000,  // max
+            100,   // restoration min
+            60000, // restoration max
+            "100", // requested (below min of 200)
+            "200"
+        },
+        {
+            "DetectionTimeAboveMax",
+            100,   // min
+            500,   // max
+            100,   // restoration min
+            60000, // restoration max
+            "1000", // requested (above max of 500)
+            "200"
+        },
+        {
+            "RestorationTimeBelowMin",
+            100,   // detection min
+            5000,  // detection max
+            500,   // min
+            60000, // max
+            "200",
+            "200"  // requested (below min of 500)
+        },
+        {
+            "RestorationTimeAboveMax",
+            100,   // detection min
+            5000,  // detection max
+            100,   // min
+            1000,  // max
+            "200",
+            "2000" // requested (above max of 1000)
+        }
+    };
+
+    for (const auto& tc : testCases) {
+        // Configure hardware time ranges
+        gPfcWdHwOrch->m_detectionTimeMin = tc.detectionMin;
+        gPfcWdHwOrch->m_detectionTimeMax = tc.detectionMax;
+        gPfcWdHwOrch->m_restorationTimeMin = tc.restorationMin;
+        gPfcWdHwOrch->m_restorationTimeMax = tc.restorationMax;
+
+        auto status = gPfcWdHwOrch->createEntry("Ethernet0",
+            { { "action", "drop" },
+              { "detection_time", tc.requestedDetection },
+              { "restoration_time", tc.requestedRestoration } });
+
+        ASSERT_EQ(status, task_process_status::task_invalid_entry)
+            << "Test case '" << tc.name << "' failed: should reject out-of-range time";
+        ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 0u)
+            << "Test case '" << tc.name << "' failed: port should not be configured";
+    }
+}
+
+TEST_F(PfcWdHwOrchTest, InvalidConfigRejected)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+
+    // Test 1: Unknown action
+    auto status = gPfcWdHwOrch->createEntry("Ethernet0",
+        { { "action", "invalid_action" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+    ASSERT_EQ(status, task_process_status::task_invalid_entry);
+    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 0u);
+
+    // Test 2: Missing detection_time field
+    status = gPfcWdHwOrch->createEntry("Ethernet0",
+        { { "action", "drop" }, { "restoration_time", "200" } });
+    ASSERT_EQ(status, task_process_status::task_invalid_entry);
+    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 0u);
+
+    // Test 3: Unknown field
+    status = gPfcWdHwOrch->createEntry("Ethernet0",
+        { { "action", "drop" },
+          { "detection_time", "200" },
+          { "restoration_time", "200" },
+          { "unknown_field", "some_value" } });
+    ASSERT_EQ(status, task_process_status::task_invalid_entry);
+    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 0u);
+}
+
+TEST_F(PfcWdHwOrchTest, NoLosslessTcFailure)
+{
+    bringUpPorts();
+    // Deliberately skip enablePfcOnPort — no lossless TCs on Ethernet0
+
+    auto consumer = dynamic_cast<Consumer *>(
+        gPfcWdHwOrch->getExecutor(CFG_PFC_WD_TABLE_NAME));
+    deque<KeyOpFieldsValuesTuple> entries;
+    entries.push_back({ "Ethernet0", "SET",
+        { { "action", "drop" }, { "detection_time", "200" },
+          { "restoration_time", "200" } } });
+    consumer->addToSync(entries);
+    static_cast<Orch *>(gPfcWdHwOrch)->doTask();
+
+    // Verify STATE_DB reports failure status
+    vector<FieldValueTuple> fvs;
+    ASSERT_TRUE(gPfcWdHwOrch->m_pfcWdHwStateTable->get("Ethernet0", fvs));
+    map<string, string> fields(fvs.begin(), fvs.end());
+    ASSERT_EQ(fields["status"], "failed");
+
+    // Port must not be tracked
+    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 0u);
+}
+
+TEST_F(PfcWdHwOrchTest, FirstPortAction)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+    enablePfcOnPort("Ethernet8");
+
+    auto before = _sai_switch_dlr_packet_action_count;
+    gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    ASSERT_EQ(_sai_switch_dlr_packet_action_count, before + 1);
+    ASSERT_EQ(_sai_switch_dlr_packet_action, (uint32_t)SAI_PACKET_ACTION_DROP);
+    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 1u);
+}
+
+TEST_F(PfcWdHwOrchTest, ActionMismatchRejected)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+    enablePfcOnPort("Ethernet8");
+
+    gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    // Attempt forward on second port while first is drop — must be rejected
+    auto status = gPfcWdHwOrch->createEntry("Ethernet8", { { "action", "forward" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    ASSERT_EQ(status, task_process_status::task_invalid_entry);
+    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet8"), 0u);
+}
+
+TEST_F(PfcWdHwOrchTest, ActionResetOnLastDelete)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+
+    gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+    ASSERT_EQ(gPfcWdHwOrch->getPfcDlrPacketAction(), PfcWdAction::PFC_WD_ACTION_DROP);
+
+    deleteHwWdEntry("Ethernet0");
+    ASSERT_EQ(gPfcWdHwOrch->getPfcDlrPacketAction(), PfcWdAction::PFC_WD_ACTION_UNKNOWN);
+    ASSERT_TRUE(gPfcWdHwOrch->m_hwWdPorts.empty());
+}
+
+TEST_F(PfcWdHwOrchTest, ForwardActionConfig)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+
+    auto beforeCount = _sai_switch_dlr_packet_action_count;
+
+    auto status = gPfcWdHwOrch->createEntry("Ethernet0",
+        { { "action", "forward" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    ASSERT_EQ(status, task_process_status::task_success);
+    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 1u);
+
+    // Verify SAI_SWITCH_ATTR_PFC_DLR_PACKET_ACTION was set to FORWARD
+    ASSERT_GT(_sai_switch_dlr_packet_action_count, beforeCount);
+    ASSERT_EQ(_sai_switch_dlr_packet_action, SAI_PACKET_ACTION_FORWARD);
+
+    Port port;
+    gPortsOrch->getPort("Ethernet0", port);
+
+    // Verify DLDR is enabled on lossless queues even with forward action
+    sai_object_id_t queue_tc3 = port.m_queue_ids[3];
+    sai_object_id_t queue_tc4 = port.m_queue_ids[4];
+    ASSERT_TRUE(_sai_queue_dldr_enabled[queue_tc3]);
+    ASSERT_TRUE(_sai_queue_dldr_enabled[queue_tc4]);
+}
+
+TEST_F(PfcWdHwOrchTest, ReconfigurePort)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+
+    gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 1u);
+
+    Port port;
+    gPortsOrch->getPort("Ethernet0", port);
+
+    // Verify initial intervals
+    ASSERT_EQ(_sai_port_dld_intervals[port.m_port_id], 200u);
+    ASSERT_EQ(_sai_port_dlr_intervals[port.m_port_id], 200u);
+
+    // Same port reconfigures with forward action and new intervals
+    auto beforeAction = _sai_switch_dlr_packet_action_count;
+
+    gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "forward" }, { "detection_time", "300" }, { "restoration_time", "400" } });
+
+    // Verify action was re-set
+    ASSERT_GT(_sai_switch_dlr_packet_action_count, beforeAction);
+    ASSERT_EQ(_sai_switch_dlr_packet_action, (uint32_t)SAI_PACKET_ACTION_FORWARD);
+
+    // Verify DLD interval was re-set with new value
+    ASSERT_EQ(_sai_port_dld_intervals[port.m_port_id], 300u);
+
+    // Verify DLR interval was re-set with new value
+    ASSERT_EQ(_sai_port_dlr_intervals[port.m_port_id], 400u);
+}
+
+TEST_F(PfcWdHwOrchTest, StateDbLifecycle)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+
+    // Configure PFC watchdog
+    gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "300" } });
+
+    // Verify STATE_DB entry written on success
+    vector<FieldValueTuple> fvs;
+    ASSERT_TRUE(gPfcWdHwOrch->m_pfcWdHwStateTable->get("Ethernet0", fvs));
+    map<string, string> fields(fvs.begin(), fvs.end());
+    ASSERT_EQ(fields["recovery_type"], "hardware");
+    ASSERT_EQ(fields["status"], "configured");
+    ASSERT_EQ(fields["action"], "drop");
+    ASSERT_EQ(fields["configured_detection_time"], "200");
+    ASSERT_EQ(fields["configured_restoration_time"], "300");
+
+    // Delete PFC watchdog
+    deleteHwWdEntry("Ethernet0");
+
+    // Verify STATE_DB entry removed on stop
+    ASSERT_FALSE(gPfcWdHwOrch->m_pfcWdHwStateTable->get("Ethernet0", fvs));
+}
+
+TEST_F(PfcWdHwOrchTest, StateDbGlobalRecoveryMechanism)
+{
+    auto stateTable = gPfcWdHwOrch->getStateTable();
+    string fullKey = stateTable->getTableName() + stateTable->getTableNameSeparator() + "PFC_WD";
+    auto value = gPfcWdHwOrch->getStateDb()->hget(fullKey, PFC_WD_RECOVERY_MECHANISM);
+    ASSERT_NE(value, nullptr);
+    ASSERT_EQ(*value, PFC_WD_RECOVERY_HARDWARE);
+}
+
+TEST_F(PfcWdHwOrchTest, WarmRebootRecovery)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+
+    // Add configuration to CONFIG_DB before warm reboot
+    Table cfgPfcWdTable(m_config_db.get(), CFG_PFC_WD_TABLE_NAME);
+    cfgPfcWdTable.set("Ethernet0", {
+        { "action", "drop" },
+        { "detection_time", "200" },
+        { "restoration_time", "200" }
+    });
+
+    // Simulate warm reboot: destroy and recreate PfcWdHwOrch
+    delete gPfcWdHwOrch;
+
+    vector<string> pfc_wd_tables = { CFG_PFC_WD_TABLE_NAME };
+    static const vector<sai_port_stat_t> portStatIds = {
+        SAI_PORT_STAT_PFC_0_RX_PKTS,
+        SAI_PORT_STAT_PFC_1_RX_PKTS
+    };
+    static const vector<sai_queue_stat_t> queueStatIds = {
+        SAI_QUEUE_STAT_PACKETS
+    };
+    static const vector<sai_queue_attr_t> queueAttrIds = {
+        SAI_QUEUE_ATTR_PAUSE_STATUS
+    };
+
+    gPfcWdHwOrch = new PfcWdHwOrch(m_config_db.get(), pfc_wd_tables,
+                                    portStatIds, queueStatIds, queueAttrIds);
+
+    // Process warm reboot recovery
+    static_cast<Orch *>(gPfcWdHwOrch)->doTask();
+
+    // Verify configuration was restored
+    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 1u);
+
+    Port port;
+    gPortsOrch->getPort("Ethernet0", port);
+    ASSERT_EQ(_sai_port_dld_intervals.count(port.m_port_id), 1u);
+    ASSERT_EQ(_sai_port_dlr_intervals.count(port.m_port_id), 1u);
+}
+
+TEST_F(PfcWdHwOrchTest, IntervalsSet)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+
+    gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "drop" }, { "detection_time", "300" }, { "restoration_time", "400" } });
+
+    Port port;
+    gPortsOrch->getPort("Ethernet0", port);
+
+    // Verify DLD interval value (detection_time = 300ms)
+    ASSERT_EQ(_sai_port_dld_intervals.count(port.m_port_id), 1u);
+    ASSERT_EQ(_sai_port_dld_intervals[port.m_port_id], 300u);
+
+    // Verify DLR interval value (restoration_time = 400ms)
+    ASSERT_EQ(_sai_port_dlr_intervals.count(port.m_port_id), 1u);
+    ASSERT_EQ(_sai_port_dlr_intervals[port.m_port_id], 400u);
+}
+
+TEST_F(PfcWdHwOrchTest, IntervalsCleared)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+
+    gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "drop" }, { "detection_time", "300" }, { "restoration_time", "400" } });
+    Port port;
+    gPortsOrch->getPort("Ethernet0", port);
+
+    // Verify both intervals are set
+    ASSERT_EQ(_sai_port_dld_intervals.count(port.m_port_id), 1u);
+    ASSERT_EQ(_sai_port_dlr_intervals.count(port.m_port_id), 1u);
+
+    deleteHwWdEntry("Ethernet0");
+
+    // Verify both interval maps are cleared for this port after disable
+    ASSERT_EQ(_sai_port_dld_intervals.count(port.m_port_id), 0u);
+    ASSERT_EQ(_sai_port_dlr_intervals.count(port.m_port_id), 0u);
+}
+
+TEST_F(PfcWdHwOrchTest, DldrLifecycle)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+
+    gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    // Get port and queue IDs
+    Port port;
+    ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+    ASSERT_LT(3, port.m_queue_ids.size());
+    ASSERT_LT(4, port.m_queue_ids.size());
+    sai_object_id_t queue_tc3 = port.m_queue_ids[3];
+    sai_object_id_t queue_tc4 = port.m_queue_ids[4];
+
+    // Verify DLDR is enabled on lossless queues (TCs 3 and 4)
+    ASSERT_TRUE(_sai_queue_dldr_enabled.find(queue_tc3) != _sai_queue_dldr_enabled.end());
+    ASSERT_TRUE(_sai_queue_dldr_enabled[queue_tc3]);
+    ASSERT_TRUE(_sai_queue_dldr_enabled.find(queue_tc4) != _sai_queue_dldr_enabled.end());
+    ASSERT_TRUE(_sai_queue_dldr_enabled[queue_tc4]);
+
+    deleteHwWdEntry("Ethernet0");
+
+    // Verify DLDR is disabled after deletion
+    ASSERT_FALSE(_sai_queue_dldr_enabled[queue_tc3]);
+    ASSERT_FALSE(_sai_queue_dldr_enabled[queue_tc4]);
+}
+
+TEST_F(PfcWdHwOrchTest, CallbackRegistered)
+{
+    // Verify callback was registered during PfcWdHwOrch construction
+    ASSERT_NE(_sai_captured_deadlock_callback, nullptr);
+
+    // Verify callback can be invoked
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+    gPfcWdHwOrch->createEntry("Ethernet0",
+        { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    Port port;
+    gPortsOrch->getPort("Ethernet0", port);
+    sai_object_id_t queueId = port.m_queue_ids[3];
+
+    // Invoke the captured callback directly
+    sai_queue_deadlock_notification_data_t data;
+    data.queue_id = queueId;
+    data.event = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_DETECTED;
+    data.app_managed_recovery = true;
+
+    _sai_captured_deadlock_callback(1, &data);
+
+    // Verify callback executed successfully (stats updated)
+    string queueIdStr = sai_serialize_object_id(queueId);
+    auto stats = gPfcWdHwOrch->getQueueStats(queueIdStr);
+    ASSERT_EQ(stats.detectCount, 1u);
+}
+
+TEST_F(PfcWdHwOrchTest, DeadlockLifecycle)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+    gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    Port port;
+    gPortsOrch->getPort("Ethernet0", port);
+    sai_object_id_t queueId = port.m_queue_ids[3];
+
+    string queueIdStr = sai_serialize_object_id(queueId);
+    sai_queue_deadlock_notification_data_t data;
+    data.queue_id           = queueId;
+    data.app_managed_recovery = true;
+
+    // Simulate DETECTED event from hardware
+    data.event = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_DETECTED;
+    gPfcWdHwOrch->onQueuePfcDeadlock(1, &data);
+
+    // Verify stats after detection
+    auto stats = gPfcWdHwOrch->getQueueStats(queueIdStr);
+    ASSERT_EQ(stats.detectCount, 1u);
+    ASSERT_FALSE(stats.operational);
+
+    // Simulate RECOVERED event from hardware
+    data.event = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_RECOVERED;
+    gPfcWdHwOrch->onQueuePfcDeadlock(1, &data);
+
+    // Verify stats after recovery
+    stats = gPfcWdHwOrch->getQueueStats(queueIdStr);
+    ASSERT_EQ(stats.detectCount, 1u);
+    ASSERT_EQ(stats.restoreCount, 1u);
+    ASSERT_TRUE(stats.operational);
+}
+
+TEST_F(PfcWdHwOrchTest, DeadlockCountsAccumulate)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+    gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    Port port;
+    gPortsOrch->getPort("Ethernet0", port);
+    sai_object_id_t queueId = port.m_queue_ids[3];
+    string queueIdStr = sai_serialize_object_id(queueId);
+
+    // Storm DETECTED and RECOVERED three times each
+    sai_queue_deadlock_notification_data_t data;
+    data.queue_id = queueId;
+    data.app_managed_recovery = true;
+
+    for (int i = 0; i < 3; i++)
+    {
+        data.event = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_DETECTED;
+        gPfcWdHwOrch->onQueuePfcDeadlock(1, &data);
+        data.event = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_RECOVERED;
+        gPfcWdHwOrch->onQueuePfcDeadlock(1, &data);
+    }
+
+    auto stats = gPfcWdHwOrch->getQueueStats(queueIdStr);
+    ASSERT_EQ(stats.detectCount,  3u);
+    ASSERT_EQ(stats.restoreCount, 3u);
+}
+
+TEST_F(PfcWdHwOrchTest, UnknownQueueHandled)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+    gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    // Use a queue ID that is not in m_queueToPortMap
+    sai_object_id_t unknownQueueId = 0xDEADBEEF;
+    ASSERT_EQ(gPfcWdHwOrch->m_queueToPortMap.count(unknownQueueId), 0u);
+
+    sai_queue_deadlock_notification_data_t data;
+    data.queue_id           = unknownQueueId;
+    data.event              = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_DETECTED;
+    data.app_managed_recovery = true;
+
+    // Must not crash, stats will not be created but no port info
+    ASSERT_NO_FATAL_FAILURE(gPfcWdHwOrch->onQueuePfcDeadlock(1, &data));
+
+    string queueIdStr = sai_serialize_object_id(unknownQueueId);
+    auto stats = gPfcWdHwOrch->getQueueStats(queueIdStr);
+    ASSERT_EQ(stats.detectCount, 0u);
+}
+
+TEST_F(PfcWdHwOrchTest, MultipleEventsHandled)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+    gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    Port port;
+    gPortsOrch->getPort("Ethernet0", port);
+    sai_object_id_t queueId3 = port.m_queue_ids[3];
+    sai_object_id_t queueId4 = port.m_queue_ids[4];
+
+    // Single callback invocation with two events
+    sai_queue_deadlock_notification_data_t data[2];
+    data[0].queue_id           = queueId3;
+    data[0].event              = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_DETECTED;
+    data[0].app_managed_recovery = true;
+    data[1].queue_id           = queueId4;
+    data[1].event              = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_DETECTED;
+    data[1].app_managed_recovery = true;
+
+    gPfcWdHwOrch->onQueuePfcDeadlock(2, data);
+
+    auto stats3 = gPfcWdHwOrch->getQueueStats(sai_serialize_object_id(queueId3));
+    auto stats4 = gPfcWdHwOrch->getQueueStats(sai_serialize_object_id(queueId4));
+    ASSERT_EQ(stats3.detectCount, 1u);
+    ASSERT_EQ(stats4.detectCount, 1u);
+}
+
+TEST_F(PfcWdHwOrchTest, StormedPortProtection)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+    gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    // Simulate storm on TC 3
+    Port port;
+    gPortsOrch->getPort("Ethernet0", port);
+    sai_object_id_t queueId = port.m_queue_ids[3];
+    sai_queue_deadlock_notification_data_t data;
+    data.queue_id           = queueId;
+    data.event              = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_DETECTED;
+    data.app_managed_recovery = true;
+    gPfcWdHwOrch->onQueuePfcDeadlock(1, &data);
+
+    ASSERT_TRUE(gPfcWdHwOrch->isPortInStormedState(port));
+
+    // Test 1: Reject modify while stormed
+    auto consumer = dynamic_cast<Consumer *>(
+        gPfcWdHwOrch->getExecutor(CFG_PFC_WD_TABLE_NAME));
+    deque<KeyOpFieldsValuesTuple> entries;
+    entries.push_back({ "Ethernet0", "SET",
+        { { "action", "drop" }, { "detection_time", "400" },
+          { "restoration_time", "400" } } });
+    consumer->addToSync(entries);
+    static_cast<Orch *>(gPfcWdHwOrch)->doTask();
+
+    // Detection time must remain 200 ms (not 400) - modification rejected
+    ASSERT_EQ(_sai_port_dld_intervals.count(port.m_port_id), 1u);
+    ASSERT_EQ(_sai_port_dld_intervals[port.m_port_id], 200u);
+
+    // Test 2: Reject delete while stormed
+    deleteHwWdEntry("Ethernet0");
+
+    // Port must still be tracked - delete was rejected
+    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 1u);
+}
+
+TEST_F(PfcWdHwOrchTest, QueueMapLifecycle)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+    gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    Port port;
+    gPortsOrch->getPort("Ethernet0", port);
+    sai_object_id_t q3 = port.m_queue_ids[3];
+    sai_object_id_t q4 = port.m_queue_ids[4];
+
+    // Verify queue-to-port map is populated (TCs 3 and 4)
+    ASSERT_EQ(gPfcWdHwOrch->m_queueToPortMap.count(q3), 1u);
+    ASSERT_EQ(gPfcWdHwOrch->m_queueToPortMap.count(q4), 1u);
+    ASSERT_EQ(gPfcWdHwOrch->m_queueToPortMap[q3].port_alias, "Ethernet0");
+    ASSERT_EQ(gPfcWdHwOrch->m_queueToPortMap[q3].queue_index, 3u);
+
+    deleteHwWdEntry("Ethernet0");
+
+    // Verify queue-to-port map is cleared after deletion
+    ASSERT_EQ(gPfcWdHwOrch->m_queueToPortMap.count(q3), 0u);
+    ASSERT_EQ(gPfcWdHwOrch->m_queueToPortMap.count(q4), 0u);
+}
+
+TEST_F(PfcWdHwOrchTest, StatsPreservedOnReconfig)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+    gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    Port port;
+    gPortsOrch->getPort("Ethernet0", port);
+    sai_object_id_t queueId = port.m_queue_ids[3];
+
+    // Record a detection event
+    sai_queue_deadlock_notification_data_t data;
+    data.queue_id           = queueId;
+    data.event              = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_DETECTED;
+    data.app_managed_recovery = true;
+    gPfcWdHwOrch->onQueuePfcDeadlock(1, &data);
+    data.event              = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_RECOVERED;
+    gPfcWdHwOrch->onQueuePfcDeadlock(1, &data);
+
+    // Reconfigure
+    gPfcWdHwOrch->createEntry("Ethernet0", { { "action", "drop" }, { "detection_time", "300" }, { "restoration_time", "300" } });
+
+    // detectCount must survive the reconfigure
+    string queueIdStr = sai_serialize_object_id(queueId);
+    auto stats = gPfcWdHwOrch->getQueueStats(queueIdStr);
+    ASSERT_EQ(stats.detectCount, 1u);
+    ASSERT_EQ(stats.restoreCount, 1u);
+}
+
+TEST_F(PfcWdHwOrchTest, SAIFailureSwitchAction)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+
+    // Inject failure for SAI_SWITCH_ATTR_PFC_DLR_PACKET_ACTION
+    _sai_fail_switch_dlr_packet_action = true;
+
+    auto status = gPfcWdHwOrch->createEntry("Ethernet0",
+        { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    // Verify entry creation failed
+    ASSERT_NE(status, task_process_status::task_success);
+
+    // Verify clean state: port not added to m_hwWdPorts
+    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 0u);
+
+    Port port;
+    gPortsOrch->getPort("Ethernet0", port);
+
+    // Verify clean state: no intervals set on port
+    ASSERT_EQ(_sai_port_dld_intervals.count(port.m_port_id), 0u);
+    ASSERT_EQ(_sai_port_dlr_intervals.count(port.m_port_id), 0u);
+
+    // Verify clean state: DLDR not enabled on queues
+    for (auto queueId : port.m_queue_ids)
+    {
+        ASSERT_FALSE(_sai_queue_dldr_enabled[queueId]);
+    }
+
+    // Verify STATE_DB reports failure status
+    vector<FieldValueTuple> fvs;
+    ASSERT_TRUE(gPfcWdHwOrch->m_pfcWdHwStateTable->get("Ethernet0", fvs));
+    map<string, string> fields(fvs.begin(), fvs.end());
+    ASSERT_EQ(fields["status"], "failed");
+    ASSERT_EQ(fields["recovery_type"], "hardware");
+
+    resetPfcWdFailureFlags();
+}
+
+TEST_F(PfcWdHwOrchTest, SAIFailureDldInterval)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+
+    // Inject failure for SAI_PORT_ATTR_PFC_TC_DLD_INTERVAL
+    _sai_fail_port_dld_interval = true;
+
+    auto status = gPfcWdHwOrch->createEntry("Ethernet0",
+        { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    // Verify entry creation failed
+    ASSERT_NE(status, task_process_status::task_success);
+
+    // Verify clean state: port not added to m_hwWdPorts
+    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 0u);
+
+    Port port;
+    gPortsOrch->getPort("Ethernet0", port);
+
+    // Verify clean state: no DLD interval set
+    ASSERT_EQ(_sai_port_dld_intervals.count(port.m_port_id), 0u);
+
+    // Verify clean state: no DLR interval set (rollback)
+    ASSERT_EQ(_sai_port_dlr_intervals.count(port.m_port_id), 0u);
+
+    // Verify clean state: DLDR not enabled on queues (rollback)
+    for (auto queueId : port.m_queue_ids)
+    {
+        ASSERT_FALSE(_sai_queue_dldr_enabled[queueId]);
+    }
+
+    // Verify clean state: switch action not set (rollback)
+    ASSERT_EQ(_sai_switch_dlr_packet_action, 0u);
+
+    // Verify STATE_DB reports failure status
+    vector<FieldValueTuple> fvs;
+    ASSERT_TRUE(gPfcWdHwOrch->m_pfcWdHwStateTable->get("Ethernet0", fvs));
+    map<string, string> fields(fvs.begin(), fvs.end());
+    ASSERT_EQ(fields["status"], "failed");
+    ASSERT_EQ(fields["recovery_type"], "hardware");
+
+    resetPfcWdFailureFlags();
+}
+
+TEST_F(PfcWdHwOrchTest, SAIFailureDlrInterval)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+
+    // Inject failure for SAI_PORT_ATTR_PFC_TC_DLR_INTERVAL
+    _sai_fail_port_dlr_interval = true;
+
+    auto status = gPfcWdHwOrch->createEntry("Ethernet0",
+        { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    // Verify entry creation failed
+    ASSERT_NE(status, task_process_status::task_success);
+
+    // Verify clean state: port not added to m_hwWdPorts
+    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 0u);
+
+    Port port;
+    gPortsOrch->getPort("Ethernet0", port);
+
+    // Verify clean state: no DLR interval set
+    ASSERT_EQ(_sai_port_dlr_intervals.count(port.m_port_id), 0u);
+
+    // Verify clean state: DLD interval rolled back
+    ASSERT_EQ(_sai_port_dld_intervals.count(port.m_port_id), 0u);
+
+    // Verify clean state: DLDR not enabled on queues (rollback)
+    for (auto queueId : port.m_queue_ids)
+    {
+        ASSERT_FALSE(_sai_queue_dldr_enabled[queueId]);
+    }
+
+    // Verify clean state: switch action rolled back
+    ASSERT_EQ(_sai_switch_dlr_packet_action, 0u);
+
+    // Verify STATE_DB reports failure status
+    vector<FieldValueTuple> fvs;
+    ASSERT_TRUE(gPfcWdHwOrch->m_pfcWdHwStateTable->get("Ethernet0", fvs));
+    map<string, string> fields(fvs.begin(), fvs.end());
+    ASSERT_EQ(fields["status"], "failed");
+    ASSERT_EQ(fields["recovery_type"], "hardware");
+
+    resetPfcWdFailureFlags();
+}
+
+TEST_F(PfcWdHwOrchTest, SAIFailureQueueDldr)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+
+    // Inject failure for SAI_QUEUE_ATTR_ENABLE_PFC_DLDR
+    _sai_fail_queue_dldr_enable = true;
+
+    auto status = gPfcWdHwOrch->createEntry("Ethernet0",
+        { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    // Verify entry creation failed
+    ASSERT_NE(status, task_process_status::task_success);
+
+    // Verify clean state: port not added to m_hwWdPorts
+    ASSERT_EQ(gPfcWdHwOrch->m_hwWdPorts.count("Ethernet0"), 0u);
+
+    Port port;
+    gPortsOrch->getPort("Ethernet0", port);
+
+    // Verify clean state: DLDR not enabled on any queue
+    for (auto queueId : port.m_queue_ids)
+    {
+        ASSERT_FALSE(_sai_queue_dldr_enabled[queueId]);
+    }
+
+    // Verify clean state: intervals rolled back
+    ASSERT_EQ(_sai_port_dld_intervals.count(port.m_port_id), 0u);
+    ASSERT_EQ(_sai_port_dlr_intervals.count(port.m_port_id), 0u);
+
+    // Verify clean state: switch action rolled back
+    ASSERT_EQ(_sai_switch_dlr_packet_action, 0u);
+
+    // Verify STATE_DB reports failure status
+    vector<FieldValueTuple> fvs;
+    ASSERT_TRUE(gPfcWdHwOrch->m_pfcWdHwStateTable->get("Ethernet0", fvs));
+    map<string, string> fields(fvs.begin(), fvs.end());
+    ASSERT_EQ(fields["status"], "failed");
+    ASSERT_EQ(fields["recovery_type"], "hardware");
+
+    resetPfcWdFailureFlags();
+}
+
 }

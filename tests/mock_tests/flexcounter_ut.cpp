@@ -706,6 +706,7 @@ namespace flexcounter_test
         ASSERT_TRUE(checkFlexCounter(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP, pgOid,
                                      {
                                          {PG_COUNTER_ID_LIST,
+                                          "SAI_INGRESS_PRIORITY_GROUP_STAT_PACKETS,"
                                           "SAI_INGRESS_PRIORITY_GROUP_STAT_DROPPED_PACKETS"
                                          }
                                      }));

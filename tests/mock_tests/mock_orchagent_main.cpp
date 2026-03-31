@@ -24,6 +24,7 @@ bool gOrchUnhealthy = false;
 string gSaiErrorString;
 
 VRFOrch *gVrfOrch;
+PfcWdHwOrch *gPfcWdHwOrch = nullptr;
 
 void syncd_apply_view() {}
 

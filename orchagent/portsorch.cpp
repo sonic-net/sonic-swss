@@ -413,6 +413,7 @@ static const vector<sai_ingress_priority_group_stat_t> ingressPriorityGroupWater
 
 static const vector<sai_ingress_priority_group_stat_t> ingressPriorityGroupDropStatIds =
 {
+    SAI_INGRESS_PRIORITY_GROUP_STAT_PACKETS,
     SAI_INGRESS_PRIORITY_GROUP_STAT_DROPPED_PACKETS
 };
 

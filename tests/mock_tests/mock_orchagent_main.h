@@ -19,6 +19,8 @@
 #include "qosorch.h"
 #define protected public
 #include "pfcwdorch.h"
+#include "pfcwdsworch.h"
+#include "pfcwdhworch.h"
 #undef protected
 #undef private
 #include "vrforch.h"
@@ -66,6 +68,7 @@ extern MirrorOrch *gMirrorOrch;
 extern BufferOrch *gBufferOrch;
 extern QosOrch *gQosOrch;
 template <typename DropHandler, typename ForwardHandler> PfcWdSwOrch<DropHandler, ForwardHandler> *gPfcwdOrch;
+extern PfcWdHwOrch *gPfcWdHwOrch;
 extern VRFOrch *gVrfOrch;
 extern NhgOrch *gNhgOrch;
 extern Srv6Orch  *gSrv6Orch;
