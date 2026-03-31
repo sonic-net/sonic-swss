@@ -465,6 +465,9 @@ private:
     bool setCollectionOnLagMember(Port &lagMember, bool enableCollection);
     bool setDistributionOnLagMember(Port &lagMember, bool enableDistribution);
 
+    /* Propagate LAG admin status changes to member ports */
+    void cascadeLagAdminStatusToMembers(Port &lag, bool adminUp);
+
     sai_status_t removePort(sai_object_id_t port_id);
     bool initExistingPort(const PortConfig &port);
     bool initPortsBulk(std::vector<Port>& ports);
