@@ -150,7 +150,7 @@ static decltype(auto) makeNlAddr(const T& ip)
 }
 
 
-RouteSync::RouteSync(RedisPipeline *pipeline) :
+RouteSync::RouteSync(RedisPipeline *pipeline, RedisPipeline *app_state_pipeline)) :
     // When the feature ORCH_NORTHBOND_ROUTE_ZMQ_ENABLED is enabled, route events must be sent to orchagent via the ZMQ channel.
     m_zmqClient(create_local_zmq_client(ORCH_NORTHBOND_ROUTE_ZMQ_ENABLED, false)),
     m_routeTable(createProducerStateTable(pipeline, APP_ROUTE_TABLE_NAME, true, m_zmqClient)),
@@ -162,7 +162,10 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_warmStartHelper(pipeline, m_routeTable.get(), APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
     m_srv6MySidTable(pipeline, APP_SRV6_MY_SID_TABLE_NAME, true),
     m_srv6SidListTable(pipeline, APP_SRV6_SID_LIST_TABLE_NAME, true),
-    m_nl_sock(NULL), m_link_cache(NULL)
+    m_nl_sock(NULL), m_link_cache(NULL),
+    m_rib_fib_nhg_mgr(pipeline, APP_NEXTHOP_GROUP_TABLE_NAME, APP_PIC_CONTEXT_TABLE_NAME, true),
+    m_app_state_pipeline(app_state_pipeline),
+    m_nhgFullStateTable(app_state_pipeline, "NHG_FULL_STATE_TABLE", true)
 {
     m_nl_sock = nl_socket_alloc();
     nl_connect(m_nl_sock, NETLINK_ROUTE);
