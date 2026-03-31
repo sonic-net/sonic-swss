@@ -295,11 +295,11 @@ void P4Orch::handlePortStatusChangeNotification(const std::string &op, const std
 
             if (status == SAI_PORT_OPER_STATUS_UP)
             {
-                m_wcmpManager->restorePrunedNextHops(port.m_alias);
+              m_wcmpManager->updateWatchPort(port.m_alias, false);
             }
             else
             {
-                m_wcmpManager->pruneNextHops(port.m_alias);
+              m_wcmpManager->updateWatchPort(port.m_alias, true);
             }
         }
 
@@ -375,4 +375,12 @@ GreTunnelManager *P4Orch::getGreTunnelManager()
 
 TunnelDecapGroupManager* P4Orch::getTunnelDecapGroupManager() {
   return m_tunnelDecapGroupManager.get();
+}
+
+void P4Orch::refreshPortStatus() {
+  m_wcmpManager->refreshPortOperStatus();
+}
+
+void P4Orch::setRouterIntfsMtu(const std::string& port, uint32_t mtu) {
+    m_routerIntfManager->setRouterIntfsMtu(port, mtu);
 }

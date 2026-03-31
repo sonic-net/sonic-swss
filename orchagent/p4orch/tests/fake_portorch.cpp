@@ -706,6 +706,8 @@ void PortsOrch::doTask(swss::SelectableTimer &timer)
 {
 }
 
+bool PortsOrch::isFrontPanelPort(Port& port) { return true; }
+
 void PortsOrch::onWarmBootEnd()
 {
 }

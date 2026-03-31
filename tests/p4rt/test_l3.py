@@ -5,7 +5,7 @@ import json
 import util
 import l3
 import test_vrf
-
+import time
 
 class TestP4RTL3(object):
     def _set_up(self, dvs):
@@ -383,10 +383,6 @@ class TestP4RTL3(object):
                 self._p4rt_wcmp_group_obj.asic_db,
                 self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
             ),
-            (
-                self._p4rt_wcmp_group_obj.asic_db,
-                self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-            ),
         )
         self._p4rt_wcmp_group_obj.get_original_redis_entries(db_list)
 
@@ -464,46 +460,21 @@ class TestP4RTL3(object):
         attr_list = [
             (
                 self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_TYPE,
-                self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP,
+                self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS,
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_LIST,
+                "1:" + nexthop_oid,
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
+                "1:" + str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
             )
         ]
         (status, fvs) = util.get_key(
             self._p4rt_wcmp_group_obj.asic_db,
             self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
             wcmp_group_oid,
-        )
-        assert status == True
-        util.verify_attr(fvs, attr_list)
-
-        # Query ASIC database for wcmp group member entries.
-        wcmp_group_member_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-        )
-        assert len(wcmp_group_member_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_asic_db_member_entries_count() + 1
-        )
-
-        # Query ASIC database for newly crated wcmp group member key.
-        asic_db_group_member_key = (
-            self._p4rt_wcmp_group_obj.get_newly_created_wcmp_group_member_asic_db_key()
-        )
-        assert asic_db_group_member_key is not None
-        attr_list = [
-            (
-                self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_MEMBER_NEXTHOP_GROUP_ID,
-                wcmp_group_oid,
-            ),
-            (self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_MEMBER_NEXTHOP_ID, nexthop_oid),
-            (
-                self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_MEMBER_WEIGHT,
-                str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
-            ),
-        ]
-        (status, fvs) = util.get_key(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-            asic_db_group_member_key,
         )
         assert status == True
         util.verify_attr(fvs, attr_list)
@@ -753,24 +724,6 @@ class TestP4RTL3(object):
             self._p4rt_wcmp_group_obj.asic_db,
             self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
             wcmp_group_oid,
-        )
-        assert status == False
-
-        # Query ASIC database for wcmp group member entries.
-        wcmp_group_member_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-        )
-        assert len(wcmp_group_member_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_asic_db_member_entries_count()
-        )
-
-        # Verify that removed wcmp group member no longer exists in ASIC
-        # database.
-        (status, fvs) = util.get_key(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-            asic_db_group_member_key,
         )
         assert status == False
 
@@ -1188,10 +1141,6 @@ class TestP4RTL3(object):
                 self._p4rt_wcmp_group_obj.asic_db,
                 self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
             ),
-            (
-                self._p4rt_wcmp_group_obj.asic_db,
-                self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-            ),
         )
         self._p4rt_wcmp_group_obj.get_original_redis_entries(db_list)
         db_list = (
@@ -1283,33 +1232,17 @@ class TestP4RTL3(object):
             (
                 self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_TYPE,
                 (
-                    self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP
+                    self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS
                 ),
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_LIST,
+                "1:" + nexthop_oid,
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
+                "1:" + str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
             )
-        ]
-        util.verify_attr(fvs, asic_attr_list)
-
-        # Query ASIC database for newly created wcmp group member key.
-        asic_db_group_member_key = (
-            self._p4rt_wcmp_group_obj.get_newly_created_wcmp_group_member_asic_db_key()
-        )
-        assert asic_db_group_member_key is not None
-        (status, fvs) = util.get_key(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-            asic_db_group_member_key,
-        )
-        assert status == True
-        asic_attr_list = [
-            (
-                self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_MEMBER_NEXTHOP_GROUP_ID,
-                wcmp_group_oid,
-            ),
-            (self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_MEMBER_NEXTHOP_ID, nexthop_oid),
-            (
-                self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_MEMBER_WEIGHT,
-                str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
-            ),
         ]
         util.verify_attr(fvs, asic_attr_list)
 
@@ -1318,35 +1251,56 @@ class TestP4RTL3(object):
 
         # Check ASIC DB to verify that associated member for watch_port is
         # pruned.
-        wcmp_group_member_entries = util.get_keys(
+        (status, fvs) = util.get_key(
             self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
+            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
+            wcmp_group_oid,
         )
-        assert len(wcmp_group_member_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_asic_db_member_entries_count()
-        )
+        assert status == True
+        asic_attr_list = [
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_TYPE,
+                (
+                    self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS
+                ),
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_LIST,
+                "0:null",
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
+                "0:null",
+            )
+        ]
+        util.verify_attr(fvs, asic_attr_list)
 
         # Force oper-up for associated port.
         util.set_interface_status(dvs, if_name, "up")
 
         # Check pruned next hop member is restored in ASIC DB.
-        wcmp_group_member_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-        )
-        assert len(wcmp_group_member_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_asic_db_member_entries_count() + 1
-        )
-        asic_db_group_member_key = (
-            self._p4rt_wcmp_group_obj.get_newly_created_wcmp_group_member_asic_db_key()
-        )
-        assert asic_db_group_member_key is not None
         (status, fvs) = util.get_key(
             self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-            asic_db_group_member_key,
+            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
+            wcmp_group_oid,
         )
         assert status == True
+        asic_attr_list = [
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_TYPE,
+                (
+                    self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS
+                ),
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_LIST,
+                "1:" + nexthop_oid,
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
+                "1:" + str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
+            )
+        ]
         util.verify_attr(fvs, asic_attr_list)
 
         # Delete WCMP group member.
@@ -1380,10 +1334,6 @@ class TestP4RTL3(object):
                 self._p4rt_wcmp_group_obj.asic_db,
                 self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
             ),
-            (
-                self._p4rt_wcmp_group_obj.asic_db,
-                self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-            ),
         )
         self._p4rt_wcmp_group_obj.get_original_redis_entries(db_list)
         db_list = (
@@ -1475,49 +1425,24 @@ class TestP4RTL3(object):
             (
                 self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_TYPE,
                 (
-                    self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP
+                    self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS
                 ),
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_LIST,
+                "1:" + nexthop_oid,
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
+                "1:" + str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
             )
-        ]
-        util.verify_attr(fvs, asic_attr_list)
-
-        # Query ASIC database for wcmp group member entries.
-        wcmp_group_member_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-        )
-        assert len(wcmp_group_member_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_asic_db_member_entries_count() + 1
-        )
-
-        # Query ASIC database for newly created wcmp group member key.
-        asic_db_group_member_key = (
-            self._p4rt_wcmp_group_obj.get_newly_created_wcmp_group_member_asic_db_key()
-        )
-        assert asic_db_group_member_key is not None
-        (status, fvs) = util.get_key(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-            asic_db_group_member_key,
-        )
-        assert status == True
-        asic_attr_list = [
-            (
-                self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_MEMBER_NEXTHOP_GROUP_ID,
-                wcmp_group_oid,
-            ),
-            (self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_MEMBER_NEXTHOP_ID, nexthop_oid),
-            (
-                self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_MEMBER_WEIGHT,
-                str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
-            ),
         ]
         util.verify_attr(fvs, asic_attr_list)
 
         # Bring down the port.
         util.set_interface_status(dvs, if_name)
 
-        # Execute the warm reboot.
+        # Execute the warm reboot
         dvs.warm_restart_swss("true")
         dvs.stop_swss()
         dvs.start_swss()
@@ -1526,13 +1451,31 @@ class TestP4RTL3(object):
         dvs.check_swss_ready()
 
         # Verify that the associated next hop is pruned in ASIC DB.
-        wcmp_group_member_entries = util.get_keys(
+        wcmp_group_oid = self._p4rt_wcmp_group_obj.get_newly_created_wcmp_group_oid()
+        assert wcmp_group_oid is not None
+        (status, fvs) = util.get_key(
             self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
+            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
+            wcmp_group_oid,
         )
-        assert len(wcmp_group_member_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_asic_db_member_entries_count()
-        )
+        assert status == True
+        asic_attr_list = [
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_TYPE,
+                (
+                    self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS
+                ),
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_LIST,
+                "0:null",
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
+                "0:null",
+            )
+        ]
+        util.verify_attr(fvs, asic_attr_list)
 
         # Delete WCMP group member.
         self._p4rt_wcmp_group_obj.remove_app_db_entry(wcmp_group_key)
@@ -1564,10 +1507,6 @@ class TestP4RTL3(object):
             (
                 self._p4rt_wcmp_group_obj.asic_db,
                 self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
-            ),
-            (
-                self._p4rt_wcmp_group_obj.asic_db,
-                self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
             ),
         )
         self._p4rt_wcmp_group_obj.get_original_redis_entries(db_list)
@@ -1660,52 +1599,45 @@ class TestP4RTL3(object):
             (
                 self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_TYPE,
                 (
-                    self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP
+                    self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS
                 ),
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_LIST,
+                "0:null",
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
+                "0:null",
             )
         ]
         util.verify_attr(fvs, asic_attr_list)
-
-        # Query ASIC database for wcmp group member entries (expect no entry).
-        wcmp_group_member_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-        )
-        assert len(wcmp_group_member_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_asic_db_member_entries_count()
-        )
 
         # Bring up the port.
         util.set_interface_status(dvs, if_name, "up")
 
         # Verify that next hop member is now created in SAI.
-        wcmp_group_member_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-        )
-        assert len(wcmp_group_member_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_asic_db_member_entries_count() + 1
-        )
-        asic_db_group_member_key = (
-            self._p4rt_wcmp_group_obj.get_newly_created_wcmp_group_member_asic_db_key()
-        )
-        assert asic_db_group_member_key is not None
         (status, fvs) = util.get_key(
             self._p4rt_wcmp_group_obj.asic_db,
-            (self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME),
-            asic_db_group_member_key,
+            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
+            wcmp_group_oid,
         )
         assert status == True
         asic_attr_list = [
             (
-                self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_MEMBER_NEXTHOP_GROUP_ID,
-                wcmp_group_oid,
+                self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_TYPE,
+                (
+                    self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS
+                ),
             ),
-            (self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_MEMBER_NEXTHOP_ID, nexthop_oid),
             (
-                self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_MEMBER_WEIGHT,
-                str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_LIST,
+                "1:" + nexthop_oid,
             ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
+                "1:" + str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
+            )
         ]
         util.verify_attr(fvs, asic_attr_list)
 
@@ -1740,10 +1672,6 @@ class TestP4RTL3(object):
                 self._p4rt_wcmp_group_obj.asic_db,
                 self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
             ),
-            (
-                self._p4rt_wcmp_group_obj.asic_db,
-                self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-            ),
         )
         self._p4rt_wcmp_group_obj.get_original_redis_entries(db_list)
         db_list = (
@@ -1835,30 +1763,19 @@ class TestP4RTL3(object):
             (
                 self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_TYPE,
                 (
-                    self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP
+                    self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS
                 ),
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_LIST,
+                "0:null",
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
+                "0:null",
             )
         ]
         util.verify_attr(fvs, asic_attr_list)
-
-        # Query ASIC database for wcmp group member entries.
-        wcmp_group_member_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
-        )
-        assert len(wcmp_group_member_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_asic_db_member_entries_count() + 1
-        )
-
-        # Query ASIC database for wcmp group member entries (expect no entry).
-        wcmp_group_member_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-        )
-        assert (
-            len(wcmp_group_member_entries)
-            == self._p4rt_wcmp_group_obj.get_original_asic_db_member_entries_count()
-        )
 
         # Attempt to delete the next hop. Expect failure as the pruned WCMP
         # group member is still referencing it.
@@ -1874,13 +1791,6 @@ class TestP4RTL3(object):
         )
         assert len(wcmp_group_entries) == (
             self._p4rt_wcmp_group_obj.get_original_asic_db_group_entries_count()
-        )
-        wcmp_group_member_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-        )
-        assert len(wcmp_group_member_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_asic_db_member_entries_count()
         )
 
         # Delete next hop.
@@ -2129,6 +2039,123 @@ class TestP4RTL3(object):
         )
         self._clean_vrf(dvs)
 
+    @pytest.mark.skip(reason="sairedis vs MY MAC support is not ready")
+    def test_RouterInterfaceMtuUpdate(self, dvs, testlog):
+        self._set_up(dvs)
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(swsscommon.APPL_STATE_DB, dvs.redis_sock, 0)
+
+        db_list = (
+            (
+                self._p4rt_router_intf_obj.appl_db,
+                "%s:%s"
+                % (self._p4rt_router_intf_obj.APP_DB_TBL_NAME,
+                   self._p4rt_router_intf_obj.TBL_NAME),
+            ),
+            (self._p4rt_router_intf_obj.asic_db,
+             self._p4rt_router_intf_obj.ASIC_DB_TBL_NAME),
+        )
+        self._p4rt_router_intf_obj.get_original_redis_entries(db_list)
+
+        # Create router interface.
+        port = "Ethernet8"
+        (
+            router_interface_id,
+            router_intf_key,
+            attr_list,
+        ) = self._p4rt_router_intf_obj.create_router_interface(port_id=port)
+        util.verify_response(
+            self.response_consumer, router_intf_key, attr_list, "SWSS_RC_SUCCESS"
+        )
+
+        rif_oid = (
+            self._p4rt_router_intf_obj.get_newly_created_router_interface_oid())
+        assert rif_oid is not None
+        (status, fvs) = util.get_key(
+            self._p4rt_router_intf_obj.asic_db,
+            self._p4rt_router_intf_obj.ASIC_DB_TBL_NAME,
+            rif_oid,
+        )
+        assert status == True
+        attribute_found = False
+        for fv in fvs:
+            if fv[0] == self._p4rt_router_intf_obj.SAI_ATTR_MTU:
+                assert fv[1] == self._p4rt_router_intf_obj.SAI_ATTR_DEFAULT_MTU
+                attribute_found = True
+                break
+        assert attribute_found == True
+
+        # Fetch original MTU.
+        tbl = swsscommon.Table(adb, "PORT_TABLE")
+        (status, fvs) = tbl.get(port)
+        assert status == True
+        orig_mtu = None
+        for fv in fvs:
+            if fv[0] == "mtu":
+                orig_mtu = fv[1]
+                break
+        assert orig_mtu is not None
+
+        # Update port MTU.
+        tbl = swsscommon.Table(cdb, "PORT")
+        mtu = "5678"
+        fvs = swsscommon.FieldValuePairs([("mtu", mtu)])
+        tbl.set(port, fvs)
+        time.sleep(1)
+
+        # Check application state database.
+        tbl = swsscommon.Table(adb, "PORT_TABLE")
+        (status, fvs) = tbl.get(port)
+        assert status == True
+        attribute_found = False
+        for fv in fvs:
+            if fv[0] == "mtu":
+                assert fv[1] == mtu
+                attribute_found = True
+                break
+        assert attribute_found == True
+
+        # Verify that MTU has been updated in P4RT router interface.
+        (status, fvs) = util.get_key(
+            self._p4rt_router_intf_obj.asic_db,
+            self._p4rt_router_intf_obj.ASIC_DB_TBL_NAME,
+            rif_oid,
+        )
+        assert status == True
+        attribute_found = False
+        for fv in fvs:
+            if fv[0] == self._p4rt_router_intf_obj.SAI_ATTR_MTU:
+                assert fv[1] == mtu
+                attribute_found = True
+                break
+        assert attribute_found == True
+
+        # Restore original MTU.
+        tbl = swsscommon.Table(cdb, "PORT")
+        fvs = swsscommon.FieldValuePairs([("mtu", orig_mtu)])
+        tbl.set(port, fvs)
+        time.sleep(1)
+
+        # Verify that MTU has been updated in P4RT router interface.
+        (status, fvs) = util.get_key(
+            self._p4rt_router_intf_obj.asic_db,
+            self._p4rt_router_intf_obj.ASIC_DB_TBL_NAME,
+            rif_oid,
+        )
+        assert status == True
+        attribute_found = False
+        for fv in fvs:
+            if fv[0] == self._p4rt_router_intf_obj.SAI_ATTR_MTU:
+                assert fv[1] == orig_mtu
+                attribute_found = True
+                break
+        assert attribute_found == True
+
+        # Remove router interface.
+        self._p4rt_router_intf_obj.remove_app_db_entry(router_intf_key)
+        util.verify_response(
+            self.response_consumer, router_intf_key, [], "SWSS_RC_SUCCESS"
+        )
 
     def test_NexthopAddWithRewrite(self, dvs, testlog):
         # Initialize L3 objects and database connectors.
@@ -2222,3 +2249,16 @@ class TestP4RTL3(object):
                      (self._p4rt_nexthop_obj.SAI_ATTR_DISABLE_VLAN_REWRITE,
                       "true")]
         util.verify_attr(fvs, attr_list)
+
+        # Cleanup
+        self._p4rt_nexthop_obj.remove_app_db_entry(nexthop_key)
+        util.verify_response(
+            self.response_consumer, nexthop_key, [], "SWSS_RC_SUCCESS")
+        self._p4rt_neighbor_obj.remove_app_db_entry(neighbor_key)
+        util.verify_response(
+            self.response_consumer, neighbor_key, [], "SWSS_RC_SUCCESS")
+        self._p4rt_router_intf_obj.remove_app_db_entry(router_intf_key)
+        util.verify_response(
+            self.response_consumer, router_intf_key, [], "SWSS_RC_SUCCESS")
+
+        self._clean_vrf(dvs)
