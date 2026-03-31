@@ -1025,26 +1025,6 @@ TEST_F(FpmSyncdResponseTest, TestBlackholeRoute)
     }
 }
 
-auto create_nl_addr(const char* addr_str)
-{
-    nl_addr* addr;
-    nl_addr_parse(addr_str, AF_INET, &addr);
-    return unique_ptr<nl_addr, decltype(nl_addr_put)*>(addr, nl_addr_put);
-}
-
-auto create_route(const char* dst_addr_str)
-{
-    rtnl_route* route = rtnl_route_alloc();
-    auto dst_addr = create_nl_addr(dst_addr_str);
-    rtnl_route_set_dst(route, dst_addr.get());
-    rtnl_route_set_type(route, RTN_UNICAST);
-    rtnl_route_set_protocol(route, RTPROT_STATIC);
-    rtnl_route_set_family(route, AF_INET);
-    rtnl_route_set_scope(route, RT_SCOPE_UNIVERSE);
-    rtnl_route_set_table(route, RT_TABLE_MAIN);
-    return unique_ptr<rtnl_route, decltype(rtnl_route_put)*>(route, rtnl_route_put);
-}
-
 /**
  * Unit tests for warm restart route handling functionality
  *
