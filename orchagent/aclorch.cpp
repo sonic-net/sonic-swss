@@ -3470,6 +3470,33 @@ bool AclRange::remove()
     return true;
 }
 
+static bool isSeparateMirrorV6TablePlatform()
+{
+    static const vector<string> separateMirrorV6Platforms = {
+        "nokia_ixr7220_h6",   // Tomahawk6
+    };
+
+    DBConnector cfgDb("CONFIG_DB", 0);
+    Table cfgDeviceMetaDataTable(&cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
+    string specific_platform;
+
+    if (!cfgDeviceMetaDataTable.hget("localhost", "platform", specific_platform))
+    {
+        return false;
+    }
+
+    for (const auto& p : separateMirrorV6Platforms)
+    {
+        if (specific_platform.find(p) != string::npos)
+        {
+            SWSS_LOG_NOTICE("Platform %s requires separate mirror V6 table", specific_platform.c_str());
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch)
 {
     SWSS_LOG_ENTER();
@@ -3548,7 +3575,8 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
         platform == MRVL_PRST_PLATFORM_SUBSTRING ||
         platform == XS_PLATFORM_SUBSTRING ||
         platform == CLX_PLATFORM_SUBSTRING ||
-        (platform == BRCM_PLATFORM_SUBSTRING && sub_platform == BRCM_DNX_PLATFORM_SUBSTRING))
+        (platform == BRCM_PLATFORM_SUBSTRING && sub_platform == BRCM_DNX_PLATFORM_SUBSTRING) ||
+        isSeparateMirrorV6TablePlatform())
     {
         m_isCombinedMirrorV6Table = false;
     }
