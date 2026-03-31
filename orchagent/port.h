@@ -212,6 +212,8 @@ public:
     sai_object_id_t     m_hif_id = 0;
     sai_object_id_t     m_lag_id = 0;
     sai_object_id_t     m_lag_member_id = 0;
+    /* PHY port admin state is overriden by parent LAG admin-down */
+    bool                m_lag_forced_admin_down = false;
     sai_object_id_t     m_tunnel_id = 0;
     sai_object_id_t     m_ingress_acl_table_group_id = 0;
     sai_object_id_t     m_egress_acl_table_group_id = 0;
