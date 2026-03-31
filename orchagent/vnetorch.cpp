@@ -1175,7 +1175,7 @@ bool VNetRouteOrch::selectFgNextHopGroup(const string& vnet,
         nhopgroup_members_set[nh] = next_hop_id;
     }
 
-    sai_object_id_t nh_id;
+    sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
 
     sai_object_id_t vrf_id;
     vnet_orch_->getVrfIdByVnetName(vnet, vrf_id);
@@ -1185,19 +1185,26 @@ bool VNetRouteOrch::selectFgNextHopGroup(const string& vnet,
         return false;
     }
 
-    NextHopGroupInfo next_hop_group_entry;
-    next_hop_group_entry.next_hop_group_id = nh_id;
-
-    /*
-    * Initialize the next hop group structure with ref_count as 0. This
-    * count will increase once the route is successfully syncd.
-    */
-    next_hop_group_entry.ref_count = 0;
-    syncd_nexthop_groups_[vnet][nexthops] = next_hop_group_entry;
-
-    for (auto nh : nexthops.getNextHops())
+    if (!hasNextHopGroup(vnet, nexthops))
     {
-        syncd_nexthop_groups_[vnet][nexthops].active_members[nh] = SAI_NULL_OBJECT_ID;
+        NextHopGroupInfo next_hop_group_entry;
+        next_hop_group_entry.next_hop_group_id = nh_id;
+
+        /*
+        * Initialize the next hop group structure with ref_count as 0. This
+        * count will increase once the route is successfully syncd.
+        */
+        next_hop_group_entry.ref_count = 0;
+        syncd_nexthop_groups_[vnet][nexthops] = next_hop_group_entry;
+
+        for (auto nh : nexthops.getNextHops())
+        {
+            syncd_nexthop_groups_[vnet][nexthops].active_members[nh] = SAI_NULL_OBJECT_ID;
+        }
+    }
+    else if (isNextHopIdChanged)
+    {
+        syncd_nexthop_groups_[vnet][nexthops].next_hop_group_id = nh_id;
     }
 
     return true;
