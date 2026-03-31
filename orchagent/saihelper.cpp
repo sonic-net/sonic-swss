@@ -691,6 +691,11 @@ task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, vo
         case SAI_STATUS_TABLE_FULL:
         case SAI_STATUS_NO_MEMORY:
         case SAI_STATUS_NV_STORAGE_FULL:
+        case SAI_STATUS_INVALID_PARAMETER:
+            /*
+             * INVALID_PARAMETER is not a normal remove result (e.g. sairedis Meta may
+             * return it when the entry is already absent); still treat as handled success.
+             */
             SWSS_LOG_WARN("Status %s is not expected for remove operation, SAI API: %s",
                             s_status.c_str(), s_api.c_str());
             return task_success;
