@@ -77,6 +77,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 stporch_ut.cpp \
                 flexcounter_ut.cpp \
                 portphyattr_ut.cpp \
+		portphyserdesattr_ut.cpp \
                 counternameupdater_ut.cpp \
                 hftelprofile_ut.cpp \
                 mock_orch_test.cpp \
@@ -341,3 +342,5 @@ tests_teamsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTES
 tests_teamsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_teamsyncd_INCLUDES)
 tests_teamsyncd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 \
         -lswsscommon -lgtest -lgtest_main -lpthread -lteam -lteamdctl
+
+LOG_DRIVER = $(top_srcdir)/run-gtest-suite.py

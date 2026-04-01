@@ -30,6 +30,7 @@
 #define PORT_RATE_COUNTER_FLEX_COUNTER_GROUP "PORT_RATE_COUNTER"
 #define PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP "PORT_BUFFER_DROP_STAT"
 #define PORT_PHY_ATTR_FLEX_COUNTER_GROUP "PORT_PHY_ATTR"
+#define PORT_PHY_SERDES_ATTR_FLEX_COUNTER_GROUP "PORT_PHY_SERDES_ATTR"
 #define QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_STAT_COUNTER"
 #define QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_WATERMARK_STAT_COUNTER"
 #define PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_WATERMARK_STAT_COUNTER"
@@ -142,6 +143,11 @@ namespace portphyattr_test
 class PortAttrTest;
 } // namespace portphyattr_test
 
+namespace portphyserdesattr_test
+{
+class PortSerdesAttrTest;
+} // namespace portphyserdesattr_test
+
 class PortsOrch : public Orch, public Subject
 {
 public:
@@ -230,7 +236,14 @@ public:
     void clearPortPhyAttrCounterMap();
     const std::vector<sai_port_attr_t>& getPortPhyAttrIds() const;
     void queryPortPhyAttrCapabilities();
-    bool verifyPortSupportsAllPhyAttr(sai_object_id_t port_id, const char* port_name);
+    std::vector<sai_port_attr_t> getPortPhySupportedAttrs(sai_object_id_t port_id, const char* port_name);
+
+    sai_object_id_t getPortSerdesIdFromPortId(sai_object_id_t port_id);
+    void generatePortPhySerdesAttrCounterMap();
+    void clearPortPhySerdesAttrCounterMap();
+    const std::vector<sai_port_serdes_attr_t>& getPortPhySerdesAttrIds() const;
+    void queryPortPhySerdesAttrCapabilities();
+    std::vector<sai_port_serdes_attr_t> getPortPhySerdesSupportedAttrs(sai_object_id_t port_serdes_id, const char* port_name);
 
     void generateWredPortCounterMap();
     void generateWredQueueCounterMap();
@@ -280,6 +293,7 @@ public:
     void setMACsecEnabledState(sai_object_id_t port_id, bool enabled);
     bool isMACsecPort(sai_object_id_t port_id) const;
     vector<sai_object_id_t> getPortVoQIds(Port& port);
+    bool isFrontPanelPort(Port& port);
 
     bool setPortPtIntfId(const Port& port, sai_uint16_t intf_id);
     bool setPortPtTimestampTemplate(const Port& port, sai_port_path_tracing_timestamp_type_t ts_type);
@@ -288,6 +302,7 @@ private:
     unique_ptr<CounterNameMapUpdater> m_counterNameMapUpdater;
     unique_ptr<Table> m_counterSysPortTable;
     unique_ptr<Table> m_counterLagTable;
+    unique_ptr<Table> m_portSerdesIdToPortIdTable;
     unique_ptr<Table> m_portTable;
     unique_ptr<Table> m_sendToIngressPortTable;
     unique_ptr<Table> m_systemPortTable;
@@ -316,6 +331,7 @@ private:
 
     FlexCounterTaggedCachedManager<void> port_stat_manager;
     FlexCounterTaggedCachedManager<void> port_phy_attr_manager;
+    FlexCounterTaggedCachedManager<void> port_phy_serdes_attr_manager;
     FlexCounterTaggedCachedManager<void> port_buffer_drop_stat_manager;
     FlexCounterTaggedCachedManager<sai_queue_type_t> queue_stat_manager;
     FlexCounterTaggedCachedManager<sai_queue_type_t> queue_watermark_manager;
@@ -334,6 +350,9 @@ private:
     std::map<sai_object_id_t, PortSupportedSpeeds> m_portSupportedSpeeds;
     // Supported FEC modes on the system side.
     std::map<sai_object_id_t, PortFecModeCapability_t> m_portSupportedFecModes;
+
+    // Port ID to Port Serdes ID mapping
+    std::map<sai_object_id_t, sai_object_id_t> m_portIdToSerdesId;
 
     bool m_initDone = false;
     bool m_isSendToIngressPortConfigured = false;
@@ -523,6 +542,8 @@ private:
 
     std::vector<sai_port_attr_t> m_supported_phy_attrs;
 
+    std::vector<sai_port_serdes_attr_t> m_supported_phy_serdes_attrs;
+
     bool isAutoNegEnabled(sai_object_id_t id);
     task_process_status setPortAutoNeg(Port &port, bool autoneg);
     task_process_status setPortUnreliableLOS(Port &port, bool enabled);
@@ -559,6 +580,9 @@ private:
                                 std::map<sai_port_serdes_attr_t, SerdesValue> &serdes_attr);
 
     void removePortSerdesAttribute(sai_object_id_t port_id);
+
+    bool programSerdes(Port &port, sai_object_id_t port_id, sai_object_id_t switch_id,
+                       std::map<sai_port_serdes_attr_t, SerdesValue> &serdes_attr);
 
     bool getSaiAclBindPointType(Port::Type                type,
                                 sai_acl_bind_point_type_t &sai_acl_bind_type);
@@ -637,5 +661,6 @@ private:
 
     // Friend declaration for unit tests
     friend class portphyattr_test::PortAttrTest;
+    friend class portphyserdesattr_test::PortSerdesAttrTest;
 };
 #endif /* SWSS_PORTSORCH_H */

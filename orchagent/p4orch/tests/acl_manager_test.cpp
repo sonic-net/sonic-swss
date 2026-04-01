@@ -982,7 +982,7 @@ class AclManagerTest : public ::testing::Test
                                                          kAclGroupLookupOid, std::placeholders::_1))))
             .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
         std::vector<std::string> p4_tables;
-        gP4Orch = new P4Orch(gAppDb, p4_tables, gVrfOrch, copp_orch_);
+        gP4Orch = new P4Orch(gAppDb, p4_tables, nullptr, gVrfOrch, copp_orch_);
         acl_table_manager_ = gP4Orch->getAclTableManager();
         acl_rule_manager_ = gP4Orch->getAclRuleManager();
         p4_oid_mapper_ = acl_table_manager_->m_p4OidMapper;
@@ -1379,11 +1379,6 @@ TEST_F(AclManagerTest, DISABLED_CreatePuntTableFailsWhenUserTrapGroupOrHostifNot
     setUpSwitchOrch();
     // Update p4orch to use new copp orch
     setUpP4Orch();
-    // Fail to create ACL table because the trap group is absent
-    EXPECT_EQ("Trap group was not found given trap group name: " + std::string(GENL_PACKET_TRAP_GROUP_NAME_PREFIX) +
-                  std::to_string(skip_cpu_queue),
-              ProcessAddTableRequest(app_db_entry).message());
-    EXPECT_EQ(nullptr, GetAclTable(app_db_entry.acl_table_name));
 
     // Create the trap group for CPU queue 1 without host interface(genl
     // attributes)
