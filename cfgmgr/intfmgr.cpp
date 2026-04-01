@@ -579,7 +579,7 @@ bool IntfMgr::setIntfGratArp(const string &alias, const string &grat_arp)
 
     if (grat_arp == "enabled")
     {
-        garp_enabled = "1";
+        garp_enabled = "2";
     }
     else if (grat_arp == "disabled")
     {
