@@ -396,11 +396,20 @@ class DockerVirtualSwitch:
                 cr_prefix = os.environ['DEFAULT_CONTAINER_REGISTRY'].rstrip("/") + "/"
             else:
                 cr_prefix = ''
-            self.ctn_sw = self.client.containers.run(cr_prefix + "debian:jessie",
+            self.ctn_sw = self.client.containers.run(cr_prefix + "debian:bookworm",
                                                      privileged=True,
                                                      detach=True,
                                                      command="bash",
                                                      stdin_open=True)
+
+            # Install iproute2 for 'ip' commands used by vct_connect()
+            self.ctn_sw.exec_run("bash -c 'apt-get update -qq && apt-get install -y -qq iproute2'")
+
+            # Clean up eth0 (Docker bridge) to prevent spurious neighbor entries
+            # in NEIGH_TABLE. The apt-get above creates ARP entries on eth0 that
+            # neighsyncd would pick up when the sonic-vs container starts.
+            self.ctn_sw.exec_run("ip addr flush dev eth0")
+            self.ctn_sw.exec_run("sysctl -w net.ipv6.conf.eth0.disable_ipv6=1")
 
             _, output = subprocess.getstatusoutput(f"docker inspect --format '{{{{.State.Pid}}}}' {self.ctn_sw.name}")
             self.ctn_sw_pid = int(output)
@@ -534,6 +543,10 @@ class DockerVirtualSwitch:
         try:
             # temp fix: remove them once they are moved to vs start.sh
             self.ctn.exec_run("sysctl -w net.ipv6.conf.default.disable_ipv6=0")
+            # Disable IPv6 on the Docker bridge interface to prevent
+            # auto-configured link-local addresses from creating spurious
+            # neighbor entries in NEIGH_TABLE.
+            self.ctn.exec_run("sysctl -w net.ipv6.conf.eth0.disable_ipv6=1")
             for i in range(0, 128, 4):
                 self.ctn.exec_run(f"sysctl -w net.ipv6.conf.eth{i + 1}.disable_ipv6=1")
 
@@ -1171,7 +1184,12 @@ class DockerVirtualSwitch:
         If subnet is True, the returned address will include the subnet length (e.g., fe80::aa:bbff:fecc:ddee/64)
         """
         _, output = self.runcmd(f"ip --brief address show {interface}")
-        ipv6 = output.split()[2]
+        ipv6 = None
+        for token in output.split():
+            if token.startswith("fe80:"):
+                ipv6 = token
+                break
+        assert ipv6 is not None, f"No link-local IPv6 address found on {interface}: {output}"
         if not subnet:
             slash = ipv6.find('/')
             if slash > 0:
