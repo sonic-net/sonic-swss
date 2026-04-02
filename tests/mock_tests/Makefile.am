@@ -36,6 +36,7 @@ tests_SOURCES = db_state_handling_ut.cpp \
                 state_sync_monitoring_ut.cpp \
                 mgmt_observability_interface_ut.cpp \
                 perf_stability_ut.cpp \
+                p4_enabled_asic_ext_ut.cpp \
                 aclorch_ut.cpp \
                 aclorch_rule_ut.cpp \
                 portsorch_ut.cpp \

@@ -205,3 +205,11 @@ Các nhóm kiểm thử chính:
 - Có tài liệu data model + DB contract rõ ràng.
 - Có test tự động xác minh contract cốt lõi.
 - Có liên kết tài liệu từ phần kiến trúc chung.
+
+## 9. Mở rộng contract cho P4-enabled ASIC (Task 4.3)
+
+- Contract P4RT chính: `APP_P4RT_TABLE` với key envelope `{table}:{payload}`.
+- Bảng definition và extension path có contract riêng, nhưng giữ thống nhất response contract.
+- Tham chiếu chi tiết:
+	- `doc/p4-enabled-asic-integration.md`
+	- `tests/mock_tests/p4_enabled_asic_ext_ut.cpp`

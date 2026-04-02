@@ -271,3 +271,26 @@ Phụ thuộc:
 - Mô tả rõ dependency graph và init order.
 - Mô tả rõ flow xử lý, retry, warm restart, observability.
 - Có guideline mở rộng cho orch mới và chiến lược kiểm thử đi kèm.
+
+## 14. P4-enabled ASIC integration (Task 4.3)
+
+### 14.1 Vai trò của P4Orch trong orchagent
+
+- `P4Orch` là bộ điều phối cho `APP_P4RT_TABLE` và các object manager P4.
+- P4 path dùng cơ chế manager-based dispatch: table -> manager -> SAI.
+- Hỗ trợ cả manager lõi và extension manager để mở rộng pipeline.
+
+### 14.2 Điểm tích hợp chính
+
+- `orchdaemon` khởi tạo `P4Orch` với ZMQ server endpoint riêng.
+- `P4Orch` đăng ký timer cho counters (ACL/EXT) và notification consumer cho port status.
+- Kết quả xử lý publish về response path chuẩn của P4RT.
+
+### 14.3 Hợp đồng mở rộng
+
+- Key của P4RT theo dạng `{table}:{payload}`.
+- Bảng không thuộc lõi phải được route an toàn qua extension manager.
+- Add/Delete precedence cần bảo toàn để tránh lỗi dependency khi reconcile.
+
+Chi tiết đầy đủ tại:
+- `doc/p4-enabled-asic-integration.md`
