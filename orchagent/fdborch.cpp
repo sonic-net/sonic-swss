@@ -15,6 +15,8 @@
 #include "vxlanorch.h"
 #include "directory.h"
 
+#define VLAN_PREFIX         "Vlan"
+
 extern sai_fdb_api_t    *sai_fdb_api;
 
 extern sai_object_id_t  gSwitchId;
@@ -988,7 +990,7 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
         }
         else if (op == "VLAN")
         {
-            vlan = data;
+            vlan = VLAN_PREFIX + data;
             if (vlan.empty())
             {
                 SWSS_LOG_ERROR("Receive wrong vlan to flush fdb!");
@@ -1013,7 +1015,7 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
             if (found != string::npos)
             {
                 alias = data.substr(0, found);
-                vlan = data.substr(found+1);
+                vlan = VLAN_PREFIX + data.substr(found+1);
             }
             if (alias.empty() || vlan.empty())
             {
