@@ -31,6 +31,7 @@ tests_INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib -I$
 tests_SOURCES = db_state_handling_ut.cpp \
                 cfgmgr_ut.cpp \
                 orchagent_module_ut.cpp \
+                sai_hw_communication_ut.cpp \
                 aclorch_ut.cpp \
                 aclorch_rule_ut.cpp \
                 portsorch_ut.cpp \
