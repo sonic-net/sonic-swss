@@ -212,6 +212,7 @@ bool ProtNhg::sync()
     if (!syncMembers(member_keys))
     {
         SWSS_LOG_WARN("Failed to sync members of protection NHG %s", m_key.c_str());
+        remove();
         return false;
     }
 
