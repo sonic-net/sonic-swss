@@ -28,7 +28,9 @@ LDADD_GTEST = -L/usr/src/gtest
 
 tests_INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib -I$(top_srcdir)/cfgmgr -I$(top_srcdir)/orchagent -I$(P4_ORCH_DIR)/tests -I$(DASH_ORCH_DIR) -I$(top_srcdir)/warmrestart
 
-tests_SOURCES = aclorch_ut.cpp \
+tests_SOURCES = db_state_handling_ut.cpp \
+                cfgmgr_ut.cpp \
+                aclorch_ut.cpp \
                 aclorch_rule_ut.cpp \
                 portsorch_ut.cpp \
                 vxlanorch_ut.cpp \
@@ -156,6 +158,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/nvgreorch.cpp \
                 $(top_srcdir)/cfgmgr/portmgr.cpp \
                 $(top_srcdir)/cfgmgr/sflowmgr.cpp \
+                $(top_srcdir)/cfgmgr/vrfmgr.cpp \
+                $(top_srcdir)/cfgmgr/vlanmgr.cpp \
                 $(top_srcdir)/orchagent/zmqorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashenifwdorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashenifwdinfo.cpp \
