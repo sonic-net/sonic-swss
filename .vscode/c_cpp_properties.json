@@ -5,7 +5,8 @@
             "includePath": [
                 "${workspaceFolder}/**",
                 "${workspaceFolder}/orchagent/**",
-                "/usr/local/include"
+                "/usr/local/include",
+                "/Users/tritm/Codes/sonic-sairedis/**"
             ],
             "browse": {
                 "path": [
