@@ -3,6 +3,7 @@
 ## Tài liệu liên quan
 
 - Thiết kế chi tiết OrchAgent và các Orch liên quan: `doc/orchagent-detailed-design.md`
+- Mô hình dữ liệu và hợp đồng cơ sở dữ liệu: `doc/db-data-model-contract.md`
 
 ## Overview
 Tài liệu này mô tả kiến trúc của SONiC Switch State Service (SWSS).
