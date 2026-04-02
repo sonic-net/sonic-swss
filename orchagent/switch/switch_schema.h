@@ -35,3 +35,14 @@
 
 #define SWITCH_HASH_ECMP_HASH_ALGORITHM "ecmp_hash_algorithm"
 #define SWITCH_HASH_LAG_HASH_ALGORITHM  "lag_hash_algorithm"
+
+#define SWITCH_HASH_ECMP_HASH_SEED  "ecmp_hash_seed"
+
+#define SWITCH_HASH_ECMP_TYPE       "ecmp_type"
+#define SWITCH_HASH_ECMP_TYPE_STATIC     "static"
+#define SWITCH_HASH_ECMP_TYPE_CONSISTENT "consistent"
+#define SWITCH_HASH_ECMP_TYPE_RESILIENT  "resilient"
+
+#define SWITCH_HASH_ECMP_RESILIENT_HASH_BUCKETS          "ecmp_resilient_hash_buckets"
+#define SWITCH_HASH_ECMP_RESILIENT_ACTIVE_FLOW_TIMER     "ecmp_resilient_active_flow_timer"
+#define SWITCH_HASH_ECMP_RESILIENT_MAX_UNBALANCED_TIME   "ecmp_resilient_max_unbalanced_time"

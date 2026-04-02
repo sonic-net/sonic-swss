@@ -184,6 +184,49 @@ bool SwitchHelper::parseSwHash(SwitchHash &hash) const
                 return false;
             }
         }
+        else if (field == SWITCH_HASH_ECMP_HASH_SEED)
+        {
+            try
+            {
+                hash.ecmp_hash_seed.value = std::stoul(value);
+                hash.ecmp_hash_seed.is_set = true;
+            }
+            catch (...)
+            {
+                SWSS_LOG_ERROR("Failed to parse field(%s): invalid value(%s)", field.c_str(), value.c_str());
+                return false;
+            }
+        }
+        else if (field == SWITCH_HASH_ECMP_TYPE)
+        {
+            if (value == SWITCH_HASH_ECMP_TYPE_STATIC)
+                hash.ecmp_type.value = EcmpType::ECMP_STATIC;
+            else if (value == SWITCH_HASH_ECMP_TYPE_CONSISTENT)
+                hash.ecmp_type.value = EcmpType::ECMP_CONSISTENT;
+            else if (value == SWITCH_HASH_ECMP_TYPE_RESILIENT)
+                hash.ecmp_type.value = EcmpType::ECMP_RESILIENT;
+            else
+            {
+                SWSS_LOG_ERROR("Failed to parse field(%s): invalid value(%s)", field.c_str(), value.c_str());
+                return false;
+            }
+            hash.ecmp_type.is_set = true;
+        }
+        else if (field == SWITCH_HASH_ECMP_RESILIENT_HASH_BUCKETS)
+        {
+            try { hash.ecmp_resilient_hash_buckets.value = std::stoul(value); hash.ecmp_resilient_hash_buckets.is_set = true; }
+            catch (...) { SWSS_LOG_ERROR("Failed to parse %s: %s", field.c_str(), value.c_str()); return false; }
+        }
+        else if (field == SWITCH_HASH_ECMP_RESILIENT_ACTIVE_FLOW_TIMER)
+        {
+            try { hash.ecmp_resilient_active_flow_timer.value = std::stoul(value); hash.ecmp_resilient_active_flow_timer.is_set = true; }
+            catch (...) { SWSS_LOG_ERROR("Failed to parse %s: %s", field.c_str(), value.c_str()); return false; }
+        }
+        else if (field == SWITCH_HASH_ECMP_RESILIENT_MAX_UNBALANCED_TIME)
+        {
+            try { hash.ecmp_resilient_max_unbalanced_time.value = std::stoul(value); hash.ecmp_resilient_max_unbalanced_time.is_set = true; }
+            catch (...) { SWSS_LOG_ERROR("Failed to parse %s: %s", field.c_str(), value.c_str()); return false; }
+        }
         else
         {
             SWSS_LOG_WARN("Unknown field(%s): skipping ...", field.c_str());
@@ -199,11 +242,24 @@ bool SwitchHelper::validateSwHash(SwitchHash &hash) const
 
     auto cond = hash.ecmp_hash.is_set || hash.lag_hash.is_set;
     cond = cond || hash.ecmp_hash_algorithm.is_set || hash.lag_hash_algorithm.is_set;
+    cond = cond || hash.ecmp_hash_seed.is_set || hash.ecmp_type.is_set;
+    cond = cond || hash.ecmp_resilient_hash_buckets.is_set;
+    cond = cond || hash.ecmp_resilient_active_flow_timer.is_set;
+    cond = cond || hash.ecmp_resilient_max_unbalanced_time.is_set;
 
     if (!cond)
     {
         SWSS_LOG_ERROR("Validation error: missing valid fields");
         return false;
+    }
+
+    if (hash.ecmp_resilient_hash_buckets.is_set || hash.ecmp_resilient_active_flow_timer.is_set
+        || hash.ecmp_resilient_max_unbalanced_time.is_set)
+    {
+        if (!hash.ecmp_type.is_set || hash.ecmp_type.value != EcmpType::ECMP_RESILIENT)
+        {
+            SWSS_LOG_WARN("Resilient ECMP tuning parameters set but ecmp_type is not 'resilient'");
+        }
     }
 
     return true;

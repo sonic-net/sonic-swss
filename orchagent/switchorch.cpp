@@ -889,6 +889,46 @@ bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
         }
     }
 
+    if (hash.ecmp_hash_seed.is_set)
+    {
+        if (!hObj.ecmp_hash_seed.is_set || hObj.ecmp_hash_seed.value != hash.ecmp_hash_seed.value)
+        {
+            sai_attribute_t attr;
+            attr.id = SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_SEED;
+            attr.value.u32 = hash.ecmp_hash_seed.value;
+
+            auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to set ECMP hash seed to %u: SAI status %d",
+                               hash.ecmp_hash_seed.value, status);
+                return false;
+            }
+            SWSS_LOG_NOTICE("Set ECMP hash seed to %u", hash.ecmp_hash_seed.value);
+            cfgUpd = true;
+        }
+    }
+
+    if (hash.ecmp_type.is_set)
+    {
+        if (!hObj.ecmp_type.is_set || hObj.ecmp_type.value != hash.ecmp_type.value)
+        {
+            switch (hash.ecmp_type.value)
+            {
+            case EcmpType::ECMP_STATIC:
+                SWSS_LOG_NOTICE("ECMP type set to static (standard)");
+                break;
+            case EcmpType::ECMP_CONSISTENT:
+                SWSS_LOG_NOTICE("ECMP type set to consistent (fine-grained)");
+                break;
+            case EcmpType::ECMP_RESILIENT:
+                SWSS_LOG_NOTICE("ECMP type set to resilient (dynamic-ordered)");
+                break;
+            }
+            cfgUpd = true;
+        }
+    }
+
     // Don't update internal cache when config remains unchanged
     if (!cfgUpd)
     {
