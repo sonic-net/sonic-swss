@@ -5,6 +5,7 @@
 - Thiết kế chi tiết OrchAgent và các Orch liên quan: `doc/orchagent-detailed-design.md`
 - Mô hình dữ liệu và hợp đồng cơ sở dữ liệu: `doc/db-data-model-contract.md`
 - Tích hợp P4-enabled ASIC và phần mở rộng: `doc/p4-enabled-asic-integration.md`
+- Chất lượng, giám sát và vận hành: `doc/quality-monitoring-operations.md`
 
 ## Overview
 Tài liệu này mô tả kiến trúc của SONiC Switch State Service (SWSS).

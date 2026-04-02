@@ -294,3 +294,26 @@ Phụ thuộc:
 
 Chi tiết đầy đủ tại:
 - `doc/p4-enabled-asic-integration.md`
+
+## 15. Chất lượng, giám sát và vận hành (Task 4.4)
+
+### 15.1 Mục tiêu vận hành
+
+- Đảm bảo orchestration an toàn trước/sau apply bằng quality gates.
+- Theo dõi health và alert theo module để phản ứng nhanh khi có regression.
+- Cung cấp operations controls (maintenance, retry budget) cho runbook xử lý sự cố.
+
+### 15.2 Mô hình dữ liệu vận hành
+
+- APP_DB: `QUALITY_GATE_TABLE`, `SWSS_OPS_CONTROL_TABLE`.
+- STATE_DB: `SWSS_HEALTH_TABLE`, `SWSS_ALERT_TABLE`.
+- COUNTERS_DB: `SWSS_SLO_COUNTERS`.
+
+### 15.3 Tích hợp với luồng orch
+
+- Trước khi apply batch lớn: quality gate được cập nhật.
+- Khi lỗi vượt ngưỡng: publish alert + tăng mức severity.
+- Ops có thể bật maintenance để giảm rủi ro khi thao tác khắc phục.
+
+Chi tiết đầy đủ tại:
+- `doc/quality-monitoring-operations.md`

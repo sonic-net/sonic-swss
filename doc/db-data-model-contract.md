@@ -213,3 +213,15 @@ Các nhóm kiểm thử chính:
 - Tham chiếu chi tiết:
 	- `doc/p4-enabled-asic-integration.md`
 	- `tests/mock_tests/p4_enabled_asic_ext_ut.cpp`
+
+## 10. Contract cho chất lượng, giám sát và vận hành (Task 4.4)
+
+- `QUALITY_GATE_TABLE` (APP_DB): phản ánh pass/fail của quality checks.
+- `SWSS_HEALTH_TABLE` (STATE_DB): trạng thái health theo module.
+- `SWSS_ALERT_TABLE` (STATE_DB): sự kiện cảnh báo và mức severity.
+- `SWSS_SLO_COUNTERS` (COUNTERS_DB): chỉ số SLO định dạng số.
+- `SWSS_OPS_CONTROL_TABLE` (APP_DB): control knobs như maintenance/retry policy.
+
+Tham chiếu chi tiết:
+- `doc/quality-monitoring-operations.md`
+- `tests/mock_tests/quality_monitoring_operations_ut.cpp`
