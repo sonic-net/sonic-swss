@@ -33,6 +33,7 @@ tests_SOURCES = db_state_handling_ut.cpp \
                 orchagent_module_ut.cpp \
                 sai_hw_communication_ut.cpp \
                 state_sync_monitoring_ut.cpp \
+                mgmt_observability_interface_ut.cpp \
                 aclorch_ut.cpp \
                 aclorch_rule_ut.cpp \
                 portsorch_ut.cpp \
