@@ -168,6 +168,17 @@ bool OrchDaemon::init()
 {
     SWSS_LOG_ENTER();
 
+    /*
+     * Orch initialization order is dependency-aware:
+     * 1) Global/system capability orchestrators (CRM, Switch)
+     * 2) L2 foundation (Ports, FDB)
+     * 3) L3/session helpers (BFD/ICMP/flow monitor)
+     * 4) VRF/INTF/NEIGH/ROUTE and feature orch that depend on them
+     *
+     * Keep this ordering stable unless dependency graph changes.
+     * See doc/orchagent-detailed-design.md for the full design rationale.
+     */
+
     string platform = getenv("platform") ? getenv("platform") : "";
 
     g_events_handle = events_init_publisher("sonic-events-swss");
