@@ -99,7 +99,7 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
         SWSS_LOG_INFO("STP global key %s op %s", key.c_str(), op.c_str());
         if (op == SET_COMMAND)
         {
-            msg.opcode = STP_SET_COMMAND;
+            msg.opcode = STP_SET_COMMAND;   
             for (auto i : kfvFieldsValues(t))
             {
                 SWSS_LOG_DEBUG("Field: %s Val %s", fvField(i).c_str(), fvValue(i).c_str());

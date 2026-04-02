@@ -1,3 +1,6 @@
+
+FPM_PATH = $(top_srcdir)/fpmsyncd/fpm
+
 INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/warmrestart -I $(FPM_PATH) -I $(top_srcdir)/lib
 
 bin_PROGRAMS = fpmsyncd
@@ -22,4 +25,5 @@ endif
 if ASAN_ENABLED
 fpmsyncd_SOURCES += $(top_srcdir)/lib/asan.cpp
 endif
+
 

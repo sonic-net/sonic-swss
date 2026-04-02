@@ -6,8 +6,6 @@
                 "${workspaceFolder}/**",
                 "${workspaceFolder}/orchagent/**",
                 "/usr/local/include"
-                //"/Users/tritm/Codes/sonic-swss-common/common"
-                // "${workspaceFolder}/common"
             ],
             "browse": {
                 "path": [
