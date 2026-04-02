@@ -1,10 +1,8 @@
 # This test suite covers the functionality of mirror feature in SwSS
-import distro
 import pytest
 import time
 
 from swsscommon import swsscommon
-from distutils.version import StrictVersion
 
 
 class TestMirror(object):
@@ -377,9 +375,6 @@ class TestMirror(object):
         self.remove_mirror_session(session)
         self.check_syslog(dvs, marker, "Detached next hop observer for destination IP {}".format(dst_ip), 1)
 
-    # Ignore testcase in Debian Jessie
-    # TODO: Remove this skip if Jessie support is no longer needed
-    @pytest.mark.skipif(StrictVersion(distro.linux_distribution()[1]) <= StrictVersion('8.9'), reason="Debian 8.9 or before has no support")
     def test_MirrorToVlanAddRemove(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -631,9 +626,6 @@ class TestMirror(object):
         # remove mirror session
         self.remove_mirror_session(session)
 
-    # Ignore testcase in Debian Jessie
-    # TODO: Remove this skip if Jessie support is no longer needed
-    @pytest.mark.skipif(StrictVersion(distro.linux_distribution()[1]) <= StrictVersion('8.9'), reason="Debian 8.9 or before has no support")
     def test_MirrorDestMoveVlan(self, dvs, testlog):
         self.setup_db(dvs)
 
