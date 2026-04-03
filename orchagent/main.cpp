@@ -82,6 +82,7 @@ uint32_t gCfgSystemPorts = 0;
 string gMyHostName = "";
 string gMyAsicName = "";
 bool gTraditionalFlexCounter = false;
+bool gRouteStateAsyncPublish = true;
 uint32_t create_switch_timeout = 0;
 bool gMultiAsicVoq = false;
 

@@ -32,6 +32,7 @@ extern TunnelDecapOrch *gTunneldecapOrch;
 
 extern size_t gMaxBulkSize;
 extern string gMySwitchType;
+extern bool gRouteStateAsyncPublish;
 
 /* Default maximum number of next hop groups */
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
@@ -56,6 +57,7 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
 
     m_publisher.setBuffered(true);
     m_publisher.m_directDbWrite = true;
+    m_publisher.setAsyncFullPublish(true);
 
     sai_attribute_t attr;
     attr.id = SAI_SWITCH_ATTR_NUMBER_OF_ECMP_GROUPS;
@@ -3189,7 +3191,7 @@ void RouteOrch::publishRouteState(const RouteBulkContext& ctx, const ReturnCode&
     std::vector<FieldValueTuple> fvs;
 
     /* Leave the fvs empty if the operation type is "DEL".
-     * An empty fvs makes ResponsePublisher::publish() remove the state entry from APPL_STATE_DB
+     * An empty fvs makes ResponsePublisher remove the state entry from APPL_STATE_DB
      */
     if (ctx.is_set)
     {
@@ -3198,7 +3200,7 @@ void RouteOrch::publishRouteState(const RouteBulkContext& ctx, const ReturnCode&
 
     const bool replace = false;
 
-    m_publisher.publish(APP_ROUTE_TABLE_NAME, ctx.key, fvs, status, replace);
+    m_publisher.publishAsync(APP_ROUTE_TABLE_NAME, ctx.key, fvs, status, replace);
 }
 
 inline bool RouteOrch::isVipRoute(const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
@@ -3248,4 +3250,10 @@ inline void RouteOrch::removeVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix)
     string key = tunnel_name + ":" + ipPrefix.to_string();
     m_appTunnelDecapTermProducer.del(key);
     m_SubnetDecapTermsCreated.erase(it);
+}
+
+void RouteOrch::flushResponses()
+{
+    m_publisher.flush();
+    Orch::flushResponses();
 }

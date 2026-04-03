@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "timestamp.h"
 
 namespace
 {
@@ -29,7 +30,7 @@ std::string PrependedComponent(const ReturnCode &status)
 }
 
 void RecordDBWrite(const std::string &table, const std::string &key, const std::vector<swss::FieldValueTuple> &attrs,
-                   const std::string &op)
+                   const std::string &op, const std::string *record_ts = nullptr)
 {
     if (!swss::Recorder::Instance().respub.isRecord())
     {
@@ -42,11 +43,19 @@ void RecordDBWrite(const std::string &table, const std::string &key, const std::
         s += "|" + fvField(attr) + ":" + fvValue(attr);
     }
 
-    swss::Recorder::Instance().respub.record(s);
+    if (record_ts != nullptr && !record_ts->empty())
+    {
+        swss::Recorder::Instance().respub.record(*record_ts, s);
+    }
+    else
+    {
+        swss::Recorder::Instance().respub.record(s);
+    }
 }
 
 void RecordResponse(const std::string &response_channel, const std::string &key,
-                    const std::vector<swss::FieldValueTuple> &attrs, const std::string &status)
+                    const std::vector<swss::FieldValueTuple> &attrs, const std::string &status,
+                    const std::string *record_ts = nullptr)
 {
     if (!swss::Recorder::Instance().respub.isRecord())
     {
@@ -59,7 +68,14 @@ void RecordResponse(const std::string &response_channel, const std::string &key,
         s += "|" + fvField(attr) + ":" + fvValue(attr);
     }
 
-    swss::Recorder::Instance().respub.record(s);
+    if (record_ts != nullptr && !record_ts->empty())
+    {
+        swss::Recorder::Instance().respub.record(*record_ts, s);
+    }
+    else
+    {
+        swss::Recorder::Instance().respub.record(s);
+    }
 }
 
 } // namespace
@@ -149,6 +165,61 @@ void ResponsePublisher::publish(const std::string &table, const std::string &key
     publish(table, key, intent_attrs, status, state_attrs, replace);
 }
 
+void ResponsePublisher::setAsyncFullPublish(bool enable)
+{
+    m_async_full_publish = enable;
+}
+
+void ResponsePublisher::publishAsync(const std::string &table, const std::string &key,
+                                     const std::vector<swss::FieldValueTuple> &intent_attrs, const ReturnCode &status,
+                                     bool replace)
+{
+    if (m_update_thread == nullptr)
+    {
+        publish(table, key, intent_attrs, status, replace);
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_lock);
+        std::string ts = swss::getTimestamp();
+        entry e(table, key, std::vector<swss::FieldValueTuple>{}, "", replace, /*flush=*/false, /*shutdown=*/false);
+        e.fullPublish = true;
+        e.intent_attrs = intent_attrs;
+        e.status = status;
+        e.record_ts = std::move(ts);
+        m_queue.push(std::move(e));
+    }
+    m_signal.notify_one();
+}
+
+void ResponsePublisher::publishFullFromThread(const std::string &table, const std::string &key,
+                                              const std::vector<swss::FieldValueTuple> &intent_attrs,
+                                              const ReturnCode &status, bool replace, const std::string &record_ts)
+{
+    std::vector<swss::FieldValueTuple> state_attrs;
+    if (status.ok())
+    {
+        state_attrs = intent_attrs;
+    }
+    std::string response_channel = "APPL_DB_" + table + "_RESPONSE_CHANNEL";
+    swss::NotificationProducer notificationProducer{m_ntf_pipe.get(), response_channel, m_buffered};
+
+    auto intent_attrs_copy = intent_attrs;
+    swss::FieldValueTuple err_str("err_str", PrependedComponent(status) + status.message());
+    intent_attrs_copy.insert(intent_attrs_copy.begin(), err_str);
+    notificationProducer.send(status.codeStr(), key, intent_attrs_copy);
+    // Same enqueue-time stamp for both lines (parity with sync publish recorder timing).
+    const std::string *ts_ptr = record_ts.empty() ? nullptr : &record_ts;
+    RecordResponse(response_channel, key, intent_attrs_copy, status.codeStr(), ts_ptr);
+
+    if ((intent_attrs.size() && state_attrs.size()) || (status.ok() && !intent_attrs.size()))
+    {
+        std::string op = intent_attrs.size() ? SET_COMMAND : DEL_COMMAND;
+        writeToDBInternal(table, key, state_attrs, op, replace);
+        RecordDBWrite(table, key, state_attrs, op, ts_ptr);
+    }
+}
+
 void ResponsePublisher::writeToDB(const std::string &table, const std::string &key,
                                   const std::vector<swss::FieldValueTuple> &values, const std::string &op, bool replace)
 {
@@ -229,19 +300,24 @@ void ResponsePublisher::flush() {
   } else {
     m_ntf_pipe->flush();
   }
-  if (m_update_thread != nullptr)
-  {
-      {
-          std::lock_guard<std::mutex> lock(m_lock);
-          m_queue.emplace(/*table=*/"", /*key=*/"", /*values =*/std::vector<swss::FieldValueTuple>{}, /*op=*/"",
-                          /*replace=*/false, /*flush=*/true, /*shutdown=*/false);
-      }
-      m_signal.notify_one();
-  }
-  else
-  {
-      m_db_pipe->flush();
-  }
+    if (m_update_thread != nullptr)
+    {
+        if (!m_async_full_publish)
+        {
+            m_ntf_pipe->flush();
+        }
+        {
+            std::lock_guard<std::mutex> lock(m_lock);
+            m_queue.emplace(/*table=*/"", /*key=*/"", /*values =*/std::vector<swss::FieldValueTuple>{}, /*op=*/"",
+                            /*replace=*/false, /*flush=*/true, /*shutdown=*/false);
+        }
+        m_signal.notify_one();
+    }
+    else
+    {
+        m_ntf_pipe->flush();
+        m_db_pipe->flush();
+    }
 }
 
 void ResponsePublisher::setBuffered(bool buffered)
@@ -249,6 +325,7 @@ void ResponsePublisher::setBuffered(bool buffered)
     m_buffered = buffered;
 }
 
+// Runs on m_update_thread (response publisher db update thread).
 void ResponsePublisher::dbUpdateThread()
 {
     while (true)
@@ -270,7 +347,15 @@ void ResponsePublisher::dbUpdateThread()
         }
         if (e.flush)
         {
+            if (m_async_full_publish)
+            {
+                m_ntf_pipe->flush();
+            }
             m_db_pipe->flush();
+        }
+        else if (e.fullPublish)
+        {
+            publishFullFromThread(e.table, e.key, e.intent_attrs, e.status, e.replace, e.record_ts);
         }
         else
         {
