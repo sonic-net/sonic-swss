@@ -21,6 +21,7 @@ using namespace swss;
 
 NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector *cfgDb) :
     m_neighTable(pipelineAppDB, APP_NEIGH_TABLE_NAME),
+    m_neighRefreshTable(pipelineAppDB, APP_NEIGH_REFRESH_TABLE_NAME),
     m_stateNeighRestoreTable(stateDb, STATE_NEIGH_RESTORE_TABLE_NAME),
     m_cfgInterfaceTable(cfgDb, CFG_INTF_TABLE_NAME),
     m_cfgLagInterfaceTable(cfgDb, CFG_LAG_INTF_TABLE_NAME),
@@ -123,6 +124,11 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
         }
     }
 
+    // Add only physical interface neighbors to refresh table
+    bool addToRefresh = false;
+    if (!intfName.compare(0, strlen("Ethernet"), "Ethernet"))
+        addToRefresh = true;
+
     bool delete_key = false;
     bool use_zero_mac = false;
     if (is_dualtor && (state == NUD_INCOMPLETE || state == NUD_FAILED))
@@ -183,10 +189,31 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
         if (delete_key == true)
         {
             m_neighTable.del(key);
-            return;
         }
-        m_neighTable.set(key, fvVector);
+        else
+        {
+            m_neighTable.set(key, fvVector);
+        }
     }
+
+    if(addToRefresh)
+    {
+        SWSS_LOG_INFO("Neigh Refresh Table %s, Key - %s", 
+                        ((nlmsg_type == RTM_DELNEIGH) ? "Del" : "Add"), key.c_str());
+
+        if (nlmsg_type == RTM_DELNEIGH)
+        {
+            m_neighRefreshTable.del(key);
+        }
+        else
+        {
+            FieldValueTuple st("state", to_string(state));
+            fvVector.push_back(st);
+
+            m_neighRefreshTable.set(key, fvVector);
+        }
+    }
+
 }
 
 /* To check the ipv6 link local is enabled on a given port */
