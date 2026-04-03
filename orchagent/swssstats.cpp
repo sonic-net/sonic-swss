@@ -1,10 +1,13 @@
 #include "swssstats.h"
+#include "dbconnector.h"
+#include "table.h"
 #include "logger.h"
+#include <chrono>
 
 using namespace std;
 using namespace swss;
 
-#define SWSS_STATS_TABLE "SWSS_STATS_TABLE"
+#define SWSS_STATS_TABLE "SWSS_STATS"
 
 SwssStats* SwssStats::getInstance()
 {
@@ -12,211 +15,145 @@ SwssStats* SwssStats::getInstance()
     return &instance;
 }
 
-SwssStats::SwssStats(uint32_t interval) :
-    m_interval(interval)
+SwssStats::SwssStats(uint32_t interval)
+    : m_running(true)
+    , m_interval_sec(interval)
 {
     SWSS_LOG_ENTER();
-
-    m_run_thread = true;
-    m_counter_db = make_shared<DBConnector>("COUNTERS_DB", 0);
-    m_counter_table = make_unique<Table>(m_counter_db.get(), SWSS_STATS_TABLE);
-
-    m_background_thread = make_unique<thread>(&SwssStats::recordStatsThread, this);
     
-    SWSS_LOG_NOTICE("SwssStats initialized with interval %d seconds", m_interval);
+    // Connect to COUNTERS_DB
+    m_db = make_shared<DBConnector>("COUNTERS_DB", 0);
+    m_table = make_unique<Table>(m_db.get(), SWSS_STATS_TABLE);
+    
+    // Start background writer thread
+    m_thread = make_unique<thread>(&SwssStats::writerThread, this);
+    
+    SWSS_LOG_NOTICE("SwssStats initialized (interval: %d sec)", m_interval_sec);
 }
 
 SwssStats::~SwssStats()
 {
     SWSS_LOG_ENTER();
-
-    m_run_thread = false;
-    if (m_background_thread && m_background_thread->joinable())
+    
+    m_running = false;
+    if (m_thread && m_thread->joinable())
     {
-        m_background_thread->join();
+        m_thread->join();
     }
     
-    SWSS_LOG_NOTICE("SwssStats shutdown");
+    SWSS_LOG_NOTICE("SwssStats stopped");
 }
 
-void SwssStats::recordIncomingTask(ConsumerBase &consumer, const KeyOpFieldsValuesTuple &tuple)
+void SwssStats::recordTask(const string &table_name, const string &op)
 {
     SWSS_LOG_ENTER();
-
-    auto table_name = consumer.getTableName();
-    auto op = kfvOp(tuple);
-
-    auto& stats = getTableStats(table_name);
     
-    if (op == SET_COMMAND)
+    auto& stats = getStats(table_name);
+    
+    if (op == "SET")
     {
-        stats.m_set_count++;
+        stats.set_count++;
     }
-    else if (op == DEL_COMMAND)
+    else if (op == "DEL")
     {
-        stats.m_del_count++;
+        stats.del_count++;
     }
     
-    stats.m_version++;
+    stats.version++;
 }
 
-void SwssStats::recordTaskComplete(ConsumerBase &consumer, const KeyOpFieldsValuesTuple &tuple, 
-                                  uint64_t latency_us)
+void SwssStats::recordComplete(const string &table_name)
 {
     SWSS_LOG_ENTER();
-
-    auto table_name = consumer.getTableName();
-    auto& stats = getTableStats(table_name);
     
-    stats.m_completed_count++;
-    stats.m_total_latency_us += latency_us;
-    
-    // Update min/max latency
-    updateMinMax(stats.m_min_latency_us, stats.m_max_latency_us, latency_us);
-    
-    stats.m_version++;
+    auto& stats = getStats(table_name);
+    stats.complete_count++;
+    stats.version++;
 }
 
-void SwssStats::recordTaskError(ConsumerBase &consumer, const KeyOpFieldsValuesTuple &tuple)
+void SwssStats::recordError(const string &table_name)
 {
     SWSS_LOG_ENTER();
-
-    auto table_name = consumer.getTableName();
-    auto& stats = getTableStats(table_name);
     
-    stats.m_error_count++;
-    stats.m_version++;
+    auto& stats = getStats(table_name);
+    stats.error_count++;
+    stats.version++;
 }
 
-void SwssStats::recordQueueDepth(const std::string &table_name, size_t depth)
+SwssStats::TableStats& SwssStats::getStats(const string &table_name)
 {
-    SWSS_LOG_ENTER();
-
-    auto& stats = getTableStats(table_name);
+    lock_guard<mutex> lock(m_mutex);
     
-    stats.m_current_queue_depth = depth;
-    
-    // Update max queue depth
-    uint64_t current_max = stats.m_max_queue_depth.load();
-    while (depth > current_max && 
-           !stats.m_max_queue_depth.compare_exchange_weak(current_max, depth))
+    auto it = m_stats.find(table_name);
+    if (it == m_stats.end())
     {
-        // Loop until successful update
-    }
-    
-    stats.m_version++;
-}
-
-SwssStats::Stats &SwssStats::getTableStats(const std::string &table_name)
-{
-    SWSS_LOG_ENTER();
-
-    auto it = m_table_stats_map.find(table_name);
-    if (it == m_table_stats_map.end())
-    {
-        lock_guard<mutex> lock(m_mutex);
-        it = m_table_stats_map.emplace(
-            std::piecewise_construct,
-            std::forward_as_tuple(table_name),
-            std::forward_as_tuple()).first;
+        it = m_stats.emplace(piecewise_construct,
+                            forward_as_tuple(table_name),
+                            forward_as_tuple()).first;
         
         SWSS_LOG_INFO("Created stats for table: %s", table_name.c_str());
     }
-
+    
     return it->second;
 }
 
-void SwssStats::dumpStats(const std::string &table_name, const Stats& stats, vector<FieldValueTuple> &dump)
+void SwssStats::dumpStats(const string &table_name, const TableStats &stats,
+                         vector<FieldValueTuple> &values)
 {
-    SWSS_LOG_ENTER();
-
-    dump.clear();
-
-    // Operation counters
-    dump.emplace_back("SET", to_string(stats.m_set_count.load()));
-    dump.emplace_back("DEL", to_string(stats.m_del_count.load()));
-    dump.emplace_back("COMPLETED", to_string(stats.m_completed_count.load()));
-    dump.emplace_back("ERROR", to_string(stats.m_error_count.load()));
+    values.clear();
     
-    // Latency statistics (in microseconds)
-    uint64_t completed = stats.m_completed_count.load();
-    uint64_t total_latency = stats.m_total_latency_us.load();
-    uint64_t avg_latency = (completed > 0) ? (total_latency / completed) : 0;
-    
-    dump.emplace_back("AVG_LATENCY_US", to_string(avg_latency));
-    dump.emplace_back("MIN_LATENCY_US", to_string(stats.m_min_latency_us.load()));
-    dump.emplace_back("MAX_LATENCY_US", to_string(stats.m_max_latency_us.load()));
-    dump.emplace_back("TOTAL_LATENCY_US", to_string(total_latency));
-    
-    // Queue depth
-    dump.emplace_back("QUEUE_DEPTH", to_string(stats.m_current_queue_depth.load()));
-    dump.emplace_back("MAX_QUEUE_DEPTH", to_string(stats.m_max_queue_depth.load()));
+    values.emplace_back("SET", to_string(stats.set_count.load()));
+    values.emplace_back("DEL", to_string(stats.del_count.load()));
+    values.emplace_back("COMPLETE", to_string(stats.complete_count.load()));
+    values.emplace_back("ERROR", to_string(stats.error_count.load()));
 }
 
-void SwssStats::recordStatsThread()
+void SwssStats::writerThread()
 {
     SWSS_LOG_ENTER();
-
-    std::unordered_map<std::string, std::uint64_t> dump_version;
-
-    SWSS_LOG_NOTICE("SwssStats background thread started");
-
-    while (m_run_thread)
+    SWSS_LOG_NOTICE("SwssStats writer thread started");
+    
+    unordered_map<string, uint64_t> last_versions;
+    
+    while (m_running)
     {
-        vector<string> stats_names;
-        vector<vector<FieldValueTuple>> stats_values;
+        vector<string> table_names;
+        vector<vector<FieldValueTuple>> table_values;
         
         {
             lock_guard<mutex> lock(m_mutex);
             
-            for (const auto& table_stats : m_table_stats_map)
+            for (const auto& entry : m_stats)
             {
-                auto ver = dump_version.find(table_stats.first);
-                if (ver == dump_version.end())
+                const string& name = entry.first;
+                const TableStats& stats = entry.second;
+                
+                uint64_t current_ver = stats.version.load();
+                
+                // Check if stats changed since last write
+                auto ver_it = last_versions.find(name);
+                if (ver_it != last_versions.end() && ver_it->second == current_ver)
                 {
-                    ver = dump_version.emplace(table_stats.first, 0).first;
-                }
-                else if (ver->second == table_stats.second.m_version.load())
-                {
-                    // No changes, skip
-                    continue;
+                    continue;  // No changes
                 }
                 
-                ver->second = table_stats.second.m_version.load();
-                stats_names.emplace_back(table_stats.first);
-                stats_values.emplace_back();
-                dumpStats(table_stats.first, table_stats.second, stats_values.back());
+                last_versions[name] = current_ver;
+                
+                table_names.push_back(name);
+                table_values.emplace_back();
+                dumpStats(name, stats, table_values.back());
             }
         }
         
         // Write to Redis outside the lock
-        for (size_t i = 0; i < stats_names.size(); i++)
+        for (size_t i = 0; i < table_names.size(); i++)
         {
-            m_counter_table->set(stats_names[i], stats_values[i]);
-            SWSS_LOG_DEBUG("Updated stats for table: %s", stats_names[i].c_str());
+            m_table->set(table_names[i], table_values[i]);
+            SWSS_LOG_DEBUG("Updated stats for: %s", table_names[i].c_str());
         }
         
-        this_thread::sleep_for(chrono::seconds(m_interval));
+        this_thread::sleep_for(chrono::seconds(m_interval_sec));
     }
     
-    SWSS_LOG_NOTICE("SwssStats background thread stopped");
-}
-
-void SwssStats::updateMinMax(std::atomic<std::uint64_t> &min_val, std::atomic<std::uint64_t> &max_val, uint64_t new_val)
-{
-    // Update minimum
-    uint64_t current_min = min_val.load();
-    while (new_val < current_min && 
-           !min_val.compare_exchange_weak(current_min, new_val))
-    {
-        // Loop until successful update
-    }
-    
-    // Update maximum
-    uint64_t current_max = max_val.load();
-    while (new_val > current_max && 
-           !max_val.compare_exchange_weak(current_max, new_val))
-    {
-        // Loop until successful update
-    }
+    SWSS_LOG_NOTICE("SwssStats writer thread stopped");
 }

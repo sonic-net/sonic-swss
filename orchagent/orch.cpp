@@ -257,7 +257,7 @@ void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry, bool onRetry)
         /* Record statistics */
         if (gSwssStatsRecord)
         {
-            SwssStats::getInstance()->recordIncomingTask(*this, entry);
+            SwssStats::getInstance()->recordTask(getTableName(), op);
         }
     }
     else
