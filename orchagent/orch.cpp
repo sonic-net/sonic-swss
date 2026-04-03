@@ -3,6 +3,7 @@
 #include <sys/time.h>
 #include "timestamp.h"
 #include "orch.h"
+#include "swssstats.h"
 
 #include "subscriberstatetable.h"
 #include "portsorch.h"
@@ -16,6 +17,7 @@
 using namespace swss;
 
 int gBatchSize = 0;
+bool gSwssStatsRecord = true;  // Enable SwssStats by default
 
 std::shared_ptr<RingBuffer> Orch::gRingBuffer = nullptr;
 std::shared_ptr<RingBuffer> Executor::gRingBuffer = nullptr;
@@ -248,8 +250,16 @@ void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry, bool onRetry)
     string op  = kfvOp(entry);
 
     if (!onRetry)
+    {
         /* Record incoming tasks */
         Recorder::Instance().swss.record(dumpTuple(entry));
+        
+        /* Record statistics */
+        if (gSwssStatsRecord)
+        {
+            SwssStats::getInstance()->recordIncomingTask(*this, entry);
+        }
+    }
     else
         Recorder::Instance().retry.record(dumpTuple(entry).append(DECACHE));
 

@@ -55,7 +55,8 @@ orchagent_SOURCES = \
             $(top_srcdir)/lib/orch_zmq_config.cpp \
             orchdaemon.cpp \
             orch.cpp \
-            notifications.cpp \
+            swssstats.cpp \
+            notifications.cpp\
             nhgorch.cpp \
             nhgbase.cpp \
             cbf/cbfnhgorch.cpp  \
