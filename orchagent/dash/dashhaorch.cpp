@@ -71,7 +71,7 @@ DashHaOrch::DashHaOrch(DBConnector *db, const vector<string> &tables, DashOrch *
     dash_ha_scope_result_table_ = make_unique<Table>(app_state_db, APP_DASH_HA_SCOPE_TABLE_NAME);
 
     m_counter_db = std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
-    m_ha_set_name_table = make_unique<Table>(m_counter_db.get(), COUNTERS_HA_SET_NAME_MAP);
+    m_counter_ha_set_name_map_table = make_unique<Table>(m_counter_db.get(), COUNTERS_HA_SET_NAME_MAP);
 
     m_dpuStateDbConnector = make_unique<DBConnector>("DPU_STATE_DB", 0, true);
 
@@ -350,7 +350,7 @@ bool DashHaOrch::addHaSetEntry(const std::string &key, const dash::ha_set::HaSet
 
     std::vector<FieldValueTuple> nameMapFvs;
     nameMapFvs.emplace_back(key, sai_serialize_object_id(sai_ha_set_oid));
-    m_ha_set_name_table->set("", nameMapFvs);
+    m_counter_ha_set_name_map_table->set("", nameMapFvs);
 
     SWSS_LOG_NOTICE("Created HA Set object for %s", key.c_str());
 
@@ -381,7 +381,7 @@ bool DashHaOrch::removeHaSetEntry(const std::string &key)
         }
     }
     m_ha_set_entries.erase(it);
-    m_ha_set_name_table->hdel("", key);
+    m_counter_ha_set_name_map_table->hdel("", key);
     SWSS_LOG_NOTICE("Removed HA Set object for %s", key.c_str());
 
     return true;
