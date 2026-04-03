@@ -35,6 +35,7 @@
 #include "countercheckorch.h"
 #include "notifier.h"
 #include "fdborch.h"
+#include "p4orch/p4orch.h"
 #include "switchorch.h"
 #include "stringutility.h"
 #include "subscriberstatetable.h"
@@ -60,6 +61,7 @@ extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
 extern BufferOrch *gBufferOrch;
 extern FdbOrch *gFdbOrch;
+extern P4Orch *gP4Orch;
 extern SwitchOrch *gSwitchOrch;
 extern StpOrch *gStpOrch;
 extern Directory<Orch*> gDirectory;
@@ -1032,6 +1034,12 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         m_defaultVlan = attrs[1].value.oid;
     }
 
+    //Fast link-up per-port attribute support
+    if (gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_FAST_LINKUP_ENABLED))
+    {
+        m_fastLinkupPortAttrSupported = true;
+    }
+
     if (gMySwitchType != "dpu")
     {
         // System Ports not supported on dpu
@@ -1788,6 +1796,11 @@ bool PortsOrch::getPort(sai_object_id_t id, Port &port)
     }
 
     return false;
+}
+
+bool PortsOrch::isFrontPanelPort(Port& port)
+{
+    return port.m_type == Port::PHY;
 }
 
 void PortsOrch::increasePortRefCount(const string &alias)
@@ -3516,6 +3529,28 @@ bool PortsOrch::getPortAdvSpeeds(const Port& port, bool remote, string& adv_spee
     return rc;
 }
 
+task_process_status PortsOrch::setPortFastLinkupEnabled(Port &port, bool enable)
+{
+    SWSS_LOG_ENTER();
+
+    if (!m_fastLinkupPortAttrSupported)
+    {
+        SWSS_LOG_NOTICE("Fast link-up is not supported on this platform");
+        return task_success;
+    }
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_FAST_LINKUP_ENABLED;
+    attr.value.booldata = enable;
+    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set fast_linkup %d on port %s", enable, port.m_alias.c_str());
+        return handleSaiSetStatus(SAI_API_PORT, status);
+    }
+    SWSS_LOG_INFO("Set port %s fast_linkup %s", port.m_alias.c_str(), enable ? "true" : "false");
+    return task_success;
+}
+
 task_process_status PortsOrch::setPortUnreliableLOS(Port &port, bool enabled)
 {
     SWSS_LOG_ENTER();
@@ -4885,6 +4920,19 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
+                // Handle fast_linkup boolean
+                if (pCfg.fast_linkup.is_set)
+                {
+                    auto status = setPortFastLinkupEnabled(p, pCfg.fast_linkup.value);
+                    // For fast_linkup attribute, task_need_retry is not a meaningful return, so treat any failure as a permanent failure and erase the task.
+                    if (status != task_success)
+                    {
+                        SWSS_LOG_ERROR("Failed to set port %s fast_linkup to %s", p.m_alias.c_str(), pCfg.fast_linkup.value ? "true" : "false");
+                        it = taskMap.erase(it);
+                        continue;
+                    }
+                }
+
                 if (pCfg.link_event_damping_algorithm.is_set)
                 {
                     if (p.m_link_event_damping_algorithm != pCfg.link_event_damping_algorithm.value)
@@ -5220,7 +5268,10 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         {
                             gIntfsOrch->setRouterIntfsMtu(p);
                         }
-
+                        if (gP4Orch)
+                        {
+                            gP4Orch->setRouterIntfsMtu(p.m_alias, p.m_mtu);
+                        }
                         // Sub interfaces inherit parent physical port mtu
                         updateChildPortsMtu(p, pCfg.mtu.value);
 
@@ -5780,7 +5831,12 @@ void PortsOrch::doVlanTask(Consumer &consumer)
         else if (op == DEL_COMMAND)
         {
             Port vlan;
-            getPort(vlan_alias, vlan);
+            if (!getPort(vlan_alias, vlan))
+            {
+                SWSS_LOG_WARN("VLAN %s not found in m_portList, skipping removal (likely never created)", vlan_alias.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
 
             if (removeVlan(vlan))
                 it = consumer.m_toSync.erase(it);
@@ -6275,7 +6331,15 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
                     continue;
                 }
 
-                if (!addLagMember(lag, port, status))
+                // Skip adding port to LAG if the port is still a member of one or more VLANs.
+                if (m_portVlanMember[port.m_alias].size() > 0)
+				{
+                    SWSS_LOG_DEBUG("Port %s is still a member of %zu VLAN(s), skipping adding port to port channel.", port.m_alias.c_str(), m_portVlanMember[port.m_alias].size());
+                    it++;
+                    continue;
+                } 
+                
+                if(!addLagMember(lag, port, status))
                 {
                     it++;
                     continue;

@@ -293,9 +293,11 @@ public:
     void setMACsecEnabledState(sai_object_id_t port_id, bool enabled);
     bool isMACsecPort(sai_object_id_t port_id) const;
     vector<sai_object_id_t> getPortVoQIds(Port& port);
+    bool isFrontPanelPort(Port& port);
 
     bool setPortPtIntfId(const Port& port, sai_uint16_t intf_id);
     bool setPortPtTimestampTemplate(const Port& port, sai_port_path_tracing_timestamp_type_t ts_type);
+    task_process_status setPortFastLinkupEnabled(Port &port, bool enable);
 
 private:
     unique_ptr<CounterNameMapUpdater> m_counterNameMapUpdater;
@@ -411,6 +413,7 @@ private:
     bool saiHwTxSignalSupported = false;
     bool saiTxReadyNotifySupported = false;
     bool m_supportsHostIfTxQueue = false;
+    bool m_fastLinkupPortAttrSupported = false;
 
     swss::SelectableTimer *m_port_state_poller = nullptr;
 
