@@ -39,6 +39,19 @@ void ResponsePublisher::publish(
     }
 }
 
+void ResponsePublisher::setAsyncFullPublish(bool enable)
+{
+    (void)enable;
+}
+
+void ResponsePublisher::publishAsync(
+    const std::string& table, const std::string& key,
+    const std::vector<swss::FieldValueTuple>& intent_attrs, const ReturnCode& status, bool replace)
+{
+    // Fake has no db update thread; mirror real ResponsePublisher::publishAsync fallback.
+    publish(table, key, intent_attrs, status, replace);
+}
+
 void ResponsePublisher::writeToDB(
     const std::string& table, const std::string& key,
     const std::vector<swss::FieldValueTuple>& values, const std::string& op,
