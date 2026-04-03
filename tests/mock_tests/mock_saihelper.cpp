@@ -434,6 +434,31 @@ namespace saihelper_test
         _unhook_sai_apis();
     }
 
+    TEST_F(SaihelperTest, TestRemoveInvalidEntry) {
+        _hook_sai_apis();
+        initSwitchOrch();
+
+        _sai_syncd_notifications_count = (uint32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        *_sai_syncd_notifications_count = 0;
+        task_process_status status;
+
+        status = handleSaiRemoveStatus(SAI_API_LAG, SAI_STATUS_ITEM_NOT_FOUND);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_invalid_entry);
+        _unhook_sai_apis();
+
+        status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, SAI_STATUS_ITEM_NOT_FOUND);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_invalid_entry);
+        _unhook_sai_apis();
+
+        status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_INBOUND_ROUTING, SAI_STATUS_ITEM_NOT_FOUND);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_invalid_entry);
+        _unhook_sai_apis();
+    }
+
     TEST_F(SaihelperTest, TestAllSuccess) {
         _hook_sai_apis();
         initSwitchOrch();
@@ -472,10 +497,6 @@ namespace saihelper_test
         ASSERT_EQ(status, task_success);
 
         status = handleSaiSetStatus(SAI_API_NEXT_HOP, SAI_STATUS_OBJECT_IN_USE);
-        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
-        ASSERT_EQ(status, task_success);
-
-        status = handleSaiRemoveStatus(SAI_API_LAG, SAI_STATUS_ITEM_NOT_FOUND);
         ASSERT_EQ(*_sai_syncd_notifications_count, 0);
         ASSERT_EQ(status, task_success);
 
