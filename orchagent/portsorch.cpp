@@ -5790,7 +5790,12 @@ void PortsOrch::doVlanTask(Consumer &consumer)
         else if (op == DEL_COMMAND)
         {
             Port vlan;
-            getPort(vlan_alias, vlan);
+            if (!getPort(vlan_alias, vlan))
+            {
+                SWSS_LOG_WARN("VLAN %s not found in m_portList, skipping removal (likely never created)", vlan_alias.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
 
             if (removeVlan(vlan))
                 it = consumer.m_toSync.erase(it);
@@ -6285,7 +6290,15 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
                     continue;
                 }
 
-                if (!addLagMember(lag, port, status))
+                // Skip adding port to LAG if the port is still a member of one or more VLANs.
+                if (m_portVlanMember[port.m_alias].size() > 0)
+				{
+                    SWSS_LOG_DEBUG("Port %s is still a member of %zu VLAN(s), skipping adding port to port channel.", port.m_alias.c_str(), m_portVlanMember[port.m_alias].size());
+                    it++;
+                    continue;
+                } 
+                
+                if(!addLagMember(lag, port, status))
                 {
                     it++;
                     continue;
