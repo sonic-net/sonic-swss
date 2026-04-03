@@ -549,6 +549,8 @@ void FdbOrch::update(sai_fdb_event_t        type,
     case SAI_FDB_EVENT_MOVE:
     {
         Port port_old;
+        port_old.m_alias = "";
+        port_old.m_type = Port::UNKNOWN;
         auto existing_entry = m_entries.find(update.entry);
 
         SWSS_LOG_INFO("Received MOVE event for bvid=0x%" PRIx64 " mac=%s port=0x%" PRIx64,
