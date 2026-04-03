@@ -274,7 +274,6 @@ bool DashRouteOrch::removeOutboundRoutingPost(const string& key, const OutboundR
         SWSS_LOG_ERROR("Failed to remove outbound routing entry for %s", key.c_str());
         return parseHandleSaiStatusFailure(handle_status);
     }
-    SWSS_LOG_NOTICE("Outbound routing entry for %s remove treated as success (already absent)", key.c_str());
     return true;
 }
 
@@ -559,7 +558,6 @@ bool DashRouteOrch::removeInboundRoutingPost(const string& key, const InboundRou
         SWSS_LOG_ERROR("Failed to remove inbound routing entry for %s", key.c_str());
         return parseHandleSaiStatusFailure(handle_status);
     }
-    SWSS_LOG_NOTICE("Inbound routing entry for %s remove treated as success (already absent)", key.c_str());
     return true;
 }
 

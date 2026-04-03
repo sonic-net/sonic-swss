@@ -835,8 +835,8 @@ private:
         }
         else if (status == SAI_STATUS_INVALID_PARAMETER)
         {
-            SWSS_LOG_NOTICE("EntityBulker.flush remove entries not completed, status: %s, count %zu (per-entry status may vary)",
-                            sai_serialize_status(status).c_str(), count);
+            SWSS_LOG_WARN("EntityBulker.flush remove entries not completed, number of entries to remove: %zu, status: %s",
+                            count, sai_serialize_status(status).c_str());
         }
         else
         {
