@@ -709,34 +709,28 @@ bool IntfMgr::isIntfStateOk(const string &alias)
     return false;
 }
 
-void IntfMgr::delIpv6LinkLocalNeigh(const string &alias)
+void IntfMgr::delLinkLocalNeigh(const string &alias, IpVersion ipVersion)
 {
-    vector<string> neighEntries;
+    string ipPattern = (ipVersion == IpVersion::IPv6) ? "fe80" : "169.254";
+    string ipVersionStr = (ipVersion == IpVersion::IPv6) ? "IPv6" : "IPv4";
+    SWSS_LOG_INFO("Deleting %s link local neighbors for %s", ipVersionStr.c_str(), alias.c_str());
 
-    SWSS_LOG_INFO("Deleting ipv6 link local neighbors for %s", alias.c_str());
+    string cmd = "ip neigh show dev " + alias + " | awk '$1 ~ /" + ipPattern + "/ {system(\"ip neigh del dev " + alias + " \" $1)}'";
+    execNeighDelCommand(cmd);
+}
 
-    m_neighTable.getKeys(neighEntries);
-    for (auto neighKey : neighEntries)
+void IntfMgr::execNeighDelCommand(const string& cmd)
+{
+    string res;
+    SWSS_LOG_DEBUG("cmd: %s", cmd.c_str());
+
+    int ret = swss::exec(cmd, res);
+    if (ret)
     {
-        if (!neighKey.compare(0, alias.size(), alias.c_str()))
-        {
-            vector<string> keys = tokenize(neighKey, ':', 1);
-            if (keys.size() == 2)
-            {
-                IpAddress ipAddress(keys[1]);
-                if (ipAddress.getAddrScope() == IpAddress::AddrScope::LINK_SCOPE)
-                {
-                    stringstream cmd;
-                    string res;
-
-                    cmd << IP_CMD << " neigh del dev " << keys[0] << " " << keys[1] ;
-                    swss::exec(cmd.str(), res);
-                    SWSS_LOG_INFO("Deleted ipv6 link local neighbor - %s", keys[1].c_str());
-                }
-            }
-        }
+        SWSS_LOG_WARN("Command '%s' failed with rc %d, res:%s", cmd.c_str(), ret, res.c_str());
     }
 }
+
 
 bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         vector<FieldValueTuple> data,
@@ -915,12 +909,14 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                 if ((ipv6_link_local_mode == "enable") && (m_ipv6LinkLocalModeList.find(alias) == m_ipv6LinkLocalModeList.end()))
                 {
                     m_ipv6LinkLocalModeList.insert(alias);
+                    SWSS_LOG_NOTICE("Flush link-local neighbor for %s", alias.c_str());
+                    delLinkLocalNeigh(alias, IpVersion::IPv6);
                     SWSS_LOG_INFO("Inserted ipv6 link local mode list for %s", alias.c_str());
                 }
                 else if ((ipv6_link_local_mode == "disable") && (m_ipv6LinkLocalModeList.find(alias) != m_ipv6LinkLocalModeList.end()))
                 {
                     m_ipv6LinkLocalModeList.erase(alias);
-                    delIpv6LinkLocalNeigh(alias);
+                    delLinkLocalNeigh(alias, IpVersion::IPv6);
                     SWSS_LOG_INFO("Erased ipv6 link local mode list for %s", alias.c_str());
                 }
                 FieldValueTuple fvTuple("ipv6_use_link_local_only", ipv6_link_local_mode);
@@ -1081,9 +1077,12 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         if (m_ipv6LinkLocalModeList.find(alias) != m_ipv6LinkLocalModeList.end())
         {
             m_ipv6LinkLocalModeList.erase(alias);
-            delIpv6LinkLocalNeigh(alias);
+            delLinkLocalNeigh(alias, IpVersion::IPv6);
+
             SWSS_LOG_INFO("Erased ipv6 link local mode list for %s", alias.c_str());
         }
+
+        delLinkLocalNeigh(alias, IpVersion::IPv4);
 
         m_appIntfTableProducer.del(alias);
         m_stateIntfTable.del(alias);
