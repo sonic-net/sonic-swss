@@ -57,6 +57,7 @@ using namespace swss;
 #define VXLAN_RMAC            3
 #define NH_ENCAP_VXLAN      100
 #define LWTUNNEL_ENCAP_IP 2
+#define LWTUNNEL_ENCAP_IP6 4
 #define LWTUNNEL_IP_ID    1
 
 #define NH_ENCAP_SRV6_ROUTE         101
@@ -266,14 +267,42 @@ void RouteSync::parseRtAttrNested(struct rtattr **tb, int max,
  */
 void RouteSync::parseEncap(struct rtattr *tb, uint32_t &encap_value, string &rmac)
 {
-    struct rtattr *tb_encap[3] = {0};
-    char mac_buf[MAX_ADDR_SIZE+1];
-    char mac_val[MAX_ADDR_SIZE+1];
+    struct rtattr *tb_encap[VXLAN_RMAC + 1] = {0};
+    char mac_buf[MAX_ADDR_SIZE+1] = {0};
+    char mac_val[MAX_ADDR_SIZE+1] = {0};
+    int rmac_idx;
 
-    parseRtAttrNested(tb_encap, 3, tb);
-    encap_value = ntohll((*(uint64_t *)RTA_DATA(tb_encap[LWTUNNEL_IP_ID]))) & 0xFFFFFFFF;
-    memcpy(&mac_buf, RTA_DATA(tb_encap[VXLAN_RMAC]), MAX_ADDR_SIZE);
+    parseRtAttrNested(tb_encap, VXLAN_RMAC, tb);
 
+    /*
+     * NH_ENCAP_VXLAN (100) path (evpn_mh FRR): VNI at index 0 as uint32,
+     *   RMAC at index 1.
+     * LWTUNNEL_ENCAP_IP{6} path: VNI at LWTUNNEL_IP_ID (1) as uint64,
+     *   RMAC at VXLAN_RMAC (3).
+     */
+    if (tb_encap[VXLAN_VNI])
+    {
+        encap_value = *(uint32_t *)RTA_DATA(tb_encap[VXLAN_VNI]);
+        rmac_idx = 1;
+    }
+    else if (tb_encap[LWTUNNEL_IP_ID])
+    {
+        encap_value = ntohll((*(uint64_t *)RTA_DATA(tb_encap[LWTUNNEL_IP_ID]))) & 0xFFFFFFFF;
+        rmac_idx = VXLAN_RMAC;
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("parseEncap: Missing VNI in encap attributes");
+        return;
+    }
+
+    if (!tb_encap[rmac_idx])
+    {
+        SWSS_LOG_NOTICE("parseEncap: Missing VXLAN_RMAC in encap attributes");
+        return;
+    }
+
+    memcpy(mac_buf, RTA_DATA(tb_encap[rmac_idx]), ETH_ALEN);
     SWSS_LOG_INFO("Rx MAC %s VNI %u",
         prefixMac2Str(mac_buf, mac_val, ETHER_ADDR_STRLEN), encap_value);
     rmac = mac_val;
@@ -664,7 +693,9 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
             }
 
             if (tb[RTA_ENCAP] && tb[RTA_ENCAP_TYPE]
-                && (*(uint16_t *)RTA_DATA(tb[RTA_ENCAP_TYPE]) == LWTUNNEL_ENCAP_IP))
+                && (*(uint16_t *)RTA_DATA(tb[RTA_ENCAP_TYPE]) == LWTUNNEL_ENCAP_IP
+                    || *(uint16_t *)RTA_DATA(tb[RTA_ENCAP_TYPE]) == LWTUNNEL_ENCAP_IP6
+                    || *(uint16_t *)RTA_DATA(tb[RTA_ENCAP_TYPE]) == NH_ENCAP_VXLAN))
             {
                 parseEncap(tb[RTA_ENCAP], encap_value, rmac);
             }
@@ -780,7 +811,9 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                     }
 
                     if (subtb[RTA_ENCAP] && subtb[RTA_ENCAP_TYPE]
-                        && (*(uint16_t *)RTA_DATA(subtb[RTA_ENCAP_TYPE]) == LWTUNNEL_ENCAP_IP))
+                        && (*(uint16_t *)RTA_DATA(subtb[RTA_ENCAP_TYPE]) == LWTUNNEL_ENCAP_IP
+                            || *(uint16_t *)RTA_DATA(subtb[RTA_ENCAP_TYPE]) == LWTUNNEL_ENCAP_IP6
+                            || *(uint16_t *)RTA_DATA(subtb[RTA_ENCAP_TYPE]) == NH_ENCAP_VXLAN))
                     {
                         parseEncap(subtb[RTA_ENCAP], encap_value, rmac);
                     }
