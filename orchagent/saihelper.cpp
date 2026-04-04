@@ -759,6 +759,14 @@ bool parseHandleSaiStatusFailure(task_process_status status)
     return true;
 }
 
+bool isSaiStatusResourceFull(sai_status_t status)
+{
+    return status == SAI_STATUS_INSUFFICIENT_RESOURCES ||
+           status == SAI_STATUS_TABLE_FULL ||
+           status == SAI_STATUS_NO_MEMORY ||
+           status == SAI_STATUS_NV_STORAGE_FULL;
+}
+
 /* Handling SAI failure. Request redis to invoke SAI failure dump */
 void handleSaiFailure(sai_api_t api, string oper, sai_status_t status, bool abort_on_failure)
 {
