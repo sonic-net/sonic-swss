@@ -31,6 +31,7 @@ extern "C" {
 #include "notifications.h"
 #include <signal.h>
 #include "warm_restart.h"
+#include "parseasicid.h"
 #include "gearboxutils.h"
 #include "macsecpost.h"
 
@@ -409,15 +410,12 @@ int main(int argc, char **argv)
             break;
         case 'i':
             {
-                // Limit asic instance string max length
-                size_t len = strnlen(optarg, SAI_MAX_HARDWARE_ID_LEN);
-                // Check if input is longer and warn
-                if (len == SAI_MAX_HARDWARE_ID_LEN && optarg[len] != '\0')
+                bool truncated;
+                gAsicInstance = parseAsicInstanceId(optarg, SAI_MAX_HARDWARE_ID_LEN, truncated);
+                if (truncated)
                 {
                     SWSS_LOG_WARN("ASIC instance_id length > SAI_MAX_HARDWARE_ID_LEN, LIMITING !!");
                 }
-                // If longer, truncate into a string
-                gAsicInstance.assign(optarg, len);
             }
             break;
         case 'm':
