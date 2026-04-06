@@ -298,10 +298,10 @@ void ResponsePublisher::flush() {
     }
     responses.clear();
   } else {
-    m_ntf_pipe->flush();
-  }
     if (m_update_thread != nullptr)
     {
+        // When m_async_full_publish, only the worker may use m_ntf_pipe (publishFullFromThread);
+        // flushing it here would race with the worker and can drop state/notification Redis ops.
         if (!m_async_full_publish)
         {
             m_ntf_pipe->flush();
@@ -318,6 +318,7 @@ void ResponsePublisher::flush() {
         m_ntf_pipe->flush();
         m_db_pipe->flush();
     }
+  }
 }
 
 void ResponsePublisher::setBuffered(bool buffered)
