@@ -169,7 +169,7 @@ class L3MulticastManagerTest : public ::testing::Test {
     router_interface_entry.action = action;
     router_interface_entry.src_mac = src_mac;
     router_interface_entry.has_src_mac =
-        action != p4orch::kL2MulticastPassthrough;
+        action != p4orch::kMulticastL2Passthrough;
     router_interface_entry.multicast_metadata = multicast_metadata;
     router_interface_entry.multicast_router_interface_entry_key =
         KeyGenerator::generateMulticastRouterInterfaceKey(
@@ -227,7 +227,7 @@ class L3MulticastManagerTest : public ::testing::Test {
     std::vector<P4MulticastRouterInterfaceEntry> entries;
     auto entry = GenerateP4MulticastRouterInterfaceEntry(
 	port, instance, swss::MacAddress(kSrcMac0), /*multicast_metadata=*/"",
-        p4orch::kL2MulticastPassthrough);
+        p4orch::kMulticastL2Passthrough);
     entries.push_back(entry);
 
     if (expect_mock) {
@@ -1026,10 +1026,10 @@ TEST_F(L3MulticastManagerTest,
   std::vector<P4MulticastRouterInterfaceEntry> entries;
   auto entry = GenerateP4MulticastRouterInterfaceEntry(
       "Ethernet1", /*instance=*/"0x0", swss::MacAddress(kSrcMac0),
-      /*multicast_metadata=*/"", p4orch::kL2MulticastPassthrough);
+      /*multicast_metadata=*/"", p4orch::kMulticastL2Passthrough);
   auto entry2 = GenerateP4MulticastRouterInterfaceEntry(
       "Ethernet2", /*instance=*/"0x0", swss::MacAddress(kSrcMac0),
-      /*multicast_metadata=*/"", p4orch::kL2MulticastPassthrough);
+      /*multicast_metadata=*/"", p4orch::kMulticastL2Passthrough);
   entries.push_back(entry);
   entries.push_back(entry2);
 
@@ -1058,10 +1058,10 @@ TEST_F(L3MulticastManagerTest,
   std::vector<P4MulticastRouterInterfaceEntry> entries;
   auto entry = GenerateP4MulticastRouterInterfaceEntry(
       "InvalidPort", /*instance=*/"0x0", swss::MacAddress(kSrcMac0),
-      /*multicast_metadata=*/"", p4orch::kL2MulticastPassthrough);
+      /*multicast_metadata=*/"", p4orch::kMulticastL2Passthrough);
   auto entry2 = GenerateP4MulticastRouterInterfaceEntry(
       "Ethernet2", /*instance=*/"0x0", swss::MacAddress(kSrcMac0),
-      /*multicast_metadata=*/"", p4orch::kL2MulticastPassthrough);
+      /*multicast_metadata=*/"", p4orch::kMulticastL2Passthrough);
   entries.push_back(entry);
   entries.push_back(entry2);
 
@@ -1276,7 +1276,7 @@ TEST_F(L3MulticastManagerTest,
       "Ethernet2", /*instance=*/"0x0", kBridgePortOid2);
   auto entry3 = GenerateP4MulticastRouterInterfaceEntry(
       "Ethernet3", /*instance=*/"0x0", swss::MacAddress(kSrcMac0),
-      /*multicast_metadata=*/"", p4orch::kL2MulticastPassthrough);
+      /*multicast_metadata=*/"", p4orch::kMulticastL2Passthrough);
 
   std::vector<P4MulticastRouterInterfaceEntry> entries = {entry3, entry,
                                                           entry2};
@@ -1640,11 +1640,11 @@ TEST_F(L3MulticastManagerTest, DrainMulticastRouterInterfaceNoActionEntry) {
   // Enqueue entry for create operation.
   auto expect_entry = GenerateP4MulticastRouterInterfaceEntry(
       "Ethernet1", /*instance=*/"0x0", swss::MacAddress(kSrcMac0),
-      /*multicast_metadata=*/"", p4orch::kL2MulticastPassthrough);
+      /*multicast_metadata=*/"", p4orch::kMulticastL2Passthrough);
 
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kL2MulticastPassthrough});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastL2Passthrough});
   attributes.push_back(
       swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
 
@@ -2087,7 +2087,7 @@ TEST_F(L3MulticastManagerTest,
        ValidateL2MulticastRouterInterfaceEntryNotInMapper) {
   auto entry = GenerateP4MulticastRouterInterfaceEntry(
       "Ethernet1", /*instance=*/"0x0", swss::MacAddress(kSrcMac0),
-      /*multicast_metadata=*/"", p4orch::kL2MulticastPassthrough);
+      /*multicast_metadata=*/"", p4orch::kMulticastL2Passthrough);
   ReturnCode status = ValidateL2MulticastRouterInterfaceEntry(entry, &entry);
   EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, status);
 }
@@ -2134,7 +2134,7 @@ TEST_F(L3MulticastManagerTest,
        ValidateSetMulticastRouterInterfaceEntryActionChangeFails) {
   auto entry = SetupP4MulticastRouterInterfaceEntry(
       "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
-  entry.action = p4orch::kL2MulticastPassthrough;
+  entry.action = p4orch::kMulticastL2Passthrough;
   ReturnCode status = ValidateMulticastRouterInterfaceEntry(entry, SET_COMMAND);
   EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, status);
 }
@@ -2215,7 +2215,7 @@ TEST_F(L3MulticastManagerTest,
       std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter + appl_db_key;
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kL2MulticastPassthrough});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastL2Passthrough});
 
   // Setup ASIC DB.
   swss::Table table(nullptr, "ASIC_STATE");

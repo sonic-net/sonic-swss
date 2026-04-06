@@ -39,7 +39,7 @@ class P4RtL3MulticastRouterInterfaceWrapper(util.DBInterface):
   DEFAULT_INSTANCE = "0x0"
   DEFAULT_SRC_MAC = "00:11:22:33:44:55"
   DEFAULT_ACTION = "set_multicast_src_mac"
-  L2_MULTICAST_PASSTHROUGH_ACTION = "l2_multicast_passthrough"
+  MULTICAST_L2_PASSTHROUGH_ACTION = "multicast_l2_passthrough"
 
   def generate_app_db_key(self, multicast_replica_port,
                           multicast_replica_instance):
@@ -70,7 +70,7 @@ class P4RtL3MulticastRouterInterfaceWrapper(util.DBInterface):
   def create_bridge_port(self, port_id=None, instance=None):
     port_id = port_id or self.DEFAULT_PORT_ID
     instance = instance or self.DEFAULT_INSTANCE
-    action = self.L2_MULTICAST_PASSTHROUGH_ACTION
+    action = self.MULTICAST_L2_PASSTHROUGH_ACTION
     attr_list = [(self.ACTION_FIELD, action)]
     mcast_router_intf_key = self.generate_app_db_key(port_id, instance)
     self.set_app_db_entry(mcast_router_intf_key, attr_list)
