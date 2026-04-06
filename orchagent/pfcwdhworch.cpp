@@ -32,14 +32,6 @@ static void on_queue_pfc_deadlock(
     }
 }
 
-namespace {
-
-// Maximum tick count for hardware timers.
-// TODO: Hard-coded value, replace with SAI query when API support is available.
-constexpr uint32_t MAX_TICK_COUNT = 15;
-
-} // anonymous namespace
-
 PfcWdHwOrch::PfcWdHwOrch(DBConnector *db, vector<string> &tableNames,
                          const vector<sai_port_stat_t> &portStatIds,
                          const vector<sai_queue_stat_t> &queueStatIds,
@@ -53,8 +45,7 @@ PfcWdHwOrch::PfcWdHwOrch(DBConnector *db, vector<string> &tableNames,
     m_restorationTimeMin(0),
     m_restorationTimeMax(0),
     m_stateDb(make_shared<DBConnector>("STATE_DB", 0)),
-    m_pfcWdHwStateTable(make_shared<Table>(m_stateDb.get(), STATE_PFC_WD_HW_STATE_TABLE_NAME)),
-    m_portLevelGranularitySupported(false)
+    m_pfcWdHwStateTable(make_shared<Table>(m_stateDb.get(), STATE_PFC_WD_HW_STATE_TABLE_NAME))
 {
     SWSS_LOG_ENTER();
 
@@ -66,7 +57,6 @@ PfcWdHwOrch::PfcWdHwOrch(DBConnector *db, vector<string> &tableNames,
 
     SWSS_LOG_NOTICE("Initializing hardware-based PFC watchdog");
 
-    initializeCapabilities();
     initializeTimerRanges();
     registerCallbacks();
     recoverWarmReboot(db);
@@ -79,32 +69,6 @@ PfcWdHwOrch::~PfcWdHwOrch(void)
     SWSS_LOG_ENTER();
 
     g_pfcWdHwOrch = nullptr;
-}
-
-void PfcWdHwOrch::initializeCapabilities()
-{
-    SWSS_LOG_ENTER();
-
-    // Detect platform capability for port-level timer granularity
-    sai_attr_capability_t attr_capability;
-    sai_status_t cap_status = sai_query_attribute_capability(
-        gSwitchId,
-        SAI_OBJECT_TYPE_PORT,
-        SAI_PORT_ATTR_PFC_TC_DLD_TIMER_INTERVAL,
-        &attr_capability);
-
-    if (cap_status == SAI_STATUS_SUCCESS &&
-        attr_capability.set_implemented &&
-        attr_capability.get_implemented)
-    {
-        m_portLevelGranularitySupported = true;
-        SWSS_LOG_NOTICE("Port-level PFC DLD timer granularity supported");
-    }
-    else
-    {
-        m_portLevelGranularitySupported = false;
-        SWSS_LOG_NOTICE("Port-level PFC DLD timer granularity not supported, using default 100ms");
-    }
 }
 
 void PfcWdHwOrch::initializeTimerRanges()
@@ -376,54 +340,6 @@ void PfcWdHwOrch::updateQueueStats(const string &queueIdStr, const PfcWdQueueSta
     resultFvValues.emplace_back("PFC_WD_STATUS", stats.operational ? "operational" : "stormed");
 
     this->getCountersTable()->set(queueIdStr, resultFvValues);
-}
-
-
-
-
-
-bool PfcWdHwOrch::determineTimerGranularity(uint32_t timeValue, uint32_t hwMin, uint32_t hwMax, uint32_t& granularity)
-{
-    SWSS_LOG_ENTER();
-
-    // Fixed granularity options: 1ms, 10ms, 100ms
-    // TODO: Query supported granularities from hardware
-    const vector<uint32_t> granularities = {1, 10, 100};
-
-    // Find granularity where timeValue fits in range [gran*1, gran*MAX_TICK_COUNT]
-    for (uint32_t gran : granularities)
-    {
-        uint32_t minTime = gran * 1;
-        uint32_t maxTime = gran * MAX_TICK_COUNT;
-
-        // Skip if not in hardware range
-        if (gran < hwMin || minTime > hwMax)
-        {
-            SWSS_LOG_DEBUG("Skipping granularity %u ms (not in hardware range [%u, %u] ms)",
-                          gran, hwMin, hwMax);
-            continue;
-        }
-
-        if (timeValue < minTime)
-        {
-            SWSS_LOG_ERROR("Time value %u ms is less than minimum supported time %u ms for granularity %u ms",
-                          timeValue, minTime, gran);
-            return false;
-        }
-
-        if (timeValue <= maxTime)
-        {
-            granularity = gran;
-            uint32_t ticks = (timeValue + gran - 1) / gran; // Round up to nearest tick
-            SWSS_LOG_DEBUG("Time %u ms can be represented with granularity %u ms (range: %u-%u ms, ticks: %u)",
-                          timeValue, gran, minTime, maxTime, ticks);
-            return true;
-        }
-    }
-
-    SWSS_LOG_ERROR("Time value %u ms exceeds maximum supported time %u ms",
-                  timeValue, 100 * MAX_TICK_COUNT);
-    return false;
 }
 
 task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<FieldValueTuple>& data)
@@ -777,13 +693,6 @@ bool PfcWdHwOrch::configureHwWatchdog(const Port& port, uint32_t detectionTime,
         return false;
     }
 
-    // Configure timer granularity if supported
-    uint32_t timerGranularity = 0;
-    if (!configureTimerGranularity(port, detectionTime, timerGranularity, handleFailure))
-    {
-        return false;
-    }
-
     // Configure detection and restoration intervals
     if (!configureTimerIntervals(port, losslessTc, detectionTime, restorationTime, handleFailure))
     {
@@ -822,12 +731,6 @@ bool PfcWdHwOrch::configureHwWatchdog(const Port& port, uint32_t detectionTime,
     fvs.emplace_back("hw_restoration_time", to_string(actualHwRestorationTime));
     fvs.emplace_back("configured_detection_time", to_string(detectionTime));
     fvs.emplace_back("configured_restoration_time", to_string(restorationTime));
-
-    // Add granularity field if port-level granularity is supported
-    if (m_portLevelGranularitySupported && timerGranularity > 0)
-    {
-        fvs.emplace_back("detection_granularity", to_string(timerGranularity));
-    }
 
     fvs.emplace_back("action", serializeAction(action));
     m_pfcWdHwStateTable->set(port.m_alias, fvs);
@@ -880,61 +783,6 @@ bool PfcWdHwOrch::configureSwitchAction(const Port& port, PfcWdAction action,
 
     return true;
 }
-
-bool PfcWdHwOrch::configureTimerGranularity(const Port& port, uint32_t detectionTime,
-                                            uint32_t& timerGranularity,
-                                            const function<bool(const string&)>& handleFailure)
-{
-    SWSS_LOG_ENTER();
-
-    // SAI_PORT_ATTR_PFC_TC_DLD_TIMER_INTERVAL only applies to detection timer
-    if (!m_portLevelGranularitySupported)
-    {
-        SWSS_LOG_INFO("Port-level granularity not supported on port %s, ASIC will configure best available granularity",
-                     port.m_alias.c_str());
-        timerGranularity = 0;
-        return true;
-    }
-
-    // Find granularity that supports the detection time
-    if (!determineTimerGranularity(detectionTime, m_detectionTimeMin, m_detectionTimeMax, timerGranularity))
-    {
-        return handleFailure("Failed to determine suitable timer granularity for detection time " +
-                           to_string(detectionTime) + " ms on port " + port.m_alias);
-    }
-
-    SWSS_LOG_INFO("Using timer granularity %u ms for detection time %u ms on port %s",
-                 timerGranularity, detectionTime, port.m_alias.c_str());
-
-    // Build map with granularity for all TCs (0-7)
-    std::vector<sai_map_t> granularity_map_list;
-    for (uint8_t tc = 0; tc < PFC_WD_TC_MAX; tc++)
-    {
-        sai_map_t gran_map;
-        gran_map.key = tc;
-        gran_map.value = timerGranularity;
-        granularity_map_list.push_back(gran_map);
-    }
-
-    sai_attribute_t attr_granularity;
-    attr_granularity.id = SAI_PORT_ATTR_PFC_TC_DLD_TIMER_INTERVAL;
-    attr_granularity.value.maplist.count = static_cast<uint32_t>(granularity_map_list.size());
-    attr_granularity.value.maplist.list = granularity_map_list.data();
-
-    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr_granularity);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        return handleFailure("Failed to set PFC DLD timer granularity to " + to_string(timerGranularity) +
-                           " ms on port " + port.m_alias + ": " + to_string(status));
-    }
-
-    SWSS_LOG_NOTICE("Set PFC DLD timer granularity to %u ms for detection timer on port %s",
-                   timerGranularity, port.m_alias.c_str());
-
-    return true;
-}
-
-
 
 bool PfcWdHwOrch::configureTimerIntervals(const Port& port, const set<uint8_t>& losslessTc,
                                           uint32_t detectionTime, uint32_t restorationTime,

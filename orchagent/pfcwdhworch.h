@@ -92,14 +92,11 @@ private:
                             uint32_t restorationTime, PfcWdAction action);
     bool disableHwWatchdog(const Port& port);
 
-    // Determine the timer granularity that supports the given time value
-    bool determineTimerGranularity(uint32_t timeValue, uint32_t hwMin, uint32_t hwMax, uint32_t& granularity);
-
     // Member variables
     const vector<sai_port_stat_t> c_portStatIds;
     const vector<sai_queue_stat_t> c_queueStatIds;
     const vector<sai_queue_attr_t> c_queueAttrIds;
-	
+    
     // Hardware timer ranges
     uint32_t m_detectionTimeMin;
     uint32_t m_detectionTimeMax;
@@ -125,7 +122,6 @@ private:
                            uint32_t& actual, const string& timerName);
 
     // Initialization functions
-    void initializeCapabilities();
     void initializeTimerRanges();
     void registerCallbacks();
     void recoverWarmReboot(DBConnector *db);
@@ -133,9 +129,6 @@ private:
     // Configuration functions
     bool configureSwitchAction(const Port& port, PfcWdAction action,
                                const function<bool(const string&)>& handleFailure);
-    bool configureTimerGranularity(const Port& port, uint32_t detectionTime,
-                                   uint32_t& timerGranularity,
-                                   const function<bool(const string&)>& handleFailure);
     bool configureTimerIntervals(const Port& port, const set<uint8_t>& losslessTc,
                                  uint32_t detectionTime, uint32_t restorationTime,
                                  const function<bool(const string&)>& handleFailure);
@@ -143,9 +136,6 @@ private:
                                     uint32_t detectionTime, uint32_t restorationTime,
                                     const function<bool(const string&)>& handleFailure);
     void initializeQueueStats(const Port& port, const set<uint8_t>& losslessTc);
-
-    // Platform capabilities
-    bool m_portLevelGranularitySupported;
 
     // Ports where hardware watchdog is configured
     std::set<std::string> m_hwWdPorts;
@@ -166,4 +156,3 @@ private:
 };
 
 #endif
-
