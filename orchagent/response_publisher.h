@@ -1,6 +1,7 @@
 #pragma once
 
 #include <condition_variable>
+#include <list>
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -14,6 +15,7 @@
 #include "recorder.h"
 #include "response_publisher_interface.h"
 #include "table.h"
+#include "zmqserver.h"
 
 // This class performs two tasks when publish is called:
 // 1. Sends a notification into the redis channel.
@@ -21,7 +23,9 @@
 class ResponsePublisher : public ResponsePublisherInterface
 {
   public:
-    explicit ResponsePublisher(const std::string &dbName, bool buffered = false, bool db_write_thread = false);
+    explicit ResponsePublisher(const std::string& dbName, bool buffered = false,
+                               bool db_write_thread = false,
+                             swss::ZmqServer* zmqServer = nullptr);
 
     virtual ~ResponsePublisher();
 
@@ -51,7 +55,7 @@ class ResponsePublisher : public ResponsePublisherInterface
     /**
      * @brief Flush pending responses
      */
-    void flush();
+    void flush(bool warmboot = false);
 
     /**
      * @brief Set buffering mode
@@ -96,9 +100,13 @@ class ResponsePublisher : public ResponsePublisherInterface
     std::unique_ptr<swss::RedisPipeline> m_db_pipe;
 
     bool m_buffered{false};
+  swss::ZmqServer* m_zmqServer;
+  std::unordered_map<std::string, std::vector<swss::KeyOpFieldsValuesTuple>>
+      responses;  // Cache the responses to send them together in flush(). Only
+                  // used when ZMQ is enabled.
     // Thread to write to DB.
     std::unique_ptr<std::thread> m_update_thread;
-    std::queue<entry> m_queue;
+    std::queue<entry, std::list<entry>> m_queue;
     mutable std::mutex m_lock;
     std::condition_variable m_signal;
 };

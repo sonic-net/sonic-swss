@@ -659,6 +659,10 @@ P4AclTableDefinitionAppDbEntry getDefaultAclTableDefAppDbEntry()
         P4_FORMAT_HEX_STRING, 32);
     app_db_entry.match_field_lookup["udf2"] =
         BuildMatchFieldJsonStrKindUdf("SAI_UDF_BASE_L3", 56, P4_FORMAT_HEX_STRING, 16);
+    app_db_entry.match_field_lookup["vlan_user_meta"] =
+        BuildMatchFieldJsonStrKindSaiField(P4_MATCH_VLAN_USER_META);
+    app_db_entry.match_field_lookup["port_user_meta"] =
+      BuildMatchFieldJsonStrKindSaiField(P4_MATCH_PORT_USER_META);
 
     // Action field mapping, from P4 action to SAI action
     app_db_entry.action_field_lookup["set_packet_action"].push_back(
@@ -978,7 +982,7 @@ class AclManagerTest : public ::testing::Test
                                                          kAclGroupLookupOid, std::placeholders::_1))))
             .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
         std::vector<std::string> p4_tables;
-        gP4Orch = new P4Orch(gAppDb, p4_tables, gVrfOrch, copp_orch_);
+        gP4Orch = new P4Orch(gAppDb, p4_tables, nullptr, gVrfOrch, copp_orch_);
         acl_table_manager_ = gP4Orch->getAclTableManager();
         acl_rule_manager_ = gP4Orch->getAclRuleManager();
         p4_oid_mapper_ = acl_table_manager_->m_p4OidMapper;
@@ -1375,11 +1379,6 @@ TEST_F(AclManagerTest, DISABLED_CreatePuntTableFailsWhenUserTrapGroupOrHostifNot
     setUpSwitchOrch();
     // Update p4orch to use new copp orch
     setUpP4Orch();
-    // Fail to create ACL table because the trap group is absent
-    EXPECT_EQ("Trap group was not found given trap group name: " + std::string(GENL_PACKET_TRAP_GROUP_NAME_PREFIX) +
-                  std::to_string(skip_cpu_queue),
-              ProcessAddTableRequest(app_db_entry).message());
-    EXPECT_EQ(nullptr, GetAclTable(app_db_entry.acl_table_name));
 
     // Create the trap group for CPU queue 1 without host interface(genl
     // attributes)
@@ -2838,6 +2837,8 @@ TEST_F(AclManagerTest, AclRuleWithValidMatchFields)
     app_db_entry.match_fvs["inner_vlan_cfi"] = "200";
     app_db_entry.match_fvs["vrf_id"] = gVrfName;
     app_db_entry.match_fvs["ipmc_table_hit"] = "0x1";
+    app_db_entry.match_fvs["vlan_user_meta"] = "0x100 & 0x1F0";
+    app_db_entry.match_fvs["port_user_meta"] = "0x0044";
 
     const auto &acl_rule_key = KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
 
@@ -3047,6 +3048,18 @@ TEST_F(AclManagerTest, AclRuleWithValidMatchFields)
     EXPECT_EQ(true,
               acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT]
                   .aclfield.data.booldata);
+    EXPECT_EQ(0x100,
+            acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_VLAN_USER_META]
+                .aclfield.data.u32);
+    EXPECT_EQ(0x1F0,
+            acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_VLAN_USER_META]
+                .aclfield.mask.u32);
+    EXPECT_EQ(0x0044,
+            acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_PORT_USER_META]
+                .aclfield.data.u16);
+    EXPECT_EQ(0xFFFF,
+            acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_PORT_USER_META]
+                .aclfield.mask.u16);
 
     // Check action field value
     EXPECT_EQ(SAI_PACKET_ACTION_TRAP,

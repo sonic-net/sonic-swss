@@ -1193,9 +1193,12 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         std::map<NextHopKey, swss::IpAddress> origin_secondary_monitors;
         if (custom_monitor_ep_updated)
         {
-            auto it_route =  syncd_tunnel_routes_[vnet].find(ipPrefix);
-            getCustomMonitors(vnet, ipPrefix, it_route->second.primary, origin_primary_monitors);
-            getCustomMonitors(vnet, ipPrefix, it_route->second.secondary, origin_secondary_monitors);
+            auto it_route = syncd_tunnel_routes_[vnet].find(ipPrefix);
+            if (it_route != syncd_tunnel_routes_[vnet].end())
+            {
+                getCustomMonitors(vnet, ipPrefix, it_route->second.primary, origin_primary_monitors);
+                getCustomMonitors(vnet, ipPrefix, it_route->second.secondary, origin_secondary_monitors);
+            }
         }
 
         bool is_custom_monitor_pinned_state_updated = isPinnedStateUpdated(vnet, ipPrefix, monitor_addr_to_pinned_state);
