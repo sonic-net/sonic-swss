@@ -102,6 +102,18 @@ protected:
     // Supported timer limits. False defers the entry for retry.
     virtual bool getTimerRange(PfcWdTimerRange& range) const;
 
+    void updateStateTable(const string &field, const string &value)
+    {
+        string key = m_stateTable->getTableName() + m_stateTable->getTableNameSeparator() + "PFC_WD";
+        m_stateDb->hset(key, field, value);
+    }
+
+    void updateDlrPacketActionInStateTable()
+    {
+        string dlrAction = PfcWdBaseOrch::serializeAction(this->getPfcDlrPacketAction());
+        this->updateStateTable(PFC_WD_DLR_PACKET_ACTION, dlrAction);
+    }
+    
     // ========================================================================
     // Helper functions used in both SW and HW watchdog implementations
     // ========================================================================
