@@ -108,7 +108,7 @@ protected:
         string dlrAction = PfcWdBaseOrch::serializeAction(this->getPfcDlrPacketAction());
         this->updateStateTable(PFC_WD_DLR_PACKET_ACTION, dlrAction);
     }
-
+    
     // ========================================================================
     // Helper functions used in both SW and HW watchdog implementations
     // ========================================================================
