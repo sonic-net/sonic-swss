@@ -53,7 +53,7 @@ private:
     const vector<sai_port_stat_t> c_portStatIds;
     const vector<sai_queue_stat_t> c_queueStatIds;
     const vector<sai_queue_attr_t> c_queueAttrIds;
-	
+    
     // Hardware timer ranges
     uint32_t m_detectionTimeMin;
     uint32_t m_detectionTimeMax;
@@ -75,6 +75,7 @@ private:
                            const set<uint8_t>& losslessTc, uint32_t expected,
                            uint32_t& actual, const string& timerName);
 
+    // Initialization functions
     void initializeTimerRanges();
     void registerCallbacks();
     void recoverWarmReboot(DBConnector *db);
@@ -88,6 +89,7 @@ private:
     bool enableDldrOnLosslessQueues(const Port& port, const set<uint8_t>& losslessTc,
                                     uint32_t detectionTime, uint32_t restorationTime,
                                     const function<bool(const string&)>& handleFailure);
+    void initializeQueueStats(const Port& port, const set<uint8_t>& losslessTc);
 
     // Ports where hardware watchdog is configured
     std::set<std::string> m_hwWdPorts;
@@ -105,4 +107,3 @@ private:
 };
 
 #endif
-
