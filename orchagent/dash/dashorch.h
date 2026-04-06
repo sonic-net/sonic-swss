@@ -21,6 +21,7 @@
 #include "dashcounter.h"
 
 #include "dash_api/appliance.pb.h"
+#include "dash_api/eni.pb.h"
 #include "dash_api/route_type.pb.h"
 #include "dash_api/qos.pb.h"
 #include "dash_api/eni_route.pb.h"
@@ -35,6 +36,18 @@
 #define DASH_RESULT_FAILURE 1
 
 class DashHaOrch;
+
+struct EniEntry
+{
+    sai_object_id_t eni_id;
+    dash::eni::Eni metadata;
+    sai_object_id_t getOid() const { return eni_id; }
+};
+
+typedef std::map<std::string, EniEntry> EniTable;
+
+using DashEniCounter = DashCounter<CounterType::ENI, EniTable>;
+using DashMeterCounter = DashCounter<CounterType::DASH_METER, EniTable>;
 
 struct ApplianceEntry
 {

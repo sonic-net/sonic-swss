@@ -1,11 +1,11 @@
-#include "dashcounter.h"
+#include "dashhaorch.h"
 
 #include "sai.h"
 #include "saiextensions.h"
 #include "saihelper.h"
 
 template<>
-void DashCounter<CounterType::ENI>::fetchStats()
+void DashCounter<CounterType::ENI, EniTable>::fetchStats()
 {
     counter_stats.clear();
     auto stat_enum_list = queryAvailableCounterStats((sai_object_type_t)SAI_OBJECT_TYPE_ENI);
@@ -17,7 +17,7 @@ void DashCounter<CounterType::ENI>::fetchStats()
 }
 
 template<>
-void DashCounter<CounterType::DASH_METER>::fetchStats()
+void DashCounter<CounterType::DASH_METER, EniTable>::fetchStats()
 {
     counter_stats.clear();
     auto stat_enum_list = queryAvailableCounterStats((sai_object_type_t)SAI_OBJECT_TYPE_METER_BUCKET_ENTRY);
@@ -29,7 +29,7 @@ void DashCounter<CounterType::DASH_METER>::fetchStats()
 }
 
 template<>
-void DashCounter<CounterType::HA_SET>::fetchStats()
+void DashCounter<CounterType::HA_SET, HaSetTable>::fetchStats()
 {
     counter_stats.clear();
     auto stat_enum_list = queryAvailableCounterStats((sai_object_type_t)SAI_OBJECT_TYPE_HA_SET);

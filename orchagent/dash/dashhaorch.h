@@ -2,6 +2,7 @@
 #define DASHHAORCH_H
 #include <map>
 #include <mutex>
+#include <chrono>
 
 #include "dbconnector.h"
 #include "dashorch.h"
@@ -14,6 +15,7 @@
 #include "sai_serialize.h"
 #include "notifications.h"
 
+#include "dash_api/ha_set.pb.h"
 #include "dash_api/ha_scope.pb.h"
 
 #include "pbutils.h"
@@ -31,8 +33,18 @@ struct HaScopeEntry
     std::time_t last_state_start_time;
 };
 
+struct HaSetEntry
+{
+    sai_object_id_t ha_set_id;
+    dash::ha_set::HaSet metadata;
+    sai_object_id_t getOid() const { return ha_set_id; }
+};
+
+typedef std::map<std::string, HaSetEntry> HaSetTable;
 typedef std::map<std::string, HaScopeEntry> HaScopeTable;
 typedef std::map<std::string, vector<swss::FieldValueTuple>> DashBfdSessionTable;
+
+using DashHaCounter = DashCounter<CounterType::HA_SET, HaSetTable>;
 
 template <typename T>
 bool in(T value, std::initializer_list<T> list) {
