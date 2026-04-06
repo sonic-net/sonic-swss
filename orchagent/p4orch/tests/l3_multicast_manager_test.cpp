@@ -231,7 +231,7 @@ class L3MulticastManagerTest : public ::testing::Test {
     entries.push_back(entry);
 
     if (expect_mock) {
-      EXPECT_CALL(mock_sai_bridge_, create_bridge_port(_, _, Eq(2), _))
+      EXPECT_CALL(mock_sai_bridge_, create_bridge_port(_, _, Eq(4), _))
           .WillOnce(DoAll(SetArgPointee<0>(bridge_port_oid),
                           Return(SAI_STATUS_SUCCESS)));
     }
@@ -1033,7 +1033,7 @@ TEST_F(L3MulticastManagerTest,
   entries.push_back(entry);
   entries.push_back(entry2);
 
-  EXPECT_CALL(mock_sai_bridge_, create_bridge_port(_, _, Eq(2), _))
+  EXPECT_CALL(mock_sai_bridge_, create_bridge_port(_, _, Eq(4), _))
       .WillOnce(Return(SAI_STATUS_FAILURE));
 
   std::vector<ReturnCode> statuses =
@@ -2219,12 +2219,15 @@ TEST_F(L3MulticastManagerTest,
 
   // Setup ASIC DB.
   swss::Table table(nullptr, "ASIC_STATE");
-  table.set("SAI_OBJECT_TYPE_BRIDGE_PORT:oid:0x101",
-            std::vector<swss::FieldValueTuple>{
-                swss::FieldValueTuple{"SAI_BRIDGE_PORT_ATTR_TYPE",
-                                      "SAI_BRIDGE_PORT_TYPE_PORT"},
-                swss::FieldValueTuple{"SAI_BRIDGE_PORT_ATTR_PORT_ID",
-                                      "oid:0x112233"}});
+  table.set(
+      "SAI_OBJECT_TYPE_BRIDGE_PORT:oid:0x101",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_BRIDGE_PORT_ATTR_TYPE",
+                                "SAI_BRIDGE_PORT_TYPE_PORT"},
+          swss::FieldValueTuple{"SAI_BRIDGE_PORT_ATTR_PORT_ID", "oid:0x112233"},
+          swss::FieldValueTuple{"SAI_BRIDGE_PORT_ATTR_ADMIN_STATE", "true"},
+          swss::FieldValueTuple{"SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE",
+                                "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE"}});
 
   // Verification should succeed with vaild key and value.
   EXPECT_EQ(VerifyState(db_key, attributes), "");
@@ -2288,12 +2291,16 @@ TEST_F(L3MulticastManagerTest,
       "Ethernet1", /*instance=*/"0x0", kBridgePortOid1);
   // Setup ASIC DB.
   swss::Table table(nullptr, "ASIC_STATE");
-  table.set("SAI_OBJECT_TYPE_BRIDGE_PORT:oid:0x101",
-            std::vector<swss::FieldValueTuple>{
-                swss::FieldValueTuple{"SAI_BRIDGE_PORT_ATTR_TYPE",
-                                      "SAI_BRIDGE_PORT_TYPE_PORT"},
-                swss::FieldValueTuple{"SAI_BRIDGE_PORT_ATTR_PORT_ID",
-                                      "oid:0x112233"}});
+  table.set(
+      "SAI_OBJECT_TYPE_BRIDGE_PORT:oid:0x101",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_BRIDGE_PORT_ATTR_TYPE",
+                                "SAI_BRIDGE_PORT_TYPE_PORT"},
+          swss::FieldValueTuple{"SAI_BRIDGE_PORT_ATTR_PORT_ID", "oid:0x112233"},
+          swss::FieldValueTuple{"SAI_BRIDGE_PORT_ATTR_ADMIN_STATE", "true"},
+          swss::FieldValueTuple{"SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE",
+                                "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE"}});
+
   EXPECT_TRUE(VerifyMulticastRouterInterfaceStateAsicDb(&entry).empty());
   table.del("SAI_OBJECT_TYPE_BRIDGE_PORT:oid:0x101");
 }
@@ -2313,12 +2320,17 @@ TEST_F(L3MulticastManagerTest,
       "Ethernet1", /*instance=*/"0x0", kBridgePortOid1);
   // Setup ASIC DB.
   swss::Table table(nullptr, "ASIC_STATE");
-  table.set("SAI_OBJECT_TYPE_BRIDGE_PORT:oid:0x101",
-            std::vector<swss::FieldValueTuple>{
-                swss::FieldValueTuple{"SAI_BRIDGE_PORT_ATTR_TYPE",
-                                      "SAI_BRIDGE_PORT_TYPE_PORT"},
-                swss::FieldValueTuple{"SAI_BRIDGE_PORT_ATTR_PORT_ID",
-                                      "oid:0x88888888888"}});
+  table.set(
+      "SAI_OBJECT_TYPE_BRIDGE_PORT:oid:0x101",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_BRIDGE_PORT_ATTR_TYPE",
+                                "SAI_BRIDGE_PORT_TYPE_PORT"},
+          swss::FieldValueTuple{"SAI_BRIDGE_PORT_ATTR_PORT_ID",
+                                "oid:0x88888888888"},
+          swss::FieldValueTuple{"SAI_BRIDGE_PORT_ATTR_ADMIN_STATE", "true"},
+          swss::FieldValueTuple{"SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE",
+                                "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE"}});
+
   EXPECT_FALSE(VerifyMulticastRouterInterfaceStateAsicDb(&entry).empty());
   table.del("SAI_OBJECT_TYPE_BRIDGE_PORT:oid:0x101");
 }

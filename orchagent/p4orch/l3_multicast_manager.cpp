@@ -128,6 +128,14 @@ ReturnCodeOr<std::vector<sai_attribute_t>> prepareBridgePortSaiAttrs(
   attr.value.oid = port.m_port_id;
   attrs.push_back(attr);
 
+  attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
+  attr.value.booldata = true;
+  attrs.push_back(attr);
+
+  attr.id = SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE;
+  attr.value.s32 = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE;
+  attrs.push_back(attr);
+
   return attrs;
 }
 
