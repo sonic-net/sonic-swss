@@ -143,11 +143,11 @@ public:
         return tunnel_;
     }
 
-    set<string>& getTunnelNames() const
+    set<string> getTunnelNames() const
     {
         if (!tunnel_.empty())
         {
-            return set<string>{tunnel_};
+            return { tunnel_ };
         }
 
         return tunnel_list_;
@@ -308,7 +308,7 @@ public:
         return vnet_table_.at(name)->getTunnelName();
     }
 
-    const set<string>& getTunnelNames(const std::string& name) const
+    set<string> getTunnelNames(const std::string& name) const
     {
         return vnet_table_.at(name)->getTunnelNames();
     }
