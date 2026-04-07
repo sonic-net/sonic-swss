@@ -188,7 +188,7 @@ bool SwitchHelper::parseSwHash(SwitchHash &hash) const
         {
             try
             {
-                hash.ecmp_hash_seed.value = std::stoul(value);
+                hash.ecmp_hash_seed.value = static_cast<uint32_t>(std::stoul(value));
                 hash.ecmp_hash_seed.is_set = true;
             }
             catch (...)
@@ -214,17 +214,17 @@ bool SwitchHelper::parseSwHash(SwitchHash &hash) const
         }
         else if (field == SWITCH_HASH_ECMP_RESILIENT_HASH_BUCKETS)
         {
-            try { hash.ecmp_resilient_hash_buckets.value = std::stoul(value); hash.ecmp_resilient_hash_buckets.is_set = true; }
+            try { hash.ecmp_resilient_hash_buckets.value = static_cast<uint32_t>(std::stoul(value)); hash.ecmp_resilient_hash_buckets.is_set = true; }
             catch (...) { SWSS_LOG_ERROR("Failed to parse %s: %s", field.c_str(), value.c_str()); return false; }
         }
         else if (field == SWITCH_HASH_ECMP_RESILIENT_ACTIVE_FLOW_TIMER)
         {
-            try { hash.ecmp_resilient_active_flow_timer.value = std::stoul(value); hash.ecmp_resilient_active_flow_timer.is_set = true; }
+            try { hash.ecmp_resilient_active_flow_timer.value = static_cast<uint32_t>(std::stoul(value)); hash.ecmp_resilient_active_flow_timer.is_set = true; }
             catch (...) { SWSS_LOG_ERROR("Failed to parse %s: %s", field.c_str(), value.c_str()); return false; }
         }
         else if (field == SWITCH_HASH_ECMP_RESILIENT_MAX_UNBALANCED_TIME)
         {
-            try { hash.ecmp_resilient_max_unbalanced_time.value = std::stoul(value); hash.ecmp_resilient_max_unbalanced_time.is_set = true; }
+            try { hash.ecmp_resilient_max_unbalanced_time.value = static_cast<uint32_t>(std::stoul(value)); hash.ecmp_resilient_max_unbalanced_time.is_set = true; }
             catch (...) { SWSS_LOG_ERROR("Failed to parse %s: %s", field.c_str(), value.c_str()); return false; }
         }
         else
