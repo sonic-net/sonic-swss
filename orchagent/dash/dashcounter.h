@@ -5,6 +5,7 @@
 
 #include <saitypes.h>
 
+#include "logger.h"
 #include "flex_counter_manager.h"
 
 template<CounterType CT, typename TableT>
