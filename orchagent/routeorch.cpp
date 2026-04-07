@@ -1206,6 +1206,12 @@ void RouteOrch::doTask(ConsumerBase& consumer)
             }
         }
 
+        /* Flush response publisher so route notifications reach fpmsyncd every batch.
+         * Without this, notifications stay buffered in the Redis pipeline until the
+         * next OrchDaemon periodic flush (up to 1s), delaying the offload reply to
+         * zebra and causing BGP advertisement delay when supress fib pending is ON */
+        m_publisher.flush();
+
         /* Remove next hop group if the reference count decreases to zero */
         for (auto& it_nhg : m_bulkNhgReducedRefCnt)
         {
