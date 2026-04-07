@@ -730,6 +730,8 @@ void DashHaOrch::updateHaScopeStateForSwitchOwner(const std::string &key, const 
         case dash::types::HA_ROLE_DEAD:
             ha_state = SAI_DASH_HA_STATE_DEAD;
             break;
+        case dash::types::HA_ROLE_SWITCHING_TO_ACTIVE:
+            return;
         default:
             ha_state = SAI_DASH_HA_STATE_DEAD;
     }
@@ -743,6 +745,8 @@ void DashHaOrch::updateHaScopeStateForSwitchOwner(const std::string &key, const 
 
     m_ha_scope_entries[key].ha_state = ha_state;
     m_ha_scope_entries[key].last_state_start_time = now_time;
+    m_ha_scope_entries[key].metadata.set_ha_role(entry.ha_role());
+    m_ha_scope_entries[key].last_role_start_time = now_time;
 
     SWSS_LOG_NOTICE("Updated HA Scope state for %s to %s (owner is switch)",
                     key.c_str(), sai_ha_state_name.at(ha_state).c_str());
