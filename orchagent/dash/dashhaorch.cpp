@@ -735,7 +735,7 @@ void DashHaOrch::updateHaScopeStateForSwitchOwner(const std::string &key, const 
     }
 
     std::vector<FieldValueTuple> fvs;
-    fvs.push_back({"ha_role", sai_ha_role_name.at(to_sai(entry.ha_role()))});
+    fvs.push_back({"ha_role", sai_ha_role_name.at(static_cast<sai_dash_ha_role_t>(to_sai(entry.ha_role())))});
     fvs.push_back({"ha_role_start_time", to_string(now_time)});
     fvs.push_back({"ha_state", sai_ha_state_name.at(ha_state)});
     fvs.push_back({"ha_state_start_time", to_string(now_time)});
