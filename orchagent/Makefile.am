@@ -119,6 +119,7 @@ orchagent_SOURCES = \
             zmqorch.cpp \
             dash/dashenifwdorch.cpp \
             dash/dashenifwdinfo.cpp \
+            dash/dashcounter.cpp \
             dash/dashorch.cpp \
             dash/dashrouteorch.cpp \
             dash/dashvnetorch.cpp \
