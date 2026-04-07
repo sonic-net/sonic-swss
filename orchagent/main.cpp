@@ -62,6 +62,9 @@ bool gRingMode = false;
 bool gSyncMode = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 string gAsicInstance;
+// Context guid used to select a specific context from context_config.json
+// Set via -g command line flag. UINT32_MAX means "not set" and applies to all contexts
+uint32_t gContextGuid = UINT32_MAX;
 
 extern bool gIsNatSupported;
 
@@ -113,6 +116,7 @@ void usage()
     cout << "    -c counter mode (traditional|asic_db), default: asic_db" << endl;
     cout << "    -t Override create switch timeout, in sec" << endl;
     cout << "    -v vrf: VRF name (default empty)" << endl;
+    cout << "    -g guid: context guid (default: all contexts)" << endl;
     cout << "    -I heart_beat_interval: Heart beat interval in millisecond (default 10)" << endl;
     cout << "    -R enable the ring thread feature" << endl;
     cout << "    -M enable SAI MACSec POST" << endl;
@@ -400,7 +404,7 @@ int main(int argc, char **argv)
     // Disable SAI MACSec POST by default. Use option -M to enable it.
     bool macsec_post_enabled = false;
 
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:RD:M")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:g:I:RD:M")) != -1)
     {
         switch (opt)
         {
@@ -522,6 +526,10 @@ int main(int argc, char **argv)
             macsec_post_enabled = true;
             break;
         case 'D': { gFlexCounterDelaySec = swss::to_int<int>(optarg); } break;
+        case 'g':
+            gContextGuid = (uint32_t)std::stoul(optarg);
+            SWSS_LOG_NOTICE("Context guid set to: %u", gContextGuid);
+            break;
         default: /* '?' */
             exit(EXIT_FAILURE);
         }

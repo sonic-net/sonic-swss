@@ -106,6 +106,7 @@ extern sai_object_id_t gSwitchId;
 extern bool gTraditionalFlexCounter;
 extern bool gSyncMode;
 extern sai_redis_communication_mode_t gRedisCommunicationMode;
+extern uint32_t gContextGuid;
 extern event_handle_t g_events_handle;
 extern bool gOrchUnhealthy;
 extern string gSaiErrorString;
@@ -348,6 +349,21 @@ void initSaiRedis()
 
     sai_attribute_t attr;
     sai_status_t status;
+    // Set ZMQ enabled guid if ZMQ mode and a specific guid is requested
+    if (gContextGuid != UINT32_MAX &&
+        gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
+    {
+        attr.id = SAI_REDIS_SWITCH_ATTR_ZMQ_ENABLED_GUID;
+        attr.value.u32 = gContextGuid;
+
+        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set ZMQ enabled guid: rv:%d", status);
+            return handleSaiFailure(SAI_API_SWITCH, "set", status, true);
+        }
+        SWSS_LOG_NOTICE("ZMQ enabled guid set successfully to %u", gContextGuid);
+    }
 
     attr.id = SAI_REDIS_SWITCH_ATTR_REDIS_COMMUNICATION_MODE;
     attr.value.s32 = gRedisCommunicationMode;

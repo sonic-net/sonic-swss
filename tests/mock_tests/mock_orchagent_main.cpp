@@ -4,6 +4,7 @@ extern "C" {
 }
 
 #include "orchdaemon.h"
+#include <cstdint>
 
 /* Global variables */
 sai_object_id_t gVirtualRouterId;
@@ -20,6 +21,7 @@ string gMyAsicName = "Asic0";
 bool gTraditionalFlexCounter = false;
 bool gSyncMode = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
+uint32_t gContextGuid = UINT32_MAX;
 bool gOrchUnhealthy = false;
 string gSaiErrorString;
 
