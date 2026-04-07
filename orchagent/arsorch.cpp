@@ -131,17 +131,17 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                 const string &field = fvField(fv);
                 const string &value = fvValue(fv);
 
-                if      (field == "load_past_weight")    entry.loadPastWeight   = stoul(value);
-                else if (field == "load_future_weight")  entry.loadFutureWeight = stoul(value);
+                if      (field == "load_past_weight")    entry.loadPastWeight   = static_cast<uint32_t>(stoul(value));
+                else if (field == "load_future_weight")  entry.loadFutureWeight = static_cast<uint32_t>(stoul(value));
                 else if (field == "load_current_weight") entry.loadCurrentEnable = (stoul(value) > 0);
-                else if (field == "load_exponent")       entry.loadExponent      = stoul(value);
-                else if (field == "max_flows")           entry.maxFlows          = stoul(value);
-                else if (field == "load_past_min_val")   entry.loadPastMinVal    = stoul(value);
-                else if (field == "load_past_max_val")   entry.loadPastMaxVal    = stoul(value);
-                else if (field == "load_future_min_val") entry.loadFutureMinVal  = stoul(value);
-                else if (field == "load_future_max_val") entry.loadFutureMaxVal  = stoul(value);
-                else if (field == "load_current_min_val") entry.loadCurrentMinVal = stoul(value);
-                else if (field == "load_current_max_val") entry.loadCurrentMaxVal = stoul(value);
+                else if (field == "load_exponent")       entry.loadExponent      = static_cast<uint32_t>(stoul(value));
+                else if (field == "max_flows")           entry.maxFlows          = static_cast<uint32_t>(stoul(value));
+                else if (field == "load_past_min_val")   entry.loadPastMinVal    = static_cast<uint32_t>(stoul(value));
+                else if (field == "load_past_max_val")   entry.loadPastMaxVal    = static_cast<uint32_t>(stoul(value));
+                else if (field == "load_future_min_val") entry.loadFutureMinVal  = static_cast<uint32_t>(stoul(value));
+                else if (field == "load_future_max_val") entry.loadFutureMaxVal  = static_cast<uint32_t>(stoul(value));
+                else if (field == "load_current_min_val") entry.loadCurrentMinVal = static_cast<uint32_t>(stoul(value));
+                else if (field == "load_current_max_val") entry.loadCurrentMaxVal = static_cast<uint32_t>(stoul(value));
             }
 
             if (entry.profileOid == SAI_NULL_OBJECT_ID)
@@ -206,8 +206,8 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
                 const string &value = fvValue(fv);
 
                 if      (field == "assign_mode") entry.mode     = parseArsMode(value);
-                else if (field == "idle_time")   entry.idleTime = stoul(value);
-                else if (field == "max_flows")   entry.maxFlows = stoul(value);
+                else if (field == "idle_time")   entry.idleTime = static_cast<uint32_t>(stoul(value));
+                else if (field == "max_flows")   entry.maxFlows = static_cast<uint32_t>(stoul(value));
                 else if (field == "admin_state") entry.enabled  = (value == "up");
                 else if (field == "profile")     entry.profileName = value;
             }
