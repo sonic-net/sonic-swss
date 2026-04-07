@@ -18,6 +18,7 @@
 #include <linux/pkt_cls.h>
 #include <linux/nexthop.h>
 #include <linux/lwtunnel.h>
+#include <linux/rtnetlink.h>
 #include <linux/seg6_iptunnel.h>
 
 using namespace std;
@@ -141,12 +142,32 @@ static string getProtocolString(int proto)
     static constexpr size_t protocolNameBufferSize = 128;
     char buffer[protocolNameBufferSize] = {};
 
-    if (!rtnl_route_proto2str(proto, buffer, sizeof(buffer)))
+    /*
+     * rtnl_route_proto2str() always returns a non-NULL pointer.
+     * For protocol numbers not in libnl3's translation table (e.g.
+     * RTPROT_BGP = 186), it writes a hex string like "0xba" into
+     * the buffer. Check for that and fall back to our own mapping.
+     */
+    rtnl_route_proto2str(proto, buffer, sizeof(buffer));
+    if (buffer[0] && buffer[0] != '0')
     {
-        return std::to_string(proto);
+        return buffer;
     }
 
-    return buffer;
+    /* libnl3 did not resolve the name; use well-known protocol names.
+     * Values 186-192 are defined in <linux/rtnetlink.h>.
+     * Values 190-196 are FRR-specific (zebra/rt_netlink.h). */
+    switch (proto) {
+    case RTPROT_BGP:    return "bgp";
+    case RTPROT_ISIS:   return "isis";
+    case RTPROT_OSPF:   return "ospf";
+    case RTPROT_RIP:    return "rip";
+    case RTPROT_EIGRP:  return "eigrp";
+    case 190:           return "ripng";   /* RTPROT_RIPNG (FRR) */
+    case 191:           return "nhrp";    /* RTPROT_NHRP (FRR) */
+    case 196:           return "zstatic"; /* RTPROT_ZSTATIC (FRR) */
+    default:  return std::to_string(proto);
+    }
 }
 
 /* Helper to create unique pointer with custom destructor */
@@ -833,7 +854,7 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                         return false;
                     }
 
-                    if (gate)
+                    if (gate || subtb[RTA_VIA])
                     {
                         if (ecmp_count)
                         {
