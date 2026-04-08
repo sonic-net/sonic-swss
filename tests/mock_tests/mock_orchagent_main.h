@@ -90,6 +90,7 @@ extern sai_router_interface_api_t *sai_router_intfs_api;
 extern sai_route_api_t *sai_route_api;
 extern sai_neighbor_api_t *sai_neighbor_api;
 extern sai_tunnel_api_t *sai_tunnel_api;
+extern sai_srv6_api_t *sai_srv6_api;
 extern sai_next_hop_api_t *sai_next_hop_api;
 extern sai_next_hop_group_api_t *sai_next_hop_group_api;
 extern sai_hostif_api_t *sai_hostif_api;
