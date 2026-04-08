@@ -3384,16 +3384,20 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         if (!monitor_list.empty())
         {
             monitors[nh] = monitor_list[idx_ip];
-        }
-        if (!pinned_state_list.empty())
-        {
-            if (pinned_state_list[idx_ip] == "up")
+            if (!pinned_state_list.empty())
             {
-                monitor_addr_to_pinned_state[monitor_list[idx_ip]] = PINNED_STATE_UP;
-            }
-            else if (pinned_state_list[idx_ip] == "down")
-            {
-                monitor_addr_to_pinned_state[monitor_list[idx_ip]] = PINNED_STATE_DOWN;
+                if (pinned_state_list[idx_ip] == "up")
+                {
+                    monitor_addr_to_pinned_state[monitor_list[idx_ip]] = PINNED_STATE_UP;
+                }
+                else if (pinned_state_list[idx_ip] == "down")
+                {
+                    monitor_addr_to_pinned_state[monitor_list[idx_ip]] = PINNED_STATE_DOWN;
+                }
+                else
+                {
+                    monitor_addr_to_pinned_state[monitor_list[idx_ip]] = PINNED_STATE_NONE;
+                }
             }
             else
             {
