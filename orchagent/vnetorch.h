@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <algorithm>
 #include <bitset>
+#include <deque>
 #include <tuple>
 
 #include "aclorch.h"
@@ -457,36 +458,47 @@ struct RouteOrchContext
 {
     RouteBulkContext ctx;
     NextHopGroupKey nhg;
-    bool is_add;
+    bool is_set_op;
     RouteOrchContext(const std::string& key, bool is_set, const NextHopGroupKey& nexthops) 
-        : ctx(key, is_set), nhg(nexthops), is_add(is_set) {}
+        : ctx(key, is_set), nhg(nexthops), is_set_op(is_set) {}
 };
 
 struct TunnelRouteContext
 {
+    enum class SaiOp
+    {
+        NONE,
+        ADD,
+        UPDATE,
+        DEL
+    };
+
     IpPrefix ip_prefix;
     string vnet;
+    sai_object_id_t vr_id;
     NextHopGroupKey nhg;
     NextHopGroupKey primary;
     NextHopGroupKey secondary;  
     string profile;
     IpPrefix adv_prefix;
     string monitoring;
-    bool is_add;
-    bool is_update;
+    bool is_set_op;
+    SaiOp sai_op;
     bool trigger_monitor_update;  
     bool is_custom_monitor_pinned_state_updated = false;
     std::map<NextHopKey, swss::IpAddress> origin_primary_monitors;
     std::map<NextHopKey, swss::IpAddress> origin_secondary_monitors;
     size_t status_index;
-    TunnelRouteContext(const string& vnet_name, const IpPrefix& pfx, bool add_op, size_t idx, bool update_op = false)
-        : ip_prefix(pfx), vnet(vnet_name), nhg("", true), primary("", true), secondary("", true),
-          is_add(add_op), is_update(update_op), trigger_monitor_update(false), status_index(idx) {}
+    TunnelRouteContext(const string& vnet_name, sai_object_id_t vrf_id, const IpPrefix& pfx,
+                       bool set_op, SaiOp op, size_t idx)
+        : ip_prefix(pfx), vnet(vnet_name), vr_id(vrf_id), nhg("", true), primary("", true), secondary("", true),
+          is_set_op(set_op), sai_op(op), trigger_monitor_update(false), status_index(idx) {}
 };
 
 struct VNetRouteBulkContext {
     std::string key;
     std::string op;
+    bool processable = false;
     std::vector<RouteOrchContext> non_subnet_contexts;
     std::vector<TunnelRouteContext> tunnel_contexts;
 };
@@ -614,7 +626,7 @@ private:
     bool setAndDeleteRoutesWithRouteOrch(const sai_object_id_t vr_id, const IpPrefix& ipPrefix,
                                         const NextHopGroupKey& nhg, const string& op);
     bool addTunnelRouteBulk(const string& vnet, sai_object_id_t vr_id, const IpPrefix& ipPrefix, sai_object_id_t nh_id);
-    bool delTunnelRouteBulk(const string& vnet, sai_object_id_t vr_id, const IpPrefix& ipPrefix);
+    bool delTunnelRouteBulk(const string& vnet, sai_object_id_t vr_id, const IpPrefix& ipPrefix, bool is_set_op = false);
     bool addTunnelRoutePost(const TunnelRouteContext& tr_ctx);
     bool delTunnelRoutePost(const TunnelRouteContext& tr_ctx);
     bool updateTunnelRouteBulk(const std::string& vnet, sai_object_id_t vr_id, const IpPrefix& ipPrefix, sai_object_id_t nh_id);
@@ -652,7 +664,7 @@ private:
     std::deque<sai_status_t> object_statuses_;
     std::vector<RouteOrchContext> routeorch_contexts_;
     std::vector<TunnelRouteContext> tunnel_route_contexts_;
-    std::map<std::pair<std::string, std::string>, VNetRouteBulkContext> toBulk_;
+    std::vector<VNetRouteBulkContext> toBulk_;
     EntityBulker<sai_route_api_t> tunnel_route_bulker_;
     
     unique_ptr<Table> monitor_session_producer_;

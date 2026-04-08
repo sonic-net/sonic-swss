@@ -1227,18 +1227,24 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                     // Remove route when updating from a nhg with active member to another nhg without
                     if (!syncd_nexthop_groups_[vnet][nhg].active_members.empty())
                     {
-                        delTunnelRouteBulk(vnet, vr_id, ipPrefix);
+                        delTunnelRouteBulk(vnet, vr_id, ipPrefix, true);
                     }
                     else
                     {
                         object_statuses_.emplace_back(SAI_STATUS_SUCCESS);
-                        tunnel_route_contexts_.emplace_back(vnet, ipPrefix, true, object_statuses_.size() - 1);
+                        tunnel_route_contexts_.emplace_back(vnet, vr_id, ipPrefix,
+                                                            true,
+                                                            TunnelRouteContext::SaiOp::NONE,
+                                                            object_statuses_.size() - 1);
                     }
                 }
                 else
                 {
                     object_statuses_.emplace_back(SAI_STATUS_SUCCESS);
-                    tunnel_route_contexts_.emplace_back(vnet, ipPrefix, true, object_statuses_.size() - 1);
+                    tunnel_route_contexts_.emplace_back(vnet, vr_id, ipPrefix,
+                                                        true,
+                                                        TunnelRouteContext::SaiOp::NONE,
+                                                        object_statuses_.size() - 1);
                 }
             }
             else
@@ -1321,7 +1327,10 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             else
             {
                 object_statuses_.emplace_back(SAI_STATUS_SUCCESS);
-                tunnel_route_contexts_.emplace_back(vnet, ipPrefix, false, object_statuses_.size() - 1);
+                tunnel_route_contexts_.emplace_back(vnet, vr_id, ipPrefix,
+                                                    false,
+                                                    TunnelRouteContext::SaiOp::NONE,
+                                                    object_statuses_.size() - 1);
                 
                 SWSS_LOG_INFO("Route %s already removed (no active endpoints), creating no-op context for cleanup", 
                              ipPrefix.to_string().c_str());
@@ -1357,12 +1366,15 @@ bool VNetRouteOrch::addTunnelRouteBulk(const string& vnet, sai_object_id_t vr_id
 
     object_statuses_.emplace_back();
     tunnel_route_bulker_.create_entry(&object_statuses_.back(), &route_entry, 1, &route_attr);
-    tunnel_route_contexts_.emplace_back(vnet, ipPrefix, true, object_statuses_.size() - 1);
+    tunnel_route_contexts_.emplace_back(vnet, vr_id, ipPrefix,
+                                        true,
+                                        TunnelRouteContext::SaiOp::ADD,
+                                        object_statuses_.size() - 1);
 
     return true;
 }
 
-bool VNetRouteOrch::delTunnelRouteBulk(const string& vnet, sai_object_id_t vr_id, const IpPrefix& ipPrefix)
+bool VNetRouteOrch::delTunnelRouteBulk(const string& vnet, sai_object_id_t vr_id, const IpPrefix& ipPrefix, bool is_set_op)
 {
     SWSS_LOG_ENTER();
 
@@ -1373,7 +1385,10 @@ bool VNetRouteOrch::delTunnelRouteBulk(const string& vnet, sai_object_id_t vr_id
 
     object_statuses_.emplace_back();
     tunnel_route_bulker_.remove_entry(&object_statuses_.back(), &route_entry);
-    tunnel_route_contexts_.emplace_back(vnet, ipPrefix, false, object_statuses_.size() - 1);
+    tunnel_route_contexts_.emplace_back(vnet, vr_id, ipPrefix,
+                                        is_set_op,
+                                        TunnelRouteContext::SaiOp::DEL,
+                                        object_statuses_.size() - 1);
 
     return true;
 }
@@ -1393,7 +1408,10 @@ bool VNetRouteOrch::updateTunnelRouteBulk(const string& vnet, sai_object_id_t vr
 
     object_statuses_.emplace_back();
     tunnel_route_bulker_.set_entry_attribute(&object_statuses_.back(), &route_entry, &route_attr);
-    tunnel_route_contexts_.emplace_back(vnet, ipPrefix, false, object_statuses_.size() - 1, true);
+    tunnel_route_contexts_.emplace_back(vnet, vr_id, ipPrefix,
+                                        true,
+                                        TunnelRouteContext::SaiOp::UPDATE,
+                                        object_statuses_.size() - 1);
 
     return true;
 }
@@ -3668,10 +3686,12 @@ void VNetRouteOrch::doTask(Consumer &consumer)
         KeyOpFieldsValuesTuple t = it->second;
         string key = kfvKey(t);
         string op = kfvOp(t);
-        auto& bulk_ctx = toBulk_[make_pair(key, op)];
+
+        toBulk_.emplace_back();
+        auto& bulk_ctx = toBulk_.back();
         bulk_ctx.key = key;
         bulk_ctx.op = op;
-        
+
         request_.parse(t);
         auto table_name = consumer.getTableName();
         request_.setTableName(table_name);
@@ -3689,63 +3709,58 @@ void VNetRouteOrch::doTask(Consumer &consumer)
         {
             SWSS_LOG_ERROR("Wrong operation. Check RequestParser: %s", op.c_str());
             it = consumer.m_toSync.erase(it);
-            toBulk_.erase(make_pair(key, op));
+            toBulk_.pop_back();
+            routeorch_contexts_.clear();
+            tunnel_route_contexts_.clear();
             request_.clear();
             continue;
         }
-        
+
         request_.clear();
 
         if (can_process)
         {
+            bulk_ctx.processable = true;
             bulk_ctx.non_subnet_contexts = std::move(routeorch_contexts_);
             bulk_ctx.tunnel_contexts = std::move(tunnel_route_contexts_);
-            routeorch_contexts_.clear();
-            tunnel_route_contexts_.clear();
-            it++;
         }
-        else
-        {
-            it++;
-            toBulk_.erase(make_pair(key, op));
-        }
+        routeorch_contexts_.clear();
+        tunnel_route_contexts_.clear();
+        it++;
     }
     
-    if (toBulk_.empty())
+    bool any_processable = std::any_of(toBulk_.begin(), toBulk_.end(),
+        [](const VNetRouteBulkContext& c) { return c.processable; });
+    if (!any_processable)
     {
         return;
     }
-        
+
     gRouteOrch->gRouteBulker.flush();
     tunnel_route_bulker_.flush();
-    
+
     size_t total_non_subnet_routes = 0;
     size_t total_tunnel_routes = 0;
     for (const auto& entry : toBulk_)
     {
-        total_non_subnet_routes += entry.second.non_subnet_contexts.size();
-        total_tunnel_routes += entry.second.tunnel_contexts.size();
+        total_non_subnet_routes += entry.non_subnet_contexts.size();
+        total_tunnel_routes += entry.tunnel_contexts.size();
     }
     SWSS_LOG_NOTICE("Bulk flush: %zu tunnel routes + %zu non-subnet routes",
                    total_tunnel_routes, total_non_subnet_routes);
     
     auto& bulkNhgReducedRefCnt = gRouteOrch->getBulkNhgReducedRefCnt();
     auto it_prev = consumer.m_toSync.begin();
-    
-    while (it_prev != consumer.m_toSync.end())
+    for (size_t bulk_idx = 0; bulk_idx < toBulk_.size(); ++bulk_idx)
     {
-        KeyOpFieldsValuesTuple t = it_prev->second;
-        string key = kfvKey(t);
-        string op = kfvOp(t);
-        
-        auto found = toBulk_.find(make_pair(key, op));
-        if (found == toBulk_.end())
+        auto& bulk_ctx = toBulk_[bulk_idx];
+
+        if (!bulk_ctx.processable)
         {
-            it_prev++;
+            ++it_prev; // keep in m_toSync for retry
             continue;
         }
-        
-        auto& bulk_ctx = found->second;
+
         bool all_success = true;
         
         for (auto& ro_ctx : bulk_ctx.non_subnet_contexts)
@@ -3765,7 +3780,7 @@ void VNetRouteOrch::doTask(Consumer &consumer)
             }
             
             bool post_success = false;
-            if (ro_ctx.is_add)
+            if (ro_ctx.is_set_op)
             {
                 post_success = gRouteOrch->addRoutePost(ro_ctx.ctx, ro_ctx.nhg);
             }
@@ -3801,7 +3816,8 @@ void VNetRouteOrch::doTask(Consumer &consumer)
                 SWSS_LOG_ERROR("Tunnel route %s failed (status %d), will retry",
                               tr_ctx.ip_prefix.to_string().c_str(), status);
                 /* Clean up the newly created next hop group entry */
-                if (tr_ctx.is_add || tr_ctx.is_update)
+                if (tr_ctx.sai_op == TunnelRouteContext::SaiOp::ADD ||
+                    tr_ctx.sai_op == TunnelRouteContext::SaiOp::UPDATE)
                 {
                     auto *vrf_obj = vnet_orch_->getTypePtr<VNetVrfObject>(tr_ctx.vnet);
                     if (tr_ctx.nhg.getSize() > 1)
@@ -3813,7 +3829,7 @@ void VNetRouteOrch::doTask(Consumer &consumer)
                 continue;
             }
 
-            if (tr_ctx.is_add && !tr_ctx.is_update)
+            if (tr_ctx.sai_op == TunnelRouteContext::SaiOp::ADD)
             {
                 sai_ip_prefix_t sai_pfx;
                 copy(sai_pfx, tr_ctx.ip_prefix);
@@ -3826,10 +3842,9 @@ void VNetRouteOrch::doTask(Consumer &consumer)
                     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
                 }
                 
-                auto *vrf_obj = vnet_orch_->getTypePtr<VNetVrfObject>(tr_ctx.vnet);
-                gFlowCounterRouteOrch->onAddMiscRouteEntry(vrf_obj->getVRidIngress(), sai_pfx, false);
+                gFlowCounterRouteOrch->onAddMiscRouteEntry(tr_ctx.vr_id, sai_pfx, false);
             } 
-            else if (!tr_ctx.is_add && !tr_ctx.is_update)
+            else if (tr_ctx.sai_op == TunnelRouteContext::SaiOp::DEL)
             {
                 sai_ip_prefix_t sai_pfx;
                 copy(sai_pfx, tr_ctx.ip_prefix);
@@ -3842,8 +3857,7 @@ void VNetRouteOrch::doTask(Consumer &consumer)
                     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
                 }
                 
-                auto *vrf_obj = vnet_orch_->getTypePtr<VNetVrfObject>(tr_ctx.vnet);
-                gFlowCounterRouteOrch->onRemoveMiscRouteEntry(vrf_obj->getVRidIngress(), sai_pfx, false);
+                gFlowCounterRouteOrch->onRemoveMiscRouteEntry(tr_ctx.vr_id, sai_pfx, false);
             }
             
             auto route_key = std::make_pair(tr_ctx.vnet, tr_ctx.ip_prefix);
@@ -3854,7 +3868,7 @@ void VNetRouteOrch::doTask(Consumer &consumer)
             processed_routes.insert(route_key);
             
             bool post_success = false;
-            if (tr_ctx.is_add || tr_ctx.is_update)
+            if (tr_ctx.is_set_op)
             {
                 post_success = addTunnelRoutePost(tr_ctx);
             }
@@ -3877,10 +3891,10 @@ void VNetRouteOrch::doTask(Consumer &consumer)
         }
         else
         {
-            it_prev++;
+            ++it_prev;
         }
     }
-    
+
     for (auto& it : bulkNhgReducedRefCnt)
     {
         if (gRouteOrch->getNextHopGroupRefCount(it.first) == 0)
