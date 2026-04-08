@@ -1399,6 +1399,10 @@ class TestMuxTunnelBase():
                 assert value == "SAI_TUNNEL_DSCP_MODE_PIPE_MODEL"
             elif field == "SAI_TUNNEL_ATTR_DECAP_DSCP_MODE":
                 assert value == "SAI_TUNNEL_DSCP_MODE_PIPE_MODEL"
+            elif field == "SAI_TUNNEL_ATTR_DECAP_ECN_MODE":
+                assert value == self.ecn_modes_map[self.DEFAULT_TUNNEL_PARAMS["ecn_mode"]]
+            elif field == "SAI_TUNNEL_ATTR_ENCAP_ECN_MODE":
+                assert value == "SAI_TUNNEL_ENCAP_ECN_MODE_STANDARD"
             else:
                 assert False, "Field %s is not tested" % field
 
