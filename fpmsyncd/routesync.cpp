@@ -246,7 +246,7 @@ void RouteSync::parseRtAttrNested(struct rtattr **tb, int max,
  */
 void RouteSync::parseEncap(struct rtattr *tb, uint32_t &encap_value, string &rmac)
 {
-    struct rtattr *tb_encap[3] = {0};
+    struct rtattr *tb_encap[VXLAN_RMAC + 1] = {0};
     char mac_buf[MAX_ADDR_SIZE+1];
     char mac_val[MAX_ADDR_SIZE+1];
 
