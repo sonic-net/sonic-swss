@@ -148,6 +148,13 @@ public:
                        const NextHopKey &standby_nh,
                        sai_object_id_t standby_nh_id = SAI_NULL_OBJECT_ID);
 
+    /* Create a protection NHG where each role is an existing ECMP NHG.
+     * The group keys are resolved to their SAI OIDs via hasNhg/getNhg.
+     */
+    bool createProtNhg(const string &key,
+                       const NextHopGroupKey &primary_nhg_key,
+                       const NextHopGroupKey &standby_nhg_key);
+
     /* Remove a protection NHG by key. */
     bool removeProtNhg(const string &key);
 

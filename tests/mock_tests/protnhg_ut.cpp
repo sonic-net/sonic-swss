@@ -1,11 +1,16 @@
 #define private public
-#include "directory.h"
 #undef private
+#include "directory.h"
 #define protected public
 #include "orch.h"
 #undef protected
 
 #include "ut_helper.h"
+
+#define protected public
+#include "nhgbase.h"
+#undef protected
+
 #include "mock_orchagent_main.h"
 #include "mock_sai_api.h"
 #include "mock_orch_test.h"
@@ -648,5 +653,101 @@ namespace protnhg_test
         EXPECT_TRUE(nhg.updateMemberMonitoredObject(standby_nh, session_oid));
         EXPECT_TRUE(nhg.sync());
         EXPECT_TRUE(nhg.isSynced());
+    }
+
+
+    static uint64_t ecmp_nhg_oid_counter = 0x7000000;
+
+    /* Helper: register a fake synced ECMP NHG in gNhgOrch.
+     * Directly assigns a SAI OID instead of calling sync(), which would
+     * try to resolve individual NHs through NeighOrch.
+     */
+    static void addEcmpNhg(const NextHopGroupKey &nhg_key)
+    {
+        string key_str = nhg_key.to_string();
+        auto nhg = make_unique<NextHopGroup>(nhg_key, false);
+        nhg->m_id = ++ecmp_nhg_oid_counter;
+        gNhgOrch->m_syncdNextHopGroups.emplace(
+            key_str, NhgEntry<NextHopGroup>(move(nhg)));
+    }
+
+    static void removeEcmpNhg(const string &key_str)
+    {
+        auto it = gNhgOrch->m_syncdNextHopGroups.find(key_str);
+        if (it != gNhgOrch->m_syncdNextHopGroups.end())
+        {
+            it->second.nhg->m_id = SAI_NULL_OBJECT_ID;
+            gNhgOrch->m_syncdNextHopGroups.erase(it);
+        }
+    }
+
+    TEST_F(ProtNhgTest, CreateProtNhgWithNhgKeys)
+    {
+        NextHopGroupKey primary_nhg_key("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0");
+        NextHopGroupKey standby_nhg_key("10.0.0.100@Ethernet4");
+
+        addEcmpNhg(primary_nhg_key);
+        addEcmpNhg(standby_nhg_key);
+
+        string key = "prot_nhg_keys";
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nhg_key, standby_nhg_key));
+        EXPECT_TRUE(gNhgOrch->hasProtNhg(key));
+        EXPECT_NE(gNhgOrch->getProtNhgId(key), SAI_NULL_OBJECT_ID);
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+        EXPECT_FALSE(gNhgOrch->hasProtNhg(key));
+
+        removeEcmpNhg(primary_nhg_key.to_string());
+        removeEcmpNhg(standby_nhg_key.to_string());
+    }
+
+    TEST_F(ProtNhgTest, CreateProtNhgWithNhgKeysPrimaryNotFound)
+    {
+        NextHopGroupKey primary_nhg_key("10.0.0.1@Ethernet0");
+        NextHopGroupKey standby_nhg_key("10.0.0.100@Ethernet4");
+
+        addEcmpNhg(standby_nhg_key);
+
+        EXPECT_FALSE(gNhgOrch->createProtNhg("prot_no_primary",
+                                              primary_nhg_key,
+                                              standby_nhg_key));
+        EXPECT_FALSE(gNhgOrch->hasProtNhg("prot_no_primary"));
+
+        removeEcmpNhg(standby_nhg_key.to_string());
+    }
+
+    TEST_F(ProtNhgTest, CreateProtNhgWithNhgKeysStandbyNotFound)
+    {
+        NextHopGroupKey primary_nhg_key("10.0.0.1@Ethernet0");
+        NextHopGroupKey standby_nhg_key("10.0.0.100@Ethernet4");
+
+        addEcmpNhg(primary_nhg_key);
+
+        EXPECT_FALSE(gNhgOrch->createProtNhg("prot_no_standby",
+                                              primary_nhg_key,
+                                              standby_nhg_key));
+        EXPECT_FALSE(gNhgOrch->hasProtNhg("prot_no_standby"));
+
+        removeEcmpNhg(primary_nhg_key.to_string());
+    }
+
+    TEST_F(ProtNhgTest, CreateProtNhgWithNhgKeysEmptyPrimary)
+    {
+        NextHopGroupKey empty_primary;
+        NextHopGroupKey standby_nhg_key("10.0.0.100@Ethernet4");
+
+        EXPECT_FALSE(gNhgOrch->createProtNhg("prot_empty_primary",
+                                              empty_primary,
+                                              standby_nhg_key));
+    }
+
+    TEST_F(ProtNhgTest, CreateProtNhgWithNhgKeysEmptyStandby)
+    {
+        NextHopGroupKey primary_nhg_key("10.0.0.1@Ethernet0");
+        NextHopGroupKey empty_standby;
+
+        EXPECT_FALSE(gNhgOrch->createProtNhg("prot_empty_standby",
+                                              primary_nhg_key,
+                                              empty_standby));
     }
 }

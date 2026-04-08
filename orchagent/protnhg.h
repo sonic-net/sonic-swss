@@ -67,6 +67,16 @@ public:
             const NextHopKey &standby_nh,
             sai_object_id_t standby_nh_id = SAI_NULL_OBJECT_ID);
 
+    /* Construct from NextHopGroupKey pairs with pre-resolved NHG OIDs.
+     * Each group becomes a single protection member whose SAI next-hop ID
+     * points to the resolved ECMP NHG OID (recursive/nested NHG).
+     */
+    ProtNhg(const string &key,
+            const NextHopGroupKey &primary_nhg_key,
+            sai_object_id_t primary_nhg_id,
+            const NextHopGroupKey &standby_nhg_key,
+            sai_object_id_t standby_nhg_id);
+
     ProtNhg(ProtNhg &&nhg);
 
     ~ProtNhg() { SWSS_LOG_ENTER(); remove(); }

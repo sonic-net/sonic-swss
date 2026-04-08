@@ -1269,6 +1269,91 @@ bool NhgOrch::createProtNhg(const string &key,
     return true;
 }
 
+bool NhgOrch::createProtNhg(const string &key,
+                             const NextHopGroupKey &primary_nhg_key,
+                             const NextHopGroupKey &standby_nhg_key)
+{
+    SWSS_LOG_ENTER();
+
+    if (primary_nhg_key.getSize() == 0)
+    {
+        SWSS_LOG_ERROR("Protection NHG %s primary group key is empty", key.c_str());
+        return false;
+    }
+
+    if (standby_nhg_key.getSize() == 0)
+    {
+        SWSS_LOG_ERROR("Protection NHG %s standby group key is empty", key.c_str());
+        return false;
+    }
+
+    string primary_key_str = primary_nhg_key.to_string();
+    string standby_key_str = standby_nhg_key.to_string();
+
+    if (!hasNhg(primary_key_str))
+    {
+        SWSS_LOG_ERROR("Protection NHG %s: primary NHG %s does not exist",
+                       key.c_str(), primary_key_str.c_str());
+        return false;
+    }
+
+    if (!hasNhg(standby_key_str))
+    {
+        SWSS_LOG_ERROR("Protection NHG %s: standby NHG %s does not exist",
+                       key.c_str(), standby_key_str.c_str());
+        return false;
+    }
+
+    sai_object_id_t primary_nhg_id = getNhg(primary_key_str).getId();
+    sai_object_id_t standby_nhg_id = getNhg(standby_key_str).getId();
+
+    if (primary_nhg_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Protection NHG %s: primary NHG %s is not synced",
+                       key.c_str(), primary_key_str.c_str());
+        return false;
+    }
+
+    if (standby_nhg_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Protection NHG %s: standby NHG %s is not synced",
+                       key.c_str(), standby_key_str.c_str());
+        return false;
+    }
+
+    if (m_protNhgs.find(key) != m_protNhgs.end())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s already exists", key.c_str());
+        return false;
+    }
+
+    if (gRouteOrch->getNhgCount() + NhgBase::getSyncedCount() >=
+        gRouteOrch->getMaxNhgCount())
+    {
+        SWSS_LOG_ERROR("NHG capacity exhausted, cannot create protection NHG %s",
+                       key.c_str());
+        return false;
+    }
+
+    auto nhg = make_unique<ProtNhg>(key, primary_nhg_key, primary_nhg_id,
+                                    standby_nhg_key, standby_nhg_id);
+
+    if (!nhg->sync())
+    {
+        SWSS_LOG_ERROR("Failed to sync protection NHG %s", key.c_str());
+        return false;
+    }
+
+    m_protNhgs.emplace(key, NhgEntry<ProtNhg>(move(nhg)));
+
+    SWSS_LOG_NOTICE("Created protection NHG %s (primary NHG: %s, standby NHG: %s)",
+                    key.c_str(),
+                    primary_key_str.c_str(),
+                    standby_key_str.c_str());
+
+    return true;
+}
+
 bool NhgOrch::removeProtNhg(const string &key)
 {
     SWSS_LOG_ENTER();

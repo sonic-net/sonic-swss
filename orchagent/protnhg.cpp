@@ -158,6 +158,24 @@ ProtNhg::ProtNhg(const string &key,
                       ProtNhgMember(standby_nh, ProtNhgRole::STANDBY, standby_nh_id));
 }
 
+ProtNhg::ProtNhg(const string &key,
+                  const NextHopGroupKey &primary_nhg_key,
+                  sai_object_id_t primary_nhg_id,
+                  const NextHopGroupKey &standby_nhg_key,
+                  sai_object_id_t standby_nhg_id) :
+    NhgCommon(key)
+{
+    SWSS_LOG_ENTER();
+
+    const NextHopKey &primary_rep = *primary_nhg_key.getNextHops().begin();
+    const NextHopKey &standby_rep = *standby_nhg_key.getNextHops().begin();
+
+    m_members.emplace(primary_rep,
+                      ProtNhgMember(primary_rep, ProtNhgRole::PRIMARY, primary_nhg_id));
+    m_members.emplace(standby_rep,
+                      ProtNhgMember(standby_rep, ProtNhgRole::STANDBY, standby_nhg_id));
+}
+
 ProtNhg::ProtNhg(ProtNhg &&nhg) :
     NhgCommon(move(nhg))
 {
