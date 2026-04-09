@@ -126,11 +126,6 @@ P4Orch::P4Orch(swss::DBConnector* db, std::vector<std::string> tableNames,
     Orch::addExecutor(ext_executor);
     m_extCounterStatsTimer->start();
 
-    // Add port state change notification handling support
-    swss::DBConnector notificationsDb("ASIC_DB", 0);
-    m_portStatusNotificationConsumer = new swss::NotificationConsumer(&notificationsDb, "NOTIFICATIONS");
-    auto portStatusNotifier = new Notifier(m_portStatusNotificationConsumer, this, "PORT_STATUS_NOTIFICATIONS");
-    Orch::addExecutor(portStatusNotifier);
 }
 
 void P4Orch::doTask(ConsumerBase &consumer)
@@ -285,41 +280,17 @@ ReturnCode P4Orch::drain() {
   return status;
 }
 
-void P4Orch::handlePortStatusChangeNotification(const std::string &op, const std::string &data)
-{
-    if (op == "port_state_change")
-    {
-        uint32_t count;
-        sai_port_oper_status_notification_t *port_oper_status = nullptr;
-        sai_deserialize_port_oper_status_ntf(data, count, &port_oper_status);
+void P4Orch::handlePortStatusUpdate(const std::string& alias,
+                                    const sai_port_oper_status_t& status) {
+  Port port;
+  if (!gPortsOrch->getPort(alias, port)) {
+    SWSS_LOG_ERROR("Failed to get port object for port alias %s.",
+                   alias.c_str());
+    return;
+  }
 
-        for (uint32_t i = 0; i < count; i++)
-        {
-            sai_object_id_t id = port_oper_status[i].port_id;
-            sai_port_oper_status_t status = port_oper_status[i].port_state;
-
-            Port port;
-            if (!gPortsOrch->getPort(id, port))
-            {
-                SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, id);
-                continue;
-            }
-
-            // Update port oper-status in local map
-            m_wcmpManager->updatePortOperStatusMap(port.m_alias, status);
-
-            if (status == SAI_PORT_OPER_STATUS_UP)
-            {
-              m_wcmpManager->updateWatchPort(port.m_alias, false);
-            }
-            else
-            {
-              m_wcmpManager->updateWatchPort(port.m_alias, true);
-            }
-        }
-
-        sai_deserialize_free_port_oper_status_ntf(count, port_oper_status);
-    }
+  // Update watchport
+  m_wcmpManager->updateWatchPort(alias, status);
 }
 
 void P4Orch::doTask(NotificationConsumer &consumer)
@@ -336,10 +307,6 @@ void P4Orch::doTask(NotificationConsumer &consumer)
 
     consumer.pop(op, data, values);
 
-
-    if (&consumer == m_portStatusNotificationConsumer) {
-        handlePortStatusChangeNotification(op, data);
-    }
 }
 
 void P4Orch::doTask(swss::SelectableEvent& event) {

@@ -222,60 +222,51 @@ P4WcmpGroupEntry *WcmpManager::getWcmpGroupEntry(const std::string &wcmp_group_i
 
 void WcmpManager::insertMemberInPortNameToWcmpGroupMemberMap(std::shared_ptr<P4WcmpGroupMemberEntry> member)
 {
-    port_name_to_wcmp_group_member_map[member->watch_port].insert(member);
+    m_port_name_to_wcmp_group_member_map[member->watch_port].insert(member);
 }
 
 void WcmpManager::removeMemberFromPortNameToWcmpGroupMemberMap(std::shared_ptr<P4WcmpGroupMemberEntry> member)
 {
-    if (port_name_to_wcmp_group_member_map.find(member->watch_port) != port_name_to_wcmp_group_member_map.end())
-    {
-        auto &s = port_name_to_wcmp_group_member_map[member->watch_port];
-        auto it = s.find(member);
-        if (it != s.end())
-        {
-            s.erase(it);
-        }
-    }
+    m_port_name_to_wcmp_group_member_map[member->watch_port].erase(member);
 }
 
-ReturnCode WcmpManager::fetchPortOperStatus(const std::string &port_name, sai_port_oper_status_t *oper_status)
-{
-    if (!getPortOperStatusFromMap(port_name, oper_status))
-    {
-        // Get port object for associated watch port
+void WcmpManager::fetchPortOperStatus(const P4WcmpGroupEntry& wcmp_group) {
+  SWSS_LOG_ENTER();
+
+    for (auto& member : wcmp_group.wcmp_group_members) {
+      if (!member->watch_port.empty()) {
+        sai_port_oper_status_t oper_status = SAI_PORT_OPER_STATUS_DOWN;
         Port port;
-        if (!gPortsOrch->getPort(port_name, port))
-        {
-            SWSS_LOG_ERROR("Failed to get port object for port %s", port_name.c_str());
-            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM);
+        if (gPortsOrch->getPort(member->watch_port, port)) {
+          oper_status = port.m_oper_status;
         }
-        // Get the oper-status of the port from PortsOrch. In case of warm reboot,
-        // this ensures that the oper-status before reboot is used to determine
-        // the watchport status of the member, thereby avoiding any ASIC operations
-        // during reconciliation.
-        *oper_status = port.m_oper_status;
-
-        // Update port oper-status in local map
-        updatePortOperStatusMap(port.m_alias, *oper_status);
+        m_port_oper_status_map[member->watch_port] = oper_status;
+      }
     }
-    return ReturnCode();
+    return;
 }
 
-ReturnCode WcmpManager::fetchMemberInfo(P4WcmpGroupEntry* wcmp_group) {
-  for (auto& member : wcmp_group->wcmp_group_members) {
+void WcmpManager::populateMemberInfo(P4WcmpGroupEntry& wcmp_group) {
+  SWSS_LOG_ENTER();
+
+  for (auto& member : wcmp_group.wcmp_group_members) {
     if (!member->watch_port.empty()) {
-      sai_port_oper_status_t oper_status = SAI_PORT_OPER_STATUS_DOWN;
-      RETURN_IF_ERROR(fetchPortOperStatus(member->watch_port, &oper_status));
-      if (oper_status != SAI_PORT_OPER_STATUS_UP) {
+      if (m_port_oper_status_map[member->watch_port] !=
+          SAI_PORT_OPER_STATUS_UP) {
         member->pruned = true;
+      } else {
+        member->pruned = false;
       }
     }
 
-    m_p4OidMapper->getOID(SAI_OBJECT_TYPE_NEXT_HOP,
-                          KeyGenerator::generateNextHopKey(member->next_hop_id),
-                          &(member->next_hop_oid));
+    if (member->next_hop_oid == SAI_NULL_OBJECT_ID) {
+      m_p4OidMapper->getOID(
+          SAI_OBJECT_TYPE_NEXT_HOP,
+          KeyGenerator::generateNextHopKey(member->next_hop_id),
+          &(member->next_hop_oid));
+    }
   }
-  return ReturnCode();
+  return;
 }
 
 std::vector<ReturnCode> WcmpManager::createWcmpGroups(
@@ -507,28 +498,29 @@ ReturnCode WcmpManager::processEntries(
     return status;
 }
 
-void WcmpManager::updateWatchPort(const std::string& port, bool prune) {
+void WcmpManager::updateWatchPort(const std::string& port,
+                                  sai_port_oper_status_t status) {
   SWSS_LOG_ENTER();
 
-  // Get list of WCMP group members associated with the watch_port
-
-  if (port_name_to_wcmp_group_member_map.find(port) !=
-      port_name_to_wcmp_group_member_map.end()) {
-    for (auto& member : port_name_to_wcmp_group_member_map[port]) {
-      if (member->pruned != prune) {
-        auto* wcmp_group = getWcmpGroupEntry(member->wcmp_group_id);
-        if (wcmp_group == nullptr) {
-          SWSS_RAISE_CRITICAL_STATE("Failed to find WCMP group " +
-                                    QuotedVar(member->wcmp_group_id) +
-                                    " in updateWatchPort");
-        } else {
-          const std::string update = prune ? "prune" : "restore";
-          member->pruned = prune;
-          m_watchport_groups.insert(member->wcmp_group_id);
-          SWSS_LOG_NOTICE("Queued watchport event: %s member %s from group %s",
-                          update.c_str(), member->next_hop_id.c_str(),
-                          member->wcmp_group_id.c_str());
-        }
+  m_port_oper_status_map[port] = status;
+  if (m_port_name_to_wcmp_group_member_map.find(port) ==
+      m_port_name_to_wcmp_group_member_map.end()) {
+    return;
+  }
+  bool prune = status != SAI_PORT_OPER_STATUS_UP;
+  for (auto& member : m_port_name_to_wcmp_group_member_map[port]) {
+    if (member->pruned != prune) {
+      auto* wcmp_group = getWcmpGroupEntry(member->wcmp_group_id);
+      if (wcmp_group == nullptr) {
+        SWSS_RAISE_CRITICAL_STATE("Failed to find WCMP group " +
+                                  QuotedVar(member->wcmp_group_id) +
+                                  " in updateWatchPort");
+      } else {
+        const std::string update = prune ? "prune" : "restore";
+        m_watchport_groups.insert(member->wcmp_group_id);
+        SWSS_LOG_NOTICE("Queued watchport event: %s member %s from group %s",
+                        update.c_str(), member->next_hop_id.c_str(),
+                        member->wcmp_group_id.c_str());
       }
     }
   }
@@ -541,10 +533,13 @@ void WcmpManager::processWatchPortEvent() {
   SWSS_LOG_ENTER();
 
   uint count = 0;
+  P4WcmpGroupEntry* entry;
   std::vector<P4WcmpGroupEntry> entries;
   auto it = m_watchport_groups.begin();
   while (it != m_watchport_groups.end()) {
-    entries.push_back(*getWcmpGroupEntry(*it));
+    entry = getWcmpGroupEntry(*it);
+    populateMemberInfo(*entry);
+    entries.push_back(*entry);
     it = m_watchport_groups.erase(it);
     if (++count >= kMaxWatchportGroupBulkSize) {
       break;
@@ -567,21 +562,6 @@ void WcmpManager::processWatchPortEvent() {
   if (!m_watchport_groups.empty()) {
     m_watchport_event->notify();
   }
-}
-
-bool WcmpManager::getPortOperStatusFromMap(const std::string &port, sai_port_oper_status_t *oper_status)
-{
-    if (port_oper_status_map.find(port) != port_oper_status_map.end())
-    {
-        *oper_status = port_oper_status_map[port];
-        return true;
-    }
-    return false;
-}
-
-void WcmpManager::updatePortOperStatusMap(const std::string &port, const sai_port_oper_status_t &status)
-{
-    port_oper_status_map[port] = status;
 }
 
 ReturnCode WcmpManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type,
@@ -668,17 +648,8 @@ ReturnCode WcmpManager::drain() {
     }
 
     if (operation == SET_COMMAND) {
-      status = fetchMemberInfo(&app_db_entry);
-      if (!status.ok()) {
-        SWSS_LOG_ERROR(
-            "Fail to get group member info for WCMP group with id %s: %s",
-            QuotedVar(app_db_entry.wcmp_group_id).c_str(),
-            status.message().c_str());
-        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
-                             kfvFieldsValues(key_op_fvs_tuple), status,
-                             /*replace=*/true);
-        break;
-      }
+      fetchPortOperStatus(app_db_entry);
+      populateMemberInfo(app_db_entry);
     }
 
     if (prev_op == "") {
@@ -888,18 +859,13 @@ std::string WcmpManager::verifyStateAsicDb(P4WcmpGroupEntry* wcmp_group_entry) {
 }
 
 void WcmpManager::refreshPortOperStatus() {
-  for (const auto& it : port_oper_status_map) {
+  for (const auto& it : m_port_oper_status_map) {
     Port port;
     if (!gPortsOrch->getPort(it.first, port)) {
       SWSS_LOG_ERROR("Failed to get port object for port %s", it.first.c_str());
       continue;
     }
-    // Update oper-status in local cache.
-    updatePortOperStatusMap(it.first, port.m_oper_status);
-    // Update watchport to ensure pruning/restoration logic is triggered based
-    // on the updated oper-status.
-    bool prune = port.m_oper_status != SAI_PORT_OPER_STATUS_UP;
-    updateWatchPort(it.first, prune);
+    updateWatchPort(it.first, port.m_oper_status);
   }
 }
 
