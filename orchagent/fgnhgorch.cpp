@@ -368,6 +368,46 @@ bool FgNhgOrch::createFineGrainedNextHopGroup(FGNextHopGroupEntry &syncd_fg_rout
         }
     }
 
+    nhg_attr.id = SAI_SWITCH_ATTR_ECMP_MEMBERS;
+    nhg_attr.value.u32 = 0;
+    sai_status_t ecmp_status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &nhg_attr);
+    if (ecmp_status == SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_NOTICE("SAI_SWITCH_ATTR_ECMP_MEMBERS: %u", nhg_attr.value.u32);
+    }
+    else
+    {
+        SWSS_LOG_WARN("Failed to query SAI_SWITCH_ATTR_ECMP_MEMBERS, rv:%d", ecmp_status);
+    }
+
+    nhg_attr.id = SAI_SWITCH_ATTR_MAX_ECMP_MEMBER_COUNT;
+    nhg_attr.value.u32 = 0;
+    ecmp_status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &nhg_attr);
+    if (ecmp_status == SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_NOTICE("SAI_SWITCH_ATTR_MAX_ECMP_MEMBER_COUNT: %u", nhg_attr.value.u32);
+        uint32_t mac_ecmp_members = nhg_attr.value.u32;
+
+        nhg_attr.id = SAI_SWITCH_ATTR_NUMBER_OF_ECMP_GROUPS;
+        nhg_attr.value.u32 = 0;
+        ecmp_status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &nhg_attr);
+        if (ecmp_status == SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_NOTICE("SAI_SWITCH_ATTR_NUMBER_OF_ECMP_GROUPS: %u", nhg_attr.value.u32);
+            uint32_t num_ecmp_groups = nhg_attr.value.u32;
+            uint32_t max_bucket_size = mac_ecmp_members / num_ecmp_groups;
+            SWSS_LOG_NOTICE("Max bucket size calculated based on switch attributes: %u", max_bucket_size);
+        }
+        else
+        {
+            SWSS_LOG_WARN("Failed to query SAI_SWITCH_ATTR_NUMBER_OF_ECMP_GROUPS, rv:%d", ecmp_status);
+        }
+    }
+    else
+    {
+        SWSS_LOG_WARN("Failed to query SAI_SWITCH_ATTR_MAX_ECMP_MEMBER_COUNT, rv:%d", ecmp_status);
+    }
+
     nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
     nhg_attr.value.s32 = SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP;
     nhg_attrs.push_back(nhg_attr);
