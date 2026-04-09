@@ -991,8 +991,37 @@ TEST_F(NextHopManagerTest, DeserializeP4NextHopAppDbEntryRewriteSuccess) {
       swss::FieldValueTuple(prependParamField(p4orch::kDisableVlanRewrite),
                             "1")};
 
-  EXPECT_TRUE(
-      DeserializeP4NextHopAppDbEntry(kNextHopP4AppDbKey, attributes).ok());
+  auto entry_or =
+      DeserializeP4NextHopAppDbEntry(kNextHopP4AppDbKey, attributes);
+  EXPECT_TRUE(entry_or.ok());
+  EXPECT_EQ(entry_or->disable_decrement_ttl, false);
+  EXPECT_EQ(entry_or->disable_src_mac_rewrite, true);
+  EXPECT_EQ(entry_or->disable_dst_mac_rewrite, false);
+  EXPECT_EQ(entry_or->disable_vlan_rewrite, true);
+}
+
+TEST_F(NextHopManagerTest, DeserializeP4NextHopAppDbEntryRewriteHexSuccess) {
+  std::vector<swss::FieldValueTuple> attributes = {
+      swss::FieldValueTuple(p4orch::kAction,
+                            "set_ip_nexthop_and_disable_rewrites"),
+      swss::FieldValueTuple(prependParamField(p4orch::kRouterInterfaceId),
+                            kRouterInterfaceId1),
+      swss::FieldValueTuple(prependParamField(p4orch::kDisableDecrementTtl),
+                            "0x1"),
+      swss::FieldValueTuple(prependParamField(p4orch::kDisableSrcMacRewrite),
+                            "0x0"),
+      swss::FieldValueTuple(prependParamField(p4orch::kDisableDstMacRewrite),
+                            "0X1"),
+      swss::FieldValueTuple(prependParamField(p4orch::kDisableVlanRewrite),
+                            "0x0")};
+
+  auto entry_or =
+      DeserializeP4NextHopAppDbEntry(kNextHopP4AppDbKey, attributes);
+  EXPECT_TRUE(entry_or.ok());
+  EXPECT_EQ(entry_or->disable_decrement_ttl, true);
+  EXPECT_EQ(entry_or->disable_src_mac_rewrite, false);
+  EXPECT_EQ(entry_or->disable_dst_mac_rewrite, true);
+  EXPECT_EQ(entry_or->disable_vlan_rewrite, false);
 }
 
 TEST_F(NextHopManagerTest, DeserializeP4NextHopAppDbEntryRewriteFailures) {
