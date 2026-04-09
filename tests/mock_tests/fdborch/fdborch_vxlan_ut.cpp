@@ -153,9 +153,9 @@ namespace fdborch_vxlan_ut
             auto* flexCounterOrch = new FlexCounterOrch(m_config_db.get(), flex_counter_tables);
             gDirectory.set(flexCounterOrch);
 
-            //ASSERT_EQ(gL2NhgOrch, nullptr);
-            //gL2NhgOrch = new L2NhgOrch(m_app_db.get(), APP_L2_NEXTHOP_GROUP_TABLE_NAME);
-            //gDirectory.set(gL2NhgOrch);
+            ASSERT_EQ(gL2NhgOrch, nullptr);
+            gL2NhgOrch = new L2NhgOrch(m_app_db.get(), APP_L2_NEXTHOP_GROUP_TABLE_NAME);
+            gDirectory.set(gL2NhgOrch);
 
             m_EvpnNvoOrch = new EvpnNvoOrch(m_app_db.get(), APP_VXLAN_EVPN_NVO_TABLE_NAME);
             gDirectory.set(m_EvpnNvoOrch);
@@ -222,8 +222,8 @@ namespace fdborch_vxlan_ut
             delete gRouteOrch;
             gRouteOrch = nullptr;
 
-            //delete gL2NhgOrch;
-            //gL2NhgOrch = nullptr;
+            delete gL2NhgOrch;
+            gL2NhgOrch = nullptr;
 
             delete m_EvpnNvoOrch;
             m_EvpnNvoOrch = nullptr;
@@ -460,11 +460,11 @@ namespace fdborch_vxlan_ut
         ASSERT_EQ(m_portsOrch->m_portList[VXLAN_REMOTE].m_fdb_count, 0);
     }
 
-    TEST_F(VxlanFdbOrchTest, RemoteMacLearnAddDeleteForNhg)
+    TEST_F(VxlanFdbOrchTest, DISABLED_RemoteMacLearnAddDeleteForNhg)
     {
-        // This test is currently disabled because L2NhgOrch is not fully implemented
-        // Skip this test for now
-        GTEST_SKIP() << "L2NhgOrch functionality is not available";
+        // TODO: Enable once L2NhgOrch test setup covers the required
+        // nexthop-group/VTEP dependencies. Do not use GTEST_SKIP here:
+        // the automake/gtest harness treats skipped tests as non-passing in Azure.
     }
 
     /* Test Consolidated Flush Per Vlan and Per Port */

@@ -30,6 +30,7 @@
 #include "vrforch.h"
 #include "vxlanorch.h"
 #include "evpnmhorch.h"
+#include "l2nhgorch.h"
 #include "vnetorch.h"
 #include "countercheckorch.h"
 #include "flexcounterorch.h"
