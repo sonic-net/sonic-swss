@@ -198,21 +198,7 @@ ReturnCode NextHopManager::validateAppDbEntry(
   return ReturnCode();
 }
 
-ReturnCodeOr<bool> parseFlag(std::string name, std::string value) {
-  try {
-    int flag = std::stoi(value);
-    if (flag == 1)
-      return true;
-    else if (flag == 0)
-      return false;
-  } catch (std::exception& e) {
-    // Nothing
-  }
-  return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-         << "Invalid " << QuotedVar(name) << " value: " << QuotedVar(value);
-}
-
-std::vector<sai_attribute_t> NextHopManager::getSaiAttrs(
+std::vector<sai_attribute_t> NextHopManager::prepareSaiAttrs(
     const P4NextHopEntry& next_hop_entry) {
   std::vector<sai_attribute_t> next_hop_attrs;
   sai_attribute_t next_hop_attr;
@@ -532,7 +518,7 @@ std::vector<ReturnCode> NextHopManager::createNextHops(
       entries[i].neighbor_id = (*gre_tunnel_or).neighbor_id;
     }
 
-    sai_attrs[i] = getSaiAttrs(entries[i]);
+    sai_attrs[i] = prepareSaiAttrs(entries[i]);
     attrs_cnt[i] = static_cast<uint32_t>(sai_attrs[i].size());
     attrs_ptr[i] = sai_attrs[i].data();
   }
@@ -879,7 +865,7 @@ std::string NextHopManager::verifyStateCache(const P4NextHopAppDbEntry &app_db_e
 
 std::string NextHopManager::verifyStateAsicDb(const P4NextHopEntry *next_hop_entry)
 {
-  std::vector<sai_attribute_t> attrs = getSaiAttrs(*next_hop_entry);
+  std::vector<sai_attribute_t> attrs = prepareSaiAttrs(*next_hop_entry);
   std::vector<swss::FieldValueTuple> exp =
       saimeta::SaiAttributeList::serialize_attr_list(
           SAI_OBJECT_TYPE_NEXT_HOP, (uint32_t)attrs.size(), attrs.data(),

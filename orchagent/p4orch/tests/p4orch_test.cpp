@@ -65,6 +65,14 @@ class P4OrchTest : public ::testing::Test {
         mock_set_router_interface_attribute;
     sai_router_intfs_api->get_router_interface_attribute =
         mock_get_router_interface_attribute;
+    sai_router_intfs_api->create_router_interfaces =
+        mock_create_router_interfaces;
+    sai_router_intfs_api->remove_router_interfaces =
+        mock_remove_router_interfaces;
+    sai_router_intfs_api->set_router_interfaces_attribute =
+        mock_set_router_interfaces_attribute;
+    sai_router_intfs_api->get_router_interfaces_attribute =
+        mock_get_router_interfaces_attribute;
     mock_sai_neighbor = &mock_sai_neighbor_;
     sai_neighbor_api->create_neighbor_entry = mock_create_neighbor_entry;
     sai_neighbor_api->remove_neighbor_entry = mock_remove_neighbor_entry;
@@ -159,7 +167,7 @@ class P4OrchTest : public ::testing::Test {
 
     copp_orch_ = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
     std::vector<std::string> p4_tables{APP_P4RT_TABLE_NAME};
-    gP4Orch = new P4Orch(gAppDb, p4_tables, gVrfOrch, copp_orch_);
+    gP4Orch = new P4Orch(gAppDb, p4_tables, nullptr, gVrfOrch, copp_orch_);
     gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
   }
 
@@ -169,10 +177,7 @@ class P4OrchTest : public ::testing::Test {
     gMockResponsePublisher.reset();
   }
 
-  void HandleP4rtNotification(
-      const std::vector<swss::FieldValueTuple>& values) {
-    gP4Orch->handleP4rtNotification(values);
-  }
+  void DoTask(ConsumerBase& consumer) { gP4Orch->doTask(consumer); }
 
   NiceMock<MockSaiHostif> mock_sai_hostif_;
   NiceMock<MockSaiSwitch> mock_sai_switch_;
@@ -191,9 +196,18 @@ class P4OrchTest : public ::testing::Test {
 
 TEST_F(P4OrchTest, ProcessInvalidEntry) {
   InSequence s;
-  std::vector<swss::FieldValueTuple> values;
-  values.push_back(swss::FieldValueTuple{"invalid", ""});
-  values.push_back(swss::FieldValueTuple{"invalid:invalid", ""});
+  ZmqServer zmq_server("endpoint", "", false, true);
+  DBConnector db("APPL_DB", 0);
+  ZmqConsumerStateTable* table =
+      new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                /*dbPersistence=*/false);
+  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME,
+                       /*orderedQueue=*/true);
+  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+      "invalid", DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
+  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+      "invalid:invalid", DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
   std::vector<swss::FieldValueTuple> exp_values;
   EXPECT_CALL(*gMockResponsePublisher,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq("invalid"), Eq(exp_values),
@@ -202,12 +216,19 @@ TEST_F(P4OrchTest, ProcessInvalidEntry) {
       *gMockResponsePublisher,
       publish(Eq(APP_P4RT_TABLE_NAME), Eq("invalid:invalid"), Eq(exp_values),
               Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
-  HandleP4rtNotification(values);
+  DoTask(consumer);
 }
 
 TEST_F(P4OrchTest, ProcessP4Notification) {
   InSequence s;
-  std::vector<swss::FieldValueTuple> values;
+  ZmqServer zmq_server("endpoint", "", false, true);
+  DBConnector db("APPL_DB", 0);
+  ZmqConsumerStateTable* table =
+      new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                /*dbPersistence=*/false);
+  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME,
+                       /*orderedQueue=*/true);
 
   // Router interface
   const std::string ritf_key =
@@ -218,8 +239,8 @@ TEST_F(P4OrchTest, ProcessP4Notification) {
       swss::FieldValueTuple{prependParamField(p4orch::kPort), "Ethernet1"});
   ritf_attrs.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac),
                                              "00:01:02:03:04:05"});
-  values.push_back(
-      swss::FieldValueTuple{ritf_key, swss::JSon::buildJson(ritf_attrs)});
+  consumer.m_queue.push_back(
+      swss::KeyOpFieldsValuesTuple{ritf_key, SET_COMMAND, ritf_attrs});
 
   // Neighbor
   const std::string neighbor_key = std::string(APP_P4RT_NEIGHBOR_TABLE_NAME) +
@@ -229,8 +250,8 @@ TEST_F(P4OrchTest, ProcessP4Notification) {
   std::vector<swss::FieldValueTuple> neighbor_attrs;
   neighbor_attrs.push_back(swss::FieldValueTuple{
       prependParamField(p4orch::kDstMac), "00:01:02:03:04:05"});
-  values.push_back(swss::FieldValueTuple{
-      neighbor_key, swss::JSon::buildJson(neighbor_attrs)});
+  consumer.m_queue.push_back(
+      swss::KeyOpFieldsValuesTuple{neighbor_key, SET_COMMAND, neighbor_attrs});
 
   // Nexthop
   const std::string nexthop_key =
@@ -243,8 +264,8 @@ TEST_F(P4OrchTest, ProcessP4Notification) {
       prependParamField(p4orch::kNeighborId), "10.0.0.22"});
   nexthop_attrs.push_back(swss::FieldValueTuple{
       prependParamField(p4orch::kRouterInterfaceId), "intf-3/4"});
-  values.push_back(
-      swss::FieldValueTuple{nexthop_key, swss::JSon::buildJson(nexthop_attrs)});
+  consumer.m_queue.push_back(
+      swss::KeyOpFieldsValuesTuple{nexthop_key, SET_COMMAND, nexthop_attrs});
 
   // Route
   const std::string route_key =
@@ -255,14 +276,18 @@ TEST_F(P4OrchTest, ProcessP4Notification) {
       swss::FieldValueTuple{p4orch::kAction, p4orch::kSetNexthopId});
   route_attrs.push_back(swss::FieldValueTuple{
       prependParamField(p4orch::kNexthopId), "ju1u32m1.atl11:qe-3/7"});
-  values.push_back(
-      swss::FieldValueTuple{route_key, swss::JSon::buildJson(route_attrs)});
+  consumer.m_queue.push_back(
+      swss::KeyOpFieldsValuesTuple{route_key, SET_COMMAND, route_attrs});
 
   // Delete
-  values.push_back(swss::FieldValueTuple{ritf_key, ""});
-  values.push_back(swss::FieldValueTuple{neighbor_key, ""});
-  values.push_back(swss::FieldValueTuple{nexthop_key, ""});
-  values.push_back(swss::FieldValueTuple{route_key, ""});
+  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+      ritf_key, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
+  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+      neighbor_key, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
+  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+      nexthop_key, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
+  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+      route_key, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
 
   EXPECT_CALL(*gMockResponsePublisher,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(ritf_key), Eq(ritf_attrs),
@@ -291,12 +316,19 @@ TEST_F(P4OrchTest, ProcessP4Notification) {
   EXPECT_CALL(*gMockResponsePublisher,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(ritf_key), Eq(exp_values),
                       Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
-  HandleP4rtNotification(values);
+  DoTask(consumer);
 }
 
 TEST_F(P4OrchTest, ProcessP4NotificationStopOnFirstFailure) {
   InSequence s;
-  std::vector<swss::FieldValueTuple> values;
+  ZmqServer zmq_server("endpoint", "", false, true);
+  DBConnector db("APPL_DB", 0);
+  ZmqConsumerStateTable* table =
+      new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                /*dbPersistence=*/false);
+  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME,
+                       /*orderedQueue=*/true);
 
   // Router interface
   const std::string ritf_key =
@@ -307,8 +339,8 @@ TEST_F(P4OrchTest, ProcessP4NotificationStopOnFirstFailure) {
       swss::FieldValueTuple{prependParamField(p4orch::kPort), "Ethernet1"});
   ritf_attrs.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac),
                                              "00:01:02:03:04:05"});
-  values.push_back(
-      swss::FieldValueTuple{ritf_key, swss::JSon::buildJson(ritf_attrs)});
+  consumer.m_queue.push_back(
+      swss::KeyOpFieldsValuesTuple{ritf_key, SET_COMMAND, ritf_attrs});
 
   // Neighbor
   const std::string neighbor_key = std::string(APP_P4RT_NEIGHBOR_TABLE_NAME) +
@@ -318,8 +350,8 @@ TEST_F(P4OrchTest, ProcessP4NotificationStopOnFirstFailure) {
   std::vector<swss::FieldValueTuple> neighbor_attrs;
   neighbor_attrs.push_back(swss::FieldValueTuple{
       prependParamField(p4orch::kDstMac), "00:01:02:03:04:05"});
-  values.push_back(swss::FieldValueTuple{
-      neighbor_key, swss::JSon::buildJson(neighbor_attrs)});
+  consumer.m_queue.push_back(
+      swss::KeyOpFieldsValuesTuple{neighbor_key, SET_COMMAND, neighbor_attrs});
 
   // Nexthop
   const std::string nexthop_key =
@@ -332,8 +364,8 @@ TEST_F(P4OrchTest, ProcessP4NotificationStopOnFirstFailure) {
       prependParamField(p4orch::kNeighborId), "10.0.0.22"});
   nexthop_attrs.push_back(swss::FieldValueTuple{
       prependParamField(p4orch::kRouterInterfaceId), "intf-3/4"});
-  values.push_back(
-      swss::FieldValueTuple{nexthop_key, swss::JSon::buildJson(nexthop_attrs)});
+  consumer.m_queue.push_back(
+      swss::KeyOpFieldsValuesTuple{nexthop_key, SET_COMMAND, nexthop_attrs});
 
   // Route
   const std::string route_key =
@@ -344,14 +376,18 @@ TEST_F(P4OrchTest, ProcessP4NotificationStopOnFirstFailure) {
       swss::FieldValueTuple{p4orch::kAction, p4orch::kSetNexthopId});
   route_attrs.push_back(swss::FieldValueTuple{
       prependParamField(p4orch::kNexthopId), "ju1u32m1.atl11:qe-3/7"});
-  values.push_back(
-      swss::FieldValueTuple{route_key, swss::JSon::buildJson(route_attrs)});
+ consumer.m_queue.push_back(
+      swss::KeyOpFieldsValuesTuple{route_key, SET_COMMAND, route_attrs});
 
   // Delete
-  values.push_back(swss::FieldValueTuple{ritf_key, ""});
-  values.push_back(swss::FieldValueTuple{neighbor_key, ""});
-  values.push_back(swss::FieldValueTuple{nexthop_key, ""});
-  values.push_back(swss::FieldValueTuple{route_key, ""});
+  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+      ritf_key, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
+  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+      neighbor_key, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
+  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+      nexthop_key, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
+  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+      route_key, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
 
   EXPECT_CALL(*gMockResponsePublisher,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(ritf_key), Eq(ritf_attrs),
@@ -384,12 +420,19 @@ TEST_F(P4OrchTest, ProcessP4NotificationStopOnFirstFailure) {
   EXPECT_CALL(*gMockResponsePublisher,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(route_key), Eq(exp_values),
                       Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
-  HandleP4rtNotification(values);
+  DoTask(consumer);
 }
 
 TEST_F(P4OrchTest, ProcessP4NotificationStopOnFirstFailureDifferentTypes) {
   InSequence s;
-  std::vector<swss::FieldValueTuple> values;
+  ZmqServer zmq_server("endpoint", "", false, true);
+  DBConnector db("APPL_DB", 0);
+  ZmqConsumerStateTable* table =
+      new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                /*dbPersistence=*/false);
+  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME,
+                       /*orderedQueue=*/true);
 
   // Router interface
   const std::string ritf_key_1 =
@@ -405,24 +448,28 @@ TEST_F(P4OrchTest, ProcessP4NotificationStopOnFirstFailureDifferentTypes) {
                                              "00:01:02:03:04:05"});
 
   // Add
-  values.push_back(
-      swss::FieldValueTuple{ritf_key_1, swss::JSon::buildJson(ritf_attrs)});
-  values.push_back(
-      swss::FieldValueTuple{ritf_key_2, swss::JSon::buildJson(ritf_attrs)});
+  consumer.m_queue.push_back(
+      swss::KeyOpFieldsValuesTuple{ritf_key_1, SET_COMMAND, ritf_attrs});
+  consumer.m_queue.push_back(
+      swss::KeyOpFieldsValuesTuple{ritf_key_2, SET_COMMAND, ritf_attrs});
 
   // Delete
-  values.push_back(swss::FieldValueTuple{ritf_key_1, ""});
-  values.push_back(swss::FieldValueTuple{ritf_key_2, ""});
+  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+      ritf_key_1, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
+  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+      ritf_key_2, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
 
   // Add
-  values.push_back(
-      swss::FieldValueTuple{ritf_key_1, swss::JSon::buildJson(ritf_attrs)});
-  values.push_back(
-      swss::FieldValueTuple{ritf_key_2, swss::JSon::buildJson(ritf_attrs)});
+  consumer.m_queue.push_back(
+      swss::KeyOpFieldsValuesTuple{ritf_key_1, SET_COMMAND, ritf_attrs});
+  consumer.m_queue.push_back(
+      swss::KeyOpFieldsValuesTuple{ritf_key_2, SET_COMMAND, ritf_attrs});
 
   // Delete
-  values.push_back(swss::FieldValueTuple{ritf_key_1, ""});
-  values.push_back(swss::FieldValueTuple{ritf_key_2, ""});
+  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+      ritf_key_1, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
+  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+      ritf_key_2, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
 
   EXPECT_CALL(*gMockResponsePublisher,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(ritf_key_1), Eq(ritf_attrs),
@@ -430,8 +477,11 @@ TEST_F(P4OrchTest, ProcessP4NotificationStopOnFirstFailureDifferentTypes) {
   EXPECT_CALL(*gMockResponsePublisher,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(ritf_key_2), Eq(ritf_attrs),
                       Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
-  EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(_))
-      .WillOnce(Return(SAI_STATUS_FAILURE));
+  std::vector<sai_status_t> exp_status{SAI_STATUS_FAILURE,
+                                       SAI_STATUS_NOT_EXECUTED};
+  EXPECT_CALL(mock_sai_router_intf_, remove_router_interfaces(_, _, _, _))
+      .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()),
+                      Return(SAI_STATUS_FAILURE)));
   std::vector<swss::FieldValueTuple> exp_values;
   EXPECT_CALL(*gMockResponsePublisher,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(ritf_key_1), Eq(exp_values),
@@ -451,5 +501,5 @@ TEST_F(P4OrchTest, ProcessP4NotificationStopOnFirstFailureDifferentTypes) {
   EXPECT_CALL(*gMockResponsePublisher,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(ritf_key_2), Eq(exp_values),
                       Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
-  HandleP4rtNotification(values);
+  DoTask(consumer);
 }

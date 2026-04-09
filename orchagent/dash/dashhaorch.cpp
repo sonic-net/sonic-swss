@@ -62,12 +62,16 @@ static const map<sai_ha_scope_event_t, string> sai_ha_scope_event_type_name =
 DashHaOrch::DashHaOrch(DBConnector *db, const vector<string> &tables, DashOrch *dash_orch, BfdOrch *bfd_orch, DBConnector *app_state_db, ZmqServer *zmqServer) :
     ZmqOrch(db, tables, zmqServer),
     m_dash_orch(dash_orch),
-    m_bfd_orch(bfd_orch)
+    m_bfd_orch(bfd_orch),
+    HaSetCounter(HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, HA_SET_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false)
 {
     SWSS_LOG_ENTER();
 
     dash_ha_set_result_table_ = make_unique<Table>(app_state_db, APP_DASH_HA_SET_TABLE_NAME);
     dash_ha_scope_result_table_ = make_unique<Table>(app_state_db, APP_DASH_HA_SCOPE_TABLE_NAME);
+
+    m_counter_db = std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
+    m_counter_ha_set_name_map_table = make_unique<Table>(m_counter_db.get(), COUNTERS_HA_SET_NAME_MAP);
 
     m_dpuStateDbConnector = make_unique<DBConnector>("DPU_STATE_DB", 0, true);
 
@@ -161,6 +165,33 @@ bool DashHaOrch::register_ha_scope_notifier()
     }
 
     return true;
+}
+
+bool DashHaOrch::isHaScopeAdminStateAttrSupported()
+{
+    SWSS_LOG_ENTER();
+
+    std::call_once(m_ha_scope_admin_state_attr_once_flag, [this]() {
+        sai_attr_capability_t capability;
+        sai_status_t status = sai_query_attribute_capability(
+                gSwitchId,
+                (sai_object_type_t)SAI_OBJECT_TYPE_HA_SCOPE,
+                SAI_HA_SCOPE_ATTR_ADMIN_STATE,
+                &capability);
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query SAI_HA_SCOPE_ATTR_ADMIN_STATE capability: %d", status);
+            m_ha_scope_admin_state_attr_supported = false;
+        }
+        else
+        {
+            m_ha_scope_admin_state_attr_supported =
+                    capability.set_implemented || capability.create_implemented;
+        }
+    });
+
+    return m_ha_scope_admin_state_attr_supported;
 }
 
 std::string DashHaOrch::getHaSetObjectKey(const sai_object_id_t ha_set_oid)
@@ -315,6 +346,12 @@ bool DashHaOrch::addHaSetEntry(const std::string &key, const dash::ha_set::HaSet
         }
     }
     m_ha_set_entries[key] = HaSetEntry {sai_ha_set_oid, entry};
+    HaSetCounter.addToFC(sai_ha_set_oid, key);
+
+    std::vector<FieldValueTuple> nameMapFvs;
+    nameMapFvs.emplace_back(key, sai_serialize_object_id(sai_ha_set_oid));
+    m_counter_ha_set_name_map_table->set("", nameMapFvs);
+
     SWSS_LOG_NOTICE("Created HA Set object for %s", key.c_str());
 
     return true;
@@ -331,7 +368,7 @@ bool DashHaOrch::removeHaSetEntry(const std::string &key)
         SWSS_LOG_WARN("HA Set entry does not exist for %s", key.c_str());
         return true;
     }
-
+    HaSetCounter.removeFromFC(it->second.ha_set_id, key);
     sai_status_t status = sai_dash_ha_api->remove_ha_set(it->second.ha_set_id);
 
     if (status != SAI_STATUS_SUCCESS)
@@ -344,6 +381,7 @@ bool DashHaOrch::removeHaSetEntry(const std::string &key)
         }
     }
     m_ha_set_entries.erase(it);
+    m_counter_ha_set_name_map_table->hdel("", key);
     SWSS_LOG_NOTICE("Removed HA Set object for %s", key.c_str());
 
     return true;
@@ -499,10 +537,13 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     ha_role_attr.value.u16 = to_sai(entry.ha_role());
     ha_scope_attrs.push_back(ha_role_attr);
 
-    sai_attribute_t disabled_attr = {};
-    disabled_attr.id = SAI_HA_SCOPE_ATTR_ADMIN_STATE;
-    disabled_attr.value.booldata = !entry.disabled();
-    ha_scope_attrs.push_back(disabled_attr);
+    if (isHaScopeAdminStateAttrSupported())
+    {
+        sai_attribute_t disabled_attr = {};
+        disabled_attr.id = SAI_HA_SCOPE_ATTR_ADMIN_STATE;
+        disabled_attr.value.booldata = !entry.disabled();
+        ha_scope_attrs.push_back(disabled_attr);
+    }
 
     if (entry.has_vip_v4() && entry.vip_v4().has_ipv4())
     {
@@ -728,6 +769,12 @@ bool DashHaOrch::setHaScopeActivateRoleRequest(const std::string &key)
 bool DashHaOrch::setHaScopeDisabled(const std::string &key, bool disabled)
 {
     SWSS_LOG_ENTER();
+
+    if (!isHaScopeAdminStateAttrSupported())
+    {
+        m_ha_scope_entries[key].metadata.set_disabled(disabled);
+        return true;
+    }
 
     sai_object_id_t ha_scope_id = m_ha_scope_entries[key].ha_scope_id;
 

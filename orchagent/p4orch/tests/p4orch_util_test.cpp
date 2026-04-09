@@ -14,13 +14,13 @@ namespace
 TEST(P4OrchUtilTest, KeyGeneratorTest)
 {
     std::string intf_key = KeyGenerator::generateRouterInterfaceKey("intf-qe-3/7");
-    EXPECT_EQ("router_interface_id=intf-qe-3/7", intf_key);
+    EXPECT_EQ("intf-qe-3/7", intf_key);
     std::string neighbor_key = KeyGenerator::generateNeighborKey("intf-qe-3/7", swss::IpAddress("10.0.0.22"));
     EXPECT_EQ("neighbor_id=10.0.0.22:router_interface_id=intf-qe-3/7", neighbor_key);
     std::string nexthop_key = KeyGenerator::generateNextHopKey("ju1u32m1.atl11:qe-3/7");
-    EXPECT_EQ("nexthop_id=ju1u32m1.atl11:qe-3/7", nexthop_key);
+    EXPECT_EQ("ju1u32m1.atl11:qe-3/7", nexthop_key);
     std::string wcmp_group_key = KeyGenerator::generateWcmpGroupKey("group-1");
-    EXPECT_EQ("wcmp_group_id=group-1", wcmp_group_key);
+    EXPECT_EQ("group-1", wcmp_group_key);
     std::string ipv4_route_key = KeyGenerator::generateRouteKey("b4-traffic", swss::IpPrefix("10.11.12.0/24"));
     EXPECT_EQ("ipv4_dst=10.11.12.0/24:vrf_id=b4-traffic", ipv4_route_key);
     ipv4_route_key = KeyGenerator::generateRouteKey("b4-traffic", swss::IpPrefix("0.0.0.0/0"));
@@ -144,6 +144,42 @@ TEST(P4OrchUtilTest, VerifyAttrsTest)
             std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"k2", "v2"}, swss::FieldValueTuple{"k3", "v3"}},
             /*allow_unknown=*/false)
             .empty());
+}
+
+TEST(P4OrchUtilTest, ParseFlagTest) {
+  const std::string name = "name";
+  auto flag_or = parseFlag(name, "0x1");
+  EXPECT_TRUE(flag_or.ok());
+  EXPECT_EQ(true, *flag_or);
+
+  flag_or = parseFlag(name, "0X1");
+  EXPECT_TRUE(flag_or.ok());
+  EXPECT_EQ(true, *flag_or);
+
+  flag_or = parseFlag(name, "0x0");
+  EXPECT_TRUE(flag_or.ok());
+  EXPECT_EQ(false, *flag_or);
+
+  flag_or = parseFlag(name, "0X0");
+  EXPECT_TRUE(flag_or.ok());
+  EXPECT_EQ(false, *flag_or);
+
+  flag_or = parseFlag(name, "1");
+  EXPECT_TRUE(flag_or.ok());
+  EXPECT_EQ(true, *flag_or);
+
+  flag_or = parseFlag(name, "0");
+  EXPECT_TRUE(flag_or.ok());
+  EXPECT_EQ(false, *flag_or);
+
+  flag_or = parseFlag(name, "0xinvalid");
+  EXPECT_FALSE(flag_or.ok());
+
+  flag_or = parseFlag(name, "0Xinvalid");
+  EXPECT_FALSE(flag_or.ok());
+
+  flag_or = parseFlag(name, "invalid");
+  EXPECT_FALSE(flag_or.ok());
 }
 
 } // namespace
