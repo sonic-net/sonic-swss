@@ -772,7 +772,7 @@ ReturnCode AclRuleManager::setMatchValue(const sai_acl_entry_attr_t attr_name,
                                          const std::string& ip_type_bit_type) {
   SWSS_LOG_ENTER();
   try {
-    switch (attr_name) {
+    switch ((int)attr_name) {
       case SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS: {
         const auto& ports = tokenize(attr_value, kPortsDelimiter);
         if (ports.empty()) {
@@ -857,6 +857,7 @@ ReturnCode AclRuleManager::setMatchValue(const sai_acl_entry_attr_t attr_name,
         break;
       }
       case SAI_ACL_ENTRY_ATTR_FIELD_PORT_USER_META:
+      case SAI_ACL_ENTRY_ATTR_FIELD_OUTER_TPID:
       case SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE:
       case SAI_ACL_ENTRY_ATTR_FIELD_L4_SRC_PORT:
       case SAI_ACL_ENTRY_ATTR_FIELD_L4_DST_PORT:
@@ -1035,12 +1036,13 @@ ReturnCode AclRuleManager::setMatchValue(const sai_acl_entry_attr_t attr_name,
         }
         break;
       }
-      case SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT: {
+      case SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT:
+      case SAI_ACL_ENTRY_ATTR_FIELD_ROUTE_NPU_META_DST_HIT: {
         const std::vector<std::string>& value_and_mask =
             tokenize(attr_value, kDataMaskDelimiter);
         uint8_t hit_value = to_uint<uint8_t>(trim(value_and_mask[0]));
         if (value_and_mask.size() > 1) {
-          SWSS_LOG_INFO("Mask ignored for IPMC table hit field.");
+          SWSS_LOG_INFO("Mask ignored for IPMC/route table hit field.");
         }
         value->aclfield.data.booldata = hit_value != 0;
         break;

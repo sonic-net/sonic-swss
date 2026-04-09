@@ -101,13 +101,13 @@ class P4RtL3MulticastGroupWrapper(util.DBInterface):
     return mcast_group_key, attr_list
 
 
-class P4RtL3MulticastRouteWrapper(util.DBInterface):
-  """Interface to interact with APP DB and ASIC DB tables for P4RT L3 multicast route object."""
+class P4RtIpMulticastWrapper(util.DBInterface):
+  """Interface to interact with APP DB and ASIC DB tables for P4RT IP multicast table object."""
 
   # Database and SAI constants.
   APP_DB_TBL_NAME = swsscommon.APP_P4RT_TABLE_NAME
-  TBL_NAME_IPV4 = swsscommon.APP_P4RT_IPV4_TABLE_NAME
-  TBL_NAME_IPV6 = swsscommon.APP_P4RT_IPV6_TABLE_NAME
+  TBL_NAME_IPV4 = swsscommon.APP_P4RT_IPV4_MULTICAST_TABLE_NAME
+  TBL_NAME_IPV6 = swsscommon.APP_P4RT_IPV6_MULTICAST_TABLE_NAME
 
   ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_IPMC_ENTRY"
   ASIC_DB_RPF_GROUP_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_RPF_GROUP"
@@ -119,15 +119,13 @@ class P4RtL3MulticastRouteWrapper(util.DBInterface):
   # Attribute fields for multicast route entry.
   ACTION_FIELD = "action"
   MULTICAST_GROUP_ID_FIELD = "multicast_group_id"
-  NEXT_HOP_ID_FIELD = "nexthop_id"
 
   # Default router interface attribute values.
   DEFAULT_ACTION = "set_multicast_group_id"
-  SET_NEXT_HOP_ID_ACTION = "set_nexthop_id"
   DEFAULT_GROUP_ID = "0x1"
   DEFAULT_VRF_ID = "b4-traffic"
-  DEFAULT_DST_V6 = "2001:db8:3:4:5:6:7:8"
-  DEFAULT_DST_V4 = "10.11.12.0"
+  DEFAULT_DST_V6 = "ff00:db8:3:4:5:6:7:8"
+  DEFAULT_DST_V4 = "225.11.12.0"
 
   def generate_app_db_key(self, vrf_id, ipv4_dst=None, ipv6_dst=None):
     d = {}
@@ -143,7 +141,7 @@ class P4RtL3MulticastRouteWrapper(util.DBInterface):
 
   # Create default multicast route entry.
   def create_multicast_route(self, group_id=None, dst_ip=None, is_v4=True,
-                             action=None, param="0"):
+                             param="0"):
     group_id = group_id or self.DEFAULT_GROUP_ID
     if is_v4:
       ipv4_dst = dst_ip or self.DEFAULT_DST_V4
@@ -152,17 +150,11 @@ class P4RtL3MulticastRouteWrapper(util.DBInterface):
       ipv4_dst = None
       ipv6_dst = dst_ip or self.DEFAULT_DST_V6
     vrf_id = self.DEFAULT_VRF_ID
-    action = action or self.DEFAULT_ACTION
-    if action == self.DEFAULT_ACTION:
-      attr_list = [
-          (util.prepend_param_field(self.MULTICAST_GROUP_ID_FIELD), group_id),
-          (self.ACTION_FIELD, action),
-      ]
-    else:
-      attr_list = [
-          (util.prepend_param_field(self.NEXT_HOP_ID_FIELD), param),
-          (self.ACTION_FIELD, action),
-      ]
+    action = self.DEFAULT_ACTION
+    attr_list = [
+        (util.prepend_param_field(self.MULTICAST_GROUP_ID_FIELD), group_id),
+        (self.ACTION_FIELD, action),
+    ]
     mcast_route_key = self.generate_app_db_key(vrf_id, ipv4_dst, ipv6_dst)
     self.set_app_db_entry(mcast_route_key, attr_list)
     return mcast_route_key, attr_list
