@@ -17,6 +17,7 @@
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t gSwitchId;
 
+extern sai_switch_api_t*            sai_switch_api;
 extern sai_next_hop_group_api_t*    sai_next_hop_group_api;
 extern sai_route_api_t*             sai_route_api;
 
@@ -36,6 +37,7 @@ FgNhgOrch::FgNhgOrch(DBConnector *db, DBConnector *appDb, DBConnector *stateDb, 
 {
     SWSS_LOG_ENTER();
     isFineGrainedConfigured = false;
+    initializeMaxEcmpMemberCount();
     gPortsOrch->attach(this);
 }
 
@@ -264,6 +266,75 @@ bool FgNhgOrch::writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry,
     return true;
 }
 
+void FgNhgOrch::initializeMaxEcmpMemberCount()
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t switch_attr;
+    switch_attr.id = SAI_SWITCH_ATTR_MAX_ECMP_MEMBER_COUNT;
+    switch_attr.value.u32 = 0;
+
+    sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &switch_attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Failed to query SAI_SWITCH_ATTR_MAX_ECMP_MEMBER_COUNT during FG NHG init, rv:%d",
+                      status);
+        return;
+    }
+
+    m_maxEcmpMemberCount = switch_attr.value.u32;
+    m_maxEcmpMemberCountInitialized = true;
+
+    SWSS_LOG_NOTICE("FG NHG max ECMP member count cached at init: %u", m_maxEcmpMemberCount);
+}
+
+bool FgNhgOrch::getMaxEcmpMemberCount(uint32_t &maxEcmpMembers)
+{
+    SWSS_LOG_ENTER();
+
+    if (!m_maxEcmpMemberCountInitialized)
+    {
+        SWSS_LOG_WARN("SAI_SWITCH_ATTR_MAX_ECMP_MEMBER_COUNT is unavailable in FG NHG cache");
+        return false;
+    }
+
+    maxEcmpMembers = m_maxEcmpMemberCount;
+    return true;
+}
+
+bool FgNhgOrch::getEffectiveFgNhgMemberCapacity(uint32_t configuredBucketSize, uint32_t &memberCapacity)
+{
+    SWSS_LOG_ENTER();
+
+    memberCapacity = configuredBucketSize;
+
+    uint32_t hw_max_ecmp_members = 0;
+    if (!getMaxEcmpMemberCount(hw_max_ecmp_members))
+    {
+        return false;
+    }
+
+    memberCapacity = min(memberCapacity, hw_max_ecmp_members);
+    return true;
+}
+
+bool FgNhgOrch::validateFgNhgMemberCount(size_t memberCount, uint32_t configuredBucketSize, const string &logKey)
+{
+    SWSS_LOG_ENTER();
+
+    uint32_t member_capacity = 0;
+    getEffectiveFgNhgMemberCapacity(configuredBucketSize, member_capacity);
+
+    if (memberCount > member_capacity)
+    {
+        SWSS_LOG_ERROR("Number of next-hops %zu exceeds effective FG NHG member capacity %u for %s",
+                       memberCount, member_capacity, logKey.c_str());
+        return false;
+    }
+
+    return true;
+}
+
 
 bool FgNhgOrch::createFineGrainedNextHopGroup(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
         const NextHopGroupKey &nextHops)
@@ -272,6 +343,30 @@ bool FgNhgOrch::createFineGrainedNextHopGroup(FGNextHopGroupEntry &syncd_fg_rout
     string platform = getenv("platform") ? getenv("platform") : "";
     sai_attribute_t nhg_attr;
     vector<sai_attribute_t> nhg_attrs;
+
+    /* Query hardware maximum ECMP member count */
+    uint32_t effective_member_capacity = 0;
+    bool hw_limit_available = getEffectiveFgNhgMemberCapacity(fgNhgEntry->configured_bucket_size,
+                                                              effective_member_capacity);
+    
+    if (!hw_limit_available)
+    {
+        SWSS_LOG_WARN("Unable to verify hardware ECMP member limit. Proceeding with configured bucket size %d",
+                      fgNhgEntry->configured_bucket_size);
+    }
+    else
+    {
+        SWSS_LOG_INFO("Effective FG NHG member capacity: %d, Configured bucket size: %d",
+                      effective_member_capacity, fgNhgEntry->configured_bucket_size);
+        
+        /* If configured bucket size exceeds hardware maximum, adjust it */
+        if (fgNhgEntry->configured_bucket_size > effective_member_capacity)
+        {
+            SWSS_LOG_WARN("Configured bucket size %d exceeds effective FG NHG member capacity %d. Adjusting bucket size.",
+                          fgNhgEntry->configured_bucket_size, effective_member_capacity);
+            fgNhgEntry->configured_bucket_size = effective_member_capacity;
+        }
+    }
 
     nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
     nhg_attr.value.s32 = SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP;
@@ -1495,6 +1590,13 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
     getVnetNameByVrfId(vrf_id, vnet);
     string key = getWarmRebootStateDbKey(vnet, ipPrefix);
 
+    /* Defensive sanity check before SAI programming. Invalid config should be rejected earlier. */
+    if (!validateFgNhgMemberCount(nhopgroup_members_set.size(), fgNhgEntry->configured_bucket_size,
+                                  ipPrefix.to_string()))
+    {
+        return false;
+    }
+
     if (syncd_fg_route_entry_it != m_syncdFGRouteTables.at(vrf_id).end())
     {
         /* Route exists and nh was associated in the past */
@@ -1622,10 +1724,8 @@ bool FgNhgOrch::setFgNhgTunnel(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
         return true;
     }
 
-    if (nhopgroup_members_set.size() >= max_next_hops)
+    if (!validateFgNhgMemberCount(nhopgroup_members_set.size(), bucket_size, fg_nhg_name))
     {
-        SWSS_LOG_ERROR("Number of next-hops exceed max_next_hops %d for key %s",
-            max_next_hops, fg_nhg_name.c_str());
         return false;
     }
 
