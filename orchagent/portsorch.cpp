@@ -3019,7 +3019,7 @@ bool PortsOrch::setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip)
     SWSS_LOG_ENTER();
     vector<Port> portv;
 
-    if(port.m_type == Port::TUNNEL)
+    if(port.m_type == Port::TUNNEL || port.m_type == Port::NEXTHOP_GROUP)
     {
         return true;
     }
@@ -7056,6 +7056,20 @@ bool PortsOrch::addBridgePort(Port &port)
         attr.value.oid = m_default1QBridge;
         attrs.push_back(attr);
     }
+    else if (port.m_type == Port::NEXTHOP_GROUP)
+    {
+        attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
+        attr.value.s32 = SAI_BRIDGE_PORT_TYPE_BRIDGE_PORT_NEXT_HOP_GROUP;
+        attrs.push_back(attr);
+
+        attr.id = SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_NEXT_HOP_GROUP_ID;
+        attr.value.oid = port.m_nexthop_group_id;
+        attrs.push_back(attr);
+
+        attr.id = SAI_BRIDGE_PORT_ATTR_BRIDGE_ID;
+        attr.value.oid = m_default1QBridge;
+        attrs.push_back(attr);
+    }
     else
     {
         SWSS_LOG_ERROR("Failed to add bridge port %s to default 1Q bridge, invalid port type %d",
@@ -7091,6 +7105,7 @@ bool PortsOrch::addBridgePort(Port &port)
         {
             return parseHandleSaiStatusFailure(handle_status);
         }
+        return false;
     }
 
     if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_KEEP))
@@ -7754,6 +7769,10 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port, string end_point_ip)
 
 bool PortsOrch::isVlanMember(Port &vlan, Port &port, string end_point_ip)
 {
+    if(port.m_type == Port::TUNNEL || port.m_type == Port::NEXTHOP_GROUP)
+    {
+        return true;
+    }
     if (!end_point_ip.empty())
     {
         if (vlan.m_vlan_info.l2mc_members.find(end_point_ip) != vlan.m_vlan_info.l2mc_members.end())
@@ -8212,6 +8231,28 @@ bool PortsOrch::removeTunnel(Port tunnel)
 
     saiOidToAlias.erase(tunnel.m_tunnel_id);
     m_portList.erase(tunnel.m_alias);
+
+    return true;
+}
+
+bool PortsOrch::addL2NexthopGroup(string nhg_alias, sai_object_id_t nhg_oid)
+{
+    SWSS_LOG_ENTER();
+
+    Port nhgPort(nhg_alias, Port::NEXTHOP_GROUP);
+    nhgPort.m_nexthop_group_id = nhg_oid;
+    nhgPort.m_learn_mode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE;
+    m_portList[nhg_alias] = nhgPort;
+
+    SWSS_LOG_INFO("Created a l2 nhg port %s with oid: 0x%" PRIx64, nhg_alias.c_str(), nhg_oid);
+    return true;
+}
+
+bool PortsOrch::removeL2NexthopGroup(Port nhgPort)
+{
+    SWSS_LOG_ENTER();
+
+    m_portList.erase(nhgPort.m_alias);
 
     return true;
 }

@@ -153,9 +153,9 @@ namespace fdborch_vxlan_ut
             auto* flexCounterOrch = new FlexCounterOrch(m_config_db.get(), flex_counter_tables);
             gDirectory.set(flexCounterOrch);
 
-            //ASSERT_EQ(gL2NhgOrch, nullptr);
-            //gL2NhgOrch = new L2NhgOrch(m_app_db.get(), APP_L2_NEXTHOP_GROUP_TABLE_NAME);
-            //gDirectory.set(gL2NhgOrch);
+            ASSERT_EQ(gL2NhgOrch, nullptr);
+            gL2NhgOrch = new L2NhgOrch(m_app_db.get(), APP_L2_NEXTHOP_GROUP_TABLE_NAME);
+            gDirectory.set(gL2NhgOrch);
 
             m_EvpnNvoOrch = new EvpnNvoOrch(m_app_db.get(), APP_VXLAN_EVPN_NVO_TABLE_NAME);
             gDirectory.set(m_EvpnNvoOrch);
@@ -222,8 +222,8 @@ namespace fdborch_vxlan_ut
             delete gRouteOrch;
             gRouteOrch = nullptr;
 
-            //delete gL2NhgOrch;
-            //gL2NhgOrch = nullptr;
+            delete gL2NhgOrch;
+            gL2NhgOrch = nullptr;
 
             delete m_EvpnNvoOrch;
             m_EvpnNvoOrch = nullptr;

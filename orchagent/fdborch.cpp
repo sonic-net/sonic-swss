@@ -13,6 +13,7 @@
 #include "sai_serialize.h"
 #include "mlagorch.h"
 #include "vxlanorch.h"
+#include "l2nhgorch.h"
 #include "directory.h"
 #include "neighorch.h"
 
@@ -23,6 +24,7 @@ extern CrmOrch *        gCrmOrch;
 extern MlagOrch*        gMlagOrch;
 extern Directory<Orch*> gDirectory;
 extern NeighOrch*       gNeighOrch;
+extern L2NhgOrch*       gL2NhgOrch;
 
 const int FdbOrch::fdborch_pri = 20;
 
@@ -1092,8 +1094,17 @@ void FdbOrch::doTask(Consumer& consumer)
                         port = tunnel_orch->getTunnelPortName(sip_tunnel->getSrcIP().to_string(), true);
                     }
                 }
-                else if (dest_type == IFNAME) {
-                    /* For IFNAME case, use the dest_value as port name directly */
+                if (dest_type == NEXTHOPGROUP) {
+                    /* get the port_name from l2nhgorch so that we can populate the port structure  */
+                    if (!gL2NhgOrch->hasActiveL2Nhg(dest_value))
+                    {
+                        SWSS_LOG_INFO("L2 Next Hop Group %s is not known/active yet", dest_value.c_str());
+                        it++;
+                        continue;
+                    }
+                    port = gL2NhgOrch->getNextHopGroupPortName(dest_value);
+                }
+                if (dest_type == IFNAME) {
                     port = dest_value;
                 }
             }
@@ -1453,10 +1464,10 @@ void FdbOrch::flushAllFDBEntries(sai_object_id_t bridge_port_oid,
             return;
         }
 
-        /* Using a workaround to flush all mac under the tunnel port */
-        if (port.m_type == Port::TUNNEL)
+        /* Using a workaround to flush all mac under the tunnel port or next hop type port */
+        if (port.m_type == Port::TUNNEL || port.m_type == Port::NEXTHOP_GROUP)
         {
-            SWSS_LOG_NOTICE("Try to flushAllFDB for tunnel port %s bridge_port_id 0x%" PRIx64, port.m_alias.c_str(), bridge_port_oid);
+            SWSS_LOG_NOTICE("Try to flushAllFDB for port %s of type %d, bridge_port_id 0x%" PRIx64, port.m_alias.c_str(), port.m_type, bridge_port_oid);
             /* Try to remove all remote FDB under this tunnel port one by one */
             for (auto itr = m_entries.begin(); itr != m_entries.end();)
             {

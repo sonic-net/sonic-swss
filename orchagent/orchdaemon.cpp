@@ -73,6 +73,7 @@ IcmpOrch *gIcmpOrch;
 HFTelOrch *gHFTOrch;
 ShlOrch *gShlOrch;
 EvpnMhOrch *gEvpnMhOrch;
+L2NhgOrch *gL2NhgOrch;
 
 bool gIsNatSupported = false;
 event_handle_t g_events_handle;
@@ -485,6 +486,9 @@ bool OrchDaemon::init()
     };
 
     gEvpnMhOrch = new EvpnMhOrch(evpn_df_es_table_connectors);
+
+    gL2NhgOrch = new L2NhgOrch(m_applDb, APP_L2_NEXTHOP_GROUP_TABLE_NAME);
+
     /*
      * The order of the orch list is important for state restore of warm start and
      * the queued processing in m_toSync map after gPortsOrch->allPortsReady() is set.
@@ -493,7 +497,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch, gEvpnMhOrch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch, gEvpnMhOrch, gL2NhgOrch};
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
     {

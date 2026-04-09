@@ -65,6 +65,7 @@ orchagent_SOURCES = \
             neighorch.cpp \
             intfsorch.cpp \
             evpnmhorch.cpp \
+            l2nhgorch.cpp \
             port/port_capabilities.cpp \
             port/porthlpr.cpp \
             portsorch.cpp \
