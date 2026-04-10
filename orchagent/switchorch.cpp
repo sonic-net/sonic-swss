@@ -546,7 +546,6 @@ sai_status_t SwitchOrch::setSwitchTunnelVxlanParams(swss::FieldValueTuple &val)
             attr.value.u8 = to_uint<uint8_t>(value);
             break;
         case SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_SECURITY:
-            // Config must use string "true" or "false"
             if (value == "true")
             {
                 attr.value.booldata = true;
