@@ -2364,4 +2364,363 @@ namespace aclorch_test
         orch->doAclRuleTask(ruleKofvt);
         ASSERT_NE(orch->getAclRule(aclTableName, aclRuleName), nullptr);
     }
+
+    sai_switch_api_t *old_sai_switch_api_mirror_egress;
+
+    sai_status_t getSwitchAttributeMirrorEgress(_In_ sai_object_id_t switch_id, _In_ uint32_t attr_count,
+                                                _Inout_ sai_attribute_t *attr_list)
+    {
+        if (attr_count == 1)
+        {
+            switch(attr_list[0].id)
+            {
+            case SAI_SWITCH_ATTR_MAX_ACL_ACTION_COUNT:
+                attr_list[0].value.u32 = 3;
+                return SAI_STATUS_SUCCESS;
+            case SAI_SWITCH_ATTR_ACL_STAGE_INGRESS:
+                attr_list[0].value.aclcapability.action_list.count = 3;
+                attr_list[0].value.aclcapability.action_list.list[0] = SAI_ACL_ACTION_TYPE_COUNTER;
+                attr_list[0].value.aclcapability.action_list.list[1] = SAI_ACL_ACTION_TYPE_MIRROR_INGRESS;
+                attr_list[0].value.aclcapability.action_list.list[2] = SAI_ACL_ACTION_TYPE_MIRROR_EGRESS;
+                attr_list[0].value.aclcapability.is_action_list_mandatory = true;
+                return SAI_STATUS_SUCCESS;
+            case SAI_SWITCH_ATTR_ACL_STAGE_EGRESS:
+                attr_list[0].value.aclcapability.action_list.count = 2;
+                attr_list[0].value.aclcapability.action_list.list[0] = SAI_ACL_ACTION_TYPE_COUNTER;
+                attr_list[0].value.aclcapability.action_list.list[1] = SAI_ACL_ACTION_TYPE_MIRROR_EGRESS;
+                attr_list[0].value.aclcapability.is_action_list_mandatory = true;
+                return SAI_STATUS_SUCCESS;
+            }
+        }
+        return old_sai_switch_api_mirror_egress->get_switch_attribute(switch_id, attr_count, attr_list);
+    }
+
+    sai_status_t getSwitchAttributeNoMirrorEgressOnIngress(_In_ sai_object_id_t switch_id, _In_ uint32_t attr_count,
+                                                           _Inout_ sai_attribute_t *attr_list)
+    {
+        if (attr_count == 1)
+        {
+            switch(attr_list[0].id)
+            {
+            case SAI_SWITCH_ATTR_MAX_ACL_ACTION_COUNT:
+                attr_list[0].value.u32 = 2;
+                return SAI_STATUS_SUCCESS;
+            case SAI_SWITCH_ATTR_ACL_STAGE_INGRESS:
+                attr_list[0].value.aclcapability.action_list.count = 2;
+                attr_list[0].value.aclcapability.action_list.list[0] = SAI_ACL_ACTION_TYPE_COUNTER;
+                attr_list[0].value.aclcapability.action_list.list[1] = SAI_ACL_ACTION_TYPE_MIRROR_INGRESS;
+                attr_list[0].value.aclcapability.is_action_list_mandatory = true;
+                return SAI_STATUS_SUCCESS;
+            case SAI_SWITCH_ATTR_ACL_STAGE_EGRESS:
+                attr_list[0].value.aclcapability.action_list.count = 2;
+                attr_list[0].value.aclcapability.action_list.list[0] = SAI_ACL_ACTION_TYPE_COUNTER;
+                attr_list[0].value.aclcapability.action_list.list[1] = SAI_ACL_ACTION_TYPE_MIRROR_EGRESS;
+                attr_list[0].value.aclcapability.is_action_list_mandatory = true;
+                return SAI_STATUS_SUCCESS;
+            }
+        }
+        return old_sai_switch_api_mirror_egress->get_switch_attribute(switch_id, attr_count, attr_list);
+    }
+
+    TEST_F(AclOrchTest, MirrorTableIngressHasMirrorEgressAction)
+    {
+        old_sai_switch_api_mirror_egress = sai_switch_api;
+        sai_switch_api_t new_sai_switch_api = *sai_switch_api;
+        sai_switch_api = &new_sai_switch_api;
+        sai_switch_api->get_switch_attribute = getSwitchAttributeMirrorEgress;
+
+        bool unset_platform_env = false;
+        if (!getenv("platform"))
+        {
+            setenv("platform", VS_PLATFORM_SUBSTRING, 0);
+            unset_platform_env = true;
+        }
+
+        auto orch = createAclOrch();
+
+        // Create MIRROR table at INGRESS stage
+        string acl_table_id = "mirror_egress_test_table";
+        auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id,
+                SET_COMMAND,
+                { { ACL_TABLE_DESCRIPTION, "Mirror ingress test" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_MIRROR },
+                  { ACL_TABLE_STAGE, STAGE_INGRESS },
+                  { ACL_TABLE_PORTS, "1,2" } } } });
+        orch->doAclTableTask(kvfAclTable);
+        auto acl_table = orch->getAclTable(acl_table_id);
+        ASSERT_NE(acl_table, nullptr);
+
+        auto acl_actions = acl_table->type.getActions();
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_COUNTER), acl_actions.end())
+            << "MIRROR ingress table should have COUNTER action";
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_MIRROR_INGRESS), acl_actions.end())
+            << "MIRROR ingress table should have MIRROR_INGRESS action";
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_MIRROR_EGRESS), acl_actions.end())
+            << "MIRROR ingress table should have MIRROR_EGRESS action";
+
+        // Delete table
+        kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id, DEL_COMMAND, {} } });
+        orch->doAclTableTask(kvfAclTable);
+        ASSERT_EQ(orch->getAclTable(acl_table_id), nullptr);
+
+        if (unset_platform_env)
+        {
+            unsetenv("platform");
+        }
+        sai_switch_api = old_sai_switch_api_mirror_egress;
+    }
+
+    TEST_F(AclOrchTest, MirrorV6TableIngressHasMirrorEgressAction)
+    {
+        old_sai_switch_api_mirror_egress = sai_switch_api;
+        sai_switch_api_t new_sai_switch_api = *sai_switch_api;
+        sai_switch_api = &new_sai_switch_api;
+        sai_switch_api->get_switch_attribute = getSwitchAttributeMirrorEgress;
+
+        bool unset_platform_env = false;
+        if (!getenv("platform"))
+        {
+            setenv("platform", VS_PLATFORM_SUBSTRING, 0);
+            unset_platform_env = true;
+        }
+
+        auto orch = createAclOrch();
+
+        // Create MIRRORV6 table at INGRESS stage
+        string acl_table_id = "mirrorv6_egress_test_table";
+        auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id,
+                SET_COMMAND,
+                { { ACL_TABLE_DESCRIPTION, "MirrorV6 ingress test" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_MIRRORV6 },
+                  { ACL_TABLE_STAGE, STAGE_INGRESS },
+                  { ACL_TABLE_PORTS, "1,2" } } } });
+        orch->doAclTableTask(kvfAclTable);
+        auto acl_table = orch->getAclTable(acl_table_id);
+        ASSERT_NE(acl_table, nullptr);
+
+        auto acl_actions = acl_table->type.getActions();
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_COUNTER), acl_actions.end())
+            << "MIRRORV6 ingress table should have COUNTER action";
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_MIRROR_INGRESS), acl_actions.end())
+            << "MIRRORV6 ingress table should have MIRROR_INGRESS action";
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_MIRROR_EGRESS), acl_actions.end())
+            << "MIRRORV6 ingress table should have MIRROR_EGRESS action";
+
+        // Delete table
+        kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id, DEL_COMMAND, {} } });
+        orch->doAclTableTask(kvfAclTable);
+        ASSERT_EQ(orch->getAclTable(acl_table_id), nullptr);
+
+        if (unset_platform_env)
+        {
+            unsetenv("platform");
+        }
+        sai_switch_api = old_sai_switch_api_mirror_egress;
+    }
+
+    TEST_F(AclOrchTest, MirrorTableEgressOnlyHasMirrorEgressAction)
+    {
+        old_sai_switch_api_mirror_egress = sai_switch_api;
+        sai_switch_api_t new_sai_switch_api = *sai_switch_api;
+        sai_switch_api = &new_sai_switch_api;
+        sai_switch_api->get_switch_attribute = getSwitchAttributeMirrorEgress;
+
+        bool unset_platform_env = false;
+        if (!getenv("platform"))
+        {
+            setenv("platform", VS_PLATFORM_SUBSTRING, 0);
+            unset_platform_env = true;
+        }
+
+        auto orch = createAclOrch();
+
+        // Create MIRROR table at EGRESS stage
+        string acl_table_id = "mirror_egress_only_table";
+        auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id,
+                SET_COMMAND,
+                { { ACL_TABLE_DESCRIPTION, "Mirror egress test" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_MIRROR },
+                  { ACL_TABLE_STAGE, STAGE_EGRESS },
+                  { ACL_TABLE_PORTS, "1,2" } } } });
+        orch->doAclTableTask(kvfAclTable);
+        auto acl_table = orch->getAclTable(acl_table_id);
+        ASSERT_NE(acl_table, nullptr);
+
+        auto acl_actions = acl_table->type.getActions();
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_COUNTER), acl_actions.end())
+            << "MIRROR egress table should have COUNTER action";
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_MIRROR_EGRESS), acl_actions.end())
+            << "MIRROR egress table should have MIRROR_EGRESS action";
+        ASSERT_EQ(acl_actions.find(SAI_ACL_ACTION_TYPE_MIRROR_INGRESS), acl_actions.end())
+            << "MIRROR egress table should NOT have MIRROR_INGRESS action";
+
+        // Delete table
+        kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id, DEL_COMMAND, {} } });
+        orch->doAclTableTask(kvfAclTable);
+        ASSERT_EQ(orch->getAclTable(acl_table_id), nullptr);
+
+        if (unset_platform_env)
+        {
+            unsetenv("platform");
+        }
+        sai_switch_api = old_sai_switch_api_mirror_egress;
+    }
+
+    TEST_F(AclOrchTest, MirrorV6TableEgressOnlyHasMirrorEgressAction)
+    {
+        old_sai_switch_api_mirror_egress = sai_switch_api;
+        sai_switch_api_t new_sai_switch_api = *sai_switch_api;
+        sai_switch_api = &new_sai_switch_api;
+        sai_switch_api->get_switch_attribute = getSwitchAttributeMirrorEgress;
+
+        bool unset_platform_env = false;
+        if (!getenv("platform"))
+        {
+            setenv("platform", VS_PLATFORM_SUBSTRING, 0);
+            unset_platform_env = true;
+        }
+
+        auto orch = createAclOrch();
+
+        // Create MIRRORV6 table at EGRESS stage
+        string acl_table_id = "mirrorv6_egress_only_table";
+        auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id,
+                SET_COMMAND,
+                { { ACL_TABLE_DESCRIPTION, "MirrorV6 egress test" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_MIRRORV6 },
+                  { ACL_TABLE_STAGE, STAGE_EGRESS },
+                  { ACL_TABLE_PORTS, "1,2" } } } });
+        orch->doAclTableTask(kvfAclTable);
+        auto acl_table = orch->getAclTable(acl_table_id);
+        ASSERT_NE(acl_table, nullptr);
+
+        auto acl_actions = acl_table->type.getActions();
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_COUNTER), acl_actions.end())
+            << "MIRRORV6 egress table should have COUNTER action";
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_MIRROR_EGRESS), acl_actions.end())
+            << "MIRRORV6 egress table should have MIRROR_EGRESS action";
+        ASSERT_EQ(acl_actions.find(SAI_ACL_ACTION_TYPE_MIRROR_INGRESS), acl_actions.end())
+            << "MIRRORV6 egress table should NOT have MIRROR_INGRESS action";
+
+        // Delete table
+        kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id, DEL_COMMAND, {} } });
+        orch->doAclTableTask(kvfAclTable);
+        ASSERT_EQ(orch->getAclTable(acl_table_id), nullptr);
+
+        if (unset_platform_env)
+        {
+            unsetenv("platform");
+        }
+        sai_switch_api = old_sai_switch_api_mirror_egress;
+    }
+
+    TEST_F(AclOrchTest, MirrorDscpTableIngressUnchanged)
+    {
+        old_sai_switch_api_mirror_egress = sai_switch_api;
+        sai_switch_api_t new_sai_switch_api = *sai_switch_api;
+        sai_switch_api = &new_sai_switch_api;
+        sai_switch_api->get_switch_attribute = getSwitchAttributeMirrorEgress;
+
+        bool unset_platform_env = false;
+        if (!getenv("platform"))
+        {
+            setenv("platform", VS_PLATFORM_SUBSTRING, 0);
+            unset_platform_env = true;
+        }
+
+        auto orch = createAclOrch();
+
+        // Create MIRROR_DSCP table at INGRESS stage
+        string acl_table_id = "mirror_dscp_test_table";
+        auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id,
+                SET_COMMAND,
+                { { ACL_TABLE_DESCRIPTION, "Mirror DSCP ingress test" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_MIRROR_DSCP },
+                  { ACL_TABLE_STAGE, STAGE_INGRESS },
+                  { ACL_TABLE_PORTS, "1,2" } } } });
+        orch->doAclTableTask(kvfAclTable);
+        auto acl_table = orch->getAclTable(acl_table_id);
+        ASSERT_NE(acl_table, nullptr);
+
+        auto acl_actions = acl_table->type.getActions();
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_COUNTER), acl_actions.end())
+            << "MIRROR_DSCP ingress table should have COUNTER action";
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_MIRROR_INGRESS), acl_actions.end())
+            << "MIRROR_DSCP ingress table should have MIRROR_INGRESS action";
+        ASSERT_EQ(acl_actions.find(SAI_ACL_ACTION_TYPE_MIRROR_EGRESS), acl_actions.end())
+            << "MIRROR_DSCP ingress table should NOT have MIRROR_EGRESS action";
+
+        // Delete table
+        kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id, DEL_COMMAND, {} } });
+        orch->doAclTableTask(kvfAclTable);
+        ASSERT_EQ(orch->getAclTable(acl_table_id), nullptr);
+
+        if (unset_platform_env)
+        {
+            unsetenv("platform");
+        }
+        sai_switch_api = old_sai_switch_api_mirror_egress;
+    }
+
+    TEST_F(AclOrchTest, MirrorTableIngressWithoutMirrorEgressSupport)
+    {
+        old_sai_switch_api_mirror_egress = sai_switch_api;
+        sai_switch_api_t new_sai_switch_api = *sai_switch_api;
+        sai_switch_api = &new_sai_switch_api;
+        sai_switch_api->get_switch_attribute = getSwitchAttributeNoMirrorEgressOnIngress;
+
+        bool unset_platform_env = false;
+        if (!getenv("platform"))
+        {
+            setenv("platform", VS_PLATFORM_SUBSTRING, 0);
+            unset_platform_env = true;
+        }
+
+        auto orch = createAclOrch();
+
+        for (const auto &acl_table_type : { TABLE_TYPE_MIRROR, TABLE_TYPE_MIRRORV6 })
+        {
+            string acl_table_id = "mirror_no_egress_table";
+            auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+                { { acl_table_id,
+                    SET_COMMAND,
+                    { { ACL_TABLE_DESCRIPTION, acl_table_type },
+                      { ACL_TABLE_TYPE, acl_table_type },
+                      { ACL_TABLE_STAGE, STAGE_INGRESS },
+                      { ACL_TABLE_PORTS, "1,2" } } } });
+            orch->doAclTableTask(kvfAclTable);
+            auto acl_table = orch->getAclTable(acl_table_id);
+            ASSERT_NE(acl_table, nullptr) << "Table " << acl_table_type << " should be created";
+
+            auto acl_actions = acl_table->type.getActions();
+            ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_COUNTER), acl_actions.end())
+                << acl_table_type << " ingress table should have COUNTER action";
+            ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_MIRROR_INGRESS), acl_actions.end())
+                << acl_table_type << " ingress table should have MIRROR_INGRESS action";
+            ASSERT_EQ(acl_actions.find(SAI_ACL_ACTION_TYPE_MIRROR_EGRESS), acl_actions.end())
+                << acl_table_type << " ingress table should NOT have MIRROR_EGRESS when unsupported by SAI";
+
+            // Delete table
+            kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+                { { acl_table_id, DEL_COMMAND, {} } });
+            orch->doAclTableTask(kvfAclTable);
+            ASSERT_EQ(orch->getAclTable(acl_table_id), nullptr);
+        }
+
+        if (unset_platform_env)
+        {
+            unsetenv("platform");
+        }
+        sai_switch_api = old_sai_switch_api_mirror_egress;
+    }
 } // namespace nsAclOrchTest
