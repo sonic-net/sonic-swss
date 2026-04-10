@@ -260,6 +260,11 @@ class WcmpManagerTest : public ::testing::Test
       gP4Orch->handlePortStatusUpdate(alias, status);
     }
 
+    void HandleLagMemberLacpStatusUpdate(const std::string& alias,
+                                         bool lacp_enable) {
+      gP4Orch->handleLagMemberLacpStatusUpdate(alias, lacp_enable);
+    }
+
     void UpdateWatchPort(const std::string& port, bool prune) {
       wcmp_group_manager_->updateWatchPort(
         port, prune ? SAI_PORT_OPER_STATUS_DOWN : SAI_PORT_OPER_STATUS_UP);
@@ -2854,6 +2859,140 @@ TEST_F(WcmpManagerTest, VerifyStateAsicDbTest)
                                   "1:oid:0x1"},
             swss::FieldValueTuple{
                 "SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST", "1:2"}});
+}
+
+TEST_F(WcmpManagerTest, LagMemberWatchportLacpStatusChange) {
+  // Add member with operationally up watch port
+  std::string port_name = "Ethernet6";
+  P4WcmpGroupEntry app_db_entry =
+      AddWcmpGroupEntryWithWatchport(port_name, true);
+  EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(
+    app_db_entry.wcmp_group_members[0], true, 1));
+  EXPECT_FALSE(app_db_entry.wcmp_group_members[0]->pruned);
+
+  std::vector<sai_object_id_t> member_oids{};
+  std::vector<uint32_t> member_weights{};
+  std::vector<sai_attribute_t> attrs;
+  sai_attribute_t attr;
+  attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+  attr.value.objlist.count = static_cast<uint32_t>(member_oids.size());
+  attr.value.objlist.list = member_oids.data();
+  attrs.push_back(attr);
+  attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+  attr.value.u32list.count = static_cast<uint32_t>(member_weights.size());
+  attr.value.u32list.list = member_weights.data();
+  attrs.push_back(attr);
+
+  std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS};
+  EXPECT_CALL(
+      mock_sai_next_hop_group_,
+      set_next_hop_groups_attribute(
+          Eq(2),
+          ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1, kWcmpGroupOid1}),
+          AttrArrayEq(attrs), _, _))
+      .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
+                      Return(SAI_STATUS_SUCCESS)));
+
+  // First make sure the port oper-status is UP.
+  HandlePortStatusUpdate(port_name, SAI_PORT_OPER_STATUS_UP);
+  ProcessWatchPortEvent();
+  EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0],
+                                             true, 1));
+  EXPECT_FALSE(app_db_entry.wcmp_group_members[0]->pruned);
+
+  // Disable the LACP enable status and expect the member to be pruned.
+  HandleLagMemberLacpStatusUpdate("Invalid_Port", /*lacp_enable=*/false);  // No-Op
+  HandleLagMemberLacpStatusUpdate(port_name, /*lacp_enable=*/false);
+  ProcessWatchPortEvent();
+  EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0],
+                                             true, 1));
+  EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
+
+  member_oids.push_back(kNexthopOid1);
+  member_weights.push_back(2);
+  attrs.clear();
+  attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+  attr.value.objlist.count = static_cast<uint32_t>(member_oids.size());
+  attr.value.objlist.list = member_oids.data();
+  attrs.push_back(attr);
+  attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+  attr.value.u32list.count = static_cast<uint32_t>(member_weights.size());
+  attr.value.u32list.list = member_weights.data();
+  attrs.push_back(attr);
+
+  EXPECT_CALL(
+      mock_sai_next_hop_group_,
+      set_next_hop_groups_attribute(
+          Eq(2),
+          ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1, kWcmpGroupOid1}),
+          AttrArrayEq(attrs), _, _))
+      .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
+                      Return(SAI_STATUS_SUCCESS)));
+
+  // Enable the LACP enable status and expect the member to be restored.
+  HandleLagMemberLacpStatusUpdate("Invalid_Port", /*lacp_enable=*/true);  // No-Op
+  HandleLagMemberLacpStatusUpdate(port_name, /*lacp_enable=*/true);
+  ProcessWatchPortEvent();
+  EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0],
+                                             true, 1));
+  EXPECT_FALSE(app_db_entry.wcmp_group_members[0]->pruned);
+}
+
+
+TEST_F(WcmpManagerTest, LagMemberWatchportOperStatusUpWhenLacpStatusIsDisabled) {
+  std::string port_name = "Ethernet1";
+  // The port is initially operationally down.
+  P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntryWithWatchport(
+    port_name, false);
+  EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(
+    app_db_entry.wcmp_group_members[0], true, 1));
+  EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
+
+  std::vector<sai_object_id_t> member_oids{kNexthopOid1};
+  std::vector<uint32_t> member_weights{2};
+  std::vector<sai_attribute_t> attrs;
+  sai_attribute_t attr;
+  attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+  attr.value.objlist.count = static_cast<uint32_t>(member_oids.size());
+  attr.value.objlist.list = member_oids.data();
+  attrs.push_back(attr);
+  attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST;
+  attr.value.u32list.count = static_cast<uint32_t>(member_weights.size());
+  attr.value.u32list.list = member_weights.data();
+  attrs.push_back(attr);
+
+  std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS};
+  EXPECT_CALL(
+      mock_sai_next_hop_group_,
+      set_next_hop_groups_attribute(
+          Eq(2),
+          ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupOid1, kWcmpGroupOid1}),
+          AttrArrayEq(attrs), _, _))
+      .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
+                      Return(SAI_STATUS_SUCCESS)));
+
+  // Disable the LACP status and expect the member to be pruned.
+  HandleLagMemberLacpStatusUpdate("Invalid_Port", /*lacp_enable=*/false);  // No-Op
+  HandleLagMemberLacpStatusUpdate(port_name, /*lacp_enable=*/false);
+  ProcessWatchPortEvent();
+  EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0],
+                                             true, 1));
+  EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
+
+  // Bring up the port, but since the LACP state is still disabled, the port
+  // should still be pruned.
+  HandlePortStatusUpdate(port_name, SAI_PORT_OPER_STATUS_UP);
+  ProcessWatchPortEvent();
+  EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0],
+                                             true, 1));
+  EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
+
+  // Enable the LACP status and exlect the member to be restored.
+  HandleLagMemberLacpStatusUpdate(port_name, /*lacp_enable=*/true);
+  ProcessWatchPortEvent();
+  EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0],
+                                             true, 1));
+  EXPECT_FALSE(app_db_entry.wcmp_group_members[0]->pruned);
 }
 
 } // namespace test

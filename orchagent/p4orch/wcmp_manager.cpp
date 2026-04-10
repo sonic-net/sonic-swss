@@ -250,9 +250,14 @@ void WcmpManager::populateMemberInfo(P4WcmpGroupEntry& wcmp_group) {
   SWSS_LOG_ENTER();
 
   for (auto& member : wcmp_group.wcmp_group_members) {
-    if (!member->watch_port.empty()) {
-      if (m_port_oper_status_map[member->watch_port] !=
+    const std::string &port_name = member->watch_port;
+    if (!port_name.empty()) {
+      if (m_port_oper_status_map[port_name] !=
           SAI_PORT_OPER_STATUS_UP) {
+        member->pruned = true;
+      } else if (m_port_lacp_enable_status_map.find(port_name) !=
+                 m_port_lacp_enable_status_map.end() &&
+                 !m_port_lacp_enable_status_map[port_name]) {
         member->pruned = true;
       } else {
         member->pruned = false;
@@ -508,6 +513,14 @@ void WcmpManager::updateWatchPort(const std::string& port,
     return;
   }
   bool prune = status != SAI_PORT_OPER_STATUS_UP;
+  auto it = m_port_lacp_enable_status_map.find(port);
+  // If a port is a LAG member, and its LACP port status is disabled, then
+  // even if the port oper-status is up, this port should be pruned from the
+  // WCMP group. On the other hand, if the port oper-status is down, then
+  // we should always prune this port from the WCMP group.
+  if (it != m_port_lacp_enable_status_map.end() && !it->second) {
+    prune = true;
+  }
   for (auto& member : m_port_name_to_wcmp_group_member_map[port]) {
     if (member->pruned != prune) {
       auto* wcmp_group = getWcmpGroupEntry(member->wcmp_group_id);
@@ -519,6 +532,43 @@ void WcmpManager::updateWatchPort(const std::string& port,
         const std::string update = prune ? "prune" : "restore";
         m_watchport_groups.insert(member->wcmp_group_id);
         SWSS_LOG_NOTICE("Queued watchport event: %s member %s from group %s",
+                        update.c_str(), member->next_hop_id.c_str(),
+                        member->wcmp_group_id.c_str());
+      }
+    }
+  }
+  if (!m_watchport_groups.empty()) {
+    m_watchport_event->notify();
+  }
+}
+
+void WcmpManager::updateLagMemberWatchPort(const std::string& port,
+                                           bool lacp_enable) {
+  SWSS_LOG_ENTER();
+
+  m_port_lacp_enable_status_map[port] = lacp_enable;
+  if (m_port_name_to_wcmp_group_member_map.find(port) ==
+      m_port_name_to_wcmp_group_member_map.end()) {
+    return;
+  }
+  bool prune = !lacp_enable;
+  auto it = m_port_oper_status_map.find(port);
+  if (it != m_port_oper_status_map.end() &&
+      it->second != SAI_PORT_OPER_STATUS_UP) {
+    prune = true;
+  }
+  for (auto& member : m_port_name_to_wcmp_group_member_map[port]) {
+    if (member->pruned != prune) {
+      auto* wcmp_group = getWcmpGroupEntry(member->wcmp_group_id);
+      if (wcmp_group == nullptr) {
+        SWSS_RAISE_CRITICAL_STATE("Failed to find WCMP group " +
+                                  QuotedVar(member->wcmp_group_id) +
+                                  " in updateLagMemberWatchPort");
+      } else {
+        const std::string update = prune ? "prune" : "restore";
+        m_watchport_groups.insert(member->wcmp_group_id);
+        SWSS_LOG_NOTICE("Queued Lag member watchport event: %s member %s "
+                        "from group %s",
                         update.c_str(), member->next_hop_id.c_str(),
                         member->wcmp_group_id.c_str());
       }
