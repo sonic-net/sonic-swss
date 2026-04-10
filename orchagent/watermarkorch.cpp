@@ -277,25 +277,32 @@ void WatermarkOrch::doTask(SelectableTimer &timer)
 
         clearSingleWm(m_periodicWatermarkTable.get(),
                       "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES",
-                      m_pg_ids);
+                      m_pg_ids,
+                      true);
         clearSingleWm(m_periodicWatermarkTable.get(),
                       "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES",
-                      m_pg_ids);
+                      m_pg_ids,
+                      true);
         clearSingleWm(m_periodicWatermarkTable.get(),
                       "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
-                      m_unicast_queue_ids);
+                      m_unicast_queue_ids,
+                      true);
         clearSingleWm(m_periodicWatermarkTable.get(),
                       "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
-                      m_multicast_queue_ids);
+                      m_multicast_queue_ids,
+                      true);
         clearSingleWm(m_periodicWatermarkTable.get(),
                       "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
-                      m_all_queue_ids);
+                      m_all_queue_ids,
+                      true);
         clearSingleWm(m_periodicWatermarkTable.get(),
                       "SAI_BUFFER_POOL_STAT_WATERMARK_BYTES",
-                      gBufferOrch->getBufferPoolNameOidMap());
+                      gBufferOrch->getBufferPoolNameOidMap(),
+                      true);
         clearSingleWm(m_periodicWatermarkTable.get(),
                       "SAI_BUFFER_POOL_STAT_XOFF_ROOM_WATERMARK_BYTES",
-                      gBufferOrch->getBufferPoolNameOidMap());
+                      gBufferOrch->getBufferPoolNameOidMap(),
+                      true);
         SWSS_LOG_DEBUG("Periodic watermark cleared by timer!");
     }
 }
