@@ -6,6 +6,8 @@
 #include "converter.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdlib>
 
 using namespace std;
 using namespace swss;
@@ -32,6 +34,7 @@ ArsOrch::ArsOrch(DBConnector *configDb,
       m_switchOrch(switchOrch),
       m_portsOrch(portsOrch),
       m_stateArsCapTable(stateDb, STATE_ARS_CAPABILITY_TABLE_NAME),
+      m_stateArsNhgTable(stateDb, "ARS_NHG_TABLE"),
       m_cfgArsTable(configDb, CFG_ARS_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
@@ -97,6 +100,12 @@ void ArsOrch::doArsGlobalTask(Consumer &consumer)
             {
                 SWSS_LOG_NOTICE("ARS: Adaptive Routing globally enabled");
                 m_arsEnabled = true;
+
+                if (profileName.empty() && m_globalProfileName.empty() &&
+                    m_activeSwitchProfileOid == SAI_NULL_OBJECT_ID)
+                {
+                    createDefaultProfileIfNeeded();
+                }
             }
             else if (!wantEnable && m_arsEnabled)
             {
@@ -172,9 +181,12 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                 const string &field = fvField(fv);
                 const string &value = fvValue(fv);
 
-                if      (field == "load_past_weight")    entry.loadPastWeight   = static_cast<uint32_t>(stoul(value));
-                else if (field == "load_future_weight")  entry.loadFutureWeight = static_cast<uint32_t>(stoul(value));
-                else if (field == "load_current_weight") entry.loadCurrentWeight = static_cast<uint32_t>(stoul(value));
+                if      (field == "port_load_past_weight" || field == "load_past_weight")
+                    entry.loadPastWeight   = static_cast<uint32_t>(stoul(value));
+                else if (field == "port_load_future_weight" || field == "load_future_weight")
+                    entry.loadFutureWeight = static_cast<uint32_t>(stoul(value));
+                else if (field == "port_load_current_weight" || field == "load_current_weight")
+                    entry.loadCurrentWeight = static_cast<uint32_t>(stoul(value));
                 else if (field == "load_exponent")       entry.loadExponent      = static_cast<uint32_t>(stoul(value));
                 else if (field == "max_flows")           entry.maxFlows          = static_cast<uint32_t>(stoul(value));
                 else if (field == "load_past_min_val")   entry.loadPastMinVal    = static_cast<uint32_t>(stoul(value));
@@ -287,6 +299,8 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
                 else if (field == "idle_time")   entry.idleTime = static_cast<uint32_t>(stoul(value));
                 else if (field == "max_flows")   entry.maxFlows = static_cast<uint32_t>(stoul(value));
                 else if (field == "admin_state") entry.enabled  = (value == "up");
+                else if (field == "ipv4_enable") entry.ipv4Enable = (value == "true");
+                else if (field == "ipv6_enable") entry.ipv6Enable = (value == "true");
                 else if (field == "profile")     entry.profileName = value;
                 else if (field == "port_profile") entry.portProfileName = value;
             }
@@ -393,7 +407,7 @@ void ArsOrch::doArsInterfaceTask(Consumer &consumer)
             }
             if (entry.linkUtilThreshold > 0)
             {
-                setPortArsScalingFactor(portName, entry.linkUtilThreshold);
+                setPortArsLinkUtilThreshold(portName, entry.linkUtilThreshold);
                 SWSS_LOG_NOTICE("ARS: interface %s link-utilization-threshold=%u%%",
                                 portName.c_str(), entry.linkUtilThreshold);
             }
@@ -449,7 +463,13 @@ void ArsOrch::doArsPortProfileTask(Consumer &consumer)
                 else if (field == "port_load_future_weight")
                     entry.portLoadFutureWeight = static_cast<uint32_t>(stoul(value));
                 else if (field == "load_scaling_factor")
-                    entry.loadScalingFactor = static_cast<uint32_t>(stoul(value));
+                {
+                    double fval = stod(value);
+                    if (fval == 0.0)
+                        entry.loadScalingFactorAuto = true;
+                    entry.loadScalingFactor = static_cast<uint32_t>(round(fval * 10));
+                    entry.loadScalingFactorRaw = fval;
+                }
             }
 
             m_arsPortProfiles[name] = entry;
@@ -768,7 +788,11 @@ bool ArsOrch::createArsObject(const string &name, const ArsObjectEntry &entry)
     attrs.push_back(attr);
 
     attr.id = SAI_ARS_ATTR_ENABLE_IPV4;
-    attr.value.booldata = entry.enabled;
+    attr.value.booldata = entry.ipv4Enable;
+    attrs.push_back(attr);
+
+    attr.id = SAI_ARS_ATTR_ENABLE_IPV6;
+    attr.value.booldata = entry.ipv6Enable;
     attrs.push_back(attr);
 
     if (!entry.profileName.empty())
@@ -932,6 +956,15 @@ sai_object_id_t ArsOrch::resolveArsForNhg(sai_object_id_t nhgOid, const NextHopG
         }
     }
 
+    if (commonArsObj.empty() && !m_nexthopArsBindings.empty())
+    {
+        for (const auto &[prefix, objName] : m_nexthopArsBindings)
+        {
+            commonArsObj = objName;
+            break;
+        }
+    }
+
     if (mismatch || commonArsObj.empty())
         return SAI_NULL_OBJECT_ID;
 
@@ -939,6 +972,7 @@ sai_object_id_t ArsOrch::resolveArsForNhg(sai_object_id_t nhgOid, const NextHopG
     if (arsOid == SAI_NULL_OBJECT_ID)
     {
         SWSS_LOG_WARN("ARS: object '%s' not yet created for NHG", commonArsObj.c_str());
+        writeArsNhgState(nhgKey.to_string(), true, "ARS object not created");
     }
 
     return arsOid;
@@ -1014,13 +1048,22 @@ bool ArsOrch::setPortArsLoadBands(const string &portName, const ArsPortProfileEn
     return true;
 }
 
-bool ArsOrch::setPortArsScalingFactor(const string &portName, uint32_t factor)
+bool ArsOrch::setPortArsScalingFactor(const string &portName, const ArsPortProfileEntry &pp)
 {
     Port port;
     if (!m_portsOrch->getPort(portName, port))
     {
         SWSS_LOG_ERROR("ARS: port %s not found for scaling factor", portName.c_str());
         return false;
+    }
+
+    uint32_t factor = pp.loadScalingFactor;
+    if (pp.loadScalingFactorAuto)
+    {
+        uint32_t speedMbps = port.m_speed;
+        factor = (speedMbps > 0) ? (speedMbps / 10000) : 1;
+        SWSS_LOG_NOTICE("ARS: auto scaling factor for %s: speed=%u → factor=%u",
+                        portName.c_str(), speedMbps, factor);
     }
 
     sai_attribute_t attr;
@@ -1032,6 +1075,30 @@ bool ArsOrch::setPortArsScalingFactor(const string &portName, uint32_t factor)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_WARN("ARS: set scaling factor on %s failed: %s (may require SDK-only path)",
+                      portName.c_str(), sai_serialize_status(status).c_str());
+        return false;
+    }
+    return true;
+}
+
+bool ArsOrch::setPortArsLinkUtilThreshold(const string &portName, uint32_t threshold)
+{
+    Port port;
+    if (!m_portsOrch->getPort(portName, port))
+    {
+        SWSS_LOG_ERROR("ARS: port %s not found for link util threshold", portName.c_str());
+        return false;
+    }
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_ARS_PORT_LOAD_PAST_MAX_VAL;
+    attr.value.u32 = threshold;
+
+    extern sai_port_api_t *sai_port_api;
+    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("ARS: set link utilization threshold on %s failed: %s",
                       portName.c_str(), sai_serialize_status(status).c_str());
         return false;
     }
@@ -1092,8 +1159,8 @@ void ArsOrch::applyPortProfileToInterface(const string &portName, const string &
         return;
     }
 
-    if (pp.loadScalingFactor > 0)
-        setPortArsScalingFactor(portName, pp.loadScalingFactor);
+    if (pp.loadScalingFactor > 0 || pp.loadScalingFactorAuto)
+        setPortArsScalingFactor(portName, pp);
 
     if (pp.portLoadPastWeight > 0 || pp.portLoadFutureWeight > 0)
         setPortArsWeights(portName, pp.portLoadPastWeight, pp.portLoadFutureWeight);
@@ -1113,10 +1180,86 @@ void ArsOrch::publishArsCaps()
     SWSS_LOG_ENTER();
 
     vector<FieldValueTuple> caps;
-    caps.emplace_back("ars_supported", "true");
-    caps.emplace_back("modes_supported",
-                      "flowlet-quality,flowlet-quality-bounded,flowlet-random,"
-                      "packet-quality,packet-random,fixed");
+
+    sai_attr_capability_t modeCap = {};
+    sai_status_t status = sai_query_attribute_capability(
+        gSwitchId, SAI_OBJECT_TYPE_ARS, SAI_ARS_ATTR_MODE, &modeCap);
+
+    bool arsSupported = (status == SAI_STATUS_SUCCESS && modeCap.create_implemented);
+    caps.emplace_back("ars_supported", arsSupported ? "true" : "false");
+
+    string modesStr;
+    static const vector<pair<string, sai_ars_mode_t>> modeProbes = {
+        {"flowlet-quality",         SAI_ARS_MODE_FLOWLET_QUALITY},
+        {"flowlet-quality-bounded", SAI_ARS_MODE_FLOWLET_QUALITY_BOUNDED},
+        {"flowlet-random",          SAI_ARS_MODE_FLOWLET_RANDOM},
+        {"packet-quality",          SAI_ARS_MODE_PER_PACKET_QUALITY},
+        {"packet-random",           SAI_ARS_MODE_PER_PACKET_RANDOM},
+        {"fixed",                   SAI_ARS_MODE_FIXED},
+    };
+
+    if (arsSupported)
+    {
+        for (const auto &[name, mode] : modeProbes)
+        {
+            sai_s32_list_t enumCap = {};
+            int32_t enumList[16];
+            enumCap.count = 16;
+            enumCap.list = enumList;
+            sai_status_t qs = sai_query_attribute_enum_values_capability(
+                gSwitchId, SAI_OBJECT_TYPE_ARS, SAI_ARS_ATTR_MODE, &enumCap);
+
+            bool found = false;
+            if (qs == SAI_STATUS_SUCCESS)
+            {
+                for (uint32_t i = 0; i < enumCap.count; i++)
+                {
+                    if (enumCap.list[i] == (int32_t)mode)
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                found = true;
+            }
+
+            if (found)
+            {
+                if (!modesStr.empty()) modesStr += ",";
+                modesStr += name;
+            }
+        }
+    }
+    else
+    {
+        modesStr = "flowlet-quality,flowlet-quality-bounded,flowlet-random,"
+                   "packet-quality,packet-random,fixed";
+    }
+    caps.emplace_back("modes_supported", modesStr);
+
+    static const vector<pair<string, sai_ars_attr_t>> attrProbes = {
+        {"SAI_ARS_ATTR_MODE",      SAI_ARS_ATTR_MODE},
+        {"SAI_ARS_ATTR_IDLE_TIME", SAI_ARS_ATTR_IDLE_TIME},
+        {"SAI_ARS_ATTR_MAX_FLOWS", SAI_ARS_ATTR_MAX_FLOWS},
+    };
+    for (const auto &[attrName, attrId] : attrProbes)
+    {
+        sai_attr_capability_t ac = {};
+        sai_status_t qs = sai_query_attribute_capability(
+            gSwitchId, SAI_OBJECT_TYPE_ARS, attrId, &ac);
+        string capStr = "unknown";
+        if (qs == SAI_STATUS_SUCCESS)
+        {
+            capStr = string("create=") + (ac.create_implemented ? "true" : "false") +
+                     ",set=" + (ac.set_implemented ? "true" : "false") +
+                     ",get=" + (ac.get_implemented ? "true" : "false");
+        }
+        m_stateArsCapTable.set(attrName, {{attrName, capStr}});
+    }
+
     m_stateArsCapTable.set("switch", caps);
 }
 
@@ -1142,4 +1285,45 @@ sai_object_id_t ArsOrch::getArsObjectOid(const string &name) const
 {
     auto it = m_arsObjects.find(name);
     return (it != m_arsObjects.end()) ? it->second.arsOid : SAI_NULL_OBJECT_ID;
+}
+
+void ArsOrch::createDefaultProfileIfNeeded()
+{
+    SWSS_LOG_ENTER();
+
+    static const string kDefaultName = "__ARS_DEFAULT__";
+    if (m_arsProfiles.count(kDefaultName))
+        return;
+
+    ArsProfileEntry entry;
+    if (!createArsProfile(kDefaultName, entry))
+    {
+        SWSS_LOG_WARN("ARS: failed to auto-create default profile — "
+                      "SAI will use built-in defaults");
+        return;
+    }
+
+    m_globalProfileName = kDefaultName;
+    SWSS_LOG_NOTICE("ARS: auto-created default profile '%s' with SDK defaults",
+                    kDefaultName.c_str());
+}
+
+string ArsOrch::getArsObjectForPrefix(const string &prefix) const
+{
+    auto it = m_nexthopArsBindings.find(prefix);
+    return (it != m_nexthopArsBindings.end()) ? it->second : "";
+}
+
+void ArsOrch::writeArsNhgState(const string &nhgName, bool degraded, const string &reason)
+{
+    vector<FieldValueTuple> fvs;
+    fvs.emplace_back("status", degraded ? "degraded" : "active");
+    if (degraded && !reason.empty())
+        fvs.emplace_back("reason", reason);
+    m_stateArsNhgTable.set(nhgName, fvs);
+}
+
+void ArsOrch::removeArsNhgState(const string &nhgName)
+{
+    m_stateArsNhgTable.del(nhgName);
 }

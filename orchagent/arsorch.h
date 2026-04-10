@@ -43,6 +43,8 @@ struct ArsObjectEntry
     uint32_t        idleTime = 256;
     uint32_t        maxFlows = 512;
     bool            enabled  = false;
+    bool            ipv4Enable = true;
+    bool            ipv6Enable = true;
     std::string     profileName;
     std::string     portProfileName;
 };
@@ -68,6 +70,8 @@ struct ArsPortProfileEntry
     uint32_t portLoadPastWeight   = 0;
     uint32_t portLoadFutureWeight = 0;
     uint32_t loadScalingFactor    = 0;
+    double   loadScalingFactorRaw = 0.0;
+    bool     loadScalingFactorAuto = false;
 };
 
 class ArsOrch : public Orch
@@ -86,6 +90,9 @@ public:
     bool unbindArsFromNhg(sai_object_id_t nhgOid);
     sai_object_id_t resolveArsForNhg(sai_object_id_t nhgOid, const NextHopGroupKey &nhgKey);
     std::string getArsObjectForPort(const std::string &portName) const;
+    std::string getArsObjectForPrefix(const std::string &prefix) const;
+    void writeArsNhgState(const std::string &nhgName, bool degraded, const std::string &reason = "");
+    void removeArsNhgState(const std::string &nhgName);
 
 private:
     void doTask(Consumer &consumer) override;
@@ -109,10 +116,12 @@ private:
     bool bindArsProfileToSwitch(sai_object_id_t profileOid);
 
     bool setPortArsEnable(const std::string &portName, bool enable);
-    bool setPortArsScalingFactor(const std::string &portName, uint32_t factor);
+    bool setPortArsScalingFactor(const std::string &portName, const ArsPortProfileEntry &pp);
+    bool setPortArsLinkUtilThreshold(const std::string &portName, uint32_t threshold);
     bool setPortArsWeights(const std::string &portName, uint32_t pastWeight, uint32_t futureWeight);
     bool setPortArsLoadBands(const std::string &portName, const ArsPortProfileEntry &pp);
     void applyPortProfileToInterface(const std::string &portName, const std::string &profileName);
+    void createDefaultProfileIfNeeded();
 
     void doArsPortChannelTask(Consumer &consumer);
 
@@ -123,6 +132,7 @@ private:
     SwitchOrch *m_switchOrch;
     PortsOrch  *m_portsOrch;
     swss::Table m_stateArsCapTable;
+    swss::Table m_stateArsNhgTable;
     swss::Table m_cfgArsTable;
 
     bool m_arsEnabled = false;
