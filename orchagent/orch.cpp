@@ -556,7 +556,32 @@ void Executor::processAnyTask(AnyTask&& task)
 void Consumer::drain()
 {
     if (!m_toSync.empty())
-        ((Orch *)m_orch)->doTask((Consumer&)*this);
+    {
+        try
+        {
+            ((Orch *)m_orch)->doTask((Consumer&)*this);
+        }
+        catch (const std::invalid_argument& e)
+        {
+            SWSS_LOG_ERROR("Parse error in Consumer::drain() for %s: %s",
+                           getName().c_str(), e.what());
+        }
+        catch (const std::logic_error& e)
+        {
+            SWSS_LOG_ERROR("Logic error in Consumer::drain() for %s: %s",
+                           getName().c_str(), e.what());
+        }
+        catch (const std::exception& e)
+        {
+            SWSS_LOG_ERROR("Exception caught in Consumer::drain() for %s: %s",
+                           getName().c_str(), e.what());
+        }
+        catch (...)
+        {
+            SWSS_LOG_ERROR("Unknown exception caught in Consumer::drain() for %s",
+                           getName().c_str());
+        }
+    }
 }
 
 size_t Orch::addExistingData(const string& tableName)
@@ -843,8 +868,31 @@ void Orch::doTask()
 
     for (auto &it : m_consumerMap)
     {
-        count += retryToSync(it.first, threshold - count);
-        it.second->drain();
+        try
+        {
+            count += retryToSync(it.first, threshold - count);
+            it.second->drain();
+        }
+        catch (const std::invalid_argument& e)
+        {
+            SWSS_LOG_ERROR("Parse error in Orch::doTask() for %s in %s: %s",
+                           it.first.c_str(), typeid(*this).name(), e.what());
+        }
+        catch (const std::logic_error& e)
+        {
+            SWSS_LOG_ERROR("Logic error in Orch::doTask() for %s in %s: %s",
+                           it.first.c_str(), typeid(*this).name(), e.what());
+        }
+        catch (const std::exception& e)
+        {
+            SWSS_LOG_ERROR("Exception caught in Orch::doTask() for %s in %s: %s",
+                           it.first.c_str(), typeid(*this).name(), e.what());
+        }
+        catch (...)
+        {
+            SWSS_LOG_ERROR("Unknown exception caught in Orch::doTask() for %s in %s",
+                           it.first.c_str(), typeid(*this).name());
+        }
     }
 }
 
