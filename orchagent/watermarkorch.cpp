@@ -5,8 +5,20 @@
 #include "converter.h"
 #include "bufferorch.h"
 #include <inttypes.h>
+#include <chrono>
 
 #define DEFAULT_TELEMETRY_INTERVAL 120
+#define LAST_RESET_TIME_FIELD "LAST_RESET_TIME"
+
+/*
+ * Get system uptime in milliseconds using steady_clock (monotonic time).
+ */
+static uint64_t getSysUptimeMilliseconds()
+{
+    using namespace std::chrono;
+    auto now = steady_clock::now();
+    return duration_cast<milliseconds>(now.time_since_epoch()).count();
+}
 
 #define CLEAR_PG_HEADROOM_REQUEST "PG_HEADROOM"
 #define CLEAR_PG_SHARED_REQUEST "PG_SHARED"
@@ -197,19 +209,22 @@ void WatermarkOrch::doTask(NotificationConsumer &consumer)
     {
         clearSingleWm(table,
                       "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
-                      m_unicast_queue_ids);
+                      m_unicast_queue_ids,
+                      op == "USER");
     }
     else if (data == CLEAR_QUEUE_SHARED_MULTI_REQUEST)
     {
         clearSingleWm(table,
                       "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
-                      m_multicast_queue_ids);
+                      m_multicast_queue_ids,
+                      op == "USER");
     }
     else if (data == CLEAR_QUEUE_SHARED_ALL_REQUEST)
     {
         clearSingleWm(table,
                       "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
-                      m_all_queue_ids);
+                      m_all_queue_ids,
+                      op == "USER");
     }
     else if (data == CLEAR_BUFFER_POOL_REQUEST)
     {
@@ -320,13 +335,22 @@ void WatermarkOrch::init_queue_ids()
     }
 }
 
-void WatermarkOrch::clearSingleWm(Table *table, string wm_name, vector<sai_object_id_t> &obj_ids)
+void WatermarkOrch::clearSingleWm(Table *table, string wm_name, vector<sai_object_id_t> &obj_ids, bool recordResetTime)
 {
     /* Zero-out some WM in some table for some vector of object ids*/
     SWSS_LOG_ENTER();
-    SWSS_LOG_DEBUG("clear WM %s, for %zu obj ids", wm_name.c_str(), obj_ids.size());
+    SWSS_LOG_DEBUG("clear WM %s, for %zu obj ids, recordResetTime=%d", wm_name.c_str(), obj_ids.size(), recordResetTime);
 
     vector<FieldValueTuple> vfvt = {{wm_name, "0"}};
+
+    // Record the reset timestamp for user-initiated clears (for SNMP oracleXgsQueueWatermarkLastResetTime)
+    // SNMP TimeTicks uses centiseconds (1/100 sec), so divide milliseconds by 10
+    if (recordResetTime)
+    {
+        uint64_t uptimeCentiseconds = getSysUptimeMilliseconds() / 10;
+        vfvt.emplace_back(LAST_RESET_TIME_FIELD, to_string(uptimeCentiseconds));
+        SWSS_LOG_INFO("Recording watermark reset time: %" PRIu64 " centiseconds", uptimeCentiseconds);
+    }
 
     for (sai_object_id_t id: obj_ids)
     {
@@ -334,12 +358,21 @@ void WatermarkOrch::clearSingleWm(Table *table, string wm_name, vector<sai_objec
     }
 }
 
-void WatermarkOrch::clearSingleWm(Table *table, string wm_name, const object_reference_map &nameOidMap)
+void WatermarkOrch::clearSingleWm(Table *table, string wm_name, const object_reference_map &nameOidMap, bool recordResetTime)
 {
     SWSS_LOG_ENTER();
-    SWSS_LOG_DEBUG("clear WM %s, for %zu obj ids", wm_name.c_str(), nameOidMap.size());
+    SWSS_LOG_DEBUG("clear WM %s, for %zu obj ids, recordResetTime=%d", wm_name.c_str(), nameOidMap.size(), recordResetTime);
 
     vector<FieldValueTuple> fvTuples = {{wm_name, "0"}};
+
+    // Record the reset timestamp for user-initiated clears (for SNMP oracleXgsQueueWatermarkLastResetTime)
+    // SNMP TimeTicks uses centiseconds (1/100 sec), so divide milliseconds by 10
+    if (recordResetTime)
+    {
+        uint64_t uptimeCentiseconds = getSysUptimeMilliseconds() / 10;
+        fvTuples.emplace_back(LAST_RESET_TIME_FIELD, to_string(uptimeCentiseconds));
+        SWSS_LOG_INFO("Recording watermark reset time: %" PRIu64 " centiseconds", uptimeCentiseconds);
+    }
 
     for (const auto &it : nameOidMap)
     {

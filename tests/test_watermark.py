@@ -303,6 +303,74 @@ class TestWatermark(object):
 
         self.enable_unittests(dvs, "false")
 
+    def verify_last_reset_time_set(self, dvs, obj_ids, table_name):
+        """Verify LAST_RESET_TIME field exists and contains a valid numeric value"""
+        counters_db = swsscommon.DBConnector(swsscommon.COUNTERS_DB, dvs.redis_sock, 0)
+        table = swsscommon.Table(counters_db, table_name)
+
+        for obj_id in obj_ids:
+            ret = table.get(obj_id)
+            status = ret[0]
+            assert status, f"Entry {obj_id} not found in {table_name}"
+            keyvalues = dict(ret[1])
+            assert "LAST_RESET_TIME" in keyvalues, f"LAST_RESET_TIME not found for {obj_id}"
+            reset_time = int(keyvalues["LAST_RESET_TIME"])
+            assert reset_time > 0, f"LAST_RESET_TIME should be positive, got {reset_time}"
+
+    def verify_last_reset_time_not_set(self, dvs, obj_ids, table_name):
+        """Verify LAST_RESET_TIME field does NOT exist (for persistent watermarks)"""
+        counters_db = swsscommon.DBConnector(swsscommon.COUNTERS_DB, dvs.redis_sock, 0)
+        table = swsscommon.Table(counters_db, table_name)
+
+        for obj_id in obj_ids:
+            ret = table.get(obj_id)
+            if ret[0]:  # entry exists
+                keyvalues = dict(ret[1])
+                assert "LAST_RESET_TIME" not in keyvalues, \
+                    f"LAST_RESET_TIME should not be set for {table_name}"
+
+    def test_clear_user_watermark_sets_last_reset_time(self, dvs):
+        """
+        Test that clearing USER queue watermarks sets LAST_RESET_TIME field.
+        This timestamp is used by SNMP oracleXgsQueueWatermarkLastResetTime.
+        LAST_RESET_TIME should only be set for USER watermarks on queue clears,
+        not for PERSISTENT watermarks or PG/buffer pool clears.
+        """
+        self.setup_dbs(dvs)
+        self.set_up(dvs)
+        self.enable_unittests(dvs, "true")
+
+        try:
+            self.populate_asic_all(dvs, "100")
+
+            # Clear USER unicast queue watermark - should set LAST_RESET_TIME
+            self.clear_watermark(dvs, ["USER", "Q_SHARED_UNI"])
+            self.verify_value(dvs, self.uc_q, WmTables.user, SaiWmStats.queue_shared, "0")
+            self.verify_last_reset_time_set(dvs, self.uc_q, WmTables.user)
+
+            # Clear USER multicast queue watermark - should set LAST_RESET_TIME
+            self.clear_watermark(dvs, ["USER", "Q_SHARED_MULTI"])
+            self.verify_value(dvs, self.mc_q, WmTables.user, SaiWmStats.queue_shared, "0")
+            self.verify_last_reset_time_set(dvs, self.mc_q, WmTables.user)
+
+            # Clear USER all queue watermark - should set LAST_RESET_TIME
+            self.clear_watermark(dvs, ["USER", "Q_SHARED_ALL"])
+            self.verify_value(dvs, self.all_q, WmTables.user, SaiWmStats.queue_shared, "0")
+            self.verify_last_reset_time_set(dvs, self.all_q, WmTables.user)
+
+            # Clear PERSISTENT unicast queue watermark - should NOT set LAST_RESET_TIME
+            self.clear_watermark(dvs, ["PERSISTENT", "Q_SHARED_UNI"])
+            self.verify_value(dvs, self.uc_q, WmTables.persistent, SaiWmStats.queue_shared, "0")
+            self.verify_last_reset_time_not_set(dvs, self.uc_q, WmTables.persistent)
+
+            # Clear USER PG watermark - should NOT set LAST_RESET_TIME (only queue clears)
+            self.clear_watermark(dvs, ["USER", "PG_SHARED"])
+            self.verify_value(dvs, self.pgs, WmTables.user, SaiWmStats.pg_shared, "0")
+            self.verify_last_reset_time_not_set(dvs, self.pgs, WmTables.user)
+
+        finally:
+            self.enable_unittests(dvs, "false")
+
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
