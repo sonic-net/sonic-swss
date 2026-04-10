@@ -696,9 +696,9 @@ task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, vo
             return task_success;
         case SAI_STATUS_ITEM_NOT_FOUND:
         case SAI_STATUS_ADDR_NOT_FOUND:
-            SWSS_LOG_NOTICE("Invalid entry for remove operation, SAI API: %s, status: %s",
-                            s_api.c_str(), s_status.c_str());
-            return task_invalid_entry;
+            SWSS_LOG_NOTICE("Returning success for remove operation, SAI API: %s, status: %s",
+                                s_api.c_str(), s_status.c_str());
+            return task_success;
         case SAI_STATUS_OBJECT_IN_USE:
             return task_need_retry;
         default:
@@ -752,7 +752,6 @@ bool parseHandleSaiStatusFailure(task_process_status status)
         case task_need_retry:
             return false;
         case task_failed:
-        case task_invalid_entry:
             return true;
         default:
             SWSS_LOG_WARN("task_process_status %d is not expected in parseHandleSaiStatusFailure", status);
