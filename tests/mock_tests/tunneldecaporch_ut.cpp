@@ -195,6 +195,32 @@ namespace tunneldecaporch_test
         });
     }
 
+    TEST_F(TunnelDecapOrchTest, TunnelDecapOrch_GetEcnMode_NotFound)
+    {
+        vector<string> tunnel_tables = { APP_TUNNEL_DECAP_TABLE_NAME };
+        auto tunnelDecapOrch = make_shared<TunnelDecapOrch>(
+            m_app_db.get(), m_state_db.get(), m_config_db.get(), tunnel_tables);
+        ASSERT_NE(tunnelDecapOrch, nullptr);
+
+        EXPECT_NO_THROW({
+            string ecn_mode = tunnelDecapOrch->getEcnMode("non_existent_tunnel");
+            EXPECT_TRUE(ecn_mode.empty());
+        });
+    }
+
+    TEST_F(TunnelDecapOrchTest, TunnelDecapOrch_GetEncapEcnMode_NotFound)
+    {
+        vector<string> tunnel_tables = { APP_TUNNEL_DECAP_TABLE_NAME };
+        auto tunnelDecapOrch = make_shared<TunnelDecapOrch>(
+            m_app_db.get(), m_state_db.get(), m_config_db.get(), tunnel_tables);
+        ASSERT_NE(tunnelDecapOrch, nullptr);
+
+        EXPECT_NO_THROW({
+            string encap_ecn = tunnelDecapOrch->getEncapEcnMode("non_existent_tunnel");
+            EXPECT_TRUE(encap_ecn.empty());
+        });
+    }
+
     TEST_F(TunnelDecapOrchTest, TunnelDecapOrch_GetDstIpAddresses)
     {
         vector<string> tunnel_tables = { APP_TUNNEL_DECAP_TABLE_NAME };
