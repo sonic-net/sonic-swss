@@ -16,7 +16,7 @@ extern sai_object_id_t        gSwitchId;
 
 static const map<string, sai_ars_mode_t> arsModeLookup = {
     {"flowlet-quality",         SAI_ARS_MODE_FLOWLET_QUALITY},
-    {"flowlet-quality-bounded", SAI_ARS_MODE_FLOWLET_QUALITY},
+    {"flowlet-quality-bounded", SAI_ARS_MODE_FLOWLET_QUALITY_BOUNDED},
     {"flowlet-random",          SAI_ARS_MODE_FLOWLET_RANDOM},
     {"packet-quality",          SAI_ARS_MODE_PER_PACKET_QUALITY},
     {"packet-random",           SAI_ARS_MODE_PER_PACKET_RANDOM},
@@ -56,6 +56,8 @@ void ArsOrch::doTask(Consumer &consumer)
         doArsPortProfileTask(consumer);
     else if (tableName == CFG_ARS_NEXTHOPS_TABLE_NAME)
         doArsNexthopsTask(consumer);
+    else if (tableName == CFG_ARS_PORTCHANNELS_TABLE_NAME)
+        doArsPortChannelTask(consumer);
     else
         SWSS_LOG_ERROR("ArsOrch: unknown table %s", tableName.c_str());
 }
@@ -189,10 +191,20 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                 else if (field == "random_seed")         entry.randomSeed        = static_cast<uint32_t>(stoul(value));
                 else if (field == "algorithm")
                 {
-                    /* Only EWMA supported; log if different */
                     if (value != "EWMA")
                         SWSS_LOG_WARN("ARS: unsupported algorithm '%s', using EWMA", value.c_str());
                 }
+                else if (field == "quantization_type")
+                {
+                    if (value == "log2")
+                        entry.quantizationType = 1;
+                    else
+                        entry.quantizationType = 0;
+                }
+                else if (field == "link_utilization_threshold")
+                    entry.profileLinkUtilThreshold = static_cast<uint32_t>(stoul(value));
+                else if (field == "idle_time")
+                    entry.profileIdleTime = static_cast<uint32_t>(stoul(value));
                 else
                     SWSS_LOG_WARN("ARS: unknown profile field '%s'", field.c_str());
             }
@@ -276,6 +288,7 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
                 else if (field == "max_flows")   entry.maxFlows = static_cast<uint32_t>(stoul(value));
                 else if (field == "admin_state") entry.enabled  = (value == "up");
                 else if (field == "profile")     entry.profileName = value;
+                else if (field == "port_profile") entry.portProfileName = value;
             }
 
             if (!m_arsEnabled)
@@ -341,7 +354,8 @@ void ArsOrch::doArsInterfaceTask(Consumer &consumer)
                 else if (field == "ars_object")               entry.arsObject = value;
                 else if (field == "port_profile")             entry.portProfile = value;
                 else if (field == "link_utilization_threshold") entry.linkUtilThreshold = static_cast<uint32_t>(stoul(value));
-                else if (field == "weight")                   { /* stored in YANG but no SAI attr */ }
+                else if (field == "weight")
+                    entry.weight = static_cast<uint32_t>(stoul(value));
                 else
                     SWSS_LOG_WARN("ARS: unknown interface field '%s' on %s",
                                   field.c_str(), portName.c_str());
@@ -489,6 +503,51 @@ void ArsOrch::doArsNexthopsTask(Consumer &consumer)
         {
             m_nexthopArsBindings.erase(prefix);
             SWSS_LOG_NOTICE("ARS: prefix %s ARS binding removed", prefix.c_str());
+        }
+
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
+/* ── ARS PortChannels (LAG-level ARS membership) ─────────────────────── */
+
+void ArsOrch::doArsPortChannelTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        auto &kfv = it->second;
+        string lagName = kfvKey(kfv);
+        string op      = kfvOp(kfv);
+
+        if (op == SET_COMMAND)
+        {
+            ArsInterfaceEntry entry;
+            if (m_arsInterfaces.count(lagName))
+                entry = m_arsInterfaces[lagName];
+
+            for (auto &fv : kfvFieldsValues(kfv))
+            {
+                const string &field = fvField(fv);
+                const string &value = fvValue(fv);
+
+                if      (field == "admin_state") entry.enabled = (value == "up");
+                else if (field == "ars_object")  entry.arsObject = value;
+                else if (field == "port_profile") entry.portProfile = value;
+                else if (field == "link_utilization_threshold")
+                    entry.linkUtilThreshold = static_cast<uint32_t>(stoul(value));
+            }
+
+            m_arsInterfaces[lagName] = entry;
+            SWSS_LOG_NOTICE("ARS: PortChannel %s ARS config set (object=%s, enabled=%d)",
+                            lagName.c_str(), entry.arsObject.c_str(), entry.enabled);
+        }
+        else if (op == DEL_COMMAND)
+        {
+            m_arsInterfaces.erase(lagName);
+            SWSS_LOG_NOTICE("ARS: PortChannel %s ARS config removed", lagName.c_str());
         }
 
         it = consumer.m_toSync.erase(it);
@@ -708,6 +767,21 @@ bool ArsOrch::createArsObject(const string &name, const ArsObjectEntry &entry)
     attr.value.u32 = entry.maxFlows;
     attrs.push_back(attr);
 
+    attr.id = SAI_ARS_ATTR_ENABLE_IPV4;
+    attr.value.booldata = entry.enabled;
+    attrs.push_back(attr);
+
+    if (!entry.profileName.empty())
+    {
+        auto profOid = getArsProfileOid(entry.profileName);
+        if (profOid != SAI_NULL_OBJECT_ID)
+        {
+            attr.id = SAI_ARS_ATTR_ARS_PROFILE;
+            attr.value.oid = profOid;
+            attrs.push_back(attr);
+        }
+    }
+
     sai_object_id_t arsOid;
     sai_status_t status = sai_ars_api->create_ars(
         &arsOid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
@@ -902,6 +976,44 @@ bool ArsOrch::setPortArsEnable(const string &portName, bool enable)
 
 /* ── Per-port ARS profile attributes via SAI ──────────────────────────── */
 
+bool ArsOrch::setPortArsLoadBands(const string &portName, const ArsPortProfileEntry &pp)
+{
+    Port port;
+    if (!m_portsOrch->getPort(portName, port))
+    {
+        SWSS_LOG_ERROR("ARS: port %s not found for load bands", portName.c_str());
+        return false;
+    }
+
+    extern sai_port_api_t *sai_port_api;
+    sai_attribute_t attr;
+    auto setAttr = [&](sai_port_attr_t id, uint32_t val) {
+        attr.id = id;
+        attr.value.u32 = val;
+        sai_status_t s = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+        if (s != SAI_STATUS_SUCCESS)
+            SWSS_LOG_WARN("ARS: set port load band attr %d on %s failed: %s",
+                          id, portName.c_str(), sai_serialize_status(s).c_str());
+    };
+
+    if (pp.loadPastMinVal > 0 || pp.loadPastMaxVal > 0)
+    {
+        setAttr(SAI_PORT_ATTR_ARS_PORT_LOAD_PAST_MIN_VAL, pp.loadPastMinVal);
+        setAttr(SAI_PORT_ATTR_ARS_PORT_LOAD_PAST_MAX_VAL, pp.loadPastMaxVal);
+    }
+    if (pp.loadFutureMinVal > 0 || pp.loadFutureMaxVal > 0)
+    {
+        setAttr(SAI_PORT_ATTR_ARS_PORT_LOAD_FUTURE_MIN_VAL, pp.loadFutureMinVal);
+        setAttr(SAI_PORT_ATTR_ARS_PORT_LOAD_FUTURE_MAX_VAL, pp.loadFutureMaxVal);
+    }
+    if (pp.loadCurrentMinVal > 0 || pp.loadCurrentMaxVal > 0)
+    {
+        setAttr(SAI_PORT_ATTR_ARS_PORT_LOAD_CURRENT_MIN_VAL, pp.loadCurrentMinVal);
+        setAttr(SAI_PORT_ATTR_ARS_PORT_LOAD_CURRENT_MAX_VAL, pp.loadCurrentMaxVal);
+    }
+    return true;
+}
+
 bool ArsOrch::setPortArsScalingFactor(const string &portName, uint32_t factor)
 {
     Port port;
@@ -973,11 +1085,25 @@ void ArsOrch::applyPortProfileToInterface(const string &portName, const string &
 
     const auto &pp = it->second;
 
+    if (!pp.enabled)
+    {
+        SWSS_LOG_NOTICE("ARS: port-profile '%s' is disabled, skipping application to %s",
+                        profileName.c_str(), portName.c_str());
+        return;
+    }
+
     if (pp.loadScalingFactor > 0)
         setPortArsScalingFactor(portName, pp.loadScalingFactor);
 
     if (pp.portLoadPastWeight > 0 || pp.portLoadFutureWeight > 0)
         setPortArsWeights(portName, pp.portLoadPastWeight, pp.portLoadFutureWeight);
+
+    if (pp.loadPastMinVal > 0 || pp.loadPastMaxVal > 0 ||
+        pp.loadFutureMinVal > 0 || pp.loadFutureMaxVal > 0 ||
+        pp.loadCurrentMinVal > 0 || pp.loadCurrentMaxVal > 0)
+    {
+        setPortArsLoadBands(portName, pp);
+    }
 }
 
 /* ── Publish ARS capabilities to STATE_DB ─────────────────────────────── */

@@ -66,6 +66,8 @@ public:
 
     sai_next_hop_group_type_t getEcmpNhgType() const { return m_ecmpNhgType; }
     uint32_t getEcmpResilientBuckets() const { return m_ecmpResilientBuckets; }
+    uint32_t getEcmpResilientActiveFlowTimer() const { return m_ecmpResilientActiveFlowTimer; }
+    uint32_t getEcmpResilientMaxUnbalancedTime() const { return m_ecmpResilientMaxUnbalancedTime; }
 
     void onSwitchAsicSdkHealthEvent(sai_object_id_t switch_id,
                                     sai_switch_asic_sdk_health_severity_t severity,
@@ -155,6 +157,8 @@ private:
     bool m_orderedEcmpEnable = false;
     sai_next_hop_group_type_t m_ecmpNhgType = SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP;
     uint32_t m_ecmpResilientBuckets = 0;
+    uint32_t m_ecmpResilientActiveFlowTimer = 0;
+    uint32_t m_ecmpResilientMaxUnbalancedTime = 0;
     bool m_PfcDlrInitEnable = false;
 
     // ASIC SDK health event

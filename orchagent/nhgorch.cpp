@@ -775,12 +775,33 @@ bool NextHopGroup::sync()
         nhg_attr.value.s32 = gSwitchOrch->getEcmpNhgType();
         nhg_attrs.push_back(nhg_attr);
 
+        auto nhgType = gSwitchOrch->getEcmpNhgType();
         auto nhgBuckets = gSwitchOrch->getEcmpResilientBuckets();
-        if (gSwitchOrch->getEcmpNhgType() == SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP && nhgBuckets > 0)
+        if ((nhgType == SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP ||
+             nhgType == SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP) && nhgBuckets > 0)
         {
             nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_CONFIGURED_SIZE;
             nhg_attr.value.u32 = nhgBuckets;
             nhg_attrs.push_back(nhg_attr);
+        }
+
+        if (nhgType == SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP)
+        {
+            auto activeFlowTimer = gSwitchOrch->getEcmpResilientActiveFlowTimer();
+            if (activeFlowTimer > 0)
+            {
+                nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_ACTIVE_FLOW_TIMER;
+                nhg_attr.value.u32 = activeFlowTimer;
+                nhg_attrs.push_back(nhg_attr);
+            }
+
+            auto maxUnbalancedTime = gSwitchOrch->getEcmpResilientMaxUnbalancedTime();
+            if (maxUnbalancedTime > 0)
+            {
+                nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_MAX_UNBALANCED_TIME;
+                nhg_attr.value.u32 = maxUnbalancedTime;
+                nhg_attrs.push_back(nhg_attr);
+            }
         }
 
         sai_status_t status = sai_next_hop_group_api->create_next_hop_group(

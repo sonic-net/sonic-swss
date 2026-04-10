@@ -935,6 +935,16 @@ bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
                 m_ecmpResilientBuckets = hash.ecmp_resilient_hash_buckets.value;
             }
 
+            if (hash.ecmp_resilient_active_flow_timer.is_set)
+            {
+                m_ecmpResilientActiveFlowTimer = hash.ecmp_resilient_active_flow_timer.value;
+            }
+
+            if (hash.ecmp_resilient_max_unbalanced_time.is_set)
+            {
+                m_ecmpResilientMaxUnbalancedTime = hash.ecmp_resilient_max_unbalanced_time.value;
+            }
+
             cfgUpd = true;
         }
     }

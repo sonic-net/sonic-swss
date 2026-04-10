@@ -31,6 +31,9 @@ struct ArsProfileEntry
     bool            ipv6Enable        = true;
     uint32_t        samplingInterval  = 0;
     uint32_t        randomSeed        = 0;
+    uint32_t        quantizationType  = 0;
+    uint32_t        profileLinkUtilThreshold = 0;
+    uint32_t        profileIdleTime   = 0;
 };
 
 struct ArsObjectEntry
@@ -41,6 +44,7 @@ struct ArsObjectEntry
     uint32_t        maxFlows = 512;
     bool            enabled  = false;
     std::string     profileName;
+    std::string     portProfileName;
 };
 
 struct ArsInterfaceEntry
@@ -49,6 +53,7 @@ struct ArsInterfaceEntry
     std::string arsObject;
     std::string portProfile;
     uint32_t    linkUtilThreshold = 0;
+    uint32_t    weight = 1;
 };
 
 struct ArsPortProfileEntry
@@ -106,7 +111,10 @@ private:
     bool setPortArsEnable(const std::string &portName, bool enable);
     bool setPortArsScalingFactor(const std::string &portName, uint32_t factor);
     bool setPortArsWeights(const std::string &portName, uint32_t pastWeight, uint32_t futureWeight);
+    bool setPortArsLoadBands(const std::string &portName, const ArsPortProfileEntry &pp);
     void applyPortProfileToInterface(const std::string &portName, const std::string &profileName);
+
+    void doArsPortChannelTask(Consumer &consumer);
 
     void publishArsCaps();
 
