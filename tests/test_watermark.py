@@ -315,7 +315,8 @@ class TestWatermark(object):
             keyvalues = dict(ret[1])
             assert "LAST_RESET_TIME" in keyvalues, f"LAST_RESET_TIME not found for {obj_id}"
             reset_time = int(keyvalues["LAST_RESET_TIME"])
-            assert reset_time > 0, f"LAST_RESET_TIME should be positive, got {reset_time}"
+            assert 0 <= reset_time <= 0xFFFFFFFF, \
+                f"LAST_RESET_TIME should be a non-negative 32-bit value, got {reset_time}"
 
     def verify_last_reset_time_not_set(self, dvs, obj_ids, table_name):
         """Verify LAST_RESET_TIME field does NOT exist (for persistent watermarks)"""

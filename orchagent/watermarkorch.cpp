@@ -5,19 +5,23 @@
 #include "converter.h"
 #include "bufferorch.h"
 #include <inttypes.h>
-#include <chrono>
+#include <time.h>
 
 #define DEFAULT_TELEMETRY_INTERVAL 120
 #define LAST_RESET_TIME_FIELD "LAST_RESET_TIME"
 
 /*
- * Get system uptime in milliseconds using steady_clock (monotonic time).
+ * Get system uptime in centiseconds using CLOCK_BOOTTIME.
+ * Returns a 32-bit value that wraps at 2^32 per SNMP TimeTicks (RFC 2578).
+ * CLOCK_BOOTTIME includes time spent in suspend, unlike CLOCK_MONOTONIC.
  */
-static uint64_t getSysUptimeMilliseconds()
+static uint32_t getSysUptimeCentiseconds()
 {
-    using namespace std::chrono;
-    auto now = steady_clock::now();
-    return duration_cast<milliseconds>(now.time_since_epoch()).count();
+    struct timespec ts;
+    clock_gettime(CLOCK_BOOTTIME, &ts);
+    // Convert to centiseconds (1/100 sec) and wrap at 2^32
+    uint64_t centiseconds = (uint64_t)ts.tv_sec * 100 + ts.tv_nsec / 10000000;
+    return (uint32_t)(centiseconds & 0xFFFFFFFF);
 }
 
 #define CLEAR_PG_HEADROOM_REQUEST "PG_HEADROOM"
@@ -344,12 +348,12 @@ void WatermarkOrch::clearSingleWm(Table *table, string wm_name, vector<sai_objec
     vector<FieldValueTuple> vfvt = {{wm_name, "0"}};
 
     // Record the reset timestamp for user-initiated clears (for SNMP oracleXgsQueueWatermarkLastResetTime)
-    // SNMP TimeTicks uses centiseconds (1/100 sec), so divide milliseconds by 10
+    // SNMP TimeTicks uses centiseconds (1/100 sec), 32-bit value wrapping at 2^32
     if (recordResetTime)
     {
-        uint64_t uptimeCentiseconds = getSysUptimeMilliseconds() / 10;
+        uint32_t uptimeCentiseconds = getSysUptimeCentiseconds();
         vfvt.emplace_back(LAST_RESET_TIME_FIELD, to_string(uptimeCentiseconds));
-        SWSS_LOG_INFO("Recording watermark reset time: %" PRIu64 " centiseconds", uptimeCentiseconds);
+        SWSS_LOG_DEBUG("Recording watermark reset time: %" PRIu32 " centiseconds", uptimeCentiseconds);
     }
 
     for (sai_object_id_t id: obj_ids)
@@ -366,12 +370,12 @@ void WatermarkOrch::clearSingleWm(Table *table, string wm_name, const object_ref
     vector<FieldValueTuple> fvTuples = {{wm_name, "0"}};
 
     // Record the reset timestamp for user-initiated clears (for SNMP oracleXgsQueueWatermarkLastResetTime)
-    // SNMP TimeTicks uses centiseconds (1/100 sec), so divide milliseconds by 10
+    // SNMP TimeTicks uses centiseconds (1/100 sec), 32-bit value wrapping at 2^32
     if (recordResetTime)
     {
-        uint64_t uptimeCentiseconds = getSysUptimeMilliseconds() / 10;
+        uint32_t uptimeCentiseconds = getSysUptimeCentiseconds();
         fvTuples.emplace_back(LAST_RESET_TIME_FIELD, to_string(uptimeCentiseconds));
-        SWSS_LOG_INFO("Recording watermark reset time: %" PRIu64 " centiseconds", uptimeCentiseconds);
+        SWSS_LOG_DEBUG("Recording watermark reset time: %" PRIu32 " centiseconds", uptimeCentiseconds);
     }
 
     for (const auto &it : nameOidMap)
