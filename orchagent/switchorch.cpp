@@ -916,15 +916,25 @@ bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
             switch (hash.ecmp_type.value)
             {
             case EcmpType::ECMP_STATIC:
-                SWSS_LOG_NOTICE("ECMP type set to static (standard)");
+                m_ecmpNhgType = SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP;
+                SWSS_LOG_NOTICE("ECMP type set to static — NHGs will use DYNAMIC_UNORDERED_ECMP");
                 break;
             case EcmpType::ECMP_CONSISTENT:
-                SWSS_LOG_NOTICE("ECMP type set to consistent (fine-grained)");
+                m_ecmpNhgType = SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP;
+                SWSS_LOG_NOTICE("ECMP type set to consistent — NHGs will use FINE_GRAIN_ECMP");
                 break;
             case EcmpType::ECMP_RESILIENT:
-                SWSS_LOG_NOTICE("ECMP type set to resilient (dynamic-ordered)");
+                m_ecmpNhgType = SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP;
+                m_orderedEcmpEnable = true;
+                SWSS_LOG_NOTICE("ECMP type set to resilient — NHGs will use DYNAMIC_ORDERED_ECMP");
                 break;
             }
+
+            if (hash.ecmp_resilient_hash_buckets.is_set)
+            {
+                m_ecmpResilientBuckets = hash.ecmp_resilient_hash_buckets.value;
+            }
+
             cfgUpd = true;
         }
     }

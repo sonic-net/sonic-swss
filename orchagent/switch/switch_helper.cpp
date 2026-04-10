@@ -39,7 +39,9 @@ static const std::unordered_map<std::string, sai_native_hash_field_t> swHashHash
     { SWITCH_HASH_FIELD_INNER_SRC_IP,      SAI_NATIVE_HASH_FIELD_INNER_SRC_IP      },
     { SWITCH_HASH_FIELD_INNER_L4_DST_PORT, SAI_NATIVE_HASH_FIELD_INNER_L4_DST_PORT },
     { SWITCH_HASH_FIELD_INNER_L4_SRC_PORT, SAI_NATIVE_HASH_FIELD_INNER_L4_SRC_PORT },
-    { SWITCH_HASH_FIELD_IPV6_FLOW_LABEL,   SAI_NATIVE_HASH_FIELD_IPV6_FLOW_LABEL   }
+    { SWITCH_HASH_FIELD_IPV6_FLOW_LABEL,   SAI_NATIVE_HASH_FIELD_IPV6_FLOW_LABEL   },
+    { SWITCH_HASH_FIELD_RDMA_BTH_OPCODE,   SAI_NATIVE_HASH_FIELD_RDMA_BTH_OPCODE   },
+    { SWITCH_HASH_FIELD_RDMA_BTH_DEST_QP,  SAI_NATIVE_HASH_FIELD_RDMA_BTH_DEST_QP  }
 };
 
 static const std::unordered_map<std::string, sai_hash_algorithm_t> swHashAlgorithmMap =
@@ -50,7 +52,8 @@ static const std::unordered_map<std::string, sai_hash_algorithm_t> swHashAlgorit
     { SWITCH_HASH_ALGORITHM_CRC_32LO,  SAI_HASH_ALGORITHM_CRC_32LO  },
     { SWITCH_HASH_ALGORITHM_CRC_32HI,  SAI_HASH_ALGORITHM_CRC_32HI  },
     { SWITCH_HASH_ALGORITHM_CRC_CCITT, SAI_HASH_ALGORITHM_CRC_CCITT },
-    { SWITCH_HASH_ALGORITHM_CRC_XOR,   SAI_HASH_ALGORITHM_CRC_XOR   }
+    { SWITCH_HASH_ALGORITHM_CRC_XOR,       SAI_HASH_ALGORITHM_CRC_XOR       },
+    { SWITCH_HASH_ALGORITHM_ROUND_ROBIN,   SAI_HASH_ALGORITHM_ROUND_ROBIN   }
 };
 
 // switch helper ------------------------------------------------------------------------------------------------------

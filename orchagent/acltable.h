@@ -40,6 +40,7 @@ extern "C" {
 #define TABLE_TYPE_EGR_SET_DSCP         "EGR_SET_DSCP"
 #define TABLE_TYPE_UNDERLAY_SET_DSCP    "UNDERLAY_SET_DSCP"
 #define TABLE_TYPE_UNDERLAY_SET_DSCPV6  "UNDERLAY_SET_DSCPV6"
+#define TABLE_TYPE_ARS                  "ARS"
 
 typedef enum
 {

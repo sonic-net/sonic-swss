@@ -3,6 +3,7 @@
 #include "orch.h"
 #include "portsorch.h"
 #include "switchorch.h"
+#include "nexthopgroupkey.h"
 
 #include <unordered_map>
 #include <string>
@@ -58,6 +59,10 @@ struct ArsPortProfileEntry
     uint32_t loadFutureMaxVal  = 0;
     uint32_t loadCurrentMinVal = 0;
     uint32_t loadCurrentMaxVal = 0;
+    bool     enabled           = false;
+    uint32_t portLoadPastWeight   = 0;
+    uint32_t portLoadFutureWeight = 0;
+    uint32_t loadScalingFactor    = 0;
 };
 
 class ArsOrch : public Orch
@@ -73,6 +78,9 @@ public:
     sai_object_id_t getArsProfileOid(const std::string &name) const;
     sai_object_id_t getArsObjectOid(const std::string &name) const;
     bool bindArsToNhg(sai_object_id_t nhgOid, sai_object_id_t arsOid);
+    bool unbindArsFromNhg(sai_object_id_t nhgOid);
+    sai_object_id_t resolveArsForNhg(sai_object_id_t nhgOid, const NextHopGroupKey &nhgKey);
+    std::string getArsObjectForPort(const std::string &portName) const;
 
 private:
     void doTask(Consumer &consumer) override;
@@ -96,6 +104,9 @@ private:
     bool bindArsProfileToSwitch(sai_object_id_t profileOid);
 
     bool setPortArsEnable(const std::string &portName, bool enable);
+    bool setPortArsScalingFactor(const std::string &portName, uint32_t factor);
+    bool setPortArsWeights(const std::string &portName, uint32_t pastWeight, uint32_t futureWeight);
+    void applyPortProfileToInterface(const std::string &portName, const std::string &profileName);
 
     void publishArsCaps();
 
