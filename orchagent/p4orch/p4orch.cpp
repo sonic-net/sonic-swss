@@ -293,6 +293,20 @@ void P4Orch::handlePortStatusUpdate(const std::string& alias,
   m_wcmpManager->updateWatchPort(alias, status);
 }
 
+void P4Orch::handleLagMemberLacpStatusUpdate(
+    const std::string& alias, bool lacp_enable) {
+
+  Port port;
+  if (!gPortsOrch->getPort(alias, port)) {
+    SWSS_LOG_ERROR("Failed to get port object for port alias %s.",
+                   alias.c_str());
+    return;
+  }
+
+  // Update watchport
+  m_wcmpManager->updateLagMemberWatchPort(alias, lacp_enable);
+}
+
 void P4Orch::doTask(NotificationConsumer &consumer)
 {
     SWSS_LOG_ENTER();

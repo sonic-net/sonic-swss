@@ -95,6 +95,10 @@ class WcmpManager : public ObjectManagerInterface
     // The real watchport update will happen in processWatchPortEvent().
     void updateWatchPort(const std::string& port, sai_port_oper_status_t status);
 
+    // Update the WCMP group member if the member is also a member of an LACP
+    // LAG. Prune or restore this WCMP group member based on the LACP state.
+    void updateLagMemberWatchPort(const std::string& port, bool lacp_enable);
+
     // Process group update in m_watchport_groups, maximum of
     // kMaxWatchportGroupBulkSize groups per call.
     void processWatchPortEvent();
@@ -164,6 +168,9 @@ class WcmpManager : public ObjectManagerInterface
     // Maps port name to oper-status
     std::unordered_map<std::string, sai_port_oper_status_t>
       m_port_oper_status_map;
+
+    // Maps port name to LACP enable status if the port is a LAG member
+    std::unordered_map<std::string, bool> m_port_lacp_enable_status_map;
 
     // Owners of pointers below must outlive this class's instance.
     P4OidMapper *m_p4OidMapper;
