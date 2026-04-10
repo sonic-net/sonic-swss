@@ -9289,7 +9289,7 @@ sai_object_id_t PortsOrch::getPortSerdesIdFromPortId(sai_object_id_t port_id)
     sai_status_t status = sai_port_api->get_port_attribute(port_id, 1, &port_attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get port serdes ID for port 0x%" PRIx64 " (status=%d)", port_id, status);
+        SWSS_LOG_WARN("Failed to get port serdes ID for port 0x%" PRIx64 " (status=%d)", port_id, status);
         return SAI_NULL_OBJECT_ID;
     }
 
