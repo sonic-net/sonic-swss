@@ -51,6 +51,10 @@ void ArsOrch::doTask(Consumer &consumer)
         doArsObjectTask(consumer);
     else if (tableName == CFG_ARS_INTERFACES_TABLE_NAME)
         doArsInterfaceTask(consumer);
+    else if (tableName == CFG_ARS_PORT_PROFILE_TABLE_NAME)
+        doArsPortProfileTask(consumer);
+    else if (tableName == CFG_ARS_NEXTHOPS_TABLE_NAME)
+        doArsNexthopsTask(consumer);
     else
         SWSS_LOG_ERROR("ArsOrch: unknown table %s", tableName.c_str());
 }
@@ -77,10 +81,13 @@ void ArsOrch::doArsGlobalTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             bool wantEnable = false;
+            string profileName;
             for (auto &fv : kfvFieldsValues(kfv))
             {
                 if (fvField(fv) == "admin_state")
                     wantEnable = (fvValue(fv) == "up");
+                else if (fvField(fv) == "profile")
+                    profileName = fvValue(fv);
             }
 
             if (wantEnable && !m_arsEnabled)
@@ -93,6 +100,32 @@ void ArsOrch::doArsGlobalTask(Consumer &consumer)
                 SWSS_LOG_NOTICE("ARS: Adaptive Routing globally disabled");
                 m_arsEnabled = false;
             }
+
+            if (!profileName.empty() && profileName != m_globalProfileName)
+            {
+                auto profIt = m_arsProfiles.find(profileName);
+                if (profIt != m_arsProfiles.end() &&
+                    profIt->second.profileOid != SAI_NULL_OBJECT_ID)
+                {
+                    bindArsProfileToSwitch(profIt->second.profileOid);
+                    m_globalProfileName = profileName;
+                    SWSS_LOG_NOTICE("ARS: bound profile '%s' to switch",
+                                    profileName.c_str());
+                }
+                else
+                {
+                    m_globalProfileName = profileName;
+                    SWSS_LOG_NOTICE("ARS: profile '%s' requested but not yet "
+                                    "created — will bind when available",
+                                    profileName.c_str());
+                }
+            }
+            else if (profileName.empty() && !m_globalProfileName.empty())
+            {
+                bindArsProfileToSwitch(SAI_NULL_OBJECT_ID);
+                m_globalProfileName.clear();
+                SWSS_LOG_NOTICE("ARS: unbound profile from switch");
+            }
         }
         else if (op == DEL_COMMAND)
         {
@@ -100,6 +133,11 @@ void ArsOrch::doArsGlobalTask(Consumer &consumer)
             {
                 SWSS_LOG_NOTICE("ARS: Adaptive Routing global entry removed — disabling");
                 m_arsEnabled = false;
+            }
+            if (m_activeSwitchProfileOid != SAI_NULL_OBJECT_ID)
+            {
+                bindArsProfileToSwitch(SAI_NULL_OBJECT_ID);
+                m_globalProfileName.clear();
             }
         }
 
@@ -133,7 +171,7 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
 
                 if      (field == "load_past_weight")    entry.loadPastWeight   = static_cast<uint32_t>(stoul(value));
                 else if (field == "load_future_weight")  entry.loadFutureWeight = static_cast<uint32_t>(stoul(value));
-                else if (field == "load_current_weight") entry.loadCurrentEnable = (stoul(value) > 0);
+                else if (field == "load_current_weight") entry.loadCurrentWeight = static_cast<uint32_t>(stoul(value));
                 else if (field == "load_exponent")       entry.loadExponent      = static_cast<uint32_t>(stoul(value));
                 else if (field == "max_flows")           entry.maxFlows          = static_cast<uint32_t>(stoul(value));
                 else if (field == "load_past_min_val")   entry.loadPastMinVal    = static_cast<uint32_t>(stoul(value));
@@ -142,7 +180,24 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                 else if (field == "load_future_max_val") entry.loadFutureMaxVal  = static_cast<uint32_t>(stoul(value));
                 else if (field == "load_current_min_val") entry.loadCurrentMinVal = static_cast<uint32_t>(stoul(value));
                 else if (field == "load_current_max_val") entry.loadCurrentMaxVal = static_cast<uint32_t>(stoul(value));
+                else if (field == "port_load_past")      entry.loadPastEnable    = (value == "true");
+                else if (field == "port_load_future")    entry.loadFutureEnable  = (value == "true");
+                else if (field == "ipv4_enable")         entry.ipv4Enable        = (value == "true");
+                else if (field == "ipv6_enable")         entry.ipv6Enable        = (value == "true");
+                else if (field == "sampling_interval")   entry.samplingInterval  = static_cast<uint32_t>(stoul(value));
+                else if (field == "random_seed")         entry.randomSeed        = static_cast<uint32_t>(stoul(value));
+                else if (field == "algorithm")
+                {
+                    /* Only EWMA supported; log if different */
+                    if (value != "EWMA")
+                        SWSS_LOG_WARN("ARS: unsupported algorithm '%s', using EWMA", value.c_str());
+                }
+                else
+                    SWSS_LOG_WARN("ARS: unknown profile field '%s'", field.c_str());
             }
+
+            /* loadCurrentEnable derived from weight > 0 for SAI compat */
+            entry.loadCurrentEnable = (entry.loadCurrentWeight > 0);
 
             if (entry.profileOid == SAI_NULL_OBJECT_ID)
             {
@@ -153,12 +208,20 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                     continue;
                 }
                 entry.profileOid = m_arsProfiles[name].profileOid;
+
+                if (!m_globalProfileName.empty() && m_globalProfileName == name &&
+                    m_activeSwitchProfileOid == SAI_NULL_OBJECT_ID)
+                {
+                    bindArsProfileToSwitch(entry.profileOid);
+                }
             }
             else
             {
                 sai_object_id_t oid = entry.profileOid;
                 updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_PAST_WEIGHT,   entry.loadPastWeight);
                 updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_FUTURE_WEIGHT,  entry.loadFutureWeight);
+                updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_PAST,       entry.loadPastEnable);
+                updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_FUTURE,     entry.loadFutureEnable);
                 updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_CURRENT,    entry.loadCurrentEnable);
                 updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_EXPONENT,       entry.loadExponent);
                 updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_MAX_FLOWS,                entry.maxFlows);
@@ -168,6 +231,8 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                 updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_FUTURE_MAX_VAL,      entry.loadFutureMaxVal);
                 updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_CURRENT_MIN_VAL,     entry.loadCurrentMinVal);
                 updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_CURRENT_MAX_VAL,     entry.loadCurrentMaxVal);
+                updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_ENABLE_IPV4,          entry.ipv4Enable);
+                updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_ENABLE_IPV6,          entry.ipv6Enable);
                 m_arsProfiles[name] = entry;
             }
         }
@@ -262,26 +327,58 @@ void ArsOrch::doArsInterfaceTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            bool wantEnable = false;
+            ArsInterfaceEntry entry;
+            if (m_arsInterfaces.count(portName))
+                entry = m_arsInterfaces[portName];
+
             for (auto &fv : kfvFieldsValues(kfv))
             {
-                if (fvField(fv) == "admin_state")
-                    wantEnable = (fvValue(fv) == "up");
+                const string &field = fvField(fv);
+                const string &value = fvValue(fv);
+
+                if      (field == "admin_state")              entry.enabled = (value == "up");
+                else if (field == "ars_object")               entry.arsObject = value;
+                else if (field == "port_profile")             entry.portProfile = value;
+                else if (field == "link_utilization_threshold") entry.linkUtilThreshold = static_cast<uint32_t>(stoul(value));
+                else if (field == "weight")                   { /* stored in YANG but no SAI attr */ }
+                else
+                    SWSS_LOG_WARN("ARS: unknown interface field '%s' on %s",
+                                  field.c_str(), portName.c_str());
             }
 
-            if (wantEnable && m_arsEnabledPorts.find(portName) == m_arsEnabledPorts.end())
+            bool prevEnabled = (m_arsEnabledPorts.find(portName) != m_arsEnabledPorts.end());
+
+            if (entry.enabled && !prevEnabled)
             {
                 if (setPortArsEnable(portName, true))
                     m_arsEnabledPorts.insert(portName);
                 else
                     SWSS_LOG_ERROR("ARS: failed to enable ARS on port %s", portName.c_str());
             }
-            else if (!wantEnable && m_arsEnabledPorts.count(portName))
+            else if (!entry.enabled && prevEnabled)
             {
                 if (setPortArsEnable(portName, false))
                     m_arsEnabledPorts.erase(portName);
                 else
                     SWSS_LOG_ERROR("ARS: failed to disable ARS on port %s", portName.c_str());
+            }
+
+            m_arsInterfaces[portName] = entry;
+
+            if (!entry.arsObject.empty())
+            {
+                SWSS_LOG_NOTICE("ARS: interface %s associated with ARS object '%s'",
+                                portName.c_str(), entry.arsObject.c_str());
+            }
+            if (!entry.portProfile.empty())
+            {
+                SWSS_LOG_NOTICE("ARS: interface %s bound to port-profile '%s'",
+                                portName.c_str(), entry.portProfile.c_str());
+            }
+            if (entry.linkUtilThreshold > 0)
+            {
+                SWSS_LOG_NOTICE("ARS: interface %s link-utilization-threshold=%u%%",
+                                portName.c_str(), entry.linkUtilThreshold);
             }
         }
         else if (op == DEL_COMMAND)
@@ -291,6 +388,102 @@ void ArsOrch::doArsInterfaceTask(Consumer &consumer)
                 setPortArsEnable(portName, false);
                 m_arsEnabledPorts.erase(portName);
             }
+            m_arsInterfaces.erase(portName);
+        }
+
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
+/* ── ARS Port Profile ────────────────────────────────────────────────── */
+
+void ArsOrch::doArsPortProfileTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        auto &kfv = it->second;
+        string name = kfvKey(kfv);
+        string op   = kfvOp(kfv);
+
+        if (op == SET_COMMAND)
+        {
+            ArsPortProfileEntry entry;
+            if (m_arsPortProfiles.count(name))
+                entry = m_arsPortProfiles[name];
+
+            for (auto &fv : kfvFieldsValues(kfv))
+            {
+                const string &field = fvField(fv);
+                const string &value = fvValue(fv);
+
+                if      (field == "load_past_min_val")    entry.loadPastMinVal    = static_cast<uint32_t>(stoul(value));
+                else if (field == "load_past_max_val")    entry.loadPastMaxVal    = static_cast<uint32_t>(stoul(value));
+                else if (field == "load_future_min_val")  entry.loadFutureMinVal  = static_cast<uint32_t>(stoul(value));
+                else if (field == "load_future_max_val")  entry.loadFutureMaxVal  = static_cast<uint32_t>(stoul(value));
+                else if (field == "load_current_min_val") entry.loadCurrentMinVal = static_cast<uint32_t>(stoul(value));
+                else if (field == "load_current_max_val") entry.loadCurrentMaxVal = static_cast<uint32_t>(stoul(value));
+                else if (field == "enable" || field == "port_load_past_weight" ||
+                         field == "port_load_future_weight" || field == "load_scaling_factor")
+                {
+                    SWSS_LOG_NOTICE("ARS: port-profile %s field '%s' = '%s' (stored, no SAI attr)",
+                                    name.c_str(), field.c_str(), value.c_str());
+                }
+            }
+
+            m_arsPortProfiles[name] = entry;
+            SWSS_LOG_NOTICE("ARS: port-profile '%s' updated", name.c_str());
+        }
+        else if (op == DEL_COMMAND)
+        {
+            m_arsPortProfiles.erase(name);
+            SWSS_LOG_NOTICE("ARS: port-profile '%s' removed", name.c_str());
+        }
+
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
+/* ── ARS Nexthops (prefix → ARS object binding for routeorch) ────────── */
+
+void ArsOrch::doArsNexthopsTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        auto &kfv = it->second;
+        string prefix = kfvKey(kfv);
+        string op     = kfvOp(kfv);
+
+        if (op == SET_COMMAND)
+        {
+            string arsObjName;
+            for (auto &fv : kfvFieldsValues(kfv))
+            {
+                if (fvField(fv) == "ars_object")
+                    arsObjName = fvValue(fv);
+            }
+
+            if (arsObjName.empty())
+            {
+                SWSS_LOG_WARN("ARS: nexthop entry for prefix %s has no ars_object",
+                              prefix.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            m_nexthopArsBindings[prefix] = arsObjName;
+            SWSS_LOG_NOTICE("ARS: prefix %s mapped to ARS object '%s'",
+                            prefix.c_str(), arsObjName.c_str());
+        }
+        else if (op == DEL_COMMAND)
+        {
+            m_nexthopArsBindings.erase(prefix);
+            SWSS_LOG_NOTICE("ARS: prefix %s ARS binding removed", prefix.c_str());
         }
 
         it = consumer.m_toSync.erase(it);
@@ -307,11 +500,11 @@ bool ArsOrch::createArsProfile(const string &name, const ArsProfileEntry &entry)
     sai_attribute_t attr;
 
     attr.id = SAI_ARS_PROFILE_ATTR_ALGO;
-    attr.value.s32 = SAI_ARS_PROFILE_ALGO_EWMA;
+    attr.value.s32 = entry.algorithm;
     attrs.push_back(attr);
 
     attr.id = SAI_ARS_PROFILE_ATTR_PORT_LOAD_PAST;
-    attr.value.booldata = true;
+    attr.value.booldata = entry.loadPastEnable;
     attrs.push_back(attr);
 
     attr.id = SAI_ARS_PROFILE_ATTR_PORT_LOAD_PAST_WEIGHT;
@@ -319,7 +512,7 @@ bool ArsOrch::createArsProfile(const string &name, const ArsProfileEntry &entry)
     attrs.push_back(attr);
 
     attr.id = SAI_ARS_PROFILE_ATTR_PORT_LOAD_FUTURE;
-    attr.value.booldata = true;
+    attr.value.booldata = entry.loadFutureEnable;
     attrs.push_back(attr);
 
     attr.id = SAI_ARS_PROFILE_ATTR_PORT_LOAD_FUTURE_WEIGHT;
@@ -335,11 +528,11 @@ bool ArsOrch::createArsProfile(const string &name, const ArsProfileEntry &entry)
     attrs.push_back(attr);
 
     attr.id = SAI_ARS_PROFILE_ATTR_ENABLE_IPV4;
-    attr.value.booldata = true;
+    attr.value.booldata = entry.ipv4Enable;
     attrs.push_back(attr);
 
     attr.id = SAI_ARS_PROFILE_ATTR_ENABLE_IPV6;
-    attr.value.booldata = true;
+    attr.value.booldata = entry.ipv6Enable;
     attrs.push_back(attr);
 
     if (entry.maxFlows > 0)

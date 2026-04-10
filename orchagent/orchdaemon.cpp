@@ -474,7 +474,9 @@ bool OrchDaemon::init()
         CFG_ARS_TABLE_NAME,
         CFG_ARS_PROFILE_TABLE_NAME,
         CFG_ARS_OBJECT_TABLE_NAME,
-        CFG_ARS_INTERFACES_TABLE_NAME
+        CFG_ARS_INTERFACES_TABLE_NAME,
+        CFG_ARS_PORT_PROFILE_TABLE_NAME,
+        CFG_ARS_NEXTHOPS_TABLE_NAME
     };
     gArsOrch = new ArsOrch(m_configDb, m_stateDb, ars_cfg_tables, gSwitchOrch, gPortsOrch);
     gDirectory.set(gArsOrch);

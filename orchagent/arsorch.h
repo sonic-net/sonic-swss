@@ -11,9 +11,13 @@
 struct ArsProfileEntry
 {
     sai_object_id_t profileOid = SAI_NULL_OBJECT_ID;
+    sai_ars_profile_algo_t algorithm = SAI_ARS_PROFILE_ALGO_EWMA;
+    bool            loadPastEnable   = true;
     uint32_t        loadPastWeight   = 16;
+    bool            loadFutureEnable = true;
     uint32_t        loadFutureWeight = 16;
     bool            loadCurrentEnable = false;
+    uint32_t        loadCurrentWeight = 0;
     uint32_t        loadExponent      = 2;
     uint32_t        maxFlows          = 0;
     uint32_t        loadPastMinVal    = 0;
@@ -22,6 +26,10 @@ struct ArsProfileEntry
     uint32_t        loadFutureMaxVal  = 0;
     uint32_t        loadCurrentMinVal = 0;
     uint32_t        loadCurrentMaxVal = 0;
+    bool            ipv4Enable        = true;
+    bool            ipv6Enable        = true;
+    uint32_t        samplingInterval  = 0;
+    uint32_t        randomSeed        = 0;
 };
 
 struct ArsObjectEntry
@@ -32,6 +40,24 @@ struct ArsObjectEntry
     uint32_t        maxFlows = 512;
     bool            enabled  = false;
     std::string     profileName;
+};
+
+struct ArsInterfaceEntry
+{
+    bool        enabled   = false;
+    std::string arsObject;
+    std::string portProfile;
+    uint32_t    linkUtilThreshold = 0;
+};
+
+struct ArsPortProfileEntry
+{
+    uint32_t loadPastMinVal    = 0;
+    uint32_t loadPastMaxVal    = 0;
+    uint32_t loadFutureMinVal  = 0;
+    uint32_t loadFutureMaxVal  = 0;
+    uint32_t loadCurrentMinVal = 0;
+    uint32_t loadCurrentMaxVal = 0;
 };
 
 class ArsOrch : public Orch
@@ -46,6 +72,7 @@ public:
     bool isArsEnabled() const { return m_arsEnabled; }
     sai_object_id_t getArsProfileOid(const std::string &name) const;
     sai_object_id_t getArsObjectOid(const std::string &name) const;
+    bool bindArsToNhg(sai_object_id_t nhgOid, sai_object_id_t arsOid);
 
 private:
     void doTask(Consumer &consumer) override;
@@ -54,6 +81,8 @@ private:
     void doArsProfileTask(Consumer &consumer);
     void doArsObjectTask(Consumer &consumer);
     void doArsInterfaceTask(Consumer &consumer);
+    void doArsPortProfileTask(Consumer &consumer);
+    void doArsNexthopsTask(Consumer &consumer);
 
     bool createArsProfile(const std::string &name, const ArsProfileEntry &entry);
     bool removeArsProfile(const std::string &name);
@@ -65,7 +94,6 @@ private:
     bool setArsObjectAttr(sai_object_id_t oid, sai_ars_attr_t attrId, uint32_t val);
 
     bool bindArsProfileToSwitch(sai_object_id_t profileOid);
-    bool bindArsToNhg(sai_object_id_t nhgOid, sai_object_id_t arsOid);
 
     bool setPortArsEnable(const std::string &portName, bool enable);
 
@@ -79,9 +107,14 @@ private:
     swss::Table m_cfgArsTable;
 
     bool m_arsEnabled = false;
+    std::string m_globalProfileName;
     sai_object_id_t m_activeSwitchProfileOid = SAI_NULL_OBJECT_ID;
 
-    std::unordered_map<std::string, ArsProfileEntry> m_arsProfiles;
-    std::unordered_map<std::string, ArsObjectEntry>  m_arsObjects;
+    std::unordered_map<std::string, ArsProfileEntry>    m_arsProfiles;
+    std::unordered_map<std::string, ArsObjectEntry>     m_arsObjects;
+    std::unordered_map<std::string, ArsInterfaceEntry>  m_arsInterfaces;
+    std::unordered_map<std::string, ArsPortProfileEntry> m_arsPortProfiles;
     std::set<std::string> m_arsEnabledPorts;
+
+    std::unordered_map<std::string, std::string> m_nexthopArsBindings;
 };
