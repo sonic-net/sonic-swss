@@ -29,6 +29,49 @@ namespace consumer_test
         long m_notification_count;
     };
 
+    enum class ThrowType
+    {
+        None,
+        InvalidArgument,
+        LogicError,
+        RuntimeError,
+        UnknownException
+    };
+
+    class ThrowingOrch : public Orch
+    {
+    public:
+        ThrowingOrch(swss::DBConnector *db, string tableName)
+            :Orch(db, tableName),
+            m_throwType(ThrowType::None),
+            m_doTaskCallCount(0)
+        {
+        }
+
+        void doTask(Consumer& consumer)
+        {
+            m_doTaskCallCount++;
+            switch (m_throwType)
+            {
+                case ThrowType::InvalidArgument:
+                    throw std::invalid_argument("test invalid argument");
+                case ThrowType::LogicError:
+                    throw std::logic_error("test logic error");
+                case ThrowType::RuntimeError:
+                    throw std::runtime_error("test runtime error");
+                case ThrowType::UnknownException:
+                    throw 42;
+                case ThrowType::None:
+                default:
+                    consumer.m_toSync.clear();
+                    break;
+            }
+        }
+
+        ThrowType m_throwType;
+        int m_doTaskCallCount;
+    };
+
     struct ConsumerTest : public ::testing::Test
     {
         shared_ptr<swss::DBConnector> m_app_db;
@@ -367,5 +410,147 @@ namespace consumer_test
 
         test_consumer.execute();
         ASSERT_EQ(test_orch.m_notification_count, consumer_pops_batch_size*2);
+    }
+
+    /*
+     * Exception handling tests for Consumer::drain() and Orch::doTask()
+     *
+     * These tests verify that exceptions thrown inside doTask(Consumer&)
+     * are caught gracefully and do not crash the process.
+     */
+
+    struct ExceptionHandlingTest : public ::testing::Test
+    {
+        shared_ptr<swss::DBConnector> m_app_db;
+        unique_ptr<ThrowingOrch> m_orch;
+
+        virtual void SetUp() override
+        {
+            ::testing_db::reset();
+            m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
+            m_orch = make_unique<ThrowingOrch>(m_app_db.get(), "APP_TEST_TABLE");
+        }
+
+        virtual void TearDown() override
+        {
+            m_orch.reset();
+            ::testing_db::reset();
+        }
+
+        void populateConsumer(Consumer &consumer, int count = 1)
+        {
+            deque<KeyOpFieldsValuesTuple> entries;
+            for (int i = 0; i < count; i++)
+            {
+                entries.push_back({"key" + to_string(i), SET_COMMAND, {{"field", "value"}}});
+            }
+            consumer.addToSync(entries);
+        }
+    };
+
+    TEST_F(ExceptionHandlingTest, DrainCatchesInvalidArgument)
+    {
+        auto *executor = m_orch->getExecutor("APP_TEST_TABLE");
+        auto *consumer = dynamic_cast<Consumer *>(executor);
+        ASSERT_NE(consumer, nullptr);
+
+        populateConsumer(*consumer);
+        ASSERT_FALSE(consumer->m_toSync.empty());
+
+        m_orch->m_throwType = ThrowType::InvalidArgument;
+
+        // drain() should catch the exception and not crash
+        ASSERT_NO_THROW(consumer->drain());
+        ASSERT_EQ(m_orch->m_doTaskCallCount, 1);
+
+        // m_toSync is not cleared because the exception prevented it
+        ASSERT_FALSE(consumer->m_toSync.empty());
+    }
+
+    TEST_F(ExceptionHandlingTest, DrainCatchesLogicError)
+    {
+        auto *consumer = dynamic_cast<Consumer *>(m_orch->getExecutor("APP_TEST_TABLE"));
+        ASSERT_NE(consumer, nullptr);
+
+        populateConsumer(*consumer);
+        m_orch->m_throwType = ThrowType::LogicError;
+
+        ASSERT_NO_THROW(consumer->drain());
+        ASSERT_EQ(m_orch->m_doTaskCallCount, 1);
+        ASSERT_FALSE(consumer->m_toSync.empty());
+    }
+
+    TEST_F(ExceptionHandlingTest, DrainCatchesRuntimeError)
+    {
+        auto *consumer = dynamic_cast<Consumer *>(m_orch->getExecutor("APP_TEST_TABLE"));
+        ASSERT_NE(consumer, nullptr);
+
+        populateConsumer(*consumer);
+        m_orch->m_throwType = ThrowType::RuntimeError;
+
+        ASSERT_NO_THROW(consumer->drain());
+        ASSERT_EQ(m_orch->m_doTaskCallCount, 1);
+        ASSERT_FALSE(consumer->m_toSync.empty());
+    }
+
+    TEST_F(ExceptionHandlingTest, DrainCatchesUnknownException)
+    {
+        auto *consumer = dynamic_cast<Consumer *>(m_orch->getExecutor("APP_TEST_TABLE"));
+        ASSERT_NE(consumer, nullptr);
+
+        populateConsumer(*consumer);
+        m_orch->m_throwType = ThrowType::UnknownException;
+
+        ASSERT_NO_THROW(consumer->drain());
+        ASSERT_EQ(m_orch->m_doTaskCallCount, 1);
+        ASSERT_FALSE(consumer->m_toSync.empty());
+    }
+
+    TEST_F(ExceptionHandlingTest, DrainNoExceptionClearsSync)
+    {
+        auto *consumer = dynamic_cast<Consumer *>(m_orch->getExecutor("APP_TEST_TABLE"));
+        ASSERT_NE(consumer, nullptr);
+
+        populateConsumer(*consumer, 3);
+        m_orch->m_throwType = ThrowType::None;
+
+        ASSERT_NO_THROW(consumer->drain());
+        ASSERT_EQ(m_orch->m_doTaskCallCount, 1);
+
+        // Normal path: doTask clears m_toSync
+        ASSERT_TRUE(consumer->m_toSync.empty());
+    }
+
+    TEST_F(ExceptionHandlingTest, OrchDoTaskCatchesExceptionPerConsumer)
+    {
+        auto *consumer = dynamic_cast<Consumer *>(m_orch->getExecutor("APP_TEST_TABLE"));
+        ASSERT_NE(consumer, nullptr);
+
+        populateConsumer(*consumer, 2);
+        m_orch->m_throwType = ThrowType::RuntimeError;
+
+        // Orch::doTask() (no-arg) iterates consumers and should not crash
+        ASSERT_NO_THROW(static_cast<Orch *>(m_orch.get())->doTask());
+        ASSERT_EQ(m_orch->m_doTaskCallCount, 1);
+    }
+
+    TEST_F(ExceptionHandlingTest, DrainRecoveryAfterException)
+    {
+        auto *consumer = dynamic_cast<Consumer *>(m_orch->getExecutor("APP_TEST_TABLE"));
+        ASSERT_NE(consumer, nullptr);
+
+        populateConsumer(*consumer);
+
+        // First call throws
+        m_orch->m_throwType = ThrowType::RuntimeError;
+        ASSERT_NO_THROW(consumer->drain());
+        ASSERT_EQ(m_orch->m_doTaskCallCount, 1);
+        ASSERT_FALSE(consumer->m_toSync.empty());
+
+        // Second call succeeds — orch recovers and processes tasks
+        m_orch->m_throwType = ThrowType::None;
+        ASSERT_NO_THROW(consumer->drain());
+        ASSERT_EQ(m_orch->m_doTaskCallCount, 2);
+        ASSERT_TRUE(consumer->m_toSync.empty());
     }
 }
