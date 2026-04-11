@@ -1538,6 +1538,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
 
     if (nhgType == SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP)
     {
+#ifdef SAI_NEXT_HOP_GROUP_ATTR_ACTIVE_FLOW_TIMER
         auto activeFlowTimer = m_switchOrch->getEcmpResilientActiveFlowTimer();
         if (activeFlowTimer > 0)
         {
@@ -1545,6 +1546,8 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
             nhg_attr.value.u32 = activeFlowTimer;
             nhg_attrs.push_back(nhg_attr);
         }
+#endif
+#ifdef SAI_NEXT_HOP_GROUP_ATTR_MAX_UNBALANCED_TIME
         auto maxUnbalancedTime = m_switchOrch->getEcmpResilientMaxUnbalancedTime();
         if (maxUnbalancedTime > 0)
         {
@@ -1552,6 +1555,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
             nhg_attr.value.u32 = maxUnbalancedTime;
             nhg_attrs.push_back(nhg_attr);
         }
+#endif
     }
 
     sai_object_id_t next_hop_group_id;

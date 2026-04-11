@@ -787,6 +787,7 @@ bool NextHopGroup::sync()
 
         if (nhgType == SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP)
         {
+#ifdef SAI_NEXT_HOP_GROUP_ATTR_ACTIVE_FLOW_TIMER
             auto activeFlowTimer = gSwitchOrch->getEcmpResilientActiveFlowTimer();
             if (activeFlowTimer > 0)
             {
@@ -794,7 +795,9 @@ bool NextHopGroup::sync()
                 nhg_attr.value.u32 = activeFlowTimer;
                 nhg_attrs.push_back(nhg_attr);
             }
+#endif
 
+#ifdef SAI_NEXT_HOP_GROUP_ATTR_MAX_UNBALANCED_TIME
             auto maxUnbalancedTime = gSwitchOrch->getEcmpResilientMaxUnbalancedTime();
             if (maxUnbalancedTime > 0)
             {
@@ -802,6 +805,7 @@ bool NextHopGroup::sync()
                 nhg_attr.value.u32 = maxUnbalancedTime;
                 nhg_attrs.push_back(nhg_attr);
             }
+#endif
         }
 
         sai_status_t status = sai_next_hop_group_api->create_next_hop_group(

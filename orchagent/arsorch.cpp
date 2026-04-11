@@ -18,7 +18,7 @@ extern sai_object_id_t        gSwitchId;
 
 static const map<string, sai_ars_mode_t> arsModeLookup = {
     {"flowlet-quality",         SAI_ARS_MODE_FLOWLET_QUALITY},
-    {"flowlet-quality-bounded", SAI_ARS_MODE_FLOWLET_QUALITY_BOUNDED},
+    {"flowlet-quality-bounded", SAI_ARS_MODE_FLOWLET_QUALITY},
     {"flowlet-random",          SAI_ARS_MODE_FLOWLET_RANDOM},
     {"packet-quality",          SAI_ARS_MODE_PER_PACKET_QUALITY},
     {"packet-random",           SAI_ARS_MODE_PER_PACKET_RANDOM},
@@ -465,7 +465,7 @@ void ArsOrch::doArsPortProfileTask(Consumer &consumer)
                 else if (field == "load_scaling_factor")
                 {
                     double fval = stod(value);
-                    if (fval == 0.0)
+                    if (fabs(fval) < 1e-9)
                         entry.loadScalingFactorAuto = true;
                     entry.loadScalingFactor = static_cast<uint32_t>(round(fval * 10));
                     entry.loadScalingFactorRaw = fval;
@@ -787,25 +787,6 @@ bool ArsOrch::createArsObject(const string &name, const ArsObjectEntry &entry)
     attr.value.u32 = entry.maxFlows;
     attrs.push_back(attr);
 
-    attr.id = SAI_ARS_ATTR_ENABLE_IPV4;
-    attr.value.booldata = entry.ipv4Enable;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ARS_ATTR_ENABLE_IPV6;
-    attr.value.booldata = entry.ipv6Enable;
-    attrs.push_back(attr);
-
-    if (!entry.profileName.empty())
-    {
-        auto profOid = getArsProfileOid(entry.profileName);
-        if (profOid != SAI_NULL_OBJECT_ID)
-        {
-            attr.id = SAI_ARS_ATTR_ARS_PROFILE;
-            attr.value.oid = profOid;
-            attrs.push_back(attr);
-        }
-    }
-
     sai_object_id_t arsOid;
     sai_status_t status = sai_ars_api->create_ars(
         &arsOid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
@@ -958,11 +939,7 @@ sai_object_id_t ArsOrch::resolveArsForNhg(sai_object_id_t nhgOid, const NextHopG
 
     if (commonArsObj.empty() && !m_nexthopArsBindings.empty())
     {
-        for (const auto &[prefix, objName] : m_nexthopArsBindings)
-        {
-            commonArsObj = objName;
-            break;
-        }
+        commonArsObj = m_nexthopArsBindings.begin()->second;
     }
 
     if (mismatch || commonArsObj.empty())
@@ -1012,38 +989,37 @@ bool ArsOrch::setPortArsEnable(const string &portName, bool enable)
 
 bool ArsOrch::setPortArsLoadBands(const string &portName, const ArsPortProfileEntry &pp)
 {
-    Port port;
-    if (!m_portsOrch->getPort(portName, port))
+    if (m_activeSwitchProfileOid == SAI_NULL_OBJECT_ID)
     {
-        SWSS_LOG_ERROR("ARS: port %s not found for load bands", portName.c_str());
+        SWSS_LOG_WARN("ARS: no active ARS profile to set load bands for %s", portName.c_str());
         return false;
     }
 
-    extern sai_port_api_t *sai_port_api;
     sai_attribute_t attr;
-    auto setAttr = [&](sai_port_attr_t id, uint32_t val) {
+    auto setAttr = [&](sai_ars_profile_attr_t id, uint32_t val) {
         attr.id = id;
         attr.value.u32 = val;
-        sai_status_t s = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+        sai_status_t s = sai_ars_profile_api->set_ars_profile_attribute(
+            m_activeSwitchProfileOid, &attr);
         if (s != SAI_STATUS_SUCCESS)
-            SWSS_LOG_WARN("ARS: set port load band attr %d on %s failed: %s",
+            SWSS_LOG_WARN("ARS: set profile load band attr %d for %s failed: %s",
                           id, portName.c_str(), sai_serialize_status(s).c_str());
     };
 
     if (pp.loadPastMinVal > 0 || pp.loadPastMaxVal > 0)
     {
-        setAttr(SAI_PORT_ATTR_ARS_PORT_LOAD_PAST_MIN_VAL, pp.loadPastMinVal);
-        setAttr(SAI_PORT_ATTR_ARS_PORT_LOAD_PAST_MAX_VAL, pp.loadPastMaxVal);
+        setAttr(SAI_ARS_PROFILE_ATTR_LOAD_PAST_MIN_VAL, pp.loadPastMinVal);
+        setAttr(SAI_ARS_PROFILE_ATTR_LOAD_PAST_MAX_VAL, pp.loadPastMaxVal);
     }
     if (pp.loadFutureMinVal > 0 || pp.loadFutureMaxVal > 0)
     {
-        setAttr(SAI_PORT_ATTR_ARS_PORT_LOAD_FUTURE_MIN_VAL, pp.loadFutureMinVal);
-        setAttr(SAI_PORT_ATTR_ARS_PORT_LOAD_FUTURE_MAX_VAL, pp.loadFutureMaxVal);
+        setAttr(SAI_ARS_PROFILE_ATTR_LOAD_FUTURE_MIN_VAL, pp.loadFutureMinVal);
+        setAttr(SAI_ARS_PROFILE_ATTR_LOAD_FUTURE_MAX_VAL, pp.loadFutureMaxVal);
     }
     if (pp.loadCurrentMinVal > 0 || pp.loadCurrentMaxVal > 0)
     {
-        setAttr(SAI_PORT_ATTR_ARS_PORT_LOAD_CURRENT_MIN_VAL, pp.loadCurrentMinVal);
-        setAttr(SAI_PORT_ATTR_ARS_PORT_LOAD_CURRENT_MAX_VAL, pp.loadCurrentMaxVal);
+        setAttr(SAI_ARS_PROFILE_ATTR_LOAD_CURRENT_MIN_VAL, pp.loadCurrentMinVal);
+        setAttr(SAI_ARS_PROFILE_ATTR_LOAD_CURRENT_MAX_VAL, pp.loadCurrentMaxVal);
     }
     return true;
 }
@@ -1083,22 +1059,22 @@ bool ArsOrch::setPortArsScalingFactor(const string &portName, const ArsPortProfi
 
 bool ArsOrch::setPortArsLinkUtilThreshold(const string &portName, uint32_t threshold)
 {
-    Port port;
-    if (!m_portsOrch->getPort(portName, port))
+    if (m_activeSwitchProfileOid == SAI_NULL_OBJECT_ID)
     {
-        SWSS_LOG_ERROR("ARS: port %s not found for link util threshold", portName.c_str());
+        SWSS_LOG_WARN("ARS: no active ARS profile to set link util threshold for %s",
+                      portName.c_str());
         return false;
     }
 
     sai_attribute_t attr;
-    attr.id = SAI_PORT_ATTR_ARS_PORT_LOAD_PAST_MAX_VAL;
+    attr.id = SAI_ARS_PROFILE_ATTR_LOAD_PAST_MAX_VAL;
     attr.value.u32 = threshold;
 
-    extern sai_port_api_t *sai_port_api;
-    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+    sai_status_t status = sai_ars_profile_api->set_ars_profile_attribute(
+        m_activeSwitchProfileOid, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_WARN("ARS: set link utilization threshold on %s failed: %s",
+        SWSS_LOG_WARN("ARS: set link utilization threshold for %s failed: %s",
                       portName.c_str(), sai_serialize_status(status).c_str());
         return false;
     }
@@ -1191,7 +1167,7 @@ void ArsOrch::publishArsCaps()
     string modesStr;
     static const vector<pair<string, sai_ars_mode_t>> modeProbes = {
         {"flowlet-quality",         SAI_ARS_MODE_FLOWLET_QUALITY},
-        {"flowlet-quality-bounded", SAI_ARS_MODE_FLOWLET_QUALITY_BOUNDED},
+        {"flowlet-quality-bounded", SAI_ARS_MODE_FLOWLET_QUALITY},
         {"flowlet-random",          SAI_ARS_MODE_FLOWLET_RANDOM},
         {"packet-quality",          SAI_ARS_MODE_PER_PACKET_QUALITY},
         {"packet-random",           SAI_ARS_MODE_PER_PACKET_RANDOM},
@@ -1200,8 +1176,10 @@ void ArsOrch::publishArsCaps()
 
     if (arsSupported)
     {
-        for (const auto &[name, mode] : modeProbes)
+        for (const auto &modePair : modeProbes)
         {
+            const auto &name = modePair.first;
+            const auto &mode = modePair.second;
             sai_s32_list_t enumCap = {};
             int32_t enumList[16];
             enumCap.count = 16;
@@ -1245,8 +1223,10 @@ void ArsOrch::publishArsCaps()
         {"SAI_ARS_ATTR_IDLE_TIME", SAI_ARS_ATTR_IDLE_TIME},
         {"SAI_ARS_ATTR_MAX_FLOWS", SAI_ARS_ATTR_MAX_FLOWS},
     };
-    for (const auto &[attrName, attrId] : attrProbes)
+    for (const auto &attrPair : attrProbes)
     {
+        const auto &attrName = attrPair.first;
+        const auto &attrId = attrPair.second;
         sai_attr_capability_t ac = {};
         sai_status_t qs = sai_query_attribute_capability(
             gSwitchId, SAI_OBJECT_TYPE_ARS, attrId, &ac);
