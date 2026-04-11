@@ -72,6 +72,41 @@ namespace consumer_test
         int m_doTaskCallCount;
     };
 
+    class ThrowingRetryOrch : public Orch
+    {
+    public:
+        ThrowingRetryOrch(swss::DBConnector *db, string tableName)
+            :Orch(db, tableName),
+            m_throwType(ThrowType::None)
+        {
+        }
+
+        void doTask(Consumer& consumer)
+        {
+            consumer.m_toSync.clear();
+        }
+
+        size_t retryToSync(const std::string &executorName, size_t quota) override
+        {
+            switch (m_throwType)
+            {
+                case ThrowType::InvalidArgument:
+                    throw std::invalid_argument("retryToSync invalid argument");
+                case ThrowType::LogicError:
+                    throw std::logic_error("retryToSync logic error");
+                case ThrowType::RuntimeError:
+                    throw std::runtime_error("retryToSync runtime error");
+                case ThrowType::UnknownException:
+                    throw 42;
+                case ThrowType::None:
+                default:
+                    return 0;
+            }
+        }
+
+        ThrowType m_throwType;
+    };
+    
     struct ConsumerTest : public ::testing::Test
     {
         shared_ptr<swss::DBConnector> m_app_db;
@@ -534,6 +569,58 @@ namespace consumer_test
         ASSERT_EQ(m_orch->m_doTaskCallCount, 1);
     }
 
+    /*
+     * Tests for Orch::doTask() catch blocks via retryToSync().
+     *
+     * Consumer::drain() has its own catch, so exceptions from doTask(Consumer&)
+     * never reach Orch::doTask()'s catch. To exercise Orch::doTask()'s catches
+     * directly, we override retryToSync() to throw — it runs before drain()
+     * in the Orch::doTask() loop.
+     */
+
+    struct OrchDoTaskExceptionTest : public ::testing::Test
+    {
+        shared_ptr<swss::DBConnector> m_app_db;
+        unique_ptr<ThrowingRetryOrch> m_orch;
+
+        virtual void SetUp() override
+        {
+            ::testing_db::reset();
+            m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
+            m_orch = make_unique<ThrowingRetryOrch>(m_app_db.get(), "APP_TEST_TABLE");
+        }
+
+        virtual void TearDown() override
+        {
+            m_orch.reset();
+            ::testing_db::reset();
+        }
+    };
+
+    TEST_F(OrchDoTaskExceptionTest, DoTaskCatchesInvalidArgumentFromRetry)
+    {
+        m_orch->m_throwType = ThrowType::InvalidArgument;
+        ASSERT_NO_THROW(static_cast<Orch *>(m_orch.get())->doTask());
+    }
+
+    TEST_F(OrchDoTaskExceptionTest, DoTaskCatchesLogicErrorFromRetry)
+    {
+        m_orch->m_throwType = ThrowType::LogicError;
+        ASSERT_NO_THROW(static_cast<Orch *>(m_orch.get())->doTask());
+    }
+
+    TEST_F(OrchDoTaskExceptionTest, DoTaskCatchesRuntimeErrorFromRetry)
+    {
+        m_orch->m_throwType = ThrowType::RuntimeError;
+        ASSERT_NO_THROW(static_cast<Orch *>(m_orch.get())->doTask());
+    }
+
+    TEST_F(OrchDoTaskExceptionTest, DoTaskCatchesUnknownExceptionFromRetry)
+    {
+        m_orch->m_throwType = ThrowType::UnknownException;
+        ASSERT_NO_THROW(static_cast<Orch *>(m_orch.get())->doTask());
+    }
+    
     TEST_F(ExceptionHandlingTest, DrainRecoveryAfterException)
     {
         auto *consumer = dynamic_cast<Consumer *>(m_orch->getExecutor("APP_TEST_TABLE"));

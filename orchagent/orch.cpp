@@ -125,7 +125,7 @@ Orch::Orch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with
     }
 }
 
-Orch::Orch(const vector<TableConnector>& tables)
+Orch::Orch(const vector<TableConnector>& tables)ca
 {
     for (auto it : tables)
     {
@@ -563,22 +563,22 @@ void Consumer::drain()
         }
         catch (const std::invalid_argument& e)
         {
-            SWSS_LOG_ERROR("Parse error in Consumer::drain() for %s: %s",
+            SWSS_LOG_ERROR("Exception caught: type=invalid_argument, table=%s, error=%s",
                            getName().c_str(), e.what());
         }
         catch (const std::logic_error& e)
         {
-            SWSS_LOG_ERROR("Logic error in Consumer::drain() for %s: %s",
+            SWSS_LOG_ERROR("Exception caught: type=logic_error, table=%s, error=%s",
                            getName().c_str(), e.what());
         }
         catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Exception caught in Consumer::drain() for %s: %s",
+            SWSS_LOG_ERROR("Exception caught: type=std::exception, table=%s, error=%s",
                            getName().c_str(), e.what());
         }
         catch (...)
         {
-            SWSS_LOG_ERROR("Unknown exception caught in Consumer::drain() for %s",
+            SWSS_LOG_ERROR("Exception caught: type=unknown, table=%s",
                            getName().c_str());
         }
     }
@@ -875,22 +875,22 @@ void Orch::doTask()
         }
         catch (const std::invalid_argument& e)
         {
-            SWSS_LOG_ERROR("Parse error in Orch::doTask() for %s in %s: %s",
+            SWSS_LOG_ERROR("Exception caught: type=invalid_argument, table=%s, orch=%s, error=%s",
                            it.first.c_str(), typeid(*this).name(), e.what());
         }
         catch (const std::logic_error& e)
         {
-            SWSS_LOG_ERROR("Logic error in Orch::doTask() for %s in %s: %s",
+            SWSS_LOG_ERROR("Exception caught: type=logic_error, table=%s, orch=%s, error=%s",
                            it.first.c_str(), typeid(*this).name(), e.what());
         }
         catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Exception caught in Orch::doTask() for %s in %s: %s",
+            SWSS_LOG_ERROR("Exception caught: type=std::exception, table=%s, orch=%s, error=%s",
                            it.first.c_str(), typeid(*this).name(), e.what());
         }
         catch (...)
         {
-            SWSS_LOG_ERROR("Unknown exception caught in Orch::doTask() for %s in %s",
+            SWSS_LOG_ERROR("Exception caught: type=unknown, table=%s, orch=%s",
                            it.first.c_str(), typeid(*this).name());
         }
     }
@@ -1205,19 +1205,23 @@ void Orch2::doTask(Consumer &consumer)
         }
         catch (const std::invalid_argument& e)
         {
-            SWSS_LOG_ERROR("Parse error in %s: %s", typeid(*this).name(), e.what());
+            SWSS_LOG_ERROR("Exception caught: type=invalid_argument, orch=%s, error=%s",
+                           typeid(*this).name(), e.what());
         }
         catch (const std::logic_error& e)
         {
-            SWSS_LOG_ERROR("Logic error in %s: %s", typeid(*this).name(), e.what());
+            SWSS_LOG_ERROR("Exception caught: type=logic_error, orch=%s, error=%s",
+                           typeid(*this).name(), e.what());
         }
         catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Exception was caught in the request parser in %s: %s", typeid(*this).name(), e.what());
+            SWSS_LOG_ERROR("Exception caught: type=std::exception, orch=%s, error=%s",
+                           typeid(*this).name(), e.what());
         }
         catch (...)
         {
-            SWSS_LOG_ERROR("Unknown exception was caught in the request parser");
+            SWSS_LOG_ERROR("Exception caught: type=unknown, orch=%s",
+                           typeid(*this).name());
         }
         request_.clear();
 
