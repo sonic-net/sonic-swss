@@ -5707,11 +5707,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 it = consumer.m_toSync.erase(it);
 
                 /* Notify retry cache that resources may have been freed for this table */
-                auto retryCache = getRetryCache(consumer.getTableName());
-                if (retryCache)
-                {
-                    retryCache->mark_resolved(make_constraint(RETRY_CST_SAI_RESOURCE, table_id));
-                }
+                notifyRetry(this, consumer.getTableName(), make_constraint(RETRY_CST_SAI_RESOURCE, table_id));
             }
             else
             {
