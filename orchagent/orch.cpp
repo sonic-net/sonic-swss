@@ -125,7 +125,7 @@ Orch::Orch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with
     }
 }
 
-Orch::Orch(const vector<TableConnector>& tables)ca
+Orch::Orch(const vector<TableConnector>& tables)
 {
     for (auto it : tables)
     {
