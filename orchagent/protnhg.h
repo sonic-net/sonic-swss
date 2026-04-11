@@ -65,7 +65,8 @@ public:
     ProtNhg(const string &key,
             const vector<NextHopKey> &primary_nhs,
             const NextHopKey &standby_nh,
-            sai_object_id_t standby_nh_id = SAI_NULL_OBJECT_ID);
+            sai_object_id_t standby_nh_id = SAI_NULL_OBJECT_ID,
+            bool hw_protection = true);
 
     /* Construct from NextHopGroupKey pairs with pre-resolved NHG OIDs.
      * Each group becomes a single protection member whose SAI next-hop ID
@@ -75,7 +76,8 @@ public:
             const NextHopGroupKey &primary_nhg_key,
             sai_object_id_t primary_nhg_id,
             const NextHopGroupKey &standby_nhg_key,
-            sai_object_id_t standby_nhg_id);
+            sai_object_id_t standby_nhg_id,
+            bool hw_protection = true);
 
     ProtNhg(ProtNhg &&nhg);
 
@@ -88,6 +90,9 @@ public:
     inline NextHopGroupKey getNhgKey() const override { return {}; }
 
     bool setAdminRole(sai_int32_t admin_role);
+
+    /* Trigger switchover from primary to backup (PROTECTION type only). */
+    bool setSwitchover(bool enable);
 
     bool updateMemberMonitoredObject(const NextHopKey &nh_key,
                                      sai_object_id_t monitored_oid);
@@ -106,6 +111,8 @@ public:
     string to_string() const override { return m_key; }
 
 private:
+    bool m_hw_protection;
+
     bool syncMembers(const set<NextHopKey> &member_keys) override;
     vector<sai_attribute_t> createNhgmAttrs(const ProtNhgMember &member) const override;
 };

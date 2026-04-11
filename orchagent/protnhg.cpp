@@ -145,8 +145,10 @@ string ProtNhgMember::to_string() const
 ProtNhg::ProtNhg(const string &key,
                   const vector<NextHopKey> &primary_nhs,
                   const NextHopKey &standby_nh,
-                  sai_object_id_t standby_nh_id) :
-    NhgCommon(key)
+                  sai_object_id_t standby_nh_id,
+                  bool hw_protection) :
+    NhgCommon(key),
+    m_hw_protection(hw_protection)
 {
     SWSS_LOG_ENTER();
 
@@ -162,8 +164,10 @@ ProtNhg::ProtNhg(const string &key,
                   const NextHopGroupKey &primary_nhg_key,
                   sai_object_id_t primary_nhg_id,
                   const NextHopGroupKey &standby_nhg_key,
-                  sai_object_id_t standby_nhg_id) :
-    NhgCommon(key)
+                  sai_object_id_t standby_nhg_id,
+                  bool hw_protection) :
+    NhgCommon(key),
+    m_hw_protection(hw_protection)
 {
     SWSS_LOG_ENTER();
 
@@ -177,7 +181,8 @@ ProtNhg::ProtNhg(const string &key,
 }
 
 ProtNhg::ProtNhg(ProtNhg &&nhg) :
-    NhgCommon(move(nhg))
+    NhgCommon(move(nhg)),
+    m_hw_protection(nhg.m_hw_protection)
 {
     SWSS_LOG_ENTER();
 }
@@ -202,7 +207,9 @@ bool ProtNhg::sync()
     vector<sai_attribute_t> nhg_attrs;
 
     nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
-    nhg_attr.value.s32 = SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION;
+    nhg_attr.value.s32 = m_hw_protection
+        ? SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION
+        : SAI_NEXT_HOP_GROUP_TYPE_PROTECTION;
     nhg_attrs.push_back(nhg_attr);
 
     sai_status_t status = sai_next_hop_group_api->create_next_hop_group(
@@ -253,6 +260,14 @@ bool ProtNhg::setAdminRole(sai_int32_t admin_role)
 {
     SWSS_LOG_ENTER();
 
+    if (!m_hw_protection)
+    {
+        SWSS_LOG_ERROR("Admin role is only supported on HW_PROTECTION NHGs, "
+                       "use setSwitchover() for PROTECTION NHG %s",
+                       m_key.c_str());
+        return false;
+    }
+
     if (!isSynced())
     {
         SWSS_LOG_ERROR("Cannot set admin role on unsynced protection NHG %s",
@@ -276,6 +291,45 @@ bool ProtNhg::setAdminRole(sai_int32_t admin_role)
 
     SWSS_LOG_NOTICE("Set admin role %d on protection NHG %s",
                     admin_role, m_key.c_str());
+
+    return true;
+}
+
+bool ProtNhg::setSwitchover(bool enable)
+{
+    SWSS_LOG_ENTER();
+
+    if (m_hw_protection)
+    {
+        SWSS_LOG_ERROR("Switchover is only supported on PROTECTION NHGs, "
+                       "use setAdminRole() for HW_PROTECTION NHG %s",
+                       m_key.c_str());
+        return false;
+    }
+
+    if (!isSynced())
+    {
+        SWSS_LOG_ERROR("Cannot set switchover on unsynced protection NHG %s",
+                       m_key.c_str());
+        return false;
+    }
+
+    sai_attribute_t attr;
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_SET_SWITCHOVER;
+    attr.value.booldata = enable;
+
+    sai_status_t status =
+        sai_next_hop_group_api->set_next_hop_group_attribute(m_id, &attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set switchover %s on protection NHG %s, rv: %d",
+                       enable ? "true" : "false", m_key.c_str(), status);
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Set switchover %s on protection NHG %s",
+                    enable ? "true" : "false", m_key.c_str());
 
     return true;
 }

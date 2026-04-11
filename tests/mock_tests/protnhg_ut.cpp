@@ -750,4 +750,93 @@ namespace protnhg_test
                                               primary_nhg_key,
                                               empty_standby));
     }
+
+    TEST_F(ProtNhgTest, CreateNonHwProtectionNhg)
+    {
+        string key = "prot_nhg_sw";
+        NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
+        sai_object_id_t standby_nh_id = 0x1234;
+        vector<NextHopKey> primaries = {primary_nh};
+
+        EXPECT_CALL(*mock_sai_next_hop_group_api,
+                    create_next_hop_group(_, _, _, _))
+            .WillOnce(
+                [](sai_object_id_t *id, sai_object_id_t,
+                   uint32_t attr_count, const sai_attribute_t *attrs) {
+                    for (uint32_t i = 0; i < attr_count; i++)
+                    {
+                        if (attrs[i].id == SAI_NEXT_HOP_GROUP_ATTR_TYPE)
+                        {
+                            EXPECT_EQ(attrs[i].value.s32,
+                                      SAI_NEXT_HOP_GROUP_TYPE_PROTECTION);
+                        }
+                    }
+                    *id = 0xAA00;
+                    return SAI_STATUS_SUCCESS;
+                });
+
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh,
+                                             standby_nh_id,
+                                             false));
+        EXPECT_TRUE(gNhgOrch->hasProtNhg(key));
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+    }
+
+    TEST_F(ProtNhgTest, SetAdminRoleOnProtectionNhgFails)
+    {
+        string key = "prot_nhg_admin_prot";
+        NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
+        vector<NextHopKey> primaries = {primary_nh};
+
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh,
+                                             0x1234, false));
+
+        EXPECT_FALSE(gNhgOrch->setProtNhgAdminRole(
+            key, SAI_NEXT_HOP_GROUP_MEMBER_CONFIGURED_ROLE_PRIMARY));
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+    }
+
+    TEST_F(ProtNhgTest, SetSwitchoverSuccess)
+    {
+        string key = "prot_nhg_switchover";
+        NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
+        vector<NextHopKey> primaries = {primary_nh};
+
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh,
+                                             0x1234, false));
+
+        EXPECT_CALL(*mock_sai_next_hop_group_api,
+                    set_next_hop_group_attribute(_, _))
+            .Times(1)
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        EXPECT_TRUE(gNhgOrch->setProtNhgSwitchover(key, true));
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+    }
+
+    TEST_F(ProtNhgTest, SetSwitchoverOnHwProtectionFails)
+    {
+        string key = "prot_nhg_switchover_hw";
+        NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
+        vector<NextHopKey> primaries = {primary_nh};
+
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh,
+                                             0x1234, true));
+
+        EXPECT_FALSE(gNhgOrch->setProtNhgSwitchover(key, true));
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+    }
+
+    TEST_F(ProtNhgTest, SetSwitchoverNonExistentNhgFails)
+    {
+        EXPECT_FALSE(gNhgOrch->setProtNhgSwitchover("no_such_key", true));
+    }
 }

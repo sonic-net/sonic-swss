@@ -146,14 +146,16 @@ public:
     bool createProtNhg(const string &key,
                        const vector<NextHopKey> &primary_nhs,
                        const NextHopKey &standby_nh,
-                       sai_object_id_t standby_nh_id = SAI_NULL_OBJECT_ID);
+                       sai_object_id_t standby_nh_id = SAI_NULL_OBJECT_ID,
+                       bool hw_protection = true);
 
     /* Create a protection NHG where each role is an existing ECMP NHG.
      * The group keys are resolved to their SAI OIDs via hasNhg/getNhg.
      */
     bool createProtNhg(const string &key,
                        const NextHopGroupKey &primary_nhg_key,
-                       const NextHopGroupKey &standby_nhg_key);
+                       const NextHopGroupKey &standby_nhg_key,
+                       bool hw_protection = true);
 
     /* Remove a protection NHG by key. */
     bool removeProtNhg(const string &key);
@@ -167,8 +169,11 @@ public:
     /* Get the SAI object ID of a protection NHG. */
     sai_object_id_t getProtNhgId(const string &key) const;
 
-    /* Toggle admin role (auto / force primary / force standby). */
+    /* Toggle admin role -- HW_PROTECTION groups only. */
     bool setProtNhgAdminRole(const string &key, sai_int32_t admin_role);
+
+    /* Trigger switchover from primary to backup -- PROTECTION groups only. */
+    bool setProtNhgSwitchover(const string &key, bool enable);
 
     /* Update the monitored object on a protection NHG member. */
     bool setProtNhgMonitoredObject(const string &key,

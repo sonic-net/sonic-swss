@@ -1217,7 +1217,8 @@ bool NhgOrch::isHwProtectionSupported()
 bool NhgOrch::createProtNhg(const string &key,
                              const vector<NextHopKey> &primary_nhs,
                              const NextHopKey &standby_nh,
-                             sai_object_id_t standby_nh_id)
+                             sai_object_id_t standby_nh_id,
+                             bool hw_protection)
 {
     SWSS_LOG_ENTER();
 
@@ -1241,7 +1242,8 @@ bool NhgOrch::createProtNhg(const string &key,
         return false;
     }
 
-    auto nhg = make_unique<ProtNhg>(key, primary_nhs, standby_nh, standby_nh_id);
+    auto nhg = make_unique<ProtNhg>(key, primary_nhs, standby_nh, standby_nh_id,
+                                    hw_protection);
 
     if (!nhg->sync())
     {
@@ -1271,7 +1273,8 @@ bool NhgOrch::createProtNhg(const string &key,
 
 bool NhgOrch::createProtNhg(const string &key,
                              const NextHopGroupKey &primary_nhg_key,
-                             const NextHopGroupKey &standby_nhg_key)
+                             const NextHopGroupKey &standby_nhg_key,
+                             bool hw_protection)
 {
     SWSS_LOG_ENTER();
 
@@ -1336,7 +1339,8 @@ bool NhgOrch::createProtNhg(const string &key,
     }
 
     auto nhg = make_unique<ProtNhg>(key, primary_nhg_key, primary_nhg_id,
-                                    standby_nhg_key, standby_nhg_id);
+                                    standby_nhg_key, standby_nhg_id,
+                                    hw_protection);
 
     if (!nhg->sync())
     {
@@ -1422,6 +1426,20 @@ bool NhgOrch::setProtNhgAdminRole(const string &key, sai_int32_t admin_role)
     }
 
     return it->second.nhg->setAdminRole(admin_role);
+}
+
+bool NhgOrch::setProtNhgSwitchover(const string &key, bool enable)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_protNhgs.find(key);
+    if (it == m_protNhgs.end())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s does not exist", key.c_str());
+        return false;
+    }
+
+    return it->second.nhg->setSwitchover(enable);
 }
 
 bool NhgOrch::setProtNhgMonitoredObject(const string &key,
