@@ -2,6 +2,8 @@
 #include <unordered_map>
 #include <chrono>
 #include <limits.h>
+#include <errno.h>
+#include <signal.h>
 #include "orchdaemon.h"
 #include "logger.h"
 #include <sairedis.h>
@@ -30,6 +32,7 @@ extern string                      gMySwitchType;
 extern string                      gMySwitchSubType;
 extern bool                        gOrchUnhealthy;
 extern string                      gSaiErrorString;
+volatile sig_atomic_t              gOrchShutdownRequested = 0;
 
 extern void syncd_apply_view();
 /*
@@ -931,7 +934,19 @@ void OrchDaemon::start(long heartBeatInterval)
         Selectable *s;
         int ret;
 
+        if (gOrchShutdownRequested != 0)
+        {
+            SWSS_LOG_NOTICE("Received signal %d, shutting down orchagent gracefully", gOrchShutdownRequested);
+            break;
+        }
+
         ret = m_select->select(&s, SELECT_TIMEOUT);
+
+        if (gOrchShutdownRequested != 0)
+        {
+            SWSS_LOG_NOTICE("Received signal %d, shutting down orchagent gracefully", gOrchShutdownRequested);
+            break;
+        }
 
         /*
          * Log an error message periodically if a previous SAI API call failed with
@@ -956,6 +971,11 @@ void OrchDaemon::start(long heartBeatInterval)
 
         if (ret == Select::ERROR)
         {
+            if (errno == EINTR && gOrchShutdownRequested != 0)
+            {
+                SWSS_LOG_NOTICE("Interrupted by signal %d, shutting down orchagent gracefully", gOrchShutdownRequested);
+                break;
+            }
             SWSS_LOG_NOTICE("Error: %s!\n", strerror(errno));
             continue;
         }

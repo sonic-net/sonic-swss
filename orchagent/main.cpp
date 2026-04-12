@@ -51,6 +51,7 @@ sai_object_id_t gSwitchId = SAI_NULL_OBJECT_ID;
 MacAddress gMacAddress;
 MacAddress gVxlanMacAddress;
 bool gOrchUnhealthy = false;
+extern volatile sig_atomic_t gOrchShutdownRequested;
 string gSaiErrorString;
 
 extern size_t gMaxBulkSize;
@@ -91,7 +92,7 @@ bool isChassisDbInUse()
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF] [-I heart_beat_interval] [-R] [-M]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-A] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF] [-I heart_beat_interval] [-R] [-M]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    Bit 0: sairedis.rec, Bit 1: swss.rec, Bit 2: responsepublisher.rec. For example:" << endl;
@@ -104,6 +105,7 @@ void usage()
     cout << "    -b batch_size: set consumer table pop operation batch size (default 128)" << endl;
     cout << "    -m MAC: set switch MAC address" << endl;
     cout << "    -i INST_ID: set the ASIC instance_id in multi-asic platform" << endl;
+    cout << "    -A: enable async swss.rec recording path" << endl;
     cout << "    -s enable synchronous mode (deprecated, use -z)" << endl;
     cout << "    -z redis communication mode (redis_async|redis_sync|zmq_sync), default: redis_async" << endl;
     cout << "    -f swss_rec_filename: swss record log filename(default 'swss.rec')" << endl;
@@ -128,6 +130,51 @@ void sighup_handler(int signo)
     Recorder::Instance().swss.setRotate(true);
     Recorder::Instance().sairedis.setRotate(true);
     Recorder::Instance().respub.setRotate(true);
+}
+
+void fatal_signal_handler(int signo)
+{
+    /*
+     * Do not use SWSS logging here since it takes locks. Dump only the
+     * async recorder counters with async-signal-safe write() and then let
+     * the process terminate with the original signal to preserve core dumps.
+     */
+    dumpAsyncSwssRecorderSignalSafeStats(STDERR_FILENO, signo);
+    kill(getpid(), signo);
+    _exit(128 + signo);
+}
+
+void graceful_shutdown_signal_handler(int signo)
+{
+    gOrchShutdownRequested = signo;
+}
+
+void register_fatal_signal_handler(int signo)
+{
+    struct sigaction sigact = {};
+    sigemptyset(&sigact.sa_mask);
+    sigact.sa_handler = fatal_signal_handler;
+    sigact.sa_flags = SA_RESETHAND;
+
+    if (sigaction(signo, &sigact, nullptr))
+    {
+        SWSS_LOG_ERROR("failed to setup fatal signal handler for signal %d", signo);
+        exit(1);
+    }
+}
+
+void register_graceful_shutdown_signal_handler(int signo)
+{
+    struct sigaction sigact = {};
+    sigemptyset(&sigact.sa_mask);
+    sigact.sa_handler = graceful_shutdown_signal_handler;
+    sigact.sa_flags = 0;
+
+    if (sigaction(signo, &sigact, nullptr))
+    {
+        SWSS_LOG_ERROR("failed to setup graceful shutdown handler for signal %d", signo);
+        exit(1);
+    }
 }
 
 void syncd_apply_view()
@@ -383,6 +430,14 @@ int main(int argc, char **argv)
         exit(1);
     }
 
+    register_fatal_signal_handler(SIGABRT);
+    register_fatal_signal_handler(SIGSEGV);
+    register_fatal_signal_handler(SIGBUS);
+    register_fatal_signal_handler(SIGILL);
+    register_fatal_signal_handler(SIGFPE);
+    register_graceful_shutdown_signal_handler(SIGTERM);
+    register_graceful_shutdown_signal_handler(SIGINT);
+
     int opt;
     sai_status_t status;
 
@@ -400,7 +455,7 @@ int main(int argc, char **argv)
     // Disable SAI MACSec POST by default. Use option -M to enable it.
     bool macsec_post_enabled = false;
 
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:RD:M")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:Af:j:d:i:hsz:k:q:c:t:v:I:RD:M")) != -1)
     {
         switch (opt)
         {
@@ -432,6 +487,10 @@ int main(int argc, char **argv)
                 usage();
                 exit(EXIT_FAILURE);
             }
+            break;
+        case 'A':
+            Recorder::Instance().swss.setAsync(true);
+            SWSS_LOG_NOTICE("Async swss recorder enabled");
             break;
         case 'd':
             record_location = optarg;

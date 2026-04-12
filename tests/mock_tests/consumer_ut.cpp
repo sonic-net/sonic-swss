@@ -68,10 +68,12 @@ namespace consumer_test
         virtual void SetUp() override
         {
             ::testing_db::reset();
+            Recorder::Instance().swss.setAsync(false);
         }
 
         virtual void TearDown() override
         {
+            Recorder::Instance().swss.setAsync(false);
             ::testing_db::reset();
         }
 
@@ -416,6 +418,7 @@ namespace consumer_test
         Recorder::Instance().swss.setRecord(true);
         Recorder::Instance().swss.setLocation(dirname);
         Recorder::Instance().swss.setFileName(filename);
+        Recorder::Instance().swss.setAsync(true);
         Recorder::Instance().swss.startRec(true);
 
         deque<KeyOpFieldsValuesTuple> entries;
@@ -438,5 +441,7 @@ namespace consumer_test
             EXPECT_NE(lines[i].find("|field1:value1_a"), string::npos);
             EXPECT_NE(lines[i].find("|field2:value2_a"), string::npos);
         }
+
+        Recorder::Instance().swss.setAsync(false);
     }
 }
