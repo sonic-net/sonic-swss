@@ -428,6 +428,24 @@ class TestP4RTAcl(object):
         meter_pbs = "200"
         table_name_with_rule_key1 = table_name + ":" + rule_json_key1
 
+        # First attemp failed due to invalid meter
+        attr_list = [
+            (self._p4rt_acl_rule_obj.ACTION, action),
+            ("param/traffic_class", "1"),
+            (self._p4rt_acl_rule_obj.METER_CIR, "N/A"),
+            (self._p4rt_acl_rule_obj.METER_CBURST, meter_cbs),
+            (self._p4rt_acl_rule_obj.METER_MODE, "single_rate_two_color"),
+        ]
+
+        self._p4rt_acl_rule_obj.set_app_db_entry(
+            table_name_with_rule_key1, attr_list)
+        self._p4rt_acl_rule_obj.verify_response(
+            table_name_with_rule_key1,
+            attr_list,
+            "SWSS_RC_INVALID_PARAM",
+            '[OrchAgent] Invalid ACL meter field value \'meter/cir\': \'N/A\' - Expect a uint64_t.',
+        )
+
         attr_list = [
             (self._p4rt_acl_rule_obj.ACTION, action),
             ("param/traffic_class", "1"),
@@ -732,7 +750,7 @@ class TestP4RTAcl(object):
         ]
         util.verify_attr(fvs, attr_list)
 
-        # create ACL rule 2 with QOS_QUEUE action
+        # First attempt failed since cpu queue is out of range
         rule_json_key2 = '{"match/is_ip":"0x1","match/ether_type":"0x0800 & 0xFFFF","match/ether_dst":"AA:BB:CC:DD:EE:FF & FF:FF:FF:FF:FF:FF","priority":100}'
         action = "qos_queue"
         meter_cir = "80"
@@ -744,11 +762,30 @@ class TestP4RTAcl(object):
     # First attempt failed since no UserDefinedTrap is created for the CPU queue    
         attr_list = [
             (self._p4rt_acl_rule_obj.ACTION, action),
-            ("param/cpu_queue", "30"), # No UserDefinedTrap created for the queue.
+            # No UserDefinedTrap created for the queue.
+            ("param/cpu_queue", "48"),
             (self._p4rt_acl_rule_obj.METER_CIR, meter_cir),
             (self._p4rt_acl_rule_obj.METER_CBURST, meter_cbs),
             (self._p4rt_acl_rule_obj.METER_PIR, meter_pir),
             (self._p4rt_acl_rule_obj.METER_PBURST, meter_pbs),
+        ]
+
+        self._p4rt_acl_rule_obj.set_app_db_entry(
+            table_name_with_rule_key2, attr_list)
+        self._p4rt_acl_rule_obj.verify_response(
+            table_name_with_rule_key2,
+            attr_list,
+            "SWSS_RC_INVALID_PARAM",
+            "[OrchAgent] Invalid CPU queue number '48' for 'ACL_PUNT_TABLE_RULE_TEST'. Queue number should >= 0 and <= 47",
+        )
+
+        # Second attempt failed since no UserDefinedTrap is created for the CPU queue
+        attr_list = [
+            (self._p4rt_acl_rule_obj.ACTION, action),
+            # No UserDefinedTrap created for the queue.
+            ("param/cpu_queue", "30"),
+            (self._p4rt_acl_rule_obj.METER_CIR, meter_cir),
+            (self._p4rt_acl_rule_obj.METER_CBURST, meter_cbs),
         ]
 
         self._p4rt_acl_rule_obj.set_app_db_entry(
@@ -761,6 +798,7 @@ class TestP4RTAcl(object):
             "[OrchAgent] Invalid CPU queue number '30' for 'ACL_PUNT_TABLE_RULE_TEST'. Queue number 30 does not have UserDefinedTrap configured",
         )
 
+        # Third attempt passed.
         attr_list = [
             (self._p4rt_acl_rule_obj.ACTION, action),
             ("param/cpu_queue", "5"),
@@ -1377,7 +1415,7 @@ class TestP4RTAcl(object):
             table_name_with_rule_key,
             attr_list,
             "SWSS_RC_INVALID_PARAM",
-            "[OrchAgent] Failed to find P4Orch Manager for ACL_PUNT_TABLE_RULE_TEST P4RT DB table",
+            '[OrchAgent] Failed to find P4Orch Manager for key ACL_PUNT_TABLE_RULE_TEST:{"match/ether_type":"0x0800","match/ether_dst":"00:1a:11:17:5f:80","match/src_ipv6_64bit":"fdf8:f53b:82e4::","match/arp_tpa":"0xff665543","priority":100}',
         )
 
         # query application database for ACL rules
