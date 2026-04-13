@@ -1924,7 +1924,7 @@ bool MuxOrch::convertNeighborToMux(const NeighborEntry& neighbor_entry, const st
     }
 
     // Convert to MUX neighbor for prefix based nbr handler before adding the nbr entry to mux port
-    // If neighbor is host-route based, convertToPrefixBasedNbr will not be called (short-circuit)
+    // If the mux port uses the host-route nbr handler, convertToPrefixBasedNbr will not be called (short-circuit)
     if (ptr->getNbrHandlerType() == MuxNbrHandlerType::NBR_HANDLER_HOST_ROUTE ||
             neigh_orch_->convertToPrefixBasedNbr(neighbor_entry, tunnel_nh_id))
     {
