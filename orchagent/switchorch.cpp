@@ -916,17 +916,19 @@ bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
             switch (hash.ecmp_type.value)
             {
             case EcmpType::ECMP_STATIC:
-                m_ecmpNhgType = SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP;
-                SWSS_LOG_NOTICE("ECMP type set to static — NHGs will use DYNAMIC_UNORDERED_ECMP");
+                m_ecmpNhgType = SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP;
+                m_orderedEcmpEnable = true;
+                SWSS_LOG_NOTICE("ECMP type set to static — NHGs use DYNAMIC_ORDERED_ECMP (Mellanox pre-allocated)");
                 break;
             case EcmpType::ECMP_CONSISTENT:
-                m_ecmpNhgType = SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP;
-                SWSS_LOG_NOTICE("ECMP type set to consistent — NHGs will use FINE_GRAIN_ECMP");
+                m_ecmpNhgType = SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP;
+                m_orderedEcmpEnable = true;
+                SWSS_LOG_NOTICE("ECMP type set to consistent — NHGs use DYNAMIC_ORDERED_ECMP (Mellanox pre-allocated)");
                 break;
             case EcmpType::ECMP_RESILIENT:
                 m_ecmpNhgType = SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP;
                 m_orderedEcmpEnable = true;
-                SWSS_LOG_NOTICE("ECMP type set to resilient — NHGs will use DYNAMIC_ORDERED_ECMP");
+                SWSS_LOG_NOTICE("ECMP type set to resilient — NHGs use DYNAMIC_ORDERED_ECMP");
                 break;
             }
 

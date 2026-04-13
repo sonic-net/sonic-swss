@@ -154,8 +154,8 @@ private:
     bool m_sensorsMaxTempSupported = true;
     bool m_sensorsAvgTempSupported = true;
     bool m_vxlanSportUserModeEnabled = false;
-    bool m_orderedEcmpEnable = false;
-    sai_next_hop_group_type_t m_ecmpNhgType = SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP;
+    bool m_orderedEcmpEnable = true;
+    sai_next_hop_group_type_t m_ecmpNhgType = SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP;
     uint32_t m_ecmpResilientBuckets = 0;
     uint32_t m_ecmpResilientActiveFlowTimer = 0;
     uint32_t m_ecmpResilientMaxUnbalancedTime = 0;
