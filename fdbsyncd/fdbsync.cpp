@@ -340,7 +340,7 @@ void FdbSync::updateLocalMac (struct m_fdb_info *info)
 {
     char *op;
     char *type;
-    char *proto_string;
+    std::string proto_string = "";
     string port_name = "";
     string key = info->vid + ":" + info->mac;
     short fdb_type;    /*dynamic or static*/

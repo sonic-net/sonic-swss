@@ -1979,6 +1979,12 @@ void RouteSync::onTcFilterMsg(struct nlmsghdr *h, int len)
             int msg_type = h->nlmsg_type;
             struct rtattr *tca_options = tb[TCA_OPTIONS];
 
+            if (!tca_options)
+            {
+                SWSS_LOG_WARN("tc filter message missing TCA_OPTIONS attribute");
+                return;
+            }
+
             if (!getIfName(tcm->tcm_ifindex, if_name, IFNAMSIZ))
             {
                 strcpy(if_name, ifname_unknown);
@@ -2395,30 +2401,6 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
         return;
     default:
         break;
-    }
-
-    if (h->nlmsg_type == RTM_NEWTFILTER || h->nlmsg_type == RTM_DELTFILTER)
-    {
-        onTcFilterMsg(h, len);
-        return;
-    }
-
-    if (h->nlmsg_type == RTM_FPM_ADD_EVPN_SHL || h->nlmsg_type == RTM_FPM_DEL_EVPN_SHL)
-    {
-        onEvpnShlMsg(h, len);
-        return;
-    }
-
-    if (h->nlmsg_type == RTM_FPM_ADD_EVPN_DF || h->nlmsg_type == RTM_FPM_DEL_EVPN_DF)
-    {
-        onEvpnDfMsg(h, len);
-        return;
-    }
-
-    if (h->nlmsg_type == RTM_FPM_ADD_EVPN_ES_BACKUP_NHG || h->nlmsg_type == RTM_FPM_DEL_EVPN_ES_BACKUP_NHG)
-    {
-        onEvpnEsBackupNhgMsg(h, len);
-        return;
     }
 
     switch (getEncapType(h))

@@ -40,9 +40,27 @@ NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConne
     {
         m_AppRestartAssist->registerAppTable(APP_NEIGH_TABLE_NAME, &m_neighTable);
     }
+    
     m_nl_sock = nl_socket_alloc();
-    nl_connect(m_nl_sock, NETLINK_ROUTE);
-    rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
+    if (!m_nl_sock)
+    {
+        SWSS_LOG_THROW("Failed to allocate netlink socket");
+    }
+    
+    if (nl_connect(m_nl_sock, NETLINK_ROUTE) < 0)
+    {
+        nl_socket_free(m_nl_sock);
+        m_nl_sock = NULL;
+        SWSS_LOG_THROW("Failed to connect to netlink socket");
+    }
+    
+    if (rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache) < 0 || !m_link_cache)
+    {
+        nl_close(m_nl_sock);
+        nl_socket_free(m_nl_sock);
+        m_nl_sock = NULL;
+        SWSS_LOG_THROW("Failed to allocate link cache");
+    }
 }
 
 NeighSync::~NeighSync()

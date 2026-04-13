@@ -1142,6 +1142,16 @@ void VxlanTunnel::updateRemoteEndPointIpRef(const std::string remote_vtep, bool 
     }
 }
 
+void VxlanTunnel::eraseRemoteEndPoint(const std::string remote_vtep)
+{
+    auto it = tnl_users_.find(remote_vtep);
+    if (it != tnl_users_.end())
+    {
+        tnl_users_.erase(it);
+        SWSS_LOG_INFO("Erased remote endpoint %s from tnl_users_", remote_vtep.c_str());
+    }
+}
+
 bool VxlanTunnel::createDynamicDIPTunnel(const std::string dip, tunnel_user_t usr)
 {
     uint8_t mapper_list = 0;
@@ -1773,6 +1783,11 @@ bool  VxlanTunnelOrch::delTunnelUser(const std::string remote_vtep, uint32_t vni
         port_tunnel_name = getTunnelPortName(vtep_ptr->getSrcIP().to_string(), true);
         gPortsOrch->getPort(port_tunnel_name,tunnelPort);
         vtep_ptr->updateRemoteEndPointIpRef(remote_vtep, false);
+        // Clean up tnl_users_ entry if refcount reaches zero
+        if (vtep_ptr->getRemoteEndPointRefCnt(remote_vtep) == 0)
+        {
+            vtep_ptr->eraseRemoteEndPoint(remote_vtep);
+        }
         if (vtep_ptr->del_tnl_hw_pending && !vtep_ptr->isTunnelReferenced())
         {
             ret = gPortsOrch->removeBridgePort(tunnelPort);

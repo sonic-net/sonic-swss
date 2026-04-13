@@ -1502,6 +1502,7 @@ void FdbOrch::flushAllFDBEntries(sai_object_id_t bridge_port_oid,
                                    entry.mac.to_string().c_str(), entry.bv_id, port.m_alias.c_str());
 
                     port.m_fdb_count--;
+                    m_portsOrch->setPort(port.m_alias, port);
                     if (!m_portsOrch->getPort(entry.bv_id, vlan))
                     {
                         SWSS_LOG_NOTICE("FdbOrch notification: Failed to locate vlan port from bv_id 0x%" PRIx64, entry.bv_id);
@@ -1529,7 +1530,6 @@ void FdbOrch::flushAllFDBEntries(sai_object_id_t bridge_port_oid,
             }
             SWSS_LOG_NOTICE("flushAllFDB Done for tunnel bridge_port_id 0x%" PRIx64, bridge_port_oid);
 
-            m_portsOrch->setPort(port.m_alias, port);
             return;
         }
     }
@@ -1785,7 +1785,6 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
     FdbOrigin oldOrigin = FDB_ORIGIN_INVALID ;
     bool macUpdate = false;
     bool macMoveLocalToRemote = false;
-    bool macMoveRemoteToLocal = false;
     bool macFlushPending = false;
 
     auto it = m_entries.find(entry);
@@ -1851,7 +1850,15 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             }
             else if (oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED)
             {
-                if ((oldType == "static") && (fdbData.type == "static"))
+                if (fdbData.origin == FDB_ORIGIN_LEARN)
+                {
+                    SWSS_LOG_NOTICE("FdbOrch: mac=%s %s port=%s type=%s origin=%d old_origin=%d"
+                            " old_type=%s remote mac exists,"
+                            " moved from remote vxlan vtep to local port",
+                            entry.mac.to_string().c_str(), vlan.m_alias.c_str(), port_name.c_str(),
+                            fdbData.type.c_str(), fdbData.origin, oldOrigin, oldType.c_str());
+                }
+                else if ((oldType == "static") && (fdbData.type == "static"))
                 {
                     SWSS_LOG_WARN("You have just overwritten existing static MAC:%s "
                             "in Vlan:%d from Peer:dest_type:%s, dest_value:%s, "
@@ -2015,7 +2022,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
     attr.id = SAI_FDB_ENTRY_ATTR_PACKET_ACTION;
     attr.value.s32 = (fdbData.discard == "true") ? SAI_PACKET_ACTION_DROP: SAI_PACKET_ACTION_FORWARD;
     attrs.push_back(attr);
-    if (macUpdate && !macMoveLocalToRemote && !macMoveRemoteToLocal)
+    if (macUpdate && !macMoveLocalToRemote)
     {
         SWSS_LOG_INFO("MAC-Update FDB %s in %s on from-%s:to-%s from-%s:to-%s origin-%d-to-%d",
                 entry.mac.to_string().c_str(), vlan.m_alias.c_str(), oldPort.m_alias.c_str(),
@@ -2045,7 +2052,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
     }
     else
     {
-        if (macMoveLocalToRemote || macMoveRemoteToLocal)
+        if (macMoveLocalToRemote)
         {
             status = sai_fdb_api->remove_fdb_entry(&fdb_entry);
 
