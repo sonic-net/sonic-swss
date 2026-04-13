@@ -2089,7 +2089,7 @@ void SwitchOrch::setFastLinkupCapability()
     }
     else
     {
-        SWSS_LOG_ERROR("Failed to get fast linkup polling range: %s", sai_serialize_status(status).c_str());
+        SWSS_LOG_WARN("Failed to get fast linkup polling range: %s", sai_serialize_status(status).c_str());
     }
 
     attr.id = SAI_SWITCH_ATTR_FAST_LINKUP_GUARD_TIMEOUT_RANGE;
@@ -2105,7 +2105,7 @@ void SwitchOrch::setFastLinkupCapability()
     }
     else
     {
-        SWSS_LOG_ERROR("Failed to get fast linkup guard range: %s", sai_serialize_status(status).c_str());
+        SWSS_LOG_WARN("Failed to get fast linkup guard range: %s", sai_serialize_status(status).c_str());
     }
     set_switch_capability(fvVector);
 }
