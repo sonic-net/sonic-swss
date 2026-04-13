@@ -68,13 +68,13 @@ struct FdbData
     bool is_flush_pending = false;
 
     /* Remote FDB related info */
-    NEXT_HOP_VALUE_TYPE dest_type;
+    NEXT_HOP_VALUE_TYPE dest_type = UNKNOWN;
     string dest_value;
     string    esi;
     unsigned int vni = 0;
     sai_fdb_entry_type_t sai_fdb_type = SAI_FDB_ENTRY_TYPE_DYNAMIC;
     string discard;
-    bool allow_mac_move;
+    bool allow_mac_move = false;
 };
 
 struct SavedFdbEntry

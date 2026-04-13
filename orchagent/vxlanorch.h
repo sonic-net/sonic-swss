@@ -221,6 +221,7 @@ public:
     void cleanupDynamicDIPTunnel(const std::string remote_vtep);
     bool isTunnelReferenced(void);
     void updateRemoteEndPointIpRef(const std::string remote_vtep, bool inc);
+    void eraseRemoteEndPoint(const std::string remote_vtep);
     uint32_t vlan_vrf_vni_count = 0;
     bool del_tnl_hw_pending = false;
 

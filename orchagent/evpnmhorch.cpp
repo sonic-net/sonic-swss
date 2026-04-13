@@ -205,7 +205,7 @@ void EvpnMhOrch::vlanMembersApplyNonDF(string port_name)
             SWSS_LOG_WARN("vlanMembersApplyNonDF: SAI attribute not supported for port %s vlan %d, "
                           "Non-DF BUM suppression unavailable on this platform",
                           port_name.c_str(), vlan_id);
-            return;
+            continue;
         }
         else if (status != SAI_STATUS_SUCCESS)
         {

@@ -141,15 +141,19 @@ private:
         unsigned int vni;
         std::string ifname;
         uint8_t protocol;
-        struct AnonymousBuffer
+        
+        // Mutually exclusive destination fields
+        // Only one should be populated based on nhtype value:
+        // - nhtype == VTEP: use remote_vtep
+        // - nhtype == NEXTHOPGROUP: use nexthop_group  
+        // - nhtype == IFNAME: use ifname_dest
+        struct NextHopValue
         {
-        public:
-            AnonymousBuffer() : remote_vtep(buffer), nexthop_group(buffer), ifname(buffer) {};
-            std::string &remote_vtep;
-            std::string &nexthop_group;
-            std::string &ifname;
-        private:
-            std::string buffer;
+            std::string remote_vtep;
+            std::string nexthop_group;
+            std::string ifname;
+            
+            NextHopValue() = default;
         } v;
     };
     std::unordered_map<std::string, m_mac_info> m_mac;

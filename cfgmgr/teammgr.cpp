@@ -631,6 +631,7 @@ int TeamMgr::update_kernel(const string &alias, const string &system_mac)
     }
     if (rtnl_link_change(sockk, orig_link, link, ifindex) < 0) {
         SWSS_LOG_ERROR("Failed to change the MAC address.\n");
+        rtnl_link_put(orig_link);
         rtnl_link_put(link);
         nl_close(sockk);
         nl_socket_free(sockk);
@@ -639,6 +640,7 @@ int TeamMgr::update_kernel(const string &alias, const string &system_mac)
 
     SWSS_LOG_NOTICE("Successfully changed the MAC address of the interface %d.\n", ifindex);
 
+    rtnl_link_put(orig_link);
     rtnl_link_put(link);
     nl_close(sockk);
     nl_socket_free(sockk);
