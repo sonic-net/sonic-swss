@@ -37,6 +37,13 @@ TEST(P4OrchUtilTest, KeyGeneratorTest)
     // Invalid, expected to return group ID 0.
     EXPECT_EQ("0x0000", KeyGenerator::generateL3MulticastGroupKey("zzz"));
 
+    // L2 multicast group keys.
+    EXPECT_EQ("0x0003", KeyGenerator::generateL2MulticastGroupKey("0x3"));
+    EXPECT_EQ("0x0009", KeyGenerator::generateL2MulticastGroupKey("0X09"));
+    EXPECT_EQ("0x0021", KeyGenerator::generateL2MulticastGroupKey("33"));
+    // Invalid, expected to return group ID 0.
+    EXPECT_EQ("0x0000", KeyGenerator::generateL2MulticastGroupKey("invalid"));
+
     std::string ipv4_multicast_key = KeyGenerator::generateIpMulticastKey(
         "b4-traffic", swss::IpAddress("127.0.0.1"));
     EXPECT_EQ("ipv4_dst=127.0.0.1:vrf_id=b4-traffic", ipv4_multicast_key);
