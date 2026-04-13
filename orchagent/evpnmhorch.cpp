@@ -18,39 +18,26 @@ EvpnMhOrch::~EvpnMhOrch()
     SWSS_LOG_ENTER();
 }
 
-struct EsCacheEntry *EvpnMhOrch::getEsCache(const std::string &key)
+EsCacheEntry *EvpnMhOrch::getEsCache(const std::string &key)
 {
-    std::map<std::string, struct EsCacheEntry *>::iterator entry_it = m_esDataMap.find(key);
-    struct EsCacheEntry *entry = nullptr;
-
+    auto entry_it = m_esDataMap.find(key);
     if (entry_it == m_esDataMap.end())
     {
-        entry = nullptr;
+        return nullptr;
     }
-    else
-    {
-        entry = (*entry_it).second;
-    }
-
-    return entry;
+    return entry_it->second.get();
 }
 
-struct EsCacheEntry *EvpnMhOrch::getEsCacheForPort(const std::string &key)
+EsCacheEntry *EvpnMhOrch::getEsCacheForPort(const std::string &key)
 {
-    std::map<std::string, struct EsCacheEntry *>::iterator entry_it = m_esDataMap.begin();
-    struct EsCacheEntry *entry = nullptr;
-
-    while (entry_it != m_esDataMap.end() && entry == nullptr)
+    for (auto &entry_it : m_esDataMap)
     {
-        if (((*entry_it).first).find(key) != std::string::npos)
+        if (entry_it.first.find(key) != std::string::npos)
         {
-            entry = (*entry_it).second;
+            return entry_it.second.get();
         }
-
-        entry_it++;
     }
-
-    return entry;
+    return nullptr;
 }
 
 std::string getPortFromEsKey(string &key)
@@ -107,8 +94,8 @@ void EvpnMhOrch::updateEsCache(string &key, KeyOpFieldsValuesTuple &t)
     }
     else
     {
-        existing_entry = new EsCacheEntry(is_df);
-        m_esDataMap[key] = existing_entry;
+        m_esDataMap[key] = std::make_unique<EsCacheEntry>(is_df);
+        existing_entry = m_esDataMap[key].get();
     }
 
     if (existing_entry)
@@ -189,8 +176,6 @@ void EvpnMhOrch::deleteEsCache(string &key)
             return;
         }
         m_esDataMap.erase(key);
-        delete entry;
-        entry = nullptr;
     }
 }
 
@@ -215,9 +200,17 @@ void EvpnMhOrch::vlanMembersApplyNonDF(string port_name)
         SWSS_LOG_NOTICE("vlanMembersApplyNonDF: set Non-DF for port: %s, vlan: %d", port_name.c_str(), vlan_id);
 
         auto status = sai_vlan_api->set_vlan_member_attribute(vlan_mem_entry.vlan_member_id, &attr);
-        if (status != SAI_STATUS_SUCCESS)
+        if (status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
         {
-            /* TODO: Error handling */
+            SWSS_LOG_WARN("vlanMembersApplyNonDF: SAI attribute not supported for port %s vlan %d, "
+                          "Non-DF BUM suppression unavailable on this platform",
+                          port_name.c_str(), vlan_id);
+            return;
+        }
+        else if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("vlanMembersApplyNonDF: failed to set Non-DF for port %s vlan %d (status %d)",
+                           port_name.c_str(), vlan_id, status);
         }
     }
     return;

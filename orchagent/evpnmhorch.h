@@ -1,6 +1,7 @@
 #ifndef SWSS_EVPNMHORCH_H
 #define SWSS_EVPNMHORCH_H
 
+#include <memory>
 #include <vector>
 
 #include "orch.h"
@@ -37,11 +38,11 @@ public:
 private:
     vector<Table *> m_appTables;
 
-    std::map<std::string, struct EsCacheEntry *> m_esDataMap;
+    std::map<std::string, std::unique_ptr<EsCacheEntry>> m_esDataMap;
     std::map<std::string, bool> m_esIntfMap;
 
-    struct EsCacheEntry *getEsCache(const std::string &key);
-    struct EsCacheEntry *getEsCacheForPort(const std::string &key);
+    EsCacheEntry *getEsCache(const std::string &key);
+    EsCacheEntry *getEsCacheForPort(const std::string &key);
     void updateEsCache(string &key, KeyOpFieldsValuesTuple &t);
     void deleteEsCache(string &key);
     void doEvpnEsDfTask(Consumer &consumer);

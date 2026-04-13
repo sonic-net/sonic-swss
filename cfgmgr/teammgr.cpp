@@ -331,8 +331,14 @@ void TeamMgr::doLagTask(Consumer &consumer)
             }
             if (!sys_mac.empty())
             {
-                setLagSysmac(alias, sys_mac);
-                SWSS_LOG_NOTICE("Configure %s sys_mac to %s", alias.c_str(), sys_mac.c_str());
+                if (setLagSysmac(alias, sys_mac))
+                {
+                    SWSS_LOG_NOTICE("Successfully configured %s sys_mac to %s", alias.c_str(), sys_mac.c_str());
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Failed to configure %s sys_mac to %s", alias.c_str(), sys_mac.c_str());
+                }
             }
         }
         else if (op == DEL_COMMAND)
@@ -648,12 +654,22 @@ bool TeamMgr::setLagSysmac(const string &alias, string &sys_mac)
     }
     FieldValueTuple fv("system_mac", sys_mac);
     fvs.push_back(fv);
-    //Update in APP_DB
-    m_appLagTable.set(alias, fvs);
-    //update in kernel
+
+    //update in kernel first
     int err = this->update_kernel(alias, sys_mac);
-    SWSS_LOG_NOTICE("kernel update returned with error %d", err);
-    //Update in State_DB
+    if (err != 0)
+    {
+        SWSS_LOG_ERROR("Failed to update kernel for %s with system_mac %s, error %d",
+                       alias.c_str(), sys_mac.c_str(), err);
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Successfully updated kernel for %s with system_mac %s",
+                    alias.c_str(), sys_mac.c_str());
+
+    //Update in APP_DB only after successful kernel update
+    m_appLagTable.set(alias, fvs);
+    //Update in State_DB only after successful kernel update
     m_stateLagTable.set(alias, fvs);
     return true;
 }

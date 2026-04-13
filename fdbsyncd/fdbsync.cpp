@@ -283,11 +283,19 @@ void FdbSync::macDelVxlanEntry(string auxkey, struct m_fdb_info *info)
 {
     std::string cmds;
     auto mac = info->mac;
-    auto ifname = m_mac[auxkey].ifname;
     auto vid =  info->vid.substr(4);
-    if (m_mac[auxkey].nhtype == VTEP)
+
+    auto it = m_mac.find(auxkey);
+    if (it == m_mac.end())
     {
-        std::string vtep = m_mac[auxkey].v.remote_vtep;
+        SWSS_LOG_WARN("macDelVxlanEntry: Entry not found for key %s", auxkey.c_str());
+        return;
+    }
+
+    auto ifname = it->second.ifname;
+    if (it->second.nhtype == VTEP)
+    {
+        std::string vtep = it->second.v.remote_vtep;
 
         // The usage of self allow the avoidance of
         // deleting both bridge and VxLAN FDB.
@@ -297,9 +305,9 @@ void FdbSync::macDelVxlanEntry(string auxkey, struct m_fdb_info *info)
         //bridge fdb del 00:00:00:00:66:66 dev Ethernet1_13 vlan 10 master
 
     }
-    else if (m_mac[auxkey].nhtype == NEXTHOPGROUP)
+    else if (it->second.nhtype == NEXTHOPGROUP)
     {
-        std::string nexthop_group = m_mac[auxkey].v.nexthop_group;
+        std::string nexthop_group = it->second.v.nexthop_group;
 
         // The usage of self allow the avoidance of
         // deleting both bridge and VxLAN FDB.
@@ -312,7 +320,7 @@ void FdbSync::macDelVxlanEntry(string auxkey, struct m_fdb_info *info)
     {
         SWSS_LOG_INFO("Delete of this Vxlan entry is not supported. \
                        Mac points to neither a NHG or VTEP. \
-                        nhtype: %d", m_mac[auxkey].nhtype);
+                        nhtype: %d", it->second.nhtype);
         return;
     }
 
@@ -1290,6 +1298,8 @@ void FdbSync::onMsgRaw(struct nlmsghdr *h)
         int ret = rtnl_neigh_parse(h, &neigh);
         if (ret != 0)
         {
+            SWSS_LOG_ERROR("%s: Failed to parse neighbor netlink message, ret=%d, type=%d",
+                           __PRETTY_FUNCTION__, ret, h->nlmsg_type);
             return;
         }
         onMsgNbr(h->nlmsg_type, (nl_object *)neigh, h);
