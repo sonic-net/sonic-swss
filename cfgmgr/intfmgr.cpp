@@ -142,6 +142,12 @@ void IntfMgr::setSagFdbEntry(const string &op, const string &alias, const string
     stringstream cmd;
     string res;
 
+    if (op != "add" && op != "replace" && op != "del")
+    {
+        SWSS_LOG_ERROR("Invalid FDB operation '%s' for MAC %s on %s", op.c_str(), mac_str.c_str(), alias.c_str());
+        return;
+    }
+
     if (mac_str == gMacAddress.to_string())
     {
         // Don't add or del for global system MAC address
@@ -1311,6 +1317,10 @@ void IntfMgr::doSagTask(const vector<string>& keys,
 
         // reset mac address for enabled static-anycast-gateway's VLAN interfaces
         updateSagMac(gMacAddress.to_string());
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Unknown operation: %s", op.c_str());
     }
 }
 

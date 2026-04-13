@@ -22,6 +22,7 @@ using namespace swss;
 
 #define VRF_PREFIX              "Vrf"
 #define TENMS                   10000
+#define MAX_ROUTE_DEL_RETRY     100
 
 NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector *cfgDb, DBConnector *appDb) :
     m_neighTable(pipelineAppDB, APP_NEIGH_TABLE_NAME),
@@ -49,6 +50,17 @@ NeighSync::~NeighSync()
     if (m_AppRestartAssist)
     {
         delete m_AppRestartAssist;
+    }
+
+    if (m_link_cache)
+    {
+        nl_cache_free(m_link_cache);
+    }
+
+    if (m_nl_sock)
+    {
+        nl_close(m_nl_sock);
+        nl_socket_free(m_nl_sock);
     }
 }
 
@@ -185,16 +197,6 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     }
 
     SWSS_LOG_INFO("Get neighbor msg %s, state %d, type %d", ipStr, state, nlmsg_type);
-    if (state == NUD_NOARP)
-    {
-        /* For externally learned neighbors, e.g. VXLAN EVPN, we want to keep
-         * these neighbors. */
-        if (!(rtnl_neigh_get_flags(neigh) & NTF_EXT_LEARNED))
-        {
-            SWSS_LOG_INFO("NOARP address received, ignoring for %s", ipStr);
-            return;
-        }
-    }
 
     bool delete_key = false;
     bool use_zero_mac = false;
@@ -212,10 +214,24 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
         }
     }
     else if ((nlmsg_type == RTM_DELNEIGH) ||
-             (state == NUD_INCOMPLETE) || (state == NUD_FAILED) || (state == NUD_NOARP))
+             (state == NUD_INCOMPLETE) || (state == NUD_FAILED))
     {
-        /* NUD_NOARP means this neighbor is moved to remote, we should delete the local neighbor */
         delete_key = true;
+    }
+    else if (state == NUD_NOARP)
+    {
+        /* NUD_NOARP with NTF_EXT_LEARNED means this is an EVPN-synced neighbor
+         * (e.g., from RT-2 MAC/IP via FRR zebra). Keep it — don't delete.
+         * NUD_NOARP without NTF_EXT_LEARNED means moved to remote — delete. */
+        if (!(rtnl_neigh_get_flags(neigh) & NTF_EXT_LEARNED))
+        {
+            SWSS_LOG_INFO("NUD_NOARP without NTF_EXT_LEARNED, neighbor moved to remote for %s", ipStr);
+            delete_key = true;
+        }
+        else
+        {
+            SWSS_LOG_INFO("NUD_NOARP with NTF_EXT_LEARNED (EVPN-synced), keeping neighbor for %s", ipStr);
+        }
     }
 
     if (use_zero_mac)
@@ -271,11 +287,17 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
             SWSS_LOG_INFO("Remove host route before adding neighbor %s", hostRoute.c_str());
             m_routeTable.del(hostRoute);
             vector<FieldValueTuple> values;
-            while (m_routeCheckTable.get(hostRoute, values))
+            int retry_count = 0;
+            while (m_routeCheckTable.get(hostRoute, values) && retry_count < MAX_ROUTE_DEL_RETRY)
             {
-                SWSS_LOG_DEBUG("Host route still exists: %s", hostRoute.c_str());
+                SWSS_LOG_DEBUG("Host route still exists: %s, retry %d", hostRoute.c_str(), retry_count);
                 m_routeTable.del(hostRoute);
-				usleep(TENMS);
+                usleep(TENMS);
+                retry_count++;
+            }
+            if (retry_count >= MAX_ROUTE_DEL_RETRY)
+            {
+                SWSS_LOG_WARN("Host route %s still present after %d retries, proceeding with neighbor add", hostRoute.c_str(), MAX_ROUTE_DEL_RETRY);
             }
         }
 

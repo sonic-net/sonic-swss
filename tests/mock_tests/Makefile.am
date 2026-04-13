@@ -87,6 +87,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_saihelper.cpp \
                 mirrororch_ut.cpp \
                 shlorch_ut.cpp \
+                mock_sai_fdb.cpp \
                 mock_sai_tunnel.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \

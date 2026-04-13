@@ -1779,13 +1779,20 @@ bool PortsOrch::getPort(sai_object_id_t id, Port &port)
     return false;
 }
 
-bool PortsOrch::getVlanMember(string alias, Port vlan, sai_object_id_t &vlan_member_id)
+bool PortsOrch::getVlanMember(const string &alias, const Port &vlan, sai_object_id_t &vlan_member_id)
 {
-    auto vlan_member = m_portVlanMember[alias].find(vlan.m_vlan_info.vlan_id);
-    if (vlan_member == m_portVlanMember[alias].end()) {
+    auto portIt = m_portVlanMember.find(alias);
+    if (portIt == m_portVlanMember.end())
+    {
         return false;
     }
-    vlan_member_id = vlan_member->second.vlan_member_id;
+    auto &vlanMap = portIt->second;
+    auto vlanMemberIt = vlanMap.find(vlan.m_vlan_info.vlan_id);
+    if (vlanMemberIt == vlanMap.end())
+    {
+        return false;
+    }
+    vlan_member_id = vlanMemberIt->second.vlan_member_id;
 
     return true;
 }
@@ -7088,7 +7095,7 @@ bool PortsOrch::addBridgePort(Port &port)
     attrs.push_back(attr);
 
     /* If the interface is associated with an ethernet segment, set the DF role */
-    if (gEvpnMhOrch->isPortInterfaceAssociatedToEs(port.m_alias)) {
+    if (gEvpnMhOrch && gEvpnMhOrch->isPortInterfaceAssociatedToEs(port.m_alias)) {
         /* TODO FIXME: sridsant : Use proper attribute once its available in SAI */
         attr.id = SAI_BRIDGE_PORT_ATTR_EGRESS_FILTERING;
         attr.value.booldata = gEvpnMhOrch->isInterfaceDF(port.m_alias, DEFAULT_PORT_VLAN_ID);
@@ -7389,7 +7396,7 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
     attrs.push_back(attr);
 
     /* If the interface is associated with an ethernet segment, send the SAI vlan DF attribute */
-    if (gEvpnMhOrch->isPortAndVlanAssociatedToEs(port.m_alias, vlan.m_vlan_info.vlan_id)) {
+    if (gEvpnMhOrch && gEvpnMhOrch->isPortAndVlanAssociatedToEs(port.m_alias, vlan.m_vlan_info.vlan_id)) {
         /* TODO: Use proper attribute once its available in SAI */
         attr.id = SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP;
         attr.value.booldata = gEvpnMhOrch->isInterfaceDF(port.m_alias, vlan.m_vlan_info.vlan_id);

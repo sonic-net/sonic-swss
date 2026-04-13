@@ -541,15 +541,11 @@ void FdbOrch::update(sai_fdb_event_t        type,
     }
     case SAI_FDB_EVENT_AGED:
     {
-        SWSS_LOG_INFO("update: EVPN_MH_UC: Received AGE out event for bvid=0x%" PRIx64 " mac=%s port=0x%" PRIx64,
+        SWSS_LOG_INFO("Received AGE event for bvid=0x%" PRIx64 " mac=%s port=0x%" PRIx64,
                        entry->bv_id, update.entry.mac.to_string().c_str(), bridge_port_id);
 
-        auto status = sai_fdb_api->remove_fdb_entry(entry);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_INFO("FdbOrch ageout: Ignore the failure of removing FDB entry. mac=%s, bv_id=0x%" PRIx64,
-                           update.entry.mac.to_string().c_str(), entry->bv_id);
-        }
+        // SAI_FDB_EVENT_AGED indicates the entry has already been removed by SAI/ASIC,
+        // so we only need to clean up the software state without calling remove_fdb_entry
  
         auto existing_entry = m_entries.find(update.entry);
         // we don't have such entries
@@ -691,7 +687,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
                 attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
                 attr.value.oid = bridge_port_id;
                 attrs.push_back(attr);
-                status = sai_fdb_api->create_fdb_entry(entry, (uint32_t)attrs.size(), attrs.data());
+                auto status = sai_fdb_api->create_fdb_entry(entry, (uint32_t)attrs.size(), attrs.data());
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("Failed to create FDB %s on %s, rv:%d",
