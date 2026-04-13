@@ -1871,13 +1871,6 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
                 const NeighborEntry& neighbor_entry = neighbor_pair.first;
                 const auto& neighbor_data = neighbor_pair.second;
 
-                // Skip neighbors already tracked as MUX neighbors
-                NextHopKey nh_key = { neighbor_entry.ip_address, neighbor_entry.alias };
-                if (mux_nexthop_tb_.find(nh_key) != mux_nexthop_tb_.end())
-                {
-                    continue;
-                }
-
                 // Skip prefix_route neighbors that are not skip neighbors
                 // soc neighbors will get added with prefix_route but
                 // they may not be yet qualified as mux neighbor
