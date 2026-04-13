@@ -101,6 +101,11 @@ namespace mock_orch_test
         SetDashTable(APP_DASH_ROUTE_TABLE_NAME, route_group1 + ":1.2.3.4/32", route, true, expect_empty);
     }
 
+    void MockDashOrchTest::RemoveOutboundRoutingEntry(bool expect_empty)
+    {
+        SetDashTable(APP_DASH_ROUTE_TABLE_NAME, route_group1 + ":1.2.3.4/32", dash::route::Route(), false, expect_empty);
+    }
+
     void MockDashOrchTest::AddTunnel()
     {
         dash::tunnel::Tunnel tunnel = dash::tunnel::Tunnel();
