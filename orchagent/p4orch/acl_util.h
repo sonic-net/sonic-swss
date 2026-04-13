@@ -142,6 +142,7 @@ struct P4AclRule
 
     sai_uint32_t action_qos_queue_num;
     std::string action_redirect_nexthop_key;
+    std::string action_redirect_l3_multicast_group_key;
     // SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_INGRESS and
     // SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_EGRESS are allowed as key
     std::map<sai_acl_entry_attr_t, P4AclMirrorSession> action_mirror_sessions;
@@ -159,10 +160,11 @@ struct SaiActionWithParam
   sai_acl_entry_attr_t action;
   std::string param_name;
   std::string param_value;
+  sai_object_id_t object_type = SAI_NULL_OBJECT_ID;
 
   bool operator==(const SaiActionWithParam& entry) const {
     return action == entry.action && param_name == entry.param_name &&
-           param_value == entry.param_value;
+           param_value == entry.param_value && object_type == entry.object_type;
   }
 
     bool operator!=(const SaiActionWithParam &entry) const
@@ -255,6 +257,7 @@ using acl_rule_attr_lookup_t = std::map<std::string, sai_acl_entry_attr_t>;
 using acl_table_attr_lookup_t = std::map<std::string, sai_acl_table_attr_t>;
 using acl_table_attr_format_lookup_t = std::map<sai_acl_table_attr_t, Format>;
 using acl_packet_action_lookup_t = std::map<std::string, sai_packet_action_t>;
+using acl_object_type_lookup_t = std::map<std::string, sai_object_id_t>;
 using acl_packet_color_lookup_t = std::map<std::string, sai_packet_color_t>;
 using acl_packet_color_policer_attr_lookup_t = std::map<std::string, sai_policer_attr_t>;
 using acl_ip_type_lookup_t = std::map<std::string, sai_acl_ip_type_t>;
@@ -386,6 +389,16 @@ using P4AclRuleTables = std::map<std::string, std::map<std::string, P4AclRule>>;
 #define P4_COUNTER_UNIT_PACKETS "PACKETS"
 #define P4_COUNTER_UNIT_BYTES "BYTES"
 #define P4_COUNTER_UNIT_BOTH "BOTH"
+
+// SAI_OBJECT_TYPES supported by SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT
+#define P4_OBJECT_TYPE_PORT "SAI_OBJECT_TYPE_PORT"
+#define P4_OBJECT_TYPE_SYSTEM_PORT "SAI_OBJECT_TYPE_SYSTEM_PORT"
+#define P4_OBJECT_TYPE_LAG "SAI_OBJECT_TYPE_LAG"
+#define P4_OBJECT_TYPE_NEXT_HOP "SAI_OBJECT_TYPE_NEXT_HOP"
+#define P4_OBJECT_TYPE_NEXT_HOP_GROUP "SAI_OBJECT_TYPE_NEXT_HOP_GROUP"
+#define P4_OBJECT_TYPE_BRIDGE_PORT "SAI_OBJECT_TYPE_BRIDGE_PORT"
+#define P4_OBJECT_TYPE_L2MC_GROUP "SAI_OBJECT_TYPE_L2MC_GROUP"
+#define P4_OBJECT_TYPE_IPMC_GROUP "SAI_OBJECT_TYPE_IPMC_GROUP"
 
 // IP_TYPE encode in p4. go/p4-ip-type
 #define P4_IP_TYPE_BIT_IP "IP"
@@ -646,6 +659,17 @@ static const acl_packet_action_lookup_t aclPacketActionLookup = {
     {P4_PACKET_ACTION_LOG, SAI_PACKET_ACTION_LOG},
     {P4_PACKET_ACTION_COPY_CANCEL, SAI_PACKET_ACTION_COPY_CANCEL},
     {P4_PACKET_ACTION_DENY, SAI_PACKET_ACTION_DENY},
+};
+
+static const acl_object_type_lookup_t aclObjectTypeLookup = {
+    {P4_OBJECT_TYPE_PORT, SAI_OBJECT_TYPE_PORT},
+    {P4_OBJECT_TYPE_SYSTEM_PORT, SAI_OBJECT_TYPE_SYSTEM_PORT},
+    {P4_OBJECT_TYPE_LAG, SAI_OBJECT_TYPE_LAG},
+    {P4_OBJECT_TYPE_NEXT_HOP, SAI_OBJECT_TYPE_NEXT_HOP},
+    {P4_OBJECT_TYPE_NEXT_HOP_GROUP, SAI_OBJECT_TYPE_NEXT_HOP_GROUP},
+    {P4_OBJECT_TYPE_BRIDGE_PORT, SAI_OBJECT_TYPE_BRIDGE_PORT},
+    {P4_OBJECT_TYPE_L2MC_GROUP, SAI_OBJECT_TYPE_L2MC_GROUP},
+    {P4_OBJECT_TYPE_IPMC_GROUP, SAI_OBJECT_TYPE_IPMC_GROUP},
 };
 
 static const acl_rule_attr_lookup_t aclActionLookup = {
