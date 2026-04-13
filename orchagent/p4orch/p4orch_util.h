@@ -74,6 +74,7 @@ constexpr char *kStage = "stage";
 constexpr char *kSize = "size";
 constexpr char *kPriority = "priority";
 constexpr char *kPacketColor = "packet_color";
+constexpr char *kObjectType = "object_type";
 constexpr char *kMeterUnit = "meter/unit";
 constexpr char *kCounterUnit = "counter/unit";
 constexpr char kFieldDelimiter = '/';
@@ -281,6 +282,7 @@ struct P4ActionParamName
 {
     std::string sai_action;
     std::string p4_param_name;
+    std::string sai_object_type;  // optionally included for some sai_actions.
 };
 
 struct P4PacketActionWithColor
@@ -419,6 +421,9 @@ class KeyGenerator
     static std::string generateMulticastRouterInterfaceRifKey(
         const std::string& multicast_replica_port,
         const swss::MacAddress& src_mac);
+
+    static std::string generateL3MulticastGroupKey(
+        const std::string& multicast_group_id);
 
     static std::string generateIpMulticastKey(const std::string& vrf_id,
                                               const swss::IpAddress& ip_dst);
