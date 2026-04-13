@@ -5521,9 +5521,6 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    /* Move resolved retry-cache tasks back into the consumer sync queue */
-    retryToSync(consumer.getTableName());
-
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -5681,9 +5678,18 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                     SWSS_LOG_WARN("ACL rule %s in table %s failed due to resource exhaustion, parking for retry",
                             rule_id.c_str(), table_id.c_str());
                     auto cst = make_constraint(RETRY_CST_SAI_RESOURCE, table_id);
-                    consumer.addToRetry(it->second, cst);
-                    setAclRuleStatus(table_id, rule_id, AclObjectStatus::INACTIVE);
-                    it = consumer.m_toSync.erase(it);
+                    if (consumer.addToRetry(it->second, cst))
+                    {
+                        setAclRuleStatus(table_id, rule_id, AclObjectStatus::PENDING_CREATION);
+                        it = consumer.m_toSync.erase(it);
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to park ACL rule %s in table %s in retry cache",
+                                rule_id.c_str(), table_id.c_str());
+                        setAclRuleStatus(table_id, rule_id, AclObjectStatus::PENDING_CREATION);
+                        it++;
+                    }
                 }
                 else
                 {
@@ -5701,13 +5707,18 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
+            bool ruleExisted = (getAclRule(table_id, rule_id) != nullptr);
             if (removeAclRule(table_id, rule_id))
             {
                 removeAclRuleStatus(table_id, rule_id);
                 it = consumer.m_toSync.erase(it);
 
-                /* Notify retry cache that resources may have been freed for this table */
-                notifyRetry(this, consumer.getTableName(), make_constraint(RETRY_CST_SAI_RESOURCE, table_id));
+                /* Notify retry cache that resources may have been freed for this table,
+                 * but only if the rule actually existed (i.e., ASIC resources were freed). */
+                if (ruleExisted)
+                {
+                    notifyRetry(this, consumer.getTableName(), make_constraint(RETRY_CST_SAI_RESOURCE, table_id));
+                }
             }
             else
             {
