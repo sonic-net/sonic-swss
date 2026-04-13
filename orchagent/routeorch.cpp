@@ -493,7 +493,8 @@ bool RouteOrch::validnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t& 
             nhgm_attrs.push_back(nhgm_attr);
         }
 
-        if (m_switchOrch->checkOrderedEcmpEnable())
+        if (m_switchOrch->checkOrderedEcmpEnable() &&
+            m_switchOrch->getEcmpNhgType() == SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP)
         {
             nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID;
             nhgm_attr.value.u32 = nhopgroup->second.nhopgroup_members[nexthop].seq_id;
@@ -1610,7 +1611,8 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
             nhgm_attrs.push_back(nhgm_attr);
         }
 
-        if (m_switchOrch->checkOrderedEcmpEnable())
+        if (m_switchOrch->checkOrderedEcmpEnable() &&
+            nhgType == SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP)
         {
             nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID;
             nhgm_attr.value.u32 = ((uint32_t)i) + 1; // To make non-zero sequence id
@@ -1629,9 +1631,25 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         auto nhgm_id = nhgm_ids[i];
         if (nhgm_id == SAI_NULL_OBJECT_ID)
         {
-            // TODO: do we need to clean up?
             SWSS_LOG_ERROR("Failed to create next hop group %" PRIx64 " member %" PRIx64 ": %d\n",
                            next_hop_group_id, nhgm_ids[i], status);
+
+            /* Remove any members that were successfully created before this failure */
+            for (size_t j = 0; j < i; j++)
+            {
+                if (nhgm_ids[j] != SAI_NULL_OBJECT_ID)
+                {
+                    sai_next_hop_group_api->remove_next_hop_group_member(nhgm_ids[j]);
+                    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+                }
+            }
+
+            /* Remove the orphaned next hop group */
+            sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
+            m_nextHopGroupCount--;
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+            SWSS_LOG_NOTICE("Cleaned up next hop group %" PRIx64 " after member creation failure",
+                            next_hop_group_id);
             return false;
         }
 
