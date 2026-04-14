@@ -329,7 +329,8 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
             {
                 sai_object_id_t oid = entry.arsOid;
                 setArsObjectAttr(oid, SAI_ARS_ATTR_MODE,      (uint32_t)entry.mode);
-                setArsObjectAttr(oid, SAI_ARS_ATTR_IDLE_TIME,  entry.idleTime);
+                if (isFlowletMode(entry.mode))
+                    setArsObjectAttr(oid, SAI_ARS_ATTR_IDLE_TIME,  entry.idleTime);
                 setArsObjectAttr(oid, SAI_ARS_ATTR_MAX_FLOWS,  entry.maxFlows);
                 m_arsObjects[name] = entry;
             }
@@ -775,6 +776,12 @@ bool ArsOrch::updateArsProfileAttrBool(sai_object_id_t oid, sai_ars_profile_attr
 
 /* ── SAI helpers: ARS Object (per-NHG) ───────────────────────────────── */
 
+static bool isFlowletMode(sai_ars_mode_t mode)
+{
+    return mode == SAI_ARS_MODE_FLOWLET_QUALITY ||
+           mode == SAI_ARS_MODE_FLOWLET_RANDOM;
+}
+
 bool ArsOrch::createArsObject(const string &name, const ArsObjectEntry &entry)
 {
     SWSS_LOG_ENTER();
@@ -786,9 +793,12 @@ bool ArsOrch::createArsObject(const string &name, const ArsObjectEntry &entry)
     attr.value.s32 = entry.mode;
     attrs.push_back(attr);
 
-    attr.id = SAI_ARS_ATTR_IDLE_TIME;
-    attr.value.u32 = entry.idleTime;
-    attrs.push_back(attr);
+    if (isFlowletMode(entry.mode))
+    {
+        attr.id = SAI_ARS_ATTR_IDLE_TIME;
+        attr.value.u32 = entry.idleTime;
+        attrs.push_back(attr);
+    }
 
     attr.id = SAI_ARS_ATTR_MAX_FLOWS;
     attr.value.u32 = entry.maxFlows;
