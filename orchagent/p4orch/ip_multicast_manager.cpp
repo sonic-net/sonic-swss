@@ -18,8 +18,8 @@
 #include "p4orch/p4oidmapper.h"
 #include "p4orch/p4orch_util.h"
 #include "portsorch.h"
-#include "sai_serialize.h"
 #include "swssnet.h"
+#include "sai_serialize.h"
 #include "table.h"
 #include "vrforch.h"
 
@@ -83,7 +83,10 @@ std::vector<sai_attribute_t> prepareIpmcSaiAttrs(
 
 IpMulticastManager::IpMulticastManager(P4OidMapper* mapper, VRFOrch* vrfOrch,
                                        ResponsePublisherInterface* publisher)
-    : m_p4OidMapper(mapper), m_vrfOrch(vrfOrch) {
+    : m_p4OidMapper(mapper),
+      m_vrfOrch(vrfOrch),
+      m_asic_db("ASIC_DB", 0),
+      m_asic_state_table(&m_asic_db, "ASIC_STATE") {
   SWSS_LOG_ENTER();
   assert(publisher != nullptr);
   m_publisher = publisher;
@@ -390,14 +393,12 @@ std::string IpMulticastManager::verifyStateAsicDb(
           SAI_OBJECT_TYPE_IPMC_ENTRY, (uint32_t)exp_attrs.size(),
           exp_attrs.data(), /*countOnly=*/false);
 
-  swss::DBConnector db("ASIC_DB", 0);
-  swss::Table table(&db, "ASIC_STATE");
   std::string key =
       sai_serialize_object_type(SAI_OBJECT_TYPE_IPMC_ENTRY) + ":" +
       sai_serialize_ipmc_entry(prepareSaiIpmcEntry(*ip_multicast_entry));
 
   std::vector<swss::FieldValueTuple> values;
-  if (!table.get(key, values)) {
+  if (!m_asic_state_table.get(key, values)) {
     return std::string("ASIC DB key not found ") + key;
   }
 
