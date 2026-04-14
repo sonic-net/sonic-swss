@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "dbconnector.h"
 #include "macaddress.h"
 #include "orch.h"
 #include "p4orch/object_manager_interface.h"
@@ -14,6 +15,7 @@
 #include "response_publisher_interface.h"
 #include "return_code.h"
 #include "vrforch.h"
+#include "table.h"
 
 extern "C" {
 #include "sai.h"
@@ -346,6 +348,8 @@ class L3MulticastManager : public ObjectManagerInterface {
 
   P4OidMapper* m_p4OidMapper;
   VRFOrch* m_vrfOrch;
+  swss::DBConnector m_asic_db;
+  swss::Table m_asic_state_table;
   ResponsePublisherInterface* m_publisher;
   std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
 

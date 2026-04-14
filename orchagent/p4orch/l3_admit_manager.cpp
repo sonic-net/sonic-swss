@@ -476,12 +476,10 @@ std::string L3AdmitManager::verifyStateAsicDb(const P4L3AdmitEntry *l3_admit_ent
         saimeta::SaiAttributeList::serialize_attr_list(SAI_OBJECT_TYPE_MY_MAC, (uint32_t)attrs.size(), attrs.data(),
                                                        /*countOnly=*/false);
 
-    swss::DBConnector db("ASIC_DB", 0);
-    swss::Table table(&db, "ASIC_STATE");
     std::string key =
         sai_serialize_object_type(SAI_OBJECT_TYPE_MY_MAC) + ":" + sai_serialize_object_id(l3_admit_entry->l3_admit_oid);
     std::vector<swss::FieldValueTuple> values;
-    if (!table.get(key, values))
+    if (!m_asic_state_table.get(key, values))
     {
         return std::string("ASIC DB key not found ") + key;
     }

@@ -297,8 +297,10 @@ bool RouteUpdater::checkAction(int idx) const {
 }
 
 RouteManager::RouteManager(P4OidMapper *p4oidMapper, VRFOrch *vrfOrch, ResponsePublisherInterface *publisher)
-    : m_vrfOrch(vrfOrch), m_routerBulker(sai_route_api, gMaxBulkSize)
-{
+    : m_vrfOrch(vrfOrch),
+      m_routerBulker(sai_route_api, gMaxBulkSize),
+      m_asic_db("ASIC_DB", 0),
+      m_asic_state_table(&m_asic_db, "ASIC_STATE") {
     SWSS_LOG_ENTER();
 
     assert(p4oidMapper != nullptr);
@@ -1213,14 +1215,11 @@ std::string RouteManager::verifyStateAsicDb(const P4RouteEntry *route_entry)
             opt_attrs.data(),
             /*countOnly=*/false);
 
-    swss::DBConnector db("ASIC_DB", 0);
-    swss::Table table(&db, "ASIC_STATE");
     std::string key = sai_serialize_object_type(SAI_OBJECT_TYPE_ROUTE_ENTRY) +
                       ":" +
                       sai_serialize_route_entry(prepareSaiEntry(*route_entry));
     std::vector<swss::FieldValueTuple> values;
-    if (!table.get(key, values))
-    {
+    if (!m_asic_state_table.get(key, values)) {
         return std::string("ASIC DB key not found ") + key;
     }
 
