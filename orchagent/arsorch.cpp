@@ -27,6 +27,8 @@ static const map<string, sai_ars_mode_t> arsModeLookup = {
     {"fixed",                   SAI_ARS_MODE_FIXED},
 };
 
+static bool isFlowletMode(sai_ars_mode_t mode);
+
 ArsOrch::ArsOrch(DBConnector *configDb,
                  DBConnector *stateDb,
                  const vector<string> &tableNames,
