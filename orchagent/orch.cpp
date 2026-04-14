@@ -573,7 +573,7 @@ void Consumer::drain()
         }
         catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Exception caught: type=std::exception, table=%s, error=%s",
+            SWSS_LOG_ERROR("Exception caught: type=exception, table=%s, error=%s",
                            getName().c_str(), e.what());
         }
         catch (...)
@@ -885,7 +885,7 @@ void Orch::doTask()
         }
         catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Exception caught: type=std::exception, table=%s, orch=%s, error=%s",
+            SWSS_LOG_ERROR("Exception caught: type=exception, table=%s, orch=%s, error=%s",
                            it.first.c_str(), typeid(*this).name(), e.what());
         }
         catch (...)
@@ -1215,7 +1215,7 @@ void Orch2::doTask(Consumer &consumer)
         }
         catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Exception caught: type=std::exception, orch=%s, error=%s",
+            SWSS_LOG_ERROR("Exception caught: type=exception, orch=%s, error=%s",
                            typeid(*this).name(), e.what());
         }
         catch (...)

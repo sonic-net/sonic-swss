@@ -10,6 +10,8 @@ namespace consumer_test
 {
     using namespace std;
 
+    const int UNKNOWN_EXCEPTION_VALUE = 42;
+
     class TestOrch : public Orch
     {
     public:
@@ -60,7 +62,7 @@ namespace consumer_test
                 case ThrowType::RuntimeError:
                     throw std::runtime_error("test runtime error");
                 case ThrowType::UnknownException:
-                    throw 42;
+                    throw UNKNOWN_EXCEPTION_VALUE;
                 case ThrowType::None:
                 default:
                     consumer.m_toSync.clear();
@@ -97,7 +99,7 @@ namespace consumer_test
                 case ThrowType::RuntimeError:
                     throw std::runtime_error("retryToSync runtime error");
                 case ThrowType::UnknownException:
-                    throw 42;
+                    throw UNKNOWN_EXCEPTION_VALUE;
                 case ThrowType::None:
                 default:
                     return 0;
