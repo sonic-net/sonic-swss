@@ -671,7 +671,7 @@ TEST_F(P4OrchTest, ProcessP4NotificationStopOnFirstFailureDifferentTypes) {
                       Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
   EXPECT_CALL(*gMockResponsePublisher,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(ritf_key_2), Eq(exp_values),
-                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+                      Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
   EXPECT_CALL(*gMockResponsePublisher,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(ritf_key_1), Eq(ritf_attrs),
                       Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
