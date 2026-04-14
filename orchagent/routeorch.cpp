@@ -1846,6 +1846,31 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops, const bool i
     return true;
 }
 
+void RouteOrch::bindArsToExistingNhgs()
+{
+    SWSS_LOG_ENTER();
+
+    if (!gArsOrch || !gArsOrch->isArsEnabled())
+        return;
+
+    for (auto &entry : m_syncdNextHopGroups)
+    {
+        sai_object_id_t nhgOid = entry.second.next_hop_group_id;
+        if (nhgOid == SAI_NULL_OBJECT_ID)
+            continue;
+
+        auto arsOid = gArsOrch->resolveArsForNhg(nhgOid, entry.first);
+        if (arsOid != SAI_NULL_OBJECT_ID)
+        {
+            if (gArsOrch->bindArsToNhg(nhgOid, arsOid))
+            {
+                SWSS_LOG_NOTICE("ARS: retroactively bound ARS to NHG %s",
+                                entry.first.to_string().c_str());
+            }
+        }
+    }
+}
+
 void RouteOrch::addNextHopRoute(const NextHopKey& nextHop, const RouteKey& routeKey)
 {
     auto it = m_nextHops.find((nextHop));

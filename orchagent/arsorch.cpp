@@ -1,4 +1,5 @@
 #include "arsorch.h"
+#include "routeorch.h"
 #include "logger.h"
 #include "schema.h"
 #include "tokenize.h"
@@ -15,6 +16,7 @@ using namespace swss;
 extern sai_ars_api_t*         sai_ars_api;
 extern sai_ars_profile_api_t* sai_ars_profile_api;
 extern sai_object_id_t        gSwitchId;
+extern RouteOrch             *gRouteOrch;
 
 static const map<string, sai_ars_mode_t> arsModeLookup = {
     {"flowlet-quality",         SAI_ARS_MODE_FLOWLET_QUALITY},
@@ -320,6 +322,8 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
+                if (gRouteOrch)
+                    gRouteOrch->bindArsToExistingNhgs();
             }
             else
             {
@@ -424,6 +428,9 @@ void ArsOrch::doArsInterfaceTask(Consumer &consumer)
 
         it = consumer.m_toSync.erase(it);
     }
+
+    if (gRouteOrch && m_arsEnabled)
+        gRouteOrch->bindArsToExistingNhgs();
 }
 
 /* ── ARS Port Profile ────────────────────────────────────────────────── */
