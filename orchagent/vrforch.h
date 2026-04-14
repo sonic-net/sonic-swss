@@ -179,6 +179,11 @@ public:
         }
     }
 
+    void markVniAsL3(const uint32_t vni)
+    {
+        l3vni_table_[vni].l3_vni = true;
+    }
+
     int updateL3VniVlan(uint32_t vni, uint16_t vlan_id);
 private:
     virtual bool addOperation(const Request& request);
