@@ -84,7 +84,8 @@ class P4Orch : public ZmqOrch
 
     swss::SelectableTimer *m_aclCounterStatsTimer;
     swss::SelectableTimer *m_extCounterStatsTimer;
-    swss::SelectableEvent* m_watchportEvent;
+    swss::SelectableEvent *m_watchportEvent;
+    swss::SelectableEvent *m_fallbackEvent;
     P4OidMapper m_p4OidMapper;
     std::unique_ptr<TablesDefnManager> m_tablesDefnManager;
     std::unique_ptr<RouterInterfaceManager> m_routerIntfManager;
