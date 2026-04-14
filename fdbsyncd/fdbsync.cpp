@@ -869,6 +869,7 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h
     string vlan_id = "";
     bool isVxlanIntf = false;
     NEXT_HOP_VALUE_TYPE dest_type = UNKNOWN;
+    bool is_imet_mac = false;
 
     if ((nlmsg_type != RTM_NEWNEIGH) && (nlmsg_type != RTM_GETNEIGH) &&
         (nlmsg_type != RTM_DELNEIGH))
@@ -901,6 +902,16 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h
 
     nl_addr2str(rtnl_neigh_get_lladdr(neigh), macStr, MAX_ADDR_SIZE);
 
+    /*
+     * Detect IMET routes early (MAC 00:00:00:00:00:00) so we can ensure
+     * proper handling throughout the function, particularly for DEL messages
+     * which need NDA_DST extracted even on RTM_DELNEIGH.
+     */
+    if (MacAddress(macStr) == MacAddress("00:00:00:00:00:00"))
+    {
+        is_imet_mac = true;
+    }
+
     if (tb[NDA_NH_ID])
     {
         nexthop_group = std::to_string(*(uint32_t *)RTA_DATA(tb[NDA_NH_ID]));
@@ -917,7 +928,7 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h
         ifname = m_intf_info[ifindex].ifname;
     }
 
-    if (isVxlanIntf == false)
+    if (isVxlanIntf == false && !is_imet_mac)
     {
         if (nlmsg_type == RTM_NEWNEIGH)
         {
@@ -953,7 +964,7 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h
     }
 
 
-    if (isVxlanIntf == false)
+    if (isVxlanIntf == false && !is_imet_mac)
     {
         vlan = rtnl_neigh_get_vlan(neigh);
         if (m_isEvpnNvoExist)
@@ -967,9 +978,13 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h
      * dest_type is not required for delete messages. It is skipped so that the
      * bridge fdb delete goes through as it does not contain the NDA_DST attribute.
      *
+     * Except for IMET routes which need the NDA_DST information to construct
+     * the correct VXLAN_REMOTE_VNI_TABLE key for deletion.
+     *
      * VTEP can only be applicable if dest_type is not NEXTHOPGROUP
      */
-    if (nlmsg_type != RTM_DELNEIGH && dest_type != NEXTHOPGROUP)
+    if ((nlmsg_type != RTM_DELNEIGH && dest_type != NEXTHOPGROUP) ||
+        is_imet_mac)
     {
         vtep_addr = rtnl_neigh_get_dst(neigh);
         if (vtep_addr == NULL)
@@ -995,7 +1010,7 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h
     }
 
     /* Handling IMET routes */
-    if (MacAddress(macStr) == MacAddress("00:00:00:00:00:00"))
+    if (is_imet_mac)
     {
         string vlan_str = ifname.substr(str_loc+1, string::npos);
 

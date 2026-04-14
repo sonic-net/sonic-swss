@@ -7166,8 +7166,9 @@ bool PortsOrch::removeBridgePort(Port &port)
     /* Remove STP ports before bridge port deletion*/
     gStpOrch->removeStpPorts(port);
 
-    //Flush the FDB entires corresponding to the port
-    gFdbOrch->flushFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+    //Flush all FDB entires corresponding to the port (including static entries
+    //on tunnel/nexthop_group bridge ports)
+    gFdbOrch->flushAllFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
     SWSS_LOG_INFO("Flush FDB entries for port %s", port.m_alias.c_str());
 
     /* Remove bridge port */
@@ -7776,10 +7777,6 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port, string end_point_ip)
 
 bool PortsOrch::isVlanMember(Port &vlan, Port &port, string end_point_ip)
 {
-    if(port.m_type == Port::TUNNEL || port.m_type == Port::NEXTHOP_GROUP)
-    {
-        return true;
-    }
     if (!end_point_ip.empty())
     {
         if (vlan.m_vlan_info.l2mc_members.find(end_point_ip) != vlan.m_vlan_info.l2mc_members.end())
