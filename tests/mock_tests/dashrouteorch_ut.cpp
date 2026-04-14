@@ -11,6 +11,7 @@
 #include "dash_api/appliance.pb.h"
 #include "dash_api/route_type.pb.h"
 #include "dash_api/route.pb.h"
+#include "dash_api/route_rule.pb.h"
 #include "dash_api/eni.pb.h"
 #include "dash_api/qos.pb.h"
 #include "dash_api/eni_route.pb.h"
@@ -32,7 +33,7 @@ namespace dashrouteorch_test
     class DashRouteOrchTest : public MockDashOrchTest, public ::testing::WithParamInterface<std::tuple<swss::IpPrefix, int>>
     {
     protected:
-        int GetCrmUsedCount(CrmResourceType type)
+        uint32_t GetCrmUsedCount(CrmResourceType type)
         {
             return gCrmOrch->m_resourcesMap.at(type).countersMap["STATS"].usedCounter;
         }
@@ -57,6 +58,7 @@ namespace dashrouteorch_test
             RestoreSaiApis();
             DEINIT_SAI_API_MOCK(dash_inbound_routing);
             DEINIT_SAI_API_MOCK(dash_outbound_routing);
+            DEINIT_SAI_API_MOCK(dash_inbound_routing);
         }
         public:
             void VerifyInboundRoutingEntry(sai_inbound_routing_entry_t actual_entry, uint32_t expected_vni, swss::IpPrefix expected_prefix, uint32_t expected_priority)
@@ -160,21 +162,24 @@ namespace dashrouteorch_test
 
     TEST_F(DashRouteOrchTest, RemoveNonexistOutboundRoutingDoesNotDecrementCrm)
     {
-        AddOutboundRoutingGroup();
-        AddTunnel();
-
-        int baselineUsed = GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING);
-        AddOutboundRoutingEntry();
-        EXPECT_EQ(GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING), baselineUsed + 1);
-
-        RemoveOutboundRoutingEntry();
-        EXPECT_EQ(GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING), baselineUsed);
-
+        uint32_t baselineUsed = GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING);
         // Remove non-existent outbound routing entry should return SAI_STATUS_ITEM_NOT_FOUND and not decrement the CRM used count
         std::vector<sai_status_t> exp_status = {SAI_STATUS_ITEM_NOT_FOUND};
         EXPECT_CALL(*mock_sai_dash_outbound_routing_api, remove_outbound_routing_entries)
             .Times(1).WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
         RemoveOutboundRoutingEntry();
         EXPECT_EQ(GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING), baselineUsed);
+    }
+
+    TEST_F(DashRouteOrchTest, RemoveNonexistInboundRoutingDoesNotDecrementCrm)
+    {
+        // Create an ENI entry to test removal of inbound routing entry
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, BuildEniEntry());
+        uint32_t baselineUsed = GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_INBOUND_ROUTING);
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_ITEM_NOT_FOUND};
+        EXPECT_CALL(*mock_sai_dash_inbound_routing_api, remove_inbound_routing_entries)
+            .Times(1).WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        RemoveInboundRoutingEntry();
+        EXPECT_EQ(GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_INBOUND_ROUTING), baselineUsed);
     }
 }

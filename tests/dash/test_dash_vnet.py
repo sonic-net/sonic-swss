@@ -293,6 +293,9 @@ class TestDash(TestFlexCountersBase):
         assert_sai_attribute_exists("SAI_INBOUND_ROUTING_ENTRY_ATTR_METER_CLASS_OR", attrs, self.inbound_metering_class_or)
         assert_sai_attribute_exists("SAI_INBOUND_ROUTING_ENTRY_ATTR_METER_CLASS_AND", attrs, self.inbound_metering_class_and)
 
+        dash_db.remove_inbound_routing(self.mac_string, self.vni, self.ip)
+        dash_db.wait_for_asic_db_key_del(ASIC_INBOUND_ROUTING_TABLE, inbound_routing_entries[0])
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down
 # before retrying
