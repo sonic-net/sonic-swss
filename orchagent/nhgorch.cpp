@@ -775,8 +775,6 @@ bool NextHopGroup::sync()
         nhg_attr.value.s32 = gSwitchOrch->getEcmpNhgType();
         nhg_attrs.push_back(nhg_attr);
 
-        auto nhgType = gSwitchOrch->getEcmpNhgType();
-
         sai_status_t status = sai_next_hop_group_api->create_next_hop_group(
                                                     &m_id,
                                                     gSwitchId,
