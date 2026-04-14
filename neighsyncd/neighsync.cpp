@@ -40,20 +40,20 @@ NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConne
     {
         m_AppRestartAssist->registerAppTable(APP_NEIGH_TABLE_NAME, &m_neighTable);
     }
-    
+
     m_nl_sock = nl_socket_alloc();
     if (!m_nl_sock)
     {
         SWSS_LOG_THROW("Failed to allocate netlink socket");
     }
-    
+
     if (nl_connect(m_nl_sock, NETLINK_ROUTE) < 0)
     {
         nl_socket_free(m_nl_sock);
         m_nl_sock = NULL;
         SWSS_LOG_THROW("Failed to connect to netlink socket");
     }
-    
+
     if (rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache) < 0 || !m_link_cache)
     {
         nl_close(m_nl_sock);
@@ -304,19 +304,6 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
             SWSS_LOG_INFO("Remove host route before adding neighbor %s", hostRoute.c_str());
             m_routeTable.del(hostRoute);
-            vector<FieldValueTuple> values;
-            int retry_count = 0;
-            while (m_routeCheckTable.get(hostRoute, values) && retry_count < MAX_ROUTE_DEL_RETRY)
-            {
-                SWSS_LOG_DEBUG("Host route still exists: %s, retry %d", hostRoute.c_str(), retry_count);
-                m_routeTable.del(hostRoute);
-                usleep(TENMS);
-                retry_count++;
-            }
-            if (retry_count >= MAX_ROUTE_DEL_RETRY)
-            {
-                SWSS_LOG_WARN("Host route %s still present after %d retries, proceeding with neighbor add", hostRoute.c_str(), MAX_ROUTE_DEL_RETRY);
-            }
         }
 
         m_neighTable.set(key, fvVector);

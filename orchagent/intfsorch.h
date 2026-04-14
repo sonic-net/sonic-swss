@@ -37,7 +37,6 @@ class IntfsOrch : public Orch
 public:
     IntfsOrch(DBConnector *db, vector<table_name_with_pri_t> tableNames, VRFOrch *vrf_orch, DBConnector *chassisAppDb);
     static const int intfsorch_pri;
-    std::map<sai_object_id_t, uint32_t> SagVrfRefTable;
 
     sai_object_id_t getRouterIntfsId(const string&);
     bool isPrefixSubnet(const IpPrefix&, const string&);
@@ -87,6 +86,7 @@ private:
     IntfsTable m_syncdIntfses;
     map<string, string> m_vnetInfses;
     MacAddress m_sagMac;
+    std::map<sai_object_id_t, uint32_t> m_sagVrfRefTable;
 
     void doTask(Consumer &consumer);
     void doTask(SelectableTimer &timer);

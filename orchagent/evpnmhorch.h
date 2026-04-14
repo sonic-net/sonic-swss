@@ -42,7 +42,6 @@ private:
     std::map<std::string, bool> m_esIntfMap;
 
     EsCacheEntry *getEsCache(const std::string &key);
-    EsCacheEntry *getEsCacheForPort(const std::string &key);
     void updateEsCache(string &key, KeyOpFieldsValuesTuple &t);
     void deleteEsCache(string &key);
     void doEvpnEsDfTask(Consumer &consumer);

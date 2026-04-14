@@ -28,18 +28,6 @@ EsCacheEntry *EvpnMhOrch::getEsCache(const std::string &key)
     return entry_it->second.get();
 }
 
-EsCacheEntry *EvpnMhOrch::getEsCacheForPort(const std::string &key)
-{
-    for (auto &entry_it : m_esDataMap)
-    {
-        if (entry_it.first.find(key) != std::string::npos)
-        {
-            return entry_it.second.get();
-        }
-    }
-    return nullptr;
-}
-
 std::string getPortFromEsKey(string &key)
 {
     std::string ret_port;

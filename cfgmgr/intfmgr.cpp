@@ -1115,7 +1115,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                         {
                             m_sagIntfList[alias] = false;
 
-                            // del the sag MAC fdb from bridge 
+                            // del the sag MAC fdb from bridge
                             setSagFdbEntry("del", alias, gSagMacAddress.to_string());
 
                             setIntfState(alias, false);
@@ -1323,6 +1323,11 @@ void IntfMgr::doSagTask(const vector<string>& keys,
     vector<FieldValueTuple> fvAppSag;
     if (op == SET_COMMAND)
     {
+        if (mac.empty())
+        {
+            SWSS_LOG_ERROR("gateway_mac field is missing in SAG configuration");
+            return;
+        }
         FieldValueTuple gwmac("gateway_mac", MacAddress(mac).to_string());
         fvAppSag.push_back(gwmac);
         m_appSagTableProducer.set("GLOBAL", fvAppSag);
@@ -1381,7 +1386,7 @@ void IntfMgr::doTask(Consumer &consumer)
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
-	
+
                 if (!doIntfGeneralTask(keys, data, op))
                 {
                     it++;

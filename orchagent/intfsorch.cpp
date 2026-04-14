@@ -1252,7 +1252,7 @@ void IntfsOrch::doSagTask(vector<FieldValueTuple> data, const string& op)
     }
     else if (op == DEL_COMMAND)
     {
-        for (auto sag_vrf_table : SagVrfRefTable)
+        for (auto sag_vrf_table : m_sagVrfRefTable)
         {
             IpPrefix linklocal_prefix = gRouteOrch->getLinkLocalEui64Addr(m_sagMac);
             sai_object_id_t vrf_id = sag_vrf_table.first;
@@ -1264,7 +1264,7 @@ void IntfsOrch::doSagTask(vector<FieldValueTuple> data, const string& op)
 
         }
 
-        SagVrfRefTable.clear();
+        m_sagVrfRefTable.clear();
         m_sagMac = MacAddress();
     }
 }
@@ -1279,10 +1279,10 @@ void IntfsOrch::addLinkLocalRouteToMeSag(sai_object_id_t vrf_id)
 
     IpPrefix linklocal_prefix = gRouteOrch->getLinkLocalEui64Addr(m_sagMac);
 
-    auto it = SagVrfRefTable.find(vrf_id);
-    if (it == SagVrfRefTable.end())
+    auto it = m_sagVrfRefTable.find(vrf_id);
+    if (it == m_sagVrfRefTable.end())
     {
-        SagVrfRefTable[vrf_id] = 1;
+        m_sagVrfRefTable[vrf_id] = 1;
 
         SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu in VRF %s",
                         linklocal_prefix.to_string().c_str(), m_vrfOrch->getVRFname(vrf_id).c_str());
@@ -1290,7 +1290,7 @@ void IntfsOrch::addLinkLocalRouteToMeSag(sai_object_id_t vrf_id)
         gRouteOrch->addLinkLocalRouteToMe(vrf_id, linklocal_prefix);
 
         SWSS_LOG_NOTICE("Ref count (%u) for link local ipv6 route %s to cpu in VRF %s",
-                        SagVrfRefTable[vrf_id], linklocal_prefix.to_string().c_str(), m_vrfOrch->getVRFname(vrf_id).c_str());
+                        m_sagVrfRefTable[vrf_id], linklocal_prefix.to_string().c_str(), m_vrfOrch->getVRFname(vrf_id).c_str());
     }
     else
     {
@@ -1310,8 +1310,8 @@ void IntfsOrch::removeLinkLocalRouteToMeSag(sai_object_id_t vrf_id)
 
     IpPrefix linklocal_prefix = gRouteOrch->getLinkLocalEui64Addr(m_sagMac);
 
-    auto it = SagVrfRefTable.find(vrf_id);
-    if (it != SagVrfRefTable.end())
+    auto it = m_sagVrfRefTable.find(vrf_id);
+    if (it != m_sagVrfRefTable.end())
     {
         if (--(it->second) == 0)
         {
@@ -1321,10 +1321,13 @@ void IntfsOrch::removeLinkLocalRouteToMeSag(sai_object_id_t vrf_id)
             // remove link local route for this vrf
             gRouteOrch->delLinkLocalRouteToMe(vrf_id, linklocal_prefix);
 
-            SagVrfRefTable.erase(vrf_id);
+            m_sagVrfRefTable.erase(vrf_id);
         }
-        SWSS_LOG_NOTICE("Ref count (%u) for link local ipv6 route %s to cpu in VRF %s",
-                        it->second, linklocal_prefix.to_string().c_str(), m_vrfOrch->getVRFname(vrf_id).c_str());
+        else
+        {
+            SWSS_LOG_NOTICE("Ref count (%u) for link local ipv6 route %s to cpu in VRF %s",
+                            it->second, linklocal_prefix.to_string().c_str(), m_vrfOrch->getVRFname(vrf_id).c_str());
+        }
     }
     else
     {

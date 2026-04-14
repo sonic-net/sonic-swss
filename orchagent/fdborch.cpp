@@ -458,7 +458,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
                 SWSS_LOG_NOTICE("FdbOrch LEARN notification for original VXLAN entry: mac %s is already in vxlan bv_id 0x%"
                 PRIx64 " existing-bp 0x%" PRIx64 "new-bp:0x%" PRIx64,
                 update.entry.mac.to_string().c_str(), entry->bv_id, existing_entry->second.bridge_port_id, bridge_port_id);
- 
+
                 // Get the old port, same logic as MAC MOVE
                 if (!m_portsOrch->getPortByBridgePortId(existing_entry->second.bridge_port_id, port_old))
                 {
@@ -548,7 +548,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
 
         // SAI_FDB_EVENT_AGED indicates the entry has already been removed by SAI/ASIC,
         // so we only need to clean up the software state without calling remove_fdb_entry
- 
+
         auto existing_entry = m_entries.find(update.entry);
         // we don't have such entries
         if (existing_entry == m_entries.end())
@@ -760,7 +760,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
         }
 
         /* If the existing MAC is MCLAG remote, change its type to dynamic. */
-        if (existing_entry->second.origin == FDB_ORIGIN_MCLAG_ADVERTIZED)
+        if (existing && existing_entry->second.origin == FDB_ORIGIN_MCLAG_ADVERTIZED)
         {
             if (existing_entry->second.bridge_port_id != bridge_port_id)
             {
@@ -808,7 +808,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
         m_portsOrch->setPort(update.port.m_alias, update.port);
 
         //update Vlan fdb count if no existing fdb
-        if ((!existing) && (!vlan.m_alias.empty())) 
+        if ((!existing) && (!vlan.m_alias.empty()))
         {
             vlan.m_fdb_count++;
             SWSS_LOG_DEBUG("Received MOVE event without existing fdb, vlan %s, m_fdb_count %d", vlan.m_alias.c_str(), vlan.m_fdb_count);
@@ -819,7 +819,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
         storeFdbEntryState(update);
 
         notify(SUBJECT_TYPE_FDB_CHANGE, &update);
- 
+
         if (mac_move_local)
         {
             /* Try to add local neighbor entry if exists
@@ -828,7 +828,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
             gNeighOrch->processFDBAdd(update.entry);
         }
 
-        if (existing) 
+        if (existing)
         {
             notifyTunnelOrch(port_old);
         }
@@ -1290,7 +1290,7 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
             {
                 return;
             }
-            flushFDBEntries(port.m_bridge_port_id, vlanPort.m_vlan_info.vlan_oid); 
+            flushFDBEntries(port.m_bridge_port_id, vlanPort.m_vlan_info.vlan_oid);
             SWSS_LOG_NOTICE("Clear fdb by port(%s)+vlan(%s)", alias.c_str(), vlan.c_str());
             return;
         }
@@ -1576,7 +1576,7 @@ void FdbOrch::flushFdbByVlan(const string &alias)
     vlan_attr[1].id = SAI_FDB_FLUSH_ATTR_ENTRY_TYPE;
     vlan_attr[1].value.s32 = SAI_FDB_FLUSH_ENTRY_TYPE_DYNAMIC;
     status = sai_fdb_api->flush_fdb_entries(gSwitchId, 2, vlan_attr);
-  
+
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Flush fdb failed, return code %x", status);
@@ -1795,7 +1795,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         oldType = it->second.type;
         oldOrigin = it->second.origin;
 
-        if (it->second.is_flush_pending) 
+        if (it->second.is_flush_pending)
         {
             macFlushPending = true;
         }
@@ -1899,7 +1899,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
                     m_entries[entry].type = "dynamic_control_learn";
                     return true;
                 }
-                macMoveLocalToRemote = true; 
+                macMoveLocalToRemote = true;
             }
         }
         else /* (fdbData.origin == oldOrigin) */
@@ -2067,7 +2067,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             {
                 SWSS_LOG_ERROR("FdbOrch RemoveFDBEntry: Failed to remove FDB entry. mac=%s, bv_id=0x%" PRIx64,
                                entry.mac.to_string().c_str(), entry.bv_id);
-                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_FDB, status); 
+                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_FDB, status);
                 if (handle_status != task_success)
                 {
                     return parseHandleSaiStatusFailure(handle_status);
@@ -2128,7 +2128,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         //MAC is added/updated as dynamic to allow aging.
         SWSS_LOG_INFO("MAC-Update Modify to dynamic FDB %s in %s on from-%s:to-%s from-%s:to-%s origin-%d-to-%d",
                 entry.mac.to_string().c_str(), vlan.m_alias.c_str(), oldPort.m_alias.c_str(),
-                port_name.c_str(), oldType.c_str(), fdbData.type.c_str(), 
+                port_name.c_str(), oldType.c_str(), fdbData.type.c_str(),
                 oldOrigin, fdbData.origin);
 
         storeFdbData.origin = FDB_ORIGIN_LEARN;
@@ -2236,7 +2236,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
     {
         SWSS_LOG_NOTICE("FdbOrch RemoveFDBEntry: Failed to locate port from bridge_port_id 0x%" PRIx64, fdbData.bridge_port_id);
         if (it->second.is_flush_pending) {
-            /* when remove bridge port, we have triggered a FLUSH. 
+            /* when remove bridge port, we have triggered a FLUSH.
                Here clear the fdb entry which is in flush pending to avoid the missing flush event case */
             SWSS_LOG_NOTICE("FdbOrch RemoveFDBEntry: FDB has been flushed, mac=%s bv_id=0x%" PRIx64, entry.mac.to_string().c_str(), entry.bv_id);
             clearFdbEntry(it->first, it->second);
