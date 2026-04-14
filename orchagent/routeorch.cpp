@@ -5,6 +5,7 @@
 #include <algorithm>
 #include "routeorch.h"
 #include "nhgorch.h"
+#include "arsorch.h"
 #include "tunneldecaporch.h"
 #include "cbf/cbfnhgorch.h"
 #include "logger.h"
@@ -29,6 +30,7 @@ extern NhgOrch *gNhgOrch;
 extern CbfNhgOrch *gCbfNhgOrch;
 extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 extern TunnelDecapOrch *gTunneldecapOrch;
+extern ArsOrch *gArsOrch;
 
 extern size_t gMaxBulkSize;
 extern string gMySwitchType;
@@ -1551,6 +1553,19 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
 
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
 
+    if (gArsOrch && gArsOrch->isArsEnabled())
+    {
+        auto arsOid = gArsOrch->resolveArsForNhg(next_hop_group_id, nexthops);
+        if (arsOid != SAI_NULL_OBJECT_ID)
+        {
+            if (!gArsOrch->bindArsToNhg(next_hop_group_id, arsOid))
+            {
+                SWSS_LOG_WARN("ARS: failed to bind ARS to NHG %s, falling back to ECMP",
+                              nexthops.to_string().c_str());
+            }
+        }
+    }
+
     NextHopGroupEntry next_hop_group_entry;
     next_hop_group_entry.next_hop_group_id = next_hop_group_id;
     next_hop_group_entry.nh_member_install_count = 0;
@@ -1708,6 +1723,11 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops, const bool i
     }
 
     SWSS_LOG_NOTICE("Delete next hop group %s", nexthops.to_string().c_str());
+
+    if (gArsOrch)
+    {
+        gArsOrch->unbindArsFromNhg(next_hop_group_id);
+    }
 
     vector<sai_object_id_t> next_hop_ids;
     /* If the NexthopGroup is the one that has been swapped with default route members
