@@ -279,7 +279,7 @@ int NHGMgr::addNewNHGFull(NextHopGroupFull nhg, uint8_t af) {
     if (entry->hasSonicGatewayObj()) {
         SWSS_LOG_DEBUG("Create sonic gateway object for NHG %d", nhg.id);
         SonicNHGObjectKey key;
-        ret = SonicNHGObjectKey::createSonicSRv6GateWayNHGObjectKey(entry, key);
+        ret = SonicNHGObjectKey::createSonicGateWayNHGObjectKey(entry, key);
         if (ret != 0) {
             SWSS_LOG_ERROR("Failed to create sonic nhg object key for %d", nhg.id);
             return ret;
@@ -394,7 +394,7 @@ int NHGMgr::updateExistingNHGFull(NextHopGroupFull nhg, uint8_t af) {
     // update the sonic gateway nhg object if updated
     if ((entry->hasSonicGatewayObj() && hasPreviousSonicGatewayObj && entry->getSonicObjType() == previousType)) {
         SonicNHGObjectKey newKey;
-        ret = SonicNHGObjectKey::createSonicSRv6GateWayNHGObjectKey(entry, newKey);
+        ret = SonicNHGObjectKey::createSonicGateWayNHGObjectKey(entry, newKey);
         if (ret != 0) {
             SWSS_LOG_ERROR("Failed to create sonic gateway nhg object key for %d", nhg.id);
             return ret;
@@ -415,7 +415,7 @@ int NHGMgr::updateExistingNHGFull(NextHopGroupFull nhg, uint8_t af) {
     // create the sonic gateway nhg object if not exist or type changed
     if ((entry->hasSonicGatewayObj() && !hasPreviousSonicGatewayObj) || (entry->getSonicObjType() != previousType)){
         SonicNHGObjectKey key;
-        ret = SonicNHGObjectKey::createSonicSRv6GateWayNHGObjectKey(entry, key);
+        ret = SonicNHGObjectKey::createSonicGateWayNHGObjectKey(entry, key);
         if (ret != 0) {
             SWSS_LOG_ERROR("Failed to create sonic nhg object key for %d", nhg.id);
             return ret;
@@ -1250,7 +1250,7 @@ int RIBNHGEntry::getNextHopGroupFields() {
     m_segSrc = segSrcs;
     m_weight = weights;
     SWSS_LOG_NOTICE("get NextHopGroup fields done, nexthop[%s] ifname[%s] weight[%s] vpnSid[%s] segSrc[%s]", m_nexthop.c_str(), m_ifName.c_str(),
-                  m_weight.c_str(), m_vpnSid.c_str(), m_segSrc.c_str());
+                    m_weight.c_str(), m_vpnSid.c_str(), m_segSrc.c_str());
     return 0;
 }
 
@@ -1498,7 +1498,7 @@ void SonicGateWayNHGTable::removeFromDB(SonicGateWayNHGEntry *entry) {
  * add the SonicGateWayNHGEntry
  */
 int SonicGateWayNHGTable::addEntry(SonicGateWayNHGObject sonicObj) {
-    SonicNHGObjectKey key = SonicNHGObjectKey::createSonicSRv6GateWayNHGObjectKey(sonicObj);
+    SonicNHGObjectKey key = SonicNHGObjectKey::createSonicGateWayNHGObjectKey(sonicObj);
     if (m_sonic_nhg_map.find(key) != m_sonic_nhg_map.end()) {
         SWSS_LOG_ERROR("SonicGateWayNHGObject is already exist: %d", sonicObj.id);
         return -1;
@@ -1535,7 +1535,7 @@ int SonicGateWayNHGTable::addEntry(SonicGateWayNHGObject sonicObj) {
  * update the SonicGateWayNHGEntry from SonicGateWayNHGObject
  */
 int SonicGateWayNHGTable::updateEntry(SonicGateWayNHGObject sonicObj) {
-    SonicNHGObjectKey key = SonicNHGObjectKey::createSonicSRv6GateWayNHGObjectKey(sonicObj);
+    SonicNHGObjectKey key = SonicNHGObjectKey::createSonicGateWayNHGObjectKey(sonicObj);
     SonicGateWayNHGEntry *entry = getEntry(sonicObj.type, sonicObj.id);
     if (entry == nullptr || entry->getType() != sonicObj.type || m_sonic_nhg_map.find(key) != m_sonic_nhg_map.end()) {
         SWSS_LOG_WARN("SonicGateWayNHGObject update error");
@@ -1571,7 +1571,7 @@ int SonicGateWayNHGTable::updateEntry(SonicGateWayNHGObject sonicObj) {
  * delete the SonicGateWayNHGEntry
  */
 void SonicGateWayNHGTable::delEntry(SonicGateWayNHGObject sonicObj) {
-    SonicNHGObjectKey key = SonicNHGObjectKey::createSonicSRv6GateWayNHGObjectKey(sonicObj);
+    SonicNHGObjectKey key = SonicNHGObjectKey::createSonicGateWayNHGObjectKey(sonicObj);
     if (m_sonic_nhg_map.find(key) == m_sonic_nhg_map.end()) {
         SWSS_LOG_WARN("SonicGateWayNHGObject is not exist");
         return;
@@ -1779,7 +1779,7 @@ int SonicGateWayNHGEntry::setEntry(SonicGateWayNHGObject nhg) {
 int SonicGateWayNHGEntry::setSRv6GatewayEntry(SonicGateWayNHGObject nhg) {
     m_sonic_obj = nhg;
     m_sonic_obj_id = nhg.id;
-    m_sonic_obj_key = SonicNHGObjectKey::createSonicSRv6GateWayNHGObjectKey(nhg);
+    m_sonic_obj_key = SonicNHGObjectKey::createSonicGateWayNHGObjectKey(nhg);
     for (auto member: nhg.groupMember) {
         SonicGateWayNHGEntry *entry = m_table->getEntry(nhg.type, member.first);
         if (entry == nullptr) {
@@ -1899,7 +1899,7 @@ int SonicIDAllocator::recoverSonicIDMapFromDB() {
 /*
  * create SonicNHGObjectKey from SonicGateWayNHGObject
  */
-SonicNHGObjectKey SonicNHGObjectKey::createSonicSRv6GateWayNHGObjectKey(SonicGateWayNHGObject obj) {
+SonicNHGObjectKey SonicNHGObjectKey::createSonicGateWayNHGObjectKey(SonicGateWayNHGObject obj) {
     SonicNHGObjectKey key;
     key.groupMember = obj.groupMember;
     key.type = obj.type;
@@ -1929,12 +1929,12 @@ void SonicNHGObjectKey::createSonicNormalNHGObjectKey(RIBNHGEntry *entry, SonicN
 /*
  * create SonicNHGObjectKey from RIBNHGEntry
  */
-int SonicNHGObjectKey::createSonicSRv6GateWayNHGObjectKey(RIBNHGEntry *entry, SonicNHGObjectKey &key_out) {
+int SonicNHGObjectKey::createSonicGateWayNHGObjectKey(RIBNHGEntry *entry, SonicNHGObjectKey &key_out) {
     SonicGateWayNHGObject obj;
     int ret = entry->createSonicGateWayNHGObjectFromRIBEntry(obj);
     if (ret != 0) {
         return ret;
     }
-    key_out = createSonicSRv6GateWayNHGObjectKey(obj);
+    key_out = createSonicGateWayNHGObjectKey(obj);
     return 0;
 }
