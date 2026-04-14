@@ -341,7 +341,9 @@ MATCHER_P(NextHopAttrArrayEq, array, "") {
 class L3MulticastManagerTest : public ::testing::Test {
  protected:
   L3MulticastManagerTest()
-      : l3_multicast_manager_(&p4_oid_mapper_, gVrfOrch, &publisher_) {}
+      : fallback_event_(/*pri=*/-1),
+        l3_multicast_manager_(&p4_oid_mapper_, gVrfOrch, &publisher_,
+                              &fallback_event_) {}
 
   P4MulticastRouterInterfaceEntry GenerateP4MulticastRouterInterfaceEntry(
       const std::string& multicast_replica_port,
@@ -418,6 +420,26 @@ class L3MulticastManagerTest : public ::testing::Test {
       group_entry.replicas.push_back(std::vector<P4Replica>{r});
       group_entry.active_replicas.push_back(r);
       group_entry.replica_keys.insert(r.key);
+    }
+    group_entry.multicast_metadata = multicast_metadata;
+    group_entry.controller_metadata = controller_metadata;
+    return group_entry;
+  }
+
+  P4MulticastGroupEntry GenerateP4MulticastGroupEntryWithBackups(
+      const std::string& multicast_group_id,
+      const std::vector<std::vector<P4Replica>>& replicas,
+      const std::string& multicast_metadata = "",
+      const std::string& controller_metadata = "") {
+    P4MulticastGroupEntry group_entry = {};
+    group_entry.multicast_group_id = multicast_group_id;
+    group_entry.is_ipmc = true;
+    group_entry.replicas = replicas;
+    for (const auto& replica_list : replicas) {
+      group_entry.active_replicas.push_back(replica_list[0]);
+      for (const auto& replica : replica_list) {
+        group_entry.replica_keys.insert(replica.key);
+      }
     }
     group_entry.multicast_metadata = multicast_metadata;
     group_entry.controller_metadata = controller_metadata;
@@ -558,6 +580,56 @@ class L3MulticastManagerTest : public ::testing::Test {
       sai_object_id_t end_groupMemberOid = SAI_NULL_OBJECT_ID;
       p4_oid_mapper_.getOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
                             replica.key, &end_groupMemberOid);
+      EXPECT_EQ(end_groupMemberOid, group_member_oid);
+    }
+
+    return entry;
+  }
+
+  P4MulticastGroupEntry SetupP4MulticastGroupEntryWithBackups(
+      const std::string& multicast_group_id,
+      const std::vector<std::vector<P4Replica>>& replicas,
+      const sai_object_id_t group_oid,
+      const std::vector<sai_object_id_t>& group_member_oids,
+      bool expect_group_mock = true) {
+    auto entry =
+        GenerateP4MulticastGroupEntryWithBackups(multicast_group_id, replicas);
+    std::vector<P4MulticastGroupEntry> entries = {entry};
+
+    if (expect_group_mock) {
+      EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group(_, _, _, _))
+          .WillOnce(
+              DoAll(SetArgPointee<0>(group_oid), Return(SAI_STATUS_SUCCESS)));
+    }
+
+    if (group_member_oids.size() == 1) {
+      EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group_member(_, _, _, _))
+          .WillOnce(DoAll(SetArgPointee<0>(group_member_oids.at(0)),
+                          Return(SAI_STATUS_SUCCESS)));
+    } else if (group_member_oids.size() == 2) {
+      EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group_member(_, _, _, _))
+          .WillOnce(DoAll(SetArgPointee<0>(group_member_oids.at(0)),
+                          Return(SAI_STATUS_SUCCESS)))
+          .WillOnce(DoAll(SetArgPointee<0>(group_member_oids.at(1)),
+                          Return(SAI_STATUS_SUCCESS)));
+    }
+
+    auto statuses = AddMulticastGroupEntries(entries);
+    EXPECT_EQ(statuses.size(), 1);
+    EXPECT_TRUE(statuses[0].ok());
+
+    sai_object_id_t end_groupOid = SAI_NULL_OBJECT_ID;
+    p4_oid_mapper_.getOID(SAI_OBJECT_TYPE_IPMC_GROUP,
+                          entries[0].multicast_group_id, &end_groupOid);
+    EXPECT_EQ(end_groupOid, group_oid);
+
+    EXPECT_EQ(replicas.size(), group_member_oids.size());
+    for (size_t i = 0; i < replicas.size(); ++i) {
+      auto& replica = replicas[i][0];
+      auto group_member_oid = group_member_oids.at(i);
+      sai_object_id_t end_groupMemberOid = SAI_NULL_OBJECT_ID;
+      p4_oid_mapper_.getOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER, replica.key,
+                            &end_groupMemberOid);
       EXPECT_EQ(end_groupMemberOid, group_member_oid);
     }
 
@@ -1025,6 +1097,15 @@ class L3MulticastManagerTest : public ::testing::Test {
         multicast_router_interface_entry);
   }
 
+  void UpdateFallbackGroup(const std::string& port,
+                           sai_port_oper_status_t status) {
+    return l3_multicast_manager_.updateFallbackGroup(port, status);
+  }
+
+  void ProcessFallbackGroupEvent() {
+    return l3_multicast_manager_.processFallbackGroupEvent();
+  }
+
   StrictMock<MockSaiRouterInterface> mock_sai_router_intf_;
   StrictMock<MockSaiIpmcGroup> mock_sai_ipmc_group_;
   StrictMock<MockSaiL2mc> mock_sai_l2mc_;
@@ -1035,6 +1116,7 @@ class L3MulticastManagerTest : public ::testing::Test {
   StrictMock<MockSaiMyMac> mock_sai_my_mac_;
   StrictMock<MockResponsePublisher> publisher_;
   P4OidMapper p4_oid_mapper_;
+  swss::SelectableEvent fallback_event_;
   L3MulticastManager l3_multicast_manager_;
 };
 
@@ -8785,6 +8867,125 @@ TEST_F(L3MulticastManagerTest, VerifyStateL2MulticastGroupMissingAsicDb) {
   EXPECT_FALSE(VerifyState(db_key, attributes).empty());
 
   table.del("SAI_OBJECT_TYPE_L2MC_GROUP:oid:0x1");
+}
+
+TEST_F(L3MulticastManagerTest, AddMulticastGroupEntriesWithBackupTest) {
+  // Add router interface entry so have RIF.
+  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto rif_entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac2), kRifOid2);
+  auto rif_entry3 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet3", "0x0", swss::MacAddress(kSrcMac3), kRifOid3);
+  auto rif_entry4 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet4", "0x0", swss::MacAddress(kSrcMac4), kRifOid4);
+
+  P4Replica replica1 = P4Replica("0x1", "Ethernet1", "0x0");
+  P4Replica replica2 = P4Replica("0x1", "Ethernet2", "0x0");
+  P4Replica replica3 = P4Replica("0x1", "Ethernet3", "0x0");
+  P4Replica replica4 = P4Replica("0x1", "Ethernet4", "0x0");
+
+  SetupP4MulticastGroupEntryWithBackups(
+      "0x1", {{replica1, replica3, replica4}, {replica2}}, kGroupOid1,
+      {kGroupMemberOid1, kGroupMemberOid2});
+
+  // TODO(b/377401287): Expect SAI call on fallback group update.
+
+  // Ethernet1 goes down. Expect to use replica3 on the first replica.
+  UpdateFallbackGroup("Ethernet1", SAI_PORT_OPER_STATUS_DOWN);
+  ProcessFallbackGroupEvent();
+
+  // Ethernet2 goes down. Expect no change in the second replica as it has no
+  // backup replica.
+  UpdateFallbackGroup("Ethernet2", SAI_PORT_OPER_STATUS_DOWN);
+  ProcessFallbackGroupEvent();
+
+  // Ethernet1 comes back up. Expect to use replica1 on the first replica.
+  UpdateFallbackGroup("Ethernet1", SAI_PORT_OPER_STATUS_UP);
+  ProcessFallbackGroupEvent();
+}
+
+TEST_F(L3MulticastManagerTest, DrainMulticastGroupEntryWithBackupTest) {
+  // Add router interface entry so have RIF.
+  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto rif_entry2 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac2), kRifOid2);
+  auto rif_entry3 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet3", "0x0", swss::MacAddress(kSrcMac3), kRifOid3);
+  auto rif_entry4 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet6", "0x0", swss::MacAddress(kSrcMac4), kRifOid4);
+
+  const std::string group_match_key = "0x1";
+  const std::string group_appl_db_key =
+      std::string(APP_P4RT_REPLICATION_IP_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + group_match_key;
+  std::vector<swss::FieldValueTuple> group_attributes;
+  std::string json_array = R"([
+        {
+            "multicast_replica_instance": "0x0",
+            "multicast_replica_port": "Ethernet1"
+        },
+        {
+            "multicast_replica_instance": "0x0",
+            "multicast_replica_port": "Ethernet2"
+        }
+    ])";
+  group_attributes.push_back(swss::FieldValueTuple{"replicas", json_array});
+  json_array = R"([
+        [
+            {
+                "multicast_replica_instance": "0x0",
+                "multicast_replica_port": "Ethernet3"
+            },
+            {
+                "multicast_replica_instance": "0x0",
+                "multicast_replica_port": "Ethernet6"
+            }
+        ],
+        []
+    ])";
+  group_attributes.push_back(swss::FieldValueTuple{"backups", json_array});
+  group_attributes.push_back(
+      swss::FieldValueTuple{p4orch::kControllerMetadata, "controller_meta"});
+  group_attributes.push_back(
+      swss::FieldValueTuple{p4orch::kMulticastMetadata, "multicast_meta"});
+
+  Enqueue(APP_P4RT_REPLICATION_IP_MULTICAST_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(group_appl_db_key, SET_COMMAND,
+                                       group_attributes));
+
+  EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kGroupOid1), Return(SAI_STATUS_SUCCESS)));
+
+  // Expect Ethernet6 and Ethernet2 to be used as the active replicas.
+  std::vector<sai_attribute_t> exp_member_attrs_1, exp_member_attrs_2;
+  sai_attribute_t attr;
+  attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_GROUP_ID;
+  attr.value.oid = kGroupOid1;
+  exp_member_attrs_1.push_back(attr);
+  exp_member_attrs_2.push_back(attr);
+  attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID;
+  attr.value.oid = kRifOid4;
+  exp_member_attrs_1.push_back(attr);
+  attr.value.oid = kRifOid2;
+  exp_member_attrs_2.push_back(attr);
+
+  EXPECT_CALL(
+      mock_sai_ipmc_group_,
+      create_ipmc_group_member(_, _, 2, IpmcAttrArrayEq(exp_member_attrs_1)))
+      .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(
+      mock_sai_ipmc_group_,
+      create_ipmc_group_member(_, _, 2, IpmcAttrArrayEq(exp_member_attrs_2)))
+      .WillOnce(DoAll(SetArgPointee<0>(kGroupMemberOid2),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME),
+                                  Eq(group_appl_db_key), Eq(group_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 }
 
 }  // namespace p4orch

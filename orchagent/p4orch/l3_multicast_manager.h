@@ -21,6 +21,8 @@ extern "C" {
 
 namespace p4orch {
 
+constexpr uint32_t kMaxFallbackGroupBulkSize = 30;
+
 // Table entries for multicast_router_interface_table.
 struct P4MulticastRouterInterfaceEntry {
   std::string multicast_router_interface_entry_key;  // Unique key of the entry.
@@ -105,7 +107,8 @@ typedef std::unordered_map<std::string, P4MulticastGroupEntry>
 class L3MulticastManager : public ObjectManagerInterface {
  public:
   L3MulticastManager(P4OidMapper* mapper, VRFOrch* vrfOrch,
-                     ResponsePublisherInterface* publisher);
+                     ResponsePublisherInterface* publisher,
+                     swss::SelectableEvent* fallback_event);
   virtual ~L3MulticastManager() = default;
 
   void enqueue(const std::string& table_name,
@@ -118,6 +121,12 @@ class L3MulticastManager : public ObjectManagerInterface {
   ReturnCode getSaiObject(const std::string& json_key,
                           sai_object_type_t& object_type,
                           std::string& object_key) override;
+  // Refreshes port oper-status with the latest values from PortsOrch.
+  void refreshPortOperStatus();
+
+  // Updates port oper status and fallback group.
+  void updateFallbackGroup(const std::string& port,
+                           sai_port_oper_status_t status);
 
  private:
   // Drains entries associated with the multicast router interface table.
@@ -174,6 +183,10 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Performs multicast group entry validation for DEL command.
   ReturnCode validateDelMulticastGroupEntry(
       const P4MulticastGroupEntry& multicast_group_entry);
+
+  // Updates port oper status in m_port_oper_status_map for all the ports in the
+  // group.
+  void fetchPortOperStatus(const P4MulticastGroupEntry& multicast_group_entry);
 
   // Select the replicas to be used in a group.
   void setActiveReplicas(P4MulticastGroupEntry& multicast_group_entry);
@@ -374,9 +387,37 @@ class L3MulticastManager : public ObjectManagerInterface {
   sai_object_id_t getBridgePortOid(
       const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
 
+  // Processes group update in m_fallback_groups, maximum of
+  // kMaxFallbackGroupBulkSize groups per call.
+  void processFallbackGroupEvent();
+
+  // Returns true if the active replicas in the group will change.
+  bool checkActiveReplicasChange(
+      const P4MulticastGroupEntry& multicast_group_entry);
+
+  // Inserts the group into m_port_name_to_ipmc_group_map.
+  void insertGroupInPortNameToIpmcGroupMap(
+      const P4MulticastGroupEntry& multicast_group_entry);
+
+  // Removes the group from m_port_name_to_ipmc_group_map.
+  void removeGroupFromPortNameToIpmcGroupMap(
+      const P4MulticastGroupEntry& multicast_group_entry);
+
   // Internal cache of entries.
   P4MulticastRouterInterfaceTable m_multicastRouterInterfaceTable;
   P4MulticastGroupTable m_multicastGroupEntryTable;
+
+  // Maps port name to oper-status.
+  std::unordered_map<std::string, sai_port_oper_status_t>
+      m_port_oper_status_map;
+
+  // A set that stores the groups that need to be updated due to watchport
+  // events.
+  std::unordered_set<std::string> m_fallback_groups;
+
+  // Maps port name to an IPMC group.
+  std::unordered_map<std::string, std::unordered_set<std::string>>
+      m_port_name_to_ipmc_group_map;
 
   // OID for a valid MyMAC object, needed for creating multicast RIFs that will
   // *not* result in a MyStation entry being added.  This will prevent the
@@ -386,6 +427,7 @@ class L3MulticastManager : public ObjectManagerInterface {
   P4OidMapper* m_p4OidMapper;
   VRFOrch* m_vrfOrch;
   ResponsePublisherInterface* m_publisher;
+  swss::SelectableEvent* m_fallback_event;
   std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
 
   friend class L3MulticastManagerTest;
