@@ -44,13 +44,18 @@ P4Orch::P4Orch(swss::DBConnector* db, std::vector<std::string> tableNames,
 {
     SWSS_LOG_ENTER();
 
-    // Add watchport event handling support
+    // Add watchport and multicast fallback event handling support.
     // This is a low priority event that shouldn't block other high priority
-    // requests
+    // requests.
     m_watchportEvent = new swss::SelectableEvent(/*pri=*/-1);
     auto watchportEventExecutor =
         new EventExecutor(m_watchportEvent, this, "WATCHPORT_EVENT");
     Orch::addExecutor(watchportEventExecutor);
+
+    m_fallbackEvent = new swss::SelectableEvent(/*pri=*/-1);
+    auto fallbackEventExecutor =
+        new EventExecutor(m_fallbackEvent, this, "FALLBACK_EVENT");
+    Orch::addExecutor(fallbackEventExecutor);
 
     m_tablesDefnManager = std::make_unique<TablesDefnManager>(&m_p4OidMapper, &m_publisher);
     m_routerIntfManager = std::make_unique<RouterInterfaceManager>(&m_p4OidMapper, &m_publisher);
@@ -58,7 +63,7 @@ P4Orch::P4Orch(swss::DBConnector* db, std::vector<std::string> tableNames,
     m_greTunnelManager = std::make_unique<GreTunnelManager>(&m_p4OidMapper, &m_publisher);
     m_nextHopManager = std::make_unique<NextHopManager>(&m_p4OidMapper, &m_publisher);
     m_l3MulticastManager = std::make_unique<p4orch::L3MulticastManager>(
-        &m_p4OidMapper, vrfOrch, &m_publisher);
+        &m_p4OidMapper, vrfOrch, &m_publisher, m_fallbackEvent);
     m_ipMulticastManager = std::make_unique<p4orch::IpMulticastManager>(
         &m_p4OidMapper, vrfOrch, &m_publisher);
     m_routeManager = std::make_unique<RouteManager>(&m_p4OidMapper, vrfOrch, &m_publisher);
@@ -291,6 +296,9 @@ void P4Orch::handlePortStatusUpdate(const std::string& alias,
 
   // Update watchport
   m_wcmpManager->updateWatchPort(alias, status);
+
+  // Update multicast fallback group
+  m_l3MulticastManager->updateFallbackGroup(alias, status);
 }
 
 void P4Orch::handleLagMemberLacpStatusUpdate(
@@ -385,6 +393,7 @@ TunnelDecapGroupManager* P4Orch::getTunnelDecapGroupManager() {
 
 void P4Orch::refreshPortStatus() {
   m_wcmpManager->refreshPortOperStatus();
+  m_l3MulticastManager->refreshPortOperStatus();
 }
 
 void P4Orch::setRouterIntfsMtu(const std::string& port, uint32_t mtu) {

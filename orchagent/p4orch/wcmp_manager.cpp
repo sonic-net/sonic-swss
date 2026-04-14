@@ -491,12 +491,12 @@ ReturnCode WcmpManager::processEntries(
     m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(tuple_list[i]),
                          kfvFieldsValues(tuple_list[i]), statuses[i],
                          /*replace=*/true);
-    if (status.ok()) {
+    if (statuses[i].ok()) {
       // Remove the queued watchport event if the group has been updated.
       m_watchport_groups.erase(entries[i].wcmp_group_id);
-      if (!statuses[i].ok()) {
-        status = statuses[i];
       }
+      if (status.ok() && !statuses[i].ok()) {
+        status = statuses[i];
       }
     }
 
