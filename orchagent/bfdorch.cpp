@@ -733,6 +733,26 @@ BgpGlobalStateOrch::BgpGlobalStateOrch(DBConnector *db, string tableName):
     tsa_enabled = false;
     bool ipv6 = true;
     bfd_offload = (offload_supported(!ipv6) && offload_supported(ipv6));
+
+    /* When the operator explicitly sets SYSTEM_DEFAULTS|software_bfd to
+     * "enabled" in CONFIG_DB, honour that intent and use software BFD
+     * (FRR bfdd) regardless of what the ASIC/SAI reports for HW offload
+     * capability.  Operators who want HW-offloaded BFD should not set
+     * the software_bfd flag in CONFIG_DB.
+     *
+     * This is evaluated once at construction time.  A runtime change to
+     * SYSTEM_DEFAULTS requires a swss restart to take effect.
+     */
+    if (bfd_offload)
+    {
+        string value;
+        Table systemDefaultsTable(db, "SYSTEM_DEFAULTS");
+        if (systemDefaultsTable.hget("software_bfd", "status", value) && value == "enabled")
+        {
+            SWSS_LOG_NOTICE("software_bfd is enabled in SYSTEM_DEFAULTS, overriding HW BFD offload");
+            bfd_offload = false;
+        }
+    }
 }
 
 BgpGlobalStateOrch::~BgpGlobalStateOrch(void)
