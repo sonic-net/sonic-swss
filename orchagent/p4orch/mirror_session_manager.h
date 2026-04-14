@@ -72,7 +72,7 @@ class MirrorSessionManager : public ObjectManagerInterface
 {
   public:
     MirrorSessionManager(P4OidMapper *p4oidMapper, ResponsePublisherInterface *publisher)
-    {
+      	: m_asic_db("ASIC_DB", 0), m_asic_state_table(&m_asic_db, "ASIC_STATE") {
         SWSS_LOG_ENTER();
 
         assert(p4oidMapper != nullptr);
@@ -123,6 +123,8 @@ class MirrorSessionManager : public ObjectManagerInterface
 
     // Owners of pointers below must outlive this class's instance.
     P4OidMapper *m_p4OidMapper;
+    swss::DBConnector m_asic_db;
+    swss::Table m_asic_state_table;
     ResponsePublisherInterface *m_publisher;
     std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
 

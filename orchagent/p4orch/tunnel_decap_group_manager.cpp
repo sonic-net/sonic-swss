@@ -115,7 +115,8 @@ std::vector<sai_attribute_t> TunnelDecapGroupManager::prepareSaiAttrs(
 
 TunnelDecapGroupManager::TunnelDecapGroupManager(
     P4OidMapper* p4oidMapper, VRFOrch* vrfOrch,
-    ResponsePublisherInterface* publisher) {
+    ResponsePublisherInterface* publisher)
+    : m_asic_db("ASIC_DB", 0), m_asic_state_table(&m_asic_db, "ASIC_STATE") {
   SWSS_LOG_ENTER();
 
   assert(p4oidMapper != nullptr);
@@ -714,9 +715,6 @@ std::string TunnelDecapGroupManager::verifyStateCache(
 
 std::string TunnelDecapGroupManager::verifyStateAsicDb(
     const Ipv6TunnelTermTableEntry* ipv6_tunnel_term_entry) {
-  swss::DBConnector db("ASIC_DB", 0);
-  swss::Table table(&db, "ASIC_STATE");
-
   // Verify Ipv6 tunnel termination table ASIC DB attributes
   std::vector<sai_attribute_t> attrs = prepareSaiAttrs(*ipv6_tunnel_term_entry);
   std::vector<swss::FieldValueTuple> exp =
@@ -727,7 +725,7 @@ std::string TunnelDecapGroupManager::verifyStateAsicDb(
       sai_serialize_object_type(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY) + ":" +
       sai_serialize_object_id(ipv6_tunnel_term_entry->ipv6_tunnel_term_oid);
   std::vector<swss::FieldValueTuple> values;
-  if (!table.get(key, values)) {
+  if (!m_asic_state_table.get(key, values)) {
     return std::string("ASIC DB key not found ") + key;
   }
 

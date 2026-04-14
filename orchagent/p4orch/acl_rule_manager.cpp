@@ -2672,9 +2672,6 @@ std::string AclRuleManager::verifyStateCache(const P4AclRuleAppDbEntry &app_db_e
 
 std::string AclRuleManager::verifyStateAsicDb(const P4AclRule *acl_rule)
 {
-    swss::DBConnector db("ASIC_DB", 0);
-    swss::Table table(&db, "ASIC_STATE");
-
     // Verify rule.
     auto attrs = getRuleSaiAttrs(*acl_rule);
     std::vector<swss::FieldValueTuple> exp =
@@ -2683,7 +2680,7 @@ std::string AclRuleManager::verifyStateAsicDb(const P4AclRule *acl_rule)
     std::string key =
         sai_serialize_object_type(SAI_OBJECT_TYPE_ACL_ENTRY) + ":" + sai_serialize_object_id(acl_rule->acl_entry_oid);
     std::vector<swss::FieldValueTuple> values;
-    if (!table.get(key, values))
+    if (!m_asic_state_table.get(key, values))
     {
         return std::string("ASIC DB key not found ") + key;
     }
@@ -2704,7 +2701,7 @@ std::string AclRuleManager::verifyStateAsicDb(const P4AclRule *acl_rule)
         key = sai_serialize_object_type(SAI_OBJECT_TYPE_ACL_COUNTER) + ":" +
               sai_serialize_object_id(acl_rule->counter.counter_oid);
         values.clear();
-        if (!table.get(key, values))
+        if (!m_asic_state_table.get(key, values))
         {
             return std::string("ASIC DB key not found ") + key;
         }
@@ -2726,7 +2723,7 @@ std::string AclRuleManager::verifyStateAsicDb(const P4AclRule *acl_rule)
         key = sai_serialize_object_type(SAI_OBJECT_TYPE_POLICER) + ":" +
               sai_serialize_object_id(acl_rule->meter.meter_oid);
         values.clear();
-        if (!table.get(key, values))
+        if (!m_asic_state_table.get(key, values))
         {
             return std::string("ASIC DB key not found ") + key;
         }

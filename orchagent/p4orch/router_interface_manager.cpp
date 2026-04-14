@@ -749,13 +749,10 @@ std::string RouterInterfaceManager::verifyStateAsicDb(const P4RouterInterfaceEnt
     std::vector<swss::FieldValueTuple> exp = saimeta::SaiAttributeList::serialize_attr_list(
         SAI_OBJECT_TYPE_ROUTER_INTERFACE, (uint32_t)attrs.size(), attrs.data(), /*countOnly=*/false);
 
-    swss::DBConnector db("ASIC_DB", 0);
-    swss::Table table(&db, "ASIC_STATE");
     std::string key = sai_serialize_object_type(SAI_OBJECT_TYPE_ROUTER_INTERFACE) + ":" +
                       sai_serialize_object_id(router_intf_entry->router_interface_oid);
     std::vector<swss::FieldValueTuple> values;
-    if (!table.get(key, values))
-    {
+    if (!m_asic_state_table.get(key, values)) {
         return std::string("ASIC DB key not found ") + key;
     }
 

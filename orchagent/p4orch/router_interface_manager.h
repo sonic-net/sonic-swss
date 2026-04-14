@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "dbconnector.h"
 #include "macaddress.h"
 #include "orch.h"
 #include "p4orch/object_manager_interface.h"
@@ -12,6 +13,8 @@
 #include "p4orch/p4orch_util.h"
 #include "response_publisher_interface.h"
 #include "return_code.h"
+#include "table.h"
+
 extern "C"
 {
 #include "sai.h"
@@ -43,7 +46,7 @@ class RouterInterfaceManager : public ObjectManagerInterface
 {
   public:
     RouterInterfaceManager(P4OidMapper *p4oidMapper, ResponsePublisherInterface *publisher)
-    {
+      : m_asic_db("ASIC_DB", 0), m_asic_state_table(&m_asic_db, "ASIC_STATE") {
         SWSS_LOG_ENTER();
 
         assert(p4oidMapper != nullptr);
@@ -67,7 +70,8 @@ class RouterInterfaceManager : public ObjectManagerInterface
     ReturnCode validateRouterInterfaceAppDbEntry(
         const P4RouterInterfaceAppDbEntry& app_db_entry);
     ReturnCode validateRouterInterfaceEntryOperation(
-        const P4RouterInterfaceAppDbEntry& app_db_entry, const std::string& operation);
+        const P4RouterInterfaceAppDbEntry& app_db_entry,
+	const std::string& operation);
     P4RouterInterfaceEntry *getRouterInterfaceEntry(const std::string &router_intf_key);
     std::vector<ReturnCode> createRouterInterfaces(
         const std::vector<P4RouterInterfaceAppDbEntry>& router_intf_entries);
@@ -85,6 +89,8 @@ class RouterInterfaceManager : public ObjectManagerInterface
 
     P4RouterInterfaceTable m_routerIntfTable;
     P4OidMapper *m_p4OidMapper;
+    swss::DBConnector m_asic_db;
+    swss::Table m_asic_state_table;
     ResponsePublisherInterface *m_publisher;
     std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
 

@@ -824,9 +824,6 @@ std::string WcmpManager::verifyStateCache(const P4WcmpGroupEntry &app_db_entry,
 }
 
 std::string WcmpManager::verifyStateAsicDb(P4WcmpGroupEntry* wcmp_group_entry) {
-  swss::DBConnector db("ASIC_DB", 0);
-  swss::Table table(&db, "ASIC_STATE");
-
   auto group_attrs = prepareSaiGroupAttrs(*wcmp_group_entry);
   std::vector<swss::FieldValueTuple> exp =
       saimeta::SaiAttributeList::serialize_attr_list(
@@ -836,7 +833,7 @@ std::string WcmpManager::verifyStateAsicDb(P4WcmpGroupEntry* wcmp_group_entry) {
                     ":" +
                     sai_serialize_object_id(wcmp_group_entry->wcmp_group_oid);
   std::vector<swss::FieldValueTuple> values;
-  if (!table.get(key, values)) {
+  if (!m_asic_state_table.get(key, values)) {
     return std::string("ASIC DB key not found ") + key;
   }
   auto group_result =

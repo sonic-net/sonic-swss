@@ -7,13 +7,13 @@
 #include <vector>
 
 #include "SaiAttributeList.h"
-#include "crmorch.h"
 #include "dbconnector.h"
 #include "ipaddress.h"
 #include "logger.h"
+#include "orchagent/crmorch.h"
 #include "p4orch/p4orch_util.h"
-#include "sai_serialize.h"
 #include "swssnet.h"
+#include "sai_serialize.h"
 #include "table.h"
 #include "neighbor_manager.h"
 
@@ -682,9 +682,6 @@ std::string GreTunnelManager::verifyStateCache(const P4GreTunnelAppDbEntry &app_
 
 std::string GreTunnelManager::verifyStateAsicDb(const P4GreTunnelEntry *gre_tunnel_entry)
 {
-    swss::DBConnector db("ASIC_DB", 0);
-    swss::Table table(&db, "ASIC_STATE");
-
     // Verify Tunnel ASIC DB attributes
     std::vector<sai_attribute_t> attrs = prepareSaiAttrs(*gre_tunnel_entry);
     std::vector<swss::FieldValueTuple> exp =
@@ -694,7 +691,7 @@ std::string GreTunnelManager::verifyStateAsicDb(const P4GreTunnelEntry *gre_tunn
     std::string key = sai_serialize_object_type(SAI_OBJECT_TYPE_TUNNEL) + ":" +
                       sai_serialize_object_id(gre_tunnel_entry->tunnel_oid);
     std::vector<swss::FieldValueTuple> values;
-    if (!table.get(key, values))
+    if (!m_asic_state_table.get(key, values))
     {
         return std::string("ASIC DB key not found ") + key;
     }
