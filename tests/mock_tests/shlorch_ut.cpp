@@ -312,18 +312,6 @@ namespace shlorch_test
 
             PrepareSai();
 
-            TableConnector appDbDfTable(m_app_db.get(), "EVPN_DF_TABLE");
-            TableConnector confDbEvpnEsTable(m_config_db.get(), "EVPN_ETHERNET_SEGMENT");
-
-            vector<TableConnector> evpn_df_es_table_connectors = {
-                appDbDfTable,
-                confDbEvpnEsTable,
-            };
-
-            gEvpnMhOrch = new EvpnMhOrch(evpn_df_es_table_connectors);
-            gDirectory.set(gEvpnMhOrch);
-            ut_orch_list.push_back((Orch **)&gEvpnMhOrch);
-
             const int portsorch_base_pri = 40;
             vector<table_name_with_pri_t> ports_tables = {
                 { APP_PORT_TABLE_NAME, portsorch_base_pri + 5 },
@@ -374,6 +362,20 @@ namespace shlorch_test
             gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
             gDirectory.set(gPortsOrch);
             ut_orch_list.push_back((Orch **)&gPortsOrch);
+
+            // Create EvpnMhOrch early so its ES/DF state is available when PortsOrch
+            // processes bridge ports and VLAN members (matches production code order)
+            TableConnector appDbDfTable(m_app_db.get(), "EVPN_DF_TABLE");
+            TableConnector confDbEvpnEsTable(m_config_db.get(), "EVPN_ETHERNET_SEGMENT");
+
+            vector<TableConnector> evpn_df_es_table_connectors = {
+                appDbDfTable,
+                confDbEvpnEsTable,
+            };
+
+            gEvpnMhOrch = new EvpnMhOrch(evpn_df_es_table_connectors);
+            gDirectory.set(gEvpnMhOrch);
+            ut_orch_list.push_back((Orch **)&gEvpnMhOrch);
 
             const int fgnhgorch_pri = 15;
 

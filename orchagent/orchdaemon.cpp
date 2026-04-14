@@ -212,6 +212,19 @@ bool OrchDaemon::init()
     };
 
     gPortsOrch = new PortsOrch(m_applDb, m_stateDb, ports_tables, m_chassisAppDb);
+
+    // Create EvpnMhOrch early so its ES/DF state is available when PortsOrch
+    // processes bridge ports and VLAN members (fixes warm boot ordering)
+    TableConnector appDbDfTable(m_applDb, "EVPN_DF_TABLE");
+    TableConnector confDbEvpnEsTable(m_configDb, "EVPN_ETHERNET_SEGMENT");
+
+    vector<TableConnector> evpn_df_es_table_connectors = {
+        appDbDfTable,
+        confDbEvpnEsTable,
+    };
+
+    gEvpnMhOrch = new EvpnMhOrch(evpn_df_es_table_connectors);
+
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
     TableConnector stateMclagDbFdb(m_stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
     gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
@@ -477,16 +490,6 @@ bool OrchDaemon::init()
 
     gNhgMapOrch = new NhgMapOrch(m_applDb, APP_FC_TO_NHG_INDEX_MAP_TABLE_NAME);
 
-    TableConnector appDbDfTable(m_applDb, "EVPN_DF_TABLE");
-    TableConnector confDbEvpnEsTable(m_configDb, "EVPN_ETHERNET_SEGMENT");
-
-    vector<TableConnector> evpn_df_es_table_connectors = {
-        appDbDfTable,
-        confDbEvpnEsTable,
-    };
-
-    gEvpnMhOrch = new EvpnMhOrch(evpn_df_es_table_connectors);
-
     gL2NhgOrch = new L2NhgOrch(m_applDb, APP_L2_NEXTHOP_GROUP_TABLE_NAME);
 
     /*
@@ -497,7 +500,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch, gEvpnMhOrch, gL2NhgOrch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gEvpnMhOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch, gL2NhgOrch};
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
     {
