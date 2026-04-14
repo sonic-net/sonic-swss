@@ -1680,6 +1680,33 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops, const bool i
     }
 
     next_hop_group_id = next_hop_group_entry->second.next_hop_group_id;
+
+    /*
+     * When an ordered ECMP NHG is reused (member removed in-place), the old
+     * entry's SAI OID is set to SAI_NULL_OBJECT_ID to signal that the SAI
+     * object still exists under a new key.  Skip all SAI cleanup but still
+     * release neighbour reference counts so the bookkeeping stays correct.
+     */
+    if (next_hop_group_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_NOTICE("Skip SAI cleanup for reused ordered ECMP NHG %s",
+                        nexthops.to_string().c_str());
+
+        MuxOrch* mux_orch_reuse = gDirectory.get<MuxOrch*>();
+        sai_object_id_t mux_tunnel_nh_reuse = mux_orch_reuse->getTunnelNextHopId();
+        set<NextHopKey> next_hop_set = nexthops.getNextHops();
+        for (auto it : next_hop_set)
+        {
+            auto nh_id = m_neighOrch->getNextHopId(it);
+            if (nh_id != mux_tunnel_nh_reuse)
+            {
+                m_neighOrch->decreaseNextHopRefCount(it);
+            }
+        }
+        m_syncdNextHopGroups.erase(nexthops);
+        return true;
+    }
+
     SWSS_LOG_NOTICE("Delete next hop group %s", nexthops.to_string().c_str());
 
     vector<sai_object_id_t> next_hop_ids;
@@ -2144,6 +2171,80 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             {
                 SWSS_LOG_ERROR("Failed to handle SRV6 nexthops for %s", nextHops.to_string().c_str());
                 return false;
+            }
+        }
+
+        /*
+         * Ordered-ECMP in-place reuse:  when the ECMP type is
+         * DYNAMIC_ORDERED_ECMP and the new next-hop set is a strict subset of
+         * the current route's next-hop set, the failed member was already
+         * removed in-place by invalidnexthopinNextHopGroup().  Reuse the
+         * existing SAI NHG OID so the ASIC's preserved-order hash is not
+         * disturbed.
+         */
+        if (!hasNextHopGroup(nextHops) &&
+            it_route != m_syncdRoutes.at(vrf_id).end() &&
+            ctx.nhg_index.empty() &&
+            it_route->second.nhg_key.getSize() > 1 &&
+            nextHops.getSize() > 1 &&
+            it_route->second.nhg_key != nextHops &&
+            it_route->second.nhg_key.contains(nextHops) &&
+            m_switchOrch->checkOrderedEcmpEnable() &&
+            m_switchOrch->getEcmpNhgType() == SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP)
+        {
+            auto& oldKey   = it_route->second.nhg_key;
+            auto  oldIt    = m_syncdNextHopGroups.find(oldKey);
+
+            if (oldIt != m_syncdNextHopGroups.end() &&
+                oldIt->second.ref_count == 1 &&
+                !oldIt->second.is_default_route_nh_swap)
+            {
+                SWSS_LOG_NOTICE(
+                    "Reuse ordered ECMP NHG %" PRIx64 " for %s -> %s",
+                    oldIt->second.next_hop_group_id,
+                    oldKey.to_string().c_str(),
+                    nextHops.to_string().c_str());
+
+                NextHopGroupEntry newEntry;
+                newEntry.next_hop_group_id              = oldIt->second.next_hop_group_id;
+                newEntry.ref_count                      = 0;
+                newEntry.eligible_for_default_route_nh_swap = oldIt->second.eligible_for_default_route_nh_swap;
+                newEntry.is_default_route_nh_swap       = false;
+                newEntry.nh_member_install_count         = 0;
+
+                for (auto& nhop_pair : oldIt->second.nhopgroup_members)
+                {
+                    if (nextHops.contains(nhop_pair.first))
+                    {
+                        newEntry.nhopgroup_members[nhop_pair.first] = nhop_pair.second;
+                        if (!m_neighOrch->isNextHopFlagSet(nhop_pair.first, NHFLAGS_IFDOWN))
+                        {
+                            newEntry.nh_member_install_count++;
+                        }
+                    }
+                }
+
+                m_syncdNextHopGroups[nextHops] = newEntry;
+
+                /* Increment neighbour ref-counts for new key (removeNextHopGroup
+                 * on the old key will decrement for all old-key NHs). */
+                MuxOrch* mux_orch_reuse = gDirectory.get<MuxOrch*>();
+                sai_object_id_t mux_nh_reuse = mux_orch_reuse->getTunnelNextHopId();
+                for (auto& nh : nextHops.getNextHops())
+                {
+                    if (m_neighOrch->hasNextHop(nh))
+                    {
+                        auto nh_id = m_neighOrch->getNextHopId(nh);
+                        if (nh_id != mux_nh_reuse)
+                        {
+                            m_neighOrch->increaseNextHopRefCount(nh);
+                        }
+                    }
+                }
+
+                /* Mark old entry for no-SAI-cleanup */
+                oldIt->second.next_hop_group_id = SAI_NULL_OBJECT_ID;
+                oldIt->second.nhopgroup_members.clear();
             }
         }
 
