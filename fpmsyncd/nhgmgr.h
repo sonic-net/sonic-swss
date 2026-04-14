@@ -147,9 +147,9 @@ namespace swss {
             return !(*this == b);
         }
 
-        static SonicNHGObjectKey createSonicSRv6GateWayNHGObjectKey(SonicGateWayNHGObject obj);
+        static SonicNHGObjectKey createSonicGateWayNHGObjectKey(SonicGateWayNHGObject obj);
 
-        static int createSonicSRv6GateWayNHGObjectKey(RIBNHGEntry *entry, SonicNHGObjectKey &key_out);
+        static int createSonicGateWayNHGObjectKey(RIBNHGEntry *entry, SonicNHGObjectKey &key_out);
 
         static void createSonicNormalNHGObjectKey(RIBNHGEntry *entry, SonicNHGObjectKey &key_out);
     };
@@ -799,7 +799,7 @@ namespace swss {
          */
         int getResolvedGroupFromNHGFull();
 
-       /*
+        /*
         * check if need create Sonic Gateway NHG Object and Sonic gateway object type
         */
         void checkNeedCreateSonicGatewayNHGObj();
