@@ -628,36 +628,35 @@ ReturnCodeOr<P4AclRuleAppDbEntry> AclRuleManager::deserializeAclRuleAppDbEntry(
         else if (prefix == kMeterPrefix)
         {
             const auto &meter_attr_name = tokenized_field[1];
-            if (std::stoi(value) < 0)
-            {
-                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                       << "Invalid ACL meter field value " << QuotedVar(field) << ": " << QuotedVar(value);
-            }
-            if (meter_attr_name == kMeterCir)
-            {
-                app_db_entry.meter.cir = std::stoi(value);
-            }
-            else if (meter_attr_name == kMeterCburst)
-            {
-                app_db_entry.meter.cburst = std::stoi(value);
-            }
-            else if (meter_attr_name == kMeterPir)
-            {
-                app_db_entry.meter.pir = std::stoi(value);
-            }
-            else if (meter_attr_name == kMeterPburst)
-            {
-                app_db_entry.meter.pburst = std::stoi(value);
-            }
-            else
-            {
-                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Unknown ACL meter field " << QuotedVar(field);
-            }
-            app_db_entry.meter.enabled = true;
-        }
-        else
-        {
-            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Unknown ACL rule field " << QuotedVar(field);
+            try {
+                auto value_node = nlohmann::json::parse(value);
+                if (!value_node.is_number_unsigned()) {
+                  return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                     << "Invalid ACL meter field value " << QuotedVar(field) << ": "
+                     << QuotedVar(value) << " - Expect a uint64_t.";
+               }
+               uint64_t meter_value = std::stoull(value);
+               if (meter_attr_name == kMeterCir) {
+                  app_db_entry.meter.cir = meter_value;
+               } else if (meter_attr_name == kMeterCburst) {
+                   app_db_entry.meter.cburst = meter_value;
+               } else if (meter_attr_name == kMeterPir) {
+                   app_db_entry.meter.pir = meter_value;
+               } else if (meter_attr_name == kMeterPburst) {
+                   app_db_entry.meter.pburst = meter_value;
+               } else {
+                  return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                    << "Unknown ACL meter field " << QuotedVar(field);
+               }
+           } catch (std::exception& e) {
+             return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                 << "Invalid ACL meter field value " << QuotedVar(field) << ": "
+                 << QuotedVar(value) << " - Expect a uint64_t.";
+           }
+           app_db_entry.meter.enabled = true;
+        } else  {
+            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Unknown ACL rule field " << QuotedVar(field);
         }
     }
     return app_db_entry;
@@ -772,7 +771,7 @@ ReturnCode AclRuleManager::setMatchValue(const sai_acl_entry_attr_t attr_name,
                                          const std::string& ip_type_bit_type) {
   SWSS_LOG_ENTER();
   try {
-    switch (attr_name) {
+    switch ((int)attr_name) {
       case SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS: {
         const auto& ports = tokenize(attr_value, kPortsDelimiter);
         if (ports.empty()) {
@@ -857,6 +856,7 @@ ReturnCode AclRuleManager::setMatchValue(const sai_acl_entry_attr_t attr_name,
         break;
       }
       case SAI_ACL_ENTRY_ATTR_FIELD_PORT_USER_META:
+      case SAI_ACL_ENTRY_ATTR_FIELD_OUTER_TPID:
       case SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE:
       case SAI_ACL_ENTRY_ATTR_FIELD_L4_SRC_PORT:
       case SAI_ACL_ENTRY_ATTR_FIELD_L4_DST_PORT:
@@ -1035,12 +1035,13 @@ ReturnCode AclRuleManager::setMatchValue(const sai_acl_entry_attr_t attr_name,
         }
         break;
       }
-      case SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT: {
+      case SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT:
+      case SAI_ACL_ENTRY_ATTR_FIELD_ROUTE_NPU_META_DST_HIT: {
         const std::vector<std::string>& value_and_mask =
             tokenize(attr_value, kDataMaskDelimiter);
         uint8_t hit_value = to_uint<uint8_t>(trim(value_and_mask[0]));
         if (value_and_mask.size() > 1) {
-          SWSS_LOG_INFO("Mask ignored for IPMC table hit field.");
+          SWSS_LOG_INFO("Mask ignored for IPMC/route table hit field.");
         }
         value->aclfield.data.booldata = hit_value != 0;
         break;

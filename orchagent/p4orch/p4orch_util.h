@@ -42,6 +42,7 @@ constexpr char *kDstMac = "dst_mac";
 constexpr char *kNexthopId = "nexthop_id";
 constexpr char *kTunnelId = "tunnel_id";
 constexpr char *kVrfId = "vrf_id";
+constexpr char *kVlanId = "vlan_id";
 constexpr char *kIpv4Dst = "ipv4_dst";
 constexpr char *kIpv6Dst = "ipv6_dst";
 constexpr char *kWcmpGroupId = "wcmp_group_id";
@@ -60,7 +61,12 @@ constexpr char *kSetIpNexthop = "set_ip_nexthop";
 constexpr char* kSetIpNexthopAndDisableRewrites =
     "set_ip_nexthop_and_disable_rewrites";
 constexpr char *kSetTunnelNexthop = "set_p2p_tunnel_encap_nexthop";
-constexpr char* kNoAction = "no_action";
+constexpr char* kL2MulticastPassthrough = "l2_multicast_passthrough";
+constexpr char* kMulticastL2Passthrough = "multicast_l2_passthrough";
+constexpr char* kMulticastSetSrcMac = "multicast_set_src_mac";
+constexpr char* kMulticastSetSrcMacAndVlanId = "multicast_set_src_mac_and_vlan_id";
+constexpr char* kMulticastSetSrcMacAndDstMacAndVlanId = "multicast_set_src_mac_and_dst_mac_and_vlan_id";
+constexpr char* kMulticastSetSrcMacAndPreserveIngressVlanId = "multicast_set_src_mac_and_preserve_ingress_vlan_id";
 constexpr char *kDrop = "drop";
 constexpr char *kTrap = "trap";
 constexpr char *kStage = "stage";
@@ -188,8 +194,10 @@ struct P4RouterInterfaceAppDbEntry
     std::string router_interface_id;
     std::string port_name;
     swss::MacAddress src_mac_address;
+    uint16_t vlan_id = 0;
     bool is_set_port_name = false;
     bool is_set_src_mac = false;
+    bool is_set_vlan_id = false;
 };
 
 struct P4NeighborAppDbEntry
@@ -374,6 +382,9 @@ std::string verifyAttrs(const std::vector<swss::FieldValueTuple> &targets,
 // Helper function to drain all entries in the manager without execution.
 void drainMgmtWithNotExecuted(std::deque<swss::KeyOpFieldsValuesTuple>& entries,
                               ResponsePublisherInterface* publisher);
+
+// Helper function to parse an int or hex int from a string to a bool.
+ReturnCodeOr<bool> parseFlag(const std::string& name, const std::string& value);
 
 // class KeyGenerator includes member functions to generate keys for entries
 // stored in P4 Orch managers.
