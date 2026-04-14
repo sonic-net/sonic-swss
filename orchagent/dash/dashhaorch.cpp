@@ -243,6 +243,15 @@ bool DashHaOrch::updateExistingHaSetEntry(const std::string &key, const dash::ha
 {
     SWSS_LOG_ENTER();
 
+    if (entry.owner() != m_ha_set_entries[key].metadata.owner())
+    {
+        SWSS_LOG_NOTICE("HA Set owner updated for %s from %s to %s",
+                        key.c_str(),
+                        dash::types::HaOwner_Name(m_ha_set_entries[key].metadata.owner()).c_str(),
+                        dash::types::HaOwner_Name(entry.owner()).c_str());
+        m_ha_set_entries[key].metadata.set_owner(entry.owner());
+    }
+
     sai_status_t status;
     sai_attribute_t ha_set_attr_list[8]={};
     sai_ip_address_t sai_peer_ip;
@@ -632,6 +641,9 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
     }
     m_ha_scope_entries[key] = HaScopeEntry {sai_ha_scope_oid, entry, getNowTime(), SAI_DASH_HA_STATE_DEAD, getNowTime()};
     SWSS_LOG_NOTICE("Created HA Scope object for %s", key.c_str());
+
+    // If owner is switch, directly update state DB with ha_state on first creation
+    updateHaScopeStateForSwitchOwner(key, entry);
 
     // set HA Scope ID to ENI
     if (ha_set_it->second.metadata.scope() == dash::types::HaScope::HA_SCOPE_ENI)
