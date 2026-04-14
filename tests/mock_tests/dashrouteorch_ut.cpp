@@ -176,6 +176,7 @@ namespace dashrouteorch_test
         // Create an ENI entry to test removal of inbound routing entry
         SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, BuildEniEntry());
         uint32_t baselineUsed = GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_INBOUND_ROUTING);
+        // Remove non-existent inbound routing entry should return SAI_STATUS_ITEM_NOT_FOUND and not decrement the CRM used count
         std::vector<sai_status_t> exp_status = {SAI_STATUS_ITEM_NOT_FOUND};
         EXPECT_CALL(*mock_sai_dash_inbound_routing_api, remove_inbound_routing_entries)
             .Times(1).WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
