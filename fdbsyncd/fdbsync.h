@@ -112,7 +112,7 @@ private:
 
     std::unordered_map<std::string, m_local_fdb_info> m_mclag_remote_fdb_mac;
 
-    void macDelVxlanEntry(std::string auxkey, struct m_fdb_info *info);
+    void macDelVxlanEntry(struct m_fdb_info *info);
 
     void macUpdateCache(struct m_fdb_info *info);
 
@@ -142,19 +142,11 @@ private:
         std::string ifname;
         uint8_t protocol;
         
-        // Mutually exclusive destination fields
-        // Only one should be populated based on nhtype value:
-        // - nhtype == VTEP: use remote_vtep
-        // - nhtype == NEXTHOPGROUP: use nexthop_group  
-        // - nhtype == IFNAME: use ifname_dest
-        struct NextHopValue
-        {
-            std::string remote_vtep;
-            std::string nexthop_group;
-            std::string ifname;
-            
-            NextHopValue() = default;
-        } v;
+        // Nexthop destination value - interpretation depends on nhtype:
+        // - nhtype == VTEP: contains remote VTEP IP address
+        // - nhtype == NEXTHOPGROUP: contains nexthop group ID
+        // - nhtype == IFNAME: contains interface name
+        std::string nexthop_value;
     };
     std::unordered_map<std::string, m_mac_info> m_mac;
 

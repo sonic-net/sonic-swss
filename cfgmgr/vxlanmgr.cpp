@@ -4,6 +4,7 @@
 #include <sstream>
 #include <string>
 #include <net/if.h>
+#include <arpa/inet.h>
 
 #include "logger.h"
 #include "producerstatetable.h"
@@ -65,7 +66,15 @@ static int cmdCreateVxlan(const swss::VxlanMgr::VxlanInfo & info, std::string & 
         cmd << " local " << shellquote(info.m_sourceIp);
     }
     cmd << " dstport 4789";
-    cmd << " udp6zerocsumrx";
+    if (!info.m_sourceIp.empty())
+    {
+        // Parse IP to determine IPv4 vs IPv6
+        struct in6_addr addr6;
+        if (inet_pton(AF_INET6, info.m_sourceIp.c_str(), &addr6) == 1)
+        {
+            cmd << " udp6zerocsumrx";
+        }
+    }
     return swss::exec(cmd.str(), res);
 }
 
@@ -1020,7 +1029,14 @@ int VxlanMgr::createVxlanNetdevice(std::string vxlanTunnelName, std::string vni_
                    " address " + gMacAddress.to_string() + " type vxlan id " + 
                    std::string(vni_id) + " local " + src_ip + 
                    ((dst_ip  == "")? "":(" remote " + dst_ip)) + 
-                   " nolearning " + " dstport 4789 udp6zerocsumrx ";
+                   " nolearning " + " dstport 4789";
+    
+    // Add udp6zerocsumrx only for IPv6
+    struct in6_addr addr6;
+    if (inet_pton(AF_INET6, src_ip.c_str(), &addr6) == 1)
+    {
+        link_add_cmd += " udp6zerocsumrx";
+    }
     
     link_set_master_cmd = std::string("") + IP_CMD + " link set " + 
                           vxlan_dev_name + " master Bridge ";

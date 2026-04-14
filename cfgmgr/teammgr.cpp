@@ -621,6 +621,7 @@ int TeamMgr::update_kernel(const string &alias, const string &system_mac)
     }
 
     rtnl_link_set_addr(link, nl_addr);
+    nl_addr_put(nl_addr); // Release our reference; link now owns the addr
 
     if (rtnl_link_get_kernel(sockk, 0, alias.c_str(), &orig_link) < 0) {
         SWSS_LOG_ERROR("Failed to get link for interface %d.\n", ifindex);

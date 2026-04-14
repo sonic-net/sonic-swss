@@ -304,19 +304,6 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
             SWSS_LOG_INFO("Remove host route before adding neighbor %s", hostRoute.c_str());
             m_routeTable.del(hostRoute);
-            vector<FieldValueTuple> values;
-            int retry_count = 0;
-            while (m_routeCheckTable.get(hostRoute, values) && retry_count < MAX_ROUTE_DEL_RETRY)
-            {
-                SWSS_LOG_DEBUG("Host route still exists: %s, retry %d", hostRoute.c_str(), retry_count);
-                m_routeTable.del(hostRoute);
-                usleep(TENMS);
-                retry_count++;
-            }
-            if (retry_count >= MAX_ROUTE_DEL_RETRY)
-            {
-                SWSS_LOG_WARN("Host route %s still present after %d retries, proceeding with neighbor add", hostRoute.c_str(), MAX_ROUTE_DEL_RETRY);
-            }
         }
 
         m_neighTable.set(key, fvVector);

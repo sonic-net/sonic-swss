@@ -1443,6 +1443,9 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
         SWSS_LOG_INFO("Failed to remove still referenced neighbor %s on %s",
                       m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str());
         m_syncdNeighbors[neighborEntry].deletion_pending = false;
+        // Rollback: notify observers that neighbor is back (still referenced)
+        NeighborUpdate rollback = { neighborEntry, m_syncdNeighbors[neighborEntry].mac, true };
+        notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&rollback));
         return false;
     }
 
@@ -1482,6 +1485,9 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
                 if (handle_status != task_success)
                 {
                     m_syncdNeighbors[neighborEntry].deletion_pending = false;
+                    // Rollback: notify observers that neighbor is back (SAI removal failed)
+                    NeighborUpdate rollback = { neighborEntry, m_syncdNeighbors[neighborEntry].mac, true };
+                    notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&rollback));
                     return parseHandleSaiStatusFailure(handle_status);
                 }
             }
@@ -1518,6 +1524,9 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
                 if (handle_status != task_success)
                 {
                     m_syncdNeighbors[neighborEntry].deletion_pending = false;
+                    // Rollback: notify observers that neighbor is back (SAI removal failed)
+                    NeighborUpdate rollback = { neighborEntry, m_syncdNeighbors[neighborEntry].mac, true };
+                    notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&rollback));
                     return parseHandleSaiStatusFailure(handle_status);
                 }
             }

@@ -25,6 +25,9 @@ using namespace std;
 using namespace swss;
 
 #define VXLAN_BR_IF_NAME_PREFIX    "Brvxlan"
+#ifndef RTPROT_HW
+#define RTPROT_HW 193  /* Protocol ID for hardware learned routes */
+#endif
 
 FdbSync::FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector *config_db) :
     m_fdbTable(pipelineAppDB, APP_VXLAN_FDB_TABLE_NAME),
@@ -279,11 +282,12 @@ bool FdbSync::macCheckSrcDB(struct m_fdb_info *info)
     return false;
 }
 
-void FdbSync::macDelVxlanEntry(string auxkey, struct m_fdb_info *info)
+void FdbSync::macDelVxlanEntry(struct m_fdb_info *info)
 {
     std::string cmds;
     auto mac = info->mac;
     auto vid =  info->vid.substr(4);
+    string auxkey = info->vid + ":" + info->mac;
 
     auto it = m_mac.find(auxkey);
     if (it == m_mac.end())
@@ -295,7 +299,7 @@ void FdbSync::macDelVxlanEntry(string auxkey, struct m_fdb_info *info)
     auto ifname = it->second.ifname;
     if (it->second.nhtype == VTEP)
     {
-        std::string vtep = it->second.v.remote_vtep;
+        std::string vtep = it->second.nexthop_value;
 
         // The usage of self allow the avoidance of
         // deleting both bridge and VxLAN FDB.
@@ -307,7 +311,7 @@ void FdbSync::macDelVxlanEntry(string auxkey, struct m_fdb_info *info)
     }
     else if (it->second.nhtype == NEXTHOPGROUP)
     {
-        std::string nexthop_group = it->second.v.nexthop_group;
+        std::string nexthop_group = it->second.nexthop_value;
 
         // The usage of self allow the avoidance of
         // deleting both bridge and VxLAN FDB.
@@ -396,7 +400,7 @@ void FdbSync::updateLocalMac (struct m_fdb_info *info)
         /* Check if this vlan+key is also learned by vxlan neighbor then delete the dest entry */
         if (m_mac.find(key) != m_mac.end())
         {
-            macDelVxlanEntry(key, info);
+            macDelVxlanEntry(info);
             SWSS_LOG_INFO("Local learn event deleting from VXLAN table DEL_KEY %s", key.c_str());
             macDelVxlan(key);
         }
@@ -522,7 +526,7 @@ void FdbSync::updateMclagRemoteMacPort(int ifindex, int vlan, std::string mac, u
         port_name = m_mclag_remote_fdb_mac[key].port_name;
         if (protocol == RTPROT_ZEBRA)
             proto_string = " proto zebra";
-        else if (protocol == 193)/*RTPRO_HW might not be in swss inc rtnetlink.h*/
+        else if (protocol == RTPROT_HW)
             /* Unlikely this can happen, but keeping just in case */
             proto_string = " proto hw";
         SWSS_LOG_INFO(" port %s, type %d %s\n", port_name.c_str(), type, proto_string.c_str());
@@ -583,7 +587,7 @@ void FdbSync::macRefreshStateDB(int vlan, string kmac, uint8_t protocol)
 
         if (protocol == RTPROT_ZEBRA)
             proto_string = " proto zebra";
-        else if (protocol == 193)/*RTPRO_HW might not be in swss inc rtnetlink.h*/
+        else if (protocol == RTPROT_HW)
             proto_string = " proto hw";
 
         const std::string cmds = std::string("")
@@ -702,7 +706,7 @@ void FdbSync::macDelVxlanDB(string key)
     if (m_mac[key].nhtype == VTEP)
     {
         // VTEP destination
-        string vtep = m_mac[key].v.remote_vtep;
+        string vtep = m_mac[key].nexthop_value;
         FieldValueTuple nh("remote_vtep", vtep);
         fvVector.push_back(nh);
         SWSS_LOG_NOTICE("VXLAN_FDB_TABLE: DEL_KEY %s vtep:%s type:%s vni:%s protocol:%u",
@@ -711,7 +715,7 @@ void FdbSync::macDelVxlanDB(string key)
     else if (m_mac[key].nhtype == NEXTHOPGROUP)
     {
         // Nexthop group destination
-        string nexthop_group = m_mac[key].v.nexthop_group;
+        string nexthop_group = m_mac[key].nexthop_value;
         FieldValueTuple nh("nexthop_group", nexthop_group);
         fvVector.push_back(nh);
         SWSS_LOG_NOTICE("VXLAN_FDB_TABLE: DEL_KEY %s nexthop_group:%s type:%s vni:%s protocol:%u",
@@ -720,7 +724,7 @@ void FdbSync::macDelVxlanDB(string key)
     else if (m_mac[key].nhtype == IFNAME)
     {
         // Interface name destination
-        string ifname = m_mac[key].v.ifname;
+        string ifname = m_mac[key].nexthop_value;
         FieldValueTuple nh("ifname", ifname);
         fvVector.push_back(nh);
         SWSS_LOG_INFO("VXLAN_FDB_TABLE: DEL_KEY %s ifname:%s type:%s vni:%s protocol:%u",
@@ -765,7 +769,7 @@ void FdbSync::macAddVxlan(string key, struct nl_addr *vtep, string type, uint32_
         if (m_mac.find(key) != m_mac.end())
             m_fdbTable.del(key);
         m_mac[key].nhtype = NEXTHOPGROUP;
-        m_mac[key].v.nexthop_group = nexthop_group;
+        m_mac[key].nexthop_value = nexthop_group;
         FieldValueTuple nh("nexthop_group", nexthop_group);
         fvVector.push_back(nh);
         SWSS_LOG_INFO("VXLAN_FDB_TABLE: ADD_KEY %s nexthop_group:%s type:%s vni:%s ifname:%s protocol:%u",
@@ -778,7 +782,7 @@ void FdbSync::macAddVxlan(string key, struct nl_addr *vtep, string type, uint32_
         char buf[MAX_ADDR_SIZE + 1] = {0};
         m_mac[key].nhtype = VTEP;
         string svtep = nl_addr2str(vtep, buf, sizeof(buf));
-        m_mac[key].v.remote_vtep = svtep;
+        m_mac[key].nexthop_value = svtep;
         FieldValueTuple nh("remote_vtep", svtep);
         fvVector.push_back(nh);
         SWSS_LOG_INFO("VXLAN_FDB_TABLE: ADD_KEY %s vtep:%s type:%s vni:%s ifname:%s protocol:%u",
@@ -789,7 +793,7 @@ void FdbSync::macAddVxlan(string key, struct nl_addr *vtep, string type, uint32_
         if (m_mac.find(key) != m_mac.end())
             m_fdbTable.del(key);
         m_mac[key].nhtype = IFNAME;
-        m_mac[key].v.ifname = intf_name;
+        m_mac[key].nexthop_value = intf_name;
         FieldValueTuple fv_ifname("ifname", intf_name);
         fvVector.push_back(fv_ifname);
         SWSS_LOG_INFO("VXLAN_FDB_TABLE: ADD_KEY %s ifname:%s type:%s vni:%s ifname:%s protocol:%u",
@@ -823,19 +827,19 @@ void FdbSync::macDelVxlan(string key)
         if (m_mac[key].nhtype == VTEP)
         {
             SWSS_LOG_INFO("DEL_KEY %s vtep:%s type:%s vni:%s ifname:%s protocol:%u", key.c_str(),
-                           m_mac[key].v.remote_vtep.c_str(), m_mac[key].type.c_str(),
+                           m_mac[key].nexthop_value.c_str(), m_mac[key].type.c_str(),
                            to_string(m_mac[key].vni).c_str(), m_mac[key].ifname.c_str(), m_mac[key].protocol);
         }
         else if (m_mac[key].nhtype == NEXTHOPGROUP)
         {
             SWSS_LOG_INFO("DEL_KEY %s nexthop:%s type:%s vni:%s ifname:%s protocol:%u", key.c_str(),
-                           m_mac[key].v.nexthop_group.c_str(), m_mac[key].type.c_str(),
+                           m_mac[key].nexthop_value.c_str(), m_mac[key].type.c_str(),
                            to_string(m_mac[key].vni).c_str(), m_mac[key].ifname.c_str(), m_mac[key].protocol);
         }
         else if (m_mac[key].nhtype == IFNAME)
         {
             SWSS_LOG_INFO("DEL_KEY %s ifname:%s type:%s vni:%s protocol:%u", key.c_str(),
-                           m_mac[key].v.ifname.c_str(), m_mac[key].type.c_str(),
+                           m_mac[key].nexthop_value.c_str(), m_mac[key].type.c_str(),
                            to_string(m_mac[key].vni).c_str(), m_mac[key].protocol);
         }
         else {
@@ -1020,7 +1024,19 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h
         }
         else
         {
-            imetDelRoute(vtep_addr, vlan_str, vni);
+            /* For IMET deletes, vtep_addr is NULL because RTM_DELNEIGH messages
+             * lack the NDA_DST attribute. We cannot construct the key without the
+             * VTEP address, so skip the delete operation. IMET routes will be
+             * cleaned up when the interface goes down or through other means. */
+            if (vtep_addr != NULL)
+            {
+                imetDelRoute(vtep_addr, vlan_str, vni);
+            }
+            else
+            {
+                SWSS_LOG_INFO("Skipping IMET delete for vlan %s vni %u - VTEP address not available in delete message",
+                              vlan_str.c_str(), vni);
+            }
         }
         return;
     }

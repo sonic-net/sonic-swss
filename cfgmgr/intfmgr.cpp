@@ -1305,6 +1305,11 @@ void IntfMgr::doSagTask(const vector<string>& keys,
     vector<FieldValueTuple> fvAppSag;
     if (op == SET_COMMAND)
     {
+        if (mac.empty())
+        {
+            SWSS_LOG_ERROR("gateway_mac field is missing in SAG configuration");
+            return;
+        }
         FieldValueTuple gwmac("gateway_mac", MacAddress(mac).to_string());
         fvAppSag.push_back(gwmac);
         m_appSagTableProducer.set("GLOBAL", fvAppSag);
