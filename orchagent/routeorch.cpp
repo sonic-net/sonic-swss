@@ -1528,36 +1528,6 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
     nhg_attrs.push_back(nhg_attr);
 
     auto nhgType = m_switchOrch->getEcmpNhgType();
-    auto nhgBuckets = m_switchOrch->getEcmpResilientBuckets();
-    if ((nhgType == SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP ||
-         nhgType == SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP) && nhgBuckets > 0)
-    {
-        nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_CONFIGURED_SIZE;
-        nhg_attr.value.u32 = nhgBuckets;
-        nhg_attrs.push_back(nhg_attr);
-    }
-
-    if (nhgType == SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP)
-    {
-#ifdef SAI_NEXT_HOP_GROUP_ATTR_ACTIVE_FLOW_TIMER
-        auto activeFlowTimer = m_switchOrch->getEcmpResilientActiveFlowTimer();
-        if (activeFlowTimer > 0)
-        {
-            nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_ACTIVE_FLOW_TIMER;
-            nhg_attr.value.u32 = activeFlowTimer;
-            nhg_attrs.push_back(nhg_attr);
-        }
-#endif
-#ifdef SAI_NEXT_HOP_GROUP_ATTR_MAX_UNBALANCED_TIME
-        auto maxUnbalancedTime = m_switchOrch->getEcmpResilientMaxUnbalancedTime();
-        if (maxUnbalancedTime > 0)
-        {
-            nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_MAX_UNBALANCED_TIME;
-            nhg_attr.value.u32 = maxUnbalancedTime;
-            nhg_attrs.push_back(nhg_attr);
-        }
-#endif
-    }
 
     sai_object_id_t next_hop_group_id;
     sai_status_t status = sai_next_hop_group_api->create_next_hop_group(&next_hop_group_id,

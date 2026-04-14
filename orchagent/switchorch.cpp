@@ -920,31 +920,11 @@ bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
                 m_orderedEcmpEnable = false;
                 SWSS_LOG_NOTICE("ECMP type set to static — SAI ECMP (SDK SX_ECMP_TYPE_STATIC_E, full rehash)");
                 break;
-            case EcmpType::ECMP_CONSISTENT:
+            case EcmpType::ECMP_ORDERED:
                 m_ecmpNhgType = SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP;
                 m_orderedEcmpEnable = true;
-                SWSS_LOG_NOTICE("ECMP type set to consistent — SAI DYNAMIC_ORDERED_ECMP (SDK SX_ECMP_TYPE_PRESERVED_ORDER_E)");
+                SWSS_LOG_NOTICE("ECMP type set to ordered — SAI DYNAMIC_ORDERED_ECMP (SDK SX_ECMP_TYPE_PRESERVED_ORDER_E)");
                 break;
-            case EcmpType::ECMP_RESILIENT:
-                m_ecmpNhgType = SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP;
-                m_orderedEcmpEnable = true;
-                SWSS_LOG_NOTICE("ECMP type set to resilient — SAI DYNAMIC_ORDERED_ECMP (SDK SX_ECMP_TYPE_PRESERVED_ORDER_E)");
-                break;
-            }
-
-            if (hash.ecmp_resilient_hash_buckets.is_set)
-            {
-                m_ecmpResilientBuckets = hash.ecmp_resilient_hash_buckets.value;
-            }
-
-            if (hash.ecmp_resilient_active_flow_timer.is_set)
-            {
-                m_ecmpResilientActiveFlowTimer = hash.ecmp_resilient_active_flow_timer.value;
-            }
-
-            if (hash.ecmp_resilient_max_unbalanced_time.is_set)
-            {
-                m_ecmpResilientMaxUnbalancedTime = hash.ecmp_resilient_max_unbalanced_time.value;
             }
 
             cfgUpd = true;
