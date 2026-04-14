@@ -59,10 +59,10 @@ class TestIPv6LinkLocal(object):
         time.sleep(2)
 
         # Neigh entries should contain Ipv6-link-local neighbors, should be 4
-        neigh_entries = self.pdb.get_keys("NEIGH_TABLE")
-        assert (len(neigh_entries) == 4)
+        self.pdb.wait_for_n_keys("NEIGH_TABLE", 4)
 
         found_entry = False
+        neigh_entries = self.pdb.get_keys("NEIGH_TABLE")
         for key in neigh_entries:
             if (key.find("Ethernet4:2001::2") or key.find("Ethernet0:2000::2")):
                 found_entry = True

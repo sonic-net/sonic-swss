@@ -63,10 +63,20 @@ class TestP4RTAcl(object):
         self._p4rt_udf_match_obj.set_up_databases(dvs)
         self._p4rt_udf_obj.set_up_databases(dvs)
 
-        self.response_consumer = swsscommon.NotificationConsumer(
-            self._p4rt_acl_table_definition_obj.appl_db, "APPL_DB_" +
-            swsscommon.APP_P4RT_TABLE_NAME + "_RESPONSE_CHANNEL"
-        )
+    def _cleanup(self):   
+        self._p4rt_acl_group_member_obj.clean_up()
+        self._p4rt_acl_group_obj.clean_up()
+        self._p4rt_acl_table_definition_obj.clean_up()
+        self._p4rt_acl_rule_obj.clean_up()
+        self._p4rt_acl_counter_obj.clean_up()
+        self._p4rt_acl_meter_obj.clean_up()
+        self._p4rt_trap_group_obj.clean_up()
+        self._p4rt_user_trap_obj.clean_up()
+        self._p4rt_hostif_obj.clean_up()
+        self._p4rt_hostif_table_entry_obj.clean_up()
+        self._p4rt_udf_group_obj.clean_up()
+        self._p4rt_udf_match_obj.clean_up()
+        self._p4rt_udf_obj.clean_up()
 
     @pytest.mark.skip(reason="p4orch is not enabled")
     def test_AclRulesAddUpdateDelPass(self, dvs, testlog):
@@ -176,6 +186,8 @@ class TestP4RTAcl(object):
         punt_and_set_tc = '[{"action":"SAI_PACKET_ACTION_TRAP","packet_color":"SAI_PACKET_COLOR_RED"},{"action":"SAI_ACL_ENTRY_ATTR_ACTION_SET_TC","param":"traffic_class"}]'
         qos_queue = '[{"action":"SAI_PACKET_ACTION_TRAP"},{"action":"QOS_QUEUE","param":"cpu_queue"}]'
 
+        acl_rate_limit_copy = '[{"action":"SAI_PACKET_ACTION_FORWARD","packet_color":"SAI_PACKET_COLOR_GREEN"},{"action":"SAI_PACKET_ACTION_COPY_CANCEL","packet_color":"SAI_PACKET_COLOR_YELLOW"},{"action":"SAI_PACKET_ACTION_COPY_CANCEL","packet_color":"SAI_PACKET_COLOR_RED"},{"action":"QOS_QUEUE","param":"qos_queue"}]'
+
         attr_list = [
             (self._p4rt_acl_table_definition_obj.STAGE_FIELD, stage),
             (self._p4rt_acl_table_definition_obj.PRIORITY_FIELD, priority),
@@ -201,6 +213,7 @@ class TestP4RTAcl(object):
                 punt_and_set_tc,
             ),
             (self._p4rt_acl_table_definition_obj.ACTION_SET_QOS_QUEUE, qos_queue),
+	    (self._p4rt_acl_table_definition_obj.ACTION_SET_ACL_RATE_LIMIT_COPY, acl_rate_limit_copy),
             (self._p4rt_acl_table_definition_obj.METER_UNIT, meter_unit),
             (self._p4rt_acl_table_definition_obj.COUNTER_UNIT, counter_unit),
         ]
@@ -208,8 +221,7 @@ class TestP4RTAcl(object):
         self._p4rt_acl_table_definition_obj.set_app_db_entry(
             self._p4rt_acl_table_definition_obj.TBL_NAME + ":" + table_name, attr_list
         )
-        util.verify_response(
-            self.response_consumer,
+        self._p4rt_acl_table_definition_obj.verify_response(
             self._p4rt_acl_table_definition_obj.TBL_NAME + ":" + table_name,
             attr_list,
             "SWSS_RC_SUCCESS",
@@ -385,7 +397,7 @@ class TestP4RTAcl(object):
             ),
             (
                 self._p4rt_acl_table_definition_obj.SAI_ATTR_ACTION_TYPE_LIST,
-                "1:SAI_ACL_ACTION_TYPE_COUNTER",
+                "5:SAI_ACL_ACTION_TYPE_PACKET_ACTION,SAI_ACL_ACTION_TYPE_COUNTER,SAI_ACL_ACTION_TYPE_SET_POLICER,SAI_ACL_ACTION_TYPE_SET_TC,SAI_ACL_ACTION_TYPE_SET_USER_TRAP_ID",
             ),
         ]
         util.verify_attr(fvs, attr_list)
@@ -416,6 +428,24 @@ class TestP4RTAcl(object):
         meter_pbs = "200"
         table_name_with_rule_key1 = table_name + ":" + rule_json_key1
 
+        # First attemp failed due to invalid meter
+        attr_list = [
+            (self._p4rt_acl_rule_obj.ACTION, action),
+            ("param/traffic_class", "1"),
+            (self._p4rt_acl_rule_obj.METER_CIR, "N/A"),
+            (self._p4rt_acl_rule_obj.METER_CBURST, meter_cbs),
+            (self._p4rt_acl_rule_obj.METER_MODE, "single_rate_two_color"),
+        ]
+
+        self._p4rt_acl_rule_obj.set_app_db_entry(
+            table_name_with_rule_key1, attr_list)
+        self._p4rt_acl_rule_obj.verify_response(
+            table_name_with_rule_key1,
+            attr_list,
+            "SWSS_RC_INVALID_PARAM",
+            '[OrchAgent] Invalid ACL meter field value \'meter/cir\': \'N/A\' - Expect a uint64_t.',
+        )
+
         attr_list = [
             (self._p4rt_acl_rule_obj.ACTION, action),
             ("param/traffic_class", "1"),
@@ -427,8 +457,7 @@ class TestP4RTAcl(object):
 
         self._p4rt_acl_rule_obj.set_app_db_entry(
             table_name_with_rule_key1, attr_list)
-        util.verify_response(
-            self.response_consumer,
+        self._p4rt_acl_rule_obj.verify_response(
             table_name_with_rule_key1,
             attr_list,
             "SWSS_RC_SUCCESS",
@@ -584,8 +613,7 @@ class TestP4RTAcl(object):
 
         self._p4rt_acl_rule_obj.set_app_db_entry(
             table_name_with_rule_key1, attr_list)
-        util.verify_response(
-            self.response_consumer,
+        self._p4rt_acl_rule_obj.verify_response(
             table_name_with_rule_key1,
             attr_list,
             "SWSS_RC_SUCCESS",
@@ -722,7 +750,7 @@ class TestP4RTAcl(object):
         ]
         util.verify_attr(fvs, attr_list)
 
-        # create ACL rule 2 with QOS_QUEUE action
+        # First attempt failed since cpu queue is out of range
         rule_json_key2 = '{"match/is_ip":"0x1","match/ether_type":"0x0800 & 0xFFFF","match/ether_dst":"AA:BB:CC:DD:EE:FF & FF:FF:FF:FF:FF:FF","priority":100}'
         action = "qos_queue"
         meter_cir = "80"
@@ -731,6 +759,46 @@ class TestP4RTAcl(object):
         meter_pbs = "200"
         table_name_with_rule_key2 = table_name + ":" + rule_json_key2
 
+    # First attempt failed since no UserDefinedTrap is created for the CPU queue    
+        attr_list = [
+            (self._p4rt_acl_rule_obj.ACTION, action),
+            # No UserDefinedTrap created for the queue.
+            ("param/cpu_queue", "48"),
+            (self._p4rt_acl_rule_obj.METER_CIR, meter_cir),
+            (self._p4rt_acl_rule_obj.METER_CBURST, meter_cbs),
+            (self._p4rt_acl_rule_obj.METER_PIR, meter_pir),
+            (self._p4rt_acl_rule_obj.METER_PBURST, meter_pbs),
+        ]
+
+        self._p4rt_acl_rule_obj.set_app_db_entry(
+            table_name_with_rule_key2, attr_list)
+        self._p4rt_acl_rule_obj.verify_response(
+            table_name_with_rule_key2,
+            attr_list,
+            "SWSS_RC_INVALID_PARAM",
+            "[OrchAgent] Invalid CPU queue number '48' for 'ACL_PUNT_TABLE_RULE_TEST'. Queue number should >= 0 and <= 47",
+        )
+
+        # Second attempt failed since no UserDefinedTrap is created for the CPU queue
+        attr_list = [
+            (self._p4rt_acl_rule_obj.ACTION, action),
+            # No UserDefinedTrap created for the queue.
+            ("param/cpu_queue", "30"),
+            (self._p4rt_acl_rule_obj.METER_CIR, meter_cir),
+            (self._p4rt_acl_rule_obj.METER_CBURST, meter_cbs),
+        ]
+
+        self._p4rt_acl_rule_obj.set_app_db_entry(
+            table_name_with_rule_key2, attr_list)
+        util.verify_response(
+            self.response_consumer,
+            table_name_with_rule_key2,
+            attr_list,
+            "SWSS_RC_INVALID_PARAM",
+            "[OrchAgent] Invalid CPU queue number '30' for 'ACL_PUNT_TABLE_RULE_TEST'. Queue number 30 does not have UserDefinedTrap configured",
+        )
+
+        # Third attempt passed.
         attr_list = [
             (self._p4rt_acl_rule_obj.ACTION, action),
             ("param/cpu_queue", "5"),
@@ -742,8 +810,7 @@ class TestP4RTAcl(object):
 
         self._p4rt_acl_rule_obj.set_app_db_entry(
             table_name_with_rule_key2, attr_list)
-        util.verify_response(
-            self.response_consumer,
+        self._p4rt_acl_rule_obj.verify_response(
             table_name_with_rule_key2,
             attr_list,
             "SWSS_RC_SUCCESS",
@@ -924,8 +991,7 @@ class TestP4RTAcl(object):
 
         self._p4rt_acl_rule_obj.set_app_db_entry(
             table_name_with_rule_key3, attr_list)
-        util.verify_response(
-            self.response_consumer,
+        self._p4rt_acl_rule_obj.verify_response(
             table_name_with_rule_key3,
             attr_list,
             "SWSS_RC_SUCCESS",
@@ -1021,10 +1087,110 @@ class TestP4RTAcl(object):
         ]
         util.verify_attr(fvs, attr_list)
 
+	
+	  # update ACL rule 2 with acl_rate_limit_copy action
+        action = "acl_rate_limit_copy"
+
+        attr_list = [
+            (self._p4rt_acl_rule_obj.ACTION, action),
+            ("param/qos_queue", "7"),
+            (self._p4rt_acl_rule_obj.METER_CIR, meter_cir),
+            (self._p4rt_acl_rule_obj.METER_CBURST, meter_cbs),
+            (self._p4rt_acl_rule_obj.METER_PIR, meter_pir),
+            (self._p4rt_acl_rule_obj.METER_PBURST, meter_pbs),
+        ]
+
+        self._p4rt_acl_rule_obj.set_app_db_entry(
+            table_name_with_rule_key2, attr_list)
+        self._p4rt_acl_rule_obj.verify_response(
+            table_name_with_rule_key2,
+            attr_list,
+            "SWSS_RC_SUCCESS",
+        )
+
+        # query application database for ACL rules
+        acl_rules = util.get_keys(
+            self._p4rt_acl_rule_obj.appl_db,
+            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME + ":" + table_name,
+        )
+        assert len(acl_rules) == len(original_appl_acl_rules) + 3
+
+        # query application database for updated ACL rule
+        (status, fvs) = util.get_key(
+            self._p4rt_acl_rule_obj.appl_db,
+            self._p4rt_acl_table_definition_obj.APP_DB_TBL_NAME,
+            table_name_with_rule_key2,
+        )
+        assert status == True
+        util.verify_attr(fvs, attr_list)
+
+         # query ASIC database for updated ACL meter
+        (status, fvs) = util.get_key(
+            self._p4rt_acl_meter_obj.asic_db,
+            self._p4rt_acl_meter_obj.ASIC_DB_TBL_NAME,
+            meter_asic_db_key2,
+        )
+        assert status == True
+        attr_list = [
+            (
+                self._p4rt_acl_meter_obj.SAI_ATTR_GREEN_PACKET_ACTION,
+                "SAI_PACKET_ACTION_FORWARD",
+            ),
+            (
+                self._p4rt_acl_meter_obj.SAI_ATTR_YELLOW_PACKET_ACTION,
+                "SAI_PACKET_ACTION_COPY_CANCEL",
+            ),
+            (
+                self._p4rt_acl_meter_obj.SAI_ATTR_RED_PACKET_ACTION,
+                "SAI_PACKET_ACTION_COPY_CANCEL",
+            ),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_TYPE, "SAI_METER_TYPE_PACKETS"),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_MODE, "SAI_POLICER_MODE_TR_TCM"),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CIR, meter_cir),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_CBS, meter_cbs),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_PIR, meter_pir),
+            (self._p4rt_acl_meter_obj.SAI_ATTR_METER_PBS, meter_pbs),
+        ]
+        util.verify_attr(fvs, attr_list)
+
+        # query ASIC database for updated ACL rule
+        (status, fvs) = util.get_key(
+            self._p4rt_acl_rule_obj.asic_db,
+            self._p4rt_acl_rule_obj.ASIC_DB_TBL_NAME,
+            rule_asic_db_key2,
+        )
+        assert status == True
+        attr_list = [
+            (
+                self._p4rt_acl_rule_obj.SAI_ATTR_ACTION_SET_USER_TRAP_ID,
+                user_trap_asic_db_key,
+            ),
+            (
+                self._p4rt_acl_rule_obj.SAI_ATTR_ACTION_PACKET_ACTION,
+                "disabled",
+            ),
+            (self._p4rt_acl_rule_obj.SAI_ATTR_MATCH_ETHER_TYPE, "2048&mask:0xffff"),
+            (
+                self._p4rt_acl_rule_obj.SAI_ATTR_MATCH_IP_TYPE,
+                "SAI_ACL_IP_TYPE_IP&mask:0xffffffffffffffff",
+            ),
+            (
+                self._p4rt_acl_rule_obj.SAI_ATTR_MATCH_DST_MAC,
+                "AA:BB:CC:DD:EE:FF&mask:FF:FF:FF:FF:FF:FF",
+            ),
+            (self._p4rt_acl_rule_obj.SAI_ATTR_TABLE_ID, table_asic_db_key),
+            (self._p4rt_acl_rule_obj.SAI_ATTR_SET_POLICER, meter_asic_db_key2),
+            (self._p4rt_acl_rule_obj.SAI_ATTR_COUNTER, counter_asic_db_key2),
+            (self._p4rt_acl_rule_obj.SAI_ATTR_ADMIN_STATE, "true"),
+            (self._p4rt_acl_rule_obj.SAI_ATTR_PRIORITY, "100"),
+        ]
+        util.verify_attr(fvs, attr_list)
+
+
         # remove ACL rule 3
         self._p4rt_acl_rule_obj.remove_app_db_entry(table_name_with_rule_key3)
-        util.verify_response(
-            self.response_consumer, table_name_with_rule_key3, [], "SWSS_RC_SUCCESS"
+        self._p4rt_acl_rule_obj.verify_response(
+            table_name_with_rule_key3, [], "SWSS_RC_SUCCESS"
         )
 
         # query application database for ACL rules
@@ -1066,8 +1232,8 @@ class TestP4RTAcl(object):
 
         # remove ACL rule 1
         self._p4rt_acl_rule_obj.remove_app_db_entry(table_name_with_rule_key1)
-        util.verify_response(
-            self.response_consumer, table_name_with_rule_key1, [], "SWSS_RC_SUCCESS"
+        self._p4rt_acl_rule_obj.verify_response(
+            table_name_with_rule_key1, [], "SWSS_RC_SUCCESS"
         )
 
         # query application database for ACL rules
@@ -1117,8 +1283,8 @@ class TestP4RTAcl(object):
 
         # remove ACL rule 2
         self._p4rt_acl_rule_obj.remove_app_db_entry(table_name_with_rule_key2)
-        util.verify_response(
-            self.response_consumer, table_name_with_rule_key2, [], "SWSS_RC_SUCCESS"
+        self._p4rt_acl_rule_obj.verify_response(
+            table_name_with_rule_key2, [], "SWSS_RC_SUCCESS"
         )
 
         # query application database for ACL rules
@@ -1170,8 +1336,7 @@ class TestP4RTAcl(object):
         self._p4rt_acl_table_definition_obj.remove_app_db_entry(
             self._p4rt_acl_table_definition_obj.TBL_NAME + ":" + table_name
         )
-        util.verify_response(
-            self.response_consumer,
+        self._p4rt_acl_table_definition_obj.verify_response(
             self._p4rt_acl_table_definition_obj.TBL_NAME + ":" + table_name,
             [],
             "SWSS_RC_SUCCESS",
@@ -1209,6 +1374,8 @@ class TestP4RTAcl(object):
         )
         assert status == False
 
+        self._cleanup()
+
     def test_AclRuleAddWithoutTableDefinitionFails(self, dvs, testlog):
         # initialize ACL table objects and database connectors
         self._set_up(dvs)
@@ -1244,12 +1411,11 @@ class TestP4RTAcl(object):
 
         self._p4rt_acl_rule_obj.set_app_db_entry(
             table_name_with_rule_key, attr_list)
-        util.verify_response(
-            self.response_consumer,
+        self._p4rt_acl_rule_obj.verify_response(
             table_name_with_rule_key,
             attr_list,
             "SWSS_RC_INVALID_PARAM",
-            "[OrchAgent] Failed to find P4Orch Manager for ACL_PUNT_TABLE_RULE_TEST P4RT DB table",
+            '[OrchAgent] Failed to find P4Orch Manager for key ACL_PUNT_TABLE_RULE_TEST:{"match/ether_type":"0x0800","match/ether_dst":"00:1a:11:17:5f:80","match/src_ipv6_64bit":"fdf8:f53b:82e4::","match/arp_tpa":"0xff665543","priority":100}',
         )
 
         # query application database for ACL rules
@@ -1257,7 +1423,7 @@ class TestP4RTAcl(object):
             self._p4rt_acl_rule_obj.appl_db,
             self._p4rt_acl_rule_obj.APP_DB_TBL_NAME + ":" + table_name,
         )
-        assert len(acl_rules) == len(original_appl_acl_rules) + 1
+        assert len(acl_rules) == len(original_appl_acl_rules)
 
         # query application database for newly created ACL rule
         (status, fvs) = util.get_key(
@@ -1265,8 +1431,7 @@ class TestP4RTAcl(object):
             self._p4rt_acl_table_definition_obj.APP_DB_TBL_NAME,
             table_name_with_rule_key,
         )
-        assert status == True
-        util.verify_attr(fvs, attr_list)
+        assert status == False
 
         # query ASIC database for ACL rules
         acl_asic_rules = util.get_keys(
@@ -1280,9 +1445,5 @@ class TestP4RTAcl(object):
         ]
         assert len(rule_asic_db_keys) == 0
 
-        # cleanup application database
-        tbl = swsscommon.Table(
-            self._p4rt_acl_table_definition_obj.appl_db,
-            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME,
-        )
-        tbl._del(table_name_with_rule_key)
+        self._cleanup()
+

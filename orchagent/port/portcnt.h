@@ -99,6 +99,16 @@ public:
     } link_training; // Port link training
 
     struct {
+        bool value;
+        bool is_set = false;
+    } fast_linkup; // Port fast link-up enable
+
+    struct {
+        std::string value;
+        bool is_set = false;
+    } media_type; // Port media type
+
+    struct {
 
         struct {
             std::vector<std::uint32_t> value;
@@ -185,7 +195,27 @@ public:
             bool is_set = false;
         } regn_bfm1n; // Port serdes regn_bfm1n
 
-    } serdes; // Port serdes
+        struct {
+            bool value;
+            bool is_set = false;
+        } unreliable_los; // Port unreliable_los
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } txpolarity; // Port serdes TX polarity
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } rxpolarity; // Port serdes RX polarity
+
+        struct {
+            std::string value;
+            bool is_set = false;
+        } custom_collection; // Port serdes custom_collection
+
+    } serdes, serdes_gb_line, serdes_gb_system; // Port serdes (ASIC port, gearbox line-side, gearbox system-side)
 
     struct {
         swss::Port::Role value;

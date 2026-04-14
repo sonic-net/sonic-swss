@@ -1,15 +1,34 @@
 """Utilities for interacting with SWITCH objects when writing VS tests."""
+
 from typing import Dict, List
+from swsscommon import swsscommon
 
 
 class DVSSwitch:
     """Manage switch objects on the virtual switch."""
 
-    ADB_SWITCH = "ASIC_STATE:SAI_OBJECT_TYPE_SWITCH"
+    CHANNEL_UNITTEST = "SAI_VS_UNITTEST_CHANNEL"
 
-    def __init__(self, asic_db):
+    ASIC_VIDTORID = "VIDTORID"
+    ASIC_SWITCH = "ASIC_STATE:SAI_OBJECT_TYPE_SWITCH"
+
+    CONFIG_SWITCH_TRIMMING = "SWITCH_TRIMMING"
+    KEY_SWITCH_TRIMMING_GLOBAL = "GLOBAL"
+
+    COUNTERS_COUNTERS = "COUNTERS"
+
+    def __init__(self, asic_db, config_db, counters_db):
         """Create a new DVS switch manager."""
         self.asic_db = asic_db
+        self.config_db = config_db
+        self.counters_db = counters_db
+
+    def update_switch_trimming(
+        self,
+        qualifiers: Dict[str, str]
+    ) -> None:
+        """Update switch trimming global in CONFIG DB."""
+        self.config_db.update_entry(self.CONFIG_SWITCH_TRIMMING, self.KEY_SWITCH_TRIMMING_GLOBAL, qualifiers)
 
     def get_switch_ids(
         self,
@@ -24,10 +43,10 @@ class DVSSwitch:
             The list of switch ids in ASIC DB.
         """
         if expected is None:
-            return self.asic_db.get_keys(self.ADB_SWITCH)
+            return self.asic_db.get_keys(self.ASIC_SWITCH)
 
         num_keys = len(self.asic_db.default_switch_keys) + expected
-        keys = self.asic_db.wait_for_n_keys(self.ADB_SWITCH, num_keys)
+        keys = self.asic_db.wait_for_n_keys(self.ASIC_SWITCH, num_keys)
 
         for k in self.asic_db.default_switch_keys:
             assert k in keys
@@ -45,7 +64,7 @@ class DVSSwitch:
         """
         self.get_switch_ids(expected)
 
-    def verify_switch_generic(
+    def verify_switch(
         self,
         sai_switch_id: str,
         sai_qualifiers: Dict[str, str]
@@ -56,41 +75,36 @@ class DVSSwitch:
             sai_switch_id: The specific switch id to check in ASIC DB.
             sai_qualifiers: The expected set of SAI qualifiers to be found in ASIC DB.
         """
-        entry = self.asic_db.wait_for_entry(self.ADB_SWITCH, sai_switch_id)
+        self.asic_db.wait_for_field_match(self.ASIC_SWITCH, sai_switch_id, sai_qualifiers)
 
-        for k, v in entry.items():
-            if k == "NULL":
-                continue
-            elif k in sai_qualifiers:
-                if k == "SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_ALGORITHM":
-                    assert sai_qualifiers[k] == v
-                elif k == "SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_ALGORITHM":
-                    assert sai_qualifiers[k] == v
-            else:
-                assert False, "Unknown SAI qualifier: key={}, value={}".format(k, v)
-
-    def verify_switch(
+    def set_switch_counter(
         self,
         sai_switch_id: str,
-        sai_qualifiers: Dict[str, str],
-        strict: bool = False
+        sai_qualifiers: Dict[str, str]
     ) -> None:
-        """Verify that switch object has correct ASIC DB representation.
+        """Set switch counter value in ASIC DB."""
+        attr_list = [ sai_switch_id ]
+        fvs = self.asic_db.wait_for_fields(self.ASIC_VIDTORID, "", attr_list)
 
-        Args:
-            sai_switch_id: The specific switch id to check in ASIC DB.
-            sai_qualifiers: The expected set of SAI qualifiers to be found in ASIC DB.
-            strict: Specifies whether verification should be strict
-        """
-        if strict:
-            self.verify_switch_generic(sai_switch_id, sai_qualifiers)
-            return
+        ntf = swsscommon.NotificationProducer(self.asic_db.db_connection, self.CHANNEL_UNITTEST)
 
-        entry = self.asic_db.wait_for_entry(self.ADB_SWITCH, sai_switch_id)
+        # Enable test mode
+        fvp = swsscommon.FieldValuePairs()
+        ntf.send("enable_unittests", "true", fvp)
 
-        attr_dict = {
-            **entry,
-            **sai_qualifiers
-        }
+        # Set switch stats
+        key = fvs[sai_switch_id]
+        fvp = swsscommon.FieldValuePairs(list(sai_qualifiers.items()))
+        ntf.send("set_stats", str(key), fvp)
 
-        self.verify_switch_generic(sai_switch_id, attr_dict)
+        # Disable test mode
+        fvp = swsscommon.FieldValuePairs()
+        ntf.send("enable_unittests", "false", fvp)
+
+    def verify_switch_counter(
+        self,
+        sai_switch_id: str,
+        sai_qualifiers: Dict[str, str]
+    ) -> None:
+        """Verify that switch counter object has correct COUNTERS DB representation."""
+        self.counters_db.wait_for_field_match(self.COUNTERS_COUNTERS, sai_switch_id, sai_qualifiers)

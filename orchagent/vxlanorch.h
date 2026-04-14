@@ -46,6 +46,7 @@ typedef enum
 #define MAX_VLAN_ID 4095
 
 #define MAX_VNI_ID 16777215
+#define DEFAULT_TUNNEL_ENCAP_TTL 255
 
 typedef enum
 {
@@ -138,10 +139,17 @@ typedef std::map<uint32_t, std::pair<sai_object_id_t, sai_object_id_t>> TunnelMa
 typedef std::unordered_map<nh_key_t, nh_tunnel_t, nh_key_hash> TunnelNHs;
 typedef std::map<std::string, tunnel_refcnt_t> TunnelUsers;
 
+enum class VxlanTunnelTTLMode
+{
+    NOT_SET,
+    PIPE,
+    UNIFORM
+};
+
 class VxlanTunnel
 {
 public:
-    VxlanTunnel(string name, IpAddress srcIp, IpAddress dstIp, tunnel_creation_src_t src);
+    VxlanTunnel(string name, IpAddress srcIp, IpAddress dstIp, tunnel_creation_src_t src, VxlanTunnelTTLMode ttl_mode = VxlanTunnelTTLMode::NOT_SET);
     ~VxlanTunnel();
 
     bool isActive() const
@@ -196,7 +204,7 @@ public:
 
     bool deleteMapperHw(uint8_t mapper_list, tunnel_map_use_t map_src);
     bool createMapperHw(uint8_t mapper_list, tunnel_map_use_t map_src);
-    bool createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, bool with_term = true, sai_uint8_t encap_ttl=0);
+    bool createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, bool with_term = true, sai_uint8_t encap_ttl=DEFAULT_TUNNEL_ENCAP_TTL);
     bool deleteTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, bool with_term = true);
     void deletePendingSIPTunnel();
     void increment_spurious_imr_add(const std::string remote_vtep);
@@ -231,6 +239,7 @@ private:
     TunnelUsers tnl_users_;
     VxlanTunnel* vtep_ptr=NULL;
     tunnel_creation_src_t src_creation_;
+    VxlanTunnelTTLMode decap_ttl_mode_; // Decap TTL mode: NOT_SET, PIPE, or UNIFORM (default is NOT_SET)
     uint8_t encap_dedicated_mappers_ = 0;
     uint8_t decap_dedicated_mappers_ = 0;
 };
@@ -240,6 +249,7 @@ const request_description_t vxlan_tunnel_request_description = {
             {
                 { "src_ip", REQ_T_IP },
                 { "dst_ip", REQ_T_IP },
+                { "ttl_mode", REQ_T_STRING },
             },
             { "src_ip" }
 };
@@ -299,7 +309,7 @@ public:
 
 
     bool createVxlanTunnelMap(string tunnelName, tunnel_map_type_t mapType, uint32_t vni,
-                              sai_object_id_t encap, sai_object_id_t decap, uint8_t encap_ttl=0);
+                              sai_object_id_t encap, sai_object_id_t decap, uint8_t encap_ttl=DEFAULT_TUNNEL_ENCAP_TTL);
 
     bool removeVxlanTunnelMap(string tunnelName, uint32_t vni);
 

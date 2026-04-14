@@ -17,31 +17,59 @@
 #include "timer.h"
 #include "zmqorch.h"
 #include "zmqserver.h"
+#include "flex_counter_manager.h"
+#include "dashcounter.h"
 
 #include "dash_api/appliance.pb.h"
-#include "dash_api/route_type.pb.h"
 #include "dash_api/eni.pb.h"
+#include "dash_api/route_type.pb.h"
 #include "dash_api/qos.pb.h"
 #include "dash_api/eni_route.pb.h"
+
+#define ENI_STAT_COUNTER_FLEX_COUNTER_GROUP "ENI_STAT_COUNTER"
+#define ENI_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
+
+#define METER_STAT_COUNTER_FLEX_COUNTER_GROUP "METER_STAT_COUNTER"
+#define METER_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
+
+#define DASH_RESULT_SUCCESS 0
+#define DASH_RESULT_FAILURE 1
+
+class DashHaOrch;
 
 struct EniEntry
 {
     sai_object_id_t eni_id;
     dash::eni::Eni metadata;
+    sai_object_id_t getOid() const { return eni_id; }
 };
 
-typedef std::map<std::string, dash::appliance::Appliance> ApplianceTable;
-typedef std::map<dash::route_type::RoutingType, dash::route_type::RouteType> RoutingTypeTable;
 typedef std::map<std::string, EniEntry> EniTable;
+
+using DashEniCounter = DashCounter<CounterType::ENI, EniTable>;
+using DashMeterCounter = DashCounter<CounterType::DASH_METER, EniTable>;
+
+struct ApplianceEntry
+{
+    sai_object_id_t appliance_id;
+    dash::appliance::Appliance metadata;
+};
+
+typedef std::map<std::string, ApplianceEntry> ApplianceTable;
+typedef std::map<dash::route_type::RoutingType, dash::route_type::RouteType> RoutingTypeTable;
 typedef std::map<std::string, dash::qos::Qos> QosTable;
 typedef std::map<std::string, dash::eni_route::EniRoute> EniRouteTable;
 
 class DashOrch : public ZmqOrch
 {
 public:
-    DashOrch(swss::DBConnector *db, std::vector<std::string> &tables, swss::ZmqServer *zmqServer);
+    DashOrch(swss::DBConnector *db, std::vector<std::string> &tables, swss::DBConnector *app_state_db, swss::ZmqServer *zmqServer);
+    void setDashHaOrch(DashHaOrch *dash_ha_orch);
     const EniEntry *getEni(const std::string &eni) const;
+    const EniTable *getEniTable() const { return &eni_entries_; };
     bool getRouteTypeActions(dash::route_type::RoutingType routing_type, dash::route_type::RouteType& route_type);
+    dash::types::IpAddress getApplianceVip();
+    bool hasApplianceEntry();    
 
 private:
     ApplianceTable appliance_entries_;
@@ -49,6 +77,11 @@ private:
     EniTable eni_entries_;
     QosTable qos_entries_;
     EniRouteTable eni_route_entries_;
+    std::unique_ptr<swss::Table> dash_eni_result_table_;
+    std::unique_ptr<swss::Table> dash_qos_result_table_;
+    std::unique_ptr<swss::Table> dash_appliance_result_table_;
+    std::unique_ptr<swss::Table> dash_eni_route_result_table_;
+    std::unique_ptr<swss::Table> dash_routing_type_result_table_;
     void doTask(ConsumerBase &consumer);
     void doTaskApplianceTable(ConsumerBase &consumer);
     void doTaskRoutingTypeTable(ConsumerBase &consumer);
@@ -57,18 +90,41 @@ private:
     void doTaskEniRouteTable(ConsumerBase &consumer);
     void doTaskRouteGroupTable(ConsumerBase &consumer);
     bool addApplianceEntry(const std::string& appliance_id, const dash::appliance::Appliance &entry);
+    bool addApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance& entry);
     bool removeApplianceEntry(const std::string& appliance_id);
+    bool removeApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance& entry);
     bool addRoutingTypeEntry(const dash::route_type::RoutingType &routing_type, const dash::route_type::RouteType &entry);
     bool removeRoutingTypeEntry(const dash::route_type::RoutingType &routing_type);
     bool addEniObject(const std::string& eni, EniEntry& entry);
     bool addEniAddrMapEntry(const std::string& eni, const EniEntry& entry);
+    bool addEniTrustedVnis(const std::string& eni, const EniEntry& entry);
     bool addEni(const std::string& eni, EniEntry &entry);
     bool removeEniObject(const std::string& eni);
     bool removeEniAddrMapEntry(const std::string& eni);
+    bool removeEniTrustedVnis(const std::string& eni, const EniEntry& entry);
     bool removeEni(const std::string& eni);
     bool setEniAdminState(const std::string& eni, const EniEntry& entry);
     bool addQosEntry(const std::string& qos_name, const dash::qos::Qos &entry);
     bool removeQosEntry(const std::string& qos_name);
     bool setEniRoute(const std::string& eni, const dash::eni_route::EniRoute& entry);
     bool removeEniRoute(const std::string& eni);
+protected:
+    virtual bool isHaFlowOwnerAttrSupported();
+
+private:
+    std::unique_ptr<swss::Table> m_eni_name_table;
+    std::shared_ptr<swss::DBConnector> m_counter_db;
+    std::shared_ptr<swss::DBConnector> m_asic_db;
+    DashHaOrch* m_dash_ha_orch = nullptr;
+    bool m_ha_flow_owner_attr_supported = false;
+    std::once_flag m_ha_flow_owner_attr_once_flag;
+
+    void addEniMapEntry(sai_object_id_t oid, const std::string& name);
+    void removeEniMapEntry(sai_object_id_t oid, const std::string& name);
+    DashEniCounter EniCounter;
+    DashMeterCounter MeterCounter;
+
+public:
+    void handleFCStatusUpdate(bool is_enabled) { EniCounter.handleStatusUpdate(is_enabled, eni_entries_); }
+    void handleMeterFCStatusUpdate(bool is_enabled) { MeterCounter.handleStatusUpdate(is_enabled, eni_entries_); }
 };

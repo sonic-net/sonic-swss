@@ -17,6 +17,12 @@ extern "C" {
 #define COUNTER_DESCRIPTION "desc"
 #define COUNTER_GROUP       "group"
 
+// Drop counter specific attributes for drop monitor feature.
+#define DROP_MONITOR_STATUS                   "drop_monitor_status"
+#define DROP_MONITOR_DROP_COUNT_THRESHOLD     "drop_count_threshold"
+#define DROP_MONITOR_INCIDENT_COUNT_THRESHOLD "incident_count_threshold"
+#define DROP_MONITOR_WINDOW                   "window"
+
 // Supported debug counter types.
 #define PORT_INGRESS_DROPS   "PORT_INGRESS_DROPS"
 #define PORT_EGRESS_DROPS    "PORT_EGRESS_DROPS"

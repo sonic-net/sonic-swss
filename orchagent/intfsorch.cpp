@@ -38,6 +38,7 @@ extern NeighOrch *gNeighOrch;
 extern string gMySwitchType;
 extern int32_t gVoqMySwitchId;
 extern bool gTraditionalFlexCounter;
+extern bool isChassisDbInUse();
 
 const int intfsorch_pri = 35;
 
@@ -98,7 +99,7 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBCon
                                  RIF_PLUGIN_FIELD,
                                  rifRateSha);
 
-    if(gMySwitchType == "voq")
+    if(isChassisDbInUse())
     {
         //Add subscriber to process VOQ system interface
         tableName = CHASSIS_APP_SYSTEM_INTERFACE_TABLE_NAME;
@@ -846,6 +847,19 @@ void IntfsOrch::doTask(Consumer &consumer)
                         m_syncdIntfses[alias] = intfs_entry;
                         m_vrfOrch->increaseVrfRefCount(vrf_id);
                     }
+                    else if (m_syncdIntfses[alias].vrf_id != vrf_id)
+                    {
+                        if (m_syncdIntfses[alias].ip_addresses.size() == 0)
+                        {
+                            m_vrfOrch->decreaseVrfRefCount(m_syncdIntfses[alias].vrf_id);
+                            m_vrfOrch->increaseVrfRefCount(vrf_id);
+                            m_syncdIntfses[alias].vrf_id = vrf_id;
+                        }
+                        else
+                        {
+                            SWSS_LOG_ERROR("Failed to set interface '%s' to VRF ID '%d' because it has IP addresses associated with it.", alias.c_str(), vrf_id);
+                        }
+                    }
                 }
                 else
                 {
@@ -1297,7 +1311,7 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port, string loopba
 
     SWSS_LOG_NOTICE("Create router interface %s MTU %u", port.m_alias.c_str(), port.m_mtu);
 
-    if(gMySwitchType == "voq")
+    if(isChassisDbInUse())
     {
         // Sync the interface of local port/LAG to the SYSTEM_INTERFACE table of CHASSIS_APP_DB
         voqSyncAddIntf(port.m_alias);
@@ -1316,8 +1330,21 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
         return false;
     }
 
-    const auto id = sai_serialize_object_id(port.m_rif_id);
-    removeRifFromFlexCounter(id, port.m_alias);
+    bool port_found = false;
+    for (auto it = m_rifsToAdd.begin(); it != m_rifsToAdd.end(); ++it)
+    {
+        if (it->m_rif_id == port.m_rif_id)
+        {
+            m_rifsToAdd.erase(it);
+            port_found = true;
+            break;
+        }
+    }
+    if (!port_found)
+    {
+        const auto id = sai_serialize_object_id(port.m_rif_id);
+        removeRifFromFlexCounter(id, port.m_alias);
+    }
 
     sai_status_t status = sai_router_intfs_api->remove_router_interface(port.m_rif_id);
     if (status != SAI_STATUS_SUCCESS)
@@ -1337,7 +1364,7 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
 
     SWSS_LOG_NOTICE("Remove router interface for port %s", port.m_alias.c_str());
 
-    if(gMySwitchType == "voq")
+    if(isChassisDbInUse())
     {
         // Sync the removal of interface of local port/LAG to the SYSTEM_INTERFACE table of CHASSIS_APP_DB
         voqSyncDelIntf(port.m_alias);
@@ -1672,6 +1699,11 @@ void IntfsOrch::voqSyncAddIntf(string &alias)
         return;
     }
 
+    if(alias.empty())
+    {
+        SWSS_LOG_ERROR("System Port/LAG alias is empty for %s!", port.m_alias.c_str());
+        return;
+    }
 
     string oper_status = port.m_oper_status == SAI_PORT_OPER_STATUS_UP ? "up" : "down";
 
@@ -1747,3 +1779,4 @@ void IntfsOrch::voqSyncIntfState(string &alias, bool isUp)
     }
 
 }
+

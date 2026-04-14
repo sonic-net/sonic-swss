@@ -100,8 +100,15 @@ void BufferMgr::readPgProfileLookupFile(string file)
 
 task_process_status BufferMgr::doCableTask(string port, string cable_length)
 {
-    m_cableLenLookup[port] = cable_length;
-    SWSS_LOG_INFO("Cable length set to %s for port %s", m_cableLenLookup[port].c_str(), port.c_str());
+
+    if (cable_length != "None" && m_cableLenLookup[port] != cable_length)
+    {
+        m_cableLenLookup[port] = cable_length;
+        SWSS_LOG_INFO("Cable length set to %s for port %s", m_cableLenLookup[port].c_str(), port.c_str());
+        // The return status is ignored
+        doSpeedUpdateTask(port);
+    }
+
     return task_process_status::task_success;
 }
 
@@ -531,6 +538,8 @@ void BufferMgr::doTask(Consumer &consumer)
             }
             else if (m_pgfile_processed && table_name == CFG_PORT_TABLE_NAME)
             {
+                bool admin_status_found = false;
+
                 for (auto i : kfvFieldsValues(t))
                 {
                     if (fvField(i) == "speed")
@@ -540,7 +549,16 @@ void BufferMgr::doTask(Consumer &consumer)
                     if (fvField(i) == "admin_status")
                     {
                         m_portStatusLookup[port] = fvValue(i);
+                        admin_status_found = true;
                     }
+                }
+                
+                // Ensure admin_status is set to "down" if not received
+                if (!admin_status_found)
+                {
+                    /* CONFIG_DB producer may not always generate admin_status field for down ports. */
+                    SWSS_LOG_INFO("admin_status is not available for port %s, assuming default down", port.c_str());
+                    m_portStatusLookup[port] = "down";
                 }
 
                 if (m_speedLookup.count(port) != 0)

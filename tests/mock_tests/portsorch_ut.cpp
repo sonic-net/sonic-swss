@@ -4,13 +4,16 @@
 
 #include "json.h"
 #include "ut_helper.h"
+#define private public
 #include "mock_orchagent_main.h"
+#undef private
 #include "mock_table.h"
 #include "notifier.h"
 #include "mock_sai_bridge.h"
 #define private public
 #include "pfcactionhandler.h"
 #include "switchorch.h"
+#include "notifications.h"
 #include <sys/mman.h>
 #undef private
 #define private public
@@ -19,7 +22,21 @@
 
 #include <sstream>
 
+// Add operator<< for vector<uint32_t> to support boost::variant printing in tests for SerdesValue
+namespace std {
+    inline ostream& operator<<(ostream& os, const vector<uint32_t>& vec) {
+        os << "[";
+        for (size_t i = 0; i < vec.size(); ++i) {
+            if (i > 0) os << ", ";
+            os << vec[i];  // Decimal format
+        }
+        os << "]";
+        return os;
+    }
+}
+
 extern redisReply *mockReply;
+extern sai_redis_communication_mode_t gRedisCommunicationMode;
 using ::testing::_;
 using ::testing::StrictMock;
 
@@ -39,8 +56,21 @@ namespace portsorch_test
 
     bool not_support_fetching_fec;
     uint32_t _sai_set_port_fec_count;
+    uint32_t _sai_set_port_auto_neg_count;
+    uint32_t _sai_set_port_tpid_count;
     int32_t _sai_port_fec_mode;
     vector<sai_port_fec_mode_t> mock_port_fec_modes = {SAI_PORT_FEC_MODE_RS, SAI_PORT_FEC_MODE_FC};
+
+    // Serdes test stubs
+    struct SerdesCallInfo {
+        sai_object_id_t port_id;
+        sai_object_id_t switch_id;
+        std::map<sai_port_serdes_attr_t, std::vector<uint32_t>> attributes;
+    };
+    std::vector<SerdesCallInfo> _sai_create_port_serdes_calls;
+    std::vector<sai_object_id_t> _sai_remove_port_serdes_calls;
+    sai_object_id_t _sai_create_port_serdes_fail_for_port_id = SAI_NULL_OBJECT_ID;
+    std::map<sai_object_id_t, sai_object_id_t> _port_to_serdes_map;
 
     sai_status_t _ut_stub_sai_get_port_attribute(
         _In_ sai_object_id_t port_id,
@@ -75,6 +105,17 @@ namespace portsorch_test
             attr_list[0].value.u32 = (uint32_t)SAI_PORT_OPER_STATUS_UP;
             status = SAI_STATUS_SUCCESS;
         }
+        else if (attr_count == 1 && attr_list[0].id == SAI_PORT_ATTR_PORT_SERDES_ID)
+        {
+            // Check if serdes exists for this port
+            auto it = _port_to_serdes_map.find(port_id);
+            if (it != _port_to_serdes_map.end()) {
+                attr_list[0].value.oid = it->second;
+            } else {
+                attr_list[0].value.oid = SAI_NULL_OBJECT_ID;
+            }
+            status = SAI_STATUS_SUCCESS;
+        }
         else
         {
             status = pold_sai_port_api->get_port_attribute(port_id, attr_count, attr_list);
@@ -91,14 +132,23 @@ namespace portsorch_test
     uint32_t set_pt_interface_id_count = false;
     uint32_t set_pt_timestamp_template_count = false;
     uint32_t set_port_tam_count = false;
-    uint32_t set_pt_interface_id_failures;
-    uint32_t set_pt_timestamp_template_failures;
-    uint32_t set_port_tam_failures;
+    uint32_t set_pt_interface_id_failures = 0;
+    uint32_t set_pt_timestamp_template_failures = 0;
+    uint32_t set_port_tam_failures = 0;
     bool set_link_event_damping_success = true;
+    bool set_fast_linkup_success = true;
+    uint32_t _sai_set_fast_linkup_count;
+    bool _sai_fast_linkup_enabled = false;
     uint32_t _sai_set_link_event_damping_algorithm_count;
     uint32_t _sai_set_link_event_damping_config_count;
     int32_t _sai_link_event_damping_algorithm = 0;
+    bool set_pfc_asym_not_supported = false;
+    uint32_t set_pfc_asym_failures;
     sai_redis_link_event_damping_algo_aied_config_t _sai_link_event_damping_config = {0, 0, 0, 0, 0};
+
+    // Admin status failure simulation for gearbox serdes tests
+    bool set_admin_status_fail = false;
+    uint32_t set_admin_status_failures = 0;
 
     sai_status_t _ut_stub_sai_set_port_attribute(
         _In_ sai_object_id_t port_id,
@@ -111,12 +161,19 @@ namespace portsorch_test
         }
         else if (attr[0].id == SAI_PORT_ATTR_AUTO_NEG_MODE)
         {
+            _sai_set_port_auto_neg_count++;
             /* Simulating failure case */
             return SAI_STATUS_FAILURE;
         }
-	else if (attr[0].id == SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_COMBINED)
-	{
-	    _sai_set_pfc_mode_count++;
+        else if (attr[0].id == SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_MODE)
+        {
+            _sai_set_pfc_mode_count++;
+            /* Simulating failure case */
+            if (set_pfc_asym_not_supported)
+            {
+                set_pfc_asym_failures++;
+                return SAI_STATUS_NOT_SUPPORTED;
+            }
         }
 	else if (attr[0].id == SAI_PORT_ATTR_ADMIN_STATE)
 	{
@@ -124,6 +181,13 @@ namespace portsorch_test
 	        _sai_set_admin_state_up_count++;
             } else {
 	        _sai_set_admin_state_down_count++;
+            }
+
+            // Simulate failure
+            if (set_admin_status_fail)
+            {
+                set_admin_status_failures++;
+                return SAI_STATUS_INSUFFICIENT_RESOURCES;
             }
         }
         else if (attr[0].id == SAI_PORT_ATTR_PATH_TRACING_INTF)
@@ -155,6 +219,21 @@ namespace portsorch_test
                 set_port_tam_failures++;
                 return SAI_STATUS_INVALID_ATTR_VALUE_0;
             }
+        }
+        else if (attr[0].id == SAI_PORT_ATTR_TPID)
+        {
+            _sai_set_port_tpid_count++;
+        }
+        else if (attr[0].id == SAI_PORT_ATTR_FAST_LINKUP_ENABLED)
+        {
+            _sai_set_fast_linkup_count++;
+            _sai_fast_linkup_enabled = attr[0].value.booldata;
+
+            if (!set_fast_linkup_success)
+            {
+                return SAI_STATUS_FAILURE;
+            }
+            return SAI_STATUS_SUCCESS;
         }
         else if (attr[0].id == SAI_REDIS_PORT_ATTR_LINK_EVENT_DAMPING_ALGORITHM)
         {
@@ -228,7 +307,7 @@ namespace portsorch_test
     {
         if (attr[0].id == SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD)
         {
-            *_sai_syncd_notifications_count =+ 1;
+            *_sai_syncd_notifications_count = *_sai_syncd_notifications_count + 1;
             *_sai_syncd_notification_event = attr[0].value.s32;
         }
 	else if (attr[0].id == SAI_SWITCH_ATTR_PFC_DLR_PACKET_ACTION)
@@ -239,12 +318,86 @@ namespace portsorch_test
         return pold_sai_switch_api->set_switch_attribute(switch_id, attr);
     }
 
+    sai_status_t _ut_stub_sai_create_port_serdes(
+        _Out_ sai_object_id_t *port_serdes_id,
+        _In_ sai_object_id_t switch_id,
+        _In_ uint32_t attr_count,
+        _In_ const sai_attribute_t *attr_list)
+    {
+        SerdesCallInfo call_info;
+        call_info.switch_id = switch_id;
+
+        // Extract port_id and attributes
+        for (uint32_t i = 0; i < attr_count; i++) {
+            if (attr_list[i].id == SAI_PORT_SERDES_ATTR_PORT_ID) {
+                call_info.port_id = attr_list[i].value.oid;
+
+                // Check if we should fail for this port
+                if (call_info.port_id == _sai_create_port_serdes_fail_for_port_id) {
+                    _sai_create_port_serdes_calls.push_back(call_info);
+                    return SAI_STATUS_NO_MEMORY;
+                }
+            } else {
+                // Store serdes attribute
+                std::vector<uint32_t> values(
+                    attr_list[i].value.u32list.list,
+                    attr_list[i].value.u32list.list + attr_list[i].value.u32list.count
+                );
+                call_info.attributes[static_cast<sai_port_serdes_attr_t>(attr_list[i].id)] = values;
+            }
+        }
+
+        _sai_create_port_serdes_calls.push_back(call_info);
+
+        // Create unique serdes ID
+        *port_serdes_id = call_info.port_id + 0x1000000;
+        _port_to_serdes_map[call_info.port_id] = *port_serdes_id;
+
+        return SAI_STATUS_SUCCESS;
+    }
+
+    sai_status_t _ut_stub_sai_remove_port_serdes(
+        _In_ sai_object_id_t port_serdes_id)
+    {
+        _sai_remove_port_serdes_calls.push_back(port_serdes_id);
+
+        // Erase any port-to-serdes mappings that reference this serdes ID,
+        // so subsequent SAI_PORT_ATTR_PORT_SERDES_ID queries reflect removal.
+        for (auto it = _port_to_serdes_map.begin(); it != _port_to_serdes_map.end(); )
+        {
+            if (it->second == port_serdes_id)
+            {
+                it = _port_to_serdes_map.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+
+        return SAI_STATUS_SUCCESS;
+    }
+
+    void _reset_serdes_test_state()
+    {
+        _sai_create_port_serdes_calls.clear();
+        _sai_remove_port_serdes_calls.clear();
+        _sai_create_port_serdes_fail_for_port_id = SAI_NULL_OBJECT_ID;
+        _port_to_serdes_map.clear();
+
+        // Reset admin status failure flags
+        set_admin_status_fail = false;
+        set_admin_status_failures = 0;
+    }
+
     void _hook_sai_port_api()
     {
         ut_sai_port_api = *sai_port_api;
         pold_sai_port_api = sai_port_api;
         ut_sai_port_api.get_port_attribute = _ut_stub_sai_get_port_attribute;
         ut_sai_port_api.set_port_attribute = _ut_stub_sai_set_port_attribute;
+        ut_sai_port_api.create_port_serdes = _ut_stub_sai_create_port_serdes;
+        ut_sai_port_api.remove_port_serdes = _ut_stub_sai_remove_port_serdes;
         sai_port_api = &ut_sai_port_api;
     }
 
@@ -527,6 +680,22 @@ namespace portsorch_test
             ASSERT_EQ((gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>), nullptr);
             gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler> = new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(m_config_db.get(), pfc_wd_tables, portStatIds, queueStatIds, queueAttrIds, 100);
 
+            vector<string> mlag_tables = {
+                { CFG_MCLAG_TABLE_NAME },
+                { CFG_MCLAG_INTF_TABLE_NAME }
+            };
+
+            ASSERT_EQ(gMlagOrch, nullptr);
+            gMlagOrch = new MlagOrch(m_config_db.get(), mlag_tables);
+
+            vector<string> debug_counter_tables = {
+                CFG_DEBUG_COUNTER_TABLE_NAME,
+                CFG_DEBUG_COUNTER_DROP_REASON_TABLE_NAME,
+                CFG_DEBUG_DROP_MONITOR_TABLE_NAME
+            };
+
+           ASSERT_EQ(gDebugCounterOrch, nullptr);
+           gDebugCounterOrch = new DebugCounterOrch(m_config_db.get(), debug_counter_tables, 1000);
         }
 
         virtual void TearDown() override
@@ -545,6 +714,8 @@ namespace portsorch_test
             gFdbOrch = nullptr;
             delete gIntfsOrch;
             gIntfsOrch = nullptr;
+            delete gDebugCounterOrch;
+            gDebugCounterOrch = nullptr;
             delete gPortsOrch;
             gPortsOrch = nullptr;
             delete gBufferOrch;
@@ -555,7 +726,8 @@ namespace portsorch_test
             gQosOrch = nullptr;
             delete gSwitchOrch;
             gSwitchOrch = nullptr;
-
+            delete gMlagOrch;
+            gMlagOrch = nullptr;
             // clear orchs saved in directory
             gDirectory.m_values.clear();
         }
@@ -649,13 +821,14 @@ namespace portsorch_test
         // mock a redis reply for notification, it notifies that Ehernet0 is going to up
         for (uint32_t count=0; count < 5; count++) {
             sai_port_oper_status_t oper_status = (count % 2 == 0) ? SAI_PORT_OPER_STATUS_UP : SAI_PORT_OPER_STATUS_DOWN;
-            mockReply = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply = (redisReply *)calloc(1, sizeof(redisReply));
             mockReply->type = REDIS_REPLY_ARRAY;
             mockReply->elements = 3; // REDIS_PUBLISH_MESSAGE_ELEMNTS
-            mockReply->element = (redisReply **)calloc(sizeof(redisReply *), mockReply->elements);
-            mockReply->element[2] = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply->element = (redisReply **)calloc(mockReply->elements, sizeof(redisReply *));
+            mockReply->element[2] = (redisReply *)calloc(1, sizeof(redisReply));
             mockReply->element[2]->type = REDIS_REPLY_STRING;
             sai_port_oper_status_notification_t port_oper_status;
+            memset(&port_oper_status, 0, sizeof(port_oper_status));
             port_oper_status.port_state = oper_status;
             port_oper_status.port_id = port.m_port_id;
             std::string data = sai_serialize_port_oper_status_ntf(1, &port_oper_status);
@@ -671,9 +844,172 @@ namespace portsorch_test
             gPortsOrch->doTask(*consumer);
             mockReply = nullptr;
 
+            // Call the orchagent port state change callback method with zmq mode
+            sai_redis_communication_mode_t oldRedisCommunicationMode = gRedisCommunicationMode;
+            gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC;
+            on_port_state_change(1, &port_oper_status);
+            gRedisCommunicationMode = oldRedisCommunicationMode;
+
             gPortsOrch->getPort("Ethernet0", port);
             ASSERT_TRUE(port.m_oper_status == oper_status);
             ASSERT_TRUE(port.m_flap_count == count+1);
+        }
+
+        cleanupPorts(gPortsOrch);
+    }
+
+   /*
+    * Test port oper error count
+    */
+    TEST_F(PortsOrchTest, PortOperErrorStatus)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table portTableOpErrState = Table(m_state_db.get(), STATE_PORT_OPER_ERR_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate port table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone, PortInitDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+        // Apply configuration : create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Get first port, expect the oper status is not UP
+        Port port;
+        gPortsOrch->getPort("Ethernet0", port);
+        ASSERT_TRUE(port.m_oper_status != SAI_PORT_OPER_STATUS_UP);
+        ASSERT_TRUE(port.m_flap_count == 0);
+
+        auto exec = static_cast<Notifier *>(gPortsOrch->getExecutor("PORT_STATUS_NOTIFICATIONS"));
+        auto consumer = exec->getNotificationConsumer();
+
+        std::vector<sai_port_error_status_t> errors = {
+            SAI_PORT_ERROR_STATUS_MAC_LOCAL_FAULT,
+            SAI_PORT_ERROR_STATUS_MAC_REMOTE_FAULT,
+            static_cast<sai_port_error_status_t>(
+                SAI_PORT_ERROR_STATUS_FEC_SYNC_LOSS |
+                SAI_PORT_ERROR_STATUS_MAC_LOCAL_FAULT),
+            static_cast<sai_port_error_status_t>(
+                SAI_PORT_ERROR_STATUS_FEC_LOSS_ALIGNMENT_MARKER |
+                SAI_PORT_ERROR_STATUS_HIGH_SER |
+                SAI_PORT_ERROR_STATUS_HIGH_BER |
+                SAI_PORT_ERROR_STATUS_CRC_RATE),
+            SAI_PORT_ERROR_STATUS_DATA_UNIT_CRC_ERROR,
+            static_cast<sai_port_error_status_t>(
+                SAI_PORT_ERROR_STATUS_FEC_SYNC_LOSS |
+                SAI_PORT_ERROR_STATUS_DATA_UNIT_SIZE |
+                SAI_PORT_ERROR_STATUS_DATA_UNIT_MISALIGNMENT_ERROR),
+            static_cast<sai_port_error_status_t>(
+                SAI_PORT_ERROR_STATUS_CODE_GROUP_ERROR |
+                SAI_PORT_ERROR_STATUS_SIGNAL_LOCAL_ERROR |
+                SAI_PORT_ERROR_STATUS_NO_RX_REACHABILITY),
+            static_cast<sai_port_error_status_t>(
+                SAI_PORT_ERROR_STATUS_FEC_SYNC_LOSS |
+                SAI_PORT_ERROR_STATUS_MAC_REMOTE_FAULT)
+        };
+
+        // mock a redis reply for notification, it notifies that Ehernet0 is going to up
+        for (uint32_t count=0; count < errors.size(); count++) {
+            sai_port_oper_status_t oper_status = SAI_PORT_OPER_STATUS_DOWN;
+            mockReply = (redisReply *)calloc(1, sizeof(redisReply));
+            mockReply->type = REDIS_REPLY_ARRAY;
+            mockReply->elements = 3; // REDIS_PUBLISH_MESSAGE_ELEMNTS
+            mockReply->element = (redisReply **)calloc(mockReply->elements, sizeof(redisReply *));
+            mockReply->element[2] = (redisReply *)calloc(1, sizeof(redisReply));
+            mockReply->element[2]->type = REDIS_REPLY_STRING;
+            sai_port_oper_status_notification_t port_oper_status;
+            memset(&port_oper_status, 0, sizeof(port_oper_status));
+            port_oper_status.port_error_status = errors[count];
+            port_oper_status.port_state = oper_status;
+            port_oper_status.port_id = port.m_port_id;
+            std::string data = sai_serialize_port_oper_status_ntf(1, &port_oper_status);
+            std::vector<FieldValueTuple> notifyValues;
+            FieldValueTuple opdata("port_state_change", data);
+            notifyValues.push_back(opdata);
+            std::string msg = swss::JSon::buildJson(notifyValues);
+            mockReply->element[2]->str = (char*)calloc(1, msg.length() + 1);
+            memcpy(mockReply->element[2]->str, msg.c_str(), msg.length());
+
+            // trigger the notification
+            consumer->readData();
+            gPortsOrch->doTask(*consumer);
+            mockReply = nullptr;
+            gPortsOrch->getPort("Ethernet0", port);
+            gPortsOrch->updatePortErrorStatus(port, errors[count]);
+            ASSERT_TRUE(port.m_oper_error_status == errors[count]);
+        }
+
+        std::vector<FieldValueTuple> values;
+        portTableOpErrState.get("Ethernet0", values);
+
+        for (auto &valueTuple : values)
+        {
+            if (fvField(valueTuple) == "mac_local_fault_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "2");
+            }
+            else if (fvField(valueTuple) == "mac_remote_fault_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "2");
+            }
+            else if (fvField(valueTuple) == "oper_error_status")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "3");
+            }
+            else if (fvField(valueTuple) == "fec_sync_loss_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "3");
+            }
+            else if (fvField(valueTuple) == "fec_alignment_loss_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "1");
+            }
+            else if (fvField(valueTuple) == "high_ser_error_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "1");
+            }
+            else if (fvField(valueTuple) == "high_ber_error_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "1");
+            }
+            else if (fvField(valueTuple) == "crc_rate_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "1");
+            }
+            else if (fvField(valueTuple) == "data_unit_crc_error_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "1");
+            }
+            else if (fvField(valueTuple) == "data_unit_size_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "1");
+            }
+            else if (fvField(valueTuple) == "data_unit_misalignment_error_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "1");
+            }
+            else if (fvField(valueTuple) == "code_group_error_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "1");
+            }
+            else if (fvField(valueTuple) == "signal_local_error_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "1");
+            }
+            else if (fvField(valueTuple) == "no_rx_reachability_count")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "1");
+            }
         }
 
         cleanupPorts(gPortsOrch);
@@ -708,6 +1044,7 @@ namespace portsorch_test
                 { "lanes",               lanes.str() },
                 { "speed",               "100000"    },
                 { "autoneg",             "off"       },
+                { "unreliable_los",      "off"       },
                 { "adv_speeds",          "all"       },
                 { "interface_type",      "none"      },
                 { "adv_interface_types", "all"       },
@@ -749,6 +1086,105 @@ namespace portsorch_test
         ASSERT_TRUE(keys.empty());
     }
 
+    // Verifies certain port attributes are set on port creation, ensures no set API calls are made.
+    TEST_F(PortsOrchTest, PortAttributeSetOnCreation)
+    {
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        const auto alias = "Ethernet0";
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // default Ethernet0 has different lanes so create_ports() is triggered
+        std::vector<FieldValueTuple> fvList = {
+            { "alias",               alias       },
+            { "index",               "0"         },
+            { "lanes",               "0,1,2,3"   },
+            { "speed",               "100000"    },
+            { "autoneg",             "on"        },
+            { "adv_speeds",          "all"       },
+            { "interface_type",      "none"      },
+            { "adv_interface_types", "all"       },
+            { "fec",                 "rs"        },
+            { "mtu",                 "9100"      },
+            { "tpid",                "0x8101"    },
+            { "pfc_asym",            "on"        },
+            { "admin_status",        "up"        },
+            { "description",         "FP port"   }
+        };
+
+        portTable.set(alias, fvList);
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        const auto set_port_fec_count = _sai_set_port_fec_count;
+        const auto set_port_auto_neg_count = _sai_set_port_auto_neg_count;
+        const auto set_port_tpid_count = _sai_set_port_tpid_count;
+        const auto sai_set_pfc_mode_count = _sai_set_pfc_mode_count;
+
+        _hook_sai_port_api();
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Dump pending tasks
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        EXPECT_TRUE(taskList.empty());
+
+        _unhook_sai_port_api();
+
+        Port p;
+        EXPECT_TRUE(gPortsOrch->getPort(alias, p));
+
+        // Validate SAI port configuration
+
+        sai_attribute_t attr;
+
+        attr.id = SAI_PORT_ATTR_FEC_MODE;
+        EXPECT_EQ(SAI_STATUS_SUCCESS, sai_port_api->get_port_attribute(p.m_port_id, 1, &attr));
+        EXPECT_EQ(attr.value.s32, SAI_PORT_FEC_MODE_RS);
+
+        if (gPortsOrch->fec_override_sup)
+        {
+            attr.id = SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE;
+            EXPECT_EQ(SAI_STATUS_SUCCESS, sai_port_api->get_port_attribute(p.m_port_id, 1, &attr));
+            EXPECT_FALSE(attr.value.booldata);
+        }
+
+        attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
+        EXPECT_EQ(SAI_STATUS_SUCCESS, sai_port_api->get_port_attribute(p.m_port_id, 1, &attr));
+        EXPECT_TRUE(attr.value.booldata);
+
+        attr.id = SAI_PORT_ATTR_TPID;
+        EXPECT_EQ(SAI_STATUS_SUCCESS, sai_port_api->get_port_attribute(p.m_port_id, 1, &attr));
+        EXPECT_EQ(attr.value.u16, 0x8101);
+
+        attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_MODE;
+        EXPECT_EQ(SAI_STATUS_SUCCESS, sai_port_api->get_port_attribute(p.m_port_id, 1, &attr));
+        EXPECT_EQ(attr.value.s32, SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_SEPARATE);
+
+        attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_RX;
+        EXPECT_EQ(SAI_STATUS_SUCCESS, sai_port_api->get_port_attribute(p.m_port_id, 1, &attr));
+        EXPECT_EQ(attr.value.u8, 0xff);
+
+        // Validate no set API calls performed for specified attributes
+
+        EXPECT_EQ(set_port_fec_count, _sai_set_port_fec_count);
+        EXPECT_EQ(set_port_auto_neg_count, _sai_set_port_auto_neg_count);
+        EXPECT_EQ(set_port_tpid_count, _sai_set_port_tpid_count);
+        EXPECT_EQ(sai_set_pfc_mode_count, _sai_set_pfc_mode_count);
+
+        // Cleanup ports
+        cleanupPorts(gPortsOrch);
+    }
+
     TEST_F(PortsOrchTest, PortBasicConfig)
     {
         auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
@@ -781,6 +1217,7 @@ namespace portsorch_test
             SET_COMMAND, {
                 { "speed",               "100000"            },
                 { "autoneg",             "on"                },
+                { "unreliable_los",      "on"                },
                 { "adv_speeds",          "1000,10000,100000" },
                 { "interface_type",      "CR"                },
                 { "adv_interface_types", "CR,CR2,CR4,CR8"    },
@@ -809,6 +1246,9 @@ namespace portsorch_test
 
         // Verify auto-negotiation
         ASSERT_TRUE(p.m_autoneg);
+
+        // Verify unreliablelos
+        ASSERT_TRUE(p.m_unreliable_los);
 
         // Verify advertised speed
         std::set<std::uint32_t> adv_speeds = { 1000, 10000, 100000 };
@@ -879,27 +1319,196 @@ namespace portsorch_test
         // Port count: 32 Data + 1 CPU
         ASSERT_EQ(gPortsOrch->getAllPorts().size(), ports.size() + 1);
 
+        std::string custom_serdes_attrs = "{'attributes':[{'attr_xyz':{'value':[1,2,3,4]}}]}";
         // Generate port serdes config
         std::deque<KeyOpFieldsValuesTuple> kfvList = {{
             "Ethernet0",
             SET_COMMAND, {
-                { "preemphasis", "0xcad0,0xc6e0,0xc6e0,0xd2b0" },
-                { "idriver",     "0x5,0x3,0x4,0x1"             },
-                { "ipredriver",  "0x1,0x4,0x3,0x5"             },
-                { "pre1",        "0xfff0,0xfff2,0xfff1,0xfff3" },
-                { "pre2",        "0xfff0,0xfff2,0xfff1,0xfff3" },
-                { "pre3",        "0xfff0,0xfff2,0xfff1,0xfff3" },
-                { "main",        "0x90,0x92,0x91,0x93"         },
-                { "post1",       "0x10,0x12,0x11,0x13"         },
-                { "post2",       "0x10,0x12,0x11,0x13"         },
-                { "post3",       "0x10,0x12,0x11,0x13"         },
-                { "attn",        "0x80,0x82,0x81,0x83"         },
-                { "ob_m2lp",     "0x4,0x6,0x5,0x7"             },
-                { "ob_alev_out", "0xf,0x11,0x10,0x12"          },
-                { "obplev",      "0x69,0x6b,0x6a,0x6c"         },
-                { "obnlev",      "0x5f,0x61,0x60,0x62"         },
-                { "regn_bfm1p",  "0x1e,0x20,0x1f,0x21"         },
-                { "regn_bfm1n",  "0xaa,0xac,0xab,0xad"         }
+                { "preemphasis",   "0xcad0,0xc6e0,0xc6e0,0xd2b0" },
+                { "idriver",       "0x5,0x3,0x4,0x1"             },
+                { "ipredriver",    "0x1,0x4,0x3,0x5"             },
+                { "pre1",          "0xfff0,0xfff2,0xfff1,0xfff3" },
+                { "pre2",          "0xfff0,0xfff2,0xfff1,0xfff3" },
+                { "pre3",          "0xfff0,0xfff2,0xfff1,0xfff3" },
+                { "main",          "0x90,0x92,0x91,0x93"         },
+                { "post1",         "0x10,0x12,0x11,0x13"         },
+                { "post2",         "0x10,0x12,0x11,0x13"         },
+                { "post3",         "0x10,0x12,0x11,0x13"         },
+                { "attn",          "0x80,0x82,0x81,0x83"         },
+                { "unreliable_los","off"                         },
+                { "ob_m2lp",       "0x4,0x6,0x5,0x7"             },
+                { "ob_alev_out",   "0xf,0x11,0x10,0x12"          },
+                { "obplev",        "0x69,0x6b,0x6a,0x6c"         },
+                { "obnlev",        "0x5f,0x61,0x60,0x62"         },
+                { "regn_bfm1p",    "0x1e,0x20,0x1f,0x21"         },
+                { "regn_bfm1n",    "0xaa,0xac,0xab,0xad"         },
+                { "custom_serdes_attrs", custom_serdes_attrs     },
+                { "media_type",    "backplane"                   }
+            }
+        }};
+        std::deque<KeyOpFieldsValuesTuple> kfvList1 = {{"Ethernet0", SET_COMMAND, {{ "media_type",    "" }}}};
+        std::deque<KeyOpFieldsValuesTuple> kfvList2 = {{"Ethernet0", SET_COMMAND, {{ "media_type",    "none" }}}};
+        std::deque<KeyOpFieldsValuesTuple> kfvListDel = {{"Ethernet0", "DEL" , {}}};
+
+        auto fvs = ports.begin()->second;
+
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        std::deque<KeyOpFieldsValuesTuple> kfvListAdd= {{"Ethernet0", SET_COMMAND , fvs}};
+
+        Port p;
+        //empty media_type should not be processed
+        consumer->addToSync(kfvList1);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_EQ(p.m_media_type, "unknown");
+
+        consumer->addToSync(kfvListDel);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        consumer->addToSync(kfvListAdd);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+
+        consumer->addToSync(kfvList2);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_EQ(p.m_media_type, "unknown");
+
+        consumer->addToSync(kfvListDel);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        consumer->addToSync(kfvListAdd);
+        static_cast<Orch*>(gPortsOrch)->doTask();
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+
+        // Refill consumer
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Get port
+       // Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+
+        // Verify preemphasis
+        std::vector<std::uint32_t> preemphasis = { 0xcad0, 0xc6e0, 0xc6e0, 0xd2b0 };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_PREEMPHASIS), SerdesValue(preemphasis));
+
+        // Verify idriver
+        std::vector<std::uint32_t> idriver = { 0x5, 0x3, 0x4, 0x1 };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_IDRIVER), SerdesValue(idriver));
+
+        // Verify ipredriver
+        std::vector<std::uint32_t> ipredriver = { 0x1, 0x4, 0x3, 0x5 };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_IPREDRIVER), SerdesValue(ipredriver));
+
+        // Verify pre1
+        std::vector<std::uint32_t> pre1 = { 0xfff0, 0xfff2, 0xfff1, 0xfff3 };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_PRE1), SerdesValue(pre1));
+
+        // Verify pre2
+        std::vector<std::uint32_t> pre2 = { 0xfff0, 0xfff2, 0xfff1, 0xfff3 };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_PRE2), SerdesValue(pre2));
+
+        // Verify pre3
+        std::vector<std::uint32_t> pre3 = { 0xfff0, 0xfff2, 0xfff1, 0xfff3 };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_PRE3), SerdesValue(pre3));
+
+        // Verify main
+        std::vector<std::uint32_t> main = { 0x90, 0x92, 0x91, 0x93 };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_MAIN), SerdesValue(main));
+
+        // Verify post1
+        std::vector<std::uint32_t> post1 = { 0x10, 0x12, 0x11, 0x13 };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_POST1), SerdesValue(post1));
+
+        // Verify post2
+        std::vector<std::uint32_t> post2 = { 0x10, 0x12, 0x11, 0x13 };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_POST2), SerdesValue(post2));
+
+        // Verify post3
+        std::vector<std::uint32_t> post3 = { 0x10, 0x12, 0x11, 0x13 };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_POST3), SerdesValue(post3));
+
+        // Verify attn
+        std::vector<std::uint32_t> attn = { 0x80, 0x82, 0x81, 0x83 };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_FIR_ATTN), SerdesValue(attn));
+
+        // Verify ob_m2lp
+        std::vector<std::uint32_t> ob_m2lp = { 0x4, 0x6, 0x5, 0x7 };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_PAM4_RATIO), SerdesValue(ob_m2lp));
+
+        // Verify ob_alev_out
+        std::vector<std::uint32_t> ob_alev_out = { 0xf, 0x11, 0x10, 0x12 };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_OUT_COMMON_MODE), SerdesValue(ob_alev_out));
+
+        // Verify obplev
+        std::vector<std::uint32_t> obplev = { 0x69, 0x6b, 0x6a, 0x6c };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_PMOS_COMMON_MODE), SerdesValue(obplev));
+
+        // Verify obnlev
+        std::vector<std::uint32_t> obnlev = { 0x5f, 0x61, 0x60, 0x62 };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_NMOS_COMMON_MODE), SerdesValue(obnlev));
+
+        // Verify regn_bfm1p
+        std::vector<std::uint32_t> regn_bfm1p = { 0x1e, 0x20, 0x1f, 0x21 };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_PMOS_VLTG_REG), SerdesValue(regn_bfm1p));
+
+        // Verify regn_bfm1n
+        std::vector<std::uint32_t> regn_bfm1n = { 0xaa, 0xac, 0xab, 0xad };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_NMOS_VLTG_REG), SerdesValue(regn_bfm1n));
+
+        // Verify custom_serdes_attrs
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_CUSTOM_COLLECTION), SerdesValue(custom_serdes_attrs));
+
+        // Verify media_type
+        std::string media_type = "backplane";
+        ASSERT_EQ(p.m_media_type, media_type);
+
+        // Verify unreliablelos
+        ASSERT_EQ(p.m_unreliable_los, false);
+
+
+        // Dump pending tasks
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        ASSERT_TRUE(taskList.empty());
+
+        // Cleanup ports
+        cleanupPorts(gPortsOrch);
+    }
+
+    TEST_F(PortsOrchTest, PortSerdesPolarity)
+    {
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Port count: 32 Data + 1 CPU
+        ASSERT_EQ(gPortsOrch->getAllPorts().size(), ports.size() + 1);
+
+        // Generate port serdes config with polarity settings
+        std::deque<KeyOpFieldsValuesTuple> kfvList = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "txpolarity",    "0x1,0x0,0x1,0x0"          },
+                { "rxpolarity",    "0x0,0x1,0x0,0x1"          }
             }
         }};
 
@@ -914,73 +1523,16 @@ namespace portsorch_test
         Port p;
         ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
 
-        // Verify preemphasis
-        std::vector<std::uint32_t> preemphasis = { 0xcad0, 0xc6e0, 0xc6e0, 0xd2b0 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_PREEMPHASIS), preemphasis);
+        // Verify txpolarity
+        std::vector<std::uint32_t> txpolarity = { 0x1, 0x0, 0x1, 0x0 };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_TX_POLARITY), SerdesValue(txpolarity));
 
-        // Verify idriver
-        std::vector<std::uint32_t> idriver = { 0x5, 0x3, 0x4, 0x1 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_IDRIVER), idriver);
-
-        // Verify ipredriver
-        std::vector<std::uint32_t> ipredriver = { 0x1, 0x4, 0x3, 0x5 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_IPREDRIVER), ipredriver);
-
-        // Verify pre1
-        std::vector<std::uint32_t> pre1 = { 0xfff0, 0xfff2, 0xfff1, 0xfff3 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_PRE1), pre1);
-
-        // Verify pre2
-        std::vector<std::uint32_t> pre2 = { 0xfff0, 0xfff2, 0xfff1, 0xfff3 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_PRE2), pre2);
-
-        // Verify pre3
-        std::vector<std::uint32_t> pre3 = { 0xfff0, 0xfff2, 0xfff1, 0xfff3 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_PRE3), pre3);
-
-        // Verify main
-        std::vector<std::uint32_t> main = { 0x90, 0x92, 0x91, 0x93 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_MAIN), main);
-
-        // Verify post1
-        std::vector<std::uint32_t> post1 = { 0x10, 0x12, 0x11, 0x13 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_POST1), post1);
-
-        // Verify post2
-        std::vector<std::uint32_t> post2 = { 0x10, 0x12, 0x11, 0x13 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_POST2), post2);
-
-        // Verify post3
-        std::vector<std::uint32_t> post3 = { 0x10, 0x12, 0x11, 0x13 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_POST3), post3);
-
-        // Verify attn
-        std::vector<std::uint32_t> attn = { 0x80, 0x82, 0x81, 0x83 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_ATTN), attn);
-
-        // Verify ob_m2lp
-        std::vector<std::uint32_t> ob_m2lp = { 0x4, 0x6, 0x5, 0x7 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_PAM4_RATIO), ob_m2lp);
-
-        // Verify ob_alev_out
-        std::vector<std::uint32_t> ob_alev_out = { 0xf, 0x11, 0x10, 0x12 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_OUT_COMMON_MODE), ob_alev_out);
-
-        // Verify obplev
-        std::vector<std::uint32_t> obplev = { 0x69, 0x6b, 0x6a, 0x6c };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_PMOS_COMMON_MODE), obplev);
-
-        // Verify obnlev
-        std::vector<std::uint32_t> obnlev = { 0x5f, 0x61, 0x60, 0x62 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_NMOS_COMMON_MODE), obnlev);
-
-        // Verify regn_bfm1p
-        std::vector<std::uint32_t> regn_bfm1p = { 0x1e, 0x20, 0x1f, 0x21 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_PMOS_VLTG_REG), regn_bfm1p);
-
-        // Verify regn_bfm1n
-        std::vector<std::uint32_t> regn_bfm1n = { 0xaa, 0xac, 0xab, 0xad };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_NMOS_VLTG_REG), regn_bfm1n);
+        // Verify rxpolarity
+        std::vector<std::uint32_t> rxpolarity = { SAI_PORT_SERDES_POLARITY_NORMAL,
+                                                    SAI_PORT_SERDES_POLARITY_INVERTED,
+                                                    SAI_PORT_SERDES_POLARITY_NORMAL,
+                                                    SAI_PORT_SERDES_POLARITY_INVERTED };
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_RX_POLARITY), SerdesValue(rxpolarity));
 
         // Dump pending tasks
         std::vector<std::string> taskList;
@@ -1052,7 +1604,8 @@ namespace portsorch_test
         consumer->addToSync(kfvSerdes);
 
         _hook_sai_port_api();
-        uint32_t current_sai_api_call_count = _sai_set_admin_state_down_count;
+        uint32_t down_call_count = _sai_set_admin_state_down_count;
+        uint32_t up_call_count = _sai_set_admin_state_up_count;
 
         // Apply configuration
         static_cast<Orch*>(gPortsOrch)->doTask();
@@ -1064,11 +1617,11 @@ namespace portsorch_test
 
         // Verify idriver
         std::vector<std::uint32_t> idriver = { 0x6, 0x6, 0x6, 0x6 };
-        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_IDRIVER), idriver);
+        ASSERT_EQ(p.m_serdes_attrs.at(SAI_PORT_SERDES_ATTR_IDRIVER), SerdesValue(idriver));
 
         // Verify admin-disable then admin-enable
-        ASSERT_EQ(_sai_set_admin_state_down_count, ++current_sai_api_call_count);
-        ASSERT_EQ(_sai_set_admin_state_up_count, current_sai_api_call_count);
+        ASSERT_EQ(_sai_set_admin_state_down_count, ++down_call_count);
+        ASSERT_EQ(_sai_set_admin_state_up_count, ++up_call_count);
 
         // Configure non-serdes attribute that does not trigger admin state change
         std::deque<KeyOpFieldsValuesTuple> kfvMtu = {{
@@ -1082,7 +1635,7 @@ namespace portsorch_test
         consumer->addToSync(kfvMtu);
 
         _hook_sai_port_api();
-        current_sai_api_call_count = _sai_set_admin_state_down_count;
+        down_call_count = _sai_set_admin_state_down_count;
 
         // Apply configuration
         static_cast<Orch*>(gPortsOrch)->doTask();
@@ -1096,8 +1649,8 @@ namespace portsorch_test
         ASSERT_EQ(p.m_mtu, 1234);
 
         // Verify no admin-disable then admin-enable
-        ASSERT_EQ(_sai_set_admin_state_down_count, current_sai_api_call_count);
-        ASSERT_EQ(_sai_set_admin_state_up_count, current_sai_api_call_count);
+        ASSERT_EQ(_sai_set_admin_state_down_count, down_call_count);
+        ASSERT_EQ(_sai_set_admin_state_up_count, up_call_count);
 
         // Dump pending tasks
         std::vector<std::string> taskList;
@@ -1105,6 +1658,521 @@ namespace portsorch_test
         ASSERT_TRUE(taskList.empty());
 
         // Cleanup ports
+        cleanupPorts(gPortsOrch);
+    }
+
+    /**
+     * Test that verifies gearbox line-side and system-side serdes configuration
+     */
+    TEST_F(PortsOrchTest, PortGearboxSerdesConfig)
+    {
+        _reset_serdes_test_state();
+        _hook_sai_port_api();
+
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Get port and mock gearbox initialization
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+
+        // Mock gearbox port IDs (simulating initGearboxPort)
+        p.m_switch_id = 0x2100000000000000;      // PHY switch ID
+        p.m_line_side_id = 0x2100000000000001;   // Line-side port ID
+        p.m_system_side_id = 0x2100000000000002; // System-side port ID
+        p.m_admin_state_up = true;
+
+        // Update port in PortsOrch (using private access)
+        gPortsOrch->m_portList["Ethernet0"] = p;
+
+        // Generate gearbox serdes config with both line and system side
+        std::deque<KeyOpFieldsValuesTuple> kfvList = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                // Gearbox line-side serdes
+                { "gb_line_pre1",  "0x10,0x11,0x12,0x13" },
+                { "gb_line_pre2",  "0x20,0x21,0x22,0x23" },
+                { "gb_line_pre3",  "0x30,0x31,0x32,0x33" },
+                { "gb_line_main",  "0x90,0x91,0x92,0x93" },
+                { "gb_line_post1", "0x40,0x41,0x42,0x43" },
+                { "gb_line_post2", "0x50,0x51,0x52,0x53" },
+                { "gb_line_post3", "0x60,0x61,0x62,0x63" },
+                // Gearbox system-side serdes
+                { "gb_system_pre1",  "0x15,0x16,0x17,0x18" },
+                { "gb_system_pre2",  "0x25,0x26,0x27,0x28" },
+                { "gb_system_pre3",  "0x35,0x36,0x37,0x38" },
+                { "gb_system_main",  "0x95,0x96,0x97,0x98" },
+                { "gb_system_post1", "0x45,0x46,0x47,0x48" },
+                { "gb_system_post2", "0x55,0x56,0x57,0x58" },
+                { "gb_system_post3", "0x65,0x66,0x67,0x68" }
+            }
+        }};
+
+        // Refill consumer
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Verify exactly 2 serdes configurations (line + system)
+        ASSERT_EQ(_sai_create_port_serdes_calls.size(), 2);
+
+        // Verify line-side configuration
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].port_id, p.m_line_side_id);
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].switch_id, p.m_switch_id);
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_PRE1],
+                  (std::vector<uint32_t>{0x10, 0x11, 0x12, 0x13}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_PRE2],
+                  (std::vector<uint32_t>{0x20, 0x21, 0x22, 0x23}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_PRE3],
+                  (std::vector<uint32_t>{0x30, 0x31, 0x32, 0x33}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_MAIN],
+                  (std::vector<uint32_t>{0x90, 0x91, 0x92, 0x93}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_POST1],
+                  (std::vector<uint32_t>{0x40, 0x41, 0x42, 0x43}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_POST2],
+                  (std::vector<uint32_t>{0x50, 0x51, 0x52, 0x53}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_POST3],
+                  (std::vector<uint32_t>{0x60, 0x61, 0x62, 0x63}));
+
+        // Verify system-side configuration
+        ASSERT_EQ(_sai_create_port_serdes_calls[1].port_id, p.m_system_side_id);
+        ASSERT_EQ(_sai_create_port_serdes_calls[1].switch_id, p.m_switch_id);
+        ASSERT_EQ(_sai_create_port_serdes_calls[1].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_PRE1],
+                  (std::vector<uint32_t>{0x15, 0x16, 0x17, 0x18}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[1].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_PRE2],
+                  (std::vector<uint32_t>{0x25, 0x26, 0x27, 0x28}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[1].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_PRE3],
+                  (std::vector<uint32_t>{0x35, 0x36, 0x37, 0x38}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[1].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_MAIN],
+                  (std::vector<uint32_t>{0x95, 0x96, 0x97, 0x98}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[1].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_POST1],
+                  (std::vector<uint32_t>{0x45, 0x46, 0x47, 0x48}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[1].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_POST2],
+                  (std::vector<uint32_t>{0x55, 0x56, 0x57, 0x58}));
+        ASSERT_EQ(_sai_create_port_serdes_calls[1].attributes[SAI_PORT_SERDES_ATTR_TX_FIR_POST3],
+                  (std::vector<uint32_t>{0x65, 0x66, 0x67, 0x68}));
+
+        _unhook_sai_port_api();
+        cleanupPorts(gPortsOrch);
+    }
+
+    /**
+     * Test that verifies error handling when serdes configuration fails
+     * Tests failure on line-side
+     */
+    TEST_F(PortsOrchTest, PortGearboxSerdesConfigLineSideFailure)
+    {
+        _reset_serdes_test_state();
+        _hook_sai_port_api();
+
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Get port and mock gearbox initialization
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+
+        // Mock gearbox port IDs
+        p.m_switch_id = 0x2100000000000000;
+        p.m_line_side_id = 0x2100000000000001;
+        p.m_system_side_id = 0x2100000000000002;
+        p.m_admin_state_up = true;
+
+        gPortsOrch->m_portList["Ethernet0"] = p;
+
+        // Configure to fail line-side serdes creation
+        _sai_create_port_serdes_fail_for_port_id = p.m_line_side_id;
+
+        // Generate gearbox serdes config with both line and system side
+        std::deque<KeyOpFieldsValuesTuple> kfvList = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "gb_line_pre1",  "0x10,0x11,0x12,0x13" },
+                { "gb_line_main",  "0x90,0x91,0x92,0x93" },
+                { "gb_system_pre1",  "0x15,0x16,0x17,0x18" },
+                { "gb_system_main",  "0x95,0x96,0x97,0x98" }
+            }
+        }};
+
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Verify line-side was attempted but failed. System side will not be attempted due to
+        // early abortion in response to line-side configuration failure.
+        ASSERT_EQ(_sai_create_port_serdes_calls.size(), 1);
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].port_id, p.m_line_side_id);
+        ASSERT_TRUE(_sai_create_port_serdes_calls[0].attributes.empty());
+
+        // Verify task is pending retry
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        ASSERT_FALSE(taskList.empty());
+
+        _unhook_sai_port_api();
+        cleanupPorts(gPortsOrch);
+    }
+
+    /**
+     * Test that verifies error handling when serdes configuration fails
+     * Tests failure on system-side
+     */
+    TEST_F(PortsOrchTest, PortGearboxSerdesConfigSystemSideFailure)
+    {
+        _reset_serdes_test_state();
+        _hook_sai_port_api();
+
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Get port and mock gearbox initialization
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+
+        // Mock gearbox port IDs
+        p.m_switch_id = 0x2100000000000000;
+        p.m_line_side_id = 0x2100000000000001;
+        p.m_system_side_id = 0x2100000000000002;
+        p.m_admin_state_up = true;
+
+        gPortsOrch->m_portList["Ethernet0"] = p;
+
+        // Configure to fail system-side serdes creation
+        _sai_create_port_serdes_fail_for_port_id = p.m_system_side_id;
+
+        // Generate gearbox serdes config with both line and system side
+        std::deque<KeyOpFieldsValuesTuple> kfvList = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "gb_line_pre1",  "0x10,0x11,0x12,0x13" },
+                { "gb_line_main",  "0x90,0x91,0x92,0x93" },
+                { "gb_system_pre1",  "0x15,0x16,0x17,0x18" },
+                { "gb_system_main",  "0x95,0x96,0x97,0x98" }
+            }
+        }};
+
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Verify line-side was attempted and succeeded. 
+        ASSERT_EQ(_sai_create_port_serdes_calls.size(), 2);
+        ASSERT_EQ(_sai_create_port_serdes_calls[0].port_id, p.m_line_side_id);
+        ASSERT_FALSE(_sai_create_port_serdes_calls[0].attributes.empty());
+
+        // Verify system-side failed.
+        ASSERT_EQ(_sai_create_port_serdes_calls[1].port_id, p.m_system_side_id);
+        ASSERT_TRUE(_sai_create_port_serdes_calls[1].attributes.empty());
+
+        // Verify task is pending retry
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        ASSERT_FALSE(taskList.empty());
+
+        _unhook_sai_port_api();
+        cleanupPorts(gPortsOrch);
+    }
+
+    /**
+     * Test that verifies gearbox serdes config is skipped for ports without gearbox
+     */
+    TEST_F(PortsOrchTest, PortGearboxSerdesConfigNoGearbox)
+    {
+        _reset_serdes_test_state();
+        _hook_sai_port_api();
+
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Get port - do NOT mock gearbox (leave IDs as 0)
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+
+        // Verify port has no gearbox IDs
+        ASSERT_EQ(p.m_line_side_id, 0);
+        ASSERT_EQ(p.m_system_side_id, 0);
+
+        // Generate gearbox serdes config
+        std::deque<KeyOpFieldsValuesTuple> kfvList = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "gb_line_pre1",  "0x10,0x11,0x12,0x13" },
+                { "gb_line_main",  "0x90,0x91,0x92,0x93" },
+                { "gb_system_pre1",  "0x15,0x16,0x17,0x18" },
+                { "gb_system_main",  "0x95,0x96,0x97,0x98" }
+            }
+        }};
+
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Verify no serdes configuration in place (port has no gearbox)
+        ASSERT_EQ(_sai_create_port_serdes_calls.size(), 0);
+
+        _unhook_sai_port_api();
+        cleanupPorts(gPortsOrch);
+    }
+
+    /**
+     * Test that verifies error handling when setPortAdminStatus fails
+     * while trying to bring port down before applying gearbox line-side serdes attributes
+     */
+    TEST_F(PortsOrchTest, PortGearboxSerdesAdminStatusDownFailureLineSide)
+    {
+        _reset_serdes_test_state();
+        _hook_sai_port_api();
+
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Get port and mock gearbox initialization
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+
+        // Mock gearbox port IDs
+        p.m_switch_id = 0x2100000000000000;
+        p.m_line_side_id = 0x2100000000000001;
+        p.m_system_side_id = 0x2100000000000002;
+        p.m_admin_state_up = true;  // Port is UP - this is critical!
+
+        gPortsOrch->m_portList["Ethernet0"] = p;
+
+        // Set admin status failure
+        set_admin_status_fail = true;
+
+        // Generate gearbox line-side serdes config
+        std::deque<KeyOpFieldsValuesTuple> kfvList = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "gb_line_pre1",  "0x10,0x11,0x12,0x13" },
+                { "gb_line_main",  "0x90,0x91,0x92,0x93" }
+            }
+        }};
+
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvList);
+
+        uint32_t failure_count_before = set_admin_status_failures;
+        uint32_t admin_down_count_before = _sai_set_admin_state_down_count;
+
+        // Apply configuration - should fail when trying to bring port down
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Verify admin status DOWN was attempted
+        ASSERT_GT(_sai_set_admin_state_down_count, admin_down_count_before);
+
+        // Verify the SAI call failed
+        // setPortAdminStatus first tries to set admin status on the main port_id,
+        // which fails, so it returns early before calling setGearboxPortsAttr
+        ASSERT_EQ(set_admin_status_failures, failure_count_before + 1);
+
+        // Verify NO serdes configuration was attempted (early abort)
+        ASSERT_EQ(_sai_create_port_serdes_calls.size(), 0);
+
+        // Verify task is pending retry
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        ASSERT_FALSE(taskList.empty());
+
+        // Verify port admin state remains UP (not changed)
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_TRUE(p.m_admin_state_up);
+
+        // Reset failure flags 
+        set_admin_status_fail = false;
+        set_admin_status_failures = 0;
+
+        _unhook_sai_port_api();
+        cleanupPorts(gPortsOrch);
+    }
+
+    /**
+     * Test that verifies error handling when setPortAdminStatus fails
+     * while trying to bring port down before applying gearbox system-side serdes attributes
+     */
+    TEST_F(PortsOrchTest, PortGearboxSerdesAdminStatusDownFailureSystemSide)
+    {
+        _reset_serdes_test_state();
+        _hook_sai_port_api();
+
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Get port and mock gearbox initialization
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+
+        // Mock gearbox port IDs
+        p.m_switch_id = 0x2100000000000000;
+        p.m_line_side_id = 0x2100000000000001;
+        p.m_system_side_id = 0x2100000000000002;
+        p.m_admin_state_up = true;  // Port is UP - this is critical!
+
+        gPortsOrch->m_portList["Ethernet0"] = p;
+
+        // Set admin status failure
+        set_admin_status_fail = true;
+
+        // Generate gearbox system-side serdes config (no line-side)
+        std::deque<KeyOpFieldsValuesTuple> kfvList = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "gb_system_pre1",  "0x15,0x16,0x17,0x18" },
+                { "gb_system_main",  "0x95,0x96,0x97,0x98" }
+            }
+        }};
+
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvList);
+
+        uint32_t failure_count_before = set_admin_status_failures;
+        uint32_t admin_down_count_before = _sai_set_admin_state_down_count;
+
+        // Apply configuration - should fail when trying to bring port down
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Verify admin status DOWN was attempted
+        ASSERT_GT(_sai_set_admin_state_down_count, admin_down_count_before);
+
+        // Verify the SAI call failed
+        // setPortAdminStatus first tries to set admin status on the main port_id,
+        // which fails, so it returns early before calling setGearboxPortsAttr
+        ASSERT_EQ(set_admin_status_failures, failure_count_before + 1);
+
+        // Verify NO serdes configuration was attempted (early abort)
+        ASSERT_EQ(_sai_create_port_serdes_calls.size(), 0);
+
+        // Verify task is pending retry
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        ASSERT_FALSE(taskList.empty());
+
+        // Verify port admin state remains UP (not changed)
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_TRUE(p.m_admin_state_up);
+
+        // Reset failure flags 
+        set_admin_status_fail = false;
+        set_admin_status_failures = 0;
+
+        _unhook_sai_port_api();
         cleanupPorts(gPortsOrch);
     }
 
@@ -1141,17 +2209,16 @@ namespace portsorch_test
         ASSERT_NE(port.m_port_id, SAI_NULL_OBJECT_ID);
 
         // Get queue info
-        string type;
+        sai_queue_type_t type;
         uint8_t index;
         auto queue_id = port.m_queue_ids[0];
         auto ut_sai_get_queue_attr_count = _sai_get_queue_attr_count;
         gPortsOrch->getQueueTypeAndIndex(queue_id, type, index);
-        ASSERT_EQ(type, "SAI_QUEUE_TYPE_UNICAST");
+        ASSERT_EQ(type, SAI_QUEUE_TYPE_UNICAST);
         ASSERT_EQ(index, 0);
-        type = "";
         index = 255;
         gPortsOrch->getQueueTypeAndIndex(queue_id, type, index);
-        ASSERT_EQ(type, "SAI_QUEUE_TYPE_UNICAST");
+        ASSERT_EQ(type, SAI_QUEUE_TYPE_UNICAST);
         ASSERT_EQ(index, 0);
         ASSERT_EQ(++ut_sai_get_queue_attr_count, _sai_get_queue_attr_count);
 
@@ -1165,6 +2232,79 @@ namespace portsorch_test
         ASSERT_FALSE(gPortsOrch->getPort(port.m_port_id, port));
         ASSERT_EQ(gPortsOrch->m_queueInfo.find(queue_id), gPortsOrch->m_queueInfo.end());
         _unhook_sai_queue_api();
+    }
+
+    TEST_F(PortsOrchTest, PortDeleteQueueCountersCleanup)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Create ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port port;
+        auto testQueueIdx = 0;
+        string portName = "Ethernet0";
+        ASSERT_TRUE(gPortsOrch->getPort(portName, port));
+        ASSERT_NE(port.m_port_id, SAI_NULL_OBJECT_ID);
+        ASSERT_GT(port.m_queue_ids.size(), 0u);
+
+        // Enable Queue flex counters
+        Table flexCounterCfg = Table(m_config_db.get(), CFG_FLEX_COUNTER_TABLE_NAME);
+        const std::vector<FieldValueTuple> enable({ {FLEX_COUNTER_STATUS_FIELD, "enable"} });
+        flexCounterCfg.set("QUEUE_WATERMARK", enable);
+        flexCounterCfg.set("QUEUE", enable);
+
+        auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
+        flexCounterOrch->addExistingData(&flexCounterCfg);
+        static_cast<Orch *>(flexCounterOrch)->doTask();
+
+        sai_object_id_t targetQueueOid = port.m_queue_ids[testQueueIdx];
+
+        // Delete the port
+        entries.push_back({portName, "DEL", { { } }});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        entries.clear();
+
+        Table countersQueueNameMap(m_counters_db.get(), "COUNTERS_QUEUE_NAME_MAP");
+        Table countersQueuePortMap(m_counters_db.get(), "COUNTERS_QUEUE_PORT_MAP");
+
+        // Verify specific alias:idx field is gone from name maps
+        string dummy;
+        ASSERT_FALSE(countersQueueNameMap.hget("", portName + ":" + to_string(testQueueIdx), dummy));
+        ASSERT_FALSE(countersQueuePortMap.hget("", sai_serialize_object_id(targetQueueOid), dummy));
+
+        // Re-add the same port
+        auto it = ports.find(portName);
+        entries.push_back({portName, "SET", it->second});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        entries.clear();
+
+        // Fetch the re-added port and verify COUNTERS_DB entries exist for the queue index
+        Port readded;
+        ASSERT_TRUE(gPortsOrch->getPort(portName, readded));
+        ASSERT_GT(readded.m_queue_ids.size(), 0u);
+        sai_object_id_t readdedQ1 = readded.m_queue_ids[testQueueIdx];
+
+        // Name-map should contain alias:idx as a field
+        ASSERT_TRUE(countersQueueNameMap.hget("", portName + ":" + to_string(testQueueIdx), dummy));
+        // Port-map should contain queue OID -> port OID mapping as a field
+        ASSERT_TRUE(countersQueuePortMap.hget("", sai_serialize_object_id(readdedQ1), dummy));
     }
 
     TEST_F(PortsOrchTest, PortPTConfigDefaultTimestampTemplate)
@@ -1495,6 +2635,12 @@ namespace portsorch_test
         _hook_sai_port_api();
         _hook_sai_switch_api();
 
+        _sai_syncd_notifications_count = (uint32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        _sai_syncd_notification_event = (int32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        *_sai_syncd_notifications_count = 0;
+        uint32_t notif_count = *_sai_syncd_notifications_count;
         auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
         Port p;
         std::deque<KeyOpFieldsValuesTuple> kfvList;
@@ -1547,8 +2693,9 @@ namespace portsorch_test
         consumer->addToSync(kfvList);
 
         static_cast<Orch*>(gPortsOrch)->doTask();
-
-        ASSERT_EQ(set_pt_interface_id_fail, 1);
+        ASSERT_EQ(set_pt_interface_id_failures, 1);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
 
         set_pt_interface_id_fail = false;
 
@@ -1571,6 +2718,8 @@ namespace portsorch_test
         static_cast<Orch*>(gPortsOrch)->doTask();
 
         ASSERT_EQ(set_pt_timestamp_template_failures, 1);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
 
         set_pt_timestamp_template_fail = false;
 
@@ -1592,7 +2741,9 @@ namespace portsorch_test
 
         static_cast<Orch*>(gPortsOrch)->doTask();
 
-        ASSERT_EQ(set_port_tam_fail, 1);
+        ASSERT_EQ(set_port_tam_failures, 1);
+        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
 
         set_port_tam_fail = false;
 
@@ -1758,6 +2909,74 @@ namespace portsorch_test
         gPortsOrch->dumpPendingTasks(ts);
         ASSERT_TRUE(ts.empty());
 
+        _unhook_sai_port_api();
+    }
+
+    TEST_F(PortsOrchTest, FastLinkupUnsupportedReturnsSuccess)
+    {
+        _hook_sai_port_api();
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+
+        gPortsOrch->m_fastLinkupPortAttrSupported = false;
+        uint32_t current_sai_api_call_count = _sai_set_fast_linkup_count;
+
+        auto status = gPortsOrch->setPortFastLinkupEnabled(port, true);
+        ASSERT_EQ(status, task_success);
+        ASSERT_EQ(_sai_set_fast_linkup_count, current_sai_api_call_count);
+
+        _unhook_sai_port_api();
+    }
+
+    TEST_F(PortsOrchTest, FastLinkupFailureDropsTask)
+    {
+        _hook_sai_port_api();
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        gPortsOrch->m_fastLinkupPortAttrSupported = true;
+        set_fast_linkup_success = false;
+
+        uint32_t current_fast_linkup_call_count = _sai_set_fast_linkup_count;
+
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"fast_linkup", "true"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        entries.clear();
+
+        ASSERT_EQ(_sai_set_fast_linkup_count, ++current_fast_linkup_call_count);
+
+        vector<string> ts;
+        gPortsOrch->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        set_fast_linkup_success = true;
         _unhook_sai_port_api();
     }
 
@@ -2272,6 +3491,59 @@ namespace portsorch_test
         mock_port_fec_modes = old_mock_port_fec_modes;
         _unhook_sai_port_api();
     }
+
+    /*
+     * Test case: SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_MODE is not supported by vendor
+     **/
+    TEST_F(PortsOrchTest, PortPFCNotSupported)
+    {
+        _hook_sai_port_api();
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        set_pfc_asym_not_supported = true;
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        uint32_t current_sai_api_call_count = _sai_set_pfc_mode_count;
+
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               { "pfc_asym", "on"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        entries.clear();
+
+        ASSERT_EQ(_sai_set_pfc_mode_count, ++current_sai_api_call_count);
+        ASSERT_EQ(set_pfc_asym_failures, 1);
+
+        set_pfc_asym_not_supported = false;
+
+        vector<string> ts;
+
+        gPortsOrch->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        _unhook_sai_port_api();
+    }
+
     TEST_F(PortsOrchTest, PortTestSAIFailureHandling)
     {
         _hook_sai_port_api();
@@ -2310,7 +3582,7 @@ namespace portsorch_test
                            }});
         auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
         consumer->addToSync(entries);
-        ASSERT_DEATH({static_cast<Orch *>(gPortsOrch)->doTask();}, "");
+        gPortsOrch->doTask();
 
         ASSERT_EQ(*_sai_syncd_notifications_count, 1);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
@@ -2466,6 +3738,7 @@ namespace portsorch_test
         for (const auto &it : ports)
         {
             portTable.set(it.first, it.second);
+            portTable.set(it.first, {{"oper_status", "up"}});
             transceieverInfoTable.set(it.first, {});
         }
 
@@ -2533,7 +3806,92 @@ namespace portsorch_test
             ASSERT_EQ(status, SAI_STATUS_SUCCESS);
             ASSERT_TRUE(attr.value.booldata);
         }
+
+        // Verify host if configuration
+        for (const auto& iter: ports)
+        {
+            const auto& portName = iter.first;
+
+            Port port;
+            gPortsOrch->getPort(portName, port);
+
+            ASSERT_TRUE(port.m_oper_status == SAI_PORT_OPER_STATUS_UP);
+
+            attr.id = SAI_HOSTIF_ATTR_OPER_STATUS;
+            status = sai_hostif_api->get_hostif_attribute(port.m_hif_id, 1, &attr);
+
+            ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+            ASSERT_TRUE(attr.value.booldata);
+        }
     }
+
+    TEST_F(PortsOrchTest, PortsWithNoPGsQueuesSchedulerGroups)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        auto original_api = sai_port_api->get_ports_attribute;
+        // Mock SAI port API to return 0 number of PGs, queues and scheduler groups
+        auto spy = SpyOn<SAI_API_PORT, SAI_OBJECT_TYPE_PORT>(&sai_port_api->get_ports_attribute);
+        spy->callFake([&](
+                    uint32_t object_count,
+                    const sai_object_id_t *object_id,
+                    const uint32_t *attr_count,
+                    sai_attribute_t **attr_list,
+                    sai_bulk_op_error_mode_t mode,
+                    sai_status_t *object_statuses) -> sai_status_t
+            {
+                assert(object_count > 1);
+                assert(attr_count[0] > 1);
+                switch (attr_list[0]->id)
+                {
+                case SAI_PORT_ATTR_NUMBER_OF_INGRESS_PRIORITY_GROUPS:
+                case SAI_PORT_ATTR_QOS_NUMBER_OF_QUEUES:
+                case SAI_PORT_ATTR_QOS_NUMBER_OF_SCHEDULER_GROUPS:
+                    for (size_t i = 0; i < object_count; i++)
+                    {
+                        attr_list[i]->value.u32 = 0;
+                        object_statuses[i] = SAI_STATUS_SUCCESS;
+                    }
+                    return SAI_STATUS_SUCCESS;
+                }
+                return original_api(
+                        object_count,
+                        object_id,
+                        attr_count,
+                        attr_list,
+                        mode,
+                        object_statuses);
+            }
+        );
+
+        // Get SAI default ports to populate DB
+
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate pot table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port port;
+        gPortsOrch->getPort("Ethernet0", port);
+
+        ASSERT_TRUE(port.m_init);
+        ASSERT_EQ(port.m_priority_group_ids.size(), 0);
+        ASSERT_EQ(port.m_queue_ids.size(), 0);
+    }
+
 
     TEST_F(PortsOrchTest, PfcDlrHandlerCallingDlrInitAttribute)
     {
@@ -2738,6 +4096,85 @@ namespace portsorch_test
 	_unhook_sai_switch_api();
     }
 
+    TEST_F(PortsOrchTest, DebugDropMonitorToggle)
+    {
+        // setup the tables with data
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate port table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        // Apply configuration again
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        ASSERT_TRUE(gPortsOrch->allPortsReady());
+
+        // Check if default status is disabled
+        ASSERT_TRUE(!gDebugCounterOrch->getDebugMonitorStatus());
+
+        // Set status to enabled
+        entries.clear();
+        entries.push_back({ "CONFIG", "SET", {
+            { "status", "enabled" }
+        } });
+        auto DebugCounterConsumer = dynamic_cast<Consumer *>(gDebugCounterOrch->getExecutor("DEBUG_DROP_MONITOR"));
+        DebugCounterConsumer->addToSync(entries);
+        static_cast<Orch*>(gDebugCounterOrch)->doTask();
+        ASSERT_TRUE(gDebugCounterOrch->getDebugMonitorStatus());
+        entries.clear();
+
+        // Set status with an invalid value
+        entries.push_back({ "CONFIG", "SET", {
+            { "status", "turnoff" }
+        } });
+        DebugCounterConsumer->addToSync(entries);
+        static_cast<Orch*>(gDebugCounterOrch)->doTask();
+        ASSERT_TRUE(gDebugCounterOrch->getDebugMonitorStatus());
+        entries.clear();
+
+        // Set an unsupported attribute
+        entries.push_back({ "CONFIG", "SET", {
+            { "enable", "false" }
+        } });
+        DebugCounterConsumer->addToSync(entries);
+        static_cast<Orch*>(gDebugCounterOrch)->doTask();
+        ASSERT_TRUE(gDebugCounterOrch->getDebugMonitorStatus());
+        entries.clear();
+
+        // Use an unsupported operation type
+        entries.push_back({ "CONFIG", "GET", {
+            { "status", "disable" }
+        } });
+        DebugCounterConsumer->addToSync(entries);
+        static_cast<Orch*>(gDebugCounterOrch)->doTask();
+        ASSERT_TRUE(gDebugCounterOrch->getDebugMonitorStatus());
+        entries.clear();
+
+        // Set status back to disabled
+        entries.push_back({ "CONFIG", "SET", {
+            { "status", "disabled" }
+        } });
+        DebugCounterConsumer->addToSync(entries);
+        static_cast<Orch*>(gDebugCounterOrch)->doTask();
+        ASSERT_TRUE(!gDebugCounterOrch->getDebugMonitorStatus());
+        entries.clear();
+    }
+
     TEST_F(PortsOrchTest, PfcZeroBufferHandler)
     {
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
@@ -2847,6 +4284,60 @@ namespace portsorch_test
         queueConsumer->dumpPendingTasks(ts);
         ASSERT_TRUE(ts.empty()); // queue should be processed now
         ts.clear();
+    }
+
+    /* This test passes an incorrect LAG entry and verifies that this entry is not
+     * erased from the consumer table.
+     */
+    TEST_F(PortsOrchTest, LagMemberCanNotBeLocated)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table lagTable = Table(m_app_db.get(), APP_LAG_TABLE_NAME);
+        Table lagMemberTable = Table(m_app_db.get(), APP_LAG_MEMBER_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        /*
+         * Next we will prepare some configuration data to be consumed by PortsOrch
+         * 32 Ports, 1 LAG, 1 port is an invalid LAG member.
+         */
+
+        // Populate pot table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+        lagTable.set("PortChannel999",
+            {
+                {"admin_status", "up"},
+                {"mtu", "9100"}
+            }
+        );
+
+        // Add invalid lag member
+        lagMemberTable.set(
+            std::string("InvalidLagMember") + lagMemberTable.getTableNameSeparator() + ports.begin()->first,
+            { {"status", "enabled"} });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+        gPortsOrch->addExistingData(&lagTable);
+        gPortsOrch->addExistingData(&lagMemberTable);
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // verify there is a pending task to do.
+        vector<string> ts;
+        auto exec = gPortsOrch->getExecutor(APP_LAG_MEMBER_TABLE_NAME);
+        auto consumer = static_cast<Consumer*>(exec);
+        ts.clear();
+        consumer->dumpPendingTasks(ts);
+        ASSERT_FALSE(ts.empty());
     }
 
     /* This test checks that a LAG member validation happens on orchagent level
@@ -3007,11 +4498,11 @@ namespace portsorch_test
         auto consumer = exec->getNotificationConsumer();
 
         // mock a redis reply for notification, it notifies that Ehernet0 is going to up
-        mockReply = (redisReply *)calloc(sizeof(redisReply), 1);
+        mockReply = (redisReply *)calloc(1, sizeof(redisReply));
         mockReply->type = REDIS_REPLY_ARRAY;
         mockReply->elements = 3; // REDIS_PUBLISH_MESSAGE_ELEMNTS
-        mockReply->element = (redisReply **)calloc(sizeof(redisReply *), mockReply->elements);
-        mockReply->element[2] = (redisReply *)calloc(sizeof(redisReply), 1);
+        mockReply->element = (redisReply **)calloc(mockReply->elements, sizeof(redisReply *));
+        mockReply->element[2] = (redisReply *)calloc(1, sizeof(redisReply));
         mockReply->element[2]->type = REDIS_REPLY_STRING;
         sai_port_oper_status_notification_t port_oper_status;
         port_oper_status.port_id = port.m_port_id;
@@ -3061,6 +4552,126 @@ namespace portsorch_test
         }
 
         sai_port_api = orig_port_api;
+    }
+
+    /* This test verifies that an invalid configuration
+     * of pfc stat history will not enable the featuer
+     */
+    TEST_F(PortsOrchTest, PfcInvalidHistoryToggle)
+    {
+        _hook_sai_switch_api();
+        // setup the tables with data
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate port table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        // Apply configuration
+        //          ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        ASSERT_TRUE(gPortsOrch->allPortsReady());
+
+        // No more tasks
+        vector<string> ts;
+        gPortsOrch->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        ts.clear();
+
+        entries.clear();
+        entries.push_back({ "Ethernet0", "SET", { { "pfc_enable", "3,4" }, { "pfcwd_sw_enable", "3,4" } } });
+        auto portQosMapConsumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME));
+        portQosMapConsumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gQosOrch)->doTask();
+
+        entries.push_back({ "GLOBAL", "SET", {{ "POLL_INTERVAL", "200" }}});
+        entries.push_back({ "Ethernet0", "SET", {
+            { "action", "drop" },
+            { "detection_time", "200" },
+            { "restoration_time", "200" }
+        } });
+        auto PfcwdConsumer = dynamic_cast<Consumer *>(gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>->getExecutor(CFG_PFC_WD_TABLE_NAME));
+        PfcwdConsumer->addToSync(entries);
+
+        // trigger the notification
+        static_cast<Orch*>(gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>)->doTask();
+        ASSERT_EQ((gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>->m_pfcwd_ports.size()), 1);
+        entries.clear();
+
+        // create pfcwd entry with an invalid history setting
+        entries.push_back({ "Ethernet0", "SET", {
+            { "action", "drop" },
+            { "detection_time", "200" },
+            { "restoration_time", "200" },
+            { "pfc_stat_history", "up" }
+        } });
+        PfcwdConsumer->addToSync(entries);
+        static_cast<Orch*>(gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>)->doTask();
+        ASSERT_EQ((gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>->m_pfcwd_ports.size()), 1);
+        entries.clear();
+
+        // verify in counters db that history is NOT enabled
+        Port port;
+        gPortsOrch->getPort("Ethernet0", port);
+        auto countersTable = make_shared<Table>(m_counters_db.get(), COUNTERS_TABLE);
+        auto entryMap = gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>->m_entryMap;
+
+        sai_object_id_t queueId = port.m_queue_ids[3];
+        ASSERT_NE(entryMap.find(queueId), entryMap.end());
+
+        string queueIdStr = sai_serialize_object_id(queueId);
+        vector<FieldValueTuple> countersFieldValues;
+        countersTable->get(queueIdStr, countersFieldValues);
+        ASSERT_NE(countersFieldValues.size(), 0);
+
+        for (auto &valueTuple : countersFieldValues)
+        {
+            if (fvField(valueTuple) == "PFC_STAT_HISTORY")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "disable");
+            }
+        }
+
+        queueId = port.m_queue_ids[4];
+        ASSERT_NE(entryMap.find(queueId), entryMap.end());
+
+        queueIdStr = sai_serialize_object_id(queueId);
+        countersFieldValues.clear();
+        countersTable->get(queueIdStr, countersFieldValues);
+        ASSERT_NE(countersFieldValues.size(), 0);
+
+        for (auto &valueTuple : countersFieldValues)
+        {
+            if (fvField(valueTuple) == "PFC_STAT_HISTORY")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) == "disable");
+            }
+        }
+
+        // remove from monitoring
+        entries.push_back({ "Ethernet0", "DEL", { {} } });
+        PfcwdConsumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>)->doTask();
+        ASSERT_EQ((gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>->m_pfcwd_ports.size()), 0);
+
+        _unhook_sai_switch_api();
     }
 
     /*
@@ -3178,4 +4789,317 @@ namespace portsorch_test
         ASSERT_FALSE(bridgePortCalledBeforeLagMember); // bridge port created on lag before lag member was created
     }
 
+    /*
+     * Regression test for sonic-buildimage issue #23635.
+     *
+     * Issue: When a user removes a port from a VLAN and adds it to a LAG while
+     * orchagent is busy, both operations are queued. PortsOrch processes tables
+     * in a fixed order (LAG_MEMBER before VLAN_MEMBER), so the LAG member add
+     * executes while the port is still in vlan. 
+     *
+     * Fix: PortsOrch defers the LAG member add when m_portVlanMember for the
+     * port is non-empty. Once the VLAN member removal completes in a subsequent doTask cycle, the LAG member add
+     * succeeds.
+     *
+     * Test: Queues a VLAN member DEL and a LAG member SET for the same port in
+     * one batch, then verifies that the first doTask defers the LAG add, 
+     * and a second doTask completes it after the VLAN member is removed.
+     */
+    struct VlanLagRaceTest : PortsOrchTest {};
+
+    TEST_F(VlanLagRaceTest, LagMemberAddDeferredWhileVlanMemberPending)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table lagTable = Table(m_app_db.get(), APP_LAG_TABLE_NAME);
+        Table lagMemberTable = Table(m_app_db.get(), APP_LAG_MEMBER_TABLE_NAME);
+        Table vlanTable = Table(m_app_db.get(), APP_VLAN_TABLE_NAME);
+        Table vlanMemberTable = Table(m_app_db.get(), APP_VLAN_MEMBER_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        string testPort = ports.begin()->first;
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Add testPort to Vlan10
+        vlanTable.set("Vlan10",
+            {
+                {"admin_status", "up"},
+                {"mtu", "9100"}
+            }
+        );
+        string vlanMemberKey = string("Vlan10") + vlanMemberTable.getTableNameSeparator() + testPort;
+        vlanMemberTable.set(vlanMemberKey, { {"tagging_mode", "untagged"} });
+
+        gPortsOrch->addExistingData(&vlanTable);
+        gPortsOrch->addExistingData(&vlanMemberTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Verify VLAN and VLAN member creation completed with no pending tasks
+        for (auto tableName : {APP_VLAN_TABLE_NAME, APP_VLAN_MEMBER_TABLE_NAME})
+        {
+            vector<string> ts;
+            auto exec = gPortsOrch->getExecutor(tableName);
+            auto consumer = static_cast<Consumer *>(exec);
+            consumer->dumpPendingTasks(ts);
+            ASSERT_TRUE(ts.empty()) << "VLAN setup should complete: " << tableName;
+        }
+
+        // Queue VLAN member removal
+        std::deque<KeyOpFieldsValuesTuple> vlanMemberDelEntries;
+        vlanMemberDelEntries.push_back({vlanMemberKey, DEL_COMMAND, {}});
+        auto vlanMemberConsumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_VLAN_MEMBER_TABLE_NAME));
+        vlanMemberConsumer->addToSync(vlanMemberDelEntries);
+
+        // Queue LAG creation and LAG member addition
+        lagTable.set("PortChannel1",
+            {
+                {"admin_status", "up"},
+                {"mtu", "9100"}
+            }
+        );
+        string lagMemberKey = string("PortChannel1") + lagMemberTable.getTableNameSeparator() + testPort;
+        lagMemberTable.set(lagMemberKey, { {"status", "enabled"} });
+
+        gPortsOrch->addExistingData(&lagTable);
+        gPortsOrch->addExistingData(&lagMemberTable);
+
+        // --- First doTask: LAG_MEMBER processed before VLAN_MEMBER (table order) ---
+        // The fix should defer the LAG member add because the port is still a VLAN member
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Verify LAG member add was deferred (still pending in m_toSync)
+        {
+            vector<string> ts;
+            auto exec = gPortsOrch->getExecutor(APP_LAG_MEMBER_TABLE_NAME);
+            auto consumer = static_cast<Consumer *>(exec);
+            consumer->dumpPendingTasks(ts);
+            ASSERT_EQ(ts.size(), 1) << "Exactly one LAG member task should be pending";
+
+            string expectedSubstr = lagMemberKey + "|SET";
+            ASSERT_NE(ts[0].find(expectedSubstr), string::npos)
+                << "Pending task should be the SET for " << lagMemberKey
+                << ", got: " << ts[0];
+        }
+
+        // Verify VLAN member DEL completed (port removed from VLAN)
+        {
+            vector<string> ts;
+            auto exec = gPortsOrch->getExecutor(APP_VLAN_MEMBER_TABLE_NAME);
+            auto consumer = static_cast<Consumer *>(exec);
+            consumer->dumpPendingTasks(ts);
+            ASSERT_TRUE(ts.empty()) << "VLAN member DEL should have completed in the first doTask";
+        }
+
+        // --- Second doTask: LAG member add should now succeed ---
+        // The port is no longer a VLAN member, so the deferred task completes
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Verify all LAG tasks completed
+        for (auto tableName : {APP_LAG_TABLE_NAME, APP_LAG_MEMBER_TABLE_NAME})
+        {
+            vector<string> ts;
+            auto exec = gPortsOrch->getExecutor(tableName);
+            auto consumer = static_cast<Consumer *>(exec);
+            ts.clear();
+            consumer->dumpPendingTasks(ts);
+            ASSERT_TRUE(ts.empty()) << "All tasks should complete: " << tableName;
+        }
+
+        // Verify the port is now a LAG member
+        Port port;
+        gPortsOrch->getPort(testPort, port);
+        ASSERT_NE(port.m_lag_id, SAI_NULL_OBJECT_ID) << "Port should be a LAG member after second doTask";
+    }
+
+    struct PostPortInitTests : PortsOrchTest
+    {
+    };
+
+    // This test ensures post port initialization is performed when calling onWarmBootEnd()
+    TEST_F(PostPortInitTests, PortPostInit)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table pgTable = Table(m_app_db.get(), APP_BUFFER_PG_TABLE_NAME);
+        Table profileTable = Table(m_app_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
+        Table poolTable = Table(m_app_db.get(), APP_BUFFER_POOL_TABLE_NAME);
+        Table stateTable = Table(m_state_db.get(), STATE_BUFFER_MAXIMUM_VALUE_TABLE);
+
+        // Get SAI default ports to populate DB
+
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate pot table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone, PortInitDone
+
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // Set warm boot flag
+        gPortsOrch->m_isWarmRestoreStage = true;
+
+        gPortsOrch->bake();
+        gPortsOrch->doTask();
+
+        std::string value;
+        bool stateDbSet;
+
+        // At this point postPortInit() hasn't been called yet, so don't expect
+        // to find "max_priority_groups" field in STATE_DB
+        stateDbSet = stateTable.hget("Ethernet0", "max_priority_groups", value);
+        ASSERT_FALSE(stateDbSet);
+
+        gPortsOrch->onWarmBootEnd();
+
+        // Now the field "max_priority_groups" is set
+        stateDbSet = stateTable.hget("Ethernet0", "max_priority_groups", value);
+        ASSERT_TRUE(stateDbSet);
+    }
+
+    struct PortsOrchNegativeTests : PortsOrchTest
+    {
+    };
+
+    TEST_F(PortsOrchNegativeTests, PortHostIfCreateFailed)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        auto original_api = sai_hostif_api->create_hostif;
+        auto hostIfSpy = SpyOn<SAI_API_HOSTIF, SAI_OBJECT_TYPE_HOSTIF>(&sai_hostif_api->create_hostif);
+        hostIfSpy->callFake([&](sai_object_id_t*, sai_object_id_t, uint32_t, const sai_attribute_t*) -> sai_status_t {
+                return SAI_STATUS_INSUFFICIENT_RESOURCES;
+            }
+        );
+
+        // Get SAI default ports to populate DB
+
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate pot table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        sai_hostif_api->create_hostif = original_api;
+
+        Port port;
+        gPortsOrch->getPort("Ethernet0", port);
+
+        ASSERT_FALSE(port.m_init);
+    }
+
+    /*
+     * Verify that deleting a VLAN which was never created (not in m_portList)
+     * is handled gracefully: the DEL entry is consumed from m_toSync and no
+     * crash.
+     */
+    struct PortsOrchDanglingDeleteTests : PortsOrchTest {};
+    TEST_F(PortsOrchDanglingDeleteTests, VlanDeleteNonExistentIsSkipped)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port port;
+        ASSERT_FALSE(gPortsOrch->getPort("Vlan100", port));
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Vlan100", DEL_COMMAND, {}});
+
+        auto vlanConsumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_VLAN_TABLE_NAME));
+        vlanConsumer->addToSync(entries);
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        vector<string> ts;
+        vlanConsumer->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        ASSERT_FALSE(gPortsOrch->getPort("Vlan100", port));
+    }
+
+    /*
+     * Verify the normal VLAN create-then-delete path still works, contrasting
+     * with the non-existent VLAN deletion above.
+     */
+    struct PortsOrchCreateThenDeleteTests : PortsOrchTest {};
+    TEST_F(PortsOrchCreateThenDeleteTests, VlanCreateThenDelete)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Vlan200", SET_COMMAND, {
+            {"admin_status", "up"},
+            {"mtu", "9100"}
+        }});
+
+        auto vlanConsumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_VLAN_TABLE_NAME));
+        vlanConsumer->addToSync(entries);
+        entries.clear();
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port vlan;
+        ASSERT_TRUE(gPortsOrch->getPort("Vlan200", vlan));
+        ASSERT_EQ(vlan.m_type, Port::VLAN);
+
+        entries.push_back({"Vlan200", DEL_COMMAND, {}});
+        vlanConsumer->addToSync(entries);
+        entries.clear();
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        vector<string> ts;
+        vlanConsumer->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        ASSERT_FALSE(gPortsOrch->getPort("Vlan200", vlan));
+    }
 }

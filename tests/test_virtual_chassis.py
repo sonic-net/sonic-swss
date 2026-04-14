@@ -27,6 +27,8 @@ class TestVirtualChassis(object):
                 chassis_app_db = DVSDatabase(swsscommon.CHASSIS_APP_DB, dvs.redis_chassis_sock)
                 chassis_app_db.db_connection.set("SYSTEM_LAG_ID_START", "1")
                 chassis_app_db.db_connection.set("SYSTEM_LAG_ID_END", "2")
+                chassis_app_db.db_connection.rpush("SYSTEM_LAG_IDS_FREE_LIST", "1")
+                chassis_app_db.db_connection.rpush("SYSTEM_LAG_IDS_FREE_LIST", "2")
                 break
             
     def config_inbandif_port(self, vct, ibport):
@@ -913,62 +915,6 @@ class TestVirtualChassis(object):
                     
                     break
 
-    def test_chassis_add_remove_ports(self, vct):
-        """Test removing and adding a port in a VOQ chassis.
-
-        Test validates that when a port is created the port is removed from the default vlan.
-        """
-        dvss = vct.dvss
-        for name in dvss.keys():
-            dvs = dvss[name]
-            buffer_model.enable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
-
-            config_db = dvs.get_config_db()
-            app_db = dvs.get_app_db()
-            asic_db = dvs.get_asic_db()
-            metatbl = config_db.get_entry("DEVICE_METADATA", "localhost")
-            cfg_switch_type = metatbl.get("switch_type")
-
-            if cfg_switch_type == "voq":
-                num_ports = len(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT"))
-                # Get the port info we'll flap
-                port = config_db.get_keys('PORT')[0]
-                port_info = config_db.get_entry("PORT", port)
-
-                # Remove port's other configs
-                pgs = config_db.get_keys('BUFFER_PG')
-                queues = config_db.get_keys('BUFFER_QUEUE')
-                for key in pgs:
-                    if port in key:
-                        config_db.delete_entry('BUFFER_PG', key)
-                        app_db.wait_for_deleted_entry('BUFFER_PG_TABLE', key)
-
-                for key in queues:
-                    if port in key:
-                        config_db.delete_entry('BUFFER_QUEUE', key)
-                        app_db.wait_for_deleted_entry('BUFFER_QUEUE_TABLE', key)
-
-                # Remove port
-                config_db.delete_entry('PORT', port)
-                app_db.wait_for_deleted_entry('PORT_TABLE', port)
-                num = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
-                                              num_ports)
-                assert len(num) == num_ports
-
-                # Create port
-                config_db.update_entry("PORT", port, port_info)
-                app_db.wait_for_entry("PORT_TABLE", port)
-                num = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
-                                              num_ports)
-                assert len(num) == num_ports
-
-                # Check that we see the logs for removing default vlan
-                _, logSeen = dvs.runcmd( [ "sh", "-c",
-                    "awk STARTFILE/ENDFILE /var/log/syslog | grep 'removeDefaultVlanMembers: Remove 32 VLAN members from default VLAN' | wc -l"] )
-                assert logSeen.strip() == "1"
-
-            buffer_model.disable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
-
     def test_voq_egress_queue_counter(self, vct):
         if vct is None:
             return
@@ -1036,6 +982,78 @@ class TestVirtualChassis(object):
                 # Total number of logs = (No of system ports * No of lossless priorities) - No of lossless priorities for CPU ports
                 assert logSeen.strip() == str(len(system_ports)*2 - 2)
     
+    def test_chassis_add_remove_ports(self, vct):
+        """Test removing and adding a port in a VOQ chassis.
+
+        Test validates that when a port is created the port is removed from the default vlan.
+        """
+        dvss = vct.dvss
+        for name in dvss.keys():
+            dvs = dvss[name]
+            buffer_model.enable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
+
+            config_db = dvs.get_config_db()
+            app_db = dvs.get_app_db()
+            asic_db = dvs.get_asic_db()
+            metatbl = config_db.get_entry("DEVICE_METADATA", "localhost")
+            cfg_switch_type = metatbl.get("switch_type")
+            cfg_hostname = metatbl.get("hostname")
+            cfg_asic_name = metatbl.get("asic_name")
+
+            if cfg_switch_type == "voq":
+                num_ports = len(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT"))
+                # Get the port info we'll flap
+                port = config_db.get_keys('PORT')[0]
+                port_info = config_db.get_entry("PORT", port)
+                system_port = cfg_hostname+"|"+cfg_asic_name+"|"+port
+
+                # Remove port's other configs
+                pgs = config_db.get_keys('BUFFER_PG')
+                buf_queues = config_db.get_keys('BUFFER_QUEUE')
+                queues = config_db.get_keys('QUEUE')
+                for key in pgs:
+                    if port in key:
+                        config_db.delete_entry('BUFFER_PG', key)
+                        app_db.wait_for_deleted_entry('BUFFER_PG_TABLE', key)
+
+                for key in buf_queues:
+                    if port in key:
+                        config_db.delete_entry('BUFFER_QUEUE', key)
+                        app_db.wait_for_deleted_entry('BUFFER_QUEUE_TABLE', key)
+
+                queue_info = {}
+                for key in queues:
+                    if system_port in key:
+                        queue_info[key] = config_db.get_entry("QUEUE", key)
+                        config_db.delete_entry('QUEUE', key)
+                        config_db.wait_for_deleted_entry('QUEUE_TABLE', key)
+
+                # Remove port
+                config_db.delete_entry('PORT', port)
+                app_db.wait_for_deleted_entry('PORT_TABLE', port)
+                num = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
+                                              num_ports)
+                assert len(num) == num_ports
+
+                # Create port
+                config_db.update_entry("PORT", port, port_info)
+                app_db.wait_for_entry("PORT_TABLE", port)
+                num = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
+                                              num_ports)
+                assert len(num) == num_ports
+
+                if len(queue_info):
+                    for key, value in queue_info.items():
+                        config_db.update_entry("QUEUE", key, value)
+                        config_db.wait_for_entry("QUEUE", key)
+
+                # Check that we see the logs for removing default vlan
+                _, logSeen = dvs.runcmd( [ "sh", "-c",
+                    "awk STARTFILE/ENDFILE /var/log/syslog | grep 'removeDefaultVlanMembers: Remove 32 VLAN members from default VLAN' | wc -l"] )
+                assert logSeen.strip() == "1"
+
+            buffer_model.disable_dynamic_buffer(dvs)
+
     def test_chassis_system_intf_status(self, vct):
         dvs = self.get_sup_dvs(vct)
         chassis_app_db = DVSDatabase(swsscommon.CHASSIS_APP_DB, dvs.redis_chassis_sock)
@@ -1120,6 +1138,133 @@ class TestVirtualChassis(object):
 
         # Cleanup inband if configuration
         self.del_inbandif_port(vct, inband_port)
+        self.configure_neighbor(local_lc_dvs, "del", test_neigh_ip_2, test_neigh_mac_2, test_neigh_dev_2)
+
+
+    def test_remote_neighbor_add(self, vct):
+        # test params
+        local_lc_switch_id = '0'
+        remote_lc_switch_id = '2'
+        test_prefix = "14.14.0.0/16"
+        inband_port = "Ethernet0"
+        test_neigh_ip_1 = "10.8.104.50"
+        test_neigh_dev_1 = "Ethernet4"
+        test_neigh_mac_1 = "00:09:03:04:05:06"
+        test_neigh_dev_2 = "Ethernet8"
+
+        local_lc_dvs = self.get_lc_dvs(vct, local_lc_switch_id)
+        remote_lc_dvs = self.get_lc_dvs(vct, remote_lc_switch_id)
+
+        # config inband port
+        self.config_inbandif_port(vct, inband_port)
+
+        # add neighbor
+        self.configure_neighbor(local_lc_dvs, "add", test_neigh_ip_1, test_neigh_mac_1, test_neigh_dev_1)
+
+        time.sleep(10)
+
+        asic_db = remote_lc_dvs.get_asic_db()
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY", 1)
+        neighkeys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY")
+        assert len(neighkeys), "No neigh entries in ASIC_DB"
+
+        # Check for presence of the remote neighbor in ASIC_DB
+        remote_neigh = ""
+        for nkey in neighkeys:
+            ne = ast.literal_eval(nkey)
+            if ne['ip'] == test_neigh_ip_1:
+               remote_neigh = nkey
+               break
+
+        assert remote_neigh != "", "Remote neigh not found in ASIC_DB"
+
+        # Preserve remote neigh asic db neigh key for delete verification later
+        test_remote_neigh_asic_db_key = remote_neigh
+
+        asic_db = remote_lc_dvs.get_asic_db()
+        nexthop_keys = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", 1)
+        assert len(nexthop_keys), "No Nexthop entries in ASIC_DB"
+
+        nexthop_entry = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nexthop_keys[0])
+        ip = nexthop_entry.get("SAI_NEXT_HOP_ATTR_IP")
+        assert ip != "", "Ip address not found for nexthop entry in asic db"
+        rif1 = nexthop_entry.get("SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID")
+
+
+        # add route of LC1(pretend learnt via bgp)
+        _, res = remote_lc_dvs.runcmd(['sh', '-c', f"ip route add {test_prefix} nexthop via {test_neigh_ip_1}"])
+        assert res == "", "Error configuring route"
+        time.sleep(5)
+
+        # del neighbor on first port and add it on second port
+        self.configure_neighbor(local_lc_dvs, "del", test_neigh_ip_1, test_neigh_mac_1, test_neigh_dev_1)
+        time.sleep(5)
+        self.configure_neighbor(local_lc_dvs, "add", test_neigh_ip_1, test_neigh_mac_1, test_neigh_dev_2)
+
+        time.sleep(10)
+
+        asic_db = remote_lc_dvs.get_asic_db()
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY", 1)
+        neighkeys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY")
+        assert len(neighkeys), "No neigh entries in ASIC_DB"
+
+        # Check for presence of the remote neighbor in ASIC_DB
+        remote_neigh = ""
+        for nkey in neighkeys:
+            ne = ast.literal_eval(nkey)
+            if ne['ip'] == test_neigh_ip_1:
+               remote_neigh = nkey
+               break
+
+        assert remote_neigh != "", "Remote neigh not found in ASIC_DB"
+
+        nexthop_keys = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", 1)
+        assert len(nexthop_keys), "No Nexthop entries in ASIC_DB"
+        nexthop_entry = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nexthop_keys[0])
+        print("2:nexthop_entrty:",nexthop_entry)
+        rif2 = nexthop_entry.get("SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID")
+        assert rif1 == rif2, "Neighbor is already replaced with new rif"
+
+        #del the route
+        _, res = remote_lc_dvs.runcmd(['sh', '-c', f"ip route del {test_prefix} nexthop via {test_neigh_ip_1} "])
+        assert res == "", "Error configuring route"
+
+        time.sleep(10)
+
+        asic_db = remote_lc_dvs.get_asic_db()
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY", 1)
+        neighkeys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY")
+        assert len(neighkeys), "No neigh entries in ASIC_DB"
+
+        # Check for presence of the remote neighbor in ASIC_DB
+        remote_neigh = ""
+        for nkey in neighkeys:
+            ne = ast.literal_eval(nkey)
+            if ne['ip'] == test_neigh_ip_1:
+               remote_neigh = nkey
+               break
+        assert remote_neigh != "", "Remote neigh not found in ASIC_DB"
+
+        nexthop_keys = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", 1)
+        assert len(nexthop_keys), "No Nexthop entries in ASIC_DB"
+        nexthop_entry = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nexthop_keys[0])
+        print("3:nexthop_entrty:",nexthop_entry)
+        rif3 = nexthop_entry.get("SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID")
+        assert rif1 != rif3, "Neighbor is not replaced with new rif"
+
+        #del the neighbor
+        self.configure_neighbor(local_lc_dvs, "del", test_neigh_ip_1, test_neigh_mac_1, test_neigh_dev_2)
+        time.sleep(10)
+        asic_db = remote_lc_dvs.get_asic_db()
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY", 0)
+        neighkeys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY")
+        assert len(neighkeys) == 0, "Neigh entries still in ASIC_DB"
+
+        nexthop_keys = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", 0)
+        assert len(nexthop_keys) == 0, "Nexthop entries in still ASIC_DB"
+
+        # Cleanup inband if configuration
+        self.del_inbandif_port(vct, inband_port)
 
     def test_voq_drop_counters(self, vct):
         """Test VOQ switch drop counters.
@@ -1154,14 +1299,14 @@ class TestVirtualChassis(object):
                       value = drop_entry.get("SWITCH_DEBUG_COUNTER_ID_LIST")
                       assert value == "SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP", "Got error in getting Voq Switch Drop counter from FLEX_COUNTER_DB"
 
-                cntr_db = dvs.get_counters_db()
-                stat_name_entry = cntr_db.get_entry("COUNTERS_DEBUG_NAME_SWITCH_STAT_MAP", "")
-                value = stat_name_entry.get("SWITCH_STD_DROP_COUNTER-SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP")
-                assert value == "SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP", "Got error in getting Voq Switch Drop counter name map from COUNTERS_DB"
-
                 asic_db = dvs.get_asic_db()
                 keys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_SWITCH")
                 switch_oid_key = keys[0]
+                cntr_db = dvs.get_counters_db()
+                stat_name_entry = cntr_db.get_entry("COUNTERS_DEBUG_NAME_SWITCH_STAT_MAP", "")
+                value = stat_name_entry.get("SWITCH_ID")
+                assert value == switch_oid_key, "Wrong Switch Id"
+
                 stat_entry = cntr_db.get_entry("COUNTERS", switch_oid_key)
                 value = stat_entry.get("SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP")
                 assert value == "0", "SAI_SWITCH_STAT_PACKET_INTEGRITY_DROP is non zero in COUNTERS_DB"

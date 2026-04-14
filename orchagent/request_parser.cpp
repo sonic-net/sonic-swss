@@ -41,6 +41,7 @@ void Request::clear()
     attr_item_bools_.clear();
     attr_item_mac_addresses_.clear();
     attr_item_packet_actions_.clear();
+    attr_item_string_list_.clear();
 
     is_parsed_ = false;
 }
@@ -71,10 +72,10 @@ void Request::parseKey(const KeyOpFieldsValuesTuple& request)
     key_items.push_back(full_key_.substr(key_item_start, full_key_.length()));
 
     /*
-     * Attempt to parse an IPv6 address only if the following conditions are met:
+     * Attempt to parse an IPv6/MAC address only if the following conditions are met:
      * - The key separator is ":" 
      *     - The above logic will already correctly parse IPv6 addresses using other key separators
-     *     - Special consideration is only needed for ":" key separators since IPv6 addresses also use ":" as the field separator
+     *     - Special consideration is only needed for ":" key separators since IPv6/MAC addresses also use ":" as the field separator
      * - The number of parsed key items exceeds the number of expected key items
      *     - If we have too many key items and the last key item is supposed to be an IP or prefix, there is a chance that it was an 
      *       IPv6 address that got segmented during parsing
@@ -85,7 +86,8 @@ void Request::parseKey(const KeyOpFieldsValuesTuple& request)
      */
     if (key_separator_ == ':' and 
         key_items.size() > number_of_key_items_ and 
-        (request_description_.key_item_types.back() == REQ_T_IP or request_description_.key_item_types.back() == REQ_T_IP_PREFIX))
+        (request_description_.key_item_types.back() == REQ_T_IP or request_description_.key_item_types.back() == REQ_T_IP_PREFIX
+        or request_description_.key_item_types.back() == REQ_T_MAC_ADDRESS))
     {
         // Remove key_items so that key_items.size() is correct, then assemble the removed items into an IPv6 address
         std::vector<std::string> ip_addr_groups(--key_items.begin() + number_of_key_items_, key_items.end());
@@ -155,8 +157,16 @@ void Request::parseAttrs(const KeyOpFieldsValuesTuple& request)
         const auto item = request_description_.attr_item_types.find(fvField(*i));
         if (item == not_found)
         {
-            throw std::invalid_argument(std::string("Unknown attribute name: ") + fvField(*i));
+            if (!relaxed_attr_parsing_)
+            {
+                throw std::invalid_argument(std::string("Unknown attribute name: ") + fvField(*i));
+            }
+            else
+            {
+                continue;
+            }
         }
+
         attr_names_.insert(fvField(*i));
         switch(item->second)
         {
@@ -195,6 +205,12 @@ void Request::parseAttrs(const KeyOpFieldsValuesTuple& request)
                 break;
             case REQ_T_UINT_LIST:
                 attr_item_uint_list_[fvField(*i)] = parseUintList(fvValue(*i));
+                break;
+            case REQ_T_BOOL_LIST:
+                attr_item_bool_list_[fvField(*i)] = parseBoolList(fvValue(*i));
+                break;
+            case REQ_T_STRING_LIST:
+                attr_item_string_list_[fvField(*i)] = parseStringList(fvValue(*i));
                 break;
             default:
                 throw std::logic_error(std::string("Not implemented attribute type parser for attribute:") + fvField(*i));
@@ -362,6 +378,25 @@ sai_packet_action_t Request::parsePacketAction(const std::string& str)
     return found->second;
 }
 
+vector<bool> Request::parseBoolList(const std::string& str)
+{
+    try
+    {
+        vector<bool> res;
+        string substr;
+        std::istringstream iss(str);
+        while (getline(iss, substr, ','))
+        {
+            res.emplace_back(parseBool(substr));
+        }
+        return res;
+    }
+    catch (std::invalid_argument& _)
+    {
+        throw std::invalid_argument(std::string("Invalid boolean list: ") + str);
+    }
+}
+
 vector<IpAddress> Request::parseIpAddressList(const std::string& str)
 {
     try
@@ -427,4 +462,23 @@ vector<uint64_t> Request::parseUintList(const std::string& str)
     {
         throw std::invalid_argument(std::string("Out of range unsigned integer: ") + str);
     }
+}
+
+vector<string> Request::parseStringList(const std::string& str)
+{
+    std::vector<string> res;
+    try
+    {
+        std::string token;
+        std::istringstream iss(str);
+        while (getline(iss, token, ','))
+        {
+            res.emplace_back(token);
+        }
+    }
+    catch (std::invalid_argument& _)
+    {
+        throw std::invalid_argument(std::string("Invalid string list: ") + str);
+    }
+    return res;
 }

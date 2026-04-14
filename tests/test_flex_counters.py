@@ -1,11 +1,11 @@
 import time
 import pytest
 
+from dvslib.dvs_flex_counter import TestFlexCountersBase, NUMBER_OF_RETRIES
 from swsscommon import swsscommon
 
 TUNNEL_TYPE_MAP           = "COUNTERS_TUNNEL_TYPE_MAP"
 ROUTE_TO_PATTERN_MAP      = "COUNTERS_ROUTE_TO_PATTERN_MAP"
-NUMBER_OF_RETRIES         = 10
 CPU_PORT_OID              = "0x0"
 
 counter_group_meta = {
@@ -78,67 +78,28 @@ counter_group_meta = {
         'name_map': 'COUNTERS_ROUTE_NAME_MAP',
         'pre_test': 'pre_route_flow_counter_test',
         'post_test':  'post_route_flow_counter_test',
+    },
+    'wred_queue_counter': {
+        'key': 'WRED_ECN_QUEUE',
+        'group_name': 'WRED_ECN_QUEUE_STAT_COUNTER',
+        'name_map': 'COUNTERS_QUEUE_NAME_MAP',
+    },
+    'wred_port_counter': {
+        'key': 'WRED_ECN_PORT',
+        'group_name': 'WRED_ECN_PORT_STAT_COUNTER',
+        'name_map': 'COUNTERS_PORT_NAME_MAP',
+    },
+    'srv6_counter': {
+        'key': 'SRV6',
+        'group_name': 'SRV6_STAT_COUNTER',
+        'name_map': 'COUNTERS_SRV6_NAME_MAP',
+        'pre_test': 'pre_srv6_counter_test',
+        'post_test': 'post_srv6_counter_test',
     }
 }
 
-class TestFlexCounters(object):
 
-    def setup_dbs(self, dvs):
-        self.config_db = dvs.get_config_db()
-        self.flex_db = dvs.get_flex_db()
-        self.counters_db = dvs.get_counters_db()
-        self.app_db = dvs.get_app_db()
-
-    def wait_for_table(self, table):
-        for retry in range(NUMBER_OF_RETRIES):
-            counters_keys = self.counters_db.db_connection.hgetall(table)
-            if len(counters_keys) > 0:
-                return
-            else:
-                time.sleep(1)
-
-        assert False, str(table) + " not created in Counters DB"
-
-    def wait_for_table_empty(self, table):
-        for retry in range(NUMBER_OF_RETRIES):
-            counters_keys = self.counters_db.db_connection.hgetall(table)
-            if len(counters_keys) == 0:
-                return
-            else:
-                time.sleep(1)
-
-        assert False, str(table) + " is still in Counters DB"
-
-    def wait_for_id_list(self, stat, name, oid):
-        for retry in range(NUMBER_OF_RETRIES):
-            id_list = self.flex_db.db_connection.hgetall("FLEX_COUNTER_TABLE:" + stat + ":" + oid).items()
-            if len(id_list) > 0:
-                return
-            else:
-                time.sleep(1)
-
-        assert False, "No ID list for counter " + str(name)
-
-    def wait_for_id_list_remove(self, stat, name, oid):
-        for retry in range(NUMBER_OF_RETRIES):
-            id_list = self.flex_db.db_connection.hgetall("FLEX_COUNTER_TABLE:" + stat + ":" + oid).items()
-            if len(id_list) == 0:
-                return
-            else:
-                time.sleep(1)
-
-        assert False, "ID list for counter " + str(name) + " is still there"
-
-    def wait_for_interval_set(self, group, interval):
-        interval_value = None
-        for retry in range(NUMBER_OF_RETRIES):
-            interval_value = self.flex_db.db_connection.hget("FLEX_COUNTER_GROUP_TABLE:" + group, 'POLL_INTERVAL')
-            if interval_value == interval:
-                return
-            else:
-                time.sleep(1)
-
-        assert False, "Polling interval is not applied to FLEX_COUNTER_GROUP_TABLE for group {}, expect={}, actual={}".format(group, interval, interval_value)
+class TestFlexCounters(TestFlexCountersBase):
 
     def wait_for_buffer_pg_queue_counter(self, map, port, index, isSet):
         for retry in range(NUMBER_OF_RETRIES):
@@ -152,10 +113,6 @@ class TestFlexCounters(object):
 
         assert False, "Counter not {} for port: {}, type: {}, index: {}".format("created" if isSet else "removed", port, map, index)
 
-    def verify_no_flex_counters_tables(self, counter_stat):
-        counters_stat_keys = self.flex_db.get_keys("FLEX_COUNTER_TABLE:" + counter_stat)
-        assert len(counters_stat_keys) == 0, "FLEX_COUNTER_TABLE:" + str(counter_stat) + " tables exist before enabling the flex counter group"
-
     def verify_no_flex_counters_tables_after_delete(self, counter_stat):
         for retry in range(NUMBER_OF_RETRIES):
             counters_stat_keys = self.flex_db.get_keys("FLEX_COUNTER_TABLE:" + counter_stat + ":")
@@ -164,13 +121,6 @@ class TestFlexCounters(object):
             else:
                 time.sleep(1)
         assert False, "FLEX_COUNTER_TABLE:" + str(counter_stat) + " tables exist after removing the entries"
-
-    def verify_flex_counters_populated(self, map, stat):
-        counters_keys = self.counters_db.db_connection.hgetall(map)
-        for counter_entry in counters_keys.items():
-            name = counter_entry[0]
-            oid = counter_entry[1]
-            self.wait_for_id_list(stat, name, oid)
 
     def verify_tunnel_type_vxlan(self, meta_data, type_map):
         counters_keys = self.counters_db.db_connection.hgetall(meta_data['name_map'])
@@ -186,53 +136,13 @@ class TestFlexCounters(object):
         for port_stat in port_counters_stat_keys:
             assert port_stat in dict(port_counters_keys.items()).values(), "Non PHY port created on PORT_STAT_COUNTER group: {}".format(port_stat)
 
-    def set_flex_counter_group_status(self, group, map, status='enable', check_name_map=True):
-        group_stats_entry = {"FLEX_COUNTER_STATUS": status}
-        self.config_db.create_entry("FLEX_COUNTER_TABLE", group, group_stats_entry)
-        if check_name_map:
-            if status == 'enable':
-                self.wait_for_table(map)
-            else:
-                self.wait_for_table_empty(map)
-
-    def set_flex_counter_group_interval(self, key, group, interval):
-        group_stats_entry = {"POLL_INTERVAL": interval}
-        self.config_db.create_entry("FLEX_COUNTER_TABLE", key, group_stats_entry)
-        self.wait_for_interval_set(group, interval)
-
     def set_only_config_db_buffers_field(self, value):
         fvs = {'create_only_config_db_buffers' : value}
         self.config_db.update_entry("DEVICE_METADATA", "localhost", fvs)
 
     @pytest.mark.parametrize("counter_type", counter_group_meta.keys())
     def test_flex_counters(self, dvs, counter_type):
-        """
-        The test will check there are no flex counters tables on FlexCounter DB when the counters are disabled.
-        After enabling each counter group, the test will check the flow of creating flex counters tables on FlexCounter DB.
-        For some counter types the MAPS on COUNTERS DB will be created as well after enabling the counter group, this will be also verified on this test.
-        """
-        self.setup_dbs(dvs)
-        meta_data = counter_group_meta[counter_type]
-        counter_key = meta_data['key']
-        counter_stat = meta_data['group_name']
-        counter_map = meta_data['name_map']
-        pre_test = meta_data.get('pre_test')
-        post_test = meta_data.get('post_test')
-        meta_data['dvs'] = dvs
-
-        self.verify_no_flex_counters_tables(counter_stat)
-
-        if pre_test:
-            cb = getattr(self, pre_test)
-            cb(meta_data)
-
-        self.set_flex_counter_group_status(counter_key, counter_map)
-        self.verify_flex_counters_populated(counter_map, counter_stat)
-        self.set_flex_counter_group_interval(counter_key, counter_stat, '2500')
-
-        if post_test:
-            cb = getattr(self, post_test)
-            cb(meta_data)
+        self.verify_flex_counter_flow(dvs, counter_group_meta[counter_type])
 
     def pre_rif_counter_test(self, meta_data):
         self.config_db.db_connection.hset('INTERFACE|Ethernet0', "NULL", "NULL")
@@ -290,6 +200,19 @@ class TestFlexCounters(object):
         time.sleep(2)
         dvs.servers[1].runcmd("ping -6 -c 1 2001::1")
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"ipv6 route 2000::/64 2001::2\"")
+
+    def pre_srv6_counter_test(self, meta_data):
+        dvs = meta_data['dvs']
+        dvs.runcmd("ip link add sr0 type dummy")
+        dvs.runcmd("ip link set sr0 up")
+
+        self.config_db.create_entry("SRV6_MY_LOCATORS", "loc1", {"prefix": "1000:0:1::", "block_len": "32", "node_len": "16", "func_len": "0", "arg_len": "0"})
+        self.config_db.create_entry("SRV6_MY_SIDS", f'loc1|1000:0:1::/48', {"decap_dscp_mode": "pipe"})
+
+        loc_cmd = 'vtysh -c "configure terminal" -c "segment-routing" -c "srv6" -c "locators" -c "locator loc1" -c "prefix 1000:0:1::/48 block-len 32 node-len 16 func-bits 0" -c "behavior usid"'
+        sid_cmd = 'vtysh -c "configure terminal" -c "segment-routing" -c "srv6" -c "static-sids" -c "sid 1000:0:1::/48 locator loc1 behavior uN"'
+        dvs.runcmd(loc_cmd)
+        dvs.runcmd(sid_cmd)
 
     def post_rif_counter_test(self, meta_data):
         self.config_db.db_connection.hdel('INTERFACE|Ethernet0|192.168.0.1/24', "NULL")
@@ -363,6 +286,18 @@ class TestFlexCounters(object):
         dvs.servers[1].runcmd("ip -6 route del default dev eth0")
         dvs.servers[1].runcmd("ip -6 address del 2001::2/64 dev eth0")
         self.config_db.delete_entry('FLOW_COUNTER_ROUTE_PATTERN', '2000::/64')
+
+    def post_srv6_counter_test(self, meta_data):
+        dvs = meta_data['dvs']
+        sid_cmd = 'vtysh -c "configure terminal" -c "segment-routing" -c "srv6" -c "static-sids" -c "no sid 1000:0:1::/48 locator loc1 behavior uN"'
+        loc_cmd = 'vtysh -c "configure terminal" -c "segment-routing" -c "srv6" -c "locators" -c "no locator loc1"'
+        dvs.runcmd(sid_cmd)
+        dvs.runcmd(loc_cmd)
+
+        self.config_db.delete_entry("SRV6_MY_SIDS", f"loc1|1000:0:1::/48")
+        self.config_db.delete_entry("SRV6_MY_LOCATORS", "loc1")
+
+        dvs.runcmd("ip link del sr0 type dummy")
 
     def test_add_remove_trap(self, dvs):
         """Test steps:
@@ -716,12 +651,12 @@ class TestFlexCounters(object):
     def set_admin_status(self, interface, status):
         self.config_db.update_entry("PORT", interface, {"admin_status": status})
 
-    @pytest.mark.parametrize('counter_type', [('queue_counter'), ('pg_drop_counter')])
-    def test_create_only_config_db_buffers_false(self, dvs, counter_type):
+    @pytest.mark.parametrize('counter_type_id', [('queue_counter', '8'), ('pg_drop_counter', '7'), ('wred_queue_counter', '6')])
+    def test_create_only_config_db_buffers_false(self, dvs, counter_type_id):
         """
         Test steps:
             1. By default the configuration knob 'create_only_config_db_value' is missing.
-            2. Get the counter OID for the interface 'Ethernet0:7' from the counters database.
+            2. Get the counter OID for the interface 'Ethernet0', queue 8 or PG 7, from the counters database.
             3. Perform assertions based on the 'create_only_config_db_value':
                 - If 'create_only_config_db_value' is 'false' or does not exist, assert that the counter OID has a valid OID value.
 
@@ -730,10 +665,11 @@ class TestFlexCounters(object):
             counter_type (str): The type of counter being tested
         """
         self.setup_dbs(dvs)
+        counter_type, index = counter_type_id
         meta_data = counter_group_meta[counter_type]
         self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'])
 
-        counter_oid = self.counters_db.db_connection.hget(meta_data['name_map'], 'Ethernet0:7')
+        counter_oid = self.counters_db.db_connection.hget(meta_data['name_map'], 'Ethernet0:' + index)
         assert counter_oid is not None, "Counter OID should have a valid OID value when create_only_config_db_value is 'false' or does not exist"
 
     def test_create_remove_buffer_pg_watermark_counter(self, dvs):
@@ -765,12 +701,12 @@ class TestFlexCounters(object):
         self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', '1', False)
         self.wait_for_id_list_remove(meta_data['group_name'], "Ethernet0", counter_oid)
 
-    @pytest.mark.parametrize('counter_type', [('queue_counter'), ('pg_drop_counter')])
-    def test_create_only_config_db_buffers_true(self, dvs, counter_type):
+    @pytest.mark.parametrize('counter_type_id', [('queue_counter', '8'), ('pg_drop_counter', '7'), ('wred_queue_counter', '6')])
+    def test_create_only_config_db_buffers_true(self, dvs, counter_type_id):
         """
         Test steps:
             1. The 'create_only_config_db_buffers' was set to 'true' by previous test.
-            2. Get the counter OID for the interface 'Ethernet0:7' from the counters database.
+            2. Get the counter OID for the interface 'Ethernet0', queue 8 or PG 7, from the counters database.
             3. Perform assertions based on the 'create_only_config_db_value':
                 - If 'create_only_config_db_value' is 'true', assert that the counter OID is None.
 
@@ -778,12 +714,32 @@ class TestFlexCounters(object):
             dvs (object): virtual switch object
             counter_type (str): The type of counter being tested
         """
+        counter_type, index = counter_type_id
         self.setup_dbs(dvs)
         meta_data = counter_group_meta[counter_type]
         self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'])
 
-        counter_oid = self.counters_db.db_connection.hget(meta_data['name_map'], 'Ethernet0:7')
+        counter_oid = self.counters_db.db_connection.hget(meta_data['name_map'], 'Ethernet0:' + index)
         assert counter_oid is None, "Counter OID should be None when create_only_config_db_value is 'true'"
+
+    def test_wred_port_stats_status(self, dvs):
+        """
+        Test steps:
+            1. This test tests the counter status for the wred port stats.
+
+        Args:
+            dvs (object): virtual switch object
+        """
+        counter_type = 'wred_port_counter'
+        self.setup_dbs(dvs)
+        meta_data = counter_group_meta[counter_type]
+        self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'])
+        counter_oid = self.counters_db.db_connection.hget(meta_data['name_map'], 'Ethernet0')
+        stats_entry_disable = {"FLEX_COUNTER_STATUS": "disable"}
+        self.config_db.set_entry("FLEX_COUNTER_TABLE", meta_data['key'], stats_entry_disable)
+        stats_entry_enable = {"FLEX_COUNTER_STATUS": "enable"}
+        self.config_db.set_entry("FLEX_COUNTER_TABLE", meta_data['key'], stats_entry_enable)
+        assert(counter_oid)
 
     def test_create_remove_buffer_queue_counter(self, dvs):
         """
@@ -802,12 +758,12 @@ class TestFlexCounters(object):
 
         self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'])
 
-        self.config_db.update_entry('BUFFER_QUEUE', 'Ethernet0|7', {'profile': 'egress_lossless_profile'})
-        counter_oid = self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', '7', True)
+        self.config_db.update_entry('BUFFER_QUEUE', 'Ethernet0|8', {'profile': 'egress_lossless_profile'})
+        counter_oid = self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', '8', True)
         self.wait_for_id_list(meta_data['group_name'], "Ethernet0", counter_oid)
 
-        self.config_db.delete_entry('BUFFER_QUEUE', 'Ethernet0|7')
-        self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', '7', False)
+        self.config_db.delete_entry('BUFFER_QUEUE', 'Ethernet0|8')
+        self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', '8', False)
         self.wait_for_id_list_remove(meta_data['group_name'], "Ethernet0", counter_oid)
 
     def test_create_remove_buffer_watermark_queue_pg_counter(self, dvs):
@@ -830,16 +786,18 @@ class TestFlexCounters(object):
                 self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'])
 
         self.config_db.update_entry('BUFFER_PG', 'Ethernet0|7', {'profile': 'ingress_lossy_profile'})
-        self.config_db.update_entry('BUFFER_QUEUE', 'Ethernet0|7', {'profile': 'egress_lossless_profile'})
+        self.config_db.update_entry('BUFFER_QUEUE', 'Ethernet0|8', {'profile': 'egress_lossless_profile'})
 
         for counterpoll_type, meta_data in counter_group_meta.items():
             if 'queue' in counterpoll_type or 'pg' in counterpoll_type:
-                counter_oid = self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', '7', True)
+                index = '8' if 'queue' in counterpoll_type else '7'
+                counter_oid = self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', index, True)
                 self.wait_for_id_list(meta_data['group_name'], "Ethernet0", counter_oid)
 
-        self.config_db.delete_entry('BUFFER_QUEUE', 'Ethernet0|7')
+        self.config_db.delete_entry('BUFFER_QUEUE', 'Ethernet0|8')
         self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|7')
         for counterpoll_type, meta_data in counter_group_meta.items():
             if 'queue' in counterpoll_type or 'pg' in counterpoll_type:
-                self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', '7', False)
+                index = '8' if 'queue' in counterpoll_type else '7'
+                self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', index, False)
                 self.wait_for_id_list_remove(meta_data['group_name'], "Ethernet0", counter_oid)

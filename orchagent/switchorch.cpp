@@ -27,6 +27,18 @@ extern CrmOrch *gCrmOrch;
 extern event_handle_t g_events_handle;
 extern string gMyAsicName;
 
+// defines ------------------------------------------------------------------------------------------------------------
+
+#define SWITCH_STAT_COUNTER_POLLING_INTERVAL_MS 60000
+
+// constants ----------------------------------------------------------------------------------------------------------
+
+static const vector<sai_switch_stat_t> switch_stat_ids =
+{
+    SAI_SWITCH_STAT_DROPPED_TRIM_PACKETS,
+    SAI_SWITCH_STAT_TX_TRIM_PACKETS
+};
+
 const map<string, sai_switch_attr_t> switch_attribute_map =
 {
     {"fdb_unicast_miss_packet_action",      SAI_SWITCH_ATTR_FDB_UNICAST_MISS_PACKET_ACTION},
@@ -95,6 +107,22 @@ const std::set<sai_switch_asic_sdk_health_category_t> switch_asic_sdk_health_eve
 
 const std::set<std::string> switch_non_sai_attribute_set = {"ordered_ecmp"};
 
+// functions ----------------------------------------------------------------------------------------------------------
+
+static std::unordered_set<std::string> serializeSwitchCounterStats(const std::vector<sai_switch_stat_t> statIdList)
+{
+    std::unordered_set<std::string> stats;
+
+    for (const auto &cit : statIdList)
+    {
+        stats.emplace(sai_serialize_switch_stat(cit));
+    }
+
+    return stats;
+}
+
+// Switch OA ----------------------------------------------------------------------------------------------------------
+
 void SwitchOrch::set_switch_pfc_dlr_init_capability()
 {
     vector<FieldValueTuple> fvVector;
@@ -120,11 +148,12 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
         Orch(connectors),
         m_switchTable(switchTable.first, switchTable.second),
         m_db(db),
-        m_stateDb(new DBConnector(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+        m_stateDb(new DBConnector("STATE_DB", 0)),
         m_asicSensorsTable(new Table(m_stateDb.get(), ASIC_TEMPERATURE_INFO_TABLE_NAME)),
         m_sensorsPollerTimer (new SelectableTimer((timespec { .tv_sec = DEFAULT_ASIC_SENSORS_POLLER_INTERVAL, .tv_nsec = 0 }))),
-        m_stateDbForNotification(new DBConnector(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
-        m_asicSdkHealthEventTable(new Table(m_stateDbForNotification.get(), STATE_ASIC_SDK_HEALTH_EVENT_TABLE_NAME))
+        m_stateDbForNotification(new DBConnector("STATE_DB", 0)),
+        m_asicSdkHealthEventTable(new Table(m_stateDbForNotification.get(), STATE_ASIC_SDK_HEALTH_EVENT_TABLE_NAME)),
+        m_counterManager(SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, SWITCH_STAT_COUNTER_POLLING_INTERVAL_MS, false)
 {
     m_restartCheckNotificationConsumer = new NotificationConsumer(db, "RESTARTCHECK");
     auto restartCheckNotifier = new Notifier(m_restartCheckNotificationConsumer, this, "RESTARTCHECK");
@@ -135,10 +164,43 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
     initSensorsTable();
     querySwitchTpidCapability();
     querySwitchPortEgressSampleCapability();
+    querySwitchPortMirrorCapability();
     querySwitchHashDefaults();
+    setSwitchIcmpOffloadCapability();
+    setFastLinkupCapability();
 
     auto executorT = new ExecutableTimer(m_sensorsPollerTimer, this, "ASIC_SENSORS_POLL_TIMER");
     Orch::addExecutor(executorT);
+}
+
+void SwitchOrch::generateSwitchCounterNameMap() const
+{
+    SWSS_LOG_ENTER();
+
+    DBConnector db("COUNTERS_DB", 0);
+    Table table(&db, COUNTERS_SWITCH_NAME_MAP);
+
+    FieldValueTuple tuple("ASIC", sai_serialize_object_id(gSwitchId));
+    std::vector<FieldValueTuple> fvList = { tuple };
+
+    table.set("", fvList);
+
+    SWSS_LOG_NOTICE("Wrote switch name mapping to Counters DB");
+}
+
+void SwitchOrch::generateSwitchCounterIdList()
+{
+    if (m_isSwitchCounterIdListGenerated)
+    {
+        return;
+    }
+
+    auto switchStats = serializeSwitchCounterStats(switch_stat_ids);
+    m_counterManager.setCounterIdList(gSwitchId, CounterType::SWITCH, switchStats);
+
+    generateSwitchCounterNameMap();
+
+    m_isSwitchCounterIdListGenerated = true;
 }
 
 void SwitchOrch::initAsicSdkHealthEventNotification()
@@ -900,6 +962,372 @@ void SwitchOrch::doCfgSwitchHashTableTask(Consumer &consumer)
     }
 }
 
+bool SwitchOrch::setSwitchTrimmingSizeSai(const SwitchTrimming &trim) const
+{
+    sai_attribute_t attr;
+
+    attr.id = SAI_SWITCH_ATTR_PACKET_TRIM_SIZE;
+    attr.value.u32 = trim.size.value;
+
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool SwitchOrch::setSwitchTrimmingDscpModeSai(const SwitchTrimming &trim) const
+{
+    sai_attribute_t attr;
+
+    attr.id = SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_RESOLUTION_MODE;
+    attr.value.s32 = trim.dscp.mode.value;
+
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool SwitchOrch::setSwitchTrimmingDscpSai(const SwitchTrimming &trim) const
+{
+    sai_attribute_t attr;
+
+    attr.id = SAI_SWITCH_ATTR_PACKET_TRIM_DSCP_VALUE;
+    attr.value.u8 = trim.dscp.value;
+
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool SwitchOrch::setSwitchTrimmingTcSai(const SwitchTrimming &trim) const
+{
+    sai_attribute_t attr;
+
+    attr.id = SAI_SWITCH_ATTR_PACKET_TRIM_TC_VALUE;
+    attr.value.u8 = trim.tc.value;
+
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool SwitchOrch::setSwitchTrimmingQueueModeSai(const SwitchTrimming &trim) const
+{
+    sai_attribute_t attr;
+
+    attr.id = SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_RESOLUTION_MODE;
+    attr.value.s32 = trim.queue.mode.value;
+
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool SwitchOrch::setSwitchTrimmingQueueIndexSai(const SwitchTrimming &trim) const
+{
+    sai_attribute_t attr;
+
+    attr.id = SAI_SWITCH_ATTR_PACKET_TRIM_QUEUE_INDEX;
+    attr.value.u8 = trim.queue.index.value;
+
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool SwitchOrch::setSwitchTrimming(const SwitchTrimming &trim)
+{
+    SWSS_LOG_ENTER();
+
+    auto tObj = trimHlpr.getConfig();
+
+    auto dscpBak = false;
+    auto tcBak = false;
+    auto queueBak = false;
+
+    auto tcUpdate = false;
+    auto tcSync = false;
+
+    auto cfgUpd = false;
+
+    if (!trimCap.isSwitchTrimmingSupported())
+    {
+        SWSS_LOG_WARN("Switch trimming configuration is not supported: skipping ...");
+        return true;
+    }
+
+    if (trim.size.is_set)
+    {
+        if (!tObj.size.is_set || (tObj.size.value != trim.size.value))
+        {
+            if (!setSwitchTrimmingSizeSai(trim))
+            {
+                SWSS_LOG_ERROR("Failed to set switch trimming size in SAI");
+                return false;
+            }
+
+            cfgUpd = true;
+        }
+    }
+    else
+    {
+        if (tObj.size.is_set)
+        {
+            SWSS_LOG_ERROR("Failed to remove switch trimming size configuration: operation is not supported");
+            return false;
+        }
+    }
+
+    if (trim.dscp.mode.is_set)
+    {
+        if (!tObj.dscp.mode.is_set || (tObj.dscp.mode.value != trim.dscp.mode.value))
+        {
+            if (!trimCap.validateTrimDscpModeCap(trim.dscp.mode.value))
+            {
+                SWSS_LOG_ERROR("Failed to validate switch trimming DSCP mode: capability is not supported");
+                return false;
+            }
+
+            if (!setSwitchTrimmingDscpModeSai(trim))
+            {
+                SWSS_LOG_ERROR("Failed to set switch trimming DSCP mode in SAI");
+                return false;
+            }
+
+            if (trimHlpr.isSymDscpMode(tObj))
+            {
+                dscpBak = true;
+            }
+
+            if (!trimHlpr.isSymDscpMode(trim))
+            {
+                if (!tObj.tc.cache.is_set)
+                {
+                    tcUpdate = true;
+                }
+                else
+                {
+                    tObj.tc.value = tObj.tc.cache.value;
+                }
+            }
+
+            cfgUpd = true;
+        }
+    }
+    else
+    {
+        if (tObj.dscp.mode.is_set)
+        {
+            SWSS_LOG_ERROR("Failed to remove switch trimming DSCP configuration: operation is not supported");
+            return false;
+        }
+    }
+
+    if (trim.dscp.is_set)
+    {
+        if (!tObj.dscp.is_set || (tObj.dscp.value != trim.dscp.value))
+        {
+            if (!setSwitchTrimmingDscpSai(trim))
+            {
+                SWSS_LOG_ERROR("Failed to set switch trimming DSCP value in SAI");
+                return false;
+            }
+
+            cfgUpd = true;
+        }
+    }
+
+    if (trim.tc.is_set)
+    {
+        if (!tObj.tc.is_set || (tObj.tc.value != trim.tc.value) || tcUpdate)
+        {
+            if (!trimHlpr.isSymDscpMode(trim))
+            {
+                if (!trimCap.validateTrimTcCap(trim.tc.value))
+                {
+                    SWSS_LOG_ERROR("Failed to validate switch trimming TC value: capability is not supported");
+                    return false;
+                }
+
+                if (!setSwitchTrimmingTcSai(trim))
+                {
+                    SWSS_LOG_ERROR("Failed to set switch trimming TC value in SAI");
+                    return false;
+                }
+
+                tcSync = true;
+            }
+            else
+            {
+                SWSS_LOG_WARN("Skip setting switch trimming TC value for symmetric DSCP mode");
+            }
+
+            cfgUpd = true;
+        }
+
+        // Cache synchronization and backup are mutually exclusive
+        if (!tcSync)
+        {
+            tcBak = true;
+        }
+    }
+    else
+    {
+        if (tObj.tc.is_set)
+        {
+            SWSS_LOG_ERROR("Failed to remove switch trimming TC configuration: operation is not supported");
+            return false;
+        }
+    }
+
+    if (trim.queue.mode.is_set)
+    {
+        if (!tObj.queue.mode.is_set || (tObj.queue.mode.value != trim.queue.mode.value))
+        {
+            if (!trimCap.validateTrimQueueModeCap(trim.queue.mode.value))
+            {
+                SWSS_LOG_ERROR("Failed to validate switch trimming queue mode: capability is not supported");
+                return false;
+            }
+
+            if (!setSwitchTrimmingQueueModeSai(trim))
+            {
+                SWSS_LOG_ERROR("Failed to set switch trimming queue mode in SAI");
+                return false;
+            }
+
+            if (trimHlpr.isStaticQueueMode(tObj))
+            {
+                queueBak = true;
+            }
+
+            cfgUpd = true;
+        }
+    }
+    else
+    {
+        if (tObj.queue.mode.is_set)
+        {
+            SWSS_LOG_ERROR("Failed to remove switch trimming queue configuration: operation is not supported");
+            return false;
+        }
+    }
+
+    if (trim.queue.index.is_set)
+    {
+        if (!tObj.queue.index.is_set || (tObj.queue.index.value != trim.queue.index.value))
+        {
+            if (!trimCap.validateQueueIndexCap(trim.queue.index.value))
+            {
+                SWSS_LOG_ERROR("Failed to validate switch trimming queue index: capability is not supported");
+                return false;
+            }
+
+            if (!setSwitchTrimmingQueueIndexSai(trim))
+            {
+                SWSS_LOG_ERROR("Failed to set switch trimming queue index in SAI");
+                return false;
+            }
+
+            cfgUpd = true;
+        }
+    }
+
+    // Don't update internal cache when config remains unchanged
+    if (!cfgUpd)
+    {
+        SWSS_LOG_NOTICE("Switch trimming in SAI is up-to-date");
+        return true;
+    }
+
+    if (dscpBak || tcBak || queueBak || tcSync) // Custom configuration update
+    {
+        auto cfg = trim;
+
+        if (dscpBak) // Override dscp configuration during transition from symmetric -> asymmetric
+        {
+            cfg.dscp = tObj.dscp;
+            cfg.dscp.mode = trim.dscp.mode;
+        }
+
+        if (tcBak) // Override tc configuration to pass synchronization cache
+        {
+            cfg.tc.cache = tObj.tc.cache;
+        }
+
+        if (queueBak) // override queue configuration during transition from static -> dynamic
+        {
+            cfg.queue.index = tObj.queue.index;
+        }
+
+        if (tcSync) // Update tc synchronization cache
+        {
+            cfg.tc.cache.value = trim.tc.value;
+            cfg.tc.cache.is_set = true;
+        }
+
+        trimHlpr.setConfig(cfg);
+    }
+    else // Regular configuration update
+    {
+        trimHlpr.setConfig(trim);
+    }
+
+    SWSS_LOG_NOTICE("Set switch trimming in SAI");
+
+    return true;
+}
+
+void SwitchOrch::doCfgSwitchTrimmingTableTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto &map = consumer.m_toSync;
+    auto it = map.begin();
+
+    while (it != map.end())
+    {
+        auto keyOpFieldsValues = it->second;
+        auto key = kfvKey(keyOpFieldsValues);
+        auto op = kfvOp(keyOpFieldsValues);
+
+        SWSS_LOG_INFO("KEY: %s, OP: %s", key.c_str(), op.c_str());
+
+        if (key.empty())
+        {
+            SWSS_LOG_ERROR("Failed to parse switch trimming key: empty string");
+            it = map.erase(it);
+            continue;
+        }
+
+        SwitchTrimming trim;
+
+        if (op == SET_COMMAND)
+        {
+            for (const auto &cit : kfvFieldsValues(keyOpFieldsValues))
+            {
+                auto fieldName = fvField(cit);
+                auto fieldValue = fvValue(cit);
+
+                SWSS_LOG_INFO("FIELD: %s, VALUE: %s", fieldName.c_str(), fieldValue.c_str());
+
+                trim.fieldValueMap[fieldName] = fieldValue;
+            }
+
+            if (trimHlpr.parseTrimConfig(trim))
+            {
+                if (!setSwitchTrimming(trim))
+                {
+                    SWSS_LOG_ERROR("Failed to set switch trimming: ASIC and CONFIG DB are diverged");
+                }
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            SWSS_LOG_ERROR("Failed to remove switch trimming: operation is not supported: ASIC and CONFIG DB are diverged");
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation(%s)", op.c_str());
+        }
+
+        it = map.erase(it);
+    }
+}
+
 void SwitchOrch::registerAsicSdkHealthEventCategories(sai_switch_attr_t saiSeverity, const string &severityString, const string &suppressed_category_list, bool isInitializing)
 {
     sai_status_t status;
@@ -1045,6 +1473,14 @@ void SwitchOrch::doTask(Consumer &consumer)
     {
         doCfgSwitchHashTableTask(consumer);
     }
+    else if (tableName == CFG_SWITCH_TRIMMING_TABLE_NAME)
+    {
+        doCfgSwitchTrimmingTableTask(consumer);
+    }
+    else if (tableName == CFG_SWITCH_FAST_LINKUP_TABLE_NAME)
+    {
+        doCfgSwitchFastLinkupTableTask(consumer);
+    }
     else if (tableName == CFG_SUPPRESS_ASIC_SDK_HEALTH_EVENT_NAME)
     {
         doCfgSuppressAsicSdkHealthEventTableTask(consumer);
@@ -1115,8 +1551,22 @@ void SwitchOrch::onSwitchAsicSdkHealthEvent(sai_object_id_t switch_id,
     const string &severity_str = switch_asic_sdk_health_event_severity_reverse_map.at(severity);
     const string &category_str = switch_asic_sdk_health_event_category_reverse_map.at(category);
     string description_str;
-    const std::time_t &t = (std::time_t)timestamp.tv_sec;
+    std::time_t t = (std::time_t)timestamp.tv_sec;
+    const std::time_t now = std::time(0);
+    const double year_in_seconds = 86400 * 365;
     stringstream time_ss;
+
+    /*
+     * In case vendor SAI passed a very large timestamp, put_time can cause segment fault which can not be caught by try/catch infra
+     * We check the difference between the timestamp from SAI and the current time and force to use current time if the gap is too large
+     * By doing so, we can avoid the segment fault
+     */
+    if (difftime(t, now) > year_in_seconds)
+    {
+        SWSS_LOG_ERROR("Invalid timestamp second %" PRIx64 " in received ASIC/SDK health event, reset to current time", timestamp.tv_sec);
+        t = now;
+    }
+
     time_ss << std::put_time(std::localtime(&t), "%Y-%m-%d %H:%M:%S");
 
     switch (data.data_type)
@@ -1381,6 +1831,11 @@ void SwitchOrch::set_switch_capability(const std::vector<FieldValueTuple>& value
      m_switchTable.set("switch", values);
 }
 
+void SwitchOrch::get_switch_capability(const std::string& capability, std::string& val)
+{
+     m_switchTable.hget("switch", capability, val);
+}
+
 void SwitchOrch::querySwitchPortEgressSampleCapability()
 {
     vector<FieldValueTuple> fvVector;
@@ -1407,6 +1862,63 @@ void SwitchOrch::querySwitchPortEgressSampleCapability()
         }
         SWSS_LOG_NOTICE("port egress Sample capability %d", capability.set_implemented);
     }
+    set_switch_capability(fvVector);
+}
+
+void SwitchOrch::querySwitchPortMirrorCapability()
+{
+    vector<FieldValueTuple> fvVector;
+    sai_status_t status = SAI_STATUS_SUCCESS;
+    sai_attr_capability_t capability;
+
+    // Check if SAI is capable of handling Port ingress mirror session
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT,
+                            SAI_PORT_ATTR_INGRESS_MIRROR_SESSION, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query port ingress mirror capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_MIRROR_CAPABLE, "true");
+        m_portIngressMirrorSupported = true;
+    }
+    else
+    {
+        if (capability.set_implemented)
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_MIRROR_CAPABLE, "true");
+            m_portIngressMirrorSupported = true;
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_MIRROR_CAPABLE, "false");
+            m_portIngressMirrorSupported = false;
+        }
+        SWSS_LOG_NOTICE("port ingress mirror capability %d", capability.set_implemented);
+    }
+
+    // Check if SAI is capable of handling Port egress mirror session
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT,
+                            SAI_PORT_ATTR_EGRESS_MIRROR_SESSION, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query port egress mirror capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_MIRROR_CAPABLE, "true");
+        m_portEgressMirrorSupported = true;
+    }
+    else
+    {
+        if (capability.set_implemented)
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_MIRROR_CAPABLE, "true");
+            m_portEgressMirrorSupported = true;
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_MIRROR_CAPABLE, "false");
+            m_portEgressMirrorSupported = false;
+        }
+        SWSS_LOG_NOTICE("port egress mirror capability %d", capability.set_implemented);
+    }
+
     set_switch_capability(fvVector);
 }
 
@@ -1495,6 +2007,27 @@ void SwitchOrch::querySwitchHashDefaults()
     }
 }
 
+void SwitchOrch::setSwitchIcmpOffloadCapability()
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> fvVector;
+    // icmp echo offload does not support capability attribute,
+    //  we depend on its notification capability
+    bool supported = querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ICMP_ECHO_SESSION_STATE_CHANGE_NOTIFY);
+    if (supported == false)
+    {
+        SWSS_LOG_NOTICE("Icmp Echo Offload not supported");
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_ICMP_OFFLOAD_CAPABLE, "false");
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("Icmp Echo Offload supported");
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_ICMP_OFFLOAD_CAPABLE, "true");
+    }
+    set_switch_capability(fvVector);
+}
+
 bool SwitchOrch::querySwitchCapability(sai_object_type_t sai_object, sai_attr_id_t attr_id)
 {
     SWSS_LOG_ENTER();
@@ -1520,6 +2053,190 @@ bool SwitchOrch::querySwitchCapability(sai_object_type_t sai_object, sai_attr_id
         {
             return false;
         }
+    }
+}
+
+void SwitchOrch::setFastLinkupCapability()
+{
+    SWSS_LOG_ENTER();
+
+    std::vector<FieldValueTuple> fvVector;
+
+    // Determine support by checking create/set capability on polling time attribute (enabled in real SAI)
+    bool supported = querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_FAST_LINKUP_POLLING_TIMEOUT);
+    m_fastLinkupCap.supported = supported;
+
+    if (!supported)
+    {
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_FAST_LINKUP_CAPABLE, "false");
+        set_switch_capability(fvVector);
+        return;
+    }
+    fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_FAST_LINKUP_CAPABLE, "true");
+
+    // Query allowed ranges if supported by SAI
+    sai_attribute_t attr;
+    attr.id = SAI_SWITCH_ATTR_FAST_LINKUP_POLLING_TIMEOUT_RANGE;
+    sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        m_fastLinkupCap.has_polling_range = true;
+        m_fastLinkupCap.polling_min = attr.value.u16range.min;
+        m_fastLinkupCap.polling_max = attr.value.u16range.max;
+        fvVector.emplace_back(
+            SWITCH_CAPABILITY_TABLE_FAST_LINKUP_POLLING_TIMER_RANGE,
+            to_string(m_fastLinkupCap.polling_min) + "," + to_string(m_fastLinkupCap.polling_max));
+    }
+    else
+    {
+        SWSS_LOG_WARN("Failed to get fast linkup polling range: %s", sai_serialize_status(status).c_str());
+    }
+
+    attr.id = SAI_SWITCH_ATTR_FAST_LINKUP_GUARD_TIMEOUT_RANGE;
+    status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        m_fastLinkupCap.has_guard_range = true;
+        m_fastLinkupCap.guard_min = attr.value.u16range.min;
+        m_fastLinkupCap.guard_max = attr.value.u16range.max;
+        fvVector.emplace_back(
+            SWITCH_CAPABILITY_TABLE_FAST_LINKUP_GUARD_TIMER_RANGE,
+            to_string(m_fastLinkupCap.guard_min) + "," + to_string(m_fastLinkupCap.guard_max));
+    }
+    else
+    {
+        SWSS_LOG_WARN("Failed to get fast linkup guard range: %s", sai_serialize_status(status).c_str());
+    }
+    set_switch_capability(fvVector);
+}
+
+bool SwitchOrch::setSwitchFastLinkup(const FastLinkupConfig &cfg)
+{
+    SWSS_LOG_ENTER();
+
+    if (!m_fastLinkupCap.supported)
+    {
+        SWSS_LOG_NOTICE("Fast link-up is not supported on this platform");
+        return false;
+    }
+
+    // Validate ranges if known
+    if (cfg.has_polling && m_fastLinkupCap.has_polling_range)
+    {
+        if (cfg.polling_time < m_fastLinkupCap.polling_min || cfg.polling_time > m_fastLinkupCap.polling_max)
+        {
+            SWSS_LOG_NOTICE("Invalid polling_time %u; allowed [%u,%u]", cfg.polling_time, m_fastLinkupCap.polling_min, m_fastLinkupCap.polling_max);
+            return false;
+        }
+    }
+    if (cfg.has_guard && m_fastLinkupCap.has_guard_range)
+    {
+        if (cfg.guard_time < m_fastLinkupCap.guard_min || cfg.guard_time > m_fastLinkupCap.guard_max)
+        {
+            SWSS_LOG_NOTICE("Invalid guard_time %u; allowed [%u,%u]", cfg.guard_time, m_fastLinkupCap.guard_min, m_fastLinkupCap.guard_max);
+            return false;
+        }
+    }
+
+    // Apply attributes conditionally
+    sai_status_t status;
+    if (cfg.has_polling)
+    {
+        sai_attribute_t attr;
+        attr.id = SAI_SWITCH_ATTR_FAST_LINKUP_POLLING_TIMEOUT;
+        attr.value.u16 = cfg.polling_time;
+        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_NOTICE("Failed to set FAST_LINKUP_POLLING_TIME=%u: %s", cfg.polling_time, sai_serialize_status(status).c_str());
+            return false;
+        }
+    }
+
+    if (cfg.has_guard)
+    {
+        sai_attribute_t attr;
+        attr.id = SAI_SWITCH_ATTR_FAST_LINKUP_GUARD_TIMEOUT;
+        attr.value.u8 = cfg.guard_time;
+        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_NOTICE("Failed to set FAST_LINKUP_GUARD_TIME=%u: %s", cfg.guard_time, sai_serialize_status(status).c_str());
+            return false;
+        }
+    }
+
+    if (cfg.has_ber)
+    {
+        sai_attribute_t attr;
+        attr.id = SAI_SWITCH_ATTR_FAST_LINKUP_BER_THRESHOLD;
+        attr.value.u8 = cfg.ber_threshold;
+        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_NOTICE("Failed to set FAST_LINKUP_BER_THRESHOLD=%u: %s", cfg.ber_threshold, sai_serialize_status(status).c_str());
+            return false;
+        }
+    }
+    SWSS_LOG_INFO("Fast link-up set: polling_time=%s, guard_time=%s, ber_threshold=%s",
+                    cfg.has_polling ? std::to_string(cfg.polling_time).c_str() : "N/A",
+                    cfg.has_guard   ? std::to_string(cfg.guard_time).c_str()   : "N/A",
+                    cfg.has_ber     ? std::to_string(cfg.ber_threshold).c_str() : "N/A");
+    return true;
+}
+
+void SwitchOrch::doCfgSwitchFastLinkupTableTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto &map = consumer.m_toSync;
+    auto it = map.begin();
+
+    while (it != map.end())
+    {
+        auto keyOpFieldsValues = it->second;
+        auto key = kfvKey(keyOpFieldsValues);
+        auto op = kfvOp(keyOpFieldsValues);
+
+        if (op == SET_COMMAND)
+        {
+            FastLinkupConfig cfg;
+            for (const auto &cit : kfvFieldsValues(keyOpFieldsValues))
+            {
+                auto fieldName = fvField(cit);
+                auto fieldValue = fvValue(cit);
+                if (fieldName == "polling_time")
+                {
+                    try { cfg.polling_time = to_uint<uint16_t>(fieldValue); cfg.has_polling = true; }
+                    catch (...) { SWSS_LOG_ERROR("Invalid polling_time value %s", fieldValue.c_str()); }
+                }
+                else if (fieldName == "guard_time")
+                {
+                    try { cfg.guard_time = to_uint<uint8_t>(fieldValue); cfg.has_guard = true; }
+                    catch (...) { SWSS_LOG_ERROR("Invalid guard_time value %s", fieldValue.c_str()); }
+                }
+                else if (fieldName == "ber_threshold")
+                {
+                    try { cfg.ber_threshold = to_uint<uint8_t>(fieldValue); cfg.has_ber = true; }
+                    catch (...) { SWSS_LOG_ERROR("Invalid ber_threshold value %s", fieldValue.c_str()); }
+                }
+                else
+                {
+                    SWSS_LOG_WARN("Unknown field %s in SWITCH_FAST_LINKUP", fieldName.c_str());
+                }
+            }
+
+            if (!setSwitchFastLinkup(cfg))
+            {
+                SWSS_LOG_ERROR("Failed to configure fast link-up from CONFIG_DB");
+            }
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unsupported operation %s for SWITCH_FAST_LINKUP", op.c_str());
+        }
+
+        it = map.erase(it);
     }
 }
 

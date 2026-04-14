@@ -10,8 +10,11 @@ extern "C" {
 #include <vector>
 #include <map>
 #include <bitset>
+#include <chrono>
 #include <unordered_set>
-
+#include <iomanip>
+#include <sstream>
+#include <boost/variant.hpp>
 #include <macaddress.h>
 #include <sairedis.h>
 
@@ -30,6 +33,28 @@ extern "C" {
 #define DEFAULT_TPID             0x8100
 
 #define VNID_NONE               0xFFFFFFFF
+
+// SerdesValue using boost::variant to support both vector<uint32_t> and string values
+using SerdesValue = boost::variant<std::vector<uint32_t>, std::string>;
+
+// Visitor class for processing SerdesValue in SAI attribute setting
+class SerdesValueVisitor : public boost::static_visitor<void> {
+public:
+    explicit SerdesValueVisitor(sai_attribute_t& attr) : attr_(attr) {}
+
+    void operator()(const std::vector<uint32_t>& values) const {
+        attr_.value.u32list.count = static_cast<uint32_t>(values.size());
+        attr_.value.u32list.list = const_cast<uint32_t*>(values.data());
+    }
+
+    void operator()(const std::string& str_value) const {
+        attr_.value.json.json.count = static_cast<uint32_t>(str_value.size());
+        attr_.value.json.json.list = reinterpret_cast<int8_t*>(const_cast<char*>(str_value.data()));
+    }
+
+private:
+    sai_attribute_t& attr_;
+};
 
 namespace swss {
 
@@ -72,6 +97,43 @@ struct SystemLagInfo
     std::string alias = "";
     int32_t switch_id = -1;
     int32_t spa_id = 0;
+};
+
+typedef std::map<sai_uint16_t, sai_object_id_t> stp_port_ids_t;
+class PortOperErrorEvent
+{
+public:
+    PortOperErrorEvent() = default;
+    PortOperErrorEvent(const sai_port_error_status_t error, std::string key) : m_errorFlag(error), m_dbKeyError(key){}
+    ~PortOperErrorEvent() = default;
+
+    inline void incrementErrorCount(void) { m_errorCount++; }
+    
+    inline size_t getErrorCount(void) const { return m_errorCount; }
+    
+    void recordEventTime(void) {
+        auto now = std::chrono::system_clock::now();
+        m_eventTime = std::chrono::system_clock::to_time_t(now);
+    }
+    
+    std::string getEventTime(void) {
+        std::ostringstream oss;
+        oss << std::put_time(std::gmtime(&m_eventTime), "%Y-%m-%d %H:%M:%S");
+        return oss.str();
+    }
+
+    inline std::string getDbKey(void) const { return m_dbKeyError; }
+    
+    // Returns true if port oper error flag in sai_port_error_status_t is set
+    bool isErrorSet(sai_port_error_status_t errstatus) const { return (m_errorFlag & errstatus);}
+
+    static const std::unordered_map<sai_port_error_status_t, std::string> db_key_errors;
+
+private:
+    sai_port_error_status_t m_errorFlag = SAI_PORT_ERROR_STATUS_CLEAR;
+    size_t m_errorCount = 0;
+    std::string m_dbKeyError; // DB key for this port error
+    std::time_t m_eventTime = 0;
 };
 
 class Port
@@ -133,6 +195,7 @@ public:
     uint32_t            m_speed = 0;    // Mbps
     port_learn_mode_t   m_learn_mode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
     bool                m_autoneg = false;
+    bool                m_unreliable_los = false;
     bool                m_link_training = false;
     bool                m_admin_state_up = false;
     bool                m_init = false;
@@ -155,6 +218,7 @@ public:
     sai_object_id_t     m_parent_port_id = 0;
     uint32_t            m_dependency_bitmap = 0;
     sai_port_oper_status_t m_oper_status = SAI_PORT_OPER_STATUS_UNKNOWN;
+    sai_port_error_status_t m_oper_error_status = SAI_PORT_ERROR_STATUS_CLEAR; //Bitmap of last port oper error status
     std::set<std::string> m_members;
     std::set<std::string> m_child_ports;
     std::vector<sai_object_id_t> m_queue_ids;
@@ -162,17 +226,19 @@ public:
     sai_port_priority_flow_control_mode_t m_pfc_asym = SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_COMBINED;
     uint8_t   m_pfc_bitmask = 0;        // PFC enable bit mask
     uint8_t   m_pfcwd_sw_bitmask = 0;   // PFC software watchdog enable
+    uint8_t   m_host_tx_queue = 0;
+    bool      m_host_tx_queue_configured = false;
     uint16_t  m_tpid = DEFAULT_TPID;
     uint32_t  m_nat_zone_id = 0;
     uint32_t  m_vnid = VNID_NONE;
     uint32_t  m_fdb_count = 0;
     uint64_t  m_flap_count = 0;
     uint32_t  m_up_member_count = 0;
-    uint32_t  m_maximum_headroom = 0;
     std::set<uint32_t> m_adv_speeds;
     sai_port_interface_type_t m_interface_type = SAI_PORT_INTERFACE_TYPE_NONE;
     std::set<sai_port_interface_type_t> m_adv_interface_types;
     bool      m_mpls = false;
+    std::string m_media_type = "unknown";
     /*
      * Following bit vector is used to lock
      * the queue from being changed in BufferOrch.
@@ -193,8 +259,13 @@ public:
     sai_object_id_t  m_system_side_id = 0;
     sai_object_id_t  m_line_side_id = 0;
 
-    /* pre-emphasis */
-    std::map<sai_port_serdes_attr_t, std::vector<uint32_t>> m_preemphasis;
+    stp_port_ids_t m_stp_port_ids; //STP Port object ids for each STP instance
+    sai_int16_t m_stp_id = -1; //STP instance for the VLAN
+    /* Port oper error status to event map*/
+    std::unordered_map<sai_port_error_status_t, PortOperErrorEvent> m_portOperErrorToEvent;
+
+    /* serdes attributes */
+    std::map<sai_port_serdes_attr_t, SerdesValue> m_serdes_attrs;
 
     /* Force initial parameter configuration flags */
     bool m_an_cfg = false;        // Auto-negotiation (AN)
@@ -203,7 +274,6 @@ public:
     bool m_adv_intf_cfg = false;  // Advertised interface type
     bool m_fec_cfg = false;       // Forward Error Correction (FEC)
     bool m_override_fec = false;  // Enable Override FEC
-    bool m_pfc_asym_cfg = false;  // Asymmetric Priority Flow Control (PFC)
     bool m_lm_cfg = false;        // Forwarding Database (FDB) Learning Mode (LM)
     bool m_lt_cfg = false;        // Link Training (LT)
 
@@ -221,6 +291,8 @@ public:
     uint32_t m_suppress_threshold = 0;
     uint32_t m_reuse_threshold = 0;
     uint32_t m_flap_penalty = 0;
+
+    Role m_role;
 };
 
 }

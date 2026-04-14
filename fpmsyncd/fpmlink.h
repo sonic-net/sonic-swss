@@ -15,6 +15,13 @@
 #include "fpmsyncd/fpminterface.h"
 #include "fpmsyncd/routesync.h"
 
+#define RTM_NEWSRV6LOCALSID		1000
+#define RTM_DELSRV6LOCALSID		1001
+#define RTM_NEWPICCONTEXT		2000
+#define RTM_DELPICCONTEXT		2001
+#define RTM_NEWSRV6VPNROUTE		3000
+#define RTM_DELSRV6VPNROUTE		3001
+
 namespace swss {
 
 class FpmLink : public FpmInterface {

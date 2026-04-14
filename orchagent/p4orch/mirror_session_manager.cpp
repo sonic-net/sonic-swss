@@ -55,129 +55,136 @@ void MirrorSessionManager::enqueue(const std::string &table_name, const swss::Ke
     m_entries.push_back(entry);
 }
 
-void MirrorSessionManager::drain()
-{
-    SWSS_LOG_ENTER();
-
-    for (const auto &key_op_fvs_tuple : m_entries)
-    {
-        std::string table_name;
-        std::string key;
-        parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &key);
-        const std::vector<swss::FieldValueTuple> &attributes = kfvFieldsValues(key_op_fvs_tuple);
-
-        ReturnCode status;
-        auto app_db_entry_or = deserializeP4MirrorSessionAppDbEntry(key, attributes);
-        if (!app_db_entry_or.ok())
-        {
-            status = app_db_entry_or.status();
-            SWSS_LOG_ERROR("Unable to deserialize APP DB entry with key %s: %s",
-                           QuotedVar(table_name + ":" + key).c_str(), status.message().c_str());
-            m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                 status,
-                                 /*replace=*/true);
-            continue;
-        }
-        auto &app_db_entry = *app_db_entry_or;
-
-        const std::string mirror_session_key = KeyGenerator::generateMirrorSessionKey(app_db_entry.mirror_session_id);
-
-        // Fulfill the operation.
-        const std::string &operation = kfvOp(key_op_fvs_tuple);
-        if (operation == SET_COMMAND)
-        {
-            auto *mirror_session_entry = getMirrorSessionEntry(mirror_session_key);
-            if (mirror_session_entry == nullptr)
-            {
-                // Create new mirror session.
-                status = processAddRequest(app_db_entry);
-            }
-            else
-            {
-                // Modify existing mirror session.
-                status = processUpdateRequest(app_db_entry, mirror_session_entry);
-            }
-        }
-        else if (operation == DEL_COMMAND)
-        {
-            // Delete mirror session.
-            status = processDeleteRequest(mirror_session_key);
-        }
-        else
-        {
-            status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Unknown operation type " << QuotedVar(operation);
-            SWSS_LOG_ERROR("%s", status.message().c_str());
-        }
-        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple), status,
-                             /*replace=*/true);
-    }
-    m_entries.clear();
+void MirrorSessionManager::drainWithNotExecuted() {
+  drainMgmtWithNotExecuted(m_entries, m_publisher);
 }
 
-ReturnCodeOr<std::vector<sai_attribute_t>> getSaiAttrs(const P4MirrorSessionEntry &mirror_session_entry)
-{
-    swss::Port port;
-    if (!gPortsOrch->getPort(mirror_session_entry.port, port))
-    {
-        LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-                             << "Failed to get port info for port " << QuotedVar(mirror_session_entry.port));
+ReturnCode MirrorSessionManager::drain() {
+  SWSS_LOG_ENTER();
+
+  ReturnCode status;
+  while (!m_entries.empty()) {
+    auto key_op_fvs_tuple = m_entries.front();
+    m_entries.pop_front();
+    std::string table_name;
+    std::string key;
+    parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &key);
+    const std::vector<swss::FieldValueTuple>& attributes =
+        kfvFieldsValues(key_op_fvs_tuple);
+
+    auto app_db_entry_or =
+        deserializeP4MirrorSessionAppDbEntry(key, attributes);
+    if (!app_db_entry_or.ok()) {
+      status = app_db_entry_or.status();
+      SWSS_LOG_ERROR("Unable to deserialize APP DB entry with key %s: %s",
+                     QuotedVar(table_name + ":" + key).c_str(),
+                     status.message().c_str());
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple), status,
+                           /*replace=*/true);
+      break;
     }
-    if (port.m_type != Port::Type::PHY)
-    {
-        LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                             << "Port " << QuotedVar(mirror_session_entry.port) << "'s type " << port.m_type
-                             << " is not physical and is invalid as destination "
-                                "port for mirror packet.");
+    auto& app_db_entry = *app_db_entry_or;
+
+    const std::string mirror_session_key =
+        KeyGenerator::generateMirrorSessionKey(app_db_entry.mirror_session_id);
+
+    // Fulfill the operation.
+    const std::string& operation = kfvOp(key_op_fvs_tuple);
+    if (operation == SET_COMMAND) {
+      auto* mirror_session_entry = getMirrorSessionEntry(mirror_session_key);
+      if (mirror_session_entry == nullptr) {
+        // Create new mirror session.
+        status = processAddRequest(app_db_entry);
+      } else {
+        // Modify existing mirror session.
+        status = processUpdateRequest(app_db_entry, mirror_session_entry);
+      }
+    } else if (operation == DEL_COMMAND) {
+      // Delete mirror session.
+      status = processDeleteRequest(mirror_session_key);
+    } else {
+      status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Unknown operation type " << QuotedVar(operation);
+      SWSS_LOG_ERROR("%s", status.message().c_str());
     }
+    m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                         kfvFieldsValues(key_op_fvs_tuple), status,
+                         /*replace=*/true);
+    if (!status.ok()) {
+      break;
+    }
+  }
+  drainWithNotExecuted();
+  return status;
+}
 
-    std::vector<sai_attribute_t> attrs;
-    sai_attribute_t attr;
+ReturnCodeOr<std::vector<sai_attribute_t>> prepareSaiAttrs(
+    const P4MirrorSessionEntry& mirror_session_entry) {
+  swss::Port port;
+  if (!gPortsOrch->getPort(mirror_session_entry.port, port)) {
+    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                         << "Failed to get port info for port "
+                         << QuotedVar(mirror_session_entry.port));
+  }
+  if (port.m_type != Port::Type::PHY) {
+    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                         << "Port " << QuotedVar(mirror_session_entry.port)
+                         << "'s type " << port.m_type
+                         << " is not physical and is invalid as destination "
+                            "port for mirror packet.");
+  }
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
-    attr.value.oid = port.m_port_id;
-    attrs.push_back(attr);
+  std::vector<sai_attribute_t> attrs;
+  sai_attribute_t attr;
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_TYPE;
-    attr.value.s32 = SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE;
-    attrs.push_back(attr);
+  attr.id = SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
+  attr.value.oid = port.m_port_id;
+  attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_ERSPAN_ENCAPSULATION_TYPE;
-    attr.value.s32 = SAI_ERSPAN_ENCAPSULATION_TYPE_MIRROR_L3_GRE_TUNNEL;
-    attrs.push_back(attr);
+  attr.id = SAI_MIRROR_SESSION_ATTR_TYPE;
+  attr.value.s32 = SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE;
+  attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION;
-    attr.value.u8 = MIRROR_SESSION_DEFAULT_IP_HDR_VER;
-    attrs.push_back(attr);
+  attr.id = SAI_MIRROR_SESSION_ATTR_ERSPAN_ENCAPSULATION_TYPE;
+  attr.value.s32 = SAI_ERSPAN_ENCAPSULATION_TYPE_MIRROR_L3_GRE_TUNNEL;
+  attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_TOS;
-    attr.value.u8 = mirror_session_entry.tos;
-    attrs.push_back(attr);
+  attr.id = SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION;
+  attr.value.u8 = MIRROR_SESSION_DEFAULT_IP_HDR_VER;
+  attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_TTL;
-    attr.value.u8 = mirror_session_entry.ttl;
-    attrs.push_back(attr);
+  attr.id = SAI_MIRROR_SESSION_ATTR_TOS;
+  attr.value.u8 = mirror_session_entry.tos;
+  attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_SRC_IP_ADDRESS;
-    swss::copy(attr.value.ipaddr, mirror_session_entry.src_ip);
-    attrs.push_back(attr);
+  attr.id = SAI_MIRROR_SESSION_ATTR_TTL;
+  attr.value.u8 = mirror_session_entry.ttl;
+  attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_DST_IP_ADDRESS;
-    swss::copy(attr.value.ipaddr, mirror_session_entry.dst_ip);
-    attrs.push_back(attr);
+  attr.id = SAI_MIRROR_SESSION_ATTR_SRC_IP_ADDRESS;
+  swss::copy(attr.value.ipaddr, mirror_session_entry.src_ip);
+  attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_SRC_MAC_ADDRESS;
-    memcpy(attr.value.mac, mirror_session_entry.src_mac.getMac(), sizeof(sai_mac_t));
-    attrs.push_back(attr);
+  attr.id = SAI_MIRROR_SESSION_ATTR_DST_IP_ADDRESS;
+  swss::copy(attr.value.ipaddr, mirror_session_entry.dst_ip);
+  attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS;
-    memcpy(attr.value.mac, mirror_session_entry.dst_mac.getMac(), sizeof(sai_mac_t));
-    attrs.push_back(attr);
+  attr.id = SAI_MIRROR_SESSION_ATTR_SRC_MAC_ADDRESS;
+  memcpy(attr.value.mac, mirror_session_entry.src_mac.getMac(),
+         sizeof(sai_mac_t));
+  attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE;
-    attr.value.u16 = GRE_PROTOCOL_ERSPAN;
-    attrs.push_back(attr);
+  attr.id = SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS;
+  memcpy(attr.value.mac, mirror_session_entry.dst_mac.getMac(),
+         sizeof(sai_mac_t));
+  attrs.push_back(attr);
 
-    return attrs;
+  attr.id = SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE;
+  attr.value.u16 = GRE_PROTOCOL_ERSPAN;
+  attrs.push_back(attr);
+
+  return attrs;
 }
 
 ReturnCodeOr<P4MirrorSessionAppDbEntry> MirrorSessionManager::deserializeP4MirrorSessionAppDbEntry(
@@ -367,7 +374,8 @@ ReturnCode MirrorSessionManager::createMirrorSession(P4MirrorSessionEntry mirror
                                                  << " already exists in centralized mapper");
     }
     // Prepare attributes for the SAI creation call.
-    ASSIGN_OR_RETURN(std::vector<sai_attribute_t> attrs, getSaiAttrs(mirror_session_entry));
+    ASSIGN_OR_RETURN(std::vector<sai_attribute_t> attrs,
+                     prepareSaiAttrs(mirror_session_entry));
 
     // Call SAI API.
     CHECK_ERROR_AND_LOG_AND_RETURN(
@@ -900,11 +908,11 @@ std::string MirrorSessionManager::verifyStateCache(const P4MirrorSessionAppDbEnt
 
 std::string MirrorSessionManager::verifyStateAsicDb(const P4MirrorSessionEntry *mirror_session_entry)
 {
-    auto attrs_or = getSaiAttrs(*mirror_session_entry);
-    if (!attrs_or.ok())
-    {
-        return std::string("Failed to get SAI attrs: ") + attrs_or.status().message();
-    }
+  auto attrs_or = prepareSaiAttrs(*mirror_session_entry);
+  if (!attrs_or.ok()) {
+    return std::string("Failed to get SAI attrs: ") +
+           attrs_or.status().message();
+  }
     std::vector<sai_attribute_t> attrs = *attrs_or;
     std::vector<swss::FieldValueTuple> exp = saimeta::SaiAttributeList::serialize_attr_list(
         SAI_OBJECT_TYPE_MIRROR_SESSION, (uint32_t)attrs.size(), attrs.data(),

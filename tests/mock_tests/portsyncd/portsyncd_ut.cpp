@@ -187,18 +187,6 @@ namespace portsyncd_ut
 
 namespace portsyncd_ut
 {
-    TEST_F(PortSyncdTest, test_linkSyncInit)
-    {
-        if_ni_mock = populateNetDev();
-        mockCmdStdcout = "up\n";
-        swss::LinkSync sync(m_app_db.get(), m_state_db.get());
-        std::vector<std::string> keys;
-        sync.m_stateMgmtPortTable.getKeys(keys);
-        ASSERT_EQ(keys.size(), 1);
-        ASSERT_EQ(keys.back(), "eth0");
-        ASSERT_EQ(mockCallArgs.back(), "cat /sys/class/net/\"eth0\"/operstate");
-    }
-
     TEST_F(PortSyncdTest, test_cacheOldIfaces)
     {  
         if_ni_mock = populateNetDevAdvanced();
@@ -293,29 +281,6 @@ namespace portsyncd_ut
 
         /* Verify if the state_db entry is cleared */
         ASSERT_EQ(sync.m_statePortTable.get("Ethernet0", ovalues), false);
-    }
-
-    TEST_F(PortSyncdTest, test_onMsgMgmtIface){
-        swss::LinkSync sync(m_app_db.get(), m_state_db.get());
-        
-        /* Generate a netlink notification about the eth0 netdev iface */
-        std::vector<unsigned int> flags = {IFF_UP}; 
-        struct nl_object* msg = draft_nlmsg("eth0",
-                                            flags,
-                                            "",
-                                            "00:50:56:28:0e:4a",
-                                            16222,
-                                            9100,
-                                            0);
-        sync.onMsg(RTM_NEWLINK, msg);
-
-        /* Verify if the update has been written to State DB */
-        std::string oper_status;
-        ASSERT_EQ(sync.m_stateMgmtPortTable.hget("eth0", "oper_status", oper_status), true);
-        ASSERT_EQ(oper_status, "down");
-
-        /* Free Nl_object */
-        free_nlobj(msg);
     }
 
     TEST_F(PortSyncdTest, test_onMsgIgnoreOldNetDev){
