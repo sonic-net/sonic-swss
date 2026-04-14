@@ -1,3 +1,6 @@
+// NOTE: Using #define private public is a known SONiC test pattern to access internal members
+// for testing purposes. However, this is technically undefined behavior in C++ and should be
+// used cautiously. Consider using friend declarations or proper test fixtures in new code.
 #define private public // make Directory::m_values available to clean it.
 #include "directory.h"
 #undef private
@@ -171,18 +174,8 @@ namespace evpnmhorch_test
             gDirectory.set(gPortsOrch);
             ut_orch_list.push_back((Orch **)&gPortsOrch);
 
-            vector<string> buffer_tables = { APP_BUFFER_POOL_TABLE_NAME,
-                                             APP_BUFFER_PROFILE_TABLE_NAME,
-                                             APP_BUFFER_QUEUE_TABLE_NAME,
-                                             APP_BUFFER_PG_TABLE_NAME,
-                                             APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
-                                             APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME };
-
-            ASSERT_EQ(gBufferOrch, nullptr);
-            gBufferOrch = new BufferOrch(m_appl_db.get(), m_config_db.get(), m_state_db.get(), buffer_tables);
-            gDirectory.set(gBufferOrch);
-            ut_orch_list.push_back((Orch **)&gBufferOrch);
-
+            // Create EvpnMhOrch early so its ES/DF state is available when PortsOrch
+            // processes bridge ports and VLAN members (matches production code order)
             TableConnector appDbDfTable(m_appl_db.get(), "EVPN_DF_TABLE");
             TableConnector confDbEvpnEsTable(m_config_db.get(), "EVPN_ETHERNET_SEGMENT");
 
@@ -195,6 +188,18 @@ namespace evpnmhorch_test
             gEvpnMhOrch = new EvpnMhOrch(evpn_df_es_table_connectors);
             gDirectory.set(gEvpnMhOrch);
             ut_orch_list.push_back((Orch **)&gEvpnMhOrch);
+
+            vector<string> buffer_tables = { APP_BUFFER_POOL_TABLE_NAME,
+                                             APP_BUFFER_PROFILE_TABLE_NAME,
+                                             APP_BUFFER_QUEUE_TABLE_NAME,
+                                             APP_BUFFER_PG_TABLE_NAME,
+                                             APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
+                                             APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME };
+
+            ASSERT_EQ(gBufferOrch, nullptr);
+            gBufferOrch = new BufferOrch(m_appl_db.get(), m_config_db.get(), m_state_db.get(), buffer_tables);
+            gDirectory.set(gBufferOrch);
+            ut_orch_list.push_back((Orch **)&gBufferOrch);
         }
 
         void TearDown() override
