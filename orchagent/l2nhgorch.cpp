@@ -443,6 +443,7 @@ bool L2NhgOrch::addL2NextHopGroupEntry(string nhg_id, string nh_ids, string sour
                 SWSS_LOG_ERROR("Failed to add bridge port of type next hop group for %s", nhg_id.c_str());
 
                 /* Clean up the next hops that were just added since bridge port creation failed */
+                bool cleanup_failed = false;
                 for (string i : v_add_nh)
                 {
                     if (m_nhg_nh[nhg_id].next_hops.count(i))
@@ -450,8 +451,9 @@ bool L2NhgOrch::addL2NextHopGroupEntry(string nhg_id, string nh_ids, string sour
                         bool ret = removeSaiNextHop(m_nhg_nh[nhg_id].next_hops[i]);
                         if (!ret)
                         {
-                            SWSS_LOG_INFO("Failed to remove SAI next hop %s for %s", i.c_str(), nhg_id.c_str());
-                            return false;
+                            SWSS_LOG_ERROR("Failed to remove SAI next hop %s for %s during cleanup", i.c_str(), nhg_id.c_str());
+                            cleanup_failed = true;
+                            continue; // Try to clean up remaining NHs
                         }
                         m_nhg_nh[nhg_id].next_hops.erase(i);
                         
@@ -475,6 +477,10 @@ bool L2NhgOrch::addL2NextHopGroupEntry(string nhg_id, string nh_ids, string sour
                 {
                     removeSaiNextHopGroup(m_nhg_nh[nhg_id].oid);
                     m_nhg_nh.erase(nhg_id);
+                }
+                else if (cleanup_failed)
+                {
+                    SWSS_LOG_ERROR("Partial cleanup failure for NHG %s - some SAI objects may have leaked", nhg_id.c_str());
                 }
                 return false;
             }
@@ -551,13 +557,21 @@ bool L2NhgOrch::deleteL2NextHop(string nh_id)
 
     if (m_nhg_vtep[nh_id].ref_count != 0)
     {
-        SWSS_LOG_ERROR("L2 nexthop %s pointing to the tunnel for %s has non-zero ref count : %d",
-                       nh_id.c_str(),
-                       m_nhg_vtep[nh_id].ip.c_str(),
-                       m_nhg_vtep[nh_id].ref_count);
-        if (m_nhg_vtep[nh_id].ref_count > 0) {
-            return false;
+        if (m_nhg_vtep[nh_id].ref_count < 0)
+        {
+            SWSS_LOG_ERROR("L2 nexthop %s pointing to the tunnel for %s has NEGATIVE ref count : %d - indicates ref counting bug",
+                           nh_id.c_str(),
+                           m_nhg_vtep[nh_id].ip.c_str(),
+                           m_nhg_vtep[nh_id].ref_count);
         }
+        else
+        {
+            SWSS_LOG_ERROR("L2 nexthop %s pointing to the tunnel for %s has non-zero ref count : %d",
+                           nh_id.c_str(),
+                           m_nhg_vtep[nh_id].ip.c_str(),
+                           m_nhg_vtep[nh_id].ref_count);
+        }
+        return false;
     }
 
     m_nhg_vtep.erase(nh_id);
