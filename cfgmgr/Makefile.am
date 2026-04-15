@@ -27,6 +27,7 @@ DBGFLAGS = -g
 endif
 
 COMMON_ORCH_SOURCE = $(top_srcdir)/orchagent/orch.cpp \
+				$(top_srcdir)/orchagent/swssstats.cpp \
 				$(top_srcdir)/orchagent/request_parser.cpp \
 				$(top_srcdir)/orchagent/response_publisher.cpp \
 				$(top_srcdir)/lib/recorder.cpp
