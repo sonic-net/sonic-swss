@@ -71,21 +71,6 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
     else
     {
         m_maxNextHopGroupCount = attr.value.s32;
-
-        /*
-         * ASIC specific workaround to re-calculate maximum ECMP groups
-         * according to different ECMP mode used.
-         *
-         * On Mellanox platform, the maximum ECMP groups returned is the value
-         * under the condition that the ECMP group size is 1. Dividing this
-         * number by DEFAULT_MAX_ECMP_GROUP_SIZE gets the maximum number of
-         * ECMP groups when the maximum ECMP group size is 32.
-         */
-        char *platform = getenv("platform");
-        if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
-        {
-            m_maxNextHopGroupCount /= DEFAULT_MAX_ECMP_GROUP_SIZE;
-        }
     }
     vector<FieldValueTuple> fvTuple;
     fvTuple.emplace_back("MAX_NEXTHOP_GROUP_COUNT", to_string(m_maxNextHopGroupCount));
