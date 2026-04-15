@@ -5,7 +5,7 @@ import json
 import util
 import l3
 import test_vrf
-
+import time
 
 class TestP4RTL3(object):
     def _set_up(self, dvs):
@@ -23,17 +23,14 @@ class TestP4RTL3(object):
         self._p4rt_nexthop_obj.set_up_databases(dvs)
         self._p4rt_route_obj.set_up_databases(dvs)
         self._p4rt_wcmp_group_obj.set_up_databases(dvs)
-        APP_P4RT_CHANNEL_NAME="P4rt_Channel"
-        self.p4rt_notifier = swsscommon.NotificationProducer(
-            self._p4rt_route_obj.appl_db, APP_P4RT_CHANNEL_NAME
-        )
-        self.p4rt_response_consumer = swsscommon.NotificationConsumer(
-            self._p4rt_route_obj.appl_db, APP_P4RT_CHANNEL_NAME 
-        )
-        self.response_consumer = swsscommon.NotificationConsumer(
-            self._p4rt_route_obj.appl_db, "APPL_DB_" +
-            swsscommon.APP_P4RT_TABLE_NAME + "_RESPONSE_CHANNEL"
-        )
+
+    def _cleanup(self):
+        self._p4rt_router_intf_obj.clean_up()
+        self._p4rt_gre_tunnel_obj.clean_up()
+        self._p4rt_neighbor_obj.clean_up()
+        self._p4rt_nexthop_obj.clean_up()
+        self._p4rt_route_obj.clean_up()
+        self._p4rt_wcmp_group_obj.clean_up()
 
     def _set_vrf(self, dvs):
         # Create VRF.
@@ -44,6 +41,116 @@ class TestP4RTL3(object):
     def _clean_vrf(self, dvs):
         # Remove VRF.
         self._vrf_obj.vrf_remove(dvs, self.vrf_id, self.vrf_state)
+
+    def get_global_vrf_id(self):
+        virt_entries = util.get_keys(self._p4rt_router_intf_obj.asic_db,
+                                     "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
+        for key in virt_entries:
+            return key
+        return "0"
+
+    def test_CreateRouterInterfaceWithVlanAddDeletePass(self, dvs, testlog):
+        # Initialize L3 objects and database connectors.
+        self._set_up(dvs)
+
+        appl_db_table_name = (
+            self._p4rt_router_intf_obj.APP_DB_TBL_NAME + ":" +
+            self._p4rt_router_intf_obj.TBL_NAME)
+
+        # Fetch database state after init.
+        original_app_db_entries = util.get_keys(
+            self._p4rt_router_intf_obj.appl_db, appl_db_table_name)
+        original_asic_db_entries = util.get_keys(
+            self._p4rt_router_intf_obj.asic_db,
+            self._p4rt_router_intf_obj.ASIC_DB_TBL_NAME)
+
+        db_list = (
+            (self._p4rt_router_intf_obj.asic_db,
+             self._p4rt_router_intf_obj.ASIC_DB_TBL_NAME),
+        )
+        self._p4rt_router_intf_obj.get_original_redis_entries(db_list)
+
+        # Create router interface.
+        (
+            router_interface_id,
+            router_intf_key,
+            attr_list,
+        ) = self._p4rt_router_intf_obj.create_router_interface(
+                action=self._p4rt_router_intf_obj.VLAN_ID_ACTION)
+        self._p4rt_router_intf_obj.verify_response(
+            router_intf_key, attr_list, "SWSS_RC_SUCCESS"
+        )
+        rif_oid = (
+            self._p4rt_router_intf_obj.get_newly_created_router_interface_oid())
+
+        # Check that APP DB has expected entry with expected values.
+        rif_entries = util.get_keys(
+            self._p4rt_router_intf_obj.appl_db, appl_db_table_name)
+        assert len(rif_entries) == (len(original_app_db_entries) + 1)
+
+        (status, fvs) = util.get_key(
+            self._p4rt_router_intf_obj.appl_db,
+            self._p4rt_router_intf_obj.APP_DB_TBL_NAME,
+            router_intf_key)
+        assert status == True
+        util.verify_attr(fvs, attr_list)
+
+        # Check that ASIC DB has expected values.
+        rif_asic_entries = util.get_keys(
+            self._p4rt_router_intf_obj.asic_db,
+            self._p4rt_router_intf_obj.ASIC_DB_TBL_NAME)
+        assert len(rif_asic_entries) == (
+            len(original_asic_db_entries) + 1)
+
+        asic_db_key = None
+        for key in rif_asic_entries:
+            if key not in original_asic_db_entries:
+                asic_db_key = key
+                break
+        assert asic_db_key is not None
+        (status, fvs) = util.get_key(
+            self._p4rt_router_intf_obj.asic_db,
+            self._p4rt_router_intf_obj.ASIC_DB_TBL_NAME,
+            asic_db_key)
+        assert status == True
+
+        global_vrf_id = self.get_global_vrf_id()
+        port_oid = util.get_port_oid_by_name(
+            dvs, self._p4rt_router_intf_obj.DEFAULT_PORT_ID)
+
+        attr_list = [
+            (self._p4rt_router_intf_obj.SAI_ATTR_VIRTUAL_ROUTER_ID,
+             global_vrf_id),
+            (self._p4rt_router_intf_obj.SAI_ATTR_SRC_MAC,
+             self._p4rt_router_intf_obj.DEFAULT_SRC_MAC),
+            (self._p4rt_router_intf_obj.SAI_ATTR_TYPE,
+             self._p4rt_router_intf_obj.SAI_ATTR_TYPE_SUB_PORT),
+            (self._p4rt_router_intf_obj.SAI_ATTR_MTU,
+             self._p4rt_router_intf_obj.SAI_ATTR_DEFAULT_MTU),
+            (self._p4rt_router_intf_obj.SAI_ATTR_OUTER_VLAN_ID, "65"),
+            (self._p4rt_router_intf_obj.SAI_ATTR_PORT_ID, port_oid),
+            (self._p4rt_router_intf_obj.SAI_ATTR_V4_MCAST_ENABLE, "true"),
+            (self._p4rt_router_intf_obj.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+        ]
+        util.verify_attr(fvs, attr_list)
+
+        # Next, delete the entry
+        self._p4rt_router_intf_obj.remove_app_db_entry(router_intf_key)
+        self._p4rt_router_intf_obj.verify_response(router_intf_key, [],
+                                                   "SWSS_RC_SUCCESS")
+
+        # Check that entries are gone.
+        rif_entries = util.get_keys(
+            self._p4rt_router_intf_obj.appl_db, appl_db_table_name)
+        assert len(rif_entries) == len(original_app_db_entries)
+
+        # Check that ASIC DB has expected values.
+        rif_asic_entries = util.get_keys(
+            self._p4rt_router_intf_obj.asic_db,
+            self._p4rt_router_intf_obj.ASIC_DB_TBL_NAME)
+        assert len(rif_asic_entries) == len(original_asic_db_entries)
+
+        self._cleanup()
 
     def test_IPv4RouteWithNexthopAddUpdateDeletePass(self, dvs, testlog):
         # Initialize L3 objects and database connectors.
@@ -70,35 +177,73 @@ class TestP4RTL3(object):
         )
         self._p4rt_route_obj.get_original_redis_entries(db_list)
 
+        db_list = (
+            (
+                self._p4rt_router_intf_obj.appl_db,
+                "%s:%s"
+                % (self._p4rt_router_intf_obj.APP_DB_TBL_NAME,
+                   self._p4rt_router_intf_obj.TBL_NAME),
+            ),
+            (self._p4rt_router_intf_obj.asic_db,
+             self._p4rt_router_intf_obj.ASIC_DB_TBL_NAME),
+        )
+        self._p4rt_router_intf_obj.get_original_redis_entries(db_list)
+
         # Create router interface.
         (
             router_interface_id,
             router_intf_key,
             attr_list,
         ) = self._p4rt_router_intf_obj.create_router_interface()
-        util.verify_response(
-            self.response_consumer, router_intf_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_router_intf_obj.verify_response(
+            router_intf_key, attr_list, "SWSS_RC_SUCCESS"
         )
+        rif_oid = (
+            self._p4rt_router_intf_obj.get_newly_created_router_interface_oid())
 
         # Create neighbor.
         neighbor_id, neighbor_key, attr_list = self._p4rt_neighbor_obj.create_neighbor()
-        util.verify_response(
-            self.response_consumer, neighbor_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_neighbor_obj.verify_response(
+            neighbor_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Create nexthop.
         nexthop_id, nexthop_key, attr_list = self._p4rt_nexthop_obj.create_next_hop()
-        util.verify_response(
-            self.response_consumer, nexthop_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_nexthop_obj.verify_response(
+            nexthop_key, attr_list, "SWSS_RC_SUCCESS"
         )
         # get nexthop_oid of newly created nexthop
         nexthop_oid = self._p4rt_nexthop_obj.get_newly_created_nexthop_oid()
         assert nexthop_oid is not None
 
+        # Query ASIC database for newly created next hop.
+        asic_db_key = self._p4rt_nexthop_obj.get_newly_created_asic_db_key()
+        assert asic_db_key is not None
+        (status, fvs) = util.get_key(
+            self._p4rt_nexthop_obj.asic_db,
+            self._p4rt_nexthop_obj.ASIC_DB_TBL_NAME,
+            asic_db_key,
+        )
+        assert status == True
+        attr_list = [(self._p4rt_nexthop_obj.SAI_ATTR_TYPE,
+                      self._p4rt_nexthop_obj.SAI_ATTR_TYPE_IP),
+                     (self._p4rt_nexthop_obj.SAI_ATTR_IP,
+                      self._p4rt_nexthop_obj.DEFAULT_IPV4_NEIGHBOR_ID),
+                     (self._p4rt_nexthop_obj.SAI_ATTR_ROUTER_INTF_OID, rif_oid),
+                     (self._p4rt_nexthop_obj.SAI_ATTR_DISABLE_DECREMENT_TTL,
+                      "false"),
+                     (self._p4rt_nexthop_obj.SAI_ATTR_DISABLE_SRC_MAC_REWRITE,
+                      "false"),
+                     (self._p4rt_nexthop_obj.SAI_ATTR_DISABLE_DST_MAC_REWRITE,
+                      "false"),
+                     (self._p4rt_nexthop_obj.SAI_ATTR_DISABLE_VLAN_REWRITE,
+                      "false")]
+        util.verify_attr(fvs, attr_list)
+
         # Create route entry.
         route_key, attr_list = self._p4rt_route_obj.create_route(nexthop_id)
-        util.verify_response(
-            self.response_consumer, route_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_route_obj.verify_response(
+            route_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Query application database for route entries.
@@ -143,8 +288,8 @@ class TestP4RTL3(object):
         route_key, attr_list = self._p4rt_route_obj.create_route(
             action="set_nexthop_id_and_metadata", metadata="2"
         )
-        util.verify_response(
-            self.response_consumer, route_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_route_obj.verify_response(
+            route_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Query application database for route entries.
@@ -203,8 +348,8 @@ class TestP4RTL3(object):
 
         # Update route entry to drop.
         route_key, attr_list = self._p4rt_route_obj.create_route(action="drop")
-        util.verify_response(
-            self.response_consumer, route_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_route_obj.verify_response(
+            route_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Query application database for route entries.
@@ -254,24 +399,23 @@ class TestP4RTL3(object):
 
         # Remove route entry.
         self._p4rt_route_obj.remove_app_db_entry(route_key)
-        util.verify_response(self.response_consumer,
-                             route_key, [], "SWSS_RC_SUCCESS")
+        self._p4rt_route_obj.verify_response(route_key, [], "SWSS_RC_SUCCESS")
 
         # Remove nexthop.
         self._p4rt_nexthop_obj.remove_app_db_entry(nexthop_key)
-        util.verify_response(self.response_consumer,
-                             nexthop_key, [], "SWSS_RC_SUCCESS")
+        self._p4rt_nexthop_obj.verify_response(
+            nexthop_key, [], "SWSS_RC_SUCCESS")
 
         # Remove neighbor.
         self._p4rt_neighbor_obj.remove_app_db_entry(neighbor_key)
-        util.verify_response(
-            self.response_consumer, neighbor_key, [], "SWSS_RC_SUCCESS"
+        self._p4rt_neighbor_obj.verify_response(
+            neighbor_key, [], "SWSS_RC_SUCCESS"
         )
 
         # Remove router interface.
         self._p4rt_router_intf_obj.remove_app_db_entry(router_intf_key)
-        util.verify_response(
-            self.response_consumer, router_intf_key, [], "SWSS_RC_SUCCESS"
+        self._p4rt_router_intf_obj.verify_response(
+            router_intf_key, [], "SWSS_RC_SUCCESS"
         )
 
         # Query application database for route entries.
@@ -307,6 +451,7 @@ class TestP4RTL3(object):
         )
         assert status == False
         self._clean_vrf(dvs)
+        self._cleanup()
 
     def test_IPv6WithWcmpRouteAddUpdateDeletePass(self, dvs, testlog):
         # Initialize L3 objects and database connectors.
@@ -345,10 +490,6 @@ class TestP4RTL3(object):
                 self._p4rt_wcmp_group_obj.asic_db,
                 self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
             ),
-            (
-                self._p4rt_wcmp_group_obj.asic_db,
-                self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-            ),
         )
         self._p4rt_wcmp_group_obj.get_original_redis_entries(db_list)
 
@@ -358,24 +499,24 @@ class TestP4RTL3(object):
             router_intf_key,
             attr_list,
         ) = self._p4rt_router_intf_obj.create_router_interface()
-        util.verify_response(
-            self.response_consumer, router_intf_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_router_intf_obj.verify_response(
+            router_intf_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Create neighbor.
         neighbor_id, neighbor_key, attr_list = self._p4rt_neighbor_obj.create_neighbor(
             ipv4=False
         )
-        util.verify_response(
-            self.response_consumer, neighbor_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_neighbor_obj.verify_response(
+            neighbor_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Create nexthop.
         nexthop_id, nexthop_key, attr_list = self._p4rt_nexthop_obj.create_next_hop(
             ipv4=False
         )
-        util.verify_response(
-            self.response_consumer, nexthop_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_nexthop_obj.verify_response(
+            nexthop_key, attr_list, "SWSS_RC_SUCCESS"
         )
         # Get the oid of the newly created nexthop.
         nexthop_oid = self._p4rt_nexthop_obj.get_newly_created_nexthop_oid()
@@ -387,8 +528,8 @@ class TestP4RTL3(object):
             wcmp_group_key,
             attr_list,
         ) = self._p4rt_wcmp_group_obj.create_wcmp_group()
-        util.verify_response(
-            self.response_consumer, wcmp_group_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_wcmp_group_obj.verify_response(
+            wcmp_group_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Query application database for wcmp group entries.
@@ -426,7 +567,15 @@ class TestP4RTL3(object):
         attr_list = [
             (
                 self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_TYPE,
-                self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP,
+                self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS,
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_LIST,
+                "1:" + nexthop_oid,
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
+                "1:" + str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
             )
         ]
         (status, fvs) = util.get_key(
@@ -437,45 +586,12 @@ class TestP4RTL3(object):
         assert status == True
         util.verify_attr(fvs, attr_list)
 
-        # Query ASIC database for wcmp group member entries.
-        wcmp_group_member_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-        )
-        assert len(wcmp_group_member_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_asic_db_member_entries_count() + 1
-        )
-
-        # Query ASIC database for newly crated wcmp group member key.
-        asic_db_group_member_key = (
-            self._p4rt_wcmp_group_obj.get_newly_created_wcmp_group_member_asic_db_key()
-        )
-        assert asic_db_group_member_key is not None
-        attr_list = [
-            (
-                self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_MEMBER_NEXTHOP_GROUP_ID,
-                wcmp_group_oid,
-            ),
-            (self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_MEMBER_NEXTHOP_ID, nexthop_oid),
-            (
-                self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_MEMBER_WEIGHT,
-                str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
-            ),
-        ]
-        (status, fvs) = util.get_key(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-            asic_db_group_member_key,
-        )
-        assert status == True
-        util.verify_attr(fvs, attr_list)
-
         # Create route entry.
         route_key, attr_list = self._p4rt_route_obj.create_route(
             wcmp_group_id=wcmp_group_id, action="set_wcmp_group_id", dst="2001:db8::/32"
         )
-        util.verify_response(
-            self.response_consumer, route_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_route_obj.verify_response(
+            route_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Query application database for route entries.
@@ -521,8 +637,8 @@ class TestP4RTL3(object):
         route_key, attr_list = self._p4rt_route_obj.create_route(
             action="drop", dst="2001:db8::/32"
         )
-        util.verify_response(
-            self.response_consumer, route_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_route_obj.verify_response(
+            route_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Query application database for route entries.
@@ -573,8 +689,8 @@ class TestP4RTL3(object):
         route_key, attr_list = self._p4rt_route_obj.create_route(
             action="trap", dst="2001:db8::/32"
         )
-        util.verify_response(
-            self.response_consumer, route_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_route_obj.verify_response(
+            route_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Query application database for route entries.
@@ -623,30 +739,29 @@ class TestP4RTL3(object):
 
         # Remove route entry.
         self._p4rt_route_obj.remove_app_db_entry(route_key)
-        util.verify_response(self.response_consumer,
-                             route_key, [], "SWSS_RC_SUCCESS")
+        self._p4rt_route_obj.verify_response(route_key, [], "SWSS_RC_SUCCESS")
 
         # Remove wcmp group entry.
         self._p4rt_wcmp_group_obj.remove_app_db_entry(wcmp_group_key)
-        util.verify_response(
-            self.response_consumer, wcmp_group_key, [], "SWSS_RC_SUCCESS"
+        self._p4rt_wcmp_group_obj.verify_response(
+            wcmp_group_key, [], "SWSS_RC_SUCCESS"
         )
 
         # Remove nexthop.
         self._p4rt_nexthop_obj.remove_app_db_entry(nexthop_key)
-        util.verify_response(self.response_consumer,
-                             nexthop_key, [], "SWSS_RC_SUCCESS")
+        self._p4rt_nexthop_obj.verify_response(
+            nexthop_key, [], "SWSS_RC_SUCCESS")
 
         # Remove neighbor.
         self._p4rt_neighbor_obj.remove_app_db_entry(neighbor_key)
-        util.verify_response(
-            self.response_consumer, neighbor_key, [], "SWSS_RC_SUCCESS"
+        self._p4rt_neighbor_obj.verify_response(
+            neighbor_key, [], "SWSS_RC_SUCCESS"
         )
 
         # Remove router interface.
         self._p4rt_router_intf_obj.remove_app_db_entry(router_intf_key)
-        util.verify_response(
-            self.response_consumer, router_intf_key, [], "SWSS_RC_SUCCESS"
+        self._p4rt_router_intf_obj.verify_response(
+            router_intf_key, [], "SWSS_RC_SUCCESS"
         )
 
         # Query application database for route entries.
@@ -718,25 +833,8 @@ class TestP4RTL3(object):
         )
         assert status == False
 
-        # Query ASIC database for wcmp group member entries.
-        wcmp_group_member_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-        )
-        assert len(wcmp_group_member_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_asic_db_member_entries_count()
-        )
-
-        # Verify that removed wcmp group member no longer exists in ASIC
-        # database.
-        (status, fvs) = util.get_key(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-            asic_db_group_member_key,
-        )
-        assert status == False
-
         self._clean_vrf(dvs)
+        self._cleanup()
 
     def test_NexthopWithGreTunnelAddDeletePass(self, dvs, testlog):
         # Initialize L3 objects and database connectors.
@@ -783,18 +881,24 @@ class TestP4RTL3(object):
             router_intf_key,
             attr_list,
         ) = self._p4rt_router_intf_obj.create_router_interface()
-        util.verify_response(
-            self.response_consumer, router_intf_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_router_intf_obj.verify_response(
+            router_intf_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # get router_interface_oid of newly created router_intf
         router_intf_oid = self._p4rt_router_intf_obj.get_newly_created_router_interface_oid()
         assert router_intf_oid is not None
 
+        # Create neighbor.
+        neighbor_id, neighbor_key, attr_list = self._p4rt_neighbor_obj.create_neighbor()
+        self._p4rt_neighbor_obj.verify_response(
+        neighbor_key, attr_list, "SWSS_RC_SUCCESS"
+        )
+
         # Create tunnel.
         tunnel_id, tunnel_key, attr_list = self._p4rt_gre_tunnel_obj.create_gre_tunnel()
-        util.verify_response(
-            self.response_consumer, tunnel_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_gre_tunnel_obj.verify_response(
+            tunnel_key, attr_list, "SWSS_RC_SUCCESS"
         )
         # get tunnel_oid of newly created tunnel
         tunnel_oid = self._p4rt_gre_tunnel_obj.get_newly_created_tunnel_oid()
@@ -849,18 +953,12 @@ class TestP4RTL3(object):
         ]
         util.verify_attr(fvs, attr_list)
 
-        # Create neighbor.
-        neighbor_id, neighbor_key, attr_list = self._p4rt_neighbor_obj.create_neighbor()
-        util.verify_response(
-            self.response_consumer, neighbor_key, attr_list, "SWSS_RC_SUCCESS"
-        )
-
         # Create tunnel nexthop.
         nexthop_id, nexthop_key, attr_list = self._p4rt_nexthop_obj.create_next_hop(
             tunnel_id=tunnel_id
         )
-        util.verify_response(
-            self.response_consumer, nexthop_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_nexthop_obj.verify_response(
+            nexthop_key, attr_list, "SWSS_RC_SUCCESS"
         )
         # get nexthop_oid of newly created nexthop
         nexthop_oid = self._p4rt_nexthop_obj.get_newly_created_nexthop_oid()
@@ -912,25 +1010,25 @@ class TestP4RTL3(object):
 
         # Remove nexthop.
         self._p4rt_nexthop_obj.remove_app_db_entry(nexthop_key)
-        util.verify_response(self.response_consumer,
-                             nexthop_key, [], "SWSS_RC_SUCCESS")
-
-        # Remove neighbor.
-        self._p4rt_neighbor_obj.remove_app_db_entry(neighbor_key)
-        util.verify_response(
-            self.response_consumer, neighbor_key, [], "SWSS_RC_SUCCESS"
-        )
+        self._p4rt_nexthop_obj.verify_response(
+            nexthop_key, [], "SWSS_RC_SUCCESS")
 
         # Remove tunnel.
         self._p4rt_gre_tunnel_obj.remove_app_db_entry(tunnel_key)
-        util.verify_response(
-            self.response_consumer, tunnel_key, [], "SWSS_RC_SUCCESS"
+        self._p4rt_gre_tunnel_obj.verify_response(
+            tunnel_key, [], "SWSS_RC_SUCCESS"
+        )
+
+        # Remove neighbor.
+        self._p4rt_neighbor_obj.remove_app_db_entry(neighbor_key)
+        self._p4rt_neighbor_obj.verify_response(
+            neighbor_key, [], "SWSS_RC_SUCCESS"
         )
 
         # Remove router interface.
         self._p4rt_router_intf_obj.remove_app_db_entry(router_intf_key)
-        util.verify_response(
-            self.response_consumer, router_intf_key, [], "SWSS_RC_SUCCESS"
+        self._p4rt_router_intf_obj.verify_response(
+            router_intf_key, [], "SWSS_RC_SUCCESS"
         )
 
         # Query application database for nexthop entries.
@@ -1000,6 +1098,7 @@ class TestP4RTL3(object):
         )
         assert status == False
         self._clean_vrf(dvs)
+        self._cleanup()
 
     def test_IPv4RouteAddWithInvalidNexthopFail(self, dvs, testlog):
         marker = dvs.add_log_marker()
@@ -1026,8 +1125,8 @@ class TestP4RTL3(object):
         # Create route entry using invalid nexthop (expect failure).
         route_key, attr_list = self._p4rt_route_obj.create_route()
         err_log = "[OrchAgent] Nexthop ID '8' does not exist"
-        util.verify_response(
-            self.response_consumer, route_key, attr_list, "SWSS_RC_NOT_FOUND", err_log
+        self._p4rt_route_obj.verify_response(
+            route_key, attr_list, "SWSS_RC_NOT_FOUND", err_log
         )
 
         # Query application database for route entries.
@@ -1036,7 +1135,7 @@ class TestP4RTL3(object):
             self._p4rt_route_obj.APP_DB_TBL_NAME + ":" + self._p4rt_route_obj.TBL_NAME,
         )
         assert len(route_entries) == (
-            self._p4rt_route_obj.get_original_appl_db_entries_count() + 1
+            self._p4rt_route_obj.get_original_appl_db_entries_count()
         )
 
         # Query application database for newly created route key.
@@ -1045,8 +1144,7 @@ class TestP4RTL3(object):
             self._p4rt_route_obj.APP_DB_TBL_NAME,
             route_key,
         )
-        assert status == True
-        util.verify_attr(fvs, attr_list)
+        assert status == False
 
         # Query ASIC database for route entries (no new ASIC DB entry should be
         # created for route entry).
@@ -1060,10 +1158,11 @@ class TestP4RTL3(object):
         # Remove route entry (expect failure).
         self._p4rt_route_obj.remove_app_db_entry(route_key)
         err_log = "[OrchAgent] Route entry does not exist"
-        util.verify_response(
-            self.response_consumer, route_key, [], "SWSS_RC_NOT_FOUND", err_log
+        self._p4rt_route_obj.verify_response(
+            route_key, [], "SWSS_RC_NOT_FOUND", err_log
         )
         self._clean_vrf(dvs)
+        self._cleanup()
 
     def test_IPv6RouteAddWithInvalidWcmpFail(self, dvs, testlog):
         marker = dvs.add_log_marker()
@@ -1092,8 +1191,8 @@ class TestP4RTL3(object):
             action="set_wcmp_group_id", wcmp_group_id="8"
         )
         err_log = "[OrchAgent] WCMP group '8' does not exist"
-        util.verify_response(
-            self.response_consumer, route_key, attr_list, "SWSS_RC_NOT_FOUND", err_log
+        self._p4rt_route_obj.verify_response(
+            route_key, attr_list, "SWSS_RC_NOT_FOUND", err_log
         )
 
         # Query application database for route entries
@@ -1102,7 +1201,7 @@ class TestP4RTL3(object):
             self._p4rt_route_obj.APP_DB_TBL_NAME + ":" + self._p4rt_route_obj.TBL_NAME,
         )
         assert len(route_entries) == (
-            self._p4rt_route_obj.get_original_appl_db_entries_count() + 1
+            self._p4rt_route_obj.get_original_appl_db_entries_count()
         )
 
         # Query application database for newly created route key.
@@ -1111,8 +1210,7 @@ class TestP4RTL3(object):
             self._p4rt_route_obj.APP_DB_TBL_NAME,
             route_key,
         )
-        assert status == True
-        util.verify_attr(fvs, attr_list)
+        assert status == False
 
         # Query ASIC database for route entries (no new ASIC DB entry should be
         # created for route entry).
@@ -1126,10 +1224,11 @@ class TestP4RTL3(object):
         # Remove route entry (expect failure).
         self._p4rt_route_obj.remove_app_db_entry(route_key)
         err_log = "[OrchAgent] Route entry does not exist"
-        util.verify_response(
-            self.response_consumer, route_key, [], "SWSS_RC_NOT_FOUND", err_log
+        self._p4rt_route_obj.verify_response(
+            route_key, [], "SWSS_RC_NOT_FOUND", err_log
         )
         self._clean_vrf(dvs)
+        self._cleanup()
 
     def test_PruneAndRestoreNextHop(self, dvs, testlog):
         # Initialize L3 objects and database connectors.
@@ -1150,10 +1249,6 @@ class TestP4RTL3(object):
                 self._p4rt_wcmp_group_obj.asic_db,
                 self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
             ),
-            (
-                self._p4rt_wcmp_group_obj.asic_db,
-                self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-            ),
         )
         self._p4rt_wcmp_group_obj.get_original_redis_entries(db_list)
         db_list = (
@@ -1174,20 +1269,20 @@ class TestP4RTL3(object):
             router_intf_key,
             attr_list,
         ) = self._p4rt_router_intf_obj.create_router_interface()
-        util.verify_response(
-            self.response_consumer, router_intf_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_router_intf_obj.verify_response(
+            router_intf_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Create neighbor.
         neighbor_id, neighbor_key, attr_list = self._p4rt_neighbor_obj.create_neighbor()
-        util.verify_response(
-            self.response_consumer, neighbor_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_neighbor_obj.verify_response(
+            neighbor_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Create nexthop.
         nexthop_id, nexthop_key, attr_list = self._p4rt_nexthop_obj.create_next_hop()
-        util.verify_response(
-            self.response_consumer, nexthop_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_nexthop_obj.verify_response(
+            nexthop_key, attr_list, "SWSS_RC_SUCCESS"
         )
         # Get nexthop_oid of newly created nexthop.
         nexthop_oid = self._p4rt_nexthop_obj.get_newly_created_nexthop_oid()
@@ -1199,8 +1294,8 @@ class TestP4RTL3(object):
             wcmp_group_key,
             attr_list,
         ) = self._p4rt_wcmp_group_obj.create_wcmp_group(watch_port=port_name)
-        util.verify_response(
-            self.response_consumer, wcmp_group_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_wcmp_group_obj.verify_response(
+            wcmp_group_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Query application database for wcmp group entries.
@@ -1245,33 +1340,17 @@ class TestP4RTL3(object):
             (
                 self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_TYPE,
                 (
-                    self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP
+                    self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS
                 ),
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_LIST,
+                "1:" + nexthop_oid,
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
+                "1:" + str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
             )
-        ]
-        util.verify_attr(fvs, asic_attr_list)
-
-        # Query ASIC database for newly created wcmp group member key.
-        asic_db_group_member_key = (
-            self._p4rt_wcmp_group_obj.get_newly_created_wcmp_group_member_asic_db_key()
-        )
-        assert asic_db_group_member_key is not None
-        (status, fvs) = util.get_key(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-            asic_db_group_member_key,
-        )
-        assert status == True
-        asic_attr_list = [
-            (
-                self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_MEMBER_NEXTHOP_GROUP_ID,
-                wcmp_group_oid,
-            ),
-            (self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_MEMBER_NEXTHOP_ID, nexthop_oid),
-            (
-                self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_MEMBER_WEIGHT,
-                str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
-            ),
         ]
         util.verify_attr(fvs, asic_attr_list)
 
@@ -1280,35 +1359,56 @@ class TestP4RTL3(object):
 
         # Check ASIC DB to verify that associated member for watch_port is
         # pruned.
-        wcmp_group_member_entries = util.get_keys(
+        (status, fvs) = util.get_key(
             self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
+            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
+            wcmp_group_oid,
         )
-        assert len(wcmp_group_member_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_asic_db_member_entries_count()
-        )
+        assert status == True
+        asic_attr_list = [
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_TYPE,
+                (
+                    self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS
+                ),
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_LIST,
+                "0:null",
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
+                "0:null",
+            )
+        ]
+        util.verify_attr(fvs, asic_attr_list)
 
         # Force oper-up for associated port.
         util.set_interface_status(dvs, if_name, "up")
 
         # Check pruned next hop member is restored in ASIC DB.
-        wcmp_group_member_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-        )
-        assert len(wcmp_group_member_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_asic_db_member_entries_count() + 1
-        )
-        asic_db_group_member_key = (
-            self._p4rt_wcmp_group_obj.get_newly_created_wcmp_group_member_asic_db_key()
-        )
-        assert asic_db_group_member_key is not None
         (status, fvs) = util.get_key(
             self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-            asic_db_group_member_key,
+            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
+            wcmp_group_oid,
         )
         assert status == True
+        asic_attr_list = [
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_TYPE,
+                (
+                    self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS
+                ),
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_LIST,
+                "1:" + nexthop_oid,
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
+                "1:" + str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
+            )
+        ]
         util.verify_attr(fvs, asic_attr_list)
 
         # Delete WCMP group member.
@@ -1322,6 +1422,8 @@ class TestP4RTL3(object):
 
         # Delete router interface.
         self._p4rt_router_intf_obj.remove_app_db_entry(router_intf_key)
+
+        self._cleanup()
 
     def test_PruneNextHopOnWarmBoot(self, dvs, testlog):
         # Initialize L3 objects and database connectors.
@@ -1342,10 +1444,6 @@ class TestP4RTL3(object):
                 self._p4rt_wcmp_group_obj.asic_db,
                 self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
             ),
-            (
-                self._p4rt_wcmp_group_obj.asic_db,
-                self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-            ),
         )
         self._p4rt_wcmp_group_obj.get_original_redis_entries(db_list)
         db_list = (
@@ -1366,20 +1464,20 @@ class TestP4RTL3(object):
             router_intf_key,
             attr_list,
         ) = self._p4rt_router_intf_obj.create_router_interface()
-        util.verify_response(
-            self.response_consumer, router_intf_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_router_intf_obj.verify_response(
+            router_intf_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Create neighbor.
         neighbor_id, neighbor_key, attr_list = self._p4rt_neighbor_obj.create_neighbor()
-        util.verify_response(
-            self.response_consumer, neighbor_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_neighbor_obj.verify_response(
+            neighbor_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Create nexthop.
         nexthop_id, nexthop_key, attr_list = self._p4rt_nexthop_obj.create_next_hop()
-        util.verify_response(
-            self.response_consumer, nexthop_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_nexthop_obj.verify_response(
+            nexthop_key, attr_list, "SWSS_RC_SUCCESS"
         )
         # Get nexthop_oid of newly created nexthop.
         nexthop_oid = self._p4rt_nexthop_obj.get_newly_created_nexthop_oid()
@@ -1391,8 +1489,8 @@ class TestP4RTL3(object):
             wcmp_group_key,
             attr_list,
         ) = self._p4rt_wcmp_group_obj.create_wcmp_group(watch_port=port_name)
-        util.verify_response(
-            self.response_consumer, wcmp_group_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_wcmp_group_obj.verify_response(
+            wcmp_group_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Query application database for wcmp group entries.
@@ -1437,49 +1535,24 @@ class TestP4RTL3(object):
             (
                 self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_TYPE,
                 (
-                    self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP
+                    self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS
                 ),
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_LIST,
+                "1:" + nexthop_oid,
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
+                "1:" + str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
             )
-        ]
-        util.verify_attr(fvs, asic_attr_list)
-
-        # Query ASIC database for wcmp group member entries.
-        wcmp_group_member_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-        )
-        assert len(wcmp_group_member_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_asic_db_member_entries_count() + 1
-        )
-
-        # Query ASIC database for newly created wcmp group member key.
-        asic_db_group_member_key = (
-            self._p4rt_wcmp_group_obj.get_newly_created_wcmp_group_member_asic_db_key()
-        )
-        assert asic_db_group_member_key is not None
-        (status, fvs) = util.get_key(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-            asic_db_group_member_key,
-        )
-        assert status == True
-        asic_attr_list = [
-            (
-                self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_MEMBER_NEXTHOP_GROUP_ID,
-                wcmp_group_oid,
-            ),
-            (self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_MEMBER_NEXTHOP_ID, nexthop_oid),
-            (
-                self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_MEMBER_WEIGHT,
-                str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
-            ),
         ]
         util.verify_attr(fvs, asic_attr_list)
 
         # Bring down the port.
         util.set_interface_status(dvs, if_name)
 
-        # Execute the warm reboot.
+        # Execute the warm reboot
         dvs.warm_restart_swss("true")
         dvs.stop_swss()
         dvs.start_swss()
@@ -1488,13 +1561,31 @@ class TestP4RTL3(object):
         dvs.check_swss_ready()
 
         # Verify that the associated next hop is pruned in ASIC DB.
-        wcmp_group_member_entries = util.get_keys(
+        wcmp_group_oid = self._p4rt_wcmp_group_obj.get_newly_created_wcmp_group_oid()
+        assert wcmp_group_oid is not None
+        (status, fvs) = util.get_key(
             self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
+            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
+            wcmp_group_oid,
         )
-        assert len(wcmp_group_member_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_asic_db_member_entries_count()
-        )
+        assert status == True
+        asic_attr_list = [
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_TYPE,
+                (
+                    self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS
+                ),
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_LIST,
+                "0:null",
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
+                "0:null",
+            )
+        ]
+        util.verify_attr(fvs, asic_attr_list)
 
         # Delete WCMP group member.
         self._p4rt_wcmp_group_obj.remove_app_db_entry(wcmp_group_key)
@@ -1507,6 +1598,8 @@ class TestP4RTL3(object):
 
         # Delete router interface.
         self._p4rt_router_intf_obj.remove_app_db_entry(router_intf_key)
+
+        self._cleanup()
 
     def test_CreateWcmpMemberForOperUpWatchportOnly(self, dvs, testlog):
         # Initialize L3 objects and database connectors.
@@ -1527,10 +1620,6 @@ class TestP4RTL3(object):
                 self._p4rt_wcmp_group_obj.asic_db,
                 self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
             ),
-            (
-                self._p4rt_wcmp_group_obj.asic_db,
-                self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-            ),
         )
         self._p4rt_wcmp_group_obj.get_original_redis_entries(db_list)
         db_list = (
@@ -1540,7 +1629,7 @@ class TestP4RTL3(object):
         self._p4rt_nexthop_obj.get_original_redis_entries(db_list)
 
         # Force oper-down on port under test.
-        port_name = "Ethernet0"
+        port_name = "Ethernet0"   
         if_name = "eth0"
         util.initialize_interface(dvs, port_name, "10.0.0.0/31")
         util.set_interface_status(dvs, if_name)
@@ -1551,20 +1640,20 @@ class TestP4RTL3(object):
             router_intf_key,
             attr_list,
         ) = self._p4rt_router_intf_obj.create_router_interface()
-        util.verify_response(
-            self.response_consumer, router_intf_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_router_intf_obj.verify_response(
+            router_intf_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Create neighbor.
         neighbor_id, neighbor_key, attr_list = self._p4rt_neighbor_obj.create_neighbor()
-        util.verify_response(
-            self.response_consumer, neighbor_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_neighbor_obj.verify_response(
+            neighbor_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Create nexthop.
         nexthop_id, nexthop_key, attr_list = self._p4rt_nexthop_obj.create_next_hop()
-        util.verify_response(
-            self.response_consumer, nexthop_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_nexthop_obj.verify_response(
+            nexthop_key, attr_list, "SWSS_RC_SUCCESS"
         )
         # Get nexthop_oid of newly created nexthop.
         nexthop_oid = self._p4rt_nexthop_obj.get_newly_created_nexthop_oid()
@@ -1576,8 +1665,8 @@ class TestP4RTL3(object):
             wcmp_group_key,
             attr_list,
         ) = self._p4rt_wcmp_group_obj.create_wcmp_group(watch_port=port_name)
-        util.verify_response(
-            self.response_consumer, wcmp_group_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_wcmp_group_obj.verify_response(
+            wcmp_group_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Query application database for wcmp group entries.
@@ -1622,52 +1711,45 @@ class TestP4RTL3(object):
             (
                 self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_TYPE,
                 (
-                    self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP
+                    self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS
                 ),
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_LIST,
+                "0:null",
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
+                "0:null",
             )
         ]
         util.verify_attr(fvs, asic_attr_list)
-
-        # Query ASIC database for wcmp group member entries (expect no entry).
-        wcmp_group_member_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-        )
-        assert len(wcmp_group_member_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_asic_db_member_entries_count()
-        )
 
         # Bring up the port.
         util.set_interface_status(dvs, if_name, "up")
 
         # Verify that next hop member is now created in SAI.
-        wcmp_group_member_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-        )
-        assert len(wcmp_group_member_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_asic_db_member_entries_count() + 1
-        )
-        asic_db_group_member_key = (
-            self._p4rt_wcmp_group_obj.get_newly_created_wcmp_group_member_asic_db_key()
-        )
-        assert asic_db_group_member_key is not None
         (status, fvs) = util.get_key(
             self._p4rt_wcmp_group_obj.asic_db,
-            (self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME),
-            asic_db_group_member_key,
+            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
+            wcmp_group_oid,
         )
         assert status == True
         asic_attr_list = [
             (
-                self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_MEMBER_NEXTHOP_GROUP_ID,
-                wcmp_group_oid,
+                self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_TYPE,
+                (
+                    self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS
+                ),
             ),
-            (self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_MEMBER_NEXTHOP_ID, nexthop_oid),
             (
-                self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_MEMBER_WEIGHT,
-                str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_LIST,
+                "1:" + nexthop_oid,
             ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
+                "1:" + str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
+            )
         ]
         util.verify_attr(fvs, asic_attr_list)
 
@@ -1682,6 +1764,8 @@ class TestP4RTL3(object):
 
         # Delete router interface.
         self._p4rt_router_intf_obj.remove_app_db_entry(router_intf_key)
+
+        self._cleanup()
 
     def test_RemovePrunedWcmpGroupMember(self, dvs, testlog):
         # Initialize L3 objects and database connectors.
@@ -1702,10 +1786,6 @@ class TestP4RTL3(object):
                 self._p4rt_wcmp_group_obj.asic_db,
                 self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
             ),
-            (
-                self._p4rt_wcmp_group_obj.asic_db,
-                self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-            ),
         )
         self._p4rt_wcmp_group_obj.get_original_redis_entries(db_list)
         db_list = (
@@ -1726,20 +1806,20 @@ class TestP4RTL3(object):
             router_intf_key,
             attr_list,
         ) = self._p4rt_router_intf_obj.create_router_interface()
-        util.verify_response(
-            self.response_consumer, router_intf_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_router_intf_obj.verify_response(
+            router_intf_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Create neighbor.
         neighbor_id, neighbor_key, attr_list = self._p4rt_neighbor_obj.create_neighbor()
-        util.verify_response(
-            self.response_consumer, neighbor_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_neighbor_obj.verify_response(
+            neighbor_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Create nexthop.
         nexthop_id, nexthop_key, attr_list = self._p4rt_nexthop_obj.create_next_hop()
-        util.verify_response(
-            self.response_consumer, nexthop_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_nexthop_obj.verify_response(
+            nexthop_key, attr_list, "SWSS_RC_SUCCESS"
         )
         # Get nexthop_oid of newly created nexthop.
         nexthop_oid = self._p4rt_nexthop_obj.get_newly_created_nexthop_oid()
@@ -1751,8 +1831,8 @@ class TestP4RTL3(object):
             wcmp_group_key,
             attr_list,
         ) = self._p4rt_wcmp_group_obj.create_wcmp_group(watch_port=port_name)
-        util.verify_response(
-            self.response_consumer, wcmp_group_key, attr_list, "SWSS_RC_SUCCESS"
+        self._p4rt_wcmp_group_obj.verify_response(
+            wcmp_group_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Query application database for wcmp group entries.
@@ -1797,30 +1877,19 @@ class TestP4RTL3(object):
             (
                 self._p4rt_wcmp_group_obj.SAI_ATTR_GROUP_TYPE,
                 (
-                    self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP
+                    self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS
                 ),
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_LIST,
+                "0:null",
+            ),
+            (
+                self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
+                "0:null",
             )
         ]
         util.verify_attr(fvs, asic_attr_list)
-
-        # Query ASIC database for wcmp group member entries.
-        wcmp_group_member_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_TBL_NAME,
-        )
-        assert len(wcmp_group_member_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_asic_db_member_entries_count() + 1
-        )
-
-        # Query ASIC database for wcmp group member entries (expect no entry).
-        wcmp_group_member_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-        )
-        assert (
-            len(wcmp_group_member_entries)
-            == self._p4rt_wcmp_group_obj.get_original_asic_db_member_entries_count()
-        )
 
         # Attempt to delete the next hop. Expect failure as the pruned WCMP
         # group member is still referencing it.
@@ -1837,13 +1906,6 @@ class TestP4RTL3(object):
         assert len(wcmp_group_entries) == (
             self._p4rt_wcmp_group_obj.get_original_asic_db_group_entries_count()
         )
-        wcmp_group_member_entries = util.get_keys(
-            self._p4rt_wcmp_group_obj.asic_db,
-            self._p4rt_wcmp_group_obj.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-        )
-        assert len(wcmp_group_member_entries) == (
-            self._p4rt_wcmp_group_obj.get_original_asic_db_member_entries_count()
-        )
 
         # Delete next hop.
         self._p4rt_nexthop_obj.remove_app_db_entry(nexthop_key)
@@ -1853,6 +1915,8 @@ class TestP4RTL3(object):
 
         # Delete router interface.
         self._p4rt_router_intf_obj.remove_app_db_entry(router_intf_key)
+
+        self._cleanup()
 
     def test_NexthopWithGreTunnelCreationFailIfDependenciesAreMissing(self, dvs, testlog):
         # Initialize L3 objects and database connectors.
@@ -1895,8 +1959,8 @@ class TestP4RTL3(object):
 
         # Create tunnel.
         tunnel_id, tunnel_key, attr_list = self._p4rt_gre_tunnel_obj.create_gre_tunnel()
-        util.verify_response(
-            self.response_consumer, tunnel_key, attr_list, "SWSS_RC_NOT_FOUND",
+        self._p4rt_gre_tunnel_obj.verify_response(
+            tunnel_key, attr_list, "SWSS_RC_NOT_FOUND",
             "[OrchAgent] Router intf '16' does not exist"
         )
 
@@ -1907,7 +1971,7 @@ class TestP4RTL3(object):
             ":" + self._p4rt_gre_tunnel_obj.TBL_NAME,
         )
         assert len(tunnel_entries) == (
-            self._p4rt_gre_tunnel_obj.get_original_appl_db_entries_count() + 1
+            self._p4rt_gre_tunnel_obj.get_original_appl_db_entries_count()
         )
 
         # Query ASIC database for tunnel entries.
@@ -1922,8 +1986,8 @@ class TestP4RTL3(object):
         nexthop_id, nexthop_key, attr_list = self._p4rt_nexthop_obj.create_next_hop(
             tunnel_id=tunnel_id
         )
-        util.verify_response(
-            self.response_consumer, nexthop_key, attr_list, "SWSS_RC_NOT_FOUND",
+        self._p4rt_nexthop_obj.verify_response(
+            nexthop_key, attr_list, "SWSS_RC_NOT_FOUND",
             "[OrchAgent] GRE Tunnel 'tunnel-1' does not exist in GRE Tunnel Manager"
         )
 
@@ -1933,7 +1997,7 @@ class TestP4RTL3(object):
             self._p4rt_nexthop_obj.APP_DB_TBL_NAME + ":" + self._p4rt_nexthop_obj.TBL_NAME,
         )
         assert len(nexthop_entries) == (
-            self._p4rt_nexthop_obj.get_original_appl_db_entries_count() + 1
+            self._p4rt_nexthop_obj.get_original_appl_db_entries_count()
         )
 
         # Query ASIC database for nexthop entries.
@@ -1945,8 +2009,129 @@ class TestP4RTL3(object):
         )
 
         self._clean_vrf(dvs)
+        self._cleanup()
 
-    def test_P4rtNotification(self, dvs, testlog):
+    @pytest.mark.skip(reason="sairedis vs MY MAC support is not ready")
+    def test_RouterInterfaceMtuUpdate(self, dvs, testlog):
+        self._set_up(dvs)
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(swsscommon.APPL_STATE_DB, dvs.redis_sock, 0)
+
+        db_list = (
+            (
+                self._p4rt_router_intf_obj.appl_db,
+                "%s:%s"
+                % (self._p4rt_router_intf_obj.APP_DB_TBL_NAME,
+                   self._p4rt_router_intf_obj.TBL_NAME),
+            ),
+            (self._p4rt_router_intf_obj.asic_db,
+             self._p4rt_router_intf_obj.ASIC_DB_TBL_NAME),
+        )
+        self._p4rt_router_intf_obj.get_original_redis_entries(db_list)
+
+        # Create router interface.
+        port = "Ethernet8"
+        (
+            router_interface_id,
+            router_intf_key,
+            attr_list,
+        ) = self._p4rt_router_intf_obj.create_router_interface(port_id=port)
+        self._p4rt_router_intf_obj.verify_response(
+            self.response_consumer, router_intf_key, attr_list, "SWSS_RC_SUCCESS"
+        )
+
+        rif_oid = (
+            self._p4rt_router_intf_obj.get_newly_created_router_interface_oid())
+        assert rif_oid is not None
+        (status, fvs) = util.get_key(
+            self._p4rt_router_intf_obj.asic_db,
+            self._p4rt_router_intf_obj.ASIC_DB_TBL_NAME,
+            rif_oid,
+        )
+        assert status == True
+        attribute_found = False
+        for fv in fvs:
+            if fv[0] == self._p4rt_router_intf_obj.SAI_ATTR_MTU:
+                assert fv[1] == self._p4rt_router_intf_obj.SAI_ATTR_DEFAULT_MTU
+                attribute_found = True
+                break
+        assert attribute_found == True
+
+        # Fetch original MTU.
+        tbl = swsscommon.Table(adb, "PORT_TABLE")
+        (status, fvs) = tbl.get(port)
+        assert status == True
+        orig_mtu = None
+        for fv in fvs:
+            if fv[0] == "mtu":
+                orig_mtu = fv[1]
+                break
+        assert orig_mtu is not None
+
+        # Update port MTU.
+        tbl = swsscommon.Table(cdb, "PORT")
+        mtu = "5678"
+        fvs = swsscommon.FieldValuePairs([("mtu", mtu)])
+        tbl.set(port, fvs)
+        time.sleep(1)
+
+        # Check application state database.
+        tbl = swsscommon.Table(adb, "PORT_TABLE")
+        (status, fvs) = tbl.get(port)
+        assert status == True
+        attribute_found = False
+        for fv in fvs:
+            if fv[0] == "mtu":
+                assert fv[1] == mtu
+                attribute_found = True
+                break
+        assert attribute_found == True
+
+        # Verify that MTU has been updated in P4RT router interface.
+        (status, fvs) = util.get_key(
+            self._p4rt_router_intf_obj.asic_db,
+            self._p4rt_router_intf_obj.ASIC_DB_TBL_NAME,
+            rif_oid,
+        )
+        assert status == True
+        attribute_found = False
+        for fv in fvs:
+            if fv[0] == self._p4rt_router_intf_obj.SAI_ATTR_MTU:
+                assert fv[1] == mtu
+                attribute_found = True
+                break
+        assert attribute_found == True
+
+        # Restore original MTU.
+        tbl = swsscommon.Table(cdb, "PORT")
+        fvs = swsscommon.FieldValuePairs([("mtu", orig_mtu)])
+        tbl.set(port, fvs)
+        time.sleep(1)
+
+        # Verify that MTU has been updated in P4RT router interface.
+        (status, fvs) = util.get_key(
+            self._p4rt_router_intf_obj.asic_db,
+            self._p4rt_router_intf_obj.ASIC_DB_TBL_NAME,
+            rif_oid,
+        )
+        assert status == True
+        attribute_found = False
+        for fv in fvs:
+            if fv[0] == self._p4rt_router_intf_obj.SAI_ATTR_MTU:
+                assert fv[1] == orig_mtu
+                attribute_found = True
+                break
+        assert attribute_found == True
+
+        # Remove router interface.
+        self._p4rt_router_intf_obj.remove_app_db_entry(router_intf_key)
+        self._p4rt_router_intf_obj.verify_response(
+            self.response_consumer, router_intf_key, [], "SWSS_RC_SUCCESS"
+        )
+
+        self._cleanup()
+
+    def test_NexthopAddWithRewrite(self, dvs, testlog):
         # Initialize L3 objects and database connectors.
         self._set_up(dvs)
         self._set_vrf(dvs)
@@ -1957,6 +2142,11 @@ class TestP4RTL3(object):
         # Maintain list of original Application and ASIC DB entries before
         # adding new route.
         db_list = (
+            (self._p4rt_nexthop_obj.asic_db,
+             self._p4rt_nexthop_obj.ASIC_DB_TBL_NAME),
+        )
+        self._p4rt_nexthop_obj.get_original_redis_entries(db_list)
+        db_list = (
             (
                 self._p4rt_route_obj.appl_db,
                 "%s:%s"
@@ -1966,127 +2156,84 @@ class TestP4RTL3(object):
         )
         self._p4rt_route_obj.get_original_redis_entries(db_list)
 
-        # Add router interface.
-        router_intf_key = self._p4rt_router_intf_obj.generate_app_db_key(
-            self._p4rt_router_intf_obj.DEFAULT_ROUTER_INTERFACE_ID)
-        ritf_attrs = [
-            (util.prepend_param_field(self._p4rt_router_intf_obj.PORT_FIELD),
-             self._p4rt_router_intf_obj.DEFAULT_PORT_ID),
-            (util.prepend_param_field(self._p4rt_router_intf_obj.SRC_MAC_FIELD),
-             self._p4rt_router_intf_obj.DEFAULT_SRC_MAC),
-            (self._p4rt_router_intf_obj.ACTION_FIELD,
-             self._p4rt_router_intf_obj.DEFAULT_ACTION)
-        ]
-        attr_list = [
-            util.prepend_param_field(
-                self._p4rt_router_intf_obj.PORT_FIELD), self._p4rt_router_intf_obj.DEFAULT_PORT_ID,
-            util.prepend_param_field(
-                self._p4rt_router_intf_obj.SRC_MAC_FIELD), self._p4rt_router_intf_obj.DEFAULT_SRC_MAC,
-            self._p4rt_router_intf_obj.ACTION_FIELD, self._p4rt_router_intf_obj.DEFAULT_ACTION
-        ]
-        sop = "SET"
-        sdata = self._p4rt_router_intf_obj.DEFAULT_PORT_ID
-        self.p4rt_notifier.send(sop, sdata, swsscommon.FieldValuePairs([(router_intf_key, json.dumps(attr_list))]))
-        util.p4rt_verify_response(self.p4rt_response_consumer, sop, sdata, ritf_attrs, router_intf_key)
-
-        # Add neighbor.
-        neighbor_key = self._p4rt_neighbor_obj.generate_app_db_key(
-            self._p4rt_neighbor_obj.DEFAULT_ROUTER_INTERFACE_ID, self._p4rt_neighbor_obj.DEFAULT_IPV4_NEIGHBOR_ID)
-        neighbor_attrs = [
-            (util.prepend_param_field(self._p4rt_neighbor_obj.DST_MAC_FIELD),
-             self._p4rt_neighbor_obj.DEFAULT_DST_MAC),
-            (self._p4rt_neighbor_obj.ACTION_FIELD,
-             self._p4rt_neighbor_obj.DEFAULT_ACTION)
-        ]
-        attr_list = [
-            util.prepend_param_field(
-                self._p4rt_neighbor_obj.DST_MAC_FIELD), self._p4rt_neighbor_obj.DEFAULT_DST_MAC,
-            self._p4rt_neighbor_obj.ACTION_FIELD, self._p4rt_neighbor_obj.DEFAULT_ACTION
-        ]
-        sop = "SET"
-        sdata = self._p4rt_neighbor_obj.DEFAULT_ROUTER_INTERFACE_ID
-        self.p4rt_notifier.send(sop, sdata, swsscommon.FieldValuePairs([(neighbor_key, json.dumps(attr_list))]))
-        util.p4rt_verify_response(self.p4rt_response_consumer, sop, sdata, neighbor_attrs, neighbor_key)
-
-        # Add nexthop.
-        nexthop_key = self._p4rt_nexthop_obj.generate_app_db_key(
-            self._p4rt_nexthop_obj.DEFAULT_NEXTHOP_ID)
-        nexthop_attrs = [
-            (self._p4rt_nexthop_obj.ACTION_FIELD,
-             self._p4rt_nexthop_obj.DEFAULT_ACTION),
-            (util.prepend_param_field(self._p4rt_nexthop_obj.RIF_FIELD),
-             self._p4rt_nexthop_obj.DEFAULT_ROUTER_INTERFACE_ID),
-            (util.prepend_param_field(self._p4rt_nexthop_obj.NEIGHBOR_ID_FIELD),
-             self._p4rt_nexthop_obj.DEFAULT_IPV4_NEIGHBOR_ID)
-        ]
-        attr_list = [
-            self._p4rt_nexthop_obj.ACTION_FIELD, self._p4rt_nexthop_obj.DEFAULT_ACTION,
-            util.prepend_param_field(
-                self._p4rt_nexthop_obj.RIF_FIELD), self._p4rt_nexthop_obj.DEFAULT_ROUTER_INTERFACE_ID,
-            util.prepend_param_field(
-                self._p4rt_nexthop_obj.NEIGHBOR_ID_FIELD), self._p4rt_nexthop_obj.DEFAULT_IPV4_NEIGHBOR_ID
-        ]
-        sop = "SET"
-        sdata = self._p4rt_nexthop_obj.DEFAULT_NEXTHOP_ID
-        self.p4rt_notifier.send(sop, sdata, swsscommon.FieldValuePairs([(nexthop_key, json.dumps(attr_list))]))
-        util.p4rt_verify_response(self.p4rt_response_consumer, sop, sdata, nexthop_attrs, nexthop_key)
-
-        # Add route.
-        route_key = self._p4rt_route_obj.generate_app_db_key(
-            self._p4rt_route_obj.DEFAULT_VRF_ID, self._p4rt_route_obj.DEFAULT_DST)
-        route_attrs = [
-            (self._p4rt_route_obj.ACTION_FIELD,
-             self._p4rt_route_obj.DEFAULT_ACTION),
-            (util.prepend_param_field(self._p4rt_route_obj.NEXTHOP_ID_FIELD),
-             self._p4rt_route_obj.DEFAULT_NEXTHOP_ID),
-        ]
-        attr_list = [
-            self._p4rt_route_obj.ACTION_FIELD, self._p4rt_route_obj.DEFAULT_ACTION,
-            util.prepend_param_field(
-                self._p4rt_route_obj.NEXTHOP_ID_FIELD), self._p4rt_route_obj.DEFAULT_NEXTHOP_ID
-        ]
-        sop = "SET"
-        sdata = self._p4rt_route_obj.DEFAULT_VRF_ID
-        self.p4rt_notifier.send(sop, sdata, swsscommon.FieldValuePairs([(route_key, json.dumps(attr_list))]))
-        util.p4rt_verify_response(self.p4rt_response_consumer, sop, sdata, route_attrs, route_key)
-
-        # Delete route.
-        sop = "DEL"
-        sdata = self._p4rt_route_obj.DEFAULT_VRF_ID
-        self.p4rt_notifier.send(sop, sdata, swsscommon.FieldValuePairs([(route_key, "")]))
-        util.p4rt_verify_response(self.p4rt_response_consumer, sop, sdata, route_attrs, route_key)
-	
-        # Delete nexthop.
-        sop = "DEL"
-        sdata = self._p4rt_nexthop_obj.DEFAULT_NEXTHOP_ID
-        self.p4rt_notifier.send(sop, sdata, swsscommon.FieldValuePairs([(nexthop_key, "")]))
-        util.p4rt_verify_response(self.p4rt_response_consumer, sop, sdata, nexthop_attrs, nexthop_key)
-
-        # Delete neighbor.
-        sop = "DEL"
-        sdata = self._p4rt_neighbor_obj.DEFAULT_ROUTER_INTERFACE_ID
-        self.p4rt_notifier.send(sop, sdata, swsscommon.FieldValuePairs([(neighbor_key, "")]))
-        util.p4rt_verify_response(self.p4rt_response_consumer, sop, sdata, neighbor_attrs, neighbor_key)
-
-        # Delete router interface.
-        sop = "DEL"
-        sdata = self._p4rt_router_intf_obj.DEFAULT_PORT_ID
-        self.p4rt_notifier.send(sop, sdata, swsscommon.FieldValuePairs([(router_intf_key, "")]))
-        util.p4rt_verify_response(self.p4rt_response_consumer, sop, sdata, ritf_attrs, router_intf_key)
-
-        # Query application database for route entries.
-        route_entries = util.get_keys(
-            self._p4rt_route_obj.appl_db,
-            self._p4rt_route_obj.APP_DB_TBL_NAME + ":" + self._p4rt_route_obj.TBL_NAME,
+        db_list = (
+            (
+                self._p4rt_router_intf_obj.appl_db,
+                "%s:%s"
+                % (self._p4rt_router_intf_obj.APP_DB_TBL_NAME,
+                   self._p4rt_router_intf_obj.TBL_NAME),
+            ),
+            (self._p4rt_router_intf_obj.asic_db,
+             self._p4rt_router_intf_obj.ASIC_DB_TBL_NAME),
         )
-        assert len(route_entries) == (
-            self._p4rt_route_obj.get_original_appl_db_entries_count()
+        self._p4rt_router_intf_obj.get_original_redis_entries(db_list)
+
+        # Create router interface.
+        (
+            router_interface_id,
+            router_intf_key,
+            attr_list,
+        ) = self._p4rt_router_intf_obj.create_router_interface()
+        self._p4rt_router_intf_obj.verify_response(
+            router_intf_key, attr_list, "SWSS_RC_SUCCESS"
         )
-        # Query ASIC database for route entries.
-        route_entries = util.get_keys(
-            self._p4rt_route_obj.asic_db, self._p4rt_route_obj.ASIC_DB_TBL_NAME
+        rif_oid = (
+            self._p4rt_router_intf_obj.get_newly_created_router_interface_oid())
+
+        # Create neighbor.
+        neighbor_id, neighbor_key, attr_list = self._p4rt_neighbor_obj.create_neighbor()
+        self._p4rt_neighbor_obj.verify_response(
+            neighbor_key, attr_list, "SWSS_RC_SUCCESS"
         )
-        assert len(route_entries) == (
-            self._p4rt_route_obj.get_original_asic_db_entries_count()
+
+        # Create nexthop.
+        nexthop_id, nexthop_key, attr_list = self._p4rt_nexthop_obj.create_next_hop(
+            action=self._p4rt_nexthop_obj.SET_IP_NEXTHOP_AND_DISABLE_REWRITES_ACTION,
+            disable_decrement_ttl=1,
+            disable_src_mac_rewrite=1,
+            disable_dst_mac_rewrite=1,
+            disable_vlan_rewrite=1)
+        self._p4rt_nexthop_obj.verify_response(
+            nexthop_key, attr_list, "SWSS_RC_SUCCESS"
         )
+        # get nexthop_oid of newly created nexthop
+        nexthop_oid = self._p4rt_nexthop_obj.get_newly_created_nexthop_oid()
+        assert nexthop_oid is not None
+
+        # Query ASIC database for newly created next hop.
+        asic_db_key = self._p4rt_nexthop_obj.get_newly_created_asic_db_key()
+        assert asic_db_key is not None
+        (status, fvs) = util.get_key(
+            self._p4rt_nexthop_obj.asic_db,
+            self._p4rt_nexthop_obj.ASIC_DB_TBL_NAME,
+            asic_db_key,
+        )
+        assert status == True
+        attr_list = [(self._p4rt_nexthop_obj.SAI_ATTR_TYPE,
+                      self._p4rt_nexthop_obj.SAI_ATTR_TYPE_IP),
+                     (self._p4rt_nexthop_obj.SAI_ATTR_IP,
+                      self._p4rt_nexthop_obj.DEFAULT_IPV4_NEIGHBOR_ID),
+                     (self._p4rt_nexthop_obj.SAI_ATTR_ROUTER_INTF_OID, rif_oid),
+                     (self._p4rt_nexthop_obj.SAI_ATTR_DISABLE_DECREMENT_TTL,
+                      "true"),
+                     (self._p4rt_nexthop_obj.SAI_ATTR_DISABLE_SRC_MAC_REWRITE,
+                      "true"),
+                     (self._p4rt_nexthop_obj.SAI_ATTR_DISABLE_DST_MAC_REWRITE,
+                      "true"),
+                     (self._p4rt_nexthop_obj.SAI_ATTR_DISABLE_VLAN_REWRITE,
+                      "true")]
+        util.verify_attr(fvs, attr_list)
+
+        # Cleanup
+        self._p4rt_nexthop_obj.remove_app_db_entry(nexthop_key)
+        self._p4rt_nexthop_obj.verify_response(
+            nexthop_key, [], "SWSS_RC_SUCCESS")
+        self._p4rt_neighbor_obj.remove_app_db_entry(neighbor_key)
+        self._p4rt_neighbor_obj.verify_response(
+            neighbor_key, [], "SWSS_RC_SUCCESS")
+        self._p4rt_router_intf_obj.remove_app_db_entry(router_intf_key)
+        self._p4rt_router_intf_obj.verify_response(
+            router_intf_key, [], "SWSS_RC_SUCCESS")
+
         self._clean_vrf(dvs)
+        self._cleanup()

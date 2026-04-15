@@ -264,9 +264,9 @@ ReturnCode AclRuleManager::setUpUserDefinedTraps()
         auto trap_group_it = trapGroupMap.find(GENL_PACKET_TRAP_GROUP_NAME_PREFIX + std::to_string(queue_num));
         if (trap_group_it == trapGroupMap.end())
         {
-            LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-                                 << "Trap group was not found given trap group name: "
-                                 << GENL_PACKET_TRAP_GROUP_NAME_PREFIX << queue_num);
+	    SWSS_LOG_INFO("Trap group was not found given trap group name: %s%d",
+                    GENL_PACKET_TRAP_GROUP_NAME_PREFIX, queue_num);
+              continue;
         }
         const sai_object_id_t trap_group_oid = trap_group_it->second;
         auto hostif_oid_it = trapGroupHostIfMap.find(trap_group_oid);
@@ -322,7 +322,7 @@ ReturnCode AclRuleManager::setUpUserDefinedTraps()
         }
         m_p4OidMapper->setOID(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP, std::to_string(queue_num),
                               udt_hostif.user_defined_trap, /*ref_count=*/1);
-        m_userDefinedTraps.push_back(udt_hostif);
+	m_userDefinedTraps[queue_num] = udt_hostif;
         SWSS_LOG_NOTICE("Created user defined trap for QUEUE number %d: %s", queue_num,
                         sai_serialize_object_id(udt_hostif.user_defined_trap).c_str());
     }
@@ -333,15 +333,20 @@ ReturnCode AclRuleManager::cleanUpUserDefinedTraps()
 {
     SWSS_LOG_ENTER();
 
-    for (size_t queue_num = 1; queue_num <= m_userDefinedTraps.size(); queue_num++)
-    {
-        CHECK_ERROR_AND_LOG_AND_RETURN(
-            sai_hostif_api->remove_hostif_table_entry(m_userDefinedTraps[queue_num - 1].hostif_table_entry),
-            "Failed to create hostif table entry.");
-        m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP, std::to_string(queue_num));
-        sai_hostif_api->remove_hostif_user_defined_trap(m_userDefinedTraps[queue_num - 1].user_defined_trap);
-        m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP, std::to_string(queue_num));
+    const auto trapGroupMap = m_coppOrch->getTrapGroupMap();
+    for (const auto& udt_it : m_userDefinedTraps) {
+        CHECK_ERROR_AND_LOG_AND_RETURN(sai_hostif_api->remove_hostif_table_entry(
+                                       fvValue(udt_it).hostif_table_entry),
+                                       "Failed to remove hostif table entry.");
+
+        m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
+                                        std::to_string(fvField(udt_it)));
+        sai_hostif_api->remove_hostif_user_defined_trap(
+            fvValue(udt_it).user_defined_trap);
+        m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
+                                std::to_string(fvField(udt_it)));
     }
+
     m_userDefinedTraps.clear();
     return ReturnCode();
 }
@@ -623,36 +628,35 @@ ReturnCodeOr<P4AclRuleAppDbEntry> AclRuleManager::deserializeAclRuleAppDbEntry(
         else if (prefix == kMeterPrefix)
         {
             const auto &meter_attr_name = tokenized_field[1];
-            if (std::stoi(value) < 0)
-            {
-                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                       << "Invalid ACL meter field value " << QuotedVar(field) << ": " << QuotedVar(value);
-            }
-            if (meter_attr_name == kMeterCir)
-            {
-                app_db_entry.meter.cir = std::stoi(value);
-            }
-            else if (meter_attr_name == kMeterCburst)
-            {
-                app_db_entry.meter.cburst = std::stoi(value);
-            }
-            else if (meter_attr_name == kMeterPir)
-            {
-                app_db_entry.meter.pir = std::stoi(value);
-            }
-            else if (meter_attr_name == kMeterPburst)
-            {
-                app_db_entry.meter.pburst = std::stoi(value);
-            }
-            else
-            {
-                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Unknown ACL meter field " << QuotedVar(field);
-            }
-            app_db_entry.meter.enabled = true;
-        }
-        else
-        {
-            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Unknown ACL rule field " << QuotedVar(field);
+            try {
+                auto value_node = nlohmann::json::parse(value);
+                if (!value_node.is_number_unsigned()) {
+                  return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                     << "Invalid ACL meter field value " << QuotedVar(field) << ": "
+                     << QuotedVar(value) << " - Expect a uint64_t.";
+               }
+               uint64_t meter_value = std::stoull(value);
+               if (meter_attr_name == kMeterCir) {
+                  app_db_entry.meter.cir = meter_value;
+               } else if (meter_attr_name == kMeterCburst) {
+                   app_db_entry.meter.cburst = meter_value;
+               } else if (meter_attr_name == kMeterPir) {
+                   app_db_entry.meter.pir = meter_value;
+               } else if (meter_attr_name == kMeterPburst) {
+                   app_db_entry.meter.pburst = meter_value;
+               } else {
+                  return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                    << "Unknown ACL meter field " << QuotedVar(field);
+               }
+           } catch (std::exception& e) {
+             return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                 << "Invalid ACL meter field value " << QuotedVar(field) << ": "
+                 << QuotedVar(value) << " - Expect a uint64_t.";
+           }
+           app_db_entry.meter.enabled = true;
+        } else  {
+            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Unknown ACL rule field " << QuotedVar(field);
         }
     }
     return app_db_entry;
@@ -767,7 +771,7 @@ ReturnCode AclRuleManager::setMatchValue(const sai_acl_entry_attr_t attr_name,
                                          const std::string& ip_type_bit_type) {
   SWSS_LOG_ENTER();
   try {
-    switch (attr_name) {
+    switch ((int)attr_name) {
       case SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS: {
         const auto& ports = tokenize(attr_value, kPortsDelimiter);
         if (ports.empty()) {
@@ -851,6 +855,8 @@ ReturnCode AclRuleManager::setMatchValue(const sai_acl_entry_attr_t attr_name,
         }
         break;
       }
+      case SAI_ACL_ENTRY_ATTR_FIELD_PORT_USER_META:
+      case SAI_ACL_ENTRY_ATTR_FIELD_OUTER_TPID:
       case SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE:
       case SAI_ACL_ENTRY_ATTR_FIELD_L4_SRC_PORT:
       case SAI_ACL_ENTRY_ATTR_FIELD_L4_DST_PORT:
@@ -980,6 +986,7 @@ ReturnCode AclRuleManager::setMatchValue(const sai_acl_entry_attr_t attr_name,
         }
         break;
       }
+      case SAI_ACL_ENTRY_ATTR_FIELD_VLAN_USER_META:
       case SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI:
       case SAI_ACL_ENTRY_ATTR_FIELD_ROUTE_DST_USER_META:
       case SAI_ACL_ENTRY_ATTR_FIELD_ACL_USER_META:
@@ -1028,12 +1035,13 @@ ReturnCode AclRuleManager::setMatchValue(const sai_acl_entry_attr_t attr_name,
         }
         break;
       }
-      case SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT: {
+      case SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT:
+      case SAI_ACL_ENTRY_ATTR_FIELD_ROUTE_NPU_META_DST_HIT: {
         const std::vector<std::string>& value_and_mask =
             tokenize(attr_value, kDataMaskDelimiter);
         uint8_t hit_value = to_uint<uint8_t>(trim(value_and_mask[0]));
         if (value_and_mask.size() > 1) {
-          SWSS_LOG_INFO("Mask ignored for IPMC table hit field.");
+          SWSS_LOG_INFO("Mask ignored for IPMC/route table hit field.");
         }
         value->aclfield.data.booldata = hit_value != 0;
         break;
@@ -1382,7 +1390,15 @@ ReturnCode AclRuleManager::setActionValue(const sai_acl_entry_attr_t attr_name,
                        << QuotedVar(acl_rule->acl_table_name)
                        << ". Queue number should >= 1 and <= " << m_userDefinedTraps.size();
             }
-            value->aclaction.parameter.oid = m_userDefinedTraps[queue_num - 1].user_defined_trap;
+	    const auto udt_it = m_userDefinedTraps.find(queue_num);
+            if (udt_it == m_userDefinedTraps.end()) {
+          	return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                 << "Invalid CPU queue number " << QuotedVar(attr_value)
+                 << " for " << QuotedVar(acl_rule->acl_table_name)
+                 << ". Queue number " << to_string(queue_num)
+                 << " does not have UserDefinedTrap configured";
+            }
+	    value->aclaction.parameter.oid = udt_it->second.user_defined_trap;
             acl_rule->action_qos_queue_num = queue_num;
         }
         catch (std::exception &e)

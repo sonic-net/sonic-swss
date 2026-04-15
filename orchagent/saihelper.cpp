@@ -29,7 +29,11 @@ using namespace swss;
 #define STR(s) _STR(s)
 
 #define CONTEXT_CFG_FILE "/usr/share/sonic/hwsku/context_config.json"
+#if defined(__arm__)
+#define SAI_REDIS_SYNC_OPERATION_RESPONSE_TIMEOUT ((480*1000)*2)
+#else
 #define SAI_REDIS_SYNC_OPERATION_RESPONSE_TIMEOUT (480*1000)
+#endif
 
 // hwinfo = "INTERFACE_NAME/PHY ID", mii_ioctl_data->phy_id is a __u16
 #define HWINFO_MAX_SIZE IFNAMSIZ + 1 + 5
@@ -69,6 +73,7 @@ sai_isolation_group_api_t*  sai_isolation_group_api;
 sai_system_port_api_t*      sai_system_port_api;
 sai_macsec_api_t*           sai_macsec_api;
 sai_srv6_api_t**            sai_srv6_api;;
+sai_l2mc_api_t*             sai_l2mc_api;
 sai_l2mc_group_api_t*       sai_l2mc_group_api;
 sai_counter_api_t*          sai_counter_api;
 sai_bfd_api_t*              sai_bfd_api;
@@ -232,6 +237,7 @@ void initSaiApi()
     sai_api_query(SAI_API_SYSTEM_PORT,          (void **)&sai_system_port_api);
     sai_api_query(SAI_API_MACSEC,               (void **)&sai_macsec_api);
     sai_api_query(SAI_API_SRV6,                 (void **)&sai_srv6_api);
+    sai_api_query(SAI_API_L2MC,                 (void **)&sai_l2mc_api);
     sai_api_query(SAI_API_L2MC_GROUP,           (void **)&sai_l2mc_group_api);
     sai_api_query(SAI_API_COUNTER,              (void **)&sai_counter_api);
     sai_api_query(SAI_API_BFD,                  (void **)&sai_bfd_api);
@@ -293,6 +299,7 @@ void initSaiApi()
     sai_log_set(SAI_API_SYSTEM_PORT,            SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_MACSEC,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_SRV6,                   SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_L2MC,                   SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_L2MC_GROUP,             SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_COUNTER,                SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_BFD,                    SAI_LOG_LEVEL_NOTICE);
