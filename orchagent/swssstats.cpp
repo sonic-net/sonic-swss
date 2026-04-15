@@ -118,11 +118,13 @@ SwssStats::TableStats& SwssStats::getOrCreateStats(const string &table_name)
     return it->second;
 }
 
-void SwssStats::dumpStats(const TableStats &stats,
-                          vector<FieldValueTuple> &values)
+// File-local helper: serialize a TableStats snapshot into FieldValueTuple list.
+// Kept out of the header to avoid forward-declaring FieldValueTuple (which is
+// a typedef, not a class, and cannot be forward-declared with 'class').
+static void dumpStats(const SwssStats::TableStats &stats,
+                      vector<FieldValueTuple> &values)
 {
     values.clear();
-
     values.emplace_back("SET",      to_string(stats.set_count.load(memory_order_relaxed)));
     values.emplace_back("DEL",      to_string(stats.del_count.load(memory_order_relaxed)));
     values.emplace_back("COMPLETE", to_string(stats.complete_count.load(memory_order_relaxed)));

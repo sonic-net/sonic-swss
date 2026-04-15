@@ -12,7 +12,6 @@
 namespace swss {
     class DBConnector;
     class Table;
-    class FieldValueTuple;
 }
 
 // Defined in orch.cpp; set to false to disable all SwssStats recording
@@ -36,23 +35,8 @@ public:
         uint64_t error_count    = 0;
     };
 
-    static SwssStats* getInstance();
-    ~SwssStats();
-
-    // Record an incoming task (called from addToSync)
-    void recordTask(const std::string &table_name, const std::string &op);
-
-    // Record task completions (count tasks removed from sync queue)
-    void recordComplete(const std::string &table_name, uint64_t count = 1);
-
-    // Record task error
-    void recordError(const std::string &table_name, uint64_t count = 1);
-
-    // Return a snapshot of counters for the given table.
-    // Returns zeroed snapshot if the table has no stats yet.
-    CounterSnapshot getCounters(const std::string &table_name);
-
-private:
+    // Internal stats storage — public so file-local helpers in swssstats.cpp
+    // can access it without needing a friend declaration.
     struct TableStats
     {
         std::atomic<uint64_t> set_count;
@@ -76,6 +60,23 @@ private:
         TableStats& operator=(const TableStats&) = delete;
     };
 
+    static SwssStats* getInstance();
+    ~SwssStats();
+
+    // Record an incoming task (called from addToSync)
+    void recordTask(const std::string &table_name, const std::string &op);
+
+    // Record task completions (count tasks removed from sync queue)
+    void recordComplete(const std::string &table_name, uint64_t count = 1);
+
+    // Record task error
+    void recordError(const std::string &table_name, uint64_t count = 1);
+
+    // Return a snapshot of counters for the given table.
+    // Returns zeroed snapshot if the table has no stats yet.
+    CounterSnapshot getCounters(const std::string &table_name);
+
+private:
     // m_running uses atomic to avoid data race between main and writer threads
     std::atomic<bool> m_running;
     uint32_t m_interval_sec;
@@ -99,5 +100,4 @@ private:
     // because std::map never invalidates existing element references.
     TableStats& getOrCreateStats(const std::string &table_name);
     void writerThread();
-    void dumpStats(const TableStats &stats, std::vector<swss::FieldValueTuple> &values);
 };
