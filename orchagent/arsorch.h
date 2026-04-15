@@ -1,6 +1,7 @@
 #pragma once
 
 #include "orch.h"
+#include "observer.h"
 #include "portsorch.h"
 #include "switchorch.h"
 #include "nexthopgroupkey.h"
@@ -34,6 +35,7 @@ struct ArsProfileEntry
     uint32_t        quantizationType  = 0;
     uint32_t        profileLinkUtilThreshold = 0;
     uint32_t        profileIdleTime   = 0;
+    std::string     defaultArsObject;
 };
 
 struct ArsObjectEntry
@@ -74,7 +76,7 @@ struct ArsPortProfileEntry
     bool     loadScalingFactorAuto = false;
 };
 
-class ArsOrch : public Orch
+class ArsOrch : public Orch, public Observer
 {
 public:
     ArsOrch(swss::DBConnector *configDb,
@@ -93,6 +95,8 @@ public:
     std::string getArsObjectForPrefix(const std::string &prefix) const;
     void writeArsNhgState(const std::string &nhgName, bool degraded, const std::string &reason = "");
     void removeArsNhgState(const std::string &nhgName);
+
+    void update(SubjectType type, void *cntx) override;
 
 private:
     void doTask(Consumer &consumer) override;
@@ -114,6 +118,8 @@ private:
     bool setArsObjectAttr(sai_object_id_t oid, sai_ars_attr_t attrId, uint32_t val);
 
     bool bindArsProfileToSwitch(sai_object_id_t profileOid);
+    bool bindArsToLag(const std::string &lagName, sai_object_id_t arsOid);
+    bool unbindArsFromLag(const std::string &lagName);
 
     bool setPortArsEnable(const std::string &portName, bool enable);
     bool setPortArsScalingFactor(const std::string &portName, const ArsPortProfileEntry &pp);
@@ -126,12 +132,14 @@ private:
     void doArsPortChannelTask(Consumer &consumer);
 
     void publishArsCaps();
+    void publishArsProfileState(const std::string &profileName, const ArsProfileEntry &entry);
 
     sai_ars_mode_t parseArsMode(const std::string &modeStr) const;
 
     SwitchOrch *m_switchOrch;
     PortsOrch  *m_portsOrch;
     swss::Table m_stateArsCapTable;
+    swss::Table m_stateArsProfileTable;
     swss::Table m_stateArsNhgTable;
     swss::Table m_cfgArsTable;
 
@@ -144,6 +152,7 @@ private:
     std::unordered_map<std::string, ArsInterfaceEntry>  m_arsInterfaces;
     std::unordered_map<std::string, ArsPortProfileEntry> m_arsPortProfiles;
     std::set<std::string> m_arsEnabledPorts;
+    std::set<std::string> m_arsEnabledLags;
 
     std::unordered_map<std::string, std::string> m_nexthopArsBindings;
 };
