@@ -52,9 +52,10 @@ DashRouteOrch::DashRouteOrch(DBConnector *db, vector<string> &tableName, DashOrc
     dash_orch_(dash_orch)
 {
     SWSS_LOG_ENTER();
-    dash_route_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ROUTE_TABLE_NAME);
-    dash_route_rule_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ROUTE_RULE_TABLE_NAME);
-    dash_route_group_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ROUTE_GROUP_TABLE_NAME);
+    m_resultPipeline = std::make_unique<RedisPipeline>(app_state_db);
+    dash_route_result_table_ = make_unique<Table>(m_resultPipeline.get(), APP_DASH_ROUTE_TABLE_NAME, true);
+    dash_route_rule_result_table_ = make_unique<Table>(m_resultPipeline.get(), APP_DASH_ROUTE_RULE_TABLE_NAME, true);
+    dash_route_group_result_table_ = make_unique<Table>(m_resultPipeline.get(), APP_DASH_ROUTE_GROUP_TABLE_NAME, true);
 }
 
 bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkContext& ctxt)
@@ -416,6 +417,7 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
                 }
             }
         }
+        flushResultsToDb(dash_route_result_table_);
     }
 }
 
@@ -700,6 +702,7 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
                 }
             }
         }
+        flushResultsToDb(dash_route_rule_result_table_);
     }
 }
 

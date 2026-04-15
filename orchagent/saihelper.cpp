@@ -1165,3 +1165,23 @@ void removeResultFromDB(const std::unique_ptr<swss::Table>& table, const string&
     }
     SWSS_LOG_INFO("Removed result from DB for key %s", key.c_str());
 }
+
+void flushResultsToDb(const std::unique_ptr<swss::Table>& table)
+{
+    SWSS_LOG_ENTER();
+
+    if (!table)
+    {
+        SWSS_LOG_WARN("Table passed in is NULL");
+        return;
+    }
+
+    try
+    {
+        table->flush();
+    }
+    catch (const exception &e)
+    {
+        SWSS_LOG_ERROR("Exception caught while flushing results to DB: %s", e.what());
+    }
+}
