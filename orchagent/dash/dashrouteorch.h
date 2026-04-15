@@ -42,6 +42,7 @@ struct InboundRoutingBulkContext
     uint32_t vni;
     swss::IpAddress sip;
     swss::IpAddress sip_mask;
+    uint32_t priority;
     dash::route_rule::RouteRule metadata;
     std::deque<sai_status_t> object_statuses;
     InboundRoutingBulkContext() {}
