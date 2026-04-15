@@ -14,6 +14,7 @@ namespace mock_orch_test
                 {APP_DASH_ROUTING_TYPE_TABLE_NAME, (Orch**) &m_DashOrch},
                 {APP_DASH_ROUTE_GROUP_TABLE_NAME, (Orch**) &m_DashRouteOrch},
                 {APP_DASH_ROUTE_TABLE_NAME, (Orch**) &m_DashRouteOrch},
+                {APP_DASH_ROUTE_RULE_TABLE_NAME, (Orch**) &m_DashRouteOrch},
                 {APP_DASH_TUNNEL_TABLE_NAME, (Orch**) &m_DashTunnelOrch},
                 {APP_DASH_ENI_TABLE_NAME, (Orch**) &m_DashOrch},
                 { APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, (Orch **)&m_dashPortMapOrch },
