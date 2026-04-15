@@ -2559,6 +2559,8 @@ namespace aclorch_test
                 { { acl_table_id, DEL_COMMAND, {} } });
             orch->doAclTableTask(kvfDel);
         }
+    }
+
     sai_switch_api_t *old_sai_switch_api_mirror_egress;
 
     sai_status_t getSwitchAttributeMirrorEgress(_In_ sai_object_id_t switch_id, _In_ uint32_t attr_count,
