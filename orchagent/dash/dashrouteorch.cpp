@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <exception>
+#include <cctype>
 #include <inttypes.h>
 #include <algorithm>
 #include <numeric>
@@ -441,7 +442,7 @@ bool DashRouteOrch::addInboundRouting(const string& key, InboundRoutingBulkConte
     inbound_routing_entry.vni = ctxt.vni;
     swss::copy(inbound_routing_entry.sip, ctxt.sip);
     swss::copy(inbound_routing_entry.sip_mask, ctxt.sip_mask);
-    inbound_routing_entry.priority = ctxt.metadata.priority();
+    inbound_routing_entry.priority = ctxt.priority;
     auto& object_statuses = ctxt.object_statuses;
 
     sai_attribute_t inbound_routing_attr;
@@ -523,7 +524,7 @@ bool DashRouteOrch::removeInboundRouting(const string& key, InboundRoutingBulkCo
     inbound_routing_entry.vni = ctxt.vni;
     swss::copy(inbound_routing_entry.sip, ctxt.sip);
     swss::copy(inbound_routing_entry.sip_mask, ctxt.sip_mask);
-    inbound_routing_entry.priority = ctxt.metadata.priority();
+    inbound_routing_entry.priority = ctxt.priority;
     object_statuses.emplace_back();
     inbound_routing_bulker_.remove_entry(&object_statuses.back(), &inbound_routing_entry);
 
@@ -596,14 +597,34 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
             uint32_t& vni = ctxt.vni;
             IpAddress& sip = ctxt.sip;
             IpAddress& sip_mask = ctxt.sip_mask;
+            uint32_t& priority = ctxt.priority;
             IpPrefix prefix;
 
-            vector<string> keys = tokenize(key, ':');
-            eni = keys[0];
-            vni = to_uint<uint32_t>(keys[1]);
-            string ip_str;
-            size_t pos = key.find(":", keys[0].length() + keys[1].length() + 1);
-            ip_str = key.substr(pos + 1);
+            // expect key in format {{eni}}:{{vni}}:{{prefix/tag}}:{{priority}}
+            size_t first_colon = key.find(":");
+            size_t second_colon = key.find(":", first_colon == string::npos ? first_colon : first_colon + 1);
+            eni = key.substr(0, first_colon);
+            vni = to_uint<uint32_t>(key.substr(first_colon + 1, second_colon - first_colon - 1));
+
+            priority = 0;
+
+            // the key format was changed to include priority field. in case old key format is used where the priority is not present, we should not crash and default to priority 0.
+            string prefix_and_optional_priority = key.substr(second_colon + 1);
+            string ip_str = prefix_and_optional_priority;
+            size_t last_colon = prefix_and_optional_priority.rfind(':');
+            if (last_colon != string::npos)
+            {
+                string maybe_priority = prefix_and_optional_priority.substr(last_colon + 1);
+                bool is_priority = !maybe_priority.empty() &&
+                                   all_of(maybe_priority.begin(), maybe_priority.end(),
+                                          [](unsigned char c)
+                                          { return std::isdigit(c); });
+                if (is_priority)
+                {
+                    priority = to_uint<uint32_t>(maybe_priority);
+                    ip_str = prefix_and_optional_priority.substr(0, last_colon);
+                }
+            }
             prefix = IpPrefix(ip_str);
 
             sip = prefix.getIp();
