@@ -82,6 +82,22 @@ void SwssStats::recordError(const string &table_name, uint64_t count)
     stats.version.fetch_add(1, memory_order_release);
 }
 
+SwssStats::CounterSnapshot SwssStats::getCounters(const string &table_name)
+{
+    lock_guard<mutex> lock(m_mutex);
+
+    CounterSnapshot snap;
+    auto it = m_stats.find(table_name);
+    if (it != m_stats.end())
+    {
+        snap.set_count      = it->second.set_count.load(memory_order_relaxed);
+        snap.del_count      = it->second.del_count.load(memory_order_relaxed);
+        snap.complete_count = it->second.complete_count.load(memory_order_relaxed);
+        snap.error_count    = it->second.error_count.load(memory_order_relaxed);
+    }
+    return snap;
+}
+
 SwssStats::TableStats& SwssStats::getOrCreateStats(const string &table_name)
 {
     lock_guard<mutex> lock(m_mutex);

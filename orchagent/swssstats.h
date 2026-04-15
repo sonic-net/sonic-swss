@@ -27,6 +27,15 @@ extern std::atomic<bool> gSwssStatsRecord;
 class SwssStats
 {
 public:
+    // Snapshot of counters for a single table (used for testing and diagnostics)
+    struct CounterSnapshot
+    {
+        uint64_t set_count      = 0;
+        uint64_t del_count      = 0;
+        uint64_t complete_count = 0;
+        uint64_t error_count    = 0;
+    };
+
     static SwssStats* getInstance();
     ~SwssStats();
 
@@ -38,6 +47,10 @@ public:
 
     // Record task error
     void recordError(const std::string &table_name, uint64_t count = 1);
+
+    // Return a snapshot of counters for the given table.
+    // Returns zeroed snapshot if the table has no stats yet.
+    CounterSnapshot getCounters(const std::string &table_name);
 
 private:
     struct TableStats
