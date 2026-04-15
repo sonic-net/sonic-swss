@@ -9,9 +9,9 @@ CXXFLAGS = -g -O0
 
 CFLAGS_SAI = -I /usr/include/sai
 
-TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_bfdsyncd tests_response_publisher
+TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd tests_bfdsyncd
 
-noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_bfdsyncd tests_response_publisher
+noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd tests_bfdsyncd
 
 LDADD_SAI = -lsaimeta -lsaimetadata -lsaivs -lsairedis
 
