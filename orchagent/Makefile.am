@@ -56,7 +56,7 @@ orchagent_SOURCES = \
             orchdaemon.cpp \
             orch.cpp \
             swssstats.cpp \
-            notifications.cpp\
+            notifications.cpp \
             nhgorch.cpp \
             nhgbase.cpp \
             cbf/cbfnhgorch.cpp  \

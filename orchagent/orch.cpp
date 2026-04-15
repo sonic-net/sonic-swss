@@ -17,7 +17,7 @@
 using namespace swss;
 
 int gBatchSize = 0;
-bool gSwssStatsRecord = true;  // Enable SwssStats by default
+std::atomic<bool> gSwssStatsRecord(true);  // Enable SwssStats by default
 
 std::shared_ptr<RingBuffer> Orch::gRingBuffer = nullptr;
 std::shared_ptr<RingBuffer> Executor::gRingBuffer = nullptr;
@@ -566,7 +566,17 @@ void Executor::processAnyTask(AnyTask&& task)
 void Consumer::drain()
 {
     if (!m_toSync.empty())
+    {
+        size_t size_before = gSwssStatsRecord ? m_toSync.size() : 0;
         ((Orch *)m_orch)->doTask((Consumer&)*this);
+        if (gSwssStatsRecord && size_before > 0)
+        {
+            size_t size_after = m_toSync.size();
+            uint64_t completed = (size_before > size_after) ? (size_before - size_after) : 0;
+            if (completed > 0)
+                SwssStats::getInstance()->recordComplete(getTableName(), completed);
+        }
+    }
 }
 
 size_t Orch::addExistingData(const string& tableName)
