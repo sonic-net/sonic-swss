@@ -42,7 +42,39 @@ ArsOrch::ArsOrch(DBConnector *configDb,
       m_cfgArsTable(configDb, CFG_ARS_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
+    m_portsOrch->attach(this);
     publishArsCaps();
+}
+
+void ArsOrch::update(SubjectType type, void *cntx)
+{
+    if (type != SUBJECT_TYPE_PORT_OPER_STATE_CHANGE)
+        return;
+
+    auto *stateUpdate = reinterpret_cast<PortOperStateUpdate *>(cntx);
+    if (stateUpdate->operStatus != SAI_PORT_OPER_STATUS_UP)
+        return;
+
+    const string &portName = stateUpdate->port.m_alias;
+    auto it = m_arsInterfaces.find(portName);
+    if (it == m_arsInterfaces.end())
+        return;
+
+    const auto &entry = it->second;
+    if (!entry.enabled || entry.portProfile.empty())
+        return;
+
+    auto ppIt = m_arsPortProfiles.find(entry.portProfile);
+    if (ppIt == m_arsPortProfiles.end())
+        return;
+
+    const auto &pp = ppIt->second;
+    if (!pp.loadScalingFactorAuto)
+        return;
+
+    SWSS_LOG_NOTICE("ARS: port %s came up (speed=%u), re-applying auto scaling factor",
+                    portName.c_str(), stateUpdate->port.m_speed);
+    applyPortProfileToInterface(portName, entry.portProfile);
 }
 
 void ArsOrch::doTask(Consumer &consumer)
@@ -490,6 +522,16 @@ void ArsOrch::doArsPortProfileTask(Consumer &consumer)
 
             m_arsPortProfiles[name] = entry;
             SWSS_LOG_NOTICE("ARS: port-profile '%s' updated", name.c_str());
+
+            for (const auto &kv : m_arsInterfaces)
+            {
+                if (kv.second.portProfile == name && kv.second.enabled)
+                {
+                    SWSS_LOG_NOTICE("ARS: re-applying updated port-profile '%s' to %s",
+                                    name.c_str(), kv.first.c_str());
+                    applyPortProfileToInterface(kv.first, name);
+                }
+            }
         }
         else if (op == DEL_COMMAND)
         {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "orch.h"
+#include "observer.h"
 #include "portsorch.h"
 #include "switchorch.h"
 #include "nexthopgroupkey.h"
@@ -74,7 +75,7 @@ struct ArsPortProfileEntry
     bool     loadScalingFactorAuto = false;
 };
 
-class ArsOrch : public Orch
+class ArsOrch : public Orch, public Observer
 {
 public:
     ArsOrch(swss::DBConnector *configDb,
@@ -93,6 +94,8 @@ public:
     std::string getArsObjectForPrefix(const std::string &prefix) const;
     void writeArsNhgState(const std::string &nhgName, bool degraded, const std::string &reason = "");
     void removeArsNhgState(const std::string &nhgName);
+
+    void update(SubjectType type, void *cntx) override;
 
 private:
     void doTask(Consumer &consumer) override;
