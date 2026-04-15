@@ -19,12 +19,8 @@ extern sai_object_id_t        gSwitchId;
 extern RouteOrch             *gRouteOrch;
 
 static const map<string, sai_ars_mode_t> arsModeLookup = {
-    {"flowlet-quality",         SAI_ARS_MODE_FLOWLET_QUALITY},
-    {"flowlet-quality-bounded", SAI_ARS_MODE_FLOWLET_QUALITY},
-    {"flowlet-random",          SAI_ARS_MODE_FLOWLET_RANDOM},
-    {"packet-quality",          SAI_ARS_MODE_PER_PACKET_QUALITY},
-    {"packet-random",           SAI_ARS_MODE_PER_PACKET_RANDOM},
-    {"fixed",                   SAI_ARS_MODE_FIXED},
+    {"flowlet-quality",  SAI_ARS_MODE_FLOWLET_QUALITY},
+    {"packet-quality",   SAI_ARS_MODE_PER_PACKET_QUALITY},
 };
 
 static bool isFlowletMode(sai_ars_mode_t mode);
@@ -897,8 +893,7 @@ bool ArsOrch::updateArsProfileAttrBool(sai_object_id_t oid, sai_ars_profile_attr
 
 static bool isFlowletMode(sai_ars_mode_t mode)
 {
-    return mode == SAI_ARS_MODE_FLOWLET_QUALITY ||
-           mode == SAI_ARS_MODE_FLOWLET_RANDOM;
+    return mode == SAI_ARS_MODE_FLOWLET_QUALITY;
 }
 
 bool ArsOrch::createArsObject(const string &name, const ArsObjectEntry &entry)
@@ -1342,12 +1337,8 @@ void ArsOrch::publishArsCaps()
 
     string modesStr;
     static const vector<pair<string, sai_ars_mode_t>> modeProbes = {
-        {"flowlet-quality",         SAI_ARS_MODE_FLOWLET_QUALITY},
-        {"flowlet-quality-bounded", SAI_ARS_MODE_FLOWLET_QUALITY},
-        {"flowlet-random",          SAI_ARS_MODE_FLOWLET_RANDOM},
-        {"packet-quality",          SAI_ARS_MODE_PER_PACKET_QUALITY},
-        {"packet-random",           SAI_ARS_MODE_PER_PACKET_RANDOM},
-        {"fixed",                   SAI_ARS_MODE_FIXED},
+        {"flowlet-quality",  SAI_ARS_MODE_FLOWLET_QUALITY},
+        {"packet-quality",   SAI_ARS_MODE_PER_PACKET_QUALITY},
     };
 
     if (arsSupported)
@@ -1389,8 +1380,7 @@ void ArsOrch::publishArsCaps()
     }
     else
     {
-        modesStr = "flowlet-quality,flowlet-quality-bounded,flowlet-random,"
-                   "packet-quality,packet-random,fixed";
+        modesStr = "flowlet-quality,packet-quality";
     }
     caps.emplace_back("modes_supported", modesStr);
 
