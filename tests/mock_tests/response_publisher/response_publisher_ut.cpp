@@ -72,14 +72,14 @@ TEST(ResponsePublisher, TestPublishEnableDbWrite)
     ASSERT_TRUE(stateTable.hget("SOME_KEY", "field", value));
     ASSERT_EQ(value, "value");
 
-    publisher.setEnableDbWriteAndNotify(false);
+    publisher.setEnableDbWrite(false);
 
     publisher.publish("SOME_TABLE", "SOME_KEY", {{"field", "new-value"}}, ReturnCode(SAI_STATUS_SUCCESS));
     publisher.flush();
     ASSERT_TRUE(stateTable.hget("SOME_KEY", "field", value));
     ASSERT_EQ(value, "value");
 
-    publisher.setEnableDbWriteAndNotify(true);
+    publisher.setEnableDbWrite(true);
 
     publisher.publish("SOME_TABLE", "SOME_KEY", {{"field", "new-value"}}, ReturnCode(SAI_STATUS_SUCCESS));
     publisher.flush();
@@ -226,7 +226,7 @@ TEST(ResponsePublisher, PublishAsyncRespectsEnableDbWriteAndNotifyToggle)
 
     ResponsePublisher publisher{"APPL_STATE_DB", false, true};
     publisher.m_directDbWrite = true;
-    publisher.setEnableDbWriteAndNotify(false);
+    publisher.setEnableDbWrite(false);
 
     publisher.publishAsync("ROUTE_TABLE", "10.8.1.0/24", {{"state", "off"}}, ReturnCode(SAI_STATUS_SUCCESS));
     publisher.publishAsyncBatch();
@@ -235,7 +235,7 @@ TEST(ResponsePublisher, PublishAsyncRespectsEnableDbWriteAndNotifyToggle)
     std::string v;
     ASSERT_FALSE(pollHget(stateTable, "10.8.1.0/24", "state", &v, 200));
 
-    publisher.setEnableDbWriteAndNotify(true);
+    publisher.setEnableDbWrite(true);
     publisher.publishAsync("ROUTE_TABLE", "10.8.1.0/24", {{"state", "on"}}, ReturnCode(SAI_STATUS_SUCCESS));
     publisher.publishAsyncBatch();
     publisher.flush();
