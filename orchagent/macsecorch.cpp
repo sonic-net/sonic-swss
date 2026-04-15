@@ -1502,16 +1502,16 @@ bool MACsecOrch::createMACsecPort(
 
     m_port_orch->setMACsecEnabledState(port_id, true);
 
+    if (!setPFCForward(port_id, true))
+    {
+        SWSS_LOG_WARN("Cannot enable PFC forward at the port %s.", port_name.c_str());
+        return false;
+    }
+    recover.add_action([this, port_id]()
+                        { this->setPFCForward(port_id, false); });
+
     if (phy)
     {
-        if (!setPFCForward(port_id, true))
-        {
-            SWSS_LOG_WARN("Cannot enable PFC forward at the port %s.", port_name.c_str());
-            return false;
-        }
-        recover.add_action([this, port_id]()
-                           { this->setPFCForward(port_id, false); });
-
         if (phy->macsec_ipg != 0)
         {
             if (!m_port_orch->getPortIPG(port.m_port_id, macsec_port.m_original_ipg))
@@ -1771,14 +1771,14 @@ bool MACsecOrch::deleteMACsecPort(
 
     m_port_orch->setMACsecEnabledState(port_id, false);
 
+    if (!setPFCForward(port_id, false))
+    {
+        SWSS_LOG_WARN("Cannot disable PFC forward at the port %s.", port_name.c_str());
+        result &= false;
+    }
+
     if (phy)
     {
-        if (!setPFCForward(port_id, false))
-        {
-            SWSS_LOG_WARN("Cannot disable PFC forward at the port %s.", port_name.c_str());
-            result &= false;
-        }
-
         if (phy->macsec_ipg != 0)
         {
             if (!m_port_orch->setPortIPG(port.m_port_id, macsec_port.m_original_ipg))
@@ -2695,35 +2695,32 @@ bool MACsecOrch::initMACsecACLTable(
     }
     recover.add_action([&acl_table]() { acl_table.m_available_acl_priorities.clear(); });
 
-    if (phy)
+    if (acl_table.m_available_acl_priorities.empty())
     {
-        if (acl_table.m_available_acl_priorities.empty())
-        {
-            SWSS_LOG_WARN("Available ACL priorities have been exhausted.");
-            return false;
-        }
-        priority = *(acl_table.m_available_acl_priorities.rbegin());
-        acl_table.m_available_acl_priorities.erase(std::prev(acl_table.m_available_acl_priorities.end()));
-
-        TaskArgs values;
-        if (!m_applPortTable.get(port_name, values))
-        {
-            SWSS_LOG_ERROR("Port %s isn't existing", port_name.c_str());
-            return false;
-        }
-        std::string pfc_mode = PFC_MODE_DEFAULT;
-        get_value(values, "pfc_encryption_mode", pfc_mode);
-
-        if (!createPFCEntry(acl_table.m_pfc_entry_id, acl_table.m_table_id, switch_id, direction, priority, pfc_mode))
-        {
-            return false;
-        }
-        recover.add_action([this, &acl_table, priority]() {
-            this->deleteMACsecACLEntry(acl_table.m_pfc_entry_id);
-            acl_table.m_pfc_entry_id = SAI_NULL_OBJECT_ID;
-            acl_table.m_available_acl_priorities.insert(priority);
-        });
+        SWSS_LOG_WARN("Available ACL priorities have been exhausted.");
+        return false;
     }
+    priority = *(acl_table.m_available_acl_priorities.rbegin());
+    acl_table.m_available_acl_priorities.erase(std::prev(acl_table.m_available_acl_priorities.end()));
+
+    TaskArgs values;
+    if (!m_applPortTable.get(port_name, values))
+    {
+        SWSS_LOG_ERROR("Port %s isn't existing", port_name.c_str());
+        return false;
+    }
+    std::string pfc_mode = PFC_MODE_DEFAULT;
+    get_value(values, "pfc_encryption_mode", pfc_mode);
+
+    if (!createPFCEntry(acl_table.m_pfc_entry_id, acl_table.m_table_id, switch_id, direction, priority, pfc_mode))
+    {
+        return false;
+    }
+    recover.add_action([this, &acl_table, priority]() {
+        this->deleteMACsecACLEntry(acl_table.m_pfc_entry_id);
+        acl_table.m_pfc_entry_id = SAI_NULL_OBJECT_ID;
+        acl_table.m_available_acl_priorities.insert(priority);
+    });
 
     recover.clear();
     return true;
@@ -2747,13 +2744,10 @@ bool MACsecOrch::deinitMACsecACLTable(
         SWSS_LOG_WARN("Cannot delete EAPOL ACL entry");
         result &= false;
     }
-    if (phy)
+    if (!deleteMACsecACLEntry(acl_table.m_pfc_entry_id))
     {
-        if (!deleteMACsecACLEntry(acl_table.m_pfc_entry_id))
-        {
-            SWSS_LOG_WARN("Cannot delete PFC ACL entry");
-            result &= false;
-        }
+        SWSS_LOG_WARN("Cannot delete PFC ACL entry");
+        result &= false;
     }
     if (!deleteMACsecACLTable(acl_table.m_table_id))
     {
