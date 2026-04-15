@@ -38,6 +38,7 @@ ArsOrch::ArsOrch(DBConnector *configDb,
       m_switchOrch(switchOrch),
       m_portsOrch(portsOrch),
       m_stateArsCapTable(stateDb, STATE_ARS_CAPABILITY_TABLE_NAME),
+      m_stateArsProfileTable(stateDb, STATE_ARS_PROFILE_TABLE_NAME),
       m_stateArsNhgTable(stateDb, "ARS_NHG_TABLE"),
       m_cfgArsTable(configDb, CFG_ARS_TABLE_NAME)
 {
@@ -255,6 +256,8 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                     entry.profileLinkUtilThreshold = static_cast<uint32_t>(stoul(value));
                 else if (field == "idle_time")
                     entry.profileIdleTime = static_cast<uint32_t>(stoul(value));
+                else if (field == "default_ars_object")
+                    entry.defaultArsObject = value;
                 else
                     SWSS_LOG_WARN("ARS: unknown profile field '%s'", field.c_str());
             }
@@ -271,6 +274,8 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                     continue;
                 }
                 entry.profileOid = m_arsProfiles[name].profileOid;
+
+                publishArsProfileState(name, m_arsProfiles[name]);
 
                 if (!m_globalProfileName.empty() && m_globalProfileName == name &&
                     m_activeSwitchProfileOid == SAI_NULL_OBJECT_ID)
@@ -301,12 +306,14 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                 if (entry.randomSeed > 0)
                     updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_ARS_RANDOM_SEED,      entry.randomSeed);
                 m_arsProfiles[name] = entry;
+                publishArsProfileState(name, entry);
             }
         }
         else if (op == DEL_COMMAND)
         {
             if (!removeArsProfile(name))
                 SWSS_LOG_ERROR("ARS: failed to remove profile %s", name.c_str());
+            m_stateArsProfileTable.del(name);
         }
 
         it = consumer.m_toSync.erase(it);
@@ -364,6 +371,27 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
                 }
                 if (gRouteOrch)
                     gRouteOrch->bindArsToExistingNhgs();
+
+                for (const auto &profKv : m_arsProfiles)
+                {
+                    if (profKv.second.defaultArsObject == name)
+                        publishArsProfileState(profKv.first, profKv.second);
+                }
+
+                for (auto &lagKv : m_arsInterfaces)
+                {
+                    if (lagKv.second.arsObject == name && lagKv.second.enabled &&
+                        m_arsEnabledLags.count(lagKv.first) == 0)
+                    {
+                        sai_object_id_t arsOid = m_arsObjects[name].arsOid;
+                        if (bindArsToLag(lagKv.first, arsOid))
+                        {
+                            m_arsEnabledLags.insert(lagKv.first);
+                            SWSS_LOG_NOTICE("ARS: deferred LAG %s now bound to ARS object '%s'",
+                                            lagKv.first.c_str(), name.c_str());
+                        }
+                    }
+                }
             }
             else
             {
@@ -619,11 +647,52 @@ void ArsOrch::doArsPortChannelTask(Consumer &consumer)
             }
 
             m_arsInterfaces[lagName] = entry;
-            SWSS_LOG_NOTICE("ARS: PortChannel %s ARS config set (object=%s, enabled=%d)",
-                            lagName.c_str(), entry.arsObject.c_str(), entry.enabled);
+
+            bool prevBound = (m_arsEnabledLags.count(lagName) > 0);
+
+            if (entry.enabled && !entry.arsObject.empty() && m_arsEnabled)
+            {
+                sai_object_id_t arsOid = getArsObjectOid(entry.arsObject);
+                if (arsOid != SAI_NULL_OBJECT_ID)
+                {
+                    if (bindArsToLag(lagName, arsOid))
+                    {
+                        m_arsEnabledLags.insert(lagName);
+                        SWSS_LOG_NOTICE("ARS: PortChannel %s bound to ARS object '%s'",
+                                        lagName.c_str(), entry.arsObject.c_str());
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("ARS: failed to bind ARS object '%s' to PortChannel %s",
+                                       entry.arsObject.c_str(), lagName.c_str());
+                    }
+                }
+                else
+                {
+                    SWSS_LOG_WARN("ARS: ARS object '%s' not yet created, deferring LAG %s binding",
+                                  entry.arsObject.c_str(), lagName.c_str());
+                }
+            }
+            else if ((!entry.enabled || entry.arsObject.empty()) && prevBound)
+            {
+                if (unbindArsFromLag(lagName))
+                    m_arsEnabledLags.erase(lagName);
+                else
+                    SWSS_LOG_ERROR("ARS: failed to unbind ARS from PortChannel %s", lagName.c_str());
+            }
+
+            if (!entry.portProfile.empty() && entry.enabled)
+            {
+                applyPortProfileToInterface(lagName, entry.portProfile);
+            }
         }
         else if (op == DEL_COMMAND)
         {
+            if (m_arsEnabledLags.count(lagName))
+            {
+                unbindArsFromLag(lagName);
+                m_arsEnabledLags.erase(lagName);
+            }
             m_arsInterfaces.erase(lagName);
             SWSS_LOG_NOTICE("ARS: PortChannel %s ARS config removed", lagName.c_str());
         }
@@ -962,6 +1031,46 @@ bool ArsOrch::bindArsToNhg(sai_object_id_t nhgOid, sai_object_id_t arsOid)
 bool ArsOrch::unbindArsFromNhg(sai_object_id_t nhgOid)
 {
     return bindArsToNhg(nhgOid, SAI_NULL_OBJECT_ID);
+}
+
+bool ArsOrch::bindArsToLag(const string &lagName, sai_object_id_t arsOid)
+{
+    SWSS_LOG_ENTER();
+
+    Port port;
+    if (!m_portsOrch->getPort(lagName, port))
+    {
+        SWSS_LOG_ERROR("ARS: PortChannel %s not found", lagName.c_str());
+        return false;
+    }
+
+    if (port.m_lag_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("ARS: %s has no SAI LAG object", lagName.c_str());
+        return false;
+    }
+
+    sai_attribute_t attr;
+    attr.id = SAI_LAG_ATTR_ARS_OBJECT_ID;
+    attr.value.oid = arsOid;
+
+    extern sai_lag_api_t *sai_lag_api;
+    sai_status_t status = sai_lag_api->set_lag_attribute(port.m_lag_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("ARS: set SAI_LAG_ATTR_ARS_OBJECT_ID on %s failed: %s",
+                       lagName.c_str(), sai_serialize_status(status).c_str());
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("ARS: bound ARS OID 0x%" PRIx64 " to LAG %s (0x%" PRIx64 ")",
+                    arsOid, lagName.c_str(), port.m_lag_id);
+    return true;
+}
+
+bool ArsOrch::unbindArsFromLag(const string &lagName)
+{
+    return bindArsToLag(lagName, SAI_NULL_OBJECT_ID);
 }
 
 string ArsOrch::getArsObjectForPort(const string &portName) const
@@ -1308,6 +1417,34 @@ void ArsOrch::publishArsCaps()
     }
 
     m_stateArsCapTable.set("switch", caps);
+}
+
+/* ── Publish ARS Profile state to STATE_DB (incl. default_ars_object) ── */
+
+void ArsOrch::publishArsProfileState(const string &profileName, const ArsProfileEntry &entry)
+{
+    vector<FieldValueTuple> fvs;
+    fvs.emplace_back("profile_oid",
+                     sai_serialize_object_id(entry.profileOid));
+    fvs.emplace_back("default_ars_object", entry.defaultArsObject);
+
+    if (!entry.defaultArsObject.empty())
+    {
+        auto objIt = m_arsObjects.find(entry.defaultArsObject);
+        if (objIt != m_arsObjects.end() && objIt->second.arsOid != SAI_NULL_OBJECT_ID)
+        {
+            fvs.emplace_back("default_ars_object_oid",
+                             sai_serialize_object_id(objIt->second.arsOid));
+        }
+        else
+        {
+            fvs.emplace_back("default_ars_object_oid", "N/A");
+        }
+    }
+
+    m_stateArsProfileTable.set(profileName, fvs);
+    SWSS_LOG_NOTICE("ARS: published profile '%s' state to STATE_DB (default_ars_object=%s)",
+                    profileName.c_str(), entry.defaultArsObject.c_str());
 }
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
