@@ -61,12 +61,8 @@ acl_rule_attr_lookup_t aclMatchLookup =
     { MATCH_OUT_PORTS,         SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORTS },
     { MATCH_SRC_IP,            SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP },
     { MATCH_DST_IP,            SAI_ACL_ENTRY_ATTR_FIELD_DST_IP },
-    { MATCH_SRC_IP_MASK,       SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP },
-    { MATCH_DST_IP_MASK,       SAI_ACL_ENTRY_ATTR_FIELD_DST_IP },
     { MATCH_SRC_IPV6,          SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6 },
     { MATCH_DST_IPV6,          SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6 },
-    { MATCH_SRC_IPV6_MASK,     SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6 },
-    { MATCH_DST_IPV6_MASK,     SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6 },
     { MATCH_L4_SRC_PORT,       SAI_ACL_ENTRY_ATTR_FIELD_L4_SRC_PORT },
     { MATCH_L4_DST_PORT,       SAI_ACL_ENTRY_ATTR_FIELD_L4_DST_PORT },
     { MATCH_ETHER_TYPE,        SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE },
@@ -1118,12 +1114,17 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
             }
             else
             {
+                // Intentional deferred validation: a plain IP address (no CIDR) may be paired
+                // with a separate *_MASK field. Both are stored here and combined in
+                // processPendingIpFields(). INNER_SRC_IP only supports CIDR notation and
+                // has no *_MASK counterpart.
                 m_pendingIpFields[attr_name] = attr_value;
                 return true;
             }
         }
         else if (attr_name == MATCH_SRC_IP_MASK || attr_name == MATCH_DST_IP_MASK)
         {
+            // Strip the "_MASK" suffix to get the companion IP field name (e.g. SRC_IP_MASK -> SRC_IP)
             string ip_field = attr_name.substr(0, attr_name.length() - 5);
             m_pendingIpMasks[ip_field] = attr_value;
             return true;
@@ -1143,6 +1144,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
             }
             else
             {
+                // Intentional deferred validation: see comment above for IPv4 case.
                 m_pendingIpFields[attr_name] = attr_value;
                 return true;
             }
@@ -1346,12 +1348,24 @@ bool AclRule::processPendingIpFields()
     }
 
     m_pendingIpFields.clear();
+
+    // Warn about any mask fields that had no corresponding IP field
+    for (const auto& entry : m_pendingIpMasks)
+    {
+        SWSS_LOG_WARN("IP mask field %s_MASK specified without a corresponding %s address field; ignoring",
+            entry.first.c_str(), entry.first.c_str());
+    }
     m_pendingIpMasks.clear();
     return true;
 }
 
 bool AclRule::create()
 {
+    // processPendingIpFields() is also called in doAclRuleTask/updateAclRule before validate(),
+    // because validate() checks m_matches and IP fields must be moved there first.
+    // This call handles the addAclRule() code path which bypasses doAclRuleTask entirely
+    // (e.g. used by other orchs and unit tests). When coming via doAclRuleTask the maps
+    // are already cleared, so this is a no-op on that path.
     if (!processPendingIpFields())
     {
         return false;
@@ -2730,7 +2744,7 @@ bool AclTable::addStageMandatoryRangeFields()
 }
 
 
-bool AclTable::addStageMandatoryMatchFields()
+bool AclTable::addStageMandatoryMatchFields(bool l3v6InPortsEnabled, bool l3v6OutPortsEnabled)
 {
     SWSS_LOG_ENTER();
 
@@ -2749,6 +2763,21 @@ bool AclTable::addStageMandatoryMatchFields()
             {
                 if (match != SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE)
                 {
+                    // IN_PORTS/OUT_PORTS for L3V6 are gated by SAI capability queries;
+                    // skip if the platform does not support the field.
+                    if (type.getName() == TABLE_TYPE_L3V6)
+                    {
+                        if (match == SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS && !l3v6InPortsEnabled)
+                        {
+                            SWSS_LOG_INFO("Skipping IN_PORTS for L3V6 table: not supported by SAI");
+                            continue;
+                        }
+                        if (match == SAI_ACL_TABLE_ATTR_FIELD_OUT_PORTS && !l3v6OutPortsEnabled)
+                        {
+                            SWSS_LOG_INFO("Skipping OUT_PORTS for L3V6 table: not supported by SAI");
+                            continue;
+                        }
+                    }
                     type.addMatch(make_shared<AclTableMatch>(match));
                     SWSS_LOG_INFO("Added mandatory match field %s for table type %s stage %d",
                         sai_serialize_enum(match, &sai_metadata_enum_sai_acl_table_attr_t).c_str(),
@@ -3763,6 +3792,40 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
         m_metaDataMgr.populateRange(metadataMin, metadataMax);
 
     }
+
+    // Query IN_PORTS and OUT_PORTS ACL table field capabilities independently —
+    // platforms may support one but not the other.
+    {
+        sai_attr_capability_t capability;
+        sai_status_t status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_ACL_TABLE,
+            SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS, &capability);
+        if (status == SAI_STATUS_SUCCESS)
+        {
+            m_l3v6InPortsCapability = capability.create_implemented;
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("Could not query SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS capability (%d), "
+                "disabling L3V6 IN_PORTS match", status);
+        }
+
+        status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_ACL_TABLE,
+            SAI_ACL_TABLE_ATTR_FIELD_OUT_PORTS, &capability);
+        if (status == SAI_STATUS_SUCCESS)
+        {
+            m_l3v6OutPortsCapability = capability.create_implemented;
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("Could not query SAI_ACL_TABLE_ATTR_FIELD_OUT_PORTS capability (%d), "
+                "disabling L3V6 OUT_PORTS match", status);
+        }
+
+        SWSS_LOG_NOTICE("    TABLE_TYPE_L3V6 IN_PORTS: %s, OUT_PORTS: %s",
+            m_l3v6InPortsCapability ? "yes" : "no",
+            m_l3v6OutPortsCapability ? "yes" : "no");
+    }
+
     // Store the capabilities in state database
     // TODO: Move this part of the code into syncd
     vector<FieldValueTuple> fvVector;
@@ -4851,7 +4914,7 @@ bool AclOrch::addAclTable(AclTable &newTable)
         }
     }
     // Update matching field according to ACL stage
-    newTable.addStageMandatoryMatchFields();
+    newTable.addStageMandatoryMatchFields(m_l3v6InPortsCapability, m_l3v6OutPortsCapability);
 
     // Add mandatory ACL action if not present
     // We need to call addMandatoryActions here because addAclTable is directly called in other orchs.

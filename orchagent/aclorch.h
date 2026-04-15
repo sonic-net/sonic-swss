@@ -345,8 +345,6 @@ public:
 
     const vector<AclRangeConfig>& getRangeConfig() const;
 
-    bool processPendingIpFields();
-
     static shared_ptr<AclRule> makeShared(AclOrch *acl,
                                         MirrorOrch *mirror,
                                         DTelOrch *dtel,
@@ -399,7 +397,9 @@ protected:
     std::map<std::string, std::string> m_pendingIpMasks;
 
 private:
+    friend class AclOrch;
     bool m_createCounter;
+    bool processPendingIpFields();
 };
 
 class AclRulePacket: public AclRule
@@ -509,7 +509,7 @@ public:
     bool addMandatoryActions();
 
     // Add stage mandatory matching fields to ACL table
-    bool addStageMandatoryMatchFields();
+    bool addStageMandatoryMatchFields(bool l3v6InPortsEnabled = false, bool l3v6OutPortsEnabled = false);
 
     // Add stage mandatory range fields to ACL table
     bool addStageMandatoryRangeFields();
@@ -638,6 +638,8 @@ public:
     bool m_isCombinedMirrorV6Table = true;
     map<string, bool> m_mirrorTableCapabilities;
     map<acl_stage_type_t, bool> m_L3V4V6Capability;
+    bool m_l3v6InPortsCapability = false;
+    bool m_l3v6OutPortsCapability = false;
     map<string, string> m_switchMetaDataCapabilities;
     
     void registerFlexCounter(const AclRule& rule);
