@@ -3,6 +3,7 @@
 #include "crmorch.h"
 #include "routeorch.h"
 #include "srv6orch.h"
+#include "arsorch.h"
 #include "bulker.h"
 #include "logger.h"
 #include "swssnet.h"
@@ -14,6 +15,8 @@ extern NeighOrch *gNeighOrch;
 extern RouteOrch *gRouteOrch;
 extern NhgOrch *gNhgOrch;
 extern Srv6Orch *gSrv6Orch;
+extern SwitchOrch *gSwitchOrch;
+extern ArsOrch *gArsOrch;
 
 extern size_t gMaxBulkSize;
 
@@ -769,7 +772,7 @@ bool NextHopGroup::sync()
         vector<sai_attribute_t> nhg_attrs;
 
         nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
-        nhg_attr.value.s32 = SAI_NEXT_HOP_GROUP_TYPE_ECMP;
+        nhg_attr.value.s32 = gSwitchOrch->getEcmpNhgType();
         nhg_attrs.push_back(nhg_attr);
 
         sai_status_t status = sai_next_hop_group_api->create_next_hop_group(
@@ -805,6 +808,20 @@ bool NextHopGroup::sync()
             SWSS_LOG_WARN("Failed to create next hop members of group %s",
                             to_string().c_str());
             return false;
+        }
+
+        /* Bind ARS object if adaptive routing is enabled and a matching ARS object exists */
+        if (gArsOrch && gArsOrch->isArsEnabled())
+        {
+            auto arsOid = gArsOrch->resolveArsForNhg(m_id, m_key);
+            if (arsOid != SAI_NULL_OBJECT_ID)
+            {
+                if (!gArsOrch->bindArsToNhg(m_id, arsOid))
+                {
+                    SWSS_LOG_WARN("ARS: failed to bind ARS to NHG %s, falling back to ECMP",
+                                  m_key.to_string().c_str());
+                }
+            }
         }
     }
 

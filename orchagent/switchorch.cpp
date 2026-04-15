@@ -485,10 +485,9 @@ void SwitchOrch::setSwitchNonSaiAttributes(swss::FieldValueTuple &val)
                     {
                         if (values.list[i] == SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP)
                         {
-                            m_orderedEcmpEnable = true;
                             fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_ORDERED_ECMP_CAPABLE, "true");
                             set_switch_capability(fvVector);
-                            SWSS_LOG_NOTICE("Ordered ECMP/Nexthop-Group is configured");
+                            SWSS_LOG_NOTICE("Ordered ECMP/Nexthop-Group is supported by hardware");
                             return;
                         }
                     }
@@ -887,6 +886,48 @@ bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
         {
             SWSS_LOG_ERROR("Failed to remove switch LAG hash algorithm configuration: operation is not supported");
             return false;
+        }
+    }
+
+    if (hash.ecmp_hash_seed.is_set)
+    {
+        if (!hObj.ecmp_hash_seed.is_set || hObj.ecmp_hash_seed.value != hash.ecmp_hash_seed.value)
+        {
+            sai_attribute_t attr;
+            attr.id = SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_SEED;
+            attr.value.u32 = hash.ecmp_hash_seed.value;
+
+            auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to set ECMP hash seed to %u: SAI status %d",
+                               hash.ecmp_hash_seed.value, status);
+                return false;
+            }
+            SWSS_LOG_NOTICE("Set ECMP hash seed to %u", hash.ecmp_hash_seed.value);
+            cfgUpd = true;
+        }
+    }
+
+    if (hash.ecmp_type.is_set)
+    {
+        if (!hObj.ecmp_type.is_set || hObj.ecmp_type.value != hash.ecmp_type.value)
+        {
+            switch (hash.ecmp_type.value)
+            {
+            case EcmpType::ECMP_STATIC:
+                m_ecmpNhgType = SAI_NEXT_HOP_GROUP_TYPE_ECMP;
+                m_orderedEcmpEnable = false;
+                SWSS_LOG_NOTICE("ECMP type set to static — SAI ECMP (SDK SX_ECMP_TYPE_STATIC_E, full rehash)");
+                break;
+            case EcmpType::ECMP_ORDERED:
+                m_ecmpNhgType = SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP;
+                m_orderedEcmpEnable = true;
+                SWSS_LOG_NOTICE("ECMP type set to ordered — SAI DYNAMIC_ORDERED_ECMP (SDK SX_ECMP_TYPE_PRESERVED_ORDER_E)");
+                break;
+            }
+
+            cfgUpd = true;
         }
     }
 

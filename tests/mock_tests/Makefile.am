@@ -171,6 +171,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/cfgmgr/coppmgr.cpp \
                 $(top_srcdir)/orchagent/twamporch.cpp \
                 $(top_srcdir)/orchagent/stporch.cpp \
+                $(top_srcdir)/orchagent/arsorch.cpp \
                 $(top_srcdir)/orchagent/nexthopkey.cpp \
                 $(top_srcdir)/orchagent/high_frequency_telemetry/hftelorch.cpp \
                 $(top_srcdir)/orchagent/high_frequency_telemetry/hftelprofile.cpp \

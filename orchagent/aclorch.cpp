@@ -109,7 +109,8 @@ static acl_rule_attr_lookup_t aclL3ActionLookup =
     { ACTION_PACKET_ACTION,                    SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION },
     { ACTION_REDIRECT_ACTION,                  SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT },
     { ACTION_DO_NOT_NAT_ACTION,                SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT },
-    { ACTION_DISABLE_TRIM,                     SAI_ACL_ENTRY_ATTR_ACTION_PACKET_TRIM_DISABLE }
+    { ACTION_DISABLE_TRIM,                     SAI_ACL_ENTRY_ATTR_ACTION_PACKET_TRIM_DISABLE },
+    { ACTION_DISABLE_ARS_FORWARDING,           SAI_ACL_ENTRY_ATTR_ACTION_DISABLE_ARS_FORWARDING }
 };
 
 static acl_rule_attr_lookup_t aclInnerActionLookup =
@@ -2037,6 +2038,10 @@ bool AclRulePacket::validateAddAction(string attr_name, string _attr_value)
         }
         actionData.parameter.oid = param_id;
     }
+    else if (attr_name == ACTION_DISABLE_ARS_FORWARDING)
+    {
+        actionData.parameter.booldata = (attr_value == "TRUE" || attr_value == "true");
+    }
     else
     {
         return false;
@@ -3940,6 +3945,22 @@ void AclOrch::initDefaultTableTypes(const string& platform, const string& sub_pl
     }
     // Placeholder for control plane tables
     addAclTableType(builder.withName(TABLE_TYPE_CTRLPLANE).build());
+
+    addAclTableType(
+        builder.withName(TABLE_TYPE_ARS)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_LAG)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_SWITCH)
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IP))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IP))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6))
+            .withAction(SAI_ACL_ACTION_TYPE_DISABLE_ARS_FORWARDING)
+            .build()
+    );
 }
 
 void AclOrch::queryAclActionCapability()
