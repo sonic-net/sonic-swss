@@ -238,6 +238,7 @@ tests_intfmgrd_SOURCES = intfmgrd/intfmgr_ut.cpp \
                          $(top_srcdir)/lib/subintf.cpp \
                          $(top_srcdir)/lib/recorder.cpp \
                          $(top_srcdir)/orchagent/orch.cpp \
+                         $(top_srcdir)/orchagent/swssstats.cpp \
                          $(top_srcdir)/orchagent/request_parser.cpp \
                          mock_orchagent_main.cpp \
                          mock_dbconnector.cpp \
@@ -260,6 +261,7 @@ tests_teammgrd_SOURCES = teammgrd/teammgr_ut.cpp \
                          $(top_srcdir)/lib/subintf.cpp \
                          $(top_srcdir)/lib/recorder.cpp \
                          $(top_srcdir)/orchagent/orch.cpp \
+                         $(top_srcdir)/orchagent/swssstats.cpp \
                          $(top_srcdir)/orchagent/request_parser.cpp \
                          mock_orchagent_main.cpp \
                          mock_dbconnector.cpp \
