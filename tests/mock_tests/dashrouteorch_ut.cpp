@@ -171,6 +171,13 @@ namespace dashrouteorch_test
         EXPECT_EQ(GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING), baselineUsed);
     }
 
+    TEST_F(DashRouteOrchTest, AddRemoveInboundRoutingEntry)
+    {
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, BuildEniEntry());
+        AddInboundRoutingEntry();
+        RemoveInboundRoutingEntry();
+    }
+
     TEST_F(DashRouteOrchTest, RemoveNonexistInboundRoutingDoesNotDecrementCrm)
     {
         // Create an ENI entry to test removal of inbound routing entry

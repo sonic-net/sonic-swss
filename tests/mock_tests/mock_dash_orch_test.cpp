@@ -106,6 +106,14 @@ namespace mock_orch_test
         SetDashTable(APP_DASH_ROUTE_TABLE_NAME, route_group1 + ":1.2.3.4/32", dash::route::Route(), false, expect_empty);
     }
     
+    void MockDashOrchTest::AddInboundRoutingEntry(bool expect_empty)
+    {
+        dash::route_rule::RouteRule rule = dash::route_rule::RouteRule();
+        rule.set_pa_validation(true);
+        rule.set_vnet(vnet1);
+        SetDashTable(APP_DASH_ROUTE_RULE_TABLE_NAME, eni1 + ":5555:10.0.0.0/24", rule, true, expect_empty);
+    }
+
     void MockDashOrchTest::RemoveInboundRoutingEntry(bool expect_empty)
     {
         SetDashTable(APP_DASH_ROUTE_RULE_TABLE_NAME, eni1 + ":5555:10.0.0.0/24", dash::route_rule::RouteRule(), false, expect_empty);
