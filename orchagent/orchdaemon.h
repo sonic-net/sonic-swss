@@ -76,7 +76,7 @@ public:
     bool warmRestoreValidation();
 
     bool warmRestartCheck();
-
+    void configureResponsePublisherForWarmBoot(bool warm_boot_start);
     void addOrchList(Orch* o);
     void setFabricEnabled(bool enabled)
     {

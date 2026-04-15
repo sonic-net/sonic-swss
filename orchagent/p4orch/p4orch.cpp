@@ -142,14 +142,14 @@ void P4Orch::doTask(ConsumerBase &consumer)
     // Warmboot scenario.
     if (!consumer.m_toSync.empty()) {
         // Do not need to write same entries to DB during warmboot.
-        m_publisher.setEnableDbWriteAndNotify(/*enable_db_write_and_notify=*/false);
+        m_publisher.setEnableDbWrite(/*enable=*/false);
         auto it = consumer.m_toSync.begin();
         while (it != consumer.m_toSync.end()) {
            enqueue(it->second);
            it = consumer.m_toSync.erase(it);
         }
         drain();
-        m_publisher.setEnableDbWriteAndNotify(/*enable_db_write_and_notify=*/true);
+        m_publisher.setEnableDbWrite(/*enable=*/true);
     }   
 
     auto* zmq_consumer = dynamic_cast<ZmqConsumer*>(&consumer);
@@ -386,4 +386,8 @@ void P4Orch::refreshPortStatus() {
 
 void P4Orch::setRouterIntfsMtu(const std::string& port, uint32_t mtu) {
     m_routerIntfManager->setRouterIntfsMtu(port, mtu);
+}
+
+void P4Orch::setEnableNotify(bool enable) {
+  m_publisher.setEnableNotify(enable);
 }

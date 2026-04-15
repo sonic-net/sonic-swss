@@ -306,6 +306,10 @@ public:
     virtual void doTask(swss::NotificationConsumer &consumer) { }
     virtual void doTask(swss::SelectableTimer &timer) { }
 
+    virtual void setWarmbootStateOnFailure(const std::string& app_name,
+                                            bool set_on_fail);
+    virtual void setEnableNotify(bool enable);
+
     /*
      * Called once after APPLY_VIEW in warm/fast boot scenario.
      * Orch can override this method to perform orch specific operations after boot is finished.

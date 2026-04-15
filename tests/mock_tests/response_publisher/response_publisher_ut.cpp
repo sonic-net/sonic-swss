@@ -43,14 +43,14 @@ TEST(ResponsePublisher, TestPublishEnableDbWrite)
     ASSERT_TRUE(stateTable.hget("SOME_KEY", "field", value));
     ASSERT_EQ(value, "value");
 
-    publisher.setEnableDbWriteAndNotify(false);
+    publisher.setEnableDbWrite(false);
 
     publisher.publish("SOME_TABLE", "SOME_KEY", {{"field", "new-value"}}, ReturnCode(SAI_STATUS_SUCCESS));
     publisher.flush();
     ASSERT_TRUE(stateTable.hget("SOME_KEY", "field", value));
     ASSERT_EQ(value, "value");
 
-    publisher.setEnableDbWriteAndNotify(true);
+    publisher.setEnableDbWrite(true);
 
     publisher.publish("SOME_TABLE", "SOME_KEY", {{"field", "new-value"}}, ReturnCode(SAI_STATUS_SUCCESS));
     publisher.flush();

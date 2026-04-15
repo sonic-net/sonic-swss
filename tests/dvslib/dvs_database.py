@@ -500,6 +500,79 @@ class DVSDatabase:
 
         return result
 
+    def get_response_consumers_from_json(self, json_path: str, filter_table: List[str]) -> List[swsscommon.NotificationConsumer]:
+        """Parse json object from file and return the response consumers that
+            can be used to verify response messages.
+            Note that P4RT entries will not show up in APPL STATE DB.
+            The json file should be formatted in one of below schemas:
+            Option 1
+            {
+                "TABLE_NAME_A":{
+                    "KEY_1": {
+                        "FIELD_1" : "VALUE_1",
+                        "FIELD_2" : "VALUE_2"
+                    },
+                    "KEY_2": {
+                        "FIELD_1" : "VALUE_3",
+                        "FIELD_2" : "VALUE_4"
+                    }
+                },
+                "TABLE_NAME_B":{
+                    "KEY_3": {
+                        "FIELD_3" : "VALUE_5",
+                        "FIELD_4" : "VALUE_6"
+                    }
+                }
+            }
+            Option 2
+            {
+                "TABLE_NAME_A:KEY_1": {
+                    "FIELD_1" : "VALUE_1",
+                    "FIELD_2" : "VALUE_2"
+                },
+                "TABLE_NAME_A:KEY_2": {
+                    "FIELD_1" : "VALUE_3",
+                    "FIELD_2" : "VALUE_4"
+                },
+                "TABLE_NAME_B:KEY_3": {
+                    "FIELD_3" : "VALUE_5",
+                    "FIELD_4" : "VALUE_6"
+                }
+            }
+
+        Args:
+            json_path: relevant path to appl_state_db json file.
+
+        Returns:
+            A list of NotificationConsumer.
+        """
+        with open(json_path) as f:
+            json_obj = json.load(f)
+        if not json_obj:
+            return []
+        channel_name_set = set()
+        response_consumer_list = []
+        for key_str in json_obj:
+            if self.APPL_DB_KEY_DELIMITER in key_str:
+                # Parse and verify entries in concatenated table:key schema.
+                # E.g. "TABLE_NAME_A:KEY_1": {
+                #        "FIELD_1" : "VALUE_1"
+                #    }
+                table_name = key_str.split(self.APPL_DB_KEY_DELIMITER, 1)[0]
+            else:
+                # Verify entries in separated table key schema.
+                # E.g. "TABLE_NAME_A": {
+                #        ""KEY_1": {
+                #            "FIELD_1" : "VALUE_1"
+                #        }
+                table_name = key_str
+            channel_name = "APPL_DB_" + table_name + "_RESPONSE_CHANNEL"
+            if table_name not in filter_table and channel_name not in channel_name_set:
+                response_consumer_list.append(swsscommon.NotificationConsumer(
+                    self.db_connection, channel_name))
+                channel_name_set.add(channel_name)
+        return response_consumer_list
+
     @staticmethod
     def _disable_strict_polling(polling_config: PollingConfig) -> PollingConfig:
         disabled_config = PollingConfig(

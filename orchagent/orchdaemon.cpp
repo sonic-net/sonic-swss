@@ -1062,6 +1062,9 @@ bool OrchDaemon::warmRestoreAndSyncUp()
 
     WarmStart::setWarmStartState("orchagent", WarmStart::INITIALIZED);
 
+    // Configure response publisher before warm-boot starts.
+    configureResponsePublisherForWarmBoot(/*warm_boot_start=*/true);
+
     for (Orch *o : m_orchList)
     {
         o->bake();
@@ -1105,6 +1108,9 @@ bool OrchDaemon::warmRestoreAndSyncUp()
     // after the rest of the data has been processed.
     gMirrorOrch->doTask();
     gAclOrch->doTask();
+
+    // Configure response publisher after warm-boot completes.
+    configureResponsePublisherForWarmBoot(/*warm_boot_start=*/false);
 
     /*
      * At this point, all the pre-existing data should have been processed properly, and
@@ -1212,6 +1218,25 @@ void OrchDaemon::addOrchList(Orch *o)
 {
     m_orchList.push_back(o);
 }
+
+void OrchDaemon::configureResponsePublisherForWarmBoot(bool warm_boot_start)
+{
+     for (Orch *o : m_orchList)
+     {
+        /* During warmboot, we will enable setWarmbootStateOnFailure, so that
+         * failure during warmboot will update the warmboot state to FAILED
+         * indicating that the reconciliation process failed. */
+        o->setWarmbootStateOnFailure("orchagent", warm_boot_start);
+
+        /* During warmboot, we will disable setEnableNotify, so that no
+         * response notification will be generated when processing warmboot
+         * entries. The response notification is not needed during warmboot as
+         * there is no application client receiving the response during
+         * warmboot. */
+        o->setEnableNotify(!warm_boot_start);
+     }
+}
+
 
 void OrchDaemon::heartBeat(std::chrono::time_point<std::chrono::high_resolution_clock> tcurrent, long interval)
 {
