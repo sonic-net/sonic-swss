@@ -180,6 +180,7 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
             if (m_arsProfiles.count(name))
                 entry = m_arsProfiles[name];
 
+            bool explicitLoadCurrent = false;
             for (auto &fv : kfvFieldsValues(kfv))
             {
                 const string &field = fvField(fv);
@@ -201,6 +202,7 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                 else if (field == "load_current_max_val") entry.loadCurrentMaxVal = static_cast<uint32_t>(stoul(value));
                 else if (field == "port_load_past")      entry.loadPastEnable    = (value == "true");
                 else if (field == "port_load_future")    entry.loadFutureEnable  = (value == "true");
+                else if (field == "port_load_current")   { entry.loadCurrentEnable = (value == "true"); explicitLoadCurrent = true; }
                 else if (field == "ipv4_enable")         entry.ipv4Enable        = (value == "true");
                 else if (field == "ipv6_enable")         entry.ipv6Enable        = (value == "true");
                 else if (field == "sampling_interval")   entry.samplingInterval  = static_cast<uint32_t>(stoul(value));
@@ -225,8 +227,8 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                     SWSS_LOG_WARN("ARS: unknown profile field '%s'", field.c_str());
             }
 
-            /* loadCurrentEnable derived from weight > 0 for SAI compat */
-            entry.loadCurrentEnable = (entry.loadCurrentWeight > 0);
+            if (!explicitLoadCurrent)
+                entry.loadCurrentEnable = (entry.loadCurrentWeight > 0);
 
             if (entry.profileOid == SAI_NULL_OBJECT_ID)
             {
@@ -262,6 +264,10 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                 updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_CURRENT_MAX_VAL,     entry.loadCurrentMaxVal);
                 updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_ENABLE_IPV4,          entry.ipv4Enable);
                 updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_ENABLE_IPV6,          entry.ipv6Enable);
+                if (entry.samplingInterval > 0)
+                    updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_SAMPLING_INTERVAL,    entry.samplingInterval);
+                if (entry.randomSeed > 0)
+                    updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_ARS_RANDOM_SEED,      entry.randomSeed);
                 m_arsProfiles[name] = entry;
             }
         }
