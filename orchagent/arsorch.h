@@ -35,6 +35,17 @@ struct ArsProfileEntry
     uint32_t        quantizationType  = 0;
     uint32_t        profileLinkUtilThreshold = 0;
     uint32_t        profileIdleTime   = 0;
+    // Per-band congestion thresholds (in Mbps) that feed
+    // SAI_ARS_PROFILE_ATTR_QUANT_BAND_{0,1,2}_MIN_THRESHOLD.
+    // Required for Mellanox SAI to program the SDK congestion threshold via
+    // sx_api_ar_congestion_threshold_set — the gating check in
+    // are_ars_profile_thresholds_configured() only returns true when at least
+    // one of the three band0/band1/band2 min thresholds is non-zero; otherwise
+    // SAI falls back to the "hardened" profile and the quality signal cannot
+    // tip EWMA-based flowlet reassignment regardless of load_*_max_val values.
+    uint32_t        quantBand0MinThreshold = 0;
+    uint32_t        quantBand1MinThreshold = 0;
+    uint32_t        quantBand2MinThreshold = 0;
     std::string     defaultArsObject;
 };
 

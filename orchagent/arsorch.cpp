@@ -254,12 +254,42 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                     entry.profileIdleTime = static_cast<uint32_t>(stoul(value));
                 else if (field == "default_ars_object")
                     entry.defaultArsObject = value;
+                else if (field == "quant_band_0_min_threshold")
+                    entry.quantBand0MinThreshold = static_cast<uint32_t>(stoul(value));
+                else if (field == "quant_band_1_min_threshold")
+                    entry.quantBand1MinThreshold = static_cast<uint32_t>(stoul(value));
+                else if (field == "quant_band_2_min_threshold")
+                    entry.quantBand2MinThreshold = static_cast<uint32_t>(stoul(value));
                 else
                     SWSS_LOG_WARN("ARS: unknown profile field '%s'", field.c_str());
             }
 
             if (!explicitLoadCurrent)
                 entry.loadCurrentEnable = (entry.loadCurrentWeight > 0);
+
+            // Reject non-monotonic quant-band thresholds before they reach SAI:
+            // Mellanox SAI enforces band0 < band1 < band2 when any are non-zero
+            // and will return SAI_STATUS_INVALID_ATTR_VALUE. Detect here so the
+            // operator gets a clear log message instead of a silent SAI rejection.
+            bool anyQuantBandSet = (entry.quantBand0MinThreshold |
+                                    entry.quantBand1MinThreshold |
+                                    entry.quantBand2MinThreshold) != 0;
+            if (anyQuantBandSet)
+            {
+                if (!(entry.quantBand0MinThreshold < entry.quantBand1MinThreshold &&
+                      entry.quantBand1MinThreshold < entry.quantBand2MinThreshold))
+                {
+                    SWSS_LOG_ERROR(
+                        "ARS: profile '%s' quant-band thresholds must be strictly "
+                        "monotonic (band0=%u < band1=%u < band2=%u); skipping update",
+                        name.c_str(),
+                        entry.quantBand0MinThreshold,
+                        entry.quantBand1MinThreshold,
+                        entry.quantBand2MinThreshold);
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+            }
 
             if (entry.profileOid == SAI_NULL_OBJECT_ID)
             {
@@ -301,6 +331,19 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                     updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_SAMPLING_INTERVAL,    entry.samplingInterval);
                 if (entry.randomSeed > 0)
                     updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_ARS_RANDOM_SEED,      entry.randomSeed);
+                // Per-band quant thresholds — these gate whether the Mellanox
+                // SAI backend calls sx_api_ar_congestion_threshold_set at bind
+                // time. Program them only if the operator has configured them;
+                // leaving at 0 preserves the SDK "hardened" defaults.
+                if (anyQuantBandSet)
+                {
+                    updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_QUANT_BAND_0_MIN_THRESHOLD,
+                                         entry.quantBand0MinThreshold);
+                    updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_QUANT_BAND_1_MIN_THRESHOLD,
+                                         entry.quantBand1MinThreshold);
+                    updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_QUANT_BAND_2_MIN_THRESHOLD,
+                                         entry.quantBand2MinThreshold);
+                }
                 m_arsProfiles[name] = entry;
                 publishArsProfileState(name, entry);
             }
@@ -790,6 +833,26 @@ bool ArsOrch::createArsProfile(const string &name, const ArsProfileEntry &entry)
         attrs.push_back(attr);
         attr.id = SAI_ARS_PROFILE_ATTR_LOAD_CURRENT_MAX_VAL;
         attr.value.u32 = entry.loadCurrentMaxVal;
+        attrs.push_back(attr);
+    }
+
+    // Per-band congestion thresholds (Mbps). Sending these at CREATE is what
+    // allows the Mellanox SAI backend to take the non-hardened path and call
+    // sx_api_ar_congestion_threshold_set on the SDK — without them the EWMA
+    // quality signal cannot trigger flowlet reassignment on CPU-scale loads
+    // because the SDK keeps its line-rate default thresholds.
+    if (entry.quantBand0MinThreshold != 0 ||
+        entry.quantBand1MinThreshold != 0 ||
+        entry.quantBand2MinThreshold != 0)
+    {
+        attr.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_0_MIN_THRESHOLD;
+        attr.value.u32 = entry.quantBand0MinThreshold;
+        attrs.push_back(attr);
+        attr.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_1_MIN_THRESHOLD;
+        attr.value.u32 = entry.quantBand1MinThreshold;
+        attrs.push_back(attr);
+        attr.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_2_MIN_THRESHOLD;
+        attr.value.u32 = entry.quantBand2MinThreshold;
         attrs.push_back(attr);
     }
 
