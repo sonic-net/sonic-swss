@@ -1,16 +1,18 @@
 #include "protnhg.h"
 #include "neighorch.h"
+#include "nhgorch.h"
 #include "logger.h"
 #include "sai_serialize.h"
 
 extern NeighOrch *gNeighOrch;
+extern NhgOrch *gNhgOrch;
 
 ProtNhgMember::ProtNhgMember(const NextHopKey &key, ProtNhgRole role,
-                             sai_object_id_t nh_id_override) :
+                             const string &nhg_key) :
     NhgMember(key),
     m_role(role),
     m_monitored_oid(SAI_NULL_OBJECT_ID),
-    m_nh_id_override(nh_id_override)
+    m_nhg_key(nhg_key)
 {
     SWSS_LOG_ENTER();
 }
@@ -19,11 +21,10 @@ ProtNhgMember::ProtNhgMember(ProtNhgMember &&nhgm) :
     NhgMember(move(nhgm)),
     m_role(nhgm.m_role),
     m_monitored_oid(nhgm.m_monitored_oid),
-    m_nh_id_override(nhgm.m_nh_id_override)
+    m_nhg_key(move(nhgm.m_nhg_key))
 {
     SWSS_LOG_ENTER();
     nhgm.m_monitored_oid = SAI_NULL_OBJECT_ID;
-    nhgm.m_nh_id_override = SAI_NULL_OBJECT_ID;
 }
 
 ProtNhgMember::~ProtNhgMember()
@@ -36,7 +37,11 @@ void ProtNhgMember::sync(sai_object_id_t gm_id)
     SWSS_LOG_ENTER();
     NhgMember::sync(gm_id);
 
-    if (m_nh_id_override == SAI_NULL_OBJECT_ID)
+    if (isRecursive())
+    {
+        gNhgOrch->incNhgRefCount(m_nhg_key);
+    }
+    else
     {
         gNeighOrch->increaseNextHopRefCount(m_key);
     }
@@ -51,7 +56,11 @@ void ProtNhgMember::remove()
         return;
     }
 
-    if (m_nh_id_override == SAI_NULL_OBJECT_ID)
+    if (isRecursive())
+    {
+        gNhgOrch->decNhgRefCount(m_nhg_key);
+    }
+    else
     {
         gNeighOrch->decreaseNextHopRefCount(m_key);
     }
@@ -62,9 +71,15 @@ sai_object_id_t ProtNhgMember::getNhId() const
 {
     SWSS_LOG_ENTER();
 
-    if (m_nh_id_override != SAI_NULL_OBJECT_ID)
+    if (isRecursive())
     {
-        return m_nh_id_override;
+        if (gNhgOrch->hasNhg(m_nhg_key))
+        {
+            return gNhgOrch->getNhg(m_nhg_key).getId();
+        }
+        SWSS_LOG_WARN("Recursive NHG %s not found for member %s",
+                       m_nhg_key.c_str(), m_key.to_string().c_str());
+        return SAI_NULL_OBJECT_ID;
     }
 
     if (gNeighOrch->hasNextHop(m_key))
@@ -79,10 +94,9 @@ bool ProtNhgMember::updateMonitoredObject(sai_object_id_t oid)
 {
     SWSS_LOG_ENTER();
 
-    m_monitored_oid = oid;
-
     if (!isSynced())
     {
+        m_monitored_oid = oid;
         return true;
     }
 
@@ -100,6 +114,7 @@ bool ProtNhgMember::updateMonitoredObject(sai_object_id_t oid)
         return false;
     }
 
+    m_monitored_oid = oid;
     return true;
 }
 
@@ -145,7 +160,6 @@ string ProtNhgMember::to_string() const
 ProtNhg::ProtNhg(const string &key,
                   const vector<NextHopKey> &primary_nhs,
                   const NextHopKey &standby_nh,
-                  sai_object_id_t standby_nh_id,
                   bool hw_protection) :
     NhgCommon(key),
     m_hw_protection(hw_protection)
@@ -157,14 +171,12 @@ ProtNhg::ProtNhg(const string &key,
         m_members.emplace(nh, ProtNhgMember(nh, ProtNhgRole::PRIMARY));
     }
     m_members.emplace(standby_nh,
-                      ProtNhgMember(standby_nh, ProtNhgRole::STANDBY, standby_nh_id));
+                      ProtNhgMember(standby_nh, ProtNhgRole::STANDBY));
 }
 
 ProtNhg::ProtNhg(const string &key,
                   const NextHopGroupKey &primary_nhg_key,
-                  sai_object_id_t primary_nhg_id,
                   const NextHopGroupKey &standby_nhg_key,
-                  sai_object_id_t standby_nhg_id,
                   bool hw_protection) :
     NhgCommon(key),
     m_hw_protection(hw_protection)
@@ -175,9 +187,11 @@ ProtNhg::ProtNhg(const string &key,
     const NextHopKey &standby_rep = *standby_nhg_key.getNextHops().begin();
 
     m_members.emplace(primary_rep,
-                      ProtNhgMember(primary_rep, ProtNhgRole::PRIMARY, primary_nhg_id));
+                      ProtNhgMember(primary_rep, ProtNhgRole::PRIMARY,
+                                    primary_nhg_key.to_string()));
     m_members.emplace(standby_rep,
-                      ProtNhgMember(standby_rep, ProtNhgRole::STANDBY, standby_nhg_id));
+                      ProtNhgMember(standby_rep, ProtNhgRole::STANDBY,
+                                    standby_nhg_key.to_string()));
 }
 
 ProtNhg::ProtNhg(ProtNhg &&nhg) :
@@ -237,7 +251,6 @@ bool ProtNhg::sync()
     if (!syncMembers(member_keys))
     {
         SWSS_LOG_WARN("Failed to sync members of protection NHG %s", m_key.c_str());
-        remove();
         return false;
     }
 

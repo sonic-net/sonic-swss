@@ -140,22 +140,38 @@ public:
      */
 
     /* Create a protection NHG with one or more primary and one standby next hop.
-     * standby_nh_id: optional pre-resolved SAI OID for the standby NH
-     *                (e.g., tunnel NH not registered in NeighOrch).
+     * Individual NHs are resolved via NeighOrch at sync time.
      */
     bool createProtNhg(const string &key,
                        const vector<NextHopKey> &primary_nhs,
                        const NextHopKey &standby_nh,
-                       sai_object_id_t standby_nh_id = SAI_NULL_OBJECT_ID,
+                       bool hw_protection = true);
+
+    /* Auto-keyed convenience overload -- key is derived from the members. */
+    bool createProtNhg(const vector<NextHopKey> &primary_nhs,
+                       const NextHopKey &standby_nh,
                        bool hw_protection = true);
 
     /* Create a protection NHG where each role is an existing ECMP NHG.
-     * The group keys are resolved to their SAI OIDs via hasNhg/getNhg.
+     * NHG OIDs are dynamically resolved via NhgOrch at sync time.
      */
     bool createProtNhg(const string &key,
                        const NextHopGroupKey &primary_nhg_key,
                        const NextHopGroupKey &standby_nhg_key,
                        bool hw_protection = true);
+
+    /* Auto-keyed convenience overload -- key is derived from the group keys. */
+    bool createProtNhg(const NextHopGroupKey &primary_nhg_key,
+                       const NextHopGroupKey &standby_nhg_key,
+                       bool hw_protection = true);
+
+    /* Build the deterministic key for a protection NHG from its members. */
+    static string buildProtNhgKey(const vector<NextHopKey> &primary_nhs,
+                                  const NextHopKey &standby_nh,
+                                  bool hw_protection = true);
+    static string buildProtNhgKey(const NextHopGroupKey &primary_nhg_key,
+                                  const NextHopGroupKey &standby_nhg_key,
+                                  bool hw_protection = true);
 
     /* Remove a protection NHG by key. */
     bool removeProtNhg(const string &key);

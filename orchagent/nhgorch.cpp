@@ -1217,7 +1217,6 @@ bool NhgOrch::isHwProtectionSupported()
 bool NhgOrch::createProtNhg(const string &key,
                              const vector<NextHopKey> &primary_nhs,
                              const NextHopKey &standby_nh,
-                             sai_object_id_t standby_nh_id,
                              bool hw_protection)
 {
     SWSS_LOG_ENTER();
@@ -1242,8 +1241,7 @@ bool NhgOrch::createProtNhg(const string &key,
         return false;
     }
 
-    auto nhg = make_unique<ProtNhg>(key, primary_nhs, standby_nh, standby_nh_id,
-                                    hw_protection);
+    auto nhg = make_unique<ProtNhg>(key, primary_nhs, standby_nh, hw_protection);
 
     if (!nhg->sync())
     {
@@ -1269,6 +1267,50 @@ bool NhgOrch::createProtNhg(const string &key,
                     standby_nh.to_string().c_str());
 
     return true;
+}
+
+string NhgOrch::buildProtNhgKey(const vector<NextHopKey> &primary_nhs,
+                                 const NextHopKey &standby_nh,
+                                 bool hw_protection)
+{
+    string prefix = hw_protection ? "prot:hw:" : "prot:sw:";
+
+    set<NextHopKey> sorted(primary_nhs.begin(), primary_nhs.end());
+    string primary_str;
+    for (auto it = sorted.begin(); it != sorted.end(); ++it)
+    {
+        if (it != sorted.begin())
+        {
+            primary_str += NHG_DELIMITER;
+        }
+        primary_str += it->to_string();
+    }
+
+    return prefix + primary_str + "|" + standby_nh.to_string();
+}
+
+string NhgOrch::buildProtNhgKey(const NextHopGroupKey &primary_nhg_key,
+                                 const NextHopGroupKey &standby_nhg_key,
+                                 bool hw_protection)
+{
+    string prefix = hw_protection ? "prot:hw:" : "prot:sw:";
+    return prefix + primary_nhg_key.to_string() + "|" + standby_nhg_key.to_string();
+}
+
+bool NhgOrch::createProtNhg(const vector<NextHopKey> &primary_nhs,
+                             const NextHopKey &standby_nh,
+                             bool hw_protection)
+{
+    return createProtNhg(buildProtNhgKey(primary_nhs, standby_nh, hw_protection),
+                         primary_nhs, standby_nh, hw_protection);
+}
+
+bool NhgOrch::createProtNhg(const NextHopGroupKey &primary_nhg_key,
+                             const NextHopGroupKey &standby_nhg_key,
+                             bool hw_protection)
+{
+    return createProtNhg(buildProtNhgKey(primary_nhg_key, standby_nhg_key, hw_protection),
+                         primary_nhg_key, standby_nhg_key, hw_protection);
 }
 
 bool NhgOrch::createProtNhg(const string &key,
@@ -1307,23 +1349,6 @@ bool NhgOrch::createProtNhg(const string &key,
         return false;
     }
 
-    sai_object_id_t primary_nhg_id = getNhg(primary_key_str).getId();
-    sai_object_id_t standby_nhg_id = getNhg(standby_key_str).getId();
-
-    if (primary_nhg_id == SAI_NULL_OBJECT_ID)
-    {
-        SWSS_LOG_ERROR("Protection NHG %s: primary NHG %s is not synced",
-                       key.c_str(), primary_key_str.c_str());
-        return false;
-    }
-
-    if (standby_nhg_id == SAI_NULL_OBJECT_ID)
-    {
-        SWSS_LOG_ERROR("Protection NHG %s: standby NHG %s is not synced",
-                       key.c_str(), standby_key_str.c_str());
-        return false;
-    }
-
     if (m_protNhgs.find(key) != m_protNhgs.end())
     {
         SWSS_LOG_ERROR("Protection NHG %s already exists", key.c_str());
@@ -1338,8 +1363,7 @@ bool NhgOrch::createProtNhg(const string &key,
         return false;
     }
 
-    auto nhg = make_unique<ProtNhg>(key, primary_nhg_key, primary_nhg_id,
-                                    standby_nhg_key, standby_nhg_id,
+    auto nhg = make_unique<ProtNhg>(key, primary_nhg_key, standby_nhg_key,
                                     hw_protection);
 
     if (!nhg->sync())

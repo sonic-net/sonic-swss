@@ -24,7 +24,7 @@ class ProtNhgMember : public NhgMember<NextHopKey>
 {
 public:
     ProtNhgMember(const NextHopKey &key, ProtNhgRole role,
-                  sai_object_id_t nh_id_override = SAI_NULL_OBJECT_ID);
+                  const string &nhg_key = "");
 
     ProtNhgMember(ProtNhgMember &&nhgm);
 
@@ -35,6 +35,9 @@ public:
 
     inline ProtNhgRole getRole() const { return m_role; }
     sai_object_id_t getNhId() const;
+
+    /* True when this member represents a recursive NHG rather than an individual NH. */
+    inline bool isRecursive() const { return !m_nhg_key.empty(); }
 
     inline sai_object_id_t getMonitoredObject() const { return m_monitored_oid; }
     void setMonitoredObject(sai_object_id_t oid) { m_monitored_oid = oid; }
@@ -49,7 +52,7 @@ public:
 private:
     ProtNhgRole m_role;
     sai_object_id_t m_monitored_oid;
-    sai_object_id_t m_nh_id_override;
+    string m_nhg_key;   /* Non-empty when member is a recursive NHG (resolved via NhgOrch). */
 };
 
 /*
@@ -65,18 +68,16 @@ public:
     ProtNhg(const string &key,
             const vector<NextHopKey> &primary_nhs,
             const NextHopKey &standby_nh,
-            sai_object_id_t standby_nh_id = SAI_NULL_OBJECT_ID,
             bool hw_protection = true);
 
-    /* Construct from NextHopGroupKey pairs with pre-resolved NHG OIDs.
+
+    /* Construct from NextHopGroupKey pairs (recursive/nested NHG).
      * Each group becomes a single protection member whose SAI next-hop ID
-     * points to the resolved ECMP NHG OID (recursive/nested NHG).
+     * is dynamically resolved via NhgOrch at sync time.
      */
     ProtNhg(const string &key,
             const NextHopGroupKey &primary_nhg_key,
-            sai_object_id_t primary_nhg_id,
             const NextHopGroupKey &standby_nhg_key,
-            sai_object_id_t standby_nhg_id,
             bool hw_protection = true);
 
     ProtNhg(ProtNhg &&nhg);

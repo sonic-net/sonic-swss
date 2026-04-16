@@ -18,6 +18,7 @@ extern "C"
 #define NH_DELIMITER '@'
 #define NHG_DELIMITER ','
 #define VRF_PREFIX "Vrf"
+#define TUNNEL_PREFIX "tunnel:"
 extern IntfsOrch *gIntfsOrch;
 
 struct NextHopKey
@@ -33,6 +34,7 @@ struct NextHopKey
     string              srv6_segment;   // SRV6 segment string
     string              srv6_source;    // SRV6 source address
     string              srv6_vpn_sid;   // SRV6 vpn sid
+    string              tunnel_name;    // IPinIP tunnel name
 
     NextHopKey() : weight(0) {}
     NextHopKey(const std::string &str, const std::string &alias) :
@@ -50,6 +52,20 @@ struct NextHopKey
         {
             std::string err = "Error converting " + str + " to NextHop";
             throw std::invalid_argument(err);
+        }
+        if (str.compare(0, strlen(TUNNEL_PREFIX), TUNNEL_PREFIX) == 0)
+        {
+            std::string body = str.substr(strlen(TUNNEL_PREFIX));
+            auto keys = tokenize(body, NH_DELIMITER);
+            if (keys.size() != 2)
+            {
+                std::string err = "Error converting " + str + " to tunnel NextHop";
+                throw std::invalid_argument(err);
+            }
+            tunnel_name = keys[0];
+            ip_address = keys[1];
+            weight = 0;
+            return;
         }
         std::string ip_str = parseMplsNextHop(str);
         auto keys = tokenize(ip_str, NH_DELIMITER);
@@ -116,9 +132,18 @@ struct NextHopKey
 
     NextHopKey(const IpAddress &ip, const MacAddress &mac, const uint32_t &vni, bool overlay_nh) : ip_address(ip), alias(""), vni(vni), mac_address(mac), weight(0){}
     NextHopKey(const IpAddress &ip, const std::string &alias, const MacAddress &mac, const uint32_t &vni, bool overlay_nh) : ip_address(ip), alias(alias), vni(vni), mac_address(mac), weight(0){}
+    /* IPinIP tunnel next hop: identified by tunnel name + destination IP. */
+    NextHopKey(const IpAddress &ip, const std::string &tnl_name, bool /*tunnel_nh*/, int /*tag*/) :
+        ip_address(ip), vni(0), mac_address(), weight(0), tunnel_name(tnl_name) {}
+
 
     const std::string to_string() const
     {
+        if (isTunnelNextHop())
+        {
+            return std::string(TUNNEL_PREFIX) + tunnel_name +
+                   NH_DELIMITER + ip_address.to_string();
+        }
         std::string str = formatMplsNextHop();
         str += ip_address.to_string() + NH_DELIMITER + alias;
         return str;
@@ -139,8 +164,8 @@ struct NextHopKey
 
     bool operator<(const NextHopKey &o) const
     {
-        return std::tie(ip_address, alias, label_stack, vni, mac_address, srv6_segment, srv6_source, srv6_vpn_sid) <
-            std::tie(o.ip_address, o.alias, o.label_stack, o.vni, o.mac_address, o.srv6_segment, o.srv6_source, o.srv6_vpn_sid);
+        return std::tie(ip_address, alias, label_stack, vni, mac_address, srv6_segment, srv6_source, srv6_vpn_sid, tunnel_name) <
+            std::tie(o.ip_address, o.alias, o.label_stack, o.vni, o.mac_address, o.srv6_segment, o.srv6_source, o.srv6_vpn_sid, o.tunnel_name);
     }
 
     bool operator==(const NextHopKey &o) const
@@ -149,7 +174,8 @@ struct NextHopKey
             (label_stack == o.label_stack) &&
             (vni == o.vni) && (mac_address == o.mac_address) &&
             (srv6_segment == o.srv6_segment) && (srv6_source == o.srv6_source) &&
-            (srv6_vpn_sid == o.srv6_vpn_sid);
+            (srv6_vpn_sid == o.srv6_vpn_sid) &&
+            (tunnel_name == o.tunnel_name);
     }
 
     bool operator!=(const NextHopKey &o) const
@@ -176,6 +202,12 @@ struct NextHopKey
     {
         return (srv6_vpn_sid != "");
     }
+
+    bool isTunnelNextHop() const
+    {
+        return (!tunnel_name.empty());
+    }
+
 
     std::string parseMplsNextHop(const std::string& str)
     {
