@@ -42,6 +42,116 @@ class TestP4RTL3(object):
         # Remove VRF.
         self._vrf_obj.vrf_remove(dvs, self.vrf_id, self.vrf_state)
 
+    def get_global_vrf_id(self):
+        virt_entries = util.get_keys(self._p4rt_router_intf_obj.asic_db,
+                                     "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
+        for key in virt_entries:
+            return key
+        return "0"
+
+    def test_CreateRouterInterfaceWithVlanAddDeletePass(self, dvs, testlog):
+        # Initialize L3 objects and database connectors.
+        self._set_up(dvs)
+
+        appl_db_table_name = (
+            self._p4rt_router_intf_obj.APP_DB_TBL_NAME + ":" +
+            self._p4rt_router_intf_obj.TBL_NAME)
+
+        # Fetch database state after init.
+        original_app_db_entries = util.get_keys(
+            self._p4rt_router_intf_obj.appl_db, appl_db_table_name)
+        original_asic_db_entries = util.get_keys(
+            self._p4rt_router_intf_obj.asic_db,
+            self._p4rt_router_intf_obj.ASIC_DB_TBL_NAME)
+
+        db_list = (
+            (self._p4rt_router_intf_obj.asic_db,
+             self._p4rt_router_intf_obj.ASIC_DB_TBL_NAME),
+        )
+        self._p4rt_router_intf_obj.get_original_redis_entries(db_list)
+
+        # Create router interface.
+        (
+            router_interface_id,
+            router_intf_key,
+            attr_list,
+        ) = self._p4rt_router_intf_obj.create_router_interface(
+                action=self._p4rt_router_intf_obj.VLAN_ID_ACTION)
+        self._p4rt_router_intf_obj.verify_response(
+            router_intf_key, attr_list, "SWSS_RC_SUCCESS"
+        )
+        rif_oid = (
+            self._p4rt_router_intf_obj.get_newly_created_router_interface_oid())
+
+        # Check that APP DB has expected entry with expected values.
+        rif_entries = util.get_keys(
+            self._p4rt_router_intf_obj.appl_db, appl_db_table_name)
+        assert len(rif_entries) == (len(original_app_db_entries) + 1)
+
+        (status, fvs) = util.get_key(
+            self._p4rt_router_intf_obj.appl_db,
+            self._p4rt_router_intf_obj.APP_DB_TBL_NAME,
+            router_intf_key)
+        assert status == True
+        util.verify_attr(fvs, attr_list)
+
+        # Check that ASIC DB has expected values.
+        rif_asic_entries = util.get_keys(
+            self._p4rt_router_intf_obj.asic_db,
+            self._p4rt_router_intf_obj.ASIC_DB_TBL_NAME)
+        assert len(rif_asic_entries) == (
+            len(original_asic_db_entries) + 1)
+
+        asic_db_key = None
+        for key in rif_asic_entries:
+            if key not in original_asic_db_entries:
+                asic_db_key = key
+                break
+        assert asic_db_key is not None
+        (status, fvs) = util.get_key(
+            self._p4rt_router_intf_obj.asic_db,
+            self._p4rt_router_intf_obj.ASIC_DB_TBL_NAME,
+            asic_db_key)
+        assert status == True
+
+        global_vrf_id = self.get_global_vrf_id()
+        port_oid = util.get_port_oid_by_name(
+            dvs, self._p4rt_router_intf_obj.DEFAULT_PORT_ID)
+
+        attr_list = [
+            (self._p4rt_router_intf_obj.SAI_ATTR_VIRTUAL_ROUTER_ID,
+             global_vrf_id),
+            (self._p4rt_router_intf_obj.SAI_ATTR_SRC_MAC,
+             self._p4rt_router_intf_obj.DEFAULT_SRC_MAC),
+            (self._p4rt_router_intf_obj.SAI_ATTR_TYPE,
+             self._p4rt_router_intf_obj.SAI_ATTR_TYPE_SUB_PORT),
+            (self._p4rt_router_intf_obj.SAI_ATTR_MTU,
+             self._p4rt_router_intf_obj.SAI_ATTR_DEFAULT_MTU),
+            (self._p4rt_router_intf_obj.SAI_ATTR_OUTER_VLAN_ID, "65"),
+            (self._p4rt_router_intf_obj.SAI_ATTR_PORT_ID, port_oid),
+            (self._p4rt_router_intf_obj.SAI_ATTR_V4_MCAST_ENABLE, "true"),
+            (self._p4rt_router_intf_obj.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+        ]
+        util.verify_attr(fvs, attr_list)
+
+        # Next, delete the entry
+        self._p4rt_router_intf_obj.remove_app_db_entry(router_intf_key)
+        self._p4rt_router_intf_obj.verify_response(router_intf_key, [],
+                                                   "SWSS_RC_SUCCESS")
+
+        # Check that entries are gone.
+        rif_entries = util.get_keys(
+            self._p4rt_router_intf_obj.appl_db, appl_db_table_name)
+        assert len(rif_entries) == len(original_app_db_entries)
+
+        # Check that ASIC DB has expected values.
+        rif_asic_entries = util.get_keys(
+            self._p4rt_router_intf_obj.asic_db,
+            self._p4rt_router_intf_obj.ASIC_DB_TBL_NAME)
+        assert len(rif_asic_entries) == len(original_asic_db_entries)
+
+        self._cleanup()
+
     def test_IPv4RouteWithNexthopAddUpdateDeletePass(self, dvs, testlog):
         # Initialize L3 objects and database connectors.
         self._set_up(dvs)
