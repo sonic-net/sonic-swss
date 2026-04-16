@@ -1,10 +1,14 @@
 #include <arpa/inet.h>
+#include <signal.h>
 #include <gtest/gtest.h>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <fstream>
-#include <string>
 #include <iostream>
+#include <string>
+#include <thread>
 #include <unistd.h>
 #include "recorder.h"
 #include "swssnet.h"
@@ -15,6 +19,58 @@ using namespace swss;
 
 #define DOT1Q_BRIDGE_NAME   "Bridge"
 #define DEFAULT_VLAN_ID     "1"
+
+namespace
+{
+
+vector<string> waitForRecordedLines(const string& path, const string& marker, size_t expected)
+{
+    for (size_t retry = 0; retry < 50; ++retry)
+    {
+        ifstream ifs(path);
+        vector<string> matches;
+        string line;
+
+        while (getline(ifs, line))
+        {
+            if (line.find(marker) != string::npos)
+            {
+                matches.push_back(line);
+            }
+        }
+
+        if (matches.size() >= expected)
+        {
+            return matches;
+        }
+
+        this_thread::sleep_for(chrono::milliseconds(20));
+    }
+
+    return {};
+}
+
+AsyncSwssRecorderDebugStats waitForRecorderStats(
+        SwSSRec& recorder,
+        uint64_t expectedEnqueued,
+        uint64_t expectedDrained)
+{
+    for (size_t retry = 0; retry < 50; ++retry)
+    {
+        auto stats = recorder.getAsyncDebugStats();
+        if (stats.enqueued_total >= expectedEnqueued &&
+            stats.drained_total >= expectedDrained)
+        {
+            return stats;
+        }
+
+        this_thread::sleep_for(chrono::milliseconds(20));
+    }
+
+    return recorder.getAsyncDebugStats();
+}
+
+}
 
 TEST(quoted, copy1_v6)
 {
@@ -74,4 +130,136 @@ TEST(recorder, preservesProvidedTimestamp)
     }
 
     EXPECT_EQ(last_line, timestamp + "|" + payload);
+}
+
+TEST(swssrec, asyncUpdatesStatsAndWritesRecord)
+{
+    char dir_template[] = "/tmp/swss-recorder-ut-XXXXXX";
+    auto dir = mkdtemp(dir_template);
+    ASSERT_NE(dir, nullptr);
+
+    const string dirname(dir);
+    const string filename = "swss-async-stats.rec";
+    const string fullpath = dirname + "/" + filename;
+    const string prefix = "TEST_TABLE:";
+    const string expectedPayload = "TEST_TABLE:async-key|SET|field1:value1|field2:value2";
+
+    SwSSRec recorder;
+    recorder.setRecord(true);
+    recorder.setLocation(dirname);
+    recorder.setFileName(filename);
+    recorder.setAsync(true);
+    recorder.startRec(true);
+
+    KeyOpFieldsValuesTuple tuple(
+        { "async-key",
+          SET_COMMAND,
+          { { "field1", "value1" }, { "field2", "value2" } } });
+
+    recorder.recordTupleAsync(prefix, tuple);
+
+    const auto lines = waitForRecordedLines(fullpath, "async-key", 1);
+    ASSERT_EQ(lines.size(), 1u);
+    EXPECT_NE(lines[0].find(expectedPayload), string::npos);
+
+    const auto stats = waitForRecorderStats(recorder, 1, 1);
+    EXPECT_EQ(stats.enqueued_total, 1u);
+    EXPECT_EQ(stats.drained_total, 1u);
+    EXPECT_EQ(stats.pending_count, 0u);
+    EXPECT_GE(stats.high_watermark, 1u);
+}
+
+TEST(swssrec, syncFallbackWhenAsyncDisabled)
+{
+    char dir_template[] = "/tmp/swss-recorder-ut-XXXXXX";
+    auto dir = mkdtemp(dir_template);
+    ASSERT_NE(dir, nullptr);
+
+    const string dirname(dir);
+    const string filename = "swss-sync-fallback.rec";
+    const string fullpath = dirname + "/" + filename;
+    const string prefix = "TEST_TABLE:";
+    const string keyPrefix = "sync-key-";
+
+    SwSSRec recorder;
+    recorder.setRecord(true);
+    recorder.setLocation(dirname);
+    recorder.setFileName(filename);
+    recorder.setAsync(false);
+    recorder.startRec(true);
+
+    deque<KeyOpFieldsValuesTuple> entries;
+    entries.push_back(KeyOpFieldsValuesTuple(
+        { keyPrefix + "0",
+          SET_COMMAND,
+          { { "field1", "value1" } } }));
+    entries.push_back(KeyOpFieldsValuesTuple(
+        { keyPrefix + "1",
+          SET_COMMAND,
+          { { "field2", "value2" } } }));
+
+    recorder.recordTuplesAsync(prefix, entries);
+
+    const auto lines = waitForRecordedLines(fullpath, keyPrefix, 2);
+    ASSERT_EQ(lines.size(), 2u);
+    EXPECT_NE(lines[0].find("TEST_TABLE:sync-key-0|SET|field1:value1"), string::npos);
+    EXPECT_NE(lines[1].find("TEST_TABLE:sync-key-1|SET|field2:value2"), string::npos);
+
+    const auto stats = recorder.getAsyncDebugStats();
+    EXPECT_EQ(stats.enqueued_total, 0u);
+    EXPECT_EQ(stats.drained_total, 0u);
+    EXPECT_EQ(stats.pending_count, 0u);
+    EXPECT_EQ(stats.high_watermark, 0u);
+}
+
+TEST(swssrec, signalSafeStatsDumpFormatsOutput)
+{
+    char dir_template[] = "/tmp/swss-recorder-ut-XXXXXX";
+    auto dir = mkdtemp(dir_template);
+    ASSERT_NE(dir, nullptr);
+
+    const string dirname(dir);
+    const string filename = "swss-signal-stats.rec";
+    const string fullpath = dirname + "/" + filename;
+    const string prefix = "TEST_TABLE:";
+
+    SwSSRec recorder;
+    recorder.setRecord(true);
+    recorder.setLocation(dirname);
+    recorder.setFileName(filename);
+    recorder.setAsync(true);
+    recorder.startRec(true);
+
+    KeyOpFieldsValuesTuple tuple(
+        { "signal-key",
+          SET_COMMAND,
+          { { "field1", "value1" } } });
+
+    recorder.recordTupleAsync(prefix, tuple);
+
+    const auto lines = waitForRecordedLines(fullpath, "signal-key", 1);
+    ASSERT_EQ(lines.size(), 1u);
+
+    const auto stats = waitForRecorderStats(recorder, 1, 1);
+    ASSERT_EQ(stats.enqueued_total, 1u);
+    ASSERT_EQ(stats.drained_total, 1u);
+
+    int pipefd[2];
+    ASSERT_EQ(pipe(pipefd), 0);
+
+    recorder.dumpAsyncSignalSafeStats(pipefd[1], SIGABRT);
+    close(pipefd[1]);
+
+    char buffer[256] = {};
+    ssize_t bytesRead = read(pipefd[0], buffer, sizeof(buffer) - 1);
+    close(pipefd[0]);
+
+    ASSERT_GT(bytesRead, 0);
+    string output(buffer, static_cast<size_t>(bytesRead));
+
+    EXPECT_NE(output.find("AsyncSwssRecorderStats signal=" + to_string(SIGABRT)), string::npos);
+    EXPECT_NE(output.find("pending=0"), string::npos);
+    EXPECT_NE(output.find("high_watermark="), string::npos);
+    EXPECT_NE(output.find("enqueued=1"), string::npos);
+    EXPECT_NE(output.find("drained=1"), string::npos);
 }

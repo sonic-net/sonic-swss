@@ -89,9 +89,9 @@ void SwSSRec::recordTupleAsync(const std::string& prefix, const KeyOpFieldsValue
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_queue.push_back({received_time, prefix, tuple});
+        onEnqueue(1);
     }
 
-    onEnqueue(1);
     m_signal.notify_one();
 }
 
@@ -121,9 +121,9 @@ void SwSSRec::recordTuplesAsync(const std::string& prefix, const std::deque<KeyO
             gettimeofday(&received_time, nullptr);
             m_queue.push_back({received_time, prefix, entry});
         }
+        onEnqueue(entries.size());
     }
 
-    onEnqueue(entries.size());
     m_signal.notify_one();
 }
 
