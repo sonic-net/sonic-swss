@@ -22,6 +22,14 @@ class P4RtL3MulticastRouterInterfaceWrapper(util.DBInterface):
   SAI_ATTR_V6_MCAST_ENABLE = "SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE"
   SAI_ATTR_DEFAULT_MTU = "9100"
 
+  L2_ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT"
+  SAI_BRIDGE_PORT_ATTR_TYPE = "SAI_BRIDGE_PORT_ATTR_TYPE"
+  SAI_BRIDGE_PORT_ATTR_PORT_ID = "SAI_BRIDGE_PORT_ATTR_PORT_ID"
+  SAI_BRIDGE_PORT_TYPE_PORT = "SAI_BRIDGE_PORT_TYPE_PORT"
+  SAI_BRIDGE_PORT_ATTR_ADMIN_STATE = "SAI_BRIDGE_PORT_ATTR_ADMIN_STATE"
+  SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE = "SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE"
+  SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE = "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE"
+
   # Attribute fields for multicast router interface entry.
   ACTION_FIELD = "action"
   SRC_MAC_FIELD = "src_mac"
@@ -31,6 +39,7 @@ class P4RtL3MulticastRouterInterfaceWrapper(util.DBInterface):
   DEFAULT_INSTANCE = "0x0"
   DEFAULT_SRC_MAC = "00:11:22:33:44:55"
   DEFAULT_ACTION = "set_multicast_src_mac"
+  MULTICAST_L2_PASSTHROUGH_ACTION = "multicast_l2_passthrough"
 
   def generate_app_db_key(self, multicast_replica_port,
                           multicast_replica_instance):
@@ -57,6 +66,16 @@ class P4RtL3MulticastRouterInterfaceWrapper(util.DBInterface):
     self.set_app_db_entry(mcast_router_intf_key, attr_list)
     return mcast_router_intf_key, attr_list
 
+  # Create default bridge port for L2 replication.
+  def create_bridge_port(self, port_id=None, instance=None):
+    port_id = port_id or self.DEFAULT_PORT_ID
+    instance = instance or self.DEFAULT_INSTANCE
+    action = self.MULTICAST_L2_PASSTHROUGH_ACTION
+    attr_list = [(self.ACTION_FIELD, action)]
+    mcast_router_intf_key = self.generate_app_db_key(port_id, instance)
+    self.set_app_db_entry(mcast_router_intf_key, attr_list)
+    return mcast_router_intf_key, attr_list
+
 
 class P4RtL3MulticastGroupWrapper(util.DBInterface):
   """Interface to interact with APP DB and ASIC DB tables for P4RT L3 multicast group object."""
@@ -69,6 +88,11 @@ class P4RtL3MulticastGroupWrapper(util.DBInterface):
   ASIC_DB_GROUP_MEMBER_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER"
   SAI_ATTR_IPMC_GROUP_ID = "SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_GROUP_ID"
   SAI_ATTR_IPMC_OUTPUT_ID = "SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID"
+
+  L2_ASIC_DB_GROUP_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_L2MC_GROUP"
+  L2_ASIC_DB_GROUP_MEMBER_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER"
+  SAI_ATTR_L2MC_GROUP_ID = "SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_GROUP_ID"
+  SAI_ATTR_L2MC_OUTPUT_ID = "SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_OUTPUT_ID"
 
   # Default router interface attribute values.
   DEFAULT_GROUP_ID = "0x1"
@@ -101,13 +125,13 @@ class P4RtL3MulticastGroupWrapper(util.DBInterface):
     return mcast_group_key, attr_list
 
 
-class P4RtL3MulticastRouteWrapper(util.DBInterface):
-  """Interface to interact with APP DB and ASIC DB tables for P4RT L3 multicast route object."""
+class P4RtIpMulticastWrapper(util.DBInterface):
+  """Interface to interact with APP DB and ASIC DB tables for P4RT IP multicast table object."""
 
   # Database and SAI constants.
   APP_DB_TBL_NAME = swsscommon.APP_P4RT_TABLE_NAME
-  TBL_NAME_IPV4 = swsscommon.APP_P4RT_IPV4_TABLE_NAME
-  TBL_NAME_IPV6 = swsscommon.APP_P4RT_IPV6_TABLE_NAME
+  TBL_NAME_IPV4 = swsscommon.APP_P4RT_IPV4_MULTICAST_TABLE_NAME
+  TBL_NAME_IPV6 = swsscommon.APP_P4RT_IPV6_MULTICAST_TABLE_NAME
 
   ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_IPMC_ENTRY"
   ASIC_DB_RPF_GROUP_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_RPF_GROUP"
@@ -119,15 +143,13 @@ class P4RtL3MulticastRouteWrapper(util.DBInterface):
   # Attribute fields for multicast route entry.
   ACTION_FIELD = "action"
   MULTICAST_GROUP_ID_FIELD = "multicast_group_id"
-  NEXT_HOP_ID_FIELD = "nexthop_id"
 
   # Default router interface attribute values.
   DEFAULT_ACTION = "set_multicast_group_id"
-  SET_NEXT_HOP_ID_ACTION = "set_nexthop_id"
   DEFAULT_GROUP_ID = "0x1"
   DEFAULT_VRF_ID = "b4-traffic"
-  DEFAULT_DST_V6 = "2001:db8:3:4:5:6:7:8"
-  DEFAULT_DST_V4 = "10.11.12.0"
+  DEFAULT_DST_V6 = "ff00:db8:3:4:5:6:7:8"
+  DEFAULT_DST_V4 = "225.11.12.0"
 
   def generate_app_db_key(self, vrf_id, ipv4_dst=None, ipv6_dst=None):
     d = {}
@@ -143,7 +165,7 @@ class P4RtL3MulticastRouteWrapper(util.DBInterface):
 
   # Create default multicast route entry.
   def create_multicast_route(self, group_id=None, dst_ip=None, is_v4=True,
-                             action=None, param="0"):
+                             param="0"):
     group_id = group_id or self.DEFAULT_GROUP_ID
     if is_v4:
       ipv4_dst = dst_ip or self.DEFAULT_DST_V4
@@ -152,17 +174,11 @@ class P4RtL3MulticastRouteWrapper(util.DBInterface):
       ipv4_dst = None
       ipv6_dst = dst_ip or self.DEFAULT_DST_V6
     vrf_id = self.DEFAULT_VRF_ID
-    action = action or self.DEFAULT_ACTION
-    if action == self.DEFAULT_ACTION:
-      attr_list = [
-          (util.prepend_param_field(self.MULTICAST_GROUP_ID_FIELD), group_id),
-          (self.ACTION_FIELD, action),
-      ]
-    else:
-      attr_list = [
-          (util.prepend_param_field(self.NEXT_HOP_ID_FIELD), param),
-          (self.ACTION_FIELD, action),
-      ]
+    action = self.DEFAULT_ACTION
+    attr_list = [
+        (util.prepend_param_field(self.MULTICAST_GROUP_ID_FIELD), group_id),
+        (self.ACTION_FIELD, action),
+    ]
     mcast_route_key = self.generate_app_db_key(vrf_id, ipv4_dst, ipv6_dst)
     self.set_app_db_entry(mcast_route_key, attr_list)
     return mcast_route_key, attr_list

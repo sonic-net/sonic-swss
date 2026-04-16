@@ -76,6 +76,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 dashportmaporch_ut.cpp \
                 twamporch_ut.cpp \
                 stporch_ut.cpp \
+                srv6orch_ut.cpp \
                 flexcounter_ut.cpp \
                 portphyattr_ut.cpp \
 		portphyserdesattr_ut.cpp \
@@ -87,6 +88,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 retrycache_ut.cpp \
                 mock_saihelper.cpp \
                 mirrororch_ut.cpp \
+                hftelorch_ut.cpp \
+                hftelorch_is_supported_sai_wrap.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
@@ -171,6 +174,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/dash/dashhaorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashmeterorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashportmaporch.cpp \
+                $(top_srcdir)/orchagent/dash/dashcounter.cpp \
                 $(top_srcdir)/cfgmgr/buffermgrdyn.cpp \
                 $(top_srcdir)/warmrestart/warmRestartAssist.cpp \
                 $(top_srcdir)/orchagent/dash/pbutils.cpp \
@@ -210,6 +214,7 @@ tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
 
 tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_INCLUDES)
+tests_LDFLAGS = -Wl,--wrap=sai_query_stats_st_capability -Wl,--wrap=sai_query_attribute_capability
 tests_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis -lpthread \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lgmock -lgmock_main -lprotobuf -ldashapi
 
@@ -344,6 +349,7 @@ tests_nbrmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTES
 tests_nbrmgrd_CXXFLAGS = -Wl,-wrap,nl_socket_alloc -Wl,-wrap,nl_connect -Wl,-wrap,nl_send_auto -Wl,-wrap,if_nametoindex -Wl,-wrap,nlmsg_alloc
 tests_nbrmgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lgmock_main
+
 
 tests_teamsyncd_SOURCES = teamsync_ut.cpp \
                           $(top_srcdir)/teamsyncd/teamsync.cpp
