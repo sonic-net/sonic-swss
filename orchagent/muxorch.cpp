@@ -1540,6 +1540,10 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
     string port, old_port;
     if (update.add && !getMuxPort(update.mac, update.entry.alias, port))
     {
+        SWSS_LOG_INFO("Mux FDB not found for neighbor %s mac %s, adding nexthop placeholder",
+                      update.entry.ip_address.to_string().c_str(),
+                      update.mac.to_string().c_str());
+        addNexthop(update.entry);
         return;
     }
     else if (update.add)
