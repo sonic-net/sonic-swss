@@ -93,6 +93,13 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
 
     SWSS_LOG_NOTICE("Maximum number of ECMP groups supported is %d", m_maxNextHopGroupCount);
 
+    if (m_maxNextHopGroupCount < DEFAULT_NUMBER_OF_ECMP_GROUPS)
+    {
+        SWSS_LOG_WARN("SAI returned suspiciously low MAX ECMP groups: %d (expected >= %d). "
+                       "Possible SAI bug.",
+                       m_maxNextHopGroupCount, DEFAULT_NUMBER_OF_ECMP_GROUPS);
+    }
+
     /* fetch the MAX_ECMP_MEMBER_COUNT and for voq platform, set it to 128 */
     attr.id = SAI_SWITCH_ATTR_MAX_ECMP_MEMBER_COUNT;
     status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
@@ -1424,8 +1431,9 @@ bool RouteOrch::createFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id
 
     if (m_nextHopGroupCount + NhgOrch::getSyncedNhgCount() >= m_maxNextHopGroupCount)
     {
-        SWSS_LOG_DEBUG("Failed to create new next hop group. \
-                Reaching maximum number of next hop groups.");
+        SWSS_LOG_WARN("Failed to create new fine-grained next hop group. "
+                "Reaching maximum number of next hop groups (%d).",
+                m_maxNextHopGroupCount);
         return false;
     }
 
@@ -1478,8 +1486,9 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
 
     if (m_nextHopGroupCount + NhgOrch::getSyncedNhgCount() >= m_maxNextHopGroupCount)
     {
-        SWSS_LOG_DEBUG("Failed to create new next hop group. \
-                        Reaching maximum number of next hop groups.");
+        SWSS_LOG_WARN("Failed to create new next hop group. "
+                        "Reaching maximum number of next hop groups (%d).",
+                        m_maxNextHopGroupCount);
         return false;
     }
 
@@ -2226,12 +2235,15 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
 
                 /* Failed to create the next hop group and check if a temporary route is needed */
 
-                /* If the current next hop is part of the next hop group to sync,
-                 * then return false and no need to add another temporary route. */
+                /* If the current next hop is part of the next hop group to sync
+                 * and the desired NHG hasn't changed, skip re-randomization to
+                 * avoid unnecessary dataplane churn. Re-randomize if the NHG
+                 * membership changed (e.g., new nexthops came up). */
                 if (it_route != m_syncdRoutes.at(vrf_id).end() && it_route->second.nhg_key.getSize() == 1)
                 {
                     const NextHopKey& nexthop = *it_route->second.nhg_key.getNextHops().begin();
-                    if (nextHops.contains(nexthop))
+                    if (nextHops.contains(nexthop) &&
+                        it_route->second.desired_nhg_key == nextHops)
                     {
                         return false;
                     }
@@ -2239,7 +2251,8 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
 
                 /* Add a temporary route when a next hop group cannot be added,
                  * and there is no temporary route right now or the current temporary
-                 * route is not pointing to a member of the next hop group to sync. */
+                 * route is not pointing to a member of the next hop group to sync,
+                 * or the desired NHG membership has changed. */
                 addTempRoute(ctx, nextHops);
                 /* Return false since the original route is not successfully added */
                 return false;
@@ -2712,6 +2725,13 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
     }
 
     m_syncdRoutes[vrf_id][ipPrefix] = RouteNhg(nextHops, ctx.nhg_index, ctx.context_index);
+
+    /* If this was a temp route, record the original desired NHG key
+     * so the guard in addRoute can detect NHG membership changes. */
+    if (ctx.tmp_next_hop.getSize() > 0)
+    {
+        m_syncdRoutes[vrf_id][ipPrefix].desired_nhg_key = ctx.nhg;
+    }
 
     /* add subnet decap term for VIP route */
     const SubnetDecapConfig &config = gTunneldecapOrch->getSubnetDecapConfig();
