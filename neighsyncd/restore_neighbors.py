@@ -20,7 +20,12 @@ from pyroute2.netlink.rtnl import ndmsg
 from socket import AF_INET,AF_INET6
 import logging
 logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
-from scapy.all import conf, in6_getnsma, inet_pton, inet_ntop, in6_getnsmac, get_if_hwaddr, Ether, ARP, IPv6, ICMPv6ND_NS, ICMPv6NDOptSrcLLAddr
+
+# Avoid long startup delays when route tables are large.
+from scapy.config import conf
+conf.route_autoload = False
+conf.route6_autoload = False
+from scapy.all import in6_getnsma, inet_pton, inet_ntop, in6_getnsmac, get_if_hwaddr, Ether, ARP, IPv6, ICMPv6ND_NS, ICMPv6NDOptSrcLLAddr
 from swsscommon import swsscommon
 import errno
 import syslog
