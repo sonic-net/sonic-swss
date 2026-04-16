@@ -52,10 +52,12 @@ class ResponsePublisher : public ResponsePublisherInterface
     void writeToDB(const std::string &table, const std::string &key, const std::vector<swss::FieldValueTuple> &values,
                    const std::string &op, bool replace = false) override;
 
+    void setEnableDbWriteAndNotify(bool enable_db_write_and_notify) override;
+
     /**
      * @brief Flush pending responses
      */
-    void flush(bool warmboot = false);
+    void flush();
 
     /**
      * @brief Set buffering mode
@@ -109,4 +111,5 @@ class ResponsePublisher : public ResponsePublisherInterface
     std::queue<entry, std::list<entry>> m_queue;
     mutable std::mutex m_lock;
     std::condition_variable m_signal;
+    bool m_enable_db_write_and_notify{true};
 };

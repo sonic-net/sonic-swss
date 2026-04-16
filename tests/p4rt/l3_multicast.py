@@ -22,6 +22,14 @@ class P4RtL3MulticastRouterInterfaceWrapper(util.DBInterface):
   SAI_ATTR_V6_MCAST_ENABLE = "SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE"
   SAI_ATTR_DEFAULT_MTU = "9100"
 
+  L2_ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT"
+  SAI_BRIDGE_PORT_ATTR_TYPE = "SAI_BRIDGE_PORT_ATTR_TYPE"
+  SAI_BRIDGE_PORT_ATTR_PORT_ID = "SAI_BRIDGE_PORT_ATTR_PORT_ID"
+  SAI_BRIDGE_PORT_TYPE_PORT = "SAI_BRIDGE_PORT_TYPE_PORT"
+  SAI_BRIDGE_PORT_ATTR_ADMIN_STATE = "SAI_BRIDGE_PORT_ATTR_ADMIN_STATE"
+  SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE = "SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE"
+  SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE = "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE"
+
   # Attribute fields for multicast router interface entry.
   ACTION_FIELD = "action"
   SRC_MAC_FIELD = "src_mac"
@@ -31,6 +39,7 @@ class P4RtL3MulticastRouterInterfaceWrapper(util.DBInterface):
   DEFAULT_INSTANCE = "0x0"
   DEFAULT_SRC_MAC = "00:11:22:33:44:55"
   DEFAULT_ACTION = "set_multicast_src_mac"
+  MULTICAST_L2_PASSTHROUGH_ACTION = "multicast_l2_passthrough"
 
   def generate_app_db_key(self, multicast_replica_port,
                           multicast_replica_instance):
@@ -57,6 +66,16 @@ class P4RtL3MulticastRouterInterfaceWrapper(util.DBInterface):
     self.set_app_db_entry(mcast_router_intf_key, attr_list)
     return mcast_router_intf_key, attr_list
 
+  # Create default bridge port for L2 replication.
+  def create_bridge_port(self, port_id=None, instance=None):
+    port_id = port_id or self.DEFAULT_PORT_ID
+    instance = instance or self.DEFAULT_INSTANCE
+    action = self.MULTICAST_L2_PASSTHROUGH_ACTION
+    attr_list = [(self.ACTION_FIELD, action)]
+    mcast_router_intf_key = self.generate_app_db_key(port_id, instance)
+    self.set_app_db_entry(mcast_router_intf_key, attr_list)
+    return mcast_router_intf_key, attr_list
+
 
 class P4RtL3MulticastGroupWrapper(util.DBInterface):
   """Interface to interact with APP DB and ASIC DB tables for P4RT L3 multicast group object."""
@@ -69,6 +88,11 @@ class P4RtL3MulticastGroupWrapper(util.DBInterface):
   ASIC_DB_GROUP_MEMBER_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER"
   SAI_ATTR_IPMC_GROUP_ID = "SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_GROUP_ID"
   SAI_ATTR_IPMC_OUTPUT_ID = "SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID"
+
+  L2_ASIC_DB_GROUP_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_L2MC_GROUP"
+  L2_ASIC_DB_GROUP_MEMBER_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER"
+  SAI_ATTR_L2MC_GROUP_ID = "SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_GROUP_ID"
+  SAI_ATTR_L2MC_OUTPUT_ID = "SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_OUTPUT_ID"
 
   # Default router interface attribute values.
   DEFAULT_GROUP_ID = "0x1"
