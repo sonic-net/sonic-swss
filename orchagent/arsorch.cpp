@@ -209,6 +209,15 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
             if (m_arsProfiles.count(name))
                 entry = m_arsProfiles[name];
 
+            // Capture the pre-existing quant-band state before the kfvFieldsValues
+            // loop potentially overwrites it. We need this so a transition from a
+            // previously-configured triple (e.g. 10/20/30) to all-zero actually
+            // writes the zeroes through to SAI — otherwise the device retains the
+            // old thresholds while CONFIG_DB / m_arsProfiles claim they are cleared.
+            const bool hadQuantBandConfig = (entry.quantBand0MinThreshold |
+                                             entry.quantBand1MinThreshold |
+                                             entry.quantBand2MinThreshold) != 0;
+
             bool explicitLoadCurrent = false;
             for (auto &fv : kfvFieldsValues(kfv))
             {
@@ -333,9 +342,11 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                     updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_ARS_RANDOM_SEED,      entry.randomSeed);
                 // Per-band quant thresholds — these gate whether the Mellanox
                 // SAI backend calls sx_api_ar_congestion_threshold_set at bind
-                // time. Program them only if the operator has configured them;
-                // leaving at 0 preserves the SDK "hardened" defaults.
-                if (anyQuantBandSet)
+                // time. Write through on any transition that affects the three
+                // thresholds: either the new values are non-zero, or the previous
+                // values were non-zero (so clearing to 0/0/0 actually resets the
+                // device to hardened defaults rather than leaving stale state).
+                if (anyQuantBandSet || hadQuantBandConfig)
                 {
                     updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_QUANT_BAND_0_MIN_THRESHOLD,
                                          entry.quantBand0MinThreshold);
