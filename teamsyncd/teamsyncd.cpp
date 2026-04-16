@@ -55,8 +55,19 @@ int main(int argc, char **argv)
         s.addSelectable(&netlink);
         while (!received_sigterm)
         {
-            Selectable *temps;
-            s.select(&temps, 1000); // block for a second
+            Selectable *temps = nullptr;
+
+            int ret = s.select(&temps, 1000); // block for a second
+
+            if (ret == Select::OBJECT && temps != nullptr)
+            {
+                swss::SelectableTimer* timer = dynamic_cast<swss::SelectableTimer*>(temps);
+                if (timer) 
+                {
+                    sync.processTimerSelectable(timer); 
+                }
+            }
+
             sync.periodic();
         }
         sync.cleanTeamSync();

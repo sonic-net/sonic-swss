@@ -144,7 +144,7 @@ namespace teamportsync_test
     TEST_F(TeamPortSyncTest, TestInvalidIfIndex)
     {
         try {
-            swss::TeamSync::TeamPortSync("testLag", 0, NULL);
+            swss::TeamSync::TeamPortSync(NULL, "testLag", 0, NULL);
             FAIL();
         } catch (std::runtime_error &exception) {
             EXPECT_THAT(exception.what(), testing::HasSubstr("Unable to initialize team socket"));
@@ -154,7 +154,7 @@ namespace teamportsync_test
     TEST_F(TeamPortSyncTest, NoLagPresent)
     {
         try {
-            swss::TeamSync::TeamPortSync("testLag", 4, NULL);
+            swss::TeamSync::TeamPortSync(NULL, "testLag", 4, NULL);
             FAIL();
         } catch (std::runtime_error &exception) {
             EXPECT_THAT(exception.what(), testing::HasSubstr("Unable to initialize team socket"));
@@ -167,7 +167,7 @@ namespace teamportsync_test
         callback_team_change_handler = cb_team_change_handler;
         callback_teamdctl_connect = cb_teamdctl_connect;
         try {
-            swss::TeamSync::TeamPortSync("testLag", 4, NULL);
+            swss::TeamSync::TeamPortSync(NULL, "testLag", 4, NULL);
             FAIL();
         } catch (std::runtime_error &exception) {
             EXPECT_THAT(exception.what(), testing::HasSubstr("Unable to get config from teamd"));
@@ -180,6 +180,6 @@ namespace teamportsync_test
         callback_team_change_handler = cb_team_change_handler;
         callback_teamdctl_connect = cb_teamdctl_connect;
         callback_teamdctl_config_get_raw_direct = cb_teamdctl_config_get_raw_direct_success;
-        swss::TeamSync::TeamPortSync("testLag", 4, NULL);
+        swss::TeamSync::TeamPortSync(NULL, "testLag", 4, NULL);
     }
 }
