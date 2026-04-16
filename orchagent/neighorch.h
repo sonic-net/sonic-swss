@@ -88,6 +88,8 @@ public:
     bool getNeighborEntry(const NextHopKey&, NeighborEntry&, MacAddress&);
     bool getNeighborEntry(const IpAddress&, NeighborEntry&, MacAddress&);
 
+    const NeighborTable& getNeighborTable() const { return m_syncdNeighbors; }
+
     bool enableNeighbor(const NeighborEntry&);
     bool disableNeighbor(const NeighborEntry&);
     bool enableNeighbors(std::list<NeighborContext>&);

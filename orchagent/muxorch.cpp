@@ -1459,6 +1459,7 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
     NeighborEntry neigh;
     MacAddress mac;
     MuxCable* ptr;
+    bool found_existing_mux_neighbor = false;
     for (auto nh = mux_nexthop_tb_.begin(); nh != mux_nexthop_tb_.end(); ++nh)
     {
         auto res = neigh_orch_->getNeighborEntry(nh->first, neigh, mac);
@@ -1466,6 +1467,8 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
         {
             continue;
         }
+
+        found_existing_mux_neighbor = true;
 
         if (nh->second != update.entry.port_name)
         {
@@ -1487,6 +1490,64 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
             }
         }
     }
+
+    // Handle case where neighbor exists but is not yet a MUX neighbor.
+    // This can happen when FDB entry is learned after neighbor is added.
+    if (!found_existing_mux_neighbor && isMuxExists(update.entry.port_name))
+    {
+        auto vlan_ports = gPortsOrch->getAllVlans();
+        SWSS_LOG_INFO("FDB update without mux neighbor on mux port %s, mac %s",
+                      update.entry.port_name.c_str(),
+                      update.entry.mac.to_string().c_str());
+
+        for (auto vlan_alias : vlan_ports)
+        {
+            auto neighbors = neigh_orch_->getNeighborTable();
+            for (const auto& neighbor_pair : neighbors)
+            {
+                const NeighborEntry& neighbor_entry = neighbor_pair.first;
+                const auto& neighbor_data = neighbor_pair.second;
+
+                if (neighbor_data.mac == update.entry.mac && neighbor_entry.alias == vlan_alias)
+                {
+                    string port_name;
+                    if (getMuxPort(update.entry.mac, vlan_alias, port_name) &&
+                        !port_name.empty() && port_name == update.entry.port_name)
+                    {
+                        SWSS_LOG_INFO("Converting existing neighbor %s on %s to MUX neighbor due to FDB update",
+                                      neighbor_entry.ip_address.to_string().c_str(), vlan_alias.c_str());
+
+                        convertNeighborToMux(neighbor_entry, port_name);
+                    }
+                }
+            }
+        }
+    }
+}
+
+void MuxOrch::convertNeighborToMux(const NeighborEntry& neighbor_entry, const string& port_name)
+{
+    MuxCable* ptr = getMuxCable(port_name);
+    if (!ptr)
+    {
+        SWSS_LOG_WARN("MUX cable for port %s not found, skipping neighbor conversion", port_name.c_str());
+        return;
+    }
+
+    NextHopKey nh_key = { neighbor_entry.ip_address, neighbor_entry.alias };
+    if (containsNextHop(nh_key))
+    {
+        SWSS_LOG_INFO("Neighbor %s already tracked as MUX neighbor, skipping conversion",
+                       neighbor_entry.ip_address.to_string().c_str());
+        return;
+    }
+
+    mux_nexthop_tb_[nh_key] = port_name;
+    ptr->updateNeighbor(nh_key, true);
+
+    SWSS_LOG_NOTICE("Converted neighbor %s on %s to MUX neighbor on port %s",
+                     neighbor_entry.ip_address.to_string().c_str(),
+                     neighbor_entry.alias.c_str(), port_name.c_str());
 }
 
 void MuxOrch::updateNeighbor(const NeighborUpdate& update)

@@ -261,6 +261,7 @@ private:
 
     void updateNeighbor(const NeighborUpdate&);
     void updateFdb(const FdbUpdate&);
+    void convertNeighborToMux(const NeighborEntry&, const std::string&);
 
     /***
      * Methods for managing tunnel routes for neighbor IPs not associated
