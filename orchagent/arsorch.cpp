@@ -76,7 +76,8 @@ ArsOrch::ArsOrch(DBConnector *configDb,
       m_stateArsProfileTable(stateDb, STATE_ARS_PROFILE_TABLE_NAME),
       m_stateArsNhgTable(stateDb, "ARS_NHG_TABLE"),
       m_stateArsObjectTable(stateDb, "ARS_OBJECT_TABLE"),
-      m_cfgArsTable(configDb, CFG_ARS_TABLE_NAME)
+      m_cfgArsTable(configDb, CFG_ARS_TABLE_NAME),
+      m_cfgArsObjectTable(configDb, CFG_ARS_OBJECT_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
     m_portsOrch->attach(this);
@@ -656,6 +657,64 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
 
             if (entry.arsOid == SAI_NULL_OBJECT_ID)
             {
+                // Re-read the full current CONFIG_DB row before creating the
+                // SAI object. uCLI actioners write each field as a separate
+                // HSET — the ConsumerStateTable notification we just popped
+                // may only contain one of them (e.g. `assign_mode` without
+                // `idle_time` or `max_flows`). Relying on ArsObjectEntry's
+                // struct defaults here means the SAI create call ships
+                // idleTime=256 / maxFlows=512 even when CONFIG_DB actually
+                // holds 200 / 4096 from prior HSETs in the same uCLI
+                // session. Worse, Mellanox SAI flips both attrs to
+                // SAI_STATUS_OBJECT_IN_USE once an NHG binds to the ARS
+                // object (mlnx_sai_ars.c:mlnx_ars_set_idle_time), so the
+                // subsequent set_attribute we fire from the idle_time/
+                // max_flows notification gets rejected and ASIC_DB keeps
+                // the stale create-time default. Folding the full row in
+                // here ensures the create always carries CONFIG_DB's
+                // latest view.
+                std::vector<swss::FieldValueTuple> cfgRow;
+                if (m_cfgArsObjectTable.get(name, cfgRow))
+                {
+                    for (const auto &fv : cfgRow)
+                    {
+                        const string &cfgField = fvField(fv);
+                        const string &cfgValue = fvValue(fv);
+                        try
+                        {
+                            if (cfgField == "assign_mode")
+                            {
+                                sai_ars_mode_t parsed;
+                                if (parseArsMode(cfgValue, &parsed))
+                                    entry.mode = parsed;
+                            }
+                            else if (cfgField == "idle_time")
+                            {
+                                entry.idleTime =
+                                    static_cast<uint32_t>(stoul(cfgValue));
+                            }
+                            else if (cfgField == "max_flows")
+                            {
+                                entry.maxFlows =
+                                    static_cast<uint32_t>(stoul(cfgValue));
+                            }
+                            else if (cfgField == "admin_state")
+                            {
+                                entry.enabled = (cfgValue == "up");
+                            }
+                        }
+                        catch (const std::exception &e)
+                        {
+                            SWSS_LOG_WARN("ARS: failed to parse "
+                                          "CONFIG_DB.%s.%s='%s' for %s: %s "
+                                          "(using notification/default value)",
+                                          CFG_ARS_OBJECT_TABLE_NAME,
+                                          cfgField.c_str(), cfgValue.c_str(),
+                                          name.c_str(), e.what());
+                        }
+                    }
+                }
+
                 if (!createArsObject(name, entry))
                 {
                     SWSS_LOG_ERROR("ARS: failed to create object %s", name.c_str());

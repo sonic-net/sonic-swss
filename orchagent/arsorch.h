@@ -170,6 +170,17 @@ private:
     swss::Table m_stateArsCapTable;
     swss::Table m_stateArsProfileTable;
     swss::Table m_stateArsNhgTable;
+    // Read-only handle to the ARS_OBJECT CONFIG_DB table so
+    // doArsObjectTask can fetch the full current row on create. Without
+    // this, a uCLI sequence that HSETs mode/idle_time/max_flows one
+    // field at a time can race the consumer notification: arsOrch sees
+    // an event with only `assign_mode` set, creates the SAI ARS object
+    // with the struct defaults (idle=256, flows=512), and by the time
+    // the subsequent `idle_time` / `max_flows` fields arrive the object
+    // already has NHG references — at which point Mellanox SAI rejects
+    // set_attribute with SAI_STATUS_OBJECT_IN_USE and the ASIC keeps
+    // the stale create-time values.
+    swss::Table m_cfgArsObjectTable;
     // Tracks per-ARS_OBJECT operational state — used to surface a
     // "mode_change_rejected" marker when a live-mode-change is attempted
     // against an object the underlying SAI refuses to mutate
