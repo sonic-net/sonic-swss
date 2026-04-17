@@ -10,6 +10,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <exception>
 
 using namespace std;
 using namespace swss;
@@ -336,6 +337,8 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                 const string &field = fvField(fv);
                 const string &value = fvValue(fv);
 
+                try
+                {
                 if      (field == "port_load_past_weight" || field == "load_past_weight")
                     entry.loadPastWeight   = clampToU8(name, field,
                                                        static_cast<uint32_t>(stoul(value)));
@@ -435,6 +438,14 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                     entry.quantBand2MinThreshold = static_cast<uint32_t>(stoul(value));
                 else
                     SWSS_LOG_WARN("ARS: unknown profile field '%s'", field.c_str());
+                }
+                catch (const std::exception &e)
+                {
+                    SWSS_LOG_ERROR("ARS: failed to parse profile '%s' field '%s' value '%s': %s",
+                                   name.c_str(), field.c_str(), value.c_str(), e.what());
+                    rejectProfile = true;
+                    break;
+                }
             }
 
             if (rejectProfile)
@@ -499,25 +510,26 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
             else
             {
                 sai_object_id_t oid = entry.profileOid;
-                updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_PAST_WEIGHT,   entry.loadPastWeight);
-                updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_FUTURE_WEIGHT,  entry.loadFutureWeight);
-                updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_PAST,       entry.loadPastEnable);
-                updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_FUTURE,     entry.loadFutureEnable);
-                updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_CURRENT,    entry.loadCurrentEnable);
-                updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_EXPONENT,       entry.loadExponent);
-                updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_MAX_FLOWS,                entry.maxFlows);
-                updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_PAST_MIN_VAL,        entry.loadPastMinVal);
-                updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_PAST_MAX_VAL,        entry.loadPastMaxVal);
-                updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_FUTURE_MIN_VAL,      entry.loadFutureMinVal);
-                updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_FUTURE_MAX_VAL,      entry.loadFutureMaxVal);
-                updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_CURRENT_MIN_VAL,     entry.loadCurrentMinVal);
-                updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_CURRENT_MAX_VAL,     entry.loadCurrentMaxVal);
-                updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_ENABLE_IPV4,          entry.ipv4Enable);
-                updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_ENABLE_IPV6,          entry.ipv6Enable);
+                bool anyFailed = false;
+                anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_PAST_WEIGHT,   entry.loadPastWeight);
+                anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_FUTURE_WEIGHT,  entry.loadFutureWeight);
+                anyFailed |= !updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_PAST,       entry.loadPastEnable);
+                anyFailed |= !updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_FUTURE,     entry.loadFutureEnable);
+                anyFailed |= !updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_CURRENT,    entry.loadCurrentEnable);
+                anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_EXPONENT,       entry.loadExponent);
+                anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_MAX_FLOWS,                entry.maxFlows);
+                anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_PAST_MIN_VAL,        entry.loadPastMinVal);
+                anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_PAST_MAX_VAL,        entry.loadPastMaxVal);
+                anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_FUTURE_MIN_VAL,      entry.loadFutureMinVal);
+                anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_FUTURE_MAX_VAL,      entry.loadFutureMaxVal);
+                anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_CURRENT_MIN_VAL,     entry.loadCurrentMinVal);
+                anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_CURRENT_MAX_VAL,     entry.loadCurrentMaxVal);
+                anyFailed |= !updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_ENABLE_IPV4,          entry.ipv4Enable);
+                anyFailed |= !updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_ENABLE_IPV6,          entry.ipv6Enable);
                 if (entry.samplingInterval > 0)
-                    updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_SAMPLING_INTERVAL,    entry.samplingInterval);
+                    anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_SAMPLING_INTERVAL,    entry.samplingInterval);
                 if (entry.randomSeed > 0)
-                    updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_ARS_RANDOM_SEED,      entry.randomSeed);
+                    anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_ARS_RANDOM_SEED,      entry.randomSeed);
                 // Per-band quant thresholds — these gate whether the Mellanox
                 // SAI backend calls sx_api_ar_congestion_threshold_set at bind
                 // time. Write through on any transition that affects the three
@@ -526,22 +538,31 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                 // device to hardened defaults rather than leaving stale state).
                 if (anyQuantBandSet || hadQuantBandConfig)
                 {
-                    updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_QUANT_BAND_0_MIN_THRESHOLD,
+                    anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_QUANT_BAND_0_MIN_THRESHOLD,
                                          entry.quantBand0MinThreshold);
-                    updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_QUANT_BAND_1_MIN_THRESHOLD,
+                    anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_QUANT_BAND_1_MIN_THRESHOLD,
                                          entry.quantBand1MinThreshold);
-                    updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_QUANT_BAND_2_MIN_THRESHOLD,
+                    anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_QUANT_BAND_2_MIN_THRESHOLD,
                                          entry.quantBand2MinThreshold);
                 }
-                m_arsProfiles[name] = entry;
-                publishArsProfileState(name, entry);
+                if (anyFailed)
+                    SWSS_LOG_WARN("ARS: one or more SAI attributes failed to update for profile '%s'",
+                                  name.c_str());
+                else
+                {
+                    m_arsProfiles[name] = entry;
+                    publishArsProfileState(name, entry);
+                }
             }
         }
         else if (op == DEL_COMMAND)
         {
-            if (!removeArsProfile(name))
-                SWSS_LOG_ERROR("ARS: failed to remove profile %s", name.c_str());
-            m_stateArsProfileTable.del(name);
+            if (removeArsProfile(name))
+                m_stateArsProfileTable.del(name);
+            else
+                SWSS_LOG_ERROR("ARS: failed to remove profile %s — "
+                               "keeping STATE_DB entry to reflect SAI state",
+                               name.c_str());
         }
 
         it = consumer.m_toSync.erase(it);
@@ -885,15 +906,21 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            if (!removeArsObject(name))
-                SWSS_LOG_ERROR("ARS: failed to remove object %s", name.c_str());
-
-            // Drop any STATE_DB "mode_change_rejected" marker left over
-            // from a previously-rejected transition on this object name.
-            // Without this a deleted+recreated-as-different-mode cycle
-            // could leave the previous object's degraded row visible
-            // indefinitely.
-            m_stateArsObjectTable.del(name);
+            if (removeArsObject(name))
+            {
+                // Drop any STATE_DB "mode_change_rejected" marker left over
+                // from a previously-rejected transition on this object name.
+                // Without this a deleted+recreated-as-different-mode cycle
+                // could leave the previous object's degraded row visible
+                // indefinitely.
+                m_stateArsObjectTable.del(name);
+            }
+            else
+            {
+                SWSS_LOG_ERROR("ARS: failed to remove object %s — "
+                               "keeping STATE_DB entry to reflect SAI state",
+                               name.c_str());
+            }
         }
 
         it = consumer.m_toSync.erase(it);
@@ -927,11 +954,14 @@ void ArsOrch::doArsInterfaceTask(Consumer &consumer)
 
             const ArsInterfaceEntry prevEntry = entry;
 
+            bool rejectInterface = false;
             for (auto &fv : kfvFieldsValues(kfv))
             {
                 const string &field = fvField(fv);
                 const string &value = fvValue(fv);
 
+                try
+                {
                 if      (field == "admin_state")              entry.enabled = (toLower(value) == "up");
                 else if (field == "ars_object")               entry.arsObject = value;
                 else if (field == "port_profile")             entry.portProfile = value;
@@ -941,6 +971,20 @@ void ArsOrch::doArsInterfaceTask(Consumer &consumer)
                 else
                     SWSS_LOG_WARN("ARS: unknown interface field '%s' on %s",
                                   field.c_str(), portName.c_str());
+                }
+                catch (const std::exception &e)
+                {
+                    SWSS_LOG_ERROR("ARS: failed to parse interface '%s' field '%s' value '%s': %s",
+                                   portName.c_str(), field.c_str(), value.c_str(), e.what());
+                    rejectInterface = true;
+                    break;
+                }
+            }
+
+            if (rejectInterface)
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
             }
 
             if (prevEntry.enabled != entry.enabled ||
@@ -956,7 +1000,13 @@ void ArsOrch::doArsInterfaceTask(Consumer &consumer)
                 if (setPortArsEnable(portName, true))
                     m_arsEnabledPorts.insert(portName);
                 else
-                    SWSS_LOG_ERROR("ARS: failed to enable ARS on port %s", portName.c_str());
+                {
+                    SWSS_LOG_ERROR("ARS: failed to enable ARS on port %s — "
+                                   "keeping entry.enabled=false so NHG resolver "
+                                   "does not bind ARS on this port",
+                                   portName.c_str());
+                    entry.enabled = false;
+                }
             }
             else if (!entry.enabled && prevEnabled)
             {
@@ -1050,11 +1100,14 @@ void ArsOrch::doArsPortProfileTask(Consumer &consumer)
             if (m_arsPortProfiles.count(name))
                 entry = m_arsPortProfiles[name];
 
+            bool rejectPortProfile = false;
             for (auto &fv : kfvFieldsValues(kfv))
             {
                 const string &field = fvField(fv);
                 const string &value = fvValue(fv);
 
+                try
+                {
                 if      (field == "load_past_min_val")    entry.loadPastMinVal    = static_cast<uint32_t>(stoul(value));
                 else if (field == "load_past_max_val")    entry.loadPastMaxVal    = static_cast<uint32_t>(stoul(value));
                 else if (field == "load_future_min_val")  entry.loadFutureMinVal  = static_cast<uint32_t>(stoul(value));
@@ -1075,6 +1128,20 @@ void ArsOrch::doArsPortProfileTask(Consumer &consumer)
                     entry.loadScalingFactor = static_cast<uint32_t>(round(fval * 10));
                     entry.loadScalingFactorRaw = fval;
                 }
+                }
+                catch (const std::exception &e)
+                {
+                    SWSS_LOG_ERROR("ARS: failed to parse port-profile '%s' field '%s' value '%s': %s",
+                                   name.c_str(), field.c_str(), value.c_str(), e.what());
+                    rejectPortProfile = true;
+                    break;
+                }
+            }
+
+            if (rejectPortProfile)
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
             }
 
             m_arsPortProfiles[name] = entry;
@@ -1188,16 +1255,33 @@ void ArsOrch::doArsPortChannelTask(Consumer &consumer)
             if (m_arsLags.count(lagName))
                 entry = m_arsLags[lagName];
 
+            bool rejectLag = false;
             for (auto &fv : kfvFieldsValues(kfv))
             {
                 const string &field = fvField(fv);
                 const string &value = fvValue(fv);
 
-                if      (field == "admin_state") entry.enabled = (value == "up");
+                try
+                {
+                if      (field == "admin_state") entry.enabled = (toLower(value) == "up");
                 else if (field == "ars_object")  entry.arsObject = value;
                 else if (field == "port_profile") entry.portProfile = value;
                 else if (field == "link_utilization_threshold")
                     entry.linkUtilThreshold = static_cast<uint32_t>(stoul(value));
+                }
+                catch (const std::exception &e)
+                {
+                    SWSS_LOG_ERROR("ARS: failed to parse PortChannel '%s' field '%s' value '%s': %s",
+                                   lagName.c_str(), field.c_str(), value.c_str(), e.what());
+                    rejectLag = true;
+                    break;
+                }
+            }
+
+            if (rejectLag)
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
             }
 
             m_arsLags[lagName] = entry;
@@ -1930,6 +2014,11 @@ string ArsOrch::getArsObjectForPort(const string &portName) const
     auto it = m_arsInterfaces.find(portName);
     if (it != m_arsInterfaces.end() && it->second.enabled)
         return it->second.arsObject;
+
+    auto lagIt = m_arsLags.find(portName);
+    if (lagIt != m_arsLags.end() && lagIt->second.enabled)
+        return lagIt->second.arsObject;
+
     return "";
 }
 
