@@ -170,6 +170,13 @@ private:
     swss::Table m_stateArsCapTable;
     swss::Table m_stateArsProfileTable;
     swss::Table m_stateArsNhgTable;
+    // Tracks per-ARS_OBJECT operational state — used to surface a
+    // "mode_change_rejected" marker when a live-mode-change is attempted
+    // against an object the underlying SAI refuses to mutate
+    // (Mellanox: SAI_ARS_ATTR_MODE is create-only on live objects).
+    // Keyed by ARS_OBJECT name so the `show load-balance adaptive object`
+    // backend can look it up without a reverse NHG→name map.
+    swss::Table m_stateArsObjectTable;
     swss::Table m_cfgArsTable;
 
     bool m_arsEnabled = false;

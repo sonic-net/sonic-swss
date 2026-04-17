@@ -75,6 +75,7 @@ ArsOrch::ArsOrch(DBConnector *configDb,
       m_stateArsCapTable(stateDb, STATE_ARS_CAPABILITY_TABLE_NAME),
       m_stateArsProfileTable(stateDb, STATE_ARS_PROFILE_TABLE_NAME),
       m_stateArsNhgTable(stateDb, "ARS_NHG_TABLE"),
+      m_stateArsObjectTable(stateDb, "ARS_OBJECT_TABLE"),
       m_cfgArsTable(configDb, CFG_ARS_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
@@ -699,18 +700,70 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
                 // type on the fly"). Pushing the set would leave our cache
                 // claiming the new mode while the ASIC still runs the old
                 // one. Reject the transition and keep the cached mode at the
-                // previous value so STATE_DB stays truthful; operators must
-                // delete the ARS_OBJECT and re-create it.
+                // previous value so STATE_DB / arsOrch-internal state stays
+                // truthful; operators must delete the ARS_OBJECT and
+                // re-create it.
+                //
+                // Also surface the split to STATE_DB so a `show` command
+                // (or an external monitor) can detect that CONFIG_DB
+                // advertises a mode the ASIC is not using. Without this
+                // marker the CLI still writes the new assign_mode into
+                // CONFIG_DB (KLISH doesn't roll back the row on orchagent
+                // rejection), producing a silent mismatch.
                 if (prev.mode != entry.mode)
                 {
+                    const char *prevStr =
+                        (prev.mode == SAI_ARS_MODE_FLOWLET_QUALITY)
+                            ? "flowlet-quality" : "packet-quality";
+                    const char *newStr =
+                        (entry.mode == SAI_ARS_MODE_FLOWLET_QUALITY)
+                            ? "flowlet-quality" : "packet-quality";
+
                     SWSS_LOG_ERROR("ARS: object '%s' assign_mode change "
-                                   "(%d → %d) is not supported on live ARS "
+                                   "(%s → %s) is not supported on live ARS "
                                    "objects by the underlying SAI. Delete "
                                    "ARS_OBJECT|%s and re-create it to change "
-                                   "mode. Keeping previous mode in cache.",
-                                   name.c_str(), (int)prev.mode,
-                                   (int)entry.mode, name.c_str());
+                                   "mode. Keeping previous mode in cache; "
+                                   "CONFIG_DB will temporarily advertise the "
+                                   "rejected value.",
+                                   name.c_str(), prevStr, newStr, name.c_str());
+
+                    // Republish a degraded row for this ARS object name so
+                    // operators can see the split. Keyed by object name
+                    // (ARS_OBJECT_TABLE) rather than NHG OID so it can be
+                    // found by the `show load-balance adaptive object`
+                    // backend without a reverse lookup.
+                    vector<FieldValueTuple> fvs;
+                    fvs.emplace_back("status", "mode_change_rejected");
+                    fvs.emplace_back("current_mode", prevStr);
+                    fvs.emplace_back("config_db_mode", newStr);
+                    fvs.emplace_back("reason",
+                        "Mellanox SAI rejects SAI_ARS_ATTR_MODE changes on "
+                        "live ARS objects. Delete and re-create the object "
+                        "to change mode.");
+                    m_stateArsObjectTable.set(name, fvs);
+
                     entry.mode = prev.mode;
+                }
+                else
+                {
+                    // Clear any stale "mode_change_rejected" marker on the
+                    // object name once CONFIG_DB stops advertising a
+                    // different mode — either the operator reverted the
+                    // row or deleted+recreated the object.
+                    std::vector<FieldValueTuple> existing;
+                    if (m_stateArsObjectTable.get(name, existing))
+                    {
+                        for (const auto &fv : existing)
+                        {
+                            if (fvField(fv) == "status" &&
+                                fvValue(fv) == "mode_change_rejected")
+                            {
+                                m_stateArsObjectTable.del(name);
+                                break;
+                            }
+                        }
+                    }
                 }
                 if (isFlowletMode(entry.mode) && prev.idleTime != entry.idleTime)
                     setArsObjectAttr(oid, SAI_ARS_ATTR_IDLE_TIME, entry.idleTime);
@@ -775,6 +828,13 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
         {
             if (!removeArsObject(name))
                 SWSS_LOG_ERROR("ARS: failed to remove object %s", name.c_str());
+
+            // Drop any STATE_DB "mode_change_rejected" marker left over
+            // from a previously-rejected transition on this object name.
+            // Without this a deleted+recreated-as-different-mode cycle
+            // could leave the previous object's degraded row visible
+            // indefinitely.
+            m_stateArsObjectTable.del(name);
         }
 
         it = consumer.m_toSync.erase(it);
@@ -1141,6 +1201,75 @@ void ArsOrch::doArsPortChannelTask(Consumer &consumer)
 bool ArsOrch::createArsProfile(const string &name, const ArsProfileEntry &entry)
 {
     SWSS_LOG_ENTER();
+
+    // Mellanox SAI hard-codes ars_profile_idx = 0 in
+    // mlnx_sai_create_ars_profile, so any subsequent create_ars_profile
+    // returns SAI_STATUS_ITEM_ALREADY_EXISTS. Detect the single-profile
+    // limit from this side so the operator gets a single clear error
+    // (pointing at the pre-existing profile) rather than a generic SAI
+    // failure, and so the second ARS_PROFILE row in CONFIG_DB is visibly
+    // rejected rather than silently leaving its profileOid at
+    // SAI_NULL_OBJECT_ID. Mirrors the check in createArsObject().
+    //
+    // One exception: if the only thing holding the slot is the internal
+    // __ARS_DEFAULT__ profile (auto-created by createDefaultProfileIfNeeded
+    // when ARS|GLOBAL came up without an explicit profile), transparently
+    // evict it so the operator-supplied profile can take the slot. Without
+    // this evict path, users on Mellanox could NEVER create a named
+    // ARS_PROFILE after enabling ARS, because __ARS_DEFAULT__ would
+    // permanently occupy the SAI slot.
+    //
+    // For any *other* pre-existing profile the user must remove it
+    // explicitly (`no load-balance adaptive profile <name>`) first.
+    // See docs/04.FLOWLET.md §"Spectrum-4 single-profile limit".
+    static const string kDefaultName = "__ARS_DEFAULT__";
+    string blockingProfile;
+    for (const auto &kv : m_arsProfiles)
+    {
+        if (kv.first == name)
+            continue;
+        if (kv.second.profileOid == SAI_NULL_OBJECT_ID)
+            continue;
+        blockingProfile = kv.first;
+        break;
+    }
+    if (!blockingProfile.empty())
+    {
+        if (blockingProfile == kDefaultName)
+        {
+            SWSS_LOG_NOTICE("ARS: evicting auto-created '%s' to make room "
+                            "for operator-supplied profile '%s' (Mellanox "
+                            "single-profile slot)",
+                            blockingProfile.c_str(), name.c_str());
+            // removeArsProfile unbinds from the switch (if bound) and
+            // calls remove_ars_profile(); on success the slot frees up.
+            // If the remove itself fails (e.g. because an ARS object is
+            // still live — but Mellanox allows the profile OID to be
+            // unbound from the switch without touching ARS objects), we
+            // still fall through to fail the create with a clear error.
+            if (!removeArsProfile(blockingProfile))
+            {
+                SWSS_LOG_ERROR("ARS: failed to evict '%s' — new profile '%s' "
+                               "cannot be created while the default holds the "
+                               "SAI slot. Retry after orchagent recovers.",
+                               blockingProfile.c_str(), name.c_str());
+                return false;
+            }
+            m_stateArsProfileTable.del(blockingProfile);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("ARS: cannot create ARS_PROFILE '%s' — the "
+                           "underlying SAI on this platform supports at most "
+                           "one ARS profile per switch, and '%s' already holds "
+                           "that slot. Remove '%s' from CONFIG_DB "
+                           "(`ARS_PROFILE|%s`) first, or update it in-place "
+                           "instead of creating a new one.",
+                           name.c_str(), blockingProfile.c_str(),
+                           blockingProfile.c_str(), blockingProfile.c_str());
+            return false;
+        }
+    }
 
     vector<sai_attribute_t> attrs;
     sai_attribute_t attr;
