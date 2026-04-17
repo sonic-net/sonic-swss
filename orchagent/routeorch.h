@@ -231,6 +231,10 @@ public:
     bool addNextHopGroup(const NextHopGroupKey&);
     bool removeNextHopGroup(const NextHopGroupKey&, const bool is_default_route_nh_swap=false);
     void bindArsToExistingNhgs();
+    // Inverse of bindArsToExistingNhgs — used when global ARS is being torn
+    // down so the data plane actually stops doing adaptive routing instead of
+    // silently keeping stale SAI_NEXT_HOP_GROUP_ATTR_ARS_OBJECT_ID bindings.
+    void unbindArsFromAllNhgs();
 
     bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
     bool removeRoute(RouteBulkContext& ctx);

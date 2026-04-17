@@ -122,6 +122,14 @@ private:
     bool unbindArsFromLag(const std::string &lagName);
 
     bool setPortArsEnable(const std::string &portName, bool enable);
+
+    // Wholesale enable/disable of the ARS data-plane state. Called from the
+    // global ARS|GLOBAL admin_state transitions so that a toggle to "down"
+    // actually removes ARS from the data plane (rather than just flipping
+    // m_arsEnabled), and the opposite toggle to "up" rebuilds it from the
+    // cached CONFIG_DB view in m_arsInterfaces / m_arsObjects.
+    void disableArsDataPlane();
+    void enableArsDataPlane();
     bool setPortArsScalingFactor(const std::string &portName, const ArsPortProfileEntry &pp);
     bool setPortArsLinkUtilThreshold(const std::string &portName, uint32_t threshold);
     bool setPortArsWeights(const std::string &portName, uint32_t pastWeight, uint32_t futureWeight);

@@ -143,10 +143,18 @@ void ArsOrch::doArsGlobalTask(Consumer &consumer)
                 {
                     createDefaultProfileIfNeeded();
                 }
+
+                // Re-apply ARS to the data plane: per-port enables, LAG
+                // bindings, and NHG re-evaluation for any routes that were
+                // installed while ARS was disabled.
+                enableArsDataPlane();
             }
             else if (!wantEnable && m_arsEnabled)
             {
                 SWSS_LOG_NOTICE("ARS: Adaptive Routing globally disabled");
+                // Tear down the data plane *before* flipping the flag so the
+                // helpers still treat ARS as "enabled" while iterating.
+                disableArsDataPlane();
                 m_arsEnabled = false;
             }
 
@@ -181,6 +189,7 @@ void ArsOrch::doArsGlobalTask(Consumer &consumer)
             if (m_arsEnabled)
             {
                 SWSS_LOG_NOTICE("ARS: Adaptive Routing global entry removed — disabling");
+                disableArsDataPlane();
                 m_arsEnabled = false;
             }
             if (m_activeSwitchProfileOid != SAI_NULL_OBJECT_ID)
@@ -1154,6 +1163,68 @@ bool ArsOrch::setPortArsEnable(const string &portName, bool enable)
 
     SWSS_LOG_NOTICE("ARS: port %s ARS %s", portName.c_str(), enable ? "enabled" : "disabled");
     return true;
+}
+
+/* ── Wholesale data-plane enable/disable (ARS|GLOBAL admin_state) ─────── */
+
+void ArsOrch::disableArsDataPlane()
+{
+    SWSS_LOG_ENTER();
+    SWSS_LOG_NOTICE("ARS: tearing down data plane (unbinding NHGs/LAGs, "
+                    "clearing per-port enables)");
+
+    if (gRouteOrch)
+        gRouteOrch->unbindArsFromAllNhgs();
+
+    for (const auto &lagName : m_arsEnabledLags)
+        unbindArsFromLag(lagName);
+    m_arsEnabledLags.clear();
+
+    for (const auto &portName : m_arsEnabledPorts)
+        setPortArsEnable(portName, false);
+    m_arsEnabledPorts.clear();
+}
+
+void ArsOrch::enableArsDataPlane()
+{
+    SWSS_LOG_ENTER();
+    SWSS_LOG_NOTICE("ARS: re-applying data plane from cached CONFIG_DB state");
+
+    // Re-enable per-port ARS on every interface that was admin_state=up.
+    for (const auto &kv : m_arsInterfaces)
+    {
+        const auto &portName = kv.first;
+        const auto &entry = kv.second;
+        if (!entry.enabled)
+            continue;
+        if (setPortArsEnable(portName, true))
+            m_arsEnabledPorts.insert(portName);
+    }
+
+    // Re-bind any LAGs whose ARS object already exists.
+    for (const auto &kv : m_arsInterfaces)
+    {
+        const auto &name = kv.first;
+        const auto &entry = kv.second;
+        if (!entry.enabled || entry.arsObject.empty())
+            continue;
+        sai_object_id_t arsOid = getArsObjectOid(entry.arsObject);
+        if (arsOid == SAI_NULL_OBJECT_ID)
+            continue;
+        // Only names that actually resolve as LAGs: try the bind and let the
+        // helper's PortsOrch lookup reject non-LAG names cheaply.
+        Port port;
+        if (m_portsOrch->getPort(name, port) && port.m_lag_id != SAI_NULL_OBJECT_ID)
+        {
+            if (bindArsToLag(name, arsOid))
+                m_arsEnabledLags.insert(name);
+        }
+    }
+
+    // Retroactively bind ARS to any routes/NHGs that were installed while ARS
+    // was disabled.
+    if (gRouteOrch)
+        gRouteOrch->bindArsToExistingNhgs();
 }
 
 /* ── Per-port ARS profile attributes via SAI ──────────────────────────── */

@@ -1872,6 +1872,27 @@ void RouteOrch::bindArsToExistingNhgs()
     }
 }
 
+void RouteOrch::unbindArsFromAllNhgs()
+{
+    SWSS_LOG_ENTER();
+
+    if (!gArsOrch)
+        return;
+
+    for (auto &entry : m_syncdNextHopGroups)
+    {
+        sai_object_id_t nhgOid = entry.second.next_hop_group_id;
+        if (nhgOid == SAI_NULL_OBJECT_ID)
+            continue;
+
+        if (gArsOrch->unbindArsFromNhg(nhgOid))
+        {
+            SWSS_LOG_NOTICE("ARS: unbound ARS from NHG %s",
+                            entry.first.to_string().c_str());
+        }
+    }
+}
+
 void RouteOrch::addNextHopRoute(const NextHopKey& nextHop, const RouteKey& routeKey)
 {
     auto it = m_nextHops.find((nextHop));
