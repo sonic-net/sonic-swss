@@ -1368,6 +1368,8 @@ namespace routeorch_test
 
         // Verify that SAI was called (re-randomization occurred)
         ASSERT_TRUE(sai_called);
+        // addRoute should return false since NHG creation still fails
+        ASSERT_FALSE(result);
         
         // Verify that the desired_nhg_key was updated to reflect the new membership
         it = gRouteOrch->m_syncdRoutes[gVirtualRouterId].find(prefix);
@@ -1516,10 +1518,14 @@ namespace routeorch_test
         nhg_entry.next_hop_group_id = mock_nhg_id;
         
         // Add nexthop members to the group (only the remaining 2)
+        uint32_t seq_id = 0;
         for (const auto& nh : reduced_nhg.getNextHops())
         {
             sai_object_id_t nh_id = gNeighOrch->getNextHopId(nh);
-            nhg_entry.nhopgroup_members[nh.to_string()] = nh_id;
+            NextHopGroupMemberEntry member_entry;
+            member_entry.next_hop_id = nh_id;
+            member_entry.seq_id = seq_id++;
+            nhg_entry.nhopgroup_members[nh] = member_entry;
         }
         
         gRouteOrch->m_syncdNextHopGroups[reduced_nhg] = nhg_entry;
