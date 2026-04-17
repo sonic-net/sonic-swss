@@ -218,11 +218,34 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
+            // Reserve names beginning with '__ARS_' for orchagent-internal
+            // use (see createDefaultProfileIfNeeded). A user-supplied profile
+            // with the same name would clash with the auto-created default
+            // and silently replace it in m_arsProfiles, causing hard-to-debug
+            // mismatches between CONFIG_DB and SAI.
+            if (name.rfind("__ARS_", 0) == 0)
+            {
+                SWSS_LOG_ERROR("ARS: profile name '%s' is reserved (prefix "
+                               "'__ARS_' is orchagent-internal); rejecting",
+                               name.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
             ArsProfileEntry entry;
-            if (m_arsProfiles.count(name))
+            const bool isCreate = (m_arsProfiles.count(name) == 0);
+            if (!isCreate)
                 entry = m_arsProfiles[name];
 
+            // Track which EWMA-related fields appeared in *this* update so we
+            // can only derive defaults for fields the operator didn't touch.
+            // Previously a single explicitLoadCurrent flag guarded a recompute
+            // of loadCurrentEnable that used entry.loadCurrentWeight — which
+            // was seeded from the prior cached state. That meant an unrelated
+            // update (say sampling_interval) could re-derive loadCurrentEnable
+            // from a stale weight and silently flip it.
             bool explicitLoadCurrent = false;
+            bool explicitLoadCurrentWeight = false;
             for (auto &fv : kfvFieldsValues(kfv))
             {
                 const string &field = fvField(fv);
@@ -233,7 +256,10 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                 else if (field == "port_load_future_weight" || field == "load_future_weight")
                     entry.loadFutureWeight = static_cast<uint32_t>(stoul(value));
                 else if (field == "port_load_current_weight" || field == "load_current_weight")
+                {
                     entry.loadCurrentWeight = static_cast<uint32_t>(stoul(value));
+                    explicitLoadCurrentWeight = true;
+                }
                 else if (field == "load_exponent")       entry.loadExponent      = static_cast<uint32_t>(stoul(value));
                 else if (field == "max_flows")           entry.maxFlows          = static_cast<uint32_t>(stoul(value));
                 else if (field == "load_past_min_val")   entry.loadPastMinVal    = static_cast<uint32_t>(stoul(value));
@@ -271,7 +297,15 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                     SWSS_LOG_WARN("ARS: unknown profile field '%s'", field.c_str());
             }
 
-            if (!explicitLoadCurrent)
+            // Only auto-derive loadCurrentEnable when:
+            //   - this is an initial CREATE (no prior cached state), or
+            //   - the operator explicitly wrote load_current_weight in this
+            //     update (so the derivation uses a value we just parsed, not
+            //     one seeded from the prior state).
+            // This prevents unrelated partial updates (e.g. touching only
+            // sampling_interval) from silently flipping a previously-set
+            // loadCurrentEnable based on a stale loadCurrentWeight.
+            if (!explicitLoadCurrent && (isCreate || explicitLoadCurrentWeight))
                 entry.loadCurrentEnable = (entry.loadCurrentWeight > 0);
 
             if (entry.profileOid == SAI_NULL_OBJECT_ID)
@@ -352,12 +386,24 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
             // admin_state transitions and drive NHG/LAG rebinds.
             const bool wasEnabled = entry.enabled;
 
+            bool rejectEntry = false;
             for (auto &fv : kfvFieldsValues(kfv))
             {
                 const string &field = fvField(fv);
                 const string &value = fvValue(fv);
 
-                if      (field == "assign_mode") entry.mode     = parseArsMode(value);
+                if (field == "assign_mode")
+                {
+                    sai_ars_mode_t parsed;
+                    if (!parseArsMode(value, &parsed))
+                    {
+                        SWSS_LOG_ERROR("ARS: object %s rejected — unknown "
+                                       "assign_mode '%s'", name.c_str(), value.c_str());
+                        rejectEntry = true;
+                        break;
+                    }
+                    entry.mode = parsed;
+                }
                 else if (field == "idle_time")   entry.idleTime = static_cast<uint32_t>(stoul(value));
                 else if (field == "max_flows")   entry.maxFlows = static_cast<uint32_t>(stoul(value));
                 else if (field == "admin_state") entry.enabled  = (value == "up");
@@ -379,6 +425,12 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
                     SWSS_LOG_WARN("ARS: unknown object field '%s' on %s",
                                   field.c_str(), name.c_str());
                 }
+            }
+
+            if (rejectEntry)
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
             }
 
             if (!m_arsEnabled)
@@ -1647,14 +1699,14 @@ void ArsOrch::publishArsProfileState(const string &profileName, const ArsProfile
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
 
-sai_ars_mode_t ArsOrch::parseArsMode(const string &modeStr) const
+bool ArsOrch::parseArsMode(const string &modeStr, sai_ars_mode_t *out) const
 {
     auto it = arsModeLookup.find(modeStr);
-    if (it != arsModeLookup.end())
-        return it->second;
-
-    SWSS_LOG_WARN("ARS: unknown mode '%s', defaulting to flowlet-quality", modeStr.c_str());
-    return SAI_ARS_MODE_FLOWLET_QUALITY;
+    if (it == arsModeLookup.end())
+        return false;
+    if (out)
+        *out = it->second;
+    return true;
 }
 
 sai_object_id_t ArsOrch::getArsProfileOid(const string &name) const

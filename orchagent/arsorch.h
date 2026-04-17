@@ -145,7 +145,11 @@ private:
     void publishArsCaps();
     void publishArsProfileState(const std::string &profileName, const ArsProfileEntry &entry);
 
-    sai_ars_mode_t parseArsMode(const std::string &modeStr) const;
+    // Parse an assign_mode CLI/CONFIG_DB string. Returns true on success and
+    // writes the SAI mode into *out; returns false (and does NOT modify *out)
+    // for any string not in arsModeLookup so the caller can skip the update
+    // rather than silently coerce to a default.
+    bool parseArsMode(const std::string &modeStr, sai_ars_mode_t *out) const;
 
     SwitchOrch *m_switchOrch;
     PortsOrch  *m_portsOrch;
