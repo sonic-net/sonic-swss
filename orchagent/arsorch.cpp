@@ -1484,13 +1484,21 @@ bool ArsOrch::setPortArsScalingFactor(const string &portName, const ArsPortProfi
         return false;
     }
 
+    // Unit convention: pp.loadScalingFactor stores the operator's multiplier
+    // scaled by 10 (so 1.0 → 10, 2.5 → 25, 10.0 → 100, cf. doArsPortProfileTask
+    // where round(fval * 10) is assigned). The auto path must produce the
+    // same representation, not a raw "speed in 10G units" number.
+    // For 100G: multiplier is 10.0 → scaled = 100.
+    // For  25G: multiplier is  2.5 → scaled = 25.
+    // That translates to (speedMbps / 1000), not (speedMbps / 10000).
     uint32_t factor = pp.loadScalingFactor;
     if (pp.loadScalingFactorAuto)
     {
         uint32_t speedMbps = port.m_speed;
-        factor = (speedMbps > 0) ? (speedMbps / 10000) : 1;
-        SWSS_LOG_NOTICE("ARS: auto scaling factor for %s: speed=%u → factor=%u",
-                        portName.c_str(), speedMbps, factor);
+        factor = (speedMbps > 0) ? (speedMbps / 1000) : 10; // 1.0 default
+        SWSS_LOG_NOTICE("ARS: auto scaling factor for %s: speed=%u Mbps → "
+                        "multiplier=%u.%u (SAI u32 = %u)",
+                        portName.c_str(), speedMbps, factor / 10, factor % 10, factor);
     }
 
     sai_attribute_t attr;
