@@ -1099,4 +1099,473 @@ namespace routeorch_test
         ASSERT_EQ(gRouteOrch->gRouteBulker.setting_entries_count(), 0);
         ASSERT_EQ(gRouteOrch->gRouteBulker.removing_entries_count(), 0);
     }
+
+    TEST_F(RouteOrchTest, RouteOrchTestTempRouteDesiredNhgKeyAssignment)
+    {
+        // Test that desired_nhg_key is properly assigned when a temp route is created
+        
+        // --- Step 1: Setup resolved neighbors ---
+        Table neighborTable(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+
+        neighborTable.set("Ethernet0:10.0.0.10", {{"neigh", "00:00:0a:00:00:0a"}, {"family", "IPv4"}});
+        neighborTable.set("Ethernet0:10.0.0.11", {{"neigh", "00:00:0a:00:00:0b"}, {"family", "IPv4"}});
+
+        gNeighOrch->addExistingData(&neighborTable);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+
+        // --- Step 2: Create a temp route with multiple nexthops ---
+        NextHopGroupKey desired_nhg("10.0.0.10,10.0.0.11");
+        
+        RouteBulkContext ctx("5.5.5.0/24", true);
+        ctx.vrf_id = gVirtualRouterId;
+        ctx.ip_prefix = IpPrefix("5.5.5.0/24");
+        ctx.nhg = desired_nhg;
+
+        // Mock SAI to always succeed
+        EXPECT_CALL(*mock_sai_route_api,
+                    create_route_entries(::testing::_, ::testing::_, ::testing::_, ::testing::_, ::testing::_, ::testing::_))
+            .WillOnce(::testing::Invoke(
+                [](uint32_t object_count,
+                   const sai_route_entry_t * /*route_entries*/,
+                   const uint32_t * /*attr_count*/,
+                   const sai_attribute_t ** /*attr_list*/,
+                   sai_bulk_op_error_mode_t /*mode*/,
+                   sai_status_t *object_statuses) -> sai_status_t
+                {
+                    for (uint32_t i = 0; i < object_count; ++i)
+                    {
+                        object_statuses[i] = SAI_STATUS_SUCCESS;
+                    }
+                    return SAI_STATUS_SUCCESS;
+                }));
+
+        // Create temp route
+        gRouteOrch->addTempRoute(ctx, desired_nhg);
+        gRouteOrch->gRouteBulker.flush();
+
+        // --- Step 3: Verify desired_nhg_key was recorded ---
+        auto it = gRouteOrch->m_syncdRoutes[gVirtualRouterId].find(IpPrefix("5.5.5.0/24"));
+        ASSERT_NE(it, gRouteOrch->m_syncdRoutes[gVirtualRouterId].end());
+        
+        const RouteNhg& route_nhg = it->second;
+        
+        // The actual programmed nexthop should be a single nexthop (temp route)
+        ASSERT_EQ(route_nhg.nhg_key.getSize(), 1);
+        
+        // The desired_nhg_key should contain the full original NHG
+        ASSERT_EQ(route_nhg.desired_nhg_key.getSize(), 2);
+        ASSERT_TRUE(route_nhg.desired_nhg_key == desired_nhg);
+    }
+
+    TEST_F(RouteOrchTest, RouteOrchTestTempRouteNoReRandomizeWhenUnchanged)
+    {
+        // Test that re-randomization doesn't occur when:
+        // 1. Current temp nexthop is still valid
+        // 2. Desired NHG membership hasn't changed
+        
+        // --- Step 1: Setup resolved neighbors ---
+        Table neighborTable(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+
+        neighborTable.set("Ethernet0:10.0.0.20", {{"neigh", "00:00:0a:00:00:14"}, {"family", "IPv4"}});
+        neighborTable.set("Ethernet0:10.0.0.21", {{"neigh", "00:00:0a:00:00:15"}, {"family", "IPv4"}});
+        neighborTable.set("Ethernet0:10.0.0.22", {{"neigh", "00:00:0a:00:00:16"}, {"family", "IPv4"}});
+
+        gNeighOrch->addExistingData(&neighborTable);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+
+        // --- Step 2: Create initial temp route ---
+        NextHopGroupKey desired_nhg("10.0.0.20,10.0.0.21,10.0.0.22");
+        IpPrefix prefix("6.6.6.0/24");
+        
+        RouteBulkContext ctx(prefix.to_string(), true);
+        ctx.vrf_id = gVirtualRouterId;
+        ctx.ip_prefix = prefix;
+        ctx.nhg = desired_nhg;
+
+        sai_object_id_t first_nh_oid = 0;
+
+        EXPECT_CALL(*mock_sai_route_api,
+                    create_route_entries(::testing::_, ::testing::_, ::testing::_, ::testing::_, ::testing::_, ::testing::_))
+            .WillOnce(::testing::Invoke(
+                [&first_nh_oid](uint32_t object_count,
+                                const sai_route_entry_t * /*route_entries*/,
+                                const uint32_t *attr_count,
+                                const sai_attribute_t **attr_list,
+                                sai_bulk_op_error_mode_t /*mode*/,
+                                sai_status_t *object_statuses) -> sai_status_t
+                {
+                    for (uint32_t i = 0; i < object_count; ++i)
+                    {
+                        // Capture the first nexthop OID
+                        for (uint32_t j = 0; j < attr_count[i]; ++j)
+                        {
+                            if (attr_list[i][j].id == SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID)
+                            {
+                                first_nh_oid = attr_list[i][j].value.oid;
+                            }
+                        }
+                        object_statuses[i] = SAI_STATUS_SUCCESS;
+                    }
+                    return SAI_STATUS_SUCCESS;
+                }));
+
+        gRouteOrch->addTempRoute(ctx, desired_nhg);
+        gRouteOrch->gRouteBulker.flush();
+
+        ASSERT_NE(first_nh_oid, 0u);
+
+        // Verify initial state of the temp route
+        auto it_before = gRouteOrch->m_syncdRoutes[gVirtualRouterId].find(prefix);
+        ASSERT_NE(it_before, gRouteOrch->m_syncdRoutes[gVirtualRouterId].end());
+        
+        // Capture the state before retry
+        NextHopGroupKey nhg_before = it_before->second.nhg_key;
+        NextHopGroupKey desired_nhg_before = it_before->second.desired_nhg_key;
+        
+        ASSERT_EQ(nhg_before.getSize(), 1);  // Should be single nexthop (temp route)
+        ASSERT_EQ(desired_nhg_before.getSize(), 3);  // Desired should be all 3
+
+        // --- Step 3: Retry with same NHG (simulating NHG creation still failing) ---
+        RouteBulkContext ctx2(prefix.to_string(), true);
+        ctx2.vrf_id = gVirtualRouterId;
+        ctx2.ip_prefix = prefix;
+        ctx2.nhg = desired_nhg;
+
+        // If re-randomization occurred, addRoute would be called and SAI mock would fire
+        // We expect NO new SAI call because the guard should prevent re-randomization
+        EXPECT_CALL(*mock_sai_route_api,
+                    create_route_entries(::testing::_, ::testing::_, ::testing::_, ::testing::_, ::testing::_, ::testing::_))
+            .Times(0);
+        EXPECT_CALL(*mock_sai_route_api,
+                    set_route_entries_attribute(::testing::_, ::testing::_, ::testing::_, ::testing::_, ::testing::_))
+            .Times(0);
+
+        bool result = gRouteOrch->addRoute(ctx2, desired_nhg);
+        gRouteOrch->gRouteBulker.flush();
+
+        // Should return false (route not added) without changing the temp route
+        ASSERT_FALSE(result);
+
+        // --- Step 4: Verify that addTempRoute was NOT called again ---
+        // The route state should remain completely unchanged
+        auto it_after = gRouteOrch->m_syncdRoutes[gVirtualRouterId].find(prefix);
+        ASSERT_NE(it_after, gRouteOrch->m_syncdRoutes[gVirtualRouterId].end());
+        
+        // nhg_key (actual programmed route) should be identical
+        ASSERT_TRUE(it_after->second.nhg_key == nhg_before);
+        ASSERT_EQ(it_after->second.nhg_key.getSize(), 1);
+        
+        // desired_nhg_key should be identical
+        ASSERT_TRUE(it_after->second.desired_nhg_key == desired_nhg_before);
+        ASSERT_EQ(it_after->second.desired_nhg_key.getSize(), 3);
+        
+        // Verify the route is still pointing to the same single nexthop
+        // (if addTempRoute was called again, it might have picked a different one)
+        const auto& nh_after = *it_after->second.nhg_key.getNextHops().begin();
+        const auto& nh_before = *nhg_before.getNextHops().begin();
+        ASSERT_TRUE(nh_after == nh_before);
+    }
+
+    TEST_F(RouteOrchTest, RouteOrchTestTempRouteReRandomizeWhenMembershipChanges)
+    {
+        // Test that re-randomization DOES occur when NHG membership changes
+        // (e.g., new nexthop becomes available)
+        
+        // --- Step 1: Setup initial resolved neighbors ---
+        Table neighborTable(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+
+        neighborTable.set("Ethernet0:10.0.0.30", {{"neigh", "00:00:0a:00:00:1e"}, {"family", "IPv4"}});
+        neighborTable.set("Ethernet0:10.0.0.31", {{"neigh", "00:00:0a:00:00:1f"}, {"family", "IPv4"}});
+
+        gNeighOrch->addExistingData(&neighborTable);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+
+        // --- Step 2: Create initial temp route with 2 nexthops ---
+        NextHopGroupKey initial_nhg("10.0.0.30,10.0.0.31");
+        IpPrefix prefix("7.7.7.0/24");
+        
+        RouteBulkContext ctx(prefix.to_string(), true);
+        ctx.vrf_id = gVirtualRouterId;
+        ctx.ip_prefix = prefix;
+        ctx.nhg = initial_nhg;
+
+        sai_object_id_t first_nh_oid = 0;
+
+        EXPECT_CALL(*mock_sai_route_api,
+                    create_route_entries(::testing::_, ::testing::_, ::testing::_, ::testing::_, ::testing::_, ::testing::_))
+            .WillOnce(::testing::Invoke(
+                [&first_nh_oid](uint32_t object_count,
+                                const sai_route_entry_t * /*route_entries*/,
+                                const uint32_t *attr_count,
+                                const sai_attribute_t **attr_list,
+                                sai_bulk_op_error_mode_t /*mode*/,
+                                sai_status_t *object_statuses) -> sai_status_t
+                {
+                    for (uint32_t i = 0; i < object_count; ++i)
+                    {
+                        for (uint32_t j = 0; j < attr_count[i]; ++j)
+                        {
+                            if (attr_list[i][j].id == SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID)
+                            {
+                                first_nh_oid = attr_list[i][j].value.oid;
+                            }
+                        }
+                        object_statuses[i] = SAI_STATUS_SUCCESS;
+                    }
+                    return SAI_STATUS_SUCCESS;
+                }));
+
+        gRouteOrch->addTempRoute(ctx, initial_nhg);
+        gRouteOrch->gRouteBulker.flush();
+
+        ASSERT_NE(first_nh_oid, 0u);
+
+        // Verify initial state
+        auto it = gRouteOrch->m_syncdRoutes[gVirtualRouterId].find(prefix);
+        ASSERT_NE(it, gRouteOrch->m_syncdRoutes[gVirtualRouterId].end());
+        ASSERT_EQ(it->second.desired_nhg_key.getSize(), 2);
+
+        // --- Step 3: Add a new neighbor (simulating new nexthop coming up) ---
+        neighborTable.set("Ethernet0:10.0.0.32", {{"neigh", "00:00:0a:00:00:20"}, {"family", "IPv4"}});
+        gNeighOrch->addExistingData(&neighborTable);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+
+        // --- Step 4: Retry with EXPANDED NHG (membership changed) ---
+        NextHopGroupKey expanded_nhg("10.0.0.30,10.0.0.31,10.0.0.32");
+        
+        RouteBulkContext ctx2(prefix.to_string(), true);
+        ctx2.vrf_id = gVirtualRouterId;
+        ctx2.ip_prefix = prefix;
+        ctx2.nhg = expanded_nhg;
+
+        sai_object_id_t second_nh_oid = 0;
+        bool sai_called = false;
+
+        // This time, SAI should be called because membership changed
+        EXPECT_CALL(*mock_sai_route_api,
+                    set_route_entries_attribute(::testing::_, ::testing::_, ::testing::_, ::testing::_, ::testing::_))
+            .WillOnce(::testing::Invoke(
+                [&second_nh_oid, &sai_called](uint32_t object_count,
+                                               const sai_route_entry_t * /*route_entries*/,
+                                               const sai_attribute_t *attr_list,
+                                               sai_bulk_op_error_mode_t /*mode*/,
+                                               sai_status_t *object_statuses) -> sai_status_t
+                {
+                    sai_called = true;
+                    for (uint32_t i = 0; i < object_count; ++i)
+                    {
+                        if (attr_list[i].id == SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID)
+                        {
+                            second_nh_oid = attr_list[i].value.oid;
+                        }
+                        object_statuses[i] = SAI_STATUS_SUCCESS;
+                    }
+                    return SAI_STATUS_SUCCESS;
+                }));
+
+        bool result = gRouteOrch->addRoute(ctx2, expanded_nhg);
+        gRouteOrch->gRouteBulker.flush();
+
+        // Verify that SAI was called (re-randomization occurred)
+        ASSERT_TRUE(sai_called);
+        
+        // Verify that the desired_nhg_key was updated to reflect the new membership
+        it = gRouteOrch->m_syncdRoutes[gVirtualRouterId].find(prefix);
+        ASSERT_NE(it, gRouteOrch->m_syncdRoutes[gVirtualRouterId].end());
+        ASSERT_EQ(it->second.desired_nhg_key.getSize(), 3);
+        ASSERT_TRUE(it->second.desired_nhg_key == expanded_nhg);
+    }
+
+    TEST_F(RouteOrchTest, RouteOrchTestTempRouteToFullNhgLifecycle)
+    {
+        // Test the complete lifecycle:
+        // 1. Initial temp route with 3 nexthops (NHG creation fails)
+        // 2. Previously selected nexthop goes down - membership changes, re-randomization occurs
+        // 3. NHG creation succeeds - route ends up pointing to full 2-member NHG (remaining NHs)
+        
+        // --- Step 1: Setup initial 3 resolved neighbors ---
+        Table neighborTable(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+
+        neighborTable.set("Ethernet0:10.0.0.40", {{"neigh", "00:00:0a:00:00:28"}, {"family", "IPv4"}});
+        neighborTable.set("Ethernet0:10.0.0.41", {{"neigh", "00:00:0a:00:00:29"}, {"family", "IPv4"}});
+        neighborTable.set("Ethernet0:10.0.0.42", {{"neigh", "00:00:0a:00:00:2a"}, {"family", "IPv4"}});
+
+        gNeighOrch->addExistingData(&neighborTable);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+
+        // --- Step 2: Create initial temp route with 3 nexthops ---
+        NextHopGroupKey initial_nhg("10.0.0.40,10.0.0.41,10.0.0.42");
+        IpPrefix prefix("8.8.8.0/24");
+        
+        RouteBulkContext ctx(prefix.to_string(), true);
+        ctx.vrf_id = gVirtualRouterId;
+        ctx.ip_prefix = prefix;
+        ctx.nhg = initial_nhg;
+
+        sai_object_id_t initial_nh_oid = 0;
+
+        EXPECT_CALL(*mock_sai_route_api,
+                    create_route_entries(::testing::_, ::testing::_, ::testing::_, ::testing::_, ::testing::_, ::testing::_))
+            .WillOnce(::testing::Invoke(
+                [&initial_nh_oid](uint32_t object_count,
+                                  const sai_route_entry_t * /*route_entries*/,
+                                  const uint32_t *attr_count,
+                                  const sai_attribute_t **attr_list,
+                                  sai_bulk_op_error_mode_t /*mode*/,
+                                  sai_status_t *object_statuses) -> sai_status_t
+                {
+                    for (uint32_t i = 0; i < object_count; ++i)
+                    {
+                        // Capture which nexthop was selected
+                        for (uint32_t j = 0; j < attr_count[i]; ++j)
+                        {
+                            if (attr_list[i][j].id == SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID)
+                            {
+                                initial_nh_oid = attr_list[i][j].value.oid;
+                            }
+                        }
+                        object_statuses[i] = SAI_STATUS_SUCCESS;
+                    }
+                    return SAI_STATUS_SUCCESS;
+                }));
+
+        gRouteOrch->addTempRoute(ctx, initial_nhg);
+        gRouteOrch->gRouteBulker.flush();
+
+        // Verify temp route was created
+        auto it = gRouteOrch->m_syncdRoutes[gVirtualRouterId].find(prefix);
+        ASSERT_NE(it, gRouteOrch->m_syncdRoutes[gVirtualRouterId].end());
+        ASSERT_EQ(it->second.nhg_key.getSize(), 1);  // Single nexthop (temp)
+        ASSERT_EQ(it->second.desired_nhg_key.getSize(), 3);  // Desired has 3
+
+        // Capture which nexthop was initially selected
+        const auto& selected_nh = *it->second.nhg_key.getNextHops().begin();
+        
+        // --- Step 3: Simulate the selected nexthop going down ---
+        // Delete the neighbor that was selected for the temp route
+        neighborTable.del("Ethernet0:" + selected_nh.ip_address.to_string());
+        gNeighOrch->addExistingData(&neighborTable);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+
+        // --- Step 4: Retry with reduced NHG (selected NH removed - triggers re-randomization) ---
+        // Build the reduced NHG by removing the selected nexthop
+        std::vector<std::string> remaining_nhs;
+        for (const auto& nh : initial_nhg.getNextHops())
+        {
+            if (nh.ip_address.to_string() != selected_nh.ip_address.to_string())
+            {
+                remaining_nhs.push_back(nh.ip_address.to_string());
+            }
+        }
+        
+        NextHopGroupKey reduced_nhg(remaining_nhs[0] + "," + remaining_nhs[1]);
+        
+        RouteBulkContext ctx2(prefix.to_string(), true);
+        ctx2.vrf_id = gVirtualRouterId;
+        ctx2.ip_prefix = prefix;
+        ctx2.nhg = reduced_nhg;
+
+        // Re-randomization should occur because the currently selected NH is no longer valid
+        EXPECT_CALL(*mock_sai_route_api,
+                    set_route_entries_attribute(::testing::_, ::testing::_, ::testing::_, ::testing::_, ::testing::_))
+            .WillOnce(::testing::Invoke(
+                [initial_nh_oid](uint32_t object_count,
+                                 const sai_route_entry_t * /*route_entries*/,
+                                 const sai_attribute_t *attr_list,
+                                 sai_bulk_op_error_mode_t /*mode*/,
+                                 sai_status_t *object_statuses) -> sai_status_t
+                {
+                    for (uint32_t i = 0; i < object_count; ++i)
+                    {
+                        // Verify a different nexthop was selected (not the one that went down)
+                        if (attr_list[i].id == SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID)
+                        {
+                            EXPECT_NE(attr_list[i].value.oid, initial_nh_oid);
+                        }
+                        object_statuses[i] = SAI_STATUS_SUCCESS;
+                    }
+                    return SAI_STATUS_SUCCESS;
+                }));
+
+        gRouteOrch->addRoute(ctx2, reduced_nhg);
+        gRouteOrch->gRouteBulker.flush();
+
+        // Verify re-randomization occurred and desired_nhg_key was updated
+        it = gRouteOrch->m_syncdRoutes[gVirtualRouterId].find(prefix);
+        ASSERT_NE(it, gRouteOrch->m_syncdRoutes[gVirtualRouterId].end());
+        ASSERT_EQ(it->second.nhg_key.getSize(), 1);  // Still temp route (single NH)
+        ASSERT_EQ(it->second.desired_nhg_key.getSize(), 2);  // Desired now has 2 (reduced)
+        ASSERT_TRUE(it->second.desired_nhg_key == reduced_nhg);
+        
+        // Verify that the nexthop that went down is NOT in the new desired_nhg_key
+        bool found_removed_nh = false;
+        for (const auto& nh : it->second.desired_nhg_key.getNextHops())
+        {
+            if (nh.ip_address.to_string() == selected_nh.ip_address.to_string())
+            {
+                found_removed_nh = true;
+                break;
+            }
+        }
+        ASSERT_FALSE(found_removed_nh) << "Nexthop that went down should not be in desired_nhg_key";
+
+        // --- Step 5: Simulate successful NHG creation ---
+        // Manually add the NHG to m_syncdNextHopGroups to simulate successful creation
+        sai_object_id_t mock_nhg_id = 0x999999;  // Mock NHG SAI object ID
+        NextHopGroupEntry nhg_entry;
+        nhg_entry.next_hop_group_id = mock_nhg_id;
+        
+        // Add nexthop members to the group (only the remaining 2)
+        for (const auto& nh : reduced_nhg.getNextHops())
+        {
+            sai_object_id_t nh_id = gNeighOrch->getNextHopId(nh);
+            nhg_entry.nhopgroup_members[nh.to_string()] = nh_id;
+        }
+        
+        gRouteOrch->m_syncdNextHopGroups[reduced_nhg] = nhg_entry;
+
+        // --- Step 6: Call addRoute again - this time it should succeed with full NHG ---
+        RouteBulkContext ctx3(prefix.to_string(), true);
+        ctx3.vrf_id = gVirtualRouterId;
+        ctx3.ip_prefix = prefix;
+
+        // Should update route to point to the NHG (not a temp single nexthop)
+        EXPECT_CALL(*mock_sai_route_api,
+                    set_route_entries_attribute(::testing::_, ::testing::_, ::testing::_, ::testing::_, ::testing::_))
+            .WillOnce(::testing::Invoke(
+                [mock_nhg_id](uint32_t object_count,
+                              const sai_route_entry_t * /*route_entries*/,
+                              const sai_attribute_t *attr_list,
+                              sai_bulk_op_error_mode_t /*mode*/,
+                              sai_status_t *object_statuses) -> sai_status_t
+                {
+                    for (uint32_t i = 0; i < object_count; ++i)
+                    {
+                        // Verify it's setting the NHG ID, not a single nexthop
+                        if (attr_list[i].id == SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID)
+                        {
+                            EXPECT_EQ(attr_list[i].value.oid, mock_nhg_id);
+                        }
+                        object_statuses[i] = SAI_STATUS_SUCCESS;
+                    }
+                    return SAI_STATUS_SUCCESS;
+                }));
+
+        bool result = gRouteOrch->addRoute(ctx3, reduced_nhg);
+        gRouteOrch->gRouteBulker.flush();
+
+        ASSERT_TRUE(result);
+
+        // --- Step 7: Verify final state - route points to full 2-member NHG ---
+        it = gRouteOrch->m_syncdRoutes[gVirtualRouterId].find(prefix);
+        ASSERT_NE(it, gRouteOrch->m_syncdRoutes[gVirtualRouterId].end());
+        
+        // Route should now point to the full 2-member NHG, not a temp single nexthop
+        ASSERT_EQ(it->second.nhg_key.getSize(), 2);
+        ASSERT_TRUE(it->second.nhg_key == reduced_nhg);
+        
+        // desired_nhg_key should still match (it's been tracking the desired state)
+        ASSERT_EQ(it->second.desired_nhg_key.getSize(), 2);
+        ASSERT_TRUE(it->second.desired_nhg_key == reduced_nhg);
+    }
 }
