@@ -348,6 +348,10 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
             if (m_arsObjects.count(name))
                 entry = m_arsObjects[name];
 
+            // Capture the pre-update 'enabled' state so we can detect
+            // admin_state transitions and drive NHG/LAG rebinds.
+            const bool wasEnabled = entry.enabled;
+
             for (auto &fv : kfvFieldsValues(kfv))
             {
                 const string &field = fvField(fv);
@@ -357,10 +361,24 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
                 else if (field == "idle_time")   entry.idleTime = static_cast<uint32_t>(stoul(value));
                 else if (field == "max_flows")   entry.maxFlows = static_cast<uint32_t>(stoul(value));
                 else if (field == "admin_state") entry.enabled  = (value == "up");
-                else if (field == "ipv4_enable") entry.ipv4Enable = (value == "true");
-                else if (field == "ipv6_enable") entry.ipv6Enable = (value == "true");
                 else if (field == "profile")     entry.profileName = value;
                 else if (field == "port_profile") entry.portProfileName = value;
+                else if (field == "ipv4_enable" || field == "ipv6_enable")
+                {
+                    // SAI models IPv{4,6} enable on the *profile* only
+                    // (SAI_ARS_PROFILE_ATTR_ENABLE_IPV{4,6}), not on the
+                    // per-object ARS. Accepting these fields at the object
+                    // level silently drops them; direct the operator to the
+                    // right knob instead of pretending it worked.
+                    SWSS_LOG_WARN("ARS: field '%s' is not supported on ARS_OBJECT "
+                                  "(set it on ARS_PROFILE instead) — ignoring for %s",
+                                  field.c_str(), name.c_str());
+                }
+                else
+                {
+                    SWSS_LOG_WARN("ARS: unknown object field '%s' on %s",
+                                  field.c_str(), name.c_str());
+                }
             }
 
             if (!m_arsEnabled)
@@ -419,6 +437,40 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
                     setArsObjectAttr(oid, SAI_ARS_ATTR_IDLE_TIME,  entry.idleTime);
                 setArsObjectAttr(oid, SAI_ARS_ATTR_MAX_FLOWS,  entry.maxFlows);
                 m_arsObjects[name] = entry;
+
+                // If admin_state flipped, re-evaluate all NHG bindings so the
+                // resolver's updated view of 'enabled' takes effect on the
+                // data plane. Also sync LAG bindings that reference this
+                // object name.
+                if (wasEnabled != entry.enabled)
+                {
+                    SWSS_LOG_NOTICE("ARS: object '%s' admin_state %s → %s, "
+                                    "rebinding NHGs and LAGs",
+                                    name.c_str(),
+                                    wasEnabled ? "up" : "down",
+                                    entry.enabled ? "up" : "down");
+
+                    if (gRouteOrch)
+                        gRouteOrch->rebindArsForAllNhgs();
+
+                    for (const auto &lagKv : m_arsInterfaces)
+                    {
+                        if (lagKv.second.arsObject != name)
+                            continue;
+                        const auto &lagName = lagKv.first;
+                        const bool isBound = m_arsEnabledLags.count(lagName) > 0;
+                        if (entry.enabled && !isBound && lagKv.second.enabled)
+                        {
+                            if (bindArsToLag(lagName, oid))
+                                m_arsEnabledLags.insert(lagName);
+                        }
+                        else if (!entry.enabled && isBound)
+                        {
+                            if (unbindArsFromLag(lagName))
+                                m_arsEnabledLags.erase(lagName);
+                        }
+                    }
+                }
             }
         }
         else if (op == DEL_COMMAND)
@@ -1135,7 +1187,20 @@ sai_object_id_t ArsOrch::resolveArsForNhg(sai_object_id_t nhgOid, const NextHopG
     if (mismatch || commonArsObj.empty())
         return SAI_NULL_OBJECT_ID;
 
-    auto arsOid = getArsObjectOid(commonArsObj);
+    // Honor ARS_OBJECT.admin_state: if the resolved object is disabled we
+    // return NULL so the NHG falls back to plain ECMP.
+    auto objIt = m_arsObjects.find(commonArsObj);
+    if (objIt == m_arsObjects.end() || !objIt->second.enabled)
+    {
+        if (objIt != m_arsObjects.end())
+        {
+            SWSS_LOG_NOTICE("ARS: object '%s' admin_state=down — NHG falls back "
+                            "to plain ECMP", commonArsObj.c_str());
+        }
+        return SAI_NULL_OBJECT_ID;
+    }
+
+    auto arsOid = objIt->second.arsOid;
     if (arsOid == SAI_NULL_OBJECT_ID)
     {
         SWSS_LOG_WARN("ARS: object '%s' not yet created for NHG", commonArsObj.c_str());

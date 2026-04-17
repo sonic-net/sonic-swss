@@ -44,9 +44,12 @@ struct ArsObjectEntry
     sai_ars_mode_t  mode     = SAI_ARS_MODE_FLOWLET_QUALITY;
     uint32_t        idleTime = 256;
     uint32_t        maxFlows = 512;
-    bool            enabled  = false;
-    bool            ipv4Enable = true;
-    bool            ipv6Enable = true;
+    // admin_state on an ARS_OBJECT gates whether NHGs / LAGs that reference
+    // it actually carry the SAI ARS binding. Defaults to true so existing
+    // configs that omit the field (YANG default "down" notwithstanding)
+    // continue to bind — operators who explicitly write admin_state=down
+    // now cause unbinding, which matches intent.
+    bool            enabled  = true;
     std::string     profileName;
     std::string     portProfileName;
 };
