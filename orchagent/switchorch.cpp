@@ -775,13 +775,10 @@ bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
             }
         }
     }
-    else
+    else if (hObj.ecmp_hash.is_set)
     {
-        if (hObj.ecmp_hash.is_set)
-        {
-            SWSS_LOG_ERROR("Failed to remove switch ECMP hash configuration: operation is not supported");
-            return false;
-        }
+        SWSS_LOG_WARN("ECMP hash field removed from CONFIG_DB — clearing cached state");
+        cfgUpd = true;
     }
 
     if (hash.lag_hash.is_set)
@@ -810,13 +807,10 @@ bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
             }
         }
     }
-    else
+    else if (hObj.lag_hash.is_set)
     {
-        if (hObj.lag_hash.is_set)
-        {
-            SWSS_LOG_ERROR("Failed to remove switch LAG hash configuration: operation is not supported");
-            return false;
-        }
+        SWSS_LOG_WARN("LAG hash field removed from CONFIG_DB — clearing cached state");
+        cfgUpd = true;
     }
 
     if (hash.ecmp_hash_algorithm.is_set)
@@ -845,13 +839,10 @@ bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
             }
         }
     }
-    else
+    else if (hObj.ecmp_hash_algorithm.is_set)
     {
-        if (hObj.ecmp_hash_algorithm.is_set)
-        {
-            SWSS_LOG_ERROR("Failed to remove switch ECMP hash algorithm configuration: operation is not supported");
-            return false;
-        }
+        SWSS_LOG_WARN("ECMP hash algorithm removed from CONFIG_DB — clearing cached state");
+        cfgUpd = true;
     }
 
     if (hash.lag_hash_algorithm.is_set)
@@ -880,13 +871,10 @@ bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
             }
         }
     }
-    else
+    else if (hObj.lag_hash_algorithm.is_set)
     {
-        if (hObj.lag_hash_algorithm.is_set)
-        {
-            SWSS_LOG_ERROR("Failed to remove switch LAG hash algorithm configuration: operation is not supported");
-            return false;
-        }
+        SWSS_LOG_WARN("LAG hash algorithm removed from CONFIG_DB — clearing cached state");
+        cfgUpd = true;
     }
 
     if (hash.ecmp_hash_seed.is_set)
