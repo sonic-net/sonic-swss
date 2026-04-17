@@ -1123,11 +1123,14 @@ bool ArsOrch::removeArsObject(const string &name)
     // fails and the orchagent-side cache drifts from config-DB.
     //
     // NHGs: flip each NHG whose resolver currently returns this arsOid to
-    // SAI_NULL_OBJECT_ID. We do this by temporarily hiding the object from
+    // SAI_NULL_OBJECT_ID by temporarily hiding the object from
     // resolveArsForNhg (setting enabled=false) and asking RouteOrch to
-    // rebind. The enable flag is restored only for the in-memory view
-    // before erase, but since we're about to erase the entry entirely it
-    // doesn't matter.
+    // rebind.
+    //
+    // Safety note: if remove_ars subsequently fails we must restore both
+    // the NHG bindings and the LAG bindings so the failure is side-effect
+    // free. The operator can then address the underlying SAI error and
+    // retry deletion without having to rebuild ARS bindings manually.
     it->second.enabled = false;
     if (gRouteOrch)
         gRouteOrch->rebindArsForAllNhgs();
@@ -1148,11 +1151,30 @@ bool ArsOrch::removeArsObject(const string &name)
     sai_status_t status = sai_ars_api->remove_ars(oid);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("ARS: remove_ars failed for %s: %s",
+        SWSS_LOG_ERROR("ARS: remove_ars failed for %s: %s — restoring "
+                       "NHG and LAG bindings so the failure is side-effect free",
                        name.c_str(), sai_serialize_status(status).c_str());
-        // Restore state so the operator can retry deletion once the
-        // remaining reference is cleared.
+
+        // Restore in-memory view first so the resolver and LAG loop below
+        // see the object as live again.
         it->second.enabled = true;
+
+        // Rebinding NHGs: the resolver will now return oid again because
+        // enabled=true, so rebindArsForAllNhgs puts each NHG back onto
+        // this ARS object (or whichever the resolver dictates).
+        if (gRouteOrch)
+            gRouteOrch->rebindArsForAllNhgs();
+
+        // Rebind each LAG we unbound above. Use the same oid we captured
+        // up top since the entry's arsOid is unchanged.
+        for (const auto &lag : lagsToUnbind)
+        {
+            if (bindArsToLag(lag, oid))
+                m_arsEnabledLags.insert(lag);
+            else
+                SWSS_LOG_ERROR("ARS: failed to restore LAG %s binding for %s "
+                               "after remove_ars failure", lag.c_str(), name.c_str());
+        }
         return false;
     }
 
