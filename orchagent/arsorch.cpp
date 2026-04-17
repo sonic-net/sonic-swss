@@ -315,6 +315,17 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
             // was seeded from the prior cached state. That meant an unrelated
             // update (say sampling_interval) could re-derive loadCurrentEnable
             // from a stale weight and silently flip it.
+            //
+            // Also capture the pre-existing quant-band state before the
+            // kfvFieldsValues loop potentially overwrites it. We need this so
+            // a transition from a previously-configured triple (e.g. 10/20/30)
+            // to all-zero actually writes the zeroes through to SAI —
+            // otherwise the device retains the old thresholds while
+            // CONFIG_DB / m_arsProfiles claim they are cleared.
+            const bool hadQuantBandConfig = (entry.quantBand0MinThreshold |
+                                             entry.quantBand1MinThreshold |
+                                             entry.quantBand2MinThreshold) != 0;
+
             bool explicitLoadCurrent = false;
             bool explicitLoadCurrentWeight = false;
             for (auto &fv : kfvFieldsValues(kfv))
@@ -405,6 +416,12 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                                     "binding). Published to STATE_DB for "
                                     "visibility.", value.c_str());
                 }
+                else if (field == "quant_band_0_min_threshold")
+                    entry.quantBand0MinThreshold = static_cast<uint32_t>(stoul(value));
+                else if (field == "quant_band_1_min_threshold")
+                    entry.quantBand1MinThreshold = static_cast<uint32_t>(stoul(value));
+                else if (field == "quant_band_2_min_threshold")
+                    entry.quantBand2MinThreshold = static_cast<uint32_t>(stoul(value));
                 else
                     SWSS_LOG_WARN("ARS: unknown profile field '%s'", field.c_str());
             }
@@ -419,6 +436,30 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
             // loadCurrentEnable based on a stale loadCurrentWeight.
             if (!explicitLoadCurrent && (isCreate || explicitLoadCurrentWeight))
                 entry.loadCurrentEnable = (entry.loadCurrentWeight > 0);
+
+            // Reject non-monotonic quant-band thresholds before they reach SAI:
+            // Mellanox SAI enforces band0 < band1 < band2 when any are non-zero
+            // and will return SAI_STATUS_INVALID_ATTR_VALUE. Detect here so the
+            // operator gets a clear log message instead of a silent SAI rejection.
+            bool anyQuantBandSet = (entry.quantBand0MinThreshold |
+                                    entry.quantBand1MinThreshold |
+                                    entry.quantBand2MinThreshold) != 0;
+            if (anyQuantBandSet)
+            {
+                if (!(entry.quantBand0MinThreshold < entry.quantBand1MinThreshold &&
+                      entry.quantBand1MinThreshold < entry.quantBand2MinThreshold))
+                {
+                    SWSS_LOG_ERROR(
+                        "ARS: profile '%s' quant-band thresholds must be strictly "
+                        "monotonic (band0=%u < band1=%u < band2=%u); skipping update",
+                        name.c_str(),
+                        entry.quantBand0MinThreshold,
+                        entry.quantBand1MinThreshold,
+                        entry.quantBand2MinThreshold);
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+            }
 
             if (entry.profileOid == SAI_NULL_OBJECT_ID)
             {
@@ -460,6 +501,21 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                     updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_SAMPLING_INTERVAL,    entry.samplingInterval);
                 if (entry.randomSeed > 0)
                     updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_ARS_RANDOM_SEED,      entry.randomSeed);
+                // Per-band quant thresholds — these gate whether the Mellanox
+                // SAI backend calls sx_api_ar_congestion_threshold_set at bind
+                // time. Write through on any transition that affects the three
+                // thresholds: either the new values are non-zero, or the previous
+                // values were non-zero (so clearing to 0/0/0 actually resets the
+                // device to hardened defaults rather than leaving stale state).
+                if (anyQuantBandSet || hadQuantBandConfig)
+                {
+                    updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_QUANT_BAND_0_MIN_THRESHOLD,
+                                         entry.quantBand0MinThreshold);
+                    updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_QUANT_BAND_1_MIN_THRESHOLD,
+                                         entry.quantBand1MinThreshold);
+                    updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_QUANT_BAND_2_MIN_THRESHOLD,
+                                         entry.quantBand2MinThreshold);
+                }
                 m_arsProfiles[name] = entry;
                 publishArsProfileState(name, entry);
             }
@@ -1134,6 +1190,26 @@ bool ArsOrch::createArsProfile(const string &name, const ArsProfileEntry &entry)
         attrs.push_back(attr);
         attr.id = SAI_ARS_PROFILE_ATTR_LOAD_CURRENT_MAX_VAL;
         attr.value.u32 = entry.loadCurrentMaxVal;
+        attrs.push_back(attr);
+    }
+
+    // Per-band congestion thresholds (Mbps). Sending these at CREATE is what
+    // allows the Mellanox SAI backend to take the non-hardened path and call
+    // sx_api_ar_congestion_threshold_set on the SDK — without them the EWMA
+    // quality signal cannot trigger flowlet reassignment on CPU-scale loads
+    // because the SDK keeps its line-rate default thresholds.
+    if (entry.quantBand0MinThreshold != 0 ||
+        entry.quantBand1MinThreshold != 0 ||
+        entry.quantBand2MinThreshold != 0)
+    {
+        attr.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_0_MIN_THRESHOLD;
+        attr.value.u32 = entry.quantBand0MinThreshold;
+        attrs.push_back(attr);
+        attr.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_1_MIN_THRESHOLD;
+        attr.value.u32 = entry.quantBand1MinThreshold;
+        attrs.push_back(attr);
+        attr.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_2_MIN_THRESHOLD;
+        attr.value.u32 = entry.quantBand2MinThreshold;
         attrs.push_back(attr);
     }
 
@@ -2147,12 +2223,12 @@ void ArsOrch::publishArsProfileState(const string &profileName, const ArsProfile
     fvs.emplace_back("ipv6_enable",              entry.ipv6Enable ? "true" : "false");
     fvs.emplace_back("sampling_interval",        std::to_string(entry.samplingInterval));
     fvs.emplace_back("random_seed",              std::to_string(entry.randomSeed));
-    // NOTE: quant_band_{0,1,2}_min_threshold are published separately by
-    // upscale-ai-network/sonic-swss#15 (feat/ars-quant-band-thresholds),
-    // which adds the corresponding fields to ArsProfileEntry. Intentionally
-    // omitted here so this branch builds standalone against
-    // upscaleai-202511. When #15 merges, a follow-up should mirror the
-    // three fields from the merged ArsProfileEntry into this helper.
+    // quant-band thresholds land here now that feat/ars-quant-band-thresholds
+    // (upscale-ai-network/sonic-swss#15) has been merged into this branch
+    // and ArsProfileEntry carries the fields.
+    fvs.emplace_back("quant_band_0_min_threshold", std::to_string(entry.quantBand0MinThreshold));
+    fvs.emplace_back("quant_band_1_min_threshold", std::to_string(entry.quantBand1MinThreshold));
+    fvs.emplace_back("quant_band_2_min_threshold", std::to_string(entry.quantBand2MinThreshold));
 
     fvs.emplace_back("default_ars_object", entry.defaultArsObject);
 
