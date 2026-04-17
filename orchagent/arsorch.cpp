@@ -616,9 +616,13 @@ void ArsOrch::doArsInterfaceTask(Consumer &consumer)
             }
             if (entry.linkUtilThreshold > 0)
             {
-                setPortArsLinkUtilThreshold(portName, entry.linkUtilThreshold);
-                SWSS_LOG_NOTICE("ARS: interface %s link-utilization-threshold=%u%%",
-                                portName.c_str(), entry.linkUtilThreshold);
+                SWSS_LOG_WARN("ARS: interface %s link_utilization_threshold=%u%% "
+                              "configured, but SAI has no per-port link-util "
+                              "attribute. Set link_utilization_threshold on the "
+                              "ARS_PROFILE instead to affect all ports, or use "
+                              "an ARS_PORT_PROFILE with load-band overrides for "
+                              "per-port tuning. Ignoring the per-interface value.",
+                              portName.c_str(), entry.linkUtilThreshold);
             }
         }
         else if (op == DEL_COMMAND)
@@ -1505,26 +1509,24 @@ bool ArsOrch::setPortArsScalingFactor(const string &portName, const ArsPortProfi
 
 bool ArsOrch::setPortArsLinkUtilThreshold(const string &portName, uint32_t threshold)
 {
-    if (m_activeSwitchProfileOid == SAI_NULL_OBJECT_ID)
-    {
-        SWSS_LOG_WARN("ARS: no active ARS profile to set link util threshold for %s",
-                      portName.c_str());
-        return false;
-    }
-
-    sai_attribute_t attr;
-    attr.id = SAI_ARS_PROFILE_ATTR_LOAD_PAST_MAX_VAL;
-    attr.value.u32 = threshold;
-
-    sai_status_t status = sai_ars_profile_api->set_ars_profile_attribute(
-        m_activeSwitchProfileOid, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_WARN("ARS: set link utilization threshold for %s failed: %s",
-                      portName.c_str(), sai_serialize_status(status).c_str());
-        return false;
-    }
-    return true;
+    // Retained as a stub for source compatibility with older callers; the
+    // per-port 'link utilization threshold' concept does not have a
+    // corresponding SAI attribute. The previous implementation wrote a
+    // percentage value into SAI_ARS_PROFILE_ATTR_LOAD_PAST_MAX_VAL on the
+    // switch-level profile — which is both (a) a byte-rate ceiling, not a
+    // percentage, and (b) global, not per-port — effectively clobbering
+    // the globally-bound EWMA knob every time any port's threshold was
+    // written. See commit message for the full rationale.
+    //
+    // If operators want per-port behavior, they should use an
+    // ARS_PORT_PROFILE with the load_*_max_val bands; for a global
+    // link-utilization threshold, set it on ARS_PROFILE directly.
+    SWSS_LOG_WARN("ARS: setPortArsLinkUtilThreshold(%s, %u) ignored — "
+                  "no SAI per-port link-util attribute exists; use "
+                  "ARS_PORT_PROFILE load bands or the profile-level "
+                  "link_utilization_threshold",
+                  portName.c_str(), threshold);
+    return false;
 }
 
 bool ArsOrch::setPortArsWeights(const string &portName, uint32_t pastWeight, uint32_t futureWeight)
