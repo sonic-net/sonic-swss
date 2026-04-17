@@ -328,6 +328,7 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
 
             bool explicitLoadCurrent = false;
             bool explicitLoadCurrentWeight = false;
+            bool rejectProfile = false;
             for (auto &fv : kfvFieldsValues(kfv))
             {
                 const string &field = fvField(fv);
@@ -364,14 +365,22 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                 else if (field == "random_seed")         entry.randomSeed        = static_cast<uint32_t>(stoul(value));
                 else if (field == "algorithm")
                 {
-                    // Accept any capitalization of "EWMA" — the user guide
-                    // examples use lowercase "ewma" while older tooling
-                    // sometimes passes "EWMA". EWMA is currently the only
-                    // algorithm supported on Spectrum; flag anything else.
+                    // EWMA is the only algorithm supported by SAI on
+                    // Spectrum. Previously we warned-and-coerced: whatever
+                    // the operator wrote we silently stored as EWMA and
+                    // published 'algorithm=0' in STATE_DB, contradicting
+                    // CONFIG_DB. Reject the row so the operator gets a
+                    // clear signal that the value isn't honored.
                     if (toLower(value) != "ewma")
-                        SWSS_LOG_WARN("ARS: unsupported algorithm '%s' on "
-                                      "profile %s, using EWMA",
-                                      value.c_str(), name.c_str());
+                    {
+                        SWSS_LOG_ERROR("ARS: profile '%s' rejected — "
+                                       "algorithm '%s' is not supported "
+                                       "(only 'ewma'). Fix CONFIG_DB and "
+                                       "retry.",
+                                       name.c_str(), value.c_str());
+                        rejectProfile = true;
+                        break;
+                    }
                 }
                 else if (field == "quantization_type")
                 {
@@ -424,6 +433,12 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                     entry.quantBand2MinThreshold = static_cast<uint32_t>(stoul(value));
                 else
                     SWSS_LOG_WARN("ARS: unknown profile field '%s'", field.c_str());
+            }
+
+            if (rejectProfile)
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
             }
 
             // Only auto-derive loadCurrentEnable when:
@@ -862,8 +877,25 @@ void ArsOrch::doArsInterfaceTask(Consumer &consumer)
                 resolverInputsChanged = true;
             if (m_arsEnabledPorts.count(portName))
             {
-                setPortArsEnable(portName, false);
-                m_arsEnabledPorts.erase(portName);
+                // Only drop from m_arsEnabledPorts if SAI actually accepted
+                // the disable. Mellanox SAI will reject the set when the
+                // port has a RIF (mlnx_sai_port.c "Can't modify
+                // SAI_PORT_ATTR_ARS_ENABLE on port with created RIFs").
+                // Previously the erase was unconditional, causing the
+                // orchagent view to falsely claim ARS is off while the
+                // ASIC still had it on.
+                if (setPortArsEnable(portName, false))
+                {
+                    m_arsEnabledPorts.erase(portName);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("ARS: failed to disable ARS on port %s at "
+                                   "DEL — keeping in m_arsEnabledPorts so the "
+                                   "ASIC / orchagent view stay consistent. "
+                                   "Operator may need to remove the RIF first.",
+                                   portName.c_str());
+                }
             }
             m_arsInterfaces.erase(portName);
         }
@@ -994,12 +1026,19 @@ void ArsOrch::doArsNexthopsTask(Consumer &consumer)
             // resolver. The mapping is accepted and cached for future use,
             // but has no effect on NHG→ARS binding today — use
             // ARS_INTERFACES.ars_object for per-NHG control instead.
-            SWSS_LOG_WARN("ARS: prefix %s mapped to ARS object '%s' — "
-                          "ARS_NEXTHOPS prefix→object mapping is currently "
-                          "NOT honored by the NHG resolver (NHGs are shared "
-                          "across prefixes). Use ARS_INTERFACES.ars_object "
-                          "on the egress ports instead.",
-                          prefix.c_str(), arsObjName.c_str());
+            //
+            // Escalated to ERROR so the row's no-op status is visible in
+            // syslog without LOG_DEBUG; operators who wrote this expecting
+            // per-prefix ARS routing will otherwise see a CONFIG_DB row
+            // and assume it works.
+            SWSS_LOG_ERROR("ARS: ARS_NEXTHOPS|%s → ARS object '%s' is NOT "
+                           "honored on this release. NHGs are shared across "
+                           "prefixes, so a per-prefix override cannot be "
+                           "applied; the row has been cached but has no "
+                           "effect. Use ARS_INTERFACES.ars_object on the "
+                           "egress ports instead. Remove the ARS_NEXTHOPS "
+                           "row to silence this message.",
+                           prefix.c_str(), arsObjName.c_str());
         }
         else if (op == DEL_COMMAND)
         {
@@ -1320,6 +1359,32 @@ bool ArsOrch::createArsObject(const string &name, const ArsObjectEntry &entry)
 {
     SWSS_LOG_ENTER();
 
+    // Mellanox SAI internally hard-codes ars_obj_idx = 0 in mlnx_sai_create_ars
+    // and the subsequent mlnx_ars_find_ars_by_oid() check makes any second
+    // create_ars() call return SAI_STATUS_ITEM_ALREADY_EXISTS. Detect this
+    // from the orchagent side so the operator gets a single clear error
+    // (pointing at the pre-existing object) instead of a generic SAI failure,
+    // and so the second ARS_OBJECT row in CONFIG_DB is visibly rejected
+    // rather than silently leaving its arsOid at SAI_NULL_OBJECT_ID.
+    //
+    // The user-guide section "Cross-Vendor ARS Design Alignment" calls out
+    // per-NHG granularity as a design goal, but on this SAI it is not
+    // achievable with more than one ARS object. Document the limit here.
+    for (const auto &kv : m_arsObjects)
+    {
+        if (kv.first == name)
+            continue;
+        if (kv.second.arsOid == SAI_NULL_OBJECT_ID)
+            continue;
+        SWSS_LOG_ERROR("ARS: cannot create ARS_OBJECT '%s' — the underlying "
+                       "SAI on this platform supports at most one ARS object "
+                       "per switch, and '%s' already holds that slot. Delete "
+                       "'%s' first, or reuse it (per-NHG ARS granularity is "
+                       "not available on this SAI).",
+                       name.c_str(), kv.first.c_str(), kv.first.c_str());
+        return false;
+    }
+
     vector<sai_attribute_t> attrs;
     sai_attribute_t attr;
 
@@ -1511,39 +1576,58 @@ bool ArsOrch::bindArsToNhg(sai_object_id_t nhgOid, sai_object_id_t arsOid)
         // and *why*. The workaround is to flap the affected route(s) so
         // the NHG is re-created with the new binding at create time.
         const string key = sai_serialize_object_id(nhgOid);
+        const char *direction = (arsOid == SAI_NULL_OBJECT_ID) ? "unbind ARS from"
+                                                               : "bind ARS to";
         string reason;
         if (status == SAI_STATUS_INVALID_PARAMETER)
         {
             reason = "SAI set-attribute rejected: NHG already has members "
                      "(Mellanox write-once restriction). Re-create the route "
                      "to apply the new ARS binding.";
-            SWSS_LOG_ERROR("ARS: bind ARS OID 0x%" PRIx64 " to NHG 0x%" PRIx64
-                           " failed (INVALID_PARAMETER) — NHG-ARS binding is "
+            SWSS_LOG_ERROR("ARS: %s NHG 0x%" PRIx64 " (target ARS 0x%" PRIx64
+                           ") failed (INVALID_PARAMETER) — NHG-ARS binding is "
                            "write-once at create time on this SAI. Flap the "
                            "affected routes to apply the change.",
-                           arsOid, nhgOid);
+                           direction, nhgOid, arsOid);
         }
         else if (status == SAI_STATUS_NOT_SUPPORTED)
         {
             reason = "SAI NHG-ARS binding not supported (SAI ARS not enabled?)";
-            SWSS_LOG_ERROR("ARS: bind ARS OID 0x%" PRIx64 " to NHG 0x%" PRIx64
-                           " failed: NOT_SUPPORTED — check that SAI ARS is "
-                           "enabled on the switch.", arsOid, nhgOid);
+            SWSS_LOG_ERROR("ARS: %s NHG 0x%" PRIx64 " (target ARS 0x%" PRIx64
+                           ") failed: NOT_SUPPORTED — check that SAI ARS is "
+                           "enabled on the switch.", direction, nhgOid, arsOid);
         }
         else
         {
             reason = string("SAI set_next_hop_group_attribute failed: ") +
                      sai_serialize_status(status);
-            SWSS_LOG_ERROR("ARS: bind ARS OID 0x%" PRIx64 " to NHG 0x%" PRIx64 " failed: %s",
-                           arsOid, nhgOid, sai_serialize_status(status).c_str());
+            SWSS_LOG_ERROR("ARS: %s NHG 0x%" PRIx64 " (target ARS 0x%" PRIx64
+                           ") failed: %s",
+                           direction, nhgOid, arsOid,
+                           sai_serialize_status(status).c_str());
         }
-        // Only flag degraded when we were actually trying to establish or
-        // update a non-null binding. A failed *unbind* (NULL) is already
-        // logged above; there's no useful 'degraded' row to report since
-        // the caller's intent was to remove the binding.
-        if (arsOid != SAI_NULL_OBJECT_ID)
+        // Surface the failure in STATE_DB for BOTH bind and unbind failures.
+        // A failed *unbind* (arsOid == NULL) is particularly dangerous: the
+        // caller's intent was to remove the binding, but the SAI rejection
+        // means the ASIC still carries the old ars_object_id. Previously
+        // this path did nothing (no STATE_DB row), silently dropping any
+        // existing row and leaving operators with no visible signal that
+        // orchagent state and ASIC state have diverged.
+        //
+        // Record a 'degraded' row tagged with the direction so tooling can
+        // distinguish a stuck bind from a stuck unbind, and keep
+        // m_nhgStateKeys populated so forgetNhg() on NHG removal still
+        // cleans up.
+        m_nhgStateKeys[nhgOid] = key;
+        if (arsOid == SAI_NULL_OBJECT_ID)
         {
-            m_nhgStateKeys[nhgOid] = key;
+            writeArsNhgState(key, true,
+                             string("unbind rejected by SAI — ASIC retains previous "
+                                    "ARS binding (write-once NHG-ARS on Mellanox). "
+                                    "Flap the affected routes to apply: ") + reason);
+        }
+        else
+        {
             writeArsNhgState(key, true, reason);
         }
         return false;
@@ -1620,8 +1704,26 @@ bool ArsOrch::bindArsToLag(const string &lagName, sai_object_id_t arsOid)
     sai_status_t status = sai_lag_api->set_lag_attribute(port.m_lag_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("ARS: set SAI_LAG_ATTR_ARS_OBJECT_ID on %s failed: %s",
-                       lagName.c_str(), sai_serialize_status(status).c_str());
+        // Same RIF-present caveat as setPortArsEnable — Mellanox SAI wires
+        // both SAI_PORT_ATTR_ARS_ENABLE and SAI_LAG_ATTR_ARS_OBJECT_ID
+        // through mlnx_port_lag_ars_enable_set_impl, which refuses the set
+        // if the LAG has any RIFs bound. Give the operator a pointer to the
+        // remove-RIF / set-ARS / re-add-RIF sequence rather than a generic
+        // SAI error.
+        if (status == SAI_STATUS_INVALID_PARAMETER)
+        {
+            SWSS_LOG_ERROR("ARS: set SAI_LAG_ATTR_ARS_OBJECT_ID on %s failed "
+                           "(INVALID_PARAMETER). Most likely cause on Mellanox: "
+                           "the LAG has a router interface (RIF) attached; SAI "
+                           "forbids toggling the ARS binding on a LAG with RIFs. "
+                           "Workaround: remove the IP from the LAG, set the ARS "
+                           "binding, then re-add the IP.", lagName.c_str());
+        }
+        else
+        {
+            SWSS_LOG_ERROR("ARS: set SAI_LAG_ATTR_ARS_OBJECT_ID on %s failed: %s",
+                           lagName.c_str(), sai_serialize_status(status).c_str());
+        }
         return false;
     }
 
@@ -1779,8 +1881,33 @@ bool ArsOrch::setPortArsEnable(const string &portName, bool enable)
     sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("ARS: set SAI_PORT_ATTR_ARS_ENABLE on %s failed: %s",
-                       portName.c_str(), sai_serialize_status(status).c_str());
+        // Mellanox SAI (mlnx_sai_port.c: mlnx_port_lag_ars_enable_set_impl)
+        // rejects SAI_PORT_ATTR_ARS_ENABLE with SAI_STATUS_INVALID_PARAMETER
+        // when port_config->rifs > 0 — i.e. when any router interface is
+        // bound to the port. L3 uplink ports (the ports where ARS matters)
+        // are exactly this case at steady state. The only supported
+        // workarounds are (a) passing ARS_ENABLE at port-create time,
+        // before any RIF is created, or (b) removing the RIF, enabling
+        // ARS, and re-adding the RIF — see test/setup_lab.py "_setup_ars"
+        // for the (b) sequence. Surface a specific hint so operators
+        // don't have to dig through SDK logs to figure this out.
+        if (status == SAI_STATUS_INVALID_PARAMETER)
+        {
+            SWSS_LOG_ERROR("ARS: set SAI_PORT_ATTR_ARS_ENABLE=%s on %s failed "
+                           "(INVALID_PARAMETER). Most likely cause on Mellanox: "
+                           "the port already has a router interface (RIF) "
+                           "attached; SAI forbids toggling ARS on a port with "
+                           "RIFs. Workaround: remove the IP from the port, "
+                           "toggle ARS, then re-add the IP. See "
+                           "test/setup_lab.py _setup_ars() for the exact "
+                           "sequence.",
+                           enable ? "true" : "false", portName.c_str());
+        }
+        else
+        {
+            SWSS_LOG_ERROR("ARS: set SAI_PORT_ATTR_ARS_ENABLE on %s failed: %s",
+                           portName.c_str(), sai_serialize_status(status).c_str());
+        }
         return false;
     }
 
@@ -1799,13 +1926,42 @@ void ArsOrch::disableArsDataPlane()
     if (gRouteOrch)
         gRouteOrch->unbindArsFromAllNhgs();
 
-    for (const auto &lagName : m_arsEnabledLags)
-        unbindArsFromLag(lagName);
-    m_arsEnabledLags.clear();
+    // Only forget a LAG/port from our bookkeeping if SAI actually accepted
+    // the unbind/disable. Previously this blindly .clear()-ed both sets
+    // regardless of the SAI return status, which on Mellanox can fail for
+    // LAGs with active RIFs or ports whose ARS_ENABLE setting is locked
+    // by other state. Keeping the entries until we know SAI agrees means
+    // subsequent enableArsDataPlane() calls can retry correctly, and
+    // operators see accurate state in 'show load-balance adaptive'.
+    for (auto it = m_arsEnabledLags.begin(); it != m_arsEnabledLags.end(); )
+    {
+        if (unbindArsFromLag(*it))
+        {
+            it = m_arsEnabledLags.erase(it);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("ARS: failed to unbind ARS from LAG %s; keeping "
+                           "in m_arsEnabledLags so teardown can retry",
+                           it->c_str());
+            ++it;
+        }
+    }
 
-    for (const auto &portName : m_arsEnabledPorts)
-        setPortArsEnable(portName, false);
-    m_arsEnabledPorts.clear();
+    for (auto it = m_arsEnabledPorts.begin(); it != m_arsEnabledPorts.end(); )
+    {
+        if (setPortArsEnable(*it, false))
+        {
+            it = m_arsEnabledPorts.erase(it);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("ARS: failed to disable ARS on port %s; keeping "
+                           "in m_arsEnabledPorts so teardown can retry",
+                           it->c_str());
+            ++it;
+        }
+    }
 }
 
 void ArsOrch::enableArsDataPlane()
@@ -1868,39 +2024,38 @@ void ArsOrch::enableArsDataPlane()
 
 bool ArsOrch::setPortArsLoadBands(const string &portName, const ArsPortProfileEntry &pp)
 {
-    if (m_activeSwitchProfileOid == SAI_NULL_OBJECT_ID)
+    // Previously this routine wrote the ARS_PORT_PROFILE.load_*_{min,max}_val
+    // fields to the *switch-level* profile OID (m_activeSwitchProfileOid)
+    // via SAI_ARS_PROFILE_ATTR_LOAD_*_{MIN,MAX}_VAL. Those SAI attributes are
+    // profile-scope (there is no per-port SAI_PORT_ATTR_ARS_LOAD_*_MIN_VAL),
+    // so two different ports bound to two different ARS_PORT_PROFILEs that
+    // each set load bands would OVERWRITE each other on the single
+    // switch-level profile — the last-applied port-profile would win
+    // globally, silently reconfiguring every other port's EWMA computation.
+    //
+    // This is the same class of bug as setPortArsLinkUtilThreshold (also a
+    // stub now). The SAI model simply does not support per-port load-band
+    // customisation; we cannot deliver what the ARS_PORT_PROFILE schema
+    // promises. Refuse it explicitly and point the operator at the right
+    // knob (ARS_PROFILE load-band attributes for a switch-wide setting).
+    if (pp.loadPastMinVal == 0 && pp.loadPastMaxVal == 0 &&
+        pp.loadFutureMinVal == 0 && pp.loadFutureMaxVal == 0 &&
+        pp.loadCurrentMinVal == 0 && pp.loadCurrentMaxVal == 0)
     {
-        SWSS_LOG_WARN("ARS: no active ARS profile to set load bands for %s", portName.c_str());
-        return false;
+        return true; // nothing configured; no-op
     }
 
-    sai_attribute_t attr;
-    auto setAttr = [&](sai_ars_profile_attr_t id, uint32_t val) {
-        attr.id = id;
-        attr.value.u32 = val;
-        sai_status_t s = sai_ars_profile_api->set_ars_profile_attribute(
-            m_activeSwitchProfileOid, &attr);
-        if (s != SAI_STATUS_SUCCESS)
-            SWSS_LOG_WARN("ARS: set profile load band attr %d for %s failed: %s",
-                          id, portName.c_str(), sai_serialize_status(s).c_str());
-    };
-
-    if (pp.loadPastMinVal > 0 || pp.loadPastMaxVal > 0)
-    {
-        setAttr(SAI_ARS_PROFILE_ATTR_LOAD_PAST_MIN_VAL, pp.loadPastMinVal);
-        setAttr(SAI_ARS_PROFILE_ATTR_LOAD_PAST_MAX_VAL, pp.loadPastMaxVal);
-    }
-    if (pp.loadFutureMinVal > 0 || pp.loadFutureMaxVal > 0)
-    {
-        setAttr(SAI_ARS_PROFILE_ATTR_LOAD_FUTURE_MIN_VAL, pp.loadFutureMinVal);
-        setAttr(SAI_ARS_PROFILE_ATTR_LOAD_FUTURE_MAX_VAL, pp.loadFutureMaxVal);
-    }
-    if (pp.loadCurrentMinVal > 0 || pp.loadCurrentMaxVal > 0)
-    {
-        setAttr(SAI_ARS_PROFILE_ATTR_LOAD_CURRENT_MIN_VAL, pp.loadCurrentMinVal);
-        setAttr(SAI_ARS_PROFILE_ATTR_LOAD_CURRENT_MAX_VAL, pp.loadCurrentMaxVal);
-    }
-    return true;
+    SWSS_LOG_WARN("ARS: ARS_PORT_PROFILE load-band values on port %s "
+                  "(past[%u/%u], future[%u/%u], current[%u/%u]) are IGNORED — "
+                  "SAI has no per-port load-band attributes on this platform. "
+                  "Set load_*_min_val / load_*_max_val on the ARS_PROFILE "
+                  "itself to apply switch-wide; the previous per-port path "
+                  "silently clobbered the global profile for all ports.",
+                  portName.c_str(),
+                  pp.loadPastMinVal, pp.loadPastMaxVal,
+                  pp.loadFutureMinVal, pp.loadFutureMaxVal,
+                  pp.loadCurrentMinVal, pp.loadCurrentMaxVal);
+    return false;
 }
 
 bool ArsOrch::setPortArsScalingFactor(const string &portName, const ArsPortProfileEntry &pp)
@@ -2288,6 +2443,23 @@ void ArsOrch::createDefaultProfileIfNeeded()
         return;
 
     ArsProfileEntry entry;
+    // Seed non-zero quant-band thresholds on the auto-created default so the
+    // Mellanox SAI backend doesn't classify the profile as "hardened". A
+    // hardened profile (all three band*_min_thresholds == 0) makes SAI refuse
+    // to create flowlet-quality ARS objects outright — see
+    // mlnx_sai_create_ars / is_hardened_profile_bound. Without this the
+    // documented "bare minimum" path (ARS|GLOBAL admin_state=up → create an
+    // ARS_OBJECT with assign_mode=flowlet-quality) fails at the ARS_OBJECT
+    // create call with SAI_STATUS_INVALID_ATTR_VALUE and the operator is
+    // left with no flowlet behavior despite a clean CONFIG_DB.
+    //
+    // The values here are deliberately conservative (1/2/4 Gbps in Mbps)
+    // and strictly monotonic as required by SAI; operators who want tighter
+    // bands for their topology should create an explicit ARS_PROFILE and
+    // bind it via ARS|GLOBAL.profile.
+    entry.quantBand0MinThreshold = 1000;
+    entry.quantBand1MinThreshold = 2000;
+    entry.quantBand2MinThreshold = 4000;
     if (!createArsProfile(kDefaultName, entry))
     {
         SWSS_LOG_WARN("ARS: failed to auto-create default profile — "
