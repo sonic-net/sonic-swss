@@ -93,6 +93,9 @@ public:
     sai_object_id_t getArsObjectOid(const std::string &name) const;
     bool bindArsToNhg(sai_object_id_t nhgOid, sai_object_id_t arsOid);
     bool unbindArsFromNhg(sai_object_id_t nhgOid);
+    // Called by RouteOrch when an NHG is removed so the ARS_NHG_TABLE row
+    // (written by bindArsToNhg / resolveArsForNhg) doesn't leak.
+    void forgetNhg(sai_object_id_t nhgOid);
     sai_object_id_t resolveArsForNhg(sai_object_id_t nhgOid, const NextHopGroupKey &nhgKey);
     std::string getArsObjectForPort(const std::string &portName) const;
     std::string getArsObjectForPrefix(const std::string &prefix) const;
@@ -177,4 +180,8 @@ private:
     std::set<std::string> m_arsEnabledLags;
 
     std::unordered_map<std::string, std::string> m_nexthopArsBindings;
+    // nhgOid → ARS_NHG_TABLE row key. Written by bindArsToNhg so we can
+    // reliably delete the row later on NHG removal (via forgetNhg) without
+    // having to reconstruct the key.
+    std::unordered_map<sai_object_id_t, std::string> m_nhgStateKeys;
 };

@@ -1785,6 +1785,12 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops, const bool i
         }
     }
 
+    // Drop any ARS_NHG_TABLE row that this NHG may have been registered
+    // under — otherwise STATE_DB leaks an 'active' or 'degraded' entry
+    // indefinitely.
+    if (gArsOrch)
+        gArsOrch->forgetNhg(next_hop_group_id);
+
     m_nextHopGroupCount--;
     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();

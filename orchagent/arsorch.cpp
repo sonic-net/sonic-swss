@@ -1213,12 +1213,32 @@ bool ArsOrch::bindArsToNhg(sai_object_id_t nhgOid, sai_object_id_t arsOid)
     }
 
     SWSS_LOG_NOTICE("ARS: bound ARS OID 0x%" PRIx64 " to NHG 0x%" PRIx64, arsOid, nhgOid);
+
+    // Mirror the positive outcome into STATE_DB's ARS_NHG_TABLE so an
+    // 'active' row exists alongside the 'degraded' rows written by
+    // resolveArsForNhg's failure paths. Without this, operators reading
+    // ARS_NHG_TABLE only ever see failures.
+    m_nhgStateKeys[nhgOid] = sai_serialize_object_id(nhgOid);
+    if (arsOid == SAI_NULL_OBJECT_ID)
+        removeArsNhgState(m_nhgStateKeys[nhgOid]);
+    else
+        writeArsNhgState(m_nhgStateKeys[nhgOid], false);
     return true;
 }
 
 bool ArsOrch::unbindArsFromNhg(sai_object_id_t nhgOid)
 {
     return bindArsToNhg(nhgOid, SAI_NULL_OBJECT_ID);
+}
+
+void ArsOrch::forgetNhg(sai_object_id_t nhgOid)
+{
+    SWSS_LOG_ENTER();
+    auto it = m_nhgStateKeys.find(nhgOid);
+    if (it == m_nhgStateKeys.end())
+        return;
+    removeArsNhgState(it->second);
+    m_nhgStateKeys.erase(it);
 }
 
 bool ArsOrch::bindArsToLag(const string &lagName, sai_object_id_t arsOid)
@@ -1324,8 +1344,15 @@ sai_object_id_t ArsOrch::resolveArsForNhg(sai_object_id_t nhgOid, const NextHopG
     auto arsOid = objIt->second.arsOid;
     if (arsOid == SAI_NULL_OBJECT_ID)
     {
-        SWSS_LOG_WARN("ARS: object '%s' not yet created for NHG", commonArsObj.c_str());
-        writeArsNhgState(nhgKey.to_string(), true, "ARS object not created");
+        SWSS_LOG_WARN("ARS: object '%s' not yet created for NHG %s",
+                      commonArsObj.c_str(), nhgKey.to_string().c_str());
+        // Key the ARS_NHG_TABLE by the SAI NHG OID so forgetNhg() can
+        // reliably delete it on NHG removal. Storing the key also means a
+        // subsequent successful bind can replace this row with an 'active'
+        // entry via bindArsToNhg's positive path.
+        const std::string key = sai_serialize_object_id(nhgOid);
+        m_nhgStateKeys[nhgOid] = key;
+        writeArsNhgState(key, true, "ARS object not created");
     }
 
     return arsOid;
