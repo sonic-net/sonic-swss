@@ -168,6 +168,15 @@ void ArsOrch::doArsGlobalTask(Consumer &consumer)
                     m_globalProfileName = profileName;
                     SWSS_LOG_NOTICE("ARS: bound profile '%s' to switch",
                                     profileName.c_str());
+                    // The new profile may carry different EWMA thresholds
+                    // and port-select behavior than the previous one. Some
+                    // vendor backends snapshot profile values into ARS
+                    // object state at creation time, so existing NHG
+                    // bindings may not pick up the new thresholds without
+                    // a rebind. Walk all NHGs so the updated profile
+                    // reaches the data plane.
+                    if (gRouteOrch && m_arsEnabled)
+                        gRouteOrch->rebindArsForAllNhgs();
                 }
                 else
                 {
@@ -182,6 +191,11 @@ void ArsOrch::doArsGlobalTask(Consumer &consumer)
                 bindArsProfileToSwitch(SAI_NULL_OBJECT_ID);
                 m_globalProfileName.clear();
                 SWSS_LOG_NOTICE("ARS: unbound profile from switch");
+                // Same reasoning as above — without a bound profile the
+                // ARS objects revert to whatever the vendor default is,
+                // so refresh NHG bindings.
+                if (gRouteOrch && m_arsEnabled)
+                    gRouteOrch->rebindArsForAllNhgs();
             }
         }
         else if (op == DEL_COMMAND)
