@@ -1142,7 +1142,9 @@ namespace routeorch_test
         // Create temp route
         gRouteOrch->addTempRoute(ctx, desired_nhg);
         gRouteOrch->gRouteBulker.flush();
-        gRouteOrch->addRoutePost(ctx, ctx.tmp_next_hop);
+        // Use the original desired NHG key (matches production doTask pattern);
+        // addRoutePost will recurse into the tmp_next_hop path internally when NHG doesn't exist.
+        gRouteOrch->addRoutePost(ctx, desired_nhg);
 
         // --- Step 3: Verify desired_nhg_key was recorded ---
         auto it = gRouteOrch->m_syncdRoutes[gVirtualRouterId].find(IpPrefix("5.5.5.0/24"));
@@ -1212,7 +1214,7 @@ namespace routeorch_test
 
         gRouteOrch->addTempRoute(ctx, desired_nhg);
         gRouteOrch->gRouteBulker.flush();
-        gRouteOrch->addRoutePost(ctx, ctx.tmp_next_hop);
+        gRouteOrch->addRoutePost(ctx, desired_nhg);
 
         ASSERT_NE(first_nh_oid, 0u);
 
@@ -1235,6 +1237,10 @@ namespace routeorch_test
 
         // If re-randomization occurred, addRoute would be called and SAI mock would fire
         // We expect NO new SAI call because the guard should prevent re-randomization
+        // Force NHG creation to fail so the guard-check code path is actually reached
+        // (otherwise addNextHopGroup would succeed via vslib, bypassing the guard entirely)
+        EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(_, _, _, _))
+            .WillRepeatedly(Return(SAI_STATUS_TABLE_FULL));
         EXPECT_CALL(*mock_sai_route_api,
                     create_route_entries(::testing::_, ::testing::_, ::testing::_, ::testing::_, ::testing::_, ::testing::_))
             .Times(0);
@@ -1319,7 +1325,7 @@ namespace routeorch_test
 
         gRouteOrch->addTempRoute(ctx, initial_nhg);
         gRouteOrch->gRouteBulker.flush();
-        gRouteOrch->addRoutePost(ctx, ctx.tmp_next_hop);
+        gRouteOrch->addRoutePost(ctx, initial_nhg);
 
         ASSERT_NE(first_nh_oid, 0u);
 
@@ -1343,6 +1349,11 @@ namespace routeorch_test
 
         sai_object_id_t second_nh_oid = 0;
         bool sai_called = false;
+
+        // Force NHG creation to fail so re-randomization via addTempRoute is triggered
+        // (otherwise addNextHopGroup would succeed via vslib, bypassing addTempRoute)
+        EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(_, _, _, _))
+            .WillRepeatedly(Return(SAI_STATUS_TABLE_FULL));
 
         // This time, SAI should be called because membership changed
         EXPECT_CALL(*mock_sai_route_api,
@@ -1368,7 +1379,7 @@ namespace routeorch_test
 
         bool result = gRouteOrch->addRoute(ctx2, expanded_nhg);
         gRouteOrch->gRouteBulker.flush();
-        gRouteOrch->addRoutePost(ctx2, ctx2.tmp_next_hop);
+        gRouteOrch->addRoutePost(ctx2, expanded_nhg);
 
         // Verify that SAI was called (re-randomization occurred)
         ASSERT_TRUE(sai_called);
@@ -1437,7 +1448,7 @@ namespace routeorch_test
 
         gRouteOrch->addTempRoute(ctx, initial_nhg);
         gRouteOrch->gRouteBulker.flush();
-        gRouteOrch->addRoutePost(ctx, ctx.tmp_next_hop);
+        gRouteOrch->addRoutePost(ctx, initial_nhg);
 
         // Verify temp route was created
         auto it = gRouteOrch->m_syncdRoutes[gVirtualRouterId].find(prefix);
@@ -1472,6 +1483,11 @@ namespace routeorch_test
         ctx2.ip_prefix = prefix;
         ctx2.nhg = reduced_nhg;
 
+        // Force NHG creation to fail so re-randomization via addTempRoute is triggered
+        // (otherwise addNextHopGroup would succeed via vslib, bypassing addTempRoute)
+        EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(_, _, _, _))
+            .WillRepeatedly(Return(SAI_STATUS_TABLE_FULL));
+
         // Re-randomization should occur because the currently selected NH is no longer valid
         EXPECT_CALL(*mock_sai_route_api,
                     set_route_entries_attribute(::testing::_, ::testing::_, ::testing::_, ::testing::_, ::testing::_))
@@ -1496,7 +1512,7 @@ namespace routeorch_test
 
         gRouteOrch->addRoute(ctx2, reduced_nhg);
         gRouteOrch->gRouteBulker.flush();
-        gRouteOrch->addRoutePost(ctx2, ctx2.tmp_next_hop);
+        gRouteOrch->addRoutePost(ctx2, reduced_nhg);
 
         // Verify re-randomization occurred and desired_nhg_key was updated
         it = gRouteOrch->m_syncdRoutes[gVirtualRouterId].find(prefix);
@@ -1579,8 +1595,7 @@ namespace routeorch_test
         ASSERT_EQ(it->second.nhg_key.getSize(), 2);
         ASSERT_TRUE(it->second.nhg_key == reduced_nhg);
         
-        // desired_nhg_key should still match (it's been tracking the desired state)
-        ASSERT_EQ(it->second.desired_nhg_key.getSize(), 2);
-        ASSERT_TRUE(it->second.desired_nhg_key == reduced_nhg);
+        // desired_nhg_key is empty: route now directly points to NHG (no longer a temp route)
+        ASSERT_EQ(it->second.desired_nhg_key.getSize(), 0);
     }
 }
