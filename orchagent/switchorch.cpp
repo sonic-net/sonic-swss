@@ -522,9 +522,24 @@ sai_status_t SwitchOrch::setSwitchTunnelVxlanParams(swss::FieldValueTuple &val)
         attr.id = SAI_SWITCH_TUNNEL_ATTR_TUNNEL_VXLAN_UDP_SPORT_MODE;
         attr.value.s32 = SAI_TUNNEL_VXLAN_UDP_SPORT_MODE_USER_DEFINED;
         attrs.push_back(attr);
-        attr.id = SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_SECURITY;
-        attr.value.booldata = false;
-        attrs.push_back(attr);
+        sai_attr_capability_t capability;
+        status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SWITCH_TUNNEL,
+                                                SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_SECURITY, &capability);
+        if (status == SAI_STATUS_SUCCESS) {
+            if (capability.create_implemented) {
+                attr.id = SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_SECURITY;
+                attr.value.booldata = false;
+                attrs.push_back(attr);
+            }
+            else
+            {
+                SWSS_LOG_NOTICE("VXLAN UDP sport security attribute not supported for switch tunnel creation, skipping attribute creation");
+            }
+        }
+        else
+        {
+            SWSS_LOG_WARN("VXLAN UDP sport security attribute query capability failed, rv:%d", status);
+        }
 
         status = sai_switch_api->create_switch_tunnel(&m_switchTunnelId, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
 
