@@ -859,7 +859,17 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
                     }
                 }
                 if (isFlowletMode(entry.mode) && prev.idleTime != entry.idleTime)
-                    setArsObjectAttr(oid, SAI_ARS_ATTR_IDLE_TIME, entry.idleTime);
+                {
+                    if (!setArsObjectAttr(oid, SAI_ARS_ATTR_IDLE_TIME, entry.idleTime))
+                    {
+                        SWSS_LOG_ERROR("ARS: object '%s' idle_time change "
+                                       "(%u → %u) rejected by SAI — keeping "
+                                       "previous value.",
+                                       name.c_str(), prev.idleTime,
+                                       entry.idleTime);
+                        entry.idleTime = prev.idleTime;
+                    }
+                }
                 // SAI_ARS_ATTR_MAX_FLOWS cannot be modified while any NHG
                 // references the object. Try the set; if SAI rejects with
                 // OBJECT_IN_USE, keep the cache at the previous value so a
@@ -2711,7 +2721,8 @@ void ArsOrch::publishArsProfileState(const string &profileName, const ArsProfile
 
 bool ArsOrch::parseArsMode(const string &modeStr, sai_ars_mode_t *out) const
 {
-    auto it = arsModeLookup.find(modeStr);
+    string lower = toLower(modeStr);
+    auto it = arsModeLookup.find(lower);
     if (it == arsModeLookup.end())
         return false;
     if (out)

@@ -422,11 +422,14 @@ void NhgOrch::doTask(Consumer& consumer)
             else
             {
                 const auto& nhg = nhg_it->second.nhg;
+                sai_object_id_t nhgOid = nhg->getId();
 
                 success = nhg->remove();
 
                 if (success)
                 {
+                    if (gArsOrch && nhgOid != SAI_NULL_OBJECT_ID)
+                        gArsOrch->forgetNhg(nhgOid);
                     m_syncdNextHopGroups.erase(nhg_it);
                 }
             }
