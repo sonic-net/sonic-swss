@@ -75,8 +75,8 @@ ArsOrch::ArsOrch(DBConnector *configDb,
       m_portsOrch(portsOrch),
       m_stateArsCapTable(stateDb, STATE_ARS_CAPABILITY_TABLE_NAME),
       m_stateArsProfileTable(stateDb, STATE_ARS_PROFILE_TABLE_NAME),
-      m_stateArsNhgTable(stateDb, "ARS_NHG_TABLE"),
-      m_stateArsObjectTable(stateDb, "ARS_OBJECT_TABLE"),
+      m_stateArsNhgTable(stateDb, STATE_ARS_NHG_TABLE_NAME),
+      m_stateArsObjectTable(stateDb, STATE_ARS_OBJECT_TABLE_NAME),
       m_cfgArsTable(configDb, CFG_ARS_TABLE_NAME),
       m_cfgArsObjectTable(configDb, CFG_ARS_OBJECT_TABLE_NAME)
 {
@@ -224,19 +224,19 @@ void ArsOrch::doArsGlobalTask(Consumer &consumer)
                 if (profIt != m_arsProfiles.end() &&
                     profIt->second.profileOid != SAI_NULL_OBJECT_ID)
                 {
-                    bindArsProfileToSwitch(profIt->second.profileOid);
-                    m_globalProfileName = profileName;
-                    SWSS_LOG_NOTICE("ARS: bound profile '%s' to switch",
-                                    profileName.c_str());
-                    // The new profile may carry different EWMA thresholds
-                    // and port-select behavior than the previous one. Some
-                    // vendor backends snapshot profile values into ARS
-                    // object state at creation time, so existing NHG
-                    // bindings may not pick up the new thresholds without
-                    // a rebind. Walk all NHGs so the updated profile
-                    // reaches the data plane.
-                    if (gRouteOrch && m_arsEnabled)
-                        gRouteOrch->rebindArsForAllNhgs();
+                    if (bindArsProfileToSwitch(profIt->second.profileOid))
+                    {
+                        m_globalProfileName = profileName;
+                        SWSS_LOG_NOTICE("ARS: bound profile '%s' to switch",
+                                        profileName.c_str());
+                        if (gRouteOrch && m_arsEnabled)
+                            gRouteOrch->rebindArsForAllNhgs();
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("ARS: failed to bind profile '%s' to switch",
+                                       profileName.c_str());
+                    }
                 }
                 else
                 {
@@ -248,14 +248,17 @@ void ArsOrch::doArsGlobalTask(Consumer &consumer)
             }
             else if (profileName.empty() && !m_globalProfileName.empty())
             {
-                bindArsProfileToSwitch(SAI_NULL_OBJECT_ID);
-                m_globalProfileName.clear();
-                SWSS_LOG_NOTICE("ARS: unbound profile from switch");
-                // Same reasoning as above — without a bound profile the
-                // ARS objects revert to whatever the vendor default is,
-                // so refresh NHG bindings.
-                if (gRouteOrch && m_arsEnabled)
-                    gRouteOrch->rebindArsForAllNhgs();
+                if (bindArsProfileToSwitch(SAI_NULL_OBJECT_ID))
+                {
+                    m_globalProfileName.clear();
+                    SWSS_LOG_NOTICE("ARS: unbound profile from switch");
+                    if (gRouteOrch && m_arsEnabled)
+                        gRouteOrch->rebindArsForAllNhgs();
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("ARS: failed to unbind profile from switch");
+                }
             }
         }
         else if (op == DEL_COMMAND)
@@ -598,6 +601,8 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
                 const string &field = fvField(fv);
                 const string &value = fvValue(fv);
 
+                try
+                {
                 if (field == "assign_mode")
                 {
                     sai_ars_mode_t parsed;
@@ -612,7 +617,7 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
                 }
                 else if (field == "idle_time")   entry.idleTime = static_cast<uint32_t>(stoul(value));
                 else if (field == "max_flows")   entry.maxFlows = static_cast<uint32_t>(stoul(value));
-                else if (field == "admin_state") entry.enabled  = (value == "up");
+                else if (field == "admin_state") entry.enabled  = (toLower(value) == "up");
                 else if (field == "profile")
                 {
                     // SAI binds the ARS profile at switch scope (via
@@ -651,6 +656,14 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
                 {
                     SWSS_LOG_WARN("ARS: unknown object field '%s' on %s",
                                   field.c_str(), name.c_str());
+                }
+                }
+                catch (const std::exception &e)
+                {
+                    SWSS_LOG_ERROR("ARS: failed to parse object '%s' field '%s' value '%s': %s",
+                                   name.c_str(), field.c_str(), value.c_str(), e.what());
+                    rejectEntry = true;
+                    break;
                 }
             }
 
@@ -721,7 +734,7 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
                             }
                             else if (cfgField == "admin_state")
                             {
-                                entry.enabled = (cfgValue == "up");
+                                entry.enabled = (toLower(cfgValue) == "up");
                             }
                         }
                         catch (const std::exception &e)
@@ -2430,6 +2443,7 @@ bool ArsOrch::setPortArsWeights(const string &portName, uint32_t pastWeight, uin
     }
 
     sai_attribute_t attr;
+    bool success = true;
 
     if (pastWeight > 0)
     {
@@ -2437,8 +2451,11 @@ bool ArsOrch::setPortArsWeights(const string &portName, uint32_t pastWeight, uin
         attr.value.u32 = pastWeight;
         sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
         if (status != SAI_STATUS_SUCCESS)
+        {
             SWSS_LOG_WARN("ARS: set past weight on %s failed: %s",
                           portName.c_str(), sai_serialize_status(status).c_str());
+            success = false;
+        }
     }
 
     if (futureWeight > 0)
@@ -2447,11 +2464,14 @@ bool ArsOrch::setPortArsWeights(const string &portName, uint32_t pastWeight, uin
         attr.value.u32 = futureWeight;
         sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
         if (status != SAI_STATUS_SUCCESS)
+        {
             SWSS_LOG_WARN("ARS: set future weight on %s failed: %s",
                           portName.c_str(), sai_serialize_status(status).c_str());
+            success = false;
+        }
     }
 
-    return true;
+    return success;
 }
 
 void ArsOrch::applyPortProfileToInterface(const string &portName, const string &profileName)

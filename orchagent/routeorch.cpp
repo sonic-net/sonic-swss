@@ -1631,6 +1631,8 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
             }
 
             /* Remove the orphaned next hop group */
+            if (gArsOrch)
+                gArsOrch->forgetNhg(next_hop_group_id);
             sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
             m_nextHopGroupCount--;
             gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
