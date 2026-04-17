@@ -1725,10 +1725,13 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops, const bool i
 
     SWSS_LOG_NOTICE("Delete next hop group %s", nexthops.to_string().c_str());
 
-    if (gArsOrch)
-    {
-        gArsOrch->unbindArsFromNhg(next_hop_group_id);
-    }
+    // NOTE: do NOT pre-unbind ARS here. The Mellanox SAI rejects the
+    // set-to-NULL on SAI_NEXT_HOP_GROUP_ATTR_ARS_OBJECT_ID while the NHG
+    // has members, which floods syslog with misleading errors on every
+    // route withdrawal. remove_next_hop_group() internally decrements the
+    // ARS object ref count when the NHG is freed, so explicit unbind here
+    // is both unnecessary and actively harmful. forgetNhg() below cleans
+    // up the STATE_DB row tracking this NHG.
 
     vector<sai_object_id_t> next_hop_ids;
     /* If the NexthopGroup is the one that has been swapped with default route members

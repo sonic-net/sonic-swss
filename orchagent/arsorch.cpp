@@ -7,6 +7,7 @@
 #include "converter.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 
@@ -26,6 +27,40 @@ static const map<string, sai_ars_mode_t> arsModeLookup = {
     {"flowlet-quality",  SAI_ARS_MODE_FLOWLET_QUALITY},
     {"packet-quality",   SAI_ARS_MODE_PER_PACKET_QUALITY},
 };
+
+// Clamp a u32 CONFIG_DB value to the u8 range expected by several
+// SAI_ARS_PROFILE_ATTR_* attributes (PORT_LOAD_PAST/FUTURE_WEIGHT,
+// PORT_LOAD_EXPONENT). A raw stoul() parse can easily produce values
+// >255 (e.g. an operator mistyping a scaling factor as a weight); the
+// SAI wrapper truncates silently, which is an easy way to set e.g.
+// load_past_weight=256 and end up with 0 in the ASIC. Clamp + warn
+// instead so the value the operator sees in STATE_DB matches SAI.
+static uint32_t clampToU8(const string &profile, const string &field, uint32_t val)
+{
+    if (val > 255)
+    {
+        SWSS_LOG_WARN("ARS: profile '%s' field '%s' value %u exceeds u8 "
+                      "range; clamping to 255 (SAI attribute is u8).",
+                      profile.c_str(), field.c_str(), val);
+        return 255;
+    }
+    return val;
+}
+
+// Lowercase a string in-place copy for case-insensitive comparisons of
+// CONFIG_DB enum-ish values (e.g. algorithm "EWMA" vs "ewma", admin_state
+// "up" vs "UP"). Keeps the caller logic simple.
+static string toLower(string s)
+{
+    // Explicit narrowing cast to char — std::tolower takes/returns int, and
+    // assigning an int directly to a char iterator is flagged as
+    // -Wnarrowing by some toolchains. This keeps the lambda well-formed
+    // under -Wall -Wextra without suppressing the diagnostic.
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return s;
+}
 
 static bool isFlowletMode(sai_ars_mode_t mode);
 
@@ -128,7 +163,7 @@ void ArsOrch::doArsGlobalTask(Consumer &consumer)
             for (auto &fv : kfvFieldsValues(kfv))
             {
                 if (fvField(fv) == "admin_state")
-                    wantEnable = (fvValue(fv) == "up");
+                    wantEnable = (toLower(fvValue(fv)) == "up");
                 else if (fvField(fv) == "profile")
                     profileName = fvValue(fv);
             }
@@ -137,6 +172,28 @@ void ArsOrch::doArsGlobalTask(Consumer &consumer)
             {
                 SWSS_LOG_NOTICE("ARS: Adaptive Routing globally enabled");
                 m_arsEnabled = true;
+
+                // Per the user guide (docs/07.USER_GUIDE_ECMP.md and
+                // docs/08.USER_GUIDE_FLOWLET.md §"Quick Reference: Config
+                // Order Matters") adaptive routing requires
+                // SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP — i.e. the
+                // operator must have configured `ecmp type ordered` before
+                // enabling ARS. If the switch is still set to static ECMP
+                // we let the configuration proceed (the vendor SAI may
+                // auto-switch the underlying SDK type to ADAPTIVE_E when
+                // an ARS object is bound) but emit a loud warning so the
+                // operator can correlate any unexpected behavior with the
+                // missing prerequisite.
+                if (m_switchOrch && !m_switchOrch->checkOrderedEcmpEnable())
+                {
+                    SWSS_LOG_WARN("ARS: Adaptive Routing enabled while ECMP "
+                                  "type is 'static' — the documented "
+                                  "prerequisite is `ecmp type ordered` "
+                                  "(SWITCH_HASH|GLOBAL.ecmp_type=ordered). "
+                                  "Existing NHGs built with static ECMP may "
+                                  "need to be re-created for ARS bindings "
+                                  "to take effect.");
+                }
 
                 if (profileName.empty() && m_globalProfileName.empty() &&
                     m_activeSwitchProfileOid == SAI_NULL_OBJECT_ID)
@@ -266,15 +323,20 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                 const string &value = fvValue(fv);
 
                 if      (field == "port_load_past_weight" || field == "load_past_weight")
-                    entry.loadPastWeight   = static_cast<uint32_t>(stoul(value));
+                    entry.loadPastWeight   = clampToU8(name, field,
+                                                       static_cast<uint32_t>(stoul(value)));
                 else if (field == "port_load_future_weight" || field == "load_future_weight")
-                    entry.loadFutureWeight = static_cast<uint32_t>(stoul(value));
+                    entry.loadFutureWeight = clampToU8(name, field,
+                                                       static_cast<uint32_t>(stoul(value)));
                 else if (field == "port_load_current_weight" || field == "load_current_weight")
                 {
-                    entry.loadCurrentWeight = static_cast<uint32_t>(stoul(value));
+                    entry.loadCurrentWeight = clampToU8(name, field,
+                                                        static_cast<uint32_t>(stoul(value)));
                     explicitLoadCurrentWeight = true;
                 }
-                else if (field == "load_exponent")       entry.loadExponent      = static_cast<uint32_t>(stoul(value));
+                else if (field == "load_exponent" || field == "port_load_exponent")
+                    entry.loadExponent     = clampToU8(name, field,
+                                                       static_cast<uint32_t>(stoul(value)));
                 else if (field == "max_flows")           entry.maxFlows          = static_cast<uint32_t>(stoul(value));
                 else if (field == "load_past_min_val")   entry.loadPastMinVal    = static_cast<uint32_t>(stoul(value));
                 else if (field == "load_past_max_val")   entry.loadPastMaxVal    = static_cast<uint32_t>(stoul(value));
@@ -291,8 +353,14 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                 else if (field == "random_seed")         entry.randomSeed        = static_cast<uint32_t>(stoul(value));
                 else if (field == "algorithm")
                 {
-                    if (value != "EWMA")
-                        SWSS_LOG_WARN("ARS: unsupported algorithm '%s', using EWMA", value.c_str());
+                    // Accept any capitalization of "EWMA" — the user guide
+                    // examples use lowercase "ewma" while older tooling
+                    // sometimes passes "EWMA". EWMA is currently the only
+                    // algorithm supported on Spectrum; flag anything else.
+                    if (toLower(value) != "ewma")
+                        SWSS_LOG_WARN("ARS: unsupported algorithm '%s' on "
+                                      "profile %s, using EWMA",
+                                      value.c_str(), name.c_str());
                 }
                 else if (field == "quantization_type")
                 {
@@ -300,13 +368,43 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                         entry.quantizationType = 1;
                     else
                         entry.quantizationType = 0;
+                    SWSS_LOG_WARN("ARS: profile field 'quantization_type' is "
+                                  "parsed but NOT applied — no corresponding "
+                                  "SAI attribute exists on this platform. "
+                                  "Ignoring for profile %s.", name.c_str());
                 }
                 else if (field == "link_utilization_threshold")
+                {
                     entry.profileLinkUtilThreshold = static_cast<uint32_t>(stoul(value));
+                    SWSS_LOG_WARN("ARS: profile field 'link_utilization_threshold' "
+                                  "is parsed but NOT applied — no SAI profile "
+                                  "attribute backs it on this platform. "
+                                  "Ignoring for profile %s.", name.c_str());
+                }
                 else if (field == "idle_time")
+                {
                     entry.profileIdleTime = static_cast<uint32_t>(stoul(value));
+                    SWSS_LOG_WARN("ARS: profile field 'idle_time' is parsed "
+                                  "but NOT applied at profile scope — "
+                                  "idle_time is an ARS_OBJECT attribute. "
+                                  "Set idle_time on ARS_OBJECT|<name> instead. "
+                                  "Ignoring for profile %s.", name.c_str());
+                }
                 else if (field == "default_ars_object")
+                {
                     entry.defaultArsObject = value;
+                    // Accepted for cross-vendor schema compatibility but not
+                    // wired into SAI in our design — we use explicit per-
+                    // interface ars_object binding instead. See
+                    // docs/08.USER_GUIDE_FLOWLET.md §"Cross-Vendor ARS
+                    // Design Alignment".
+                    SWSS_LOG_NOTICE("ARS: profile field 'default_ars_object=%s' "
+                                    "accepted but NOT honored by the NHG "
+                                    "resolver in this design (use "
+                                    "ARS_INTERFACES.ars_object for per-NHG "
+                                    "binding). Published to STATE_DB for "
+                                    "visibility.", value.c_str());
+                }
                 else
                     SWSS_LOG_WARN("ARS: unknown profile field '%s'", field.c_str());
             }
@@ -421,8 +519,29 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
                 else if (field == "idle_time")   entry.idleTime = static_cast<uint32_t>(stoul(value));
                 else if (field == "max_flows")   entry.maxFlows = static_cast<uint32_t>(stoul(value));
                 else if (field == "admin_state") entry.enabled  = (value == "up");
-                else if (field == "profile")     entry.profileName = value;
-                else if (field == "port_profile") entry.portProfileName = value;
+                else if (field == "profile")
+                {
+                    // SAI binds the ARS profile at switch scope (via
+                    // SAI_SWITCH_ATTR_ARS_PROFILE) — there is no per-
+                    // ARS_OBJECT profile attribute. Keeping a cached value
+                    // here would advertise a behavior we cannot deliver.
+                    SWSS_LOG_WARN("ARS: field 'profile=%s' on ARS_OBJECT is "
+                                  "not supported (SAI binds ARS_PROFILE at "
+                                  "switch scope — use ARS|GLOBAL.profile). "
+                                  "Ignoring for %s.",
+                                  value.c_str(), name.c_str());
+                }
+                else if (field == "port_profile")
+                {
+                    // Same reason: SAI has no per-object port-profile
+                    // binding. Per-port profile assignment is done via
+                    // ARS_INTERFACES.port_profile on each egress port.
+                    SWSS_LOG_WARN("ARS: field 'port_profile=%s' on ARS_OBJECT "
+                                  "is not supported — use "
+                                  "ARS_INTERFACES.port_profile on each "
+                                  "member port instead. Ignoring for %s.",
+                                  value.c_str(), name.c_str());
+                }
                 else if (field == "ipv4_enable" || field == "ipv6_enable")
                 {
                     // SAI models IPv{4,6} enable on the *profile* only
@@ -503,12 +622,47 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
                 // issued three SAI calls regardless, cluttering sairedis.rec
                 // and churning vendor-SAI state for no effect.
                 const auto &prev = m_arsObjects[name];
+
+                // Mellanox SAI explicitly rejects changing SAI_ARS_ATTR_MODE
+                // on an existing ARS object ("Not supported to change ars
+                // type on the fly"). Pushing the set would leave our cache
+                // claiming the new mode while the ASIC still runs the old
+                // one. Reject the transition and keep the cached mode at the
+                // previous value so STATE_DB stays truthful; operators must
+                // delete the ARS_OBJECT and re-create it.
                 if (prev.mode != entry.mode)
-                    setArsObjectAttr(oid, SAI_ARS_ATTR_MODE, (uint32_t)entry.mode);
+                {
+                    SWSS_LOG_ERROR("ARS: object '%s' assign_mode change "
+                                   "(%d → %d) is not supported on live ARS "
+                                   "objects by the underlying SAI. Delete "
+                                   "ARS_OBJECT|%s and re-create it to change "
+                                   "mode. Keeping previous mode in cache.",
+                                   name.c_str(), (int)prev.mode,
+                                   (int)entry.mode, name.c_str());
+                    entry.mode = prev.mode;
+                }
                 if (isFlowletMode(entry.mode) && prev.idleTime != entry.idleTime)
                     setArsObjectAttr(oid, SAI_ARS_ATTR_IDLE_TIME, entry.idleTime);
+                // SAI_ARS_ATTR_MAX_FLOWS cannot be modified while any NHG
+                // references the object. Try the set; if SAI rejects with
+                // OBJECT_IN_USE, keep the cache at the previous value so a
+                // 'show' of the object doesn't advertise a value the ASIC
+                // isn't actually using.
                 if (prev.maxFlows != entry.maxFlows)
-                    setArsObjectAttr(oid, SAI_ARS_ATTR_MAX_FLOWS, entry.maxFlows);
+                {
+                    if (!setArsObjectAttr(oid, SAI_ARS_ATTR_MAX_FLOWS, entry.maxFlows))
+                    {
+                        SWSS_LOG_ERROR("ARS: object '%s' max_flows change "
+                                       "(%u → %u) rejected by SAI — this "
+                                       "attribute is immutable while NHGs "
+                                       "reference the object. Unbind all "
+                                       "NHGs (or delete/recreate the object) "
+                                       "to apply. Keeping previous value.",
+                                       name.c_str(), prev.maxFlows,
+                                       entry.maxFlows);
+                        entry.maxFlows = prev.maxFlows;
+                    }
+                }
                 m_arsObjects[name] = entry;
 
                 // If admin_state flipped, re-evaluate all NHG bindings so the
@@ -562,6 +716,12 @@ void ArsOrch::doArsInterfaceTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
+    // Track whether any update in this batch actually touched a field that
+    // could alter NHG→ARS resolution (admin_state, ars_object). If nothing
+    // relevant changed, skip the (expensive + noisy on Mellanox) call to
+    // bindArsToExistingNhgs() at the tail of the function.
+    bool resolverInputsChanged = false;
+
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -575,12 +735,14 @@ void ArsOrch::doArsInterfaceTask(Consumer &consumer)
             if (m_arsInterfaces.count(portName))
                 entry = m_arsInterfaces[portName];
 
+            const ArsInterfaceEntry prevEntry = entry;
+
             for (auto &fv : kfvFieldsValues(kfv))
             {
                 const string &field = fvField(fv);
                 const string &value = fvValue(fv);
 
-                if      (field == "admin_state")              entry.enabled = (value == "up");
+                if      (field == "admin_state")              entry.enabled = (toLower(value) == "up");
                 else if (field == "ars_object")               entry.arsObject = value;
                 else if (field == "port_profile")             entry.portProfile = value;
                 else if (field == "link_utilization_threshold") entry.linkUtilThreshold = static_cast<uint32_t>(stoul(value));
@@ -589,6 +751,12 @@ void ArsOrch::doArsInterfaceTask(Consumer &consumer)
                 else
                     SWSS_LOG_WARN("ARS: unknown interface field '%s' on %s",
                                   field.c_str(), portName.c_str());
+            }
+
+            if (prevEntry.enabled != entry.enabled ||
+                prevEntry.arsObject != entry.arsObject)
+            {
+                resolverInputsChanged = true;
             }
 
             bool prevEnabled = (m_arsEnabledPorts.find(portName) != m_arsEnabledPorts.end());
@@ -634,6 +802,8 @@ void ArsOrch::doArsInterfaceTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
+            if (m_arsInterfaces.count(portName))
+                resolverInputsChanged = true;
             if (m_arsEnabledPorts.count(portName))
             {
                 setPortArsEnable(portName, false);
@@ -645,7 +815,12 @@ void ArsOrch::doArsInterfaceTask(Consumer &consumer)
         it = consumer.m_toSync.erase(it);
     }
 
-    if (gRouteOrch && m_arsEnabled)
+    // Only re-evaluate NHG bindings if something resolver-relevant changed
+    // this batch. Skipping no-op re-binds keeps sairedis.rec clean and, on
+    // Mellanox, avoids a flurry of INVALID_PARAMETER failures from the
+    // set-on-populated-NHG restriction (see commit notes on ARS NHG
+    // binding immutability).
+    if (resolverInputsChanged && gRouteOrch && m_arsEnabled)
         gRouteOrch->bindArsToExistingNhgs();
 }
 
@@ -757,8 +932,18 @@ void ArsOrch::doArsNexthopsTask(Consumer &consumer)
             }
 
             m_nexthopArsBindings[prefix] = arsObjName;
-            SWSS_LOG_NOTICE("ARS: prefix %s mapped to ARS object '%s'",
-                            prefix.c_str(), arsObjName.c_str());
+            // NHGs are shared across prefixes in SONiC; there is no reliable
+            // way to look up "the prefix for this NHG" at resolve time, so a
+            // per-prefix ARS binding cannot currently be enforced by the
+            // resolver. The mapping is accepted and cached for future use,
+            // but has no effect on NHG→ARS binding today — use
+            // ARS_INTERFACES.ars_object for per-NHG control instead.
+            SWSS_LOG_WARN("ARS: prefix %s mapped to ARS object '%s' — "
+                          "ARS_NEXTHOPS prefix→object mapping is currently "
+                          "NOT honored by the NHG resolver (NHGs are shared "
+                          "across prefixes). Use ARS_INTERFACES.ars_object "
+                          "on the egress ports instead.",
+                          prefix.c_str(), arsObjName.c_str());
         }
         else if (op == DEL_COMMAND)
         {
@@ -1236,22 +1421,87 @@ bool ArsOrch::bindArsToNhg(sai_object_id_t nhgOid, sai_object_id_t arsOid)
     sai_status_t status = sai_next_hop_group_api->set_next_hop_group_attribute(nhgOid, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("ARS: bind ARS OID 0x%" PRIx64 " to NHG 0x%" PRIx64 " failed: %s",
-                       arsOid, nhgOid, sai_serialize_status(status).c_str());
+        // Mellanox SAI rejects SAI_NEXT_HOP_GROUP_ATTR_ARS_OBJECT_ID with
+        // SAI_STATUS_INVALID_PARAMETER when the NHG already has members.
+        // This makes the binding effectively write-once at create time:
+        // any later transition (enable ARS after routes exist, admin_state
+        // flip on ARS_OBJECT, profile rebind, interface remap) cannot be
+        // applied in-place. We can't fix the SAI limitation from here, but
+        // we can make it visible to operators instead of silently failing
+        // and leaving the orchagent cache out of sync with the ASIC.
+        //
+        // Surface the specific failure in STATE_DB so 'show load-balance
+        // adaptive' and monitoring can show *which* NHGs are out of sync
+        // and *why*. The workaround is to flap the affected route(s) so
+        // the NHG is re-created with the new binding at create time.
+        const string key = sai_serialize_object_id(nhgOid);
+        string reason;
+        if (status == SAI_STATUS_INVALID_PARAMETER)
+        {
+            reason = "SAI set-attribute rejected: NHG already has members "
+                     "(Mellanox write-once restriction). Re-create the route "
+                     "to apply the new ARS binding.";
+            SWSS_LOG_ERROR("ARS: bind ARS OID 0x%" PRIx64 " to NHG 0x%" PRIx64
+                           " failed (INVALID_PARAMETER) — NHG-ARS binding is "
+                           "write-once at create time on this SAI. Flap the "
+                           "affected routes to apply the change.",
+                           arsOid, nhgOid);
+        }
+        else if (status == SAI_STATUS_NOT_SUPPORTED)
+        {
+            reason = "SAI NHG-ARS binding not supported (SAI ARS not enabled?)";
+            SWSS_LOG_ERROR("ARS: bind ARS OID 0x%" PRIx64 " to NHG 0x%" PRIx64
+                           " failed: NOT_SUPPORTED — check that SAI ARS is "
+                           "enabled on the switch.", arsOid, nhgOid);
+        }
+        else
+        {
+            reason = string("SAI set_next_hop_group_attribute failed: ") +
+                     sai_serialize_status(status);
+            SWSS_LOG_ERROR("ARS: bind ARS OID 0x%" PRIx64 " to NHG 0x%" PRIx64 " failed: %s",
+                           arsOid, nhgOid, sai_serialize_status(status).c_str());
+        }
+        // Only flag degraded when we were actually trying to establish or
+        // update a non-null binding. A failed *unbind* (NULL) is already
+        // logged above; there's no useful 'degraded' row to report since
+        // the caller's intent was to remove the binding.
+        if (arsOid != SAI_NULL_OBJECT_ID)
+        {
+            m_nhgStateKeys[nhgOid] = key;
+            writeArsNhgState(key, true, reason);
+        }
         return false;
     }
 
     SWSS_LOG_NOTICE("ARS: bound ARS OID 0x%" PRIx64 " to NHG 0x%" PRIx64, arsOid, nhgOid);
 
-    // Mirror the positive outcome into STATE_DB's ARS_NHG_TABLE so an
-    // 'active' row exists alongside the 'degraded' rows written by
-    // resolveArsForNhg's failure paths. Without this, operators reading
-    // ARS_NHG_TABLE only ever see failures.
-    m_nhgStateKeys[nhgOid] = sai_serialize_object_id(nhgOid);
+    // Mirror the outcome into STATE_DB's ARS_NHG_TABLE so an 'active' row
+    // exists alongside the 'degraded' rows written by resolveArsForNhg's
+    // failure paths. Without this, operators reading ARS_NHG_TABLE only
+    // ever see failures.
+    const string key = sai_serialize_object_id(nhgOid);
     if (arsOid == SAI_NULL_OBJECT_ID)
-        removeArsNhgState(m_nhgStateKeys[nhgOid]);
+    {
+        // Unbind: drop both the STATE_DB row and the bookkeeping entry so
+        // m_nhgStateKeys doesn't accumulate stale keys over the lifetime of
+        // the NHG. (Previously the map was inserted-but-never-erased on
+        // every unbind, leaking an entry per unbind cycle.)
+        auto it = m_nhgStateKeys.find(nhgOid);
+        if (it != m_nhgStateKeys.end())
+        {
+            removeArsNhgState(it->second);
+            m_nhgStateKeys.erase(it);
+        }
+        else
+        {
+            removeArsNhgState(key);
+        }
+    }
     else
-        writeArsNhgState(m_nhgStateKeys[nhgOid], false);
+    {
+        m_nhgStateKeys[nhgOid] = key;
+        writeArsNhgState(key, false);
+    }
     return true;
 }
 
@@ -1324,16 +1574,31 @@ sai_object_id_t ArsOrch::resolveArsForNhg(sai_object_id_t nhgOid, const NextHopG
     if (!m_arsEnabled)
         return SAI_NULL_OBJECT_ID;
 
+    // Per design (see docs/08.USER_GUIDE_FLOWLET.md §"Per-Interface ARS
+    // Object Association"): every NHG member interface must reference the
+    // same ARS object. If any member is missing or disagrees, the NHG falls
+    // back to standard hash-based ECMP. This is intentionally strict so
+    // partial config doesn't silently run some flows adaptive and others
+    // static. The previous loop was permissive (treated "no ars_object" as
+    // "abstain") which contradicted the documented behavior and allowed
+    // accidental adaptive binding on mixed NHGs.
     string commonArsObj;
-    bool mismatch = false;
+    bool inconsistent = false;
+    string inconsistencyReason;
 
-    for (const auto &nh : nhgKey.getNextHops())
+    const auto &nextHops = nhgKey.getNextHops();
+    for (const auto &nh : nextHops)
     {
-        string portName = nh.alias;
+        const string &portName = nh.alias;
         string arsObj = getArsObjectForPort(portName);
 
         if (arsObj.empty())
-            continue;
+        {
+            inconsistent = true;
+            inconsistencyReason = "member " + portName +
+                                  " has no ars_object association";
+            break;
+        }
 
         if (commonArsObj.empty())
         {
@@ -1341,31 +1606,62 @@ sai_object_id_t ArsOrch::resolveArsForNhg(sai_object_id_t nhgOid, const NextHopG
         }
         else if (commonArsObj != arsObj)
         {
-            SWSS_LOG_WARN("ARS: NHG members have different ARS objects (%s vs %s), "
-                          "falling back to plain ECMP",
-                          commonArsObj.c_str(), arsObj.c_str());
-            mismatch = true;
+            inconsistent = true;
+            inconsistencyReason = "member " + portName + " binds '" + arsObj +
+                                  "' but earlier members bind '" +
+                                  commonArsObj + "'";
             break;
         }
     }
 
-    if (commonArsObj.empty() && !m_nexthopArsBindings.empty())
+    if (inconsistent)
     {
-        commonArsObj = m_nexthopArsBindings.begin()->second;
+        SWSS_LOG_NOTICE("ARS: NHG %s not eligible for adaptive routing: %s. "
+                        "Falling back to plain ECMP.",
+                        nhgKey.to_string().c_str(),
+                        inconsistencyReason.c_str());
+        // Surface the reason in STATE_DB so operators can see why ARS isn't
+        // active on this NHG without having to grep syslog.
+        const std::string key = sai_serialize_object_id(nhgOid);
+        m_nhgStateKeys[nhgOid] = key;
+        writeArsNhgState(key, true, inconsistencyReason);
+        return SAI_NULL_OBJECT_ID;
     }
 
-    if (mismatch || commonArsObj.empty())
+    if (commonArsObj.empty())
+    {
+        // No members at all (should not happen, but be defensive) — nothing
+        // to bind. Note: the prefix→ARS mapping (ARS_NEXTHOPS) cannot be
+        // consulted here because NHGs are shared across prefixes, so there
+        // is no well-defined "prefix for this NHG". The previous fallback
+        // (m_nexthopArsBindings.begin()->second) picked an arbitrary entry
+        // from an unordered map, which was effectively random; it has been
+        // removed. See doArsNexthopsTask for the warning logged when that
+        // table is populated.
         return SAI_NULL_OBJECT_ID;
+    }
 
     // Honor ARS_OBJECT.admin_state: if the resolved object is disabled we
     // return NULL so the NHG falls back to plain ECMP.
     auto objIt = m_arsObjects.find(commonArsObj);
     if (objIt == m_arsObjects.end() || !objIt->second.enabled)
     {
+        const std::string key = sai_serialize_object_id(nhgOid);
         if (objIt != m_arsObjects.end())
         {
             SWSS_LOG_NOTICE("ARS: object '%s' admin_state=down — NHG falls back "
                             "to plain ECMP", commonArsObj.c_str());
+            m_nhgStateKeys[nhgOid] = key;
+            writeArsNhgState(key, true, "ars_object '" + commonArsObj +
+                                         "' admin_state=down");
+        }
+        else
+        {
+            SWSS_LOG_WARN("ARS: NHG %s references unknown ARS object '%s'",
+                          nhgKey.to_string().c_str(), commonArsObj.c_str());
+            m_nhgStateKeys[nhgOid] = key;
+            writeArsNhgState(key, true, "ars_object '" + commonArsObj +
+                                         "' not defined");
         }
         return SAI_NULL_OBJECT_ID;
     }
@@ -1540,6 +1836,18 @@ bool ArsOrch::setPortArsScalingFactor(const string &portName, const ArsPortProfi
         return false;
     }
 
+    // Callers should have already fanned LAGs out to their members via
+    // applyPortProfileToInterface; belt-and-braces check here so a stray
+    // direct caller doesn't pass SAI_NULL_OBJECT_ID to set_port_attribute.
+    if (port.m_type == Port::LAG || port.m_port_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_WARN("ARS: %s has no SAI port OID (type=%d) — cannot set "
+                      "per-port scaling factor directly; caller should "
+                      "iterate LAG members instead",
+                      portName.c_str(), (int)port.m_type);
+        return false;
+    }
+
     // Unit convention: pp.loadScalingFactor stores the operator's multiplier
     // scaled by 10 (so 1.0 → 10, 2.5 → 25, 10.0 → 100, cf. doArsPortProfileTask
     // where round(fval * 10) is assigned). The auto path must produce the
@@ -1602,6 +1910,17 @@ bool ArsOrch::setPortArsWeights(const string &portName, uint32_t pastWeight, uin
         return false;
     }
 
+    // See setPortArsScalingFactor — SAI_PORT_ATTR_ARS_* are port-level and
+    // cannot be set on a LAG's (null) port OID.
+    if (port.m_type == Port::LAG || port.m_port_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_WARN("ARS: %s has no SAI port OID (type=%d) — cannot set "
+                      "per-port weights directly; caller should iterate "
+                      "LAG members instead",
+                      portName.c_str(), (int)port.m_type);
+        return false;
+    }
+
     sai_attribute_t attr;
 
     if (pastWeight > 0)
@@ -1643,6 +1962,35 @@ void ArsOrch::applyPortProfileToInterface(const string &portName, const string &
     {
         SWSS_LOG_NOTICE("ARS: port-profile '%s' is disabled, skipping application to %s",
                         profileName.c_str(), portName.c_str());
+        return;
+    }
+
+    // For PortChannels (LAGs) the SAI_PORT_ATTR_ARS_* attributes do not
+    // apply to the LAG object itself — they're port-level. A naive
+    // set_port_attribute(port.m_port_id) on a LAG would pass
+    // SAI_NULL_OBJECT_ID (because Port.m_port_id for a LAG is 0) and be
+    // rejected by the SAI. Fan the port-profile out across the LAG's
+    // physical member ports instead so each contributes the correct
+    // per-port EWMA weighting / scaling factor.
+    Port p;
+    if (m_portsOrch->getPort(portName, p) && p.m_type == Port::LAG)
+    {
+        if (p.m_members.empty())
+        {
+            SWSS_LOG_NOTICE("ARS: PortChannel %s has no members yet — "
+                            "deferring port-profile '%s' application until "
+                            "members join", portName.c_str(), profileName.c_str());
+            return;
+        }
+        SWSS_LOG_NOTICE("ARS: fanning port-profile '%s' across %zu member(s) "
+                        "of PortChannel %s", profileName.c_str(),
+                        p.m_members.size(), portName.c_str());
+        for (const auto &member : p.m_members)
+        {
+            // Recurse with the member name; each member is a physical port
+            // so the second branch below applies.
+            applyPortProfileToInterface(member, profileName);
+        }
         return;
     }
 
@@ -1874,6 +2222,14 @@ void ArsOrch::createDefaultProfileIfNeeded()
     m_globalProfileName = kDefaultName;
     SWSS_LOG_NOTICE("ARS: auto-created default profile '%s' with SDK defaults",
                     kDefaultName.c_str());
+
+    // Mirror the auto-created default into STATE_DB so 'show load-balance
+    // adaptive' and other readers can see the effective profile (OID,
+    // bound status, EWMA tuning) without having to infer that it exists
+    // from the CONFIG_DB absence of a user-defined profile.
+    auto it = m_arsProfiles.find(kDefaultName);
+    if (it != m_arsProfiles.end())
+        publishArsProfileState(kDefaultName, it->second);
 }
 
 string ArsOrch::getArsObjectForPrefix(const string &prefix) const
