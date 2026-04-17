@@ -22,6 +22,9 @@ class TestP4RTL3MulticastRouterInterface(object):
         self._p4rt_l3_multicast_router_intf.TBL_NAME)
     self.asic_db_table = self._p4rt_l3_multicast_router_intf.ASIC_DB_TBL_NAME
     self.l2_asic_db_table = self._p4rt_l3_multicast_router_intf.L2_ASIC_DB_TBL_NAME
+    self.next_hop_asic_db_table = self._p4rt_l3_multicast_router_intf.NEXT_HOP_ASIC_DB_TABLE_NAME
+    self.neighbor_asic_db_table = self._p4rt_l3_multicast_router_intf.NEIGHBOR_ENTRY_ASIC_DB_TABLE_NAME
+    self.my_mac_asic_db_table = self._p4rt_l3_multicast_router_intf.MY_MAC_ASIC_DB_TABLE_NAME
 
   def _cleanup(self):
     self._p4rt_l3_multicast_router_intf.clean_up()
@@ -424,7 +427,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_BRIDGE_PORT_ATTR_ADMIN_STATE,
          "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE,
-         self._p4rt_l3_multicast_router_intf.SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE),
+         self._p4rt_l3_multicast_router_intf.SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW),
     ]
     util.verify_attr(fvs, attr_list)
 
@@ -453,6 +456,997 @@ class TestP4RTL3MulticastRouterInterface(object):
 
     self._cleanup()
 
+  def test_L3MulticastRouterInterfaceAddUpdateDeleteMulticastSetSrcMac(self, dvs, testlog):
+    """
+    This test attempts to add a multicast router interface entry using the
+    action multicast_set_src_mac, confirms the databases are setup
+    correctly, updates the entry to use a different Src MAC address,
+    confirms the databases are setup correctly, and then deletes the entry.
+    """
+    # Initialize database connectors
+    self._set_up(dvs)
+
+    # Fetch database state after init.
+    original_app_db_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.appl_db, self.appl_db_table)
+    original_asic_db_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.asic_db_table)
+    original_next_hop_asic_db_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.next_hop_asic_db_table)
+    original_neighbor_asic_db_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.neighbor_asic_db_table)
+    original_my_mac_asic_db_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.my_mac_asic_db_table)
+
+    ####################################
+    # Add operation
+    ####################################
+    # Add one L3 multicast router interface entry.
+    mcast_router_intf_key, attr_list = (
+        self._p4rt_l3_multicast_router_intf.create_router_interface_with_next_hop(
+            port_id=None, instance=None, src_mac=None,
+            dst_mac=self._p4rt_l3_multicast_router_intf.UNUSED_MAC_ADDRESS,
+            vlan_id="0x000",
+            action=self._p4rt_l3_multicast_router_intf.MULTICAST_SET_SRC_MAC))
+    self._p4rt_l3_multicast_router_intf.verify_response(mcast_router_intf_key,
+                                                        attr_list, "SWSS_RC_SUCCESS")
+
+    # Check that APP DB has expected entry with expected values.
+    mcast_rif_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.appl_db, self.appl_db_table)
+    assert len(mcast_rif_entries) == (len(original_app_db_entries) + 1)
+
+    (status, fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.appl_db,
+        self._p4rt_l3_multicast_router_intf.APP_DB_TBL_NAME,
+        mcast_router_intf_key)
+    assert status == True
+    util.verify_attr(fvs, attr_list)
+
+    # ------------------------------------------------------
+    # Fetch my MAC oid
+    # ------------------------------------------------------
+    mcast_my_mac_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.my_mac_asic_db_table)
+    assert len(mcast_my_mac_asic_entries) == (
+        len(original_my_mac_asic_db_entries) + 1)
+
+    my_mac_asic_db_key = None
+    for key in mcast_my_mac_asic_entries:
+      if key not in original_my_mac_asic_db_entries:
+          my_mac_asic_db_key = key
+          break
+    assert my_mac_asic_db_key is not None
+    (status, fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.MY_MAC_ASIC_DB_TABLE_NAME,
+        my_mac_asic_db_key)
+    assert status == True
+
+    # ------------------------------------------------------
+    # Check that ASIC DB has expected values (RIF).
+    # ------------------------------------------------------
+    mcast_rif_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.asic_db_table)
+    assert len(mcast_rif_asic_entries) == (
+        len(original_asic_db_entries) + 1)
+
+    asic_db_key = None
+    for key in mcast_rif_asic_entries:
+        if key not in original_asic_db_entries:
+            asic_db_key = key
+            break
+    assert asic_db_key is not None
+    (status, fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.ASIC_DB_TBL_NAME,
+        asic_db_key)
+    assert status == True
+
+    global_vrf_id = self.get_global_vrf_id()
+    port_oid = util.get_port_oid_by_name(
+        dvs, self._p4rt_l3_multicast_router_intf.DEFAULT_PORT_ID)
+
+    attr_list = [
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_VIRTUAL_ROUTER_ID,
+         global_vrf_id),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_SRC_MAC,
+         self._p4rt_l3_multicast_router_intf.DEFAULT_SRC_MAC),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_TYPE,
+         self._p4rt_l3_multicast_router_intf.SAI_ATTR_TYPE_PORT),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MTU,
+         self._p4rt_l3_multicast_router_intf.SAI_ATTR_DEFAULT_MTU),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, my_mac_asic_db_key),
+    ]
+    util.verify_attr(fvs, attr_list)
+
+    # ------------------------------------------------------
+    # Check that ASIC DB has expected values (Next Hop).
+    # ------------------------------------------------------
+    mcast_next_hop_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.next_hop_asic_db_table)
+    assert len(mcast_next_hop_asic_entries) == (
+        len(original_next_hop_asic_db_entries) + 1)
+
+    nh_asic_db_key = None
+    for key in mcast_next_hop_asic_entries:
+        if key not in original_next_hop_asic_db_entries:
+            nh_asic_db_key = key
+            break
+    assert nh_asic_db_key is not None
+    (nh_status, nh_fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.NEXT_HOP_ASIC_DB_TABLE_NAME,
+        nh_asic_db_key)
+    assert nh_status == True
+
+    nh_attr_list = [
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_TYPE,
+         self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_TYPE_IPMC),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID,
+         asic_db_key),  # The key we fetched above is the RIF OID.
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_IP,
+         "169.254.0.1"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE, "false"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE, "false"),
+    ]
+    util.verify_attr(nh_fvs, nh_attr_list)
+
+    # ------------------------------------------------------
+    # Check that ASIC DB has expected values (Neighbor).
+    # ------------------------------------------------------
+    mcast_neighbor_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.neighbor_asic_db_table)
+    assert len(mcast_neighbor_asic_entries) == (
+        len(original_neighbor_asic_db_entries) + 1)
+
+    neighbor_asic_db_key = None
+    for key in mcast_neighbor_asic_entries:
+        if key not in original_neighbor_asic_db_entries:
+            neighbor_asic_db_key = key
+            break
+    assert neighbor_asic_db_key is not None
+    (neighbor_status, neighbor_fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.NEIGHBOR_ENTRY_ASIC_DB_TABLE_NAME,
+        neighbor_asic_db_key)
+    assert neighbor_status == True
+
+    neighbor_attr_list = [
+        (self._p4rt_l3_multicast_router_intf.SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS,
+         self._p4rt_l3_multicast_router_intf.UNUSED_MAC_ADDRESS),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE,
+         "true"),
+    ]
+    util.verify_attr(neighbor_fvs, neighbor_attr_list)
+
+    ####################################
+    # Update operation
+    ####################################
+    # Update L3 multicast router interface entry to use a different MAC.
+    new_src_mac = "00:66:77:88:99:AA"
+
+    mcast_router_intf_key, attr_list = (
+        self._p4rt_l3_multicast_router_intf.create_router_interface_with_next_hop(
+            port_id=None, instance=None, src_mac=new_src_mac,
+            dst_mac=self._p4rt_l3_multicast_router_intf.UNUSED_MAC_ADDRESS,
+            vlan_id="0x000",
+            action=self._p4rt_l3_multicast_router_intf.MULTICAST_SET_SRC_MAC))
+    self._p4rt_l3_multicast_router_intf.verify_response(mcast_router_intf_key,
+                                                        attr_list, "SWSS_RC_SUCCESS")
+
+    # Check that APP DB has expected entry with expected values.
+    mcast_rif_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.appl_db, self.appl_db_table)
+    assert len(mcast_rif_entries) == (len(original_app_db_entries) + 1)
+
+    (status, fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.appl_db,
+        self._p4rt_l3_multicast_router_intf.APP_DB_TBL_NAME,
+        mcast_router_intf_key)
+    assert status == True
+    util.verify_attr(fvs, attr_list)
+
+    # ------------------------------------------------------
+    # Check that ASIC DB has expected values (RIF).
+    # ------------------------------------------------------
+    mcast_rif_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.asic_db_table)
+    assert len(mcast_rif_asic_entries) == (
+        len(original_asic_db_entries) + 1)
+
+    asic_db_key = None
+    for key in mcast_rif_asic_entries:
+        if key not in original_asic_db_entries:
+            asic_db_key = key
+            break
+    assert asic_db_key is not None
+    (status, fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.ASIC_DB_TBL_NAME,
+        asic_db_key)
+    assert status == True
+
+    global_vrf_id = self.get_global_vrf_id()
+    port_oid = util.get_port_oid_by_name(
+        dvs, self._p4rt_l3_multicast_router_intf.DEFAULT_PORT_ID)
+
+    attr_list = [
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_VIRTUAL_ROUTER_ID,
+         global_vrf_id),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_SRC_MAC, new_src_mac),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_TYPE,
+         self._p4rt_l3_multicast_router_intf.SAI_ATTR_TYPE_PORT),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MTU,
+         self._p4rt_l3_multicast_router_intf.SAI_ATTR_DEFAULT_MTU),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, my_mac_asic_db_key),
+    ]
+    util.verify_attr(fvs, attr_list)
+
+    # ------------------------------------------------------
+    # Check that ASIC DB has expected values (Next Hop).
+    # ------------------------------------------------------
+    mcast_next_hop_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.next_hop_asic_db_table)
+    assert len(mcast_next_hop_asic_entries) == (
+        len(original_next_hop_asic_db_entries) + 1)
+
+    nh_asic_db_key = None
+    for key in mcast_next_hop_asic_entries:
+        if key not in original_next_hop_asic_db_entries:
+            nh_asic_db_key = key
+            break
+    assert nh_asic_db_key is not None
+    (nh_status, nh_fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.NEXT_HOP_ASIC_DB_TABLE_NAME,
+        nh_asic_db_key)
+    assert nh_status == True
+
+    nh_attr_list = [
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_TYPE,
+         self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_TYPE_IPMC),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID,
+         asic_db_key),  # The key we fetched above is the RIF OID.
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_IP,
+         "169.254.0.1"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE, "false"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE, "false"),
+    ]
+    util.verify_attr(nh_fvs, nh_attr_list)
+
+    # ------------------------------------------------------
+    # Check that ASIC DB has expected values (Neighbor).
+    # ------------------------------------------------------
+    mcast_neighbor_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.neighbor_asic_db_table)
+    assert len(mcast_neighbor_asic_entries) == (
+        len(original_neighbor_asic_db_entries) + 1)
+
+    neighbor_asic_db_key = None
+    for key in mcast_neighbor_asic_entries:
+        if key not in original_neighbor_asic_db_entries:
+            neighbor_asic_db_key = key
+            break
+    assert neighbor_asic_db_key is not None
+    (neighbor_status, neighbor_fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.NEIGHBOR_ENTRY_ASIC_DB_TABLE_NAME,
+        neighbor_asic_db_key)
+    assert neighbor_status == True
+
+    neighbor_attr_list = [
+        (self._p4rt_l3_multicast_router_intf.SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS,
+         self._p4rt_l3_multicast_router_intf.UNUSED_MAC_ADDRESS),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE,
+         "true"),
+    ]
+    util.verify_attr(neighbor_fvs, neighbor_attr_list)
+
+    ####################################
+    # Delete operation
+    ####################################
+    self._p4rt_l3_multicast_router_intf.remove_app_db_entry(
+        mcast_router_intf_key)
+    self._p4rt_l3_multicast_router_intf.verify_response(mcast_router_intf_key, [],
+                                                        "SWSS_RC_SUCCESS")
+
+    # Check that entries are gone.
+    mcast_rif_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.appl_db, self.appl_db_table)
+    assert len(mcast_rif_entries) == len(original_app_db_entries)
+
+    # Check that ASIC DB has expected values.
+    mcast_rif_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.asic_db_table)
+    assert len(mcast_rif_asic_entries) == len(original_asic_db_entries)
+
+    mcast_nh_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.next_hop_asic_db_table)
+    assert len(mcast_nh_asic_entries) == len(original_next_hop_asic_db_entries)
+
+    mcast_neighbor_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.neighbor_asic_db_table)
+    assert len(mcast_neighbor_asic_entries) == len(original_neighbor_asic_db_entries)
+
+    self._cleanup()
+
+    ####################################
+    # Cleanup
+    ####################################
+    # Cleanup needed to clear MyMac for next test.
+    dvs.restart()
+
+  def test_L3MulticastRouterInterfaceAddUpdateDeleteMulticastSetSrcMacAndVlanId(self, dvs, testlog):
+    """
+    This test attempts to add a multicast router interface entry using the
+    action multicast_set_src_mac_and_vlan_id, confirms the databases are
+    setup correctly, updates the entry to use a different Src MAC address,
+    confirms the databases are setup correctly, and then deletes the entry.
+    """
+    # Initialize database connectors
+    self._set_up(dvs)
+
+    # Fetch database state after init.
+    original_app_db_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.appl_db, self.appl_db_table)
+    original_asic_db_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.asic_db_table)
+    original_next_hop_asic_db_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.next_hop_asic_db_table)
+    original_neighbor_asic_db_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.neighbor_asic_db_table)
+    original_my_mac_asic_db_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.my_mac_asic_db_table)
+
+    ####################################
+    # Add operation
+    ####################################
+    # Add one L3 multicast router interface entry.
+    mcast_router_intf_key, attr_list = (
+        self._p4rt_l3_multicast_router_intf.create_router_interface_with_next_hop(
+            port_id=None, instance=None, src_mac=None,
+            dst_mac=self._p4rt_l3_multicast_router_intf.UNUSED_MAC_ADDRESS,
+            vlan_id="0x123",
+            action=self._p4rt_l3_multicast_router_intf.MULTICAST_SET_SRC_MAC_AND_VLAN_ID))
+    self._p4rt_l3_multicast_router_intf.verify_response(mcast_router_intf_key,
+                                                        attr_list, "SWSS_RC_SUCCESS")
+
+    # Check that APP DB has expected entry with expected values.
+    mcast_rif_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.appl_db, self.appl_db_table)
+    assert len(mcast_rif_entries) == (len(original_app_db_entries) + 1)
+
+    (status, fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.appl_db,
+        self._p4rt_l3_multicast_router_intf.APP_DB_TBL_NAME,
+        mcast_router_intf_key)
+    assert status == True
+    util.verify_attr(fvs, attr_list)
+
+    # ------------------------------------------------------
+    # Fetch my MAC oid
+    # ------------------------------------------------------
+    mcast_my_mac_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.my_mac_asic_db_table)
+    assert len(mcast_my_mac_asic_entries) == (
+        len(original_my_mac_asic_db_entries) + 1)
+
+    my_mac_asic_db_key = None
+    for key in mcast_my_mac_asic_entries:
+        if key not in original_my_mac_asic_db_entries:
+            my_mac_asic_db_key = key
+            break
+    assert my_mac_asic_db_key is not None
+    (status, fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.MY_MAC_ASIC_DB_TABLE_NAME,
+        my_mac_asic_db_key)
+    assert status == True
+
+    # ------------------------------------------------------
+    # Check that ASIC DB has expected values (RIF).
+    # ------------------------------------------------------
+    mcast_rif_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.asic_db_table)
+    assert len(mcast_rif_asic_entries) == (
+        len(original_asic_db_entries) + 1)
+
+    asic_db_key = None
+    for key in mcast_rif_asic_entries:
+        if key not in original_asic_db_entries:
+            asic_db_key = key
+            break
+    assert asic_db_key is not None
+    (status, fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.ASIC_DB_TBL_NAME,
+        asic_db_key)
+    assert status == True
+
+    global_vrf_id = self.get_global_vrf_id()
+    port_oid = util.get_port_oid_by_name(
+        dvs, self._p4rt_l3_multicast_router_intf.DEFAULT_PORT_ID)
+
+    attr_list = [
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_VIRTUAL_ROUTER_ID,
+         global_vrf_id),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_SRC_MAC,
+         self._p4rt_l3_multicast_router_intf.DEFAULT_SRC_MAC),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_TYPE,
+         self._p4rt_l3_multicast_router_intf.SAI_ATTR_TYPE_SUB_PORT),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_OUTER_VLAN_ID, "291"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MTU,
+         self._p4rt_l3_multicast_router_intf.SAI_ATTR_DEFAULT_MTU),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, my_mac_asic_db_key),
+    ]
+    util.verify_attr(fvs, attr_list)
+
+    # ------------------------------------------------------
+    # Check that ASIC DB has expected values (Next Hop).
+    # ------------------------------------------------------
+    mcast_next_hop_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.next_hop_asic_db_table)
+    assert len(mcast_next_hop_asic_entries) == (
+        len(original_next_hop_asic_db_entries) + 1)
+
+    nh_asic_db_key = None
+    for key in mcast_next_hop_asic_entries:
+        if key not in original_next_hop_asic_db_entries:
+            nh_asic_db_key = key
+            break
+    assert nh_asic_db_key is not None
+    (nh_status, nh_fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.NEXT_HOP_ASIC_DB_TABLE_NAME,
+        nh_asic_db_key)
+    assert nh_status == True
+
+    nh_attr_list = [
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_TYPE,
+         self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_TYPE_IPMC),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID,
+         asic_db_key),  # The key we fetched above is the RIF OID.
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_IP,
+         "169.254.0.1"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE, "false"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE, "false"),
+    ]
+    util.verify_attr(nh_fvs, nh_attr_list)
+
+    # ------------------------------------------------------
+    # Check that ASIC DB has expected values (Neighbor).
+    # ------------------------------------------------------
+    mcast_neighbor_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.neighbor_asic_db_table)
+    assert len(mcast_neighbor_asic_entries) == (
+        len(original_neighbor_asic_db_entries) + 1)
+
+    neighbor_asic_db_key = None
+    for key in mcast_neighbor_asic_entries:
+        if key not in original_neighbor_asic_db_entries:
+            neighbor_asic_db_key = key
+            break
+    assert neighbor_asic_db_key is not None
+    (neighbor_status, neighbor_fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.NEIGHBOR_ENTRY_ASIC_DB_TABLE_NAME,
+        neighbor_asic_db_key)
+    assert neighbor_status == True
+
+    neighbor_attr_list = [
+        (self._p4rt_l3_multicast_router_intf.SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS,
+         self._p4rt_l3_multicast_router_intf.UNUSED_MAC_ADDRESS),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE,
+         "true"),
+    ]
+    util.verify_attr(neighbor_fvs, neighbor_attr_list)
+
+    ####################################
+    # Update operation
+    ####################################
+    # Update L3 multicast router interface entry to use a different MAC.
+    new_src_mac = "00:66:77:88:99:AA"
+
+    mcast_router_intf_key, attr_list = (
+        self._p4rt_l3_multicast_router_intf.create_router_interface_with_next_hop(
+            port_id=None, instance=None, src_mac=new_src_mac,
+            dst_mac=self._p4rt_l3_multicast_router_intf.UNUSED_MAC_ADDRESS,
+            vlan_id="0x123",
+            action=self._p4rt_l3_multicast_router_intf.MULTICAST_SET_SRC_MAC_AND_VLAN_ID))
+    self._p4rt_l3_multicast_router_intf.verify_response(mcast_router_intf_key,
+                                                        attr_list, "SWSS_RC_SUCCESS")
+
+    # Check that APP DB has expected entry with expected values.
+    mcast_rif_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.appl_db, self.appl_db_table)
+    assert len(mcast_rif_entries) == (len(original_app_db_entries) + 1)
+
+    (status, fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.appl_db,
+        self._p4rt_l3_multicast_router_intf.APP_DB_TBL_NAME,
+        mcast_router_intf_key)
+    assert status == True
+    util.verify_attr(fvs, attr_list)
+
+    # ------------------------------------------------------
+    # Check that ASIC DB has expected values (RIF).
+    # ------------------------------------------------------
+    mcast_rif_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.asic_db_table)
+    assert len(mcast_rif_asic_entries) == (
+        len(original_asic_db_entries) + 1)
+
+    asic_db_key = None
+    for key in mcast_rif_asic_entries:
+        if key not in original_asic_db_entries:
+            asic_db_key = key
+            break
+    assert asic_db_key is not None
+    (status, fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.ASIC_DB_TBL_NAME,
+        asic_db_key)
+    assert status == True
+
+    global_vrf_id = self.get_global_vrf_id()
+    port_oid = util.get_port_oid_by_name(
+        dvs, self._p4rt_l3_multicast_router_intf.DEFAULT_PORT_ID)
+
+    attr_list = [
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_VIRTUAL_ROUTER_ID,
+         global_vrf_id),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_SRC_MAC, new_src_mac),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_TYPE,
+         self._p4rt_l3_multicast_router_intf.SAI_ATTR_TYPE_SUB_PORT),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_OUTER_VLAN_ID, "291"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MTU,
+         self._p4rt_l3_multicast_router_intf.SAI_ATTR_DEFAULT_MTU),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, my_mac_asic_db_key),
+    ]
+    util.verify_attr(fvs, attr_list)
+
+    # ------------------------------------------------------
+    # Check that ASIC DB has expected values (Next Hop).
+    # ------------------------------------------------------
+    mcast_next_hop_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.next_hop_asic_db_table)
+    assert len(mcast_next_hop_asic_entries) == (
+        len(original_next_hop_asic_db_entries) + 1)
+
+    nh_asic_db_key = None
+    for key in mcast_next_hop_asic_entries:
+        if key not in original_next_hop_asic_db_entries:
+            nh_asic_db_key = key
+            break
+    assert nh_asic_db_key is not None
+    (nh_status, nh_fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.NEXT_HOP_ASIC_DB_TABLE_NAME,
+        nh_asic_db_key)
+    assert nh_status == True
+
+    nh_attr_list = [
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_TYPE,
+         self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_TYPE_IPMC),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID,
+         asic_db_key),  # The key we fetched above is the RIF OID.
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_IP,
+         "169.254.0.1"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE, "false"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE, "false"),
+    ]
+    util.verify_attr(nh_fvs, nh_attr_list)
+
+    # ------------------------------------------------------
+    # Check that ASIC DB has expected values (Neighbor).
+    # ------------------------------------------------------
+    mcast_neighbor_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.neighbor_asic_db_table)
+    assert len(mcast_neighbor_asic_entries) == (
+        len(original_neighbor_asic_db_entries) + 1)
+
+    neighbor_asic_db_key = None
+    for key in mcast_neighbor_asic_entries:
+        if key not in original_neighbor_asic_db_entries:
+            neighbor_asic_db_key = key
+            break
+    assert neighbor_asic_db_key is not None
+    (neighbor_status, neighbor_fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.NEIGHBOR_ENTRY_ASIC_DB_TABLE_NAME,
+        neighbor_asic_db_key)
+    assert neighbor_status == True
+
+    neighbor_attr_list = [
+        (self._p4rt_l3_multicast_router_intf.SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS,
+         self._p4rt_l3_multicast_router_intf.UNUSED_MAC_ADDRESS),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE,
+         "true"),
+    ]
+    util.verify_attr(neighbor_fvs, neighbor_attr_list)
+
+    ####################################
+    # Delete operation
+    ####################################
+    self._p4rt_l3_multicast_router_intf.remove_app_db_entry(
+        mcast_router_intf_key)
+    self._p4rt_l3_multicast_router_intf.verify_response(mcast_router_intf_key, [],
+                                                        "SWSS_RC_SUCCESS")
+
+    # Check that entries are gone.
+    mcast_rif_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.appl_db, self.appl_db_table)
+    assert len(mcast_rif_entries) == len(original_app_db_entries)
+
+    # Check that ASIC DB has expected values.
+    mcast_rif_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.asic_db_table)
+    assert len(mcast_rif_asic_entries) == len(original_asic_db_entries)
+
+    mcast_nh_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.next_hop_asic_db_table)
+    assert len(mcast_nh_asic_entries) == len(original_next_hop_asic_db_entries)
+
+    mcast_neighbor_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.neighbor_asic_db_table)
+    assert len(mcast_neighbor_asic_entries) == len(original_neighbor_asic_db_entries)
+
+    self._cleanup()
+
+    ####################################
+    # Cleanup
+    ####################################
+    # Cleanup needed to clear MyMac for next test.
+    dvs.restart()
+
+  def test_L3MulticastRouterInterfaceAddUpdateDeleteMulticastSetSrcMacAndDstMacAndVlanId(self, dvs, testlog):
+    """
+    This test attempts to add a multicast router interface entry using the
+    action multicast_set_src_mac_and_dst_mac_and_vlan_id, confirms the
+    databases are setup correctly, updates the entry to use a different
+    Src MAC and Dst MAC addresses, confirms the databases are setup
+    correctly, and then deletes the entry.
+    """
+    # Initialize database connectors
+    self._set_up(dvs)
+
+    # Fetch database state after init.
+    original_app_db_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.appl_db, self.appl_db_table)
+    original_asic_db_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.asic_db_table)
+    original_next_hop_asic_db_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.next_hop_asic_db_table)
+    original_neighbor_asic_db_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.neighbor_asic_db_table)
+    original_my_mac_asic_db_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.my_mac_asic_db_table)
+
+    ####################################
+    # Add operation
+    ####################################
+    # Add one L3 multicast router interface entry.
+    mcast_router_intf_key, attr_list = (
+        self._p4rt_l3_multicast_router_intf.create_router_interface_with_next_hop(
+            port_id=None, instance=None, src_mac=None, dst_mac=None,
+            vlan_id="0x123",
+            action=self._p4rt_l3_multicast_router_intf.MULTICAST_SET_SRC_MAC_AND_DST_MAC_AND_VLAN_ID))
+    self._p4rt_l3_multicast_router_intf.verify_response(mcast_router_intf_key,
+                                                        attr_list, "SWSS_RC_SUCCESS")
+
+    # Check that APP DB has expected entry with expected values.
+    mcast_rif_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.appl_db, self.appl_db_table)
+    assert len(mcast_rif_entries) == (len(original_app_db_entries) + 1)
+
+    (status, fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.appl_db,
+        self._p4rt_l3_multicast_router_intf.APP_DB_TBL_NAME,
+        mcast_router_intf_key)
+    assert status == True
+    util.verify_attr(fvs, attr_list)
+
+    # ------------------------------------------------------
+    # Fetch my MAC oid
+    # ------------------------------------------------------
+    mcast_my_mac_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.my_mac_asic_db_table)
+    assert len(mcast_my_mac_asic_entries) == (
+        len(original_my_mac_asic_db_entries) + 1)
+
+    my_mac_asic_db_key = None
+    for key in mcast_my_mac_asic_entries:
+        if key not in original_my_mac_asic_db_entries:
+            my_mac_asic_db_key = key
+            break
+    assert my_mac_asic_db_key is not None
+    (status, fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.MY_MAC_ASIC_DB_TABLE_NAME,
+        my_mac_asic_db_key)
+    assert status == True
+
+    # ------------------------------------------------------
+    # Check that ASIC DB has expected values (RIF).
+    # ------------------------------------------------------
+    mcast_rif_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.asic_db_table)
+    assert len(mcast_rif_asic_entries) == (
+        len(original_asic_db_entries) + 1)
+
+    asic_db_key = None
+    for key in mcast_rif_asic_entries:
+        if key not in original_asic_db_entries:
+            asic_db_key = key
+            break
+    assert asic_db_key is not None
+    (status, fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.ASIC_DB_TBL_NAME,
+        asic_db_key)
+    assert status == True
+
+    global_vrf_id = self.get_global_vrf_id()
+    port_oid = util.get_port_oid_by_name(
+        dvs, self._p4rt_l3_multicast_router_intf.DEFAULT_PORT_ID)
+
+    attr_list = [
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_VIRTUAL_ROUTER_ID,
+         global_vrf_id),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_SRC_MAC,
+         self._p4rt_l3_multicast_router_intf.DEFAULT_SRC_MAC),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_TYPE,
+         self._p4rt_l3_multicast_router_intf.SAI_ATTR_TYPE_SUB_PORT),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_OUTER_VLAN_ID, "291"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MTU,
+         self._p4rt_l3_multicast_router_intf.SAI_ATTR_DEFAULT_MTU),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, my_mac_asic_db_key),
+    ]
+    util.verify_attr(fvs, attr_list)
+
+    # ------------------------------------------------------
+    # Check that ASIC DB has expected values (Next Hop).
+    # ------------------------------------------------------
+    mcast_next_hop_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.next_hop_asic_db_table)
+    assert len(mcast_next_hop_asic_entries) == (
+        len(original_next_hop_asic_db_entries) + 1)
+
+    nh_asic_db_key = None
+    for key in mcast_next_hop_asic_entries:
+        if key not in original_next_hop_asic_db_entries:
+            nh_asic_db_key = key
+            break
+    assert nh_asic_db_key is not None
+    (nh_status, nh_fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.NEXT_HOP_ASIC_DB_TABLE_NAME,
+        nh_asic_db_key)
+    assert nh_status == True
+
+    nh_attr_list = [
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_TYPE,
+         self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_TYPE_IPMC),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID,
+         asic_db_key),  # The key we fetched above is the RIF OID.
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_IP,
+         "169.254.0.1"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE, "false"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE, "false"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE, "false"),
+    ]
+    util.verify_attr(nh_fvs, nh_attr_list)
+
+    # ------------------------------------------------------
+    # Check that ASIC DB has expected values (Neighbor).
+    # ------------------------------------------------------
+    mcast_neighbor_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.neighbor_asic_db_table)
+    assert len(mcast_neighbor_asic_entries) == (
+        len(original_neighbor_asic_db_entries) + 1)
+
+    neighbor_asic_db_key = None
+    for key in mcast_neighbor_asic_entries:
+        if key not in original_neighbor_asic_db_entries:
+            neighbor_asic_db_key = key
+            break
+    assert neighbor_asic_db_key is not None
+    (neighbor_status, neighbor_fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.NEIGHBOR_ENTRY_ASIC_DB_TABLE_NAME,
+        neighbor_asic_db_key)
+    assert neighbor_status == True
+
+    neighbor_attr_list = [
+        (self._p4rt_l3_multicast_router_intf.SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS,
+         self._p4rt_l3_multicast_router_intf.DEFAULT_DST_MAC),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE,
+         "true"),
+    ]
+    util.verify_attr(neighbor_fvs, neighbor_attr_list)
+
+    ####################################
+    # Update operation
+    ####################################
+    # Update L3 multicast router interface entry to use a different MAC.
+    new_src_mac = "00:66:77:88:99:AA"
+    new_dst_mac = "00:35:45:55:65:75"
+
+    mcast_router_intf_key, attr_list = (
+        self._p4rt_l3_multicast_router_intf.create_router_interface_with_next_hop(
+            port_id=None, instance=None, src_mac=new_src_mac,
+            dst_mac=new_dst_mac, vlan_id="0x123",
+            action=self._p4rt_l3_multicast_router_intf.MULTICAST_SET_SRC_MAC_AND_DST_MAC_AND_VLAN_ID))
+    self._p4rt_l3_multicast_router_intf.verify_response(mcast_router_intf_key,
+                                                        attr_list, "SWSS_RC_SUCCESS")
+
+    # Check that APP DB has expected entry with expected values.
+    mcast_rif_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.appl_db, self.appl_db_table)
+    assert len(mcast_rif_entries) == (len(original_app_db_entries) + 1)
+
+    (status, fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.appl_db,
+        self._p4rt_l3_multicast_router_intf.APP_DB_TBL_NAME,
+        mcast_router_intf_key)
+    assert status == True
+    util.verify_attr(fvs, attr_list)
+
+    # ------------------------------------------------------
+    # Check that ASIC DB has expected values (RIF).
+    # ------------------------------------------------------
+    mcast_rif_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.asic_db_table)
+    assert len(mcast_rif_asic_entries) == (
+        len(original_asic_db_entries) + 1)
+
+    asic_db_key = None
+    for key in mcast_rif_asic_entries:
+        if key not in original_asic_db_entries:
+            asic_db_key = key
+            break
+    assert asic_db_key is not None
+    (status, fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.ASIC_DB_TBL_NAME,
+        asic_db_key)
+    assert status == True
+
+    global_vrf_id = self.get_global_vrf_id()
+    port_oid = util.get_port_oid_by_name(
+        dvs, self._p4rt_l3_multicast_router_intf.DEFAULT_PORT_ID)
+
+    attr_list = [
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_VIRTUAL_ROUTER_ID,
+         global_vrf_id),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_SRC_MAC, new_src_mac),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_TYPE,
+         self._p4rt_l3_multicast_router_intf.SAI_ATTR_TYPE_SUB_PORT),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_OUTER_VLAN_ID, "291"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MTU,
+         self._p4rt_l3_multicast_router_intf.SAI_ATTR_DEFAULT_MTU),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, my_mac_asic_db_key),
+    ]
+    util.verify_attr(fvs, attr_list)
+
+    # ------------------------------------------------------
+    # Check that ASIC DB has expected values (Next Hop).
+    # ------------------------------------------------------
+    mcast_next_hop_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.next_hop_asic_db_table)
+    assert len(mcast_next_hop_asic_entries) == (
+        len(original_next_hop_asic_db_entries) + 1)
+
+    nh_asic_db_key = None
+    for key in mcast_next_hop_asic_entries:
+        if key not in original_next_hop_asic_db_entries:
+            nh_asic_db_key = key
+            break
+    assert nh_asic_db_key is not None
+    (nh_status, nh_fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.NEXT_HOP_ASIC_DB_TABLE_NAME,
+        nh_asic_db_key)
+    assert nh_status == True
+
+    nh_attr_list = [
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_TYPE,
+         self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_TYPE_IPMC),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID,
+         asic_db_key),  # The key we fetched above is the RIF OID.
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_IP,
+         "169.254.0.1"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE, "false"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE, "false"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE, "false"),
+    ]
+    util.verify_attr(nh_fvs, nh_attr_list)
+
+    # ------------------------------------------------------
+    # Check that ASIC DB has expected values (Neighbor).
+    # ------------------------------------------------------
+    mcast_neighbor_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.neighbor_asic_db_table)
+    assert len(mcast_neighbor_asic_entries) == (
+        len(original_neighbor_asic_db_entries) + 1)
+
+    neighbor_asic_db_key = None
+    for key in mcast_neighbor_asic_entries:
+        if key not in original_neighbor_asic_db_entries:
+            neighbor_asic_db_key = key
+            break
+    assert neighbor_asic_db_key is not None
+    (neighbor_status, neighbor_fvs) = util.get_key(
+        self._p4rt_l3_multicast_router_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.NEIGHBOR_ENTRY_ASIC_DB_TABLE_NAME,
+        neighbor_asic_db_key)
+    assert neighbor_status == True
+
+    neighbor_attr_list = [
+        (self._p4rt_l3_multicast_router_intf.SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS,
+         new_dst_mac),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE,
+         "true"),
+    ]
+    util.verify_attr(neighbor_fvs, neighbor_attr_list)
+
+    ####################################
+    # Delete operation
+    ####################################
+    self._p4rt_l3_multicast_router_intf.remove_app_db_entry(
+        mcast_router_intf_key)
+    self._p4rt_l3_multicast_router_intf.verify_response(mcast_router_intf_key, [],
+                                                        "SWSS_RC_SUCCESS")
+
+    # Check that entries are gone.
+    mcast_rif_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.appl_db, self.appl_db_table)
+    assert len(mcast_rif_entries) == len(original_app_db_entries)
+
+    # Check that ASIC DB has expected values.
+    mcast_rif_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.asic_db_table)
+    assert len(mcast_rif_asic_entries) == len(original_asic_db_entries)
+
+    mcast_nh_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.next_hop_asic_db_table)
+    assert len(mcast_nh_asic_entries) == len(original_next_hop_asic_db_entries)
+
+    mcast_neighbor_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_router_intf.asic_db, self.neighbor_asic_db_table)
+    assert len(mcast_neighbor_asic_entries) == len(original_neighbor_asic_db_entries)
+
+    self._cleanup()
+
+    ####################################
+    # Cleanup
+    ####################################
+    # Cleanup needed to clear MyMac for next test.
+    dvs.restart()
+
 class TestP4RTL3MulticastGroup(object):
   """Tests interacting with replication multicast table"""
   def _set_up(self, dvs):
@@ -473,6 +1467,8 @@ class TestP4RTL3MulticastGroup(object):
         self._p4rt_l3_multicast_group_intf.ASIC_DB_GROUP_MEMBER_TBL_NAME)
     self.asic_db_rif_table = (
         self._p4rt_l3_multicast_router_intf.ASIC_DB_TBL_NAME)
+    self.asic_db_next_hop_table = (
+        self._p4rt_l3_multicast_router_intf.NEXT_HOP_ASIC_DB_TABLE_NAME)
     self.l2_asic_db_group_table = (
         self._p4rt_l3_multicast_group_intf.L2_ASIC_DB_GROUP_TBL_NAME)
     self.l2_asic_db_group_member_table = (
@@ -539,6 +1535,17 @@ class TestP4RTL3MulticastGroup(object):
         return key
     return "0"
 
+  def get_added_next_hop_oid(self, original_entries):
+    """Returns OID key if single next hop was added"""
+    next_hop_entries = util.get_keys(
+        self._p4rt_l3_multicast_group_intf.asic_db,
+        self._p4rt_l3_multicast_router_intf.NEXT_HOP_ASIC_DB_TABLE_NAME)
+
+    for key in next_hop_entries:
+      if key not in original_entries:
+        return key
+    return "0"
+
   def get_added_bridge_port_oid(self, original_entries):
     """Returns OID key if single bridge port was added"""
     bridge_port_entries = util.get_keys(
@@ -564,6 +1571,26 @@ class TestP4RTL3MulticastGroup(object):
     rif_oid = self.get_added_rif_oid(start_asic_db_rif_entries)
     return rif_oid
 
+  def add_rif_and_next_hop(self, port_id=None, instance=None, src_mac=None):
+    """Adds a multicast router interface entry"""
+    start_asic_db_rif_entries = util.get_keys(
+        self._p4rt_l3_multicast_group_intf.asic_db,
+        self.asic_db_rif_table)
+    start_asic_db_next_hop_entries = util.get_keys(
+        self._p4rt_l3_multicast_group_intf.asic_db,
+        self.asic_db_next_hop_table)
+
+    mcast_router_intf_key, attr_list = (
+        self._p4rt_l3_multicast_router_intf.create_router_interface_with_next_hop(
+            port_id, instance, src_mac,
+            dst_mac=self._p4rt_l3_multicast_router_intf.UNUSED_MAC_ADDRESS,
+            vlan_id="0x000",
+            action=self._p4rt_l3_multicast_router_intf.MULTICAST_SET_SRC_MAC))
+    self._p4rt_l3_multicast_router_intf.verify_response(mcast_router_intf_key,
+                                                        attr_list, "SWSS_RC_SUCCESS")
+    rif_oid = self.get_added_rif_oid(start_asic_db_rif_entries)
+    next_hop_oid = self.get_added_next_hop_oid(start_asic_db_next_hop_entries)
+    return rif_oid, next_hop_oid
 
   def add_bridge_port(self, port_id=None, instance=None):
     """Adds a multicast router interface entry for L2 groups"""
@@ -656,6 +1683,89 @@ class TestP4RTL3MulticastGroup(object):
            rif_oids[idx]),
       ]
       util.verify_attr(fvs_asic_group_member, asic_group_member_attr_list)
+    return mcast_group_key, attr_list, group_oid_to_ret, new_group_member_oids
+
+  def add_and_verify_multicast_group_with_next_hop(self, group_id=None,
+                                                   replicas=None, next_hop_oids=None,
+                                                   new_replicas=None, group_oid=None):
+    """Adds a multicast group entry that uses next hop and verifies APP DB and ASIC DB"""
+    start_app_db_entries = util.get_keys(
+        self._p4rt_l3_multicast_group_intf.appl_db, self.appl_db_table)
+    start_asic_db_group_entries = util.get_keys(
+        self._p4rt_l3_multicast_group_intf.asic_db,
+        self.asic_db_group_table)
+    start_asic_db_group_member_entries = util.get_keys(
+        self._p4rt_l3_multicast_group_intf.asic_db,
+        self.asic_db_group_member_table)
+    assert len(next_hop_oids) == len(new_replicas)
+
+    # Add the group member.
+    mcast_group_key, attr_list = (
+        self._p4rt_l3_multicast_group_intf.create_multicast_group_entry(
+            group_id=group_id, replicas=replicas))
+    self._p4rt_l3_multicast_group_intf.verify_response(mcast_group_key,
+                                                       attr_list, "SWSS_RC_SUCCESS")
+
+    # Check that APP DB has expected entry with expected values.
+    mcast_group_entries = util.get_keys(
+        self._p4rt_l3_multicast_group_intf.appl_db, self.appl_db_table)
+    # If we provided a group_oid, we expected the entry to already exist.
+    if group_oid is not None:
+        assert len(mcast_group_entries) == len(start_app_db_entries)
+    else:
+        assert len(mcast_group_entries) == (len(start_app_db_entries) + 1)
+
+    (status, fvs) = util.get_key(
+        self._p4rt_l3_multicast_group_intf.appl_db,
+        self._p4rt_l3_multicast_group_intf.APP_DB_TBL_NAME,
+        mcast_group_key)
+    assert status == True
+    util.verify_attr(fvs, attr_list)
+
+    # Check that ASIC DB has expected value
+    mcast_group_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_group_intf.asic_db,
+        self.asic_db_group_table)
+    if group_oid is not None:
+        # If we provided a group_oid, that means we expected the group OID to
+        # already exist.
+        assert len(mcast_group_asic_entries) == (
+            len(start_asic_db_group_entries))
+        group_oid_to_ret = group_oid
+    else:
+        # There are no attributes to check for the group.  We just need to check
+        # that there is a new entry.
+        assert len(mcast_group_asic_entries) == (
+            len(start_asic_db_group_entries) + 1)
+        group_oid_to_ret = self.get_added_multicast_group_oid(
+            start_asic_db_group_entries)
+
+    # Verify group member.
+    mcast_group_member_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_group_intf.asic_db,
+        self.asic_db_group_member_table)
+    assert len(mcast_group_member_asic_entries) == (
+        len(start_asic_db_group_member_entries) + len(new_replicas))
+
+    new_group_member_oids = self.get_added_multicast_group_member_oids(
+        start_asic_db_group_member_entries)
+    assert len(new_group_member_oids) == len(new_replicas)
+
+    for idx, group_member_oid in enumerate(new_group_member_oids):
+        (status_asic_group_member, fvs_asic_group_member) = util.get_key(
+            self._p4rt_l3_multicast_group_intf.asic_db,
+            self._p4rt_l3_multicast_group_intf.ASIC_DB_GROUP_MEMBER_TBL_NAME,
+            group_member_oid)
+        assert status_asic_group_member == True
+
+        asic_group_member_attr_list = [
+            (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_ID,
+             group_oid_to_ret),
+            (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_OUTPUT_ID,
+             next_hop_oids[idx]),
+        ]
+        util.verify_attr(fvs_asic_group_member,
+                         asic_group_member_attr_list)
     return mcast_group_key, attr_list, group_oid_to_ret, new_group_member_oids
 
   def add_and_verify_l2_multicast_group(self, group_id=None, replicas=None,
@@ -1061,6 +2171,88 @@ class TestP4RTL3MulticastGroup(object):
     mcast_group_member_asic_entries = util.get_keys(
         self._p4rt_l3_multicast_group_intf.asic_db,
         self.l2_asic_db_group_member_table)
+    assert len(mcast_group_member_asic_entries) == (
+        len(original_asic_db_group_member_entries))
+
+    self._cleanup()
+
+    ####################################
+    # Cleanup
+    ####################################
+    dvs.restart()
+
+  @pytest.mark.skip(reason="The SAI header change needs to be merged first")
+  def test_L3MulticastGroupWithNextHopAddUpdateDelete(self, dvs, testlog):
+    """
+    This test adds a multicast group member that will use next hops,
+    confirms a group and a member were created, confirms an update operation
+    can add a new member, and then deletes the group.
+    """
+    self._set_up(dvs)
+
+    # Fetch database state after init.
+    original_app_db_entries = util.get_keys(
+        self._p4rt_l3_multicast_group_intf.appl_db, self.appl_db_table)
+    original_asic_db_rif_entries = util.get_keys(
+        self._p4rt_l3_multicast_group_intf.asic_db,
+        self.asic_db_rif_table)
+    original_asic_db_next_hop_entries = util.get_keys(
+        self._p4rt_l3_multicast_group_intf.asic_db,
+        self.asic_db_next_hop_table)
+    original_asic_db_group_entries = util.get_keys(
+        self._p4rt_l3_multicast_group_intf.asic_db,
+        self.asic_db_group_table)
+    original_asic_db_group_member_entries = util.get_keys(
+        self._p4rt_l3_multicast_group_intf.asic_db,
+        self.asic_db_group_member_table)
+
+    # To be able to add multicast groups and members, we need the corresponding
+    # router interfaces and next hops to have been created.
+    rif_oid_0, next_hop_oid_0 = self.add_rif_and_next_hop()
+    rif_oid_1, next_hop_oid_1 = self.add_rif_and_next_hop(port_id="Ethernet4")
+
+    ####################################
+    # Add operation
+    ####################################
+    # Add one L3 multicast group entry (one group member).
+    mcast_group_key, attr_list, group_oid, group_member_oids = (
+        self.add_and_verify_multicast_group_with_next_hop(
+            replicas=[("Ethernet8", "0x0")],
+            next_hop_oids=[next_hop_oid_0],
+            new_replicas=[("Ethernet8", "0x0")]))
+
+    ####################################
+    # Update operation
+    ####################################
+    # We'll add a new replica to the same multicast group.
+    mcast_group_key_1, attr_list_1, group_oid_1, group_member_oids_1 = (
+        self.add_and_verify_multicast_group_with_next_hop(
+            replicas=[("Ethernet8", "0x0"), ("Ethernet4", "0x0")],
+            next_hop_oids=[next_hop_oid_1],
+            new_replicas=[("Ethernet4", "0x0")],
+            group_oid=group_oid))
+
+    ####################################
+    # Delete operation
+    ####################################
+    self._p4rt_l3_multicast_group_intf.remove_app_db_entry(mcast_group_key)
+    self._p4rt_l3_multicast_group_intf.verify_response(mcast_group_key, [],
+                                                       "SWSS_RC_SUCCESS")
+
+    # Check that APP DB entry was removed.
+    mcast_group_entries = util.get_keys(
+        self._p4rt_l3_multicast_group_intf.appl_db, self.appl_db_table)
+    assert len(mcast_group_entries) == len(original_app_db_entries)
+
+    # Check that ASIC DB entries were removed (both group and member).
+    mcast_group_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_group_intf.asic_db,
+        self.asic_db_group_table)
+    assert len(mcast_group_asic_entries) == len(
+        original_asic_db_group_entries)
+    mcast_group_member_asic_entries = util.get_keys(
+        self._p4rt_l3_multicast_group_intf.asic_db,
+        self.asic_db_group_member_table)
     assert len(mcast_group_member_asic_entries) == (
         len(original_asic_db_group_member_entries))
 

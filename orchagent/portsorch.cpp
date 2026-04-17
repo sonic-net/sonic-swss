@@ -1132,6 +1132,7 @@ void PortsOrch::initializeCpuPort()
     this->m_cpuPort.m_port_id = attr.value.oid;
     this->m_portList[m_cpuPort.m_alias] = m_cpuPort;
     this->m_port_ref_count[m_cpuPort.m_alias] = 0;
+    this->m_bridge_port_ref_count[m_cpuPort.m_alias] = 0;
 
     SWSS_LOG_NOTICE("Get CPU port pid:%" PRIx64, this->m_cpuPort.m_port_id);
 }
@@ -1827,7 +1828,7 @@ void PortsOrch::decreaseBridgePortRefCount(Port &port)
     m_bridge_port_ref_count[port.m_alias]--;
 }
 
-bool PortsOrch::getBridgePortReferenceCount(Port &port)
+uint32_t PortsOrch::getBridgePortReferenceCount(Port &port)
 {
     assert (m_bridge_port_ref_count.find(port.m_alias) != m_bridge_port_ref_count.end());
     return m_bridge_port_ref_count[port.m_alias];
@@ -2071,6 +2072,7 @@ bool PortsOrch::addSubPort(Port &port, const string &alias, const string &vlan, 
 
     m_portList[alias] = p;
     m_port_ref_count[alias] = 0;
+    m_bridge_port_ref_count[alias] = 0;
     port = p;
     return true;
 }
@@ -4106,6 +4108,7 @@ void PortsOrch::registerPort(Port &p)
     m_portList[alias] = p;
     saiOidToAlias[id] = alias;
     m_port_ref_count[alias] = 0;
+    m_bridge_port_ref_count[alias] = 0;
     m_portOidToIndex[id] = index;
 
     /* Add port name map to counter table */
@@ -5945,7 +5948,7 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
             {
                 if (removeVlanMember(vlan, port))
                 {
-                    if (m_portVlanMember[port.m_alias].empty())
+		    if (getBridgePortReferenceCount(port) == 0)
                     {
                         removeBridgePort(port);
                     }
@@ -7408,6 +7411,7 @@ bool PortsOrch::addVlan(string vlan_alias)
     vlan.m_members = set<string>();
     m_portList[vlan_alias] = vlan;
     m_port_ref_count[vlan_alias] = 0;
+    m_bridge_port_ref_count[vlan_alias] = 0;
     saiOidToAlias[vlan_oid] =  vlan_alias;
     m_vlanPorts.emplace(vlan_alias);
 
@@ -7482,6 +7486,7 @@ bool PortsOrch::removeVlan(Port vlan)
     saiOidToAlias.erase(vlan.m_vlan_info.vlan_oid);
     m_portList.erase(vlan.m_alias);
     m_port_ref_count.erase(vlan.m_alias);
+    m_bridge_port_ref_count.erase(vlan.m_alias);
     m_vlanPorts.erase(vlan.m_alias);
 
     return true;
@@ -7575,6 +7580,7 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
     m_portList[port.m_alias] = port;
     vlan.m_members.insert(port.m_alias);
     m_portList[vlan.m_alias] = vlan;
+    increaseBridgePortRefCount(port);
 
     VlanMemberUpdate update = { vlan, port, true };
     notify(SUBJECT_TYPE_VLAN_MEMBER_CHANGE, static_cast<void *>(&update));
@@ -7908,6 +7914,7 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port, string end_point_ip)
     m_portList[port.m_alias] = port;
     vlan.m_members.erase(port.m_alias);
     m_portList[vlan.m_alias] = vlan;
+    decreaseBridgePortRefCount(port);
 
     VlanMemberUpdate update = { vlan, port, false };
     notify(SUBJECT_TYPE_VLAN_MEMBER_CHANGE, static_cast<void *>(&update));
@@ -8003,6 +8010,7 @@ bool PortsOrch::addLag(string lag_alias, uint32_t spa_id, int32_t switch_id)
     lag.m_members = set<string>();
     m_portList[lag_alias] = lag;
     m_port_ref_count[lag_alias] = 0;
+    m_bridge_port_ref_count[lag_alias] = 0;
     saiOidToAlias[lag_id] = lag_alias;
 
     PortUpdate update = { lag, true };
@@ -8079,6 +8087,7 @@ bool PortsOrch::removeLag(Port lag)
     saiOidToAlias.erase(lag.m_lag_id);
     m_portList.erase(lag.m_alias);
     m_port_ref_count.erase(lag.m_alias);
+    m_bridge_port_ref_count.erase(lag.m_alias);
 
     PortUpdate update = { lag, false };
     notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
@@ -10992,6 +11001,10 @@ bool PortsOrch::addSystemPorts()
             if(m_port_ref_count.find(port.m_alias) == m_port_ref_count.end())
             {
                 m_port_ref_count[port.m_alias] = 0;
+            }
+	    if(m_bridge_port_ref_count.find(port.m_alias) == m_bridge_port_ref_count.end())
+            {
+                m_bridge_port_ref_count[port.m_alias] = 0;
             }
 
             SWSS_LOG_NOTICE("Added system port %" PRIx64 " for %s", system_port_oid, alias.c_str());
