@@ -1725,8 +1725,41 @@ void ArsOrch::publishArsCaps()
 void ArsOrch::publishArsProfileState(const string &profileName, const ArsProfileEntry &entry)
 {
     vector<FieldValueTuple> fvs;
+
+    // SAI identity first so operators can cross-reference against sairedis.
     fvs.emplace_back("profile_oid",
                      sai_serialize_object_id(entry.profileOid));
+    fvs.emplace_back("is_bound",
+                     (entry.profileOid != SAI_NULL_OBJECT_ID &&
+                      entry.profileOid == m_activeSwitchProfileOid) ? "true" : "false");
+
+    // Mirror the in-orchagent view of the EWMA tuning so 'show' commands and
+    // external monitors have a source of truth for *applied* config (as
+    // opposed to whatever CONFIG_DB currently contains — which may have
+    // been rejected by a validator and left unpropagated).
+    fvs.emplace_back("algorithm",                std::to_string((int)entry.algorithm));
+    fvs.emplace_back("port_load_past",           entry.loadPastEnable ? "true" : "false");
+    fvs.emplace_back("port_load_past_weight",    std::to_string(entry.loadPastWeight));
+    fvs.emplace_back("port_load_future",         entry.loadFutureEnable ? "true" : "false");
+    fvs.emplace_back("port_load_future_weight",  std::to_string(entry.loadFutureWeight));
+    fvs.emplace_back("port_load_current",        entry.loadCurrentEnable ? "true" : "false");
+    fvs.emplace_back("port_load_current_weight", std::to_string(entry.loadCurrentWeight));
+    fvs.emplace_back("load_exponent",            std::to_string(entry.loadExponent));
+    fvs.emplace_back("max_flows",                std::to_string(entry.maxFlows));
+    fvs.emplace_back("load_past_min_val",        std::to_string(entry.loadPastMinVal));
+    fvs.emplace_back("load_past_max_val",        std::to_string(entry.loadPastMaxVal));
+    fvs.emplace_back("load_future_min_val",      std::to_string(entry.loadFutureMinVal));
+    fvs.emplace_back("load_future_max_val",      std::to_string(entry.loadFutureMaxVal));
+    fvs.emplace_back("load_current_min_val",     std::to_string(entry.loadCurrentMinVal));
+    fvs.emplace_back("load_current_max_val",     std::to_string(entry.loadCurrentMaxVal));
+    fvs.emplace_back("ipv4_enable",              entry.ipv4Enable ? "true" : "false");
+    fvs.emplace_back("ipv6_enable",              entry.ipv6Enable ? "true" : "false");
+    fvs.emplace_back("sampling_interval",        std::to_string(entry.samplingInterval));
+    fvs.emplace_back("random_seed",              std::to_string(entry.randomSeed));
+    fvs.emplace_back("quant_band_0_min_threshold", std::to_string(entry.quantBand0MinThreshold));
+    fvs.emplace_back("quant_band_1_min_threshold", std::to_string(entry.quantBand1MinThreshold));
+    fvs.emplace_back("quant_band_2_min_threshold", std::to_string(entry.quantBand2MinThreshold));
+
     fvs.emplace_back("default_ars_object", entry.defaultArsObject);
 
     if (!entry.defaultArsObject.empty())
@@ -1744,8 +1777,12 @@ void ArsOrch::publishArsProfileState(const string &profileName, const ArsProfile
     }
 
     m_stateArsProfileTable.set(profileName, fvs);
-    SWSS_LOG_NOTICE("ARS: published profile '%s' state to STATE_DB (default_ars_object=%s)",
-                    profileName.c_str(), entry.defaultArsObject.c_str());
+    SWSS_LOG_NOTICE("ARS: published profile '%s' state to STATE_DB "
+                    "(is_bound=%s, default_ars_object=%s)",
+                    profileName.c_str(),
+                    (entry.profileOid != SAI_NULL_OBJECT_ID &&
+                     entry.profileOid == m_activeSwitchProfileOid) ? "true" : "false",
+                    entry.defaultArsObject.c_str());
 }
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
