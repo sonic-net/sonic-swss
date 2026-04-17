@@ -1020,11 +1020,54 @@ bool ArsOrch::removeArsObject(const string &name)
     if (it == m_arsObjects.end())
         return true;
 
-    sai_status_t status = sai_ars_api->remove_ars(it->second.arsOid);
+    const sai_object_id_t oid = it->second.arsOid;
+
+    // A deferred-creation entry (arsOid still NULL) has no SAI state to tear
+    // down — just drop the cache.
+    if (oid == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_NOTICE("ARS: removed deferred-creation entry for object %s",
+                        name.c_str());
+        m_arsObjects.erase(it);
+        return true;
+    }
+
+    // Unbind any NHGs and LAGs that currently reference this object. SAI's
+    // remove_ars returns SAI_STATUS_OBJECT_IN_USE while bindings exist, so
+    // without this sweep removal of an ARS object in active use silently
+    // fails and the orchagent-side cache drifts from config-DB.
+    //
+    // NHGs: flip each NHG whose resolver currently returns this arsOid to
+    // SAI_NULL_OBJECT_ID. We do this by temporarily hiding the object from
+    // resolveArsForNhg (setting enabled=false) and asking RouteOrch to
+    // rebind. The enable flag is restored only for the in-memory view
+    // before erase, but since we're about to erase the entry entirely it
+    // doesn't matter.
+    it->second.enabled = false;
+    if (gRouteOrch)
+        gRouteOrch->rebindArsForAllNhgs();
+
+    // LAGs tracked by m_arsEnabledLags that point at this object name.
+    vector<string> lagsToUnbind;
+    for (const auto &kv : m_arsInterfaces)
+    {
+        if (kv.second.arsObject == name && m_arsEnabledLags.count(kv.first))
+            lagsToUnbind.push_back(kv.first);
+    }
+    for (const auto &lag : lagsToUnbind)
+    {
+        unbindArsFromLag(lag);
+        m_arsEnabledLags.erase(lag);
+    }
+
+    sai_status_t status = sai_ars_api->remove_ars(oid);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("ARS: remove_ars failed for %s: %s",
                        name.c_str(), sai_serialize_status(status).c_str());
+        // Restore state so the operator can retry deletion once the
+        // remaining reference is cleared.
+        it->second.enabled = true;
         return false;
     }
 
