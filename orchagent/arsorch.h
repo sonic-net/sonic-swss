@@ -160,7 +160,14 @@ private:
 
     std::unordered_map<std::string, ArsProfileEntry>    m_arsProfiles;
     std::unordered_map<std::string, ArsObjectEntry>     m_arsObjects;
+    // m_arsInterfaces holds physical port entries (ARS_INTERFACES).
+    // m_arsLags holds PortChannel entries (ARS_PORTCHANNELS).
+    // Previously both shared m_arsInterfaces and the only thing keeping the
+    // deferred-LAG-bind loop correct was the Ethernet/PortChannel naming
+    // convention — a LAG named 'Ethernet…' (unusual but allowed) would have
+    // been bound with the wrong SAI path. Separate maps remove that hazard.
     std::unordered_map<std::string, ArsInterfaceEntry>  m_arsInterfaces;
+    std::unordered_map<std::string, ArsInterfaceEntry>  m_arsLags;
     std::unordered_map<std::string, ArsPortProfileEntry> m_arsPortProfiles;
     std::set<std::string> m_arsEnabledPorts;
     std::set<std::string> m_arsEnabledLags;

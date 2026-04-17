@@ -414,7 +414,7 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
                         publishArsProfileState(profKv.first, profKv.second);
                 }
 
-                for (auto &lagKv : m_arsInterfaces)
+                for (auto &lagKv : m_arsLags)
                 {
                     if (lagKv.second.arsObject == name && lagKv.second.enabled &&
                         m_arsEnabledLags.count(lagKv.first) == 0)
@@ -453,7 +453,7 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
                     if (gRouteOrch)
                         gRouteOrch->rebindArsForAllNhgs();
 
-                    for (const auto &lagKv : m_arsInterfaces)
+                    for (const auto &lagKv : m_arsLags)
                     {
                         if (lagKv.second.arsObject != name)
                             continue;
@@ -621,15 +621,23 @@ void ArsOrch::doArsPortProfileTask(Consumer &consumer)
             m_arsPortProfiles[name] = entry;
             SWSS_LOG_NOTICE("ARS: port-profile '%s' updated", name.c_str());
 
-            for (const auto &kv : m_arsInterfaces)
-            {
-                if (kv.second.portProfile == name && kv.second.enabled)
+            // Re-apply to every port AND PortChannel that references this
+            // profile (LAGs live in m_arsLags now — covering both ensures
+            // an update to a shared port-profile actually reaches every
+            // user).
+            auto reapply = [&](const auto &map) {
+                for (const auto &kv : map)
                 {
-                    SWSS_LOG_NOTICE("ARS: re-applying updated port-profile '%s' to %s",
-                                    name.c_str(), kv.first.c_str());
-                    applyPortProfileToInterface(kv.first, name);
+                    if (kv.second.portProfile == name && kv.second.enabled)
+                    {
+                        SWSS_LOG_NOTICE("ARS: re-applying updated port-profile '%s' to %s",
+                                        name.c_str(), kv.first.c_str());
+                        applyPortProfileToInterface(kv.first, name);
+                    }
                 }
-            }
+            };
+            reapply(m_arsInterfaces);
+            reapply(m_arsLags);
         }
         else if (op == DEL_COMMAND)
         {
@@ -701,8 +709,8 @@ void ArsOrch::doArsPortChannelTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             ArsInterfaceEntry entry;
-            if (m_arsInterfaces.count(lagName))
-                entry = m_arsInterfaces[lagName];
+            if (m_arsLags.count(lagName))
+                entry = m_arsLags[lagName];
 
             for (auto &fv : kfvFieldsValues(kfv))
             {
@@ -716,7 +724,7 @@ void ArsOrch::doArsPortChannelTask(Consumer &consumer)
                     entry.linkUtilThreshold = static_cast<uint32_t>(stoul(value));
             }
 
-            m_arsInterfaces[lagName] = entry;
+            m_arsLags[lagName] = entry;
 
             bool prevBound = (m_arsEnabledLags.count(lagName) > 0);
 
@@ -763,7 +771,7 @@ void ArsOrch::doArsPortChannelTask(Consumer &consumer)
                 unbindArsFromLag(lagName);
                 m_arsEnabledLags.erase(lagName);
             }
-            m_arsInterfaces.erase(lagName);
+            m_arsLags.erase(lagName);
             SWSS_LOG_NOTICE("ARS: PortChannel %s ARS config removed", lagName.c_str());
         }
 
@@ -1049,7 +1057,7 @@ bool ArsOrch::removeArsObject(const string &name)
 
     // LAGs tracked by m_arsEnabledLags that point at this object name.
     vector<string> lagsToUnbind;
-    for (const auto &kv : m_arsInterfaces)
+    for (const auto &kv : m_arsLags)
     {
         if (kv.second.arsObject == name && m_arsEnabledLags.count(kv.first))
             lagsToUnbind.push_back(kv.first);
@@ -1327,7 +1335,7 @@ void ArsOrch::enableArsDataPlane()
         }
     }
 
-    // Re-enable per-port ARS on every interface that was admin_state=up.
+    // Re-enable per-port ARS on every physical port that was admin_state=up.
     for (const auto &kv : m_arsInterfaces)
     {
         const auto &portName = kv.first;
@@ -1339,7 +1347,7 @@ void ArsOrch::enableArsDataPlane()
     }
 
     // Re-bind any LAGs whose ARS object already exists.
-    for (const auto &kv : m_arsInterfaces)
+    for (const auto &kv : m_arsLags)
     {
         const auto &name = kv.first;
         const auto &entry = kv.second;
@@ -1348,14 +1356,8 @@ void ArsOrch::enableArsDataPlane()
         sai_object_id_t arsOid = getArsObjectOid(entry.arsObject);
         if (arsOid == SAI_NULL_OBJECT_ID)
             continue;
-        // Only names that actually resolve as LAGs: try the bind and let the
-        // helper's PortsOrch lookup reject non-LAG names cheaply.
-        Port port;
-        if (m_portsOrch->getPort(name, port) && port.m_lag_id != SAI_NULL_OBJECT_ID)
-        {
-            if (bindArsToLag(name, arsOid))
-                m_arsEnabledLags.insert(name);
-        }
+        if (bindArsToLag(name, arsOid))
+            m_arsEnabledLags.insert(name);
     }
 
     // Retroactively bind ARS to any routes/NHGs that were installed while ARS
