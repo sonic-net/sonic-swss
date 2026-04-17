@@ -76,6 +76,7 @@ protected:
     bool addHaScopeEntry(const std::string &key, const dash::ha_scope::HaScope &entry);
     bool removeHaScopeEntry(const std::string &key);
     bool setHaScopeHaRole(const std::string &key, const dash::ha_scope::HaScope &entry);
+    void updateHaScopeStateForSwitchOwner(const std::string &key, const dash::ha_scope::HaScope &entry);
     bool setHaScopeFlowReconcileRequest(const  std::string &key);
     bool setHaScopeActivateRoleRequest(const std::string &key);
     bool setHaScopeDisabled(const std::string &key, bool disabled);

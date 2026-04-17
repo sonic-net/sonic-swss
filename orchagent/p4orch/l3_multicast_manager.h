@@ -34,6 +34,7 @@ struct P4MulticastRouterInterfaceEntry {
   bool has_vlan_id = false;
   std::string action;
   std::string multicast_metadata;
+  sai_neighbor_entry_t sai_neighbor_entry;
 
   P4MulticastRouterInterfaceEntry() = default;
 };
@@ -52,12 +53,24 @@ struct P4Replica {
         instance(instance_number) {
     key = group_id + ":" + port_name + ":" + instance_number;
   }
+
+  bool operator==(const P4Replica& replica) const {
+    return multicast_group_id == replica.multicast_group_id &&
+           port == replica.port && instance == replica.instance &&
+           key == replica.key;
+  }
 };
 
 // Table entries for replication_multicast_group_table.
 struct P4MulticastGroupEntry {
   std::string multicast_group_id;  // Also a unique key for the entry.
-  std::vector<P4Replica> replicas;
+  bool is_ipmc;
+  // For each group member, there is a list of replicas to choose.
+  // We should choose the first replica that is up in the list.
+  // If no replica is up, we select the first replica in the list.
+  std::vector<std::vector<P4Replica>> replicas;
+  // The active replicas that the group is using.
+  std::vector<P4Replica> active_replicas;
   std::string multicast_metadata;
   std::string controller_metadata;
   // Used as a quick lookup for what replicas are in use.
@@ -162,6 +175,9 @@ class L3MulticastManager : public ObjectManagerInterface {
   ReturnCode validateDelMulticastGroupEntry(
       const P4MulticastGroupEntry& multicast_group_entry);
 
+  // Select the replicas to be used in a group.
+  void setActiveReplicas(P4MulticastGroupEntry& multicast_group_entry);
+
   // Processes a list of entries of the same operation type for the multicast
   // router interface table.
   // Returns an overall status code.
@@ -181,14 +197,21 @@ class L3MulticastManager : public ObjectManagerInterface {
       const std::string& op, bool update);
 
   // Wrapper around SAI setup and call, for easy mocking.
-  ReturnCode createBridgePort(P4MulticastRouterInterfaceEntry& entry,
-                              sai_object_id_t* bridge_port_oid);
-  ReturnCode deleteBridgePort(const std::string& port,
-                              sai_object_id_t bridge_port_oid);
   ReturnCode createRouterInterface(P4MulticastRouterInterfaceEntry& entry,
                                    sai_object_id_t* rif_oid);
+  ReturnCode createNextHop(P4MulticastRouterInterfaceEntry& entry,
+                           const sai_object_id_t rif_oid,
+                           sai_object_id_t* next_hop_oid);
+  ReturnCode createNeighborEntry(
+    P4MulticastRouterInterfaceEntry& entry, const sai_object_id_t rif_oid);
+
   ReturnCode deleteRouterInterface(const std::string& rif_key,
                                    sai_object_id_t rif_oid);
+
+  ReturnCode createDefaultMyMac();
+
+  ReturnCode deleteNextHop(P4MulticastRouterInterfaceEntry* entry,
+                           const sai_object_id_t next_hop_oid);
 
   // Wrapper around SAI setup and call to create multicast group.
   ReturnCode createMulticastGroup(P4MulticastGroupEntry& entry,
@@ -224,11 +247,15 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Update existing multicast router interface table entries.
   std::vector<ReturnCode> updateMulticastRouterInterfaceEntries(
       std::vector<P4MulticastRouterInterfaceEntry>& entries);
+
+  ReturnCode setDstMac(const swss::MacAddress& new_dst_mac,
+                       P4MulticastRouterInterfaceEntry* existing_entry);
+
   // Delete existing multicast router interface table entries.
   std::vector<ReturnCode> deleteMulticastRouterInterfaceEntries(
       const std::vector<P4MulticastRouterInterfaceEntry>& entries);
   ReturnCode deleteL3MulticastRouterInterfaceEntry(
-      const P4MulticastRouterInterfaceEntry* entry);
+      P4MulticastRouterInterfaceEntry* entry);
   ReturnCode deleteL2MulticastRouterInterfaceEntry(
       const P4MulticastRouterInterfaceEntry* entry);
 
@@ -313,15 +340,22 @@ class L3MulticastManager : public ObjectManagerInterface {
 
   // Fetches the RIF OID for a given multicast router interface entry.
   // Return SAI_NULL_OBJECT_ID if not found.
-  // A RIF is unique for each egress multicast_replica_port and Ethernet
-  // src mac pair.  The multicast_replica_instance is ignored as controller
-  // bookkeeping.
+  // A RIF is unique for each egress multicast_replica_port and
+  // multicast_replica_instance.
   sai_object_id_t getRifOid(
+      const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
+
+  // Fetches the Next hop OID for a given multicast router interface entry.
+  sai_object_id_t getNextHopOid(
       const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
 
   // Fetches the RIF OID that will be used by a given multicast replica.
   // This would be the value used by the group member.
   sai_object_id_t getRifOid(const P4Replica& replica);
+
+  // Fetches the Next hop OID that will be used by a given multicast replica.
+  // This would be the value used by the group member.
+  sai_object_id_t getNextHopOid(const P4Replica& replica);
 
   // Fetches the Bridge port OID that will be used by a given L2 multicast
   // replica.
@@ -343,6 +377,11 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Internal cache of entries.
   P4MulticastRouterInterfaceTable m_multicastRouterInterfaceTable;
   P4MulticastGroupTable m_multicastGroupEntryTable;
+
+  // OID for a valid MyMAC object, needed for creating multicast RIFs that will
+  // *not* result in a MyStation entry being added.  This will prevent the
+  // MyStation table size from blocking creating additional RIFs.
+  sai_object_id_t m_my_mac_oid = SAI_NULL_OBJECT_ID;
 
   P4OidMapper* m_p4OidMapper;
   VRFOrch* m_vrfOrch;
