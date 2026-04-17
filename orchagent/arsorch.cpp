@@ -76,9 +76,15 @@ ArsOrch::ArsOrch(DBConnector *configDb,
       m_stateArsCapTable(stateDb, STATE_ARS_CAPABILITY_TABLE_NAME),
       m_stateArsProfileTable(stateDb, STATE_ARS_PROFILE_TABLE_NAME),
       m_stateArsNhgTable(stateDb, STATE_ARS_NHG_TABLE_NAME),
+      // Match declaration order in arsorch.h (m_cfgArsObjectTable before
+      // m_stateArsObjectTable before m_cfgArsTable). Keeping the init list
+      // in declaration order is what -Wreorder checks for, and swss builds
+      // with -Wall -Wextra -Werror (see configure.ac), so any mismatch
+      // here fails the entire orchagent build. Do NOT reorder without
+      // also updating the header.
+      m_cfgArsObjectTable(configDb, CFG_ARS_OBJECT_TABLE_NAME),
       m_stateArsObjectTable(stateDb, STATE_ARS_OBJECT_TABLE_NAME),
-      m_cfgArsTable(configDb, CFG_ARS_TABLE_NAME),
-      m_cfgArsObjectTable(configDb, CFG_ARS_OBJECT_TABLE_NAME)
+      m_cfgArsTable(configDb, CFG_ARS_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
     m_portsOrch->attach(this);
