@@ -143,6 +143,7 @@ private:
     void doRestartCheckNotificationConsumerTask(swss::NotificationConsumer& consumer);
     swss::DBConnector *m_db;
     swss::Table m_switchTable;
+    swss::Table m_appSwitchTbl;
     std::map<sai_acl_stage_t, referenced_object> m_aclGroups;
     sai_object_id_t m_switchTunnelId;
 
