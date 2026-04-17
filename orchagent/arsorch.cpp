@@ -498,10 +498,17 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
             else
             {
                 sai_object_id_t oid = entry.arsOid;
-                setArsObjectAttr(oid, SAI_ARS_ATTR_MODE,      (uint32_t)entry.mode);
-                if (isFlowletMode(entry.mode))
-                    setArsObjectAttr(oid, SAI_ARS_ATTR_IDLE_TIME,  entry.idleTime);
-                setArsObjectAttr(oid, SAI_ARS_ATTR_MAX_FLOWS,  entry.maxFlows);
+                // Diff before set: only push SAI attrs whose value actually
+                // changed in this update. Previously every ARS_OBJECT SET
+                // issued three SAI calls regardless, cluttering sairedis.rec
+                // and churning vendor-SAI state for no effect.
+                const auto &prev = m_arsObjects[name];
+                if (prev.mode != entry.mode)
+                    setArsObjectAttr(oid, SAI_ARS_ATTR_MODE, (uint32_t)entry.mode);
+                if (isFlowletMode(entry.mode) && prev.idleTime != entry.idleTime)
+                    setArsObjectAttr(oid, SAI_ARS_ATTR_IDLE_TIME, entry.idleTime);
+                if (prev.maxFlows != entry.maxFlows)
+                    setArsObjectAttr(oid, SAI_ARS_ATTR_MAX_FLOWS, entry.maxFlows);
                 m_arsObjects[name] = entry;
 
                 // If admin_state flipped, re-evaluate all NHG bindings so the
@@ -1654,16 +1661,28 @@ void ArsOrch::publishArsCaps()
 
     if (arsSupported)
     {
+        // Query the enum capability once into a vector that we grow on
+        // SAI_STATUS_BUFFER_OVERFLOW rather than silently truncating. Then
+        // probe each mode of interest against the collected list. Doing the
+        // query once (not per mode) also avoids an N× SAI round-trip.
+        std::vector<int32_t> enumList(16);
+        sai_s32_list_t enumCap = {};
+        enumCap.count = (uint32_t)enumList.size();
+        enumCap.list  = enumList.data();
+        sai_status_t qs = sai_query_attribute_enum_values_capability(
+            gSwitchId, SAI_OBJECT_TYPE_ARS, SAI_ARS_ATTR_MODE, &enumCap);
+        if (qs == SAI_STATUS_BUFFER_OVERFLOW)
+        {
+            enumList.resize(enumCap.count);
+            enumCap.list = enumList.data();
+            qs = sai_query_attribute_enum_values_capability(
+                gSwitchId, SAI_OBJECT_TYPE_ARS, SAI_ARS_ATTR_MODE, &enumCap);
+        }
+
         for (const auto &modePair : modeProbes)
         {
             const auto &name = modePair.first;
             const auto &mode = modePair.second;
-            sai_s32_list_t enumCap = {};
-            int32_t enumList[16];
-            enumCap.count = 16;
-            enumCap.list = enumList;
-            sai_status_t qs = sai_query_attribute_enum_values_capability(
-                gSwitchId, SAI_OBJECT_TYPE_ARS, SAI_ARS_ATTR_MODE, &enumCap);
 
             bool found = false;
             if (qs == SAI_STATUS_SUCCESS)
@@ -1679,6 +1698,8 @@ void ArsOrch::publishArsCaps()
             }
             else
             {
+                // Platforms that don't implement the enum capability query
+                // advertise everything — this matches the previous behavior.
                 found = true;
             }
 
