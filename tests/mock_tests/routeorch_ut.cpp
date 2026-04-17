@@ -1142,6 +1142,7 @@ namespace routeorch_test
         // Create temp route
         gRouteOrch->addTempRoute(ctx, desired_nhg);
         gRouteOrch->gRouteBulker.flush();
+        gRouteOrch->addRoutePost(ctx, ctx.tmp_next_hop);
 
         // --- Step 3: Verify desired_nhg_key was recorded ---
         auto it = gRouteOrch->m_syncdRoutes[gVirtualRouterId].find(IpPrefix("5.5.5.0/24"));
@@ -1211,6 +1212,7 @@ namespace routeorch_test
 
         gRouteOrch->addTempRoute(ctx, desired_nhg);
         gRouteOrch->gRouteBulker.flush();
+        gRouteOrch->addRoutePost(ctx, ctx.tmp_next_hop);
 
         ASSERT_NE(first_nh_oid, 0u);
 
@@ -1317,6 +1319,7 @@ namespace routeorch_test
 
         gRouteOrch->addTempRoute(ctx, initial_nhg);
         gRouteOrch->gRouteBulker.flush();
+        gRouteOrch->addRoutePost(ctx, ctx.tmp_next_hop);
 
         ASSERT_NE(first_nh_oid, 0u);
 
@@ -1365,6 +1368,7 @@ namespace routeorch_test
 
         bool result = gRouteOrch->addRoute(ctx2, expanded_nhg);
         gRouteOrch->gRouteBulker.flush();
+        gRouteOrch->addRoutePost(ctx2, ctx2.tmp_next_hop);
 
         // Verify that SAI was called (re-randomization occurred)
         ASSERT_TRUE(sai_called);
@@ -1433,6 +1437,7 @@ namespace routeorch_test
 
         gRouteOrch->addTempRoute(ctx, initial_nhg);
         gRouteOrch->gRouteBulker.flush();
+        gRouteOrch->addRoutePost(ctx, ctx.tmp_next_hop);
 
         // Verify temp route was created
         auto it = gRouteOrch->m_syncdRoutes[gVirtualRouterId].find(prefix);
@@ -1491,6 +1496,7 @@ namespace routeorch_test
 
         gRouteOrch->addRoute(ctx2, reduced_nhg);
         gRouteOrch->gRouteBulker.flush();
+        gRouteOrch->addRoutePost(ctx2, ctx2.tmp_next_hop);
 
         // Verify re-randomization occurred and desired_nhg_key was updated
         it = gRouteOrch->m_syncdRoutes[gVirtualRouterId].find(prefix);
@@ -1559,8 +1565,11 @@ namespace routeorch_test
 
         bool result = gRouteOrch->addRoute(ctx3, reduced_nhg);
         gRouteOrch->gRouteBulker.flush();
+        gRouteOrch->addRoutePost(ctx3, reduced_nhg);
 
-        ASSERT_TRUE(result);
+        // addRoute returns false even on success (it's an internal method that queues operations)
+        // Success is verified by checking m_syncdRoutes instead
+        ASSERT_FALSE(result);
 
         // --- Step 7: Verify final state - route points to full 2-member NHG ---
         it = gRouteOrch->m_syncdRoutes[gVirtualRouterId].find(prefix);
