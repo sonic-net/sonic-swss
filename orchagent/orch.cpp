@@ -568,13 +568,6 @@ void Consumer::drain()
     if (!m_toSync.empty())
     {
         size_t size_before = gSwssStatsRecord ? m_toSync.size() : 0;
-        ((Orch *)m_orch)->doTask((Consumer&)*this);
-        if (gSwssStatsRecord && size_before > 0)
-        {
-            size_t size_after = m_toSync.size();
-            uint64_t completed = (size_before > size_after) ? (size_before - size_after) : 0;
-            if (completed > 0)
-                SwssStats::getInstance()->recordComplete(getTableName(), completed);
         try
         {
             ((Orch *)m_orch)->doTask((Consumer&)*this);
@@ -598,6 +591,13 @@ void Consumer::drain()
         {
             SWSS_LOG_ERROR("Exception caught: type=unknown, table=%s",
                            getName().c_str());
+        }
+        if (gSwssStatsRecord && size_before > 0)
+        {
+            size_t size_after = m_toSync.size();
+            uint64_t completed = (size_before > size_after) ? (size_before - size_after) : 0;
+            if (completed > 0)
+                SwssStats::getInstance()->recordComplete(getTableName(), completed);
         }
     }
 }
