@@ -490,7 +490,18 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch, gArsOrch};
+    // gArsOrch intentionally runs *before* the NHG/RouteOrch group. On cold
+    // boot with both ARS config and pre-existing routes in CONFIG_DB, if
+    // RouteOrch created NHGs first, gArsOrch->isArsEnabled() would still be
+    // false at NHG-create time — the ARS_OBJECT_ID attribute would not be
+    // included, and the retroactive bind via bindArsToExistingNhgs() would
+    // then be rejected by Mellanox SAI with SAI_STATUS_INVALID_PARAMETER
+    // because the NHG by then has members (write-once restriction in
+    // mlnx_sai_nexthopgroup.c:1522). Moving gArsOrch ahead of gNhgOrch /
+    // gNhgMapOrch / gCbfNhgOrch / gFgNhgOrch / gRouteOrch ensures
+    // ARS|GLOBAL.admin_state is processed first, so when routeorch creates
+    // NHGs it can bind ARS atomically before any member is added.
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gArsOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
