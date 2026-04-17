@@ -1799,9 +1799,12 @@ void ArsOrch::publishArsProfileState(const string &profileName, const ArsProfile
     fvs.emplace_back("ipv6_enable",              entry.ipv6Enable ? "true" : "false");
     fvs.emplace_back("sampling_interval",        std::to_string(entry.samplingInterval));
     fvs.emplace_back("random_seed",              std::to_string(entry.randomSeed));
-    fvs.emplace_back("quant_band_0_min_threshold", std::to_string(entry.quantBand0MinThreshold));
-    fvs.emplace_back("quant_band_1_min_threshold", std::to_string(entry.quantBand1MinThreshold));
-    fvs.emplace_back("quant_band_2_min_threshold", std::to_string(entry.quantBand2MinThreshold));
+    // NOTE: quant_band_{0,1,2}_min_threshold are published separately by
+    // upscale-ai-network/sonic-swss#15 (feat/ars-quant-band-thresholds),
+    // which adds the corresponding fields to ArsProfileEntry. Intentionally
+    // omitted here so this branch builds standalone against
+    // upscaleai-202511. When #15 merges, a follow-up should mirror the
+    // three fields from the merged ArsProfileEntry into this helper.
 
     fvs.emplace_back("default_ars_object", entry.defaultArsObject);
 
