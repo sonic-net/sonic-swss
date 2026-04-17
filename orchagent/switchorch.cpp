@@ -918,6 +918,22 @@ bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
             cfgUpd = true;
         }
     }
+    else if (hObj.ecmp_type.is_set)
+    {
+        // `no ecmp type` in uCLI HDELs the ecmp_type field from
+        // SWITCH_HASH|GLOBAL without clearing the whole key. The SET
+        // notification that follows has no ecmp_type, so the block above
+        // is skipped — previously leaving m_ecmpNhgType stuck at whatever
+        // was last set (ordered) even though operator intent was "revert".
+        // Mirror the reset pattern used for ecmp_hash / *_algorithm above
+        // and return to the documented default (static) so newly-created
+        // NHGs stop using DYNAMIC_ORDERED_ECMP the moment the operator
+        // clears the field.
+        m_ecmpNhgType = SAI_NEXT_HOP_GROUP_TYPE_ECMP;
+        m_orderedEcmpEnable = false;
+        SWSS_LOG_NOTICE("ECMP type cleared from CONFIG_DB — reverting to default static (SAI ECMP)");
+        cfgUpd = true;
+    }
 
     // Don't update internal cache when config remains unchanged
     if (!cfgUpd)
