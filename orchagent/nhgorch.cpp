@@ -801,16 +801,11 @@ bool NextHopGroup::sync()
         ++m_syncdCount;
 
         /*
-        * Try creating the next hop group's members over SAI.
-        */
-        if (!syncMembers(m_key.getNextHops()))
-        {
-            SWSS_LOG_WARN("Failed to create next hop members of group %s",
-                            to_string().c_str());
-            return false;
-        }
-
-        /* Bind ARS object if adaptive routing is enabled and a matching ARS object exists */
+         * Bind ARS object BEFORE adding members.  Mellanox SAI only programs
+         * SX_ECMP_TYPE_ADAPTIVE_E on an empty ECMP container
+         * (mlnx_check_and_set_ar_ecmp skips when sdk_next_hop_cnt != 0).
+         * This matches the RouteOrch::addNextHopGroup ordering.
+         */
         if (gArsOrch && gArsOrch->isArsEnabled())
         {
             auto arsOid = gArsOrch->resolveArsForNhg(m_id, m_key);
@@ -822,6 +817,16 @@ bool NextHopGroup::sync()
                                   m_key.to_string().c_str());
                 }
             }
+        }
+
+        /*
+        * Try creating the next hop group's members over SAI.
+        */
+        if (!syncMembers(m_key.getNextHops()))
+        {
+            SWSS_LOG_WARN("Failed to create next hop members of group %s",
+                            to_string().c_str());
+            return false;
         }
     }
 
