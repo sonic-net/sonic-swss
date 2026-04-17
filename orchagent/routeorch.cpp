@@ -1226,12 +1226,6 @@ void RouteOrch::doTask(ConsumerBase& consumer)
             }
         }
 
-        /* Flush response publisher so route notifications reach fpmsyncd every batch.
-         * Without this, notifications stay buffered in the Redis pipeline until the
-         * next OrchDaemon periodic flush (up to 1s), delaying the offload reply to
-         * zebra and causing BGP advertisement delay when supress fib pending is ON */
-        m_publisher.flush();
-
         /* Remove next hop group if the reference count decreases to zero */
         for (auto& it_nhg : m_bulkNhgReducedRefCnt)
         {
@@ -1251,6 +1245,13 @@ void RouteOrch::doTask(ConsumerBase& consumer)
         {
             m_srv6Orch->removeSrv6Nexthops(m_bulkSrv6NhgReducedVec);
         }
+
+        // One async batch + flush per gRouteBulker.flush(): drain batched publishAsync work to the worker,
+        // then enqueue the flush marker so fpmsyncd sees responses without waiting for OrchDaemon periodic 
+        // flush.
+        m_publisher.publishAsyncBatch();
+        m_publisher.flush();
+
         /* No Update to Default Route so we can return */
         if (!(v4_default_nhg_key.getSize()) && !(v6_default_nhg_key.getSize()))
         {
@@ -3040,8 +3041,10 @@ bool RouteOrch::removeRoutePrefix(const IpPrefix& prefix)
         return true;
     }
     gRouteBulker.flush();
-    return removeRoutePost(context);
-
+    bool ret = removeRoutePost(context);
+    m_publisher.publishAsyncBatch();
+    m_publisher.flush();
+    return ret;
 }
 
 bool RouteOrch::createRemoteVtep(sai_object_id_t vrf_id, const NextHopKey &nextHop)
