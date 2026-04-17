@@ -54,16 +54,19 @@ class ResponsePublisher : public ResponsePublisherInterface
 
     void setEnableDbWriteAndNotify(bool enable_db_write_and_notify) override;
 
-    // Enqueue full publish (notification + APPL_STATE_DB write + recorder) on the response publisher 
-    // db update thread. When constructed without a DB update thread (e.g. RouteOrch with orchagent -a 
-    // gRouteStateAsyncPublish false), calls the 5-arg publish() synchronously.
+    // With a state update thread: append to m_async_publish_pending; caller must call
+    // publishAsyncBatch() then flush() to enqueue work (batch + flush marker).
+    // Without a state update thread: synchronous publish().
     void publishAsync(const std::string &table, const std::string &key,
                       const std::vector<swss::FieldValueTuple> &intent_attrs, const ReturnCode &status,
                       bool replace = false);
 
-    // When true and the response publisher db update thread is used, all notifications for this publisher 
+    // Enqueue the current async batch as one queue item. No-op if empty or if no state update thread.
+    void publishAsyncBatch();
+
+    // When true and the response publisher state update thread is used, all notifications for this publisher 
     // are sent from that thread (publishAsync path). flush() then flushes the notification pipeline on the 
-    // response publisher db update thread as well, avoiding concurrent use of the notification RedisPipeline 
+    // response publisher state update thread as well, avoiding concurrent use of the notification RedisPipeline 
     // from two threads.
     void setAsyncFullPublish(bool enable);
 
@@ -85,6 +88,16 @@ class ResponsePublisher : public ResponsePublisherInterface
     bool m_directDbWrite = false;
 
   private:
+    struct asyncPublishItem
+    {
+        std::string table;
+        std::string key;
+        std::vector<swss::FieldValueTuple> intent_attrs;
+        ReturnCode status;
+        bool replace;
+        std::string record_ts;
+    };
+
     struct entry
     {
         std::string table;
@@ -94,28 +107,23 @@ class ResponsePublisher : public ResponsePublisherInterface
         bool replace;
         bool flush;
         bool shutdown;
-        bool fullPublish;
-        std::vector<swss::FieldValueTuple> intent_attrs;
-        ReturnCode status;
-        // When fullPublish: timestamp at enqueue; matches sync publish() recorder timing.
-        std::string record_ts;
+        bool fullPublishBatch;
+        std::vector<asyncPublishItem> full_publish_batch;
 
-        entry() : replace(false), flush(false), shutdown(false), fullPublish(false)
+        entry() : replace(false), flush(false), shutdown(false), fullPublishBatch(false)
         {
         }
 
         entry(const std::string &table, const std::string &key, const std::vector<swss::FieldValueTuple> &values,
               const std::string &op, bool replace, bool flush, bool shutdown)
             : table(table), key(key), values(values), op(op), replace(replace), flush(flush), shutdown(shutdown),
-              fullPublish(false)
+              fullPublishBatch(false)
         {
         }
     };
 
-    void dbUpdateThread();
-    void publishFullFromThread(const std::string &table, const std::string &key,
-                               const std::vector<swss::FieldValueTuple> &intent_attrs, const ReturnCode &status,
-                               bool replace, const std::string &record_ts);
+    void stateUpdateThread();
+    void publishFullBatchFromThread(std::vector<asyncPublishItem> &&items);
     void writeToDBInternal(const std::string &table, const std::string &key,
                            const std::vector<swss::FieldValueTuple> &values, const std::string &op, bool replace);
 
@@ -129,9 +137,10 @@ class ResponsePublisher : public ResponsePublisherInterface
       responses;  // Cache the responses to send them together in flush(). Only
                   // used when ZMQ is enabled.
     // When true with m_update_thread, full publish (incl. notifications) runs on the response publisher 
-    // db update thread; flush() coordinates m_ntf_pipe flush there.
+    // state update thread; flush() coordinates m_ntf_pipe flush there.
     bool m_async_full_publish{false};
-    // Thread to write to DB.
+    std::vector<asyncPublishItem> m_async_publish_pending;
+    // Thread to write to DB, notify and record.
     std::unique_ptr<std::thread> m_update_thread;
     std::queue<entry, std::list<entry>> m_queue;
     mutable std::mutex m_lock;
