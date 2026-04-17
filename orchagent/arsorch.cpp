@@ -13,10 +13,14 @@
 using namespace std;
 using namespace swss;
 
-extern sai_ars_api_t*         sai_ars_api;
-extern sai_ars_profile_api_t* sai_ars_profile_api;
-extern sai_object_id_t        gSwitchId;
-extern RouteOrch             *gRouteOrch;
+extern sai_ars_api_t*            sai_ars_api;
+extern sai_ars_profile_api_t*    sai_ars_profile_api;
+extern sai_switch_api_t*         sai_switch_api;
+extern sai_next_hop_group_api_t* sai_next_hop_group_api;
+extern sai_lag_api_t*            sai_lag_api;
+extern sai_port_api_t*           sai_port_api;
+extern sai_object_id_t           gSwitchId;
+extern RouteOrch                *gRouteOrch;
 
 static const map<string, sai_ars_mode_t> arsModeLookup = {
     {"flowlet-quality",  SAI_ARS_MODE_FLOWLET_QUALITY},
@@ -988,7 +992,6 @@ bool ArsOrch::bindArsProfileToSwitch(sai_object_id_t profileOid)
     attr.id = SAI_SWITCH_ATTR_ARS_PROFILE;
     attr.value.oid = profileOid;
 
-    extern sai_switch_api_t *sai_switch_api;
     sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -1010,7 +1013,6 @@ bool ArsOrch::bindArsToNhg(sai_object_id_t nhgOid, sai_object_id_t arsOid)
     attr.id = SAI_NEXT_HOP_GROUP_ATTR_ARS_OBJECT_ID;
     attr.value.oid = arsOid;
 
-    extern sai_next_hop_group_api_t *sai_next_hop_group_api;
     sai_status_t status = sai_next_hop_group_api->set_next_hop_group_attribute(nhgOid, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -1049,7 +1051,6 @@ bool ArsOrch::bindArsToLag(const string &lagName, sai_object_id_t arsOid)
     attr.id = SAI_LAG_ATTR_ARS_OBJECT_ID;
     attr.value.oid = arsOid;
 
-    extern sai_lag_api_t *sai_lag_api;
     sai_status_t status = sai_lag_api->set_lag_attribute(port.m_lag_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -1143,7 +1144,6 @@ bool ArsOrch::setPortArsEnable(const string &portName, bool enable)
     attr.id = SAI_PORT_ATTR_ARS_ENABLE;
     attr.value.booldata = enable;
 
-    extern sai_port_api_t *sai_port_api;
     sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -1217,7 +1217,6 @@ bool ArsOrch::setPortArsScalingFactor(const string &portName, const ArsPortProfi
     attr.id = SAI_PORT_ATTR_ARS_PORT_LOAD_SCALING_FACTOR;
     attr.value.u32 = factor;
 
-    extern sai_port_api_t *sai_port_api;
     sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -1261,7 +1260,6 @@ bool ArsOrch::setPortArsWeights(const string &portName, uint32_t pastWeight, uin
         return false;
     }
 
-    extern sai_port_api_t *sai_port_api;
     sai_attribute_t attr;
 
     if (pastWeight > 0)
