@@ -365,8 +365,17 @@ void ArsOrch::doArsObjectTask(Consumer &consumer)
 
             if (!m_arsEnabled)
             {
-                SWSS_LOG_WARN("ARS: global ARS not enabled, deferring object %s", name.c_str());
-                ++it;
+                // Defer creation by persisting the parsed entry with a null
+                // SAI OID. enableArsDataPlane() walks m_arsObjects on global
+                // ARS|GLOBAL admin_state=up and creates everything with
+                // arsOid == SAI_NULL_OBJECT_ID. We still erase from m_toSync
+                // (the config-DB view is already captured in our cache) so
+                // the orchagent doesn't spin on a can-never-progress entry.
+                m_arsObjects[name] = entry;
+                SWSS_LOG_WARN("ARS: global ARS not enabled, cached object %s "
+                              "for creation on next ARS|GLOBAL admin_state=up",
+                              name.c_str());
+                it = consumer.m_toSync.erase(it);
                 continue;
             }
 
@@ -1189,6 +1198,26 @@ void ArsOrch::enableArsDataPlane()
 {
     SWSS_LOG_ENTER();
     SWSS_LOG_NOTICE("ARS: re-applying data plane from cached CONFIG_DB state");
+
+    // Create any ARS objects that were parsed while global ARS was disabled
+    // (stored with arsOid == SAI_NULL_OBJECT_ID by doArsObjectTask). Done
+    // before port / LAG / NHG steps so the resolver can find them.
+    for (auto &kv : m_arsObjects)
+    {
+        if (kv.second.arsOid != SAI_NULL_OBJECT_ID)
+            continue;
+        const auto &name = kv.first;
+        if (createArsObject(name, kv.second))
+        {
+            SWSS_LOG_NOTICE("ARS: created deferred object '%s' on global enable",
+                            name.c_str());
+        }
+        else
+        {
+            SWSS_LOG_ERROR("ARS: failed to create deferred object '%s'",
+                           name.c_str());
+        }
+    }
 
     // Re-enable per-port ARS on every interface that was admin_state=up.
     for (const auto &kv : m_arsInterfaces)
