@@ -208,6 +208,26 @@ private:
     std::set<std::string> m_arsEnabledPorts;
     std::set<std::string> m_arsEnabledLags;
 
+    // Ports whose CONFIG_DB ARS_INTERFACES|<port> requested admin_state=up
+    // but whose setPortArsEnable() SAI call was rejected — typically
+    // because the port's SAI OID wasn't yet published by PortsOrch at
+    // the time ArsOrch processed the ARS_INTERFACES event (cold boot /
+    // post-`config reload` race), or because the SAI rejected the
+    // attribute set on a port that was briefly carrying a RIF.
+    //
+    // Without a retry path, these ports stay "enabled in CONFIG_DB but
+    // disabled in SAI" forever — ArsOrch force-sets
+    // m_arsInterfaces[port].enabled=false so the NHG resolver reports
+    // "member <port> has no ars_object association" and every NHG that
+    // includes them stays degraded, with no way to recover short of
+    // flapping ARS_INTERFACES manually.
+    //
+    // On SUBJECT_TYPE_PORT_OPER_STATE_CHANGE=UP we retry
+    // setPortArsEnable() for every port in this set and, on success,
+    // move it back into m_arsEnabledPorts / m_arsInterfaces[].enabled
+    // and ask RouteOrch to re-evaluate NHG bindings.
+    std::set<std::string> m_arsInterfacesPendingEnable;
+
     std::unordered_map<std::string, std::string> m_nexthopArsBindings;
     // nhgOid → ARS_NHG_TABLE row key. Written by bindArsToNhg so we can
     // reliably delete the row later on NHG removal (via forgetNhg) without

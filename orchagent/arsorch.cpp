@@ -102,6 +102,54 @@ void ArsOrch::update(SubjectType type, void *cntx)
         return;
 
     const string &portName = stateUpdate->port.m_alias;
+
+    // Retry a previously-failed setPortArsEnable. doArsInterfaceTask
+    // queues a port here when its CONFIG_DB ARS_INTERFACES row requested
+    // admin_state=up but the SAI enable was rejected (port OID not yet
+    // published by PortsOrch at cold boot / config-reload time, or the
+    // port briefly carried a RIF). The port-up notification is a good
+    // retry moment: by the time the oper state reaches UP, PortsOrch
+    // has certainly created the SAI port object and IntfsOrch has
+    // either not yet created the RIF (setup path — egress ports that
+    // came up without IPs configured, as in setup_lab.py's ARS path)
+    // or has already finished creating it (in which case we're out of
+    // luck and the retry will fail again, but failing at port-up and
+    // leaving the port queued is still better than never retrying at
+    // all on platforms where the transient clears by itself).
+    if (m_arsInterfacesPendingEnable.count(portName))
+    {
+        SWSS_LOG_NOTICE("ARS: port %s came up — retrying previously-failed "
+                        "setPortArsEnable", portName.c_str());
+        if (setPortArsEnable(portName, true))
+        {
+            m_arsInterfacesPendingEnable.erase(portName);
+            m_arsEnabledPorts.insert(portName);
+            auto it = m_arsInterfaces.find(portName);
+            if (it != m_arsInterfaces.end())
+            {
+                it->second.enabled = true;
+                SWSS_LOG_NOTICE("ARS: port %s ARS now enabled on retry",
+                                portName.c_str());
+                // Ports becoming ARS-enabled makes previously-degraded
+                // NHGs eligible for binding. RouteOrch::bindArsToExistingNhgs
+                // calls resolveArsForNhg which will now find ars_object for
+                // this port, and (on platforms where SAI_NEXT_HOP_GROUP_ATTR
+                // _ARS_OBJECT_ID is settable on an existing NHG) attach the
+                // ARS object. On Mellanox the set is rejected on populated
+                // NHGs (write-once-at-create), so the retry merely restores
+                // correct m_arsInterfaces state — the operator still needs
+                // a route flap to materialize the binding.
+                if (gRouteOrch && m_arsEnabled)
+                    gRouteOrch->bindArsToExistingNhgs();
+            }
+        }
+        else
+        {
+            SWSS_LOG_WARN("ARS: retry of setPortArsEnable on %s still failed "
+                          "— leaving queued", portName.c_str());
+        }
+    }
+
     auto it = m_arsInterfaces.find(portName);
     if (it == m_arsInterfaces.end())
         return;
@@ -1041,14 +1089,25 @@ void ArsOrch::doArsInterfaceTask(Consumer &consumer)
             if (entry.enabled && !prevEnabled)
             {
                 if (setPortArsEnable(portName, true))
+                {
                     m_arsEnabledPorts.insert(portName);
+                    m_arsInterfacesPendingEnable.erase(portName);
+                }
                 else
                 {
+                    // SAI rejected the enable. Most common causes: PortsOrch
+                    // hasn't published the port's OID yet (cold boot /
+                    // config-reload race), or the port is carrying a RIF
+                    // that must be removed first. Queue for retry on the
+                    // next PORT_OPER_STATE_CHANGE=UP so we don't leave the
+                    // port permanently misbound when the transient clears.
                     SWSS_LOG_ERROR("ARS: failed to enable ARS on port %s — "
                                    "keeping entry.enabled=false so NHG resolver "
-                                   "does not bind ARS on this port",
+                                   "does not bind ARS on this port; queued "
+                                   "for retry on next port-up event",
                                    portName.c_str());
                     entry.enabled = false;
+                    m_arsInterfacesPendingEnable.insert(portName);
                 }
             }
             else if (!entry.enabled && prevEnabled)
@@ -1057,6 +1116,8 @@ void ArsOrch::doArsInterfaceTask(Consumer &consumer)
                     m_arsEnabledPorts.erase(portName);
                 else
                     SWSS_LOG_ERROR("ARS: failed to disable ARS on port %s", portName.c_str());
+                // Explicit admin_state=down cancels any pending retry.
+                m_arsInterfacesPendingEnable.erase(portName);
             }
 
             m_arsInterfaces[portName] = entry;
@@ -1110,6 +1171,8 @@ void ArsOrch::doArsInterfaceTask(Consumer &consumer)
                 }
             }
             m_arsInterfaces.erase(portName);
+            // Interface entry is gone — no enable intent remains to retry.
+            m_arsInterfacesPendingEnable.erase(portName);
         }
 
         it = consumer.m_toSync.erase(it);
