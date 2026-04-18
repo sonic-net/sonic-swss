@@ -80,6 +80,20 @@ void on_ha_scope_event(uint32_t count, sai_ha_scope_event_data_t *data)
     }
 }
 
+void on_flow_bulk_get_session_event(sai_object_id_t flow_bulk_session_id, uint32_t count, sai_flow_bulk_get_session_event_data_t *data)
+{
+    if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
+    {
+        swss::DBConnector db("ASIC_DB", 0);
+        swss::NotificationProducer flow_bulk_get_session_event(&db, "NOTIFICATIONS");
+        std::string sdata = sai_serialize_flow_bulk_get_session_event_ntf(flow_bulk_session_id, count, data);
+        std::vector<swss::FieldValueTuple> values;
+
+        // Forward flow_bulk_get_session_event notification to be handled in orchagent doTask()
+        flow_bulk_get_session_event.send(SAI_SWITCH_NOTIFICATION_NAME_FLOW_BULK_GET_SESSION_EVENT, sdata, values);
+    }
+}
+
 void on_switch_shutdown_request(sai_object_id_t switch_id)
 {
     SWSS_LOG_ENTER();
