@@ -1177,7 +1177,7 @@ int RIBNHGEntry::syncFvVector() {
 /* get fields from entry */
 int RIBNHGEntry::getNHGFields() {
 
-    if (m_has_member) {
+    if (m_resolvedGroup.size() > 0) {
         SWSS_LOG_DEBUG("multi nexthop group");
         // nexthop with group member
         return getNextHopGroupFields();
@@ -1301,7 +1301,6 @@ int RIBNHGEntry::getNextHopFields() {
  * below fields of entry will be set:
  *      m_resolvedGroup
  *      m_is_single
- *      m_has_member
  */
 int RIBNHGEntry::getResolvedGroupFromNHGFull() {
     if (m_sonic_obj_type == SONIC_NHG_OBJ_TYPE_NHG_NORMAL) {
@@ -1310,6 +1309,13 @@ int RIBNHGEntry::getResolvedGroupFromNHGFull() {
                 m_resolvedGroup.insert(std::make_pair(nhg.id, nhg.weight));
                 SWSS_LOG_DEBUG("NextHop id %d add resolved group %d.", m_rib_id, nhg.id);
             }
+        }
+        if(m_resolvedGroup.size() == 0){
+            m_is_single = true;
+        } else if (m_resolvedGroup.size() == 1){
+            m_is_single = true;
+        } else{
+            m_is_single = false;
         }
     } else if (m_sonic_obj_type == SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY) {
         for (auto nhg: m_nhg.nh_grp_full_list){
@@ -1322,19 +1328,13 @@ int RIBNHGEntry::getResolvedGroupFromNHGFull() {
                 m_resolvedGroup.insert(std::make_pair(nhg.id, nhg.weight));
                 SWSS_LOG_DEBUG("NextHop id %d add resolved group %d, type %d.", m_rib_id, nhg.id, entry->getSonicObjType());
             }
+            /*
+             * SRv6 VPN already create NHG and PIC objects
+             */
+            m_is_single = false;
         }
     }
 
-    if(m_resolvedGroup.size() == 0){
-        m_is_single = true;
-        m_has_member = false;
-    } else if (m_resolvedGroup.size() == 1){
-        m_is_single = true;
-        m_has_member = true;
-    } else{
-        m_is_single = false;
-        m_has_member = true;
-    }
     return 0;
 }
 

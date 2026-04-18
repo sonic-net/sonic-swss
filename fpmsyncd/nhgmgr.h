@@ -733,8 +733,6 @@ namespace swss {
          */
         bool m_is_single = true;
 
-        bool m_has_member = false;
-
         /*
          * enable flag of the entry
          * default: true
