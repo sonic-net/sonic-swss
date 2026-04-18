@@ -91,7 +91,7 @@ private:
         KeyOpFieldsValuesTuple tuple;
     };
 
-    void ensureAsyncWorker();
+    void ensureAsyncWorkerLocked();
     void stopAsyncWorker();
     void onEnqueue(size_t count);
     void onDrain();
@@ -102,13 +102,14 @@ private:
     static size_t appendLiteral(char *buffer, size_t pos, const char *text, size_t capacity);
     static size_t appendUnsigned(char *buffer, size_t pos, uint64_t value, size_t capacity);
 
-    bool m_asyncEnabled = false;
+    std::atomic<bool> m_asyncEnabled{false};
     bool m_shutdown = false;
     bool m_workerStarted = false;
     mutable std::atomic<uint64_t> m_pendingCount{0};
     mutable std::atomic<uint64_t> m_highWatermark{0};
     mutable std::atomic<uint64_t> m_enqueuedTotal{0};
     mutable std::atomic<uint64_t> m_drainedTotal{0};
+    std::mutex m_stateMutex;
     std::mutex m_mutex;
     std::condition_variable m_signal;
     std::deque<AsyncSwssRecordEntry> m_queue;

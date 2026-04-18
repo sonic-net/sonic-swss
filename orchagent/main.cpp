@@ -136,12 +136,22 @@ void fatal_signal_handler(int signo)
 {
     /*
      * Do not use SWSS logging here since it takes locks. Dump only the
-     * async recorder counters with async-signal-safe write() and then let
-     * the process terminate with the original signal to preserve core dumps.
+     * async recorder counters with async-signal-safe write() and then
+     * re-raise the original signal so the default fatal action can produce
+     * the expected core dump.
      */
     dumpAsyncSwssRecorderSignalSafeStats(STDERR_FILENO, signo);
+
+    /*
+     * The handler is registered with SA_RESETHAND, so only the handled
+     * signal remains blocked here. Unblock it and re-raise so the default
+     * fatal action runs instead of short-circuiting through _exit().
+     */
+    sigset_t sigset;
+    sigemptyset(&sigset);
+    sigaddset(&sigset, signo);
+    sigprocmask(SIG_UNBLOCK, &sigset, nullptr);
     kill(getpid(), signo);
-    _exit(128 + signo);
 }
 
 void graceful_shutdown_signal_handler(int signo)
@@ -423,6 +433,12 @@ int main(int argc, char **argv)
     gOrchUnhealthy = false;
     WarmStart::initialize("orchagent", "swss");
     WarmStart::checkWarmStart("orchagent", "swss");
+
+    /*
+     * Construct the singleton before registering fatal handlers so the
+     * signal path never triggers function-local static initialization.
+     */
+    (void)Recorder::Instance();
 
     if (signal(SIGHUP, sighup_handler) == SIG_ERR)
     {

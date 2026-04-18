@@ -114,7 +114,7 @@ namespace consumer_test
 
         ThrowType m_throwType;
     };
-    
+
     struct ConsumerTest : public ::testing::Test
     {
         shared_ptr<swss::DBConnector> m_app_db;
@@ -523,6 +523,8 @@ namespace consumer_test
         }
 
         Recorder::Instance().swss.setAsync(false);
+        ASSERT_EQ(remove(fullpath.c_str()), 0);
+        ASSERT_EQ(rmdir(dirname.c_str()), 0);
     }
 
     /*

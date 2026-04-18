@@ -59,17 +59,26 @@ SwSSRec::~SwSSRec()
 
 void SwSSRec::setAsync(bool enabled)
 {
-    m_asyncEnabled = enabled;
+    bool previous = m_asyncEnabled.exchange(enabled, std::memory_order_relaxed);
+    if (previous == enabled)
+    {
+        return;
+    }
+
+    if (!enabled)
+    {
+        stopAsyncWorker();
+    }
 }
 
 bool SwSSRec::isAsyncEnabled() const
 {
-    return m_asyncEnabled;
+    return m_asyncEnabled.load(std::memory_order_relaxed);
 }
 
 void SwSSRec::recordTupleAsync(const std::string& prefix, const KeyOpFieldsValuesTuple& tuple)
 {
-    if (!m_asyncEnabled)
+    if (!m_asyncEnabled.load(std::memory_order_relaxed))
     {
         AsyncSwssRecordEntry entry = {{}, prefix, tuple};
         record(serialize(entry));
@@ -80,13 +89,22 @@ void SwSSRec::recordTupleAsync(const std::string& prefix, const KeyOpFieldsValue
     {
         return;
     }
-
-    ensureAsyncWorker();
-
     struct timeval received_time;
     gettimeofday(&received_time, nullptr);
 
     {
+        std::unique_lock<std::mutex> stateLock(m_stateMutex);
+
+        if (!m_asyncEnabled.load(std::memory_order_relaxed))
+        {
+            stateLock.unlock();
+            AsyncSwssRecordEntry entry = {{}, prefix, tuple};
+            record(serialize(entry));
+            return;
+        }
+
+        ensureAsyncWorkerLocked();
+
         std::lock_guard<std::mutex> lock(m_mutex);
         m_queue.push_back({received_time, prefix, tuple});
         onEnqueue(1);
@@ -97,7 +115,7 @@ void SwSSRec::recordTupleAsync(const std::string& prefix, const KeyOpFieldsValue
 
 void SwSSRec::recordTuplesAsync(const std::string& prefix, const std::deque<KeyOpFieldsValuesTuple>& entries)
 {
-    if (!m_asyncEnabled)
+    if (!m_asyncEnabled.load(std::memory_order_relaxed))
     {
         for (const auto& entry : entries)
         {
@@ -110,10 +128,21 @@ void SwSSRec::recordTuplesAsync(const std::string& prefix, const std::deque<KeyO
     {
         return;
     }
-
-    ensureAsyncWorker();
-
     {
+        std::unique_lock<std::mutex> stateLock(m_stateMutex);
+
+        if (!m_asyncEnabled.load(std::memory_order_relaxed))
+        {
+            stateLock.unlock();
+            for (const auto& entry : entries)
+            {
+                record(serialize({{}, prefix, entry}));
+            }
+            return;
+        }
+
+        ensureAsyncWorkerLocked();
+
         std::lock_guard<std::mutex> lock(m_mutex);
         for (const auto& entry : entries)
         {
@@ -162,32 +191,29 @@ void SwSSRec::dumpAsyncSignalSafeStats(int fd, int signo) const
     }
 }
 
-void SwSSRec::ensureAsyncWorker()
+void SwSSRec::ensureAsyncWorkerLocked()
 {
-    if (m_workerStarted)
+    if (m_workerStarted || !m_asyncEnabled.load(std::memory_order_relaxed))
     {
         return;
     }
 
-    m_shutdown = false;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_shutdown = false;
+    }
     m_worker = std::thread(&SwSSRec::drain, this);
     m_workerStarted = true;
 }
 
 void SwSSRec::stopAsyncWorker()
 {
+    std::unique_lock<std::mutex> stateLock(m_stateMutex);
+
     if (!m_workerStarted)
     {
         return;
     }
-
-    auto stats = getAsyncDebugStats();
-    SWSS_LOG_INFO(
-        "AsyncSwssRecorder graceful shutdown: pending_at_shutdown=%" PRIu64
-        " drained_total=%" PRIu64 " high_watermark=%" PRIu64,
-        stats.pending_count,
-        stats.drained_total,
-        stats.high_watermark);
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -197,6 +223,15 @@ void SwSSRec::stopAsyncWorker()
     m_signal.notify_one();
     m_worker.join();
     m_workerStarted = false;
+    stateLock.unlock();
+
+    auto stats = getAsyncDebugStats();
+    SWSS_LOG_INFO(
+        "AsyncSwssRecorder graceful shutdown: pending_after_shutdown=%" PRIu64
+        " drained_total=%" PRIu64 " high_watermark=%" PRIu64,
+        stats.pending_count,
+        stats.drained_total,
+        stats.high_watermark);
 }
 
 void SwSSRec::onEnqueue(size_t count)
