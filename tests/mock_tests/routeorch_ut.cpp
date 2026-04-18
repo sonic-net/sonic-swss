@@ -1269,8 +1269,8 @@ namespace routeorch_test
         
         // Verify the route is still pointing to the same single nexthop
         // (if addTempRoute was called again, it might have picked a different one)
-        const auto& nh_after = *it_after->second.nhg_key.getNextHops().begin();
-        const auto& nh_before = *nhg_before.getNextHops().begin();
+        NextHopKey nh_after = *it_after->second.nhg_key.getNextHops().begin();
+        NextHopKey nh_before = *nhg_before.getNextHops().begin();
         ASSERT_TRUE(nh_after == nh_before);
     }
 
@@ -1456,8 +1456,9 @@ namespace routeorch_test
         ASSERT_EQ(it->second.nhg_key.getSize(), 1);  // Single nexthop (temp)
         ASSERT_EQ(it->second.desired_nhg_key.getSize(), 3);  // Desired has 3
 
-        // Capture which nexthop was initially selected
-        const auto& selected_nh = *it->second.nhg_key.getNextHops().begin();
+        // Capture which nexthop was initially selected. Keep a copy because route state
+        // is updated later and references into nhg_key can become stale.
+        NextHopKey selected_nh = *it->second.nhg_key.getNextHops().begin();
         
         // --- Step 3: Simulate the selected nexthop going down ---
         // Delete the neighbor that was selected for the temp route
