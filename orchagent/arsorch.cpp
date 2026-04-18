@@ -514,7 +514,12 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                 if (!m_globalProfileName.empty() && m_globalProfileName == name &&
                     m_activeSwitchProfileOid == SAI_NULL_OBJECT_ID)
                 {
-                    bindArsProfileToSwitch(entry.profileOid);
+                    if (!bindArsProfileToSwitch(entry.profileOid))
+                    {
+                        SWSS_LOG_ERROR("ARS: profile '%s' created but switch "
+                                       "bind failed — ARS inactive until "
+                                       "profile is re-bound", name.c_str());
+                    }
                 }
             }
             else
@@ -526,6 +531,7 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                 anyFailed |= !updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_PAST,       entry.loadPastEnable);
                 anyFailed |= !updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_FUTURE,     entry.loadFutureEnable);
                 anyFailed |= !updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_CURRENT,    entry.loadCurrentEnable);
+                anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_CURRENT_WEIGHT, entry.loadCurrentWeight);
                 anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_EXPONENT,       entry.loadExponent);
                 anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_MAX_FLOWS,                entry.maxFlows);
                 anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_PAST_MIN_VAL,        entry.loadPastMinVal);
@@ -556,13 +562,16 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                                          entry.quantBand2MinThreshold);
                 }
                 if (anyFailed)
-                    SWSS_LOG_WARN("ARS: one or more SAI attributes failed to update for profile '%s'",
-                                  name.c_str());
-                else
                 {
-                    m_arsProfiles[name] = entry;
-                    publishArsProfileState(name, entry);
+                    SWSS_LOG_WARN("ARS: one or more SAI attributes failed to "
+                                  "update for profile '%s' — cache and "
+                                  "STATE_DB updated to match CONFIG_DB intent "
+                                  "so a subsequent retry can converge; check "
+                                  "syslog for per-attribute errors",
+                                  name.c_str());
                 }
+                m_arsProfiles[name] = entry;
+                publishArsProfileState(name, entry);
             }
         }
         else if (op == DEL_COMMAND)
@@ -1471,6 +1480,10 @@ bool ArsOrch::createArsProfile(const string &name, const ArsProfileEntry &entry)
     attr.value.booldata = entry.loadCurrentEnable;
     attrs.push_back(attr);
 
+    attr.id = SAI_ARS_PROFILE_ATTR_PORT_LOAD_CURRENT_WEIGHT;
+    attr.value.u8 = (uint8_t)entry.loadCurrentWeight;
+    attrs.push_back(attr);
+
     attr.id = SAI_ARS_PROFILE_ATTR_PORT_LOAD_EXPONENT;
     attr.value.u8 = (uint8_t)entry.loadExponent;
     attrs.push_back(attr);
@@ -1573,7 +1586,15 @@ bool ArsOrch::createArsProfile(const string &name, const ArsProfileEntry &entry)
 
     if (m_activeSwitchProfileOid == SAI_NULL_OBJECT_ID)
     {
-        bindArsProfileToSwitch(profileOid);
+        if (!bindArsProfileToSwitch(profileOid))
+        {
+            SWSS_LOG_ERROR("ARS: profile %s created (OID 0x%" PRIx64
+                           ") but failed to bind to switch — data-plane "
+                           "ARS will not be active until the profile is "
+                           "re-bound (e.g. via `load-balance adaptive "
+                           "bind-profile`)",
+                           name.c_str(), profileOid);
+        }
     }
 
     return true;
