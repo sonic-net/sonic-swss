@@ -531,7 +531,11 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                 anyFailed |= !updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_PAST,       entry.loadPastEnable);
                 anyFailed |= !updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_FUTURE,     entry.loadFutureEnable);
                 anyFailed |= !updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_CURRENT,    entry.loadCurrentEnable);
-                anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_CURRENT_WEIGHT, entry.loadCurrentWeight);
+                // SAI exposes no PORT_LOAD_CURRENT_WEIGHT attribute — only
+                // PAST_WEIGHT and FUTURE_WEIGHT exist. loadCurrentWeight is
+                // kept in ArsProfileEntry only to derive loadCurrentEnable
+                // (above, when the operator wrote load_current_weight without
+                // explicit port_load_current); do not push it to SAI.
                 anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_PORT_LOAD_EXPONENT,       entry.loadExponent);
                 anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_MAX_FLOWS,                entry.maxFlows);
                 anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_PAST_MIN_VAL,        entry.loadPastMinVal);
@@ -1480,9 +1484,10 @@ bool ArsOrch::createArsProfile(const string &name, const ArsProfileEntry &entry)
     attr.value.booldata = entry.loadCurrentEnable;
     attrs.push_back(attr);
 
-    attr.id = SAI_ARS_PROFILE_ATTR_PORT_LOAD_CURRENT_WEIGHT;
-    attr.value.u8 = (uint8_t)entry.loadCurrentWeight;
-    attrs.push_back(attr);
+    // Note: SAI has no PORT_LOAD_CURRENT_WEIGHT attribute (only PAST_WEIGHT
+    // and FUTURE_WEIGHT). loadCurrentWeight is retained in ArsProfileEntry
+    // only to seed loadCurrentEnable when the operator writes
+    // load_current_weight without an explicit port_load_current.
 
     attr.id = SAI_ARS_PROFILE_ATTR_PORT_LOAD_EXPONENT;
     attr.value.u8 = (uint8_t)entry.loadExponent;
