@@ -32,6 +32,12 @@ def crm_update(dvs, field, value):
 
 class TestP4RTVIPLB(object):
 
+    # Use a fixture to check status and skip
+    @pytest.fixture(autouse=True)
+    def skip_if_p4_disabled(self, dvs):
+        if not util.is_p4rt_enabled(dvs):
+            pytest.skip("P4RT is disabled in C++ logic, skipping test.")
+
     def _set_up(self, dvs):
         self._p4rt_tables_definition_obj = tables_definition.P4RtTableDefinitionWrapper()
         self._p4rt_router_intf_obj = l3.P4RtRouterInterfaceWrapper()

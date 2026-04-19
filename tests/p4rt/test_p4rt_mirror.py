@@ -8,6 +8,12 @@ import json
 class P4RtMirrorSessionWrapper(util.DBInterface):
     """Interface to interact with APP DB and ASIC DB tables for P4RT mirror session object."""
 
+    # Use a fixture to check status and skip
+    @pytest.fixture(autouse=True)
+    def skip_if_p4_disabled(self, dvs):
+        if not util.is_p4rt_enabled(dvs):
+            pytest.skip("P4RT is disabled in C++ logic, skipping test.")
+
     # database and SAI constants
     APP_DB_TBL_NAME = swsscommon.APP_P4RT_TABLE_NAME
     TBL_NAME = swsscommon.APP_P4RT_MIRROR_SESSION_TABLE_NAME
@@ -41,6 +47,13 @@ class P4RtMirrorSessionWrapper(util.DBInterface):
 
 
 class TestP4RTMirror(object):
+
+    # Use a fixture to check status and skip
+    @pytest.fixture(autouse=True)
+    def skip_if_p4_disabled(self, dvs):
+        if not util.is_p4rt_enabled(dvs):
+            pytest.skip("P4RT is disabled in C++ logic, skipping test.")
+
     def _set_up(self, dvs):
         self._p4rt_mirror_session_wrapper = P4RtMirrorSessionWrapper()
         self._p4rt_mirror_session_wrapper.set_up_databases(dvs)

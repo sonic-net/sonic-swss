@@ -65,6 +65,8 @@ class P4Orch : public ZmqOrch
     std::unordered_map<std::string, ObjectManagerInterface *> m_p4TableToManagerMap;
 
   private:
+    swss::ZmqServer *m_p4OrchZmqServer;
+
     void doTask(ConsumerBase &consumer);
     void doTask(swss::SelectableTimer &timer);
     void doTask(swss::NotificationConsumer &consumer);

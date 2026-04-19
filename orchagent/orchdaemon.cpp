@@ -826,7 +826,42 @@ bool OrchDaemon::init()
     m_orchList.push_back(&CounterCheckOrch::getInstance(m_configDb));
 
     vector<string> p4rt_tables = {APP_P4RT_TABLE_NAME};
-    m_p4OrchZmqServer = new swss::ZmqServer(m_p4OrchZmqServerEp, "", false, true);
+
+    // 1. Check if P4RT is enabled in CONFIG_DB
+    Table featureTable(m_configDb, "FEATURE");
+    std::vector<FieldValueTuple> values;
+    bool isP4Enabled = false;
+
+    if (featureTable.get("p4rt", values))
+    {
+    std::cout << "Inside if loop 1" << std::endl;
+        for (auto const& v : values)
+        {
+            std::cout << "Inside for loop 1" << std::endl;
+            if (fvField(v) == "status" && fvValue(v) == "enabled")
+            {
+                std::cout << "Inside if loop 2" << std::endl;
+                isP4Enabled = true;
+                break;
+            }
+        }
+    }
+
+    // 2. Conditionally initialize the ZMQ server and P4Orch
+    if (isP4Enabled)
+    {
+        SWSS_LOG_NOTICE("P4RT is enabled. Initializing ZMQ server (16MB) and P4Orch.");
+        std::cout << "P4RT is enabled. Initializing ZMQ server (16MB) and P4Orch." << std::endl;
+        m_p4OrchZmqServer = new swss::ZmqServer(m_p4OrchZmqServerEp, "", false, true);
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("P4RT is disabled. Skipping ZMQ server initialization to save memory.");
+        std::cout << "P4RT is disabled." << std::endl;
+        m_p4OrchZmqServer = nullptr; // Ensure the pointer is null if not enabled
+    }
+
+    // 3. Initialize P4Orch (passing the ZMQ server pointer, which may now be nullptr)
     gP4Orch = new P4Orch(m_applDb, p4rt_tables, m_p4OrchZmqServer, vrf_orch, gCoppOrch);
     m_orchList.push_back(gP4Orch);
 
