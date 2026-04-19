@@ -95,6 +95,10 @@ void SwSSRec::recordTupleAsync(const std::string& prefix, const KeyOpFieldsValue
     {
         std::unique_lock<std::mutex> stateLock(m_stateMutex);
 
+        // Recorder calls can come from both the main thread and the ring
+        // thread. Async mode can also be toggled via setAsync(), so re-check
+        // under m_stateMutex to serialize mode transitions with worker startup
+        // and avoid queueing to a worker that is being stopped.
         if (!m_asyncEnabled.load(std::memory_order_relaxed))
         {
             stateLock.unlock();
@@ -131,6 +135,10 @@ void SwSSRec::recordTuplesAsync(const std::string& prefix, const std::deque<KeyO
     {
         std::unique_lock<std::mutex> stateLock(m_stateMutex);
 
+        // Recorder calls can come from both the main thread and the ring
+        // thread. Async mode can also be toggled via setAsync(), so re-check
+        // under m_stateMutex to serialize mode transitions with worker startup
+        // and avoid queueing to a worker that is being stopped.
         if (!m_asyncEnabled.load(std::memory_order_relaxed))
         {
             stateLock.unlock();

@@ -109,7 +109,7 @@ private:
     mutable std::atomic<uint64_t> m_highWatermark{0};
     mutable std::atomic<uint64_t> m_enqueuedTotal{0};
     mutable std::atomic<uint64_t> m_drainedTotal{0};
-    std::mutex m_stateMutex;
+    std::mutex m_stateMutex; // Serializes async mode transitions and worker lifecycle.
     std::mutex m_mutex;
     std::condition_variable m_signal;
     std::deque<AsyncSwssRecordEntry> m_queue;

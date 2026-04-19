@@ -435,8 +435,8 @@ int main(int argc, char **argv)
     WarmStart::checkWarmStart("orchagent", "swss");
 
     /*
-     * Construct the singleton before registering fatal handlers so the
-     * signal path never triggers function-local static initialization.
+     * Construct the Recorder singleton before registering fatal handlers so
+     * fatal_signal_handler() never triggers function-local static initialization.
      */
     (void)Recorder::Instance();
 
