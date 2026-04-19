@@ -71,7 +71,7 @@ class AclRuleManager : public ObjectManagerInterface
     ReturnCode processDeleteRuleRequest(const std::string &acl_table_name, const std::string &acl_rule_key);
 
     // Processes update operation for an ACL rule.
-    ReturnCode processUpdateRuleRequest(const P4AclRuleAppDbEntry &app_db_entry, const P4AclRule &old_acl_rule);
+    ReturnCode processUpdateRuleRequest(const P4AclRuleAppDbEntry &app_db_entry, P4AclRule &old_acl_rule);
 
     // Set counters stats for an ACL rule in COUNTERS_DB.
     ReturnCode setAclRuleCounterStats(const P4AclRule &acl_rule);
@@ -124,14 +124,23 @@ class AclRuleManager : public ObjectManagerInterface
     // Validate and set an action attribute in an ACL rule.
     ReturnCode setActionValue(const sai_acl_entry_attr_t attr_name,
                               const std::string& attr_value,
+                              const sai_object_id_t attr_type,
                               sai_attribute_value_t* value,
                               P4AclRule* acl_rule);
 
     // Get port object id by name for redirect action.
-    ReturnCode getRedirectActionPortOid(const std::string &target, sai_object_id_t *rediect_oid);
+    ReturnCode getRedirectActionPortOid(const std::string &target, sai_object_id_t* redirect_oid);
 
     // Get next hop object id by name for redirect action.
-    ReturnCode getRedirectActionNextHopOid(const std::string &target, sai_object_id_t *rediect_oid);
+    ReturnCode getRedirectActionNextHopOid(const std::string &target, sai_object_id_t* redirect_oid);
+
+    // Get L2 multicast group oid by name for redirection action.
+    ReturnCode getRedirectActionL2MulticastGroupOid(
+        const std::string& target, sai_object_id_t* redirect_oid);
+
+    // Get multicast group oid by name for redirection action.
+    ReturnCode getRedirectActionL3MulticastGroupOid(
+        const std::string& target, sai_object_id_t* redirect_oid);
 
     // Create user defined trap for each cpu queue/trap group and program user
     // defined traps in hostif. Save the user defined trap oids in m_p4OidMapper
