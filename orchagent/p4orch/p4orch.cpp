@@ -127,6 +127,16 @@ void P4Orch::doTask(ConsumerBase &consumer)
 {
     SWSS_LOG_ENTER();
 
+    if (m_zmqServer == nullptr)
+    {
+        auto it = consumer.m_toSync.begin();
+        while (it != consumer.m_toSync.end())
+        {
+            it = consumer.m_toSync.erase(it);
+        }
+        return;
+    }
+
     if (!gPortsOrch->allPortsReady())
     {
         return;
