@@ -2165,9 +2165,12 @@ void PortsOrch::initHostTxReadyState(Port &port)
 
     if (hostTxReady.empty())
     {
-        setHostTxReady(port, "false");
-        SWSS_LOG_NOTICE("initialize host_tx_ready as false for port %s",
-                        port.m_alias.c_str());
+        /* Initialize host_tx_ready to false and count to 0 */
+        vector<FieldValueTuple> fvs;
+        fvs.emplace_back("host_tx_ready", "false");
+        fvs.emplace_back("host_tx_ready_count", "0");
+        m_portStateTable.set(port.m_alias, fvs);
+        SWSS_LOG_NOTICE("initialize host_tx_ready as false for port %s", port.m_alias.c_str());
     }
 }
 
@@ -2232,12 +2235,47 @@ void PortsOrch::setHostTxReady(Port port, const std::string &status)
     vector<FieldValueTuple> tuples;
     bool exist;
 
-    /* If the port is revmoed, don't need to update StateDB*/
+    /* If the port is removed, don't need to update StateDB*/
     exist = m_portStateTable.get(port.m_alias, tuples);
     if (exist)
     {
-        SWSS_LOG_NOTICE("Setting host_tx_ready status = %s, alias = %s, port_id = 0x%" PRIx64, status.c_str(), port.m_alias.c_str(), port.m_port_id);
-        m_portStateTable.hset(port.m_alias, "host_tx_ready", status);
+        /* Read current state and count from STATE_DB */
+        string currentStatus;
+        uint64_t currentCount = 0;
+
+        for (auto &tuple : tuples)
+        {
+            if (fvField(tuple) == "host_tx_ready")
+            {
+                currentStatus = fvValue(tuple);
+            }
+            else if (fvField(tuple) == "host_tx_ready_count")
+            {
+                try
+                {
+                    currentCount = stoull(fvValue(tuple));
+                }
+                catch (const std::exception &e)
+                {
+                    SWSS_LOG_ERROR("Failed to parse host_tx_ready_count for port %s: %s",
+                                  port.m_alias.c_str(), e.what());
+                }
+            }
+        }
+
+        /* Check if state changed, increment counter if so */
+        if (currentStatus != status)
+        {
+            currentCount++;
+            SWSS_LOG_NOTICE("Setting host_tx_ready status = %s, count = %" PRIu64 ", alias = %s, port_id = 0x%" PRIx64,
+                            status.c_str(), currentCount, port.m_alias.c_str(), port.m_port_id);
+
+            /* Write both status and count to STATE_DB*/
+            vector<FieldValueTuple> fvs;
+            fvs.emplace_back("host_tx_ready", status);
+            fvs.emplace_back("host_tx_ready_count", std::to_string(currentCount));
+            m_portStateTable.set(port.m_alias, fvs);
+        }
     }
 }
 

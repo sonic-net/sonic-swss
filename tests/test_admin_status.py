@@ -77,6 +77,15 @@ class TestAdminStatus(object):
             if fv[0] == "host_tx_ready":
                 assert fv[1] == "true" if admin_status == "up" else "false"
 
+    def get_host_tx_ready_count(self, dvs, port):
+        ptbl = swsscommon.Table(self.sdb, "PORT_TABLE")
+        (status, fvs) = ptbl.get(port)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "host_tx_ready_count":
+                return int(fv[1])
+        return 0
+
     def test_PortChannelMemberAdminStatus(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -130,6 +139,41 @@ class TestAdminStatus(object):
         self.check_host_tx_ready_status(dvs, "Ethernet0", "up")
         self.check_host_tx_ready_status(dvs, "Ethernet4", "down")
         self.check_host_tx_ready_status(dvs, "Ethernet8", "up")
+
+    def test_PortHostTxReadyCount(self, dvs, testlog):
+        dvs.setup_db()
+        self.setup_db(dvs)
+
+        #Find switch_id
+        switch_id = dvs.getSwitchOid()
+
+        # configure admin status to interface
+        self.set_admin_status("Ethernet0", "up")
+        time.sleep(1)
+
+        # Trigger host_tx_ready transitions and verify count increments
+        self.update_host_tx_ready_status(dvs, self.get_port_id(dvs, "Ethernet0"), switch_id, "up")
+        time.sleep(1)
+        count1 = self.get_host_tx_ready_count(dvs, "Ethernet0")
+        assert count1 == 1, f"Expected count 1, got {count1}"
+
+        # Transition to down
+        self.update_host_tx_ready_status(dvs, self.get_port_id(dvs, "Ethernet0"), switch_id, "down")
+        time.sleep(1)
+        count2 = self.get_host_tx_ready_count(dvs, "Ethernet0")
+        assert count2 == 2, f"Expected count 2, got {count2}"
+
+        # Transition back to up
+        self.update_host_tx_ready_status(dvs, self.get_port_id(dvs, "Ethernet0"), switch_id, "up")
+        time.sleep(1)
+        count3 = self.get_host_tx_ready_count(dvs, "Ethernet0")
+        assert count3 == 3, f"Expected count 3, got {count3}"
+
+        # Send same status (up->up), count should not increment
+        self.update_host_tx_ready_status(dvs, self.get_port_id(dvs, "Ethernet0"), switch_id, "up")
+        time.sleep(1)
+        count4 = self.get_host_tx_ready_count(dvs, "Ethernet0")
+        assert count4 == 3, f"Expected count 3 (no change), got {count4}"
 
 
 # Add Dummy always-pass test at end as workaroud
