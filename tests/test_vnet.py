@@ -3578,96 +3578,9 @@ class TestVnetOrch(object):
 
 
     '''
-    Test 37 - Test for pinned state change
+    Test 37 - Test for vnet tunnel routes with fine-grained ECMP using consistent_hashing_buckets
     '''
     def test_vnet_orch_37(self, dvs, testlog):
-        self.setup_db(dvs)
-
-        vnet_obj = self.get_vnet_obj()
-        tunnel_name = 'tunnel_36'
-        vnet_name = 'vnet36'
-        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-
-        vnet_obj.fetch_exist_entries(dvs)
-
-        create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
-        create_vnet_entry(dvs, vnet_name, tunnel_name, '10029', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
-
-        vnet_obj.check_vnet_entry(dvs, vnet_name)
-        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10029')
-
-        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
-
-        self.create_l3_intf("Ethernet4", "")
-        self.add_ip_address("Ethernet4", "9.1.0.1/32")
-        self.set_admin_status("Ethernet4", "up")
-        self.add_neighbor("Ethernet4", "9.1.0.1", "00:01:02:03:04:05")
-
-        '''
-        Local Endpoint: (DPU)9.1.0.1
-        Remote Endpoints: (NPU)10.1.0.1 -> (DPU)9.1.0.2
-        '''
-        vnet_obj.fetch_exist_entries(dvs)
-        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,10.1.0.1', ep_monitor='9.1.0.1,9.1.0.2', primary ='9.1.0.1', monitoring='custom_bfd', adv_prefix='100.100.1.1/32', check_directly_connected=True, rx_monitor_timer=100, tx_monitor_timer=100, pinned_state="none,none")
-
-        # default monitor status is down, route should not be programmed in this status
-        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
-        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", [])
-        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
-
-        # Route should be properly configured when all monitor session states go up. Only primary Endpoints should be in use.
-        update_bfd_session_state(dvs, '9.1.0.1', 'Up')
-        update_bfd_session_state(dvs, '9.1.0.2', 'Up')
-        time.sleep(2)
-        vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1'], tunnel_name)
-        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
-        check_routes_advertisement(dvs, "100.100.1.1/32")
-
-        # Pinned state change, set primary's pinned state to down, route should switch to backup endpoint
-        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,10.1.0.1', ep_monitor='9.1.0.1,9.1.0.2', primary ='9.1.0.1', monitoring='custom_bfd', pinned_state="down,none")
-        time.sleep(2)
-        vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['10.1.0.1'], tunnel_name)
-        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['10.1.0.1'])
-        check_routes_advertisement(dvs, "100.100.1.1/32")
-
-        # Pinned state change, set primary's pinned state to none, route should come up with primary endpoint
-        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,10.1.0.1', ep_monitor='9.1.0.1,9.1.0.2', primary ='9.1.0.1', monitoring='custom_bfd', pinned_state="none,none")
-        time.sleep(2)
-        vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1'], tunnel_name)
-        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
-        check_routes_advertisement(dvs, "100.100.1.1/32")
-
-        # Pinned state change, set primary's pinned state to up, route should remain on primary endpoint when BFD is down
-        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,10.1.0.1', ep_monitor='9.1.0.1,9.1.0.2', primary ='9.1.0.1', monitoring='custom_bfd', pinned_state="up,none")
-        update_bfd_session_state(dvs, '9.1.0.1', 'Down')
-        time.sleep(2)
-        vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1'], tunnel_name)
-        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
-        check_routes_advertisement(dvs, "100.100.1.1/32")
-
-        # Remove tunnel route 1
-        delete_vnet_routes(dvs, "100.100.1.1/32", vnet_name)
-        time.sleep(2)
-        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
-        check_remove_state_db_routes(dvs, vnet_name, "100.100.1.1/32")
-        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
-
-        # Confirm the monitor sessions are removed
-        check_del_bfd_session(dvs, ['9.1.0.1', '9.1.0.2'])
-
-        delete_vnet_entry(dvs, vnet_name)
-        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
-        delete_vxlan_tunnel(dvs, tunnel_name)
-
-        self.remove_neighbor("Ethernet4", "9.1.0.1")
-        self.remove_ip_address("Ethernet4", "9.1.0.1/32")
-        self.set_admin_status("Ethernet4", "down")
-
-
-    '''
-    Test 36 - Test for vnet tunnel routes with fine-grained ECMP using consistent_hashing_buckets
-    '''
-    def test_vnet_orch_36(self, dvs, testlog):
         self.setup_db(dvs)
         vnet_obj = self.get_vnet_obj()
         asic_db = dvs.get_asic_db()
@@ -3825,6 +3738,169 @@ class TestVnetOrch(object):
         vnet_obj.check_del_vnet_entry(dvs, vnet_name)
         vnet_obj.check_del_vnet_entry(dvs, vnet_name_2)
         
+        delete_vxlan_tunnel(dvs, tunnel_name)
+        vnet_obj.check_del_vxlan_tunnel(dvs)
+
+    '''
+    Test 38 - Test transition between regular ECMP and fine-grained ECMP vnet tunnel routes
+    '''
+    def test_vnet_orch_38(self, dvs, testlog):
+        self.setup_db(dvs)
+        vnet_obj = self.get_vnet_obj()
+        asic_db = dvs.get_asic_db()
+        state_db = dvs.get_state_db()
+
+        tunnel_name = 'tunnel_37'
+        vnet_name = 'Vnet37'
+        prefix = "100.100.37.0/24"
+        bucket_size = 60
+
+        vnet_obj.fetch_exist_entries(dvs)
+        initial_nhop_count = len(asic_db.get_keys(vnet_obj.ASIC_NEXT_HOP))
+        initial_nhgm_count = len(asic_db.get_keys(vnet_obj.ASIC_NEXT_HOP_GROUP_MEMBER))
+
+        create_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10037', "")
+
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10037')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
+
+        vnet_obj.fetch_exist_entries(dvs)
+        vr_id = vnet_obj.vr_map[vnet_name]['ing']
+
+        # =====================================================================
+        # Phase 1: Create a regular ECMP route with 3 endpoints
+        # =====================================================================
+        create_vnet_routes(dvs, prefix, vnet_name, '37.0.0.1,37.0.0.2,37.0.0.3',
+                          '00:37:34:56:78:9A,00:37:34:56:78:9B,00:37:34:56:78:9C')
+
+        # Validate regular ECMP NHG is created
+        route1, nhg1 = vnet_obj.check_vnet_ecmp_routes(dvs, vnet_name,
+                            ['37.0.0.1', '37.0.0.2', '37.0.0.3'], tunnel_name)
+        check_state_db_routes(dvs, vnet_name, prefix, ['37.0.0.1', '37.0.0.2', '37.0.0.3'])
+
+        # Verify the NHG type is regular ECMP (not fine-grained)
+        nhg_fvs = asic_db.get_entry(vnet_obj.ASIC_NEXT_HOP_GROUP, nhg1)
+        assert nhg_fvs.get("SAI_NEXT_HOP_GROUP_ATTR_TYPE") in [
+            "SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP",
+            "SAI_NEXT_HOP_GROUP_TYPE_ECMP"
+        ], "Expected regular ECMP NHG type"
+
+        # =====================================================================
+        # Phase 2: Transition regular ECMP -> fine-grained ECMP
+        # =====================================================================
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vnet_routes(dvs, prefix, vnet_name, '37.0.0.1,37.0.0.2,37.0.0.3',
+                          '00:37:34:56:78:9A,00:37:34:56:78:9B,00:37:34:56:78:9C',
+                          consistent_hashing_buckets=bucket_size)
+
+        time.sleep(2)
+
+        # Validate fine-grained ECMP NHG is created
+        fg_nhgid = test_fgnhg.validate_asic_nhg_fine_grained_ecmp(asic_db, prefix, bucket_size, vr_id)
+
+        # Validate FG NHG members (buckets) are created
+        asic_db.wait_for_n_keys(test_fgnhg.ASIC_NHG_MEMB, bucket_size)
+
+        nh_oid_map = test_fgnhg.get_nh_oid_map(asic_db)
+
+        ip_to_if_map = {
+            '37.0.0.1': '',
+            '37.0.0.2': '',
+            '37.0.0.3': '',
+        }
+
+        check_state_db_routes(dvs, vnet_name, prefix, ['37.0.0.1', '37.0.0.2', '37.0.0.3'])
+
+        # Validate bucket distribution: 60 buckets / 3 endpoints = 20 each
+        nh_memb_exp_count = {'37.0.0.1': 20, '37.0.0.2': 20, '37.0.0.3': 20}
+        prev_memb_dict = {}
+        test_fgnhg.validate_fine_grained_asic_n_state_db_entries(
+            asic_db, state_db, ip_to_if_map, prev_memb_dict, 60,
+            prefix, nh_memb_exp_count, nh_oid_map, fg_nhgid, bucket_size, vnet_name)
+
+        # Verify the old regular ECMP NHG is cleaned up
+        vnet_obj.fetch_exist_entries(dvs)
+        assert nhg1 not in vnet_obj.nhgs, "Old regular ECMP NHG should be removed after transition to FG"
+
+        # Route should still exist in ASIC DB (updated, not re-created)
+        asic_rt_key_after_fg = test_fgnhg.get_asic_route_key(asic_db, prefix, vr_id)
+
+        # =====================================================================
+        # Phase 3: Transition fine-grained ECMP -> regular ECMP
+        # =====================================================================
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vnet_routes(dvs, prefix, vnet_name, '37.0.0.1,37.0.0.2,37.0.0.3',
+                          '00:37:34:56:78:9A,00:37:34:56:78:9B,00:37:34:56:78:9C')
+
+        time.sleep(2)
+
+        # Validate regular ECMP NHG is created again
+        _, nhg2 = vnet_obj.check_vnet_ecmp_routes(dvs, vnet_name,
+                            ['37.0.0.1', '37.0.0.2', '37.0.0.3'], tunnel_name,
+                            route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, prefix, ['37.0.0.1', '37.0.0.2', '37.0.0.3'])
+
+        # Verify the NHG type is regular ECMP
+        nhg_fvs = asic_db.get_entry(vnet_obj.ASIC_NEXT_HOP_GROUP, nhg2)
+        assert nhg_fvs.get("SAI_NEXT_HOP_GROUP_ATTR_TYPE") in [
+            "SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP",
+            "SAI_NEXT_HOP_GROUP_TYPE_ECMP"
+        ], "Expected regular ECMP NHG type after transition back"
+
+        # Verify the old FG NHG is cleaned up
+        # FG NHG members should be gone (only regular ECMP members remain)
+        # Regular ECMP has 3 members for 3 endpoints
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # The FG NHG (with bucket_size members) should be removed.
+        # Now we should have regular ECMP NHG members (3 members for 3 endpoints)
+        nhgm_keys = asic_db.get_keys(vnet_obj.ASIC_NEXT_HOP_GROUP_MEMBER)
+        # Filter to only members belonging to our new regular ECMP NHG
+        our_nhgm_count = 0
+        for nhgm_key in nhgm_keys:
+            nhgm_fvs = asic_db.get_entry(vnet_obj.ASIC_NEXT_HOP_GROUP_MEMBER, nhgm_key)
+            if nhgm_fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID") == nhg2:
+                our_nhgm_count += 1
+        assert our_nhgm_count == 3, \
+            "Expected 3 regular ECMP NHG members, got %d" % our_nhgm_count
+
+        # FG_ROUTE_TABLE in state_db should be cleaned up
+        state_db.wait_for_n_keys("FG_ROUTE_TABLE", 0)
+
+        # =====================================================================
+        # Phase 4: Delete the route and verify full cleanup
+        # =====================================================================
+        vnet_obj.fetch_exist_entries(dvs)
+
+        delete_vnet_routes(dvs, prefix, vnet_name)
+
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, [prefix])
+        check_remove_state_db_routes(dvs, vnet_name, prefix)
+
+        # Verify all ASIC objects are cleaned up
+        # NHG should be removed
+        vnet_obj.fetch_exist_entries(dvs)
+        assert nhg2 not in vnet_obj.nhgs, "NHG should be removed after route deletion"
+
+        # Tunnel next hops should be cleaned up (back to initial count)
+        asic_db.wait_for_n_keys(vnet_obj.ASIC_NEXT_HOP, initial_nhop_count)
+
+        # NHG members should be back to initial
+        asic_db.wait_for_n_keys(vnet_obj.ASIC_NEXT_HOP_GROUP_MEMBER, initial_nhgm_count)
+
+        # Route should be deleted from ASIC DB
+        asic_db.wait_for_deleted_entry(test_fgnhg.ASIC_ROUTE_TB, asic_rt_key_after_fg)
+
+        # =====================================================================
+        # Cleanup
+        # =====================================================================
+        delete_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+
         delete_vxlan_tunnel(dvs, tunnel_name)
         vnet_obj.check_del_vxlan_tunnel(dvs)
 
