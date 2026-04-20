@@ -18,10 +18,11 @@
 #include "zmqorch.h"
 #include "zmqserver.h"
 #include "flex_counter_manager.h"
+#include "dashcounter.h"
 
 #include "dash_api/appliance.pb.h"
-#include "dash_api/route_type.pb.h"
 #include "dash_api/eni.pb.h"
+#include "dash_api/route_type.pb.h"
 #include "dash_api/qos.pb.h"
 #include "dash_api/eni_route.pb.h"
 
@@ -40,7 +41,13 @@ struct EniEntry
 {
     sai_object_id_t eni_id;
     dash::eni::Eni metadata;
+    sai_object_id_t getOid() const { return eni_id; }
 };
+
+typedef std::map<std::string, EniEntry> EniTable;
+
+using DashEniCounter = DashCounter<CounterType::ENI, EniTable>;
+using DashMeterCounter = DashCounter<CounterType::DASH_METER, EniTable>;
 
 struct ApplianceEntry
 {
@@ -50,7 +57,6 @@ struct ApplianceEntry
 
 typedef std::map<std::string, ApplianceEntry> ApplianceTable;
 typedef std::map<dash::route_type::RoutingType, dash::route_type::RouteType> RoutingTypeTable;
-typedef std::map<std::string, EniEntry> EniTable;
 typedef std::map<std::string, dash::qos::Qos> QosTable;
 typedef std::map<std::string, dash::eni_route::EniRoute> EniRouteTable;
 
@@ -84,99 +90,39 @@ private:
     void doTaskEniRouteTable(ConsumerBase &consumer);
     void doTaskRouteGroupTable(ConsumerBase &consumer);
     bool addApplianceEntry(const std::string& appliance_id, const dash::appliance::Appliance &entry);
-    void addApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance& entry);
+    bool addApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance& entry);
     bool removeApplianceEntry(const std::string& appliance_id);
-    void removeApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance& entry);
+    bool removeApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance& entry);
     bool addRoutingTypeEntry(const dash::route_type::RoutingType &routing_type, const dash::route_type::RouteType &entry);
     bool removeRoutingTypeEntry(const dash::route_type::RoutingType &routing_type);
     bool addEniObject(const std::string& eni, EniEntry& entry);
     bool addEniAddrMapEntry(const std::string& eni, const EniEntry& entry);
-    void addEniTrustedVnis(const std::string& eni, const EniEntry& entry);
+    bool addEniTrustedVnis(const std::string& eni, const EniEntry& entry);
     bool addEni(const std::string& eni, EniEntry &entry);
     bool removeEniObject(const std::string& eni);
     bool removeEniAddrMapEntry(const std::string& eni);
-    void removeEniTrustedVnis(const std::string& eni, const EniEntry& entry);
+    bool removeEniTrustedVnis(const std::string& eni, const EniEntry& entry);
     bool removeEni(const std::string& eni);
     bool setEniAdminState(const std::string& eni, const EniEntry& entry);
     bool addQosEntry(const std::string& qos_name, const dash::qos::Qos &entry);
     bool removeQosEntry(const std::string& qos_name);
     bool setEniRoute(const std::string& eni, const dash::eni_route::EniRoute& entry);
     bool removeEniRoute(const std::string& eni);
+protected:
+    virtual bool isHaFlowOwnerAttrSupported();
 
 private:
-
-    template<CounterType CT>
-    struct DashCounter
-    {
-        FlexCounterManager stat_manager;
-        bool fc_status = false;
-        std::unordered_set<std::string> counter_stats;
-
-        DashCounter() {}
-        DashCounter(const std::string& group_name, StatsMode stats_mode, uint polling_interval, bool enabled) 
-            : stat_manager(group_name, stats_mode, polling_interval, enabled) { fetchStats(); }
-        void fetchStats();
-        
-        void addToFC(sai_object_id_t oid, const std::string& name)
-        {
-            if (!fc_status)
-            {
-                return;
-            }
-
-            if (oid == SAI_NULL_OBJECT_ID)
-            {
-                SWSS_LOG_WARN("Cannot add counter on NULL OID for %s", name.c_str());
-                return;
-            }
-            stat_manager.setCounterIdList(oid, CT, counter_stats);
-        }
-
-        void removeFromFC(sai_object_id_t oid, const std::string& name)
-        {
-            if (oid == SAI_NULL_OBJECT_ID)
-            {
-                SWSS_LOG_WARN("Cannot remove counter on NULL OID for %s", name.c_str());
-                return;
-            }
-            stat_manager.clearCounterIdList(oid);
-        }
-
-        void refreshStats(bool install, const EniTable& eni_entries)
-        {
-            for (auto it = eni_entries.begin(); it != eni_entries.end(); it++)
-            {
-                if (install)
-                {
-                    addToFC(it->second.eni_id, it->first);
-                }
-                else
-                {
-                    removeFromFC(it->second.eni_id, it->first);
-                }
-            }
-        }
-
-        void handleStatusUpdate(bool enabled, const EniTable& eni_entries)
-        {
-            bool prev_enabled = fc_status;
-            fc_status = enabled;
-            if (fc_status != prev_enabled)
-            {
-                refreshStats(fc_status, eni_entries);
-            }
-        }
-    };
-
     std::unique_ptr<swss::Table> m_eni_name_table;
     std::shared_ptr<swss::DBConnector> m_counter_db;
     std::shared_ptr<swss::DBConnector> m_asic_db;
     DashHaOrch* m_dash_ha_orch = nullptr;
+    bool m_ha_flow_owner_attr_supported = false;
+    std::once_flag m_ha_flow_owner_attr_once_flag;
 
     void addEniMapEntry(sai_object_id_t oid, const std::string& name);
     void removeEniMapEntry(sai_object_id_t oid, const std::string& name);
-    DashCounter<CounterType::ENI> EniCounter;
-    DashCounter<CounterType::DASH_METER> MeterCounter;
+    DashEniCounter EniCounter;
+    DashMeterCounter MeterCounter;
 
 public:
     void handleFCStatusUpdate(bool is_enabled) { EniCounter.handleStatusUpdate(is_enabled, eni_entries_); }

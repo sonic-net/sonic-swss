@@ -29,7 +29,11 @@ using namespace swss;
 #define STR(s) _STR(s)
 
 #define CONTEXT_CFG_FILE "/usr/share/sonic/hwsku/context_config.json"
+#if defined(__arm__)
+#define SAI_REDIS_SYNC_OPERATION_RESPONSE_TIMEOUT ((480*1000)*2)
+#else
 #define SAI_REDIS_SYNC_OPERATION_RESPONSE_TIMEOUT (480*1000)
+#endif
 
 // hwinfo = "INTERFACE_NAME/PHY ID", mii_ioctl_data->phy_id is a __u16
 #define HWINFO_MAX_SIZE IFNAMSIZ + 1 + 5
@@ -69,6 +73,7 @@ sai_isolation_group_api_t*  sai_isolation_group_api;
 sai_system_port_api_t*      sai_system_port_api;
 sai_macsec_api_t*           sai_macsec_api;
 sai_srv6_api_t**            sai_srv6_api;;
+sai_l2mc_api_t*             sai_l2mc_api;
 sai_l2mc_group_api_t*       sai_l2mc_group_api;
 sai_counter_api_t*          sai_counter_api;
 sai_bfd_api_t*              sai_bfd_api;
@@ -96,6 +101,7 @@ sai_stp_api_t*                      sai_stp_api;
 sai_dash_meter_api_t*               sai_dash_meter_api;
 sai_dash_outbound_port_map_api_t*   sai_dash_outbound_port_map_api;
 sai_dash_trusted_vni_api_t*         sai_dash_trusted_vni_api;
+sai_dash_flow_api_t*                sai_dash_flow_api;
 
 extern sai_object_id_t gSwitchId;
 extern bool gTraditionalFlexCounter;
@@ -232,6 +238,7 @@ void initSaiApi()
     sai_api_query(SAI_API_SYSTEM_PORT,          (void **)&sai_system_port_api);
     sai_api_query(SAI_API_MACSEC,               (void **)&sai_macsec_api);
     sai_api_query(SAI_API_SRV6,                 (void **)&sai_srv6_api);
+    sai_api_query(SAI_API_L2MC,                 (void **)&sai_l2mc_api);
     sai_api_query(SAI_API_L2MC_GROUP,           (void **)&sai_l2mc_group_api);
     sai_api_query(SAI_API_COUNTER,              (void **)&sai_counter_api);
     sai_api_query(SAI_API_BFD,                  (void **)&sai_bfd_api);
@@ -255,7 +262,8 @@ void initSaiApi()
     sai_api_query((sai_api_t)SAI_API_DASH_TUNNEL,               (void**)&sai_dash_tunnel_api);
     sai_api_query((sai_api_t)SAI_API_DASH_HA,                   (void**)&sai_dash_ha_api);
     sai_api_query((sai_api_t)SAI_API_DASH_OUTBOUND_PORT_MAP,    (void**)&sai_dash_outbound_port_map_api);
-    sai_api_query((sai_api_t)SAI_API_DASH_TRUSTED_VNI,          (void**)&sai_dash_trusted_vni_api);    
+    sai_api_query((sai_api_t)SAI_API_DASH_TRUSTED_VNI,          (void**)&sai_dash_trusted_vni_api);
+    sai_api_query((sai_api_t)SAI_API_DASH_FLOW,                 (void**)&sai_dash_flow_api);
     sai_api_query(SAI_API_TWAMP,                (void **)&sai_twamp_api);
     sai_api_query(SAI_API_TAM,                  (void **)&sai_tam_api);
     sai_api_query(SAI_API_STP,                  (void **)&sai_stp_api);
@@ -293,6 +301,7 @@ void initSaiApi()
     sai_log_set(SAI_API_SYSTEM_PORT,            SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_MACSEC,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_SRV6,                   SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_L2MC,                   SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_L2MC_GROUP,             SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_COUNTER,                SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_BFD,                    SAI_LOG_LEVEL_NOTICE);

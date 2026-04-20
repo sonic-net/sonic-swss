@@ -1,5 +1,9 @@
 #include "p4orch/p4orch_util.h"
 
+#include <iomanip>
+#include <sstream>
+#include <string>
+
 #include "p4orch/p4orch.h"
 #include "schema.h"
 
@@ -132,6 +136,30 @@ void drainMgmtWithNotExecuted(std::deque<swss::KeyOpFieldsValuesTuple>& entries,
   return;
 }
 
+ReturnCodeOr<bool> parseFlag(const std::string& name,
+                             const std::string& value) {
+  try {
+    if (value.rfind("0x") == 0 || value.rfind("0X") == 0) {
+      size_t processed = 0;
+      int flag = std::stoi(value, &processed, 16);
+      if (flag == 1 && processed > 2)
+        return true;
+      else if (flag == 0 && processed > 2)
+        return false;
+    } else {
+      int flag = std::stoi(value);
+      if (flag == 1)
+        return true;
+      else if (flag == 0)
+        return false;
+    }
+  } catch (std::exception& e) {
+    // Nothing
+  }
+  return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+         << "Invalid " << QuotedVar(name) << " value: " << QuotedVar(value);
+}
+
 std::string KeyGenerator::generateRouteKey(const std::string &vrf_id, const swss::IpPrefix &ip_prefix)
 {
     std::map<std::string, std::string> fv_map = {
@@ -141,8 +169,7 @@ std::string KeyGenerator::generateRouteKey(const std::string &vrf_id, const swss
 
 std::string KeyGenerator::generateRouterInterfaceKey(const std::string &router_intf_id)
 {
-    std::map<std::string, std::string> fv_map = {{p4orch::kRouterInterfaceId, router_intf_id}};
-    return generateKey(fv_map);
+    return router_intf_id;
 }
 
 std::string KeyGenerator::generateNeighborKey(const std::string &router_intf_id, const swss::IpAddress &neighbor_id)
@@ -154,14 +181,12 @@ std::string KeyGenerator::generateNeighborKey(const std::string &router_intf_id,
 
 std::string KeyGenerator::generateNextHopKey(const std::string &next_hop_id)
 {
-    std::map<std::string, std::string> fv_map = {{p4orch::kNexthopId, next_hop_id}};
-    return generateKey(fv_map);
+    return next_hop_id;
 }
 
 std::string KeyGenerator::generateMirrorSessionKey(const std::string &mirror_session_id)
 {
-    std::map<std::string, std::string> fv_map = {{p4orch::kMirrorSessionId, mirror_session_id}};
-    return generateKey(fv_map);
+    return mirror_session_id;
 }
 
 std::string KeyGenerator::generateMulticastRouterInterfaceKey(
@@ -210,10 +235,44 @@ std::string KeyGenerator::generateMulticastRouterInterfaceRifKey(
   return generateKey(fv_map);
 }
 
+std::string KeyGenerator::generateL3MulticastGroupKey(
+    const std::string& multicast_group_id) {
+    // L3 multicast groups use the group ID directly as the key.  However,
+    // this is expected to be formatted as a 16-bit hex string, e.g. 0x0001.
+    int group_id = 0;
+    try {
+      if (multicast_group_id.rfind("0x") == 0 ||
+          multicast_group_id.rfind("0X") == 0) {
+        size_t processed = 0;
+        group_id = std::stoi(multicast_group_id, &processed, 16);
+      } else {
+        group_id = std::stoi(multicast_group_id);
+      }
+    } catch (std::exception& e) {
+      group_id = 0;  // invalid group ID
+    }
+    std::stringstream ss;
+    ss << "0x" << std::setfill('0') << std::setw(4) << std::hex << group_id;
+    return ss.str();
+}
+
+std::string KeyGenerator::generateL2MulticastGroupKey(
+    const std::string& l2_multicast_group_id) {
+    // L2 multicast group IDs are formatted just like L3 multicast group IDs.
+    return generateL3MulticastGroupKey(l2_multicast_group_id);
+}
+
+std::string KeyGenerator::generateIpMulticastKey(
+    const std::string& vrf_id, const swss::IpAddress& ip_dst) {
+  std::map<std::string, std::string> fv_map = {
+      {ip_dst.isV4() ? p4orch::kIpv4Dst : p4orch::kIpv6Dst, ip_dst.to_string()},
+      {p4orch::kVrfId, vrf_id}};
+  return generateKey(fv_map);
+}
+
 std::string KeyGenerator::generateWcmpGroupKey(const std::string &wcmp_group_id)
 {
-    std::map<std::string, std::string> fv_map = {{p4orch::kWcmpGroupId, wcmp_group_id}};
-    return generateKey(fv_map);
+    return wcmp_group_id;
 }
 
 std::string KeyGenerator::generateAclRuleKey(const std::map<std::string, std::string> &match_fields,
@@ -246,8 +305,18 @@ std::string KeyGenerator::generateL3AdmitKey(const swss::MacAddress &mac_address
 
 std::string KeyGenerator::generateTunnelKey(const std::string &tunnel_id)
 {
-    std::map<std::string, std::string> fv_map = {{p4orch::kTunnelId, tunnel_id}};
-    return generateKey(fv_map);
+    return tunnel_id;
+}
+
+std::string KeyGenerator::generateIpv6TunnelTermKey(
+    const swss::IpAddress& src_ipv6_ip, const swss::IpAddress& src_ipv6_mask,
+    const swss::IpAddress& dst_ipv6_ip, const swss::IpAddress& dst_ipv6_mask) {
+  std::map<std::string, std::string> fv_map = {
+      {p4orch::kDecapSrcIpv6Ip, src_ipv6_ip.to_string()},
+      {p4orch::kDecapSrcIpv6Mask, src_ipv6_mask.to_string()},
+      {p4orch::kDecapDstIpv6Ip, dst_ipv6_ip.to_string()},
+      {p4orch::kDecapDstIpv6Mask, dst_ipv6_mask.to_string()}};
+  return generateKey(fv_map);
 }
 
 std::string KeyGenerator::generateExtTableKey(const std::string &table_name, const std::string &table_key)

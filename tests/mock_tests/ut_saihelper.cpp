@@ -75,6 +75,7 @@ namespace ut_helper
         sai_api_query(SAI_API_ROUTE, (void **)&sai_route_api);
         sai_api_query(SAI_API_NEIGHBOR, (void **)&sai_neighbor_api);
         sai_api_query(SAI_API_TUNNEL, (void **)&sai_tunnel_api);
+        sai_api_query(SAI_API_SRV6, (void **)&sai_srv6_api);
         sai_api_query(SAI_API_NEXT_HOP, (void **)&sai_next_hop_api);
         sai_api_query(SAI_API_NEXT_HOP_GROUP, (void **)&sai_next_hop_group_api);
         sai_api_query(SAI_API_ACL, (void **)&sai_acl_api);
@@ -95,6 +96,7 @@ namespace ut_helper
         sai_api_query((sai_api_t)SAI_API_DASH_DIRECTION_LOOKUP, (void**)&sai_dash_direction_lookup_api);
         sai_api_query((sai_api_t)SAI_API_DASH_ENI, (void**)&sai_dash_eni_api);
         sai_api_query((sai_api_t)SAI_API_DASH_HA, (void**)&sai_dash_ha_api);
+        sai_api_query((sai_api_t)SAI_API_DASH_FLOW, (void**)&sai_dash_flow_api);
         sai_api_query((sai_api_t)SAI_API_DASH_OUTBOUND_CA_TO_PA, (void**)&sai_dash_outbound_ca_to_pa_api);
         sai_api_query((sai_api_t)SAI_API_DASH_PA_VALIDATION, (void**)&sai_dash_pa_validation_api);
         sai_api_query((sai_api_t)SAI_API_DASH_VNET, (void**)&sai_dash_vnet_api);
@@ -127,6 +129,7 @@ namespace ut_helper
         sai_route_api = nullptr;
         sai_neighbor_api = nullptr;
         sai_tunnel_api = nullptr;
+        sai_srv6_api = nullptr;
         sai_next_hop_api = nullptr;
         sai_acl_api = nullptr;
         sai_hostif_api = nullptr;
@@ -140,6 +143,7 @@ namespace ut_helper
         sai_dash_direction_lookup_api = nullptr;
         sai_dash_eni_api = nullptr;
         sai_dash_ha_api = nullptr;
+        sai_dash_flow_api = nullptr;
         sai_stp_api = nullptr;
         sai_dash_meter_api = nullptr;
 

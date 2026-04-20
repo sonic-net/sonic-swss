@@ -4,6 +4,7 @@
 
 #include <string>
 
+#include "ipaddress.h"
 #include "ipprefix.h"
 #include "swssnet.h"
 
@@ -13,13 +14,13 @@ namespace
 TEST(P4OrchUtilTest, KeyGeneratorTest)
 {
     std::string intf_key = KeyGenerator::generateRouterInterfaceKey("intf-qe-3/7");
-    EXPECT_EQ("router_interface_id=intf-qe-3/7", intf_key);
+    EXPECT_EQ("intf-qe-3/7", intf_key);
     std::string neighbor_key = KeyGenerator::generateNeighborKey("intf-qe-3/7", swss::IpAddress("10.0.0.22"));
     EXPECT_EQ("neighbor_id=10.0.0.22:router_interface_id=intf-qe-3/7", neighbor_key);
     std::string nexthop_key = KeyGenerator::generateNextHopKey("ju1u32m1.atl11:qe-3/7");
-    EXPECT_EQ("nexthop_id=ju1u32m1.atl11:qe-3/7", nexthop_key);
+    EXPECT_EQ("ju1u32m1.atl11:qe-3/7", nexthop_key);
     std::string wcmp_group_key = KeyGenerator::generateWcmpGroupKey("group-1");
-    EXPECT_EQ("wcmp_group_id=group-1", wcmp_group_key);
+    EXPECT_EQ("group-1", wcmp_group_key);
     std::string ipv4_route_key = KeyGenerator::generateRouteKey("b4-traffic", swss::IpPrefix("10.11.12.0/24"));
     EXPECT_EQ("ipv4_dst=10.11.12.0/24:vrf_id=b4-traffic", ipv4_route_key);
     ipv4_route_key = KeyGenerator::generateRouteKey("b4-traffic", swss::IpPrefix("0.0.0.0/0"));
@@ -28,6 +29,27 @@ TEST(P4OrchUtilTest, KeyGeneratorTest)
     EXPECT_EQ("ipv6_dst=2001:db8:1::/32:vrf_id=b4-traffic", ipv6_route_key);
     ipv6_route_key = KeyGenerator::generateRouteKey("b4-traffic", swss::IpPrefix("::/0"));
     EXPECT_EQ("ipv6_dst=::/0:vrf_id=b4-traffic", ipv6_route_key);
+
+    // L3 multicast group keys.
+    EXPECT_EQ("0x0001", KeyGenerator::generateL3MulticastGroupKey("0x1"));
+    EXPECT_EQ("0x0002", KeyGenerator::generateL3MulticastGroupKey("0X02"));
+    EXPECT_EQ("0x0011", KeyGenerator::generateL3MulticastGroupKey("17"));
+    // Invalid, expected to return group ID 0.
+    EXPECT_EQ("0x0000", KeyGenerator::generateL3MulticastGroupKey("zzz"));
+
+    // L2 multicast group keys.
+    EXPECT_EQ("0x0003", KeyGenerator::generateL2MulticastGroupKey("0x3"));
+    EXPECT_EQ("0x0009", KeyGenerator::generateL2MulticastGroupKey("0X09"));
+    EXPECT_EQ("0x0021", KeyGenerator::generateL2MulticastGroupKey("33"));
+    // Invalid, expected to return group ID 0.
+    EXPECT_EQ("0x0000", KeyGenerator::generateL2MulticastGroupKey("invalid"));
+
+    std::string ipv4_multicast_key = KeyGenerator::generateIpMulticastKey(
+        "b4-traffic", swss::IpAddress("127.0.0.1"));
+    EXPECT_EQ("ipv4_dst=127.0.0.1:vrf_id=b4-traffic", ipv4_multicast_key);
+    std::string ipv6_multicast_key = KeyGenerator::generateIpMulticastKey(
+        "b4-traffic", swss::IpAddress("::1"));
+    EXPECT_EQ("ipv6_dst=::1:vrf_id=b4-traffic", ipv6_multicast_key);
 
     // Test with special characters.
     neighbor_key = KeyGenerator::generateNeighborKey("::===::", swss::IpAddress("::1"));
@@ -40,6 +62,14 @@ TEST(P4OrchUtilTest, KeyGeneratorTest)
     EXPECT_EQ("match/ether_type=0x0800:match/"
               "ipv6_dst=fdf8:f53b:82e4::53 & fdf8:f53b:82e4::53:priority=15",
               acl_rule_key);
+
+    auto ipv6_tunnel_term_key =
+        KeyGenerator::generateIpv6TunnelTermKey(
+        swss::IpAddress("::1"), swss::IpAddress("::1"), swss::IpAddress("::2"),
+        swss::IpAddress("::2"));
+    EXPECT_EQ(
+        "dst_ipv6_ip=::2:dst_ipv6_mask=::2:src_ipv6_ip=::1:src_ipv6_mask=::1",
+        ipv6_tunnel_term_key);
 }
 
 TEST(P4OrchUtilTest, ParseP4RTKeyTest)
@@ -128,6 +158,42 @@ TEST(P4OrchUtilTest, VerifyAttrsTest)
             std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"k2", "v2"}, swss::FieldValueTuple{"k3", "v3"}},
             /*allow_unknown=*/false)
             .empty());
+}
+
+TEST(P4OrchUtilTest, ParseFlagTest) {
+  const std::string name = "name";
+  auto flag_or = parseFlag(name, "0x1");
+  EXPECT_TRUE(flag_or.ok());
+  EXPECT_EQ(true, *flag_or);
+
+  flag_or = parseFlag(name, "0X1");
+  EXPECT_TRUE(flag_or.ok());
+  EXPECT_EQ(true, *flag_or);
+
+  flag_or = parseFlag(name, "0x0");
+  EXPECT_TRUE(flag_or.ok());
+  EXPECT_EQ(false, *flag_or);
+
+  flag_or = parseFlag(name, "0X0");
+  EXPECT_TRUE(flag_or.ok());
+  EXPECT_EQ(false, *flag_or);
+
+  flag_or = parseFlag(name, "1");
+  EXPECT_TRUE(flag_or.ok());
+  EXPECT_EQ(true, *flag_or);
+
+  flag_or = parseFlag(name, "0");
+  EXPECT_TRUE(flag_or.ok());
+  EXPECT_EQ(false, *flag_or);
+
+  flag_or = parseFlag(name, "0xinvalid");
+  EXPECT_FALSE(flag_or.ok());
+
+  flag_or = parseFlag(name, "0Xinvalid");
+  EXPECT_FALSE(flag_or.ok());
+
+  flag_or = parseFlag(name, "invalid");
+  EXPECT_FALSE(flag_or.ok());
 }
 
 } // namespace

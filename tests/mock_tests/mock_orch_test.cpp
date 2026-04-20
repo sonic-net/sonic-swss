@@ -10,6 +10,27 @@ void MockOrchTest::PostSetUp() {}
 void MockOrchTest::PreTearDown() {}
 void MockOrchTest::ApplySaiMock() {}
 
+void MockOrchTest::initTestLogger(const std::string &appName, int minPrio)
+{
+    const char *syslogStdout = std::getenv("SWSS_SYSLOG_STDOUT");
+    if (syslogStdout != nullptr && std::string(syslogStdout) == "1")
+    {
+        static std::once_flag loggerInitFlag;
+
+        std::call_once(loggerInitFlag, [&appName]() {
+            swss::Logger::linkToDbNative(appName);
+        });
+
+        swss::Logger::swssOutputNotify("orchagent", "STDOUT");
+        swss::Logger::setMinPrio(static_cast<swss::Logger::Priority>(minPrio));
+    }
+}
+
+DashOrch* MockOrchTest::CreateDashOrch(swss::DBConnector* app_db, const std::vector<std::string>& dash_tables, swss::DBConnector* state_db, swss::ZmqServer* zmq)
+{
+    return new DashOrch(app_db, const_cast<std::vector<std::string>&>(dash_tables), state_db, zmq);
+}
+
 void MockOrchTest::PrepareSai()
 {
     sai_attribute_t attr;
@@ -61,6 +82,8 @@ void MockOrchTest::PrepareSai()
 
 void MockOrchTest::SetUp()
 {
+    initTestLogger();
+
     map<string, string> profile = {
         { "SAI_VS_SWITCH_TYPE", "SAI_VS_SWITCH_TYPE_BCM56850" },
         { "KV_DEVICE_MAC_ADDRESS", "20:03:04:05:06:00" }
@@ -247,7 +270,7 @@ void MockOrchTest::SetUp()
         APP_DASH_QOS_TABLE_NAME
     };
 
-    m_DashOrch = new DashOrch(m_app_db.get(), dash_tables, m_dpu_app_state_db.get(), nullptr);
+    m_DashOrch = CreateDashOrch(m_app_db.get(), dash_tables, m_dpu_app_state_db.get(), nullptr);
     gDirectory.set(m_DashOrch);
     ut_orch_list.push_back((Orch **)&m_DashOrch);
 
