@@ -327,6 +327,23 @@ sai_object_id_t VNetVrfObject::getTunnelNextHop(NextHopKey& nh)
     return nh_id;
 }
 
+sai_object_id_t VNetVrfObject::getExistingTunnelNextHopId(NextHopKey& nh)
+{
+    auto tun_name = getTunnelName();
+
+    VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+
+    auto *tunnel_obj = vxlan_orch->getVxlanTunnel(tun_name);
+    sai_object_id_t nh_id = tunnel_obj->getNextHop(nh.ip_address, nh.mac_address, nh.vni);
+    if (nh_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("NH Tunnel lookup failed for '%s' ip '%s'",
+                vnet_name_.c_str(), nh.ip_address.to_string().c_str());
+    }
+
+    return nh_id;
+}
+
 bool VNetVrfObject::removeTunnelNextHop(NextHopKey& nh)
 {
     auto tun_name = getTunnelName();
@@ -1167,11 +1184,22 @@ bool VNetRouteOrch::selectFgNextHopGroup(const string& vnet,
     // This function returns the next hop group which is to be used to in the hardware
     // for fine grained ECMP tunnel routes.
 
+    bool nhg_exists = hasNextHopGroup(vnet, nexthops);
     std::map<NextHopKey, sai_object_id_t> nhopgroup_members_set;
 
     for (auto nh : nexthops.getNextHops())
     {
-        sai_object_id_t next_hop_id = vrf_obj->getTunnelNextHop(nh);
+        sai_object_id_t next_hop_id;
+        if (nhg_exists)
+        {
+            // NHG already exists, look up existing tunnel NH IDs without incrementing refcount
+            next_hop_id = vrf_obj->getExistingTunnelNextHopId(nh);
+        }
+        else
+        {
+            // New NHG, create tunnel NHs (sets refcount to 1)
+            next_hop_id = vrf_obj->getTunnelNextHop(nh);
+        }
         nhopgroup_members_set[nh] = next_hop_id;
     }
 
@@ -1182,10 +1210,18 @@ bool VNetRouteOrch::selectFgNextHopGroup(const string& vnet,
     if (!gFgNhgOrch->setFgNhgTunnel(vrf_id, ipPrefix, nhopgroup_members_set, nexthops, consistent_hashing_buckets, nh_id, isNextHopIdChanged))
     {
         SWSS_LOG_ERROR("Failed to create fine grained next hop group for VNET %s", vnet.c_str());
+
+        if (!nhg_exists)
+        {
+            for (auto nh : nexthops.getNextHops())
+            {
+                vrf_obj->removeTunnelNextHop(nh);
+            }
+        }
         return false;
     }
 
-    if (!hasNextHopGroup(vnet, nexthops))
+    if (!nhg_exists)
     {
         NextHopGroupInfo next_hop_group_entry;
         next_hop_group_entry.next_hop_group_id = nh_id;
@@ -1202,7 +1238,7 @@ bool VNetRouteOrch::selectFgNextHopGroup(const string& vnet,
             syncd_nexthop_groups_[vnet][nexthops].active_members[nh] = SAI_NULL_OBJECT_ID;
         }
     }
-    else if (isNextHopIdChanged)
+    if (isNextHopIdChanged)
     {
         syncd_nexthop_groups_[vnet][nexthops].next_hop_group_id = nh_id;
     }

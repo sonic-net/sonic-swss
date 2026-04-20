@@ -219,6 +219,7 @@ public:
     bool hasRoute(IpPrefix& ipPrefix);
 
     sai_object_id_t getTunnelNextHop(NextHopKey& nh);
+    sai_object_id_t getExistingTunnelNextHopId(NextHopKey& nh);
     bool removeTunnelNextHop(NextHopKey& nh);
     void increaseNextHopRefCount(const nextHop&);
     void decreaseNextHopRefCount(const nextHop&);
