@@ -70,12 +70,11 @@ struct P4AclMeter
     sai_uint64_t pir;
     sai_uint64_t pburst;
     std::string policer_label;
-
     std::map<sai_policer_attr_t, sai_packet_action_t> packet_color_actions;
 
     P4AclMeter()
         : enabled(false), meter_oid(SAI_NULL_OBJECT_ID), cir(0), cburst(0), pir(0), pburst(0),
-          type(SAI_METER_TYPE_PACKETS), mode(SAI_POLICER_MODE_TR_TCM)
+          type(SAI_METER_TYPE_PACKETS), mode(SAI_POLICER_MODE_STORM_CONTROL)
     {
     }
 
@@ -142,6 +141,8 @@ struct P4AclRule
 
     sai_uint32_t action_qos_queue_num;
     std::string action_redirect_nexthop_key;
+    std::string action_redirect_l2_multicast_group_key;
+    std::string action_redirect_l3_multicast_group_key;
     // SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_INGRESS and
     // SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_EGRESS are allowed as key
     std::map<sai_acl_entry_attr_t, P4AclMirrorSession> action_mirror_sessions;
@@ -159,10 +160,11 @@ struct SaiActionWithParam
   sai_acl_entry_attr_t action;
   std::string param_name;
   std::string param_value;
+  sai_object_id_t object_type = SAI_NULL_OBJECT_ID;
 
   bool operator==(const SaiActionWithParam& entry) const {
     return action == entry.action && param_name == entry.param_name &&
-           param_value == entry.param_value;
+           param_value == entry.param_value && object_type == entry.object_type;
   }
 
     bool operator!=(const SaiActionWithParam &entry) const
@@ -255,6 +257,7 @@ using acl_rule_attr_lookup_t = std::map<std::string, sai_acl_entry_attr_t>;
 using acl_table_attr_lookup_t = std::map<std::string, sai_acl_table_attr_t>;
 using acl_table_attr_format_lookup_t = std::map<sai_acl_table_attr_t, Format>;
 using acl_packet_action_lookup_t = std::map<std::string, sai_packet_action_t>;
+using acl_object_type_lookup_t = std::map<std::string, sai_object_id_t>;
 using acl_packet_color_lookup_t = std::map<std::string, sai_packet_color_t>;
 using acl_packet_color_policer_attr_lookup_t = std::map<std::string, sai_policer_attr_t>;
 using acl_ip_type_lookup_t = std::map<std::string, sai_acl_ip_type_t>;
@@ -387,6 +390,16 @@ using P4AclRuleTables = std::map<std::string, std::map<std::string, P4AclRule>>;
 #define P4_COUNTER_UNIT_BYTES "BYTES"
 #define P4_COUNTER_UNIT_BOTH "BOTH"
 
+// SAI_OBJECT_TYPES supported by SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT
+#define P4_OBJECT_TYPE_PORT "SAI_OBJECT_TYPE_PORT"
+#define P4_OBJECT_TYPE_SYSTEM_PORT "SAI_OBJECT_TYPE_SYSTEM_PORT"
+#define P4_OBJECT_TYPE_LAG "SAI_OBJECT_TYPE_LAG"
+#define P4_OBJECT_TYPE_NEXT_HOP "SAI_OBJECT_TYPE_NEXT_HOP"
+#define P4_OBJECT_TYPE_NEXT_HOP_GROUP "SAI_OBJECT_TYPE_NEXT_HOP_GROUP"
+#define P4_OBJECT_TYPE_BRIDGE_PORT "SAI_OBJECT_TYPE_BRIDGE_PORT"
+#define P4_OBJECT_TYPE_L2MC_GROUP "SAI_OBJECT_TYPE_L2MC_GROUP"
+#define P4_OBJECT_TYPE_IPMC_GROUP "SAI_OBJECT_TYPE_IPMC_GROUP"
+
 // IP_TYPE encode in p4. go/p4-ip-type
 #define P4_IP_TYPE_BIT_IP "IP"
 #define P4_IP_TYPE_BIT_IPV4ANY "IPV4ANY"
@@ -432,6 +445,10 @@ using P4AclRuleTables = std::map<std::string, std::map<std::string, P4AclRule>>;
 #define P4_COUNTER_STATS_RED_PACKETS "red_packets"
 #define P4_COUNTER_STATS_RED_BYTES "red_bytes"
 
+#define P4_POLICER_MODE_SINGLE_RATE_THREE_COLOR "single_rate_three_color"
+#define P4_POLICER_MODE_TWO_RATE_THREE_COLOR "two_rate_three_color"
+#define P4_POLICER_MODE_SINGLE_RATE_TWO_COLOR "single_rate_two_color"
+
 #define P4_UDF_BASE_L2 "SAI_UDF_BASE_L2"
 #define P4_UDF_BASE_L3 "SAI_UDF_BASE_L3"
 #define P4_UDF_BASE_L4 "SAI_UDF_BASE_L4"
@@ -439,8 +456,9 @@ using P4AclRuleTables = std::map<std::string, std::map<std::string, P4AclRule>>;
 #define GENL_PACKET_TRAP_GROUP_NAME_PREFIX "trap.group.cpu.queue."
 
 #define EMPTY_STRING ""
+
 #define P4_CPU_QUEUE_MIN_NUM 0
-#define P4_CPU_QUEUE_MAX_NUM 46
+#define P4_CPU_QUEUE_MAX_NUM 47
 
 #define IPV6_SINGLE_WORD_BYTES_LENGTH 4
 #define BYTE_BITWIDTH 8
@@ -643,6 +661,17 @@ static const acl_packet_action_lookup_t aclPacketActionLookup = {
     {P4_PACKET_ACTION_DENY, SAI_PACKET_ACTION_DENY},
 };
 
+static const acl_object_type_lookup_t aclObjectTypeLookup = {
+    {P4_OBJECT_TYPE_PORT, SAI_OBJECT_TYPE_PORT},
+    {P4_OBJECT_TYPE_SYSTEM_PORT, SAI_OBJECT_TYPE_SYSTEM_PORT},
+    {P4_OBJECT_TYPE_LAG, SAI_OBJECT_TYPE_LAG},
+    {P4_OBJECT_TYPE_NEXT_HOP, SAI_OBJECT_TYPE_NEXT_HOP},
+    {P4_OBJECT_TYPE_NEXT_HOP_GROUP, SAI_OBJECT_TYPE_NEXT_HOP_GROUP},
+    {P4_OBJECT_TYPE_BRIDGE_PORT, SAI_OBJECT_TYPE_BRIDGE_PORT},
+    {P4_OBJECT_TYPE_L2MC_GROUP, SAI_OBJECT_TYPE_L2MC_GROUP},
+    {P4_OBJECT_TYPE_IPMC_GROUP, SAI_OBJECT_TYPE_IPMC_GROUP},
+};
+
 static const acl_rule_attr_lookup_t aclActionLookup = {
     {P4_ACTION_PACKET_ACTION, SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION},
     {P4_ACTION_REDIRECT, SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT},
@@ -749,6 +778,12 @@ static const std::map<sai_acl_stage_t, acl_stage_type_t>
         {SAI_ACL_STAGE_INGRESS, ACL_STAGE_INGRESS},
         {SAI_ACL_STAGE_EGRESS, ACL_STAGE_EGRESS},
         {SAI_ACL_STAGE_PRE_INGRESS, ACL_STAGE_PRE_INGRESS},
+};
+
+static std::map<std::string, sai_policer_mode_t> policerModeLookup = {
+    {P4_POLICER_MODE_SINGLE_RATE_THREE_COLOR, SAI_POLICER_MODE_SR_TCM},
+    {P4_POLICER_MODE_TWO_RATE_THREE_COLOR, SAI_POLICER_MODE_TR_TCM},
+    {P4_POLICER_MODE_SINGLE_RATE_TWO_COLOR, SAI_POLICER_MODE_STORM_CONTROL}
 };
 
 // Parse ACL table definition APP DB entry action field to P4ActionParamName

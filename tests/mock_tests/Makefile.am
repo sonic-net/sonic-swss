@@ -71,6 +71,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 dashorch_ut.cpp \
                 dashvnetorch_ut.cpp \
                 dashhaorch_ut.cpp \
+                dashhafloworch_ut.cpp \
                 dashrouteorch_ut.cpp \
                 dashportmaporch_ut.cpp \
                 twamporch_ut.cpp \
@@ -87,6 +88,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 retrycache_ut.cpp \
                 mock_saihelper.cpp \
                 mirrororch_ut.cpp \
+                hftelorch_ut.cpp \
+                hftelorch_is_supported_sai_wrap.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
@@ -168,6 +171,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/dash/dashtunnelorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashvnetorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashhaorch.cpp \
+                $(top_srcdir)/orchagent/dash/dashhafloworch.cpp \
                 $(top_srcdir)/orchagent/dash/dashmeterorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashportmaporch.cpp \
                 $(top_srcdir)/orchagent/dash/dashcounter.cpp \
@@ -210,6 +214,7 @@ tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
 
 tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_INCLUDES)
+tests_LDFLAGS = -Wl,--wrap=sai_query_stats_st_capability -Wl,--wrap=sai_query_attribute_capability
 tests_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis -lpthread \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lgmock -lgmock_main -lprotobuf -ldashapi
 

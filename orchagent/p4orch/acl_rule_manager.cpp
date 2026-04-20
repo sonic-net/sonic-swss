@@ -144,13 +144,29 @@ std::vector<sai_attribute_t> getMeterSaiAttrs(const P4AclMeter &p4_acl_meter)
         meter_attr.value.u64 = p4_acl_meter.cir;
         meter_attrs.push_back(meter_attr);
 
-        meter_attr.id = SAI_POLICER_ATTR_PIR;
-        meter_attr.value.u64 = p4_acl_meter.pir;
-        meter_attrs.push_back(meter_attr);
+        if (p4_acl_meter.mode == SAI_POLICER_MODE_SR_TCM) {
+            meter_attr.id = SAI_POLICER_ATTR_PBS;
+            meter_attr.value.u64 = p4_acl_meter.pburst;
+            meter_attrs.push_back(meter_attr);
+        } else if (p4_acl_meter.mode == SAI_POLICER_MODE_TR_TCM) {
+            meter_attr.id = SAI_POLICER_ATTR_PIR;
+            meter_attr.value.u64 = p4_acl_meter.pir;
+            meter_attrs.push_back(meter_attr);
 
-        meter_attr.id = SAI_POLICER_ATTR_PBS;
-        meter_attr.value.u64 = p4_acl_meter.pburst;
-        meter_attrs.push_back(meter_attr);
+            meter_attr.id = SAI_POLICER_ATTR_PBS;
+            meter_attr.value.u64 = p4_acl_meter.pburst;
+            meter_attrs.push_back(meter_attr);
+        }
+
+        /* TBD
+        if (gLabelMapper->isLabelValid(p4_acl_meter.policer_label)) {
+          meter_attr.id = SAI_POLICER_ATTR_LABEL;
+          auto size = sizeof(meter_attr.value.chardata);
+          snprintf(meter_attr.value.chardata, size, "%s",
+                   p4_acl_meter.policer_label.c_str());
+          meter_attrs.push_back(meter_attr);
+        }
+       */
     }
 
     for (const auto &packet_color_action : p4_acl_meter.packet_color_actions)
@@ -628,36 +644,39 @@ ReturnCodeOr<P4AclRuleAppDbEntry> AclRuleManager::deserializeAclRuleAppDbEntry(
         else if (prefix == kMeterPrefix)
         {
             const auto &meter_attr_name = tokenized_field[1];
-            if (std::stoi(value) < 0)
-            {
-                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                       << "Invalid ACL meter field value " << QuotedVar(field) << ": " << QuotedVar(value);
+            if (meter_attr_name == kMeterMode) {
+                app_db_entry.meter.mode = value;
+                continue;
             }
-            if (meter_attr_name == kMeterCir)
-            {
-                app_db_entry.meter.cir = std::stoi(value);
-            }
-            else if (meter_attr_name == kMeterCburst)
-            {
-                app_db_entry.meter.cburst = std::stoi(value);
-            }
-            else if (meter_attr_name == kMeterPir)
-            {
-                app_db_entry.meter.pir = std::stoi(value);
-            }
-            else if (meter_attr_name == kMeterPburst)
-            {
-                app_db_entry.meter.pburst = std::stoi(value);
-            }
-            else
-            {
-                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Unknown ACL meter field " << QuotedVar(field);
-            }
-            app_db_entry.meter.enabled = true;
-        }
-        else
-        {
-            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Unknown ACL rule field " << QuotedVar(field);
+            try {
+                auto value_node = nlohmann::json::parse(value);
+                if (!value_node.is_number_unsigned()) {
+                  return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                     << "Invalid ACL meter field value " << QuotedVar(field) << ": "
+                     << QuotedVar(value) << " - Expect a uint64_t.";
+               }
+               uint64_t meter_value = std::stoull(value);
+               if (meter_attr_name == kMeterCir) {
+                  app_db_entry.meter.cir = meter_value;
+               } else if (meter_attr_name == kMeterCburst) {
+                   app_db_entry.meter.cburst = meter_value;
+               } else if (meter_attr_name == kMeterPir) {
+                   app_db_entry.meter.pir = meter_value;
+               } else if (meter_attr_name == kMeterPburst) {
+                   app_db_entry.meter.pburst = meter_value;
+               } else {
+                  return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                    << "Unknown ACL meter field " << QuotedVar(field);
+               }
+           } catch (std::exception& e) {
+             return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                 << "Invalid ACL meter field value " << QuotedVar(field) << ": "
+                 << QuotedVar(value) << " - Expect a uint64_t.";
+           }
+           app_db_entry.meter.enabled = true;
+        } else  {
+            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Unknown ACL rule field " << QuotedVar(field);
         }
     }
     return app_db_entry;
@@ -669,6 +688,27 @@ ReturnCode AclRuleManager::validateAclRuleAppDbEntry(const P4AclRuleAppDbEntry &
     {
         return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
                << "ACL rule in table " << QuotedVar(app_db_entry.acl_table_name) << " is missing priority";
+    }
+    if (app_db_entry.meter.enabled && !app_db_entry.meter.mode.empty() &&
+        policerModeLookup.find(app_db_entry.meter.mode) ==
+            policerModeLookup.end()) {
+      return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+             << "ACL rule " << QuotedVar(app_db_entry.db_key)
+             << " has invalid policer mode:"
+             << QuotedVar(app_db_entry.meter.mode);
+    }
+    // If meter/mode is empty, then OA will use storm mode by default.
+    // If meter/pir and meter/pburst present, they should be equal to meter/cir
+    // and meter/cburst.
+    if (app_db_entry.meter.enabled && app_db_entry.meter.mode.empty() &&
+        ((app_db_entry.meter.pir != 0 &&
+          app_db_entry.meter.cir != app_db_entry.meter.pir) ||
+         (app_db_entry.meter.pburst != 0 &&
+          app_db_entry.meter.cburst != app_db_entry.meter.pburst))) {
+      return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+             << "ACL policer for " << QuotedVar(app_db_entry.db_key)
+             << " in default single_rate_two_color mode has invalid cir:pir/cburst:pburst pairs, "
+                "expected cir==pir, cburst==pburst.";
     }
     return ReturnCode();
 }
@@ -1061,7 +1101,7 @@ ReturnCode AclRuleManager::setMatchValue(const sai_acl_entry_attr_t attr_name,
   return ReturnCode();
 }
 
-ReturnCode AclRuleManager::getRedirectActionPortOid(const std::string &target, sai_object_id_t *rediect_oid)
+ReturnCode AclRuleManager::getRedirectActionPortOid(const std::string& target, sai_object_id_t* redirect_oid)
 {
     // Try to parse physical port and LAG first
     Port port;
@@ -1069,12 +1109,12 @@ ReturnCode AclRuleManager::getRedirectActionPortOid(const std::string &target, s
     {
         if (port.m_type == Port::PHY)
         {
-            *rediect_oid = port.m_port_id;
+            *redirect_oid = port.m_port_id;
             return ReturnCode();
         }
         else if (port.m_type == Port::LAG)
         {
-            *rediect_oid = port.m_lag_id;
+            *redirect_oid = port.m_lag_id;
             return ReturnCode();
         }
         else
@@ -1087,14 +1127,42 @@ ReturnCode AclRuleManager::getRedirectActionPortOid(const std::string &target, s
     return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND) << "Port " << QuotedVar(target) << " not found.";
 }
 
-ReturnCode AclRuleManager::getRedirectActionNextHopOid(const std::string &target, sai_object_id_t *rediect_oid)
+ReturnCode AclRuleManager::getRedirectActionNextHopOid(const std::string& target, sai_object_id_t* redirect_oid)
 {
     // Try to get nexthop object id
     const auto &next_hop_key = KeyGenerator::generateNextHopKey(target);
-    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_NEXT_HOP, next_hop_key, rediect_oid))
+    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_NEXT_HOP, next_hop_key, redirect_oid))
     {
         LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
                              << "ACL Redirect action target next hop ip: " << QuotedVar(target)
+                             << " doesn't exist on the switch");
+    }
+    return ReturnCode();
+}
+
+ReturnCode AclRuleManager::getRedirectActionL3MulticastGroupOid(
+    const std::string& target, sai_object_id_t* redirect_oid) {
+    const auto& multicast_group_key =
+        KeyGenerator::generateL3MulticastGroupKey(target);
+    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_IPMC_GROUP, multicast_group_key,
+                               redirect_oid)) {
+        LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                             << "ACL Redirect action target multicast group ID: "
+                             << QuotedVar(target)
+                             << " doesn't exist on the switch");
+    }
+    return ReturnCode();
+}
+
+ReturnCode AclRuleManager::getRedirectActionL2MulticastGroupOid(
+    const std::string& target, sai_object_id_t* redirect_oid) {
+    const auto& l2_multicast_group_key =
+        KeyGenerator::generateL2MulticastGroupKey(target);
+    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_L2MC_GROUP, l2_multicast_group_key,
+                               redirect_oid)) {
+        LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                             << "ACL Redirect action target L2 multicast group ID: "
+                             << QuotedVar(target)
                              << " doesn't exist on the switch");
     }
     return ReturnCode();
@@ -1216,6 +1284,7 @@ ReturnCode AclRuleManager::setAllActionFieldValues(const P4AclRuleAppDbEntry &ap
         sai_action_param.action = action_param.action;
         sai_action_param.param_name = action_param.param_name;
         sai_action_param.param_value = action_param.param_value;
+        sai_action_param.object_type = action_param.object_type;
         if (!action_param.param_name.empty())
         {
             const auto &param_value_it = app_db_entry.action_param_fvs.find(action_param.param_name);
@@ -1231,6 +1300,7 @@ ReturnCode AclRuleManager::setAllActionFieldValues(const P4AclRuleAppDbEntry &ap
             }
         }
         auto set_action_rc = setActionValue(sai_action_param.action, sai_action_param.param_value,
+                                            sai_action_param.object_type,
                                             &acl_rule.action_fvs[sai_action_param.action], &acl_rule);
         if (!set_action_rc.ok())
         {
@@ -1242,6 +1312,7 @@ ReturnCode AclRuleManager::setAllActionFieldValues(const P4AclRuleAppDbEntry &ap
 
 ReturnCode AclRuleManager::setActionValue(const sai_acl_entry_attr_t attr_name,
                                           const std::string& attr_value,
+                                          const sai_object_id_t attr_type,
                                           sai_attribute_value_t* value,
                                           P4AclRule* acl_rule) {
   switch (attr_name) {
@@ -1261,6 +1332,43 @@ ReturnCode AclRuleManager::setActionValue(const sai_acl_entry_attr_t attr_name,
     }
     case SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT: {
         sai_object_id_t redirect_oid;
+
+        // Use the attr_type to disambiguate what we are redirecting to.
+        if (attr_type == SAI_OBJECT_TYPE_IPMC_GROUP) {
+          RETURN_IF_ERROR(
+              getRedirectActionL3MulticastGroupOid(attr_value, &redirect_oid));
+          value->aclaction.parameter.oid = redirect_oid;
+          acl_rule->action_redirect_l3_multicast_group_key =
+              KeyGenerator::generateL3MulticastGroupKey(attr_value);
+          break;
+        } else if (attr_type == SAI_OBJECT_TYPE_L2MC_GROUP) {
+          RETURN_IF_ERROR(
+              getRedirectActionL2MulticastGroupOid(attr_value, &redirect_oid));
+          value->aclaction.parameter.oid = redirect_oid;
+          acl_rule->action_redirect_l2_multicast_group_key =
+              KeyGenerator::generateL2MulticastGroupKey(attr_value);
+          break;
+        } else if (attr_type == SAI_OBJECT_TYPE_PORT) {
+          auto port_status = getRedirectActionPortOid(attr_value, &redirect_oid);
+          if (port_status.ok()) {
+            value->aclaction.parameter.oid = redirect_oid;
+            break;
+          } else if (port_status.code() == StatusCode::SWSS_RC_IN_USE) {
+            return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                   << port_status.message();
+          } else {
+            return port_status;
+          }
+          break;
+        } else if (attr_type == SAI_OBJECT_TYPE_NEXT_HOP) {
+          RETURN_IF_ERROR(getRedirectActionNextHopOid(attr_value, &redirect_oid));
+          value->aclaction.parameter.oid = redirect_oid;
+          acl_rule->action_redirect_nexthop_key =
+              KeyGenerator::generateNextHopKey(attr_value);
+          break;
+        }
+
+        // If object type was not set, use original fall-through chain for now.
         if (getRedirectActionPortOid(attr_value, &redirect_oid).ok())
         {
             value->aclaction.parameter.oid = redirect_oid;
@@ -1486,11 +1594,18 @@ ReturnCode AclRuleManager::setMeterValue(const P4AclTableDefinition *acl_table, 
 {
     if (app_db_entry.meter.enabled)
     {
+        auto policer_mode_it = policerModeLookup.find(app_db_entry.meter.mode);
+        if (policer_mode_it != policerModeLookup.end()) {
+            acl_meter.mode = policer_mode_it->second;
+        }
         acl_meter.cir = app_db_entry.meter.cir;
         acl_meter.cburst = app_db_entry.meter.cburst;
-        acl_meter.pir = app_db_entry.meter.pir;
-        acl_meter.pburst = app_db_entry.meter.pburst;
-        acl_meter.mode = SAI_POLICER_MODE_TR_TCM;
+        if (acl_meter.mode == SAI_POLICER_MODE_SR_TCM) {
+            acl_meter.pburst = app_db_entry.meter.pburst;
+        } else if (acl_meter.mode == SAI_POLICER_MODE_TR_TCM) {
+            acl_meter.pir = app_db_entry.meter.pir;
+            acl_meter.pburst = app_db_entry.meter.pburst;
+        }
         if (acl_table->meter_unit == P4_METER_UNIT_PACKETS)
         {
             acl_meter.type = SAI_METER_TYPE_PACKETS;
@@ -1513,17 +1628,22 @@ ReturnCode AclRuleManager::setMeterValue(const P4AclTableDefinition *acl_table, 
         acl_meter.packet_color_actions = action_color_it->second;
     }
 
-    // SAI_POLICER_MODE_TR_TCM mode is used by default.
+    if (acl_meter.mode == SAI_POLICER_MODE_STORM_CONTROL &&
+        acl_meter.packet_color_actions.find(
+            SAI_POLICER_ATTR_YELLOW_PACKET_ACTION) !=
+            acl_meter.packet_color_actions.end()) {
+    acl_meter.packet_color_actions.erase(SAI_POLICER_ATTR_YELLOW_PACKET_ACTION);
+    }
+
+    // SAI_POLICER_MODE_STORM_CONTROL mode is used by default.
     // Meter rate limit config is not present for the ACL rule
     // Mark the packet as GREEN by setting rate limit to max.
     if (!acl_meter.packet_color_actions.empty() && !acl_meter.enabled)
     {
         acl_meter.enabled = true;
-        acl_meter.type = SAI_METER_TYPE_PACKETS;
-        acl_meter.cburst = 0x7fffffff;
+        acl_meter.type = SAI_METER_TYPE_BYTES;
+        acl_meter.cburst = 0x1000021;
         acl_meter.cir = 0x7fffffff;
-        acl_meter.pir = 0x7fffffff;
-        acl_meter.pburst = 0x7fffffff;
     }
 
     return ReturnCode();
@@ -1692,6 +1812,26 @@ ReturnCode AclRuleManager::updateAclRule(const P4AclRule &acl_rule, const P4AclR
     {
         m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP, acl_rule.action_redirect_nexthop_key);
     }
+    if (!old_acl_rule.action_redirect_l3_multicast_group_key.empty()) {
+        m_p4OidMapper->decreaseRefCount(
+          SAI_OBJECT_TYPE_IPMC_GROUP,
+          old_acl_rule.action_redirect_l3_multicast_group_key);
+    }
+    if (!acl_rule.action_redirect_l3_multicast_group_key.empty()) {
+        m_p4OidMapper->increaseRefCount(
+          SAI_OBJECT_TYPE_IPMC_GROUP,
+          acl_rule.action_redirect_l3_multicast_group_key);
+    }
+    if (!old_acl_rule.action_redirect_l2_multicast_group_key.empty()) {
+        m_p4OidMapper->decreaseRefCount(
+          SAI_OBJECT_TYPE_L2MC_GROUP,
+          old_acl_rule.action_redirect_l2_multicast_group_key);
+    }
+    if (!acl_rule.action_redirect_l2_multicast_group_key.empty()) {
+        m_p4OidMapper->increaseRefCount(
+          SAI_OBJECT_TYPE_L2MC_GROUP,
+          acl_rule.action_redirect_l2_multicast_group_key);
+    }
     for (const auto &mirror_session : old_acl_rule.action_mirror_sessions)
     {
         m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_MIRROR_SESSION, fvValue(mirror_session).key);
@@ -1807,6 +1947,16 @@ ReturnCode AclRuleManager::removeAclRule(const std::string &acl_table_name, cons
     {
         m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP, acl_rule->action_redirect_nexthop_key);
     }
+    if (!acl_rule->action_redirect_l3_multicast_group_key.empty()) {
+        m_p4OidMapper->decreaseRefCount(
+          SAI_OBJECT_TYPE_IPMC_GROUP,
+          acl_rule->action_redirect_l3_multicast_group_key);
+    }
+    if (!acl_rule->action_redirect_l2_multicast_group_key.empty()) {
+        m_p4OidMapper->decreaseRefCount(
+          SAI_OBJECT_TYPE_L2MC_GROUP,
+          acl_rule->action_redirect_l2_multicast_group_key);
+    }
     for (const auto &mirror_session : acl_rule->action_mirror_sessions)
     {
         m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_MIRROR_SESSION, fvValue(mirror_session).key);
@@ -1897,6 +2047,16 @@ ReturnCode AclRuleManager::processAddRuleRequest(const std::string &acl_rule_key
     {
         m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP, acl_rule.action_redirect_nexthop_key);
     }
+    if (!acl_rule.action_redirect_l3_multicast_group_key.empty()) {
+        m_p4OidMapper->increaseRefCount(
+          SAI_OBJECT_TYPE_IPMC_GROUP,
+          acl_rule.action_redirect_l3_multicast_group_key);
+    }
+    if (!acl_rule.action_redirect_l2_multicast_group_key.empty()) {
+        m_p4OidMapper->increaseRefCount(
+          SAI_OBJECT_TYPE_L2MC_GROUP,
+          acl_rule.action_redirect_l2_multicast_group_key);
+    }
     for (const auto &mirror_session : acl_rule.action_mirror_sessions)
     {
         m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_MIRROR_SESSION, fvValue(mirror_session).key);
@@ -1953,8 +2113,8 @@ ReturnCode AclRuleManager::processDeleteRuleRequest(const std::string &acl_table
     return status;
 }
 
-ReturnCode AclRuleManager::processUpdateRuleRequest(const P4AclRuleAppDbEntry &app_db_entry,
-                                                    const P4AclRule &old_acl_rule)
+ReturnCode AclRuleManager::processUpdateRuleRequest(
+    const P4AclRuleAppDbEntry& app_db_entry, P4AclRule &old_acl_rule)
 {
     SWSS_LOG_ENTER();
 
@@ -2027,6 +2187,14 @@ ReturnCode AclRuleManager::processUpdateRuleRequest(const P4AclRuleAppDbEntry &a
     else if (old_acl_rule.meter.meter_oid != SAI_NULL_OBJECT_ID)
     {
         // Update meter attributes
+        if (acl_rule.meter.mode != old_acl_rule.meter.mode) {
+        // TODO: SAI_POLICER_ATTR_MODE is CREATE_ONLY
+        LOG_ERROR_AND_RETURN(
+            ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
+            << "Updating ACL rule meter mode is not supported for ACL entry: "
+            << QuotedVar(acl_rule.acl_rule_key) << " in table "
+            << QuotedVar(acl_rule.acl_table_name));
+        }
         auto status = updateAclMeter(acl_rule.meter, old_acl_rule.meter);
         if (!status.ok())
         {
@@ -2035,6 +2203,7 @@ ReturnCode AclRuleManager::processUpdateRuleRequest(const P4AclRuleAppDbEntry &a
         }
         updated_meter = true;
         acl_rule.meter.meter_oid = old_acl_rule.meter.meter_oid;
+        acl_rule.meter.policer_label = old_acl_rule.meter.policer_label;
     }
 
     auto status = updateAclRule(acl_rule, old_acl_rule, acl_entry_attrs, rollback_attrs);
@@ -2345,6 +2514,28 @@ std::string AclRuleManager::verifyStateCache(const P4AclRuleAppDbEntry &app_db_e
             << QuotedVar(acl_rule_entry.action_redirect_nexthop_key) << " mismatch with internal cache "
             << QuotedVar(acl_rule->action_redirect_nexthop_key) << " in ACl rule manager.";
         return msg.str();
+    }
+    if (acl_rule->action_redirect_l3_multicast_group_key !=
+        acl_rule_entry.action_redirect_l3_multicast_group_key) {
+      std::stringstream msg;
+      msg << "ACL rule " << QuotedVar(acl_rule_key)
+          << " with redirect L3 multicast group key "
+          << QuotedVar(acl_rule_entry.action_redirect_l3_multicast_group_key)
+          << " mismatch with internal cache "
+          << QuotedVar(acl_rule->action_redirect_l3_multicast_group_key)
+          << " in ACl rule manager.";
+      return msg.str();
+    }
+    if (acl_rule->action_redirect_l2_multicast_group_key !=
+        acl_rule_entry.action_redirect_l2_multicast_group_key) {
+      std::stringstream msg;
+      msg << "ACL rule " << QuotedVar(acl_rule_key)
+          << " with redirect L2 multicast group key "
+          << QuotedVar(acl_rule_entry.action_redirect_l2_multicast_group_key)
+          << " mismatch with internal cache "
+          << QuotedVar(acl_rule->action_redirect_l2_multicast_group_key)
+          << " in ACl rule manager.";
+      return msg.str();
     }
     if (acl_rule->action_mirror_sessions != acl_rule_entry.action_mirror_sessions)
     {

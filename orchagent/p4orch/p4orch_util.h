@@ -32,6 +32,7 @@ constexpr char *kInPort = "in_port";
 constexpr char* kMulticastReplicaPort = "multicast_replica_port";
 constexpr char* kMulticastReplicaInstance = "multicast_replica_instance";
 constexpr char* kReplicas = "replicas";
+constexpr char* kBackups = "backups";
 constexpr char *kSrcMac = "src_mac";
 constexpr char *kAction = "action";
 constexpr char *kActions = "actions";
@@ -42,7 +43,7 @@ constexpr char *kDstMac = "dst_mac";
 constexpr char *kNexthopId = "nexthop_id";
 constexpr char *kTunnelId = "tunnel_id";
 constexpr char *kVrfId = "vrf_id";
-constexpr char* kVlanId = "vlan_id";
+constexpr char *kVlanId = "vlan_id";
 constexpr char *kIpv4Dst = "ipv4_dst";
 constexpr char *kIpv6Dst = "ipv6_dst";
 constexpr char *kWcmpGroupId = "wcmp_group_id";
@@ -62,12 +63,18 @@ constexpr char* kSetIpNexthopAndDisableRewrites =
     "set_ip_nexthop_and_disable_rewrites";
 constexpr char *kSetTunnelNexthop = "set_p2p_tunnel_encap_nexthop";
 constexpr char* kL2MulticastPassthrough = "l2_multicast_passthrough";
+constexpr char* kMulticastL2Passthrough = "multicast_l2_passthrough";
+constexpr char* kMulticastSetSrcMac = "multicast_set_src_mac";
+constexpr char* kMulticastSetSrcMacAndVlanId = "multicast_set_src_mac_and_vlan_id";
+constexpr char* kMulticastSetSrcMacAndDstMacAndVlanId = "multicast_set_src_mac_and_dst_mac_and_vlan_id";
+constexpr char* kMulticastSetSrcMacAndPreserveIngressVlanId = "multicast_set_src_mac_and_preserve_ingress_vlan_id";
 constexpr char *kDrop = "drop";
 constexpr char *kTrap = "trap";
 constexpr char *kStage = "stage";
 constexpr char *kSize = "size";
 constexpr char *kPriority = "priority";
 constexpr char *kPacketColor = "packet_color";
+constexpr char *kObjectType = "object_type";
 constexpr char *kMeterUnit = "meter/unit";
 constexpr char *kCounterUnit = "counter/unit";
 constexpr char kFieldDelimiter = '/';
@@ -77,6 +84,7 @@ constexpr char kPortsDelimiter = ',';
 constexpr char *kMatchPrefix = "match";
 constexpr char *kActionParamPrefix = "param";
 constexpr char *kMeterPrefix = "meter";
+constexpr char *kMeterMode = "mode";
 constexpr char *kMeterCir = "cir";
 constexpr char *kMeterCburst = "cburst";
 constexpr char *kMeterPir = "pir";
@@ -274,6 +282,7 @@ struct P4ActionParamName
 {
     std::string sai_action;
     std::string p4_param_name;
+    std::string sai_object_type;  // optionally included for some sai_actions.
 };
 
 struct P4PacketActionWithColor
@@ -304,8 +313,10 @@ struct P4AclMeterAppDb
     uint64_t cburst;
     uint64_t pir;
     uint64_t pburst;
+    std::string mode;
 
-    P4AclMeterAppDb() : enabled(false)
+    //P4AclMeterAppDb() : enabled(false)
+    P4AclMeterAppDb() : enabled(false), cir(0), cburst(0), pir(0), pburst(0)
     {
     }
 };
@@ -410,6 +421,11 @@ class KeyGenerator
     static std::string generateMulticastRouterInterfaceRifKey(
         const std::string& multicast_replica_port,
         const swss::MacAddress& src_mac);
+
+    static std::string generateL2MulticastGroupKey(
+        const std::string& l2_multicast_group_id);
+    static std::string generateL3MulticastGroupKey(
+        const std::string& multicast_group_id);
 
     static std::string generateIpMulticastKey(const std::string& vrf_id,
                                               const swss::IpAddress& ip_dst);
