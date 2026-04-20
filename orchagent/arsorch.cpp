@@ -21,7 +21,6 @@ extern sai_switch_api_t*         sai_switch_api;
 extern sai_next_hop_group_api_t* sai_next_hop_group_api;
 extern sai_lag_api_t*            sai_lag_api;
 extern sai_port_api_t*                  sai_port_api;
-extern sai_router_interface_api_t*      sai_router_intfs_api;
 extern sai_object_id_t                  gSwitchId;
 extern RouteOrch                       *gRouteOrch;
 
@@ -2276,102 +2275,48 @@ bool ArsOrch::setPortArsEnable(const string &portName, bool enable)
 
     sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
 
-    // Mellanox SAI rejects SAI_PORT_ATTR_ARS_ENABLE with
-    // SAI_STATUS_INVALID_PARAMETER when the port has a router interface
-    // (RIF). L3 uplink ports — exactly where ARS matters — always have
-    // RIFs at steady state. Handle this transparently by temporarily
-    // removing the RIF, enabling ARS, then re-creating the RIF. This
-    // is the same sequence setup_lab.py performed externally, but done
-    // atomically inside orchagent where it doesn't race with other
-    // notification processing.
-    if (status == SAI_STATUS_INVALID_PARAMETER && port.m_rif_id != 0)
-    {
-        SWSS_LOG_NOTICE("ARS: SAI_PORT_ATTR_ARS_ENABLE=%s on %s rejected "
-                        "(port has RIF oid:0x%" PRIx64 "). Attempting RIF "
-                        "bounce: remove → set ARS → re-create.",
-                        enable ? "true" : "false", portName.c_str(),
-                        port.m_rif_id);
-
-        // Save the RIF attributes we need for re-creation.
-        sai_object_id_t saved_rif_id = port.m_rif_id;
-        sai_object_id_t saved_vr_id  = port.m_vr_id;
-
-        // Step 1: Remove the RIF.
-        sai_status_t rif_status = sai_router_intfs_api->remove_router_interface(saved_rif_id);
-        if (rif_status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("ARS: RIF bounce failed — could not remove RIF "
-                           "oid:0x%" PRIx64 " on %s: %s. ARS enable aborted.",
-                           saved_rif_id, portName.c_str(),
-                           sai_serialize_status(rif_status).c_str());
-            return false;
-        }
-
-        // Step 2: Enable ARS on the now-bare port.
-        status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("ARS: RIF bounce — ARS enable still failed after "
-                           "RIF removal on %s: %s. Re-creating RIF.",
-                           portName.c_str(),
-                           sai_serialize_status(status).c_str());
-        }
-
-        // Step 3: Re-create the RIF (must succeed regardless of ARS result).
-        sai_attribute_t rif_attrs[5];
-        uint32_t rif_attr_count = 0;
-
-        rif_attrs[rif_attr_count].id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
-        rif_attrs[rif_attr_count].value.oid = saved_vr_id;
-        rif_attr_count++;
-
-        rif_attrs[rif_attr_count].id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
-        rif_attrs[rif_attr_count].value.s32 = SAI_ROUTER_INTERFACE_TYPE_PORT;
-        rif_attr_count++;
-
-        rif_attrs[rif_attr_count].id = SAI_ROUTER_INTERFACE_ATTR_PORT_ID;
-        rif_attrs[rif_attr_count].value.oid = port.m_port_id;
-        rif_attr_count++;
-
-        rif_attrs[rif_attr_count].id = SAI_ROUTER_INTERFACE_ATTR_MTU;
-        rif_attrs[rif_attr_count].value.u32 = port.m_mtu;
-        rif_attr_count++;
-
-        sai_object_id_t new_rif_id;
-        rif_status = sai_router_intfs_api->create_router_interface(
-            &new_rif_id, gSwitchId, rif_attr_count, rif_attrs);
-
-        if (rif_status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("ARS: CRITICAL — RIF re-creation failed on %s: %s. "
-                           "Port has lost its router interface!",
-                           portName.c_str(),
-                           sai_serialize_status(rif_status).c_str());
-            // Update port state to reflect the lost RIF.
-            port.m_rif_id = 0;
-            m_portsOrch->setPort(portName, port);
-            return (status == SAI_STATUS_SUCCESS);
-        }
-
-        // Update port state with the new RIF OID.
-        port.m_rif_id = new_rif_id;
-        m_portsOrch->setPort(portName, port);
-
-        if (status == SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_NOTICE("ARS: RIF bounce succeeded — port %s ARS %s "
-                            "(new RIF oid:0x%" PRIx64 ")",
-                            portName.c_str(), enable ? "enabled" : "disabled",
-                            new_rif_id);
-            return true;
-        }
-        return false;
-    }
-
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("ARS: set SAI_PORT_ATTR_ARS_ENABLE on %s failed: %s",
-                       portName.c_str(), sai_serialize_status(status).c_str());
+        // Mellanox SAI rejects SAI_PORT_ATTR_ARS_ENABLE with
+        // SAI_STATUS_INVALID_PARAMETER when port_config->rifs > 0, i.e.
+        // when a router interface is bound to the port.  The supported
+        // workaround is to enable ARS BEFORE any RIF is created — the
+        // orch-list ordering (gArsOrch before gIntfsOrch, commit cbb87df6)
+        // ensures this at cold boot / config reload.  The port-up retry
+        // handler (eb8f03bd) covers transient boot-time failures.
+        //
+        // A previous implementation (commit 16845cf0) attempted an
+        // automatic "RIF bounce" here: remove the RIF via SAI, enable
+        // ARS, then re-create the RIF.  This was removed because:
+        //
+        //  1. It destroys the RIF behind IntfsOrch/NeighOrch's back,
+        //     orphaning next-hop objects that reference the old RIF OID.
+        //     Subsequent neighbor programming fails with
+        //     SAI_STATUS_INVALID_PARAMETER on SAI_API_NEXT_HOP (stale
+        //     OID removal) and orchagent enters an infinite retry loop.
+        //
+        //  2. On Spectrum-4, the SAI often returns SAI_STATUS_NOT_SUPPORTED
+        //     even after the RIF is removed, so the bounce destroys the
+        //     RIF for nothing and leaves the port in a broken state.
+        //
+        // If this error appears at runtime, the operator should remove
+        // IPs from the port, enable ARS, then re-add IPs — or use
+        // config reload with ARS config pre-written to CONFIG_DB.
+        if (status == SAI_STATUS_INVALID_PARAMETER && port.m_rif_id != 0)
+        {
+            SWSS_LOG_ERROR("ARS: set SAI_PORT_ATTR_ARS_ENABLE=%s on %s failed "
+                           "(INVALID_PARAMETER — port has RIF oid:0x%" PRIx64 "). "
+                           "Mellanox SAI forbids toggling ARS on a port with "
+                           "RIFs. Use config reload with ARS pre-configured, "
+                           "or remove IPs before enabling ARS.",
+                           enable ? "true" : "false", portName.c_str(),
+                           port.m_rif_id);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("ARS: set SAI_PORT_ATTR_ARS_ENABLE on %s failed: %s",
+                           portName.c_str(), sai_serialize_status(status).c_str());
+        }
         return false;
     }
 
