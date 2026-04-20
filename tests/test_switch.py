@@ -65,7 +65,7 @@ def vxlan_switch_test(dvs, oid, port, mac, mask, sport, security="false"):
     }
     check_object(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_SWITCH", oid, expected_attrs)
 
-def vxlan_switch_test(dvs, oid, port, mac, mask, sport, security="true"):
+def vxlan_switch_test_security(dvs, oid, port, mac, mask, sport, security="true"):
     app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
     create_entry_pst(
         app_db,
