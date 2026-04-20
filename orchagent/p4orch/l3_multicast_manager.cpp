@@ -1068,10 +1068,8 @@ ReturnCode L3MulticastManager::validateSetMulticastGroupEntry(
       multicast_group_entry.multicast_group_id);
 
   sai_object_type_t sai_group_type = SAI_OBJECT_TYPE_IPMC_GROUP;
-  sai_object_type_t sai_group_member_type = SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER;
   if (!multicast_group_entry.is_ipmc) {
     sai_group_type = SAI_OBJECT_TYPE_L2MC_GROUP;
-    sai_group_member_type = SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER;
   }
 
   bool is_update_operation = group_entry_ptr != nullptr;
@@ -1084,32 +1082,6 @@ ReturnCode L3MulticastManager::validateSetMulticastGroupEntry(
           << group_entry_ptr->multicast_group_id;
     }
 
-    // Confirm we have references to the multicast group members also.
-    // An update operation may add or delete members.
-    // For add, confirm the member did not have an oid.
-    // For update, confirm the member had an oid.
-    for (auto& replica_list : multicast_group_entry.replicas) {
-      for (auto& replica : replica_list) {
-        bool member_exists_in_mapper =
-            m_p4OidMapper->existsOID(sai_group_member_type, replica.key);
-        if (group_entry_ptr->replica_keys.find(replica.key) ==
-            group_entry_ptr->replica_keys.end()) {  // Add member.
-          if (member_exists_in_mapper) {
-            LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                                 << "Multicast group member to add "
-                                 << QuotedVar(replica.key)
-                                 << " already exists in the central mapper.");
-          }
-        } else {  // Update member.
-          if (!member_exists_in_mapper) {
-            LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                                 << "Multicast group member to delete "
-                                 << QuotedVar(replica.key)
-                                 << " does not exist in the central mapper.");
-          }
-        }
-      }
-    }
   }
   // No additional validation required for add operation.
   return ReturnCode();
