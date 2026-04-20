@@ -2205,7 +2205,7 @@ void PortsOrch::initHostTxReadyState(Port &port)
     }
 }
 
-bool PortsOrch::setPortAdminStatus(Port &port, bool state)
+bool PortsOrch::setPortAdminStatus(Port &port, bool state, bool update_host_tx_ready)
 {
     SWSS_LOG_ENTER();
 
@@ -2217,7 +2217,7 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     // do not change host_tx_ready value in STATE DB when admin status is changed.
 
     /* Update the host_tx_ready to false before setting admin_state, when admin state is false */
-    if (!state && !m_cmisModuleAsicSyncSupported)
+    if (!state && !m_cmisModuleAsicSyncSupported && update_host_tx_ready)
     {
         setHostTxReady(port, "false");
         SWSS_LOG_NOTICE("Set admin status DOWN host_tx_ready to false for port %s",
@@ -2231,7 +2231,7 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
                        " Setting host_tx_ready as false",
                        state ? "UP" : "DOWN", port.m_alias.c_str());
 
-        if (!m_cmisModuleAsicSyncSupported)
+        if (!m_cmisModuleAsicSyncSupported && update_host_tx_ready)
         {
             setHostTxReady(port, "false");
         }
@@ -2243,7 +2243,7 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     }
 
     bool gbstatus = setGearboxPortsAttr(port, SAI_PORT_ATTR_ADMIN_STATE, &state);
-    if (gbstatus != true && !m_cmisModuleAsicSyncSupported)
+    if (gbstatus != true && !m_cmisModuleAsicSyncSupported && update_host_tx_ready)
     {
         setHostTxReady(port, "false");
         SWSS_LOG_NOTICE("Set host_tx_ready to false as gbstatus is false "
@@ -2251,7 +2251,7 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     }
 
     /* Update the state table for host_tx_ready*/
-    if (state && (gbstatus == true) && (status == SAI_STATUS_SUCCESS) && !m_cmisModuleAsicSyncSupported)
+    if (state && (gbstatus == true) && (status == SAI_STATUS_SUCCESS) && !m_cmisModuleAsicSyncSupported && update_host_tx_ready)
     {
         setHostTxReady(port, "true");
         SWSS_LOG_NOTICE("Set admin status UP host_tx_ready to true for port %s",
@@ -2273,6 +2273,20 @@ void PortsOrch::setHostTxReady(Port port, const std::string &status)
         SWSS_LOG_NOTICE("Setting host_tx_ready status = %s, alias = %s, port_id = 0x%" PRIx64, status.c_str(), port.m_alias.c_str(), port.m_port_id);
         m_portStateTable.hset(port.m_alias, "host_tx_ready", status);
     }
+}
+
+void PortsOrch::setPortSiSettingsSyncStatus(const Port& port, const std::string& status)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> tuples;
+    FieldValueTuple tuple("si_settings_sync_status", status);
+    tuples.push_back(tuple);
+
+    m_portStateTable.set(port.m_alias, tuples);
+
+    SWSS_LOG_NOTICE("Set port %s SI settings sync status to %s",
+                    port.m_alias.c_str(), status.c_str());
 }
 
 bool PortsOrch::getPortAdminStatus(sai_object_id_t id, bool &up)
@@ -4494,6 +4508,106 @@ void PortsOrch::doSendToIngressPortTask(Consumer &consumer)
     }
 }
 
+// Helper function to apply port serdes configurations for all sides (ASIC, line, system)
+bool PortsOrch::applyPortSerdesConfig(Port &port, const PortConfig &pCfg, bool &serdes_settings_changed)
+{
+    SWSS_LOG_ENTER();
+
+    serdes_settings_changed = false;
+
+    // Get serdes attributes from port config
+    PortSerdesAttrMap_t serdes_attr;
+    PortSerdesAttrMap_t line_serdes_attr;
+    PortSerdesAttrMap_t system_serdes_attr;
+    uint32_t si_sync_count;
+    std::string si_sync_status;
+
+    getPortSerdesAttr(serdes_attr, pCfg.serdes);
+    getPortSerdesAttr(line_serdes_attr, pCfg.serdes_gb_line);
+    getPortSerdesAttr(system_serdes_attr, pCfg.serdes_gb_system);
+
+
+    if (!pCfg.serdes_settings_sync_status.is_set)
+    {
+        return false;
+    }
+
+    si_sync_count = pCfg.serdes_settings_sync_status.count;
+    si_sync_status = pCfg.serdes_settings_sync_status.type;
+
+    /* Default settings requested from xcvrd, cleanup happens in next programming
+     * Update the sync_status to default for warm restart scenarios
+     */
+    if (si_sync_status == PORT_SI_SETTINGS_DEFAULT) 
+    {
+        setPortSiSettingsSyncStatus(port, std::string(PORT_SI_SETTINGS_DEFAULT) + ":" + std::to_string(si_sync_count));
+        return true;
+    }
+
+    if (serdes_attr.empty() && line_serdes_attr.empty() && system_serdes_attr.empty())
+    {
+        return true;
+    }
+
+    /* Even if some other config processing disabled admin state in the same batch, 
+       we should not set host_tx_ready if the si settings is processed as part of the batch */
+    serdes_settings_changed = true;
+
+    if (port.m_admin_state_up)
+    {
+        /* Bring port down before applying serdes attribute */
+        if (!setPortAdminStatus(port, false, false))
+        {
+            SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to apply serdes config",
+                          port.m_alias.c_str());
+            return false;
+        }
+
+        port.m_admin_state_up = false;
+        m_portList[port.m_alias] = port;        
+    }
+
+    /* Handle ASIC-side serdes configuration */
+    if (!serdes_attr.empty())
+    {
+        if (port.m_link_training)
+        {
+            SWSS_LOG_NOTICE("Save port %s preemphasis for LT", port.m_alias.c_str());
+            port.m_serdes_attrs = serdes_attr;
+            m_portList[port.m_alias] = port;
+        }
+        else
+        {
+            if (!programSerdes(port, port.m_port_id, gSwitchId, serdes_attr))
+            {
+                return false;
+            }
+            port.m_serdes_attrs = serdes_attr;
+            m_portList[port.m_alias] = port;
+        }
+    }
+
+    // Handle gearbox line-side serdes configuration
+    if (port.m_line_side_id && !line_serdes_attr.empty())
+    {
+        if (!programSerdes(port, port.m_line_side_id, port.m_switch_id, line_serdes_attr))
+        {
+            return false;
+        }
+    }
+
+    // Handle gearbox system-side serdes configuration
+    if (port.m_system_side_id && !system_serdes_attr.empty())
+    {
+        if (!programSerdes(port, port.m_system_side_id, port.m_switch_id, system_serdes_attr))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 // Helper function to program serdes with admin state management
 bool PortsOrch::programSerdes(
     Port &port,
@@ -4522,20 +4636,6 @@ bool PortsOrch::programSerdes(
                       port_id, port.m_alias.c_str(),
                       port.m_port_id, port.m_line_side_id, port.m_system_side_id);
         return false;
-    }
-
-    if (port.m_admin_state_up)
-    {
-        /* Bring port down before applying serdes attribute */
-        if (!setPortAdminStatus(port, false))
-        {
-            SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set %s serdes attr",
-                          port.m_alias.c_str(), serdes_type_name);
-            return false;
-        }
-
-        port.m_admin_state_up = false;
-        m_portList[port.m_alias] = port;
     }
 
     if (setPortSerdesAttribute(port_id, switch_id, serdes_attr))
@@ -5438,25 +5538,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
-                if (!serdes_attr.empty())
-                {
-                    if (p.m_link_training)
-                    {
-                        SWSS_LOG_NOTICE("Save port %s serdes attributes for LT", p.m_alias.c_str());
-                        p.m_serdes_attrs = serdes_attr;
-                        m_portList[p.m_alias] = p;
-                    }
-                    else
-                    {
-                        if (!programSerdes(p, p.m_port_id, gSwitchId, serdes_attr))
-                        {
-                            it++;
-                            continue;
-                        }
-                        p.m_serdes_attrs = serdes_attr;
-                        m_portList[p.m_alias] = p;
-                    }
-                }
                 if (pCfg.media_type.is_set)
                 {
                     if (setPortMediaType(p, pCfg.media_type.value))
@@ -5473,18 +5554,11 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
-                if (p.m_line_side_id && !line_serdes_attr.empty())
+                /* Apply serdes settings if serdes sync variable is set*/
+                bool serdes_settings_changed = false;
+                if (pCfg.serdes_settings_sync_status.is_set)
                 {
-                    if (!programSerdes(p, p.m_line_side_id, p.m_switch_id, line_serdes_attr))
-                    {
-                        it++;
-                        continue;
-                    }
-                }
-
-                if (p.m_system_side_id && !system_serdes_attr.empty())
-                {
-                    if (!programSerdes(p, p.m_system_side_id, p.m_switch_id, system_serdes_attr))
+                    if (!applyPortSerdesConfig(p, pCfg, serdes_settings_changed))
                     {
                         it++;
                         continue;
@@ -5508,7 +5582,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     if (p.m_admin_state_up != pCfg.admin_status.value)
                     {
-                        if (!setPortAdminStatus(p, pCfg.admin_status.value))
+                        if (!setPortAdminStatus(p, pCfg.admin_status.value, !serdes_settings_changed))
                         {
                             SWSS_LOG_ERROR(
                                 "Failed to set port %s admin status to %s",
@@ -5526,6 +5600,14 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             p.m_alias.c_str(), m_portHlpr.getAdminStatusStr(pCfg).c_str()
                         );
                     }
+                }
+
+                if (serdes_settings_changed)
+                {
+                    // Build the sync status string
+                    std::string sync_status = std::string(PORT_SI_SYNC_DONE) + ":" +
+                                            std::to_string(pCfg.serdes_settings_sync_status.count);
+                    setPortSiSettingsSyncStatus(p, sync_status);
                 }
 
                 if (pCfg.pt_intf_id.is_set)
@@ -6599,6 +6681,9 @@ bool PortsOrch::initializePorts(std::vector<Port>& ports)
         initializePortHostTxReadyBulk(ports);
     }
 
+    /* initialize port SI settings sync status in STATE_DB */
+    initializePortSiSettingsSyncStatusBulk(ports);
+
     initializePortMtuBulk(ports);
 
     // Create host interfaces
@@ -6679,6 +6764,20 @@ bool PortsOrch::initializePorts(std::vector<Port>& ports)
     }
 
     return status;
+}
+
+void PortsOrch::initializePortSiSettingsSyncStatusBulk(std::vector<Port>& ports)
+{
+    SWSS_LOG_ENTER();
+
+    SWSS_LOG_TIMER(__FUNCTION__);
+
+    for (auto& port : ports)
+    {
+        setPortSiSettingsSyncStatus(port, std::string(PORT_SI_SETTINGS_DEFAULT) + ":0");
+        SWSS_LOG_NOTICE("Initialize si_settings_sync_status as %s:0 for port %s",
+                        PORT_SI_SETTINGS_DEFAULT, port.m_alias.c_str());
+    }
 }
 
 void PortsOrch::initializePortHostTxReadyBulk(std::vector<Port>& ports)

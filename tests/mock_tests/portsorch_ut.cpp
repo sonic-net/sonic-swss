@@ -1343,7 +1343,8 @@ namespace portsorch_test
                 { "regn_bfm1p",    "0x1e,0x20,0x1f,0x21"         },
                 { "regn_bfm1n",    "0xaa,0xac,0xab,0xad"         },
                 { "custom_serdes_attrs", custom_serdes_attrs     },
-                { "media_type",    "backplane"                   }
+                { "media_type",    "backplane"                   },
+                { "si_sync_status","SI_SETTINGS_NOTIFIED:1"      }
             }
         }};
         std::deque<KeyOpFieldsValuesTuple> kfvList1 = {{"Ethernet0", SET_COMMAND, {{ "media_type",    "" }}}};
@@ -1508,7 +1509,8 @@ namespace portsorch_test
             "Ethernet0",
             SET_COMMAND, {
                 { "txpolarity",    "0x1,0x0,0x1,0x0"          },
-                { "rxpolarity",    "0x0,0x1,0x0,0x1"          }
+                { "rxpolarity",    "0x0,0x1,0x0,0x1"          },
+                { "si_sync_status","SI_SETTINGS_NOTIFIED:1"   }
             }
         }};
 
@@ -1596,7 +1598,8 @@ namespace portsorch_test
         std::deque<KeyOpFieldsValuesTuple> kfvSerdes = {{
             "Ethernet0",
             SET_COMMAND, {
-                { "idriver"     , "0x6,0x6,0x6,0x6" }
+                { "idriver"     , "0x6,0x6,0x6,0x6" },
+                { "si_sync_status","SI_SETTINGS_NOTIFIED:1" }
             }
         }};
 
@@ -1722,7 +1725,8 @@ namespace portsorch_test
                 { "gb_system_main",  "0x95,0x96,0x97,0x98" },
                 { "gb_system_post1", "0x45,0x46,0x47,0x48" },
                 { "gb_system_post2", "0x55,0x56,0x57,0x58" },
-                { "gb_system_post3", "0x65,0x66,0x67,0x68" }
+                { "gb_system_post3", "0x65,0x66,0x67,0x68" },
+                { "si_sync_status","SI_SETTINGS_NOTIFIED:1"   }
             }
         }};
 
@@ -1905,7 +1909,8 @@ namespace portsorch_test
                 { "gb_line_pre1",  "0x10,0x11,0x12,0x13" },
                 { "gb_line_main",  "0x90,0x91,0x92,0x93" },
                 { "gb_system_pre1",  "0x15,0x16,0x17,0x18" },
-                { "gb_system_main",  "0x95,0x96,0x97,0x98" }
+                { "gb_system_main",  "0x95,0x96,0x97,0x98" },
+                { "si_sync_status","SI_SETTINGS_NOTIFIED:1"   }
             }
         }};
 
@@ -1977,7 +1982,8 @@ namespace portsorch_test
                 { "gb_line_pre1",  "0x10,0x11,0x12,0x13" },
                 { "gb_line_main",  "0x90,0x91,0x92,0x93" },
                 { "gb_system_pre1",  "0x15,0x16,0x17,0x18" },
-                { "gb_system_main",  "0x95,0x96,0x97,0x98" }
+                { "gb_system_main",  "0x95,0x96,0x97,0x98" },
+                { "si_sync_status","SI_SETTINGS_NOTIFIED:1"   }
             }
         }};
 
@@ -2044,7 +2050,8 @@ namespace portsorch_test
             "Ethernet0",
             SET_COMMAND, {
                 { "gb_line_pre1",  "0x10,0x11,0x12,0x13" },
-                { "gb_line_main",  "0x90,0x91,0x92,0x93" }
+                { "gb_line_main",  "0x90,0x91,0x92,0x93" },
+                { "si_sync_status","SI_SETTINGS_NOTIFIED:1"   }
             }
         }};
 
@@ -2135,7 +2142,8 @@ namespace portsorch_test
             "Ethernet0",
             SET_COMMAND, {
                 { "gb_system_pre1",  "0x15,0x16,0x17,0x18" },
-                { "gb_system_main",  "0x95,0x96,0x97,0x98" }
+                { "gb_system_main",  "0x95,0x96,0x97,0x98" },
+                { "si_sync_status","SI_SETTINGS_NOTIFIED:1"   }
             }
         }};
 
@@ -2173,6 +2181,74 @@ namespace portsorch_test
         set_admin_status_failures = 0;
 
         _unhook_sai_port_api();
+        cleanupPorts(gPortsOrch);
+    }
+
+    /**
+     * Test that verifies SI_SETTINGS_DEFAULT serdes sync status handling
+     * This tests the code path where xcvrd requests default SI settings
+     */
+    TEST_F(PortsOrchTest, PortSerdesConfigSiSettingsDefault)
+    {
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        auto statePortTable = Table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Port count: 32 Data + 1 CPU
+        ASSERT_EQ(gPortsOrch->getAllPorts().size(), ports.size() + 1);
+
+        // Generate port config with SI_SETTINGS_DEFAULT status
+        // This simulates xcvrd requesting default settings during warm restart
+        std::deque<KeyOpFieldsValuesTuple> kfvList = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "si_sync_status","SI_SETTINGS_DEFAULT:5" }
+            }
+        }};
+
+        // Refill consumer
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Verify that the SI settings sync status was updated in STATE_DB
+        // The format should be "SI_SETTINGS_DEFAULT:5"
+        std::vector<swss::FieldValueTuple> values;
+        statePortTable.get("Ethernet0", values);
+
+        bool found_si_sync_status = false;
+        for (const auto &fv : values)
+        {
+            if (fvField(fv) == "si_settings_sync_status")
+            {
+                found_si_sync_status = true;
+                ASSERT_EQ(fvValue(fv), "SI_SETTINGS_DEFAULT:5");
+                break;
+            }
+        }
+        ASSERT_TRUE(found_si_sync_status);
+
+        // Cleanup ports
         cleanupPorts(gPortsOrch);
     }
 
