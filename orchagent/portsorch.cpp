@@ -5950,13 +5950,29 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
                 {
 		    if (getBridgePortReferenceCount(port) == 0)
                     {
-                        removeBridgePort(port);
+                        if (!removeBridgePort(port))
+                        {
+                            it = consumer.m_toSync.upper_bound(it->first);
+                            continue;
+                        }
                     }
                     it = consumer.m_toSync.erase(it);
                 }
                 else
                 {
                     it++;
+                }
+            }
+            else if (m_portVlanMember[port.m_alias].empty() && port.m_bridge_port_id != SAI_NULL_OBJECT_ID)
+            {
+                if (!removeBridgePort(port))
+                {
+                    it = consumer.m_toSync.upper_bound(it->first);
+                    continue;
+                }
+                else
+                {
+                    it = consumer.m_toSync.erase(it);
                 }
             }
             else
