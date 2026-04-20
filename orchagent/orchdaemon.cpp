@@ -1383,6 +1383,13 @@ bool DpuOrchDaemon::init()
     DashPortMapOrch *dash_port_map_orch = new DashPortMapOrch(m_dpu_appDb, dash_port_map_tables, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_port_map_orch);
 
+    vector<string> dash_ha_flow_tables = {
+        APP_DASH_FLOW_SYNC_SESSION_TABLE_NAME,
+        APP_DASH_FLOW_DUMP_FILTER_TABLE_NAME
+    };
+    DashHaFlowOrch *dash_ha_flow_orch = new DashHaFlowOrch(m_dpu_appDb, dash_ha_flow_tables, m_dpu_appstateDb, dash_zmq_server);
+    gDirectory.set(dash_ha_flow_orch);
+
     addOrchList(dash_acl_orch);
     addOrchList(dash_vnet_orch);
     addOrchList(dash_route_orch);
@@ -1391,6 +1398,7 @@ bool DpuOrchDaemon::init()
     addOrchList(dash_meter_orch);
     addOrchList(dash_ha_orch);
     addOrchList(dash_port_map_orch);
+    addOrchList(dash_ha_flow_orch);
 
     return true;
 }
