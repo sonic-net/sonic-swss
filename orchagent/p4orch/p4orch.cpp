@@ -388,3 +388,42 @@ void P4Orch::refreshPortStatus() {
 void P4Orch::setRouterIntfsMtu(const std::string& port, uint32_t mtu) {
     m_routerIntfManager->setRouterIntfsMtu(port, mtu);
 }
+
+bool P4Orch::bake()
+{
+    /*
+     * bake is called during warmreboot reconciling procedure.
+     */
+
+    SWSS_LOG_ENTER();
+
+    // Set orderedQueue to false during bake.
+    // Warm boot requests will be stored in m_toSync.
+    setOrderedQueueForAllConsumers(/*orderedQueue=*/false);
+    Orch::bake();
+    setOrderedQueueForAllConsumers(/*orderedQueue=*/true);
+
+    for (auto &it : m_consumerMap)
+    {
+        auto consumer = dynamic_cast<ConsumerBase *>(it.second.get());
+        if (consumer == NULL || consumer->getTableName() != APP_P4RT_TABLE_NAME)
+        {
+            continue;
+        }
+        for (auto entry_it: consumer->m_toSync)
+        {
+            const std::string& key = kfvKey(entry_it.second);
+            std::string table_name;
+            std::string key_content;
+            parseP4RTKey(key, &table_name, &key_content);
+            if (table_name == APP_P4RT_ACL_TABLE_DEFINITION_NAME)
+            {
+                // Add the table_name to m_aclRuleManager mapping during warm reboot,
+                // since the acl tables have not been created yet.
+                addAclTableToManagerMapping(key_content);
+            }
+        }
+    }
+
+    return true;
+}
