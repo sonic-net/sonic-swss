@@ -3,6 +3,9 @@
 #include "table.h"
 #include "logger.h"
 #include <chrono>
+#include <tuple>
+#include <unordered_map>
+#include <utility>
 
 using namespace std;
 using namespace swss;
@@ -26,7 +29,7 @@ SwssStats::SwssStats(uint32_t interval)
     // not yet be accessible (causes waitForGetResponse crash).
     m_thread = make_unique<thread>(&SwssStats::writerThread, this);
 
-    SWSS_LOG_NOTICE("SwssStats initialized (interval: %d sec)", m_interval_sec);
+    SWSS_LOG_NOTICE("SwssStats initialized (interval: %u sec)", m_interval_sec);
 }
 
 SwssStats::~SwssStats()
@@ -52,18 +55,27 @@ void SwssStats::recordTask(const string &table_name, const string &op)
 {
     auto& stats = getOrCreateStats(table_name);
 
+    bool updated = false;
+
     if (op == "SET")
     {
         stats.set_count.fetch_add(1, memory_order_relaxed);
+        updated = true;
     }
     else if (op == "DEL")
     {
         stats.del_count.fetch_add(1, memory_order_relaxed);
+        updated = true;
     }
 
+    // Only bump version when a counter was actually updated, so the writer
+    // thread does not treat unknown ops as changes requiring a Redis write.
     // Release ordering ensures counter writes above are visible to the writer
-    // thread before it observes the version increment
-    stats.version.fetch_add(1, memory_order_release);
+    // thread before it observes the version increment.
+    if (updated)
+    {
+        stats.version.fetch_add(1, memory_order_release);
+    }
 }
 
 void SwssStats::recordComplete(const string &table_name, uint64_t count)

@@ -16,8 +16,9 @@ using namespace chrono;
 //  Helpers
 // ─────────────────────────────────────────────
 
-// Return a fresh SwssStats instance with a very long flush interval so the
-// background writer never fires during tests, keeping tests fast and deterministic.
+// Return the SwssStats singleton. The singleton uses the default 1-second
+// flush interval; tests rely on unique table names to avoid cross-test
+// interference rather than on controlling the flush interval.
 static SwssStats* stats()
 {
     // The singleton is reused across tests in the same process; that is fine
@@ -141,7 +142,7 @@ TEST(SwssStats, ConcurrentRecordTaskNoRaceCondition)
 
     for (int i = 0; i < num_threads; i++)
     {
-        threads.emplace_back([s, &tbl]()
+        threads.emplace_back([s, &tbl, ops_per_thread]()
         {
             for (int j = 0; j < ops_per_thread; j++)
             {
@@ -164,15 +165,15 @@ TEST(SwssStats, ConcurrentMixedOpsNoRaceCondition)
     const int ops = 500;
 
     // One thread doing recordTask, another doing recordComplete/recordError
-    thread t1([s, &tbl]()
+    thread t1([s, &tbl, ops]()
     {
         for (int i = 0; i < ops; i++) s->recordTask(tbl, "SET");
     });
-    thread t2([s, &tbl]()
+    thread t2([s, &tbl, ops]()
     {
         for (int i = 0; i < ops; i++) s->recordComplete(tbl);
     });
-    thread t3([s, &tbl]()
+    thread t3([s, &tbl, ops]()
     {
         for (int i = 0; i < ops; i++) s->recordError(tbl);
     });
@@ -212,3 +213,4 @@ TEST(SwssStats, DestructorExitsQuicklyWithLargeInterval)
     // The above should complete in << 1 second with no blocking
     EXPECT_LT(elapsed_ms, 1000);
 }
+

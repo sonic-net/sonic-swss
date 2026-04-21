@@ -8,6 +8,7 @@
 #include <condition_variable>
 #include <vector>
 #include <string>
+#include <cstdint>
 
 namespace swss {
     class DBConnector;
@@ -101,3 +102,4 @@ private:
     TableStats& getOrCreateStats(const std::string &table_name);
     void writerThread();
 };
+
