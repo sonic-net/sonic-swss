@@ -91,6 +91,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mirrororch_ut.cpp \
                 hftelorch_ut.cpp \
                 hftelorch_is_supported_sai_wrap.cpp \
+                udforch_ut.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \

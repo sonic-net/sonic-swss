@@ -6,7 +6,6 @@
 #include "tokenize.h"
 #include "sai_serialize.h"
 #include "warm_restart.h"
-#include <nlohmann/json.hpp>
 
 using namespace std;
 using namespace swss;
@@ -538,7 +537,7 @@ void UdfOrch::doUdfFieldTask(Consumer& consumer)
             {
                 if (saiStatus == SAI_STATUS_INSUFFICIENT_RESOURCES)
                 {
-                    SWSS_LOG_WARN("UDF group %s: no hardware slots available, will retry", key.c_str());
+                    SWSS_LOG_INFO("UDF group %s: no hardware slots available, will retry", key.c_str());
                     ++it;
                     continue;
                 }
@@ -605,88 +604,91 @@ void UdfOrch::doUdfSelectorTask(Consumer& consumer)
             uint16_t offset = 0;
             UdfMatchConfig matchConfig = {};
 
-            string selectJson, matchJson;
+            bool selectBaseSet = false;
+            bool selectOffsetSet = false;
+            bool parseError = false;
+
             for (const auto& field : kfvFieldsValues(t))
             {
-                if (fvField(field) == "select")
-                    selectJson = fvValue(field);
-                else if (fvField(field) == "match")
-                    matchJson = fvValue(field);
+                const string& f = fvField(field);
+                const string& v = fvValue(field);
+                try
+                {
+                    if (f == "select_base")
+                    {
+                        baseStr = v;
+                        selectBaseSet = true;
+                    }
+                    else if (f == "select_offset")
+                    {
+                        offset = static_cast<uint16_t>(stoul(v, nullptr, 0));
+                        selectOffsetSet = true;
+                    }
+                    else if (f == "match_l2_type")
+                    {
+                        matchConfig.l2_type = static_cast<uint16_t>(stoul(v, nullptr, 0));
+                        matchConfig.l2_type_set = true;
+                    }
+                    else if (f == "match_l2_type_mask")
+                    {
+                        matchConfig.l2_type_mask = static_cast<uint16_t>(stoul(v, nullptr, 0));
+                    }
+                    else if (f == "match_l3_type")
+                    {
+                        matchConfig.l3_type = static_cast<uint8_t>(stoul(v, nullptr, 0));
+                        matchConfig.l3_type_set = true;
+                    }
+                    else if (f == "match_l3_type_mask")
+                    {
+                        matchConfig.l3_type_mask = static_cast<uint8_t>(stoul(v, nullptr, 0));
+                    }
+                    else if (f == "match_gre_type")
+                    {
+                        matchConfig.gre_type = static_cast<uint16_t>(stoul(v, nullptr, 0));
+                        matchConfig.gre_type_set = true;
+                    }
+                    else if (f == "match_gre_type_mask")
+                    {
+                        matchConfig.gre_type_mask = static_cast<uint16_t>(stoul(v, nullptr, 0));
+                    }
+                    else if (f == "match_l4_dst_port")
+                    {
+                        matchConfig.l4_dst_port = static_cast<uint16_t>(stoul(v, nullptr, 0));
+                        matchConfig.l4_dst_port_set = true;
+                    }
+                    else if (f == "match_l4_dst_port_mask")
+                    {
+                        matchConfig.l4_dst_port_mask = static_cast<uint16_t>(stoul(v, nullptr, 0));
+                    }
+                    else if (f == "match_priority")
+                    {
+                        matchConfig.priority = static_cast<uint8_t>(stoul(v));
+                    }
+                }
+                catch (const std::exception& e)
+                {
+                    SWSS_LOG_ERROR("UDF_SELECTOR %s: invalid value for %s='%s': %s",
+                                   selectorKey.c_str(), f.c_str(), v.c_str(), e.what());
+                    parseError = true;
+                    break;
+                }
             }
 
-            // Python str() uses single quotes; normalize to valid JSON
-            auto normJson = [](string& s) {
-                replace(s.begin(), s.end(), '\'', '"');
-            };
-            normJson(selectJson);
-            normJson(matchJson);
-
-            if (selectJson.empty())
+            if (parseError)
             {
-                SWSS_LOG_ERROR("UDF_SELECTOR %s: missing required 'select' field", selectorKey.c_str());
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
-            try
-            {
-                auto sel = nlohmann::json::parse(selectJson);
-                if (sel.contains("base"))
-                    baseStr = sel["base"].get<string>();
-                if (sel.contains("offset"))
-                    offset = static_cast<uint16_t>(stoul(sel["offset"].get<string>()));
-            }
-            catch (const nlohmann::json::exception& e)
-            {
-                SWSS_LOG_ERROR("UDF_SELECTOR %s: failed to parse 'select' JSON: %s",
-                               selectorKey.c_str(), e.what());
-                it = consumer.m_toSync.erase(it);
-                continue;
-            }
 
-            if (matchJson.empty())
+            if (!selectBaseSet)
             {
-                SWSS_LOG_ERROR("UDF_SELECTOR %s: missing required 'match' field", selectorKey.c_str());
+                SWSS_LOG_ERROR("UDF_SELECTOR %s: missing required 'select_base' field", selectorKey.c_str());
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
-            try
+            if (!selectOffsetSet)
             {
-                auto mat = nlohmann::json::parse(matchJson);
-                if (mat.contains("l2_type"))
-                {
-                    matchConfig.l2_type = static_cast<uint16_t>(stoul(mat["l2_type"].get<string>(), nullptr, 0));
-                    matchConfig.l2_type_set = true;
-                }
-                if (mat.contains("l2_type_mask"))
-                    matchConfig.l2_type_mask = static_cast<uint16_t>(stoul(mat["l2_type_mask"].get<string>(), nullptr, 0));
-                if (mat.contains("l3_type"))
-                {
-                    matchConfig.l3_type = static_cast<uint8_t>(stoul(mat["l3_type"].get<string>(), nullptr, 0));
-                    matchConfig.l3_type_set = true;
-                }
-                if (mat.contains("l3_type_mask"))
-                    matchConfig.l3_type_mask = static_cast<uint8_t>(stoul(mat["l3_type_mask"].get<string>(), nullptr, 0));
-                if (mat.contains("gre_type"))
-                {
-                    matchConfig.gre_type = static_cast<uint16_t>(stoul(mat["gre_type"].get<string>(), nullptr, 0));
-                    matchConfig.gre_type_set = true;
-                }
-                if (mat.contains("gre_type_mask"))
-                    matchConfig.gre_type_mask = static_cast<uint16_t>(stoul(mat["gre_type_mask"].get<string>(), nullptr, 0));
-                if (mat.contains("l4_dst_port"))
-                {
-                    matchConfig.l4_dst_port = static_cast<uint16_t>(stoul(mat["l4_dst_port"].get<string>(), nullptr, 0));
-                    matchConfig.l4_dst_port_set = true;
-                }
-                if (mat.contains("l4_dst_port_mask"))
-                    matchConfig.l4_dst_port_mask = static_cast<uint16_t>(stoul(mat["l4_dst_port_mask"].get<string>(), nullptr, 0));
-                if (mat.contains("priority"))
-                    matchConfig.priority = static_cast<uint8_t>(stoul(mat["priority"].get<string>()));
-            }
-            catch (const nlohmann::json::exception& e)
-            {
-                SWSS_LOG_ERROR("UDF_SELECTOR %s: failed to parse 'match' JSON: %s",
-                               selectorKey.c_str(), e.what());
+                SWSS_LOG_ERROR("UDF_SELECTOR %s: missing required 'select_offset' field", selectorKey.c_str());
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
