@@ -3299,8 +3299,8 @@ TEST_F(AclManagerTest, AclRuleWithColorPacketActionsButNoRateLimit)
     EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_policer_,
               create_policer(
-                  _, Eq(gSwitchId), Eq(6),
-                  Truly(std::bind(MatchSaiPolicerAttributeInStormMode, 6,
+                  _, Eq(gSwitchId), Eq(7),
+                  Truly(std::bind(MatchSaiPolicerAttributeInStormMode, 7,
                                   SAI_METER_TYPE_BYTES, SAI_PACKET_ACTION_TRAP,
                                   SAI_PACKET_ACTION_DROP, 0x7fffffff, 0x1000021,
                                   std::placeholders::_1))))
@@ -3354,8 +3354,8 @@ TEST_F(AclManagerTest, AclRuleWithColorPacketActionsButWithRateLimit) {
   EXPECT_CALL(
       mock_sai_policer_,
       create_policer(
-          _, Eq(gSwitchId), Eq(6),
-          Truly(std::bind(MatchSaiPolicerAttributeInStormMode, 6,
+          _, Eq(gSwitchId), Eq(7),
+          Truly(std::bind(MatchSaiPolicerAttributeInStormMode, 7,
                           SAI_METER_TYPE_BYTES, SAI_PACKET_ACTION_FORWARD,
                           SAI_PACKET_ACTION_COPY_CANCEL, 0x7fffffff, 0x1000021,
                           std::placeholders::_1))))
