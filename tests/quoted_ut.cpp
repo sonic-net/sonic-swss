@@ -212,6 +212,82 @@ TEST(swssrec, syncFallbackWhenAsyncDisabled)
     EXPECT_EQ(stats.high_watermark, 0u);
 }
 
+TEST(swssrec, setAsyncDisableWithoutStartedWorkerKeepsStatsClear)
+{
+    SwSSRec recorder;
+
+    recorder.setAsync(true);
+    EXPECT_TRUE(recorder.isAsyncEnabled());
+
+    recorder.setAsync(false);
+    EXPECT_FALSE(recorder.isAsyncEnabled());
+
+    // Repeating the same state should take the no-op early return path.
+    recorder.setAsync(false);
+    EXPECT_FALSE(recorder.isAsyncEnabled());
+
+    const auto stats = recorder.getAsyncDebugStats();
+    EXPECT_EQ(stats.enqueued_total, 0u);
+    EXPECT_EQ(stats.drained_total, 0u);
+    EXPECT_EQ(stats.pending_count, 0u);
+    EXPECT_EQ(stats.high_watermark, 0u);
+}
+
+TEST(swssrec, setAsyncDisableDrainsWorkerAndSingleTupleFallsBackToSync)
+{
+    char dir_template[] = "/tmp/swss-recorder-ut-XXXXXX";
+    auto dir = mkdtemp(dir_template);
+    ASSERT_NE(dir, nullptr);
+
+    const string dirname(dir);
+    const string filename = "swss-disable-drain.rec";
+    const string fullpath = dirname + "/" + filename;
+    const string prefix = "TEST_TABLE:";
+
+    {
+        SwSSRec recorder;
+        recorder.setRecord(true);
+        recorder.setLocation(dirname);
+        recorder.setFileName(filename);
+        recorder.setAsync(true);
+        recorder.startRec(true);
+
+        KeyOpFieldsValuesTuple asyncTuple(
+            { "async-key",
+              SET_COMMAND,
+              { { "field1", "value1" } } });
+
+        recorder.recordTupleAsync(prefix, asyncTuple);
+        const auto asyncLines = waitForRecordedLines(fullpath, "async-key", 1);
+        ASSERT_EQ(asyncLines.size(), 1u);
+
+        const auto drainedStats = waitForRecorderStats(recorder, 1, 1);
+        EXPECT_EQ(drainedStats.pending_count, 0u);
+
+        recorder.setAsync(false);
+        EXPECT_FALSE(recorder.isAsyncEnabled());
+
+        KeyOpFieldsValuesTuple syncTuple(
+            { "sync-key",
+              SET_COMMAND,
+              { { "field2", "value2" } } });
+
+        recorder.recordTupleAsync(prefix, syncTuple);
+        const auto syncLines = waitForRecordedLines(fullpath, "TEST_TABLE:sync-key|SET", 1);
+        ASSERT_EQ(syncLines.size(), 1u);
+        EXPECT_NE(syncLines[0].find("TEST_TABLE:sync-key|SET|field2:value2"), string::npos);
+
+        const auto finalStats = recorder.getAsyncDebugStats();
+        EXPECT_EQ(finalStats.enqueued_total, 1u);
+        EXPECT_EQ(finalStats.drained_total, 1u);
+        EXPECT_EQ(finalStats.pending_count, 0u);
+        EXPECT_GE(finalStats.high_watermark, 1u);
+    }
+
+    ASSERT_EQ(remove(fullpath.c_str()), 0);
+    ASSERT_EQ(rmdir(dirname.c_str()), 0);
+}
+
 TEST(swssrec, signalSafeStatsDumpFormatsOutput)
 {
     char dir_template[] = "/tmp/swss-recorder-ut-XXXXXX";

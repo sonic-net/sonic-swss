@@ -233,8 +233,14 @@ void SwSSRec::stopAsyncWorker()
     m_workerStarted = false;
     stateLock.unlock();
 
+    /*
+     * Emit post-drain stats at NOTICE so operators can confirm a clean
+     * async recorder shutdown in default syslog. This only fires when
+     * the async worker was actually started (m_workerStarted guard
+     * above), so platforms running with async disabled stay silent.
+     */
     auto stats = getAsyncDebugStats();
-    SWSS_LOG_INFO(
+    SWSS_LOG_NOTICE(
         "AsyncSwssRecorder graceful shutdown: pending_after_shutdown=%" PRIu64
         " drained_total=%" PRIu64 " high_watermark=%" PRIu64,
         stats.pending_count,
