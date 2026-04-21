@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <sstream>
 #include "aclorch.h"
+#include "udforch.h"
 #include "logger.h"
 #include "schema.h"
 #include "ipprefix.h"
@@ -631,6 +632,43 @@ bool AclTableRangeMatch::validateAclRuleMatch(const AclRule& rule) const
     return true;
 }
 
+AclTableUdfGroupMatch::AclTableUdfGroupMatch(const std::string& udfName, unsigned int attr):
+    AclTableMatchInterface(static_cast<sai_acl_table_attr_t>(attr)),
+    m_name(udfName)
+{
+    SWSS_LOG_DEBUG("UDF group match %s attr %d", udfName.c_str(), attr);
+}
+
+sai_object_id_t AclTableUdfGroupMatch::getUdfGroupId() const
+{
+    if (!gUdfOrch)
+    {
+        return SAI_NULL_OBJECT_ID;
+    }
+
+    UdfGroup* group = gUdfOrch->getUdfGroup(m_name);
+    if (group != nullptr)
+    {
+        sai_object_id_t groupOid = group->getOid();
+        SWSS_LOG_DEBUG("UDF group %s OID 0x%" PRIx64, m_name.c_str(), groupOid);
+        return groupOid;
+    }
+
+    SWSS_LOG_WARN("UDF group %s not found", m_name.c_str());
+    return SAI_NULL_OBJECT_ID;
+}
+
+sai_attribute_t AclTableUdfGroupMatch::toSaiAttribute()
+{
+    sai_object_id_t udfGroupId = getUdfGroupId();
+    return sai_attribute_t{
+        .id = getId(),
+        .value = {
+            .oid = udfGroupId,
+        },
+    };
+}
+
 void AclRule::TunnelNH::load(const std::string& target)
 {
     parse(target);
@@ -794,6 +832,7 @@ bool AclTableTypeParser::parseAclTableTypeMatches(const std::string& value, AclT
 {
     auto matches = tokenize(value, comma);
     set<sai_acl_range_type_t> saiRangeTypes;
+    unsigned int udfIndex = 2; /* after BTH reserved slots */
 
     for (const auto& match: matches)
     {
@@ -812,7 +851,30 @@ bool AclTableTypeParser::parseAclTableTypeMatches(const std::string& value, AclT
         }
         else
         {
-            SWSS_LOG_ERROR("Unknown match %s", match.c_str());
+            if (gUdfOrch)
+            {
+                UdfGroup* group = gUdfOrch->getUdfGroup(match);
+                if (group != nullptr)
+                {
+                    if (udfIndex >= SAI_ACL_USER_DEFINED_FIELD_ATTR_ID_RANGE)
+                    {
+                        SWSS_LOG_ERROR("Too many UDF groups in ACL table type (max: %d)", SAI_ACL_USER_DEFINED_FIELD_ATTR_ID_RANGE);
+                        return false;
+                    }
+
+                    sai_acl_table_attr_t udfAttr = static_cast<sai_acl_table_attr_t>(
+                        SAI_ACL_TABLE_ATTR_USER_DEFINED_FIELD_GROUP_MIN + udfIndex);
+                    SWSS_LOG_INFO("UDF %s attr index %d", match.c_str(), udfIndex);
+                    builder.withMatch(make_shared<AclTableUdfGroupMatch>(match, udfAttr));
+                    udfIndex++;
+                    continue;
+                }
+
+                SWSS_LOG_INFO("UDF %s not found, retry later", match.c_str());
+                return false;
+            }
+
+            SWSS_LOG_ERROR("Unknown match field %s", match.c_str());
             return false;
         }
     }
@@ -942,6 +1004,95 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
     {
         if (aclMatchLookup.find(attr_name) == aclMatchLookup.end())
         {
+            UdfGroup* udfGroup = gUdfOrch ? gUdfOrch->getUdfGroup(attr_name) : nullptr;
+            if (udfGroup)
+            {
+                bool found = false;
+                for (const auto& match : m_pTable->type.getMatches())
+                {
+                    auto udfMatch = dynamic_cast<const AclTableUdfGroupMatch*>(match.second.get());
+                    if (udfMatch && udfMatch->getName() == attr_name)
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found)
+                {
+                    SWSS_LOG_ERROR("UDF %s is not in ACL table %s matches",
+                                   attr_name.c_str(), m_pTable->getId().c_str());
+                    return false;
+                }
+
+                uint16_t udf_length = udfGroup->getConfig().length;
+                auto udf_data = tokenize(attr_value, '/');
+
+                if (udf_data.size() != 1 && udf_data.size() != 2)
+                {
+                    SWSS_LOG_ERROR("Invalid UDF %s value: %s (expected <value> or <value>/<mask>)",
+                                 attr_name.c_str(), attr_value.c_str());
+                    return false;
+                }
+
+                vector<uint8_t> value_bytes;
+                vector<uint8_t> mask_bytes;
+
+                if (udf_length <= 4)
+                {
+                    uint32_t udf_value = to_uint<uint32_t>(udf_data[0]);
+                    uint32_t udf_mask = (udf_data.size() == 2)
+                        ? to_uint<uint32_t>(udf_data[1])
+                        : (udf_length == 1 ? 0xFF
+                           : udf_length == 2 ? 0xFFFF
+                           : 0xFFFFFFFF);
+                    for (int i = static_cast<int>(udf_length) - 1; i >= 0; i--)
+                    {
+                        value_bytes.push_back(static_cast<uint8_t>((udf_value >> (i * 8)) & 0xFF));
+                        mask_bytes.push_back(static_cast<uint8_t>((udf_mask >> (i * 8)) & 0xFF));
+                    }
+                }
+                else
+                {
+                    auto parseHexBytes = [&](const string& hex_str, uint16_t expected_len) -> vector<uint8_t>
+                    {
+                        string hex = hex_str;
+                        if (hex.size() >= 2 && (hex.substr(0, 2) == "0x" || hex.substr(0, 2) == "0X"))
+                            hex = hex.substr(2);
+                        if (hex.size() % 2 != 0)
+                            hex = "0" + hex;
+
+                        vector<uint8_t> bytes;
+                        for (size_t i = 0; i < hex.size(); i += 2)
+                        {
+                            bytes.push_back(static_cast<uint8_t>(stoul(hex.substr(i, 2), nullptr, 16)));
+                        }
+
+                        while (bytes.size() < expected_len)
+                            bytes.insert(bytes.begin(), 0);
+                        if (bytes.size() > expected_len)
+                            bytes.assign(bytes.end() - expected_len, bytes.end());
+
+                        return bytes;
+                    };
+
+                    value_bytes = parseHexBytes(udf_data[0], udf_length);
+
+                    if (udf_data.size() == 2)
+                    {
+                        mask_bytes = parseHexBytes(udf_data[1], udf_length);
+                    }
+                    else
+                    {
+                        mask_bytes.assign(udf_length, 0xFF);
+                    }
+                }
+
+                m_udfFieldValues[attr_name] = make_pair(value_bytes, mask_bytes);
+                SWSS_LOG_INFO("UDF %s match %d bytes", attr_name.c_str(), udf_length);
+                return true;
+            }
+
             return false;
         }
         else if (attr_name == MATCH_TUNNEL_TERM)
@@ -1251,6 +1402,99 @@ bool AclRule::processIpType(string type, sai_uint32_t &ip_type)
     return true;
 }
 
+bool AclRule::processUdfMatches(vector<sai_attribute_t>& udf_attrs)
+{
+    SWSS_LOG_ENTER();
+
+    if (m_udfFieldValues.empty())
+    {
+        return true;
+    }
+
+    if (!gUdfOrch)
+    {
+        SWSS_LOG_ERROR("UdfOrch not available for rule %s", m_id.c_str());
+        return false;
+    }
+
+    map<string, UdfGroup*> udf_cache;
+
+    for (const auto& udf_match : m_udfFieldValues)
+    {
+        const string& udf_name = udf_match.first;
+
+        UdfGroup* udf_group = gUdfOrch->getUdfGroup(udf_name);
+        if (!udf_group)
+        {
+            SWSS_LOG_ERROR("UDF %s not found for rule %s", udf_name.c_str(), m_id.c_str());
+            return false;
+        }
+
+        udf_cache[udf_name] = udf_group;
+    }
+
+    for (const auto& udf_match : m_udfFieldValues)
+    {
+        const string& udf_name = udf_match.first;
+        const vector<uint8_t>& udf_value_bytes = udf_match.second.first;
+        const vector<uint8_t>& udf_mask_bytes = udf_match.second.second;
+
+        UdfGroup* udf_group = udf_cache[udf_name];
+
+        sai_acl_entry_attr_t udf_entry_attr = SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN;
+        bool found_slot = false;
+
+        for (const auto& match_pair : m_pTable->type.getMatches())
+        {
+            auto table_udf_match = dynamic_cast<AclTableUdfGroupMatch*>(match_pair.second.get());
+            if (!table_udf_match)
+            {
+                continue;
+            }
+
+            if (table_udf_match->getName() == udf_name)
+            {
+                sai_acl_table_attr_t table_attr = match_pair.first;
+                uint32_t slot_index = table_attr - SAI_ACL_TABLE_ATTR_USER_DEFINED_FIELD_GROUP_MIN;
+
+                udf_entry_attr = static_cast<sai_acl_entry_attr_t>(
+                    SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN + slot_index);
+
+                found_slot = true;
+                SWSS_LOG_DEBUG("UDF %s using slot index %u", udf_name.c_str(), slot_index);
+                break;
+            }
+        }
+
+        if (!found_slot)
+        {
+            SWSS_LOG_ERROR("UDF %s not found in table %s matches",
+                           udf_name.c_str(), getTableId().c_str());
+            return false;
+        }
+
+        sai_attribute_t udf_attr;
+        udf_attr.id = udf_entry_attr;
+        udf_attr.value.aclfield.enable = true;
+
+        udf_attr.value.aclfield.data.u8list.count = static_cast<uint32_t>(udf_value_bytes.size());
+        udf_attr.value.aclfield.data.u8list.list = new uint8_t[udf_value_bytes.size()];
+        memcpy(udf_attr.value.aclfield.data.u8list.list, udf_value_bytes.data(), udf_value_bytes.size());
+
+        udf_attr.value.aclfield.mask.u8list.count = static_cast<uint32_t>(udf_mask_bytes.size());
+        udf_attr.value.aclfield.mask.u8list.list = new uint8_t[udf_mask_bytes.size()];
+        memcpy(udf_attr.value.aclfield.mask.u8list.list, udf_mask_bytes.data(), udf_mask_bytes.size());
+
+        udf_attrs.push_back(udf_attr);
+
+        SWSS_LOG_INFO("UDF %s rule %s: %zu bytes group OID=0x%" PRIx64 " slot=%d",
+                      udf_name.c_str(), m_id.c_str(), udf_value_bytes.size(),
+                      udf_group->getOid(), udf_entry_attr);
+    }
+
+    return true;
+}
+
 bool AclRule::create()
 {
     if (m_createCounter && !createCounter())
@@ -1331,6 +1575,15 @@ bool AclRule::createRule()
         rule_attrs.push_back(attr);
     }
 
+    vector<sai_attribute_t> udf_attrs;
+    if (!processUdfMatches(udf_attrs))
+    {
+        AclRange::remove(range_objects, range_object_list.count);
+        return false;
+    }
+    for (const auto& udf_attr : udf_attrs)
+        rule_attrs.push_back(udf_attr);
+
     // store actions
     for (auto& it : m_actions)
     {
@@ -1344,19 +1597,33 @@ bool AclRule::createRule()
         if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
         {
             SWSS_LOG_NOTICE("ACL rule %s already exists", m_id.c_str());
+            if (gUdfOrch && !m_udfFieldValues.empty())
+            {
+                for (const auto& udfMatch : m_udfFieldValues)
+                {
+                    gUdfOrch->incrementUdfRuleRefCount(udfMatch.first);
+                }
+            }
             return true;
         }
         SWSS_LOG_ERROR("Failed to create ACL rule %s, rv:%d",
                 m_id.c_str(), status);
         AclRange::remove(range_objects, range_object_list.count);
         decreaseNextHopRefCount();
+        //return false;
     }
-
     if (status == SAI_STATUS_SUCCESS)
     {
         gCrmOrch->incCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_ENTRY, m_pTable->getOid());
-    }
 
+        if (gUdfOrch && !m_udfFieldValues.empty())
+        {
+            for (const auto& udfMatch : m_udfFieldValues)
+            {
+                gUdfOrch->incrementUdfRuleRefCount(udfMatch.first);
+            }
+        }
+    }
     return (status == SAI_STATUS_SUCCESS);
 }
 
@@ -1415,19 +1682,28 @@ bool AclRule::removeRule()
     }
 
     auto status = sai_acl_api->remove_acl_entry(m_ruleOid);
-    if (status != SAI_STATUS_SUCCESS)
+    if (status != SAI_STATUS_SUCCESS && status != SAI_STATUS_ITEM_NOT_FOUND)
     {
-        if (status == SAI_STATUS_ITEM_NOT_FOUND)
-        {
-            SWSS_LOG_NOTICE("ACL rule already deleted");
-            m_ruleOid = SAI_NULL_OBJECT_ID;
-            return true;
-        }
         SWSS_LOG_ERROR("Failed to delete ACL rule, status %s", sai_serialize_status(status).c_str());
         return false;
     }
 
-    gCrmOrch->decCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_ENTRY, m_pTable->getOid());
+    if (status == SAI_STATUS_ITEM_NOT_FOUND)
+    {
+        SWSS_LOG_NOTICE("ACL rule already deleted in SAI");
+    }
+    else
+    {
+        gCrmOrch->decCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_ENTRY, m_pTable->getOid());
+    }
+
+    if (gUdfOrch && !m_udfFieldValues.empty())
+    {
+        for (const auto& udfMatch : m_udfFieldValues)
+        {
+            gUdfOrch->decrementUdfRuleRefCount(udfMatch.first);
+        }
+    }
 
     m_ruleOid = SAI_NULL_OBJECT_ID;
 
@@ -2165,7 +2441,7 @@ bool AclRulePacket::validate()
 {
     SWSS_LOG_ENTER();
 
-    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() != 1)
+    if ((m_rangeConfig.empty() && m_matches.empty() && m_udfFieldValues.empty()) || m_actions.size() != 1)
     {
         return false;
     }
@@ -2844,6 +3120,16 @@ bool AclTable::create()
     if (status != SAI_STATUS_SUCCESS)
     {
         return false;
+    }
+
+    if (gUdfOrch)
+    {
+        for (const auto& matchPair : type.getMatches())
+        {
+            auto* udfMatch = dynamic_cast<const AclTableUdfGroupMatch*>(matchPair.second.get());
+            if (!udfMatch) continue;
+            gUdfOrch->incrementGroupRefCount(udfMatch->getName());
+        }
     }
 
     for (const auto& bpointType: type.getBindPointTypes())
@@ -4079,7 +4365,6 @@ void AclOrch::putAclActionCapabilityInDB(acl_stage_type_t stage)
         }
     }
 
-
     is_action_list_mandatory_stream << boolalpha << capabilities.isActionListMandatoryOnTableCreation;
 
     fvVector.emplace_back(STATE_DB_ACL_ACTION_FIELD_IS_ACTION_LIST_MANDATORY, is_action_list_mandatory_stream.str());
@@ -4868,6 +5153,16 @@ bool AclOrch::removeAclTable(string table_id)
             gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, sai_stage, bpointType, table_oid);
         }
 
+        if (gUdfOrch)
+        {
+            for (const auto& matchPair : m_AclTables[table_oid].type.getMatches())
+            {
+                auto* udfMatch = dynamic_cast<const AclTableUdfGroupMatch*>(matchPair.second.get());
+                if (!udfMatch) continue;
+                gUdfOrch->decrementGroupRefCount(udfMatch->getName());
+            }
+        }
+
         SWSS_LOG_NOTICE("Successfully deleted ACL table %s", table_id.c_str());
         m_AclTables.erase(table_oid);
 
@@ -4916,25 +5211,40 @@ bool AclOrch::addAclTableType(const AclTableType& tableType)
         return false;
     }
 
+    if (gUdfOrch)
+    {
+        for (const auto& matchPair : tableType.getMatches())
+        {
+            auto* udfMatch = dynamic_cast<const AclTableUdfGroupMatch*>(matchPair.second.get());
+            if (!udfMatch) continue;
+            gUdfOrch->incrementGroupRefCount(udfMatch->getName());
+        }
+    }
+
     m_AclTableTypes.emplace(tableType.getName(), tableType);
     return true;
 }
 
 bool AclOrch::removeAclTableType(const string& tableTypeName)
 {
-    // It is Ok to remove table type that is in use by AclTable.
-    // AclTable holds a copy of AclTableType and there is no
-    // SAI object associated with AclTableType.
-    // So it is no harm to remove it without validation.
-    // The upper layer can although ensure that
-    // user does not remove table type that is referenced
-    // by an ACL table.
-    if (!m_AclTableTypes.erase(tableTypeName))
+    auto it = m_AclTableTypes.find(tableTypeName);
+    if (it == m_AclTableTypes.end())
     {
         SWSS_LOG_ERROR("Unknown table type %s", tableTypeName.c_str());
         return false;
     }
 
+    if (gUdfOrch)
+    {
+        for (const auto& matchPair : it->second.getMatches())
+        {
+            auto* udfMatch = dynamic_cast<const AclTableUdfGroupMatch*>(matchPair.second.get());
+            if (!udfMatch) continue;
+            gUdfOrch->decrementGroupRefCount(udfMatch->getName());
+        }
+    }
+
+    m_AclTableTypes.erase(it);
     return true;
 }
 
@@ -5462,18 +5772,21 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                 }
                 else
                 {
+                    // Dependencies (ACL table type) are already checked before this point
+                    // If addAclTable fails, it's due to SAI error or permanent failure - don't retry
                     if (addAclTable(table_id, newTable, orignalTableTypeName))
                     {
                         // Mark ACL table as ACTIVE
                         setAclTableStatus(table_id, AclObjectStatus::ACTIVE);
-                        it = consumer.m_toSync.erase(it);
                     }
                     else
                     {
-                        //we have failed to create the MarkMeta table, we need to remove the EgrSetDscp table
-                        setAclTableStatus(table_id, AclObjectStatus::PENDING_CREATION);
-                        it++;
+                        // Mark as INACTIVE on failure - don't retry
+                        setAclTableStatus(table_id, AclObjectStatus::INACTIVE);
+                        SWSS_LOG_ERROR("Failed to create ACL table %s, not retrying", table_id.c_str());
                     }
+                    // Always remove from queue - don't retry on SAI failures
+                    it = consumer.m_toSync.erase(it);
                 }
             }
             else
@@ -5713,8 +6026,8 @@ void AclOrch::doAclTableTypeTask(Consumer &consumer)
             AclTableTypeBuilder builder;
             if (!AclTableTypeParser().parse(key, kfvFieldsValues(keyOpFieldValues), builder))
             {
-                SWSS_LOG_ERROR("Failed to parse ACL table type configuration %s", key.c_str());
-                it = consumer.m_toSync.erase(it);
+                SWSS_LOG_INFO("Failed to parse ACL table type configuration %s, will retry", key.c_str());
+                ++it;
                 continue;
             }
 

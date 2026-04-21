@@ -13,6 +13,7 @@
 #include "sairedis.h"
 #include "chassisorch.h"
 #include "stporch.h"
+#include "udforch.h"
 
 using namespace std;
 using namespace swss;
@@ -46,6 +47,7 @@ NhgMapOrch *gNhgMapOrch;
 CbfNhgOrch *gCbfNhgOrch;
 FgNhgOrch *gFgNhgOrch;
 AclOrch *gAclOrch;
+UdfOrch *gUdfOrch;
 PbhOrch *gPbhOrch;
 MirrorOrch *gMirrorOrch;
 CrmOrch *gCrmOrch;
@@ -508,6 +510,16 @@ bool OrchDaemon::init()
         dtel_orch = new DTelOrch(m_configDb, dtel_tables, gPortsOrch);
         m_orchList.push_back(dtel_orch);
     }
+
+    //
+    // User Defined Field (UDF) orchestrator - must be initialized before AclOrch
+    //
+    vector<string> udf_tables = {
+        CFG_UDF_TABLE_NAME,
+        CFG_UDF_SELECTOR_TABLE_NAME
+    };
+    gUdfOrch = new UdfOrch(m_configDb, udf_tables);
+    m_orchList.push_back(gUdfOrch);
 
     gAclOrch = new AclOrch(acl_table_connectors, m_stateDb,
         gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, dtel_orch);
