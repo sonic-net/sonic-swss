@@ -637,6 +637,43 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
 
         it = consumer.m_toSync.erase(it);
     }
+
+    // Mellanox SAI requires an ARS profile to exist before
+    // SAI_PORT_ATTR_ARS_ENABLE can succeed.  Because m_consumerMap is
+    // sorted alphabetically, ARS_INTERFACES is processed before
+    // ARS_PROFILE at boot — so doArsInterfaceTask's setPortArsEnable
+    // calls fail with SAI_STATUS_NOT_SUPPORTED ("ARS profile is not
+    // created") and the ports are queued in m_arsInterfacesPendingEnable.
+    // Now that a profile exists, retry those deferred enables while the
+    // ports are still bare (no RIF yet — IntfsOrch hasn't run).
+    if (!m_arsInterfacesPendingEnable.empty())
+    {
+        SWSS_LOG_NOTICE("ARS: profile created — retrying %zu pending "
+                        "port ARS enables",
+                        m_arsInterfacesPendingEnable.size());
+
+        auto pending = m_arsInterfacesPendingEnable;
+        for (const auto &portName : pending)
+        {
+            if (setPortArsEnable(portName, true))
+            {
+                m_arsInterfacesPendingEnable.erase(portName);
+                m_arsEnabledPorts.insert(portName);
+                auto ifIt = m_arsInterfaces.find(portName);
+                if (ifIt != m_arsInterfaces.end())
+                    ifIt->second.enabled = true;
+                SWSS_LOG_NOTICE("ARS: deferred enable on %s succeeded "
+                                "after profile creation",
+                                portName.c_str());
+            }
+            else
+            {
+                SWSS_LOG_WARN("ARS: deferred enable on %s still failed "
+                              "after profile creation — leaving queued",
+                              portName.c_str());
+            }
+        }
+    }
 }
 
 /* ── ARS Object (per-NHG) ───────────────────────────────────────────── */
