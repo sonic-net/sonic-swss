@@ -86,6 +86,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 retrycache_ut.cpp \
                 mock_saihelper.cpp \
                 mirrororch_ut.cpp \
+                udforch_ut.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \

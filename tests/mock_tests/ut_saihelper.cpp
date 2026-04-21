@@ -89,6 +89,7 @@ namespace ut_helper
         sai_api_query(SAI_API_MPLS, (void**)&sai_mpls_api);
         sai_api_query(SAI_API_COUNTER, (void**)&sai_counter_api);
         sai_api_query(SAI_API_FDB, (void**)&sai_fdb_api);
+        sai_api_query(SAI_API_UDF, (void**)&sai_udf_api);
         sai_api_query(SAI_API_TWAMP, (void**)&sai_twamp_api);
         sai_api_query(SAI_API_TAM, (void**)&sai_tam_api);
         sai_api_query((sai_api_t)SAI_API_DASH_VIP, (void**)&sai_dash_vip_api);
