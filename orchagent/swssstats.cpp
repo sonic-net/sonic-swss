@@ -21,11 +21,9 @@ SwssStats::SwssStats(uint32_t interval)
 {
     SWSS_LOG_ENTER();
 
-    // Connect to COUNTERS_DB
-    m_db = make_shared<DBConnector>("COUNTERS_DB", 0);
-    m_table = make_unique<Table>(m_db.get(), SWSS_STATS_TABLE);
-
-    // Start background writer thread
+    // DB connection is deferred to writerThread() to avoid calling
+    // DBConnector during early orchagent init when COUNTERS_DB may
+    // not yet be accessible (causes waitForGetResponse crash).
     m_thread = make_unique<thread>(&SwssStats::writerThread, this);
 
     SWSS_LOG_NOTICE("SwssStats initialized (interval: %d sec)", m_interval_sec);
@@ -136,6 +134,20 @@ void SwssStats::writerThread()
     SWSS_LOG_ENTER();
     SWSS_LOG_NOTICE("SwssStats writer thread started");
 
+    // Connect to COUNTERS_DB here (not in constructor) so that
+    // singleton creation during early orchagent startup is safe.
+    try
+    {
+        m_db = make_shared<DBConnector>("COUNTERS_DB", 0);
+        m_table = make_unique<Table>(m_db.get(), SWSS_STATS_TABLE);
+    }
+    catch (const exception& e)
+    {
+        SWSS_LOG_ERROR("SwssStats: failed to connect to COUNTERS_DB: %s. "
+                       "Stats will not be written.", e.what());
+        return;
+    }
+
     unordered_map<string, uint64_t> last_versions;
 
     while (true)
@@ -191,4 +203,3 @@ void SwssStats::writerThread()
 
     SWSS_LOG_NOTICE("SwssStats writer thread stopped");
 }
-
