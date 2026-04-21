@@ -646,7 +646,22 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
     // created") and the ports are queued in m_arsInterfacesPendingEnable.
     // Now that a profile exists, retry those deferred enables while the
     // ports are still bare (no RIF yet — IntfsOrch hasn't run).
-    if (!m_arsInterfacesPendingEnable.empty())
+    //
+    // Only retry if at least one profile was successfully created in
+    // this batch — if all profile creates failed (e.g.
+    // SAI_STATUS_ATTR_NOT_IMPLEMENTED), there's no profile in SAI and
+    // the port enables would fail again for the same reason.
+    bool anyProfileExists = false;
+    for (const auto &p : m_arsProfiles)
+    {
+        if (p.second.profileOid != SAI_NULL_OBJECT_ID)
+        {
+            anyProfileExists = true;
+            break;
+        }
+    }
+
+    if (anyProfileExists && !m_arsInterfacesPendingEnable.empty())
     {
         SWSS_LOG_NOTICE("ARS: profile created — retrying %zu pending "
                         "port ARS enables",
@@ -1674,6 +1689,39 @@ bool ArsOrch::createArsProfile(const string &name, const ArsProfileEntry &entry)
     sai_object_id_t profileOid;
     sai_status_t status = sai_ars_profile_api->create_ars_profile(
         &profileOid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+
+    // Mellanox SAI only implements quant-band threshold attributes on
+    // ARS_PROFILE (SAI_ARS_PROFILE_ATTR_QUANT_BAND_{0,1,2}_MIN_THRESHOLD).
+    // Standard EWMA attributes like ALGO, PORT_LOAD_*, ENABLE_IPV4/6,
+    // SAMPLING_INTERVAL etc. are handled internally by the SDK and not
+    // exposed through SAI. If the full attribute list fails with
+    // ATTR_NOT_IMPLEMENTED, retry with only the quant-band thresholds.
+    if (SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status) ||
+        SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status))
+    {
+        SWSS_LOG_NOTICE("ARS: full profile create for '%s' returned %s — "
+                        "retrying with quant-band thresholds only "
+                        "(Mellanox SAI handles EWMA tuning via SDK internally)",
+                        name.c_str(), sai_serialize_status(status).c_str());
+
+        vector<sai_attribute_t> qb_attrs;
+        sai_attribute_t qb;
+
+        qb.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_0_MIN_THRESHOLD;
+        qb.value.u32 = entry.quantBand0MinThreshold;
+        qb_attrs.push_back(qb);
+
+        qb.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_1_MIN_THRESHOLD;
+        qb.value.u32 = entry.quantBand1MinThreshold;
+        qb_attrs.push_back(qb);
+
+        qb.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_2_MIN_THRESHOLD;
+        qb.value.u32 = entry.quantBand2MinThreshold;
+        qb_attrs.push_back(qb);
+
+        status = sai_ars_profile_api->create_ars_profile(
+            &profileOid, gSwitchId, (uint32_t)qb_attrs.size(), qb_attrs.data());
+    }
 
     if (status != SAI_STATUS_SUCCESS)
     {
