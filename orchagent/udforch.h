@@ -28,13 +28,17 @@ struct UdfMatchConfig
     string name;
     uint16_t l2_type      = 0;
     uint16_t l2_type_mask = 0;
-    uint8_t l3_type       = 0;
-    uint8_t l3_type_mask  = 0;
+    bool     l2_type_set  = false;
+    uint8_t  l3_type      = 0;
+    uint8_t  l3_type_mask = 0;
+    bool     l3_type_set  = false;
     uint16_t gre_type      = 0;
     uint16_t gre_type_mask = 0;
+    bool     gre_type_set  = false;
     uint16_t l4_dst_port      = 0;
     uint16_t l4_dst_port_mask = 0;
-    uint8_t priority       = 0;
+    bool     l4_dst_port_set  = false;
+    uint8_t  priority = 0;
 };
 
 struct UdfConfig
@@ -52,7 +56,7 @@ public:
     UdfGroup(const UdfGroupConfig& config);
     ~UdfGroup();
 
-    bool create();
+    sai_status_t create();
     bool remove();
 
     sai_object_id_t getOid() const { return m_oid; }
@@ -107,28 +111,32 @@ struct UdfMatchSignature
 {
     uint16_t l2_type      = 0;
     uint16_t l2_type_mask = 0;
+    bool     l2_type_set  = false;
     uint8_t  l3_type      = 0;
     uint8_t  l3_type_mask = 0;
+    bool     l3_type_set  = false;
     uint16_t gre_type      = 0;
     uint16_t gre_type_mask = 0;
+    bool     gre_type_set  = false;
     uint16_t l4_dst_port      = 0;
     uint16_t l4_dst_port_mask = 0;
+    bool     l4_dst_port_set  = false;
     uint8_t  priority      = 0;
 
     bool operator<(const UdfMatchSignature& o) const
     {
-        return tie(l2_type, l2_type_mask, l3_type, l3_type_mask,
-                   gre_type, gre_type_mask, l4_dst_port, l4_dst_port_mask, priority)
-             < tie(o.l2_type, o.l2_type_mask, o.l3_type, o.l3_type_mask,
-                   o.gre_type, o.gre_type_mask, o.l4_dst_port, o.l4_dst_port_mask, o.priority);
+        return tie(l2_type, l2_type_mask, l2_type_set, l3_type, l3_type_mask, l3_type_set,
+                   gre_type, gre_type_mask, gre_type_set, l4_dst_port, l4_dst_port_mask, l4_dst_port_set, priority)
+             < tie(o.l2_type, o.l2_type_mask, o.l2_type_set, o.l3_type, o.l3_type_mask, o.l3_type_set,
+                   o.gre_type, o.gre_type_mask, o.gre_type_set, o.l4_dst_port, o.l4_dst_port_mask, o.l4_dst_port_set, o.priority);
     }
 
     bool operator==(const UdfMatchSignature& o) const
     {
-        return tie(l2_type, l2_type_mask, l3_type, l3_type_mask,
-                   gre_type, gre_type_mask, l4_dst_port, l4_dst_port_mask, priority)
-            == tie(o.l2_type, o.l2_type_mask, o.l3_type, o.l3_type_mask,
-                   o.gre_type, o.gre_type_mask, o.l4_dst_port, o.l4_dst_port_mask, o.priority);
+        return tie(l2_type, l2_type_mask, l2_type_set, l3_type, l3_type_mask, l3_type_set,
+                   gre_type, gre_type_mask, gre_type_set, l4_dst_port, l4_dst_port_mask, l4_dst_port_set, priority)
+            == tie(o.l2_type, o.l2_type_mask, o.l2_type_set, o.l3_type, o.l3_type_mask, o.l3_type_set,
+                   o.gre_type, o.gre_type_mask, o.gre_type_set, o.l4_dst_port, o.l4_dst_port_mask, o.l4_dst_port_set, o.priority);
     }
 };
 
@@ -138,7 +146,7 @@ public:
     UdfOrch(DBConnector *configDb, const vector<string> &tableNames);
     ~UdfOrch();
 
-    bool addUdfGroup(const string& name, const UdfGroupConfig& config);
+    bool addUdfGroup(const string& name, const UdfGroupConfig& config, sai_status_t* saiStatus = nullptr);
     bool removeUdfGroup(const string& name);
     UdfGroup* getUdfGroup(const string& name);
     sai_object_id_t getUdfGroupOid(const string& name);
@@ -164,8 +172,12 @@ private:
     void doUdfSelectorTask(Consumer& consumer);
 
     UdfMatchSignature buildMatchSignature(const UdfMatchConfig& config);
+    string makeSharedMatchName(const UdfMatchSignature& sig) const;
     string getOrCreateSharedMatch(const UdfMatchSignature& sig, const UdfMatchConfig& config);
     void releaseSharedMatch(const string& matchName);
+
+    void flushStaleAsicUdfObjects();
+    void probeUdfSupport();
 
     sai_object_id_t getUdfMatchOid(const string& name);
     uint32_t getGroupRefCount(const string& groupName) const;
@@ -180,9 +192,10 @@ private:
 
     map<string, string> m_selectorToMatchName;
 
-    uint32_t m_sharedMatchCounter = 0;
     map<string, uint32_t> m_udfGroupRefCount;
     map<string, uint32_t> m_udfRuleRefCount;
+
+    bool m_udfSupported = false;
 };
 
 extern UdfOrch* gUdfOrch;
