@@ -1,9 +1,11 @@
 #include <inttypes.h>
+#include <sstream>
 #include "udforch.h"
 #include "logger.h"
 #include "schema.h"
 #include "tokenize.h"
 #include "sai_serialize.h"
+#include "warm_restart.h"
 #include <nlohmann/json.hpp>
 
 using namespace std;
@@ -26,7 +28,7 @@ UdfGroup::~UdfGroup()
     }
 }
 
-bool UdfGroup::create()
+sai_status_t UdfGroup::create()
 {
     SWSS_LOG_ENTER();
 
@@ -34,14 +36,14 @@ bool UdfGroup::create()
     {
         SWSS_LOG_ERROR("UDF group %s already exists with OID: 0x%" PRIx64,
                        m_config.name.c_str(), m_oid);
-        return false;
+        return SAI_STATUS_ITEM_ALREADY_EXISTS;
     }
 
     if (!isValidUdfGroupLength(m_config.length))
     {
         SWSS_LOG_ERROR("Invalid UDF group length %d for group %s",
                        m_config.length, m_config.name.c_str());
-        return false;
+        return SAI_STATUS_INVALID_PARAMETER;
     }
 
     vector<sai_attribute_t> attrs;
@@ -58,7 +60,7 @@ bool UdfGroup::create()
     if (!sai_udf_api)
     {
         SWSS_LOG_ERROR("SAI UDF API is not available for UDF group %s", m_config.name.c_str());
-        return false;
+        return SAI_STATUS_FAILURE;
     }
 
     sai_status_t status = sai_udf_api->create_udf_group(&m_oid, gSwitchId,
@@ -69,13 +71,13 @@ bool UdfGroup::create()
     {
         SWSS_LOG_ERROR("Failed to create UDF group %s, SAI status: %s",
                        m_config.name.c_str(), sai_serialize_status(status).c_str());
-        return false;
+        return status;
     }
 
     SWSS_LOG_NOTICE("Created UDF group %s OID: 0x%" PRIx64 " type: %s length: %d",
                   m_config.name.c_str(), m_oid,
                   getUdfGroupTypeString(m_config.type).c_str(), m_config.length);
-    return true;
+    return SAI_STATUS_SUCCESS;
 }
 
 bool UdfGroup::remove()
@@ -139,7 +141,7 @@ bool UdfMatch::create()
 
     // UDF_MATCH L2/L3/GRE attrs are sai_acl_field_data_t — the enable flag
     // must be set to true for the criteria to take effect in SAI.
-    if (m_config.l2_type != 0 || m_config.l2_type_mask != 0)
+    if (m_config.l2_type_set)
     {
         attr.id = SAI_UDF_MATCH_ATTR_L2_TYPE;
         attr.value.aclfield.enable = true;
@@ -148,7 +150,7 @@ bool UdfMatch::create()
         attrs.push_back(attr);
     }
 
-    if (m_config.l3_type != 0 || m_config.l3_type_mask != 0)
+    if (m_config.l3_type_set)
     {
         attr.id = SAI_UDF_MATCH_ATTR_L3_TYPE;
         attr.value.aclfield.enable = true;
@@ -157,7 +159,7 @@ bool UdfMatch::create()
         attrs.push_back(attr);
     }
 
-    if (m_config.gre_type != 0 || m_config.gre_type_mask != 0)
+    if (m_config.gre_type_set)
     {
         attr.id = SAI_UDF_MATCH_ATTR_GRE_TYPE;
         attr.value.aclfield.enable = true;
@@ -166,7 +168,7 @@ bool UdfMatch::create()
         attrs.push_back(attr);
     }
 
-    if (m_config.l4_dst_port != 0 || m_config.l4_dst_port_mask != 0)
+    if (m_config.l4_dst_port_set)
     {
         attr.id = SAI_UDF_MATCH_ATTR_L4_DST_PORT_TYPE;
         attr.value.aclfield.enable = true;
@@ -358,6 +360,84 @@ UdfOrch::UdfOrch(DBConnector *configDb, const vector<string> &tableNames) :
 {
     SWSS_LOG_ENTER();
     SWSS_LOG_NOTICE("UdfOrch initialized with %zu tables", tableNames.size());
+
+    probeUdfSupport();
+
+    if (m_udfSupported && WarmStart::isWarmStart())
+    {
+        flushStaleAsicUdfObjects();
+    }
+}
+
+void UdfOrch::probeUdfSupport()
+{
+    SWSS_LOG_ENTER();
+
+    // SAI_UDF_GROUP_ATTR_LENGTH is a mandatory-on-create attribute; if the
+    // platform implements it at create time, UDF_GROUP creation is supported.
+    // We treat any non-SUCCESS query result as "assume supported" so that
+    // platforms whose SAI does not implement sai_query_attribute_capability
+    // for UDF are not incorrectly blocked.
+    sai_attr_capability_t cap{};
+    sai_status_t status = sai_query_attribute_capability(
+        gSwitchId, SAI_OBJECT_TYPE_UDF_GROUP, SAI_UDF_GROUP_ATTR_LENGTH, &cap);
+
+    if (status != SAI_STATUS_SUCCESS || cap.create_implemented)
+    {
+        m_udfSupported = true;
+        SWSS_LOG_NOTICE("UDF supported on this platform (query status: %s)",
+                        sai_serialize_status(status).c_str());
+        return;
+    }
+
+    SWSS_LOG_WARN("UDF not supported on this platform (SAI_UDF_GROUP_ATTR_LENGTH create_implemented=false)");
+}
+
+void UdfOrch::flushStaleAsicUdfObjects()
+{
+    SWSS_LOG_ENTER();
+
+    DBConnector asicDb("ASIC_DB", 0);
+
+    auto extractOid = [](const string& key) {
+        sai_object_id_t oid;
+        sai_deserialize_object_id(key.substr(key.rfind("oid:")), oid);
+        return oid;
+    };
+
+    // UDFs reference UDF_GROUP and UDF_MATCH, so remove UDFs first.
+    for (const auto& key : asicDb.keys("ASIC_STATE:SAI_OBJECT_TYPE_UDF:*"))
+    {
+        sai_object_id_t oid = extractOid(key);
+        sai_status_t status = sai_udf_api->remove_udf(oid);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Failed to remove stale UDF 0x%" PRIx64 ": %s",
+                          oid, sai_serialize_status(status).c_str());
+        }
+    }
+
+    for (const auto& key : asicDb.keys("ASIC_STATE:SAI_OBJECT_TYPE_UDF_MATCH:*"))
+    {
+        sai_object_id_t oid = extractOid(key);
+        sai_status_t status = sai_udf_api->remove_udf_match(oid);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Failed to remove stale UDF_MATCH 0x%" PRIx64 ": %s",
+                          oid, sai_serialize_status(status).c_str());
+        }
+    }
+
+    for (const auto& key : asicDb.keys("ASIC_STATE:SAI_OBJECT_TYPE_UDF_GROUP:*"))
+    {
+        sai_object_id_t oid = extractOid(key);
+        sai_status_t status = sai_udf_api->remove_udf_group(oid);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Failed to remove stale UDF_GROUP 0x%" PRIx64 ": %s",
+                          oid, sai_serialize_status(status).c_str());
+        }
+    }
 }
 
 UdfOrch::~UdfOrch()
@@ -371,6 +451,18 @@ UdfOrch::~UdfOrch()
 void UdfOrch::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
+
+    if (!m_udfSupported)
+    {
+        // Drain without retry; leaving entries in m_toSync produces a log flood.
+        for (auto& kv : consumer.m_toSync)
+        {
+            SWSS_LOG_WARN("Dropping %s entry '%s': UDF not supported on this platform",
+                          consumer.getTableName().c_str(), kfvKey(kv.second).c_str());
+        }
+        consumer.m_toSync.clear();
+        return;
+    }
 
     const string& tableName = consumer.getTableName();
 
@@ -405,6 +497,7 @@ void UdfOrch::doUdfFieldTask(Consumer& consumer)
             config.name = key;
             config.type = SAI_UDF_GROUP_TYPE_GENERIC;  // Default
 
+            bool invalid = false;
             for (const auto& field : kfvFieldsValues(t))
             {
                 const string& fieldName = fvField(field);
@@ -412,6 +505,12 @@ void UdfOrch::doUdfFieldTask(Consumer& consumer)
 
                 if (fieldName == "field_type")
                 {
+                    if (!isValidUdfGroupType(fieldValue))
+                    {
+                        SWSS_LOG_ERROR("UDF %s: unknown field_type '%s'", key.c_str(), fieldValue.c_str());
+                        invalid = true;
+                        break;
+                    }
                     config.type = getUdfGroupType(fieldValue);
                 }
                 else if (fieldName == "length")
@@ -421,6 +520,12 @@ void UdfOrch::doUdfFieldTask(Consumer& consumer)
                 // "description" is informational only, not passed to SAI
             }
 
+            if (invalid)
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
             if (config.length == 0)
             {
                 SWSS_LOG_ERROR("UDF %s missing required field: length", key.c_str());
@@ -428,9 +533,16 @@ void UdfOrch::doUdfFieldTask(Consumer& consumer)
                 continue;
             }
 
-            if (!addUdfGroup(key, config))
+            sai_status_t saiStatus = SAI_STATUS_SUCCESS;
+            if (!addUdfGroup(key, config, &saiStatus))
             {
-                SWSS_LOG_ERROR("Failed to add UDF group for %s, discarding entry", key.c_str());
+                if (saiStatus == SAI_STATUS_INSUFFICIENT_RESOURCES)
+                {
+                    SWSS_LOG_WARN("UDF group %s: no hardware slots available, will retry", key.c_str());
+                    ++it;
+                    continue;
+                }
+                SWSS_LOG_ERROR("UDF group %s: config error, discarding entry", key.c_str());
             }
             it = consumer.m_toSync.erase(it);
         }
@@ -479,6 +591,16 @@ void UdfOrch::doUdfSelectorTask(Consumer& consumer)
 
         if (op == SET_COMMAND)
         {
+            // Idempotent replay guard: if the selector SAI object already
+            // exists, skip processing to avoid incrementing the shared-match
+            // refcount without a corresponding release on the replay path.
+            if (m_udfs.count(selectorKey) && m_selectorToMatchName.count(selectorKey))
+            {
+                SWSS_LOG_DEBUG("UDF_SELECTOR %s already exists, skipping replay", selectorKey.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
             string baseStr;
             uint16_t offset = 0;
             UdfMatchConfig matchConfig = {};
@@ -531,19 +653,31 @@ void UdfOrch::doUdfSelectorTask(Consumer& consumer)
             {
                 auto mat = nlohmann::json::parse(matchJson);
                 if (mat.contains("l2_type"))
+                {
                     matchConfig.l2_type = static_cast<uint16_t>(stoul(mat["l2_type"].get<string>(), nullptr, 0));
+                    matchConfig.l2_type_set = true;
+                }
                 if (mat.contains("l2_type_mask"))
                     matchConfig.l2_type_mask = static_cast<uint16_t>(stoul(mat["l2_type_mask"].get<string>(), nullptr, 0));
                 if (mat.contains("l3_type"))
+                {
                     matchConfig.l3_type = static_cast<uint8_t>(stoul(mat["l3_type"].get<string>(), nullptr, 0));
+                    matchConfig.l3_type_set = true;
+                }
                 if (mat.contains("l3_type_mask"))
                     matchConfig.l3_type_mask = static_cast<uint8_t>(stoul(mat["l3_type_mask"].get<string>(), nullptr, 0));
                 if (mat.contains("gre_type"))
+                {
                     matchConfig.gre_type = static_cast<uint16_t>(stoul(mat["gre_type"].get<string>(), nullptr, 0));
+                    matchConfig.gre_type_set = true;
+                }
                 if (mat.contains("gre_type_mask"))
                     matchConfig.gre_type_mask = static_cast<uint16_t>(stoul(mat["gre_type_mask"].get<string>(), nullptr, 0));
                 if (mat.contains("l4_dst_port"))
+                {
                     matchConfig.l4_dst_port = static_cast<uint16_t>(stoul(mat["l4_dst_port"].get<string>(), nullptr, 0));
+                    matchConfig.l4_dst_port_set = true;
+                }
                 if (mat.contains("l4_dst_port_mask"))
                     matchConfig.l4_dst_port_mask = static_cast<uint16_t>(stoul(mat["l4_dst_port_mask"].get<string>(), nullptr, 0));
                 if (mat.contains("priority"))
@@ -572,19 +706,19 @@ void UdfOrch::doUdfSelectorTask(Consumer& consumer)
                 continue;
             }
 
-            if (matchConfig.l2_type != 0 && matchConfig.l2_type_mask == 0)
+            if (matchConfig.l2_type_set && matchConfig.l2_type_mask == 0)
                 matchConfig.l2_type_mask = 0xFFFF;
-            if (matchConfig.l3_type != 0 && matchConfig.l3_type_mask == 0)
+            if (matchConfig.l3_type_set && matchConfig.l3_type_mask == 0)
                 matchConfig.l3_type_mask = 0xFF;
-            if (matchConfig.gre_type != 0 && matchConfig.gre_type_mask == 0)
+            if (matchConfig.gre_type_set && matchConfig.gre_type_mask == 0)
                 matchConfig.gre_type_mask = 0xFFFF;
-            if (matchConfig.l4_dst_port != 0 && matchConfig.l4_dst_port_mask == 0)
+            if (matchConfig.l4_dst_port_set && matchConfig.l4_dst_port_mask == 0)
                 matchConfig.l4_dst_port_mask = 0xFFFF;
 
-            bool hasL2  = (matchConfig.l2_type  != 0 || matchConfig.l2_type_mask  != 0);
-            bool hasL3  = (matchConfig.l3_type  != 0 || matchConfig.l3_type_mask  != 0);
-            bool hasGre = (matchConfig.gre_type != 0 || matchConfig.gre_type_mask != 0);
-            bool hasL4  = (matchConfig.l4_dst_port != 0 || matchConfig.l4_dst_port_mask != 0);
+            bool hasL2  = matchConfig.l2_type_set;
+            bool hasL3  = matchConfig.l3_type_set;
+            bool hasGre = matchConfig.gre_type_set;
+            bool hasL4  = matchConfig.l4_dst_port_set;
             if (!hasL2 && !hasL3 && !hasGre && !hasL4)
             {
                 SWSS_LOG_ERROR("UDF_SELECTOR %s: at least one match criterion required",
@@ -689,14 +823,32 @@ UdfMatchSignature UdfOrch::buildMatchSignature(const UdfMatchConfig& config)
     UdfMatchSignature sig;
     sig.l2_type      = config.l2_type;
     sig.l2_type_mask = config.l2_type_mask;
+    sig.l2_type_set  = config.l2_type_set;
     sig.l3_type      = config.l3_type;
     sig.l3_type_mask = config.l3_type_mask;
+    sig.l3_type_set  = config.l3_type_set;
     sig.gre_type      = config.gre_type;
     sig.gre_type_mask = config.gre_type_mask;
+    sig.gre_type_set  = config.gre_type_set;
     sig.l4_dst_port      = config.l4_dst_port;
     sig.l4_dst_port_mask = config.l4_dst_port_mask;
+    sig.l4_dst_port_set  = config.l4_dst_port_set;
     sig.priority      = config.priority;
     return sig;
+}
+
+string UdfOrch::makeSharedMatchName(const UdfMatchSignature& sig) const
+{
+    uint64_t h = 14695981039346656037ULL;
+    auto mix = [&](uint64_t v) { h ^= v; h *= 1099511628211ULL; };
+    mix(sig.l2_type); mix(sig.l2_type_mask); mix(sig.l2_type_set ? 1u : 0u);
+    mix(sig.l3_type); mix(sig.l3_type_mask); mix(sig.l3_type_set ? 1u : 0u);
+    mix(sig.gre_type); mix(sig.gre_type_mask); mix(sig.gre_type_set ? 1u : 0u);
+    mix(sig.l4_dst_port); mix(sig.l4_dst_port_mask); mix(sig.l4_dst_port_set ? 1u : 0u);
+    mix(sig.priority);
+    char buf[32];
+    snprintf(buf, sizeof(buf), ".smatch_%016" PRIx64, h);
+    return string(buf);
 }
 
 string UdfOrch::getOrCreateSharedMatch(const UdfMatchSignature& sig, const UdfMatchConfig& config)
@@ -711,7 +863,7 @@ string UdfOrch::getOrCreateSharedMatch(const UdfMatchSignature& sig, const UdfMa
         return existingName;
     }
 
-    string matchName = "shared_match_" + to_string(m_sharedMatchCounter++);
+    string matchName = makeSharedMatchName(sig);
 
     UdfMatchConfig newConfig = config;
     newConfig.name = matchName;
@@ -759,15 +911,9 @@ void UdfOrch::releaseSharedMatch(const string& matchName)
     }
 }
 
-bool UdfOrch::addUdfGroup(const string& name, const UdfGroupConfig& config)
+bool UdfOrch::addUdfGroup(const string& name, const UdfGroupConfig& config, sai_status_t* saiStatus)
 {
     SWSS_LOG_ENTER();
-
-    if (!isValidUdfName(name))
-    {
-        SWSS_LOG_ERROR("Invalid UDF group name: %s", name.c_str());
-        return false;
-    }
 
     auto it = m_udfGroups.find(name);
     if (it != m_udfGroups.end())
@@ -795,9 +941,12 @@ bool UdfOrch::addUdfGroup(const string& name, const UdfGroupConfig& config)
     }
 
     auto udfGroup = make_unique<UdfGroup>(config);
-    if (!udfGroup->create())
+    sai_status_t status = udfGroup->create();
+    if (saiStatus) *saiStatus = status;
+    if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create UDF group %s", name.c_str());
+        SWSS_LOG_ERROR("Failed to create UDF group %s, SAI status: %s",
+                       name.c_str(), sai_serialize_status(status).c_str());
         return false;
     }
 
@@ -866,25 +1015,19 @@ bool UdfOrch::addUdfMatch(const string& name, const UdfMatchConfig& config)
 {
     SWSS_LOG_ENTER();
 
-    if (!isValidUdfName(name))
-    {
-        SWSS_LOG_ERROR("Invalid UDF match name: %s", name.c_str());
-        return false;
-    }
-
     auto it = m_udfMatches.find(name);
     if (it != m_udfMatches.end())
     {
         const UdfMatchConfig& existingConfig = it->second->getConfig();
 
         bool configChanged = false;
-        if (existingConfig.l2_type != config.l2_type || existingConfig.l2_type_mask != config.l2_type_mask)
+        if (existingConfig.l2_type != config.l2_type || existingConfig.l2_type_mask != config.l2_type_mask || existingConfig.l2_type_set != config.l2_type_set)
             configChanged = true;
-        if (existingConfig.l3_type != config.l3_type || existingConfig.l3_type_mask != config.l3_type_mask)
+        if (existingConfig.l3_type != config.l3_type || existingConfig.l3_type_mask != config.l3_type_mask || existingConfig.l3_type_set != config.l3_type_set)
             configChanged = true;
-        if (existingConfig.gre_type != config.gre_type || existingConfig.gre_type_mask != config.gre_type_mask)
+        if (existingConfig.gre_type != config.gre_type || existingConfig.gre_type_mask != config.gre_type_mask || existingConfig.gre_type_set != config.gre_type_set)
             configChanged = true;
-        if (existingConfig.l4_dst_port != config.l4_dst_port || existingConfig.l4_dst_port_mask != config.l4_dst_port_mask)
+        if (existingConfig.l4_dst_port != config.l4_dst_port || existingConfig.l4_dst_port_mask != config.l4_dst_port_mask || existingConfig.l4_dst_port_set != config.l4_dst_port_set)
             configChanged = true;
         if (existingConfig.priority != config.priority)
             configChanged = true;
@@ -900,10 +1043,10 @@ bool UdfOrch::addUdfMatch(const string& name, const UdfMatchConfig& config)
     }
 
     // Also called directly by BTH setup which bypasses doUdfSelectorTask
-    bool hasL2  = (config.l2_type  != 0 || config.l2_type_mask  != 0);
-    bool hasL3  = (config.l3_type  != 0 || config.l3_type_mask  != 0);
-    bool hasGre = (config.gre_type != 0 || config.gre_type_mask != 0);
-    bool hasL4  = (config.l4_dst_port != 0 || config.l4_dst_port_mask != 0);
+    bool hasL2  = config.l2_type_set;
+    bool hasL3  = config.l3_type_set;
+    bool hasGre = config.gre_type_set;
+    bool hasL4  = config.l4_dst_port_set;
     if (!hasL2 && !hasL3 && !hasGre && !hasL4)
     {
         SWSS_LOG_ERROR("UDF match %s must have at least one match criteria", name.c_str());
@@ -973,12 +1116,6 @@ sai_object_id_t UdfOrch::getUdfMatchOid(const string& name)
 bool UdfOrch::addUdf(const string& name, const UdfConfig& config)
 {
     SWSS_LOG_ENTER();
-
-    if (!isValidUdfName(name))
-    {
-        SWSS_LOG_ERROR("Invalid UDF name: %s", name.c_str());
-        return false;
-    }
 
     auto it = m_udfs.find(name);
     if (it != m_udfs.end())

@@ -7,13 +7,17 @@
 #define UDF_MAX_OFFSET          255
 #define UDF_GROUP_MAX_LENGTH    20
 #define UDF_GROUP_MIN_LENGTH    1
-#define UDF_NAME_MAX_LENGTH     64
+
+inline bool isValidUdfGroupType(const std::string& type_str)
+{
+    return (type_str == "GENERIC" || type_str == "HASH");
+}
 
 inline sai_udf_group_type_t getUdfGroupType(const std::string& type_str)
 {
     if (type_str == "GENERIC") return SAI_UDF_GROUP_TYPE_GENERIC;
     if (type_str == "HASH") return SAI_UDF_GROUP_TYPE_HASH;
-    SWSS_LOG_WARN("Unknown UDF group type '%s', defaulting to GENERIC", type_str.c_str());
+    SWSS_LOG_ERROR("Unknown UDF group type '%s'", type_str.c_str());
     return SAI_UDF_GROUP_TYPE_GENERIC;
 }
 
@@ -22,7 +26,7 @@ inline sai_udf_base_t getUdfBaseType(const std::string& base_str)
     if (base_str == "L2") return SAI_UDF_BASE_L2;
     if (base_str == "L3") return SAI_UDF_BASE_L3;
     if (base_str == "L4") return SAI_UDF_BASE_L4;
-    SWSS_LOG_WARN("Unknown UDF base type '%s', defaulting to L2", base_str.c_str());
+    SWSS_LOG_ERROR("Unknown UDF base type '%s'", base_str.c_str());
     return SAI_UDF_BASE_L2;
 }
 
@@ -60,11 +64,6 @@ inline bool isValidUdfBase(const std::string& base_str)
 inline bool isValidUdfGroupLength(uint16_t length)
 {
     return (length >= UDF_GROUP_MIN_LENGTH && length <= UDF_GROUP_MAX_LENGTH);
-}
-
-inline bool isValidUdfName(const std::string& name)
-{
-    return (!name.empty() && name.length() <= UDF_NAME_MAX_LENGTH);
 }
 
 #endif /* SWSS_UDFORCH_CONSTANTS_H */
