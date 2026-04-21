@@ -90,6 +90,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_saihelper.cpp \
                 mirrororch_ut.cpp \
                 hftelorch_ut.cpp \
+                hftelorch_notify_ut.cpp \
                 hftelorch_is_supported_sai_wrap.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \

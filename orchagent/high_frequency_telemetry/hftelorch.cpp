@@ -673,8 +673,8 @@ void HFTelOrch::createNetlinkChannel(const string &genl_family, const string &ge
             SAI_API_HOSTIF,
             sai_hostif_api->create_hostif(&m_sai_hostif_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data())) != task_success)
     {
-        deleteNetlinkChannel();
-        return;
+        deleteNetlinkChannel(); // LCOV_EXCL_LINE: SAI VS create always succeeds
+        return;                 // LCOV_EXCL_LINE
     }
 
     // Create hostif user defined trap object
@@ -688,8 +688,8 @@ void HFTelOrch::createNetlinkChannel(const string &genl_family, const string &ge
             SAI_API_HOSTIF,
             sai_hostif_api->create_hostif_user_defined_trap(&m_sai_hostif_user_defined_trap_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data())) != task_success)
     {
-        deleteNetlinkChannel();
-        return;
+        deleteNetlinkChannel(); // LCOV_EXCL_LINE: SAI VS create always succeeds
+        return;                 // LCOV_EXCL_LINE
     }
 
     // Create hostif table entry object
@@ -715,8 +715,8 @@ void HFTelOrch::createNetlinkChannel(const string &genl_family, const string &ge
             SAI_API_HOSTIF,
             sai_hostif_api->create_hostif_table_entry(&m_sai_hostif_table_entry_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data())) != task_success)
     {
-        deleteNetlinkChannel();
-        return;
+        deleteNetlinkChannel(); // LCOV_EXCL_LINE: SAI VS create always succeeds
+        return;                 // LCOV_EXCL_LINE
     }
 }
 

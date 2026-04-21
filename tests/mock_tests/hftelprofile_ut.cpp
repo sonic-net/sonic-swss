@@ -236,4 +236,76 @@ namespace hftelprofile_ut
         sai_object_id_t bad_oid = 0xDEAD;
         EXPECT_THROW(s.p->updateTemplates(bad_oid), runtime_error);
     }
+
+    /*
+     * Fixture for clearGroup() tests.
+     * Constructs all members that clearGroup() reads/writes.
+     */
+    struct ClearGroupTest : public ::testing::Test
+    {
+        struct ClearGroupStub
+        {
+            alignas(HFTelProfile) unsigned char buf[sizeof(HFTelProfile)];
+            HFTelProfile *p = nullptr;
+
+            void init()
+            {
+                memset(buf, 0, sizeof(buf));
+                p = reinterpret_cast<HFTelProfile *>(static_cast<void *>(buf));
+
+                new (const_cast<string*>(&p->m_profile_name)) string("test_profile");
+                new (&p->m_groups) decay_t<decltype(p->m_groups)>();
+                new (&p->m_sai_tam_tel_type_templates) decay_t<decltype(p->m_sai_tam_tel_type_templates)>();
+                new (&p->m_sai_tam_counter_subscription_objs) decay_t<decltype(p->m_sai_tam_counter_subscription_objs)>();
+                new (&p->m_sai_tam_tel_type_objs) decay_t<decltype(p->m_sai_tam_tel_type_objs)>();
+                new (&p->m_sai_tam_tel_type_states) decay_t<decltype(p->m_sai_tam_tel_type_states)>();
+                new (&p->m_sai_tam_report_objs) decay_t<decltype(p->m_sai_tam_report_objs)>();
+                new (&p->m_name_sai_map) decay_t<decltype(p->m_name_sai_map)>();
+            }
+
+            ~ClearGroupStub()
+            {
+                if (!p) return;
+                p->m_profile_name.~basic_string();
+                p->m_groups.~map();
+                p->m_sai_tam_tel_type_templates.~unordered_map();
+                p->m_sai_tam_counter_subscription_objs.~unordered_map();
+                p->m_sai_tam_tel_type_objs.~unordered_map();
+                p->m_sai_tam_tel_type_states.~unordered_map();
+                p->m_sai_tam_report_objs.~unordered_map();
+                p->m_name_sai_map.~unordered_map();
+                p = nullptr;
+            }
+        };
+    };
+
+    /* clearGroup on empty profile — exercises the find-based cleanup path */
+    TEST_F(ClearGroupTest, ClearGroup_EmptyProfile)
+    {
+        ClearGroupStub s;
+        s.init();
+
+        // clearGroup with no existing data — should not crash
+        ASSERT_NO_THROW(s.p->clearGroup("port"));
+    }
+
+    /* clearGroup with tel_type_obj present — covers the if(find) erase branch */
+    TEST_F(ClearGroupTest, ClearGroup_WithTelTypeObj)
+    {
+        ClearGroupStub s;
+        s.init();
+
+        auto guard = make_shared<sai_object_id_t>(0x200);
+        s.p->m_sai_tam_tel_type_objs[SAI_OBJECT_TYPE_PORT] = guard;
+        s.p->m_sai_tam_tel_type_states[guard] = SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
+        s.p->m_sai_tam_tel_type_templates[SAI_OBJECT_TYPE_PORT] = {0x01, 0x02};
+        s.p->m_sai_tam_report_objs[SAI_OBJECT_TYPE_PORT] = make_shared<sai_object_id_t>(0x300);
+
+        ASSERT_NO_THROW(s.p->clearGroup("port"));
+
+        EXPECT_TRUE(s.p->m_sai_tam_tel_type_objs.empty());
+        EXPECT_TRUE(s.p->m_sai_tam_tel_type_states.empty());
+        EXPECT_TRUE(s.p->m_sai_tam_tel_type_templates.empty());
+        EXPECT_TRUE(s.p->m_sai_tam_report_objs.empty());
+    }
 }
