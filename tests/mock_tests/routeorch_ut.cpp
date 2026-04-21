@@ -25,6 +25,8 @@ namespace routeorch_test
     using ::testing::SetArrayArgument;
     using ::testing::Return;
     using ::testing::DoAll;
+    using ::testing::InSequence;
+    using ::testing::Invoke;
 
     static bool stateRouteStateFieldExists(swss::DBConnector* state_db,
                                        const std::string& prefix)
@@ -59,6 +61,7 @@ namespace routeorch_test
     }
 
     DEFINE_SAI_API_MOCK_SPECIFY_ENTRY_WITH_SET(route, route);
+    DEFINE_SAI_GENERIC_APIS_MOCK(next_hop_group, next_hop_group, next_hop_group_member);
 
     shared_ptr<swss::DBConnector> m_app_db;
     shared_ptr<swss::DBConnector> m_config_db;
@@ -155,6 +158,7 @@ namespace routeorch_test
             ut_helper::initSaiApi(profile);
 
             INIT_SAI_API_MOCK(route);
+            INIT_SAI_API_MOCK(next_hop_group);
             MockSaiApis();
 
             // Hack the route create function
@@ -389,6 +393,7 @@ namespace routeorch_test
         void TearDown() override
         {
             RestoreSaiApis();
+            DEINIT_SAI_API_MOCK(next_hop_group);
             DEINIT_SAI_API_MOCK(route);
 
             gDirectory.m_values.clear();
@@ -1025,5 +1030,170 @@ namespace routeorch_test
         ASSERT_EQ(gRouteOrch->gRouteBulker.creating_entries_count(), 0);
         ASSERT_EQ(gRouteOrch->gRouteBulker.setting_entries_count(), 0);
         ASSERT_EQ(gRouteOrch->gRouteBulker.removing_entries_count(), 0);
+    }
+
+    TEST_F(RouteOrchTest, RouteOrchNhgMemberCreateFailureCleanup)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"1.1.1.0/24", "SET", {{"ifname", "Ethernet0,Ethernet0"},
+                                                    {"nexthop", "10.0.0.2,10.0.0.3"}}});
+
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        consumer->addToSync(entries);
+
+        const auto current_create_count = create_route_count;
+        const auto current_nhg_count = gRouteOrch->getNhgCount();
+        auto create_members_with_second_failure = [](sai_object_id_t switch_id,
+                                                     uint32_t object_count,
+                                                     const uint32_t *attr_count,
+                                                     const sai_attribute_t **attr_list,
+                                                     sai_bulk_op_error_mode_t mode,
+                                                     sai_object_id_t *object_id,
+                                                     sai_status_t *object_statuses) -> sai_status_t {
+            EXPECT_EQ(object_count, 2u) << "Unexpected bulk create NHG member count";
+
+            auto create_status = old_sai_next_hop_group_api->create_next_hop_group_members(
+                switch_id, 1, attr_count, attr_list, mode, object_id, object_statuses);
+            EXPECT_EQ(create_status, SAI_STATUS_SUCCESS);
+            EXPECT_EQ(object_statuses[0], SAI_STATUS_SUCCESS);
+            EXPECT_NE(object_id[0], SAI_NULL_OBJECT_ID);
+
+            object_id[1] = SAI_NULL_OBJECT_ID;
+            object_statuses[1] = SAI_STATUS_INSUFFICIENT_RESOURCES;
+            return SAI_STATUS_INSUFFICIENT_RESOURCES;
+        };
+
+        auto remove_created_member = [](uint32_t object_count,
+                                        const sai_object_id_t *object_id,
+                                        sai_bulk_op_error_mode_t mode,
+                                        sai_status_t *object_statuses) -> sai_status_t {
+            EXPECT_EQ(object_count, 1u) << "Unexpected rollback NHG member remove count";
+            EXPECT_NE(object_id[0], SAI_NULL_OBJECT_ID) << "Rollback received null NHG member id";
+
+            return old_sai_next_hop_group_api->remove_next_hop_group_members(
+                object_count, object_id, mode, object_statuses);
+        };
+
+        auto remove_group = [](sai_object_id_t next_hop_group_id) {
+            return old_sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
+        };
+
+        {
+            InSequence seq;
+
+            EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(_, _, _, _)).Times(1);
+            EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group_members(_, _, _, _, _, _, _))
+                .Times(1)
+                .WillOnce(Invoke(create_members_with_second_failure));
+            EXPECT_CALL(*mock_sai_next_hop_group_api, remove_next_hop_group_members(_, _, _, _))
+                .Times(1)
+                .WillOnce(Invoke(remove_created_member));
+            EXPECT_CALL(*mock_sai_next_hop_group_api, remove_next_hop_group(_))
+                .Times(1)
+                .WillOnce(Invoke(remove_group));
+        }
+
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        NextHopGroupKey ecmp_nhg_key("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0");
+        ASSERT_EQ(current_create_count, create_route_count);
+        ASSERT_EQ(current_nhg_count, gRouteOrch->getNhgCount());
+        ASSERT_FALSE(gRouteOrch->hasNextHopGroup(ecmp_nhg_key));
+    }
+
+    TEST_F(RouteOrchTest, RouteOrchNhgMemberCreateFailureCleanupMplsNh)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"1.1.1.0/24", "SET", {{"ifname", "Ethernet0,Ethernet0"},
+                                                    {"nexthop", "10.0.0.2,10.0.0.3"},
+                                                    {"mpls_nh", "push200,push201"}}});
+
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        consumer->addToSync(entries);
+
+        const auto current_create_count = create_route_count;
+        const auto current_nhg_count = gRouteOrch->getNhgCount();
+
+        auto create_members_with_second_failure = [](sai_object_id_t switch_id,
+                                                     uint32_t object_count,
+                                                     const uint32_t *attr_count,
+                                                     const sai_attribute_t **attr_list,
+                                                     sai_bulk_op_error_mode_t mode,
+                                                     sai_object_id_t *object_id,
+                                                     sai_status_t *object_statuses) -> sai_status_t {
+            EXPECT_EQ(object_count, 2u) << "Unexpected bulk create NHG member count for MPLS case";
+
+            auto create_status = old_sai_next_hop_group_api->create_next_hop_group_members(
+                switch_id, 1, attr_count, attr_list, mode, object_id, object_statuses);
+            EXPECT_EQ(create_status, SAI_STATUS_SUCCESS);
+            EXPECT_EQ(object_statuses[0], SAI_STATUS_SUCCESS);
+            EXPECT_NE(object_id[0], SAI_NULL_OBJECT_ID);
+
+            object_id[1] = SAI_NULL_OBJECT_ID;
+            object_statuses[1] = SAI_STATUS_INSUFFICIENT_RESOURCES;
+            return SAI_STATUS_INSUFFICIENT_RESOURCES;
+        };
+
+        auto remove_created_member = [](uint32_t object_count,
+                                        const sai_object_id_t *object_id,
+                                        sai_bulk_op_error_mode_t mode,
+                                        sai_status_t *object_statuses) -> sai_status_t {
+            EXPECT_EQ(object_count, 1u) << "Unexpected rollback NHG member remove count for MPLS case";
+            EXPECT_NE(object_id[0], SAI_NULL_OBJECT_ID) << "Rollback received null NHG member id for MPLS case";
+
+            return old_sai_next_hop_group_api->remove_next_hop_group_members(
+                object_count, object_id, mode, object_statuses);
+        };
+
+        auto remove_group = [](sai_object_id_t next_hop_group_id) {
+            return old_sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
+        };
+
+        {
+            InSequence seq;
+
+            EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(_, _, _, _)).Times(1);
+            EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group_members(_, _, _, _, _, _, _))
+                .Times(1)
+                .WillOnce(Invoke(create_members_with_second_failure));
+            EXPECT_CALL(*mock_sai_next_hop_group_api, remove_next_hop_group_members(_, _, _, _))
+                .Times(1)
+                .WillOnce(Invoke(remove_created_member));
+            EXPECT_CALL(*mock_sai_next_hop_group_api, remove_next_hop_group(_))
+                .Times(1)
+                .WillOnce(Invoke(remove_group));
+        }
+
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        IpPrefix route_prefix("1.1.1.0/24");
+        NextHopGroupKey mpls_ecmp_nhg_key("push200+10.0.0.2@Ethernet0,push201+10.0.0.3@Ethernet0");
+        NextHopKey mpls_nh0("push200+10.0.0.2@Ethernet0");
+        NextHopKey mpls_nh1("push201+10.0.0.3@Ethernet0");
+
+        ASSERT_EQ(current_create_count, create_route_count);
+        ASSERT_EQ(current_nhg_count, gRouteOrch->getNhgCount());
+        ASSERT_FALSE(gRouteOrch->hasNextHopGroup(mpls_ecmp_nhg_key));
+
+        ASSERT_TRUE(gRouteOrch->m_syncdRoutes.count(gVirtualRouterId));
+        auto &vrf_routes = gRouteOrch->m_syncdRoutes[gVirtualRouterId];
+        auto it_route = vrf_routes.find(route_prefix);
+        ASSERT_TRUE(it_route != vrf_routes.end());
+
+        const auto &tmp_nhg = it_route->second.nhg_key;
+        ASSERT_EQ(tmp_nhg.getSize(), 1u);
+        const NextHopKey &tmp_nh = *tmp_nhg.getNextHops().begin();
+
+        bool temp_is_nh0 = (tmp_nh == mpls_nh0);
+        bool temp_is_nh1 = (tmp_nh == mpls_nh1);
+        ASSERT_TRUE(temp_is_nh0 || temp_is_nh1)
+            << "Unexpected temporary NH programmed: " << tmp_nh.to_string();
+
+        auto temp_refcnt = gNeighOrch->getNextHopRefCount(tmp_nh);
+        EXPECT_EQ(temp_refcnt, 1);
+
+        const NextHopKey &other_nh = temp_is_nh0 ? mpls_nh1 : mpls_nh0;
+        EXPECT_FALSE(gNeighOrch->hasNextHop(other_nh))
+            << "Non-temporary MPLS NH should be cleaned up: " << other_nh.to_string();
     }
 }

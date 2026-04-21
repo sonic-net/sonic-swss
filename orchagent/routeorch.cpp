@@ -1491,6 +1491,16 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
     sai_object_id_t mux_tunnel_nh_id = mux_orch->getTunnelNextHopId();
     bool has_mux_prefix_rt_nh = mux_orch->hasPrefixBasedMuxNexthop(next_hop_set);
 
+    auto cleanup_mpls_nh = [this](const set<NextHopKey>& nh_set) {
+        for (auto it : nh_set)
+        {
+            if (it.isMplsNextHop() && (m_neighOrch->getNextHopRefCount(it) == 0))
+            {
+                m_neighOrch->removeMplsNextHop(it);
+            }
+        }
+    };
+
     /* Assert each IP address exists in m_syncdNextHops table,
      * and add the corresponding next_hop_id to next_hop_ids. */
     for (auto it : next_hop_set)
@@ -1513,6 +1523,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         {
             SWSS_LOG_INFO("Failed to get next hop %s in %s",
                     it.to_string().c_str(), nexthops.to_string().c_str());
+            cleanup_mpls_nh(next_hop_set);
             return false;
         }
 
@@ -1548,6 +1559,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
     if (!next_hop_ids.size())
     {
         SWSS_LOG_INFO("Skipping creation of nexthop group as none of nexthop are active");
+        cleanup_mpls_nh(next_hop_set);
         return false;
     }
     sai_attribute_t nhg_attr;
@@ -1570,6 +1582,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status);
         if (handle_status != task_success)
         {
+            cleanup_mpls_nh(next_hop_set);
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
@@ -1628,9 +1641,46 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         auto nhgm_id = nhgm_ids[i];
         if (nhgm_id == SAI_NULL_OBJECT_ID)
         {
-            // TODO: do we need to clean up?
             SWSS_LOG_ERROR("Failed to create next hop group %" PRIx64 " member %" PRIx64 ": %d\n",
                            next_hop_group_id, nhgm_ids[i], status);
+            vector<sai_status_t> statuses(i);
+            for (size_t j = 0; j < i; j++)
+            {
+                gNextHopGroupMemberBulker.remove_entry(&statuses[j], nhgm_ids[j]);
+            }
+            gNextHopGroupMemberBulker.flush();
+
+            for (size_t j = 0; j < i; j++)
+            {
+                if (statuses[j] != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to remove next hop group member[%zu] %" PRIx64 ", rv:%d",
+                                   j, nhgm_ids[j], statuses[j]);
+                    task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP_GROUP, statuses[j]);
+                    if (handle_status != task_success)
+                    {
+                        return parseHandleSaiStatusFailure(handle_status);
+                    }
+                }
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+            }
+            
+            sai_status_t remove_status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
+            if (remove_status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to remove next hop group %" PRIx64 ", rv:%d", next_hop_group_id, remove_status);
+                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP_GROUP, remove_status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
+            }
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+            m_nextHopGroupCount--;
+
+            /* Remove MPLS NH objects that were created and are no longer used */
+            cleanup_mpls_nh(next_hop_set);ß
+
             return false;
         }
 
