@@ -25,7 +25,7 @@ class ResponsePublisher : public ResponsePublisherInterface
   public:
     explicit ResponsePublisher(const std::string& dbName, bool buffered = false,
                                bool db_write_thread = false,
-                             swss::ZmqServer* zmqServer = nullptr);
+                               swss::ZmqServer* zmqServer = nullptr);
 
     virtual ~ResponsePublisher();
 
@@ -102,10 +102,10 @@ class ResponsePublisher : public ResponsePublisherInterface
     std::unique_ptr<swss::RedisPipeline> m_db_pipe;
 
     bool m_buffered{false};
-  swss::ZmqServer* m_zmqServer;
-  std::unordered_map<std::string, std::vector<swss::KeyOpFieldsValuesTuple>>
-      responses;  // Cache the responses to send them together in flush(). Only
-                  // used when ZMQ is enabled.
+    swss::ZmqServer* m_zmqServer;
+    std::unordered_map<std::string, std::vector<swss::KeyOpFieldsValuesTuple>>
+        responses;  // Cache the responses to send them together in flush(). Only
+                    // used when ZMQ is enabled.
     // Thread to write to DB.
     std::unique_ptr<std::thread> m_update_thread;
     std::queue<entry, std::list<entry>> m_queue;

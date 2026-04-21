@@ -59,6 +59,7 @@ class P4Orch : public ZmqOrch
     TunnelDecapGroupManager* getTunnelDecapGroupManager();
     void refreshPortStatus();
     void setRouterIntfsMtu(const std::string& port, uint32_t mtu);
+    bool bake() override;
     TablesInfo *tablesinfo = NULL;
 
     // m_p4TableToManagerMap: P4 APP DB table name, P4 Object Manager
