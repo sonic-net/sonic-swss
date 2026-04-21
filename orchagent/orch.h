@@ -216,10 +216,11 @@ public:
     {
         m_orderedQueue = orderedQueue;
     }
-};
 
 private:
     void addToSyncInternal(const swss::KeyOpFieldsValuesTuple &entry, bool onRetry, bool recordTask);
+};
+
 
 class RingBuffer
 {
