@@ -98,14 +98,30 @@ OrchDaemon::~OrchDaemon()
 {
     SWSS_LOG_ENTER();
 
-    // Stop the ring thread before delete orch pointers
+    /*
+     * Stop the ring thread before deleting orch pointers.
+     *
+     * OrchDaemon::start() always launches ring_thread, but popRingBuffer()
+     * returns immediately when gRingBuffer is null (ring mode disabled).
+     * In that case ring_thread is still "joinable" after its entry function
+     * returns, so this teardown path would otherwise dereference a null
+     * gRingBuffer. Before PR #4400 this was unreachable: SIGTERM was not
+     * handled, so ~OrchDaemon() never ran on signal-driven shutdown. The
+     * new graceful shutdown path reaches this destructor on clean exit and
+     * exposes the latent null dereference. Guard the ring buffer accesses
+     * so teardown is safe whether ring mode is enabled or not.
+     */
     if (ring_thread.joinable()) {
-        // notify the ring_thread to exit
-        gRingBuffer->thread_exited = true;
-        gRingBuffer->notify();
+        if (gRingBuffer) {
+            // notify the ring_thread to exit
+            gRingBuffer->thread_exited = true;
+            gRingBuffer->notify();
+        }
         // wait for the ring_thread to exit
         ring_thread.join();
-        disableRingBuffer();
+        if (gRingBuffer) {
+            disableRingBuffer();
+        }
     }
 
     /*
