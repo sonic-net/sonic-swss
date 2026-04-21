@@ -198,4 +198,24 @@ void NameLabelMapper::readMapperFromDb()
             setLabel(sai_object_type, key, label);
         }
     }
+
+std::string NameLabelMapper::verifyLabelMapping(
+    _In_ sai_object_type_t object_type, _In_ const std::string& key,
+    _In_ std::string label) {
+  SWSS_LOG_ENTER();
+
+  std::string mapper_label;
+  if (!getLabel(object_type, key, mapper_label)) {
+    std::stringstream msg;
+    msg << "Label not found in mapper for key " << key;
+    return msg.str();
+  }
+  if (mapper_label != label) {
+    std::stringstream msg;
+    msg << "Label mismatched in mapper for key " << key << ": " << label
+        << " vs " << mapper_label;
+    return msg.str();
+  }
+
+  return "";
 }
