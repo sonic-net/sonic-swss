@@ -490,7 +490,20 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch, gArsOrch};
+    // gArsOrch must run:
+    //   (a) BEFORE gIntfsOrch — Mellanox SAI rejects SAI_PORT_ATTR_ARS_ENABLE
+    //       on ports with RIFs (INVALID_PARAMETER). On cold boot, if IntfsOrch
+    //       creates RIFs first (from CONFIG_DB INTERFACE entries), ArsOrch's
+    //       setPortArsEnable always fails. Placing ArsOrch ahead of IntfsOrch
+    //       ensures ARS is enabled on bare ports before any RIF is created.
+    //       The SAI allows subsequent RIF creation on ARS-enabled ports.
+    //   (b) BEFORE gNhgOrch / gRouteOrch — so ARS|GLOBAL.admin_state is
+    //       processed and ARS objects are created before RouteOrch creates
+    //       NHGs. Mellanox SAI requires SAI_NEXT_HOP_GROUP_ATTR_ARS_OBJECT_ID
+    //       at NHG creation time (write-once in mlnx_sai_nexthopgroup.c:1522).
+    // ArsOrch depends only on gPortsOrch (position 3) for port OIDs, which
+    // is already processed by this point.
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gArsOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)

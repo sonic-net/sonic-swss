@@ -148,6 +148,7 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
         Orch(connectors),
         m_switchTable(switchTable.first, switchTable.second),
         m_db(db),
+        m_appSwitchTbl(db, APP_SWITCH_TABLE_NAME),
         m_stateDb(new DBConnector("STATE_DB", 0)),
         m_asicSensorsTable(new Table(m_stateDb.get(), ASIC_TEMPERATURE_INFO_TABLE_NAME)),
         m_sensorsPollerTimer (new SelectableTimer((timespec { .tv_sec = DEFAULT_ASIC_SENSORS_POLLER_INTERVAL, .tv_nsec = 0 }))),
@@ -775,13 +776,10 @@ bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
             }
         }
     }
-    else
+    else if (hObj.ecmp_hash.is_set)
     {
-        if (hObj.ecmp_hash.is_set)
-        {
-            SWSS_LOG_ERROR("Failed to remove switch ECMP hash configuration: operation is not supported");
-            return false;
-        }
+        SWSS_LOG_WARN("ECMP hash field removed from CONFIG_DB — clearing cached state");
+        cfgUpd = true;
     }
 
     if (hash.lag_hash.is_set)
@@ -810,13 +808,10 @@ bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
             }
         }
     }
-    else
+    else if (hObj.lag_hash.is_set)
     {
-        if (hObj.lag_hash.is_set)
-        {
-            SWSS_LOG_ERROR("Failed to remove switch LAG hash configuration: operation is not supported");
-            return false;
-        }
+        SWSS_LOG_WARN("LAG hash field removed from CONFIG_DB — clearing cached state");
+        cfgUpd = true;
     }
 
     if (hash.ecmp_hash_algorithm.is_set)
@@ -845,13 +840,10 @@ bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
             }
         }
     }
-    else
+    else if (hObj.ecmp_hash_algorithm.is_set)
     {
-        if (hObj.ecmp_hash_algorithm.is_set)
-        {
-            SWSS_LOG_ERROR("Failed to remove switch ECMP hash algorithm configuration: operation is not supported");
-            return false;
-        }
+        SWSS_LOG_WARN("ECMP hash algorithm removed from CONFIG_DB — clearing cached state");
+        cfgUpd = true;
     }
 
     if (hash.lag_hash_algorithm.is_set)
@@ -880,13 +872,10 @@ bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
             }
         }
     }
-    else
+    else if (hObj.lag_hash_algorithm.is_set)
     {
-        if (hObj.lag_hash_algorithm.is_set)
-        {
-            SWSS_LOG_ERROR("Failed to remove switch LAG hash algorithm configuration: operation is not supported");
-            return false;
-        }
+        SWSS_LOG_WARN("LAG hash algorithm removed from CONFIG_DB — clearing cached state");
+        cfgUpd = true;
     }
 
     if (hash.ecmp_hash_seed.is_set)
@@ -905,6 +894,14 @@ bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
                 return false;
             }
             SWSS_LOG_NOTICE("Set ECMP hash seed to %u", hash.ecmp_hash_seed.value);
+
+            // Sync the authoritative seed back to APPL_DB so that
+            // SWITCH_TABLE:switch reflects CONFIG_DB after reboot.
+            // Without this, switch.json.j2 overwrites the APPL_DB
+            // value with the platform default on every boot.
+            m_appSwitchTbl.hset("switch", "ecmp_hash_seed",
+                                to_string(hash.ecmp_hash_seed.value));
+
             cfgUpd = true;
         }
     }
@@ -929,6 +926,22 @@ bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
 
             cfgUpd = true;
         }
+    }
+    else if (hObj.ecmp_type.is_set)
+    {
+        // `no ecmp type` in uCLI HDELs the ecmp_type field from
+        // SWITCH_HASH|GLOBAL without clearing the whole key. The SET
+        // notification that follows has no ecmp_type, so the block above
+        // is skipped — previously leaving m_ecmpNhgType stuck at whatever
+        // was last set (ordered) even though operator intent was "revert".
+        // Mirror the reset pattern used for ecmp_hash / *_algorithm above
+        // and return to the documented default (static) so newly-created
+        // NHGs stop using DYNAMIC_ORDERED_ECMP the moment the operator
+        // clears the field.
+        m_ecmpNhgType = SAI_NEXT_HOP_GROUP_TYPE_ECMP;
+        m_orderedEcmpEnable = false;
+        SWSS_LOG_NOTICE("ECMP type cleared from CONFIG_DB — reverting to default static (SAI ECMP)");
+        cfgUpd = true;
     }
 
     // Don't update internal cache when config remains unchanged

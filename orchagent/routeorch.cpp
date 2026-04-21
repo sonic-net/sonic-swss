@@ -1631,6 +1631,8 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
             }
 
             /* Remove the orphaned next hop group */
+            if (gArsOrch)
+                gArsOrch->forgetNhg(next_hop_group_id);
             sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
             m_nextHopGroupCount--;
             gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
@@ -1725,10 +1727,13 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops, const bool i
 
     SWSS_LOG_NOTICE("Delete next hop group %s", nexthops.to_string().c_str());
 
-    if (gArsOrch)
-    {
-        gArsOrch->unbindArsFromNhg(next_hop_group_id);
-    }
+    // NOTE: do NOT pre-unbind ARS here. The Mellanox SAI rejects the
+    // set-to-NULL on SAI_NEXT_HOP_GROUP_ATTR_ARS_OBJECT_ID while the NHG
+    // has members, which floods syslog with misleading errors on every
+    // route withdrawal. remove_next_hop_group() internally decrements the
+    // ARS object ref count when the NHG is freed, so explicit unbind here
+    // is both unnecessary and actively harmful. forgetNhg() below cleans
+    // up the STATE_DB row tracking this NHG.
 
     vector<sai_object_id_t> next_hop_ids;
     /* If the NexthopGroup is the one that has been swapped with default route members
@@ -1784,6 +1789,12 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops, const bool i
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
+
+    // Drop any ARS_NHG_TABLE row that this NHG may have been registered
+    // under — otherwise STATE_DB leaks an 'active' or 'degraded' entry
+    // indefinitely.
+    if (gArsOrch)
+        gArsOrch->forgetNhg(next_hop_group_id);
 
     m_nextHopGroupCount--;
     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
@@ -1866,6 +1877,61 @@ void RouteOrch::bindArsToExistingNhgs()
             if (gArsOrch->bindArsToNhg(nhgOid, arsOid))
             {
                 SWSS_LOG_NOTICE("ARS: retroactively bound ARS to NHG %s",
+                                entry.first.to_string().c_str());
+            }
+        }
+    }
+}
+
+void RouteOrch::unbindArsFromAllNhgs()
+{
+    SWSS_LOG_ENTER();
+
+    if (!gArsOrch)
+        return;
+
+    for (auto &entry : m_syncdNextHopGroups)
+    {
+        sai_object_id_t nhgOid = entry.second.next_hop_group_id;
+        if (nhgOid == SAI_NULL_OBJECT_ID)
+            continue;
+
+        if (gArsOrch->unbindArsFromNhg(nhgOid))
+        {
+            SWSS_LOG_NOTICE("ARS: unbound ARS from NHG %s",
+                            entry.first.to_string().c_str());
+        }
+    }
+}
+
+void RouteOrch::rebindArsForAllNhgs()
+{
+    SWSS_LOG_ENTER();
+
+    if (!gArsOrch)
+        return;
+
+    for (auto &entry : m_syncdNextHopGroups)
+    {
+        sai_object_id_t nhgOid = entry.second.next_hop_group_id;
+        if (nhgOid == SAI_NULL_OBJECT_ID)
+            continue;
+
+        // Clear any existing binding first, then let the resolver decide
+        // whether a new one applies. This way admin_state=down, profile
+        // rebind, and interface remapping all converge through the same
+        // path.
+        gArsOrch->unbindArsFromNhg(nhgOid);
+
+        if (!gArsOrch->isArsEnabled())
+            continue;
+
+        auto arsOid = gArsOrch->resolveArsForNhg(nhgOid, entry.first);
+        if (arsOid != SAI_NULL_OBJECT_ID)
+        {
+            if (gArsOrch->bindArsToNhg(nhgOid, arsOid))
+            {
+                SWSS_LOG_NOTICE("ARS: rebound ARS to NHG %s",
                                 entry.first.to_string().c_str());
             }
         }
