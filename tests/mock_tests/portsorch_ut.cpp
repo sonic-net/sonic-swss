@@ -58,6 +58,7 @@ namespace portsorch_test
     uint32_t _sai_set_port_fec_count;
     uint32_t _sai_set_port_auto_neg_count;
     bool mock_autoneg_cap_supported = true;
+    bool set_autoneg_need_retry = false;
     uint32_t _sai_set_port_tpid_count;
     int32_t _sai_port_fec_mode;
     vector<sai_port_fec_mode_t> mock_port_fec_modes = {SAI_PORT_FEC_MODE_RS, SAI_PORT_FEC_MODE_FC};
@@ -168,6 +169,10 @@ namespace portsorch_test
         else if (attr[0].id == SAI_PORT_ATTR_AUTO_NEG_MODE)
         {
             _sai_set_port_auto_neg_count++;
+            if (set_autoneg_need_retry)
+            {
+                return SAI_STATUS_INSUFFICIENT_RESOURCES;
+            }
             /* Simulating failure case */
             return SAI_STATUS_FAILURE;
         }
@@ -3686,6 +3691,93 @@ namespace portsorch_test
         EXPECT_TRUE(ts.empty());
 
         mock_autoneg_cap_supported = true;
+        _unhook_sai_port_api();
+    }
+
+    TEST_F(PortsOrchTest, AutonegAdminDownFailure)
+    {
+        // When autoneg is configured on a port that is admin UP and bringing the
+        // port DOWN fails, the task must be retried (it++, not erased).
+        _hook_sai_port_api();
+
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Force Ethernet0 into admin UP state
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        p.m_admin_state_up = true;
+        gPortsOrch->m_portList["Ethernet0"] = p;
+
+        set_admin_status_fail = true;
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", SET_COMMAND,
+                           {
+                               { "autoneg", "on" }
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        EXPECT_EQ(set_admin_status_failures, 1);
+
+        // Task should remain queued for retry
+        vector<string> ts;
+        gPortsOrch->dumpPendingTasks(ts);
+        EXPECT_FALSE(ts.empty());
+
+        set_admin_status_fail = false;
+        set_admin_status_failures = 0;
+        _unhook_sai_port_api();
+    }
+
+    TEST_F(PortsOrchTest, AutonegSetNeedsRetry)
+    {
+        // When setPortAutoNeg returns task_need_retry (SAI_STATUS_INSUFFICIENT_RESOURCES),
+        // the task must stay queued (it++) rather than being dropped.
+        _hook_sai_port_api();
+        set_autoneg_need_retry = true;
+
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        const auto an_call_count = _sai_set_port_auto_neg_count;
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", SET_COMMAND,
+                           {
+                               { "autoneg", "on" }
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // SAI set was attempted
+        EXPECT_GT(_sai_set_port_auto_neg_count, an_call_count);
+
+        // Task should remain queued for retry
+        vector<string> ts;
+        gPortsOrch->dumpPendingTasks(ts);
+        EXPECT_FALSE(ts.empty());
+
+        set_autoneg_need_retry = false;
         _unhook_sai_port_api();
     }
 
