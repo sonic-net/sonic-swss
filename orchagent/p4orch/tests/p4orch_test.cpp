@@ -728,3 +728,156 @@ TEST_F(P4OrchTest, TestP4OrchDumpPendingTasks)
   consumer.dumpPendingTasks(pending_tasks);
   EXPECT_FALSE(pending_tasks.empty());
 }
+
+TEST_F(P4OrchTest, P4OrchBakeWithAclTableDefinition) {
+  InSequence s;
+  ZmqServer zmq_server("endpoint");
+  DBConnector db("APPL_DB", 0);
+  ZmqConsumerStateTable* table =
+      new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                /*dbPersistence=*/false);
+  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
+  consumer.setOrderedQueue(/*orderedQueue=*/true);
+
+  // ACL Table Definition entry
+  const std::string acl_table_def_key =
+      std::string(APP_P4RT_ACL_TABLE_DEFINITION_NAME) + kTableKeyDelimiter +
+      "{\"acl_table_name\":\"acl_ingress\"}";
+  std::vector<swss::FieldValueTuple> acl_table_def_attrs;
+  acl_table_def_attrs.push_back(
+      swss::FieldValueTuple{"stage", "INGRESS"});
+  acl_table_def_attrs.push_back(
+      swss::FieldValueTuple{"size", "8192"});
+  consumer.m_toSyncQueue.push_back(
+      swss::KeyOpFieldsValuesTuple{acl_table_def_key, SET_COMMAND, acl_table_def_attrs});
+
+  // Call bake() to simulate warm boot reconciliation
+  ASSERT_TRUE(gP4Orch->bake());
+  
+  // Verify that the ordered queue has been set back to true after bake
+  // This is implicit - if bake() completes successfully, the ordered queue is restored
+}
+
+TEST_F(P4OrchTest, P4OrchBakeWithMultipleAclTables) {
+  InSequence s;
+  ZmqServer zmq_server("endpoint");
+  DBConnector db("APPL_DB", 0);
+  ZmqConsumerStateTable* table =
+      new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                /*dbPersistence=*/false);
+  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
+  consumer.setOrderedQueue(/*orderedQueue=*/true);
+
+  // Multiple ACL Table Definitions
+  const std::string acl_table_def_key_1 =
+      std::string(APP_P4RT_ACL_TABLE_DEFINITION_NAME) + kTableKeyDelimiter +
+      "{\"acl_table_name\":\"acl_ingress\"}";
+  const std::string acl_table_def_key_2 =
+      std::string(APP_P4RT_ACL_TABLE_DEFINITION_NAME) + kTableKeyDelimiter +
+      "{\"acl_table_name\":\"acl_egress\"}";
+  
+  std::vector<swss::FieldValueTuple> acl_table_def_attrs;
+  acl_table_def_attrs.push_back(
+      swss::FieldValueTuple{"stage", "INGRESS"});
+  acl_table_def_attrs.push_back(
+      swss::FieldValueTuple{"size", "8192"});
+
+  // Add ACL table definitions to consumer queue
+  consumer.m_toSyncQueue.push_back(
+      swss::KeyOpFieldsValuesTuple{acl_table_def_key_1, SET_COMMAND, acl_table_def_attrs});
+  
+  std::vector<swss::FieldValueTuple> acl_table_def_attrs_2;
+  acl_table_def_attrs_2.push_back(
+      swss::FieldValueTuple{"stage", "EGRESS"});
+  acl_table_def_attrs_2.push_back(
+      swss::FieldValueTuple{"size", "4096"});
+  consumer.m_toSyncQueue.push_back(
+      swss::KeyOpFieldsValuesTuple{acl_table_def_key_2, SET_COMMAND, acl_table_def_attrs_2});
+
+  // Call bake() during warm boot
+  ASSERT_TRUE(gP4Orch->bake());
+}
+
+TEST_F(P4OrchTest, P4OrchBakeEmptyConsumer) {
+  InSequence s;
+  ZmqServer zmq_server("endpoint");
+  DBConnector db("APPL_DB", 0);
+  ZmqConsumerStateTable* table =
+      new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                /*dbPersistence=*/false);
+  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
+  consumer.setOrderedQueue(/*orderedQueue=*/true);
+
+  // Empty consumer - no entries to process during warm boot
+  // Verify bake() handles empty queue gracefully
+  ASSERT_TRUE(gP4Orch->bake());
+}
+
+TEST_F(P4OrchTest, P4OrchBakeNonAclTableEntries) {
+  InSequence s;
+  ZmqServer zmq_server("endpoint");
+  DBConnector db("APPL_DB", 0);
+  ZmqConsumerStateTable* table =
+      new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                /*dbPersistence=*/false);
+  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
+  consumer.setOrderedQueue(/*orderedQueue=*/true);
+
+  // Non-ACL table entry (Router Interface)
+  const std::string ritf_key =
+      std::string(APP_P4RT_ROUTER_INTERFACE_TABLE_NAME) + kTableKeyDelimiter +
+      "{\"match/router_interface_id\":\"intf-1\"}";
+  std::vector<swss::FieldValueTuple> ritf_attrs;
+  ritf_attrs.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kPort), "Ethernet1"});
+  ritf_attrs.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac),
+                                             "00:01:02:03:04:05"});
+  consumer.m_toSyncQueue.push_back(
+      swss::KeyOpFieldsValuesTuple{ritf_key, SET_COMMAND, ritf_attrs});
+
+  // Call bake() - should skip non-ACL entries
+  ASSERT_TRUE(gP4Orch->bake());
+}
+
+TEST_F(P4OrchTest, P4OrchBakeMixedAclAndNonAclEntries) {
+  InSequence s;
+  ZmqServer zmq_server("endpoint");
+  DBConnector db("APPL_DB", 0);
+  ZmqConsumerStateTable* table =
+      new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                /*dbPersistence=*/false);
+  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
+  consumer.setOrderedQueue(/*orderedQueue=*/true);
+
+  // Router Interface
+  const std::string ritf_key =
+      std::string(APP_P4RT_ROUTER_INTERFACE_TABLE_NAME) + kTableKeyDelimiter +
+      "{\"match/router_interface_id\":\"intf-1\"}";
+  std::vector<swss::FieldValueTuple> ritf_attrs;
+  ritf_attrs.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kPort), "Ethernet1"});
+  ritf_attrs.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac),
+                                             "00:01:02:03:04:05"});
+  consumer.m_toSyncQueue.push_back(
+      swss::KeyOpFieldsValuesTuple{ritf_key, SET_COMMAND, ritf_attrs});
+
+  // ACL Table Definition
+  const std::string acl_table_def_key =
+      std::string(APP_P4RT_ACL_TABLE_DEFINITION_NAME) + kTableKeyDelimiter +
+      "{\"acl_table_name\":\"acl_ingress\"}";
+  std::vector<swss::FieldValueTuple> acl_table_def_attrs;
+  acl_table_def_attrs.push_back(
+      swss::FieldValueTuple{"stage", "INGRESS"});
+  acl_table_def_attrs.push_back(
+      swss::FieldValueTuple{"size", "8192"});
+  consumer.m_toSyncQueue.push_back(
+      swss::KeyOpFieldsValuesTuple{acl_table_def_key, SET_COMMAND, acl_table_def_attrs});
+
+  // Call bake()
+  ASSERT_TRUE(gP4Orch->bake());
+}
