@@ -230,26 +230,22 @@ void ArsOrch::doArsGlobalTask(Consumer &consumer)
                 SWSS_LOG_NOTICE("ARS: Adaptive Routing globally enabled");
                 m_arsEnabled = true;
 
-                // Per the user guide (docs/07.USER_GUIDE_ECMP.md and
-                // docs/08.USER_GUIDE_FLOWLET.md §"Quick Reference: Config
-                // Order Matters") adaptive routing requires
-                // SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP — i.e. the
-                // operator must have configured `ecmp type ordered` before
-                // enabling ARS. If the switch is still set to static ECMP
-                // we let the configuration proceed (the vendor SAI may
-                // auto-switch the underlying SDK type to ADAPTIVE_E when
-                // an ARS object is bound) but emit a loud warning so the
-                // operator can correlate any unexpected behavior with the
-                // missing prerequisite.
+                // ARS requires DYNAMIC_ORDERED_ECMP NHGs.  The uCLI
+                // auto-sets ecmp_type=ordered in CONFIG_DB when the user
+                // runs `load-balance adaptive enable`.  If orchagent sees
+                // static ECMP at this point, CONFIG_DB was written directly
+                // (bypassing uCLI) or the ecmp_type update hasn't been
+                // processed by SwitchOrch yet.  Log a warning; existing
+                // NHGs may need a route flap or config reload to pick up
+                // the ordered type.
                 if (m_switchOrch && !m_switchOrch->checkOrderedEcmpEnable())
                 {
                     SWSS_LOG_WARN("ARS: Adaptive Routing enabled while ECMP "
-                                  "type is 'static' — the documented "
-                                  "prerequisite is `ecmp type ordered` "
-                                  "(SWITCH_HASH|GLOBAL.ecmp_type=ordered). "
-                                  "Existing NHGs built with static ECMP may "
-                                  "need to be re-created for ARS bindings "
-                                  "to take effect.");
+                                  "type is still 'static'. The uCLI should "
+                                  "have auto-set ecmp_type=ordered; if "
+                                  "CONFIG_DB was written directly, run "
+                                  "'ecmp type ordered' first. Existing NHGs "
+                                  "may need to be re-created.");
                 }
 
                 if (profileName.empty() && m_globalProfileName.empty() &&
