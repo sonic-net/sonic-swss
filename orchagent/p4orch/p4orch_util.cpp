@@ -1,5 +1,9 @@
 #include "p4orch/p4orch_util.h"
 
+#include <iomanip>
+#include <sstream>
+#include <string>
+
 #include "p4orch/p4orch.h"
 #include "schema.h"
 
@@ -132,6 +136,30 @@ void drainMgmtWithNotExecuted(std::deque<swss::KeyOpFieldsValuesTuple>& entries,
   return;
 }
 
+ReturnCodeOr<bool> parseFlag(const std::string& name,
+                             const std::string& value) {
+  try {
+    if (value.rfind("0x") == 0 || value.rfind("0X") == 0) {
+      size_t processed = 0;
+      int flag = std::stoi(value, &processed, 16);
+      if (flag == 1 && processed > 2)
+        return true;
+      else if (flag == 0 && processed > 2)
+        return false;
+    } else {
+      int flag = std::stoi(value);
+      if (flag == 1)
+        return true;
+      else if (flag == 0)
+        return false;
+    }
+  } catch (std::exception& e) {
+    // Nothing
+  }
+  return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+         << "Invalid " << QuotedVar(name) << " value: " << QuotedVar(value);
+}
+
 std::string KeyGenerator::generateRouteKey(const std::string &vrf_id, const swss::IpPrefix &ip_prefix)
 {
     std::map<std::string, std::string> fv_map = {
@@ -205,6 +233,33 @@ std::string KeyGenerator::generateMulticastRouterInterfaceRifKey(
                      p4orch::kFieldDelimiter + p4orch::kSrcMac,
                  src_mac.to_string());
   return generateKey(fv_map);
+}
+
+std::string KeyGenerator::generateL3MulticastGroupKey(
+    const std::string& multicast_group_id) {
+    // L3 multicast groups use the group ID directly as the key.  However,
+    // this is expected to be formatted as a 16-bit hex string, e.g. 0x0001.
+    int group_id = 0;
+    try {
+      if (multicast_group_id.rfind("0x") == 0 ||
+          multicast_group_id.rfind("0X") == 0) {
+        size_t processed = 0;
+        group_id = std::stoi(multicast_group_id, &processed, 16);
+      } else {
+        group_id = std::stoi(multicast_group_id);
+      }
+    } catch (std::exception& e) {
+      group_id = 0;  // invalid group ID
+    }
+    std::stringstream ss;
+    ss << "0x" << std::setfill('0') << std::setw(4) << std::hex << group_id;
+    return ss.str();
+}
+
+std::string KeyGenerator::generateL2MulticastGroupKey(
+    const std::string& l2_multicast_group_id) {
+    // L2 multicast group IDs are formatted just like L3 multicast group IDs.
+    return generateL3MulticastGroupKey(l2_multicast_group_id);
 }
 
 std::string KeyGenerator::generateIpMulticastKey(

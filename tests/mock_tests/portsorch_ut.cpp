@@ -4,7 +4,9 @@
 
 #include "json.h"
 #include "ut_helper.h"
+#define private public
 #include "mock_orchagent_main.h"
+#undef private
 #include "mock_table.h"
 #include "notifier.h"
 #include "mock_sai_bridge.h"
@@ -134,6 +136,9 @@ namespace portsorch_test
     uint32_t set_pt_timestamp_template_failures = 0;
     uint32_t set_port_tam_failures = 0;
     bool set_link_event_damping_success = true;
+    bool set_fast_linkup_success = true;
+    uint32_t _sai_set_fast_linkup_count;
+    bool _sai_fast_linkup_enabled = false;
     uint32_t _sai_set_link_event_damping_algorithm_count;
     uint32_t _sai_set_link_event_damping_config_count;
     int32_t _sai_link_event_damping_algorithm = 0;
@@ -218,6 +223,17 @@ namespace portsorch_test
         else if (attr[0].id == SAI_PORT_ATTR_TPID)
         {
             _sai_set_port_tpid_count++;
+        }
+        else if (attr[0].id == SAI_PORT_ATTR_FAST_LINKUP_ENABLED)
+        {
+            _sai_set_fast_linkup_count++;
+            _sai_fast_linkup_enabled = attr[0].value.booldata;
+
+            if (!set_fast_linkup_success)
+            {
+                return SAI_STATUS_FAILURE;
+            }
+            return SAI_STATUS_SUCCESS;
         }
         else if (attr[0].id == SAI_REDIS_PORT_ATTR_LINK_EVENT_DAMPING_ALGORITHM)
         {
@@ -2896,6 +2912,74 @@ namespace portsorch_test
         _unhook_sai_port_api();
     }
 
+    TEST_F(PortsOrchTest, FastLinkupUnsupportedReturnsSuccess)
+    {
+        _hook_sai_port_api();
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+
+        gPortsOrch->m_fastLinkupPortAttrSupported = false;
+        uint32_t current_sai_api_call_count = _sai_set_fast_linkup_count;
+
+        auto status = gPortsOrch->setPortFastLinkupEnabled(port, true);
+        ASSERT_EQ(status, task_success);
+        ASSERT_EQ(_sai_set_fast_linkup_count, current_sai_api_call_count);
+
+        _unhook_sai_port_api();
+    }
+
+    TEST_F(PortsOrchTest, FastLinkupFailureDropsTask)
+    {
+        _hook_sai_port_api();
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        gPortsOrch->m_fastLinkupPortAttrSupported = true;
+        set_fast_linkup_success = false;
+
+        uint32_t current_fast_linkup_call_count = _sai_set_fast_linkup_count;
+
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"fast_linkup", "true"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        entries.clear();
+
+        ASSERT_EQ(_sai_set_fast_linkup_count, ++current_fast_linkup_call_count);
+
+        vector<string> ts;
+        gPortsOrch->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        set_fast_linkup_success = true;
+        _unhook_sai_port_api();
+    }
+
     TEST_F(PortsOrchTest, SupportedLinkEventDampingAlgorithmFailure)
     {
         _hook_sai_port_api();
@@ -4705,6 +4789,136 @@ namespace portsorch_test
         ASSERT_FALSE(bridgePortCalledBeforeLagMember); // bridge port created on lag before lag member was created
     }
 
+    /*
+     * Regression test for sonic-buildimage issue #23635.
+     *
+     * Issue: When a user removes a port from a VLAN and adds it to a LAG while
+     * orchagent is busy, both operations are queued. PortsOrch processes tables
+     * in a fixed order (LAG_MEMBER before VLAN_MEMBER), so the LAG member add
+     * executes while the port is still in vlan. 
+     *
+     * Fix: PortsOrch defers the LAG member add when m_portVlanMember for the
+     * port is non-empty. Once the VLAN member removal completes in a subsequent doTask cycle, the LAG member add
+     * succeeds.
+     *
+     * Test: Queues a VLAN member DEL and a LAG member SET for the same port in
+     * one batch, then verifies that the first doTask defers the LAG add, 
+     * and a second doTask completes it after the VLAN member is removed.
+     */
+    struct VlanLagRaceTest : PortsOrchTest {};
+
+    TEST_F(VlanLagRaceTest, LagMemberAddDeferredWhileVlanMemberPending)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table lagTable = Table(m_app_db.get(), APP_LAG_TABLE_NAME);
+        Table lagMemberTable = Table(m_app_db.get(), APP_LAG_MEMBER_TABLE_NAME);
+        Table vlanTable = Table(m_app_db.get(), APP_VLAN_TABLE_NAME);
+        Table vlanMemberTable = Table(m_app_db.get(), APP_VLAN_MEMBER_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        string testPort = ports.begin()->first;
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Add testPort to Vlan10
+        vlanTable.set("Vlan10",
+            {
+                {"admin_status", "up"},
+                {"mtu", "9100"}
+            }
+        );
+        string vlanMemberKey = string("Vlan10") + vlanMemberTable.getTableNameSeparator() + testPort;
+        vlanMemberTable.set(vlanMemberKey, { {"tagging_mode", "untagged"} });
+
+        gPortsOrch->addExistingData(&vlanTable);
+        gPortsOrch->addExistingData(&vlanMemberTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Verify VLAN and VLAN member creation completed with no pending tasks
+        for (auto tableName : {APP_VLAN_TABLE_NAME, APP_VLAN_MEMBER_TABLE_NAME})
+        {
+            vector<string> ts;
+            auto exec = gPortsOrch->getExecutor(tableName);
+            auto consumer = static_cast<Consumer *>(exec);
+            consumer->dumpPendingTasks(ts);
+            ASSERT_TRUE(ts.empty()) << "VLAN setup should complete: " << tableName;
+        }
+
+        // Queue VLAN member removal
+        std::deque<KeyOpFieldsValuesTuple> vlanMemberDelEntries;
+        vlanMemberDelEntries.push_back({vlanMemberKey, DEL_COMMAND, {}});
+        auto vlanMemberConsumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_VLAN_MEMBER_TABLE_NAME));
+        vlanMemberConsumer->addToSync(vlanMemberDelEntries);
+
+        // Queue LAG creation and LAG member addition
+        lagTable.set("PortChannel1",
+            {
+                {"admin_status", "up"},
+                {"mtu", "9100"}
+            }
+        );
+        string lagMemberKey = string("PortChannel1") + lagMemberTable.getTableNameSeparator() + testPort;
+        lagMemberTable.set(lagMemberKey, { {"status", "enabled"} });
+
+        gPortsOrch->addExistingData(&lagTable);
+        gPortsOrch->addExistingData(&lagMemberTable);
+
+        // --- First doTask: LAG_MEMBER processed before VLAN_MEMBER (table order) ---
+        // The fix should defer the LAG member add because the port is still a VLAN member
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Verify LAG member add was deferred (still pending in m_toSync)
+        {
+            vector<string> ts;
+            auto exec = gPortsOrch->getExecutor(APP_LAG_MEMBER_TABLE_NAME);
+            auto consumer = static_cast<Consumer *>(exec);
+            consumer->dumpPendingTasks(ts);
+            ASSERT_EQ(ts.size(), 1) << "Exactly one LAG member task should be pending";
+
+            string expectedSubstr = lagMemberKey + "|SET";
+            ASSERT_NE(ts[0].find(expectedSubstr), string::npos)
+                << "Pending task should be the SET for " << lagMemberKey
+                << ", got: " << ts[0];
+        }
+
+        // Verify VLAN member DEL completed (port removed from VLAN)
+        {
+            vector<string> ts;
+            auto exec = gPortsOrch->getExecutor(APP_VLAN_MEMBER_TABLE_NAME);
+            auto consumer = static_cast<Consumer *>(exec);
+            consumer->dumpPendingTasks(ts);
+            ASSERT_TRUE(ts.empty()) << "VLAN member DEL should have completed in the first doTask";
+        }
+
+        // --- Second doTask: LAG member add should now succeed ---
+        // The port is no longer a VLAN member, so the deferred task completes
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Verify all LAG tasks completed
+        for (auto tableName : {APP_LAG_TABLE_NAME, APP_LAG_MEMBER_TABLE_NAME})
+        {
+            vector<string> ts;
+            auto exec = gPortsOrch->getExecutor(tableName);
+            auto consumer = static_cast<Consumer *>(exec);
+            ts.clear();
+            consumer->dumpPendingTasks(ts);
+            ASSERT_TRUE(ts.empty()) << "All tasks should complete: " << tableName;
+        }
+
+        // Verify the port is now a LAG member
+        Port port;
+        gPortsOrch->getPort(testPort, port);
+        ASSERT_NE(port.m_lag_id, SAI_NULL_OBJECT_ID) << "Port should be a LAG member after second doTask";
+    }
+
     struct PostPortInitTests : PortsOrchTest
     {
     };
@@ -4795,5 +5009,97 @@ namespace portsorch_test
         gPortsOrch->getPort("Ethernet0", port);
 
         ASSERT_FALSE(port.m_init);
+    }
+
+    /*
+     * Verify that deleting a VLAN which was never created (not in m_portList)
+     * is handled gracefully: the DEL entry is consumed from m_toSync and no
+     * crash.
+     */
+    struct PortsOrchDanglingDeleteTests : PortsOrchTest {};
+    TEST_F(PortsOrchDanglingDeleteTests, VlanDeleteNonExistentIsSkipped)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port port;
+        ASSERT_FALSE(gPortsOrch->getPort("Vlan100", port));
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Vlan100", DEL_COMMAND, {}});
+
+        auto vlanConsumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_VLAN_TABLE_NAME));
+        vlanConsumer->addToSync(entries);
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        vector<string> ts;
+        vlanConsumer->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        ASSERT_FALSE(gPortsOrch->getPort("Vlan100", port));
+    }
+
+    /*
+     * Verify the normal VLAN create-then-delete path still works, contrasting
+     * with the non-existent VLAN deletion above.
+     */
+    struct PortsOrchCreateThenDeleteTests : PortsOrchTest {};
+    TEST_F(PortsOrchCreateThenDeleteTests, VlanCreateThenDelete)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Vlan200", SET_COMMAND, {
+            {"admin_status", "up"},
+            {"mtu", "9100"}
+        }});
+
+        auto vlanConsumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_VLAN_TABLE_NAME));
+        vlanConsumer->addToSync(entries);
+        entries.clear();
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port vlan;
+        ASSERT_TRUE(gPortsOrch->getPort("Vlan200", vlan));
+        ASSERT_EQ(vlan.m_type, Port::VLAN);
+
+        entries.push_back({"Vlan200", DEL_COMMAND, {}});
+        vlanConsumer->addToSync(entries);
+        entries.clear();
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        vector<string> ts;
+        vlanConsumer->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        ASSERT_FALSE(gPortsOrch->getPort("Vlan200", vlan));
     }
 }

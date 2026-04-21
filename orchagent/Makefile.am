@@ -120,6 +120,7 @@ orchagent_SOURCES = \
             zmqorch.cpp \
             dash/dashenifwdorch.cpp \
             dash/dashenifwdinfo.cpp \
+            dash/dashcounter.cpp \
             dash/dashorch.cpp \
             dash/dashrouteorch.cpp \
             dash/dashvnetorch.cpp \
@@ -130,6 +131,7 @@ orchagent_SOURCES = \
             dash/dashtunnelorch.cpp \
             dash/pbutils.cpp \
             dash/dashhaorch.cpp \
+            dash/dashhafloworch.cpp \
             dash/dashportmaporch.cpp \
             twamporch.cpp \
             stporch.cpp \

@@ -1034,6 +1034,12 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         m_defaultVlan = attrs[1].value.oid;
     }
 
+    //Fast link-up per-port attribute support
+    if (gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_FAST_LINKUP_ENABLED))
+    {
+        m_fastLinkupPortAttrSupported = true;
+    }
+
     if (gMySwitchType != "dpu")
     {
         // System Ports not supported on dpu
@@ -1126,6 +1132,7 @@ void PortsOrch::initializeCpuPort()
     this->m_cpuPort.m_port_id = attr.value.oid;
     this->m_portList[m_cpuPort.m_alias] = m_cpuPort;
     this->m_port_ref_count[m_cpuPort.m_alias] = 0;
+    this->m_bridge_port_ref_count[m_cpuPort.m_alias] = 0;
 
     SWSS_LOG_NOTICE("Get CPU port pid:%" PRIx64, this->m_cpuPort.m_port_id);
 }
@@ -1821,7 +1828,7 @@ void PortsOrch::decreaseBridgePortRefCount(Port &port)
     m_bridge_port_ref_count[port.m_alias]--;
 }
 
-bool PortsOrch::getBridgePortReferenceCount(Port &port)
+uint32_t PortsOrch::getBridgePortReferenceCount(Port &port)
 {
     assert (m_bridge_port_ref_count.find(port.m_alias) != m_bridge_port_ref_count.end());
     return m_bridge_port_ref_count[port.m_alias];
@@ -2065,6 +2072,7 @@ bool PortsOrch::addSubPort(Port &port, const string &alias, const string &vlan, 
 
     m_portList[alias] = p;
     m_port_ref_count[alias] = 0;
+    m_bridge_port_ref_count[alias] = 0;
     port = p;
     return true;
 }
@@ -3523,6 +3531,28 @@ bool PortsOrch::getPortAdvSpeeds(const Port& port, bool remote, string& adv_spee
     return rc;
 }
 
+task_process_status PortsOrch::setPortFastLinkupEnabled(Port &port, bool enable)
+{
+    SWSS_LOG_ENTER();
+
+    if (!m_fastLinkupPortAttrSupported)
+    {
+        SWSS_LOG_NOTICE("Fast link-up is not supported on this platform");
+        return task_success;
+    }
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_FAST_LINKUP_ENABLED;
+    attr.value.booldata = enable;
+    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set fast_linkup %d on port %s", enable, port.m_alias.c_str());
+        return handleSaiSetStatus(SAI_API_PORT, status);
+    }
+    SWSS_LOG_INFO("Set port %s fast_linkup %s", port.m_alias.c_str(), enable ? "true" : "false");
+    return task_success;
+}
+
 task_process_status PortsOrch::setPortUnreliableLOS(Port &port, bool enabled)
 {
     SWSS_LOG_ENTER();
@@ -4078,6 +4108,7 @@ void PortsOrch::registerPort(Port &p)
     m_portList[alias] = p;
     saiOidToAlias[id] = alias;
     m_port_ref_count[alias] = 0;
+    m_bridge_port_ref_count[alias] = 0;
     m_portOidToIndex[id] = index;
 
     /* Add port name map to counter table */
@@ -4889,6 +4920,19 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             "Set port %s link training to %s",
                             p.m_alias.c_str(), m_portHlpr.getLinkTrainingStr(pCfg).c_str()
                         );
+                    }
+                }
+
+                // Handle fast_linkup boolean
+                if (pCfg.fast_linkup.is_set)
+                {
+                    auto status = setPortFastLinkupEnabled(p, pCfg.fast_linkup.value);
+                    // For fast_linkup attribute, task_need_retry is not a meaningful return, so treat any failure as a permanent failure and erase the task.
+                    if (status != task_success)
+                    {
+                        SWSS_LOG_ERROR("Failed to set port %s fast_linkup to %s", p.m_alias.c_str(), pCfg.fast_linkup.value ? "true" : "false");
+                        it = taskMap.erase(it);
+                        continue;
                     }
                 }
 
@@ -5790,7 +5834,12 @@ void PortsOrch::doVlanTask(Consumer &consumer)
         else if (op == DEL_COMMAND)
         {
             Port vlan;
-            getPort(vlan_alias, vlan);
+            if (!getPort(vlan_alias, vlan))
+            {
+                SWSS_LOG_WARN("VLAN %s not found in m_portList, skipping removal (likely never created)", vlan_alias.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
 
             if (removeVlan(vlan))
                 it = consumer.m_toSync.erase(it);
@@ -5899,7 +5948,7 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
             {
                 if (removeVlanMember(vlan, port))
                 {
-                    if (m_portVlanMember[port.m_alias].empty())
+		    if (getBridgePortReferenceCount(port) == 0)
                     {
                         removeBridgePort(port);
                     }
@@ -6285,7 +6334,15 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
                     continue;
                 }
 
-                if (!addLagMember(lag, port, status))
+                // Skip adding port to LAG if the port is still a member of one or more VLANs.
+                if (m_portVlanMember[port.m_alias].size() > 0)
+				{
+                    SWSS_LOG_DEBUG("Port %s is still a member of %zu VLAN(s), skipping adding port to port channel.", port.m_alias.c_str(), m_portVlanMember[port.m_alias].size());
+                    it++;
+                    continue;
+                } 
+                
+                if(!addLagMember(lag, port, status))
                 {
                     it++;
                     continue;
@@ -7354,6 +7411,7 @@ bool PortsOrch::addVlan(string vlan_alias)
     vlan.m_members = set<string>();
     m_portList[vlan_alias] = vlan;
     m_port_ref_count[vlan_alias] = 0;
+    m_bridge_port_ref_count[vlan_alias] = 0;
     saiOidToAlias[vlan_oid] =  vlan_alias;
     m_vlanPorts.emplace(vlan_alias);
 
@@ -7428,6 +7486,7 @@ bool PortsOrch::removeVlan(Port vlan)
     saiOidToAlias.erase(vlan.m_vlan_info.vlan_oid);
     m_portList.erase(vlan.m_alias);
     m_port_ref_count.erase(vlan.m_alias);
+    m_bridge_port_ref_count.erase(vlan.m_alias);
     m_vlanPorts.erase(vlan.m_alias);
 
     return true;
@@ -7521,6 +7580,7 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
     m_portList[port.m_alias] = port;
     vlan.m_members.insert(port.m_alias);
     m_portList[vlan.m_alias] = vlan;
+    increaseBridgePortRefCount(port);
 
     VlanMemberUpdate update = { vlan, port, true };
     notify(SUBJECT_TYPE_VLAN_MEMBER_CHANGE, static_cast<void *>(&update));
@@ -7854,6 +7914,7 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port, string end_point_ip)
     m_portList[port.m_alias] = port;
     vlan.m_members.erase(port.m_alias);
     m_portList[vlan.m_alias] = vlan;
+    decreaseBridgePortRefCount(port);
 
     VlanMemberUpdate update = { vlan, port, false };
     notify(SUBJECT_TYPE_VLAN_MEMBER_CHANGE, static_cast<void *>(&update));
@@ -7949,6 +8010,7 @@ bool PortsOrch::addLag(string lag_alias, uint32_t spa_id, int32_t switch_id)
     lag.m_members = set<string>();
     m_portList[lag_alias] = lag;
     m_port_ref_count[lag_alias] = 0;
+    m_bridge_port_ref_count[lag_alias] = 0;
     saiOidToAlias[lag_id] = lag_alias;
 
     PortUpdate update = { lag, true };
@@ -8025,6 +8087,7 @@ bool PortsOrch::removeLag(Port lag)
     saiOidToAlias.erase(lag.m_lag_id);
     m_portList.erase(lag.m_alias);
     m_port_ref_count.erase(lag.m_alias);
+    m_bridge_port_ref_count.erase(lag.m_alias);
 
     PortUpdate update = { lag, false };
     notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
@@ -9235,7 +9298,7 @@ sai_object_id_t PortsOrch::getPortSerdesIdFromPortId(sai_object_id_t port_id)
     sai_status_t status = sai_port_api->get_port_attribute(port_id, 1, &port_attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get port serdes ID for port 0x%" PRIx64 " (status=%d)", port_id, status);
+        SWSS_LOG_WARN("Failed to get port serdes ID for port 0x%" PRIx64 " (status=%d)", port_id, status);
         return SAI_NULL_OBJECT_ID;
     }
 
@@ -10938,6 +11001,10 @@ bool PortsOrch::addSystemPorts()
             if(m_port_ref_count.find(port.m_alias) == m_port_ref_count.end())
             {
                 m_port_ref_count[port.m_alias] = 0;
+            }
+	    if(m_bridge_port_ref_count.find(port.m_alias) == m_bridge_port_ref_count.end())
+            {
+                m_bridge_port_ref_count[port.m_alias] = 0;
             }
 
             SWSS_LOG_NOTICE("Added system port %" PRIx64 " for %s", system_port_oid, alias.c_str());

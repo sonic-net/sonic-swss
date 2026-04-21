@@ -30,6 +30,20 @@ TEST(P4OrchUtilTest, KeyGeneratorTest)
     ipv6_route_key = KeyGenerator::generateRouteKey("b4-traffic", swss::IpPrefix("::/0"));
     EXPECT_EQ("ipv6_dst=::/0:vrf_id=b4-traffic", ipv6_route_key);
 
+    // L3 multicast group keys.
+    EXPECT_EQ("0x0001", KeyGenerator::generateL3MulticastGroupKey("0x1"));
+    EXPECT_EQ("0x0002", KeyGenerator::generateL3MulticastGroupKey("0X02"));
+    EXPECT_EQ("0x0011", KeyGenerator::generateL3MulticastGroupKey("17"));
+    // Invalid, expected to return group ID 0.
+    EXPECT_EQ("0x0000", KeyGenerator::generateL3MulticastGroupKey("zzz"));
+
+    // L2 multicast group keys.
+    EXPECT_EQ("0x0003", KeyGenerator::generateL2MulticastGroupKey("0x3"));
+    EXPECT_EQ("0x0009", KeyGenerator::generateL2MulticastGroupKey("0X09"));
+    EXPECT_EQ("0x0021", KeyGenerator::generateL2MulticastGroupKey("33"));
+    // Invalid, expected to return group ID 0.
+    EXPECT_EQ("0x0000", KeyGenerator::generateL2MulticastGroupKey("invalid"));
+
     std::string ipv4_multicast_key = KeyGenerator::generateIpMulticastKey(
         "b4-traffic", swss::IpAddress("127.0.0.1"));
     EXPECT_EQ("ipv4_dst=127.0.0.1:vrf_id=b4-traffic", ipv4_multicast_key);
@@ -144,6 +158,42 @@ TEST(P4OrchUtilTest, VerifyAttrsTest)
             std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"k2", "v2"}, swss::FieldValueTuple{"k3", "v3"}},
             /*allow_unknown=*/false)
             .empty());
+}
+
+TEST(P4OrchUtilTest, ParseFlagTest) {
+  const std::string name = "name";
+  auto flag_or = parseFlag(name, "0x1");
+  EXPECT_TRUE(flag_or.ok());
+  EXPECT_EQ(true, *flag_or);
+
+  flag_or = parseFlag(name, "0X1");
+  EXPECT_TRUE(flag_or.ok());
+  EXPECT_EQ(true, *flag_or);
+
+  flag_or = parseFlag(name, "0x0");
+  EXPECT_TRUE(flag_or.ok());
+  EXPECT_EQ(false, *flag_or);
+
+  flag_or = parseFlag(name, "0X0");
+  EXPECT_TRUE(flag_or.ok());
+  EXPECT_EQ(false, *flag_or);
+
+  flag_or = parseFlag(name, "1");
+  EXPECT_TRUE(flag_or.ok());
+  EXPECT_EQ(true, *flag_or);
+
+  flag_or = parseFlag(name, "0");
+  EXPECT_TRUE(flag_or.ok());
+  EXPECT_EQ(false, *flag_or);
+
+  flag_or = parseFlag(name, "0xinvalid");
+  EXPECT_FALSE(flag_or.ok());
+
+  flag_or = parseFlag(name, "0Xinvalid");
+  EXPECT_FALSE(flag_or.ok());
+
+  flag_or = parseFlag(name, "invalid");
+  EXPECT_FALSE(flag_or.ok());
 }
 
 } // namespace
