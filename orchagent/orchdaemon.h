@@ -25,6 +25,7 @@
 #include "aclorch.h"
 #include "pbhorch.h"
 #include "pfcwdorch.h"
+#include "pfcwdsworch.h"
 #include "switchorch.h"
 #include "crmorch.h"
 #include "vrforch.h"
