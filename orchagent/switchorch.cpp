@@ -1,5 +1,6 @@
 #include <map>
 #include <set>
+#include <regex>
 #include <inttypes.h>
 #include <iomanip>
 
@@ -135,13 +136,30 @@ void SwitchOrch::set_switch_pfc_dlr_init_capability()
         m_PfcDlrInitEnable = false;
         fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE, "false");
     }
-    else 
+    else
     {
         SWSS_LOG_INFO("Queue level PFC DLR INIT configuration is supported");
         m_PfcDlrInitEnable = true;
         fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE, "true");
     }
     set_switch_capability(fvVector);
+}
+
+bool SwitchOrch::isHwPfcWdSupportedSku() const
+{
+    static const std::vector<std::regex> patterns = {
+        std::regex("nh-4010.*", std::regex_constants::icase)
+    };
+
+    for (const auto& pattern : patterns)
+    {
+        if (std::regex_match(m_hwSku, pattern))
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, TableConnector switchTable):
@@ -158,6 +176,12 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
     m_restartCheckNotificationConsumer = new NotificationConsumer(db, "RESTARTCHECK");
     auto restartCheckNotifier = new Notifier(m_restartCheckNotificationConsumer, this, "RESTARTCHECK");
     Orch::addExecutor(restartCheckNotifier);
+
+    // Read HWSKU from CONFIG_DB
+    DBConnector configDb("CONFIG_DB", 0);
+    Table deviceMetadataTable(&configDb, CFG_DEVICE_METADATA_TABLE_NAME);
+    deviceMetadataTable.hget("localhost", "hwsku", m_hwSku);
+    SWSS_LOG_NOTICE("HWSKU: %s", m_hwSku.c_str());
 
     initAsicSdkHealthEventNotification();
     set_switch_pfc_dlr_init_capability();
