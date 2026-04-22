@@ -918,13 +918,10 @@ std::string MirrorSessionManager::verifyStateAsicDb(const P4MirrorSessionEntry *
         SAI_OBJECT_TYPE_MIRROR_SESSION, (uint32_t)attrs.size(), attrs.data(),
         /*countOnly=*/false);
 
-    swss::DBConnector db("ASIC_DB", 0);
-    swss::Table table(&db, "ASIC_STATE");
     std::string key = sai_serialize_object_type(SAI_OBJECT_TYPE_MIRROR_SESSION) + ":" +
                       sai_serialize_object_id(mirror_session_entry->mirror_session_oid);
     std::vector<swss::FieldValueTuple> values;
-    if (!table.get(key, values))
-    {
+  if (!m_asic_state_table.get(key, values)) {
         return std::string("ASIC DB key not found ") + key;
     }
 
