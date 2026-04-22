@@ -20,7 +20,7 @@ int main(int argc, char **argv)
     DBConnector stateDb("STATE_DB", 0);
     DBConnector cfgDb("CONFIG_DB", 0);
 
-    NeighSync sync(&pipelineAppDB, &stateDb, &cfgDb);
+    NeighSync sync(&pipelineAppDB, &stateDb, &cfgDb, &appDb);
 
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWNEIGH, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELNEIGH, &sync);
