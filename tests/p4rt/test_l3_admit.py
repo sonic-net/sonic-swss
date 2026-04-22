@@ -13,9 +13,10 @@ class TestP4RTL3Admit(object):
         self._p4rt_l3_admit_obj = l3_admit.P4RtL3AdmitWrapper()
 
         self._p4rt_l3_admit_obj.set_up_databases(dvs)
-
-    def _cleanup(self):
-        self._p4rt_l3_admit_obj.clean_up()
+        self.response_consumer = swsscommon.NotificationConsumer(
+            self._p4rt_l3_admit_obj.appl_db, "APPL_DB_" +
+            swsscommon.APP_P4RT_TABLE_NAME + "_RESPONSE_CHANNEL"
+        )
 
     @pytest.mark.skip(reason="sairedis vs MY MAC support is not ready")
     def test_DefaultL3AdmitAddDeletePass(self, dvs, testlog):
@@ -49,8 +50,8 @@ class TestP4RTL3Admit(object):
             l3_admit_key,
             attr_list,
         ) = self._p4rt_l3_admit_obj.create_l3_admit(dst_mac_data + "&" + dst_mac_mask, priority, in_port)
-        self._p4rt_l3_admit_obj.verify_response(
-            l3_admit_key, attr_list, "SWSS_RC_SUCCESS"
+        util.verify_response(
+            self.response_consumer, l3_admit_key, attr_list, "SWSS_RC_SUCCESS"
         )
 
         # Query application database for l3 admit entries.
@@ -98,17 +99,16 @@ class TestP4RTL3Admit(object):
         # deplicate SET will be no-op.
         new_l3_admit_key, new_attr_list = self._p4rt_l3_admit_obj.create_l3_admit(
             dst_mac_data + "&" + dst_mac_mask, priority, in_port)
-        self._p4rt_l3_admit_obj.verify_response(
-            new_l3_admit_key, new_attr_list,
+        util.verify_response(
+            self.response_consumer, new_l3_admit_key, new_attr_list,
             "SWSS_RC_SUCCESS",
             "L3 Admit entry with the same key received: 'match/dst_mac=00:02:03:04:00:00&ff:ff:ff:ff:00:00:match/in_port=Ethernet8:priority=2030'"
         )
 
         # Remove l3 admit entry.
         self._p4rt_l3_admit_obj.remove_app_db_entry(l3_admit_key)
-        self._p4rt_l3_admit_obj.verify_response(
-            l3_admit_key, [], "SWSS_RC_SUCCESS"
-        )
+        util.verify_response(self.response_consumer,
+                             l3_admit_key, [], "SWSS_RC_SUCCESS")
 
         # Query application database for route entries.
         l3_admit_entries = util.get_keys(
@@ -144,8 +144,6 @@ class TestP4RTL3Admit(object):
         )
         assert status == False
 
-        self._cleanup()
-
     def test_InvalidL3AdmitKeyFailsToCreate(self, dvs, testlog):
         # Initialize database connectors.
         self._set_up(dvs)
@@ -176,8 +174,8 @@ class TestP4RTL3Admit(object):
             l3_admit_key,
             attr_list,
         ) = self._p4rt_l3_admit_obj.create_l3_admit(dst_mac_data, priority, in_port)
-        self._p4rt_l3_admit_obj.verify_response(
-            l3_admit_key, attr_list,
+        util.verify_response(
+            self.response_consumer, l3_admit_key, attr_list,
             "SWSS_RC_INVALID_PARAM",
             "[OrchAgent] Failed to deserialize l3 admit key"
         )
@@ -211,11 +209,10 @@ class TestP4RTL3Admit(object):
         (l3_admit_key, attr_list,) = self._p4rt_l3_admit_obj.create_l3_admit(
             dst_mac_data + "&" + dst_mac_mask, priority, in_port
         )
-        self._p4rt_l3_admit_obj.verify_response(
+        util.verify_response(
+            self.response_consumer,
             l3_admit_key,
             attr_list,
             "SWSS_RC_UNIMPLEMENTED",
             "[OrchAgent] Port \'PortChannelLAG1\'\'s type 5 is not physical and is not supported for L3 Admit entry.",
         )
-
-        self._cleanup()

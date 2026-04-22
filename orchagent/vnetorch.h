@@ -37,13 +37,6 @@ typedef enum
     MONITOR_SESSION_STATE_DOWN,
 } monitor_session_state_t;
 
-typedef enum
-{
-    PINNED_STATE_NONE,
-    PINNED_STATE_UP,
-    PINNED_STATE_DOWN,
-} pinned_state_t;
-
 const request_description_t vnet_request_description = {
     { REQ_T_STRING },
     {
@@ -323,7 +316,6 @@ const request_description_t vnet_route_description = {
         { "check_directly_connected", REQ_T_BOOL },
         { "rx_monitor_timer",       REQ_T_UINT },
         { "tx_monitor_timer",       REQ_T_UINT },
-        { "pinned_state",           REQ_T_STRING_LIST },
         { "metric",                 REQ_T_UINT }
     },
     { }
@@ -440,7 +432,6 @@ struct MonitorSessionInfo
     monitor_session_state_t state;
     NextHopKey endpoint;
     int ref_count;
-    pinned_state_t pinned_state = PINNED_STATE_NONE;
 };
 
 struct MonitorUpdate
@@ -538,8 +529,7 @@ private:
 
     bool selectNextHopGroup(const string&, NextHopGroupKey&, NextHopGroupKey&, const string&, const int32_t, const int32_t, IpPrefix&,
                             VNetVrfObject *vrf_obj, NextHopGroupKey&,
-                            const std::map<NextHopKey,IpAddress>& monitors=std::map<NextHopKey, IpAddress>(),
-                            const std::map<IpAddress, pinned_state_t>& monitor_addr_to_pinned_state={});
+                            const std::map<NextHopKey,IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
     void createBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer);
     void removeBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
@@ -550,17 +540,6 @@ private:
                             const string& monitoring, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer,
                             IpPrefix& ipPrefix);
     void delEndpointMonitor(const string& vnet, NextHopGroupKey& nexthops, IpPrefix& ipPrefix);
-    void delEndpointMonitor(const string& vnet, const std::map<NextHopKey, IpAddress>& monitors, IpPrefix& ipPrefix);
-
-    bool isPinnedStateUpdated(const string& vnet, IpPrefix& ipPrefix,
-                                  const std::map<IpAddress, pinned_state_t>& monitor_addr_to_pinned_state);
-    void updateMonitorPinnedState(const string& vnet, IpPrefix& ipPrefix,
-                                  const std::map<IpAddress, pinned_state_t>& monitor_addr_to_pinned_state);
-
-    bool isCustomMonitorEndpointUpdated(const string& vnet, IpPrefix& ipPrefix,
-                                  const std::map<NextHopKey, IpAddress>& monitors);
-    void getCustomMonitors(const string& vnet, const IpPrefix& ipPrefix, const NextHopGroupKey& nexthops, std::map<NextHopKey, IpAddress>& monitors);
-
     void postRouteState(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& profile);
     void removeRouteState(const string& vnet, IpPrefix& ipPrefix);
     void addRouteAdvertisement(IpPrefix& ipPrefix, string& profile);
@@ -579,8 +558,7 @@ private:
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op, string& profile,
                     const string& monitoring, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer,
                     NextHopGroupKey& nexthops_secondary, const IpPrefix& adv_prefix,
-                    const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>(),
-                    const std::map<IpAddress, pinned_state_t>& monitor_addr_to_pinned_state = {});
+                    const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, nextHop& nh, string& op);

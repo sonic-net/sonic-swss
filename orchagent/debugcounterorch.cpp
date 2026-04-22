@@ -681,6 +681,10 @@ void DebugCounterOrch::uninstallDebugFlexCounters(const string& counter_type,
     {
         for (auto const &curr : gPortsOrch->getAllPorts())
         {
+            // Remove debug counter stat from being tracked by drop counter monitor
+            string key = string(DEBUG_COUNTER_FLEX_COUNTER_GROUP) + ":" + sai_serialize_object_id(curr.second.m_port_id);
+            stopFlexCounterPolling(gSwitchId, key);
+
             if (port_id != SAI_NULL_OBJECT_ID)
             {
                 if (curr.second.m_port_id != port_id)
@@ -693,10 +697,6 @@ void DebugCounterOrch::uninstallDebugFlexCounters(const string& counter_type,
             {
                 continue;
             }
-
-            // Remove debug counter stat from being tracked by drop counter monitor
-            string key = string(DEBUG_COUNTER_FLEX_COUNTER_GROUP) + ":" + sai_serialize_object_id(curr.second.m_port_id);
-            stopFlexCounterPolling(gSwitchId, key);
 
             flex_counter_manager.removeFlexCounterStat(
                 curr.second.m_port_id,

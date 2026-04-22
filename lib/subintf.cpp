@@ -1,6 +1,5 @@
 #include <cerrno>
 #include <cstring>
-#include <cstdint>
 #include <array>
 #include <net/if.h>
 #include <stdexcept>

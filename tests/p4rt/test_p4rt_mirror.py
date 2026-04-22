@@ -44,9 +44,8 @@ class TestP4RTMirror(object):
     def _set_up(self, dvs):
         self._p4rt_mirror_session_wrapper = P4RtMirrorSessionWrapper()
         self._p4rt_mirror_session_wrapper.set_up_databases(dvs)
-
-    def _cleanup(self):
-        self._p4rt_mirror_session_wrapper.clean_up()
+        self._response_consumer = swsscommon.NotificationConsumer(
+            self._p4rt_mirror_session_wrapper.appl_db, "APPL_DB_" + swsscommon.APP_P4RT_TABLE_NAME + "_RESPONSE_CHANNEL")
 
     def test_MirrorSessionAddModifyAndDelete(self, dvs, testlog):
         # Initialize database connectors
@@ -89,8 +88,8 @@ class TestP4RTMirror(object):
             mirror_session_id)
         self._p4rt_mirror_session_wrapper.set_app_db_entry(
             mirror_session_key, attr_list_in_app_db)
-        self._p4rt_mirror_session_wrapper.verify_response(
-            mirror_session_key, attr_list_in_app_db, "SWSS_RC_SUCCESS")
+        util.verify_response(
+            self._response_consumer, mirror_session_key, attr_list_in_app_db, "SWSS_RC_SUCCESS")
 
         # Query application database for mirror entries
         appl_mirror_entries = util.get_keys(
@@ -154,8 +153,8 @@ class TestP4RTMirror(object):
             self._p4rt_mirror_session_wrapper.DST_MAC), new_dst_mac)
         self._p4rt_mirror_session_wrapper.set_app_db_entry(
             mirror_session_key, attr_list_in_app_db)
-        self._p4rt_mirror_session_wrapper.verify_response(
-            mirror_session_key, attr_list_in_app_db, "SWSS_RC_SUCCESS")
+        util.verify_response(
+            self._response_consumer, mirror_session_key, attr_list_in_app_db, "SWSS_RC_SUCCESS")
 
         # Query application database for the modified mirror key
         (status, fvs) = util.get_key(self._p4rt_mirror_session_wrapper.appl_db,
@@ -176,8 +175,8 @@ class TestP4RTMirror(object):
         # 3. Delete the mirror session.
         self._p4rt_mirror_session_wrapper.remove_app_db_entry(
             mirror_session_key)
-        self._p4rt_mirror_session_wrapper.verify_response(
-            mirror_session_key, [], "SWSS_RC_SUCCESS")
+        util.verify_response(
+            self._response_consumer, mirror_session_key, [], "SWSS_RC_SUCCESS")
 
         # Query application database for mirror entries
         appl_mirror_entries = util.get_keys(
@@ -201,6 +200,3 @@ class TestP4RTMirror(object):
                                      self._p4rt_mirror_session_wrapper.ASIC_DB_TBL_NAME,
                                      asic_db_key)
         assert status == False
-
-        self._cleanup()
-

@@ -261,8 +261,7 @@ static acl_table_action_list_lookup_t defaultAclActionList =
             {
                 ACL_STAGE_INGRESS,
                 {
-                    SAI_ACL_ACTION_TYPE_MIRROR_INGRESS,
-                    SAI_ACL_ACTION_TYPE_MIRROR_EGRESS
+                    SAI_ACL_ACTION_TYPE_MIRROR_INGRESS
                 }
             },
             {
@@ -280,8 +279,7 @@ static acl_table_action_list_lookup_t defaultAclActionList =
             {
                 ACL_STAGE_INGRESS,
                 {
-                    SAI_ACL_ACTION_TYPE_MIRROR_INGRESS,
-                    SAI_ACL_ACTION_TYPE_MIRROR_EGRESS
+                    SAI_ACL_ACTION_TYPE_MIRROR_INGRESS
                 }
             },
             {
@@ -3426,11 +3424,11 @@ bool AclRange::remove(sai_object_id_t *oids, int oidsCnt)
 {
     SWSS_LOG_ENTER();
 
-    for (int oidIdx = 0; oidIdx < oidsCnt; oidIdx++)
+    for (int oidIdx = 0; oidIdx < oidsCnt; oidsCnt++)
     {
         for (auto it : m_ranges)
         {
-            if (it.second->m_oid == oids[oidIdx])
+            if (it.second->m_oid == oids[oidsCnt])
             {
                 return it.second->remove();
             }

@@ -4,7 +4,6 @@
 #include <string>
 #include <vector>
 
-#include "dbconnector.h"
 #include "copporch.h"
 #include "orch.h"
 #include "p4orch/acl_util.h"
@@ -14,7 +13,6 @@
 #include "response_publisher_interface.h"
 #include "return_code.h"
 #include "vrforch.h"
-#include "table.h"
 
 extern "C"
 {
@@ -33,7 +31,7 @@ class AclRuleManager : public ObjectManagerInterface
   public:
     explicit AclRuleManager(P4OidMapper *p4oidMapper, VRFOrch *vrfOrch, CoppOrch *coppOrch,
                             ResponsePublisherInterface *publisher)
-        : m_p4OidMapper(p4oidMapper), m_vrfOrch(vrfOrch), m_asic_db("ASIC_DB", 0), m_asic_state_table(&m_asic_db, "ASIC_STATE"), m_publisher(publisher), m_coppOrch(coppOrch),
+        : m_p4OidMapper(p4oidMapper), m_vrfOrch(vrfOrch), m_publisher(publisher), m_coppOrch(coppOrch),
           m_countersDb(std::make_unique<swss::DBConnector>("COUNTERS_DB", 0)),
           m_countersTable(std::make_unique<swss::Table>(
               m_countersDb.get(), std::string(COUNTERS_TABLE) + DEFAULT_KEY_SEPARATOR + APP_P4RT_TABLE_NAME))
@@ -73,7 +71,7 @@ class AclRuleManager : public ObjectManagerInterface
     ReturnCode processDeleteRuleRequest(const std::string &acl_table_name, const std::string &acl_rule_key);
 
     // Processes update operation for an ACL rule.
-    ReturnCode processUpdateRuleRequest(const P4AclRuleAppDbEntry &app_db_entry, P4AclRule &old_acl_rule);
+    ReturnCode processUpdateRuleRequest(const P4AclRuleAppDbEntry &app_db_entry, const P4AclRule &old_acl_rule);
 
     // Set counters stats for an ACL rule in COUNTERS_DB.
     ReturnCode setAclRuleCounterStats(const P4AclRule &acl_rule);
@@ -126,23 +124,14 @@ class AclRuleManager : public ObjectManagerInterface
     // Validate and set an action attribute in an ACL rule.
     ReturnCode setActionValue(const sai_acl_entry_attr_t attr_name,
                               const std::string& attr_value,
-                              const sai_object_id_t attr_type,
                               sai_attribute_value_t* value,
                               P4AclRule* acl_rule);
 
     // Get port object id by name for redirect action.
-    ReturnCode getRedirectActionPortOid(const std::string &target, sai_object_id_t* redirect_oid);
+    ReturnCode getRedirectActionPortOid(const std::string &target, sai_object_id_t *rediect_oid);
 
     // Get next hop object id by name for redirect action.
-    ReturnCode getRedirectActionNextHopOid(const std::string &target, sai_object_id_t* redirect_oid);
-
-    // Get L2 multicast group oid by name for redirection action.
-    ReturnCode getRedirectActionL2MulticastGroupOid(
-        const std::string& target, sai_object_id_t* redirect_oid);
-
-    // Get multicast group oid by name for redirection action.
-    ReturnCode getRedirectActionL3MulticastGroupOid(
-        const std::string& target, sai_object_id_t* redirect_oid);
+    ReturnCode getRedirectActionNextHopOid(const std::string &target, sai_object_id_t *rediect_oid);
 
     // Create user defined trap for each cpu queue/trap group and program user
     // defined traps in hostif. Save the user defined trap oids in m_p4OidMapper
@@ -161,8 +150,6 @@ class AclRuleManager : public ObjectManagerInterface
     std::string verifyStateAsicDb(const P4AclRule *acl_rule);
 
     P4OidMapper *m_p4OidMapper;
-    swss::DBConnector m_asic_db;
-    swss::Table m_asic_state_table;
     ResponsePublisherInterface *m_publisher;
     P4AclRuleTables m_aclRuleTables;
     VRFOrch *m_vrfOrch;
@@ -170,7 +157,7 @@ class AclRuleManager : public ObjectManagerInterface
     std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
     std::unique_ptr<swss::DBConnector> m_countersDb;
     std::unique_ptr<swss::Table> m_countersTable;
-    std::map<int, P4UserDefinedTrapHostifTableEntry> m_userDefinedTraps;
+    std::vector<P4UserDefinedTrapHostifTableEntry> m_userDefinedTraps;
 
     friend class AclTableManager;
     friend class p4orch::test::AclManagerTest;
