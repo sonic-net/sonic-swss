@@ -23,6 +23,7 @@ public:
     bool isNeighRestoreDone();
 
 private:
+    void reconcileNeighResolveTable(DBConnector *appDb);
     bool isIntfStateOk(const std::string &alias);
     bool setNeighbor(const std::string& alias, const IpAddress& ip, const MacAddress& mac);
 

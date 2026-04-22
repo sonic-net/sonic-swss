@@ -104,11 +104,12 @@ jobs:
     clean: true
     submodules: true
   - script: |
+      set -xe
       sudo apt-get update
       sudo apt-get install -y \
         libhiredis-dev \
         libzmq3-dev \
-        swig4.0 \
+        swig \
         libdbus-1-dev \
         libteam-dev
       sudo pip3 install lcov_cobertura
@@ -257,6 +258,11 @@ jobs:
   - script: |
       RUSTFLAGS=-Dwarnings cargo test
     displayName: "Test countersyncd"
+  - task: PublishTestResults@2
+    inputs:
+      testResultsFiles: '**/*_tr.xml'
+      testRunTitle: gtest
+    condition: and(succeededOrFailed(), eq('${{ parameters.asan }}', false))
   - publish: $(System.DefaultWorkingDirectory)/
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive swss debian packages"

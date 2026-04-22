@@ -336,7 +336,7 @@ class NextHopManagerTest : public ::testing::Test
         EXPECT_CALL(mock_sai_switch_, get_switch_attribute(_, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
         copp_orch_ = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
         std::vector<std::string> p4_tables;
-        gP4Orch = new P4Orch(gAppDb, p4_tables, gVrfOrch, copp_orch_);
+        gP4Orch = new P4Orch(gAppDb, p4_tables, nullptr, gVrfOrch, copp_orch_);
     }
 
     ~NextHopManagerTest()
@@ -991,8 +991,37 @@ TEST_F(NextHopManagerTest, DeserializeP4NextHopAppDbEntryRewriteSuccess) {
       swss::FieldValueTuple(prependParamField(p4orch::kDisableVlanRewrite),
                             "1")};
 
-  EXPECT_TRUE(
-      DeserializeP4NextHopAppDbEntry(kNextHopP4AppDbKey, attributes).ok());
+  auto entry_or =
+      DeserializeP4NextHopAppDbEntry(kNextHopP4AppDbKey, attributes);
+  EXPECT_TRUE(entry_or.ok());
+  EXPECT_EQ(entry_or->disable_decrement_ttl, false);
+  EXPECT_EQ(entry_or->disable_src_mac_rewrite, true);
+  EXPECT_EQ(entry_or->disable_dst_mac_rewrite, false);
+  EXPECT_EQ(entry_or->disable_vlan_rewrite, true);
+}
+
+TEST_F(NextHopManagerTest, DeserializeP4NextHopAppDbEntryRewriteHexSuccess) {
+  std::vector<swss::FieldValueTuple> attributes = {
+      swss::FieldValueTuple(p4orch::kAction,
+                            "set_ip_nexthop_and_disable_rewrites"),
+      swss::FieldValueTuple(prependParamField(p4orch::kRouterInterfaceId),
+                            kRouterInterfaceId1),
+      swss::FieldValueTuple(prependParamField(p4orch::kDisableDecrementTtl),
+                            "0x1"),
+      swss::FieldValueTuple(prependParamField(p4orch::kDisableSrcMacRewrite),
+                            "0x0"),
+      swss::FieldValueTuple(prependParamField(p4orch::kDisableDstMacRewrite),
+                            "0X1"),
+      swss::FieldValueTuple(prependParamField(p4orch::kDisableVlanRewrite),
+                            "0x0")};
+
+  auto entry_or =
+      DeserializeP4NextHopAppDbEntry(kNextHopP4AppDbKey, attributes);
+  EXPECT_TRUE(entry_or.ok());
+  EXPECT_EQ(entry_or->disable_decrement_ttl, true);
+  EXPECT_EQ(entry_or->disable_src_mac_rewrite, false);
+  EXPECT_EQ(entry_or->disable_dst_mac_rewrite, true);
+  EXPECT_EQ(entry_or->disable_vlan_rewrite, false);
 }
 
 TEST_F(NextHopManagerTest, DeserializeP4NextHopAppDbEntryRewriteFailures) {

@@ -28,6 +28,7 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       $(ORCHAGENT_DIR)/switchorch.cpp \
 		       $(ORCHAGENT_DIR)/request_parser.cpp \
 		       $(top_srcdir)/lib/recorder.cpp \
+		       $(ORCHAGENT_DIR)/zmqorch.cpp \
 		       $(ORCHAGENT_DIR)/flex_counter/flex_counter_manager.cpp \
 		       $(ORCHAGENT_DIR)/flex_counter/flow_counter_handler.cpp \
 		       $(ORCHAGENT_DIR)/port/port_capabilities.cpp \
@@ -64,6 +65,7 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       fake_notificationconsumer.cpp \
 		       fake_table.cpp \
 		       fake_aclorch.cpp \
+		       fake_zmqserver.cpp \
 		       p4oidmapper_test.cpp \
 		       p4orch_test.cpp \
 		       p4orch_util_test.cpp \
@@ -88,6 +90,7 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       mock_sai_ipmc_group.cpp \
 		       mock_sai_l2mc.cpp \
 		       mock_sai_l2mc_group.cpp \
+		       mock_sai_my_mac.cpp \
 		       mock_sai_serialize.cpp \
 		       mock_sai_router_interface.cpp \
 		       mock_sai_rpf_group.cpp \
@@ -101,3 +104,5 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 p4orch_tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 p4orch_tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 p4orch_tests_LDADD = $(LDADD_GTEST) $(LDFLAGS_ASAN) -lpthread -lsairedis -lswsscommon -lsaimeta -lsaimetadata -lzmq
+
+LOG_DRIVER = $(top_srcdir)/run-gtest-suite.py

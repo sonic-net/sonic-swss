@@ -1854,7 +1854,7 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
 
     // Handle case where neighbor exists but is not yet a MUX neighbor
     // This can happen when FDB entry is learned after neighbor is added
-    if (!found_existing_mux_neighbor && isMuxCablePrefixBased(update.entry.port_name))
+    if (!found_existing_mux_neighbor && isMuxExists(update.entry.port_name))
     {
         // Check if there's an existing neighbor with this MAC on any VLAN interface
         // that could be converted to a MUX neighbor
@@ -1871,7 +1871,7 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
                 const NeighborEntry& neighbor_entry = neighbor_pair.first;
                 const auto& neighbor_data = neighbor_pair.second;
 
-                // Skip if this neighbor is already a MUX neighbor
+                // Skip prefix_route neighbors that are not skip neighbors
                 // soc neighbors will get added with prefix_route but
                 // they may not be yet qualified as mux neighbor
                 if (neighbor_data.prefix_route && !isSkipNeighbor(neighbor_entry.ip_address))
@@ -1917,6 +1917,7 @@ bool MuxOrch::convertNeighborToMux(const NeighborEntry& neighbor_entry, const st
     }
 
     // Convert to MUX neighbor for prefix based nbr handler before adding the nbr entry to mux port
+    // If the mux port uses the host-route nbr handler, convertToPrefixBasedNbr will not be called (short-circuit)
     if (ptr->getNbrHandlerType() == MuxNbrHandlerType::NBR_HANDLER_HOST_ROUTE ||
             neigh_orch_->convertToPrefixBasedNbr(neighbor_entry, tunnel_nh_id))
     {

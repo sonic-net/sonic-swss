@@ -4,6 +4,7 @@
 #include <string>
 #include <unordered_map>
 
+#include "dbconnector.h"
 #include "ipaddress.h"
 #include "orch.h"
 #include "p4orch/gre_tunnel_manager.h"
@@ -14,6 +15,8 @@
 #include "p4orch/router_interface_manager.h"
 #include "response_publisher_interface.h"
 #include "return_code.h"
+#include "table.h"
+
 extern "C"
 {
 #include "sai.h"
@@ -56,7 +59,7 @@ class NextHopManager : public ObjectManagerInterface
 {
   public:
     NextHopManager(P4OidMapper *p4oidMapper, ResponsePublisherInterface *publisher)
-    {
+      : m_asic_db("ASIC_DB", 0), m_asic_state_table(&m_asic_db, "ASIC_STATE") {
         SWSS_LOG_ENTER();
 
         assert(p4oidMapper != nullptr);
@@ -109,7 +112,7 @@ class NextHopManager : public ObjectManagerInterface
     std::string verifyStateAsicDb(const P4NextHopEntry *next_hop_entry);
 
     // Returns the SAI attributes for an entry.
-    std::vector<sai_attribute_t> getSaiAttrs(
+    std::vector<sai_attribute_t> prepareSaiAttrs(
         const P4NextHopEntry& next_hop_entry);
 
     // m_nextHopTable: next_hop_key, P4NextHopEntry
@@ -117,6 +120,8 @@ class NextHopManager : public ObjectManagerInterface
 
     // Owners of pointers below must outlive this class's instance.
     P4OidMapper *m_p4OidMapper;
+    swss::DBConnector m_asic_db;
+    swss::Table m_asic_state_table;
     ResponsePublisherInterface *m_publisher;
     std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
 
