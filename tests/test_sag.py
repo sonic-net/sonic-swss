@@ -68,7 +68,6 @@ class TestSag(object):
         vrf_entries = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
         assert len(vrf_entries) == 1
         return list(set(vrf_entries))[0]
-        return set(vrf_entries)
 
     def generate_ipv6_link_local_addr(self, mac, prefix_len):
         eui64 = re.sub(r'[.:-]', '', mac).lower()
