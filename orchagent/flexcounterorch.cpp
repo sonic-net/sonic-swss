@@ -722,3 +722,15 @@ void FlexCounterPgStates::enablePgCounter(uint32_t pgIndex)
     SWSS_LOG_ENTER();
     m_pgStates[pgIndex] = true;
 }
+
+void FlexCounterOrch::removePortCounter(sai_object_id_t port_id)
+{
+    std::string port_oid = sai_serialize_object_id(port_id);
+
+    if (m_countersTable)
+    {
+        m_countersTable->del("PORT_STAT_COUNTER:" + port_oid);
+    }
+
+    SWSS_LOG_NOTICE("Removed counters for port %s", port_oid.c_str());
+}
