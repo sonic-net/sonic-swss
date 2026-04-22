@@ -92,6 +92,8 @@ constexpr sai_object_id_t kRifOid5 = 0x55abcd;
 
 constexpr sai_object_id_t kNextHopOid1 = 0x100a;
 constexpr sai_object_id_t kNextHopOid2 = 0x100b;
+constexpr sai_object_id_t kNextHopOid3 = 0x100c;
+constexpr sai_object_id_t kNextHopOid4 = 0x100d;
 
 constexpr sai_object_id_t kGroupOid1 = 0x1;
 constexpr sai_object_id_t kGroupOid2 = 0x2;
@@ -8890,23 +8892,35 @@ TEST_F(L3MulticastManagerTest, AddMulticastGroupEntriesWithBackupTest) {
   // Add router interface entry so have RIF.
   auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
       "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
-  auto rif_entry2 = SetupP4MulticastRouterInterfaceEntry(
-      "Ethernet2", "0x0", swss::MacAddress(kSrcMac2), kRifOid2);
-  auto rif_entry3 = SetupP4MulticastRouterInterfaceEntry(
-      "Ethernet3", "0x0", swss::MacAddress(kSrcMac3), kRifOid3);
-  auto rif_entry4 = SetupP4MulticastRouterInterfaceEntry(
-      "Ethernet4", "0x0", swss::MacAddress(kSrcMac4), kRifOid4);
+  auto rif_entry2 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac2),
+      swss::MacAddress(kDstMac0), kVlanIdNum1, p4orch::kMulticastSetSrcMac,
+      kRifOid2, kNextHopOid2);
+  auto rif_entry3 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet3", "0x0", swss::MacAddress(kSrcMac3),
+      swss::MacAddress(kDstMac0), kVlanIdNum1, p4orch::kMulticastSetSrcMac,
+      kRifOid3, kNextHopOid3);
+  auto rif_entry4 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet4", "0x0", swss::MacAddress(kSrcMac4),
+      swss::MacAddress(kDstMac0), kVlanIdNum1, p4orch::kMulticastSetSrcMac,
+      kRifOid4, kNextHopOid4);
 
   P4Replica replica1 = P4Replica("0x1", "Ethernet1", "0x0");
   P4Replica replica2 = P4Replica("0x1", "Ethernet2", "0x0");
   P4Replica replica3 = P4Replica("0x1", "Ethernet3", "0x0");
   P4Replica replica4 = P4Replica("0x1", "Ethernet4", "0x0");
 
+  std::vector<sai_object_id_t> nexthop_oids = {kNextHopOid1, kNextHopOid2};
   SetupP4MulticastGroupEntryWithBackups(
       "0x1", {{replica1, replica3, replica4}, {replica2}}, kGroupOid1,
-      {kGroupMemberOid1, kGroupMemberOid2});
+      nexthop_oids);
 
-  // TODO(b/377401287): Expect SAI call on fallback group update.
+  // Bring up all ports. Expect no SAI calls.
+  UpdateFallbackGroup("Ethernet1", SAI_PORT_OPER_STATUS_UP);
+  UpdateFallbackGroup("Ethernet2", SAI_PORT_OPER_STATUS_UP);
+  UpdateFallbackGroup("Ethernet3", SAI_PORT_OPER_STATUS_UP);
+  UpdateFallbackGroup("Ethernet4", SAI_PORT_OPER_STATUS_UP);
+  ProcessFallbackGroupEvent();
 
   // Ethernet1 goes down. Expect to use replica3 on the first replica.
   UpdateFallbackGroup("Ethernet1", SAI_PORT_OPER_STATUS_DOWN);
@@ -8919,6 +8933,130 @@ TEST_F(L3MulticastManagerTest, AddMulticastGroupEntriesWithBackupTest) {
 
   // Ethernet1 comes back up. Expect to use replica1 on the first replica.
   UpdateFallbackGroup("Ethernet1", SAI_PORT_OPER_STATUS_UP);
+  ProcessFallbackGroupEvent();
+}
+
+TEST_F(L3MulticastManagerTest, MulticastGroupFallbackFails) {
+  // Add router interface entry so have RIF.
+  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto rif_entry2 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac2),
+      swss::MacAddress(kDstMac0), kVlanIdNum1, p4orch::kMulticastSetSrcMac,
+      kRifOid2, kNextHopOid2);
+  auto rif_entry3 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet3", "0x0", swss::MacAddress(kSrcMac3),
+      swss::MacAddress(kDstMac0), kVlanIdNum1, p4orch::kMulticastSetSrcMac,
+      kRifOid3, kNextHopOid3);
+  auto rif_entry4 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet4", "0x0", swss::MacAddress(kSrcMac4),
+      swss::MacAddress(kDstMac0), kVlanIdNum1, p4orch::kMulticastSetSrcMac,
+      kRifOid4, kNextHopOid4);
+
+  P4Replica replica1 = P4Replica("0x1", "Ethernet1", "0x0");
+  P4Replica replica2 = P4Replica("0x1", "Ethernet2", "0x0");
+  P4Replica replica3 = P4Replica("0x1", "Ethernet3", "0x0");
+  P4Replica replica4 = P4Replica("0x1", "Ethernet4", "0x0");
+
+  std::vector<sai_object_id_t> nexthop_oids = {kNextHopOid1, kNextHopOid2};
+  SetupP4MulticastGroupEntryWithBackups(
+      "0x1", {{replica1, replica3, replica4}, {replica2}}, kGroupOid1,
+      nexthop_oids);
+
+  // Bring up all ports. Expect no SAI calls.
+  UpdateFallbackGroup("Ethernet1", SAI_PORT_OPER_STATUS_UP);
+  UpdateFallbackGroup("Ethernet2", SAI_PORT_OPER_STATUS_UP);
+  UpdateFallbackGroup("Ethernet3", SAI_PORT_OPER_STATUS_UP);
+  UpdateFallbackGroup("Ethernet4", SAI_PORT_OPER_STATUS_UP);
+  ProcessFallbackGroupEvent();
+
+  // Ethernet1 goes down. Expect to use replica3 on the first replica.
+  UpdateFallbackGroup("Ethernet1", SAI_PORT_OPER_STATUS_DOWN);
+  std::vector<sai_object_id_t> nexthop_oids_2 = {kNextHopOid3, kNextHopOid2};
+  ProcessFallbackGroupEvent();
+}
+
+TEST_F(L3MulticastManagerTest, MulticastGroupFallbackWithPortFlap) {
+  // Add router interface entry so have RIF.
+  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto rif_entry2 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac2),
+      swss::MacAddress(kDstMac0), kVlanIdNum1, p4orch::kMulticastSetSrcMac,
+      kRifOid2, kNextHopOid2);
+  auto rif_entry3 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet3", "0x0", swss::MacAddress(kSrcMac3),
+      swss::MacAddress(kDstMac0), kVlanIdNum1, p4orch::kMulticastSetSrcMac,
+      kRifOid3, kNextHopOid3);
+  auto rif_entry4 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet4", "0x0", swss::MacAddress(kSrcMac4),
+      swss::MacAddress(kDstMac0), kVlanIdNum1, p4orch::kMulticastSetSrcMac,
+      kRifOid4, kNextHopOid4);
+
+  P4Replica replica1 = P4Replica("0x1", "Ethernet1", "0x0");
+  P4Replica replica2 = P4Replica("0x1", "Ethernet2", "0x0");
+  P4Replica replica3 = P4Replica("0x1", "Ethernet3", "0x0");
+  P4Replica replica4 = P4Replica("0x1", "Ethernet4", "0x0");
+
+  std::vector<sai_object_id_t> nexthop_oids = {kNextHopOid1, kNextHopOid2};
+  SetupP4MulticastGroupEntryWithBackups(
+      "0x1", {{replica1, replica3, replica4}, {replica2}}, kGroupOid1,
+      nexthop_oids);
+
+  // Bring up all ports. Expect no SAI calls.
+  UpdateFallbackGroup("Ethernet1", SAI_PORT_OPER_STATUS_UP);
+  UpdateFallbackGroup("Ethernet2", SAI_PORT_OPER_STATUS_UP);
+  UpdateFallbackGroup("Ethernet3", SAI_PORT_OPER_STATUS_UP);
+  UpdateFallbackGroup("Ethernet4", SAI_PORT_OPER_STATUS_UP);
+  ProcessFallbackGroupEvent();
+
+  // Ethernet1 flaps. Expect no SAI calls to happen.
+  UpdateFallbackGroup("Ethernet1", SAI_PORT_OPER_STATUS_DOWN);
+  UpdateFallbackGroup("Ethernet1", SAI_PORT_OPER_STATUS_UP);
+  ProcessFallbackGroupEvent();
+}
+
+TEST_F(L3MulticastManagerTest, MulticastGroupFallbackWithGroupUpdate) {
+  // Add router interface entry so have RIF.
+  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto rif_entry2 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac2),
+      swss::MacAddress(kDstMac0), kVlanIdNum1, p4orch::kMulticastSetSrcMac,
+      kRifOid2, kNextHopOid2);
+  auto rif_entry3 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet3", "0x0", swss::MacAddress(kSrcMac3),
+      swss::MacAddress(kDstMac0), kVlanIdNum1, p4orch::kMulticastSetSrcMac,
+      kRifOid3, kNextHopOid3);
+  auto rif_entry4 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet4", "0x0", swss::MacAddress(kSrcMac4),
+      swss::MacAddress(kDstMac0), kVlanIdNum1, p4orch::kMulticastSetSrcMac,
+      kRifOid4, kNextHopOid4);
+
+  P4Replica replica1 = P4Replica("0x1", "Ethernet1", "0x0");
+  P4Replica replica2 = P4Replica("0x1", "Ethernet2", "0x0");
+  P4Replica replica3 = P4Replica("0x1", "Ethernet3", "0x0");
+  P4Replica replica4 = P4Replica("0x1", "Ethernet4", "0x0");
+
+  std::vector<sai_object_id_t> nexthop_oids = {kNextHopOid1, kNextHopOid2};
+  SetupP4MulticastGroupEntryWithBackups(
+      "0x1", {{replica1, replica3, replica4}, {replica2}}, kGroupOid1,
+      nexthop_oids);
+
+  // Bring up all ports. Expect no SAI calls.
+  UpdateFallbackGroup("Ethernet1", SAI_PORT_OPER_STATUS_UP);
+  UpdateFallbackGroup("Ethernet2", SAI_PORT_OPER_STATUS_UP);
+  UpdateFallbackGroup("Ethernet3", SAI_PORT_OPER_STATUS_UP);
+  UpdateFallbackGroup("Ethernet4", SAI_PORT_OPER_STATUS_UP);
+  ProcessFallbackGroupEvent();
+
+  // Ethernet1 goes down. Expect to use replica3 on the first replica.
+  UpdateFallbackGroup("Ethernet1", SAI_PORT_OPER_STATUS_DOWN);
+  // New request to switch the backup priority of replica3 and replica4.
+  // Expect to use replica4 on the first replica.
+  auto group_entry = GenerateP4MulticastGroupEntryWithBackups(
+      "0x1", {{replica1, replica4, replica3}, {replica2}});
+  std::vector<sai_object_id_t> nexthop_oids_2 = {kNextHopOid4, kNextHopOid2};
   ProcessFallbackGroupEvent();
 }
 

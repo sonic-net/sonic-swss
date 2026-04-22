@@ -340,6 +340,8 @@ void P4Orch::doTask(swss::SelectableEvent& event) {
 
   if (&event == m_watchportEvent) {
     m_wcmpManager->processWatchPortEvent();
+  } else if (&event == m_fallbackEvent) {
+    m_l3MulticastManager->processFallbackGroupEvent();
   }
 }
 
