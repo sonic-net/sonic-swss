@@ -1,6 +1,7 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <chrono>
+#include <thread>
 #include <limits.h>
 #include "orchdaemon.h"
 #include "logger.h"
@@ -934,12 +935,15 @@ void OrchDaemon::start(long heartBeatInterval)
         ret = m_select->select(&s, SELECT_TIMEOUT);
 
         /*
-         * Log an error message periodically if a previous SAI API call failed with
-         * an unrecoverable error.
+         * When gOrchUnhealthy is set, the Select event loop spins with
+         * epoll_wait(timeout=0) because poll_descriptors phase 1 always
+         * finds "ready" Selectables (the notification channel stays readable
+         * after the SAI failure), so the blocking phase 2 poll is never
+         * reached. This causes 100% CPU. Sleep to throttle the loop.
          */
-        if (gOrchUnhealthy)
+        if (gOrchUnhealthy && ret != Select::TIMEOUT)
         {
-            SWSS_LOG_ERROR("%s", gSaiErrorString.c_str());
+            std::this_thread::sleep_for(std::chrono::milliseconds(SELECT_TIMEOUT));
         }
 
         auto tend = std::chrono::high_resolution_clock::now();
@@ -950,6 +954,16 @@ void OrchDaemon::start(long heartBeatInterval)
         if (diff.count() >= SELECT_TIMEOUT)
         {
             tstart = std::chrono::high_resolution_clock::now();
+
+            /*
+             * Log an error message periodically if a previous SAI API call failed with
+             * an unrecoverable error. Rate-limit to once per SELECT_TIMEOUT interval
+             * to avoid busy-loop CPU spin from excessive syslog writes.
+             */
+            if (gOrchUnhealthy)
+            {
+                SWSS_LOG_ERROR("%s", gSaiErrorString.c_str());
+            }
 
             flush();
         }
@@ -1363,6 +1377,13 @@ bool DpuOrchDaemon::init()
     DashPortMapOrch *dash_port_map_orch = new DashPortMapOrch(m_dpu_appDb, dash_port_map_tables, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_port_map_orch);
 
+    vector<string> dash_ha_flow_tables = {
+        APP_DASH_FLOW_SYNC_SESSION_TABLE_NAME,
+        APP_DASH_FLOW_DUMP_FILTER_TABLE_NAME
+    };
+    DashHaFlowOrch *dash_ha_flow_orch = new DashHaFlowOrch(m_dpu_appDb, dash_ha_flow_tables, m_dpu_appstateDb, dash_zmq_server);
+    gDirectory.set(dash_ha_flow_orch);
+
     addOrchList(dash_acl_orch);
     addOrchList(dash_vnet_orch);
     addOrchList(dash_route_orch);
@@ -1371,6 +1392,7 @@ bool DpuOrchDaemon::init()
     addOrchList(dash_meter_orch);
     addOrchList(dash_ha_orch);
     addOrchList(dash_port_map_orch);
+    addOrchList(dash_ha_flow_orch);
 
     return true;
 }

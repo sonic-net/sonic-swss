@@ -3,6 +3,8 @@
 #include <sys/mman.h>
 
 extern sai_switch_api_t *sai_switch_api;
+extern bool gOrchUnhealthy;
+extern string gSaiErrorString;
 
 namespace saifailure_test
 {
@@ -85,6 +87,35 @@ namespace saifailure_test
         handleSaiRemoveStatus(SAI_API_LAG, SAI_STATUS_FAILURE);
         ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+
+        _unhook_sai_switch_api();
+    }
+
+    TEST_F(SaiFailureTest, handleSaiFailureSetsOrchUnhealthy)
+    {
+        /*
+         * Verify that handleSaiFailure sets gOrchUnhealthy and gSaiErrorString.
+         * The orchdaemon main loop relies on gOrchUnhealthy to log the error
+         * message periodically (rate-limited to once per SELECT_TIMEOUT).
+         * Previously the log was emitted on every select iteration, causing
+         * ~37K syslog writes/sec and 100% CPU when the select loop was busy.
+         */
+        _hook_sai_switch_api();
+
+        gOrchUnhealthy = false;
+        gSaiErrorString.clear();
+
+        handleSaiCreateStatus(SAI_API_HOSTIF, SAI_STATUS_FAILURE);
+
+        ASSERT_TRUE(gOrchUnhealthy);
+        ASSERT_FALSE(gSaiErrorString.empty());
+        ASSERT_NE(gSaiErrorString.find("SAI_API_HOSTIF"), string::npos);
+        ASSERT_NE(gSaiErrorString.find("SAI_STATUS_FAILURE"), string::npos);
+        ASSERT_NE(gSaiErrorString.find("create"), string::npos);
+
+        // Reset for other tests
+        gOrchUnhealthy = false;
+        gSaiErrorString.clear();
 
         _unhook_sai_switch_api();
     }

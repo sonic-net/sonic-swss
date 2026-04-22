@@ -270,7 +270,7 @@ public:
     bool removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip);
     void increaseBridgePortRefCount(Port &port);
     void decreaseBridgePortRefCount(Port &port);
-    bool getBridgePortReferenceCount(Port &port);
+    uint32_t getBridgePortReferenceCount(Port &port);
 
     string m_inbandPortName = "";
     bool isInbandPort(const string &alias);
