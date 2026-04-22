@@ -1,6 +1,7 @@
 #include <cassert>
 #include <string>
 #include <vector>
+#include <set>
 #include <unordered_map>
 #include <unordered_set>
 #include <stdexcept>
@@ -1818,7 +1819,7 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
     NeighborEntry neigh;
     MacAddress mac;
     MuxCable* ptr;
-    bool found_existing_mux_neighbor = false;
+    std::set<NeighborEntry> handled;
 
     // Handle existing MUX neighbors that might be moving between ports
     for (auto nh = mux_nexthop_tb_.begin(); nh != mux_nexthop_tb_.end(); ++nh)
@@ -1829,7 +1830,7 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
             continue;
         }
 
-        found_existing_mux_neighbor = true;
+        handled.insert(nh->first);
 
         if (nh->second != update.entry.port_name)
         {
@@ -1852,15 +1853,17 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
         }
     }
 
-    // Handle case where neighbor exists but is not yet a MUX neighbor
-    // This can happen when FDB entry is learned after neighbor is added
-    if (!found_existing_mux_neighbor && isMuxExists(update.entry.port_name))
+    // Fallback: convert any NeighOrch entry that shares this MAC on the FDB's
+    // mux port but is not yet in mux_nexthop_tb_. Always runs when the FDB
+    // port is a mux; the `handled` set prevents re-processing neighbors that
+    // the loop above already re-bound.
+    if (isMuxExists(update.entry.port_name))
     {
         // Check if there's an existing neighbor with this MAC on any VLAN interface
         // that could be converted to a MUX neighbor
         auto vlan_ports = gPortsOrch->getAllVlans();
-        SWSS_LOG_INFO("FDB update without mux neighbor on mux port %s, mac %s", update.entry.port_name.c_str(),
-                update.entry.mac.to_string().c_str());
+        SWSS_LOG_INFO("FDB update on mux port %s, mac %s — scanning for stranded neighbors",
+                update.entry.port_name.c_str(), update.entry.mac.to_string().c_str());
 
         for (auto vlan_alias : vlan_ports)
         {
@@ -1870,6 +1873,12 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
             {
                 const NeighborEntry& neighbor_entry = neighbor_pair.first;
                 const auto& neighbor_data = neighbor_pair.second;
+
+                // Already re-bound by the loop above — skip.
+                if (handled.count(neighbor_entry))
+                {
+                    continue;
+                }
 
                 // Skip prefix_route neighbors that are not skip neighbors
                 // soc neighbors will get added with prefix_route but

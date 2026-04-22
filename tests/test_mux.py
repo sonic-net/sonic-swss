@@ -2117,6 +2117,113 @@ class TestMuxTunnel(TestMuxTunnelBase):
             self.set_mux_state(appdb, cable_name, "active")
             time.sleep(1)
 
+    def test_fdb_aging_after_neighbor_shared_mac(
+        self, dvs, dvs_route, setup, setup_vlan, setup_mux_cable, setup_tunnel,
+        setup_peer_switch, testlog
+    ):
+        """Reproduce shared-MAC neighbor recovery bug in MuxOrch::updateFdb().
+
+        Scenario (two neighbors sharing one MAC on a standby mux port, e.g.
+        IPv6 link-local + global on the same server NIC):
+
+        1. FDB for MAC X is present on Ethernet0 (standby).
+        2. Neighbor A (IP_A / MAC X) is learned -> fully converted to a MUX
+           neighbor, present in mux_nexthop_tb_.
+        3. FDB for MAC X ages out.
+        4. Neighbor B (IP_B / MAC X) is learned while FDB is absent.
+           On master (post-#4459) updateNeighbor returns early because
+           getMuxPort() fails with no FDB and the empty-port placeholder
+           was removed. B is NOT added to mux_nexthop_tb_.
+        5. FDB for MAC X is re-learned on Ethernet0 -> MuxOrch::updateFdb
+           fires. Loop over mux_nexthop_tb_ hits A (same MAC), sets
+           found_existing_mux_neighbor=true. The fallback block that is
+           supposed to convert any stranded same-MAC neighbor is gated
+           by !found_existing_mux_neighbor, so it is skipped for B.
+
+        Expected (fix): both A and B end up MUX-managed on standby
+        (removed from ASIC neighbor table, tunnel route installed).
+        Actual (current master): B stays as a regular ASIC neighbor with
+        no tunnel route -> unroutable toward peer ToR.
+
+        This test currently fails on master and is the canary for the
+        fix that replaces the function-scoped boolean with per-IP
+        tracking.
+        """
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = dvs.get_asic_db()
+
+        ip_a = "192.168.0.210"
+        ip_b = "192.168.0.211"
+        shared_mac = "00:00:00:00:aa:dd"
+        shared_mac_dash = "00-00-00-00-aa-dd"
+        cable_name = "Ethernet0"
+
+        try:
+            # Step 1: Standby mux, prime FDB for the shared MAC on Ethernet0
+            self.set_mux_state(appdb, cable_name, "standby")
+            self.add_fdb(dvs, cable_name, shared_mac_dash)
+            time.sleep(1)
+
+            # Step 2: Neighbor A with the shared MAC arrives while FDB is
+            # present -> should be fully converted to a MUX neighbor on
+            # standby (not in ASIC, tunnel route installed).
+            self.add_neighbor(dvs, ip_a, shared_mac)
+            time.sleep(2)
+            self.check_neigh_in_asic_db(asicdb, ip_a, expected=False)
+            self.check_tunnel_route_in_app_db(dvs, [ip_a + self.IPV4_MASK], expected=True)
+
+            # Step 3: FDB for the shared MAC ages out. MuxOrch::updateFdb
+            # ignores delete events, so A stays in mux_nexthop_tb_.
+            self.del_fdb(dvs, shared_mac_dash)
+            time.sleep(1)
+
+            # Step 4: Neighbor B (different IP, same MAC) arrives while
+            # FDB is absent. On master, updateNeighbor returns early and
+            # B is NOT added to mux_nexthop_tb_; it sits as a plain
+            # NeighOrch entry in the ASIC.
+            self.add_neighbor(dvs, ip_b, shared_mac)
+            time.sleep(1)
+            self.check_neigh_in_asic_db(asicdb, ip_b, expected=True)
+            self.check_tunnel_route_in_app_db(dvs, [ip_b + self.IPV4_MASK], expected=False)
+
+            # Step 5: FDB for the shared MAC is re-learned on Ethernet0.
+            # This fires MuxOrch::updateFdb. Loop (A) hits neighbor A and
+            # sets found_existing_mux_neighbor=true, which masks the
+            # fallback that would otherwise convert B.
+            self.add_fdb(dvs, cable_name, shared_mac_dash)
+            time.sleep(2)
+
+            # Step 6: Both neighbors should now be MUX-managed on standby.
+            # A stays converted (baseline); B should ALSO be disabled and
+            # have a tunnel route installed. This assertion is the
+            # canary: it FAILS on master until the flag is replaced with
+            # per-IP tracking.
+            self.check_neigh_in_asic_db(asicdb, ip_a, expected=False)
+            self.check_tunnel_route_in_app_db(dvs, [ip_a + self.IPV4_MASK], expected=True)
+
+            self.check_neigh_in_asic_db(
+                asicdb, ip_b, expected=False
+            )  # Bug: currently True on master (B stranded)
+            self.check_tunnel_route_in_app_db(
+                dvs, [ip_b + self.IPV4_MASK], expected=True
+            )  # Bug: currently missing on master
+
+            # Step 7: Toggle to active -> both should be re-enabled and
+            # tunnel routes withdrawn (fix-validation smoke check).
+            self.set_mux_state(appdb, cable_name, "active")
+            self.check_neigh_in_asic_db(asicdb, ip_a, expected=True)
+            self.check_neigh_in_asic_db(asicdb, ip_b, expected=True)
+            self.check_tunnel_route_in_app_db(
+                dvs, [ip_a + self.IPV4_MASK, ip_b + self.IPV4_MASK], expected=False
+            )
+
+        finally:
+            self.del_neighbor(dvs, ip_a)
+            self.del_neighbor(dvs, ip_b)
+            self.del_fdb(dvs, shared_mac_dash)
+            self.set_mux_state(appdb, cable_name, "active")
+            time.sleep(1)
+
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
