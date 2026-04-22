@@ -8,8 +8,11 @@
  * when needed to test code that uses response publisher. */
 std::unique_ptr<MockResponsePublisher> gMockResponsePublisher;
 
-ResponsePublisher::ResponsePublisher(const std::string& dbName, bool buffered, bool db_write_thread) :
-    m_db(std::make_unique<swss::DBConnector>(dbName, 0)), m_buffered(buffered) {}
+ResponsePublisher::ResponsePublisher(const std::string& dbName, bool buffered,
+                                     bool db_write_thread,
+                                     swss::ZmqServer* zmqServer)
+    : m_db(std::make_unique<swss::DBConnector>(dbName, 0)),
+      m_buffered(buffered) {}
 
 ResponsePublisher::~ResponsePublisher() {}
 
@@ -40,6 +43,14 @@ void ResponsePublisher::writeToDB(
     const std::string& table, const std::string& key,
     const std::vector<swss::FieldValueTuple>& values, const std::string& op,
     bool replace) {}
+
+void ResponsePublisher::setEnableDbWriteAndNotify(bool enable_db_write_and_notify)
+{
+    if (gMockResponsePublisher)
+    {
+        gMockResponsePublisher->setEnableDbWriteAndNotify(enable_db_write_and_notify);
+    }
+}
 
 void ResponsePublisher::flush() {}
 
