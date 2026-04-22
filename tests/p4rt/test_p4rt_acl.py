@@ -513,6 +513,7 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_PACKET_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_BYTE_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_TABLE_ID, table_asic_db_key),
+            (self._p4rt_acl_counter_obj.SAI_ACL_COUNTER_ATTR_LABEL, "any_value"),
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -667,6 +668,7 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_PACKET_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_BYTE_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_TABLE_ID, table_asic_db_key),
+            (self._p4rt_acl_counter_obj.SAI_ACL_COUNTER_ATTR_LABEL, "any_value"),
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -864,6 +866,7 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_PACKET_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_BYTE_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_TABLE_ID, table_asic_db_key),
+            (self._p4rt_acl_counter_obj.SAI_ACL_COUNTER_ATTR_LABEL, "any_value"),
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -1051,6 +1054,7 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_PACKET_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_BYTE_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_TABLE_ID, table_asic_db_key),
+            (self._p4rt_acl_counter_obj.SAI_ACL_COUNTER_ATTR_LABEL, "any_value"),
         ]
         util.verify_attr(fvs, attr_list)
 
@@ -1435,6 +1439,7 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_PACKET_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_BYTE_COUNT, "true"),
             (self._p4rt_acl_counter_obj.SAI_ATTR_TABLE_ID, table_asic_db_key),
+            (self._p4rt_acl_counter_obj.SAI_ACL_COUNTER_ATTR_LABEL, "any_value"),
         ]
         util.verify_attr(fvs, attr_list)
 

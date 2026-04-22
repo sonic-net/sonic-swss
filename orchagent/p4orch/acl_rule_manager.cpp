@@ -98,8 +98,9 @@ std::vector<sai_attribute_t> getRuleSaiAttrs(const P4AclRule &acl_rule)
     return acl_entry_attrs;
 }
 
-std::vector<sai_attribute_t> getCounterSaiAttrs(const P4AclRule &acl_rule)
-{
+std::vector<sai_attribute_t> getCounterSaiAttrs(const P4AclRule& acl_rule,
+                                                std::string& mapper_key,
+                                                std::string& counter_label) {
     sai_attribute_t attr;
     std::vector<sai_attribute_t> counter_attrs;
     attr.id = SAI_ACL_COUNTER_ATTR_TABLE_ID;
@@ -119,6 +120,20 @@ std::vector<sai_attribute_t> getCounterSaiAttrs(const P4AclRule &acl_rule)
         attr.value.booldata = true;
         counter_attrs.push_back(attr);
     }
+
+    // Add label to uniquely identify acl counters.
+    const std::string counter_key = concatTableNameAndRuleKey(acl_rule.acl_table_name,
+                                                              acl_rule.acl_rule_key);
+
+    bool label_present = gLabelMapper->addLabelToAttr(
+        SAI_OBJECT_TYPE_ACL_COUNTER, APP_P4RT_TABLE_NAME,
+        counter_key, attr, SAI_ACL_COUNTER_ATTR_LABEL,
+        mapper_key, counter_label);
+
+    if (label_present) {
+        mapper_key = "";
+    }
+    counter_attrs.push_back(attr);
 
     return counter_attrs;
 }
@@ -396,8 +411,10 @@ ReturnCode AclRuleManager::createAclCounter(const std::string &acl_table_name, c
                                             const P4AclRule &acl_rule, sai_object_id_t *counter_oid)
 {
     SWSS_LOG_ENTER();
+    std::string mapper_key;
+    std::string counter_label;
 
-    auto attrs = getCounterSaiAttrs(acl_rule);
+    auto attrs = getCounterSaiAttrs(acl_rule, mapper_key, counter_label);
 
     CHECK_ERROR_AND_LOG_AND_RETURN(
         sai_acl_api->create_acl_counter(counter_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data()),
@@ -406,6 +423,10 @@ ReturnCode AclRuleManager::createAclCounter(const std::string &acl_table_name, c
     m_p4OidMapper->setOID(SAI_OBJECT_TYPE_ACL_COUNTER, counter_key, *counter_oid);
     gCrmOrch->incCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_COUNTER, acl_rule.acl_table_oid);
     m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_ACL_TABLE, acl_table_name);
+
+    if (mapper_key != "") {
+      gLabelMapper->setLabel(SAI_OBJECT_TYPE_ACL_COUNTER, mapper_key, counter_label);
+    }
     return ReturnCode();
 }
 
@@ -432,6 +453,11 @@ ReturnCode AclRuleManager::removeAclCounter(const std::string &acl_table_name, c
     gCrmOrch->decCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_COUNTER, table_oid);
     m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_ACL_COUNTER, counter_key);
     m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_ACL_TABLE, acl_table_name);
+    gLabelMapper->eraseLabel(
+                  SAI_OBJECT_TYPE_ACL_COUNTER,
+                  gLabelMapper->generateKeyFromTableAndObjectName(
+                      APP_P4RT_TABLE_NAME, counter_key));
+
     SWSS_LOG_NOTICE("Removing record about the counter %s from the DB", sai_serialize_object_id(counter_oid).c_str());
     return ReturnCode();
 }
@@ -2717,9 +2743,10 @@ std::string AclRuleManager::verifyStateAsicDb(const P4AclRule *acl_rule)
     }
 
     // Verify counter.
-    if (acl_rule->counter.packets_enabled || acl_rule->counter.bytes_enabled)
-    {
-        attrs = getCounterSaiAttrs(*acl_rule);
+    std::string mapper_key;
+    std::string counter_label;
+    if (acl_rule->counter.packets_enabled || acl_rule->counter.bytes_enabled) {
+      attrs = getCounterSaiAttrs(*acl_rule, mapper_key, counter_label);
         exp = saimeta::SaiAttributeList::serialize_attr_list(SAI_OBJECT_TYPE_ACL_COUNTER, (uint32_t)attrs.size(),
                                                              attrs.data(),
                                                              /*countOnly=*/false);
