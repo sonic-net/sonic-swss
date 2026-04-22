@@ -24,6 +24,19 @@ int main(int argc, char **argv)
 
     FdbSync sync(&pipelineAppDB, &stateDb, &config_db);
 
+    /* Check if EVPN MH is enabled at startup */
+    {
+        auto es_keys = config_db.keys("EVPN_ETHERNET_SEGMENT|*");
+        auto mh_entry = config_db.hgetall("EVPN_MH_GLOBAL|default");
+        bool mh_enabled = !es_keys.empty();
+        if (mh_entry.find("enabled") != mh_entry.end() && mh_entry["enabled"] == "true")
+            mh_enabled = true;
+        if (mh_entry.find("enabled") != mh_entry.end() && mh_entry["enabled"] == "false")
+            mh_enabled = false;
+        sync.setEvpnMhEnabled(mh_enabled);
+        SWSS_LOG_NOTICE("EVPN MH initial state: %s", mh_enabled ? "enabled" : "disabled");
+    }
+
     NetDispatcher::getInstance().registerRawMessageHandler(RTM_NEWNEIGH, &sync);
     NetDispatcher::getInstance().registerRawMessageHandler(RTM_DELNEIGH, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);

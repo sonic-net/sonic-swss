@@ -62,6 +62,9 @@ public:
     virtual void onMsg(int nlmsg_type, struct nl_object *obj) override;
     virtual void onMsgRaw(struct nlmsghdr *) override;
 
+    bool isEvpnMhEnabled() const { return m_evpnMhEnabled; }
+    void setEvpnMhEnabled(bool enabled) { m_evpnMhEnabled = enabled; }
+
     bool isIntfRestoreDone();
 
     AppRestartAssist *getRestartAssist()
@@ -95,6 +98,7 @@ public:
     bool m_isEvpnNvoExist = false;
 
 private:
+    bool m_evpnMhEnabled = false;  /* Runtime feature gate for EVPN MH netlink processing */
     ProducerStateTable m_fdbTable;
     ProducerStateTable m_imetTable;
     ProducerStateTable m_l2NhgTable;

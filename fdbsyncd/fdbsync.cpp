@@ -1098,6 +1098,12 @@ void FdbSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
 void FdbSync::onMsgNhg(struct nlmsghdr *msg)
 {
+    /* EVPN MH feature gate — ignore NHG netlink messages when MH is disabled */
+    if (!m_evpnMhEnabled)
+    {
+        return;
+    }
+
     struct nhmsg *nhm = (struct nhmsg *)NLMSG_DATA(msg);
     int len = (int)(msg->nlmsg_len - NLMSG_LENGTH(sizeof(*nhm)));
 
@@ -1306,6 +1312,15 @@ void FdbSync::onMsgRaw(struct nlmsghdr *h)
     if (!h)
     {
         SWSS_LOG_ERROR("Received NULL message");
+        return;
+    }
+
+    /* EVPN MH feature gate — for NHG messages, skip when MH is disabled.
+     * NEIGH messages are processed regardless (raw handler adds protocol
+     * field parsing which is a general improvement). */
+    if (!m_evpnMhEnabled &&
+        (h->nlmsg_type == RTM_NEWNEXTHOP || h->nlmsg_type == RTM_DELNEXTHOP))
+    {
         return;
     }
 
