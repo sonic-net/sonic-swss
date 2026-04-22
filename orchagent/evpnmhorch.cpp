@@ -290,6 +290,59 @@ void EvpnMhOrch::doTask(Consumer &consumer)
     SWSS_LOG_ENTER();
 
     string table_name = consumer.getTableName();
+
+    /* Handle EVPN_MH_GLOBAL config — controls the runtime feature gate */
+    if (table_name == "EVPN_MH_GLOBAL")
+    {
+        auto it = consumer.m_toSync.begin();
+        while (it != consumer.m_toSync.end())
+        {
+            KeyOpFieldsValuesTuple t = it->second;
+            string op = kfvOp(t);
+            if (op == SET_COMMAND)
+            {
+                for (auto &fv : kfvFieldsValues(t))
+                {
+                    if (fvField(fv) == "enabled")
+                    {
+                        bool new_enabled = (fvValue(fv) == "true");
+                        if (new_enabled != m_enabled)
+                        {
+                            m_enabled = new_enabled;
+                            SWSS_LOG_NOTICE("EVPN MH feature %s",
+                                m_enabled ? "ENABLED" : "DISABLED");
+                            if (!m_enabled)
+                            {
+                                disableEvpnMh();
+                            }
+                        }
+                    }
+                }
+            }
+            else if (op == DEL_COMMAND)
+            {
+                if (m_enabled)
+                {
+                    m_enabled = false;
+                    SWSS_LOG_NOTICE("EVPN MH feature DISABLED (config removed)");
+                    disableEvpnMh();
+                }
+            }
+            it = consumer.m_toSync.erase(it);
+        }
+        return;
+    }
+
+    /* All other tables require the feature to be enabled */
+    if (!m_enabled)
+    {
+        /* Drain the queue silently when disabled */
+        auto it = consumer.m_toSync.begin();
+        while (it != consumer.m_toSync.end())
+            it = consumer.m_toSync.erase(it);
+        return;
+    }
+
     if (table_name == "EVPN_DF_TABLE")
     {
         doEvpnEsDfTask(consumer);
@@ -301,6 +354,24 @@ void EvpnMhOrch::doTask(Consumer &consumer)
             doEvpnEsIntfTask(consumer);
         }
     }
+}
+
+void EvpnMhOrch::disableEvpnMh()
+{
+    SWSS_LOG_NOTICE("EVPN MH: disabling — cleaning up all MH state");
+
+    /* Clear DF elections — reset BUM TX_DROP on all ES vlan members */
+    for (auto &es : m_esDataMap)
+    {
+        string key = es.first;
+        deleteEsCache(key);
+    }
+    m_esDataMap.clear();
+
+    /* Clear ES interface map */
+    m_esIntfMap.clear();
+
+    SWSS_LOG_NOTICE("EVPN MH: cleanup complete");
 }
 
 bool EvpnMhOrch::isInterfaceDF(const std::string &port_name, sai_vlan_id_t vlan_id)

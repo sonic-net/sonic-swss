@@ -7095,7 +7095,7 @@ bool PortsOrch::addBridgePort(Port &port)
     attrs.push_back(attr);
 
     /* If the interface is associated with an ethernet segment, set the DF role */
-    if (gEvpnMhOrch && gEvpnMhOrch->isPortInterfaceAssociatedToEs(port.m_alias)) {
+    if (gEvpnMhOrch && gEvpnMhOrch->isEnabled() && gEvpnMhOrch->isPortInterfaceAssociatedToEs(port.m_alias)) {
         /* TODO FIXME: sridsant : Use proper attribute once its available in SAI */
         attr.id = SAI_BRIDGE_PORT_ATTR_EGRESS_FILTERING;
         attr.value.booldata = gEvpnMhOrch->isInterfaceDF(port.m_alias, DEFAULT_PORT_VLAN_ID);
@@ -7397,7 +7397,7 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
     attrs.push_back(attr);
 
     /* If the interface is associated with an ethernet segment, send the SAI vlan DF attribute */
-    if (gEvpnMhOrch && gEvpnMhOrch->isPortAndVlanAssociatedToEs(port.m_alias, vlan.m_vlan_info.vlan_id)) {
+    if (gEvpnMhOrch && gEvpnMhOrch->isEnabled() && gEvpnMhOrch->isPortAndVlanAssociatedToEs(port.m_alias, vlan.m_vlan_info.vlan_id)) {
         /* TODO: Use proper attribute once its available in SAI */
         attr.id = SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP;
         attr.value.booldata = gEvpnMhOrch->isInterfaceDF(port.m_alias, vlan.m_vlan_info.vlan_id);

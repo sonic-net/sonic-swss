@@ -31,11 +31,13 @@ public:
     EvpnMhOrch(vector<TableConnector> &connectors);
     ~EvpnMhOrch();
 
+    bool isEnabled() const { return m_enabled; }
     bool isPortInterfaceAssociatedToEs(const std::string &port_name);
     bool isPortAndVlanAssociatedToEs(const std::string &port_name, sai_vlan_id_t vlan_id);
     bool isInterfaceDF(const std::string &port_name, sai_vlan_id_t vlan_id);
 
 private:
+    bool m_enabled = false;  /* Runtime feature gate — set by EVPN_MH_GLOBAL config */
     std::map<std::string, std::unique_ptr<EsCacheEntry>> m_esDataMap;
     std::map<std::string, bool> m_esIntfMap;
 
@@ -48,6 +50,7 @@ private:
     std::string stripVlanFromInterfaceName(const std::string interfaceName);
 
     void doTask(Consumer &consumer);
+    void disableEvpnMh();  /* Cleanup all MH state on feature disable */
 };
 
 #endif /* SWSS_EVPNMHORCH_H */

@@ -217,10 +217,12 @@ bool OrchDaemon::init()
     // processes bridge ports and VLAN members (fixes warm boot ordering)
     TableConnector appDbDfTable(m_applDb, "EVPN_DF_TABLE");
     TableConnector confDbEvpnEsTable(m_configDb, "EVPN_ETHERNET_SEGMENT");
+    TableConnector confDbEvpnMhGlobal(m_configDb, "EVPN_MH_GLOBAL");
 
     vector<TableConnector> evpn_df_es_table_connectors = {
         appDbDfTable,
         confDbEvpnEsTable,
+        confDbEvpnMhGlobal,
     };
 
     gEvpnMhOrch = new EvpnMhOrch(evpn_df_es_table_connectors);
