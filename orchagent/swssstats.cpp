@@ -37,7 +37,7 @@ SwssStats::~SwssStats()
     SWSS_LOG_ENTER();
 
     {
-        lock_guard<mutex> lock(m_mutex);
+        lock_guard<mutex> lock(m_statsMutex);
         m_running = false;
     }
     // Wake the writer thread immediately instead of waiting up to m_interval_sec
@@ -94,7 +94,7 @@ void SwssStats::recordError(const string &table_name, uint64_t count)
 
 SwssStats::CounterSnapshot SwssStats::getCounters(const string &table_name)
 {
-    lock_guard<mutex> lock(m_mutex);
+    lock_guard<mutex> lock(m_statsMutex);
 
     CounterSnapshot snap;
     auto it = m_stats.find(table_name);
@@ -110,7 +110,7 @@ SwssStats::CounterSnapshot SwssStats::getCounters(const string &table_name)
 
 SwssStats::TableStats& SwssStats::getOrCreateStats(const string &table_name)
 {
-    lock_guard<mutex> lock(m_mutex);
+    lock_guard<mutex> lock(m_statsMutex);
 
     auto it = m_stats.find(table_name);
     if (it == m_stats.end())
@@ -165,7 +165,7 @@ void SwssStats::writerThread()
     while (true)
     {
         {
-            unique_lock<mutex> lock(m_mutex);
+            unique_lock<mutex> lock(m_statsMutex);
             // Wait for either the interval to elapse or a shutdown signal
             m_cv.wait_for(lock, chrono::seconds(m_interval_sec),
                           [this]{ return !m_running.load(memory_order_relaxed); });
@@ -180,7 +180,7 @@ void SwssStats::writerThread()
         vector<vector<FieldValueTuple>> table_values;
 
         {
-            lock_guard<mutex> lock(m_mutex);
+            lock_guard<mutex> lock(m_statsMutex);
 
             for (const auto& entry : m_stats)
             {

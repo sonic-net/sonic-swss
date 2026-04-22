@@ -82,7 +82,9 @@ private:
     std::atomic<bool> m_running;
     uint32_t m_interval_sec;
     std::unique_ptr<std::thread> m_thread;
-    std::mutex m_mutex;
+    // m_statsMutex guards m_stats and is held briefly by the writer thread
+    // when snapshotting counters, and by the destructor when signalling shutdown
+    std::mutex m_statsMutex;
     // m_cv allows the destructor to wake the writer thread immediately
     std::condition_variable m_cv;
 
@@ -91,15 +93,14 @@ private:
 
     // std::map is used instead of unordered_map: map iterators and references
     // to existing elements remain valid after new insertions, which is required
-    // because recordTask() holds a reference after releasing m_mutex.
+    // because recordTask() holds a reference after releasing m_statsMutex.
     std::map<std::string, TableStats> m_stats;
 
     SwssStats(uint32_t interval = 1);
 
     // Returns a stable reference to the TableStats for the given table,
-    // creating it if it does not exist. Safe to use after m_mutex is released
-    // because std::map never invalidates existing element references.
+    // creating it if it does not exist. Safe to use after m_statsMutex is
+    // released because std::map never invalidates existing element references.
     TableStats& getOrCreateStats(const std::string &table_name);
     void writerThread();
 };
-
