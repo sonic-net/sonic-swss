@@ -249,14 +249,26 @@ void BfdOrch::doTask(NotificationConsumer &consumer)
             if (state != bfd_session_lookup[id].state)
             {
                 auto key = bfd_session_lookup[id].peer;
+                const sai_bfd_session_state_t old_state = bfd_session_lookup[id].state;
+                const bool count_flap =
+                    (old_state == SAI_BFD_SESSION_STATE_UP && state == SAI_BFD_SESSION_STATE_DOWN) ||
+                    (old_state == SAI_BFD_SESSION_STATE_DOWN && state == SAI_BFD_SESSION_STATE_UP);
+
+                if (count_flap)
+                {
+                    bfd_session_lookup[id].flap_cnt++;
+                    m_stateBfdSessionTable.hset(key, "flap_cnt", to_string(bfd_session_lookup[id].flap_cnt));
+                }
+
                 m_stateBfdSessionTable.hset(key, "state", session_state_lookup.at(state));
 
                 SWSS_LOG_NOTICE("BFD session state for %s changed from %s to %s", key.c_str(),
-                            session_state_lookup.at(bfd_session_lookup[id].state).c_str(), session_state_lookup.at(state).c_str());
+                            session_state_lookup.at(old_state).c_str(), session_state_lookup.at(state).c_str());
 
                 BfdUpdate update;
                 update.peer = key;
                 update.state = state;
+                update.flap_cnt = bfd_session_lookup[id].flap_cnt;
                 notify(SUBJECT_TYPE_BFD_SESSION_STATE_CHANGE, static_cast<void *>(&update));
 
                 bfd_session_lookup[id].state = state;
@@ -542,6 +554,7 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     }
 
     fvVector.emplace_back("state", session_state_lookup.at(SAI_BFD_SESSION_STATE_DOWN));
+    fvVector.emplace_back("flap_cnt", "0");
 
     sai_object_id_t bfd_session_id = SAI_NULL_OBJECT_ID;
     sai_status_t status = sai_bfd_api->create_bfd_session(&bfd_session_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
@@ -569,6 +582,7 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     BfdUpdate update;
     update.peer = state_db_key;
     update.state = SAI_BFD_SESSION_STATE_DOWN;
+    update.flap_cnt = 0;
     notify(SUBJECT_TYPE_BFD_SESSION_STATE_CHANGE, static_cast<void *>(&update));
 
     return true;

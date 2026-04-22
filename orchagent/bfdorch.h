@@ -1,6 +1,8 @@
 #ifndef SWSS_BFDORCH_H
 #define SWSS_BFDORCH_H
 
+#include <cstdint>
+
 #include "orch.h"
 #include "observer.h"
 
@@ -8,6 +10,7 @@ struct BfdUpdate
 {
     std::string peer;
     sai_bfd_session_state_t state;
+    uint64_t flap_cnt = 0;
 };
 
 class BfdOrch: public Orch, public Subject
