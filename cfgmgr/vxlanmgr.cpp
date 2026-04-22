@@ -4,6 +4,7 @@
 #include <sstream>
 #include <string>
 #include <net/if.h>
+#include <arpa/inet.h>
 
 #include "logger.h"
 #include "producerstatetable.h"
@@ -65,6 +66,15 @@ static int cmdCreateVxlan(const swss::VxlanMgr::VxlanInfo & info, std::string & 
         cmd << " local " << shellquote(info.m_sourceIp);
     }
     cmd << " dstport 4789";
+    if (!info.m_sourceIp.empty())
+    {
+        // Parse IP to determine IPv4 vs IPv6
+        struct in6_addr addr6;
+        if (inet_pton(AF_INET6, info.m_sourceIp.c_str(), &addr6) == 1)
+        {
+            cmd << " udp6zerocsumrx";
+        }
+    }
     return swss::exec(cmd.str(), res);
 }
 
@@ -183,6 +193,7 @@ static int cmdDetachVxlanIfFromVnet(const swss::VxlanMgr::VxlanInfo & info, std:
 VxlanMgr::VxlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<std::string> &tables) :
         m_app_db(appDb),
         Orch(cfgDb, tables),
+        m_appVxlanTunnelTableProducer(appDb, APP_VXLAN_TUNNEL_TABLE_NAME),
         m_appVxlanTunnelTable(appDb, APP_VXLAN_TUNNEL_TABLE_NAME),
         m_appVxlanTunnelMapTable(appDb, APP_VXLAN_TUNNEL_MAP_TABLE_NAME),
         m_appSwitchTable(appDb, APP_SWITCH_TABLE_NAME),
@@ -429,7 +440,7 @@ bool VxlanMgr::doVxlanTunnelCreateTask(const KeyOpFieldsValuesTuple & t)
         }
     }
 
-    m_appVxlanTunnelTable.set(vxlanTunnelName, kfvFieldsValues(t));
+    m_appVxlanTunnelTableProducer.set(vxlanTunnelName, kfvFieldsValues(t));
     m_vxlanTunnelCache[vxlanTunnelName] = tuncache;
 
     SWSS_LOG_NOTICE("Create vxlan tunnel %s", vxlanTunnelName.c_str());
@@ -460,7 +471,7 @@ bool VxlanMgr::doVxlanTunnelDeleteTask(const KeyOpFieldsValuesTuple & t)
 
     if (isTunnelActive(vxlanTunnelName))
     {
-        m_appVxlanTunnelTable.del(vxlanTunnelName);
+        m_appVxlanTunnelTableProducer.del(vxlanTunnelName);
     }
 
     auto it1 = m_vxlanTunnelCache.find(vxlanTunnelName);
@@ -688,6 +699,12 @@ bool VxlanMgr::doVxlanEvpnNvoCreateTask(const KeyOpFieldsValuesTuple & t)
         if (!isTunnelActive(value))
         {
             SWSS_LOG_ERROR("NVO %s creation failed. VTEP not present",EvpnNvoName.c_str());
+            return false;
+        }
+        std::vector<FieldValueTuple> fv;
+        if (!m_appVxlanTunnelTable.get(value, fv))
+        {
+            SWSS_LOG_WARN("NVO %s creation delayed. VTEP %s not found", EvpnNvoName.c_str(), value.c_str());
             return false;
         }
         if (field == SOURCE_VTEP)
@@ -1012,7 +1029,14 @@ int VxlanMgr::createVxlanNetdevice(std::string vxlanTunnelName, std::string vni_
                    " address " + gMacAddress.to_string() + " type vxlan id " + 
                    std::string(vni_id) + " local " + src_ip + 
                    ((dst_ip  == "")? "":(" remote " + dst_ip)) + 
-                   " nolearning " + " dstport 4789 ";
+                   " nolearning " + " dstport 4789";
+    
+    // Add udp6zerocsumrx only for IPv6
+    struct in6_addr addr6;
+    if (inet_pton(AF_INET6, src_ip.c_str(), &addr6) == 1)
+    {
+        link_add_cmd += " udp6zerocsumrx";
+    }
     
     link_set_master_cmd = std::string("") + IP_CMD + " link set " + 
                           vxlan_dev_name + " master Bridge ";
