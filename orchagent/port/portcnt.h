@@ -99,6 +99,11 @@ public:
     } link_training; // Port link training
 
     struct {
+        bool value;
+        bool is_set = false;
+    } fast_linkup; // Port fast link-up enable
+
+    struct {
         std::string value;
         bool is_set = false;
     } media_type; // Port media type

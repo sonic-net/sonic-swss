@@ -35,6 +35,7 @@ ASIC_VIRTUAL_ROUTER_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"
 ASIC_PORT_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_PORT"
 ASIC_LAG_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_LAG"
 ASIC_TUNNEL_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL"
+ASIC_SWITCH_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_SWITCH"
 
 ADMIN_STATUS = "admin_status"
 VRF_NAME = "vrf_name"
@@ -84,6 +85,7 @@ class TestSubPortIntf(object):
         dvs.setup_db()
 
         self.default_vrf_oid = self.get_default_vrf_oid()
+        self.initial_vrf_count = len(self.get_oids(ASIC_VIRTUAL_ROUTER_TABLE))
 
         phy_port = self.SUB_PORT_INTERFACE_UNDER_TEST.split(VLAN_SUB_INTERFACE_SEPARATOR)[0]
 
@@ -389,8 +391,21 @@ class TestSubPortIntf(object):
         return oid[0]
 
     def get_default_vrf_oid(self):
+        # Query the switch object for the default virtual router ID instead of
+        # assuming there is exactly one VRF in ASIC_DB.  Other features (VRFs,
+        # VNETs, loopback-action, …) may legitimately create additional virtual
+        # routers before these tests run, so a count-based assertion is fragile.
+        tbl = swsscommon.Table(self.asic_db.db_connection, ASIC_SWITCH_TABLE)
+        switch_keys = tbl.getKeys()
+        assert len(switch_keys) >= 1, "No switch entry in ASIC_DB"
+        (status, fvs) = tbl.get(switch_keys[0])
+        assert status, "Failed to read switch entry from ASIC_DB"
+        for fv in fvs:
+            if fv[0] == "SAI_SWITCH_ATTR_DEFAULT_VIRTUAL_ROUTER_ID":
+                return fv[1]
+        # Fallback: if the attribute is absent, use legacy behaviour
         oids = self.get_oids(ASIC_VIRTUAL_ROUTER_TABLE)
-        assert len(oids) == 1, "Wrong # of default vrfs: %d, expected #: 1." % (len(oids))
+        assert len(oids) >= 1, "No virtual routers found in ASIC_DB"
         return oids[0]
 
     def get_ip_prefix_nhg_oid(self, ip_prefix, vrf_oid=None, prefix_present=True):
@@ -1004,7 +1019,7 @@ class TestSubPortIntf(object):
         self.set_parent_port_admin_status(dvs, parent_port, "up")
         if vrf_name:
             self.create_vrf(vrf_name)
-            self.asic_db.wait_for_n_keys(ASIC_VIRTUAL_ROUTER_TABLE, 2)
+            self.asic_db.wait_for_n_keys(ASIC_VIRTUAL_ROUTER_TABLE, self.initial_vrf_count + 1)
         self.create_sub_port_intf_profile(sub_port_intf_name, vrf_name)
 
         self.add_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
@@ -1056,7 +1071,7 @@ class TestSubPortIntf(object):
         # Remove vrf if created
         if vrf_name:
             self.remove_vrf(vrf_name)
-            self.asic_db.wait_for_n_keys(ASIC_VIRTUAL_ROUTER_TABLE, 1)
+            self.asic_db.wait_for_n_keys(ASIC_VIRTUAL_ROUTER_TABLE, self.initial_vrf_count)
             if vrf_name.startswith(VNET_PREFIX):
                 self.remove_vxlan_tunnel(self.TUNNEL_UNDER_TEST)
                 self.app_db.wait_for_n_keys(ASIC_TUNNEL_TABLE, 0)
@@ -1238,7 +1253,7 @@ class TestSubPortIntf(object):
         # Remove vrf if created
         if vrf_name:
             self.remove_vrf(vrf_name)
-            self.asic_db.wait_for_n_keys(ASIC_VIRTUAL_ROUTER_TABLE, 1)
+            self.asic_db.wait_for_n_keys(ASIC_VIRTUAL_ROUTER_TABLE, self.initial_vrf_count)
             if vrf_name.startswith(VNET_PREFIX):
                 self.remove_vxlan_tunnel(self.TUNNEL_UNDER_TEST)
                 self.app_db.wait_for_n_keys(ASIC_TUNNEL_TABLE, 0)
