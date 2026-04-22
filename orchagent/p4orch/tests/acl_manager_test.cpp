@@ -89,8 +89,13 @@ constexpr sai_object_id_t kUdfGroupOid1 = 4001;
 constexpr sai_object_id_t kUdfMatchOid1 = 5001;
 constexpr sai_object_id_t kUdfOid1 = 6001;
 constexpr char *kAclIngressTableName = "ACL_PUNT_TABLE";
+
 std::string kUdfGroupMapperKey = "P4RT_TABLE:ACL_PUNT_TABLE-udf2-0";
 std::string kUdfGroupMapperLabel = "1706901078193258";
+std::string kAclCounterMapperKey1 = "P4RT_TABLE:ACL_PUNT_TABLE:match/ether_type=0x0800:match/ipv6_dst=fdf8:f53b:82e4::53 & fdf8:f53b:82e4::53:priority=15";
+std::string kAclCounterLabel1 = "1707179015354132";
+std::string kAclCounterMapperKey2 = "P4RT_TABLE:ACL_PUNT_TABLE:match/arp_tpa=0xff112231:match/ether_type=0x0800:match/in_ports=Ethernet1,Ethernet2:match/ipmc_table_hit=0x1:match/ipv6_dst=fdf8:f53b:82e4::53 & fdf8:f53b:82e4::53:match/out_ports=Ethernet4,Ethernet5:match/vrf_id=b4-traffic:priority=15";
+std::string kAclCounterLabel2 = "1708458300499045";
 
 // Matches the policer sai_attribute_t[] argument.
 bool MatchSaiPolicerAttributeInStormMode(const int attrs_size,
@@ -944,6 +949,8 @@ class AclManagerTest : public ::testing::Test
         sai_udf_api->create_udf_match = create_udf_match;
 
         gLabelMapper->setLabel(SAI_OBJECT_TYPE_UDF_GROUP, kUdfGroupMapperKey, kUdfGroupMapperLabel);
+        gLabelMapper->setLabel(SAI_OBJECT_TYPE_ACL_COUNTER, kAclCounterMapperKey1, kAclCounterLabel1);
+        gLabelMapper->setLabel(SAI_OBJECT_TYPE_ACL_COUNTER, kAclCounterMapperKey2, kAclCounterLabel2);
     }
 
     void setUpCoppOrch()
@@ -2671,6 +2678,9 @@ TEST_F(AclManagerTest, DrainRuleTuplesToProcessSetDelRequestSucceeds)
     EXPECT_EQ(kAclIngressRuleOid1, acl_rule->acl_entry_oid);
     EXPECT_EQ(rule_tuple_key, acl_rule->db_key);
 
+    EXPECT_TRUE(gLabelMapper->existsLabel(SAI_OBJECT_TYPE_ACL_COUNTER,
+                                          kAclCounterMapperKey1));
+
     // Drain ACL rule tuple to process DEL request
     attributes.clear();
     EnqueueRuleTuple(std::string(kAclIngressTableName),
@@ -2686,6 +2696,9 @@ TEST_F(AclManagerTest, DrainRuleTuplesToProcessSetDelRequestSucceeds)
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
               DrainRuleTuples(/*failure_before=*/false));
     EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
+
+    EXPECT_FALSE(gLabelMapper->existsLabel(SAI_OBJECT_TYPE_ACL_COUNTER,
+                                           kAclCounterMapperKey1));
 }
 
 TEST_F(AclManagerTest, DrainRuleTuplesToProcessSetRequestInvalidTableNameRuleKeyFails)
@@ -5912,7 +5925,9 @@ TEST_F(AclManagerTest, AclRuleVerifyStateTest)
               std::vector<swss::FieldValueTuple>{
                   swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_TABLE_ID", "oid:0x7000000000606"},
                   swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_ENABLE_BYTE_COUNT", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT", "true"}});
+                  swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT", "true"},
+                  swss::FieldValueTuple{
+                      "SAI_ACL_COUNTER_ATTR_LABEL", kAclCounterLabel2}});
     table.set(
         "SAI_OBJECT_TYPE_POLICER:oid:0x7d1",
         std::vector<swss::FieldValueTuple>{
@@ -6447,7 +6462,9 @@ TEST_F(AclManagerTest, AclRuleVerifyStateAsicDbTest)
               std::vector<swss::FieldValueTuple>{
                   swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_TABLE_ID", "oid:0x7000000000606"},
                   swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_ENABLE_BYTE_COUNT", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT", "true"}});
+                  swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT", "true"},
+                  swss::FieldValueTuple{
+                      "SAI_ACL_COUNTER_ATTR_LABEL", kAclCounterLabel1}});
     table.set(
         "SAI_OBJECT_TYPE_POLICER:oid:0x7d1",
         std::vector<swss::FieldValueTuple>{
@@ -6484,7 +6501,9 @@ TEST_F(AclManagerTest, AclRuleVerifyStateAsicDbTest)
 
     // Verification should fail if counter entry mismatch.
     table.set("SAI_OBJECT_TYPE_ACL_COUNTER:oid:0xbb9",
-              std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_TABLE_ID", "oid:0x0"}});
+              std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_TABLE_ID", "oid:0x0"},
+                  swss::FieldValueTuple{
+                      "SAI_ACL_COUNTER_ATTR_LABEL", kAclCounterLabel1}});
     EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty());
 
     // Verification should fail if counter entry is missing.
@@ -6494,7 +6513,9 @@ TEST_F(AclManagerTest, AclRuleVerifyStateAsicDbTest)
               std::vector<swss::FieldValueTuple>{
                   swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_TABLE_ID", "oid:0x7000000000606"},
                   swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_ENABLE_BYTE_COUNT", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT", "true"}});
+                  swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT", "true"},
+                  swss::FieldValueTuple{
+                      "SAI_ACL_COUNTER_ATTR_LABEL", kAclCounterLabel1}});
 
     // Verification should fail if meter entry mismatch.
     table.set("SAI_OBJECT_TYPE_POLICER:oid:0x7d1",
