@@ -553,14 +553,123 @@ task_process_status MirrorOrch::updateEntry(const string& key, const vector<Fiel
 
     SWSS_LOG_NOTICE("Updating mirror session %s", key.c_str());
 
-    auto task_status = deleteEntry(key);
-    if (task_status != task_process_status::task_success)
+    auto sessionIter = m_syncdMirrors.find(key);
+    if (sessionIter == m_syncdMirrors.end())
     {
-        SWSS_LOG_ERROR("Failed to delete existing mirror session %s during update", key.c_str());
-        return task_status;
+        SWSS_LOG_ERROR("Failed to update non-existent mirror session %s", key.c_str());
+        return task_process_status::task_invalid_entry;
     }
 
-    return createEntry(key, data);
+    auto& session = sessionIter->second;
+
+    // Determine if any immutable fields have changed
+    bool immutable_changed = false;
+    uint32_t new_sample_rate = session.sample_rate;
+    uint32_t new_truncate_size = session.truncate_size;
+
+    for (auto& fv : data)
+    {
+        const auto& field = fvField(fv);
+        const auto& value = fvValue(fv);
+
+        if (field == MIRROR_SESSION_SAMPLE_RATE)
+        {
+            new_sample_rate = to_uint<uint32_t>(value);
+        }
+        else if (field == MIRROR_SESSION_TRUNCATE_SIZE)
+        {
+            new_truncate_size = to_uint<uint32_t>(value);
+        }
+        else if (field == MIRROR_SESSION_SRC_IP ||
+                 field == MIRROR_SESSION_DST_IP ||
+                 field == MIRROR_SESSION_GRE_TYPE ||
+                 field == MIRROR_SESSION_DSCP ||
+                 field == MIRROR_SESSION_TTL ||
+                 field == MIRROR_SESSION_QUEUE ||
+                 field == MIRROR_SESSION_SRC_PORT ||
+                 field == MIRROR_SESSION_DIRECTION ||
+                 field == MIRROR_SESSION_POLICER)
+        {
+            immutable_changed = true;
+        }
+    }
+
+    // If any immutable fields changed, must delete and recreate
+    if (immutable_changed)
+    {
+        SWSS_LOG_NOTICE("Immutable fields changed for session %s, performing delete+recreate", key.c_str());
+        auto task_status = deleteEntry(key);
+        if (task_status != task_process_status::task_success)
+        {
+            SWSS_LOG_ERROR("Failed to delete mirror session %s during update", key.c_str());
+            return task_status;
+        }
+        return createEntry(key, data);
+    }
+
+    // Only mutable fields (sample_rate, truncate_size) changed - update in-place
+    bool sample_rate_changed = (new_sample_rate != session.sample_rate);
+    bool truncate_size_changed = (new_truncate_size != session.truncate_size);
+
+    if (!sample_rate_changed && !truncate_size_changed)
+    {
+        SWSS_LOG_NOTICE("No field changes detected for session %s", key.c_str());
+        return task_process_status::task_success;
+    }
+
+    // If samplepacket exists, update its attributes in-place
+    if (session.samplepacketId != SAI_NULL_OBJECT_ID)
+    {
+        if (sample_rate_changed)
+        {
+            sai_attribute_t attr;
+            attr.id = SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE;
+            attr.value.u32 = new_sample_rate;
+            sai_status_t status = sai_samplepacket_api->set_samplepacket_attribute(
+                session.samplepacketId, &attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to update sample_rate for session %s, status %d", key.c_str(), status);
+                return task_process_status::task_failed;
+            }
+            session.sample_rate = new_sample_rate;
+            SWSS_LOG_NOTICE("Updated sample_rate to %u for session %s", new_sample_rate, key.c_str());
+        }
+
+        if (truncate_size_changed)
+        {
+            sai_attribute_t attr;
+            attr.id = SAI_SAMPLEPACKET_ATTR_TRUNCATE_SIZE;
+            attr.value.u32 = new_truncate_size;
+            sai_status_t status = sai_samplepacket_api->set_samplepacket_attribute(
+                session.samplepacketId, &attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to update truncate_size for session %s, status %d", key.c_str(), status);
+                return task_process_status::task_failed;
+            }
+            session.truncate_size = new_truncate_size;
+            SWSS_LOG_NOTICE("Updated truncate_size to %u for session %s", new_truncate_size, key.c_str());
+        }
+    }
+    else
+    {
+        // No samplepacket exists (full mirror path) but sample_rate/truncate_size changed
+        // Need to transition from full mirror to sampled path - delete+recreate
+        SWSS_LOG_NOTICE("Transitioning session %s from full mirror to sampled path, performing delete+recreate", key.c_str());
+        auto task_status = deleteEntry(key);
+        if (task_status != task_process_status::task_success)
+        {
+            SWSS_LOG_ERROR("Failed to delete mirror session %s during path transition", key.c_str());
+            return task_status;
+        }
+        return createEntry(key, data);
+    }
+
+    // Update STATE_DB with new values
+    setSessionState(key, session);
+
+    return task_process_status::task_success;
 }
 
 task_process_status MirrorOrch::deleteEntry(const string& name)
