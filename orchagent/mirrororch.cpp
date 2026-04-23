@@ -572,15 +572,24 @@ task_process_status MirrorOrch::updateEntry(const string& key, const vector<Fiel
         const auto& field = fvField(fv);
         const auto& value = fvValue(fv);
 
-        if (field == MIRROR_SESSION_SAMPLE_RATE)
+        try
         {
-            new_sample_rate = to_uint<uint32_t>(value);
+            if (field == MIRROR_SESSION_SAMPLE_RATE)
+            {
+                new_sample_rate = to_uint<uint32_t>(value);
+            }
+            else if (field == MIRROR_SESSION_TRUNCATE_SIZE)
+            {
+                new_truncate_size = to_uint<uint32_t>(value);
+            }
         }
-        else if (field == MIRROR_SESSION_TRUNCATE_SIZE)
+        catch (const exception& e)
         {
-            new_truncate_size = to_uint<uint32_t>(value);
+            SWSS_LOG_ERROR("Failed to parse %s for session %s: %s", field.c_str(), key.c_str(), e.what());
+            return task_process_status::task_invalid_entry;
         }
-        else if (field == MIRROR_SESSION_SRC_IP ||
+
+        if (field == MIRROR_SESSION_SRC_IP ||
                  field == MIRROR_SESSION_DST_IP ||
                  field == MIRROR_SESSION_GRE_TYPE ||
                  field == MIRROR_SESSION_DSCP ||
@@ -607,6 +616,21 @@ task_process_status MirrorOrch::updateEntry(const string& key, const vector<Fiel
         return createEntry(key, data);
     }
 
+    // Detect path transition (sampled <-> full mirror) — requires delete+recreate
+    bool was_sampled = (session.sample_rate > 0);
+    bool will_be_sampled = (new_sample_rate > 0);
+    if (was_sampled != will_be_sampled)
+    {
+        SWSS_LOG_NOTICE("Mirror path transition for session %s, performing delete+recreate", key.c_str());
+        auto task_status = deleteEntry(key);
+        if (task_status != task_process_status::task_success)
+        {
+            SWSS_LOG_ERROR("Failed to delete mirror session %s during path transition", key.c_str());
+            return task_status;
+        }
+        return createEntry(key, data);
+    }
+
     // Only mutable fields (sample_rate, truncate_size) changed - update in-place
     bool sample_rate_changed = (new_sample_rate != session.sample_rate);
     bool truncate_size_changed = (new_truncate_size != session.truncate_size);
@@ -620,6 +644,7 @@ task_process_status MirrorOrch::updateEntry(const string& key, const vector<Fiel
     // If samplepacket exists, update its attributes in-place
     if (session.samplepacketId != SAI_NULL_OBJECT_ID)
     {
+        // Apply SAI updates first, commit to session only after both succeed
         if (sample_rate_changed)
         {
             sai_attribute_t attr;
@@ -632,7 +657,6 @@ task_process_status MirrorOrch::updateEntry(const string& key, const vector<Fiel
                 SWSS_LOG_ERROR("Failed to update sample_rate for session %s, status %d", key.c_str(), status);
                 return task_process_status::task_failed;
             }
-            session.sample_rate = new_sample_rate;
             SWSS_LOG_NOTICE("Updated sample_rate to %u for session %s", new_sample_rate, key.c_str());
         }
 
@@ -645,12 +669,24 @@ task_process_status MirrorOrch::updateEntry(const string& key, const vector<Fiel
                 session.samplepacketId, &attr);
             if (status != SAI_STATUS_SUCCESS)
             {
+                // Rollback sample_rate if it was changed
+                if (sample_rate_changed)
+                {
+                    sai_attribute_t rollback_attr;
+                    rollback_attr.id = SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE;
+                    rollback_attr.value.u32 = session.sample_rate;
+                    sai_samplepacket_api->set_samplepacket_attribute(
+                        session.samplepacketId, &rollback_attr);
+                }
                 SWSS_LOG_ERROR("Failed to update truncate_size for session %s, status %d", key.c_str(), status);
                 return task_process_status::task_failed;
             }
-            session.truncate_size = new_truncate_size;
             SWSS_LOG_NOTICE("Updated truncate_size to %u for session %s", new_truncate_size, key.c_str());
         }
+
+        // Both SAI updates succeeded, commit to session object
+        session.sample_rate = new_sample_rate;
+        session.truncate_size = new_truncate_size;
     }
     else
     {
