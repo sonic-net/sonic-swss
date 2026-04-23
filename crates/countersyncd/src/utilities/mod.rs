@@ -1,6 +1,7 @@
 /// Utility helpers shared across countersyncd modules.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -30,8 +31,16 @@ pub fn format_hex_lines(buffer: &[u8]) -> String {
     lines.join("\n")
 }
 
-/// Log interval for communication stats.
-const COMM_LOG_INTERVAL: Duration = Duration::from_secs(600);
+/// Configurable log interval for communication stats (seconds).
+/// Set via set_comm_log_interval_secs() at startup (e.g. from CLI); default 600.
+static COMM_LOG_INTERVAL_SECS: AtomicU64 = AtomicU64::new(600);
+
+/// Sets the interval (in seconds) between periodic comm stats log lines.
+/// Call once at startup (e.g. from CLI). Shorter intervals (e.g. 60) help when
+/// verifying HFT processing slowness.
+pub fn set_comm_log_interval_secs(secs: u64) {
+    COMM_LOG_INTERVAL_SECS.store(secs, Ordering::Relaxed);
+}
 
 /// Channel labels for actor-to-actor communication.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -131,7 +140,8 @@ pub fn record_comm_stats(label: ChannelLabel, channel_len: usize) {
     }
 
     let now = Instant::now();
-    if now.duration_since(stats.last_log) >= COMM_LOG_INTERVAL {
+    let interval = Duration::from_secs(COMM_LOG_INTERVAL_SECS.load(Ordering::Relaxed));
+    if now.duration_since(stats.last_log) >= interval {
         let avg = stats.sum as f64 / stats.count as f64;
         let rms = (stats.sum_sq as f64 / stats.count as f64).sqrt();
         if stats.capacity > 0 {
