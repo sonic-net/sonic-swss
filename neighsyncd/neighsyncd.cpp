@@ -61,6 +61,10 @@ int main(int argc, char **argv)
                 }
                 sync.getRestartAssist()->startReconcileTimer(s);
             }
+            else
+            {
+                sync.getRestartAssist()->warmStartDisabled();
+            }
 
             netlink.registerGroup(RTNLGRP_NEIGH);
             cout << "Listens to neigh messages..." << endl;
