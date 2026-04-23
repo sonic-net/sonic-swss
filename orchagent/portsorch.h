@@ -148,10 +148,14 @@ namespace portphyserdesattr_test
 class PortSerdesAttrTest;
 } // namespace portphyserdesattr_test
 
+// Forward declaration
+#include "prbshandler.h"
+
 class PortsOrch : public Orch, public Subject
 {
 public:
     PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, DBConnector *chassisAppDb);
+    ~PortsOrch() { }
 
     bool allPortsReady();
     bool isInitDone();
@@ -317,6 +321,10 @@ private:
     unique_ptr<Table> m_pgPortTable;
     unique_ptr<Table> m_pgIndexTable;
     unique_ptr<Table> m_stateBufferMaximumValueTable;
+    unique_ptr<PrbsHandler> m_prbsHandler;
+    unique_ptr<Table> m_prbsTestTable;
+    unique_ptr<Table> m_prbsLaneResultTable;
+    unique_ptr<Table> m_prbsResultsTable;
     Table m_portStateTable;
     Table m_portOpErrTable;
 

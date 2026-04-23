@@ -67,6 +67,7 @@ orchagent_SOURCES = \
             port/port_capabilities.cpp \
             port/porthlpr.cpp \
             portsorch.cpp \
+            prbshandler.cpp \
             fabricportsorch.cpp \
             fgnhgorch.cpp \
             copporch.cpp \
