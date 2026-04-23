@@ -11,7 +11,11 @@ use std::io;
 use std::os::fd::AsRawFd;
 
 #[cfg(not(test))]
-use log::{debug, warn};
+use log::{debug, info, warn};
+#[cfg(not(test))]
+use std::thread;
+#[cfg(not(test))]
+use std::time::{Duration, Instant};
 #[cfg(not(test))]
 use netlink_packet_core::{NetlinkMessage, NetlinkPayload, NLM_F_ACK, NLM_F_REQUEST};
 #[cfg(not(test))]
@@ -381,5 +385,58 @@ pub fn resolve_multicast_group(
             io::ErrorKind::InvalidData,
             "Unexpected response type",
         )),
+    }
+}
+
+/// Poll until the generic netlink family is registered or `total_wait` elapses.
+///
+/// On timeout, logs a warning and returns so `countersyncd` can fall back to its
+/// existing reconnect path (e.g. when `syncd` registers the family slightly later).
+///
+/// NOTE: This function uses blocking `thread::sleep` and is called during process
+/// initialization, before any Tokio runtime workers are spawned. The blocking
+/// sleep does not affect async task execution.
+#[cfg(not(test))]
+pub fn wait_for_genl_family_registered(
+    family_name: &str,
+    total_wait: Duration,
+    poll: Duration,
+) {
+    if total_wait.is_zero() {
+        return;
+    }
+    let mut socket = match create_nl_resolver() {
+        Some(s) => s,
+        None => {
+            warn!(
+                "Cannot wait for netlink family '{}': failed to create resolver socket",
+                family_name
+            );
+            return;
+        }
+    };
+    let poll_eff = poll.max(Duration::from_millis(10));
+    let deadline = Instant::now() + total_wait;
+    info!(
+        "Waiting up to {:?} for generic netlink family '{}' to register",
+        total_wait, family_name
+    );
+    loop {
+        match resolve_family_id(&mut socket, family_name) {
+            Ok(_) => {
+                info!("Generic netlink family '{}' is registered", family_name);
+                return;
+            }
+            Err(e) => {
+                if Instant::now() >= deadline {
+                    warn!(
+                        "Timed out after {:?} waiting for netlink family '{}' ({:?}); proceeding",
+                        total_wait, family_name, e
+                    );
+                    return;
+                }
+                thread::sleep(poll_eff);
+            }
+        }
     }
 }

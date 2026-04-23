@@ -222,11 +222,59 @@ task_process_status HFTelOrch::profileTableSet(const string &profile_name, const
     }
 
     value_opt = fvsGetValue(values, "poll_interval", true);
+    auto value_opt_us = fvsGetValue(values, "poll_interval_us", true);
     uint32_t poll_interval = 0;
-    if (value_opt)
+    if (value_opt_us)
+    {
+        lexical_convert(*value_opt_us, poll_interval);
+        profile->setPollInterval(poll_interval);
+    }
+    else if (value_opt)
     {
         lexical_convert(*value_opt, poll_interval);
         profile->setPollInterval(poll_interval);
+    }
+
+    value_opt = fvsGetValue(values, "session_duration_sec", true);
+    if (value_opt)
+    {
+        uint32_t dur = 0;
+        lexical_convert(*value_opt, dur);
+        profile->setSessionDuration(dur);
+    }
+
+    value_opt = fvsGetValue(values, "traffic_classes", true);
+    if (value_opt)
+    {
+        profile->setTrafficClasses(*value_opt);
+    }
+
+    value_opt = fvsGetValue(values, "num_bins", true);
+    if (value_opt)
+    {
+        uint32_t bins = 0;
+        lexical_convert(*value_opt, bins);
+        profile->setNumBins(bins);
+    }
+
+    auto range_min_opt = fvsGetValue(values, "range_min_ns", true);
+    auto range_max_opt = fvsGetValue(values, "range_max_ns", true);
+    if (range_min_opt && range_max_opt)
+    {
+        uint32_t rmin = 0, rmax = 0;
+        lexical_convert(*range_min_opt, rmin);
+        lexical_convert(*range_max_opt, rmax);
+        if (rmin > rmax)
+        {
+            SWSS_LOG_THROW("Invalid range for profile %s: range_min_ns (%u) > range_max_ns (%u)",
+                           profile_name.c_str(), rmin, rmax);
+        }
+        profile->setRange(rmin, rmax);
+    }
+    else if (range_min_opt || range_max_opt)
+    {
+        SWSS_LOG_THROW("Both range_min_ns and range_max_ns must be provided together for profile %s",
+                       profile_name.c_str());
     }
 
     SWSS_LOG_NOTICE("The high frequency telemetry profile %s is set (stream_state: %s, poll_interval: %u)",
@@ -456,12 +504,24 @@ void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
 
 
         values.emplace_back("object_names", boost::algorithm::join(profile.second->getObjectNames(type), ","));
-        auto to_string = boost::adaptors::transformed([](sai_uint16_t n)
+        auto labels_to_string = boost::adaptors::transformed([](sai_uint16_t n)
                                                         { return boost::lexical_cast<std::string>(n); });
-        values.emplace_back("object_ids", boost::algorithm::join(profile.second->getObjectLabels(type) | to_string, ","));
+        values.emplace_back("object_ids", boost::algorithm::join(profile.second->getObjectLabels(type) | labels_to_string, ","));
 
 
         values.emplace_back("session_type", "ipfix");
+
+        if (profile.second->getSessionDuration() > 0)
+            values.emplace_back("session_duration_sec", std::to_string(profile.second->getSessionDuration()));
+        if (!profile.second->getTrafficClasses().empty())
+            values.emplace_back("traffic_classes", profile.second->getTrafficClasses());
+        if (profile.second->getNumBins() > 0)
+            values.emplace_back("num_bins", std::to_string(profile.second->getNumBins()));
+        if (profile.second->getRangeMinNs() > 0 || profile.second->getRangeMaxNs() > 0)
+        {
+            values.emplace_back("range_min_ns", std::to_string(profile.second->getRangeMinNs()));
+            values.emplace_back("range_max_ns", std::to_string(profile.second->getRangeMaxNs()));
+        }
 
         auto templates = profile.second->getTemplates(type);
         values.emplace_back("session_config", string(templates.begin(), templates.end()));

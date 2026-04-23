@@ -6,7 +6,7 @@ mod utilities;
 
 // External dependencies
 use clap::Parser;
-use log::{error, info};
+use log::{error, info, warn};
 use opentelemetry::ExportError;
 use std::time::Duration;
 use tokio::{spawn, sync::mpsc::channel};
@@ -15,8 +15,9 @@ use tokio::{spawn, sync::mpsc::channel};
 use crate::actor::{
     control_netlink::ControlNetlinkActor,
     counter_db::{CounterDBActor, CounterDBConfig},
-    data_netlink::{get_genl_family_group, DataNetlinkActor},
+    data_netlink::{load_hft_genl_constants, DataNetlinkActor},
     ipfix::IpfixActor,
+    netlink_utils::wait_for_genl_family_registered,
     stats_reporter::{ConsoleWriter, StatsReporterActor, StatsReporterConfig},
     swss::SwssActor,
     otel::{OtelActor, OtelActorConfig},
@@ -25,6 +26,23 @@ use crate::actor::{
 // Internal exit codes
 use countersyncd::exit_codes::{EXIT_FAILURE, EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED, EXIT_SUCCESS};
 use crate::utilities::{set_comm_capacity, ChannelLabel};
+
+use swss_common::DbConnector;
+
+/// Normalize OTLP gRPC endpoint for tonic (`http://` or `https://` required).
+/// Accepts values like `127.0.0.1:4317` or `http://127.0.0.1:4317` from OTEL_EXPORTER_OTLP_ENDPOINT.
+/// Standard SONiC with host-network swss and collectord: send to loopback gRPC.
+fn normalize_otlp_grpc_endpoint(raw: String) -> String {
+    let t = raw.trim();
+    if t.is_empty() {
+        return "http://127.0.0.1:4317".to_string();
+    }
+    if t.starts_with("http://") || t.starts_with("https://") {
+        t.to_string()
+    } else {
+        format!("http://{}", t)
+    }
+}
 
 /// Initialize logging based on command line arguments
 fn init_logging(log_level: &str, log_format: &str) {
@@ -195,15 +213,16 @@ struct Args {
     )]
     counter_db_capacity: usize,
 
-    /// Enable OpenTelemetry metrics export
-    #[arg(short = 'o', long, default_value = "false")]
+    /// Enable OpenTelemetry metrics export (may also set COUNTERSYNCD_ENABLE_OTEL=true)
+    #[arg(short = 'o', long, default_value = "false", env = "COUNTERSYNCD_ENABLE_OTEL")]
     enable_otel: bool,
 
-    /// OpenTelemetry collector endpoint
+    /// OpenTelemetry collector endpoint (defaults from OTEL_EXPORTER_OTLP_ENDPOINT when set)
     #[arg(
         long,
-        default_value = "http://localhost:4317",
-        help = "OpenTelemetry collector endpoint URL"
+        default_value = "http://127.0.0.1:4317",
+        env = "OTEL_EXPORTER_OTLP_ENDPOINT",
+        help = "OpenTelemetry collector endpoint URL (gRPC); scheme optional if set via env"
     )]
     otel_endpoint: String,
 
@@ -232,13 +251,55 @@ struct Args {
     otel_flush_timeout_ms: u64,
 }
 
+const SOCK_PATH: &str = "/var/run/redis/redis.sock";
+const CONFIG_DB_ID: i32 = 4;
+const TELEMETRY_GLOBAL_KEY: &str = "TELEMETRY_GLOBAL|config";
+
+fn read_counter_db_frequency_from_config() -> Option<u64> {
+    let db = match DbConnector::new_unix(CONFIG_DB_ID, SOCK_PATH, 0) {
+        Ok(conn) => conn,
+        Err(_) => return None,
+    };
+    let val = match db.hget(TELEMETRY_GLOBAL_KEY, "counter_db_frequency_sec") {
+        Ok(Some(v)) => v,
+        _ => return None,
+    };
+    let raw = val.to_string_lossy();
+    match raw.parse::<u64>() {
+        Ok(v) if v >= 1 && v <= 300 => Some(v),
+        Ok(v) => {
+            warn!(
+                "{} counter_db_frequency_sec={} is out of range (1..300), ignoring",
+                TELEMETRY_GLOBAL_KEY, v
+            );
+            None
+        }
+        Err(_) => {
+            warn!(
+                "{} counter_db_frequency_sec='{}' is not a valid integer, ignoring",
+                TELEMETRY_GLOBAL_KEY, raw
+            );
+            None
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
-    let args = Args::parse();
+    let mut args = Args::parse();
+    args.otel_endpoint = normalize_otlp_grpc_endpoint(args.otel_endpoint);
 
     // Initialize logging based on command line arguments
     init_logging(&args.log_level, &args.log_format);
+
+    if let Some(freq) = read_counter_db_frequency_from_config() {
+        info!(
+            "CONFIG_DB override: counter_db_frequency {} -> {} seconds",
+            args.counter_db_frequency, freq
+        );
+        args.counter_db_frequency = freq;
+    }
 
     info!("Starting SONiC High Frequency Telemetry Counter Sync Daemon");
     info!("Stats reporting enabled: {}", args.enable_stats);
@@ -284,14 +345,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     set_comm_capacity(ChannelLabel::IpfixToOtel, args.otel_capacity);
 
     // Get netlink family and group configuration from SONiC constants
-    let (family, group) = get_genl_family_group();
-    info!("Using netlink family: '{}', group: '{}'", family, group);
+    let hft_genl = load_hft_genl_constants();
+    info!(
+        "Using netlink family: '{}', group: '{}'",
+        hft_genl.family, hft_genl.group
+    );
+    wait_for_genl_family_registered(
+        &hft_genl.family,
+        Duration::from_millis(hft_genl.genl_register_wait_ms),
+        Duration::from_millis(hft_genl.genl_register_poll_ms),
+    );
 
     // Initialize and configure actors
-    let mut data_netlink = DataNetlinkActor::new(family.as_str(), group.as_str(), command_receiver);
+    let mut data_netlink = DataNetlinkActor::new(
+        hft_genl.family.as_str(),
+        hft_genl.group.as_str(),
+        command_receiver,
+    );
     data_netlink.add_recipient(ipfix_record_sender);
 
-    let control_netlink = ControlNetlinkActor::new(family.as_str(), command_sender);
+    let control_netlink = ControlNetlinkActor::new(hft_genl.family.as_str(), command_sender);
 
     let mut ipfix = IpfixActor::new(ipfix_template_receiver, ipfix_record_receiver);
 

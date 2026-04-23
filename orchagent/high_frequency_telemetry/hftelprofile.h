@@ -44,6 +44,15 @@ public:
     sai_object_type_t getObjectType(sai_object_id_t tam_tel_type_obj) const;
     void setPollInterval(std::uint32_t poll_interval);
     void setBulkSize(std::uint32_t bulk_size);
+    void setSessionDuration(std::uint32_t duration_sec);
+    void setTrafficClasses(const std::string &tc_csv);
+    void setNumBins(std::uint32_t num_bins);
+    void setRange(std::uint32_t range_min_ns, std::uint32_t range_max_ns);
+    std::uint32_t getSessionDuration() const { return m_session_duration_sec; }
+    const std::string& getTrafficClasses() const { return m_traffic_classes; }
+    std::uint32_t getNumBins() const { return m_num_bins; }
+    std::uint32_t getRangeMinNs() const { return m_range_min_ns; }
+    std::uint32_t getRangeMaxNs() const { return m_range_max_ns; }
     void setObjectNames(const std::string &group_name, std::set<std::string> &&object_names);
     void setStatsIDs(const std::string &group_name, const std::set<std::string> &object_counters);
     void setObjectSAIID(sai_object_type_t object_type, const char *object_name, sai_object_id_t object_id);
@@ -67,6 +76,11 @@ private:
     const std::string m_profile_name;
     sai_tam_tel_type_state_t m_setting_state;
     std::uint32_t m_poll_interval;
+    std::uint32_t m_session_duration_sec{0};
+    std::string   m_traffic_classes;
+    std::uint32_t m_num_bins{0};
+    std::uint32_t m_range_min_ns{0};
+    std::uint32_t m_range_max_ns{0};
     std::map<sai_object_type_t, HFTelGroup> m_groups;
 
     // Runtime parameters
