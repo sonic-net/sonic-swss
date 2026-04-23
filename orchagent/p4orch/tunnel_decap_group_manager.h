@@ -4,6 +4,7 @@
 #include <string>
 #include <unordered_map>
 
+#include "dbconnector.h"
 #include "orch.h"
 #include "p4orch/object_manager_interface.h"
 #include "p4orch/p4oidmapper.h"
@@ -11,6 +12,8 @@
 #include "response_publisher_interface.h"
 #include "return_code.h"
 #include "vrforch.h"
+#include "table.h"
+
 extern "C" {
 #include "sai.h"
 }
@@ -121,6 +124,8 @@ class TunnelDecapGroupManager : public ObjectManagerInterface {
 
   // Owners of pointers below must outlive this class's instance.
   P4OidMapper* m_p4OidMapper;
+  swss::DBConnector m_asic_db;
+  swss::Table m_asic_state_table;
   VRFOrch* m_vrfOrch;
   ResponsePublisherInterface* m_publisher;
   std::deque<swss::KeyOpFieldsValuesTuple> m_entries;

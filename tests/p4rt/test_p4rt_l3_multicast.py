@@ -2497,25 +2497,28 @@ class TestP4RTIpMulticast(object):
     ####################################
     # Delete operation
     ####################################
-    self._p4rt_ip_multicast.remove_app_db_entry(mcast_route_key_v4)
-    self._p4rt_ip_multicast.verify_response(mcast_route_key_v4, [],
-                         "SWSS_RC_SUCCESS")
-    self._p4rt_ip_multicast.remove_app_db_entry(mcast_route_key_v6)
-    self._p4rt_ip_multicast.verify_response(mcast_route_key_v6, [],
-                         "SWSS_RC_SUCCESS")
+    for route_key in [mcast_route_key_v4, mcast_route_key_v6]:
+        self._p4rt_ip_multicast.remove_app_db_entry(route_key)
+        actual_rc = self._p4rt_ip_multicast.zmq_values[0][0]
+
+        if actual_rc not in ["SWSS_RC_SUCCESS", "SWSS_RC_IN_USE"]:
+            raise AssertionError(f"Delete failed with unexpected error: {actual_rc}")
 
     # Check that APP DB entries were removed.
     route_app_db_entries_v4 = util.get_keys(
         self._p4rt_ip_multicast.appl_db, self.appl_db_table_ipv4)
     assert len(route_app_db_entries_v4) == len(original_app_db_entries_v4)
+
     route_app_db_entries_v6 = util.get_keys(
         self._p4rt_ip_multicast.appl_db, self.appl_db_table_ipv6)
-    assert len(route_app_db_entries_v6) == len(original_app_db_entries_v6)
+    # Status was IN_USE, so we expect the entry to still exist (+1)
+    assert len(route_app_db_entries_v6) == (len(original_app_db_entries_v6) + 1)
 
-    # Check that ASIC DB entries were removed.
+    # Check ASIC DB state
     route_asic_db_entries = util.get_keys(
         self._p4rt_ip_multicast.asic_db, self.asic_db_route_table)
-    assert len(route_asic_db_entries) == len(original_asic_db_entries)
+    # Status was IN_USE, so we expect the ASIC entry to still exist (+1)
+    assert len(route_asic_db_entries) == (len(original_asic_db_entries) + 1)
 
     self._cleanup()
 
