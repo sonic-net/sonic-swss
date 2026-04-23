@@ -43,6 +43,8 @@
 
 #include "saitam.h"
 
+#include "flexcounterorch.h"
+
 extern sai_switch_api_t *sai_switch_api;
 extern sai_bridge_api_t *sai_bridge_api;
 extern sai_port_api_t *sai_port_api;
@@ -3942,6 +3944,14 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
      */
     if (getPort(port_id, port))
     {
+        auto *flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
+
+        if (flexCounterOrch && port_id != SAI_NULL_OBJECT_ID)
+        {
+            flexCounterOrch->removePortCounter(port_id);
+        }
+        port_stat_manager.clearCounterIdList(port_id);
+
         /* Bring port down before removing port */
         if (!setPortAdminStatus(port, false))
         {

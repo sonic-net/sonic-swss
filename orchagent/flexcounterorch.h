@@ -72,6 +72,7 @@ public:
     bool getWredPortCountersState() const;
     bool isCreateOnlyConfigDbBuffers() const;
     bool bake() override;
+    void removePortCounter(sai_object_id_t port_id);
 
 private:
     void handleDeviceMetadataTable(Consumer &consumer);
