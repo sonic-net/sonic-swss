@@ -1185,7 +1185,6 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     Orch::addExecutor(executor);
 }
 
-
 void PortsOrch::initializeCpuPort()
 {
     SWSS_LOG_ENTER();
@@ -1657,7 +1656,7 @@ bool PortsOrch::removePortBulk(const std::vector<sai_object_id_t> &portList)
 
             return false;
         }
-        
+
         m_portSupportedSpeeds.erase(portList.at(i));
         if(m_prbsHandler != nullptr)
         {
