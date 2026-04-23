@@ -12,6 +12,7 @@ extern "C" {
 #include <bitset>
 #include <chrono>
 #include <unordered_set>
+#include <unordered_map>
 #include <iomanip>
 #include <sstream>
 #include <boost/variant.hpp>
