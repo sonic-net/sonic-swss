@@ -3556,7 +3556,7 @@ bool VNetRouteOrch::addOperation(const Request& request)
     catch(std::runtime_error& _)
     {
         SWSS_LOG_ERROR("VNET add operation error %s ", _.what());
-        return true;
+        return false;
     }
 
     return true;
@@ -3580,7 +3580,7 @@ bool VNetRouteOrch::delOperation(const Request& request)
     catch(std::runtime_error& _)
     {
         SWSS_LOG_ERROR("VNET del operation error %s ", _.what());
-        return true;
+        return false;
     }
 
     return true;
