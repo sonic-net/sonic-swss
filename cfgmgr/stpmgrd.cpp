@@ -23,11 +23,9 @@ int main(int argc, char **argv)
 
     SWSS_LOG_NOTICE("--- Starting stpmgrd ---");
 
-    FILE *dbg_file = fopen("/stpmgrd_dbg_reload", "r");
-    if (dbg_file)
+    if (fopen("/stpmgrd_dbg_reload", "r"))
     {
         Logger::setMinPrio(Logger::SWSS_DEBUG);
-        fclose(dbg_file);
     }
 
     try

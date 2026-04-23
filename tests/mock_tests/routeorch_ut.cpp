@@ -231,6 +231,17 @@ namespace routeorch_test
             gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
             gDirectory.set(gPortsOrch);
 
+            TableConnector appDbDfTable(m_app_db.get(), "EVPN_DF_TABLE");
+            TableConnector confDbEvpnEsTable(m_config_db.get(), "EVPN_ETHERNET_SEGMENT");
+
+            vector<TableConnector> evpn_df_es_table_connectors = {
+                appDbDfTable,
+                confDbEvpnEsTable,
+            };
+
+            gEvpnMhOrch = new EvpnMhOrch(evpn_df_es_table_connectors);
+            gDirectory.set(gEvpnMhOrch);
+
             vector<string> flex_counter_tables = {
                 CFG_FLEX_COUNTER_TABLE_NAME
             };
@@ -250,8 +261,12 @@ namespace routeorch_test
             EvpnNvoOrch *evpn_orch = new EvpnNvoOrch(m_app_db.get(), APP_VXLAN_EVPN_NVO_TABLE_NAME);
             gDirectory.set(evpn_orch);
 
+            vector<table_name_with_pri_t> intf_tables = {
+                { APP_INTF_TABLE_NAME,  IntfsOrch::intfsorch_pri},
+                { APP_SAG_TABLE_NAME,   IntfsOrch::intfsorch_pri}
+            };
             ASSERT_EQ(gIntfsOrch, nullptr);
-            gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch, m_chassis_app_db.get());
+            gIntfsOrch = new IntfsOrch(m_app_db.get(), intf_tables, gVrfOrch, m_chassis_app_db.get());
 
             const int fdborch_pri = 20;
 
@@ -428,6 +443,9 @@ namespace routeorch_test
 
             delete gBufferOrch;
             gBufferOrch = nullptr;
+
+            delete gEvpnMhOrch;
+            gEvpnMhOrch = nullptr;
 
             sai_route_api = pold_sai_route_api;
             ut_helper::uninitSaiApi();

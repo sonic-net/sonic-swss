@@ -99,11 +99,6 @@ public:
     } link_training; // Port link training
 
     struct {
-        bool value;
-        bool is_set = false;
-    } fast_linkup; // Port fast link-up enable
-
-    struct {
         std::string value;
         bool is_set = false;
     } media_type; // Port media type
@@ -215,7 +210,7 @@ public:
             bool is_set = false;
         } custom_collection; // Port serdes custom_collection
 
-    } serdes, serdes_gb_line, serdes_gb_system; // Port serdes (ASIC port, gearbox line-side, gearbox system-side)
+    } serdes; // Port serdes
 
     struct {
         swss::Port::Role value;

@@ -100,15 +100,8 @@ void BufferMgr::readPgProfileLookupFile(string file)
 
 task_process_status BufferMgr::doCableTask(string port, string cable_length)
 {
-
-    if (cable_length != "None" && m_cableLenLookup[port] != cable_length)
-    {
-        m_cableLenLookup[port] = cable_length;
-        SWSS_LOG_INFO("Cable length set to %s for port %s", m_cableLenLookup[port].c_str(), port.c_str());
-        // The return status is ignored
-        doSpeedUpdateTask(port);
-    }
-
+    m_cableLenLookup[port] = cable_length;
+    SWSS_LOG_INFO("Cable length set to %s for port %s", m_cableLenLookup[port].c_str(), port.c_str());
     return task_process_status::task_success;
 }
 
@@ -450,11 +443,6 @@ void BufferMgr::doPortQosTableTask(Consumer &consumer)
                 // The return status is ignored
                 doSpeedUpdateTask(port_name);
             }
-        }
-        else if (op == DEL_COMMAND)
-        {
-            SWSS_LOG_INFO("Port %s removed from PORT_QOS_MAP, clearing PFC status", port_name.c_str());
-            m_portPfcStatus.erase(port_name);
         }
         it = consumer.m_toSync.erase(it);
     }

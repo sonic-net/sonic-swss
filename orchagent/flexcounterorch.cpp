@@ -21,7 +21,6 @@
 
 #include "dash/dashorch.h"
 #include "dash/dashmeterorch.h"
-#include "dash/dashhaorch.h"
 #include "flex_counter/flowcounterrouteorch.h"
 
 #include "flexcounterorch.h"
@@ -39,14 +38,12 @@ extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 extern Srv6Orch *gSrv6Orch;
 extern SwitchOrch *gSwitchOrch;
 extern sai_object_id_t gSwitchId;
-extern string gMySwitchType;
 
 int gFlexCounterDelaySec;
 
 #define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
 #define PORT_KEY                    "PORT"
 #define PORT_PHY_ATTR_KEY           "PORT_PHY_ATTR"
-#define PORT_PHY_SERDES_ATTR_KEY    "PORT_PHY_SERDES_ATTR"
 #define PORT_BUFFER_DROP_KEY        "PORT_BUFFER_DROP"
 #define QUEUE_KEY                   "QUEUE"
 #define QUEUE_WATERMARK             "QUEUE_WATERMARK"
@@ -63,13 +60,11 @@ int gFlexCounterDelaySec;
 #define WRED_PORT_KEY               "WRED_ECN_PORT"
 #define SRV6_KEY                    "SRV6"
 #define SWITCH_KEY                  "SWITCH"
-#define HA_SET_KEY                  "HA_SET"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
     {"PORT", PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"PORT_PHY_ATTR", PORT_PHY_ATTR_FLEX_COUNTER_GROUP},
-    {"PORT_PHY_SERDES_ATTR", PORT_PHY_SERDES_ATTR_FLEX_COUNTER_GROUP},
     {"PORT_RATES", PORT_RATE_COUNTER_FLEX_COUNTER_GROUP},
     {"DEBUG_MONITOR_COUNTER", DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP},
     {"PORT_BUFFER_DROP", PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP},
@@ -94,8 +89,7 @@ unordered_map<string, string> flexCounterGroupMap =
     {"WRED_ECN_PORT", WRED_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"WRED_ECN_QUEUE", WRED_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {SRV6_KEY, SRV6_STAT_COUNTER_FLEX_COUNTER_GROUP},
-    {SWITCH_KEY, SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP},
-    {HA_SET_KEY, HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP}
+    {SWITCH_KEY, SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP}
 };
 
 
@@ -161,7 +155,6 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 
     VxlanTunnelOrch* vxlan_tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     DashOrch* dash_orch = gDirectory.get<DashOrch*>();
-    DashHaOrch* dash_ha_orch = gDirectory.get<DashHaOrch*>();
     if (gPortsOrch && !gPortsOrch->allPortsReady())
     {
         return;
@@ -208,11 +201,6 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         {
                             setFlexCounterGroupPollInterval(flexCounterGroupMap[key], value, true);
                         }
-                    }
-                    // PORT_PHY_ATTR_KEY and PORT_PHY_SERDES_ATTR_KEY share the 'counterpoll phy' knob
-                    if (key == PORT_PHY_ATTR_KEY)
-                    {
-                        setFlexCounterGroupPollInterval(flexCounterGroupMap[PORT_PHY_SERDES_ATTR_KEY], value);
                     }
                 }
                 else if (field == BULK_CHUNK_SIZE_FIELD)
@@ -305,10 +293,6 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     {
                         dash_orch->handleMeterFCStatusUpdate((value == "enable"));
                     }
-                    if (dash_ha_orch && (key == HA_SET_KEY))
-                    {
-                        dash_ha_orch->handleHaSetFCStatusUpdate((value == "enable"));
-                    }
                     if (gCoppOrch && (key == FLOW_CNT_TRAP_KEY))
                     {
                         if (value == "enable")
@@ -341,31 +325,15 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     }
                     if (gPortsOrch && (key == PORT_PHY_ATTR_KEY))
                     {
-                        if(value == "enable")
+                        if(value == "enable" && !m_port_phy_attr_enabled)
                         {
-                            if (!m_port_phy_attr_enabled)
-                            {
-                                m_port_phy_attr_enabled = true;
-                                gPortsOrch->generatePortPhyAttrCounterMap();
-                            }
-                            if (!m_port_phy_serdes_attr_enabled)
-                            {
-                                m_port_phy_serdes_attr_enabled = true;
-                                gPortsOrch->generatePortPhySerdesAttrCounterMap();
-                            }
+                            m_port_phy_attr_enabled = true;
+                            gPortsOrch->generatePortPhyAttrCounterMap();
                         }
-                        if (value == "disable")
+                        if (value == "disable" && m_port_phy_attr_enabled)
                         {
-                            if (m_port_phy_attr_enabled)
-                            {
-                                gPortsOrch->clearPortPhyAttrCounterMap();
-                                m_port_phy_attr_enabled = false;
-                            }
-                            if (m_port_phy_serdes_attr_enabled)
-                            {
-                                gPortsOrch->clearPortPhySerdesAttrCounterMap();
-                                m_port_phy_serdes_attr_enabled = false;
-                            }
+                            gPortsOrch->clearPortPhyAttrCounterMap();
+                            m_port_phy_attr_enabled = false;
                         }
                     }
                     if (gSwitchOrch && (key == SWITCH_KEY) && (value == "enable"))
@@ -386,11 +354,6 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         {
                             setFlexCounterGroupOperation(flexCounterGroupMap[key], value, true);
                         }
-                    }
-                    // PORT_PHY_ATTR_KEY and PORT_PHY_SERDES_ATTR_KEY share the 'counterpoll phy' knob
-                    if (key == PORT_PHY_ATTR_KEY)
-                    {
-                        setFlexCounterGroupOperation(flexCounterGroupMap[PORT_PHY_SERDES_ATTR_KEY], value);
                     }
                 }
                 else
@@ -439,11 +402,6 @@ bool FlexCounterOrch::getPortCountersState() const
 bool FlexCounterOrch::getPortPhyAttrCounterState() const
 {
     return m_port_phy_attr_enabled;
-}
-
-bool FlexCounterOrch::getPortPhySerdesAttrCountersState() const
-{
-    return m_port_phy_serdes_attr_enabled;
 }
 
 bool FlexCounterOrch::getPortBufferDropCountersState() const
@@ -542,9 +500,7 @@ map<string, FlexCounterQueueStates> FlexCounterOrch::getQueueConfigurations()
 
     map<string, FlexCounterQueueStates> queuesStateVector;
 
-    // For VOQ chassis, flexcounterorch adds the Queue Counters for all egress and VOQ queues of all front panel and system ports
-    // to  the FLEX_COUNTER_DB irrespective of BUFFER_QUEUE configuration.
-    if ((!isCreateOnlyConfigDbBuffers()) || (gMySwitchType == "voq"))
+    if (!isCreateOnlyConfigDbBuffers())
     {
         FlexCounterQueueStates flexCounterQueueState(0);
         queuesStateVector.insert(make_pair(createAllAvailableBuffersStr, flexCounterQueueState));

@@ -1,7 +1,6 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <chrono>
-#include <thread>
 #include <limits.h>
 #include "orchdaemon.h"
 #include "logger.h"
@@ -72,6 +71,9 @@ StpOrch *gStpOrch;
 MuxOrch *gMuxOrch;
 IcmpOrch *gIcmpOrch;
 HFTelOrch *gHFTOrch;
+ShlOrch *gShlOrch;
+EvpnMhOrch *gEvpnMhOrch;
+L2NhgOrch *gL2NhgOrch;
 
 bool gIsNatSupported = false;
 event_handle_t g_events_handle;
@@ -180,13 +182,11 @@ bool OrchDaemon::init()
     TableConnector conf_asic_sensors(m_configDb, CFG_ASIC_SENSORS_TABLE_NAME);
     TableConnector conf_switch_hash(m_configDb, CFG_SWITCH_HASH_TABLE_NAME);
     TableConnector conf_switch_trim(m_configDb, CFG_SWITCH_TRIMMING_TABLE_NAME);
-    TableConnector conf_switch_fast_linkup(m_configDb, CFG_SWITCH_FAST_LINKUP_TABLE_NAME);
     TableConnector conf_suppress_asic_sdk_health_categories(m_configDb, CFG_SUPPRESS_ASIC_SDK_HEALTH_EVENT_NAME);
 
     vector<TableConnector> switch_tables = {
         conf_switch_hash,
         conf_switch_trim,
-        conf_switch_fast_linkup,
         conf_asic_sensors,
         conf_suppress_asic_sdk_health_categories,
         app_switch_table
@@ -212,6 +212,21 @@ bool OrchDaemon::init()
     };
 
     gPortsOrch = new PortsOrch(m_applDb, m_stateDb, ports_tables, m_chassisAppDb);
+
+    // Create EvpnMhOrch early so its ES/DF state is available when PortsOrch
+    // processes bridge ports and VLAN members (fixes warm boot ordering)
+    TableConnector appDbDfTable(m_applDb, "EVPN_DF_TABLE");
+    TableConnector confDbEvpnEsTable(m_configDb, "EVPN_ETHERNET_SEGMENT");
+    TableConnector confDbEvpnMhGlobal(m_configDb, "EVPN_MH_GLOBAL");
+
+    vector<TableConnector> evpn_df_es_table_connectors = {
+        appDbDfTable,
+        confDbEvpnEsTable,
+        confDbEvpnMhGlobal,
+    };
+
+    gEvpnMhOrch = new EvpnMhOrch(evpn_df_es_table_connectors);
+
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
     TableConnector stateMclagDbFdb(m_stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
     gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
@@ -275,8 +290,14 @@ bool OrchDaemon::init()
     ChassisOrch* chassis_frontend_orch = new ChassisOrch(m_configDb, m_applDb, chassis_frontend_tables, vnet_rt_orch);
     gDirectory.set(chassis_frontend_orch);
 
-    gIntfsOrch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME, vrf_orch, m_chassisAppDb);
+    vector<table_name_with_pri_t> intf_tables = {
+        { APP_INTF_TABLE_NAME,  IntfsOrch::intfsorch_pri},
+        { APP_SAG_TABLE_NAME,   IntfsOrch::intfsorch_pri}
+    };
+
+    gIntfsOrch = new IntfsOrch(m_applDb, intf_tables, vrf_orch, m_chassisAppDb);
     gDirectory.set(gIntfsOrch);
+
     gNeighOrch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassisAppDb);
     gDirectory.set(gNeighOrch);
 
@@ -471,6 +492,8 @@ bool OrchDaemon::init()
 
     gNhgMapOrch = new NhgMapOrch(m_applDb, APP_FC_TO_NHG_INDEX_MAP_TABLE_NAME);
 
+    gL2NhgOrch = new L2NhgOrch(m_applDb, APP_L2_NEXTHOP_GROUP_TABLE_NAME);
+
     /*
      * The order of the orch list is important for state restore of warm start and
      * the queued processing in m_toSync map after gPortsOrch->allPortsReady() is set.
@@ -479,8 +502,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch};
-
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gEvpnMhOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch, gL2NhgOrch};
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
     {
@@ -528,6 +550,13 @@ bool OrchDaemon::init()
 
     gIsoGrpOrch = new IsoGrpOrch(iso_grp_tbl_ctrs);
 
+    TableConnector appDbShlTbl(m_applDb, APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+    vector<TableConnector> shl_tbl_ctrs = {
+        appDbShlTbl
+    };
+
+    gShlOrch = new ShlOrch(shl_tbl_ctrs);
+
     //
     // Policy Based Hashing (PBH) orchestrator
     //
@@ -555,6 +584,7 @@ bool OrchDaemon::init()
     m_orchList.push_back(vxlan_tunnel_orch);
     m_orchList.push_back(evpn_nvo_orch);
     m_orchList.push_back(vxlan_tunnel_map_orch);
+    m_orchList.push_back(gShlOrch);
 
     if (vxlan_tunnel_orch->isDipTunnelsSupported())
     {
@@ -827,8 +857,7 @@ bool OrchDaemon::init()
     m_orchList.push_back(&CounterCheckOrch::getInstance(m_configDb));
 
     vector<string> p4rt_tables = {APP_P4RT_TABLE_NAME};
-    m_p4OrchZmqServer = new swss::ZmqServer(m_p4OrchZmqServerEp, "", false, true);
-    gP4Orch = new P4Orch(m_applDb, p4rt_tables, m_p4OrchZmqServer, vrf_orch, gCoppOrch);
+    gP4Orch = new P4Orch(m_applDb, p4rt_tables, vrf_orch, gCoppOrch);
     m_orchList.push_back(gP4Orch);
 
     TableConnector confDbTwampTable(m_configDb, CFG_TWAMP_SESSION_TABLE_NAME);
@@ -935,15 +964,12 @@ void OrchDaemon::start(long heartBeatInterval)
         ret = m_select->select(&s, SELECT_TIMEOUT);
 
         /*
-         * When gOrchUnhealthy is set, the Select event loop spins with
-         * epoll_wait(timeout=0) because poll_descriptors phase 1 always
-         * finds "ready" Selectables (the notification channel stays readable
-         * after the SAI failure), so the blocking phase 2 poll is never
-         * reached. This causes 100% CPU. Sleep to throttle the loop.
+         * Log an error message periodically if a previous SAI API call failed with
+         * an unrecoverable error.
          */
-        if (gOrchUnhealthy && ret != Select::TIMEOUT)
+        if (gOrchUnhealthy)
         {
-            std::this_thread::sleep_for(std::chrono::milliseconds(SELECT_TIMEOUT));
+            SWSS_LOG_ERROR("%s", gSaiErrorString.c_str());
         }
 
         auto tend = std::chrono::high_resolution_clock::now();
@@ -954,16 +980,6 @@ void OrchDaemon::start(long heartBeatInterval)
         if (diff.count() >= SELECT_TIMEOUT)
         {
             tstart = std::chrono::high_resolution_clock::now();
-
-            /*
-             * Log an error message periodically if a previous SAI API call failed with
-             * an unrecoverable error. Rate-limit to once per SELECT_TIMEOUT interval
-             * to avoid busy-loop CPU spin from excessive syslog writes.
-             */
-            if (gOrchUnhealthy)
-            {
-                SWSS_LOG_ERROR("%s", gSaiErrorString.c_str());
-            }
 
             flush();
         }
@@ -1377,13 +1393,6 @@ bool DpuOrchDaemon::init()
     DashPortMapOrch *dash_port_map_orch = new DashPortMapOrch(m_dpu_appDb, dash_port_map_tables, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_port_map_orch);
 
-    vector<string> dash_ha_flow_tables = {
-        APP_DASH_FLOW_SYNC_SESSION_TABLE_NAME,
-        APP_DASH_FLOW_DUMP_FILTER_TABLE_NAME
-    };
-    DashHaFlowOrch *dash_ha_flow_orch = new DashHaFlowOrch(m_dpu_appDb, dash_ha_flow_tables, m_dpu_appstateDb, dash_zmq_server);
-    gDirectory.set(dash_ha_flow_orch);
-
     addOrchList(dash_acl_orch);
     addOrchList(dash_vnet_orch);
     addOrchList(dash_route_orch);
@@ -1392,7 +1401,6 @@ bool DpuOrchDaemon::init()
     addOrchList(dash_meter_orch);
     addOrchList(dash_ha_orch);
     addOrchList(dash_port_map_orch);
-    addOrchList(dash_ha_flow_orch);
 
     return true;
 }

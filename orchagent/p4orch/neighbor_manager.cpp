@@ -330,9 +330,9 @@ std::vector<ReturnCode> NeighborManager::updateNeighbors(
   for (size_t i = 0; i < neighbor_entries.size(); ++i) {
     entries[i] = getNeighborEntry(KeyGenerator::generateNeighborKey(
         neighbor_entries[i].router_intf_id, neighbor_entries[i].neighbor_id));
-    statuses[i] = ReturnCode();
     if (!neighbor_entries[i].is_set_dst_mac ||
         entries[i]->dst_mac_address == neighbor_entries[i].dst_mac_address) {
+      statuses[i] = ReturnCode();
       continue;
     }
     sai_entries[size] = entries[i]->neigh_entry;
@@ -653,10 +653,13 @@ std::string NeighborManager::verifyStateAsicDb(const P4NeighborEntry *neighbor_e
         SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, (uint32_t)attrs.size(), attrs.data(),
         /*countOnly=*/false);
 
+    swss::DBConnector db("ASIC_DB", 0);
+    swss::Table table(&db, "ASIC_STATE");
     std::string key =
         sai_serialize_object_type(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY) + ":" + sai_serialize_neighbor_entry(sai_entry);
     std::vector<swss::FieldValueTuple> values;
-    if (!m_asic_state_table.get(key, values)) {
+    if (!table.get(key, values))
+    {
         return std::string("ASIC DB key not found ") + key;
     }
 

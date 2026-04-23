@@ -29,6 +29,8 @@
 #include "crmorch.h"
 #include "vrforch.h"
 #include "vxlanorch.h"
+#include "evpnmhorch.h"
+#include "l2nhgorch.h"
 #include "vnetorch.h"
 #include "countercheckorch.h"
 #include "flexcounterorch.h"
@@ -56,11 +58,11 @@
 #include "dash/dashtunnelorch.h"
 #include "dash/dashvnetorch.h"
 #include "dash/dashhaorch.h"
-#include "dash/dashhafloworch.h"
 #include "dash/dashmeterorch.h"
 #include "dash/dashportmaporch.h"
 #include "high_frequency_telemetry/hftelorch.h"
 #include <sairedis.h>
+#include "shlorch.h"
 
 using namespace swss;
 
@@ -116,10 +118,6 @@ protected:
     DBConnector *m_stateDb;
     DBConnector *m_chassisAppDb;
     ZmqServer *m_zmqServer;
-
-    // Use a dedicated zmq server for p4Orch.
-    const std::string m_p4OrchZmqServerEp = "ipc:///zmq_swss/p4orch_zmq_swss_ep";
-    ZmqServer *m_p4OrchZmqServer = nullptr;
 
     bool m_fabricEnabled = false;
     bool m_fabricPortStatEnabled = true;

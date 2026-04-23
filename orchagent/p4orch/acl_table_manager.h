@@ -5,7 +5,6 @@
 #include <utility>
 #include <vector>
 
-#include "dbconnector.h"
 #include "orch.h"
 #include "p4orch/acl_util.h"
 #include "p4orch/object_manager_interface.h"
@@ -13,7 +12,6 @@
 #include "p4orch/p4orch_util.h"
 #include "response_publisher_interface.h"
 #include "return_code.h"
-#include "table.h"
 
 extern "C"
 {
@@ -115,8 +113,6 @@ class AclTableManager : public ObjectManagerInterface
     ReturnCodeOr<std::vector<sai_attribute_t>> getUdfSaiAttrs(const P4UdfField &udf_field);
 
     P4OidMapper *m_p4OidMapper;
-    swss::DBConnector m_asic_db;
-    swss::Table m_asic_state_table;
     ResponsePublisherInterface *m_publisher;
     P4AclTableDefinitions m_aclTableDefinitions;
     std::deque<swss::KeyOpFieldsValuesTuple> m_entries;

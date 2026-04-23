@@ -17,6 +17,7 @@ extern "C"
 #include "mock_sai_virtual_router.h"
 #include "p4orch.h"
 #include "portsorch.h"
+#include "mock_routeorch.h"
 #include "sai_serialize.h"
 #include "switchorch.h"
 #include "vrforch.h"
@@ -59,6 +60,7 @@ PortsOrch *gPortsOrch;
 CrmOrch *gCrmOrch;
 P4Orch *gP4Orch;
 VRFOrch *gVrfOrch;
+RouteOrch *gRouteOrch;
 FlowCounterRouteOrch *gFlowCounterRouteOrch;
 SwitchOrch *gSwitchOrch;
 Directory<Orch *> gDirectory;
@@ -67,12 +69,14 @@ swss::DBConnector *gStateDb;
 swss::DBConnector *gConfigDb;
 swss::DBConnector *gCountersDb;
 MacAddress gVxlanMacAddress;
+MacAddress gMacAddress;
 
 sai_router_interface_api_t *sai_router_intfs_api;
 sai_neighbor_api_t *sai_neighbor_api;
 sai_next_hop_api_t *sai_next_hop_api;
 sai_next_hop_group_api_t *sai_next_hop_group_api;
 sai_route_api_t *sai_route_api;
+sai_mpls_api_t *sai_mpls_api;
 sai_acl_api_t *sai_acl_api;
 sai_policer_api_t *sai_policer_api;
 sai_virtual_router_api_t *sai_virtual_router_api;
@@ -87,8 +91,6 @@ sai_counter_api_t *sai_counter_api;
 sai_ipmc_api_t* sai_ipmc_api;
 sai_ipmc_group_api_t* sai_ipmc_group_api;
 sai_rpf_group_api_t* sai_rpf_group_api;
-sai_l2mc_api_t* sai_l2mc_api;
-sai_l2mc_group_api_t* sai_l2mc_group_api;
 sai_bridge_api_t* sai_bridge_api;
 sai_generic_programmable_api_t *sai_generic_programmable_api;
 
@@ -128,7 +130,7 @@ using ::testing::StrictMock;
 
 void CreatePort(const std::string port_name, const uint32_t speed, const uint32_t mtu, const sai_object_id_t port_oid,
                 Port::Type port_type = Port::PHY, const sai_port_oper_status_t oper_status = SAI_PORT_OPER_STATUS_DOWN,
-                const sai_object_id_t vlan_oid = 0, const uint16_t vlan_id = 0,
+                const sai_object_id_t vlan_oid = 0,
                 const sai_object_id_t vrouter_id = gVirtualRouterId, const bool admin_state_up = true)
 {
     Port port(port_name, port_type);
@@ -145,10 +147,7 @@ void CreatePort(const std::string port_name, const uint32_t speed, const uint32_
     port.m_vr_id = vrouter_id;
     port.m_admin_state_up = admin_state_up;
     port.m_oper_status = oper_status;
-    if (port_type == Port::SUBPORT) {
-        port.m_vlan_info.vlan_oid = vlan_oid;
-        port.m_vlan_info.vlan_id = vlan_id;
-    }
+    if (port_type == Port::SUBPORT) port.m_vlan_info.vlan_oid = vlan_oid;
 
     gPortsOrch->setPort(port_name, port);
 }
@@ -175,8 +174,7 @@ void SetupPorts()
                /*mtu=*/9100, /*port_oid=*/0x56789abcfff, Port::PHY, SAI_PORT_OPER_STATUS_UNKNOWN);
     CreatePort(/*port_name=*/"Ethernet10", /*speed=*/50000,
                /*mtu=*/9100, /*port_oid=*/0xabcfff, Port::SUBPORT, SAI_PORT_OPER_STATUS_DOWN, 
-               /*vlan_oid=*/0xffffff,
-               /*vlan_id=*/2);
+               /*vlan_oid=*/0xffffff);
 }
 
 void AddVrf()
@@ -203,16 +201,12 @@ int main(int argc, char *argv[])
     gBatchSize = DEFAULT_BATCH_SIZE;
     testing::InitGoogleTest(&argc, argv);
 
-    swss::Table logging_table(nullptr, CFG_LOGGER_TABLE_NAME);
-    logging_table.hset("SWSS", DAEMON_LOGLEVEL, "NOTICE");
-    logging_table.hset("SWSS", DAEMON_LOGOUTPUT, "STDOUT");
-    swss::Logger::linkToDb("SWSS", [](std::string, std::string) {}, "NOTICE");
-
     sai_router_interface_api_t router_intfs_api;
     sai_neighbor_api_t neighbor_api;
     sai_next_hop_api_t next_hop_api;
     sai_next_hop_group_api_t next_hop_group_api;
     sai_route_api_t route_api;
+    sai_mpls_api_t mpls_api; 
     sai_acl_api_t acl_api;
     sai_policer_api_t policer_api;
     sai_virtual_router_api_t virtual_router_api;
@@ -227,8 +221,6 @@ int main(int argc, char *argv[])
     sai_ipmc_api_t ipmc_api;
     sai_ipmc_group_api_t ipmc_group_api;
     sai_rpf_group_api_t rpf_group_api;
-    sai_l2mc_api_t l2mc_api;
-    sai_l2mc_group_api_t l2mc_group_api;
     sai_bridge_api_t bridge_api;
     sai_generic_programmable_api_t generic_programmable_api;
     sai_router_intfs_api = &router_intfs_api;
@@ -236,6 +228,7 @@ int main(int argc, char *argv[])
     sai_next_hop_api = &next_hop_api;
     sai_next_hop_group_api = &next_hop_group_api;
     sai_route_api = &route_api;
+    sai_mpls_api = &mpls_api;
     sai_acl_api = &acl_api;
     sai_policer_api = &policer_api;
     sai_virtual_router_api = &virtual_router_api;
@@ -250,8 +243,6 @@ int main(int argc, char *argv[])
     sai_ipmc_api = &ipmc_api;
     sai_ipmc_group_api = &ipmc_group_api;
     sai_rpf_group_api = &rpf_group_api;
-    sai_l2mc_api = &l2mc_api;
-    sai_l2mc_group_api = &l2mc_group_api;
     sai_bridge_api = &bridge_api;
     sai_generic_programmable_api = &generic_programmable_api;
 
@@ -272,6 +263,15 @@ int main(int argc, char *argv[])
     VRFOrch vrf_orch(gAppDb, APP_VRF_TABLE_NAME, gStateDb, STATE_VRF_OBJECT_TABLE_NAME);
     gVrfOrch = &vrf_orch;
     gDirectory.set(static_cast<VRFOrch *>(&vrf_orch));
+
+    const int routeorch_pri = 5;
+    vector<table_name_with_pri_t> route_tables = {
+        { APP_ROUTE_TABLE_NAME,        routeorch_pri },
+        { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
+    };
+    RouteOrch route_orch(gAppDb, route_tables, NULL, NULL, NULL, NULL, NULL, NULL);
+    gRouteOrch = &route_orch;
+    gDirectory.set(static_cast<RouteOrch *>(&route_orch));
 
     FlowCounterRouteOrch flow_counter_route_orch(gConfigDb, std::vector<std::string>{});
     gFlowCounterRouteOrch = &flow_counter_route_orch;

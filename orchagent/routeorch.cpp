@@ -177,7 +177,7 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
      * Hence add a single /128 route entry for the link-local interface
      * address pointing to the CPU port.
      */
-    IpPrefix linklocal_prefix = getLinkLocalEui64Addr();
+    IpPrefix linklocal_prefix = getLinkLocalEui64Addr(gMacAddress);
 
     addLinkLocalRouteToMe(gVirtualRouterId, linklocal_prefix);
     SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu", linklocal_prefix.to_string().c_str());
@@ -192,12 +192,12 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
     createRetryCache(APP_ROUTE_TABLE_NAME);
 }
 
-std::string RouteOrch::getLinkLocalEui64Addr(void)
+std::string RouteOrch::getLinkLocalEui64Addr(const MacAddress &mac)
 {
     SWSS_LOG_ENTER();
 
     string        ip_prefix;
-    const uint8_t *gmac = gMacAddress.getMac();
+    const uint8_t *gmac = mac.getMac();
 
     uint8_t        eui64_interface_id[EUI64_INTF_ID_LEN];
     char           ipv6_ll_addr[INET6_ADDRSTRLEN] = {0};
@@ -1224,12 +1224,6 @@ void RouteOrch::doTask(ConsumerBase& consumer)
             }
         }
 
-        /* Flush response publisher so route notifications reach fpmsyncd every batch.
-         * Without this, notifications stay buffered in the Redis pipeline until the
-         * next OrchDaemon periodic flush (up to 1s), delaying the offload reply to
-         * zebra and causing BGP advertisement delay when supress fib pending is ON */
-        m_publisher.flush();
-
         /* Remove next hop group if the reference count decreases to zero */
         for (auto& it_nhg : m_bulkNhgReducedRefCnt)
         {
@@ -1489,7 +1483,6 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
     std::map<sai_object_id_t, set<NextHopKey>> nhopgroup_shared_set;
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
     sai_object_id_t mux_tunnel_nh_id = mux_orch->getTunnelNextHopId();
-    bool has_mux_prefix_rt_nh = mux_orch->hasPrefixBasedMuxNexthop(next_hop_set);
 
     /* Assert each IP address exists in m_syncdNextHops table,
      * and add the corresponding next_hop_id to next_hop_ids. */
@@ -1520,12 +1513,6 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         if (next_hop_id != mux_tunnel_nh_id)
         {
             valid_next_hops_for_refcount.insert(it);
-        }
-        else if (has_mux_prefix_rt_nh)
-        {
-            // skip using tunnel nh in NHG for prefix based mux nbrs
-            SWSS_LOG_INFO("Skipping tunnel nh in NHG %s", nexthops.to_string().c_str());
-            continue;
         }
 
         // skip next hop group member create for neighbor from down port
@@ -1706,15 +1693,6 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops, const bool i
         {
             SWSS_LOG_WARN("NHFLAGS_IFDOWN set for next hop group member %s with next_hop_id %" PRIx64,
                            nhop->first.to_string().c_str(), nhop->second.next_hop_id);
-            nhop = nhgm.erase(nhop);
-            continue;
-        }
-
-        if (m_neighOrch->isPrefixNeighborNh(nhop->first) && !m_neighOrch->hasNextHop(nhop->first))
-        {
-            SWSS_LOG_INFO("Skip NHG member remove for %s in group %" PRIx64 ": nexthop missing",
-                          nhop->first.to_string().c_str(),
-                          next_hop_group_entry->second.next_hop_group_id);
             nhop = nhgm.erase(nhop);
             continue;
         }

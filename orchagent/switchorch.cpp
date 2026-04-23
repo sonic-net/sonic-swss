@@ -57,8 +57,7 @@ const map<string, sai_switch_attr_t> switch_attribute_map =
 const map<string, sai_switch_tunnel_attr_t> switch_tunnel_attribute_map =
 {
     {"vxlan_sport", SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT},
-    {"vxlan_mask", SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_MASK},
-    {"vxlan_security",  SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_SECURITY}
+    {"vxlan_mask",  SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_MASK}
 };
 
 const map<string, sai_packet_action_t> packet_action_map =
@@ -168,7 +167,6 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
     querySwitchPortMirrorCapability();
     querySwitchHashDefaults();
     setSwitchIcmpOffloadCapability();
-    setFastLinkupCapability();
 
     auto executorT = new ExecutableTimer(m_sensorsPollerTimer, this, "ASIC_SENSORS_POLL_TIMER");
     Orch::addExecutor(executorT);
@@ -504,7 +502,6 @@ void SwitchOrch::setSwitchNonSaiAttributes(swss::FieldValueTuple &val)
         return;
     }
 }
-
 sai_status_t SwitchOrch::setSwitchTunnelVxlanParams(swss::FieldValueTuple &val)
 {
     auto attribute = fvField(val);
@@ -522,24 +519,6 @@ sai_status_t SwitchOrch::setSwitchTunnelVxlanParams(swss::FieldValueTuple &val)
         attr.id = SAI_SWITCH_TUNNEL_ATTR_TUNNEL_VXLAN_UDP_SPORT_MODE;
         attr.value.s32 = SAI_TUNNEL_VXLAN_UDP_SPORT_MODE_USER_DEFINED;
         attrs.push_back(attr);
-        sai_attr_capability_t capability;
-        status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SWITCH_TUNNEL,
-                                                SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_SECURITY, &capability);
-        if (status == SAI_STATUS_SUCCESS) {
-            if (capability.create_implemented) {
-                attr.id = SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_SECURITY;
-                attr.value.booldata = false;
-                attrs.push_back(attr);
-            }
-            else
-            {
-                SWSS_LOG_NOTICE("VXLAN UDP sport security attribute not supported for switch tunnel creation, skipping attribute creation");
-            }
-        }
-        else
-        {
-            SWSS_LOG_WARN("VXLAN UDP sport security attribute query capability failed, rv:%d", status);
-        }
 
         status = sai_switch_api->create_switch_tunnel(&m_switchTunnelId, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
 
@@ -560,21 +539,6 @@ sai_status_t SwitchOrch::setSwitchTunnelVxlanParams(swss::FieldValueTuple &val)
             break;
         case SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_MASK:
             attr.value.u8 = to_uint<uint8_t>(value);
-            break;
-        case SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_SECURITY:
-            if (value == "true")
-            {
-                attr.value.booldata = true;
-            }
-            else if (value == "false")
-            {
-                attr.value.booldata = false;
-            }
-            else
-            {
-                SWSS_LOG_ERROR("vxlan_security invalid value '%s' (use string \"true\" or \"false\"); defaulting to false", value.c_str());
-                attr.value.booldata = false;
-            }
             break;
         default:
             SWSS_LOG_ERROR("Invalid switch tunnel attribute id %d", attr.id);
@@ -1512,10 +1476,6 @@ void SwitchOrch::doTask(Consumer &consumer)
     {
         doCfgSwitchTrimmingTableTask(consumer);
     }
-    else if (tableName == CFG_SWITCH_FAST_LINKUP_TABLE_NAME)
-    {
-        doCfgSwitchFastLinkupTableTask(consumer);
-    }
     else if (tableName == CFG_SUPPRESS_ASIC_SDK_HEALTH_EVENT_NAME)
     {
         doCfgSuppressAsicSdkHealthEventTableTask(consumer);
@@ -2088,190 +2048,6 @@ bool SwitchOrch::querySwitchCapability(sai_object_type_t sai_object, sai_attr_id
         {
             return false;
         }
-    }
-}
-
-void SwitchOrch::setFastLinkupCapability()
-{
-    SWSS_LOG_ENTER();
-
-    std::vector<FieldValueTuple> fvVector;
-
-    // Determine support by checking create/set capability on polling time attribute (enabled in real SAI)
-    bool supported = querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_FAST_LINKUP_POLLING_TIMEOUT);
-    m_fastLinkupCap.supported = supported;
-
-    if (!supported)
-    {
-        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_FAST_LINKUP_CAPABLE, "false");
-        set_switch_capability(fvVector);
-        return;
-    }
-    fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_FAST_LINKUP_CAPABLE, "true");
-
-    // Query allowed ranges if supported by SAI
-    sai_attribute_t attr;
-    attr.id = SAI_SWITCH_ATTR_FAST_LINKUP_POLLING_TIMEOUT_RANGE;
-    sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
-    if (status == SAI_STATUS_SUCCESS)
-    {
-        m_fastLinkupCap.has_polling_range = true;
-        m_fastLinkupCap.polling_min = attr.value.u16range.min;
-        m_fastLinkupCap.polling_max = attr.value.u16range.max;
-        fvVector.emplace_back(
-            SWITCH_CAPABILITY_TABLE_FAST_LINKUP_POLLING_TIMER_RANGE,
-            to_string(m_fastLinkupCap.polling_min) + "," + to_string(m_fastLinkupCap.polling_max));
-    }
-    else
-    {
-        SWSS_LOG_WARN("Failed to get fast linkup polling range: %s", sai_serialize_status(status).c_str());
-    }
-
-    attr.id = SAI_SWITCH_ATTR_FAST_LINKUP_GUARD_TIMEOUT_RANGE;
-    status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
-    if (status == SAI_STATUS_SUCCESS)
-    {
-        m_fastLinkupCap.has_guard_range = true;
-        m_fastLinkupCap.guard_min = attr.value.u16range.min;
-        m_fastLinkupCap.guard_max = attr.value.u16range.max;
-        fvVector.emplace_back(
-            SWITCH_CAPABILITY_TABLE_FAST_LINKUP_GUARD_TIMER_RANGE,
-            to_string(m_fastLinkupCap.guard_min) + "," + to_string(m_fastLinkupCap.guard_max));
-    }
-    else
-    {
-        SWSS_LOG_WARN("Failed to get fast linkup guard range: %s", sai_serialize_status(status).c_str());
-    }
-    set_switch_capability(fvVector);
-}
-
-bool SwitchOrch::setSwitchFastLinkup(const FastLinkupConfig &cfg)
-{
-    SWSS_LOG_ENTER();
-
-    if (!m_fastLinkupCap.supported)
-    {
-        SWSS_LOG_NOTICE("Fast link-up is not supported on this platform");
-        return false;
-    }
-
-    // Validate ranges if known
-    if (cfg.has_polling && m_fastLinkupCap.has_polling_range)
-    {
-        if (cfg.polling_time < m_fastLinkupCap.polling_min || cfg.polling_time > m_fastLinkupCap.polling_max)
-        {
-            SWSS_LOG_NOTICE("Invalid polling_time %u; allowed [%u,%u]", cfg.polling_time, m_fastLinkupCap.polling_min, m_fastLinkupCap.polling_max);
-            return false;
-        }
-    }
-    if (cfg.has_guard && m_fastLinkupCap.has_guard_range)
-    {
-        if (cfg.guard_time < m_fastLinkupCap.guard_min || cfg.guard_time > m_fastLinkupCap.guard_max)
-        {
-            SWSS_LOG_NOTICE("Invalid guard_time %u; allowed [%u,%u]", cfg.guard_time, m_fastLinkupCap.guard_min, m_fastLinkupCap.guard_max);
-            return false;
-        }
-    }
-
-    // Apply attributes conditionally
-    sai_status_t status;
-    if (cfg.has_polling)
-    {
-        sai_attribute_t attr;
-        attr.id = SAI_SWITCH_ATTR_FAST_LINKUP_POLLING_TIMEOUT;
-        attr.value.u16 = cfg.polling_time;
-        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_NOTICE("Failed to set FAST_LINKUP_POLLING_TIME=%u: %s", cfg.polling_time, sai_serialize_status(status).c_str());
-            return false;
-        }
-    }
-
-    if (cfg.has_guard)
-    {
-        sai_attribute_t attr;
-        attr.id = SAI_SWITCH_ATTR_FAST_LINKUP_GUARD_TIMEOUT;
-        attr.value.u8 = cfg.guard_time;
-        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_NOTICE("Failed to set FAST_LINKUP_GUARD_TIME=%u: %s", cfg.guard_time, sai_serialize_status(status).c_str());
-            return false;
-        }
-    }
-
-    if (cfg.has_ber)
-    {
-        sai_attribute_t attr;
-        attr.id = SAI_SWITCH_ATTR_FAST_LINKUP_BER_THRESHOLD;
-        attr.value.u8 = cfg.ber_threshold;
-        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_NOTICE("Failed to set FAST_LINKUP_BER_THRESHOLD=%u: %s", cfg.ber_threshold, sai_serialize_status(status).c_str());
-            return false;
-        }
-    }
-    SWSS_LOG_INFO("Fast link-up set: polling_time=%s, guard_time=%s, ber_threshold=%s",
-                    cfg.has_polling ? std::to_string(cfg.polling_time).c_str() : "N/A",
-                    cfg.has_guard   ? std::to_string(cfg.guard_time).c_str()   : "N/A",
-                    cfg.has_ber     ? std::to_string(cfg.ber_threshold).c_str() : "N/A");
-    return true;
-}
-
-void SwitchOrch::doCfgSwitchFastLinkupTableTask(Consumer &consumer)
-{
-    SWSS_LOG_ENTER();
-
-    auto &map = consumer.m_toSync;
-    auto it = map.begin();
-
-    while (it != map.end())
-    {
-        auto keyOpFieldsValues = it->second;
-        auto key = kfvKey(keyOpFieldsValues);
-        auto op = kfvOp(keyOpFieldsValues);
-
-        if (op == SET_COMMAND)
-        {
-            FastLinkupConfig cfg;
-            for (const auto &cit : kfvFieldsValues(keyOpFieldsValues))
-            {
-                auto fieldName = fvField(cit);
-                auto fieldValue = fvValue(cit);
-                if (fieldName == "polling_time")
-                {
-                    try { cfg.polling_time = to_uint<uint16_t>(fieldValue); cfg.has_polling = true; }
-                    catch (...) { SWSS_LOG_ERROR("Invalid polling_time value %s", fieldValue.c_str()); }
-                }
-                else if (fieldName == "guard_time")
-                {
-                    try { cfg.guard_time = to_uint<uint8_t>(fieldValue); cfg.has_guard = true; }
-                    catch (...) { SWSS_LOG_ERROR("Invalid guard_time value %s", fieldValue.c_str()); }
-                }
-                else if (fieldName == "ber_threshold")
-                {
-                    try { cfg.ber_threshold = to_uint<uint8_t>(fieldValue); cfg.has_ber = true; }
-                    catch (...) { SWSS_LOG_ERROR("Invalid ber_threshold value %s", fieldValue.c_str()); }
-                }
-                else
-                {
-                    SWSS_LOG_WARN("Unknown field %s in SWITCH_FAST_LINKUP", fieldName.c_str());
-                }
-            }
-
-            if (!setSwitchFastLinkup(cfg))
-            {
-                SWSS_LOG_ERROR("Failed to configure fast link-up from CONFIG_DB");
-            }
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Unsupported operation %s for SWITCH_FAST_LINKUP", op.c_str());
-        }
-
-        it = map.erase(it);
     }
 }
 

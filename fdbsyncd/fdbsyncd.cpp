@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <chrono>
+#include <linux/rtnetlink.h>
 #include "logger.h"
 #include "select.h"
 #include "netdispatcher.h"
@@ -23,9 +24,24 @@ int main(int argc, char **argv)
 
     FdbSync sync(&pipelineAppDB, &stateDb, &config_db);
 
-    NetDispatcher::getInstance().registerMessageHandler(RTM_NEWNEIGH, &sync);
-    NetDispatcher::getInstance().registerMessageHandler(RTM_DELNEIGH, &sync);
+    /* Check if EVPN MH is enabled at startup */
+    {
+        auto es_keys = config_db.keys("EVPN_ETHERNET_SEGMENT|*");
+        auto mh_entry = config_db.hgetall("EVPN_MH_GLOBAL|default");
+        bool mh_enabled = !es_keys.empty();
+        if (mh_entry.find("enabled") != mh_entry.end() && mh_entry["enabled"] == "true")
+            mh_enabled = true;
+        if (mh_entry.find("enabled") != mh_entry.end() && mh_entry["enabled"] == "false")
+            mh_enabled = false;
+        sync.setEvpnMhEnabled(mh_enabled);
+        SWSS_LOG_NOTICE("EVPN MH initial state: %s", mh_enabled ? "enabled" : "disabled");
+    }
+
+    NetDispatcher::getInstance().registerRawMessageHandler(RTM_NEWNEIGH, &sync);
+    NetDispatcher::getInstance().registerRawMessageHandler(RTM_DELNEIGH, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
+    NetDispatcher::getInstance().registerRawMessageHandler(RTM_NEWNEXTHOP, &sync);
+    NetDispatcher::getInstance().registerRawMessageHandler(RTM_DELNEXTHOP, &sync);
 
     while (1)
     {
@@ -73,13 +89,21 @@ int main(int argc, char **argv)
 
             netlink.registerGroup(RTNLGRP_LINK);
             netlink.registerGroup(RTNLGRP_NEIGH);
-            SWSS_LOG_NOTICE("Listens to link and neigh messages...");
+            netlink.registerGroup(RTNLGRP_NEXTHOP);
+            SWSS_LOG_NOTICE("Listens to link, neigh and nexthop messages...");
             netlink.dumpRequest(RTM_GETLINK);
             s.addSelectable(&netlink);
             ret = s.select(&temps, 1);
             if (ret == Select::ERROR)
             {
                 SWSS_LOG_ERROR("Error in RTM_GETLINK dump");
+            }
+
+            netlink.dumpRequest(RTM_GETNEXTHOP);
+            ret = s.select(&temps, 1);
+            if (ret == Select::ERROR)
+            {
+                SWSS_LOG_ERROR("Error in RTM_GETNEXTHOP dump");
             }
 
             netlink.dumpRequest(RTM_GETNEIGH);
