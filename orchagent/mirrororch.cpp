@@ -391,12 +391,7 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
     bool src_ip_initialized = false;
     bool dst_ip_initialized = false;
 
-    auto session = m_syncdMirrors.find(key);
-    if (session != m_syncdMirrors.end())
-    {
-        SWSS_LOG_NOTICE("Failed to create session %s: object already exists", key.c_str());
-        return task_process_status::task_duplicated;
-    }
+
 
     string platform = getenv("platform") ? getenv("platform") : "";
     MirrorEntry entry(platform);
@@ -550,6 +545,22 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
     SWSS_LOG_NOTICE("Created mirror session %s", key.c_str());
 
     return task_process_status::task_success;
+}
+
+task_process_status MirrorOrch::updateEntry(const string& key, const vector<FieldValueTuple>& data)
+{
+    SWSS_LOG_ENTER();
+
+    SWSS_LOG_NOTICE("Updating mirror session %s", key.c_str());
+
+    auto task_status = deleteEntry(key);
+    if (task_status != task_process_status::task_success)
+    {
+        SWSS_LOG_ERROR("Failed to delete existing mirror session %s during update", key.c_str());
+        return task_status;
+    }
+
+    return createEntry(key, data);
 }
 
 task_process_status MirrorOrch::deleteEntry(const string& name)
@@ -1775,7 +1786,14 @@ void MirrorOrch::doTask(Consumer& consumer)
 
         if (op == SET_COMMAND)
         {
-            task_status = createEntry(key, kfvFieldsValues(t));
+            if (sessionExists(key))
+            {
+                task_status = updateEntry(key, kfvFieldsValues(t));
+            }
+            else
+            {
+                task_status = createEntry(key, kfvFieldsValues(t));
+            }
         }
         else if (op == DEL_COMMAND)
         {

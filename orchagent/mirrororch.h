@@ -113,6 +113,7 @@ private:
     bool isHwResourcesAvailable();
 
     task_process_status createEntry(const string&, const vector<FieldValueTuple>&);
+    task_process_status updateEntry(const string&, const vector<FieldValueTuple>&);
     task_process_status deleteEntry(const string&);
 
     bool activateSession(const string&, MirrorEntry&);
