@@ -627,7 +627,7 @@ class TestCrm(object):
         marker = dvs.add_log_marker()
         # create ACL table
         ttbl = swsscommon.Table(db, "ACL_TABLE")
-        fvs = swsscommon.FieldValuePairs([("policy_desc", "test"), ("type", "L3"), ("ports", ",".join(bind_ports))])
+        fvs = swsscommon.FieldValuePairs([("policy_desc", "test"), ("type", "L3"), ("ports@", ",".join(bind_ports))])
         ttbl.set("test", fvs)
         time.sleep(2)
         check_syslog(dvs, marker, "ACL_TABLE Exception occurred (div by Zero)", 1)
@@ -689,7 +689,7 @@ class TestCrm(object):
 
         # create ACL table
         tbl = swsscommon.Table(db, "ACL_TABLE")
-        fvs = swsscommon.FieldValuePairs([("policy_desc", "testv6"), ("type", "L3V6"), ("ports", ",".join(bind_ports))])
+        fvs = swsscommon.FieldValuePairs([("policy_desc", "testv6"), ("type", "L3V6"), ("ports@", ",".join(bind_ports))])
         tbl.set("test-aclv6", fvs)
 
         time.sleep(2)

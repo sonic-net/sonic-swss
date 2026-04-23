@@ -99,7 +99,7 @@ class TestMirror(object):
     def create_acl_table(self, table, interfaces, type, stage=None):
         attrs = [("policy_desc", "mirror_test"),
                  ("type", type),
-                 ("ports", ",".join(interfaces))]
+                 ("ports@", ",".join(interfaces))]
         if stage:
             attrs.append(("stage", stage))
 
