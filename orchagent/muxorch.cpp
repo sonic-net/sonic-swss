@@ -1,4 +1,5 @@
 #include <cassert>
+#include <set>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -1459,6 +1460,7 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
     NeighborEntry neigh;
     MacAddress mac;
     MuxCable* ptr;
+    std::set<NeighborEntry> handled;
     for (auto nh = mux_nexthop_tb_.begin(); nh != mux_nexthop_tb_.end(); ++nh)
     {
         auto res = neigh_orch_->getNeighborEntry(nh->first, neigh, mac);
@@ -1466,6 +1468,8 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
         {
             continue;
         }
+
+        handled.insert(nh->first);
 
         if (nh->second != update.entry.port_name)
         {
@@ -1485,6 +1489,51 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
                 ptr = getMuxCable(update.entry.port_name);
                 ptr->updateNeighbor(nh->first, true);
             }
+        }
+    }
+
+    // Handle case where neighbor exists in NeighOrch but is not yet tracked as a mux neighbor.
+    // This happens when a neighbor resolves on a mux port before its FDB entry is available:
+    // NeighOrch::addNeighbor installs it as a direct Vlan next hop (active-side path) because
+    // the FDB lookup fails and MuxOrch::isNeighborActive defaults to true. When the FDB entry
+    // finally arrives here, we need to locate any such stranded neighbors by MAC and convert
+    // them via MuxCable::updateNeighbor so the standby path installs a tunnel next hop.
+    if (isMuxExists(update.entry.port_name))
+    {
+        ptr = getMuxCable(update.entry.port_name);
+        const NeighborTable& neighbor_table = gNeighOrch->getNeighborTable();
+        for (const auto& neighbor_pair : neighbor_table)
+        {
+            const NeighborEntry& neighbor_entry = neighbor_pair.first;
+            const auto& neighbor_data = neighbor_pair.second;
+
+            if (handled.count(neighbor_entry))
+            {
+                continue;
+            }
+
+            if (neighbor_data.mac != update.entry.mac)
+            {
+                continue;
+            }
+
+            // Verify the neighbor sits on a Vlan interface whose FDB lookup
+            // resolves to the same port we just received the update for.
+            // getMuxPort returns false for non-Vlan interfaces, preventing
+            // conversion of unrelated neighbors that happen to share a MAC.
+            string resolved_port;
+            if (!getMuxPort(update.entry.mac, neighbor_entry.alias, resolved_port) ||
+                resolved_port != update.entry.port_name)
+            {
+                continue;
+            }
+
+            SWSS_LOG_NOTICE("FDB update on mux port %s — converting stranded neighbor %s (MAC %s)",
+                            update.entry.port_name.c_str(),
+                            neighbor_entry.ip_address.to_string().c_str(),
+                            update.entry.mac.to_string().c_str());
+
+            ptr->updateNeighbor(neighbor_entry, true);
         }
     }
 }

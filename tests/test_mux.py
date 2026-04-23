@@ -1978,6 +1978,174 @@ class TestMuxTunnel(TestMuxTunnelBase):
             ]
         )
 
+    def test_fdb_after_neighbor_on_standby_mux(
+        self, dvs, dvs_route, setup, setup_vlan, setup_mux_cable, setup_tunnel,
+        setup_peer_switch, testlog
+    ):
+        """Test neighbor conversion to MUX neighbor when FDB is learned after neighbor (host-route mode).
+
+        When a new neighbor is learned on a standby mux port and the FDB entry
+        for that MAC has not yet been learned, MuxOrch::updateNeighbor fails to
+        associate the neighbor with the mux port (FDB lookup fails). The neighbor
+        is never added to mux_nexthop_tb_ and disableNeighbor is never called.
+
+        This test verifies that when the FDB entry is later learned on the mux port,
+        the neighbor gets properly converted to a MUX neighbor and disabled (standby).
+        """
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = dvs.get_asic_db()
+
+        test_ip = "192.168.0.200"
+        test_mac = "00:00:00:00:aa:bb"
+        test_mac_dash = "00-00-00-00-aa-bb"
+        cable_name = "Ethernet0"
+
+        try:
+            self.set_mux_state(appdb, cable_name, "standby")
+
+            # Neighbor arrives with no prior FDB entry -> installed as
+            # direct Vlan next hop, not yet mux-managed.
+            self.add_neighbor(dvs, test_ip, test_mac)
+            time.sleep(1)
+            self.check_neigh_in_asic_db(asicdb, test_ip, expected=True)
+
+            # FDB learn arrives -> updateFdb fallback should convert the
+            # stranded neighbor, remove it from ASIC, install tunnel route.
+            self.add_fdb(dvs, cable_name, test_mac_dash)
+            time.sleep(2)
+            self.check_neigh_in_asic_db(asicdb, test_ip, expected=False)
+            self.check_tunnel_route_in_app_db(dvs, [test_ip + self.IPV4_MASK], expected=True)
+
+            # Toggle to active -> re-enabled.
+            self.set_mux_state(appdb, cable_name, "active")
+            self.check_neigh_in_asic_db(asicdb, test_ip, expected=True)
+            self.check_tunnel_route_in_app_db(dvs, [test_ip + self.IPV4_MASK], expected=False)
+
+            # Toggle back to standby -> disabled again.
+            self.set_mux_state(appdb, cable_name, "standby")
+            self.check_neigh_in_asic_db(asicdb, test_ip, expected=False)
+            self.check_tunnel_route_in_app_db(dvs, [test_ip + self.IPV4_MASK], expected=True)
+
+        finally:
+            self.del_neighbor(dvs, test_ip)
+            self.del_fdb(dvs, test_mac_dash)
+            self.set_mux_state(appdb, cable_name, "active")
+            time.sleep(1)
+
+    def test_fdb_after_neighbor_on_active_mux(
+        self, dvs, dvs_route, setup, setup_vlan, setup_mux_cable, setup_tunnel,
+        setup_peer_switch, testlog
+    ):
+        """Same scenario as the standby test but with the mux port active.
+
+        The neighbor should be registered as a MUX neighbor and remain enabled.
+        """
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = dvs.get_asic_db()
+
+        test_ip = "192.168.0.201"
+        test_mac = "00:00:00:00:aa:cc"
+        test_mac_dash = "00-00-00-00-aa-cc"
+        cable_name = "Ethernet0"
+
+        try:
+            self.set_mux_state(appdb, cable_name, "active")
+
+            self.add_neighbor(dvs, test_ip, test_mac)
+            time.sleep(1)
+            self.check_neigh_in_asic_db(asicdb, test_ip, expected=True)
+
+            self.add_fdb(dvs, cable_name, test_mac_dash)
+            time.sleep(2)
+
+            # On active, neighbor stays in ASIC and no tunnel route is installed.
+            self.check_neigh_in_asic_db(asicdb, test_ip, expected=True)
+            self.check_tunnel_route_in_app_db(dvs, [test_ip + self.IPV4_MASK], expected=False)
+
+            self.set_mux_state(appdb, cable_name, "standby")
+            self.check_neigh_in_asic_db(asicdb, test_ip, expected=False)
+            self.check_tunnel_route_in_app_db(dvs, [test_ip + self.IPV4_MASK], expected=True)
+
+            self.set_mux_state(appdb, cable_name, "active")
+            self.check_neigh_in_asic_db(asicdb, test_ip, expected=True)
+            self.check_tunnel_route_in_app_db(dvs, [test_ip + self.IPV4_MASK], expected=False)
+
+        finally:
+            self.del_neighbor(dvs, test_ip)
+            self.del_fdb(dvs, test_mac_dash)
+            self.set_mux_state(appdb, cable_name, "active")
+            time.sleep(1)
+
+    def test_fdb_aging_after_neighbor_shared_mac(
+        self, dvs, dvs_route, setup, setup_vlan, setup_mux_cable, setup_tunnel,
+        setup_peer_switch, testlog
+    ):
+        """Regression test for shared-MAC neighbor recovery in MuxOrch::updateFdb.
+
+        Two neighbors share one MAC on a standby mux port (e.g. IPv6
+        link-local + global on the same server NIC). A gets converted
+        while its FDB is present; FDB then ages; B arrives while FDB is
+        absent and never reaches mux_nexthop_tb_; FDB re-learns.
+
+        The per-IP `handled` set must not let A's MAC match mask the
+        conversion of stranded B. Both A and B must end up MUX-managed.
+        """
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = dvs.get_asic_db()
+
+        ip_a = "192.168.0.210"
+        ip_b = "192.168.0.211"
+        shared_mac = "00:00:00:00:aa:dd"
+        shared_mac_dash = "00-00-00-00-aa-dd"
+        cable_name = "Ethernet0"
+
+        try:
+            self.set_mux_state(appdb, cable_name, "standby")
+            self.add_fdb(dvs, cable_name, shared_mac_dash)
+            time.sleep(1)
+
+            # A arrives with FDB present -> fully converted.
+            self.add_neighbor(dvs, ip_a, shared_mac)
+            time.sleep(2)
+            self.check_neigh_in_asic_db(asicdb, ip_a, expected=False)
+            self.check_tunnel_route_in_app_db(dvs, [ip_a + self.IPV4_MASK], expected=True)
+
+            # FDB ages out (updateFdb ignores deletes; A stays in mux_nexthop_tb_).
+            self.del_fdb(dvs, shared_mac_dash)
+            time.sleep(1)
+
+            # B arrives while FDB is absent -> updateNeighbor returns early,
+            # B never reaches mux_nexthop_tb_ and sits in ASIC as a plain neighbor.
+            self.add_neighbor(dvs, ip_b, shared_mac)
+            time.sleep(1)
+            self.check_neigh_in_asic_db(asicdb, ip_b, expected=True)
+            self.check_tunnel_route_in_app_db(dvs, [ip_b + self.IPV4_MASK], expected=False)
+
+            # FDB re-learns on the mux port. A's MAC match must not suppress
+            # the fallback conversion of B.
+            self.add_fdb(dvs, cable_name, shared_mac_dash)
+            time.sleep(2)
+
+            self.check_neigh_in_asic_db(asicdb, ip_a, expected=False)
+            self.check_tunnel_route_in_app_db(dvs, [ip_a + self.IPV4_MASK], expected=True)
+            self.check_neigh_in_asic_db(asicdb, ip_b, expected=False)
+            self.check_tunnel_route_in_app_db(dvs, [ip_b + self.IPV4_MASK], expected=True)
+
+            # Toggle to active -> both re-enabled.
+            self.set_mux_state(appdb, cable_name, "active")
+            self.check_neigh_in_asic_db(asicdb, ip_a, expected=True)
+            self.check_neigh_in_asic_db(asicdb, ip_b, expected=True)
+            self.check_tunnel_route_in_app_db(
+                dvs, [ip_a + self.IPV4_MASK, ip_b + self.IPV4_MASK], expected=False
+            )
+
+        finally:
+            self.del_neighbor(dvs, ip_a)
+            self.del_neighbor(dvs, ip_b)
+            self.del_fdb(dvs, shared_mac_dash)
+            self.set_mux_state(appdb, cable_name, "active")
+            time.sleep(1)
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
