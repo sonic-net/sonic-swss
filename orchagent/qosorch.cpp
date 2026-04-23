@@ -1690,9 +1690,19 @@ bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, 
     attr.value.oid = scheduler_profile_id;
 
     sai_status = sai_scheduler_group_api->set_scheduler_group_attribute(group_id, &attr);
+    if (SAI_STATUS_NOT_SUPPORTED != sai_status)
+    {
+        /* On some chips, hierarchical scheduler configuration may not be supported.
+         * Let's try configuring at the queue level */
+        attr.id = SAI_QUEUE_ATTR_SCHEDULER_PROFILE_ID;
+        sai_status = sai_queue_api->set_queue_attribute(queue_id, &attr);
+    }
+    
     if (SAI_STATUS_SUCCESS != sai_status)
     {
-        SWSS_LOG_ERROR("Failed applying scheduler profile:0x%" PRIx64 " to scheduler group:0x%" PRIx64 ", port:%s", scheduler_profile_id, group_id, port.m_alias.c_str());
+        SWSS_LOG_ERROR("Failed applying scheduler profile:0x%" PRIx64 
+            " to scheduler group:0x%" PRIx64 " and queue:0x%" PRIx64 
+            ", port:%s", scheduler_profile_id, group_id, queue_id, port.m_alias.c_str());
         task_process_status handle_status = handleSaiSetStatus(SAI_API_SCHEDULER_GROUP, sai_status);
         if (handle_status != task_success)
         {
