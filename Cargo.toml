@@ -54,7 +54,7 @@ anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
 
 # Command line utilities
-clap = { version = "4", features = ["derive", "cargo", "wrap_help", "unicode", "string", "unstable-styles"] }
+clap = { version = "4", features = ["derive", "cargo", "env", "wrap_help", "unicode", "string", "unstable-styles"] }
 color-eyre = "0.6"
 
 # Utilities

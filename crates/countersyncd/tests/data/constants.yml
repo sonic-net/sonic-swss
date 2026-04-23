@@ -2,3 +2,5 @@ constants:
     high_frequency_telemetry:
         genl_family: "sonic_stel"
         genl_multicast_group: "ipfix"
+        genl_register_wait_ms: 0
+        genl_register_poll_ms: 100

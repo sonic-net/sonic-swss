@@ -1323,17 +1323,17 @@ pub mod test {
     #[test]
     fn test_get_genl_family_group() {
         // Use the test constants file since the production file might not exist
-        let result = get_genl_family_group_from_path_safe("tests/data/constants.yml");
+        let result = get_hft_genl_constants_from_path_safe("tests/data/constants.yml");
         assert!(result.is_ok());
-        let (family, group) = result.unwrap();
-        assert!(!family.is_empty());
-        assert!(!group.is_empty());
+        let c = result.unwrap();
+        assert!(!c.family.is_empty());
+        assert!(!c.group.is_empty());
     }
 
     /// Tests the get_genl_family_group_from_path function with a test file.
     #[test]
     fn test_get_genl_family_group_from_path() {
-        let result = get_genl_family_group_from_path_safe("/non/existent/path.yml");
+        let result = get_hft_genl_constants_from_path_safe("/non/existent/path.yml");
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -1343,11 +1343,13 @@ pub mod test {
     /// Tests the get_genl_family_group_from_path function with the test constants file.
     #[test]
     fn test_get_genl_family_group_from_test_file() {
-        let result = get_genl_family_group_from_path_safe("tests/data/constants.yml");
+        let result = get_hft_genl_constants_from_path_safe("tests/data/constants.yml");
         assert!(result.is_ok());
-        let (family, group) = result.unwrap();
-        assert!(!family.is_empty());
-        assert!(!group.is_empty());
+        let c = result.unwrap();
+        assert!(!c.family.is_empty());
+        assert!(!c.group.is_empty());
+        assert_eq!(c.genl_register_wait_ms, 0);
+        assert_eq!(c.genl_register_poll_ms, 100);
     }
 
     /// Tests that get_genl_family_group returns default values when config file is missing.
@@ -1357,7 +1359,7 @@ pub mod test {
         let _original_path = SONIC_CONSTANTS;
 
         // Use the safe function to test default behavior
-        let result = get_genl_family_group_from_path_safe("/non/existent/path/constants.yml");
+        let result = get_hft_genl_constants_from_path_safe("/non/existent/path/constants.yml");
         assert!(result.is_err());
 
         // Test the main function - it should not panic and should return defaults
@@ -1378,6 +1380,50 @@ pub mod test {
     }
 }
 
+/// High-frequency telemetry (STEL) generic netlink settings from `constants.yml`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HftGenlConstants {
+    pub family: String,
+    pub group: String,
+    /// Max time to poll at startup for the kernel to register `family` (0 = skip).
+    pub genl_register_wait_ms: u64,
+    pub genl_register_poll_ms: u64,
+}
+
+/// Loads STEL generic netlink settings from `/etc/sonic/constants.yml`.
+///
+/// On failure, returns default family/group and disables startup wait (`genl_register_wait_ms` = 0).
+pub fn load_hft_genl_constants() -> HftGenlConstants {
+    const DEFAULT_FAMILY: &str = "sonic_stel";
+    const DEFAULT_GROUP: &str = "ipfix";
+
+    match get_hft_genl_constants_from_path_safe(SONIC_CONSTANTS) {
+        Ok(c) => {
+            debug!(
+                "Loaded HFT netlink config from '{}': family='{}', group='{}', register_wait_ms={}, register_poll_ms={}",
+                SONIC_CONSTANTS,
+                c.family,
+                c.group,
+                c.genl_register_wait_ms,
+                c.genl_register_poll_ms
+            );
+            c
+        }
+        Err(e) => {
+            warn!(
+                "Failed to load config from '{}': {}. Using defaults: family='{}', group='{}'",
+                SONIC_CONSTANTS, e, DEFAULT_FAMILY, DEFAULT_GROUP
+            );
+            HftGenlConstants {
+                family: DEFAULT_FAMILY.to_string(),
+                group: DEFAULT_GROUP.to_string(),
+                genl_register_wait_ms: 0,
+                genl_register_poll_ms: 250,
+            }
+        }
+    }
+}
+
 /// Reads the Generic Netlink family and group names from the configuration file.
 ///
 /// This function is used to determine which netlink family and multicast group
@@ -1392,40 +1438,20 @@ pub mod test {
 /// If the configuration file cannot be read or parsed, this function will
 /// use default values: ("sonic_stel", "ipfix")
 pub fn get_genl_family_group() -> (String, String) {
-    // Default values
-    const DEFAULT_FAMILY: &str = "sonic_stel";
-    const DEFAULT_GROUP: &str = "ipfix";
+    let c = load_hft_genl_constants();
+    (c.family, c.group)
+}
 
-    // Try to read from config file, use defaults if it fails
-    match get_genl_family_group_from_path_safe(SONIC_CONSTANTS) {
-        Ok((family, group)) => {
-            debug!(
-                "Loaded netlink config from '{}': family='{}', group='{}'",
-                SONIC_CONSTANTS, family, group
-            );
-            (family, group)
-        }
-        Err(e) => {
-            warn!(
-                "Failed to load config from '{}': {}. Using defaults: family='{}', group='{}'",
-                SONIC_CONSTANTS, e, DEFAULT_FAMILY, DEFAULT_GROUP
-            );
-            (DEFAULT_FAMILY.to_string(), DEFAULT_GROUP.to_string())
-        }
+fn yaml_non_negative_u64(val: &yaml_rust::Yaml) -> Option<u64> {
+    match val {
+        yaml_rust::Yaml::Integer(i) if *i >= 0 => Some(*i as u64),
+        yaml_rust::Yaml::String(s) => s.parse().ok(),
+        _ => None,
     }
 }
 
-/// Safe version of get_genl_family_group_from_path that returns Result instead of panicking.
-///
-/// # Arguments
-///
-/// * `path` - Path to the YAML configuration file
-///
-/// # Returns
-///
-/// A Result containing a tuple (family_name, group_name) on success,
-/// or an error message on failure.
-fn get_genl_family_group_from_path_safe(path: &str) -> Result<(String, String), String> {
+/// Safe version that returns [`HftGenlConstants`] or an error string.
+fn get_hft_genl_constants_from_path_safe(path: &str) -> Result<HftGenlConstants, String> {
     use std::fs::File;
     use std::io::Read;
     use yaml_rust::YamlLoader;
@@ -1452,17 +1478,29 @@ fn get_genl_family_group_from_path_safe(path: &str) -> Result<(String, String), 
     }
 
     let yaml = &yaml_docs[0];
+    let hft = &yaml["constants"]["high_frequency_telemetry"];
 
     // Extract family and group with default fallback
-    let family = yaml["constants"]["high_frequency_telemetry"]["genl_family"]
+    let family = hft["genl_family"]
         .as_str()
         .unwrap_or("sonic_stel")
         .to_string();
 
-    let group = yaml["constants"]["high_frequency_telemetry"]["genl_multicast_group"]
+    let group = hft["genl_multicast_group"]
         .as_str()
         .unwrap_or("ipfix")
         .to_string();
 
-    Ok((family, group))
+    let genl_register_wait_ms = yaml_non_negative_u64(&hft["genl_register_wait_ms"]).unwrap_or(0);
+
+    let genl_register_poll_ms = yaml_non_negative_u64(&hft["genl_register_poll_ms"])
+        .unwrap_or(250)
+        .max(10);
+
+    Ok(HftGenlConstants {
+        family,
+        group,
+        genl_register_wait_ms,
+        genl_register_poll_ms,
+    })
 }
