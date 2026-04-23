@@ -43,15 +43,15 @@ pipeline_out_file_map = {
     DASH_API: 'dash-api.zip'
 }
 
-force_master_branch = [VPP]
+force_main_branch = [VPP]
 
 build_url = 'https://dev.azure.com/mssonic/build/_apis/build/builds?definitions={}&branchName=refs/heads/{}&resultFilter=succeeded,partiallySucceeded&statusFilter=completed&maxBuildsPerDefinition=1&queryOrder=finishTimeDescending'
 artifact_url = 'https://dev.azure.com/mssonic/build/_apis/build/builds/{}/artifacts?artifactName={}&api-version=5.1'
 
 
 def get_latest_build(pipeline, branch):
-    if pipeline in force_master_branch:
-        target_branch = "master"
+    if pipeline in force_main_branch:
+        target_branch = "main"
     else:
         target_branch = branch
 
