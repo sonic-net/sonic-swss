@@ -250,6 +250,7 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const st
                                 SWSS_LOG_ERROR("Failed to set switch level PFC DLR packet action rv : %d", status);
                                 return task_process_status::task_invalid_entry;
                             }
+
                             setPfcDlrPacketAction(action);
                         }
                         else
@@ -591,6 +592,97 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
         {
             auto queueAttrIdSet = counterIdsToStr(c_queueAttrIds, sai_serialize_queue_attr);
             (dynamic_cast<FlexCounterManager*>(this->m_pfcwdFlexCounterManager.get()))->setCounterIdList(queueId, CounterType::QUEUE_ATTR, queueAttrIdSet);
+        }
+
+        if (this->m_platform == BRCM_PLATFORM_SUBSTRING && gSwitchOrch->checkPfcDlrInitEnable())
+        {
+            SWSS_LOG_INFO("Enabling PFC DLDR on queue 0x%" PRIx64, queueId);
+            sai_attribute_t enable_attr;
+            enable_attr.id = SAI_QUEUE_ATTR_ENABLE_PFC_DLDR;
+            enable_attr.value.booldata = true;
+
+            sai_status_t status = sai_queue_api->set_queue_attribute(queueId, &enable_attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to enable PFC DLDR on queue 0x%" PRIx64, queueId);
+            }
+            else
+            {
+                SWSS_LOG_INFO("Enabled PFC DLDR on queue 0x%" PRIx64, queueId);
+            }
+
+            // Configure PFC deadlock detection timer for this TC
+            sai_attribute_t detection_attr;
+            detection_attr.id = SAI_PORT_ATTR_PFC_TC_DLD_INTERVAL;
+
+            // Cap detection time to 15 (hardware limit: 1-15 ticks across all chips)
+            // The timer granularity decides the actual detection timer for which there is no SAI API
+            // So, in case the default granularity is 1ms and the configured detection time is 400ms,
+            // the actual timer will be set to 15ms
+            uint32_t capped_detection_time = std::min(detectionTime, static_cast<uint32_t>(15));
+            if (capped_detection_time != detectionTime)
+            {
+                SWSS_LOG_WARN("Detection time %dms exceeds hardware limit, capping to %dms for TC %d on port %s",
+                             detectionTime, capped_detection_time, i, port.m_alias.c_str());
+            }
+
+            sai_map_t tc_detection_map;
+            tc_detection_map.key = i;  // Traffic Class
+            tc_detection_map.value = capped_detection_time;
+
+            detection_attr.value.maplist.count = 1;
+            detection_attr.value.maplist.list = &tc_detection_map;
+
+            status = sai_port_api->set_port_attribute(port.m_port_id, &detection_attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to set PFC detection timer %dms for TC %d on port %s: %d",
+                              detectionTime, i, port.m_alias.c_str(), status);
+            }
+            else
+            {
+                SWSS_LOG_INFO("Set PFC detection timer %dms for TC %d on port %s",
+                             detectionTime, i, port.m_alias.c_str());
+            }
+
+            // Configure PFC deadlock recovery timer for this TC (if restoration time is specified)
+            if (restorationTime > 0)
+            {
+                sai_attribute_t recovery_attr;
+                recovery_attr.id = SAI_PORT_ATTR_PFC_TC_DLR_INTERVAL;
+
+                // Recovery timer granularity is 100ms, so ensure minimum 100ms and round up to nearest 100ms
+                uint32_t min_recovery_time = std::max(restorationTime, static_cast<uint32_t>(100));
+                uint32_t aligned_recovery_time = ((min_recovery_time + 99) / 100) * 100;  // Round up to nearest 100ms
+
+                // Cap recovery time to hardware limits 10 ticks (1000ms = 10 units * 100ms)
+                uint32_t capped_restoration_time = std::min(aligned_recovery_time, static_cast<uint32_t>(1000));
+
+                if (capped_restoration_time != restorationTime)
+                {
+                    SWSS_LOG_WARN("Recovery time %dms adjusted to %dms (100ms granularity, max 1000ms) for TC %d on port %s",
+                                 restorationTime, capped_restoration_time, i, port.m_alias.c_str());
+                }
+
+                sai_map_t tc_recovery_map;
+                tc_recovery_map.key = i;  // Traffic Class
+                tc_recovery_map.value = capped_restoration_time;
+
+                recovery_attr.value.maplist.count = 1;
+                recovery_attr.value.maplist.list = &tc_recovery_map;
+
+                status = sai_port_api->set_port_attribute(port.m_port_id, &recovery_attr);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to set PFC recovery timer %dms (%d units) for TC %d on port %s: %d",
+                                  restorationTime, restorationTime / 100, i, port.m_alias.c_str(), status);
+                }
+                else
+                {
+                    SWSS_LOG_INFO("Set PFC recovery timer %dms (%d units) for TC %d on port %s",
+                                 restorationTime, restorationTime / 100, i, port.m_alias.c_str());
+                }
+            }
         }
 
         // Create internal entry
