@@ -1679,7 +1679,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
             m_nextHopGroupCount--;
 
             /* Remove MPLS NH objects that were created and are no longer used */
-            cleanup_mpls_nh(next_hop_set);ß
+            cleanup_mpls_nh(next_hop_set);
 
             return false;
         }
