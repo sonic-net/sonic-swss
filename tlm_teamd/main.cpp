@@ -88,15 +88,39 @@ int main()
     {
         swss::Logger::linkToDbNative("tlm_teamd");
         SWSS_LOG_NOTICE("Starting");
-        swss::DBConnector db("STATE_DB", 0);
-
-        ValuesStore values_store(&db);
-        TeamdCtlMgr teamdctl_mgr;
+	swss::DBConnector db("STATE_DB", 0);
+	ValuesStore values_store(&db);
+	TeamdCtlMgr teamdctl_mgr;
 
         swss::Select s;
         swss::Selectable * event;
         swss::SubscriberStateTable sst_lag(&db, STATE_LAG_TABLE_NAME);
         s.addSelectable(&sst_lag);
+	swss::DBConnector config_db("CONFIG_DB", 0);
+
+        swss::Table table(&config_db, "TEAMD");
+        std::vector<swss::FieldValueTuple> values;
+
+        std::string m_teamdMode = "multi-process";
+        bool  key_exists = table.get("GLOBAL", values);
+
+        if (key_exists && !values.empty())
+        {
+            for (const auto& fv : values)
+            {
+                if (fv.first == "mode")
+
+                {
+                    m_teamdMode = fv.second;
+                    break;
+                }
+            }
+        }
+        if (m_teamdMode == "unified-process") {
+            teamdctl_mgr.m_teamdUnifiedProcMode = true;
+        } else {
+            teamdctl_mgr.m_teamdUnifiedProcMode = false;
+        }
 
         while (g_run && rc == 0)
         {
