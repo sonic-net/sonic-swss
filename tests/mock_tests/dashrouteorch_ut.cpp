@@ -10,10 +10,13 @@
 #include "mock_dash_orch_test.h"
 #include "dash_api/appliance.pb.h"
 #include "dash_api/route_type.pb.h"
+#include "dash_api/route.pb.h"
+#include "dash_api/route_rule.pb.h"
 #include "dash_api/eni.pb.h"
 #include "dash_api/qos.pb.h"
 #include "dash_api/eni_route.pb.h"
 #include "swssnet.h"
+#include "crmorch.h"
 
 EXTERN_MOCK_FNS
 namespace dashrouteorch_test
@@ -25,9 +28,16 @@ namespace dashrouteorch_test
     using ::testing::DoAll;
     using ::testing::SaveArgPointee;
     using ::testing::Invoke;
-
+    using ::testing::Return;
+    using ::testing::SetArrayArgument;
     class DashRouteOrchTest : public MockDashOrchTest, public ::testing::WithParamInterface<std::tuple<swss::IpPrefix, int>>
     {
+    protected:
+        uint32_t GetCrmUsedCount(CrmResourceType type)
+        {
+            return gCrmOrch->m_resourcesMap.at(type).countersMap["STATS"].usedCounter;
+        }
+
         void PostSetUp()
         {
             CreateApplianceEntry();
@@ -46,33 +56,33 @@ namespace dashrouteorch_test
         void PreTearDown()
         {
             RestoreSaiApis();
-            DEINIT_SAI_API_MOCK(dash_inbound_routing);
             DEINIT_SAI_API_MOCK(dash_outbound_routing);
+            DEINIT_SAI_API_MOCK(dash_inbound_routing);
         }
-        public:
-            void VerifyInboundRoutingEntry(sai_inbound_routing_entry_t actual_entry, uint32_t expected_vni, swss::IpPrefix expected_prefix, uint32_t expected_priority)
-            {
-                EXPECT_EQ(actual_entry.vni, expected_vni);
-                EXPECT_EQ(actual_entry.priority, expected_priority);
+    public:
+        void VerifyInboundRoutingEntry(sai_inbound_routing_entry_t actual_entry, uint32_t expected_vni, swss::IpPrefix expected_prefix, uint32_t expected_priority)
+        {
+            EXPECT_EQ(actual_entry.vni, expected_vni);
+            EXPECT_EQ(actual_entry.priority, expected_priority);
 
-                sai_ip_address_t expected_sip, expected_sip_mask;
-                swss::copy(expected_sip, expected_prefix.getIp());
-                swss::copy(expected_sip_mask, expected_prefix.getMask());
-                EXPECT_EQ(actual_entry.sip, expected_sip);
-                EXPECT_EQ(actual_entry.sip_mask, expected_sip_mask);
-            }
-            void VerifyInboundRoutingAction(std::vector<sai_attribute_t> &actual_attrs, sai_inbound_routing_entry_action_t expected_action)
+            sai_ip_address_t expected_sip, expected_sip_mask;
+            swss::copy(expected_sip, expected_prefix.getIp());
+            swss::copy(expected_sip_mask, expected_prefix.getMask());
+            EXPECT_EQ(actual_entry.sip, expected_sip);
+            EXPECT_EQ(actual_entry.sip_mask, expected_sip_mask);
+        }
+        void VerifyInboundRoutingAction(std::vector<sai_attribute_t> &actual_attrs, sai_inbound_routing_entry_action_t expected_action)
+        {
+            for (auto &attr : actual_attrs)
             {
-                for (auto &attr : actual_attrs)
+                if (attr.id == SAI_INBOUND_ROUTING_ENTRY_ATTR_ACTION)
                 {
-                    if (attr.id == SAI_INBOUND_ROUTING_ENTRY_ATTR_ACTION)
-                    {
-                        EXPECT_EQ(attr.value.u32, expected_action);
-                        return;
-                    }
+                    EXPECT_EQ(attr.value.u32, expected_action);
+                    return;
                 }
-                FAIL() << "SAI_INBOUND_ROUTING_ENTRY_ATTR_ACTION not found in attributes";
             }
+            FAIL() << "SAI_INBOUND_ROUTING_ENTRY_ATTR_ACTION not found in attributes";
+        }
     };
 
     TEST_F(DashRouteOrchTest, RouteWithMissingTunnelNotAdded)
@@ -148,4 +158,32 @@ namespace dashrouteorch_test
             const std::string priority_str = (priority >= 0) ? std::to_string(priority) : "None";
             return "InboundRouting_" + addr_family + "_Priority_" + priority_str;
         });
+
+    TEST_F(DashRouteOrchTest, RemoveNonexistOutboundRoutingDoesNotDecrementCrm)
+    {
+        uint32_t baselineUsed = GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING);
+        // Remove non-existent outbound routing entry should return SAI_STATUS_ITEM_NOT_FOUND and not decrement the CRM used count
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_ITEM_NOT_FOUND};
+        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, remove_outbound_routing_entries)
+            .Times(1).WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        RemoveOutboundRoutingEntry();
+        EXPECT_EQ(GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING), baselineUsed);
+    }
+
+    TEST_F(DashRouteOrchTest, AddRemoveInboundRoutingEntry)
+    {
+        AddInboundRoutingEntry();
+        RemoveInboundRoutingEntry();
+    }
+
+    TEST_F(DashRouteOrchTest, RemoveNonexistInboundRoutingDoesNotDecrementCrm)
+    {
+        uint32_t baselineUsed = GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_INBOUND_ROUTING);
+        // Remove non-existent inbound routing entry should return SAI_STATUS_ITEM_NOT_FOUND and not decrement the CRM used count
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_ITEM_NOT_FOUND};
+        EXPECT_CALL(*mock_sai_dash_inbound_routing_api, remove_inbound_routing_entries)
+            .Times(1).WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        RemoveInboundRoutingEntry();
+        EXPECT_EQ(GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_INBOUND_ROUTING), baselineUsed);
+    }
 }

@@ -257,25 +257,23 @@ bool DashRouteOrch::removeOutboundRoutingPost(const string& key, const OutboundR
 
     auto it_status = object_statuses.begin();
     sai_status_t status = *it_status++;
-    if (status != SAI_STATUS_SUCCESS)
+    if (status == SAI_STATUS_SUCCESS)
     {
-        if (status == SAI_STATUS_NOT_EXECUTED)
-        {
-            // Retry if bulk operation did not execute
-            return false;
-        }
-        SWSS_LOG_ERROR("Failed to remove outbound routing entry for %s", key.c_str());
-        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
+        gCrmOrch->decCrmResUsedCounter(ctxt.destination.isV4() ? CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING : CrmResourceType::CRM_DASH_IPV6_OUTBOUND_ROUTING);
+        SWSS_LOG_INFO("Outbound routing entry for %s removed", key.c_str());
+        return true;
     }
-
-    gCrmOrch->decCrmResUsedCounter(ctxt.destination.isV4() ? CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING : CrmResourceType::CRM_DASH_IPV6_OUTBOUND_ROUTING);
-
-    SWSS_LOG_INFO("Outbound routing entry for %s removed", key.c_str());
-
+    if (status == SAI_STATUS_NOT_EXECUTED)
+    {
+        // Retry if bulk operation did not execute
+        return false;
+    }
+    task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, status);
+    if (handle_status != task_success)
+    {
+        SWSS_LOG_ERROR("Failed to remove outbound routing entry for %s", key.c_str());
+        return parseHandleSaiStatusFailure(handle_status);
+    }
     return true;
 }
 
@@ -543,25 +541,23 @@ bool DashRouteOrch::removeInboundRoutingPost(const string& key, const InboundRou
 
     auto it_status = object_statuses.begin();
     sai_status_t status = *it_status++;
-    if (status != SAI_STATUS_SUCCESS)
+    if (status == SAI_STATUS_SUCCESS)
     {
-        if (status == SAI_STATUS_NOT_EXECUTED)
-        {
-            // Retry if bulk operation did not execute
-            return false;
-        }
-        SWSS_LOG_ERROR("Failed to remove inbound routing entry for %s", key.c_str());
-        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_INBOUND_ROUTING, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
+        gCrmOrch->decCrmResUsedCounter(ctxt.sip.isV4() ? CrmResourceType::CRM_DASH_IPV4_INBOUND_ROUTING : CrmResourceType::CRM_DASH_IPV6_INBOUND_ROUTING);
+        SWSS_LOG_INFO("Inbound routing entry for %s removed", key.c_str());
+        return true;
     }
-
-    gCrmOrch->decCrmResUsedCounter(ctxt.sip.isV4() ? CrmResourceType::CRM_DASH_IPV4_INBOUND_ROUTING : CrmResourceType::CRM_DASH_IPV6_INBOUND_ROUTING);
-
-    SWSS_LOG_INFO("Inbound routing entry for %s removed", key.c_str());
-
+    if (status == SAI_STATUS_NOT_EXECUTED)
+    {
+        // Retry if bulk operation did not execute
+        return false;
+    }
+    task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_INBOUND_ROUTING, status);
+    if (handle_status != task_success)
+    {
+        SWSS_LOG_ERROR("Failed to remove inbound routing entry for %s", key.c_str());
+        return parseHandleSaiStatusFailure(handle_status);
+    }
     return true;
 }
 
