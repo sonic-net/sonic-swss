@@ -47,17 +47,15 @@ const MAX_LOCAL_RECONNECT_ATTEMPTS: u32 = 3;
 /// Socket health check timeout - if no data received for this duration, socket is considered unhealthy
 const SOCKET_HEALTH_TIMEOUT_SECS: u64 = 60;
 
-/// Heartbeat logging interval (in iterations) - log every 5 minutes at 10ms per iteration
-const HEARTBEAT_LOG_INTERVAL: u32 = 30000; // 30000 * 10ms = 5 minutes
+/// Target duration for heartbeat log (5 minutes).
+const HEARTBEAT_TARGET_MS: u64 = 5 * 60 * 1000;
 
-/// Debug logging interval (in iterations) - log debug info every 30 seconds
-const DEBUG_LOG_INTERVAL: u32 = 3000; // 3000 * 10ms = 30 seconds
+/// Target duration for debug log (30 seconds).
+const DEBUG_TARGET_MS: u64 = 30 * 1000;
 
-/// WouldBlock debug logging interval (in iterations) - log WouldBlock every minute
-const WOULDBLOCK_LOG_INTERVAL: u32 = 6000; // 6000 * 10ms = 1 minute
+/// Target duration for WouldBlock log (1 minute).
+const WOULDBLOCK_TARGET_MS: u64 = 60 * 1000;
 
-/// Socket readiness check timeout in milliseconds
-const SOCKET_READINESS_TIMEOUT_MS: u64 = 10;
 
 /// Maximum size for buffering incomplete messages (1MB)
 const MAX_INCOMPLETE_MESSAGE_SIZE: usize = 1024 * 1024;
@@ -260,6 +258,10 @@ pub struct DataNetlinkActor {
     command_recipient: Receiver<NetlinkCommand>,
     /// Message parser for handling multiple and fragmented netlink messages
     message_parser: NetlinkMessageParser,
+    /// Netlink socket receive buffer size in bytes (0 = OS default). Reduces ENOBUFS when set.
+    netlink_rcvbuf_bytes: usize,
+    /// Socket readiness poll interval in milliseconds. Shorter than HFT interval reduces ENOBUFS.
+    socket_readiness_timeout_ms: u64,
 }
 
 impl DataNetlinkActor {
@@ -270,11 +272,19 @@ impl DataNetlinkActor {
     /// * `family` - The generic netlink family name
     /// * `group` - The multicast group name
     /// * `command_recipient` - Channel for receiving control commands
+    /// * `netlink_rcvbuf_bytes` - Socket SO_RCVBUF size in bytes (0 = OS default). Larger values reduce ENOBUFS under high HFT load.
+    /// * `socket_readiness_timeout_ms` - Poll interval in ms for socket readiness. Shorter than HFT interval (e.g. 10 ms) reduces ENOBUFS.
     ///
     /// # Returns
     ///
     /// A new DataNetlinkActor instance with an initial connection attempt
-    pub fn new(family: &str, group: &str, command_recipient: Receiver<NetlinkCommand>) -> Self {
+    pub fn new(
+        family: &str,
+        group: &str,
+        command_recipient: Receiver<NetlinkCommand>,
+        netlink_rcvbuf_bytes: usize,
+        socket_readiness_timeout_ms: u64,
+    ) -> Self {
         let nl_resolver = Self::create_nl_resolver();
         let mut actor = DataNetlinkActor {
             family: family.to_string(),
@@ -285,6 +295,8 @@ impl DataNetlinkActor {
             buffer_recipients: LinkedList::new(),
             command_recipient,
             message_parser: NetlinkMessageParser::new(),
+            netlink_rcvbuf_bytes,
+            socket_readiness_timeout_ms,
         };
 
         // Use instance method for initial connection
@@ -373,7 +385,7 @@ impl DataNetlinkActor {
                         }
                     } else {
                         // Fallback to creating temporary socket
-                        return Self::connect_fallback(family, group);
+                        return Self::connect_fallback(family, group, self.netlink_rcvbuf_bytes);
                     }
                 }
             }
@@ -401,7 +413,7 @@ impl DataNetlinkActor {
                 }
             } else {
                 // Fallback to creating temporary socket
-                return Self::connect_fallback(family, group);
+                return Self::connect_fallback(family, group, self.netlink_rcvbuf_bytes);
             }
         };
 
@@ -443,6 +455,8 @@ impl DataNetlinkActor {
             return None;
         }
 
+        netlink_utils::set_socket_rcvbuf(&socket, self.netlink_rcvbuf_bytes);
+
         info!(
             "Successfully connected to family '{}', group '{}' with group_id: {}",
             family, group, group_id
@@ -468,7 +482,11 @@ impl DataNetlinkActor {
 
     /// Fallback connection method when shared router is not available.
     #[cfg(not(test))]
-    fn connect_fallback(family: &str, group: &str) -> Option<SocketType> {
+    fn connect_fallback(
+        family: &str,
+        group: &str,
+        netlink_rcvbuf_bytes: usize,
+    ) -> Option<SocketType> {
         debug!(
             "Using fallback connection for family '{}', group '{}'",
             family, group
@@ -551,6 +569,8 @@ impl DataNetlinkActor {
             warn!("Failed to set non-blocking mode: {:?}", e);
             return None;
         }
+
+        netlink_utils::set_socket_rcvbuf(&socket, netlink_rcvbuf_bytes);
 
         info!(
             "Successfully connected to family '{}', group '{}' with group_id: {}",
@@ -797,16 +817,20 @@ impl DataNetlinkActor {
         );
         let mut heartbeat_counter = 0u32;
         let mut consecutive_failures = 0u32;
+        let poll_ms = actor.socket_readiness_timeout_ms.max(1);
+        let heartbeat_interval = (HEARTBEAT_TARGET_MS / poll_ms).max(1) as u32;
+        let debug_interval = (DEBUG_TARGET_MS / poll_ms).max(1) as u32;
+        let wouldblock_interval = (WOULDBLOCK_TARGET_MS / poll_ms).max(1) as u32;
 
         loop {
             // Log heartbeat every 5 minutes to show the actor is running
             heartbeat_counter += 1;
-            if heartbeat_counter % HEARTBEAT_LOG_INTERVAL == 0 {
+            if heartbeat_counter % heartbeat_interval == 0 {
                 info!("DataNetlinkActor is running normally - waiting for data messages");
             }
 
             // More frequent debug info about socket status
-            if heartbeat_counter % DEBUG_LOG_INTERVAL == 0 {
+            if heartbeat_counter % debug_interval == 0 {
                 debug!(
                     "DataNetlinkActor heartbeat: socket={}, recipients={}, failures={}",
                     actor.socket.is_some(),
@@ -846,7 +870,7 @@ impl DataNetlinkActor {
             }
 
             // Check socket readiness with configurable timeout to allow periodic checks
-            match Self::check_socket_readiness(SOCKET_READINESS_TIMEOUT_MS).await {
+            match Self::check_socket_readiness(actor.socket_readiness_timeout_ms).await {
                 Ok(data_ready) => {
                     // Only try to receive data if we have a socket and data is ready
                     if actor.socket.is_some() && data_ready {
@@ -900,7 +924,10 @@ impl DataNetlinkActor {
                                 // Handle specific errors
                                 if let Some(os_error) = e.raw_os_error() {
                                     if os_error == ENOBUFS {
-                                        warn!("Netlink receive buffer full (ENOBUFS). Consider increasing buffer size or processing messages faster. Error: {:?}", e);
+                                        warn!(
+                                            "Netlink receive buffer full (ENOBUFS). poll_interval_ms={}. Consider reducing --socket-readiness-timeout-ms or increasing buffer. Error: {:?}",
+                                            actor.socket_readiness_timeout_ms, e
+                                        );
                                         // Don't disconnect on ENOBUFS, just continue
                                         continue;
                                     }
@@ -909,7 +936,7 @@ impl DataNetlinkActor {
                                 // Check if it's WouldBlock using standard ErrorKind
                                 if e.kind() == io::ErrorKind::WouldBlock {
                                     // No data available right now, continue normally
-                                    if heartbeat_counter % WOULDBLOCK_LOG_INTERVAL == 0 {
+                                    if heartbeat_counter % wouldblock_interval == 0 {
                                         debug!("No netlink data available (WouldBlock) - socket is connected but no messages from kernel");
                                     }
                                 } else {
@@ -933,7 +960,7 @@ impl DataNetlinkActor {
                         }
                     } else if actor.socket.is_none() {
                         // No socket available, log this periodically but don't spam
-                        if heartbeat_counter % DEBUG_LOG_INTERVAL == 0 {
+                        if heartbeat_counter % debug_interval == 0 {
                             debug!("No socket available - waiting for reconnect command from ControlNetlinkActor");
                         }
                     }
@@ -941,7 +968,7 @@ impl DataNetlinkActor {
                 Err(e) => {
                     warn!("Poll error: {:?}", e);
                     // Wait a bit before retrying to avoid busy loop on persistent poll errors
-                    sleep(Duration::from_millis(SOCKET_READINESS_TIMEOUT_MS));
+                    sleep(Duration::from_millis(actor.socket_readiness_timeout_ms));
                 }
             }
         }
@@ -1143,7 +1170,7 @@ pub mod test {
         let (command_sender, command_receiver) = channel(1);
         let (buffer_sender, mut buffer_receiver) = channel(1);
 
-        let mut actor = DataNetlinkActor::new("family", "group", command_receiver);
+        let mut actor = DataNetlinkActor::new("family", "group", command_receiver, 0, 5);
         actor.add_recipient(buffer_sender);
 
         let task = spawn(DataNetlinkActor::run(actor));
@@ -1415,6 +1442,27 @@ pub mod test {
             assert!(!group.is_empty());
         }
     }
+
+    #[test]
+    fn test_netlink_rcvbuf_stored_on_construction() {
+        let (_, command_receiver) = channel(1);
+        let actor = DataNetlinkActor::new("family", "group", command_receiver, 4194304, 5);
+        assert_eq!(actor.netlink_rcvbuf_bytes, 4194304);
+    }
+
+    #[test]
+    fn test_log_interval_cadence() {
+        // Verify that computed intervals match target durations for various poll rates.
+        for poll_ms in [1u64, 5, 10, 50, 100] {
+            let heartbeat = (HEARTBEAT_TARGET_MS / poll_ms).max(1);
+            let debug = (DEBUG_TARGET_MS / poll_ms).max(1);
+            let wouldblock = (WOULDBLOCK_TARGET_MS / poll_ms).max(1);
+            assert_eq!(heartbeat * poll_ms, HEARTBEAT_TARGET_MS, "poll_ms={}", poll_ms);
+            assert_eq!(debug * poll_ms, DEBUG_TARGET_MS, "poll_ms={}", poll_ms);
+            assert_eq!(wouldblock * poll_ms, WOULDBLOCK_TARGET_MS, "poll_ms={}", poll_ms);
+        }
+    }
+
 }
 
 /// Reads the Generic Netlink family and group names from the configuration file.
