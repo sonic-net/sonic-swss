@@ -3,6 +3,7 @@
 #include <sys/time.h>
 #include "timestamp.h"
 #include "orch.h"
+#include "swssstats.h"
 
 #include "subscriberstatetable.h"
 #include "portsorch.h"
@@ -248,8 +249,16 @@ void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry, bool onRetry)
     string op  = kfvOp(entry);
 
     if (!onRetry)
+    {
         /* Record incoming tasks */
         Recorder::Instance().swss.record(dumpTuple(entry));
+        
+        /* Record statistics */
+        if (gSwssStatsRecord)
+        {
+            SwssStats::getInstance()->recordTask(getTableName(), op);
+        }
+    }
     else
         Recorder::Instance().retry.record(dumpTuple(entry).append(DECACHE));
 
@@ -557,6 +566,8 @@ void Consumer::drain()
 {
     if (!m_toSync.empty())
     {
+        size_t size_before = gSwssStatsRecord ? m_toSync.size() : 0;
+        bool threw = false;
         try
         {
             ((Orch *)m_orch)->doTask((Consumer&)*this);
@@ -565,21 +576,39 @@ void Consumer::drain()
         {
             SWSS_LOG_ERROR("Exception caught: type=invalid_argument, table=%s, error=%s",
                            getName().c_str(), e.what());
+            threw = true;
         }
         catch (const std::logic_error& e)
         {
             SWSS_LOG_ERROR("Exception caught: type=logic_error, table=%s, error=%s",
                            getName().c_str(), e.what());
+            threw = true;
         }
         catch (const std::exception& e)
         {
             SWSS_LOG_ERROR("Exception caught: type=exception, table=%s, error=%s",
                            getName().c_str(), e.what());
+            threw = true;
         }
         catch (...)
         {
             SWSS_LOG_ERROR("Exception caught: type=unknown, table=%s",
                            getName().c_str());
+            threw = true;
+        }
+        if (gSwssStatsRecord && size_before > 0)
+        {
+            if (threw)
+            {
+                SwssStats::getInstance()->recordError(getTableName(), 1);
+            }
+            else
+            {
+                size_t size_after = m_toSync.size();
+                uint64_t completed = (size_before > size_after) ? (size_before - size_after) : 0;
+                if (completed > 0)
+                    SwssStats::getInstance()->recordComplete(getTableName(), completed);
+            }
         }
     }
 }
@@ -1235,3 +1264,4 @@ void Orch2::doTask(Consumer &consumer)
         }
     }
 }
+
