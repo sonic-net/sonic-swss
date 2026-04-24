@@ -388,6 +388,13 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
 {
     SWSS_LOG_ENTER();
 
+
+    if (m_syncdMirrors.find(key) != m_syncdMirrors.end())
+    {
+        SWSS_LOG_ERROR("Mirror session %s already exists", key.c_str());
+        return task_process_status::task_invalid_entry;
+    }
+
     bool src_ip_initialized = false;
     bool dst_ip_initialized = false;
 
@@ -476,11 +483,21 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
             }
             else if (fvField(i) == MIRROR_SESSION_SAMPLE_RATE)
             {
-                entry.sample_rate = to_uint<uint32_t>(fvValue(i));
+                try {
+                    entry.sample_rate = to_uint<uint32_t>(fvValue(i));
+                } catch (const exception& e) {
+                    SWSS_LOG_ERROR("Invalid sample_rate for session %s: %s", key.c_str(), e.what());
+                    return task_process_status::task_invalid_entry;
+                }
             }
             else if (fvField(i) == MIRROR_SESSION_TRUNCATE_SIZE)
             {
-                entry.truncate_size = to_uint<uint32_t>(fvValue(i));
+                try {
+                    entry.truncate_size = to_uint<uint32_t>(fvValue(i));
+                } catch (const exception& e) {
+                    SWSS_LOG_ERROR("Invalid truncate_size for session %s: %s", key.c_str(), e.what());
+                    return task_process_status::task_invalid_entry;
+                }
             }
             else
             {
@@ -1031,8 +1048,15 @@ bool MirrorOrch::setUnsetPortMirror(Port port,
 
     sai_status_t status;
 
-    if (sample_rate > 0 && ingress)
+    if (sample_rate > 0)
     {
+        if (!ingress)
+        {
+            SWSS_LOG_ERROR("Sampled mirroring on egress is not supported for port %s",
+                            port.m_alias.c_str());
+            return false;
+        }
+
         // Sampled mirroring path: use SAMPLEPACKET_ENABLE + SAMPLE_MIRROR_SESSION
         sai_attribute_t sp_attr;
         sp_attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
@@ -1350,7 +1374,14 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
     // Create SamplePacket if sample_rate > 0
     if (session.sample_rate > 0)
     {
-        if (!createSamplePacket(name, session))
+        if (!m_switchOrch->isPortIngressSampleMirrorSupported())
+        {
+            SWSS_LOG_WARN("Sampled mirroring not supported on this platform, "
+                          "falling back to full mirror for session %s", name.c_str());
+            session.sample_rate = 0;
+            session.truncate_size = 0;
+        }
+        else if (!createSamplePacket(name, session))
         {
             SWSS_LOG_ERROR("Failed to create samplepacket, removing mirror session %s", name.c_str());
             sai_mirror_api->remove_mirror_session(session.sessionId);
@@ -1365,6 +1396,12 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         if (status == false)
         {
             SWSS_LOG_ERROR("Failed to activate port mirror session %s", name.c_str());
+            // Clean up samplepacket if it was created
+            if (session.samplepacketId != SAI_NULL_OBJECT_ID)
+            {
+                removeSamplePacket(name, session);
+            }
+            sai_mirror_api->remove_mirror_session(session.sessionId);
             session.status = false;
             return false;
         }
@@ -1486,13 +1523,22 @@ bool MirrorOrch::createSamplePacket(const string& name, MirrorEntry& session)
 
     if (session.truncate_size > 0)
     {
-        attrs[attr_count].id = SAI_SAMPLEPACKET_ATTR_TRUNCATE_ENABLE;
-        attrs[attr_count].value.booldata = true;
-        attr_count++;
+        if (!m_switchOrch->isSamplepacketTruncationSupported())
+        {
+            SWSS_LOG_WARN("Truncation not supported on this platform, "
+                          "skipping truncation for session %s", name.c_str());
+            session.truncate_size = 0;
+        }
+        else
+        {
+            attrs[attr_count].id = SAI_SAMPLEPACKET_ATTR_TRUNCATE_ENABLE;
+            attrs[attr_count].value.booldata = true;
+            attr_count++;
 
-        attrs[attr_count].id = SAI_SAMPLEPACKET_ATTR_TRUNCATE_SIZE;
-        attrs[attr_count].value.u32 = session.truncate_size;
-        attr_count++;
+            attrs[attr_count].id = SAI_SAMPLEPACKET_ATTR_TRUNCATE_SIZE;
+            attrs[attr_count].value.u32 = session.truncate_size;
+            attr_count++;
+        }
     }
 
     sai_status_t status = sai_samplepacket_api->create_samplepacket(
@@ -1502,16 +1548,20 @@ bool MirrorOrch::createSamplePacket(const string& name, MirrorEntry& session)
     {
         SWSS_LOG_ERROR("Failed to create samplepacket for session %s, status %d",
                        name.c_str(), status);
+        session.samplepacketId = SAI_NULL_OBJECT_ID;
         task_process_status handle_status = handleSaiCreateStatus(SAI_API_SAMPLEPACKET, status);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
+    else
+    {
+        SWSS_LOG_NOTICE("Created samplepacket for session %s, rate %u, truncate %u",
+                        name.c_str(), session.sample_rate, session.truncate_size);
+    }
 
-    SWSS_LOG_NOTICE("Created samplepacket for session %s, rate %u, truncate %u",
-                    name.c_str(), session.sample_rate, session.truncate_size);
-    return true;
+    return (status == SAI_STATUS_SUCCESS);
 }
 
 bool MirrorOrch::removeSamplePacket(const string& name, MirrorEntry& session)
