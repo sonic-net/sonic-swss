@@ -108,7 +108,7 @@ private:
     void querySwitchTpidCapability();
     void querySwitchPortEgressSampleCapability();
     void querySwitchPortMirrorCapability();
-    void querySwitchSampledMirrorCapability();
+    void querySwitchSamplePacketCapability();
 
     // Statistics
     void generateSwitchCounterNameMap() const;
