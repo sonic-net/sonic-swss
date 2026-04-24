@@ -95,6 +95,11 @@ counter_group_meta = {
         'name_map': 'COUNTERS_SRV6_NAME_MAP',
         'pre_test': 'pre_srv6_counter_test',
         'post_test': 'post_srv6_counter_test',
+    },
+    'copp_policer_counter': {
+        'key': 'COPP_STATS',
+        'group_name': 'COPP_STATS_COUNTER',
+        'name_map': 'COUNTERS_POLICER_NAME_MAP',
     }
 }
 

@@ -67,6 +67,7 @@ extern string gMySwitchType;
 #define ICMP_SESSION_KEY            "ICMP_SESSION"
 #define SWITCH_KEY                  "SWITCH"
 #define HA_SET_KEY                  "HA_SET"
+#define COPP_STATS_KEY               "COPP_STATS"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
@@ -100,6 +101,7 @@ unordered_map<string, string> flexCounterGroupMap =
     {ICMP_SESSION_KEY, ICMP_SESSION_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {SWITCH_KEY, SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {HA_SET_KEY, HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP}
+    {COPP_STATS_KEY, COPP_STATS_COUNTER_FLEX_COUNTER_GROUP},
 };
 
 
@@ -323,6 +325,19 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         {
                             gCoppOrch->clearHostIfTrapCounterIdList();
                             m_hostif_trap_counter_enabled = false;
+                        }
+                    }
+                    if (gCoppOrch && (key == COPP_STATS_KEY))
+                    {
+                        if (value == "enable")
+                        {
+                            m_copp_stats_counter_enabled = true;
+                            gCoppOrch->generatePolicerCounterIdList();
+                        }
+                        else if (value == "disable")
+                        {
+                            gCoppOrch->clearPolicerCounterIdList();
+                            m_copp_stats_counter_enabled = false;
                         }
                     }
                     if (gFlowCounterRouteOrch && gFlowCounterRouteOrch->getRouteFlowCounterSupported() && key == FLOW_CNT_ROUTE_KEY)
