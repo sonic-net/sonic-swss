@@ -46,6 +46,7 @@ enum class CounterType
     SRV6,
     SWITCH,
     HA_SET,
+    POLICER
 };
 
 extern bool gTraditionalFlexCounter;
