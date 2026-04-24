@@ -73,9 +73,15 @@ class NameLabelMapper
 
     // Checks whether label mapping exists for the given key for the specific
     // object type.
+
     bool existsLabel(_In_ sai_object_type_t object_type, _In_ const std::string &key) const;
 
-  private:
+   // Verify the given label in the label mapper
+   std::string verifyLabelMapping(_In_ sai_object_type_t object_type,
+                                  _In_ const std::string& key,
+                                  _In_ std::string label);
+
+   private:
     // Generate and return a unique label
     std::string generateUniqueLabel();
 

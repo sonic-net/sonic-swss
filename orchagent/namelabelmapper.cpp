@@ -198,6 +198,7 @@ void NameLabelMapper::readMapperFromDb()
             setLabel(sai_object_type, key, label);
         }
     }
+}
 
 std::string NameLabelMapper::verifyLabelMapping(
     _In_ sai_object_type_t object_type, _In_ const std::string& key,
