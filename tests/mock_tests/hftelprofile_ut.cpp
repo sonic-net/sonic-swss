@@ -127,10 +127,6 @@ namespace hftelprofile_ut
 
                 /* Placement-new the containers and strings that may be
                  * accessed (directly or via logging) by updateTemplates().
-                 * Today that means:
-                 *   - m_profile_name
-                 *   - m_sai_tam_tel_type_objs
-                 *   - m_sai_tam_tel_type_templates
                  * If updateTemplates() starts touching additional members,
                  * extend this partial construction accordingly. */
                 new (const_cast<string*>(&p->m_profile_name)) string();
@@ -138,14 +134,18 @@ namespace hftelprofile_ut
                     decay_t<decltype(p->m_sai_tam_tel_type_objs)>();
                 new (&p->m_sai_tam_tel_type_templates)
                     decay_t<decltype(p->m_sai_tam_tel_type_templates)>();
+                new (&p->m_sai_tam_counter_subscription_objs)
+                    decay_t<decltype(p->m_sai_tam_counter_subscription_objs)>();
 
                 p->m_sai_tam_tel_type_objs[SAI_OBJECT_TYPE_PORT] = guard;
+                p->m_sai_tam_counter_subscription_objs[SAI_OBJECT_TYPE_PORT];
             }
 
             ~Stub()
             {
                 if (!p) return;
                 p->m_profile_name.~basic_string();
+                p->m_sai_tam_counter_subscription_objs.~unordered_map();
                 p->m_sai_tam_tel_type_objs.~unordered_map();
                 p->m_sai_tam_tel_type_templates.~unordered_map();
                 p = nullptr;
