@@ -96,12 +96,12 @@ std::string kAclCounterMapperKey1 =
     "P4RT_TABLE:ACL_PUNT_TABLE:match/ether_type=0x0800:match/"
     "ipv6_dst=fdf8:f53b:82e4::53 & fdf8:f53b:82e4::53:priority=15";
 std::string kAclCounterLabel1 = "1707179015354132";
-std::string kAclCounterMapperKey2 =
+constexpr char* kAclCounterMapperKey2 =
     "P4RT_TABLE:ACL_PUNT_TABLE:match/arp_tpa=0xff112231:match/"
     "ether_type=0x0800:match/in_ports=Ethernet1,Ethernet2:match/"
     "ipmc_table_hit=0x1:match/ipv6_dst=fdf8:f53b:82e4::53 & "
     "fdf8:f53b:82e4::53:match/out_ports=Ethernet4,Ethernet5:match/"
-    "vrf_id=b4-traffic:priority=15";
+    "route_table_hit=0x1:match/vrf_id=b4-traffic:priority=15";
 std::string kAclCounterLabel2 = "1708458300499045";
 
 // Matches the policer sai_attribute_t[] argument.
@@ -163,15 +163,25 @@ bool MatchSaiPolicerAttributeInStormMode(const int attrs_size,
 }
 
 // Matches the policer sai_qos_map_list_t value.
-bool MatchSaiPolicerAttributeMulticastQueue(const int attrs_size,
-                                            sai_qos_map_list_t expected_qos_map,
-                                            const sai_attribute_t* attr_list) {
+bool MatchSaiPolicerAttributeForwardingQueues(
+    const int attrs_size, sai_qos_map_list_t expected_mcast_qos_map,
+    sai_qos_map_list_t expected_ucast_qos_map,
+    const sai_attribute_t* attr_list) {
   if (attr_list == nullptr) {
     return false;
   }
+
+  sai_qos_map_list_t& expected_qos_map = expected_mcast_qos_map;
   for (int i = 0; i < attrs_size; ++i) {
     if (attr_list[i].id ==
-        SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION) {
+            SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION ||
+        attr_list[i].id ==
+            SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION) {
+      attr_list[i].id ==
+              SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION
+          ? expected_qos_map = expected_mcast_qos_map
+          : expected_qos_map = expected_ucast_qos_map;
+
       auto attr = attr_list[i];
       if (attr.value.qosmap.count != expected_qos_map.count) return false;
 
@@ -865,7 +875,7 @@ P4AclTableDefinitionAppDbEntry getDefaultAclTableDefAppDbEntry()
     app_db_entry.packet_action_color_lookup["acl_trap"].push_back(
         {.packet_action = P4_PACKET_ACTION_DROP, .packet_color = P4_PACKET_COLOR_RED});
 
-    //   "action/set_cpu_and_multicast_queues" = [
+    //   "action/set_forwarding_queues" = [
     //     {"action": "SAI_PACKET_ACTION_FORWARD", "packet_color":
     //     "SAI_PACKET_COLOR_GREEN"},
     //     {"action": "SAI_PACKET_ACTION_DENY", "packet_color":
@@ -879,24 +889,32 @@ P4AclTableDefinitionAppDbEntry getDefaultAclTableDefAppDbEntry()
     //     "SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION",
     //     "packet_color": "SAI_PACKET_COLOR_RED", "param": "red_multicast_queue"}
     //   ]
-    app_db_entry.action_field_lookup["set_cpu_and_multicast_queues"].push_back(
+    app_db_entry.action_field_lookup["set_forwarding_queues"].push_back(
         {.sai_action = P4_ACTION_SET_QOS_QUEUE,
          .p4_param_name = "cpu_queue",
          .sai_object_type = EMPTY_STRING});
-    app_db_entry.packet_action_color_lookup["set_cpu_and_multicast_queues"]
-        .push_back({.packet_action = P4_PACKET_ACTION_FORWARD,
-                    .packet_color = P4_PACKET_COLOR_GREEN});
-    app_db_entry.packet_action_color_lookup["set_cpu_and_multicast_queues"]
-        .push_back({.packet_action = P4_PACKET_ACTION_DENY,
-                    .packet_color = P4_PACKET_COLOR_RED});
-    app_db_entry.action_color_param_lookup["set_cpu_and_multicast_queues"]
-        .push_back({.sai_action = P4_ACTION_SET_MULTICAST_QOS_QUEUE,
-                    .packet_color = P4_PACKET_COLOR_GREEN,
-                    .p4_param_name = "green_multicast_queue"});
-    app_db_entry.action_color_param_lookup["set_cpu_and_multicast_queues"]
-        .push_back({.sai_action = P4_ACTION_SET_MULTICAST_QOS_QUEUE,
-                    .packet_color = P4_PACKET_COLOR_RED,
-                    .p4_param_name = "red_multicast_queue"});
+    app_db_entry.packet_action_color_lookup["set_forwarding_queues"].push_back(
+        {.packet_action = P4_PACKET_ACTION_FORWARD,
+         .packet_color = P4_PACKET_COLOR_GREEN});
+    app_db_entry.packet_action_color_lookup["set_forwarding_queues"].push_back(
+        {.packet_action = P4_PACKET_ACTION_DENY,
+         .packet_color = P4_PACKET_COLOR_RED});
+    app_db_entry.action_color_param_lookup["set_forwarding_queues"].push_back(
+        {.sai_action = P4_ACTION_SET_MULTICAST_QOS_QUEUE,
+         .packet_color = P4_PACKET_COLOR_GREEN,
+         .p4_param_name = "green_multicast_queue"});
+    app_db_entry.action_color_param_lookup["set_forwarding_queues"].push_back(
+        {.sai_action = P4_ACTION_SET_MULTICAST_QOS_QUEUE,
+         .packet_color = P4_PACKET_COLOR_RED,
+         .p4_param_name = "red_multicast_queue"});
+    app_db_entry.action_color_param_lookup["set_forwarding_queues"].push_back(
+        {.sai_action = P4_ACTION_SET_UNICAST_QOS_QUEUE,
+         .packet_color = P4_PACKET_COLOR_GREEN,
+         .p4_param_name = "green_unicast_queue"});
+    app_db_entry.action_color_param_lookup["set_forwarding_queues"].push_back(
+        {.sai_action = P4_ACTION_SET_UNICAST_QOS_QUEUE,
+         .packet_color = P4_PACKET_COLOR_RED,
+         .p4_param_name = "red_unicast_queue"});
     return app_db_entry;
 }
 
@@ -4100,7 +4118,7 @@ TEST_F(AclManagerTest, AclRuleWithVrfAction)
     EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
 }
 
-TEST_F(AclManagerTest, AclRuleWithMeteredMcastQueues) {
+TEST_F(AclManagerTest, AclRuleWithMeteredForwardingQueues) {
     ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
 
     auto app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
@@ -4111,44 +4129,73 @@ TEST_F(AclManagerTest, AclRuleWithMeteredMcastQueues) {
     const auto& table_name_and_rule_key =
         concatTableNameAndRuleKey(kAclIngressTableName, acl_rule_key);
 
-    int green_multicast_queue_num = 9;
-    int red_multicast_queue_num = 10;
+    // Set user defined trap for QOS_QUEUE, and metered forwarding qos queues.
+    int green_multicast_queue_num = 1;
+    int red_multicast_queue_num = 2;
+    int green_unicast_queue_num = 3;
+    int red_unicast_queue_num = 4;
     int cpu_queue_num = 9;
-    app_db_entry.action = "set_cpu_and_multicast_queues";
+    app_db_entry.action = "set_forwarding_queues";
     app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(cpu_queue_num);
     app_db_entry.action_param_fvs["green_multicast_queue"] =
         std::to_string(green_multicast_queue_num);
     app_db_entry.action_param_fvs["red_multicast_queue"] =
         std::to_string(red_multicast_queue_num);
+    app_db_entry.action_param_fvs["green_unicast_queue"] =
+        std::to_string(green_unicast_queue_num);
+    app_db_entry.action_param_fvs["red_unicast_queue"] =
+        std::to_string(red_unicast_queue_num);
 
-    sai_qos_map_list_t qos_map_list;
-    sai_qos_map_t qos_map;
-    std::vector<sai_qos_map_t> map_list;
+    sai_qos_map_list_t multicast_qos_map_list;
+    sai_qos_map_t multicast_qos_map;
+    std::vector<sai_qos_map_t> multicast_map_list;
 
-    /* Add green packet map. */
-    memset(&qos_map, 0, sizeof(qos_map));
-    qos_map.key.color = SAI_PACKET_COLOR_GREEN;
-    qos_map.value.queue_index = (sai_queue_index_t)green_multicast_queue_num;
-    map_list.push_back(qos_map);
-    /* Add red packet map. */
-    memset(&qos_map, 0, sizeof(qos_map));
-    qos_map.key.color = SAI_PACKET_COLOR_RED;
-    qos_map.value.queue_index = (sai_queue_index_t)red_multicast_queue_num;
-    map_list.push_back(qos_map);
+    /* Add green multicast packet map. */
+    memset(&multicast_qos_map, 0, sizeof(multicast_qos_map));
+    multicast_qos_map.key.color = SAI_PACKET_COLOR_GREEN;
+    multicast_qos_map.value.queue_index =
+        (sai_queue_index_t)green_multicast_queue_num;
+    multicast_map_list.push_back(multicast_qos_map);
+    /* Add red multicast packet map. */
+    memset(&multicast_qos_map, 0, sizeof(multicast_qos_map));
+    multicast_qos_map.key.color = SAI_PACKET_COLOR_RED;
+    multicast_qos_map.value.queue_index =
+        (sai_queue_index_t)red_multicast_queue_num;
+    multicast_map_list.push_back(multicast_qos_map);
     /* Set up sai_qos_map_list_t. */
-    qos_map_list.count = (uint32_t)map_list.size();
-    qos_map_list.list = map_list.data();
+    multicast_qos_map_list.count = (uint32_t)multicast_map_list.size();
+    multicast_qos_map_list.list = multicast_map_list.data();
+
+    sai_qos_map_list_t unicast_qos_map_list;
+    sai_qos_map_t unicast_qos_map;
+    std::vector<sai_qos_map_t> unicast_map_list;
+
+    /* Add green unicast packet map. */
+    memset(&unicast_qos_map, 0, sizeof(unicast_qos_map));
+    unicast_qos_map.key.color = SAI_PACKET_COLOR_GREEN;
+    unicast_qos_map.value.queue_index =
+        (sai_queue_index_t)green_unicast_queue_num;
+    unicast_map_list.push_back(unicast_qos_map);
+    /* Add red unicast packet map. */
+    memset(&unicast_qos_map, 0, sizeof(unicast_qos_map));
+    unicast_qos_map.key.color = SAI_PACKET_COLOR_RED;
+    unicast_qos_map.value.queue_index = (sai_queue_index_t)red_unicast_queue_num;
+    unicast_map_list.push_back(unicast_qos_map);
+    /* Set up sai_qos_map_list_t. */
+    unicast_qos_map_list.count = (uint32_t)unicast_map_list.size();
+    unicast_qos_map_list.list = unicast_map_list.data();
 
     EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
                         Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
         .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_CALL(
-        mock_sai_policer_,
-        create_policer(_, Eq(gSwitchId), Eq(8),
-                       Truly(std::bind(MatchSaiPolicerAttributeMulticastQueue, 8,
-                                       qos_map_list, std::placeholders::_1))))
+    EXPECT_CALL(mock_sai_policer_,
+                create_policer(
+                    _, Eq(gSwitchId), Eq(9),
+                    Truly(std::bind(MatchSaiPolicerAttributeForwardingQueues, 9,
+                                    multicast_qos_map_list, unicast_qos_map_list,
+                                    std::placeholders::_1))))
         .WillOnce(
             DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
@@ -4173,6 +4220,23 @@ TEST_F(AclManagerTest, AclRuleWithMeteredMcastQueues) {
     EXPECT_EQ(
         red_multicast_queue_num,
         acl_rule->meter.packet_metered_queues[sai_attr][1].value.queue_index);
+    sai_attr = static_cast<sai_policer_attr_t>(
+        SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION);
+    // Check action field value
+    EXPECT_FALSE(acl_rule->meter.packet_metered_queues.empty());
+    EXPECT_NE(acl_rule->meter.packet_metered_queues.find(sai_attr),
+              acl_rule->meter.packet_metered_queues.end());
+    EXPECT_EQ(2, acl_rule->meter.packet_metered_queues[sai_attr].size());
+    EXPECT_EQ(SAI_PACKET_COLOR_GREEN,
+              acl_rule->meter.packet_metered_queues[sai_attr][0].key.color);
+    EXPECT_EQ(
+        green_unicast_queue_num,
+        acl_rule->meter.packet_metered_queues[sai_attr][0].value.queue_index);
+    EXPECT_EQ(SAI_PACKET_COLOR_RED,
+              acl_rule->meter.packet_metered_queues[sai_attr][1].key.color);
+    EXPECT_EQ(
+        red_unicast_queue_num,
+        acl_rule->meter.packet_metered_queues[sai_attr][1].value.queue_index);
 
     EXPECT_TRUE(p4_oid_mapper_->getOID(SAI_OBJECT_TYPE_POLICER,
                                        table_name_and_rule_key, &meter_oid));
@@ -4193,7 +4257,8 @@ TEST_F(AclManagerTest, AclRuleWithMeteredMcastQueues) {
     EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
 }
 
-TEST_F(AclManagerTest, AclRuleWithMeteredMcastQueuesInvalidParamNameFails) {
+TEST_F(AclManagerTest,
+       AclRuleWithMeteredForwardingQueuesInvalidParamNameFails) {
     ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
 
     auto app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
@@ -4201,16 +4266,19 @@ TEST_F(AclManagerTest, AclRuleWithMeteredMcastQueuesInvalidParamNameFails) {
         KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
 
     int cpu_queue_num = 9;
-    app_db_entry.action = "set_cpu_and_multicast_queues";
+    app_db_entry.action = "set_forwarding_queues";
     app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(cpu_queue_num);
-    app_db_entry.action_param_fvs["invalid_param_name"] = "11";
-    app_db_entry.action_param_fvs["red_multicast_queue"] = "12";
+    app_db_entry.action_param_fvs["invalid_param_name"] = "1";
+    app_db_entry.action_param_fvs["red_multicast_queue"] = "2";
+    app_db_entry.action_param_fvs["green_unicast_queue"] = "3";
+    app_db_entry.action_param_fvs["red_unicast_queue"] = "4";
 
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
               ProcessAddRuleRequest(acl_rule_key, app_db_entry));
 }
 
-TEST_F(AclManagerTest, AclRuleWithMeteredMcastQueuesInvalidParamValueFails) {
+TEST_F(AclManagerTest,
+       AclRuleWithMeteredForwardingQueuesInvalidParamValueFails) {
     ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
 
     auto app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
@@ -4218,17 +4286,19 @@ TEST_F(AclManagerTest, AclRuleWithMeteredMcastQueuesInvalidParamValueFails) {
         KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
 
     int cpu_queue_num = 9;
-    app_db_entry.action = "set_cpu_and_multicast_queues";
+    app_db_entry.action = "set_forwarding_queues";
     app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(cpu_queue_num);
     app_db_entry.action_param_fvs["green_multicast_queue"] =
         "invalid queue number";
     app_db_entry.action_param_fvs["red_multicast_queue"] = "invalid queue number";
+    app_db_entry.action_param_fvs["green_unicast_queue"] = "3";
+    app_db_entry.action_param_fvs["red_unicast_queue"] = "4";
 
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
               ProcessAddRuleRequest(acl_rule_key, app_db_entry));
 }
 
-TEST_F(AclManagerTest, AclRuleWithMeteredMcastQueuesNoParamFails) {
+TEST_F(AclManagerTest, AclRuleWithMeteredForwardingQueuesNoParamFails) {
     ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
 
     auto app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
@@ -4236,7 +4306,7 @@ TEST_F(AclManagerTest, AclRuleWithMeteredMcastQueuesNoParamFails) {
         KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
 
     int cpu_queue_num = 9;
-    app_db_entry.action = "set_cpu_and_multicast_queues";
+    app_db_entry.action = "set_forwarding_queues";
     app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(cpu_queue_num);
 
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
@@ -4871,7 +4941,7 @@ TEST_F(AclManagerTest, UpdateAclRuleWithActionMeterChange)
               acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID].aclaction.parameter.oid);
 }
 
-TEST_F(AclManagerTest, UpdateAclRuleWithMeteredMcastQueueChange) {
+TEST_F(AclManagerTest, UpdateAclRuleWithMeteredForwardingQueueChange) {
   ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
 
   auto app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
@@ -4882,44 +4952,73 @@ TEST_F(AclManagerTest, UpdateAclRuleWithMeteredMcastQueueChange) {
   const auto& table_name_and_rule_key =
       concatTableNameAndRuleKey(kAclIngressTableName, acl_rule_key);
 
-  int green_multicast_queue_num = 9;
-  int red_multicast_queue_num = 10;
+  // Set user defined trap for QOS_QUEUE, and metered forwarding qos queues.
+  int green_multicast_queue_num = 1;
+  int red_multicast_queue_num = 2;
+  int green_unicast_queue_num = 3;
+  int red_unicast_queue_num = 4;
   int cpu_queue_num = 9;
-  app_db_entry.action = "set_cpu_and_multicast_queues";
+  app_db_entry.action = "set_forwarding_queues";
   app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(cpu_queue_num);
   app_db_entry.action_param_fvs["green_multicast_queue"] =
       std::to_string(green_multicast_queue_num);
   app_db_entry.action_param_fvs["red_multicast_queue"] =
       std::to_string(red_multicast_queue_num);
+  app_db_entry.action_param_fvs["green_unicast_queue"] =
+      std::to_string(green_unicast_queue_num);
+  app_db_entry.action_param_fvs["red_unicast_queue"] =
+      std::to_string(red_unicast_queue_num);
 
-  sai_qos_map_list_t qos_map_list;
-  sai_qos_map_t qos_map;
-  std::vector<sai_qos_map_t> map_list;
+  sai_qos_map_list_t multicast_qos_map_list;
+  sai_qos_map_t multicast_qos_map;
+  std::vector<sai_qos_map_t> multicast_map_list;
 
-  /* Add green packet map. */
-  memset(&qos_map, 0, sizeof(qos_map));
-  qos_map.key.color = SAI_PACKET_COLOR_GREEN;
-  qos_map.value.queue_index = (sai_queue_index_t)green_multicast_queue_num;
-  map_list.push_back(qos_map);
-  /* Add red packet map. */
-  memset(&qos_map, 0, sizeof(qos_map));
-  qos_map.key.color = SAI_PACKET_COLOR_RED;
-  qos_map.value.queue_index = (sai_queue_index_t)red_multicast_queue_num;
-  map_list.push_back(qos_map);
+  /* Add green multicast packet map. */
+  memset(&multicast_qos_map, 0, sizeof(multicast_qos_map));
+  multicast_qos_map.key.color = SAI_PACKET_COLOR_GREEN;
+  multicast_qos_map.value.queue_index =
+      (sai_queue_index_t)green_multicast_queue_num;
+  multicast_map_list.push_back(multicast_qos_map);
+  /* Add red multicast packet map. */
+  memset(&multicast_qos_map, 0, sizeof(multicast_qos_map));
+  multicast_qos_map.key.color = SAI_PACKET_COLOR_RED;
+  multicast_qos_map.value.queue_index =
+      (sai_queue_index_t)red_multicast_queue_num;
+  multicast_map_list.push_back(multicast_qos_map);
   /* Set up sai_qos_map_list_t. */
-  qos_map_list.count = (uint32_t)map_list.size();
-  qos_map_list.list = map_list.data();
+  multicast_qos_map_list.count = (uint32_t)multicast_map_list.size();
+  multicast_qos_map_list.list = multicast_map_list.data();
+
+  sai_qos_map_list_t unicast_qos_map_list;
+  sai_qos_map_t unicast_qos_map;
+  std::vector<sai_qos_map_t> unicast_map_list;
+
+  /* Add green unicast packet map. */
+  memset(&unicast_qos_map, 0, sizeof(unicast_qos_map));
+  unicast_qos_map.key.color = SAI_PACKET_COLOR_GREEN;
+  unicast_qos_map.value.queue_index =
+      (sai_queue_index_t)green_unicast_queue_num;
+  unicast_map_list.push_back(unicast_qos_map);
+  /* Add red unicast packet map. */
+  memset(&unicast_qos_map, 0, sizeof(unicast_qos_map));
+  unicast_qos_map.key.color = SAI_PACKET_COLOR_RED;
+  unicast_qos_map.value.queue_index = (sai_queue_index_t)red_unicast_queue_num;
+  unicast_map_list.push_back(unicast_qos_map);
+  /* Set up sai_qos_map_list_t. */
+  unicast_qos_map_list.count = (uint32_t)unicast_map_list.size();
+  unicast_qos_map_list.list = unicast_map_list.data();
 
   EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
       .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
                       Return(SAI_STATUS_SUCCESS)));
   EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
-  EXPECT_CALL(
-      mock_sai_policer_,
-      create_policer(_, Eq(gSwitchId), Eq(8),
-                     Truly(std::bind(MatchSaiPolicerAttributeMulticastQueue, 8,
-                                     qos_map_list, std::placeholders::_1))))
+  EXPECT_CALL(mock_sai_policer_,
+              create_policer(
+                  _, Eq(gSwitchId), Eq(9),
+                  Truly(std::bind(MatchSaiPolicerAttributeForwardingQueues, 9,
+                                  multicast_qos_map_list, unicast_qos_map_list,
+                                  std::placeholders::_1))))
       .WillOnce(
           DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
   EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
@@ -4945,6 +5044,24 @@ TEST_F(AclManagerTest, UpdateAclRuleWithMeteredMcastQueueChange) {
       red_multicast_queue_num,
       acl_rule->meter.packet_metered_queues[sai_attr][1].value.queue_index);
 
+  sai_attr = static_cast<sai_policer_attr_t>(
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION);
+  // Check action field value
+  EXPECT_FALSE(acl_rule->meter.packet_metered_queues.empty());
+  EXPECT_NE(acl_rule->meter.packet_metered_queues.find(sai_attr),
+            acl_rule->meter.packet_metered_queues.end());
+  EXPECT_EQ(2, acl_rule->meter.packet_metered_queues[sai_attr].size());
+  EXPECT_EQ(SAI_PACKET_COLOR_GREEN,
+            acl_rule->meter.packet_metered_queues[sai_attr][0].key.color);
+  EXPECT_EQ(
+      green_unicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][0].value.queue_index);
+  EXPECT_EQ(SAI_PACKET_COLOR_RED,
+            acl_rule->meter.packet_metered_queues[sai_attr][1].key.color);
+  EXPECT_EQ(
+      red_unicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][1].value.queue_index);
+
   EXPECT_TRUE(p4_oid_mapper_->getOID(SAI_OBJECT_TYPE_POLICER,
                                      table_name_and_rule_key, &meter_oid));
   EXPECT_EQ(kAclMeterOid1, meter_oid);
@@ -4953,29 +5070,47 @@ TEST_F(AclManagerTest, UpdateAclRuleWithMeteredMcastQueueChange) {
   EXPECT_EQ(1, ref_cnt);
 
   // Update rule.
-  green_multicast_queue_num = 11;
-  red_multicast_queue_num = 12;
-  app_db_entry.action = "set_cpu_and_multicast_queues";
+  green_multicast_queue_num = 5;
+  red_multicast_queue_num = 6;
+
+  app_db_entry.action = "set_forwarding_queues";
   app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(cpu_queue_num);
   app_db_entry.action_param_fvs["green_multicast_queue"] =
       std::to_string(green_multicast_queue_num);
   app_db_entry.action_param_fvs["red_multicast_queue"] =
       std::to_string(red_multicast_queue_num);
 
-  map_list.clear();
-  /* Add green packet map. */
-  memset(&qos_map, 0, sizeof(qos_map));
-  qos_map.key.color = SAI_PACKET_COLOR_GREEN;
-  qos_map.value.queue_index = (sai_queue_index_t)green_multicast_queue_num;
-  map_list.push_back(qos_map);
-  /* Add red packet map. */
-  memset(&qos_map, 0, sizeof(qos_map));
-  qos_map.key.color = SAI_PACKET_COLOR_RED;
-  qos_map.value.queue_index = (sai_queue_index_t)red_multicast_queue_num;
-  map_list.push_back(qos_map);
+  multicast_map_list.clear();
+  /* Add green multicast packet map. */
+  memset(&multicast_qos_map, 0, sizeof(multicast_qos_map));
+  multicast_qos_map.key.color = SAI_PACKET_COLOR_GREEN;
+  multicast_qos_map.value.queue_index =
+      (sai_queue_index_t)green_multicast_queue_num;
+  multicast_map_list.push_back(multicast_qos_map);
+  /* Add red multicast packet map. */
+  memset(&multicast_qos_map, 0, sizeof(multicast_qos_map));
+  multicast_qos_map.key.color = SAI_PACKET_COLOR_RED;
+  multicast_qos_map.value.queue_index =
+      (sai_queue_index_t)red_multicast_queue_num;
+  multicast_map_list.push_back(multicast_qos_map);
   /* Set up sai_qos_map_list_t. */
-  qos_map_list.count = (uint32_t)map_list.size();
-  qos_map_list.list = map_list.data();
+  multicast_qos_map_list.count = (uint32_t)multicast_map_list.size();
+  multicast_qos_map_list.list = multicast_map_list.data();
+
+  /* Add green unicast packet map. */
+  memset(&unicast_qos_map, 0, sizeof(unicast_qos_map));
+  unicast_qos_map.key.color = SAI_PACKET_COLOR_GREEN;
+  unicast_qos_map.value.queue_index =
+      (sai_queue_index_t)green_unicast_queue_num;
+  unicast_map_list.push_back(unicast_qos_map);
+  /* Add red unicast packet map. */
+  memset(&unicast_qos_map, 0, sizeof(unicast_qos_map));
+  unicast_qos_map.key.color = SAI_PACKET_COLOR_RED;
+  unicast_qos_map.value.queue_index = (sai_queue_index_t)red_unicast_queue_num;
+  unicast_map_list.push_back(unicast_qos_map);
+  /* Set up sai_qos_map_list_t. */
+  unicast_qos_map_list.count = (uint32_t)unicast_map_list.size();
+  unicast_qos_map_list.list = unicast_map_list.data();
 
   // Update rule success.
   EXPECT_CALL(mock_sai_policer_, set_policer_attribute(Eq(kAclMeterOid1), _))
@@ -4983,13 +5118,18 @@ TEST_F(AclManagerTest, UpdateAclRuleWithMeteredMcastQueueChange) {
   EXPECT_CALL(mock_sai_policer_,
               set_policer_attribute(
                   Eq(kAclMeterOid1),
-                  Truly(std::bind(MatchSaiPolicerAttributeMulticastQueue, 1,
-                                  qos_map_list, std::placeholders::_1))))
+                  Truly(std::bind(MatchSaiPolicerAttributeForwardingQueues, 1,
+                                  multicast_qos_map_list, unicast_qos_map_list,
+                                  std::placeholders::_1))))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
   EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
             ProcessUpdateRuleRequest(app_db_entry, *acl_rule));
 
   acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+  ASSERT_NE(nullptr, acl_rule);
+  // Check action field value
+  sai_attr = static_cast<sai_policer_attr_t>(
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION);
   ASSERT_NE(nullptr, acl_rule);
   // Check action field value
   EXPECT_FALSE(acl_rule->meter.packet_metered_queues.empty());
@@ -5007,6 +5147,24 @@ TEST_F(AclManagerTest, UpdateAclRuleWithMeteredMcastQueueChange) {
       red_multicast_queue_num,
       acl_rule->meter.packet_metered_queues[sai_attr][1].value.queue_index);
 
+  sai_attr = static_cast<sai_policer_attr_t>(
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION);
+  // Check action field value
+  EXPECT_FALSE(acl_rule->meter.packet_metered_queues.empty());
+  EXPECT_NE(acl_rule->meter.packet_metered_queues.find(sai_attr),
+            acl_rule->meter.packet_metered_queues.end());
+  EXPECT_EQ(2, acl_rule->meter.packet_metered_queues[sai_attr].size());
+  EXPECT_EQ(SAI_PACKET_COLOR_GREEN,
+            acl_rule->meter.packet_metered_queues[sai_attr][0].key.color);
+  EXPECT_EQ(
+      green_unicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][0].value.queue_index);
+  EXPECT_EQ(SAI_PACKET_COLOR_RED,
+            acl_rule->meter.packet_metered_queues[sai_attr][1].key.color);
+  EXPECT_EQ(
+      red_unicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][1].value.queue_index);
+
   EXPECT_TRUE(p4_oid_mapper_->getOID(SAI_OBJECT_TYPE_POLICER,
                                      table_name_and_rule_key, &meter_oid));
   EXPECT_EQ(kAclMeterOid1, meter_oid);
@@ -5015,12 +5173,16 @@ TEST_F(AclManagerTest, UpdateAclRuleWithMeteredMcastQueueChange) {
   EXPECT_EQ(1, ref_cnt);
 
   // No policer update if new rule has the same queues in different order.
-  app_db_entry.action = "set_cpu_and_multicast_queues";
+  app_db_entry.action = "set_forwarding_queues";
   app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(cpu_queue_num);
   app_db_entry.action_param_fvs["red_multicast_queue"] =
       std::to_string(red_multicast_queue_num);
   app_db_entry.action_param_fvs["green_multicast_queue"] =
       std::to_string(green_multicast_queue_num);
+  app_db_entry.action_param_fvs["red_unicast_queue"] =
+      std::to_string(red_unicast_queue_num);
+  app_db_entry.action_param_fvs["green_unicast_queue"] =
+      std::to_string(green_unicast_queue_num);
 
   EXPECT_CALL(mock_sai_policer_, set_policer_attribute(_, _)).Times(0);
   EXPECT_CALL(mock_sai_policer_, set_policer_attribute(_, _)).Times(0);
@@ -5029,7 +5191,7 @@ TEST_F(AclManagerTest, UpdateAclRuleWithMeteredMcastQueueChange) {
 
   // Update rule fails with no param.
   app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
-  app_db_entry.action = "set_cpu_and_multicast_queues";
+  app_db_entry.action = "set_forwarding_queues";
   app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(cpu_queue_num);
 
   EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
@@ -5040,6 +5202,10 @@ TEST_F(AclManagerTest, UpdateAclRuleWithMeteredMcastQueueChange) {
       std::to_string(green_multicast_queue_num + 1);
   app_db_entry.action_param_fvs["red_multicast_queue"] =
       std::to_string(red_multicast_queue_num + 1);
+  app_db_entry.action_param_fvs["red_unicast_queue"] =
+      std::to_string(red_unicast_queue_num + 1);
+  app_db_entry.action_param_fvs["green_unicast_queue"] =
+      std::to_string(green_unicast_queue_num + 1);
 
   EXPECT_CALL(mock_sai_policer_, set_policer_attribute(Eq(kAclMeterOid1), _))
       .WillOnce(Return(SAI_STATUS_NOT_SUPPORTED));
@@ -5047,6 +5213,10 @@ TEST_F(AclManagerTest, UpdateAclRuleWithMeteredMcastQueueChange) {
             ProcessUpdateRuleRequest(app_db_entry, *acl_rule));
 
   acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+  ASSERT_NE(nullptr, acl_rule);
+  // Check action field value
+  sai_attr = static_cast<sai_policer_attr_t>(
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION);
   ASSERT_NE(nullptr, acl_rule);
   // Check action field value
   EXPECT_FALSE(acl_rule->meter.packet_metered_queues.empty());
@@ -5062,6 +5232,23 @@ TEST_F(AclManagerTest, UpdateAclRuleWithMeteredMcastQueueChange) {
             acl_rule->meter.packet_metered_queues[sai_attr][1].key.color);
   EXPECT_EQ(
       red_multicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][1].value.queue_index);
+  sai_attr = static_cast<sai_policer_attr_t>(
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION);
+  // Check action field value
+  EXPECT_FALSE(acl_rule->meter.packet_metered_queues.empty());
+  EXPECT_NE(acl_rule->meter.packet_metered_queues.find(sai_attr),
+            acl_rule->meter.packet_metered_queues.end());
+  EXPECT_EQ(2, acl_rule->meter.packet_metered_queues[sai_attr].size());
+  EXPECT_EQ(SAI_PACKET_COLOR_GREEN,
+            acl_rule->meter.packet_metered_queues[sai_attr][0].key.color);
+  EXPECT_EQ(
+      green_unicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][0].value.queue_index);
+  EXPECT_EQ(SAI_PACKET_COLOR_RED,
+            acl_rule->meter.packet_metered_queues[sai_attr][1].key.color);
+  EXPECT_EQ(
+      red_unicast_queue_num,
       acl_rule->meter.packet_metered_queues[sai_attr][1].value.queue_index);
 
   EXPECT_TRUE(p4_oid_mapper_->getOID(SAI_OBJECT_TYPE_POLICER,
@@ -5077,16 +5264,17 @@ TEST_F(AclManagerTest, UpdateAclRuleWithMeteredMcastQueueChange) {
   app_db_entry.action = "qos_queue";
   app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(queue_num);
 
-  qos_map_list.count = 0;
-  qos_map_list.list = NULL;
+  multicast_qos_map_list.count = 0;
+  multicast_qos_map_list.list = NULL;
 
   EXPECT_CALL(mock_sai_policer_, set_policer_attribute(Eq(kAclMeterOid1), _))
       .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
   EXPECT_CALL(mock_sai_policer_,
               set_policer_attribute(
                   Eq(kAclMeterOid1),
-                  Truly(std::bind(MatchSaiPolicerAttributeMulticastQueue, 1,
-                                  qos_map_list, std::placeholders::_1))))
+                  Truly(std::bind(MatchSaiPolicerAttributeForwardingQueues, 1,
+                                  multicast_qos_map_list, unicast_qos_map_list,
+                                  std::placeholders::_1))))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
   EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
             ProcessUpdateRuleRequest(app_db_entry, *acl_rule));
@@ -5105,38 +5293,64 @@ TEST_F(AclManagerTest, UpdateAclRuleWithMeteredMcastQueueChange) {
 
   // Update rule overwrite previous action.
   app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
-  app_db_entry.action = "set_cpu_and_multicast_queues";
+  app_db_entry.action = "set_forwarding_queues";
   app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(cpu_queue_num);
   app_db_entry.action_param_fvs["green_multicast_queue"] =
       std::to_string(green_multicast_queue_num);
   app_db_entry.action_param_fvs["red_multicast_queue"] =
       std::to_string(red_multicast_queue_num);
+  app_db_entry.action_param_fvs["green_unicast_queue"] =
+      std::to_string(green_unicast_queue_num);
+  app_db_entry.action_param_fvs["red_unicast_queue"] =
+      std::to_string(red_unicast_queue_num);
 
-  map_list.clear();
-  /* Add green packet map. */
-  memset(&qos_map, 0, sizeof(qos_map));
-  qos_map.key.color = SAI_PACKET_COLOR_GREEN;
-  qos_map.value.queue_index = (sai_queue_index_t)green_multicast_queue_num;
-  map_list.push_back(qos_map);
-  /* Add red packet map. */
-  memset(&qos_map, 0, sizeof(qos_map));
-  qos_map.key.color = SAI_PACKET_COLOR_RED;
-  qos_map.value.queue_index = (sai_queue_index_t)red_multicast_queue_num;
-  map_list.push_back(qos_map);
+  multicast_map_list.clear();
+  /* Add green multicast packet map. */
+  memset(&multicast_qos_map, 0, sizeof(multicast_qos_map));
+  multicast_qos_map.key.color = SAI_PACKET_COLOR_GREEN;
+  multicast_qos_map.value.queue_index =
+      (sai_queue_index_t)green_multicast_queue_num;
+  multicast_map_list.push_back(multicast_qos_map);
+  /* Add red multicast packet map. */
+  memset(&multicast_qos_map, 0, sizeof(multicast_qos_map));
+  multicast_qos_map.key.color = SAI_PACKET_COLOR_RED;
+  multicast_qos_map.value.queue_index =
+      (sai_queue_index_t)red_multicast_queue_num;
+  multicast_map_list.push_back(multicast_qos_map);
   /* Set up sai_qos_map_list_t. */
-  qos_map_list.count = (uint32_t)map_list.size();
-  qos_map_list.list = map_list.data();
+  multicast_qos_map_list.count = (uint32_t)multicast_map_list.size();
+  multicast_qos_map_list.list = multicast_map_list.data();
+
+  /* Add green unicast packet map. */
+  memset(&unicast_qos_map, 0, sizeof(unicast_qos_map));
+  unicast_qos_map.key.color = SAI_PACKET_COLOR_GREEN;
+  unicast_qos_map.value.queue_index =
+      (sai_queue_index_t)green_unicast_queue_num;
+  unicast_map_list.push_back(unicast_qos_map);
+  /* Add red unicast packet map. */
+  memset(&unicast_qos_map, 0, sizeof(unicast_qos_map));
+  unicast_qos_map.key.color = SAI_PACKET_COLOR_RED;
+  unicast_qos_map.value.queue_index = (sai_queue_index_t)red_unicast_queue_num;
+  unicast_map_list.push_back(unicast_qos_map);
+  /* Set up sai_qos_map_list_t. */
+  unicast_qos_map_list.count = (uint32_t)unicast_map_list.size();
+  unicast_qos_map_list.list = unicast_map_list.data();
 
   EXPECT_CALL(mock_sai_policer_,
               set_policer_attribute(
                   Eq(kAclMeterOid1),
-                  Truly(std::bind(MatchSaiPolicerAttributeMulticastQueue, 1,
-                                  qos_map_list, std::placeholders::_1))))
+                  Truly(std::bind(MatchSaiPolicerAttributeForwardingQueues, 1,
+                                  multicast_qos_map_list, unicast_qos_map_list,
+                                  std::placeholders::_1))))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
   EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
             ProcessUpdateRuleRequest(app_db_entry, *acl_rule));
 
   acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+  ASSERT_NE(nullptr, acl_rule);
+  // Check action field value
+  sai_attr = static_cast<sai_policer_attr_t>(
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION);
   ASSERT_NE(nullptr, acl_rule);
   // Check action field value
   EXPECT_FALSE(acl_rule->meter.packet_metered_queues.empty());
@@ -5152,6 +5366,23 @@ TEST_F(AclManagerTest, UpdateAclRuleWithMeteredMcastQueueChange) {
             acl_rule->meter.packet_metered_queues[sai_attr][1].key.color);
   EXPECT_EQ(
       red_multicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][1].value.queue_index);
+  sai_attr = static_cast<sai_policer_attr_t>(
+      SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION);
+  // Check action field value
+  EXPECT_FALSE(acl_rule->meter.packet_metered_queues.empty());
+  EXPECT_NE(acl_rule->meter.packet_metered_queues.find(sai_attr),
+            acl_rule->meter.packet_metered_queues.end());
+  EXPECT_EQ(2, acl_rule->meter.packet_metered_queues[sai_attr].size());
+  EXPECT_EQ(SAI_PACKET_COLOR_GREEN,
+            acl_rule->meter.packet_metered_queues[sai_attr][0].key.color);
+  EXPECT_EQ(
+      green_unicast_queue_num,
+      acl_rule->meter.packet_metered_queues[sai_attr][0].value.queue_index);
+  EXPECT_EQ(SAI_PACKET_COLOR_RED,
+            acl_rule->meter.packet_metered_queues[sai_attr][1].key.color);
+  EXPECT_EQ(
+      red_unicast_queue_num,
       acl_rule->meter.packet_metered_queues[sai_attr][1].value.queue_index);
 
   EXPECT_TRUE(p4_oid_mapper_->getOID(SAI_OBJECT_TYPE_POLICER,

@@ -425,7 +425,13 @@ using P4AclRuleTables = std::map<std::string, std::map<std::string, P4AclRule>>;
 #ifndef SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION
 #define SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION (sai_policer_attr_t)0x10000001
 #endif
+
+#ifndef SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION
+#define SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION (sai_policer_attr_t)0x10000002
+#endif
+
 #define P4_ACTION_SET_MULTICAST_QOS_QUEUE  "SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION"
+#define P4_ACTION_SET_UNICAST_QOS_QUEUE "SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION"
 
 #define P4_PACKET_ACTION_FORWARD "SAI_PACKET_ACTION_FORWARD"
 #define P4_PACKET_ACTION_DROP "SAI_PACKET_ACTION_DROP"
@@ -765,6 +771,9 @@ static const acl_rule_policer_attr_lookup_t aclActionPolicerAttrLookup = {
     {P4_ACTION_SET_MULTICAST_QOS_QUEUE,
      static_cast<sai_policer_attr_t>(
          SAI_POLICER_ATTR_COLORED_PACKET_SET_MCAST_COS_QUEUE_ACTION)},
+    {P4_ACTION_SET_UNICAST_QOS_QUEUE,
+     static_cast<sai_policer_attr_t>(
+         SAI_POLICER_ATTR_COLORED_PACKET_SET_UCAST_COS_QUEUE_ACTION)},
 };
 
 static const acl_packet_color_policer_attr_lookup_t aclPacketColorPolicerAttrLookup = {
