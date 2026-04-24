@@ -166,7 +166,7 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
     querySwitchTpidCapability();
     querySwitchPortEgressSampleCapability();
     querySwitchPortMirrorCapability();
-    querySwitchSampledMirrorCapability();
+    querySwitchSamplePacketCapability();
     querySwitchHashDefaults();
     setSwitchIcmpOffloadCapability();
     setFastLinkupCapability();
@@ -1958,7 +1958,7 @@ void SwitchOrch::querySwitchPortMirrorCapability()
     set_switch_capability(fvVector);
 }
 
-void SwitchOrch::querySwitchSampledMirrorCapability()
+void SwitchOrch::querySwitchSamplePacketCapability()
 {
     vector<FieldValueTuple> fvVector;
     sai_status_t status = SAI_STATUS_SUCCESS;
