@@ -784,6 +784,22 @@ void MirrorOrch::setSessionState(const string& name, const MirrorEntry& session,
      fvVector.emplace_back(MIRROR_SESSION_NEXT_HOP_IP, value);
     }
 
+    if (attr.empty() || attr == MIRROR_SESSION_SAMPLE_RATE)
+    {
+        if (session.sample_rate > 0)
+        {
+            fvVector.emplace_back(MIRROR_SESSION_SAMPLE_RATE, to_string(session.sample_rate));
+        }
+    }
+
+    if (attr.empty() || attr == MIRROR_SESSION_TRUNCATE_SIZE)
+    {
+        if (session.truncate_size > 0)
+        {
+            fvVector.emplace_back(MIRROR_SESSION_TRUNCATE_SIZE, to_string(session.truncate_size));
+        }
+    }
+
     m_mirrorTable.set(name, fvVector);
 }
 
