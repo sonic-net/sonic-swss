@@ -58,6 +58,8 @@ public:
     bool querySwitchCapability(sai_object_type_t sai_object, sai_attr_id_t attr_id);
     bool checkPfcDlrInitEnable() { return m_PfcDlrInitEnable; }
     void set_switch_pfc_dlr_init_capability();
+    std::string getHwSku() const { return m_hwSku; }
+    bool isHwPfcWdSupportedSku() const;
 
     // Return reference to ACL group created for each stage and the bind point is
     // the switch
@@ -180,6 +182,7 @@ private:
     bool m_vxlanSportUserModeEnabled = false;
     bool m_orderedEcmpEnable = false;
     bool m_PfcDlrInitEnable = false;
+    std::string m_hwSku;
 
     // Port mirror capabilities
     bool m_portIngressMirrorSupported = false;
