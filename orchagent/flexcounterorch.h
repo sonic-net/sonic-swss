@@ -11,18 +11,6 @@ extern "C" {
 #include "sai.h"
 }
 
-// Delay in seconds before flex counter processing begins after orchagent startup.
-// 
-// This delay improves boot time by prioritizing data plane configuration over
-// counter initialization. Systems with many ports, priority groups (PGs), and
-// queues require significant time to generate counter maps, which is not
-// immediately necessary during boot.
-// Value of 0 will process flex counters immediately.
-// 
-// Configured via orchagent command line argument: -D <delay_sec>
-// 
-extern int gFlexCounterDelaySec;
-
 const std::string createAllAvailableBuffersStr = "create_all_available_buffers";
 
 class FlexCounterQueueStates
@@ -91,7 +79,8 @@ private:
     Table m_bufferQueueConfigTable;
     Table m_bufferPgConfigTable;
     Table m_deviceMetadataConfigTable;
-    SelectableTimer* m_delayTimer;
+    std::unique_ptr<SelectableTimer> m_delayTimer;
+    std::unique_ptr<Executor> m_delayExecutor;
     std::unordered_set<std::string> m_groupsWithBulkChunkSize;
 
     bool m_createOnlyConfigDbBuffers = false;
