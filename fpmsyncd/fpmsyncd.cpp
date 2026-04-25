@@ -8,7 +8,6 @@
 #include "netdispatcher.h"
 #include "netlink.h"
 #include "notificationconsumer.h"
-#include "subscriberstatetable.h"
 #include "warmRestartHelper.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/fpmsyncd.h"
@@ -26,6 +25,8 @@ static int gSelectTimeout;
 static int gFlushTimeout = FLUSH_TIMEOUT;
 // consider the traffic is small if pipeline contains < 500 entries
 #define SMALL_TRAFFIC 500
+
+#define STATE_FIB_SUPPRESS_TABLE_NAME "FIB_SUPPRESS_TABLE"
 
 /**
  * @brief fpmsyncd invokes redispipeline's flush with a timer
@@ -78,9 +79,6 @@ int main(int argc, char **argv)
     const auto routeResponseChannelName = std::string("APPL_DB_") + APP_ROUTE_TABLE_NAME + "_RESPONSE_CHANNEL";
 
     DBConnector db("APPL_DB", 0);
-    DBConnector cfgDb("CONFIG_DB", 0);
-    SubscriberStateTable deviceMetadataTableSubscriber(&cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
-    Table deviceMetadataTable(&cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
     DBConnector applStateDb("APPL_STATE_DB", 0);
     std::unique_ptr<NotificationConsumer> routeResponseChannel;
 
@@ -110,12 +108,14 @@ int main(int argc, char **argv)
     nlmsg_set_default_size(FPM_MAX_MSG_LEN);
 
     std::string suppressionEnabledStr;
-    deviceMetadataTable.hget("localhost", "suppress-fib-pending", suppressionEnabledStr);
+    Table fibSuppressTable(&stateDb, STATE_FIB_SUPPRESS_TABLE_NAME);
+    fibSuppressTable.hget("system", "oper_state", suppressionEnabledStr);
     if (suppressionEnabledStr == "enabled")
     {
         routeResponseChannel = std::make_unique<NotificationConsumer>(&applStateDb, routeResponseChannelName);
         sync.setSuppressionEnabled(true);
     }
+    SWSS_LOG_NOTICE("FIB suppression oper_state: %s", suppressionEnabledStr.c_str());
 
     while (true)
     {
@@ -142,8 +142,6 @@ int main(int argc, char **argv)
 
             s.addSelectable(&fpm);
             s.addSelectable(&netlink);
-            s.addSelectable(&deviceMetadataTableSubscriber);
-
             if (sync.isSuppressionEnabled())
             {
                 s.addSelectable(routeResponseChannel.get());
@@ -248,61 +246,6 @@ int main(int argc, char **argv)
                     {
                         s.removeSelectable(&eoiuCheckTimer);
                     }
-                }
-                else if (temps == &deviceMetadataTableSubscriber)
-                {
-                    std::deque<KeyOpFieldsValuesTuple> keyOpFvsQueue;
-                    deviceMetadataTableSubscriber.pops(keyOpFvsQueue);
-
-                    for (const auto& keyOpFvs: keyOpFvsQueue)
-                    {
-                        const auto& key = kfvKey(keyOpFvs);
-                        const auto& op = kfvOp(keyOpFvs);
-                        const auto& fvs = kfvFieldsValues(keyOpFvs);
-
-                        if (op != SET_COMMAND)
-                        {
-                            continue;
-                        }
-
-                        if (key != "localhost")
-                        {
-                            continue;
-                        }
-
-                        for (const auto& fv: fvs)
-                        {
-                            const auto& field = fvField(fv);
-                            const auto& value = fvValue(fv);
-
-                            if (field != "suppress-fib-pending")
-                            {
-                                continue;
-                            }
-
-                            bool shouldEnable = (value == "enabled");
-
-                            if (shouldEnable && !sync.isSuppressionEnabled())
-                            {
-                                routeResponseChannel = std::make_unique<NotificationConsumer>(&applStateDb, routeResponseChannelName);
-                                sync.setSuppressionEnabled(true);
-                                s.addSelectable(routeResponseChannel.get());
-                            }
-                            else if (!shouldEnable && sync.isSuppressionEnabled())
-                            {
-                                /* When disabling suppression we mark all existing routes offloaded in zebra
-                                 * as there could be some transient routes which are pending response from
-                                 * orchagent, thus such updates might be missing. Since we are disabling suppression
-                                 * we no longer care about real HW offload status and can mark all routes as offloaded
-                                 * to avoid routes stuck in suppressed state after transition. */
-                                sync.markRoutesOffloaded(db);
-
-                                sync.setSuppressionEnabled(false);
-                                s.removeSelectable(routeResponseChannel.get());
-                                routeResponseChannel.reset();
-                            }
-                        } // end for fvs
-                    } // end for keyOpFvsQueue
                 }
                 else if (routeResponseChannel && (temps == routeResponseChannel.get()))
                 {
