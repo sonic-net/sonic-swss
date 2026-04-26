@@ -185,7 +185,7 @@ typedef struct STP_PORT_CONFIG_MSG {
     int         priority;
     int         count;
     VLAN_ATTR   vlan_list[0];
-} STP_PORT_CONFIG_MSG;;
+} STP_PORT_CONFIG_MSG;
 
 typedef struct STP_VLAN_MEM_CONFIG_MSG {
     uint8_t opcode;   // enable/disable
@@ -306,4 +306,3 @@ private:
 
 }
 #endif
-
