@@ -174,6 +174,7 @@ typedef struct STP_PORT_CONFIG_MSG {
     char        intf_name[IFNAMSIZ];
     uint8_t     enabled;
     uint8_t     root_guard;
+    uint8_t     loop_guard;
     uint8_t     bpdu_guard;
     uint8_t     bpdu_guard_do_disable;
     uint8_t     portfast;           // PVST only
