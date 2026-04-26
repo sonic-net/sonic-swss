@@ -17,7 +17,15 @@ namespace copporch_test
         MockCoppOrch()
         {
             this->appDb = std::make_shared<DBConnector>("APPL_DB", 0);
-            this->coppOrch = std::make_shared<CoppOrch>(this->appDb.get(), APP_COPP_TABLE_NAME);
+            this->configDb = std::make_shared<DBConnector>("CONFIG_DB", 4);
+            std::vector<std::string> appCoppOrchTables = {
+                APP_COPP_TABLE_NAME
+            };
+            std::vector<std::string> cfgCoppOrchTables = {
+                CFG_COPP_TRAP_EXCLUDE_PORTS_TABLE_NAME
+            };
+            this->coppOrch = std::make_shared<CoppOrch>(this->appDb.get(), this->configDb.get(), appCoppOrchTables,
+                                                        cfgCoppOrchTables);
         }
         ~MockCoppOrch() = default;
 
@@ -53,6 +61,7 @@ namespace copporch_test
     private:
         std::shared_ptr<CoppOrch> coppOrch;
         std::shared_ptr<DBConnector> appDb;
+        std::shared_ptr<DBConnector> configDb;
     };
 
     class CoppOrchTest : public ::testing::Test
