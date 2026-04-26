@@ -399,7 +399,7 @@ void SflowOrch::doTask(Consumer &consumer)
 
             SWSS_LOG_DEBUG(" Existing Cfg portOid %" PRIx64 " admin %d rate %d dir %s", 
                             port.m_port_id, (unsigned int)admin_state, rate, 
-                            sflowInfo->second.m_sample_dir.c_str());
+                            (sflowInfo != m_sflowPortInfoMap.end()) ? sflowInfo->second.m_sample_dir.c_str() : "n/a");
 
             sflowExtractInfo(kfvFieldsValues(tuple), admin_state, rate, dir);
 
