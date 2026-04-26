@@ -19,6 +19,7 @@
 #include <sys/wait.h>
 #include <sys/types.h>
 #include <signal.h>
+#include <netlink/route/link.h>
 
 
 using namespace std;
@@ -234,7 +235,6 @@ void TeamMgr::cleanTeamProcesses()
 void TeamMgr::doLagTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
-
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -252,6 +252,7 @@ void TeamMgr::doLagTask(Consumer &consumer)
             string mtu = DEFAULT_MTU_STR;
             string learn_mode;
             string tpid;
+            string sys_mac;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -296,6 +297,11 @@ void TeamMgr::doLagTask(Consumer &consumer)
                     SWSS_LOG_INFO("Get fast_rate `%s`",
                                   fast_rate ? "true" : "false");
                 }
+                else if (fvField(i) == "system_mac")
+                {
+                    sys_mac = fvValue(i);
+                    SWSS_LOG_INFO("Get sys_mac %s.", sys_mac.c_str());
+                }
             }
 
             if (m_lagList.find(alias) == m_lagList.end())
@@ -322,6 +328,11 @@ void TeamMgr::doLagTask(Consumer &consumer)
             {
                 setLagTpid(alias, tpid);
                 SWSS_LOG_NOTICE("Configure %s TPID to %s", alias.c_str(), tpid.c_str());
+            }
+            if (!sys_mac.empty())
+            {
+                setLagSysmac(alias, sys_mac);
+                SWSS_LOG_NOTICE("Configure %s sys_mac to %s", alias.c_str(), sys_mac.c_str());
             }
         }
         else if (op == DEL_COMMAND)
@@ -558,6 +569,92 @@ bool TeamMgr::setLagLearnMode(const string &alias, const string &learn_mode)
     fvs.push_back(fv);
     m_appLagTable.set(alias, fvs);
 
+    return true;
+}
+
+int TeamMgr::update_kernel(const string &alias, const string &system_mac)
+{
+    struct rtnl_link *link;
+    struct rtnl_link *orig_link;
+    int err = 0;
+    struct nl_addr *nl_addr;
+    MacAddress sys_mac(system_mac);
+    struct nl_sock * sockk = nl_socket_alloc();
+    uint32_t ifindex = if_nametoindex(alias.c_str());
+    uint8_t *addr = const_cast<uint8_t *>(sys_mac.getMac());
+
+    if (sockk == NULL) {
+        SWSS_LOG_ERROR("Failed to allocate netlink socket.\n");
+        return -1;
+    }
+    if (nl_connect(sockk, NETLINK_ROUTE) < 0) {
+        SWSS_LOG_ERROR("Failed to connect to netlink.\n");
+        nl_socket_free(sockk);
+        return -1;
+    }
+
+    link = rtnl_link_alloc();
+    if (!link) {
+        SWSS_LOG_ERROR("Unable to create link");
+        nl_close(sockk);
+        nl_socket_free(sockk);
+        return -ENOMEM;
+    }
+    SWSS_LOG_NOTICE("ifindex %d, mac %02x:%02x:%02x:%02x:%02x:%02x, err %d",
+                ifindex, addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], err);
+    void *mac = (void *)addr;
+    nl_addr = nl_addr_build(AF_UNSPEC, mac, ETHER_ADDR_LEN);
+    if (!nl_addr)
+    {
+        SWSS_LOG_ERROR("Error in update_kernel");
+        err = -ENOMEM;
+        rtnl_link_put(link);
+        nl_close(sockk);
+        nl_socket_free(sockk);
+        return err;
+    }
+
+    rtnl_link_set_addr(link, nl_addr);
+
+    if (rtnl_link_get_kernel(sockk, 0, alias.c_str(), &orig_link) < 0) {
+        SWSS_LOG_ERROR("Failed to get link for interface %d.\n", ifindex);
+        rtnl_link_put(link);
+        nl_close(sockk);
+        nl_socket_free(sockk);
+        return -1;
+    }
+    if (rtnl_link_change(sockk, orig_link, link, ifindex) < 0) {
+        SWSS_LOG_ERROR("Failed to change the MAC address.\n");
+        rtnl_link_put(link);
+        nl_close(sockk);
+        nl_socket_free(sockk);
+        return -1;
+    }
+
+    SWSS_LOG_NOTICE("Successfully changed the MAC address of the interface %d.\n", ifindex);
+
+    rtnl_link_put(link);
+    nl_close(sockk);
+    nl_socket_free(sockk);
+    return err;
+}
+
+bool TeamMgr::setLagSysmac(const string &alias, string &sys_mac)
+{
+    vector<FieldValueTuple> fvs;
+    stringstream    cmd;
+    if (sys_mac == "None") {
+        sys_mac = m_mac.to_string();
+    }
+    FieldValueTuple fv("system_mac", sys_mac);
+    fvs.push_back(fv);
+    //Update in APP_DB
+    m_appLagTable.set(alias, fvs);
+    //update in kernel
+    int err = this->update_kernel(alias, sys_mac);
+    SWSS_LOG_NOTICE("kernel update returned with error %d", err);
+    //Update in State_DB
+    m_stateLagTable.set(alias, fvs);
     return true;
 }
 
