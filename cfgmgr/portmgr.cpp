@@ -15,8 +15,6 @@ PortMgr::PortMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         Orch(tables),
         m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME),
         m_cfgSendToIngressPortTable(cfgDb, CFG_SEND_TO_INGRESS_PORT_TABLE_NAME),
-        m_cfgLagMemberTable(cfgDb, CFG_LAG_MEMBER_TABLE_NAME),
-
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
         m_stateMonitorLinkGroupMemberTable(stateDb, STATE_MONITOR_LINK_GROUP_MEMBER_TABLE_NAME),
         m_appSendToIngressPortTable(appDb, APP_SEND_TO_INGRESS_PORT_TABLE_NAME),
