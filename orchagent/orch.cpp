@@ -252,15 +252,14 @@ void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry, bool onRetry)
     {
         /* Record incoming tasks */
         Recorder::Instance().swss.record(dumpTuple(entry));
-        
-        /* Record statistics */
-        if (gSwssStatsRecord)
-        {
-            SwssStats::getInstance()->recordTask(getTableName(), op);
-        }
+
+        /* Record statistics (no-op when disabled) */
+        SwssStats::getInstance()->recordTask(getTableName(), op);
     }
     else
+    {
         Recorder::Instance().retry.record(dumpTuple(entry).append(DECACHE));
+    }
 
     auto retryCache = getOrch() ? getOrch()->getRetryCache(getName()) : nullptr;
 
@@ -566,7 +565,8 @@ void Consumer::drain()
 {
     if (!m_toSync.empty())
     {
-        size_t size_before = gSwssStatsRecord ? m_toSync.size() : 0;
+        const bool record = SwssStats::isEnabled();
+        const size_t size_before = record ? m_toSync.size() : 0;
         bool threw = false;
         try
         {
@@ -596,10 +596,13 @@ void Consumer::drain()
                            getName().c_str());
             threw = true;
         }
-        if (gSwssStatsRecord && size_before > 0)
+        if (record)
         {
             if (threw)
             {
+                // ERROR is incremented once per failing drain pass, not once
+                // per failed item. Items left in m_toSync will be retried on
+                // the next drain and may contribute to ERROR again.
                 SwssStats::getInstance()->recordError(getTableName(), 1);
             }
             else
@@ -607,7 +610,9 @@ void Consumer::drain()
                 size_t size_after = m_toSync.size();
                 uint64_t completed = (size_before > size_after) ? (size_before - size_after) : 0;
                 if (completed > 0)
+                {
                     SwssStats::getInstance()->recordComplete(getTableName(), completed);
+                }
             }
         }
     }
@@ -1264,4 +1269,3 @@ void Orch2::doTask(Consumer &consumer)
         }
     }
 }
-

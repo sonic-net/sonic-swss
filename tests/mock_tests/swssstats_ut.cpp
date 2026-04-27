@@ -4,9 +4,6 @@
 #include <thread>
 #include <vector>
 
-// gSwssStatsRecord is defined in orch.cpp which is compiled as part of the
-// tests binary via Makefile.am ($(top_srcdir)/orchagent/orch.cpp).
-// No need to define it here.
 #include "swssstats.h"
 
 using namespace std;
@@ -187,30 +184,29 @@ TEST(SwssStats, ConcurrentMixedOpsNoRaceCondition)
 }
 
 // ─────────────────────────────────────────────
-//  Fast shutdown test
+//  Enable / disable flag
 // ─────────────────────────────────────────────
 
-TEST(SwssStats, DestructorExitsQuicklyWithLargeInterval)
+TEST(SwssStats, DisabledFlagSilencesRecording)
 {
-    // Create a local instance with a 60-second flush interval.
-    // The destructor should notify the condition variable and exit in well
-    // under 1 second, NOT after waiting the full 60 seconds.
-    auto start = steady_clock::now();
+    auto* s = stats();
+    const string tbl = "UT_DISABLED_TABLE";
 
-    {
-        // Access private constructor via the getInstance path won't work for a
-        // local instance.  Instead we measure the singleton destructor by
-        // observing that a freshly-created thread on the instance wakes up fast.
-        // We simulate this by timing a recordTask + re-check cycle.
-        //
-        // The real fast-shutdown guarantee is tested in the system/VS tests;
-        // here we verify the writer cv path compiles and doesn't deadlock.
-        auto* s = SwssStats::getInstance();
-        s->recordTask("UT_SHUTDOWN_TBL", "SET");
-    }
+    SwssStats::setEnabled(false);
+    s->recordTask(tbl, "SET");
+    s->recordTask(tbl, "DEL");
+    s->recordComplete(tbl, 5);
+    s->recordError(tbl, 7);
 
-    auto elapsed_ms = duration_cast<milliseconds>(steady_clock::now() - start).count();
-    // The above should complete in << 1 second with no blocking
-    EXPECT_LT(elapsed_ms, 1000);
+    auto snap = s->getCounters(tbl);
+    EXPECT_EQ(snap.set_count,      0u);
+    EXPECT_EQ(snap.del_count,      0u);
+    EXPECT_EQ(snap.complete_count, 0u);
+    EXPECT_EQ(snap.error_count,    0u);
+
+    // Re-enable and confirm recording resumes.
+    SwssStats::setEnabled(true);
+    s->recordTask(tbl, "SET");
+    snap = s->getCounters(tbl);
+    EXPECT_EQ(snap.set_count, 1u);
 }
-

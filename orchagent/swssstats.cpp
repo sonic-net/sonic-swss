@@ -2,21 +2,33 @@
 
 #include "componentstats.h"
 #include "logger.h"
+#include "schema.h"   // SET_COMMAND / DEL_COMMAND
 
 #include <atomic>
 
-// Enable SwssStats recording by default. Flip to false to silence the hot path
-// without tearing down the singleton or its writer thread.
-std::atomic<bool> gSwssStatsRecord(true);
-
 namespace {
 // Metric names written into COUNTERS_DB under SWSS_STATS:<table>.
-// Keep these in sync with any dashboards or collectors consuming the table.
+// These are the on-the-wire field names for dashboards / collectors and
+// must NOT be replaced with SET_COMMAND / DEL_COMMAND (those are the swss
+// op-string vocabulary, which is allowed to drift independently).
 constexpr const char *kMetricSet      = "SET";
 constexpr const char *kMetricDel      = "DEL";
 constexpr const char *kMetricComplete = "COMPLETE";
 constexpr const char *kMetricError    = "ERROR";
 } // namespace
+
+// Recording is enabled by default. Toggle via SwssStats::setEnabled().
+std::atomic<bool> SwssStats::s_enabled{true};
+
+void SwssStats::setEnabled(bool on)
+{
+    s_enabled.store(on, std::memory_order_relaxed);
+}
+
+bool SwssStats::isEnabled()
+{
+    return s_enabled.load(std::memory_order_relaxed);
+}
 
 SwssStats* SwssStats::getInstance()
 {
@@ -32,11 +44,15 @@ SwssStats::SwssStats()
 
 void SwssStats::recordTask(const std::string &table_name, const std::string &op)
 {
-    if (op == kMetricSet)
+    if (!isEnabled())
+    {
+        return;
+    }
+    if (op == SET_COMMAND)
     {
         m_impl->increment(table_name, kMetricSet);
     }
-    else if (op == kMetricDel)
+    else if (op == DEL_COMMAND)
     {
         m_impl->increment(table_name, kMetricDel);
     }
@@ -46,11 +62,19 @@ void SwssStats::recordTask(const std::string &table_name, const std::string &op)
 
 void SwssStats::recordComplete(const std::string &table_name, uint64_t count)
 {
+    if (!isEnabled())
+    {
+        return;
+    }
     m_impl->increment(table_name, kMetricComplete, count);
 }
 
 void SwssStats::recordError(const std::string &table_name, uint64_t count)
 {
+    if (!isEnabled())
+    {
+        return;
+    }
     m_impl->increment(table_name, kMetricError, count);
 }
 
