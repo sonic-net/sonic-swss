@@ -6,6 +6,7 @@
 #include "select.h"
 #include "warm_restart.h"
 #include <signal.h>
+#include <sys/prctl.h>
 
 using namespace std;
 using namespace swss;
@@ -43,6 +44,14 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
+    /* Set as subreaper to adopt orphaned teamd processes */
+    if (prctl(PR_SET_CHILD_SUBREAPER, 1) < 0)
+    {
+        SWSS_LOG_ERROR("Failed to set child subreaper: %s", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+    SWSS_LOG_NOTICE("Set as child subreaper for teamd process management");
+
     try
     {
         DBConnector conf_db("CONFIG_DB", 0);
@@ -55,11 +64,13 @@ int main(int argc, char **argv)
         TableConnector conf_lag_table(&conf_db, CFG_LAG_TABLE_NAME);
         TableConnector conf_lag_member_table(&conf_db, CFG_LAG_MEMBER_TABLE_NAME);
         TableConnector state_port_table(&state_db, STATE_PORT_TABLE_NAME);
+        TableConnector state_monitor_link_group_member_table(&state_db, STATE_MONITOR_LINK_GROUP_MEMBER_TABLE_NAME);
 
         vector<TableConnector> tables = {
             conf_lag_table,
             conf_lag_member_table,
-            state_port_table
+            state_port_table,
+            state_monitor_link_group_member_table
         };
 
         TeamMgr teammgr(&conf_db, &app_db, &state_db, tables);

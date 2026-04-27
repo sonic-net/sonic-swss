@@ -11,12 +11,14 @@
 using namespace std;
 using namespace swss;
 
-PortMgr::PortMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
-        Orch(cfgDb, tableNames),
+PortMgr::PortMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<TableConnector> &tables) :
+        Orch(tables),
         m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME),
         m_cfgSendToIngressPortTable(cfgDb, CFG_SEND_TO_INGRESS_PORT_TABLE_NAME),
         m_cfgLagMemberTable(cfgDb, CFG_LAG_MEMBER_TABLE_NAME),
+
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
+        m_stateMonitorLinkGroupMemberTable(stateDb, STATE_MONITOR_LINK_GROUP_MEMBER_TABLE_NAME),
         m_appSendToIngressPortTable(appDb, APP_SEND_TO_INGRESS_PORT_TABLE_NAME),
         m_appPortTable(appDb, APP_PORT_TABLE_NAME)
 {
@@ -61,6 +63,9 @@ bool PortMgr::setPortAdminStatus(const string &alias, const bool up)
 {
     stringstream cmd;
     string res, cmd_str;
+
+    // Monitor link state checking is now handled at the configuration level
+    // This function just applies the admin status as requested
 
     // ip link set dev <port_name> [up|down]
     cmd << IP_CMD << " link set dev " << shellquote(alias) << (up ? " up" : " down");
@@ -143,6 +148,12 @@ void PortMgr::doTask(Consumer &consumer)
     if (table == CFG_SEND_TO_INGRESS_PORT_TABLE_NAME)
     {
         doSendToIngressPortTask(consumer);
+        return;
+    }
+
+    else if (table == STATE_MONITOR_LINK_GROUP_MEMBER_TABLE_NAME)
+    {
+        doMonitorLinkGroupMemberTask(consumer);
         return;
     }
 
@@ -234,8 +245,8 @@ void PortMgr::doTask(Consumer &consumer)
 
             if (!admin_status.empty())
             {
-                setPortAdminStatus(alias, admin_status == "up");
                 SWSS_LOG_NOTICE("Configure %s admin status to %s", alias.c_str(), admin_status.c_str());
+                applyEffectiveAdminStatus(alias);
             }
         }
         else if (op == DEL_COMMAND)
@@ -243,6 +254,109 @@ void PortMgr::doTask(Consumer &consumer)
             SWSS_LOG_NOTICE("Delete Port: %s", alias.c_str());
             m_appPortTable.del(alias);
             m_portList.erase(alias);
+        }
+
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
+void PortMgr::applyEffectiveAdminStatus(const string &alias)
+{
+    // Read config intent
+    vector<FieldValueTuple> port_data;
+    if (!m_cfgPortTable.get(alias, port_data))
+        return;
+
+    bool config_admin_up = true;
+    for (const auto &fv : port_data)
+    {
+        if (fvField(fv) == "admin_status")
+        {
+            config_admin_up = (fvValue(fv) == "up");
+            break;
+        }
+    }
+
+    // Check monitor link override; absent entry means no restriction
+    bool monitor_force_down = false;
+    vector<FieldValueTuple> ml_data;
+    if (m_stateMonitorLinkGroupMemberTable.get(alias, ml_data))
+    {
+        for (const auto &fv : ml_data)
+        {
+            if (fvField(fv) == "state")
+            {
+                monitor_force_down = (fvValue(fv) == "force_down");
+                break;
+            }
+        }
+    }
+
+    bool effective_up = config_admin_up && !monitor_force_down;
+    SWSS_LOG_INFO("PortMgr: %s effective admin status: config=%s monitor=%s result=%s",
+                  alias.c_str(),
+                  config_admin_up ? "up" : "down",
+                  monitor_force_down ? "force_down" : "allow_up",
+                  effective_up ? "up" : "down");
+    setPortAdminStatus(alias, effective_up);
+}
+
+
+
+void PortMgr::doMonitorLinkGroupMemberTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+
+        string interface_name = kfvKey(t);
+        string op = kfvOp(t);
+        auto data = kfvFieldsValues(t);
+
+        // Determine interface type via CONFIG_DB rather than name prefix — avoids breakage
+        // if SONiC ever adds interface names that don't start with "Ethernet" (e.g. Ethernet-BP).
+        vector<FieldValueTuple> port_data;
+        if (!m_cfgPortTable.get(interface_name, port_data))
+        {
+            // Not a physical port (PortChannel or unknown) — handled by teammgrd
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
+        if (op == SET_COMMAND)
+        {
+            string monitor_link_state = "";
+            string down_due_to = "";
+
+            for (const auto &idx : data)
+            {
+                const auto &field = fvField(idx);
+                const auto &value = fvValue(idx);
+
+                if (field == "state")
+                    monitor_link_state = value;
+                else if (field == "down_due_to")
+                    down_due_to = value;
+            }
+
+            if (monitor_link_state.empty())
+            {
+                SWSS_LOG_WARN("PortMgr: No state provided for interface %s, skipping", interface_name.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            SWSS_LOG_INFO("PortMgr: monitor link SET %s state=%s down_due_to=%s",
+                         interface_name.c_str(), monitor_link_state.c_str(), down_due_to.c_str());
+            applyEffectiveAdminStatus(interface_name);
+        }
+        else if (op == DEL_COMMAND)
+        {
+            SWSS_LOG_INFO("PortMgr: Processing monitor link group member DEL for %s", interface_name.c_str());
+            applyEffectiveAdminStatus(interface_name);
         }
 
         it = consumer.m_toSync.erase(it);
@@ -264,3 +378,5 @@ bool PortMgr::writeConfigToAppDb(const std::string &alias, std::vector<FieldValu
     m_appPortTable.set(alias, field_values);
     return true;
 }
+
+
