@@ -1,6 +1,8 @@
+#include "json.h"
 #include "../ut_helper.h"
 #include "../mock_orchagent_main.h"
 #include "../mock_table.h"
+#include "notifier.h"
 #include "port.h"
 #define private public // Need to modify internal cache
 #include "portsorch.h"
@@ -23,6 +25,7 @@ namespace fdb_syncd_flush_test
 
     sai_fdb_api_t ut_sai_fdb_api;
     sai_fdb_api_t *pold_sai_fdb_api;
+    static int g_sai_flush_call_count = 0;
 
     sai_status_t _ut_stub_sai_create_fdb_entry (
         _In_ const sai_fdb_entry_t *fdb_entry,
@@ -31,11 +34,22 @@ namespace fdb_syncd_flush_test
     {
         return SAI_STATUS_SUCCESS;
     }
+
+    sai_status_t _ut_stub_sai_flush_fdb_entries(
+        _In_ sai_object_id_t switch_id,
+        _In_ uint32_t attr_count,
+        _In_ const sai_attribute_t *attr_list)
+    {
+        g_sai_flush_call_count++;
+        return SAI_STATUS_SUCCESS;
+    }
+
     void _hook_sai_fdb_api()
     {
         ut_sai_fdb_api = *sai_fdb_api;
         pold_sai_fdb_api = sai_fdb_api;
         ut_sai_fdb_api.create_fdb_entry = _ut_stub_sai_create_fdb_entry;
+        ut_sai_fdb_api.flush_fdb_entries = _ut_stub_sai_flush_fdb_entries;
         sai_fdb_api = &ut_sai_fdb_api;
     }
     void _unhook_sai_fdb_api()
@@ -213,6 +227,108 @@ namespace fdb_syncd_flush_test
 
 namespace fdb_syncd_flush_test
 {
+    /* Test Vlan Flush Request from Top to Bottom */
+    TEST_F(FdbOrchTest, FlushVlanFdbRequest)
+    {   
+        _hook_sai_fdb_api();
+
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+        m_portsOrch->addExistingData(&portTable);
+
+        /* Set all ports to ready */
+        static_cast<Orch *>(m_portsOrch.get())->doTask();
+
+        ASSERT_NE(m_portsOrch, nullptr);
+        setUpVlan(m_portsOrch.get());
+        setUpPort(m_portsOrch.get());
+        ASSERT_NE(m_portsOrch->m_portList.find(VLAN40), m_portsOrch->m_portList.end());
+        ASSERT_NE(m_portsOrch->m_portList.find(ETH0), m_portsOrch->m_portList.end());
+        setUpVlanMember(m_portsOrch.get());
+        g_sai_flush_call_count = 0;
+
+        /* Generate a FDB Flush request for VLAN */
+        auto exec = static_cast<Notifier *>(m_fdborch->getExecutor("FLUSHFDBREQUEST"));
+        auto consumer = exec->getNotificationConsumer();
+    
+        /* Construct JSON payload in format: [["VLAN", "40"]] */
+        std::vector<FieldValueTuple> notifyValues;
+        FieldValueTuple opdata("VLAN", "40");
+        notifyValues.push_back(opdata); 
+        std::string msg = swss::JSon::buildJson(notifyValues);
+        
+        mockReply = (redisReply *)calloc(1, sizeof(redisReply));
+        mockReply->type = REDIS_REPLY_ARRAY;
+        mockReply->elements = 3;
+        mockReply->element = (redisReply **)calloc(mockReply->elements, sizeof(redisReply *));
+        
+        mockReply->element[2] = (redisReply *)calloc(1, sizeof(redisReply));
+        mockReply->element[2]->type = REDIS_REPLY_STRING;
+        mockReply->element[2]->str = (char *)calloc(1, msg.length() + 1);
+        memcpy(mockReply->element[2]->str, msg.c_str(), msg.length());
+        mockReply->element[2]->len = (int)msg.length();
+
+        /* Trigger data reading and execute the task */
+        consumer->readData(); 
+        m_fdborch->doTask(*consumer);
+        mockReply = nullptr;
+
+        /* Final verification */
+        ASSERT_EQ(g_sai_flush_call_count, 1);
+        _unhook_sai_fdb_api();
+    }
+
+    /* Test Port Vlan Flush Request from Top to Bottom */
+    TEST_F(FdbOrchTest, FlushPortVlanFdbRequest)
+    {
+        _hook_sai_fdb_api();
+        
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+        m_portsOrch->addExistingData(&portTable);
+
+        /* Set all ports to ready */
+        static_cast<Orch *>(m_portsOrch.get())->doTask();
+
+        ASSERT_NE(m_portsOrch, nullptr);
+        setUpVlan(m_portsOrch.get());
+        setUpPort(m_portsOrch.get());
+        ASSERT_NE(m_portsOrch->m_portList.find(VLAN40), m_portsOrch->m_portList.end());
+        ASSERT_NE(m_portsOrch->m_portList.find(ETH0), m_portsOrch->m_portList.end());
+        setUpVlanMember(m_portsOrch.get());
+        g_sai_flush_call_count = 0;
+
+        /* Generate a FDB Flush request for PORT + VLAN */
+        auto exec = static_cast<Notifier *>(m_fdborch->getExecutor("FLUSHFDBREQUEST"));
+        auto consumer = exec->getNotificationConsumer();
+
+        /* Input format: port_alias|vlanId */
+        std::vector<FieldValueTuple> notifyValues;
+        FieldValueTuple opdata("PORTVLAN", "Ethernet0|40");
+        notifyValues.push_back(opdata); 
+        std::string msg = swss::JSon::buildJson(notifyValues);
+
+        mockReply = (redisReply *)calloc(1, sizeof(redisReply));
+        mockReply->type = REDIS_REPLY_ARRAY;
+        mockReply->elements = 3; 
+        mockReply->element = (redisReply **)calloc(mockReply->elements, sizeof(redisReply *));
+    
+        mockReply->element[2] = (redisReply *)calloc(1, sizeof(redisReply));
+        mockReply->element[2]->type = REDIS_REPLY_STRING;
+        mockReply->element[2]->str = (char *)calloc(1, msg.length() + 1);
+        memcpy(mockReply->element[2]->str, msg.c_str(), msg.length());
+        mockReply->element[2]->len = (int)msg.length();
+
+        /* Trigger processing */
+        consumer->readData(); 
+        m_fdborch->doTask(*consumer);
+        mockReply = nullptr;
+
+        /* Final verification */
+        ASSERT_EQ(g_sai_flush_call_count, 1);
+        _unhook_sai_fdb_api();
+    }
+
     /* Test Consolidated Flush Per Vlan and Per Port */
     TEST_F(FdbOrchTest, ConsolidatedFlushVlanandPort)
     {   
