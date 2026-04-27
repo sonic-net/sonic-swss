@@ -51,11 +51,7 @@ void MonitorLinkGroupMgr::doTask(Consumer &consumer)
 
             if (keys.size() == 1)
             {
-                if (!doMonitorLinkGroupTask(keys, data, op))
-                {
-                    it++;
-                    continue;
-                }
+                doMonitorLinkGroupTask(keys, data, op);
             }
             else
             {
@@ -88,9 +84,13 @@ void MonitorLinkGroupMgr::doPortTableTask(const string& key, vector<FieldValueTu
         else if (!oper_status_val.empty())
             updateMonitorLinkInterfaceState(key, oper_status_val == "up");
     }
+    else if (op == DEL_COMMAND)
+    {
+        updateMonitorLinkInterfaceState(key, false);
+    }
 }
 
-bool MonitorLinkGroupMgr::doMonitorLinkGroupTask(const vector<string>& keys, const vector<FieldValueTuple>& data, const string& op)
+void MonitorLinkGroupMgr::doMonitorLinkGroupTask(const vector<string>& keys, const vector<FieldValueTuple>& data, const string& op)
 {
     SWSS_LOG_ENTER();
 
@@ -100,16 +100,15 @@ bool MonitorLinkGroupMgr::doMonitorLinkGroupTask(const vector<string>& keys, con
 
     if (op == SET_COMMAND)
     {
-        return handleMonitorLinkGroupSet(group_name, data);
+        handleMonitorLinkGroupSet(group_name, data);
     }
     else if (op == DEL_COMMAND)
     {
-        return handleMonitorLinkGroupDel(group_name);
+        handleMonitorLinkGroupDel(group_name);
     }
     else
     {
         SWSS_LOG_ERROR("Unknown operation: %s for monitor link group", op.c_str());
-        return false;
     }
 }
 
@@ -401,7 +400,7 @@ bool MonitorLinkGroupMgr::handleMonitorLinkGroupDel(const string& group_name)
         {
             SWSS_LOG_NOTICE("MonitorLinkGroupMgr: Keeping executor for deleted group %s (timer stopped, will be reused if group is recreated)",
                             group_name.c_str());
-            // Clear our reference - the executor still owns the timer
+            m_timerToGroup.erase(groupIt->second.linkup_delay_timer);
             groupIt->second.linkup_delay_timer = nullptr;
         }
 
@@ -424,10 +423,9 @@ bool MonitorLinkGroupMgr::getInterfaceOperState(const string& interface_name)
     vector<FieldValueTuple> interface_values;
     bool interface_exists_in_state = false;
 
-    if (interface_name.find(PORTCHANNEL_PREFIX) == 0)
+    interface_exists_in_state = m_statePortTable.get(interface_name, interface_values);
+    if (!interface_exists_in_state)
         interface_exists_in_state = m_stateLagTable.get(interface_name, interface_values);
-    else
-        interface_exists_in_state = m_statePortTable.get(interface_name, interface_values);
 
     if (!interface_exists_in_state)
         return false;
@@ -502,12 +500,13 @@ void MonitorLinkGroupMgr::removeInterfaceFromGroup(const string& group_name, con
     }
 
     // Verify the interface belongs to the specified group in the specified role
-    bool member = interfaceIt->second.uplink_groups.count(group_name) ||
-                  interfaceIt->second.downlink_groups.count(group_name);
+    bool member = (link_type == "uplink")
+        ? interfaceIt->second.uplink_groups.count(group_name) > 0
+        : interfaceIt->second.downlink_groups.count(group_name) > 0;
     if (!member)
     {
-        SWSS_LOG_WARN("Interface %s does not belong to group %s. Cannot remove from group it's not in.",
-                       interface_name.c_str(), group_name.c_str());
+        SWSS_LOG_WARN("Interface %s does not belong to group %s as %s. Cannot remove.",
+                       interface_name.c_str(), group_name.c_str(), link_type.c_str());
         return;
     }
 
@@ -537,7 +536,6 @@ void MonitorLinkGroupMgr::removeInterfaceFromGroup(const string& group_name, con
             }
         }
 
-        updateMonitorLinkGroupState(group_name);
     }
 
     if (link_type == "uplink")
@@ -623,12 +621,12 @@ void MonitorLinkGroupMgr::doTask(SelectableTimer &timer)
 {
     timer.stop();
 
-    for (auto& group_pair : m_monitorLinkGroups) {
-        if (group_pair.second.linkup_delay_timer == &timer) {
-            SWSS_LOG_NOTICE("Monitor link group %s linkup delay timer expired", group_pair.first.c_str());
-            handleLinkupDelayExpired(group_pair.first);
-            return;
-        }
+    auto it = m_timerToGroup.find(&timer);
+    if (it != m_timerToGroup.end())
+    {
+        SWSS_LOG_NOTICE("Monitor link group %s linkup delay timer expired", it->second.c_str());
+        handleLinkupDelayExpired(it->second);
+        return;
     }
 
     SWSS_LOG_WARN("MonitorLinkGroupMgr: Linkup delay timer expired but no matching group found");
@@ -673,7 +671,7 @@ void MonitorLinkGroupMgr::startLinkupDelayTimer(const std::string& group_name)
         }
         else if (group_info.linkup_delay_timer == nullptr)
         {
-            auto interv = timespec { .tv_sec = 1, .tv_nsec = 0 };
+            auto interv = timespec { .tv_sec = static_cast<time_t>(delay_seconds), .tv_nsec = 0 };
             group_info.linkup_delay_timer = new SelectableTimer(interv);
 
             auto executor = new ExecutableTimer(group_info.linkup_delay_timer, this, executor_name);
@@ -696,6 +694,7 @@ void MonitorLinkGroupMgr::startLinkupDelayTimer(const std::string& group_name)
             group_info.linkup_delay_timer->stop();
         }
 
+        m_timerToGroup[group_info.linkup_delay_timer] = group_name;
         auto interv = timespec { .tv_sec = static_cast<time_t>(delay_seconds), .tv_nsec = 0 };
         group_info.linkup_delay_timer->setInterval(interv);
         group_info.linkup_delay_timer->start();
@@ -754,6 +753,7 @@ void MonitorLinkGroupMgr::handleLinkupDelayExpired(const std::string& group_name
     else
     {
         group_info.pending_up = false;
+        writeMonitorLinkGroupStateToDb(group_name);
 
         SWSS_LOG_NOTICE("MonitorLinkGroupMgr: Monitor link group %s cancelled linkup delay - threshold no longer met (%u uplinks up, threshold: %u)",
                         group_name.c_str(), group_info.uplink_up_count, threshold);

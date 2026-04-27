@@ -48,7 +48,7 @@ private:
         std::set<std::string> uplink_groups;   // groups where this port is an uplink
         std::set<std::string> downlink_groups; // groups where this port is a downlink
         bool is_up;                            // current operational state
-        int down_group_count;                  // downlink-role groups that are DOWN/PENDING
+        uint32_t down_group_count;             // downlink-role groups that are DOWN/PENDING
 
         MonitorLinkInterfaceInfo() : is_up(false), down_group_count(0) {}
 
@@ -59,10 +59,12 @@ private:
     std::map<std::string, MonitorLinkGroupInfo> m_monitorLinkGroups;
     // Interface name -> Interface info mapping
     std::map<std::string, MonitorLinkInterfaceInfo> m_monitorLinkInterfaces;
+    // Timer pointer -> Group name reverse map for O(1) timer expiry lookup
+    std::map<SelectableTimer*, std::string> m_timerToGroup;
 
     void doTask(Consumer &consumer);
     void doPortTableTask(const std::string& key, std::vector<FieldValueTuple> data, std::string op);
-    bool doMonitorLinkGroupTask(const std::vector<std::string>& keys, const std::vector<FieldValueTuple>& data, const std::string& op);
+    void doMonitorLinkGroupTask(const std::vector<std::string>& keys, const std::vector<FieldValueTuple>& data, const std::string& op);
 
     // Monitor link interface state methods
     bool updateMonitorLinkInterfaceState(const std::string& interface_name, bool is_up);

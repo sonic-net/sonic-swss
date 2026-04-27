@@ -24,7 +24,6 @@ public:
 private:
     Table m_cfgPortTable;
     Table m_cfgSendToIngressPortTable;
-    Table m_cfgLagMemberTable;
     Table m_statePortTable;
     Table m_stateMonitorLinkGroupMemberTable;
     ProducerStateTable m_appPortTable;
