@@ -483,6 +483,14 @@ namespace saihelper_test
         ASSERT_EQ(*_sai_syncd_notifications_count, 0);
         ASSERT_EQ(status, task_success);
 
+        status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, SAI_STATUS_ITEM_NOT_FOUND);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_success);
+
+        status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_INBOUND_ROUTING, SAI_STATUS_ITEM_NOT_FOUND);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_success);
+
         _unhook_sai_apis();
     }
 
