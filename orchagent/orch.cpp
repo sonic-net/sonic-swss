@@ -3,6 +3,7 @@
 #include <sys/time.h>
 #include "timestamp.h"
 #include "orch.h"
+#include "swssstats.h"
 
 #include "subscriberstatetable.h"
 #include "portsorch.h"
@@ -248,10 +249,17 @@ void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry, bool onRetry)
     string op  = kfvOp(entry);
 
     if (!onRetry)
+    {
         /* Record incoming tasks */
         Recorder::Instance().swss.record(dumpTuple(entry));
+
+        /* Record statistics (no-op when disabled) */
+        SwssStats::getInstance()->recordTask(getTableName(), op);
+    }
     else
+    {
         Recorder::Instance().retry.record(dumpTuple(entry).append(DECACHE));
+    }
 
     auto retryCache = getOrch() ? getOrch()->getRetryCache(getName()) : nullptr;
 
@@ -557,6 +565,9 @@ void Consumer::drain()
 {
     if (!m_toSync.empty())
     {
+        const bool record = SwssStats::isEnabled();
+        const size_t size_before = record ? m_toSync.size() : 0;
+        bool threw = false;
         try
         {
             ((Orch *)m_orch)->doTask((Consumer&)*this);
@@ -565,21 +576,44 @@ void Consumer::drain()
         {
             SWSS_LOG_ERROR("Exception caught: type=invalid_argument, table=%s, error=%s",
                            getName().c_str(), e.what());
+            threw = true;
         }
         catch (const std::logic_error& e)
         {
             SWSS_LOG_ERROR("Exception caught: type=logic_error, table=%s, error=%s",
                            getName().c_str(), e.what());
+            threw = true;
         }
         catch (const std::exception& e)
         {
             SWSS_LOG_ERROR("Exception caught: type=exception, table=%s, error=%s",
                            getName().c_str(), e.what());
+            threw = true;
         }
         catch (...)
         {
             SWSS_LOG_ERROR("Exception caught: type=unknown, table=%s",
                            getName().c_str());
+            threw = true;
+        }
+        if (record)
+        {
+            if (threw)
+            {
+                // ERROR is incremented once per failing drain pass, not once
+                // per failed item. Items left in m_toSync will be retried on
+                // the next drain and may contribute to ERROR again.
+                SwssStats::getInstance()->recordError(getTableName(), 1);
+            }
+            else
+            {
+                size_t size_after = m_toSync.size();
+                uint64_t completed = (size_before > size_after) ? (size_before - size_after) : 0;
+                if (completed > 0)
+                {
+                    SwssStats::getInstance()->recordComplete(getTableName(), completed);
+                }
+            }
         }
     }
 }
