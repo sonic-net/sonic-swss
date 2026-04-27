@@ -28,6 +28,7 @@ private:
     Table m_statePortTable;
     Table m_stateLagTable;
     Table m_stateMACsecIngressSATable;
+    Table m_stateMonitorLinkGroupMemberTable;
 
     ProducerStateTable m_appPortTable;
     ProducerStateTable m_appLagTable;
@@ -40,6 +41,7 @@ private:
     void doLagTask(Consumer &consumer);
     void doLagMemberTask(Consumer &consumer);
     void doPortUpdateTask(Consumer &consumer);
+    void doMonitorLinkGroupMemberTask(Consumer &consumer);
 
     task_process_status addLag(const std::string &alias, int min_links, bool fall_back, bool fast_rate);
     bool removeLag(const std::string &alias);

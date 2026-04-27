@@ -6,6 +6,7 @@
 #include "exec.h"
 #include "schema.h"
 #include "intfmgr.h"
+#include "monitorlinkgroupmgr.h"
 #include <fstream>
 #include <iostream>
 #include "warm_restart.h"
@@ -34,6 +35,10 @@ int main(int argc, char **argv)
             CFG_VOQ_INBAND_INTERFACE_TABLE_NAME,
         };
 
+        vector<string> cfg_mlg_tables = {
+            CFG_MONITOR_LINK_GROUP_TABLE_NAME,
+        };
+
         DBConnector cfgDb("CONFIG_DB", 0);
         DBConnector appDb("APPL_DB", 0);
         DBConnector stateDb("STATE_DB", 0);
@@ -42,7 +47,8 @@ int main(int argc, char **argv)
         WarmStart::checkWarmStart("intfmgrd", "swss");
 
         IntfMgr intfmgr(&cfgDb, &appDb, &stateDb, cfg_intf_tables);
-        std::vector<Orch *> cfgOrchList = {&intfmgr};
+        MonitorLinkGroupMgr mlgmgr(&cfgDb, &stateDb, cfg_mlg_tables);
+        std::vector<Orch *> cfgOrchList = {&intfmgr, &mlgmgr};
 
         swss::Select s;
         for (Orch *o : cfgOrchList)
@@ -64,7 +70,16 @@ int main(int argc, char **argv)
             }
             if (ret == Select::TIMEOUT)
             {
-                intfmgr.doTask();
+                for (Orch *o : cfgOrchList)
+                {
+                    o->doTask();
+                }
+
+                // Refresh selectables to pick up any new timers created during config processing
+                for (Orch *o : cfgOrchList)
+                {
+                    s.addSelectables(o->getSelectables());
+                }
                 continue;
             }
 

@@ -36,7 +36,8 @@ TeamMgr::TeamMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_appLagTable(applDb, APP_LAG_TABLE_NAME),
     m_statePortTable(statDb, STATE_PORT_TABLE_NAME),
     m_stateLagTable(statDb, STATE_LAG_TABLE_NAME),
-    m_stateMACsecIngressSATable(statDb, STATE_MACSEC_INGRESS_SA_TABLE_NAME)
+    m_stateMACsecIngressSATable(statDb, STATE_MACSEC_INGRESS_SA_TABLE_NAME),
+    m_stateMonitorLinkGroupMemberTable(statDb, STATE_MONITOR_LINK_GROUP_MEMBER_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
 
@@ -165,6 +166,10 @@ void TeamMgr::doTask(Consumer &consumer)
     else if (table == STATE_PORT_TABLE_NAME)
     {
         doPortUpdateTask(consumer);
+    }
+    else if (table == STATE_MONITOR_LINK_GROUP_MEMBER_TABLE_NAME)
+    {
+        doMonitorLinkGroupMemberTask(consumer);
     }
 }
 
@@ -311,7 +316,42 @@ void TeamMgr::doLagTask(Consumer &consumer)
                 m_lagList.insert(alias);
             }
 
-            setLagAdminStatus(alias, admin_status);
+            if (admin_status == "up")
+            {
+                vector<FieldValueTuple> monitor_link_data;
+                if (m_stateMonitorLinkGroupMemberTable.get(alias, monitor_link_data))
+                {
+                    string monitor_link_state;
+                    for (const auto &fv : monitor_link_data)
+                    {
+                        if (fvField(fv) == "state")
+                        {
+                            monitor_link_state = fvValue(fv);
+                            break;
+                        }
+                    }
+                    if (monitor_link_state == "allow_up")
+                    {
+                        setLagAdminStatus(alias, "up");
+                        SWSS_LOG_NOTICE("Configure %s admin status to up (monitor link allows)", alias.c_str());
+                    }
+                    else
+                    {
+                        setLagAdminStatus(alias, "down");
+                        SWSS_LOG_NOTICE("Configure %s admin status blocked by monitor link (state: %s)", alias.c_str(), monitor_link_state.c_str());
+                    }
+                }
+                else
+                {
+                    setLagAdminStatus(alias, "up");
+                    SWSS_LOG_NOTICE("Configure %s admin status to up", alias.c_str());
+                }
+            }
+            else
+            {
+                setLagAdminStatus(alias, "down");
+                SWSS_LOG_NOTICE("Configure %s admin status to down", alias.c_str());
+            }
             setLagMtu(alias, mtu);
             if (!learn_mode.empty())
             {
@@ -876,4 +916,93 @@ bool TeamMgr::removeLagMember(const string &lag, const string &member)
     SWSS_LOG_NOTICE("Remove %s from port channel %s", member.c_str(), lag.c_str());
 
     return true;
+}
+
+void TeamMgr::doMonitorLinkGroupMemberTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+
+        string interface_name = kfvKey(t);
+        string op = kfvOp(t);
+        auto data = kfvFieldsValues(t);
+
+        // Determine interface type via CONFIG_DB rather than name prefix — avoids breakage
+        // if SONiC ever adds LAG naming that doesn't start with "PortChannel".
+        vector<FieldValueTuple> lag_data;
+        if (!m_cfgLagTable.get(interface_name, lag_data))
+        {
+            // Not a LAG (Ethernet or unknown) — handled by portmgrd
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
+        if (op == SET_COMMAND)
+        {
+            SWSS_LOG_INFO("TeamMgr: Processing monitor link group member SET for %s", interface_name.c_str());
+
+            string monitor_link_state;
+            string down_due_to;
+
+            for (const auto &idx : data)
+            {
+                const auto &field = fvField(idx);
+                const auto &value = fvValue(idx);
+
+                if (field == "state")
+                    monitor_link_state = value;
+                else if (field == "down_due_to")
+                    down_due_to = value;
+            }
+
+            if (monitor_link_state.empty())
+            {
+                SWSS_LOG_WARN("TeamMgr: No state provided for interface %s, skipping", interface_name.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            bool config_admin_up = true;
+            for (const auto &fv : lag_data)
+            {
+                if (fvField(fv) == "admin_status")
+                {
+                    config_admin_up = (fvValue(fv) == "up");
+                    break;
+                }
+            }
+
+            bool should_be_up = (monitor_link_state == "allow_up") && config_admin_up;
+
+            SWSS_LOG_INFO("TeamMgr: Interface %s - monitor_link_state: %s, config_admin_up: %s, final_state: %s, down_due_to: %s",
+                         interface_name.c_str(), monitor_link_state.c_str(),
+                         config_admin_up ? "up" : "down", should_be_up ? "up" : "down", down_due_to.c_str());
+
+            setLagAdminStatus(interface_name, should_be_up ? "up" : "down");
+        }
+        else if (op == DEL_COMMAND)
+        {
+            SWSS_LOG_INFO("TeamMgr: Processing monitor link group member DEL for %s", interface_name.c_str());
+
+            bool config_admin_up = true;
+            for (const auto &fv : lag_data)
+            {
+                if (fvField(fv) == "admin_status")
+                {
+                    config_admin_up = (fvValue(fv) == "up");
+                    break;
+                }
+            }
+
+            SWSS_LOG_INFO("TeamMgr: Restoring interface %s to configuration state: %s",
+                         interface_name.c_str(), config_admin_up ? "up" : "down");
+            setLagAdminStatus(interface_name, config_admin_up ? "up" : "down");
+        }
+
+        it = consumer.m_toSync.erase(it);
+    }
 }
