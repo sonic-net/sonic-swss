@@ -5,8 +5,24 @@
 #include "converter.h"
 #include "bufferorch.h"
 #include <inttypes.h>
+#include <time.h>
 
 #define DEFAULT_TELEMETRY_INTERVAL 120
+#define LAST_RESET_TIME_FIELD "LAST_RESET_TIME"
+
+/*
+ * Get system uptime in centiseconds using CLOCK_BOOTTIME.
+ * Returns a 32-bit value that wraps at 2^32 per SNMP TimeTicks (RFC 2578).
+ * CLOCK_BOOTTIME includes time spent in suspend, unlike CLOCK_MONOTONIC.
+ */
+static uint32_t getSysUptimeCentiseconds()
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_BOOTTIME, &ts);
+    // Convert to centiseconds (1/100 sec) and wrap at 2^32
+    uint64_t centiseconds = (uint64_t)ts.tv_sec * 100 + ts.tv_nsec / 10000000;
+    return (uint32_t)(centiseconds & 0xFFFFFFFF);
+}
 
 #define CLEAR_PG_HEADROOM_REQUEST "PG_HEADROOM"
 #define CLEAR_PG_SHARED_REQUEST "PG_SHARED"
@@ -197,19 +213,22 @@ void WatermarkOrch::doTask(NotificationConsumer &consumer)
     {
         clearSingleWm(table,
                       "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
-                      m_unicast_queue_ids);
+                      m_unicast_queue_ids,
+                      op == "USER");
     }
     else if (data == CLEAR_QUEUE_SHARED_MULTI_REQUEST)
     {
         clearSingleWm(table,
                       "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
-                      m_multicast_queue_ids);
+                      m_multicast_queue_ids,
+                      op == "USER");
     }
     else if (data == CLEAR_QUEUE_SHARED_ALL_REQUEST)
     {
         clearSingleWm(table,
                       "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
-                      m_all_queue_ids);
+                      m_all_queue_ids,
+                      op == "USER");
     }
     else if (data == CLEAR_BUFFER_POOL_REQUEST)
     {
@@ -258,25 +277,32 @@ void WatermarkOrch::doTask(SelectableTimer &timer)
 
         clearSingleWm(m_periodicWatermarkTable.get(),
                       "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES",
-                      m_pg_ids);
+                      m_pg_ids,
+                      true);
         clearSingleWm(m_periodicWatermarkTable.get(),
                       "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES",
-                      m_pg_ids);
+                      m_pg_ids,
+                      true);
         clearSingleWm(m_periodicWatermarkTable.get(),
                       "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
-                      m_unicast_queue_ids);
+                      m_unicast_queue_ids,
+                      true);
         clearSingleWm(m_periodicWatermarkTable.get(),
                       "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
-                      m_multicast_queue_ids);
+                      m_multicast_queue_ids,
+                      true);
         clearSingleWm(m_periodicWatermarkTable.get(),
                       "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
-                      m_all_queue_ids);
+                      m_all_queue_ids,
+                      true);
         clearSingleWm(m_periodicWatermarkTable.get(),
                       "SAI_BUFFER_POOL_STAT_WATERMARK_BYTES",
-                      gBufferOrch->getBufferPoolNameOidMap());
+                      gBufferOrch->getBufferPoolNameOidMap(),
+                      true);
         clearSingleWm(m_periodicWatermarkTable.get(),
                       "SAI_BUFFER_POOL_STAT_XOFF_ROOM_WATERMARK_BYTES",
-                      gBufferOrch->getBufferPoolNameOidMap());
+                      gBufferOrch->getBufferPoolNameOidMap(),
+                      true);
         SWSS_LOG_DEBUG("Periodic watermark cleared by timer!");
     }
 }
@@ -320,13 +346,22 @@ void WatermarkOrch::init_queue_ids()
     }
 }
 
-void WatermarkOrch::clearSingleWm(Table *table, string wm_name, vector<sai_object_id_t> &obj_ids)
+void WatermarkOrch::clearSingleWm(Table *table, string wm_name, vector<sai_object_id_t> &obj_ids, bool recordResetTime)
 {
     /* Zero-out some WM in some table for some vector of object ids*/
     SWSS_LOG_ENTER();
-    SWSS_LOG_DEBUG("clear WM %s, for %zu obj ids", wm_name.c_str(), obj_ids.size());
+    SWSS_LOG_DEBUG("clear WM %s, for %zu obj ids, recordResetTime=%d", wm_name.c_str(), obj_ids.size(), recordResetTime);
 
     vector<FieldValueTuple> vfvt = {{wm_name, "0"}};
+
+    // Record the reset timestamp for user-initiated clears (for SNMP oracleXgsQueueWatermarkLastResetTime)
+    // SNMP TimeTicks uses centiseconds (1/100 sec), 32-bit value wrapping at 2^32
+    if (recordResetTime)
+    {
+        uint32_t uptimeCentiseconds = getSysUptimeCentiseconds();
+        vfvt.emplace_back(LAST_RESET_TIME_FIELD, to_string(uptimeCentiseconds));
+        SWSS_LOG_DEBUG("Recording watermark reset time: %" PRIu32 " centiseconds", uptimeCentiseconds);
+    }
 
     for (sai_object_id_t id: obj_ids)
     {
@@ -334,12 +369,21 @@ void WatermarkOrch::clearSingleWm(Table *table, string wm_name, vector<sai_objec
     }
 }
 
-void WatermarkOrch::clearSingleWm(Table *table, string wm_name, const object_reference_map &nameOidMap)
+void WatermarkOrch::clearSingleWm(Table *table, string wm_name, const object_reference_map &nameOidMap, bool recordResetTime)
 {
     SWSS_LOG_ENTER();
-    SWSS_LOG_DEBUG("clear WM %s, for %zu obj ids", wm_name.c_str(), nameOidMap.size());
+    SWSS_LOG_DEBUG("clear WM %s, for %zu obj ids, recordResetTime=%d", wm_name.c_str(), nameOidMap.size(), recordResetTime);
 
     vector<FieldValueTuple> fvTuples = {{wm_name, "0"}};
+
+    // Record the reset timestamp for user-initiated clears (for SNMP oracleXgsQueueWatermarkLastResetTime)
+    // SNMP TimeTicks uses centiseconds (1/100 sec), 32-bit value wrapping at 2^32
+    if (recordResetTime)
+    {
+        uint32_t uptimeCentiseconds = getSysUptimeCentiseconds();
+        fvTuples.emplace_back(LAST_RESET_TIME_FIELD, to_string(uptimeCentiseconds));
+        SWSS_LOG_DEBUG("Recording watermark reset time: %" PRIu32 " centiseconds", uptimeCentiseconds);
+    }
 
     for (const auto &it : nameOidMap)
     {
