@@ -1115,4 +1115,4 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::bake()
 template class PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>;
 template class PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>;
 template class PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>;
-template class PfcWdSwOrch<PfcWdSaiDlrInitHandler, PfcWdActionHandler>;
+template class PfcWdSwOrch<PfcWdDlrHandler, PfcWdActionHandler>;
