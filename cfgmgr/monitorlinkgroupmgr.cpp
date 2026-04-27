@@ -71,16 +71,22 @@ void MonitorLinkGroupMgr::doPortTableTask(const string& key, vector<FieldValueTu
 {
     if (op == SET_COMMAND)
     {
+        string oper_status_val, netdev_oper_status_val;
         for (auto idx : data)
         {
             const auto &field = fvField(idx);
             const auto &value = fvValue(idx);
-
-            if (field == "oper_status" || field == "netdev_oper_status")
-            {
-                updateMonitorLinkInterfaceState(key, value == "up");
-            }
+            if (field == "oper_status")
+                oper_status_val = value;
+            else if (field == "netdev_oper_status")
+                netdev_oper_status_val = value;
         }
+        // netdev_oper_status is the authoritative kernel-netdev state for Ethernet;
+        // oper_status is the LAG operational state for PortChannels.
+        if (!netdev_oper_status_val.empty())
+            updateMonitorLinkInterfaceState(key, netdev_oper_status_val == "up");
+        else if (!oper_status_val.empty())
+            updateMonitorLinkInterfaceState(key, oper_status_val == "up");
     }
 }
 
@@ -423,17 +429,21 @@ bool MonitorLinkGroupMgr::getInterfaceOperState(const string& interface_name)
     else
         interface_exists_in_state = m_statePortTable.get(interface_name, interface_values);
 
-    if (interface_exists_in_state)
-    {
-        for (const auto& fv : interface_values)
-        {
-            if (fvField(fv) == "oper_status" || fvField(fv) == "netdev_oper_status")
-            {
-                return (fvValue(fv) == "up");
-            }
-        }
-    }
+    if (!interface_exists_in_state)
+        return false;
 
+    string oper_val, netdev_oper_val;
+    for (const auto& fv : interface_values)
+    {
+        if (fvField(fv) == "oper_status")
+            oper_val = fvValue(fv);
+        else if (fvField(fv) == "netdev_oper_status")
+            netdev_oper_val = fvValue(fv);
+    }
+    if (!netdev_oper_val.empty())
+        return netdev_oper_val == "up";
+    if (!oper_val.empty())
+        return oper_val == "up";
     return false;
 }
 
