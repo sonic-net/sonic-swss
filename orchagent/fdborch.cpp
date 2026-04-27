@@ -306,8 +306,17 @@ void FdbOrch::update(sai_fdb_event_t        type,
             SWSS_LOG_INFO("Flush event: Failed to get port by bridge port ID 0x%" PRIx64 ".",
                         bridge_port_id);
         } else {
-            SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%" PRIx64 ".",
+            SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%" PRIx64 ". "
+                        "Removing stale FDB entries referencing this bridge port.",
                         bridge_port_id);
+            for (auto itr = m_entries.begin(); itr != m_entries.end();)
+            {
+                auto curr = itr++;
+                if (curr->second.bridge_port_id == bridge_port_id)
+                {
+                    clearFdbEntry(curr->first);
+                }
+            }
             return;
         }
     }
