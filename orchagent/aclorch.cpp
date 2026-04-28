@@ -472,15 +472,13 @@ static acl_table_match_field_lookup_t stageMandatoryMatchFields =
             {
                 ACL_STAGE_INGRESS,
                 {
-                    SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE,
-                    SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS
+                    SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE
                 }
             },
             {
                 ACL_STAGE_EGRESS,
                 {
-                    SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE,
-                    SAI_ACL_TABLE_ATTR_FIELD_OUT_PORTS
+                    SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE
                 }
             }
         }
@@ -942,6 +940,17 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
 
     matchData.enable = true;
 
+    // *_MASK fields have no direct SAI entry attribute mapping; they are stored
+    // here and combined with the companion IP field in processPendingIpFields().
+    // This check must come before the aclMatchLookup guard below.
+    if (attr_name == MATCH_SRC_IP_MASK || attr_name == MATCH_DST_IP_MASK ||
+        attr_name == MATCH_SRC_IPV6_MASK || attr_name == MATCH_DST_IPV6_MASK)
+    {
+        string ip_field = attr_name.substr(0, attr_name.length() - 5);
+        m_pendingIpMasks[ip_field] = attr_value;
+        return true;
+    }
+
     try
     {
         if (aclMatchLookup.find(attr_name) == aclMatchLookup.end())
@@ -1122,13 +1131,6 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
                 return true;
             }
         }
-        else if (attr_name == MATCH_SRC_IP_MASK || attr_name == MATCH_DST_IP_MASK)
-        {
-            // Strip the "_MASK" suffix to get the companion IP field name (e.g. SRC_IP_MASK -> SRC_IP)
-            string ip_field = attr_name.substr(0, attr_name.length() - 5);
-            m_pendingIpMasks[ip_field] = attr_value;
-            return true;
-        }
         else if (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6)
         {
             if (attr_value.find('/') != string::npos)
@@ -1148,12 +1150,6 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
                 m_pendingIpFields[attr_name] = attr_value;
                 return true;
             }
-        }
-        else if (attr_name == MATCH_SRC_IPV6_MASK || attr_name == MATCH_DST_IPV6_MASK)
-        {
-            string ip_field = attr_name.substr(0, attr_name.length() - 5);
-            m_pendingIpMasks[ip_field] = attr_value;
-            return true;
         }
         else if ((attr_name == MATCH_L4_SRC_PORT_RANGE) || (attr_name == MATCH_L4_DST_PORT_RANGE))
         {
@@ -2744,7 +2740,7 @@ bool AclTable::addStageMandatoryRangeFields()
 }
 
 
-bool AclTable::addStageMandatoryMatchFields(bool l3v6InPortsEnabled, bool l3v6OutPortsEnabled)
+bool AclTable::addStageMandatoryMatchFields()
 {
     SWSS_LOG_ENTER();
 
@@ -2763,21 +2759,6 @@ bool AclTable::addStageMandatoryMatchFields(bool l3v6InPortsEnabled, bool l3v6Ou
             {
                 if (match != SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE)
                 {
-                    // IN_PORTS/OUT_PORTS for L3V6 are gated by SAI capability queries;
-                    // skip if the platform does not support the field.
-                    if (type.getName() == TABLE_TYPE_L3V6)
-                    {
-                        if (match == SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS && !l3v6InPortsEnabled)
-                        {
-                            SWSS_LOG_INFO("Skipping IN_PORTS for L3V6 table: not supported by SAI");
-                            continue;
-                        }
-                        if (match == SAI_ACL_TABLE_ATTR_FIELD_OUT_PORTS && !l3v6OutPortsEnabled)
-                        {
-                            SWSS_LOG_INFO("Skipping OUT_PORTS for L3V6 table: not supported by SAI");
-                            continue;
-                        }
-                    }
                     type.addMatch(make_shared<AclTableMatch>(match));
                     SWSS_LOG_INFO("Added mandatory match field %s for table type %s stage %d",
                         sai_serialize_enum(match, &sai_metadata_enum_sai_acl_table_attr_t).c_str(),
@@ -3791,39 +3772,6 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
 
         m_metaDataMgr.populateRange(metadataMin, metadataMax);
 
-    }
-
-    // Query IN_PORTS and OUT_PORTS ACL table field capabilities independently —
-    // platforms may support one but not the other.
-    {
-        sai_attr_capability_t capability;
-        sai_status_t status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_ACL_TABLE,
-            SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS, &capability);
-        if (status == SAI_STATUS_SUCCESS)
-        {
-            m_l3v6InPortsCapability = capability.create_implemented;
-        }
-        else
-        {
-            SWSS_LOG_NOTICE("Could not query SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS capability (%d), "
-                "disabling L3V6 IN_PORTS match", status);
-        }
-
-        status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_ACL_TABLE,
-            SAI_ACL_TABLE_ATTR_FIELD_OUT_PORTS, &capability);
-        if (status == SAI_STATUS_SUCCESS)
-        {
-            m_l3v6OutPortsCapability = capability.create_implemented;
-        }
-        else
-        {
-            SWSS_LOG_NOTICE("Could not query SAI_ACL_TABLE_ATTR_FIELD_OUT_PORTS capability (%d), "
-                "disabling L3V6 OUT_PORTS match", status);
-        }
-
-        SWSS_LOG_NOTICE("    TABLE_TYPE_L3V6 IN_PORTS: %s, OUT_PORTS: %s",
-            m_l3v6InPortsCapability ? "yes" : "no",
-            m_l3v6OutPortsCapability ? "yes" : "no");
     }
 
     // Store the capabilities in state database
@@ -4914,7 +4862,7 @@ bool AclOrch::addAclTable(AclTable &newTable)
         }
     }
     // Update matching field according to ACL stage
-    newTable.addStageMandatoryMatchFields(m_l3v6InPortsCapability, m_l3v6OutPortsCapability);
+    newTable.addStageMandatoryMatchFields();
 
     // Add mandatory ACL action if not present
     // We need to call addMandatoryActions here because addAclTable is directly called in other orchs.

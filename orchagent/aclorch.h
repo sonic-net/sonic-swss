@@ -509,7 +509,7 @@ public:
     bool addMandatoryActions();
 
     // Add stage mandatory matching fields to ACL table
-    bool addStageMandatoryMatchFields(bool l3v6InPortsEnabled = false, bool l3v6OutPortsEnabled = false);
+    bool addStageMandatoryMatchFields();
 
     // Add stage mandatory range fields to ACL table
     bool addStageMandatoryRangeFields();
@@ -638,8 +638,6 @@ public:
     bool m_isCombinedMirrorV6Table = true;
     map<string, bool> m_mirrorTableCapabilities;
     map<acl_stage_type_t, bool> m_L3V4V6Capability;
-    bool m_l3v6InPortsCapability = false;
-    bool m_l3v6OutPortsCapability = false;
     map<string, string> m_switchMetaDataCapabilities;
     
     void registerFlexCounter(const AclRule& rule);

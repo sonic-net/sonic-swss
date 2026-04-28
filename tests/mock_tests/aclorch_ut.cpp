@@ -2503,64 +2503,6 @@ namespace aclorch_test
         delRule();
     }
 
-    // Verify that L3V6 ACL tables automatically have IN_PORTS capability at ingress
-    // and OUT_PORTS capability at egress via stageMandatoryMatchFields.
-    // Rules are not required to use these fields; they are just enabled on the table.
-    TEST_F(AclOrchTest, L3V6Acl_StagePortMatchCapability)
-    {
-        auto orch = createAclOrch();
-
-        // Ingress L3V6 table: SAI table attributes must include FIELD_IN_PORTS.
-        {
-            const string acl_table_id = "l3v6_ingress_table";
-            auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
-                { { acl_table_id,
-                    SET_COMMAND,
-                    { { ACL_TABLE_DESCRIPTION, "L3V6 ingress" },
-                      { ACL_TABLE_TYPE, TABLE_TYPE_L3V6 },
-                      { ACL_TABLE_STAGE, STAGE_INGRESS },
-                      { ACL_TABLE_PORTS, "1,2" } } } });
-            orch->doAclTableTask(kvfAclTable);
-
-            auto acl_table_oid = orch->getTableById(acl_table_id);
-            ASSERT_NE(acl_table_oid, SAI_NULL_OBJECT_ID);
-
-            const auto &acl_table = orch->getAclTables().at(acl_table_oid);
-            const auto &matches = acl_table.type.getMatches();
-            ASSERT_NE(matches.find(SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS), matches.end())
-                << "L3V6 ingress table must have FIELD_IN_PORTS as a mandatory match";
-
-            auto kvfDel = deque<KeyOpFieldsValuesTuple>(
-                { { acl_table_id, DEL_COMMAND, {} } });
-            orch->doAclTableTask(kvfDel);
-        }
-
-        // Egress L3V6 table: SAI table attributes must include FIELD_OUT_PORTS.
-        {
-            const string acl_table_id = "l3v6_egress_table";
-            auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
-                { { acl_table_id,
-                    SET_COMMAND,
-                    { { ACL_TABLE_DESCRIPTION, "L3V6 egress" },
-                      { ACL_TABLE_TYPE, TABLE_TYPE_L3V6 },
-                      { ACL_TABLE_STAGE, STAGE_EGRESS },
-                      { ACL_TABLE_PORTS, "1,2" } } } });
-            orch->doAclTableTask(kvfAclTable);
-
-            auto acl_table_oid = orch->getTableById(acl_table_id);
-            ASSERT_NE(acl_table_oid, SAI_NULL_OBJECT_ID);
-
-            const auto &acl_table = orch->getAclTables().at(acl_table_oid);
-            const auto &matches = acl_table.type.getMatches();
-            ASSERT_NE(matches.find(SAI_ACL_TABLE_ATTR_FIELD_OUT_PORTS), matches.end())
-                << "L3V6 egress table must have FIELD_OUT_PORTS as a mandatory match";
-
-            auto kvfDel = deque<KeyOpFieldsValuesTuple>(
-                { { acl_table_id, DEL_COMMAND, {} } });
-            orch->doAclTableTask(kvfDel);
-        }
-    }
-
     sai_switch_api_t *old_sai_switch_api_mirror_egress;
 
     sai_status_t getSwitchAttributeMirrorEgress(_In_ sai_object_id_t switch_id, _In_ uint32_t attr_count,
