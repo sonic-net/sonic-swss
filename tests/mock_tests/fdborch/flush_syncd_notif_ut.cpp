@@ -7,6 +7,8 @@
 #include "fdborch.h"
 #include "crmorch.h"
 #undef private
+#include "json.h"
+#include "sai_serialize.h"
 
 #define ETH0 "Ethernet0"
 #define VLAN40 "Vlan40"
@@ -547,5 +549,121 @@ namespace fdb_syncd_flush_test
         ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
         ASSERT_EQ(m_portsOrch->m_portList[VXLAN_REMOTE].m_fdb_count, 1);
         _unhook_sai_fdb_api();
+    }
+
+    /*
+     * Regression test: sai_fdb_type must not bleed across events in a batch.
+     *
+     * Before the fix, sai_fdb_type was declared outside the per-event loop in
+     * FdbOrch::doTask(NotificationConsumer&). If event[0] carried
+     * SAI_FDB_ENTRY_ATTR_TYPE=STATIC and event[1] lacked the attribute, event[1]
+     * would incorrectly inherit STATIC type from event[0].
+     *
+     * We test the fix at two levels:
+     *
+     * Part A: Direct handleSyncdFlushNotif call.
+     *   Verify that a STATIC flush does NOT clear a DYNAMIC entry, and that a
+     *   DYNAMIC flush does. This confirms the sai_fdb_type filter works.
+     *
+     * Part B: Full doTask batch path.
+     *   Inject a two-event FLUSHED batch via the NotificationConsumer queue:
+     *     event[0]: type=STATIC (consolidated flush, clears nothing)
+     *     event[1]: no type attribute (should default to DYNAMIC, clears DYNAMIC entry)
+     *   On fixed code event[1] defaults to DYNAMIC -> entry flushed (test passes).
+     *   On buggy code event[1] inherits STATIC from event[0] -> entry survives (test fails).
+     */
+    TEST_F(FdbOrchTest, FdbTypeDoesNotBleedAcrossBatchEvents)
+    {
+        ASSERT_NE(m_portsOrch, nullptr);
+        setUpVlan(m_portsOrch.get());
+        setUpPort(m_portsOrch.get());
+        setUpVlanMember(m_portsOrch.get());
+
+        m_portsOrch->m_initDone = true;
+
+        sai_object_id_t bv_id      = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+        sai_object_id_t bp_id_eth0 = m_portsOrch->m_portList[ETH0].m_bridge_port_id;
+        vector<uint8_t> mac_addr = {0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x01};
+
+        /* ---- Part A: test the type filter directly ---- */
+
+        triggerUpdate(m_fdborch.get(), SAI_FDB_EVENT_LEARNED, mac_addr, bp_id_eth0, bv_id);
+
+        FdbEntry fdb_entry;
+        fdb_entry.mac = MacAddress("aa:bb:cc:dd:ee:01");
+        fdb_entry.bv_id = bv_id;
+
+        ASSERT_NE(m_fdborch->m_entries.find(fdb_entry), m_fdborch->m_entries.end())
+            << "Entry not inserted by LEARN";
+        ASSERT_EQ(m_fdborch->m_entries[fdb_entry].sai_fdb_type, SAI_FDB_ENTRY_TYPE_DYNAMIC)
+            << "Entry should be DYNAMIC after LEARN";
+
+        m_fdborch->m_entries[fdb_entry].is_flush_pending = true;
+
+        /* STATIC flush must NOT clear a DYNAMIC entry. */
+        m_fdborch->handleSyncdFlushNotif(SAI_NULL_OBJECT_ID, SAI_NULL_OBJECT_ID,
+                                         MacAddress("00:00:00:00:00:00"),
+                                         SAI_FDB_ENTRY_TYPE_STATIC);
+        EXPECT_NE(m_fdborch->m_entries.find(fdb_entry), m_fdborch->m_entries.end())
+            << "DYNAMIC entry incorrectly removed by STATIC flush";
+
+        /* DYNAMIC flush must clear the DYNAMIC entry. */
+        m_fdborch->handleSyncdFlushNotif(SAI_NULL_OBJECT_ID, SAI_NULL_OBJECT_ID,
+                                         MacAddress("00:00:00:00:00:00"),
+                                         SAI_FDB_ENTRY_TYPE_DYNAMIC);
+        EXPECT_EQ(m_fdborch->m_entries.find(fdb_entry), m_fdborch->m_entries.end())
+            << "DYNAMIC entry survived DYNAMIC flush";
+
+        /* ---- Part B: test the full doTask batch deserialization path ---- */
+
+        /* Re-learn the entry. */
+        triggerUpdate(m_fdborch.get(), SAI_FDB_EVENT_LEARNED, mac_addr, bp_id_eth0, bv_id);
+        ASSERT_NE(m_fdborch->m_entries.find(fdb_entry), m_fdborch->m_entries.end())
+            << "Entry not re-learned";
+        m_fdborch->m_entries[fdb_entry].is_flush_pending = true;
+
+        /* Build two-event FLUSHED batch:
+         *   event[0]: type=STATIC consolidated flush
+         *   event[1]: no type attr, consolidated flush (should default to DYNAMIC)
+         */
+        sai_fdb_event_notification_data_t events[2];
+        memset(events, 0, sizeof(events));
+
+        events[0].event_type = SAI_FDB_EVENT_FLUSHED;
+        sai_attribute_t attrs0[1];
+        attrs0[0].id = SAI_FDB_ENTRY_ATTR_TYPE;
+        attrs0[0].value.s32 = SAI_FDB_ENTRY_TYPE_STATIC;
+        events[0].attr_count = 1;
+        events[0].attr = attrs0;
+
+        events[1].event_type = SAI_FDB_EVENT_FLUSHED;
+        events[1].attr_count = 0;
+        events[1].attr = nullptr;
+
+        std::string ntf_data = sai_serialize_fdb_event_ntf(2, events);
+        std::vector<swss::FieldValueTuple> notifyValues;
+        notifyValues.emplace_back("fdb_event", ntf_data);
+        std::string msg = swss::JSon::buildJson(notifyValues);
+
+        mockReply = (redisReply *)calloc(1, sizeof(redisReply));
+        mockReply->type = REDIS_REPLY_ARRAY;
+        mockReply->elements = 3;
+        mockReply->element = (redisReply **)calloc(mockReply->elements, sizeof(redisReply *));
+        mockReply->element[0] = (redisReply *)calloc(1, sizeof(redisReply));
+        mockReply->element[1] = (redisReply *)calloc(1, sizeof(redisReply));
+        mockReply->element[2] = (redisReply *)calloc(1, sizeof(redisReply));
+        mockReply->element[2]->type = REDIS_REPLY_STRING;
+        mockReply->element[2]->str = (char *)calloc(1, msg.length() + 1);
+        memcpy(mockReply->element[2]->str, msg.c_str(), msg.length());
+
+        m_fdborch->m_fdbNotificationConsumer->readData();
+        mockReply = nullptr;
+
+        m_fdborch->doTask(*m_fdborch->m_fdbNotificationConsumer);
+
+        /* Fixed: event[1] defaults to DYNAMIC -> entry flushed -> not in m_entries.
+         * Buggy: event[1] inherits STATIC -> entry survives -> still in m_entries. */
+        EXPECT_EQ(m_fdborch->m_entries.find(fdb_entry), m_fdborch->m_entries.end())
+            << "DYNAMIC entry survived: event[1] inherited STATIC type (type bleed regression)";
     }
 }

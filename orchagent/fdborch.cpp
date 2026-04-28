@@ -1049,13 +1049,12 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
     {
         uint32_t count;
         sai_fdb_event_notification_data_t *fdbevent = nullptr;
-        sai_fdb_entry_type_t sai_fdb_type = SAI_FDB_ENTRY_TYPE_DYNAMIC;
-
         sai_deserialize_fdb_event_ntf(data, count, &fdbevent);
 
         for (uint32_t i = 0; i < count; ++i)
         {
             sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+            sai_fdb_entry_type_t sai_fdb_type = SAI_FDB_ENTRY_TYPE_DYNAMIC;
 
             for (uint32_t j = 0; j < fdbevent[i].attr_count; ++j)
             {
