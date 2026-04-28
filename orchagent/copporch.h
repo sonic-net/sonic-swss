@@ -21,6 +21,7 @@ extern "C" {
 using namespace swss;
 
 #define HOSTIF_TRAP_COUNTER_FLEX_COUNTER_GROUP "HOSTIF_TRAP_FLOW_COUNTER"
+#define COPP_STATS_COUNTER_FLEX_COUNTER_GROUP "COPP_STATS_COUNTER"
 
 // trap fields
 const std::string copp_trap_id_list                = "trap_ids";
@@ -82,6 +83,8 @@ public:
     CoppOrch(swss::DBConnector* db, std::string tableName);
     void generateHostIfTrapCounterIdList();
     void clearHostIfTrapCounterIdList();
+    void generatePolicerCounterIdList();
+    void clearPolicerCounterIdList();
 
     inline object_map getTrapGroupMap()
     {
@@ -111,10 +114,12 @@ protected:
     std::unique_ptr<Table> m_vidToRidTable;
     std::unique_ptr<Table> m_trapCapabilityTable;
     std::unique_ptr<Table> m_trapTable;
+    std::unique_ptr<Table> m_policerCounterTable;
 
-    std::unordered_set<sai_hostif_trap_type_t> supported_trap_ids;    
+    std::unordered_set<sai_hostif_trap_type_t> supported_trap_ids;
 
     FlexCounterManager m_trap_counter_manager;
+    FlexCounterManager m_policer_counter_manager;
 
     bool m_trap_rate_plugin_loaded = false;
 
@@ -167,6 +172,9 @@ protected:
 
     bool bindTrapCounter(sai_object_id_t hostif_trap_id, sai_hostif_trap_type_t trap_type);
     void unbindTrapCounter(sai_object_id_t hostif_trap_id);
+
+    bool bindPolicerCounter(sai_object_id_t policer_id, const std::string &trap_group_name);
+    void unbindPolicerCounter(sai_object_id_t policer_id);
 
     virtual void doTask(Consumer& consumer);
     void doTask(swss::SelectableTimer&) override;
