@@ -32,6 +32,8 @@
 #define INVALID_MODE  -1
 
 #define MAX_VLANS 4096
+#define MIN_VLAN_ID 1
+#define MAX_VLAN_ID 4095
 
 // Maximum number of instances supported
 #define L2_INSTANCE_MAX             MAX_VLANS
@@ -73,6 +75,7 @@ typedef enum STP_MSG_TYPE {
     STP_STPCTL_MSG,
     STP_MST_GLOBAL_CONFIG,
     STP_MST_INST_CONFIG,
+    STP_MST_VLAN_PORT_LIST_CONFIG,
     STP_MST_INST_PORT_CONFIG,
     STP_MAX_MSG
 } STP_MSG_TYPE;
@@ -113,7 +116,7 @@ typedef struct STP_INIT_READY_MSG {
     uint16_t max_stp_instances;
     // Example: potential extra padding if alignment warnings arise
     // uint8_t  padding[1];
-} ALIGNED(4) STP_INIT_READY_MSG;
+} __attribute__((packed)) STP_INIT_READY_MSG;
 
 // Add padding for alignment if needed
 typedef struct STP_BRIDGE_CONFIG_MSG {
@@ -123,16 +126,14 @@ typedef struct STP_BRIDGE_CONFIG_MSG {
     uint8_t base_mac_addr[6];
     // Potential padding for alignment:
     // uint8_t padding[2];
-} ALIGNED(4) STP_BRIDGE_CONFIG_MSG;
+} __attribute__((packed)) STP_BRIDGE_CONFIG_MSG;
 
 // Must match the version in stp_ipc.h exactly
 typedef struct PORT_ATTR {
     char   intf_name[IFNAMSIZ]; // 16 bytes typically
     int8_t mode;
     uint8_t enabled;
-    // Add padding to align to 4 bytes
-    uint16_t padding;
-} ALIGNED(4) PORT_ATTR;
+} PORT_ATTR;
 
 // Must match the version in stp_ipc.h exactly
 typedef struct STP_VLAN_CONFIG_MSG {
@@ -146,7 +147,7 @@ typedef struct STP_VLAN_CONFIG_MSG {
     int       priority;
     int       count;
     PORT_ATTR port_list[0];
-} ALIGNED(4) STP_VLAN_CONFIG_MSG;
+} __attribute__((packed))  STP_VLAN_CONFIG_MSG;
 
 typedef struct STP_VLAN_PORT_CONFIG_MSG {
     uint8_t opcode;  // enable/disable
@@ -155,19 +156,19 @@ typedef struct STP_VLAN_PORT_CONFIG_MSG {
     int     inst_id;
     int     path_cost;
     int     priority;
-} ALIGNED(4) STP_VLAN_PORT_CONFIG_MSG;
+} __attribute__((packed))  STP_VLAN_PORT_CONFIG_MSG;
 
 typedef struct VLAN_ATTR {
+    int8_t mode;
+    uint8_t padding[3];  // Explicit padding for alignment
     int   inst_id;
     int   vlan_id;
-    int8_t mode;
-    // Add padding to align to 4 bytes
-    uint8_t padding[3];
-} ALIGNED(4) VLAN_ATTR;
+} VLAN_ATTR;
 
 typedef struct VLAN_LIST{
     uint16_t    vlan_id;
 }VLAN_LIST;
+
 
 typedef struct STP_PORT_CONFIG_MSG {
     uint8_t     opcode;             // enable/disable
@@ -188,16 +189,15 @@ typedef struct STP_PORT_CONFIG_MSG {
 
 typedef struct STP_VLAN_MEM_CONFIG_MSG {
     uint8_t opcode;   // enable/disable
+    uint8_t enabled;
+    int8_t  mode;
+    uint8_t padding;  // Explicit padding for alignment
     int     vlan_id;
     int     inst_id;
     char    intf_name[IFNAMSIZ];
-    uint8_t enabled;
-    int8_t  mode;
-    // Add 1 byte padding
-    uint8_t padding;
     int     path_cost;
     int     priority;
-} ALIGNED(4) STP_VLAN_MEM_CONFIG_MSG;
+} STP_VLAN_MEM_CONFIG_MSG;
 
 typedef struct STP_MST_GLOBAL_CONFIG_MSG {
     uint8_t     opcode; // enable/disable
@@ -215,7 +215,7 @@ typedef struct STP_MST_INST_CONFIG_MSG {
     int             priority;   // Bridge priority
     uint16_t        vlan_count; // Number of VLANs in this instance
     VLAN_LIST       vlan_list[0]; // Flexible array for VLAN IDs
-}__attribute__((packed)) STP_MST_INST_CONFIG_MSG;
+}__attribute__((packed)) MST_INST_CONFIG_MSG;
 
 typedef struct STP_MST_INST_PORT_CONFIG_MSG {
     uint8_t     opcode;         // enable/disable
@@ -224,6 +224,19 @@ typedef struct STP_MST_INST_PORT_CONFIG_MSG {
     int         path_cost;      // Path cost
     int         priority;       // Port priority
 } __attribute__((packed)) STP_MST_INST_PORT_CONFIG_MSG;
+
+typedef struct PORT_LIST {
+    char        intf_name[IFNAMSIZ];
+    int8_t      tagging_mode;
+} PORT_LIST;
+
+typedef struct STP_MST_VLAN_PORT_MAP {
+    uint16_t    vlan_id;
+    uint16_t    port_count;
+    int8_t      stp_mode;
+    uint8_t     add;    
+    PORT_LIST   port_list[0];
+} STP_MST_VLAN_PORT_MAP;
 
 namespace swss {
 
@@ -235,7 +248,7 @@ public:
 
     using Orch::doTask;
     void ipcInitStpd();
-    int  sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data);
+    int  sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data, L2_PROTO_MODE protocol);
     MacAddress macAddress;
     bool isPortInitDone(DBConnector *app_db);
     uint16_t getStpMaxInstances(void);    
