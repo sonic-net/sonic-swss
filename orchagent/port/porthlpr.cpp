@@ -40,6 +40,12 @@ static const std::unordered_map<std::string, bool> portModeMap =
     { PORT_MODE_OFF, false }
 };
 
+static const std::unordered_map<std::string, bool> duplexModeMap =
+{
+    { PORT_DUPLEX_FULL, true  },
+    { PORT_DUPLEX_HALF, false }
+};
+
 static const std::unordered_map<std::string, bool> portStatusMap =
 {
     { PORT_STATUS_UP,   true  },
@@ -249,6 +255,11 @@ std::string PortHelper::getLearnModeStr(const PortConfig &port) const
 std::string PortHelper::getLinkTrainingStr(const PortConfig &port) const
 {
     return this->getFieldValueStr(port, PORT_LINK_TRAINING);
+}
+
+std::string PortHelper::getDuplexStr(const PortConfig &port) const
+{
+    return this->getFieldValueStr(port, PORT_DUPLEX);
 }
 
 std::string PortHelper::getAdminStatusStr(const PortConfig &port) const
@@ -700,6 +711,29 @@ bool PortHelper::parsePortLinkTraining(PortConfig &port, const std::string &fiel
     return true;
 }
 
+bool PortHelper::parsePortDuplex(PortConfig &port, const std::string &field, const std::string &value) const
+{
+    SWSS_LOG_ENTER();
+
+    if (value.empty())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): empty value is prohibited", field.c_str());
+        return false;
+    }
+
+    const auto &cit = duplexModeMap.find(value);
+    if (cit == duplexModeMap.cend())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): invalid value(%s)", field.c_str(), value.c_str());
+        return false;
+    }
+
+    port.duplex.value = cit->second;
+    port.duplex.is_set = true;
+
+    return true;
+}
+
 template<typename T>
 bool PortHelper::parsePortSerdes(T &serdes, const std::string &field, const std::string &value) const
 {
@@ -1071,6 +1105,13 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         else if (field == PORT_LINK_TRAINING)
         {
             if (!this->parsePortLinkTraining(port, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_DUPLEX)
+        {
+            if (!this->parsePortDuplex(port, field, value))
             {
                 return false;
             }
