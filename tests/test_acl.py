@@ -779,6 +779,80 @@ class TestAcl:
         else:
             assert not match_in_ports
 
+    def test_AclRuleArbitraryIpv4Mask(self, dvs_acl, l3_acl_table):
+        """Verify SRC_IP/DST_IP with a separate *_MASK field creates an ACL rule
+        with a non-contiguous IPv4 mask that cannot be expressed as a CIDR prefix.
+        """
+        # SRC_IP + SRC_IP_MASK — non-contiguous mask (cannot be expressed as /prefix)
+        config_qualifiers = {"SRC_IP": "192.168.1.1", "SRC_IP_MASK": "255.0.255.0"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP": dvs_acl.get_simple_qualifier_comparator("192.168.1.1&mask:255.0.255.0")
+        }
+        dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, "Active")
+        dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+
+        # DST_IP + DST_IP_MASK — non-contiguous mask
+        config_qualifiers = {"DST_IP": "10.1.0.1", "DST_IP_MASK": "255.0.255.0"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_DST_IP": dvs_acl.get_simple_qualifier_comparator("10.1.0.1&mask:255.0.255.0")
+        }
+        dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, "Active")
+        dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+
+        # CIDR notation still works (backward compatibility)
+        config_qualifiers = {"SRC_IP": "192.168.0.0/16"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP": dvs_acl.get_simple_qualifier_comparator("192.168.0.0&mask:255.255.0.0")
+        }
+        dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, "Active")
+        dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+
+    def test_V6AclRuleArbitraryIpv6Mask(self, dvs_acl, l3v6_acl_table):
+        """Verify SRC_IPV6/DST_IPV6 with a separate *_MASK field creates an ACL rule
+        with a non-contiguous IPv6 mask that cannot be expressed as a CIDR prefix.
+        """
+        # SRC_IPV6 + SRC_IPV6_MASK — non-contiguous mask (cannot be expressed as /prefix)
+        config_qualifiers = {"SRC_IPV6": "2001:db8::1", "SRC_IPV6_MASK": "ffff::ffff"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6": dvs_acl.get_simple_qualifier_comparator("2001:db8::1&mask:ffff::ffff")
+        }
+        dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, "Active")
+        dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+
+        # DST_IPV6 + DST_IPV6_MASK — non-contiguous mask
+        config_qualifiers = {"DST_IPV6": "fe80::1", "DST_IPV6_MASK": "ffff::ffff"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6": dvs_acl.get_simple_qualifier_comparator("fe80::1&mask:ffff::ffff")
+        }
+        dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, "Active")
+        dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+
+        # CIDR notation still works (backward compatibility)
+        config_qualifiers = {"SRC_IPV6": "2777::0/64"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6": dvs_acl.get_simple_qualifier_comparator("2777::&mask:ffff:ffff:ffff:ffff::")
+        }
+        dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, "Active")
+        dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+
     def test_AclTableMandatoryRangeFields(self, dvs, l3_acl_table):
         """
         The test case is to verify range qualifier is not applied for egress ACL

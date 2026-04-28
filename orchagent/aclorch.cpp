@@ -525,6 +525,32 @@ static map<AclObjectStatus, string> aclObjectStatusLookup =
     {AclObjectStatus::PENDING_REMOVAL, "Pending removal"}
 };
 
+static bool parseIpv4Subnet(const string& value, sai_acl_field_data_t& matchData)
+{
+    IpPrefix ip(value);
+    if (!ip.isV4())
+    {
+        SWSS_LOG_ERROR("IP type is not v4 type");
+        return false;
+    }
+    matchData.data.ip4 = ip.getIp().getV4Addr();
+    matchData.mask.ip4 = ip.getMask().getV4Addr();
+    return true;
+}
+
+static bool parseIpv6Subnet(const string& value, sai_acl_field_data_t& matchData)
+{
+    IpPrefix ip(value);
+    if (ip.isV4())
+    {
+        SWSS_LOG_ERROR("IP type is not v6 type");
+        return false;
+    }
+    memcpy(matchData.data.ip6, ip.getIp().getV6Addr(), 16);
+    memcpy(matchData.mask.ip6, ip.getMask().getV6Addr(), 16);
+    return true;
+}
+
 static sai_acl_table_attr_t AclEntryFieldToAclTableField(sai_acl_entry_attr_t attr)
 {
     if (!IS_ATTR_ID_IN_RANGE(attr, ACL_ENTRY, FIELD))
@@ -1112,14 +1138,10 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
         {
             if (attr_value.find('/') != string::npos)
             {
-                IpPrefix ip(attr_value);
-                if (!ip.isV4())
+                if (!parseIpv4Subnet(attr_value, matchData))
                 {
-                    SWSS_LOG_ERROR("IP type is not v4 type");
                     return false;
                 }
-                matchData.data.ip4 = ip.getIp().getV4Addr();
-                matchData.mask.ip4 = ip.getMask().getV4Addr();
             }
             else
             {
@@ -1135,14 +1157,10 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
         {
             if (attr_value.find('/') != string::npos)
             {
-                IpPrefix ip(attr_value);
-                if (ip.isV4())
+                if (!parseIpv6Subnet(attr_value, matchData))
                 {
-                    SWSS_LOG_ERROR("IP type is not v6 type");
                     return false;
                 }
-                memcpy(matchData.data.ip6, ip.getIp().getV6Addr(), 16);
-                memcpy(matchData.mask.ip6, ip.getMask().getV6Addr(), 16);
             }
             else
             {

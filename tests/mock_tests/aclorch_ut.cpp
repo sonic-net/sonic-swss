@@ -2412,18 +2412,18 @@ namespace aclorch_test
             ASSERT_EQ(acl_table.rules.find(acl_rule_id), acl_table.rules.end());
         };
 
-        // SRC_IP plain address + SRC_IP_MASK
-        addRule({ { MATCH_SRC_IP, "192.168.1.1" }, { MATCH_SRC_IP_MASK, "255.255.255.0" } });
+        // SRC_IP plain address + SRC_IP_MASK — non-contiguous mask (cannot be /prefix)
+        addRule({ { MATCH_SRC_IP, "192.168.1.1" }, { MATCH_SRC_IP_MASK, "255.0.255.0" } });
         ASSERT_NE(acl_table.rules.find(acl_rule_id), acl_table.rules.end());
         ASSERT_EQ(getAclRuleSaiAttribute(*acl_table.rules.at(acl_rule_id), SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP),
-                  "192.168.1.1&mask:255.255.255.0");
+                  "192.168.1.1&mask:255.0.255.0");
         delRule();
 
-        // DST_IP plain address + DST_IP_MASK
-        addRule({ { MATCH_DST_IP, "10.0.0.1" }, { MATCH_DST_IP_MASK, "255.0.0.0" } });
+        // DST_IP plain address + DST_IP_MASK — non-contiguous mask
+        addRule({ { MATCH_DST_IP, "10.1.0.1" }, { MATCH_DST_IP_MASK, "255.0.255.0" } });
         ASSERT_NE(acl_table.rules.find(acl_rule_id), acl_table.rules.end());
         ASSERT_EQ(getAclRuleSaiAttribute(*acl_table.rules.at(acl_rule_id), SAI_ACL_ENTRY_ATTR_FIELD_DST_IP),
-                  "10.0.0.1&mask:255.0.0.0");
+                  "10.1.0.1&mask:255.0.255.0");
         delRule();
 
         // Backward compat: CIDR notation still works
@@ -2481,18 +2481,18 @@ namespace aclorch_test
             ASSERT_EQ(acl_table.rules.find(acl_rule_id), acl_table.rules.end());
         };
 
-        // SRC_IPV6 plain address + SRC_IPV6_MASK
-        addRule({ { MATCH_SRC_IPV6, "2001:db8::1" }, { MATCH_SRC_IPV6_MASK, "ffff:ffff::" } });
+        // SRC_IPV6 plain address + SRC_IPV6_MASK — non-contiguous mask (cannot be /prefix)
+        addRule({ { MATCH_SRC_IPV6, "2001:db8::1" }, { MATCH_SRC_IPV6_MASK, "ffff::ffff" } });
         ASSERT_NE(acl_table.rules.find(acl_rule_id), acl_table.rules.end());
         ASSERT_EQ(getAclRuleSaiAttribute(*acl_table.rules.at(acl_rule_id), SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6),
-                  "2001:db8::1&mask:ffff:ffff::");
+                  "2001:db8::1&mask:ffff::ffff");
         delRule();
 
-        // DST_IPV6 plain address + DST_IPV6_MASK
-        addRule({ { MATCH_DST_IPV6, "fe80::1" }, { MATCH_DST_IPV6_MASK, "ffff::" } });
+        // DST_IPV6 plain address + DST_IPV6_MASK — non-contiguous mask
+        addRule({ { MATCH_DST_IPV6, "fe80::1" }, { MATCH_DST_IPV6_MASK, "ffff::ffff" } });
         ASSERT_NE(acl_table.rules.find(acl_rule_id), acl_table.rules.end());
         ASSERT_EQ(getAclRuleSaiAttribute(*acl_table.rules.at(acl_rule_id), SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6),
-                  "fe80::1&mask:ffff::");
+                  "fe80::1&mask:ffff::ffff");
         delRule();
 
         // Backward compat: CIDR notation still works
