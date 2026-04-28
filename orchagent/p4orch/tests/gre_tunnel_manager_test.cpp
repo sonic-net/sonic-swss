@@ -205,6 +205,8 @@ class GreTunnelManagerTest : public ::testing::Test
         mock_sai_tunnel = &mock_sai_tunnel_;
         sai_tunnel_api->create_tunnel = mock_create_tunnel;
         sai_tunnel_api->remove_tunnel = mock_remove_tunnel;
+        sai_tunnel_api->create_tunnels = mock_create_tunnels;
+        sai_tunnel_api->remove_tunnels = mock_remove_tunnels;
         // Set up mock stuff for SAI router interface API structure.
         mock_sai_router_intf = &mock_sai_router_intf_;
         sai_router_intfs_api->create_router_interface = mock_create_router_interface;

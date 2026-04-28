@@ -1020,6 +1020,12 @@ void HFTelProfile::updateTemplates(sai_object_id_t tam_tel_type_obj)
     auto status = sai_tam_api->get_tam_tel_type_attribute(tam_tel_type_obj, 1, &attr);
     if (status == SAI_STATUS_BUFFER_OVERFLOW)
     {
+        if (attr.value.u8list.count == 0)
+        {
+            buffer.clear();
+            m_sai_tam_tel_type_templates[object_type] = move(buffer);
+            return;
+        }
         buffer.resize(attr.value.u8list.count);
         attr.value.u8list.list = buffer.data();
         status = sai_tam_api->get_tam_tel_type_attribute(tam_tel_type_obj, 1, &attr);
