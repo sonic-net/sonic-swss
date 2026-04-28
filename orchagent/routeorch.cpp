@@ -901,7 +901,7 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                         * way is to create loopback interface and then create
                         * route pointing to it, so that we can traps packets to
                         * CPU */
-                        if (alias == "eth0" || alias == "docker0" ||
+                        if (alias == "eth0" || alias == "docker0" || alias == "usb0" ||
                             alias == "lo" || !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX))
                         {
                             excp_intfs_flag = true;
