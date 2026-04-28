@@ -3687,30 +3687,6 @@ task_process_status PortsOrch::setPortLinkTraining(const Port &port, bool state)
     return task_success;
 }
 
-task_process_status PortsOrch::setPortDuplex(Port &port, bool full_duplex)
-{
-    SWSS_LOG_ENTER();
-
-    if (port.m_type != Port::PHY)
-    {
-        return task_failed;
-    }
-
-    sai_attribute_t attr;
-    attr.id = SAI_PORT_ATTR_FULL_DUPLEX_MODE;
-    attr.value.booldata = full_duplex;
-
-    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to set duplex %u to port %s", attr.value.booldata, port.m_alias.c_str());
-        return handleSaiSetStatus(SAI_API_PORT, status);
-    }
-
-    SWSS_LOG_INFO("Set duplex %u to port %s", attr.value.booldata, port.m_alias.c_str());
-
-    return task_success;
-}
 
 ReturnCode PortsOrch::setPortLinkEventDampingAlgorithm(Port &port,
                                                        sai_redis_link_event_damping_algorithm_t &link_event_damping_algorithm)
@@ -4709,41 +4685,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         SWSS_LOG_NOTICE(
                             "Set port %s autoneg to %s",
                             p.m_alias.c_str(), m_portHlpr.getAutonegStr(pCfg).c_str()
-                        );
-                    }
-                }
-
-                if (pCfg.duplex.is_set)
-                {
-                    if (!p.m_duplex_cfg || ((p.m_duplex != pCfg.duplex.value) && (p.m_type == Port::PHY)))
-                    {
-                        auto status = setPortDuplex(p, pCfg.duplex.value);
-                        if (status != task_success)
-                        {
-                            SWSS_LOG_ERROR(
-                                "Failed to set port %s duplex from %d to %d",
-                                p.m_alias.c_str(), p.m_duplex, pCfg.duplex.value
-                            );
-                            if (status == task_need_retry)
-                            {
-                                it++;
-                            }
-                            else
-                            {
-                                it = taskMap.erase(it);
-                            }
-                            continue;
-                        }
-
-                        const auto duplexStr = m_portHlpr.getDuplexStr(pCfg);
-                        p.m_duplex = pCfg.duplex.value;
-                        p.m_duplex_cfg = true;
-                        m_portList[p.m_alias] = p;
-                        m_portStateTable.hset(p.m_alias, "duplex", duplexStr);
-
-                        SWSS_LOG_NOTICE(
-                            "Set port %s duplex to %s",
-                            p.m_alias.c_str(), duplexStr.c_str()
                         );
                     }
                 }

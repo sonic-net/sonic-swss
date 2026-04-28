@@ -516,8 +516,6 @@ private:
     task_process_status setPortInterfaceType(Port &port, sai_port_interface_type_t interface_type);
     task_process_status setPortAdvInterfaceTypes(Port &port, std::set<sai_port_interface_type_t> &interface_types);
     task_process_status setPortLinkTraining(const Port& port, bool state);
-    task_process_status setPortDuplex(Port &port, bool full_duplex);
-
     ReturnCode setPortLinkEventDampingAlgorithm(Port &port,
                                                 sai_redis_link_event_damping_algorithm_t &link_event_damping_algorithm);
     ReturnCode setPortLinkEventDampingAiedConfig(Port &port,

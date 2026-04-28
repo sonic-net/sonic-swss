@@ -240,25 +240,6 @@ pub enum SaiPortStat {
     DroppedTrimPackets = 202,
     TxTrimPackets = 203,
 
-    // Per-lane FEC corrected bits
-    IfInFecCorrectedBitsLane0 = 204,
-    IfInFecCorrectedBitsLane1 = 205,
-    IfInFecCorrectedBitsLane2 = 206,
-    IfInFecCorrectedBitsLane3 = 207,
-    IfInFecCorrectedBitsLane4 = 208,
-    IfInFecCorrectedBitsLane5 = 209,
-    IfInFecCorrectedBitsLane6 = 210,
-    IfInFecCorrectedBitsLane7 = 211,
-
-    // Per-lane FEC symbol errors
-    IfInFecSymbolErrorsLane0 = 212,
-    IfInFecSymbolErrorsLane1 = 213,
-    IfInFecSymbolErrorsLane2 = 214,
-    IfInFecSymbolErrorsLane3 = 215,
-    IfInFecSymbolErrorsLane4 = 216,
-    IfInFecSymbolErrorsLane5 = 217,
-    IfInFecSymbolErrorsLane6 = 218,
-    IfInFecSymbolErrorsLane7 = 219,
 
     // Drop reason ranges (0x00001000 base)
     InConfiguredDropReasons0DroppedPkts = 0x00001000,
@@ -302,6 +283,26 @@ pub enum SaiPortStat {
 
     // Port stat range end
     End = 0x00002010,
+
+    // Per-lane FEC corrected bits (NVIDIA custom range: SAI_PORT_STAT_CUSTOM_RANGE_BASE + 4..11)
+    IfInFecCorrectedBitsLane0 = 0x10000004,
+    IfInFecCorrectedBitsLane1 = 0x10000005,
+    IfInFecCorrectedBitsLane2 = 0x10000006,
+    IfInFecCorrectedBitsLane3 = 0x10000007,
+    IfInFecCorrectedBitsLane4 = 0x10000008,
+    IfInFecCorrectedBitsLane5 = 0x10000009,
+    IfInFecCorrectedBitsLane6 = 0x1000000a,
+    IfInFecCorrectedBitsLane7 = 0x1000000b,
+
+    // Per-lane FEC symbol errors (NVIDIA custom range: SAI_PORT_STAT_CUSTOM_RANGE_BASE + 12..19)
+    IfInFecSymbolErrorsLane0 = 0x1000000c,
+    IfInFecSymbolErrorsLane1 = 0x1000000d,
+    IfInFecSymbolErrorsLane2 = 0x1000000e,
+    IfInFecSymbolErrorsLane3 = 0x1000000f,
+    IfInFecSymbolErrorsLane4 = 0x10000010,
+    IfInFecSymbolErrorsLane5 = 0x10000011,
+    IfInFecSymbolErrorsLane6 = 0x10000012,
+    IfInFecSymbolErrorsLane7 = 0x10000013,
 }
 
 impl SaiPortStat {
@@ -509,22 +510,6 @@ impl SaiPortStat {
             198 => Some(Self::IfInFecCodewordErrorsS15),
             199 => Some(Self::IfInFecCodewordErrorsS16),
             200 => Some(Self::IfInFecCorrectedBits),
-            204 => Some(Self::IfInFecCorrectedBitsLane0),
-            205 => Some(Self::IfInFecCorrectedBitsLane1),
-            206 => Some(Self::IfInFecCorrectedBitsLane2),
-            207 => Some(Self::IfInFecCorrectedBitsLane3),
-            208 => Some(Self::IfInFecCorrectedBitsLane4),
-            209 => Some(Self::IfInFecCorrectedBitsLane5),
-            210 => Some(Self::IfInFecCorrectedBitsLane6),
-            211 => Some(Self::IfInFecCorrectedBitsLane7),
-            212 => Some(Self::IfInFecSymbolErrorsLane0),
-            213 => Some(Self::IfInFecSymbolErrorsLane1),
-            214 => Some(Self::IfInFecSymbolErrorsLane2),
-            215 => Some(Self::IfInFecSymbolErrorsLane3),
-            216 => Some(Self::IfInFecSymbolErrorsLane4),
-            217 => Some(Self::IfInFecSymbolErrorsLane5),
-            218 => Some(Self::IfInFecSymbolErrorsLane6),
-            219 => Some(Self::IfInFecSymbolErrorsLane7),
             201 => Some(Self::TrimPackets),
             202 => Some(Self::DroppedTrimPackets),
             203 => Some(Self::TxTrimPackets),
@@ -565,6 +550,23 @@ impl SaiPortStat {
             0x0000200e => Some(Self::EtherOutPkts2501To9000Octets),
             0x0000200f => Some(Self::EtherOutPkts9001To16383Octets),
             0x00002010 => Some(Self::End),
+
+            0x10000004 => Some(Self::IfInFecCorrectedBitsLane0),
+            0x10000005 => Some(Self::IfInFecCorrectedBitsLane1),
+            0x10000006 => Some(Self::IfInFecCorrectedBitsLane2),
+            0x10000007 => Some(Self::IfInFecCorrectedBitsLane3),
+            0x10000008 => Some(Self::IfInFecCorrectedBitsLane4),
+            0x10000009 => Some(Self::IfInFecCorrectedBitsLane5),
+            0x1000000a => Some(Self::IfInFecCorrectedBitsLane6),
+            0x1000000b => Some(Self::IfInFecCorrectedBitsLane7),
+            0x1000000c => Some(Self::IfInFecSymbolErrorsLane0),
+            0x1000000d => Some(Self::IfInFecSymbolErrorsLane1),
+            0x1000000e => Some(Self::IfInFecSymbolErrorsLane2),
+            0x1000000f => Some(Self::IfInFecSymbolErrorsLane3),
+            0x10000010 => Some(Self::IfInFecSymbolErrorsLane4),
+            0x10000011 => Some(Self::IfInFecSymbolErrorsLane5),
+            0x10000012 => Some(Self::IfInFecSymbolErrorsLane6),
+            0x10000013 => Some(Self::IfInFecSymbolErrorsLane7),
             _ => None,
         }
     }
