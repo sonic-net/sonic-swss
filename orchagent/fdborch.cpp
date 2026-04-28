@@ -10,6 +10,7 @@
 #include "fdborch.h"
 #include "crmorch.h"
 #include "notifier.h"
+#include "consumerstatetable.h"
 #include "sai_serialize.h"
 #include "mlagorch.h"
 #include "vxlanorch.h"
@@ -46,6 +47,11 @@ FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> app
     m_fdbNotificationConsumer = new swss::NotificationConsumer(m_notificationsDb.get(), "NOTIFICATIONS");
     auto fdbNotifier = new Notifier(m_fdbNotificationConsumer, this, "FDB_NOTIFICATIONS");
     Orch::addExecutor(fdbNotifier);
+
+    /* Add ConsumerStateTable for FDB LEARN/AGED/MOVE events (key-based dedup) */
+    auto fdbEventConsumer = new ConsumerStateTable(m_notificationsDb.get(), ASIC_FDB_EVENT_STATE_TABLE);
+    auto fdbEventExecutor = new Consumer(fdbEventConsumer, this, ASIC_FDB_EVENT_STATE_TABLE);
+    Orch::addExecutor(fdbEventExecutor);
 }
 
 bool FdbOrch::bake()
@@ -716,6 +722,67 @@ void FdbOrch::doTask(Consumer& consumer)
     FdbOrigin origin = FDB_ORIGIN_PROVISIONED;
 
     string table_name = consumer.getTableName();
+
+    /*
+     * Handle FDB events from ASIC via ProducerStateTable (LEARN/AGED/MOVE).
+     * These arrive with key-based dedup — multiple events for same MAC+BVID
+     * are merged by ConsumerStateTable, solving the MAC flap memory storm.
+     */
+    if (table_name == ASIC_FDB_EVENT_STATE_TABLE)
+    {
+        auto it = consumer.m_toSync.begin();
+        while (it != consumer.m_toSync.end())
+        {
+            KeyOpFieldsValuesTuple t = it->second;
+            string key = kfvKey(t);
+            string op = kfvOp(t);
+
+            /* Deserialize the FDB entry from the key */
+            sai_fdb_entry_t fdb_entry;
+            sai_deserialize_fdb_entry(key, fdb_entry);
+
+            if (op == DEL_COMMAND)
+            {
+                /* AGED event: DEL means the MAC was aged out */
+                sai_object_id_t bridge_port_id = SAI_NULL_OBJECT_ID;
+                sai_fdb_entry_type_t sai_fdb_type = SAI_FDB_ENTRY_TYPE_DYNAMIC;
+
+                this->update(SAI_FDB_EVENT_AGED, &fdb_entry, bridge_port_id, sai_fdb_type);
+                it = consumer.m_toSync.erase(it);
+            }
+            else
+            {
+                /* LEARN or MOVE event */
+                sai_fdb_event_t event_type = SAI_FDB_EVENT_LEARNED;
+                sai_object_id_t bridge_port_id = SAI_NULL_OBJECT_ID;
+                sai_fdb_entry_type_t sai_fdb_type = SAI_FDB_ENTRY_TYPE_DYNAMIC;
+
+                for (auto &fv : kfvFieldsValues(t))
+                {
+                    if (fvField(fv) == "event_type")
+                    {
+                        sai_deserialize_fdb_event(fvValue(fv), event_type);
+                    }
+                    else if (fvField(fv) == "bridge_port_id")
+                    {
+                        sai_deserialize_object_id(fvValue(fv), bridge_port_id);
+                    }
+                    else if (fvField(fv) == "sai_fdb_type")
+                    {
+                        int32_t val;
+                        sai_deserialize_enum(fvValue(fv),
+                                &sai_metadata_enum_sai_fdb_entry_type_t, val);
+                        sai_fdb_type = (sai_fdb_entry_type_t)val;
+                    }
+                }
+
+                this->update(event_type, &fdb_entry, bridge_port_id, sai_fdb_type);
+                it = consumer.m_toSync.erase(it);
+            }
+        }
+        return;
+    }
+
     if(table_name == APP_VXLAN_FDB_TABLE_NAME)
     {
         origin = FDB_ORIGIN_VXLAN_ADVERTIZED;
@@ -1047,6 +1114,15 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
     }
     else if (&consumer == m_fdbNotificationConsumer && op == "fdb_event")
     {
+        /*
+         * After the ProducerStateTable migration, only FLUSH events arrive
+         * here via PUBLISH/SUBSCRIBE. LEARN/AGED/MOVE events are now handled
+         * by doTask(Consumer&) via ConsumerStateTable with key-based dedup.
+         *
+         * As a safety net, any non-FLUSH events that still arrive on this
+         * path (e.g., during transition or from ZeroMQ mode) are also
+         * processed.
+         */
         uint32_t count;
         sai_fdb_event_notification_data_t *fdbevent = nullptr;
         sai_deserialize_fdb_event_ntf(data, count, &fdbevent);
@@ -1054,7 +1130,7 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
         for (uint32_t i = 0; i < count; ++i)
         {
             sai_object_id_t oid = SAI_NULL_OBJECT_ID;
-            sai_fdb_entry_type_t sai_fdb_type = SAI_FDB_ENTRY_TYPE_DYNAMIC;
+            sai_fdb_entry_type_t fdb_type = SAI_FDB_ENTRY_TYPE_DYNAMIC;
 
             for (uint32_t j = 0; j < fdbevent[i].attr_count; ++j)
             {
@@ -1064,11 +1140,11 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
                 }
                 else if (fdbevent[i].attr[j].id == SAI_FDB_ENTRY_ATTR_TYPE)
                 {
-                    sai_fdb_type = (sai_fdb_entry_type_t)fdbevent[i].attr[j].value.s32;
+                    fdb_type = (sai_fdb_entry_type_t)fdbevent[i].attr[j].value.s32;
                 }
             }
 
-            this->update(fdbevent[i].event_type, &fdbevent[i].fdb_entry, oid, sai_fdb_type);
+            this->update(fdbevent[i].event_type, &fdbevent[i].fdb_entry, oid, fdb_type);
         }
 
         sai_deserialize_free_fdb_event_ntf(count, fdbevent);
