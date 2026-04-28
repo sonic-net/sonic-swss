@@ -4816,44 +4816,52 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         }
                         if (p.m_cap_an < 1)
                         {
-                            SWSS_LOG_ERROR("%s: autoneg is not supported (cap=%d)", p.m_alias.c_str(), p.m_cap_an);
-                            // autoneg is not supported, don't retry
-                            it = taskMap.erase(it);
-                            continue;
-                        }
-                        if (p.m_admin_state_up)
-                        {
-                            /* Bring port down before applying speed */
-                            if (!setPortAdminStatus(p, false))
+                            if (pCfg.autoneg.value)
                             {
-                                SWSS_LOG_ERROR(
-                                    "Failed to set port %s admin status DOWN to set port autoneg mode",
-                                    p.m_alias.c_str()
-                                );
-                                it++;
+                                SWSS_LOG_ERROR("%s: autoneg is not supported (cap=%d)", p.m_alias.c_str(), p.m_cap_an);
+                                // autoneg is not supported, don't retry
+                                it = taskMap.erase(it);
                                 continue;
                             }
-
-                            p.m_admin_state_up = false;
-                            m_portList[p.m_alias] = p;
+                            /* autoneg as off is a no op when autoneg is not supported. Do not error out and delete remaining config */
+                            SWSS_LOG_INFO("%s: autoneg not supported; disable is no-op", p.m_alias.c_str());
                         }
-
-                        auto status = setPortAutoNeg(p, pCfg.autoneg.value);
-                        if (status != task_success)
+                        else
                         {
-                            SWSS_LOG_ERROR(
-                                "Failed to set port %s AN from %d to %d",
-                                p.m_alias.c_str(), p.m_autoneg, pCfg.autoneg.value
-                            );
-                            if (status == task_need_retry)
+                            if (p.m_admin_state_up)
                             {
-                                it++;
+                                /* Bring port down before applying speed */
+                                if (!setPortAdminStatus(p, false))
+                                {
+                                    SWSS_LOG_ERROR(
+                                        "Failed to set port %s admin status DOWN to set port autoneg mode",
+                                        p.m_alias.c_str()
+                                    );
+                                    it++;
+                                    continue;
+                                }
+
+                                p.m_admin_state_up = false;
+                                m_portList[p.m_alias] = p;
                             }
-                            else
+
+                            auto status = setPortAutoNeg(p, pCfg.autoneg.value);
+                            if (status != task_success)
                             {
-                                it = taskMap.erase(it);
+                                SWSS_LOG_ERROR(
+                                    "Failed to set port %s AN from %d to %d",
+                                    p.m_alias.c_str(), p.m_autoneg, pCfg.autoneg.value
+                                );
+                                if (status == task_need_retry)
+                                {
+                                    it++;
+                                }
+                                else
+                                {
+                                    it = taskMap.erase(it);
+                                }
+                                continue;
                             }
-                            continue;
                         }
 
                         p.m_autoneg = pCfg.autoneg.value;
