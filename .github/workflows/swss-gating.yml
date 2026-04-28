@@ -1,0 +1,26 @@
+# Gating: runs on PRs targeting upscaleai-202511. Optional manual dispatch.
+name: swss-gating
+on:
+  pull_request:
+    branches: [upscaleai-202511]
+  workflow_dispatch:
+    inputs:
+      skip_dpkg:
+        description: 'Skip dpkg-buildpackage step (faster iteration)'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: swss-gating-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  call-swss-tests:
+    uses: ./.github/workflows/swss-tests-common.yml
+    with:
+      skip_dpkg: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.skip_dpkg == 'true' || false }}
+    secrets: inherit

@@ -1,0 +1,269 @@
+# Reusable workflow: build SWSS inside the SONiC slave Docker container,
+# run mock tests, build the Rust countersyncd, and optionally produce .deb packages.
+#
+# The self-hosted runner must have:
+#   1. Docker with a sonic-slave-bookworm* image (built by sonic-buildimage CI)
+#   2. SONiC dependency .deb files from a prior sonic-buildimage run
+#      (located automatically from the buildimage workspace or dpkg cache)
+name: swss-tests-common
+on:
+  workflow_call:
+    inputs:
+      skip_dpkg:
+        description: 'Skip dpkg-buildpackage (faster, still validates compile + mock tests + cargo)'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  build-and-test:
+    runs-on: [self-hosted, linux, sonic-build-202511]
+    timeout-minutes: 60
+    steps:
+      - name: Clean workspace (root-owned artifacts from prior builds)
+        run: |
+          if [ -d "$GITHUB_WORKSPACE" ]; then
+            sudo chown -R "$(whoami):$(id -gn)" "$GITHUB_WORKSPACE" 2>/dev/null || true
+            sudo rm -rf "$GITHUB_WORKSPACE"/fsroot-* "$GITHUB_WORKSPACE"/fsroot.docker.* 2>/dev/null || true
+          fi
+
+      - name: Checkout sonic-swss
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+
+      - name: Resolve Docker image
+        id: docker
+        run: |
+          IMAGE=$(docker image ls \
+                  --filter 'reference=sonic-slave-bookworm*' \
+                  --format '{{.Repository}}:{{.Tag}}' \
+                  | grep -v ':<none>$' \
+                  | head -1)
+          if [ -z "$IMAGE" ]; then
+            echo "::error::No sonic-slave-bookworm Docker image found on this runner"
+            exit 1
+          fi
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "Using Docker image: $IMAGE"
+
+      - name: Locate SONiC dependency debs
+        id: debs
+        run: |
+          # Search strategy:
+          #   1. Explicit cache paths
+          #   2. Buildimage workspace from other runner slots (target/debs/bookworm/)
+          #   3. Dpkg cache tarballs (extract debs from .tgz archives)
+
+          # --- Strategy 1: Direct .deb directories ---
+          for candidate in \
+            "/var/cache/sonic/debs/bookworm" \
+            "/var/cache/sonic/artifacts/mellanox/gating/target/debs/bookworm" \
+            "/var/cache/sonic/artifacts/mellanox/prod/target/debs/bookworm"; do
+            if [ -d "$candidate" ] && ls "$candidate"/libswsscommon-dev_*.deb 1>/dev/null 2>&1; then
+              echo "debs_dir=$candidate" >> "$GITHUB_OUTPUT"
+              echo "Found debs at: $candidate"
+              exit 0
+            fi
+          done
+
+          # --- Strategy 2: Scan buildimage workspaces on this runner ---
+          RUNNER_BASE=$(dirname "$(dirname "$GITHUB_WORKSPACE")")
+          echo "Scanning runner workspace base: $RUNNER_BASE"
+          for ws in "$RUNNER_BASE"/*/caspian-sonic-buildimage/target/debs/bookworm \
+                     /home/*/org-action-runners/actions-runner-*/_work/caspian-sonic-buildimage/caspian-sonic-buildimage/target/debs/bookworm; do
+            if [ -d "$ws" ] && ls "$ws"/libswsscommon-dev_*.deb 1>/dev/null 2>&1; then
+              echo "debs_dir=$ws" >> "$GITHUB_OUTPUT"
+              echo "Found debs at buildimage workspace: $ws"
+              exit 0
+            fi
+          done
+
+          # --- Strategy 3: Extract from dpkg cache tarballs ---
+          CACHE_DIR=""
+          for c in "/var/cache/sonic/artifacts/mellanox/gating" \
+                   "/var/cache/sonic/artifacts/mellanox/prod"; do
+            if [ -d "$c" ] && ls "$c"/libswsscommon-dev_*.tgz 2>/dev/null | head -1 | grep -q .; then
+              CACHE_DIR="$c"
+              break
+            fi
+          done
+
+          if [ -n "$CACHE_DIR" ]; then
+            echo "Extracting debs from dpkg cache at: $CACHE_DIR"
+            EXTRACT_DIR="${RUNNER_TEMP}/sonic-debs-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            rm -rf "$EXTRACT_DIR"
+            mkdir -p "$EXTRACT_DIR"
+
+            for pkg in libyang libyang-cpp libyang-dev \
+                       libnl-3-200 libnl-3-dev libnl-route-3-200 libnl-route-3-dev \
+                       libnl-genl-3-200 libnl-genl-3-dev libnl-nf-3-200 libnl-nf-3-dev \
+                       libnl-cli-3-200 libnl-cli-3-dev \
+                       libswsscommon libswsscommon-dev \
+                       libsairedis libsairedis-dev libsaimetadata libsaimetadata-dev \
+                       libsaivs libsaivs-dev libdashapi \
+                       libteam5 libteamdctl0 libteam-dev libteam-utils stp; do
+              tgz=$(ls "$CACHE_DIR"/${pkg}_*.tgz 2>/dev/null | sort -V | tail -1)
+              if [ -n "$tgz" ]; then
+                tar xzf "$tgz" -C "$EXTRACT_DIR" || echo "::warning::failed to extract $tgz"
+              fi
+            done
+
+            # Move any .deb files found to top level
+            find "$EXTRACT_DIR" -name '*.deb' -exec mv {} "$EXTRACT_DIR/" \; 2>&1 || echo "::warning::some .deb moves failed"
+
+            if ls "$EXTRACT_DIR"/libswsscommon-dev_*.deb 1>/dev/null 2>&1; then
+              echo "debs_dir=$EXTRACT_DIR" >> "$GITHUB_OUTPUT"
+              echo "Extracted debs from cache to: $EXTRACT_DIR"
+              ls "$EXTRACT_DIR"/*.deb | wc -l | xargs -I{} echo "  {} .deb files extracted"
+              exit 0
+            fi
+          fi
+
+          echo "::error::No SONiC dependency debs found on this runner."
+          echo "  Checked: /var/cache/sonic/debs/bookworm, buildimage workspaces, dpkg cache tarballs."
+          echo "  Ensure a sonic-buildimage CI run has completed on this runner."
+          exit 1
+
+      - name: Build SWSS + run mock tests
+        env:
+          DOCKER_IMG: ${{ steps.docker.outputs.image }}
+          DEBS_DIR: ${{ steps.debs.outputs.debs_dir }}
+          SKIP_DPKG: ${{ inputs.skip_dpkg }}
+        run: |
+          docker run --rm --privileged --init \
+            --ulimit nofile=65536:65536 \
+            -v "${{ github.workspace }}:/build/sonic-swss" \
+            -v "${DEBS_DIR}:/debs:ro" \
+            -w "/build/sonic-swss" \
+            -e CARGO_NET_GIT_FETCH_WITH_CLI=true \
+            -e SKIP_DPKG="${SKIP_DPKG}" \
+            "${DOCKER_IMG}" \
+            bash -c '
+          set -ex
+
+          # ── Phase 1: Install SONiC build dependencies ──
+          cd /debs
+
+          dep_warnings=0
+          install_deb() {
+            local pattern="$1"
+            local deb=$(ls ${pattern} 2>/dev/null | sort -V | tail -1)
+            if [ -n "$deb" ]; then
+              echo "  Installing: $deb"
+              if ! sudo dpkg --force-depends --force-overwrite -i "$deb" 2>&1; then
+                echo "::warning::dpkg install returned non-zero for $deb (may be dependency warnings)"
+                dep_warnings=$((dep_warnings + 1))
+              fi
+            else
+              echo "::warning::no .deb match for pattern: $pattern"
+              dep_warnings=$((dep_warnings + 1))
+            fi
+          }
+
+          echo "=== Installing SONiC-patched dependencies ==="
+          for pkg in \
+            "libyang_*.deb" "libyang-cpp_*.deb" "libyang-dev_*.deb" \
+            "libnl-3-200_*.deb" "libnl-3-dev_*.deb" \
+            "libnl-route-3-200_*.deb" "libnl-route-3-dev_*.deb" \
+            "libnl-genl-3-200_*.deb" "libnl-genl-3-dev_*.deb" \
+            "libnl-nf-3-200_*.deb" "libnl-nf-3-dev_*.deb" \
+            "libnl-cli-3-200_*.deb" "libnl-cli-3-dev_*.deb" \
+            "libswsscommon_*.deb" "libswsscommon-dev_*.deb" \
+            "libsairedis_*.deb" "libsairedis-dev_*.deb" \
+            "libsaimetadata_*.deb" "libsaimetadata-dev_*.deb" \
+            "libsaivs_*.deb" "libsaivs-dev_*.deb" \
+            "libdashapi_*.deb" \
+            "libteam5_*.deb" "libteamdctl0_*.deb" "libteam-dev_*.deb" "libteam-utils_*.deb" \
+            "stp_*.deb"; do
+            install_deb "$pkg"
+          done
+          sudo ldconfig
+          if [ "$dep_warnings" -gt 0 ]; then
+            echo "::warning::$dep_warnings package(s) had install issues (see above)"
+          fi
+
+          echo "=== Verify key headers ==="
+          for hdr in /usr/include/swss/logger.h /usr/include/sai/sai.h /usr/include/dash_api/appliance.pb.h; do
+            test -f "$hdr" || { echo "FAIL: missing $hdr"; exit 1; }
+          done
+          echo "OK: all key headers present"
+
+          # ── Phase 2: Configure ──
+          cd /build/sonic-swss
+          ./autogen.sh
+          ./configure
+
+          # ── Phase 3: Build (mock tests compile via noinst_PROGRAMS) ──
+          make -j$(nproc)
+          echo "=== SWSS make all SUCCEEDED ==="
+
+          ls -la orchagent/orchagent fpmsyncd/fpmsyncd neighsyncd/neighsyncd 2>/dev/null || true
+
+          # ── Phase 4: Run mock tests ──
+          echo "=== Running mock tests (make check) ==="
+          make check -j$(nproc) 2>&1 || {
+            echo "=== Mock test failures detected ==="
+            cat tests/mock_tests/test-suite.log 2>/dev/null || true
+            cat tests/mock_tests/tests.log 2>/dev/null || true
+            exit 1
+          }
+          echo "=== Mock tests PASSED ==="
+
+          # ── Phase 5: Rust countersyncd build ──
+          echo "=== Building countersyncd (Rust) ==="
+          cargo --version
+          rustc --version
+          echo "Cargo.lock present: $(test -f Cargo.lock && echo YES || echo NO)"
+          cargo build --release --locked
+          echo "=== Rust build SUCCEEDED ==="
+
+          # ── Phase 6: dpkg-buildpackage (optional) ──
+          # dpkg-buildpackage writes .debs to ../ (parent of source tree).
+          # The container runs as a non-root user (baked into the sonic-slave image),
+          # and fakeroot only fakes ownership -- it cannot grant real write access.
+          # Ensure the parent directory is writable.
+          sudo chmod 1777 ..
+          if [ "${SKIP_DPKG}" = "true" ]; then
+            echo "=== Skipping dpkg-buildpackage (SKIP_DPKG=true) ==="
+          else
+            echo "=== Building .deb packages ==="
+            DEB_BUILD_OPTIONS="nocheck" dpkg-buildpackage -us -uc -b -j$(nproc) -d 2>&1
+            echo "=== DPKG-BUILDPACKAGE SUCCEEDED ==="
+            ls -la ../swss_*.deb ../swss-dbg_*.deb 2>/dev/null || echo "debs produced in parent dir"
+            cp ../swss_*.deb ../swss-dbg_*.deb /build/sonic-swss/ 2>/dev/null || true
+          fi
+
+          echo "=== ALL PHASES COMPLETE ==="
+          '
+
+      - name: Upload .deb artifacts
+        if: inputs.skip_dpkg != true && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: swss-debs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            swss_*.deb
+            swss-dbg_*.deb
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Build summary
+        if: always()
+        env:
+          BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          DOCKER_IMAGE_USED: ${{ steps.docker.outputs.image }}
+          DEBS_SOURCE: ${{ steps.debs.outputs.debs_dir }}
+          SKIP_DPKG_VAL: ${{ inputs.skip_dpkg }}
+        run: |
+          echo "## SWSS Gating Build Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Property | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| --- | --- |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Branch | \`${BRANCH_NAME}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Commit | \`${COMMIT_SHA}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Docker image | \`${DOCKER_IMAGE_USED}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Debs source | \`${DEBS_SOURCE}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Skip dpkg | \`${SKIP_DPKG_VAL}\` |" >> "$GITHUB_STEP_SUMMARY"
