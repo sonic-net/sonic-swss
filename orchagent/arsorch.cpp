@@ -2837,6 +2837,31 @@ void ArsOrch::publishArsCaps()
     }
 
     m_stateArsCapTable.set("switch", caps);
+
+    /* Probe ARS_PROFILE attributes so the ars-classifier-daemon knows
+       whether SAI handles ipv4/ipv6 enable natively or whether the daemon
+       must make direct SDK calls. */
+    static const vector<pair<string, sai_ars_profile_attr_t>> profileAttrProbes = {
+        {"SAI_ARS_PROFILE_ATTR_ENABLE_IPV4", SAI_ARS_PROFILE_ATTR_ENABLE_IPV4},
+        {"SAI_ARS_PROFILE_ATTR_ENABLE_IPV6", SAI_ARS_PROFILE_ATTR_ENABLE_IPV6},
+    };
+    for (const auto &attrPair : profileAttrProbes)
+    {
+        const auto &attrName = attrPair.first;
+        const auto &attrId = attrPair.second;
+        sai_attr_capability_t ac = {};
+        sai_status_t qs = sai_query_attribute_capability(
+            gSwitchId, SAI_OBJECT_TYPE_ARS_PROFILE, attrId, &ac);
+        string capStr = "unknown";
+        if (qs == SAI_STATUS_SUCCESS)
+        {
+            capStr = string("create=") + (ac.create_implemented ? "true" : "false") +
+                     ",set=" + (ac.set_implemented ? "true" : "false") +
+                     ",get=" + (ac.get_implemented ? "true" : "false");
+        }
+        SWSS_LOG_NOTICE("ARS profile capability %s: %s", attrName.c_str(), capStr.c_str());
+        m_stateArsCapTable.set(attrName, {{attrName, capStr}});
+    }
 }
 
 /* ── Publish ARS Profile state to STATE_DB (incl. default_ars_object) ── */
