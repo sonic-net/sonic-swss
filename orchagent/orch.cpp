@@ -1,6 +1,5 @@
-#include <inttypes.h>
 #include <stdexcept>
-#include <sys/time.h>
+#include <thread>
 #include "timestamp.h"
 #include "orch.h"
 
@@ -242,16 +241,27 @@ size_t ConsumerBase::addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValue
 
 void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry, bool onRetry)
 {
+    addToSyncInternal(entry, onRetry, true);
+}
+
+void ConsumerBase::addToSyncInternal(const KeyOpFieldsValuesTuple &entry, bool onRetry, bool recordTask)
+{
     SWSS_LOG_ENTER();
 
     string key = kfvKey(entry);
     string op  = kfvOp(entry);
 
-    if (!onRetry)
-        /* Record incoming tasks */
-        Recorder::Instance().swss.record(dumpTuple(entry));
-    else
-        Recorder::Instance().retry.record(dumpTuple(entry).append(DECACHE));
+    if (recordTask)
+    {
+        if (!onRetry)
+        {
+            recordTuple(entry);
+        }
+        else
+        {
+            Recorder::Instance().retry.record(dumpTuple(entry).append(DECACHE));
+        }
+    }
 
     auto retryCache = getOrch() ? getOrch()->getRetryCache(getName()) : nullptr;
 
@@ -396,9 +406,14 @@ size_t ConsumerBase::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries
 {
     SWSS_LOG_ENTER();
 
+    if (!onRetry)
+    {
+        recordTuples(entries);
+    }
+
     for (auto& entry: entries)
     {
-        addToSync(entry, onRetry);
+        addToSyncInternal(entry, onRetry, onRetry);
     }
 
     return entries.size();
@@ -472,6 +487,39 @@ string ConsumerBase::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
     }
 
     return s;
+}
+
+void ConsumerBase::recordTuple(const KeyOpFieldsValuesTuple &tuple)
+{
+    auto& swssRecorder = Recorder::Instance().swss;
+
+    if (!swssRecorder.isAsyncEnabled())
+    {
+        swssRecorder.record(dumpTuple(tuple));
+        return;
+    }
+
+    swssRecorder.recordTupleAsync(
+        getTableName() + getConsumerTable()->getTableNameSeparator(),
+        tuple);
+}
+
+void ConsumerBase::recordTuples(const std::deque<KeyOpFieldsValuesTuple> &entries)
+{
+    auto& swssRecorder = Recorder::Instance().swss;
+
+    if (!swssRecorder.isAsyncEnabled())
+    {
+        for (const auto& entry : entries)
+        {
+            swssRecorder.record(dumpTuple(entry));
+        }
+        return;
+    }
+
+    swssRecorder.recordTuplesAsync(
+        getTableName() + getConsumerTable()->getTableNameSeparator(),
+        entries);
 }
 
 void ConsumerBase::dumpPendingTasks(vector<string> &ts)

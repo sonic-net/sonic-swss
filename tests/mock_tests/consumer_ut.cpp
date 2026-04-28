@@ -2,7 +2,13 @@
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
 
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
 #include <sstream>
+#include <thread>
+#include <unistd.h>
 
 extern PortsOrch *gPortsOrch;
 
@@ -108,7 +114,7 @@ namespace consumer_test
 
         ThrowType m_throwType;
     };
-    
+
     struct ConsumerTest : public ::testing::Test
     {
         shared_ptr<swss::DBConnector> m_app_db;
@@ -142,10 +148,12 @@ namespace consumer_test
         virtual void SetUp() override
         {
             ::testing_db::reset();
+            Recorder::Instance().swss.setAsync(false);
         }
 
         virtual void TearDown() override
         {
+            Recorder::Instance().swss.setAsync(false);
             ::testing_db::reset();
         }
 
@@ -168,6 +176,33 @@ namespace consumer_test
                 }
             }
             ASSERT_EQ(sync.size(), exp_sz-1);
+        }
+
+        vector<string> waitForRecordedLines(const string& path, const string& marker, size_t expected)
+        {
+            for (size_t retry = 0; retry < 50; ++retry)
+            {
+                ifstream ifs(path);
+                vector<string> matches;
+                string line;
+
+                while (getline(ifs, line))
+                {
+                    if (line.find(marker) != string::npos)
+                    {
+                        matches.push_back(line);
+                    }
+                }
+
+                if (matches.size() >= expected)
+                {
+                    return matches;
+                }
+
+                this_thread::sleep_for(chrono::milliseconds(20));
+            }
+
+            return {};
         }
     };
 
@@ -449,6 +484,49 @@ namespace consumer_test
         ASSERT_EQ(test_orch.m_notification_count, consumer_pops_batch_size*2);
     }
 
+    TEST_F(ConsumerTest, AsyncSwssRecorderWritesBatchRecords)
+    {
+        char dir_template[] = "/tmp/swss-consumer-ut-XXXXXX";
+        auto dir = mkdtemp(dir_template);
+        ASSERT_NE(dir, nullptr);
+
+        const string dirname(dir);
+        const string filename = "swss-recorder-ut.rec";
+        const string fullpath = dirname + "/" + filename;
+        const string key_prefix = "async-swss-recorder-key-";
+
+        Recorder::Instance().swss.setRecord(true);
+        Recorder::Instance().swss.setLocation(dirname);
+        Recorder::Instance().swss.setFileName(filename);
+        Recorder::Instance().swss.setAsync(true);
+        Recorder::Instance().swss.startRec(true);
+
+        deque<KeyOpFieldsValuesTuple> entries;
+        for (int i = 0; i < 3; ++i)
+        {
+            entries.push_back(KeyOpFieldsValuesTuple(
+                { key_prefix + to_string(i),
+                  SET_COMMAND,
+                  { { f1, v1a }, { f2, v2a } } }));
+        }
+
+        consumer->addToSync(entries);
+
+        const auto lines = waitForRecordedLines(fullpath, key_prefix, entries.size());
+        ASSERT_EQ(lines.size(), entries.size());
+
+        for (size_t i = 0; i < lines.size(); ++i)
+        {
+            EXPECT_NE(lines[i].find(consumer->dumpTuple(entries[i])), string::npos);
+            EXPECT_NE(lines[i].find("|field1:value1_a"), string::npos);
+            EXPECT_NE(lines[i].find("|field2:value2_a"), string::npos);
+        }
+
+        Recorder::Instance().swss.setAsync(false);
+        ASSERT_EQ(remove(fullpath.c_str()), 0);
+        ASSERT_EQ(rmdir(dirname.c_str()), 0);
+    }
+
     /*
      * Exception handling tests for Consumer::drain() and Orch::doTask()
      *
@@ -576,7 +654,7 @@ namespace consumer_test
      *
      * Consumer::drain() has its own catch, so exceptions from doTask(Consumer&)
      * never reach Orch::doTask()'s catch. To exercise Orch::doTask()'s catches
-     * directly, we override retryToSync() to throw — it runs before drain()
+     * directly, we override retryToSync() to throw - it runs before drain()
      * in the Orch::doTask() loop.
      */
 
@@ -622,7 +700,7 @@ namespace consumer_test
         m_orch->m_throwType = ThrowType::UnknownException;
         ASSERT_NO_THROW(static_cast<Orch *>(m_orch.get())->doTask());
     }
-    
+
     TEST_F(ExceptionHandlingTest, DrainRecoveryAfterException)
     {
         auto *consumer = dynamic_cast<Consumer *>(m_orch->getExecutor("APP_TEST_TABLE"));
@@ -636,7 +714,7 @@ namespace consumer_test
         ASSERT_EQ(m_orch->m_doTaskCallCount, 1);
         ASSERT_FALSE(consumer->m_toSync.empty());
 
-        // Second call succeeds — orch recovers and processes tasks
+        // Second call succeeds - orch recovers and processes tasks
         m_orch->m_throwType = ThrowType::None;
         ASSERT_NO_THROW(consumer->drain());
         ASSERT_EQ(m_orch->m_doTaskCallCount, 2);
