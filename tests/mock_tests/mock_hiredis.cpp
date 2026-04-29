@@ -16,6 +16,7 @@ int redisGetReply(redisContext *c, void **reply)
     else
     {
         *reply = mockReply;
+        mockReply = nullptr;
     }
     return 0;
 }
