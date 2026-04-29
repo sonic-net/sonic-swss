@@ -112,4 +112,4 @@
 #define PORT_UNRELIABLE_LOS        "unreliable_los"
 #define PORT_MEDIA_TYPE            "media_type"
 #define PORT_FAST_LINKUP           "fast_linkup"
-#define PORT_SI_SYNC_SETTINGS      "si_sync_status"
+#define PORT_SI_SYNC_SETTINGS      "si_settings_notification"

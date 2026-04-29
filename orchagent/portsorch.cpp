@@ -2280,7 +2280,7 @@ void PortsOrch::setPortSiSettingsSyncStatus(const Port& port, const std::string&
     SWSS_LOG_ENTER();
 
     vector<FieldValueTuple> tuples;
-    FieldValueTuple tuple("si_settings_sync_status", status);
+    FieldValueTuple tuple("si_settings_ack", status);
     tuples.push_back(tuple);
 
     m_portStateTable.set(port.m_alias, tuples);
@@ -4520,7 +4520,7 @@ bool PortsOrch::applyPortSerdesConfig(Port &port, const PortConfig &pCfg, bool &
     PortSerdesAttrMap_t line_serdes_attr;
     PortSerdesAttrMap_t system_serdes_attr;
     uint32_t si_sync_count;
-    std::string si_sync_status;
+    std::string si_settings_notification;
 
     getPortSerdesAttr(serdes_attr, pCfg.serdes);
     getPortSerdesAttr(line_serdes_attr, pCfg.serdes_gb_line);
@@ -4533,12 +4533,12 @@ bool PortsOrch::applyPortSerdesConfig(Port &port, const PortConfig &pCfg, bool &
     }
 
     si_sync_count = pCfg.serdes_settings_sync_status.count;
-    si_sync_status = pCfg.serdes_settings_sync_status.type;
+    si_settings_notification = pCfg.serdes_settings_sync_status.type;
 
     /* Default settings requested from xcvrd, cleanup happens in next programming
      * Update the sync_status to default for warm restart scenarios
      */
-    if (si_sync_status == PORT_SI_SETTINGS_DEFAULT) 
+    if (si_settings_notification == PORT_SI_SETTINGS_DEFAULT) 
     {
         setPortSiSettingsSyncStatus(port, std::string(PORT_SI_SETTINGS_DEFAULT) + ":" + std::to_string(si_sync_count));
         return true;
@@ -6775,7 +6775,7 @@ void PortsOrch::initializePortSiSettingsSyncStatusBulk(std::vector<Port>& ports)
     for (auto& port : ports)
     {
         setPortSiSettingsSyncStatus(port, std::string(PORT_SI_SETTINGS_DEFAULT) + ":0");
-        SWSS_LOG_NOTICE("Initialize si_settings_sync_status as %s:0 for port %s",
+        SWSS_LOG_NOTICE("Initialize si_settings_ack as %s:0 for port %s",
                         PORT_SI_SETTINGS_DEFAULT, port.m_alias.c_str());
     }
 }
