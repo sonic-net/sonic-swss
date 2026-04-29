@@ -18,7 +18,7 @@ public:
     {
         auto notificationConsumer = getNotificationConsumer();
         /* Check before triggering doTask because pop() can throw an exception if there is no data */
-        if (notificationConsumer->hasData())
+        while (notificationConsumer->hasData())
         {
             m_orch->doTask(*notificationConsumer);
         }
