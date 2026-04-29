@@ -21,6 +21,8 @@
 #include "acltable.h"
 
 #include "saiattr.h"
+#include "udf_constants.h"
+#include "udforch.h"
 
 #define RULE_PRIORITY           "PRIORITY"
 #define MATCH_IN_PORTS          "IN_PORTS"
@@ -168,7 +170,7 @@ public:
 
     sai_acl_table_attr_t getId() const;
     virtual sai_attribute_t toSaiAttribute() = 0;
-    virtual bool validateAclRuleMatch(const AclRule& rule) const = 0;
+    virtual bool validateAclRuleMatch(const AclRule& rule) const { return true; }
 private:
     sai_acl_table_attr_t m_matchField;
 };
@@ -192,6 +194,20 @@ public:
 
 private:
     vector<int32_t> m_rangeList;
+};
+
+class AclTableUdfGroupMatch: public AclTableMatchInterface
+{
+public:
+    AclTableUdfGroupMatch(const std::string& udfName, unsigned int index);
+
+    sai_attribute_t toSaiAttribute() override;
+    sai_object_id_t getUdfGroupId() const;
+
+    const std::string& getName() const { return m_name; }
+
+private:
+    std::string m_name;
 };
 
 class MetaDataMgr
@@ -371,6 +387,8 @@ protected:
 
     bool isActionSupported(sai_acl_entry_attr_t) const;
 
+    bool processUdfMatches(vector<sai_attribute_t>& udf_attrs);
+
     static sai_uint32_t m_minPriority;
     static sai_uint32_t m_maxPriority;
     AclOrch *m_pAclOrch;
@@ -387,6 +405,8 @@ protected:
 
     vector<AclRangeConfig> m_rangeConfig;
     vector<AclRange*> m_ranges;
+
+    map<string, pair<vector<uint8_t>, vector<uint8_t>>> m_udfFieldValues;
 
 private:
     bool m_createCounter;

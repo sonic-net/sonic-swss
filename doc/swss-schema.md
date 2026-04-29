@@ -755,6 +755,29 @@ Equivalent RedisDB entry:
 
 ----------------------------------------------
 
+### UDF
+Defines a user-defined field (UDF) group. Config DB table. Maps internally to a SAI UDF_GROUP object, and can be referenced by name from ACL_TABLE_TYPE `matches` and ACL_RULE match fields.
+
+    key: UDF|udf_name                ; udf_name is the UDF group identifier
+    ;field       = value
+    length       = 1*2DIGIT          ; extraction length in bytes, range 1..20
+    field_type   = "GENERIC" / "HASH"; UDF type, default "GENERIC"
+    description  = 0*128VCHAR        ; optional human-readable label
+
+Constraint (not enforced in schema): `udf_name` must not collide with any built-in ACL match qualifier. Reserved names are the keys of `aclMatchLookup` in [orchagent/aclorch.cpp](../orchagent/aclorch.cpp) — currently: `IN_PORTS`, `OUT_PORT`, `OUT_PORTS`, `SRC_IP`, `DST_IP`, `SRC_IPV6`, `DST_IPV6`, `L4_SRC_PORT`, `L4_DST_PORT`, `ETHER_TYPE`, `VLAN_ID`, `IP_PROTOCOL`, `NEXT_HEADER`, `TCP_FLAGS`, `IP_TYPE`, `DSCP`, `TC`, `ICMP_TYPE`, `ICMP_CODE`, `ICMPV6_TYPE`, `ICMPV6_CODE`, `L4_SRC_PORT_RANGE`, `L4_DST_PORT_RANGE`, `TUNNEL_VNI`, `INNER_ETHER_TYPE`, `INNER_IP_PROTOCOL`, `INNER_SRC_MAC`, `INNER_DST_MAC`, `INNER_SRC_IP`, `INNER_L4_SRC_PORT`, `INNER_L4_DST_PORT`, `BTH_OPCODE`, `AETH_SYNDROME`, `TUNNEL_TERM`, `METADATA`. A UDF group with a colliding name is accepted at creation but silently unreachable from ACL rules, because the rule-field dispatch at `aclorch.cpp:validateAddMatch` matches the built-in first.
+
+### UDF\_SELECTOR
+Per-packet-type extraction definition for a UDF group. Config DB table. Maps internally to SAI UDF_MATCH + SAI UDF objects. UDF_MATCH objects with identical match criteria are de-duplicated and ref-counted in orchagent.
+
+    key: UDF_SELECTOR|udf_name|selector_name
+    ;field   = value
+    select   = json-object          ; {"base": "L2"|"L3"|"L4", "offset": 0..255}
+    match    = json-object          ; {"l2_type", "l2_type_mask", "l3_type", "l3_type_mask",
+                                    ; "gre_type", "gre_type_mask", "l4_dst_port",
+                                    ; "l4_dst_port_mask", "priority"}
+
+----------------------------------------------
+
 ### MIRROR\_SESSION\_TABLE
 Mirror session table
 Stores information about mirror sessions and their properties.
