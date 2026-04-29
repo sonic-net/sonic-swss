@@ -2299,7 +2299,7 @@ void RouteSync::onEvpnEsBackupNhgMsg(struct nlmsghdr *h, int len)
         }
         else
         {
-            SWSS_LOG_INFO("Warm-Restart mode: EVPN_ES_BACKUP_NHG_TABLE set msg: %s, Backpu NHG ID:%s",
+            SWSS_LOG_INFO("Warm-Restart mode: EVPN_ES_BACKUP_NHG_TABLE set msg: %s, Backup NHG ID:%s",
                           backup_nhg_entry_key, backup_nhg_id.c_str());
             const KeyOpFieldsValuesTuple kfv = std::make_tuple(backup_nhg_entry_key,
                                                                SET_COMMAND,
