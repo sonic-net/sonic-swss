@@ -297,7 +297,6 @@ public:
 
     bool setPortPtIntfId(const Port& port, sai_uint16_t intf_id);
     bool setPortPtTimestampTemplate(const Port& port, sai_port_path_tracing_timestamp_type_t ts_type);
-    void setLagMemberState(Port &port, bool enabled);
     task_process_status setPortFastLinkupEnabled(Port &port, bool enable);
 
 private:
@@ -318,7 +317,6 @@ private:
     unique_ptr<Table> m_pgPortTable;
     unique_ptr<Table> m_pgIndexTable;
     unique_ptr<Table> m_stateBufferMaximumValueTable;
-    unique_ptr<Table> m_lagMemberTable;
     Table m_portStateTable;
     Table m_portOpErrTable;
 
@@ -466,6 +464,7 @@ private:
     bool removeLagMember(Port &lag, Port &port);
     bool setCollectionOnLagMember(Port &lagMember, bool enableCollection);
     bool setDistributionOnLagMember(Port &lagMember, bool enableDistribution);
+    void setLagMemberState(Port &port, bool enabled);
 
     sai_status_t removePort(sai_object_id_t port_id);
     bool initExistingPort(const PortConfig &port);
