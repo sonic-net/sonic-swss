@@ -82,6 +82,7 @@ uint32_t gCfgSystemPorts = 0;
 string gMyHostName = "";
 string gMyAsicName = "";
 bool gTraditionalFlexCounter = false;
+bool gRouteStateAsyncPublish = true;
 uint32_t create_switch_timeout = 0;
 bool gMultiAsicVoq = false;
 
@@ -274,6 +275,35 @@ void getCfgSwitchType(DBConnector *cfgDb, string &switch_type, string &switch_su
         SWSS_LOG_ERROR("System error in parsing switch subtype: %s", e.what());
     }
 
+}
+
+/*
+ * DEVICE_METADATA|localhost route_state_async_publish: if value is "disabled", turn off async route state publish.
+ * Otherwise keep default gRouteStateAsyncPublish == true. Must run before OrchDaemon::init() constructs RouteOrch.
+ */
+void getCfgRouteStateAsyncPublish(DBConnector *cfgDb)
+{
+    Table cfgDeviceMetaDataTable(cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
+    string val;
+
+    try
+    {
+        if (!cfgDeviceMetaDataTable.hget("localhost", "route_state_async_publish", val))
+        {
+            return;
+        }
+    }
+    catch (const std::system_error &e)
+    {
+        SWSS_LOG_WARN("Could not read route_state_async_publish from CONFIG_DB: %s; default enabled", e.what());
+        return;
+    }
+
+    if (val == "disabled")
+    {
+        gRouteStateAsyncPublish = false;
+        SWSS_LOG_NOTICE("route_state_async_publish is disabled in DEVICE_METADATA|localhost; synchronous route state publish");
+    }
 }
 
 bool isChassisAppDbPresent()
@@ -1015,6 +1045,8 @@ int main(int argc, char **argv)
         /* Initialize the ring before OrchDaemon initializing Orchs */
         orchDaemon->enableRingBuffer();
     }
+
+    getCfgRouteStateAsyncPublish(&config_db);
 
     if (!orchDaemon->init())
     {
