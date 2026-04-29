@@ -761,7 +761,7 @@ void FdbOrch::doTask(Consumer& consumer)
                 {
                     if (fvField(fv) == "event_type")
                     {
-                        sai_deserialize_fdb_event(fvValue(fv), event_type);
+                        sai_deserialize_fdb_event(fvValue(fv).c_str(), &event_type);
                     }
                     else if (fvField(fv) == "bridge_port_id")
                     {
