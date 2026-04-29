@@ -29,6 +29,7 @@
 #include "p4orch/wcmp_manager.h"
 #include "response_publisher.h"
 #include "return_code.h"
+#include "selectableevent.h"
 #include "vrforch.h"
 #include "zmqorch.h"
 
@@ -59,6 +60,10 @@ class P4Orch : public ZmqOrch
     TunnelDecapGroupManager* getTunnelDecapGroupManager();
     void refreshPortStatus();
     void setRouterIntfsMtu(const std::string& port, uint32_t mtu);
+    void handlePortStatusUpdate(const std::string& alias,
+                              const sai_port_oper_status_t& status);
+    void handleLagMemberLacpStatusUpdate(const std::string& alias,
+                                       bool lacp_enable);
     TablesInfo *tablesinfo = NULL;
 
     // m_p4TableToManagerMap: P4 APP DB table name, P4 Object Manager
@@ -70,15 +75,16 @@ class P4Orch : public ZmqOrch
     void doTask(swss::NotificationConsumer &consumer);
     ObjectManagerInterface* findManager(const std::string key,
                                         std::string& table_name);
+    void doTask(swss::SelectableEvent& event);
     void enqueue(const swss::KeyOpFieldsValuesTuple& entry);
     ReturnCode drain();
-    void handlePortStatusChangeNotification(const std::string &op, const std::string &data);
 
     // P4 object manager request processing order.
     std::vector<ObjectManagerInterface*> m_p4ManagerAddPrecedence;
 
     swss::SelectableTimer *m_aclCounterStatsTimer;
     swss::SelectableTimer *m_extCounterStatsTimer;
+    swss::SelectableEvent* m_watchportEvent;
     P4OidMapper m_p4OidMapper;
     std::unique_ptr<TablesDefnManager> m_tablesDefnManager;
     std::unique_ptr<RouterInterfaceManager> m_routerIntfManager;
@@ -96,8 +102,7 @@ class P4Orch : public ZmqOrch
     std::unique_ptr<TunnelDecapGroupManager> m_tunnelDecapGroupManager;
     std::unique_ptr<ExtTablesManager> m_extTablesManager;
 
-    // Notification consumer for port state change
-    swss::NotificationConsumer *m_portStatusNotificationConsumer;
+    // Notification consumer
 
     swss::ZmqServer* m_zmqServer;
     // Sepcial publisher that writes to APPL DB instead of APPL STATE DB.
