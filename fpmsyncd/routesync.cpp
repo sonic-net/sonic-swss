@@ -17,6 +17,7 @@
 #include <linux/nexthop.h>
 #include <linux/lwtunnel.h>
 #include <linux/seg6_iptunnel.h>
+#include "fpmsyncd/nhgmgr.h"
 
 using namespace std;
 using namespace swss;
@@ -116,6 +117,10 @@ enum {
     ROUTE_ENCAP_SRV6_ENCAP_SRC_ADDR    = 2,
     ROUTE_ENCAP_SRV6_PIC_ID            = 3,
     ROUTE_ENCAP_SRV6_NH_ID             = 4,
+};
+
+enum {
+    NHA_JSON_STR            = 2,
 };
 
 #define MAX_MULTIPATH_NUM 514
@@ -1981,13 +1986,16 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
         && (h->nlmsg_type != RTM_DELNEXTHOP)
         && (h->nlmsg_type != RTM_NEWPICCONTEXT)
         && (h->nlmsg_type != RTM_DELPICCONTEXT)
+        && (h->nlmsg_type != RTM_NEWNHGFIB)
+        && (h->nlmsg_type != RTM_DELNHGFIB)
         && (h->nlmsg_type != RTM_NEWSRV6VPNROUTE)
         && (h->nlmsg_type != RTM_DELSRV6VPNROUTE)
         && (h->nlmsg_type != RTM_NEWSRV6LOCALSID)
         && (h->nlmsg_type != RTM_DELSRV6LOCALSID))
         return;
 
-    if(h->nlmsg_type == RTM_NEWNEXTHOP || h->nlmsg_type == RTM_DELNEXTHOP)
+    if(h->nlmsg_type == RTM_NEWNEXTHOP || h->nlmsg_type == RTM_DELNEXTHOP
+       || h->nlmsg_type == RTM_NEWNHGFIB || h->nlmsg_type == RTM_DELNHGFIB)
     {
         len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(struct nhmsg)));
     }
@@ -2005,6 +2013,12 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
         SWSS_LOG_ERROR("%s: Message received from netlink is of a broken size %d %zu",
             __PRETTY_FUNCTION__, h->nlmsg_len,
             (size_t)NLMSG_LENGTH(sizeof(struct ndmsg)));
+        return;
+    }
+
+    if(h->nlmsg_type == RTM_NEWNHGFIB || h->nlmsg_type == RTM_DELNHGFIB)
+    {
+        onNextHopGroupFullMsg(h, len);
         return;
     }
 
@@ -2199,34 +2213,71 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
 
     string nhg_id_key;
     uint32_t nhg_id = rtnl_route_get_nh_id(route_obj);
+    uint32_t sonic_nhg_id = 0;
     if(nhg_id)
     {
-        const auto itg = m_nh_groups.find(nhg_id);
-        if(itg == m_nh_groups.end())
+        if (m_nhgFibEnabled)
         {
-            SWSS_LOG_ERROR("NextHop group id %d not found. Dropping the route %s", nhg_id, destipprefix);
-            return;
-        }
-        NextHopGroup& nhg = itg->second;
-        if(nhg.group.size() == 0)
-        {
-            // Using route-table only for single next-hop
-            string nexthops = nhg.nexthop.empty() ? (rtnl_route_get_family(route_obj) == AF_INET ? "0.0.0.0" : "::") : nhg.nexthop;
-            string ifnames, weights;
+            RIBNHGEntry *entry = m_rib_fib_nhg_mgr.getRIBNHGEntryByRIBID(nhg_id);
 
-            getNextHopGroupFields(nhg, nexthops, ifnames, weights, rtnl_route_get_family(route_obj));
-            fvw.nexthop = std::move(nexthops);
-            fvw.ifname = std::move(ifnames);
-            if (!weights.empty())
-                fvw.weight = std::move(weights);
+            if (!entry)
+            {
+                SWSS_LOG_ERROR("NextHop group id %d not found in m_rib_nhg_table. Dropping the route %s", nhg_id, destipprefix);
+                return;
+            }
+            SWSS_LOG_INFO("Get NHG with id %d", nhg_id);
 
-            SWSS_LOG_DEBUG("NextHop group id %d is a single nexthop address. Filling the route table %s with nexthop and ifname", nhg_id, destipprefix);
+            sonic_nhg_id = entry->getSonicObjID();
+
+            if(entry->isSingleNexthop())
+            {
+                // Using route-table only for single next-hop
+                string nexthops = entry->getNextHopStr();
+                string ifnames = entry->getInterfaceNameStr();
+
+                FieldValueTuple gw("nexthop", nexthops.c_str());
+                FieldValueTuple intf("ifname", ifnames.c_str());
+                fvVector.push_back(gw);
+                fvVector.push_back(intf);
+
+                SWSS_LOG_DEBUG("NextHop group id %d (zebra id: %d) is a single nexthop address. Filling the route table %s with nexthop and ifname", sonic_nhg_id, nhg_id, destipprefix);
+            }
+            else
+            {
+                nhg_id_key = to_string(sonic_nhg_id);
+                FieldValueTuple nhg("nexthop_group", nhg_id_key.c_str());
+                fvVector.push_back(nhg);
+            }
         }
         else
         {
-            nhg_id_key = getNextHopGroupKeyAsString(nhg_id);
-            fvw.nexthop_group = std::move(nhg_id_key);
-            installNextHopGroup(nhg_id);
+            const auto itg = m_nh_groups.find(nhg_id);
+            if(itg == m_nh_groups.end())
+            {
+                SWSS_LOG_ERROR("NextHop group id %d not found. Dropping the route %s", nhg_id, destipprefix);
+                return;
+            }
+            NextHopGroup& nhg = itg->second;
+            if(nhg.group.size() == 0)
+            {
+                // Using route-table only for single next-hop
+                string nexthops = nhg.nexthop.empty() ? (rtnl_route_get_family(route_obj) == AF_INET ? "0.0.0.0" : "::") : nhg.nexthop;
+                string ifnames, weights;
+
+                getNextHopGroupFields(nhg, nexthops, ifnames, weights, rtnl_route_get_family(route_obj));
+                fvw.nexthop = std::move(nexthops);
+                fvw.ifname = std::move(ifnames);
+                if (!weights.empty())
+                    fvw.weight = std::move(weights);
+
+                SWSS_LOG_DEBUG("NextHop group id %d is a single nexthop address. Filling the route table %s with nexthop and ifname", nhg_id, destipprefix);
+            }
+            else
+            {
+                nhg_id_key = getNextHopGroupKeyAsString(nhg_id);
+                fvw.nexthop_group = std::move(nhg_id_key);
+                installNextHopGroup(nhg_id);
+            }
         }
     }
     else
@@ -2633,6 +2684,85 @@ void RouteSync::onPicContextMsg(struct nlmsghdr *h, int len)
     {
         SWSS_LOG_DEBUG("NextHopGroup del event: %d", id);
         deletePicContextGroup(id);
+    }
+
+    return;
+}
+
+/*
+ * Handle Nexthop Full msg
+ *
+ * onNextHopFullMsg() decodes the NextHopGroupFull's JSON string
+ * and create NextHopGroupFull Object, then send the object to NHG Manager.
+ *
+ * @arg nlmsghdr      Netlink messaged
+ */
+void RouteSync::onNextHopGroupFullMsg(struct nlmsghdr *h, int len)
+{
+    int nlmsg_type = h->nlmsg_type;
+    uint32_t id = 0;
+    uint8_t addr_family;
+    struct nhmsg *nhm = NULL;
+    struct rtattr *tb[NHA_MAX + 1] = {};
+    char ifname_unknown[IFNAMSIZ] = "unknown";
+    string ifname;
+    char *json_str = NULL;
+
+    nhm = (struct nhmsg *)NLMSG_DATA(h);
+
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wcast-align"
+    struct rtattr *rta = NHA_RTA(nhm);
+    #pragma GCC diagnostic pop
+
+    netlink_parse_rtattr(tb, NHA_MAX, rta, len);
+
+    if (!tb[NHA_ID]) {
+        SWSS_LOG_ERROR(
+            "Nexthop group without an ID received from the zebra");
+        return;
+    }
+
+    /* We use the ID as a key for nhg table */
+    id = *((uint32_t *)RTA_DATA(tb[NHA_ID]));
+
+    addr_family = nhm->nh_family;
+
+    if (nlmsg_type == RTM_NEWNEXTHOP)
+    {
+        SWSS_LOG_INFO("New nexthop group full message!");
+
+        /* Get NextHopGroupFull JSON string */
+        json_str = (char *)RTA_DATA(tb[NHA_JSON_STR]);
+        SWSS_LOG_NOTICE("Received NHGFULL %d JSON string: %s", id, json_str);
+
+        /* Conver JSON to NextHopGroupFull object */
+        nlohmann::ordered_json j = nlohmann::ordered_json::parse(json_str);
+        fib::NextHopGroupFull nhg;
+        fib::from_json(j, nhg);
+
+        /* Get ifname by ifindex */
+        char if_name[IFNAMSIZ] = {0};
+        if (!getIfName(nhg.ifindex, if_name, IFNAMSIZ))
+        {
+            strcpy(if_name, ifname_unknown);
+        }
+        ifname = string(if_name);
+        if (ifname == "eth0" || ifname == "docker0")
+        {
+            SWSS_LOG_DEBUG("Skip routes to interfaces: %s id[%d]", ifname.c_str(), id);
+            return;
+        }
+        nhg.ifname = ifname;
+
+        /* Send constructed nhg to NHGMgr */
+        m_rib_fib_nhg_mgr.addNHGFull(nhg, addr_family);
+        SWSS_LOG_INFO("Add NHG with id %d", nhg.id);
+    }
+    else if (nlmsg_type == RTM_DELNEXTHOP)
+    {
+        SWSS_LOG_DEBUG("NextHopGroupFull del event: %d", id);
+        m_rib_fib_nhg_mgr.delNHGFull(id);
     }
 
     return;
