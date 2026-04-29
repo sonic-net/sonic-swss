@@ -7,12 +7,16 @@
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
+#include <chrono>
+#include <hiredis/hiredis.h>
+#include <thread>
 #define private public
 #include "buffermgrdyn.h"
 #include "warm_restart.h"
 #undef private
 
 extern string gMySwitchType;
+extern redisReply *mockReply;
 
 
 namespace buffermgrdyn_test
@@ -2076,7 +2080,7 @@ namespace buffermgrdyn_test
         // TEST CASE 1: Manually test retry mode - profiles not synced
         // Directly populate m_shpProfilesToCheck to simulate being in retry mode
         m_dynamicBuffer->m_shpProfilesToCheck = {testProfile.name};
-        
+
         // Verify checkPendingProfilesSyncStatus returns retry when profile not in APPL_STATE_DB
         auto status = m_dynamicBuffer->checkPendingProfilesSyncStatus();
         EXPECT_EQ(status, task_process_status::task_need_retry)
@@ -2104,7 +2108,7 @@ namespace buffermgrdyn_test
         // Manually set retry state
         m_dynamicBuffer->m_configuredSharedHeadroomPoolSize = "1048576";
         m_dynamicBuffer->m_shpProfilesToCheck = {testProfile.name};
-        
+
         // Clear APPL_STATE_DB to simulate profiles not synced yet
         m_dynamicBuffer->m_applStateBufferProfileTable.del(testProfile.name);
 
@@ -2399,4 +2403,187 @@ namespace buffermgrdyn_test
         EXPECT_EQ(m_dynamicBuffer->m_shpProfilesToCheck.size(), profileCheckListSizeBefore)
             << "Should not add profiles to check list when SHP size unchanged";
     }
+
+    /*
+     * Test SHP disable keeps the new desired size while waiting for profile
+     * sync. Rolling it back lets unrelated refresh paths calculate profiles
+     * against the old SHP-enabled state.
+     */
+    TEST_F(BufferMgrDynTest, TestHandleBufferPoolTableSHPDisableRetryDoesNotRollback)
+    {
+        InitDefaultLosslessParameter();
+        InitMmuSize();
+        StartBufferManager();
+
+        auto setRedisScriptReply = [](const vector<string> &values)
+        {
+            mockReply = (redisReply *)calloc(1, sizeof(redisReply));
+            mockReply->type = REDIS_REPLY_ARRAY;
+            mockReply->elements = values.size();
+            mockReply->element = (redisReply **)calloc(values.size(), sizeof(redisReply *));
+
+            for (size_t i = 0; i < values.size(); i++)
+            {
+                mockReply->element[i] = (redisReply *)calloc(1, sizeof(redisReply));
+                mockReply->element[i]->type = REDIS_REPLY_STRING;
+                mockReply->element[i]->len = values[i].length();
+                mockReply->element[i]->str = (char *)calloc(values[i].length() + 1, sizeof(char));
+                memcpy(mockReply->element[i]->str, values[i].c_str(), values[i].length());
+            }
+        };
+        m_dynamicBuffer->m_headroomSha = "mock_headroom";
+
+        InitPort();
+        SetPortInitDone();
+        m_dynamicBuffer->doTask(m_selectableTable);
+
+        InitBufferPool();
+        InitDefaultBufferProfile();
+
+        buffer_profile_t testProfile;
+        testProfile.name = "pg_lossless_100000_5m_profile";
+        testProfile.size = "43008";
+        testProfile.xon = "43008";
+        testProfile.xoff = "50176";
+        testProfile.static_configured = false;
+        testProfile.lossless = true;
+        testProfile.pool_name = INGRESS_LOSSLESS_PG_POOL_NAME;
+        testProfile.speed = "100000";
+        testProfile.cable_length = "5m";
+        testProfile.port_mtu = "9100";
+        testProfile.gearbox_model = "";
+        testProfile.threshold_mode = buffer_dynamic_th_field_name;
+        testProfile.threshold = "0";
+        m_dynamicBuffer->m_bufferProfileLookup[testProfile.name] = testProfile;
+
+        defaultLosslessParameterTable.del("AZURE");
+        defaultLosslessParameterTable.set("AZURE", {{"default_dynamic_th", "0"}});
+        bufferPoolTable.del(INGRESS_LOSSLESS_PG_POOL_NAME);
+        bufferPoolTable.set(INGRESS_LOSSLESS_PG_POOL_NAME,
+                            {
+                                {"mode", "dynamic"},
+                                {"type", "ingress"}
+                            });
+        m_dynamicBuffer->m_configuredSharedHeadroomPoolSize = "1024000";
+        m_dynamicBuffer->m_overSubscribeRatio = "";
+        m_dynamicBuffer->m_shpProfilesToCheck.clear();
+        m_dynamicBuffer->m_applStateBufferProfileTable.del(testProfile.name);
+
+        vector<FieldValueTuple> fvVector = {
+            {"mode", "dynamic"},
+            {"type", "ingress"}
+        };
+        KeyOpFieldsValuesTuple tuple = {INGRESS_LOSSLESS_PG_POOL_NAME, "SET", fvVector};
+
+        thread syncProfileThread([&]()
+        {
+            this_thread::sleep_for(chrono::milliseconds(100));
+            m_dynamicBuffer->m_applStateBufferProfileTable.set(testProfile.name, {
+                {"xoff", "50176"},
+                {"xon", "43008"},
+                {"size", "93184"}
+            });
+        });
+
+        setRedisScriptReply({"xon:43008", "xoff:50176", "size:93184"});
+        auto status = m_dynamicBuffer->handleBufferPoolTable(tuple);
+        syncProfileThread.join();
+        mockReply = nullptr;
+        EXPECT_EQ(status, task_process_status::task_success)
+            << "SHP disable should wait until recalculated profiles are synced";
+        EXPECT_EQ(m_dynamicBuffer->m_configuredSharedHeadroomPoolSize, "0")
+            << "Desired SHP size must not be rolled back during retry";
+
+        const auto disabledProfileSize = m_dynamicBuffer->m_bufferProfileLookup[testProfile.name].size;
+        const auto enabledProfileSize = m_dynamicBuffer->m_bufferProfileLookup[testProfile.name].xon;
+        EXPECT_EQ(disabledProfileSize, "93184")
+            << "SHP-disabled profile size should be xon + xoff";
+        EXPECT_EQ(enabledProfileSize, "43008")
+            << "SHP-enabled profile size is xon only";
+        EXPECT_NE(disabledProfileSize, enabledProfileSize)
+            << "The test must distinguish SHP-disabled size from SHP-enabled size";
+
+        /*
+         * The failure happened in the retry window: another refresh path
+         * recalculated lossless profiles while the desired SHP disable was still
+         * waiting for SAI sync. That refresh must keep the disabled size.
+         */
+        const bool shpEnabledBySize = !m_dynamicBuffer->m_configuredSharedHeadroomPoolSize.empty() &&
+                                      m_dynamicBuffer->m_configuredSharedHeadroomPoolSize != "0";
+        const string retryWindowProfileSize = shpEnabledBySize ? "43008" : "93184";
+        setRedisScriptReply({"xon:43008", "xoff:50176", "size:" + retryWindowProfileSize});
+        m_dynamicBuffer->refreshSharedHeadroomPool(false, true);
+        mockReply = nullptr;
+        EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup[testProfile.name].size, disabledProfileSize)
+            << "Retry-window refresh must not rewrite the profile as SHP-enabled";
+
+        m_dynamicBuffer->m_applBufferProfileTable.flush();
+        vector<FieldValueTuple> profileFvVector;
+        ASSERT_TRUE(appBufferProfileTable.get(testProfile.name, profileFvVector));
+
+        auto getField = [](const vector<FieldValueTuple> &fieldValues, const string &field) -> string
+        {
+            for (const auto &fv : fieldValues)
+            {
+                if (fvField(fv) == field)
+                {
+                    return fvValue(fv);
+                }
+            }
+            return "";
+        };
+
+        const string applDbProfileSize = getField(profileFvVector, buffer_size_field_name);
+        ASSERT_FALSE(applDbProfileSize.empty());
+        EXPECT_EQ(applDbProfileSize, disabledProfileSize)
+            << "APPL_DB profile size must remain the SHP-disabled size";
+        EXPECT_NE(applDbProfileSize, enabledProfileSize)
+            << "The bad dump had APPL_DB profile size equal to xon, meaning SHP was enabled again";
+        EXPECT_EQ(getField(profileFvVector, buffer_xon_field_name), "43008");
+        EXPECT_EQ(getField(profileFvVector, buffer_xoff_field_name), "50176");
+        EXPECT_EQ(getField(profileFvVector, buffer_dynamic_th_field_name), "0");
+
+        vector<FieldValueTuple> configPoolFvVector;
+        ASSERT_TRUE(bufferPoolTable.get(INGRESS_LOSSLESS_PG_POOL_NAME, configPoolFvVector));
+        EXPECT_TRUE(getField(configPoolFvVector, buffer_pool_xoff_field_name).empty())
+            << "CONFIG_DB should represent SHP disabled by removing pool xoff";
+
+        m_dynamicBuffer->m_applStateBufferProfileTable.set(testProfile.name, profileFvVector);
+        vector<FieldValueTuple> stateProfileFvVector;
+        ASSERT_TRUE(m_dynamicBuffer->m_applStateBufferProfileTable.get(testProfile.name, stateProfileFvVector));
+        EXPECT_EQ(getField(stateProfileFvVector, buffer_size_field_name), disabledProfileSize)
+            << "If OA writes back the APPL_DB payload, APPL_STATE_DB should not contain the bad size=xon state";
+
+        status = m_dynamicBuffer->handleBufferPoolTable(tuple);
+        EXPECT_EQ(status, task_process_status::task_success)
+            << "Once profile sync is observed, the retry should finish and publish the disabled pool";
+        m_dynamicBuffer->m_applBufferPoolTable.flush();
+
+        vector<FieldValueTuple> applPoolFvVector;
+        ASSERT_TRUE(appBufferPoolTable.get(INGRESS_LOSSLESS_PG_POOL_NAME, applPoolFvVector));
+        EXPECT_TRUE(getField(applPoolFvVector, buffer_pool_xoff_field_name).empty())
+            << "APPL_DB pool should not keep a non-zero SHP xoff after the disable retry finishes";
+
+        const bool profileIndicatesShpEnabled = (m_dynamicBuffer->m_bufferProfileLookup[testProfile.name].size == enabledProfileSize);
+        m_dynamicBuffer->m_bufferpoolSha = "mock_buffer_pool";
+        m_dynamicBuffer->m_mmuSize = "200000000";
+        m_dynamicBuffer->m_mmuSizeNumber = 200000000;
+        if (profileIndicatesShpEnabled)
+        {
+            setRedisScriptReply({"ingress_lossless_pool:100081664:655360"});
+        }
+        else
+        {
+            setRedisScriptReply({"ingress_lossless_pool:100081664"});
+        }
+        m_dynamicBuffer->recalculateSharedBufferPool();
+        mockReply = nullptr;
+        m_dynamicBuffer->m_applBufferPoolTable.flush();
+
+        applPoolFvVector.clear();
+        ASSERT_TRUE(appBufferPoolTable.get(INGRESS_LOSSLESS_PG_POOL_NAME, applPoolFvVector));
+        EXPECT_NE(getField(applPoolFvVector, buffer_pool_xoff_field_name), "655360")
+            << "The bad dump's pool xoff=655360 is produced only when the profile has already fallen back to size=xon";
+    }
+
 }
