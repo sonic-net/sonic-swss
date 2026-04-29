@@ -11,6 +11,12 @@ import test_vrf
 class TestP4RTL3MulticastRouterInterface(object):
   """Tests interacting with multicast router interface table"""
 
+  # Use a fixture to check status and skip
+  @pytest.fixture(autouse=True)
+  def skip_if_p4_disabled(self, dvs):
+    if not util.is_p4rt_enabled(dvs):
+        pytest.skip("P4RT is disabled in C++ logic, skipping test.")
+
   def _set_up(self, dvs):
     self._p4rt_l3_multicast_router_intf = (
         l3_multicast.P4RtL3MulticastRouterInterfaceWrapper())
@@ -1449,6 +1455,13 @@ class TestP4RTL3MulticastRouterInterface(object):
 
 class TestP4RTL3MulticastGroup(object):
   """Tests interacting with replication multicast table"""
+
+  # Use a fixture to check status and skip
+  @pytest.fixture(autouse=True)
+  def skip_if_p4_disabled(self, dvs):
+    if not util.is_p4rt_enabled(dvs):
+        pytest.skip("P4RT is disabled in C++ logic, skipping test.")
+
   def _set_up(self, dvs):
     self._p4rt_l3_multicast_router_intf = (
         l3_multicast.P4RtL3MulticastRouterInterfaceWrapper())
@@ -2265,6 +2278,13 @@ class TestP4RTL3MulticastGroup(object):
 
 class TestP4RTIpMulticast(object):
   """Tests for interacting with the route tables ipv4_multicast_table and ipv6_multicast_table"""
+
+  # Use a fixture to check status and skip
+  @pytest.fixture(autouse=True)
+  def skip_if_p4_disabled(self, dvs):
+    if not util.is_p4rt_enabled(dvs):
+        pytest.skip("P4RT is disabled in C++ logic, skipping test.")
+
   def _set_up(self, dvs):
     self._p4rt_l3_multicast_router_intf = (
         l3_multicast.P4RtL3MulticastRouterInterfaceWrapper())

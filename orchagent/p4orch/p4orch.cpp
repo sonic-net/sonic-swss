@@ -41,6 +41,17 @@ P4Orch::P4Orch(swss::DBConnector* db, std::vector<std::string> tableNames,
       m_publisher("APPL_DB", /*bool buffered=*/true,
                   /*db_write_thread=*/true, zmqServer)
 {
+    if (m_zmqServer == nullptr)
+    {
+        SWSS_LOG_NOTICE("P4Orch initialized with no ZMQ server. P4RT processing will be skipped.");
+        std::cout << "P4Orch initialized with no ZMQ server. P4RT processing will be skipped." << std::endl;
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("P4Orch initialized with ZMQ server.");
+        std::cout << "P4Orch initialized with ZMQ server." << std::endl;
+    }
+
     SWSS_LOG_ENTER();
 
     m_tablesDefnManager = std::make_unique<TablesDefnManager>(&m_p4OidMapper, &m_publisher);
@@ -126,6 +137,17 @@ P4Orch::P4Orch(swss::DBConnector* db, std::vector<std::string> tableNames,
 void P4Orch::doTask(ConsumerBase &consumer)
 {
     SWSS_LOG_ENTER();
+
+    if (m_zmqServer == nullptr)
+    {
+        std::cout << "!m_zmqServer" << std::endl;
+        auto it = consumer.m_toSync.begin();
+        while (it != consumer.m_toSync.end())
+        {
+            it = consumer.m_toSync.erase(it);
+        }
+        return;
+    }
 
     if (!gPortsOrch->allPortsReady())
     {

@@ -36,6 +36,12 @@ def verify_selected_attr_vals(db, table, key, expected_attrs):
 
 
 class TestP4RTAcl(object):
+    # Use a fixture to check status and skip
+    @pytest.fixture(autouse=True)
+    def skip_if_p4_disabled(self, dvs):
+        if not util.is_p4rt_enabled(dvs):
+            pytest.skip("P4RT is disabled in C++ logic, skipping test.")
+
     def _set_up(self, dvs):
         self._p4rt_acl_table_definition_obj = acl.P4RtAclTableDefinitionWrapper()
         self._p4rt_acl_group_obj = acl.P4RtAclGroupWrapper()

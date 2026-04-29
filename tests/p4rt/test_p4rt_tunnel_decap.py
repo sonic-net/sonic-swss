@@ -1,6 +1,7 @@
 # Lint as: python3
 from swsscommon import swsscommon
 
+import pytest
 import util
 import json
 import test_vrf
@@ -33,6 +34,13 @@ class P4RtTunnelDecapWrapper(util.DBInterface):
         return self.TBL_NAME + ":" + key
 
 class TestP4RTunnelDecap(object):
+
+    # Use a fixture to check status and skip
+    @pytest.fixture(autouse=True)
+    def skip_if_p4_disabled(self, dvs):
+        if not util.is_p4rt_enabled(dvs):
+            pytest.skip("P4RT is disabled in C++ logic, skipping test.")
+
     def _set_up(self, dvs):
         self._p4rt_tunnel_decap_wrapper = P4RtTunnelDecapWrapper()
         self._vrf_obj = test_vrf.TestVrf()
