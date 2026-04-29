@@ -525,6 +525,11 @@ static map<AclObjectStatus, string> aclObjectStatusLookup =
     {AclObjectStatus::PENDING_REMOVAL, "Pending removal"}
 };
 
+static bool isSubnetNotation(const string& value)
+{
+    return value.find('/') != string::npos;
+}
+
 static bool parseIpv4Subnet(const string& value, sai_acl_field_data_t& matchData)
 {
     IpPrefix ip(value);
@@ -1136,7 +1141,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
         }
         else if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP || attr_name == MATCH_INNER_SRC_IP)
         {
-            if (attr_value.find('/') != string::npos)
+            if (isSubnetNotation(attr_value))
             {
                 if (!parseIpv4Subnet(attr_value, matchData))
                 {
@@ -1147,15 +1152,18 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
             {
                 // Intentional deferred validation: a plain IP address (no CIDR) may be paired
                 // with a separate *_MASK field. Both are stored here and combined in
-                // processPendingIpFields(). INNER_SRC_IP only supports CIDR notation and
-                // has no *_MASK counterpart.
+                // processPendingIpFields(). If no *_MASK field is provided, processPendingIpFields()
+                // applies a host mask (all-ones), making it equivalent to an exact-host match.
+                // Note: INNER_SRC_IP has no *_MASK counterpart and does not support non-CIDR
+                // notation in practice, but a plain address is accepted here and treated as a
+                // host match (same as passing /32) for consistency.
                 m_pendingIpFields[attr_name] = attr_value;
                 return true;
             }
         }
         else if (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6)
         {
-            if (attr_value.find('/') != string::npos)
+            if (isSubnetNotation(attr_value))
             {
                 if (!parseIpv6Subnet(attr_value, matchData))
                 {
