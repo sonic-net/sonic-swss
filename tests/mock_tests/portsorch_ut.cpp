@@ -1226,7 +1226,9 @@ namespace portsorch_test
                 { "tpid",                "0x9100"            },
                 { "pfc_asym",            "on"                },
                 { "link_training",       "on"                },
-                { "admin_status",        "up"                }
+                { "admin_status",        "up"                },
+                { "macsec",              "basic-profile"     },
+                { "num_voq",             "8"                 }
             }
         }};
 
