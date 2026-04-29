@@ -3,6 +3,7 @@
 #include "orch.h"
 #include "switchorch.h"
 #include "crmorch.h"
+#include "namelabelmapper.h"
 #include "portsorch.h"
 #include "debugcounterorch.h"
 #include "routeorch.h"
