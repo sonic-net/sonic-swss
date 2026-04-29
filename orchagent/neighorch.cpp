@@ -2045,6 +2045,63 @@ bool NeighOrch::removeTunnelNextHop(const NextHopKey& nh)
     return true;
 }
 
+bool NeighOrch::addIpinipTunnelNextHop(const NextHopKey& nh, sai_object_id_t nh_id)
+{
+    SWSS_LOG_ENTER();
+
+    if (!nh.isTunnelNextHop())
+    {
+        SWSS_LOG_ERROR("NextHopKey is not a tunnel NH: %s", nh.to_string().c_str());
+        return false;
+    }
+
+    if (nh_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Invalid SAI OID for tunnel NH %s", nh.to_string().c_str());
+        return false;
+    }
+
+    if (m_syncdNextHops.find(nh) != m_syncdNextHops.end())
+    {
+        SWSS_LOG_INFO("IPinIP tunnel NH already registered: %s", nh.to_string().c_str());
+        return true;
+    }
+
+    NextHopEntry next_hop_entry;
+    next_hop_entry.next_hop_id = nh_id;
+    next_hop_entry.ref_count = 0;
+    next_hop_entry.nh_flags = 0;
+    m_syncdNextHops[nh] = next_hop_entry;
+
+    SWSS_LOG_NOTICE("Registered IPinIP tunnel NH %s (OID 0x%" PRIx64 ")",
+                    nh.to_string().c_str(), nh_id);
+    return true;
+}
+
+bool NeighOrch::removeIpinipTunnelNextHop(const NextHopKey& nh)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_syncdNextHops.find(nh);
+    if (it == m_syncdNextHops.end())
+    {
+        SWSS_LOG_ERROR("IPinIP tunnel NH not found: %s", nh.to_string().c_str());
+        return false;
+    }
+
+    if (it->second.ref_count > 0)
+    {
+        SWSS_LOG_ERROR("Cannot remove still-referenced IPinIP tunnel NH %s (ref_count=%d)",
+                       nh.to_string().c_str(), it->second.ref_count);
+        return false;
+    }
+
+    m_syncdNextHops.erase(it);
+
+    SWSS_LOG_NOTICE("Unregistered IPinIP tunnel NH %s", nh.to_string().c_str());
+    return true;
+}
+
 void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
