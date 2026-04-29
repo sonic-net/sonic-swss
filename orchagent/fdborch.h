@@ -54,9 +54,9 @@ enum NEXT_HOP_VALUE_TYPE {
 
 struct FdbData
 {
-    sai_object_id_t bridge_port_id;
+    sai_object_id_t bridge_port_id = SAI_NULL_OBJECT_ID;
     string type;
-    FdbOrigin origin;
+    FdbOrigin origin = FDB_ORIGIN_INVALID;
     /**
       {"dynamic", FDB_ORIGIN_LEARN} => dynamically learnt
       {"dynamic", FDB_ORIGIN_PROVISIONED} => provisioned dynamic with swssconfig in APPDB
@@ -65,14 +65,14 @@ struct FdbData
       {"static", FDB_ORIGIN_PROVISIONED} => statically provisioned
       {"static", FDB_ORIGIN_ADVERTIZED} => sticky synced from remote device
     */
-    bool is_flush_pending;
+    bool is_flush_pending = false;
 
     /* Remote FDB related info */
     NEXT_HOP_VALUE_TYPE dest_type = UNKNOWN;
     string dest_value;
     string    esi;
-    unsigned int vni;
-    sai_fdb_entry_type_t sai_fdb_type;
+    unsigned int vni = 0;
+    sai_fdb_entry_type_t sai_fdb_type = SAI_FDB_ENTRY_TYPE_DYNAMIC;
     string discard;
     bool allow_mac_move = false;
 };
