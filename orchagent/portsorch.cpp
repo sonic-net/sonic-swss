@@ -434,6 +434,32 @@ static const vector<sai_queue_stat_t> wred_queue_stat_ids =
     SAI_QUEUE_STAT_WRED_DROPPED_BYTES
 };
 
+static const vector<sai_port_stat_t> llr_port_stat_ids = 
+{
+    SAI_PORT_STAT_LLR_TX_INIT_CTL_OS,
+    SAI_PORT_STAT_LLR_TX_INIT_ECHO_CTL_OS,
+    SAI_PORT_STAT_LLR_TX_ACK_CTL_OS,
+    SAI_PORT_STAT_LLR_TX_NACK_CTL_OS,
+    SAI_PORT_STAT_LLR_TX_DISCARD,
+    SAI_PORT_STAT_LLR_TX_OK,
+    SAI_PORT_STAT_LLR_TX_POISONED,
+    SAI_PORT_STAT_LLR_TX_REPLAY,
+    SAI_PORT_STAT_LLR_RX_INIT_CTL_OS,
+    SAI_PORT_STAT_LLR_RX_INIT_ECHO_CTL_OS,
+    SAI_PORT_STAT_LLR_RX_ACK_CTL_OS,
+    SAI_PORT_STAT_LLR_RX_NACK_CTL_OS,
+    SAI_PORT_STAT_LLR_RX_ACK_NACK_SEQ_ERROR,
+    SAI_PORT_STAT_LLR_RX_OK,
+    SAI_PORT_STAT_LLR_RX_POISONED,
+    SAI_PORT_STAT_LLR_RX_BAD,
+    SAI_PORT_STAT_LLR_RX_EXPECTED_SEQ_GOOD,
+    SAI_PORT_STAT_LLR_RX_EXPECTED_SEQ_POISONED,
+    SAI_PORT_STAT_LLR_RX_EXPECTED_SEQ_BAD,
+    SAI_PORT_STAT_LLR_RX_MISSING_SEQ,
+    SAI_PORT_STAT_LLR_RX_DUPLICATE_SEQ,
+    SAI_PORT_STAT_LLR_RX_REPLAY
+};
+
 static char* hostif_vlan_tag[] = {
     [SAI_HOSTIF_VLAN_TAG_STRIP]     = "SAI_HOSTIF_VLAN_TAG_STRIP",
     [SAI_HOSTIF_VLAN_TAG_KEEP]      = "SAI_HOSTIF_VLAN_TAG_KEEP",
@@ -737,6 +763,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         pg_drop_stat_manager(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PG_DROP_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         wred_port_stat_manager(WRED_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         wred_queue_stat_manager(WRED_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+        llr_port_stat_manager(LLR_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         counter_managers({
                 ref(port_stat_manager),
                 ref(port_phy_attr_manager),
@@ -747,7 +774,8 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
                 ref(pg_watermark_manager),
                 ref(pg_drop_stat_manager),
                 ref(wred_port_stat_manager),
-                ref(wred_queue_stat_manager)
+                ref(wred_queue_stat_manager),
+                ref(llr_port_stat_manager)
             }),
         m_port_state_poller(new SelectableTimer(timespec { .tv_sec = PORT_STATE_POLLING_SEC, .tv_nsec = 0 })),
         m_isWarmRestoreStage(WarmStart::isWarmStart())
@@ -1961,6 +1989,29 @@ void PortsOrch::initCounterCapabilities(sai_object_id_t switchId)
         }
         SWSS_LOG_INFO("WRED port drop stats is_capable: [wred-grn-pkts:%d,wred-ylw-pkts:%d,wred-red-pkts:%d,wred-total-pkts:%d]",
 	       pt_grn_pkt, pt_ylw_pkt, pt_red_pkt, pt_tot_pkt);
+
+        vector<FieldValueTuple> llrCounterFvs;
+        for (const auto& llr_stat : llr_port_stat_ids)
+        {
+            bool found = false;
+            for (uint32_t idx = 0; idx < port_stats_capability.count; idx++)
+            {
+                if (port_stats_capability.list[idx].stat_enum == llr_stat)
+                {
+                    found = true;
+                    break;
+                }
+            }
+            std::string llr_stat_name = sai_serialize_port_stat(llr_stat);
+            const std::string prefix = "SAI_PORT_STAT_";
+            std::string llr_stat_db_name = llr_stat_name.substr(prefix.length());
+            llrCounterFvs.emplace_back(llr_stat_db_name, found ? "true" : "false");
+            if (!found)
+            {
+                SWSS_LOG_DEBUG("LLR Port stat: %s is not supported", llr_stat_name.c_str());
+            }
+        }
+        m_portCounterCapabilitiesTable->set("LLR", llrCounterFvs);
     }
     else
     {
@@ -4194,6 +4245,13 @@ void PortsOrch::registerPort(Port &p)
         auto wred_port_stats = generateCounterStats(wred_port_stat_ids, sai_serialize_port_stat);
         wred_port_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, wred_port_stats);
     }
+
+    if (flex_counters_orch->getLlrPortCountersState())
+    {
+        auto llr_port_stats = generateCounterStats(llr_port_stat_ids, sai_serialize_port_stat);
+        llr_port_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, llr_port_stats);
+    }
+
     //Add the Queue Counters
     if ((flex_counters_orch->getQueueCountersState()) || (flex_counters_orch->getQueueWatermarkCountersState()))
     {
@@ -4306,6 +4364,10 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
         port_serdes_id != SAI_NULL_OBJECT_ID)
     {
         port_phy_serdes_attr_manager.clearCounterIdList(port_serdes_id);
+    }
+    if (flex_counters_orch->getLlrPortCountersState())
+    {
+        llr_port_stat_manager.clearCounterIdList(p.m_port_id);
     }
 
     /* remove port name map from counter table */
@@ -9492,6 +9554,27 @@ void PortsOrch::generateWredPortCounterMap()
     }
 
     m_isWredPortCounterMapGenerated = true;
+}
+
+void PortsOrch::generateLlrPortCounterMap()
+{
+    if (m_isLlrPortCounterMapGenerated)
+    {
+        return;
+    }
+
+    auto llr_port_stats = generateCounterStats(llr_port_stat_ids, sai_serialize_port_stat);
+    for (const auto& it: m_portList)
+    {
+        // Set counter stats only for PHY ports to ensure syncd will not try to query the counter statistics from the HW for non-PHY ports.
+        if (it.second.m_type != Port::Type::PHY)
+        {
+            continue;
+        }
+        llr_port_stat_manager.setCounterIdList(it.second.m_port_id, CounterType::PORT, llr_port_stats);
+    }
+
+    m_isLlrPortCounterMapGenerated = true;
 }
 
 /****

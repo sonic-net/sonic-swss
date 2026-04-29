@@ -95,7 +95,12 @@ counter_group_meta = {
         'name_map': 'COUNTERS_SRV6_NAME_MAP',
         'pre_test': 'pre_srv6_counter_test',
         'post_test': 'post_srv6_counter_test',
-    }
+    },
+    'llr_port_counter': {
+        'key': 'LLR',
+        'group_name': 'LLR_PORT_STAT_COUNTER',
+        'name_map': 'COUNTERS_PORT_NAME_MAP',
+    },
 }
 
 
@@ -731,6 +736,28 @@ class TestFlexCounters(TestFlexCountersBase):
             dvs (object): virtual switch object
         """
         counter_type = 'wred_port_counter'
+        self.setup_dbs(dvs)
+        meta_data = counter_group_meta[counter_type]
+        self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'])
+        counter_oid = self.counters_db.db_connection.hget(meta_data['name_map'], 'Ethernet0')
+        stats_entry_disable = {"FLEX_COUNTER_STATUS": "disable"}
+        self.config_db.set_entry("FLEX_COUNTER_TABLE", meta_data['key'], stats_entry_disable)
+        stats_entry_enable = {"FLEX_COUNTER_STATUS": "enable"}
+        self.config_db.set_entry("FLEX_COUNTER_TABLE", meta_data['key'], stats_entry_enable)
+        assert(counter_oid)
+
+    def test_llr_port_stats_status(self, dvs):
+        """
+        Test steps:
+            1. Enable LLR port flex counter group.
+            2. Verify port counter OID exists in name map.
+            3. Disable and re-enable the group.
+            4. Verify counter OID is still valid.
+
+        Args:
+            dvs (object): virtual switch object
+        """
+        counter_type = 'llr_port_counter'
         self.setup_dbs(dvs)
         meta_data = counter_group_meta[counter_type]
         self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'])

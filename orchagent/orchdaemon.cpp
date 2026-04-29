@@ -75,6 +75,7 @@ StpOrch *gStpOrch;
 MuxOrch *gMuxOrch;
 IcmpOrch *gIcmpOrch;
 HFTelOrch *gHFTOrch;
+LlrOrch *gLlrOrch;
 
 bool gIsNatSupported = false;
 event_handle_t g_events_handle;
@@ -869,6 +870,14 @@ bool OrchDaemon::init()
     {
         SWSS_LOG_NOTICE("High Frequency Telemetry is not supported on this platform");
     }
+
+
+    const vector<string> llr_tables = {
+        APP_LLR_PROFILE_TABLE_NAME,
+        APP_LLR_PORT_TABLE_NAME
+    };
+    gLlrOrch = new LlrOrch(m_applDb, m_stateDb, llr_tables);
+    m_orchList.push_back(gLlrOrch);
 
     if (WarmStart::isWarmStart())
     {

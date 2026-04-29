@@ -41,6 +41,7 @@
 #define PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS   "1000"
 #define WRED_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP "WRED_ECN_QUEUE_STAT_COUNTER"
 #define WRED_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP "WRED_ECN_PORT_STAT_COUNTER"
+#define LLR_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP "LLR_PORT_STAT_COUNTER"
 
 typedef std::vector<sai_uint32_t> PortSupportedSpeeds;
 typedef std::set<sai_port_fec_mode_t> PortSupportedFecModes;
@@ -248,6 +249,8 @@ public:
     void generateWredPortCounterMap();
     void generateWredQueueCounterMap();
 
+    void generateLlrPortCounterMap();
+
     void flushCounters();
 
     void refreshPortStatus();
@@ -340,6 +343,7 @@ private:
     FlexCounterTaggedCachedManager<void> pg_drop_stat_manager;
     FlexCounterTaggedCachedManager<void> wred_port_stat_manager;
     FlexCounterTaggedCachedManager<sai_queue_type_t> wred_queue_stat_manager;
+    FlexCounterTaggedCachedManager<void> llr_port_stat_manager;
 
     std::vector<std::reference_wrapper<FlexCounterCachedManager>> counter_managers;
 
@@ -647,6 +651,7 @@ private:
     bool m_isPathTracingSupported = false;
     void initCounterCapabilities(sai_object_id_t switchId);
     bool m_isWredPortCounterMapGenerated = false;
+    bool m_isLlrPortCounterMapGenerated = false;
     std::unique_ptr<swss::Table> m_queueCounterCapabilitiesTable = nullptr;
     std::unique_ptr<swss::Table> m_portCounterCapabilitiesTable = nullptr;
 
