@@ -305,6 +305,7 @@ private:
     bool isSharedHeadroomPoolEnabledInSai();
     bool isLosslessProfileSyncedInSai(const std::string &profileName);
     task_process_status checkPendingProfilesSyncStatus();
+    task_process_status waitPendingProfilesSyncStatus();
     void refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size);
     task_process_status checkBufferProfileDirection(const std::string &profiles, buffer_direction_t dir);
     std::string constructZeroProfileListFromNormalProfileList(const std::string &normalProfileList, const std::string &port);
