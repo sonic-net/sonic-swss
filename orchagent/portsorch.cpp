@@ -42,6 +42,7 @@
 #include "warm_restart.h"
 
 #include "saitam.h"
+#include "prbshandler.h"
 
 extern sai_switch_api_t *sai_switch_api;
 extern sai_bridge_api_t *sai_bridge_api;
@@ -792,6 +793,27 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     /* Initialize counter capability table*/
     m_queueCounterCapabilitiesTable = unique_ptr<Table>(new Table(m_state_db.get(), STATE_QUEUE_COUNTER_CAPABILITIES_NAME));
     m_portCounterCapabilitiesTable = unique_ptr<Table>(new Table(m_state_db.get(), STATE_PORT_COUNTER_CAPABILITIES_NAME));
+
+    /* Query port attribute capabilities from SAI */
+    sai_attr_capability_t prbs_config_capability;
+    if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_PRBS_CONFIG,
+                                        &prbs_config_capability) == SAI_STATUS_SUCCESS)
+    {
+        if (prbs_config_capability.set_implemented == true)
+        {
+            /* Initialize PRBS Handler */
+            m_prbsTestTable = unique_ptr<Table>(new Table(stateDb, "PORT_PRBS_TEST"));
+            m_prbsLaneResultTable = unique_ptr<Table>(new Table(stateDb, "PORT_PRBS_LANE_RESULT"));
+            m_prbsResultsTable = unique_ptr<Table>(new Table(stateDb, "PORT_PRBS_RESULTS"));
+            m_prbsHandler = unique_ptr<PrbsHandler>(new PrbsHandler(*m_prbsTestTable, *m_prbsLaneResultTable, *m_prbsResultsTable));
+
+            /* Clean up PRBS entries after ports are initialized in case of normal reboot */
+            if (m_prbsHandler && !m_isWarmRestoreStage)
+            {
+                m_prbsHandler->removeAllPrbsEntries();
+            }
+        }
+    }
 
     initGearbox();
 
@@ -1583,6 +1605,10 @@ bool PortsOrch::removePortBulk(const std::vector<sai_object_id_t> &portList)
         }
 
         m_portSupportedSpeeds.erase(portList.at(i));
+        if(m_prbsHandler != nullptr)
+        {
+            m_prbsHandler->clearSupportedPrbsPatterns(portList.at(i));
+        }
         m_portCount--;
     }
 
@@ -3172,7 +3198,6 @@ void PortsOrch::initPortSupportedSpeeds(const std::string& alias, sai_object_id_
     m_portStateTable.set(alias, v);
 }
 
-
 void PortsOrch::initPortCapAutoNeg(Port &port)
 {
     sai_status_t status;
@@ -3975,6 +4000,10 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
 
     m_portCount--;
     m_portSupportedSpeeds.erase(port_id);
+    if (m_prbsHandler != nullptr)
+    {
+        m_prbsHandler->clearSupportedPrbsPatterns(port_id);
+    }
     SWSS_LOG_NOTICE("Remove port %" PRIx64, port_id);
 
     return status;
@@ -4330,6 +4359,12 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
 
     /* Remove the entry from buffer maximum parameter table*/
     m_stateBufferMaximumValueTable->del(alias);
+
+    /* Clear PRBS state entries for this port */
+    if (m_prbsHandler)
+    {
+        m_prbsHandler->clearPrbsResults(alias);
+    }
 
     m_portList[alias].m_init = false;
     SWSS_LOG_NOTICE("De-Initialized port %s", alias.c_str());
@@ -5491,6 +5526,52 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
+                // Handle PRBS Pattern configuration
+                if (pCfg.fieldValueMap.find("prbs_pattern") != pCfg.fieldValueMap.end())
+                {
+                    const string& prbs_pattern = pCfg.fieldValueMap["prbs_pattern"];
+
+                    if (m_prbsHandler && 
+                        m_prbsHandler->isPrbsPatternSupported(p.m_alias, p.m_port_id, prbs_pattern, m_portStateTable))
+                    {
+                        if (!m_prbsHandler->handlePrbsPatternConfig(p, prbs_pattern))
+                        {
+                            SWSS_LOG_ERROR("Failed to handle PRBS pattern config on port %s", p.m_alias.c_str());
+                        }
+                        else
+                        {
+                            SWSS_LOG_NOTICE("Successfully PRBS pattern config for port %s: pattern=%s",
+                                p.m_alias.c_str(), prbs_pattern.c_str());
+                        }
+                    }
+                }
+
+                // Handle PRBS configuration
+                if (pCfg.fieldValueMap.find("prbs_mode") != pCfg.fieldValueMap.end())
+                {
+                    const string& prbs_mode = pCfg.fieldValueMap["prbs_mode"];
+
+                    if (m_prbsHandler)
+                    {
+                        if (!m_prbsHandler->handlePrbsConfig(p, prbs_mode))
+                        {
+                            SWSS_LOG_ERROR("Failed to handle PRBS config on port %s", p.m_alias.c_str());
+                            it = taskMap.erase(it);
+                            continue;
+                        }
+
+                        if (prbs_mode == "disabled")
+                        {
+                            SWSS_LOG_NOTICE("Successfully disabled PRBS on port %s", p.m_alias.c_str());
+                        }
+                        else
+                        {
+                            SWSS_LOG_NOTICE("Successfully enabled PRBS on port %s (mode=%s)",
+                                           p.m_alias.c_str(), prbs_mode.c_str());
+                        }
+                    }
+                }
+
                 /* create host_tx_ready field in state-db */
                 initHostTxReadyState(p);
 
@@ -6459,6 +6540,10 @@ void PortsOrch::postPortInit(Port& p)
 
     initPortSupportedSpeeds(p.m_alias, p.m_port_id);
     initPortSupportedFecModes(p.m_alias, p.m_port_id);
+    if (m_prbsHandler)
+    {
+        m_prbsHandler->initPortSupportedPrbsPatterns(p.m_alias, p.m_port_id, m_portStateTable);
+    }
 }
 
 void PortsOrch::doTask()
