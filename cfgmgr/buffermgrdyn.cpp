@@ -1,6 +1,7 @@
 #include <fstream>
 #include <iostream>
 #include <string.h>
+#include <unistd.h>
 #include "logger.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
@@ -27,6 +28,8 @@
  */
 using namespace std;
 using namespace swss;
+
+static constexpr int BUFFER_PROFILE_SYNC_WAIT_SECONDS = 30;
 
 BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, DBConnector *applStateDb, const vector<TableConnector> &tables, shared_ptr<vector<KeyOpFieldsValuesTuple>> gearboxInfo, shared_ptr<vector<KeyOpFieldsValuesTuple>> zeroProfilesInfo) :
         Orch(tables),
@@ -2121,6 +2124,27 @@ task_process_status BufferMgrDynamic::checkPendingProfilesSyncStatus()
     return task_process_status::task_success;
 }
 
+task_process_status BufferMgrDynamic::waitPendingProfilesSyncStatus()
+{
+    for (int i = 0; i <= BUFFER_PROFILE_SYNC_WAIT_SECONDS; i++)
+    {
+        auto status = checkPendingProfilesSyncStatus();
+        if (status == task_process_status::task_success)
+        {
+            return status;
+        }
+
+        if (i < BUFFER_PROFILE_SYNC_WAIT_SECONDS)
+        {
+            sleep(1);
+        }
+    }
+
+    SWSS_LOG_ERROR("Timed out waiting for %zu BUFFER_PROFILE entries to sync to SAI",
+                   m_shpProfilesToCheck.size());
+    return task_process_status::task_failed;
+}
+
 task_process_status BufferMgrDynamic::handleCableLenTable(KeyOpFieldsValuesTuple &tuple)
 {
     string op = kfvOp(tuple);
@@ -2564,6 +2588,7 @@ task_process_status BufferMgrDynamic::handleBufferPoolTable(KeyOpFieldsValuesTup
              * False        | Static    | False               | False
              */
             bool willSHPBeEnabledBySize = isNonZero(newSHPSize);
+
             if (newSHPSize != m_configuredSharedHeadroomPoolSize)
             {
                 bool isSHPEnabledBySize = isNonZero(m_configuredSharedHeadroomPoolSize);
@@ -2576,36 +2601,18 @@ task_process_status BufferMgrDynamic::handleBufferPoolTable(KeyOpFieldsValuesTup
                     }
                 }
 
-                // Check if we are in retry mode (profiles waiting for SAI sync)
+                m_configuredSharedHeadroomPoolSize = newSHPSize;
+                refreshSharedHeadroomPool(false, isSHPEnabledBySize != willSHPBeEnabledBySize);
+
+                // Check if there are profiles waiting for SAI sync
                 if (!m_shpProfilesToCheck.empty())
                 {
-                    // Retry mode: only check SAI sync status, don't refresh profiles
-                    SWSS_LOG_NOTICE("Retry mode: checking pending profiles");
-                    auto status = checkPendingProfilesSyncStatus();
-                    if (status == task_process_status::task_need_retry)
+                    // The desired SHP size is already in memory; wait here so
+                    // a replay cannot skip profiles that are still in flight.
+                    auto status = waitPendingProfilesSyncStatus();
+                    if (status != task_process_status::task_success)
                     {
-                        return task_process_status::task_need_retry;
-                    }
-                    // Profiles synced successfully, update configuration and continue
-                    m_configuredSharedHeadroomPoolSize = newSHPSize;
-                }
-                else
-                {
-                    // Not retry mode: refresh profiles
-                    string oldSHPSize = m_configuredSharedHeadroomPoolSize;
-                    m_configuredSharedHeadroomPoolSize = newSHPSize;
-                    refreshSharedHeadroomPool(false, isSHPEnabledBySize != willSHPBeEnabledBySize);
-
-                    // Check if there are profiles waiting for SAI sync
-                    if (!m_shpProfilesToCheck.empty())
-                    {
-                        auto status = checkPendingProfilesSyncStatus();
-                        if (status == task_process_status::task_need_retry)
-                        {
-                            // Rollback configuration change
-                            m_configuredSharedHeadroomPoolSize = oldSHPSize;
-                            return task_process_status::task_need_retry;
-                        }
+                        return status;
                     }
                 }
             }
