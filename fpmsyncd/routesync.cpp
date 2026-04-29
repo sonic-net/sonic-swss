@@ -18,6 +18,7 @@
 #include <linux/pkt_cls.h>
 #include <linux/nexthop.h>
 #include <linux/lwtunnel.h>
+#include <linux/rtnetlink.h>
 #include <linux/seg6_iptunnel.h>
 
 using namespace std;
@@ -153,15 +154,18 @@ static string getProtocolString(int proto)
         return buffer;
     }
 
-    /* libnl3 did not resolve the name; use well-known protocol names */
+    /* libnl3 did not resolve the name; use well-known protocol names.
+     * Values 186-192 are defined in <linux/rtnetlink.h>.
+     * Values 190-196 are FRR-specific (zebra/rt_netlink.h). */
     switch (proto) {
-    case 186: return "bgp";
-    case 188: return "isis";
-    case 187: return "ospf";
-    case 189: return "rip";
-    case 192: return "eigrp";
-    case 196: return "nhrp";
-    case 190: return "static";
+    case RTPROT_BGP:    return "bgp";
+    case RTPROT_ISIS:   return "isis";
+    case RTPROT_OSPF:   return "ospf";
+    case RTPROT_RIP:    return "rip";
+    case RTPROT_EIGRP:  return "eigrp";
+    case 190:           return "ripng";   /* RTPROT_RIPNG (FRR) */
+    case 191:           return "nhrp";    /* RTPROT_NHRP (FRR) */
+    case 196:           return "zstatic"; /* RTPROT_ZSTATIC (FRR) */
     default:  return std::to_string(proto);
     }
 }
