@@ -46,6 +46,7 @@ extern MacAddress gVxlanMacAddress;
 extern BfdOrch *gBfdOrch;
 extern SwitchOrch *gSwitchOrch;
 extern TunnelDecapOrch *gTunneldecapOrch;
+extern FgNhgOrch *gFgNhgOrch;
 /*
  * VRF Modeling and VNetVrf class definitions
  */
@@ -320,6 +321,23 @@ sai_object_id_t VNetVrfObject::getTunnelNextHop(NextHopKey& nh)
          * is already done in createNextHopTunnel()
          */
         SWSS_LOG_ERROR("NH Tunnel create failed for '%s' ip '%s'",
+                vnet_name_.c_str(), nh.ip_address.to_string().c_str());
+    }
+
+    return nh_id;
+}
+
+sai_object_id_t VNetVrfObject::getExistingTunnelNextHopId(NextHopKey& nh)
+{
+    auto tun_name = getTunnelName();
+
+    VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+
+    auto *tunnel_obj = vxlan_orch->getVxlanTunnel(tun_name);
+    sai_object_id_t nh_id = tunnel_obj->getNextHop(nh.ip_address, nh.mac_address, nh.vni);
+    if (nh_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("NH Tunnel lookup failed for '%s' ip '%s'",
                 vnet_name_.c_str(), nh.ip_address.to_string().c_str());
     }
 
@@ -933,6 +951,26 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
     return true;
 }
 
+bool VNetRouteOrch::removeFgNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, const IpPrefix& ipPrefix, VNetVrfObject *vrf_obj)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t vr_id = vrf_obj->getVRidIngress();
+    if (!gFgNhgOrch->removeFgNhgTunnel(vr_id, ipPrefix))
+    {
+        SWSS_LOG_ERROR("Failed to remove fine grained next hop group for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
+        return false;
+    }
+
+    for (auto nhop : nexthops.getNextHops())
+    {
+        vrf_obj->removeTunnelNextHop(nhop);
+    }
+
+    syncd_nexthop_groups_[vnet].erase(nexthops);
+    return true;
+}
+
 bool VNetRouteOrch::createNextHopGroup(const string& vnet,
                                        NextHopGroupKey& nexthops,
                                        VNetVrfObject *vrf_obj,
@@ -1142,6 +1180,78 @@ bool VNetRouteOrch::selectNextHopGroup(const string& vnet,
     return true;
 }
 
+bool VNetRouteOrch::selectFgNextHopGroup(const string& vnet,
+                                       NextHopGroupKey& nexthops,
+                                       IpPrefix& ipPrefix,
+                                       VNetVrfObject *vrf_obj,
+                                       const uint16_t consistent_hashing_buckets,
+                                       bool& isNextHopIdChanged)
+{
+    // This function returns the next hop group which is to be used to in the hardware
+    // for fine grained ECMP tunnel routes.
+
+    bool nhg_exists = hasNextHopGroup(vnet, nexthops);
+    std::map<NextHopKey, sai_object_id_t> nhopgroup_members_set;
+
+    for (auto nh : nexthops.getNextHops())
+    {
+        sai_object_id_t next_hop_id;
+        if (nhg_exists)
+        {
+            // NHG already exists, look up existing tunnel NH IDs without incrementing refcount
+            next_hop_id = vrf_obj->getExistingTunnelNextHopId(nh);
+        }
+        else
+        {
+            // New NHG, create tunnel NHs (sets refcount to 1)
+            next_hop_id = vrf_obj->getTunnelNextHop(nh);
+        }
+        nhopgroup_members_set[nh] = next_hop_id;
+    }
+
+    sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
+
+    sai_object_id_t vrf_id;
+    vnet_orch_->getVrfIdByVnetName(vnet, vrf_id);
+    if (!gFgNhgOrch->setFgNhgTunnel(vrf_id, ipPrefix, nhopgroup_members_set, nexthops, consistent_hashing_buckets, nh_id, isNextHopIdChanged))
+    {
+        SWSS_LOG_ERROR("Failed to create fine grained next hop group for VNET %s", vnet.c_str());
+
+        if (!nhg_exists)
+        {
+            for (auto nh : nexthops.getNextHops())
+            {
+                vrf_obj->removeTunnelNextHop(nh);
+            }
+        }
+        return false;
+    }
+
+    if (!nhg_exists)
+    {
+        NextHopGroupInfo next_hop_group_entry;
+        next_hop_group_entry.next_hop_group_id = nh_id;
+
+        /*
+        * Initialize the next hop group structure with ref_count as 0. This
+        * count will increase once the route is successfully syncd.
+        */
+        next_hop_group_entry.ref_count = 0;
+        syncd_nexthop_groups_[vnet][nexthops] = next_hop_group_entry;
+
+        for (auto nh : nexthops.getNextHops())
+        {
+            syncd_nexthop_groups_[vnet][nexthops].active_members[nh] = SAI_NULL_OBJECT_ID;
+        }
+    }
+    if (isNextHopIdChanged)
+    {
+        syncd_nexthop_groups_[vnet][nexthops].next_hop_group_id = nh_id;
+    }
+
+    return true;
+}
+
 template<>
 bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipPrefix,
                                                NextHopGroupKey& nexthops, string& op, string& profile,
@@ -1150,6 +1260,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                                                const int32_t tx_monitor_timer,
                                                NextHopGroupKey& nexthops_secondary,
                                                const IpPrefix& adv_prefix,
+                                               const uint16_t consistent_hashing_buckets,
                                                const map<NextHopKey, IpAddress>& monitors,
                                                const map<IpAddress, pinned_state_t>& monitor_addr_to_pinned_state)
 {
@@ -1186,83 +1297,191 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
     sai_ip_prefix_t pfx;
     copy(pfx, ipPrefix);
 
+    bool is_fg = (consistent_hashing_buckets > 0);
+
     if (op == SET_COMMAND)
     {
-        bool custom_monitor_ep_updated = isCustomMonitorEndpointUpdated(vnet, ipPrefix, monitors);
-        std::map<NextHopKey, swss::IpAddress> origin_primary_monitors;
-        std::map<NextHopKey, swss::IpAddress> origin_secondary_monitors;
-        if (custom_monitor_ep_updated)
-        {
-            auto it_route = syncd_tunnel_routes_[vnet].find(ipPrefix);
-            if (it_route != syncd_tunnel_routes_[vnet].end())
-            {
-                getCustomMonitors(vnet, ipPrefix, it_route->second.primary, origin_primary_monitors);
-                getCustomMonitors(vnet, ipPrefix, it_route->second.secondary, origin_secondary_monitors);
-            }
-        }
-
-        bool is_custom_monitor_pinned_state_updated = isPinnedStateUpdated(vnet, ipPrefix, monitor_addr_to_pinned_state);
+        auto it_route = syncd_tunnel_routes_[vnet].find(ipPrefix);
+        bool was_fg = (it_route != syncd_tunnel_routes_[vnet].end()) ? (it_route->second.consistent_hashing_buckets > 0) : false;
 
         sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
         NextHopGroupKey active_nhg("", true);
-        if (!selectNextHopGroup(vnet, nexthops, nexthops_secondary, monitoring, rx_monitor_timer, tx_monitor_timer, ipPrefix, vrf_obj, active_nhg, monitors, monitor_addr_to_pinned_state))
+        bool isNextHopIdChanged = false;
+
+        bool custom_monitor_ep_updated = false;
+        std::map<NextHopKey, swss::IpAddress> origin_primary_monitors;
+        std::map<NextHopKey, swss::IpAddress> origin_secondary_monitors;
+        bool is_custom_monitor_pinned_state_updated = false;
+
+        bool route_deleted_for_fg_transition = false;
+
+        if (is_fg)
         {
-            return true;
+            /* If transitioning from regular ECMP to FG ECMP, clean up the old
+             * regular NHG first. This must happen before selectFgNextHopGroup
+             * so the syncd_nexthop_groups_ entry isn't corrupted when both the
+             * old regular NHG and the new FG NHG share the same key. */
+            if (!was_fg && it_route != syncd_tunnel_routes_[vnet].end())
+            {
+                /* Remove the SAI route first so the old NHG's SAI reference
+                 * count drops to 0, allowing it to be cleanly removed.
+                 * Without this the SAI remove_next_hop_group call fails with
+                 * "reference count is 1, can't remove" and the NHG entry
+                 * remains in syncd_nexthop_groups_, which causes
+                 * selectFgNextHopGroup to call getExistingTunnelNextHopId on
+                 * already-removed tunnel NHs and receive NULL OIDs, making
+                 * all 60 FG bucket member creations fail. */
+                for (auto del_vr_id : vr_set)
+                {
+                    del_route(del_vr_id, pfx);
+                }
+                vrf_obj->removeRoute(ipPrefix);
+                vrf_obj->removeProfile(ipPrefix);
+                route_deleted_for_fg_transition = true;
+
+                NextHopGroupKey old_nhg = it_route->second.nhg_key;
+                if (hasNextHopGroup(vnet, old_nhg))
+                {
+                    --syncd_nexthop_groups_[vnet][old_nhg].ref_count;
+                    if (old_nhg.getSize() > 1)
+                    {
+                        removeNextHopGroup(vnet, old_nhg, vrf_obj);
+                    }
+                    else
+                    {
+                        NextHopKey old_nh = *old_nhg.getNextHops().begin();
+                        syncd_nexthop_groups_[vnet].erase(old_nhg);
+                        if (!isLocalEndpoint(vnet, old_nh.ip_address))
+                        {
+                            vrf_obj->removeTunnelNextHop(old_nh);
+                        }
+                    }
+                    delEndpointMonitor(vnet, old_nhg, ipPrefix);
+                }
+            }
+
+            if (!selectFgNextHopGroup(vnet, nexthops, ipPrefix, vrf_obj, consistent_hashing_buckets, isNextHopIdChanged))
+            {
+                return true;
+            }
+            active_nhg = nexthops;
+        }
+        else
+        {
+            /* If transitioning from FG ECMP to regular ECMP, clean up the old
+             * FG NHG first. This must happen before selectNextHopGroup so the
+             * syncd_nexthop_groups_ entry isn't corrupted when both the old FG
+             * NHG and the new regular NHG share the same key. */
+            if (was_fg && it_route != syncd_tunnel_routes_[vnet].end())
+            {
+                /* Remove the SAI route first so the old FG NHG's SAI reference
+                 * count drops to 0, allowing it to be cleanly removed.
+                 * Without this the sai_next_hop_group_api->remove_next_hop_group
+                 * call inside removeFgNhgTunnel fails with "reference count is 1,
+                 * can't remove", leaving the SAI NHG object and the fgnhgorch
+                 * m_syncdFGRouteTables entry in a corrupted/leaked state. */
+                for (auto del_vr_id : vr_set)
+                {
+                    del_route(del_vr_id, pfx);
+                }
+                vrf_obj->removeRoute(ipPrefix);
+                route_deleted_for_fg_transition = true;
+
+                NextHopGroupKey old_nhg = it_route->second.nhg_key;
+                if (hasNextHopGroup(vnet, old_nhg))
+                {
+                    --syncd_nexthop_groups_[vnet][old_nhg].ref_count;
+                    removeFgNextHopGroup(vnet, old_nhg, ipPrefix, vrf_obj);
+                }
+            }
+
+            custom_monitor_ep_updated = isCustomMonitorEndpointUpdated(vnet, ipPrefix, monitors);
+            if (custom_monitor_ep_updated)
+            {
+                if (it_route != syncd_tunnel_routes_[vnet].end())
+                {
+                    getCustomMonitors(vnet, ipPrefix, it_route->second.primary, origin_primary_monitors);
+                    getCustomMonitors(vnet, ipPrefix, it_route->second.secondary, origin_secondary_monitors);
+                }
+            }
+
+            is_custom_monitor_pinned_state_updated = isPinnedStateUpdated(vnet, ipPrefix, monitor_addr_to_pinned_state);
+
+            if (!selectNextHopGroup(vnet, nexthops, nexthops_secondary, monitoring, rx_monitor_timer, tx_monitor_timer, ipPrefix, vrf_obj, active_nhg, monitors, monitor_addr_to_pinned_state))
+            {
+                return true;
+            }
         }
 
         // note: nh_id can be SAI_NULL_OBJECT_ID when active_nhg is empty.
         nh_id = syncd_nexthop_groups_[vnet][active_nhg].next_hop_group_id;
 
-        auto it_route = syncd_tunnel_routes_[vnet].find(ipPrefix);
         for (auto vr_id : vr_set)
         {
             bool route_status = true;
 
-            // Remove route if the nexthop group has no active endpoint
-            if (syncd_nexthop_groups_[vnet][active_nhg].active_members.empty())
+            if (is_fg)
             {
-                if (it_route != syncd_tunnel_routes_[vnet].end())
+                // FG path: add if new route or if we deleted the route during
+                // the regular→FG transition; otherwise update if NHG changed.
+                if (it_route == syncd_tunnel_routes_[vnet].end() || route_deleted_for_fg_transition)
                 {
-                    NextHopGroupKey nhg = it_route->second.nhg_key;
-                    // Remove route when updating from a nhg with active member to another nhg without
-                    if (!syncd_nexthop_groups_[vnet][nhg].active_members.empty())
-                    {
-                        del_route(vr_id, pfx);
-                    }
+                    route_status = add_route(vr_id, pfx, nh_id);
+                }
+                else if (isNextHopIdChanged || was_fg != is_fg)
+                {
+                    route_status = update_route(vr_id, pfx, nh_id);
                 }
             }
             else
             {
-                auto prefixToRemove = ipPrefix;
-                if (adv_prefix.to_string() != ipPrefix.to_string())
+                // Regular path: handles empty NHG, BGP route removal, adv_prefix
+                if (syncd_nexthop_groups_[vnet][active_nhg].active_members.empty())
                 {
-                    prefixToRemove = adv_prefix;
-                }
-                auto prefixSubnet = prefixToRemove.getSubnet();
-                if(gRouteOrch && gRouteOrch->isRouteExists(vr_id, prefixSubnet))
-                {
-                    if (!gRouteOrch->removeRoutePrefix(prefixSubnet))
+                    if (it_route != syncd_tunnel_routes_[vnet].end())
                     {
-                        SWSS_LOG_ERROR("Could not remove existing bgp route for prefix: %s\n", prefixSubnet.to_string().c_str());
-                        return false;
+                        NextHopGroupKey nhg = it_route->second.nhg_key;
+                        // Remove route when updating from a nhg with active member to another nhg without
+                        if (!syncd_nexthop_groups_[vnet][nhg].active_members.empty())
+                        {
+                            del_route(vr_id, pfx);
+                        }
                     }
-                    SWSS_LOG_INFO("Successfully removed existing bgp route for prefix: %s\n",
-                                  prefixSubnet.to_string().c_str());
-                }
-                if (it_route == syncd_tunnel_routes_[vnet].end())
-                {
-                    route_status = add_route(vr_id, pfx, nh_id);
                 }
                 else
                 {
-                    NextHopGroupKey nhg = it_route->second.nhg_key;
-                    if (syncd_nexthop_groups_[vnet][nhg].active_members.empty())
+                    auto prefixToRemove = ipPrefix;
+                    if (adv_prefix.to_string() != ipPrefix.to_string())
+                    {
+                        prefixToRemove = adv_prefix;
+                    }
+                    auto prefixSubnet = prefixToRemove.getSubnet();
+                    if(gRouteOrch && gRouteOrch->isRouteExists(vr_id, prefixSubnet))
+                    {
+                        if (!gRouteOrch->removeRoutePrefix(prefixSubnet))
+                        {
+                            SWSS_LOG_ERROR("Could not remove existing bgp route for prefix: %s\n", prefixSubnet.to_string().c_str());
+                            return false;
+                        }
+                        SWSS_LOG_INFO("Successfully removed existing bgp route for prefix: %s\n",
+                                      prefixSubnet.to_string().c_str());
+                    }
+                    if (it_route == syncd_tunnel_routes_[vnet].end() || route_deleted_for_fg_transition)
                     {
                         route_status = add_route(vr_id, pfx, nh_id);
                     }
                     else
                     {
-                        route_status = update_route(vr_id, pfx, nh_id);
+                        NextHopGroupKey nhg = it_route->second.nhg_key;
+                        if (hasNextHopGroup(vnet, nhg) &&
+                            syncd_nexthop_groups_[vnet][nhg].active_members.empty())
+                        {
+                            route_status = add_route(vr_id, pfx, nh_id);
+                        }
+                        else
+                        {
+                            route_status = update_route(vr_id, pfx, nh_id);
+                        }
                     }
                 }
             }
@@ -1271,88 +1490,138 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             {
                 SWSS_LOG_ERROR("Route add/update failed for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
                 /* Clean up the newly created next hop group entry */
-                if (active_nhg.getSize() > 1)
+                if (is_fg)
+                {
+                    removeFgNextHopGroup(vnet, active_nhg, ipPrefix, vrf_obj);
+                }
+                else if (active_nhg.getSize() > 1)
                 {
                     removeNextHopGroup(vnet, active_nhg, vrf_obj);
                 }
                 return false;
             }
         }
+
+        // Clean up old NHG if the route is being updated
         bool route_updated = false;
         bool priority_route_updated = false;
         if (it_route != syncd_tunnel_routes_[vnet].end())
         {
-            if (custom_monitor_ep_updated)
+            if (was_fg)
             {
-                route_updated = true;
-
-                delEndpointMonitor(vnet, origin_primary_monitors, ipPrefix);
-                delEndpointMonitor(vnet, origin_secondary_monitors, ipPrefix);
-            }
-            else if ((monitoring == "" && it_route->second.nhg_key != nexthops) ||
-                ((monitoring == VNET_MONITORING_TYPE_CUSTOM || monitoring == VNET_MONITORING_TYPE_CUSTOM_BFD) &&
-                 (it_route->second.primary != nexthops || it_route->second.secondary != nexthops_secondary)))
-            {
-                route_updated = true;
-                NextHopGroupKey nhg = it_route->second.nhg_key;
-                if (monitoring == VNET_MONITORING_TYPE_CUSTOM || monitoring == VNET_MONITORING_TYPE_CUSTOM_BFD)
+                if (!is_fg)
                 {
-                    // if the previously active NHG is same as the newly created active NHG.case of primary secondary swap or
-                    //when primary is active and secondary is changed or vice versa. In these cases we dont remove the NHG
-                    // but only remove the monitors for the set which has changed.
-                    if (it_route->second.primary != nexthops)
-                    {
-                        delEndpointMonitor(vnet, it_route->second.primary, ipPrefix);
-                    }
-                    if (it_route->second.secondary != nexthops_secondary)
-                    {
-                        delEndpointMonitor(vnet, it_route->second.secondary, ipPrefix);
-                    }
-                    if (monitor_info_[vnet][ipPrefix].empty())
-                    {
-                        monitor_info_[vnet].erase(ipPrefix);
-                    }
-                    priority_route_updated = true;
+                    /* FG->non-FG transition: old FG NHG was already cleaned up
+                     * before selectNextHopGroup, just mark as updated. */
+                    route_updated = true;
                 }
-                else
+                // Old route was FG ECMP, new route is also FG ECMP
+                else if (it_route->second.nhg_key != nexthops)
                 {
-                    // In case of updating an existing route, decrease the reference count for the previous nexthop group
-                    if (--syncd_nexthop_groups_[vnet][nhg].ref_count == 0)
+                    route_updated = true;
+                    NextHopGroupKey old_nhg = it_route->second.nhg_key;
+
+                    if (--syncd_nexthop_groups_[vnet][old_nhg].ref_count == 0)
                     {
-                        if (nhg.getSize() > 1)
+                        /* FG->FG update: setFgNhgTunnel already updated the SAI NHG
+                         * in-place, so skip SAI-level removal. Remove all old tunnel
+                         * NHs to balance the refcount: selectFgNextHopGroup already
+                         * called getTunnelNextHop for every NH in the new set. */
+                        for (auto nhop : old_nhg.getNextHops())
                         {
-                            removeNextHopGroup(vnet, nhg, vrf_obj);
+                            vrf_obj->removeTunnelNextHop(nhop);
                         }
-                        else
-                        {
-                            syncd_nexthop_groups_[vnet].erase(nhg);
-                            if(nhg.getSize() == 1)
-                            {
-                                NextHopKey nexthop = *nhg.getNextHops().begin();
-                                if (!isLocalEndpoint(vnet, nexthop.ip_address))
-                                {
-                                    vrf_obj->removeTunnelNextHop(nexthop);
-                                }
-                            }
-                        }
-                        if (monitoring != VNET_MONITORING_TYPE_CUSTOM && monitoring != VNET_MONITORING_TYPE_CUSTOM_BFD)
-                        {
-                            delEndpointMonitor(vnet, nhg, ipPrefix);
-                        }
+                        syncd_nexthop_groups_[vnet].erase(old_nhg);
                     }
                     else
                     {
-                        syncd_nexthop_groups_[vnet][nhg].tunnel_routes.erase(ipPrefix);
+                        syncd_nexthop_groups_[vnet][old_nhg].tunnel_routes.erase(ipPrefix);
                     }
                     vrf_obj->removeRoute(ipPrefix);
-                    vrf_obj->removeProfile(ipPrefix);
                 }
-            } else if (is_custom_monitor_pinned_state_updated)
+            }
+            else
             {
-                route_updated = true;
+                // Old route was regular ECMP - use regular cleanup path
+                if (custom_monitor_ep_updated)
+                {
+                    route_updated = true;
+
+                    delEndpointMonitor(vnet, origin_primary_monitors, ipPrefix);
+                    delEndpointMonitor(vnet, origin_secondary_monitors, ipPrefix);
+                }
+                else if (is_fg)
+                {
+                    /* Regular->FG transition: old NHG was already cleaned up
+                     * before selectFgNextHopGroup, just mark as updated. */
+                    route_updated = true;
+                }
+                else if ((monitoring == "" && it_route->second.nhg_key != nexthops) ||
+                    ((monitoring == VNET_MONITORING_TYPE_CUSTOM || monitoring == VNET_MONITORING_TYPE_CUSTOM_BFD) &&
+                     (it_route->second.primary != nexthops || it_route->second.secondary != nexthops_secondary)))
+                {
+                    route_updated = true;
+                    NextHopGroupKey nhg = it_route->second.nhg_key;
+                    if (monitoring == VNET_MONITORING_TYPE_CUSTOM || monitoring == VNET_MONITORING_TYPE_CUSTOM_BFD)
+                    {
+                        // if the previously active NHG is same as the newly created active NHG.case of primary secondary swap or
+                        //when primary is active and secondary is changed or vice versa. In these cases we dont remove the NHG
+                        // but only remove the monitors for the set which has changed.
+                        if (it_route->second.primary != nexthops)
+                        {
+                            delEndpointMonitor(vnet, it_route->second.primary, ipPrefix);
+                        }
+                        if (it_route->second.secondary != nexthops_secondary)
+                        {
+                            delEndpointMonitor(vnet, it_route->second.secondary, ipPrefix);
+                        }
+                        if (monitor_info_[vnet][ipPrefix].empty())
+                        {
+                            monitor_info_[vnet].erase(ipPrefix);
+                        }
+                        priority_route_updated = true;
+                    }
+                    else
+                    {
+                        // In case of updating an existing route, decrease the reference count for the previous nexthop group
+                        if (--syncd_nexthop_groups_[vnet][nhg].ref_count == 0)
+                        {
+                            if (nhg.getSize() > 1)
+                            {
+                                removeNextHopGroup(vnet, nhg, vrf_obj);
+                            }
+                            else
+                            {
+                                syncd_nexthop_groups_[vnet].erase(nhg);
+                                if(nhg.getSize() == 1)
+                                {
+                                    NextHopKey nexthop = *nhg.getNextHops().begin();
+                                    if (!isLocalEndpoint(vnet, nexthop.ip_address))
+                                    {
+                                        vrf_obj->removeTunnelNextHop(nexthop);
+                                    }
+                                }
+                            }
+                            if (monitoring != VNET_MONITORING_TYPE_CUSTOM && monitoring != VNET_MONITORING_TYPE_CUSTOM_BFD)
+                            {
+                                delEndpointMonitor(vnet, nhg, ipPrefix);
+                            }
+                        }
+                        else
+                        {
+                            syncd_nexthop_groups_[vnet][nhg].tunnel_routes.erase(ipPrefix);
+                        }
+                        vrf_obj->removeRoute(ipPrefix);
+                        vrf_obj->removeProfile(ipPrefix);
+                    }
+                } else if (is_custom_monitor_pinned_state_updated)
+                {
+                    route_updated = true;
+                }
             }
         }
-        if (!profile.empty())
+
+        if (!is_fg && !profile.empty())
         {
             vrf_obj->addProfile(ipPrefix, profile);
         }
@@ -1361,12 +1630,13 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             syncd_nexthop_groups_[vnet][active_nhg].tunnel_routes.insert(ipPrefix);
             VNetTunnelRouteEntry tunnel_route_entry;
             tunnel_route_entry.nhg_key = active_nhg;
+            tunnel_route_entry.consistent_hashing_buckets = consistent_hashing_buckets;
             tunnel_route_entry.primary = nexthops;
-            tunnel_route_entry.secondary = nexthops_secondary;
+            tunnel_route_entry.secondary = is_fg ? NextHopGroupKey() : nexthops_secondary;
             syncd_tunnel_routes_[vnet][ipPrefix] = tunnel_route_entry;
             syncd_nexthop_groups_[vnet][active_nhg].ref_count++;
 
-            if (priority_route_updated || custom_monitor_ep_updated || is_custom_monitor_pinned_state_updated)
+            if (!is_fg && (priority_route_updated || custom_monitor_ep_updated || is_custom_monitor_pinned_state_updated))
             {
                 MonitorUpdate update;
                 update.monitoring_type = monitoring;
@@ -1378,21 +1648,24 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 return true;
             }
 
-            if (adv_prefix.to_string() != ipPrefix.to_string() && prefix_to_adv_prefix_.find(ipPrefix) == prefix_to_adv_prefix_.end())
+            if (!is_fg)
             {
-                prefix_to_adv_prefix_[ipPrefix] = adv_prefix;
-                if (adv_prefix_refcount_.find(adv_prefix) == adv_prefix_refcount_.end())
+                if (adv_prefix.to_string() != ipPrefix.to_string() && prefix_to_adv_prefix_.find(ipPrefix) == prefix_to_adv_prefix_.end())
                 {
-                    adv_prefix_refcount_[adv_prefix] = 0;
-                }
-                if(active_nhg.getSize() > 0)
-                {
-                    adv_prefix_refcount_[adv_prefix] += 1;
+                    prefix_to_adv_prefix_[ipPrefix] = adv_prefix;
+                    if (adv_prefix_refcount_.find(adv_prefix) == adv_prefix_refcount_.end())
+                    {
+                        adv_prefix_refcount_[adv_prefix] = 0;
+                    }
+                    if(active_nhg.getSize() > 0)
+                    {
+                        adv_prefix_refcount_[adv_prefix] += 1;
+                    }
                 }
             }
             vrf_obj->addRoute(ipPrefix, active_nhg);
         }
-        postRouteState(vnet, ipPrefix, active_nhg, profile);
+        postRouteState(vnet, ipPrefix, active_nhg, is_fg ? string("") : profile);
     }
     else if (op == DEL_COMMAND)
     {
@@ -1404,6 +1677,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             return true;
         }
         NextHopGroupKey nhg = it_route->second.nhg_key;
+        bool was_fg = (it_route->second.consistent_hashing_buckets > 0);
         auto last_nhg_size = nhg.getSize();
         for (auto vr_id : vr_set)
         {
@@ -1422,34 +1696,42 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
 
         if(--syncd_nexthop_groups_[vnet][nhg].ref_count == 0)
         {
-            if (nhg.getSize() > 1)
+            if (was_fg)
             {
-                removeNextHopGroup(vnet, nhg, vrf_obj);
+                removeFgNextHopGroup(vnet, nhg, ipPrefix, vrf_obj);
             }
             else
             {
-                syncd_nexthop_groups_[vnet].erase(nhg);
-                // We need to check specifically if there is only one next hop active.
-                // In case of Priority routes we can end up in a situation where the active NHG has 0 nexthops.
-                if(nhg.getSize() == 1)
+                if (nhg.getSize() > 1)
                 {
-                    NextHopKey nexthop = *nhg.getNextHops().begin();
-                    if (!isLocalEndpoint(vnet, nexthop.ip_address))
+                    removeNextHopGroup(vnet, nhg, vrf_obj);
+                }
+                else
+                {
+                    syncd_nexthop_groups_[vnet].erase(nhg);
+                    // We need to check specifically if there is only one next hop active.
+                    // In case of Priority routes we can end up in a situation where the active NHG has 0 nexthops.
+                    if(nhg.getSize() == 1)
                     {
-                        vrf_obj->removeTunnelNextHop(nexthop);
+                        NextHopKey nexthop = *nhg.getNextHops().begin();
+                        if (!isLocalEndpoint(vnet, nexthop.ip_address))
+                        {
+                            vrf_obj->removeTunnelNextHop(nexthop);
+                        }
                     }
                 }
-            }
-            if (monitor_info_[vnet].find(ipPrefix) == monitor_info_[vnet].end())
-            {
-                delEndpointMonitor(vnet, nhg, ipPrefix);
+                if (monitor_info_[vnet].find(ipPrefix) == monitor_info_[vnet].end())
+                {
+                    delEndpointMonitor(vnet, nhg, ipPrefix);
+                }
             }
         }
         else
         {
             syncd_nexthop_groups_[vnet][nhg].tunnel_routes.erase(ipPrefix);
         }
-        if (monitor_info_[vnet].find(ipPrefix) != monitor_info_[vnet].end())
+
+        if (!was_fg && monitor_info_[vnet].find(ipPrefix) != monitor_info_[vnet].end())
         {
             delEndpointMonitor(vnet, it_route->second.primary, ipPrefix);
             delEndpointMonitor(vnet, it_route->second.secondary, ipPrefix);
@@ -1463,10 +1745,14 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         }
 
         vrf_obj->removeRoute(ipPrefix);
-        vrf_obj->removeProfile(ipPrefix);
+
+        if (!was_fg)
+        {
+            vrf_obj->removeProfile(ipPrefix);
+        }
 
         removeRouteState(vnet, ipPrefix);
-        if (prefix_to_adv_prefix_.find(ipPrefix) != prefix_to_adv_prefix_.end())
+        if (!was_fg && prefix_to_adv_prefix_.find(ipPrefix) != prefix_to_adv_prefix_.end())
         {
             auto adv_pfx = prefix_to_adv_prefix_[ipPrefix];
             prefix_to_adv_prefix_.erase(ipPrefix);
@@ -2550,7 +2836,7 @@ void VNetRouteOrch::updateMonitorState(string& op, const IpPrefix& prefix, const
     }
 }
 
-void VNetRouteOrch::postRouteState(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& profile)
+void VNetRouteOrch::postRouteState(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, const string& profile)
 {
     const string state_db_key = vnet + state_db_key_delimiter + ipPrefix.to_string();
     vector<FieldValueTuple> fvVector;
@@ -2630,7 +2916,7 @@ void VNetRouteOrch::removeRouteState(const string& vnet, IpPrefix& ipPrefix)
     }
 }
 
-void VNetRouteOrch::addRouteAdvertisement(IpPrefix& ipPrefix, string& profile)
+void VNetRouteOrch::addRouteAdvertisement(IpPrefix& ipPrefix, const string& profile)
 {
     const string key = ipPrefix.to_string();
     vector<FieldValueTuple> fvs;
@@ -3207,6 +3493,7 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     string monitoring;
     int32_t rx_monitor_timer = -1;
     int32_t tx_monitor_timer = -1;
+    uint16_t consistent_hashing_buckets = 0;
     swss::IpPrefix adv_prefix;
     bool has_priority_ep = false;
     bool has_adv_pfx = false;
@@ -3263,6 +3550,10 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         else if (name == "pinned_state")
         {
             pinned_state_list = request.getAttrStringList(name);
+        }
+        else if (name == "consistent_hashing_buckets")
+        {
+            consistent_hashing_buckets = static_cast<uint16_t>(request.getAttrUint(name));
         }
         else
         {
@@ -3424,7 +3715,7 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     }
     if (vnet_orch_->isVnetExecVrf())
     {
-        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, (has_priority_ep == true) ? nhg_primary : nhg, op, profile, monitoring, rx_monitor_timer, tx_monitor_timer, nhg_secondary, adv_prefix, monitors, monitor_addr_to_pinned_state);
+        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, (has_priority_ep == true) ? nhg_primary : nhg, op, profile, monitoring, rx_monitor_timer, tx_monitor_timer, nhg_secondary, adv_prefix, consistent_hashing_buckets, monitors, monitor_addr_to_pinned_state);
     }
 
     return true;
