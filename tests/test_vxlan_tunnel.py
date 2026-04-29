@@ -6,6 +6,7 @@ import pytest
 
 from swsscommon import swsscommon
 from pprint import pprint
+from dvslib.dvs_common import wait_for_result, PollingConfig
 
 
 def create_entry(tbl, key, pairs):
@@ -410,6 +411,93 @@ def test_vnet_cleanup_config_reload(dvs, env_setup):
     ret, stdout = dvs.runcmd(["ip", "link", "show"])
     assert "Vxlan1" in stdout
     assert "Brvxlan1" in stdout
+
+def test_vxlanmgr_constructor_cleanup(dvs, env_setup):
+    """Test that vxlanmgrd constructor cleans up stale VXLAN and VXLAN_IF devices on restart"""
+    
+    num_stale_devices = 100
+    
+    # Collect initial VXLAN device count
+    _, output = dvs.runcmd(['sh', '-c', 
+        "ip link show type vxlan | grep -c '^[0-9]' || true"])
+    initial_vxlan_count = int(output.strip()) if output.strip() else 0
+    
+    # Collect initial VXLAN_IF (bridge) device count
+    _, output = dvs.runcmd(['sh', '-c', 
+        "ip link show type bridge | grep -c '^[0-9]' || true"])
+    initial_bridge_count = int(output.strip()) if output.strip() else 0
+    
+    # Create stale VXLAN devices directly in Linux
+    # These simulate leftover devices from a previous run
+    for i in range(num_stale_devices):
+        vxlan_name = f"StaleVxlan{i}"
+        vni = 10000 + i
+        ret, _ = dvs.runcmd(['sh', '-c', 
+            f"ip link add {vxlan_name} type vxlan id {vni} dstport 4789 nolearning"])
+        assert ret == 0, f"Failed to create stale VXLAN {vxlan_name}"
+    
+    # Create stale VXLAN_IF (bridge) devices
+    for i in range(num_stale_devices):
+        bridge_name = f"Brvxlan{1000 + i}"
+        ret, _ = dvs.runcmd(['sh', '-c', 
+            f"ip link add {bridge_name} type bridge"])
+        assert ret == 0, f"Failed to create stale bridge {bridge_name}"
+    
+    # Verify stale VXLANs were created in kernel
+    _, output = dvs.runcmd(['sh', '-c', 
+        "ip link show type vxlan | grep -c '^[0-9]' || true"])
+    current_vxlan_count = int(output.strip()) if output.strip() else 0
+    expected_vxlan_count = initial_vxlan_count + num_stale_devices
+    assert current_vxlan_count == expected_vxlan_count, \
+        f"Expected {expected_vxlan_count} VXLANs, found {current_vxlan_count}"
+    
+    # Verify stale bridges were created in kernel
+    _, output = dvs.runcmd(['sh', '-c', 
+        "ip link show type bridge | grep -c '^[0-9]' || true"])
+    current_bridge_count = int(output.strip()) if output.strip() else 0
+    expected_bridge_count = initial_bridge_count + num_stale_devices
+    assert current_bridge_count == expected_bridge_count, \
+        f"Expected {expected_bridge_count} bridges, found {current_bridge_count}"
+    
+    # Kill vxlanmgrd process to trigger restart
+    dvs.runcmd(['sh', '-c', "pkill -9 vxlanmgrd"])
+    
+    # Restart vxlanmgrd via supervisorctl
+    dvs.runcmd(['sh', '-c', "supervisorctl restart vxlanmgrd"])
+    
+    # Reapply cfg to restore legitimate devices
+    cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    apply_test_vnet_cfg(cfg_db)
+    
+    # Poll until all stale VXLAN devices are cleaned up
+    cleanup_polling = PollingConfig(polling_interval=1, timeout=30, strict=True)
+
+    def _check_stale_vxlans_cleaned():
+        _, output = dvs.runcmd(['sh', '-c',
+            "ip link show type vxlan | grep -c '^[0-9]' || true"])
+        current = int(output.strip()) if output.strip() else 0
+        return (current == initial_vxlan_count, current)
+
+    wait_for_result(
+        _check_stale_vxlans_cleaned,
+        polling_config=cleanup_polling,
+        failure_message=f"Stale VXLANs not cleaned up within {cleanup_polling.timeout}s; "
+                       f"expected {initial_vxlan_count} VXLANs",
+    )
+
+    # Poll until all stale bridge devices are cleaned up
+    def _check_stale_bridges_cleaned():
+        _, output = dvs.runcmd(['sh', '-c',
+            "ip link show type bridge | grep -c '^[0-9]' || true"])
+        current = int(output.strip()) if output.strip() else 0
+        return (current == initial_bridge_count, current)
+
+    wait_for_result(
+        _check_stale_bridges_cleaned,
+        polling_config=cleanup_polling,
+        failure_message=f"Stale bridges not cleaned up within {cleanup_polling.timeout}s; "
+                       f"expected {initial_bridge_count} bridges",
+    )
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

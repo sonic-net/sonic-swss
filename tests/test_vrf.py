@@ -5,6 +5,7 @@ import pytest
 
 from swsscommon import swsscommon
 from pprint import pprint
+from dvslib.dvs_common import wait_for_result, PollingConfig
 
 
 class TestVrf(object):
@@ -247,6 +248,55 @@ class TestVrf(object):
             self.vrf_update("Vrf_a", req_attr, exp_attr, state)
 
         self.vrf_remove(dvs, "Vrf_a", state)
+
+    def test_VRFMgr_ConstructorCleanup(self, dvs, testlog):
+        """Test that vrfmgrd constructor cleans up stale VRF devices on restart"""
+        self.setup_db(dvs)
+
+        num_stale_vrfs = 100
+        
+        # Collect initial VRF count
+        _, output = dvs.runcmd(['sh', '-c', 
+            "ip link show type vrf | grep -c '^[0-9]' || true"])
+        initial_vrf_count = int(output.strip()) if output.strip() else 0
+        
+        # Create stale VRF devices directly in Linux
+        # These simulate leftover devices from a previous run
+        for i in range(num_stale_vrfs):
+            vrf_name = f"StaleVrf{i}"
+            table_id = 2000 + i
+            (exitcode, _) = dvs.runcmd(['sh', '-c', 
+                f"ip link add {vrf_name} type vrf table {table_id}"])
+            assert exitcode == 0, f"Failed to create stale VRF {vrf_name}"
+        
+        # Verify stale VRFs were created in kernel
+        _, output = dvs.runcmd(['sh', '-c', 
+            "ip link show type vrf | grep -c '^[0-9]' || true"])
+        current_vrf_count = int(output.strip()) if output.strip() else 0
+        expected_vrf_count = initial_vrf_count + num_stale_vrfs
+        assert current_vrf_count == expected_vrf_count, \
+            f"Expected {expected_vrf_count} VRFs, found {current_vrf_count}"
+        
+        # Kill vrfmgrd process to trigger restart
+        dvs.runcmd(['sh', '-c', "pkill -9 vrfmgrd"])
+        
+        # Restart vrfmgrd via supervisorctl
+        dvs.runcmd(['sh', '-c', "supervisorctl restart vrfmgrd"])
+        
+        # Poll until all stale VRFs are cleaned up
+        def _check_stale_vrfs_cleaned():
+            _, output = dvs.runcmd(['sh', '-c',
+                "ip link show type vrf | grep -c '^[0-9]' || true"])
+            current = int(output.strip()) if output.strip() else 0
+            return (current == initial_vrf_count, current)
+
+        polling_config = PollingConfig(polling_interval=1, timeout=30, strict=True)
+        wait_for_result(
+            _check_stale_vrfs_cleaned,
+            polling_config=polling_config,
+            failure_message=f"Stale VRFs not cleaned up within {polling_config.timeout}s; "
+                           f"expected {initial_vrf_count} VRFs",
+        )
 
     @pytest.mark.xfail(reason="Test unstable, blocking PR builds")
     def test_VRFMgr_Capacity(self, dvs, testlog):
