@@ -166,6 +166,7 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
     querySwitchTpidCapability();
     querySwitchPortEgressSampleCapability();
     querySwitchPortMirrorCapability();
+    querySwitchSamplePacketCapability();
     querySwitchHashDefaults();
     setSwitchIcmpOffloadCapability();
     setFastLinkupCapability();
@@ -1952,6 +1953,87 @@ void SwitchOrch::querySwitchPortMirrorCapability()
             m_portEgressMirrorSupported = false;
         }
         SWSS_LOG_NOTICE("port egress mirror capability %d", capability.set_implemented);
+    }
+
+    set_switch_capability(fvVector);
+}
+
+void SwitchOrch::querySwitchSamplePacketCapability()
+{
+    vector<FieldValueTuple> fvVector;
+    sai_status_t status = SAI_STATUS_SUCCESS;
+    sai_attr_capability_t capability;
+
+    // Check if SAI is capable of handling Port ingress sample mirror session
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT,
+                            SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query port ingress sample mirror capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_SAMPLE_MIRROR_CAPABLE, "false");
+        m_portIngressSampleMirrorSupported = false;
+    }
+    else
+    {
+        if (capability.set_implemented)
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_SAMPLE_MIRROR_CAPABLE, "true");
+            m_portIngressSampleMirrorSupported = true;
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_SAMPLE_MIRROR_CAPABLE, "false");
+            m_portIngressSampleMirrorSupported = false;
+        }
+        SWSS_LOG_NOTICE("port ingress sample mirror capability %d", capability.set_implemented);
+    }
+
+    // Check if SAI is capable of handling Port egress sample mirror session
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT,
+                            SAI_PORT_ATTR_EGRESS_SAMPLE_MIRROR_SESSION, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query port egress sample mirror capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_MIRROR_CAPABLE, "false");
+        m_portEgressSampleMirrorSupported = false;
+    }
+    else
+    {
+        if (capability.set_implemented)
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_MIRROR_CAPABLE, "true");
+            m_portEgressSampleMirrorSupported = true;
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_MIRROR_CAPABLE, "false");
+            m_portEgressSampleMirrorSupported = false;
+        }
+        SWSS_LOG_NOTICE("port egress sample mirror capability %d", capability.set_implemented);
+    }
+
+    // Check if SAI is capable of handling samplepacket truncation
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SAMPLEPACKET,
+                            SAI_SAMPLEPACKET_ATTR_TRUNCATE_ENABLE, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query samplepacket truncation capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE, "false");
+        m_samplepacketTruncationSupported = false;
+    }
+    else
+    {
+        if (capability.set_implemented)
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE, "true");
+            m_samplepacketTruncationSupported = true;
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE, "false");
+            m_samplepacketTruncationSupported = false;
+        }
+        SWSS_LOG_NOTICE("samplepacket truncation capability %d", capability.set_implemented);
     }
 
     set_switch_capability(fvVector);
