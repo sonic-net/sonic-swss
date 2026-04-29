@@ -41,6 +41,31 @@ class DVSMirror(object):
 
         self.config_db.create_entry("MIRROR_SESSION", name, mirror_entry)
 
+
+    def create_erspan_session_sampled(self, name, src, dst, gre, dscp, ttl, queue,
+                                       policer=None, src_ports=None, direction="RX",
+                                       sample_rate=None, truncate_size=None):
+        mirror_entry = {
+            "type": "ERSPAN",
+            "src_ip": src,
+            "dst_ip": dst,
+            "gre_type": gre,
+            "dscp": dscp,
+            "ttl": ttl,
+            "queue": queue,
+            "direction": direction
+        }
+
+        if policer:
+            mirror_entry["policer"] = policer
+        if src_ports:
+            mirror_entry["src_port"] = src_ports
+        if sample_rate:
+            mirror_entry["sample_rate"] = sample_rate
+        if truncate_size:
+            mirror_entry["truncate_size"] = truncate_size
+
+        self.config_db.create_entry("MIRROR_SESSION", name, mirror_entry)
     def remove_mirror_session(self, name):
         self.config_db.delete_entry("MIRROR_SESSION", name)
 
