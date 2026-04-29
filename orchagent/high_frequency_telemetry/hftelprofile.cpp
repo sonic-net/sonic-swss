@@ -315,7 +315,7 @@ void HFTelProfile::setStatsIDs(const string &group_name, const set<string> &obje
     if (itr == m_groups.end() || itr->first != sai_object_type)
     {
         HFTelGroup group(group_name);
-        group.updateStatsIDs(stats_ids_set);
+        group.updateStatsIDs(std::move(stats_ids_set));
         m_groups.insert(itr, {sai_object_type, move(group)});
     }
     else
@@ -324,7 +324,7 @@ void HFTelProfile::setStatsIDs(const string &group_name, const set<string> &obje
         {
             return;
         }
-        itr->second.updateStatsIDs(stats_ids_set);
+        itr->second.updateStatsIDs(std::move(stats_ids_set));
     }
 
     // TODO: In the phase 2, we don't need to stop the stream before update the stats
@@ -451,10 +451,14 @@ void HFTelProfile::clearGroup(const std::string &group_name)
         m_groups.erase(itr);
     }
     m_sai_tam_tel_type_templates.erase(sai_object_type);
-    m_sai_tam_tel_type_states.erase(m_sai_tam_tel_type_objs[sai_object_type]);
-    m_sai_tam_tel_type_objs.erase(sai_object_type);
-    m_sai_tam_report_objs.erase(sai_object_type);
     m_sai_tam_counter_subscription_objs.erase(sai_object_type);
+    auto tel_type_itr = m_sai_tam_tel_type_objs.find(sai_object_type);
+    if (tel_type_itr != m_sai_tam_tel_type_objs.end())
+    {
+        m_sai_tam_tel_type_states.erase(tel_type_itr->second);
+        m_sai_tam_tel_type_objs.erase(tel_type_itr);
+    }
+    m_sai_tam_report_objs.erase(sai_object_type);
     m_name_sai_map.erase(sai_object_type);
 
     SWSS_LOG_NOTICE("Cleared high frequency telemetry group %s with no objects", group_name.c_str());
@@ -663,6 +667,7 @@ sai_object_id_t HFTelProfile::getTAMReportObjID(sai_object_type_t object_type)
 
     attr.id = SAI_TAM_REPORT_ATTR_REPORT_INTERVAL_UNIT;
     attr.value.s32 = SAI_TAM_REPORT_INTERVAL_UNIT_USEC;
+    attrs.push_back(attr);
 
     handleSaiCreateStatus(
         SAI_API_TAM,
@@ -862,7 +867,7 @@ void HFTelProfile::deployCounterSubscription(sai_object_type_t object_type, sai_
     attrs.push_back(attr);
 
     attr.id = SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_STAT_ID;
-    attr.value.oid = stat_id;
+    attr.value.u32 = static_cast<uint32_t>(stat_id);
     attrs.push_back(attr);
 
     attr.id = SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_LABEL;

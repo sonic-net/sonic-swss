@@ -20,8 +20,6 @@
 using namespace std;
 using namespace swss;
 
-#define CONSTANTS_FILE "/et/sonic/constants.yml"
-
 const unordered_map<string, sai_object_type_t> HFTelOrch::SUPPORT_COUNTER_TABLES = {
     {COUNTERS_PORT_NAME_MAP, SAI_OBJECT_TYPE_PORT},
     {COUNTERS_BUFFER_POOL_NAME_MAP, SAI_OBJECT_TYPE_BUFFER_POOL},
@@ -110,23 +108,23 @@ void HFTelOrch::locallyNotify(const CounterNameMapUpdater::Message &msg)
     auto counter_itr = HFTelOrch::SUPPORT_COUNTER_TABLES.find(msg.m_table_name);
     if (counter_itr == HFTelOrch::SUPPORT_COUNTER_TABLES.end())
     {
-        SWSS_LOG_WARN("The counter table %s is not supported by high frequency telemetry", msg.m_table_name);
+        SWSS_LOG_WARN("The counter table %s is not supported by high frequency telemetry", msg.m_table_name.c_str());
         return;
     }
 
     SWSS_LOG_NOTICE("The counter table %s is updated, operation %d, object %s",
-                    msg.m_table_name,
+                    msg.m_table_name.c_str(),
                     msg.m_operation,
-                    msg.m_operation == CounterNameMapUpdater::SET ? msg.m_set.m_counter_name : msg.m_del.m_counter_name);
+                    msg.m_counter_name.c_str());
 
     // Update the local cache
     if (msg.m_operation == CounterNameMapUpdater::SET)
     {
-        m_counter_name_cache[counter_itr->second][msg.m_set.m_counter_name] = msg.m_set.m_oid;
+        m_counter_name_cache[counter_itr->second][msg.m_counter_name] = msg.m_oid;
     }
     else if (msg.m_operation == CounterNameMapUpdater::DEL)
     {
-        m_counter_name_cache[counter_itr->second].erase(msg.m_del.m_counter_name);
+        m_counter_name_cache[counter_itr->second].erase(msg.m_counter_name);
     }
 
     // Update the profile
@@ -138,24 +136,24 @@ void HFTelOrch::locallyNotify(const CounterNameMapUpdater::Message &msg)
     for (auto profile_itr = type_itr->second.begin(); profile_itr != type_itr->second.end(); profile_itr++)
     {
         auto profile = *profile_itr;
-        const char *counter_name = msg.m_operation == CounterNameMapUpdater::SET ? msg.m_set.m_counter_name : msg.m_del.m_counter_name;
+        const auto &counter_name = msg.m_counter_name;
 
         if (!profile->canBeUpdated(counter_itr->second))
         {
             // TODO: Here is a potential issue, we might need to retry the task.
             // Because the Syncd is generating the configuration(template),
             // we cannot update the monitor objects at this time.
-            SWSS_LOG_WARN("The high frequency telemetry profile %s is not ready to be updated, but the object %s want to be updated", profile->getProfileName().c_str(), counter_name);
+            SWSS_LOG_WARN("The high frequency telemetry profile %s is not ready to be updated, but the object %s want to be updated", profile->getProfileName().c_str(), counter_name.c_str());
             continue;
         }
 
         if (msg.m_operation == CounterNameMapUpdater::SET)
         {
-            profile->setObjectSAIID(counter_itr->second, counter_name, msg.m_set.m_oid);
+            profile->setObjectSAIID(counter_itr->second, counter_name.c_str(), msg.m_oid);
         }
         else if (msg.m_operation == CounterNameMapUpdater::DEL)
         {
-            profile->delObjectSAIID(counter_itr->second, counter_name);
+            profile->delObjectSAIID(counter_itr->second, counter_name.c_str());
         }
         else
         {
@@ -671,10 +669,13 @@ void HFTelOrch::createNetlinkChannel(const string &genl_family, const string &ge
     strncpy(attr.value.chardata, genl_group.c_str(), sizeof(attr.value.chardata));
     attrs.push_back(attr);
 
-    sai_hostif_api->create_hostif(&m_sai_hostif_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
-
-    // // Create hostif trap group object
-    // sai_hostif_api->create_hostif_trap_group(&m_sai_hostif_trap_group_obj, gSwitchId, 0, nullptr);
+    if (handleSaiCreateStatus(
+            SAI_API_HOSTIF,
+            sai_hostif_api->create_hostif(&m_sai_hostif_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data())) != task_success)
+    {
+        deleteNetlinkChannel(); // LCOV_EXCL_LINE: SAI VS create always succeeds
+        return;                 // LCOV_EXCL_LINE
+    }
 
     // Create hostif user defined trap object
     attrs.clear();
@@ -683,11 +684,13 @@ void HFTelOrch::createNetlinkChannel(const string &genl_family, const string &ge
     attr.value.s32 = SAI_HOSTIF_USER_DEFINED_TRAP_TYPE_TAM;
     attrs.push_back(attr);
 
-    // attr.id = SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TRAP_GROUP;
-    // attr.value.oid = m_sai_hostif_trap_group_obj;
-    // attrs.push_back(attr);
-
-    sai_hostif_api->create_hostif_user_defined_trap(&m_sai_hostif_user_defined_trap_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
+    if (handleSaiCreateStatus(
+            SAI_API_HOSTIF,
+            sai_hostif_api->create_hostif_user_defined_trap(&m_sai_hostif_user_defined_trap_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data())) != task_success)
+    {
+        deleteNetlinkChannel(); // LCOV_EXCL_LINE: SAI VS create always succeeds
+        return;                 // LCOV_EXCL_LINE
+    }
 
     // Create hostif table entry object
     attrs.clear();
@@ -708,7 +711,13 @@ void HFTelOrch::createNetlinkChannel(const string &genl_family, const string &ge
     attr.value.oid = m_sai_hostif_obj;
     attrs.push_back(attr);
 
-    sai_hostif_api->create_hostif_table_entry(&m_sai_hostif_table_entry_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
+    if (handleSaiCreateStatus(
+            SAI_API_HOSTIF,
+            sai_hostif_api->create_hostif_table_entry(&m_sai_hostif_table_entry_obj, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data())) != task_success)
+    {
+        deleteNetlinkChannel(); // LCOV_EXCL_LINE: SAI VS create always succeeds
+        return;                 // LCOV_EXCL_LINE
+    }
 }
 
 void HFTelOrch::deleteNetlinkChannel()

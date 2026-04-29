@@ -15,7 +15,7 @@ public:
     HFTelGroup(const std::string& group_name);
     ~HFTelGroup() = default;
     void updateObjects(const std::set<std::string> &object_names);
-    void updateStatsIDs(const std::set<sai_stat_id_t> &stats_ids);
+    void updateStatsIDs(std::set<sai_stat_id_t> &&stats_ids);
     bool isSameObjects(const std::set<std::string> &object_names) const;
     bool isObjectInGroup(const std::string &object_name) const;
     const std::unordered_map<std::string, sai_uint16_t>& getObjects() const { return m_objects; }
