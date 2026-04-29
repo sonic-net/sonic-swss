@@ -971,6 +971,59 @@ bool PortHelper::parsePortPtIntfId(PortConfig &port, const std::string &field, c
     return true;
 }
 
+bool PortHelper::parsePortSiSyncStatus(
+    PortConfig &port,
+    const std::string &field,
+    const std::string &value) const
+{
+    SWSS_LOG_ENTER();
+
+    if (value.empty())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): empty value is prohibited", field.c_str());
+        return false;
+    }
+
+    // Expected format: "SI_SETTINGS_DEFAULT:<num>" or "SI_SETTINGS_NOTIFIED:<num>"
+    std::size_t colon_pos = value.find(':');
+    if (colon_pos == std::string::npos)
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): invalid format(%s), expected SI_SETTINGS_DEFAULT:<num> or SI_SETTINGS_NOTIFIED:<num>",
+                       field.c_str(), value.c_str());
+        return false;
+    }
+
+    std::string type = value.substr(0, colon_pos);
+    if (type != PORT_SI_SETTINGS_DEFAULT && type != PORT_SI_SETTINGS_NOTIFIED)
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): invalid type(%s), expected SI_SETTINGS_DEFAULT or SI_SETTINGS_NOTIFIED",
+                       field.c_str(), type.c_str());
+        return false;
+    }
+
+    std::string count_str = value.substr(colon_pos + 1);
+    if (count_str.empty())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): count value is empty", field.c_str());
+        return false;
+    }
+
+    try
+    {
+        uint32_t count = static_cast<uint32_t>(std::stoul(count_str));
+        port.serdes_settings_sync_status.type = type;
+        port.serdes_settings_sync_status.count = count;
+        port.serdes_settings_sync_status.is_set = true;
+    }
+    catch (const std::exception &e)
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): %s", field.c_str(), e.what());
+        return false;
+    }
+
+    return true;
+}
+
 bool PortHelper::parsePortPtTimestampTemplate(PortConfig &port, const std::string &field, const std::string &value) const
 {
     SWSS_LOG_ENTER();
@@ -1371,6 +1424,13 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         else if (field == PORT_FLAP_PENALTY)
         {
             if (!this->parsePortLinkEventDampingConfig(port.link_event_damping_config.flap_penalty, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_SI_SYNC_SETTINGS)
+        {
+            if (!this->parsePortSiSyncStatus(port, field, value))
             {
                 return false;
             }

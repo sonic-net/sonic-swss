@@ -444,6 +444,7 @@ private:
     void initializeQueuesBulk(std::vector<Port>& ports);
     void initializeSchedulerGroupsBulk(std::vector<Port>& ports);
     void initializePortHostTxReadyBulk(std::vector<Port>& ports);
+    void initializePortSiSettingsSyncStatusBulk(std::vector<Port>& ports);
     void initializePortMtuBulk(std::vector<Port>& ports);
 
     void initializePortBufferMaximumParameters(const Port &port);
@@ -477,7 +478,7 @@ private:
 
     void postPortInit(Port &p);
 
-    bool setPortAdminStatus(Port &port, bool up);
+    bool setPortAdminStatus(Port &port, bool up, bool update_host_tx_ready = true);
     bool getPortAdminStatus(sai_object_id_t id, bool& up);
     bool getPortMtu(const Port& port, sai_uint32_t &mtu);
     bool getPortHostTxReady(const Port& port, bool &hostTxReadyVal);
@@ -496,6 +497,7 @@ private:
     bool setSaiHostTxSignal(const Port &port, bool enable);
 
     void setHostTxReady(Port port, const std::string &status);
+    void setPortSiSettingsSyncStatus(const Port& port, const std::string& status);
     // Get supported speeds on system side
     bool isSpeedSupported(const std::string& alias, sai_object_id_t port_id, sai_uint32_t speed);
     void getPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id, PortSupportedSpeeds &supported_speeds);
@@ -585,6 +587,7 @@ private:
 
     bool programSerdes(Port &port, sai_object_id_t port_id, sai_object_id_t switch_id,
                        std::map<sai_port_serdes_attr_t, SerdesValue> &serdes_attr);
+    bool applyPortSerdesConfig(Port &port, const PortConfig &pCfg, bool &serdes_settings_changed);
 
     bool getSaiAclBindPointType(Port::Type                type,
                                 sai_acl_bind_point_type_t &sai_acl_bind_type);

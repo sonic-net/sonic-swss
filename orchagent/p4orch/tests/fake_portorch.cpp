@@ -520,7 +520,7 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
 {
 }
 
-bool PortsOrch::setPortAdminStatus(Port &port, bool up)
+bool PortsOrch::setPortAdminStatus(Port &port, bool up, bool update_host_tx_ready)
 {
     return true;
 }
