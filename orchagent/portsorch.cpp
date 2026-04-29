@@ -11274,6 +11274,39 @@ bool PortsOrch::decrFdbCount(const std::string& alias, int count)
     return true;
 }
 
+void PortsOrch::setLagMemberState(Port &port, bool enabled)
+{
+    SWSS_LOG_ENTER();
+
+    /* Check if this port is a LAG member */
+    if (!port.m_lag_id || !port.m_lag_member_id)
+    {
+        SWSS_LOG_INFO("Port %s is not a LAG member, skipping MACsec state update",
+                port.m_alias.c_str());
+        return;
+    }
+
+    /*
+     * Call SAI directly instead of writing to APP_LAG_MEMBER_TABLE to avoid a
+     * race condition with teamsyncd, which also owns that table.
+     */
+    bool ret;
+    if (enabled)
+    {
+        ret = setCollectionOnLagMember(port, true) && setDistributionOnLagMember(port, true);
+    }
+    else
+    {
+        ret = setDistributionOnLagMember(port, false) && setCollectionOnLagMember(port, false);
+    }
+
+    if (ret)
+    {
+        SWSS_LOG_INFO("Set LAG member %s with status %s",
+                port.m_alias.c_str(), enabled ? "enabled" : "disabled");
+    }
+}
+
 void PortsOrch::setMACsecEnabledState(sai_object_id_t port_id, bool enabled)
 {
     SWSS_LOG_ENTER();
@@ -11298,6 +11331,9 @@ void PortsOrch::setMACsecEnabledState(sai_object_id_t port_id, bool enabled)
     {
         setPortMtu(p, p.m_mtu);
     }
+
+    /* if the port is a lag member port set state */
+    setLagMemberState(p, enabled);
 }
 
 bool PortsOrch::isMACsecPort(sai_object_id_t port_id) const

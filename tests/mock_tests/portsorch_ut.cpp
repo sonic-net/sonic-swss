@@ -4919,6 +4919,198 @@ namespace portsorch_test
         ASSERT_NE(port.m_lag_id, SAI_NULL_OBJECT_ID) << "Port should be a LAG member after second doTask";
     }
 
+    /*
+     * Tests for setMACsecEnabledState() when the port is a LAG member.
+     *
+     * Covers sonic-buildimage issue #19254: when a MACsec session goes down
+     * without the physical link going down, the port must be immediately
+     * removed from active LAG distribution/collection (within the MACsec
+     * ~6 s timeout) instead of waiting for the 90 s LACP timeout.
+     *
+     * The fix calls setCollectionOnLagMember / setDistributionOnLagMember
+     * directly via SAI rather than writing to APP_LAG_MEMBER_TABLE, which
+     * avoids a race condition with teamsyncd overwriting the disabled state.
+     */
+    struct MacsecLagMemberTest : PortsOrchTest {};
+
+    /*
+     * When the MACsec session goes down on a LAG member port, portsorch must
+     * immediately disable egress (distribution) and ingress (collection) on
+     * that LAG member via SAI without touching APP_LAG_MEMBER_TABLE.
+     */
+    TEST_F(MacsecLagMemberTest, MacsecSessionDownDisablesLagMember)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table lagTable  = Table(m_app_db.get(), APP_LAG_TABLE_NAME);
+        Table lagMemberTable = Table(m_app_db.get(), APP_LAG_MEMBER_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        string testPort = ports.begin()->first;
+
+        for (const auto &it : ports)
+            portTable.set(it.first, it.second);
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+
+        lagTable.set("PortChannel0001", { {"admin_status", "up"}, {"mtu", "9100"} });
+        lagMemberTable.set(
+            string("PortChannel0001") + lagMemberTable.getTableNameSeparator() + testPort,
+            { {"status", "enabled"} });
+
+        gPortsOrch->addExistingData(&portTable);
+        gPortsOrch->addExistingData(&lagTable);
+        gPortsOrch->addExistingData(&lagMemberTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        /* Verify LAG and LAG member tasks are fully processed */
+        for (auto tbl : {APP_LAG_TABLE_NAME, APP_LAG_MEMBER_TABLE_NAME})
+        {
+            vector<string> ts;
+            auto consumer = static_cast<Consumer *>(gPortsOrch->getExecutor(tbl));
+            consumer->dumpPendingTasks(ts);
+            ASSERT_TRUE(ts.empty()) << "Pending tasks remain for " << tbl;
+        }
+
+        /* Confirm port is a LAG member */
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort(testPort, port));
+        ASSERT_NE(port.m_lag_member_id, SAI_NULL_OBJECT_ID) << "Port should be a LAG member";
+
+        /* Spy on set_lag_member_attribute to capture SAI calls */
+        auto origLagApi = sai_lag_api;
+        sai_lag_api = new sai_lag_api_t();
+        memcpy(sai_lag_api, origLagApi, sizeof(*sai_lag_api));
+
+        vector<pair<sai_attr_id_t, bool>> capturedAttrs;
+        auto lagAttrSpy = SpyOn<SAI_API_LAG, SAI_OBJECT_TYPE_LAG_MEMBER>(&sai_lag_api->set_lag_member_attribute);
+        lagAttrSpy->callFake([&](sai_object_id_t, const sai_attribute_t *attr) -> sai_status_t {
+            if (attr->id == SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE ||
+                attr->id == SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE)
+            {
+                capturedAttrs.push_back({attr->id, attr->value.booldata});
+            }
+            return origLagApi->set_lag_member_attribute(port.m_lag_member_id, attr);
+        });
+
+        /* Simulate MACsec session down */
+        gPortsOrch->setMACsecEnabledState(port.m_port_id, false);
+
+        sai_lag_api = origLagApi;
+
+        /* Egress disable (distribution off) must be called first, then ingress disable (collection off) */
+        ASSERT_EQ(capturedAttrs.size(), 2u) << "Expected exactly 2 SAI LAG member attribute calls";
+        EXPECT_EQ(capturedAttrs[0].first, SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE);
+        EXPECT_TRUE(capturedAttrs[0].second) << "Egress should be disabled";
+        EXPECT_EQ(capturedAttrs[1].first, SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE);
+        EXPECT_TRUE(capturedAttrs[1].second) << "Ingress should be disabled";
+    }
+
+    /*
+     * When the MACsec session comes back up on a LAG member port, portsorch
+     * must re-enable collection and distribution on that LAG member via SAI.
+     */
+    TEST_F(MacsecLagMemberTest, MacsecSessionUpEnablesLagMember)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table lagTable  = Table(m_app_db.get(), APP_LAG_TABLE_NAME);
+        Table lagMemberTable = Table(m_app_db.get(), APP_LAG_MEMBER_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        string testPort = ports.begin()->first;
+
+        for (const auto &it : ports)
+            portTable.set(it.first, it.second);
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+
+        lagTable.set("PortChannel0001", { {"admin_status", "up"}, {"mtu", "9100"} });
+        lagMemberTable.set(
+            string("PortChannel0001") + lagMemberTable.getTableNameSeparator() + testPort,
+            { {"status", "enabled"} });
+
+        gPortsOrch->addExistingData(&portTable);
+        gPortsOrch->addExistingData(&lagTable);
+        gPortsOrch->addExistingData(&lagMemberTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort(testPort, port));
+        ASSERT_NE(port.m_lag_member_id, SAI_NULL_OBJECT_ID);
+
+        /* First bring MACsec down (unspied) */
+        gPortsOrch->setMACsecEnabledState(port.m_port_id, false);
+
+        /* Now spy and bring MACsec back up */
+        auto origLagApi = sai_lag_api;
+        sai_lag_api = new sai_lag_api_t();
+        memcpy(sai_lag_api, origLagApi, sizeof(*sai_lag_api));
+
+        vector<pair<sai_attr_id_t, bool>> capturedAttrs;
+        auto lagAttrSpy = SpyOn<SAI_API_LAG, SAI_OBJECT_TYPE_LAG_MEMBER>(&sai_lag_api->set_lag_member_attribute);
+        lagAttrSpy->callFake([&](sai_object_id_t, const sai_attribute_t *attr) -> sai_status_t {
+            if (attr->id == SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE ||
+                attr->id == SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE)
+            {
+                capturedAttrs.push_back({attr->id, attr->value.booldata});
+            }
+            return origLagApi->set_lag_member_attribute(port.m_lag_member_id, attr);
+        });
+
+        gPortsOrch->setMACsecEnabledState(port.m_port_id, true);
+
+        sai_lag_api = origLagApi;
+
+        /* Collection (ingress enable) first, then distribution (egress enable) */
+        ASSERT_EQ(capturedAttrs.size(), 2u) << "Expected exactly 2 SAI LAG member attribute calls";
+        EXPECT_EQ(capturedAttrs[0].first, SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE);
+        EXPECT_FALSE(capturedAttrs[0].second) << "Ingress should be re-enabled";
+        EXPECT_EQ(capturedAttrs[1].first, SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE);
+        EXPECT_FALSE(capturedAttrs[1].second) << "Egress should be re-enabled";
+    }
+
+    /*
+     * When the MACsec session state changes on a port that is NOT a LAG
+     * member, no SAI LAG member attribute calls must be made.
+     */
+    TEST_F(MacsecLagMemberTest, MacsecSessionStateChangeOnNonLagPort)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        string testPort = ports.begin()->first;
+
+        for (const auto &it : ports)
+            portTable.set(it.first, it.second);
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort(testPort, port));
+        /* Confirm port is NOT in a LAG */
+        ASSERT_EQ(port.m_lag_id, SAI_NULL_OBJECT_ID);
+
+        auto origLagApi = sai_lag_api;
+        sai_lag_api = new sai_lag_api_t();
+        memcpy(sai_lag_api, origLagApi, sizeof(*sai_lag_api));
+
+        bool lagAttrCalled = false;
+        auto lagAttrSpy = SpyOn<SAI_API_LAG, SAI_OBJECT_TYPE_LAG_MEMBER>(&sai_lag_api->set_lag_member_attribute);
+        lagAttrSpy->callFake([&](sai_object_id_t, const sai_attribute_t *) -> sai_status_t {
+            lagAttrCalled = true;
+            return SAI_STATUS_SUCCESS;
+        });
+
+        gPortsOrch->setMACsecEnabledState(port.m_port_id, false);
+        gPortsOrch->setMACsecEnabledState(port.m_port_id, true);
+
+        sai_lag_api = origLagApi;
+
+        EXPECT_FALSE(lagAttrCalled) << "SAI LAG member attribute must not be called for non-LAG ports";
+    }
+
     struct PostPortInitTests : PortsOrchTest
     {
     };
