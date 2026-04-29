@@ -174,7 +174,6 @@ public:
     bool                m_autoneg = false;
     bool                m_unreliable_los = false;
     bool                m_link_training = false;
-    bool                m_duplex = true;
     bool                m_admin_state_up = false;
     bool                m_init = false;
     bool                m_l3_vni = false;
@@ -253,7 +252,6 @@ public:
     bool m_override_fec = false;  // Enable Override FEC
     bool m_lm_cfg = false;        // Forwarding Database (FDB) Learning Mode (LM)
     bool m_lt_cfg = false;        // Link Training (LT)
-    bool m_duplex_cfg = false;    // Duplex mode
 
     int m_cap_an = -1; /* Capability - AutoNeg, -1 means not set */
     int m_cap_lt = -1; /* Capability - LinkTraining, -1 means not set */

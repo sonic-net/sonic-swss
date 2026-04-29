@@ -99,11 +99,6 @@ public:
     } link_training; // Port link training
 
     struct {
-        bool value;
-        bool is_set = false;
-    } duplex; // Port duplex mode
-
-    struct {
 
         struct {
             std::vector<std::uint32_t> value;

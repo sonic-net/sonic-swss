@@ -5,9 +5,6 @@
 #define PORT_MODE_OFF "off"
 #define PORT_MODE_ON  "on"
 
-#define PORT_DUPLEX_FULL "full"
-#define PORT_DUPLEX_HALF "half"
-
 #define PORT_STATUS_DOWN "down"
 #define PORT_STATUS_UP   "up"
 
@@ -75,7 +72,6 @@
 #define PORT_PFC_ASYM              "pfc_asym"
 #define PORT_LEARN_MODE            "learn_mode"
 #define PORT_LINK_TRAINING         "link_training"
-#define PORT_DUPLEX                "duplex"
 #define PORT_PREEMPHASIS           "preemphasis"
 #define PORT_IDRIVER               "idriver"
 #define PORT_IPREDRIVER            "ipredriver"

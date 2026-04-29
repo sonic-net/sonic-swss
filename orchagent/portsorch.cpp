@@ -1294,15 +1294,6 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList, std::vector
             p.m_an_cfg = true;
         }
 
-        if (cit.duplex.is_set)
-        {
-            attr.id = SAI_PORT_ATTR_FULL_DUPLEX_MODE;
-            attr.value.booldata = cit.duplex.value;
-            attrList.push_back(attr);
-            p.m_duplex = cit.duplex.value;
-            p.m_duplex_cfg = true;
-        }
-
         if (cit.fec.is_set)
         {
             attr.id = SAI_PORT_ATTR_FEC_MODE;
