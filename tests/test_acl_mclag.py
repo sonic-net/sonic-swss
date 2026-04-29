@@ -46,9 +46,9 @@ class TestMclagAcl(object):
         else:
             return None
 
-    def verify_acl_group_num(self, expt):
+    def verify_acl_group_num(self, dvs, expt):
         atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
-        acl_table_groups = atbl.getKeys()
+        acl_table_groups = [k for k in atbl.getKeys() if k not in dvs.asicdb.default_acl_groups]
         assert len(acl_table_groups) == expt
 
         for k in acl_table_groups:
@@ -88,7 +88,7 @@ class TestMclagAcl(object):
 
     def verify_acl_port_binding(self, dvs, bind_ports):
         atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
-        acl_table_groups = atbl.getKeys()
+        acl_table_groups = [k for k in atbl.getKeys() if k not in dvs.asicdb.default_acl_groups]
         assert len(acl_table_groups) == len(bind_ports)
 
         atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
@@ -126,11 +126,11 @@ class TestMclagAcl(object):
         assert acl_table_id is not None
 
         # check acl table group in asic db
-        self.verify_acl_group_num(2)
+        self.verify_acl_group_num(dvs, 2)
 
         # get acl table group ids and verify the id numbers
         atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
-        acl_group_ids = atbl.getKeys()
+        acl_group_ids = [k for k in atbl.getKeys() if k not in dvs.asicdb.default_acl_groups]
         assert len(acl_group_ids) == 2
 
         # check acl table group member

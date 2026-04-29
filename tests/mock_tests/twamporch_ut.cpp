@@ -243,6 +243,14 @@ namespace twamporch_test
         void initOrch()
         {
             //
+            // CrmOrch
+            //
+            ASSERT_EQ(gCrmOrch, nullptr);
+            gCrmOrch = new CrmOrch(this->configDb.get(), CFG_CRM_TABLE_NAME);
+            gDirectory.set(gCrmOrch);
+            resourcesList.push_back(gCrmOrch);
+
+            //
             // SwitchOrch
             //
             TableConnector state_switch_table(this->stateDb.get(), "SWITCH_CAPABILITY");
@@ -310,14 +318,6 @@ namespace twamporch_test
             auto flexCounterOrch = new FlexCounterOrch(this->configDb.get(), flexCounterTableList);
             gDirectory.set(flexCounterOrch);
             resourcesList.push_back(flexCounterOrch);
-
-            //
-            // CrmOrch
-            //
-            ASSERT_EQ(gCrmOrch, nullptr);
-            gCrmOrch = new CrmOrch(this->configDb.get(), CFG_CRM_TABLE_NAME);
-            gDirectory.set(gCrmOrch);
-            resourcesList.push_back(gCrmOrch);
         }
 
         void deinitOrch()
@@ -328,11 +328,11 @@ namespace twamporch_test
                 delete it;
             }
 
+            gCrmOrch = nullptr;
             gSwitchOrch = nullptr;
             gPortsOrch = nullptr;
             gVrfOrch = nullptr;
             gBufferOrch = nullptr;
-            gCrmOrch = nullptr;
 
             Portal::DirectoryInternal::clear(gDirectory);
             EXPECT_TRUE(Portal::DirectoryInternal::empty(gDirectory));
