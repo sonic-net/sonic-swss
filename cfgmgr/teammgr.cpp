@@ -36,7 +36,8 @@ TeamMgr::TeamMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_appLagTable(applDb, APP_LAG_TABLE_NAME),
     m_statePortTable(statDb, STATE_PORT_TABLE_NAME),
     m_stateLagTable(statDb, STATE_LAG_TABLE_NAME),
-    m_stateMACsecIngressSATable(statDb, STATE_MACSEC_INGRESS_SA_TABLE_NAME)
+    m_stateMACsecIngressSATable(statDb, STATE_MACSEC_INGRESS_SA_TABLE_NAME),
+    m_stateMonitorLinkGroupMemberTable(statDb, STATE_MONITOR_LINK_GROUP_MEMBER_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
 
@@ -165,6 +166,10 @@ void TeamMgr::doTask(Consumer &consumer)
     else if (table == STATE_PORT_TABLE_NAME)
     {
         doPortUpdateTask(consumer);
+    }
+    else if (table == STATE_MONITOR_LINK_GROUP_MEMBER_TABLE_NAME)
+    {
+        doMonitorLinkGroupMemberTask(consumer);
     }
 }
 
@@ -311,7 +316,7 @@ void TeamMgr::doLagTask(Consumer &consumer)
                 m_lagList.insert(alias);
             }
 
-            setLagAdminStatus(alias, admin_status);
+            applyEffectiveLagAdminStatus(alias);
             setLagMtu(alias, mtu);
             if (!learn_mode.empty())
             {
@@ -496,6 +501,45 @@ bool TeamMgr::setLagAdminStatus(const string &alias, const string &admin_status)
             alias.c_str(), admin_status.c_str());
 
     return true;
+}
+
+void TeamMgr::applyEffectiveLagAdminStatus(const string &alias)
+{
+    vector<FieldValueTuple> lag_data;
+    bool config_admin_up = true;
+    if (m_cfgLagTable.get(alias, lag_data))
+    {
+        for (const auto &fv : lag_data)
+        {
+            if (fvField(fv) == "admin_status")
+            {
+                config_admin_up = (fvValue(fv) == "up");
+                break;
+            }
+        }
+    }
+
+    bool monitor_force_down = false;
+    vector<FieldValueTuple> ml_data;
+    if (m_stateMonitorLinkGroupMemberTable.get(alias, ml_data))
+    {
+        for (const auto &fv : ml_data)
+        {
+            if (fvField(fv) == "state")
+            {
+                monitor_force_down = (fvValue(fv) == "force_down");
+                break;
+            }
+        }
+    }
+
+    bool effective_up = config_admin_up && !monitor_force_down;
+    SWSS_LOG_INFO("TeamMgr: %s effective admin status: config=%s monitor=%s result=%s",
+                  alias.c_str(),
+                  config_admin_up ? "up" : "down",
+                  monitor_force_down ? "force_down" : "allow_up",
+                  effective_up ? "up" : "down");
+    setLagAdminStatus(alias, effective_up ? "up" : "down");
 }
 
 bool TeamMgr::setLagMtu(const string &alias, const string &mtu)
@@ -876,4 +920,42 @@ bool TeamMgr::removeLagMember(const string &lag, const string &member)
     SWSS_LOG_NOTICE("Remove %s from port channel %s", member.c_str(), lag.c_str());
 
     return true;
+}
+
+void TeamMgr::doMonitorLinkGroupMemberTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+
+        string interface_name = kfvKey(t);
+        string op = kfvOp(t);
+        auto data = kfvFieldsValues(t);
+
+        // Determine interface type via CONFIG_DB rather than name prefix — avoids breakage
+        // if SONiC ever adds LAG naming that doesn't start with "PortChannel".
+        vector<FieldValueTuple> lag_data;
+        if (!m_cfgLagTable.get(interface_name, lag_data))
+        {
+            // Not a LAG (Ethernet or unknown) — handled by portmgrd
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
+        if (op == SET_COMMAND)
+        {
+            SWSS_LOG_INFO("TeamMgr: Processing monitor link group member SET for %s", interface_name.c_str());
+            applyEffectiveLagAdminStatus(interface_name);
+        }
+        else if (op == DEL_COMMAND)
+        {
+            SWSS_LOG_INFO("TeamMgr: Processing monitor link group member DEL for %s", interface_name.c_str());
+            applyEffectiveLagAdminStatus(interface_name);
+        }
+
+        it = consumer.m_toSync.erase(it);
+    }
 }

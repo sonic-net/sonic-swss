@@ -24,16 +24,21 @@ int main(int argc, char **argv)
 
     try
     {
-        vector<string> cfg_port_tables = {
-            CFG_PORT_TABLE_NAME,
-            CFG_SEND_TO_INGRESS_PORT_TABLE_NAME,
-        };
-
         DBConnector cfgDb("CONFIG_DB", 0);
         DBConnector appDb("APPL_DB", 0);
         DBConnector stateDb("STATE_DB", 0);
 
-        PortMgr portmgr(&cfgDb, &appDb, &stateDb, cfg_port_tables);
+        TableConnector cfg_port_table(&cfgDb, CFG_PORT_TABLE_NAME);
+        TableConnector cfg_send_to_ingress_port_table(&cfgDb, CFG_SEND_TO_INGRESS_PORT_TABLE_NAME);
+        TableConnector state_monitor_link_group_member_table(&stateDb, STATE_MONITOR_LINK_GROUP_MEMBER_TABLE_NAME);
+
+        vector<TableConnector> tables = {
+            cfg_port_table,
+            cfg_send_to_ingress_port_table,
+            state_monitor_link_group_member_table
+        };
+
+        PortMgr portmgr(&cfgDb, &appDb, &stateDb, tables);
         vector<Orch *> cfgOrchList = {&portmgr};
 
         swss::Select s;
