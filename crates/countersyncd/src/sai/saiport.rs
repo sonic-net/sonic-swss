@@ -240,7 +240,6 @@ pub enum SaiPortStat {
     DroppedTrimPackets = 202,
     TxTrimPackets = 203,
 
-
     // Drop reason ranges (0x00001000 base)
     InConfiguredDropReasons0DroppedPkts = 0x00001000,
     InConfiguredDropReasons1DroppedPkts = 0x00001001,

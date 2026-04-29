@@ -3688,7 +3688,6 @@ task_process_status PortsOrch::setPortLinkTraining(const Port &port, bool state)
     return task_success;
 }
 
-
 ReturnCode PortsOrch::setPortLinkEventDampingAlgorithm(Port &port,
                                                        sai_redis_link_event_damping_algorithm_t &link_event_damping_algorithm)
 {
