@@ -217,12 +217,16 @@ void ArsOrch::doArsGlobalTask(Consumer &consumer)
         {
             bool wantEnable = false;
             string profileName;
+            bool hasProfileField = false;
             for (auto &fv : kfvFieldsValues(kfv))
             {
                 if (fvField(fv) == "admin_state")
                     wantEnable = (toLower(fvValue(fv)) == "up");
                 else if (fvField(fv) == "profile")
+                {
                     profileName = fvValue(fv);
+                    hasProfileField = true;
+                }
             }
 
             if (wantEnable && !m_arsEnabled)
@@ -268,7 +272,7 @@ void ArsOrch::doArsGlobalTask(Consumer &consumer)
                 m_arsEnabled = false;
             }
 
-            if (!profileName.empty() && profileName != m_globalProfileName)
+            if (hasProfileField && !profileName.empty() && profileName != m_globalProfileName)
             {
                 auto profIt = m_arsProfiles.find(profileName);
                 if (profIt != m_arsProfiles.end() &&
@@ -296,7 +300,7 @@ void ArsOrch::doArsGlobalTask(Consumer &consumer)
                                     profileName.c_str());
                 }
             }
-            else if (profileName.empty() && !m_globalProfileName.empty())
+            else if (hasProfileField && profileName.empty() && !m_globalProfileName.empty())
             {
                 if (bindArsProfileToSwitch(SAI_NULL_OBJECT_ID))
                 {
@@ -1662,23 +1666,36 @@ bool ArsOrch::createArsProfile(const string &name, const ArsProfileEntry &entry)
         attrs.push_back(attr);
     }
 
-    // Per-band congestion thresholds (Mbps). Sending these at CREATE is what
-    // allows the Mellanox SAI backend to take the non-hardened path and call
-    // sx_api_ar_congestion_threshold_set on the SDK — without them the EWMA
-    // quality signal cannot trigger flowlet reassignment on CPU-scale loads
-    // because the SDK keeps its line-rate default thresholds.
-    if (entry.quantBand0MinThreshold != 0 ||
-        entry.quantBand1MinThreshold != 0 ||
-        entry.quantBand2MinThreshold != 0)
+    // Per-band congestion thresholds (Mbps). Sending non-zero values at
+    // CREATE is what tells Mellanox SAI to take the non-hardened path and
+    // call sx_api_ar_congestion_threshold_set — without them, SAI treats
+    // the profile as "hardened" and rejects flowlet-quality ARS objects.
+    //
+    // When the operator omits all three bands (all zero), auto-fill with
+    // conservative defaults (1/2/4 Gbps) so flowlet works out of the box.
+    // This mirrors createDefaultProfileIfNeeded() and avoids forcing users
+    // to manually set thresholds just to get basic flowlet behavior.
+    uint32_t qb0 = entry.quantBand0MinThreshold;
+    uint32_t qb1 = entry.quantBand1MinThreshold;
+    uint32_t qb2 = entry.quantBand2MinThreshold;
+    if (qb0 == 0 && qb1 == 0 && qb2 == 0)
+    {
+        qb0 = 1000;
+        qb1 = 2000;
+        qb2 = 4000;
+        SWSS_LOG_NOTICE("ARS: profile '%s' has no quant-band thresholds — "
+                        "using defaults (%u/%u/%u Mbps) to avoid hardened mode",
+                        name.c_str(), qb0, qb1, qb2);
+    }
     {
         attr.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_0_MIN_THRESHOLD;
-        attr.value.u32 = entry.quantBand0MinThreshold;
+        attr.value.u32 = qb0;
         attrs.push_back(attr);
         attr.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_1_MIN_THRESHOLD;
-        attr.value.u32 = entry.quantBand1MinThreshold;
+        attr.value.u32 = qb1;
         attrs.push_back(attr);
         attr.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_2_MIN_THRESHOLD;
-        attr.value.u32 = entry.quantBand2MinThreshold;
+        attr.value.u32 = qb2;
         attrs.push_back(attr);
     }
 
@@ -1704,15 +1721,15 @@ bool ArsOrch::createArsProfile(const string &name, const ArsProfileEntry &entry)
         sai_attribute_t qb;
 
         qb.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_0_MIN_THRESHOLD;
-        qb.value.u32 = entry.quantBand0MinThreshold;
+        qb.value.u32 = qb0;
         qb_attrs.push_back(qb);
 
         qb.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_1_MIN_THRESHOLD;
-        qb.value.u32 = entry.quantBand1MinThreshold;
+        qb.value.u32 = qb1;
         qb_attrs.push_back(qb);
 
         qb.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_2_MIN_THRESHOLD;
-        qb.value.u32 = entry.quantBand2MinThreshold;
+        qb.value.u32 = qb2;
         qb_attrs.push_back(qb);
 
         status = sai_ars_profile_api->create_ars_profile(
@@ -1730,6 +1747,9 @@ bool ArsOrch::createArsProfile(const string &name, const ArsProfileEntry &entry)
 
     ArsProfileEntry stored = entry;
     stored.profileOid = profileOid;
+    stored.quantBand0MinThreshold = qb0;
+    stored.quantBand1MinThreshold = qb1;
+    stored.quantBand2MinThreshold = qb2;
     m_arsProfiles[name] = stored;
 
     if (m_activeSwitchProfileOid == SAI_NULL_OBJECT_ID)
