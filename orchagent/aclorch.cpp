@@ -525,6 +525,37 @@ static map<AclObjectStatus, string> aclObjectStatusLookup =
     {AclObjectStatus::PENDING_REMOVAL, "Pending removal"}
 };
 
+static bool isSubnetNotation(const string& value)
+{
+    return value.find('/') != string::npos;
+}
+
+static bool parseIpv4Subnet(const string& value, sai_acl_field_data_t& matchData)
+{
+    IpPrefix ip(value);
+    if (!ip.isV4())
+    {
+        SWSS_LOG_ERROR("IP type is not v4 type");
+        return false;
+    }
+    matchData.data.ip4 = ip.getIp().getV4Addr();
+    matchData.mask.ip4 = ip.getMask().getV4Addr();
+    return true;
+}
+
+static bool parseIpv6Subnet(const string& value, sai_acl_field_data_t& matchData)
+{
+    IpPrefix ip(value);
+    if (ip.isV4())
+    {
+        SWSS_LOG_ERROR("IP type is not v6 type");
+        return false;
+    }
+    memcpy(matchData.data.ip6, ip.getIp().getV6Addr(), 16);
+    memcpy(matchData.mask.ip6, ip.getMask().getV6Addr(), 16);
+    return true;
+}
+
 static sai_acl_table_attr_t AclEntryFieldToAclTableField(sai_acl_entry_attr_t attr)
 {
     if (!IS_ATTR_ID_IN_RANGE(attr, ACL_ENTRY, FIELD))
@@ -940,6 +971,17 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
 
     matchData.enable = true;
 
+    // *_MASK fields have no direct SAI entry attribute mapping; they are stored
+    // here and combined with the companion IP field in processPendingIpFields().
+    // This check must come before the aclMatchLookup guard below.
+    if (attr_name == MATCH_SRC_IP_MASK || attr_name == MATCH_DST_IP_MASK ||
+        attr_name == MATCH_SRC_IPV6_MASK || attr_name == MATCH_DST_IPV6_MASK)
+    {
+        string ip_field = attr_name.substr(0, attr_name.length() - 5);
+        m_pendingIpMasks[ip_field] = attr_value;
+        return true;
+    }
+
     try
     {
         if (aclMatchLookup.find(attr_name) == aclMatchLookup.end())
@@ -1099,26 +1141,41 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
         }
         else if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP || attr_name == MATCH_INNER_SRC_IP)
         {
-            IpPrefix ip(attr_value);
-
-            if (!ip.isV4())
+            if (isSubnetNotation(attr_value))
             {
-                SWSS_LOG_ERROR("IP type is not v4 type");
-                return false;
+                if (!parseIpv4Subnet(attr_value, matchData))
+                {
+                    return false;
+                }
             }
-            matchData.data.ip4 = ip.getIp().getV4Addr();
-            matchData.mask.ip4 = ip.getMask().getV4Addr();
+            else
+            {
+                // Intentional deferred validation: a plain IP address (no CIDR) may be paired
+                // with a separate *_MASK field. Both are stored here and combined in
+                // processPendingIpFields(). If no *_MASK field is provided, processPendingIpFields()
+                // applies a host mask (all-ones), making it equivalent to an exact-host match.
+                // Note: INNER_SRC_IP has no *_MASK counterpart and does not support non-CIDR
+                // notation in practice, but a plain address is accepted here and treated as a
+                // host match (same as passing /32) for consistency.
+                m_pendingIpFields[attr_name] = attr_value;
+                return true;
+            }
         }
         else if (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6)
         {
-            IpPrefix ip(attr_value);
-            if (ip.isV4())
+            if (isSubnetNotation(attr_value))
             {
-                SWSS_LOG_ERROR("IP type is not v6 type");
-                return false;
+                if (!parseIpv6Subnet(attr_value, matchData))
+                {
+                    return false;
+                }
             }
-            memcpy(matchData.data.ip6, ip.getIp().getV6Addr(), 16);
-            memcpy(matchData.mask.ip6, ip.getMask().getV6Addr(), 16);
+            else
+            {
+                // Intentional deferred validation: see comment above for IPv4 case.
+                m_pendingIpFields[attr_name] = attr_value;
+                return true;
+            }
         }
         else if ((attr_name == MATCH_L4_SRC_PORT_RANGE) || (attr_name == MATCH_L4_DST_PORT_RANGE))
         {
@@ -1253,8 +1310,89 @@ bool AclRule::processIpType(string type, sai_uint32_t &ip_type)
     return true;
 }
 
+bool AclRule::processPendingIpFields()
+{
+    SWSS_LOG_ENTER();
+
+    for (const auto& entry : m_pendingIpFields)
+    {
+        const string& field = entry.first;
+        const string& addr  = entry.second;
+
+        sai_acl_field_data_t matchData{};
+        matchData.enable = true;
+
+        bool isV6 = (field == MATCH_SRC_IPV6 || field == MATCH_DST_IPV6);
+
+        try
+        {
+            auto maskIt = m_pendingIpMasks.find(field);
+
+            if (!isV6)
+            {
+                IpAddress ip(addr);
+                matchData.data.ip4 = ip.getV4Addr();
+                if (maskIt != m_pendingIpMasks.end())
+                {
+                    IpAddress mask(maskIt->second);
+                    matchData.mask.ip4 = mask.getV4Addr();
+                }
+                else
+                {
+                    matchData.mask.ip4 = 0xFFFFFFFF;
+                }
+            }
+            else
+            {
+                IpAddress ip(addr);
+                memcpy(matchData.data.ip6, ip.getV6Addr(), 16);
+                if (maskIt != m_pendingIpMasks.end())
+                {
+                    IpAddress mask(maskIt->second);
+                    memcpy(matchData.mask.ip6, mask.getV6Addr(), 16);
+                }
+                else
+                {
+                    memset(matchData.mask.ip6, 0xFF, 16);
+                }
+            }
+        }
+        catch (exception& e)
+        {
+            SWSS_LOG_ERROR("Failed to process IP field %s=%s: %s", field.c_str(), addr.c_str(), e.what());
+            return false;
+        }
+
+        if (!setMatch(aclMatchLookup[field], matchData))
+        {
+            return false;
+        }
+    }
+
+    m_pendingIpFields.clear();
+
+    // Warn about any mask fields that had no corresponding IP field
+    for (const auto& entry : m_pendingIpMasks)
+    {
+        SWSS_LOG_WARN("IP mask field %s_MASK specified without a corresponding %s address field; ignoring",
+            entry.first.c_str(), entry.first.c_str());
+    }
+    m_pendingIpMasks.clear();
+    return true;
+}
+
 bool AclRule::create()
 {
+    // processPendingIpFields() is also called in doAclRuleTask/updateAclRule before validate(),
+    // because validate() checks m_matches and IP fields must be moved there first.
+    // This call handles the addAclRule() code path which bypasses doAclRuleTask entirely
+    // (e.g. used by other orchs and unit tests). When coming via doAclRuleTask the maps
+    // are already cleared, so this is a no-op on that path.
+    if (!processPendingIpFields())
+    {
+        return false;
+    }
+
     if (m_createCounter && !createCounter())
     {
         return false;
@@ -1711,6 +1849,7 @@ bool AclRule::setMatch(sai_acl_entry_attr_t matchId, sai_acl_field_data_t matchD
 
     if (!m_pTable->validateAclRuleMatch(matchId, *this))
     {
+        m_matches.erase(matchId);
         return false;
     }
 
@@ -2231,7 +2370,7 @@ AclRuleInnerSrcMacRewrite::AclRuleInnerSrcMacRewrite(AclOrch *aclOrch, string ru
  {
     SWSS_LOG_ENTER();
 
-    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() != 1 )
+    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() != 1)
     {
         return false;
     }
@@ -3660,6 +3799,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
         m_metaDataMgr.populateRange(metadataMin, metadataMax);
 
     }
+
     // Store the capabilities in state database
     // TODO: Move this part of the code into syncd
     vector<FieldValueTuple> fvVector;
@@ -5173,6 +5313,11 @@ bool AclOrch::updateAclRule(shared_ptr<AclRule> updatedRule)
         return false;
     }
 
+    if (!updatedRule->processPendingIpFields())
+    {
+        return false;
+    }
+
     if (!m_AclTables[tableOid].updateRule(updatedRule))
     {
         return false;
@@ -5656,7 +5801,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             }
 
             // validate and create ACL rule
-            if (bAllAttributesOk && newRule->validate())
+            if (bAllAttributesOk && newRule->processPendingIpFields() && newRule->validate())
             {
                 if (addAclRule(newRule, table_id))
                 {

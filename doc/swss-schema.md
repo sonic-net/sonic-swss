@@ -661,14 +661,31 @@ Stores rules associated with a specific ACL table on the switch.
     src_ip        = ipv4_prefix                ; options of the source ipv4
                                                ; address (and mask) field
 
+    src_ip_mask   = ipv4_address               ; optional non-contiguous IPv4 mask for src_ip.
+                                               ; Used when the mask cannot be expressed as a
+                                               ; CIDR prefix length (e.g. "255.0.255.0").
+                                               ; Requires src_ip to be a plain host address
+                                               ; (no "/" prefix notation).
+
     dst_ip        = ipv4_prefix                ; options of the destination ipv4
                                                ; address (and mask) field
+
+    dst_ip_mask   = ipv4_address               ; optional non-contiguous IPv4 mask for dst_ip.
+                                               ; See src_ip_mask for usage.
 
     src_ipv6      = ipv6_prefix                ; options of the source ipv6
                                                ; address (and mask) field
 
+    src_ipv6_mask = ipv6_address               ; optional non-contiguous IPv6 mask for src_ipv6.
+                                               ; Used when the mask cannot be expressed as a
+                                               ; CIDR prefix length (e.g. "ffff::ffff").
+                                               ; Requires src_ipv6 to be a plain host address.
+
     dst_ipv6      = ipv6_prefix                ; options of the destination ipv6
                                                ; address (and mask) field
+
+    dst_ipv6_mask = ipv6_address               ; optional non-contiguous IPv6 mask for dst_ipv6.
+                                               ; See src_ipv6_mask for usage.
 
     l4_src_port   = port_num                   ; source L4 port or the
     l4_dst_port   = port_num                   ; destination L4 port
@@ -700,6 +717,8 @@ Stores rules associated with a specific ACL table on the switch.
     h16         = 1*4HEXDIG
     ls32        = ( h16 ":" h16 ) / IPv4address
     ipv4_prefix = dec-octet "." dec-octet "." dec-octet "." dec-octet “/” %d1-32
+    ipv4_address = dec-octet "." dec-octet "." dec-octet "." dec-octet
+    ipv6_address = ipv6 host address without prefix-length (e.g. "ffff::ffff")
     dec-octet   = DIGIT                     ; 0-9
                     / %x31-39 DIGIT         ; 10-99
                     / "1" 2DIGIT            ; 100-199
