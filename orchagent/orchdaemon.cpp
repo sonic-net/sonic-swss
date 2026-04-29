@@ -274,7 +274,7 @@ bool OrchDaemon::init()
     };
 
     VNetOrch *vnet_orch;
-    vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME);
+    vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME, m_stateDb);
 
     gDirectory.set(vnet_orch);
     VNetCfgRouteOrch *cfg_vnet_rt_orch = new VNetCfgRouteOrch(m_configDb, m_applDb, cfg_vnet_tables);

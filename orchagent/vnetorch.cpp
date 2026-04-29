@@ -374,10 +374,15 @@ std::unique_ptr<T> VNetOrch::createObject(const string& vnet_name, const VNetInf
     return vnet_obj;
 }
 
-VNetOrch::VNetOrch(DBConnector *db, const std::string& tableName, VNET_EXEC op)
+VNetOrch::VNetOrch(DBConnector *db, const std::string& tableName, DBConnector *stateDb, VNET_EXEC op)
          : Orch2(db, tableName, request_)
 {
     vnet_exec_ = op;
+
+    if (stateDb)
+    {
+        m_stateVrfObjectTable = std::unique_ptr<Table>(new Table(stateDb, STATE_VRF_OBJECT_TABLE_NAME));
+    }
 
     if (op == VNET_EXEC::VNET_EXEC_VRF)
     {
@@ -518,6 +523,11 @@ bool VNetOrch::addOperation(const Request& request)
                 }
 
                 SWSS_LOG_NOTICE("VNET '%s' was added ", vnet_name.c_str());
+
+                if (m_stateVrfObjectTable)
+                {
+                    m_stateVrfObjectTable->hset(vnet_name, "state", "ok");
+                }
             }
             else
             {
@@ -599,6 +609,13 @@ bool VNetOrch::delOperation(const Request& request)
     }
 
     vnet_table_.erase(vnet_name);
+
+    if (m_stateVrfObjectTable)
+    {
+        m_stateVrfObjectTable->del(vnet_name);
+    }
+
+    SWSS_LOG_NOTICE("VNET '%s' was removed", vnet_name.c_str());
 
     return true;
 }

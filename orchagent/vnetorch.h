@@ -250,7 +250,7 @@ typedef std::unordered_map<std::string, VNetObject_T> VNetTable;
 class VNetOrch : public Orch2
 {
 public:
-    VNetOrch(DBConnector *db, const std::string&, VNET_EXEC op = VNET_EXEC::VNET_EXEC_VRF);
+    VNetOrch(DBConnector *db, const std::string&, DBConnector *stateDb = nullptr, VNET_EXEC op = VNET_EXEC::VNET_EXEC_VRF);
 
     bool setIntf(const string& alias, const string name, const IpPrefix *prefix = nullptr, const bool adminUp = true, const uint32_t mtu = 0);
     bool delIntf(const string& alias, const string name, const IpPrefix *prefix = nullptr);
@@ -304,6 +304,7 @@ private:
     VNetTable vnet_table_;
     VNetRequest request_;
     VNET_EXEC vnet_exec_;
+    std::unique_ptr<swss::Table> m_stateVrfObjectTable;
 
 };
 
