@@ -212,7 +212,7 @@ jobs:
       pipeline: sonic-net.sonic-platform-vpp
       artifact: vpp
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/main'
+      runBranch: 'refs/heads/master'
       allowPartiallySucceededBuilds: true
       path: $(Build.ArtifactStagingDirectory)/download
     displayName: "Download sonic platform-vpp deb packages"
