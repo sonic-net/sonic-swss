@@ -13,7 +13,7 @@ TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests
 
 noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
 
-LDADD_SAI = -lsaimeta -lsaimetadata -lsaivs -lsairedis
+LDADD_SAI = -lsaivs -lsairedis -lsaimeta -lsaimetadata
 
 if DEBUG
 DBGFLAGS = -ggdb -DDEBUG
