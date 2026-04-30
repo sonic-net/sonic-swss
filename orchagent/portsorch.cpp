@@ -9453,7 +9453,7 @@ void PortsOrch::clearPortPhySerdesAttrCounterMap()
 
         if (port_serdes_id == SAI_NULL_OBJECT_ID)
         {
-            SWSS_LOG_ERROR("PORT_PHY_SERDES_ATTR: Port %s has no serdes object", it.second.m_alias.c_str());
+            SWSS_LOG_WARN("PORT_PHY_SERDES_ATTR: Port %s has no serdes object", it.second.m_alias.c_str());
             continue;
         }
 
