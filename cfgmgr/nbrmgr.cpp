@@ -220,8 +220,13 @@ vector<string> NbrMgr::parseAliasIp(const string &app_db_nbr_tbl_key, const char
 {
     vector<string> ret;
     size_t found = app_db_nbr_tbl_key.find(delimiter);
+    if (found == string::npos)
+    {
+        SWSS_LOG_ERROR("Failed to parse key %s, delimiter not found", app_db_nbr_tbl_key.c_str());
+        return ret;
+    }
     string alias = app_db_nbr_tbl_key.substr(0, found);
-    string ip_address = app_db_nbr_tbl_key.substr(found + 1, app_db_nbr_tbl_key.size() - 1);
+    string ip_address = app_db_nbr_tbl_key.substr(found + 1);
 
     ret.push_back(alias);
     ret.push_back(ip_address);
