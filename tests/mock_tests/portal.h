@@ -110,6 +110,16 @@ struct Portal
         {
             return obj.m_sflowPortInfoMap;
         }
+
+        static bool getSflowDropMonitorStatusEnable(SflowOrch &obj)
+        {
+            return obj.m_sflowDropMonitor.m_enable;
+        }
+
+        static int32_t getSflowDropMonitorLimitRate(SflowOrch &obj)
+        {
+            return obj.m_sflowDropMonitor.m_limitRate;
+        }
     };
 
     struct TwampOrchInternal
