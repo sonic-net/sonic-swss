@@ -4,11 +4,11 @@
 
 #include "dashaclgroupmgr.h"
 
-#include "crmorch.h"
+#include "orchagent/crmorch.h"
 #include "dashorch.h"
 #include "dashaclorch.h"
-#include "saihelper.h"
-#include "pbutils.h"
+#include "orchagent/saihelper.h"
+#include "orchagent/dash/pbutils.h"
 #include "taskworker.h"
 
 extern sai_dash_acl_api_t* sai_dash_acl_api;

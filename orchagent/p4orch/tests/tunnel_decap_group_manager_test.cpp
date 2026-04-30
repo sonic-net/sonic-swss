@@ -1,4 +1,4 @@
-#include "tunnel_decap_group_manager.h"
+#include "orchagent/p4orch/tunnel_decap_group_manager.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -9,14 +9,14 @@
 #include <unordered_map>
 
 #include "ipprefix.h"
-#include "mock_response_publisher.h"
-#include "mock_sai_serialize.h"
-#include "mock_sai_tunnel.h"
-#include "p4oidmapper.h"
-#include "p4orch/p4orch_util.h"
-#include "p4orch_util.h"
-#include "return_code.h"
-#include "swssnet.h"
+#include "orchagent/p4orch/tests/mock_response_publisher.h"
+#include "orchagent/p4orch/tests/mock_sai_serialize.h"
+#include "orchagent/p4orch/tests/mock_sai_tunnel.h"
+#include "orchagent/p4orch/p4oidmapper.h"
+#include "orchagent/p4orch/p4orch_util.h"
+#include "orchagent/p4orch/p4orch_util.h"
+#include "orchagent/return_code.h"
+#include "orchagent/swssnet.h"
 extern "C" {
 #include "sai.h"
 }

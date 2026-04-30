@@ -4,8 +4,7 @@
 #include <array>
 #include <net/if.h>
 #include <stdexcept>
-#include "subintf.h"
-
+#include "lib/subintf.h"
 using namespace swss;
 
 subIntf::subIntf(const std::string &ifName)

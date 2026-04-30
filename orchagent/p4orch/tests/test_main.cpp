@@ -7,19 +7,19 @@ extern "C"
 
 #include <vector>
 
-#include "aclorch.h"
-#include "copporch.h"
-#include "crmorch.h"
+#include "orchagent/aclorch.h"
+#include "orchagent/copporch.h"
+#include "orchagent/crmorch.h"
 #include "dbconnector.h"
-#include "directory.h"
-#include "flowcounterrouteorch.h"
+#include "orchagent/directory.h"
+#include "orchagent/flex_counter/flowcounterrouteorch.h"
 #include "gtest/gtest.h"
-#include "mock_sai_virtual_router.h"
-#include "p4orch.h"
-#include "portsorch.h"
+#include "orchagent/p4orch/tests/mock_sai_virtual_router.h"
+#include "orchagent/p4orch/p4orch.h"
+#include "orchagent/portsorch.h"
 #include "sai_serialize.h"
-#include "switchorch.h"
-#include "vrforch.h"
+#include "orchagent/switchorch.h"
+#include "orchagent/vrforch.h"
 
 using ::testing::StrictMock;
 

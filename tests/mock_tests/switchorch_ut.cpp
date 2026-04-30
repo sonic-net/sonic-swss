@@ -1,14 +1,14 @@
 #define private public // make Directory::m_values available to clean it.
-#include "directory.h"
+#include "orchagent/directory.h"
 #undef private
 #define protected public
-#include "orch.h"
+#include "orchagent/orch.h"
 #undef protected
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
-#include "mock_response_publisher.h"
-#include "switchorch.h"
+#include "orchagent/p4orch/tests/mock_response_publisher.h"
+#include "orchagent/switchorch.h"
 
 extern void on_switch_asic_sdk_health_event(sai_object_id_t switch_id,
                                             sai_switch_asic_sdk_health_severity_t severity,

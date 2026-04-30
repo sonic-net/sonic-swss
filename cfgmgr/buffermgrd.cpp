@@ -6,8 +6,8 @@
 #include "select.h"
 #include "exec.h"
 #include "schema.h"
-#include "buffermgr.h"
-#include "buffermgrdyn.h"
+#include "cfgmgr/buffermgr.h"
+#include "cfgmgr/buffermgrdyn.h"
 #include <fstream>
 #include <iostream>
 #include "json.h"

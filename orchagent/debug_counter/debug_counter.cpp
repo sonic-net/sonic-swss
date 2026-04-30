@@ -1,5 +1,5 @@
-#include "debug_counter.h"
-#include "drop_counter.h"
+#include "orchagent/debug_counter/debug_counter.h"
+#include "orchagent/debug_counter/drop_counter.h"
 
 #include <unordered_set>
 #include <unordered_map>

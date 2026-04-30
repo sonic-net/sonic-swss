@@ -6,15 +6,15 @@
 #include "producerstatetable.h"
 #include "tokenize.h"
 #include "ipprefix.h"
-#include "timer.h"
-#include "buffermgrdyn.h"
-#include "bufferorch.h"
+#include "orchagent/timer.h"
+#include "cfgmgr/buffermgrdyn.h"
+#include "orchagent/bufferorch.h"
 #include "exec.h"
-#include "shellcmd.h"
+#include "cfgmgr/shellcmd.h"
 #include "schema.h"
 #include "warm_restart.h"
 
-#include "buffer/bufferschema.h"
+#include "orchagent/buffer/bufferschema.h"
 
 /*
  * Some Tips

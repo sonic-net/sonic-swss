@@ -12,7 +12,7 @@
 #include "producerstatetable.h"
 #include "zmqclient.h"
 #include "zmqproducerstatetable.h"
-#include "orch_zmq_config.h"
+#include "lib/orch_zmq_config.h"
 #include <nlohmann/json.hpp>
 
 using namespace std;

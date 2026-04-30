@@ -1,4 +1,4 @@
-#include "mock_sai_rpf_group.h"
+#include "orchagent/p4orch/tests/mock_sai_rpf_group.h"
 
 MockSaiRpfGroup* mock_sai_rpf_group;
 

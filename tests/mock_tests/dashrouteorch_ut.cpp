@@ -1,8 +1,8 @@
 #define private public
-#include "directory.h"
+#include "orchagent/directory.h"
 #undef private
 #define protected public
-#include "orch.h"
+#include "orchagent/orch.h"
 #undef protected
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
@@ -15,8 +15,8 @@
 #include "dash_api/eni.pb.h"
 #include "dash_api/qos.pb.h"
 #include "dash_api/eni_route.pb.h"
-#include "swssnet.h"
-#include "crmorch.h"
+#include "orchagent/swssnet.h"
+#include "orchagent/crmorch.h"
 
 EXTERN_MOCK_FNS
 namespace dashrouteorch_test

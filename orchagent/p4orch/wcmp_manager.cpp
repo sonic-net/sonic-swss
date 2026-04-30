@@ -1,4 +1,4 @@
-#include "p4orch/wcmp_manager.h"
+#include "orchagent/p4orch/wcmp_manager.h"
 
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -6,11 +6,11 @@
 #include <vector>
 
 #include "SaiAttributeList.h"
-#include "crmorch.h"
+#include "orchagent/crmorch.h"
 #include "dbconnector.h"
 #include "logger.h"
-#include "p4orch/p4orch_util.h"
-#include "portsorch.h"
+#include "orchagent/p4orch/p4orch_util.h"
+#include "orchagent/portsorch.h"
 #include "sai_serialize.h"
 #include "table.h"
 extern "C"

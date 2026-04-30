@@ -4,13 +4,13 @@
 #include <string>
 #include <map>
 #include <unordered_map>
-#include "orch.h"
-#include "portsorch.h"
+#include "orchagent/orch.h"
+#include "orchagent/portsorch.h"
 #include "redisapi.h"
 #include "saiattr.h"
 
 #include "buffer/bufferhelper.h"
-#include "high_frequency_telemetry/counternameupdater.h"
+#include "orchagent/high_frequency_telemetry/counternameupdater.h"
 
 #define BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "BUFFER_POOL_WATERMARK_STAT_COUNTER"
 #define BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS  "60000"

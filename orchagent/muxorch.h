@@ -6,11 +6,12 @@
 #include <memory>
 
 #include "request_parser.h"
-#include "portsorch.h"
-#include "tunneldecaporch.h"
-#include "aclorch.h"
-#include "neighorch.h"
-#include "bulker.h"
+#include "orchagent/request_parser.h"
+#include "orchagent/portsorch.h"
+#include "orchagent/tunneldecaporch.h"
+#include "orchagent/aclorch.h"
+#include "orchagent/neighorch.h"
+#include "orchagent/bulker.h"
 
 enum MuxState
 {

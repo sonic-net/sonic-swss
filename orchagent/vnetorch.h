@@ -8,14 +8,14 @@
 #include <bitset>
 #include <tuple>
 
-#include "aclorch.h"
-#include "request_parser.h"
+#include "orchagent/aclorch.h"
+#include "orchagent/request_parser.h"
 #include "ipaddresses.h"
 #include "producerstatetable.h"
-#include "observer.h"
-#include "nexthopgroupkey.h"
-#include "bfdorch.h"
-#include "tunneltermhelper.h"
+#include "orchagent/observer.h"
+#include "orchagent/nexthopgroupkey.h"
+#include "orchagent/bfdorch.h"
+#include "orchagent/tunneltermhelper.h"
 
 #define VNET_BITMAP_SIZE 32
 #define VNET_TUNNEL_SIZE 40960

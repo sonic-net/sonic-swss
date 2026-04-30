@@ -10,7 +10,7 @@
 
 #define private public
 #define protected public
-#include "high_frequency_telemetry/hftelprofile.h"
+#include "orchagent/high_frequency_telemetry/hftelprofile.h"
 #undef private
 #undef protected
 

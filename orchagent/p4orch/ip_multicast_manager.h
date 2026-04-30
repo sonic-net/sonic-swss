@@ -7,13 +7,13 @@
 
 #include "dbconnector.h"
 #include "ipaddress.h"
-#include "orch.h"
-#include "p4orch/object_manager_interface.h"
-#include "p4orch/p4oidmapper.h"
-#include "response_publisher_interface.h"
-#include "return_code.h"
-#include "vrforch.h"
 #include "table.h"
+#include "orchagent/orch.h"
+#include "orchagent/p4orch/object_manager_interface.h"
+#include "orchagent/p4orch/p4oidmapper.h"
+#include "orchagent/response_publisher_interface.h"
+#include "orchagent/return_code.h"
+#include "orchagent/vrforch.h"
 
 extern "C" {
 #include "sai.h"

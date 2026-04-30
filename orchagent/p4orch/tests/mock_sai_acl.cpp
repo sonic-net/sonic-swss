@@ -1,4 +1,4 @@
-#include "mock_sai_acl.h"
+#include "orchagent/p4orch/tests/mock_sai_acl.h"
 
 MockSaiAcl *mock_sai_acl;
 

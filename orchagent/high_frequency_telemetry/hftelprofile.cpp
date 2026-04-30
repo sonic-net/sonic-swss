@@ -1,6 +1,6 @@
 #include "hftelprofile.h"
 #include "hftelutils.h"
-#include "saihelper.h"
+#include "orchagent/saihelper.h"
 
 #include <swss/logger.h>
 #include <swss/redisutility.h>

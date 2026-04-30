@@ -1,4 +1,4 @@
-#include "p4orch/mirror_session_manager.h"
+#include "orchagent/p4orch/mirror_session_manager.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -7,14 +7,14 @@
 #include <string>
 #include <vector>
 
-#include "mock_response_publisher.h"
-#include "mock_sai_mirror.h"
-#include "p4oidmapper.h"
-#include "p4orch_util.h"
-#include "portsorch.h"
+#include "orchagent/p4orch/tests/mock_response_publisher.h"
+#include "orchagent/p4orch/tests/mock_sai_mirror.h"
+#include "orchagent/p4orch/p4oidmapper.h"
+#include "orchagent/p4orch/p4orch_util.h"
+#include "orchagent/portsorch.h"
 #include "swss/ipaddress.h"
 #include "swss/macaddress.h"
-#include "swssnet.h"
+#include "orchagent/swssnet.h"
 extern "C"
 {
 #include "sai.h"

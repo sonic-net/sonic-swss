@@ -1,9 +1,9 @@
 #pragma once
 
 #include "dbconnector.h"
-#include "zmqorch.h"
+#include "orchagent/zmqorch.h"
 #include "dash_api/outbound_port_map_range.pb.h"
-#include "bulker.h"
+#include "orchagent/bulker.h"
 
 struct DashPortMapBulkContext
 {

@@ -1,6 +1,6 @@
 #include <fstream>
 
-#include "teammgr.h"
+#include "cfgmgr/teammgr.h"
 #include "netdispatcher.h"
 #include "netlink.h"
 #include "select.h"

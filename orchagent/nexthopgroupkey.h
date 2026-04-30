@@ -1,7 +1,7 @@
 #ifndef SWSS_NEXTHOPGROUPKEY_H
 #define SWSS_NEXTHOPGROUPKEY_H
 
-#include "nexthopkey.h"
+#include "orchagent/nexthopkey.h"
 #include <boost/functional/hash.hpp>
 
 class NextHopGroupKey

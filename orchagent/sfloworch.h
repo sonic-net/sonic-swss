@@ -4,8 +4,8 @@
 #include <string>
 #include <inttypes.h>
 
-#include "orch.h"
-#include "portsorch.h"
+#include "orchagent/orch.h"
+#include "orchagent/portsorch.h"
 
 struct SflowPortInfo
 {

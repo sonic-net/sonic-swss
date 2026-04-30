@@ -6,7 +6,7 @@
 #include <set>
 #include <string>
 #include "dbconnector.h"
-#include "portsorch.h"
+#include "orchagent/portsorch.h"
 #include "intfsorch.h"
 
 #define VNET_TUNNEL_TERM_ACL_TABLE_TYPE "VNET_LOCAL_ENDPOINT_REDIRECT"

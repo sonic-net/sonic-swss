@@ -1,9 +1,9 @@
 #pragma once
 
-#include "bulker.h"
+#include "orchagent/bulker.h"
 #include "dbconnector.h"
 #include "ipprefix.h"
-#include "orch.h"
+#include "orchagent/orch.h"
 #include <map>
 #include <memory>
 #include <set>

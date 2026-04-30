@@ -7,8 +7,8 @@
 #ifndef SWSS_ICMPORCH_H
 #define SWSS_ICMPORCH_H
 
-#include "orch.h"
-#include "observer.h"
+#include "orchagent/orch.h"
+#include "orchagent/observer.h"
 #include "saioffloadsession.h"
 #include <vector>
 #include <tuple>

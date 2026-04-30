@@ -1,4 +1,4 @@
-#include "mock_sai_neighbor.h"
+#include "orchagent/p4orch/tests/mock_sai_neighbor.h"
 
 MockSaiNeighbor* mock_sai_neighbor;
 

@@ -1,9 +1,9 @@
-#include "watermarkorch.h"
+#include "orchagent/watermarkorch.h"
 #include "sai_serialize.h"
-#include "portsorch.h"
-#include "notifier.h"
+#include "orchagent/portsorch.h"
+#include "orchagent/notifier.h"
 #include "converter.h"
-#include "bufferorch.h"
+#include "orchagent/bufferorch.h"
 #include <inttypes.h>
 
 #define DEFAULT_TELEMETRY_INTERVAL 120

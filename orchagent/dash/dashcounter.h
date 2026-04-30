@@ -6,7 +6,7 @@
 #include <saitypes.h>
 
 #include "logger.h"
-#include "flex_counter_manager.h"
+#include "orchagent/flex_counter/flex_counter_manager.h"
 
 template<CounterType CT, typename TableT>
 struct DashCounter

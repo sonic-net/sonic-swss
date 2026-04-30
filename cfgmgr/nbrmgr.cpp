@@ -8,9 +8,9 @@
 #include "tokenize.h"
 #include "ipprefix.h"
 #include "macaddress.h"
-#include "nbrmgr.h"
+#include "cfgmgr/nbrmgr.h"
 #include "exec.h"
-#include "shellcmd.h"
+#include "cfgmgr/shellcmd.h"
 #include "subscriberstatetable.h"
 
 using namespace swss;

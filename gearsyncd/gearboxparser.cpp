@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-#include "gearboxparser.h"
-#include "gearboxutils.h"
-#include "phyparser.h"
+#include "gearsyncd/gearboxparser.h"
+#include "lib/gearboxutils.h"
+#include "gearsyncd/phyparser.h"
 #include <vector>
 
 void GearboxParser::notifyGearboxConfigDone(bool success)

@@ -5,7 +5,7 @@
 #include "logger.h"
 #include "select.h"
 #include "netdispatcher.h"
-#include "natsync.h"
+#include "natsyncd/natsync.h"
 #include <netlink/netfilter/nfnl.h>
 
 using namespace std;

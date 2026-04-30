@@ -3,7 +3,7 @@
 
 #include <logger.h>
 
-#include "teamdctl_mgr.h"
+#include "tlm_teamd/teamdctl_mgr.h"
 
 #define MAX_RETRY 3
 
