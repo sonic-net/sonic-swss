@@ -277,7 +277,7 @@ bool IcmpOrch::remove_icmp_session(const string& key)
 {
     if (m_icmp_session_map.find(key) == m_icmp_session_map.end())
     {
-        SWSS_LOG_ERROR("Request to remove non-existing ICMP session for %s", key.c_str());
+        SWSS_LOG_WARN("Request to remove non-existing ICMP session for %s", key.c_str());
         return true;
     }
 
