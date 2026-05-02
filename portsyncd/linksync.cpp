@@ -16,6 +16,7 @@
 #include "warm_restart.h"
 #include "shellcmd.h"
 
+#include <fstream>
 #include <iostream>
 #include <set>
 #include <sstream>
@@ -33,6 +34,20 @@ const string LAG_PREFIX = "PortChannel";
 extern set<string> g_portSet;
 extern bool g_init;
 extern string g_switchType;
+
+static string readSysfsEntry(const string &ifname, const string &entry)
+{
+    string path = "/sys/class/net/" + ifname + "/" + entry;
+    ifstream ifs(path);
+    if (!ifs.is_open())
+    {
+        SWSS_LOG_WARN("Failed to open %s", path.c_str());
+        return "";
+    }
+    string value;
+    getline(ifs, value);
+    return value;
+}
 
 LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
     m_portTableProducer(appl_db, APP_PORT_TABLE_NAME),
@@ -202,6 +217,22 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
         vector.push_back(op);
         vector.push_back(admin_status);
         vector.push_back(port_mtu);
+
+        const std::pair<std::string, std::string> sysfsEntries[] = {
+            {"carrier_transitions",  "carrier_changes"},
+            {"carrier_up_count",     "carrier_up_count"},
+            {"carrier_down_count",   "carrier_down_count"},
+            {"protodown",            "proto_down"},
+        };
+        for (const auto &entry : sysfsEntries)
+        {
+            string val = readSysfsEntry(key, entry.second);
+            if (!val.empty())
+            {
+                vector.emplace_back(entry.first, val);
+            }
+        }
+
         m_statePortTable.set(key, vector);
         SWSS_LOG_NOTICE("Publish %s(ok:%s) to state db", key.c_str(), oper ? "up" : "down");
     }

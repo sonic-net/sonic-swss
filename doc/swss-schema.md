@@ -1101,6 +1101,10 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     key                 = PORT_TABLE|ifname    ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
     oper_status         = "down" / "up" ; oper status
     state               = "" / "ok"     ; port created successfully
+    carrier_changes     = 1*DIGIT              ; cumulative carrier state transitions count
+    carrier_up_count    = 1*DIGIT              ; carrier up transitions count
+    carrier_down_count  = 1*DIGIT              ; carrier down transitions count
+    proto_down          = "0" / "1"            ; protocol down state
 
 ### MGMT_PORT_TABLE
     ;State for management port, including at least one key
