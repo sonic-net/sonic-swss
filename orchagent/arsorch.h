@@ -28,8 +28,8 @@ struct ArsProfileEntry
     uint32_t        loadFutureMaxVal  = 0;
     uint32_t        loadCurrentMinVal = 0;
     uint32_t        loadCurrentMaxVal = 0;
-    bool            ipv4Enable        = true;
-    bool            ipv6Enable        = true;
+    bool            ipv4Enable        = false;
+    bool            ipv6Enable        = false;
     uint32_t        samplingInterval  = 0;
     uint32_t        randomSeed        = 0;
     uint32_t        quantizationType  = 0;
