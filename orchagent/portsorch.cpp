@@ -333,6 +333,7 @@ const vector<sai_port_stat_t> port_stat_ids =
     SAI_PORT_STAT_DOT3_STATS_SYMBOL_ERRORS,
     // upscaleai:start
     SAI_PORT_STAT_ETHER_STATS_CRC_ALIGN_ERRORS,
+    SAI_PORT_STAT_ETHER_STATS_DROP_EVENTS,
     SAI_PORT_STAT_ECN_MARKED_PACKETS,
     // upscaleai:end
 };
