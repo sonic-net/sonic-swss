@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <cstdint>
 
 #define VLAN_SUB_INTERFACE_SEPARATOR   "."
 namespace swss {
