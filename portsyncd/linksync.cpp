@@ -218,11 +218,16 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
         vector.push_back(admin_status);
         vector.push_back(port_mtu);
 
+        uint32_t carrier_changes;
+        if (rtnl_link_get_carrier_changes(link, &carrier_changes) == 0)
+        {
+            vector.emplace_back("carrier_changes", to_string(carrier_changes));
+        }
+
         const std::pair<std::string, std::string> sysfsEntries[] = {
-            {"carrier_transitions",  "carrier_changes"},
-            {"carrier_up_count",     "carrier_up_count"},
-            {"carrier_down_count",   "carrier_down_count"},
-            {"protodown",            "proto_down"},
+            {"carrier_up_count",   "carrier_up_count"},
+            {"carrier_down_count", "carrier_down_count"},
+            {"proto_down",         "proto_down"},
         };
         for (const auto &entry : sysfsEntries)
         {
