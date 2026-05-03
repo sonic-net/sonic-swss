@@ -92,14 +92,23 @@ namespace portsorch_test
         }
         else if (attr_count == 1 && attr_list[0].id == SAI_PORT_ATTR_PORT_SERDES_ID)
         {
-            // Check if serdes exists for this port
+            // Prefer test-tracked serdes if present.
             auto it = _port_to_serdes_map.find(port_id);
             if (it != _port_to_serdes_map.end()) {
                 attr_list[0].value.oid = it->second;
-            } else {
-                attr_list[0].value.oid = SAI_NULL_OBJECT_ID;
+                status = SAI_STATUS_SUCCESS;
             }
-            status = SAI_STATUS_SUCCESS;
+            // Fall through to the real SAI only for genuine VS PORT objects so
+            // default-port serdes (auto-created during init_switch) gets cleaned
+            // up. Synthetic OIDs used by gearbox tests (e.g., 0x2100...) decode
+            // to non-PORT types and would throw inside libsairedis-meta.
+            else if (sai_object_type_query(port_id) == SAI_OBJECT_TYPE_PORT) {
+                status = pold_sai_port_api->get_port_attribute(port_id, attr_count, attr_list);
+            }
+            else {
+                attr_list[0].value.oid = SAI_NULL_OBJECT_ID;
+                status = SAI_STATUS_SUCCESS;
+            }
         }
         else
         {
@@ -331,6 +340,31 @@ namespace portsorch_test
         _In_ sai_object_id_t port_serdes_id)
     {
         _sai_remove_port_serdes_calls.push_back(port_serdes_id);
+
+        bool tracked = false;
+        // Erase any port-to-serdes mappings that reference this serdes ID,
+        // so subsequent SAI_PORT_ATTR_PORT_SERDES_ID queries reflect removal.
+        for (auto it = _port_to_serdes_map.begin(); it != _port_to_serdes_map.end(); )
+        {
+            if (it->second == port_serdes_id)
+            {
+                it = _port_to_serdes_map.erase(it);
+                tracked = true;
+            }
+            else
+            {
+                ++it;
+            }
+        }
+
+        // Forward to real SAI only for genuine PORT_SERDES OIDs so default VS
+        // port serdes objects get cleaned up. Test-fabricated OIDs would throw
+        // inside libsairedis-meta.
+        if (!tracked && sai_object_type_query(port_serdes_id) == SAI_OBJECT_TYPE_PORT_SERDES)
+        {
+            return pold_sai_port_api->remove_port_serdes(port_serdes_id);
+        }
+
         return SAI_STATUS_SUCCESS;
     }
 
@@ -1053,7 +1087,9 @@ namespace portsorch_test
         auto &ports = defaultPortList;
         ASSERT_TRUE(!ports.empty());
 
-        // default Ethernet0 has different lanes so create_ports() is triggered
+        // default Ethernet0 has different lanes so create_ports() is triggered.
+        // Set role explicitly: PortConfig::role.value has no default initializer,
+        // so leaving it unset would propagate uninitialized memory into Port::m_role.
         std::vector<FieldValueTuple> fvList = {
             { "alias",               alias       },
             { "index",               "0"         },
@@ -1068,6 +1104,7 @@ namespace portsorch_test
             { "tpid",                "0x8101"    },
             { "pfc_asym",            "on"        },
             { "admin_status",        "up"        },
+            { "role",                "Ext"       },
             { "description",         "FP port"   }
         };
 

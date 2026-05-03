@@ -4061,7 +4061,8 @@ void PortsOrch::registerPort(Port &p)
 
     /* Get Port Serdes Id of this port*/
     sai_object_id_t port_serdes_id = SAI_NULL_OBJECT_ID;
-    if (p.m_type == Port::Type::PHY) {
+    if (p.m_type == Port::Type::PHY &&
+        p.m_role != Port::Role::Rec && p.m_role != Port::Role::Inb) {
         port_serdes_id = getPortSerdesIdFromPortId(p.m_port_id);
     }
 
@@ -4098,7 +4099,8 @@ void PortsOrch::registerPort(Port &p)
     }
     if (flex_counters_orch->getPortPhyAttrCounterState())
     {
-        if (!m_supported_phy_attrs.empty() && p.m_type == Port::Type::PHY)
+        if (!m_supported_phy_attrs.empty() && p.m_type == Port::Type::PHY &&
+            p.m_role != Port::Role::Rec && p.m_role != Port::Role::Inb)
         {
             auto supported_attrs = getPortPhySupportedAttrs(p.m_port_id, p.m_alias.c_str());
             if (!supported_attrs.empty())
@@ -4114,6 +4116,7 @@ void PortsOrch::registerPort(Port &p)
     {
         if (!m_supported_phy_serdes_attrs.empty() &&
             p.m_type == Port::Type::PHY &&
+            p.m_role != Port::Role::Rec && p.m_role != Port::Role::Inb &&
             port_serdes_id != SAI_NULL_OBJECT_ID)
         {
             auto supported_attrs = getPortPhySerdesSupportedAttrs(port_serdes_id, p.m_alias.c_str());
@@ -4230,7 +4233,8 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     {
         wred_port_stat_manager.clearCounterIdList(p.m_port_id);
     }
-    if (!m_supported_phy_attrs.empty() && p.m_type == Port::Type::PHY)
+    if (!m_supported_phy_attrs.empty() && p.m_type == Port::Type::PHY &&
+        p.m_role != Port::Role::Rec && p.m_role != Port::Role::Inb)
     {
         port_phy_attr_manager.clearCounterIdList(p.m_port_id);
     }
@@ -4245,6 +4249,7 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
 
     if (!m_supported_phy_serdes_attrs.empty() &&
         p.m_type == Port::Type::PHY &&
+        p.m_role != Port::Role::Rec && p.m_role != Port::Role::Inb &&
         port_serdes_id != SAI_NULL_OBJECT_ID)
     {
         port_phy_serdes_attr_manager.clearCounterIdList(port_serdes_id);
@@ -9159,7 +9164,9 @@ void PortsOrch::generatePortPhyAttrCounterMap()
 
     for (const auto& it: m_portList)
     {
-        if (it.second.m_type == Port::Type::PHY)
+        if (it.second.m_type == Port::Type::PHY &&
+            it.second.m_role != Port::Role::Rec &&
+            it.second.m_role != Port::Role::Inb)
         {
             auto supported_attrs = getPortPhySupportedAttrs(it.second.m_port_id, it.second.m_alias.c_str());
             if (!supported_attrs.empty())
@@ -9180,7 +9187,9 @@ void PortsOrch::clearPortPhyAttrCounterMap()
     for (const auto& it: m_portList)
     {
         // Clear counter stats only for PHY ports that were previously configured
-        if (it.second.m_type != Port::Type::PHY)
+        if (it.second.m_type != Port::Type::PHY ||
+            it.second.m_role == Port::Role::Rec ||
+            it.second.m_role == Port::Role::Inb)
         {
             continue;
         }
@@ -9306,7 +9315,9 @@ void PortsOrch::generatePortPhySerdesAttrCounterMap()
 
     for (const auto& it: m_portList)
     {
-        if (it.second.m_type == Port::Type::PHY)
+        if (it.second.m_type == Port::Type::PHY &&
+            it.second.m_role != Port::Role::Rec &&
+            it.second.m_role != Port::Role::Inb)
         {
             const char *port_name = it.second.m_alias.c_str();
             sai_object_id_t port_id = it.second.m_port_id;
@@ -9342,7 +9353,9 @@ void PortsOrch::clearPortPhySerdesAttrCounterMap()
     for (const auto& it: m_portList)
     {
         // Clear counter stats only for PHY ports that were previously configured
-        if (it.second.m_type != Port::Type::PHY)
+        if (it.second.m_type != Port::Type::PHY ||
+            it.second.m_role == Port::Role::Rec ||
+            it.second.m_role == Port::Role::Inb)
         {
             continue;
         }
@@ -10031,6 +10044,15 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id, sai_object_id_t 
 {
     SWSS_LOG_ENTER();
 
+    Port port;
+    if (getPort(port_id, port) &&
+        (port.m_role == Port::Role::Rec || port.m_role == Port::Role::Inb))
+    {
+        SWSS_LOG_INFO("Skipping serdes programming for recirc/inband port %s",
+                      port.m_alias.c_str());
+        return true;
+    }
+
     vector<sai_attribute_t> attr_list;
     sai_attribute_t port_attr;
     sai_attribute_t port_serdes_attr;
@@ -10173,6 +10195,13 @@ bool PortsOrch::setPortMediaType(Port& port, const string &media_type)
 void PortsOrch::removePortSerdesAttribute(sai_object_id_t port_id)
 {
     SWSS_LOG_ENTER();
+
+    Port port;
+    if (getPort(port_id, port) &&
+        (port.m_role == Port::Role::Rec || port.m_role == Port::Role::Inb))
+    {
+        return;
+    }
 
     sai_attribute_t port_attr;
     sai_status_t status;
