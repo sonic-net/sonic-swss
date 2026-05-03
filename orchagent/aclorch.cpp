@@ -144,6 +144,8 @@ static acl_packet_action_lookup_t aclPacketActionLookup =
     { PACKET_ACTION_FORWARD, SAI_PACKET_ACTION_FORWARD },
     { PACKET_ACTION_DROP,    SAI_PACKET_ACTION_DROP },
     { PACKET_ACTION_COPY,    SAI_PACKET_ACTION_COPY },
+    { PACKET_ACTION_TRAP,    SAI_PACKET_ACTION_TRAP },
+    { PACKET_ACTION_LOG,     SAI_PACKET_ACTION_LOG },
 };
 
 static acl_rule_attr_lookup_t aclMetadataDscpActionLookup =
@@ -1314,6 +1316,16 @@ bool AclRule::createRule()
     {
         attr = it.second.getSaiAttr();
         rule_attrs.push_back(attr);
+        if (attr.id == SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION && attr.value.aclaction.enable)
+        {
+            auto pa = static_cast<sai_packet_action_t>(attr.value.aclaction.parameter.s32);
+            if (pa == SAI_PACKET_ACTION_TRAP || pa == SAI_PACKET_ACTION_LOG ||
+                pa == SAI_PACKET_ACTION_COPY)
+            {
+                SWSS_LOG_NOTICE("ACL rule %s: creating entry with punt-related packet action SAI %d",
+                        m_id.c_str(), static_cast<int>(pa));
+            }
+        }
     }
 
     status = sai_acl_api->create_acl_entry(&m_ruleOid, gSwitchId, (uint32_t)rule_attrs.size(), rule_attrs.data());
@@ -1982,6 +1994,7 @@ bool AclRulePacket::validateAddAction(string attr_name, string _attr_value)
         if (it != aclPacketActionLookup.cend())
         {
             actionData.parameter.s32 = it->second;
+            SWSS_LOG_NOTICE("ACL rule packet action: %s -> SAI %d", attr_value.c_str(), static_cast<int>(it->second));
         }
         // handle PACKET_ACTION_REDIRECT in ACTION_PACKET_ACTION for backward compatibility
         else if (attr_value.find(PACKET_ACTION_REDIRECT) != string::npos)
@@ -2147,9 +2160,19 @@ bool AclRulePacket::validate()
 {
     SWSS_LOG_ENTER();
 
-    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() != 1)
+    if (m_rangeConfig.empty() && m_matches.empty())
     {
         return false;
+    }
+
+    if (m_actions.empty() || m_actions.size() > 2)
+    {
+        return false;
+    }
+
+    if (m_actions.size() > 1)
+    {
+        SWSS_LOG_NOTICE("ACL rule %s: validation passed with %zu actions", m_id.c_str(), m_actions.size());
     }
 
     return true;
@@ -5602,6 +5625,11 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 else if (newRule->validateAddMatch(attr_name, attr_value))
                 {
                     SWSS_LOG_INFO("Added match attribute '%s'", attr_name.c_str());
+                }
+                else if (attr_name == MATCH_TRAP_GROUP)
+                {
+                    // Store trap group name; will be resolved during rule creation
+                    SWSS_LOG_NOTICE("ACL rule %s: TRAP_GROUP=%s", rule_id.c_str(), attr_value.c_str());
                 }
                 else if (newRule->validateAddAction(attr_name, attr_value))
                 {
