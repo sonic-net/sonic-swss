@@ -148,6 +148,13 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     char addrStr[MAX_ADDR_SIZE+1] = {0};
     nl_addr2str(rtnl_link_get_addr(link), addrStr, MAX_ADDR_SIZE);
 
+    char permAddrStr[MAX_ADDR_SIZE+1] = {0};
+    struct nl_addr *permAddr = rtnl_link_get_perm_addr(link);
+    if (permAddr)
+    {
+        nl_addr2str(permAddr, permAddrStr, MAX_ADDR_SIZE);
+    }
+
     unsigned int ifindex = rtnl_link_get_ifindex(link);
     int master = rtnl_link_get_master(link);
     char *type = rtnl_link_get_type(link);
@@ -222,6 +229,11 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
         if (rtnl_link_get_carrier_changes(link, &carrier_changes) == 0)
         {
             vector.emplace_back("carrier_changes", to_string(carrier_changes));
+        }
+
+        if (permAddrStr[0] != '\0')
+        {
+            vector.emplace_back("perm_hw_addr", permAddrStr);
         }
 
         const std::pair<std::string, std::string> sysfsEntries[] = {
