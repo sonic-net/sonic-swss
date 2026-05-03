@@ -36,9 +36,29 @@ extern "C" {
  * Global enable lives in DEVICE_METADATA|localhost.tam_int_enable —
  * tamorch refuses to push any SAI calls when this flag is false.
  *
- * TAM_FLOW (per-flow ACL programming via SAI_TAM_INT_ATTR_ACL_GROUP)
- * is parsed but not yet pushed to SAI in this revision. Tracking that
- * work in the M3 milestone of the IFAv2 visibility proposal.
+ * v1 deployment topology — IMPORTANT for understanding what this
+ * orchagent does and does NOT do:
+ *
+ *   IFAv2 modifies the original packet inline. The source switch
+ *   inserts an IFAv2 shim, transit switches append metadata, and
+ *   only the SINK emits a UDP/TCP report to a collector. v1 uses
+ *   NIC-terminated IFAv2 (DOCA Flow on CX7/CX8/BF3/BF4 is the sink),
+ *   so all switches in v1 are source + transit only — they never
+ *   open a socket to a collector.
+ *
+ *   Therefore in v1:
+ *     * doTaskTamReport, doTaskTamInt, doTaskTam     — push SAI.
+ *     * doTaskTamTransport, doTaskTamTelemetry       — parse and
+ *       validate but do not push SAI (v1 has no sink-on-switch).
+ *     * doTaskTamFlow                                — parsed only;
+ *       per-flow ACL programming via SAI_TAM_INT_ATTR_ACL_GROUP is
+ *       deferred to M3.
+ *
+ *   The dead parsers are intentional, not stubbed-out work: they keep
+ *   the orchagent's CONFIG_DB surface 1:1 with the YANG module so
+ *   that M3 (switch-sink topology for non-IFA-aware receive NICs)
+ *   can light them up without a schema rev. Reviewers expecting
+ *   sink behavior in v1 should look for it in M3 instead.
  */
 class TamOrch : public Orch
 {
