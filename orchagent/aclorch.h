@@ -405,8 +405,14 @@ public:
     bool validate();
     void onUpdate(SubjectType, void *) override;
 
+    void setTrapGroup(const string& trapGroup);
+    const string& getTrapGroup() const;
+
 protected:
     sai_object_id_t getRedirectObjectId(const string& redirect_param);
+
+private:
+    string m_trapGroup;
 };
 
 class AclRuleInnerSrcMacRewrite: public AclRule

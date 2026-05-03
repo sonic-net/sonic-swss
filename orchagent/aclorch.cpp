@@ -2165,17 +2165,25 @@ bool AclRulePacket::validate()
         return false;
     }
 
-    if (m_actions.empty() || m_actions.size() > 2)
+    if (m_actions.size() != 1)
     {
+        SWSS_LOG_ERROR("ACL rule %s: expected exactly 1 action, got %zu",
+                       m_id.c_str(), m_actions.size());
         return false;
     }
 
-    if (m_actions.size() > 1)
-    {
-        SWSS_LOG_NOTICE("ACL rule %s: validation passed with %zu actions", m_id.c_str(), m_actions.size());
-    }
-
     return true;
+}
+
+void AclRulePacket::setTrapGroup(const string& trapGroup)
+{
+    m_trapGroup = trapGroup;
+    SWSS_LOG_NOTICE("ACL rule %s: TRAP_GROUP set to '%s'", m_id.c_str(), trapGroup.c_str());
+}
+
+const string& AclRulePacket::getTrapGroup() const
+{
+    return m_trapGroup;
 }
 
 void AclRulePacket::onUpdate(SubjectType, void *)
@@ -5628,8 +5636,15 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 }
                 else if (attr_name == MATCH_TRAP_GROUP)
                 {
-                    // Store trap group name; will be resolved during rule creation
-                    SWSS_LOG_NOTICE("ACL rule %s: TRAP_GROUP=%s", rule_id.c_str(), attr_value.c_str());
+                    auto pktRule = dynamic_cast<AclRulePacket*>(newRule.get());
+                    if (pktRule)
+                    {
+                        pktRule->setTrapGroup(attr_value);
+                    }
+                    else
+                    {
+                        SWSS_LOG_WARN("ACL rule %s: TRAP_GROUP ignored (not a packet rule)", rule_id.c_str());
+                    }
                 }
                 else if (newRule->validateAddAction(attr_name, attr_value))
                 {
