@@ -1336,14 +1336,15 @@ bool AclRule::createRule()
             SWSS_LOG_NOTICE("ACL rule %s already exists", m_id.c_str());
             return true;
         }
-        SWSS_LOG_ERROR("Failed to create ACL rule %s, rv:%d",
-                m_id.c_str(), status);
+        SWSS_LOG_ERROR("Failed to create ACL rule %s, status=%s",
+                m_id.c_str(), sai_serialize_status(status).c_str());
         AclRange::remove(range_objects, range_object_list.count);
         decreaseNextHopRefCount();
     }
 
     if (status == SAI_STATUS_SUCCESS)
     {
+        SWSS_LOG_NOTICE("ACL rule %s: created entry oid=0x%" PRIx64, m_id.c_str(), m_ruleOid);
         gCrmOrch->incCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_ENTRY, m_pTable->getOid());
     }
 
@@ -1413,7 +1414,8 @@ bool AclRule::removeRule()
             m_ruleOid = SAI_NULL_OBJECT_ID;
             return true;
         }
-        SWSS_LOG_ERROR("Failed to delete ACL rule, status %s", sai_serialize_status(status).c_str());
+        SWSS_LOG_ERROR("Failed to delete ACL rule %s oid=0x%" PRIx64 ", status=%s",
+                m_id.c_str(), m_ruleOid, sai_serialize_status(status).c_str());
         return false;
     }
 
@@ -2162,6 +2164,7 @@ bool AclRulePacket::validate()
 
     if (m_rangeConfig.empty() && m_matches.empty())
     {
+        SWSS_LOG_ERROR("ACL rule %s: no matches or range configured", m_id.c_str());
         return false;
     }
 
