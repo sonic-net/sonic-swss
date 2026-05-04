@@ -5646,9 +5646,8 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                 }
                 else
                 {
-                    SWSS_LOG_ERROR("Unknown table attribute '%s'", attr_name.c_str());
-                    bAllAttributesOk = false;
-                    break;
+                    SWSS_LOG_WARN("Ignoring unknown table attribute '%s'", attr_name.c_str());
+                    continue;
                 }
             }
 
