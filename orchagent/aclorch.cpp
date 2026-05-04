@@ -2200,22 +2200,7 @@ bool AclRulePacket::createRule()
 {
     SWSS_LOG_ENTER();
 
-    bool needsUserTrap = false;
-    for (const auto& it : m_actions)
-    {
-        auto attr = it.second.getSaiAttr();
-        if (attr.id == SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION && attr.value.aclaction.enable)
-        {
-            auto pa = static_cast<sai_packet_action_t>(attr.value.aclaction.parameter.s32);
-            if (pa == SAI_PACKET_ACTION_TRAP || pa == SAI_PACKET_ACTION_COPY ||
-                pa == SAI_PACKET_ACTION_LOG)
-            {
-                needsUserTrap = true;
-            }
-        }
-    }
-
-    if (needsUserTrap)
+    if (needsUserDefinedTrap())
     {
         sai_object_id_t trapGroupOid = SAI_NULL_OBJECT_ID;
 
@@ -2321,6 +2306,24 @@ bool AclRulePacket::removeRule()
     return true;
 }
 
+bool AclRulePacket::needsUserDefinedTrap() const
+{
+    for (const auto& it : m_actions)
+    {
+        auto attr = it.second.getSaiAttr();
+        if (attr.id == SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION && attr.value.aclaction.enable)
+        {
+            auto pa = static_cast<sai_packet_action_t>(attr.value.aclaction.parameter.s32);
+            if (pa == SAI_PACKET_ACTION_TRAP || pa == SAI_PACKET_ACTION_COPY ||
+                pa == SAI_PACKET_ACTION_LOG)
+            {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 bool AclRulePacket::update(const AclRule& updatedRule)
 {
     SWSS_LOG_ENTER();
@@ -2334,11 +2337,12 @@ bool AclRulePacket::update(const AclRule& updatedRule)
     }
 
     auto updatedPktRule = dynamic_cast<const AclRulePacket*>(&updatedRule);
-    if (updatedPktRule && !updatedPktRule->getTrapGroup().empty())
+    if (updatedPktRule &&
+        (updatedPktRule->needsUserDefinedTrap() || !updatedPktRule->getTrapGroup().empty()))
     {
         SWSS_LOG_NOTICE("ACL rule %s: in-place update not supported when "
-                        "adding TRAP_GROUP; caller should remove+create",
-                        m_id.c_str());
+                        "target rule requires a user-defined trap; "
+                        "caller should remove+create", m_id.c_str());
         return false;
     }
 

@@ -410,6 +410,7 @@ public:
 
     void setTrapGroup(const string& trapGroup);
     const string& getTrapGroup() const;
+    bool needsUserDefinedTrap() const;
 
 protected:
     sai_object_id_t getRedirectObjectId(const string& redirect_param);
