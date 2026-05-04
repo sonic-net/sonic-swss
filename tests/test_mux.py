@@ -2131,7 +2131,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
            neighbor, present in mux_nexthop_tb_.
         3. FDB for MAC X ages out.
         4. Neighbor B (IP_B / MAC X) is learned while FDB is absent.
-           On master (post-#4459) updateNeighbor returns early because
+           On master (post-#4491) updateNeighbor returns early because
            getMuxPort() fails with no FDB and the empty-port placeholder
            was removed. B is NOT added to mux_nexthop_tb_.
         5. FDB for MAC X is re-learned on Ethernet0 -> MuxOrch::updateFdb
@@ -2140,14 +2140,10 @@ class TestMuxTunnel(TestMuxTunnelBase):
            supposed to convert any stranded same-MAC neighbor is gated
            by !found_existing_mux_neighbor, so it is skipped for B.
 
-        Expected (fix): both A and B end up MUX-managed on standby
+        Expected: both A and B end up MUX-managed on standby
         (removed from ASIC neighbor table, tunnel route installed).
         Actual (current master): B stays as a regular ASIC neighbor with
         no tunnel route -> unroutable toward peer ToR.
-
-        This test currently fails on master and is the canary for the
-        fix that replaces the function-scoped boolean with per-IP
-        tracking.
         """
         appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         asicdb = dvs.get_asic_db()
