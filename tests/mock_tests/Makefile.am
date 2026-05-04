@@ -139,6 +139,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/chassisorch.cpp \
                 $(top_srcdir)/orchagent/sfloworch.cpp \
                 $(top_srcdir)/orchagent/debugcounterorch.cpp \
+                $(top_srcdir)/orchagent/tamorch.cpp \
                 $(top_srcdir)/orchagent/natorch.cpp \
                 $(top_srcdir)/orchagent/muxorch.cpp \
                 $(top_srcdir)/orchagent/mlagorch.cpp \

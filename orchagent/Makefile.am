@@ -104,6 +104,7 @@ orchagent_SOURCES = \
             sfloworch.cpp \
             chassisorch.cpp \
             debugcounterorch.cpp \
+            tamorch.cpp \
             natorch.cpp \
             mlagorch.cpp \
             isolationgrouporch.cpp \

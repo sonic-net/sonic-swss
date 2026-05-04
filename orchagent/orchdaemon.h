@@ -36,6 +36,7 @@
 #include "policerorch.h"
 #include "sfloworch.h"
 #include "debugcounterorch.h"
+#include "tamorch.h"
 #include "directory.h"
 #include "natorch.h"
 #include "isolationgrouporch.h"

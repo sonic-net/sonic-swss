@@ -66,6 +66,7 @@ BfdOrch *gBfdOrch;
 Srv6Orch *gSrv6Orch;
 FlowCounterRouteOrch *gFlowCounterRouteOrch;
 DebugCounterOrch *gDebugCounterOrch;
+TamOrch *gTamOrch;
 MonitorOrch *gMonitorOrch;
 BfdMonitorOrch *gBfdMonitorOrch;
 TunnelDecapOrch *gTunneldecapOrch;
@@ -432,6 +433,19 @@ bool OrchDaemon::init()
 
     gDebugCounterOrch = new DebugCounterOrch(m_configDb, debug_counter_tables, 1000);
 
+    /* IFAv2 / TAM-INT — see sonic-tam-int.yang for the schema and
+     * engineering-notes/network-visibility-int-ifa/00-proposal.md for
+     * the rollout plan. Global enable: DEVICE_METADATA|localhost.tam_int_enable. */
+    vector<string> tam_tables = {
+        TAM_REPORT_TABLE_NAME,
+        TAM_TRANSPORT_TABLE_NAME,
+        TAM_TELEMETRY_TABLE_NAME,
+        TAM_INT_TABLE_NAME,
+        TAM_TABLE_NAME,
+        TAM_FLOW_TABLE_NAME
+    };
+    gTamOrch = new TamOrch(m_configDb, tam_tables);
+
     const int natorch_base_pri = 50;
 
     vector<table_name_with_pri_t> nat_tables = {
@@ -503,7 +517,7 @@ bool OrchDaemon::init()
     //       at NHG creation time (write-once in mlnx_sai_nexthopgroup.c:1522).
     // ArsOrch depends only on gPortsOrch (position 3) for port OIDs, which
     // is already processed by this point.
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gArsOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gArsOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gTamOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
