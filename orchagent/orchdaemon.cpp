@@ -1,7 +1,6 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <chrono>
-#include <thread>
 #include <limits.h>
 #include <errno.h>
 #include <signal.h>
@@ -966,15 +965,12 @@ void OrchDaemon::start(long heartBeatInterval)
         }
 
         /*
-         * When gOrchUnhealthy is set, the Select event loop spins with
-         * epoll_wait(timeout=0) because poll_descriptors phase 1 always
-         * finds "ready" Selectables (the notification channel stays readable
-         * after the SAI failure), so the blocking phase 2 poll is never
-         * reached. This causes 100% CPU. Sleep to throttle the loop.
+         * Log an error message periodically if a previous SAI API call failed with
+         * an unrecoverable error.
          */
-        if (gOrchUnhealthy && ret != Select::TIMEOUT)
+        if (gOrchUnhealthy)
         {
-            std::this_thread::sleep_for(std::chrono::milliseconds(SELECT_TIMEOUT));
+            SWSS_LOG_ERROR("%s", gSaiErrorString.c_str());
         }
 
         auto tend = std::chrono::high_resolution_clock::now();
@@ -985,16 +981,6 @@ void OrchDaemon::start(long heartBeatInterval)
         if (diff.count() >= SELECT_TIMEOUT)
         {
             tstart = std::chrono::high_resolution_clock::now();
-
-            /*
-             * Log an error message periodically if a previous SAI API call failed with
-             * an unrecoverable error. Rate-limit to once per SELECT_TIMEOUT interval
-             * to avoid busy-loop CPU spin from excessive syslog writes.
-             */
-            if (gOrchUnhealthy)
-            {
-                SWSS_LOG_ERROR("%s", gSaiErrorString.c_str());
-            }
 
             flush();
         }
