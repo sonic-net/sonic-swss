@@ -403,6 +403,8 @@ public:
 
     bool validateAddAction(string attr_name, string attr_value);
     bool validate();
+    bool createRule() override;
+    bool removeRule() override;
     void onUpdate(SubjectType, void *) override;
 
     void setTrapGroup(const string& trapGroup);
@@ -413,6 +415,7 @@ protected:
 
 private:
     string m_trapGroup;
+    sai_object_id_t m_userDefinedTrapOid = SAI_NULL_OBJECT_ID;
 };
 
 class AclRuleInnerSrcMacRewrite: public AclRule
