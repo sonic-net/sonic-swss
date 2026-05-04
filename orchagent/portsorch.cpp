@@ -429,10 +429,28 @@ const vector<sai_port_stat_t> wred_port_stat_ids =
     SAI_PORT_STAT_WRED_DROPPED_PACKETS
 };
 
+/* Used on platforms where WRED stats are exposed at the egress queue
+ * object (SAI_QUEUE_TYPE_UNICAST/MULTICAST/ALL). On these platforms
+ * the egress queue maintains both WRED-drop counters
+ * (SAI_QUEUE_STAT_WRED_DROPPED_*) and WRED-ECN-marked counters
+ * (SAI_QUEUE_STAT_WRED_ECN_MARKED_*) for packets and bytes. */
 static const vector<sai_queue_stat_t> wred_queue_stat_ids =
 {
     SAI_QUEUE_STAT_WRED_ECN_MARKED_PACKETS,
     SAI_QUEUE_STAT_WRED_ECN_MARKED_BYTES,
+    SAI_QUEUE_STAT_WRED_DROPPED_PACKETS,
+    SAI_QUEUE_STAT_WRED_DROPPED_BYTES
+};
+
+/* Used on platforms where WRED stats are exposed at the
+ * virtual-output-queue object (SAI_QUEUE_TYPE_UNICAST_VOQ). On these
+ * platforms WRED drops are counted at the ingress VOQ, so the
+ * WRED-drop counters (SAI_QUEUE_STAT_WRED_DROPPED_*) are exposed on
+ * the VOQ object. WRED ECN marking is performed at egress and the
+ * WRED-ECN-marked counters are exposed only on the egress queue
+ * object — not on the VOQ — and are therefore not registered here. */
+static const vector<sai_queue_stat_t> wred_voq_stat_ids =
+{
     SAI_QUEUE_STAT_WRED_DROPPED_PACKETS,
     SAI_QUEUE_STAT_WRED_DROPPED_BYTES
 };
@@ -9758,7 +9776,12 @@ void PortsOrch::addWredQueueFlexCountersPerPortPerQueueIndex(const Port& port, s
     std::unordered_set<string> counter_stats;
     std::vector<sai_object_id_t> queue_ids;
 
-    for (const auto& it: wred_queue_stat_ids)
+    /* Pick the stats list that matches where this platform exposes WRED
+     * counters: on VOQ chassis the WRED drop counters live at the VOQ
+     * object; on platforms that expose WRED at the egress queue the
+     * egress queue carries both WRED drop and WRED ECN-marked counters. */
+    const auto& stat_ids = voq ? wred_voq_stat_ids : wred_queue_stat_ids;
+    for (const auto& it: stat_ids)
     {
         counter_stats.emplace(sai_serialize_queue_stat(it));
     }
