@@ -268,4 +268,13 @@ namespace neighorch_test
         gPortsOrch->m_portList.erase(VLAN_2000);
         LearnNeighbor(VLAN_2000, TEST_IP, MAC2);
     }
+
+    TEST_F(NeighOrchTest, SkipHostInterfaceUsb0)
+    {
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).Times(0);
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).Times(0);
+        LearnNeighbor("usb0", TEST_IP, MAC1);
+        /* Literal "usb0" can overload-resolve to NextHopKey(str, bool overlay) vs (str, str). */
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(NeighborEntry(TEST_IP, std::string("usb0"))), 0);
+    }
 }
