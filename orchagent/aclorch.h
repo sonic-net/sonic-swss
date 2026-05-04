@@ -405,6 +405,7 @@ public:
     bool validate();
     bool createRule() override;
     bool removeRule() override;
+    bool update(const AclRule& updatedRule) override;
     void onUpdate(SubjectType, void *) override;
 
     void setTrapGroup(const string& trapGroup);

@@ -180,7 +180,8 @@ static const acl_capabilities_t defaultAclActionsSupported =
             {
                 SAI_ACL_ACTION_TYPE_PACKET_ACTION,
                 SAI_ACL_ACTION_TYPE_MIRROR_INGRESS,
-                SAI_ACL_ACTION_TYPE_NO_NAT
+                SAI_ACL_ACTION_TYPE_NO_NAT,
+                SAI_ACL_ACTION_TYPE_SET_USER_TRAP_ID
             },
             false
         }
@@ -2275,7 +2276,20 @@ bool AclRulePacket::createRule()
             SaiAttrWrapper(SAI_OBJECT_TYPE_ACL_ENTRY, trapAttr);
     }
 
-    return AclRule::createRule();
+    if (!AclRule::createRule())
+    {
+        if (m_userDefinedTrapOid != SAI_NULL_OBJECT_ID)
+        {
+            sai_hostif_api->remove_hostif_user_defined_trap(m_userDefinedTrapOid);
+            SWSS_LOG_NOTICE("ACL rule %s: cleaned up user-defined trap OID 0x%" PRIx64
+                            " after ACL entry creation failure", m_id.c_str(), m_userDefinedTrapOid);
+            m_userDefinedTrapOid = SAI_NULL_OBJECT_ID;
+            m_actions.erase(SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID);
+        }
+        return false;
+    }
+
+    return true;
 }
 
 bool AclRulePacket::removeRule()
@@ -2296,16 +2310,39 @@ bool AclRulePacket::removeRule()
             SWSS_LOG_ERROR("ACL rule %s: failed to remove user-defined trap OID 0x%" PRIx64
                            ", status=%s", m_id.c_str(), m_userDefinedTrapOid,
                            sai_serialize_status(status).c_str());
+            return false;
         }
-        else
-        {
-            SWSS_LOG_NOTICE("ACL rule %s: removed user-defined trap OID 0x%" PRIx64,
-                            m_id.c_str(), m_userDefinedTrapOid);
-        }
+
+        SWSS_LOG_NOTICE("ACL rule %s: removed user-defined trap OID 0x%" PRIx64,
+                        m_id.c_str(), m_userDefinedTrapOid);
         m_userDefinedTrapOid = SAI_NULL_OBJECT_ID;
     }
 
     return true;
+}
+
+bool AclRulePacket::update(const AclRule& updatedRule)
+{
+    SWSS_LOG_ENTER();
+
+    if (m_userDefinedTrapOid != SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_NOTICE("ACL rule %s: in-place update not supported for "
+                        "trap-backed rules; caller should remove+create",
+                        m_id.c_str());
+        return false;
+    }
+
+    auto updatedPktRule = dynamic_cast<const AclRulePacket*>(&updatedRule);
+    if (updatedPktRule && !updatedPktRule->getTrapGroup().empty())
+    {
+        SWSS_LOG_NOTICE("ACL rule %s: in-place update not supported when "
+                        "adding TRAP_GROUP; caller should remove+create",
+                        m_id.c_str());
+        return false;
+    }
+
+    return AclRule::update(updatedRule);
 }
 
 void AclRulePacket::onUpdate(SubjectType, void *)
