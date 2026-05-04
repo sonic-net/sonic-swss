@@ -2249,6 +2249,37 @@ bool AclRulePacket::createRule()
         SWSS_LOG_NOTICE("ACL rule %s: created user-defined trap OID 0x%" PRIx64,
                         m_id.c_str(), m_userDefinedTrapOid);
 
+        vector<sai_attribute_t> hteAttrs;
+        sai_attribute_t hteAttr;
+
+        hteAttr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_TYPE;
+        hteAttr.value.s32 = SAI_HOSTIF_TABLE_ENTRY_TYPE_TRAP_ID;
+        hteAttrs.push_back(hteAttr);
+
+        hteAttr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_TRAP_ID;
+        hteAttr.value.oid = m_userDefinedTrapOid;
+        hteAttrs.push_back(hteAttr);
+
+        hteAttr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_CHANNEL_TYPE;
+        hteAttr.value.s32 = SAI_HOSTIF_TABLE_ENTRY_CHANNEL_TYPE_NETDEV_PHYSICAL_PORT;
+        hteAttrs.push_back(hteAttr);
+
+        status = sai_hostif_api->create_hostif_table_entry(
+            &m_hostifTableEntryOid, gSwitchId,
+            static_cast<uint32_t>(hteAttrs.size()), hteAttrs.data());
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("ACL rule %s: failed to create hostif table entry, status=%s",
+                           m_id.c_str(), sai_serialize_status(status).c_str());
+            sai_hostif_api->remove_hostif_user_defined_trap(m_userDefinedTrapOid);
+            m_userDefinedTrapOid = SAI_NULL_OBJECT_ID;
+            return false;
+        }
+
+        SWSS_LOG_NOTICE("ACL rule %s: created hostif table entry OID 0x%" PRIx64,
+                        m_id.c_str(), m_hostifTableEntryOid);
+
         sai_acl_action_data_t trapAction;
         trapAction.enable = true;
         trapAction.parameter.oid = m_userDefinedTrapOid;
@@ -2263,11 +2294,16 @@ bool AclRulePacket::createRule()
 
     if (!AclRule::createRule())
     {
+        if (m_hostifTableEntryOid != SAI_NULL_OBJECT_ID)
+        {
+            sai_hostif_api->remove_hostif_table_entry(m_hostifTableEntryOid);
+            m_hostifTableEntryOid = SAI_NULL_OBJECT_ID;
+        }
         if (m_userDefinedTrapOid != SAI_NULL_OBJECT_ID)
         {
             sai_hostif_api->remove_hostif_user_defined_trap(m_userDefinedTrapOid);
-            SWSS_LOG_NOTICE("ACL rule %s: cleaned up user-defined trap OID 0x%" PRIx64
-                            " after ACL entry creation failure", m_id.c_str(), m_userDefinedTrapOid);
+            SWSS_LOG_NOTICE("ACL rule %s: cleaned up trap objects "
+                            "after ACL entry creation failure", m_id.c_str());
             m_userDefinedTrapOid = SAI_NULL_OBJECT_ID;
             m_actions.erase(SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID);
         }
@@ -2284,6 +2320,22 @@ bool AclRulePacket::removeRule()
     if (!AclRule::removeRule())
     {
         return false;
+    }
+
+    if (m_hostifTableEntryOid != SAI_NULL_OBJECT_ID)
+    {
+        sai_status_t status = sai_hostif_api->remove_hostif_table_entry(
+            m_hostifTableEntryOid);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("ACL rule %s: failed to remove hostif table entry OID 0x%" PRIx64
+                           ", status=%s", m_id.c_str(), m_hostifTableEntryOid,
+                           sai_serialize_status(status).c_str());
+            return false;
+        }
+        SWSS_LOG_NOTICE("ACL rule %s: removed hostif table entry OID 0x%" PRIx64,
+                        m_id.c_str(), m_hostifTableEntryOid);
+        m_hostifTableEntryOid = SAI_NULL_OBJECT_ID;
     }
 
     if (m_userDefinedTrapOid != SAI_NULL_OBJECT_ID)

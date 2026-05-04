@@ -418,6 +418,7 @@ protected:
 private:
     string m_trapGroup;
     sai_object_id_t m_userDefinedTrapOid = SAI_NULL_OBJECT_ID;
+    sai_object_id_t m_hostifTableEntryOid = SAI_NULL_OBJECT_ID;
 };
 
 class AclRuleInnerSrcMacRewrite: public AclRule
