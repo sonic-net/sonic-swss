@@ -66,6 +66,7 @@ class DVSMirror(object):
             mirror_entry["truncate_size"] = truncate_size
 
         self.config_db.create_entry("MIRROR_SESSION", name, mirror_entry)
+
     def remove_mirror_session(self, name):
         self.config_db.delete_entry("MIRROR_SESSION", name)
 

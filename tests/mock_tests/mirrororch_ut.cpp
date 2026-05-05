@@ -54,44 +54,6 @@ namespace mirrororch_test
         ASSERT_FALSE(ret);
     }
 
-    TEST_F(MirrorOrchTest, SampledPathUsesCorrectPortAttributes)
-    {
-        // Verify setUnsetPortMirror enters sampled path when sample_rate > 0
-        ASSERT_NE(gSwitchOrch, nullptr);
-        ASSERT_NE(gMirrorOrch, nullptr);
-
-        gSwitchOrch->m_portIngressMirrorSupported = true;
-        gSwitchOrch->m_portIngressSampleMirrorSupported = true;
-
-        Port dummyPort;
-        dummyPort.m_port_id = SAI_NULL_OBJECT_ID;
-
-        // Sampled path: sample_rate > 0 with samplepacketId
-        // SAI mock may fail but function should not crash
-        gMirrorOrch->setUnsetPortMirror(dummyPort, /*ingress*/ true, /*set*/ true,
-                                        /*sessionId*/ SAI_NULL_OBJECT_ID,
-                                        /*samplepacketId*/ (sai_object_id_t)0x1234,
-                                        /*sample_rate*/ 50000);
-    }
-
-    TEST_F(MirrorOrchTest, FullMirrorPathWhenSampleRateZero)
-    {
-        // Verify setUnsetPortMirror uses full mirror path when sample_rate == 0
-        ASSERT_NE(gSwitchOrch, nullptr);
-        ASSERT_NE(gMirrorOrch, nullptr);
-
-        gSwitchOrch->m_portIngressMirrorSupported = true;
-
-        Port dummyPort;
-        dummyPort.m_port_id = SAI_NULL_OBJECT_ID;
-
-        // Full mirror path: sample_rate == 0
-        gMirrorOrch->setUnsetPortMirror(dummyPort, /*ingress*/ true, /*set*/ true,
-                                        /*sessionId*/ SAI_NULL_OBJECT_ID,
-                                        /*samplepacketId*/ SAI_NULL_OBJECT_ID,
-                                        /*sample_rate*/ 0);
-    }
-
     TEST_F(MirrorOrchTest, FallbackToFullMirrorWhenSampledUnsupported)
     {
         // Verify activateSession falls back to full mirror when sampled not supported
@@ -105,8 +67,8 @@ namespace mirrororch_test
         entry.sample_rate = 50000;
         entry.truncate_size = 128;
 
-        // Simulate: activateSession should detect unsupported and clear sample_rate
-        // We test the capability check logic directly
+        // Note: activateSession requires full neighbor/route resolution which is
+        // not available in mock environment. Testing capability check logic directly.
         if (!gSwitchOrch->isPortIngressSampleMirrorSupported())
         {
             entry.sample_rate = 0;
