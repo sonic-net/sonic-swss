@@ -534,6 +534,7 @@ private:
     bool addNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj,
                             const string& monitoring, const bool isLocalEp=false);
     bool removeNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
+    bool removeNextHopGroupDirectly(const string&, NextHopGroupInfo&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
     bool removeFgNextHopGroup(const string&, const NextHopGroupKey&, const IpPrefix&, VNetVrfObject *vrf_obj);
     bool createNextHopGroup(const string&, NextHopGroupKey&, VNetVrfObject *vrf_obj,
                             const string& monitoring);
@@ -584,11 +585,8 @@ private:
                     const string& monitoring, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer,
                     NextHopGroupKey& nexthops_secondary, const IpPrefix& adv_prefix,
                     const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>(),
-                    const std::map<IpAddress, pinned_state_t>& monitor_addr_to_pinned_state = {});
-
-    template<typename T>
-    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op,
-                    const uint16_t consistent_hashing_buckets);
+                    const std::map<IpAddress, pinned_state_t>& monitor_addr_to_pinned_state = {},
+                    const uint16_t consistent_hashing_buckets = 0);
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, nextHop& nh, string& op);
