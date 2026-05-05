@@ -4,10 +4,55 @@
 //! to OpenTelemetry gauge format for export to observability systems.
 
 use crate::message::saistats::{SAIStat, SAIStats};
+use crate::sai::{
+    saibuffer::SaiBufferPoolStat,
+    saiport::SaiPortStat,
+    saiqueue::SaiQueueStat,
+    saitypes::SaiObjectType,
+};
 use opentelemetry_proto::tonic::{
     common::v1::{KeyValue as ProtoKeyValue, AnyValue, any_value::Value},
     metrics::v1::{NumberDataPoint, number_data_point},
 };
+
+/// Resolve a (type_id, stat_id) pair to a Datadog/Prometheus-friendly metric
+/// name like `sonic.port.if_in_octets` or `sonic.queue.dropped_packets`.
+///
+/// Returns `None` if either the SAI object type or the stat enum value is
+/// unknown to this build (e.g. vendor-extension IDs); callers should fall
+/// back to the raw `sai_counter_type_{}_stat_{}` form in that case.
+fn friendly_metric_name(type_id: u32, stat_id: u32) -> Option<String> {
+    // helper: strip the SAI_X_STAT_ / SAI_X_STAT_TYPE_ prefix and lowercase
+    fn short(c_name: &str, prefix: &str) -> String {
+        c_name
+            .strip_prefix(prefix)
+            .unwrap_or(c_name)
+            .to_lowercase()
+    }
+
+    let obj = SaiObjectType::try_from(type_id).ok()?;
+    let (obj_short, stat_short) = match obj {
+        SaiObjectType::Port => (
+            "port",
+            short(SaiPortStat::try_from(stat_id).ok()?.to_c_name(), "SAI_PORT_STAT_"),
+        ),
+        SaiObjectType::Queue => (
+            "queue",
+            short(SaiQueueStat::try_from(stat_id).ok()?.to_c_name(), "SAI_QUEUE_STAT_"),
+        ),
+        SaiObjectType::BufferPool => (
+            "buffer_pool",
+            short(
+                SaiBufferPoolStat::try_from(stat_id).ok()?.to_c_name(),
+                "SAI_BUFFER_POOL_STAT_",
+            ),
+        ),
+        // Future: add SaiIngressPriorityGroup, etc., as their stat enums are added.
+        _ => return None,
+    };
+
+    Some(format!("sonic.{}.{}", obj_short, stat_short))
+}
 
 /// OpenTelemetry Gauge representation for SAI statistics
 ///
@@ -99,9 +144,19 @@ impl OtelDataPoint {
 }
 
 impl OtelGauge {
-    /// Creates a new OtelGauge from SAI statistic
+    /// Creates a new OtelGauge from SAI statistic.
+    ///
+    /// Metric naming: when both the SAI object type and stat enum value are
+    /// known to this build, emits a friendly name like `sonic.port.if_in_octets`
+    /// or `sonic.queue.dropped_packets`. Otherwise falls back to the raw
+    /// `sai_counter_type_{type_id}_stat_{stat_id}` form so vendor-extension
+    /// counters are still observable. The raw type_id / stat_id are always
+    /// available as data-point attributes for traceability.
     pub fn from_sai_stat(sai_stat: &SAIStat, observation_time_nano: u64) -> Self {
-        let name = format!("sai_counter_type_{}_stat_{}", sai_stat.type_id, sai_stat.stat_id);
+        let name = friendly_metric_name(sai_stat.type_id, sai_stat.stat_id)
+            .unwrap_or_else(|| {
+                format!("sai_counter_type_{}_stat_{}", sai_stat.type_id, sai_stat.stat_id)
+            });
         let description = format!(
             "SAI counter for object {} (type:{}, stat:{})",
             sai_stat.object_name, sai_stat.type_id, sai_stat.stat_id
@@ -233,6 +288,7 @@ mod tests {
 
     #[test]
     fn test_otel_gauge_from_sai_stat() {
+        // type_id=24 = SAI_OBJECT_TYPE_BUFFER_POOL, stat_id=2 = SAI_BUFFER_POOL_STAT_DROPPED_PACKETS
         let sai_stat = SAIStat {
             object_name: "BufferPool1".to_string(),
             type_id: 24,
@@ -243,7 +299,7 @@ mod tests {
         let observation_time_nano = 0u64; // 1970-01-01 00:00:00 UTC
         let gauge = OtelGauge::from_sai_stat(&sai_stat, observation_time_nano);
 
-        assert_eq!(gauge.name, "sai_counter_type_24_stat_2");
+        assert_eq!(gauge.name, "sonic.buffer_pool.dropped_packets");
         assert_eq!(gauge.description, "SAI counter for object BufferPool1 (type:24, stat:2)");
         assert_eq!(gauge.unit, "1");
         assert_eq!(gauge.data_points.len(), 1);
@@ -254,19 +310,37 @@ mod tests {
     }
 
     #[test]
+    fn test_otel_gauge_friendly_name_unknown_type_falls_back() {
+        // type_id=100 has no SaiObjectType variant, so we keep the raw form
+        // for traceability of vendor-extension counters.
+        let sai_stat = SAIStat {
+            object_name: "Vendor".to_string(),
+            type_id: 100,
+            stat_id: 200,
+            counter: 1,
+        };
+        let gauge = OtelGauge::from_sai_stat(&sai_stat, 0);
+        assert_eq!(gauge.name, "sai_counter_type_100_stat_200");
+    }
+
+    #[test]
     fn test_otel_gauge_from_sai_stats_collection() {
         let sai_stats = create_test_sai_stats(1672531200, 3);
         let gauges = OtelGauge::from_sai_stats(&sai_stats);
 
         assert_eq!(gauges.len(), 3);
 
-        // Check first gauge
+        // i=0 -> type_id=1 (Port), stat_id=1 (IfInUcastPkts)
         let first_gauge = &gauges[0];
-        assert_eq!(first_gauge.name, "sai_counter_type_1_stat_1");
+        assert_eq!(first_gauge.name, "sonic.port.if_in_ucast_pkts");
         assert!(first_gauge.description.contains("Ethernet0"));
         assert_eq!(first_gauge.data_points[0].value, 500);
 
-        let expected_time_nano = 1672531200u64; 
+        // i=1 and i=2 use type_id 101/201 (unknown) -> fallback to raw form
+        assert_eq!(gauges[1].name, "sai_counter_type_101_stat_11");
+        assert_eq!(gauges[2].name, "sai_counter_type_201_stat_21");
+
+        let expected_time_nano = 1672531200u64;
         for gauge in &gauges {
             assert_eq!(gauge.data_points[0].time_unix_nano, expected_time_nano);
         }
@@ -300,13 +374,13 @@ mod tests {
         assert_eq!(otel_metrics.len(), 2);
         assert!(!otel_metrics.is_empty());
 
-        // Check individual gauges
+        // Check individual gauges (now using the friendly names)
         let port_gauge = otel_metrics.gauges.iter()
-            .find(|g| g.name == "sai_counter_type_1_stat_1").unwrap();
+            .find(|g| g.name == "sonic.port.if_in_ucast_pkts").unwrap();
         assert_eq!(port_gauge.data_points[0].value, 12345);
 
         let buffer_gauge = otel_metrics.gauges.iter()
-            .find(|g| g.name == "sai_counter_type_24_stat_2").unwrap();
+            .find(|g| g.name == "sonic.buffer_pool.dropped_packets").unwrap();
         assert_eq!(buffer_gauge.data_points[0].value, 67890);
     }
 
@@ -398,9 +472,9 @@ fn test_sai_to_otel_gauge_conversion() {
         assert_eq!(gauge.data_points[0].time_unix_nano, expected_time);
     }
 
-    // Verify metric naming
+    // Verify metric naming (friendly form for known SAI types/stats)
     let port_rx_metric = otel_metrics.gauges.iter()
-        .find(|g| g.name == "sai_counter_type_1_stat_1").unwrap();
+        .find(|g| g.name == "sonic.port.if_in_ucast_pkts").unwrap();
     assert!(port_rx_metric.description.contains("type:1, stat:1"));
 }
 

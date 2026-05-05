@@ -440,3 +440,10 @@ mod tests {
         assert_eq!(SaiQueueStat::TxTrimPackets.to_u32(), 0x0000002e);
     }
 }
+impl TryFrom<u32> for SaiQueueStat {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        Self::from_u32(value).ok_or(())
+    }
+}
