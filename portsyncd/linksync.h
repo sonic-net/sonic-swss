@@ -7,6 +7,8 @@
 
 #include <map>
 
+struct nlmsghdr;
+
 namespace swss {
 
 class LinkSync : public NetMsg
@@ -16,9 +18,13 @@ public:
 
     LinkSync(DBConnector *appl_db, DBConnector *state_db);
 
-    virtual void onMsg(int nlmsg_type, struct nl_object *obj);
+    virtual void onMsg(int nlmsg_type, struct nl_object *obj) override;
+    virtual void onMsgRaw(int nlmsg_type, struct nl_object *obj,
+                          struct nlmsghdr *nlh) override;
 
 private:
+    void parseRawLinkAttrs(const std::string &key, struct nlmsghdr *nlh);
+
     ProducerStateTable m_portTableProducer;
     Table m_portTable, m_statePortTable;
 
