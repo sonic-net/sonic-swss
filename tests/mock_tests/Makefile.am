@@ -105,6 +105,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 icmporch_ut.cpp \
                 mock_sai_capability_wrap.cpp \
                 notifications_ut.cpp \
+                asan_ut.cpp \
+                $(top_srcdir)/lib/asan.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
