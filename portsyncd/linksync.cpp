@@ -4,8 +4,10 @@
 #include <sys/socket.h>
 #include <net/if.h>
 #include <netlink/route/link.h>
+//upscaleai:start
 #include <netlink/msg.h>
 #include <netlink/attr.h>
+//upscaleai:end
 #include "logger.h"
 #include "netmsg.h"
 #include "dbconnector.h"
@@ -23,6 +25,7 @@
 #include <sstream>
 #include <iomanip>
 
+//upscaleai:start
 /*
  * Kernel IFLA attributes not exposed by the installed libnl3.
  * Values are stable UAPI (include/uapi/linux/if_link.h).
@@ -50,6 +53,7 @@ struct linksync_ifinfomsg
     unsigned int   ifi_flags;
     unsigned int   ifi_change;
 };
+//upscaleai:end
 
 using namespace std;
 using namespace swss;
@@ -233,11 +237,13 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
         vector.push_back(admin_status);
         vector.push_back(port_mtu);
 
+        //upscaleai:start
         uint32_t carrier_changes;
         if (rtnl_link_get_carrier_changes(link, &carrier_changes) == 0)
         {
             vector.emplace_back("carrier_changes", to_string(carrier_changes));
         }
+        //upscaleai:end
 
         m_statePortTable.set(key, vector);
         SWSS_LOG_NOTICE("Publish %s(ok:%s) to state db", key.c_str(), oper ? "up" : "down");
@@ -248,6 +254,7 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     }
 }
 
+//upscaleai:start
 void LinkSync::onMsgRaw(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *nlh)
 {
     onMsg(nlmsg_type, obj);
@@ -321,3 +328,4 @@ void LinkSync::parseRawLinkAttrs(const string &key, struct nlmsghdr *nlh)
         SWSS_LOG_INFO("Published raw link attrs for %s", key.c_str());
     }
 }
+//upscaleai:end
