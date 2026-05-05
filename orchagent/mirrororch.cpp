@@ -391,8 +391,14 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
 
     if (m_syncdMirrors.find(key) != m_syncdMirrors.end())
     {
-        SWSS_LOG_ERROR("Mirror session %s already exists", key.c_str());
-        return task_process_status::task_invalid_entry;
+        // Only support update for ERSPAN sessions
+        auto& existing = m_syncdMirrors.find(key)->second;
+        if (existing.type == MIRROR_SESSION_ERSPAN)
+        {
+            return updateEntry(key, data);
+        }
+        SWSS_LOG_NOTICE("Failed to create session %s: object already exists", key.c_str());
+        return task_process_status::task_duplicated;
     }
 
     bool src_ip_initialized = false;
@@ -1961,14 +1967,7 @@ void MirrorOrch::doTask(Consumer& consumer)
 
         if (op == SET_COMMAND)
         {
-            if (sessionExists(key))
-            {
-                task_status = updateEntry(key, kfvFieldsValues(t));
-            }
-            else
-            {
-                task_status = createEntry(key, kfvFieldsValues(t));
-            }
+            task_status = createEntry(key, kfvFieldsValues(t));
         }
         else if (op == DEL_COMMAND)
         {
