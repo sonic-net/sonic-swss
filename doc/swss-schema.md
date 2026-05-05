@@ -1105,6 +1105,7 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     carrier_up_count    = 1*DIGIT              ; carrier up transitions count
     carrier_down_count  = 1*DIGIT              ; carrier down transitions count
     proto_down          = "0" / "1"            ; protocol down state
+    perm_hw_addr        = 12HEXDIG             ; permanent hardware MAC address
 
 ### MGMT_PORT_TABLE
     ;State for management port, including at least one key
