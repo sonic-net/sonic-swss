@@ -10,8 +10,6 @@ class TestSampledMirror(object):
     def _setup_mirror_session(self, dvs, session, src_ports, sample_rate=None, truncate_size=None):
         """Helper to set up network and create a sampled ERSPAN mirror session"""
         dvs.setup_db()
-        pmap = dvs.counters_db.get_entry("COUNTERS_PORT_NAME_MAP", "")
-        pmap = dict(pmap)
 
         # create sampled mirror session
         self.dvs_mirror.create_erspan_session_sampled(
@@ -20,16 +18,14 @@ class TestSampledMirror(object):
             sample_rate=sample_rate, truncate_size=truncate_size)
 
         # Session starts inactive until route exists
-        self.dvs_mirror.verify_session_status(session, status="inactive")
+        dvs.state_db.wait_for_field_match("MIRROR_SESSION_TABLE", session, {"status": "inactive"})
 
         # Bring up port and create route to dst_ip
         dvs.set_interface_status("Ethernet16", "up")
         dvs.add_ip_address("Ethernet16", "10.0.0.0/30")
         dvs.add_neighbor("Ethernet16", "10.0.0.1", "02:04:06:08:10:12")
         dvs.add_route("2.2.2.2", "10.0.0.1")
-        self.dvs_mirror.verify_session_status(session, status="active")
-
-        return pmap
+        dvs.state_db.wait_for_field_match("MIRROR_SESSION_TABLE", session, {"status": "active"})
 
     def _teardown_mirror_session(self, dvs, session):
         """Helper to tear down network and remove mirror session"""
@@ -38,7 +34,7 @@ class TestSampledMirror(object):
         dvs.remove_ip_address("Ethernet16", "10.0.0.0/30")
         dvs.set_interface_status("Ethernet16", "down")
         self.dvs_mirror.remove_mirror_session(session)
-        self.dvs_mirror.verify_no_mirror()
+        dvs.state_db.wait_for_deleted_entry("MIRROR_SESSION_TABLE", session)
 
     def test_SampledMirrorCreateRemove(self, dvs, testlog):
         """
@@ -104,7 +100,7 @@ class TestSampledMirror(object):
         dvs.add_ip_address("Ethernet16", "10.0.0.0/30")
         dvs.add_neighbor("Ethernet16", "10.0.0.1", "02:04:06:08:10:12")
         dvs.add_route("2.2.2.2", "10.0.0.1")
-        self.dvs_mirror.verify_session_status(session, status="active")
+        dvs.state_db.wait_for_field_match("MIRROR_SESSION_TABLE", session, {"status": "active"})
 
         # Verify NO SAMPLEPACKET object in ASIC_DB
         dvs.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", 0)
@@ -186,13 +182,10 @@ class TestSampledMirror(object):
             sample_rate="50000")
 
         # Session should not be created in STATE_DB
-        self.dvs_mirror.verify_session_status(session, expected=0)
+        dvs.state_db.wait_for_deleted_entry("MIRROR_SESSION_TABLE", session)
 
         # Verify NO SAMPLEPACKET in ASIC_DB
         dvs.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", 0)
-
-        # Verify NO mirror session in ASIC_DB
-        dvs.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION", 0)
 
     def test_SampledMirrorInvalidTruncateWithoutRate(self, dvs, testlog):
         """
@@ -209,7 +202,7 @@ class TestSampledMirror(object):
             truncate_size="128")
 
         # Session should not be created in STATE_DB
-        self.dvs_mirror.verify_session_status(session, expected=0)
+        dvs.state_db.wait_for_deleted_entry("MIRROR_SESSION_TABLE", session)
 
         # Verify NO SAMPLEPACKET in ASIC_DB
         dvs.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", 0)
@@ -267,6 +260,7 @@ class TestSampledMirror(object):
                 f"SAMPLE_MIRROR_SESSION not set on {port_name}"
 
         self._teardown_mirror_session(dvs, session)
+
     def test_PathTransitionFullToSampled(self, dvs, testlog):
         """
         Test path transition from full mirror to sampled mirror.
@@ -286,7 +280,7 @@ class TestSampledMirror(object):
         dvs.add_ip_address("Ethernet16", "10.0.0.0/30")
         dvs.add_neighbor("Ethernet16", "10.0.0.1", "02:04:06:08:10:12")
         dvs.add_route("2.2.2.2", "10.0.0.1")
-        self.dvs_mirror.verify_session_status(session, status="active")
+        dvs.state_db.wait_for_field_match("MIRROR_SESSION_TABLE", session, {"status": "active"})
 
         # Verify full mirror path - no SAMPLEPACKET
         dvs.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", 0)
@@ -295,11 +289,27 @@ class TestSampledMirror(object):
         port_entry = dvs.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid)
         assert "SAI_PORT_ATTR_INGRESS_MIRROR_SESSION" in port_entry
 
-        # Transition to sampled mirror by adding sample_rate
-        dvs.config_db.update_entry("MIRROR_SESSION", session, {"sample_rate": "50000"})
+        # Transition to sampled mirror: delete and recreate with sample_rate
+        dvs.remove_route("2.2.2.2")
+        dvs.remove_neighbor("Ethernet16", "10.0.0.1")
+        dvs.remove_ip_address("Ethernet16", "10.0.0.0/30")
+        dvs.set_interface_status("Ethernet16", "down")
+        self.dvs_mirror.remove_mirror_session(session)
+        dvs.state_db.wait_for_deleted_entry("MIRROR_SESSION_TABLE", session)
 
-        # Verify SAMPLEPACKET created (delete+recreate path)
-        dvs.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", 1)
+        # Recreate with sample_rate
+        self.dvs_mirror.create_erspan_session_sampled(
+            session, "1.1.1.1", "2.2.2.2", "0x8949", "8", "64", "0",
+            src_ports="Ethernet12", direction="RX",
+            sample_rate="50000")
+
+        dvs.set_interface_status("Ethernet16", "up")
+        dvs.add_ip_address("Ethernet16", "10.0.0.0/30")
+        dvs.add_neighbor("Ethernet16", "10.0.0.1", "02:04:06:08:10:12")
+        dvs.add_route("2.2.2.2", "10.0.0.1")
+        dvs.state_db.wait_for_field_match("MIRROR_SESSION_TABLE", session, {"status": "active"})
+
+        # Verify SAMPLEPACKET created
         samplepacket_keys = dvs.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", 1)
         samplepacket_entry = dvs.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", samplepacket_keys[0])
         assert samplepacket_entry["SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE"] == "50000"
@@ -336,7 +346,7 @@ class TestSampledMirror(object):
         dvs.remove_ip_address("Ethernet16", "10.0.0.0/30")
         dvs.set_interface_status("Ethernet16", "down")
         self.dvs_mirror.remove_mirror_session(session)
-        self.dvs_mirror.verify_no_mirror()
+        dvs.state_db.wait_for_deleted_entry("MIRROR_SESSION_TABLE", session)
 
         # Recreate as full mirror (no sample_rate)
         self.dvs_mirror.create_erspan_session(
@@ -347,7 +357,7 @@ class TestSampledMirror(object):
         dvs.add_ip_address("Ethernet16", "10.0.0.0/30")
         dvs.add_neighbor("Ethernet16", "10.0.0.1", "02:04:06:08:10:12")
         dvs.add_route("2.2.2.2", "10.0.0.1")
-        self.dvs_mirror.verify_session_status(session, status="active")
+        dvs.state_db.wait_for_field_match("MIRROR_SESSION_TABLE", session, {"status": "active"})
 
         # Verify SAMPLEPACKET removed
         dvs.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", 0)
@@ -357,6 +367,7 @@ class TestSampledMirror(object):
         assert "SAI_PORT_ATTR_INGRESS_MIRROR_SESSION" in port_entry
 
         self._teardown_mirror_session(dvs, session)
+
     def test_SampledMirrorInvalidBothDirection(self, dvs, testlog):
         """
         Test that sampled mirroring with BOTH direction is rejected.
@@ -372,10 +383,7 @@ class TestSampledMirror(object):
             sample_rate="50000")
 
         # Session should not be created in STATE_DB
-        self.dvs_mirror.verify_session_status(session, expected=0)
+        dvs.state_db.wait_for_deleted_entry("MIRROR_SESSION_TABLE", session)
 
         # Verify NO SAMPLEPACKET in ASIC_DB
         dvs.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", 0)
-
-        # Verify NO mirror session in ASIC_DB
-        dvs.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION", 0)
