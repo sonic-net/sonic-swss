@@ -181,7 +181,7 @@ sai_neighbor_entry_t prepareSaiNeighborEntry(const sai_object_id_t rif_oid) {
 // Create the vector of SAI attributes for creating a new next hop object.
 std::vector<sai_attribute_t> prepareNextHopSaiAttrs(
     const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
-    const sai_object_id_t rif_oid) {
+    const sai_object_id_t rif_oid, std::string& label) {
   std::vector<sai_attribute_t> attrs;
   sai_attribute_t attr;
 
@@ -221,6 +221,13 @@ std::vector<sai_attribute_t> prepareNextHopSaiAttrs(
 
   attr.id = SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE;
   attr.value.booldata = !write_vlan;
+  attrs.push_back(attr);
+
+  std::string mapper_key;
+  gLabelMapper->addLabelToAttr(
+      SAI_OBJECT_TYPE_NEXT_HOP, APP_P4RT_TABLE_NAME,
+      multicast_router_interface_entry.multicast_router_interface_entry_key,
+      attr, SAI_NEXT_HOP_ATTR_LABEL, mapper_key, label);
   attrs.push_back(attr);
 
   return attrs;
@@ -1542,7 +1549,7 @@ ReturnCode L3MulticastManager::createNeighborEntry(
 
 ReturnCode L3MulticastManager::createNextHop(
     P4MulticastRouterInterfaceEntry& entry, const sai_object_id_t rif_oid,
-    sai_object_id_t* next_hop_oid) {
+    sai_object_id_t& next_hop_oid, std::string& label) {
   SWSS_LOG_ENTER();
 
   // Confirm we haven't already created a next hop for this.
@@ -1557,9 +1564,10 @@ ReturnCode L3MulticastManager::createNextHop(
   RETURN_IF_ERROR(createNeighborEntry(entry, rif_oid));
 
   // Create next hop SAI object.
-  std::vector<sai_attribute_t> attrs = prepareNextHopSaiAttrs(entry, rif_oid);
+  std::vector<sai_attribute_t> attrs =
+      prepareNextHopSaiAttrs(entry, rif_oid, label);
   auto sai_status = sai_next_hop_api->create_next_hop(
-      next_hop_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+      &next_hop_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
   if (sai_status != SAI_STATUS_SUCCESS) {
     // Back-out creation of neighbor entry.
     sai_status_t del_status =
@@ -1611,6 +1619,9 @@ ReturnCode L3MulticastManager::deleteNextHop(
   // and we have to re-add the next hop.
   m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_NEXT_HOP,
                           entry->multicast_router_interface_entry_key);
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, entry->multicast_router_interface_entry_key);
+  gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_NEXT_HOP, mapper_key);
 
   sai_status_t del_status =
       sai_neighbor_api->remove_neighbor_entry(&entry->sai_neighbor_entry);
@@ -1618,8 +1629,9 @@ ReturnCode L3MulticastManager::deleteNextHop(
     // Attempt to re-add next hop just deleted.
     sai_object_id_t rif_oid = getRifOid(entry);
     sai_object_id_t new_next_hop_oid = SAI_NULL_OBJECT_ID;
+    std::string nexthop_label;
     std::vector<sai_attribute_t> attrs =
-        prepareNextHopSaiAttrs(*entry, rif_oid);
+        prepareNextHopSaiAttrs(*entry, rif_oid, nexthop_label);
     auto add_status = sai_next_hop_api->create_next_hop(
         &new_next_hop_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (add_status != SAI_STATUS_SUCCESS) {
@@ -1636,6 +1648,10 @@ ReturnCode L3MulticastManager::deleteNextHop(
       m_p4OidMapper->setOID(SAI_OBJECT_TYPE_NEXT_HOP,
                             entry->multicast_router_interface_entry_key,
                             new_next_hop_oid);
+      std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+          APP_P4RT_TABLE_NAME, entry->multicast_router_interface_entry_key);
+      gLabelMapper->setLabel(SAI_OBJECT_TYPE_NEXT_HOP, mapper_key,
+                             nexthop_label);
     }
     // Return original error.
     return ReturnCode(del_status)
@@ -1874,7 +1890,9 @@ ReturnCode L3MulticastManager::addL3MulticastRouterInterfaceEntry(
   // TODO(b/353398275): Make if unconditional when kSetMulticastSrcMac removed
   if (entry.action != p4orch::kSetMulticastSrcMac) {
     sai_object_id_t next_hop_oid = SAI_NULL_OBJECT_ID;
-    ReturnCode nh_status = createNextHop(entry, rif_oid, &next_hop_oid);
+    std::string nexthop_label;
+    ReturnCode nh_status =
+        createNextHop(entry, rif_oid, next_hop_oid, nexthop_label);
     if (!nh_status.ok()) {
       ReturnCode del_status = deleteRouterInterface(
           entry.multicast_router_interface_entry_key, rif_oid);
@@ -1898,6 +1916,7 @@ ReturnCode L3MulticastManager::addL3MulticastRouterInterfaceEntry(
     m_p4OidMapper->setOID(SAI_OBJECT_TYPE_NEXT_HOP,
                           entry.multicast_router_interface_entry_key,
                           next_hop_oid);
+    gLabelMapper->setLabel(SAI_OBJECT_TYPE_NEXT_HOP, mapper_key, nexthop_label);
   }
 
   // Update internal state.
@@ -2167,6 +2186,9 @@ ReturnCode L3MulticastManager::deleteL3MulticastRouterInterfaceEntry(
     // deleteNextHop deletes next hop OID from oid mapper.
   }
 
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, entry->multicast_router_interface_entry_key);
+
   // Delete the RIF.
   // Attempt to delete RIF at SAI layer before adjusting internal maps, in
   // case there is an error.
@@ -2178,7 +2200,9 @@ ReturnCode L3MulticastManager::deleteL3MulticastRouterInterfaceEntry(
     if (entry->action != p4orch::kSetMulticastSrcMac) {
       // Try to restore next hop
       sai_object_id_t new_next_hop_oid = SAI_NULL_OBJECT_ID;
-      ReturnCode nh_status = createNextHop(*entry, rif_oid, &new_next_hop_oid);
+      std::string nexthop_label;
+      ReturnCode nh_status =
+          createNextHop(*entry, rif_oid, new_next_hop_oid, nexthop_label);
       if (!nh_status.ok()) {
         // All kinds of bad.  The create failed, and we couldn't restore the
         // previous system state.
@@ -2194,6 +2218,8 @@ ReturnCode L3MulticastManager::deleteL3MulticastRouterInterfaceEntry(
         m_p4OidMapper->setOID(SAI_OBJECT_TYPE_NEXT_HOP,
                               entry->multicast_router_interface_entry_key,
                               new_next_hop_oid);
+        gLabelMapper->setLabel(SAI_OBJECT_TYPE_NEXT_HOP, mapper_key,
+                               nexthop_label);
       }
     }
     return del_rif_rc;
@@ -2201,8 +2227,6 @@ ReturnCode L3MulticastManager::deleteL3MulticastRouterInterfaceEntry(
 
   m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
                           entry->multicast_router_interface_entry_key);
-  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
-      APP_P4RT_TABLE_NAME, entry->multicast_router_interface_entry_key);
   gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE, mapper_key);
   gPortsOrch->decreasePortRefCount(entry->multicast_replica_port);
 
@@ -3381,7 +3405,7 @@ std::string L3MulticastManager::verifyL3MulticastRouterInterfaceStateAsicDb(
   }
 
   auto nh_attrs =
-      prepareNextHopSaiAttrs(*multicast_router_interface_entry, rif_oid);
+      prepareNextHopSaiAttrs(*multicast_router_interface_entry, rif_oid, label);
   std::vector<swss::FieldValueTuple> nh_exp =
       saimeta::SaiAttributeList::serialize_attr_list(
           SAI_OBJECT_TYPE_NEXT_HOP, (uint32_t)nh_attrs.size(), nh_attrs.data(),
