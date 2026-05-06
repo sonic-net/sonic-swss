@@ -540,6 +540,7 @@ bool TamOrch::createSaiTamInt(const string &name,
     attrs.push_back(attr);
 
     uint64_t device_id_val = 0;
+    string s;
     if (getField(values, "device_id", s) && parseUint(s, device_id_val))
     {
         attr = sai_attribute_t{};
@@ -556,9 +557,18 @@ bool TamOrch::createSaiTamInt(const string &name,
     }
 
     attr = sai_attribute_t{};
+    attr.id = SAI_TAM_INT_ATTR_INT_PRESENCE_TYPE;
+    attr.value.s32 = SAI_TAM_INT_PRESENCE_TYPE_L3_PROTOCOL;
+    attrs.push_back(attr);
+
+    attr = sai_attribute_t{};
+    attr.id = SAI_TAM_INT_ATTR_INT_PRESENCE_L3_PROTOCOL;
+    attr.value.u8 = 0x7F;
+    attrs.push_back(attr);
+
+    attr = sai_attribute_t{};
     attr.id = SAI_TAM_INT_ATTR_INLINE;
     bool inl = true;
-    string s;
     if (getField(values, "inline", s)) parseBool(s, inl);
     attr.value.booldata = inl;
     attrs.push_back(attr);
