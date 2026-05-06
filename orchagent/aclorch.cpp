@@ -1336,6 +1336,7 @@ bool AclRule::processPendingIpFields()
                 {
                     IpAddress mask(maskIt->second);
                     matchData.mask.ip4 = mask.getV4Addr();
+                    m_pendingIpMasks.erase(maskIt);
                 }
                 else
                 {
@@ -1350,6 +1351,7 @@ bool AclRule::processPendingIpFields()
                 {
                     IpAddress mask(maskIt->second);
                     memcpy(matchData.mask.ip6, mask.getV6Addr(), 16);
+                    m_pendingIpMasks.erase(maskIt);
                 }
                 else
                 {
@@ -1371,13 +1373,19 @@ bool AclRule::processPendingIpFields()
 
     m_pendingIpFields.clear();
 
-    // Warn about any mask fields that had no corresponding IP field
+    // Any masks still in the map were not consumed: either the paired IP field was absent,
+    // or it was given in CIDR notation (which bypasses m_pendingIpFields). Both are invalid
+    // because the resulting rule would silently match differently from what was configured.
     for (const auto& entry : m_pendingIpMasks)
     {
-        SWSS_LOG_WARN("IP mask field %s_MASK specified without a corresponding %s address field; ignoring",
+        SWSS_LOG_ERROR("IP mask field %s_MASK has no paired plain-address %s field; rule rejected",
             entry.first.c_str(), entry.first.c_str());
     }
-    m_pendingIpMasks.clear();
+    if (!m_pendingIpMasks.empty())
+    {
+        m_pendingIpMasks.clear();
+        return false;
+    }
     return true;
 }
 
