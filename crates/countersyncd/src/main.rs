@@ -284,6 +284,51 @@ fn read_counter_db_frequency_from_config() -> Option<u64> {
     }
 }
 
+/// Read OTLP flush timeout (ms) from CONFIG_DB::TELEMETRY_GLOBAL|config.
+///
+/// When set, this overrides the `--otel-flush-timeout-ms` CLI default.
+/// Range: 10..10000 ms (lower would cause heavy network/CPU; higher loses cadence).
+///
+/// Use case: track the effective HFT cadence. With HFT
+/// `HIGH_FREQUENCY_TELEMETRY_PROFILE.poll_interval = N ms`, the OTLP flush
+/// should be `<= N` so per-IPFIX-batch granularity isn't lost in the
+/// transport hop. The default of 1000 ms only makes sense for 1 Hz HFT
+/// (which is the legacy/conservative cadence). Operators running 100 ms
+/// or 10 ms HFT must set this to match.
+///
+/// Example:
+/// ```
+/// redis-cli -n 4 HSET "TELEMETRY_GLOBAL|config" otel_flush_timeout_ms 100
+/// ```
+fn read_otel_flush_timeout_ms_from_config() -> Option<u64> {
+    let db = match DbConnector::new_unix(CONFIG_DB_ID, SOCK_PATH, 0) {
+        Ok(conn) => conn,
+        Err(_) => return None,
+    };
+    let val = match db.hget(TELEMETRY_GLOBAL_KEY, "otel_flush_timeout_ms") {
+        Ok(Some(v)) => v,
+        _ => return None,
+    };
+    let raw = val.to_string_lossy();
+    match raw.parse::<u64>() {
+        Ok(v) if (10..=10_000).contains(&v) => Some(v),
+        Ok(v) => {
+            warn!(
+                "{} otel_flush_timeout_ms={} is out of range (10..10000), ignoring",
+                TELEMETRY_GLOBAL_KEY, v
+            );
+            None
+        }
+        Err(_) => {
+            warn!(
+                "{} otel_flush_timeout_ms='{}' is not a valid integer, ignoring",
+                TELEMETRY_GLOBAL_KEY, raw
+            );
+            None
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
@@ -299,6 +344,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             args.counter_db_frequency, freq
         );
         args.counter_db_frequency = freq;
+    }
+
+    if let Some(flush_ms) = read_otel_flush_timeout_ms_from_config() {
+        info!(
+            "CONFIG_DB override: otel_flush_timeout_ms {} -> {} ms (matches HFT cadence)",
+            args.otel_flush_timeout_ms, flush_ms
+        );
+        args.otel_flush_timeout_ms = flush_ms;
     }
 
     info!("Starting SONiC High Frequency Telemetry Counter Sync Daemon");
