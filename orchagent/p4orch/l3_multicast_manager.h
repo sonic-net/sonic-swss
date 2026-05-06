@@ -230,7 +230,8 @@ class L3MulticastManager : public ObjectManagerInterface {
 
   // Wrapper around SAI setup and call to create multicast group.
   ReturnCode createMulticastGroup(P4MulticastGroupEntry& entry,
-                                  sai_object_id_t* mcast_group_oid);
+                                  sai_object_id_t& mcast_group_oid,
+                                  std::string& group_label);
 
   ReturnCode deleteMulticastGroup(const std::string& multicast_group_id,
                                   sai_object_id_t mcast_group_oid);
@@ -242,7 +243,8 @@ class L3MulticastManager : public ObjectManagerInterface {
 
   // Wrapper around SAI setup and call to create L2 multicast group.
   ReturnCode createL2MulticastGroup(P4MulticastGroupEntry& entry,
-                                    sai_object_id_t* mcast_group_oid);
+                                    sai_object_id_t& mcast_group_oid,
+                                    std::string& group_label);
 
   ReturnCode deleteL2MulticastGroup(const std::string& multicast_group_id,
                                     sai_object_id_t mcast_group_oid);

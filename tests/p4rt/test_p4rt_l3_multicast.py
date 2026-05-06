@@ -1652,11 +1652,20 @@ class TestP4RTL3MulticastGroup(object):
           len(start_asic_db_group_entries))
       group_oid_to_ret = group_oid
     else:
-      # There are no attributes to check for the group.  We just need to check
-      # that there is a new entry.
       assert len(mcast_group_asic_entries) == (len(start_asic_db_group_entries) + 1)
       group_oid_to_ret = self.get_added_multicast_group_oid(
           start_asic_db_group_entries)
+
+      (status_asic_group, fvs_asic_group) = util.get_key(
+           self._p4rt_l3_multicast_group_intf.asic_db,
+           self._p4rt_l3_multicast_group_intf.ASIC_DB_GROUP_TBL_NAME,
+           group_oid_to_ret)
+      assert status_asic_group == True
+      asic_group_attr_list = [
+          (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_LABEL,
+           "any_value"),
+      ]
+      util.verify_attr(fvs_asic_group, asic_group_attr_list)
 
     # Verify group member.
     mcast_group_member_asic_entries = util.get_keys(
@@ -1733,12 +1742,21 @@ class TestP4RTL3MulticastGroup(object):
             len(start_asic_db_group_entries))
         group_oid_to_ret = group_oid
     else:
-        # There are no attributes to check for the group.  We just need to check
-        # that there is a new entry.
         assert len(mcast_group_asic_entries) == (
             len(start_asic_db_group_entries) + 1)
         group_oid_to_ret = self.get_added_multicast_group_oid(
             start_asic_db_group_entries)
+
+    (status_asic_group, fvs_asic_group) = util.get_key(
+         self._p4rt_l3_multicast_group_intf.asic_db,
+         self._p4rt_l3_multicast_group_intf.ASIC_DB_GROUP_TBL_NAME,
+         group_oid_to_ret)
+    assert status_asic_group == True
+    asic_group_attr_list = [
+        (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_LABEL,
+         "any_value"),
+    ]
+    util.verify_attr(fvs_asic_group, asic_group_attr_list)
 
     # Verify group member.
     mcast_group_member_asic_entries = util.get_keys(
@@ -1823,6 +1841,17 @@ class TestP4RTL3MulticastGroup(object):
             len(start_asic_db_group_entries) + 1)
         group_oid_to_ret = self.get_added_l2_multicast_group_oid(
             start_asic_db_group_entries)
+
+    (status_asic_group, fvs_asic_group) = util.get_key(
+         self._p4rt_l3_multicast_group_intf.asic_db,
+         self._p4rt_l3_multicast_group_intf.L2_ASIC_DB_GROUP_TBL_NAME,
+         group_oid_to_ret)
+    assert status_asic_group == True
+    asic_group_attr_list = [
+        (self._p4rt_l3_multicast_group_intf.SAI_ATTR_L2MC_GROUP_LABEL,
+         "any_value"),
+    ]
+    util.verify_attr(fvs_asic_group, asic_group_attr_list)
 
     # Verify group member.
     mcast_group_member_asic_entries = util.get_keys(
