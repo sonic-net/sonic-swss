@@ -502,5 +502,25 @@ namespace portphyserdesattr_test
         // Cleanup
         gPortsOrch->clearPortPhySerdesAttrCounterMap();
     }
+
+    // Covers clearPortPhySerdesAttrCounterMap() when a PHY port has no serdes OID (WARN path).
+    TEST_F(PortSerdesAttrTest, ClearPortPhySerdesAttrCounterMap_NoSerdesObject)
+    {
+        ASSERT_NE(gPortsOrch, nullptr);
+
+        sai_object_id_t phy_port_id = SAI_NULL_OBJECT_ID;
+        for (const auto &it : gPortsOrch->m_portList)
+        {
+            if (it.second.m_type == Port::Type::PHY)
+            {
+                phy_port_id = it.second.m_port_id;
+                gPortsOrch->m_portIdToSerdesId.erase(phy_port_id);
+                break;
+            }
+        }
+        ASSERT_NE(phy_port_id, SAI_NULL_OBJECT_ID);
+
+        gPortsOrch->clearPortPhySerdesAttrCounterMap();
+    }
 } // namespace portphyserdesattr_test
 
