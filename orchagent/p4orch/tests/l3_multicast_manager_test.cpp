@@ -20,6 +20,7 @@
 #include "mock_sai_next_hop.h"
 #include "mock_sai_router_interface.h"
 #include "mock_sai_switch.h"
+#include "namelabelmapper.h"
 #include "p4orch.h"
 #include "p4orch/p4orch_util.h"
 #include "portsorch.h"
@@ -58,6 +59,7 @@ extern sai_my_mac_api_t* sai_my_mac_api;
 extern char* gVrfName;
 extern PortsOrch* gPortsOrch;
 extern VRFOrch* gVrfOrch;
+extern NameLabelMapper* gLabelMapper;
 
 extern sai_object_id_t gBridgePortOid;
 
@@ -123,6 +125,28 @@ bool AddressCmp(const sai_ip_address_t* x, const sai_ip_address_t* y) {
     return memcmp(&x->addr.ip4, &y->addr.ip4, sizeof(sai_ip4_t)) == 0;
   }
   return memcmp(&x->addr.ip6, &y->addr.ip6, sizeof(sai_ip6_t)) == 0;
+}
+
+bool MatchIpmcGroupSaiAttribute(const sai_attribute_t& attr,
+                                const sai_attribute_t& exp_attr) {
+  if (exp_attr.id == SAI_IPMC_GROUP_ATTR_LABEL) {
+    if (attr.id != SAI_IPMC_GROUP_ATTR_LABEL ||
+        strcmp(attr.value.chardata, exp_attr.value.chardata) != 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool MatchL2mcGroupSaiAttribute(const sai_attribute_t& attr,
+                                const sai_attribute_t& exp_attr) {
+  if (exp_attr.id == SAI_L2MC_GROUP_ATTR_LABEL) {
+    if (attr.id != SAI_L2MC_GROUP_ATTR_LABEL ||
+        strcmp(attr.value.chardata, exp_attr.value.chardata) != 0) {
+      return false;
+    }
+  }
+  return true;
 }
 
 bool MatchIpmcSaiAttribute(const sai_attribute_t& attr,
@@ -289,6 +313,24 @@ MATCHER_P(RifAttrEq, attr, "") { return MatchRifSaiAttribute(*arg, *attr); }
 
 MATCHER_P(NeighborAttrEq, attr, "") {
   return MatchNeighborSaiAttribute(*arg, *attr);
+}
+
+MATCHER_P(IpmcGroupAttrArrayEq, array, "") {
+  for (size_t i = 0; i < array.size(); ++i) {
+    if (!MatchIpmcGroupSaiAttribute(arg[i], array[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+MATCHER_P(L2mcGroupAttrArrayEq, array, "") {
+  for (size_t i = 0; i < array.size(); ++i) {
+    if (!MatchL2mcGroupSaiAttribute(arg[i], array[i])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 MATCHER_P(IpmcAttrArrayEq, array, "") {
@@ -545,8 +587,19 @@ class L3MulticastManagerTest : public ::testing::Test {
     auto entry = GenerateP4MulticastGroupEntry(multicast_group_id, replicas);
     std::vector<P4MulticastGroupEntry> entries = {entry};
 
+    std::vector<sai_attribute_t> exp_group_attrs;
+    sai_attribute_t group_attr;
     if (expect_group_mock) {
-      EXPECT_CALL(mock_sai_ipmc_group_, create_ipmc_group(_, _, _, _))
+      std::string mapper_key, group_label;
+      gLabelMapper->addLabelToAttr(
+          SAI_OBJECT_TYPE_IPMC_GROUP, APP_P4RT_TABLE_NAME, multicast_group_id,
+          group_attr, SAI_IPMC_GROUP_ATTR_LABEL, mapper_key, group_label);
+      gLabelMapper->setLabel(SAI_OBJECT_TYPE_IPMC_GROUP, mapper_key,
+                             group_label);
+      exp_group_attrs.push_back(group_attr);
+      EXPECT_CALL(
+          mock_sai_ipmc_group_,
+          create_ipmc_group(_, _, 1, IpmcGroupAttrArrayEq(exp_group_attrs)))
           .WillOnce(DoAll(SetArgPointee<0>(group_oid),
                     Return(SAI_STATUS_SUCCESS)));
     }
@@ -647,8 +700,19 @@ class L3MulticastManagerTest : public ::testing::Test {
         /*controller_metadata=*/"", /*is_ipmc=*/false);
     std::vector<P4MulticastGroupEntry> entries = {entry};
 
+    std::vector<sai_attribute_t> exp_group_attrs;
+    sai_attribute_t group_attr;
     if (expect_group_mock) {
-      EXPECT_CALL(mock_sai_l2mc_group_, create_l2mc_group(_, _, Eq(0), _))
+      std::string mapper_key, group_label;
+      gLabelMapper->addLabelToAttr(
+          SAI_OBJECT_TYPE_L2MC_GROUP, APP_P4RT_TABLE_NAME, multicast_group_id,
+          group_attr, SAI_L2MC_GROUP_ATTR_LABEL, mapper_key, group_label);
+      gLabelMapper->setLabel(SAI_OBJECT_TYPE_L2MC_GROUP, mapper_key,
+                             group_label);
+      exp_group_attrs.push_back(group_attr);
+      EXPECT_CALL(
+          mock_sai_l2mc_group_,
+          create_l2mc_group(_, _, 1, L2mcGroupAttrArrayEq(exp_group_attrs)))
           .WillOnce(
               DoAll(SetArgPointee<0>(group_oid), Return(SAI_STATUS_SUCCESS)));
 
@@ -4980,7 +5044,7 @@ TEST_F(L3MulticastManagerTest, AddL2MulticastGroupEntriesGroupSaiFailure) {
       /*controller_metadata=*/"", /*is_ipmc=*/false);
   std::vector<P4MulticastGroupEntry> entries = {entry1, entry2};
 
-  EXPECT_CALL(mock_sai_l2mc_group_, create_l2mc_group(_, _, Eq(0), _))
+  EXPECT_CALL(mock_sai_l2mc_group_, create_l2mc_group(_, _, _, _))
       .WillOnce(Return(SAI_STATUS_FAILURE));
 
   auto statuses = AddMulticastGroupEntries(entries);
@@ -5051,7 +5115,7 @@ TEST_F(L3MulticastManagerTest,
                         kGroupMemberOid1);
 
   // Expect to create L2 multicast group and then back it out.
-  EXPECT_CALL(mock_sai_l2mc_group_, create_l2mc_group(_, _, Eq(0), _))
+  EXPECT_CALL(mock_sai_l2mc_group_, create_l2mc_group(_, _, _, _))
       .WillOnce(
           DoAll(SetArgPointee<0>(kGroupOid1), Return(SAI_STATUS_SUCCESS)));
   EXPECT_CALL(mock_sai_l2mc_group_, remove_l2mc_group(kGroupOid1))
@@ -5102,7 +5166,7 @@ TEST_F(L3MulticastManagerTest,
   std::vector<P4MulticastGroupEntry> entries = {entry1, entry2};
 
   // Expect to create L2 multicast group and then back it out.
-  EXPECT_CALL(mock_sai_l2mc_group_, create_l2mc_group(_, _, Eq(0), _))
+  EXPECT_CALL(mock_sai_l2mc_group_, create_l2mc_group(_, _, _, _))
       .WillOnce(
           DoAll(SetArgPointee<0>(kGroupOid1), Return(SAI_STATUS_SUCCESS)));
   EXPECT_CALL(mock_sai_l2mc_group_, remove_l2mc_group(kGroupOid1))
@@ -5159,7 +5223,7 @@ TEST_F(L3MulticastManagerTest,
   std::vector<P4MulticastGroupEntry> entries = {entry1, entry2};
 
   // Expect to create L2 multicast group and then back it out.
-  EXPECT_CALL(mock_sai_l2mc_group_, create_l2mc_group(_, _, Eq(0), _))
+  EXPECT_CALL(mock_sai_l2mc_group_, create_l2mc_group(_, _, _, _))
       .WillOnce(
           DoAll(SetArgPointee<0>(kGroupOid1), Return(SAI_STATUS_SUCCESS)));
 
@@ -5214,7 +5278,7 @@ TEST_F(L3MulticastManagerTest,
   std::vector<P4MulticastGroupEntry> entries = {entry1, entry2};
 
   // Expect to create L2 multicast group and then back it out.
-  EXPECT_CALL(mock_sai_l2mc_group_, create_l2mc_group(_, _, Eq(0), _))
+  EXPECT_CALL(mock_sai_l2mc_group_, create_l2mc_group(_, _, _, _))
       .WillOnce(
           DoAll(SetArgPointee<0>(kGroupOid1), Return(SAI_STATUS_SUCCESS)));
   EXPECT_CALL(mock_sai_l2mc_group_, remove_l2mc_group(kGroupOid1))
@@ -5271,7 +5335,7 @@ TEST_F(L3MulticastManagerTest,
   std::vector<P4MulticastGroupEntry> entries = {entry1, entry2};
 
   // Expect to create L2 multicast group and then back it out.
-  EXPECT_CALL(mock_sai_l2mc_group_, create_l2mc_group(_, _, Eq(0), _))
+  EXPECT_CALL(mock_sai_l2mc_group_, create_l2mc_group(_, _, _, _))
       .WillOnce(
           DoAll(SetArgPointee<0>(kGroupOid1), Return(SAI_STATUS_SUCCESS)));
   EXPECT_CALL(mock_sai_l2mc_group_, remove_l2mc_group(kGroupOid1))
@@ -5312,7 +5376,7 @@ TEST_F(L3MulticastManagerTest,
   std::vector<P4MulticastGroupEntry> entries = {entry1, entry2};
 
   // Expect to create L2 multicast group and then back it out.
-  EXPECT_CALL(mock_sai_l2mc_group_, create_l2mc_group(_, _, Eq(0), _))
+  EXPECT_CALL(mock_sai_l2mc_group_, create_l2mc_group(_, _, _, _))
       .WillOnce(
           DoAll(SetArgPointee<0>(kGroupOid1), Return(SAI_STATUS_SUCCESS)));
   EXPECT_CALL(mock_sai_l2mc_group_, remove_l2mc_group(kGroupOid1))
@@ -5353,7 +5417,7 @@ TEST_F(L3MulticastManagerTest,
   std::vector<P4MulticastGroupEntry> entries = {entry1, entry2};
 
   // Expect to create L2 multicast group and then back it out.
-  EXPECT_CALL(mock_sai_l2mc_group_, create_l2mc_group(_, _, Eq(0), _))
+  EXPECT_CALL(mock_sai_l2mc_group_, create_l2mc_group(_, _, _, _))
       .WillOnce(
           DoAll(SetArgPointee<0>(kGroupOid1), Return(SAI_STATUS_SUCCESS)));
   EXPECT_CALL(mock_sai_l2mc_group_, remove_l2mc_group(kGroupOid1))
@@ -5402,7 +5466,7 @@ TEST_F(L3MulticastManagerTest,
   std::vector<P4MulticastGroupEntry> entries = {entry1, entry2};
 
   // Expect to create L2 multicast group and then back it out.
-  EXPECT_CALL(mock_sai_l2mc_group_, create_l2mc_group(_, _, Eq(0), _))
+  EXPECT_CALL(mock_sai_l2mc_group_, create_l2mc_group(_, _, _, _))
       .WillOnce(
           DoAll(SetArgPointee<0>(kGroupOid1), Return(SAI_STATUS_SUCCESS)));
 
@@ -8435,9 +8499,15 @@ TEST_F(L3MulticastManagerTest, VerifyStateMulticastGroupTestSuccess) {
       swss::FieldValueTuple{"replicas", json_array});
 
   // Setup ASIC DB.
+  std::string label;
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, "0x1");
+  EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                     mapper_key.c_str(), label));
   swss::Table table(nullptr, "ASIC_STATE");
   table.set("SAI_OBJECT_TYPE_IPMC_GROUP:oid:0x1",
-            std::vector<swss::FieldValueTuple>{});
+            std::vector<swss::FieldValueTuple>{
+                swss::FieldValueTuple{"SAI_IPMC_GROUP_ATTR_LABEL", label}});
   table.set(
       "SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER:oid:0x11",
       std::vector<swss::FieldValueTuple>{
@@ -8478,9 +8548,15 @@ TEST_F(L3MulticastManagerTest, VerifyStateMulticastGroupTestSuccessWithBackup) {
   attributes.push_back(swss::FieldValueTuple{"backups", json_array});
 
   // Setup ASIC DB.
+  std::string label;
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, "0x1");
+  EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                     mapper_key.c_str(), label));
   swss::Table table(nullptr, "ASIC_STATE");
   table.set("SAI_OBJECT_TYPE_IPMC_GROUP:oid:0x1",
-            std::vector<swss::FieldValueTuple>{});
+            std::vector<swss::FieldValueTuple>{
+                swss::FieldValueTuple{"SAI_IPMC_GROUP_ATTR_LABEL", label}});
   table.set(
       "SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER:oid:0x11",
       std::vector<swss::FieldValueTuple>{
@@ -8518,9 +8594,15 @@ TEST_F(L3MulticastManagerTest,
   attributes.push_back(swss::FieldValueTuple{"replicas", json_array});
 
   // Setup ASIC DB.
+  std::string label;
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, "0x0001");
+  EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                     mapper_key.c_str(), label));
   swss::Table table(nullptr, "ASIC_STATE");
   table.set("SAI_OBJECT_TYPE_IPMC_GROUP:oid:0x1",
-            std::vector<swss::FieldValueTuple>{});
+            std::vector<swss::FieldValueTuple>{
+                swss::FieldValueTuple{"SAI_IPMC_GROUP_ATTR_LABEL", label}});
   table.set(
       "SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER:oid:0x11",
       std::vector<swss::FieldValueTuple>{
@@ -8668,6 +8750,11 @@ TEST_F(L3MulticastManagerTest, VerifyStateMulticastGroupMissingAsicDb) {
   attributes.push_back(swss::FieldValueTuple{"replicas", json_array});
 
   // Setup ASIC DB.
+  std::string label;
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, "0x1");
+  EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                     mapper_key.c_str(), label));
   swss::Table table(nullptr, "ASIC_STATE");
   table.set("SAI_OBJECT_TYPE_IPMC_GROUP:oid:0x1",
             std::vector<swss::FieldValueTuple>{});
@@ -8675,9 +8762,19 @@ TEST_F(L3MulticastManagerTest, VerifyStateMulticastGroupMissingAsicDb) {
       "SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER:oid:0x11",
       std::vector<swss::FieldValueTuple>{
           swss::FieldValueTuple{"SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_GROUP_ID",
-                                "oid:0x2"},  // this is wrong OID
+                                "oid:0x1"},
           swss::FieldValueTuple{"SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID",
                                 "oid:0x123456"}});
+
+  // Verification should fail if missing group label
+  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+  table.set("SAI_OBJECT_TYPE_IPMC_GROUP:oid:0x1",
+            std::vector<swss::FieldValueTuple>{
+                swss::FieldValueTuple{"SAI_IPMC_GROUP_ATTR_LABEL", label}});
+  table.set("SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER:oid:0x11",
+            std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{
+                "SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_GROUP_ID",
+                "oid:0x2"}});  // OID is wrong
 
   // Verification should fail, since ASIC DB attribute is wrong.
   EXPECT_FALSE(VerifyState(db_key, attributes).empty());
@@ -8709,10 +8806,16 @@ TEST_F(L3MulticastManagerTest, VerifyStateMulticastGroupAsicDbNoRif) {
                           rif_entry1.multicast_router_interface_entry_key);
 
   // Setup ASIC DB.
+  std::string label;
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, "0x1");
+  EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                     mapper_key.c_str(), label));
   swss::Table table(nullptr, "ASIC_STATE");
   table.set(
       "SAI_OBJECT_TYPE_IPMC_GROUP:oid:0x1",
-      std::vector<swss::FieldValueTuple>{});
+      std::vector<swss::FieldValueTuple>{
+                swss::FieldValueTuple{"SAI_IPMC_GROUP_ATTR_LABEL", label}});
 
   auto* group_entry_ptr = GetMulticastGroupEntry("0x1");
   ASSERT_NE(group_entry_ptr, nullptr);
@@ -8741,9 +8844,15 @@ TEST_F(L3MulticastManagerTest, VerifyStateMulticastGroupFailures) {
       swss::FieldValueTuple{"replicas", json_array});
 
   // Setup ASIC DB.
+  std::string label;
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, "0x1");
+  EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                     mapper_key.c_str(), label));
   swss::Table table(nullptr, "ASIC_STATE");
   table.set("SAI_OBJECT_TYPE_IPMC_GROUP:oid:0x1",
-            std::vector<swss::FieldValueTuple>{});
+            std::vector<swss::FieldValueTuple>{
+                swss::FieldValueTuple{"SAI_IPMC_GROUP_ATTR_LABEL", label}});
   table.set(
       "SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER:oid:0x11",
       std::vector<swss::FieldValueTuple>{
@@ -8782,9 +8891,15 @@ TEST_F(L3MulticastManagerTest, VerifyStateL2MulticastGroupTestSuccess) {
   attributes.push_back(swss::FieldValueTuple{"replicas", json_array});
 
   // Setup ASIC DB.
+  std::string label;
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, "0x0001");
+  EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_L2MC_GROUP,
+                                     mapper_key.c_str(), label));
   swss::Table table(nullptr, "ASIC_STATE");
   table.set("SAI_OBJECT_TYPE_L2MC_GROUP:oid:0x1",
-            std::vector<swss::FieldValueTuple>{});
+            std::vector<swss::FieldValueTuple>{
+                swss::FieldValueTuple{"SAI_L2MC_GROUP_ATTR_LABEL", label}});
   table.set("SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER:oid:0x11",
             std::vector<swss::FieldValueTuple>{
                 swss::FieldValueTuple{
@@ -8816,9 +8931,15 @@ TEST_F(L3MulticastManagerTest, VerifyStateL2MulticastGroupMissBridgePort) {
   attributes.push_back(swss::FieldValueTuple{"replicas", json_array});
 
   // Setup ASIC DB.
+  std::string label;
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, "0x0001");
+  EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_L2MC_GROUP,
+                                     mapper_key.c_str(), label));
   swss::Table table(nullptr, "ASIC_STATE");
   table.set("SAI_OBJECT_TYPE_L2MC_GROUP:oid:0x1",
-            std::vector<swss::FieldValueTuple>{});
+            std::vector<swss::FieldValueTuple>{
+                swss::FieldValueTuple{"SAI_L2MC_GROUP_ATTR_LABEL", label}});
   table.set("SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER:oid:0x11",
             std::vector<swss::FieldValueTuple>{
                 swss::FieldValueTuple{
@@ -8858,6 +8979,11 @@ TEST_F(L3MulticastManagerTest, VerifyStateL2MulticastGroupMissingAsicDb) {
   attributes.push_back(swss::FieldValueTuple{"replicas", json_array});
 
   // Setup ASIC DB.
+  std::string label;
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, "0x0001");
+  EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_L2MC_GROUP,
+                                     mapper_key.c_str(), label));
   swss::Table table(nullptr, "ASIC_STATE");
   table.set("SAI_OBJECT_TYPE_L2MC_GROUP:oid:0x1",
             std::vector<swss::FieldValueTuple>{});
@@ -8865,10 +8991,19 @@ TEST_F(L3MulticastManagerTest, VerifyStateL2MulticastGroupMissingAsicDb) {
       "SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER:oid:0x11",
       std::vector<swss::FieldValueTuple>{
           swss::FieldValueTuple{"SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_GROUP_ID",
-                                "oid:0x2"},  // this is wrong OID
+                                "oid:0x1"},
           swss::FieldValueTuple{"SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_OUTPUT_ID",
                                 "oid:0x123456"}});
 
+  // Verification should fail if missing group label
+  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+  table.set("SAI_OBJECT_TYPE_L2MC_GROUP:oid:0x1",
+            std::vector<swss::FieldValueTuple>{
+                swss::FieldValueTuple{"SAI_L2MC_GROUP_ATTR_LABEL", label}});
+  table.set("SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER:oid:0x11",
+            std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{
+                "SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_GROUP_ID",
+                "oid:0x2"}});  // OID is wrong
   // Verification should fail, since ASIC DB attribute is wrong.
   EXPECT_FALSE(VerifyState(db_key, attributes).empty());
 

@@ -14,6 +14,7 @@
 #include "dbconnector.h"
 #include "ipaddress.h"
 #include "logger.h"
+#include "namelabelmapper.h"
 #include "p4orch/p4oidmapper.h"
 #include "p4orch/p4orch_util.h"
 #include "portsorch.h"
@@ -40,6 +41,7 @@ extern sai_switch_api_t* sai_switch_api;
 extern sai_my_mac_api_t* sai_my_mac_api;
 
 extern PortsOrch* gPortsOrch;
+extern NameLabelMapper* gLabelMapper;
 
 namespace p4orch {
 
@@ -212,6 +214,36 @@ std::vector<sai_attribute_t> prepareNextHopSaiAttrs(
 
   attr.id = SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE;
   attr.value.booldata = !write_vlan;
+  attrs.push_back(attr);
+
+  return attrs;
+}
+
+// Create the vector of SAI attributes for creating a new multicast group
+// object.
+std::vector<sai_attribute_t> prepareMulticastGroupSaiAttrs(
+    const P4MulticastGroupEntry& group, std::string& group_label) {
+  std::vector<sai_attribute_t> attrs;
+  sai_attribute_t attr;
+  std::string mapper_key;
+  gLabelMapper->addLabelToAttr(
+      SAI_OBJECT_TYPE_IPMC_GROUP, APP_P4RT_TABLE_NAME, group.multicast_group_id,
+      attr, SAI_IPMC_GROUP_ATTR_LABEL, mapper_key, group_label);
+  attrs.push_back(attr);
+
+  return attrs;
+}
+
+// Create the vector of SAI attributes for creating a new L2 multicast group
+// object.
+std::vector<sai_attribute_t> prepareL2MulticastGroupSaiAttrs(
+    const P4MulticastGroupEntry& group, std::string& group_label) {
+  std::vector<sai_attribute_t> attrs;
+  sai_attribute_t attr;
+  std::string mapper_key;
+  gLabelMapper->addLabelToAttr(
+      SAI_OBJECT_TYPE_L2MC_GROUP, APP_P4RT_TABLE_NAME, group.multicast_group_id,
+      attr, SAI_L2MC_GROUP_ATTR_LABEL, mapper_key, group_label);
   attrs.push_back(attr);
 
   return attrs;
@@ -1628,7 +1660,8 @@ ReturnCode L3MulticastManager::deleteRouterInterface(const std::string& rif_key,
 }
 
 ReturnCode L3MulticastManager::createMulticastGroup(
-    P4MulticastGroupEntry& entry, sai_object_id_t* mcast_group_oid) {
+    P4MulticastGroupEntry& entry, sai_object_id_t& mcast_group_oid,
+    std::string& group_label) {
   SWSS_LOG_ENTER();
   // Confirm we haven't already created a multicast group for this.
   if (m_p4OidMapper->existsOID(
@@ -1640,10 +1673,10 @@ ReturnCode L3MulticastManager::createMulticastGroup(
   }
 
   // Create Multicast group SAI object.
-  // There are no required attributes to create a group.
-  std::vector<sai_attribute_t> attrs;
+  std::vector<sai_attribute_t> attrs =
+      prepareMulticastGroupSaiAttrs(entry, group_label);
   auto sai_status = sai_ipmc_group_api->create_ipmc_group(
-      mcast_group_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+      &mcast_group_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
   if (sai_status != SAI_STATUS_SUCCESS) {
     LOG_ERROR_AND_RETURN(ReturnCode(sai_status)
         << "Failed to create multicast group for group ID: "
@@ -1710,7 +1743,8 @@ ReturnCode L3MulticastManager::deleteMulticastGroup(
 }
 
 ReturnCode L3MulticastManager::createL2MulticastGroup(
-    P4MulticastGroupEntry& entry, sai_object_id_t* mcast_group_oid) {
+    P4MulticastGroupEntry& entry, sai_object_id_t& mcast_group_oid,
+    std::string& group_label) {
   SWSS_LOG_ENTER();
   // Confirm we haven't already created a multicast group for this.
   if (m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_L2MC_GROUP,
@@ -1722,10 +1756,10 @@ ReturnCode L3MulticastManager::createL2MulticastGroup(
   }
 
   // Create L2 multicast group SAI object.
-  // There are no required attributes to create a group.
-  std::vector<sai_attribute_t> attrs;
+  std::vector<sai_attribute_t> attrs =
+      prepareL2MulticastGroupSaiAttrs(entry, group_label);
   auto sai_status = sai_l2mc_group_api->create_l2mc_group(
-      mcast_group_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+      &mcast_group_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
   if (sai_status != SAI_STATUS_SUCCESS) {
     LOG_ERROR_AND_RETURN(ReturnCode(sai_status)
                          << "Failed to create L2 multicast group for group ID: "
@@ -2203,12 +2237,15 @@ ReturnCode L3MulticastManager::addIpMulticastGroupEntry(
 
   // Create the multicast group.
   sai_object_id_t mcast_group_oid = SAI_NULL_OBJECT_ID;
-  RETURN_IF_ERROR(createMulticastGroup(entry, &mcast_group_oid));
+  std::string group_label;
+  RETURN_IF_ERROR(createMulticastGroup(entry, mcast_group_oid, group_label));
 
   // Update internal book-keeping for new multicast group.
   m_p4OidMapper->setOID(SAI_OBJECT_TYPE_IPMC_GROUP, entry.multicast_group_id,
                         mcast_group_oid);
-
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, entry.multicast_group_id);
+  gLabelMapper->setLabel(SAI_OBJECT_TYPE_IPMC_GROUP, mapper_key, group_label);
   // Next, create the group members.  If there's a failure, back out.
   // Instead of updating internal state as members are created, wait until all
   // members have been created to simplify back-out.
@@ -2259,6 +2296,7 @@ ReturnCode L3MulticastManager::addIpMulticastGroupEntry(
         // Back out multicast group state.
         m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_IPMC_GROUP,
                                 entry.multicast_group_id);
+        gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_IPMC_GROUP, mapper_key);
       }
       // Stop trying to create replicas.  Return the first error.
       return create_member_status;
@@ -2365,7 +2403,8 @@ ReturnCode L3MulticastManager::addL2MulticastGroupEntry(
 
   // Create the multicast group.
   sai_object_id_t mcast_group_oid = SAI_NULL_OBJECT_ID;
-  RETURN_IF_ERROR(createL2MulticastGroup(entry, &mcast_group_oid));
+  std::string group_label;
+  RETURN_IF_ERROR(createL2MulticastGroup(entry, mcast_group_oid, group_label));
 
   ReturnCode l2mc_entry_status = activateL2MulticastGroup(mcast_group_oid);
 
@@ -2392,7 +2431,9 @@ ReturnCode L3MulticastManager::addL2MulticastGroupEntry(
   // Update internal book-keeping for new multicast group.
   m_p4OidMapper->setOID(SAI_OBJECT_TYPE_L2MC_GROUP, entry.multicast_group_id,
                         mcast_group_oid);
-
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, entry.multicast_group_id);
+  gLabelMapper->setLabel(SAI_OBJECT_TYPE_L2MC_GROUP, mapper_key, group_label);
   // Next, create the group members.  If there's a failure, back out.
   // Instead of updating internal state as members are created, wait until all
   // members have been created to simplify back-out.
@@ -2444,6 +2485,7 @@ ReturnCode L3MulticastManager::addL2MulticastGroupEntry(
         // Back out multicast group state.
         m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_L2MC_GROUP,
                                 entry.multicast_group_id);
+        gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_L2MC_GROUP, mapper_key);
       }
       // Stop trying to create replicas.  Return the first error.
       return create_member_status;
@@ -3005,9 +3047,12 @@ ReturnCode L3MulticastManager::deleteIpMulticastGroupEntry(
     return group_delete_status;
   }
 
-  // Do internal bookkeping to remove the multicast group.
+  // Do internal bookkeeping to remove the multicast group.
   removeGroupFromPortNameToIpmcGroupMap(entry);
   m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_IPMC_GROUP, entry.multicast_group_id);
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, entry.multicast_group_id);
+  gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_IPMC_GROUP, mapper_key);
   m_multicastGroupEntryTable.erase(entry.multicast_group_id);
   return ReturnCode();
 }
@@ -3107,8 +3152,11 @@ ReturnCode L3MulticastManager::deleteL2MulticastGroupEntry(
     return group_delete_status;
   }
 
-  // Do internal bookkeping to remove the multicast group.
+  // Do internal bookkeeping to remove the multicast group.
   m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_L2MC_GROUP, entry.multicast_group_id);
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, entry.multicast_group_id);
+  gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_L2MC_GROUP, mapper_key);
   m_multicastGroupEntryTable.erase(entry.multicast_group_id);
   return ReturnCode();
 }
@@ -3488,15 +3536,24 @@ std::string L3MulticastManager::verifyIpMulticastGroupStateAsicDb(
   m_p4OidMapper->getOID(SAI_OBJECT_TYPE_IPMC_GROUP,
                         multicast_group_entry->multicast_group_id,
                         &ipmc_group_oid);
+  std::string group_label;
+  std::vector<swss::FieldValueTuple> values, exp;
+  auto attrs =
+      prepareMulticastGroupSaiAttrs(*multicast_group_entry, group_label);
+  exp = saimeta::SaiAttributeList::serialize_attr_list(
+      SAI_OBJECT_TYPE_IPMC_GROUP, (uint32_t)attrs.size(), attrs.data(),
+      /*countOnly=*/false);
   std::string key = sai_serialize_object_type(SAI_OBJECT_TYPE_IPMC_GROUP) +
                     ":" + sai_serialize_object_id(ipmc_group_oid);
-  std::vector<swss::FieldValueTuple> values;
   if (!m_asic_state_table.get(key, values)) {
     return std::string("ASIC DB key not found ") + key;
   }
-  // There are no IPMC group attributes to verify.  The attributes that do
-  // exist are read-only attributes related to how many group members there are.
-  // We check group members and their attributes below.
+  std::string err_msg =
+      verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
+                  /*allow_unknown=*/false);
+  if (!err_msg.empty()) {
+    return err_msg;
+  }
 
   // Confirm group member settings.
   for (auto& replica : multicast_group_entry->active_replicas) {
@@ -3512,10 +3569,9 @@ std::string L3MulticastManager::verifyIpMulticastGroupStateAsicDb(
 
     auto member_attrs = prepareMulticastGroupMemberSaiAttrs(
         ipmc_group_oid, rif_oid, next_hop_oid);
-    std::vector<swss::FieldValueTuple> exp =
-        saimeta::SaiAttributeList::serialize_attr_list(
-            SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER, (uint32_t)member_attrs.size(),
-            member_attrs.data(), /*countOnly=*/false);
+    exp = saimeta::SaiAttributeList::serialize_attr_list(
+        SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER, (uint32_t)member_attrs.size(),
+        member_attrs.data(), /*countOnly=*/false);
     key = sai_serialize_object_type(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER) + ":" +
           sai_serialize_object_id(group_member_oid);
     values.clear();
@@ -3540,15 +3596,24 @@ std::string L3MulticastManager::verifyL2MulticastGroupStateAsicDb(
   m_p4OidMapper->getOID(SAI_OBJECT_TYPE_L2MC_GROUP,
                         multicast_group_entry->multicast_group_id,
                         &l2mc_group_oid);
+  std::string group_label;
+  std::vector<swss::FieldValueTuple> values, exp;
+  auto attrs =
+      prepareL2MulticastGroupSaiAttrs(*multicast_group_entry, group_label);
+  exp = saimeta::SaiAttributeList::serialize_attr_list(
+      SAI_OBJECT_TYPE_L2MC_GROUP, (uint32_t)attrs.size(), attrs.data(),
+      /*countOnly=*/false);
   std::string key = sai_serialize_object_type(SAI_OBJECT_TYPE_L2MC_GROUP) +
                     ":" + sai_serialize_object_id(l2mc_group_oid);
-  std::vector<swss::FieldValueTuple> values;
   if (!m_asic_state_table.get(key, values)) {
     return std::string("ASIC DB key not found ") + key;
   }
-  // There are no L2MC group attributes to verify.  The attributes that do
-  // exist are read-only attributes related to how many group members there are.
-  // We check group members and their attributes below.
+  std::string err_msg =
+      verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
+                  /*allow_unknown=*/false);
+  if (!err_msg.empty()) {
+    return err_msg;
+  }
 
   // Confirm group member settings.
   for (auto& replica : multicast_group_entry->active_replicas) {
@@ -3561,10 +3626,9 @@ std::string L3MulticastManager::verifyL2MulticastGroupStateAsicDb(
 
     auto member_attrs =
         prepareL2MulticastGroupMemberSaiAttrs(l2mc_group_oid, bridge_port_oid);
-    std::vector<swss::FieldValueTuple> exp =
-        saimeta::SaiAttributeList::serialize_attr_list(
-            SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER, (uint32_t)member_attrs.size(),
-            member_attrs.data(), /*countOnly=*/false);
+    exp = saimeta::SaiAttributeList::serialize_attr_list(
+        SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER, (uint32_t)member_attrs.size(),
+        member_attrs.data(), /*countOnly=*/false);
     key = sai_serialize_object_type(SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER) + ":" +
           sai_serialize_object_id(group_member_oid);
     values.clear();
