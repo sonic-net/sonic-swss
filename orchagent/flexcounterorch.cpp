@@ -326,7 +326,21 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     }
                     if (gCoppOrch && (key == COPP_STATS_KEY))
                     {
-                        if (value == "enable")
+                        // Only broadcom-xgs ASICs implement the SAI policer-stat
+                        // capability used by CoppOrch::bindPolicerCounter. Mirror
+                        // the inline platform/sub_platform convention used by
+                        // aclorch / srv6orch / pfcactionhandler.
+                        string platform     = getenv("platform")     ? getenv("platform")     : "";
+                        string sub_platform = getenv("sub_platform") ? getenv("sub_platform") : "";
+
+                        if (platform != BRCM_PLATFORM_SUBSTRING || sub_platform == BRCM_DNX_PLATFORM_SUBSTRING)
+                        {
+                            SWSS_LOG_NOTICE("COPP_STATS flex counter unsupported on platform=%s sub_platform=%s; ignoring %s",
+                                            platform.c_str(), sub_platform.c_str(), value.c_str());
+                            // Leave m_copp_stats_counter_enabled = false;
+                            // bindPolicerCounter already short-circuits on that.
+                        }
+                        else if (value == "enable")
                         {
                             m_copp_stats_counter_enabled = true;
                             gCoppOrch->generatePolicerCounterIdList();
