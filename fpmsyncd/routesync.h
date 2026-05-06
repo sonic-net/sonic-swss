@@ -11,7 +11,6 @@
 #include "warmRestartHelper.h"
 #include <string.h>
 #include <bits/stdc++.h>
-#include <unistd.h>
 #include <linux/version.h>
 #include <linux/seg6.h>
 
