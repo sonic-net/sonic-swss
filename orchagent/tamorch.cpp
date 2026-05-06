@@ -203,16 +203,19 @@ bool TamOrch::isPlatformSupported()
         return false;
     }
 
-    m_capable = cap.create_implemented && cap.set_implemented;
+    m_capable = cap.create_implemented;
     if (!m_capable)
     {
-        SWSS_LOG_WARN("TAM_INT_ATTR_TYPE not implemented on this platform "
-                      "(create=%d set=%d). IFAv2 disabled.",
-                      cap.create_implemented, cap.set_implemented);
+        SWSS_LOG_WARN("TAM_INT_ATTR_TYPE not creatable on this platform "
+                      "(create=%d). IFAv2 disabled.",
+                      cap.create_implemented);
     }
     else
     {
-        SWSS_LOG_NOTICE("TAM_INT capability OK — IFAv2 supported on this platform.");
+        SWSS_LOG_NOTICE("TAM_INT capability OK (create=%d set=%d get=%d) "
+                        "— IFAv2 supported on this platform.",
+                        cap.create_implemented, cap.set_implemented,
+                        cap.get_implemented);
     }
 
     return m_capable;
