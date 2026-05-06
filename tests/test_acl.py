@@ -853,6 +853,49 @@ class TestAcl:
         dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
         dvs_acl.verify_no_acl_rules()
 
+    def test_AclRuleInvalidMaskCombinations(self, dvs_acl, l3_acl_table):
+        """Verify that invalid mask combinations are rejected (rule stays Inactive).
+
+        Two invalid cases per field:
+          - *_MASK without a paired plain-address field
+          - *_MASK combined with a CIDR-notation address (e.g. 10.0.0.0/8)
+        """
+        invalid_cases = [
+            # SRC_IP_MASK without SRC_IP
+            {"SRC_IP_MASK": "255.0.255.0"},
+            # SRC_IP_MASK with CIDR SRC_IP
+            {"SRC_IP": "10.0.0.0/8", "SRC_IP_MASK": "255.0.255.0"},
+            # DST_IP_MASK without DST_IP
+            {"DST_IP_MASK": "255.0.255.0"},
+            # DST_IP_MASK with CIDR DST_IP
+            {"DST_IP": "192.168.0.0/16", "DST_IP_MASK": "255.0.255.0"},
+        ]
+        for qualifiers in invalid_cases:
+            dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, qualifiers)
+            dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, "Inactive")
+            dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
+            dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, None)
+            dvs_acl.verify_no_acl_rules()
+
+    def test_V6AclRuleInvalidMaskCombinations(self, dvs_acl, l3v6_acl_table):
+        """Verify that invalid IPv6 mask combinations are rejected (rule stays Inactive)."""
+        invalid_cases = [
+            # SRC_IPV6_MASK without SRC_IPV6
+            {"SRC_IPV6_MASK": "ffff::ffff"},
+            # SRC_IPV6_MASK with CIDR SRC_IPV6
+            {"SRC_IPV6": "2001:db8::/32", "SRC_IPV6_MASK": "ffff::ffff"},
+            # DST_IPV6_MASK without DST_IPV6
+            {"DST_IPV6_MASK": "ffff::ffff"},
+            # DST_IPV6_MASK with CIDR DST_IPV6
+            {"DST_IPV6": "2001:db8::/32", "DST_IPV6_MASK": "ffff::ffff"},
+        ]
+        for qualifiers in invalid_cases:
+            dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, qualifiers)
+            dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, "Inactive")
+            dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
+            dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, None)
+            dvs_acl.verify_no_acl_rules()
+
     def test_AclTableMandatoryRangeFields(self, dvs, l3_acl_table):
         """
         The test case is to verify range qualifier is not applied for egress ACL
