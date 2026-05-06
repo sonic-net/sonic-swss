@@ -67,7 +67,7 @@ void fillStatusArrayWithNotExecuted(std::vector<ReturnCode>& array,
 // Create the vector of SAI attributes for creating a new RIF object.
 ReturnCodeOr<std::vector<sai_attribute_t>> prepareRifSaiAttrs(
     const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
-    const sai_object_id_t my_mac_oid) {
+    const sai_object_id_t my_mac_oid, std::string& label) {
   Port port;
   if (!gPortsOrch->getPort(
           multicast_router_interface_entry.multicast_replica_port, port)) {
@@ -140,6 +140,13 @@ ReturnCodeOr<std::vector<sai_attribute_t>> prepareRifSaiAttrs(
     attr.value.oid = my_mac_oid;
     attrs.push_back(attr);
   }
+
+  std::string mapper_key;
+  gLabelMapper->addLabelToAttr(
+      SAI_OBJECT_TYPE_ROUTER_INTERFACE, APP_P4RT_TABLE_NAME,
+      multicast_router_interface_entry.multicast_router_interface_entry_key,
+      attr, SAI_ROUTER_INTERFACE_ATTR_LABEL, mapper_key, label);
+  attrs.push_back(attr);
 
   return attrs;
 }
@@ -1477,7 +1484,8 @@ ReturnCode L3MulticastManager::createDefaultMyMac() {
 }
 
 ReturnCode L3MulticastManager::createRouterInterface(
-    P4MulticastRouterInterfaceEntry& entry, sai_object_id_t* rif_oid) {
+    P4MulticastRouterInterfaceEntry& entry, sai_object_id_t& rif_oid,
+    std::string& label) {
   SWSS_LOG_ENTER();
 
   // For NSF purposes, we cannot add the new SAI_ROUTER_INTERFACE_ATTR_MY_MAC,
@@ -1498,9 +1506,9 @@ ReturnCode L3MulticastManager::createRouterInterface(
 
   // Create RIF SAI object.
   ASSIGN_OR_RETURN(std::vector<sai_attribute_t> attrs,
-                   prepareRifSaiAttrs(entry, m_my_mac_oid));
+                   prepareRifSaiAttrs(entry, m_my_mac_oid, label));
   auto sai_status = sai_router_intfs_api->create_router_interface(
-      rif_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+      &rif_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
   if (sai_status != SAI_STATUS_SUCCESS) {
     LOG_ERROR_AND_RETURN(
         ReturnCode(sai_status)
@@ -1852,11 +1860,15 @@ ReturnCode L3MulticastManager::addL3MulticastRouterInterfaceEntry(
   SWSS_LOG_ENTER();
 
   sai_object_id_t rif_oid = SAI_NULL_OBJECT_ID;
-  RETURN_IF_ERROR(createRouterInterface(entry, &rif_oid));
+  std::string label;
+  RETURN_IF_ERROR(createRouterInterface(entry, rif_oid, label));
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, entry.multicast_router_interface_entry_key);
 
   // Need to set RIF in mapper in case have to back out.
   m_p4OidMapper->setOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
                         entry.multicast_router_interface_entry_key, rif_oid);
+  gLabelMapper->setLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE, mapper_key, label);
 
   // For re-factoring purposes, only the new actions will setup the next hop.
   // TODO(b/353398275): Make if unconditional when kSetMulticastSrcMac removed
@@ -1868,6 +1880,7 @@ ReturnCode L3MulticastManager::addL3MulticastRouterInterfaceEntry(
           entry.multicast_router_interface_entry_key, rif_oid);
       m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
                               entry.multicast_router_interface_entry_key);
+      gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE, mapper_key);
       if (!del_status.ok()) {
         // All kinds of bad.  The delete failed, and we have to leave a
         // dangling allocated RIF
@@ -2188,6 +2201,9 @@ ReturnCode L3MulticastManager::deleteL3MulticastRouterInterfaceEntry(
 
   m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
                           entry->multicast_router_interface_entry_key);
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, entry->multicast_router_interface_entry_key);
+  gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE, mapper_key);
   gPortsOrch->decreasePortRefCount(entry->multicast_replica_port);
 
   // Finally, remove the entry P4MulticastRouterInterfaceEntry.
@@ -3329,8 +3345,9 @@ std::string L3MulticastManager::verifyMulticastRouterInterfaceStateAsicDb(
 
 std::string L3MulticastManager::verifyL3MulticastRouterInterfaceStateAsicDb(
     const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry) {
-  auto attrs_or =
-      prepareRifSaiAttrs(*multicast_router_interface_entry, m_my_mac_oid);
+  std::string label;
+  auto attrs_or = prepareRifSaiAttrs(*multicast_router_interface_entry,
+                                     m_my_mac_oid, label);
   if (!attrs_or.ok()) {
     return std::string("Failed to get multicast router interface SAI attrs: ") +
            attrs_or.status().message();

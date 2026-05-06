@@ -213,7 +213,8 @@ class L3MulticastManager : public ObjectManagerInterface {
 
   // Wrapper around SAI setup and call, for easy mocking.
   ReturnCode createRouterInterface(P4MulticastRouterInterfaceEntry& entry,
-                                   sai_object_id_t* rif_oid);
+                                   sai_object_id_t& rif_oid,
+                                   std::string& label);
   ReturnCode createNextHop(P4MulticastRouterInterfaceEntry& entry,
                            const sai_object_id_t rif_oid,
                            sai_object_id_t* next_hop_oid);

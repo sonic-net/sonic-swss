@@ -107,6 +107,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_LABEL, "any_value"),
     ]
     util.verify_attr(fvs, attr_list)
 
@@ -161,6 +162,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_LABEL, "any_value"),
     ]
     util.verify_attr(fvs, attr_list)
 
@@ -304,6 +306,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_LABEL, "any_value"),
     ]
     util.verify_attr(fvs_asic, asic_attr_list)
 
@@ -559,6 +562,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_LABEL, "any_value"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, my_mac_asic_db_key),
     ]
     util.verify_attr(fvs, attr_list)
@@ -686,6 +690,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_LABEL, "any_value"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, my_mac_asic_db_key),
     ]
     util.verify_attr(fvs, attr_list)
@@ -889,6 +894,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_LABEL, "any_value"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, my_mac_asic_db_key),
     ]
     util.verify_attr(fvs, attr_list)
@@ -1017,6 +1023,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_LABEL, "any_value"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, my_mac_asic_db_key),
     ]
     util.verify_attr(fvs, attr_list)
@@ -1220,6 +1227,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_LABEL, "any_value"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, my_mac_asic_db_key),
     ]
     util.verify_attr(fvs, attr_list)
@@ -1348,6 +1356,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_LABEL, "any_value"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, my_mac_asic_db_key),
     ]
     util.verify_attr(fvs, attr_list)
