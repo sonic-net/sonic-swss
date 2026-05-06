@@ -597,6 +597,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE, "false"),
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE, "false"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_LABEL, "any_value"),
     ]
     util.verify_attr(nh_fvs, nh_attr_list)
 
@@ -725,6 +726,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE, "false"),
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE, "false"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_LABEL, "any_value"),
     ]
     util.verify_attr(nh_fvs, nh_attr_list)
 
@@ -929,6 +931,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE, "false"),
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE, "false"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_LABEL, "any_value"),
     ]
     util.verify_attr(nh_fvs, nh_attr_list)
 
@@ -1058,6 +1061,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE, "false"),
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE, "false"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_LABEL, "any_value"),
     ]
     util.verify_attr(nh_fvs, nh_attr_list)
 
@@ -1262,6 +1266,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE, "false"),
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE, "false"),
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE, "false"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_LABEL, "any_value"),
     ]
     util.verify_attr(nh_fvs, nh_attr_list)
 
@@ -1391,6 +1396,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE, "false"),
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE, "false"),
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE, "false"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_LABEL, "any_value"),
     ]
     util.verify_attr(nh_fvs, nh_attr_list)
 

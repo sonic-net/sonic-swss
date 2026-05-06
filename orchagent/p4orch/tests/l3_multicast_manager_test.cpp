@@ -303,6 +303,12 @@ bool MatchNextHopSaiAttribute(const sai_attribute_t& attr,
       return false;
     }
   }
+  if (exp_attr.id == SAI_NEXT_HOP_ATTR_LABEL) {
+    if (attr.id != SAI_NEXT_HOP_ATTR_LABEL ||
+        strcmp(attr.value.chardata, exp_attr.value.chardata) != 0) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -541,7 +547,7 @@ class L3MulticastManagerTest : public ::testing::Test {
         .WillOnce(DoAll(SetArgPointee<0>(rif_oid), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_neighbor_, create_neighbor_entry(_, Eq(2), _))
         .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, Eq(6), _))
+    EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
         .WillOnce(
             DoAll(SetArgPointee<0>(next_hop_oid), Return(SAI_STATUS_SUCCESS)));
 
@@ -878,7 +884,8 @@ class L3MulticastManagerTest : public ::testing::Test {
   }
 
   std::vector<sai_attribute_t> PrepareNextHopSaiAttrs(
-      const sai_object_id_t rif_oid, bool write_vlan, bool write_dst_mac) {
+      const sai_object_id_t rif_oid, bool write_vlan, bool write_dst_mac,
+      const std::string& ritf_key) {
     std::vector<sai_attribute_t> attrs;
     sai_attribute_t attr;
 
@@ -905,6 +912,13 @@ class L3MulticastManagerTest : public ::testing::Test {
 
     attr.id = SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE;
     attr.value.booldata = !write_vlan;
+    attrs.push_back(attr);
+
+    std::string mapper_key, label;
+    gLabelMapper->addLabelToAttr(SAI_OBJECT_TYPE_NEXT_HOP, APP_P4RT_TABLE_NAME,
+                                 ritf_key, attr, SAI_NEXT_HOP_ATTR_LABEL,
+                                 mapper_key, label);
+    gLabelMapper->setLabel(SAI_OBJECT_TYPE_NEXT_HOP, mapper_key, label);
     attrs.push_back(attr);
 
     return attrs;
@@ -1090,17 +1104,6 @@ class L3MulticastManagerTest : public ::testing::Test {
                                    sai_object_id_t& rif_oid,
                                    std::string& label) {
     return l3_multicast_manager_.createRouterInterface(entry, rif_oid, label);
-  }
-
-  ReturnCode CreateNextHop(P4MulticastRouterInterfaceEntry& entry,
-                           const sai_object_id_t rif_oid,
-                           sai_object_id_t* next_hop_oid) {
-    return l3_multicast_manager_.createNextHop(entry, rif_oid, next_hop_oid);
-  }
-
-  ReturnCode CreateNeighborEntry(P4MulticastRouterInterfaceEntry& entry,
-                                 const sai_object_id_t rif_oid) {
-    return l3_multicast_manager_.createNeighborEntry(entry, rif_oid);
   }
 
   ReturnCode DeleteRouterInterface(const std::string& rif_key,
@@ -2081,9 +2084,9 @@ TEST_F(L3MulticastManagerTest,
                                     NeighborAttrArrayEq(exp_neigh_attrs)))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
 
-  std::vector<sai_attribute_t> exp_nh_attrs =
-      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/true,
-                             /*write_dst_mac=*/false);
+  std::vector<sai_attribute_t> exp_nh_attrs = PrepareNextHopSaiAttrs(
+      kRifOid1, /*write_vlan=*/true,
+      /*write_dst_mac=*/false, entry.multicast_router_interface_entry_key);
   EXPECT_CALL(mock_sai_next_hop_,
               create_next_hop(_, _, Eq(exp_nh_attrs.size()),
                               NextHopAttrArrayEq(exp_nh_attrs)))
@@ -2160,9 +2163,9 @@ TEST_F(L3MulticastManagerTest,
                                     NeighborAttrArrayEq(exp_neigh_attrs)))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
 
-  std::vector<sai_attribute_t> exp_nh_attrs =
-      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/true,
-                             /*write_dst_mac=*/false);
+  std::vector<sai_attribute_t> exp_nh_attrs = PrepareNextHopSaiAttrs(
+      kRifOid1, /*write_vlan=*/true,
+      /*write_dst_mac=*/false, entry.multicast_router_interface_entry_key);
   EXPECT_CALL(mock_sai_next_hop_,
               create_next_hop(_, _, Eq(exp_nh_attrs.size()),
                               NextHopAttrArrayEq(exp_nh_attrs)))
@@ -2227,9 +2230,9 @@ TEST_F(
                                     NeighborAttrArrayEq(exp_neigh_attrs)))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
 
-  std::vector<sai_attribute_t> exp_nh_attrs =
-      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/true,
-                             /*write_dst_mac=*/true);
+  std::vector<sai_attribute_t> exp_nh_attrs = PrepareNextHopSaiAttrs(
+      kRifOid1, /*write_vlan=*/true,
+      /*write_dst_mac=*/true, entry.multicast_router_interface_entry_key);
   EXPECT_CALL(mock_sai_next_hop_,
               create_next_hop(_, _, Eq(exp_nh_attrs.size()),
                               NextHopAttrArrayEq(exp_nh_attrs)))
@@ -2294,9 +2297,9 @@ TEST_F(L3MulticastManagerTest,
                                     NeighborAttrArrayEq(exp_neigh_attrs)))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
 
-  std::vector<sai_attribute_t> exp_nh_attrs =
-      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/false,
-                             /*write_dst_mac=*/false);
+  std::vector<sai_attribute_t> exp_nh_attrs = PrepareNextHopSaiAttrs(
+      kRifOid1, /*write_vlan=*/false,
+      /*write_dst_mac=*/false, entry.multicast_router_interface_entry_key);
   EXPECT_CALL(mock_sai_next_hop_,
               create_next_hop(_, _, Eq(exp_nh_attrs.size()),
                               NextHopAttrArrayEq(exp_nh_attrs)))
@@ -2346,6 +2349,11 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(kRifOid1))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
 
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, entry.multicast_router_interface_entry_key);
+  gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE, mapper_key);
+  gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_NEXT_HOP, mapper_key);
+
   std::vector<ReturnCode> statuses =
       AddMulticastRouterInterfaceEntries(entries);
 
@@ -2356,9 +2364,9 @@ TEST_F(L3MulticastManagerTest,
             nullptr);
 
   std::string label;
-  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
-      APP_P4RT_TABLE_NAME, entry.multicast_router_interface_entry_key);
   EXPECT_FALSE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                      mapper_key.c_str(), label));
+  EXPECT_FALSE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_NEXT_HOP,
                                       mapper_key.c_str(), label));
 }
 
@@ -2388,6 +2396,11 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(kRifOid1))
       .WillOnce(Return(SAI_STATUS_FAILURE));
 
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, entry.multicast_router_interface_entry_key);
+  gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE, mapper_key);
+  gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_NEXT_HOP, mapper_key);
+
   std::vector<ReturnCode> statuses =
       AddMulticastRouterInterfaceEntries(entries);
 
@@ -2398,9 +2411,9 @@ TEST_F(L3MulticastManagerTest,
             nullptr);
 
   std::string label;
-  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
-      APP_P4RT_TABLE_NAME, entry.multicast_router_interface_entry_key);
   EXPECT_FALSE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                      mapper_key.c_str(), label));
+  EXPECT_FALSE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_NEXT_HOP,
                                       mapper_key.c_str(), label));
 }
 
@@ -2428,6 +2441,11 @@ TEST_F(L3MulticastManagerTest,
                         entry.multicast_router_interface_entry_key,
                         kNextHopOid1);
 
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, entry.multicast_router_interface_entry_key);
+  gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE, mapper_key);
+  gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_NEXT_HOP, mapper_key);
+
   std::vector<ReturnCode> statuses =
       AddMulticastRouterInterfaceEntries(entries);
 
@@ -2438,9 +2456,9 @@ TEST_F(L3MulticastManagerTest,
             nullptr);
 
   std::string label;
-  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
-      APP_P4RT_TABLE_NAME, entry.multicast_router_interface_entry_key);
   EXPECT_FALSE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                      mapper_key.c_str(), label));
+  EXPECT_FALSE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_NEXT_HOP,
                                       mapper_key.c_str(), label));
 }
 
@@ -2466,12 +2484,7 @@ TEST_F(L3MulticastManagerTest, AddMulticastRouterInterfaceEntryNextHopFails) {
                                     NeighborAttrArrayEq(exp_neigh_attrs)))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
 
-  std::vector<sai_attribute_t> exp_nh_attrs =
-      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/true,
-                             /*write_dst_mac=*/false);
-  EXPECT_CALL(mock_sai_next_hop_,
-              create_next_hop(_, gSwitchId, Eq(exp_nh_attrs.size()),
-                              NextHopAttrArrayEq(exp_nh_attrs)))
+  EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
       .WillOnce(Return(SAI_STATUS_FAILURE));
 
   EXPECT_CALL(mock_sai_neighbor_, remove_neighbor_entry(_))
@@ -2479,6 +2492,11 @@ TEST_F(L3MulticastManagerTest, AddMulticastRouterInterfaceEntryNextHopFails) {
 
   EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(kRifOid1))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, entry.multicast_router_interface_entry_key);
+  gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE, mapper_key);
+  gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_NEXT_HOP, mapper_key);
 
   std::vector<ReturnCode> statuses =
       AddMulticastRouterInterfaceEntries(entries);
@@ -2490,9 +2508,9 @@ TEST_F(L3MulticastManagerTest, AddMulticastRouterInterfaceEntryNextHopFails) {
             nullptr);
 
   std::string label;
-  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
-      APP_P4RT_TABLE_NAME, entry.multicast_router_interface_entry_key);
   EXPECT_FALSE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                      mapper_key.c_str(), label));
+  EXPECT_FALSE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_NEXT_HOP,
                                       mapper_key.c_str(), label));
 }
 
@@ -2519,12 +2537,10 @@ TEST_F(L3MulticastManagerTest,
                                     NeighborAttrArrayEq(exp_neigh_attrs)))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
 
-  std::vector<sai_attribute_t> exp_nh_attrs =
-      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/true,
-                             /*write_dst_mac=*/false);
-  EXPECT_CALL(mock_sai_next_hop_,
-              create_next_hop(_, gSwitchId, Eq(exp_nh_attrs.size()),
-                              NextHopAttrArrayEq(exp_nh_attrs)))
+  std::vector<sai_attribute_t> exp_nh_attrs = PrepareNextHopSaiAttrs(
+      kRifOid1, /*write_vlan=*/true,
+      /*write_dst_mac=*/false, entry.multicast_router_interface_entry_key);
+  EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
       .WillOnce(Return(SAI_STATUS_FAILURE));
 
   EXPECT_CALL(mock_sai_neighbor_, remove_neighbor_entry(_))
@@ -2532,6 +2548,11 @@ TEST_F(L3MulticastManagerTest,
 
   EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(kRifOid1))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, entry.multicast_router_interface_entry_key);
+  gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE, mapper_key);
+  gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_NEXT_HOP, mapper_key);
 
   std::vector<ReturnCode> statuses =
       AddMulticastRouterInterfaceEntries(entries);
@@ -2543,9 +2564,9 @@ TEST_F(L3MulticastManagerTest,
             nullptr);
 
   std::string label;
-  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
-      APP_P4RT_TABLE_NAME, entry.multicast_router_interface_entry_key);
   EXPECT_FALSE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                      mapper_key.c_str(), label));
+  EXPECT_FALSE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_NEXT_HOP,
                                       mapper_key.c_str(), label));
 }
 
@@ -2758,12 +2779,7 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_CALL(mock_sai_neighbor_, remove_neighbor_entry(_))
       .WillOnce(Return(SAI_STATUS_FAILURE));
 
-  std::vector<sai_attribute_t> exp_nh_attrs =
-      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/true,
-                             /*write_dst_mac=*/false);
-  EXPECT_CALL(mock_sai_next_hop_,
-              create_next_hop(_, gSwitchId, Eq(exp_nh_attrs.size()),
-                              NextHopAttrArrayEq(exp_nh_attrs)))
+  EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)));
 
   std::vector<P4MulticastRouterInterfaceEntry> entries = {entry1};
@@ -2777,6 +2793,11 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_NE(GetMulticastRouterInterfaceEntry(
                 entry1.multicast_router_interface_entry_key),
             nullptr);
+  std::string label;
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, entry1.multicast_router_interface_entry_key);
+  EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_NEXT_HOP,
+                                     mapper_key.c_str(), label));
 }
 
 TEST_F(L3MulticastManagerTest,
@@ -2791,12 +2812,7 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_CALL(mock_sai_neighbor_, remove_neighbor_entry(_))
       .WillOnce(Return(SAI_STATUS_FAILURE));
 
-  std::vector<sai_attribute_t> exp_nh_attrs =
-      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/true,
-                             /*write_dst_mac=*/false);
-  EXPECT_CALL(mock_sai_next_hop_,
-              create_next_hop(_, gSwitchId, Eq(exp_nh_attrs.size()),
-                              NextHopAttrArrayEq(exp_nh_attrs)))
+  EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
       .WillOnce(Return(SAI_STATUS_FAILURE));
 
   std::vector<P4MulticastRouterInterfaceEntry> entries = {entry1};
@@ -2833,12 +2849,7 @@ TEST_F(L3MulticastManagerTest,
                                     NeighborAttrArrayEq(exp_neigh_attrs)))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
 
-  std::vector<sai_attribute_t> exp_nh_attrs =
-      PrepareNextHopSaiAttrs(kRifOid1, /*write_vlan=*/true,
-                             /*write_dst_mac=*/false);
-  EXPECT_CALL(mock_sai_next_hop_,
-              create_next_hop(_, gSwitchId, Eq(exp_nh_attrs.size()),
-                              NextHopAttrArrayEq(exp_nh_attrs)))
+  EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
 
   std::vector<P4MulticastRouterInterfaceEntry> entries = {entry1};
@@ -4128,11 +4139,13 @@ TEST_F(L3MulticastManagerTest,
 
   // Setup ASIC DB.
   swss::Table table(nullptr, "ASIC_STATE");
-  std::string label;
+  std::string label, nexthop_label;
   std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
       APP_P4RT_TABLE_NAME, internal_entry.multicast_router_interface_entry_key);
   EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
                                      mapper_key.c_str(), label));
+  EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_NEXT_HOP,
+                                     mapper_key.c_str(), nexthop_label));
   table.set(
       "SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456",
       std::vector<swss::FieldValueTuple>{
@@ -4168,7 +4181,8 @@ TEST_F(L3MulticastManagerTest,
           swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE",
                                 "false"},
           swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE",
-                                "false"}});
+                                "false"},
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_LABEL", nexthop_label}});
 
   table.set(
       "SAI_OBJECT_TYPE_NEIGHBOR_ENTRY:{\"ip\":\"169.254.0.1\",\"rif\":\"oid:"
@@ -4287,11 +4301,13 @@ TEST_F(L3MulticastManagerTest,
 
   // Setup ASIC DB.
   swss::Table table(nullptr, "ASIC_STATE");
-  std::string label;
+  std::string label, nexthop_label;
   std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
       APP_P4RT_TABLE_NAME, internal_entry.multicast_router_interface_entry_key);
   EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
                                      mapper_key.c_str(), label));
+  EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_NEXT_HOP,
+                                     mapper_key.c_str(), nexthop_label));
   table.set(
       "SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456",
       std::vector<swss::FieldValueTuple>{
@@ -4325,6 +4341,7 @@ TEST_F(L3MulticastManagerTest,
                                 "true"},
           swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE",
                                 "false"},
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_LABEL", nexthop_label},
           // This should be false.
           swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE",
                                 "true"}});
@@ -4375,11 +4392,13 @@ TEST_F(L3MulticastManagerTest,
 
   // Setup ASIC DB.
   swss::Table table(nullptr, "ASIC_STATE");
-  std::string label;
+  std::string label, nexthop_label;
   std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
       APP_P4RT_TABLE_NAME, internal_entry.multicast_router_interface_entry_key);
   EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
                                      mapper_key.c_str(), label));
+  EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_NEXT_HOP,
+                                     mapper_key.c_str(), nexthop_label));
   table.set(
       "SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456",
       std::vector<swss::FieldValueTuple>{
@@ -4413,7 +4432,8 @@ TEST_F(L3MulticastManagerTest,
           swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE",
                                 "false"},
           swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE",
-                                "false"}});
+                                "false"},
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_LABEL", nexthop_label}});
 
   // Neighbor key is missing.
 
@@ -4451,11 +4471,13 @@ TEST_F(L3MulticastManagerTest,
 
   // Setup ASIC DB.
   swss::Table table(nullptr, "ASIC_STATE");
-  std::string label;
+  std::string label, nexthop_label;
   std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
       APP_P4RT_TABLE_NAME, internal_entry.multicast_router_interface_entry_key);
   EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
                                      mapper_key.c_str(), label));
+  EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_NEXT_HOP,
+                                     mapper_key.c_str(), nexthop_label));
   table.set(
       "SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456",
       std::vector<swss::FieldValueTuple>{
@@ -4489,7 +4511,8 @@ TEST_F(L3MulticastManagerTest,
           swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE",
                                 "false"},
           swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE",
-                                "false"}});
+                                "false"},
+          swss::FieldValueTuple{"SAI_NEXT_HOP_ATTR_LABEL", nexthop_label}});
 
   table.set(
       "SAI_OBJECT_TYPE_NEIGHBOR_ENTRY:{\"ip\":\"169.254.0.1\",\"rif\":\"oid:"

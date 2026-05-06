@@ -217,7 +217,7 @@ class L3MulticastManager : public ObjectManagerInterface {
                                    std::string& label);
   ReturnCode createNextHop(P4MulticastRouterInterfaceEntry& entry,
                            const sai_object_id_t rif_oid,
-                           sai_object_id_t* next_hop_oid);
+                           sai_object_id_t& next_hop_oid, std::string& label);
   ReturnCode createNeighborEntry(
     P4MulticastRouterInterfaceEntry& entry, const sai_object_id_t rif_oid);
 
