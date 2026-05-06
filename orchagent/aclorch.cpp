@@ -3,6 +3,7 @@
 #include <unordered_map>
 #include <algorithm>
 #include "aclorch.h"
+#include "copporch.h"
 #include "logger.h"
 #include "schema.h"
 #include "ipprefix.h"
@@ -26,10 +27,12 @@ swss::Table AclOrch::m_countersTable(&m_countersDb, "COUNTERS");
 extern sai_acl_api_t*    sai_acl_api;
 extern sai_port_api_t*   sai_port_api;
 extern sai_switch_api_t* sai_switch_api;
+extern sai_hostif_api_t* sai_hostif_api;
 extern sai_object_id_t   gSwitchId;
 extern PortsOrch*        gPortsOrch;
 extern CrmOrch *gCrmOrch;
 extern SwitchOrch *gSwitchOrch;
+extern CoppOrch *gCoppOrch;
 extern string gMySwitchType;
 extern Directory<Orch*> gDirectory;
 
@@ -144,6 +147,8 @@ static acl_packet_action_lookup_t aclPacketActionLookup =
     { PACKET_ACTION_FORWARD, SAI_PACKET_ACTION_FORWARD },
     { PACKET_ACTION_DROP,    SAI_PACKET_ACTION_DROP },
     { PACKET_ACTION_COPY,    SAI_PACKET_ACTION_COPY },
+    { PACKET_ACTION_TRAP,    SAI_PACKET_ACTION_TRAP },
+    { PACKET_ACTION_LOG,     SAI_PACKET_ACTION_LOG },
 };
 
 static acl_rule_attr_lookup_t aclMetadataDscpActionLookup =
@@ -175,7 +180,8 @@ static const acl_capabilities_t defaultAclActionsSupported =
             {
                 SAI_ACL_ACTION_TYPE_PACKET_ACTION,
                 SAI_ACL_ACTION_TYPE_MIRROR_INGRESS,
-                SAI_ACL_ACTION_TYPE_NO_NAT
+                SAI_ACL_ACTION_TYPE_NO_NAT,
+                SAI_ACL_ACTION_TYPE_SET_USER_TRAP_ID
             },
             false
         }
@@ -202,7 +208,8 @@ static acl_table_action_list_lookup_t defaultAclActionList =
                 ACL_STAGE_INGRESS,
                 {
                     SAI_ACL_ACTION_TYPE_PACKET_ACTION,
-                    SAI_ACL_ACTION_TYPE_REDIRECT
+                    SAI_ACL_ACTION_TYPE_REDIRECT,
+                    SAI_ACL_ACTION_TYPE_SET_USER_TRAP_ID
                 }
             },
             {
@@ -222,7 +229,8 @@ static acl_table_action_list_lookup_t defaultAclActionList =
                 ACL_STAGE_INGRESS,
                 {
                     SAI_ACL_ACTION_TYPE_PACKET_ACTION,
-                    SAI_ACL_ACTION_TYPE_REDIRECT
+                    SAI_ACL_ACTION_TYPE_REDIRECT,
+                    SAI_ACL_ACTION_TYPE_SET_USER_TRAP_ID
                 }
             },
             {
@@ -242,7 +250,8 @@ static acl_table_action_list_lookup_t defaultAclActionList =
                 ACL_STAGE_INGRESS,
                 {
                     SAI_ACL_ACTION_TYPE_PACKET_ACTION,
-                    SAI_ACL_ACTION_TYPE_REDIRECT
+                    SAI_ACL_ACTION_TYPE_REDIRECT,
+                    SAI_ACL_ACTION_TYPE_SET_USER_TRAP_ID
                 }
             },
             {
@@ -1314,6 +1323,16 @@ bool AclRule::createRule()
     {
         attr = it.second.getSaiAttr();
         rule_attrs.push_back(attr);
+        if (attr.id == SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION && attr.value.aclaction.enable)
+        {
+            auto pa = static_cast<sai_packet_action_t>(attr.value.aclaction.parameter.s32);
+            if (pa == SAI_PACKET_ACTION_TRAP || pa == SAI_PACKET_ACTION_LOG ||
+                pa == SAI_PACKET_ACTION_COPY)
+            {
+                SWSS_LOG_NOTICE("ACL rule %s: creating entry with punt-related packet action SAI %d",
+                        m_id.c_str(), static_cast<int>(pa));
+            }
+        }
     }
 
     status = sai_acl_api->create_acl_entry(&m_ruleOid, gSwitchId, (uint32_t)rule_attrs.size(), rule_attrs.data());
@@ -1324,14 +1343,15 @@ bool AclRule::createRule()
             SWSS_LOG_NOTICE("ACL rule %s already exists", m_id.c_str());
             return true;
         }
-        SWSS_LOG_ERROR("Failed to create ACL rule %s, rv:%d",
-                m_id.c_str(), status);
+        SWSS_LOG_ERROR("Failed to create ACL rule %s, status=%s",
+                m_id.c_str(), sai_serialize_status(status).c_str());
         AclRange::remove(range_objects, range_object_list.count);
         decreaseNextHopRefCount();
     }
 
     if (status == SAI_STATUS_SUCCESS)
     {
+        SWSS_LOG_NOTICE("ACL rule %s: created entry oid=0x%" PRIx64, m_id.c_str(), m_ruleOid);
         gCrmOrch->incCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_ENTRY, m_pTable->getOid());
     }
 
@@ -1401,7 +1421,8 @@ bool AclRule::removeRule()
             m_ruleOid = SAI_NULL_OBJECT_ID;
             return true;
         }
-        SWSS_LOG_ERROR("Failed to delete ACL rule, status %s", sai_serialize_status(status).c_str());
+        SWSS_LOG_ERROR("Failed to delete ACL rule %s oid=0x%" PRIx64 ", status=%s",
+                m_id.c_str(), m_ruleOid, sai_serialize_status(status).c_str());
         return false;
     }
 
@@ -1982,6 +2003,7 @@ bool AclRulePacket::validateAddAction(string attr_name, string _attr_value)
         if (it != aclPacketActionLookup.cend())
         {
             actionData.parameter.s32 = it->second;
+            SWSS_LOG_NOTICE("ACL rule packet action: %s -> SAI %d", attr_value.c_str(), static_cast<int>(it->second));
         }
         // handle PACKET_ACTION_REDIRECT in ACTION_PACKET_ACTION for backward compatibility
         else if (attr_value.find(PACKET_ACTION_REDIRECT) != string::npos)
@@ -2147,12 +2169,236 @@ bool AclRulePacket::validate()
 {
     SWSS_LOG_ENTER();
 
-    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() != 1)
+    if (m_rangeConfig.empty() && m_matches.empty())
     {
+        SWSS_LOG_ERROR("ACL rule %s: no matches or range configured", m_id.c_str());
+        return false;
+    }
+
+    if (m_actions.size() != 1)
+    {
+        SWSS_LOG_ERROR("ACL rule %s: expected exactly 1 action, got %zu",
+                       m_id.c_str(), m_actions.size());
         return false;
     }
 
     return true;
+}
+
+void AclRulePacket::setTrapGroup(const string& trapGroup)
+{
+    m_trapGroup = trapGroup;
+    SWSS_LOG_NOTICE("ACL rule %s: TRAP_GROUP set to '%s'", m_id.c_str(), trapGroup.c_str());
+}
+
+const string& AclRulePacket::getTrapGroup() const
+{
+    return m_trapGroup;
+}
+
+bool AclRulePacket::createRule()
+{
+    SWSS_LOG_ENTER();
+
+    if (needsUserDefinedTrap())
+    {
+        sai_object_id_t trapGroupOid = SAI_NULL_OBJECT_ID;
+
+        if (!m_trapGroup.empty() && gCoppOrch)
+        {
+            auto trapGroupMap = gCoppOrch->getTrapGroupMap();
+            auto it = trapGroupMap.find(m_trapGroup);
+            if (it != trapGroupMap.end())
+            {
+                trapGroupOid = it->second;
+                SWSS_LOG_NOTICE("ACL rule %s: resolved TRAP_GROUP '%s' to OID 0x%" PRIx64,
+                                m_id.c_str(), m_trapGroup.c_str(), trapGroupOid);
+            }
+            else
+            {
+                SWSS_LOG_WARN("ACL rule %s: TRAP_GROUP '%s' not found in CoppOrch, "
+                              "using default trap group", m_id.c_str(), m_trapGroup.c_str());
+            }
+        }
+
+        vector<sai_attribute_t> udtAttrs;
+        sai_attribute_t udtAttr;
+
+        udtAttr.id = SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TYPE;
+        udtAttr.value.s32 = SAI_HOSTIF_USER_DEFINED_TRAP_TYPE_ACL;
+        udtAttrs.push_back(udtAttr);
+
+        if (trapGroupOid != SAI_NULL_OBJECT_ID)
+        {
+            udtAttr.id = SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TRAP_GROUP;
+            udtAttr.value.oid = trapGroupOid;
+            udtAttrs.push_back(udtAttr);
+        }
+
+        sai_status_t status = sai_hostif_api->create_hostif_user_defined_trap(
+            &m_userDefinedTrapOid, gSwitchId,
+            static_cast<uint32_t>(udtAttrs.size()), udtAttrs.data());
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("ACL rule %s: failed to create user-defined trap, status=%s",
+                           m_id.c_str(), sai_serialize_status(status).c_str());
+            return false;
+        }
+
+        SWSS_LOG_NOTICE("ACL rule %s: created user-defined trap OID 0x%" PRIx64,
+                        m_id.c_str(), m_userDefinedTrapOid);
+
+        vector<sai_attribute_t> hteAttrs;
+        sai_attribute_t hteAttr;
+
+        hteAttr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_TYPE;
+        hteAttr.value.s32 = SAI_HOSTIF_TABLE_ENTRY_TYPE_TRAP_ID;
+        hteAttrs.push_back(hteAttr);
+
+        hteAttr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_TRAP_ID;
+        hteAttr.value.oid = m_userDefinedTrapOid;
+        hteAttrs.push_back(hteAttr);
+
+        hteAttr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_CHANNEL_TYPE;
+        hteAttr.value.s32 = SAI_HOSTIF_TABLE_ENTRY_CHANNEL_TYPE_NETDEV_PHYSICAL_PORT;
+        hteAttrs.push_back(hteAttr);
+
+        status = sai_hostif_api->create_hostif_table_entry(
+            &m_hostifTableEntryOid, gSwitchId,
+            static_cast<uint32_t>(hteAttrs.size()), hteAttrs.data());
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("ACL rule %s: failed to create hostif table entry, status=%s",
+                           m_id.c_str(), sai_serialize_status(status).c_str());
+            sai_hostif_api->remove_hostif_user_defined_trap(m_userDefinedTrapOid);
+            m_userDefinedTrapOid = SAI_NULL_OBJECT_ID;
+            return false;
+        }
+
+        SWSS_LOG_NOTICE("ACL rule %s: created hostif table entry OID 0x%" PRIx64,
+                        m_id.c_str(), m_hostifTableEntryOid);
+
+        sai_acl_action_data_t trapAction;
+        trapAction.enable = true;
+        trapAction.parameter.oid = m_userDefinedTrapOid;
+
+        sai_attribute_t trapAttr;
+        trapAttr.id = SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID;
+        trapAttr.value.aclaction = trapAction;
+
+        m_actions[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID] =
+            SaiAttrWrapper(SAI_OBJECT_TYPE_ACL_ENTRY, trapAttr);
+    }
+
+    if (!AclRule::createRule())
+    {
+        if (m_hostifTableEntryOid != SAI_NULL_OBJECT_ID)
+        {
+            sai_hostif_api->remove_hostif_table_entry(m_hostifTableEntryOid);
+            m_hostifTableEntryOid = SAI_NULL_OBJECT_ID;
+        }
+        if (m_userDefinedTrapOid != SAI_NULL_OBJECT_ID)
+        {
+            sai_hostif_api->remove_hostif_user_defined_trap(m_userDefinedTrapOid);
+            SWSS_LOG_NOTICE("ACL rule %s: cleaned up trap objects "
+                            "after ACL entry creation failure", m_id.c_str());
+            m_userDefinedTrapOid = SAI_NULL_OBJECT_ID;
+            m_actions.erase(SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID);
+        }
+        return false;
+    }
+
+    return true;
+}
+
+bool AclRulePacket::removeRule()
+{
+    SWSS_LOG_ENTER();
+
+    if (!AclRule::removeRule())
+    {
+        return false;
+    }
+
+    if (m_hostifTableEntryOid != SAI_NULL_OBJECT_ID)
+    {
+        sai_status_t status = sai_hostif_api->remove_hostif_table_entry(
+            m_hostifTableEntryOid);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("ACL rule %s: failed to remove hostif table entry OID 0x%" PRIx64
+                           ", status=%s", m_id.c_str(), m_hostifTableEntryOid,
+                           sai_serialize_status(status).c_str());
+            return false;
+        }
+        SWSS_LOG_NOTICE("ACL rule %s: removed hostif table entry OID 0x%" PRIx64,
+                        m_id.c_str(), m_hostifTableEntryOid);
+        m_hostifTableEntryOid = SAI_NULL_OBJECT_ID;
+    }
+
+    if (m_userDefinedTrapOid != SAI_NULL_OBJECT_ID)
+    {
+        sai_status_t status = sai_hostif_api->remove_hostif_user_defined_trap(
+            m_userDefinedTrapOid);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("ACL rule %s: failed to remove user-defined trap OID 0x%" PRIx64
+                           ", status=%s", m_id.c_str(), m_userDefinedTrapOid,
+                           sai_serialize_status(status).c_str());
+            return false;
+        }
+
+        SWSS_LOG_NOTICE("ACL rule %s: removed user-defined trap OID 0x%" PRIx64,
+                        m_id.c_str(), m_userDefinedTrapOid);
+        m_userDefinedTrapOid = SAI_NULL_OBJECT_ID;
+    }
+
+    return true;
+}
+
+bool AclRulePacket::needsUserDefinedTrap() const
+{
+    for (const auto& it : m_actions)
+    {
+        auto attr = it.second.getSaiAttr();
+        if (attr.id == SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION && attr.value.aclaction.enable)
+        {
+            auto pa = static_cast<sai_packet_action_t>(attr.value.aclaction.parameter.s32);
+            if (pa == SAI_PACKET_ACTION_TRAP || pa == SAI_PACKET_ACTION_COPY ||
+                pa == SAI_PACKET_ACTION_LOG)
+            {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool AclRulePacket::update(const AclRule& updatedRule)
+{
+    SWSS_LOG_ENTER();
+
+    if (m_userDefinedTrapOid != SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_NOTICE("ACL rule %s: in-place update not supported for "
+                        "trap-backed rules; caller should remove+create",
+                        m_id.c_str());
+        return false;
+    }
+
+    auto updatedPktRule = dynamic_cast<const AclRulePacket*>(&updatedRule);
+    if (updatedPktRule &&
+        (updatedPktRule->needsUserDefinedTrap() || !updatedPktRule->getTrapGroup().empty()))
+    {
+        SWSS_LOG_NOTICE("ACL rule %s: in-place update not supported when "
+                        "target rule requires a user-defined trap; "
+                        "caller should remove+create", m_id.c_str());
+        return false;
+    }
+
+    return AclRule::update(updatedRule);
 }
 
 void AclRulePacket::onUpdate(SubjectType, void *)
@@ -3717,6 +3963,7 @@ void AclOrch::initDefaultTableTypes(const string& platform, const string& sub_pl
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT))
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DSCP))
             .build()
     );
 
@@ -3734,6 +3981,7 @@ void AclOrch::initDefaultTableTypes(const string& platform, const string& sub_pl
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT))
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DSCP))
             .build()
     );
 
@@ -3758,6 +4006,7 @@ void AclOrch::initDefaultTableTypes(const string& platform, const string& sub_pl
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT))
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DSCP))
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS))
             .build()
     );
@@ -5400,9 +5649,8 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                 }
                 else
                 {
-                    SWSS_LOG_ERROR("Unknown table attribute '%s'", attr_name.c_str());
-                    bAllAttributesOk = false;
-                    break;
+                    SWSS_LOG_WARN("Ignoring unknown table attribute '%s'", attr_name.c_str());
+                    continue;
                 }
             }
 
@@ -5602,6 +5850,18 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 else if (newRule->validateAddMatch(attr_name, attr_value))
                 {
                     SWSS_LOG_INFO("Added match attribute '%s'", attr_name.c_str());
+                }
+                else if (attr_name == MATCH_TRAP_GROUP)
+                {
+                    auto pktRule = dynamic_cast<AclRulePacket*>(newRule.get());
+                    if (pktRule)
+                    {
+                        pktRule->setTrapGroup(attr_value);
+                    }
+                    else
+                    {
+                        SWSS_LOG_WARN("ACL rule %s: TRAP_GROUP ignored (not a packet rule)", rule_id.c_str());
+                    }
                 }
                 else if (newRule->validateAddAction(attr_name, attr_value))
                 {

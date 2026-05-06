@@ -80,6 +80,8 @@
 #define ACTION_DSCP                         "DSCP_ACTION"
 #define ACTION_DISABLE_ARS_FORWARDING       "DISABLE_ARS_FORWARDING"
 #define ACTION_INNER_SRC_MAC_REWRITE_ACTION "INNER_SRC_MAC_REWRITE_ACTION"
+#define ACTION_SET_USER_TRAP_ID         "SET_USER_TRAP_ID"
+#define MATCH_TRAP_GROUP                "TRAP_GROUP"
 
 #define PACKET_ACTION_FORWARD      "FORWARD"
 #define PACKET_ACTION_DROP         "DROP"
@@ -87,6 +89,8 @@
 #define PACKET_ACTION_REDIRECT     "REDIRECT"
 #define PACKET_ACTION_DO_NOT_NAT   "DO_NOT_NAT"
 #define PACKET_ACTION_DISABLE_TRIM "DISABLE_TRIM"
+#define PACKET_ACTION_TRAP         "TRAP"
+#define PACKET_ACTION_LOG          "LOG"
 
 #define DTEL_FLOW_OP_NOP        "NOP"
 #define DTEL_FLOW_OP_POSTCARD   "POSTCARD"
@@ -399,10 +403,22 @@ public:
 
     bool validateAddAction(string attr_name, string attr_value);
     bool validate();
+    bool createRule() override;
+    bool removeRule() override;
+    bool update(const AclRule& updatedRule) override;
     void onUpdate(SubjectType, void *) override;
+
+    void setTrapGroup(const string& trapGroup);
+    const string& getTrapGroup() const;
+    bool needsUserDefinedTrap() const;
 
 protected:
     sai_object_id_t getRedirectObjectId(const string& redirect_param);
+
+private:
+    string m_trapGroup;
+    sai_object_id_t m_userDefinedTrapOid = SAI_NULL_OBJECT_ID;
+    sai_object_id_t m_hostifTableEntryOid = SAI_NULL_OBJECT_ID;
 };
 
 class AclRuleInnerSrcMacRewrite: public AclRule
