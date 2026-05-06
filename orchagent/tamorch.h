@@ -10,6 +10,7 @@
 
 extern "C" {
 #include "sai.h"
+#include "saiacl.h"
 #include "saitam.h"
 }
 
@@ -118,6 +119,14 @@ private:
 
     bool removeSaiObject(sai_object_id_t oid, sai_object_type_t type);
 
+    /* ACL activation for IFAv2 — creates ACL TABLE with
+     * FIELD_TAM_INT_TYPE, adds it to each port's ingress ACL group,
+     * and creates an ACL ENTRY with ACTION_INT_INSERT +
+     * ACTION_TAM_INT_OBJECT pointing to the TAM_INT instance.
+     * This is the page 7-8 flow from NVIDIA's IFA/INT overview. */
+    bool createTamIntAcl(sai_object_id_t tam_int_oid);
+    void destroyTamIntAcl();
+
     /* Global gate — pull from CONFIG_DB|DEVICE_METADATA|localhost. */
     bool isTamIntEnabled();
 
@@ -132,6 +141,11 @@ private:
     std::unordered_map<std::string, sai_object_id_t> m_telemetryMap;
     std::unordered_map<std::string, sai_object_id_t> m_intMap;
     std::unordered_map<std::string, sai_object_id_t> m_tamMap;
+
+    /* TAM INT ACL state. */
+    sai_object_id_t m_tamIntAclTableId = SAI_NULL_OBJECT_ID;
+    sai_object_id_t m_tamIntAclEntryId = SAI_NULL_OBJECT_ID;
+    std::vector<sai_object_id_t> m_tamIntAclGroupMemberIds;
 
     /* Cached enable flag — refreshed on each doTask iteration. */
     bool m_enabled = false;
