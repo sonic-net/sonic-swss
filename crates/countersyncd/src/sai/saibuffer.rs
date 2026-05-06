@@ -591,3 +591,10 @@ mod ingress_priority_group_tests {
         );
     }
 }
+impl TryFrom<u32> for SaiBufferPoolStat {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        Self::from_u32(value).ok_or(())
+    }
+}

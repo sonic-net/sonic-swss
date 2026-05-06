@@ -1314,3 +1314,10 @@ mod tests {
         );
     }
 }
+impl TryFrom<u32> for SaiPortStat {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        Self::from_u32(value).ok_or(())
+    }
+}
