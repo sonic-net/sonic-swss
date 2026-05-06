@@ -147,6 +147,8 @@ class TestFlexCounters(TestFlexCountersBase):
 
     @pytest.mark.parametrize("counter_type", counter_group_meta.keys())
     def test_flex_counters(self, dvs, counter_type):
+        if counter_type == 'copp_policer_counter':
+            pytest.skip("COPP_STATS flex counter is gated to broadcom-xgs; dvs platform is 'vs'")
         self.verify_flex_counter_flow(dvs, counter_group_meta[counter_type])
 
     def pre_rif_counter_test(self, meta_data):
