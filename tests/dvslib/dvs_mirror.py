@@ -41,6 +41,32 @@ class DVSMirror(object):
 
         self.config_db.create_entry("MIRROR_SESSION", name, mirror_entry)
 
+    def create_sampled_erspan_session(self, name, src, dst, gre, dscp, ttl, queue,
+                                      sample_rate, direction="RX", src_ports=None,
+                                      truncate_size=None, erspan_id=None,
+                                      congestion_mode=None):
+        mirror_entry = {
+            "src_ip": src,
+            "dst_ip": dst,
+            "gre_type": gre,
+            "dscp": dscp,
+            "ttl": ttl,
+            "queue": queue,
+            "direction": direction,
+            "sample_rate": str(sample_rate)
+        }
+
+        if src_ports:
+            mirror_entry["src_port"] = src_ports
+        if truncate_size:
+            mirror_entry["truncate_size"] = str(truncate_size)
+        if erspan_id is not None:
+            mirror_entry["erspan_id"] = str(erspan_id)
+        if congestion_mode:
+            mirror_entry["congestion_mode"] = congestion_mode
+
+        self.config_db.create_entry("MIRROR_SESSION", name, mirror_entry)
+
     def remove_mirror_session(self, name):
         self.config_db.delete_entry("MIRROR_SESSION", name)
 
@@ -96,4 +122,28 @@ class DVSMirror(object):
             self.verify_session_policer(dvs, entry["SAI_MIRROR_SESSION_ATTR_POLICER"], cir)
         if src_ports:
             self.verify_port_mirror_config(dvs, src_ports, direction, session_oid=session_oid)
+
+    def verify_sample_mirror_port_config(self, dvs, ports, session_oid="null", samplepacket_oid="null"):
+        """Verify SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION is set on ports."""
+        fvs = dvs.counters_db.get_entry("COUNTERS_PORT_NAME_MAP", "")
+        fvs = dict(fvs)
+        for p in ports:
+            port_oid = fvs.get(p)
+            member = dvs.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid)
+            assert member.get("SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION") == "1:" + session_oid
+            assert member.get("SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE") == samplepacket_oid
+
+    def verify_samplepacket(self, dvs, rate, truncate_size=None):
+        """Verify SAMPLEPACKET object exists in ASIC_DB with expected attributes."""
+        keys = dvs.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", 1)
+        entry = dvs.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", keys[0])
+        assert entry["SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE"] == str(rate)
+        if truncate_size:
+            assert entry.get("SAI_SAMPLEPACKET_ATTR_TRUNCATE_SIZE") == str(truncate_size)
+            assert entry.get("SAI_SAMPLEPACKET_ATTR_TRUNCATE_ENABLE") == "true"
+        return keys[0]
+
+    def verify_no_samplepacket(self, dvs):
+        """Verify no SAMPLEPACKET objects exist in ASIC_DB."""
+        dvs.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", 0)
 

@@ -32,6 +32,9 @@ extern "C" {
 #define SWITCH_CAPABILITY_TABLE_REG_NOTICE_ASIC_SDK_HEALTH_CATEGORY    "REG_NOTICE_ASIC_SDK_HEALTH_CATEGORY"
 #define SWITCH_CAPABILITY_TABLE_PORT_INGRESS_MIRROR_CAPABLE            "PORT_INGRESS_MIRROR_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_PORT_EGRESS_MIRROR_CAPABLE             "PORT_EGRESS_MIRROR_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_PORT_INGRESS_SAMPLE_MIRROR_CAPABLE     "PORT_INGRESS_SAMPLE_MIRROR_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE        "SAMPLEPACKET_TRUNCATION_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_MIRROR_ERSPAN_SESSION_ID_CAPABLE       "MIRROR_ERSPAN_SESSION_ID_CAPABLE"
 
 #define SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP "SWITCH_STAT_COUNTER"
 
@@ -89,6 +92,9 @@ public:
     // Mirror capability interface for MirrorOrch
     bool isPortIngressMirrorSupported() const { return m_portIngressMirrorSupported; }
     bool isPortEgressMirrorSupported() const { return m_portEgressMirrorSupported; }
+    bool isPortIngressSampleMirrorSupported() const { return m_portIngressSampleMirrorSupported; }
+    bool isSamplepacketTruncationSupported() const { return m_samplepacketTruncationSupported; }
+    bool isMirrorErspanSessionIdSupported() const { return m_mirrorErspanSessionIdSupported; }
 
 private:
     void doTask(Consumer &consumer);
@@ -102,6 +108,7 @@ private:
     void querySwitchTpidCapability();
     void querySwitchPortEgressSampleCapability();
     void querySwitchPortMirrorCapability();
+    void querySwitchSampledMirrorCapability();
 
     // Statistics
     void generateSwitchCounterNameMap() const;
@@ -166,6 +173,9 @@ private:
     // Port mirror capabilities
     bool m_portIngressMirrorSupported = false;
     bool m_portEgressMirrorSupported = false;
+    bool m_portIngressSampleMirrorSupported = false;
+    bool m_samplepacketTruncationSupported = false;
+    bool m_mirrorErspanSessionIdSupported = false;
 
     // ASIC SDK health event
     std::shared_ptr<swss::DBConnector> m_stateDbForNotification = nullptr;
