@@ -233,6 +233,12 @@ bool MatchRifSaiAttribute(const sai_attribute_t& attr,
       return false;
     }
   }
+  if (exp_attr.id == SAI_ROUTER_INTERFACE_ATTR_LABEL) {
+    if (attr.id != SAI_ROUTER_INTERFACE_ATTR_LABEL ||
+        strcmp(attr.value.chardata, exp_attr.value.chardata) != 0) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -797,7 +803,8 @@ class L3MulticastManagerTest : public ::testing::Test {
   std::vector<sai_attribute_t> PrepareRifSaiAttrs(
       const sai_object_id_t port_oid, uint32_t mtu, bool use_vlan,
       uint16_t vlan_id, swss::MacAddress src_mac,
-      const sai_object_id_t my_mac_oid, bool use_my_mac) {
+      const sai_object_id_t my_mac_oid, bool use_my_mac,
+      const std::string& ritf_key) {
     std::vector<sai_attribute_t> attrs;
     sai_attribute_t attr;
     attr.id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
@@ -843,6 +850,13 @@ class L3MulticastManagerTest : public ::testing::Test {
       attr.value.oid = my_mac_oid;
       attrs.push_back(attr);
     }
+
+    std::string mapper_key, label;
+    gLabelMapper->addLabelToAttr(
+        SAI_OBJECT_TYPE_ROUTER_INTERFACE, APP_P4RT_TABLE_NAME, ritf_key, attr,
+        SAI_ROUTER_INTERFACE_ATTR_LABEL, mapper_key, label);
+    gLabelMapper->setLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE, mapper_key, label);
+    attrs.push_back(attr);
 
     return attrs;
   }
@@ -1073,8 +1087,9 @@ class L3MulticastManagerTest : public ::testing::Test {
   }
 
   ReturnCode CreateRouterInterface(P4MulticastRouterInterfaceEntry& entry,
-                                   sai_object_id_t* rif_oid) {
-    return l3_multicast_manager_.createRouterInterface(entry, rif_oid);
+                                   sai_object_id_t& rif_oid,
+                                   std::string& label) {
+    return l3_multicast_manager_.createRouterInterface(entry, rif_oid, label);
   }
 
   ReturnCode CreateNextHop(P4MulticastRouterInterfaceEntry& entry,
@@ -1826,12 +1841,13 @@ TEST_F(L3MulticastManagerTest, CreateRouterInterfaceSuccess) {
   auto entry = GenerateP4MulticastRouterInterfaceEntry(
       "Ethernet5", "0x5", swss::MacAddress(kSrcMac5));
   sai_object_id_t rif_oid;
+  std::string label;
 
   EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid5), Return(SAI_STATUS_SUCCESS)));
 
   EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
-            CreateRouterInterface(entry, &rif_oid));
+            CreateRouterInterface(entry, rif_oid, label));
   EXPECT_EQ(rif_oid, kRifOid5);
 }
 
@@ -1839,12 +1855,12 @@ TEST_F(L3MulticastManagerTest, CreateRouterInterfaceFailure) {
   auto entry = GenerateP4MulticastRouterInterfaceEntry(
       "Ethernet5", "0x5", swss::MacAddress(kSrcMac5));
   sai_object_id_t rif_oid;
-
+  std::string label; 
   EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
       .WillOnce(Return(SAI_STATUS_FAILURE));
 
   EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN,
-            CreateRouterInterface(entry, &rif_oid));
+            CreateRouterInterface(entry, rif_oid, label));
 }
 
 TEST_F(L3MulticastManagerTest, CreateRouterInterfaceMyMacFailure) {
@@ -1853,12 +1869,12 @@ TEST_F(L3MulticastManagerTest, CreateRouterInterfaceMyMacFailure) {
       swss::MacAddress(kDstMac0), /*vlan_id=*/0, "metadata",
       p4orch::kMulticastSetSrcMac);
   sai_object_id_t rif_oid;
-
+  std::string label;
   EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, gSwitchId, Eq(2), _))
       .WillOnce(Return(SAI_STATUS_FAILURE));
 
   EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN,
-            CreateRouterInterface(entry, &rif_oid));
+            CreateRouterInterface(entry, rif_oid, label));
 }
 
 TEST_F(L3MulticastManagerTest, CreateRouterInterfaceAttributeFailures) {
@@ -1866,16 +1882,16 @@ TEST_F(L3MulticastManagerTest, CreateRouterInterfaceAttributeFailures) {
       "Ethernet7", "0x5", swss::MacAddress(kSrcMac5));
 
   sai_object_id_t rif_oid;
-
+  std::string label;
   EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
-            CreateRouterInterface(entry, &rif_oid));
+            CreateRouterInterface(entry, rif_oid, label));
 
   auto entry2 = GenerateP4MulticastRouterInterfaceEntry(
       "Ethernet17", "0x1", swss::MacAddress(kSrcMac1));
   sai_object_id_t rif_oid2;
 
   EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND,
-            CreateRouterInterface(entry2, &rif_oid2));
+            CreateRouterInterface(entry2, rif_oid2, label));
 }
 
 TEST_F(L3MulticastManagerTest, CreateRouterInterfaceFailureAlreadyInMapper) {
@@ -1883,10 +1899,11 @@ TEST_F(L3MulticastManagerTest, CreateRouterInterfaceFailureAlreadyInMapper) {
       "Ethernet5", "0x5", swss::MacAddress(kSrcMac5));
 
   sai_object_id_t rif_oid = kRifOid5;
+  std::string label;
   p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
                         entry.multicast_router_interface_entry_key, rif_oid);
   EXPECT_EQ(StatusCode::SWSS_RC_INTERNAL,
-            CreateRouterInterface(entry, &rif_oid));
+            CreateRouterInterface(entry, rif_oid, label));
 }
 
 TEST_F(L3MulticastManagerTest, AddMulticastRouterInterfaceEntriesSuccess) {
@@ -2051,7 +2068,7 @@ TEST_F(L3MulticastManagerTest,
   std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
       /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/false,
       /*vlan_id=*/0, swss::MacAddress(kSrcMac1), kDefaultMyMacOid,
-      /*use_my_mac=*/true);
+      /*use_my_mac=*/true, entry.multicast_router_interface_entry_key);
   EXPECT_CALL(mock_sai_router_intf_,
               create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
                                       RifAttrArrayEq(exp_rif_attrs)))
@@ -2129,7 +2146,8 @@ TEST_F(L3MulticastManagerTest,
                       Return(SAI_STATUS_SUCCESS)));
   std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
       /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/true, kVlanIdNum1,
-      swss::MacAddress(kSrcMac1), kDefaultMyMacOid, /*use_my_mac=*/true);
+      swss::MacAddress(kSrcMac1), kDefaultMyMacOid, /*use_my_mac=*/true,
+      entry.multicast_router_interface_entry_key);
   EXPECT_CALL(mock_sai_router_intf_,
               create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
                                       RifAttrArrayEq(exp_rif_attrs)))
@@ -2195,7 +2213,8 @@ TEST_F(
                       Return(SAI_STATUS_SUCCESS)));
   std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
       /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/true, kVlanIdNum1,
-      swss::MacAddress(kSrcMac1), kDefaultMyMacOid, /*use_my_mac=*/true);
+      swss::MacAddress(kSrcMac1), kDefaultMyMacOid, /*use_my_mac=*/true,
+      entry.multicast_router_interface_entry_key);
   EXPECT_CALL(mock_sai_router_intf_,
               create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
                                       RifAttrArrayEq(exp_rif_attrs)))
@@ -2262,7 +2281,7 @@ TEST_F(L3MulticastManagerTest,
   std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
       /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/false,
       /*vlan_id=*/0, swss::MacAddress(kSrcMac1), kDefaultMyMacOid,
-      /*use_my_mac=*/true);
+      /*use_my_mac=*/true, entry.multicast_router_interface_entry_key);
   EXPECT_CALL(mock_sai_router_intf_,
               create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
                                       RifAttrArrayEq(exp_rif_attrs)))
@@ -2313,13 +2332,8 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, gSwitchId, Eq(2), _))
       .WillOnce(DoAll(SetArgPointee<0>(kDefaultMyMacOid),
                       Return(SAI_STATUS_SUCCESS)));
-  std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
-      /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/false,
-      /*vlan_id=*/0, swss::MacAddress(kSrcMac1), kDefaultMyMacOid,
-      /*use_my_mac=*/true);
   EXPECT_CALL(mock_sai_router_intf_,
-              create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
-                                      RifAttrArrayEq(exp_rif_attrs)))
+              create_router_interface(_, gSwitchId, _, _))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)));
 
   std::vector<sai_attribute_t> exp_neigh_attrs =
@@ -2340,6 +2354,12 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(GetMulticastRouterInterfaceEntry(
                 entries[0].multicast_router_interface_entry_key),
             nullptr);
+
+  std::string label;
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, entry.multicast_router_interface_entry_key);
+  EXPECT_FALSE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                      mapper_key.c_str(), label));
 }
 
 TEST_F(L3MulticastManagerTest,
@@ -2354,13 +2374,8 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, gSwitchId, Eq(2), _))
       .WillOnce(DoAll(SetArgPointee<0>(kDefaultMyMacOid),
                       Return(SAI_STATUS_SUCCESS)));
-  std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
-      /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/false,
-      /*vlan_id=*/0, swss::MacAddress(kSrcMac1), kDefaultMyMacOid,
-      /*use_my_mac=*/true);
   EXPECT_CALL(mock_sai_router_intf_,
-              create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
-                                      RifAttrArrayEq(exp_rif_attrs)))
+              create_router_interface(_, gSwitchId, _, _))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)));
 
   std::vector<sai_attribute_t> exp_neigh_attrs =
@@ -2381,6 +2396,12 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(GetMulticastRouterInterfaceEntry(
                 entries[0].multicast_router_interface_entry_key),
             nullptr);
+
+  std::string label;
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, entry.multicast_router_interface_entry_key);
+  EXPECT_FALSE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                      mapper_key.c_str(), label));
 }
 
 TEST_F(L3MulticastManagerTest,
@@ -2395,13 +2416,8 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, gSwitchId, Eq(2), _))
       .WillOnce(DoAll(SetArgPointee<0>(kDefaultMyMacOid),
                       Return(SAI_STATUS_SUCCESS)));
-  std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
-      /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/false,
-      /*vlan_id=*/0, swss::MacAddress(kSrcMac1), kDefaultMyMacOid,
-      /*use_my_mac=*/true);
   EXPECT_CALL(mock_sai_router_intf_,
-              create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
-                                      RifAttrArrayEq(exp_rif_attrs)))
+              create_router_interface(_, gSwitchId, _, _))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)));
 
   EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(kRifOid1))
@@ -2420,6 +2436,12 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(GetMulticastRouterInterfaceEntry(
                 entries[0].multicast_router_interface_entry_key),
             nullptr);
+
+  std::string label;
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, entry.multicast_router_interface_entry_key);
+  EXPECT_FALSE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                      mapper_key.c_str(), label));
 }
 
 TEST_F(L3MulticastManagerTest, AddMulticastRouterInterfaceEntryNextHopFails) {
@@ -2433,13 +2455,8 @@ TEST_F(L3MulticastManagerTest, AddMulticastRouterInterfaceEntryNextHopFails) {
   EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, gSwitchId, Eq(2), _))
       .WillOnce(DoAll(SetArgPointee<0>(kDefaultMyMacOid),
                       Return(SAI_STATUS_SUCCESS)));
-  std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
-      /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/false,
-      /*vlan_id=*/0, swss::MacAddress(kSrcMac1), kDefaultMyMacOid,
-      /*use_my_mac=*/true);
   EXPECT_CALL(mock_sai_router_intf_,
-              create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
-                                      RifAttrArrayEq(exp_rif_attrs)))
+              create_router_interface(_, gSwitchId, _, _))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)));
 
   std::vector<sai_attribute_t> exp_neigh_attrs =
@@ -2471,6 +2488,12 @@ TEST_F(L3MulticastManagerTest, AddMulticastRouterInterfaceEntryNextHopFails) {
   EXPECT_EQ(GetMulticastRouterInterfaceEntry(
                 entries[0].multicast_router_interface_entry_key),
             nullptr);
+
+  std::string label;
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, entry.multicast_router_interface_entry_key);
+  EXPECT_FALSE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                      mapper_key.c_str(), label));
 }
 
 TEST_F(L3MulticastManagerTest,
@@ -2485,13 +2508,8 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, gSwitchId, Eq(2), _))
       .WillOnce(DoAll(SetArgPointee<0>(kDefaultMyMacOid),
                       Return(SAI_STATUS_SUCCESS)));
-  std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
-      /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/false,
-      /*vlan_id=*/0, swss::MacAddress(kSrcMac1), kDefaultMyMacOid,
-      /*use_my_mac=*/true);
   EXPECT_CALL(mock_sai_router_intf_,
-              create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
-                                      RifAttrArrayEq(exp_rif_attrs)))
+              create_router_interface(_, gSwitchId, _, _))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)));
 
   std::vector<sai_attribute_t> exp_neigh_attrs =
@@ -2523,6 +2541,12 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_EQ(GetMulticastRouterInterfaceEntry(
                 entries[0].multicast_router_interface_entry_key),
             nullptr);
+
+  std::string label;
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, entry.multicast_router_interface_entry_key);
+  EXPECT_FALSE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                      mapper_key.c_str(), label));
 }
 
 TEST_F(L3MulticastManagerTest, DeleteMulticastRouterInterfaceEntriesSuccess) {
@@ -4047,6 +4071,11 @@ TEST_F(L3MulticastManagerTest, VerifyStateMulticastRouterInterfaceTestSuccess) {
 
   // Setup ASIC DB.
   swss::Table table(nullptr, "ASIC_STATE");
+  std::string label;
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, entry.multicast_router_interface_entry_key);
+  EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                     mapper_key.c_str(), label));
   table.set(
       "SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456",
       std::vector<swss::FieldValueTuple>{
@@ -4062,7 +4091,8 @@ TEST_F(L3MulticastManagerTest, VerifyStateMulticastRouterInterfaceTestSuccess) {
                                 "true"},
           swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE",
                                 "true"},
-          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"}});
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_LABEL", label}});
 
   // Verification should succeed with vaild key and value.
   EXPECT_EQ(VerifyState(db_key, attributes), "");
@@ -4098,6 +4128,11 @@ TEST_F(L3MulticastManagerTest,
 
   // Setup ASIC DB.
   swss::Table table(nullptr, "ASIC_STATE");
+  std::string label;
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, internal_entry.multicast_router_interface_entry_key);
+  EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                     mapper_key.c_str(), label));
   table.set(
       "SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456",
       std::vector<swss::FieldValueTuple>{
@@ -4117,7 +4152,8 @@ TEST_F(L3MulticastManagerTest,
                                 "true"},
           swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MY_MAC",
                                 "oid:0x301"},
-          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"}});
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_LABEL", label}});
 
   table.set(
       "SAI_OBJECT_TYPE_NEXT_HOP:oid:0x100a",
@@ -4180,6 +4216,11 @@ TEST_F(L3MulticastManagerTest,
 
   // Setup ASIC DB.
   swss::Table table(nullptr, "ASIC_STATE");
+  std::string label;
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, internal_entry.multicast_router_interface_entry_key);
+  EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                     mapper_key.c_str(), label));
   table.set(
       "SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456",
       std::vector<swss::FieldValueTuple>{
@@ -4197,7 +4238,8 @@ TEST_F(L3MulticastManagerTest,
                                 "true"},
           swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE",
                                 "true"},
-          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"}});
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_LABEL", label}});
 
   // Next hop key and values is missing.
   table.set(
@@ -4208,7 +4250,7 @@ TEST_F(L3MulticastManagerTest,
                                 "00:11:22:33:44:55"},
           swss::FieldValueTuple{"SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE",
                                 "true"}});
-  // Verification should succeed with vaild key and value.
+
   EXPECT_NE(VerifyState(db_key, attributes), "");
   table.del("SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456");
   table.del(
@@ -4245,6 +4287,11 @@ TEST_F(L3MulticastManagerTest,
 
   // Setup ASIC DB.
   swss::Table table(nullptr, "ASIC_STATE");
+  std::string label;
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, internal_entry.multicast_router_interface_entry_key);
+  EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                     mapper_key.c_str(), label));
   table.set(
       "SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456",
       std::vector<swss::FieldValueTuple>{
@@ -4262,7 +4309,8 @@ TEST_F(L3MulticastManagerTest,
                                 "true"},
           swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE",
                                 "true"},
-          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"}});
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_LABEL", label}});
 
   table.set(
       "SAI_OBJECT_TYPE_NEXT_HOP:oid:0x100a",
@@ -4289,7 +4337,7 @@ TEST_F(L3MulticastManagerTest,
                                 "00:11:22:33:44:55"},
           swss::FieldValueTuple{"SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE",
                                 "true"}});
-  // Verification should succeed with vaild key and value.
+
   EXPECT_NE(VerifyState(db_key, attributes), "");
   table.del("SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456");
   table.del("SAI_OBJECT_TYPE_NEXT_HOP:oid:0x100a");
@@ -4327,6 +4375,11 @@ TEST_F(L3MulticastManagerTest,
 
   // Setup ASIC DB.
   swss::Table table(nullptr, "ASIC_STATE");
+  std::string label;
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, internal_entry.multicast_router_interface_entry_key);
+  EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                     mapper_key.c_str(), label));
   table.set(
       "SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456",
       std::vector<swss::FieldValueTuple>{
@@ -4344,7 +4397,8 @@ TEST_F(L3MulticastManagerTest,
                                 "true"},
           swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE",
                                 "true"},
-          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"}});
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_LABEL", label}});
 
   table.set(
       "SAI_OBJECT_TYPE_NEXT_HOP:oid:0x100a",
@@ -4363,7 +4417,6 @@ TEST_F(L3MulticastManagerTest,
 
   // Neighbor key is missing.
 
-  // Verification should succeed with vaild key and value.
   EXPECT_NE(VerifyState(db_key, attributes), "");
   table.del("SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456");
   table.del("SAI_OBJECT_TYPE_NEXT_HOP:oid:0x100a");
@@ -4398,6 +4451,11 @@ TEST_F(L3MulticastManagerTest,
 
   // Setup ASIC DB.
   swss::Table table(nullptr, "ASIC_STATE");
+  std::string label;
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, internal_entry.multicast_router_interface_entry_key);
+  EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                     mapper_key.c_str(), label));
   table.set(
       "SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456",
       std::vector<swss::FieldValueTuple>{
@@ -4415,7 +4473,8 @@ TEST_F(L3MulticastManagerTest,
                                 "true"},
           swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE",
                                 "true"},
-          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"}});
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_LABEL", label}});
 
   table.set(
       "SAI_OBJECT_TYPE_NEXT_HOP:oid:0x100a",
@@ -4442,7 +4501,6 @@ TEST_F(L3MulticastManagerTest,
           swss::FieldValueTuple{"SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE",
                                 "false"}});
 
-  // Verification should succeed with vaild key and value.
   EXPECT_NE(VerifyState(db_key, attributes), "");
   table.del("SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456");
   table.del("SAI_OBJECT_TYPE_NEXT_HOP:oid:0x100a");
@@ -4510,6 +4568,11 @@ TEST_F(L3MulticastManagerTest,
 
   // Setup ASIC DB.
   swss::Table table(nullptr, "ASIC_STATE");
+  std::string label;
+  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+      APP_P4RT_TABLE_NAME, entry.multicast_router_interface_entry_key);
+  EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                     mapper_key.c_str(), label));
   table.set(
       "SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456",
       std::vector<swss::FieldValueTuple>{
@@ -4521,6 +4584,7 @@ TEST_F(L3MulticastManagerTest,
                                 "SAI_ROUTER_INTERFACE_TYPE_PORT"},
           swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_PORT_ID",
                                 "oid:0x112233"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_LABEL", label},
           // These should be true.
           swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE",
                                "false"},
