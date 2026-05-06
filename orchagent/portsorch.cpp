@@ -9514,9 +9514,13 @@ void PortsOrch::generateWredPortCounterMap()
 
 /****
 *  Func Name  : addWredQueueFlexCounters
-*  Parameters : queueStateVector 
+*  Parameters : queueStateVector
 *  Returns    : void
-*  Description: Top level API to Set WRED flex counters for Queues
+*  Description: Top level API to Set WRED flex counters for Queues.
+*               On VOQ systems, WRED drop counters are exposed at the
+*               ingress VOQ object. This function therefore registers both
+*               egress queue OIDs and (on VOQ switches) the per-port VOQ
+*               OIDs for WRED stats collection.
 **/
 void PortsOrch::addWredQueueFlexCounters(map<string, FlexCounterQueueStates> queuesStateVector)
 {
@@ -9551,7 +9555,11 @@ void PortsOrch::addWredQueueFlexCounters(map<string, FlexCounterQueueStates> que
                 }
                 queuesStateVector.insert(make_pair(it.second.m_alias, flexCounterQueueState));
             }
-            addWredQueueFlexCountersPerPort(it.second, queuesStateVector.at(it.second.m_alias));
+            addWredQueueFlexCountersPerPort(it.second, queuesStateVector.at(it.second.m_alias), false);
+            if (gMySwitchType == "voq")
+            {
+                addWredQueueFlexCountersPerPort(it.second, queuesStateVector.at(it.second.m_alias), true);
+            }
         }
     }
 
@@ -9560,25 +9568,37 @@ void PortsOrch::addWredQueueFlexCounters(map<string, FlexCounterQueueStates> que
 
 /****
 *  Func Name  : addWredQueueFlexCountersPerPort
-*  Parameters : port and Queuestate
+*  Parameters : port, Queuestate, voq (true for VOQ stats, false for egress queue stats)
 *  Returns    : void
-*  Description: Port level API to program flexcounter for queues
+*  Description: Port level API to program flexcounter for queues.
+*               When voq=true, registers VOQ OIDs (m_port_voq_ids) for stats.
+*               When voq=false, registers egress queue OIDs (m_queue_ids) for stats.
 **/
-void PortsOrch::addWredQueueFlexCountersPerPort(const Port& port, FlexCounterQueueStates& queuesState)
+void PortsOrch::addWredQueueFlexCountersPerPort(const Port& port, FlexCounterQueueStates& queuesState, bool voq)
 {
-    /* Add stat counters to flex_counter */
+    std::vector<sai_object_id_t> queue_ids;
 
-    for (size_t queueIndex = 0; queueIndex < port.m_queue_ids.size(); ++queueIndex)
+    if (voq)
+    {
+        queue_ids = m_port_voq_ids[port.m_alias];
+    }
+    else
+    {
+        queue_ids = port.m_queue_ids;
+    }
+
+    for (size_t queueIndex = 0; queueIndex < queue_ids.size(); ++queueIndex)
     {
         sai_queue_type_t queueType;
         uint8_t queueRealIndex = 0;
-        if (getQueueTypeAndIndex(port.m_queue_ids[queueIndex], queueType, queueRealIndex))
+        if (getQueueTypeAndIndex(queue_ids[queueIndex], queueType, queueRealIndex))
         {
-            if (!queuesState.isQueueCounterEnabled(queueRealIndex))
+            // VOQ counters are always enabled in VOQ systems
+            if ((gMySwitchType != "voq") && !queuesState.isQueueCounterEnabled(queueRealIndex))
             {
                 continue;
             }
-            addWredQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, false, queueType);
+            addWredQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, voq, queueType);
         }
     }
 }
