@@ -4818,7 +4818,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         {
                             if (pCfg.autoneg.value)
                             {
-                                SWSS_LOG_WARNING("%s: autoneg is not supported (cap=%d)", p.m_alias.c_str(), p.m_cap_an);
+                                SWSS_LOG_WARN("%s: autoneg is not supported (cap=%d)", p.m_alias.c_str(), p.m_cap_an);
                                 // autoneg is not supported, don't retry
                                 it = taskMap.erase(it);
                                 continue;
