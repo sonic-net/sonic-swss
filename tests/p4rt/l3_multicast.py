@@ -175,7 +175,8 @@ class P4RtL3MulticastGroupWrapper(util.DBInterface):
     return self.TBL_NAME + ":" + multicast_group_id
 
   # Create default multicast group entry.
-  def create_multicast_group_entry(self, group_id=None, replicas=None):
+  def create_multicast_group_entry(self, group_id=None, replicas=None,
+                                   backups=[]):
     group_id = group_id or self.DEFAULT_GROUP_ID
     if replicas is None:
       local_replicas = [x for x in self.DEFAULT_REPLICAS]
@@ -189,6 +190,18 @@ class P4RtL3MulticastGroupWrapper(util.DBInterface):
           ",\"multicast_replica_port\":\"" + port_name + "\"}")
     replica_json_array = "[" + ",".join(replica_dicts) + "]"
     attr_list = [("replicas", replica_json_array)]
+
+    backup_lists = []
+    for replica_list in backups:
+      backup_list = []
+      for port_name, instance in replica_list:
+        d = {}
+        d["multicast_replica_instance"] = instance
+        d["multicast_replica_port"] = port_name
+        backup_list.append(d)
+      backup_lists.append(backup_list)
+    if len(backup_lists) != 0:
+      attr_list.append(("backups", json.dumps(backup_lists, separators=(",", ":"))))
 
     mcast_group_key = self.generate_app_db_key(group_id)
     self.set_app_db_entry(mcast_group_key, attr_list)

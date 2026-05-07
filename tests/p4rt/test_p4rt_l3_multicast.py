@@ -1696,7 +1696,8 @@ class TestP4RTL3MulticastGroup(object):
     return mcast_group_key, attr_list, group_oid_to_ret, new_group_member_oids
 
   def add_and_verify_multicast_group_with_next_hop(
-    self, group_id=None, replicas=None, next_hop_oids=None, group_oid=None):
+    self, group_id=None, replicas=None, backups=[], next_hop_oids=None,
+    group_oid=None):
     """Adds a multicast group entry that uses next hop and verifies APP DB and ASIC DB"""
     start_app_db_entries = util.get_keys(
         self._p4rt_l3_multicast_group_intf.appl_db, self.appl_db_table)
@@ -1707,7 +1708,7 @@ class TestP4RTL3MulticastGroup(object):
     # Add the group member.
     mcast_group_key, attr_list = (
         self._p4rt_l3_multicast_group_intf.create_multicast_group_entry(
-            group_id=group_id, replicas=replicas))
+            group_id=group_id, replicas=replicas, backups=backups))
     self._p4rt_l3_multicast_group_intf.verify_response(mcast_group_key,
                                                        attr_list, "SWSS_RC_SUCCESS")
 
@@ -1747,17 +1748,17 @@ class TestP4RTL3MulticastGroup(object):
          self._p4rt_l3_multicast_group_intf.asic_db,
             self._p4rt_l3_multicast_group_intf.ASIC_DB_GROUP_TBL_NAME,
             group_oid_to_ret)
-        assert status_asic_group == True
-        asic_group_attr_list = [
-            (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_LABEL,
-                "any_value"),
-            (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_WITH_MEMBERS,
-                "true"),
-            (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_OUTPUT_NH_LIST,
-                str(len(next_hop_oids)) + ":" + ",".join(next_hop_oids)),
-        ]
-        util.verify_attr(fvs_asic_group, asic_group_attr_list)
-        return mcast_group_key, attr_list, group_oid_to_ret
+    assert status_asic_group == True
+    asic_group_attr_list = [
+        (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_LABEL,
+            "any_value"),
+        (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_WITH_MEMBERS,
+            "true"),
+        (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_OUTPUT_NH_LIST,
+            str(len(next_hop_oids)) + ":" + ",".join(next_hop_oids)),
+    ]
+    util.verify_attr(fvs_asic_group, asic_group_attr_list)
+    return mcast_group_key, attr_list, group_oid_to_ret
 
   def add_and_verify_l2_multicast_group(self, group_id=None, replicas=None,
                                         bridge_port_oids=None,
@@ -1960,10 +1961,10 @@ class TestP4RTL3MulticastGroup(object):
         self.add_and_verify_multicast_group(replicas=[("Ethernet8", "0x0")],
                                             next_hop_oids=[next_hop_oid_0]))
 
-        ####################################
-        # Add a new group member
-        ####################################
-        mcast_group_key_b, attr_list_b, group_oid_b = (
+    ####################################
+    # Add a new group member
+    ####################################
+    mcast_group_key_b, attr_list_b, group_oid_b = (
         self.add_and_verify_multicast_group(replicas=[("Ethernet8", "0x0"),
                                                       ("Ethernet4", "0x0")],
                                             next_hop_oids=[next_hop_oid_0, next_hop_oid_1],
@@ -2204,6 +2205,80 @@ class TestP4RTL3MulticastGroup(object):
     ####################################
     dvs.restart()
 
+  def test_L3MulticastGroupWithBackups(self, dvs, testlog):
+      """
+      This test creates an L3 multicast group with backups and verify the ASIC
+      DB.
+      """
+      self._set_up(dvs)
+      util.initialize_interface(dvs, "Ethernet0", "10.0.0.0/31")
+      util.initialize_interface(dvs, "Ethernet4", "10.0.0.2/31")
+      util.initialize_interface(dvs, "Ethernet8", "10.0.0.4/31")
+      util.initialize_interface(dvs, "Ethernet12", "10.0.0.6/31")
+      util.set_interface_status(dvs, "eth0", "up")
+      util.set_interface_status(dvs, "eth4", "up")
+      util.set_interface_status(dvs, "eth8", "up")
+      util.set_interface_status(dvs, "eth12", "up")
+
+      # To be able to add multicast groups and members, we need the corresponding
+      # router interfaces and next hops to have been created.
+      rif_oid_0, next_hop_oid_0 = self.add_rif_and_next_hop(port_id="Ethernet0")
+      rif_oid_1, next_hop_oid_1 = self.add_rif_and_next_hop(port_id="Ethernet4")
+      rif_oid_2, next_hop_oid_2 = self.add_rif_and_next_hop(port_id="Ethernet8")
+      rif_oid_3, next_hop_oid_3 = self.add_rif_and_next_hop(port_id="Ethernet12")
+
+      next_hop_oids=[next_hop_oid_0, next_hop_oid_1]
+      mcast_group_key, attr_list, group_oid = (
+          self.add_and_verify_multicast_group_with_next_hop(
+              replicas = [("Ethernet0", "0x0"), ("Ethernet4", "0x0")],
+              backups = [[("Ethernet8", "0x0"), ("Ethernet12", "0x0")], []],
+              next_hop_oids=next_hop_oids))
+
+      # Bring down Ethernet0. The first replica should fallback to Ethernet8.
+      util.set_interface_status(dvs, "eth0", "down")
+      time.sleep(1)
+      next_hop_oids=[next_hop_oid_2, next_hop_oid_1]
+      (status_asic_group, fvs_asic_group) = util.get_key(
+          self._p4rt_l3_multicast_group_intf.asic_db,
+          self._p4rt_l3_multicast_group_intf.ASIC_DB_GROUP_TBL_NAME,
+          group_oid)
+      assert status_asic_group == True
+      asic_group_attr_list = [
+          (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_LABEL,
+              "any_value"),
+          (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_WITH_MEMBERS,
+              "true"),
+          (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_OUTPUT_NH_LIST,
+              str(len(next_hop_oids)) + ":" + ",".join(next_hop_oids)),
+      ]
+      util.verify_attr(fvs_asic_group, asic_group_attr_list)
+
+      # Bring up Ethernet0. The first replica should restore to Ethernet0.
+      util.set_interface_status(dvs, "eth0", "up")
+      time.sleep(1)
+      next_hop_oids=[next_hop_oid_0, next_hop_oid_1]
+      (status_asic_group, fvs_asic_group) = util.get_key(
+          self._p4rt_l3_multicast_group_intf.asic_db,
+          self._p4rt_l3_multicast_group_intf.ASIC_DB_GROUP_TBL_NAME,
+          group_oid)
+      assert status_asic_group == True
+      asic_group_attr_list = [
+          (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_LABEL,
+              "any_value"),
+          (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_WITH_MEMBERS,
+              "true"),
+          (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_OUTPUT_NH_LIST,
+              str(len(next_hop_oids)) + ":" + ",".join(next_hop_oids)),
+      ]
+      util.verify_attr(fvs_asic_group, asic_group_attr_list)
+
+      ####################################
+      # Cleanup
+      ####################################
+      self._p4rt_l3_multicast_group_intf.remove_app_db_entry(mcast_group_key)
+      self._p4rt_l3_multicast_group_intf.verify_response(mcast_group_key, [],
+                                                         "SWSS_RC_SUCCESS")
+
 class TestP4RTIpMulticast(object):
   """Tests for interacting with the route tables ipv4_multicast_table and ipv6_multicast_table"""
   def _set_up(self, dvs):
@@ -2243,6 +2318,10 @@ class TestP4RTIpMulticast(object):
     self._vrf_obj.setup_db(dvs)
     self.default_vrf_state = self._vrf_obj.vrf_create(
         dvs, self._p4rt_ip_multicast.DEFAULT_VRF_ID, [], {})
+
+  def _clean_vrf(self, dvs):
+    """Remove VRF"""
+    self._vrf_obj.vrf_remove(dvs, self._p4rt_ip_multicast.DEFAULT_VRF_ID, self.default_vrf_state)
 
   def get_added_rif_oid(self, original_entries):
     """Returns OID key if single RIF was added"""
@@ -2466,7 +2545,7 @@ class TestP4RTIpMulticast(object):
     ####################################
     # Cleanup
     ####################################
-    dvs.restart()
+    self._clean_vrf(dvs)
 
   def test_IpMulticastDeleteUnknown(self, dvs, testlog):
     """
@@ -2491,7 +2570,7 @@ class TestP4RTIpMulticast(object):
     ####################################
     # Cleanup
     ####################################
-    dvs.restart()
+    self._clean_vrf(dvs)
 
   def test_IpMulticastAddBeforeGroup(self, dvs, testlog):
     """
@@ -2513,4 +2592,4 @@ class TestP4RTIpMulticast(object):
     ####################################
     # Cleanup
     ####################################
-    dvs.restart()
+    self._clean_vrf(dvs)

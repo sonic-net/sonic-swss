@@ -131,6 +131,10 @@ class L3MulticastManager : public ObjectManagerInterface {
   void updateFallbackGroup(const std::string& port,
                            sai_port_oper_status_t status);
 
+  // Processes group update in m_fallback_groups, maximum of
+  // kMaxFallbackGroupBulkSize groups per call.
+  void processFallbackGroupEvent();
+
  private:
   // Drains entries associated with the multicast router interface table.
   ReturnCode drainMulticastRouterInterfaceEntries(
@@ -287,10 +291,11 @@ class L3MulticastManager : public ObjectManagerInterface {
 
   // Update existing multicast group table entries.
   std::vector<ReturnCode> updateMulticastGroupEntries(
-      std::vector<P4MulticastGroupEntry>& entries);
+      std::vector<P4MulticastGroupEntry>& entries, bool fallback_event = false);
   // Separate add logic for IP vs. L2 multicast groups.
   ReturnCode updateIpMulticastGroupEntry(P4MulticastGroupEntry& entry,
-                                         P4MulticastGroupEntry* old_entry);
+                                         P4MulticastGroupEntry* old_entry,
+                                         bool fallback_event = false);
   ReturnCode updateL2MulticastGroupEntry(P4MulticastGroupEntry& entry,
                                          P4MulticastGroupEntry* old_entry);
 
@@ -383,10 +388,6 @@ class L3MulticastManager : public ObjectManagerInterface {
   // group members.
   sai_object_id_t getBridgePortOid(
       const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
-
-  // Processes group update in m_fallback_groups, maximum of
-  // kMaxFallbackGroupBulkSize groups per call.
-  void processFallbackGroupEvent();
 
   // Returns true if the active replicas in the group will change.
   bool checkActiveReplicasChange(
