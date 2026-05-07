@@ -23,6 +23,8 @@ using namespace swss;
 /* Taken from drivers/net/team/team.c */
 #define TEAM_DRV_NAME "team"
 
+static const timespec LAG_MEMBER_DISABLE_DEBOUNCE = {0, 10 * 1000 * 1000};
+
 TeamSync::TeamSync(DBConnector *db, DBConnector *stateDb, Select *select) :
     m_select(select),
     m_lagTable(db, APP_LAG_TABLE_NAME),
@@ -59,6 +61,36 @@ void TeamSync::periodic()
     }
 
     doSelectableTask();
+}
+
+bool TeamSync::processTimerSelectable(Selectable *selectable)
+{
+    auto timerIt = m_timerToMember.find(selectable);
+    if (timerIt == m_timerToMember.end())
+    {
+        SWSS_LOG_WARN("Detect untracked debounce timer selectable %p!",
+                selectable);
+        return false;
+    }
+
+    auto lag = timerIt->second.first;
+    auto memberName = timerIt->second.second;
+    auto stateIt = lag->m_memberDebounceStates.find(memberName);
+    if (stateIt == lag->m_memberDebounceStates.end() || !stateIt->second.pendingDisable)
+    {
+        return true;
+    }
+
+    auto timer = stateIt->second.timer;
+
+    timer->stop();
+    stateIt->second.pendingDisable = false;
+
+    applyLagMemberStatus(lag, memberName, false);
+    SWSS_LOG_NOTICE("Debounce timeout expired for LAG %s member %s, apply disabled",
+            lag->getLagName().c_str(), memberName.c_str());
+
+    return true;
 }
 
 void TeamSync::doSelectableTask()
@@ -186,9 +218,117 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
     if (lag_update)
     {
         /* Create the team instance */
-        auto sync = make_shared<TeamPortSync>(lagName, ifindex, &m_lagMemberTable);
+        auto sync = make_shared<TeamPortSync>(this, lagName, ifindex, &m_lagMemberTable);
         m_teamSelectables[lagName] = sync;
         m_selectablesToAdd.insert(lagName);
+    }
+}
+
+void TeamSync::applyLagMemberStatus(TeamPortSync *lag, const string &memberName, bool enabled)
+{
+    string key = lag->getLagName() + ":" + memberName;
+    vector<FieldValueTuple> v;
+    FieldValueTuple l("status", enabled ? "enabled" : "disabled");
+    v.push_back(l);
+    m_lagMemberTable.set(key, v);
+    lag->m_lagMembers[memberName] = enabled;
+
+    SWSS_LOG_NOTICE("Set LAG %s member %s with status %s",
+            lag->getLagName().c_str(), memberName.c_str(), enabled ? "enabled" : "disabled");
+}
+
+void TeamSync::ensureMemberTimer(TeamPortSync *lag, const string &memberName)
+{
+    if (lag->m_memberDebounceStates.find(memberName) != lag->m_memberDebounceStates.end())
+    {
+        return;
+    }
+
+    TeamSync::TeamPortSync::MemberDebounceState state;
+    state.timer = make_shared<SelectableTimer>(LAG_MEMBER_DISABLE_DEBOUNCE);
+
+    lag->m_memberDebounceStates[memberName] = state;
+    m_timerToMember[state.timer.get()] = make_pair(lag, memberName);
+    m_select->addSelectable(state.timer.get());
+}
+
+void TeamSync::startPendingDisable(TeamPortSync *lag, const string &memberName)
+{
+    ensureMemberTimer(lag, memberName);
+    auto &state = lag->m_memberDebounceStates[memberName];
+    if (state.pendingDisable)
+    {
+        return;
+    }
+
+    state.pendingDisable = true;
+    state.timer->start();
+
+    SWSS_LOG_NOTICE("Start pending disable debounce for LAG %s member %s",
+            lag->getLagName().c_str(), memberName.c_str());
+}
+
+void TeamSync::cancelPendingDisable(TeamPortSync *lag, const string &memberName)
+{
+    auto stateIt = lag->m_memberDebounceStates.find(memberName);
+    if (stateIt == lag->m_memberDebounceStates.end() || !stateIt->second.pendingDisable)
+    {
+        return;
+    }
+
+    stateIt->second.timer->stop();
+    stateIt->second.pendingDisable = false;
+
+    SWSS_LOG_NOTICE("Cancel pending disable debounce for LAG %s member %s",
+            lag->getLagName().c_str(), memberName.c_str());
+}
+
+void TeamSync::clearPendingDisablesForLag(TeamPortSync *lag)
+{
+    vector<string> members;
+    for (const auto &it : lag->m_memberDebounceStates)
+    {
+        if (it.second.pendingDisable)
+        {
+            members.push_back(it.first);
+        }
+    }
+
+    for (const auto &memberName : members)
+    {
+        cancelPendingDisable(lag, memberName);
+    }
+}
+
+void TeamSync::handleLagMemberStatus(TeamPortSync *lag, const string &memberName, bool observedEnabled)
+{
+    auto it = lag->m_lagMembers.find(memberName);
+    bool appliedEnabled = (it != lag->m_lagMembers.end()) && it->second;
+
+    auto debounceIt = lag->m_memberDebounceStates.find(memberName);
+    bool hasPendingDisable = (debounceIt != lag->m_memberDebounceStates.end()) &&
+                             debounceIt->second.pendingDisable;
+
+    if (observedEnabled)
+    {
+        if (hasPendingDisable)
+        {
+            cancelPendingDisable(lag, memberName);
+        }
+        else if (!appliedEnabled)
+        {
+            applyLagMemberStatus(lag, memberName, true);
+        }
+        return;
+    }
+
+    if (it == lag->m_lagMembers.end())
+    {
+        applyLagMemberStatus(lag, memberName, false);
+    }
+    else if (appliedEnabled && !hasPendingDisable)
+    {
+        startPendingDisable(lag, memberName);
     }
 }
 
@@ -196,8 +336,19 @@ void TeamSync::removeLag(const string &lagName)
 {
     /* Delete all members */
     auto selectable = m_teamSelectables[lagName];
+
+    clearPendingDisablesForLag(selectable.get());
+
     for (auto it : selectable->m_lagMembers)
     {
+        auto stateIt = selectable->m_memberDebounceStates.find(it.first);
+        if (stateIt != selectable->m_memberDebounceStates.end())
+        {
+            m_timerToMember.erase(stateIt->second.timer.get());
+            m_select->removeSelectable(stateIt->second.timer.get());
+            selectable->m_memberDebounceStates.erase(stateIt);
+        }
+
         m_lagMemberTable.del(lagName + ":" + it.first);
 
         SWSS_LOG_INFO("Remove member %s before removing LAG %s",
@@ -243,8 +394,9 @@ const struct team_change_handler TeamSync::TeamPortSync::gPortChangeHandler = {
     .type_mask  = TEAM_PORT_CHANGE | TEAM_OPTION_CHANGE
 };
 
-TeamSync::TeamPortSync::TeamPortSync(const string &lagName, int ifindex,
+TeamSync::TeamPortSync::TeamPortSync(TeamSync *parent, const string &lagName, int ifindex,
                                      ProducerStateTable *lagMemberTable) :
+    m_parent(parent),
     m_lagMemberTable(lagMemberTable),
     m_lagName(lagName),
     m_ifindex(ifindex)
@@ -349,6 +501,12 @@ int TeamSync::TeamPortSync::onChange()
     struct team_port *port;
     map<string, bool> tmp_lag_members;
 
+    if (!m_parent)
+    {
+        SWSS_LOG_ERROR("TeamSync pointer is NULL!");
+        return -1;
+    }
+
     /* Check each port  */
     team_for_each_port(port, m_team)
     {
@@ -378,33 +536,39 @@ int TeamSync::TeamPortSync::onChange()
     /* Compare old and new LAG members and set/del accordingly */
     for (auto it : tmp_lag_members)
     {
-        if (m_lagMembers.find(it.first) == m_lagMembers.end() || it.second != m_lagMembers[it.first])
-        {
-            string key = m_lagName + ":" + it.first;
-            vector<FieldValueTuple> v;
-            FieldValueTuple l("status", it.second ? "enabled" : "disabled");
-            v.push_back(l);
-            m_lagMemberTable->set(key, v);
-
-            SWSS_LOG_INFO("Set LAG %s member %s with status %s",
-                    m_lagName.c_str(), it.first.c_str(), it.second ? "enabled" : "disabled");
-        }
+        m_parent->handleLagMemberStatus(this, it.first, it.second);
     }
 
+    vector<string> removedMembers;
     for (auto it : m_lagMembers)
     {
         if (tmp_lag_members.find(it.first) == tmp_lag_members.end())
         {
-            string key = m_lagName + ":" + it.first;
-            m_lagMemberTable->del(key);
-
-            SWSS_LOG_INFO("Remove member %s from LAG %s",
-                    it.first.c_str(), m_lagName.c_str());
+            removedMembers.push_back(it.first);
         }
     }
 
-    /* Replace the old LAG members with the new ones */
-    m_lagMembers = tmp_lag_members;
+    for (const auto &memberName : removedMembers)
+    {
+        string key = m_lagName + ":" + memberName;
+
+        m_parent->cancelPendingDisable(this, memberName);
+
+        auto stateIt = m_memberDebounceStates.find(memberName);
+        if (stateIt != m_memberDebounceStates.end())
+        {
+            m_parent->m_timerToMember.erase(stateIt->second.timer.get());
+            m_parent->m_select->removeSelectable(stateIt->second.timer.get());
+            m_memberDebounceStates.erase(stateIt);
+        }
+
+        m_lagMemberTable->del(key);
+        m_lagMembers.erase(memberName);
+
+        SWSS_LOG_INFO("Remove member %s from LAG %s",
+                memberName.c_str(), m_lagName.c_str());
+    }
+
     return 0;
 }
 
