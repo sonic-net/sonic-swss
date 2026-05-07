@@ -2,6 +2,7 @@
 #define TAM_ORCH_H
 
 #include <map>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -126,6 +127,7 @@ private:
      * This is the page 7-8 flow from NVIDIA's IFA/INT overview. */
     bool createTamIntAcl(sai_object_id_t tam_int_oid);
     void destroyTamIntAcl();
+    void retryTamIntAclPortBinding();
 
     /* Global gate — pull from CONFIG_DB|DEVICE_METADATA|localhost. */
     bool isTamIntEnabled();
@@ -151,6 +153,11 @@ private:
     bool m_enabled = false;
     bool m_capability_checked = false;
     bool m_capable = false;
+
+    /* Set when ACL is created but no ports had ACL groups yet.
+     * doTaskTam returns task_need_retry until bindings succeed. */
+    bool m_portBindingPending = false;
+    std::set<sai_object_id_t> m_tamIntAclBoundGroups;
 };
 
 #endif /* TAM_ORCH_H */

@@ -317,6 +317,11 @@ void TamOrch::doTask(Consumer &consumer)
             it = consumer.m_toSync.erase(it);
         }
     }
+
+    if (m_portBindingPending)
+    {
+        retryTamIntAclPortBinding();
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -845,8 +850,14 @@ task_process_status TamOrch::doTaskTam(const string &op,
     {
         if (m_tamMap.count(name))
         {
-            SWSS_LOG_WARN("TAM '%s' already exists; updates not yet supported.",
-                          name.c_str());
+            if (m_portBindingPending)
+            {
+                retryTamIntAclPortBinding();
+                if (m_portBindingPending)
+                {
+                    return task_process_status::task_need_retry;
+                }
+            }
             return task_process_status::task_success;
         }
 
@@ -888,6 +899,18 @@ task_process_status TamOrch::doTaskTam(const string &op,
         if (oid != SAI_NULL_OBJECT_ID)
         {
             m_tamMap[name] = oid;
+        }
+
+        /* Mark the TAM entry as "created" even without an OID so the
+         * retry path can find and retry port binding. */
+        if (!m_tamMap.count(name))
+        {
+            m_tamMap[name] = SAI_NULL_OBJECT_ID;
+        }
+
+        if (m_portBindingPending)
+        {
+            return task_process_status::task_need_retry;
         }
         return task_process_status::task_success;
     }
@@ -978,6 +1001,7 @@ bool TamOrch::createTamIntAcl(sai_object_id_t tam_int_oid)
                 continue;
             }
             m_tamIntAclGroupMemberIds.push_back(member_id);
+            m_tamIntAclBoundGroups.insert(port.m_ingress_acl_table_group_id);
             SWSS_LOG_NOTICE("TAM INT ACL group member 0x%" PRIx64 " for port %s",
                             member_id, port.m_alias.c_str());
         }
@@ -985,7 +1009,9 @@ bool TamOrch::createTamIntAcl(sai_object_id_t tam_int_oid)
 
     if (m_tamIntAclGroupMemberIds.empty())
     {
-        SWSS_LOG_WARN("No ports bound to TAM INT ACL — metadata insertion will not activate");
+        SWSS_LOG_WARN("No ports bound to TAM INT ACL yet — will retry when "
+                      "port ACL groups become available");
+        m_portBindingPending = true;
     }
 
     /* --- 3. Create ACL ENTRY with TAM INT match + actions --- */
@@ -1042,10 +1068,80 @@ void TamOrch::destroyTamIntAcl()
         sai_acl_api->remove_acl_table_group_member(mid);
     }
     m_tamIntAclGroupMemberIds.clear();
+    m_tamIntAclBoundGroups.clear();
     if (m_tamIntAclTableId != SAI_NULL_OBJECT_ID)
     {
         sai_acl_api->remove_acl_table(m_tamIntAclTableId);
         m_tamIntAclTableId = SAI_NULL_OBJECT_ID;
+    }
+    m_portBindingPending = false;
+}
+
+/* ------------------------------------------------------------------ */
+/* TAM INT ACL — deferred port binding                                */
+/*                                                                    */
+/* At boot, TamOrch processes CONFIG_DB before AclOrch binds CoPP     */
+/* ACL groups to ports. retryTamIntAclPortBinding() is called on      */
+/* every doTask iteration until all physical ports with ACL groups     */
+/* have been bound.                                                   */
+/* ------------------------------------------------------------------ */
+
+void TamOrch::retryTamIntAclPortBinding()
+{
+    if (m_tamIntAclTableId == SAI_NULL_OBJECT_ID || !gPortsOrch)
+    {
+        return;
+    }
+
+    auto &ports = gPortsOrch->getAllPorts();
+    size_t newly_bound = 0;
+
+    for (auto &kv : ports)
+    {
+        Port &port = kv.second;
+        if (port.m_type != Port::PHY) continue;
+        if (port.m_ingress_acl_table_group_id == SAI_NULL_OBJECT_ID) continue;
+        if (m_tamIntAclBoundGroups.count(port.m_ingress_acl_table_group_id)) continue;
+
+        sai_object_id_t member_id = SAI_NULL_OBJECT_ID;
+        sai_attribute_t mem_attrs[3];
+
+        mem_attrs[0].id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_GROUP_ID;
+        mem_attrs[0].value.oid = port.m_ingress_acl_table_group_id;
+
+        mem_attrs[1].id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_ID;
+        mem_attrs[1].value.oid = m_tamIntAclTableId;
+
+        mem_attrs[2].id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_PRIORITY;
+        mem_attrs[2].value.u32 = 100;
+
+        sai_status_t st = sai_acl_api->create_acl_table_group_member(
+            &member_id, gSwitchId, 3, mem_attrs);
+        if (st != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Failed to add TAM INT ACL to group 0x%" PRIx64
+                          " for port %s: rc=%d",
+                          port.m_ingress_acl_table_group_id,
+                          port.m_alias.c_str(), st);
+            continue;
+        }
+        m_tamIntAclGroupMemberIds.push_back(member_id);
+        m_tamIntAclBoundGroups.insert(port.m_ingress_acl_table_group_id);
+        newly_bound++;
+        SWSS_LOG_NOTICE("TAM INT ACL group member 0x%" PRIx64
+                        " for port %s (deferred bind)",
+                        member_id, port.m_alias.c_str());
+    }
+
+    if (newly_bound > 0)
+    {
+        SWSS_LOG_NOTICE("TAM INT ACL: bound %zu additional ports (%zu total)",
+                        newly_bound, m_tamIntAclGroupMemberIds.size());
+    }
+
+    if (!m_tamIntAclGroupMemberIds.empty())
+    {
+        m_portBindingPending = false;
     }
 }
 
