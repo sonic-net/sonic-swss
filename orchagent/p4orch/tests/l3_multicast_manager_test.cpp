@@ -8531,6 +8531,61 @@ TEST_F(L3MulticastManagerTest, MulticastGroupFallbackWithGroupUpdate) {
   ProcessFallbackGroupEvent();
 }
 
+TEST_F(L3MulticastManagerTest, MulticastGroupFallbackWithGroupDelete) {
+  // Add router interface entry so have RIF.
+  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
+  auto rif_entry2 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac2),
+      swss::MacAddress(kDstMac0), kVlanIdNum1, p4orch::kMulticastSetSrcMac,
+      kRifOid2, kNextHopOid2);
+  auto rif_entry3 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet3", "0x0", swss::MacAddress(kSrcMac3),
+      swss::MacAddress(kDstMac0), kVlanIdNum1, p4orch::kMulticastSetSrcMac,
+      kRifOid3, kNextHopOid3);
+  auto rif_entry4 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet4", "0x0", swss::MacAddress(kSrcMac4),
+      swss::MacAddress(kDstMac0), kVlanIdNum1, p4orch::kMulticastSetSrcMac,
+      kRifOid4, kNextHopOid4);
+
+  P4Replica replica1 = P4Replica("0x1", "Ethernet1", "0x0");
+  P4Replica replica2 = P4Replica("0x1", "Ethernet2", "0x0");
+  P4Replica replica3 = P4Replica("0x1", "Ethernet3", "0x0");
+  P4Replica replica4 = P4Replica("0x1", "Ethernet4", "0x0");
+
+  std::vector<sai_object_id_t> nexthop_oids = {kNextHopOid1, kNextHopOid2};
+  auto group_entry = SetupP4MulticastGroupEntryWithBackups(
+      "0x1", {{replica1, replica3, replica4}, {replica2}}, kGroupOid1,
+      nexthop_oids);
+
+  // Bring up all ports. Expect no SAI calls.
+  UpdateFallbackGroup("Ethernet1", SAI_PORT_OPER_STATUS_UP);
+  UpdateFallbackGroup("Ethernet2", SAI_PORT_OPER_STATUS_UP);
+  UpdateFallbackGroup("Ethernet3", SAI_PORT_OPER_STATUS_UP);
+  UpdateFallbackGroup("Ethernet4", SAI_PORT_OPER_STATUS_UP);
+  ProcessFallbackGroupEvent();
+
+  // Ethernet1 goes down. Expect to use replica3 on the first replica.
+  UpdateFallbackGroup("Ethernet1", SAI_PORT_OPER_STATUS_DOWN);
+  // New request to delete the group.
+  const std::string group_match_key = "0x1";
+  const std::string group_appl_db_key =
+      std::string(APP_P4RT_REPLICATION_IP_MULTICAST_TABLE_NAME) +
+      kTableKeyDelimiter + group_match_key;
+  std::vector<swss::FieldValueTuple> group_attributes;
+  Enqueue(APP_P4RT_REPLICATION_IP_MULTICAST_TABLE_NAME,
+          swss::KeyOpFieldsValuesTuple(group_appl_db_key, DEL_COMMAND,
+                                       group_attributes));
+  EXPECT_CALL(mock_sai_ipmc_group_, remove_ipmc_group(kGroupOid1))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME),
+                                  Eq(group_appl_db_key), Eq(group_attributes),
+                                  Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
+  // Expect no-opt for the fallback event.
+  ProcessFallbackGroupEvent();
+}
+ 
 TEST_F(L3MulticastManagerTest, DrainMulticastGroupEntryWithBackupTest) {
   // Add router interface entry so have RIF.
   auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
