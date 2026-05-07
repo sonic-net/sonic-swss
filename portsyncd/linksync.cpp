@@ -4,10 +4,6 @@
 #include <sys/socket.h>
 #include <net/if.h>
 #include <netlink/route/link.h>
-//upscaleai:start
-#include <netlink/msg.h>
-#include <netlink/attr.h>
-//upscaleai:end
 #include "logger.h"
 #include "netmsg.h"
 #include "dbconnector.h"
@@ -24,36 +20,6 @@
 #include <set>
 #include <sstream>
 #include <iomanip>
-
-//upscaleai:start
-/*
- * Kernel IFLA attributes not exposed by the installed libnl3.
- * Values are stable UAPI (include/uapi/linux/if_link.h).
- */
-#ifndef IFLA_PROTO_DOWN
-#define IFLA_PROTO_DOWN 39
-#endif
-#ifndef IFLA_CARRIER_UP_COUNT
-#define IFLA_CARRIER_UP_COUNT 47
-#endif
-#ifndef IFLA_CARRIER_DOWN_COUNT
-#define IFLA_CARRIER_DOWN_COUNT 48
-#endif
-#ifndef IFLA_PERM_ADDRESS
-#define IFLA_PERM_ADDRESS 54
-#endif
-
-/* ifinfomsg is the fixed header after nlmsghdr in RTM_*LINK messages. */
-struct linksync_ifinfomsg
-{
-    unsigned char  ifi_family;
-    unsigned char  __ifi_pad;
-    unsigned short ifi_type;
-    int            ifi_index;
-    unsigned int   ifi_flags;
-    unsigned int   ifi_change;
-};
-//upscaleai:end
 
 using namespace std;
 using namespace swss;
@@ -237,14 +203,6 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
         vector.push_back(admin_status);
         vector.push_back(port_mtu);
 
-        //upscaleai:start
-        uint32_t carrier_changes;
-        if (rtnl_link_get_carrier_changes(link, &carrier_changes) == 0)
-        {
-            vector.emplace_back("carrier_changes", to_string(carrier_changes));
-        }
-        //upscaleai:end
-
         m_statePortTable.set(key, vector);
         SWSS_LOG_NOTICE("Publish %s(ok:%s) to state db", key.c_str(), oper ? "up" : "down");
     }
@@ -253,79 +211,3 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
         SWSS_LOG_NOTICE("Cannot find %s in port table", key.c_str());
     }
 }
-
-//upscaleai:start
-void LinkSync::onMsgRaw(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *nlh)
-{
-    onMsg(nlmsg_type, obj);
-
-    if (nlmsg_type != RTM_NEWLINK || !nlh)
-        return;
-
-    struct rtnl_link *link = (struct rtnl_link *)obj;
-    string key = rtnl_link_get_name(link);
-
-    if (key.compare(0, INTFS_PREFIX.length(), INTFS_PREFIX) &&
-        key.compare(0, LAG_PREFIX.length(), LAG_PREFIX))
-    {
-        return;
-    }
-
-    vector<FieldValueTuple> temp;
-    if (!m_portTable.get(key, temp))
-        return;
-
-    parseRawLinkAttrs(key, nlh);
-}
-
-void LinkSync::parseRawLinkAttrs(const string &key, struct nlmsghdr *nlh)
-{
-    struct nlattr *tb[IFLA_PERM_ADDRESS + 1];
-    int maxattr = IFLA_PERM_ADDRESS;
-
-    if (nlmsg_parse(nlh, sizeof(struct linksync_ifinfomsg), tb, maxattr, NULL) < 0)
-    {
-        SWSS_LOG_WARN("Failed to parse raw link attributes for %s", key.c_str());
-        return;
-    }
-
-    vector<FieldValueTuple> fvs;
-
-    if (tb[IFLA_CARRIER_UP_COUNT])
-    {
-        uint32_t up_count = nla_get_u32(tb[IFLA_CARRIER_UP_COUNT]);
-        fvs.emplace_back("carrier_up_count", to_string(up_count));
-    }
-
-    if (tb[IFLA_CARRIER_DOWN_COUNT])
-    {
-        uint32_t down_count = nla_get_u32(tb[IFLA_CARRIER_DOWN_COUNT]);
-        fvs.emplace_back("carrier_down_count", to_string(down_count));
-    }
-
-    if (tb[IFLA_PROTO_DOWN])
-    {
-        uint8_t protodown = nla_get_u8(tb[IFLA_PROTO_DOWN]);
-        fvs.emplace_back("protodown", protodown ? "true" : "false");
-    }
-
-    if (tb[IFLA_PERM_ADDRESS])
-    {
-        int len = nla_len(tb[IFLA_PERM_ADDRESS]);
-        unsigned char *addr = (unsigned char *)nla_data(tb[IFLA_PERM_ADDRESS]);
-        if (len >= 6)
-        {
-            char buf[18];
-            snprintf(buf, sizeof(buf), "%02x:%02x:%02x:%02x:%02x:%02x",
-                     addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
-            fvs.emplace_back("perm_hw_addr", buf);
-        }
-    }
-
-    if (!fvs.empty())
-    {
-        m_statePortTable.set(key, fvs);
-        SWSS_LOG_INFO("Published raw link attrs for %s", key.c_str());
-    }
-}
-//upscaleai:end

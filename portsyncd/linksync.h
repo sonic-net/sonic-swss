@@ -7,10 +7,6 @@
 
 #include <map>
 
-//upscaleai:start
-struct nlmsghdr;
-//upscaleai:end
-
 namespace swss {
 
 class LinkSync : public NetMsg
@@ -20,17 +16,9 @@ public:
 
     LinkSync(DBConnector *appl_db, DBConnector *state_db);
 
-    //upscaleai:start
-    virtual void onMsg(int nlmsg_type, struct nl_object *obj) override;
-    virtual void onMsgRaw(int nlmsg_type, struct nl_object *obj,
-                          struct nlmsghdr *nlh) override;
-    //upscaleai:end
+    virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
 private:
-    //upscaleai:start
-    void parseRawLinkAttrs(const std::string &key, struct nlmsghdr *nlh);
-    //upscaleai:end
-
     ProducerStateTable m_portTableProducer;
     Table m_portTable, m_statePortTable;
 
