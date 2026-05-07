@@ -77,6 +77,7 @@ struct P4MulticastGroupEntry {
   std::vector<P4Replica> active_replicas;
   std::string multicast_metadata;
   std::string controller_metadata;
+  std::vector<sai_object_id_t> nexthop_ids;
   // Used as a quick lookup for what replicas are in use.
   std::unordered_set<std::string> replica_keys;
 
@@ -138,6 +139,11 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Drains entries associated with the multicast group table.
   ReturnCode drainMulticastGroupEntries(
       std::deque<swss::KeyOpFieldsValuesTuple>& group_entry_tuples);
+
+  // Returns the SAI attributes for an IPMC group.
+  std::vector<sai_attribute_t> prepareMulticastGroupSaiAttrs(
+      P4MulticastGroupEntry& group, std::string& group_label,
+      bool update = false);
 
   // Converts db table entry into P4MulticastRouterInterfaceEntry.
   ReturnCodeOr<P4MulticastRouterInterfaceEntry>
@@ -234,14 +240,6 @@ class L3MulticastManager : public ObjectManagerInterface {
                                   sai_object_id_t& mcast_group_oid,
                                   std::string& group_label);
 
-  ReturnCode deleteMulticastGroup(const std::string& multicast_group_id,
-                                  sai_object_id_t mcast_group_oid);
-
-  // Wrapper around SAI setup and call to create multicast group members.
-  ReturnCode createMulticastGroupMember(
-      const P4Replica& replica, const sai_object_id_t group_oid,
-      const sai_object_id_t rif_oid, sai_object_id_t* mcast_group_member_oid);
-
   // Wrapper around SAI setup and call to create L2 multicast group.
   ReturnCode createL2MulticastGroup(P4MulticastGroupEntry& entry,
                                     sai_object_id_t& mcast_group_oid,
@@ -295,12 +293,6 @@ class L3MulticastManager : public ObjectManagerInterface {
                                          P4MulticastGroupEntry* old_entry);
   ReturnCode updateL2MulticastGroupEntry(P4MulticastGroupEntry& entry,
                                          P4MulticastGroupEntry* old_entry);
-  // Used during failure scenarios where we try to revert to the previous state.
-  ReturnCode restoreDeletedGroupMembers(
-      const std::vector<P4Replica>& deleted_replicas,
-      const std::unordered_map<std::string, sai_object_id_t>& replica_rif_map,
-      const sai_object_id_t group_oid, const std::string& error_message,
-      P4MulticastGroupEntry* old_entry);
 
   // Delete existing multicast group table entries.
   std::vector<ReturnCode> deleteMulticastGroupEntries(
@@ -339,9 +331,9 @@ class L3MulticastManager : public ObjectManagerInterface {
       const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry);
   // Verifies ASIC DB for a multicast group entry.
   std::string verifyMulticastGroupStateAsicDb(
-      const P4MulticastGroupEntry* multicast_group_entry);
+      P4MulticastGroupEntry* multicast_group_entry);
   std::string verifyIpMulticastGroupStateAsicDb(
-      const P4MulticastGroupEntry* multicast_group_entry);
+      P4MulticastGroupEntry* multicast_group_entry);
   std::string verifyL2MulticastGroupStateAsicDb(
       const P4MulticastGroupEntry* multicast_group_entry);
 

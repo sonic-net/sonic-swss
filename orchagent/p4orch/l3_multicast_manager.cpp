@@ -233,21 +233,6 @@ std::vector<sai_attribute_t> prepareNextHopSaiAttrs(
   return attrs;
 }
 
-// Create the vector of SAI attributes for creating a new multicast group
-// object.
-std::vector<sai_attribute_t> prepareMulticastGroupSaiAttrs(
-    const P4MulticastGroupEntry& group, std::string& group_label) {
-  std::vector<sai_attribute_t> attrs;
-  sai_attribute_t attr;
-  std::string mapper_key;
-  gLabelMapper->addLabelToAttr(
-      SAI_OBJECT_TYPE_IPMC_GROUP, APP_P4RT_TABLE_NAME, group.multicast_group_id,
-      attr, SAI_IPMC_GROUP_ATTR_LABEL, mapper_key, group_label);
-  attrs.push_back(attr);
-
-  return attrs;
-}
-
 // Create the vector of SAI attributes for creating a new L2 multicast group
 // object.
 std::vector<sai_attribute_t> prepareL2MulticastGroupSaiAttrs(
@@ -258,32 +243,6 @@ std::vector<sai_attribute_t> prepareL2MulticastGroupSaiAttrs(
   gLabelMapper->addLabelToAttr(
       SAI_OBJECT_TYPE_L2MC_GROUP, APP_P4RT_TABLE_NAME, group.multicast_group_id,
       attr, SAI_L2MC_GROUP_ATTR_LABEL, mapper_key, group_label);
-  attrs.push_back(attr);
-
-  return attrs;
-}
-
-// Create the vector of SAI attributes for creating a new multicast group
-// member object.
-std::vector<sai_attribute_t> prepareMulticastGroupMemberSaiAttrs(
-    const sai_object_id_t multicast_group_oid, const sai_object_id_t rif_oid,
-    const sai_object_id_t next_hop_oid) {
-  std::vector<sai_attribute_t> attrs;
-  sai_attribute_t attr;
-
-  attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_GROUP_ID;
-  attr.value.oid = multicast_group_oid;
-  attrs.push_back(attr);
-
-  // TODO(b/353398275): Once remove deprecated action kSetMulticastSrcMac,
-  // this should only assign SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID to be the
-  // next_hop_oid.
-  attr.id = SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID;
-  if (next_hop_oid == SAI_NULL_OBJECT_ID) {
-    attr.value.oid = rif_oid;
-  } else {
-    attr.value.oid = next_hop_oid;
-  }
   attrs.push_back(attr);
 
   return attrs;
@@ -665,6 +624,39 @@ ReturnCode L3MulticastManager::drainMulticastGroupEntries(
 
   drainMgmtWithNotExecuted(group_entry_tuples, m_publisher);
   return status;
+}
+
+std::vector<sai_attribute_t> L3MulticastManager::prepareMulticastGroupSaiAttrs(
+    P4MulticastGroupEntry& group, std::string& group_label, bool update) {
+  std::vector<sai_attribute_t> attrs;
+  sai_attribute_t attr;
+  std::string mapper_key;
+  if (!update) {
+    gLabelMapper->addLabelToAttr(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                 APP_P4RT_TABLE_NAME, group.multicast_group_id,
+                                 attr, SAI_IPMC_GROUP_ATTR_LABEL, mapper_key,
+                                 group_label);
+    attrs.push_back(attr);
+
+    attr.id = SAI_IPMC_GROUP_ATTR_IPMC_GROUP_WITH_MEMBERS;
+    attr.value.booldata = true;
+    attrs.push_back(attr);
+  }
+
+  group.nexthop_ids.clear();
+  for (auto& replica : group.active_replicas) {
+    group.nexthop_ids.push_back(getNextHopOid(replica));
+  }
+  attr.id = SAI_IPMC_GROUP_ATTR_IPMC_OUTPUT_NH_LIST;
+  attr.value.objlist.count = uint32_t(group.active_replicas.size());
+  if (group.active_replicas.empty()) {
+    attr.value.objlist.list = nullptr;
+  } else {
+    attr.value.objlist.list = group.nexthop_ids.data();
+  }
+  attrs.push_back(attr);
+
+  return attrs;
 }
 
 ReturnCodeOr<P4MulticastRouterInterfaceEntry>
@@ -1165,11 +1157,14 @@ ReturnCode L3MulticastManager::validateDelMulticastGroupEntry(
   }
 
   // Confirm members had member OIDs.
-  for (auto& replica : group_entry_ptr->active_replicas) {
-    if (!m_p4OidMapper->existsOID(sai_group_member_type, replica.key)) {
-      return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-          << "Multicast group member does not exist in the central mapper: "
-          << QuotedVar(replica.key);
+  if (!group_entry_ptr->is_ipmc) {
+    for (auto& replica : group_entry_ptr->active_replicas) {
+      if (!m_p4OidMapper->existsOID(sai_group_member_type, replica.key)) {
+        return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+               << "Multicast group member does not exist in the central "
+                  "mapper: "
+               << QuotedVar(replica.key);
+      }
     }
   }
   return ReturnCode();
@@ -1709,63 +1704,6 @@ ReturnCode L3MulticastManager::createMulticastGroup(
   return ReturnCode();
 }
 
-ReturnCode L3MulticastManager::createMulticastGroupMember(
-    const P4Replica& replica, const sai_object_id_t group_oid,
-    const sai_object_id_t rif_oid, sai_object_id_t* mcast_group_member_oid) {
-  SWSS_LOG_ENTER();
-  // Confirm we haven't already created a multicast group member for this.
-  if (m_p4OidMapper->existsOID(
-        SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER, replica.key)) {
-    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-        << "Multicast group member to be added "
-        << QuotedVar(replica.key).c_str()
-        << " already exists in the centralized map");
-  }
-
-  if (rif_oid == SAI_NULL_OBJECT_ID) {
-    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_UNAVAIL)
-        << "Multicast group member "
-        << QuotedVar(replica.key).c_str()
-        << " cannot be added because there is no associated RIF available");
-  }
-
-  // Ok to be null, since some actions do not allocate a next hop.
-  sai_object_id_t next_hop_oid = getNextHopOid(replica);
-
-  // Create Multicast group member SAI object.
-  std::vector<sai_attribute_t> attrs =
-      prepareMulticastGroupMemberSaiAttrs(group_oid, rif_oid, next_hop_oid);
-
-  auto sai_status = sai_ipmc_group_api->create_ipmc_group_member(
-      mcast_group_member_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
-  if (sai_status != SAI_STATUS_SUCCESS) {
-    LOG_ERROR_AND_RETURN(ReturnCode(sai_status)
-        << "Failed to create multicast group member for: "
-        << QuotedVar(replica.key).c_str());
-  }
-  return ReturnCode();
-}
-
-ReturnCode L3MulticastManager::deleteMulticastGroup(
-    const std::string& multicast_group_id, sai_object_id_t mcast_group_oid) {
-  SWSS_LOG_ENTER();
-  // Confirm we have a multicast group to delete.
-  if (!m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_IPMC_GROUP,
-                                multicast_group_id)) {
-    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                         << "Multicast group to be deleted with group ID "
-                         << QuotedVar(multicast_group_id).c_str()
-                         << " does not exist in the centralized map");
-  }
-  auto sai_status = sai_ipmc_group_api->remove_ipmc_group(mcast_group_oid);
-  if (sai_status != SAI_STATUS_SUCCESS) {
-    LOG_ERROR_AND_RETURN(ReturnCode(sai_status)
-                         << "Failed to delete multicast group with ID: "
-                         << QuotedVar(multicast_group_id).c_str());
-  }
-  return ReturnCode();
-}
-
 ReturnCode L3MulticastManager::createL2MulticastGroup(
     P4MulticastGroupEntry& entry, sai_object_id_t& mcast_group_oid,
     std::string& group_label) {
@@ -2286,73 +2224,6 @@ ReturnCode L3MulticastManager::addIpMulticastGroupEntry(
   std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
       APP_P4RT_TABLE_NAME, entry.multicast_group_id);
   gLabelMapper->setLabel(SAI_OBJECT_TYPE_IPMC_GROUP, mapper_key, group_label);
-  // Next, create the group members.  If there's a failure, back out.
-  // Instead of updating internal state as members are created, wait until all
-  // members have been created to simplify back-out.
-  std::unordered_map<std::string, sai_object_id_t> created_member_map;
-  for (auto& replica : entry.active_replicas) {
-    sai_object_id_t rif_oid = getRifOid(replica);
-
-    // Create the group member.
-    sai_object_id_t mcast_group_member_oid;
-    ReturnCode create_member_status = createMulticastGroupMember(
-        replica, mcast_group_oid, rif_oid, &mcast_group_member_oid);
-
-    if (!create_member_status.ok()) {
-      // Back out creation of members that were just created.
-      for (auto& created_members : created_member_map) {
-        sai_status_t member_delete_status =
-            sai_ipmc_group_api->remove_ipmc_group_member(
-                created_members.second);
-        if (member_delete_status != SAI_STATUS_SUCCESS) {
-          // All kinds of bad.  The delete failed, and we have to leave a
-          // dangling allocated multicast group.  We are going to need outside
-          // help to repair this.  Leave the create status as the original
-          // failure code returned.
-          std::stringstream err_msg;
-          err_msg << "Multicast group member creation failed, and we were "
-                  << "unable to backout creation of previous members.";
-          SWSS_LOG_ERROR("%s", err_msg.str().c_str());
-          SWSS_RAISE_CRITICAL_STATE(err_msg.str());
-          // Cannot proceed to try to back out creation of group.
-          return create_member_status;
-        }
-      }
-
-      // Back out multicast group creation.
-      ReturnCode backout_status =
-          deleteMulticastGroup(entry.multicast_group_id, mcast_group_oid);
-
-      if (!backout_status.ok()) {
-        // All kinds of bad.  Since the delete failed, we should leave
-        // the bookkeeping in place, but we are going to need outside help to
-        // repair this.  Leave the create status as the failure code returned.
-        std::stringstream err_msg;
-        err_msg << "Multicast group member creation failed, and we were "
-                << "unable to backout creation of the multicast group.";
-        SWSS_LOG_ERROR("%s", err_msg.str().c_str());
-        SWSS_RAISE_CRITICAL_STATE(err_msg.str());
-      } else {
-        // Back out multicast group state.
-        m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_IPMC_GROUP,
-                                entry.multicast_group_id);
-        gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_IPMC_GROUP, mapper_key);
-      }
-      // Stop trying to create replicas.  Return the first error.
-      return create_member_status;
-    }
-    // We successfully created a group member.
-    created_member_map[replica.key] = mcast_group_member_oid;
-    // We defer additional book-keeping until all replicas are created.
-  }  // for replica
-
-  // Finish with book keeping.
-
-  // Update state for created group members.
-  for (auto& created_members : created_member_map) {
-    m_p4OidMapper->setOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
-                          created_members.first, created_members.second);
-  }
 
   // Group members reference multicast_router_interface entries.
   for (auto& replica : entry.active_replicas) {
@@ -2595,129 +2466,35 @@ ReturnCode L3MulticastManager::updateIpMulticastGroupEntry(
     return ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
   }
 
-  std::vector<P4Replica> replicas_to_add;
-  for (auto& replica : entry.active_replicas) {
-    // New replica is not part of existing replicas.
-    if (old_entry->replica_keys.find(replica.key) ==
-        old_entry->replica_keys.end()) {
-      replicas_to_add.push_back(replica);
+  // There should only be one attribute for update.
+  std::string group_label;
+  auto attrs =
+      prepareMulticastGroupSaiAttrs(entry, group_label, /*update=*/true);
+  if (entry.nexthop_ids != old_entry->nexthop_ids) {
+    auto sai_status = sai_ipmc_group_api->set_ipmc_group_attribute(
+        old_group_oid, attrs.data());
+    if (sai_status != SAI_STATUS_SUCCESS) {
+      LOG_ERROR_AND_RETURN(ReturnCode(sai_status)
+                           << "Failed to update multicast group for group ID: "
+                           << QuotedVar(entry.multicast_group_id));
     }
   }
 
-  std::vector<P4Replica> replicas_to_delete;
   for (auto& replica : old_entry->active_replicas) {
-    // Existing replica is not part of new replicas.
-    if (entry.replica_keys.find(replica.key) == entry.replica_keys.end()) {
-      replicas_to_delete.push_back(replica);
-    }
-  }
-
-  // Replicas in both old and new entries can be left untouched (no-op).
-
-  // First, delete replicas.
-  std::vector<P4Replica> deleted_replicas;
-  std::unordered_map<std::string, sai_object_id_t> replica_rif_map;
-
-  for (auto& replica : replicas_to_delete) {
-    // Fetch the RIF used by the member.
-    sai_object_id_t old_rif_oid = getRifOid(replica);
-    replica_rif_map[replica.key] = old_rif_oid;
-
-    // Fetch the member OID.
-    sai_object_id_t old_group_member_oid = SAI_NULL_OBJECT_ID;
-    m_p4OidMapper->getOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER, replica.key,
-                          &old_group_member_oid);
-
-    // Delete group member
-    sai_status_t member_delete_status =
-        sai_ipmc_group_api->remove_ipmc_group_member(old_group_member_oid);
-    if (member_delete_status != SAI_STATUS_SUCCESS) {
-      // Attempt to re-add deleted group members.
-      ReturnCode restore_status =
-          restoreDeletedGroupMembers(deleted_replicas, replica_rif_map,
-                                     old_group_oid, replica.key, old_entry);
-      if (!restore_status.ok()) {
-        SWSS_LOG_ERROR("%s", restore_status.message().c_str());
-        SWSS_RAISE_CRITICAL_STATE(restore_status.message());
-      }
-      // We still return the original failure when we successfully back
-      // out changes.
-      return member_delete_status;
-    }
-    // Update internal state to reflect successful delete.
-    m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER, replica.key);
     const std::string router_interface_key =
         KeyGenerator::generateMulticastRouterInterfaceKey(replica.port,
                                                           replica.instance);
     m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
                                     router_interface_key);
-    deleted_replicas.push_back(replica);
-  }  // for replica (to delete)
-
-  // Second add new replicas.
-  std::vector<P4Replica> added_replicas;
-
-  for (auto& replica : replicas_to_add) {
-    // Fetch the RIF used by the member.
-    sai_object_id_t new_rif_oid = getRifOid(replica);
-    replica_rif_map[replica.key] = new_rif_oid;
-
-    // Create the group member.
-    sai_object_id_t mcast_group_member_oid;
-    ReturnCode create_member_status = createMulticastGroupMember(
-        replica, old_group_oid, new_rif_oid, &mcast_group_member_oid);
-
-    if (!create_member_status.ok()) {
-      // Backout members added.
-      for (auto& added_replica : added_replicas) {
-	sai_object_id_t added_member_oid = SAI_NULL_OBJECT_ID;
-        m_p4OidMapper->getOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
-                              added_replica.key, &added_member_oid);
-        sai_status_t member_delete_status =
-		sai_ipmc_group_api->remove_ipmc_group_member(added_member_oid);
-        if (member_delete_status != SAI_STATUS_SUCCESS) {
-          // All kinds of bad
-          std::stringstream err_msg;
-          err_msg << "Cannot revert to previous state, because added replica "
-                  << QuotedVar(added_replica.key) << " cannot be deleted";
-          SWSS_LOG_ERROR("%s", err_msg.str().c_str());
-          SWSS_RAISE_CRITICAL_STATE(err_msg.str());
-          return create_member_status;
-        }
-        // Update state based on successful removal.
-        m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
-                                added_replica.key);
-	const std::string added_router_interface_key =
-            KeyGenerator::generateMulticastRouterInterfaceKey(
-                added_replica.port, added_replica.instance);
-	m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
-                                        added_router_interface_key);
-      }
-
-      // Attempt to re-add deleted group members.
-      ReturnCode restore_status =
-          restoreDeletedGroupMembers(deleted_replicas, replica_rif_map,
-                                     old_group_oid, replica.key, old_entry);
-      if (!restore_status.ok()) {
-        SWSS_LOG_ERROR("%s", restore_status.message().c_str());
-        SWSS_RAISE_CRITICAL_STATE(restore_status.message());
-      }
-      // We still return the original failure when we successfully back
-      // out changes.
-      return create_member_status;
     }
 
-    // Update internal state to reflect successful add.
-    m_p4OidMapper->setOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER, replica.key,
-                          mcast_group_member_oid);
+  for (auto& replica : entry.active_replicas) {
     const std::string router_interface_key =
         KeyGenerator::generateMulticastRouterInterfaceKey(replica.port,
                                                           replica.instance);
     m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
                                     router_interface_key);
-    added_replicas.push_back(replica);
-
-  }  // for replica (to add)
+    }
 
   removeGroupFromPortNameToIpmcGroupMap(*old_entry);
   insertGroupInPortNameToIpmcGroupMap(entry);
@@ -2920,41 +2697,6 @@ std::vector<ReturnCode> L3MulticastManager::updateMulticastGroupEntries(
   return statuses;
 }
 
-ReturnCode L3MulticastManager::restoreDeletedGroupMembers(
-    const std::vector<P4Replica>& deleted_replicas,
-    const std::unordered_map<std::string, sai_object_id_t>& replica_rif_map,
-    const sai_object_id_t group_oid, const std::string& error_message,
-    P4MulticastGroupEntry* old_entry) {
-  // Attempt to re-add deleted group members.
-  for (auto& deleted_replica : deleted_replicas) {
-    sai_object_id_t restore_rif_oid = replica_rif_map.at(deleted_replica.key);
-    sai_object_id_t restore_group_member_oid = SAI_NULL_OBJECT_ID;
-    auto create_status = createMulticastGroupMember(
-        deleted_replica, group_oid, restore_rif_oid,
-        &restore_group_member_oid);
-    if (!create_status.ok()) {
-      // All kinds of bad.  We couldn't restore a multicast group member,
-      // which leaves us in an inconsistent state with what the controller
-      // expects.  Leave the overall return code as original failure.
-      return ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-             << "Unable to restore deleted multicast group member  "
-             << QuotedVar(deleted_replica.key)
-             << " after group member delete failed on "
-             << QuotedVar(error_message);
-    }
-    // If we successfully added the group member back, update internal
-    // state.
-    m_p4OidMapper->setOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
-                          deleted_replica.key, restore_group_member_oid);
-    const std::string router_interface_key =
-        KeyGenerator::generateMulticastRouterInterfaceKey(
-            deleted_replica.port, deleted_replica.instance);
-    m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
-                                    router_interface_key);
-  }
-  return ReturnCode();
-}
-
 ReturnCode L3MulticastManager::restoreDeletedL2GroupMembers(
     const std::vector<P4Replica>& deleted_replicas,
     const std::unordered_map<std::string, sai_object_id_t>&
@@ -3022,72 +2764,25 @@ ReturnCode L3MulticastManager::deleteIpMulticastGroupEntry(
   m_p4OidMapper->getOID(SAI_OBJECT_TYPE_IPMC_GROUP, entry.multicast_group_id,
                         &old_group_oid);
 
-  // Delete group members.  Do internal state-book keeping as go along, since
-  // re-allocation does not necessarily result in the same OID.
-  std::vector<P4Replica> deleted_replicas;
-  std::unordered_map<std::string, sai_object_id_t> replica_rif_map;
-  for (auto& replica : entry.active_replicas) {
-    // Fetch the RIF used by the member.
-    sai_object_id_t old_rif_oid = getRifOid(replica);
-    replica_rif_map[replica.key] = old_rif_oid;
-
-    // Fetch the member OID.
-    sai_object_id_t old_group_member_oid = SAI_NULL_OBJECT_ID;
-    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER, replica.key,
-                               &old_group_member_oid)) {
-      std::stringstream err_msg;
-      err_msg << "Cannot find oid associated with group member to delete "
-              << QuotedVar(replica.key);
-      SWSS_LOG_ERROR("%s", err_msg.str().c_str());
-      SWSS_RAISE_CRITICAL_STATE(err_msg.str());
-      return ReturnCode(StatusCode::SWSS_RC_INTERNAL) << err_msg.str();
-    }
-
-    // Delete group member
-    sai_status_t member_delete_status =
-        sai_ipmc_group_api->remove_ipmc_group_member(old_group_member_oid);
-    if (member_delete_status != SAI_STATUS_SUCCESS) {
-      // Attempt to re-add deleted group members.
-      ReturnCode restore_status =
-          restoreDeletedGroupMembers(deleted_replicas, replica_rif_map,
-                                     old_group_oid, replica.key, &entry);
-      if (!restore_status.ok()) {
-        SWSS_LOG_ERROR("%s", restore_status.message().c_str());
-        SWSS_RAISE_CRITICAL_STATE(restore_status.message());
-      }
-      // We still return the original failure when we successfully back
-      // out changes.
-      return member_delete_status;
-    }
-
-    // Update internal state to reflect successful delete.
-    m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER, replica.key);
-    const std::string router_interface_key =
-        KeyGenerator::generateMulticastRouterInterfaceKey(replica.port,
-                                                          replica.instance);
-    m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
-                                    router_interface_key);
-    deleted_replicas.push_back(replica);
-  }  // for replicas
-
   // Now delete the multicast group.
   sai_status_t group_delete_status =
       sai_ipmc_group_api->remove_ipmc_group(old_group_oid);
   if (group_delete_status != SAI_STATUS_SUCCESS) {
-    SWSS_LOG_ERROR("Failed to delete multicast group %s",
-                   QuotedVar(entry.multicast_group_id).c_str());
-    // On group removal failure, attempt to put the group members back.
-    ReturnCode restore_status = restoreDeletedGroupMembers(
-        deleted_replicas, replica_rif_map, old_group_oid,
-        entry.multicast_group_id, &entry);
-    if (!restore_status.ok()) {
-      SWSS_LOG_ERROR("%s", restore_status.message().c_str());
-      SWSS_RAISE_CRITICAL_STATE(restore_status.message());
-    }
-    return group_delete_status;
+    LOG_ERROR_AND_RETURN(ReturnCode(group_delete_status)
+                         << "Failed to delete multicast group "
+                         << QuotedVar(entry.multicast_group_id));
   }
 
   // Do internal bookkeeping to remove the multicast group.
+  for (const auto replica_list : entry.replicas) {
+    for (const auto replica : replica_list) {
+      const std::string router_interface_key =
+          KeyGenerator::generateMulticastRouterInterfaceKey(replica.port,
+                                                            replica.instance);
+      m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                      router_interface_key);
+    }
+  }
   removeGroupFromPortNameToIpmcGroupMap(entry);
   m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_IPMC_GROUP, entry.multicast_group_id);
   std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
@@ -3571,7 +3266,7 @@ std::string L3MulticastManager::verifyMulticastGroupStateCache(
 }
 
 std::string L3MulticastManager::verifyIpMulticastGroupStateAsicDb(
-    const P4MulticastGroupEntry* multicast_group_entry) {
+    P4MulticastGroupEntry* multicast_group_entry) {
   // Confirm group settings.
   sai_object_id_t ipmc_group_oid = SAI_NULL_OBJECT_ID;
   m_p4OidMapper->getOID(SAI_OBJECT_TYPE_IPMC_GROUP,
@@ -3594,37 +3289,6 @@ std::string L3MulticastManager::verifyIpMulticastGroupStateAsicDb(
                   /*allow_unknown=*/false);
   if (!err_msg.empty()) {
     return err_msg;
-  }
-
-  // Confirm group member settings.
-  for (auto& replica : multicast_group_entry->active_replicas) {
-    // Confirm have RIF for each replica.
-    sai_object_id_t rif_oid = getRifOid(replica);
-
-    sai_object_id_t group_member_oid = SAI_NULL_OBJECT_ID;
-    m_p4OidMapper->getOID(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER, replica.key,
-                          &group_member_oid);
-
-    // Ok to be null, since some actions do not allocate a next hop.
-    sai_object_id_t next_hop_oid = getNextHopOid(replica);
-
-    auto member_attrs = prepareMulticastGroupMemberSaiAttrs(
-        ipmc_group_oid, rif_oid, next_hop_oid);
-    exp = saimeta::SaiAttributeList::serialize_attr_list(
-        SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER, (uint32_t)member_attrs.size(),
-        member_attrs.data(), /*countOnly=*/false);
-    key = sai_serialize_object_type(SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER) + ":" +
-          sai_serialize_object_id(group_member_oid);
-    values.clear();
-    if (!m_asic_state_table.get(key, values)) {
-      return std::string("ASIC DB key not found ") + key;
-    }
-    std::string group_member_msg =
-        verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
-                    /*allow_unknown=*/false);
-    if (!group_member_msg.empty()) {
-      return group_member_msg;
-    }
   }
   return "";
 }
@@ -3687,7 +3351,7 @@ std::string L3MulticastManager::verifyL2MulticastGroupStateAsicDb(
 }
 
 std::string L3MulticastManager::verifyMulticastGroupStateAsicDb(
-    const P4MulticastGroupEntry* multicast_group_entry) {
+    P4MulticastGroupEntry* multicast_group_entry) {
   if (multicast_group_entry->is_ipmc) {
     return verifyIpMulticastGroupStateAsicDb(multicast_group_entry);
   } else {
