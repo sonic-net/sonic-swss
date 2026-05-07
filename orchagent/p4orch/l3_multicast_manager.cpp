@@ -1449,7 +1449,7 @@ ReturnCode L3MulticastManager::processMulticastGroupEntries(
     m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(tuple_list[i]),
                          kfvFieldsValues(tuple_list[i]), statuses[i],
                          /*replace=*/true);
-    if (statuses[i].ok() && entries[i].is_ipmc) {
+    if (statuses[i].ok()) {
       // Remove the queued fallback event if the group has been updated.
       m_fallback_groups.erase(entries[i].multicast_group_id);
     }
