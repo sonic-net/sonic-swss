@@ -141,23 +141,6 @@ static bool compareNHGFullList(const NextHopGroupFull *newNHG, const NextHopGrou
 }
 
 /*
- * Function used to get the remove and add set of NHG dependency
- */
-static void diffDependency(set<uint32_t> oldSet, set<uint32_t> newSet, set<uint32_t> &outAddSet,
-                                 set<uint32_t> &outRemoveSet) {
-    for (auto it = oldSet.begin(); it != oldSet.end(); it++) {
-        if (newSet.find(*it) == newSet.end()) {
-            outRemoveSet.insert(*it);
-        }
-    }
-    for (auto it = newSet.begin(); it != newSet.end(); it++) {
-        if (oldSet.find(*it) == oldSet.end()) {
-            outAddSet.insert(*it);
-        }
-    }
-}
-
-/*
  * Function used to compare nh_srv6 in NextHopGroupFull is equal or not
  */
 static bool compareNHGSRv6Fields(const NextHopGroupFull *new_nhg, const NextHopGroupFull *oldNHG) {
@@ -597,6 +580,12 @@ void NHGMgr::dumpNHGGroupFull(fib::NextHopGroupFull nhg) {
     for (auto it = nhg.nh_grp_full_list.begin(); it != nhg.nh_grp_full_list.end(); it++) {
         SWSS_LOG_DEBUG("   group member %d, num_direct %d", it->id, it->num_direct);
     }
+    for (auto it = nhg.depends.begin(); it != nhg.depends.end(); it++) {
+        SWSS_LOG_DEBUG("   depends member %d", *it);
+    }
+    for (auto it = nhg.dependents.begin(); it != nhg.dependents.end(); it++) {
+        SWSS_LOG_DEBUG("   dependents member %d", *it);
+    }
     if (nhg.nh_srv6 != nullptr && nhg.nh_srv6->seg6_segs != nullptr){
         char seg_str[INET6_ADDRSTRLEN] = {0};
         inet_ntop(AF_INET6, &nhg.nh_srv6->seg6_segs->seg[0], seg_str, INET6_ADDRSTRLEN);
@@ -693,7 +682,7 @@ RIBNHGEntry *RIBNHGTable::getEntry(uint32_t id) {
 /*
  * update RIB NHG entry from NHG full
  */
-void RIBNHGEntry::checkNeedUpdate(NextHopGroupFull newNhg, uint8_t afNew ,bool &updated, bool &updatedDependency) {
+void RIBNHGEntry::checkNeedUpdate(NextHopGroupFull newNhg, uint8_t afNew ,bool &updated) {
 
     if (newNhg.weight != m_nhg.weight) {
         updated = true;
@@ -729,7 +718,6 @@ void RIBNHGEntry::checkNeedUpdate(NextHopGroupFull newNhg, uint8_t afNew ,bool &
     }
 
     if (!compareDependsAndDependents(&newNhg, &m_nhg)) {
-        updatedDependency = true;
         updated = true;
 
     }
@@ -770,12 +758,6 @@ int RIBNHGTable::delEntry(uint32_t id) {
     }
 
     RIBNHGEntry *entry = m_nhg_map[id];
-    if (entry->getDependentsID().size() != 0) {
-        SWSS_LOG_ERROR("NextHop group id %d still has dependents.", id);
-        return -1;
-    }
-
-    removeNHGDependents(entry->getDependsID(), entry->getRIBID());
     this->subSonicNHGObjectRef(entry->getSonicNHGObjectKey());
     delete entry;
     m_nhg_map.erase(id);
@@ -803,10 +785,6 @@ int RIBNHGTable::addEntry(NextHopGroupFull nhg, uint8_t af) {
         return -1;
     }
 
-    if (addNHGDependents(entry->getDependsID(), entry->getRIBID()) != 0) {
-        return -1;
-    }
-
     m_nhg_map.insert(std::make_pair(nhg.id, entry));
     return 0;
 }
@@ -823,11 +801,9 @@ int RIBNHGTable::updateEntry(NextHopGroupFull nhg, uint8_t af, bool &updated) {
     auto it = m_nhg_map.find(nhg.id);
     RIBNHGEntry *entry = it->second;
     int ret = 0;
-    bool updatedDependency = false;
-    set<uint32_t> previousDepends = entry->getDependsID();
 
     // check NHG fields whether updated
-    entry->checkNeedUpdate(nhg, af, updated, updatedDependency);
+    entry->checkNeedUpdate(nhg, af, updated);
 
     // update rib entry
     if (updated){
@@ -838,43 +814,7 @@ int RIBNHGTable::updateEntry(NextHopGroupFull nhg, uint8_t af, bool &updated) {
         }
     }
 
-    // update dependency
-    if (updatedDependency) {
-        set<uint32_t> addSet, removeSet;
-        diffDependency(previousDepends, entry->getDependsID(), addSet, removeSet);
-        if (addNHGDependents(addSet, entry->getRIBID()) != 0) {
-            return -1;
-        }
-        removeNHGDependents(removeSet, entry->getRIBID());
-    }
     return 0;
-}
-
-/*
- * add NHG dependents relationship in dependents set of RIB NHG entry
- */
-int RIBNHGTable::addNHGDependents(set<uint32_t> depends, uint32_t id) {
-    for (auto it = depends.begin(); it != depends.end(); it++) {
-        RIBNHGEntry *e = getEntry(*it);
-        if (e == nullptr) {
-            return -1;
-        }
-        e->addDependentsMember(id);
-    }
-    return 0;
-}
-
-/*
- * remove NHG dependents relationship in dependents set of RIB NHG entry
- */
-void RIBNHGTable::removeNHGDependents(set<uint32_t> depends, uint32_t id) {
-    for (auto it = depends.begin(); it != depends.end(); it++) {
-        RIBNHGEntry *e = getEntry(*it);
-        if (e == nullptr) {
-            continue;
-        }
-        e->removeDependentsMember(id);
-    }
 }
 
 /*
@@ -1021,16 +961,6 @@ int RIBNHGEntry::createSRv6GatewayObjFromRIBEntry(SonicGateWayNHGObject &sonicNh
     return 0;
 }
 
-/* add the id which depends the entry */
-void RIBNHGEntry::addDependentsMember(uint32_t id) {
-    m_dependents.insert(id);
-}
-
-/* remove the id which not depends the entry anymore */
-void RIBNHGEntry::removeDependentsMember(uint32_t id) {
-    m_dependents.erase(id);
-}
-
 /* getter of group */
 unordered_map<uint32_t, uint8_t> RIBNHGEntry::getGroup() {
     return m_group;
@@ -1072,19 +1002,20 @@ int RIBNHGEntry::setEntry(NextHopGroupFull nhg, uint8_t af) {
     m_af = af;
     m_group.clear();
     m_depends.clear();
+    m_dependents.clear();
     m_resolvedGroup.clear();
 
-    // check the depends NHG entry and update m_depends set
+    // update m_depends set
     for (auto it = nhg.depends.begin(); it != nhg.depends.end(); it++) {
-        // validate group member
-        if (!m_table->isNHGExist(*it)) {
-            SWSS_LOG_ERROR("NextHop id %d in group not found.", *it);
-            return -1;
-        }
         m_depends.insert(*it);
         SWSS_LOG_DEBUG("NextHop id %d add depends %d.", m_rib_id, *it);
     }
 
+    // update m_dependents set
+    for (auto it = nhg.dependents.begin(); it != nhg.dependents.end(); it++) {
+        m_dependents.insert(*it);
+        SWSS_LOG_DEBUG("NextHop id %d add dependents %d.", m_rib_id, *it);
+    }
 
     // check the full list NHG entry and update m_group set
     for (auto it = nhg.nh_grp_full_list.begin(); it != nhg.nh_grp_full_list.end(); it++) {
