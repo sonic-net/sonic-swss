@@ -9,18 +9,22 @@
 #include <arpa/inet.h>
 
 #include "logger.h"
+#include "portsorch.h"
 #include "rediscommand.h"
 #include "schema.h"
 #include "table.h"
 
 extern "C" {
 #include "sai.h"
+#include "saiacl.h"
 #include "saitam.h"
 #include "saitypes.h"
 }
 
 extern sai_tam_api_t        *sai_tam_api;
+extern sai_acl_api_t        *sai_acl_api;
 extern sai_object_id_t       gSwitchId;
+extern PortsOrch             *gPortsOrch;
 
 using std::string;
 using std::vector;
@@ -154,7 +158,8 @@ TamOrch::~TamOrch()
 {
     SWSS_LOG_ENTER();
 
-    /* Tear down in reverse-dependency order. */
+    /* Tear down in reverse-dependency order. ACL first (references TAM_INT). */
+    destroyTamIntAcl();
     for (auto &kv : m_tamMap)        removeSaiObject(kv.second, SAI_OBJECT_TYPE_TAM);
     for (auto &kv : m_telemetryMap)  removeSaiObject(kv.second, SAI_OBJECT_TYPE_TAM_TELEMETRY);
     for (auto &kv : m_intMap)        removeSaiObject(kv.second, SAI_OBJECT_TYPE_TAM_INT);
@@ -203,16 +208,19 @@ bool TamOrch::isPlatformSupported()
         return false;
     }
 
-    m_capable = cap.create_implemented && cap.set_implemented;
+    m_capable = cap.create_implemented;
     if (!m_capable)
     {
-        SWSS_LOG_WARN("TAM_INT_ATTR_TYPE not implemented on this platform "
-                      "(create=%d set=%d). IFAv2 disabled.",
-                      cap.create_implemented, cap.set_implemented);
+        SWSS_LOG_WARN("TAM_INT_ATTR_TYPE not creatable on this platform "
+                      "(create=%d). IFAv2 disabled.",
+                      cap.create_implemented);
     }
     else
     {
-        SWSS_LOG_NOTICE("TAM_INT capability OK — IFAv2 supported on this platform.");
+        SWSS_LOG_NOTICE("TAM_INT capability OK (create=%d set=%d get=%d) "
+                        "— IFAv2 supported on this platform.",
+                        cap.create_implemented, cap.set_implemented,
+                        cap.get_implemented);
     }
 
     return m_capable;
@@ -536,10 +544,36 @@ bool TamOrch::createSaiTamInt(const string &name,
     attr.value.s32 = SAI_TAM_INT_TYPE_IFA2;
     attrs.push_back(attr);
 
+    uint64_t device_id_val = 0;
+    string s;
+    if (getField(values, "device_id", s) && parseUint(s, device_id_val))
+    {
+        attr = sai_attribute_t{};
+        attr.id = SAI_TAM_INT_ATTR_DEVICE_ID;
+        attr.value.u32 = static_cast<uint32_t>(device_id_val);
+        attrs.push_back(attr);
+    }
+    else
+    {
+        attr = sai_attribute_t{};
+        attr.id = SAI_TAM_INT_ATTR_DEVICE_ID;
+        attr.value.u32 = 0;
+        attrs.push_back(attr);
+    }
+
+    attr = sai_attribute_t{};
+    attr.id = SAI_TAM_INT_ATTR_INT_PRESENCE_TYPE;
+    attr.value.s32 = SAI_TAM_INT_PRESENCE_TYPE_L3_PROTOCOL;
+    attrs.push_back(attr);
+
+    attr = sai_attribute_t{};
+    attr.id = SAI_TAM_INT_ATTR_INT_PRESENCE_L3_PROTOCOL;
+    attr.value.u8 = 0x7F;
+    attrs.push_back(attr);
+
     attr = sai_attribute_t{};
     attr.id = SAI_TAM_INT_ATTR_INLINE;
     bool inl = true;
-    string s;
     if (getField(values, "inline", s)) parseBool(s, inl);
     attr.value.booldata = inl;
     attrs.push_back(attr);
@@ -823,6 +857,29 @@ task_process_status TamOrch::doTaskTam(const string &op,
         if (oid != SAI_NULL_OBJECT_ID)
         {
             m_tamMap[name] = oid;
+
+            /* Activate IFAv2 on all ports via ACL (pages 7-8 of NVIDIA
+             * IFA/INT overview).  Use the first entry from int_objects
+             * (the same field createSaiTam resolved) to find the TAM_INT
+             * OID for the ACL entry's ACTION_TAM_INT_OBJECT. */
+            string int_objs_str;
+            if (getField(values, "int_objects", int_objs_str) && !int_objs_str.empty())
+            {
+                auto refs = parseList(int_objs_str);
+                if (!refs.empty())
+                {
+                    auto it = m_intMap.find(refs[0]);
+                    if (it != m_intMap.end() && it->second != SAI_NULL_OBJECT_ID)
+                    {
+                        if (!createTamIntAcl(it->second))
+                        {
+                            SWSS_LOG_WARN("TAM '%s': ACL activation failed; "
+                                          "IFAv2 metadata insertion will not work "
+                                          "until ACL is created", name.c_str());
+                        }
+                    }
+                }
+            }
         }
         return task_process_status::task_success;
     }
@@ -838,6 +895,150 @@ task_process_status TamOrch::doTaskTam(const string &op,
         return task_process_status::task_success;
     }
     return task_process_status::task_ignore;
+}
+
+/* ------------------------------------------------------------------ */
+/* TAM INT ACL — ACL-based activation of IFAv2 (pages 7-8)           */
+/*                                                                    */
+/* Creates an ACL TABLE with SAI_ACL_TABLE_ATTR_FIELD_TAM_INT_TYPE,   */
+/* adds it to every physical port's ingress ACL group, and creates a  */
+/* single ACL ENTRY that matches IFA2 packets and triggers metadata   */
+/* insertion via ACTION_INT_INSERT + ACTION_TAM_INT_OBJECT.           */
+/* ------------------------------------------------------------------ */
+
+bool TamOrch::createTamIntAcl(sai_object_id_t tam_int_oid)
+{
+    if (m_tamIntAclTableId != SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_NOTICE("TAM INT ACL already created");
+        return true;
+    }
+
+    sai_status_t st;
+
+    /* --- 1. Create ACL TABLE with TAM INT field --- */
+    sai_attribute_t tbl_attrs[3];
+
+    tbl_attrs[0].id = SAI_ACL_TABLE_ATTR_ACL_STAGE;
+    tbl_attrs[0].value.s32 = SAI_ACL_STAGE_INGRESS;
+
+    tbl_attrs[1].id = SAI_ACL_TABLE_ATTR_FIELD_TAM_INT_TYPE;
+    tbl_attrs[1].value.booldata = true;
+
+    sai_int32_t bp_types[] = {SAI_ACL_BIND_POINT_TYPE_PORT, SAI_ACL_BIND_POINT_TYPE_LAG};
+    tbl_attrs[2].id = SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST;
+    tbl_attrs[2].value.s32list.count = 2;
+    tbl_attrs[2].value.s32list.list = bp_types;
+
+    st = sai_acl_api->create_acl_table(&m_tamIntAclTableId, gSwitchId, 3, tbl_attrs);
+    if (st != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create TAM INT ACL table: rc=%d", st);
+        return false;
+    }
+    SWSS_LOG_NOTICE("TAM INT ACL table created: OID=0x%" PRIx64, m_tamIntAclTableId);
+
+    /* --- 2. Add table to each port's ingress ACL group --- */
+    if (gPortsOrch)
+    {
+        auto &ports = gPortsOrch->getAllPorts();
+        for (auto &kv : ports)
+        {
+            Port &port = kv.second;
+            if (port.m_type != Port::PHY) continue;
+            if (port.m_ingress_acl_table_group_id == SAI_NULL_OBJECT_ID) continue;
+
+            sai_object_id_t member_id = SAI_NULL_OBJECT_ID;
+            sai_attribute_t mem_attrs[3];
+
+            mem_attrs[0].id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_GROUP_ID;
+            mem_attrs[0].value.oid = port.m_ingress_acl_table_group_id;
+
+            mem_attrs[1].id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_ID;
+            mem_attrs[1].value.oid = m_tamIntAclTableId;
+
+            mem_attrs[2].id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_PRIORITY;
+            mem_attrs[2].value.u32 = 100;
+
+            st = sai_acl_api->create_acl_table_group_member(&member_id, gSwitchId, 3, mem_attrs);
+            if (st != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_WARN("Failed to add TAM INT ACL table to group 0x%" PRIx64
+                              " for port %s: rc=%d",
+                              port.m_ingress_acl_table_group_id,
+                              port.m_alias.c_str(), st);
+                continue;
+            }
+            m_tamIntAclGroupMemberIds.push_back(member_id);
+            SWSS_LOG_NOTICE("TAM INT ACL group member 0x%" PRIx64 " for port %s",
+                            member_id, port.m_alias.c_str());
+        }
+    }
+
+    if (m_tamIntAclGroupMemberIds.empty())
+    {
+        SWSS_LOG_WARN("No ports bound to TAM INT ACL — metadata insertion will not activate");
+    }
+
+    /* --- 3. Create ACL ENTRY with TAM INT match + actions --- */
+    sai_attribute_t entry_attrs[5];
+    int attr_count = 0;
+
+    entry_attrs[attr_count].id = SAI_ACL_ENTRY_ATTR_TABLE_ID;
+    entry_attrs[attr_count].value.oid = m_tamIntAclTableId;
+    attr_count++;
+
+    entry_attrs[attr_count].id = SAI_ACL_ENTRY_ATTR_PRIORITY;
+    entry_attrs[attr_count].value.u32 = 1000;
+    attr_count++;
+
+    entry_attrs[attr_count].id = SAI_ACL_ENTRY_ATTR_FIELD_TAM_INT_TYPE;
+    entry_attrs[attr_count].value.aclfield.enable = true;
+    entry_attrs[attr_count].value.aclfield.data.s32 = SAI_TAM_INT_TYPE_IFA2;
+    entry_attrs[attr_count].value.aclfield.mask.s32 = 0xFFFFFFFF;
+    attr_count++;
+
+    entry_attrs[attr_count].id = SAI_ACL_ENTRY_ATTR_ACTION_INT_INSERT;
+    entry_attrs[attr_count].value.aclaction.enable = true;
+    entry_attrs[attr_count].value.aclaction.parameter.booldata = true;
+    attr_count++;
+
+    entry_attrs[attr_count].id = SAI_ACL_ENTRY_ATTR_ACTION_TAM_INT_OBJECT;
+    entry_attrs[attr_count].value.aclaction.enable = true;
+    entry_attrs[attr_count].value.aclaction.parameter.oid = tam_int_oid;
+    attr_count++;
+
+    st = sai_acl_api->create_acl_entry(&m_tamIntAclEntryId, gSwitchId, attr_count, entry_attrs);
+    if (st != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create TAM INT ACL entry: rc=%d", st);
+        destroyTamIntAcl();
+        return false;
+    }
+    SWSS_LOG_NOTICE("TAM INT ACL entry created: OID=0x%" PRIx64
+                    " (TAM_INT=0x%" PRIx64 ", %zu port bindings)",
+                    m_tamIntAclEntryId, tam_int_oid,
+                    m_tamIntAclGroupMemberIds.size());
+    return true;
+}
+
+void TamOrch::destroyTamIntAcl()
+{
+    if (m_tamIntAclEntryId != SAI_NULL_OBJECT_ID)
+    {
+        sai_acl_api->remove_acl_entry(m_tamIntAclEntryId);
+        m_tamIntAclEntryId = SAI_NULL_OBJECT_ID;
+    }
+    for (auto mid : m_tamIntAclGroupMemberIds)
+    {
+        sai_acl_api->remove_acl_table_group_member(mid);
+    }
+    m_tamIntAclGroupMemberIds.clear();
+    if (m_tamIntAclTableId != SAI_NULL_OBJECT_ID)
+    {
+        sai_acl_api->remove_acl_table(m_tamIntAclTableId);
+        m_tamIntAclTableId = SAI_NULL_OBJECT_ID;
+    }
 }
 
 /* ------------------------------------------------------------------ */
