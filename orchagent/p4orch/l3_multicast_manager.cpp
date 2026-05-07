@@ -2226,12 +2226,14 @@ ReturnCode L3MulticastManager::addIpMulticastGroupEntry(
   gLabelMapper->setLabel(SAI_OBJECT_TYPE_IPMC_GROUP, mapper_key, group_label);
 
   // Group members reference multicast_router_interface entries.
-  for (auto& replica : entry.active_replicas) {
-    const std::string router_interface_key =
-        KeyGenerator::generateMulticastRouterInterfaceKey(replica.port,
-                                                          replica.instance);
-    m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
-                                    router_interface_key);
+  for (const auto replica_list : entry.replicas) {
+    for (const auto replica : replica_list) {
+      const std::string router_interface_key =
+          KeyGenerator::generateMulticastRouterInterfaceKey(replica.port,
+                                                            replica.instance);
+      m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                      router_interface_key);
+    }
   }
 
   // Update internal state.
@@ -2451,7 +2453,8 @@ std::vector<ReturnCode> L3MulticastManager::addMulticastGroupEntries(
 }
 
 ReturnCode L3MulticastManager::updateIpMulticastGroupEntry(
-    P4MulticastGroupEntry& entry, P4MulticastGroupEntry* old_entry) {
+    P4MulticastGroupEntry& entry, P4MulticastGroupEntry* old_entry,
+    bool fallback_event) {
   SWSS_LOG_ENTER();
 
   // Fetch the group OID.
@@ -2480,24 +2483,31 @@ ReturnCode L3MulticastManager::updateIpMulticastGroupEntry(
     }
   }
 
-  for (auto& replica : old_entry->active_replicas) {
-    const std::string router_interface_key =
-        KeyGenerator::generateMulticastRouterInterfaceKey(replica.port,
-                                                          replica.instance);
-    m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
-                                    router_interface_key);
+  // Do not update reference for fallback event update.
+  if (!fallback_event) {
+    for (const auto replica_list : old_entry->replicas) {
+      for (const auto replica : replica_list) {
+        const std::string router_interface_key =
+            KeyGenerator::generateMulticastRouterInterfaceKey(replica.port,
+                                                              replica.instance);
+        m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                        router_interface_key);
+      }
     }
 
-  for (auto& replica : entry.active_replicas) {
-    const std::string router_interface_key =
-        KeyGenerator::generateMulticastRouterInterfaceKey(replica.port,
-                                                          replica.instance);
-    m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
-                                    router_interface_key);
+    for (const auto replica_list : entry.replicas) {
+      for (const auto replica : replica_list) {
+        const std::string router_interface_key =
+            KeyGenerator::generateMulticastRouterInterfaceKey(replica.port,
+                                                              replica.instance);
+        m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                                        router_interface_key);
+      }
     }
 
-  removeGroupFromPortNameToIpmcGroupMap(*old_entry);
-  insertGroupInPortNameToIpmcGroupMap(entry);
+    removeGroupFromPortNameToIpmcGroupMap(*old_entry);
+    insertGroupInPortNameToIpmcGroupMap(entry);
+  }
 
   // Final bookkeeping. Updated the original entry in place.
   *old_entry = entry;
@@ -2650,7 +2660,7 @@ ReturnCode L3MulticastManager::updateL2MulticastGroupEntry(
 }
 
 std::vector<ReturnCode> L3MulticastManager::updateMulticastGroupEntries(
-    std::vector<P4MulticastGroupEntry>& entries) {
+    std::vector<P4MulticastGroupEntry>& entries, bool fallback_event) {
   // An update operation has to figure out what replicas associated with the
   // multicast group have been added, deleted, or left unchanged.
   // Replicas will be deleted before new ones are added, to avoid the
@@ -2686,7 +2696,8 @@ std::vector<ReturnCode> L3MulticastManager::updateMulticastGroupEntries(
     }
 
     if (is_ipmc) {
-      statuses[i] = updateIpMulticastGroupEntry(entry, old_entry_ptr);
+      statuses[i] =
+          updateIpMulticastGroupEntry(entry, old_entry_ptr, fallback_event);
     } else {
       statuses[i] = updateL2MulticastGroupEntry(entry, old_entry_ptr);
     }
@@ -3502,8 +3513,36 @@ void L3MulticastManager::updateFallbackGroup(const std::string& port,
 void L3MulticastManager::processFallbackGroupEvent() {
   SWSS_LOG_ENTER();
 
-  // TODO(b/377401287): Process fallback group events in m_fallback_groups.
-  m_fallback_groups.clear();
+  uint count = 0;
+  P4MulticastGroupEntry entry;
+  std::vector<P4MulticastGroupEntry> entries;
+  auto it = m_fallback_groups.begin();
+  while (it != m_fallback_groups.end()) {
+    entry = *getMulticastGroupEntry(*it);
+    setActiveReplicas(entry);
+    entries.push_back(entry);
+    it = m_fallback_groups.erase(it);
+    if (++count >= kMaxFallbackGroupBulkSize) {
+      break;
+    }
+  }
+  if (!entries.empty()) {
+    auto status = updateMulticastGroupEntries(entries, /*fallback_event=*/true);
+    for (size_t i = 0; i < entries.size(); ++i) {
+      if (!status[i].ok()) {
+        SWSS_RAISE_CRITICAL_STATE(
+            "Failed to process fallback group event for group " +
+            QuotedVar(entries[i].multicast_group_id));
+      } else {
+        SWSS_LOG_NOTICE("Fallback group event processed for group %s",
+                        entries[i].multicast_group_id.c_str());
+      }
+    }
+  }
+
+  if (!m_fallback_groups.empty()) {
+    m_fallback_event->notify();
+  }
 }
 
 bool L3MulticastManager::checkActiveReplicasChange(
