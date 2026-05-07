@@ -18,6 +18,10 @@ class MockSaiIpmcGroup {
   MOCK_METHOD1(remove_ipmc_group,
                sai_status_t(_In_ sai_object_id_t ipmc_group_id));
 
+  MOCK_METHOD2(set_ipmc_group_attribute,
+               sai_status_t(_In_ sai_object_id_t ipmc_group_id,
+                            _In_ const sai_attribute_t* attr));
+
   MOCK_METHOD4(create_ipmc_group_member,
                sai_status_t(_Out_ sai_object_id_t* ipmc_group_member_id,
                             _In_ sai_object_id_t switch_id,
@@ -45,6 +49,9 @@ sai_status_t mock_create_ipmc_group(_Out_ sai_object_id_t* ipmc_group_id,
                                     _In_ const sai_attribute_t* attr_list);
 
 sai_status_t mock_remove_ipmc_group(_In_ sai_object_id_t ipmc_group_id);
+
+sai_status_t mock_set_ipmc_group_attribute(_In_ sai_object_id_t ipmc_group_id,
+                                           _In_ const sai_attribute_t* attr);
 
 sai_status_t mock_create_ipmc_group_member(
     _Out_ sai_object_id_t* ipmc_group_member_id, _In_ sai_object_id_t switch_id,

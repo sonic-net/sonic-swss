@@ -1478,8 +1478,6 @@ class TestP4RTL3MulticastGroup(object):
         self._p4rt_l3_multicast_group_intf.TBL_NAME)
     self.asic_db_group_table = (
         self._p4rt_l3_multicast_group_intf.ASIC_DB_GROUP_TBL_NAME)
-    self.asic_db_group_member_table = (
-        self._p4rt_l3_multicast_group_intf.ASIC_DB_GROUP_MEMBER_TBL_NAME)
     self.asic_db_rif_table = (
         self._p4rt_l3_multicast_router_intf.ASIC_DB_TBL_NAME)
     self.asic_db_next_hop_table = (
@@ -1514,18 +1512,6 @@ class TestP4RTL3MulticastGroup(object):
       if key not in original_entries:
         return key
     return "0"
-
-  def get_added_multicast_group_member_oids(self, original_entries):
-    """Returns OID keys of multicast group members added"""
-    member_oids = []
-
-    group_member_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self._p4rt_l3_multicast_group_intf.ASIC_DB_GROUP_MEMBER_TBL_NAME)
-    for key in group_member_entries:
-      if key not in original_entries:
-        member_oids.append(key)
-    return member_oids
 
   def get_added_l2_multicast_group_member_oids(self, original_entries):
     """Returns OID keys of L2 multicast group members added"""
@@ -1709,19 +1695,14 @@ class TestP4RTL3MulticastGroup(object):
       util.verify_attr(fvs_asic_group_member, asic_group_member_attr_list)
     return mcast_group_key, attr_list, group_oid_to_ret, new_group_member_oids
 
-  def add_and_verify_multicast_group_with_next_hop(self, group_id=None,
-                                                   replicas=None, next_hop_oids=None,
-                                                   new_replicas=None, group_oid=None):
+  def add_and_verify_multicast_group_with_next_hop(
+    self, group_id=None, replicas=None, next_hop_oids=None, group_oid=None):
     """Adds a multicast group entry that uses next hop and verifies APP DB and ASIC DB"""
     start_app_db_entries = util.get_keys(
         self._p4rt_l3_multicast_group_intf.appl_db, self.appl_db_table)
     start_asic_db_group_entries = util.get_keys(
         self._p4rt_l3_multicast_group_intf.asic_db,
         self.asic_db_group_table)
-    start_asic_db_group_member_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_member_table)
-    assert len(next_hop_oids) == len(new_replicas)
 
     # Add the group member.
     mcast_group_key, attr_list = (
@@ -1764,42 +1745,19 @@ class TestP4RTL3MulticastGroup(object):
 
     (status_asic_group, fvs_asic_group) = util.get_key(
          self._p4rt_l3_multicast_group_intf.asic_db,
-         self._p4rt_l3_multicast_group_intf.ASIC_DB_GROUP_TBL_NAME,
-         group_oid_to_ret)
-    assert status_asic_group == True
-    asic_group_attr_list = [
-        (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_LABEL,
-         "any_value"),
-    ]
-    util.verify_attr(fvs_asic_group, asic_group_attr_list)
-
-    # Verify group member.
-    mcast_group_member_asic_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_member_table)
-    assert len(mcast_group_member_asic_entries) == (
-        len(start_asic_db_group_member_entries) + len(new_replicas))
-
-    new_group_member_oids = self.get_added_multicast_group_member_oids(
-        start_asic_db_group_member_entries)
-    assert len(new_group_member_oids) == len(new_replicas)
-
-    for idx, group_member_oid in enumerate(new_group_member_oids):
-        (status_asic_group_member, fvs_asic_group_member) = util.get_key(
-            self._p4rt_l3_multicast_group_intf.asic_db,
-            self._p4rt_l3_multicast_group_intf.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-            group_member_oid)
-        assert status_asic_group_member == True
-
-        asic_group_member_attr_list = [
-            (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_ID,
-             group_oid_to_ret),
-            (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_OUTPUT_ID,
-             next_hop_oids[idx]),
+            self._p4rt_l3_multicast_group_intf.ASIC_DB_GROUP_TBL_NAME,
+            group_oid_to_ret)
+        assert status_asic_group == True
+        asic_group_attr_list = [
+            (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_LABEL,
+                "any_value"),
+            (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_WITH_MEMBERS,
+                "true"),
+            (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_OUTPUT_NH_LIST,
+                str(len(next_hop_oids)) + ":" + ",".join(next_hop_oids)),
         ]
-        util.verify_attr(fvs_asic_group_member,
-                         asic_group_member_attr_list)
-    return mcast_group_key, attr_list, group_oid_to_ret, new_group_member_oids
+        util.verify_attr(fvs_asic_group, asic_group_attr_list)
+        return mcast_group_key, attr_list, group_oid_to_ret
 
   def add_and_verify_l2_multicast_group(self, group_id=None, replicas=None,
                                         bridge_port_oids=None,
@@ -1990,70 +1948,35 @@ class TestP4RTL3MulticastGroup(object):
     original_asic_db_group_entries = util.get_keys(
         self._p4rt_l3_multicast_group_intf.asic_db,
         self.asic_db_group_table)
-    original_asic_db_group_member_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_member_table)
 
     # For this test, we need to setup two RIFs (for the two group members).
     rif_oid_0 = self.add_rif()
     rif_oid_1 = self.add_rif(port_id="Ethernet4")
 
     ####################################
-    # Add operations
+    # Create group
     ####################################
-    # Add two group members to same multicast group.  We add one replica at a
-    # time to allow us to determine which group_member oid was assigned to each.
-    mcast_group_key_a, attr_list_a, group_oid_a, group_member_oids_a = (
+    mcast_group_key_a, attr_list_a, group_oid_a = (
         self.add_and_verify_multicast_group(replicas=[("Ethernet8", "0x0")],
-                                            rif_oids=[rif_oid_0],
-                                            new_replicas=[("Ethernet8", "0x0")]))
-    mcast_group_key_b, attr_list_b, group_oid_b, group_member_oids_b = (
+                                            next_hop_oids=[next_hop_oid_0]))
+
+        ####################################
+        # Add a new group member
+        ####################################
+        mcast_group_key_b, attr_list_b, group_oid_b = (
         self.add_and_verify_multicast_group(replicas=[("Ethernet8", "0x0"),
                                                       ("Ethernet4", "0x0")],
-                                            rif_oids=[rif_oid_1],
-                                            new_replicas=[("Ethernet4", "0x0")],
+                                            next_hop_oids=[next_hop_oid_0, next_hop_oid_1],
                                             group_oid=group_oid_a))
 
     ####################################
-    # Delete group member (via update operation)
+    # Delete a group member
     ####################################
-    mcast_group_key_1, attr_list_1 = (
-        self._p4rt_l3_multicast_group_intf.create_multicast_group_entry(
-            replicas=[("Ethernet4", "0x0")]))
-    self._p4rt_l3_multicast_group_intf.verify_response(mcast_group_key_1,
-                                                       attr_list_1, "SWSS_RC_SUCCESS")
-
-    # Check that APP DB entry is still there.
-    mcast_group_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.appl_db, self.appl_db_table)
-    assert len(mcast_group_entries) == (len(original_app_db_entries) + 1)
-
-    # Check that ASIC DB entries were removed (both group and member).
-    mcast_group_asic_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_table)
-    assert len(mcast_group_asic_entries) == (
-        len(original_asic_db_group_entries) + 1)
-    mcast_group_member_asic_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_member_table)
-    assert len(mcast_group_member_asic_entries) == (
-        len(original_asic_db_group_member_entries) + 1)
-
-    # Confirm that Ethernet4 replica is still there.
-    (status_asic_group_member, fvs_asic_group_member) = util.get_key(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self._p4rt_l3_multicast_group_intf.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-        group_member_oids_b[0])
-    assert status_asic_group_member == True
-
-    asic_group_member_attr_list = [
-        (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_ID,
-         group_oid_a),
-        (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_OUTPUT_ID,
-         rif_oid_1),
-    ]
-    util.verify_attr(fvs_asic_group_member, asic_group_member_attr_list)
+    mcast_group_key_c, attr_list_c, group_oid_c = (
+            self.add_and_verify_multicast_group_with_next_hop(
+                replicas=[("Ethernet4", "0x0")],
+                next_hop_oids=[next_hop_oid_1],
+                group_oid=group_oid_b))
 
     self._cleanup()
 
@@ -2074,9 +1997,6 @@ class TestP4RTL3MulticastGroup(object):
     original_asic_db_group_entries = util.get_keys(
         self._p4rt_l3_multicast_group_intf.asic_db,
         self.asic_db_group_table)
-    original_asic_db_group_member_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_member_table)
 
     ####################################
     # Delete operation
@@ -2099,11 +2019,6 @@ class TestP4RTL3MulticastGroup(object):
         self._p4rt_l3_multicast_group_intf.asic_db,
         self.asic_db_group_table)
     assert len(mcast_group_asic_entries) == len(original_asic_db_group_entries)
-    mcast_group_member_asic_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_member_table)
-    assert len(mcast_group_member_asic_entries) == (
-        len(original_asic_db_group_member_entries))
 
     self._cleanup()
 
@@ -2117,9 +2032,6 @@ class TestP4RTL3MulticastGroup(object):
     original_asic_db_group_entries = util.get_keys(
         self._p4rt_l3_multicast_group_intf.asic_db,
         self.asic_db_group_table)
-    original_asic_db_group_member_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_member_table)
 
     ####################################
     # Add operation
@@ -2139,11 +2051,6 @@ class TestP4RTL3MulticastGroup(object):
         self._p4rt_l3_multicast_group_intf.asic_db,
         self.asic_db_group_table)
     assert len(mcast_group_asic_entries) == len(original_asic_db_group_entries)
-    mcast_group_member_asic_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_member_table)
-    assert len(mcast_group_member_asic_entries) == (
-        len(original_asic_db_group_member_entries))
 
     self._cleanup()
 
@@ -2246,9 +2153,6 @@ class TestP4RTL3MulticastGroup(object):
     original_asic_db_group_entries = util.get_keys(
         self._p4rt_l3_multicast_group_intf.asic_db,
         self.asic_db_group_table)
-    original_asic_db_group_member_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_member_table)
 
     # To be able to add multicast groups and members, we need the corresponding
     # router interfaces and next hops to have been created.
@@ -2259,21 +2163,19 @@ class TestP4RTL3MulticastGroup(object):
     # Add operation
     ####################################
     # Add one L3 multicast group entry (one group member).
-    mcast_group_key, attr_list, group_oid, group_member_oids = (
+    mcast_group_key, attr_list, group_oid = (
         self.add_and_verify_multicast_group_with_next_hop(
             replicas=[("Ethernet8", "0x0")],
-            next_hop_oids=[next_hop_oid_0],
-            new_replicas=[("Ethernet8", "0x0")]))
+            next_hop_oids=[next_hop_oid_0]))
 
     ####################################
     # Update operation
     ####################################
     # We'll add a new replica to the same multicast group.
-    mcast_group_key_1, attr_list_1, group_oid_1, group_member_oids_1 = (
+    mcast_group_key_1, attr_list_1, group_oid_1 = (
         self.add_and_verify_multicast_group_with_next_hop(
             replicas=[("Ethernet8", "0x0"), ("Ethernet4", "0x0")],
-            next_hop_oids=[next_hop_oid_1],
-            new_replicas=[("Ethernet4", "0x0")],
+            next_hop_oids=[next_hop_oid_0, next_hop_oid_1],
             group_oid=group_oid))
 
     ####################################
@@ -2294,11 +2196,6 @@ class TestP4RTL3MulticastGroup(object):
         self.asic_db_group_table)
     assert len(mcast_group_asic_entries) == len(
         original_asic_db_group_entries)
-    mcast_group_member_asic_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_member_table)
-    assert len(mcast_group_member_asic_entries) == (
-        len(original_asic_db_group_member_entries))
 
     self._cleanup()
 
