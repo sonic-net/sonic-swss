@@ -849,37 +849,45 @@ task_process_status TamOrch::doTaskTam(const string &op,
                           name.c_str());
             return task_process_status::task_success;
         }
+
+        /* ACL activation only needs the TAM_INT OID (not the TAM parent).
+         * Create the ACL first so IFAv2 is armed even when the vendor SAI
+         * does not support SAI_TAM_ATTR_INT_OBJECTS_LIST (e.g. Mellanox). */
+        string int_objs_str;
+        if (getField(values, "int_objects", int_objs_str) && !int_objs_str.empty())
+        {
+            auto refs = parseList(int_objs_str);
+            if (!refs.empty())
+            {
+                auto it = m_intMap.find(refs[0]);
+                if (it != m_intMap.end() && it->second != SAI_NULL_OBJECT_ID)
+                {
+                    if (!createTamIntAcl(it->second))
+                    {
+                        SWSS_LOG_WARN("TAM '%s': ACL activation failed; "
+                                      "IFAv2 metadata insertion will not work "
+                                      "until ACL is created", name.c_str());
+                    }
+                }
+                else
+                {
+                    SWSS_LOG_INFO("TAM '%s': int_object '%s' not yet ready, "
+                                  "ACL creation deferred", name.c_str(),
+                                  refs[0].c_str());
+                }
+            }
+        }
+
         sai_object_id_t oid = SAI_NULL_OBJECT_ID;
         if (!createSaiTam(name, values, oid))
         {
-            return task_process_status::task_need_retry;
+            SWSS_LOG_WARN("TAM '%s': SAI TAM object creation failed (vendor "
+                          "may not support INT_OBJECTS_LIST); ACL-based "
+                          "activation may still work", name.c_str());
         }
         if (oid != SAI_NULL_OBJECT_ID)
         {
             m_tamMap[name] = oid;
-
-            /* Activate IFAv2 on all ports via ACL (pages 7-8 of NVIDIA
-             * IFA/INT overview).  Use the first entry from int_objects
-             * (the same field createSaiTam resolved) to find the TAM_INT
-             * OID for the ACL entry's ACTION_TAM_INT_OBJECT. */
-            string int_objs_str;
-            if (getField(values, "int_objects", int_objs_str) && !int_objs_str.empty())
-            {
-                auto refs = parseList(int_objs_str);
-                if (!refs.empty())
-                {
-                    auto it = m_intMap.find(refs[0]);
-                    if (it != m_intMap.end() && it->second != SAI_NULL_OBJECT_ID)
-                    {
-                        if (!createTamIntAcl(it->second))
-                        {
-                            SWSS_LOG_WARN("TAM '%s': ACL activation failed; "
-                                          "IFAv2 metadata insertion will not work "
-                                          "until ACL is created", name.c_str());
-                        }
-                    }
-                }
-            }
         }
         return task_process_status::task_success;
     }
