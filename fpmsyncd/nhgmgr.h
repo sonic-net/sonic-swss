@@ -633,16 +633,6 @@ namespace swss {
          */
         bool getNhgEnableStatus();
 
-        /*
-         * add dependents member of RIBNHGEntry into m_dependents
-         */
-        void addDependentsMember(uint32_t id);
-
-        /*
-         * remove dependents member of RIBNHGEntry from m_dependents
-         */
-        void removeDependentsMember(uint32_t id);
-
         SonicNHGObjectKey getSonicNHGObjectKey(){
             return m_sonic_nhg_key;
         }
@@ -651,7 +641,7 @@ namespace swss {
          * out: updated, true if the entry is updated
          * out: updatedDependency, true if the entry dependency is updated
          */
-        void checkNeedUpdate(NextHopGroupFull newNHG, uint8_t newAF, bool &updated, bool &updatedDependency);
+        void checkNeedUpdate(NextHopGroupFull newNHG, uint8_t newAF, bool &updated);
 
     private:
 
@@ -828,12 +818,6 @@ namespace swss {
 
         // get entry from table by rib ID
         RIBNHGEntry *getEntry(uint32_t id);
-
-        // add dependents member of RIBNHGEntry into m_dependents
-        int addNHGDependents(set<uint32_t> depends, uint32_t id);
-
-        // remove dependents member of RIBNHGEntry from m_dependents
-        void removeNHGDependents(set<uint32_t> depends, uint32_t id);
 
         // check if NHG entry exist in table by rib ID
         bool isNHGExist(uint32_t id);
