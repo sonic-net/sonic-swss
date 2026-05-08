@@ -573,7 +573,7 @@ bool TamOrch::createSaiTamInt(const string &name,
 
     attr = sai_attribute_t{};
     attr.id = SAI_TAM_INT_ATTR_INT_PRESENCE_L3_PROTOCOL;
-    attr.value.u8 = 0x7F;
+    attr.value.u8 = 0xFD;
     attrs.push_back(attr);
 
     attr = sai_attribute_t{};
