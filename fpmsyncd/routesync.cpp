@@ -15,6 +15,7 @@
 #include <string.h>
 #include <arpa/inet.h>
 #include <linux/nexthop.h>
+#include <yaml-cpp/yaml.h>
 #include <linux/lwtunnel.h>
 #include <linux/seg6_iptunnel.h>
 
@@ -167,6 +168,20 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_nl_sock = nl_socket_alloc();
     nl_connect(m_nl_sock, NETLINK_ROUTE);
     rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
+
+    YAML::Node root;
+    try
+    {
+        root = YAML::LoadFile("/etc/sonic/constants.yml");
+        route_tag_not_to_appdb = root["constants"]["bgp"]["route_do_not_send_appdb_tag"].as<int>();
+        route_tag_fallback_to_default_route = root["constants"]["bgp"]["route_eligible_for_fallback_to_default_tag"].as<int>();
+    }
+    catch (const exception &e)
+    {
+        cout << "Exception \"" << e.what() << "\" had been thrown in daemon in loading constants.yml" << endl;
+        route_tag_not_to_appdb = 0xffffffff;
+        route_tag_fallback_to_default_route = 0xffffffff;
+    }
 }
 
 void RouteSync::setRouteWithWarmRestart(FieldValueTupleWrapperBase & fvw,
@@ -1015,6 +1030,7 @@ RouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
         fvVector.push_back(FieldValueTuple("router_mac", router_mac.c_str()));
         fvVector.push_back(FieldValueTuple("segment", segment.c_str()));
         fvVector.push_back(FieldValueTuple("seg_src", seg_src.c_str()));
+        fvVector.push_back(FieldValueTuple("fallback_to_default_route", fallback_to_default_route.c_str()));
     } else {
         if (protocol != string()) {
             fvVector.push_back(FieldValueTuple("protocol", protocol.c_str()));
@@ -1048,6 +1064,9 @@ RouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
         }
         if (seg_src != string()) {
             fvVector.push_back(FieldValueTuple("seg_src", seg_src.c_str()));
+        }
+        if (fallback_to_default_route != string("false")) {
+            fvVector.push_back(FieldValueTuple("fallback_to_default_route", fallback_to_default_route.c_str()));
         }
     }
     // Return value optimization will avoid copy of the following vector
@@ -2113,6 +2132,8 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
     struct rtnl_route *route_obj = (struct rtnl_route *)obj;
     struct nl_addr *dip;
     char destipprefix[IFNAMSIZ + MAX_ADDR_SIZE + 2] = {0};
+    uint32_t tag = 0;
+    bool route_eligible_for_fallback_to_default_route = false;
 
     if (vrf)
     {
@@ -2138,6 +2159,13 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
         memcpy(destipprefix, vrf, strlen(vrf));
         destipprefix[strlen(vrf)] = ':';
     }
+
+    tag = rtnl_route_get_priority(route_obj);
+
+    if (tag == route_tag_not_to_appdb)
+        return;
+    else if (tag == route_tag_fallback_to_default_route)
+        route_eligible_for_fallback_to_default_route = true;
 
     dip = rtnl_route_get_dst(route_obj);
     nl_addr2str(dip, destipprefix + strlen(destipprefix), MAX_ADDR_SIZE);
@@ -2286,6 +2314,11 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
         {
             fvw.weight = std::move(weights);
         }
+    }
+
+    if (route_eligible_for_fallback_to_default_route)
+    {
+        fvw.fallback_to_default_route = "true";
     }
 
     setRouteWithWarmRestart(fvw, *m_routeTable);
@@ -3489,7 +3522,6 @@ void RouteSync::getNextHopGroupFields(const NextHopGroup& nhg, string& nexthops,
         }
     }
 }
-
 
 /*
  * generate the database fields.
