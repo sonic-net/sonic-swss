@@ -27,8 +27,8 @@ using namespace swss;
 #define VLAN_DRV_NAME   "bridge"
 #define TEAM_DRV_NAME   "team"
 
-const string INTFS_PREFIX = "Ethernet";
-const string LAG_PREFIX = "PortChannel";
+extern const string INTFS_PREFIX = "Ethernet";
+extern const string LAG_PREFIX = "PortChannel";
 
 extern set<string> g_portSet;
 extern bool g_init;
@@ -202,6 +202,7 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
         vector.push_back(op);
         vector.push_back(admin_status);
         vector.push_back(port_mtu);
+
         m_statePortTable.set(key, vector);
         SWSS_LOG_NOTICE("Publish %s(ok:%s) to state db", key.c_str(), oper ? "up" : "down");
     }
