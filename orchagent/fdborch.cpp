@@ -449,6 +449,16 @@ void FdbOrch::update(sai_fdb_event_t        type,
         storeFdbEntryState(update);
         notify(SUBJECT_TYPE_FDB_CHANGE, &update);
 
+        /* Notify observers (e.g. MacMoveGuardOrch) of the LEARN, so a
+           preceding AGED tombstone can be matched as a synthesized move. */
+        {
+            MacLearnNotification learn_notif;
+            learn_notif.port = update.port;
+            learn_notif.mac = update.entry.mac;
+            learn_notif.bv_id = update.entry.bv_id;
+            notify(SUBJECT_TYPE_MAC_LEARN, &learn_notif);
+        }
+
         break;
     }
     case SAI_FDB_EVENT_AGED:
@@ -652,6 +662,16 @@ void FdbOrch::update(sai_fdb_event_t        type,
         storeFdbEntryState(update);
 
         notify(SUBJECT_TYPE_FDB_CHANGE, &update);
+
+        /* Notify observers (e.g. MacMoveGuardOrch) about the MAC move with both ports */
+        {
+            MacMoveNotification move_notif;
+            move_notif.port_old = port_old;
+            move_notif.port_new = update.port;
+            move_notif.mac = update.entry.mac;
+            move_notif.bv_id = update.entry.bv_id;
+            notify(SUBJECT_TYPE_MAC_MOVE, &move_notif);
+        }
 
         notifyTunnelOrch(port_old);
 

@@ -45,6 +45,25 @@ struct FdbFlushUpdate
     Port port;
 };
 
+/* Notification struct emitted by FdbOrch on MAC move events.
+   Carries both the old and new ports so observers (e.g. MacMoveGuardOrch)
+   can track per-port-pair behavior. */
+struct MacMoveNotification
+{
+    Port port_old;
+    Port port_new;
+    MacAddress mac;
+    sai_object_id_t bv_id;
+};
+
+/* Emitted on SAI_FDB_EVENT_LEARNED. */
+struct MacLearnNotification
+{
+    Port port;
+    MacAddress mac;
+    sai_object_id_t bv_id;
+};
+
 struct FdbData
 {
     sai_object_id_t bridge_port_id;

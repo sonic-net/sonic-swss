@@ -574,6 +574,16 @@ bool OrchDaemon::init()
     gPbhOrch = new PbhOrch(pbhTableConnectorList, gAclOrch, gPortsOrch);
 
     m_orchList.push_back(gFdbOrch);
+
+    /* MAC Move Guard: monitors MAC moves between port pairs and disables a
+       port if mac-move count in the configured sliding window exceeds the
+       threshold. Constructed after gFdbOrch since it attaches as an observer. */
+    auto *macMoveGuardOrch = new MacMoveGuardOrch(m_configDb,
+                                                  CFG_MAC_MOVE_GUARD_TABLE_NAME,
+                                                  gPortsOrch);
+    gDirectory.set(macMoveGuardOrch);
+    m_orchList.push_back(macMoveGuardOrch);
+
     m_orchList.push_back(gMirrorOrch);
     m_orchList.push_back(gAclOrch);
     m_orchList.push_back(gPbhOrch);

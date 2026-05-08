@@ -76,6 +76,7 @@ orchagent_SOURCES = \
             bufferorch.cpp \
             mirrororch.cpp \
             fdborch.cpp \
+            macmoveguardorch.cpp \
             aclorch.cpp \
             pbh/pbhcap.cpp \
             pbh/pbhcnt.cpp \
