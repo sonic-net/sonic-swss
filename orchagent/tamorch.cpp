@@ -520,7 +520,9 @@ bool TamOrch::createSaiTamInt(const string &name,
 {
     string type_str = "ifa2";
     getField(values, "type", type_str);
-    if (type_str != "ifa2")
+    string type_lower = type_str;
+    std::transform(type_lower.begin(), type_lower.end(), type_lower.begin(), ::tolower);
+    if (type_lower != "ifa2")
     {
         SWSS_LOG_ERROR("TAM_INT '%s': type='%s' not supported on Spectrum-4 "
                        "(only 'ifa2' is implemented in mlnx_sai)",
@@ -583,39 +585,35 @@ bool TamOrch::createSaiTamInt(const string &name,
     attr.value.booldata = inl;
     attrs.push_back(attr);
 
-    if (getField(values, "max_hop_count", s))
+    auto addOptionalAttr = [&](const char *field, sai_attr_id_t attr_id,
+                               auto setter) -> void
     {
+        string val;
+        if (!getField(values, field, val)) return;
         uint64_t v = 0;
-        if (parseUint(s, v))
+        if (!parseUint(val, v)) return;
+
+        sai_attr_capability_t cap{};
+        if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_TAM_INT,
+                                           attr_id, &cap) != SAI_STATUS_SUCCESS
+            || !cap.create_implemented)
         {
-            attr = sai_attribute_t{};
-            attr.id = SAI_TAM_INT_ATTR_MAX_HOP_COUNT;
-            attr.value.u8 = static_cast<uint8_t>(v);
-            attrs.push_back(attr);
+            SWSS_LOG_WARN("TAM_INT '%s': attr %s not supported by vendor SAI, "
+                          "skipping", name.c_str(), field);
+            return;
         }
-    }
-    if (getField(values, "flow_liveness_period", s))
-    {
-        uint64_t v = 0;
-        if (parseUint(s, v))
-        {
-            attr = sai_attribute_t{};
-            attr.id = SAI_TAM_INT_ATTR_FLOW_LIVENESS_PERIOD;
-            attr.value.u16 = static_cast<uint16_t>(v);
-            attrs.push_back(attr);
-        }
-    }
-    if (getField(values, "latency_sensitivity", s))
-    {
-        uint64_t v = 0;
-        if (parseUint(s, v))
-        {
-            attr = sai_attribute_t{};
-            attr.id = SAI_TAM_INT_ATTR_LATENCY_SENSITIVITY;
-            attr.value.u8 = static_cast<uint8_t>(v);
-            attrs.push_back(attr);
-        }
-    }
+        sai_attribute_t a{};
+        a.id = attr_id;
+        setter(a, v);
+        attrs.push_back(a);
+    };
+
+    addOptionalAttr("max_hop_count", SAI_TAM_INT_ATTR_MAX_HOP_COUNT,
+        [](sai_attribute_t &a, uint64_t v){ a.value.u8 = static_cast<uint8_t>(v); });
+    addOptionalAttr("flow_liveness_period", SAI_TAM_INT_ATTR_FLOW_LIVENESS_PERIOD,
+        [](sai_attribute_t &a, uint64_t v){ a.value.u16 = static_cast<uint16_t>(v); });
+    addOptionalAttr("latency_sensitivity", SAI_TAM_INT_ATTR_LATENCY_SENSITIVITY,
+        [](sai_attribute_t &a, uint64_t v){ a.value.u8 = static_cast<uint8_t>(v); });
     if (getField(values, "metadata_checksum_enable", s))
     {
         bool b = false; parseBool(s, b);
