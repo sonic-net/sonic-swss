@@ -3601,10 +3601,12 @@ namespace portsorch_test
         _unhook_sai_switch_api();
     }
 
-    TEST_F(PortsOrchTest, AutonegDisableNoopOnUnsupportedPort)
+    TEST_F(PortsOrchTest, AutonegOnUnsupportedPort)
     {
-        // Configuring autoneg=off on a port that doesn't support autoneg must be a
-        // no-op: no ASIC call, no error, port marked configured so we don't retry.
+        // Configuring autoneg on a port that doesn't support it (either on or off)
+        // must skip the ASIC call, mark the port configured so we don't retry, and
+        // not drop the rest of the task's config. The requested value is mirrored
+        // in cache.
         _hook_sai_port_api();
         mock_autoneg_cap_supported = false;
 
@@ -3619,76 +3621,37 @@ namespace portsorch_test
         gPortsOrch->addExistingData(&portTable);
         static_cast<Orch *>(gPortsOrch)->doTask();
 
-        const auto an_call_count = _sai_set_port_auto_neg_count;
-
-        std::deque<KeyOpFieldsValuesTuple> entries;
-        entries.push_back({"Ethernet0", SET_COMMAND,
-                           {
-                               { "autoneg", "off" }
-                           }});
         auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
-        consumer->addToSync(entries);
-        static_cast<Orch *>(gPortsOrch)->doTask();
 
-        // No SAI set call should have been made
-        EXPECT_EQ(_sai_set_port_auto_neg_count, an_call_count);
-
-        // Port should be marked configured with autoneg disabled
-        Port p;
-        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
-        EXPECT_FALSE(p.m_autoneg);
-        EXPECT_TRUE(p.m_an_cfg);
-
-        // Task should have been consumed without error
-        vector<string> ts;
-        gPortsOrch->dumpPendingTasks(ts);
-        EXPECT_TRUE(ts.empty());
-
-        mock_autoneg_cap_supported = true;
-        _unhook_sai_port_api();
-    }
-
-    TEST_F(PortsOrchTest, AutonegEnableErrorOnUnsupportedPort)
-    {
-        // Configuring autoneg=on on a port that doesn't support autoneg must drop
-        // the task without an ASIC call and leave the port unconfigured.
-        _hook_sai_port_api();
-        mock_autoneg_cap_supported = false;
-
-        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
-        auto ports = ut_helper::getInitialSaiPorts();
-
-        for (const auto &it : ports)
+        for (const auto &requested : {std::string("off"), std::string("on")})
         {
-            portTable.set(it.first, it.second);
+            const auto an_call_count = _sai_set_port_auto_neg_count;
+
+            // Reset the port's AN-configured flag so each iteration re-enters the AN block
+            Port pre;
+            ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", pre));
+            pre.m_an_cfg = false;
+            gPortsOrch->m_portList["Ethernet0"] = pre;
+
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            entries.push_back({"Ethernet0", SET_COMMAND, { { "autoneg", requested } }});
+            consumer->addToSync(entries);
+            static_cast<Orch *>(gPortsOrch)->doTask();
+
+            // No SAI set call should have been made
+            EXPECT_EQ(_sai_set_port_auto_neg_count, an_call_count) << "requested=" << requested;
+
+            // Port marked configured; requested value reflected in cache
+            Port p;
+            ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+            EXPECT_TRUE(p.m_an_cfg) << "requested=" << requested;
+            EXPECT_EQ(p.m_autoneg, requested == "on") << "requested=" << requested;
+
+            // Task consumed (no pending) — sibling config in the same task is no longer dropped
+            vector<string> ts;
+            gPortsOrch->dumpPendingTasks(ts);
+            EXPECT_TRUE(ts.empty()) << "requested=" << requested;
         }
-        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
-        gPortsOrch->addExistingData(&portTable);
-        static_cast<Orch *>(gPortsOrch)->doTask();
-
-        const auto an_call_count = _sai_set_port_auto_neg_count;
-
-        std::deque<KeyOpFieldsValuesTuple> entries;
-        entries.push_back({"Ethernet0", SET_COMMAND,
-                           {
-                               { "autoneg", "on" }
-                           }});
-        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
-        consumer->addToSync(entries);
-        static_cast<Orch *>(gPortsOrch)->doTask();
-
-        // No SAI set call should have been made
-        EXPECT_EQ(_sai_set_port_auto_neg_count, an_call_count);
-
-        // Port should remain unconfigured
-        Port p;
-        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
-        EXPECT_FALSE(p.m_an_cfg);
-
-        // Task should have been dropped (no retry)
-        vector<string> ts;
-        gPortsOrch->dumpPendingTasks(ts);
-        EXPECT_TRUE(ts.empty());
 
         mock_autoneg_cap_supported = true;
         _unhook_sai_port_api();
