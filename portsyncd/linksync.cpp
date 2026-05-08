@@ -129,6 +129,8 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     unsigned int flags = rtnl_link_get_flags(link);
     bool admin = flags & IFF_UP;
     bool oper = flags & IFF_RUNNING;
+    uint32_t carrier_changes = 0;
+    bool has_carrier_changes = (rtnl_link_get_carrier_changes(link, &carrier_changes) == 0);
 
     char addrStr[MAX_ADDR_SIZE+1] = {0};
     nl_addr2str(rtnl_link_get_addr(link), addrStr, MAX_ADDR_SIZE);
@@ -202,9 +204,14 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
         vector.push_back(op);
         vector.push_back(admin_status);
         vector.push_back(port_mtu);
+        if (has_carrier_changes)
+        {
+            vector.emplace_back("carrier_changes", to_string(carrier_changes));
+        }
 
         m_statePortTable.set(key, vector);
-        SWSS_LOG_NOTICE("Publish %s(ok:%s) to state db", key.c_str(), oper ? "up" : "down");
+        SWSS_LOG_NOTICE("Publish %s(ok:%s carrier_changes:%u) to state db",
+                        key.c_str(), oper ? "up" : "down", carrier_changes);
     }
     else
     {
