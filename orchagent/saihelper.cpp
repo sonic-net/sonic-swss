@@ -196,10 +196,49 @@ void initSaiApi()
 {
     SWSS_LOG_ENTER();
 
-    if (ifstream(CONTEXT_CFG_FILE))
+    std::ifstream ifs(CONTEXT_CFG_FILE);
+    if (ifs.good())
     {
         SWSS_LOG_NOTICE("Context config file %s exists", CONTEXT_CFG_FILE);
         gProfileMap[SAI_REDIS_KEY_CONTEXT_CONFIG] = CONTEXT_CFG_FILE;
+
+        // If -z zmq_sync was passed but the JSON disables zmq for the default
+        // context, demote gRedisCommunicationMode to REDIS_SYNC. Notification
+        // handlers in notifications.cpp gate forwarding on this global, so it
+        // must reflect the actual transport sairedis will use. Symmetric with
+        // the fallback in sairedis/syncd Syncd.cpp.
+        if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
+        {
+            try
+            {
+                nlohmann::json j;
+                ifs >> j;
+
+                for (auto& item : j["CONTEXTS"])
+                {
+                    uint32_t guid = item["guid"];
+                    if (guid != 0)
+                    {
+                        continue;
+                    }
+
+                    if (item.contains("zmq_enable") && item["zmq_enable"] == false)
+                    {
+                        SWSS_LOG_NOTICE(
+                            "context %u: zmq_enable=false in %s, demoting "
+                            "gRedisCommunicationMode from ZMQ_SYNC to REDIS_SYNC",
+                            guid, CONTEXT_CFG_FILE);
+                        gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_SYNC;
+                    }
+                    break;
+                }
+            }
+            catch (const std::exception& e)
+            {
+                SWSS_LOG_WARN("Failed to parse %s for comm-mode resolution: %s",
+                              CONTEXT_CFG_FILE, e.what());
+            }
+        }
     }
 
     sai_api_initialize(0, (const sai_service_method_table_t *)&test_services);
@@ -329,61 +368,8 @@ void initFlexCounterTables()
     }
 }
 
-// If orchagent was started with -z zmq_sync but context_config.json explicitly
-// disables zmq for the default context, demote gRedisCommunicationMode to
-// REDIS_SYNC. Notification handlers in notifications.cpp gate forwarding on
-// this global, so it must reflect the actual transport sairedis will use.
-// Symmetric with the fallback in sairedis/syncd Syncd.cpp.
-static void resolveCommunicationModeFromContextConfig()
-{
-    if (gRedisCommunicationMode != SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
-    {
-        return;
-    }
-
-    std::ifstream ifs(CONTEXT_CFG_FILE);
-    if (!ifs.good())
-    {
-        return;
-    }
-
-    try
-    {
-        nlohmann::json j;
-        ifs >> j;
-
-        for (auto& item : j["CONTEXTS"])
-        {
-            uint32_t guid = item["guid"];
-            if (guid != 0)
-            {
-                continue;
-            }
-
-            if (item.contains("zmq_enable") && item["zmq_enable"] == false)
-            {
-                SWSS_LOG_NOTICE(
-                    "context %u: zmq_enable=false in %s, demoting "
-                    "gRedisCommunicationMode from ZMQ_SYNC to REDIS_SYNC",
-                    guid, CONTEXT_CFG_FILE);
-                gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_SYNC;
-            }
-            return;
-        }
-    }
-    catch (const std::exception& e)
-    {
-        SWSS_LOG_WARN("Failed to parse %s for comm-mode resolution: %s",
-                      CONTEXT_CFG_FILE, e.what());
-    }
-}
-
 void initSaiRedis()
 {
-    // Resolve comm-mode against context_config.json before sending it to
-    // sairedis, so notifications.cpp and sairedis agree on the transport.
-    resolveCommunicationModeFromContextConfig();
-
     // SAI_REDIS_SWITCH_ATTR_SYNC_MODE attribute only setBuffer and g_syncMode to true
     // since it is not using ASIC_DB, we can execute it before create_switch
     // when g_syncMode is set to true here, create_switch will wait the response from syncd
