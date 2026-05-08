@@ -12,7 +12,9 @@
 #include "netdispatcher.h"
 #include "netlink.h"
 #include "producerstatetable.h"
-#include "portsyncd/linksync.h"
+//upscaleai:start
+#include "portsyncd/linksync_raw.h"
+//upscaleai:end
 #include "subscriberstatetable.h"
 #include "exec.h"
 #include "warm_restart.h"
@@ -90,7 +92,9 @@ int main(int argc, char **argv)
 
         handlePortConfigFromConfigDB(p, cfgDb, warm);
 
-        LinkSync sync(&appl_db, &state_db);
+        //upscaleai:start
+        LinkSyncRaw sync(&appl_db, &state_db);
+        //upscaleai:end
         NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
         NetDispatcher::getInstance().registerMessageHandler(RTM_DELLINK, &sync);
 
