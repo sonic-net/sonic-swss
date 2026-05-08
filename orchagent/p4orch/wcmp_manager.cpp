@@ -426,8 +426,15 @@ std::vector<ReturnCode> WcmpManager::updateWcmpGroups(
     for (size_t i = 0; i < entries.size(); ++i) {
     int sai_entry_index = indice[i];
     int sai_attr_index = 2 * sai_entry_index + 1;
-    if (sai_entry_index == -1 ||
-        object_statuses[sai_attr_index] == SAI_STATUS_SUCCESS) {
+    if (i > 0 && !statuses[i - 1].ok()) {
+      // If the previous update fails, return a NOT_EXECUTED status to follow
+      // fail-on-first semantics. This should hold even when the current update
+      // is no-op.
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED)
+                    << "Skipped update to WCMP group with id "
+                    << QuotedVar(entries[i].wcmp_group_id);
+    } else if (sai_entry_index == -1 ||
+               object_statuses[sai_attr_index] == SAI_STATUS_SUCCESS) {
       // Do not update reference for watchport update.
       if (!watchport) {
         for (auto& member : old_entries[i]->wcmp_group_members) {

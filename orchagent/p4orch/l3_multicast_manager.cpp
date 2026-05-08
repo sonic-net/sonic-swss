@@ -2531,8 +2531,15 @@ std::vector<ReturnCode> L3MulticastManager::updateIpMulticastGroupEntries(
 
   for (size_t i = 0; i < entries.size(); ++i) {
     int sai_entry_index = indice[i];
-    if (sai_entry_index == -1 ||
-        object_statuses[sai_entry_index] == SAI_STATUS_SUCCESS) {
+    if (i > 0 && !statuses[i - 1].ok()) {
+      // If the previous update fails, return a NOT_EXECUTED status to follow
+      // fail-on-first semantics. This should hold even when the current update
+      // is no-op.
+      statuses[i] = ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED)
+                    << "Skipped no-op update to multicast group for group ID: "
+                    << QuotedVar(entries[i].multicast_group_id);
+    } else if (sai_entry_index == -1 ||
+               object_statuses[sai_entry_index] == SAI_STATUS_SUCCESS) {
       // Do not update reference for fallback event update.
       if (!fallback_event) {
         for (const auto replica_list : old_entry_ptrs[i]->replicas) {
