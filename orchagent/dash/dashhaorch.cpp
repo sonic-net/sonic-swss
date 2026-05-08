@@ -483,6 +483,8 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
             success = success && set_role_success;
             repeated_message = false;
 
+            ha_scope_it->second.metadata.set_ha_role(entry.ha_role());
+
             // If setHaScopeHaRole succeeded and owner is switch, directly update state DB with ha_state
             if (set_role_success)
             {
