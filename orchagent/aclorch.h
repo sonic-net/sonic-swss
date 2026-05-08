@@ -331,6 +331,8 @@ public:
     virtual bool enableCounter();
     virtual bool disableCounter();
 
+    sai_status_t getLastSaiStatus() const { return m_lastSaiStatus; }
+
     string getId() const;
     string getTableId() const;
     sai_object_id_t getOid() const;
@@ -387,6 +389,7 @@ protected:
 
     vector<AclRangeConfig> m_rangeConfig;
     vector<AclRange*> m_ranges;
+    sai_status_t m_lastSaiStatus = SAI_STATUS_SUCCESS;
 
 private:
     bool m_createCounter;
