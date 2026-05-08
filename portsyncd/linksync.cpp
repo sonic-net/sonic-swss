@@ -27,8 +27,8 @@ using namespace swss;
 #define VLAN_DRV_NAME   "bridge"
 #define TEAM_DRV_NAME   "team"
 
-const string INTFS_PREFIX = "Ethernet";
-const string LAG_PREFIX = "PortChannel";
+extern const string INTFS_PREFIX = "Ethernet";
+extern const string LAG_PREFIX = "PortChannel";
 
 extern set<string> g_portSet;
 extern bool g_init;
