@@ -4825,7 +4825,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         {
                             if (p.m_admin_state_up)
                             {
-                                /* Bring port down before applying speed */
+                                /* Bring port down before changing autoneg mode */
                                 if (!setPortAdminStatus(p, false))
                                 {
                                     SWSS_LOG_ERROR(
