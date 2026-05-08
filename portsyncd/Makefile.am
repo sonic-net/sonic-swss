@@ -8,7 +8,7 @@ else
 DBGFLAGS = -g
 endif
 
-portsyncd_SOURCES = $(top_srcdir)/lib/gearboxutils.cpp portsyncd.cpp linksync.cpp  $(top_srcdir)/cfgmgr/shellcmd.h
+portsyncd_SOURCES = $(top_srcdir)/lib/gearboxutils.cpp portsyncd.cpp linksync.cpp linksync_raw.cpp $(top_srcdir)/cfgmgr/shellcmd.h
 
 portsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)
 portsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)
