@@ -23,7 +23,7 @@ extern "C" {
 
 namespace p4orch {
 
-constexpr uint32_t kMaxFallbackGroupBulkSize = 30;
+constexpr uint32_t kMaxFallbackGroupBulkSize = 100;
 
 // Table entries for multicast_router_interface_table.
 struct P4MulticastRouterInterfaceEntry {
