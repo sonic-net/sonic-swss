@@ -4816,15 +4816,10 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         }
                         if (p.m_cap_an < 1)
                         {
-                            if (pCfg.autoneg.value)
-                            {
-                                SWSS_LOG_WARN("%s: autoneg is not supported (cap=%d)", p.m_alias.c_str(), p.m_cap_an);
-                                // autoneg is not supported, don't retry
-                                it = taskMap.erase(it);
-                                continue;
-                            }
-                            /* autoneg as off is a no op when autoneg is not supported. Do not error out and delete remaining config */
-                            SWSS_LOG_INFO("%s: autoneg not supported; disable is no-op", p.m_alias.c_str());
+                            /* autoneg not supported: log and continue applying remaining config (disable is a no-op; enable cannot be honored) */
+                            SWSS_LOG_WARN("%s: autoneg is not supported (cap=%d), requested=%s",
+                                          p.m_alias.c_str(), p.m_cap_an,
+                                          pCfg.autoneg.value ? "on" : "off");
                         }
                         else
                         {
