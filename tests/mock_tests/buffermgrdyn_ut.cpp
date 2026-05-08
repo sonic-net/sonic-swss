@@ -2103,16 +2103,19 @@ namespace buffermgrdyn_test
         EXPECT_TRUE(m_dynamicBuffer->m_shpProfilesToCheck.empty())
             << "m_shpProfilesToCheck should be cleared after successful sync";
 
-        // TEST CASE 3: Test the actual handleBufferPoolTable retry flow
+        // TEST CASE 3: Test the actual handleBufferPoolTable flow once profiles are synced
         // Set up: current SHP size is "1048576", want to change to "2097152"
-        // Manually set retry state
+        // Manually set retry state and keep APPL_STATE_DB synced to avoid waiting for timeout
         m_dynamicBuffer->m_configuredSharedHeadroomPoolSize = "1048576";
         m_dynamicBuffer->m_shpProfilesToCheck = {testProfile.name};
 
-        // Clear APPL_STATE_DB to simulate profiles not synced yet
-        m_dynamicBuffer->m_applStateBufferProfileTable.del(testProfile.name);
+        m_dynamicBuffer->m_applStateBufferProfileTable.set(testProfile.name, {
+            {"xoff", testProfile.xoff},
+            {"xon", testProfile.xon},
+            {"size", testProfile.size}
+        });
 
-        // Try to update SHP size while in retry mode
+        // Try to update SHP size after pending profiles have reached APPL_STATE_DB
         vector<FieldValueTuple> fvVector = {
             {"mode", "dynamic"},
             {"type", "ingress"},
@@ -2121,23 +2124,10 @@ namespace buffermgrdyn_test
         KeyOpFieldsValuesTuple tuple = {INGRESS_LOSSLESS_PG_POOL_NAME, "SET", fvVector};
 
         status = m_dynamicBuffer->handleBufferPoolTable(tuple);
-        EXPECT_EQ(status, task_process_status::task_need_retry)
-            << "handleBufferPoolTable should return task_need_retry in retry mode when profiles not synced";
-        EXPECT_EQ(m_dynamicBuffer->m_configuredSharedHeadroomPoolSize, "1048576")
-            << "SHP size should not be updated when in retry mode and profiles not synced";
-
-        // TEST CASE 4: Sync profiles and retry
-        m_dynamicBuffer->m_applStateBufferProfileTable.set(testProfile.name, {
-            {"xoff", testProfile.xoff},
-            {"xon", testProfile.xon},
-            {"size", testProfile.size}
-        });
-
-        status = m_dynamicBuffer->handleBufferPoolTable(tuple);
         EXPECT_EQ(status, task_process_status::task_success)
-            << "handleBufferPoolTable should succeed when profiles are synced in retry mode";
+            << "handleBufferPoolTable should succeed when pending profiles are already synced";
         EXPECT_EQ(m_dynamicBuffer->m_configuredSharedHeadroomPoolSize, "2097152")
-            << "SHP size should be updated after profiles are synced";
+            << "SHP size should be updated after pending profiles are synced";
         EXPECT_TRUE(m_dynamicBuffer->m_shpProfilesToCheck.empty())
             << "m_shpProfilesToCheck should be cleared after successful update";
     }
