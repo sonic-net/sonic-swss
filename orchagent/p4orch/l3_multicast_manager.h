@@ -219,7 +219,7 @@ class L3MulticastManager : public ObjectManagerInterface {
   ReturnCode processMulticastGroupEntries(
       std::vector<P4MulticastGroupEntry>& entries,
       const std::deque<swss::KeyOpFieldsValuesTuple>& tuple_list,
-      const std::string& op, bool update);
+      const std::string& op, bool update, bool is_ipmc);
 
   // Wrapper around SAI setup and call, for easy mocking.
   ReturnCode createRouterInterface(P4MulticastRouterInterfaceEntry& entry,
@@ -238,11 +238,6 @@ class L3MulticastManager : public ObjectManagerInterface {
 
   ReturnCode deleteNextHop(P4MulticastRouterInterfaceEntry* entry,
                            const sai_object_id_t next_hop_oid);
-
-  // Wrapper around SAI setup and call to create multicast group.
-  ReturnCode createMulticastGroup(P4MulticastGroupEntry& entry,
-                                  sai_object_id_t& mcast_group_oid,
-                                  std::string& group_label);
 
   // Wrapper around SAI setup and call to create L2 multicast group.
   ReturnCode createL2MulticastGroup(P4MulticastGroupEntry& entry,
@@ -280,30 +275,28 @@ class L3MulticastManager : public ObjectManagerInterface {
       const P4MulticastRouterInterfaceEntry* entry);
 
   // Add new multicast group table entries.
-  std::vector<ReturnCode> addMulticastGroupEntries(
+  std::vector<ReturnCode> addIpMulticastGroupEntries(
       std::vector<P4MulticastGroupEntry>& entries);
-  // Separate add logic for IP vs. L2 multicast groups.
-  ReturnCode addIpMulticastGroupEntry(P4MulticastGroupEntry& entry);
+  std::vector<ReturnCode> addL2MulticastGroupEntries(
+      std::vector<P4MulticastGroupEntry>& entries);
   ReturnCode addL2MulticastGroupEntry(P4MulticastGroupEntry& entry);
   // TODO : We need to create a temporary l2mc entry to force
   // syncd to create the l2mc group SAI object.
   ReturnCode activateL2MulticastGroup(const sai_object_id_t l2mc_group_oid);
 
   // Update existing multicast group table entries.
-  std::vector<ReturnCode> updateMulticastGroupEntries(
+  std::vector<ReturnCode> updateIpMulticastGroupEntries(
       std::vector<P4MulticastGroupEntry>& entries, bool fallback_event = false);
-  // Separate add logic for IP vs. L2 multicast groups.
-  ReturnCode updateIpMulticastGroupEntry(P4MulticastGroupEntry& entry,
-                                         P4MulticastGroupEntry* old_entry,
-                                         bool fallback_event = false);
+  std::vector<ReturnCode> updateL2MulticastGroupEntries(
+      std::vector<P4MulticastGroupEntry>& entries);
   ReturnCode updateL2MulticastGroupEntry(P4MulticastGroupEntry& entry,
                                          P4MulticastGroupEntry* old_entry);
 
   // Delete existing multicast group table entries.
-  std::vector<ReturnCode> deleteMulticastGroupEntries(
+  std::vector<ReturnCode> deleteIpMulticastGroupEntries(
       const std::vector<P4MulticastGroupEntry>& entries);
-  // Separate add logic for IP vs. L2 multicast groups.
-  ReturnCode deleteIpMulticastGroupEntry(P4MulticastGroupEntry& entry);
+  std::vector<ReturnCode> deleteL2MulticastGroupEntries(
+      const std::vector<P4MulticastGroupEntry>& entries);
   ReturnCode deleteL2MulticastGroupEntry(P4MulticastGroupEntry& entry);
 
   ReturnCode restoreDeletedL2GroupMembers(
