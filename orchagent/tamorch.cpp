@@ -317,6 +317,11 @@ void TamOrch::doTask(Consumer &consumer)
             it = consumer.m_toSync.erase(it);
         }
     }
+
+    if (m_portBindingPending)
+    {
+        retryTamIntAclPortBinding();
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -515,7 +520,9 @@ bool TamOrch::createSaiTamInt(const string &name,
 {
     string type_str = "ifa2";
     getField(values, "type", type_str);
-    if (type_str != "ifa2")
+    string type_lower = type_str;
+    std::transform(type_lower.begin(), type_lower.end(), type_lower.begin(), ::tolower);
+    if (type_lower != "ifa2")
     {
         SWSS_LOG_ERROR("TAM_INT '%s': type='%s' not supported on Spectrum-4 "
                        "(only 'ifa2' is implemented in mlnx_sai)",
@@ -568,7 +575,7 @@ bool TamOrch::createSaiTamInt(const string &name,
 
     attr = sai_attribute_t{};
     attr.id = SAI_TAM_INT_ATTR_INT_PRESENCE_L3_PROTOCOL;
-    attr.value.u8 = 0x7F;
+    attr.value.u8 = 0xFD;
     attrs.push_back(attr);
 
     attr = sai_attribute_t{};
@@ -578,39 +585,35 @@ bool TamOrch::createSaiTamInt(const string &name,
     attr.value.booldata = inl;
     attrs.push_back(attr);
 
-    if (getField(values, "max_hop_count", s))
+    auto addOptionalAttr = [&](const char *field, sai_attr_id_t attr_id,
+                               auto setter) -> void
     {
+        string val;
+        if (!getField(values, field, val)) return;
         uint64_t v = 0;
-        if (parseUint(s, v))
+        if (!parseUint(val, v)) return;
+
+        sai_attr_capability_t cap{};
+        if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_TAM_INT,
+                                           attr_id, &cap) != SAI_STATUS_SUCCESS
+            || !cap.create_implemented)
         {
-            attr = sai_attribute_t{};
-            attr.id = SAI_TAM_INT_ATTR_MAX_HOP_COUNT;
-            attr.value.u8 = static_cast<uint8_t>(v);
-            attrs.push_back(attr);
+            SWSS_LOG_WARN("TAM_INT '%s': attr %s not supported by vendor SAI, "
+                          "skipping", name.c_str(), field);
+            return;
         }
-    }
-    if (getField(values, "flow_liveness_period", s))
-    {
-        uint64_t v = 0;
-        if (parseUint(s, v))
-        {
-            attr = sai_attribute_t{};
-            attr.id = SAI_TAM_INT_ATTR_FLOW_LIVENESS_PERIOD;
-            attr.value.u16 = static_cast<uint16_t>(v);
-            attrs.push_back(attr);
-        }
-    }
-    if (getField(values, "latency_sensitivity", s))
-    {
-        uint64_t v = 0;
-        if (parseUint(s, v))
-        {
-            attr = sai_attribute_t{};
-            attr.id = SAI_TAM_INT_ATTR_LATENCY_SENSITIVITY;
-            attr.value.u8 = static_cast<uint8_t>(v);
-            attrs.push_back(attr);
-        }
-    }
+        sai_attribute_t a{};
+        a.id = attr_id;
+        setter(a, v);
+        attrs.push_back(a);
+    };
+
+    addOptionalAttr("max_hop_count", SAI_TAM_INT_ATTR_MAX_HOP_COUNT,
+        [](sai_attribute_t &a, uint64_t v){ a.value.u8 = static_cast<uint8_t>(v); });
+    addOptionalAttr("flow_liveness_period", SAI_TAM_INT_ATTR_FLOW_LIVENESS_PERIOD,
+        [](sai_attribute_t &a, uint64_t v){ a.value.u16 = static_cast<uint16_t>(v); });
+    addOptionalAttr("latency_sensitivity", SAI_TAM_INT_ATTR_LATENCY_SENSITIVITY,
+        [](sai_attribute_t &a, uint64_t v){ a.value.u8 = static_cast<uint8_t>(v); });
     if (getField(values, "metadata_checksum_enable", s))
     {
         bool b = false; parseBool(s, b);
@@ -845,41 +848,67 @@ task_process_status TamOrch::doTaskTam(const string &op,
     {
         if (m_tamMap.count(name))
         {
-            SWSS_LOG_WARN("TAM '%s' already exists; updates not yet supported.",
-                          name.c_str());
+            if (m_portBindingPending)
+            {
+                retryTamIntAclPortBinding();
+                if (m_portBindingPending)
+                {
+                    return task_process_status::task_need_retry;
+                }
+            }
             return task_process_status::task_success;
         }
+
+        /* ACL activation only needs the TAM_INT OID (not the TAM parent).
+         * Create the ACL first so IFAv2 is armed even when the vendor SAI
+         * does not support SAI_TAM_ATTR_INT_OBJECTS_LIST (e.g. Mellanox). */
+        string int_objs_str;
+        if (getField(values, "int_objects", int_objs_str) && !int_objs_str.empty())
+        {
+            auto refs = parseList(int_objs_str);
+            if (!refs.empty())
+            {
+                auto it = m_intMap.find(refs[0]);
+                if (it != m_intMap.end() && it->second != SAI_NULL_OBJECT_ID)
+                {
+                    if (!createTamIntAcl(it->second))
+                    {
+                        SWSS_LOG_WARN("TAM '%s': ACL activation failed; "
+                                      "IFAv2 metadata insertion will not work "
+                                      "until ACL is created", name.c_str());
+                    }
+                }
+                else
+                {
+                    SWSS_LOG_INFO("TAM '%s': int_object '%s' not yet ready, "
+                                  "ACL creation deferred", name.c_str(),
+                                  refs[0].c_str());
+                }
+            }
+        }
+
         sai_object_id_t oid = SAI_NULL_OBJECT_ID;
         if (!createSaiTam(name, values, oid))
         {
-            return task_process_status::task_need_retry;
+            SWSS_LOG_WARN("TAM '%s': SAI TAM object creation failed (vendor "
+                          "may not support INT_OBJECTS_LIST); ACL-based "
+                          "activation may still work", name.c_str());
         }
         if (oid != SAI_NULL_OBJECT_ID)
         {
             m_tamMap[name] = oid;
+        }
 
-            /* Activate IFAv2 on all ports via ACL (pages 7-8 of NVIDIA
-             * IFA/INT overview).  Use the first entry from int_objects
-             * (the same field createSaiTam resolved) to find the TAM_INT
-             * OID for the ACL entry's ACTION_TAM_INT_OBJECT. */
-            string int_objs_str;
-            if (getField(values, "int_objects", int_objs_str) && !int_objs_str.empty())
-            {
-                auto refs = parseList(int_objs_str);
-                if (!refs.empty())
-                {
-                    auto it = m_intMap.find(refs[0]);
-                    if (it != m_intMap.end() && it->second != SAI_NULL_OBJECT_ID)
-                    {
-                        if (!createTamIntAcl(it->second))
-                        {
-                            SWSS_LOG_WARN("TAM '%s': ACL activation failed; "
-                                          "IFAv2 metadata insertion will not work "
-                                          "until ACL is created", name.c_str());
-                        }
-                    }
-                }
-            }
+        /* Mark the TAM entry as "created" even without an OID so the
+         * retry path can find and retry port binding. */
+        if (!m_tamMap.count(name))
+        {
+            m_tamMap[name] = SAI_NULL_OBJECT_ID;
+        }
+
+        if (m_portBindingPending)
+        {
+            return task_process_status::task_need_retry;
         }
         return task_process_status::task_success;
     }
@@ -970,6 +999,7 @@ bool TamOrch::createTamIntAcl(sai_object_id_t tam_int_oid)
                 continue;
             }
             m_tamIntAclGroupMemberIds.push_back(member_id);
+            m_tamIntAclBoundGroups.insert(port.m_ingress_acl_table_group_id);
             SWSS_LOG_NOTICE("TAM INT ACL group member 0x%" PRIx64 " for port %s",
                             member_id, port.m_alias.c_str());
         }
@@ -977,7 +1007,9 @@ bool TamOrch::createTamIntAcl(sai_object_id_t tam_int_oid)
 
     if (m_tamIntAclGroupMemberIds.empty())
     {
-        SWSS_LOG_WARN("No ports bound to TAM INT ACL — metadata insertion will not activate");
+        SWSS_LOG_WARN("No ports bound to TAM INT ACL yet — will retry when "
+                      "port ACL groups become available");
+        m_portBindingPending = true;
     }
 
     /* --- 3. Create ACL ENTRY with TAM INT match + actions --- */
@@ -1034,10 +1066,80 @@ void TamOrch::destroyTamIntAcl()
         sai_acl_api->remove_acl_table_group_member(mid);
     }
     m_tamIntAclGroupMemberIds.clear();
+    m_tamIntAclBoundGroups.clear();
     if (m_tamIntAclTableId != SAI_NULL_OBJECT_ID)
     {
         sai_acl_api->remove_acl_table(m_tamIntAclTableId);
         m_tamIntAclTableId = SAI_NULL_OBJECT_ID;
+    }
+    m_portBindingPending = false;
+}
+
+/* ------------------------------------------------------------------ */
+/* TAM INT ACL — deferred port binding                                */
+/*                                                                    */
+/* At boot, TamOrch processes CONFIG_DB before AclOrch binds CoPP     */
+/* ACL groups to ports. retryTamIntAclPortBinding() is called on      */
+/* every doTask iteration until all physical ports with ACL groups     */
+/* have been bound.                                                   */
+/* ------------------------------------------------------------------ */
+
+void TamOrch::retryTamIntAclPortBinding()
+{
+    if (m_tamIntAclTableId == SAI_NULL_OBJECT_ID || !gPortsOrch)
+    {
+        return;
+    }
+
+    auto &ports = gPortsOrch->getAllPorts();
+    size_t newly_bound = 0;
+
+    for (auto &kv : ports)
+    {
+        Port &port = kv.second;
+        if (port.m_type != Port::PHY) continue;
+        if (port.m_ingress_acl_table_group_id == SAI_NULL_OBJECT_ID) continue;
+        if (m_tamIntAclBoundGroups.count(port.m_ingress_acl_table_group_id)) continue;
+
+        sai_object_id_t member_id = SAI_NULL_OBJECT_ID;
+        sai_attribute_t mem_attrs[3];
+
+        mem_attrs[0].id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_GROUP_ID;
+        mem_attrs[0].value.oid = port.m_ingress_acl_table_group_id;
+
+        mem_attrs[1].id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_ID;
+        mem_attrs[1].value.oid = m_tamIntAclTableId;
+
+        mem_attrs[2].id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_PRIORITY;
+        mem_attrs[2].value.u32 = 100;
+
+        sai_status_t st = sai_acl_api->create_acl_table_group_member(
+            &member_id, gSwitchId, 3, mem_attrs);
+        if (st != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Failed to add TAM INT ACL to group 0x%" PRIx64
+                          " for port %s: rc=%d",
+                          port.m_ingress_acl_table_group_id,
+                          port.m_alias.c_str(), st);
+            continue;
+        }
+        m_tamIntAclGroupMemberIds.push_back(member_id);
+        m_tamIntAclBoundGroups.insert(port.m_ingress_acl_table_group_id);
+        newly_bound++;
+        SWSS_LOG_NOTICE("TAM INT ACL group member 0x%" PRIx64
+                        " for port %s (deferred bind)",
+                        member_id, port.m_alias.c_str());
+    }
+
+    if (newly_bound > 0)
+    {
+        SWSS_LOG_NOTICE("TAM INT ACL: bound %zu additional ports (%zu total)",
+                        newly_bound, m_tamIntAclGroupMemberIds.size());
+    }
+
+    if (!m_tamIntAclGroupMemberIds.empty())
+    {
+        m_portBindingPending = false;
     }
 }
 
