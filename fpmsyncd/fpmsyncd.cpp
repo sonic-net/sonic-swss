@@ -108,6 +108,25 @@ int main(int argc, char **argv)
         sync.setSuppressionEnabled(true);
     }
 
+    std::string flushTimeoutStr;
+    deviceMetadataTable.hget("localhost", "fpmsyncd_flush_timeout", flushTimeoutStr);
+    if (!flushTimeoutStr.empty() && flushTimeoutStr != "None")
+    {
+        try
+        {
+            int val = std::stoi(flushTimeoutStr);
+            if (val >= 0 && val <= 5000)
+            {
+                gFlushTimeout = val;
+                SWSS_LOG_NOTICE("fpmsyncd_flush_timeout set to %d ms from CONFIG_DB", val);
+            }
+        }
+        catch (const std::exception& e)
+        {
+            SWSS_LOG_WARN("Invalid fpmsyncd_flush_timeout value: %s", flushTimeoutStr.c_str());
+        }
+    }
+
     while (true)
     {
         try
