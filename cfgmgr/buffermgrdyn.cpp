@@ -2106,7 +2106,7 @@ bool BufferMgrDynamic::isLosslessProfileSyncedInSai(const string &profileName)
 
 task_process_status BufferMgrDynamic::checkPendingProfilesSyncStatus()
 {
-    SWSS_LOG_DEBUG("Checking SAI sync status for %zu profiles", m_shpProfilesToCheck.size());
+    SWSS_LOG_INFO("Checking SAI sync status for %zu profiles", m_shpProfilesToCheck.size());
     m_applBufferProfileTable.flush();
 
     for (const auto &profileName : m_shpProfilesToCheck)
@@ -2129,20 +2129,21 @@ task_process_status BufferMgrDynamic::waitPendingProfilesSyncStatus()
     SWSS_LOG_NOTICE("Checking SAI sync status up to %d times for %zu BUFFER_PROFILE entries",
                     BUFFER_PROFILE_SYNC_MAX_CHECKS, m_shpProfilesToCheck.size());
 
-    for (int i = 1; i <= BUFFER_PROFILE_SYNC_MAX_CHECKS; i++)
+    auto status = checkPendingProfilesSyncStatus();
+    if (status == task_process_status::task_success)
     {
-        auto status = checkPendingProfilesSyncStatus();
+        return status;
+    }
+
+    for (int i = 0; i < BUFFER_PROFILE_SYNC_MAX_CHECKS - 1; i++)
+    {
+        sleep(1);
+
+        status = checkPendingProfilesSyncStatus();
         if (status == task_process_status::task_success)
         {
             return status;
         }
-
-        if (i == BUFFER_PROFILE_SYNC_MAX_CHECKS)
-        {
-            break;
-        }
-
-        sleep(1);
     }
 
     SWSS_LOG_ERROR("Timed out waiting for %zu BUFFER_PROFILE entries to sync to SAI",
