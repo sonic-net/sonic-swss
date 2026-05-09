@@ -3484,7 +3484,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     // Right now, verified platforms that support mirroring IPv6 packets are
     // Broadcom and Mellanox. Virtual switch is also supported for testing
     // purposes.
-    string platform = getenv("platform") ? getenv("platform") : "";
+    string platform = getenv("ASIC_VENDOR") ? getenv("ASIC_VENDOR") : "";
     string sub_platform = getenv("sub_platform") ? getenv("sub_platform") : "";
     if (platform == BRCM_PLATFORM_SUBSTRING ||
             platform == CISCO_8000_PLATFORM_SUBSTRING ||
