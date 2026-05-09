@@ -348,12 +348,16 @@ tests_nbrmgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredi
 
 
 tests_teamsyncd_SOURCES = teamsync_ut.cpp \
-                          $(top_srcdir)/teamsyncd/teamsync.cpp
+                          $(top_srcdir)/teamsyncd/teamsync.cpp \
+                          mock_dbconnector.cpp \
+                          mock_table.cpp \
+                          mock_hiredis.cpp \
+                          mock_redisreply.cpp
 
 tests_teamsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/teamsyncd
 tests_teamsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_teamsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_teamsyncd_INCLUDES)
 tests_teamsyncd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 \
-        -lswsscommon -lgtest -lgtest_main -lpthread -lteam -lteamdctl
+        -lswsscommon -ldl -lhiredis -lgtest -lgtest_main -lpthread -lteam -lteamdctl -lnl-route-3
 
 LOG_DRIVER = $(top_srcdir)/run-gtest-suite.py
