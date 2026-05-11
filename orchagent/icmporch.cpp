@@ -13,6 +13,7 @@
 #include "notifications.h"
 #include "icmporch.h"
 #include "switchorch.h"
+#include <algorithm>
 #include <string>
 
 using namespace std;
@@ -50,6 +51,11 @@ IcmpOrch::IcmpOrch(DBConnector *db, string tableName, TableConnector stateDbIcmp
         return;
     }
 
+    if (!resolve_stats_count_mode())
+    {
+        SWSS_LOG_WARN("ICMP stats count mode resolution failed, will try to create ICMP session without explicit stats count mode");
+    }
+
     DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
     m_icmpStateNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
 
@@ -71,6 +77,58 @@ IcmpOrch::~IcmpOrch(void)
 {
     // do nothing, just log
     SWSS_LOG_ENTER();
+}
+
+bool IcmpOrch::resolve_stats_count_mode()
+{
+    m_stats_count_mode_initialized = false;
+
+    const auto *meta = sai_metadata_get_attr_metadata(
+        SAI_OBJECT_TYPE_ICMP_ECHO_SESSION,
+        SAI_ICMP_ECHO_SESSION_ATTR_STATS_COUNT_MODE);
+    if (!meta || !meta->isenum)
+    {
+        SWSS_LOG_WARN("sai_metadata_get_attr_metadata for SAI_ICMP_ECHO_SESSION_ATTR_STATS_COUNT_MODE failed");
+        return false;
+    }
+
+    std::vector<int32_t> values_list(meta->enummetadata->valuescount);
+    sai_s32_list_t values;
+    values.count = static_cast<uint32_t>(values_list.size());
+    values.list = values_list.data();
+
+    auto status = sai_query_attribute_enum_values_capability(
+        gSwitchId,
+        SAI_OBJECT_TYPE_ICMP_ECHO_SESSION,
+        SAI_ICMP_ECHO_SESSION_ATTR_STATS_COUNT_MODE,
+        &values);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("sai_query_attribute_enum_values_capability for SAI_ICMP_ECHO_SESSION_ATTR_STATS_COUNT_MODE failed");
+        return false;
+    }
+
+    auto *end = values.list + values.count;
+
+    static const sai_stats_count_mode_t preferred_modes[] = {
+        SAI_STATS_COUNT_MODE_PACKET_AND_BYTE,
+        SAI_STATS_COUNT_MODE_PACKET,
+        SAI_STATS_COUNT_MODE_BYTE,
+        SAI_STATS_COUNT_MODE_NONE,
+    };
+
+    for (auto mode : preferred_modes)
+    {
+        if (std::find(values.list, end, static_cast<int32_t>(mode)) != end)
+        {
+            m_stats_count_mode = mode;
+            m_stats_count_mode_initialized = true;
+            return true;
+        }
+    }
+
+    SWSS_LOG_WARN("No supported stats count mode found");
+    return false;
 }
 
 void IcmpOrch::doTask(Consumer &consumer)
@@ -331,7 +389,6 @@ const std::string IcmpSaiSessionHandler::m_hw_lookup_fname          = "hw_lookup
 const std::string IcmpSaiSessionHandler::m_nexthop_switchover_fname = "nexthop_switchover";
 const std::string IcmpSaiSessionHandler::m_session_type_normal      = "NORMAL";
 const std::string IcmpSaiSessionHandler::m_session_type_rx          = "RX";
-const std::string IcmpSaiSessionHandler::m_stats_count_mode_fname   = "stats_count_mode";
 
 const uint32_t IcmpSaiSessionHandler::m_max_tx_interval_usec = 1200000;
 const uint32_t IcmpSaiSessionHandler::m_min_tx_interval_usec = 3000;
@@ -560,64 +617,16 @@ SaiOffloadHandlerStatus IcmpSaiSessionHandler::do_create()
         m_fv_map[m_tx_interval_fname] = "0";
     }
 
-    // Query capability for stats count mode and set a supported value explicitly
+    if (m_orch.m_stats_count_mode_initialized)
     {
-        const auto* meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_ICMP_ECHO_SESSION,
-                                                          SAI_ICMP_ECHO_SESSION_ATTR_STATS_COUNT_MODE);
-        if (!meta || !meta->isenum)
-        {
-            SWSS_LOG_ERROR("sai_metadata_get_attr_metadata for SAI_ICMP_ECHO_SESSION_ATTR_STATS_COUNT_MODE failed ");
-            return SaiOffloadHandlerStatus::FAILED_VALID_ENTRY;;
-        }
-
-        std::vector<int32_t> values_list(meta->enummetadata->valuescount);
-        sai_s32_list_t values;
-        values.count = static_cast<uint32_t>(values_list.size());
-        values.list = values_list.data();
-
-        auto status = sai_query_attribute_enum_values_capability(
-            gSwitchId,
-            SAI_OBJECT_TYPE_ICMP_ECHO_SESSION,
-            SAI_ICMP_ECHO_SESSION_ATTR_STATS_COUNT_MODE,
-            &values);
-
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("sai_query_attribute_enum_values_capability for SAI_ICMP_ECHO_SESSION_ATTR_STATS_COUNT_MODE failed ");
-            return SaiOffloadHandlerStatus::FAILED_VALID_ENTRY;
-        }
-
-        sai_attribute_value_t val{};
-        bool set = false;
-
-        for (size_t i = 0; i < values.count; i++)
-        {
-            // PACKET_AND_BYTE is the preferred mode, else - use PACKET only
-            if (values.list[i] == SAI_STATS_COUNT_MODE_PACKET_AND_BYTE)
-            {
-                val.s32 = SAI_STATS_COUNT_MODE_PACKET_AND_BYTE;
-                set = true;
-                break;
-            }
-            else if (values.list[i] == SAI_STATS_COUNT_MODE_PACKET)
-            {
-                val.s32 = SAI_STATS_COUNT_MODE_PACKET;
-                set = true;
-            }
-        }
-
-        if (set)
-        {
-            m_attr_val_map[SAI_ICMP_ECHO_SESSION_ATTR_STATS_COUNT_MODE] = val;
-            m_fv_vector.push_back({m_stats_count_mode_fname, "PACKET"});
-        }
-        else
-        {
-            SWSS_LOG_ERROR("No supported stats count mode found");
-            return SaiOffloadHandlerStatus::FAILED_VALID_ENTRY;
-        }
+        sai_attribute_value_t statsCountModeAttr{};
+        statsCountModeAttr.s32 = m_orch.m_stats_count_mode;
+        m_attr_val_map[SAI_ICMP_ECHO_SESSION_ATTR_STATS_COUNT_MODE] = statsCountModeAttr;
     }
-
+    else
+    {
+        SWSS_LOG_WARN("%s, Stats count mode capability unresolved", m_name.c_str());
+    }
 
     // update the hw_lookup parameter in fv_vector
     auto& hw_lookup_attr_val = m_attr_val_map[SAI_ICMP_ECHO_SESSION_ATTR_HW_LOOKUP_VALID];
