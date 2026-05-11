@@ -5,6 +5,7 @@
 #include <team.h>
 #include <teamdctl.h>
 #include "teamsync.h"
+#include "mock_table.h"
 
 static unsigned int (*callback_sleep)(unsigned int seconds) = NULL;
 static int (*callback_team_init)(struct team_handle *th, uint32_t ifindex) = NULL;
@@ -181,5 +182,72 @@ namespace teamportsync_test
         callback_teamdctl_connect = cb_teamdctl_connect;
         callback_teamdctl_config_get_raw_direct = cb_teamdctl_config_get_raw_direct_success;
         swss::TeamSync::TeamPortSync("testLag", 4, NULL);
+    }
+}
+
+namespace teamsync_test
+{
+    /* Subclass to expose the protected addLag() for unit testing. */
+    class TeamSyncUnderTest : public swss::TeamSync
+    {
+    public:
+        TeamSyncUnderTest(swss::DBConnector *db, swss::DBConnector *stateDb, swss::Select *sel)
+            : swss::TeamSync(db, stateDb, sel) {}
+        using swss::TeamSync::addLag;
+    };
+
+    struct TeamSyncTest : public ::testing::Test
+    {
+        virtual void SetUp() override
+        {
+            callback_sleep = cb_sleep;
+            callback_team_init = NULL;
+            callback_team_change_handler = NULL;
+            callback_teamdctl_connect = NULL;
+            callback_teamdctl_config_get_raw_direct = cb_teamdctl_config_get_raw_direct_force_error;
+            callback_teamdctl_disconnect = cb_teamdctl_disconnect;
+            testing_db::reset();
+        }
+
+        virtual void TearDown() override
+        {
+            callback_sleep = NULL;
+            callback_team_init = NULL;
+            callback_team_change_handler = NULL;
+            callback_teamdctl_connect = NULL;
+            callback_teamdctl_config_get_raw_direct = NULL;
+            callback_teamdctl_disconnect = NULL;
+            testing_db::reset();
+        }
+    };
+
+    /* Verify that when TeamPortSync construction fails (team_init returns an
+     * error for an invalid ifindex), addLag() catches the system_error
+     * internally and does not propagate it to the caller. */
+    TEST_F(TeamSyncTest, AddLagTeamInitFails)
+    {
+        swss::DBConnector db(0, "localhost", 0, 0);
+        swss::DBConnector stateDb(1, "localhost", 0, 0);
+        TeamSyncUnderTest ts(&db, &stateDb, nullptr);
+
+        /* ifindex 0 is invalid; the real team_init() will fail, causing
+         * TeamPortSync to throw system_error, which addLag() must catch. */
+        ts.addLag("testLag", 0, true, true, 1500);
+    }
+
+    /* Verify that addLag() successfully creates the team instance and writes
+     * the LAG state when all underlying calls succeed. */
+    TEST_F(TeamSyncTest, AddLagSucceeds)
+    {
+        callback_team_init = cb_team_init;
+        callback_team_change_handler = cb_team_change_handler;
+        callback_teamdctl_connect = cb_teamdctl_connect;
+        callback_teamdctl_config_get_raw_direct = cb_teamdctl_config_get_raw_direct_success;
+
+        swss::DBConnector db(0, "localhost", 0, 0);
+        swss::DBConnector stateDb(1, "localhost", 0, 0);
+        TeamSyncUnderTest ts(&db, &stateDb, nullptr);
+
+        ts.addLag("testLag", 4, true, true, 1500);
     }
 }
