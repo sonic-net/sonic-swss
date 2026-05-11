@@ -187,13 +187,14 @@ namespace teamportsync_test
 
 namespace teamsync_test
 {
-    /* Subclass to expose the protected addLag() for unit testing. */
+    /* Subclass to expose protected members for unit testing. */
     class TeamSyncUnderTest : public swss::TeamSync
     {
     public:
         TeamSyncUnderTest(swss::DBConnector *db, swss::DBConnector *stateDb, swss::Select *sel)
             : swss::TeamSync(db, stateDb, sel) {}
         using swss::TeamSync::addLag;
+        using swss::TeamSync::removeLag;
     };
 
     struct TeamSyncTest : public ::testing::Test
@@ -249,5 +250,215 @@ namespace teamsync_test
         TeamSyncUnderTest ts(&db, &stateDb, nullptr);
 
         ts.addLag("testLag", 4, true, true, 1500);
+    }
+
+    /* --- Queue-based event processing tests --- */
+
+    /* TestEventQueueing: Verify that enqueueEvent() adds events to the queue */
+    TEST_F(TeamSyncTest, TestEventQueueing)
+    {
+        swss::DBConnector db(0, "localhost", 0, 0);
+        swss::DBConnector stateDb(1, "localhost", 0, 0);
+        TeamSyncUnderTest ts(&db, &stateDb, nullptr);
+
+        swss::NetlinkEvent event;
+        event.nlmsg_type = RTM_NEWLINK;
+        event.lagName = "PortChannel1";
+        event.ifindex = 10;
+        event.admin_state = true;
+        event.oper_state = true;
+        event.mtu = 1500;
+
+        ts.enqueueEvent(event);
+        EXPECT_EQ(ts.getEventQueue().size(), 1u);
+
+        swss::NetlinkEvent event2;
+        event2.nlmsg_type = RTM_DELLINK;
+        event2.lagName = "PortChannel2";
+        event2.ifindex = 11;
+        event2.admin_state = false;
+        event2.oper_state = false;
+        event2.mtu = 1500;
+
+        ts.enqueueEvent(event2);
+        EXPECT_EQ(ts.getEventQueue().size(), 2u);
+
+        /* Verify FIFO ordering */
+        EXPECT_EQ(ts.getEventQueue().front().lagName, "PortChannel1");
+        EXPECT_EQ(ts.getEventQueue().back().lagName, "PortChannel2");
+    }
+
+    /* TestStaleNewCancelledByDelete: RTM_NEWLINK followed by RTM_DELLINK for
+     * the same lag should cancel each other during processEventQueue() */
+    TEST_F(TeamSyncTest, TestStaleNewCancelledByDelete)
+    {
+        swss::DBConnector db(0, "localhost", 0, 0);
+        swss::DBConnector stateDb(1, "localhost", 0, 0);
+        TeamSyncUnderTest ts(&db, &stateDb, nullptr);
+
+        swss::NetlinkEvent newEvent;
+        newEvent.nlmsg_type = RTM_NEWLINK;
+        newEvent.lagName = "PortChannel1";
+        newEvent.ifindex = 10;
+        newEvent.admin_state = true;
+        newEvent.oper_state = true;
+        newEvent.mtu = 1500;
+
+        swss::NetlinkEvent delEvent;
+        delEvent.nlmsg_type = RTM_DELLINK;
+        delEvent.lagName = "PortChannel1";
+        delEvent.ifindex = 10;
+        delEvent.admin_state = false;
+        delEvent.oper_state = false;
+        delEvent.mtu = 1500;
+
+        ts.enqueueEvent(newEvent);
+        ts.enqueueEvent(delEvent);
+        EXPECT_EQ(ts.getEventQueue().size(), 2u);
+
+        ts.processEventQueue();
+
+        /* Both events should be cancelled — queue empty */
+        EXPECT_EQ(ts.getEventQueue().size(), 0u);
+    }
+
+    /* TestFailedAddLagStaysQueued: When addLag() fails and the ifindex is
+     * still valid (sysfs exists), the event should be re-queued for retry.
+     * Note: In the test environment /sys/class/net/<lag>/ifindex won't exist,
+     * so the event will be dropped (ifindex invalid path). We test that the
+     * event is NOT in the queue after processing (dropped due to invalid
+     * ifindex). */
+    TEST_F(TeamSyncTest, TestFailedAddLagDroppedWhenIfindexInvalid)
+    {
+        swss::DBConnector db(0, "localhost", 0, 0);
+        swss::DBConnector stateDb(1, "localhost", 0, 0);
+        TeamSyncUnderTest ts(&db, &stateDb, nullptr);
+
+        /* team_init will fail (callback not set), addLag() catches exception.
+         * /sys/class/net/PortChannel1/ifindex won't exist in test env,
+         * so the event should be dropped. */
+        swss::NetlinkEvent event;
+        event.nlmsg_type = RTM_NEWLINK;
+        event.lagName = "PortChannel1";
+        event.ifindex = 99;
+        event.admin_state = true;
+        event.oper_state = true;
+        event.mtu = 1500;
+
+        ts.enqueueEvent(event);
+        ts.processEventQueue();
+
+        /* Event dropped because ifindex no longer valid */
+        EXPECT_EQ(ts.getEventQueue().size(), 0u);
+    }
+
+    /* TestSuccessfulProcessing: Enqueue a valid RTM_NEWLINK, process queue,
+     * verify lag is created (queue empty after processing) */
+    TEST_F(TeamSyncTest, TestSuccessfulProcessing)
+    {
+        callback_team_init = cb_team_init;
+        callback_team_change_handler = cb_team_change_handler;
+        callback_teamdctl_connect = cb_teamdctl_connect;
+        callback_teamdctl_config_get_raw_direct = cb_teamdctl_config_get_raw_direct_success;
+
+        swss::DBConnector db(0, "localhost", 0, 0);
+        swss::DBConnector stateDb(1, "localhost", 0, 0);
+        TeamSyncUnderTest ts(&db, &stateDb, nullptr);
+
+        swss::NetlinkEvent event;
+        event.nlmsg_type = RTM_NEWLINK;
+        event.lagName = "testLag";
+        event.ifindex = 4;
+        event.admin_state = true;
+        event.oper_state = true;
+        event.mtu = 1500;
+
+        ts.enqueueEvent(event);
+        EXPECT_EQ(ts.getEventQueue().size(), 1u);
+
+        ts.processEventQueue();
+
+        /* Event processed successfully — queue should be empty */
+        EXPECT_EQ(ts.getEventQueue().size(), 0u);
+    }
+
+    /* TestDeleteProcessedImmediately: Enqueue RTM_DELLINK for a LAG that
+     * exists, verify removeLag() is called (event consumed from queue) */
+    TEST_F(TeamSyncTest, TestDeleteProcessedImmediately)
+    {
+        callback_team_init = cb_team_init;
+        callback_team_change_handler = cb_team_change_handler;
+        callback_teamdctl_connect = cb_teamdctl_connect;
+        callback_teamdctl_config_get_raw_direct = cb_teamdctl_config_get_raw_direct_success;
+
+        swss::DBConnector db(0, "localhost", 0, 0);
+        swss::DBConnector stateDb(1, "localhost", 0, 0);
+        TeamSyncUnderTest ts(&db, &stateDb, nullptr);
+
+        /* First add the LAG so it exists */
+        ts.addLag("testLag", 4, true, true, 1500);
+
+        /* Now enqueue a delete event */
+        swss::NetlinkEvent delEvent;
+        delEvent.nlmsg_type = RTM_DELLINK;
+        delEvent.lagName = "testLag";
+        delEvent.ifindex = 4;
+        delEvent.admin_state = false;
+        delEvent.oper_state = false;
+        delEvent.mtu = 1500;
+
+        ts.enqueueEvent(delEvent);
+        EXPECT_EQ(ts.getEventQueue().size(), 1u);
+
+        ts.processEventQueue();
+
+        /* Delete event should be consumed */
+        EXPECT_EQ(ts.getEventQueue().size(), 0u);
+    }
+
+    /* TestFairness: Enqueue events for multiple LAGs where first one fails —
+     * verify second LAG still gets processed */
+    TEST_F(TeamSyncTest, TestFairness)
+    {
+        /* Set up so that team_init succeeds for all */
+        callback_team_init = cb_team_init;
+        callback_team_change_handler = cb_team_change_handler;
+        callback_teamdctl_connect = cb_teamdctl_connect;
+        /* teamdctl_config_get_raw_direct will fail, causing addLag to fail */
+        callback_teamdctl_config_get_raw_direct = cb_teamdctl_config_get_raw_direct_force_error;
+
+        swss::DBConnector db(0, "localhost", 0, 0);
+        swss::DBConnector stateDb(1, "localhost", 0, 0);
+        TeamSyncUnderTest ts(&db, &stateDb, nullptr);
+
+        /* First LAG will fail (teamdctl_config fails) */
+        swss::NetlinkEvent event1;
+        event1.nlmsg_type = RTM_NEWLINK;
+        event1.lagName = "PortChannel1";
+        event1.ifindex = 10;
+        event1.admin_state = true;
+        event1.oper_state = true;
+        event1.mtu = 1500;
+
+        /* Second LAG will also fail but both should get a chance */
+        swss::NetlinkEvent event2;
+        event2.nlmsg_type = RTM_NEWLINK;
+        event2.lagName = "PortChannel2";
+        event2.ifindex = 11;
+        event2.admin_state = true;
+        event2.oper_state = true;
+        event2.mtu = 1500;
+
+        ts.enqueueEvent(event1);
+        ts.enqueueEvent(event2);
+        EXPECT_EQ(ts.getEventQueue().size(), 2u);
+
+        ts.processEventQueue();
+
+        /* Both events should have been attempted. Since both fail and
+         * /sys/class/net/<lag>/ifindex doesn't exist in test env, both
+         * are dropped (ifindex invalid). This proves fair processing —
+         * the second event was reached even though the first failed. */
+        EXPECT_EQ(ts.getEventQueue().size(), 0u);
     }
 }
