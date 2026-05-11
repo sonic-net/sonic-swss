@@ -288,9 +288,11 @@ namespace teamsync_test
         EXPECT_EQ(ts.getEventQueue().back().lagName, "PortChannel2");
     }
 
-    /* TestStaleNewCancelledByDelete: RTM_NEWLINK followed by RTM_DELLINK for
-     * the same lag should cancel each other during processEventQueue() */
-    TEST_F(TeamSyncTest, TestStaleNewCancelledByDelete)
+    /* TestStaleNewFollowedByDelete: RTM_NEWLINK for a stale ifindex followed
+     * by RTM_DELLINK — both are processed and consumed. The RTM_NEWLINK
+     * fails (sysfs check shows ifindex gone → dropped), and RTM_DELLINK
+     * is a no-op since the lag was never added. */
+    TEST_F(TeamSyncTest, TestStaleNewFollowedByDelete)
     {
         swss::DBConnector db(0, "localhost", 0, 0);
         swss::DBConnector stateDb(1, "localhost", 0, 0);
@@ -318,7 +320,8 @@ namespace teamsync_test
 
         ts.processEventQueue();
 
-        /* Both events should be cancelled — queue empty */
+        /* RTM_NEWLINK dropped (ifindex invalid in test env), RTM_DELLINK
+         * is a no-op (lag not in m_teamSelectables). Queue empty. */
         EXPECT_EQ(ts.getEventQueue().size(), 0u);
     }
 

@@ -179,28 +179,10 @@ void TeamSync::processEventQueue()
 
         if (event.nlmsg_type == RTM_NEWLINK)
         {
-            /* Check if there's a matching RTM_DELLINK later in the queue for
-             * the same lagName. If so, this RTM_NEWLINK is stale — the device
-             * is being deleted and will be recreated. Cancel both events. */
-            bool cancelled = false;
-            for (auto it = m_eventQueue.begin(); it != m_eventQueue.end(); ++it)
-            {
-                if (it->nlmsg_type == RTM_DELLINK && it->lagName == event.lagName)
-                {
-                    SWSS_LOG_NOTICE("Cancelling stale RTM_NEWLINK for LAG %s "
-                                    "(ifindex %d) — matching RTM_DELLINK found in queue",
-                                    event.lagName.c_str(), event.ifindex);
-                    m_eventQueue.erase(it);
-                    cancelled = true;
-                    break;
-                }
-            }
-            if (cancelled)
-            {
-                continue;
-            }
-
-            /* Try to add the LAG. addLag() catches system_error internally. */
+            /* Try to add the LAG. addLag() catches system_error internally.
+             * If the device was deleted and recreated (teamd -r), the stale
+             * RTM_NEWLINK will fail and get dropped when the sysfs ifindex
+             * check below detects the mismatch. */
             addLag(event.lagName, event.ifindex, event.admin_state,
                    event.oper_state, event.mtu);
 
@@ -220,7 +202,7 @@ void TeamSync::processEventQueue()
                     continue;
                 }
 
-                int currentIfindex = 0;
+                unsigned int currentIfindex = 0;
                 ifs >> currentIfindex;
                 if (currentIfindex != event.ifindex)
                 {
