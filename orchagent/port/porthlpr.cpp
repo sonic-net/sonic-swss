@@ -1388,6 +1388,10 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
                 return false;
             }
         }
+        else if (field == "prbs_mode" || field == "prbs_pattern")
+        {
+            /* Placeholder to prevent warning. PRBS fields are handled in PortsOrch::doPortTask() */
+        }
         else
         {
             SWSS_LOG_WARN("Unknown field(%s): skipping ...", field.c_str());

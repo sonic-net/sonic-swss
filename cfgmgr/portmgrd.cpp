@@ -14,6 +14,9 @@ using namespace swss;
 
 /* select() function timeout retry time, in millisecond */
 #define SELECT_TIMEOUT 1000
+#define DEFAULT_BATCH_SIZE 128
+
+extern int gBatchSize;
 
 int main(int argc, char **argv)
 {
@@ -22,18 +25,21 @@ int main(int argc, char **argv)
 
     SWSS_LOG_NOTICE("--- Starting portmgrd ---");
 
+    gBatchSize = DEFAULT_BATCH_SIZE;
+
     try
     {
-        vector<string> cfg_port_tables = {
-            CFG_PORT_TABLE_NAME,
-            CFG_SEND_TO_INGRESS_PORT_TABLE_NAME,
-        };
-
         DBConnector cfgDb("CONFIG_DB", 0);
         DBConnector appDb("APPL_DB", 0);
         DBConnector stateDb("STATE_DB", 0);
 
-        PortMgr portmgr(&cfgDb, &appDb, &stateDb, cfg_port_tables);
+        vector<TableConnector> port_tables = {
+            TableConnector(&cfgDb, CFG_PORT_TABLE_NAME),
+            TableConnector(&cfgDb, CFG_SEND_TO_INGRESS_PORT_TABLE_NAME),
+            TableConnector(&appDb, APP_DIAG_PORT_TABLE_NAME),
+        };
+
+        PortMgr portmgr(&cfgDb, &appDb, &stateDb, port_tables);
         vector<Orch *> cfgOrchList = {&portmgr};
 
         swss::Select s;

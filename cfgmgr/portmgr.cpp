@@ -11,8 +11,8 @@
 using namespace std;
 using namespace swss;
 
-PortMgr::PortMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
-        Orch(cfgDb, tableNames),
+PortMgr::PortMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<TableConnector> &tables) :
+        Orch(tables),
         m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME),
         m_cfgSendToIngressPortTable(cfgDb, CFG_SEND_TO_INGRESS_PORT_TABLE_NAME),
         m_cfgLagMemberTable(cfgDb, CFG_LAG_MEMBER_TABLE_NAME),
@@ -145,6 +145,11 @@ void PortMgr::doTask(Consumer &consumer)
         doSendToIngressPortTask(consumer);
         return;
     }
+    if (table == APP_DIAG_PORT_TABLE_NAME)
+    {
+        doDiagPortTask(consumer);
+        return;
+    }
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -263,4 +268,37 @@ bool PortMgr::writeConfigToAppDb(const std::string &alias, std::vector<FieldValu
 {
     m_appPortTable.set(alias, field_values);
     return true;
+}
+
+void PortMgr::doDiagPortTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+        string alias = kfvKey(t);
+        string op = kfvOp(t);
+
+        if (op == SET_COMMAND)
+        {
+            vector<FieldValueTuple> fvs;
+            for (const auto &fv : kfvFieldsValues(t))
+            {
+                if (fvField(fv) == "prbs_mode" || fvField(fv) == "prbs_pattern")
+                {
+                    fvs.push_back(fv);
+                }
+            }
+            if (!fvs.empty())
+            {
+                SWSS_LOG_NOTICE("Diag: forwarding PRBS config for port %s to PORT_TABLE",
+                                alias.c_str());
+                m_appPortTable.set(alias, fvs);
+            }
+        }
+
+        it = consumer.m_toSync.erase(it);
+    }
 }
