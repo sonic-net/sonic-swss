@@ -73,49 +73,14 @@ void registerSwssLogger() {
  * Not include nh_grp_full_list and srv6 fields
  */
 static bool compareDependsAndDependents(const NextHopGroupFull *newNHG, const NextHopGroupFull *oldNHG) {
-    if ((newNHG->depends.size()) != (oldNHG->depends.size())) {
+    set<int> newDepends(newNHG->depends.begin(), newNHG->depends.end());
+    set<int> oldDepends(oldNHG->depends.begin(), oldNHG->depends.end());
+    if (newDepends != oldDepends) {
         return false;
     }
-    if ((newNHG->dependents.size()) != (oldNHG->dependents.size())) {
-        return false;
-    }
-    set<int> newNhgDepends;
-    set<int> oldNhgDepends;
-    set<int> newNhgDependents;
-    set<int> oldNhgDependents;
-    for (auto it = newNHG->depends.begin(); it != newNHG->depends.end(); it++) {
-        newNhgDepends.insert(*it);
-    }
-    for (auto it = newNHG->dependents.begin(); it != newNHG->dependents.end(); it++) {
-        newNhgDependents.insert(*it);
-    }
-    for (auto it = oldNHG->depends.begin(); it != oldNHG->depends.end(); it++) {
-        oldNhgDepends.insert(*it);
-        if (newNhgDepends
-                    .find(*it) == newNhgDepends.end()) {
-            return false;
-        }
-    }
-    for (auto it = oldNHG->dependents.begin(); it != oldNHG->dependents.end(); it++) {
-        oldNhgDependents.insert(*it);
-        if (newNhgDependents
-                    .find(*it) == newNhgDependents.end()) {
-            return false;
-        }
-    }
-    for (auto it = newNHG->depends.begin(); it != newNHG->depends.end(); it++) {
-        if (oldNhgDepends
-                    .find(*it) == oldNhgDepends.end()) {
-            return false;
-        }
-    }
-    for (auto it = newNHG->dependents.begin(); it != newNHG->dependents.end(); it++) {
-        if (oldNhgDependents
-                    .find(*it) == oldNhgDependents.end()) {
-            return false;
-        }
-    }
-    return true;
+    set<int> newDependents(newNHG->dependents.begin(), newNHG->dependents.end());
+    set<int> oldDependents(oldNHG->dependents.begin(), oldNHG->dependents.end());
+    return newDependents == oldDependents;
 }
 
 /*
@@ -225,7 +190,8 @@ int NHGMgr::addNewNHGFull(NextHopGroupFull nhg, uint8_t af) {
 
     entry = m_rib_nhg_table->getEntry(nhg.id);
     if (entry == nullptr) {
-        return ret;
+        SWSS_LOG_ERROR("Failed to get NHG entry after add for %d", nhg.id);
+        return -1;
     }
 
     /*
@@ -240,7 +206,7 @@ int NHGMgr::addNewNHGFull(NextHopGroupFull nhg, uint8_t af) {
             m_rib_nhg_table->delEntry(nhg.id);
             return -1;
         }
-
+        
         entry->setSonicNHGObjId(sonicId);
         ret = m_rib_nhg_table->writeToDB(entry);
         if (ret != 0) {
@@ -251,8 +217,10 @@ int NHGMgr::addNewNHGFull(NextHopGroupFull nhg, uint8_t af) {
         }
         SonicNHGObjectKey key;
         SonicNHGObjectKey::createSonicNormalNHGObjectKey(entry, key);
-        m_rib_nhg_table->insertCreatedNHGObject(key, sonicId);
-        entry->setSonicNHGObjId(sonicId);
+        if (entry->isSharedSonicNHG()){
+            m_rib_nhg_table->insertCreatedSharedNHGObject(key, sonicId);
+            SWSS_LOG_DEBUG("Create shared sonic NHG for %d, sonic id %d", nhg.id, sonicId);
+        }
         SWSS_LOG_DEBUG("Create sonic NHG for %d, sonic id %d", nhg.id, sonicId);
     }
 
@@ -331,14 +299,25 @@ int NHGMgr::updateExistingNHGFull(NextHopGroupFull nhg, uint8_t af) {
         }
 
         if(previousKey != entry->getSonicNHGObjectKey()){
-            m_rib_nhg_table->subSonicNHGObjectRef(previousKey);
 
             if(entry->needCreateSonicObject()){
-                uint32_t sonicId = m_sonic_id_manager.allocateID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL);
-                if (sonicId == 0) {
-                    SWSS_LOG_ERROR("Failed to allocate sonic nhg id");
-                    m_rib_nhg_table->delEntry(nhg.id);
-                    return -1;
+                uint32_t sonicId = 0;
+                if (!entry->isSharedSonicNHG()) {
+                    sonicId = entry->getSonicObjID();
+                    if (sonicId == 0){
+                        sonicId = m_sonic_id_manager.allocateID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL);
+                    }
+                    if (sonicId == 0) {
+                        SWSS_LOG_ERROR("Failed to allocate sonic nhg id");
+                        return -1;
+                    }
+                }else{
+                    m_rib_nhg_table->subSonicNHGObjectRef(previousKey);
+                    sonicId = m_sonic_id_manager.allocateID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL);
+                    if (sonicId == 0) {
+                        SWSS_LOG_ERROR("Failed to allocate sonic nhg id");
+                        return -1;
+                    }
                 }
 
                 entry->setSonicNHGObjId(sonicId);
@@ -349,9 +328,16 @@ int NHGMgr::updateExistingNHGFull(NextHopGroupFull nhg, uint8_t af) {
                     SWSS_LOG_ERROR("Failed to write to DB for %d", nhg.id);
                     return ret;
                 }
-                SonicNHGObjectKey key;
-                SonicNHGObjectKey::createSonicNormalNHGObjectKey(entry, key);
-                m_rib_nhg_table->insertCreatedNHGObject(key, sonicId);
+
+                // shared NHG track by sonic nhg key
+                if (entry->isSharedSonicNHG()){
+                    SonicNHGObjectKey key;
+                    SonicNHGObjectKey::createSonicNormalNHGObjectKey(entry, key);
+                    m_rib_nhg_table->insertCreatedSharedNHGObject(key, sonicId);
+                }else{
+                    m_rib_nhg_table->insertCreatedNhgObject(sonicId, nhg.id);
+                }
+
                 SWSS_LOG_NOTICE("Create sonic NHG for %d, sonic id %d", nhg.id, sonicId);
             }
         }
@@ -543,7 +529,6 @@ int NHGMgr::delNHGFull(uint32_t id) {
     if (entry == nullptr) {
         return 0;
     }
-    uint32_t sonicObjID = entry->getSonicObjID();
 
     // del the sonic gateway nhg first
     if (entry->hasSonicGatewayObj()) {
@@ -560,7 +545,6 @@ int NHGMgr::delNHGFull(uint32_t id) {
     if (m_rib_nhg_table->delEntry(id) != 0) {
         return -1;
     }
-    m_sonic_id_manager.freeID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL, sonicObjID);
     return 0;
 }
 
@@ -758,7 +742,23 @@ int RIBNHGTable::delEntry(uint32_t id) {
     }
 
     RIBNHGEntry *entry = m_nhg_map[id];
-    this->subSonicNHGObjectRef(entry->getSonicNHGObjectKey());
+
+    uint32_t sonicNHGID = entry->getSonicObjID();
+    if (sonicNHGID == 0){
+        SWSS_LOG_DEBUG("NextHop group id %d has no sonic nhg id.", id);
+        delete entry;
+        m_nhg_map.erase(id);
+        return 0;
+    }
+
+    if (entry->isSharedSonicNHG()){
+        this->subSonicNHGObjectRef(entry->getSonicNHGObjectKey());
+    }else{
+        this->removeFromDB(sonicNHGID);
+        m_sonic_id_manager->freeID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL, sonicNHGID);
+        m_sonic_nhg_id_2_rib_nhg_id_map.erase(sonicNHGID);
+
+    }
     delete entry;
     m_nhg_map.erase(id);
     return 0;
@@ -857,37 +857,44 @@ void RIBNHGTable::cleanUp() {
     for (auto it = m_nhg_map.begin(); it != m_nhg_map.end(); it++) {
         delete it->second;
     }
+    m_nhg_map.clear();
+    m_created_shared_nhg_map.clear();
+    m_sonic_nhg_id_2_rib_nhg_id_map.clear();
 }
 
-void RIBNHGTable::insertCreatedNHGObject(SonicNHGObjectKey key, uint32_t id) {
-    m_created_nhg_map.insert(std::make_pair(key, SonicNHGObjectInfo(id, 1)));
+void RIBNHGTable::insertCreatedSharedNHGObject(SonicNHGObjectKey key, uint32_t id) {
+    m_created_shared_nhg_map.insert(std::make_pair(key, SonicNHGObjectInfo(id, 1)));
 }
 
 void RIBNHGTable::addSonicNHGObjectRef(SonicNHGObjectKey key) {
-    m_created_nhg_map[key].refCount++;
+    m_created_shared_nhg_map[key].refCount++;
 }
 
 void RIBNHGTable::subSonicNHGObjectRef(SonicNHGObjectKey key) {
-    if (m_created_nhg_map.find(key) == m_created_nhg_map.end()){
+    if (m_created_shared_nhg_map.find(key) == m_created_shared_nhg_map.end()){
         return ;
     }
-    (m_created_nhg_map[key].refCount)--;
+    (m_created_shared_nhg_map[key].refCount)--;
 
     /*
      * if refCount is 0, then remove the sonic nhg object
      */
-    if(m_created_nhg_map[key].refCount == 0){
-        this->removeFromDB(m_created_nhg_map[key].id);
-        m_sonic_id_manager->freeID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL, m_created_nhg_map[key].id);
-        m_created_nhg_map.erase(key);
+    if(m_created_shared_nhg_map[key].refCount == 0){
+        this->removeFromDB(m_created_shared_nhg_map[key].id);
+        m_sonic_id_manager->freeID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL, m_created_shared_nhg_map[key].id);
+        m_created_shared_nhg_map.erase(key);
     }
 }
 
-int RIBNHGTable::getCreatedNHGObjectID(SonicNHGObjectKey key) {
-    if (m_created_nhg_map.find(key) == m_created_nhg_map.end()){
+int RIBNHGTable::getCreatedSharedNHGObjectID(SonicNHGObjectKey key) {
+    if (m_created_shared_nhg_map.find(key) == m_created_shared_nhg_map.end()){
         return 0;
     }
-    return m_created_nhg_map[key].id;
+    return m_created_shared_nhg_map[key].id;
+}
+
+void RIBNHGTable::insertCreatedNhgObject(uint32_t sonicNhgId, uint32_t ribNhgId) {
+    m_sonic_nhg_id_2_rib_nhg_id_map.insert(std::make_pair(sonicNhgId, ribNhgId));
 }
 
 RIBNHGEntry::RIBNHGEntry(RIBNHGTable *table) : m_table(table) {
@@ -1291,13 +1298,14 @@ void RIBNHGEntry::checkNeedCreateSonicGatewayNHGObj() {
     }
 
     /*
-     * For srv6 gateway, any nexthop with nh_srv6 and seg6_segs should create a sonic gateway obj.
+     * For srv6 received nexthop, should create a sonic gateway obj and shared sonic NHG object.
      * This covers both single-hop SRv6 VPN nexthops (no group members) and
      * recursive SRv6 VPN nexthops that carry their own SRv6 VPN info.
      */
     if (m_nhg.nh_srv6 != nullptr && m_nhg.nh_srv6->seg6_segs != nullptr && CHECK_FLAG(m_nhg.nhg_flags, NEXTHOP_GROUP_RECEIVED_FLAG)) {
         m_sonic_obj_type = SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY;
         m_has_sonic_gateway_obj = true;
+        m_is_shared_sonic_nhg = true;
         SWSS_LOG_DEBUG("NextHop id %d has sonic gateway obj.", m_rib_id);
         return;
     }
@@ -1377,8 +1385,12 @@ bool RIBNHGEntry::getNhgEnableStatus() {
 
 void RIBNHGEntry::checkNeedCreateSonicNHGObj() {
     SonicNHGObjectKey::createSonicNormalNHGObjectKey(this, m_sonic_nhg_key);
+
     if (m_sonic_obj_type == SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY){
-        uint32_t id = m_table->getCreatedNHGObjectID(m_sonic_nhg_key);
+        /*
+         * For SRv6 VPN NHG, create shared NHG object.
+         */
+        uint32_t id = m_table->getCreatedSharedNHGObjectID(m_sonic_nhg_key);
         if (id == 0){
             m_create_sonic_nhg_obj = true;
         }else{
@@ -1387,6 +1399,23 @@ void RIBNHGEntry::checkNeedCreateSonicNHGObj() {
             m_table->addSonicNHGObjectRef(m_sonic_nhg_key);
         }
     }else{
+        /*
+         * Skipped received NHG without SRv6 info.
+         */
+        if (CHECK_FLAG(m_nhg.nhg_flags, NEXTHOP_GROUP_RECEIVED_FLAG)){
+            SWSS_LOG_NOTICE("NextHop %d is a received NHG, skip create sonic object.", m_rib_id);
+            m_create_sonic_nhg_obj = false;
+            return ;
+        }
+
+        /*
+         * Skipped NHG with SRv6 info but not received NHG.
+         */
+        if (!CHECK_FLAG(m_nhg.nhg_flags, NEXTHOP_GROUP_RECEIVED_FLAG) && m_nhg.nh_srv6 != nullptr && m_nhg.nh_srv6->seg6_segs != nullptr){
+            SWSS_LOG_NOTICE("NextHop %d is a NHG with SRv6 VPN, create sonic object, but not is received NHG, skip create sonic object.", m_rib_id);
+            m_create_sonic_nhg_obj = false;
+            return ;
+        }
         if (m_is_single == true){
             m_create_sonic_nhg_obj = false;
         } else{
@@ -1476,13 +1505,13 @@ int SonicGateWayNHGTable::updateEntry(SonicGateWayNHGObject sonicObj) {
 
     int ret = entry->setEntry(sonicObj);
     if (ret != 0) {
-        delete entry;
+        SWSS_LOG_ERROR("Failed to update SonicGateWayNHGEntry, keeping previous state");
         return -1;
     }
 
     // remove previous key entry pair in m_sonic_nhg_map
-    m_sonic_nhg_map[key] = entry;
     m_sonic_nhg_map.erase(previousKey);
+    m_sonic_nhg_map[key] = entry;
 
     /*
     switch (entry->getType()) {
@@ -1558,9 +1587,10 @@ void SonicGateWayNHGTable::delEntry(sonicNhgObjType type, uint32_t id) {
  */
 void SonicGateWayNHGTable::cleanUp() {
     for (auto it = m_sonic_nhg_map.begin(); it != m_sonic_nhg_map.end(); it++) {
-        SonicGateWayNHGEntry *entry = m_sonic_nhg_map[it->first];
-        delete entry;
+        delete it->second;
     }
+    m_sonic_nhg_map.clear();
+    m_pic_map.clear();
 }
 
 /*
@@ -1738,7 +1768,9 @@ void SonicGateWayNHGEntry::addRefCount() {
 }
 
 void SonicGateWayNHGEntry::subRefCount() {
-    m_ref_count--;
+    if (m_ref_count > 0) {
+        m_ref_count--;
+    }
 }
 
 u_int32_t SonicIDMgr::allocateID(sonicNhgObjType type) {
@@ -1844,7 +1876,11 @@ SonicNHGObjectKey SonicNHGObjectKey::createSonicGateWayNHGObjectKey(SonicGateWay
 }
 
 void SonicNHGObjectKey::createSonicNormalNHGObjectKey(RIBNHGEntry *entry, SonicNHGObjectKey &key_out) {
-    key_out.type = SONIC_NHG_OBJ_TYPE_NHG_NORMAL;
+    key_out.groupMember.clear();
+    key_out.nexthop="";
+    key_out.ifName="";
+    key_out.segSrc="";
+    key_out.vpnSid="";
     if (entry->isSingleNexthop()){
         key_out.nexthop = entry->getNextHopStr();
         key_out.ifName = entry->getInterfaceNameStr();
@@ -1861,6 +1897,7 @@ void SonicNHGObjectKey::createSonicNormalNHGObjectKey(RIBNHGEntry *entry, SonicN
  * create SonicNHGObjectKey from RIBNHGEntry
  */
 int SonicNHGObjectKey::createSonicGateWayNHGObjectKey(RIBNHGEntry *entry, SonicNHGObjectKey &key_out) {
+    key_out.groupMember.clear();
     SonicGateWayNHGObject obj;
     int ret = entry->createSonicGateWayNHGObjectFromRIBEntry(obj);
     if (ret != 0) {
