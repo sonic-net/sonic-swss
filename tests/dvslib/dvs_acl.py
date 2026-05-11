@@ -201,7 +201,12 @@ class DVSAcl:
         Returns:
             The list of ACL group IDs in ASIC DB.
         """
-        acl_table_groups = self.asic_db.wait_for_n_keys(self.ADB_ACL_GROUP_TABLE_NAME, expected)
+        num_keys = len(self.asic_db.default_acl_groups) + expected
+        keys = self.asic_db.wait_for_n_keys(self.ADB_ACL_GROUP_TABLE_NAME, num_keys)
+        for k in self.asic_db.default_acl_groups:
+            assert k in keys
+
+        acl_table_groups = [k for k in keys if k not in self.asic_db.default_acl_groups]
         return acl_table_groups
 
     # FIXME: This method currently assumes only ingress xor egress tables exist.
@@ -265,7 +270,7 @@ class DVSAcl:
             num_tables: The total number of ACL tables in ASIC DB.
             stage: The stage of the ACL table that was created.
         """
-        acl_table_group_ids = self.asic_db.wait_for_n_keys(self.ADB_ACL_GROUP_TABLE_NAME, len(bind_portchannels))
+        acl_table_group_ids = self.get_acl_table_group_ids(len(bind_portchannels))
 
         portchannel_groups = []
         for portchannel in bind_portchannels:
@@ -296,7 +301,7 @@ class DVSAcl:
             num_tables: The total number of ACL tables in ASIC DB.
             stage: The stage of the ACL table that was created.
         """
-        acl_table_group_ids = self.asic_db.wait_for_n_keys(self.ADB_ACL_GROUP_TABLE_NAME, len(bind_ports))
+        acl_table_group_ids = self.get_acl_table_group_ids(len(bind_ports))
 
         port_groups = []
         for port in bind_ports:

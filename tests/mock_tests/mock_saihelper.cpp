@@ -168,6 +168,9 @@ namespace saihelper_test
                     app_switch_table
                 };
 
+                ASSERT_EQ(gCrmOrch, nullptr);
+                gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
+
                 ASSERT_EQ(gSwitchOrch, nullptr);
                 gSwitchOrch = new SwitchOrch(m_app_db.get(), switch_tables, stateDbSwitchTable);
             }
@@ -177,6 +180,9 @@ namespace saihelper_test
                 ::testing_db::reset();
 
                 gDirectory.m_values.clear();
+
+                delete gCrmOrch;
+                gCrmOrch = nullptr;
 
                 delete gSwitchOrch;
                 gSwitchOrch = nullptr;
