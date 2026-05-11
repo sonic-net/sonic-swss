@@ -129,8 +129,6 @@ private:
     FgNhgMembers m_fgNhgNexthops;
     FgNhgPrefixes m_fgNhgPrefixes;
     bool isFineGrainedConfigured;
-    bool m_maxEcmpMemberCountInitialized = false;
-    uint32_t m_maxEcmpMemberCount = 0;
 
     Table m_stateWarmRestartRouteTable;
 
@@ -165,7 +163,6 @@ private:
                     uint32_t bank, std::vector<BankMemberChanges> bank_member_changes,
                     std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const string &key, const IpPrefix&);
     void calculateBankHashBucketStartIndices(FgNhgEntry *fgNhgEntry);
-    void initializeMaxEcmpMemberCount();
     bool getMaxEcmpMemberCount(uint32_t &maxEcmpMembers);
     bool getEffectiveFgNhgMemberCapacity(uint32_t configuredBucketSize, uint32_t &memberCapacity);
     bool validateFgNhgMemberCount(size_t memberCount, uint32_t configuredBucketSize, const string &logKey);

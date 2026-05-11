@@ -37,7 +37,6 @@ FgNhgOrch::FgNhgOrch(DBConnector *db, DBConnector *appDb, DBConnector *stateDb, 
 {
     SWSS_LOG_ENTER();
     isFineGrainedConfigured = false;
-    initializeMaxEcmpMemberCount();
     gPortsOrch->attach(this);
 }
 
@@ -266,7 +265,7 @@ bool FgNhgOrch::writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry,
     return true;
 }
 
-void FgNhgOrch::initializeMaxEcmpMemberCount()
+bool FgNhgOrch::getMaxEcmpMemberCount(uint32_t &maxEcmpMembers)
 {
     SWSS_LOG_ENTER();
 
@@ -277,28 +276,11 @@ void FgNhgOrch::initializeMaxEcmpMemberCount()
     sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &switch_attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_WARN("Failed to query SAI_SWITCH_ATTR_MAX_ECMP_MEMBER_COUNT during FG NHG init, rv:%d",
-                      status);
-        return;
-    }
-
-    m_maxEcmpMemberCount = switch_attr.value.u32;
-    m_maxEcmpMemberCountInitialized = true;
-
-    SWSS_LOG_NOTICE("FG NHG max ECMP member count cached at init: %u", m_maxEcmpMemberCount);
-}
-
-bool FgNhgOrch::getMaxEcmpMemberCount(uint32_t &maxEcmpMembers)
-{
-    SWSS_LOG_ENTER();
-
-    if (!m_maxEcmpMemberCountInitialized)
-    {
-        SWSS_LOG_WARN("SAI_SWITCH_ATTR_MAX_ECMP_MEMBER_COUNT is unavailable in FG NHG cache");
+        SWSS_LOG_WARN("Failed to query SAI_SWITCH_ATTR_MAX_ECMP_MEMBER_COUNT, rv:%d", status);
         return false;
     }
 
-    maxEcmpMembers = m_maxEcmpMemberCount;
+    maxEcmpMembers = switch_attr.value.u32;
     return true;
 }
 
