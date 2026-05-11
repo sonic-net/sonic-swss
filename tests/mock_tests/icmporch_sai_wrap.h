@@ -4,7 +4,7 @@
  * Test hooks for GNU ld --wrap of
  *   sai_query_attribute_enum_values_capability
  *   sai_metadata_get_attr_metadata
- * used in IcmpSaiSessionHandler::do_create (orchagent/icmporch.cpp) stats
+ * (orchagent/icmporch.cpp, IcmpOrch::resolve_stats_count_mode).
  * count mode selection.
  */
 namespace icmporch_sai_wrap_ut
@@ -17,9 +17,9 @@ namespace icmporch_sai_wrap_ut
 
     void setIcmpSaiHookQueryEnumFail();
 
-    void setIcmpSaiHookQueryEnumByteOnlyNoPacketModes();
+    void setIcmpSaiHookQueryEnumEmptyList();
 
-    void setIcmpSaiHookQueryEnumPacketOnly();
+    void setIcmpSaiHookQueryEnumPacketAndByteOnly();
 
     struct IcmpSaiHookGuard
     {

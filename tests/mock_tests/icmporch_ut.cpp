@@ -33,70 +33,69 @@ namespace icmporch_test
     }
 
     /**
-     * icmporch.cpp (IcmpSaiSessionHandler::do_create, stats count mode block):
-     *   if (!meta) { SWSS_LOG_ERROR("sai_metadata_get_attr_metadata ..."); return FAILED_VALID_ENTRY; }
+     * IcmpOrch::resolve_stats_count_mode() (constructor): metadata unavailable.
      */
-    TEST_F(IcmpOrchStatsCountModeTest, DoCreate_failsWhenStatsCountModeMetadataNull)
+    TEST_F(IcmpOrchStatsCountModeTest, DoCreate_continuesWhenStatsCountModeMetadataNull)
     {
         icmporch_sai_wrap_ut::IcmpSaiHookGuard g(icmporch_sai_wrap_ut::setIcmpSaiHookMetadataNull);
         IcmpOrch icmpOrch(m_app_db.get(), APP_ICMP_ECHO_SESSION_TABLE_NAME,
                 TableConnector(m_state_db.get(), STATE_ICMP_ECHO_SESSION_TABLE_NAME));
         IcmpSaiSessionHandler h(icmpOrch);
         ASSERT_EQ(h.init(sai_icmp_echo_api, "default:default:5000:NORMAL"), SaiOffloadHandlerStatus::SUCCESS_VALID_ENTRY);
-        EXPECT_EQ(h.create(makeMinimalIcmpSessionFvs()), SaiOffloadHandlerStatus::FAILED_VALID_ENTRY);
+        EXPECT_EQ(h.create(makeMinimalIcmpSessionFvs()), SaiOffloadHandlerStatus::SUCCESS_VALID_ENTRY);
     }
 
     /**
-     * Same block: if (!meta->isenum) { SWSS_LOG_ERROR("sai_metadata_get_attr_metadata ..."); return FAILED_VALID_ENTRY; }
+     * resolve_stats_count_mode: metadata not marked enum false.
      */
-    TEST_F(IcmpOrchStatsCountModeTest, DoCreate_failsWhenStatsCountModeMetadataNotEnum)
+    TEST_F(IcmpOrchStatsCountModeTest, DoCreate_continuesWhenStatsCountModeMetadataNotEnum)
     {
         icmporch_sai_wrap_ut::IcmpSaiHookGuard g(icmporch_sai_wrap_ut::setIcmpSaiHookMetadataNotEnum);
         IcmpOrch icmpOrch(m_app_db.get(), APP_ICMP_ECHO_SESSION_TABLE_NAME,
                 TableConnector(m_state_db.get(), STATE_ICMP_ECHO_SESSION_TABLE_NAME));
         IcmpSaiSessionHandler h(icmpOrch);
         ASSERT_EQ(h.init(sai_icmp_echo_api, "default:default:5000:NORMAL"), SaiOffloadHandlerStatus::SUCCESS_VALID_ENTRY);
-        EXPECT_EQ(h.create(makeMinimalIcmpSessionFvs()), SaiOffloadHandlerStatus::FAILED_VALID_ENTRY);
+        EXPECT_EQ(h.create(makeMinimalIcmpSessionFvs()), SaiOffloadHandlerStatus::SUCCESS_VALID_ENTRY);
     }
 
     /**
-     *   if (status != SAI_STATUS_SUCCESS) { SWSS_LOG_ERROR("sai_query_attribute_enum_values_capability ..."); }
+     * resolve_stats_count_mode: sai_query_attribute_enum_values_capability fails false;
      */
-    TEST_F(IcmpOrchStatsCountModeTest, DoCreate_failsWhenQueryAttributeEnumValuesCapabilityFails)
+    TEST_F(IcmpOrchStatsCountModeTest, DoCreate_continuesWhenQueryAttributeEnumValuesCapabilityFails)
     {
         icmporch_sai_wrap_ut::IcmpSaiHookGuard g(icmporch_sai_wrap_ut::setIcmpSaiHookQueryEnumFail);
         IcmpOrch icmpOrch(m_app_db.get(), APP_ICMP_ECHO_SESSION_TABLE_NAME,
                 TableConnector(m_state_db.get(), STATE_ICMP_ECHO_SESSION_TABLE_NAME));
         IcmpSaiSessionHandler h(icmpOrch);
         ASSERT_EQ(h.init(sai_icmp_echo_api, "default:default:5000:NORMAL"), SaiOffloadHandlerStatus::SUCCESS_VALID_ENTRY);
-        EXPECT_EQ(h.create(makeMinimalIcmpSessionFvs()), SaiOffloadHandlerStatus::FAILED_VALID_ENTRY);
+        EXPECT_EQ(h.create(makeMinimalIcmpSessionFvs()), SaiOffloadHandlerStatus::SUCCESS_VALID_ENTRY);
     }
 
     /**
-     *   else { SWSS_LOG_ERROR("No supported stats count mode found"); return FAILED_VALID_ENTRY; }
-     * when SAI reports a mode that is neither PACKET_AND_BYTE nor PACKET (e.g. BYTE only).
+     * resolve_stats_count_mode: sai_query_attribute_enum_values_capability success with an empty list.
      */
-    TEST_F(IcmpOrchStatsCountModeTest, DoCreate_failsWhenNoPacketStatsCountModeSupported)
+    TEST_F(IcmpOrchStatsCountModeTest, DoCreate_continuesWhenCapabilityEnumListEmpty)
     {
-        icmporch_sai_wrap_ut::IcmpSaiHookGuard g(icmporch_sai_wrap_ut::setIcmpSaiHookQueryEnumByteOnlyNoPacketModes);
+        icmporch_sai_wrap_ut::IcmpSaiHookGuard g(icmporch_sai_wrap_ut::setIcmpSaiHookQueryEnumEmptyList);
         IcmpOrch icmpOrch(m_app_db.get(), APP_ICMP_ECHO_SESSION_TABLE_NAME,
                 TableConnector(m_state_db.get(), STATE_ICMP_ECHO_SESSION_TABLE_NAME));
         IcmpSaiSessionHandler h(icmpOrch);
         ASSERT_EQ(h.init(sai_icmp_echo_api, "default:default:5000:NORMAL"), SaiOffloadHandlerStatus::SUCCESS_VALID_ENTRY);
-        EXPECT_EQ(h.create(makeMinimalIcmpSessionFvs()), SaiOffloadHandlerStatus::FAILED_VALID_ENTRY);
+        EXPECT_EQ(h.create(makeMinimalIcmpSessionFvs()), SaiOffloadHandlerStatus::SUCCESS_VALID_ENTRY);
     }
 
     /**
-     *   else if (values.list[i] == SAI_STATS_COUNT_MODE_PACKET) { val.s32 = SAI_STATS_COUNT_MODE_PACKET; ... }
-     * PACKET is supported but not PACKET_AND_BYTE; do_create should still succeed and session creation may proceed.
+     * resolve_stats_count_mode: capability includes PACKET_AND_BYTE (first entry in preferred modes) and create succeeds.
      */
-    TEST_F(IcmpOrchStatsCountModeTest, DoCreate_acceptsPacketOnlyWhenPacketAndByteNotReported)
+    TEST_F(IcmpOrchStatsCountModeTest, DoCreate_resolvesPacketAndByteWhenReported)
     {
-        icmporch_sai_wrap_ut::IcmpSaiHookGuard g(icmporch_sai_wrap_ut::setIcmpSaiHookQueryEnumPacketOnly);
+        icmporch_sai_wrap_ut::IcmpSaiHookGuard g(
+                icmporch_sai_wrap_ut::setIcmpSaiHookQueryEnumPacketAndByteOnly);
         IcmpOrch icmpOrch(m_app_db.get(), APP_ICMP_ECHO_SESSION_TABLE_NAME,
                 TableConnector(m_state_db.get(), STATE_ICMP_ECHO_SESSION_TABLE_NAME));
         IcmpSaiSessionHandler h(icmpOrch);
-        ASSERT_EQ(h.init(sai_icmp_echo_api, "default:default:5000:NORMAL"), SaiOffloadHandlerStatus::SUCCESS_VALID_ENTRY);
+        ASSERT_EQ(h.init(sai_icmp_echo_api, "default:default:5000:NORMAL"),
+                SaiOffloadHandlerStatus::SUCCESS_VALID_ENTRY);
         EXPECT_EQ(h.create(makeMinimalIcmpSessionFvs()), SaiOffloadHandlerStatus::SUCCESS_VALID_ENTRY);
     }
 } // namespace icmporch_test

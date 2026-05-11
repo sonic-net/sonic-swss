@@ -1,6 +1,6 @@
 /*
  * GNU ld --wrap for SAI calls on the ICMP echo session stats count mode path
- * (orchagent/icmporch.cpp, IcmpSaiSessionHandler::do_create).
+ * (orchagent/icmporch.cpp, IcmpOrch::resolve_stats_count_mode).
  */
 
 #include "icmporch_sai_wrap.h"
@@ -21,8 +21,8 @@ namespace
         MetadataNull,
         MetadataNotEnum,
         QueryEnumFail,
-        QueryEnumByteOnly,
-        QueryEnumPacketOnly
+        QueryEnumEmptyList,
+        QueryEnumPacketAndByteOnly,
     };
 
     static thread_local Hook g_hook = Hook::None;
@@ -74,23 +74,16 @@ extern "C"
             return SAI_STATUS_NOT_SUPPORTED;
         }
 
-        if (is_icmp_stats_mode && (g_hook == Hook::QueryEnumByteOnly))
+        if (g_hook == Hook::QueryEnumEmptyList && is_icmp_stats_mode)
         {
-            if (!enum_values_capability || !enum_values_capability->list
-                    || enum_values_capability->count < 1)
+            if (enum_values_capability && enum_values_capability->list)
             {
-                if (enum_values_capability)
-                {
-                    enum_values_capability->count = 0;
-                }
-                return SAI_STATUS_BUFFER_OVERFLOW;
+                enum_values_capability->count = 0;
             }
-            enum_values_capability->count = 1;
-            enum_values_capability->list[0] = SAI_STATS_COUNT_MODE_BYTE;
             return SAI_STATUS_SUCCESS;
         }
 
-        if (is_icmp_stats_mode && (g_hook == Hook::QueryEnumPacketOnly))
+        if (is_icmp_stats_mode && (g_hook == Hook::QueryEnumPacketAndByteOnly))
         {
             if (!enum_values_capability || !enum_values_capability->list
                     || enum_values_capability->count < 1)
@@ -102,7 +95,7 @@ extern "C"
                 return SAI_STATUS_BUFFER_OVERFLOW;
             }
             enum_values_capability->count = 1;
-            enum_values_capability->list[0] = SAI_STATS_COUNT_MODE_PACKET;
+            enum_values_capability->list[0] = SAI_STATS_COUNT_MODE_PACKET_AND_BYTE;
             return SAI_STATUS_SUCCESS;
         }
 
@@ -133,14 +126,14 @@ namespace icmporch_sai_wrap_ut
         g_hook = Hook::QueryEnumFail;
     }
 
-    void setIcmpSaiHookQueryEnumByteOnlyNoPacketModes()
+    void setIcmpSaiHookQueryEnumEmptyList()
     {
-        g_hook = Hook::QueryEnumByteOnly;
+        g_hook = Hook::QueryEnumEmptyList;
     }
 
-    void setIcmpSaiHookQueryEnumPacketOnly()
+    void setIcmpSaiHookQueryEnumPacketAndByteOnly()
     {
-        g_hook = Hook::QueryEnumPacketOnly;
+        g_hook = Hook::QueryEnumPacketAndByteOnly;
     }
 
     IcmpSaiHookGuard::IcmpSaiHookGuard(void (*apply)())

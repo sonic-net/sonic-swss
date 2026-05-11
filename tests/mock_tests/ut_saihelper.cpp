@@ -3,8 +3,6 @@
 
 #include <saiicmpecho.h>
 
-extern sai_icmp_echo_api_t* sai_icmp_echo_api;
-
 namespace ut_helper
 {
     map<string, string> gProfileMap;
