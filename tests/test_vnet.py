@@ -3575,117 +3575,30 @@ class TestVnetOrch(object):
         self.remove_neighbor("Ethernet4", "9.1.0.1")
         self.remove_ip_address("Ethernet4", "9.1.0.1/32")
         self.set_admin_status("Ethernet4", "down")
-
+        
 
     '''
-    Test 37 - Test for pinned state change
+    Test 37 - Test for vnet tunnel routes with fine-grained ECMP using consistent_hashing_buckets
     '''
     def test_vnet_orch_37(self, dvs, testlog):
-        self.setup_db(dvs)
-
-        vnet_obj = self.get_vnet_obj()
-        tunnel_name = 'tunnel_36'
-        vnet_name = 'vnet36'
-        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-
-        vnet_obj.fetch_exist_entries(dvs)
-
-        create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
-        create_vnet_entry(dvs, vnet_name, tunnel_name, '10029', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
-
-        vnet_obj.check_vnet_entry(dvs, vnet_name)
-        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10029')
-
-        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
-
-        self.create_l3_intf("Ethernet4", "")
-        self.add_ip_address("Ethernet4", "9.1.0.1/32")
-        self.set_admin_status("Ethernet4", "up")
-        self.add_neighbor("Ethernet4", "9.1.0.1", "00:01:02:03:04:05")
-
-        '''
-        Local Endpoint: (DPU)9.1.0.1
-        Remote Endpoints: (NPU)10.1.0.1 -> (DPU)9.1.0.2
-        '''
-        vnet_obj.fetch_exist_entries(dvs)
-        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,10.1.0.1', ep_monitor='9.1.0.1,9.1.0.2', primary ='9.1.0.1', monitoring='custom_bfd', adv_prefix='100.100.1.1/32', check_directly_connected=True, rx_monitor_timer=100, tx_monitor_timer=100, pinned_state="none,none")
-
-        # default monitor status is down, route should not be programmed in this status
-        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
-        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", [])
-        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
-
-        # Route should be properly configured when all monitor session states go up. Only primary Endpoints should be in use.
-        update_bfd_session_state(dvs, '9.1.0.1', 'Up')
-        update_bfd_session_state(dvs, '9.1.0.2', 'Up')
-        time.sleep(2)
-        vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1'], tunnel_name)
-        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
-        check_routes_advertisement(dvs, "100.100.1.1/32")
-
-        # Pinned state change, set primary's pinned state to down, route should switch to backup endpoint
-        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,10.1.0.1', ep_monitor='9.1.0.1,9.1.0.2', primary ='9.1.0.1', monitoring='custom_bfd', pinned_state="down,none")
-        time.sleep(2)
-        vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['10.1.0.1'], tunnel_name)
-        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['10.1.0.1'])
-        check_routes_advertisement(dvs, "100.100.1.1/32")
-
-        # Pinned state change, set primary's pinned state to none, route should come up with primary endpoint
-        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,10.1.0.1', ep_monitor='9.1.0.1,9.1.0.2', primary ='9.1.0.1', monitoring='custom_bfd', pinned_state="none,none")
-        time.sleep(2)
-        vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1'], tunnel_name)
-        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
-        check_routes_advertisement(dvs, "100.100.1.1/32")
-
-        # Pinned state change, set primary's pinned state to up, route should remain on primary endpoint when BFD is down
-        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,10.1.0.1', ep_monitor='9.1.0.1,9.1.0.2', primary ='9.1.0.1', monitoring='custom_bfd', pinned_state="up,none")
-        update_bfd_session_state(dvs, '9.1.0.1', 'Down')
-        time.sleep(2)
-        vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1'], tunnel_name)
-        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
-        check_routes_advertisement(dvs, "100.100.1.1/32")
-
-        # Remove tunnel route 1
-        delete_vnet_routes(dvs, "100.100.1.1/32", vnet_name)
-        time.sleep(2)
-        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
-        check_remove_state_db_routes(dvs, vnet_name, "100.100.1.1/32")
-        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
-
-        # Confirm the monitor sessions are removed
-        check_del_bfd_session(dvs, ['9.1.0.1', '9.1.0.2'])
-
-        delete_vnet_entry(dvs, vnet_name)
-        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
-        delete_vxlan_tunnel(dvs, tunnel_name)
-
-        self.remove_neighbor("Ethernet4", "9.1.0.1")
-        self.remove_ip_address("Ethernet4", "9.1.0.1/32")
-        self.set_admin_status("Ethernet4", "down")
-
-
-    '''
-    Test 36 - Test for vnet tunnel routes with fine-grained ECMP using consistent_hashing_buckets
-    '''
-    def test_vnet_orch_36(self, dvs, testlog):
         self.setup_db(dvs)
         vnet_obj = self.get_vnet_obj()
         asic_db = dvs.get_asic_db()
         state_db = dvs.get_state_db()
 
-        tunnel_name = 'tunnel_36'
-        vnet_name = 'Vnet36'
-        fg_nhg_prefix = "100.100.36.0/24"
+        tunnel_name = 'tunnel_37'
+        vnet_name = 'Vnet37'
+        fg_nhg_prefix = "100.100.37.0/24"
         bucket_size = 60
 
         vnet_obj.fetch_exist_entries(dvs)
         initial_nhop_count = len(asic_db.get_keys(vnet_obj.ASIC_NEXT_HOP))
 
         create_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
-        create_vnet_entry(dvs, vnet_name, tunnel_name, '10036', "")
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10037', "")
 
         vnet_obj.check_vnet_entry(dvs, vnet_name)
-        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10036')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10037')
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
         
         vnet_obj.fetch_exist_entries(dvs)
@@ -3693,7 +3606,7 @@ class TestVnetOrch(object):
         vr_id = vnet_obj.vr_map[vnet_name]['ing']
 
         # Create VNET route with consistent_hashing_buckets and 3 tunnel next hops for fine-grained ECMP
-        create_vnet_routes(dvs, fg_nhg_prefix, vnet_name, '36.0.0.1,36.0.0.2,36.0.0.3',
+        create_vnet_routes(dvs, fg_nhg_prefix, vnet_name, '37.0.0.1,37.0.0.2,37.0.0.3',
                           '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C', consistent_hashing_buckets=bucket_size)
 
         asic_db.wait_for_n_keys(test_fgnhg.ASIC_NHG_MEMB, bucket_size)
@@ -3702,20 +3615,23 @@ class TestVnetOrch(object):
         nh_oid_map = test_fgnhg.get_nh_oid_map(asic_db)
         
         ip_to_if_map = {
-            '36.0.0.1': '',
-            '36.0.0.2': '',
-            '36.0.0.3': '',
-            '36.0.0.4': '',
-            '36.0.0.5': '',
-            '36.0.0.6': '',
-            '36.0.0.7': '',
-            '36.0.0.8': ''
+            '37.0.0.1': '',
+            '37.0.0.2': '',
+            '37.0.0.3': '',
+            '37.0.0.4': '',
+            '37.0.0.5': '',
+            '37.0.0.6': '',
+            '37.0.0.7': '',
+            '37.0.0.8': '',
+            '38.0.0.1': '',
+            '38.0.0.2': '',
+            '38.0.0.3': ''
         }
         
-        check_state_db_routes(dvs, vnet_name, fg_nhg_prefix, ['36.0.0.1', '36.0.0.2', '36.0.0.3'])
+        check_state_db_routes(dvs, vnet_name, fg_nhg_prefix, ['37.0.0.1', '37.0.0.2', '37.0.0.3'])
 
         num_exp_changes = 60
-        nh_memb_exp_count = {'36.0.0.1': 20, '36.0.0.2': 20, '36.0.0.3': 20}
+        nh_memb_exp_count = {'37.0.0.1': 20, '37.0.0.2': 20, '37.0.0.3': 20}
         prev_memb_dict = {}
         memb_dict = test_fgnhg.validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
                             prev_memb_dict, num_exp_changes, fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size, vnet_name)
@@ -3723,7 +3639,7 @@ class TestVnetOrch(object):
         vnet_obj.fetch_exist_entries(dvs)
 
         # Add 3 more nexthops
-        create_vnet_routes(dvs, fg_nhg_prefix, vnet_name, '36.0.0.1,36.0.0.2,36.0.0.3,36.0.0.4,36.0.0.5,36.0.0.6',
+        create_vnet_routes(dvs, fg_nhg_prefix, vnet_name, '37.0.0.1,37.0.0.2,37.0.0.3,37.0.0.4,37.0.0.5,37.0.0.6',
                           '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C,00:12:34:56:78:9D,00:12:34:56:78:9E,00:12:34:56:78:9F', 
                           consistent_hashing_buckets=bucket_size)
         
@@ -3731,17 +3647,17 @@ class TestVnetOrch(object):
 
         nh_oid_map = test_fgnhg.get_nh_oid_map(asic_db)
         
-        check_state_db_routes(dvs, vnet_name, fg_nhg_prefix, ['36.0.0.1', '36.0.0.2', '36.0.0.3','36.0.0.4','36.0.0.5','36.0.0.6'])
+        check_state_db_routes(dvs, vnet_name, fg_nhg_prefix, ['37.0.0.1', '37.0.0.2', '37.0.0.3','37.0.0.4','37.0.0.5','37.0.0.6'])
         
         num_exp_changes = 30
-        nh_memb_exp_count = {'36.0.0.1': 10, '36.0.0.2': 10, '36.0.0.3': 10, '36.0.0.4': 10, '36.0.0.5': 10, '36.0.0.6': 10}
+        nh_memb_exp_count = {'37.0.0.1': 10, '37.0.0.2': 10, '37.0.0.3': 10, '37.0.0.4': 10, '37.0.0.5': 10, '37.0.0.6': 10}
         memb_dict = test_fgnhg.validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
                             memb_dict, num_exp_changes, fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size, vnet_name)
         
         vnet_obj.fetch_exist_entries(dvs)
 
         # Update route with different endpoints
-        create_vnet_routes(dvs, fg_nhg_prefix, vnet_name, '36.0.0.1,36.0.0.2,36.0.0.3,36.0.0.4,36.0.0.7,36.0.0.8',
+        create_vnet_routes(dvs, fg_nhg_prefix, vnet_name, '37.0.0.1,37.0.0.2,37.0.0.3,37.0.0.4,37.0.0.7,37.0.0.8',
                           '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C,00:12:34:56:78:9D,00:12:34:56:78:8E,00:12:34:56:78:8F', 
                           consistent_hashing_buckets=bucket_size)
         
@@ -3749,17 +3665,17 @@ class TestVnetOrch(object):
 
         nh_oid_map = test_fgnhg.get_nh_oid_map(asic_db)
         
-        check_state_db_routes(dvs, vnet_name, fg_nhg_prefix, ['36.0.0.1', '36.0.0.2', '36.0.0.3','36.0.0.4','36.0.0.7','36.0.0.8'])
+        check_state_db_routes(dvs, vnet_name, fg_nhg_prefix, ['37.0.0.1', '37.0.0.2', '37.0.0.3','37.0.0.4','37.0.0.7','37.0.0.8'])
         
         num_exp_changes = 20
-        nh_memb_exp_count = {'36.0.0.1': 10, '36.0.0.2': 10, '36.0.0.3': 10, '36.0.0.4': 10, '36.0.0.7': 10, '36.0.0.8': 10}
+        nh_memb_exp_count = {'37.0.0.1': 10, '37.0.0.2': 10, '37.0.0.3': 10, '37.0.0.4': 10, '37.0.0.7': 10, '37.0.0.8': 10}
         memb_dict = test_fgnhg.validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
                             memb_dict, num_exp_changes, fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size, vnet_name)
 
         vnet_obj.fetch_exist_entries(dvs)
 
         # Remove one endpoint
-        create_vnet_routes(dvs, fg_nhg_prefix, vnet_name, '36.0.0.1,36.0.0.2,36.0.0.3,36.0.0.4,36.0.0.7',
+        create_vnet_routes(dvs, fg_nhg_prefix, vnet_name, '37.0.0.1,37.0.0.2,37.0.0.3,37.0.0.4,37.0.0.7',
                           '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C,00:12:34:56:78:9D,00:12:34:56:78:8E', 
                           consistent_hashing_buckets=bucket_size)
         
@@ -3767,32 +3683,32 @@ class TestVnetOrch(object):
 
         nh_oid_map = test_fgnhg.get_nh_oid_map(asic_db)
         
-        check_state_db_routes(dvs, vnet_name, fg_nhg_prefix, ['36.0.0.1', '36.0.0.2', '36.0.0.3','36.0.0.4','36.0.0.7'])
+        check_state_db_routes(dvs, vnet_name, fg_nhg_prefix, ['37.0.0.1', '37.0.0.2', '37.0.0.3','37.0.0.4','37.0.0.7'])
         
         num_exp_changes = 10
-        nh_memb_exp_count = {'36.0.0.1': 12, '36.0.0.2': 12, '36.0.0.3': 12, '36.0.0.4': 12, '36.0.0.7': 12}
+        nh_memb_exp_count = {'37.0.0.1': 12, '37.0.0.2': 12, '37.0.0.3': 12, '37.0.0.4': 12, '37.0.0.7': 12}
         memb_dict = test_fgnhg.validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
                             memb_dict, 10, fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size, vnet_name)
         
         # create route for new vnet with same IP space
-        vnet_name_2 = 'Vnet37'
-        create_vnet_entry(dvs, vnet_name_2, tunnel_name, '10037', "")
+        vnet_name_2 = 'Vnet38'
+        create_vnet_entry(dvs, vnet_name_2, tunnel_name, '10038', "")
         
         vnet_obj.check_vnet_entry(dvs, vnet_name_2)
         
         # Get VR ID for vnet_name_2
         vr_id_2 = vnet_obj.vr_map[vnet_name_2]['ing']
         
-        create_vnet_routes(dvs, fg_nhg_prefix, vnet_name_2, '36.0.0.1,36.0.0.2,36.0.0.3',
+        create_vnet_routes(dvs, fg_nhg_prefix, vnet_name_2, '38.0.0.1,38.0.0.2,38.0.0.3',
                           '00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C', consistent_hashing_buckets=bucket_size)
         
         asic_db.wait_for_n_keys(test_fgnhg.ASIC_NHG_MEMB, 120)
         nhgid = test_fgnhg.validate_asic_nhg_fine_grained_ecmp(asic_db, fg_nhg_prefix, bucket_size, vr_id_2)
         
-        check_state_db_routes(dvs, vnet_name_2, fg_nhg_prefix, ['36.0.0.1', '36.0.0.2', '36.0.0.3'])
+        check_state_db_routes(dvs, vnet_name_2, fg_nhg_prefix, ['38.0.0.1', '38.0.0.2', '38.0.0.3'])
 
         num_exp_changes = 60
-        nh_memb_exp_count = {'36.0.0.1': 20, '36.0.0.2': 20, '36.0.0.3': 20}
+        nh_memb_exp_count = {'38.0.0.1': 20, '38.0.0.2': 20, '38.0.0.3': 20}
         prev_memb_dict = {}
         memb_dict = test_fgnhg.validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
                             prev_memb_dict, num_exp_changes, fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size, vnet_name_2)
