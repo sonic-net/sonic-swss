@@ -9,15 +9,16 @@
 #include <nexthopgroup/nexthopgroup_debug.h>
 
 #include <string.h>
+#include <algorithm>
 
 #define NHG_DELIMITER ','
 #define NEXTHOP_GROUP_RECEIVED_FLAG (1 << 10)
 #define CHECK_FLAG(V,F)      ((V) & (F))
 
-using namespace std;
-
 
 namespace swss {
+
+using namespace std;
 
     using NextHopGroupFull = fib::NextHopGroupFull;
     using nh_grp_full = fib::nh_grp_full;
@@ -58,57 +59,19 @@ namespace swss {
         string ifName;
         sonicNhgObjType type;
 
-        bool operator<(const SonicNHGObjectKey &key) const {
-            if (key.type < type) {
-                return true;
-            }
-            if (key.nexthop < nexthop) {
-                return true;
-            }
-            if (key.type == SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY && key.vpnSid < vpnSid) {
-                return true;
-            }
-            if (key.segSrc < segSrc) {
-                return true;
-            }
-            if (key.ifName < ifName) {
-                return true;
-            }
-            vector<std::pair<uint32_t, uint32_t>> keyGroupMember = key.groupMember;
-            sort(keyGroupMember.begin(), keyGroupMember.end());
-            string memberKey = "";
-            string weightKey = "";
+        bool operator<(const SonicNHGObjectKey &other) const {
+            if (type != other.type) return type < other.type;
+            if (nexthop != other.nexthop) return nexthop < other.nexthop;
+            if (type == SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY && vpnSid != other.vpnSid)
+                return vpnSid < other.vpnSid;
+            if (segSrc != other.segSrc) return segSrc < other.segSrc;
+            if (ifName != other.ifName) return ifName < other.ifName;
 
-            for (auto it = keyGroupMember.begin(); it != keyGroupMember.end(); ++it) {
-                if (!memberKey.empty()) {
-                    memberKey += NHG_DELIMITER;
-                    weightKey += NHG_DELIMITER;
-                }
-                memberKey += std::to_string(it->first);
-                weightKey += std::to_string(it->second);
-            }
-
-            vector<std::pair<uint32_t, uint32_t>> myGroupMember = groupMember;
-            sort(myGroupMember.begin(), myGroupMember.end());
-            string memberStr = "";
-            string weightStr = "";
-
-            for (auto it = myGroupMember.begin(); it != myGroupMember.end(); ++it) {
-                if (!memberStr.empty()) {
-                    memberStr += NHG_DELIMITER;
-                    weightStr += NHG_DELIMITER;
-                }
-                memberStr += std::to_string(it->first);
-                weightStr += std::to_string(it->second);
-            }
-
-            if (memberKey < memberStr) {
-                return true;
-            }
-            if (weightKey < weightStr) {
-                return true;
-            }
-            return false;
+            std::vector<std::pair<uint32_t, uint32_t>> lhs = groupMember;
+            std::vector<std::pair<uint32_t, uint32_t>> rhs = other.groupMember;
+            sort(lhs.begin(), lhs.end());
+            sort(rhs.begin(), rhs.end());
+            return lhs < rhs;
         }
 
         /*
@@ -243,6 +206,10 @@ namespace swss {
     public:
 
         SonicIDMgr(){};
+        ~SonicIDMgr(){
+            delete m_nhg_id_allocator;
+            delete m_pic_id_allocator;
+        };
 
         /*
          * initialize Sonic ID Manager
@@ -603,6 +570,13 @@ namespace swss {
         }
 
         /*
+         * check if RIBNHGEntry uses shared Sonic NHG
+         */
+        bool isSharedSonicNHG() {
+            return m_is_shared_sonic_nhg;
+        }
+
+        /*
          * set the Sonic NHG Object ID of RIBNHGEntry
          */
         void setSonicNHGObjId(uint32_t id);
@@ -730,6 +704,11 @@ namespace swss {
          */
         bool m_enable = true;
 
+        /*
+         *  Shared Sonic NHG Object flag of the entry.
+         */
+        bool m_is_shared_sonic_nhg = false;
+
         /*Sonic Gateway Obj fields */
         /*
          * has Sonic Gateway Object flag of the entry
@@ -831,11 +810,14 @@ namespace swss {
         // clean up all the entry the table
         void cleanUp();
 
-        // insert created Sonic NHG Object into m_created_nhg_map
-        void insertCreatedNHGObject(SonicNHGObjectKey key, uint32_t id);
+        // insert shared Sonic NHG Object into m_created_shared_nhg_map
+        void insertCreatedSharedNHGObject(SonicNHGObjectKey key, uint32_t id);
 
-        // get created Sonic NHG Object ID from m_created_nhg_map, return 0 if not exist
-        int getCreatedNHGObjectID(SonicNHGObjectKey key);
+        // insert created Sonic NHG Object into m_sonic_nhg_id_2_rib_nhg_id_map
+        void insertCreatedNhgObject(uint32_t sonicNhgId, uint32_t ribNhgId);
+
+        // get created Sonic NHG Object ID from m_created_shared_nhg_map, return 0 if not exist
+        int getCreatedSharedNHGObjectID(SonicNHGObjectKey key);
 
         void addSonicNHGObjectRef(SonicNHGObjectKey key);
 
@@ -851,7 +833,13 @@ namespace swss {
         map<uint32_t, RIBNHGEntry *> m_nhg_map;
 
         /* store created Sonic NHG Object */
-        map<SonicNHGObjectKey, SonicNHGObjectInfo> m_created_nhg_map;
+        map<SonicNHGObjectKey, SonicNHGObjectInfo> m_created_shared_nhg_map;
+
+        /*
+         * store Sonic NHG Object ID to RIB NHG ID mapping
+         * not include shared NHG Object
+         */
+        map<uint32_t , uint32_t> m_sonic_nhg_id_2_rib_nhg_id_map;
 
         ProducerStateTable m_nexthop_groupTable;
     };
@@ -904,7 +892,6 @@ namespace swss {
         RIBNHGEntry *getRIBNHGEntryByKey(string key);
 
     private:
-        DBConnector *m_db;
         // Map zebra NHG id to received zebra_dplane_ctx + SONIC Context (a.k.a SONIC ZEBRA NHG)
         RIBNHGTable *m_rib_nhg_table;
 
