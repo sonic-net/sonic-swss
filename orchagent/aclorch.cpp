@@ -260,7 +260,8 @@ static acl_table_action_list_lookup_t defaultAclActionList =
             {
                 ACL_STAGE_INGRESS,
                 {
-                    SAI_ACL_ACTION_TYPE_MIRROR_INGRESS
+                    SAI_ACL_ACTION_TYPE_MIRROR_INGRESS,
+                    SAI_ACL_ACTION_TYPE_MIRROR_EGRESS
                 }
             },
             {
@@ -278,7 +279,8 @@ static acl_table_action_list_lookup_t defaultAclActionList =
             {
                 ACL_STAGE_INGRESS,
                 {
-                    SAI_ACL_ACTION_TYPE_MIRROR_INGRESS
+                    SAI_ACL_ACTION_TYPE_MIRROR_INGRESS,
+                    SAI_ACL_ACTION_TYPE_MIRROR_EGRESS
                 }
             },
             {
