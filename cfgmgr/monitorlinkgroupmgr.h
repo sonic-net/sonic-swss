@@ -47,16 +47,14 @@ private:
         bool has_state_change;                                         // false until first transition observed
         std::string last_state_change_from;                            // "up" | "down" | "pending"
         std::string last_state_change_to;                              // "up" | "down" | "pending"
-        std::string last_state_change_reason;                          // human-readable reason
         std::chrono::system_clock::time_point last_state_change_time;  // wall-clock of last transition
         std::chrono::system_clock::time_point pending_start_time;      // wall-clock when current PENDING started
-        uint64_t up_to_down_count;                                     // direct UP -> DOWN transitions
-        uint64_t down_to_up_count;                                     // any -> UP transitions
+        uint64_t total_transitions;                                    // count of all recorded transitions
 
         MonitorLinkGroupInfo()
             : min_monitored_links(1), linkup_delay(0), monitored_up_count(0),
               is_up(false), pending_up(false), linkup_delay_timer(nullptr),
-              has_state_change(false), up_to_down_count(0), down_to_up_count(0) {}
+              has_state_change(false), total_transitions(0) {}
     };
 
     struct MonitorLinkInterfaceInfo {
@@ -90,20 +88,17 @@ private:
     void updateMonitorLinkGroupState(const std::string& group_name, bool skip_delay = false);
     void writeMonitorLinkGroupStateToDb(const std::string& group_name);
 
-    // PR-A: record a state transition (from -> to) on the group with a human-readable
-    // reason. Updates last_state_change_*, pending_start_time when entering PENDING,
-    // and bumps counters per the rules:
-    //   - down_to_up_count++ on any path landing in UP (DOWN->UP and PENDING->UP)
-    //   - up_to_down_count++ on direct UP -> DOWN only (not PENDING -> DOWN)
-    // No-op when from == to. Emits SWSS_LOG_NOTICE.
+    // PR-A: record a state transition (from -> to) on the group. Updates
+    // last_state_change_{from,to,time}, sets pending_start_time when entering
+    // PENDING, and bumps total_transitions. No-op when from == to. Emits
+    // SWSS_LOG_NOTICE.
     void recordStateTransition(const std::string& group_name,
                                const std::string& from_state,
-                               const std::string& to_state,
-                               const std::string& reason);
+                               const std::string& to_state);
 
-    // PR-A: on first sighting of a group in this process, reload up_to_down_count
-    // and down_to_up_count from STATE_DB so the counters survive intfmgrd restart.
-    // Leaves counters at 0 if the STATE_DB fields are absent or malformed.
+    // PR-A: on first sighting of a group in this process, reload total_transitions
+    // from STATE_DB so the counter survives intfmgrd restart. Leaves the counter
+    // at 0 if the STATE_DB field is absent or malformed.
     void restoreGroupCountersFromStateDb(const std::string& group_name);
 
     // SelectableTimer management for linkup delay
