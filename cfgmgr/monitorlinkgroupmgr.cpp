@@ -193,6 +193,15 @@ bool MonitorLinkGroupMgr::handleMonitorLinkGroupSet(const string& group_name, co
     }
 
     updateGroupConfiguration(group_name, description, min_monitored_links, linkup_delay);
+
+    // PR-A: first sighting of this group in this process (likely a daemon restart
+    // path) — reload transition counters from STATE_DB so telemetry/SNMP consumers
+    // see monotonic counters across an intfmgrd crash/restart.
+    if (is_new_group)
+    {
+        restoreGroupCountersFromStateDb(group_name);
+    }
+
     updateGroupInterfaceLists(group_name, monitored_interfaces, managed_interfaces, is_new_group);
     return true;
 }
@@ -279,12 +288,20 @@ void MonitorLinkGroupMgr::handleGroupDelayChange(const string& group_name, uint3
 
     if (existingGroup.pending_up)
     {
+        uint32_t up_count = existingGroup.monitored_up_count;
+        uint32_t total = static_cast<uint32_t>(existingGroup.monitored_interfaces.size());
+        uint32_t threshold = existingGroup.min_monitored_links;
+
         if (new_delay == 0)
         {
             SWSS_LOG_INFO("Monitor link group %s delay changed to 0, bringing UP immediately", group_name.c_str());
             stopLinkupDelayTimer(group_name);
             existingGroup.pending_up = false;
             existingGroup.is_up = true;
+            std::ostringstream reason;
+            reason << "link-up-delay reduced to 0 (monitored " << up_count << "/" << total
+                   << " >= min-monitored-links " << threshold << ")";
+            recordStateTransition(group_name, "pending", "up", reason.str());
             updateManagedInterfacesForGroupStateChange(group_name, false, true);
             writeMonitorLinkGroupStateToDb(group_name);
         }
@@ -301,6 +318,10 @@ void MonitorLinkGroupMgr::handleGroupDelayChange(const string& group_name, uint3
                 stopLinkupDelayTimer(group_name);
                 existingGroup.pending_up = false;
                 existingGroup.is_up = true;
+                std::ostringstream reason;
+                reason << "link-up-delay reduced, already elapsed (monitored " << up_count << "/"
+                       << total << " >= min-monitored-links " << threshold << ")";
+                recordStateTransition(group_name, "pending", "up", reason.str());
                 updateManagedInterfacesForGroupStateChange(group_name, false, true);
                 writeMonitorLinkGroupStateToDb(group_name);
             }
@@ -665,40 +686,70 @@ void MonitorLinkGroupMgr::updateMonitorLinkGroupState(const std::string& group_n
     bool should_be_up = (groupIt->second.monitored_up_count >= threshold);
     bool current_state = groupIt->second.is_up;
     bool is_pending = groupIt->second.pending_up;
+    uint32_t up_count = groupIt->second.monitored_up_count;
+    uint32_t total = static_cast<uint32_t>(groupIt->second.monitored_interfaces.size());
 
     if (should_be_up && !current_state && !is_pending)
     {
         if (delay_seconds > 0 && !skip_delay)
         {
             groupIt->second.pending_up = true;
+            std::ostringstream reason;
+            reason << "monitored " << up_count << "/" << total
+                   << " >= min-monitored-links " << threshold
+                   << ", starting link-up-delay";
+            recordStateTransition(group_name, "down", "pending", reason.str());
             updateManagedInterfacesForGroupStateChange(group_name, false, false);
             startLinkupDelayTimer(group_name);
             SWSS_LOG_NOTICE("Monitor link group %s starting %u second linkup delay before going UP (%u monitored up, threshold: %u)",
-                            group_name.c_str(), delay_seconds, groupIt->second.monitored_up_count, threshold);
+                            group_name.c_str(), delay_seconds, up_count, threshold);
         }
         else
         {
             groupIt->second.is_up = true;
+            std::ostringstream reason;
+            reason << "monitored " << up_count << "/" << total
+                   << " >= min-monitored-links " << threshold;
+            recordStateTransition(group_name, "down", "up", reason.str());
             updateManagedInterfacesForGroupStateChange(group_name, false, true);
             SWSS_LOG_NOTICE("Monitor link group %s state changed: UP (%u monitored up, threshold: %u)",
-                            group_name.c_str(), groupIt->second.monitored_up_count, threshold);
+                            group_name.c_str(), up_count, threshold);
         }
     }
     else if (!should_be_up && (current_state || is_pending))
     {
         stopLinkupDelayTimer(group_name);
-        if (is_pending)
+        // Invariant: pending_up and is_up are mutually exclusive (is_up is forced
+        // false whenever pending_up becomes true). The two branches below are
+        // structured as if/else if to make that invariant explicit; if we ever see
+        // both true at once we log loudly and self-heal in the else-if branch.
+        if (is_pending && !current_state)
         {
             groupIt->second.pending_up = false;
+            std::ostringstream reason;
+            reason << "monitored " << up_count << "/" << total
+                   << " < min-monitored-links " << threshold
+                   << ", cancelled link-up-delay";
+            recordStateTransition(group_name, "pending", "down", reason.str());
             SWSS_LOG_NOTICE("Monitor link group %s cancelled linkup delay (%u monitored up, threshold: %u)",
-                            group_name.c_str(), groupIt->second.monitored_up_count, threshold);
+                            group_name.c_str(), up_count, threshold);
         }
-        if (current_state)
+        else if (current_state)
         {
+            if (is_pending)
+            {
+                SWSS_LOG_ERROR("Monitor link group %s in inconsistent state (is_up=true && pending_up=true), clearing pending",
+                               group_name.c_str());
+                groupIt->second.pending_up = false;
+            }
             groupIt->second.is_up = false;
+            std::ostringstream reason;
+            reason << "monitored " << up_count << "/" << total
+                   << " < min-monitored-links " << threshold;
+            recordStateTransition(group_name, "up", "down", reason.str());
             updateManagedInterfacesForGroupStateChange(group_name, true, false);
             SWSS_LOG_NOTICE("Monitor link group %s state changed: DOWN (%u monitored up, threshold: %u)",
-                            group_name.c_str(), groupIt->second.monitored_up_count, threshold);
+                            group_name.c_str(), up_count, threshold);
         }
     }
 
@@ -826,25 +877,39 @@ void MonitorLinkGroupMgr::handleLinkupDelayExpired(const std::string& group_name
     }
 
     uint32_t threshold = group_info.min_monitored_links;
+    uint32_t up_count = group_info.monitored_up_count;
+    uint32_t total = static_cast<uint32_t>(group_info.monitored_interfaces.size());
 
-    if (group_info.monitored_up_count >= threshold)
+    if (up_count >= threshold)
     {
         group_info.pending_up = false;
         group_info.is_up = true;
+
+        std::ostringstream reason;
+        reason << "link-up-delay expired (monitored " << up_count << "/" << total
+               << " >= min-monitored-links " << threshold << ")";
+        recordStateTransition(group_name, "pending", "up", reason.str());
 
         updateManagedInterfacesForGroupStateChange(group_name, false, true);
         writeMonitorLinkGroupStateToDb(group_name);
 
         SWSS_LOG_NOTICE("MonitorLinkGroupMgr: Monitor link group %s state changed: UP after linkup delay (%u monitored up, threshold: %u)",
-                        group_name.c_str(), group_info.monitored_up_count, threshold);
+                        group_name.c_str(), up_count, threshold);
     }
     else
     {
         group_info.pending_up = false;
+
+        std::ostringstream reason;
+        reason << "monitored " << up_count << "/" << total
+               << " < min-monitored-links " << threshold
+               << ", cancelled link-up-delay";
+        recordStateTransition(group_name, "pending", "down", reason.str());
+
         writeMonitorLinkGroupStateToDb(group_name);
 
         SWSS_LOG_NOTICE("MonitorLinkGroupMgr: Monitor link group %s cancelled linkup delay - threshold no longer met (%u monitored up, threshold: %u)",
-                        group_name.c_str(), group_info.monitored_up_count, threshold);
+                        group_name.c_str(), up_count, threshold);
     }
 }
 
@@ -888,10 +953,102 @@ void MonitorLinkGroupMgr::writeMonitorLinkGroupStateToDb(const std::string& grou
     fvVector.emplace_back("link_up_threshold", std::to_string(groupIt->second.min_monitored_links));
     fvVector.emplace_back("link_up_delay", std::to_string(groupIt->second.linkup_delay));
 
+    // PR-A: transition tracking fields. All optional; legacy CLIs render unchanged
+    // when these are absent (first-run before any transition).
+    const auto& g = groupIt->second;
+    if (g.has_state_change)
+    {
+        auto epoch = std::chrono::duration_cast<std::chrono::seconds>(
+            g.last_state_change_time.time_since_epoch()).count();
+        fvVector.emplace_back("last_state_change_time", std::to_string(epoch));
+        fvVector.emplace_back("last_state_change_from", g.last_state_change_from);
+        fvVector.emplace_back("last_state_change_to", g.last_state_change_to);
+        fvVector.emplace_back("last_state_change_reason", g.last_state_change_reason);
+    }
+    if (state == "pending")
+    {
+        auto epoch = std::chrono::duration_cast<std::chrono::seconds>(
+            g.pending_start_time.time_since_epoch()).count();
+        fvVector.emplace_back("pending_start_time", std::to_string(epoch));
+    }
+    fvVector.emplace_back("up_to_down_count", std::to_string(g.up_to_down_count));
+    fvVector.emplace_back("down_to_up_count", std::to_string(g.down_to_up_count));
+
     SWSS_LOG_INFO("Writing to STATE_DB for group %s: state='%s', monitored-links='%s', managed-links='%s'",
                   group_name.c_str(), state.c_str(), monitored_interfaces_str.c_str(), managed_interfaces_str.c_str());
 
     m_stateMonitorLinkGroupTable.set(group_name, fvVector);
+
+    // PR-A: clear pending_start_time once we leave PENDING so external consumers
+    // don't see stale data. The set() above does a HMSET that doesn't remove keys
+    // we omit, so we have to explicitly hdel.
+    if (state != "pending")
+    {
+        m_stateMonitorLinkGroupTable.hdel(group_name, "pending_start_time");
+    }
+}
+
+void MonitorLinkGroupMgr::recordStateTransition(const std::string& group_name,
+                                                const std::string& from_state,
+                                                const std::string& to_state,
+                                                const std::string& reason)
+{
+    auto groupIt = m_monitorLinkGroups.find(group_name);
+    if (groupIt == m_monitorLinkGroups.end())
+        return;
+    if (from_state == to_state)
+        return;
+
+    MonitorLinkGroupInfo& g = groupIt->second;
+    auto now = std::chrono::system_clock::now();
+    g.has_state_change = true;
+    g.last_state_change_from = from_state;
+    g.last_state_change_to = to_state;
+    g.last_state_change_reason = reason;
+    g.last_state_change_time = now;
+
+    if (to_state == "pending")
+    {
+        g.pending_start_time = now;
+    }
+
+    // Counter rules (D-2, D-3):
+    //   * any path landing in UP bumps down_to_up_count (DOWN -> UP and PENDING -> UP).
+    //   * only a direct UP -> DOWN bumps up_to_down_count; PENDING -> DOWN is a
+    //     near-recovery-that-failed, not a flap.
+    if (to_state == "up")
+    {
+        g.down_to_up_count++;
+    }
+    else if (from_state == "up" && to_state == "down")
+    {
+        g.up_to_down_count++;
+    }
+
+    SWSS_LOG_NOTICE("Monitor link group %s transition: %s -> %s (%s)",
+                    group_name.c_str(), from_state.c_str(), to_state.c_str(), reason.c_str());
+}
+
+void MonitorLinkGroupMgr::restoreGroupCountersFromStateDb(const std::string& group_name)
+{
+    // Counters live in MonitorLinkGroupInfo (in-memory) and would otherwise reset on
+    // intfmgrd restart. Telemetry/SNMP consumers expect monotonic counters, so reload
+    // them from STATE_DB if a prior incarnation left them there.
+    auto groupIt = m_monitorLinkGroups.find(group_name);
+    if (groupIt == m_monitorLinkGroups.end())
+        return;
+
+    std::string value;
+    if (m_stateMonitorLinkGroupTable.hget(group_name, "up_to_down_count", value))
+    {
+        try { groupIt->second.up_to_down_count = std::stoull(value); }
+        catch (const std::exception&) { /* leave at 0 */ }
+    }
+    if (m_stateMonitorLinkGroupTable.hget(group_name, "down_to_up_count", value))
+    {
+        try { groupIt->second.down_to_up_count = std::stoull(value); }
+        catch (const std::exception&) { /* leave at 0 */ }
+    }
 }
 
 void MonitorLinkGroupMgr::writeMonitorLinkGroupMemberStateToDb(const std::string& interface_name)
