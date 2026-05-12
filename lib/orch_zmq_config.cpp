@@ -78,6 +78,22 @@ std::shared_ptr<swss::ZmqServer> swss::create_zmq_server(std::string zmq_address
     return std::make_shared<ZmqServer>(zmq_address, vrf, true);
 }
 
+std::shared_ptr<swss::ZmqRouteServer> swss::create_zmq_route_server(std::string zmq_address, std::string vrf)
+{
+    if (!std::regex_search(zmq_address, ZMQ_NONE_IPV6_ADDRESS_WITH_PORT)
+            && !std::regex_search(zmq_address, ZMQ_IPV6_ADDRESS_WITH_PORT))
+    {
+        auto zmq_port = get_zmq_port();
+        zmq_address = zmq_address + ":" + std::to_string(zmq_port);
+    }
+
+    SWSS_LOG_NOTICE("Create ZMQ server with address: %s", zmq_address.c_str());
+
+    // To prevent message loss between ZmqServer's bind operation and the creation of ZmqProducerStateTable,
+    // use lazy binding and call bind() only after the handler has been registered.
+    return std::make_shared<ZmqRouteServer>(zmq_address, vrf, true);
+}
+
 bool swss::get_feature_status(std::string feature, bool default_value)
 {
     std::shared_ptr<std::string> enabled = nullptr;

@@ -22,7 +22,7 @@ ZmqMessageHandler* ZmqServer::findMessageHandler(const std::string dbName,
   return nullptr;
 }
 
-void ZmqServer::handleReceivedData(const char* buffer, const size_t size) {}
+ZmqMessageHandler* ZmqServer::handleReceivedData(const char* buffer, const size_t size) { return nullptr; }
 
 void ZmqServer::mqPollThread() {}
 
