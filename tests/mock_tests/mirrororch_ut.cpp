@@ -320,5 +320,76 @@ namespace mirrororch_test
     }
 
 
-}
 
+    TEST_F(MirrorOrchTest, UpdateEntryAllFieldsBranches)
+    {
+        // Verify updateEntry covers all field comparison branches and
+        // performs in-place update of both sample_rate and truncate_size
+        ASSERT_NE(gMirrorOrch, nullptr);
+        ASSERT_NE(gSwitchOrch, nullptr);
+
+        gSwitchOrch->m_portIngressSampleMirrorSupported = true;
+        gSwitchOrch->m_samplepacketTruncationSupported = true;
+
+        // Create a real samplepacket OID via createSamplePacket
+        string key = "update_all_fields_session";
+        MirrorEntry entry("");
+        entry.type = "ERSPAN";
+        entry.srcIp = IpAddress("10.0.0.1");
+        entry.dstIp = IpAddress("10.0.0.2");
+        entry.greType = 0x8949;
+        entry.dscp = 8;
+        entry.ttl = 64;
+        entry.queue = 0;
+        entry.src_port = "Ethernet0";
+        entry.direction = "RX";
+        entry.policer = "";
+        entry.sample_rate = 50000;
+        entry.truncate_size = 128;
+        entry.status = false;
+        entry.refCount = 0;
+
+        gMirrorOrch->createSamplePacket(key, entry);
+        ASSERT_NE(entry.samplepacketId, SAI_NULL_OBJECT_ID);
+
+        gMirrorOrch->m_syncdMirrors.emplace(key, entry);
+
+        // Simulate HGETALL data: all fields present, only mutable fields changed
+        vector<FieldValueTuple> data;
+        data.emplace_back("sample_rate", "100000");
+        data.emplace_back("truncate_size", "256");
+        data.emplace_back("src_ip", "10.0.0.1");
+        data.emplace_back("dst_ip", "10.0.0.2");
+        data.emplace_back("gre_type", "0x8949");
+        data.emplace_back("dscp", "8");
+        data.emplace_back("ttl", "64");
+        data.emplace_back("queue", "0");
+        data.emplace_back("src_port", "Ethernet0");
+        data.emplace_back("direction", "RX");
+        data.emplace_back("policer", "");
+
+        auto status = gMirrorOrch->updateEntry(key, data);
+        ASSERT_EQ(status, task_process_status::task_success);
+
+        // Verify both mutable fields were updated
+        auto& updated = gMirrorOrch->m_syncdMirrors.find(key)->second;
+        ASSERT_EQ(updated.sample_rate, (uint32_t)100000);
+        ASSERT_EQ(updated.truncate_size, (uint32_t)256);
+
+        // Cleanup
+        sai_samplepacket_api->remove_samplepacket(updated.samplepacketId);
+        gMirrorOrch->m_syncdMirrors.erase(key);
+    }
+
+    TEST_F(MirrorOrchTest, UpdateEntryNonExistentSession)
+    {
+        // Verify updateEntry returns invalid_entry for non-existent session
+        ASSERT_NE(gMirrorOrch, nullptr);
+
+        vector<FieldValueTuple> data;
+        data.emplace_back("sample_rate", "50000");
+
+        auto status = gMirrorOrch->updateEntry("non_existent_session", data);
+        ASSERT_EQ(status, task_process_status::task_invalid_entry);
+    }
+}
