@@ -202,7 +202,7 @@ void TeamSync::processEventQueue()
                     continue;
                 }
 
-                unsigned int currentIfindex = 0;
+                int currentIfindex = 0;
                 ifs >> currentIfindex;
                 if (currentIfindex != event.ifindex)
                 {
