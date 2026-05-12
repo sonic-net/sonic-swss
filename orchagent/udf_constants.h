@@ -4,6 +4,20 @@
 #include <string>
 #include "logger.h"
 
+// CONFIG_DB table names. These are normally auto-generated into
+// sonic-swss-common/common/cfg_schema.h by gen_cfg_schema.py from
+// sonic-yang-models. Defined here as a transitional shim so this PR
+// builds before sonic-buildimage#26874 (UDF YANG) merges. Once the
+// YANG model lands and swss-common's cfg_schema.h regenerates with
+// these macros, the auto-generated definitions win via the #ifndef
+// guards, and this block can be removed.
+#ifndef CFG_UDF_TABLE_NAME
+#define CFG_UDF_TABLE_NAME            "UDF"
+#endif
+#ifndef CFG_UDF_SELECTOR_TABLE_NAME
+#define CFG_UDF_SELECTOR_TABLE_NAME   "UDF_SELECTOR"
+#endif
+
 #define UDF_MAX_OFFSET          255
 #define UDF_GROUP_MAX_LENGTH    20
 #define UDF_GROUP_MIN_LENGTH    1
