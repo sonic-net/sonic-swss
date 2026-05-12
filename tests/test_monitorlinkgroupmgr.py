@@ -25,12 +25,12 @@ class TestMonitorLinkGroup:
         self.cfg_db.update_entry("PORT", port, {"admin_status": status})
         time.sleep(0.5)
 
-    def create_group(self, name, uplinks, downlinks, min_uplinks=1, linkup_delay=0, desc=""):
+    def create_group(self, name, monitored, managed, min_monitored_links=1, linkup_delay=0, desc=""):
         entry = {
             "description": desc,
-            "uplinks": ",".join(uplinks),
-            "downlinks": ",".join(downlinks),
-            "min-uplinks": str(min_uplinks),
+            "monitored-links": ",".join(monitored),
+            "managed-links": ",".join(managed),
+            "min-monitored-links": str(min_monitored_links),
             "link-up-delay": str(linkup_delay),
         }
         self.cfg_db.create_entry(CFG_MLG_TABLE, name, entry)
@@ -67,7 +67,7 @@ class TestMonitorLinkGroup:
 
         self.create_group("ml_lifecycle", ["Ethernet0"], ["Ethernet4"])
 
-        # Uplink is up: group must be UP immediately (no link-up-delay)
+        # Monitored-link is up: group must be UP immediately (no link-up-delay)
         self.wait_group_state("ml_lifecycle", "up")
         self.wait_member_state("Ethernet4", "allow_up")
 
@@ -75,8 +75,8 @@ class TestMonitorLinkGroup:
         self.sdb.wait_for_deleted_entry(STATE_MLG_STATE_TABLE, "ml_lifecycle")
         self.sdb.wait_for_deleted_entry(STATE_MLG_MEMBER_TABLE, "Ethernet4")
 
-    def test_uplink_down_forces_downlink(self, dvs, testlog):
-        """Uplink oper-down → group DOWN + downlink force_down + ASIC false; recovery reverses all."""
+    def test_monitored_down_forces_managed(self, dvs, testlog):
+        """Monitored oper-down → group DOWN + managed force_down + ASIC false; recovery reverses all."""
         self.setup_dbs(dvs)
 
         self.set_port_cfg_admin("Ethernet0", "up")
@@ -89,13 +89,13 @@ class TestMonitorLinkGroup:
         self.wait_group_state("ml_force", "up")
         self.wait_member_state("Ethernet4", "allow_up")
 
-        # Uplink goes down
+        # Monitored-link goes down
         self.set_port_oper("Ethernet0", "down")
         self.wait_group_state("ml_force", "down")
         self.wait_member_state("Ethernet4", "force_down")
         self.wait_asic_admin("Ethernet4", False)
 
-        # Uplink recovers
+        # Monitored-link recovers
         self.set_port_oper("Ethernet0", "up")
         self.wait_group_state("ml_force", "up")
         self.wait_member_state("Ethernet4", "allow_up")
@@ -116,7 +116,7 @@ class TestMonitorLinkGroup:
         self.wait_group_state("ml_delay", "down")
         self.wait_member_state("Ethernet4", "force_down")
 
-        # Uplink comes back; daemon starts 3s timer and writes state=pending
+        # Monitored-link comes back; daemon starts 3s timer and writes state=pending
         self.set_port_oper("Ethernet0", "up")
 
         # T+1s: timer not yet elapsed → state must be pending
@@ -146,7 +146,7 @@ class TestMonitorLinkGroup:
         self.wait_member_state("Ethernet4", "force_down")
         self.wait_asic_admin("Ethernet4", False)
 
-        # Uplink recovers: monitor releases Ethernet4 (allow_up), but config says down
+        # Monitored-link recovers: monitor releases Ethernet4 (allow_up), but config says down
         self.set_port_oper("Ethernet0", "up")
         self.wait_group_state("ml_cfgdown", "up")
         self.wait_member_state("Ethernet4", "allow_up")
@@ -160,7 +160,7 @@ class TestMonitorLinkGroup:
         self.wait_asic_admin("Ethernet4", True)
 
     def test_cross_role_cascade(self, dvs, testlog):
-        """Chain topology: Eth0→uplink_A, Eth4→downlink_A+uplink_B, Eth8→downlink_B.
+        """Chain topology: Eth0→monitored_A, Eth4→managed_A+monitored_B, Eth8→managed_B.
         Eth0 down cascades through to Eth8; recovery cascades back up."""
         self.setup_dbs(dvs)
 
@@ -176,7 +176,7 @@ class TestMonitorLinkGroup:
         self.wait_member_state("Ethernet4", "allow_up")
         self.wait_member_state("Ethernet8", "allow_up")
 
-        # Cascade down: Eth0 → group_A down → Eth4 force_down
+        # Cascade down: Eth0 (monitored_A) → group_A down → Eth4 force_down
         self.set_port_oper("Ethernet0", "down")
         self.wait_group_state("ml_chain_A", "down")
         self.wait_member_state("Ethernet4", "force_down")
@@ -188,7 +188,7 @@ class TestMonitorLinkGroup:
         self.wait_member_state("Ethernet8", "force_down")
         self.wait_asic_admin("Ethernet8", False)
 
-        # Cascade recovery: Eth0 up → group_A up → Eth4 allow_up
+        # Cascade recovery: Eth0 (monitored_A) up → group_A up → Eth4 allow_up
         self.set_port_oper("Ethernet0", "up")
         self.wait_group_state("ml_chain_A", "up")
         self.wait_member_state("Ethernet4", "allow_up")
@@ -200,14 +200,13 @@ class TestMonitorLinkGroup:
         self.wait_member_state("Ethernet8", "allow_up")
         self.wait_asic_admin("Ethernet8", True)
 
-        # Delete B first so Eth4 (downlink_A, uplink_B) loses uplink_B; then delete A releases Eth4
+        # Delete B first so Eth4 (managed_A, monitored_B) loses monitored_B; then delete A releases Eth4
         self.delete_group("ml_chain_B")
         self.delete_group("ml_chain_A")
         self.sdb.wait_for_deleted_entry(STATE_MLG_STATE_TABLE, "ml_chain_A")
         self.sdb.wait_for_deleted_entry(STATE_MLG_STATE_TABLE, "ml_chain_B")
         self.sdb.wait_for_deleted_entry(STATE_MLG_MEMBER_TABLE, "Ethernet4")
         self.sdb.wait_for_deleted_entry(STATE_MLG_MEMBER_TABLE, "Ethernet8")
-
 
 # Dummy always-pass test guards against module teardown on final-test flaky retry
 def test_nonflaky_dummy():
