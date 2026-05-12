@@ -1071,6 +1071,22 @@ bool MirrorOrch::setUnsetPortMirror(Port port,
             mirror_attr.value.objlist.count = 0;
         }
 
+        // Check for samplepacket conflict before binding
+        if (set)
+        {
+            sai_attribute_t check_attr;
+            check_attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
+            if (sai_port_api->get_port_attribute(port.m_port_id, 1, &check_attr) == SAI_STATUS_SUCCESS
+                && check_attr.value.oid != SAI_NULL_OBJECT_ID
+                && check_attr.value.oid != samplepacketId)
+            {
+                SWSS_LOG_ERROR("Port %s INGRESS_SAMPLEPACKET_ENABLE already bound to "
+                               "OID 0x%" PRIx64 ", cannot bind sampled mirror",
+                               port.m_alias.c_str(), check_attr.value.oid);
+                return false;
+            }
+        }
+
         // Set/clear in correct order
         if (set)
         {
