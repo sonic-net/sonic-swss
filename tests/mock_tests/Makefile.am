@@ -86,6 +86,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_dash_orch_test.cpp \
                 zmq_orch_ut.cpp \
                 retrycache_ut.cpp \
+                saihelper_ut.cpp \
                 mock_saihelper.cpp \
                 mirrororch_ut.cpp \
                 hftelorch_ut.cpp \
