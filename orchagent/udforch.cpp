@@ -1,3 +1,5 @@
+// UdfOrch: owns the SAI UDF_GROUP / UDF_MATCH / UDF object lifecycle and
+// is consumed by AclOrch when an ACL_TABLE_TYPE references a UDF field.
 #include <inttypes.h>
 #include <sstream>
 #include "udforch.h"
