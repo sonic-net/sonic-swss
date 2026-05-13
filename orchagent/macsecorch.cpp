@@ -1115,6 +1115,32 @@ task_process_status MACsecOrch::taskUpdateEgressSA(
         }
         else
         {
+            // wpa_supplicant's macsec_sonic create_transmit_sa() writes the
+            // full SA payload (sak/salt/ssci/auth_key/next_pn) to
+            // MACSEC_EGRESS_SA_TABLE. After a dirty macsec docker restart with
+            // surviving orchagent state, the SA pre-exists with the prior
+            // cycle's SAK programmed in hardware. The legacy path here would
+            // silently drop the new SAK (only update next_pn), leaving the
+            // ASIC encrypting with the stale key while userspace believes a
+            // re-key has happened.
+            //
+            // Detect re-key by the presence of "sak" in this SET and do
+            // delete+recreate using THIS sa_attr's key material -- mirroring
+            // the ingress re-key path in taskUpdateIngressSA.
+            MACsecSAK probe_sak = {{0}, false};
+            if (get_value(sa_attr, "sak", probe_sak))
+            {
+                auto del_status = deleteMACsecSA(port_sci_an, SAI_MACSEC_DIRECTION_EGRESS);
+                if (del_status != task_success)
+                {
+                    SWSS_LOG_WARN(
+                        "[macsec-rekey] egress SA %s: delete step failed during re-key",
+                        port_sci_an.c_str());
+                    return del_status;
+                }
+                return createMACsecSA(port_sci_an, sa_attr, SAI_MACSEC_DIRECTION_EGRESS);
+            }
+
             // The MACsec SA has enabled, update SA's attributes
             sai_uint64_t pn;
 
@@ -1175,6 +1201,30 @@ task_process_status MACsecOrch::taskUpdateIngressSA(
         {
             if (has_active_field)
             {
+                // wpa_supplicant's macsec_sonic driver installs a new ingress SA
+                // in two stages: stage-1 writes active=false + full key material
+                // (sak/salt/ssci/auth_key/lowest_acceptable_pn); stage-2 writes
+                // active=true only. After a macsec docker restart with surviving
+                // orchagent state, the SA already exists. The legacy path here
+                // (delete on active=false) drops the old SA but loses the new
+                // SAK because stage-2's SET no longer carries it -- the
+                // subsequent createMACsecSA then fails with "SAK isn't existed".
+                //
+                // Detect the re-key case by the presence of "sak" in this SET
+                // and do delete+recreate atomically using the SAK from THIS sa_attr.
+                MACsecSAK probe_sak = {{0}, false};
+                if (get_value(sa_attr, "sak", probe_sak))
+                {
+                    auto del_status = deleteMACsecSA(port_sci_an, SAI_MACSEC_DIRECTION_INGRESS);
+                    if (del_status != task_success)
+                    {
+                        SWSS_LOG_WARN(
+                            "[macsec-rekey] ingress SA %s: delete step failed during re-key",
+                            port_sci_an.c_str());
+                        return del_status;
+                    }
+                    return createMACsecSA(port_sci_an, sa_attr, SAI_MACSEC_DIRECTION_INGRESS);
+                }
                 // Delete MACsec SA explicitly by set active to false
                 return deleteMACsecSA(port_sci_an, SAI_MACSEC_DIRECTION_INGRESS);
             }
@@ -2240,8 +2290,31 @@ task_process_status MACsecOrch::createMACsecSA(
 
     if (ctx.get_macsec_sa() != nullptr)
     {
-        SWSS_LOG_NOTICE("The MACsec SA %s has been created.", port_sci_an.c_str());
-        return task_success;
+        // Defense-in-depth for dirty macsec docker restart: if a SET arrives
+        // for an existing SA carrying a SAK, treat it as a re-key. We do not
+        // store the SAK in orchagent memory (and SAI_MACSEC_SA_ATTR_SAK is
+        // create-only), so we cannot diff; recreate unconditionally when SAK
+        // is present. Without this, stale SAKs from a previous MKA cycle stay
+        // programmed in hardware after the macsec docker restarts, and ICV
+        // validation fails for every received frame.
+        MACsecSAK probe_sak = {{0}, false};
+        if (!get_value(sa_attr, "sak", probe_sak))
+        {
+            return task_success;
+        }
+        auto del_status = deleteMACsecSA(port_sci_an, direction);
+        if (del_status != task_success)
+        {
+            SWSS_LOG_WARN(
+                "[macsec-rekey] %s SA %s: delete step failed during re-key",
+                (direction == SAI_MACSEC_DIRECTION_EGRESS) ? "egress" : "ingress",
+                port_sci_an.c_str());
+            return del_status;
+        }
+        // Recurse: with the old SA gone from MACsecSC::m_sa_ids, ctx.get_macsec_sa()
+        // returns nullptr on this call and execution falls through to the create
+        // path with the new key material from sa_attr.
+        return createMACsecSA(port_sci_an, sa_attr, direction);
     }
 
     if (ctx.get_macsec_sc() == nullptr)
