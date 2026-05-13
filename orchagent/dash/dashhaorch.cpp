@@ -484,8 +484,6 @@ bool DashHaOrch::addHaScopeEntry(const std::string &key, const dash::ha_scope::H
             success = success && set_role_success;
             repeated_message = false;
 
-            ha_scope_it->second.metadata.set_ha_role(entry.ha_role());
-
             // If setHaScopeHaRole succeeded and owner is switch, directly update state DB with ha_state
             if (set_role_success)
             {
@@ -734,8 +732,12 @@ void DashHaOrch::updateHaScopeStateForSwitchOwner(const std::string &key, const 
 
     std::string ha_set_id = entry.ha_set_id().empty() ? key : entry.ha_set_id();
     auto ha_set_it = m_ha_set_entries.find(ha_set_id);
-    if (ha_set_it == m_ha_set_entries.end() ||
-        ha_set_it->second.metadata.owner() != dash::types::HA_OWNER_SWITCH)
+    if (ha_set_it == m_ha_set_entries.end())
+    {
+        SWSS_LOG_WARN("HA Set entry %s does not exist, still updating HA Scope state for %s",
+                      ha_set_id.c_str(), key.c_str());
+    }
+    else if (ha_set_it->second.metadata.owner() != dash::types::HA_OWNER_SWITCH)
     {
         return;
     }
