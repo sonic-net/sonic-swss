@@ -1,4 +1,5 @@
 #include <cassert>
+#include <set>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -1459,6 +1460,7 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
     NeighborEntry neigh;
     MacAddress mac;
     MuxCable* ptr;
+    std::set<NeighborEntry> handled;
     for (auto nh = mux_nexthop_tb_.begin(); nh != mux_nexthop_tb_.end(); ++nh)
     {
         auto res = neigh_orch_->getNeighborEntry(nh->first, neigh, mac);
@@ -1466,6 +1468,8 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
         {
             continue;
         }
+
+        handled.insert(nh->first);
 
         if (nh->second != update.entry.port_name)
         {
@@ -1485,6 +1489,51 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
                 ptr = getMuxCable(update.entry.port_name);
                 ptr->updateNeighbor(nh->first, true);
             }
+        }
+    }
+
+    // Stranded-neighbor recovery: if a neighbor was learned before its mux
+    // port was configured, it is not in mux_nexthop_tb_ above. Walk NeighOrch
+    // by MAC and convert any such entries on this port.
+    if (isMuxExists(update.entry.port_name))
+    {
+        ptr = getMuxCable(update.entry.port_name);
+        const NeighborTable& neighbor_table = neigh_orch_->getNeighborTable();
+        for (const auto& neighbor_pair : neighbor_table)
+        {
+            const NeighborEntry& neighbor_entry = neighbor_pair.first;
+            const auto& neighbor_data = neighbor_pair.second;
+
+            if (handled.count(neighbor_entry))
+            {
+                continue;
+            }
+
+            // SoC / active-active neighbors are excluded by handleMuxCfg's sweep; mirror that here.
+            if (isSkipNeighbor(neighbor_entry.ip_address))
+            {
+                continue;
+            }
+
+            if (neighbor_data.mac != update.entry.mac)
+            {
+                continue;
+            }
+
+            // Confirm the neighbor's Vlan FDB lookup resolves to the same port as this update.
+            string resolved_port;
+            if (!getMuxPort(update.entry.mac, neighbor_entry.alias, resolved_port) ||
+                resolved_port != update.entry.port_name)
+            {
+                continue;
+            }
+
+            SWSS_LOG_NOTICE("FDB update on mux port %s — converting stranded neighbor %s (MAC %s)",
+                            update.entry.port_name.c_str(),
+                            neighbor_entry.ip_address.to_string().c_str(),
+                            update.entry.mac.to_string().c_str());
+
+            ptr->updateNeighbor(neighbor_entry, true);
         }
     }
 }

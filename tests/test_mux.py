@@ -1641,6 +1641,111 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
         self.create_and_test_peer(asicdb, encap_tc_to_dscp_map_id, encap_tc_to_queue_map_id)
 
+    def test_fdb_after_mux_config_converts_stranded_neighbor(self, dvs, dvs_route, setup, setup_vlan, setup_peer_switch, setup_tunnel, testlog):
+        """Stranded-neighbor recovery: neighbor -> mux config -> FDB.
+
+        Steps:
+            1. Learn three neighbors sharing one MAC before any mux config:
+               regular in-subnet, SoC (soc_ipv4), and off-Vlan-subnet on Vlan1000.
+            2. Configure Ethernet0 mux cable (active-active) + standby state.
+            3. Add the FDB entry on Ethernet0.
+
+        Expected: fallback in updateFdb converts the regular and off-subnet
+        neighbors (tunnel route + LOG_NOTICE) and skips the SoC neighbor.
+        """
+        test_mac = "00:00:00:11:22:33"
+        test_mac_fdb = test_mac.replace(":", "-")
+        regular_ip = "192.168.0.110"
+        soc_ip = self.SERV1_SOC_IPV4
+        offsubnet_ip = "10.0.0.50"
+
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = dvs.get_asic_db()
+        config_db = dvs.get_config_db()
+
+        dvs.runcmd("ip neigh flush all")
+
+        try:
+            # Step 1: learn neighbors before mux_cable_tb_ is populated.
+            self.add_neighbor(dvs, regular_ip, test_mac)
+            self.add_neighbor(dvs, soc_ip, test_mac)
+            self.add_neighbor(dvs, offsubnet_ip, test_mac)
+            self.check_neigh_in_asic_db(asicdb, regular_ip, expected=True)
+            self.check_neigh_in_asic_db(asicdb, soc_ip, expected=True)
+            self.check_neigh_in_asic_db(asicdb, offsubnet_ip, expected=True)
+
+            # Step 2: configure mux cable on Ethernet0.
+            self.set_mux_state(appdb, "Ethernet0", "standby")
+            fvs = {
+                "server_ipv4": self.SERV1_IPV4 + self.IPV4_MASK,
+                "server_ipv6": self.SERV1_IPV6 + self.IPV6_MASK,
+                "soc_ipv4": soc_ip + self.IPV4_MASK,
+                "cable_type": "active-active",
+            }
+            config_db.create_entry(self.CONFIG_MUX_CABLE, "Ethernet0", fvs)
+
+            # Wait until handleMuxCfg has finished and standby state is applied.
+            app_db = dvs.get_app_db()
+            app_db.wait_for_field_match(
+                "HW_MUX_CABLE_TABLE", "Ethernet0", {"state": "standby"}
+            )
+
+            # FDB still absent -> no tunnel routes yet for any of the three.
+            self.check_tunnel_route_in_app_db(
+                dvs,
+                [
+                    regular_ip + self.IPV4_MASK,
+                    soc_ip + self.IPV4_MASK,
+                    offsubnet_ip + self.IPV4_MASK,
+                ],
+                expected=False,
+            )
+
+            # Step 3: FDB arrives -> fallback walk runs.
+            marker = dvs.add_log_marker()
+            self.add_fdb(dvs, "Ethernet0", test_mac_fdb)
+
+            # Regular + off-subnet must convert; SoC must not.
+            self.check_tunnel_route_in_app_db(
+                dvs,
+                [regular_ip + self.IPV4_MASK, offsubnet_ip + self.IPV4_MASK],
+                expected=True,
+            )
+            self.check_tunnel_route_in_app_db(
+                dvs,
+                [soc_ip + self.IPV4_MASK],
+                expected=False,
+            )
+
+            # Syslog count of the convert log line proves the fallback path
+            # ran (or didn't) for each neighbor. The SoC == 0 check guards
+            # against accidental removal of the isSkipNeighbor() guard.
+            def count_convert_log(ip):
+                (_, out) = dvs.runcmd([
+                    'sh', '-c',
+                    "awk '/%s/,ENDFILE {print;}' /var/log/syslog "
+                    "| grep 'converting stranded neighbor %s' | wc -l"
+                    % (marker, ip),
+                ])
+                return int(out.strip())
+
+            assert count_convert_log(regular_ip) >= 1, (
+                "Fallback did not log conversion for regular neighbor %s" % regular_ip
+            )
+            assert count_convert_log(soc_ip) == 0, (
+                "Fallback wrongly attempted to convert SoC neighbor %s" % soc_ip
+            )
+            assert count_convert_log(offsubnet_ip) >= 1, (
+                "Fallback did not log conversion for off-subnet neighbor %s" % offsubnet_ip
+            )
+        finally:
+            self.del_neighbor(dvs, regular_ip)
+            self.del_neighbor(dvs, soc_ip)
+            self.del_neighbor(dvs, offsubnet_ip)
+            self.del_fdb(dvs, test_mac_fdb)
+            config_db.delete_entry(self.CONFIG_MUX_CABLE, "Ethernet0")
+            dvs.runcmd("ip neigh flush all")
+
     def test_neighbor_learned_before_mux_config(self, dvs, dvs_route, setup, setup_vlan, setup_peer_switch, setup_tunnel, testlog):
         """ test neighbors learned before mux config """
         test_ip_v4 = "192.168.0.110"
