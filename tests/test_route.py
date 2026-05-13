@@ -1082,10 +1082,15 @@ class TestFpmSyncResponse(TestRouteBase):
     def test_offload(self, suppress_state, setup, dvs):
         route = "1.1.1.0/24"
 
-        # enable route suppression
+        # configure suppress-fib-pending
         rc, _ = dvs.runcmd(f"config suppress-fib-pending {suppress_state}")
         assert rc == 0, "Failed to configure suppress-fib-pending"
 
+        # restart swss and fpmsyncd to make suppression operational
+        dvs.stop_fpmsyncd()
+        dvs.stop_swss()
+        dvs.start_swss()
+        dvs.start_fpmsyncd()
         time.sleep(5)
 
         try:
@@ -1116,6 +1121,10 @@ class TestFpmSyncResponse(TestRouteBase):
 
             # make sure route suppression is disabled
             dvs.runcmd("config suppress-fib-pending disabled")
+            dvs.stop_fpmsyncd()
+            dvs.stop_swss()
+            dvs.start_swss()
+            dvs.start_fpmsyncd()
 
 
 class TestSubnetDecapVipRoute(TestRouteBase):
