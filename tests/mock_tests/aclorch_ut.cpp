@@ -2723,4 +2723,95 @@ namespace aclorch_test
         }
         sai_switch_api = old_sai_switch_api_mirror_egress;
     }
+
+    TEST_F(AclOrchTest, AclRule_InnerSrcIPv6Match)
+    {
+        const std::string aclTableTypeName = "INNER_IPV6_TYPE";
+        const std::string aclTableName = "INNER_IPV6_TABLE";
+        const std::string aclRuleName = "INNER_IPV6_RULE";
+
+        auto orch = createAclOrch();
+
+        // Create ACL table type with INNER_SRC_IPV6 match field
+        orch->doAclTableTypeTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableTypeName,
+                        SET_COMMAND,
+                        {
+                            { ACL_TABLE_TYPE_MATCHES, string(MATCH_INNER_SRC_IPV6) + comma + MATCH_TUNNEL_VNI },
+                            { ACL_TABLE_TYPE_ACTIONS, ACTION_PACKET_ACTION },
+                            { ACL_TABLE_TYPE_BPOINT_TYPES, BIND_POINT_TYPE_PORT },
+                        }
+                    }
+                }
+            )
+        );
+        ASSERT_NE(orch->getAclTableType(aclTableTypeName), nullptr);
+
+        // Create ACL table
+        orch->doAclTableTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName,
+                        SET_COMMAND,
+                        {
+                            { ACL_TABLE_DESCRIPTION, "Test inner src ipv6 table" },
+                            { ACL_TABLE_TYPE, aclTableTypeName },
+                            { ACL_TABLE_STAGE, STAGE_INGRESS },
+                            { ACL_TABLE_PORTS, "1,2" },
+                        }
+                    }
+                }
+            )
+        );
+        ASSERT_NE(orch->getAclTable(aclTableName), nullptr);
+
+        // Create ACL rule with INNER_SRC_IPV6 match
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        SET_COMMAND,
+                        {
+                            { RULE_PRIORITY, "100" },
+                            { MATCH_INNER_SRC_IPV6, "2001:db8::/32" },
+                            { MATCH_TUNNEL_VNI, "1000" },
+                            { ACTION_PACKET_ACTION, PACKET_ACTION_DROP },
+                        }
+                    }
+                }
+            )
+        );
+        ASSERT_NE(orch->getAclRule(aclTableName, aclRuleName), nullptr);
+
+        auto rule = orch->getAclRule(aclTableName, aclRuleName);
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "100");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1000&mask:0xffffffff");
+
+        // Validate that an invalid IPv4 address is rejected for INNER_SRC_IPV6
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + "INNER_IPV6_RULE_INVALID",
+                        SET_COMMAND,
+                        {
+                            { RULE_PRIORITY, "200" },
+                            { MATCH_INNER_SRC_IPV6, "1.1.1.1/24" },
+                            { ACTION_PACKET_ACTION, PACKET_ACTION_DROP },
+                        }
+                    }
+                }
+            )
+        );
+        // Rule with IPv4 address in INNER_SRC_IPV6 field should not be created
+        ASSERT_EQ(orch->getAclRule(aclTableName, "INNER_IPV6_RULE_INVALID"), nullptr);
+
+        // Cleanup
+        ASSERT_TRUE(orch->m_aclOrch->removeAclRule(aclTableName, aclRuleName));
+    }
 } // namespace nsAclOrchTest
