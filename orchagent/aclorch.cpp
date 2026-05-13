@@ -86,6 +86,7 @@ acl_rule_attr_lookup_t aclMatchLookup =
     { MATCH_INNER_SRC_MAC,     SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_MAC },
     { MATCH_INNER_DST_MAC,     SAI_ACL_ENTRY_ATTR_FIELD_INNER_DST_MAC },
     { MATCH_INNER_SRC_IP,      SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP},
+    { MATCH_INNER_SRC_IPV6,    SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IPV6},
     { MATCH_INNER_L4_SRC_PORT, SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_SRC_PORT },
     { MATCH_INNER_L4_DST_PORT, SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_DST_PORT },
     { MATCH_BTH_OPCODE,        SAI_ACL_ENTRY_ATTR_FIELD_BTH_OPCODE},
@@ -1110,7 +1111,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
             matchData.data.ip4 = ip.getIp().getV4Addr();
             matchData.mask.ip4 = ip.getMask().getV4Addr();
         }
-        else if (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6)
+        else if (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6 || attr_name == MATCH_INNER_SRC_IPV6)
         {
             IpPrefix ip(attr_value);
             if (ip.isV4())
@@ -5601,7 +5602,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 {
                     bHasIPV4 = true;
                 }
-                if (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6)
+                if (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6 || attr_name == MATCH_INNER_SRC_IPV6)
                 {
                     bHasIPV6 = true;
                 }
