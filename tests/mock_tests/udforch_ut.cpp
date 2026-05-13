@@ -29,6 +29,7 @@ static int g_remove_match_calls  = 0;
 static int g_create_udf_calls    = 0;
 static int g_remove_udf_calls    = 0;
 static sai_object_id_t g_next_oid = 0x1000;
+static sai_status_t g_create_group_status = SAI_STATUS_SUCCESS;
 
 // Captured from last create_udf_group call
 static sai_udf_group_type_t g_last_group_type = SAI_UDF_GROUP_TYPE_GENERIC;
@@ -46,8 +47,6 @@ static void reset_counters()
     g_last_match_has_l2   = g_last_match_has_l3 = g_last_match_has_l4 = false;
     g_create_group_status = SAI_STATUS_SUCCESS;
 }
-
-static sai_status_t g_create_group_status = SAI_STATUS_SUCCESS;
 
 static sai_status_t stub_create_udf_group(sai_object_id_t *oid, sai_object_id_t,
                                            uint32_t attr_count, const sai_attribute_t *attrs)
