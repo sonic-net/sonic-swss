@@ -2021,9 +2021,12 @@ task_process_status BufferMgrDynamic::handleDefaultLossLessBufferParam(KeyOpFiel
         bool willSHPBeEnabled = isNonZero(newRatio);
         if (m_portInitDone && (!isSHPEnabled) && willSHPBeEnabled)
         {
-            if (!isSharedHeadroomPoolEnabledInSai())
+            // Keep the ratio enable event out of m_toSync; stale SET fields
+            // can outlive the user's later delete-field intent.
+            auto status = waitSharedHeadroomPoolEnabledInSai();
+            if (status != task_process_status::task_success)
             {
-                return task_process_status::task_need_retry;
+                return status;
             }
         }
         SWSS_LOG_INFO("Recalculate shared buffer pool size due to over subscribe ratio has been updated from %s to %s",
@@ -2051,6 +2054,37 @@ bool BufferMgrDynamic::isSharedHeadroomPoolEnabledInSai()
     }
 
     return true;
+}
+
+task_process_status BufferMgrDynamic::waitWithRetry(const function<bool()> &checker, const string &description)
+{
+    SWSS_LOG_NOTICE("Checking SAI sync status up to %d times for %s",
+                    BUFFER_PROFILE_SYNC_MAX_CHECKS, description.c_str());
+
+    if (checker())
+    {
+        return task_process_status::task_success;
+    }
+
+    for (int i = 0; i < BUFFER_PROFILE_SYNC_MAX_CHECKS - 1; i++)
+    {
+        sleep(1);
+
+        if (checker())
+        {
+            return task_process_status::task_success;
+        }
+    }
+
+    SWSS_LOG_ERROR("CRITICAL: Timed out waiting for %s to sync to SAI, desired in-memory state is preserved, manual intervention is required",
+                   description.c_str());
+    return task_process_status::task_failed;
+}
+
+task_process_status BufferMgrDynamic::waitSharedHeadroomPoolEnabledInSai()
+{
+    return waitWithRetry([this]() { return isSharedHeadroomPoolEnabledInSai(); },
+                         "shared headroom pool");
 }
 
 bool BufferMgrDynamic::isLosslessProfileSyncedInSai(const string &profileName)
@@ -2126,29 +2160,10 @@ task_process_status BufferMgrDynamic::checkPendingProfilesSyncStatus()
 
 task_process_status BufferMgrDynamic::waitPendingProfilesSyncStatus()
 {
-    SWSS_LOG_NOTICE("Checking SAI sync status up to %d times for %zu BUFFER_PROFILE entries",
-                    BUFFER_PROFILE_SYNC_MAX_CHECKS, m_shpProfilesToCheck.size());
-
-    auto status = checkPendingProfilesSyncStatus();
-    if (status == task_process_status::task_success)
-    {
-        return status;
-    }
-
-    for (int i = 0; i < BUFFER_PROFILE_SYNC_MAX_CHECKS - 1; i++)
-    {
-        sleep(1);
-
-        status = checkPendingProfilesSyncStatus();
-        if (status == task_process_status::task_success)
-        {
-            return status;
-        }
-    }
-
-    SWSS_LOG_ERROR("Timed out waiting for %zu BUFFER_PROFILE entries to sync to SAI",
-                   m_shpProfilesToCheck.size());
-    return task_process_status::task_failed;
+    return waitWithRetry([this]() {
+                             return checkPendingProfilesSyncStatus() == task_process_status::task_success;
+                         },
+                         to_string(m_shpProfilesToCheck.size()) + " BUFFER_PROFILE entries");
 }
 
 task_process_status BufferMgrDynamic::handleCableLenTable(KeyOpFieldsValuesTuple &tuple)
@@ -2601,9 +2616,12 @@ task_process_status BufferMgrDynamic::handleBufferPoolTable(KeyOpFieldsValuesTup
 
                 if (m_portInitDone && (!isSHPEnabledBySize) && willSHPBeEnabledBySize)
                 {
-                    if (!isSharedHeadroomPoolEnabledInSai())
+                    // Keep the enable event out of m_toSync; stale SET fields
+                    // can outlive the user's later delete-field intent.
+                    auto status = waitSharedHeadroomPoolEnabledInSai();
+                    if (status != task_process_status::task_success)
                     {
-                        return task_process_status::task_need_retry;
+                        return status;
                     }
                 }
 
