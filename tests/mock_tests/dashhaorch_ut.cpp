@@ -1229,4 +1229,34 @@ namespace dashhaorch_ut
         RemoveHaScope();
         RemoveHaSet();
     }
+
+    TEST_F(DashHaOrchTestSwitchOwner, SwitchOwnerSetRoleUpdatesStateWhenHaSetMissing)
+    {
+        // Create switch-owner HA Set, then HA Scope.
+        CreateSwitchOwnerDpuScopeHaSet();
+        CreateHaScope();
+
+        // Remove the HA Set while HA Scope still exists. This makes the HA Set
+        // lookup inside updateHaScopeStateForSwitchOwner fail.
+        RemoveHaSet();
+        ASSERT_TRUE(m_dashHaOrch->getHaSetEntries().find("HA_SET_1") == m_dashHaOrch->getHaSetEntries().end());
+
+        // Trigger a role change. The new code path should emit a warning that
+        // the HA Set is missing but still update the in-memory ha_state and the
+        // DPU_STATE_DB HA Scope state table.
+        SetHaScopeHaRole("active");
+
+        auto scope_it = m_dashHaOrch->getHaScopeEntries().find("HA_SET_1");
+        ASSERT_NE(scope_it, m_dashHaOrch->getHaScopeEntries().end());
+        EXPECT_EQ(scope_it->second.ha_state, SAI_DASH_HA_STATE_ACTIVE);
+        EXPECT_EQ(to_sai(scope_it->second.metadata.ha_role()), SAI_DASH_HA_ROLE_ACTIVE);
+
+        auto dpu_state_db = std::make_shared<swss::DBConnector>("DPU_STATE_DB", 0);
+        swss::Table state_table(dpu_state_db.get(), STATE_DASH_HA_SCOPE_STATE_TABLE_NAME);
+        std::string ha_state_value;
+        ASSERT_TRUE(state_table.hget("HA_SET_1", "ha_state", ha_state_value));
+        EXPECT_EQ(ha_state_value, "active");
+
+        RemoveHaScope();
+    }
 }
