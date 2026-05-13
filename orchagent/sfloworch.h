@@ -47,4 +47,5 @@ private:
     uint32_t sflowSessionGetRate(sai_object_id_t sample_id);
     bool handleSflowSessionDel(sai_object_id_t port_id);
     void sflowExtractInfo(std::vector<FieldValueTuple> &fvs, bool &admin, uint32_t &rate, string &dir);
+    bool isSflowSamplePacket(sai_object_id_t oid);
 };

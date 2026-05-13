@@ -107,6 +107,16 @@ bool SflowOrch::sflowUpdateRate(sai_object_id_t port_id, uint32_t rate)
     return true;
 }
 
+bool SflowOrch::isSflowSamplePacket(sai_object_id_t oid)
+{
+    for (auto& it : m_sflowRateSampleMap)
+    {
+        if (it.second.m_sample_id == oid)
+            return true;
+    }
+    return false;
+}
+
 bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id, string direction)
 {
     sai_attribute_t attr;
@@ -117,6 +127,20 @@ bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id,
 
     if (direction == "both" || direction == "rx")
     {
+        // Check for samplepacket conflict before binding
+        sai_attribute_t check_attr;
+        check_attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
+        if (sai_port_api->get_port_attribute(port_id, 1, &check_attr) == SAI_STATUS_SUCCESS
+            && check_attr.value.oid != SAI_NULL_OBJECT_ID
+            && check_attr.value.oid != sample_id
+            && !isSflowSamplePacket(check_attr.value.oid))
+        {
+            SWSS_LOG_ERROR("Port %" PRIx64 " INGRESS_SAMPLEPACKET_ENABLE already bound to "
+                           "OID 0x%" PRIx64 ", cannot bind sFlow",
+                           port_id, check_attr.value.oid);
+            return false;
+        }
+
         attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
         attr.value.oid = sample_id;
         sai_rc = sai_port_api->set_port_attribute(port_id, &attr);
@@ -134,6 +158,20 @@ bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id,
 
     if (direction == "both" || direction == "tx")
     {
+        // Check for samplepacket conflict before binding
+        sai_attribute_t check_attr_egr;
+        check_attr_egr.id = SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
+        if (sai_port_api->get_port_attribute(port_id, 1, &check_attr_egr) == SAI_STATUS_SUCCESS
+            && check_attr_egr.value.oid != SAI_NULL_OBJECT_ID
+            && check_attr_egr.value.oid != sample_id
+            && !isSflowSamplePacket(check_attr_egr.value.oid))
+        {
+            SWSS_LOG_ERROR("Port %" PRIx64 " EGRESS_SAMPLEPACKET_ENABLE already bound to "
+                           "OID 0x%" PRIx64 ", cannot bind sFlow",
+                           port_id, check_attr_egr.value.oid);
+            return false;
+        }
+
         attr.id = SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
         attr.value.oid = sample_id;
         sai_rc = sai_port_api->set_port_attribute(port_id, &attr);
