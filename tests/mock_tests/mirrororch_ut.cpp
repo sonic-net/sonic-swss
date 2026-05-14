@@ -392,4 +392,56 @@ namespace mirrororch_test
         auto status = gMirrorOrch->updateEntry("non_existent_session", data);
         ASSERT_EQ(status, task_process_status::task_invalid_entry);
     }
+
+    TEST_F(MirrorOrchTest, UpdateEntryImmutableFieldChange)
+    {
+        // Verify updateEntry detects immutable field changes and triggers delete+recreate
+        ASSERT_NE(gMirrorOrch, nullptr);
+
+        // Create session via createEntry (routeOrch->attach called)
+        vector<FieldValueTuple> create_data;
+        create_data.emplace_back("type", "ERSPAN");
+        create_data.emplace_back("src_ip", "10.0.0.1");
+        create_data.emplace_back("dst_ip", "10.0.0.2");
+        create_data.emplace_back("gre_type", "0x8949");
+        create_data.emplace_back("dscp", "8");
+        create_data.emplace_back("ttl", "64");
+        create_data.emplace_back("queue", "0");
+        create_data.emplace_back("src_port", "Ethernet0");
+        create_data.emplace_back("direction", "RX");
+        create_data.emplace_back("sample_rate", "50000");
+
+        auto status = gMirrorOrch->createEntry("immutable_test", create_data);
+        ASSERT_EQ(status, task_process_status::task_success);
+
+        // Change all immutable fields except direction and policer
+        vector<FieldValueTuple> update_data;
+        update_data.emplace_back("type", "ERSPAN");
+        update_data.emplace_back("src_ip", "10.0.0.99");
+        update_data.emplace_back("dst_ip", "10.0.0.99");
+        update_data.emplace_back("gre_type", "0x1234");
+        update_data.emplace_back("dscp", "16");
+        update_data.emplace_back("ttl", "128");
+        update_data.emplace_back("queue", "1");
+        update_data.emplace_back("src_port", "Ethernet4");
+        update_data.emplace_back("direction", "RX");
+        update_data.emplace_back("sample_rate", "50000");
+
+        status = gMirrorOrch->updateEntry("immutable_test", update_data);
+        ASSERT_EQ(status, task_process_status::task_success);
+
+        // Verify recreated session has new values
+        auto& session = gMirrorOrch->m_syncdMirrors.find("immutable_test")->second;
+        ASSERT_EQ(session.srcIp, IpAddress("10.0.0.99"));
+        ASSERT_EQ(session.dstIp, IpAddress("10.0.0.99"));
+        ASSERT_EQ(session.greType, (uint16_t)0x1234);
+        ASSERT_EQ(session.dscp, (uint8_t)16);
+        ASSERT_EQ(session.ttl, (uint8_t)128);
+        ASSERT_EQ(session.queue, (uint8_t)1);
+        ASSERT_EQ(session.src_port, "Ethernet4");
+
+        // Cleanup
+        gMirrorOrch->m_syncdMirrors.erase("immutable_test");
+    }
+
 }
