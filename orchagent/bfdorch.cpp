@@ -262,12 +262,16 @@ void BfdOrch::doTask(NotificationConsumer &consumer)
 
                 m_stateBfdSessionTable.hset(key, "state", session_state_lookup.at(state));
 
-                SWSS_LOG_NOTICE("BFD session state for %s changed from %s to %s", key.c_str(),
-                            session_state_lookup.at(old_state).c_str(), session_state_lookup.at(state).c_str());
+                SWSS_LOG_NOTICE(
+                    "BFD session state for %s changed from %s to %s, %ld flaps seen so far ",
+                    key.c_str(),
+                    session_state_lookup.at(old_state).c_str(),
+                    session_state_lookup.at(state).c_str(),
+                    bfd_session_lookup[id].flap_cnt);
 
                 BfdUpdate update;
-                update.peer = key;
-                update.state = state;
+                update.peer     = key;
+                update.state    = state;
                 update.flap_cnt = bfd_session_lookup[id].flap_cnt;
                 notify(SUBJECT_TYPE_BFD_SESSION_STATE_CHANGE, static_cast<void *>(&update));
 
