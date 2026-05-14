@@ -393,7 +393,25 @@ namespace mirrororch_test
         ASSERT_EQ(status, task_process_status::task_invalid_entry);
     }
 
-    TEST_F(MirrorOrchTest, UpdateEntryImmutableFieldChange)
+    class MirrorOrchPortTest : public MirrorOrchTest
+    {
+        void ApplyInitialConfigs() override
+        {
+            Table port_table = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+            auto ports = ut_helper::getInitialSaiPorts();
+            for (const auto &it : ports)
+            {
+                port_table.set(it.first, it.second);
+            }
+            port_table.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+            port_table.set("PortInitDone", { {} });
+
+            gPortsOrch->addExistingData(&port_table);
+            static_cast<Orch *>(gPortsOrch)->doTask();
+        }
+    };
+
+    TEST_F(MirrorOrchPortTest, UpdateEntryImmutableFieldChange)
     {
         // Verify updateEntry detects immutable field changes and triggers delete+recreate
         ASSERT_NE(gMirrorOrch, nullptr);
@@ -443,5 +461,8 @@ namespace mirrororch_test
         // Cleanup
         gMirrorOrch->m_syncdMirrors.erase("immutable_test");
     }
+
+
+
 
 }
