@@ -387,3 +387,57 @@ class TestSampledMirror(object):
 
         # Verify NO SAMPLEPACKET in ASIC_DB
         dvs.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", 0)
+
+    def test_SampledMirrorRejectsWhenSflowBound(self, dvs, testlog):
+        """
+        Test that sampled mirror activation is rejected when sFlow
+        already has a samplepacket bound on the same source port.
+        """
+        dvs.setup_db()
+
+        # Step 1: Enable sFlow and configure on Ethernet12
+        dvs.config_db.create_entry("SFLOW", "global", {"admin_state": "up"})
+        dvs.config_db.create_entry("SFLOW_SESSION", "Ethernet12",
+                                    {"sample_rate": "1000", "admin_state": "up"})
+
+        # Wait for sFlow samplepacket to appear in ASIC_DB
+        dvs.asic_db.wait_for_n_keys(
+            "ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", 1, wait_at_least_n_keys=True)
+
+        # Step 2: Create sampled mirror on same port
+        self.dvs_mirror.create_erspan_session_sampled(
+            "CONFLICT_SESSION", "1.1.1.1", "2.2.2.2", "0x8949", "8", "64", "0",
+            src_ports="Ethernet12", direction="RX", sample_rate="50000")
+
+        # Setup route for ERSPAN destination
+        dvs.set_interface_status("Ethernet16", "up")
+        dvs.add_ip_address("Ethernet16", "10.0.0.0/30")
+        dvs.add_neighbor("Ethernet16", "10.0.0.1", "02:04:06:08:10:12")
+        dvs.add_route("2.2.2.2", "10.0.0.1")
+
+        # Wait for activation attempt
+        import time
+        time.sleep(3)
+
+        # Step 3: Verify mirror session stays inactive (conflict rejected it)
+        dvs.state_db.wait_for_field_match("MIRROR_SESSION_TABLE",
+                                           "CONFLICT_SESSION",
+                                           {"status": "inactive"})
+
+        # Step 4: Verify sFlow samplepacket still exists (not overwritten)
+        sp_keys = dvs.asic_db.wait_for_n_keys(
+            "ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", 1, wait_at_least_n_keys=True)
+        sp_entry = dvs.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", sp_keys[0])
+        assert sp_entry["SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE"] == "1000"
+
+        # Cleanup
+        dvs.remove_route("2.2.2.2")
+        dvs.remove_neighbor("Ethernet16", "10.0.0.1")
+        dvs.remove_ip_address("Ethernet16", "10.0.0.0/30")
+        dvs.set_interface_status("Ethernet16", "down")
+        self.dvs_mirror.remove_mirror_session("CONFLICT_SESSION")
+        dvs.config_db.delete_entry("SFLOW_SESSION", "Ethernet12")
+        dvs.config_db.delete_entry("SFLOW", "global")
+        time.sleep(2)
+        dvs.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", 0)
+
