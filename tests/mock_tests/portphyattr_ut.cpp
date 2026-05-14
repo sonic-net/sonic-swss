@@ -360,7 +360,7 @@ namespace portphyattr_test
         rec_port.m_port_id = 0xCC110001;
         rec_port.m_role = Port::Role::Rec;
 
-        std::map<sai_port_serdes_attr_t, std::vector<uint32_t>> serdes_attr;
+        std::map<sai_port_serdes_attr_t, SerdesValue> serdes_attr;
         // Deliberately pass a port_id that doesn't match any of port.m_port_id
         // / m_line_side_id / m_system_side_id. Without the gate, the validation
         // block returns false; with the gate, the function returns true before
