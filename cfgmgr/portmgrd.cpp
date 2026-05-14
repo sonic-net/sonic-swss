@@ -6,6 +6,7 @@
 
 #include "exec.h"
 #include "portmgr.h"
+#include "monitorlinkgroupmgr.h"
 #include "schema.h"
 #include "select.h"
 

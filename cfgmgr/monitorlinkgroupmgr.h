@@ -1,6 +1,21 @@
 #ifndef __MONITORLINKGROUPMGR__
 #define __MONITORLINKGROUPMGR__
 
+// STATE_DB table names for Monitor Link Group are added to swss-common's
+// common/schema.h by sonic-net/sonic-swss-common#1181. Until that PR merges,
+// the sonic-swss-common artifact pulled by CI does not have these macros and
+// this swss build fails to compile. Define here as a transitional shim with
+// #ifndef guards so the build succeeds standalone. Once swss-common#1181
+// merges and schema.h carries these macros, the #ifndef guards skip the
+// fallback and the upstream definitions take over; this block can then be
+// removed as a cleanup.
+#ifndef STATE_MONITOR_LINK_GROUP_STATE_TABLE_NAME
+#define STATE_MONITOR_LINK_GROUP_STATE_TABLE_NAME  "MONITOR_LINK_GROUP_STATE"
+#endif
+#ifndef STATE_MONITOR_LINK_GROUP_MEMBER_TABLE_NAME
+#define STATE_MONITOR_LINK_GROUP_MEMBER_TABLE_NAME "MONITOR_LINK_GROUP_MEMBER"
+#endif
+
 #include "dbconnector.h"
 #include "orch.h"
 #include "selectabletimer.h"

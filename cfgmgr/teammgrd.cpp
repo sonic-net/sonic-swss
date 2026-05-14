@@ -5,6 +5,7 @@
 #include "netlink.h"
 #include "select.h"
 #include "warm_restart.h"
+#include "monitorlinkgroupmgr.h"
 #include <signal.h>
 #include <sys/prctl.h>
 

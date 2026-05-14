@@ -5,6 +5,7 @@
 #include "tokenize.h"
 #include "warm_restart.h"
 #include "portmgr.h"
+#include "monitorlinkgroupmgr.h"
 #include <swss/redisutility.h>
 
 #include <algorithm>

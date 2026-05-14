@@ -6,6 +6,7 @@
 #include "portmgr.h"
 #include "exec.h"
 #include "shellcmd.h"
+#include "monitorlinkgroupmgr.h"
 #include <swss/redisutility.h>
 
 using namespace std;
