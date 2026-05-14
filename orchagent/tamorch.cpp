@@ -185,7 +185,7 @@ void TamOrch::tamCollectorDecRefCountByName(const string& collectorName) {
     }
 
     auto collectorEntry = collectorIter->second;
-    assert((collectorEntry->refCount-count) > 0);
+    assert((collectorEntry->refCount) > 0);
 
     collectorEntry->refCount --;
     SWSS_LOG_DEBUG("Collector:%s refCount:%d", collectorName.c_str(), collectorEntry->refCount);
@@ -465,7 +465,7 @@ bool TamOrch::tamCollectorDelete(std::shared_ptr<TamCollectorEntry> collectorEnt
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("TAM ERROR: Error deleting TAM Collector object");
-        if (handleSaiRemoveStatus(SAI_API_MIRROR, status) != task_success) {
+        if (handleSaiRemoveStatus(SAI_API_TAM, status) != task_success) {
             return false;
         }
     }
@@ -542,7 +542,7 @@ bool TamOrch::tamTransportDelete(sai_object_id_t transportObjId)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("TAM ERROR: Error deleting TAM transport object");
-        auto taskStatus = handleSaiCreateStatus(SAI_API_TAM, status);
+        auto taskStatus = handleSaiRemoveStatus(SAI_API_TAM, status);
         if (taskStatus != task_success) {
             return parseHandleSaiStatusFailure(taskStatus);
         }
@@ -1850,7 +1850,7 @@ bool TamOrch::tamReportDelete(sai_object_id_t &reportObjId)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Error deleting TAM REPORT object");
-        if (handleSaiRemoveStatus(SAI_API_MIRROR, status) != task_success) {
+        if (handleSaiRemoveStatus(SAI_API_TAM, status) != task_success) {
             return false;
         }
     }
@@ -1921,7 +1921,7 @@ bool TamOrch::tamEventActionDelete(sai_object_id_t &eventActionObjId)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Error deleting TAM EVENT ACTION object");
-        if (handleSaiRemoveStatus(SAI_API_MIRROR, status) != task_success) {
+        if (handleSaiRemoveStatus(SAI_API_TAM, status) != task_success) {
             return false;
         }
     }
@@ -1991,7 +1991,7 @@ bool TamOrch::tamDropEventDelete(std::shared_ptr<TamSessionEntry> sessionEntry, 
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Error deleting TAM EVENT object");
-        if (handleSaiRemoveStatus(SAI_API_MIRROR, status) != task_success) {
+        if (handleSaiRemoveStatus(SAI_API_TAM, status) != task_success) {
             return false;
         }
     }
@@ -2224,7 +2224,7 @@ bool TamOrch::tamDelete(sai_object_id_t &tamObjId)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Error deleting TAM EVENT object");
-        if (handleSaiRemoveStatus(SAI_API_MIRROR, status) != task_success) {
+        if (handleSaiRemoveStatus(SAI_API_TAM, status) != task_success) {
             return false;
         }
     }
