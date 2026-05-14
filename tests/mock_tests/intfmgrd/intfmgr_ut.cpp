@@ -21,7 +21,12 @@ bool FailBridgeFdbCommand = false;
 int cb(const std::string &cmd, std::string &stdout){
     mockCallArgs.push_back(cmd);
     if (cmd == "sysctl -w net.ipv6.conf.\"Ethernet0\".disable_ipv6=0") Ethernet0IPv6Set = true;
-    else if (cmd.find("/sbin/ip -6 address \"add\"") == 0) {
+    /*
+     * setIntfIp now emits the idempotent "replace" form on the SET path
+     * (cfgmgr/intfmgr.cpp::setIntfIp); the IPv6 retry-after-enableIpv6Flag
+     * behavior under test still goes through this branch.
+     */
+    else if (cmd.find("/sbin/ip -6 address \"replace\"") == 0) {
         return Ethernet0IPv6Set ? 0 : 2;
     }
     else if (cmd == "/sbin/ip link set \"Ethernet64.10\" \"up\""){
@@ -33,6 +38,14 @@ int cb(const std::string &cmd, std::string &stdout){
     }
     else if (cmd.find("bridge fdb") == 0) {
         return FailBridgeFdbCommand ? 1 : 0;
+    }
+    /*
+     * Drive the failure-after-lstat-miss branch in addLoopbackIntf
+     * (testAddLoopbackIntfCreateFailure). The alias is unique to that test so
+     * no other test path matches.
+     */
+    else if (cmd.find("/sbin/ip link add LoopbackFailMe ") == 0) {
+        return 1;
     }
     else {
         return 0;
@@ -118,7 +131,8 @@ namespace intfmgr_ut
         intfmgr.doIntfAddrTask(keys, data, "SET");
         int ip_cmd_called = 0;
         for (auto cmd : mockCallArgs){
-            if (cmd.find("/sbin/ip -6 address \"add\"") == 0){
+            /* setIntfIp emits the idempotent "replace" form on the SET path. */
+            if (cmd.find("/sbin/ip -6 address \"replace\"") == 0){
                 ip_cmd_called++;
             }
         }
@@ -142,7 +156,8 @@ namespace intfmgr_ut
         intfmgr.doIntfAddrTask(keys, data, "SET");
         int ip_cmd_called = 0;
         for (auto cmd : mockCallArgs){
-            if (cmd.find("/sbin/ip -6 address \"add\"") == 0){
+            /* setIntfIp emits the idempotent "replace" form on the SET path. */
+            if (cmd.find("/sbin/ip -6 address \"replace\"") == 0){
                 ip_cmd_called++;
             }
         }
@@ -199,31 +214,35 @@ namespace intfmgr_ut
         portData.emplace_back("admin_status", "up");
         intfmgr.doPortTableTask("Ethernet0", portData, "SET");
 
-        /* Verify that only IPv6 link-local address add was called */
-        int ipv6_ll_add_called = 0;
-        int ipv6_global_add_called = 0;
-        int ipv4_add_called = 0;
+        /*
+         * Verify that only the IPv6 link-local address was replayed.
+         * setIntfIp now emits the idempotent "replace" form on SET, so we match
+         * on the new op token. Global IPv6 / IPv4 must still produce zero hits.
+         */
+        int ipv6_ll_replay_called = 0;
+        int ipv6_global_replay_called = 0;
+        int ipv4_replay_called = 0;
         for (const auto &cmd : mockCallArgs)
         {
-            if (cmd.find("/sbin/ip -6 address \"add\"") != std::string::npos &&
+            if (cmd.find("/sbin/ip -6 address \"replace\"") != std::string::npos &&
                 cmd.find("fe80::1/64") != std::string::npos)
             {
-                ipv6_ll_add_called++;
+                ipv6_ll_replay_called++;
             }
-            if (cmd.find("/sbin/ip -6 address \"add\"") != std::string::npos &&
+            if (cmd.find("/sbin/ip -6 address \"replace\"") != std::string::npos &&
                 cmd.find("2001::8/64") != std::string::npos)
             {
-                ipv6_global_add_called++;
+                ipv6_global_replay_called++;
             }
-            if (cmd.find("/sbin/ip address \"add\"") != std::string::npos &&
+            if (cmd.find("/sbin/ip address \"replace\"") != std::string::npos &&
                 cmd.find("10.0.0.1/31") != std::string::npos)
             {
-                ipv4_add_called++;
+                ipv4_replay_called++;
             }
         }
-        ASSERT_EQ(ipv6_ll_add_called, 1);
-        ASSERT_EQ(ipv6_global_add_called, 0);
-        ASSERT_EQ(ipv4_add_called, 0);
+        ASSERT_EQ(ipv6_ll_replay_called, 1);
+        ASSERT_EQ(ipv6_global_replay_called, 0);
+        ASSERT_EQ(ipv4_replay_called, 0);
 
         /* Now delete the link-local address and verify it is no longer replayed */
         intfmgr.doIntfAddrTask(llKeys, emptyData, "DEL");
@@ -232,16 +251,16 @@ namespace intfmgr_ut
         mockCallArgs.clear();
         intfmgr.doPortTableTask("Ethernet0", portData, "SET");
 
-        ipv6_ll_add_called = 0;
+        ipv6_ll_replay_called = 0;
         for (const auto &cmd : mockCallArgs)
         {
-            if (cmd.find("/sbin/ip -6 address \"add\"") != std::string::npos &&
+            if (cmd.find("/sbin/ip -6 address \"replace\"") != std::string::npos &&
                 cmd.find("fe80::1/64") != std::string::npos)
             {
-                ipv6_ll_add_called++;
+                ipv6_ll_replay_called++;
             }
         }
-        ASSERT_EQ(ipv6_ll_add_called, 0);
+        ASSERT_EQ(ipv6_ll_replay_called, 0);
     }
 
     TEST_F(IntfMgrTest, testNoReplayLLOnAdminDown){
@@ -268,15 +287,88 @@ namespace intfmgr_ut
         portData.emplace_back("admin_status", "down");
         intfmgr.doPortTableTask("Ethernet0", portData, "SET");
 
-        int ipv6_add_called = 0;
+        /* setIntfIp emits the "replace" op token on SET; no replay should fire. */
+        int ipv6_replay_called = 0;
         for (const auto &cmd : mockCallArgs)
         {
-            if (cmd.find("/sbin/ip -6 address \"add\"") != std::string::npos)
+            if (cmd.find("/sbin/ip -6 address \"replace\"") != std::string::npos)
             {
-                ipv6_add_called++;
+                ipv6_replay_called++;
             }
         }
-        ASSERT_EQ(ipv6_add_called, 0);
+        ASSERT_EQ(ipv6_replay_called, 0);
+    }
+
+    /*
+     * Warm-restart short-circuit in addLoopbackIntf: if the kernel already
+     * has the netdev, we lstat /sys/class/net/<alias>, log INFO, and return
+     * without emitting an "ip link add". /sys/class/net/lo is reliably
+     * present on every Linux runtime, including the Azure pipeline
+     * container, so it's the cheapest fixture for the lstat==0 branch.
+     */
+    TEST_F(IntfMgrTest, testAddLoopbackIntfAlreadyPresent){
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        mockCallArgs.clear();
+
+        intfmgr.addLoopbackIntf("lo");
+
+        int link_add_seen = 0;
+        for (const auto &cmd : mockCallArgs)
+        {
+            if (cmd.find("/sbin/ip link add lo ") != std::string::npos)
+            {
+                link_add_seen++;
+            }
+        }
+        ASSERT_EQ(link_add_seen, 0);
+    }
+
+    /*
+     * Failure path in addLoopbackIntf: alias is absent from /sys/class/net
+     * (so we don't short-circuit), the mock cb returns non-zero for the
+     * "ip link add", the function logs ERR and returns without falling into
+     * the success-log path. Asserts the command was actually emitted (so the
+     * lstat-miss branch is exercised) and the function returned cleanly.
+     */
+    TEST_F(IntfMgrTest, testAddLoopbackIntfCreateFailure){
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        mockCallArgs.clear();
+
+        intfmgr.addLoopbackIntf("LoopbackFailMe");
+
+        int link_add_seen = 0;
+        for (const auto &cmd : mockCallArgs)
+        {
+            if (cmd.find("/sbin/ip link add LoopbackFailMe ") != std::string::npos)
+            {
+                link_add_seen++;
+            }
+        }
+        ASSERT_EQ(link_add_seen, 1);
+    }
+
+    /*
+     * Warm-restart short-circuit in addHostSubIntf: when the sub-interface
+     * netdev already exists in the kernel, we skip "ip link add link ...".
+     * Reuse "lo" as the alias since /sys/class/net/lo is always present;
+     * lstat doesn't care that it isn't actually a vlan device.
+     */
+    TEST_F(IntfMgrTest, testAddHostSubIntfAlreadyPresent){
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        mockCallArgs.clear();
+
+        intfmgr.addHostSubIntf("Ethernet0", "lo", "10");
+
+        int link_add_seen = 0;
+        for (const auto &cmd : mockCallArgs)
+        {
+            if (cmd.find("/sbin/ip link add link") != std::string::npos &&
+                cmd.find("\"lo\"") != std::string::npos)
+            {
+                link_add_seen++;
+            }
+        }
+        ASSERT_EQ(link_add_seen, 0);
     }
 
     TEST_F(IntfMgrTest, testSetSagFdbEntryValidationAndBridgeCommand){
