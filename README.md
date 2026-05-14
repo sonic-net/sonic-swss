@@ -1,18 +1,5 @@
-*static analysis:*
-
-[![Total alerts](https://img.shields.io/lgtm/alerts/g/sonic-net/sonic-swss.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/sonic-net/sonic-swss/alerts/)
-[![Language grade: Python](https://img.shields.io/lgtm/grade/python/g/sonic-net/sonic-swss.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/sonic-net/sonic-swss/context:python)
-[![Language grade: C/C++](https://img.shields.io/lgtm/grade/cpp/g/sonic-net/sonic-swss.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/sonic-net/sonic-swss/context:cpp)
-
-*sonic-swss builds:*
-
-[![master build](https://dev.azure.com/mssonic/build/_apis/build/status/Azure.sonic-swss?branchName=master&label=master)](https://dev.azure.com/mssonic/build/_build/latest?definitionId=15&branchName=master)
-[![202205 build](https://dev.azure.com/mssonic/build/_apis/build/status/Azure.sonic-swss?branchName=202205&label=202205)](https://dev.azure.com/mssonic/build/_build/latest?definitionId=15&branchName=202205)
-[![202111 build](https://dev.azure.com/mssonic/build/_apis/build/status/Azure.sonic-swss?branchName=202111&label=202111)](https://dev.azure.com/mssonic/build/_build/latest?definitionId=15&branchName=202111)
-[![202106 build](https://dev.azure.com/mssonic/build/_apis/build/status/Azure.sonic-swss?branchName=202106&label=202106)](https://dev.azure.com/mssonic/build/_build/latest?definitionId=15&branchName=202106)
-[![202012 build](https://dev.azure.com/mssonic/build/_apis/build/status/Azure.sonic-swss?branchName=202012&label=202012)](https://dev.azure.com/mssonic/build/_build/latest?definitionId=15&branchName=202012)
-[![201911 build](https://dev.azure.com/mssonic/build/_apis/build/status/Azure.sonic-swss?branchName=201911&label=201911)](https://dev.azure.com/mssonic/build/_build/latest?definitionId=15&branchName=201911)
-
+*coverage:*
+![Coverage](https://github.com/upscale-ai-network/sonic-swss/blob/badges/coverage-badge.svg?raw=true)
 
 # SONiC - SWitch State Service - SWSS
 
