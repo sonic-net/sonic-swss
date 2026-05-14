@@ -8,6 +8,7 @@
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
 #include "mock_response_publisher.h"
+#include "switchorch.h"
 
 extern void on_switch_asic_sdk_health_event(sai_object_id_t switch_id,
                                             sai_switch_asic_sdk_health_severity_t severity,
@@ -34,6 +35,35 @@ namespace switchorch_test
     set<sai_switch_asic_sdk_health_category_t> _ut_stub_asic_sdk_health_event_passed_categories;
 
     bool _ut_reg_event_unsupported;
+
+    bool _ut_create_switch_tunnel_called;
+    bool _ut_create_switch_tunnel_has_security_attr;
+
+    sai_status_t _ut_stub_create_switch_tunnel(
+        _Out_ sai_object_id_t *switch_tunnel_id,
+        _In_ sai_object_id_t switch_id,
+        _In_ uint32_t attr_count,
+        _In_ const sai_attribute_t *attr_list)
+    {
+        *switch_tunnel_id = 0x5678;
+        _ut_create_switch_tunnel_called = true;
+        _ut_create_switch_tunnel_has_security_attr = false;
+        for (uint32_t i = 0; i < attr_count; i++)
+        {
+            if (attr_list[i].id == SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_SECURITY)
+            {
+                _ut_create_switch_tunnel_has_security_attr = true;
+            }
+        }
+        return SAI_STATUS_SUCCESS;
+    }
+
+    sai_status_t _ut_stub_set_switch_tunnel_attribute(
+        _In_ sai_object_id_t switch_tunnel_id,
+        _In_ const sai_attribute_t *attr)
+    {
+        return SAI_STATUS_SUCCESS;
+    }
 
     sai_status_t _ut_stub_sai_set_switch_attribute(
         _In_ sai_object_id_t switch_id,
@@ -68,6 +98,8 @@ namespace switchorch_test
         ut_sai_switch_api = *sai_switch_api;
         pold_sai_switch_api = sai_switch_api;
         ut_sai_switch_api.set_switch_attribute = _ut_stub_sai_set_switch_attribute;
+        ut_sai_switch_api.create_switch_tunnel = _ut_stub_create_switch_tunnel;
+        ut_sai_switch_api.set_switch_tunnel_attribute = _ut_stub_set_switch_tunnel_attribute;
         sai_switch_api = &ut_sai_switch_api;
     }
 
@@ -90,6 +122,8 @@ namespace switchorch_test
             m_state_db = make_shared<swss::DBConnector>("STATE_DB", 0);
 
             _ut_reg_event_unsupported = false;
+            _ut_create_switch_tunnel_called = false;
+            _ut_create_switch_tunnel_has_security_attr = false;
 
             map<string, string> profile = {
                 { "SAI_VS_SWITCH_TYPE", "SAI_VS_SWITCH_TYPE_BCM56850" },
@@ -287,6 +321,13 @@ namespace switchorch_test
         ASSERT_EQ(value, "true");
         gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_REG_NOTICE_ASIC_SDK_HEALTH_CATEGORY, value);
         ASSERT_EQ(value, "true");
+
+        // Test that mirror capabilities are also queried and stored
+        // The actual values depend on the SAI implementation, but we can verify the entries exist
+        bool ingress_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_PORT_INGRESS_MIRROR_CAPABLE, value);
+        ASSERT_TRUE(ingress_exists);
+        bool egress_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_PORT_EGRESS_MIRROR_CAPABLE, value);
+        ASSERT_TRUE(egress_exists);
     }
 
     TEST_F(SwitchOrchTest, SwitchOrchTestCheckCapabilityUnsupported)
@@ -306,6 +347,13 @@ namespace switchorch_test
         ASSERT_EQ(value, "false");
         gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_REG_NOTICE_ASIC_SDK_HEALTH_CATEGORY, value);
         ASSERT_EQ(value, "false");
+
+        // Test that mirror capabilities are also queried and stored
+        // The actual values depend on the SAI implementation, but we can verify the entries exist
+        bool ingress_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_PORT_INGRESS_MIRROR_CAPABLE, value);
+        ASSERT_TRUE(ingress_exists);
+        bool egress_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_PORT_EGRESS_MIRROR_CAPABLE, value);
+        ASSERT_TRUE(egress_exists);
 
         // case: unsupported severity. To satisfy coverage.
         vector<string> ts;
@@ -335,5 +383,26 @@ namespace switchorch_test
     {
         sai_timespec_t timestamp = {.tv_sec = 172479515853275099, .tv_nsec = 538710245};
         checkAsicSdkHealthEvent(timestamp);
+    }
+
+    TEST_F(SwitchOrchTest, VxlanSportSecurityCapabilityCheck)
+    {
+        _hook_sai_apis();
+        initSwitchOrch();
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"switch", "SET",
+                           {
+                               {"vxlan_sport", "1024"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gSwitchOrch->getExecutor(APP_SWITCH_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gSwitchOrch)->doTask();
+
+        ASSERT_TRUE(_ut_create_switch_tunnel_called);
+        ASSERT_TRUE(consumer->m_toSync.empty());
+
+        _unhook_sai_apis();
     }
 }

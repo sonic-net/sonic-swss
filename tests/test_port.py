@@ -286,6 +286,8 @@ class TestPort(object):
             status, fvs = atbl.get(intf)
             assert status, "Error getting value for key"
             attributes = dict(fvs)
+            if attributes.get("SAI_HOSTIF_ATTR_TYPE") != "SAI_HOSTIF_TYPE_NETDEV":
+                continue
             hostif_queue = attributes.get("SAI_HOSTIF_ATTR_QUEUE")
             assert hostif_queue == "7"
 
@@ -480,6 +482,116 @@ class TestPort(object):
             if fv[0] == "link_event_damping_algorithm":
                 assert fv[1] == "disabled"
 
+    def test_PortAdminRestore(self, dvs, testlog):
+        appdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        asicdb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+
+        ptbl = swsscommon.ProducerStateTable(appdb, "PORT_TABLE")
+        atbl = swsscommon.Table(asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
+
+        # Initialize Ethernet0 (admin_status, fec) = (up, rs)
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up"),
+                                          ("fec", "rs")])
+        ptbl.set("Ethernet0", fvs)
+
+        time.sleep(1)
+
+        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
+        assert status == True
+
+        for fv in fvs:
+            if fv[0] == "SAI_PORT_ATTR_FEC_MODE":
+                assert fv[1] == "SAI_PORT_FEC_MODE_RS"
+            if fv[0] == "SAI_PORT_ATTR_ADMIN_STATE":
+                assert fv[1] == "true"
+
+        # Verify pCfg.admin_status.is_set false by (fec) = (none)
+        fvs = swsscommon.FieldValuePairs([("fec", "none")])
+        ptbl.set("Ethernet0", fvs)
+
+        time.sleep(1)
+
+        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
+        assert status == True
+
+        for fv in fvs:
+            if fv[0] == "SAI_PORT_ATTR_FEC_MODE":
+                assert fv[1] == "SAI_PORT_FEC_MODE_NONE"
+            if fv[0] == "SAI_PORT_ATTR_ADMIN_STATE":
+                assert fv[1] == "true"
+
+        # Verify pCfg.admin_status.is_set true by (admin_status, fec) = (down, rs)
+        fvs = swsscommon.FieldValuePairs([("admin_status", "down"),
+                                          ("fec", "rs")])
+        ptbl.set("Ethernet0", fvs)
+
+        time.sleep(1)
+
+        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
+        assert status == True
+
+        for fv in fvs:
+            if fv[0] == "SAI_PORT_ATTR_FEC_MODE":
+                assert fv[1] == "SAI_PORT_FEC_MODE_RS"
+            if fv[0] == "SAI_PORT_ATTR_ADMIN_STATE":
+                assert fv[1] == "false"
+
+    def test_media_type(self, dvs, testlog):
+
+        db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+
+        tbl = swsscommon.Table(db, "PORT_TABLE")
+        ptbl = swsscommon.ProducerStateTable(db, "PORT_TABLE")
+        atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
+
+        media_name = 'media_type'
+        media_val = ""
+
+        fvs = swsscommon.FieldValuePairs([(media_name, media_val)])
+        ptbl.set("Ethernet0", fvs)
+
+        time.sleep(1)
+
+        # get media_type
+        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
+        assert status == True
+        #empty media_type should be rejected
+        for fv in fvs:
+            assert fv[0] != "SAI_PORT_ATTR_MEDIA_TYPE"
+
+        media_name = 'media_type'
+        media_val = "none"
+        fvs = swsscommon.FieldValuePairs([(media_name, media_val)])
+        ptbl.set("Ethernet0", fvs)
+
+        time.sleep(1)
+
+        # get media_type
+        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
+        assert status == True
+        #"none" media_type should be rejected
+        for fv in fvs:
+            assert fv[0] != "SAI_PORT_ATTR_MEDIA_TYPE"
+
+        media_name = 'media_type'
+        media_val = "backplane"
+        fvs = swsscommon.FieldValuePairs([(media_name, media_val)])
+        ptbl.set("Ethernet0", fvs)
+
+        time.sleep(1)
+
+        # get media_type
+        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
+        assert status == True
+
+        found = False
+        #check the media_type is added in ASIC_DB
+        for fv in fvs:
+            if fv[0] == "SAI_PORT_ATTR_MEDIA_TYPE":
+                assert fv[1] == "SAI_PORT_MEDIA_TYPE_BACKPLANE"
+                found = True
+        assert found == True
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

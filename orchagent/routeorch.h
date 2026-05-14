@@ -16,6 +16,9 @@
 #include "bulker.h"
 #include "fgnhgorch.h"
 #include <map>
+#include "zmqorch.h"
+#include "zmqserver.h"
+#include <unordered_map>
 
 /* Maximum next hop group number */
 #define NHGRP_MAX_SIZE 128
@@ -37,9 +40,22 @@ struct NhgBase;
 
 struct NextHopGroupEntry
 {
+    NextHopGroupEntry() :
+        next_hop_group_id(SAI_NULL_OBJECT_ID),
+        ref_count(0),
+        nh_member_install_count(0),
+        eligible_for_default_route_nh_swap(false),
+        is_default_route_nh_swap(false)
+    {
+    }
+
     sai_object_id_t         next_hop_group_id;      // next hop group id
     int                     ref_count;              // reference count
     NextHopGroupMembers     nhopgroup_members;      // ids of members indexed by <ip_address, if_alias>
+    NextHopGroupMembers     default_route_nhopgroup_members;      // ids of members indexed by <ip_address, if_alias>
+    uint32_t                nh_member_install_count;
+    bool                    eligible_for_default_route_nh_swap;
+    bool                    is_default_route_nh_swap;
 };
 
 struct NextHopUpdate
@@ -91,7 +107,7 @@ struct RouteKey
 };
 
 /* NextHopGroupTable: NextHopGroupKey, NextHopGroupEntry */
-typedef std::map<NextHopGroupKey, NextHopGroupEntry> NextHopGroupTable;
+typedef std::unordered_map<NextHopGroupKey, NextHopGroupEntry> NextHopGroupTable;
 /* RouteTable: destination network, NextHopGroupKey */
 typedef std::map<IpPrefix, RouteNhg> RouteTable;
 /* RouteTables: vrf_id, RouteTable */
@@ -125,6 +141,7 @@ struct RouteBulkContext
     bool                                excp_intfs_flag;
     // using_temp_nhg will track if the NhgOrch's owned NHG is temporary or not
     bool                                using_temp_nhg;
+    bool                                fallback_to_default_route;
     std::vector<string>                 ipv;
     std::vector<string>                 alsv;
     std::vector<string>                 vni_labelv;
@@ -135,8 +152,11 @@ struct RouteBulkContext
     std::string                         protocol;  // Protocol string
     bool                                is_set;    // True if set operation
 
+    Constraint                          retry_cst;
+
     RouteBulkContext(const std::string& key, bool is_set)
-        : key(key), excp_intfs_flag(false), using_temp_nhg(false), is_set(is_set)
+        : key(key), excp_intfs_flag(false), using_temp_nhg(false), is_set(is_set),
+          fallback_to_default_route(false), retry_cst(DUMMY_CONSTRAINT)
     {
     }
 
@@ -155,6 +175,8 @@ struct RouteBulkContext
         using_temp_nhg = false;
         key.clear();
         protocol.clear();
+        fallback_to_default_route = false;
+        retry_cst = DUMMY_CONSTRAINT;
     }
 };
 
@@ -190,10 +212,10 @@ struct LabelRouteBulkContext
     }
 };
 
-class RouteOrch : public Orch, public Subject
+class RouteOrch : public ZmqOrch, public Subject
 {
 public:
-    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch);
+    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, swss::ZmqServer *zmqServer = nullptr);
 
     bool hasNextHopGroup(const NextHopGroupKey&) const;
     sai_object_id_t getNextHopGroupId(const NextHopGroupKey&);
@@ -205,13 +227,23 @@ public:
     void decreaseNextHopRefCount(const NextHopGroupKey&);
     bool isRefCounterZero(const NextHopGroupKey&) const;
 
+    void flushRouteBulker() { gRouteBulker.flush(); }
+    int getNextHopGroupRefCount(const NextHopGroupKey& key) { return m_syncdNextHopGroups[key].ref_count; }
+    std::set<std::pair<NextHopGroupKey, sai_object_id_t>> &getBulkNhgReducedRefCnt() { return m_bulkNhgReducedRefCnt; }
+
     bool addNextHopGroup(const NextHopGroupKey&);
-    bool removeNextHopGroup(const NextHopGroupKey&);
+    bool removeNextHopGroup(const NextHopGroupKey&, const bool is_default_route_nh_swap=false);
+
+    bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
+    bool removeRoute(RouteBulkContext& ctx);
+    bool addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
+    bool removeRoutePost(const RouteBulkContext& ctx);
 
     void addNextHopRoute(const NextHopKey&, const RouteKey&);
     void removeNextHopRoute(const NextHopKey&, const RouteKey&);
     bool updateNextHopRoutes(const NextHopKey&, uint32_t&);
     bool getRoutesForNexthop(std::set<RouteKey>&, const NextHopKey&);
+    bool swapnexthopinNextHopGroup(sai_object_id_t next_hop_group_id, sai_object_id_t default_next_hop_id);
 
     bool validnexthopinNextHopGroup(const NextHopKey&, uint32_t&);
     bool invalidnexthopinNextHopGroup(const NextHopKey&, uint32_t&);
@@ -224,7 +256,7 @@ public:
     const NextHopGroupKey getSyncdRouteNhgKey(sai_object_id_t vrf_id, const IpPrefix& ipPrefix);
     bool createFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id, vector<sai_attribute_t> &nhg_attrs);
     bool removeFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id);
-    bool isRouteExists(const IpPrefix& prefix);
+    bool isRouteExists(sai_object_id_t vrf_id, const IpPrefix& prefix);
     bool removeRoutePrefix(const IpPrefix& prefix);
 
     void addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
@@ -251,6 +283,8 @@ private:
     unsigned int m_maxNextHopGroupCount;
     bool m_resync;
 
+    std::set<NextHopKey> v4_active_default_route_nhops;
+    std::set<NextHopKey> v6_active_default_route_nhops;
     shared_ptr<DBConnector> m_stateDb;
     unique_ptr<swss::Table> m_stateDefaultRouteTb;
 
@@ -273,10 +307,6 @@ private:
     ObjectBulker<sai_next_hop_group_api_t>  gNextHopGroupMemberBulker;
 
     void addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
-    bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
-    bool removeRoute(RouteBulkContext& ctx);
-    bool addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
-    bool removeRoutePost(const RouteBulkContext& ctx);
 
     void addTempLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey&);
     bool addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey&);
@@ -286,8 +316,8 @@ private:
 
     void updateDefRouteState(string ip, bool add=false);
 
-    void doTask(Consumer& consumer);
-    void doLabelTask(Consumer& consumer);
+    void doTask(ConsumerBase& consumer);
+    void doLabelTask(ConsumerBase& consumer);
 
     const NhgBase &getNhg(const std::string& nhg_index);
 
@@ -296,6 +326,8 @@ private:
     bool isVipRoute(const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops);
     void createVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix);
     void removeVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix);
+    bool addDefaultRouteNexthopsInNextHopGroup(NextHopGroupEntry& original_next_hop_group, std::set<NextHopKey>& default_route_next_hop_set);
+    void updateDefaultRouteSwapSet(const NextHopGroupKey default_nhg_key, std::set<NextHopKey>& active_default_route_nhops);
     void incNhgRefCount(const std::string& nhg_index, const std::string &context_index = "");
     void decNhgRefCount(const std::string& nhg_index, const std::string &context_index = "");
 };

@@ -11,6 +11,7 @@
 #include <iostream>
 #include <string>
 #include <climits>
+#include <boost/algorithm/string.hpp>
 
 using namespace std;
 
@@ -1783,7 +1784,12 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer, KeyOpFieldsVal
             return task_process_status::task_invalid_entry;
         }
 
-        if((tokens[0] == gMyHostName) && (tokens[1] == gMyAsicName))
+        string tmp_token_1 = tokens[1];
+        string tmp_gMyAsicName = gMyAsicName;
+        boost::algorithm::to_lower(tmp_token_1);
+        boost::algorithm::to_lower(tmp_gMyAsicName);
+        // Check if the port is local to this ASIC
+        if((tokens[0] == gMyHostName) && (tmp_token_1 == tmp_gMyAsicName))
         {
            local_port = true;
            local_port_name = tokens[2];
@@ -2088,25 +2094,6 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
                         return task_process_status::task_invalid_entry;
                     }
                 }
-                if (attr.id == SAI_PORT_ATTR_QOS_TC_AND_COLOR_TO_DSCP_MAP)
-                {
-                    /* Query Port's UPDATE_DSCP Capability */
-                    bool rv = gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_UPDATE_DSCP);
-                    if (rv == true)
-                    {
-                        sai_attribute_t update_dscp_attr;
-                        memset(&update_dscp_attr, 0, sizeof(update_dscp_attr));
-                        update_dscp_attr.id = SAI_PORT_ATTR_UPDATE_DSCP;
-                        update_dscp_attr.value.booldata = false;
-                        sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &update_dscp_attr);
-                        if (status != SAI_STATUS_SUCCESS)
-                        {
-                            SWSS_LOG_ERROR("Failed to reset UPDATE_DSCP attribute on port %s, rv:%d",
-                                           port_name.c_str(), status);
-                            return task_process_status::task_invalid_entry;
-                        }
-                    }
-                }
                 SWSS_LOG_INFO("Removed %s on port %s", mapRef.first.c_str(), port_name.c_str());
             }
 
@@ -2212,25 +2199,6 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
                 if (handle_status != task_process_status::task_success)
                 {
                     return task_process_status::task_invalid_entry;
-                }
-            }
-            if (attr.id == SAI_PORT_ATTR_QOS_TC_AND_COLOR_TO_DSCP_MAP)
-            {
-                /* Query Port's UPDATE_DSCP Capability */
-                bool rv = gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_UPDATE_DSCP);
-                if (rv == true)
-                {
-                    sai_attribute_t update_dscp_attr;
-                    memset(&update_dscp_attr, 0, sizeof(update_dscp_attr));
-                    update_dscp_attr.id = SAI_PORT_ATTR_UPDATE_DSCP;
-                    update_dscp_attr.value.booldata = true;
-                    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &update_dscp_attr);
-                    if (status != SAI_STATUS_SUCCESS)
-                    {
-                        SWSS_LOG_ERROR("Failed to set UPDATE_DSCP attribute on port %s, rv:%d",
-                                       port_name.c_str(), status);
-                        return task_process_status::task_invalid_entry;
-                    }
                 }
             }
             SWSS_LOG_INFO("Applied %s to port %s", it->second.first.c_str(), port_name.c_str());

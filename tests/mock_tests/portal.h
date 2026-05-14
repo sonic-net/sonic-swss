@@ -87,6 +87,11 @@ struct Portal
         {
             return obj.processCoppRule(processCoppRule);
         }
+
+        static const std::unordered_set<sai_hostif_trap_type_t>& getSupportedTrapIds(const CoppOrch &obj)
+        {
+            return obj.supported_trap_ids;
+        }
     };
 
     struct SflowOrchInternal

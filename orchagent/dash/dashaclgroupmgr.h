@@ -67,13 +67,11 @@ struct DashAclRuleInfo
 struct DashAclGroup
 {
     using EniTable = std::unordered_map<std::string, std::unordered_set<DashAclStage>>;
-    using RuleTable = std::unordered_map<std::string, DashAclRuleInfo>;
-    using RuleKeys = std::unordered_set<std::string>;
     sai_object_id_t m_dash_acl_group_id = SAI_NULL_OBJECT_ID;
+    std::unordered_set<std::string> m_tags;
+    int m_rule_count = 0;
 
-    std::string m_guid;
     sai_ip_addr_family_t m_ip_version;
-    RuleTable m_dash_acl_rule_table;
     
     EniTable m_in_tables;
     EniTable m_out_tables;
@@ -109,12 +107,7 @@ public:
     bool exists(const std::string& group_id) const;
     bool isBound(const std::string& group_id);
 
-    task_process_status onUpdate(const std::string& group_id, const std::string& tag_id,const DashTag& tag);
-
     task_process_status createRule(const std::string& group_id, const std::string& rule_id, DashAclRule& rule);
-    task_process_status updateRule(const std::string& group_id, const std::string& rule_id, DashAclRule& rule);
-    task_process_status removeRule(const std::string& group_id, const std::string& rule_id);
-    bool ruleExists(const std::string& group_id, const std::string& rule_id) const;
 
     task_process_status bind(const std::string& group_id, const std::string& eni_id, DashAclDirection direction, DashAclStage stage);
     task_process_status unbind(const std::string& group_id, const std::string& eni_id, DashAclDirection direction, DashAclStage stage);
@@ -125,15 +118,10 @@ private:
     void remove(DashAclGroup& group);
 
     DashAclRuleInfo createRule(DashAclGroup& group, DashAclRule& rule);
-    void removeRule(DashAclGroup& group, DashAclRuleInfo& rule);
-    bool fetchRule(const std::string &group_id, const std::string &rule_id, DashAclRule &rule);
 
     void bind(const DashAclGroup& group, const EniEntry& eni, DashAclDirection direction, DashAclStage stage);
     void unbind(const DashAclGroup& group, const EniEntry& eni, DashAclDirection direction, DashAclStage stage);
     bool isBound(const DashAclGroup& group);
     void attachTags(const std::string &group_id, const std::unordered_set<std::string>& tags);
     void detachTags(const std::string &group_id, const std::unordered_set<std::string>& tags);
-
-    task_process_status refreshAclGroupFull(const std::string &group_id);
-    void removeAclGroupFull(DashAclGroup& group);
 };

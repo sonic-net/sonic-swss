@@ -293,6 +293,15 @@ namespace copporch_test
         std::vector<Orch*> resourcesList;
     };
 
+    TEST_F(CoppOrchTest, VerifySupportedTrapIds)
+    {
+        MockCoppOrch coppOrch;
+
+        const auto &supportedTrapIds = Portal::CoppOrchInternal::getSupportedTrapIds(coppOrch.get());
+        EXPECT_TRUE(supportedTrapIds.find(SAI_HOSTIF_TRAP_TYPE_IP2ME) != supportedTrapIds.end());
+        EXPECT_TRUE(supportedTrapIds.find(SAI_HOSTIF_TRAP_TYPE_NEIGHBOR_MISS) != supportedTrapIds.end());
+    }
+
     TEST_F(CoppOrchTest, TrapGroup_AddRemove)
     {
         const std::string trapGroupName = "queue4_group1";
@@ -457,10 +466,11 @@ namespace copporch_test
     TEST_F(CoppOrchTest, Trap_AddRemove)
     {
         const std::string trapGroupName = "queue4_group1";
-        const std::string trapNameList = "bgp,bgpv6";
+        const std::string trapNameList = "bgp,bgpv6,neighbor_miss";
         const std::set<sai_hostif_trap_type_t> trapIDSet = {
             SAI_HOSTIF_TRAP_TYPE_BGP,
-            SAI_HOSTIF_TRAP_TYPE_BGPV6
+            SAI_HOSTIF_TRAP_TYPE_BGPV6,
+            SAI_HOSTIF_TRAP_TYPE_NEIGHBOR_MISS
         };
 
         MockCoppOrch coppOrch;
@@ -490,6 +500,8 @@ namespace copporch_test
             const auto &tgOid = cit->second;
             const auto &tidList = Portal::CoppOrchInternal::getTrapIdsFromTrapGroup(coppOrch.get(), tgOid);
             const auto &tidSet = std::set<sai_hostif_trap_type_t>(tidList.begin(), tidList.end());
+
+            // Verify that bgp, bgpv6 and neighbor_miss are installed
             EXPECT_TRUE(trapIDSet == tidSet);
         }
 

@@ -449,7 +449,7 @@ namespace aclorch_test
 
             ASSERT_EQ(gMirrorOrch, nullptr);
             gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession,
-                                         gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch);
+                                         gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch, gSwitchOrch);
 
             auto consumer = unique_ptr<Consumer>(new Consumer(
                 new swss::ConsumerStateTable(m_app_db.get(), APP_PORT_TABLE_NAME, 1, 1), gPortsOrch, APP_PORT_TABLE_NAME));
@@ -2054,6 +2054,764 @@ namespace aclorch_test
         auto it_rule = aclTableObject.rules.find(aclRuleName);
         ASSERT_NE(it_rule, aclTableObject.rules.end());
         ASSERT_TRUE(validateAclRuleByConfOp(*it_rule->second, kfvFieldsValues(kvfAclRule.front())));
-}
+    }
 
+    TEST_F(AclOrchTest, AclInnerSourceMacRewriteTableValidation)
+    {
+        const string aclTableTypeName = "INNER_SRC_MAC_REWRITE_TABLE_TYPE";
+        const string aclTableName = "INNER_SRC_MAC_REWRITE_TABLE";
+        const string aclRuleName = "INNER_SRC_MAC_REWRITE_RULE";
+
+        auto orch = createAclOrch();
+
+        // Creating a new custom table type INNER_SRC_MAC_REWRITE_TABLE_TYPE
+        orch->doAclTableTypeTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableTypeName,
+                        SET_COMMAND,
+                        {
+                            {
+                                ACL_TABLE_TYPE_MATCHES,
+                                string(MATCH_INNER_SRC_IP) + comma + MATCH_TUNNEL_VNI
+                            },
+                            {
+                                ACL_TABLE_TYPE_BPOINT_TYPES,
+                                string(BIND_POINT_TYPE_PORT) + comma + BIND_POINT_TYPE_PORTCHANNEL
+                            },
+                            {
+                                ACL_TABLE_TYPE_ACTIONS,
+                                ACTION_INNER_SRC_MAC_REWRITE_ACTION
+                            }
+                        }
+                    }
+                }
+            )
+        );
+
+        // Creating a table of the type INNER_SRC_MAC_REWRITE_TABLE_TYPE
+        orch->doAclTableTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName,
+                        SET_COMMAND,
+                        {
+                            { ACL_TABLE_DESCRIPTION, "Inner src mac rewrite test table" },
+                            { ACL_TABLE_TYPE, aclTableTypeName},
+                            { ACL_TABLE_STAGE, STAGE_EGRESS },
+                            { ACL_TABLE_PORTS, "1,2" }
+                        }
+                    }
+                }
+            )
+        );
+
+        ASSERT_TRUE(orch->getAclTable(aclTableName));
+
+        auto fvs = vector<FieldValueTuple>{
+            { "SAI_ACL_TABLE_ATTR_FIELD_INNER_SRC_IP", "true" },
+            { "SAI_ACL_TABLE_ATTR_FIELD_TUNNEL_VNI", "true" }
+        };
+
+        ASSERT_TRUE(validateAclTable(
+            orch->getAclTable(aclTableName)->getOid(),
+            *orch->getAclTable(aclTableName),
+            make_shared<SaiAttributeList>(SAI_OBJECT_TYPE_ACL_TABLE, fvs, false))
+        );
+
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        SET_COMMAND,
+                        {
+                            { MATCH_INNER_SRC_IP, "1.1.1.1/24" },
+                            { MATCH_TUNNEL_VNI, "233" },
+                            { ACTION_PACKET_ACTION, PACKET_ACTION_DROP },
+                        }
+                    }
+                }
+            )
+        );
+
+        // Packet action is not supported on this table
+        ASSERT_FALSE(orch->getAclRule(aclTableName, aclRuleName));
+
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        SET_COMMAND,
+                        {
+                            { MATCH_INNER_SRC_IP, "1.1.1." },
+                            { ACTION_INNER_SRC_MAC_REWRITE_ACTION, "AA:BB:CC:DD:44:66" }
+                        }
+                    }
+                }
+            )
+        );
+
+        // Invalid Inner src ip not supported on this table
+        ASSERT_FALSE(orch->getAclRule(aclTableName, aclRuleName));
+
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        SET_COMMAND,
+                        {
+                            { MATCH_INNER_SRC_IP, "1.1.1.1/24" },
+                            { ACTION_INNER_SRC_MAC_REWRITE_ACTION, "BB:CC:DD:44:66" }
+                        }
+                    }
+                }
+            )
+        );
+
+        // Invalid mac address not supported on this table
+        ASSERT_FALSE(orch->getAclRule(aclTableName, aclRuleName));
+
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        SET_COMMAND,
+                        {
+                            { MATCH_INNER_SRC_IP, "1.1.1.1/24" },
+                            { MATCH_TUNNEL_VNI, "233" },
+                            { ACTION_INNER_SRC_MAC_REWRITE_ACTION, "AA:BB:CC:DD:44:66" }
+                        }
+                    }
+                }
+            )
+        );
+
+        // Inner src mac action is supported on this table
+        ASSERT_TRUE(orch->getAclRule(aclTableName, aclRuleName));
+
+        // Rule update verification
+        class AclRuleTest : public AclRuleInnerSrcMacRewrite
+        {
+        public:
+            AclRuleTest(AclOrch* orch, string rule, string table):
+            AclRuleInnerSrcMacRewrite(orch, rule, table, true)
+            {}
+
+            void setCounterEnabled(bool enabled)
+            {
+                m_createCounter = enabled;
+            }
+
+            void disableMatch(sai_acl_entry_attr_t attr)
+            {
+                m_matches.erase(attr);
+            }
+        };
+
+        // First Update, 2 matches and 1 action added to the rule
+        auto rule = make_shared<AclRuleTest>(orch->m_aclOrch, aclRuleName, aclTableName);
+        ASSERT_TRUE(rule->validateAddPriority(RULE_PRIORITY, "800"));
+        ASSERT_TRUE(rule->validateAddMatch(MATCH_INNER_SRC_IP, "2.2.2.2"));
+        ASSERT_FALSE(rule->validateAddMatch(MATCH_SRC_IP, "12.13.12.12/24"));
+        ASSERT_TRUE(rule->validateAddAction(ACTION_INNER_SRC_MAC_REWRITE_ACTION, "60:30:34:AB:CD:EF"));
+        ASSERT_TRUE(rule->validateAddMatch(MATCH_TUNNEL_VNI, "1000"));
+
+        ASSERT_TRUE(orch->m_aclOrch->addAclRule(rule, aclTableName));
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "800");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "2.2.2.2&mask:255.255.255.255");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1000&mask:0xffffffff");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC), "60:30:34:AB:CD:EF");
+
+        // Second update, Inner src ip and tunnel vni correctly updated
+        auto updatedRule = make_shared<AclRuleTest>(*rule);
+        ASSERT_TRUE(updatedRule->validateAddPriority(RULE_PRIORITY, "900"));
+        ASSERT_TRUE(updatedRule->validateAddMatch(MATCH_INNER_SRC_IP, "2.3.2.2/21"));
+        ASSERT_TRUE(updatedRule->validateAddMatch(MATCH_TUNNEL_VNI, "1100"));
+
+        // Invalid action & extra match src ip are invalidated
+        ASSERT_FALSE(updatedRule->validateAddMatch(MATCH_SRC_IP, "12.13.12.12/24"));
+        ASSERT_FALSE(updatedRule->validateAddAction(ACTION_INNER_SRC_MAC_REWRITE_ACTION, "60:30:34:AB:CD"));
+        
+        ASSERT_TRUE(orch->m_aclOrch->updateAclRule(updatedRule));
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "900");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1100&mask:0xffffffff");
+
+        // SRC IP SAI attribute is updated even though the match is not validated
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP), "12.13.12.12&mask:255.255.255.0");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "2.3.2.2&mask:255.255.248.0");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC), "60:30:34:AB:CD:EF");
+
+        // Third update, change in 2 matches and with invalid action and disable counter
+        auto updatedRule2 = make_shared<AclRuleTest>(*updatedRule);
+        updatedRule2->setCounterEnabled(false);
+        ASSERT_TRUE(updatedRule2->validateAddMatch(MATCH_INNER_SRC_IP, "3.3.3.3/24"));
+        ASSERT_TRUE(updatedRule2->validateAddMatch(MATCH_TUNNEL_VNI, "1100"));
+        ASSERT_FALSE(updatedRule2->validateAddAction(ACTION_INNER_SRC_MAC_REWRITE_ACTION, ""));
+        ASSERT_TRUE(orch->m_aclOrch->updateAclRule(updatedRule2));
+
+        // Verify if the match type is not disabled
+        updatedRule2->disableMatch(SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP);
+        ASSERT_TRUE(validateAclRuleCounter(*orch->m_aclOrch->getAclRule(aclTableName, aclRuleName), false));
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "900");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP), "3.3.3.3&mask:255.255.255.0");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1100&mask:0xffffffff");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_SRC_MAC), "60:30:34:AB:CD:EF");
+        
+        // Re-enable counter
+        auto updatedRule3 = make_shared<AclRuleTest>(*updatedRule2);
+        updatedRule3->setCounterEnabled(true);
+        ASSERT_TRUE(orch->m_aclOrch->updateAclRule(updatedRule3));
+        ASSERT_TRUE(validateAclRuleCounter(*orch->m_aclOrch->getAclRule(aclTableName, aclRuleName), true));
+
+        // Remove rule
+        ASSERT_TRUE(orch->m_aclOrch->removeAclRule(rule->getTableId(), rule->getId()));
+
+        orch->doAclTableTypeTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableTypeName,
+                        DEL_COMMAND,
+                        {}
+                   }
+                }
+            )
+       );
+
+       // Table still exists
+       ASSERT_TRUE(orch->getAclTable(aclTableName));
+       ASSERT_FALSE(orch->getAclTableType(aclTableTypeName));
+
+       orch->doAclTableTask(
+           deque<KeyOpFieldsValuesTuple>(
+               {
+                   {
+                       aclTableName,
+                       DEL_COMMAND,
+                       {}
+                   }
+               }
+           )
+       );
+
+       // Table is removed
+       ASSERT_FALSE(orch->getAclTable(aclTableName));
+
+    }
+
+    TEST_F(AclOrchTest, AclRule_TrimDisableAction)
+    {
+        const std::string aclTableTypeName = "TRIM_TYPE";
+        const std::string aclTableName = "TRIM_TABLE";
+        const std::string aclRuleName = "TRIM_RULE";
+
+        // Create ACL OA
+
+        auto orch = createAclOrch();
+
+        // Create ACL table type
+
+        auto tableTypeKofvt = std::deque<KeyOpFieldsValuesTuple>({
+            {
+                aclTableTypeName,
+                SET_COMMAND,
+                {
+                    { ACL_TABLE_TYPE_MATCHES, MATCH_SRC_IP },
+                    { ACL_TABLE_TYPE_ACTIONS, ACTION_DISABLE_TRIM },
+                    { ACL_TABLE_TYPE_BPOINT_TYPES, BIND_POINT_TYPE_PORT },
+                }
+            }
+        });
+        orch->doAclTableTypeTask(tableTypeKofvt);
+        ASSERT_NE(orch->getAclTableType(aclTableTypeName), nullptr);
+
+        // Create ACL table
+
+        auto tableKofvt = std::deque<KeyOpFieldsValuesTuple>({
+            {
+                aclTableName,
+                SET_COMMAND,
+                {
+                    { ACL_TABLE_DESCRIPTION, "Test trim table" },
+                    { ACL_TABLE_TYPE, aclTableTypeName },
+                    { ACL_TABLE_STAGE, STAGE_INGRESS },
+                    { ACL_TABLE_PORTS, "1,2" },
+                }
+            }
+        });
+        orch->doAclTableTask(tableKofvt);
+        ASSERT_NE(orch->getAclTable(aclTableName), nullptr);
+
+        // Create ACL rule
+
+        auto ruleKofvt = std::deque<KeyOpFieldsValuesTuple>({
+            {
+                aclTableName + "|" + aclRuleName,
+                SET_COMMAND,
+                {
+                    { RULE_PRIORITY, "999" },
+                    { MATCH_SRC_IP, "1.1.1.1/32" },
+                    { ACTION_PACKET_ACTION, PACKET_ACTION_DISABLE_TRIM },
+                }
+            }
+        });
+        orch->doAclRuleTask(ruleKofvt);
+        ASSERT_NE(orch->getAclRule(aclTableName, aclRuleName), nullptr);
+    }
+
+    sai_switch_api_t *old_sai_switch_api_mirror_egress;
+
+    sai_status_t getSwitchAttributeMirrorEgress(_In_ sai_object_id_t switch_id, _In_ uint32_t attr_count,
+                                                _Inout_ sai_attribute_t *attr_list)
+    {
+        if (attr_count == 1)
+        {
+            switch(attr_list[0].id)
+            {
+            case SAI_SWITCH_ATTR_MAX_ACL_ACTION_COUNT:
+                attr_list[0].value.u32 = 3;
+                return SAI_STATUS_SUCCESS;
+            case SAI_SWITCH_ATTR_ACL_STAGE_INGRESS:
+                attr_list[0].value.aclcapability.action_list.count = 3;
+                attr_list[0].value.aclcapability.action_list.list[0] = SAI_ACL_ACTION_TYPE_COUNTER;
+                attr_list[0].value.aclcapability.action_list.list[1] = SAI_ACL_ACTION_TYPE_MIRROR_INGRESS;
+                attr_list[0].value.aclcapability.action_list.list[2] = SAI_ACL_ACTION_TYPE_MIRROR_EGRESS;
+                attr_list[0].value.aclcapability.is_action_list_mandatory = true;
+                return SAI_STATUS_SUCCESS;
+            case SAI_SWITCH_ATTR_ACL_STAGE_EGRESS:
+                attr_list[0].value.aclcapability.action_list.count = 2;
+                attr_list[0].value.aclcapability.action_list.list[0] = SAI_ACL_ACTION_TYPE_COUNTER;
+                attr_list[0].value.aclcapability.action_list.list[1] = SAI_ACL_ACTION_TYPE_MIRROR_EGRESS;
+                attr_list[0].value.aclcapability.is_action_list_mandatory = true;
+                return SAI_STATUS_SUCCESS;
+            }
+        }
+        return old_sai_switch_api_mirror_egress->get_switch_attribute(switch_id, attr_count, attr_list);
+    }
+
+    sai_status_t getSwitchAttributeNoMirrorEgressOnIngress(_In_ sai_object_id_t switch_id, _In_ uint32_t attr_count,
+                                                           _Inout_ sai_attribute_t *attr_list)
+    {
+        if (attr_count == 1)
+        {
+            switch(attr_list[0].id)
+            {
+            case SAI_SWITCH_ATTR_MAX_ACL_ACTION_COUNT:
+                attr_list[0].value.u32 = 2;
+                return SAI_STATUS_SUCCESS;
+            case SAI_SWITCH_ATTR_ACL_STAGE_INGRESS:
+                attr_list[0].value.aclcapability.action_list.count = 2;
+                attr_list[0].value.aclcapability.action_list.list[0] = SAI_ACL_ACTION_TYPE_COUNTER;
+                attr_list[0].value.aclcapability.action_list.list[1] = SAI_ACL_ACTION_TYPE_MIRROR_INGRESS;
+                attr_list[0].value.aclcapability.is_action_list_mandatory = true;
+                return SAI_STATUS_SUCCESS;
+            case SAI_SWITCH_ATTR_ACL_STAGE_EGRESS:
+                attr_list[0].value.aclcapability.action_list.count = 2;
+                attr_list[0].value.aclcapability.action_list.list[0] = SAI_ACL_ACTION_TYPE_COUNTER;
+                attr_list[0].value.aclcapability.action_list.list[1] = SAI_ACL_ACTION_TYPE_MIRROR_EGRESS;
+                attr_list[0].value.aclcapability.is_action_list_mandatory = true;
+                return SAI_STATUS_SUCCESS;
+            }
+        }
+        return old_sai_switch_api_mirror_egress->get_switch_attribute(switch_id, attr_count, attr_list);
+    }
+
+    TEST_F(AclOrchTest, MirrorTableIngressHasMirrorEgressAction)
+    {
+        old_sai_switch_api_mirror_egress = sai_switch_api;
+        sai_switch_api_t new_sai_switch_api = *sai_switch_api;
+        sai_switch_api = &new_sai_switch_api;
+        sai_switch_api->get_switch_attribute = getSwitchAttributeMirrorEgress;
+
+        bool unset_platform_env = false;
+        if (!getenv("platform"))
+        {
+            setenv("platform", VS_PLATFORM_SUBSTRING, 0);
+            unset_platform_env = true;
+        }
+
+        auto orch = createAclOrch();
+
+        // Create MIRROR table at INGRESS stage
+        string acl_table_id = "mirror_egress_test_table";
+        auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id,
+                SET_COMMAND,
+                { { ACL_TABLE_DESCRIPTION, "Mirror ingress test" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_MIRROR },
+                  { ACL_TABLE_STAGE, STAGE_INGRESS },
+                  { ACL_TABLE_PORTS, "1,2" } } } });
+        orch->doAclTableTask(kvfAclTable);
+        auto acl_table = orch->getAclTable(acl_table_id);
+        ASSERT_NE(acl_table, nullptr);
+
+        auto acl_actions = acl_table->type.getActions();
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_COUNTER), acl_actions.end())
+            << "MIRROR ingress table should have COUNTER action";
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_MIRROR_INGRESS), acl_actions.end())
+            << "MIRROR ingress table should have MIRROR_INGRESS action";
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_MIRROR_EGRESS), acl_actions.end())
+            << "MIRROR ingress table should have MIRROR_EGRESS action";
+
+        // Delete table
+        kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id, DEL_COMMAND, {} } });
+        orch->doAclTableTask(kvfAclTable);
+        ASSERT_EQ(orch->getAclTable(acl_table_id), nullptr);
+
+        if (unset_platform_env)
+        {
+            unsetenv("platform");
+        }
+        sai_switch_api = old_sai_switch_api_mirror_egress;
+    }
+
+    TEST_F(AclOrchTest, MirrorV6TableIngressHasMirrorEgressAction)
+    {
+        old_sai_switch_api_mirror_egress = sai_switch_api;
+        sai_switch_api_t new_sai_switch_api = *sai_switch_api;
+        sai_switch_api = &new_sai_switch_api;
+        sai_switch_api->get_switch_attribute = getSwitchAttributeMirrorEgress;
+
+        bool unset_platform_env = false;
+        if (!getenv("platform"))
+        {
+            setenv("platform", VS_PLATFORM_SUBSTRING, 0);
+            unset_platform_env = true;
+        }
+
+        auto orch = createAclOrch();
+
+        // Create MIRRORV6 table at INGRESS stage
+        string acl_table_id = "mirrorv6_egress_test_table";
+        auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id,
+                SET_COMMAND,
+                { { ACL_TABLE_DESCRIPTION, "MirrorV6 ingress test" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_MIRRORV6 },
+                  { ACL_TABLE_STAGE, STAGE_INGRESS },
+                  { ACL_TABLE_PORTS, "1,2" } } } });
+        orch->doAclTableTask(kvfAclTable);
+        auto acl_table = orch->getAclTable(acl_table_id);
+        ASSERT_NE(acl_table, nullptr);
+
+        auto acl_actions = acl_table->type.getActions();
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_COUNTER), acl_actions.end())
+            << "MIRRORV6 ingress table should have COUNTER action";
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_MIRROR_INGRESS), acl_actions.end())
+            << "MIRRORV6 ingress table should have MIRROR_INGRESS action";
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_MIRROR_EGRESS), acl_actions.end())
+            << "MIRRORV6 ingress table should have MIRROR_EGRESS action";
+
+        // Delete table
+        kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id, DEL_COMMAND, {} } });
+        orch->doAclTableTask(kvfAclTable);
+        ASSERT_EQ(orch->getAclTable(acl_table_id), nullptr);
+
+        if (unset_platform_env)
+        {
+            unsetenv("platform");
+        }
+        sai_switch_api = old_sai_switch_api_mirror_egress;
+    }
+
+    TEST_F(AclOrchTest, MirrorTableEgressOnlyHasMirrorEgressAction)
+    {
+        old_sai_switch_api_mirror_egress = sai_switch_api;
+        sai_switch_api_t new_sai_switch_api = *sai_switch_api;
+        sai_switch_api = &new_sai_switch_api;
+        sai_switch_api->get_switch_attribute = getSwitchAttributeMirrorEgress;
+
+        bool unset_platform_env = false;
+        if (!getenv("platform"))
+        {
+            setenv("platform", VS_PLATFORM_SUBSTRING, 0);
+            unset_platform_env = true;
+        }
+
+        auto orch = createAclOrch();
+
+        // Create MIRROR table at EGRESS stage
+        string acl_table_id = "mirror_egress_only_table";
+        auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id,
+                SET_COMMAND,
+                { { ACL_TABLE_DESCRIPTION, "Mirror egress test" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_MIRROR },
+                  { ACL_TABLE_STAGE, STAGE_EGRESS },
+                  { ACL_TABLE_PORTS, "1,2" } } } });
+        orch->doAclTableTask(kvfAclTable);
+        auto acl_table = orch->getAclTable(acl_table_id);
+        ASSERT_NE(acl_table, nullptr);
+
+        auto acl_actions = acl_table->type.getActions();
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_COUNTER), acl_actions.end())
+            << "MIRROR egress table should have COUNTER action";
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_MIRROR_EGRESS), acl_actions.end())
+            << "MIRROR egress table should have MIRROR_EGRESS action";
+        ASSERT_EQ(acl_actions.find(SAI_ACL_ACTION_TYPE_MIRROR_INGRESS), acl_actions.end())
+            << "MIRROR egress table should NOT have MIRROR_INGRESS action";
+
+        // Delete table
+        kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id, DEL_COMMAND, {} } });
+        orch->doAclTableTask(kvfAclTable);
+        ASSERT_EQ(orch->getAclTable(acl_table_id), nullptr);
+
+        if (unset_platform_env)
+        {
+            unsetenv("platform");
+        }
+        sai_switch_api = old_sai_switch_api_mirror_egress;
+    }
+
+    TEST_F(AclOrchTest, MirrorV6TableEgressOnlyHasMirrorEgressAction)
+    {
+        old_sai_switch_api_mirror_egress = sai_switch_api;
+        sai_switch_api_t new_sai_switch_api = *sai_switch_api;
+        sai_switch_api = &new_sai_switch_api;
+        sai_switch_api->get_switch_attribute = getSwitchAttributeMirrorEgress;
+
+        bool unset_platform_env = false;
+        if (!getenv("platform"))
+        {
+            setenv("platform", VS_PLATFORM_SUBSTRING, 0);
+            unset_platform_env = true;
+        }
+
+        auto orch = createAclOrch();
+
+        // Create MIRRORV6 table at EGRESS stage
+        string acl_table_id = "mirrorv6_egress_only_table";
+        auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id,
+                SET_COMMAND,
+                { { ACL_TABLE_DESCRIPTION, "MirrorV6 egress test" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_MIRRORV6 },
+                  { ACL_TABLE_STAGE, STAGE_EGRESS },
+                  { ACL_TABLE_PORTS, "1,2" } } } });
+        orch->doAclTableTask(kvfAclTable);
+        auto acl_table = orch->getAclTable(acl_table_id);
+        ASSERT_NE(acl_table, nullptr);
+
+        auto acl_actions = acl_table->type.getActions();
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_COUNTER), acl_actions.end())
+            << "MIRRORV6 egress table should have COUNTER action";
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_MIRROR_EGRESS), acl_actions.end())
+            << "MIRRORV6 egress table should have MIRROR_EGRESS action";
+        ASSERT_EQ(acl_actions.find(SAI_ACL_ACTION_TYPE_MIRROR_INGRESS), acl_actions.end())
+            << "MIRRORV6 egress table should NOT have MIRROR_INGRESS action";
+
+        // Delete table
+        kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id, DEL_COMMAND, {} } });
+        orch->doAclTableTask(kvfAclTable);
+        ASSERT_EQ(orch->getAclTable(acl_table_id), nullptr);
+
+        if (unset_platform_env)
+        {
+            unsetenv("platform");
+        }
+        sai_switch_api = old_sai_switch_api_mirror_egress;
+    }
+
+    TEST_F(AclOrchTest, MirrorDscpTableIngressUnchanged)
+    {
+        old_sai_switch_api_mirror_egress = sai_switch_api;
+        sai_switch_api_t new_sai_switch_api = *sai_switch_api;
+        sai_switch_api = &new_sai_switch_api;
+        sai_switch_api->get_switch_attribute = getSwitchAttributeMirrorEgress;
+
+        bool unset_platform_env = false;
+        if (!getenv("platform"))
+        {
+            setenv("platform", VS_PLATFORM_SUBSTRING, 0);
+            unset_platform_env = true;
+        }
+
+        auto orch = createAclOrch();
+
+        // Create MIRROR_DSCP table at INGRESS stage
+        string acl_table_id = "mirror_dscp_test_table";
+        auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id,
+                SET_COMMAND,
+                { { ACL_TABLE_DESCRIPTION, "Mirror DSCP ingress test" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_MIRROR_DSCP },
+                  { ACL_TABLE_STAGE, STAGE_INGRESS },
+                  { ACL_TABLE_PORTS, "1,2" } } } });
+        orch->doAclTableTask(kvfAclTable);
+        auto acl_table = orch->getAclTable(acl_table_id);
+        ASSERT_NE(acl_table, nullptr);
+
+        auto acl_actions = acl_table->type.getActions();
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_COUNTER), acl_actions.end())
+            << "MIRROR_DSCP ingress table should have COUNTER action";
+        ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_MIRROR_INGRESS), acl_actions.end())
+            << "MIRROR_DSCP ingress table should have MIRROR_INGRESS action";
+        ASSERT_EQ(acl_actions.find(SAI_ACL_ACTION_TYPE_MIRROR_EGRESS), acl_actions.end())
+            << "MIRROR_DSCP ingress table should NOT have MIRROR_EGRESS action";
+
+        // Delete table
+        kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id, DEL_COMMAND, {} } });
+        orch->doAclTableTask(kvfAclTable);
+        ASSERT_EQ(orch->getAclTable(acl_table_id), nullptr);
+
+        if (unset_platform_env)
+        {
+            unsetenv("platform");
+        }
+        sai_switch_api = old_sai_switch_api_mirror_egress;
+    }
+
+    TEST_F(AclOrchTest, MirrorTableIngressWithoutMirrorEgressSupport)
+    {
+        old_sai_switch_api_mirror_egress = sai_switch_api;
+        sai_switch_api_t new_sai_switch_api = *sai_switch_api;
+        sai_switch_api = &new_sai_switch_api;
+        sai_switch_api->get_switch_attribute = getSwitchAttributeNoMirrorEgressOnIngress;
+
+        bool unset_platform_env = false;
+        if (!getenv("platform"))
+        {
+            setenv("platform", VS_PLATFORM_SUBSTRING, 0);
+            unset_platform_env = true;
+        }
+
+        auto orch = createAclOrch();
+
+        for (const auto &acl_table_type : { TABLE_TYPE_MIRROR, TABLE_TYPE_MIRRORV6 })
+        {
+            string acl_table_id = "mirror_no_egress_table";
+            auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+                { { acl_table_id,
+                    SET_COMMAND,
+                    { { ACL_TABLE_DESCRIPTION, acl_table_type },
+                      { ACL_TABLE_TYPE, acl_table_type },
+                      { ACL_TABLE_STAGE, STAGE_INGRESS },
+                      { ACL_TABLE_PORTS, "1,2" } } } });
+            orch->doAclTableTask(kvfAclTable);
+            auto acl_table = orch->getAclTable(acl_table_id);
+            ASSERT_NE(acl_table, nullptr) << "Table " << acl_table_type << " should be created";
+
+            auto acl_actions = acl_table->type.getActions();
+            ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_COUNTER), acl_actions.end())
+                << acl_table_type << " ingress table should have COUNTER action";
+            ASSERT_NE(acl_actions.find(SAI_ACL_ACTION_TYPE_MIRROR_INGRESS), acl_actions.end())
+                << acl_table_type << " ingress table should have MIRROR_INGRESS action";
+            ASSERT_EQ(acl_actions.find(SAI_ACL_ACTION_TYPE_MIRROR_EGRESS), acl_actions.end())
+                << acl_table_type << " ingress table should NOT have MIRROR_EGRESS when unsupported by SAI";
+
+            // Delete table
+            kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+                { { acl_table_id, DEL_COMMAND, {} } });
+            orch->doAclTableTask(kvfAclTable);
+            ASSERT_EQ(orch->getAclTable(acl_table_id), nullptr);
+        }
+
+        if (unset_platform_env)
+        {
+            unsetenv("platform");
+        }
+        sai_switch_api = old_sai_switch_api_mirror_egress;
+    }
+
+    TEST_F(AclOrchTest, AclRule_InnerSrcIPv6Match)
+    {
+        const std::string aclTableTypeName = "INNER_IPV6_TYPE";
+        const std::string aclTableName = "INNER_IPV6_TABLE";
+        const std::string aclRuleName = "INNER_IPV6_RULE";
+
+        auto orch = createAclOrch();
+
+        // Create ACL table type with INNER_SRC_IPV6 match field
+        orch->doAclTableTypeTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableTypeName,
+                        SET_COMMAND,
+                        {
+                            { ACL_TABLE_TYPE_MATCHES, string(MATCH_INNER_SRC_IPV6) + comma + MATCH_TUNNEL_VNI },
+                            { ACL_TABLE_TYPE_ACTIONS, ACTION_PACKET_ACTION },
+                            { ACL_TABLE_TYPE_BPOINT_TYPES, BIND_POINT_TYPE_PORT },
+                        }
+                    }
+                }
+            )
+        );
+        ASSERT_NE(orch->getAclTableType(aclTableTypeName), nullptr);
+
+        // Create ACL table
+        orch->doAclTableTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName,
+                        SET_COMMAND,
+                        {
+                            { ACL_TABLE_DESCRIPTION, "Test inner src ipv6 table" },
+                            { ACL_TABLE_TYPE, aclTableTypeName },
+                            { ACL_TABLE_STAGE, STAGE_INGRESS },
+                            { ACL_TABLE_PORTS, "1,2" },
+                        }
+                    }
+                }
+            )
+        );
+        ASSERT_NE(orch->getAclTable(aclTableName), nullptr);
+
+        // Create ACL rule with INNER_SRC_IPV6 match
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        SET_COMMAND,
+                        {
+                            { RULE_PRIORITY, "100" },
+                            { MATCH_INNER_SRC_IPV6, "2001:db8::/32" },
+                            { MATCH_TUNNEL_VNI, "1000" },
+                            { ACTION_PACKET_ACTION, PACKET_ACTION_DROP },
+                        }
+                    }
+                }
+            )
+        );
+        ASSERT_NE(orch->getAclRule(aclTableName, aclRuleName), nullptr);
+
+        auto rule = orch->getAclRule(aclTableName, aclRuleName);
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "100");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI), "1000&mask:0xffffffff");
+
+        // Validate that an invalid IPv4 address is rejected for INNER_SRC_IPV6
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + "INNER_IPV6_RULE_INVALID",
+                        SET_COMMAND,
+                        {
+                            { RULE_PRIORITY, "200" },
+                            { MATCH_INNER_SRC_IPV6, "1.1.1.1/24" },
+                            { ACTION_PACKET_ACTION, PACKET_ACTION_DROP },
+                        }
+                    }
+                }
+            )
+        );
+        // Rule with IPv4 address in INNER_SRC_IPV6 field should not be created
+        ASSERT_EQ(orch->getAclRule(aclTableName, "INNER_IPV6_RULE_INVALID"), nullptr);
+
+        // Cleanup
+        ASSERT_TRUE(orch->m_aclOrch->removeAclRule(aclTableName, aclRuleName));
+    }
 } // namespace nsAclOrchTest

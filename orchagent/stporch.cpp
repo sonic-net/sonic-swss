@@ -11,6 +11,7 @@ extern sai_switch_api_t *sai_switch_api;
 extern FdbOrch   *gFdbOrch;
 extern PortsOrch *gPortsOrch;
 
+
 extern sai_object_id_t gSwitchId;
 
 StpOrch::StpOrch(DBConnector * db, DBConnector * stateDb, vector<string> &tableNames) :
@@ -23,16 +24,19 @@ StpOrch::StpOrch(DBConnector * db, DBConnector * stateDb, vector<string> &tableN
     bool ret = false;
 
     m_stpTable = unique_ptr<Table>(new Table(stateDb, STATE_STP_TABLE_NAME));
-    
+
     vector<sai_attribute_t> attrs;
     attr.id = SAI_SWITCH_ATTR_DEFAULT_STP_INST_ID;
     attrs.push_back(attr);
-    
+
+    attr.id = SAI_SWITCH_ATTR_MAX_STP_INSTANCE;
+    attrs.push_back(attr);
     status = sai_switch_api->get_switch_attribute(gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status == SAI_STATUS_SUCCESS)
     {
 	    m_defaultStpId = attrs[0].value.oid;
-	    ret = true;
+        updateMaxStpInstance(attrs[1].value.u32);
+        ret = true;
     }
 
     SWSS_LOG_NOTICE("StpOrch initialization %s", (ret == true)?"success":"failure");
@@ -59,14 +63,14 @@ sai_object_id_t StpOrch::addStpInstance(sai_uint16_t stp_instance)
 
     attr.id  = 0;
     attr.value.u32 = 0;
-    
+
     sai_status_t status = sai_stp_api->create_stp(&stp_oid, gSwitchId, 0, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create STP instance %u status %u", stp_instance, status);
         return SAI_NULL_OBJECT_ID;
     }
-    
+
     m_stpInstToOid[stp_instance] = stp_oid;
     SWSS_LOG_INFO("Added STP instance:%hu oid:%" PRIx64 "", stp_instance, stp_oid);
     return stp_oid;
@@ -81,7 +85,7 @@ bool StpOrch::removeStpInstance(sai_uint16_t stp_instance)
     {
         return false;
     }
-    
+
     /* Remove all STP ports before deleting the STP instance */
     auto portList = gPortsOrch->getAllPorts();
     for (auto &it: portList)
@@ -120,7 +124,7 @@ bool StpOrch::addVlanToStpInstance(string vlan_alias, sai_uint16_t stp_instance)
     {
         return false;
     }
-    
+
     stp_oid = getStpInstanceOid(stp_instance);
     if (stp_oid == SAI_NULL_OBJECT_ID)
     {
@@ -141,6 +145,19 @@ bool StpOrch::addVlanToStpInstance(string vlan_alias, sai_uint16_t stp_instance)
 
     vlan.m_stp_id = stp_instance;
     gPortsOrch->setPort(vlan_alias, vlan);
+
+    // Update the new map structure
+    auto it = m_vlanAliasToStpInstanceMap.find(stp_instance);
+    if (it == m_vlanAliasToStpInstanceMap.end())
+    {
+        StpInstEntry entry = {stp_oid, {vlan_alias}};
+        m_vlanAliasToStpInstanceMap[stp_instance] = entry;
+    }
+    else
+    {
+        it->second.stp_inst_vlan_list.insert(vlan_alias);
+    }
+
     SWSS_LOG_INFO("Add VLAN %s to STP instance:%hu m_stp_id:%d", vlan_alias.c_str(), stp_instance, vlan.m_stp_id);
     return true;
 }
@@ -163,12 +180,23 @@ bool StpOrch::removeVlanFromStpInstance(string vlan_alias, sai_uint16_t stp_inst
     sai_status_t status = sai_vlan_api->set_vlan_attribute(vlan.m_vlan_info.vlan_oid, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to add VLAN %s to STP instance:%d status %u", vlan_alias.c_str(), vlan.m_stp_id, status);
+        SWSS_LOG_ERROR("Failed to remove VLAN %s from STP instance:%d status %u", vlan_alias.c_str(), vlan.m_stp_id, status);
         return false;
     }
 
     SWSS_LOG_INFO("Remove %s from instance:%d add instance:%" PRIx64 "", vlan_alias.c_str(), vlan.m_stp_id, m_defaultStpId);
-    
+
+    // Update the new map structure
+    auto it = m_vlanAliasToStpInstanceMap.find(stp_instance);
+    if (it != m_vlanAliasToStpInstanceMap.end())
+    {
+        it->second.stp_inst_vlan_list.erase(vlan_alias);
+        if (it->second.stp_inst_vlan_list.empty())
+        {
+            //removeStpInstance(stp_instance);
+            m_vlanAliasToStpInstanceMap.erase(it);
+        }
+    }
     removeStpInstance(vlan.m_stp_id);
     vlan.m_stp_id = -1;
     gPortsOrch->setPort(vlan_alias, vlan);
@@ -186,7 +214,7 @@ sai_object_id_t StpOrch::addStpPort(Port &port, sai_uint16_t stp_instance)
     {
         return port.m_stp_port_ids[stp_instance];
     }
-    
+
     if(port.m_bridge_port_id == SAI_NULL_OBJECT_ID)
     {
         gPortsOrch->addBridgePort(port);
@@ -199,7 +227,7 @@ sai_object_id_t StpOrch::addStpPort(Port &port, sai_uint16_t stp_instance)
     }
     attr[0].id = SAI_STP_PORT_ATTR_BRIDGE_PORT;
     attr[0].value.oid = port.m_bridge_port_id;
-    
+
     stp_id = getStpInstanceOid(stp_instance);
     if(stp_id == SAI_NULL_OBJECT_ID)
     {
@@ -212,7 +240,7 @@ sai_object_id_t StpOrch::addStpPort(Port &port, sai_uint16_t stp_instance)
 
     attr[1].id = SAI_STP_PORT_ATTR_STP;
     attr[1].value.oid = stp_id;
-    
+
     attr[2].id = SAI_STP_PORT_ATTR_STATE;
     attr[2].value.s32 = SAI_STP_PORT_STATE_BLOCKING;
 
@@ -240,12 +268,12 @@ bool StpOrch::removeStpPort(Port &port, sai_uint16_t stp_instance)
     sai_status_t status = sai_stp_api->remove_stp_port(port.m_stp_port_ids[stp_instance]);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove STP port %s instance %d oid %" PRIx64 " status %x", port.m_alias.c_str(), stp_instance, 
+        SWSS_LOG_ERROR("Failed to remove STP port %s instance %d oid %" PRIx64 " status %x", port.m_alias.c_str(), stp_instance,
                 port.m_stp_port_ids[stp_instance], status);
         return false;
     }
 
-    SWSS_LOG_INFO("Remove STP port %s instance %d oid %" PRIx64 " size %zu", port.m_alias.c_str(), stp_instance, 
+    SWSS_LOG_INFO("Remove STP port %s instance %d oid %" PRIx64 " size %zu", port.m_alias.c_str(), stp_instance,
             port.m_stp_port_ids[stp_instance], port.m_stp_port_ids.size());
     port.m_stp_port_ids.erase(stp_instance);
     gPortsOrch->setPort(port.m_alias, port);
@@ -326,7 +354,7 @@ bool StpOrch::updateStpPortState(Port &port, sai_uint16_t stp_instance, sai_uint
         SWSS_LOG_ERROR("Failed to set STP port state %s instance %d state %d status %x", port.m_alias.c_str(), stp_instance, stp_state, status);
         return false;
     }
-    
+
     SWSS_LOG_INFO("Set STP port state %s instance %d state %d ", port.m_alias.c_str(), stp_instance, stp_state);
 
     return true;
@@ -344,7 +372,7 @@ bool StpOrch::stpVlanFdbFlush(string vlan_alias)
     }
 
     gFdbOrch->flushFdbByVlan(vlan_alias);
-    
+
     SWSS_LOG_INFO("Set STP FDB flush vlan %s ", vlan_alias.c_str());
     return true;
 }
@@ -490,6 +518,59 @@ void StpOrch::doStpFastageTask(Consumer &consumer)
     }
 }
 
+void StpOrch::doMstInstPortFlushTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto it = consumer.m_toSync.begin(); it != consumer.m_toSync.end(); )
+    {
+        auto &t = it->second;
+        string op = kfvOp(t);
+        string key = kfvKey(t);
+        size_t found = key.find(':');
+        /* Return if the format of key is wrong */
+        if (found == string::npos)
+        {
+            return;
+        }
+
+        if (op == SET_COMMAND)
+        {
+            string state;
+
+            string instance_alias = key.substr(0, found);
+            string port_alias = key.substr(found+1);
+            uint16_t instance = static_cast<uint16_t>(stoi(instance_alias));
+
+            for (auto i : kfvFieldsValues(t))
+            {
+                if (fvField(i) == "state")
+                    state = fvValue(i);
+            }
+
+            if (state.compare("true") == 0)
+            {
+                // Get all VLAN aliases for the given STP instance
+                auto it_map = m_vlanAliasToStpInstanceMap.find(instance);
+                if (it_map != m_vlanAliasToStpInstanceMap.end())
+                {
+                    for (const auto& vlan_alias : it_map->second.stp_inst_vlan_list)
+                    {
+                        stpVlanFdbFlush(vlan_alias);
+                    }
+                }
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            // Handle delete command if necessary
+        }
+
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
+
 void StpOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -512,5 +593,24 @@ void StpOrch::doTask(Consumer &consumer)
     {
         doStpFastageTask(consumer);
     }
+
+    else if (table_name == APP_STP_INST_PORT_FLUSH_TABLE_NAME)
+    {
+        doMstInstPortFlushTask(consumer);
+    }
 }
 
+bool StpOrch::updateMaxStpInstance(uint32_t max_stp_instances)
+{
+    m_maxStpInstance = (sai_uint16_t)max_stp_instances - 1;
+
+    SWSS_LOG_NOTICE("StpOrch Max STP instances %d", m_maxStpInstance);
+
+    vector<FieldValueTuple> tuples;
+    FieldValueTuple tuple("max_stp_inst", to_string(m_maxStpInstance));
+    tuples.push_back(tuple);
+    m_stpTable->set("GLOBAL", tuples);
+
+    return true;
+  
+}

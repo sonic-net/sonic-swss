@@ -19,6 +19,14 @@ public:
     virtual ~BfdOrch(void);
     void handleTsaStateChange(bool tsaState);
 
+    /* APIs for HaOrch to create passive BFD sessions on DPU.*/
+    virtual void createSoftwareBfdSession(
+        const std::string& key,
+        const std::vector<swss::FieldValueTuple>& data);
+    virtual void removeSoftwareBfdSession(
+        const std::string& key);
+    virtual void removeAllSoftwareBfdSessions();
+
 private:
     bool create_bfd_session(const std::string& key, const std::vector<swss::FieldValueTuple>& data);
     bool remove_bfd_session(const std::string& key);
@@ -54,9 +62,12 @@ public:
     BgpGlobalStateOrch(swss::DBConnector *db, std::string tableName);
     virtual ~BgpGlobalStateOrch(void);
     bool getTsaState();
+    bool getSoftwareBfd();
 
 private:
     bool tsa_enabled;
+    bool bfd_offload;
+    bool offload_supported(bool get_ipv6);
 
 };
 #endif /* SWSS_BFDORCH_H */

@@ -66,20 +66,21 @@ class TestRouteBase(object):
 
     def check_route_state(self, prefix, value):
         found = False
+        fvs = {}
+        
+        for _ in range(5):  # Try for up to ~5 seconds
+            route_entries = self.sdb.get_keys("ROUTE_TABLE")
+            for key in route_entries:
+                if key != prefix:
+                    continue
+                found = True
+                fvs = self.sdb.get_entry("ROUTE_TABLE", key)
+                if fvs.get("state") == value:
+                    return
+            time.sleep(1)
 
-        route_entries = self.sdb.get_keys("ROUTE_TABLE")
-        for key in route_entries:
-            if key != prefix:
-                continue
-            found = True
-            fvs = self.sdb.get_entry("ROUTE_TABLE", key)
-
-            assert fvs != {}
-
-            for f,v in fvs.items():
-                if f == "state":
-                    assert v == value
         assert found
+        assert fvs.get("state") == value, f"Expected state '{value}', but got '{fvs.get('state')}'"
 
     def get_asic_db_key(self, destination):
         route_entries = self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
@@ -133,6 +134,7 @@ class TestRouteBase(object):
 
 class TestRoute(TestRouteBase):
     """ Functionality tests for route """
+    @pytest.mark.skip(reason="Covered by mock test: RouteOrch_AddRemoveIPv4_And_DefaultRoute_State (GTest)")
     def test_RouteAddRemoveIpv4Route(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -212,6 +214,7 @@ class TestRoute(TestRouteBase):
         dvs.servers[1].runcmd("ip route del default dev eth0")
         dvs.servers[1].runcmd("ip address del 10.0.0.3/31 dev eth0")
 
+    @pytest.mark.skip(reason="Covered by mock test: RouteOrch_AddRemoveIPv6_And_DefaultRoute_State (GTest)")
     def test_RouteAddRemoveIpv6Route(self, dvs, testlog):
         self.setup_db(dvs)
 

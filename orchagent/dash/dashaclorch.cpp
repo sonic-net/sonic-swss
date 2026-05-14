@@ -74,7 +74,7 @@ inline void lexical_convert(const string &buffer, DashAclStage &stage)
 
 }
 
-DashAclOrch::DashAclOrch(DBConnector *db, const vector<string> &tables, DashOrch *dash_orch, ZmqServer *zmqServer) :
+DashAclOrch::DashAclOrch(DBConnector *db, const vector<string> &tables, DashOrch *dash_orch, DBConnector *app_state_db, ZmqServer *zmqServer) :
     ZmqOrch(db, tables, zmqServer),
     m_dash_orch(dash_orch),
     m_group_mgr(db, dash_orch, this),
@@ -108,7 +108,6 @@ void DashAclOrch::doTask(ConsumerBase &consumer)
         PbWorker<AclGroup>::makeMemberTask(APP_DASH_ACL_GROUP_TABLE_NAME, SET_COMMAND, &DashAclOrch::taskUpdateDashAclGroup, this),
         KeyOnlyWorker::makeMemberTask(APP_DASH_ACL_GROUP_TABLE_NAME, DEL_COMMAND, &DashAclOrch::taskRemoveDashAclGroup, this),
         PbWorker<AclRule>::makeMemberTask(APP_DASH_ACL_RULE_TABLE_NAME, SET_COMMAND, &DashAclOrch::taskUpdateDashAclRule, this),
-        KeyOnlyWorker::makeMemberTask(APP_DASH_ACL_RULE_TABLE_NAME, DEL_COMMAND, &DashAclOrch::taskRemoveDashAclRule, this),
         PbWorker<PrefixTag>::makeMemberTask(APP_DASH_PREFIX_TAG_TABLE_NAME, SET_COMMAND, &DashAclOrch::taskUpdateDashPrefixTag, this),
         KeyOnlyWorker::makeMemberTask(APP_DASH_PREFIX_TAG_TABLE_NAME, DEL_COMMAND, &DashAclOrch::taskRemoveDashPrefixTag, this),
      };
@@ -278,29 +277,7 @@ task_process_status DashAclOrch::taskUpdateDashAclRule(
         return task_failed;
     }
 
-    if (m_group_mgr.ruleExists(group_id, rule_id))
-    {
-        return m_group_mgr.updateRule(group_id, rule_id, rule);
-    }
-    else
-    {
-        return m_group_mgr.createRule(group_id, rule_id, rule);
-    }
-}
-
-task_process_status DashAclOrch::taskRemoveDashAclRule(
-    const string &key)
-{
-    SWSS_LOG_ENTER();
-
-    string group_id, rule_id;
-    if (!extractVariables(key, ':', group_id, rule_id))
-    {
-        SWSS_LOG_ERROR("Failed to parse key %s", key.c_str());
-        return task_failed;
-    }
-
-    return m_group_mgr.removeRule(group_id, rule_id);
+    return m_group_mgr.createRule(group_id, rule_id, rule);
 }
 
 task_process_status DashAclOrch::taskUpdateDashPrefixTag(

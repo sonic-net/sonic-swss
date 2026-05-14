@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 #include "mock_sai_switch.h"
+#include "saihelper.h"
 
 extern sai_switch_api_t* sai_switch_api;
 sai_switch_api_t test_sai_switch;
@@ -16,6 +17,7 @@ namespace orchdaemon_test
     using ::testing::_;
     using ::testing::Return;
     using ::testing::StrictMock;
+    using ::testing::InSequence;
 
     DBConnector appl_db("APPL_DB", 0);
     DBConnector state_db("STATE_DB", 0);
@@ -84,7 +86,7 @@ namespace orchdaemon_test
     {
         orchd->enableRingBuffer();
 
-        // verify ring buffer is created  
+        // verify ring buffer is created
         EXPECT_TRUE(Executor::gRingBuffer != nullptr);
         EXPECT_TRUE(Executor::gRingBuffer == Orch::gRingBuffer);
 
@@ -126,6 +128,35 @@ namespace orchdaemon_test
         orchd = new OrchDaemon(&appl_db, &config_db, &state_db, &counters_db, nullptr);
     }
 
+    TEST_F(OrchDaemonTest, RingThreadTeardownSafeWhenRingDisabled)
+    {
+        // Reproduces the scenario fixed alongside PR #4400's graceful
+        // shutdown path: OrchDaemon::start() always launches ring_thread,
+        // but popRingBuffer() returns immediately when gRingBuffer is null
+        // (ring mode disabled). The destructor must not dereference the
+        // null gRingBuffer while tearing down a joinable ring_thread.
+
+        // Ring mode intentionally left disabled: do NOT call enableRingBuffer.
+        EXPECT_EQ(orchd->gRingBuffer, nullptr);
+
+        // Mimic OrchDaemon::start() unconditionally launching the ring thread.
+        orchd->ring_thread = std::thread(&OrchDaemon::popRingBuffer, orchd);
+
+        // popRingBuffer() returns immediately when gRingBuffer is null, but
+        // ring_thread stays joinable until the destructor joins it.
+        while (!orchd->ring_thread.joinable())
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        EXPECT_TRUE(orchd->ring_thread.joinable());
+
+        // Destructor must be safe in this state (previously null-deref'd).
+        delete orchd;
+
+        // Restore fixture invariants for the remaining test cases.
+        orchd = new OrchDaemon(&appl_db, &config_db, &state_db, &counters_db, nullptr);
+    }
+
     TEST_F(OrchDaemonTest, PushRingBuffer)
     {
         orchd->enableRingBuffer();
@@ -161,6 +192,58 @@ namespace orchdaemon_test
         task();
         // hence the task needs to be popped and explicitly executed
         EXPECT_TRUE(gRingBuffer->IsEmpty() && x==5);
+
+        orchd->disableRingBuffer();
+    }
+
+    TEST_F(OrchDaemonTest, TestRedisFlushFailure)
+    {
+
+        ASSERT_DEATH(
+            {
+                InSequence s;
+
+                EXPECT_CALL(mock_sai_switch_, set_switch_attribute(_, _))
+                .WillOnce(Return(SAI_STATUS_FAILURE));
+                EXPECT_CALL(mock_sai_switch_, set_switch_attribute(_, _));
+
+                orchd->flush();
+            },
+            ".*"
+        );
+    }
+
+    TEST_F(OrchDaemonTest, TestFlushWithRingBufferEntry)
+    {
+        // Allow one or more calls to set_switch_attribute
+        EXPECT_CALL(mock_sai_switch_, set_switch_attribute(testing::_, testing::_))
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+        orchd->enableRingBuffer();
+
+        auto gRingBuffer = orchd->gRingBuffer;
+
+        std::vector<std::string> tables = {"ROUTE_TABLE", "OTHER_TABLE"};
+        auto orch = make_shared<Orch>(&appl_db, tables);
+        auto route_consumer = dynamic_cast<Consumer *>(orch->getExecutor("ROUTE_TABLE"));
+
+        EXPECT_TRUE(gRingBuffer->serves("ROUTE_TABLE"));
+
+        int x = 0;
+
+        gRingBuffer->thread_created = true; // set the flag to assume the ring thread is created (actually not)
+        route_consumer->processAnyTask([&](){x=5;});
+
+       // Ring is not empty, flush would not be triggered
+        orchd->flush();
+        EXPECT_TRUE(!gRingBuffer->IsEmpty() && x==0);
+        AnyTask task;
+        gRingBuffer->pop(task);
+        task();
+        // hence the task needs to be popped and explicitly executed
+        EXPECT_TRUE(gRingBuffer->IsEmpty() && x==5);
+       // Ring is empty, flush would be triggered
+        orchd->flush();
 
         orchd->disableRingBuffer();
     }

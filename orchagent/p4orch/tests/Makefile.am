@@ -23,9 +23,12 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       $(ORCHAGENT_DIR)/copporch.cpp \
 		       $(ORCHAGENT_DIR)/switch/switch_capabilities.cpp \
 		       $(ORCHAGENT_DIR)/switch/switch_helper.cpp \
+		       $(ORCHAGENT_DIR)/switch/trimming/capabilities.cpp \
+		       $(ORCHAGENT_DIR)/switch/trimming/helper.cpp \
 		       $(ORCHAGENT_DIR)/switchorch.cpp \
 		       $(ORCHAGENT_DIR)/request_parser.cpp \
 		       $(top_srcdir)/lib/recorder.cpp \
+		       $(ORCHAGENT_DIR)/zmqorch.cpp \
 		       $(ORCHAGENT_DIR)/flex_counter/flex_counter_manager.cpp \
 		       $(ORCHAGENT_DIR)/flex_counter/flow_counter_handler.cpp \
 		       $(ORCHAGENT_DIR)/port/port_capabilities.cpp \
@@ -46,22 +49,31 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       $(P4ORCH_DIR)/wcmp_manager.cpp \
 		       $(P4ORCH_DIR)/mirror_session_manager.cpp \
 		       $(P4ORCH_DIR)/l3_admit_manager.cpp \
+		       $(P4ORCH_DIR)/l3_multicast_manager.cpp \
+                       $(P4ORCH_DIR)/tunnel_decap_group_manager.cpp \
+		       $(P4ORCH_DIR)/ip_multicast_manager.cpp \
 		       $(P4ORCH_DIR)/ext_tables_manager.cpp \
 		       $(top_srcdir)/tests/mock_tests/fake_response_publisher.cpp \
 		       fake_portorch.cpp \
 		       fake_crmorch.cpp \
 		       fake_flexcounterorch.cpp \
 		       fake_flowcounterrouteorch.cpp \
+		       fake_routeorch.cpp \
 		       fake_dbconnector.cpp \
 		       fake_producertable.cpp \
 		       fake_consumerstatetable.cpp \
 		       fake_subscriberstatetable.cpp \
 		       fake_notificationconsumer.cpp \
 		       fake_table.cpp \
+		       fake_aclorch.cpp \
+		       fake_zmqserver.cpp \
 		       p4oidmapper_test.cpp \
+		       p4orch_test.cpp \
 		       p4orch_util_test.cpp \
 		       return_code_test.cpp \
 		       route_manager_test.cpp \
+		       l3_multicast_manager_test.cpp \
+		       ip_multicast_manager_test.cpp \
 		       gre_tunnel_manager_test.cpp \
 		       next_hop_manager_test.cpp \
 		       wcmp_manager_test.cpp \
@@ -70,14 +82,28 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       router_interface_manager_test.cpp \
 		       neighbor_manager_test.cpp \
 		       mirror_session_manager_test.cpp \
+                       tunnel_decap_group_manager_test.cpp \
 		       test_main.cpp \
 		       mock_sai_acl.cpp \
+		       mock_sai_bridge.cpp \
 		       mock_sai_hostif.cpp \
+		       mock_sai_ipmc.cpp \
+		       mock_sai_ipmc_group.cpp \
+		       mock_sai_l2mc.cpp \
+		       mock_sai_l2mc_group.cpp \
+		       mock_sai_my_mac.cpp \
 		       mock_sai_serialize.cpp \
 		       mock_sai_router_interface.cpp \
+		       mock_sai_rpf_group.cpp \
+		       mock_sai_neighbor.cpp \
+		       mock_sai_next_hop.cpp \
+		       mock_sai_route.cpp \
 		       mock_sai_switch.cpp \
+                       mock_sai_tunnel.cpp \
 		       mock_sai_udf.cpp
 
 p4orch_tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 p4orch_tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 p4orch_tests_LDADD = $(LDADD_GTEST) $(LDFLAGS_ASAN) -lpthread -lsairedis -lswsscommon -lsaimeta -lsaimetadata -lzmq
+
+LOG_DRIVER = $(top_srcdir)/run-gtest-suite.py

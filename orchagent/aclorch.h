@@ -53,6 +53,8 @@
 #define MATCH_INNER_L4_DST_PORT "INNER_L4_DST_PORT"
 #define MATCH_INNER_SRC_MAC     "INNER_SRC_MAC"
 #define MATCH_INNER_DST_MAC     "INNER_DST_MAC"
+#define MATCH_INNER_SRC_IP      "INNER_SRC_IP"
+#define MATCH_INNER_SRC_IPV6    "INNER_SRC_IPV6"
 #define MATCH_BTH_OPCODE        "BTH_OPCODE"
 #define MATCH_AETH_SYNDROME     "AETH_SYNDROME"
 #define MATCH_TUNNEL_TERM       "TUNNEL_TERM"
@@ -64,6 +66,7 @@
 #define ACTION_PACKET_ACTION                "PACKET_ACTION"
 #define ACTION_REDIRECT_ACTION              "REDIRECT_ACTION"
 #define ACTION_DO_NOT_NAT_ACTION            "DO_NOT_NAT_ACTION"
+#define ACTION_DISABLE_TRIM                 "DISABLE_TRIM_ACTION"
 #define ACTION_MIRROR_ACTION                "MIRROR_ACTION"
 #define ACTION_MIRROR_INGRESS_ACTION        "MIRROR_INGRESS_ACTION"
 #define ACTION_MIRROR_EGRESS_ACTION         "MIRROR_EGRESS_ACTION"
@@ -76,12 +79,14 @@
 #define ACTION_COUNTER                      "COUNTER"
 #define ACTION_META_DATA                    "META_DATA_ACTION"
 #define ACTION_DSCP                         "DSCP_ACTION"
+#define ACTION_INNER_SRC_MAC_REWRITE_ACTION "INNER_SRC_MAC_REWRITE_ACTION"
 
-#define PACKET_ACTION_FORWARD     "FORWARD"
-#define PACKET_ACTION_DROP        "DROP"
-#define PACKET_ACTION_COPY        "COPY"
-#define PACKET_ACTION_REDIRECT    "REDIRECT"
-#define PACKET_ACTION_DO_NOT_NAT  "DO_NOT_NAT"
+#define PACKET_ACTION_FORWARD      "FORWARD"
+#define PACKET_ACTION_DROP         "DROP"
+#define PACKET_ACTION_COPY         "COPY"
+#define PACKET_ACTION_REDIRECT     "REDIRECT"
+#define PACKET_ACTION_DO_NOT_NAT   "DO_NOT_NAT"
+#define PACKET_ACTION_DISABLE_TRIM "DISABLE_TRIM"
 
 #define DTEL_FLOW_OP_NOP        "NOP"
 #define DTEL_FLOW_OP_POSTCARD   "POSTCARD"
@@ -103,6 +108,7 @@
 #define IP_TYPE_ARP_REPLY       "ARP_REPLY"
 
 #define MLNX_MAX_RANGES_COUNT   16
+#define CLNX_MAX_RANGES_COUNT   16
 #define INGRESS_TABLE_DROP      "IngressTableDrop"
 #define EGRESS_TABLE_DROP       "EgressTableDrop"
 #define RULE_OPER_ADD           0
@@ -326,6 +332,8 @@ public:
     virtual bool enableCounter();
     virtual bool disableCounter();
 
+    sai_status_t getLastSaiStatus() const { return m_lastSaiStatus; }
+
     string getId() const;
     string getTableId() const;
     sai_object_id_t getOid() const;
@@ -382,6 +390,7 @@ protected:
 
     vector<AclRangeConfig> m_rangeConfig;
     vector<AclRange*> m_ranges;
+    sai_status_t m_lastSaiStatus = SAI_STATUS_SUCCESS;
 
 private:
     bool m_createCounter;
@@ -400,6 +409,16 @@ protected:
     sai_object_id_t getRedirectObjectId(const string& redirect_param);
 };
 
+class AclRuleInnerSrcMacRewrite: public AclRule
+ {
+ public:
+     AclRuleInnerSrcMacRewrite(AclOrch *m_pAclOrch, string rule, string table, bool createCounter = true);
+
+     bool validateAddAction(string attr_name, string attr_value);
+     bool validate();
+     void onUpdate(SubjectType, void *) override;
+ };
+ 
 class AclRuleMirror: public AclRule
 {
 public:

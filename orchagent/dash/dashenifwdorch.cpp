@@ -12,8 +12,6 @@ DashEniFwdOrch::DashEniFwdOrch(DBConnector* cfgDb, DBConnector* applDb, const st
     : Orch2(applDb, tableName, request_), neighorch_(neighOrch)
 {
     SWSS_LOG_ENTER();
-    acl_table_type_ = make_unique<ProducerStateTable>(applDb, APP_ACL_TABLE_TYPE_TABLE_NAME);
-    acl_table_ = make_unique<ProducerStateTable>(applDb, APP_ACL_TABLE_TABLE_NAME);
     ctx = make_shared<EniFwdCtx>(cfgDb, applDb);
     if (neighorch_)
     {
@@ -77,51 +75,6 @@ void DashEniFwdOrch::handleNeighUpdate(const NeighborUpdate& update)
     }
 }
 
-void DashEniFwdOrch::initAclTableCfg()
-{
-    vector<string> match_list = {
-                                  MATCH_TUNNEL_VNI,
-                                  MATCH_DST_IP,
-                                  MATCH_INNER_SRC_MAC,
-                                  MATCH_INNER_DST_MAC,
-                                  MATCH_TUNNEL_TERM
-                                };
-
-    auto concat = [](const std::string &a, const std::string &b) { return a + "," + b; };
-
-    std::string matches = std::accumulate(
-        std::next(match_list.begin()), match_list.end(), match_list[0],
-        concat);
-
-    string bpoint_types = string(BIND_POINT_TYPE_PORT) + "," +  string(BIND_POINT_TYPE_PORTCHANNEL);
-
-    vector<FieldValueTuple> fv_ = {
-        { ACL_TABLE_TYPE_MATCHES, matches},
-        { ACL_TABLE_TYPE_ACTIONS, ACTION_REDIRECT_ACTION },
-        { ACL_TABLE_TYPE_BPOINT_TYPES, bpoint_types}
-    };
-
-    acl_table_type_->set(ENI_REDIRECT_TABLE_TYPE, fv_);
-
-    auto ports = ctx->getBindPoints();
-    std::string ports_str;
-
-    if (!ports.empty())
-    {
-        ports_str = std::accumulate(std::next(ports.begin()), ports.end(), ports[0], concat);
-    }
-
-    /* Write ACL Table */
-    vector<FieldValueTuple> table_fv_ = {
-        { ACL_TABLE_DESCRIPTION, "Contains Rule for DASH ENI Based Forwarding"},
-        { ACL_TABLE_TYPE, ENI_REDIRECT_TABLE_TYPE },
-        { ACL_TABLE_STAGE, STAGE_INGRESS },
-        { ACL_TABLE_PORTS, ports_str }
-    };
-
-    acl_table_->set(ENI_REDIRECT_TABLE, table_fv_);
-}
-
 void DashEniFwdOrch::initLocalEndpoints()
 {
     auto ids = ctx->dpu_info.getIds();
@@ -142,7 +95,7 @@ void DashEniFwdOrch::initLocalEndpoints()
 
                 if (ctx->isNeighborResolved(nh))
                 {
-                    SWSS_LOG_WARN("Neighbor already populated.. Not Expected");
+                    SWSS_LOG_INFO("Neighbor already populated for local endpoint %s", local_endp.to_string().c_str());
                 }
                 ctx->resolveNeighbor(nh);
             }
@@ -150,7 +103,7 @@ void DashEniFwdOrch::initLocalEndpoints()
     }
 }
 
-void DashEniFwdOrch::handleEniDpuMapping(uint64_t id, MacAddress mac, bool add)
+void DashEniFwdOrch::handleEniDpuMapping(const std::string& id, MacAddress mac, bool add)
 {
     /* Make sure id is local */
     dpu_type_t primary_type = CLUSTER;
@@ -185,11 +138,9 @@ void DashEniFwdOrch::lazyInit()
         1. DpuRegistry
         2. Other Orch ptrs
         3. Internal dpu-id mappings
-        4. Write ACL Table Cfg
     */
     ctx->initialize();
     ctx->populateDpuRegistry();
-    initAclTableCfg();
     initLocalEndpoints();
     ctx_initialized_ = true;
 }
@@ -216,7 +167,7 @@ bool DashEniFwdOrch::addOperation(const Request& request)
     if (new_eni)
     {
         eni_itr->second.create(request);
-        uint64_t local_ep;
+        std::string local_ep;
         if (eni_itr->second.findLocalEp(local_ep))
         {
             /* Add to the local map if the endpoint is found */
@@ -247,10 +198,9 @@ bool DashEniFwdOrch::delOperation(const Request& request)
     bool result = eni_itr->second.destroy(request);
     if (result)
     {
-        uint64_t local_ep;
+        std::string local_ep;
         if (eni_itr->second.findLocalEp(local_ep))
         {
-            /* Add to the local map if the endpoint is found */
             handleEniDpuMapping(local_ep, eni_id, false);
         }
     }
@@ -259,100 +209,206 @@ bool DashEniFwdOrch::delOperation(const Request& request)
 }
 
 
-void DpuRegistry::populate(Table* dpuTable)
+void DpuRegistry::populate(const DBConnector* cfg_db)
 {
+    /* 
+        Read DPU, VDPU, and Remote DPU tables, they are expected to be populated by the time HA is ready 
+    */
     SWSS_LOG_ENTER();
-    std::vector<std::string> keys;
-    dpuTable->getKeys(keys);
+    processDpuTable(cfg_db);
+    processRemoteDpuTable(cfg_db);
+    processVdpuTable(cfg_db);
+}
 
+void DpuRegistry::processDpuTable(const DBConnector* cfg_db)
+{
+    Table dpuTable(cfg_db, DashEniFwd::DPU_TABLE);
+    std::vector<std::string> keys;
+    dpuTable.getKeys(keys);
     for (auto key : keys)
     {
         try
         {
             std::vector<FieldValueTuple> values;
-            dpuTable->get(key, values);
+            dpuTable.get(key, values);
 
             KeyOpFieldsValuesTuple kvo = {
                 key, SET_COMMAND, values
             };
-            processDpuTable(kvo);
+            
+            dpu_request_.clear();
+            dpu_request_.parse(kvo);
+            string key = dpu_request_.getKeyString(0);
+            // Check if STATE is present and if present and value is 'down', skip this DPU
+            auto updates = dpu_request_.getAttrFieldNames();
+            auto itr_state = updates.find(DashEniFwd::STATE);
+            if (itr_state != updates.end())
+            {
+                auto state_val = dpu_request_.getAttrString(DashEniFwd::STATE);
+                if (state_val == "down")
+                {
+                    SWSS_LOG_INFO("Skipping LOCAL DPU %s as its state is down", key.c_str());
+                    continue;
+                }
+            }
+
+            DpuData data;
+            data.type = dpu_type_t::LOCAL;
+            data.pa_v4 = dpu_request_.getAttrIP(DashEniFwd::PA_V4);
+            dpus_name_map_.insert({key, data});
+            
+            SWSS_LOG_INFO("LOCAL DPU %s found, PA_V4: %s", key.c_str(), data.pa_v4.to_string().c_str());
         }
         catch(exception& e)
         {
-            SWSS_LOG_ERROR("Failed to parse key:%s in the %s", key.c_str(), CFG_DPU_TABLE);
+            SWSS_LOG_ERROR("Failed to parse key:%s in the %s", key.c_str(), DashEniFwd::DPU_TABLE);
         }
     }
-    SWSS_LOG_INFO("DPU data read. %zu dpus found", dpus_.size());
 }
 
-void DpuRegistry::processDpuTable(const KeyOpFieldsValuesTuple& kvo)
+void DpuRegistry::processRemoteDpuTable(const DBConnector* cfg_db)
 {
-    DpuData data;
-
-    dpu_request_.clear();
-    dpu_request_.parse(kvo);
-    
-    uint64_t key = dpu_request_.getKeyUint(0);
-    string type = dpu_request_.getAttrString(DPU_TYPE);
-
-    dpus_ids_.push_back(key);
-
-    if (type == "local")
+    Table remoteDpuTable(cfg_db, DashEniFwd::REMOTE_DPU_TABLE);
+    std::vector<std::string> keys;
+    remoteDpuTable.getKeys(keys);
+    for (auto key : keys)
     {
-        data.type = dpu_type_t::LOCAL;
+        try
+        {
+            std::vector<FieldValueTuple> values;
+            remoteDpuTable.get(key, values);
+
+            KeyOpFieldsValuesTuple kvo = {
+                key, SET_COMMAND, values
+            };
+            
+            remote_dpu_request_.clear();
+            remote_dpu_request_.parse(kvo);
+            string key = remote_dpu_request_.getKeyString(0);
+
+            DpuData data;
+            data.type = dpu_type_t::CLUSTER;
+            data.pa_v4 = remote_dpu_request_.getAttrIP(DashEniFwd::PA_V4);
+            data.npu_v4 = remote_dpu_request_.getAttrIP(DashEniFwd::NPU_V4);
+            dpus_name_map_.insert({key, data});
+        
+            SWSS_LOG_INFO("Remote DPU %s found, PA_V4: %s, NPU_V4: %s", 
+                key.c_str(), 
+                data.pa_v4.to_string().c_str(), 
+                data.npu_v4.to_string().c_str()
+            );
+        }
+        catch(exception& e)
+        {
+            SWSS_LOG_ERROR("Failed to parse key:%s in the %s", key.c_str(), DashEniFwd::REMOTE_DPU_TABLE);
+        }
     }
-    else
+}
+
+void DpuRegistry::processVdpuTable(const DBConnector* cfg_db)
+{
+    Table vdpuTable(cfg_db, DashEniFwd::VDPU_TABLE);
+    std::vector<std::string> keys;
+    vdpuTable.getKeys(keys);
+    for (auto key : keys)
     {
-        // External type is not suported
-        data.type = dpu_type_t::CLUSTER;
+        try
+        {
+            std::vector<FieldValueTuple> values;
+            vdpuTable.get(key, values);
+
+            KeyOpFieldsValuesTuple kvo = {
+                key, SET_COMMAND, values
+            };
+            
+            vdpu_request_.clear();
+            vdpu_request_.parse(kvo);
+            string key = vdpu_request_.getKeyString(0);
+            vector<string> dpu_ids = vdpu_request_.getAttrStringList(DashEniFwd::DPU_IDS);
+            for (auto dpu_id : dpu_ids)
+            {
+                /* This method is expected to be called after the DPU/REMOTE_DPU table is populated */
+                if (dpus_name_map_.find(dpu_id) != dpus_name_map_.end())
+                {
+                    vdpus_map_[key].push_back(dpu_id);
+                    SWSS_LOG_INFO("DPU: %s belongs to VDPU %s", dpu_id.c_str(), key.c_str());
+                }
+                else 
+                {
+                    SWSS_LOG_WARN("Invalid DPU ID: %s, not found in DPU/REMOTE_DPU table", dpu_id.c_str());
+                }
+            }
+        }
+        catch(exception& e)
+        {
+            SWSS_LOG_ERROR("Failed to parse key:%s in the %s", key.c_str(), DashEniFwd::REMOTE_DPU_TABLE);
+        }
     }
-
-    data.pa_v4 = dpu_request_.getAttrIP(DPU_PA_V4);
-    data.npu_v4 = dpu_request_.getAttrIP(DPU_NPU_V4);
-    dpus_.insert({key, data});
 }
 
-std::vector<uint64_t> DpuRegistry::getIds()
+std::vector<std::string> DpuRegistry::getIds()
 {
-    return dpus_ids_;
+    std::vector<std::string> ids;
+    for (auto itr = vdpus_map_.begin(); itr != vdpus_map_.end(); itr++)
+    {
+        ids.push_back(itr->first);
+    }
+    return ids;
 }
 
-bool DpuRegistry::getType(uint64_t id, dpu_type_t& val)
+bool DpuRegistry::getDpuId(const std::string& vdpu_id, std::string& dpu_id)
 {
-    auto itr = dpus_.find(id);
-    if (itr == dpus_.end()) return false;
+    dpu_id.clear();
+    auto itr = vdpus_map_.find(vdpu_id);
+    if (itr == vdpus_map_.end() || itr->second.empty()) return false;
+    dpu_id = itr->second[0];
+    return true;
+}
+
+bool DpuRegistry::getType(const std::string& vdpu_id, dpu_type_t& val)
+{
+    std::string id;
+    if (!getDpuId(vdpu_id, id)) return false;
+    auto itr = dpus_name_map_.find(id);
+    if (itr == dpus_name_map_.end()) return false;
     val = itr->second.type;
     return true;
 }
 
-bool DpuRegistry::getPaV4(uint64_t id, swss::IpAddress& val)
+bool DpuRegistry::getPaV4(const std::string& vdpu_id, swss::IpAddress& val)
 {
-    auto itr = dpus_.find(id);
-    if (itr == dpus_.end()) return false;
+    std::string id;
+    if (!getDpuId(vdpu_id, id)) return false;
+    auto itr = dpus_name_map_.find(id);
+    if (itr == dpus_name_map_.end()) return false;
     val = itr->second.pa_v4;
     return true;
 }
 
-bool DpuRegistry::getNpuV4(uint64_t id, swss::IpAddress& val)
+bool DpuRegistry::getNpuV4(const std::string& vdpu_id, swss::IpAddress& val)
 {
-    auto itr = dpus_.find(id);
-    if (itr == dpus_.end()) return false;
+    std::string id;
+    if (!getDpuId(vdpu_id, id)) return false;
+    auto itr = dpus_name_map_.find(id);
+    if (itr == dpus_name_map_.end()) return false;
     val = itr->second.npu_v4;
     return true;
 }
 
 EniFwdCtxBase::EniFwdCtxBase(DBConnector* cfgDb, DBConnector* applDb)
 {
-    dpu_tbl_ = make_unique<Table>(cfgDb, CFG_DPU_TABLE);
+    cfg_db_ = make_unique<DBConnector>(*cfgDb);
     port_tbl_ = make_unique<Table>(cfgDb, CFG_PORT_TABLE_NAME);
-    vip_tbl_ = make_unique<Table>(cfgDb, CFG_VIP_TABLE_TMP);
-    rule_table = make_unique<ProducerStateTable>(applDb, APP_ACL_RULE_TABLE_NAME);
+    vip_tbl_ = make_unique<Table>(cfgDb, DashEniFwd::VIP_TABLE);
+    rule_table_ = make_unique<ProducerStateTable>(applDb, APP_ACL_RULE_TABLE_NAME);
+    acl_table_type_ = make_unique<ProducerStateTable>(applDb, APP_ACL_TABLE_TYPE_TABLE_NAME);
+    acl_table_ = make_unique<ProducerStateTable>(applDb, APP_ACL_TABLE_TABLE_NAME);
     vip_inferred_ = false;
 }
 
 void EniFwdCtxBase::populateDpuRegistry() 
 {
-    dpu_info.populate(dpu_tbl_.get());
+    dpu_info.populate(cfg_db_.get());
 }
 
 std::set<std::string> EniFwdCtxBase::findInternalPorts()
@@ -433,43 +489,6 @@ string EniFwdCtxBase::getNbrAlias(const swss::IpAddress& nh_ip)
     return alias;
 }
 
-bool EniFwdCtxBase::handleTunnelNH(const std::string& tunnel_name, swss::IpAddress endpoint, bool create)
-{
-    SWSS_LOG_ENTER();
-
-    auto nh_key = endpoint.to_string() + "@" + tunnel_name;
-    auto nh_itr = remote_nh_map_.find(nh_key);
-
-    /* Delete Tunnel NH if ref_count = 0 */
-    if (!create)
-    {
-        if (nh_itr != remote_nh_map_.end())
-        {
-            if(!--nh_itr->second.first)
-            {
-                remote_nh_map_.erase(nh_key);
-                return removeNextHopTunnel(tunnel_name, endpoint);
-            }
-        }
-        return true;
-    }
-
-    if (nh_itr == remote_nh_map_.end())
-    {
-        /* Create a tunnel NH */
-        auto nh_oid = createNextHopTunnel(tunnel_name, endpoint);
-        if (nh_oid == SAI_NULL_OBJECT_ID)
-        {
-            SWSS_LOG_ERROR("Failed to create Tunnel Next Hop, name: %s. endpoint %s", tunnel_name.c_str(),
-                            endpoint.to_string().c_str());
-        }
-        remote_nh_map_.insert(make_pair(nh_key, make_pair(0, nh_oid)));
-        nh_itr = remote_nh_map_.find(nh_key);
-    }
-    nh_itr->second.first++; /* Increase the ref count, indicates number of rules using referencing this */
-    return true;
-}
-
 IpPrefix EniFwdCtxBase::getVip()
 {
     SWSS_LOG_ENTER();
@@ -496,7 +515,6 @@ IpPrefix EniFwdCtxBase::getVip()
     }
     return vip;
 }
-
 
 void EniFwdCtx::initialize()
 {
@@ -553,20 +571,80 @@ std::map<string, Port>& EniFwdCtx::getAllPorts()
     return portsorch_->getAllPorts();
 }
 
-sai_object_id_t EniFwdCtx::createNextHopTunnel(string tunnel_name, IpAddress ip_addr)
+void EniFwdCtxBase::createAclRule(const std::string& rule, const std::vector<FieldValueTuple>& fv)
 {
-    return safetyWrapper(vxlanorch_, &VxlanTunnelOrch::createNextHopTunnel,
-                        (sai_object_id_t)SAI_NULL_OBJECT_ID,
-                        (string)tunnel_name, ip_addr,
-                        MacAddress(),
-                        (uint32_t)0);
+    if (acl_rule_count_ == 0)
+    {
+        addAclTable();
+    }
+    acl_rule_count_++;
+    SWSS_LOG_INFO("Creating ACL rule: %s, ENI Forwarding rules count: %u", rule.c_str(), acl_rule_count_);
+    rule_table_->set(rule, fv);
 }
 
-bool EniFwdCtx::removeNextHopTunnel(string tunnel_name, IpAddress ip_addr)
+void EniFwdCtxBase::deleteAclRule(const std::string& rule)
 {
-    return safetyWrapper(vxlanorch_, &VxlanTunnelOrch::removeNextHopTunnel,
-                        false,
-                        (std::string)tunnel_name, ip_addr,
-                        MacAddress(),
-                        (uint32_t)0);
+    rule_table_->del(rule);
+    if (acl_rule_count_ > 0)
+    {
+        acl_rule_count_--;
+        SWSS_LOG_INFO("Deleted ACL rule: %s, ENI Forwarding rule count: %u", rule.c_str(), acl_rule_count_);
+        if (acl_rule_count_ == 0)
+        {
+            deleteAclTable();
+        }
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Attempted to delete ACL rule %s but rule count is already 0", rule.c_str());
+    }
+}
+
+void EniFwdCtxBase::addAclTable()
+{
+    vector<string> match_list = {
+                                  MATCH_DST_IP,
+                                  MATCH_INNER_DST_MAC,
+                                  MATCH_TUNNEL_TERM
+                                };
+
+    auto concat = [](const std::string &a, const std::string &b) { return a + "," + b; };
+
+    std::string matches = std::accumulate(
+        std::next(match_list.begin()), match_list.end(), match_list[0],
+        concat);
+
+    string bpoint_types = string(BIND_POINT_TYPE_PORT) + "," +  string(BIND_POINT_TYPE_PORTCHANNEL);
+
+    vector<FieldValueTuple> fv_ = {
+        { ACL_TABLE_TYPE_MATCHES, matches},
+        { ACL_TABLE_TYPE_ACTIONS, ACTION_REDIRECT_ACTION },
+        { ACL_TABLE_TYPE_BPOINT_TYPES, bpoint_types}
+    };
+
+    acl_table_type_->set(DashEniFwd::TABLE_TYPE, fv_);
+
+    auto ports = getBindPoints();
+    std::string ports_str;
+
+    if (!ports.empty())
+    {
+        ports_str = std::accumulate(std::next(ports.begin()), ports.end(), ports[0], concat);
+    }
+
+    /* Write ACL Table */
+    vector<FieldValueTuple> table_fv_ = {
+        { ACL_TABLE_DESCRIPTION, "Contains Rule for DASH ENI Based Forwarding"},
+        { ACL_TABLE_TYPE, DashEniFwd::TABLE_TYPE },
+        { ACL_TABLE_STAGE, STAGE_INGRESS },
+        { ACL_TABLE_PORTS, ports_str }
+    };
+
+    acl_table_->set(DashEniFwd::TABLE, table_fv_);
+}
+
+void EniFwdCtxBase::deleteAclTable()
+{
+    acl_table_->del(DashEniFwd::TABLE);
+    acl_table_type_->del(DashEniFwd::TABLE_TYPE);
 }

@@ -1,6 +1,5 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-
 #include <map>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -9,7 +8,9 @@
 #include "acl_rule_manager.h"
 #include "acl_table_manager.h"
 #include "acl_util.h"
+#include "aclorch.h"
 #include "acltable.h"
+#include "mock_response_publisher.h"
 #include "mock_sai_acl.h"
 #include "mock_sai_hostif.h"
 #include "mock_sai_policer.h"
@@ -17,11 +18,13 @@
 #include "mock_sai_switch.h"
 #include "mock_sai_udf.h"
 #include "p4orch.h"
+#include "portsorch.h"
 #include "return_code.h"
 #include "switchorch.h"
 #include "table.h"
 #include "tokenize.h"
 #include "vrforch.h"
+#include "logger.h"
 
 using ::p4orch::kTableKeyDelimiter;
 
@@ -37,7 +40,9 @@ extern sai_udf_api_t *sai_udf_api;
 extern int gBatchSize;
 extern VRFOrch *gVrfOrch;
 extern P4Orch *gP4Orch;
+extern std::unique_ptr<MockResponsePublisher> gMockResponsePublisher;
 extern SwitchOrch *gSwitchOrch;
+extern AclOrch* gAclOrch;
 extern sai_object_id_t gSwitchId;
 extern sai_object_id_t gVrfOid;
 extern sai_object_id_t gTrapGroupStartOid;
@@ -84,12 +89,13 @@ constexpr sai_object_id_t kUdfOid1 = 6001;
 constexpr char *kAclIngressTableName = "ACL_PUNT_TABLE";
 
 // Matches the policer sai_attribute_t[] argument.
-bool MatchSaiPolicerAttribute(const int attrs_size, const sai_meter_type_t expected_type,
-                              const sai_packet_action_t expected_gpa, const sai_packet_action_t expected_ypa,
-                              const sai_packet_action_t expected_rpa, const sai_uint64_t expected_cir,
-                              const sai_uint64_t expected_pir, const sai_uint64_t expected_cbs,
-                              const sai_uint64_t expected_pbs, const sai_attribute_t *attr_list)
-{
+bool MatchSaiPolicerAttributeInStormMode(const int attrs_size,
+                                         const sai_meter_type_t expected_type,
+                                         const sai_packet_action_t expected_gpa,
+                                         const sai_packet_action_t expected_rpa,
+                                         const sai_uint64_t expected_cir,
+                                         const sai_uint64_t expected_cbs,
+                                         const sai_attribute_t* attr_list) {
     if (attr_list == nullptr)
     {
         return false;
@@ -104,32 +110,14 @@ bool MatchSaiPolicerAttribute(const int attrs_size, const sai_meter_type_t expec
                 return false;
             }
             break;
-        case SAI_POLICER_ATTR_PBS:
-            if (attr_list[i].value.u64 != expected_pbs)
-            {
-                return false;
-            }
-            break;
         case SAI_POLICER_ATTR_CIR:
             if (attr_list[i].value.u64 != expected_cir)
             {
                 return false;
             }
             break;
-        case SAI_POLICER_ATTR_PIR:
-            if (attr_list[i].value.u64 != expected_pir)
-            {
-                return false;
-            }
-            break;
         case SAI_POLICER_ATTR_GREEN_PACKET_ACTION:
             if (attr_list[i].value.s32 != expected_gpa)
-            {
-                return false;
-            }
-            break;
-        case SAI_POLICER_ATTR_YELLOW_PACKET_ACTION:
-            if (attr_list[i].value.s32 != expected_ypa)
             {
                 return false;
             }
@@ -141,8 +129,7 @@ bool MatchSaiPolicerAttribute(const int attrs_size, const sai_meter_type_t expec
             }
             break;
         case SAI_POLICER_ATTR_MODE:
-            if (attr_list[i].value.s32 != SAI_POLICER_MODE_TR_TCM)
-            {
+            if (attr_list[i].value.s32 != SAI_POLICER_MODE_STORM_CONTROL) {
                 return false;
             }
             break;
@@ -468,11 +455,9 @@ void IsExpectedAclRuleMapping(const P4AclRule *acl_rule, const P4AclRuleAppDbEnt
     if (!table_def.meter_unit.empty())
     {
         EXPECT_TRUE(acl_rule->meter.enabled);
-        EXPECT_EQ(SAI_POLICER_MODE_TR_TCM, acl_rule->meter.mode);
+        EXPECT_EQ(SAI_POLICER_MODE_STORM_CONTROL, acl_rule->meter.mode);
         EXPECT_EQ(app_db_entry.meter.cir, acl_rule->meter.cir);
         EXPECT_EQ(app_db_entry.meter.cburst, acl_rule->meter.cburst);
-        EXPECT_EQ(app_db_entry.meter.pir, acl_rule->meter.pir);
-        EXPECT_EQ(app_db_entry.meter.pburst, acl_rule->meter.pburst);
         if (table_def.meter_unit == P4_METER_UNIT_BYTES)
         {
             EXPECT_EQ(SAI_METER_TYPE_BYTES, acl_rule->meter.type);
@@ -634,8 +619,18 @@ P4AclTableDefinitionAppDbEntry getDefaultAclTableDefAppDbEntry()
     app_db_entry.match_field_lookup["inner_vlan_pri"] = BuildMatchFieldJsonStrKindSaiField(P4_MATCH_INNER_VLAN_PRI);
     app_db_entry.match_field_lookup["inner_vlan_id"] = BuildMatchFieldJsonStrKindSaiField(P4_MATCH_INNER_VLAN_ID);
     app_db_entry.match_field_lookup["inner_vlan_cfi"] = BuildMatchFieldJsonStrKindSaiField(P4_MATCH_INNER_VLAN_CFI);
-    app_db_entry.match_field_lookup["l3_class_id"] =
-        BuildMatchFieldJsonStrKindSaiField(P4_MATCH_ROUTE_DST_USER_META, P4_FORMAT_HEX_STRING, /*bitwidth=*/6);
+    app_db_entry.match_field_lookup["vrf_id"] =
+        BuildMatchFieldJsonStrKindSaiField(P4_MATCH_VRF_ID, P4_FORMAT_STRING);
+    app_db_entry.match_field_lookup["ipmc_table_hit"] =
+        BuildMatchFieldJsonStrKindSaiField(P4_MATCH_IPMC_TABLE_HIT,
+                                           P4_FORMAT_HEX_STRING, /*bitwidth=*/1);
+    app_db_entry.match_field_lookup["route_table_hit"] =
+        BuildMatchFieldJsonStrKindSaiField(P4_MATCH_ROUTE_TABLE_HIT,
+                                           P4_FORMAT_HEX_STRING, /*bitwidth=*/1);
+    app_db_entry.match_field_lookup["l3_clasvs_id"] =
+        BuildMatchFieldJsonStrKindSaiField(P4_MATCH_ROUTE_DST_USER_META, P4_FORMAT_HEX_STRING, /*bitwidth=*/32);
+    app_db_entry.match_field_lookup["acl_user_meta"] =
+        BuildMatchFieldJsonStrKindSaiField(P4_MATCH_ACL_USER_META, P4_FORMAT_HEX_STRING, /*bitwidth=*/8);
     app_db_entry.match_field_lookup["src_ipv6_64bit"] = BuildMatchFieldJsonStrKindComposite(
         {nlohmann::json::parse(BuildMatchFieldJsonStrKindSaiField(P4_MATCH_SRC_IPV6_WORD3, P4_FORMAT_IPV6, 32)),
          nlohmann::json::parse(BuildMatchFieldJsonStrKindSaiField(P4_MATCH_SRC_IPV6_WORD2, P4_FORMAT_IPV6, 32))},
@@ -646,84 +641,173 @@ P4AclTableDefinitionAppDbEntry getDefaultAclTableDefAppDbEntry()
         P4_FORMAT_HEX_STRING, 32);
     app_db_entry.match_field_lookup["udf2"] =
         BuildMatchFieldJsonStrKindUdf("SAI_UDF_BASE_L3", 56, P4_FORMAT_HEX_STRING, 16);
+    app_db_entry.match_field_lookup["vlan_user_meta"] =
+        BuildMatchFieldJsonStrKindSaiField(P4_MATCH_VLAN_USER_META);
+    app_db_entry.match_field_lookup["port_user_meta"] =
+      BuildMatchFieldJsonStrKindSaiField(P4_MATCH_PORT_USER_META);
 
+    app_db_entry.match_field_lookup["outer_tpid"] =
+        BuildMatchFieldJsonStrKindSaiField(P4_MATCH_OUTER_TPID);
     // Action field mapping, from P4 action to SAI action
     app_db_entry.action_field_lookup["set_packet_action"].push_back(
-        {.sai_action = P4_ACTION_PACKET_ACTION, .p4_param_name = "packet_action"});
+        {.sai_action = P4_ACTION_PACKET_ACTION, .p4_param_name = "packet_action",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["copy_and_set_tc"].push_back(
-        {.sai_action = P4_ACTION_SET_TRAFFIC_CLASS, .p4_param_name = "traffic_class"});
+        {.sai_action = P4_ACTION_SET_TRAFFIC_CLASS, .p4_param_name = "traffic_class",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["punt_and_set_tc"].push_back(
-        {.sai_action = P4_ACTION_SET_TRAFFIC_CLASS, .p4_param_name = "traffic_class"});
+        {.sai_action = P4_ACTION_SET_TRAFFIC_CLASS, .p4_param_name = "traffic_class",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.packet_action_color_lookup["copy_and_set_tc"].push_back(
         {.packet_action = P4_PACKET_ACTION_COPY, .packet_color = P4_PACKET_COLOR_GREEN});
     app_db_entry.packet_action_color_lookup["punt_and_set_tc"].push_back(
         {.packet_action = P4_PACKET_ACTION_PUNT, .packet_color = EMPTY_STRING});
     app_db_entry.packet_action_color_lookup["punt_non_green_pk"].push_back(
-        {.packet_action = P4_PACKET_ACTION_PUNT, .packet_color = P4_PACKET_COLOR_YELLOW});
-    app_db_entry.packet_action_color_lookup["punt_non_green_pk"].push_back(
         {.packet_action = P4_PACKET_ACTION_PUNT, .packet_color = P4_PACKET_COLOR_RED});
     app_db_entry.action_field_lookup["redirect"].push_back(
-        {.sai_action = P4_ACTION_REDIRECT, .p4_param_name = "target"});
+        {.sai_action = P4_ACTION_REDIRECT,
+         .p4_param_name = "target",
+         .sai_object_type = EMPTY_STRING});
+    app_db_entry.action_field_lookup["redirect_ipmc"].push_back(
+        {.sai_action = P4_ACTION_REDIRECT,
+         .p4_param_name = "target",
+         .sai_object_type = "SAI_OBJECT_TYPE_IPMC_GROUP"});
+    app_db_entry.action_field_lookup["redirect_l2mc"].push_back(
+        {.sai_action = P4_ACTION_REDIRECT,
+         .p4_param_name = "target",
+         .sai_object_type = "SAI_OBJECT_TYPE_L2MC_GROUP"});
+    app_db_entry.action_field_lookup["redirect_port"].push_back(
+        {.sai_action = P4_ACTION_REDIRECT,
+         .p4_param_name = "target",
+         .sai_object_type = "SAI_OBJECT_TYPE_PORT"});
+    app_db_entry.action_field_lookup["redirect_next_hop"].push_back(
+        {.sai_action = P4_ACTION_REDIRECT,
+         .p4_param_name = "target",
+         .sai_object_type = "SAI_OBJECT_TYPE_NEXT_HOP"});
     app_db_entry.action_field_lookup["endpoint_ip"].push_back(
-        {.sai_action = P4_ACTION_ENDPOINT_IP, .p4_param_name = "ip_address"});
+        {.sai_action = P4_ACTION_ENDPOINT_IP,
+         .p4_param_name = "ip_address",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["mirror_ingress"].push_back(
-        {.sai_action = P4_ACTION_MIRROR_INGRESS, .p4_param_name = "target"});
+        {.sai_action = P4_ACTION_MIRROR_INGRESS,
+         .p4_param_name = "target",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["mirror_egress"].push_back(
-        {.sai_action = P4_ACTION_MIRROR_EGRESS, .p4_param_name = "target"});
+        {.sai_action = P4_ACTION_MIRROR_EGRESS,
+         .p4_param_name = "target",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_packet_color"].push_back(
-        {.sai_action = P4_ACTION_SET_PACKET_COLOR, .p4_param_name = "packet_color"});
+        {.sai_action = P4_ACTION_SET_PACKET_COLOR, .p4_param_name = "packet_color",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_src_mac"].push_back(
-        {.sai_action = P4_ACTION_SET_SRC_MAC, .p4_param_name = "mac_address"});
+        {.sai_action = P4_ACTION_SET_SRC_MAC,
+         .p4_param_name = "mac_address",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_dst_mac"].push_back(
-        {.sai_action = P4_ACTION_SET_DST_MAC, .p4_param_name = "mac_address"});
+        {.sai_action = P4_ACTION_SET_DST_MAC,
+         .p4_param_name = "mac_address",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_src_ip"].push_back(
-        {.sai_action = P4_ACTION_SET_SRC_IP, .p4_param_name = "ip_address"});
+        {.sai_action = P4_ACTION_SET_SRC_IP,
+         .p4_param_name = "ip_address",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_dst_ip"].push_back(
-        {.sai_action = P4_ACTION_SET_DST_IP, .p4_param_name = "ip_address"});
+        {.sai_action = P4_ACTION_SET_DST_IP,
+         .p4_param_name = "ip_address",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_src_ipv6"].push_back(
-        {.sai_action = P4_ACTION_SET_SRC_IPV6, .p4_param_name = "ip_address"});
+        {.sai_action = P4_ACTION_SET_SRC_IPV6,
+         .p4_param_name = "ip_address",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_dst_ipv6"].push_back(
-        {.sai_action = P4_ACTION_SET_DST_IPV6, .p4_param_name = "ip_address"});
+        {.sai_action = P4_ACTION_SET_DST_IPV6,
+         .p4_param_name = "ip_address",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_dscp_and_ecn"].push_back(
-        {.sai_action = P4_ACTION_SET_DSCP, .p4_param_name = "dscp"});
+        {.sai_action = P4_ACTION_SET_DSCP,
+         .p4_param_name = "dscp",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_dscp_and_ecn"].push_back(
-        {.sai_action = P4_ACTION_SET_ECN, .p4_param_name = "ecn"});
+        {.sai_action = P4_ACTION_SET_ECN,
+         .p4_param_name = "ecn",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_inner_vlan"].push_back(
-        {.sai_action = P4_ACTION_SET_INNER_VLAN_PRIORITY, .p4_param_name = "vlan_pri"});
+        {.sai_action = P4_ACTION_SET_INNER_VLAN_PRIORITY, .p4_param_name = "vlan_pri",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_inner_vlan"].push_back(
-        {.sai_action = P4_ACTION_SET_INNER_VLAN_ID, .p4_param_name = "vlan_id"});
+        {.sai_action = P4_ACTION_SET_INNER_VLAN_ID,
+         .p4_param_name = "vlan_id",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_outer_vlan"].push_back(
-        {.sai_action = P4_ACTION_SET_OUTER_VLAN_PRIORITY, .p4_param_name = "vlan_pri"});
+        {.sai_action = P4_ACTION_SET_OUTER_VLAN_PRIORITY, .p4_param_name = "vlan_pri",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_outer_vlan"].push_back(
-        {.sai_action = P4_ACTION_SET_OUTER_VLAN_ID, .p4_param_name = "vlan_id"});
+        {.sai_action = P4_ACTION_SET_OUTER_VLAN_ID,
+         .p4_param_name = "vlan_id",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_l4_src_port"].push_back(
-        {.sai_action = P4_ACTION_SET_L4_SRC_PORT, .p4_param_name = "port"});
+        {.sai_action = P4_ACTION_SET_L4_SRC_PORT,
+         .p4_param_name = "port",
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["set_l4_dst_port"].push_back(
-        {.sai_action = P4_ACTION_SET_L4_DST_PORT, .p4_param_name = "port"});
-    app_db_entry.action_field_lookup["flood"].push_back({.sai_action = P4_ACTION_FLOOD, .p4_param_name = EMPTY_STRING});
+        {.sai_action = P4_ACTION_SET_L4_DST_PORT,
+         .p4_param_name = "port",
+         .sai_object_type = EMPTY_STRING});
+    app_db_entry.action_field_lookup["flood"].push_back({.sai_action = P4_ACTION_FLOOD,
+         .p4_param_name = EMPTY_STRING,
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["decrement_ttl"].push_back(
-        {.sai_action = P4_ACTION_DECREMENT_TTL, .p4_param_name = EMPTY_STRING});
+        {.sai_action = P4_ACTION_DECREMENT_TTL,
+         .p4_param_name = EMPTY_STRING,
+         .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["do_not_learn"].push_back(
-        {.sai_action = P4_ACTION_SET_DO_NOT_LEARN, .p4_param_name = EMPTY_STRING});
-    app_db_entry.action_field_lookup["set_vrf"].push_back({.sai_action = P4_ACTION_SET_VRF, .p4_param_name = "vrf"});
+        {.sai_action = P4_ACTION_SET_DO_NOT_LEARN, .p4_param_name = EMPTY_STRING,
+         .sai_object_type = EMPTY_STRING});
+    app_db_entry.action_field_lookup["set_vrf"].push_back({.sai_action = P4_ACTION_SET_VRF,
+         .p4_param_name = "vrf",
+         .sai_object_type = EMPTY_STRING});
+    app_db_entry.action_field_lookup["set_metadata"].push_back(
+      {.sai_action = P4_ACTION_SET_ACL_META_DATA,
+       .p4_param_name = "acl_metadata",
+       .sai_object_type = EMPTY_STRING});
     app_db_entry.action_field_lookup["qos_queue"].push_back(
-        {.sai_action = P4_ACTION_SET_QOS_QUEUE, .p4_param_name = "cpu_queue"});
+        {.sai_action = P4_ACTION_SET_QOS_QUEUE,
+         .p4_param_name = "cpu_queue",
+         .sai_object_type = EMPTY_STRING});
 
+
+    // action/acl_rate_limit_copy = [
+    //   {"action":"SAI_PACKET_ACTION_FORWARD","packet_color":"SAI_PACKET_COLOR_GREEN"},
+    //   {"action":"SAI_PACKET_ACTION_COPY_CANCEL","packet_color":"SAI_PACKET_COLOR_RED"},
+    //   {"action":"QOS_QUEUE","param":"qos_queue"}
+    // ]
+
+    app_db_entry.packet_action_color_lookup["acl_rate_limit_copy"].push_back(
+      {.packet_action = P4_PACKET_ACTION_FORWARD,
+       .packet_color = P4_PACKET_COLOR_GREEN});
+  app_db_entry.packet_action_color_lookup["acl_rate_limit_copy"].push_back(
+      {.packet_action = P4_PACKET_ACTION_COPY_CANCEL,
+       .packet_color = P4_PACKET_COLOR_RED});
+  app_db_entry.action_field_lookup["acl_rate_limit_copy"].push_back(
+      {.sai_action = P4_ACTION_SET_QOS_QUEUE,
+       .p4_param_name = "qos_queue",
+       .sai_object_type = EMPTY_STRING});
+
+
+    
     //   "action/acl_trap" = [
     //     {"action": "SAI_PACKET_ACTION_TRAP", "packet_color":
     //     "SAI_PACKET_COLOR_GREEN"},
-    //     {"action": "SAI_PACKET_ACTION_DROP", "packet_color":
-    //     "SAI_PACKET_COLOR_YELLOW"},
     //     {"action": "SAI_PACKET_ACTION_DROP", "packet_color":
     //     "SAI_PACKET_COLOR_RED"},
     //     {"action": "QOS_QUEUE", "param": "queue"}
     //   ]
     app_db_entry.action_field_lookup["acl_trap"].push_back(
-        {.sai_action = P4_ACTION_SET_QOS_QUEUE, .p4_param_name = "queue"});
-    app_db_entry.packet_action_color_lookup["acl_trap"].push_back(
+        {.sai_action = P4_ACTION_SET_QOS_QUEUE,
+         .p4_param_name = "queue",
+         .sai_object_type = EMPTY_STRING});
+  app_db_entry.packet_action_color_lookup["acl_trap"].push_back(
         {.packet_action = P4_PACKET_ACTION_PUNT, .packet_color = P4_PACKET_COLOR_GREEN});
-    app_db_entry.packet_action_color_lookup["acl_trap"].push_back(
-        {.packet_action = P4_PACKET_ACTION_DROP, .packet_color = P4_PACKET_COLOR_YELLOW});
     app_db_entry.packet_action_color_lookup["acl_trap"].push_back(
         {.packet_action = P4_PACKET_ACTION_DROP, .packet_color = P4_PACKET_COLOR_RED});
     return app_db_entry;
@@ -736,8 +820,6 @@ std::vector<swss::FieldValueTuple> getDefaultRuleFieldValueTuples()
     attributes.push_back(swss::FieldValueTuple{"param/traffic_class", "0x20"});
     attributes.push_back(swss::FieldValueTuple{"meter/cir", "80"});
     attributes.push_back(swss::FieldValueTuple{"meter/cburst", "80"});
-    attributes.push_back(swss::FieldValueTuple{"meter/pir", "200"});
-    attributes.push_back(swss::FieldValueTuple{"meter/pburst", "200"});
     attributes.push_back(swss::FieldValueTuple{"controller_metadata", "..."});
     return attributes;
 }
@@ -766,8 +848,6 @@ P4AclRuleAppDbEntry getDefaultAclRuleAppDbEntryWithoutAction()
     app_db_entry.meter.enabled = true;
     app_db_entry.meter.cir = 80;
     app_db_entry.meter.cburst = 80;
-    app_db_entry.meter.pir = 200;
-    app_db_entry.meter.pburst = 200;
     return app_db_entry;
 }
 
@@ -815,6 +895,7 @@ class AclManagerTest : public ::testing::Test
         delete gP4Orch;
         delete copp_orch_;
         delete gSwitchOrch;
+        gMockResponsePublisher.reset();
     }
 
     void setUpMockApi()
@@ -939,10 +1020,11 @@ class AclManagerTest : public ::testing::Test
                                                          kAclGroupLookupOid, std::placeholders::_1))))
             .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
         std::vector<std::string> p4_tables;
-        gP4Orch = new P4Orch(gAppDb, p4_tables, gVrfOrch, copp_orch_);
+        gP4Orch = new P4Orch(gAppDb, p4_tables, nullptr, gVrfOrch, copp_orch_);
         acl_table_manager_ = gP4Orch->getAclTableManager();
         acl_rule_manager_ = gP4Orch->getAclRuleManager();
         p4_oid_mapper_ = acl_table_manager_->m_p4OidMapper;
+        gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
     }
 
     void AddDefaultUserTrapsSaiCalls(sai_object_id_t *user_defined_trap_oid)
@@ -977,10 +1059,14 @@ class AclManagerTest : public ::testing::Test
             IsExpectedAclTableDefinitionMapping(*GetAclTable(app_db_entry.acl_table_name), app_db_entry));
     }
 
-    void DrainTableTuples()
-    {
-        acl_table_manager_->drain();
+    ReturnCode DrainTableTuples(bool failure_before) {
+      if (failure_before) {
+        acl_table_manager_->drainWithNotExecuted();
+        return ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
+      }
+      return acl_table_manager_->drain();
     }
+
     void EnqueueTableTuple(const swss::KeyOpFieldsValuesTuple &entry)
     {
         acl_table_manager_->enqueue(APP_P4RT_ACL_TABLE_DEFINITION_NAME, entry);
@@ -990,10 +1076,14 @@ class AclManagerTest : public ::testing::Test
         return acl_table_manager_->verifyState(key, tuple);
     }
 
-    void DrainRuleTuples()
-    {
-        acl_rule_manager_->drain();
+    ReturnCode DrainRuleTuples(bool failure_before) {
+      if (failure_before) {
+        acl_rule_manager_->drainWithNotExecuted();
+        return ReturnCode(StatusCode::SWSS_RC_NOT_EXECUTED);
+      }
+      return acl_rule_manager_->drain();
     }
+
     void EnqueueRuleTuple(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry)
     {
         acl_rule_manager_->enqueue(table_name, entry);
@@ -1041,7 +1131,7 @@ class AclManagerTest : public ::testing::Test
         return acl_rule_manager_->processAddRuleRequest(acl_rule_key, app_db_entry);
     }
 
-    ReturnCode ProcessUpdateRuleRequest(const P4AclRuleAppDbEntry &app_db_entry, const P4AclRule &old_acl_rule)
+    ReturnCode ProcessUpdateRuleRequest(const P4AclRuleAppDbEntry &app_db_entry, P4AclRule &old_acl_rule)
     {
         return acl_rule_manager_->processUpdateRuleRequest(app_db_entry, old_acl_rule);
     }
@@ -1067,6 +1157,7 @@ class AclManagerTest : public ::testing::Test
     StrictMock<MockSaiHostif> mock_sai_hostif_;
     StrictMock<MockSaiSwitch> mock_sai_switch_;
     StrictMock<MockSaiUdf> mock_sai_udf_;
+    // StrictMock<MockResponsePublisher> *gMockResponsePublisher;
     CoppOrch *copp_orch_;
     P4OidMapper *p4_oid_mapper_;
     p4orch::AclTableManager *acl_table_manager_;
@@ -1093,7 +1184,12 @@ TEST_F(AclManagerTest, DrainTableTuplesToProcessSetDelRequestSucceeds)
         .WillOnce(DoAll(SetArgPointee<0>(kUdfGroupOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kUdfOid1), Return(SAI_STATUS_SUCCESS)));
-    DrainTableTuples();
+    EXPECT_CALL(*gMockResponsePublisher,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName),
+                        Eq(getDefaultTableDefFieldValueTuples()),
+                        Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              DrainTableTuples(/*failure_before=*/false));
     EXPECT_NE(nullptr, GetAclTable(kAclIngressTableName));
 
     // Drain table tuples to process DEL request
@@ -1103,8 +1199,100 @@ TEST_F(AclManagerTest, DrainTableTuplesToProcessSetDelRequestSucceeds)
     EXPECT_CALL(mock_sai_udf_, remove_udf_group(Eq(kUdfGroupOid1))).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_udf_, remove_udf(_)).WillOnce(Return(SAI_STATUS_SUCCESS));
     EnqueueTableTuple(swss::KeyOpFieldsValuesTuple({p4rtAclTableName, DEL_COMMAND, {}}));
-    DrainTableTuples();
+    EXPECT_CALL(*gMockResponsePublisher,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName),
+                        Eq(std::vector<swss::FieldValueTuple>{}),
+                        Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              DrainTableTuples(/*failure_before=*/false));
     EXPECT_EQ(nullptr, GetAclTable(kAclIngressTableName));
+}
+
+TEST_F(AclManagerTest, UpdateAclRuleWithAclMetadataChange)
+{
+    ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+
+    auto app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
+    const auto &acl_rule_key = KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
+    const auto &table_name_and_rule_key = concatTableNameAndRuleKey(kAclIngressTableName, acl_rule_key);
+    app_db_entry.action = "set_metadata";
+    app_db_entry.action_param_fvs["acl_metadata"] = "1";
+    // Install rule
+    EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+    auto *acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+    ASSERT_NE(nullptr, acl_rule);
+
+    // Set new metadata
+    app_db_entry.action_param_fvs["acl_metadata"] = "2";
+    // Update rule
+    EXPECT_CALL(mock_sai_acl_, set_acl_entry_attribute(Eq(kAclIngressRuleOid1), _))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessUpdateRuleRequest(app_db_entry, *acl_rule));
+    acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+    ASSERT_NE(nullptr, acl_rule);
+    // Check action field value
+    EXPECT_EQ(1, acl_rule->action_fvs.size());
+    EXPECT_EQ(2, acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA].aclaction.parameter.u8);
+    app_db_entry.action_param_fvs["acl_metadata"] = "2";
+}
+
+TEST_F(AclManagerTest, UpdateAclRuleWithL3MulticastActionChange) {
+    ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+    auto app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
+    const auto& acl_rule_key =
+        KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
+    // Set up an L3 multicast group mapping
+    const std::string multicast_group_id = "0x1";
+    const auto& l3_multicast_group_key =
+        KeyGenerator::generateL3MulticastGroupKey(multicast_group_id);
+    p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_IPMC_GROUP, l3_multicast_group_key,
+                           /*ipmc_group_oid=*/7);
+    app_db_entry.action = "redirect_ipmc";
+    app_db_entry.action_param_fvs["target"] = multicast_group_id;
+
+    // Install rule
+    EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
+        .WillOnce(
+            DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+    auto* acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+    ASSERT_NE(nullptr, acl_rule);
+    // Check action field value
+    EXPECT_EQ(/*ipmc_group_oid=*/7,
+              acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT]
+                  .aclaction.parameter.oid);
+
+    // Update rule
+    const std::string multicast_group_id2 = "0x2";
+    const auto& l3_multicast_group_key2 =
+        KeyGenerator::generateL3MulticastGroupKey(multicast_group_id2);
+    p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_IPMC_GROUP, l3_multicast_group_key2,
+                           /*ipmc_group_oid=*/8);
+    app_db_entry.action_param_fvs["target"] = multicast_group_id2;
+
+    EXPECT_CALL(mock_sai_acl_,
+                set_acl_entry_attribute(Eq(kAclIngressRuleOid1), _))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              ProcessUpdateRuleRequest(app_db_entry, *acl_rule));
+    acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+    ASSERT_NE(nullptr, acl_rule);
+    // Check action field value
+    EXPECT_EQ(1, acl_rule->action_fvs.size());
+    EXPECT_EQ(/*ipmc_group_oid=*/8,
+              acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT]
+                  .aclaction.parameter.oid);
 }
 
 TEST_F(AclManagerTest, DrainTableTuplesToProcessUpdateRequestExpectFails)
@@ -1129,14 +1317,24 @@ TEST_F(AclManagerTest, DrainTableTuplesToProcessUpdateRequestExpectFails)
     EXPECT_CALL(mock_sai_udf_, create_udf(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kUdfOid1), Return(SAI_STATUS_SUCCESS)));
 
-    DrainTableTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              DrainTableTuples(/*failure_before=*/false));
     EXPECT_NE(nullptr, GetAclTable(kAclIngressTableName));
 
     // Drain table tuples to process SET request, try to update table priority
     // to 100: should fail to update.
     attributes.push_back(swss::FieldValueTuple{kPriority, "100"});
     EnqueueTableTuple(swss::KeyOpFieldsValuesTuple({p4rtAclTableName, SET_COMMAND, attributes}));
-    DrainTableTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_UNIMPLEMENTED), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_UNIMPLEMENTED,
+              DrainTableTuples(/*failure_before=*/false));
     EXPECT_EQ(234, GetAclTable(kAclIngressTableName)->priority);
 }
 
@@ -1147,13 +1345,23 @@ TEST_F(AclManagerTest, DrainTableTuplesWithInvalidTableNameOpsFails)
         swss::KeyOpFieldsValuesTuple({p4rtAclTableName, SET_COMMAND, getDefaultTableDefFieldValueTuples()}));
     // Drain table tuples to process SET request on invalid ACL definition table
     // name: "UNDEFINED"
-    DrainTableTuples();
+    EXPECT_CALL(*gMockResponsePublisher,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName),
+                        Eq(getDefaultTableDefFieldValueTuples()),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              DrainTableTuples(/*failure_before=*/false));
     EXPECT_EQ(nullptr, GetAclTable(kAclIngressTableName));
 
     p4rtAclTableName = std::string(APP_P4RT_ACL_TABLE_DEFINITION_NAME) + kTableKeyDelimiter + kAclIngressTableName;
     EnqueueTableTuple(swss::KeyOpFieldsValuesTuple({p4rtAclTableName, "UPDATE", getDefaultTableDefFieldValueTuples()}));
     // Drain table tuples to process invalid operation: "UPDATE"
-    DrainTableTuples();
+    EXPECT_CALL(*gMockResponsePublisher,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName),
+                        Eq(getDefaultTableDefFieldValueTuples()),
+                        Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              DrainTableTuples(/*failure_before=*/false));
     EXPECT_EQ(nullptr, GetAclTable(kAclIngressTableName));
 }
 
@@ -1167,7 +1375,12 @@ TEST_F(AclManagerTest, DrainTableTuplesWithInvalidFieldFails)
     attributes.push_back(swss::FieldValueTuple{"undefined", "undefined"});
     EnqueueTableTuple(swss::KeyOpFieldsValuesTuple({p4rtAclTableName, SET_COMMAND, attributes}));
     // Drain table tuples to process SET request
-    DrainTableTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              DrainTableTuples(/*failure_before=*/false));
     EXPECT_EQ(nullptr, GetAclTable(kAclIngressTableName));
 
     // Invalid attribute field
@@ -1175,7 +1388,12 @@ TEST_F(AclManagerTest, DrainTableTuplesWithInvalidFieldFails)
     attributes.push_back(swss::FieldValueTuple{"undefined/undefined", "undefined"});
     EnqueueTableTuple(swss::KeyOpFieldsValuesTuple({p4rtAclTableName, SET_COMMAND, attributes}));
     // Drain table tuples to process SET request
-    DrainTableTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              DrainTableTuples(/*failure_before=*/false));
     EXPECT_EQ(nullptr, GetAclTable(kAclIngressTableName));
 
     // Invalid meter unit value
@@ -1183,7 +1401,12 @@ TEST_F(AclManagerTest, DrainTableTuplesWithInvalidFieldFails)
     attributes.push_back(swss::FieldValueTuple{"meter/unit", "undefined"});
     EnqueueTableTuple(swss::KeyOpFieldsValuesTuple({p4rtAclTableName, SET_COMMAND, attributes}));
     // Drain table tuples to process SET request
-    DrainTableTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              DrainTableTuples(/*failure_before=*/false));
     EXPECT_EQ(nullptr, GetAclTable(kAclIngressTableName));
 
     // Invalid counter unit value
@@ -1191,7 +1414,12 @@ TEST_F(AclManagerTest, DrainTableTuplesWithInvalidFieldFails)
     attributes.push_back(swss::FieldValueTuple{"counter/unit", "undefined"});
     EnqueueTableTuple(swss::KeyOpFieldsValuesTuple({p4rtAclTableName, SET_COMMAND, attributes}));
     // Drain table tuples to process SET request
-    DrainTableTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              DrainTableTuples(/*failure_before=*/false));
     EXPECT_EQ(nullptr, GetAclTable(kAclIngressTableName));
 }
 
@@ -1276,11 +1504,6 @@ TEST_F(AclManagerTest, DISABLED_CreatePuntTableFailsWhenUserTrapGroupOrHostifNot
     setUpSwitchOrch();
     // Update p4orch to use new copp orch
     setUpP4Orch();
-    // Fail to create ACL table because the trap group is absent
-    EXPECT_EQ("Trap group was not found given trap group name: " + std::string(GENL_PACKET_TRAP_GROUP_NAME_PREFIX) +
-                  std::to_string(skip_cpu_queue),
-              ProcessAddTableRequest(app_db_entry).message());
-    EXPECT_EQ(nullptr, GetAclTable(app_db_entry.acl_table_name));
 
     // Create the trap group for CPU queue 1 without host interface(genl
     // attributes)
@@ -1315,6 +1538,16 @@ TEST_F(AclManagerTest, CreateIngressPuntTableFailsWhenCapabilityExceeds)
     EXPECT_CALL(mock_sai_udf_, remove_udf_group(Eq(kUdfGroupOid1))).Times(3).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_udf_, remove_udf(_)).Times(3).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
     EXPECT_EQ(StatusCode::SWSS_RC_FULL, ProcessAddTableRequest(app_db_entry));
+}
+
+TEST_F(AclManagerTest, CreateIngressTableFailsWhenRedirectObjectTypeUnknown) {
+    auto app_db_entry = getDefaultAclTableDefAppDbEntry();
+    app_db_entry.action_field_lookup["redirect_ipmc_error"].push_back(
+        {.sai_action = P4_ACTION_REDIRECT,
+         .p4_param_name = "target",
+         .sai_object_type = "SAI_OBJECT_TYPE_UNKNOWN"});
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              ProcessAddTableRequest(app_db_entry));
 }
 
 TEST_F(AclManagerTest, CreateIngressPuntTableFailsWhenFailedToCreateTableGroupMember)
@@ -1787,7 +2020,9 @@ TEST_F(AclManagerTest, CreatePuntTableWithInvalidActionFieldFails)
 
     // Invalid action field
     app_db_entry.action_field_lookup["random_action"].push_back(
-        {.sai_action = "RANDOM_ACTION", .p4_param_name = "DUMMY"});
+        {.sai_action = "RANDOM_ACTION",
+         .p4_param_name = "DUMMY",
+         .sai_object_type = EMPTY_STRING});
 
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessAddTableRequest(app_db_entry));
     EXPECT_EQ(nullptr, GetAclTable(app_db_entry.acl_table_name));
@@ -1829,8 +2064,19 @@ TEST_F(AclManagerTest, CreateAclGroupMemberFailsWhenAclGroupWasNotFound)
 
 TEST_F(AclManagerTest, DeserializeValidAclTableDefAppDbSucceeds)
 {
+    auto attrs = getDefaultTableDefFieldValueTuples();
+    attrs.push_back(swss::FieldValueTuple{
+        "action/redirect_to_ipmc",
+        "[{\"action\":\"SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT\","
+        "\"param\":\"multicast_group_id\",\"object_type\":"
+        "\"SAI_OBJECT_TYPE_IPMC_GROUP\"}]"});
+    attrs.push_back(swss::FieldValueTuple{
+        "action/redirect_to_l2mc",
+        "[{\"action\":\"SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT\","
+        "\"param\":\"multicast_group_id\",\"object_type\":"
+        "\"SAI_OBJECT_TYPE_L2MC_GROUP\"}]"});
     auto app_db_entry_or =
-        DeserializeAclTableDefinitionAppDbEntry(kAclIngressTableName, getDefaultTableDefFieldValueTuples());
+        DeserializeAclTableDefinitionAppDbEntry(kAclIngressTableName, attrs);
     EXPECT_TRUE(app_db_entry_or.ok());
     auto &app_db_entry = *app_db_entry_or;
     EXPECT_EQ(kAclIngressTableName, app_db_entry.acl_table_name);
@@ -1865,6 +2111,14 @@ TEST_F(AclManagerTest, DeserializeValidAclTableDefAppDbSucceeds)
     EXPECT_EQ(P4_PACKET_ACTION_PUNT,
               app_db_entry.packet_action_color_lookup.find("punt_and_set_tc")->second[0].packet_action);
     EXPECT_EQ(EMPTY_STRING, app_db_entry.packet_action_color_lookup.find("punt_and_set_tc")->second[0].packet_color);
+    EXPECT_EQ("SAI_OBJECT_TYPE_IPMC_GROUP",
+              app_db_entry.action_field_lookup.find("redirect_to_ipmc")
+                  ->second[0]
+                  .sai_object_type);
+    EXPECT_EQ("SAI_OBJECT_TYPE_L2MC_GROUP",
+              app_db_entry.action_field_lookup.find("redirect_to_l2mc")
+                  ->second[0]
+                  .sai_object_type);
 }
 
 TEST_F(AclManagerTest, DeserializeAclTableDefAppDbWithInvalidJsonFails)
@@ -1889,6 +2143,16 @@ TEST_F(AclManagerTest, DeserializeAclTableDefAppDbWithInvalidJsonFails)
     attributes.pop_back();
     attributes.push_back(swss::FieldValueTuple{"action/drop_and_set_tc", "[\"action\":\"SAI_PACKET_ACTION_COPY\"]"});
     EXPECT_FALSE(DeserializeAclTableDefinitionAppDbEntry(acl_table_name, attributes).ok());
+
+    // Invalid object type.
+    attributes.pop_back();
+    attributes.push_back(swss::FieldValueTuple{
+        "action/redirect_to_ipmc",
+        "[{\"action\":\"SAI_ACL_ENTRY_ATTR_ACTION_"
+        "REDIRECT\",\"param\":\"multicast_group_id\",\"object_type\":"
+        "\"SAI_OBJECT_TYPE_UNKNOWN\"}]"});
+    EXPECT_FALSE(
+        DeserializeAclTableDefinitionAppDbEntry(acl_table_name, attributes).ok());
 }
 
 TEST_F(AclManagerTest, DeserializeAclTableDefAppDbWithInvalidSizeFails)
@@ -2333,7 +2597,13 @@ TEST_F(AclManagerTest, DrainRuleTuplesToProcessSetRequestSucceeds)
     EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
-    DrainRuleTuples();
+    EXPECT_CALL(*gMockResponsePublisher,
+                publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key),
+                        Eq(getDefaultRuleFieldValueTuples()),
+                        Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)))
+        .Times(2);
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              DrainRuleTuples(/*failure_before=*/false));
 
     const auto &acl_rule_key = "match/ether_type=0x0800:match/ipv6_dst=fdf8:f53b:82e4::53 & "
                                "fdf8:f53b:82e4::53:priority=15";
@@ -2360,7 +2630,12 @@ TEST_F(AclManagerTest, DrainRuleTuplesToProcessSetDelRequestSucceeds)
         .WillOnce(DoAll(SetArgPointee<0>(kAclCounterOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
-    DrainRuleTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              DrainRuleTuples(/*failure_before=*/false));
     // Populate counter stats
     EXPECT_CALL(mock_sai_policer_, get_policer_stats(Eq(kAclMeterOid1), _, _, _))
         .WillOnce(DoAll(Invoke([](sai_object_id_t policer_id, uint32_t number_of_counters,
@@ -2394,7 +2669,12 @@ TEST_F(AclManagerTest, DrainRuleTuplesToProcessSetDelRequestSucceeds)
     EXPECT_CALL(mock_sai_acl_, remove_acl_entry(Eq(kAclIngressRuleOid1))).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_acl_, remove_acl_counter(_)).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_policer_, remove_policer(Eq(kAclMeterOid1))).WillOnce(Return(SAI_STATUS_SUCCESS));
-    DrainRuleTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              DrainRuleTuples(/*failure_before=*/false));
     EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
 }
 
@@ -2409,7 +2689,12 @@ TEST_F(AclManagerTest, DrainRuleTuplesToProcessSetRequestInvalidTableNameRuleKey
                      swss::KeyOpFieldsValuesTuple({rule_tuple_key, SET_COMMAND, attributes}));
     // Drain rule tuple to process SET request with invalid ACL table name:
     // "INVALID_TABLE_NAME"
-    DrainRuleTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_NOT_FOUND), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND,
+              DrainRuleTuples(/*failure_before=*/false));
 
     auto acl_rule_key = "match/ether_type=0x0800:match/ipv6_dst=fdf8:f53b:82e4::53 & "
                         "fdf8:f53b:82e4::53:priority=15";
@@ -2426,7 +2711,12 @@ TEST_F(AclManagerTest, DrainRuleTuplesToProcessSetRequestInvalidTableNameRuleKey
                      swss::KeyOpFieldsValuesTuple({rule_tuple_key, SET_COMMAND, attributes}));
     // Drain rule tuple to process SET request without priority field in rule
     // JSON key
-    DrainRuleTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              DrainRuleTuples(/*failure_before=*/false));
     EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
 }
 
@@ -2451,8 +2741,6 @@ TEST_F(AclManagerTest, DeserializeAclRuleAppDbWithInvalidMeterFieldFails)
     attributes.push_back(swss::FieldValueTuple{kAction, "copy_and_set_tc"});
     attributes.push_back(swss::FieldValueTuple{"param/traffic_class", "0x20"});
     attributes.push_back(swss::FieldValueTuple{"meter/cburst", "80"});
-    attributes.push_back(swss::FieldValueTuple{"meter/pir", "200"});
-    attributes.push_back(swss::FieldValueTuple{"meter/pburst", "200"});
     const auto &acl_rule_json_key = "{\"match/ether_type\":\"0x0800\",\"match/"
                                     "ipv6_dst\":\"fdf8:f53b:82e4::53 & "
                                     "fdf8:f53b:82e4::53\",\"priority\":15}";
@@ -2475,6 +2763,16 @@ TEST_F(AclManagerTest, DeserializeAclRuleAppDbWithInvalidMeterFieldFails)
     attributes.pop_back();
     attributes.push_back(swss::FieldValueTuple{"undefined", "80"});
     EXPECT_FALSE(DeserializeAclRuleAppDbEntry(acl_table_name, acl_rule_json_key, attributes).ok());
+
+    // ACL rule has invalid cir value in meter field
+    attributes.pop_back();
+    attributes.push_back(swss::FieldValueTuple{"meter/cir", "18446744073709551616"});
+    EXPECT_FALSE(DeserializeAclRuleAppDbEntry(acl_table_name, acl_rule_json_key, attributes).ok());
+
+    // ACL rule has max uint64 cir value in meter field
+    attributes.pop_back();
+    attributes.push_back(swss::FieldValueTuple{"meter/cir", "18446744073709551615"});
+    EXPECT_TRUE(DeserializeAclRuleAppDbEntry(acl_table_name, acl_rule_json_key, attributes).ok());
 }
 
 TEST_F(AclManagerTest, DrainRuleTuplesWithInvalidCommand)
@@ -2487,7 +2785,12 @@ TEST_F(AclManagerTest, DrainRuleTuplesWithInvalidCommand)
     const auto &rule_tuple_key = std::string(kAclIngressTableName) + kTableKeyDelimiter + acl_rule_json_key;
     EnqueueRuleTuple(std::string(kAclIngressTableName),
                      swss::KeyOpFieldsValuesTuple({rule_tuple_key, "INVALID_COMMAND", attributes}));
-    DrainRuleTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              DrainRuleTuples(/*failure_before=*/false));
     const auto &acl_rule_key = "match/ether_type=0x0800:match/ipv6_dst=fdf8:f53b:82e4::53 & "
                                "fdf8:f53b:82e4::53:priority=15";
     EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
@@ -2619,6 +2922,14 @@ TEST_F(AclManagerTest, CreateAclRuleWithInvalidSaiMatchFails)
     app_db_entry.match_fvs.erase("arp_tpa");
     acl_table->udf_group_attr_index_lookup = saved_udf_group_attr_index_lookup;
 
+    // ACL rule has invalid VRF ID.
+    app_db_entry.match_fvs["vrf_id"] = "invalid";
+    acl_rule_key =
+        KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
+    EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND,
+              ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+    app_db_entry.match_fvs.erase("vrf_id");
+
     // ACL rule has undefined match field
     app_db_entry.match_fvs["undefined"] = "1";
     acl_rule_key = KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
@@ -2698,6 +3009,12 @@ TEST_F(AclManagerTest, AclRuleWithValidMatchFields)
     app_db_entry.match_fvs["inner_vlan_pri"] = "200";
     app_db_entry.match_fvs["inner_vlan_id"] = "200";
     app_db_entry.match_fvs["inner_vlan_cfi"] = "200";
+    app_db_entry.match_fvs["vrf_id"] = gVrfName;
+    app_db_entry.match_fvs["ipmc_table_hit"] = "0x1";
+    app_db_entry.match_fvs["vlan_user_meta"] = "0x100 & 0x1F0";
+    app_db_entry.match_fvs["port_user_meta"] = "0x0044";
+    app_db_entry.match_fvs["route_table_hit"] = "0x1";
+    app_db_entry.match_fvs["outer_tpid"] = "0x9900";
 
     const auto &acl_rule_key = KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
 
@@ -2723,33 +3040,140 @@ TEST_F(AclManagerTest, AclRuleWithValidMatchFields)
     EXPECT_EQ(0x56789abcdef, acl_rule->out_ports_oids[1]);
 
     // Verify SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN
-    EXPECT_EQ(2, acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.data.u8list.count);
-    EXPECT_EQ(acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].data[0],
-              acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.data.u8list.list[0]);
-    EXPECT_EQ(acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].data[1],
-              acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.data.u8list.list[1]);
-    EXPECT_EQ(acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].mask[0],
-              acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.mask.u8list.list[0]);
-    EXPECT_EQ(acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].mask[1],
-              acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.mask.u8list.list[1]);
-    EXPECT_EQ(0xff, acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].data[0]);
-    EXPECT_EQ(0x11, acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].data[1]);
-    EXPECT_EQ(0xff, acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].mask[0]);
-    EXPECT_EQ(0xff, acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].mask[1]);
+    EXPECT_EQ(
+        2,
+        acl_rule
+            ->match_fvs[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .aclfield.data.u8list.count);
+    EXPECT_EQ(
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .data[0],
+        acl_rule
+            ->match_fvs[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .aclfield.data.u8list.list[0]);
+    EXPECT_EQ(
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .data[1],
+        acl_rule
+            ->match_fvs[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .aclfield.data.u8list.list[1]);
+    EXPECT_EQ(
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .mask[0],
+        acl_rule
+            ->match_fvs[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .aclfield.mask.u8list.list[0]);
+    EXPECT_EQ(
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .mask[1],
+        acl_rule
+            ->match_fvs[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .aclfield.mask.u8list.list[1]);
+    EXPECT_EQ(
+        0xff,
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .data[0]);
+    EXPECT_EQ(
+        0x11,
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .data[1]);
+    EXPECT_EQ(
+        0xff,
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .mask[0]);
+    EXPECT_EQ(
+        0xff,
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .mask[1]);
+
     // Verify SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1
-    EXPECT_EQ(2, acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].aclfield.data.objlist.count);
-    EXPECT_EQ(acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].data[0],
-              acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].aclfield.data.u8list.list[0]);
-    EXPECT_EQ(acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].data[1],
-              acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].aclfield.data.u8list.list[1]);
-    EXPECT_EQ(acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].mask[0],
-              acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].aclfield.mask.u8list.list[0]);
-    EXPECT_EQ(acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].mask[1],
-              acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].aclfield.mask.u8list.list[1]);
-    EXPECT_EQ(0x22, acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].data[0]);
-    EXPECT_EQ(0x31, acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].data[1]);
-    EXPECT_EQ(0xff, acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].mask[0]);
-    EXPECT_EQ(0xff, acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1].mask[1]);
+    EXPECT_EQ(
+        2,
+        acl_rule
+            ->match_fvs[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .aclfield.data.objlist.count);
+    EXPECT_EQ(
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .data[0],
+        acl_rule
+            ->match_fvs[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .aclfield.data.u8list.list[0]);
+    EXPECT_EQ(
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .data[1],
+        acl_rule
+            ->match_fvs[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .aclfield.data.u8list.list[1]);
+    EXPECT_EQ(
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .mask[0],
+        acl_rule
+            ->match_fvs[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .aclfield.mask.u8list.list[0]);
+    EXPECT_EQ(
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .mask[1],
+        acl_rule
+            ->match_fvs[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .aclfield.mask.u8list.list[1]);
+    EXPECT_EQ(
+        0x22,
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .data[0]);
+    EXPECT_EQ(
+        0x31,
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .data[1]);
+    EXPECT_EQ(
+        0xff,
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .mask[0]);
+    EXPECT_EQ(
+        0xff,
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1)]
+            .mask[1]);
     EXPECT_EQ(0xaabbccdd, acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_IN_PORT].aclfield.data.oid);
     EXPECT_EQ(0x56789abcdff, acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORT].aclfield.data.oid);
     EXPECT_EQ(0x2, acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_TCP_FLAGS].aclfield.data.u8);
@@ -2794,6 +3218,34 @@ TEST_F(AclManagerTest, AclRuleWithValidMatchFields)
     EXPECT_EQ(SAI_ACL_IP_FRAG_HEAD, acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_FRAG].aclfield.data.u32);
     EXPECT_EQ(SAI_PACKET_VLAN_SINGLE_OUTER_TAG,
               acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_PACKET_VLAN].aclfield.data.u32);
+    EXPECT_EQ(
+        gVrfOid,
+        acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_VRF_ID].aclfield.data.oid);
+    EXPECT_EQ(true,
+              acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT]
+                  .aclfield.data.booldata);
+    EXPECT_EQ(0x100,
+            acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_VLAN_USER_META]
+                .aclfield.data.u32);
+    EXPECT_EQ(0x1F0,
+            acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_VLAN_USER_META]
+                .aclfield.mask.u32);
+    EXPECT_EQ(0x0044,
+            acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_PORT_USER_META]
+                .aclfield.data.u16);
+    EXPECT_EQ(0xFFFF,
+            acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_PORT_USER_META]
+                .aclfield.mask.u16);
+
+    EXPECT_EQ(true,
+              acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_ROUTE_NPU_META_DST_HIT]
+                  .aclfield.data.booldata);
+    EXPECT_EQ(0x9900,
+              acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_OUTER_TPID]
+                  .aclfield.data.u16);
+    EXPECT_EQ(0xFFFF,
+              acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_FIELD_OUTER_TPID]
+                  .aclfield.mask.u16);
 
     // Check action field value
     EXPECT_EQ(SAI_PACKET_ACTION_TRAP,
@@ -2836,10 +3288,12 @@ TEST_F(AclManagerTest, AclRuleWithColorPacketActionsButNoRateLimit)
         .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_policer_,
-                create_policer(_, Eq(gSwitchId), Eq(9),
-                               Truly(std::bind(MatchSaiPolicerAttribute, 9, SAI_METER_TYPE_PACKETS,
-                                               SAI_PACKET_ACTION_TRAP, SAI_PACKET_ACTION_DROP, SAI_PACKET_ACTION_DROP,
-                                               0x7fffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff, std::placeholders::_1))))
+              create_policer(
+                  _, Eq(gSwitchId), Eq(6),
+                  Truly(std::bind(MatchSaiPolicerAttributeInStormMode, 6,
+                                  SAI_METER_TYPE_BYTES, SAI_PACKET_ACTION_TRAP,
+                                  SAI_PACKET_ACTION_DROP, 0x7fffffff, 0x1000021,
+                                  std::placeholders::_1))))
         .WillOnce(DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddRuleRequest(acl_rule_key, app_db_entry));
     auto acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
@@ -2848,6 +3302,122 @@ TEST_F(AclManagerTest, AclRuleWithColorPacketActionsButNoRateLimit)
     EXPECT_EQ(gUserDefinedTrapStartOid + queue_num,
               acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID].aclaction.parameter.oid);
 }
+
+TEST_F(AclManagerTest, AclRuleWithColorPacketActionsButWithRateLimit) {
+  ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+
+  // Create app_db_entry with color packet action, but no rate limit attributes
+  P4AclRuleAppDbEntry app_db_entry;
+  app_db_entry.acl_table_name = kAclIngressTableName;
+  app_db_entry.priority = 100;
+  // ACL rule match fields
+  app_db_entry.match_fvs["ether_type"] = "0x0800";
+  app_db_entry.match_fvs["ipv6_dst"] = "fdf8:f53b:82e4::53";
+  app_db_entry.match_fvs["ether_dst"] = "AA:BB:CC:DD:EE:FF";
+  app_db_entry.match_fvs["ether_src"] = "AA:BB:CC:DD:EE:FF";
+  app_db_entry.match_fvs["ipv6_next_header"] = "1";
+  app_db_entry.match_fvs["src_ipv6_64bit"] = "fdf8:f53b:82e4::";
+  app_db_entry.match_fvs["arp_tpa"] = "0xff112231";
+  app_db_entry.match_fvs["udf2"] = "0x9876 & 0xAAAA";
+  app_db_entry.db_key =
+      "ACL_PUNT_TABLE:{\"match/ether_type\": \"0x0800\",\"match/ipv6_dst\": "
+      "\"fdf8:f53b:82e4::53\",\"match/ether_dst\": \"AA:BB:CC:DD:EE:FF\", "
+      "\"match/ether_src\": \"AA:BB:CC:DD:EE:FF\", \"match/ipv6_next_header\": "
+      "\"1\", \"match/src_ipv6_64bit\": "
+      "\"fdf8:f53b:82e4::\",\"match/arp_tpa\": \"0xff112231\",\"match/udf2\": "
+      "\"0x9876 & 0xAAAA\",\"priority\":100}";
+
+  const auto& acl_rule_key =
+      KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
+
+  // Set user defined trap for QOS_QUEUE, and color packet actions in meter
+  int queue_num = 8;
+  app_db_entry.action = "acl_rate_limit_copy";
+  app_db_entry.action_param_fvs["qos_queue"] = std::to_string(queue_num);
+  // Install rule
+  EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+
+  EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(
+      mock_sai_policer_,
+      create_policer(
+          _, Eq(gSwitchId), Eq(6),
+          Truly(std::bind(MatchSaiPolicerAttributeInStormMode, 6,
+                          SAI_METER_TYPE_BYTES, SAI_PACKET_ACTION_FORWARD,
+                          SAI_PACKET_ACTION_COPY_CANCEL, 0x7fffffff, 0x1000021,
+                          std::placeholders::_1))))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+  auto acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+  ASSERT_NE(nullptr, acl_rule);
+  // Check action field value
+  EXPECT_EQ(gUserDefinedTrapStartOid + queue_num - P4_CPU_QUEUE_MIN_NUM ,
+            acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID]
+                .aclaction.parameter.oid);
+}
+
+TEST_F(AclManagerTest, AclRuleWithMockedPacketAction) {
+  ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+  auto app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
+  const auto& acl_rule_key =
+      KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
+
+  // set packet action
+  app_db_entry.action = "set_packet_action";
+  app_db_entry.action_param_fvs["packet_action"] =
+      "SAI_PACKET_ACTION_COPY_CANCEL";
+
+  // Install rule
+  EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+  auto* acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+  ASSERT_NE(nullptr, acl_rule);
+
+  // Check action field value
+  EXPECT_EQ(SAI_PACKET_ACTION_COPY_CANCEL,
+            acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION]
+                .aclaction.parameter.s32);
+
+  // update packet action
+  app_db_entry.action_param_fvs["packet_action"] = "SAI_PACKET_ACTION_DENY";
+  EXPECT_CALL(mock_sai_acl_,
+              set_acl_entry_attribute(Eq(kAclIngressRuleOid1), _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ProcessUpdateRuleRequest(app_db_entry, *acl_rule));
+  acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+  ASSERT_NE(nullptr, acl_rule);
+
+  // Check action field value
+  EXPECT_EQ(SAI_PACKET_ACTION_DENY,
+            acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION]
+                .aclaction.parameter.s32);
+
+  // Remove rule
+  EXPECT_CALL(mock_sai_acl_, remove_acl_entry(Eq(kAclIngressRuleOid1)))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_acl_, remove_acl_counter(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_policer_, remove_policer(Eq(kAclMeterOid1)))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
+  EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
+}
+
 
 #pragma GCC diagnostic warning "-Wdisabled-optimization"
 
@@ -2900,6 +3470,37 @@ TEST_F(AclManagerTest, AclRuleWithValidAction)
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
     EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
 
+    // Repeat, redirect to port, but specify an object type.
+    app_db_entry.action = "redirect_port";
+    app_db_entry.action_param_fvs["target"] = "Ethernet7";
+    // Install rule
+    EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
+        .WillOnce(
+            DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+    acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+    ASSERT_NE(nullptr, acl_rule);
+    // Check action field value
+    EXPECT_EQ(/*port_oid=*/0x1234,
+              acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT]
+                  .aclaction.parameter.oid);
+    // Remove rule
+    EXPECT_CALL(mock_sai_acl_, remove_acl_entry(Eq(kAclIngressRuleOid1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_acl_, remove_acl_counter(_))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_policer_, remove_policer(Eq(kAclMeterOid1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
+    EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
+
     // Set up an next hop mapping
     const std::string next_hop_id = "ju1u32m1.atl11:qe-3/7";
     const auto &next_hop_key = KeyGenerator::generateNextHopKey(next_hop_id);
@@ -2923,6 +3524,109 @@ TEST_F(AclManagerTest, AclRuleWithValidAction)
     EXPECT_CALL(mock_sai_acl_, remove_acl_counter(_)).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_policer_, remove_policer(Eq(kAclMeterOid1))).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
+    EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
+
+    // Repeat next hop rule, but specify an object type.
+    app_db_entry.action = "redirect_next_hop";
+    app_db_entry.action_param_fvs["target"] = next_hop_id;
+    // Install rule
+    EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
+        .WillOnce(
+            DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+    acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+    ASSERT_NE(nullptr, acl_rule);
+    // Check action field value
+    EXPECT_EQ(/*next_hop_oid=*/1,
+              acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT]
+                  .aclaction.parameter.oid);
+    // Remove rule
+    EXPECT_CALL(mock_sai_acl_, remove_acl_entry(Eq(kAclIngressRuleOid1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_acl_, remove_acl_counter(_))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_policer_, remove_policer(Eq(kAclMeterOid1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
+    EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
+
+    // Set up an L3 multicast group mapping
+    const std::string multicast_group_id = "0x1";
+    const auto& l3_multicast_group_key =
+        KeyGenerator::generateL3MulticastGroupKey(multicast_group_id);
+    p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_IPMC_GROUP, l3_multicast_group_key,
+                           /*ipmc_group_oid=*/7);
+    app_db_entry.action = "redirect_ipmc";
+    app_db_entry.action_param_fvs["target"] = multicast_group_id;
+    // Install rule
+    EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
+        .WillOnce(
+            DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+    acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+    ASSERT_NE(nullptr, acl_rule);
+    // Check action field value
+    EXPECT_EQ(/*ipmc_group_oid=*/7,
+              acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT]
+                  .aclaction.parameter.oid);
+    // Remove rule
+    EXPECT_CALL(mock_sai_acl_, remove_acl_entry(Eq(kAclIngressRuleOid1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_acl_, remove_acl_counter(_))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_policer_, remove_policer(Eq(kAclMeterOid1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
+    EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
+
+    // Set up an L2 multicast group mapping
+    const std::string l2_multicast_group_id = "0x2";
+    const auto& l2_multicast_group_key =
+        KeyGenerator::generateL2MulticastGroupKey(l2_multicast_group_id);
+    p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_L2MC_GROUP, l2_multicast_group_key,
+                           /*l2mc_group_oid=*/9);
+    app_db_entry.action = "redirect_l2mc";
+    app_db_entry.action_param_fvs["target"] = l2_multicast_group_id;
+    // Install rule
+    EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
+        .WillOnce(
+            DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+    acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+    ASSERT_NE(nullptr, acl_rule);
+    // Check action field value
+    EXPECT_EQ(/*l2mc_group_oid=*/9,
+              acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT]
+                  .aclaction.parameter.oid);
+    // Remove rule
+    EXPECT_CALL(mock_sai_acl_, remove_acl_entry(Eq(kAclIngressRuleOid1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_acl_, remove_acl_counter(_))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_policer_, remove_policer(Eq(kAclMeterOid1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
     EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
 
     // Set endpoint Ip action
@@ -3234,6 +3938,38 @@ TEST_F(AclManagerTest, AclRuleWithVrfAction)
     EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
 }
 
+TEST_F(AclManagerTest,
+       AclRuleWithL3MulticastRedirectActionFailsWhenMulticastGroupNotFound) {
+    ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+    auto app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
+    const auto& acl_rule_key =
+        KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
+    // Set up an L3 multicast group mapping, but leave out fake OID mapping.
+    const std::string multicast_group_id = "0x1";
+    const auto& l3_multicast_group_key =
+        KeyGenerator::generateL3MulticastGroupKey(multicast_group_id);
+    app_db_entry.action = "redirect_ipmc";
+    app_db_entry.action_param_fvs["target"] = multicast_group_id;
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+}
+
+TEST_F(AclManagerTest,
+       AclRuleWithL2MulticastRedirectActionFailsWhenMulticastGroupNotFound) {
+    ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+    auto app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
+    const auto& acl_rule_key =
+        KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
+    // Set up an L2 multicast group mapping, but leave out fake OID mapping.
+    const std::string l2_multicast_group_id = "0x1";
+    const auto& l2_multicast_group_key =
+        KeyGenerator::generateL2MulticastGroupKey(l2_multicast_group_id);
+    app_db_entry.action = "redirect_l2mc";
+    app_db_entry.action_param_fvs["target"] = l2_multicast_group_id;
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+}
+
 TEST_F(AclManagerTest, AclRuleWithIpTypeBitEncoding)
 {
     ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
@@ -3474,11 +4210,9 @@ TEST_F(AclManagerTest, UpdateAclRuleWithActionMeterChange)
     app_db_entry.action_param_fvs["traffic_class"] = "2";
     app_db_entry.meter.cburst = 500;
     app_db_entry.meter.cir = 500;
-    app_db_entry.meter.pburst = 600;
-    app_db_entry.meter.pir = 600;
     // Update meter attribute for green packet action
     EXPECT_CALL(mock_sai_policer_, set_policer_attribute(Eq(kAclMeterOid1), _))
-        .Times(5)
+        .Times(3)
         .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_acl_, set_acl_entry_attribute(Eq(kAclIngressRuleOid1), _))
         .WillOnce(Return(SAI_STATUS_SUCCESS));
@@ -3495,8 +4229,6 @@ TEST_F(AclManagerTest, UpdateAclRuleWithActionMeterChange)
     EXPECT_EQ(SAI_PACKET_ACTION_COPY, acl_rule->meter.packet_color_actions[SAI_POLICER_ATTR_GREEN_PACKET_ACTION]);
     EXPECT_EQ(500, acl_rule->meter.cburst);
     EXPECT_EQ(500, acl_rule->meter.cir);
-    EXPECT_EQ(600, acl_rule->meter.pburst);
-    EXPECT_EQ(600, acl_rule->meter.pir);
     EXPECT_TRUE(p4_oid_mapper_->getOID(SAI_OBJECT_TYPE_POLICER, table_name_and_rule_key, &meter_oid));
     EXPECT_EQ(kAclMeterOid1, meter_oid);
     EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_POLICER, table_name_and_rule_key, &ref_cnt));
@@ -3506,7 +4238,7 @@ TEST_F(AclManagerTest, UpdateAclRuleWithActionMeterChange)
     app_db_entry.meter.enabled = false;
     // Update meter attribute for green packet action
     EXPECT_CALL(mock_sai_policer_, set_policer_attribute(Eq(kAclMeterOid1), _))
-        .Times(4)
+        .Times(2)
         .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessUpdateRuleRequest(app_db_entry, *acl_rule));
     acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
@@ -3520,10 +4252,8 @@ TEST_F(AclManagerTest, UpdateAclRuleWithActionMeterChange)
     EXPECT_TRUE(acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_TC].aclaction.enable);
     EXPECT_TRUE(p4_oid_mapper_->getOID(SAI_OBJECT_TYPE_POLICER, table_name_and_rule_key, &meter_oid));
     EXPECT_TRUE(acl_rule->meter.enabled);
-    EXPECT_EQ(0x7fffffff, acl_rule->meter.cburst);
+    EXPECT_EQ(0x1000021, acl_rule->meter.cburst);
     EXPECT_EQ(0x7fffffff, acl_rule->meter.cir);
-    EXPECT_EQ(0x7fffffff, acl_rule->meter.pburst);
-    EXPECT_EQ(0x7fffffff, acl_rule->meter.pir);
 
     // Update meter: enable rate limiting and reset green packet action
     app_db_entry.action = "punt_and_set_tc";
@@ -3531,7 +4261,7 @@ TEST_F(AclManagerTest, UpdateAclRuleWithActionMeterChange)
     // Update meter and rule: reset color packet action and update entry
     // attribute
     EXPECT_CALL(mock_sai_policer_, set_policer_attribute(Eq(kAclMeterOid1), _))
-        .Times(5)
+        .Times(3)
         .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_acl_, set_acl_entry_attribute(Eq(kAclIngressRuleOid1), _))
         .WillOnce(Return(SAI_STATUS_SUCCESS));
@@ -3547,8 +4277,6 @@ TEST_F(AclManagerTest, UpdateAclRuleWithActionMeterChange)
     EXPECT_TRUE(acl_rule->meter.packet_color_actions.empty());
     EXPECT_EQ(500, acl_rule->meter.cburst);
     EXPECT_EQ(500, acl_rule->meter.cir);
-    EXPECT_EQ(600, acl_rule->meter.pburst);
-    EXPECT_EQ(600, acl_rule->meter.pir);
     EXPECT_TRUE(p4_oid_mapper_->getOID(SAI_OBJECT_TYPE_POLICER, table_name_and_rule_key, &meter_oid));
     EXPECT_EQ(kAclMeterOid1, meter_oid);
     EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_POLICER, table_name_and_rule_key, &ref_cnt));
@@ -3572,8 +4300,6 @@ TEST_F(AclManagerTest, UpdateAclRuleWithActionMeterChange)
     EXPECT_FALSE(p4_oid_mapper_->getOID(SAI_OBJECT_TYPE_POLICER, table_name_and_rule_key, &meter_oid));
     EXPECT_EQ(0, acl_rule->meter.cburst);
     EXPECT_EQ(0, acl_rule->meter.cir);
-    EXPECT_EQ(0, acl_rule->meter.pburst);
-    EXPECT_EQ(0, acl_rule->meter.pir);
     EXPECT_TRUE(acl_rule->meter.packet_color_actions.empty());
     EXPECT_FALSE(acl_rule->meter.enabled);
 
@@ -3886,6 +4612,60 @@ TEST_F(AclManagerTest, UpdateAclRuleWithVrfActionChange)
     EXPECT_EQ(gVirtualRouterId, acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_VRF].aclaction.parameter.oid);
 }
 
+TEST_F(AclManagerTest, UpdateAclRuleWithL2MulticastActionChange) {
+    ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+    auto app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
+    const auto& acl_rule_key =
+        KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "100");
+    // Set up an L2 multicast group mapping
+    const std::string l2_multicast_group_id = "0x5";
+    const auto& l2_multicast_group_key =
+        KeyGenerator::generateL2MulticastGroupKey(l2_multicast_group_id);
+    p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_L2MC_GROUP, l2_multicast_group_key,
+                           /*l2mc_group_oid=*/18);
+    app_db_entry.action = "redirect_l2mc";
+    app_db_entry.action_param_fvs["target"] = l2_multicast_group_id;
+
+    // Install rule
+    EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
+        .WillOnce(
+            DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+    auto* acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+    ASSERT_NE(nullptr, acl_rule);
+    // Check action field value
+    EXPECT_EQ(/*l2mc_group_oid=*/18,
+              acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT]
+                  .aclaction.parameter.oid);
+
+    // Update rule
+    const std::string l2_multicast_group_id2 = "0x6";
+    const auto& l2_multicast_group_key2 =
+        KeyGenerator::generateL2MulticastGroupKey(l2_multicast_group_id2);
+    p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_L2MC_GROUP, l2_multicast_group_key2,
+                           /*ipmc_group_oid=*/19);
+    app_db_entry.action_param_fvs["target"] = l2_multicast_group_id2;
+
+    EXPECT_CALL(mock_sai_acl_,
+                set_acl_entry_attribute(Eq(kAclIngressRuleOid1), _))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              ProcessUpdateRuleRequest(app_db_entry, *acl_rule));
+    acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+    ASSERT_NE(nullptr, acl_rule);
+    // Check action field value
+    EXPECT_EQ(1, acl_rule->action_fvs.size());
+    EXPECT_EQ(/*l2mc_group_oid=*/19,
+              acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT]
+                  .aclaction.parameter.oid);
+}
+
 TEST_F(AclManagerTest, UpdateAclRuleFailsWhenSaiCallFails)
 {
     ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
@@ -3935,8 +4715,6 @@ TEST_F(AclManagerTest, UpdateAclRuleFailsWhenSaiCallFails)
     app_db_entry.action_param_fvs["traffic_class"] = "2";
     app_db_entry.meter.cburst = 500;
     app_db_entry.meter.cir = 500;
-    app_db_entry.meter.pburst = 600;
-    app_db_entry.meter.pir = 600;
     // Update meter attribute for green packet action
     EXPECT_CALL(mock_sai_policer_, set_policer_attribute(Eq(kAclMeterOid1), _))
         .WillOnce(Return(SAI_STATUS_SUCCESS))
@@ -3964,8 +4742,6 @@ TEST_F(AclManagerTest, UpdateAclRuleFailsWhenSaiCallFails)
     app_db_entry.action_param_fvs.erase("traffic_class");
     app_db_entry.meter.cburst = 80;
     app_db_entry.meter.cir = 80;
-    app_db_entry.meter.pburst = 200;
-    app_db_entry.meter.pir = 200;
     // Update meter attribute for green packet action
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessUpdateRuleRequest(app_db_entry, *acl_rule));
     acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
@@ -4122,8 +4898,7 @@ TEST_F(AclManagerTest, UpdateAclRuleFailsWhenSaiCallFails)
     EXPECT_FALSE(acl_rule->meter.enabled);
 }
 
-TEST_F(AclManagerTest, CreateAclRuleWithInvalidActionFails)
-{
+TEST_F(AclManagerTest, CreateAclRuleWithInvalidActionFails) {
     ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
     auto app_db_entry = getDefaultAclRuleAppDbEntryWithoutAction();
     const auto &acl_rule_key = KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, "15");
@@ -4134,7 +4909,20 @@ TEST_F(AclManagerTest, CreateAclRuleWithInvalidActionFails)
     app_db_entry.action_param_fvs["target"] = next_hop_id;
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessAddRuleRequest(acl_rule_key, app_db_entry));
     app_db_entry.action_param_fvs.erase("target");
+    // Similar check when the object type is specified.
+    app_db_entry.action = "redirect_next_hop";
+    app_db_entry.action_param_fvs["target"] = next_hop_id;
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+    app_db_entry.action_param_fvs.erase("target");
     // ACL rule has redirect action with wrong port type
+    app_db_entry.action = "redirect";
+    app_db_entry.action_param_fvs["target"] = "Ethernet8";
+    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM,
+              ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+    app_db_entry.action_param_fvs.erase("target");
+    // Similar check when the object type is specified.
+    app_db_entry.action = "redirect_port";
     app_db_entry.action_param_fvs["target"] = "Ethernet8";
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessAddRuleRequest(acl_rule_key, app_db_entry));
     app_db_entry.action_param_fvs.erase("target");
@@ -4176,7 +4964,7 @@ TEST_F(AclManagerTest, CreateAclRuleWithInvalidActionFails)
     app_db_entry.action_param_fvs.erase("target");
     // Invalid cpu queue number
     app_db_entry.action = "qos_queue";
-    app_db_entry.action_param_fvs["cpu_queue"] = "10";
+    app_db_entry.action_param_fvs["cpu_queue"] = "48";
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessAddRuleRequest(acl_rule_key, app_db_entry));
     app_db_entry.action_param_fvs["cpu_queue"] = "invalid";
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessAddRuleRequest(acl_rule_key, app_db_entry));
@@ -4409,8 +5197,6 @@ TEST_F(AclManagerTest, DoAclCounterStatsTaskSucceeds)
     EXPECT_FALSE(counters_table->hget(counter_stats_key, P4_COUNTER_STATS_GREEN_BYTES, stats));
     EXPECT_FALSE(counters_table->hget(counter_stats_key, P4_COUNTER_STATS_RED_PACKETS, stats));
     EXPECT_FALSE(counters_table->hget(counter_stats_key, P4_COUNTER_STATS_RED_BYTES, stats));
-    EXPECT_FALSE(counters_table->hget(counter_stats_key, P4_COUNTER_STATS_YELLOW_PACKETS, stats));
-    EXPECT_FALSE(counters_table->hget(counter_stats_key, P4_COUNTER_STATS_YELLOW_BYTES, stats));
 
     // Remove rule
     EXPECT_CALL(mock_sai_acl_, remove_acl_entry(Eq(kAclIngressRuleOid1))).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
@@ -4459,17 +5245,15 @@ TEST_F(AclManagerTest, DoAclCounterStatsTaskSucceeds)
     EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
     EXPECT_FALSE(counters_table->get(counter_stats_key, values));
 
-    // Install rule with packet color YELLOW and RED
+    // Install rule with packet color RED
     app_db_entry.action = "punt_non_green_pk";
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddRuleRequest(acl_rule_key, app_db_entry));
     // Populate counter stats in COUNTERS_DB
     EXPECT_CALL(mock_sai_policer_, get_policer_stats(Eq(kAclMeterOid1), _, _, _))
         .WillOnce(DoAll(Invoke([](sai_object_id_t policer_id, uint32_t number_of_counters,
                                   const sai_stat_id_t *counter_ids, uint64_t *counters) {
-                            counters[0] = 20;  // yellow_packets
-                            counters[1] = 200; // yellow_bytes
-                            counters[2] = 30;  // red_packets
-                            counters[3] = 300; // red_bytes
+                            counters[0] = 30;   // red_packets
+                            counters[1] = 300;  // red_bytes
                         }),
                         Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_acl_, get_acl_counter_attribute(Eq(kAclCounterOid1), _, _))
@@ -4479,11 +5263,7 @@ TEST_F(AclManagerTest, DoAclCounterStatsTaskSucceeds)
                         }),
                         Return(SAI_STATUS_SUCCESS)));
     DoAclCounterStatsTask();
-    // Only yellow/red_packets and yellow/red_bytes are populated in COUNTERS_DB
-    EXPECT_TRUE(counters_table->hget(counter_stats_key, P4_COUNTER_STATS_YELLOW_PACKETS, stats));
-    EXPECT_EQ("20", stats);
-    EXPECT_TRUE(counters_table->hget(counter_stats_key, P4_COUNTER_STATS_YELLOW_BYTES, stats));
-    EXPECT_EQ("200", stats);
+    // Only red_packets and red_bytes are populated in COUNTERS_DB
     EXPECT_TRUE(counters_table->hget(counter_stats_key, P4_COUNTER_STATS_RED_PACKETS, stats));
     EXPECT_EQ("30", stats);
     EXPECT_TRUE(counters_table->hget(counter_stats_key, P4_COUNTER_STATS_RED_BYTES, stats));
@@ -4576,6 +5356,277 @@ TEST_F(AclManagerTest, DISABLED_InitBindGroupToSwitchFails)
     EXPECT_THROW(new SwitchOrch(gAppDb, switch_tables, stateDbSwitchTable), std::runtime_error);
 }
 
+TEST_F(AclManagerTest, CreatePreIngressTableWillCreateDefaultRule) {
+  auto app_db_entry = getDefaultAclTableDefAppDbEntry();
+  app_db_entry.stage = STAGE_PRE_INGRESS;
+  EXPECT_CALL(mock_sai_acl_, create_acl_table(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kAclTableIngressOid),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_acl_, create_acl_table_group_member(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kAclGroupMemberIngressOid),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_udf_, create_udf_match(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kUdfMatchOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_udf_, create_udf_group(_, _, _, _))
+      .Times(3)
+      .WillRepeatedly(
+          DoAll(SetArgPointee<0>(kUdfGroupOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_udf_, create_udf(_, _, _, _))
+      .Times(3)
+      .WillRepeatedly(
+          DoAll(SetArgPointee<0>(kUdfOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _)).Times(0);
+  sai_object_id_t user_defined_trap_oid = gUserDefinedTrapStartOid;
+  AddDefaultUserTrapsSaiCalls(&user_defined_trap_oid);
+  ASSERT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddTableRequest(app_db_entry));
+  ASSERT_NO_FATAL_FAILURE(IsExpectedAclTableDefinitionMapping(
+      *GetAclTable(app_db_entry.acl_table_name), app_db_entry));
+}
+
+TEST_F(AclManagerTest, DrainTableNotExecuted) {
+  const auto& p4rtAclTableName_1 =
+      std::string(APP_P4RT_ACL_TABLE_DEFINITION_NAME) + kTableKeyDelimiter +
+      "ACL_TABLE_1";
+  const auto& p4rtAclTableName_2 =
+      std::string(APP_P4RT_ACL_TABLE_DEFINITION_NAME) + kTableKeyDelimiter +
+      "ACL_TABLE_2";
+  const auto& p4rtAclTableName_3 =
+      std::string(APP_P4RT_ACL_TABLE_DEFINITION_NAME) + kTableKeyDelimiter +
+      "ACL_TABLE_3";
+  EnqueueTableTuple(swss::KeyOpFieldsValuesTuple(
+      {p4rtAclTableName_1, SET_COMMAND, getDefaultTableDefFieldValueTuples()}));
+  EnqueueTableTuple(swss::KeyOpFieldsValuesTuple(
+      {p4rtAclTableName_2, SET_COMMAND, getDefaultTableDefFieldValueTuples()}));
+  EnqueueTableTuple(swss::KeyOpFieldsValuesTuple(
+      {p4rtAclTableName_3, SET_COMMAND, getDefaultTableDefFieldValueTuples()}));
+
+  EXPECT_CALL(*gMockResponsePublisher,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName_1),
+                      Eq(getDefaultTableDefFieldValueTuples()),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_CALL(*gMockResponsePublisher,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName_2),
+                      Eq(getDefaultTableDefFieldValueTuples()),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_CALL(*gMockResponsePublisher,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName_3),
+                      Eq(getDefaultTableDefFieldValueTuples()),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_EXECUTED,
+            DrainTableTuples(/*failure_before=*/true));
+  EXPECT_EQ(nullptr, GetAclTable("ACL_TABLE_1"));
+  EXPECT_EQ(nullptr, GetAclTable("ACL_TABLE_2"));
+  EXPECT_EQ(nullptr, GetAclTable("ACL_TABLE_3"));
+}
+
+TEST_F(AclManagerTest, DrainTableStopOnFirstFailure) {
+  const auto& p4rtAclTableName_1 =
+      std::string(APP_P4RT_ACL_TABLE_DEFINITION_NAME) + kTableKeyDelimiter +
+      "ACL_TABLE_1";
+  const auto& p4rtAclTableName_2 =
+      std::string(APP_P4RT_ACL_TABLE_DEFINITION_NAME) + kTableKeyDelimiter +
+      "ACL_TABLE_2";
+  const auto& p4rtAclTableName_3 =
+      std::string(APP_P4RT_ACL_TABLE_DEFINITION_NAME) + kTableKeyDelimiter +
+      "ACL_TABLE_3";
+  EnqueueTableTuple(swss::KeyOpFieldsValuesTuple(
+      {p4rtAclTableName_1, SET_COMMAND, getDefaultTableDefFieldValueTuples()}));
+  EnqueueTableTuple(swss::KeyOpFieldsValuesTuple(
+      {p4rtAclTableName_2, SET_COMMAND, getDefaultTableDefFieldValueTuples()}));
+  EnqueueTableTuple(swss::KeyOpFieldsValuesTuple(
+      {p4rtAclTableName_3, SET_COMMAND, getDefaultTableDefFieldValueTuples()}));
+
+  EXPECT_CALL(mock_sai_acl_,
+              create_acl_table(_, Eq(gSwitchId), Gt(2),
+                               Truly(std::bind(MatchSaiAttributeAclTableStage,
+                                               SAI_ACL_STAGE_INGRESS,
+                                               std::placeholders::_1))))
+      .WillOnce(DoAll(SetArgPointee<0>(kAclTableIngressOid),
+                      Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+  EXPECT_CALL(mock_sai_acl_,
+              create_acl_table_group_member(_, Eq(gSwitchId), Eq(3), NotNull()))
+      .WillOnce(DoAll(SetArgPointee<0>(kAclGroupMemberIngressOid),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_udf_, create_udf_match(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kUdfMatchOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_udf_, create_udf_group(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kUdfGroupOid1), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kUdfGroupOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_udf_, create_udf(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kUdfOid1), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(DoAll(SetArgPointee<0>(kUdfOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_udf_, remove_udf_group(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_udf_, remove_udf(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(*gMockResponsePublisher,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName_1),
+                      Eq(getDefaultTableDefFieldValueTuples()),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(*gMockResponsePublisher,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName_2),
+                      Eq(getDefaultTableDefFieldValueTuples()),
+                      Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
+  EXPECT_CALL(*gMockResponsePublisher,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName_3),
+                      Eq(getDefaultTableDefFieldValueTuples()),
+                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN,
+            DrainTableTuples(/*failure_before=*/false));
+  EXPECT_NE(nullptr, GetAclTable("ACL_TABLE_1"));
+  EXPECT_EQ(nullptr, GetAclTable("ACL_TABLE_2"));
+  EXPECT_EQ(nullptr, GetAclTable("ACL_TABLE_3"));
+}
+
+TEST_F(AclManagerTest, DrainRuleNotExecuted) {
+  ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+  auto attributes = getDefaultRuleFieldValueTuples();
+  const auto& acl_rule_json_key_1 =
+      "{\"match/ether_type\":\"0x0800\",\"match/"
+      "ipv6_dst\":\"fdf8:f53b:82e4::53 & "
+      "fdf8:f53b:82e4::53\",\"priority\":15}";
+  const auto& rule_tuple_key_1 = std::string(kAclIngressTableName) +
+                                 kTableKeyDelimiter + acl_rule_json_key_1;
+  const auto& acl_rule_json_key_2 =
+      "{\"match/ether_type\":\"0x0800\",\"match/"
+      "ipv6_dst\":\"fdf8:f53b:82e4::54 & "
+      "fdf8:f53b:82e4::54\",\"priority\":15}";
+  const auto& rule_tuple_key_2 = std::string(kAclIngressTableName) +
+                                 kTableKeyDelimiter + acl_rule_json_key_2;
+  const auto& acl_rule_json_key_3 =
+      "{\"match/ether_type\":\"0x0800\",\"match/"
+      "ipv6_dst\":\"fdf8:f53b:82e4::55 & "
+      "fdf8:f53b:82e4::55\",\"priority\":15}";
+  const auto& rule_tuple_key_3 = std::string(kAclIngressTableName) +
+                                 kTableKeyDelimiter + acl_rule_json_key_3;
+
+  EnqueueRuleTuple(std::string(kAclIngressTableName),
+                   swss::KeyOpFieldsValuesTuple(
+                       {rule_tuple_key_1, SET_COMMAND, attributes}));
+  EnqueueRuleTuple(std::string(kAclIngressTableName),
+                   swss::KeyOpFieldsValuesTuple(
+                       {rule_tuple_key_2, SET_COMMAND, attributes}));
+  EnqueueRuleTuple(std::string(kAclIngressTableName),
+                   swss::KeyOpFieldsValuesTuple(
+                       {rule_tuple_key_3, SET_COMMAND, attributes}));
+
+  EXPECT_CALL(
+      *gMockResponsePublisher,
+      publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key_1), Eq(attributes),
+              Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_CALL(
+      *gMockResponsePublisher,
+      publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key_2), Eq(attributes),
+              Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_CALL(
+      *gMockResponsePublisher,
+      publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key_3), Eq(attributes),
+              Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_NOT_EXECUTED,
+            DrainRuleTuples(/*failure_before=*/true));
+  EXPECT_EQ(
+      nullptr,
+      GetAclRule(kAclIngressTableName,
+                 "match/ether_type=0x0800:match/ipv6_dst=fdf8:f53b:82e4::53 & "
+                 "fdf8:f53b:82e4::53:priority=15"));
+  EXPECT_EQ(
+      nullptr,
+      GetAclRule(kAclIngressTableName,
+                 "match/ether_type=0x0800:match/ipv6_dst=fdf8:f53b:82e4::54 & "
+                 "fdf8:f53b:82e4::54:priority=15"));
+  EXPECT_EQ(
+      nullptr,
+      GetAclRule(kAclIngressTableName,
+                 "match/ether_type=0x0800:match/ipv6_dst=fdf8:f53b:82e4::55 & "
+                 "fdf8:f53b:82e4::55:priority=15"));
+}
+
+TEST_F(AclManagerTest, DrainRuleStopOnFirstFailure) {
+  ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+  auto attributes = getDefaultRuleFieldValueTuples();
+  const auto& acl_rule_json_key_1 =
+      "{\"match/ether_type\":\"0x0800\",\"match/"
+      "ipv6_dst\":\"fdf8:f53b:82e4::53 & "
+      "fdf8:f53b:82e4::53\",\"priority\":15}";
+  const auto& rule_tuple_key_1 = std::string(kAclIngressTableName) +
+                                 kTableKeyDelimiter + acl_rule_json_key_1;
+  const auto& acl_rule_json_key_2 =
+      "{\"match/ether_type\":\"0x0800\",\"match/"
+      "ipv6_dst\":\"fdf8:f53b:82e4::54 & "
+      "fdf8:f53b:82e4::54\",\"priority\":15}";
+  const auto& rule_tuple_key_2 = std::string(kAclIngressTableName) +
+                                 kTableKeyDelimiter + acl_rule_json_key_2;
+  const auto& acl_rule_json_key_3 =
+      "{\"match/ether_type\":\"0x0800\",\"match/"
+      "ipv6_dst\":\"fdf8:f53b:82e4::55 & "
+      "fdf8:f53b:82e4::55\",\"priority\":15}";
+  const auto& rule_tuple_key_3 = std::string(kAclIngressTableName) +
+                                 kTableKeyDelimiter + acl_rule_json_key_3;
+
+  EnqueueRuleTuple(std::string(kAclIngressTableName),
+                   swss::KeyOpFieldsValuesTuple(
+                       {rule_tuple_key_1, SET_COMMAND, attributes}));
+  EnqueueRuleTuple(std::string(kAclIngressTableName),
+                   swss::KeyOpFieldsValuesTuple(
+                       {rule_tuple_key_2, SET_COMMAND, attributes}));
+  EnqueueRuleTuple(std::string(kAclIngressTableName),
+                   swss::KeyOpFieldsValuesTuple(
+                       {rule_tuple_key_3, SET_COMMAND, attributes}));
+
+  EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                      Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+  EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kAclCounterOid1), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kAclCounterOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_acl_, remove_acl_counter(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_policer_, remove_policer(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(
+      *gMockResponsePublisher,
+      publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key_1), Eq(attributes),
+              Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+  EXPECT_CALL(
+      *gMockResponsePublisher,
+      publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key_2), Eq(attributes),
+              Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
+  EXPECT_CALL(
+      *gMockResponsePublisher,
+      publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key_3), Eq(attributes),
+              Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+  EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN,
+            DrainRuleTuples(/*failure_before=*/false));
+  EXPECT_NE(
+      nullptr,
+      GetAclRule(kAclIngressTableName,
+                 "match/ether_type=0x0800:match/ipv6_dst=fdf8:f53b:82e4::53 & "
+                 "fdf8:f53b:82e4::53:priority=15"));
+  EXPECT_EQ(
+      nullptr,
+      GetAclRule(kAclIngressTableName,
+                 "match/ether_type=0x0800:match/ipv6_dst=fdf8:f53b:82e4::54 & "
+                 "fdf8:f53b:82e4::54:priority=15"));
+  EXPECT_EQ(
+      nullptr,
+      GetAclRule(kAclIngressTableName,
+                 "match/ether_type=0x0800:match/ipv6_dst=fdf8:f53b:82e4::55 & "
+                 "fdf8:f53b:82e4::55:priority=15"));
+}
+
 TEST_F(AclManagerTest, AclTableVerifyStateTest)
 {
     const auto &p4rtAclTableName =
@@ -4594,26 +5645,42 @@ TEST_F(AclManagerTest, AclTableVerifyStateTest)
         .WillOnce(DoAll(SetArgPointee<0>(kUdfGroupOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kUdfOid1), Return(SAI_STATUS_SUCCESS)));
-    DrainTableTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              DrainTableTuples(/*failure_before=*/false));
     auto *acl_table = GetAclTable(kAclIngressTableName);
     EXPECT_NE(acl_table, nullptr);
 
     // Setup ASIC DB.
     swss::Table table(nullptr, "ASIC_STATE");
-    table.set("SAI_OBJECT_TYPE_ACL_TABLE:oid:0x7000000000606",
-              std::vector<swss::FieldValueTuple>{
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_ACL_STAGE", "SAI_ACL_STAGE_INGRESS"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_SIZE", "123"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_DST_MAC", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_TTL", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_USER_DEFINED_FIELD_GROUP_MIN", "oid:0xfa1"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST", "1:SAI_ACL_ACTION_TYPE_COUNTER"}});
+    table.set(
+        "SAI_OBJECT_TYPE_ACL_TABLE:oid:0x7000000000606",
+        std::vector<swss::FieldValueTuple>{
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_ACL_STAGE",
+                                  "SAI_ACL_STAGE_INGRESS"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_SIZE", "123"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE",
+                                  "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_DST_MAC", "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE",
+                                  "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE", "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6", "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER",
+                                  "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT",
+                                  "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_TTL", "true"},
+            swss::FieldValueTuple{
+                "SAI_ACL_TABLE_ATTR_USER_DEFINED_FIELD_GROUP_MIN", "oid:0xfa1"},
+            swss::FieldValueTuple{
+                "SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST",
+                "4:SAI_ACL_ACTION_TYPE_PACKET_ACTION,SAI_ACL_ACTION_TYPE_"
+                "COUNTER,"
+                "SAI_ACL_ACTION_TYPE_SET_POLICER,SAI_ACL_ACTION_TYPE_SET_TC"}});
     table.set("SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER:oid:0xc000000000607",
               std::vector<swss::FieldValueTuple>{
                   swss::FieldValueTuple{"SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_GROUP_ID", "oid:0xb00000000058f"},
@@ -4767,14 +5834,15 @@ TEST_F(AclManagerTest, AclRuleVerifyStateTest)
     attributes.push_back(swss::FieldValueTuple{"param/target", gMirrorSession1});
     attributes.push_back(swss::FieldValueTuple{"meter/cir", "80"});
     attributes.push_back(swss::FieldValueTuple{"meter/cburst", "80"});
-    attributes.push_back(swss::FieldValueTuple{"meter/pir", "200"});
-    attributes.push_back(swss::FieldValueTuple{"meter/pburst", "200"});
     attributes.push_back(swss::FieldValueTuple{"controller_metadata", "..."});
-    const auto &acl_rule_json_key = "{\"match/ether_type\":\"0x0800\",\"match/"
-                                    "ipv6_dst\":\"fdf8:f53b:82e4::53 & "
-                                    "fdf8:f53b:82e4::53\",\"match/arp_tpa\": \"0xff112231\", "
-                                    "\"match/in_ports\": \"Ethernet1,Ethernet2\", \"match/out_ports\": "
-                                    "\"Ethernet4,Ethernet5\", \"priority\":15}";
+    const auto& acl_rule_json_key =
+        "{\"match/ether_type\":\"0x0800\",\"match/"
+        "ipv6_dst\":\"fdf8:f53b:82e4::53 & "
+        "fdf8:f53b:82e4::53\",\"match/arp_tpa\": \"0xff112231\", "
+        "\"match/in_ports\": \"Ethernet1,Ethernet2\", \"match/out_ports\": "
+        "\"Ethernet4,Ethernet5\", \"priority\":15,\"match/ipmc_table_hit\":"
+        "\"0x1\",\"match/route_table_hit\":\"0x1\",\"match/"
+        "vrf_id\":\"b4-traffic\"}";
     const auto &rule_tuple_key = std::string(kAclIngressTableName) + kTableKeyDelimiter + acl_rule_json_key;
     EnqueueRuleTuple(std::string(kAclIngressTableName),
                      swss::KeyOpFieldsValuesTuple({rule_tuple_key, SET_COMMAND, attributes}));
@@ -4784,27 +5852,51 @@ TEST_F(AclManagerTest, AclRuleVerifyStateTest)
         .WillOnce(DoAll(SetArgPointee<0>(kAclCounterOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
-    DrainRuleTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              DrainRuleTuples(/*failure_before=*/false));
 
     // Setup ASIC DB.
     swss::Table table(nullptr, "ASIC_STATE");
     table.set(
         "SAI_OBJECT_TYPE_ACL_ENTRY:oid:0x3e9",
         std::vector<swss::FieldValueTuple>{
-            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_TABLE_ID", "oid:0x7000000000606"},
+            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_TABLE_ID",
+                                  "oid:0x7000000000606"},
             swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_PRIORITY", "15"},
             swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_ADMIN_STATE", "true"},
-            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6", "fdf8:f53b:82e4::53&mask:fdf8:f53b:82e4::53"},
-            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE", "2048&mask:0xffff"},
-            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_TYPE",
-                                  "SAI_ACL_IP_TYPE_ANY&mask:0xffffffffffffffff"},
-            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN", "2:255,17&mask:2:0xff,0xff"},
-            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1", "2:34,49&mask:2:0xff,0xff"},
-            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS", "2:oid:0x112233,oid:0x1fed3"},
-            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORTS", "2:oid:0x9988,oid:0x56789abcdef"},
-            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_INGRESS", "1:oid:0x2329"},
-            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER", "oid:0x7d1"},
-            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_ACTION_COUNTER", "oid:0xbb9"}});
+            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6",
+                                  "fdf8:f53b:82e4::53&mask:fdf8:f53b:82e4::53"},
+            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE",
+                                  "2048&mask:0xffff"},
+            swss::FieldValueTuple{
+                "SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_TYPE",
+                "SAI_ACL_IP_TYPE_ANY&mask:0xffffffffffffffff"},
+            swss::FieldValueTuple{
+                "SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN",
+                "2:255,17&mask:2:0xff,0xff"},
+            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_VRF_ID",
+                                  "oid:0x6f"},
+            swss::FieldValueTuple{
+                "SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT", "true"},
+            swss::FieldValueTuple{
+                "SAI_ACL_ENTRY_ATTR_FIELD_ROUTE_NPU_META_DST_HIT", "true"},
+            swss::FieldValueTuple{
+                "SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_1",
+                "2:34,49&mask:2:0xff,0xff"},
+            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS",
+                                  "2:oid:0x112233,oid:0x1fed3"},
+            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORTS",
+                                  "2:oid:0x9988,oid:0x56789abcdef"},
+            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_INGRESS",
+                                  "1:oid:0x2329"},
+            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER",
+                                  "oid:0x7d1"},
+            swss::FieldValueTuple{"SAI_ACL_ENTRY_ATTR_ACTION_COUNTER",
+                                  "oid:0xbb9"}});
     table.set("SAI_OBJECT_TYPE_ACL_COUNTER:oid:0xbb9",
               std::vector<swss::FieldValueTuple>{
                   swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_TABLE_ID", "oid:0x7000000000606"},
@@ -4813,10 +5905,9 @@ TEST_F(AclManagerTest, AclRuleVerifyStateTest)
     table.set(
         "SAI_OBJECT_TYPE_POLICER:oid:0x7d1",
         std::vector<swss::FieldValueTuple>{
-            swss::FieldValueTuple{"SAI_POLICER_ATTR_MODE", "SAI_POLICER_MODE_TR_TCM"},
+            swss::FieldValueTuple{"SAI_POLICER_ATTR_MODE", "SAI_POLICER_MODE_STORM_CONTROL"},
             swss::FieldValueTuple{"SAI_POLICER_ATTR_METER_TYPE", "SAI_METER_TYPE_BYTES"},
             swss::FieldValueTuple{"SAI_POLICER_ATTR_CBS", "80"}, swss::FieldValueTuple{"SAI_POLICER_ATTR_CIR", "80"},
-            swss::FieldValueTuple{"SAI_POLICER_ATTR_PIR", "200"}, swss::FieldValueTuple{"SAI_POLICER_ATTR_PBS", "200"},
             swss::FieldValueTuple{"SAI_POLICER_ATTR_GREEN_PACKET_ACTION", "SAI_PACKET_ACTION_COPY"}});
 
     // Verification should succeed with vaild key and value.
@@ -4829,34 +5920,49 @@ TEST_F(AclManagerTest, AclRuleVerifyStateTest)
     EXPECT_FALSE(VerifyRuleState(std::string(APP_P4RT_TABLE_NAME) + ":invalid", attributes).empty());
     EXPECT_FALSE(VerifyRuleState(std::string(APP_P4RT_TABLE_NAME) + ":invalid:invalid", attributes).empty());
     EXPECT_FALSE(VerifyRuleState(std::string(APP_P4RT_TABLE_NAME) + ":ACL_PUNT_TABLE:invalid", attributes).empty());
-    EXPECT_FALSE(VerifyRuleState(std::string(APP_P4RT_TABLE_NAME) +
-                                     ":ACL_PUNT_TABLE:{\"match/ether_type\":\"0x0800\",\"match/"
-                                     "ipv6_dst\":\"fdf8:f53b:82e4::53 & "
-                                     "fdf8:f53b:82e4::53\",\"priority\":0}",
-                                 attributes)
-                     .empty());
-    EXPECT_FALSE(VerifyRuleState(std::string(APP_P4RT_TABLE_NAME) +
-                                     ":ACL_PUNT_TABLE:{\"match/ether_type\":\"0x0800\",\"match/"
-                                     "ipv6_dst\":\"127.0.0.1/24\",\"priority\":15}",
-                                 attributes)
-                     .empty());
+    EXPECT_FALSE(
+        VerifyRuleState(
+            std::string(APP_P4RT_TABLE_NAME) +
+                ":ACL_PUNT_TABLE:{\"match/ether_type\":\"0x0800\",\"match/"
+                "ipv6_dst\":\"fdf8:f53b:82e4::53 & "
+                "fdf8:f53b:82e4::53\",\"priority\":0,\"match/ipmc_table_hit\":"
+                "\"0x1\",\"match/route_table_hit\":\"0x1\",\"match/"
+                "vrf_id\":\"b4-traffic\"}",
+            attributes)
+            .empty());
+    EXPECT_FALSE(
+        VerifyRuleState(
+            std::string(APP_P4RT_TABLE_NAME) +
+                ":ACL_PUNT_TABLE:{\"match/ether_type\":\"0x0800\",\"match/"
+                "ipv6_dst\":\"127.0.0.1/24\",\"priority\":15,"
+                "\"match/ipmc_table_hit\":\"0x1\",\"match/"
+                "route_table_hit\":\"0x1\",\"match/vrf_id\":\"b4-traffic\"}",
+            attributes)
+            .empty());
 
     // Verification should fail if entry does not exist.
-    EXPECT_FALSE(VerifyRuleState(std::string(APP_P4RT_TABLE_NAME) +
-                                     ":ACL_PUNT_TABLE:{\"match/ether_type\":\"0x0800\",\"match/"
-                                     "ipv6_dst\":\"fdf8:f53b:82e4::54 & "
-                                     "fdf8:f53b:82e4::54\",\"priority\":15}",
-                                 attributes)
-                     .empty());
+    EXPECT_FALSE(
+        VerifyRuleState(
+            std::string(APP_P4RT_TABLE_NAME) +
+                ":ACL_PUNT_TABLE:{\"match/ether_type\":\"0x0800\",\"match/"
+                "ipv6_dst\":\"fdf8:f53b:82e4::54 & "
+                "fdf8:f53b:82e4::54\",\"priority\":15,\"match/ipmc_table_hit\":"
+                "\"0x1\",\"match/route_table_hit\":\"0x1\",\"match/"
+                "vrf_id\":\"b4-traffic\"}",
+            attributes)
+            .empty());
 
     // Verification should fail with invalid attribute.
     EXPECT_FALSE(VerifyTableState(db_key, std::vector<swss::FieldValueTuple>{{kAction, "invalid"}}).empty());
 
     auto *acl_table = GetAclTable(kAclIngressTableName);
     EXPECT_NE(acl_table, nullptr);
-    const auto &acl_rule_key = "match/arp_tpa=0xff112231:match/ether_type=0x0800:match/"
-                               "in_ports=Ethernet1,Ethernet2:match/ipv6_dst=fdf8:f53b:82e4::53 & "
-                               "fdf8:f53b:82e4::53:match/out_ports=Ethernet4,Ethernet5:priority=15";
+    const auto& acl_rule_key =
+        "match/arp_tpa=0xff112231:match/ether_type=0x0800:match/"
+        "in_ports=Ethernet1,Ethernet2:match/ipmc_table_hit=0x1:"
+        "match/ipv6_dst=fdf8:f53b:82e4::53 & "
+        "fdf8:f53b:82e4::53:match/out_ports=Ethernet4,Ethernet5:"
+        "match/route_table_hit=0x1:match/vrf_id=b4-traffic:priority=15";
     auto *acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
     ASSERT_NE(acl_rule, nullptr);
 
@@ -4976,42 +6082,104 @@ TEST_F(AclManagerTest, AclRuleVerifyStateTest)
     EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty());
     acl_rule->action_redirect_nexthop_key = saved_action_redirect_nexthop_key;
 
+    // Verification should fail if action kRedirectToIpmcGroup L3 multicast group
+    // ID key mismatches.
+    auto saved_action_redirect_l3_multicast_group_key =
+        acl_rule->action_redirect_l3_multicast_group_key;
+    acl_rule->action_redirect_l3_multicast_group_key = "0x7777";
+    EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty());
+    acl_rule->action_redirect_l3_multicast_group_key =
+        saved_action_redirect_l3_multicast_group_key;
+
+    // Verification should fail if action kRedirectToIpmcGroup L2 multicast group
+    // ID key mismatches.
+    auto saved_action_redirect_l2_multicast_group_key =
+        acl_rule->action_redirect_l2_multicast_group_key;
+    acl_rule->action_redirect_l2_multicast_group_key = "0x9999";
+    EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty());
+    acl_rule->action_redirect_l2_multicast_group_key =
+        saved_action_redirect_l2_multicast_group_key;
+
     // Verification should fail if action mirror section mismatches.
     acl_rule->action_mirror_sessions[SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_EGRESS] = P4AclMirrorSession{};
     EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty());
     acl_rule->action_mirror_sessions.erase(SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_EGRESS);
 
     // Verification should fail if UDF data mask mismatches.
-    acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_2] = P4UdfDataMask{};
+    acl_rule->udf_data_masks[(
+        sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_2)] =
+        P4UdfDataMask{};
     EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty());
-    acl_rule->udf_data_masks.erase(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_2);
+    acl_rule->udf_data_masks.erase(
+        (sai_acl_entry_attr_t)SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_2);
 
     // Verification should fail if UDF data mask pointer mismatches.
-    auto udf_data_mask = std::move(acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN]);
-    acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN] = sai_attribute_value_t{};
+    auto udf_data_mask = std::move(acl_rule->match_fvs[(
+        sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]);
+    acl_rule->match_fvs[(
+        sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)] =
+        sai_attribute_value_t{};
     EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty()) << VerifyRuleState(db_key, attributes);
 
-    acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.data.u8list.count = 1;
-    acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.mask.u8list.count = 2;
-    EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty()) << VerifyRuleState(db_key, attributes);
+    acl_rule
+        ->match_fvs[(
+            sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+        .aclfield.data.u8list.count = 1;
+    acl_rule
+        ->match_fvs[(
+            sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+        .aclfield.mask.u8list.count = 2;
+    EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty())
+        << VerifyRuleState(db_key, attributes);
 
-    acl_rule->match_fvs.erase(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN);
-    acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_2] = sai_attribute_value_t{};
-    EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty()) << VerifyRuleState(db_key, attributes);
-    acl_rule->match_fvs.erase(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_2);
+    acl_rule->match_fvs[(
+        sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_2)] =
+        sai_attribute_value_t{};
+    EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty())
+        << VerifyRuleState(db_key, attributes);
+    acl_rule->match_fvs.erase(
+        (sai_acl_entry_attr_t)SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_2);
 
-    acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.data.u8list.list = nullptr;
-    acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.data.u8list.count = 2;
-    acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.mask.u8list.list =
-        acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].mask.data();
-    acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.mask.u8list.count = 2;
-    EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty()) << VerifyRuleState(db_key, attributes);
+    acl_rule
+        ->match_fvs[(
+            sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+        .aclfield.data.u8list.list = nullptr;
+    acl_rule
+        ->match_fvs[(
+            sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+        .aclfield.data.u8list.count = 2;
+    acl_rule
+        ->match_fvs[(
+            sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+        .aclfield.mask.u8list.list =
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .mask.data();
+    acl_rule
+        ->match_fvs[(
+            sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+        .aclfield.mask.u8list.count = 2;
+    EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty())
+        << VerifyRuleState(db_key, attributes);
 
-    acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.data.u8list.list =
-        acl_rule->udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].data.data();
-    acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN].aclfield.mask.u8list.list = nullptr;
-    EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty()) << VerifyRuleState(db_key, attributes);
-    acl_rule->match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN] = std::move(udf_data_mask);
+    acl_rule
+        ->match_fvs[(
+            sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+        .aclfield.data.u8list.list =
+        acl_rule
+            ->udf_data_masks[(
+                sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+            .data.data();
+    acl_rule
+        ->match_fvs[(
+            sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)]
+        .aclfield.mask.u8list.list = nullptr;
+    EXPECT_FALSE(VerifyRuleState(db_key, attributes).empty())
+        << VerifyRuleState(db_key, attributes);
+    acl_rule->match_fvs[(
+        sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN)] =
+        std::move(udf_data_mask);
 
     // Verification should fail if in ports mismatches.
     acl_rule->in_ports.push_back("invalid");
@@ -5091,26 +6259,42 @@ TEST_F(AclManagerTest, AclTableVerifyStateAsicDbTest)
         .WillOnce(DoAll(SetArgPointee<0>(kUdfGroupOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kUdfOid1), Return(SAI_STATUS_SUCCESS)));
-    DrainTableTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(p4rtAclTableName), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              DrainTableTuples(/*failure_before=*/false));
     auto *acl_table = GetAclTable(kAclIngressTableName);
     EXPECT_NE(acl_table, nullptr);
 
     // Setup ASIC DB.
     swss::Table table(nullptr, "ASIC_STATE");
-    table.set("SAI_OBJECT_TYPE_ACL_TABLE:oid:0x7000000000606",
-              std::vector<swss::FieldValueTuple>{
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_ACL_STAGE", "SAI_ACL_STAGE_INGRESS"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_SIZE", "123"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_DST_MAC", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_TTL", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_USER_DEFINED_FIELD_GROUP_MIN", "oid:0xfa1"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST", "1:SAI_ACL_ACTION_TYPE_COUNTER"}});
+    table.set(
+        "SAI_OBJECT_TYPE_ACL_TABLE:oid:0x7000000000606",
+        std::vector<swss::FieldValueTuple>{
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_ACL_STAGE",
+                                  "SAI_ACL_STAGE_INGRESS"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_SIZE", "123"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE",
+                                  "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_DST_MAC", "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE",
+                                  "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE", "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6", "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER",
+                                  "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT",
+                                  "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_TTL", "true"},
+            swss::FieldValueTuple{
+                "SAI_ACL_TABLE_ATTR_USER_DEFINED_FIELD_GROUP_MIN", "oid:0xfa1"},
+            swss::FieldValueTuple{
+                "SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST",
+                "4:SAI_ACL_ACTION_TYPE_PACKET_ACTION,SAI_ACL_ACTION_TYPE_"
+                "COUNTER,"
+                "SAI_ACL_ACTION_TYPE_SET_POLICER,SAI_ACL_ACTION_TYPE_SET_TC"}});
     table.set("SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER:oid:0xc000000000607",
               std::vector<swss::FieldValueTuple>{
                   swss::FieldValueTuple{"SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_GROUP_ID", "oid:0xb00000000058f"},
@@ -5139,20 +6323,31 @@ TEST_F(AclManagerTest, AclTableVerifyStateAsicDbTest)
     // Verification should fail if ACL table is missing.
     table.del("SAI_OBJECT_TYPE_ACL_TABLE:oid:0x7000000000606");
     EXPECT_FALSE(VerifyTableState(db_key, attributes).empty());
-    table.set("SAI_OBJECT_TYPE_ACL_TABLE:oid:0x7000000000606",
-              std::vector<swss::FieldValueTuple>{
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_ACL_STAGE", "SAI_ACL_STAGE_INGRESS"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_SIZE", "123"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_DST_MAC", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_TTL", "true"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_USER_DEFINED_FIELD_GROUP_MIN", "oid:0xfa1"},
-                  swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST", "1:SAI_ACL_ACTION_TYPE_COUNTER"}});
+    table.set(
+        "SAI_OBJECT_TYPE_ACL_TABLE:oid:0x7000000000606",
+        std::vector<swss::FieldValueTuple>{
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_ACL_STAGE",
+                                  "SAI_ACL_STAGE_INGRESS"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_SIZE", "123"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE",
+                                  "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_DST_MAC", "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE",
+                                  "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE", "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6", "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER",
+                                  "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT",
+                                  "true"},
+            swss::FieldValueTuple{"SAI_ACL_TABLE_ATTR_FIELD_TTL", "true"},
+            swss::FieldValueTuple{
+                "SAI_ACL_TABLE_ATTR_USER_DEFINED_FIELD_GROUP_MIN", "oid:0xfa1"},
+            swss::FieldValueTuple{
+                "SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST",
+                "4:SAI_ACL_ACTION_TYPE_PACKET_ACTION,SAI_ACL_ACTION_TYPE_"
+                "COUNTER,"
+                "SAI_ACL_ACTION_TYPE_SET_POLICER,SAI_ACL_ACTION_TYPE_SET_TC"}});
 
     // Verification should fail if table group member mismatch.
     table.set(
@@ -5213,7 +6408,12 @@ TEST_F(AclManagerTest, AclRuleVerifyStateAsicDbTest)
         .WillOnce(DoAll(SetArgPointee<0>(kAclCounterOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
-    DrainRuleTuples();
+    EXPECT_CALL(
+        *gMockResponsePublisher,
+        publish(Eq(APP_P4RT_TABLE_NAME), Eq(rule_tuple_key), Eq(attributes),
+                Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+              DrainRuleTuples(/*failure_before=*/false));
 
     // Setup ASIC DB.
     swss::Table table(nullptr, "ASIC_STATE");
@@ -5238,10 +6438,9 @@ TEST_F(AclManagerTest, AclRuleVerifyStateAsicDbTest)
     table.set(
         "SAI_OBJECT_TYPE_POLICER:oid:0x7d1",
         std::vector<swss::FieldValueTuple>{
-            swss::FieldValueTuple{"SAI_POLICER_ATTR_MODE", "SAI_POLICER_MODE_TR_TCM"},
+            swss::FieldValueTuple{"SAI_POLICER_ATTR_MODE", "SAI_POLICER_MODE_STORM_CONTROL"},
             swss::FieldValueTuple{"SAI_POLICER_ATTR_METER_TYPE", "SAI_METER_TYPE_BYTES"},
             swss::FieldValueTuple{"SAI_POLICER_ATTR_CBS", "80"}, swss::FieldValueTuple{"SAI_POLICER_ATTR_CIR", "80"},
-            swss::FieldValueTuple{"SAI_POLICER_ATTR_PIR", "200"}, swss::FieldValueTuple{"SAI_POLICER_ATTR_PBS", "200"},
             swss::FieldValueTuple{"SAI_POLICER_ATTR_GREEN_PACKET_ACTION", "SAI_PACKET_ACTION_COPY"}});
 
     // Verification should succeed with correct ASIC DB values.
@@ -5295,10 +6494,9 @@ TEST_F(AclManagerTest, AclRuleVerifyStateAsicDbTest)
     table.set(
         "SAI_OBJECT_TYPE_POLICER:oid:0x7d1",
         std::vector<swss::FieldValueTuple>{
-            swss::FieldValueTuple{"SAI_POLICER_ATTR_MODE", "SAI_POLICER_MODE_TR_TCM"},
+            swss::FieldValueTuple{"SAI_POLICER_ATTR_MODE", "SAI_POLICER_MODE_STORM_CONTROL"},
             swss::FieldValueTuple{"SAI_POLICER_ATTR_METER_TYPE", "SAI_METER_TYPE_BYTES"},
             swss::FieldValueTuple{"SAI_POLICER_ATTR_CBS", "80"}, swss::FieldValueTuple{"SAI_POLICER_ATTR_CIR", "80"},
-            swss::FieldValueTuple{"SAI_POLICER_ATTR_PIR", "200"}, swss::FieldValueTuple{"SAI_POLICER_ATTR_PBS", "200"},
             swss::FieldValueTuple{"SAI_POLICER_ATTR_GREEN_PACKET_ACTION", "SAI_PACKET_ACTION_COPY"}});
 }
 

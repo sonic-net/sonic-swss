@@ -144,13 +144,29 @@ std::vector<sai_attribute_t> getMeterSaiAttrs(const P4AclMeter &p4_acl_meter)
         meter_attr.value.u64 = p4_acl_meter.cir;
         meter_attrs.push_back(meter_attr);
 
-        meter_attr.id = SAI_POLICER_ATTR_PIR;
-        meter_attr.value.u64 = p4_acl_meter.pir;
-        meter_attrs.push_back(meter_attr);
+        if (p4_acl_meter.mode == SAI_POLICER_MODE_SR_TCM) {
+            meter_attr.id = SAI_POLICER_ATTR_PBS;
+            meter_attr.value.u64 = p4_acl_meter.pburst;
+            meter_attrs.push_back(meter_attr);
+        } else if (p4_acl_meter.mode == SAI_POLICER_MODE_TR_TCM) {
+            meter_attr.id = SAI_POLICER_ATTR_PIR;
+            meter_attr.value.u64 = p4_acl_meter.pir;
+            meter_attrs.push_back(meter_attr);
 
-        meter_attr.id = SAI_POLICER_ATTR_PBS;
-        meter_attr.value.u64 = p4_acl_meter.pburst;
-        meter_attrs.push_back(meter_attr);
+            meter_attr.id = SAI_POLICER_ATTR_PBS;
+            meter_attr.value.u64 = p4_acl_meter.pburst;
+            meter_attrs.push_back(meter_attr);
+        }
+
+        /* TBD
+        if (gLabelMapper->isLabelValid(p4_acl_meter.policer_label)) {
+          meter_attr.id = SAI_POLICER_ATTR_LABEL;
+          auto size = sizeof(meter_attr.value.chardata);
+          snprintf(meter_attr.value.chardata, size, "%s",
+                   p4_acl_meter.policer_label.c_str());
+          meter_attrs.push_back(meter_attr);
+        }
+       */
     }
 
     for (const auto &packet_color_action : p4_acl_meter.packet_color_actions)
@@ -176,75 +192,81 @@ void AclRuleManager::enqueue(const std::string &table_name, const swss::KeyOpFie
     m_entries.push_back(entry);
 }
 
-void AclRuleManager::drain()
-{
-    SWSS_LOG_ENTER();
+void AclRuleManager::drainWithNotExecuted() {
+  drainMgmtWithNotExecuted(m_entries, m_publisher);
+}
 
-    for (const auto &key_op_fvs_tuple : m_entries)
-    {
-        std::string table_name;
-        std::string db_key;
-        parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &db_key);
-        const auto &op = kfvOp(key_op_fvs_tuple);
-        const std::vector<swss::FieldValueTuple> &attributes = kfvFieldsValues(key_op_fvs_tuple);
+ReturnCode AclRuleManager::drain() {
+  SWSS_LOG_ENTER();
 
-        SWSS_LOG_NOTICE("OP: %s, RULE_KEY: %s", op.c_str(), QuotedVar(db_key).c_str());
+  ReturnCode status;
+  while (!m_entries.empty()) {
+    auto key_op_fvs_tuple = m_entries.front();
+    m_entries.pop_front();
+    std::string table_name;
+    std::string db_key;
+    parseP4RTKey(kfvKey(key_op_fvs_tuple), &table_name, &db_key);
+    const auto& op = kfvOp(key_op_fvs_tuple);
+    const std::vector<swss::FieldValueTuple>& attributes =
+        kfvFieldsValues(key_op_fvs_tuple);
 
-        ReturnCode status;
-        auto app_db_entry_or = deserializeAclRuleAppDbEntry(table_name, db_key, attributes);
-        if (!app_db_entry_or.ok())
-        {
-            status = app_db_entry_or.status();
-            SWSS_LOG_ERROR("Unable to deserialize APP DB entry with key %s: %s",
-                           QuotedVar(table_name + ":" + db_key).c_str(), status.message().c_str());
-            m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                 status,
-                                 /*replace=*/true);
-            continue;
-        }
-        auto &app_db_entry = *app_db_entry_or;
+    SWSS_LOG_NOTICE("OP: %s, RULE_KEY: %s", op.c_str(),
+                    QuotedVar(db_key).c_str());
 
-        status = validateAclRuleAppDbEntry(app_db_entry);
-        if (!status.ok())
-        {
-            SWSS_LOG_ERROR("Validation failed for ACL rule APP DB entry with key %s: %s",
-                           QuotedVar(table_name + ":" + db_key).c_str(), status.message().c_str());
-            m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                 status,
-                                 /*replace=*/true);
-            continue;
-        }
-
-        const auto &acl_table_name = app_db_entry.acl_table_name;
-        const auto &acl_rule_key =
-            KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, std::to_string(app_db_entry.priority));
-
-        const auto &operation = kfvOp(key_op_fvs_tuple);
-        if (operation == SET_COMMAND)
-        {
-            auto *acl_rule = getAclRule(acl_table_name, acl_rule_key);
-            if (acl_rule == nullptr)
-            {
-                status = processAddRuleRequest(acl_rule_key, app_db_entry);
-            }
-            else
-            {
-                status = processUpdateRuleRequest(app_db_entry, *acl_rule);
-            }
-        }
-        else if (operation == DEL_COMMAND)
-        {
-            status = processDeleteRuleRequest(acl_table_name, acl_rule_key);
-        }
-        else
-        {
-            status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Unknown operation type " << operation;
-            SWSS_LOG_ERROR("%s", status.message().c_str());
-        }
-        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple), status,
-                             /*replace=*/true);
+    auto app_db_entry_or =
+        deserializeAclRuleAppDbEntry(table_name, db_key, attributes);
+    if (!app_db_entry_or.ok()) {
+      status = app_db_entry_or.status();
+      SWSS_LOG_ERROR("Unable to deserialize APP DB entry with key %s: %s",
+                     QuotedVar(table_name + ":" + db_key).c_str(),
+                     status.message().c_str());
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple), status,
+                           /*replace=*/true);
+      break;
     }
-    m_entries.clear();
+    auto& app_db_entry = *app_db_entry_or;
+
+    status = validateAclRuleAppDbEntry(app_db_entry);
+    if (!status.ok()) {
+      SWSS_LOG_ERROR(
+          "Validation failed for ACL rule APP DB entry with key %s: %s",
+          QuotedVar(table_name + ":" + db_key).c_str(),
+          status.message().c_str());
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple), status,
+                           /*replace=*/true);
+      break;
+    }
+
+    const auto& acl_table_name = app_db_entry.acl_table_name;
+    const auto& acl_rule_key = KeyGenerator::generateAclRuleKey(
+        app_db_entry.match_fvs, std::to_string(app_db_entry.priority));
+
+    const auto& operation = kfvOp(key_op_fvs_tuple);
+    if (operation == SET_COMMAND) {
+      auto* acl_rule = getAclRule(acl_table_name, acl_rule_key);
+      if (acl_rule == nullptr) {
+        status = processAddRuleRequest(acl_rule_key, app_db_entry);
+      } else {
+        status = processUpdateRuleRequest(app_db_entry, *acl_rule);
+      }
+    } else if (operation == DEL_COMMAND) {
+      status = processDeleteRuleRequest(acl_table_name, acl_rule_key);
+    } else {
+      status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Unknown operation type " << operation;
+      SWSS_LOG_ERROR("%s", status.message().c_str());
+    }
+    m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                         kfvFieldsValues(key_op_fvs_tuple), status,
+                         /*replace=*/true);
+    if (!status.ok()) {
+      break;
+    }
+  }
+  drainWithNotExecuted();
+  return status;
 }
 
 ReturnCode AclRuleManager::setUpUserDefinedTraps()
@@ -258,9 +280,9 @@ ReturnCode AclRuleManager::setUpUserDefinedTraps()
         auto trap_group_it = trapGroupMap.find(GENL_PACKET_TRAP_GROUP_NAME_PREFIX + std::to_string(queue_num));
         if (trap_group_it == trapGroupMap.end())
         {
-            LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-                                 << "Trap group was not found given trap group name: "
-                                 << GENL_PACKET_TRAP_GROUP_NAME_PREFIX << queue_num);
+	    SWSS_LOG_INFO("Trap group was not found given trap group name: %s%d",
+                    GENL_PACKET_TRAP_GROUP_NAME_PREFIX, queue_num);
+              continue;
         }
         const sai_object_id_t trap_group_oid = trap_group_it->second;
         auto hostif_oid_it = trapGroupHostIfMap.find(trap_group_oid);
@@ -316,7 +338,7 @@ ReturnCode AclRuleManager::setUpUserDefinedTraps()
         }
         m_p4OidMapper->setOID(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP, std::to_string(queue_num),
                               udt_hostif.user_defined_trap, /*ref_count=*/1);
-        m_userDefinedTraps.push_back(udt_hostif);
+	m_userDefinedTraps[queue_num] = udt_hostif;
         SWSS_LOG_NOTICE("Created user defined trap for QUEUE number %d: %s", queue_num,
                         sai_serialize_object_id(udt_hostif.user_defined_trap).c_str());
     }
@@ -327,15 +349,20 @@ ReturnCode AclRuleManager::cleanUpUserDefinedTraps()
 {
     SWSS_LOG_ENTER();
 
-    for (size_t queue_num = 1; queue_num <= m_userDefinedTraps.size(); queue_num++)
-    {
-        CHECK_ERROR_AND_LOG_AND_RETURN(
-            sai_hostif_api->remove_hostif_table_entry(m_userDefinedTraps[queue_num - 1].hostif_table_entry),
-            "Failed to create hostif table entry.");
-        m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP, std::to_string(queue_num));
-        sai_hostif_api->remove_hostif_user_defined_trap(m_userDefinedTraps[queue_num - 1].user_defined_trap);
-        m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP, std::to_string(queue_num));
+    const auto trapGroupMap = m_coppOrch->getTrapGroupMap();
+    for (const auto& udt_it : m_userDefinedTraps) {
+        CHECK_ERROR_AND_LOG_AND_RETURN(sai_hostif_api->remove_hostif_table_entry(
+                                       fvValue(udt_it).hostif_table_entry),
+                                       "Failed to remove hostif table entry.");
+
+        m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
+                                        std::to_string(fvField(udt_it)));
+        sai_hostif_api->remove_hostif_user_defined_trap(
+            fvValue(udt_it).user_defined_trap);
+        m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
+                                std::to_string(fvField(udt_it)));
     }
+
     m_userDefinedTraps.clear();
     return ReturnCode();
 }
@@ -617,36 +644,39 @@ ReturnCodeOr<P4AclRuleAppDbEntry> AclRuleManager::deserializeAclRuleAppDbEntry(
         else if (prefix == kMeterPrefix)
         {
             const auto &meter_attr_name = tokenized_field[1];
-            if (std::stoi(value) < 0)
-            {
-                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                       << "Invalid ACL meter field value " << QuotedVar(field) << ": " << QuotedVar(value);
+            if (meter_attr_name == kMeterMode) {
+                app_db_entry.meter.mode = value;
+                continue;
             }
-            if (meter_attr_name == kMeterCir)
-            {
-                app_db_entry.meter.cir = std::stoi(value);
-            }
-            else if (meter_attr_name == kMeterCburst)
-            {
-                app_db_entry.meter.cburst = std::stoi(value);
-            }
-            else if (meter_attr_name == kMeterPir)
-            {
-                app_db_entry.meter.pir = std::stoi(value);
-            }
-            else if (meter_attr_name == kMeterPburst)
-            {
-                app_db_entry.meter.pburst = std::stoi(value);
-            }
-            else
-            {
-                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Unknown ACL meter field " << QuotedVar(field);
-            }
-            app_db_entry.meter.enabled = true;
-        }
-        else
-        {
-            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Unknown ACL rule field " << QuotedVar(field);
+            try {
+                auto value_node = nlohmann::json::parse(value);
+                if (!value_node.is_number_unsigned()) {
+                  return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                     << "Invalid ACL meter field value " << QuotedVar(field) << ": "
+                     << QuotedVar(value) << " - Expect a uint64_t.";
+               }
+               uint64_t meter_value = std::stoull(value);
+               if (meter_attr_name == kMeterCir) {
+                  app_db_entry.meter.cir = meter_value;
+               } else if (meter_attr_name == kMeterCburst) {
+                   app_db_entry.meter.cburst = meter_value;
+               } else if (meter_attr_name == kMeterPir) {
+                   app_db_entry.meter.pir = meter_value;
+               } else if (meter_attr_name == kMeterPburst) {
+                   app_db_entry.meter.pburst = meter_value;
+               } else {
+                  return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                    << "Unknown ACL meter field " << QuotedVar(field);
+               }
+           } catch (std::exception& e) {
+             return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                 << "Invalid ACL meter field value " << QuotedVar(field) << ": "
+                 << QuotedVar(value) << " - Expect a uint64_t.";
+           }
+           app_db_entry.meter.enabled = true;
+        } else  {
+            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Unknown ACL rule field " << QuotedVar(field);
         }
     }
     return app_db_entry;
@@ -658,6 +688,27 @@ ReturnCode AclRuleManager::validateAclRuleAppDbEntry(const P4AclRuleAppDbEntry &
     {
         return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
                << "ACL rule in table " << QuotedVar(app_db_entry.acl_table_name) << " is missing priority";
+    }
+    if (app_db_entry.meter.enabled && !app_db_entry.meter.mode.empty() &&
+        policerModeLookup.find(app_db_entry.meter.mode) ==
+            policerModeLookup.end()) {
+      return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+             << "ACL rule " << QuotedVar(app_db_entry.db_key)
+             << " has invalid policer mode:"
+             << QuotedVar(app_db_entry.meter.mode);
+    }
+    // If meter/mode is empty, then OA will use storm mode by default.
+    // If meter/pir and meter/pburst present, they should be equal to meter/cir
+    // and meter/cburst.
+    if (app_db_entry.meter.enabled && app_db_entry.meter.mode.empty() &&
+        ((app_db_entry.meter.pir != 0 &&
+          app_db_entry.meter.cir != app_db_entry.meter.pir) ||
+         (app_db_entry.meter.pburst != 0 &&
+          app_db_entry.meter.cburst != app_db_entry.meter.pburst))) {
+      return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+             << "ACL policer for " << QuotedVar(app_db_entry.db_key)
+             << " in default single_rate_two_color mode has invalid cir:pir/cburst:pburst pairs, "
+                "expected cir==pir, cburst==pburst.";
     }
     return ReturnCode();
 }
@@ -754,289 +805,303 @@ ReturnCode AclRuleManager::setAclRuleCounterStats(const P4AclRule &acl_rule)
     return ReturnCode();
 }
 
-ReturnCode AclRuleManager::setMatchValue(const acl_entry_attr_union_t attr_name, const std::string &attr_value,
-                                         sai_attribute_value_t *value, P4AclRule *acl_rule,
-                                         const std::string &ip_type_bit_type)
-{
-    try
-    {
-        switch (attr_name)
-        {
-        case SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS: {
-            const auto &ports = tokenize(attr_value, kPortsDelimiter);
-            if (ports.empty())
-            {
-                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "IN_PORTS are emtpy.";
-            }
-            for (const auto &alias : ports)
-            {
-                Port port;
-                if (!gPortsOrch->getPort(alias, port))
-                {
-                    return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND) << "Failed to locate port " << QuotedVar(alias);
-                }
-                acl_rule->in_ports.push_back(alias);
-                acl_rule->in_ports_oids.push_back(port.m_port_id);
-            }
-            value->aclfield.data.objlist.count = static_cast<uint32_t>(acl_rule->in_ports_oids.size());
-            value->aclfield.data.objlist.list = acl_rule->in_ports_oids.data();
-            break;
+ReturnCode AclRuleManager::setMatchValue(const sai_acl_entry_attr_t attr_name,
+                                         const std::string& attr_value,
+                                         sai_attribute_value_t* value,
+                                         P4AclRule* acl_rule,
+                                         const std::string& ip_type_bit_type) {
+  SWSS_LOG_ENTER();
+  try {
+    switch ((int)attr_name) {
+      case SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS: {
+        const auto& ports = tokenize(attr_value, kPortsDelimiter);
+        if (ports.empty()) {
+          return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                 << "IN_PORTS are emtpy.";
         }
-        case SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORTS: {
-            const auto &ports = tokenize(attr_value, kPortsDelimiter);
-            if (ports.empty())
-            {
-                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "OUT_PORTS are emtpy.";
-            }
-            for (const auto &alias : ports)
-            {
-                Port port;
-                if (!gPortsOrch->getPort(alias, port))
-                {
-                    return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND) << "Failed to locate port " << QuotedVar(alias);
-                }
-                acl_rule->out_ports.push_back(alias);
-                acl_rule->out_ports_oids.push_back(port.m_port_id);
-            }
-            value->aclfield.data.objlist.count = static_cast<uint32_t>(acl_rule->out_ports_oids.size());
-            value->aclfield.data.objlist.list = acl_rule->out_ports_oids.data();
-            break;
+        for (const auto& alias : ports) {
+          Port port;
+          if (!gPortsOrch->getPort(alias, port)) {
+            return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                   << "Failed to locate port " << QuotedVar(alias);
+          }
+          acl_rule->in_ports.push_back(alias);
+          acl_rule->in_ports_oids.push_back(port.m_port_id);
         }
-        case SAI_ACL_ENTRY_ATTR_FIELD_IN_PORT: {
-            Port port;
-            if (!gPortsOrch->getPort(attr_value, port))
-            {
-                return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND) << "Failed to locate port " << QuotedVar(attr_value);
-            }
-            value->aclfield.data.oid = port.m_port_id;
-            acl_rule->in_ports.push_back(attr_value);
-            break;
+        value->aclfield.data.objlist.count =
+            static_cast<uint32_t>(acl_rule->in_ports_oids.size());
+        value->aclfield.data.objlist.list = acl_rule->in_ports_oids.data();
+        break;
+      }
+      case SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORTS: {
+        const auto& ports = tokenize(attr_value, kPortsDelimiter);
+        if (ports.empty()) {
+          return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                 << "OUT_PORTS are emtpy.";
         }
-        case SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORT: {
-            Port port;
-            if (!gPortsOrch->getPort(attr_value, port))
-            {
-                return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND) << "Failed to locate port " << QuotedVar(attr_value);
-            }
-            value->aclfield.data.oid = port.m_port_id;
-            acl_rule->out_ports.push_back(attr_value);
-            break;
+        for (const auto& alias : ports) {
+          Port port;
+          if (!gPortsOrch->getPort(alias, port)) {
+            return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                   << "Failed to locate port " << QuotedVar(alias);
+          }
+          acl_rule->out_ports.push_back(alias);
+          acl_rule->out_ports_oids.push_back(port.m_port_id);
         }
-        case SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_TYPE: {
-            if (!setMatchFieldIpType(attr_value, value, ip_type_bit_type))
-            {
-                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                       << "Failed to set IP_TYPE with value " << QuotedVar(attr_value);
-            }
-            break;
+        value->aclfield.data.objlist.count =
+            static_cast<uint32_t>(acl_rule->out_ports_oids.size());
+        value->aclfield.data.objlist.list = acl_rule->out_ports_oids.data();
+        break;
+      }
+      case SAI_ACL_ENTRY_ATTR_FIELD_IN_PORT: {
+        Port port;
+        if (!gPortsOrch->getPort(attr_value, port)) {
+          return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                 << "Failed to locate port " << QuotedVar(attr_value);
         }
-        case SAI_ACL_ENTRY_ATTR_FIELD_TCP_FLAGS:
-        case SAI_ACL_ENTRY_ATTR_FIELD_IP_FLAGS:
-        case SAI_ACL_ENTRY_ATTR_FIELD_DSCP: {
-            // Support both exact value match and value/mask match
-            const auto &flag_data = tokenize(attr_value, kDataMaskDelimiter);
-            value->aclfield.data.u8 = to_uint<uint8_t>(trim(flag_data[0]), 0, 0x3F);
+        value->aclfield.data.oid = port.m_port_id;
+        acl_rule->in_ports.push_back(attr_value);
+        break;
+      }
+      case SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORT: {
+        Port port;
+        if (!gPortsOrch->getPort(attr_value, port)) {
+          return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                 << "Failed to locate port " << QuotedVar(attr_value);
+        }
+        value->aclfield.data.oid = port.m_port_id;
+        acl_rule->out_ports.push_back(attr_value);
+        break;
+      }
+      case SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_TYPE: {
+        if (!setMatchFieldIpType(attr_value, value, ip_type_bit_type)) {
+          return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                 << "Failed to set IP_TYPE with value "
+                 << QuotedVar(attr_value);
+        }
+        break;
+      }
+      case SAI_ACL_ENTRY_ATTR_FIELD_TCP_FLAGS:
+      case SAI_ACL_ENTRY_ATTR_FIELD_IP_FLAGS:
+      case SAI_ACL_ENTRY_ATTR_FIELD_DSCP: {
+        // Support both exact value match and value/mask match
+        const auto& flag_data = tokenize(attr_value, kDataMaskDelimiter);
+        value->aclfield.data.u8 = to_uint<uint8_t>(trim(flag_data[0]), 0, 0x3F);
 
-            if (flag_data.size() == 2)
-            {
-                value->aclfield.mask.u8 = to_uint<uint8_t>(trim(flag_data[1]), 0, 0x3F);
-            }
-            else
-            {
-                value->aclfield.mask.u8 = 0x3F;
-            }
-            break;
+        if (flag_data.size() == 2) {
+          value->aclfield.mask.u8 =
+              to_uint<uint8_t>(trim(flag_data[1]), 0, 0x3F);
+        } else {
+          value->aclfield.mask.u8 = 0x3F;
         }
-        case SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE:
-        case SAI_ACL_ENTRY_ATTR_FIELD_L4_SRC_PORT:
-        case SAI_ACL_ENTRY_ATTR_FIELD_L4_DST_PORT:
-        case SAI_ACL_ENTRY_ATTR_FIELD_IP_IDENTIFICATION:
-        case SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_ID:
-        case SAI_ACL_ENTRY_ATTR_FIELD_INNER_VLAN_ID:
-        case SAI_ACL_ENTRY_ATTR_FIELD_INNER_ETHER_TYPE:
-        case SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_SRC_PORT:
-        case SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_DST_PORT: {
-            const std::vector<std::string> &value_and_mask = tokenize(attr_value, kDataMaskDelimiter);
-            value->aclfield.data.u16 = to_uint<uint16_t>(trim(value_and_mask[0]));
-            if (value_and_mask.size() > 1)
-            {
-                value->aclfield.mask.u16 = to_uint<uint16_t>(trim(value_and_mask[1]));
-            }
-            else
-            {
-                value->aclfield.mask.u16 = 0xFFFF;
-            }
-            break;
+        break;
+      }
+      case SAI_ACL_ENTRY_ATTR_FIELD_PORT_USER_META:
+      case SAI_ACL_ENTRY_ATTR_FIELD_OUTER_TPID:
+      case SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE:
+      case SAI_ACL_ENTRY_ATTR_FIELD_L4_SRC_PORT:
+      case SAI_ACL_ENTRY_ATTR_FIELD_L4_DST_PORT:
+      case SAI_ACL_ENTRY_ATTR_FIELD_IP_IDENTIFICATION:
+      case SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_ID:
+      case SAI_ACL_ENTRY_ATTR_FIELD_INNER_VLAN_ID:
+      case SAI_ACL_ENTRY_ATTR_FIELD_INNER_ETHER_TYPE:
+      case SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_SRC_PORT:
+      case SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_DST_PORT: {
+        const std::vector<std::string>& value_and_mask =
+            tokenize(attr_value, kDataMaskDelimiter);
+        value->aclfield.data.u16 = to_uint<uint16_t>(trim(value_and_mask[0]));
+        if (value_and_mask.size() > 1) {
+          value->aclfield.mask.u16 = to_uint<uint16_t>(trim(value_and_mask[1]));
+        } else {
+          value->aclfield.mask.u16 = 0xFFFF;
         }
-        case SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP:
-        case SAI_ACL_ENTRY_ATTR_FIELD_INNER_DST_IP:
-        case SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP:
-        case SAI_ACL_ENTRY_ATTR_FIELD_DST_IP: {
-            const auto &tokenized_ip = tokenize(attr_value, kDataMaskDelimiter);
-            if (tokenized_ip.size() == 2)
-            {
-                // data & mask
-                swss::IpAddress ip_data(trim(tokenized_ip[0]));
-                if (!ip_data.isV4())
-                {
-                    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                           << "IP data type should be v4 type: " << QuotedVar(attr_value);
-                }
-                swss::IpAddress ip_mask(trim(tokenized_ip[1]));
-                if (!ip_mask.isV4())
-                {
-                    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                           << "IP mask type should be v4 type: " << QuotedVar(attr_value);
-                }
-                value->aclfield.data.ip4 = ip_data.getV4Addr();
-                value->aclfield.mask.ip4 = ip_mask.getV4Addr();
-            }
-            else
-            {
-                // LPM annotated value
-                swss::IpPrefix ip_prefix(trim(attr_value));
-                if (!ip_prefix.isV4())
-                {
-                    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                           << "IP type should be v6 type: " << QuotedVar(attr_value);
-                }
-                value->aclfield.data.ip4 = ip_prefix.getIp().getV4Addr();
-                value->aclfield.mask.ip4 = ip_prefix.getMask().getV4Addr();
-            }
-            break;
-        }
-        case SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IPV6:
-        case SAI_ACL_ENTRY_ATTR_FIELD_INNER_DST_IPV6:
-        case SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6:
-        case SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6: {
-            const auto &tokenized_ip = tokenize(attr_value, kDataMaskDelimiter);
-            if (tokenized_ip.size() == 2)
-            {
-                // data & mask
-                swss::IpAddress ip_data(trim(tokenized_ip[0]));
-                if (ip_data.isV4())
-                {
-                    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                           << "IP data type should be v6 type: " << QuotedVar(attr_value);
-                }
-                swss::IpAddress ip_mask(trim(tokenized_ip[1]));
-                if (ip_mask.isV4())
-                {
-                    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                           << "IP mask type should be v6 type: " << QuotedVar(attr_value);
-                }
-                memcpy(value->aclfield.data.ip6, ip_data.getV6Addr(), sizeof(sai_ip6_t));
-                memcpy(value->aclfield.mask.ip6, ip_mask.getV6Addr(), sizeof(sai_ip6_t));
-            }
-            else
-            {
-                // LPM annotated value
-                swss::IpPrefix ip_prefix(trim(attr_value));
-                if (ip_prefix.isV4())
-                {
-                    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                           << "IP type should be v6 type: " << QuotedVar(attr_value);
-                }
-                memcpy(value->aclfield.data.ip6, ip_prefix.getIp().getV6Addr(), sizeof(sai_ip6_t));
-                memcpy(value->aclfield.mask.ip6, ip_prefix.getMask().getV6Addr(), sizeof(sai_ip6_t));
-            }
-            break;
-        }
-        case SAI_ACL_ENTRY_ATTR_FIELD_SRC_MAC:
-        case SAI_ACL_ENTRY_ATTR_FIELD_DST_MAC: {
-            const std::vector<std::string> mask_and_value = tokenize(attr_value, kDataMaskDelimiter);
-            swss::MacAddress mac(trim(mask_and_value[0]));
-            memcpy(value->aclfield.data.mac, mac.getMac(), sizeof(sai_mac_t));
-            if (mask_and_value.size() > 1)
-            {
-                swss::MacAddress mask(trim(mask_and_value[1]));
-                memcpy(value->aclfield.mask.mac, mask.getMac(), sizeof(sai_mac_t));
-            }
-            else
-            {
-                const sai_mac_t mac_mask = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-                memcpy(value->aclfield.mask.mac, mac_mask, sizeof(sai_mac_t));
-            }
-            break;
-        }
-        case SAI_ACL_ENTRY_ATTR_FIELD_TC:
-        case SAI_ACL_ENTRY_ATTR_FIELD_ICMP_TYPE:
-        case SAI_ACL_ENTRY_ATTR_FIELD_ICMP_CODE:
-        case SAI_ACL_ENTRY_ATTR_FIELD_ICMPV6_TYPE:
-        case SAI_ACL_ENTRY_ATTR_FIELD_ICMPV6_CODE:
-        case SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_PRI:
-        case SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_CFI:
-        case SAI_ACL_ENTRY_ATTR_FIELD_INNER_VLAN_PRI:
-        case SAI_ACL_ENTRY_ATTR_FIELD_INNER_VLAN_CFI:
-        case SAI_ACL_ENTRY_ATTR_FIELD_INNER_IP_PROTOCOL:
-        case SAI_ACL_ENTRY_ATTR_FIELD_IP_PROTOCOL:
-        case SAI_ACL_ENTRY_ATTR_FIELD_ECN:
-        case SAI_ACL_ENTRY_ATTR_FIELD_TTL:
-        case SAI_ACL_ENTRY_ATTR_FIELD_TOS:
-        case SAI_ACL_ENTRY_ATTR_FIELD_IPV6_NEXT_HEADER: {
-            const std::vector<std::string> &value_and_mask = tokenize(attr_value, kDataMaskDelimiter);
-            value->aclfield.data.u8 = to_uint<uint8_t>(trim(value_and_mask[0]));
-            if (value_and_mask.size() > 1)
-            {
-                value->aclfield.mask.u8 = to_uint<uint8_t>(trim(value_and_mask[1]));
-            }
-            else
-            {
-                value->aclfield.mask.u8 = 0xFF;
-            }
-            break;
-        }
-        case SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI:
-        case SAI_ACL_ENTRY_ATTR_FIELD_ROUTE_DST_USER_META:
-        case SAI_ACL_ENTRY_ATTR_FIELD_IPV6_FLOW_LABEL: {
-            const std::vector<std::string> &value_and_mask = tokenize(attr_value, kDataMaskDelimiter);
-            value->aclfield.data.u32 = to_uint<uint32_t>(trim(value_and_mask[0]));
-            if (value_and_mask.size() > 1)
-            {
-                value->aclfield.mask.u32 = to_uint<uint32_t>(trim(value_and_mask[1]));
-            }
-            else
-            {
-                value->aclfield.mask.u32 = 0xFFFFFFFF;
-            }
-            break;
-        }
-        case SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_FRAG: {
-            const auto &ip_frag_it = aclIpFragLookup.find(attr_value);
-            if (ip_frag_it == aclIpFragLookup.end())
-            {
-                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Invalid IP frag " << QuotedVar(attr_value);
-            }
-            value->aclfield.data.u32 = ip_frag_it->second;
-            value->aclfield.mask.u32 = 0xFFFFFFFF;
-            break;
-        }
-        case SAI_ACL_ENTRY_ATTR_FIELD_PACKET_VLAN: {
-            const auto &packet_vlan_it = aclPacketVlanLookup.find(attr_value);
-            if (packet_vlan_it == aclPacketVlanLookup.end())
-            {
-                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Invalid Packet VLAN " << QuotedVar(attr_value);
-            }
-            value->aclfield.data.u32 = packet_vlan_it->second;
-            value->aclfield.mask.u32 = 0xFFFFFFFF;
-            break;
-        }
-        default: {
+        break;
+      }
+      case SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP:
+      case SAI_ACL_ENTRY_ATTR_FIELD_INNER_DST_IP:
+      case SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP:
+      case SAI_ACL_ENTRY_ATTR_FIELD_DST_IP: {
+        const auto& tokenized_ip = tokenize(attr_value, kDataMaskDelimiter);
+        if (tokenized_ip.size() == 2) {
+          // data & mask
+          swss::IpAddress ip_data(trim(tokenized_ip[0]));
+          if (!ip_data.isV4()) {
             return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                   << "ACL match field " << attr_name << " is not supported.";
+                   << "IP data type should be v4 type: "
+                   << QuotedVar(attr_value);
+          }
+          swss::IpAddress ip_mask(trim(tokenized_ip[1]));
+          if (!ip_mask.isV4()) {
+            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                   << "IP mask type should be v4 type: "
+                   << QuotedVar(attr_value);
+          }
+          value->aclfield.data.ip4 = ip_data.getV4Addr();
+          value->aclfield.mask.ip4 = ip_mask.getV4Addr();
+        } else {
+          // LPM annotated value
+          swss::IpPrefix ip_prefix(trim(attr_value));
+          if (!ip_prefix.isV4()) {
+            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                   << "IP type should be v6 type: " << QuotedVar(attr_value);
+          }
+          value->aclfield.data.ip4 = ip_prefix.getIp().getV4Addr();
+          value->aclfield.mask.ip4 = ip_prefix.getMask().getV4Addr();
         }
+        break;
+      }
+      case SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IPV6:
+      case SAI_ACL_ENTRY_ATTR_FIELD_INNER_DST_IPV6:
+      case SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6:
+      case SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6: {
+        const auto& tokenized_ip = tokenize(attr_value, kDataMaskDelimiter);
+        if (tokenized_ip.size() == 2) {
+          // data & mask
+          swss::IpAddress ip_data(trim(tokenized_ip[0]));
+          if (ip_data.isV4()) {
+            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                   << "IP data type should be v6 type: "
+                   << QuotedVar(attr_value);
+          }
+          swss::IpAddress ip_mask(trim(tokenized_ip[1]));
+          if (ip_mask.isV4()) {
+            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                   << "IP mask type should be v6 type: "
+                   << QuotedVar(attr_value);
+          }
+          memcpy(value->aclfield.data.ip6, ip_data.getV6Addr(),
+                 sizeof(sai_ip6_t));
+          memcpy(value->aclfield.mask.ip6, ip_mask.getV6Addr(),
+                 sizeof(sai_ip6_t));
+        } else {
+          // LPM annotated value
+          swss::IpPrefix ip_prefix(trim(attr_value));
+          if (ip_prefix.isV4()) {
+            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                   << "IP type should be v6 type: " << QuotedVar(attr_value);
+          }
+          memcpy(value->aclfield.data.ip6, ip_prefix.getIp().getV6Addr(),
+                 sizeof(sai_ip6_t));
+          memcpy(value->aclfield.mask.ip6, ip_prefix.getMask().getV6Addr(),
+                 sizeof(sai_ip6_t));
         }
-    }
-    catch (std::exception &e)
-    {
+        break;
+      }
+      case SAI_ACL_ENTRY_ATTR_FIELD_SRC_MAC:
+      case SAI_ACL_ENTRY_ATTR_FIELD_DST_MAC: {
+        const std::vector<std::string> mask_and_value =
+            tokenize(attr_value, kDataMaskDelimiter);
+        swss::MacAddress mac(trim(mask_and_value[0]));
+        memcpy(value->aclfield.data.mac, mac.getMac(), sizeof(sai_mac_t));
+        if (mask_and_value.size() > 1) {
+          swss::MacAddress mask(trim(mask_and_value[1]));
+          memcpy(value->aclfield.mask.mac, mask.getMac(), sizeof(sai_mac_t));
+        } else {
+          const sai_mac_t mac_mask = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+          memcpy(value->aclfield.mask.mac, mac_mask, sizeof(sai_mac_t));
+        }
+        break;
+      }
+      case SAI_ACL_ENTRY_ATTR_FIELD_TC:
+      case SAI_ACL_ENTRY_ATTR_FIELD_ICMP_TYPE:
+      case SAI_ACL_ENTRY_ATTR_FIELD_ICMP_CODE:
+      case SAI_ACL_ENTRY_ATTR_FIELD_ICMPV6_TYPE:
+      case SAI_ACL_ENTRY_ATTR_FIELD_ICMPV6_CODE:
+      case SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_PRI:
+      case SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_CFI:
+      case SAI_ACL_ENTRY_ATTR_FIELD_INNER_VLAN_PRI:
+      case SAI_ACL_ENTRY_ATTR_FIELD_INNER_VLAN_CFI:
+      case SAI_ACL_ENTRY_ATTR_FIELD_INNER_IP_PROTOCOL:
+      case SAI_ACL_ENTRY_ATTR_FIELD_IP_PROTOCOL:
+      case SAI_ACL_ENTRY_ATTR_FIELD_ECN:
+      case SAI_ACL_ENTRY_ATTR_FIELD_TTL:
+      case SAI_ACL_ENTRY_ATTR_FIELD_TOS:
+      case SAI_ACL_ENTRY_ATTR_FIELD_IPV6_NEXT_HEADER: {
+        const std::vector<std::string>& value_and_mask =
+            tokenize(attr_value, kDataMaskDelimiter);
+        value->aclfield.data.u8 = to_uint<uint8_t>(trim(value_and_mask[0]));
+        if (value_and_mask.size() > 1) {
+          value->aclfield.mask.u8 = to_uint<uint8_t>(trim(value_and_mask[1]));
+        } else {
+          value->aclfield.mask.u8 = 0xFF;
+        }
+        break;
+      }
+      case SAI_ACL_ENTRY_ATTR_FIELD_VLAN_USER_META:
+      case SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI:
+      case SAI_ACL_ENTRY_ATTR_FIELD_ROUTE_DST_USER_META:
+      case SAI_ACL_ENTRY_ATTR_FIELD_ACL_USER_META:
+      case SAI_ACL_ENTRY_ATTR_FIELD_IPV6_FLOW_LABEL: {
+        const std::vector<std::string>& value_and_mask =
+            tokenize(attr_value, kDataMaskDelimiter);
+        value->aclfield.data.u32 = to_uint<uint32_t>(trim(value_and_mask[0]));
+        if (value_and_mask.size() > 1) {
+          value->aclfield.mask.u32 = to_uint<uint32_t>(trim(value_and_mask[1]));
+        } else {
+          value->aclfield.mask.u32 = 0xFFFFFFFF;
+        }
+        break;
+      }
+      case SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_FRAG: {
+        const auto& ip_frag_it = aclIpFragLookup.find(attr_value);
+        if (ip_frag_it == aclIpFragLookup.end()) {
+          return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                 << "Invalid IP frag " << QuotedVar(attr_value);
+        }
+        value->aclfield.data.u32 = ip_frag_it->second;
+        value->aclfield.mask.u32 = 0xFFFFFFFF;
+        break;
+      }
+      case SAI_ACL_ENTRY_ATTR_FIELD_PACKET_VLAN: {
+        const auto& packet_vlan_it = aclPacketVlanLookup.find(attr_value);
+        if (packet_vlan_it == aclPacketVlanLookup.end()) {
+          return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                 << "Invalid Packet VLAN " << QuotedVar(attr_value);
+        }
+        value->aclfield.data.u32 = packet_vlan_it->second;
+        value->aclfield.mask.u32 = 0xFFFFFFFF;
+        break;
+      }
+      case SAI_ACL_ENTRY_ATTR_FIELD_VRF_ID: {
+        const std::vector<std::string>& value_and_mask =
+            tokenize(attr_value, kDataMaskDelimiter);
+        const std::string vrf_id = trim(value_and_mask[0]);
+        if (vrf_id.empty() || !m_vrfOrch->isVRFexists(vrf_id)) {
+          return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                 << "VRF ID " << QuotedVar(vrf_id) << " was not found.";
+        }
+        value->aclfield.data.oid = m_vrfOrch->getVRFid(vrf_id);
+        if (value_and_mask.size() > 1) {
+          SWSS_LOG_INFO("Mask ignored for VRF ID.");
+        }
+        break;
+      }
+      case SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT:
+      case SAI_ACL_ENTRY_ATTR_FIELD_ROUTE_NPU_META_DST_HIT: {
+        const std::vector<std::string>& value_and_mask =
+            tokenize(attr_value, kDataMaskDelimiter);
+        uint8_t hit_value = to_uint<uint8_t>(trim(value_and_mask[0]));
+        if (value_and_mask.size() > 1) {
+          SWSS_LOG_INFO("Mask ignored for IPMC/route table hit field.");
+        }
+        value->aclfield.data.booldata = hit_value != 0;
+        break;
+      }
+      default: {
         return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-               << "Failed to parse match attribute " << attr_name << " value: " << QuotedVar(attr_value);
+               << "ACL match field " << attr_name << " is not supported.";
+      }
     }
-    value->aclfield.enable = true;
-    return ReturnCode();
+  } catch (std::exception& e) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Failed to parse match attribute " << attr_name
+           << " value: " << QuotedVar(attr_value);
+  }
+  value->aclfield.enable = true;
+  return ReturnCode();
 }
 
-ReturnCode AclRuleManager::getRedirectActionPortOid(const std::string &target, sai_object_id_t *rediect_oid)
+ReturnCode AclRuleManager::getRedirectActionPortOid(const std::string& target, sai_object_id_t* redirect_oid)
 {
     // Try to parse physical port and LAG first
     Port port;
@@ -1044,12 +1109,12 @@ ReturnCode AclRuleManager::getRedirectActionPortOid(const std::string &target, s
     {
         if (port.m_type == Port::PHY)
         {
-            *rediect_oid = port.m_port_id;
+            *redirect_oid = port.m_port_id;
             return ReturnCode();
         }
         else if (port.m_type == Port::LAG)
         {
-            *rediect_oid = port.m_lag_id;
+            *redirect_oid = port.m_lag_id;
             return ReturnCode();
         }
         else
@@ -1062,14 +1127,42 @@ ReturnCode AclRuleManager::getRedirectActionPortOid(const std::string &target, s
     return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND) << "Port " << QuotedVar(target) << " not found.";
 }
 
-ReturnCode AclRuleManager::getRedirectActionNextHopOid(const std::string &target, sai_object_id_t *rediect_oid)
+ReturnCode AclRuleManager::getRedirectActionNextHopOid(const std::string& target, sai_object_id_t* redirect_oid)
 {
     // Try to get nexthop object id
     const auto &next_hop_key = KeyGenerator::generateNextHopKey(target);
-    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_NEXT_HOP, next_hop_key, rediect_oid))
+    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_NEXT_HOP, next_hop_key, redirect_oid))
     {
         LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
                              << "ACL Redirect action target next hop ip: " << QuotedVar(target)
+                             << " doesn't exist on the switch");
+    }
+    return ReturnCode();
+}
+
+ReturnCode AclRuleManager::getRedirectActionL3MulticastGroupOid(
+    const std::string& target, sai_object_id_t* redirect_oid) {
+    const auto& multicast_group_key =
+        KeyGenerator::generateL3MulticastGroupKey(target);
+    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_IPMC_GROUP, multicast_group_key,
+                               redirect_oid)) {
+        LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                             << "ACL Redirect action target multicast group ID: "
+                             << QuotedVar(target)
+                             << " doesn't exist on the switch");
+    }
+    return ReturnCode();
+}
+
+ReturnCode AclRuleManager::getRedirectActionL2MulticastGroupOid(
+    const std::string& target, sai_object_id_t* redirect_oid) {
+    const auto& l2_multicast_group_key =
+        KeyGenerator::generateL2MulticastGroupKey(target);
+    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_L2MC_GROUP, l2_multicast_group_key,
+                               redirect_oid)) {
+        LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                             << "ACL Redirect action target L2 multicast group ID: "
+                             << QuotedVar(target)
                              << " doesn't exist on the switch");
     }
     return ReturnCode();
@@ -1099,9 +1192,12 @@ ReturnCode AclRuleManager::setAllMatchFieldValues(const P4AclRuleAppDbEntry &app
                 }
                 set_match_rc = setUdfMatchValue(
                     udf_field, match_value,
-                    &acl_rule.match_fvs[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN + udf_group_index_it->second],
-                    &acl_rule
-                         .udf_data_masks[SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN + udf_group_index_it->second],
+                    &acl_rule.match_fvs[(
+                        sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN +
+                                              udf_group_index_it->second)],
+                    &acl_rule.udf_data_masks[(
+                        sai_acl_entry_attr_t)(SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN +
+                                              udf_group_index_it->second)],
                     bytes_offset);
                 if (!set_match_rc.ok())
                 {
@@ -1188,6 +1284,7 @@ ReturnCode AclRuleManager::setAllActionFieldValues(const P4AclRuleAppDbEntry &ap
         sai_action_param.action = action_param.action;
         sai_action_param.param_name = action_param.param_name;
         sai_action_param.param_value = action_param.param_value;
+        sai_action_param.object_type = action_param.object_type;
         if (!action_param.param_name.empty())
         {
             const auto &param_value_it = app_db_entry.action_param_fvs.find(action_param.param_name);
@@ -1203,6 +1300,7 @@ ReturnCode AclRuleManager::setAllActionFieldValues(const P4AclRuleAppDbEntry &ap
             }
         }
         auto set_action_rc = setActionValue(sai_action_param.action, sai_action_param.param_value,
+                                            sai_action_param.object_type,
                                             &acl_rule.action_fvs[sai_action_param.action], &acl_rule);
         if (!set_action_rc.ok())
         {
@@ -1212,11 +1310,12 @@ ReturnCode AclRuleManager::setAllActionFieldValues(const P4AclRuleAppDbEntry &ap
     return ReturnCode();
 }
 
-ReturnCode AclRuleManager::setActionValue(const acl_entry_attr_union_t attr_name, const std::string &attr_value,
-                                          sai_attribute_value_t *value, P4AclRule *acl_rule)
-{
-    switch (attr_name)
-    {
+ReturnCode AclRuleManager::setActionValue(const sai_acl_entry_attr_t attr_name,
+                                          const std::string& attr_value,
+                                          const sai_object_id_t attr_type,
+                                          sai_attribute_value_t* value,
+                                          P4AclRule* acl_rule) {
+  switch (attr_name) {
     case SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION: {
         const auto it = aclPacketActionLookup.find(attr_value);
         if (it != aclPacketActionLookup.end())
@@ -1233,6 +1332,43 @@ ReturnCode AclRuleManager::setActionValue(const acl_entry_attr_union_t attr_name
     }
     case SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT: {
         sai_object_id_t redirect_oid;
+
+        // Use the attr_type to disambiguate what we are redirecting to.
+        if (attr_type == SAI_OBJECT_TYPE_IPMC_GROUP) {
+          RETURN_IF_ERROR(
+              getRedirectActionL3MulticastGroupOid(attr_value, &redirect_oid));
+          value->aclaction.parameter.oid = redirect_oid;
+          acl_rule->action_redirect_l3_multicast_group_key =
+              KeyGenerator::generateL3MulticastGroupKey(attr_value);
+          break;
+        } else if (attr_type == SAI_OBJECT_TYPE_L2MC_GROUP) {
+          RETURN_IF_ERROR(
+              getRedirectActionL2MulticastGroupOid(attr_value, &redirect_oid));
+          value->aclaction.parameter.oid = redirect_oid;
+          acl_rule->action_redirect_l2_multicast_group_key =
+              KeyGenerator::generateL2MulticastGroupKey(attr_value);
+          break;
+        } else if (attr_type == SAI_OBJECT_TYPE_PORT) {
+          auto port_status = getRedirectActionPortOid(attr_value, &redirect_oid);
+          if (port_status.ok()) {
+            value->aclaction.parameter.oid = redirect_oid;
+            break;
+          } else if (port_status.code() == StatusCode::SWSS_RC_IN_USE) {
+            return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                   << port_status.message();
+          } else {
+            return port_status;
+          }
+          break;
+        } else if (attr_type == SAI_OBJECT_TYPE_NEXT_HOP) {
+          RETURN_IF_ERROR(getRedirectActionNextHopOid(attr_value, &redirect_oid));
+          value->aclaction.parameter.oid = redirect_oid;
+          acl_rule->action_redirect_nexthop_key =
+              KeyGenerator::generateNextHopKey(attr_value);
+          break;
+        }
+
+        // If object type was not set, use original fall-through chain for now.
         if (getRedirectActionPortOid(attr_value, &redirect_oid).ok())
         {
             value->aclaction.parameter.oid = redirect_oid;
@@ -1363,7 +1499,15 @@ ReturnCode AclRuleManager::setActionValue(const acl_entry_attr_union_t attr_name
                        << QuotedVar(acl_rule->acl_table_name)
                        << ". Queue number should >= 1 and <= " << m_userDefinedTraps.size();
             }
-            value->aclaction.parameter.oid = m_userDefinedTraps[queue_num - 1].user_defined_trap;
+	    const auto udt_it = m_userDefinedTraps.find(queue_num);
+            if (udt_it == m_userDefinedTraps.end()) {
+          	return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                 << "Invalid CPU queue number " << QuotedVar(attr_value)
+                 << " for " << QuotedVar(acl_rule->acl_table_name)
+                 << ". Queue number " << to_string(queue_num)
+                 << " does not have UserDefinedTrap configured";
+            }
+	    value->aclaction.parameter.oid = udt_it->second.user_defined_trap;
             acl_rule->action_qos_queue_num = queue_num;
         }
         catch (std::exception &e)
@@ -1378,7 +1522,9 @@ ReturnCode AclRuleManager::setActionValue(const acl_entry_attr_union_t attr_name
     case SAI_ACL_ENTRY_ATTR_ACTION_SET_DSCP:
     case SAI_ACL_ENTRY_ATTR_ACTION_SET_ECN:
     case SAI_ACL_ENTRY_ATTR_ACTION_SET_INNER_VLAN_PRI:
-    case SAI_ACL_ENTRY_ATTR_ACTION_SET_OUTER_VLAN_PRI: {
+    case SAI_ACL_ENTRY_ATTR_ACTION_SET_OUTER_VLAN_PRI:
+    case SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA: {
+
         try
         {
             value->aclaction.parameter.u8 = to_uint<uint8_t>(attr_value);
@@ -1448,11 +1594,18 @@ ReturnCode AclRuleManager::setMeterValue(const P4AclTableDefinition *acl_table, 
 {
     if (app_db_entry.meter.enabled)
     {
+        auto policer_mode_it = policerModeLookup.find(app_db_entry.meter.mode);
+        if (policer_mode_it != policerModeLookup.end()) {
+            acl_meter.mode = policer_mode_it->second;
+        }
         acl_meter.cir = app_db_entry.meter.cir;
         acl_meter.cburst = app_db_entry.meter.cburst;
-        acl_meter.pir = app_db_entry.meter.pir;
-        acl_meter.pburst = app_db_entry.meter.pburst;
-        acl_meter.mode = SAI_POLICER_MODE_TR_TCM;
+        if (acl_meter.mode == SAI_POLICER_MODE_SR_TCM) {
+            acl_meter.pburst = app_db_entry.meter.pburst;
+        } else if (acl_meter.mode == SAI_POLICER_MODE_TR_TCM) {
+            acl_meter.pir = app_db_entry.meter.pir;
+            acl_meter.pburst = app_db_entry.meter.pburst;
+        }
         if (acl_table->meter_unit == P4_METER_UNIT_PACKETS)
         {
             acl_meter.type = SAI_METER_TYPE_PACKETS;
@@ -1475,17 +1628,22 @@ ReturnCode AclRuleManager::setMeterValue(const P4AclTableDefinition *acl_table, 
         acl_meter.packet_color_actions = action_color_it->second;
     }
 
-    // SAI_POLICER_MODE_TR_TCM mode is used by default.
+    if (acl_meter.mode == SAI_POLICER_MODE_STORM_CONTROL &&
+        acl_meter.packet_color_actions.find(
+            SAI_POLICER_ATTR_YELLOW_PACKET_ACTION) !=
+            acl_meter.packet_color_actions.end()) {
+    acl_meter.packet_color_actions.erase(SAI_POLICER_ATTR_YELLOW_PACKET_ACTION);
+    }
+
+    // SAI_POLICER_MODE_STORM_CONTROL mode is used by default.
     // Meter rate limit config is not present for the ACL rule
     // Mark the packet as GREEN by setting rate limit to max.
     if (!acl_meter.packet_color_actions.empty() && !acl_meter.enabled)
     {
         acl_meter.enabled = true;
-        acl_meter.type = SAI_METER_TYPE_PACKETS;
-        acl_meter.cburst = 0x7fffffff;
+        acl_meter.type = SAI_METER_TYPE_BYTES;
+        acl_meter.cburst = 0x1000021;
         acl_meter.cir = 0x7fffffff;
-        acl_meter.pir = 0x7fffffff;
-        acl_meter.pburst = 0x7fffffff;
     }
 
     return ReturnCode();
@@ -1495,7 +1653,7 @@ ReturnCode AclRuleManager::createAclRule(P4AclRule &acl_rule)
 {
     SWSS_LOG_ENTER();
 
-    // Track if the entry creats a new counter or meter
+    // Track if the entry creates a new counter or meter
     bool created_meter = false;
     bool created_counter = false;
     const auto &table_name_and_rule_key = concatTableNameAndRuleKey(acl_rule.acl_table_name, acl_rule.acl_rule_key);
@@ -1576,7 +1734,7 @@ ReturnCode AclRuleManager::updateAclRule(const P4AclRule &acl_rule, const P4AclR
     SWSS_LOG_ENTER();
 
     sai_attribute_t acl_entry_attr;
-    std::set<acl_entry_attr_union_t> actions_to_reset;
+    std::set<sai_acl_entry_attr_t> actions_to_reset;
     for (const auto &old_action_fv : old_acl_rule.action_fvs)
     {
         actions_to_reset.insert(fvField(old_action_fv));
@@ -1653,6 +1811,26 @@ ReturnCode AclRuleManager::updateAclRule(const P4AclRule &acl_rule, const P4AclR
     if (!acl_rule.action_redirect_nexthop_key.empty())
     {
         m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP, acl_rule.action_redirect_nexthop_key);
+    }
+    if (!old_acl_rule.action_redirect_l3_multicast_group_key.empty()) {
+        m_p4OidMapper->decreaseRefCount(
+          SAI_OBJECT_TYPE_IPMC_GROUP,
+          old_acl_rule.action_redirect_l3_multicast_group_key);
+    }
+    if (!acl_rule.action_redirect_l3_multicast_group_key.empty()) {
+        m_p4OidMapper->increaseRefCount(
+          SAI_OBJECT_TYPE_IPMC_GROUP,
+          acl_rule.action_redirect_l3_multicast_group_key);
+    }
+    if (!old_acl_rule.action_redirect_l2_multicast_group_key.empty()) {
+        m_p4OidMapper->decreaseRefCount(
+          SAI_OBJECT_TYPE_L2MC_GROUP,
+          old_acl_rule.action_redirect_l2_multicast_group_key);
+    }
+    if (!acl_rule.action_redirect_l2_multicast_group_key.empty()) {
+        m_p4OidMapper->increaseRefCount(
+          SAI_OBJECT_TYPE_L2MC_GROUP,
+          acl_rule.action_redirect_l2_multicast_group_key);
     }
     for (const auto &mirror_session : old_acl_rule.action_mirror_sessions)
     {
@@ -1769,6 +1947,16 @@ ReturnCode AclRuleManager::removeAclRule(const std::string &acl_table_name, cons
     {
         m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP, acl_rule->action_redirect_nexthop_key);
     }
+    if (!acl_rule->action_redirect_l3_multicast_group_key.empty()) {
+        m_p4OidMapper->decreaseRefCount(
+          SAI_OBJECT_TYPE_IPMC_GROUP,
+          acl_rule->action_redirect_l3_multicast_group_key);
+    }
+    if (!acl_rule->action_redirect_l2_multicast_group_key.empty()) {
+        m_p4OidMapper->decreaseRefCount(
+          SAI_OBJECT_TYPE_L2MC_GROUP,
+          acl_rule->action_redirect_l2_multicast_group_key);
+    }
     for (const auto &mirror_session : acl_rule->action_mirror_sessions)
     {
         m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_MIRROR_SESSION, fvValue(mirror_session).key);
@@ -1859,6 +2047,16 @@ ReturnCode AclRuleManager::processAddRuleRequest(const std::string &acl_rule_key
     {
         m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP, acl_rule.action_redirect_nexthop_key);
     }
+    if (!acl_rule.action_redirect_l3_multicast_group_key.empty()) {
+        m_p4OidMapper->increaseRefCount(
+          SAI_OBJECT_TYPE_IPMC_GROUP,
+          acl_rule.action_redirect_l3_multicast_group_key);
+    }
+    if (!acl_rule.action_redirect_l2_multicast_group_key.empty()) {
+        m_p4OidMapper->increaseRefCount(
+          SAI_OBJECT_TYPE_L2MC_GROUP,
+          acl_rule.action_redirect_l2_multicast_group_key);
+    }
     for (const auto &mirror_session : acl_rule.action_mirror_sessions)
     {
         m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_MIRROR_SESSION, fvValue(mirror_session).key);
@@ -1915,8 +2113,8 @@ ReturnCode AclRuleManager::processDeleteRuleRequest(const std::string &acl_table
     return status;
 }
 
-ReturnCode AclRuleManager::processUpdateRuleRequest(const P4AclRuleAppDbEntry &app_db_entry,
-                                                    const P4AclRule &old_acl_rule)
+ReturnCode AclRuleManager::processUpdateRuleRequest(
+    const P4AclRuleAppDbEntry& app_db_entry, P4AclRule &old_acl_rule)
 {
     SWSS_LOG_ENTER();
 
@@ -1989,6 +2187,14 @@ ReturnCode AclRuleManager::processUpdateRuleRequest(const P4AclRuleAppDbEntry &a
     else if (old_acl_rule.meter.meter_oid != SAI_NULL_OBJECT_ID)
     {
         // Update meter attributes
+        if (acl_rule.meter.mode != old_acl_rule.meter.mode) {
+        // TODO: SAI_POLICER_ATTR_MODE is CREATE_ONLY
+        LOG_ERROR_AND_RETURN(
+            ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
+            << "Updating ACL rule meter mode is not supported for ACL entry: "
+            << QuotedVar(acl_rule.acl_rule_key) << " in table "
+            << QuotedVar(acl_rule.acl_table_name));
+        }
         auto status = updateAclMeter(acl_rule.meter, old_acl_rule.meter);
         if (!status.ok())
         {
@@ -1997,6 +2203,7 @@ ReturnCode AclRuleManager::processUpdateRuleRequest(const P4AclRuleAppDbEntry &a
         }
         updated_meter = true;
         acl_rule.meter.meter_oid = old_acl_rule.meter.meter_oid;
+        acl_rule.meter.policer_label = old_acl_rule.meter.policer_label;
     }
 
     auto status = updateAclRule(acl_rule, old_acl_rule, acl_entry_attrs, rollback_attrs);
@@ -2308,6 +2515,28 @@ std::string AclRuleManager::verifyStateCache(const P4AclRuleAppDbEntry &app_db_e
             << QuotedVar(acl_rule->action_redirect_nexthop_key) << " in ACl rule manager.";
         return msg.str();
     }
+    if (acl_rule->action_redirect_l3_multicast_group_key !=
+        acl_rule_entry.action_redirect_l3_multicast_group_key) {
+      std::stringstream msg;
+      msg << "ACL rule " << QuotedVar(acl_rule_key)
+          << " with redirect L3 multicast group key "
+          << QuotedVar(acl_rule_entry.action_redirect_l3_multicast_group_key)
+          << " mismatch with internal cache "
+          << QuotedVar(acl_rule->action_redirect_l3_multicast_group_key)
+          << " in ACl rule manager.";
+      return msg.str();
+    }
+    if (acl_rule->action_redirect_l2_multicast_group_key !=
+        acl_rule_entry.action_redirect_l2_multicast_group_key) {
+      std::stringstream msg;
+      msg << "ACL rule " << QuotedVar(acl_rule_key)
+          << " with redirect L2 multicast group key "
+          << QuotedVar(acl_rule_entry.action_redirect_l2_multicast_group_key)
+          << " mismatch with internal cache "
+          << QuotedVar(acl_rule->action_redirect_l2_multicast_group_key)
+          << " in ACl rule manager.";
+      return msg.str();
+    }
     if (acl_rule->action_mirror_sessions != acl_rule_entry.action_mirror_sessions)
     {
         std::stringstream msg;
@@ -2443,9 +2672,6 @@ std::string AclRuleManager::verifyStateCache(const P4AclRuleAppDbEntry &app_db_e
 
 std::string AclRuleManager::verifyStateAsicDb(const P4AclRule *acl_rule)
 {
-    swss::DBConnector db("ASIC_DB", 0);
-    swss::Table table(&db, "ASIC_STATE");
-
     // Verify rule.
     auto attrs = getRuleSaiAttrs(*acl_rule);
     std::vector<swss::FieldValueTuple> exp =
@@ -2454,7 +2680,7 @@ std::string AclRuleManager::verifyStateAsicDb(const P4AclRule *acl_rule)
     std::string key =
         sai_serialize_object_type(SAI_OBJECT_TYPE_ACL_ENTRY) + ":" + sai_serialize_object_id(acl_rule->acl_entry_oid);
     std::vector<swss::FieldValueTuple> values;
-    if (!table.get(key, values))
+    if (!m_asic_state_table.get(key, values))
     {
         return std::string("ASIC DB key not found ") + key;
     }
@@ -2475,7 +2701,7 @@ std::string AclRuleManager::verifyStateAsicDb(const P4AclRule *acl_rule)
         key = sai_serialize_object_type(SAI_OBJECT_TYPE_ACL_COUNTER) + ":" +
               sai_serialize_object_id(acl_rule->counter.counter_oid);
         values.clear();
-        if (!table.get(key, values))
+        if (!m_asic_state_table.get(key, values))
         {
             return std::string("ASIC DB key not found ") + key;
         }
@@ -2497,7 +2723,7 @@ std::string AclRuleManager::verifyStateAsicDb(const P4AclRule *acl_rule)
         key = sai_serialize_object_type(SAI_OBJECT_TYPE_POLICER) + ":" +
               sai_serialize_object_id(acl_rule->meter.meter_oid);
         values.clear();
-        if (!table.get(key, values))
+        if (!m_asic_state_table.get(key, values))
         {
             return std::string("ASIC DB key not found ") + key;
         }

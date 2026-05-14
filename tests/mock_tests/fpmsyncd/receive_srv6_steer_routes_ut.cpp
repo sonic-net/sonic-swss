@@ -56,6 +56,23 @@ namespace ut_fpmsyncd
         {
         }
     };
+
+    struct FpmSyncdSRv6RoutesTestZmqNb : public FpmSyncdSRv6RoutesTest {
+        void SetUp() override
+        {
+            FpmSyncdSRv6RoutesTest::SetUp();
+            // Simulate ZMQ being enabled by setting m_zmqClient to a non-null value
+            // We use a dummy shared_ptr (pointing to address 1) since we won't actually use it
+            // This makes isNbZmqEnabled() return true
+            m_routeSync->m_zmqClient = shared_ptr<swss::ZmqClient>(reinterpret_cast<swss::ZmqClient*>(1), [](swss::ZmqClient*){});
+        }
+        void TearDown() override
+        {
+            // Reset m_zmqClient to nullptr
+            m_routeSync->m_zmqClient = nullptr;
+            FpmSyncdSRv6RoutesTest::TearDown();
+        }
+    };
 }
 
 namespace ut_fpmsyncd
@@ -84,11 +101,11 @@ namespace ut_fpmsyncd
         m_fpmLink->processRawMsg(&nl_obj->n);
 
         /* Check that fpmsyncd created the correct entries in APP_DB */
-        ASSERT_EQ(m_srv6SidListTable->hget("Vrf10:192.168.6.0/24", "path", path), true);
+        ASSERT_EQ(m_srv6SidListTable->hget("fc00:0:2:1::", "path", path), true);
         ASSERT_EQ(path, _vpn_sid.to_string());
 
         ASSERT_EQ(m_routeTable->hget("Vrf10:192.168.6.0/24", "segment", segment), true);
-        ASSERT_EQ(segment, "Vrf10:192.168.6.0/24");
+        ASSERT_EQ(segment, "fc00:0:2:1::");
 
         ASSERT_EQ(m_routeTable->hget("Vrf10:192.168.6.0/24", "seg_src", seg_src), true);
         ASSERT_EQ(seg_src, _encap_src_addr.to_string());
@@ -107,7 +124,61 @@ namespace ut_fpmsyncd
         m_fpmLink->processRawMsg(&nl_obj->n);
 
         /* Check that fpmsyncd removed the entry from APP_DB */
-        ASSERT_EQ(m_srv6SidListTable->hget("Vrf10:192.168.6.0/24", "path", path), false);
+        ASSERT_EQ(m_srv6SidListTable->hget("fc00:0:2:1::", "path", path), false);
+        ASSERT_EQ(m_routeTable->hget("Vrf10:192.168.6.0/24", "segment", segment), false);
+        ASSERT_EQ(m_routeTable->hget("Vrf10:192.168.6.0/24", "seg_src", seg_src), false);
+
+        /* Destroy the Netlink object and free the memory */
+        free_nlobj(nl_obj);
+    }
+
+    TEST_F(FpmSyncdSRv6RoutesTestZmqNb, RecevingSRv6VpnRoutesWithIPv4PrefixZmq)
+    {
+        ASSERT_NE(m_routeSync, nullptr);
+
+        struct nlmsg *nl_obj;
+        std::string path;
+        std::string segment;
+        std::string seg_src;
+
+        /* Create a Netlink object to install the SRv6 VPN Route */
+        IpPrefix _dst = IpPrefix("192.168.6.0/24");
+        IpAddress _vpn_sid = IpAddress("fc00:0:2:1::");
+        IpAddress _encap_src_addr = IpAddress("fc00:0:1:1::1");
+
+        nl_obj = create_srv6_vpn_route_nlmsg(RTM_NEWROUTE, &_dst, &_encap_src_addr, &_vpn_sid);
+        if (!nl_obj)
+            throw std::runtime_error("SRv6 VPN Route creation failed");
+
+        /* Send the Netlink object to the FpmLink */
+        ASSERT_EQ(m_fpmLink->isRawProcessing(&nl_obj->n), true);
+        m_fpmLink->processRawMsg(&nl_obj->n);
+
+        /* Check that fpmsyncd created the correct entries in APP_DB */
+        ASSERT_EQ(m_srv6SidListTable->hget("fc00:0:2:1::", "path", path), true);
+        ASSERT_EQ(path, _vpn_sid.to_string());
+
+        ASSERT_EQ(m_routeTable->hget("Vrf10:192.168.6.0/24", "segment", segment), true);
+        ASSERT_EQ(segment, "fc00:0:2:1::");
+
+        ASSERT_EQ(m_routeTable->hget("Vrf10:192.168.6.0/24", "seg_src", seg_src), true);
+        ASSERT_EQ(seg_src, _encap_src_addr.to_string());
+
+        /* Destroy the Netlink object and free the memory */
+        free_nlobj(nl_obj);
+
+
+        /* Create a Netlink object to uninstall the SRv6 VPN Route */
+        nl_obj = create_srv6_vpn_route_nlmsg(RTM_DELROUTE, &_dst, &_encap_src_addr, &_vpn_sid);
+        if (!nl_obj)
+            throw std::runtime_error("SRv6 VPN Route creation failed");
+
+        /* Send the Netlink object to the FpmLink */
+        ASSERT_EQ(m_fpmLink->isRawProcessing(&nl_obj->n), true);
+        m_fpmLink->processRawMsg(&nl_obj->n);
+
+        /* Check that fpmsyncd removed the entry from APP_DB */
+        ASSERT_EQ(m_srv6SidListTable->hget("fc00:0:2:1::", "path", path), false);
         ASSERT_EQ(m_routeTable->hget("Vrf10:192.168.6.0/24", "segment", segment), false);
         ASSERT_EQ(m_routeTable->hget("Vrf10:192.168.6.0/24", "seg_src", seg_src), false);
 
@@ -139,11 +210,11 @@ namespace ut_fpmsyncd
         m_fpmLink->processRawMsg(&nl_obj->n);
 
         /* Check that fpmsyncd created the correct entries in APP_DB */
-        ASSERT_EQ(m_srv6SidListTable->hget("Vrf10:192.168.6.1", "path", path), true);
+        ASSERT_EQ(m_srv6SidListTable->hget("fc00:0:2:1::", "path", path), true);
         ASSERT_EQ(path, _vpn_sid.to_string());
 
         ASSERT_EQ(m_routeTable->hget("Vrf10:192.168.6.1", "segment", segment), true);
-        ASSERT_EQ(segment, "Vrf10:192.168.6.1");
+        ASSERT_EQ(segment, "fc00:0:2:1::");
 
         ASSERT_EQ(m_routeTable->hget("Vrf10:192.168.6.1", "seg_src", seg_src), true);
         ASSERT_EQ(seg_src, _encap_src_addr.to_string());
@@ -162,7 +233,7 @@ namespace ut_fpmsyncd
         m_fpmLink->processRawMsg(&nl_obj->n);
 
         /* Check that fpmsyncd removed the entry from APP_DB */
-        ASSERT_EQ(m_srv6SidListTable->hget("Vrf10:192.168.6.1/32", "path", path), false);
+        ASSERT_EQ(m_srv6SidListTable->hget("fc00:0:2:1::", "path", path), false);
         ASSERT_EQ(m_routeTable->hget("Vrf10:192.168.6.1/32", "segment", segment), false);
         ASSERT_EQ(m_routeTable->hget("Vrf10:192.168.6.1/32", "seg_src", seg_src), false);
 
@@ -193,11 +264,11 @@ namespace ut_fpmsyncd
         m_fpmLink->processRawMsg(&nl_obj->n);
 
         /* Check that fpmsyncd created the correct entries in APP_DB */
-        ASSERT_EQ(m_srv6SidListTable->hget("Vrf10:fd00:0:21::/64", "path", path), true);
+        ASSERT_EQ(m_srv6SidListTable->hget("fc00:0:2:1::", "path", path), true);
         ASSERT_EQ(path, _vpn_sid.to_string());
 
         ASSERT_EQ(m_routeTable->hget("Vrf10:fd00:0:21::/64", "segment", segment), true);
-        ASSERT_EQ(segment, "Vrf10:fd00:0:21::/64");
+        ASSERT_EQ(segment, "fc00:0:2:1::");
 
         ASSERT_EQ(m_routeTable->hget("Vrf10:fd00:0:21::/64", "seg_src", seg_src), true);
         ASSERT_EQ(seg_src, _encap_src_addr.to_string());
@@ -216,7 +287,7 @@ namespace ut_fpmsyncd
         m_fpmLink->processRawMsg(&nl_obj->n);
 
         /* Check that fpmsyncd removed the entry from APP_DB */
-        ASSERT_EQ(m_srv6SidListTable->hget("Vrf10:fd00:0:21::/64", "path", path), false);
+        ASSERT_EQ(m_srv6SidListTable->hget("fc00:0:2:1::", "path", path), false);
         ASSERT_EQ(m_routeTable->hget("Vrf10:fd00:0:21::/64", "segment", segment), false);
         ASSERT_EQ(m_routeTable->hget("Vrf10:fd00:0:21::/64", "seg_src", seg_src), false);
 
@@ -251,7 +322,7 @@ namespace ut_fpmsyncd
         m_fpmLink->processRawMsg(&nl_obj->n);
 
         /* Check that fpmsyncd created the correct entries in APP_DB */
-        ASSERT_EQ(m_srv6SidListTable->hget("Vrf10:192.168.6.0/24", "path", path), false);
+        ASSERT_EQ(m_srv6SidListTable->hget("fc00:0:2:1::", "path", path), false);
 
         ASSERT_EQ(m_routeTable->hget("Vrf10:192.168.6.0/24", "segment", segment), false);
 
@@ -289,7 +360,7 @@ namespace ut_fpmsyncd
         m_fpmLink->processRawMsg(&nl_obj->n);
 
         /* Check that fpmsyncd created the correct entries in APP_DB */
-        ASSERT_EQ(m_srv6SidListTable->hget("Vrf10:192.168.6.0/100", "path", path), false);
+        ASSERT_EQ(m_srv6SidListTable->hget("fc00:0:2:1::", "path", path), false);
 
         ASSERT_EQ(m_routeTable->hget("Vrf10:192.168.6.0/100", "segment", segment), false);
 
@@ -326,7 +397,7 @@ namespace ut_fpmsyncd
         m_fpmLink->processRawMsg(&nl_obj->n);
 
         /* Check that fpmsyncd created the correct entries in APP_DB */
-        ASSERT_EQ(m_srv6SidListTable->hget("Vrf10:fd00:0:21::/200", "path", path), false);
+        ASSERT_EQ(m_srv6SidListTable->hget("fc00:0:2:1::", "path", path), false);
 
         ASSERT_EQ(m_routeTable->hget("Vrf10:fd00:0:21::/200", "segment", segment), false);
 
@@ -368,7 +439,7 @@ namespace ut_fpmsyncd
         m_fpmLink->processRawMsg(&nl_obj->n);
 
         /* Check that fpmsyncd created the correct entries in APP_DB */
-        ASSERT_EQ(m_srv6SidListTable->hget("Vrf10:fd00:0:21::/64", "path", path), false);
+        ASSERT_EQ(m_srv6SidListTable->hget("fc00:0:2:1::", "path", path), false);
 
         ASSERT_EQ(m_routeTable->hget("Vrf10:fd00:0:21::/64", "segment", segment), false);
 
@@ -405,7 +476,7 @@ namespace ut_fpmsyncd
         m_fpmLink->processRawMsg(&nl_obj->n);
 
         /* Check that fpmsyncd created the correct entries in APP_DB */
-        ASSERT_EQ(m_srv6SidListTable->hget("Vrf10:fd00:0:21::/64", "path", path), false);
+        ASSERT_EQ(m_srv6SidListTable->hget("fc00:0:2:1::", "path", path), false);
 
         ASSERT_EQ(m_routeTable->hget("Vrf10:fd00:0:21::/64", "segment", segment), false);
 
@@ -442,7 +513,7 @@ namespace ut_fpmsyncd
         m_fpmLink->processRawMsg(&nl_obj->n);
 
         /* Check that fpmsyncd created the correct entries in APP_DB */
-        ASSERT_EQ(m_srv6SidListTable->hget("invalidVrf:fd00:0:21::/64", "path", path), false);
+        ASSERT_EQ(m_srv6SidListTable->hget("fc00:0:2:1::", "path", path), false);
 
         ASSERT_EQ(m_routeTable->hget("invalidVrf:fd00:0:21::/64", "segment", segment), false);
 
@@ -479,7 +550,7 @@ namespace ut_fpmsyncd
         m_fpmLink->processRawMsg(&nl_obj->n);
 
         /* Check that fpmsyncd created the correct entries in APP_DB */
-        ASSERT_EQ(m_srv6SidListTable->hget("Vrf10:fd00:0:21::/64", "path", path), false);
+        ASSERT_EQ(m_srv6SidListTable->hget("fc00:0:2:1::", "path", path), false);
 
         ASSERT_EQ(m_routeTable->hget("Vrf10:fd00:0:21::/64", "segment", segment), false);
 
@@ -516,7 +587,7 @@ namespace ut_fpmsyncd
         m_fpmLink->processRawMsg(&nl_obj->n);
 
         /* Check that fpmsyncd created the correct entries in APP_DB */
-        ASSERT_EQ(m_srv6SidListTable->hget("Vrf10:fd00:0:21::/64", "path", path), false);
+        ASSERT_EQ(m_srv6SidListTable->hget("fc00:0:2:1::", "path", path), false);
 
         ASSERT_EQ(m_routeTable->hget("Vrf10:fd00:0:21::/64", "segment", segment), false);
 

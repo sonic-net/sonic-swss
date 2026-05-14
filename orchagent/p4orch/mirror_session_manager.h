@@ -72,7 +72,7 @@ class MirrorSessionManager : public ObjectManagerInterface
 {
   public:
     MirrorSessionManager(P4OidMapper *p4oidMapper, ResponsePublisherInterface *publisher)
-    {
+      	: m_asic_db("ASIC_DB", 0), m_asic_state_table(&m_asic_db, "ASIC_STATE") {
         SWSS_LOG_ENTER();
 
         assert(p4oidMapper != nullptr);
@@ -83,8 +83,9 @@ class MirrorSessionManager : public ObjectManagerInterface
 
     void enqueue(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry) override;
 
-    void drain() override;
+    ReturnCode drain() override;
 
+    void drainWithNotExecuted() override;
     std::string verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple) override;
 
     ReturnCode getSaiObject(const std::string &json_key, sai_object_type_t &object_type,
@@ -122,6 +123,8 @@ class MirrorSessionManager : public ObjectManagerInterface
 
     // Owners of pointers below must outlive this class's instance.
     P4OidMapper *m_p4OidMapper;
+    swss::DBConnector m_asic_db;
+    swss::Table m_asic_state_table;
     ResponsePublisherInterface *m_publisher;
     std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
 

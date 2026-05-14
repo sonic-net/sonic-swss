@@ -33,12 +33,25 @@ struct SaiSpyFunctor
     using original_fn_ptr_t = R (**)(arglist...);
 
     original_fn_t original_fn;
+    original_fn_ptr_t original_fn_ptr;
     static std::function<R(arglist...)> fake;
 
     SaiSpyFunctor(original_fn_ptr_t fn_ptr) :
-        original_fn(*fn_ptr)
+        original_fn(*fn_ptr),
+        original_fn_ptr(fn_ptr)
     {
         *fn_ptr = spy;
+    }
+
+    SaiSpyFunctor(const SaiSpyFunctor&) = delete;
+    SaiSpyFunctor &operator=(const SaiSpyFunctor&) = delete;
+
+    SaiSpyFunctor(SaiSpyFunctor&&) noexcept = delete;
+    SaiSpyFunctor &operator=(SaiSpyFunctor&&) noexcept = delete;
+
+    ~SaiSpyFunctor()
+    {
+        *original_fn_ptr = original_fn;
     }
 
     void callFake(std::function<sai_status_t(arglist...)> fn)
@@ -102,6 +115,16 @@ std::shared_ptr<SaiSpyFunctor<n, objtype, sai_status_t, sai_object_id_t, uint32_
     SpyOn(sai_status_t (**fn_ptr)(sai_object_id_t, uint32_t, sai_attribute_t *))
 {
     using SaiSpyGetAttrFunctor = SaiSpyFunctor<n, objtype, sai_status_t, sai_object_id_t, uint32_t, sai_attribute_t *>;
+
+    return std::make_shared<SaiSpyGetAttrFunctor>(fn_ptr);
+}
+
+// get bulk entry attribute
+template <int n, int objtype>
+std::shared_ptr<SaiSpyFunctor<n, objtype, sai_status_t, uint32_t, const sai_object_id_t*, const uint32_t*, sai_attribute_t**, sai_bulk_op_error_mode_t, sai_status_t*>>
+    SpyOn(sai_status_t (**fn_ptr)(uint32_t, const sai_object_id_t*, const uint32_t*, sai_attribute_t**, sai_bulk_op_error_mode_t, sai_status_t*))
+{
+    using SaiSpyGetAttrFunctor = SaiSpyFunctor<n, objtype, sai_status_t, uint32_t, const sai_object_id_t*, const uint32_t*, sai_attribute_t**, sai_bulk_op_error_mode_t, sai_status_t*>;
 
     return std::make_shared<SaiSpyGetAttrFunctor>(fn_ptr);
 }

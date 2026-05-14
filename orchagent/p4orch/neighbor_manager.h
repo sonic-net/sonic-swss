@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "dbconnector.h"
 #include "ipaddress.h"
 #include "macaddress.h"
 #include "orch.h"
@@ -13,6 +14,8 @@
 #include "p4orch/router_interface_manager.h"
 #include "response_publisher_interface.h"
 #include "return_code.h"
+#include "table.h"
+
 extern "C"
 {
 #include "sai.h"
@@ -39,7 +42,7 @@ class NeighborManager : public ObjectManagerInterface
 {
   public:
     NeighborManager(P4OidMapper *p4oidMapper, ResponsePublisherInterface *publisher)
-    {
+      : m_asic_db("ASIC_DB", 0), m_asic_state_table(&m_asic_db, "ASIC_STATE") {
         SWSS_LOG_ENTER();
 
         assert(p4oidMapper != nullptr);
@@ -50,7 +53,8 @@ class NeighborManager : public ObjectManagerInterface
     virtual ~NeighborManager() = default;
 
     void enqueue(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry) override;
-    void drain() override;
+    ReturnCode drain() override;
+    void drainWithNotExecuted() override;
     std::string verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple) override;
     ReturnCode getSaiObject(const std::string &json_key, sai_object_type_t &object_type,
                             std::string &object_key) override;
@@ -59,19 +63,27 @@ class NeighborManager : public ObjectManagerInterface
     ReturnCodeOr<P4NeighborAppDbEntry> deserializeNeighborEntry(const std::string &key,
                                                                 const std::vector<swss::FieldValueTuple> &attributes);
     ReturnCode validateNeighborAppDbEntry(const P4NeighborAppDbEntry &app_db_entry);
+    ReturnCode validateNeighborEntryOperation(
+        const P4NeighborAppDbEntry& app_db_entry, const std::string& operation);
     P4NeighborEntry *getNeighborEntry(const std::string &neighbor_key);
-    ReturnCode createNeighbor(P4NeighborEntry &neighbor_entry);
-    ReturnCode removeNeighbor(const std::string &neighbor_key);
-    ReturnCode setDstMacAddress(P4NeighborEntry *neighbor_entry, const swss::MacAddress &mac_address);
-    ReturnCode processAddRequest(const P4NeighborAppDbEntry &app_db_entry, const std::string &neighbor_key);
-    ReturnCode processUpdateRequest(const P4NeighborAppDbEntry &app_db_entry, P4NeighborEntry *neighbor_entry);
-    ReturnCode processDeleteRequest(const std::string &neighbor_key);
+    std::vector<ReturnCode> createNeighbors(
+        const std::vector<P4NeighborAppDbEntry>& neighbor_entries);
+    std::vector<ReturnCode> removeNeighbors(
+        const std::vector<P4NeighborAppDbEntry>& neighbor_entries);
+    std::vector<ReturnCode> updateNeighbors(
+        const std::vector<P4NeighborAppDbEntry>& neighbor_entries);
+    ReturnCode processEntries(
+        const std::vector<P4NeighborAppDbEntry>& entries,
+        const std::vector<swss::KeyOpFieldsValuesTuple>& tuple_list,
+        const std::string& op, bool update);
     std::string verifyStateCache(const P4NeighborAppDbEntry &app_db_entry, const P4NeighborEntry *neighbor_entry);
     std::string verifyStateAsicDb(const P4NeighborEntry *neighbor_entry);
-    ReturnCodeOr<sai_neighbor_entry_t> getSaiEntry(const P4NeighborEntry &neighbor_entry);
+    sai_neighbor_entry_t prepareSaiEntry(const P4NeighborEntry& neighbor_entry);
 
     P4OidMapper *m_p4OidMapper;
     P4NeighborTable m_neighborTable;
+    swss::DBConnector m_asic_db;
+    swss::Table m_asic_state_table;
     ResponsePublisherInterface *m_publisher;
     std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
 

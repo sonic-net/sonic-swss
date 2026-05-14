@@ -3,8 +3,11 @@
 #include "acltable.h"
 #include "orch.h"
 #include "timer.h"
+#include "flex_counter/flex_counter_manager.h"
 #include "switch/switch_capabilities.h"
 #include "switch/switch_helper.h"
+#include "switch/trimming/capabilities.h"
+#include "switch/trimming/helper.h"
 
 #define DEFAULT_ASIC_SENSORS_POLLER_INTERVAL 60
 #define ASIC_SENSORS_POLLER_STATUS "ASIC_SENSORS_POLLER_STATUS"
@@ -16,12 +19,22 @@
 #define SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE                   "PFC_DLR_INIT_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_CAPABLE             "PORT_EGRESS_SAMPLE_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_PATH_TRACING_CAPABLE                   "PATH_TRACING_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_ICMP_OFFLOAD_CAPABLE                   "ICMP_OFFLOAD_CAPABLE"
+
+// Fast link-up capabilities
+#define SWITCH_CAPABILITY_TABLE_FAST_LINKUP_CAPABLE                    "FAST_LINKUP_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_FAST_LINKUP_POLLING_TIMER_RANGE        "FAST_LINKUP_POLLING_TIMER_RANGE"
+#define SWITCH_CAPABILITY_TABLE_FAST_LINKUP_GUARD_TIMER_RANGE          "FAST_LINKUP_GUARD_TIMER_RANGE"
 
 #define ASIC_SDK_HEALTH_EVENT_ELIMINATE_INTERVAL 3600
 #define SWITCH_CAPABILITY_TABLE_ASIC_SDK_HEALTH_EVENT_CAPABLE          "ASIC_SDK_HEALTH_EVENT"
 #define SWITCH_CAPABILITY_TABLE_REG_FATAL_ASIC_SDK_HEALTH_CATEGORY     "REG_FATAL_ASIC_SDK_HEALTH_CATEGORY"
 #define SWITCH_CAPABILITY_TABLE_REG_WARNING_ASIC_SDK_HEALTH_CATEGORY   "REG_WARNING_ASIC_SDK_HEALTH_CATEGORY"
 #define SWITCH_CAPABILITY_TABLE_REG_NOTICE_ASIC_SDK_HEALTH_CATEGORY    "REG_NOTICE_ASIC_SDK_HEALTH_CATEGORY"
+#define SWITCH_CAPABILITY_TABLE_PORT_INGRESS_MIRROR_CAPABLE            "PORT_INGRESS_MIRROR_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_PORT_EGRESS_MIRROR_CAPABLE             "PORT_EGRESS_MIRROR_CAPABLE"
+
+#define SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP "SWITCH_STAT_COUNTER"
 
 struct WarmRestartCheck
 {
@@ -41,6 +54,7 @@ public:
     void restartCheckReply(const std::string &op, const std::string &data, std::vector<swss::FieldValueTuple> &values);
     bool setAgingFDB(uint32_t sec);
     void set_switch_capability(const std::vector<swss::FieldValueTuple>& values);
+    void get_switch_capability(const std::string& capability, std::string& val);
     bool querySwitchCapability(sai_object_type_t sai_object, sai_attr_id_t attr_id);
     bool checkPfcDlrInitEnable() { return m_PfcDlrInitEnable; }
     void set_switch_pfc_dlr_init_capability();
@@ -68,16 +82,29 @@ public:
     bool bindAclTableToSwitch(acl_stage_type_t stage, sai_object_id_t table_id);
     bool unbindAclTableFromSwitch(acl_stage_type_t stage, sai_object_id_t table_id);
 
+    // Statistics
+    void generateSwitchCounterIdList();
+
+    // Mirror capability interface for MirrorOrch
+    bool isPortIngressMirrorSupported() const { return m_portIngressMirrorSupported; }
+    bool isPortEgressMirrorSupported() const { return m_portEgressMirrorSupported; }
+
 private:
     void doTask(Consumer &consumer);
     void doTask(swss::SelectableTimer &timer);
     void doCfgSwitchHashTableTask(Consumer &consumer);
+    void doCfgSwitchTrimmingTableTask(Consumer &consumer);
+    void doCfgSwitchFastLinkupTableTask(Consumer &consumer);
     void doCfgSensorsTableTask(Consumer &consumer);
     void doCfgSuppressAsicSdkHealthEventTableTask(Consumer &consumer);
     void doAppSwitchTableTask(Consumer &consumer);
     void initSensorsTable();
     void querySwitchTpidCapability();
     void querySwitchPortEgressSampleCapability();
+    void querySwitchPortMirrorCapability();
+
+    // Statistics
+    void generateSwitchCounterNameMap() const;
 
     // Switch hash
     bool setSwitchHashFieldListSai(const SwitchHash &hash, bool isEcmpHash) const;
@@ -86,6 +113,36 @@ private:
 
     bool getSwitchHashOidSai(sai_object_id_t &oid, bool isEcmpHash) const;
     void querySwitchHashDefaults();
+    void setSwitchIcmpOffloadCapability();
+
+    // Fast link-up
+    struct FastLinkupConfig
+    {
+        bool has_polling = false; uint16_t polling_time = 0;
+        bool has_guard = false; uint8_t guard_time = 0;
+        bool has_ber = false; uint8_t ber_threshold= 0;
+    };
+
+    struct FastLinkupCapabilities
+    {
+        bool supported = false;
+        bool has_polling_range = false;
+        bool has_guard_range = false;
+        uint16_t polling_min = 0, polling_max = 0;
+        uint16_t guard_min = 0, guard_max = 0;
+    };
+
+    void setFastLinkupCapability();
+    bool setSwitchFastLinkup(const FastLinkupConfig &cfg);
+
+    // Switch trimming
+    bool setSwitchTrimmingSizeSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimmingDscpModeSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimmingDscpSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimmingTcSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimmingQueueModeSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimmingQueueIndexSai(const SwitchTrimming &trim) const;
+    bool setSwitchTrimming(const SwitchTrimming &trim);
 
     sai_status_t setSwitchTunnelVxlanParams(swss::FieldValueTuple &val);
     void setSwitchNonSaiAttributes(swss::FieldValueTuple &val);
@@ -124,6 +181,10 @@ private:
     bool m_orderedEcmpEnable = false;
     bool m_PfcDlrInitEnable = false;
 
+    // Port mirror capabilities
+    bool m_portIngressMirrorSupported = false;
+    bool m_portEgressMirrorSupported = false;
+
     // ASIC SDK health event
     std::shared_ptr<swss::DBConnector> m_stateDbForNotification = nullptr;
     std::shared_ptr<swss::Table> m_asicSdkHealthEventTable = nullptr;
@@ -145,13 +206,22 @@ private:
         } lagHash;
     } m_switchHashDefaults;
 
+    // Statistics
+    FlexCounterManager m_counterManager;
+    bool m_isSwitchCounterIdListGenerated = false;
+
     // Information contained in the request from
     // external program for orchagent pre-shutdown state check
     WarmRestartCheck m_warmRestartCheck = {false, false, false};
 
     // Switch OA capabilities
     SwitchCapabilities swCap;
+    SwitchTrimmingCapabilities trimCap;
 
     // Switch OA helper
     SwitchHelper swHlpr;
+    SwitchTrimmingHelper trimHlpr;
+
+    // Fast link-up cache
+    FastLinkupCapabilities m_fastLinkupCap;
 };

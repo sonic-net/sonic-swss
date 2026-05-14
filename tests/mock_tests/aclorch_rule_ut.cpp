@@ -3,6 +3,7 @@
 #include "mock_sai_api.h"
 #include "mock_orch_test.h"
 #include "check.h"
+#include "saihelper.h"
 
 EXTERN_MOCK_FNS
 
@@ -164,10 +165,10 @@ namespace aclorch_rule_test
             static_cast<Orch2*>(m_VxlanTunnelOrch)->doTask(*consumer.get());
         }
 
-        void createTunnelNH(string ip)
+        void createTunnelNH(string ip, uint32_t vni)
         {
             IpAddress mock_nh_ip(ip);
-            ASSERT_EQ(m_VxlanTunnelOrch->createNextHopTunnel(mock_tunnel_name, mock_nh_ip, MacAddress()), nh_oid);
+            ASSERT_EQ(m_VxlanTunnelOrch->createNextHopTunnel(mock_tunnel_name, mock_nh_ip, MacAddress(), vni), nh_oid);
         }
 
         void populateAclTale()
@@ -178,8 +179,8 @@ namespace aclorch_rule_test
                     acl_table_type,
                     SET_COMMAND,
                     {
-                        { ACL_TABLE_TYPE_MATCHES, MATCH_DST_IP },
-                        { ACL_TABLE_TYPE_ACTIONS, ACTION_REDIRECT_ACTION }
+                        { ACL_TABLE_TYPE_MATCHES, string(MATCH_DST_IP) + "," + MATCH_TUNNEL_TERM },
+                        { ACL_TABLE_TYPE_ACTIONS, ACTION_REDIRECT_ACTION },
                     } 
                 }
             });
@@ -195,8 +196,14 @@ namespace aclorch_rule_test
             });
         }
 
-        void addTunnelNhRule(string ip, string tunnel_name)
+        void addTunnelNhRule(string ip, string tunnel_name, string vni)
         {
+            string redirect_str = ip + "@" + tunnel_name;
+            if (!vni.empty())
+            {
+                redirect_str = redirect_str + ',' + vni;
+            }
+
             /* Create a rule */
             doAclRuleTask({
                 {
@@ -205,7 +212,8 @@ namespace aclorch_rule_test
                     {
                         { RULE_PRIORITY, "9999" },
                         { MATCH_DST_IP, "10.0.0.1/24" },
-                        { ACTION_REDIRECT_ACTION, ip + "@" + tunnel_name }
+                        { MATCH_TUNNEL_TERM, "true" },
+                        { ACTION_REDIRECT_ACTION, redirect_str }
                     } 
                 }
             });
@@ -238,7 +246,7 @@ namespace aclorch_rule_test
                 Return(SAI_STATUS_SUCCESS)
         ));
         EXPECT_CALL(*mock_sai_acl_api, create_acl_entry).WillOnce(testing::Invoke(aclMockState.get(), &SaiMockState::handleCreate));     
-        addTunnelNhRule(mock_nh_ip_str, mock_tunnel_name);
+        addTunnelNhRule(mock_nh_ip_str, mock_tunnel_name, "1000");
 
         /* Verify SAI attributes and if the rule is created */
         SaiAttributeList attr_list(SAI_OBJECT_TYPE_ACL_ENTRY, vector<swss::FieldValueTuple>({ 
@@ -247,9 +255,10 @@ namespace aclorch_rule_test
               { "SAI_ACL_ENTRY_ATTR_ADMIN_STATE", "true" },
               { "SAI_ACL_ENTRY_ATTR_ACTION_COUNTER", "oid:0xfffffffffff"},
               { "SAI_ACL_ENTRY_ATTR_FIELD_DST_IP", "10.0.0.1&mask:255.255.255.0"},
+              { "SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_TERMINATED", "true"},
               { "SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT", sai_serialize_object_id(nh_oid) }
         }), false);
-        vector<bool> skip_list = {false, false, false, true, false, false}; /* skip checking counter */
+        vector<bool> skip_list = {false, false, false, true, false, false, false}; /* skip checking counter */
         ASSERT_TRUE(Check::AttrListSubset(SAI_OBJECT_TYPE_ACL_ENTRY, aclMockState->create_attrs, attr_list, skip_list));
         ASSERT_TRUE(gAclOrch->getAclRule(acl_table, acl_rule));
 
@@ -266,8 +275,8 @@ namespace aclorch_rule_test
                 Return(SAI_STATUS_SUCCESS)
         ));
         EXPECT_CALL(*mock_sai_acl_api, create_acl_entry).WillOnce(testing::Invoke(aclMockState.get(), &SaiMockState::handleCreate));
-        createTunnelNH(mock_nh_ip_str);
-        addTunnelNhRule(mock_nh_ip_str, mock_tunnel_name);
+        createTunnelNH(mock_nh_ip_str, 1000);
+        addTunnelNhRule(mock_nh_ip_str, mock_tunnel_name, "1000");
         ASSERT_TRUE(gAclOrch->getAclRule(acl_table, acl_rule));
 
         /* ACL Rule is deleted but nexthop is not deleted */
@@ -280,7 +289,7 @@ namespace aclorch_rule_test
     TEST_F(AclRedirectActionTest, TunnelNH_InvalidTunnel)
     {
         EXPECT_CALL(*mock_sai_acl_api, create_acl_entry).Times(0);
-        addTunnelNhRule(mock_nh_ip_str, mock_invalid_tunnel_name);
+        addTunnelNhRule(mock_nh_ip_str, mock_invalid_tunnel_name, "");
         ASSERT_FALSE(gAclOrch->getAclRule(acl_table, acl_rule));
     }
 
@@ -290,7 +299,211 @@ namespace aclorch_rule_test
                 Return(SAI_STATUS_FAILURE) /* create next hop fails */
         );
         EXPECT_CALL(*mock_sai_acl_api, create_acl_entry).Times(0);
-        addTunnelNhRule(mock_invalid_nh_ip_str, mock_tunnel_name);
+        addTunnelNhRule(mock_invalid_nh_ip_str, mock_tunnel_name, "");
         ASSERT_FALSE(gAclOrch->getAclRule(acl_table, acl_rule));
+    }
+
+    /*
+     * Test fixture for ACL rule resource exhaustion and retry cache integration.
+     * Validates that when SAI returns SAI_STATUS_INSUFFICIENT_RESOURCES (or similar),
+     * the failed rule is parked in the retry cache and re-queued when resources are freed.
+     */
+    struct AclResourceExhaustionTest : public AclOrchRuleTest
+    {
+        string acl_table_type = "L3_TEST_TYPE";
+        string acl_table = "L3_TEST_TABLE";
+        string acl_rule_1 = "RULE_1";
+        string acl_rule_2 = "RULE_2";
+        sai_object_id_t acl_entry_oid = 0x500000000001;
+
+        void PostSetUp() override
+        {
+            AclOrchRuleTest::PostSetUp();
+            populateL3Table();
+        }
+
+        void populateL3Table()
+        {
+            doAclTableTypeTask({
+                {
+                    acl_table_type,
+                    SET_COMMAND,
+                    {
+                        { ACL_TABLE_TYPE_MATCHES, string(MATCH_SRC_IP) },
+                        { ACL_TABLE_TYPE_ACTIONS, ACTION_PACKET_ACTION },
+                    }
+                }
+            });
+            doAclTableTask({
+                {
+                    acl_table,
+                    SET_COMMAND,
+                    {
+                        { ACL_TABLE_TYPE, acl_table_type },
+                        { ACL_TABLE_STAGE, STAGE_INGRESS },
+                    }
+                }
+            });
+        }
+
+        void addDropRule(const string& rule_id, const string& src_ip)
+        {
+            doAclRuleTask({
+                {
+                    acl_table + "|" + rule_id,
+                    SET_COMMAND,
+                    {
+                        { RULE_PRIORITY, "9999" },
+                        { MATCH_SRC_IP, src_ip },
+                        { ACTION_PACKET_ACTION, PACKET_ACTION_DROP }
+                    }
+                }
+            });
+        }
+
+        void delRule(const string& rule_id)
+        {
+            doAclRuleTask({
+                {
+                    acl_table + "|" + rule_id,
+                    DEL_COMMAND,
+                    { }
+                }
+            });
+        }
+
+        RetryCache* getRuleRetryCache()
+        {
+            return gAclOrch->getRetryCache(CFG_ACL_RULE_TABLE_NAME);
+        }
+    };
+
+    /* When create_acl_entry returns SAI_STATUS_INSUFFICIENT_RESOURCES,
+     * the rule should NOT be in the ACL table but should be parked in the retry cache. */
+    TEST_F(AclResourceExhaustionTest, RuleParkedOnResourceExhaustion)
+    {
+        auto *cache = getRuleRetryCache();
+        ASSERT_NE(cache, nullptr);
+        ASSERT_TRUE(cache->getRetryMap().empty());
+
+        /* Mock SAI to return INSUFFICIENT_RESOURCES on create */
+        EXPECT_CALL(*mock_sai_acl_api, create_acl_entry)
+            .WillOnce(Return(SAI_STATUS_INSUFFICIENT_RESOURCES));
+
+        addDropRule(acl_rule_1, "10.0.0.1/32");
+
+        /* Rule should NOT be created in orchagent */
+        ASSERT_FALSE(gAclOrch->getAclRule(acl_table, acl_rule_1));
+
+        /* Rule should be parked in the retry cache */
+        ASSERT_FALSE(cache->getRetryMap().empty());
+
+        auto constraint = make_constraint(RETRY_CST_SAI_RESOURCE, acl_table);
+        auto &retryKeys = cache->m_retryKeys;
+        ASSERT_NE(retryKeys.find(constraint), retryKeys.end());
+    }
+
+    /* When create_acl_entry returns SAI_STATUS_TABLE_FULL,
+     * the rule should also be parked in the retry cache (same as INSUFFICIENT_RESOURCES). */
+    TEST_F(AclResourceExhaustionTest, RuleParkedOnTableFull)
+    {
+        auto *cache = getRuleRetryCache();
+        ASSERT_NE(cache, nullptr);
+
+        EXPECT_CALL(*mock_sai_acl_api, create_acl_entry)
+            .WillOnce(Return(SAI_STATUS_TABLE_FULL));
+
+        addDropRule(acl_rule_1, "10.0.0.1/32");
+
+        ASSERT_FALSE(gAclOrch->getAclRule(acl_table, acl_rule_1));
+        ASSERT_FALSE(cache->getRetryMap().empty());
+    }
+
+    /* Non-resource failures (e.g., SAI_STATUS_FAILURE) should NOT park in retry cache;
+     * they should remain in m_toSync for normal retry. */
+    TEST_F(AclResourceExhaustionTest, NonResourceFailureNotParked)
+    {
+        auto *cache = getRuleRetryCache();
+        ASSERT_NE(cache, nullptr);
+
+        EXPECT_CALL(*mock_sai_acl_api, create_acl_entry)
+            .WillOnce(Return(SAI_STATUS_FAILURE));
+
+        addDropRule(acl_rule_1, "10.0.0.1/32");
+
+        /* Rule should NOT be created */
+        ASSERT_FALSE(gAclOrch->getAclRule(acl_table, acl_rule_1));
+
+        /* Retry cache should be empty — the rule stays in m_toSync for normal retry */
+        ASSERT_TRUE(cache->getRetryMap().empty());
+    }
+
+    /* After a rule is parked due to resource exhaustion, removing another rule from the same
+     * table should mark the constraint as resolved, allowing the parked rule to be retried. */
+    TEST_F(AclResourceExhaustionTest, RuleRetriedAfterResourceFreed)
+    {
+        auto *cache = getRuleRetryCache();
+        ASSERT_NE(cache, nullptr);
+
+        /* First, successfully create rule_1 */
+        EXPECT_CALL(*mock_sai_acl_api, create_acl_entry)
+            .WillOnce(DoAll(SetArgPointee<0>(acl_entry_oid), Return(SAI_STATUS_SUCCESS)));
+        addDropRule(acl_rule_1, "10.0.0.1/32");
+        ASSERT_TRUE(gAclOrch->getAclRule(acl_table, acl_rule_1));
+
+        /* Now try to create rule_2, but SAI returns INSUFFICIENT_RESOURCES */
+        EXPECT_CALL(*mock_sai_acl_api, create_acl_entry)
+            .WillOnce(Return(SAI_STATUS_INSUFFICIENT_RESOURCES));
+        addDropRule(acl_rule_2, "10.0.0.2/32");
+        ASSERT_FALSE(gAclOrch->getAclRule(acl_table, acl_rule_2));
+        ASSERT_FALSE(cache->getRetryMap().empty());
+
+        /* Remove rule_1 to free resources — this should mark the constraint as resolved */
+        EXPECT_CALL(*mock_sai_acl_api, remove_acl_entry)
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+        delRule(acl_rule_1);
+        ASSERT_FALSE(gAclOrch->getAclRule(acl_table, acl_rule_1));
+
+        /* The constraint should now be resolved */
+        auto constraint = make_constraint(RETRY_CST_SAI_RESOURCE, acl_table);
+        auto &resolvedConstraints = cache->getResolvedConstraints();
+        ASSERT_NE(resolvedConstraints.find(constraint), resolvedConstraints.end());
+
+        /* Now when doAclRuleTask is called again (e.g. via retryToSync),
+         * the parked task should be moved back to the consumer's m_toSync.
+         * Simulate this by calling retryToSync and then checking the real consumer. */
+        size_t moved = gAclOrch->retryToSync(CFG_ACL_RULE_TABLE_NAME);
+        ASSERT_GT(moved, 0u);
+
+        /* The retry cache should now be empty */
+        ASSERT_TRUE(cache->getRetryMap().empty());
+        ASSERT_TRUE(resolvedConstraints.empty());
+
+        /* The task should now be in the actual consumer's m_toSync */
+        auto *consumerBase = gAclOrch->getConsumerBase(CFG_ACL_RULE_TABLE_NAME);
+        ASSERT_NE(consumerBase, nullptr);
+        auto *consumer = dynamic_cast<Consumer *>(consumerBase);
+        ASSERT_NE(consumer, nullptr);
+        ASSERT_FALSE(consumer->m_toSync.empty());
+
+        /* Process the retried rule — now SAI succeeds */
+        EXPECT_CALL(*mock_sai_acl_api, create_acl_entry)
+            .WillOnce(DoAll(SetArgPointee<0>(acl_entry_oid + 1), Return(SAI_STATUS_SUCCESS)));
+        static_cast<Orch *>(gAclOrch)->doTask(*consumer);
+
+        /* Rule should now be created */
+        ASSERT_TRUE(gAclOrch->getAclRule(acl_table, acl_rule_2));
+    }
+
+    /* Verify isSaiStatusResourceFull correctly identifies resource exhaustion statuses */
+    TEST_F(AclResourceExhaustionTest, IsSaiStatusResourceFullHelper)
+    {
+        ASSERT_TRUE(isSaiStatusResourceFull(SAI_STATUS_INSUFFICIENT_RESOURCES));
+        ASSERT_TRUE(isSaiStatusResourceFull(SAI_STATUS_TABLE_FULL));
+        ASSERT_TRUE(isSaiStatusResourceFull(SAI_STATUS_NO_MEMORY));
+        ASSERT_TRUE(isSaiStatusResourceFull(SAI_STATUS_NV_STORAGE_FULL));
+        ASSERT_FALSE(isSaiStatusResourceFull(SAI_STATUS_SUCCESS));
+        ASSERT_FALSE(isSaiStatusResourceFull(SAI_STATUS_FAILURE));
+        ASSERT_FALSE(isSaiStatusResourceFull(SAI_STATUS_NOT_SUPPORTED));
     }
 }

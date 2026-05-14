@@ -74,6 +74,9 @@ class P4OidMapper
     std::string verifyOIDMapping(_In_ sai_object_type_t object_type, _In_ const std::string &key,
                                  _In_ sai_object_id_t oid);
 
+    // Returns a json string that contains each non-empty OID mapper.
+    std::string dumpStateCache();
+
   private:
     struct MapperEntry
     {
@@ -85,5 +88,4 @@ class P4OidMapper
     std::unordered_map<std::string, MapperEntry> m_oidTables[SAI_OBJECT_TYPE_MAX];
 
     swss::DBConnector m_db;
-    swss::Table m_table;
 };

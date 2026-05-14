@@ -8,10 +8,13 @@ extern "C"
 
 #include "portsorch.h"
 
+sai_object_id_t gBridgePortOid;
+
 #define PORT_SPEED_LIST_DEFAULT_SIZE                     16
 #define PORT_STATE_POLLING_SEC                            5
 #define PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS     1000
 #define PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS     60000
+#define PORT_PHY_ATTR_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
 #define QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
 #define QUEUE_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   60000
 #define PG_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   60000
@@ -24,6 +27,8 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
       m_portOpErrTable(stateDb, STATE_PORT_OPER_ERR_TABLE_NAME),
       port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
                         PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
+      port_phy_attr_manager(PORT_PHY_ATTR_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_PHY_ATTR_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+      port_phy_serdes_attr_manager(PORT_PHY_SERDES_ATTR_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_PHY_ATTR_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
       port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ,
                                     PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, true),
       queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
@@ -275,14 +280,16 @@ bool PortsOrch::removeTunnel(Port tunnel)
     return true;
 }
 
-bool PortsOrch::addBridgePort(Port &port)
+bool PortsOrch::addBridgePort(Port& port) 
 {
-    return true;
+  port.m_bridge_port_id = gBridgePortOid;
+  return true;
 }
 
-bool PortsOrch::removeBridgePort(Port &port)
+bool PortsOrch::removeBridgePort(Port& port) 
 {
-    return true;
+  port.m_bridge_port_id = SAI_NULL_OBJECT_ID;
+  return true;
 }
 
 bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, string end_point_ip)
@@ -310,17 +317,25 @@ bool PortsOrch::removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip
     return true;
 }
 
-void PortsOrch::increaseBridgePortRefCount(Port &port)
-{
+void PortsOrch::increaseBridgePortRefCount(Port& port) {
+  if (m_bridge_port_ref_count.count(port.m_alias) == 0) {
+    m_bridge_port_ref_count[port.m_alias] = 1;
+    return;
+  }
+  m_bridge_port_ref_count[port.m_alias]++;
 }
 
-void PortsOrch::decreaseBridgePortRefCount(Port &port)
-{
+void PortsOrch::decreaseBridgePortRefCount(Port& port) {
+  if (m_bridge_port_ref_count.count(port.m_alias) > 0) {
+    m_bridge_port_ref_count[port.m_alias]--;
+  }
 }
 
-bool PortsOrch::getBridgePortReferenceCount(Port &port)
-{
-    return true;
+uint32_t PortsOrch::getBridgePortReferenceCount(Port& port) {
+  if (m_bridge_port_ref_count.count(port.m_alias) == 0) {
+    return 0;
+  }
+  return m_bridge_port_ref_count[port.m_alias];
 }
 
 bool PortsOrch::isInbandPort(const string &alias)
@@ -427,24 +442,11 @@ void PortsOrch::removeDefaultBridgePorts()
 {
 }
 
-bool PortsOrch::initializePort(Port &port)
-{
-    return true;
-}
-
-void PortsOrch::initializePriorityGroups(Port &port)
+void PortsOrch::initializePortBufferMaximumParameters(const Port &port)
 {
 }
 
-void PortsOrch::initializePortBufferMaximumParameters(Port &port)
-{
-}
-
-void PortsOrch::initializeQueues(Port &port)
-{
-}
-
-bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id)
+bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id, bool isUp)
 {
     return true;
 }
@@ -509,7 +511,7 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
     return SAI_STATUS_SUCCESS;
 }
 
-bool PortsOrch::initPort(const PortConfig &port)
+bool PortsOrch::initExistingPort(const PortConfig &port)
 {
     return true;
 }
@@ -706,6 +708,18 @@ std::unordered_set<std::string> PortsOrch::generateCounterStats(const vector<T> 
     return {};
 }
 
+const std::vector<sai_port_attr_t>& PortsOrch::getPortPhyAttrIds() const
+{
+    static const std::vector<sai_port_attr_t> empty_vector = {};
+    return empty_vector;
+}
+
 void PortsOrch::doTask(swss::SelectableTimer &timer)
+{
+}
+
+bool PortsOrch::isFrontPanelPort(Port& port) { return true; }
+
+void PortsOrch::onWarmBootEnd()
 {
 }

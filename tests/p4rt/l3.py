@@ -14,19 +14,43 @@ class P4RtRouterInterfaceWrapper(util.DBInterface):
     SAI_ATTR_SRC_MAC = "SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS"
     SAI_ATTR_TYPE = "SAI_ROUTER_INTERFACE_ATTR_TYPE"
     SAI_ATTR_TYPE_PORT = "SAI_ROUTER_INTERFACE_TYPE_PORT"
+    SAI_ATTR_TYPE_SUB_PORT = "SAI_ROUTER_INTERFACE_TYPE_SUB_PORT"
     SAI_ATTR_MTU = "SAI_ROUTER_INTERFACE_ATTR_MTU"
     SAI_ATTR_PORT_ID = "SAI_ROUTER_INTERFACE_ATTR_PORT_ID"
     SAI_ATTR_DEFAULT_MTU = "9100"
+    SAI_ATTR_OUTER_VLAN_ID = "SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID"
+    SAI_ATTR_VIRTUAL_ROUTER_ID = "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID"
+    SAI_ATTR_V4_MCAST_ENABLE = "SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE"
+    SAI_ATTR_V6_MCAST_ENABLE = "SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE"
 
     # attribute fields for router interface object
     PORT_FIELD = "port"
     SRC_MAC_FIELD = "src_mac"
+    VLAN_ID = "vlan_id"
 
     # default router interface attribute values
     DEFAULT_ROUTER_INTERFACE_ID = "16"
     DEFAULT_PORT_ID = "Ethernet8"
     DEFAULT_SRC_MAC = "00:11:22:33:44:55"
     DEFAULT_ACTION = "set_port_and_src_mac"
+    DEFAULT_VLAN_ID = "0x41"
+    VLAN_ID_ACTION = "set_port_and_src_mac_and_vlan_id"
+
+    def get_default_loopback_oid(self):
+        rif_entries = util.get_keys(self.asic_db, self.ASIC_DB_TBL_NAME)
+        for key in rif_entries:
+            (status, fvs) = util.get_key(self.asic_db, self.ASIC_DB_TBL_NAME, key)
+            assert status == True
+            is_loopback = False
+            is_gVR = False
+            for f, v in fvs:
+                if f == "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID":
+                    is_gVR = True
+                if f == "SAI_ROUTER_INTERFACE_ATTR_TYPE" and v == "SAI_ROUTER_INTERFACE_TYPE_LOOPBACK":
+                    is_loopback = True
+                if is_gVR and is_loopback:
+                    return key
+        return 0
 
     # Fetch oid of the first newly created rif from created rif in ASIC
     # db. This API should only be used when only one oid is expected to be
@@ -51,26 +75,32 @@ class P4RtRouterInterfaceWrapper(util.DBInterface):
 
     def generate_app_db_key(self, router_interface_id):
         d = {}
-        d[util.prepend_match_field("router_interface_id")] = router_interface_id
+        d[util.prepend_match_field("router_interface_id")
+          ] = router_interface_id
         key = json.dumps(d, separators=(",", ":"))
         return self.TBL_NAME + ":" + key
 
     # create default router interface
     def create_router_interface(
-        self, router_interace_id=None, port_id=None, src_mac=None, action=None
+        self, router_interace_id=None, port_id=None, src_mac=None, action=None,
+        vlan_id=None
     ):
         router_interface_id = router_interace_id or self.DEFAULT_ROUTER_INTERFACE_ID
         port_id = port_id or self.DEFAULT_PORT_ID
         src_mac = src_mac or self.DEFAULT_SRC_MAC
         action = action or self.DEFAULT_ACTION
+        vlan_id = vlan_id or self.DEFAULT_VLAN_ID
         attr_list = [
             (util.prepend_param_field(self.PORT_FIELD), port_id),
             (util.prepend_param_field(self.SRC_MAC_FIELD), src_mac),
             (self.ACTION_FIELD, action),
         ]
+        if action == self.VLAN_ID_ACTION:
+            attr_list.append((util.prepend_param_field(self.VLAN_ID), vlan_id))
         router_intf_key = self.generate_app_db_key(router_interface_id)
         self.set_app_db_entry(router_intf_key, attr_list)
         return router_interface_id, router_intf_key, attr_list
+
 
 class P4RtGreTunnelWrapper(util.DBInterface):
     """Interface to interact with APP DB and ASIC DB tables for P4RT GRE Tunnel object."""
@@ -114,7 +144,8 @@ class P4RtGreTunnelWrapper(util.DBInterface):
         encap_dst_ip = encap_dst_ip or self.DEFAULT_ENCAP_DST_IP
         action = action or self.DEFAULT_ACTION
         attr_list = [
-            (util.prepend_param_field(self.ROUTER_ROUTER_INTERFACE_ID_FIELD), router_interface_id),
+            (util.prepend_param_field(
+                self.ROUTER_ROUTER_INTERFACE_ID_FIELD), router_interface_id),
             (util.prepend_param_field(self.ENCAP_SRC_IP_FIELD), encap_src_ip),
             (util.prepend_param_field(self.ENCAP_DST_IP_FIELD), encap_dst_ip),
             (self.ACTION_FIELD, action),
@@ -143,11 +174,9 @@ class P4RtGreTunnelWrapper(util.DBInterface):
         return tunnel_oid
 
     def get_original_appl_db_entries_count(self):
-        return len(
-            self._original_entries[
-                "%s:%s" % (self.appl_db, (self.APP_DB_TBL_NAME + ":" + self.TBL_NAME))
-            ]
-        )
+        key = "%s:%s" % (self.appl_db, (self.APP_DB_TBL_NAME + ":" + self.TBL_NAME))
+        entries = self._original_entries.get(key, [])
+        return len(entries)
 
     def get_original_appl_state_db_entries_count(self):
         return len(
@@ -163,6 +192,7 @@ class P4RtGreTunnelWrapper(util.DBInterface):
                 "%s:%s" % (self.asic_db, self.ASIC_DB_TBL_NAME)
             ]
         )
+
 
 class P4RtNeighborWrapper(util.DBInterface):
     """Interface to interact with APP DB and ASIC DB tables for P4RT neighbor object."""
@@ -185,7 +215,8 @@ class P4RtNeighborWrapper(util.DBInterface):
 
     def generate_app_db_key(self, router_interface_id, neighbor_id):
         d = {}
-        d[util.prepend_match_field("router_interface_id")] = router_interface_id
+        d[util.prepend_match_field("router_interface_id")
+          ] = router_interface_id
         d[util.prepend_match_field("neighbor_id")] = neighbor_id
         key = json.dumps(d, separators=(",", ":"))
         return self.TBL_NAME + ":" + key
@@ -209,7 +240,8 @@ class P4RtNeighborWrapper(util.DBInterface):
             (util.prepend_param_field(self.DST_MAC_FIELD), dst_mac),
             (self.ACTION_FIELD, action),
         ]
-        neighbor_key = self.generate_app_db_key(router_interface_id, neighbor_id)
+        neighbor_key = self.generate_app_db_key(
+            router_interface_id, neighbor_id)
         self.set_app_db_entry(neighbor_key, attr_list)
         return neighbor_id, neighbor_key, attr_list
 
@@ -222,18 +254,31 @@ class P4RtNextHopWrapper(util.DBInterface):
     TBL_NAME = swsscommon.APP_P4RT_NEXTHOP_TABLE_NAME
     ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP"
     SAI_ATTR_TYPE = "SAI_NEXT_HOP_ATTR_TYPE"
+    SAI_ATTR_TYPE_IP = "SAI_NEXT_HOP_TYPE_IP"
     SAI_ATTR_IP = "SAI_NEXT_HOP_ATTR_IP"
     SAI_ATTR_TUNNEL_ENCAP = "SAI_NEXT_HOP_TYPE_TUNNEL_ENCAP"
     SAI_ATTR_ROUTER_INTF_OID = "SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID"
     SAI_ATTR_TUNNEL_OID = "SAI_NEXT_HOP_ATTR_TUNNEL_ID"
+    SAI_ATTR_DISABLE_DECREMENT_TTL = "SAI_NEXT_HOP_ATTR_DISABLE_DECREMENT_TTL"
+    SAI_ATTR_DISABLE_SRC_MAC_REWRITE = (
+        "SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE")
+    SAI_ATTR_DISABLE_DST_MAC_REWRITE = (
+        "SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE")
+    SAI_ATTR_DISABLE_VLAN_REWRITE = "SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE"
 
     # attribute fields for nexthop object
     RIF_FIELD = "router_interface_id"
     NEIGHBOR_ID_FIELD = "neighbor_id"
     TUNNEL_ID_FIELD = "tunnel_id"
+    DISABLE_DECREMENT_TTL_FIELD = "disable_decrement_ttl"
+    DISABLE_SRC_MAC_REWRITE_FIELD = "disable_src_mac_rewrite"
+    DISABLE_DST_MAC_REWRITE_FIELD = "disable_dst_mac_rewrite"
+    DISABLE_VLAN_REWRITE_FIELD = "disable_vlan_rewrite"
 
     # default next hop attribute values
     DEFAULT_ACTION = "set_ip_nexthop"
+    SET_IP_NEXTHOP_AND_DISABLE_REWRITES_ACTION = (
+        "set_ip_nexthop_and_disable_rewrites")
     DEFAULT_NEXTHOP_ID = "8"
     DEFAULT_ROUTER_INTERFACE_ID = "16"
     DEFAULT_IPV4_NEIGHBOR_ID = "12.0.0.1"
@@ -258,8 +303,13 @@ class P4RtNextHopWrapper(util.DBInterface):
         nexthop_id=None,
         ipv4=True,
         tunnel_id=None,
+        disable_decrement_ttl=0,
+        disable_src_mac_rewrite=0,
+        disable_dst_mac_rewrite=0,
+        disable_vlan_rewrite=0
     ):
-        action = action or (self.DEFAULT_ACTION if tunnel_id == None else self.TUNNEL_ACTION)
+        action = action or (self.DEFAULT_ACTION if tunnel_id is None
+                            else self.TUNNEL_ACTION)
         router_interface_id = router_interface_id or self.DEFAULT_ROUTER_INTERFACE_ID
         if ipv4 is True:
             neighbor_id = neighbor_id or self.DEFAULT_IPV4_NEIGHBOR_ID
@@ -267,11 +317,25 @@ class P4RtNextHopWrapper(util.DBInterface):
             neighbor_id = neighbor_id or self.DEFAULT_IPV6_NEIGHBOR_ID
         nexthop_id = nexthop_id or self.DEFAULT_NEXTHOP_ID
         attr_list = [(self.ACTION_FIELD, action)]
-        if action == self.DEFAULT_ACTION:
+        if (action == self.DEFAULT_ACTION or
+            action == self.SET_IP_NEXTHOP_AND_DISABLE_REWRITES_ACTION):
             attr_list.append((util.prepend_param_field(self.RIF_FIELD), router_interface_id))
             attr_list.append((util.prepend_param_field(self.NEIGHBOR_ID_FIELD), neighbor_id))
+            attr_list.append((util.prepend_param_field(
+                self.DISABLE_DECREMENT_TTL_FIELD),
+                str(disable_decrement_ttl)))
+            attr_list.append((util.prepend_param_field(
+                self.DISABLE_SRC_MAC_REWRITE_FIELD),
+                str(disable_src_mac_rewrite)))
+            attr_list.append((util.prepend_param_field(
+                self.DISABLE_DST_MAC_REWRITE_FIELD),
+                str(disable_dst_mac_rewrite)))
+            attr_list.append((util.prepend_param_field(
+                self.DISABLE_VLAN_REWRITE_FIELD),
+                str(disable_vlan_rewrite)))
         if tunnel_id != None:
-            attr_list.append((util.prepend_param_field(self.TUNNEL_ID_FIELD), tunnel_id))
+            attr_list.append((util.prepend_param_field(
+                self.TUNNEL_ID_FIELD), tunnel_id))
         nexthop_key = self.generate_app_db_key(nexthop_id)
         self.set_app_db_entry(nexthop_key, attr_list)
         return nexthop_id, nexthop_key, attr_list
@@ -295,12 +359,22 @@ class P4RtNextHopWrapper(util.DBInterface):
                 break
         return nexthop_oid
 
+    def get_newly_created_asic_db_key(self):
+        asic_db_key = None
+        nexthop_entries = util.get_keys(self.asic_db, self.ASIC_DB_TBL_NAME)
+        original_entries_key = "%s:%s" % (self.asic_db, self.ASIC_DB_TBL_NAME)
+        original_keys = self._original_entries.get(original_entries_key, [])
+
+        for key in nexthop_entries:
+            if key not in original_keys:
+                asic_db_key = key
+                break
+        return asic_db_key
+
     def get_original_appl_db_entries_count(self):
-        return len(
-            self._original_entries[
-                "%s:%s" % (self.appl_db, (self.APP_DB_TBL_NAME + ":" + self.TBL_NAME))
-            ]
-        )
+        key = "%s:%s" % (self.appl_db, (self.APP_DB_TBL_NAME + ":" + self.TBL_NAME))
+        entries = self._original_entries.get(key, [])
+        return len(entries)
 
     def get_original_appl_state_db_entries_count(self):
         return len(
@@ -317,6 +391,7 @@ class P4RtNextHopWrapper(util.DBInterface):
             ]
         )
 
+
 class P4RtWcmpGroupWrapper(util.DBInterface):
     """Interface to interact with APP DB and ASIC DB tables for P4RT wcmp group object."""
 
@@ -325,15 +400,11 @@ class P4RtWcmpGroupWrapper(util.DBInterface):
     TBL_NAME = swsscommon.APP_P4RT_WCMP_GROUP_TABLE_NAME
     ASIC_DB_GROUP_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP"
     SAI_ATTR_GROUP_TYPE = "SAI_NEXT_HOP_GROUP_ATTR_TYPE"
-    SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP = (
-        "SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP"
+    SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS = (
+        "SAI_NEXT_HOP_GROUP_TYPE_ECMP_WITH_MEMBERS"
     )
-    ASIC_DB_GROUP_MEMBER_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER"
-    SAI_ATTR_GROUP_MEMBER_NEXTHOP_GROUP_ID = (
-        "SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"
-    )
-    SAI_ATTR_GROUP_MEMBER_NEXTHOP_ID = "SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"
-    SAI_ATTR_GROUP_MEMBER_WEIGHT = "SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT"
+    SAI_ATTR_NEXT_HOP_LIST = "SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST"
+    SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST = "SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST"
 
     # attribute fields for wcmp group object
     NEXTHOP_ID_FIELD = "nexthop_id"
@@ -356,7 +427,8 @@ class P4RtWcmpGroupWrapper(util.DBInterface):
     # 'get_original_redis_entries' before fetching oid of newly created wcmp group.
     def get_newly_created_wcmp_group_oid(self):
         wcmp_group_oid = None
-        wcmp_group_entries = util.get_keys(self.asic_db, self.ASIC_DB_GROUP_TBL_NAME)
+        wcmp_group_entries = util.get_keys(
+            self.asic_db, self.ASIC_DB_GROUP_TBL_NAME)
         for key in wcmp_group_entries:
             if (
                 key
@@ -367,28 +439,6 @@ class P4RtWcmpGroupWrapper(util.DBInterface):
                 wcmp_group_oid = key
                 break
         return wcmp_group_oid
-
-    # Fetch key for the first newly created wcmp group member from created group
-    # members in ASIC db. This API should only be used when only one key is
-    # expected to be created after the original entries.
-    # Original wcmp group member entries in asic db must be fetched using
-    # 'get_original_redis_entries' before fetching asic db key of newly created
-    # wcmp group member.
-    def get_newly_created_wcmp_group_member_asic_db_key(self):
-        asic_db_wcmp_group_member_key = None
-        wcmp_group_member_entries = util.get_keys(
-            self.asic_db, self.ASIC_DB_GROUP_MEMBER_TBL_NAME
-        )
-        for key in wcmp_group_member_entries:
-            if (
-                key
-                not in self._original_entries[
-                    "{}:{}".format(self.asic_db, self.ASIC_DB_GROUP_MEMBER_TBL_NAME)
-                ]
-            ):
-                asic_db_wcmp_group_member_key = key
-                break
-        return asic_db_wcmp_group_member_key
 
     def generate_app_db_key(self, group_id):
         d = {}
@@ -423,11 +473,9 @@ class P4RtWcmpGroupWrapper(util.DBInterface):
         return wcmp_group_id, wcmp_group_key, attr_list
 
     def get_original_appl_db_entries_count(self):
-        return len(
-            self._original_entries[
-                "%s:%s" % (self.appl_db, (self.APP_DB_TBL_NAME + ":" + self.TBL_NAME))
-            ]
-        )
+        key = "%s:%s" % (self.appl_db, (self.APP_DB_TBL_NAME + ":" + self.TBL_NAME))
+        entries = self._original_entries.get(key, [])
+        return len(entries)
 
     def get_original_appl_state_db_entries_count(self):
         return len(
@@ -441,13 +489,6 @@ class P4RtWcmpGroupWrapper(util.DBInterface):
         return len(
             self._original_entries[
                 "%s:%s" % (self.asic_db, self.ASIC_DB_GROUP_TBL_NAME)
-            ]
-        )
-
-    def get_original_asic_db_member_entries_count(self):
-        return len(
-            self._original_entries[
-                "%s:%s" % (self.asic_db, self.ASIC_DB_GROUP_MEMBER_TBL_NAME)
             ]
         )
 
@@ -545,24 +586,21 @@ class P4RtRouteWrapper(util.DBInterface):
     # 'get_original_redis_entries' before fetching asic db key of newly created
     # route.
     def get_newly_created_asic_db_key(self):
+        asic_db_key = None
         route_entries = util.get_keys(self.asic_db, self.ASIC_DB_TBL_NAME)
+        original_entries_key = "%s:%s" % (self.asic_db, self.ASIC_DB_TBL_NAME)
+        original_keys = self._original_entries.get(original_entries_key, [])
+
         for key in route_entries:
-            if (
-                key
-                not in self._original_entries[
-                    "%s:%s" % (self.asic_db, self.ASIC_DB_TBL_NAME)
-                ]
-            ):
+            if key not in original_keys:
                 asic_db_key = key
                 break
         return asic_db_key
 
     def get_original_appl_db_entries_count(self):
-        return len(
-            self._original_entries[
-                "%s:%s" % (self.appl_db, (self.APP_DB_TBL_NAME + ":" + self.TBL_NAME))
-            ]
-        )
+        key = "%s:%s" % (self.appl_db, (self.APP_DB_TBL_NAME + ":" + self.TBL_NAME))
+        entries = self._original_entries.get(key, [])
+        return len(entries)
 
     def get_original_appl_state_db_entries_count(self):
         return len(

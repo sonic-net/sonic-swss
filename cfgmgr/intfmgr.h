@@ -37,6 +37,7 @@ private:
     std::set<std::string> m_loopbackIntfList;
     std::set<std::string> m_pendingReplayIntfList;
     std::set<std::string> m_ipv6LinkLocalModeList;
+    std::map<std::string, std::set<std::string>> m_intfLLAddresses;
     std::string mySwitchType;
 
     void setIntfIp(const std::string &alias, const std::string &opCmd, const IpPrefix &ipPrefix);
@@ -64,6 +65,7 @@ private:
     std::string getIntfMtu(const std::string &alias);
     void addHostSubIntf(const std::string&intf, const std::string &subIntf, const std::string &vlan);
     std::string setHostSubIntfMtu(const std::string &alias, const std::string &mtu, const std::string &parent_mtu);
+    bool setIntfAdminStatus(const std::string &alias, const std::string &admin_status);
     std::string setHostSubIntfAdminStatus(const std::string &alias, const std::string &admin_status, const std::string &parent_admin_status);
     void removeHostSubIntf(const std::string &subIntf);
     void setSubIntfStateOk(const std::string &alias);
@@ -76,6 +78,7 @@ private:
     void updateSubIntfAdminStatus(const std::string &alias, const std::string &admin);
     void updateSubIntfMtu(const std::string &alias, const std::string &mtu);
     bool enableIpv6Flag(const std::string&);
+    void replayLLIntfAddresses(const std::string &alias);
 
     bool m_replayDone {false};
 };

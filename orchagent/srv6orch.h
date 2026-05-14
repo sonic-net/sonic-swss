@@ -5,6 +5,7 @@
 #include <string>
 #include <set>
 #include <unordered_map>
+#include <boost/optional.hpp>
 
 #include "dbconnector.h"
 #include "orch.h"
@@ -26,6 +27,8 @@
 using namespace std;
 using namespace swss;
 
+#define SRV6_STAT_COUNTER_FLEX_COUNTER_GROUP "SRV6_STAT_COUNTER"
+
 struct SidTableEntry
 {
     sai_object_id_t sid_object_id;         // SRV6 SID list object id
@@ -46,6 +49,7 @@ struct MySidEntry
     string            endAdjString; // Used for END.X, END.DX4, END.DX6
     sai_tunnel_dscp_mode_t dscp_mode;    // Used for decapsulation configuration
     sai_object_id_t   tunnel_term_entry; // Used for decapsulation configuration
+    sai_object_id_t   counter;
 };
 
 struct MySidIpInIpTunnel
@@ -141,7 +145,7 @@ typedef map<string, Srv6PrefixAggIdEntry> Srv6PrefixAggIdTableForNhg;
 typedef set<uint32_t> Srv6PrefixAggIdSet;
 typedef map<Srv6TunnelMapEntryKey, Srv6TunnelMapEntryEntry> Srv6TunnelMapEntryTable;
 typedef map<string, Srv6PicContextInfo> Srv6PicContextTable;
-typedef pair<string, sai_tunnel_dscp_mode_t> Srv6MySidDscpCfgCacheVal;
+typedef pair<string, boost::optional<sai_tunnel_dscp_mode_t>> Srv6MySidDscpCfgCacheVal;
 typedef std::unordered_multimap<string, Srv6MySidDscpCfgCacheVal> Srv6MySidDscpCfg;
 
 #define SID_LIST_DELIMITER ','
@@ -149,23 +153,8 @@ typedef std::unordered_multimap<string, Srv6MySidDscpCfgCacheVal> Srv6MySidDscpC
 class Srv6Orch : public Orch, public Observer
 {
     public:
-        Srv6Orch(DBConnector *cfgDb, DBConnector *applDb, const vector<TableConnector>& tables, SwitchOrch *switchOrch, VRFOrch *vrfOrch, NeighOrch *neighOrch):
-          Orch(tables),
-          m_vrfOrch(vrfOrch),
-          m_switchOrch(switchOrch),
-          m_neighOrch(neighOrch),
-          m_sidTable(applDb, APP_SRV6_SID_LIST_TABLE_NAME),
-          m_mysidTable(applDb, APP_SRV6_MY_SID_TABLE_NAME),
-          m_piccontextTable(applDb, APP_PIC_CONTEXT_TABLE_NAME),
-          m_mysidCfgTable(cfgDb, CFG_SRV6_MY_SID_TABLE_NAME),
-          m_locatorCfgTable(cfgDb, CFG_SRV6_MY_LOCATOR_TABLE_NAME)
-        {
-            m_neighOrch->attach(this);
-        }
-        ~Srv6Orch()
-        {
-            m_neighOrch->detach(this);
-        }
+        Srv6Orch(DBConnector *cfgDb, DBConnector *applDb, const vector<TableConnector>& tables, SwitchOrch *switchOrch, VRFOrch *vrfOrch, NeighOrch *neighOrch);
+        ~Srv6Orch();
         void increasePicContextIdRefCount(const std::string&);
         void decreasePicContextIdRefCount(const std::string&);
         void increasePrefixAggIdRefCount(const NextHopGroupKey&);
@@ -182,9 +171,11 @@ class Srv6Orch : public Orch, public Observer
         bool removeSrv6Nexthops(const std::vector<NextHopGroupKey> &nhgv);
         void update(SubjectType, void *);
         bool contextIdExists(const std::string &context_id);
+        void setCountersState(bool enable);
 
     private:
         void doTask(Consumer &consumer);
+        void doTask(SelectableTimer &timer);
         task_process_status doTaskSidTable(const KeyOpFieldsValuesTuple &tuple);
         void doTaskMySidTable(const KeyOpFieldsValuesTuple &tuple);
         task_process_status doTaskPicContextTable(const KeyOpFieldsValuesTuple &tuple);
@@ -200,16 +191,17 @@ class Srv6Orch : public Orch, public Observer
         bool sidEntryEndpointBehavior(const string action, sai_my_sid_entry_endpoint_behavior_t &end_behavior,
                                       sai_my_sid_entry_endpoint_behavior_flavor_t &end_flavor);
         MySidLocatorCfg getMySidEntryLocatorCfg(const sai_my_sid_entry_t& sai_entry) const;
+        string getMySidPrefix(const string& my_sid_addr, const MySidLocatorCfg& locator_cfg) const;
         bool getLocatorCfgFromDb(const string& locator, MySidLocatorCfg& cfg);
         bool reverseLookupLocator(const vector<string>& candidates, const MySidLocatorCfg& locator_cfg, string& locator);
         void mySidCfgCacheRefresh();
         void addMySidCfgCacheEntry(const string& my_sid_key, const vector<FieldValueTuple>& fvs);
         void removeMySidCfgCacheEntry(const string& my_sid_key);
-        bool getMySidEntryDscpMode(const string& my_sid_addr, const MySidLocatorCfg& locator_cfg, sai_tunnel_dscp_mode_t& dscp_mode);
+        bool getMySidEntryDscpMode(const string& my_sid_addr, const MySidLocatorCfg& locator_cfg, boost::optional<sai_tunnel_dscp_mode_t>& dscp_mode);
         bool mySidExists(const string mysid_string);
         bool mySidVrfRequired(const sai_my_sid_entry_endpoint_behavior_t end_behavior);
         bool mySidNextHopRequired(const sai_my_sid_entry_endpoint_behavior_t end_behavior);
-        bool mySidTunnelRequired(const string& my_sid_addr, const sai_my_sid_entry_t& sai_entry, sai_my_sid_entry_endpoint_behavior_t end_behavior, sai_tunnel_dscp_mode_t& dscp_mode);
+        bool mySidTunnelRequired(const string& my_sid_addr, const sai_my_sid_entry_t& sai_entry, sai_my_sid_entry_endpoint_behavior_t end_behavior, boost::optional<sai_tunnel_dscp_mode_t>& dscp_mode);
         void srv6TunnelUpdateNexthops(const string srv6_source, const NextHopKey nhkey, bool insert);
         size_t srv6TunnelNexthopSize(const string srv6_source);
         bool initIpInIpTunnel(MySidIpInIpTunnel& tunnel, sai_tunnel_dscp_mode_t dscp_mode);
@@ -233,6 +225,16 @@ class Srv6Orch : public Orch, public Observer
         bool deleteSrv6Vpns(const std::string &context_id);
         void updateNeighbor(const NeighborUpdate& update);
 
+        void initializeCounters();
+        bool queryMySidCountersCapability() const;
+        bool getMySidCountersEnabled() const;
+        bool getMySidCountersSupported() const;
+        string getMySidCounterKey(const sai_my_sid_entry_t& sai_entry) const;
+        IpAddress getMySidAddress(const sai_my_sid_entry_t& sai_entry) const;
+        bool addMySidCounter(const sai_my_sid_entry_t& sai_entry, sai_object_id_t& counter_oid);
+        void removeMySidCounter(const sai_my_sid_entry_t& sai_entry, sai_object_id_t& counter_oid);
+        void setMySidEntryCounter(const sai_my_sid_entry_t& sai_entry, sai_object_id_t counter_oid);
+
         ProducerStateTable m_sidTable;
         ProducerStateTable m_mysidTable;
         ProducerStateTable m_piccontextTable;
@@ -254,6 +256,16 @@ class Srv6Orch : public Orch, public Observer
         VRFOrch *m_vrfOrch;
         SwitchOrch *m_switchOrch;
         NeighOrch *m_neighOrch;
+
+        FlexCounterManager m_counter_manager;
+        unique_ptr<Table> m_mysid_counters_table;
+        unique_ptr<Table> m_vid_to_rid_table;
+        shared_ptr<DBConnector> m_counter_db;
+        shared_ptr<DBConnector> m_asic_db;
+        map<sai_object_id_t, string> m_pending_counters;
+        SelectableTimer* m_counter_update_timer = nullptr;
+        bool m_mysid_counters_enabled = false;
+        bool m_mysid_counters_supported = false;
 
         /*
          * Map to store the SRv6 MySID entries not yet configured in ASIC because associated to a non-ready nexthop

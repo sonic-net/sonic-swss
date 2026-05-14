@@ -20,6 +20,7 @@ extern "C" {
 #include "sai_serialize.h"
 #include "flex_counter_manager.h"
 #include "converter.h"
+#include "saihelper.h"
 
 /* Global variables */
 extern sai_object_id_t gSwitchId;
@@ -145,7 +146,12 @@ create_tunnel_map(MAP_T map_t)
                           );
     if (status != SAI_STATUS_SUCCESS)
     {
-        throw std::runtime_error("Can't create tunnel map object");
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_TUNNEL, status);
+        if (handle_status != task_success)
+        {
+            SWSS_LOG_ERROR("Can't create tunnel map object");
+            return SAI_NULL_OBJECT_ID;
+        }
     }
 
     return tunnel_map_id;
@@ -157,7 +163,11 @@ remove_tunnel_map(sai_object_id_t tunnel_map_id)
     sai_status_t status = sai_tunnel_api->remove_tunnel_map(tunnel_map_id);
     if (status != SAI_STATUS_SUCCESS)
     {
-        throw std::runtime_error("Can't remove a tunnel map object");
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_TUNNEL, status);
+        if (handle_status != task_success)
+        {
+            SWSS_LOG_ERROR("Can't remove a tunnel map object");
+        }
     }
 }
 
@@ -204,7 +214,12 @@ static sai_object_id_t create_tunnel_map_entry(
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        throw std::runtime_error("Can't create a tunnel map entry object");
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_TUNNEL, status);
+        if (handle_status != task_success)
+        {
+            SWSS_LOG_ERROR("Can't create a tunnel map entry object");
+            return SAI_NULL_OBJECT_ID;
+        }
     }
 
     return tunnel_map_entry_id;
@@ -221,7 +236,11 @@ void remove_tunnel_map_entry(sai_object_id_t obj_id)
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        throw std::runtime_error("Can't delete a tunnel map entry object");
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_TUNNEL, status);
+        if (handle_status != task_success)
+        {
+            SWSS_LOG_ERROR("Can't delete a tunnel map entry object");
+        }
     }
 }
 
@@ -275,6 +294,7 @@ create_tunnel(
     sai_ip_address_t *dst_ip,
     sai_object_id_t underlay_rif,
     bool p2p,
+    VxlanTunnelTTLMode decap_ttl_mode,
     sai_uint8_t encap_ttl=0)
 {
     sai_attribute_t attr;
@@ -349,6 +369,19 @@ create_tunnel(
         tunnel_attrs.push_back(attr);
     }
 
+    if (decap_ttl_mode == VxlanTunnelTTLMode::PIPE)
+    {
+        attr.id = SAI_TUNNEL_ATTR_DECAP_TTL_MODE;
+        attr.value.s32 = SAI_TUNNEL_TTL_MODE_PIPE_MODEL;
+        tunnel_attrs.push_back(attr);
+    }
+    else if (decap_ttl_mode == VxlanTunnelTTLMode::UNIFORM)
+    {
+        attr.id = SAI_TUNNEL_ATTR_DECAP_TTL_MODE;
+        attr.value.s32 = SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL;
+        tunnel_attrs.push_back(attr);
+    }
+
     if (encap_ttl != 0)
     {
         attr.id = SAI_TUNNEL_ATTR_ENCAP_TTL_MODE;
@@ -369,7 +402,12 @@ create_tunnel(
                           );
     if (status != SAI_STATUS_SUCCESS)
     {
-        throw std::runtime_error("Can't create a tunnel object");
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_TUNNEL, status);
+        if (handle_status != task_success)
+        {
+            SWSS_LOG_ERROR("Can't create a tunnel object");
+            return SAI_NULL_OBJECT_ID;
+        }
     }
 
     return tunnel_id;
@@ -383,7 +421,11 @@ remove_tunnel(sai_object_id_t tunnel_id)
         sai_status_t status = sai_tunnel_api->remove_tunnel(tunnel_id);
         if (status != SAI_STATUS_SUCCESS)
         {
-            throw std::runtime_error("Can't remove a tunnel object");
+            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_TUNNEL, status);
+            if (handle_status != task_success)
+            {
+                SWSS_LOG_ERROR("Can't remove a tunnel object");
+            }
         }
     }
     else
@@ -445,7 +487,12 @@ create_tunnel_termination(
                           );
     if (status != SAI_STATUS_SUCCESS)
     {
-        throw std::runtime_error("Can't create a tunnel term table object");
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_TUNNEL, status);
+        if (handle_status != task_success)
+        {
+            SWSS_LOG_ERROR("Can't create a tunnel term table object");
+            return SAI_NULL_OBJECT_ID;
+        }
     }
 
     return term_table_id;
@@ -459,7 +506,11 @@ remove_tunnel_termination(sai_object_id_t term_table_id)
         sai_status_t status = sai_tunnel_api->remove_tunnel_term_table_entry(term_table_id);
         if (status != SAI_STATUS_SUCCESS)
         {
-            throw std::runtime_error("Can't remove a tunnel term table object");
+            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_TUNNEL, status);
+            if (handle_status != task_success)
+            {
+                SWSS_LOG_ERROR("Can't remove a tunnel term table object");
+            }
         }
     }
     else
@@ -470,8 +521,8 @@ remove_tunnel_termination(sai_object_id_t term_table_id)
 
 //------------------- VxlanTunnel Implementation --------------------------//
 
-VxlanTunnel::VxlanTunnel(string name, IpAddress srcIp, IpAddress dstIp, tunnel_creation_src_t src)
-                :tunnel_name_(name), src_ip_(srcIp), dst_ip_(dstIp), src_creation_(src)
+VxlanTunnel::VxlanTunnel(string name, IpAddress srcIp, IpAddress dstIp, tunnel_creation_src_t src, VxlanTunnelTTLMode decap_ttl_mode)
+                :tunnel_name_(name), src_ip_(srcIp), dst_ip_(dstIp), src_creation_(src), decap_ttl_mode_(decap_ttl_mode)
 {
    VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
 
@@ -601,12 +652,16 @@ bool VxlanTunnel::removeNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32
 
     if (!nh_tunnels_[key].ref_count)
     {
-        if (sai_next_hop_api->remove_next_hop(nh_tunnels_[key].nh_id) != SAI_STATUS_SUCCESS)
+        sai_status_t status = sai_next_hop_api->remove_next_hop(nh_tunnels_[key].nh_id);
+        if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_INFO("delete NH tunnel for ip '%s', mac '%s' vni %d failed",
+            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP, status);
+            if (handle_status != task_success)
+            {
+                SWSS_LOG_ERROR("delete NH tunnel for ip '%s', mac '%s' vni %d failed",
                             ipAddr.to_string().c_str(), macAddress.to_string().c_str(), vni);
-            string err_msg = "NH tunnel delete failed for " + ipAddr.to_string();
-            throw std::runtime_error(err_msg);
+                return false;
+            }
         }
 
         nh_tunnels_.erase(key);
@@ -849,17 +904,36 @@ bool VxlanTunnel::createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src,
             SWSS_LOG_WARN("creation src = %d",src_creation_);
         }
 
-        ids_.tunnel_id = create_tunnel(&ids_, &ips, ip, gUnderlayIfId, p2p, encap_ttl);
+        ids_.tunnel_id = create_tunnel(&ids_, &ips, ip, gUnderlayIfId, p2p, decap_ttl_mode_, encap_ttl);
 
         if (ids_.tunnel_id != SAI_NULL_OBJECT_ID)
         {
             tunnel_orch->addTunnelToFlexCounter(ids_.tunnel_id, tunnel_name_);
+        }
+        else
+        {
+            // Undo changes in createMapperHw if create_tunnel fails.
+            deleteMapperHw(mapper_list, map_src);
+            ids_.tunnel_id = SAI_NULL_OBJECT_ID;
+            ids_.tunnel_term_id = SAI_NULL_OBJECT_ID;
+            active_ = false;
+            return false;
         }
 
         if (with_term)
         {
             ids_.tunnel_term_id = create_tunnel_termination(ids_.tunnel_id, ips, 
                                                             ip, gVirtualRouterId);
+            if (ids_.tunnel_term_id == SAI_NULL_OBJECT_ID)
+            {
+                // Undo changes if create_tunnel_termination fails
+                tunnel_orch->removeTunnelFromFlexCounter(ids_.tunnel_id, tunnel_name_);
+                remove_tunnel(ids_.tunnel_id);
+                deleteMapperHw(mapper_list, map_src);
+                ids_.tunnel_id = SAI_NULL_OBJECT_ID;
+                active_ = false;
+                return false;
+            }
         }
 
         active_ = true;
@@ -1352,10 +1426,17 @@ VxlanTunnelOrch::createNextHopTunnel(string tunnelName, IpAddress& ipAddr,
         macptr = &mac;
     }
 
-    if (create_nexthop_tunnel(host_ip, vni, macptr, tunnel_id, &nh_id) != SAI_STATUS_SUCCESS)
+    sai_status_t status = create_nexthop_tunnel(host_ip, vni, macptr, tunnel_id, &nh_id);
+    if (status != SAI_STATUS_SUCCESS)
     {
-        string err_msg = "NH tunnel create failed for " + ipAddr.to_string() + " " + to_string(vni);
-        throw std::runtime_error(err_msg);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP, status);
+        if (handle_status != task_success)
+        {
+            SWSS_LOG_ERROR("NH vxlan tunnel create failed for %s, ip %s, mac %s, vni %d",
+                        tunnelName.c_str(), ipAddr.to_string().c_str(),
+                        macAddress.to_string().c_str(), vni);
+            return SAI_NULL_OBJECT_ID;
+        }
     }
 
     //Store the nh tunnel id
@@ -1398,6 +1479,7 @@ bool VxlanTunnelOrch::createVxlanTunnelMap(string tunnelName, tunnel_map_type_t 
     }
 
     auto tunnel_obj = getVxlanTunnel(tunnelName);
+    bool tunnel_created = false;
 
     if (!tunnel_obj->isActive())
     {
@@ -1406,13 +1488,21 @@ bool VxlanTunnelOrch::createVxlanTunnelMap(string tunnelName, tunnel_map_type_t 
             uint8_t mapper_list = 0;
             TUNNELMAP_SET_VLAN(mapper_list);
             TUNNELMAP_SET_VRF(mapper_list);
-            tunnel_obj->createTunnelHw(mapper_list, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP , true, encap_ttl);
+            tunnel_created = tunnel_obj->createTunnelHw(mapper_list, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP , true, encap_ttl);
+            if (!tunnel_created)
+            {
+                return false;
+            }
         }
         else if (map == TUNNEL_MAP_T_BRIDGE)
         {
             uint8_t mapper_list = 0;
             TUNNELMAP_SET_BRIDGE(mapper_list);
-            tunnel_obj->createTunnelHw(mapper_list,  TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP, true, encap_ttl);
+            tunnel_created = tunnel_obj->createTunnelHw(mapper_list,  TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP, true, encap_ttl);
+            if (!tunnel_created)
+            {
+                return false;
+            }
         }
     }
 
@@ -1524,6 +1614,24 @@ bool VxlanTunnelOrch::addOperation(const Request& request)
 	}
     }
     const auto& tunnel_name = request.getKeyString(0);
+    VxlanTunnelTTLMode ttl_mode = VxlanTunnelTTLMode::NOT_SET;
+    if (attr_names.find("ttl_mode") != attr_names.end())
+    {
+        string ttl_mode_str = request.getAttrString("ttl_mode");
+        if (ttl_mode_str == "uniform")
+        {
+            ttl_mode = VxlanTunnelTTLMode::UNIFORM;
+        }
+        else if (ttl_mode_str == "pipe")
+        {
+            ttl_mode = VxlanTunnelTTLMode::PIPE;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Invalid ttl_mode '%s' for the VxLAN tunnel '%s'", ttl_mode_str.c_str(), tunnel_name.c_str());
+            return true;
+        }
+    }
 
     if (isTunnelExists(tunnel_name))
     {
@@ -1531,7 +1639,7 @@ bool VxlanTunnelOrch::addOperation(const Request& request)
         return true;
     }
 
-    vxlan_tunnel_table_[tunnel_name] = std::unique_ptr<VxlanTunnel>(new VxlanTunnel(tunnel_name, src_ip, dst_ip, TNL_CREATION_SRC_CLI));
+    vxlan_tunnel_table_[tunnel_name] = std::unique_ptr<VxlanTunnel>(new VxlanTunnel(tunnel_name, src_ip, dst_ip, TNL_CREATION_SRC_CLI, ttl_mode));
 
     SWSS_LOG_NOTICE("Vxlan tunnel '%s' was added", tunnel_name.c_str());
     return true;
@@ -1958,7 +2066,12 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
         uint8_t mapper_list = 0;
         TUNNELMAP_SET_VLAN(mapper_list);
         TUNNELMAP_SET_VRF(mapper_list);
-        tunnel_obj->createTunnelHw(mapper_list,TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP);
+        bool tunnel_created = tunnel_obj->createTunnelHw(mapper_list,
+                                            TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP);
+        if (!tunnel_created)
+        {
+            return false;
+        }
         if (!tunnel_orch->isDipTunnelsSupported())
         {
             Port tunPort;

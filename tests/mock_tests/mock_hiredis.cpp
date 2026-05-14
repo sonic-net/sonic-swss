@@ -9,7 +9,7 @@ int redisGetReply(redisContext *c, void **reply)
 {
     if (mockReply == nullptr)
     {
-        *reply = calloc(sizeof(redisReply), 1);
+        *reply = calloc(1, sizeof(redisReply));
         ((redisReply *)*reply)->type = 3;
     }
     else
