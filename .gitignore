@@ -101,6 +101,9 @@ orchagent/p4orch/tests/p4orch_tests
 orchagent/p4orch/tests/*_tr.xml
 
 
+# bazel
+bazel-*
+
 # Build Environment #
 ###################
 
