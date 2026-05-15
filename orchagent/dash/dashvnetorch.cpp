@@ -296,7 +296,7 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
                 }
             }
         }
-        flushResultsToDb(dash_vnet_result_table_);
+        flushResultsToDB(dash_vnet_result_table_);
     }
 }
 
@@ -865,7 +865,7 @@ void DashVnetOrch::doTaskVnetMapTable(ConsumerBase& consumer)
                 }
             }
         }
-        flushResultsToDb(dash_vnet_map_result_table_);
+        flushResultsToDB(dash_vnet_map_result_table_);
     }
 }
 

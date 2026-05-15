@@ -257,7 +257,7 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
                 it_prev = consumer.m_toSync.erase(it_prev);
             }
         }
-        flushResultsToDb(dash_tunnel_result_table_);
+        flushResultsToDB(dash_tunnel_result_table_);
     }
 }
 

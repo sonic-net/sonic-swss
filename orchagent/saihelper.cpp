@@ -1231,7 +1231,7 @@ void removeResultFromDB(const std::unique_ptr<swss::Table>& table, const string&
     SWSS_LOG_INFO("Removed result from DB for key %s", key.c_str());
 }
 
-void flushResultsToDb(const std::unique_ptr<swss::Table>& table)
+void flushResultsToDB(const std::unique_ptr<swss::Table>& table)
 {
     SWSS_LOG_ENTER();
 

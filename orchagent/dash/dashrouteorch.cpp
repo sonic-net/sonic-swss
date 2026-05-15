@@ -416,7 +416,7 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
                 }
             }
         }
-        flushResultsToDb(dash_route_result_table_);
+        flushResultsToDB(dash_route_result_table_);
     }
 }
 
@@ -719,7 +719,7 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
                 }
             }
         }
-        flushResultsToDb(dash_route_rule_result_table_);
+        flushResultsToDB(dash_route_rule_result_table_);
     }
 }
 
@@ -894,6 +894,7 @@ void DashRouteOrch::doTaskRouteGroupTable(ConsumerBase& consumer)
             it = consumer.m_toSync.erase(it);
         }
     }
+    flushResultsToDB(dash_route_group_result_table_);
 }
 
 void DashRouteOrch::doTask(ConsumerBase& consumer)
