@@ -152,15 +152,18 @@ private:
     void RemoveTunnelIfNotReferenced(const std::string &tunnel_name);
     int getTunnelRefCount(const std::string &tunnel_name)
     {
-        return tunnelTable[tunnel_name].ref_count;
+        auto it = tunnelTable.find(tunnel_name);
+        return it == tunnelTable.end() ? 0 : it->second.ref_count;
     }
     void increaseTunnelRefCount(const std::string &tunnel_name)
     {
-        ++tunnelTable[tunnel_name].ref_count;
+        auto it = tunnelTable.find(tunnel_name);
+        if (it != tunnelTable.end()) ++it->second.ref_count;
     }
     void decreaseTunnelRefCount(const std::string &tunnel_name)
     {
-        --tunnelTable[tunnel_name].ref_count;
+        auto it = tunnelTable.find(tunnel_name);
+        if (it != tunnelTable.end()) --it->second.ref_count;
     }
 };
 #endif
