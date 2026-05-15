@@ -2076,7 +2076,7 @@ task_process_status BufferMgrDynamic::waitWithRetry(const function<bool()> &chec
         }
     }
 
-    SWSS_LOG_ERROR("CRITICAL: Timed out waiting for %s to sync to SAI, desired in-memory state is preserved, manual intervention is required",
+    SWSS_LOG_ERROR("Timed out waiting for %s to sync to SAI, desired in-memory state is preserved, manual intervention is required",
                    description.c_str());
     return task_process_status::task_failed;
 }
