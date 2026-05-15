@@ -789,11 +789,11 @@ namespace dashorch_test
             {m_dashPortMapOrch, APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME},
         };
 
-        for (const auto &[orch, table] : child_tables)
+        for (const auto &entry : child_tables)
         {
-            auto *consumer = dynamic_cast<ConsumerBase *>(orch->getExecutor(table));
-            ASSERT_NE(consumer, nullptr) << "Consumer not found for table: " << table;
-            EXPECT_FALSE(consumer->isRecordable()) << "Recording should be disabled for child table: " << table;
+            auto *consumer = dynamic_cast<ConsumerBase *>(entry.first->getExecutor(entry.second));
+            ASSERT_NE(consumer, nullptr) << "Consumer not found for table: " << entry.second;
+            EXPECT_FALSE(consumer->isRecordable()) << "Recording should be disabled for child table: " << entry.second;
         }
 
         // Parent tables should still have recording enabled
@@ -804,11 +804,11 @@ namespace dashorch_test
             {m_dashPortMapOrch, APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME},
         };
 
-        for (const auto &[orch, table] : parent_tables)
+        for (const auto &entry : parent_tables)
         {
-            auto *consumer = dynamic_cast<ConsumerBase *>(orch->getExecutor(table));
-            ASSERT_NE(consumer, nullptr) << "Consumer not found for table: " << table;
-            EXPECT_TRUE(consumer->isRecordable()) << "Recording should be enabled for parent table: " << table;
+            auto *consumer = dynamic_cast<ConsumerBase *>(entry.first->getExecutor(entry.second));
+            ASSERT_NE(consumer, nullptr) << "Consumer not found for table: " << entry.second;
+            EXPECT_TRUE(consumer->isRecordable()) << "Recording should be enabled for parent table: " << entry.second;
         }
     }
 }
