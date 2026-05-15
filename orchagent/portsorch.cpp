@@ -571,6 +571,16 @@ static void getPortSerdesAttr(PortSerdesAttrMap_t &map, const decltype(PortConfi
     {
         map[SAI_PORT_SERDES_ATTR_RX_POLARITY] = SerdesValue(serdes.rxpolarity.value);
     }
+
+    if (serdes.tx_precoding.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_PRECODING] = SerdesValue(serdes.tx_precoding.value);
+    }
+
+    if (serdes.rx_precoding.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_RX_PRECODING] = SerdesValue(serdes.rx_precoding.value);
+    }
 }
 
 static bool isPathTracingSupported()
