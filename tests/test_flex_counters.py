@@ -95,11 +95,6 @@ counter_group_meta = {
         'name_map': 'COUNTERS_SRV6_NAME_MAP',
         'pre_test': 'pre_srv6_counter_test',
         'post_test': 'post_srv6_counter_test',
-    },
-    'copp_policer_counter': {
-        'key': 'COPP_STATS',
-        'group_name': 'COPP_STATS_COUNTER',
-        'name_map': 'COUNTERS_POLICER_NAME_MAP',
     }
 }
 
@@ -147,8 +142,6 @@ class TestFlexCounters(TestFlexCountersBase):
 
     @pytest.mark.parametrize("counter_type", counter_group_meta.keys())
     def test_flex_counters(self, dvs, counter_type):
-        if counter_type == 'copp_policer_counter':
-            pytest.skip("COPP_STATS flex counter is gated to broadcom-xgs; dvs platform is 'vs'")
         self.verify_flex_counter_flow(dvs, counter_group_meta[counter_type])
 
     def pre_rif_counter_test(self, meta_data):
