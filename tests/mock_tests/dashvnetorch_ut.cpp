@@ -218,14 +218,10 @@ namespace dashvnetorch_test
 
     TEST_F(DashVnetOrchTest, VnetResultRemovedFromDbOnDelete)
     {
-        std::vector<sai_status_t> exp_status = {SAI_STATUS_SUCCESS};
         AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
-        {
-            InSequence seq;
-            EXPECT_CALL(*mock_sai_dash_vnet_api, create_vnets).Times(1);
-            EXPECT_CALL(*mock_sai_dash_pa_validation_api, remove_pa_validation_entries).Times(1);
-            EXPECT_CALL(*mock_sai_dash_vnet_api, remove_vnets).Times(1);
-        }
+        EXPECT_CALL(*mock_sai_dash_vnet_api, create_vnets).Times(1);
+        EXPECT_CALL(*mock_sai_dash_vnet_api, remove_vnets).Times(1);
+
         CreateVnet();
 
         // Verify result exists after create

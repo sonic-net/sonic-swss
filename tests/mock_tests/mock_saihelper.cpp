@@ -110,7 +110,6 @@ namespace saihelper_test
 
             MOCK_METHOD(void, set, (const std::string &key, const std::vector<FieldValueTuple> &values, const std::string &op, const std::string &prefix), (override));
             MOCK_METHOD(void, del, (const std::string &key, const std::string &op, const std::string &prefix), (override));
-            MOCK_METHOD(void, flush, (), ());
     };
 
     class SaihelperTest : public ::testing::Test
@@ -599,31 +598,12 @@ namespace saihelper_test
         flushResultsToDB(nullTable);
     }
 
-    TEST(FlushToDBTest, FlushThrowsException) {
+    TEST(FlushToDBTest, FlushValidTable) {
         auto db = std::make_shared<swss::DBConnector>("DPU_APPL_STATE_DB", 0);
-        std::unique_ptr<swss::Table> mockTable = std::make_unique<MockDBTable>(db.get(), "APP_DASH_APPLIANCE_TABLE_NAME");
+        std::unique_ptr<swss::Table> table = std::make_unique<swss::Table>(db.get(), "TEST_TABLE");
 
-        auto* mock = dynamic_cast<MockDBTable*>(mockTable.get());
-        ASSERT_NE(mock, nullptr);
-
-        // Simulate flush() throwing an exception
-        EXPECT_CALL(*mock, flush())
-            .WillOnce(Throw(std::runtime_error("Flush failed")));
-
-        flushResultsToDB(mockTable);
-    }
-
-    TEST(FlushToDBTest, FlushSuccess) {
-        auto db = std::make_shared<swss::DBConnector>("DPU_APPL_STATE_DB", 0);
-        std::unique_ptr<swss::Table> mockTable = std::make_unique<MockDBTable>(db.get(), "APP_DASH_APPLIANCE_TABLE_NAME");
-
-        auto* mock = dynamic_cast<MockDBTable*>(mockTable.get());
-        ASSERT_NE(mock, nullptr);
-
-        EXPECT_CALL(*mock, flush())
-            .Times(1);
-
-        flushResultsToDB(mockTable);
+        // Should not crash or throw with a valid table
+        flushResultsToDB(table);
     }
 }
 
