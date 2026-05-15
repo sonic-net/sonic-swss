@@ -70,7 +70,7 @@ ARG COMMON_LIB_FILE_PATHS="\
         /target/debs/${DEBIAN_VERSION}/libnl-route-3-dev_3.7.0-0.2%2Bb1sonic1_${PLATFORM}.deb \
         /target/debs/${DEBIAN_VERSION}/libnl-nf-3-200_3.7.0-0.2%2Bb1sonic1_${PLATFORM}.deb \
         /target/debs/${DEBIAN_VERSION}/libnl-nf-3-dev_3.7.0-0.2%2Bb1sonic1_${PLATFORM}.deb \
-        /target/debs/${DEBIAN_VERSION}/libyang_1.0.73_${PLATFORM}.deb \
+        /target/debs/${DEBIAN_VERSION}/libyang_3.7.8-2_${PLATFORM}.deb \
     "
 
 RUN download_artifact.sh "${COMMON_LIB_PROJECT_NAME}" "${BRANCH_NAME}" "${COMMON_LIB_ARTIFACT_NAME}" "${COMMON_LIB_FILE_PATHS}"
