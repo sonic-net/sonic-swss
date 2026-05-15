@@ -580,7 +580,8 @@ bool OrchDaemon::init()
        threshold. Constructed after gFdbOrch since it attaches as an observer. */
     auto *macMoveGuardOrch = new MacMoveGuardOrch(m_configDb,
                                                   CFG_MAC_MOVE_GUARD_TABLE_NAME,
-                                                  gPortsOrch);
+                                                  gPortsOrch,
+                                                  gFdbOrch);
     gDirectory.set(macMoveGuardOrch);
     m_orchList.push_back(macMoveGuardOrch);
 
