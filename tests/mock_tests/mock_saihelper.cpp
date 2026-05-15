@@ -110,7 +110,7 @@ namespace saihelper_test
 
             MOCK_METHOD(void, set, (const std::string &key, const std::vector<FieldValueTuple> &values, const std::string &op, const std::string &prefix), (override));
             MOCK_METHOD(void, del, (const std::string &key, const std::string &op, const std::string &prefix), (override));
-            MOCK_METHOD(void, flush, (), (override));
+            MOCK_METHOD(void, flush, (), ());
     };
 
     class SaihelperTest : public ::testing::Test
