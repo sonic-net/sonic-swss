@@ -1528,7 +1528,7 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
                 continue;
             }
 
-            SWSS_LOG_NOTICE("FDB update on mux port %s — converting stranded neighbor %s (MAC %s)",
+            SWSS_LOG_NOTICE("FDB update on mux port %s: converting stranded neighbor %s (MAC %s)",
                             update.entry.port_name.c_str(),
                             neighbor_entry.ip_address.to_string().c_str(),
                             update.entry.mac.to_string().c_str());
