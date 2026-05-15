@@ -527,6 +527,67 @@ namespace consumer_test
         ASSERT_EQ(rmdir(dirname.c_str()), 0);
     }
 
+    TEST_F(ConsumerTest, SetRecordableSkipsRecording)
+    {
+        char dir_template[] = "/tmp/swss-consumer-ut-XXXXXX";
+        auto dir = mkdtemp(dir_template);
+        ASSERT_NE(dir, nullptr);
+
+        const string dirname(dir);
+        const string filename = "swss-recordable-ut.rec";
+        const string fullpath = dirname + "/" + filename;
+        const string recorded_key = "recorded-key";
+        const string skipped_key = "skipped-key";
+
+        Recorder::Instance().swss.setRecord(true);
+        Recorder::Instance().swss.setLocation(dirname);
+        Recorder::Instance().swss.setFileName(filename);
+        Recorder::Instance().swss.setAsync(false);
+        Recorder::Instance().swss.startRec(true);
+
+        // Default: recordable is true
+        ASSERT_TRUE(consumer->isRecordable());
+
+        // Record a tuple with recording enabled
+        deque<KeyOpFieldsValuesTuple> entries1;
+        entries1.push_back(KeyOpFieldsValuesTuple(
+            { recorded_key, SET_COMMAND, { { f1, v1a } } }));
+        consumer->addToSync(entries1);
+
+        // Disable recording and record another tuple
+        consumer->setRecordable(false);
+        ASSERT_FALSE(consumer->isRecordable());
+
+        deque<KeyOpFieldsValuesTuple> entries2;
+        entries2.push_back(KeyOpFieldsValuesTuple(
+            { skipped_key, SET_COMMAND, { { f2, v2a } } }));
+        consumer->addToSync(entries2);
+
+        // Verify only the first tuple was recorded
+        ifstream ifs(fullpath);
+        string content((istreambuf_iterator<char>(ifs)),
+                        istreambuf_iterator<char>());
+        EXPECT_NE(content.find(recorded_key), string::npos);
+        EXPECT_EQ(content.find(skipped_key), string::npos);
+
+        // Re-enable and verify recording resumes
+        consumer->setRecordable(true);
+        const string resumed_key = "resumed-key";
+        deque<KeyOpFieldsValuesTuple> entries3;
+        entries3.push_back(KeyOpFieldsValuesTuple(
+            { resumed_key, SET_COMMAND, { { f1, v1a } } }));
+        consumer->addToSync(entries3);
+
+        ifs.clear();
+        ifs.seekg(0);
+        string content2((istreambuf_iterator<char>(ifs)),
+                         istreambuf_iterator<char>());
+        EXPECT_NE(content2.find(resumed_key), string::npos);
+
+        ASSERT_EQ(remove(fullpath.c_str()), 0);
+        ASSERT_EQ(rmdir(dirname.c_str()), 0);
+    }
+
     /*
      * Exception handling tests for Consumer::drain() and Orch::doTask()
      *

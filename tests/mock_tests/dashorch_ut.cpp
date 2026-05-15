@@ -776,4 +776,39 @@ namespace dashorch_test
         SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, BuildEniEntry());
         VerifyNoAttribute(actual_attrs, SAI_ENI_ATTR_IS_HA_FLOW_OWNER);
     }
+
+    TEST_F(DashOrchTest, ChildTableRecordingDisabled)
+    {
+        // Child tables with high volume should have recording disabled
+        std::vector<std::pair<Orch*, std::string>> child_tables = {
+            {m_DashRouteOrch, APP_DASH_ROUTE_TABLE_NAME},
+            {m_DashRouteOrch, APP_DASH_ROUTE_RULE_TABLE_NAME},
+            {m_DashRouteOrch, APP_DASH_ROUTE_GROUP_TABLE_NAME},
+            {m_dashVnetOrch, APP_DASH_VNET_MAPPING_TABLE_NAME},
+            {m_DashMeterOrch, APP_DASH_METER_RULE_TABLE_NAME},
+            {m_dashPortMapOrch, APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME},
+        };
+
+        for (const auto &[orch, table] : child_tables)
+        {
+            auto *consumer = dynamic_cast<ConsumerBase *>(orch->getExecutor(table));
+            ASSERT_NE(consumer, nullptr) << "Consumer not found for table: " << table;
+            EXPECT_FALSE(consumer->isRecordable()) << "Recording should be disabled for child table: " << table;
+        }
+
+        // Parent tables should still have recording enabled
+        std::vector<std::pair<Orch*, std::string>> parent_tables = {
+            {m_DashOrch, APP_DASH_APPLIANCE_TABLE_NAME},
+            {m_DashOrch, APP_DASH_ENI_TABLE_NAME},
+            {m_dashVnetOrch, APP_DASH_VNET_TABLE_NAME},
+            {m_dashPortMapOrch, APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME},
+        };
+
+        for (const auto &[orch, table] : parent_tables)
+        {
+            auto *consumer = dynamic_cast<ConsumerBase *>(orch->getExecutor(table));
+            ASSERT_NE(consumer, nullptr) << "Consumer not found for table: " << table;
+            EXPECT_TRUE(consumer->isRecordable()) << "Recording should be enabled for parent table: " << table;
+        }
+    }
 }
