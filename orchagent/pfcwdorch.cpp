@@ -590,7 +590,11 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
         if (!c_queueAttrIds.empty())
         {
             auto queueAttrIdSet = counterIdsToStr(c_queueAttrIds, sai_serialize_queue_attr);
-            (dynamic_cast<FlexCounterManager*>(this->m_pfcwdFlexCounterManager.get()))->setCounterIdList(queueId, CounterType::QUEUE_ATTR, queueAttrIdSet);
+            auto *fcMgr = dynamic_cast<FlexCounterManager*>(this->m_pfcwdFlexCounterManager.get());
+            if (fcMgr)
+            {
+                fcMgr->setCounterIdList(queueId, CounterType::QUEUE_ATTR, queueAttrIdSet);
+            }
         }
 
         // Create internal entry
