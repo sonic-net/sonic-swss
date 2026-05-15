@@ -284,6 +284,12 @@ namespace portphyattr_test
         ASSERT_NE(gPortsOrch, nullptr);
         ASSERT_FALSE(gPortsOrch->m_supported_phy_attrs.empty());
 
+        // Anchor a real front-panel port (Ext role) so we can assert it IS
+        // probed alongside the Rec/Inb skip checks below.
+        Port fp_port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", fp_port));
+        const sai_object_id_t fp_oid = fp_port.m_port_id;
+
         // Inject synthetic Rec and Inb ports that share Port::Type::PHY with
         // regular ports — only the role distinguishes them.
         const sai_object_id_t rec_oid = 0xFEED0001;
@@ -307,9 +313,10 @@ namespace portphyattr_test
         EXPECT_EQ(g_phy_attr_queried_port_ids.count(inb_oid), 0u)
             << "Inband port was unexpectedly probed for PHY attrs";
 
-        // Sanity: at least one regular Ext-role port should have been probed.
-        EXPECT_GT(g_phy_attr_queried_port_ids.size(), 0u)
-            << "Expected at least one regular port to be probed";
+        // The Ext-role FP port must be probed — proves the gate is selective,
+        // not blanket-skipping every PHY port.
+        EXPECT_GT(g_phy_attr_queried_port_ids.count(fp_oid), 0u)
+            << "Front-panel port " << fp_port.m_alias << " (Ext) was not probed";
     }
 
     /**
@@ -320,6 +327,12 @@ namespace portphyattr_test
     {
         ASSERT_NE(gPortsOrch, nullptr);
         ASSERT_FALSE(gPortsOrch->m_supported_phy_attrs.empty());
+
+        // Confirm a real Ext-role FP port is in m_portList so the iteration
+        // exercises the gate on a non-Rec/Inb port (not just the skip path).
+        Port fp_port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", fp_port));
+        ASSERT_FALSE(fp_port.m_alias.empty());
 
         const sai_object_id_t rec_oid = 0xFEED1001;
         const sai_object_id_t inb_oid = 0xFEED1002;
@@ -335,7 +348,7 @@ namespace portphyattr_test
         gPortsOrch->m_portList["Ethernet-IB0"] = inb_port;
 
         // clearPortPhyAttrCounterMap doesn't issue SAI gets, so we just ensure
-        // it walks without throwing and silently skips Rec/Inb. This guards
+        // it walks without throwing across Rec/Inb/FP entries. This guards
         // against a future regression where the loop forgets the role check.
         try {
             gPortsOrch->clearPortPhyAttrCounterMap();
@@ -355,6 +368,12 @@ namespace portphyattr_test
     TEST_F(PortAttrTest, SetPortSerdesAttributeSkipsRecirculationPort)
     {
         ASSERT_NE(gPortsOrch, nullptr);
+
+        // Use a real Ext-role FP port so the non-Rec/Inb path can run end-to-end
+        // against the VS SAI and we can assert it DID issue the serdes-id GET.
+        Port fp_port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", fp_port));
+        const sai_object_id_t fp_oid = fp_port.m_port_id;
 
         const sai_object_id_t rec_oid = 0xCC110001;
         const sai_object_id_t inb_oid = 0xCC110002;
@@ -376,11 +395,17 @@ namespace portphyattr_test
         g_serdes_id_queried_port_ids.clear();
         EXPECT_TRUE(gPortsOrch->setPortSerdesAttribute(rec_oid, gSwitchId, serdes_attr));
         EXPECT_TRUE(gPortsOrch->setPortSerdesAttribute(inb_oid, gSwitchId, serdes_attr));
+        // Exercise the non-Rec/Inb path. We don't pin the return value (it may
+        // fail later for unrelated VS reasons), only that the SAI GET was issued.
+        gPortsOrch->setPortSerdesAttribute(fp_oid, gSwitchId, serdes_attr);
 
         EXPECT_EQ(g_serdes_id_queried_port_ids.count(rec_oid), 0u)
             << "setPortSerdesAttribute issued SAI GET on a recycle port";
         EXPECT_EQ(g_serdes_id_queried_port_ids.count(inb_oid), 0u)
             << "setPortSerdesAttribute issued SAI GET on an inband port";
+        EXPECT_GT(g_serdes_id_queried_port_ids.count(fp_oid), 0u)
+            << "setPortSerdesAttribute did not issue SAI GET on FP port "
+            << fp_port.m_alias;
     }
 
     /**
@@ -391,6 +416,11 @@ namespace portphyattr_test
     TEST_F(PortAttrTest, RemovePortSerdesAttributeSkipsRecirculationPort)
     {
         ASSERT_NE(gPortsOrch, nullptr);
+
+        // Real Ext-role FP port to exercise the non-Rec/Inb path.
+        Port fp_port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", fp_port));
+        const sai_object_id_t fp_oid = fp_port.m_port_id;
 
         const sai_object_id_t rec_oid = 0xCC220001;
         const sai_object_id_t inb_oid = 0xCC220002;
@@ -410,11 +440,15 @@ namespace portphyattr_test
         g_serdes_id_queried_port_ids.clear();
         gPortsOrch->removePortSerdesAttribute(rec_oid);
         gPortsOrch->removePortSerdesAttribute(inb_oid);
+        gPortsOrch->removePortSerdesAttribute(fp_oid);
 
         EXPECT_EQ(g_serdes_id_queried_port_ids.count(rec_oid), 0u)
             << "removePortSerdesAttribute issued SAI GET on a recycle port";
         EXPECT_EQ(g_serdes_id_queried_port_ids.count(inb_oid), 0u)
             << "removePortSerdesAttribute issued SAI GET on an inband port";
+        EXPECT_GT(g_serdes_id_queried_port_ids.count(fp_oid), 0u)
+            << "removePortSerdesAttribute did not issue SAI GET on FP port "
+            << fp_port.m_alias;
     }
 
     /**
@@ -429,6 +463,7 @@ namespace portphyattr_test
 
         const sai_object_id_t rec_oid = 0xCC330001;
         const sai_object_id_t inb_oid = 0xCC330002;
+        const sai_object_id_t fp_oid  = 0xCC330003;
 
         Port rec_port("Ethernet-Rec0", Port::Type::PHY);
         rec_port.m_port_id = rec_oid;
@@ -440,14 +475,24 @@ namespace portphyattr_test
         inb_port.m_role = Port::Role::Inb;
         inb_port.m_index = 1025;
 
+        // Ext-role FP companion to prove the gate is selective: the serdes-id
+        // GET MUST fire here even though it's suppressed for Rec/Inb.
+        Port fp_port("Ethernet-FP-RegTest", Port::Type::PHY);
+        fp_port.m_port_id = fp_oid;
+        fp_port.m_role = Port::Role::Ext;
+        fp_port.m_index = 1026;
+
         g_serdes_id_queried_port_ids.clear();
         gPortsOrch->registerPort(rec_port);
         gPortsOrch->registerPort(inb_port);
+        gPortsOrch->registerPort(fp_port);
 
         EXPECT_EQ(g_serdes_id_queried_port_ids.count(rec_oid), 0u)
             << "registerPort issued SAI_PORT_ATTR_PORT_SERDES_ID GET on a recycle port";
         EXPECT_EQ(g_serdes_id_queried_port_ids.count(inb_oid), 0u)
             << "registerPort issued SAI_PORT_ATTR_PORT_SERDES_ID GET on an inband port";
+        EXPECT_GT(g_serdes_id_queried_port_ids.count(fp_oid), 0u)
+            << "registerPort did not issue SAI_PORT_ATTR_PORT_SERDES_ID GET on FP port";
 
         // No serdes mapping should have been installed for Rec/Inb ports.
         EXPECT_EQ(gPortsOrch->m_portIdToSerdesId.count(rec_oid), 0u);
@@ -461,6 +506,12 @@ namespace portphyattr_test
     TEST_F(PortAttrTest, GeneratePortPhySerdesAttrCounterMapSkipsRecirculationPort)
     {
         ASSERT_NE(gPortsOrch, nullptr);
+
+        // A real Ext-role FP port stays in m_portList so the loop processes
+        // both gated (Rec/Inb) and ungated (Ext) entries.
+        Port fp_port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", fp_port));
+        ASSERT_FALSE(fp_port.m_alias.empty());
 
         const sai_object_id_t rec_oid = 0xDD110001;
         const sai_object_id_t inb_oid = 0xDD110002;
@@ -500,6 +551,12 @@ namespace portphyattr_test
     TEST_F(PortAttrTest, ClearPortPhySerdesAttrCounterMapSkipsRecirculationPort)
     {
         ASSERT_NE(gPortsOrch, nullptr);
+
+        // Real Ext-role FP port present in m_portList so the iteration walks
+        // both gated and ungated entries.
+        Port fp_port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", fp_port));
+        ASSERT_FALSE(fp_port.m_alias.empty());
 
         const sai_object_id_t rec_oid = 0xDD220001;
         const sai_object_id_t inb_oid = 0xDD220002;
