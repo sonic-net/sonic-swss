@@ -48,6 +48,13 @@ DashVnetOrch::DashVnetOrch(DBConnector *db, vector<string> &tables, DBConnector 
     SWSS_LOG_ENTER();
     dash_vnet_result_table_ = make_unique<Table>(app_state_db, APP_DASH_VNET_TABLE_NAME);
     dash_vnet_map_result_table_ = make_unique<Table>(app_state_db, APP_DASH_VNET_MAPPING_TABLE_NAME);
+
+    /* Disable swss.rec recording for high-volume VNET mapping table */
+    auto *consumer = dynamic_cast<ConsumerBase *>(getExecutor(APP_DASH_VNET_MAPPING_TABLE_NAME));
+    if (consumer)
+    {
+        consumer->setRecordable(false);
+    }
 }
 
 bool DashVnetOrch::addVnet(const string& vnet_name, DashVnetBulkContext& ctxt)
