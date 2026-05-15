@@ -1,6 +1,22 @@
+// Pre-include standard library headers that conflict with
+// the #define private public hack (they use 'private' internally).
+#include <string>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <memory>
+#include <deque>
+#include <mutex>
+#include <thread>
+#include <condition_variable>
+#include <atomic>
+#include "table.h"
+
 #define private public
-#include "ut_helper.h"
+#include "recorder.h"
 #undef private
+
+#include "ut_helper.h"
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
 
