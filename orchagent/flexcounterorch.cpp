@@ -326,16 +326,11 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     }
                     if (gCoppOrch && (key == COPP_STATS_KEY))
                     {
-                        // Gate to broadcom-xgs only.
-                        string platform     = getenv("platform")     ? getenv("platform")     : "";
-                        string sub_platform = getenv("sub_platform") ? getenv("sub_platform") : "";
-
-                        if (platform != BRCM_PLATFORM_SUBSTRING || sub_platform == BRCM_DNX_PLATFORM_SUBSTRING)
-                        {
-                            SWSS_LOG_NOTICE("COPP_STATS flex counter unsupported on platform=%s sub_platform=%s; ignoring %s",
-                                            platform.c_str(), sub_platform.c_str(), value.c_str());
-                        }
-                        else if (value == "enable")
+                        // Capability is checked inside CoppOrch via SAI, not by
+                        // string-matching $platform here. generatePolicerCounterIdList
+                        // is a no-op when the underlying SAI doesn't advertise policer
+                        // stats; the user-intent flag still tracks the toggle.
+                        if (value == "enable")
                         {
                             m_copp_stats_counter_enabled = true;
                             gCoppOrch->generatePolicerCounterIdList();

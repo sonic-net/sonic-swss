@@ -121,6 +121,13 @@ protected:
     FlexCounterManager m_trap_counter_manager;
     FlexCounterManager m_policer_counter_manager;
 
+    // Cached SAI policer-stats capability. Populated lazily on first probe and
+    // valid for the orchagent's lifetime (gSwitchId is stable). Per-instance
+    // rather than static-local so unit tests that construct multiple CoppOrch
+    // objects across test cases don't bleed cached state across tests.
+    std::vector<sai_stat_capability_t> m_policer_stats_caps;
+    bool m_policer_stats_caps_queried = false;
+
     bool m_trap_rate_plugin_loaded = false;
 
     SelectableTimer* m_FlexCounterUpdTimer = nullptr;
@@ -175,6 +182,14 @@ protected:
 
     bool bindPolicerCounter(sai_object_id_t policer_id, const std::string &trap_group_name);
     void unbindPolicerCounter(sai_object_id_t policer_id);
+
+    // SAI capability probe for SAI_OBJECT_TYPE_POLICER stats. Replaces the
+    // earlier platform-substring gate; mirrors isPortStatSupported() in
+    // portsorch.cpp. Cached for orchagent's lifetime — gSwitchId is stable.
+    bool isPolicerStatSupported(sai_policer_stat_t stat);
+    std::unordered_set<std::string> getSupportedPolicerStatIds();
+    bool isPolicerStatsCapable();
+    void publishPolicerStatsCapability();
 
     virtual void doTask(Consumer& consumer);
     void doTask(swss::SelectableTimer&) override;
