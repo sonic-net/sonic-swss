@@ -518,4 +518,16 @@ namespace tunneldecaporch_test
         });
     }
 
+    TEST_F(TunnelDecapOrchTest, TunnelDecapOrch_RemoveNonExistentTunnel)
+    {
+        vector<string> tunnel_tables = { APP_TUNNEL_DECAP_TABLE_NAME };
+        auto tunnelDecapOrch = make_shared<TunnelDecapOrch>(
+            m_app_db.get(), m_state_db.get(), m_config_db.get(), tunnel_tables);
+        ASSERT_NE(tunnelDecapOrch, nullptr);
+
+        // removeDecapTunnel should return false for a tunnel not in tunnelTable
+        bool result = tunnelDecapOrch->removeDecapTunnel(APP_TUNNEL_DECAP_TABLE_NAME, "nonexistent_tunnel");
+        EXPECT_FALSE(result);
+    }
+
 } // namespace tunneldecaporch_test

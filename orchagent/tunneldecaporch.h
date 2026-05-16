@@ -72,6 +72,8 @@ typedef std::map<std::string, Nexthop> TunnelNhs;
 /* unhandled decap term table */
 typedef std::map<std::string, std::map<swss::IpPrefix, TunnelTermEntry>> UnhandledDecapTermTable;
 
+namespace tunneldecaporch_test { class TunnelDecapOrchTest; }
+
 class TunnelDecapOrch : public Orch
 {
 public:
@@ -89,6 +91,8 @@ public:
     }
 
 private:
+    friend class tunneldecaporch_test::TunnelDecapOrchTest;
+
     TunnelTable tunnelTable;
     TunnelNhs   tunnelNhs;
     UnhandledDecapTermTable unhandledDecapTerms;
