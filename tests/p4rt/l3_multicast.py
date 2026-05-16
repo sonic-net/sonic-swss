@@ -63,9 +63,7 @@ class P4RtL3MulticastRouterInterfaceWrapper(util.DBInterface):
   DEFAULT_SRC_MAC = "00:11:22:33:44:55"
   DEFAULT_DST_MAC = "00:AA:BB:CC:DD:EE"
   DEFAULT_VLAN_ID = "0x123"
-  # TODO(b/353398275): Make default action multicast_set_src_mac
-  DEFAULT_ACTION = "set_multicast_src_mac"
-  MULTICAST_SET_SRC_MAC = "multicast_set_src_mac"
+  DEFAULT_ACTION = "multicast_set_src_mac"
   MULTICAST_SET_SRC_MAC_AND_VLAN_ID = "multicast_set_src_mac_and_vlan_id"
   MULTICAST_SET_SRC_MAC_AND_DST_MAC_AND_VLAN_ID = "multicast_set_src_mac_and_dst_mac_and_vlan_id"
   MULTICAST_SET_SRC_MAC_AND_PRESERVE_INGRESS_VLAN_ID = "multicast_set_src_mac_and_preserve_ingress_vlan_id"
@@ -105,10 +103,10 @@ class P4RtL3MulticastRouterInterfaceWrapper(util.DBInterface):
     src_mac = src_mac or self.DEFAULT_SRC_MAC
     dst_mac = dst_mac or self.DEFAULT_DST_MAC
     vlan_id = vlan_id or self.DEFAULT_VLAN_ID
-    action = action or self.MULTICAST_SET_SRC_MAC
+    action = action or self.DEFAULT_ACTION
     attr_list = []
 
-    if action == self.MULTICAST_SET_SRC_MAC:
+    if action == self.DEFAULT_ACTION:
       attr_list = [
         (util.prepend_param_field(self.SRC_MAC_FIELD), src_mac),
         (self.ACTION_FIELD, action),

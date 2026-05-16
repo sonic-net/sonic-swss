@@ -424,14 +424,14 @@ class L3MulticastManagerTest : public ::testing::Test {
       const std::string& multicast_replica_instance,
       const swss::MacAddress src_mac,
       const std::string& multicast_metadata = "",
-      const std::string& action = p4orch::kSetMulticastSrcMac) {
+      const std::string& action = p4orch::kMulticastSetSrcMac) {
     P4MulticastRouterInterfaceEntry router_interface_entry = {};
     router_interface_entry.multicast_replica_port = multicast_replica_port;
     router_interface_entry.multicast_replica_instance =
         multicast_replica_instance;
     router_interface_entry.action = action;
     router_interface_entry.src_mac = src_mac;
-    router_interface_entry.has_src_mac = action == p4orch::kSetMulticastSrcMac;
+    router_interface_entry.has_src_mac = action == p4orch::kMulticastSetSrcMac;
     router_interface_entry.dst_mac = swss::MacAddress(kNeighborMacAddress);
     router_interface_entry.has_dst_mac = false;
     router_interface_entry.multicast_metadata = multicast_metadata;
@@ -448,15 +448,14 @@ class L3MulticastManagerTest : public ::testing::Test {
       const std::string& multicast_replica_instance,
       const swss::MacAddress src_mac, const swss::MacAddress dst_mac,
       const uint16_t vlan_id, const std::string& multicast_metadata = "",
-      const std::string& action = p4orch::kSetMulticastSrcMac) {
+      const std::string& action = p4orch::kMulticastSetSrcMac) {
     P4MulticastRouterInterfaceEntry router_interface_entry = {};
     router_interface_entry.multicast_replica_port = multicast_replica_port;
     router_interface_entry.multicast_replica_instance =
         multicast_replica_instance;
     router_interface_entry.action = action;
 
-    if (action != p4orch::kL2MulticastPassthrough &&
-        action != p4orch::kMulticastL2Passthrough) {
+    if (action != p4orch::kMulticastL2Passthrough) {
       router_interface_entry.src_mac = src_mac;
       router_interface_entry.has_src_mac = true;
     }
@@ -522,29 +521,10 @@ class L3MulticastManagerTest : public ::testing::Test {
 
   P4MulticastRouterInterfaceEntry SetupP4MulticastRouterInterfaceEntry(
       const std::string& port, const std::string& instance,
-      const swss::MacAddress mac, const sai_object_id_t rif_oid,
-      bool expect_mock = true) {
-    std::vector<P4MulticastRouterInterfaceEntry> entries;
-    auto entry = GenerateP4MulticastRouterInterfaceEntry(port, instance, mac);
-    entries.push_back(entry);
-
-    if (expect_mock) {
-      EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
-          .WillOnce(
-              DoAll(SetArgPointee<0>(rif_oid), Return(SAI_STATUS_SUCCESS)));
-    }
-
-    std::vector<ReturnCode> statuses =
-        AddMulticastRouterInterfaceEntries(entries);
-
-    EXPECT_EQ(statuses.size(), 1);
-    EXPECT_TRUE(statuses[0].ok());
-
-    EXPECT_NE(GetMulticastRouterInterfaceEntry(
-                  entries[0].multicast_router_interface_entry_key),
-              nullptr);
-    EXPECT_EQ(GetRifOid(&entries[0]), rif_oid);
-    return entry;
+      const swss::MacAddress mac, const sai_object_id_t rif_oid) {
+    return SetupNewP4MulticastRouterInterfaceEntry(
+        port, instance, mac, swss::MacAddress(kDstMac0), kVlanIdNum1,
+        p4orch::kMulticastSetSrcMac, rif_oid, kNextHopOid1);
   }
 
   P4MulticastRouterInterfaceEntry SetupNewP4MulticastRouterInterfaceEntry(
@@ -1246,7 +1226,7 @@ TEST_F(L3MulticastManagerTest, DeserializeMulticastRouterInterfaceEntryTest) {
                     R"("match/multicast_replica_instance":"0x0"})";
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
   attributes.push_back(
@@ -1301,7 +1281,7 @@ TEST_F(L3MulticastManagerTest,
                     R"("match/multicast_replica_instance":"0x0"})";
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
   attributes.push_back(swss::FieldValueTuple{"extra_attr", "extra_attr_val"});
@@ -1318,7 +1298,7 @@ TEST_F(L3MulticastManagerTest,
                     R"("match/multicast_replica_instance":"0x0"})";
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
   attributes.push_back(
@@ -1333,7 +1313,7 @@ TEST_F(L3MulticastManagerTest,
   auto expect_entry = GenerateP4MulticastRouterInterfaceEntryByAction(
       "Ethernet2", "0x0", swss::MacAddress(kSrcMac1),
       swss::MacAddress(kDstMac0), /*vlan_id=*/0, "meta1",
-      p4orch::kSetMulticastSrcMac);
+      p4orch::kMulticastSetSrcMac);
   VerifyP4MulticastRouterInterfaceEntryEqual(expect_entry,
                                              router_interface_entry);
   EXPECT_TRUE(
@@ -1540,33 +1520,6 @@ TEST_F(L3MulticastManagerTest,
       "Ethernet2", "0x0", swss::MacAddress(kSrcMac1),
       swss::MacAddress(kDstMac0), /*vlan_id=*/0, "meta1",
       p4orch::kMulticastSetSrcMacAndPreserveIngressVlanId);
-  VerifyP4MulticastRouterInterfaceEntryEqual(expect_entry,
-                                             router_interface_entry);
-  EXPECT_TRUE(
-      ValidateMulticastRouterInterfaceEntry(router_interface_entry, SET_COMMAND)
-          .ok());
-}
-
-TEST_F(L3MulticastManagerTest,
-       DeserializeMulticastRouterInterfaceEntryL2MulticastPassthrough) {
-  std::string key = R"({"match/multicast_replica_port":"Ethernet2",)"
-                    R"("match/multicast_replica_instance":"0x0"})";
-  std::vector<swss::FieldValueTuple> attributes;
-  attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kL2MulticastPassthrough});
-  attributes.push_back(
-      swss::FieldValueTuple{p4orch::kMulticastMetadata, "meta1"});
-  attributes.push_back(
-      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
-
-  auto router_interface_entry_or =
-      DeserializeMulticastRouterInterfaceEntry(key, attributes);
-  EXPECT_TRUE(router_interface_entry_or.ok());
-  auto& router_interface_entry = *router_interface_entry_or;
-  auto expect_entry = GenerateP4MulticastRouterInterfaceEntryByAction(
-      "Ethernet2", "0x0", swss::MacAddress(kSrcMac0),
-      swss::MacAddress(kDstMac0), /*vlan_id=*/0, "meta1",
-      p4orch::kL2MulticastPassthrough);
   VerifyP4MulticastRouterInterfaceEntryEqual(expect_entry,
                                              router_interface_entry);
   EXPECT_TRUE(
@@ -1955,6 +1908,11 @@ TEST_F(L3MulticastManagerTest, AddMulticastRouterInterfaceEntriesSuccess) {
 
   EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid5), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_neighbor_, create_neighbor_entry(_, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid1), Return(SAI_STATUS_SUCCESS)));
 
   std::vector<ReturnCode> statuses =
       AddMulticastRouterInterfaceEntries(entries);
@@ -2014,6 +1972,10 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid4), Return(SAI_STATUS_SUCCESS)))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid5), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_neighbor_, create_neighbor_entry(_, _, _))
+      .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
+      .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
 
   std::vector<ReturnCode> statuses =
       AddMulticastRouterInterfaceEntries(entries);
@@ -2626,6 +2588,12 @@ TEST_F(L3MulticastManagerTest, DeleteMulticastRouterInterfaceEntriesSuccess) {
   EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(_))
       .WillOnce(Return(SAI_STATUS_SUCCESS))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_next_hop_, remove_next_hop(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_neighbor_, remove_neighbor_entry(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
   statuses = DeleteMulticastRouterInterfaceEntries(entries);
   ASSERT_EQ(statuses.size(), 2);
   for (size_t i = 0; i < statuses.size(); ++i) {
@@ -3054,6 +3022,15 @@ TEST_F(L3MulticastManagerTest, DeleteMulticastRouterInterfaceEntriesSaiFails) {
   // Second, delete entries just added.  Expect failure, since SAI call fails.
   EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(_))
       .WillOnce(Return(SAI_STATUS_FAILURE));
+  EXPECT_CALL(mock_sai_next_hop_, remove_next_hop(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_neighbor_, remove_neighbor_entry(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_neighbor_, create_neighbor_entry(_, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid1), Return(SAI_STATUS_SUCCESS)));
   auto statuses = DeleteMulticastRouterInterfaceEntries(entries);
   EXPECT_EQ(statuses.size(), 2);
   EXPECT_EQ(statuses[0], StatusCode::SWSS_RC_UNKNOWN);
@@ -3215,6 +3192,10 @@ TEST_F(L3MulticastManagerTest,
   delete_entries.push_back(entry1);
 
   EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_next_hop_, remove_next_hop(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_neighbor_, remove_neighbor_entry(_))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
   auto statuses = DeleteMulticastRouterInterfaceEntries(delete_entries);
   EXPECT_EQ(statuses.size(), 1);
@@ -3523,7 +3504,7 @@ TEST_F(L3MulticastManagerTest, DrainMulticastRouterInterfaceEntryAdd) {
 
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac2});
   attributes.push_back(
@@ -3534,6 +3515,11 @@ TEST_F(L3MulticastManagerTest, DrainMulticastRouterInterfaceEntryAdd) {
 
   EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_neighbor_, create_neighbor_entry(_, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid1), Return(SAI_STATUS_SUCCESS)));
   EXPECT_CALL(publisher_,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key), Eq(attributes),
                       Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
@@ -3557,7 +3543,7 @@ TEST_F(L3MulticastManagerTest,
 
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
   // Source MAC is missing on purpose.
 
   Enqueue(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME,
@@ -3635,7 +3621,7 @@ TEST_F(L3MulticastManagerTest,
 
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
   attributes.push_back(
@@ -3647,6 +3633,11 @@ TEST_F(L3MulticastManagerTest,
 
   EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_neighbor_, create_neighbor_entry(_, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid1), Return(SAI_STATUS_SUCCESS)));
   EXPECT_CALL(publisher_,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key1), Eq(attributes),
                       Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
@@ -3665,7 +3656,16 @@ TEST_F(L3MulticastManagerTest,
                       Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
   EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid2), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_neighbor_, create_neighbor_entry(_, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid2), Return(SAI_STATUS_SUCCESS)));
   EXPECT_CALL(mock_sai_router_intf_, remove_router_interface(kRifOid1))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_next_hop_, remove_next_hop(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_neighbor_, remove_neighbor_entry(_))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
   EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
@@ -3705,7 +3705,7 @@ TEST_F(L3MulticastManagerTest,
 
   std::vector<swss::FieldValueTuple> attributes1;
   attributes1.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
   attributes1.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
   attributes1.push_back(
@@ -3713,7 +3713,7 @@ TEST_F(L3MulticastManagerTest,
 
   std::vector<swss::FieldValueTuple> attributes2;
   attributes2.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
   attributes2.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac2});
   attributes2.push_back(
@@ -3725,6 +3725,11 @@ TEST_F(L3MulticastManagerTest,
 
   EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_neighbor_, create_neighbor_entry(_, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid1), Return(SAI_STATUS_SUCCESS)));
   EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key1),
                                   Eq(attributes1),
                                   Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
@@ -3768,7 +3773,7 @@ TEST_F(L3MulticastManagerTest, DrainMulticastRouterInterfaceEntryInvalidAdd) {
 
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
 
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac2});
@@ -3802,7 +3807,7 @@ TEST_F(L3MulticastManagerTest,
 
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac2});
   attributes.push_back(
@@ -3835,7 +3840,7 @@ TEST_F(L3MulticastManagerTest,
 
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac2});
   attributes.push_back(
@@ -3848,6 +3853,11 @@ TEST_F(L3MulticastManagerTest,
   // Called once for first entry.
   EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid2), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_neighbor_, create_neighbor_entry(_, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid1), Return(SAI_STATUS_SUCCESS)));
   EXPECT_CALL(publisher_,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key), Eq(attributes),
                       Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
@@ -3882,7 +3892,7 @@ TEST_F(L3MulticastManagerTest,
   // Enqueue entry for create operation.
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac2});
   attributes.push_back(
@@ -3895,6 +3905,11 @@ TEST_F(L3MulticastManagerTest,
   // Called once for first entry.
   EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid2), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_neighbor_, create_neighbor_entry(_, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid1), Return(SAI_STATUS_SUCCESS)));
   EXPECT_CALL(publisher_,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(appl_db_key), Eq(attributes),
                       Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
@@ -3906,7 +3921,7 @@ TEST_F(L3MulticastManagerTest,
 
   std::vector<swss::FieldValueTuple> attributes2;
   attributes2.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
   attributes2.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac3});
   attributes2.push_back(
@@ -3948,7 +3963,7 @@ TEST_F(L3MulticastManagerTest,
 
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
 
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
@@ -3975,7 +3990,7 @@ TEST_F(L3MulticastManagerTest, DrainFirstEntryFailurePublishesCorrectNumber) {
 
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac2});
   attributes.push_back(
@@ -4098,56 +4113,6 @@ TEST_F(L3MulticastManagerTest,
   ReturnCode status =
       ValidateMulticastRouterInterfaceEntry(entry, "unknown_op");
   EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, status);
-}
-
-TEST_F(L3MulticastManagerTest, VerifyStateMulticastRouterInterfaceTestSuccess) {
-  auto entry = SetupP4MulticastRouterInterfaceEntry(
-      "Ethernet1", "0x1", swss::MacAddress(kSrcMac1), kRifOid1);
-
-  const std::string match_key =
-      R"({"match/multicast_replica_port":"Ethernet1",)"
-      R"("match/multicast_replica_instance":"0x1"})";
-  const std::string appl_db_key =
-      std::string(APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME) +
-      kTableKeyDelimiter + match_key;
-  const std::string db_key = std::string(APP_P4RT_TABLE_NAME) +
-                           kTableKeyDelimiter + appl_db_key;
-  std::vector<swss::FieldValueTuple> attributes;
-  attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
-  attributes.push_back(swss::FieldValueTuple{
-      prependParamField(p4orch::kSrcMac), kSrcMac1});
-  attributes.push_back(
-      swss::FieldValueTuple{p4orch::kControllerMetadata, "so_meta"});
-
-  // Setup ASIC DB.
-  swss::Table table(nullptr, "ASIC_STATE");
-  std::string label;
-  std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
-      APP_P4RT_TABLE_NAME, entry.multicast_router_interface_entry_key);
-  EXPECT_TRUE(gLabelMapper->getLabel(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
-                                     mapper_key.c_str(), label));
-  table.set(
-      "SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456",
-      std::vector<swss::FieldValueTuple>{
-          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID",
-                                "oid:0x0"},
-          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS",
-                                "00:01:02:03:04:05"},
-          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_TYPE",
-                                "SAI_ROUTER_INTERFACE_TYPE_PORT"},
-          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_PORT_ID",
-                                "oid:0x112233"},
-          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE",
-                                "true"},
-          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE",
-                                "true"},
-          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"},
-          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_LABEL", label}});
-
-  // Verification should succeed with vaild key and value.
-  EXPECT_EQ(VerifyState(db_key, attributes), "");
-  table.del("SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x123456");
 }
 
 TEST_F(L3MulticastManagerTest,
@@ -4622,7 +4587,7 @@ TEST_F(L3MulticastManagerTest,
 
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
   // Use wrong source mac so state cache fails.
   attributes.push_back(swss::FieldValueTuple{
       prependParamField(p4orch::kSrcMac), kSrcMac2});
@@ -4767,7 +4732,7 @@ TEST_F(L3MulticastManagerTest,
                            kTableKeyDelimiter + appl_db_key;
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
   attributes.push_back(swss::FieldValueTuple{
       prependParamField(p4orch::kSrcMac), kSrcMac1});
   attributes.push_back(
@@ -5800,8 +5765,10 @@ TEST_F(L3MulticastManagerTest, UpdateMulticastGroupEntriesTestSuccess) {
       "Ethernet2", "0x0", swss::MacAddress(kSrcMac2),
       swss::MacAddress(kDstMac0), kVlanIdNum1, p4orch::kMulticastSetSrcMac,
       kRifOid2, kNextHopOid2);
-  auto rif_entry3 = SetupP4MulticastRouterInterfaceEntry(
-      "Ethernet3", "0x0", swss::MacAddress(kSrcMac3), kRifOid3);
+  auto rif_entry3 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet3", "0x0", swss::MacAddress(kSrcMac3),
+      swss::MacAddress(kDstMac0), kVlanIdNum1, p4orch::kMulticastSetSrcMac,
+      kRifOid3, kNextHopOid3);
 
   P4Replica replica1 = P4Replica("0x1", "Ethernet1", "0x0");
   P4Replica replica2 = P4Replica("0x1", "Ethernet2", "0x0");
@@ -6771,7 +6738,7 @@ TEST_F(L3MulticastManagerTest, DrainMulticastGroupEntryAddSuccessTest) {
       kTableKeyDelimiter + mac_match_key;
   std::vector<swss::FieldValueTuple> mac_attributes;
   mac_attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
   mac_attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
   mac_attributes.push_back(
@@ -6802,6 +6769,11 @@ TEST_F(L3MulticastManagerTest, DrainMulticastGroupEntryAddSuccessTest) {
 
   EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_neighbor_, create_neighbor_entry(_, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid1), Return(SAI_STATUS_SUCCESS)));
   EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(mac_appl_db_key),
                                   Eq(mac_attributes),
                                   Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
@@ -6949,7 +6921,7 @@ TEST_F(L3MulticastManagerTest,
       kTableKeyDelimiter + mac_match_key2;
   std::vector<swss::FieldValueTuple> mac_attributes;
   mac_attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
   mac_attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
   mac_attributes.push_back(
@@ -6980,6 +6952,14 @@ TEST_F(L3MulticastManagerTest,
   EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid2), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_neighbor_, create_neighbor_entry(_, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid1), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid2), Return(SAI_STATUS_SUCCESS)));
   EXPECT_CALL(publisher_,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(mac_appl_db_key),
                       Eq(mac_attributes), Eq(StatusCode::SWSS_RC_SUCCESS),
@@ -7087,7 +7067,7 @@ TEST_F(L3MulticastManagerTest,
       kTableKeyDelimiter + mac_match_key4;
   std::vector<swss::FieldValueTuple> mac_attributes;
   mac_attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
   mac_attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
   mac_attributes.push_back(
@@ -7138,6 +7118,20 @@ TEST_F(L3MulticastManagerTest,
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid2), Return(SAI_STATUS_SUCCESS)))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid3), Return(SAI_STATUS_SUCCESS)))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid4), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_neighbor_, create_neighbor_entry(_, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS))
+      .WillOnce(Return(SAI_STATUS_SUCCESS))
+      .WillOnce(Return(SAI_STATUS_SUCCESS))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid1), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid2), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid3), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid4), Return(SAI_STATUS_SUCCESS)));
   EXPECT_CALL(publisher_,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(mac_appl_db_key),
                       Eq(mac_attributes), Eq(StatusCode::SWSS_RC_SUCCESS),
@@ -7294,7 +7288,7 @@ TEST_F(L3MulticastManagerTest,
       kTableKeyDelimiter + mac_match_key3;
   std::vector<swss::FieldValueTuple> mac_attributes;
   mac_attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
   mac_attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
   mac_attributes.push_back(
@@ -7341,6 +7335,17 @@ TEST_F(L3MulticastManagerTest,
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid2), Return(SAI_STATUS_SUCCESS)))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid3), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_neighbor_, create_neighbor_entry(_, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS))
+      .WillOnce(Return(SAI_STATUS_SUCCESS))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid1), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid2), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid3), Return(SAI_STATUS_SUCCESS)));
   EXPECT_CALL(publisher_,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(mac_appl_db_key),
                       Eq(mac_attributes), Eq(StatusCode::SWSS_RC_SUCCESS),
@@ -7446,7 +7451,7 @@ TEST_F(L3MulticastManagerTest,
       kTableKeyDelimiter + mac_match_key3;
   std::vector<swss::FieldValueTuple> mac_attributes;
   mac_attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
   mac_attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
   mac_attributes.push_back(
@@ -7493,6 +7498,17 @@ TEST_F(L3MulticastManagerTest,
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid2), Return(SAI_STATUS_SUCCESS)))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid3), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_neighbor_, create_neighbor_entry(_, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS))
+      .WillOnce(Return(SAI_STATUS_SUCCESS))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_next_hop_, create_next_hop(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid1), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid2), Return(SAI_STATUS_SUCCESS)))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kNextHopOid3), Return(SAI_STATUS_SUCCESS)));
   EXPECT_CALL(publisher_,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(mac_appl_db_key),
                       Eq(mac_attributes), Eq(StatusCode::SWSS_RC_SUCCESS),
@@ -7602,7 +7618,7 @@ TEST_F(L3MulticastManagerTest, DrainUnknownTable) {
       std::string(APP_P4RT_TUNNEL_TABLE_NAME) + kTableKeyDelimiter + match_key;
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac2});
   attributes.push_back(
@@ -7628,7 +7644,7 @@ TEST_F(L3MulticastManagerTest, DrainUnknownFirstTable) {
       kTableKeyDelimiter + match_key;
   std::vector<swss::FieldValueTuple> attributes;
   attributes.push_back(
-      swss::FieldValueTuple{p4orch::kAction, p4orch::kSetMulticastSrcMac});
+      swss::FieldValueTuple{p4orch::kAction, p4orch::kMulticastSetSrcMac});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac2});
   attributes.push_back(
@@ -8562,12 +8578,18 @@ TEST_F(L3MulticastManagerTest, DrainMulticastGroupEntryWithBackupTest) {
   // Add router interface entry so have RIF.
   auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
       "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
-  auto rif_entry2 = SetupP4MulticastRouterInterfaceEntry(
-      "Ethernet2", "0x0", swss::MacAddress(kSrcMac2), kRifOid2);
-  auto rif_entry3 = SetupP4MulticastRouterInterfaceEntry(
-      "Ethernet3", "0x0", swss::MacAddress(kSrcMac3), kRifOid3);
-  auto rif_entry4 = SetupP4MulticastRouterInterfaceEntry(
-      "Ethernet6", "0x0", swss::MacAddress(kSrcMac4), kRifOid4);
+  auto rif_entry2 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac2),
+      swss::MacAddress(kDstMac0), kVlanIdNum1, p4orch::kMulticastSetSrcMac,
+      kRifOid2, kNextHopOid2);
+  auto rif_entry3 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet3", "0x0", swss::MacAddress(kSrcMac3),
+      swss::MacAddress(kDstMac0), kVlanIdNum1, p4orch::kMulticastSetSrcMac,
+      kRifOid3, kNextHopOid3);
+  auto rif_entry4 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet6", "0x0", swss::MacAddress(kSrcMac4),
+      swss::MacAddress(kDstMac0), kVlanIdNum1, p4orch::kMulticastSetSrcMac,
+      kRifOid4, kNextHopOid4);
 
   const std::string group_match_key = "0x1";
   const std::string group_appl_db_key =
