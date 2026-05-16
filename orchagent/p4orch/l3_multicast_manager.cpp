@@ -21,6 +21,7 @@
 #include "swssnet.h"
 #include "vrforch.h"
 #include "sai_serialize.h"
+#include "switchorch.h"
 #include "table.h"
 
 extern "C" {
@@ -41,6 +42,7 @@ extern sai_switch_api_t* sai_switch_api;
 extern sai_my_mac_api_t* sai_my_mac_api;
 
 extern PortsOrch* gPortsOrch;
+extern SwitchOrch* gSwitchOrch;
 extern NameLabelMapper* gLabelMapper;
 
 namespace p4orch {
@@ -54,8 +56,6 @@ namespace {
 // the value will be provided by the P4 action.
 constexpr char* kLinkLocalIpv4Address = "169.254.0.1";
 constexpr char* kNeighborMacAddress = "00:00:00:00:00:01";
-constexpr char* kDefaultMyMacAddress = "00:00:00:00:00:01";
-constexpr char* kDefaultMyMacAddressMask = "00:00:00:00:00:00";
 
 void fillStatusArrayWithNotExecuted(std::vector<ReturnCode>& array,
                                     size_t startIndex) {
@@ -206,14 +206,14 @@ std::vector<sai_attribute_t> prepareNextHopSaiAttrs(
                         p4orch::kMulticastSetSrcMacAndDstMacAndVlanId;
   attrs.push_back(attr);
 
-  bool write_vlan = multicast_router_interface_entry.action ==
-                        p4orch::kMulticastSetSrcMacAndVlanId ||
-                    multicast_router_interface_entry.action ==
-                        p4orch::kMulticastSetSrcMacAndDstMacAndVlanId ||
-                    // In P4, this action is expected to write the internal
-                    // VLAN value (not provided from P4).
-                    multicast_router_interface_entry.action ==
-                        p4orch::kMulticastSetSrcMac;
+  bool write_vlan =
+      multicast_router_interface_entry.action ==
+          p4orch::kMulticastSetSrcMacAndVlanId ||
+      multicast_router_interface_entry.action ==
+          p4orch::kMulticastSetSrcMacAndDstMacAndVlanId ||
+      // In P4, this action is expected to write the internal
+      // VLAN value (not provided from P4).
+      multicast_router_interface_entry.action == p4orch::kMulticastSetSrcMac;
 
   attr.id = SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE;
   attr.value.booldata = !write_vlan;
@@ -654,7 +654,7 @@ std::vector<sai_attribute_t> L3MulticastManager::prepareMulticastGroupSaiAttrs(
   for (auto& replica : group.active_replicas) {
     group.nexthop_ids.push_back(getNextHopOid(replica));
   }
-  attr.id = SAI_IPMC_GROUP_ATTR_IPMC_OUTPUT_NH_LIST;
+  attr.id = SAI_IPMC_GROUP_ATTR_IPMC_OUTPUT_LIST;
   attr.value.objlist.count = uint32_t(group.active_replicas.size());
   if (group.active_replicas.empty()) {
     attr.value.objlist.list = nullptr;
@@ -1486,38 +1486,18 @@ ReturnCode L3MulticastManager::processMulticastGroupEntries(
   return status;
 }
 
-ReturnCode L3MulticastManager::createDefaultMyMac() {
-  SWSS_LOG_ENTER();
-
-  std::vector<sai_attribute_t> attrs;
-  sai_attribute_t attr;
-
-  swss::MacAddress dummy_mac = swss::MacAddress(kDefaultMyMacAddress);
-  swss::MacAddress dummy_mac_mask = swss::MacAddress(kDefaultMyMacAddressMask);
-
-  attr.id = SAI_MY_MAC_ATTR_MAC_ADDRESS;
-  memcpy(attr.value.mac, dummy_mac.getMac(), sizeof(sai_mac_t));
-  attrs.push_back(attr);
-
-  attr.id = SAI_MY_MAC_ATTR_MAC_ADDRESS_MASK;
-  memcpy(attr.value.mac, dummy_mac_mask.getMac(), sizeof(sai_mac_t));
-  attrs.push_back(attr);
-
-  CHECK_ERROR_AND_LOG_AND_RETURN(
-      sai_my_mac_api->create_my_mac(&m_my_mac_oid, gSwitchId,
-                                    (uint32_t)attrs.size(), attrs.data()),
-      "Failed to create default My MAC object needed for multicast RIFs");
-
-  return ReturnCode();
-}
-
 ReturnCode L3MulticastManager::createRouterInterface(
     P4MulticastRouterInterfaceEntry& entry, sai_object_id_t& rif_oid,
     std::string& label) {
   SWSS_LOG_ENTER();
 
   if (m_my_mac_oid == SAI_NULL_OBJECT_ID) {
-    RETURN_IF_ERROR(createDefaultMyMac());
+    m_my_mac_oid = gSwitchOrch->getL3AdmitOid();
+    if (m_my_mac_oid == SAI_NULL_OBJECT_ID) {
+      LOG_ERROR_AND_RETURN(
+          ReturnCode(StatusCode::SWSS_RC_INTERNAL)
+          << "Failed to create router interface due to NULL l3 admin oid");
+    }
   }
 
   // Confirm we haven't already created a RIF for this.
@@ -2216,8 +2196,8 @@ std::vector<ReturnCode> L3MulticastManager::addIpMulticastGroupEntries(
           APP_P4RT_TABLE_NAME, entries[i].multicast_group_id);
       gLabelMapper->setLabel(SAI_OBJECT_TYPE_IPMC_GROUP, mapper_key,
                              group_labels[i]);
-      for (const auto replica_list : entries[i].replicas) {
-        for (const auto replica : replica_list) {
+      for (const auto& replica_list : entries[i].replicas) {
+        for (const auto& replica : replica_list) {
           const std::string router_interface_key =
               KeyGenerator::generateMulticastRouterInterfaceKey(
                   replica.port, replica.instance);
@@ -2494,8 +2474,8 @@ std::vector<ReturnCode> L3MulticastManager::updateIpMulticastGroupEntries(
                object_statuses[sai_entry_index] == SAI_STATUS_SUCCESS) {
       // Do not update reference for fallback event update.
       if (!fallback_event) {
-        for (const auto replica_list : old_entry_ptrs[i]->replicas) {
-          for (const auto replica : replica_list) {
+        for (const auto& replica_list : old_entry_ptrs[i]->replicas) {
+          for (const auto& replica : replica_list) {
             const std::string router_interface_key =
                 KeyGenerator::generateMulticastRouterInterfaceKey(
                     replica.port, replica.instance);
@@ -2503,8 +2483,8 @@ std::vector<ReturnCode> L3MulticastManager::updateIpMulticastGroupEntries(
                                             router_interface_key);
           }
         }
-        for (const auto replica_list : entries[i].replicas) {
-          for (const auto replica : replica_list) {
+        for (const auto& replica_list : entries[i].replicas) {
+          for (const auto& replica : replica_list) {
             const std::string router_interface_key =
                 KeyGenerator::generateMulticastRouterInterfaceKey(
                     replica.port, replica.instance);
@@ -2755,8 +2735,8 @@ std::vector<ReturnCode> L3MulticastManager::deleteIpMulticastGroupEntries(
                             old_entry_ptrs[i]->multicast_group_id));
 
     if (object_statuses[i] == SAI_STATUS_SUCCESS) {
-      for (const auto replica_list : old_entry_ptrs[i]->replicas) {
-        for (const auto replica : replica_list) {
+      for (const auto& replica_list : old_entry_ptrs[i]->replicas) {
+        for (const auto& replica : replica_list) {
           const std::string router_interface_key =
               KeyGenerator::generateMulticastRouterInterfaceKey(
                   replica.port, replica.instance);
