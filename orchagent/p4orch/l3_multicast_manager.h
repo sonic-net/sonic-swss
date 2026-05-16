@@ -97,10 +97,8 @@ typedef std::unordered_map<std::string, P4MulticastGroupEntry>
     P4MulticastGroupTable;
 
 // The L3MulticastManager handles updates to two P4 tables:
-// * The "fixed" table multicast_router_interface_table, which defines a single
-//   action set_multicast_src_mac to map output port and egress instance ID to
-//   an Ethernet source MAC address to use for replicated packets.  Entries in
-//   this table create router interface (RIF) objects in the ASIC.
+// * The "fixed" table multicast_router_interface_table.  Entries in this table
+//   create router interface (RIF) objects in the ASIC.
 // * The new "packet replication" table replication_multicast_table, which
 //   is modeled as an action-less table, where the table key of
 //   multicast group ID, egress instance, and output port will create entries
