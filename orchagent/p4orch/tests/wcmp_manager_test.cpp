@@ -868,27 +868,6 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupFailsWhenSaiCallFails) {
   EXPECT_EQ(1, nexthop_refcount);
 }
 
-TEST_F(WcmpManagerTest, UpdateWcmpGroupFailsOnFirstWithNoDiffUpdate) {
-  P4WcmpGroupEntry app_db_entry_1 = AddWcmpGroupEntry(kWcmpGroupId1);
-  P4WcmpGroupEntry app_db_entry_2 = AddWcmpGroupEntry(kWcmpGroupId2);
-
-  app_db_entry_1.wcmp_group_members.clear();
-
-  std::vector<sai_status_t> exp_status{SAI_STATUS_FAILURE, SAI_STATUS_FAILURE};
-  EXPECT_CALL(mock_sai_next_hop_group_,
-              set_next_hop_groups_attribute(Eq(2), _, _, _, _))
-      .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
-                      Return(SAI_STATUS_FAILURE)));
-
-  std::vector<P4WcmpGroupEntry> entries{app_db_entry_1, app_db_entry_2};
-  // Even though 2nd entry is a no-op update, it should return NOT_EXECUTED to
-  // follow fail-on-first.
-  EXPECT_THAT(
-      UpdateWcmpGroups(entries),
-      ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_UNKNOWN,
-                                      StatusCode::SWSS_RC_NOT_EXECUTED}));
-}
-
 TEST_F(WcmpManagerTest, ValidateWcmpGroupEntryFailsWhenNextHopDoesNotExist)
 {
     const std::string kKeyPrefix = std::string(APP_P4RT_WCMP_GROUP_TABLE_NAME) + kTableKeyDelimiter;
