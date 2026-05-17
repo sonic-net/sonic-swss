@@ -69,6 +69,7 @@ public:
 
     bool checkOrderedEcmpEnable() { return m_orderedEcmpEnable; }
     sai_object_id_t getL3AdmitOid() { return m_l3AdmitOid; }
+    std::string getAliasMac() { return m_aliasMac; }
 
     void onSwitchAsicSdkHealthEvent(sai_object_id_t switch_id,
                                     sai_switch_asic_sdk_health_severity_t severity,

@@ -20,7 +20,8 @@ using namespace swss;
 
 extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t *sai_switch_api;
-extern sai_acl_api_t *sai_acl_api;
+extern sai_acl_api_t* sai_acl_api;
+extern sai_my_mac_api_t *sai_my_mac_api;
 extern sai_hash_api_t *sai_hash_api;
 extern MacAddress gVxlanMacAddress;
 extern CrmOrch *gCrmOrch;
@@ -599,15 +600,71 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
+        ReturnCode rc;
         auto t = it->second;
         auto op = kfvOp(t);
         bool retry = false;
 
         if (op == SET_COMMAND)
         {
+            std::vector<swss::FieldValueTuple> successful_fields_values;
             for (auto i : kfvFieldsValues(t))
             {
                 auto attribute = fvField(i);
+                auto value = fvValue(i);
+
+                if (attribute == "alias_mac")
+                {
+                    if (m_aliasMac == value && m_l3AdmitOid != SAI_NULL_OBJECT_ID)
+                    {
+                        successful_fields_values.push_back(i);
+                        continue;
+                    }
+                    else if (m_aliasMac != value && m_l3AdmitOid != SAI_NULL_OBJECT_ID)
+                    {
+                        // The alias_mac update is disallowed.
+                        rc = ReturnCode(swss::StatusCode::SWSS_RC_INVALID_PARAM)
+                             << "alias_mac is not allowed to be updated";
+                        SWSS_LOG_ERROR("%s", rc.message().c_str());
+                        break;
+                    }
+                    // expect {0x00, 0x1a, 0x11, 0x17, 0x5f, 0x80};
+                    swss::MacAddress kClusterMac = swss::MacAddress(value);
+                    unsigned char kClusterMacMask[6] = {0xff, 0xff, 0xff,
+                                                        0xff, 0xff, 0xff};
+                    std::vector<sai_attribute_t> l3_admit_attrs;
+                    sai_attribute_t l3_admit_attr;
+
+                    l3_admit_attr.id = SAI_MY_MAC_ATTR_MAC_ADDRESS;
+                    kClusterMac.getMac(l3_admit_attr.value.mac);
+                    l3_admit_attrs.push_back(l3_admit_attr);
+
+                    l3_admit_attr.id = SAI_MY_MAC_ATTR_MAC_ADDRESS_MASK;
+                    memcpy(l3_admit_attr.value.mac, kClusterMacMask,
+                           sizeof(sai_mac_t));
+                    l3_admit_attrs.push_back(l3_admit_attr);
+
+                    l3_admit_attr.id = SAI_MY_MAC_ATTR_PRIORITY;
+                    // priority 2000, any valid value is ok as only one entry exists
+                    l3_admit_attr.value.u32 = 2000;
+                    l3_admit_attrs.push_back(l3_admit_attr);
+
+                    sai_status_t status = sai_my_mac_api->create_my_mac(
+                        &m_l3AdmitOid, gSwitchId, (uint32_t)l3_admit_attrs.size(),
+                        l3_admit_attrs.data());
+                    if (status != SAI_STATUS_SUCCESS) {
+                        rc = ReturnCode(status)
+                             << "Failed to create l3 admit for " << attribute
+                             << " to " << value << ", rv:" << status;
+                        SWSS_LOG_ERROR("%s", rc.message().c_str());
+                        break;
+                    }
+                    m_aliasMac = value;
+                    SWSS_LOG_NOTICE("Set switch attribute %s to %s",
+                                    attribute.c_str(), value.c_str());
+                    successful_fields_values.push_back(i);
+                    continue;
+                }
 
                 if (switch_non_sai_attribute_set.find(attribute) != switch_non_sai_attribute_set.end())
                 {
@@ -632,8 +689,6 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
 
                     continue;
                 }
-
-                auto value = fvValue(i);
 
                 sai_attribute_t attr;
                 attr.id = switch_attribute_map.at(attribute);
