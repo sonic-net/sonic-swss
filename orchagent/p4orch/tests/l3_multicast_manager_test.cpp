@@ -424,9 +424,9 @@ MATCHER_P(NextHopAttrArrayEq, array, "") {
 
 }  // namespace
 
-class L3MulticastManagerTest : public ::testing::Test {
+class L3MulticastManagerTestNoMyMac : public ::testing::Test {
  protected:
-  L3MulticastManagerTest()
+  L3MulticastManagerTestNoMyMac()
       : fallback_event_(/*pri=*/-1),
         l3_multicast_manager_(&p4_oid_mapper_, gVrfOrch, &publisher_,
                               &fallback_event_) {}
@@ -979,20 +979,7 @@ class L3MulticastManagerTest : public ::testing::Test {
     EXPECT_EQ(x.controller_metadata, y.controller_metadata);
   }
 
-  void SetMyMacOid() {
-    swss::Table table(nullptr, APP_SWITCH_TABLE_NAME);
-    std::vector<swss::FieldValueTuple> values;
-    values.push_back(swss::FieldValueTuple{"alias_mac", kClusterMac1});
-    table.set("switch", values);
-    gSwitchOrch->addExistingData(&table);
-    EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, _, _, _))
-        .WillOnce(DoAll(SetArgPointee<0>(kDefaultMyMacOid),
-                        Return(SAI_STATUS_SUCCESS)));
-    Orch* switch_orch = gSwitchOrch;
-    switch_orch->doTask();
-  }
-
-  void SetUp() override {
+  virtual void SetUp() override {
     mock_sai_router_intf = &mock_sai_router_intf_;
     sai_router_intfs_api->create_router_interface =
         mock_create_router_interface;
@@ -1051,10 +1038,9 @@ class L3MulticastManagerTest : public ::testing::Test {
     mock_sai_serialize = &mock_sai_serialize_;
 
     setUpSwitchOrch();
-    SetMyMacOid();
   }
 
-  void TearDown() override { delete gSwitchOrch; }
+  virtual void TearDown() override { delete gSwitchOrch; }
 
   void Enqueue(const std::string& table_name,
                const swss::KeyOpFieldsValuesTuple& entry) {
@@ -1268,6 +1254,29 @@ class L3MulticastManagerTest : public ::testing::Test {
   P4OidMapper p4_oid_mapper_;
   swss::SelectableEvent fallback_event_;
   L3MulticastManager l3_multicast_manager_;
+};
+
+class L3MulticastManagerTest : public L3MulticastManagerTestNoMyMac {
+ protected:
+  L3MulticastManagerTest() = default;
+
+  void SetMyMacOid() {
+    swss::Table table(nullptr, APP_SWITCH_TABLE_NAME);
+    std::vector<swss::FieldValueTuple> values;
+    values.push_back(swss::FieldValueTuple{"alias_mac", kClusterMac1});
+    table.set("switch", values);
+    gSwitchOrch->addExistingData(&table);
+    EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(kDefaultMyMacOid),
+                        Return(SAI_STATUS_SUCCESS)));
+    Orch* switch_orch = gSwitchOrch;
+    switch_orch->doTask();
+  }
+
+  void SetUp() override {
+    L3MulticastManagerTestNoMyMac::SetUp();
+    SetMyMacOid();
+  }
 };
 
 TEST_F(L3MulticastManagerTest, DeserializeMulticastRouterInterfaceEntryTest) {
@@ -1907,25 +1916,13 @@ TEST_F(L3MulticastManagerTest, CreateRouterInterfaceFailure) {
             CreateRouterInterface(entry, rif_oid, label));
 }
 
-TEST_F(L3MulticastManagerTest, CreateRouterInterfaceMyMacFailure) {
+TEST_F(L3MulticastManagerTestNoMyMac, CreateRouterInterfaceMyMacFailure) {
   auto entry = GenerateP4MulticastRouterInterfaceEntryByAction(
       "Ethernet1", "0x0001", swss::MacAddress(kSrcMac1),
       swss::MacAddress(kDstMac0), /*vlan_id=*/0, "metadata",
       p4orch::kMulticastSetSrcMac);
   sai_object_id_t rif_oid;
   std::string label;
-  // Clear my mac in switchorch by failing to create the new entry.
-  swss::Table table(nullptr, APP_SWITCH_TABLE_NAME);
-  std::vector<swss::FieldValueTuple> values;
-  values.push_back(swss::FieldValueTuple{"alias_mac", kClusterMac2});
-  table.set("switch", values);
-  gSwitchOrch->addExistingData(&table);
-  EXPECT_CALL(mock_sai_my_mac_, remove_my_mac(_))
-      .WillOnce(Return(SAI_STATUS_SUCCESS));
-  EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, _, _, _))
-      .WillOnce(Return(SAI_STATUS_FAILURE));
-  Orch* switch_orch = gSwitchOrch;
-  switch_orch->doTask();
 
   EXPECT_EQ(StatusCode::SWSS_RC_INTERNAL,
             CreateRouterInterface(entry, rif_oid, label));
@@ -1938,17 +1935,21 @@ TEST_F(L3MulticastManagerTest, CreateRouterInterfaceMyMacReconfigureFailure) {
       p4orch::kMulticastSetSrcMac);
   sai_object_id_t rif_oid;
   std::string label;
-  EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
+  std::vector<sai_attribute_t> exp_rif_attrs = PrepareRifSaiAttrs(
+      /*port_oid=*/0x112233, /*mtu=*/1500, /*use_vlan=*/false,
+      /*vlan_id=*/0, swss::MacAddress(kSrcMac1), kDefaultMyMacOid,
+      /*use_my_mac=*/true, entry.multicast_router_interface_entry_key);
+  EXPECT_CALL(mock_sai_router_intf_,
+              create_router_interface(_, gSwitchId, Eq(exp_rif_attrs.size()),
+                                      RifAttrArrayEq(exp_rif_attrs)))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)));
 
-  // Fail to delete the old mac in switchorch.
+  // Update mac in switchorch will fail.
   swss::Table table(nullptr, APP_SWITCH_TABLE_NAME);
   std::vector<swss::FieldValueTuple> values;
   values.push_back(swss::FieldValueTuple{"alias_mac", kClusterMac2});
   table.set("switch", values);
   gSwitchOrch->addExistingData(&table);
-  EXPECT_CALL(mock_sai_my_mac_, remove_my_mac(_))
-      .WillOnce(Return(SAI_STATUS_FAILURE));
   Orch* switch_orch = gSwitchOrch;
   switch_orch->doTask();
 
@@ -2405,9 +2406,6 @@ TEST_F(L3MulticastManagerTest,
       p4orch::kMulticastSetSrcMac);
   entries.push_back(entry);
 
-  EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, gSwitchId, Eq(2), _))
-      .WillOnce(DoAll(SetArgPointee<0>(kDefaultMyMacOid),
-                      Return(SAI_STATUS_SUCCESS)));
   EXPECT_CALL(mock_sai_router_intf_,
               create_router_interface(_, gSwitchId, _, _))
       .WillOnce(DoAll(SetArgPointee<0>(kRifOid1), Return(SAI_STATUS_SUCCESS)));
@@ -5892,12 +5890,16 @@ TEST_F(L3MulticastManagerTest,
 }
 
 TEST_F(L3MulticastManagerTest, UpdateMulticastGroupEntriesFails) {
-  auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
+   auto rif_entry1 = SetupP4MulticastRouterInterfaceEntry(
       "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
-  auto rif_entry2 = SetupP4MulticastRouterInterfaceEntry(
-      "Ethernet2", "0x0", swss::MacAddress(kSrcMac2), kRifOid2);
-  auto rif_entry3 = SetupP4MulticastRouterInterfaceEntry(
-      "Ethernet3", "0x0", swss::MacAddress(kSrcMac3), kRifOid3);
+  auto rif_entry2 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac2),
+      swss::MacAddress(kDstMac0), kVlanIdNum1, p4orch::kMulticastSetSrcMac,
+      kRifOid2, kNextHopOid2);
+  auto rif_entry3 = SetupNewP4MulticastRouterInterfaceEntry(
+      "Ethernet3", "0x0", swss::MacAddress(kSrcMac3),
+      swss::MacAddress(kDstMac0), kVlanIdNum1, p4orch::kMulticastSetSrcMac,
+      kRifOid3, kNextHopOid3);
 
   P4Replica replica1 = P4Replica("0x1", "Ethernet1", "0x0");
   P4Replica replica2 = P4Replica("0x1", "Ethernet2", "0x0");
@@ -5931,8 +5933,8 @@ TEST_F(L3MulticastManagerTest, UpdateMulticastGroupEntriesFails) {
 
   auto* group_entry_ptr = GetMulticastGroupEntry("0x1");
   ASSERT_NE(group_entry_ptr, nullptr);
-  auto expect_entry = GenerateP4MulticastGroupEntry(
-    "0x1", {replica1, replica2});
+  auto expect_entry =
+      GenerateP4MulticastGroupEntry("0x1", {replica1, replica2});
   VerifyP4MulticastGroupEntryEqual(expect_entry, *group_entry_ptr);
 }
 

@@ -420,6 +420,7 @@ class L3MulticastManager : public ObjectManagerInterface {
   std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
 
   friend class L3MulticastManagerTest;
+  friend class L3MulticastManagerTestNoMyMac;
 };
 
 }  // namespace p4orch

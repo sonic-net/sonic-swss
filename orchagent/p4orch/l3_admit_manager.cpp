@@ -13,6 +13,7 @@
 #include "portsorch.h"
 #include "return_code.h"
 #include "sai_serialize.h"
+#include "switchorch.h"
 #include "table.h"
 #include "tokenize.h"
 extern "C"
@@ -23,6 +24,7 @@ extern "C"
 using ::p4orch::kTableKeyDelimiter;
 
 extern PortsOrch *gPortsOrch;
+extern SwitchOrch* gSwitchOrch;
 extern sai_object_id_t gSwitchId;
 extern sai_my_mac_api_t *sai_my_mac_api;
 
@@ -68,6 +70,19 @@ ReturnCodeOr<std::vector<sai_attribute_t>> prepareSaiAttrs(
   }
 
   return l3_admit_attrs;
+}
+
+// Returns true if the MAC entry is programmed by SwitchOrch alias MAC.
+bool isAliasMac(const P4L3AdmitAppDbEntry& app_db_entry) {
+  auto alias_mac = gSwitchOrch->getAliasMac();
+  if (alias_mac.empty()) {
+    return false;
+  }
+  if (swss::MacAddress(alias_mac) == app_db_entry.mac_address_data &&
+      swss::MacAddress("FF:FF:FF:FF:FF:FF") == app_db_entry.mac_address_mask) {
+    return true;
+  }
+  return false;
 }
 
 } // namespace
@@ -116,6 +131,22 @@ ReturnCode L3AdmitManager::drain() {
     const std::string l3_admit_key = KeyGenerator::generateL3AdmitKey(
         app_db_entry.mac_address_data, app_db_entry.mac_address_mask,
         app_db_entry.port_name, app_db_entry.priority);
+
+    // If the entry is the same as the alias MAC, perform no-op as the alias MAC
+    // is already programmed by SwitchOrch. The SwitchOrch alias MAC will never
+    // be updated or deleted after it is programmed.
+    // The priority and the port fields will be ignored for alias MAC request:
+    // * The priority field has no meaning for L3 admit entry as all rules have
+    //   the same action to forward to L3. The SwitchOrch alias MAC is
+    //   programmed with a fixed priority.
+    // * The SwitchOrch alias MAC is programmed with no port specified, which
+    //   will cover all ports.
+    if (getL3AdmitEntry(l3_admit_key) == nullptr && isAliasMac(app_db_entry)) {
+      m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple),
+                           kfvFieldsValues(key_op_fvs_tuple), ReturnCode(),
+                           /*replace=*/true);
+      continue;
+    }
 
     // Fulfill the operation.
     const std::string& operation = kfvOp(key_op_fvs_tuple);
@@ -403,6 +434,12 @@ std::string L3AdmitManager::verifyState(const std::string &key, const std::vecto
     auto &app_db_entry = *app_db_entry_or;
     const std::string l3_admit_key = KeyGenerator::generateL3AdmitKey(
         app_db_entry.mac_address_data, app_db_entry.mac_address_mask, app_db_entry.port_name, app_db_entry.priority);
+
+    // Skip state verification for alias MAC entry.
+    if (getL3AdmitEntry(l3_admit_key) == nullptr && isAliasMac(app_db_entry)) {
+      return "";
+    }
+
     auto *l3_admit_entry = getL3AdmitEntry(l3_admit_key);
     if (l3_admit_entry == nullptr)
     {
