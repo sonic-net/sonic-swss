@@ -507,7 +507,9 @@ bool TeamMgr::setLagAdminStatus(const string &alias, const string &admin_status)
 void TeamMgr::applyEffectiveLagAdminStatus(const string &alias)
 {
     vector<FieldValueTuple> lag_data;
-    bool config_admin_up = true;
+    // If admin_status is absent from CONFIG_DB, match the default that the
+    // doLagTask first-write path applies (DEFAULT_ADMIN_STATUS_STR == "down").
+    bool config_admin_up = false;
     if (m_cfgLagTable.get(alias, lag_data))
     {
         for (const auto &fv : lag_data)

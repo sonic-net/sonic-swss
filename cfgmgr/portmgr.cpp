@@ -266,7 +266,9 @@ void PortMgr::applyEffectiveAdminStatus(const string &alias)
     if (!m_cfgPortTable.get(alias, port_data))
         return;
 
-    bool config_admin_up = true;
+    // If admin_status is absent from CONFIG_DB, match the default that the
+    // doTask first-write path applies (DEFAULT_ADMIN_STATUS_STR == "down").
+    bool config_admin_up = false;
     for (const auto &fv : port_data)
     {
         if (fvField(fv) == "admin_status")
