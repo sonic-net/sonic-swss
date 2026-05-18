@@ -28,6 +28,7 @@ extern sai_route_api_t *sai_neighbor_api;
 extern sai_route_api_t *sai_next_hop_api;
 extern sai_mpls_api_t *sai_mpls_api;
 extern sai_next_hop_group_api_t* sai_next_hop_group_api;
+extern sai_udf_api_t *sai_udf_api;
 extern string gMySwitchType;
 
 using namespace saimeta;
@@ -2814,4 +2815,321 @@ namespace aclorch_test
         // Cleanup
         ASSERT_TRUE(orch->m_aclOrch->removeAclRule(aclTableName, aclRuleName));
     }
+    /* ====================================================================
+     * UDF x ACL integration tests
+     * Covers UDF-aware code paths in aclorch.cpp (parseAclTableTypeMatches
+     * UDF branch, validateAddMatch UDF block, processUdfMatches, createRule
+     * + removeRule UDF wiring, addAclTableType / removeAclTableType ref
+     * counting). gUdfOrch is a global; we install a real UdfOrch wired to
+     * stubbed sai_udf_api so the ACL paths can resolve and ref-count UDF
+     * groups without needing a full DUT.
+     * ==================================================================== */
+
+    // Per-test SAI UDF stub counters. Reset in each test via resetUdfStubs().
+    static int g_acl_udf_create_group_calls = 0;
+    static int g_acl_udf_remove_group_calls = 0;
+    static sai_object_id_t g_acl_udf_next_oid = 0xA000;
+
+    static sai_status_t stub_acl_create_udf_group(sai_object_id_t* oid, sai_object_id_t,
+                                                  uint32_t, const sai_attribute_t*)
+    {
+        *oid = ++g_acl_udf_next_oid;
+        g_acl_udf_create_group_calls++;
+        return SAI_STATUS_SUCCESS;
+    }
+
+    static sai_status_t stub_acl_remove_udf_group(sai_object_id_t)
+    {
+        g_acl_udf_remove_group_calls++;
+        return SAI_STATUS_SUCCESS;
+    }
+
+    static sai_status_t stub_acl_create_udf_match(sai_object_id_t* oid, sai_object_id_t,
+                                                  uint32_t, const sai_attribute_t*)
+    {
+        *oid = ++g_acl_udf_next_oid;
+        return SAI_STATUS_SUCCESS;
+    }
+
+    static sai_status_t stub_acl_remove_udf_match(sai_object_id_t)
+    {
+        return SAI_STATUS_SUCCESS;
+    }
+
+    static sai_status_t stub_acl_create_udf(sai_object_id_t* oid, sai_object_id_t,
+                                            uint32_t, const sai_attribute_t*)
+    {
+        *oid = ++g_acl_udf_next_oid;
+        return SAI_STATUS_SUCCESS;
+    }
+
+    static sai_status_t stub_acl_remove_udf(sai_object_id_t)
+    {
+        return SAI_STATUS_SUCCESS;
+    }
+
+    struct AclOrchUdfTest : public AclOrchTest
+    {
+        sai_udf_api_t  m_ut_udf_api;
+        sai_udf_api_t* m_saved_udf_api = nullptr;
+        UdfOrch*       m_udfOrch = nullptr;
+
+        void SetUp() override
+        {
+            AclOrchTest::SetUp();
+
+            // sai_udf_api is queried from libsaivs during AclOrchTest::SetUp via
+            // sai_api_initialize. Snapshot it and overlay our stubs so UDF group
+            // create/remove succeed without touching real SAI metadata.
+            ASSERT_NE(sai_udf_api, nullptr);
+            m_saved_udf_api = sai_udf_api;
+            m_ut_udf_api = *sai_udf_api;
+            m_ut_udf_api.create_udf_group  = stub_acl_create_udf_group;
+            m_ut_udf_api.remove_udf_group  = stub_acl_remove_udf_group;
+            m_ut_udf_api.create_udf_match  = stub_acl_create_udf_match;
+            m_ut_udf_api.remove_udf_match  = stub_acl_remove_udf_match;
+            m_ut_udf_api.create_udf        = stub_acl_create_udf;
+            m_ut_udf_api.remove_udf        = stub_acl_remove_udf;
+            sai_udf_api = &m_ut_udf_api;
+
+            g_acl_udf_create_group_calls = 0;
+            g_acl_udf_remove_group_calls = 0;
+
+            ASSERT_EQ(gUdfOrch, nullptr);
+            m_udfOrch = new UdfOrch(m_config_db.get(),
+                                    { CFG_UDF_TABLE_NAME, CFG_UDF_SELECTOR_TABLE_NAME });
+            gUdfOrch = m_udfOrch;
+        }
+
+        void TearDown() override
+        {
+            gUdfOrch = nullptr;
+            delete m_udfOrch;
+            m_udfOrch = nullptr;
+            sai_udf_api = m_saved_udf_api;
+
+            AclOrchTest::TearDown();
+        }
+
+        // Push a UDF group definition through CFG_UDF table and drive doTask.
+        void createUdfGroup(const string& name, uint16_t length, const string& fieldType = "GENERIC")
+        {
+            deque<KeyOpFieldsValuesTuple> q;
+            q.push_back({ name, SET_COMMAND, {
+                { "length", to_string(length) },
+                { "field_type", fieldType }
+            }});
+            auto* c = dynamic_cast<Consumer*>(m_udfOrch->getExecutor(CFG_UDF_TABLE_NAME));
+            ASSERT_NE(c, nullptr);
+            c->addToSync(q);
+            static_cast<Orch*>(m_udfOrch)->doTask();
+        }
+    };
+
+    // parseAclTableTypeMatches UDF branch happy path:
+    // create a UDF group, then push an ACL_TABLE_TYPE that lists the group as a match.
+    // addAclTableType bumps gUdfOrch->incrementGroupRefCount, and the table type
+    // surfaces an AclTableUdfGroupMatch for the group.
+    TEST_F(AclOrchUdfTest, AclTableTypeWithUdfMatch)
+    {
+        createUdfGroup("udf_grp_a", /*length=*/4);
+        ASSERT_NE(m_udfOrch->getUdfGroup("udf_grp_a"), nullptr);
+
+        auto orch = createAclOrch();
+
+        const string tableTypeName = "TABLE_TYPE_UDF";
+        orch->doAclTableTypeTask(deque<KeyOpFieldsValuesTuple>({{
+            tableTypeName, SET_COMMAND, {
+                { ACL_TABLE_TYPE_MATCHES, string(MATCH_L4_DST_PORT) + comma + "udf_grp_a" },
+                { ACL_TABLE_TYPE_BPOINT_TYPES, BIND_POINT_TYPE_PORT },
+                { ACL_TABLE_TYPE_ACTIONS, ACTION_PACKET_ACTION }
+            }
+        }}));
+
+        const auto* type = orch->getAclTableType(tableTypeName);
+        ASSERT_NE(type, nullptr);
+
+        bool found_udf_match = false;
+        for (const auto& match : type->getMatches())
+        {
+            if (dynamic_cast<const AclTableUdfGroupMatch*>(match.second.get()) != nullptr)
+            {
+                found_udf_match = true;
+                EXPECT_EQ(
+                    dynamic_cast<const AclTableUdfGroupMatch*>(match.second.get())->getName(),
+                    "udf_grp_a");
+            }
+        }
+        EXPECT_TRUE(found_udf_match);
+    }
+
+    // parseAclTableTypeMatches UDF "retry later" path: gUdfOrch is present but
+    // the named UDF group has not been created. parser returns false and the
+    // table type is NOT registered.
+    TEST_F(AclOrchUdfTest, AclTableTypeWithUdfMissingIsDeferred)
+    {
+        ASSERT_EQ(m_udfOrch->getUdfGroup("does_not_exist"), nullptr);
+
+        auto orch = createAclOrch();
+
+        const string tableTypeName = "TABLE_TYPE_UDF_MISSING";
+        orch->doAclTableTypeTask(deque<KeyOpFieldsValuesTuple>({{
+            tableTypeName, SET_COMMAND, {
+                { ACL_TABLE_TYPE_MATCHES, "does_not_exist" },
+                { ACL_TABLE_TYPE_BPOINT_TYPES, BIND_POINT_TYPE_PORT },
+                { ACL_TABLE_TYPE_ACTIONS, ACTION_PACKET_ACTION }
+            }
+        }}));
+
+        EXPECT_EQ(orch->getAclTableType(tableTypeName), nullptr);
+    }
+
+    // validateAddMatch UDF branch for length<=4: feeds an ACL rule a UDF match value
+    // and verifies the bytes (value/mask) end up in m_udfFieldValues.
+    TEST_F(AclOrchUdfTest, AclRuleUdfMatchValueParsing)
+    {
+        createUdfGroup("udf_grp_b", /*length=*/4);
+
+        auto orch = createAclOrch();
+
+        const string tableTypeName = "TABLE_TYPE_UDF_PARSE";
+        orch->doAclTableTypeTask(deque<KeyOpFieldsValuesTuple>({{
+            tableTypeName, SET_COMMAND, {
+                { ACL_TABLE_TYPE_MATCHES, "udf_grp_b" },
+                { ACL_TABLE_TYPE_BPOINT_TYPES, BIND_POINT_TYPE_PORT },
+                { ACL_TABLE_TYPE_ACTIONS, ACTION_PACKET_ACTION }
+            }
+        }}));
+        ASSERT_NE(orch->getAclTableType(tableTypeName), nullptr);
+
+        const string tableName = "udf_parse_table";
+        orch->doAclTableTask(deque<KeyOpFieldsValuesTuple>({{
+            tableName, SET_COMMAND, {
+                { ACL_TABLE_DESCRIPTION, "udf parse" },
+                { ACL_TABLE_TYPE, tableTypeName },
+                { ACL_TABLE_STAGE, STAGE_INGRESS },
+                { ACL_TABLE_PORTS, "1,2" }
+            }
+        }}));
+        ASSERT_NE(orch->getAclTable(tableName), nullptr);
+
+        const string ruleKey = tableName + "|udf_rule_1";
+        orch->doAclRuleTask(deque<KeyOpFieldsValuesTuple>({{
+            ruleKey, SET_COMMAND, {
+                { "udf_grp_b", "0x12345678/0xFFFFFFFF" },
+                { ACTION_PACKET_ACTION, PACKET_ACTION_DROP }
+            }
+        }}));
+
+        const AclRule* rule = orch->getAclRule(tableName, "udf_rule_1");
+        ASSERT_NE(rule, nullptr);
+
+        const auto& udfMap = Portal::AclRuleInternal::getUdfFieldValues(rule);
+        auto it = udfMap.find("udf_grp_b");
+        ASSERT_NE(it, udfMap.end());
+        ASSERT_EQ(it->second.first.size(), 4u);
+        EXPECT_EQ(it->second.first[0], 0x12);
+        EXPECT_EQ(it->second.first[1], 0x34);
+        EXPECT_EQ(it->second.first[2], 0x56);
+        EXPECT_EQ(it->second.first[3], 0x78);
+        ASSERT_EQ(it->second.second.size(), 4u);
+        EXPECT_EQ(it->second.second[0], 0xFF);
+        EXPECT_EQ(it->second.second[3], 0xFF);
+    }
+
+    // Full UDF-aware ACL rule lifecycle: create rule then delete it; check that
+    // processUdfMatches emits a SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN
+    // attribute on create and that ref counts move on the UdfOrch.
+    TEST_F(AclOrchUdfTest, AclRuleUdfFullLifecycle)
+    {
+        createUdfGroup("udf_grp_c", /*length=*/2);
+
+        auto orch = createAclOrch();
+
+        const string tableTypeName = "TABLE_TYPE_UDF_LIFECYCLE";
+        orch->doAclTableTypeTask(deque<KeyOpFieldsValuesTuple>({{
+            tableTypeName, SET_COMMAND, {
+                { ACL_TABLE_TYPE_MATCHES, "udf_grp_c" },
+                { ACL_TABLE_TYPE_BPOINT_TYPES, BIND_POINT_TYPE_PORT },
+                { ACL_TABLE_TYPE_ACTIONS, ACTION_PACKET_ACTION }
+            }
+        }}));
+        ASSERT_NE(orch->getAclTableType(tableTypeName), nullptr);
+
+        // addAclTableType bumps group ref count
+        EXPECT_EQ(Portal::UdfOrchInternal::getGroupRefCount(m_udfOrch, "udf_grp_c"), 1u);
+
+        // Capture create_acl_entry attrs so we can check the UDF slot attribute.
+        vector<sai_attribute_t> captured_rule_attrs;
+        auto rule_spy = SpyOn<SAI_API_ACL, SAI_OBJECT_TYPE_ACL_ENTRY>(&sai_acl_api->create_acl_entry);
+        rule_spy->callFake(
+            [&](sai_object_id_t* oid, sai_object_id_t, uint32_t attr_count, const sai_attribute_t* attrs) -> sai_status_t
+            {
+                *oid = 0xACE0001;
+                for (uint32_t i = 0; i < attr_count; ++i)
+                {
+                    captured_rule_attrs.push_back(attrs[i]);
+                }
+                return SAI_STATUS_SUCCESS;
+            });
+
+        const string tableName = "udf_lc_table";
+        orch->doAclTableTask(deque<KeyOpFieldsValuesTuple>({{
+            tableName, SET_COMMAND, {
+                { ACL_TABLE_DESCRIPTION, "udf lc" },
+                { ACL_TABLE_TYPE, tableTypeName },
+                { ACL_TABLE_STAGE, STAGE_INGRESS },
+                { ACL_TABLE_PORTS, "1,2" }
+            }
+        }}));
+        ASSERT_NE(orch->getAclTable(tableName), nullptr);
+
+        const string ruleName = "udf_rule_lc";
+        const string ruleKey  = tableName + "|" + ruleName;
+        orch->doAclRuleTask(deque<KeyOpFieldsValuesTuple>({{
+            ruleKey, SET_COMMAND, {
+                { "udf_grp_c", "0xABCD/0xFFFF" },
+                { ACTION_PACKET_ACTION, PACKET_ACTION_DROP }
+            }
+        }}));
+
+        ASSERT_NE(orch->getAclRule(tableName, ruleName), nullptr);
+        EXPECT_EQ(Portal::UdfOrchInternal::getUdfRuleRefCount(m_udfOrch, "udf_grp_c"), 1u);
+
+        // create_acl_entry got at least one UDF slot attribute.
+        bool saw_udf_slot_attr = false;
+        for (const auto& a : captured_rule_attrs)
+        {
+            if (a.id >= SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN &&
+                a.id <= SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MAX)
+            {
+                saw_udf_slot_attr = true;
+                EXPECT_TRUE(a.value.aclfield.enable);
+                EXPECT_EQ(a.value.aclfield.data.u8list.count, 2u);
+                break;
+            }
+        }
+        EXPECT_TRUE(saw_udf_slot_attr);
+
+        // Delete the rule: decrementUdfRuleRefCount runs.
+        orch->doAclRuleTask(deque<KeyOpFieldsValuesTuple>({{
+            ruleKey, DEL_COMMAND, {}
+        }}));
+        EXPECT_EQ(Portal::UdfOrchInternal::getUdfRuleRefCount(m_udfOrch, "udf_grp_c"), 0u);
+
+        // Delete the table: removeAclTable decrements the group ref count put down
+        // by AclTable::create (paired with the table-type increment).
+        orch->doAclTableTask(deque<KeyOpFieldsValuesTuple>({{
+            tableName, DEL_COMMAND, {}
+        }}));
+        EXPECT_EQ(orch->getAclTable(tableName), nullptr);
+
+        // Delete the table type: removeAclTableType decrements the type-level ref.
+        orch->doAclTableTypeTask(deque<KeyOpFieldsValuesTuple>({{
+            tableTypeName, DEL_COMMAND, {}
+        }}));
+        EXPECT_EQ(orch->getAclTableType(tableTypeName), nullptr);
+        EXPECT_EQ(Portal::UdfOrchInternal::getGroupRefCount(m_udfOrch, "udf_grp_c"), 0u);
+    }
+
 } // namespace nsAclOrchTest
