@@ -341,4 +341,25 @@ namespace dashportmaporch_test
         SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME,
                      port_map1 + ":1000", port_map_range, true, true);
     }
+
+    TEST_F(DashPortMapOrchTest, PortMapRangeAlreadyExistsInSai)
+    {
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_maps);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, dash::outbound_port_map::OutboundPortMap());
+
+        auto port_map_range = BuildOutboundPortMapRange();
+        std::stringstream key_stream;
+        key_stream << port_map1 << ":" << port_map1_start_port << "-" << port_map1_end_port;
+        std::string key = key_stream.str();
+
+        // First create succeeds normally
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_map_port_range_entries);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key, port_map_range);
+
+        // Second create returns ITEM_ALREADY_EXISTS from bulker — should be treated as success
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_ITEM_ALREADY_EXISTS};
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_map_port_range_entries)
+            .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key, port_map_range, true, true);
+    }
 }

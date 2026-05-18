@@ -154,6 +154,11 @@ bool DashVnetOrch::removeVnetPost(const string& vnet_name, const DashVnetBulkCon
             SWSS_LOG_ERROR("Failed to remove vnet entry for %s: object remove was not executed", vnet_name.c_str());
             return false;
         }
+        if (status == SAI_STATUS_ITEM_NOT_FOUND)
+        {
+            SWSS_LOG_INFO("Vnet entry for %s already removed", vnet_name.c_str());
+            return true;
+        }
         SWSS_LOG_ERROR("Failed to remove vnet entry for %s", vnet_name.c_str());
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_VNET, status);
         if (handle_status != task_success)
@@ -188,8 +193,8 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
         while (it != consumer.m_toSync.end())
         {
             KeyOpFieldsValuesTuple tuple = it->second;
-            string key = kfvKey(tuple);
-            string op = kfvOp(tuple);
+            const string& key = kfvKey(tuple);
+            auto op = kfvOp(tuple);
 
             try
             {
@@ -527,7 +532,7 @@ bool DashVnetOrch::addOutboundCaToPaPost(const string& key, const VnetMapBulkCon
     {
         if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
         {
-            return false;
+            return true;
         }
 
         SWSS_LOG_ERROR("Failed to create CA to PA entry for %s", key.c_str());
@@ -755,8 +760,8 @@ void DashVnetOrch::doTaskVnetMapTable(ConsumerBase& consumer)
         while (it != consumer.m_toSync.end())
         {
             KeyOpFieldsValuesTuple tuple = it->second;
-            string key = kfvKey(tuple);
-            string op = kfvOp(tuple);
+            const string& key = kfvKey(tuple);
+            auto op = kfvOp(tuple);
 
             try
             {

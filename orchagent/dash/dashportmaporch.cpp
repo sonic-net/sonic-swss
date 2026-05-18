@@ -285,6 +285,11 @@ bool DashPortMapOrch::removePortMapPost(const std::string &port_map_id, DashPort
             SWSS_LOG_ERROR("Port map %s not removed, dropping notification", port_map_id.c_str());
             return false;
         }
+        if (status == SAI_STATUS_ITEM_NOT_FOUND)
+        {
+            SWSS_LOG_INFO("Port map %s already removed", port_map_id.c_str());
+            return true;
+        }
         SWSS_LOG_ERROR("Failed to remove port map %s, status: %s", port_map_id.c_str(), sai_serialize_status(status).c_str());
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t)SAI_API_DASH_OUTBOUND_PORT_MAP, status);
         if (handle_status != task_success)
@@ -525,7 +530,7 @@ bool DashPortMapOrch::addPortMapRangePost(DashPortMapRangeBulkContext &ctxt)
         if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
         {
             SWSS_LOG_INFO("Port map range for %s already exists", ctxt.parent_map_id.c_str());
-            return false;
+            return true;
         }
         SWSS_LOG_ERROR("Failed to create port map range for %s, status: %s", ctxt.parent_map_id.c_str(), sai_serialize_status(status).c_str());
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_OUTBOUND_PORT_MAP, status);

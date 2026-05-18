@@ -118,8 +118,8 @@ void DashAclOrch::doTask(ConsumerBase &consumer)
     while (itr != consumer.m_toSync.end())
     {
         auto &message = itr->second;
-        string key = kfvKey(message);
-        string op = kfvOp(message);
+        const string &key = kfvKey(message);
+        const string &op = kfvOp(message);
 
         try
         {

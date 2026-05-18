@@ -260,8 +260,8 @@ void DashMeterOrch::doTaskMeterPolicyTable(ConsumerBase& consumer)
     while (it != consumer.m_toSync.end())
     {
         auto tuple = it->second;
-        string key = kfvKey(tuple);
-        string op = kfvOp(tuple);
+        auto op = kfvOp(tuple);
+        const string& key = kfvKey(tuple);
 
         try
         {
@@ -430,6 +430,11 @@ bool DashMeterOrch::removeMeterRulePost(const string& key, const MeterRuleBulkCo
             SWSS_LOG_ERROR("Failed to remove meter rule entry for %s, dropping notification", key.c_str());
             return false;
         }
+        if (status == SAI_STATUS_ITEM_NOT_FOUND)
+        {
+            SWSS_LOG_INFO("Meter rule entry for %s already removed", key.c_str());
+            return true;
+        }
         SWSS_LOG_ERROR("Failed to remove meter rule entry for %s", key.c_str());
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_METER, status);
         if (handle_status != task_success)
@@ -462,8 +467,8 @@ void DashMeterOrch::doTaskMeterRuleTable(ConsumerBase& consumer)
         while (it != consumer.m_toSync.end())
         {
             KeyOpFieldsValuesTuple tuple = it->second;
-            string key = kfvKey(tuple);
-            string op = kfvOp(tuple);
+            const string& key = kfvKey(tuple);
+            auto op = kfvOp(tuple);
 
             try
             {

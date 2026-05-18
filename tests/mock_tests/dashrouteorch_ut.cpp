@@ -418,4 +418,28 @@ namespace dashrouteorch_test
         EXPECT_NO_THROW(
             SetDashTable(APP_DASH_ROUTE_RULE_TABLE_NAME, eni1 + ":5555", rule, true, true));
     }
+
+    TEST_F(DashRouteOrchTest, OutboundRouteAlreadyExistsInSai)
+    {
+        AddOutboundRoutingGroup();
+        AddTunnel();
+        // First create succeeds normally
+        AddOutboundRoutingEntry();
+        // Second create returns ITEM_ALREADY_EXISTS from bulker — should be treated as success
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_ITEM_ALREADY_EXISTS};
+        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries)
+            .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        AddOutboundRoutingEntry(true);
+    }
+
+    TEST_F(DashRouteOrchTest, InboundRouteAlreadyExistsInSai)
+    {
+        // First create succeeds normally
+        AddInboundRoutingEntry();
+        // Second create returns ITEM_ALREADY_EXISTS from bulker — should be treated as success
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_ITEM_ALREADY_EXISTS};
+        EXPECT_CALL(*mock_sai_dash_inbound_routing_api, create_inbound_routing_entries)
+            .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        AddInboundRoutingEntry(true);
+    }
 }

@@ -219,7 +219,7 @@ bool DashRouteOrch::addOutboundRoutingPost(const string& key, const OutboundRout
         SWSS_LOG_ERROR("Failed to create outbound routing entry for %s", key.c_str());
         if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
         {
-            return false;
+            return true;
         }
 
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, status);
@@ -280,6 +280,11 @@ bool DashRouteOrch::removeOutboundRoutingPost(const string& key, const OutboundR
         SWSS_LOG_ERROR("Failed to remove outbound routing entry for %s: bulk operation was not executed", key.c_str());
         return false;
     }
+    if (status == SAI_STATUS_ITEM_NOT_FOUND)
+    {
+        SWSS_LOG_INFO("Outbound routing entry for %s already removed", key.c_str());
+        return true;
+    }
     task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, status);
     if (handle_status != task_success)
     {
@@ -304,8 +309,8 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
         while (it != consumer.m_toSync.end())
         {
             KeyOpFieldsValuesTuple tuple = it->second;
-            string key = kfvKey(tuple);
-            string op = kfvOp(tuple);
+            const string& key = kfvKey(tuple);
+            auto op = kfvOp(tuple);
 
             try
             {
@@ -517,7 +522,7 @@ bool DashRouteOrch::addInboundRoutingPost(const string& key, const InboundRoutin
         SWSS_LOG_ERROR("Failed to create inbound routing entry for %s", key.c_str());
         if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
         {
-            return false;
+            return true;
         }
 
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_INBOUND_ROUTING, status);
@@ -575,6 +580,11 @@ bool DashRouteOrch::removeInboundRoutingPost(const string& key, const InboundRou
         SWSS_LOG_ERROR("Failed to remove inbound routing entry for %s: bulk operation was not executed", key.c_str());
         return false;
     }
+    if (status == SAI_STATUS_ITEM_NOT_FOUND)
+    {
+        SWSS_LOG_INFO("Inbound routing entry for %s already removed", key.c_str());
+        return true;
+    }
     task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_INBOUND_ROUTING, status);
     if (handle_status != task_success)
     {
@@ -599,8 +609,8 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
         while (it != consumer.m_toSync.end())
         {
             KeyOpFieldsValuesTuple tuple = it->second;
-            string key = kfvKey(tuple);
-            string op = kfvOp(tuple);
+            const string& key = kfvKey(tuple);
+            auto op = kfvOp(tuple);
 
             try
             {

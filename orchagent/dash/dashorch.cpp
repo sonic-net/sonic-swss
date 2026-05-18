@@ -135,45 +135,8 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
         return true;
     }
 
-    sai_object_id_t sai_appliance_id = 0UL;
+    sai_object_id_t sai_appliance_id = SAI_NULL_OBJECT_ID;
     sai_status_t status;
-    bool appliance_created = false;
-    bool vip_created = false;
-    bool direction_lookup_created = false;
-
-    sai_vip_entry_t vip_entry;
-    vip_entry.switch_id = gSwitchId;
-
-    sai_direction_lookup_entry_t direction_lookup_entry;
-    direction_lookup_entry.switch_id = gSwitchId;
-    direction_lookup_entry.vni = entry.vm_vni();
-
-    auto cleanup = [&]() {
-        if (direction_lookup_created)
-        {
-            sai_status_t cleanup_status = sai_dash_direction_lookup_api->remove_direction_lookup_entry(&direction_lookup_entry);
-            if (cleanup_status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_ERROR("Failed to clean up direction lookup entry for %s", appliance_id.c_str());
-            }
-        }
-        if (vip_created)
-        {
-            sai_status_t cleanup_status = sai_dash_vip_api->remove_vip_entry(&vip_entry);
-            if (cleanup_status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_ERROR("Failed to clean up vip entry for %s", appliance_id.c_str());
-            }
-        }
-        if (appliance_created && sai_appliance_id != 0UL)
-        {
-            sai_status_t cleanup_status = sai_dash_appliance_api->remove_dash_appliance(sai_appliance_id);
-            if (cleanup_status != SAI_STATUS_SUCCESS && cleanup_status != SAI_STATUS_NOT_IMPLEMENTED)
-            {
-                SWSS_LOG_ERROR("Failed to clean up dash appliance object in SAI for %s", appliance_id.c_str());
-            }
-        }
-    };
 
     sai_attr_capability_t capability;
     status = sai_query_attribute_capability(gSwitchId, (sai_object_type_t)SAI_OBJECT_TYPE_DASH_APPLIANCE, SAI_DASH_APPLIANCE_ATTR_LOCAL_REGION_ID, &capability);
@@ -195,15 +158,17 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
                 return false;
             }
         }
-        else
-        {
-            appliance_created = true;
-        }
     }
 
+    // Cache the entry early so removeApplianceEntry can be used for cleanup on any subsequent failure
+    appliance_entries_[appliance_id] = ApplianceEntry { sai_appliance_id, entry };
+    appliance_entries_[appliance_id].metadata.clear_trusted_vnis_list();
+
+    sai_vip_entry_t vip_entry;
+    vip_entry.switch_id = gSwitchId;
     if (!to_sai(entry.sip(), vip_entry.vip))
     {
-        cleanup();
+        removeApplianceEntry(appliance_id);
         return false;
     }
     sai_attribute_t appliance_attr;
@@ -216,15 +181,14 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_VIP, status);
         if (handle_status != task_success)
         {
-            cleanup();
+            removeApplianceEntry(appliance_id);
             return false;
         }
     }
-    else
-    {
-        vip_created = true;
-    }
 
+    sai_direction_lookup_entry_t direction_lookup_entry;
+    direction_lookup_entry.switch_id = gSwitchId;
+    direction_lookup_entry.vni = entry.vm_vni();
     vector<sai_attribute_t> direction_lookup_attrs;
     appliance_attr.id = SAI_DIRECTION_LOOKUP_ENTRY_ATTR_ACTION;
     if (entry.has_outbound_direction_lookup())
@@ -253,17 +217,10 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_DIRECTION_LOOKUP, status);
         if (handle_status != task_success)
         {
-            cleanup();
+            removeApplianceEntry(appliance_id);
             return false;
         }
     }
-    else
-    {
-        direction_lookup_created = true;
-    }
-    appliance_entries_[appliance_id] = ApplianceEntry { sai_appliance_id, entry };
-    // clear out the trusted VNIs list. They will be readded by addApplianceTrustedVni() after successful creation to ensure that internal cache state is consistent with SAI state
-    appliance_entries_[appliance_id].metadata.clear_trusted_vnis_list();
     SWSS_LOG_NOTICE("Created appliance, vip and direction lookup entries for %s", appliance_id.c_str());
 
     if (!entry.trusted_vnis_list().empty())
@@ -373,7 +330,7 @@ bool DashOrch::removeApplianceEntry(const string& appliance_id)
     }
 
     auto sai_appliance_id = appliance_entries_[appliance_id].appliance_id;
-    if (sai_appliance_id != 0UL)
+    if (sai_appliance_id != SAI_NULL_OBJECT_ID)
     {
         status = sai_dash_appliance_api->remove_dash_appliance(sai_appliance_id);
         if (status != SAI_STATUS_SUCCESS && status != SAI_STATUS_NOT_IMPLEMENTED)
@@ -534,12 +491,11 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
-        string key = kfvKey(t);
+        string routing_type_str = kfvKey(t);
         string op = kfvOp(t);
 
         try
         {
-            string routing_type_str = key;
             dash::route_type::RoutingType routing_type;
             result = DASH_RESULT_SUCCESS;
 
@@ -592,7 +548,7 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
         }
         catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, key.c_str(), e.what());
+            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, routing_type_str.c_str(), e.what());
             it = consumer.m_toSync.erase(it);
         }
     }
