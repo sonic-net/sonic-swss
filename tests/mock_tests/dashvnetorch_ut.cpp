@@ -258,4 +258,46 @@ namespace dashvnetorch_test
         EXPECT_NO_THROW(
             SetDashTable(APP_DASH_VNET_MAPPING_TABLE_NAME, vnet1 + ":not_an_ip", vnet_map, true, true));
     }
+
+    TEST_F(DashVnetOrchTest, VnetCreateDeleteChurn)
+    {
+        for (int i = 0; i < 3; i++)
+        {
+            EXPECT_CALL(*mock_sai_dash_vnet_api, create_vnets).Times(1);
+            CreateVnet();
+
+            EXPECT_CALL(*mock_sai_dash_vnet_api, remove_vnets).Times(1);
+            RemoveVnet();
+        }
+    }
+
+    TEST_F(DashVnetOrchTest, VnetMapCreateDeleteChurn)
+    {
+        AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
+        CreateVnet();
+
+        // PA validation is per-VNET underlay IP, only created on first add
+        EXPECT_CALL(*mock_sai_dash_pa_validation_api, create_pa_validation_entries).Times(1);
+
+        for (int i = 0; i < 3; i++)
+        {
+            EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries).Times(1);
+            AddVnetMap();
+
+            EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, remove_outbound_ca_to_pa_entries).Times(1);
+            RemoveVnetMap();
+        }
+    }
+
+    TEST_F(DashVnetOrchTest, VnetMapKeyMissingIp)
+    {
+        // Key should be "vnet:ip" — send just vnet without IP
+        CreateVnet();
+        dash::vnet_mapping::VnetMapping vnet_map = dash::vnet_mapping::VnetMapping();
+        vnet_map.set_routing_type(dash::route_type::ROUTING_TYPE_VNET_ENCAP);
+        vnet_map.mutable_underlay_ip()->set_ipv4(swss::IpAddress("7.7.7.7").getV4Addr());
+        EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries).Times(0);
+        EXPECT_NO_THROW(
+            SetDashTable(APP_DASH_VNET_MAPPING_TABLE_NAME, vnet1, vnet_map, true, true));
+    }
 }
