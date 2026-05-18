@@ -189,6 +189,12 @@ namespace dashvnetorch_test
         AddVnetMap(true);
     }
 
+    TEST_F(DashVnetOrchTest, RemoveNonExistentVnet)
+    {
+        EXPECT_CALL(*mock_sai_dash_vnet_api, remove_vnets).Times(0);
+        RemoveVnet(true);
+    }
+
     class DashVnetOrchNoApplianceTest : public MockDashOrchTest
     {
     protected:

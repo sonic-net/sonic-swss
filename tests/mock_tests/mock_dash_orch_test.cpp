@@ -127,6 +127,11 @@ namespace mock_orch_test
         SetDashTable(APP_DASH_TUNNEL_TABLE_NAME, tunnel1, tunnel);
     }
 
+    void MockDashOrchTest::RemoveTunnel()
+    {
+        SetDashTable(APP_DASH_TUNNEL_TABLE_NAME, tunnel1, dash::tunnel::Tunnel(), false);
+    }
+
     void MockDashOrchTest::AddVnetMap(bool expect_empty)
     {
         dash::vnet_mapping::VnetMapping vnet_map = dash::vnet_mapping::VnetMapping();

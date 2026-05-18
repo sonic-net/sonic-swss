@@ -231,4 +231,37 @@ namespace dashportmaporch_test
             .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
         SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, port_map, false, true);
     }
+
+    TEST_F(DashPortMapOrchTest, PortMapRangeSaiCreateFailureNotRetried)
+    {
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_maps);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, dash::outbound_port_map::OutboundPortMap());
+
+        auto port_map_range = BuildOutboundPortMapRange();
+        std::stringstream key_stream;
+        key_stream << port_map1 << ":" << port_map1_start_port << "-" << port_map1_end_port;
+        std::string key = key_stream.str();
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_INSUFFICIENT_RESOURCES};
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_map_port_range_entries)
+            .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key, port_map_range, true, true);
+    }
+
+    TEST_F(DashPortMapOrchTest, PortMapRangeSaiRemoveFailureNotRetried)
+    {
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_maps);
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_map_port_range_entries);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, dash::outbound_port_map::OutboundPortMap());
+
+        auto port_map_range = BuildOutboundPortMapRange();
+        std::stringstream key_stream;
+        key_stream << port_map1 << ":" << port_map1_start_port << "-" << port_map1_end_port;
+        std::string key = key_stream.str();
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key, port_map_range);
+
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_INVALID_PARAMETER};
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, remove_outbound_port_map_port_range_entries)
+            .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key, port_map_range, false, true);
+    }
 }

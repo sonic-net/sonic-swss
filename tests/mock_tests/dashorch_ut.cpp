@@ -243,6 +243,20 @@ namespace dashorch_test
         SetDashTable(APP_DASH_ENI_TABLE_NAME, "eni1", eni, false);
     }
 
+    TEST_F(DashOrchTest, RemoveNonExistentEni)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+        EXPECT_CALL(*mock_sai_dash_eni_api, remove_eni).Times(0);
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, dash::eni::Eni(), false, true);
+    }
+
+    TEST_F(DashOrchTest, RemoveNonExistentAppliance)
+    {
+        EXPECT_CALL(*mock_sai_dash_appliance_api, remove_dash_appliance).Times(0);
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, dash::appliance::Appliance(), false, true);
+    }
+
     TEST_F(DashOrchTest, CreateRemoveApplianceTrustedVnisSingleValue)
     {
         int trusted_vni = 100;
@@ -872,5 +886,93 @@ namespace dashorch_test
         SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni, true, true);
         // Second attempt succeeds — verifies cache was not populated by failed first attempt
         SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni, true, true);
+    }
+
+    TEST_F(DashOrchTest, AddRemoveEniRoute)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+        auto eni = BuildEniEntry();
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni);
+        AddOutboundRoutingGroup();
+
+        // SET ENI route — binds ENI to route group
+        dash::eni_route::EniRoute eni_route;
+        eni_route.set_group_id(route_group1);
+        SetDashTable(APP_DASH_ENI_ROUTE_TABLE_NAME, eni1, eni_route, true, true);
+
+        // DEL ENI route — unbinds
+        SetDashTable(APP_DASH_ENI_ROUTE_TABLE_NAME, eni1, dash::eni_route::EniRoute(), false, true);
+    }
+
+    TEST_F(DashOrchTest, AddRemoveTunnel)
+    {
+        CreateApplianceEntry();
+        AddTunnel();
+        RemoveTunnel();
+    }
+
+    TEST_F(DashOrchTest, RemoveEniPartialFailurePreservesCache)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+        auto eni = BuildEniEntry();
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni);
+
+        {
+            InSequence seq;
+            // First remove attempt: remove_eni fails
+            EXPECT_CALL(*mock_sai_dash_eni_api, remove_eni)
+                .WillOnce(Return(SAI_STATUS_OBJECT_IN_USE));
+            // Second remove attempt: remove_eni succeeds (cache was preserved)
+            EXPECT_CALL(*mock_sai_dash_eni_api, remove_eni).Times(1);
+        }
+
+        // First attempt — SAI failure, consumer still emptied but cache preserved
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, dash::eni::Eni(), false, true);
+        // Second attempt — succeeds because cache was preserved, so remove_eni is called again
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, dash::eni::Eni(), false, true);
+    }
+
+    TEST_F(DashOrchTest, RemoveApplianceDirectionLookupFailurePreservesCache)
+    {
+        CreateApplianceEntry();
+
+        {
+            InSequence seq;
+            // First remove attempt: direction_lookup remove fails
+            EXPECT_CALL(*mock_sai_dash_direction_lookup_api, remove_direction_lookup_entry)
+                .WillOnce(Return(SAI_STATUS_FAILURE));
+            // Second remove attempt: direction_lookup and appliance removes succeed
+            EXPECT_CALL(*mock_sai_dash_direction_lookup_api, remove_direction_lookup_entry).Times(1);
+            EXPECT_CALL(*mock_sai_dash_appliance_api, remove_dash_appliance).Times(1);
+        }
+
+        // First attempt — direction lookup removal fails, cache preserved
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, dash::appliance::Appliance(), false, true);
+        // Second attempt — succeeds, all SAI remove calls re-issued
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, dash::appliance::Appliance(), false, true);
+    }
+
+    TEST_F(DashOrchTest, RemoveApplianceTrustedVniFailurePreservesCache)
+    {
+        dash::appliance::Appliance appliance = BuildApplianceEntry();
+        appliance.mutable_trusted_vnis_list()->Add()->set_value(100);
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance);
+
+        {
+            InSequence seq;
+            // First remove attempt: trusted VNI removal fails
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_global_trusted_vni_entry)
+                .WillOnce(Return(SAI_STATUS_FAILURE));
+            // Second remove attempt: all removals succeed
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_global_trusted_vni_entry).Times(1);
+            EXPECT_CALL(*mock_sai_dash_appliance_api, remove_dash_appliance).Times(1);
+        }
+
+        // First attempt — VNI removal fails, cache preserved
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, dash::appliance::Appliance(), false, true);
+        // Second attempt — succeeds
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, dash::appliance::Appliance(), false, true);
     }
 }
