@@ -824,4 +824,53 @@ namespace dashorch_test
         eni_route.set_group_id(route_group1);
         SetDashTable(APP_DASH_ENI_ROUTE_TABLE_NAME, eni1, eni_route, true, true);
     }
+
+    TEST_F(DashOrchTest, ApplianceTrustedVniFailCleanupAllowsRetry)
+    {
+        dash::appliance::Appliance appliance = BuildApplianceEntry();
+        appliance.mutable_trusted_vnis_list()->Add()->set_value(100);
+
+        {
+            InSequence seq;
+            // First attempt: appliance created, VNI fails, appliance removed
+            EXPECT_CALL(*mock_sai_dash_appliance_api, create_dash_appliance).Times(1);
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_global_trusted_vni_entry)
+                .WillOnce(Return(SAI_STATUS_FAILURE));
+            EXPECT_CALL(*mock_sai_dash_appliance_api, remove_dash_appliance).Times(1);
+            // Second attempt: all SAI calls re-issued (cache was cleared)
+            EXPECT_CALL(*mock_sai_dash_appliance_api, create_dash_appliance).Times(1);
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_global_trusted_vni_entry).Times(1);
+        }
+
+        // First attempt fails
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance, true, true);
+        // Second attempt succeeds — verifies cache was not populated by failed first attempt
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance, true, true);
+    }
+
+    TEST_F(DashOrchTest, EniTrustedVniFailCleanupAllowsRetry)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+
+        dash::eni::Eni eni = BuildEniEntry();
+        eni.mutable_trusted_vnis_list()->Add()->set_value(200);
+
+        {
+            InSequence seq;
+            // First attempt: ENI created, VNI fails, ENI removed
+            EXPECT_CALL(*mock_sai_dash_eni_api, create_eni).Times(1);
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_eni_trusted_vni_entry)
+                .WillOnce(Return(SAI_STATUS_FAILURE));
+            EXPECT_CALL(*mock_sai_dash_eni_api, remove_eni).Times(1);
+            // Second attempt: all SAI calls re-issued (cache was cleared)
+            EXPECT_CALL(*mock_sai_dash_eni_api, create_eni).Times(1);
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_eni_trusted_vni_entry).Times(1);
+        }
+
+        // First attempt fails
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni, true, true);
+        // Second attempt succeeds — verifies cache was not populated by failed first attempt
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni, true, true);
+    }
 }
