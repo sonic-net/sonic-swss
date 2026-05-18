@@ -5,7 +5,9 @@
 #include <string>
 #include <thread>
 
+#include "recorder.h"
 #include "return_code.h"
+#include "zmqserver.h"
 
 using namespace swss;
 
@@ -205,5 +207,118 @@ TEST(ResponsePublisher, PublishAsyncTwoSequentialBatches)
     publisher.flush();
     ASSERT_TRUE(pollHget(stateTable, "10.10.2.0/24", "state", &v));
     ASSERT_EQ(v, "b");
+}
+
+TEST(ResponsePublisher, PublishAsyncBatchWithRecorderUsesTimestampRecord)
+{
+    DBConnector conn{"APPL_STATE_DB", 0};
+    Table stateTable{&conn, "ROUTE_TABLE"};
+
+    Recorder::Instance().respub.setRecord(true);
+    Recorder::Instance().respub.setLocation("/tmp");
+    Recorder::Instance().respub.startRec(false);
+
+    {
+        ResponsePublisher publisher{"APPL_STATE_DB", false, true};
+        publisher.m_directDbWrite = true;
+        publisher.setAsyncFullPublish(true);
+
+        publisher.publishAsync("ROUTE_TABLE", "10.11.0.0/24", {{"state", "rec"}}, ReturnCode(SAI_STATUS_SUCCESS));
+        publisher.publishAsyncBatch();
+        publisher.flush();
+
+        std::string v;
+        ASSERT_TRUE(pollHget(stateTable, "10.11.0.0/24", "state", &v));
+        ASSERT_EQ(v, "rec");
+    }
+
+    Recorder::Instance().respub.setRecord(false);
+}
+
+TEST(ResponsePublisher, PublishSyncWithZmqQueuesThenFlushDrains)
+{
+    ZmqServer zmq("inproc://rp_ut_zmq_sync", "", true);
+    DBConnector conn{"APPL_STATE_DB", 0};
+    Table stateTable{&conn, "ZMQT"};
+
+    ResponsePublisher publisher{"APPL_STATE_DB", false, false, &zmq};
+    publisher.m_directDbWrite = true;
+
+    publisher.publish("ZMQT", "k1", {{"a", "1"}}, ReturnCode(SAI_STATUS_SUCCESS));
+    publisher.flush();
+    std::string v;
+    ASSERT_TRUE(pollHget(stateTable, "k1", "a", &v));
+    ASSERT_EQ(v, "1");
+}
+
+TEST(ResponsePublisher, PublishAsyncBatchWithZmqWorkerQueuesResponses)
+{
+    ZmqServer zmq("inproc://rp_ut_zmq_async", "", true);
+    DBConnector conn{"APPL_STATE_DB", 0};
+    Table stateTable{&conn, "ROUTE_TABLE"};
+
+    ResponsePublisher publisher{"APPL_STATE_DB", false, true, &zmq};
+    publisher.m_directDbWrite = true;
+    publisher.setAsyncFullPublish(true);
+
+    publisher.publishAsync("ROUTE_TABLE", "10.20.0.0/24", {{"state", "z"}}, ReturnCode(SAI_STATUS_SUCCESS));
+    publisher.publishAsyncBatch();
+    publisher.flush();
+
+    std::string v;
+    ASSERT_TRUE(pollHget(stateTable, "10.20.0.0/24", "state", &v));
+    ASSERT_EQ(v, "z");
+}
+
+TEST(ResponsePublisher, PublishAsyncBatchWorkerNotAsyncFullPublishFlushesNtfOnCaller)
+{
+    DBConnector conn{"APPL_STATE_DB", 0};
+    Table stateTable{&conn, "ROUTE_TABLE"};
+
+    ResponsePublisher publisher{"APPL_STATE_DB", false, true};
+    publisher.m_directDbWrite = true;
+    publisher.setAsyncFullPublish(false);
+
+    publisher.publishAsync("ROUTE_TABLE", "10.21.0.0/24", {{"state", "nf"}}, ReturnCode(SAI_STATUS_SUCCESS));
+    publisher.publishAsyncBatch();
+    publisher.flush();
+
+    std::string v;
+    ASSERT_TRUE(pollHget(stateTable, "10.21.0.0/24", "state", &v));
+    ASSERT_EQ(v, "nf");
+}
+
+TEST(ResponsePublisher, PublishAsyncBatchOkDeleteEmptyIntentWritesDel)
+{
+    DBConnector conn{"APPL_STATE_DB", 0};
+    Table stateTable{&conn, "ROUTE_TABLE"};
+
+    ResponsePublisher publisher{"APPL_STATE_DB", false, true};
+    publisher.m_directDbWrite = true;
+    publisher.setAsyncFullPublish(true);
+
+    publisher.publishAsync("ROUTE_TABLE", "10.22.0.0/24", {{"state", "before"}}, ReturnCode(SAI_STATUS_SUCCESS));
+    publisher.publishAsyncBatch();
+    publisher.flush();
+    std::string v;
+    ASSERT_TRUE(pollHget(stateTable, "10.22.0.0/24", "state", &v));
+
+    publisher.publishAsync("ROUTE_TABLE", "10.22.0.0/24", {}, ReturnCode(SAI_STATUS_SUCCESS));
+    publisher.publishAsyncBatch();
+    publisher.flush();
+
+    /* flush() only queues work on the state thread; DEL may land shortly after.
+     * pollHget() returns true as soon as hget succeeds — do not use ASSERT_FALSE(pollHget)
+     * here or we fail while the old "before" value is still visible before DEL is applied. */
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        if (!stateTable.hget("10.22.0.0/24", "state", v))
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    ASSERT_FALSE(stateTable.hget("10.22.0.0/24", "state", v));
 }
 
