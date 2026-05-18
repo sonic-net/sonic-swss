@@ -231,23 +231,25 @@ void EvpnMhOrch::doEvpnEsIntfTask(Consumer &consumer)
 
         SWSS_LOG_NOTICE("doEvpnEsIntfTask: %s oper: ESI intf: %s", op.c_str(), key.c_str());
 
+        // Update ES intent state immediately - this is a control-plane fact
+        // independent of whether the port exists in SAI yet.
+        if (op == SET_COMMAND)
+        {
+            m_esIntfMap[key] = true;
+        }
+        else if (op == DEL_COMMAND)
+        {
+            m_esIntfMap.erase(key);
+        }
+
         if (!vlanMembersApplyNonDF(key))
         {
-            // SAI operation failed, leave in m_toSync for retry
-            // Do not modify m_esIntfMap until operation succeeds
+            // SAI operation failed (e.g. port not yet created), leave in m_toSync for retry.
+            // m_esIntfMap is already updated above so callers see correct ES state.
             ++it;
         }
         else
         {
-            // SAI operation succeeded, update internal state and remove from queue
-            if (op == SET_COMMAND)
-            {
-                m_esIntfMap[key] = true;
-            }
-            else if (op == DEL_COMMAND)
-            {
-                m_esIntfMap.erase(key);
-            }
             it = consumer.m_toSync.erase(it);
         }
     }
