@@ -434,6 +434,7 @@ void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
+    const char *table_name = APP_DASH_APPLIANCE_TABLE_NAME;
     auto it = consumer.m_toSync.begin();
     uint32_t result;
     while (it != consumer.m_toSync.end())
@@ -441,42 +442,51 @@ void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
         KeyOpFieldsValuesTuple t = it->second;
         string appliance_id = kfvKey(t);
         string op = kfvOp(t);
-        result = DASH_RESULT_SUCCESS;
 
-        if (op == SET_COMMAND)
+        try
         {
-            dash::appliance::Appliance entry;
+            result = DASH_RESULT_SUCCESS;
 
-            if (!parsePbMessage(kfvFieldsValues(t), entry))
+            if (op == SET_COMMAND)
             {
-                SWSS_LOG_WARN("Requires protobuff at appliance :%s", appliance_id.c_str());
+                dash::appliance::Appliance entry;
+
+                if (!parsePbMessage(kfvFieldsValues(t), entry))
+                {
+                    SWSS_LOG_WARN("Requires protobuff at appliance :%s", appliance_id.c_str());
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+
+                if (!addApplianceEntry(appliance_id, entry))
+                {
+                    SWSS_LOG_ERROR("Failed to add appliance entry for %s", appliance_id.c_str());
+                    result = DASH_RESULT_FAILURE;
+                }
                 it = consumer.m_toSync.erase(it);
-                continue;
+                writeResultToDB(dash_appliance_result_table_, appliance_id, result);
             }
-
-            if (!addApplianceEntry(appliance_id, entry))
+            else if (op == DEL_COMMAND)
             {
-                SWSS_LOG_ERROR("Failed to add appliance entry for %s", appliance_id.c_str());
-                result = DASH_RESULT_FAILURE;
-            }
-            it = consumer.m_toSync.erase(it);
-            writeResultToDB(dash_appliance_result_table_, appliance_id, result);
-        }
-        else if (op == DEL_COMMAND)
-        {
-            if (removeApplianceEntry(appliance_id))
-            {
-                removeResultFromDB(dash_appliance_result_table_, appliance_id);
+                if (removeApplianceEntry(appliance_id))
+                {
+                    removeResultFromDB(dash_appliance_result_table_, appliance_id);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Failed to remove appliance entry for %s", appliance_id.c_str());
+                }
+                it = consumer.m_toSync.erase(it);
             }
             else
             {
-                SWSS_LOG_ERROR("Failed to remove appliance entry for %s", appliance_id.c_str());
+                SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
+                it = consumer.m_toSync.erase(it);
             }
-            it = consumer.m_toSync.erase(it);
         }
-        else
+        catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
+            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, appliance_id.c_str(), e.what());
             it = consumer.m_toSync.erase(it);
         }
     }
@@ -518,60 +528,71 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
+    const char *table_name = APP_DASH_ROUTING_TYPE_TABLE_NAME;
     auto it = consumer.m_toSync.begin();
     uint32_t result;
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
-        string routing_type_str = kfvKey(t);
+        string key = kfvKey(t);
         string op = kfvOp(t);
-        dash::route_type::RoutingType routing_type;
-        result = DASH_RESULT_SUCCESS;
 
-        std::transform(routing_type_str.begin(), routing_type_str.end(), routing_type_str.begin(), ::toupper);
-        routing_type_str = "ROUTING_TYPE_" + routing_type_str;
-
-        if (!dash::route_type::RoutingType_Parse(routing_type_str, &routing_type))
+        try
         {
-            SWSS_LOG_WARN("Invalid routing type %s", routing_type_str.c_str());
-            it = consumer.m_toSync.erase(it);
-            continue;
-        }
+            string routing_type_str = key;
+            dash::route_type::RoutingType routing_type;
+            result = DASH_RESULT_SUCCESS;
 
-        if (op == SET_COMMAND)
-        {
-            dash::route_type::RouteType entry;
+            std::transform(routing_type_str.begin(), routing_type_str.end(), routing_type_str.begin(), ::toupper);
+            routing_type_str = "ROUTING_TYPE_" + routing_type_str;
 
-            if (!parsePbMessage(kfvFieldsValues(t), entry))
+            if (!dash::route_type::RoutingType_Parse(routing_type_str, &routing_type))
             {
-                SWSS_LOG_WARN("Requires protobuff at routing type :%s", routing_type_str.c_str());
+                SWSS_LOG_WARN("Invalid routing type %s", routing_type_str.c_str());
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
 
-            if (!addRoutingTypeEntry(routing_type, entry))
+            if (op == SET_COMMAND)
             {
-                SWSS_LOG_ERROR("Failed to add routing type entry for %s", routing_type_str.c_str());
-                result = DASH_RESULT_FAILURE;
+                dash::route_type::RouteType entry;
+
+                if (!parsePbMessage(kfvFieldsValues(t), entry))
+                {
+                    SWSS_LOG_WARN("Requires protobuff at routing type :%s", routing_type_str.c_str());
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+
+                if (!addRoutingTypeEntry(routing_type, entry))
+                {
+                    SWSS_LOG_ERROR("Failed to add routing type entry for %s", routing_type_str.c_str());
+                    result = DASH_RESULT_FAILURE;
+                }
+                it = consumer.m_toSync.erase(it);
+                writeResultToDB(dash_routing_type_result_table_, routing_type_str, result);
             }
-            it = consumer.m_toSync.erase(it);
-            writeResultToDB(dash_routing_type_result_table_, routing_type_str, result);
-        }
-        else if (op == DEL_COMMAND)
-        {
-            if (removeRoutingTypeEntry(routing_type))
+            else if (op == DEL_COMMAND)
             {
-                removeResultFromDB(dash_routing_type_result_table_, routing_type_str);
+                if (removeRoutingTypeEntry(routing_type))
+                {
+                    removeResultFromDB(dash_routing_type_result_table_, routing_type_str);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Failed to remove routing type entry for %s", routing_type_str.c_str());
+                }
+                it = consumer.m_toSync.erase(it);
             }
             else
             {
-                SWSS_LOG_ERROR("Failed to remove routing type entry for %s", routing_type_str.c_str());
+                SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
+                it = consumer.m_toSync.erase(it);
             }
-            it = consumer.m_toSync.erase(it);
         }
-        else
+        catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
+            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, key.c_str(), e.what());
             it = consumer.m_toSync.erase(it);
         }
     }
@@ -1102,48 +1123,58 @@ void DashOrch::doTaskEniTable(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
+    const char *table_name = APP_DASH_ENI_TABLE_NAME;
     auto it = consumer.m_toSync.begin();
     uint32_t result;
     while (it != consumer.m_toSync.end())
     {
-        auto t = it->second;
+        KeyOpFieldsValuesTuple t = it->second;
         string eni = kfvKey(t);
         string op = kfvOp(t);
-        result = DASH_RESULT_SUCCESS;
-        if (op == SET_COMMAND)
-        {
-            EniEntry entry;
 
-            if (!parsePbMessage(kfvFieldsValues(t), entry.metadata))
+        try
+        {
+            result = DASH_RESULT_SUCCESS;
+            if (op == SET_COMMAND)
             {
-                SWSS_LOG_WARN("Requires protobuff at ENI :%s", eni.c_str());
+                EniEntry entry;
+
+                if (!parsePbMessage(kfvFieldsValues(t), entry.metadata))
+                {
+                    SWSS_LOG_WARN("Requires protobuff at ENI :%s", eni.c_str());
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+
+                if (!addEni(eni, entry))
+                {
+                    SWSS_LOG_ERROR("Failed to add ENI entry for %s", eni.c_str());
+                    result = DASH_RESULT_FAILURE;
+                }
                 it = consumer.m_toSync.erase(it);
-                continue;
+                writeResultToDB(dash_eni_result_table_, eni, result);
             }
-
-            if (!addEni(eni, entry))
+            else if (op == DEL_COMMAND)
             {
-                SWSS_LOG_ERROR("Failed to add ENI entry for %s", eni.c_str());
-                result = DASH_RESULT_FAILURE;
-            }
-            it = consumer.m_toSync.erase(it);
-            writeResultToDB(dash_eni_result_table_, eni, result);
-        }
-        else if (op == DEL_COMMAND)
-        {
-            if (removeEni(eni))
-            {
-                removeResultFromDB(dash_eni_result_table_, eni);
+                if (removeEni(eni))
+                {
+                    removeResultFromDB(dash_eni_result_table_, eni);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Failed to remove ENI entry for %s", eni.c_str());
+                }
+                it = consumer.m_toSync.erase(it);
             }
             else
             {
-                SWSS_LOG_ERROR("Failed to remove ENI entry for %s", eni.c_str());
+                SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
+                it = consumer.m_toSync.erase(it);
             }
-            it = consumer.m_toSync.erase(it);
         }
-        else
+        catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
+            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, eni.c_str(), e.what());
             it = consumer.m_toSync.erase(it);
         }
     }
@@ -1180,6 +1211,7 @@ bool DashOrch::removeQosEntry(const string& qos_name)
 
 void DashOrch::doTaskQosTable(ConsumerBase& consumer)
 {
+    const char *table_name = APP_DASH_QOS_TABLE_NAME;
     auto it = consumer.m_toSync.begin();
     uint32_t result;
     while (it != consumer.m_toSync.end())
@@ -1187,42 +1219,51 @@ void DashOrch::doTaskQosTable(ConsumerBase& consumer)
         KeyOpFieldsValuesTuple t = it->second;
         string qos_name = kfvKey(t);
         string op = kfvOp(t);
-        result = DASH_RESULT_SUCCESS;
 
-        if (op == SET_COMMAND)
+        try
         {
-            dash::qos::Qos entry;
+            result = DASH_RESULT_SUCCESS;
 
-            if (!parsePbMessage(kfvFieldsValues(t), entry))
+            if (op == SET_COMMAND)
             {
-                SWSS_LOG_WARN("Requires protobuff at QOS :%s", qos_name.c_str());
+                dash::qos::Qos entry;
+
+                if (!parsePbMessage(kfvFieldsValues(t), entry))
+                {
+                    SWSS_LOG_WARN("Requires protobuff at QOS :%s", qos_name.c_str());
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+
+                if (!addQosEntry(qos_name, entry))
+                {
+                    SWSS_LOG_ERROR("Failed to add QOS entry for %s", qos_name.c_str());
+                    result = DASH_RESULT_FAILURE;
+                }
                 it = consumer.m_toSync.erase(it);
-                continue;
+                writeResultToDB(dash_qos_result_table_, qos_name, result);
             }
-
-            if (!addQosEntry(qos_name, entry))
+            else if (op == DEL_COMMAND)
             {
-                SWSS_LOG_ERROR("Failed to add QOS entry for %s", qos_name.c_str());
-                result = DASH_RESULT_FAILURE;
-            }
-            it = consumer.m_toSync.erase(it);
-            writeResultToDB(dash_qos_result_table_, qos_name, result);
-        }
-        else if (op == DEL_COMMAND)
-        {
-            if (removeQosEntry(qos_name))
-            {
-                removeResultFromDB(dash_qos_result_table_, qos_name);
+                if (removeQosEntry(qos_name))
+                {
+                    removeResultFromDB(dash_qos_result_table_, qos_name);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Failed to remove QOS entry for %s", qos_name.c_str());
+                }
+                it = consumer.m_toSync.erase(it);
             }
             else
             {
-                SWSS_LOG_ERROR("Failed to remove QOS entry for %s", qos_name.c_str());
+                SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
+                it = consumer.m_toSync.erase(it);
             }
-            it = consumer.m_toSync.erase(it);
         }
-        else
+        catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
+            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, qos_name.c_str(), e.what());
             it = consumer.m_toSync.erase(it);
         }
     }
@@ -1330,6 +1371,7 @@ bool DashOrch::removeEniRoute(const std::string& eni)
 
 void DashOrch::doTaskEniRouteTable(ConsumerBase& consumer)
 {
+    const char *table_name = APP_DASH_ENI_ROUTE_TABLE_NAME;
     auto it = consumer.m_toSync.begin();
     uint32_t result;
     while (it != consumer.m_toSync.end())
@@ -1337,42 +1379,51 @@ void DashOrch::doTaskEniRouteTable(ConsumerBase& consumer)
         KeyOpFieldsValuesTuple t = it->second;
         string eni = kfvKey(t);
         string op = kfvOp(t);
-        result = DASH_RESULT_SUCCESS;
 
-        if (op == SET_COMMAND)
+        try
         {
-            dash::eni_route::EniRoute entry;
+            result = DASH_RESULT_SUCCESS;
 
-            if (!parsePbMessage(kfvFieldsValues(t), entry))
+            if (op == SET_COMMAND)
             {
-                SWSS_LOG_WARN("Requires protobuf at ENI route:%s", eni.c_str());
+                dash::eni_route::EniRoute entry;
+
+                if (!parsePbMessage(kfvFieldsValues(t), entry))
+                {
+                    SWSS_LOG_WARN("Requires protobuf at ENI route:%s", eni.c_str());
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+
+                if (!setEniRoute(eni, entry))
+                {
+                    SWSS_LOG_ERROR("Failed to set ENI route for %s", eni.c_str());
+                    result = DASH_RESULT_FAILURE;
+                }
                 it = consumer.m_toSync.erase(it);
-                continue;
+                writeResultToDB(dash_eni_route_result_table_, eni, result);
             }
-
-            if (!setEniRoute(eni, entry))
+            else if (op == DEL_COMMAND)
             {
-                SWSS_LOG_ERROR("Failed to set ENI route for %s", eni.c_str());
-                result = DASH_RESULT_FAILURE;
-            }
-            it = consumer.m_toSync.erase(it);
-            writeResultToDB(dash_eni_route_result_table_, eni, result);
-        }
-        else if (op == DEL_COMMAND)
-        {
-            if (removeEniRoute(eni))
-            {
-                removeResultFromDB(dash_eni_route_result_table_, eni);
+                if (removeEniRoute(eni))
+                {
+                    removeResultFromDB(dash_eni_route_result_table_, eni);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Failed to remove ENI route for %s", eni.c_str());
+                }
+                it = consumer.m_toSync.erase(it);
             }
             else
             {
-                SWSS_LOG_ERROR("Failed to remove ENI route for %s", eni.c_str());
+                SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
+                it = consumer.m_toSync.erase(it);
             }
-            it = consumer.m_toSync.erase(it);
         }
-        else
+        catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
+            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, eni.c_str(), e.what());
             it = consumer.m_toSync.erase(it);
         }
     }

@@ -22,6 +22,7 @@ namespace mock_orch_test
                 { APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, (Orch **)&m_dashPortMapOrch }
             };
             void SetDashTable(std::string table_name, std::string key, const google::protobuf::Message &message, bool set = true, bool expect_empty = true);
+            void SetDashTableRaw(std::string table_name, std::string key, const std::vector<swss::FieldValueTuple> &fvs, bool set = true, bool expect_empty = true);
             dash::appliance::Appliance BuildApplianceEntry();
             void CreateApplianceEntry();
             void AddVnetEncapRoutingType(dash::route_type::EncapType encap_type);

@@ -975,4 +975,40 @@ namespace dashorch_test
         // Second attempt — succeeds
         SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, dash::appliance::Appliance(), false, true);
     }
+
+    TEST_F(DashOrchTest, MissingProtobufAppliance)
+    {
+        // SET with no pb field — should be consumed without creating anything
+        EXPECT_CALL(*mock_sai_dash_appliance_api, create_dash_appliance).Times(0);
+        SetDashTableRaw(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, {}, true, true);
+    }
+
+    TEST_F(DashOrchTest, InvalidProtobufAppliance)
+    {
+        // SET with garbage pb field — should be consumed without creating anything
+        EXPECT_CALL(*mock_sai_dash_appliance_api, create_dash_appliance).Times(0);
+        SetDashTableRaw(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, {{ "pb", "not_valid_protobuf" }}, true, true);
+    }
+
+    TEST_F(DashOrchTest, MissingProtobufEni)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+        EXPECT_CALL(*mock_sai_dash_eni_api, create_eni).Times(0);
+        SetDashTableRaw(APP_DASH_ENI_TABLE_NAME, eni1, {}, true, true);
+    }
+
+    TEST_F(DashOrchTest, MissingProtobufEniRoute)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+        SetDashTableRaw(APP_DASH_ENI_ROUTE_TABLE_NAME, eni1, {}, true, true);
+    }
+
+    TEST_F(DashOrchTest, InvalidRoutingTypeKey)
+    {
+        // Invalid routing type string that cannot be parsed
+        SetDashTableRaw(APP_DASH_ROUTING_TYPE_TABLE_NAME, "INVALID_NOT_A_REAL_TYPE",
+                        {{ "pb", dash::route_type::RouteType().SerializeAsString() }}, true, true);
+    }
 }

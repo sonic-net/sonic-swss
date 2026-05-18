@@ -285,4 +285,50 @@ namespace dashrouteorch_test
     {
         SetDashTable(APP_DASH_ROUTE_GROUP_TABLE_NAME, route_group1, dash::route_group::RouteGroup(), false, true);
     }
+
+    TEST_F(DashRouteOrchTest, MissingProtobufOutboundRoute)
+    {
+        AddOutboundRoutingGroup();
+        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries).Times(0);
+        SetDashTableRaw(APP_DASH_ROUTE_TABLE_NAME, route_group1 + ":1.2.3.4/32", {}, true, true);
+    }
+
+    TEST_F(DashRouteOrchTest, InvalidProtobufOutboundRoute)
+    {
+        AddOutboundRoutingGroup();
+        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries).Times(0);
+        SetDashTableRaw(APP_DASH_ROUTE_TABLE_NAME, route_group1 + ":1.2.3.4/32", {{ "pb", "garbage" }}, true, true);
+    }
+
+    TEST_F(DashRouteOrchTest, MissingProtobufInboundRoute)
+    {
+        EXPECT_CALL(*mock_sai_dash_inbound_routing_api, create_inbound_routing_entries).Times(0);
+        SetDashTableRaw(APP_DASH_ROUTE_RULE_TABLE_NAME, eni1 + ":5555:10.0.0.0/24", {}, true, true);
+    }
+
+    TEST_F(DashRouteOrchTest, MissingProtobufRouteGroup)
+    {
+        SetDashTableRaw(APP_DASH_ROUTE_GROUP_TABLE_NAME, route_group1, {}, true, true);
+    }
+
+    TEST_F(DashRouteOrchTest, InvalidKeyOutboundRoute)
+    {
+        // Invalid keys should be caught per-item and consumed without throwing.
+        AddOutboundRoutingGroup();
+        dash::route::Route route = dash::route::Route();
+        route.set_routing_type(dash::route_type::ROUTING_TYPE_VNET);
+        route.set_vnet(vnet1);
+        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries).Times(0);
+        EXPECT_NO_THROW(
+            SetDashTable(APP_DASH_ROUTE_TABLE_NAME, route_group1 + ":not_an_ip", route, true, true));
+    }
+
+    TEST_F(DashRouteOrchTest, InvalidKeyInboundRoute)
+    {
+        // Invalid keys should be caught per-item and consumed without throwing.
+        dash::route_rule::RouteRule rule = dash::route_rule::RouteRule();
+        EXPECT_CALL(*mock_sai_dash_inbound_routing_api, create_inbound_routing_entries).Times(0);
+        EXPECT_NO_THROW(
+            SetDashTable(APP_DASH_ROUTE_RULE_TABLE_NAME, eni1 + ":not_a_vni:10.0.0.0/24", rule, true, true));
+    }
 }

@@ -293,6 +293,7 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
+    const char *table_name = APP_DASH_ROUTE_TABLE_NAME;
     auto it = consumer.m_toSync.begin();
     uint32_t result;
     while (it != consumer.m_toSync.end())
@@ -303,72 +304,82 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
         while (it != consumer.m_toSync.end())
         {
             KeyOpFieldsValuesTuple tuple = it->second;
-            const string& key = kfvKey(tuple);
-            auto op = kfvOp(tuple);
-            auto rc = toBulk.emplace(std::piecewise_construct,
-                    std::forward_as_tuple(key, op),
-                    std::forward_as_tuple());
-            bool inserted = rc.second;
-            auto &ctxt = rc.first->second;
-            result = DASH_RESULT_SUCCESS;
+            string key = kfvKey(tuple);
+            string op = kfvOp(tuple);
 
-            if (!inserted)
+            try
             {
-                ctxt.clear();
-            }
+                auto rc = toBulk.emplace(std::piecewise_construct,
+                        std::forward_as_tuple(key, op),
+                        std::forward_as_tuple());
+                bool inserted = rc.second;
+                auto &ctxt = rc.first->second;
+                result = DASH_RESULT_SUCCESS;
 
-            string& route_group = ctxt.route_group;
-            IpPrefix& destination = ctxt.destination;
-
-            vector<string> keys = tokenize(key, ':');
-            route_group = keys[0];
-            string ip_str;
-            size_t pos = key.find(":", route_group.length());
-            ip_str = key.substr(pos + 1);
-            destination = IpPrefix(ip_str);
-
-            if (op == SET_COMMAND)
-            {
-                if (!parsePbMessage(kfvFieldsValues(tuple), ctxt.metadata))
+                if (!inserted)
                 {
-                    SWSS_LOG_WARN("Requires protobuff at OutboundRouting :%s", key.c_str());
-                    it = consumer.m_toSync.erase(it);
-                    continue;
+                    ctxt.clear();
                 }
-                if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_UNSPECIFIED)
+
+                string& route_group = ctxt.route_group;
+                IpPrefix& destination = ctxt.destination;
+
+                vector<string> keys = tokenize(key, ':');
+                route_group = keys[0];
+                string ip_str;
+                size_t pos = key.find(":", route_group.length());
+                ip_str = key.substr(pos + 1);
+                destination = IpPrefix(ip_str);
+
+                if (op == SET_COMMAND)
                 {
-                    // Route::action_type is deprecated in favor of Route::routing_type. For messages still using the old action_type field,
-                    // copy it to the new routing_type field. All subsequent operations will use the new field.
-                    #pragma GCC diagnostic push
-                    #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-                    ctxt.metadata.set_routing_type(ctxt.metadata.action_type());
-                    #pragma GCC diagnostic pop
+                    if (!parsePbMessage(kfvFieldsValues(tuple), ctxt.metadata))
+                    {
+                        SWSS_LOG_WARN("Requires protobuff at OutboundRouting :%s", key.c_str());
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
+                    if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_UNSPECIFIED)
+                    {
+                        // Route::action_type is deprecated in favor of Route::routing_type. For messages still using the old action_type field,
+                        // copy it to the new routing_type field. All subsequent operations will use the new field.
+                        #pragma GCC diagnostic push
+                        #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+                        ctxt.metadata.set_routing_type(ctxt.metadata.action_type());
+                        #pragma GCC diagnostic pop
+                    }
+                    if (addOutboundRouting(key, ctxt, result))
+                    {
+                        it = consumer.m_toSync.erase(it);
+                        writeResultToDB(dash_route_result_table_, key, result);
+                    }
+                    else
+                    {
+                        it++;
+                    }
                 }
-                if (addOutboundRouting(key, ctxt, result))
+                else if (op == DEL_COMMAND)
                 {
-                    it = consumer.m_toSync.erase(it);
-                    writeResultToDB(dash_route_result_table_, key, result);
+                    if (removeOutboundRouting(route_group, destination, ctxt))
+                    {
+                        it = consumer.m_toSync.erase(it);
+                    }
+                    else
+                    {
+                        it++;
+                    }
                 }
                 else
                 {
-                    it++;
-                }
-            }
-            else if (op == DEL_COMMAND)
-            {
-                if (removeOutboundRouting(route_group, destination, ctxt))
-                {
+                    SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
                     it = consumer.m_toSync.erase(it);
                 }
-                else
-                {
-                    it++;
-                }
             }
-            else
+            catch (const std::exception& e)
             {
-                SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
+                SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, key.c_str(), e.what());
                 it = consumer.m_toSync.erase(it);
+                continue;
             }
         }
 
@@ -380,40 +391,49 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
             KeyOpFieldsValuesTuple t = it_prev->second;
             string key = kfvKey(t);
             string op = kfvOp(t);
-            result = DASH_RESULT_SUCCESS;
-            auto found = toBulk.find(make_pair(key, op));
-            if (found == toBulk.end())
-            {
-                it_prev++;
-                continue;
-            }
 
-            const auto& ctxt = found->second;
-            const auto& object_statuses = ctxt.object_statuses;
-            if (object_statuses.empty())
+            try
             {
-                SWSS_LOG_ERROR("No bulk status returned for outbound routing entry %s", key.c_str());
-                result = DASH_RESULT_FAILURE;
-                writeResultToDB(dash_route_result_table_, key, result);
-                it_prev = consumer.m_toSync.erase(it_prev);
-                continue;
-            }
-
-            if (op == SET_COMMAND)
-            {
-                if (!addOutboundRoutingPost(key, ctxt))
+                result = DASH_RESULT_SUCCESS;
+                auto found = toBulk.find(make_pair(key, op));
+                if (found == toBulk.end())
                 {
+                    it_prev++;
+                    continue;
+                }
+
+                const auto& ctxt = found->second;
+                const auto& object_statuses = ctxt.object_statuses;
+                if (object_statuses.empty())
+                {
+                    SWSS_LOG_ERROR("No bulk status returned for outbound routing entry %s", key.c_str());
                     result = DASH_RESULT_FAILURE;
+                    writeResultToDB(dash_route_result_table_, key, result);
+                    it_prev = consumer.m_toSync.erase(it_prev);
+                    continue;
                 }
-                it_prev = consumer.m_toSync.erase(it_prev);
-                writeResultToDB(dash_route_result_table_, key, result);
-            }
-            else if (op == DEL_COMMAND)
-            {
-                if (removeOutboundRoutingPost(key, ctxt))
+
+                if (op == SET_COMMAND)
                 {
-                    removeResultFromDB(dash_route_result_table_, key);
+                    if (!addOutboundRoutingPost(key, ctxt))
+                    {
+                        result = DASH_RESULT_FAILURE;
+                    }
+                    it_prev = consumer.m_toSync.erase(it_prev);
+                    writeResultToDB(dash_route_result_table_, key, result);
                 }
+                else if (op == DEL_COMMAND)
+                {
+                    if (removeOutboundRoutingPost(key, ctxt))
+                    {
+                        removeResultFromDB(dash_route_result_table_, key);
+                    }
+                    it_prev = consumer.m_toSync.erase(it_prev);
+                }
+            }
+            catch (const std::exception& e)
+            {
+                SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", table_name, key.c_str(), e.what());
                 it_prev = consumer.m_toSync.erase(it_prev);
             }
         }
@@ -568,6 +588,7 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
+    const char *table_name = APP_DASH_ROUTE_RULE_TABLE_NAME;
     auto it = consumer.m_toSync.begin();
     uint32_t result;
     while (it != consumer.m_toSync.end())
@@ -578,90 +599,100 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
         while (it != consumer.m_toSync.end())
         {
             KeyOpFieldsValuesTuple tuple = it->second;
-            const string& key = kfvKey(tuple);
-            auto op = kfvOp(tuple);
-            auto rc = toBulk.emplace(std::piecewise_construct,
-                    std::forward_as_tuple(key, op),
-                    std::forward_as_tuple());
-            bool inserted = rc.second;
-            auto &ctxt = rc.first->second;
-            result = DASH_RESULT_SUCCESS;
+            string key = kfvKey(tuple);
+            string op = kfvOp(tuple);
 
-            if (!inserted)
+            try
             {
-                ctxt.clear();
-            }
+                auto rc = toBulk.emplace(std::piecewise_construct,
+                        std::forward_as_tuple(key, op),
+                        std::forward_as_tuple());
+                bool inserted = rc.second;
+                auto &ctxt = rc.first->second;
+                result = DASH_RESULT_SUCCESS;
 
-            string& eni = ctxt.eni;
-            uint32_t& vni = ctxt.vni;
-            IpAddress& sip = ctxt.sip;
-            IpAddress& sip_mask = ctxt.sip_mask;
-            uint32_t& priority = ctxt.priority;
-            IpPrefix prefix;
-
-            // expect key in format {{eni}}:{{vni}}:{{prefix/tag}}:{{priority}}
-            size_t first_colon = key.find(":");
-            size_t second_colon = key.find(":", first_colon == string::npos ? first_colon : first_colon + 1);
-            eni = key.substr(0, first_colon);
-            vni = to_uint<uint32_t>(key.substr(first_colon + 1, second_colon - first_colon - 1));
-
-            priority = 0;
-
-            // the key format was changed to include priority field. in case old key format is used where the priority is not present, we should not crash and default to priority 0.
-            string prefix_and_optional_priority = key.substr(second_colon + 1);
-            string ip_str = prefix_and_optional_priority;
-            size_t last_colon = prefix_and_optional_priority.rfind(':');
-            if (last_colon != string::npos)
-            {
-                string maybe_priority = prefix_and_optional_priority.substr(last_colon + 1);
-                bool is_priority = !maybe_priority.empty() &&
-                                   all_of(maybe_priority.begin(), maybe_priority.end(),
-                                          [](unsigned char c)
-                                          { return std::isdigit(c); });
-                if (is_priority)
+                if (!inserted)
                 {
-                    priority = to_uint<uint32_t>(maybe_priority);
-                    ip_str = prefix_and_optional_priority.substr(0, last_colon);
+                    ctxt.clear();
                 }
-            }
-            prefix = IpPrefix(ip_str);
 
-            sip = prefix.getIp();
-            sip_mask = prefix.getMask();
+                string& eni = ctxt.eni;
+                uint32_t& vni = ctxt.vni;
+                IpAddress& sip = ctxt.sip;
+                IpAddress& sip_mask = ctxt.sip_mask;
+                uint32_t& priority = ctxt.priority;
+                IpPrefix prefix;
 
-            if (op == SET_COMMAND)
-            {
-                if (!parsePbMessage(kfvFieldsValues(tuple), ctxt.metadata))
+                // expect key in format {{eni}}:{{vni}}:{{prefix/tag}}:{{priority}}
+                size_t first_colon = key.find(":");
+                size_t second_colon = key.find(":", first_colon == string::npos ? first_colon : first_colon + 1);
+                eni = key.substr(0, first_colon);
+                vni = to_uint<uint32_t>(key.substr(first_colon + 1, second_colon - first_colon - 1));
+
+                priority = 0;
+
+                // the key format was changed to include priority field. in case old key format is used where the priority is not present, we should not crash and default to priority 0.
+                string prefix_and_optional_priority = key.substr(second_colon + 1);
+                string ip_str = prefix_and_optional_priority;
+                size_t last_colon = prefix_and_optional_priority.rfind(':');
+                if (last_colon != string::npos)
                 {
-                    SWSS_LOG_WARN("Requires protobuff at InboundRouting :%s", key.c_str());
-                    it = consumer.m_toSync.erase(it);
-                    continue;
+                    string maybe_priority = prefix_and_optional_priority.substr(last_colon + 1);
+                    bool is_priority = !maybe_priority.empty() &&
+                                       all_of(maybe_priority.begin(), maybe_priority.end(),
+                                              [](unsigned char c)
+                                              { return std::isdigit(c); });
+                    if (is_priority)
+                    {
+                        priority = to_uint<uint32_t>(maybe_priority);
+                        ip_str = prefix_and_optional_priority.substr(0, last_colon);
+                    }
                 }
-                if (addInboundRouting(key, ctxt, result))
+                prefix = IpPrefix(ip_str);
+
+                sip = prefix.getIp();
+                sip_mask = prefix.getMask();
+
+                if (op == SET_COMMAND)
                 {
-                    it = consumer.m_toSync.erase(it);
-                    writeResultToDB(dash_route_rule_result_table_, key, result);
+                    if (!parsePbMessage(kfvFieldsValues(tuple), ctxt.metadata))
+                    {
+                        SWSS_LOG_WARN("Requires protobuff at InboundRouting :%s", key.c_str());
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
+                    if (addInboundRouting(key, ctxt, result))
+                    {
+                        it = consumer.m_toSync.erase(it);
+                        writeResultToDB(dash_route_rule_result_table_, key, result);
+                    }
+                    else
+                    {
+                        it++;
+                    }
+                }
+                else if (op == DEL_COMMAND)
+                {
+                    if (removeInboundRouting(key, ctxt))
+                    {
+                        it = consumer.m_toSync.erase(it);
+                    }
+                    else
+                    {
+                        it++;
+                    }
                 }
                 else
                 {
-                    it++;
-                }
-            }
-            else if (op == DEL_COMMAND)
-            {
-                if (removeInboundRouting(key, ctxt))
-                {
+                    SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
                     it = consumer.m_toSync.erase(it);
                 }
-                else
-                {
-                    it++;
-                }
             }
-            else
+            catch (const std::exception& e)
             {
-                SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
+                SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, key.c_str(), e.what());
                 it = consumer.m_toSync.erase(it);
+                continue;
             }
         }
 
@@ -673,40 +704,49 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
             KeyOpFieldsValuesTuple t = it_prev->second;
             string key = kfvKey(t);
             string op = kfvOp(t);
-            result = DASH_RESULT_SUCCESS;
-            auto found = toBulk.find(make_pair(key, op));
-            if (found == toBulk.end())
-            {
-                it_prev++;
-                continue;
-            }
 
-            const auto& ctxt = found->second;
-            const auto& object_statuses = ctxt.object_statuses;
-            if (object_statuses.empty())
+            try
             {
-                SWSS_LOG_ERROR("No bulk status returned for inbound routing entry %s", key.c_str());
-                result = DASH_RESULT_FAILURE;
-                writeResultToDB(dash_route_rule_result_table_, key, result);
-                it_prev = consumer.m_toSync.erase(it_prev);
-                continue;
-            }
-
-            if (op == SET_COMMAND)
-            {
-                if (!addInboundRoutingPost(key, ctxt))
+                result = DASH_RESULT_SUCCESS;
+                auto found = toBulk.find(make_pair(key, op));
+                if (found == toBulk.end())
                 {
+                    it_prev++;
+                    continue;
+                }
+
+                const auto& ctxt = found->second;
+                const auto& object_statuses = ctxt.object_statuses;
+                if (object_statuses.empty())
+                {
+                    SWSS_LOG_ERROR("No bulk status returned for inbound routing entry %s", key.c_str());
                     result = DASH_RESULT_FAILURE;
+                    writeResultToDB(dash_route_rule_result_table_, key, result);
+                    it_prev = consumer.m_toSync.erase(it_prev);
+                    continue;
                 }
-                it_prev = consumer.m_toSync.erase(it_prev);
-                writeResultToDB(dash_route_rule_result_table_, key, result);
-            }
-            else if (op == DEL_COMMAND)
-            {
-                if (removeInboundRoutingPost(key, ctxt))
+
+                if (op == SET_COMMAND)
                 {
-                    removeResultFromDB(dash_route_rule_result_table_, key);
+                    if (!addInboundRoutingPost(key, ctxt))
+                    {
+                        result = DASH_RESULT_FAILURE;
+                    }
+                    it_prev = consumer.m_toSync.erase(it_prev);
+                    writeResultToDB(dash_route_rule_result_table_, key, result);
                 }
+                else if (op == DEL_COMMAND)
+                {
+                    if (removeInboundRoutingPost(key, ctxt))
+                    {
+                        removeResultFromDB(dash_route_rule_result_table_, key);
+                    }
+                    it_prev = consumer.m_toSync.erase(it_prev);
+                }
+            }
+            catch (const std::exception& e)
+            {
+                SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", table_name, key.c_str(), e.what());
                 it_prev = consumer.m_toSync.erase(it_prev);
             }
         }
@@ -836,6 +876,7 @@ void DashRouteOrch::doTaskRouteGroupTable(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
+    const char *table_name = APP_DASH_ROUTE_GROUP_TABLE_NAME;
     auto it = consumer.m_toSync.begin();
     uint32_t result;
     while (it != consumer.m_toSync.end())
@@ -843,35 +884,44 @@ void DashRouteOrch::doTaskRouteGroupTable(ConsumerBase& consumer)
         auto t = it->second;
         string route_group = kfvKey(t);
         string op = kfvOp(t);
-        result = DASH_RESULT_SUCCESS;
-        if (op == SET_COMMAND)
-        {
-            dash::route_group::RouteGroup entry;
-            if (!parsePbMessage(kfvFieldsValues(t), entry))
-            {
-                SWSS_LOG_WARN("Requires protobuf at RouteGroup :%s", route_group.c_str());
-                it = consumer.m_toSync.erase(it);
-                continue;
-            }
 
-            if (!addRouteGroup(route_group, entry))
-            {
-                result = DASH_RESULT_FAILURE;
-            }
-            it = consumer.m_toSync.erase(it);
-            writeResultToDB(dash_route_group_result_table_, route_group, result, entry.version());
-        }
-        else if (op == DEL_COMMAND)
+        try
         {
-            if (removeRouteGroup(route_group))
+            result = DASH_RESULT_SUCCESS;
+            if (op == SET_COMMAND)
             {
-                removeResultFromDB(dash_route_group_result_table_, route_group);
+                dash::route_group::RouteGroup entry;
+                if (!parsePbMessage(kfvFieldsValues(t), entry))
+                {
+                    SWSS_LOG_WARN("Requires protobuf at RouteGroup :%s", route_group.c_str());
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+
+                if (!addRouteGroup(route_group, entry))
+                {
+                    result = DASH_RESULT_FAILURE;
+                }
+                it = consumer.m_toSync.erase(it);
+                writeResultToDB(dash_route_group_result_table_, route_group, result, entry.version());
             }
-            it = consumer.m_toSync.erase(it);
+            else if (op == DEL_COMMAND)
+            {
+                if (removeRouteGroup(route_group))
+                {
+                    removeResultFromDB(dash_route_group_result_table_, route_group);
+                }
+                it = consumer.m_toSync.erase(it);
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
+                it = consumer.m_toSync.erase(it);
+            }
         }
-        else
+        catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
+            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, route_group.c_str(), e.what());
             it = consumer.m_toSync.erase(it);
         }
     }

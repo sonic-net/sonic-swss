@@ -6,6 +6,7 @@
 #include "pbutils.h"
 #include "directory.h"
 #include "saihelper.h"
+#include <exception>
 
 extern size_t gMaxBulkSize;
 extern sai_dash_tunnel_api_t* sai_dash_tunnel_api;
@@ -92,6 +93,7 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
     SWSS_LOG_ENTER();
 
     const auto& tn = consumer.getTableName();
+    const char *table_name = APP_DASH_TUNNEL_TABLE_NAME;
     uint32_t result;
     SWSS_LOG_INFO("doTask: %s", tn.c_str());
     if (tn != APP_DASH_TUNNEL_TABLE_NAME)
@@ -111,48 +113,58 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
             swss::KeyOpFieldsValuesTuple t = it->second;
             std::string tunnel_name = kfvKey(t);
             std::string op = kfvOp(t);
-            auto rc = toBulk.emplace(std::piecewise_construct,
-                    std::forward_as_tuple(tunnel_name, op),
-                    std::forward_as_tuple());
-            bool inserted = rc.second;
-            auto& ctxt = rc.first->second;
-            result = DASH_RESULT_SUCCESS;
-            if (!inserted)
+
+            try
             {
-                ctxt.clear();
+                auto rc = toBulk.emplace(std::piecewise_construct,
+                        std::forward_as_tuple(tunnel_name, op),
+                        std::forward_as_tuple());
+                bool inserted = rc.second;
+                auto& ctxt = rc.first->second;
+                result = DASH_RESULT_SUCCESS;
+                if (!inserted)
+                {
+                    ctxt.clear();
+                }
+                if (op == SET_COMMAND)
+                {
+                    if (!parsePbMessage(kfvFieldsValues(t), ctxt.metadata))
+                    {
+                        SWSS_LOG_WARN("Requires protobuf at Tunnel :%s", tunnel_name.c_str());
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
+                    if (addTunnel(tunnel_name, ctxt, result))
+                    {
+                        it = consumer.m_toSync.erase(it);
+                        writeResultToDB(dash_tunnel_result_table_, tunnel_name, result);
+                    }
+                    else
+                    {
+                        it++;
+                    }
+                }
+                else if (op == DEL_COMMAND)
+                {
+                    if (removeTunnel(tunnel_name, ctxt))
+                    {
+                        /*
+                         * Postpone removal of result from result table until after
+                         * tunnel members are removed.
+                         */
+                        it = consumer.m_toSync.erase(it);
+                    }
+                    else
+                    {
+                        it++;
+                    }
+                }
             }
-            if (op == SET_COMMAND)
+            catch (const std::exception& e)
             {
-                if (!parsePbMessage(kfvFieldsValues(t), ctxt.metadata))
-                {
-                    SWSS_LOG_WARN("Requires protobuf at Tunnel :%s", tunnel_name.c_str());
-                    it = consumer.m_toSync.erase(it);
-                    continue;
-                }
-                if (addTunnel(tunnel_name, ctxt, result))
-                {
-                    it = consumer.m_toSync.erase(it);
-                    writeResultToDB(dash_tunnel_result_table_, tunnel_name, result);
-                }
-                else
-                {
-                    it++;
-                }
-            }
-            else if (op == DEL_COMMAND)
-            {
-                if (removeTunnel(tunnel_name, ctxt))
-                {
-                    /*
-                     * Postpone removal of result from result table until after
-                     * tunnel members are removed.
-                     */
-                    it = consumer.m_toSync.erase(it);
-                }
-                else
-                {
-                    it++;
-                }
+                SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, tunnel_name.c_str(), e.what());
+                it = consumer.m_toSync.erase(it);
+                continue;
             }
         }
 
@@ -166,60 +178,69 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
             swss::KeyOpFieldsValuesTuple t = it_prev->second;
             std::string tunnel_name = kfvKey(t);
             std::string op = kfvOp(t);
-            result = DASH_RESULT_SUCCESS;
-            auto found = toBulk.find(std::make_pair(tunnel_name, op));
-            if (found == toBulk.end())
-            {
-                it_prev++;
-                continue;
-            }
-            auto& ctxt = found->second;
 
-            if (op == SET_COMMAND)
+            try
             {
-                bool handled = addTunnelPost(tunnel_name, ctxt);
-                bool tunnel_created = !ctxt.tunnel_object_ids.empty() && ctxt.tunnel_object_ids.front() != SAI_NULL_OBJECT_ID;
-                if (handled)
-                {
-                    if (!tunnel_created)
-                    {
-                        result = DASH_RESULT_FAILURE;
-                    }
-                    it_prev = consumer.m_toSync.erase(it_prev);
-                    /*
-                     * The result should be written here only if the tunnel has
-                     * one endpoint. For more tunnel endpoints, we need to wait
-                     * until after tunnel members post-op unless tunnel creation
-                     * already failed.
-                     */
-                    if (ctxt.metadata.endpoints_size() == 1 || result == DASH_RESULT_FAILURE)
-                    {
-                        writeResultToDB(dash_tunnel_result_table_, tunnel_name,
-                                        result);
-                    }
-                }
-                else if (!ctxt.tunnel_member_object_ids.empty())
+                result = DASH_RESULT_SUCCESS;
+                auto found = toBulk.find(std::make_pair(tunnel_name, op));
+                if (found == toBulk.end())
                 {
                     it_prev++;
+                    continue;
                 }
-                else
+                auto& ctxt = found->second;
+
+                if (op == SET_COMMAND)
                 {
-                    SWSS_LOG_ERROR("Failed post-processing DASH tunnel %s", tunnel_name.c_str());
-                    result = DASH_RESULT_FAILURE;
+                    bool handled = addTunnelPost(tunnel_name, ctxt);
+                    bool tunnel_created = !ctxt.tunnel_object_ids.empty() && ctxt.tunnel_object_ids.front() != SAI_NULL_OBJECT_ID;
+                    if (handled)
+                    {
+                        if (!tunnel_created)
+                        {
+                            result = DASH_RESULT_FAILURE;
+                        }
+                        it_prev = consumer.m_toSync.erase(it_prev);
+                        /*
+                         * The result should be written here only if the tunnel has
+                         * one endpoint. For more tunnel endpoints, we need to wait
+                         * until after tunnel members post-op unless tunnel creation
+                         * already failed.
+                         */
+                        if (ctxt.metadata.endpoints_size() == 1 || result == DASH_RESULT_FAILURE)
+                        {
+                            writeResultToDB(dash_tunnel_result_table_, tunnel_name,
+                                            result);
+                        }
+                    }
+                    else if (!ctxt.tunnel_member_object_ids.empty())
+                    {
+                        it_prev++;
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed post-processing DASH tunnel %s", tunnel_name.c_str());
+                        result = DASH_RESULT_FAILURE;
+                        it_prev = consumer.m_toSync.erase(it_prev);
+                        writeResultToDB(dash_tunnel_result_table_, tunnel_name, result);
+                    }
+                }
+                else if (op == DEL_COMMAND)
+                {
+                    if (removeTunnelPost(tunnel_name, ctxt))
+                    {
+                        removeResultFromDB(dash_tunnel_result_table_, tunnel_name);
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed post-processing DASH tunnel removal %s", tunnel_name.c_str());
+                    }
                     it_prev = consumer.m_toSync.erase(it_prev);
-                    writeResultToDB(dash_tunnel_result_table_, tunnel_name, result);
                 }
             }
-            else if (op == DEL_COMMAND)
+            catch (const std::exception& e)
             {
-                if (removeTunnelPost(tunnel_name, ctxt))
-                {
-                    removeResultFromDB(dash_tunnel_result_table_, tunnel_name);
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Failed post-processing DASH tunnel removal %s", tunnel_name.c_str());
-                }
+                SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", table_name, tunnel_name.c_str(), e.what());
                 it_prev = consumer.m_toSync.erase(it_prev);
             }
         }
@@ -232,31 +253,40 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
             swss::KeyOpFieldsValuesTuple t = it_prev->second;
             std::string tunnel_name = kfvKey(t);
             std::string op = kfvOp(t);
-            result = DASH_RESULT_SUCCESS;
-            auto found = toBulk.find(std::make_pair(tunnel_name, op));
-            if (found == toBulk.end())
-            {
-                it_prev++;
-                continue;
-            }
-            auto& ctxt = found->second;
 
-            if (op == SET_COMMAND)
+            try
             {
-                if (!addTunnelMemberPost(tunnel_name, ctxt))
+                result = DASH_RESULT_SUCCESS;
+                auto found = toBulk.find(std::make_pair(tunnel_name, op));
+                if (found == toBulk.end())
                 {
-                    SWSS_LOG_ERROR("Failed post-processing DASH tunnel members for %s", tunnel_name.c_str());
-                    result = DASH_RESULT_FAILURE;
+                    it_prev++;
+                    continue;
                 }
-                it_prev = consumer.m_toSync.erase(it_prev);
-                /*
-                 * Write result for tunnels with more than one endpoint.
-                 */
-                writeResultToDB(dash_tunnel_result_table_, tunnel_name, result);
+                auto& ctxt = found->second;
+
+                if (op == SET_COMMAND)
+                {
+                    if (!addTunnelMemberPost(tunnel_name, ctxt))
+                    {
+                        SWSS_LOG_ERROR("Failed post-processing DASH tunnel members for %s", tunnel_name.c_str());
+                        result = DASH_RESULT_FAILURE;
+                    }
+                    it_prev = consumer.m_toSync.erase(it_prev);
+                    /*
+                     * Write result for tunnels with more than one endpoint.
+                     */
+                    writeResultToDB(dash_tunnel_result_table_, tunnel_name, result);
+                }
+                else if (op == DEL_COMMAND)
+                {
+                    // We should never get here
+                    it_prev = consumer.m_toSync.erase(it_prev);
+                }
             }
-            else if (op == DEL_COMMAND)
+            catch (const std::exception& e)
             {
-                // We should never get here
+                SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", table_name, tunnel_name.c_str(), e.what());
                 it_prev = consumer.m_toSync.erase(it_prev);
             }
         }

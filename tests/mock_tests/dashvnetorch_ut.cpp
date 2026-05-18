@@ -233,4 +233,29 @@ namespace dashvnetorch_test
         vnet.set_vni(5555);
         SetDashTable(APP_DASH_VNET_TABLE_NAME, "VNET_1", vnet, true, true);
     }
+
+    TEST_F(DashVnetOrchTest, MissingProtobufVnet)
+    {
+        EXPECT_CALL(*mock_sai_dash_vnet_api, create_vnets).Times(0);
+        SetDashTableRaw(APP_DASH_VNET_TABLE_NAME, "VNET_TEST", {}, true, true);
+    }
+
+    TEST_F(DashVnetOrchTest, InvalidProtobufVnetMap)
+    {
+        EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries).Times(0);
+        CreateVnet();
+        SetDashTableRaw(APP_DASH_VNET_MAPPING_TABLE_NAME, vnet1 + ":1.2.3.4", {{ "pb", "garbage" }}, true, true);
+    }
+
+    TEST_F(DashVnetOrchTest, InvalidKeyVnetMap)
+    {
+        // Invalid keys should be caught per-item and consumed without throwing.
+        CreateVnet();
+        dash::vnet_mapping::VnetMapping vnet_map = dash::vnet_mapping::VnetMapping();
+        vnet_map.set_routing_type(dash::route_type::ROUTING_TYPE_VNET_ENCAP);
+        vnet_map.mutable_underlay_ip()->set_ipv4(swss::IpAddress("7.7.7.7").getV4Addr());
+        EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries).Times(0);
+        EXPECT_NO_THROW(
+            SetDashTable(APP_DASH_VNET_MAPPING_TABLE_NAME, vnet1 + ":not_an_ip", vnet_map, true, true));
+    }
 }

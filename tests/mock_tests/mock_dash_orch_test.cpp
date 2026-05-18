@@ -6,6 +6,11 @@ namespace mock_orch_test
 
     void MockDashOrchTest::SetDashTable(std::string table_name, std::string key, const google::protobuf::Message &message, bool set, bool expect_empty)
     {
+        SetDashTableRaw(table_name, key, { { "pb", message.SerializeAsString() } }, set, expect_empty);
+    }
+
+    void MockDashOrchTest::SetDashTableRaw(std::string table_name, std::string key, const std::vector<swss::FieldValueTuple> &fvs, bool set, bool expect_empty)
+    {
         auto it = dash_table_orch_map.find(table_name);
         if (it == dash_table_orch_map.end())
         {
@@ -17,8 +22,7 @@ namespace mock_orch_test
             new swss::ConsumerStateTable(m_app_db.get(), table_name),
             target_orch, table_name);
         std::string op = set ? SET_COMMAND : DEL_COMMAND;
-        consumer->addToSync(
-            swss::KeyOpFieldsValuesTuple(key, op, { { "pb", message.SerializeAsString() } }));
+        consumer->addToSync(swss::KeyOpFieldsValuesTuple(key, op, fvs));
         target_orch->doTask(*consumer.get());
 
         auto it2 = consumer->m_toSync.begin();
