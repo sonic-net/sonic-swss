@@ -58,19 +58,21 @@ DashRouteOrch::DashRouteOrch(DBConnector *db, vector<string> &tableName, DashOrc
     dash_route_group_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ROUTE_GROUP_TABLE_NAME);
 }
 
-bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkContext& ctxt)
+bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkContext& ctxt, uint32_t& result)
 {
     SWSS_LOG_ENTER();
 
     if (isRouteGroupBound(ctxt.route_group))
     {
         SWSS_LOG_WARN("Cannot add new route to route group %s as it is already bound", ctxt.route_group.c_str());
+        result = DASH_RESULT_FAILURE;
         return true;
     }
     sai_object_id_t route_group_oid = this->getRouteGroupOid(ctxt.route_group);
     if (route_group_oid == SAI_NULL_OBJECT_ID)
     {
         SWSS_LOG_ERROR("Route group %s not found for outbound routing entry %s", ctxt.route_group.c_str(), key.c_str());
+        result = DASH_RESULT_FAILURE;
         return true;
     }
 
@@ -82,6 +84,7 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
                        ctxt.metadata.vnet().c_str(),
                        key.c_str(),
                        routing_type_str.c_str());
+        result = DASH_RESULT_FAILURE;
         return true;
     }
     if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET_DIRECT &&
@@ -91,6 +94,7 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
                        ctxt.metadata.vnet_direct().vnet().c_str(),
                        key.c_str(),
                        routing_type_str.c_str());
+        result = DASH_RESULT_FAILURE;
         return true;
     }
 
@@ -106,6 +110,7 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
     if (it == sOutboundAction.end())
     {
         SWSS_LOG_ERROR("Routing type %s for outbound routing entry %s not allowed", routing_type_str.c_str(), key.c_str());
+        result = DASH_RESULT_FAILURE;
         return true;
     }
 
@@ -120,7 +125,7 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
     else if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET
         && ctxt.metadata.has_vnet()
         && !ctxt.metadata.vnet().empty())
-    {   
+    {
         outbound_routing_attr.id = SAI_OUTBOUND_ROUTING_ENTRY_ATTR_DST_VNET_ID;
         outbound_routing_attr.value.oid = gVnetNameToId[ctxt.metadata.vnet()];
         outbound_routing_attrs.push_back(outbound_routing_attr);
@@ -138,6 +143,7 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
         if (!to_sai(ctxt.metadata.vnet_direct().overlay_ip(), outbound_routing_attr.value.ipaddr))
         {
             SWSS_LOG_ERROR("Failed to convert overlay IP for outbound routing entry %s", key.c_str());
+            result = DASH_RESULT_FAILURE;
             return true;
         }
         outbound_routing_attrs.push_back(outbound_routing_attr);
@@ -146,6 +152,7 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
     {
         SWSS_LOG_ERROR("Routing type %s for outbound routing entry %s either invalid or missing required attributes",
                        dash::route_type::RoutingType_Name(ctxt.metadata.routing_type()).c_str(), key.c_str());
+        result = DASH_RESULT_FAILURE;
         return true;
     }
 
@@ -155,6 +162,7 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
         if (!to_sai(ctxt.metadata.underlay_sip(), outbound_routing_attr.value.ipaddr))
         {
             SWSS_LOG_ERROR("Failed to convert underlay SIP for outbound routing entry %s", key.c_str());
+            result = DASH_RESULT_FAILURE;
             return true;
         }
         outbound_routing_attrs.push_back(outbound_routing_attr);
@@ -179,6 +187,7 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
         if (tunnel_oid == SAI_NULL_OBJECT_ID)
         {
             SWSS_LOG_ERROR("Tunnel %s not found for outbound routing entry %s", ctxt.metadata.tunnel().c_str(), key.c_str());
+            result = DASH_RESULT_FAILURE;
             return true;
         }
         outbound_routing_attr.id = SAI_OUTBOUND_ROUTING_ENTRY_ATTR_DASH_TUNNEL_ID;
@@ -210,13 +219,13 @@ bool DashRouteOrch::addOutboundRoutingPost(const string& key, const OutboundRout
         SWSS_LOG_ERROR("Failed to create outbound routing entry for %s", key.c_str());
         if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
         {
-            return true;
+            return false;
         }
 
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, status);
         if (handle_status != task_success)
         {
-            return true;
+            return false;
         }
     }
 
@@ -269,13 +278,13 @@ bool DashRouteOrch::removeOutboundRoutingPost(const string& key, const OutboundR
     if (status == SAI_STATUS_NOT_EXECUTED)
     {
         SWSS_LOG_ERROR("Failed to remove outbound routing entry for %s: bulk operation was not executed", key.c_str());
-        return true;
+        return false;
     }
     task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, status);
     if (handle_status != task_success)
     {
         SWSS_LOG_ERROR("Failed to remove outbound routing entry for %s", key.c_str());
-        return true;
+        return false;
     }
     return true;
 }
@@ -335,10 +344,9 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
                     ctxt.metadata.set_routing_type(ctxt.metadata.action_type());
                     #pragma GCC diagnostic pop
                 }
-                if (addOutboundRouting(key, ctxt))
+                if (addOutboundRouting(key, ctxt, result))
                 {
                     it = consumer.m_toSync.erase(it);
-                    result = DASH_RESULT_FAILURE;
                     writeResultToDB(dash_route_result_table_, key, result);
                 }
                 else
@@ -412,18 +420,20 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
     }
 }
 
-bool DashRouteOrch::addInboundRouting(const string& key, InboundRoutingBulkContext& ctxt)
+bool DashRouteOrch::addInboundRouting(const string& key, InboundRoutingBulkContext& ctxt, uint32_t& result)
 {
     SWSS_LOG_ENTER();
 
     if (!dash_orch_->getEni(ctxt.eni))
     {
         SWSS_LOG_ERROR("ENI entry %s not found for inbound routing entry %s", ctxt.eni.c_str(), key.c_str());
+        result = DASH_RESULT_FAILURE;
         return true;
     }
     if (ctxt.metadata.has_vnet() && gVnetNameToId.find(ctxt.metadata.vnet()) == gVnetNameToId.end())
     {
         SWSS_LOG_ERROR("VNET %s not found for inbound routing entry %s", ctxt.metadata.vnet().c_str(), key.c_str());
+        result = DASH_RESULT_FAILURE;
         return true;
     }
 
@@ -487,13 +497,13 @@ bool DashRouteOrch::addInboundRoutingPost(const string& key, const InboundRoutin
         SWSS_LOG_ERROR("Failed to create inbound routing entry for %s", key.c_str());
         if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
         {
-            return true;
+            return false;
         }
 
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_INBOUND_ROUTING, status);
         if (handle_status != task_success)
         {
-            return true;
+            return false;
         }
     }
 
@@ -543,13 +553,13 @@ bool DashRouteOrch::removeInboundRoutingPost(const string& key, const InboundRou
     if (status == SAI_STATUS_NOT_EXECUTED)
     {
         SWSS_LOG_ERROR("Failed to remove inbound routing entry for %s: bulk operation was not executed", key.c_str());
-        return true;
+        return false;
     }
     task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_INBOUND_ROUTING, status);
     if (handle_status != task_success)
     {
         SWSS_LOG_ERROR("Failed to remove inbound routing entry for %s", key.c_str());
-        return true;
+        return false;
     }
     return true;
 }
@@ -627,10 +637,9 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
-                if (addInboundRouting(key, ctxt))
+                if (addInboundRouting(key, ctxt, result))
                 {
                     it = consumer.m_toSync.erase(it);
-                    result = DASH_RESULT_FAILURE;
                     writeResultToDB(dash_route_rule_result_table_, key, result);
                 }
                 else
@@ -722,7 +731,7 @@ bool DashRouteOrch::addRouteGroup(const string& route_group, const dash::route_g
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, status);
         if (handle_status != task_success)
         {
-            return true;
+            return false;
         }
     }
 
@@ -755,12 +764,12 @@ bool DashRouteOrch::removeRouteGroup(const string& route_group)
         SWSS_LOG_ERROR("Failed to remove route group %s", route_group.c_str());
         if (status == SAI_STATUS_OBJECT_IN_USE)
         {
-            return true;
+            return false;
         }
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, status);
         if (handle_status != task_success)
         {
-            return true;
+            return false;
         }
     }
 

@@ -196,7 +196,7 @@ bool DashMeterOrch::addMeterPolicy(const string& meter_policy, MeterPolicyContex
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_METER, status);
         if (handle_status != task_success)
         {
-            return true;
+            return false;
         }
     }
 
@@ -214,7 +214,7 @@ bool DashMeterOrch::removeMeterPolicy(const string& meter_policy)
     if (isMeterPolicyBound(meter_policy))
     {
         SWSS_LOG_ERROR("Cannot remove bound meter policy %s", meter_policy.c_str());
-        return true;
+        return false;
     }
 
     sai_object_id_t meter_policy_oid = getMeterPolicyOid(meter_policy);
@@ -228,7 +228,7 @@ bool DashMeterOrch::removeMeterPolicy(const string& meter_policy)
     if (rule_count != 0)
     {
         SWSS_LOG_INFO("Failed to remove meter policy %s due to rule count %d ", meter_policy.c_str(), rule_count);
-        return true;
+        return false;
     }
 
     sai_status_t status = sai_dash_meter_api->remove_meter_policy(meter_policy_oid);
@@ -238,7 +238,7 @@ bool DashMeterOrch::removeMeterPolicy(const string& meter_policy)
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_METER, status);
         if (handle_status != task_success)
         {
-            return true;
+            return false;
         }
     }
 
@@ -295,7 +295,7 @@ void DashMeterOrch::doTaskMeterPolicyTable(ConsumerBase& consumer)
 }
 
 
-bool DashMeterOrch::addMeterRule(const string& key, MeterRuleBulkContext& ctxt)
+bool DashMeterOrch::addMeterRule(const string& key, MeterRuleBulkContext& ctxt, uint32_t& result)
 {
     SWSS_LOG_ENTER();
 
@@ -309,6 +309,7 @@ bool DashMeterOrch::addMeterRule(const string& key, MeterRuleBulkContext& ctxt)
     if (isMeterPolicyBound(ctxt.meter_policy))
     {
         SWSS_LOG_WARN("Cannot add new rule %s to Meter policy %s as it is already bound", key.c_str(), ctxt.meter_policy.c_str());
+        result = DASH_RESULT_FAILURE;
         return true;
     }
 
@@ -316,6 +317,7 @@ bool DashMeterOrch::addMeterRule(const string& key, MeterRuleBulkContext& ctxt)
     if (meter_policy_oid == SAI_NULL_OBJECT_ID)
     {
         SWSS_LOG_ERROR("Meter policy %s not found for rule %s", ctxt.meter_policy.c_str(), key.c_str());
+        result = DASH_RESULT_FAILURE;
         return true;
     }
 
@@ -364,7 +366,7 @@ bool DashMeterOrch::addMeterRulePost(const string& key, const MeterRuleBulkConte
     if (id == SAI_NULL_OBJECT_ID)
     {
         SWSS_LOG_ERROR("Failed to create meter rule entry for %s", key.c_str());
-        return true;
+        return false;
     }
 
     meter_rule_entries_[key] = { id, ctxt.metadata, ctxt.meter_policy, ctxt.rule_num };
@@ -414,17 +416,16 @@ bool DashMeterOrch::removeMeterRulePost(const string& key, const MeterRuleBulkCo
     sai_status_t status = *it_status++;
     if (status != SAI_STATUS_SUCCESS)
     {
-        // Retry later if object has non-zero reference to it
         if (status == SAI_STATUS_NOT_EXECUTED)
         {
             SWSS_LOG_ERROR("Failed to remove meter rule entry for %s, dropping notification", key.c_str());
-            return true;
+            return false;
         }
         SWSS_LOG_ERROR("Failed to remove meter rule entry for %s", key.c_str());
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_METER, status);
         if (handle_status != task_success)
         {
-            return true;
+            return false;
         }
     }
 
@@ -436,12 +437,12 @@ bool DashMeterOrch::removeMeterRulePost(const string& key, const MeterRuleBulkCo
     return true;
 }
 
-
 void DashMeterOrch::doTaskMeterRuleTable(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
     auto it = consumer.m_toSync.begin();
+    uint32_t result;
 
     while (it != consumer.m_toSync.end())
     {
@@ -458,6 +459,7 @@ void DashMeterOrch::doTaskMeterRuleTable(ConsumerBase& consumer)
                     std::forward_as_tuple());
             bool inserted = rc.second;
             auto &ctxt = rc.first->second;
+            result = DASH_RESULT_SUCCESS;
 
             if (!inserted)
             {
@@ -482,8 +484,12 @@ void DashMeterOrch::doTaskMeterRuleTable(ConsumerBase& consumer)
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
-                if (addMeterRule(key, ctxt))
+                if (addMeterRule(key, ctxt, result))
                 {
+                    if (result == DASH_RESULT_FAILURE)
+                    {
+                        SWSS_LOG_ERROR("Failed to process meter rule %s", key.c_str());
+                    }
                     it = consumer.m_toSync.erase(it);
                 }
                 else

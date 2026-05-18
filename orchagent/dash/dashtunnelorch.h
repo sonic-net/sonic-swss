@@ -63,7 +63,7 @@ private:
     std::unique_ptr<swss::Table> dash_tunnel_result_table_;
 
     void doTask(ConsumerBase &consumer);
-    bool addTunnel(const std::string& tunnel_name, DashTunnelBulkContext& ctxt);
+    bool addTunnel(const std::string& tunnel_name, DashTunnelBulkContext& ctxt, uint32_t& result);
     bool addTunnelPost(const std::string& tunnel_name, DashTunnelBulkContext& ctxt);
     void addTunnelNextHops(const std::string& tunnel_name, DashTunnelBulkContext& ctxt);
     bool addTunnelNextHopsPost(const std::string& tunnel_name, DashTunnelBulkContext& ctxt, const bool tunnel_succeess);

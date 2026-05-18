@@ -85,11 +85,11 @@ private:
     // The following add/remove methods will return true if the provided key should be removed from the
     // consumer (i.e. task is done and no retries are required) and false otherwise.
     // Methods which only have one possible outcome will have return type void.
-    bool addVnet(const std::string& key, DashVnetBulkContext& ctxt);
+    bool addVnet(const std::string& key, DashVnetBulkContext& ctxt, uint32_t& result);
     bool addVnetPost(const std::string& key, const DashVnetBulkContext& ctxt);
     bool removeVnet(const std::string& key, DashVnetBulkContext& ctxt);
     bool removeVnetPost(const std::string& key, const DashVnetBulkContext& ctxt);
-    bool addOutboundCaToPa(const std::string& key, VnetMapBulkContext& ctxt);
+    bool addOutboundCaToPa(const std::string& key, VnetMapBulkContext& ctxt, uint32_t& result);
     bool addOutboundCaToPaPost(const std::string& key, const VnetMapBulkContext& ctxt);
     void removeOutboundCaToPa(const std::string& key, VnetMapBulkContext& ctxt);
     bool removeOutboundCaToPaPost(const std::string& key, const VnetMapBulkContext& ctxt);
@@ -97,7 +97,7 @@ private:
     bool addPaValidationPost(const std::string& key, const VnetMapBulkContext& ctxt);
     void removePaValidation(const std::string& key, DashVnetBulkContext& ctxt);
     bool removePaValidationPost(const std::string& key, const DashVnetBulkContext& ctxt);
-    bool addVnetMap(const std::string& key, VnetMapBulkContext& ctxt);
+    bool addVnetMap(const std::string& key, VnetMapBulkContext& ctxt, uint32_t& result);
     bool addVnetMapPost(const std::string& key, const VnetMapBulkContext& ctxt);
     bool removeVnetMap(const std::string& key, VnetMapBulkContext& ctxt);
     bool removeVnetMapPost(const std::string& key, const VnetMapBulkContext& ctxt);

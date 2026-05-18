@@ -129,10 +129,9 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
-                if (addTunnel(tunnel_name, ctxt))
+                if (addTunnel(tunnel_name, ctxt, result))
                 {
                     it = consumer.m_toSync.erase(it);
-                    result = DASH_RESULT_FAILURE;
                     writeResultToDB(dash_tunnel_result_table_, tunnel_name, result);
                 }
                 else
@@ -264,13 +263,14 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
     }
 }
 
-bool DashTunnelOrch::addTunnel(const std::string& tunnel_name, DashTunnelBulkContext& ctxt)
+bool DashTunnelOrch::addTunnel(const std::string& tunnel_name, DashTunnelBulkContext& ctxt, uint32_t& result)
 {
     SWSS_LOG_ENTER();
     auto dash_orch = gDirectory.get<DashOrch*>();
     if (!dash_orch->hasApplianceEntry())
     {
         SWSS_LOG_ERROR("DASH appliance entry not found, skipping DASH tunnel %s creation", tunnel_name.c_str());
+        result = DASH_RESULT_FAILURE;
         return true;
     }
     std::vector<sai_attribute_t> tunnel_attrs;
@@ -299,6 +299,7 @@ bool DashTunnelOrch::addTunnel(const std::string& tunnel_name, DashTunnelBulkCon
             break;
         default:
             SWSS_LOG_ERROR("Unsupported encap type %d", ctxt.metadata.encap_type());
+            result = DASH_RESULT_FAILURE;
             return remove_from_consumer;
     }
     tunnel_attrs.push_back(tunnel_attr);
@@ -493,7 +494,7 @@ bool DashTunnelOrch::removeTunnelPost(const std::string& tunnel_name, const Dash
     bool remove_from_consumer = removeTunnelEndpointsPost(tunnel_name, ctxt);
     if (!remove_from_consumer)
     {
-        // If endpoint removal requires a retry, exit immediately since the tunnel can't be deleted if endpoints still exist
+        // If endpoint removal failed, exit immediately since the tunnel can't be deleted if endpoints still exist
         return remove_from_consumer;
     }
 
@@ -509,8 +510,7 @@ bool DashTunnelOrch::removeTunnelPost(const std::string& tunnel_name, const Dash
     {
         if (status == SAI_STATUS_OBJECT_IN_USE)
         {
-            // Retry later if object has non-zero reference to it
-            SWSS_LOG_WARN("DASH tunnel %s is in use, cannot remove", tunnel_name.c_str());
+            SWSS_LOG_ERROR("DASH tunnel %s is in use, cannot remove", tunnel_name.c_str());
             remove_from_consumer = false;
             return remove_from_consumer;
         }

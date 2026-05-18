@@ -48,12 +48,12 @@ public:
 private:
     void doTask(ConsumerBase &consumer);
     void doTaskPortMapTable(ConsumerBase &consumer);
-    bool addPortMap(const std::string &port_map_id, DashPortMapBulkContext &ctxt);
+    bool addPortMap(const std::string &port_map_id, DashPortMapBulkContext &ctxt, uint32_t& result);
     bool addPortMapPost(const std::string &port_map_id, DashPortMapBulkContext &ctxt);
     bool removePortMap(const std::string &port_map_id, DashPortMapBulkContext &ctxt);
     bool removePortMapPost(const std::string &port_map_id, DashPortMapBulkContext &ctxt);
     void doTaskPortMapRangeTable(ConsumerBase &consumer);
-    bool addPortMapRange(DashPortMapRangeBulkContext &ctxt);
+    bool addPortMapRange(DashPortMapRangeBulkContext &ctxt, uint32_t& result);
     bool addPortMapRangePost(DashPortMapRangeBulkContext &ctxt);
     bool removePortMapRange(DashPortMapRangeBulkContext &ctxt);
     bool removePortMapRangePost(DashPortMapRangeBulkContext &ctxt);

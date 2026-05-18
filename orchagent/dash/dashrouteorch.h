@@ -78,11 +78,11 @@ private:
     void doTaskRouteTable(ConsumerBase &consumer);
     void doTaskRouteRuleTable(ConsumerBase &consumer);
     void doTaskRouteGroupTable(ConsumerBase &consumer);
-    bool addOutboundRouting(const std::string& key, OutboundRoutingBulkContext& ctxt);
+    bool addOutboundRouting(const std::string& key, OutboundRoutingBulkContext& ctxt, uint32_t& result);
     bool addOutboundRoutingPost(const std::string& key, const OutboundRoutingBulkContext& ctxt);
     bool removeOutboundRouting(const std::string& route_group, const swss::IpPrefix& destination, OutboundRoutingBulkContext& ctxt);
     bool removeOutboundRoutingPost(const std::string& key, const OutboundRoutingBulkContext& ctxt);
-    bool addInboundRouting(const std::string& key, InboundRoutingBulkContext& ctxt);
+    bool addInboundRouting(const std::string& key, InboundRoutingBulkContext& ctxt, uint32_t& result);
     bool addInboundRoutingPost(const std::string& key, const InboundRoutingBulkContext& ctxt);
     bool removeInboundRouting(const std::string& key, InboundRoutingBulkContext& ctxt);
     bool removeInboundRoutingPost(const std::string& key, const InboundRoutingBulkContext& ctxt);

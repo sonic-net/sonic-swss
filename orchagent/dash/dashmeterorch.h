@@ -85,7 +85,7 @@ private:
     sai_ip_addr_family_t getMeterPolicyAddrFamily(const std::string& meter_policy) const;
     bool isV4(const std::string& meter_policy) const;
 
-    bool addMeterRule(const std::string& key, MeterRuleBulkContext& ctxt);
+    bool addMeterRule(const std::string& key, MeterRuleBulkContext& ctxt, uint32_t& result);
     bool addMeterRulePost(const std::string& key, const MeterRuleBulkContext& ctxt);
     bool removeMeterRule(const std::string& key, MeterRuleBulkContext& ctxt);
     bool removeMeterRulePost(const std::string& key, const MeterRuleBulkContext& ctxt);
