@@ -1463,7 +1463,7 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
             SWSS_LOG_ERROR("Get vlan oid from port alias(%s) failed!", alias.c_str());
             return false;
         }
- 
+
         FdbEntry entry;
 
         entry.mac = macAddress;
@@ -1644,23 +1644,10 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     SWSS_LOG_INFO("Try to remove neighbor %s on %s",
                    ip_address.to_string().c_str(), alias.c_str());
 
-    /*
-     * Notify consumers that a neighbor has been removed first, in order
-     * to release any references to the neighbor being removed.
-     */
-    m_syncdNeighbors[neighborEntry].deletion_pending = true;
-
-    NeighborUpdate update = { neighborEntry, MacAddress(), false };
-    notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
-
     if (m_syncdNextHops.find(nexthop) != m_syncdNextHops.end() && m_syncdNextHops[nexthop].ref_count > 0)
     {
         SWSS_LOG_INFO("Failed to remove still referenced neighbor %s on %s",
                       m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str());
-        m_syncdNeighbors[neighborEntry].deletion_pending = false;
-        // Rollback: notify observers that neighbor is back (still referenced)
-        NeighborUpdate rollback = { neighborEntry, m_syncdNeighbors[neighborEntry].mac, true };
-        notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&rollback));
         return false;
     }
 
@@ -1706,10 +1693,6 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
                 task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP, status);
                 if (handle_status != task_success)
                 {
-                    m_syncdNeighbors[neighborEntry].deletion_pending = false;
-                    // Rollback: notify observers that neighbor is back (SAI removal failed)
-                    NeighborUpdate rollback = { neighborEntry, m_syncdNeighbors[neighborEntry].mac, true };
-                    notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&rollback));
                     return parseHandleSaiStatusFailure(handle_status);
                 }
             }
@@ -1745,10 +1728,6 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
                 task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEIGHBOR, status);
                 if (handle_status != task_success)
                 {
-                    m_syncdNeighbors[neighborEntry].deletion_pending = false;
-                    // Rollback: notify observers that neighbor is back (SAI removal failed)
-                    NeighborUpdate rollback = { neighborEntry, m_syncdNeighbors[neighborEntry].mac, true };
-                    notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&rollback));
                     return parseHandleSaiStatusFailure(handle_status);
                 }
             }
@@ -1780,6 +1759,14 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     }
 
     m_syncdNeighbors.erase(neighborEntry);
+
+    /* Notify observers after the neighbor is removed from the syncd table.
+     * This keeps MuxOrch from dropping references for neighbors that failed
+     * deletion, while still clearing mux nexthop state for neighbors that
+     * are actually removed.
+     */
+    NeighborUpdate post_update = { neighborEntry, MacAddress(), false };
+    notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&post_update));
 
     // TODO: added || isChassisDbInUse()) to Cisco PR
     if (gMySwitchType == "voq" || isChassisDbInUse())

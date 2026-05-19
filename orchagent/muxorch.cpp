@@ -783,10 +783,23 @@ void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, Mu
     }
     else
     {
+        /* Remove the prefix route from ASIC if either:
+         * 1. We are tracking this neighbor in MuxNbrHandler. This covers cases
+         *    where the route was created by addPrefixRouteForNeighbor or
+         *    createStandaloneTunnelRoute, but the prefix_route flag in
+         *    m_syncdNeighbors is inconsistent for zero-MAC ping paths.
+         * 2. The MUX cable is currently standby. This preserves the original
+         *    standby-delete behavior, where the handler removes the tunnel
+         *    prefix route even if its local tracking was already cleared.
+         */
+        if (neighbors_.find(nh.ip_address) != neighbors_.end() || state == MuxState::MUX_STATE_STANDBY)
+        {
+            remove_route(pfx);
+        }
+
         /* if current state is standby, remove the tunnel route */
         if (state == MuxState::MUX_STATE_STANDBY)
         {
-            remove_route(pfx);
             updateTunnelRoute(nh, false);
         }
         neighbors_.erase(nh.ip_address);
