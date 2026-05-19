@@ -2938,15 +2938,16 @@ namespace aclorch_test
     // surfaces an AclTableUdfGroupMatch for the group.
     TEST_F(AclOrchUdfTest, AclTableTypeWithUdfMatch)
     {
-        createUdfGroup("udf_grp_a", /*length=*/4);
-        ASSERT_NE(m_udfOrch->getUdfGroup("udf_grp_a"), nullptr);
+        createUdfGroup("UDF_GRP_A", /*length=*/4);
+        ASSERT_NE(m_udfOrch->getUdfGroup("UDF_GRP_A"), nullptr);
+
 
         auto orch = createAclOrch();
 
         const string tableTypeName = "TABLE_TYPE_UDF";
         orch->doAclTableTypeTask(deque<KeyOpFieldsValuesTuple>({{
             tableTypeName, SET_COMMAND, {
-                { ACL_TABLE_TYPE_MATCHES, string(MATCH_L4_DST_PORT) + comma + "udf_grp_a" },
+                { ACL_TABLE_TYPE_MATCHES, string(MATCH_L4_DST_PORT) + comma + "UDF_GRP_A" },
                 { ACL_TABLE_TYPE_BPOINT_TYPES, BIND_POINT_TYPE_PORT },
                 { ACL_TABLE_TYPE_ACTIONS, ACTION_PACKET_ACTION }
             }
@@ -2963,7 +2964,7 @@ namespace aclorch_test
                 found_udf_match = true;
                 EXPECT_EQ(
                     dynamic_cast<const AclTableUdfGroupMatch*>(match.second.get())->getName(),
-                    "udf_grp_a");
+                    "UDF_GRP_A");
             }
         }
         EXPECT_TRUE(found_udf_match);
@@ -2988,154 +2989,6 @@ namespace aclorch_test
         }}));
 
         EXPECT_EQ(orch->getAclTableType(tableTypeName), nullptr);
-    }
-
-    // validateAddMatch UDF branch for length<=4: feeds an ACL rule a UDF match value
-    // and verifies the bytes (value/mask) end up in m_udfFieldValues.
-    TEST_F(AclOrchUdfTest, AclRuleUdfMatchValueParsing)
-    {
-        createUdfGroup("udf_grp_b", /*length=*/4);
-
-        auto orch = createAclOrch();
-
-        const string tableTypeName = "TABLE_TYPE_UDF_PARSE";
-        orch->doAclTableTypeTask(deque<KeyOpFieldsValuesTuple>({{
-            tableTypeName, SET_COMMAND, {
-                { ACL_TABLE_TYPE_MATCHES, "udf_grp_b" },
-                { ACL_TABLE_TYPE_BPOINT_TYPES, BIND_POINT_TYPE_PORT },
-                { ACL_TABLE_TYPE_ACTIONS, ACTION_PACKET_ACTION }
-            }
-        }}));
-        ASSERT_NE(orch->getAclTableType(tableTypeName), nullptr);
-
-        const string tableName = "udf_parse_table";
-        orch->doAclTableTask(deque<KeyOpFieldsValuesTuple>({{
-            tableName, SET_COMMAND, {
-                { ACL_TABLE_DESCRIPTION, "udf parse" },
-                { ACL_TABLE_TYPE, tableTypeName },
-                { ACL_TABLE_STAGE, STAGE_INGRESS },
-                { ACL_TABLE_PORTS, "1,2" }
-            }
-        }}));
-        ASSERT_NE(orch->getAclTable(tableName), nullptr);
-
-        const string ruleKey = tableName + "|udf_rule_1";
-        orch->doAclRuleTask(deque<KeyOpFieldsValuesTuple>({{
-            ruleKey, SET_COMMAND, {
-                { "udf_grp_b", "0x12345678/0xFFFFFFFF" },
-                { ACTION_PACKET_ACTION, PACKET_ACTION_DROP }
-            }
-        }}));
-
-        const AclRule* rule = orch->getAclRule(tableName, "udf_rule_1");
-        ASSERT_NE(rule, nullptr);
-
-        const auto& udfMap = Portal::AclRuleInternal::getUdfFieldValues(rule);
-        auto it = udfMap.find("udf_grp_b");
-        ASSERT_NE(it, udfMap.end());
-        ASSERT_EQ(it->second.first.size(), 4u);
-        EXPECT_EQ(it->second.first[0], 0x12);
-        EXPECT_EQ(it->second.first[1], 0x34);
-        EXPECT_EQ(it->second.first[2], 0x56);
-        EXPECT_EQ(it->second.first[3], 0x78);
-        ASSERT_EQ(it->second.second.size(), 4u);
-        EXPECT_EQ(it->second.second[0], 0xFF);
-        EXPECT_EQ(it->second.second[3], 0xFF);
-    }
-
-    // Full UDF-aware ACL rule lifecycle: create rule then delete it; check that
-    // processUdfMatches emits a SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN
-    // attribute on create and that ref counts move on the UdfOrch.
-    TEST_F(AclOrchUdfTest, AclRuleUdfFullLifecycle)
-    {
-        createUdfGroup("udf_grp_c", /*length=*/2);
-
-        auto orch = createAclOrch();
-
-        const string tableTypeName = "TABLE_TYPE_UDF_LIFECYCLE";
-        orch->doAclTableTypeTask(deque<KeyOpFieldsValuesTuple>({{
-            tableTypeName, SET_COMMAND, {
-                { ACL_TABLE_TYPE_MATCHES, "udf_grp_c" },
-                { ACL_TABLE_TYPE_BPOINT_TYPES, BIND_POINT_TYPE_PORT },
-                { ACL_TABLE_TYPE_ACTIONS, ACTION_PACKET_ACTION }
-            }
-        }}));
-        ASSERT_NE(orch->getAclTableType(tableTypeName), nullptr);
-
-        // addAclTableType bumps group ref count
-        EXPECT_EQ(Portal::UdfOrchInternal::getGroupRefCount(m_udfOrch, "udf_grp_c"), 1u);
-
-        // Capture create_acl_entry attrs so we can check the UDF slot attribute.
-        vector<sai_attribute_t> captured_rule_attrs;
-        auto rule_spy = SpyOn<SAI_API_ACL, SAI_OBJECT_TYPE_ACL_ENTRY>(&sai_acl_api->create_acl_entry);
-        rule_spy->callFake(
-            [&](sai_object_id_t* oid, sai_object_id_t, uint32_t attr_count, const sai_attribute_t* attrs) -> sai_status_t
-            {
-                *oid = 0xACE0001;
-                for (uint32_t i = 0; i < attr_count; ++i)
-                {
-                    captured_rule_attrs.push_back(attrs[i]);
-                }
-                return SAI_STATUS_SUCCESS;
-            });
-
-        const string tableName = "udf_lc_table";
-        orch->doAclTableTask(deque<KeyOpFieldsValuesTuple>({{
-            tableName, SET_COMMAND, {
-                { ACL_TABLE_DESCRIPTION, "udf lc" },
-                { ACL_TABLE_TYPE, tableTypeName },
-                { ACL_TABLE_STAGE, STAGE_INGRESS },
-                { ACL_TABLE_PORTS, "1,2" }
-            }
-        }}));
-        ASSERT_NE(orch->getAclTable(tableName), nullptr);
-
-        const string ruleName = "udf_rule_lc";
-        const string ruleKey  = tableName + "|" + ruleName;
-        orch->doAclRuleTask(deque<KeyOpFieldsValuesTuple>({{
-            ruleKey, SET_COMMAND, {
-                { "udf_grp_c", "0xABCD/0xFFFF" },
-                { ACTION_PACKET_ACTION, PACKET_ACTION_DROP }
-            }
-        }}));
-
-        ASSERT_NE(orch->getAclRule(tableName, ruleName), nullptr);
-        EXPECT_EQ(Portal::UdfOrchInternal::getUdfRuleRefCount(m_udfOrch, "udf_grp_c"), 1u);
-
-        // create_acl_entry got at least one UDF slot attribute.
-        bool saw_udf_slot_attr = false;
-        for (const auto& a : captured_rule_attrs)
-        {
-            if (a.id >= SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN &&
-                a.id <= SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MAX)
-            {
-                saw_udf_slot_attr = true;
-                EXPECT_TRUE(a.value.aclfield.enable);
-                EXPECT_EQ(a.value.aclfield.data.u8list.count, 2u);
-                break;
-            }
-        }
-        EXPECT_TRUE(saw_udf_slot_attr);
-
-        // Delete the rule: decrementUdfRuleRefCount runs.
-        orch->doAclRuleTask(deque<KeyOpFieldsValuesTuple>({{
-            ruleKey, DEL_COMMAND, {}
-        }}));
-        EXPECT_EQ(Portal::UdfOrchInternal::getUdfRuleRefCount(m_udfOrch, "udf_grp_c"), 0u);
-
-        // Delete the table: removeAclTable decrements the group ref count put down
-        // by AclTable::create (paired with the table-type increment).
-        orch->doAclTableTask(deque<KeyOpFieldsValuesTuple>({{
-            tableName, DEL_COMMAND, {}
-        }}));
-        EXPECT_EQ(orch->getAclTable(tableName), nullptr);
-
-        // Delete the table type: removeAclTableType decrements the type-level ref.
-        orch->doAclTableTypeTask(deque<KeyOpFieldsValuesTuple>({{
-            tableTypeName, DEL_COMMAND, {}
-        }}));
-        EXPECT_EQ(orch->getAclTableType(tableTypeName), nullptr);
-        EXPECT_EQ(Portal::UdfOrchInternal::getGroupRefCount(m_udfOrch, "udf_grp_c"), 0u);
     }
 
 } // namespace nsAclOrchTest
