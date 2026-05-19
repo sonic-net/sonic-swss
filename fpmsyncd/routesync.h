@@ -100,16 +100,10 @@ class FieldValueTupleWrapperBase {
 
 class RouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
     public:
-    RouteTableFieldValueTupleWrapper(const string & _key,
-                                     string && _protocol,
-                                     bool _nbZmqEnabled) :
-          FieldValueTupleWrapperBase(_key, _nbZmqEnabled),
-          protocol(std::move(_protocol)) {}
-    RouteTableFieldValueTupleWrapper(const string && _key,
-                                     string && _protocol,
-                                     bool _nbZmqEnabled) :
-          FieldValueTupleWrapperBase(std::move(_key), _nbZmqEnabled),
-          protocol(std::move(_protocol)) {}
+    RouteTableFieldValueTupleWrapper(const string & _key, string && _protocol, bool _nbZmqEnabled, bool _includeEmptyFields = false) :
+          FieldValueTupleWrapperBase(_key, _nbZmqEnabled), protocol(std::move(_protocol)), includeEmptyFields(_includeEmptyFields) {}
+    RouteTableFieldValueTupleWrapper(const string && _key, string && _protocol, bool _nbZmqEnabled, bool _includeEmptyFields = false) :
+          FieldValueTupleWrapperBase(std::move(_key), _nbZmqEnabled), protocol(std::move(_protocol)), includeEmptyFields(_includeEmptyFields) {}
 
     vector<FieldValueTuple> fieldValueTupleVector() override;
 
@@ -124,20 +118,19 @@ class RouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
     string router_mac = string();
     string segment = string();
     string seg_src = string();
+    bool includeEmptyFields = false;
 };
 
 class LabelRouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
     public:
-    LabelRouteTableFieldValueTupleWrapper(const string & _key,
-                                          string && _protocol,
-                                          bool _nbZmqEnabled) :
+    LabelRouteTableFieldValueTupleWrapper(const string & _key, string && _protocol, bool _nbZmqEnabled, bool _includeEmptyFields = false) :
         FieldValueTupleWrapperBase(_key, _nbZmqEnabled),
-        protocol(std::move(_protocol)) {}
-    LabelRouteTableFieldValueTupleWrapper(const string && _key,
-                                          string && _protocol,
-                                          bool _nbZmqEnabled) :
+        protocol(std::move(_protocol)),
+        includeEmptyFields(_includeEmptyFields) {}
+    LabelRouteTableFieldValueTupleWrapper(const string && _key, string && _protocol, bool _nbZmqEnabled, bool _includeEmptyFields = false) :
         FieldValueTupleWrapperBase(std::move(_key), _nbZmqEnabled),
-        protocol(std::move(_protocol)) {}
+        protocol(std::move(_protocol)),
+        includeEmptyFields(_includeEmptyFields) {}
 
     vector<FieldValueTuple> fieldValueTupleVector() override;
 
@@ -147,6 +140,7 @@ class LabelRouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase 
     string ifname = string();
     string mpls_nh = string();
     string mpls_pop = string();
+    bool includeEmptyFields = false;
 };
 
 class VnetRouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
@@ -415,7 +409,8 @@ private:
     void updatePicContextGroupDb(const NextHopGroup& nhg);
     void getNextHopGroupFields(const NextHopGroup& nhg, string& nexthops, string& ifnames, string& weights, uint8_t af = AF_INET);
     void getPicContextGroupFields(const NextHopGroup& nhg, struct NextHopField& nhField, uint8_t af = AF_INET);
-    bool isNbZmqEnabled() const {
+    bool isNbZmqEnabled() const
+    {
         return m_zmqClient != nullptr;
     }
 
