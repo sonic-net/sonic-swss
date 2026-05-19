@@ -53,6 +53,7 @@ public:
         static const struct team_change_handler gPortChangeHandler;
     private:
         ProducerStateTable *m_lagMemberTable;
+	struct team_netlink *m_nl;
         struct team_handle *m_team;
         std::string m_lagName;
         int m_ifindex;
