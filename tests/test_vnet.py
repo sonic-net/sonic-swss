@@ -3576,7 +3576,6 @@ class TestVnetOrch(object):
         self.set_admin_status("Ethernet4", "down")
 
 
-
     '''
     VNET tunnel route with a directly-connected local endpoint.
     '''
@@ -3667,6 +3666,77 @@ class TestVnetOrch(object):
             self.remove_ip_address("Ethernet0", "20.20.20.1/24")
             self.set_admin_status("Ethernet0", "down")
             self.cdb.delete_entry("INTERFACE", "Ethernet0")
+
+    '''
+    IP2Me link-local trap route install test for VNET VRs(fe80::/10 tracp to CPU route)
+    '''
+    def test_vnet_ip2me_link_local(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = "tunnel_ip2me"
+        vnet_name = "Vnet_ip2me"
+
+        vnet_obj.fetch_exist_entries(dvs)
+        pre_routes = get_exist_entries(dvs, vnet_obj.ASIC_ROUTE_ENTRY)
+        default_vr = get_default_vr_id(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, "10.10.10.10")
+        create_vnet_entry(dvs, vnet_name, tunnel_name, "20001", "")
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        time.sleep(2)
+
+        post_routes = get_exist_entries(dvs, vnet_obj.ASIC_ROUTE_ENTRY)
+        new_routes = post_routes - pre_routes
+        print("DBG new_route_count=%d" % len(new_routes))
+        for r in sorted(new_routes):
+            print("DBG new_route: %s" % r)
+
+        ll_keys = []
+        ll_prefixes = []
+        for key in new_routes:
+            try:
+                payload = json.loads(key)
+            except (ValueError, IndexError):
+                continue
+            dest = payload.get("dest", "")
+            if dest.startswith("fe80:"):
+                ll_keys.append(key)
+                ll_prefixes.append(dest)
+
+        assert ll_prefixes == ["fe80::/10"], (
+            "Expected exactly one link-local trap route fe80::/10 in VNET VR, "
+            "got %s; full new_routes=%s" % (ll_prefixes, sorted(new_routes))
+        )
+
+        rt_tbl = swsscommon.Table(asic_db, vnet_obj.ASIC_ROUTE_ENTRY)
+        for k in ll_keys:
+            payload = json.loads(k)
+            assert payload.get("vr") and payload["vr"] != default_vr, (
+                "Link-local route %s programmed in default VR" % k
+            )
+            status, fvs = rt_tbl.get(k)
+            assert status, "Failed to fetch attributes for %s" % k
+            attrs = dict(fvs)
+            action = attrs.get("SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION")
+            assert action == "SAI_PACKET_ACTION_FORWARD", (
+                "Link-local route %s action=%s, expected FORWARD-to-CPU" % (k, action)
+            )
+            nh = attrs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID", "")
+            assert nh, "Link-local route %s missing next hop (CPU port)" % k
+
+        delete_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
+        time.sleep(2)
+
+        final_routes = get_exist_entries(dvs, vnet_obj.ASIC_ROUTE_ENTRY)
+        for k in ll_keys:
+            assert k not in final_routes, (
+                "Link-local trap route %s not cleaned up after VNET delete" % k
+            )
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
