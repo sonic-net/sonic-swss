@@ -32,6 +32,7 @@
 #include "converter.h"
 #include "sai_serialize.h"
 #include "crmorch.h"
+#include "notificationconsumerstatsorch.h"
 #include "countercheckorch.h"
 #include "notifier.h"
 #include "fdborch.h"
@@ -1065,15 +1066,37 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         }
     }
 
-    /* Add port oper status notification support */
+    /* Add port oper status notification support.
+     * Opt the port-state consumers into the LRU-dedup queue policy:
+     * port up/down and port-host-tx-ready are end-state-idempotent
+     * under byte-identical payloads (the latest state per port is
+     * what matters), so collapsing duplicates bounds queue depth.
+     * Also install an op-allowlist so cross-fanout messages on the
+     * shared "NOTIFICATIONS" channel are dropped at admission. */
     m_notificationsDb = make_shared<DBConnector>("ASIC_DB", 0);
-    m_portStatusNotificationConsumer = new swss::NotificationConsumer(m_notificationsDb.get(), "NOTIFICATIONS");
+    m_portStatusNotificationConsumer = new swss::NotificationConsumer(
+        m_notificationsDb.get(), "NOTIFICATIONS",
+        100,                                       // pri -- match swss-common default
+        swss::DEFAULT_NC_POP_BATCH_SIZE,
+        swss::NotificationQueuePolicy::LruDedup);
+    m_portStatusNotificationConsumer->setOpAllowList({"port_state_change"});
+    m_portStatusNotificationConsumer->setStatsLabel("PortsOrch:port_state_change");
+    if (gNotifConsumerStatsOrch)
+        gNotifConsumerStatsOrch->registerConsumer("PortsOrch:port_state_change", m_portStatusNotificationConsumer);
     auto portStatusNotificatier = new Notifier(m_portStatusNotificationConsumer, this, "PORT_STATUS_NOTIFICATIONS");
     Orch::addExecutor(portStatusNotificatier);
 
     if (m_cmisModuleAsicSyncSupported)
     {
-        m_portHostTxReadyNotificationConsumer = new swss::NotificationConsumer(m_notificationsDb.get(), "NOTIFICATIONS");
+        m_portHostTxReadyNotificationConsumer = new swss::NotificationConsumer(
+            m_notificationsDb.get(), "NOTIFICATIONS",
+            100,                                       // pri -- match swss-common default
+            swss::DEFAULT_NC_POP_BATCH_SIZE,
+            swss::NotificationQueuePolicy::LruDedup);
+        m_portHostTxReadyNotificationConsumer->setOpAllowList({"port_host_tx_ready"});
+        m_portHostTxReadyNotificationConsumer->setStatsLabel("PortsOrch:port_host_tx_ready");
+        if (gNotifConsumerStatsOrch)
+            gNotifConsumerStatsOrch->registerConsumer("PortsOrch:port_host_tx_ready", m_portHostTxReadyNotificationConsumer);
         auto portHostTxReadyNotificatier = new Notifier(m_portHostTxReadyNotificationConsumer, this, "PORT_HOST_TX_NOTIFICATIONS");
         Orch::addExecutor(portHostTxReadyNotificatier);
     }

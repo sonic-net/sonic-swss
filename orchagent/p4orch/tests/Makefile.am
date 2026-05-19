@@ -64,6 +64,7 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       fake_consumerstatetable.cpp \
 		       fake_subscriberstatetable.cpp \
 		       fake_notificationconsumer.cpp \
+		       fake_notificationconsumerstatsorch.cpp \
 		       fake_table.cpp \
 		       fake_aclorch.cpp \
 		       fake_zmqserver.cpp \

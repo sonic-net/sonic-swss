@@ -145,6 +145,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/dtelorch.cpp \
                 $(top_srcdir)/orchagent/flexcounterorch.cpp \
                 $(top_srcdir)/orchagent/watermarkorch.cpp \
+                $(top_srcdir)/orchagent/notificationconsumerstatsorch.cpp \
                 $(top_srcdir)/orchagent/chassisorch.cpp \
                 $(top_srcdir)/orchagent/sfloworch.cpp \
                 $(top_srcdir)/orchagent/debugcounterorch.cpp \
