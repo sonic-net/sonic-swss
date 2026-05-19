@@ -306,8 +306,8 @@ void MonitorLinkGroupMgr::handleGroupDelayChange(const string& group_name, uint3
 
             if (elapsed_seconds >= new_delay)
             {
-                SWSS_LOG_INFO("Monitor link group %s delay reduced to %u but %ld seconds already elapsed, bringing UP immediately",
-                              group_name.c_str(), new_delay, elapsed_seconds);
+                SWSS_LOG_INFO("Monitor link group %s delay reduced to %u but %lld seconds already elapsed, bringing UP immediately",
+                              group_name.c_str(), new_delay, static_cast<long long>(elapsed_seconds));
                 stopLinkupDelayTimer(group_name);
                 existingGroup.pending_up = false;
                 existingGroup.is_up = true;
@@ -318,8 +318,8 @@ void MonitorLinkGroupMgr::handleGroupDelayChange(const string& group_name, uint3
             else
             {
                 uint32_t remaining_seconds = new_delay - static_cast<uint32_t>(elapsed_seconds);
-                SWSS_LOG_INFO("Monitor link group %s delay reduced, restarting timer with %u seconds remaining (new delay: %u, elapsed: %ld)",
-                              group_name.c_str(), remaining_seconds, new_delay, elapsed_seconds);
+                SWSS_LOG_INFO("Monitor link group %s delay reduced, restarting timer with %u seconds remaining (new delay: %u, elapsed: %lld)",
+                              group_name.c_str(), remaining_seconds, new_delay, static_cast<long long>(elapsed_seconds));
 
                 stopLinkupDelayTimer(group_name);
 
