@@ -262,7 +262,6 @@ bool DashOrch::addApplianceTrustedVni(const std::string& appliance_id, const das
             task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_TRUSTED_VNI, status);
             if (handle_status != task_success)
             {
-                parseHandleSaiStatusFailure(handle_status);
                 success = false;
                 continue;
             }
@@ -375,7 +374,6 @@ bool DashOrch::removeApplianceTrustedVni(const std::string& appliance_id, const 
             task_process_status handle_status = handleSaiRemoveStatus((sai_api_t)SAI_API_DASH_TRUSTED_VNI, status);
             if (handle_status != task_success)
             {
-                parseHandleSaiStatusFailure(handle_status);
                 success = false;
                 continue;
             }
@@ -844,7 +842,6 @@ bool DashOrch::addEniTrustedVnis(const std::string& eni, const EniEntry& entry)
             task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_TRUSTED_VNI, status);
             if (handle_status != task_success)
             {
-                parseHandleSaiStatusFailure(handle_status);
                 success = false;
                 continue;
             }
@@ -1033,7 +1030,6 @@ bool DashOrch::removeEniTrustedVnis(const std::string& eni, const EniEntry& entr
             task_process_status handle_status = handleSaiRemoveStatus((sai_api_t)SAI_API_DASH_TRUSTED_VNI, status);
             if (handle_status != task_success)
             {
-                parseHandleSaiStatusFailure(handle_status);
                 success = false;
                 continue;
             }

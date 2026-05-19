@@ -163,7 +163,6 @@ bool DashVnetOrch::removeVnetPost(const string& vnet_name, const DashVnetBulkCon
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_VNET, status);
         if (handle_status != task_success)
         {
-            parseHandleSaiStatusFailure(handle_status);
             return false;
         }
     }
@@ -539,7 +538,6 @@ bool DashVnetOrch::addOutboundCaToPaPost(const string& key, const VnetMapBulkCon
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_OUTBOUND_CA_TO_PA, status);
         if (handle_status != task_success)
         {
-            parseHandleSaiStatusFailure(handle_status);
             return false;
         }
     }
@@ -576,7 +574,6 @@ bool DashVnetOrch::addPaValidationPost(const string& key, const VnetMapBulkConte
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_PA_VALIDATION, status);
         if (handle_status != task_success)
         {
-            parseHandleSaiStatusFailure(handle_status);
             return false;
         }
     }
@@ -678,7 +675,6 @@ bool DashVnetOrch::removeOutboundCaToPaPost(const string& key, const VnetMapBulk
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_OUTBOUND_CA_TO_PA, status);
         if (handle_status != task_success)
         {
-            parseHandleSaiStatusFailure(handle_status);
             return false;
         }
     }
