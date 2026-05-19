@@ -2878,9 +2878,10 @@ namespace aclorch_test
         {
             AclOrchTest::SetUp();
 
-            // sai_udf_api is queried from libsaivs during AclOrchTest::SetUp via
-            // sai_api_initialize. Snapshot it and overlay our stubs so UDF group
-            // create/remove succeed without touching real SAI metadata.
+            // AclOrchTest::SetUp queries SAI_API_SWITCH/PORT/ACL/etc. but not
+            // SAI_API_UDF, so sai_udf_api is still NULL at this point. Query it
+            // ourselves before overlaying stubs.
+            sai_api_query(SAI_API_UDF, (void **)&sai_udf_api);
             ASSERT_NE(sai_udf_api, nullptr);
             m_saved_udf_api = sai_udf_api;
             m_ut_udf_api = *sai_udf_api;
@@ -2898,6 +2899,11 @@ namespace aclorch_test
             ASSERT_EQ(gUdfOrch, nullptr);
             m_udfOrch = new UdfOrch(m_config_db.get(),
                                     { CFG_UDF_TABLE_NAME, CFG_UDF_SELECTOR_TABLE_NAME });
+            // libsaivs reports SAI_UDF_GROUP_ATTR_LENGTH create_implemented=false on
+            // platforms where UDF is not implemented end-to-end, which makes UdfOrch
+            // mark itself as not supported and drop all CFG_UDF entries. Force it on
+            // for unit testing the orch behavior.
+            Portal::UdfOrchInternal::setUdfSupported(m_udfOrch, true);
             gUdfOrch = m_udfOrch;
         }
 

@@ -143,6 +143,11 @@ struct Portal
         {
             return orch->getUdfRuleRefCount(name);
         }
+
+        static void setUdfSupported(UdfOrch *orch, bool value)
+        {
+            orch->m_udfSupported = value;
+        }
     };
 
     struct DirectoryInternal
