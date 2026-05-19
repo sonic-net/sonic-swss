@@ -14,6 +14,7 @@
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
 #include "chassisorch.h"
+#include "notificationconsumerstatsorch.h"
 #include "stporch.h"
 
 using namespace std;
@@ -192,6 +193,14 @@ bool OrchDaemon::init()
     g_events_handle = events_init_publisher("sonic-events-swss");
 
     gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);
+
+    // Construct the NotificationConsumer stats publisher before any
+    // orch that owns a NotificationConsumer it cares to publish, so
+    // each of those orchs can call
+    // gNotifConsumerStatsOrch->registerConsumer(...) from its
+    // constructor.  A null gNotifConsumerStatsOrch means publish is
+    // disabled; the registerConsumer call sites all null-check.
+    gNotifConsumerStatsOrch = new NotificationConsumerStatsOrch();
 
     TableConnector stateDbSwitchTable(m_stateDb, STATE_SWITCH_CAPABILITY_TABLE_NAME);
     TableConnector app_switch_table(m_applDb, APP_SWITCH_TABLE_NAME);
@@ -497,7 +506,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch, gNotifConsumerStatsOrch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)

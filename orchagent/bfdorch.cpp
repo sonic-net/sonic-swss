@@ -1,5 +1,6 @@
 #include "bfdorch.h"
 #include "intfsorch.h"
+#include "notificationconsumerstatsorch.h"
 #include "vrforch.h"
 #include "converter.h"
 #include "swssnet.h"
@@ -62,6 +63,12 @@ BfdOrch::BfdOrch(DBConnector *db, string tableName, TableConnector stateDbBfdSes
 
     DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
     m_bfdStateNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+#ifdef SWSS_NOTIFICATIONCONSUMER_HAS_LRU_DEDUP
+    m_bfdStateNotificationConsumer->setOpAllowList({"bfd_session_state_change"});
+    m_bfdStateNotificationConsumer->setStatsLabel("BfdOrch:bfd_session_state_change");
+    if (gNotifConsumerStatsOrch)
+        gNotifConsumerStatsOrch->registerConsumer("BfdOrch:bfd_session_state_change", m_bfdStateNotificationConsumer);
+#endif
     auto bfdStateNotificatier = new Notifier(m_bfdStateNotificationConsumer, this, "BFD_STATE_NOTIFICATIONS");
 
     m_stateDbConnector = std::make_unique<swss::DBConnector>("STATE_DB", 0);
