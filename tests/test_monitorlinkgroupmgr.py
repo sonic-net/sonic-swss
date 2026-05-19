@@ -17,8 +17,18 @@ class TestMonitorLinkGroup:
         self.asic_db = dvs.asicdb
 
     def set_port_oper(self, port, status):
-        """Write oper_status to STATE_DB:PORT_TABLE (simulates portsyncd)."""
-        self.sdb.create_entry(STATE_PORT_TABLE, port, {"oper_status": status})
+        """Override netdev_oper_status + oper_status in STATE_DB:PORT_TABLE.
+
+        monitorlinkgroupmgr prefers netdev_oper_status for Ethernet ports
+        (kernel-netdev is authoritative) and falls back to oper_status.
+        portsyncd in the dvs may have already written netdev_oper_status,
+        so we must overwrite that field; setting only oper_status would
+        be silently ignored.
+        """
+        self.sdb.create_entry(
+            STATE_PORT_TABLE, port,
+            {"netdev_oper_status": status, "oper_status": status},
+        )
         time.sleep(0.5)
 
     def set_port_cfg_admin(self, port, status):
