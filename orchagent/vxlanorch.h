@@ -331,7 +331,7 @@ public:
 
     void deleteTunnelPort(Port &tunnelPort);
 
-    void addRemoveStateTableEntry(const string, IpAddress&, IpAddress&, tunnel_creation_src_t, bool);
+    void addRemoveStateTableEntry(const string, IpAddress&, IpAddress&, tunnel_creation_src_t, const string, bool);
 
     std::string getTunnelPortName(const std::string& vtep, bool local=false);
     void getTunnelNameFromDIP(const string& dip, string& tunnel_name);
