@@ -218,7 +218,7 @@ void VxlanMgr::doTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        bool task_result = false;
+        bool task_result = true;
         auto t = it->second;
         const std::string & op = kfvOp(t);
 
