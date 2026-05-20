@@ -178,7 +178,7 @@ struct evpn_shl_msg {
   uint16_t esm_vid;
 };
 
-#define FPM_EVPN_SHL_RTA(r) ((struct rtattr*)(((char*)(r)) + NLMSG_ALIGN(sizeof(struct evpn_shl_msg))))
+#define FPM_EVPN_SHL_RTA(r) ((struct rtattr *)(void *)(((char *)(r)) + NLMSG_ALIGN(sizeof(struct evpn_shl_msg))))
 
 struct evpn_df_msg {
   int edm_ifindex;
