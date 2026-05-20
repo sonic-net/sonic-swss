@@ -180,7 +180,6 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
-    const char *table_name = APP_DASH_VNET_TABLE_NAME;
     auto it = consumer.m_toSync.begin();
     uint32_t result;
     while (it != consumer.m_toSync.end())
@@ -213,7 +212,8 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
                 {
                     if (!parsePbMessage(kfvFieldsValues(tuple), vnet_ctxt.metadata))
                     {
-                        SWSS_LOG_WARN("Requires protobuff at Vnet :%s", key.c_str());
+                        SWSS_LOG_ERROR("Requires protobuff at Vnet :%s", key.c_str());
+                        writeResultToDB(dash_vnet_result_table_, key, DASH_RESULT_FAILURE);
                         it = consumer.m_toSync.erase(it);
                         continue;
                     }
@@ -246,7 +246,8 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
             }
             catch (const std::exception& e)
             {
-                SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, key.c_str(), e.what());
+                SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", consumer.getTableName().c_str(), key.c_str(), e.what());
+                writeResultToDB(dash_vnet_result_table_, key, DASH_RESULT_FAILURE);
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -306,7 +307,7 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
             }
             catch (const std::exception& e)
             {
-                SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", table_name, key.c_str(), e.what());
+                SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", consumer.getTableName().c_str(), key.c_str(), e.what());
                 it_prev = consumer.m_toSync.erase(it_prev);
             }
         }
@@ -745,7 +746,6 @@ void DashVnetOrch::doTaskVnetMapTable(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
-    const char *table_name = APP_DASH_VNET_MAPPING_TABLE_NAME;
     auto it = consumer.m_toSync.begin();
     uint32_t result;
     while (it != consumer.m_toSync.end())
@@ -786,7 +786,8 @@ void DashVnetOrch::doTaskVnetMapTable(ConsumerBase& consumer)
                 {
                     if (!parsePbMessage(kfvFieldsValues(tuple), ctxt.metadata))
                     {
-                        SWSS_LOG_WARN("Requires protobuff at VnetMap :%s", key.c_str());
+                        SWSS_LOG_ERROR("Requires protobuff at VnetMap :%s", key.c_str());
+                        writeResultToDB(dash_vnet_map_result_table_, key, DASH_RESULT_FAILURE);
                         it = consumer.m_toSync.erase(it);
                         continue;
                     }
@@ -829,7 +830,8 @@ void DashVnetOrch::doTaskVnetMapTable(ConsumerBase& consumer)
             }
             catch (const std::exception& e)
             {
-                SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, key.c_str(), e.what());
+                SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", consumer.getTableName().c_str(), key.c_str(), e.what());
+                writeResultToDB(dash_vnet_map_result_table_, key, DASH_RESULT_FAILURE);
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -886,7 +888,7 @@ void DashVnetOrch::doTaskVnetMapTable(ConsumerBase& consumer)
             }
             catch (const std::exception& e)
             {
-                SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", table_name, key.c_str(), e.what());
+                SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", consumer.getTableName().c_str(), key.c_str(), e.what());
                 it_prev = consumer.m_toSync.erase(it_prev);
             }
         }

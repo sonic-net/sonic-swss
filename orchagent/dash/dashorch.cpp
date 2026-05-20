@@ -136,7 +136,42 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
     }
 
     sai_object_id_t sai_appliance_id = SAI_NULL_OBJECT_ID;
+    if (!createApplianceSaiObjects(appliance_id, entry, sai_appliance_id))
+    {
+        return false;
+    }
+
+    appliance_entries_[appliance_id] = ApplianceEntry { sai_appliance_id, entry };
+    // clear out the trusted VNIs list. They will be readded by addApplianceTrustedVni() after successful creation to ensure that internal cache state is consistent with SAI state
+    appliance_entries_[appliance_id].metadata.clear_trusted_vnis_list();
+    SWSS_LOG_NOTICE("Created appliance, vip and direction lookup entries for %s", appliance_id.c_str());
+
+    if (!entry.trusted_vnis_list().empty())
+    {
+        bool all_trusted_vnis_added = addApplianceTrustedVni(appliance_id, entry);
+        if (!all_trusted_vnis_added)
+        {
+            SWSS_LOG_ERROR("Failed to add all trusted vni entries for appliance %s. Removing appliance entry.", appliance_id.c_str());
+            removeApplianceEntry(appliance_id);
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool DashOrch::createApplianceSaiObjects(const string& appliance_id, const dash::appliance::Appliance &entry, sai_object_id_t &sai_appliance_id)
+{
+    SWSS_LOG_ENTER();
+
     sai_status_t status;
+
+    sai_vip_entry_t vip_entry;
+    vip_entry.switch_id = gSwitchId;
+
+    sai_direction_lookup_entry_t direction_lookup_entry;
+    direction_lookup_entry.switch_id = gSwitchId;
+    direction_lookup_entry.vni = entry.vm_vni();
 
     sai_attr_capability_t capability;
     status = sai_query_attribute_capability(gSwitchId, (sai_object_type_t)SAI_OBJECT_TYPE_DASH_APPLIANCE, SAI_DASH_APPLIANCE_ATTR_LOCAL_REGION_ID, &capability);
@@ -160,17 +195,18 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
         }
     }
 
-    // Cache the entry early so removeApplianceEntry can be used for cleanup on any subsequent failure
-    appliance_entries_[appliance_id] = ApplianceEntry { sai_appliance_id, entry };
-    appliance_entries_[appliance_id].metadata.clear_trusted_vnis_list();
-
-    sai_vip_entry_t vip_entry;
-    vip_entry.switch_id = gSwitchId;
     if (!to_sai(entry.sip(), vip_entry.vip))
     {
-        removeApplianceEntry(appliance_id);
+        SWSS_LOG_ERROR("Failed to convert SIP for appliance %s", appliance_id.c_str());
+        // Cleanup: only appliance may have been created
+        if (sai_appliance_id != SAI_NULL_OBJECT_ID)
+        {
+            sai_dash_appliance_api->remove_dash_appliance(sai_appliance_id);
+            sai_appliance_id = SAI_NULL_OBJECT_ID;
+        }
         return false;
     }
+
     sai_attribute_t appliance_attr;
     appliance_attr.id = SAI_VIP_ENTRY_ATTR_ACTION;
     appliance_attr.value.u32 = SAI_VIP_ENTRY_ACTION_ACCEPT;
@@ -181,14 +217,15 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_VIP, status);
         if (handle_status != task_success)
         {
-            removeApplianceEntry(appliance_id);
+            if (sai_appliance_id != SAI_NULL_OBJECT_ID)
+            {
+                sai_dash_appliance_api->remove_dash_appliance(sai_appliance_id);
+                sai_appliance_id = SAI_NULL_OBJECT_ID;
+            }
             return false;
         }
     }
 
-    sai_direction_lookup_entry_t direction_lookup_entry;
-    direction_lookup_entry.switch_id = gSwitchId;
-    direction_lookup_entry.vni = entry.vm_vni();
     vector<sai_attribute_t> direction_lookup_attrs;
     appliance_attr.id = SAI_DIRECTION_LOOKUP_ENTRY_ATTR_ACTION;
     if (entry.has_outbound_direction_lookup())
@@ -217,19 +254,12 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_DIRECTION_LOOKUP, status);
         if (handle_status != task_success)
         {
-            removeApplianceEntry(appliance_id);
-            return false;
-        }
-    }
-    SWSS_LOG_NOTICE("Created appliance, vip and direction lookup entries for %s", appliance_id.c_str());
-
-    if (!entry.trusted_vnis_list().empty())
-    {
-        bool all_trusted_vnis_added = addApplianceTrustedVni(appliance_id, entry);
-        if (!all_trusted_vnis_added)
-        {
-            SWSS_LOG_ERROR("Failed to add all trusted vni entries for appliance %s. Removing appliance entry.", appliance_id.c_str());
-            removeApplianceEntry(appliance_id);
+            sai_dash_vip_api->remove_vip_entry(&vip_entry);
+            if (sai_appliance_id != SAI_NULL_OBJECT_ID)
+            {
+                sai_dash_appliance_api->remove_dash_appliance(sai_appliance_id);
+                sai_appliance_id = SAI_NULL_OBJECT_ID;
+            }
             return false;
         }
     }
@@ -299,19 +329,22 @@ bool DashOrch::removeApplianceEntry(const string& appliance_id)
 
     sai_vip_entry_t vip_entry;
     vip_entry.switch_id = gSwitchId;
-    if (!to_sai(entry.sip(), vip_entry.vip))
+    if (to_sai(entry.sip(), vip_entry.vip))
     {
-        return false;
-    }
-    status = sai_dash_vip_api->remove_vip_entry(&vip_entry);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to remove vip entry for %s", appliance_id.c_str());
-        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_VIP, status);
-        if (handle_status != task_success)
+        status = sai_dash_vip_api->remove_vip_entry(&vip_entry);
+        if (status != SAI_STATUS_SUCCESS)
         {
-            return false;
+            SWSS_LOG_ERROR("Failed to remove vip entry for %s", appliance_id.c_str());
+            task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_VIP, status);
+            if (handle_status != task_success)
+            {
+                return false;
+            }
         }
+    }
+    else
+    {
+        SWSS_LOG_WARN("Failed to convert SIP for appliance %s during removal, skipping VIP cleanup", appliance_id.c_str());
     }
 
     sai_direction_lookup_entry_t direction_lookup_entry;
@@ -389,7 +422,6 @@ void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
-    const char *table_name = APP_DASH_APPLIANCE_TABLE_NAME;
     auto it = consumer.m_toSync.begin();
     uint32_t result;
     while (it != consumer.m_toSync.end())
@@ -408,7 +440,8 @@ void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
 
                 if (!parsePbMessage(kfvFieldsValues(t), entry))
                 {
-                    SWSS_LOG_WARN("Requires protobuff at appliance :%s", appliance_id.c_str());
+                    SWSS_LOG_ERROR("Requires protobuff at appliance :%s", appliance_id.c_str());
+                    writeResultToDB(dash_appliance_result_table_, appliance_id, DASH_RESULT_FAILURE);
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
@@ -441,7 +474,8 @@ void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
         }
         catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, appliance_id.c_str(), e.what());
+            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", consumer.getTableName().c_str(), appliance_id.c_str(), e.what());
+            writeResultToDB(dash_appliance_result_table_, appliance_id, DASH_RESULT_FAILURE);
             it = consumer.m_toSync.erase(it);
         }
     }
@@ -483,7 +517,6 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
-    const char *table_name = APP_DASH_ROUTING_TYPE_TABLE_NAME;
     auto it = consumer.m_toSync.begin();
     uint32_t result;
     while (it != consumer.m_toSync.end())
@@ -502,7 +535,8 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
 
             if (!dash::route_type::RoutingType_Parse(routing_type_str, &routing_type))
             {
-                SWSS_LOG_WARN("Invalid routing type %s", routing_type_str.c_str());
+                SWSS_LOG_ERROR("Invalid routing type %s", routing_type_str.c_str());
+                writeResultToDB(dash_routing_type_result_table_, routing_type_str, DASH_RESULT_FAILURE);
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -513,7 +547,8 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
 
                 if (!parsePbMessage(kfvFieldsValues(t), entry))
                 {
-                    SWSS_LOG_WARN("Requires protobuff at routing type :%s", routing_type_str.c_str());
+                    SWSS_LOG_ERROR("Requires protobuff at routing type :%s", routing_type_str.c_str());
+                    writeResultToDB(dash_routing_type_result_table_, routing_type_str, DASH_RESULT_FAILURE);
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
@@ -546,7 +581,8 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
         }
         catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, routing_type_str.c_str(), e.what());
+            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", consumer.getTableName().c_str(), routing_type_str.c_str(), e.what());
+            writeResultToDB(dash_routing_type_result_table_, routing_type_str, DASH_RESULT_FAILURE);
             it = consumer.m_toSync.erase(it);
         }
     }
@@ -889,10 +925,7 @@ bool DashOrch::addEni(const string& eni, EniEntry &entry)
         {
             SWSS_LOG_ERROR("Failed to remove ENI object while cleaning up %s", eni.c_str());
         }
-        else
-        {
-            eni_entries_.erase(eni);
-        }
+        eni_entries_.erase(eni);
         return false;
     }
 
@@ -1075,7 +1108,6 @@ void DashOrch::doTaskEniTable(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
-    const char *table_name = APP_DASH_ENI_TABLE_NAME;
     auto it = consumer.m_toSync.begin();
     uint32_t result;
     while (it != consumer.m_toSync.end())
@@ -1093,7 +1125,8 @@ void DashOrch::doTaskEniTable(ConsumerBase& consumer)
 
                 if (!parsePbMessage(kfvFieldsValues(t), entry.metadata))
                 {
-                    SWSS_LOG_WARN("Requires protobuff at ENI :%s", eni.c_str());
+                    SWSS_LOG_ERROR("Requires protobuff at ENI :%s", eni.c_str());
+                    writeResultToDB(dash_eni_result_table_, eni, DASH_RESULT_FAILURE);
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
@@ -1126,7 +1159,8 @@ void DashOrch::doTaskEniTable(ConsumerBase& consumer)
         }
         catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, eni.c_str(), e.what());
+            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", consumer.getTableName().c_str(), eni.c_str(), e.what());
+            writeResultToDB(dash_eni_result_table_, eni, DASH_RESULT_FAILURE);
             it = consumer.m_toSync.erase(it);
         }
     }
@@ -1163,7 +1197,6 @@ bool DashOrch::removeQosEntry(const string& qos_name)
 
 void DashOrch::doTaskQosTable(ConsumerBase& consumer)
 {
-    const char *table_name = APP_DASH_QOS_TABLE_NAME;
     auto it = consumer.m_toSync.begin();
     uint32_t result;
     while (it != consumer.m_toSync.end())
@@ -1182,7 +1215,8 @@ void DashOrch::doTaskQosTable(ConsumerBase& consumer)
 
                 if (!parsePbMessage(kfvFieldsValues(t), entry))
                 {
-                    SWSS_LOG_WARN("Requires protobuff at QOS :%s", qos_name.c_str());
+                    SWSS_LOG_ERROR("Requires protobuff at QOS :%s", qos_name.c_str());
+                    writeResultToDB(dash_qos_result_table_, qos_name, DASH_RESULT_FAILURE);
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
@@ -1215,7 +1249,8 @@ void DashOrch::doTaskQosTable(ConsumerBase& consumer)
         }
         catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, qos_name.c_str(), e.what());
+            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", consumer.getTableName().c_str(), qos_name.c_str(), e.what());
+            writeResultToDB(dash_qos_result_table_, qos_name, DASH_RESULT_FAILURE);
             it = consumer.m_toSync.erase(it);
         }
     }
@@ -1323,7 +1358,6 @@ bool DashOrch::removeEniRoute(const std::string& eni)
 
 void DashOrch::doTaskEniRouteTable(ConsumerBase& consumer)
 {
-    const char *table_name = APP_DASH_ENI_ROUTE_TABLE_NAME;
     auto it = consumer.m_toSync.begin();
     uint32_t result;
     while (it != consumer.m_toSync.end())
@@ -1342,7 +1376,8 @@ void DashOrch::doTaskEniRouteTable(ConsumerBase& consumer)
 
                 if (!parsePbMessage(kfvFieldsValues(t), entry))
                 {
-                    SWSS_LOG_WARN("Requires protobuf at ENI route:%s", eni.c_str());
+                    SWSS_LOG_ERROR("Requires protobuf at ENI route:%s", eni.c_str());
+                    writeResultToDB(dash_eni_route_result_table_, eni, DASH_RESULT_FAILURE);
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
@@ -1375,7 +1410,8 @@ void DashOrch::doTaskEniRouteTable(ConsumerBase& consumer)
         }
         catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, eni.c_str(), e.what());
+            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", consumer.getTableName().c_str(), eni.c_str(), e.what());
+            writeResultToDB(dash_eni_route_result_table_, eni, DASH_RESULT_FAILURE);
             it = consumer.m_toSync.erase(it);
         }
     }

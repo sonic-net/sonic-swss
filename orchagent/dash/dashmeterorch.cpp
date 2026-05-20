@@ -254,7 +254,6 @@ void DashMeterOrch::doTaskMeterPolicyTable(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
-    const char *table_name = APP_DASH_METER_POLICY_TABLE_NAME;
     auto it = consumer.m_toSync.begin();
 
     while (it != consumer.m_toSync.end())
@@ -298,7 +297,7 @@ void DashMeterOrch::doTaskMeterPolicyTable(ConsumerBase& consumer)
         }
         catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, key.c_str(), e.what());
+            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", consumer.getTableName().c_str(), key.c_str(), e.what());
             it = consumer.m_toSync.erase(it);
         }
     }
@@ -455,7 +454,6 @@ void DashMeterOrch::doTaskMeterRuleTable(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
-    const char *table_name = APP_DASH_METER_RULE_TABLE_NAME;
     auto it = consumer.m_toSync.begin();
     uint32_t result;
 
@@ -534,7 +532,7 @@ void DashMeterOrch::doTaskMeterRuleTable(ConsumerBase& consumer)
             }
             catch (const std::exception& e)
             {
-                SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, key.c_str(), e.what());
+                SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", consumer.getTableName().c_str(), key.c_str(), e.what());
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -594,7 +592,7 @@ void DashMeterOrch::doTaskMeterRuleTable(ConsumerBase& consumer)
             }
             catch (const std::exception& e)
             {
-                SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", table_name, key.c_str(), e.what());
+                SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", consumer.getTableName().c_str(), key.c_str(), e.what());
                 it_prev = consumer.m_toSync.erase(it_prev);
             }
         }

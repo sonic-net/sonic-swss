@@ -93,7 +93,6 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
     SWSS_LOG_ENTER();
 
     const auto& tn = consumer.getTableName();
-    const char *table_name = APP_DASH_TUNNEL_TABLE_NAME;
     uint32_t result;
     SWSS_LOG_INFO("doTask: %s", tn.c_str());
     if (tn != APP_DASH_TUNNEL_TABLE_NAME)
@@ -130,7 +129,8 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
                 {
                     if (!parsePbMessage(kfvFieldsValues(t), ctxt.metadata))
                     {
-                        SWSS_LOG_WARN("Requires protobuf at Tunnel :%s", tunnel_name.c_str());
+                        SWSS_LOG_ERROR("Requires protobuf at Tunnel :%s", tunnel_name.c_str());
+                        writeResultToDB(dash_tunnel_result_table_, tunnel_name, DASH_RESULT_FAILURE);
                         it = consumer.m_toSync.erase(it);
                         continue;
                     }
@@ -162,7 +162,8 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
             }
             catch (const std::exception& e)
             {
-                SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, tunnel_name.c_str(), e.what());
+                SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", consumer.getTableName().c_str(), tunnel_name.c_str(), e.what());
+                writeResultToDB(dash_tunnel_result_table_, tunnel_name, DASH_RESULT_FAILURE);
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -240,7 +241,7 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
             }
             catch (const std::exception& e)
             {
-                SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", table_name, tunnel_name.c_str(), e.what());
+                SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", consumer.getTableName().c_str(), tunnel_name.c_str(), e.what());
                 it_prev = consumer.m_toSync.erase(it_prev);
             }
         }
@@ -286,7 +287,7 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
             }
             catch (const std::exception& e)
             {
-                SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", table_name, tunnel_name.c_str(), e.what());
+                SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", consumer.getTableName().c_str(), tunnel_name.c_str(), e.what());
                 it_prev = consumer.m_toSync.erase(it_prev);
             }
         }
@@ -628,8 +629,9 @@ bool DashTunnelOrch::removeTunnelEndpointsPost(const std::string& tunnel_name, c
 
         if (nh_status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("DASH tunnel next hop removal for tunnel %s endpoint %s failed with %s", tunnel_name.c_str(), endpoint_it->first.c_str(), sai_serialize_status(tm_status).c_str());
+            SWSS_LOG_ERROR("DASH tunnel next hop removal for tunnel %s endpoint %s failed with %s", tunnel_name.c_str(), endpoint_it->first.c_str(), sai_serialize_status(nh_status).c_str());
             handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_TUNNEL, nh_status);
+            remove_from_consumer = false;
         }
         else
         {

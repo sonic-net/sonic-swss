@@ -298,7 +298,6 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
-    const char *table_name = APP_DASH_ROUTE_TABLE_NAME;
     auto it = consumer.m_toSync.begin();
     uint32_t result;
     while (it != consumer.m_toSync.end())
@@ -340,7 +339,8 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
                 {
                     if (!parsePbMessage(kfvFieldsValues(tuple), ctxt.metadata))
                     {
-                        SWSS_LOG_WARN("Requires protobuff at OutboundRouting :%s", key.c_str());
+                        SWSS_LOG_ERROR("Requires protobuff at OutboundRouting :%s", key.c_str());
+                        writeResultToDB(dash_route_result_table_, key, DASH_RESULT_FAILURE);
                         it = consumer.m_toSync.erase(it);
                         continue;
                     }
@@ -382,7 +382,8 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
             }
             catch (const std::exception& e)
             {
-                SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, key.c_str(), e.what());
+                SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", consumer.getTableName().c_str(), key.c_str(), e.what());
+                writeResultToDB(dash_route_result_table_, key, DASH_RESULT_FAILURE);
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -438,7 +439,7 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
             }
             catch (const std::exception& e)
             {
-                SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", table_name, key.c_str(), e.what());
+                SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", consumer.getTableName().c_str(), key.c_str(), e.what());
                 it_prev = consumer.m_toSync.erase(it_prev);
             }
         }
@@ -598,7 +599,6 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
-    const char *table_name = APP_DASH_ROUTE_RULE_TABLE_NAME;
     auto it = consumer.m_toSync.begin();
     uint32_t result;
     while (it != consumer.m_toSync.end())
@@ -667,7 +667,8 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
                 {
                     if (!parsePbMessage(kfvFieldsValues(tuple), ctxt.metadata))
                     {
-                        SWSS_LOG_WARN("Requires protobuff at InboundRouting :%s", key.c_str());
+                        SWSS_LOG_ERROR("Requires protobuff at InboundRouting :%s", key.c_str());
+                        writeResultToDB(dash_route_rule_result_table_, key, DASH_RESULT_FAILURE);
                         it = consumer.m_toSync.erase(it);
                         continue;
                     }
@@ -700,7 +701,8 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
             }
             catch (const std::exception& e)
             {
-                SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, key.c_str(), e.what());
+                SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", consumer.getTableName().c_str(), key.c_str(), e.what());
+                writeResultToDB(dash_route_rule_result_table_, key, DASH_RESULT_FAILURE);
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -756,7 +758,7 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
             }
             catch (const std::exception& e)
             {
-                SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", table_name, key.c_str(), e.what());
+                SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", consumer.getTableName().c_str(), key.c_str(), e.what());
                 it_prev = consumer.m_toSync.erase(it_prev);
             }
         }
@@ -886,7 +888,6 @@ void DashRouteOrch::doTaskRouteGroupTable(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
-    const char *table_name = APP_DASH_ROUTE_GROUP_TABLE_NAME;
     auto it = consumer.m_toSync.begin();
     uint32_t result;
     while (it != consumer.m_toSync.end())
@@ -903,7 +904,8 @@ void DashRouteOrch::doTaskRouteGroupTable(ConsumerBase& consumer)
                 dash::route_group::RouteGroup entry;
                 if (!parsePbMessage(kfvFieldsValues(t), entry))
                 {
-                    SWSS_LOG_WARN("Requires protobuf at RouteGroup :%s", route_group.c_str());
+                    SWSS_LOG_ERROR("Requires protobuf at RouteGroup :%s", route_group.c_str());
+                    writeResultToDB(dash_route_group_result_table_, route_group, DASH_RESULT_FAILURE);
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
@@ -931,7 +933,8 @@ void DashRouteOrch::doTaskRouteGroupTable(ConsumerBase& consumer)
         }
         catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, route_group.c_str(), e.what());
+            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", consumer.getTableName().c_str(), route_group.c_str(), e.what());
+            writeResultToDB(dash_route_group_result_table_, route_group, DASH_RESULT_FAILURE);
             it = consumer.m_toSync.erase(it);
         }
     }

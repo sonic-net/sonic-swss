@@ -53,7 +53,6 @@ void DashPortMapOrch::doTaskPortMapTable(ConsumerBase &consumer)
 {
     SWSS_LOG_ENTER();
 
-    const char *table_name = APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME;
     auto it = consumer.m_toSync.begin();
     uint32_t result;
 
@@ -115,7 +114,8 @@ void DashPortMapOrch::doTaskPortMapTable(ConsumerBase &consumer)
         }
         catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, port_map_id.c_str(), e.what());
+            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", consumer.getTableName().c_str(), port_map_id.c_str(), e.what());
+            writeResultToDB(dash_port_map_result_table_, port_map_id, DASH_RESULT_FAILURE);
             it = consumer.m_toSync.erase(it);
             continue;
         }
@@ -183,7 +183,7 @@ void DashPortMapOrch::doTaskPortMapTable(ConsumerBase &consumer)
         }
         catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", table_name, port_map_id.c_str(), e.what());
+            SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", consumer.getTableName().c_str(), port_map_id.c_str(), e.what());
             it_prev = consumer.m_toSync.erase(it_prev);
         }
     }
@@ -307,7 +307,6 @@ void DashPortMapOrch::doTaskPortMapRangeTable(ConsumerBase &consumer)
 {
     SWSS_LOG_ENTER();
 
-    const char *table_name = APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME;
     auto it = consumer.m_toSync.begin();
     uint32_t result;
 
@@ -338,6 +337,7 @@ void DashPortMapOrch::doTaskPortMapRangeTable(ConsumerBase &consumer)
             if (!parsePortMapRange(key, ctxt))
             {
                 SWSS_LOG_ERROR("Failed to parse port map range key: %s", key.c_str());
+                writeResultToDB(dash_port_map_range_result_table_, key, DASH_RESULT_FAILURE);
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -347,6 +347,7 @@ void DashPortMapOrch::doTaskPortMapRangeTable(ConsumerBase &consumer)
                 if (!parsePbMessage(kfvFieldsValues(tuple), ctxt.metadata))
                 {
                     SWSS_LOG_ERROR("Failed to parse protobuf message for port map range %s", key.c_str());
+                    writeResultToDB(dash_port_map_range_result_table_, key, DASH_RESULT_FAILURE);
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
@@ -380,7 +381,8 @@ void DashPortMapOrch::doTaskPortMapRangeTable(ConsumerBase &consumer)
         }
         catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", table_name, key.c_str(), e.what());
+            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", consumer.getTableName().c_str(), key.c_str(), e.what());
+            writeResultToDB(dash_port_map_range_result_table_, key, DASH_RESULT_FAILURE);
             it = consumer.m_toSync.erase(it);
             continue;
         }
@@ -448,7 +450,7 @@ void DashPortMapOrch::doTaskPortMapRangeTable(ConsumerBase &consumer)
         }
         catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", table_name, key.c_str(), e.what());
+            SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", consumer.getTableName().c_str(), key.c_str(), e.what());
             it_prev = consumer.m_toSync.erase(it_prev);
         }
     }
