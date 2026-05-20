@@ -74,4 +74,5 @@ private:
     bool parsePortPtTimestampTemplate(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortMediaType(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortFastLinkup(PortConfig &port, const std::string &field, const std::string &value) const;
+    bool parsePortSiSyncStatus(PortConfig &port, const std::string &field, const std::string &value) const;
 };
