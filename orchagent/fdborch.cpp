@@ -7,6 +7,7 @@
 
 #include "logger.h"
 #include "tokenize.h"
+#include "notificationconsumerstatsorch.h"
 #include "fdborch.h"
 #include "crmorch.h"
 #include "notifier.h"
@@ -40,12 +41,51 @@ FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> app
 
     m_portsOrch->attach(this);
     m_flushNotificationsConsumer = new NotificationConsumer(applDbConnector, "FLUSHFDBREQUEST");
+#ifdef SWSS_NOTIFICATIONCONSUMER_HAS_LRU_DEDUP
+    m_flushNotificationsConsumer->setOpAllowList({"ALL", "PORT", "VLAN", "PORTVLAN"});
+    m_flushNotificationsConsumer->setStatsLabel("FdbOrch:flush");
+    if (gNotifConsumerStatsOrch)
+        gNotifConsumerStatsOrch->registerConsumer("FdbOrch:flush", m_flushNotificationsConsumer);
+#endif
     auto flushNotifier = new Notifier(m_flushNotificationsConsumer, this, "FLUSHFDBREQUEST");
     Orch::addExecutor(flushNotifier);
 
-    /* Add FDB notifications support from ASIC */
+    /* Add FDB notifications support from ASIC.
+     *
+     * Opt the FDB consumer into the LRU-dedup queue policy.  LruDedup
+     * collapses *byte-identical* in-flight payloads at enqueue -- two
+     * consecutive identical SAI fdb_event notifications (same vlan/mac/
+     * port/event_type) become one queue entry; distinct event types
+     * (LEARN vs AGE) and distinct ports for the same MAC are different
+     * byte strings and queue separately, so no event-shadowing happens.
+     *
+     * FdbOrch's update() is end-state-idempotent under identical
+     * payloads: repeated LEARN on the same (vlan, mac, port) is a
+     * no-op after the first; repeated AGE on an already-aged entry
+     * is a no-op; so collapsing only byte-identical duplicates
+     * preserves the final FDB_TABLE state while bounding queue depth
+     * to count(distinct in-flight payloads) instead of event rate.
+     *
+     * pri=100 / popBatchSize match swss-common's 4-arg ctor defaults;
+     * the 5-arg ctor has no defaults so they must be passed
+     * explicitly.  No change in Select-loop priority vs. the prior
+     * 2-arg call.
+     */
     m_notificationsDb = make_shared<DBConnector>("ASIC_DB", 0);
+#ifdef SWSS_NOTIFICATIONCONSUMER_HAS_LRU_DEDUP
+    m_fdbNotificationConsumer = new swss::NotificationConsumer(
+        m_notificationsDb.get(), "NOTIFICATIONS",
+        100,                                       // pri -- match swss-common default
+        swss::DEFAULT_NC_POP_BATCH_SIZE,
+        swss::NotificationQueuePolicy::LruDedup);
+    m_fdbNotificationConsumer->setOpAllowList({"fdb_event"});
+    m_fdbNotificationConsumer->setStatsLabel("FdbOrch:fdb_event");
+    if (gNotifConsumerStatsOrch)
+        gNotifConsumerStatsOrch->registerConsumer("FdbOrch:fdb_event", m_fdbNotificationConsumer);
+#else
+    // Legacy: libswsscommon doesn't ship the LruDedup queue policy yet.
     m_fdbNotificationConsumer = new swss::NotificationConsumer(m_notificationsDb.get(), "NOTIFICATIONS");
+#endif
     auto fdbNotifier = new Notifier(m_fdbNotificationConsumer, this, "FDB_NOTIFICATIONS");
     Orch::addExecutor(fdbNotifier);
 }

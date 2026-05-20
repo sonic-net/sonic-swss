@@ -1,4 +1,5 @@
 #include "p4orch.h"
+#include "../notificationconsumerstatsorch.h"
 
 #include <map>
 #include <memory>
@@ -119,6 +120,12 @@ P4Orch::P4Orch(swss::DBConnector* db, std::vector<std::string> tableNames,
     // Add port state change notification handling support
     swss::DBConnector notificationsDb("ASIC_DB", 0);
     m_portStatusNotificationConsumer = new swss::NotificationConsumer(&notificationsDb, "NOTIFICATIONS");
+#ifdef SWSS_NOTIFICATIONCONSUMER_HAS_LRU_DEDUP
+    m_portStatusNotificationConsumer->setOpAllowList({"port_state_change"});
+    m_portStatusNotificationConsumer->setStatsLabel("P4Orch:port_state_change");
+    if (gNotifConsumerStatsOrch)
+        gNotifConsumerStatsOrch->registerConsumer("P4Orch:port_state_change", m_portStatusNotificationConsumer);
+#endif
     auto portStatusNotifier = new Notifier(m_portStatusNotificationConsumer, this, "PORT_STATUS_NOTIFICATIONS");
     Orch::addExecutor(portStatusNotifier);
 }
