@@ -483,13 +483,13 @@ using namespace std;
          * get the full group of RIBNHGEntry
          * contain <ribID, weight> pair
          */
-        unordered_map<uint32_t, uint8_t> getGroup();
+        unordered_map<uint32_t, uint16_t> getGroup();
 
         /*
          * get the resolved group of RIBNHGEntry
          * contain <ribID, weight> pair
          */
-        unordered_map<uint32_t, uint8_t> getResolvedGroup();
+        unordered_map<uint32_t, uint16_t> getResolvedGroup();
 
         /*
          * get the DB FV vector of RIBNHGEntry
@@ -667,13 +667,13 @@ using namespace std;
          * full group of the entry
          * contain <ribID, weight> pair
          */
-        unordered_map<uint32_t, uint8_t> m_group;
+        unordered_map<uint32_t, uint16_t> m_group;
 
         /*
          * resolved group of the entry
          * contain <ribID, weight> pair
          */
-        unordered_map<uint32_t, uint8_t> m_resolvedGroup;
+        unordered_map<uint32_t, uint16_t> m_resolvedGroup;
 
         /*
          * depends of the entry
