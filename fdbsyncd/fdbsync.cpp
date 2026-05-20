@@ -884,7 +884,7 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h
     /* Parse raw attributes to extract NDA_NH_ID and NDA_FLAGS_EXT */
     nm = (struct ndmsg *)NLMSG_DATA(h);
     int attr_len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(*nm)));
-    struct rtattr *rta = (struct rtattr *)((char *)nm + NLMSG_ALIGN(sizeof(*nm)));
+    struct rtattr *rta = (struct rtattr *)(void *)((char *)nm + NLMSG_ALIGN(sizeof(*nm)));
     for (; RTA_OK(rta, attr_len); rta = RTA_NEXT(rta, attr_len))
     {
         if (rta->rta_type <= NDA_MAX)
@@ -1113,7 +1113,7 @@ void FdbSync::onMsgNhg(struct nlmsghdr *msg)
     memset(&v4addr, 0, sizeof(v4addr));
     memset(&v6addr, 0, sizeof(v6addr));
 
-    struct rtattr *rta = (struct rtattr *)((char *)nhm + NLMSG_ALIGN(sizeof(*nhm)));
+    struct rtattr *rta = (struct rtattr *)(void *)((char *)nhm + NLMSG_ALIGN(sizeof(*nhm)));
 
     for (; RTA_OK(rta, len); rta = RTA_NEXT(rta, len))
     {
