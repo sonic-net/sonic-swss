@@ -1435,12 +1435,12 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
 
     bool hw_config = isHwConfigured(neighborEntry);
     /*
-     * For MUX neighbors, do not program the SAI neighbor while the MUX cable is
-     * standby. Prefix-route mode only changes how the active neighbor is
-     * programmed (NO_HOST_ROUTE plus full-prefix route); it must not bypass
-     * active/standby gating.
+     * Prefix-route mode programs neighbors with NO_HOST_ROUTE and controls
+     * active/standby forwarding through the explicit host prefix route.  Keep
+     * the neighbor programmed in both states so state transitions can update
+     * the prefix route between local and tunnel nexthops.
      */
-    bool nbr_add_ready = is_nbr_active;
+    bool nbr_add_ready = (prefix_route || is_nbr_active);
 
     if (gMySwitchType == "voq")
     {
