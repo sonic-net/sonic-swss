@@ -1431,8 +1431,8 @@ bool RouteOrch::createFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id
     if (m_nextHopGroupCount + NhgOrch::getSyncedNhgCount() >= m_maxNextHopGroupCount)
     {
         SWSS_LOG_INFO("Failed to create new next hop group. "
-                  "Reaching maximum number of next hop groups (%d).",
-                  m_maxNextHopGroupCount);
+                      "Reaching maximum number of next hop groups (%d).",
+                      m_maxNextHopGroupCount);
         return false;
     }
 
