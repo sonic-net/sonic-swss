@@ -66,6 +66,10 @@ DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, DBConnector *app_
 
     m_counter_db = std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
     m_eni_name_table = make_unique<Table>(m_counter_db.get(), COUNTERS_ENI_NAME_MAP);
+    m_eni_oid_table = make_unique<Table>(m_counter_db.get(), COUNTERS_ENI_OID_MAP);
+    m_dpu_counter_db = std::shared_ptr<DBConnector>(new DBConnector("DPU_COUNTERS_DB", 0, true));
+    m_dpu_eni_name_table = make_unique<Table>(m_dpu_counter_db.get(), COUNTERS_ENI_NAME_MAP);
+    m_dpu_eni_oid_table = make_unique<Table>(m_dpu_counter_db.get(), COUNTERS_ENI_OID_MAP);
     dash_eni_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ENI_TABLE_NAME);
     dash_eni_route_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ENI_ROUTE_TABLE_NAME);
     dash_qos_result_table_ = make_unique<Table>(app_state_db, APP_DASH_QOS_TABLE_NAME);
@@ -1377,9 +1381,16 @@ void DashOrch::addEniMapEntry(sai_object_id_t oid, const string &name)
 
     const auto id = sai_serialize_object_id(oid);
     SWSS_LOG_INFO("Adding ENI map entry for %s, id: %s", name.c_str(), id.c_str());
+
     std::vector<FieldValueTuple> eniNameFvs;
     eniNameFvs.emplace_back(name, id);
     m_eni_name_table->set("", eniNameFvs);
+    m_dpu_eni_name_table->set("", eniNameFvs);
+
+    std::vector<FieldValueTuple> eniOidFvs;
+    eniOidFvs.emplace_back(id, name);
+    m_eni_oid_table->set("", eniOidFvs);
+    m_dpu_eni_oid_table->set("", eniOidFvs);
 }
 
 void DashOrch::removeEniMapEntry(sai_object_id_t oid, const string &name) 
@@ -1393,7 +1404,13 @@ void DashOrch::removeEniMapEntry(sai_object_id_t oid, const string &name)
     }
 
     m_eni_name_table->hdel("", name);
-    SWSS_LOG_INFO("Removing ENI map entry for %s, id: %s", name.c_str(), sai_serialize_object_id(oid).c_str());
+    m_dpu_eni_name_table->hdel("", name);
+
+    const auto id = sai_serialize_object_id(oid);
+    m_eni_oid_table->hdel("", id);
+    m_dpu_eni_oid_table->hdel("", id);
+
+    SWSS_LOG_INFO("Removing ENI map entry for %s, id: %s", name.c_str(), id.c_str());
 }
 
 dash::types::IpAddress DashOrch::getApplianceVip()
