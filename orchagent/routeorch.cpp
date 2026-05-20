@@ -95,9 +95,8 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
 
     if (m_maxNextHopGroupCount < DEFAULT_MAX_ECMP_GROUP_SIZE)
     {
-        SWSS_LOG_NOTICE("SAI returned suspiciously low MAX ECMP groups: %d (expected >= %d). "
-                       "Possible SAI bug.",
-                       m_maxNextHopGroupCount, DEFAULT_MAX_ECMP_GROUP_SIZE);
+        SWSS_LOG_WARN("SAI MAX ECMP group count is less than expected default: %d (expected >= %d).",
+                      m_maxNextHopGroupCount, DEFAULT_MAX_ECMP_GROUP_SIZE);
     }
 
     /* fetch the MAX_ECMP_MEMBER_COUNT and for voq platform, set it to 128 */
@@ -1431,9 +1430,9 @@ bool RouteOrch::createFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id
 
     if (m_nextHopGroupCount + NhgOrch::getSyncedNhgCount() >= m_maxNextHopGroupCount)
     {
-        SWSS_LOG_NOTICE("Failed to create new next hop group. "
-                "Reaching maximum number of next hop groups (%d).",
-                m_maxNextHopGroupCount);
+        SWSS_LOG_INFO("Failed to create new next hop group. "
+                  "Reaching maximum number of next hop groups (%d).",
+                  m_maxNextHopGroupCount);
         return false;
     }
 
@@ -1486,9 +1485,9 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
 
     if (m_nextHopGroupCount + NhgOrch::getSyncedNhgCount() >= m_maxNextHopGroupCount)
     {
-        SWSS_LOG_NOTICE("Failed to create new next hop group. "
-                        "Reaching maximum number of next hop groups (%d).",
-                        m_maxNextHopGroupCount);
+        SWSS_LOG_INFO("Failed to create new next hop group. "
+                      "Reaching maximum number of next hop groups (%d).",
+                      m_maxNextHopGroupCount);
         return false;
     }
 
