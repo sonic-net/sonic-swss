@@ -574,7 +574,7 @@ namespace ut_fpmsyncd
         fib::g_addr src_in;
         inet_pton(AF_INET, src_addr, &src_in.ipv4);
         fib::g_addr rmap_src_in;
-        std::uint8_t weight_in = 1;
+        std::uint16_t weight_in = 1;
         std::uint8_t flags_in = 0;
         std::uint32_t nhg_flags_in = 0;
         bool has_srv6 = false;
@@ -606,7 +606,7 @@ namespace ut_fpmsyncd
         fib::g_addr src_in;
         inet_pton(AF_INET6, src_addr, &src_in.ipv6);
         fib::g_addr rmap_src_in;
-        std::uint8_t weight_in = 1;
+        std::uint16_t weight_in = 1;
         std::uint8_t flags_in = 0;
         std::uint32_t nhg_flags_in = 0;
         bool has_srv6 = false;
@@ -635,7 +635,7 @@ namespace ut_fpmsyncd
         {
             nh_grp_full ngf;
             ngf.id = it->second.id;
-            ngf.weight = (uint8_t)weights.at(ngf.id);
+            ngf.weight = (uint16_t)weights.at(ngf.id);
             ngf.num_direct = numDirects.at(ngf.id);
             nh_grp_full_list_in.push_back(ngf);
         }
@@ -660,7 +660,7 @@ namespace ut_fpmsyncd
         fib::g_addr src_in;
         inet_pton(AF_INET6, src_addr, &src_in.ipv6);
         fib::g_addr rmap_src_in;
-        std::uint8_t weight_in = 1;
+        std::uint16_t weight_in = 1;
         std::uint8_t flags_in = 0;
         std::uint32_t nhg_flags_in = 1024;
         bool has_srv6 = true;

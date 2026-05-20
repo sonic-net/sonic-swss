@@ -952,7 +952,7 @@ int RIBNHGEntry::createSRv6GatewayObjFromRIBEntry(SonicGateWayNHGObject &sonicNh
         if (memberEntry->hasSonicGatewayObj() && memberEntry->getSonicObjType() == SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY) {
             if (memberEntry->getSonicGatewayObjID() != 0) {
                 auto git = m_group.find(member.first);
-                uint8_t weight = (git != m_group.end()) ? git->second : 1;
+                uint16_t weight = (git != m_group.end()) ? git->second : 1;
                 sonicNhgOut.groupMember.push_back(std::make_pair(memberEntry->getSonicGatewayObjID(), weight));
             }
         }
@@ -969,12 +969,12 @@ int RIBNHGEntry::createSRv6GatewayObjFromRIBEntry(SonicGateWayNHGObject &sonicNh
 }
 
 /* getter of group */
-unordered_map<uint32_t, uint8_t> RIBNHGEntry::getGroup() {
+unordered_map<uint32_t, uint16_t> RIBNHGEntry::getGroup() {
     return m_group;
 }
 
 /* getter of resolved group */
-unordered_map<uint32_t, uint8_t> RIBNHGEntry::getResolvedGroup() {
+unordered_map<uint32_t, uint16_t> RIBNHGEntry::getResolvedGroup() {
     return m_resolvedGroup;
 }
 
