@@ -58,7 +58,7 @@ DashRouteOrch::DashRouteOrch(DBConnector *db, vector<string> &tableName, DashOrc
     dash_route_group_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ROUTE_GROUP_TABLE_NAME);
 
     /* Disable swss.rec recording for high-volume child tables */
-    for (const auto &tbl : {APP_DASH_ROUTE_TABLE_NAME, APP_DASH_ROUTE_RULE_TABLE_NAME, APP_DASH_ROUTE_GROUP_TABLE_NAME})
+    for (const auto &tbl : {APP_DASH_ROUTE_TABLE_NAME, APP_DASH_ROUTE_RULE_TABLE_NAME})
     {
         auto *consumer = getConsumerBase(tbl);
         if (consumer)

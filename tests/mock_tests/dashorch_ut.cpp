@@ -783,7 +783,6 @@ namespace dashorch_test
         std::vector<std::pair<Orch*, std::string>> child_tables = {
             {m_DashRouteOrch, APP_DASH_ROUTE_TABLE_NAME},
             {m_DashRouteOrch, APP_DASH_ROUTE_RULE_TABLE_NAME},
-            {m_DashRouteOrch, APP_DASH_ROUTE_GROUP_TABLE_NAME},
             {m_dashVnetOrch, APP_DASH_VNET_MAPPING_TABLE_NAME},
             {m_DashMeterOrch, APP_DASH_METER_RULE_TABLE_NAME},
             {m_dashPortMapOrch, APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME},
@@ -800,6 +799,7 @@ namespace dashorch_test
         std::vector<std::pair<Orch*, std::string>> parent_tables = {
             {m_DashOrch, APP_DASH_APPLIANCE_TABLE_NAME},
             {m_DashOrch, APP_DASH_ENI_TABLE_NAME},
+            {m_DashRouteOrch, APP_DASH_ROUTE_GROUP_TABLE_NAME},
             {m_dashVnetOrch, APP_DASH_VNET_TABLE_NAME},
             {m_dashPortMapOrch, APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME},
         };
