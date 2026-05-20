@@ -72,20 +72,12 @@ namespace ut_fpmsyncd
         RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(nhg_obj.id);
         ASSERT_NE(entry, nullptr);
         std::string nexthop, ifname;
-        // uint32_t sonic_obj_id = entry->getSonicObjID();
-        // ASSERT_EQ(m_nextHopTable->hget(to_string(sonic_obj_id), "nexthop", nexthop), true);
-        // ASSERT_EQ(nexthop, "192.100.1.1");
-        // ASSERT_EQ(m_nextHopTable->hget(to_string(sonic_obj_id), "ifname", ifname), true);
-        // ASSERT_EQ(ifname, nhg_obj.ifname);
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonic_obj_id), true);
 
         /* Delete entry and check the APP_DB */
         ASSERT_EQ(m_nhgmgr->delNHGFull(nhg_obj.id), 0);
         entry = m_nhgmgr->getRIBNHGEntryByRIBID(nhg_obj.id);
         ASSERT_EQ(entry, nullptr);
         std::vector<FieldValueTuple> fvs;
-        // ASSERT_EQ(m_nextHopTable->get(to_string(sonic_obj_id), fvs), false);
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonic_obj_id), false);
     }
 
     /* Test add and remove a single ipv6 nexthop */
@@ -100,20 +92,13 @@ namespace ut_fpmsyncd
         RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(nhg_obj.id);
         ASSERT_NE(entry, nullptr);
         std::string nexthop, ifname;
-        // uint32_t sonic_obj_id = entry->getSonicObjID();
-        // ASSERT_EQ(m_nextHopTable->hget(to_string(sonic_obj_id), "nexthop", nexthop), true);
-        // ASSERT_EQ(nexthop, "fc00::1");
-        // ASSERT_EQ(m_nextHopTable->hget(to_string(sonic_obj_id), "ifname", ifname), true);
-        // ASSERT_EQ(ifname, nhg_obj.ifname);
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonic_obj_id), true);
 
         /* Delete entry and check the APP_DB */
         ASSERT_EQ(m_nhgmgr->delNHGFull(nhg_obj.id), 0);
         entry = m_nhgmgr->getRIBNHGEntryByRIBID(nhg_obj.id);
         ASSERT_EQ(entry, nullptr);
         std::vector<FieldValueTuple> fvs;
-        // ASSERT_EQ(m_nextHopTable->get(to_string(sonic_obj_id), fvs), false);
-        //  ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonic_obj_id), false);
+
     }
 
     /* Test add and remove a multi ipv4 nexthop */
@@ -140,13 +125,6 @@ namespace ut_fpmsyncd
         ASSERT_NE(entryC, nullptr);
         ASSERT_NE(entryB1, nullptr);
         ASSERT_NE(entryB2, nullptr);
-        // uint32_t sonicObjIDC = entryC->getSonicObjID();
-        // uint32_t sonicObjIDB1 = entryB1->getSonicObjID();
-        // uint32_t sonicObjIDB2 = entryB2->getSonicObjID();
-
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDC), true);
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB1), true);
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB2), true);
 
         vector<uint32_t> dependsB = { ribIDB1, ribIDB2 };
         vector<uint32_t> dependentsB = { ribIDA };
@@ -253,13 +231,6 @@ namespace ut_fpmsyncd
         ASSERT_NE(entryC, nullptr);
         ASSERT_NE(entryB1, nullptr);
         ASSERT_NE(entryB2, nullptr);
-        // uint32_t sonicObjIDC = entryC->getSonicObjID();
-        // uint32_t sonicObjIDB1 = entryB1->getSonicObjID();
-        // uint32_t sonicObjIDB2 = entryB2->getSonicObjID();
-
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDC), true);
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB1), true);
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB2), true);
 
         vector<uint32_t> dependsB = { ribIDB1, ribIDB2 };
         vector<uint32_t> dependentsB = { ribIDA };
@@ -352,16 +323,11 @@ namespace ut_fpmsyncd
         /* Check that fpmsyncd created the correct entries in APP_DB */
         RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(nhg_obj.id);
         ASSERT_NE(entry, nullptr);
-        // uint32_t sonicObjID = entry->getSonicObjID();
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjID), true);
+
         std::string nexthop;
-        // ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjID), "nexthop", nexthop), true);
-        // ASSERT_EQ(nexthop, "192.100.1.1");
-        // inet_pton(AF_INET, "122.0.0.1", &nhg_obj.gate.ipv4);
+
         ASSERT_EQ(m_nhgmgr->addNHGFull(nhg_obj, AF_INET), 0);
-        // ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjID), "nexthop", nexthop), true);
-        // ASSERT_EQ(nexthop, "122.0.0.1");
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjID), true);
+
     }
 
     /* Test update a single ipv6 nexthop */
@@ -374,17 +340,10 @@ namespace ut_fpmsyncd
         /* Check that fpmsyncd created the correct entries in APP_DB */
         RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(nhg_obj.id);
         ASSERT_NE(entry, nullptr);
-        // uint32_t sonicObjID = entry->getSonicObjID();
         ASSERT_EQ(entry->getNextHopStr(), "fc00::1");
         ASSERT_EQ(entry->getInterfaceNameStr(), nhg_obj.ifname);
         std::string nexthop;
-        // ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjID), "nexthop", nexthop), true);
-        // ASSERT_EQ(nexthop, "fc00::1");
-        // inet_pton(AF_INET6, "fc00::2", &nhg_obj.gate.ipv6);
         ASSERT_EQ(m_nhgmgr->addNHGFull(nhg_obj, AF_INET6), 0);
-        // ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjID), "nexthop", nexthop), true);
-        // ASSERT_EQ(nexthop, "fc00::2");
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjID), true);
     }
 
     /* Test update a multi ipv4 nexthop */
@@ -412,13 +371,6 @@ namespace ut_fpmsyncd
         ASSERT_NE(entryC, nullptr);
         ASSERT_NE(entryB1, nullptr);
         ASSERT_NE(entryB2, nullptr);
-        // uint32_t sonicObjIDC = entryC->getSonicObjID();
-        // uint32_t sonicObjIDB1 = entryB1->getSonicObjID();
-        // uint32_t sonicObjIDB2 = entryB2->getSonicObjID();
-
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDC), true);
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB1), true);
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB2), true);
 
         vector<uint32_t> dependsB = { ribIDB1, ribIDB2 };
         vector<uint32_t> dependentsB = { ribIDA };
@@ -552,13 +504,6 @@ namespace ut_fpmsyncd
         ASSERT_NE(entryC, nullptr);
         ASSERT_NE(entryB1, nullptr);
         ASSERT_NE(entryB2, nullptr);
-        // uint32_t sonicObjIDC = entryC->getSonicObjID();
-        // uint32_t sonicObjIDB1 = entryB1->getSonicObjID();
-        // uint32_t sonicObjIDB2 = entryB2->getSonicObjID();
-
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDC), true);
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB1), true);
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDB2), true);
 
         vector<uint32_t> dependsB = { ribIDB1, ribIDB2 };
         vector<uint32_t> dependentsB = { ribIDA };
@@ -690,13 +635,11 @@ namespace ut_fpmsyncd
         RIBNHGEntry *entryA = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDA);
         ASSERT_NE(entryA, nullptr);
         ASSERT_NE(entryA, nullptr);
-        // uint32_t sonicObjIDA = entryA->getSonicObjID();
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDA), true);
+
         string nexthops = "";
         string vpnsids = "";
         string weights = "";
-        // vector<string> nexthopResults, weightResults;
-        // ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjIDA), "nexthop", nexthops), true);
+
         ASSERT_EQ(nexthopA, entryA->getNextHopStr());
 
         /* Check the SRv6 NHG Object */
@@ -712,7 +655,6 @@ namespace ut_fpmsyncd
 
         /* Remove the SRv6 NHG A */
         ASSERT_EQ(m_nhgmgr->delNHGFull(ribIDA), 0);
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDA), false);
         ASSERT_EQ(m_nhgmgr->isSonicGatewayNHGIDInUsed(swss::SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY, sonicGatewayObjIDA), false);
         std::vector<FieldValueTuple> fvs;
         ASSERT_EQ(m_picContextTable->get(to_string(sonicGatewayObjIDA), fvs), false);
@@ -736,14 +678,11 @@ namespace ut_fpmsyncd
         /* Check that fpmsyncd created the correct entries in APP_DB */
         RIBNHGEntry *entryA = m_nhgmgr->getRIBNHGEntryByRIBID(ribIDA);
         ASSERT_NE(entryA, nullptr);
-        // uint32_t sonicObjIDA = entryA->getSonicObjID();
-        // ASSERT_EQ(m_nhgmgr->isSonicNHGIDInUsed(sonicObjIDA), true);
+
         string nexthops = "";
         string vpnsids = "";
         string weights = "";
         vector<string> nexthopResults, weightResults, vpnSidsResults;
-        // ASSERT_EQ(m_nextHopTable->hget(to_string(sonicObjIDA), "nexthop", nexthops), true);
-        // ASSERT_EQ("b::b", nexthops);
 
         /* Check the SRv6 NHG Object */
         SonicGateWayNHGEntry *sonicNHGEntry = m_nhgmgr->getSonicGatewayNHGByRIBID(ribIDA);
