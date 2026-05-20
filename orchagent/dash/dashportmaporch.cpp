@@ -26,7 +26,7 @@ DashPortMapOrch::DashPortMapOrch(swss::DBConnector *db, std::vector<std::string>
     dash_port_map_range_result_table_ = std::make_unique<swss::Table>(app_state_db, APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME);
 
     /* Disable swss.rec recording for high-volume port map range table */
-    auto *consumer = dynamic_cast<ConsumerBase *>(getExecutor(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME));
+    auto *consumer = getConsumerBase(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME);
     if (consumer)
     {
         consumer->setRecordable(false);

@@ -50,7 +50,7 @@ DashVnetOrch::DashVnetOrch(DBConnector *db, vector<string> &tables, DBConnector 
     dash_vnet_map_result_table_ = make_unique<Table>(app_state_db, APP_DASH_VNET_MAPPING_TABLE_NAME);
 
     /* Disable swss.rec recording for high-volume VNET mapping table */
-    auto *consumer = dynamic_cast<ConsumerBase *>(getExecutor(APP_DASH_VNET_MAPPING_TABLE_NAME));
+    auto *consumer = getConsumerBase(APP_DASH_VNET_MAPPING_TABLE_NAME);
     if (consumer)
     {
         consumer->setRecordable(false);

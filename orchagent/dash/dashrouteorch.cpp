@@ -60,7 +60,7 @@ DashRouteOrch::DashRouteOrch(DBConnector *db, vector<string> &tableName, DashOrc
     /* Disable swss.rec recording for high-volume child tables */
     for (const auto &tbl : {APP_DASH_ROUTE_TABLE_NAME, APP_DASH_ROUTE_RULE_TABLE_NAME, APP_DASH_ROUTE_GROUP_TABLE_NAME})
     {
-        auto *consumer = dynamic_cast<ConsumerBase *>(getExecutor(tbl));
+        auto *consumer = getConsumerBase(tbl);
         if (consumer)
         {
             consumer->setRecordable(false);

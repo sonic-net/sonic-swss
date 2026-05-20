@@ -31,7 +31,7 @@ DashMeterOrch::DashMeterOrch(DBConnector *db, const vector<string> &tables, DBCo
     SWSS_LOG_ENTER();
 
     /* Disable swss.rec recording for high-volume meter rule table */
-    auto *consumer = dynamic_cast<ConsumerBase *>(getExecutor(APP_DASH_METER_RULE_TABLE_NAME));
+    auto *consumer = getConsumerBase(APP_DASH_METER_RULE_TABLE_NAME);
     if (consumer)
     {
         consumer->setRecordable(false);
