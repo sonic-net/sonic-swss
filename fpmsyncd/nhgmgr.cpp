@@ -1292,9 +1292,18 @@ void RIBNHGEntry::checkNeedCreateSonicGatewayNHGObj() {
         if (entry->hasSonicGatewayObj()) {
             m_sonic_obj_type = entry->getSonicObjType();
             m_has_sonic_gateway_obj = true;
+            m_is_srv6_nhg = true;
+            m_is_shared_sonic_nhg = true;
             SWSS_LOG_DEBUG("NextHop id %d has sonic gateway obj, is multi nexthop group.", it->first);
             return;
         }
+        if(entry->isSRv6Nhg()) {
+            m_is_srv6_nhg = true;
+        }
+    }
+
+    if (m_nhg.nh_srv6 != nullptr && m_nhg.nh_srv6->seg6_segs != nullptr) {
+        m_is_srv6_nhg = true;
     }
 
     /*
@@ -1302,7 +1311,7 @@ void RIBNHGEntry::checkNeedCreateSonicGatewayNHGObj() {
      * This covers both single-hop SRv6 VPN nexthops (no group members) and
      * recursive SRv6 VPN nexthops that carry their own SRv6 VPN info.
      */
-    if (m_nhg.nh_srv6 != nullptr && m_nhg.nh_srv6->seg6_segs != nullptr && CHECK_FLAG(m_nhg.nhg_flags, NEXTHOP_GROUP_RECEIVED_FLAG)) {
+    if (m_is_srv6_nhg && CHECK_FLAG(m_nhg.nhg_flags, NEXTHOP_GROUP_RECEIVED_FLAG)) {
         m_sonic_obj_type = SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY;
         m_has_sonic_gateway_obj = true;
         m_is_shared_sonic_nhg = true;
@@ -1411,7 +1420,7 @@ void RIBNHGEntry::checkNeedCreateSonicNHGObj() {
         /*
          * Skipped NHG with SRv6 info but not received NHG.
          */
-        if (!CHECK_FLAG(m_nhg.nhg_flags, NEXTHOP_GROUP_RECEIVED_FLAG) && m_nhg.nh_srv6 != nullptr && m_nhg.nh_srv6->seg6_segs != nullptr){
+        if (!CHECK_FLAG(m_nhg.nhg_flags, NEXTHOP_GROUP_RECEIVED_FLAG) && m_is_srv6_nhg){
             SWSS_LOG_NOTICE("NextHop %d is a NHG with SRv6 VPN, create sonic object, but not is received NHG, skip create sonic object.", m_rib_id);
             m_create_sonic_nhg_obj = false;
             return ;
@@ -1422,6 +1431,9 @@ void RIBNHGEntry::checkNeedCreateSonicNHGObj() {
             m_create_sonic_nhg_obj = true;
         }
     }
+}
+bool RIBNHGEntry::isSRv6Nhg() {
+    return m_is_srv6_nhg;
 }
 
 SonicGateWayNHGTable::SonicGateWayNHGTable(RedisPipeline *pipeline, const std::string &picTableName, bool isStateTable) : m_pic_contextTable(pipeline, picTableName, isStateTable) {
