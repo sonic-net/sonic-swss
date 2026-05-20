@@ -1,0 +1,541 @@
+name: swss-coverage
+
+on:
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  actions: write
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    concurrency:
+      group: coverage-${{ vars.INSTANCE_ID }}
+      cancel-in-progress: true
+    env:
+      INSTANCE_ID: ${{ vars.INSTANCE_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-west-2' }}
+      S3_COVERAGE_PATH: ${{ vars.S3_COVERAGE_BUCKET }}
+      SSH_USER: ubuntu
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_OIDC_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-west-2' }}
+
+      - name: Start EC2 instance
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          STATE=$(aws ec2 describe-instances \
+            --instance-ids "$INSTANCE_ID" \
+            --query 'Reservations[0].Instances[0].State.Name' \
+            --output text)
+          echo "Current instance state: $STATE"
+
+          if [ "$STATE" = "stopping" ]; then
+            echo "Instance is stopping (likely from a prior run); waiting for stopped..."
+            aws ec2 wait instance-stopped --instance-ids "$INSTANCE_ID"
+            STATE="stopped"
+            echo "Instance is now stopped"
+          fi
+
+          if [ "$STATE" = "stopped" ]; then
+            aws ec2 start-instances --instance-ids "$INSTANCE_ID"
+            echo "Starting instance..."
+          fi
+
+          aws ec2 wait instance-running --instance-ids "$INSTANCE_ID"
+          echo "Instance is running"
+
+          aws ec2 create-tags --resources "$INSTANCE_ID" \
+            --tags "Key=started-by,Value=$RUN_ID"
+          echo "Tagged instance with started-by=$RUN_ID"
+
+      - name: Get EC2 public IP
+        id: ec2
+        run: |
+          IP=$(aws ec2 describe-instances \
+            --instance-ids "$INSTANCE_ID" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \
+            --output text)
+          echo "host=$IP" >> "$GITHUB_OUTPUT"
+          echo "EC2 IP: $IP"
+
+      - name: Verify and pin SSH host key
+        run: |
+          HOST="${{ steps.ec2.outputs.host }}"
+          mkdir -p ~/.ssh
+
+          echo "Waiting for SSH port to be reachable..."
+          for i in $(seq 1 30); do
+            if ssh-keyscan -t ed25519,ecdsa "$HOST" >> ~/.ssh/known_hosts 2>/dev/null; then
+              break
+            fi
+            echo "  Attempt $i/30..."
+            sleep 10
+          done
+
+          if [ ! -s ~/.ssh/known_hosts ]; then
+            echo "::error::Failed to retrieve SSH host key from $HOST"
+            exit 1
+          fi
+
+          SCANNED_FPS=$(ssh-keygen -lf ~/.ssh/known_hosts 2>/dev/null | awk '{print $2}')
+          echo "Scanned host key fingerprints:"
+          echo "$SCANNED_FPS"
+
+          CONSOLE=$(aws ec2 get-console-output \
+            --instance-id "$INSTANCE_ID" \
+            --latest \
+            --query 'Output' --output text 2>/dev/null || echo "")
+
+          if [ -n "$CONSOLE" ] && echo "$CONSOLE" | grep -q "SSH HOST KEY FINGERPRINTS"; then
+            MATCH=false
+            for fp in $SCANNED_FPS; do
+              if echo "$CONSOLE" | grep -qF "$fp"; then
+                MATCH=true
+                echo "Host key verified against EC2 console output: $fp"
+                break
+              fi
+            done
+            if [ "$MATCH" = "false" ]; then
+              echo "::error::Host key fingerprint not found in EC2 console output — possible MITM"
+              rm -f ~/.ssh/known_hosts
+              exit 1
+            fi
+          else
+            echo "::warning::EC2 console output unavailable for fingerprint verification (instance may not have freshly booted). Trusting ssh-keyscan result (IP confirmed via authenticated AWS API)."
+          fi
+
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Setup SSH key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+        run: |
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/ec2_key
+          chmod 600 ~/.ssh/ec2_key
+          cat > ~/.ssh/config <<EOF
+          Host ec2
+            HostName ${{ steps.ec2.outputs.host }}
+            User ${SSH_USER}
+            IdentityFile ~/.ssh/ec2_key
+            ServerAliveInterval 30
+            ServerAliveCountMax 10
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Wait for SSH
+        run: |
+          echo "Verifying SSH connectivity..."
+          for i in $(seq 1 30); do
+            if ssh ec2 "echo ready" 2>&1; then
+              echo "SSH is available"
+              exit 0
+            fi
+            echo "  Attempt $i/30..."
+            sleep 10
+          done
+          echo "::error::SSH not available after 5 minutes"
+          exit 1
+
+      - name: Download latest prod debs from S3
+        env:
+          S3_BUCKET: ${{ vars.S3_BUCKET }}
+          PLATFORM: mellanox
+          DEFAULT_BRANCH: ${{ vars.DEFAULT_BRANCH || 'upscaleai-202511' }}
+        run: |
+          S3_PREFIX="s3://${S3_BUCKET}/${PLATFORM}/${DEFAULT_BRANCH}/"
+          echo "Searching for latest build archive in: $S3_PREFIX"
+
+          LATEST_DIR=$(aws s3 ls "$S3_PREFIX" \
+            | grep 'PRE ' \
+            | awk '{print $2}' \
+            | grep -v '^latest/$' \
+            | sort -r \
+            | head -1)
+
+          if [ -z "$LATEST_DIR" ]; then
+            echo "::error::No build directories found under $S3_PREFIX"
+            exit 1
+          fi
+          echo "Latest build: ${LATEST_DIR}"
+
+          ARCHIVE=$(aws s3 ls "${S3_PREFIX}${LATEST_DIR}build_artifacts/" \
+            | grep 'buildarchive-.*\.tgz' \
+            | awk '{print $4}' \
+            | head -1)
+
+          if [ -z "$ARCHIVE" ]; then
+            echo "::error::No buildarchive .tgz found in ${S3_PREFIX}${LATEST_DIR}build_artifacts/"
+            exit 1
+          fi
+
+          S3_ARCHIVE="${S3_PREFIX}${LATEST_DIR}build_artifacts/${ARCHIVE}"
+          echo "Downloading: $S3_ARCHIVE"
+
+          ssh ec2 bash -s <<SCRIPT
+          set -ex
+          DEBS_DIR="/home/ubuntu/caspian-sonic-buildimage/target/debs/bookworm"
+          ARCHIVE_DIR="/tmp/sonic-build-archive"
+
+          rm -rf "\$ARCHIVE_DIR"
+          mkdir -p "\$ARCHIVE_DIR"
+
+          echo "Downloading build archive from S3..."
+          aws s3 cp "${S3_ARCHIVE}" "\$ARCHIVE_DIR/buildarchive.tgz"
+
+          echo "Extracting archive..."
+          tar xzf "\$ARCHIVE_DIR/buildarchive.tgz" -C "\$ARCHIVE_DIR"
+
+          echo "Looking for debs in extracted archive..."
+          EXTRACTED_DEBS=\$(find "\$ARCHIVE_DIR" -type d -name "bookworm" -path "*/debs/*" | head -1)
+
+          if [ -z "\$EXTRACTED_DEBS" ]; then
+            EXTRACTED_DEBS=\$(find "\$ARCHIVE_DIR" -name "libswsscommon-dev_*.deb" -exec dirname {} \; | head -1)
+          fi
+
+          if [ -z "\$EXTRACTED_DEBS" ]; then
+            echo "ERROR: Could not find debs in extracted archive"
+            ls -R "\$ARCHIVE_DIR" | head -50
+            exit 1
+          fi
+
+          echo "Found debs at: \$EXTRACTED_DEBS"
+          rm -rf "\$DEBS_DIR"
+          mkdir -p "\$DEBS_DIR"
+          cp -f "\$EXTRACTED_DEBS"/*.deb "\$DEBS_DIR/"
+
+          DEBS_COUNT=\$(ls "\$DEBS_DIR"/*.deb 2>/dev/null | wc -l)
+          echo "Copied \$DEBS_COUNT .deb files to \$DEBS_DIR"
+          ls "\$DEBS_DIR"/libswsscommon-dev_*.deb && echo "OK: key debs present" || echo "WARNING: libswsscommon-dev not found"
+
+          rm -rf "\$ARCHIVE_DIR"
+          echo "Cleaned up temp archive"
+          SCRIPT
+
+      - name: Checkout repo on EC2
+        env:
+          GH_PAT: ${{ secrets.PAT_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          GH_SHA: ${{ github.sha }}
+        run: |
+          ssh ec2 bash -s <<SCRIPT
+          set -ex
+          SWSS_DIR="\$HOME/sonic-swss"
+          REPO_URL="https://github.com/${GH_REPO}.git"
+
+          export GIT_ASKPASS="\$HOME/.git-askpass.sh"
+          printf '#!/bin/sh\necho "${GH_PAT}"\n' > "\$GIT_ASKPASS"
+          chmod +x "\$GIT_ASKPASS"
+
+          if [ ! -d "\$SWSS_DIR/.git" ]; then
+            git clone "\$REPO_URL" "\$SWSS_DIR"
+          fi
+
+          cd "\$SWSS_DIR"
+          git remote set-url origin "\$REPO_URL"
+          git reset --hard
+          sudo git clean -fdx
+          git fetch origin
+          git checkout --force "${GH_SHA}"
+          echo "Checked out ${GH_SHA}"
+
+          rm -f "\$GIT_ASKPASS"
+          unset GIT_ASKPASS
+          SCRIPT
+
+      - name: Run coverage on EC2
+        run: |
+          ssh ec2 bash -s <<'SCRIPT'
+          set -ex
+
+          SWSS_DIR="$HOME/sonic-swss"
+          DEBS_DIR="/home/ubuntu/caspian-sonic-buildimage/target/debs/bookworm"
+          COVERAGE_DIR="/tmp/swss-coverage"
+
+          DOCKER_IMAGE=$(docker image ls \
+            --filter 'reference=sonic-slave-bookworm*' \
+            --format '{{.Repository}}:{{.Tag}}' \
+            | grep -v ':<none>$' | head -1)
+
+          if [ -z "$DOCKER_IMAGE" ]; then
+            echo "ERROR: No sonic-slave-bookworm Docker image found"
+            exit 1
+          fi
+          echo "Using Docker image: $DOCKER_IMAGE"
+
+          sudo rm -rf "$COVERAGE_DIR"
+          mkdir -p "$COVERAGE_DIR"
+
+          docker run --rm --privileged --init --user root \
+            --ulimit nofile=65536:65536 \
+            -v "$SWSS_DIR:/sonic-swss" \
+            -v "$DEBS_DIR:/debs:ro" \
+            -v "$COVERAGE_DIR:/tmp/swss-coverage" \
+            -w "/sonic-swss" \
+            -e CARGO_NET_GIT_FETCH_WITH_CLI=true \
+            "$DOCKER_IMAGE" \
+            bash -c '
+          RESULTS="/tmp/swss-coverage/results.txt"
+          TOTAL_START=$(date +%s)
+
+          phase() { echo ""; echo "========== PHASE: $1 =========="; }
+          fail() { echo ""; echo "!!!!!!!!!! FAILED: $1 !!!!!!!!!!"; exit 1; }
+          timer_start() { PHASE_START=$(date +%s); }
+          timer_end() { echo "$1_seconds=$(($(date +%s) - PHASE_START))" >> "$RESULTS"; }
+
+          phase "1/7 — Install SONiC dependencies"
+          timer_start
+          cd /debs
+          dpkg --force-depends --force-overwrite -i \
+            libyang_*.deb libyang-cpp_*.deb libyang-dev_*.deb \
+            libnl-3-200_*.deb libnl-3-dev_*.deb \
+            libnl-route-3-200_*.deb libnl-route-3-dev_*.deb \
+            libnl-genl-3-200_*.deb libnl-genl-3-dev_*.deb \
+            libnl-nf-3-200_*.deb libnl-nf-3-dev_*.deb \
+            libswsscommon_*.deb libswsscommon-dev_*.deb \
+            libsairedis_*.deb libsairedis-dev_*.deb \
+            libsaimetadata_*.deb libsaimetadata-dev_*.deb \
+            libsaivs_*.deb libsaivs-dev_*.deb \
+            libdashapi_*.deb \
+            libteam5_*.deb libteamdctl0_*.deb libteam-dev_*.deb \
+            || true
+          ldconfig
+          for pkg in libswsscommon-dev libsairedis-dev libyang-dev; do
+            dpkg -s "$pkg" >/dev/null 2>&1 || fail "required package $pkg not installed"
+          done
+          timer_end "install_deps"
+
+          phase "2/7 — Configure with gcov"
+          timer_start
+          cd /sonic-swss
+          make distclean 2>/dev/null || true
+          ./autogen.sh || fail "autogen.sh"
+          ./configure --enable-gcov \
+            CFLAGS="-g -O0 -fprofile-arcs -ftest-coverage" \
+            CXXFLAGS="-g -O0 -fprofile-arcs -ftest-coverage" \
+            LDFLAGS="-fprofile-arcs -lgcov" \
+            || fail "configure"
+          timer_end "configure"
+
+          phase "3/7 — Build"
+          timer_start
+          make -j$(nproc) || fail "make"
+          timer_end "build"
+
+          phase "4/7 — Start redis"
+          redis-server --daemonize yes --port 6379 \
+            --notify-keyspace-events AKE 2>/dev/null || true
+          sleep 1
+
+          phase "5/7 — Run mock tests"
+          timer_start
+          find . -name "*.gcda" -delete
+          cd tests/mock_tests
+          ./tests --gtest_output=xml:/tmp/swss-coverage/test_results.xml 2>&1 | tee /tmp/swss-coverage/test_output.txt || fail "mock tests"
+          cd /sonic-swss
+          timer_end "tests"
+
+          TESTS_RUN=$(grep -c "^\[       OK \]" /tmp/swss-coverage/test_output.txt 2>/dev/null) || TESTS_RUN=0
+          TESTS_FAILED=$(grep -c "^\[  FAILED  \]" /tmp/swss-coverage/test_output.txt 2>/dev/null) || TESTS_FAILED=0
+          TESTS_TOTAL=$((TESTS_RUN + TESTS_FAILED))
+          TEST_TIME=$(grep "Global test environment" -A9999 /tmp/swss-coverage/test_output.txt 2>/dev/null | grep "ms total" | tail -1 | grep -oP "\d+" | tail -1) || TEST_TIME=0
+          echo "tests_total=$TESTS_TOTAL" >> "$RESULTS"
+          echo "tests_passed=$TESTS_RUN" >> "$RESULTS"
+          echo "tests_failed=$TESTS_FAILED" >> "$RESULTS"
+          echo "tests_time_ms=$TEST_TIME" >> "$RESULTS"
+
+          phase "6/7 — Capture coverage"
+          timer_start
+          lcov --capture --directory . \
+               --no-external \
+               --exclude "*/tests/*" \
+               --ignore-errors gcov \
+               --output-file /tmp/swss-coverage/coverage.info \
+               || fail "lcov capture"
+
+          lcov --add-tracefile /tmp/swss-coverage/coverage.info \
+               -o /tmp/swss-coverage/coverage.info
+          timer_end "lcov"
+
+          phase "7/7 — Generate reports"
+          timer_start
+          genhtml /tmp/swss-coverage/coverage.info \
+            --output-directory /tmp/swss-coverage/html/ \
+            --legend || fail "genhtml"
+
+          pip install lcov_cobertura -q
+          lcov_cobertura /tmp/swss-coverage/coverage.info \
+            -o /tmp/swss-coverage/coverage.xml || fail "lcov_cobertura"
+          timer_end "reports"
+
+          SUMMARY=$(lcov --summary /tmp/swss-coverage/coverage.info 2>&1)
+          LINE_COV=$(echo "$SUMMARY" | grep "lines" | grep -oP "[\d.]+%" | head -1)
+          FUNC_COV=$(echo "$SUMMARY" | grep "functions" | grep -oP "[\d.]+%" | head -1)
+          LINES_HIT=$(echo "$SUMMARY" | grep "lines" | grep -oP "\d+ of \d+" | head -1)
+          FUNCS_HIT=$(echo "$SUMMARY" | grep "functions" | grep -oP "\d+ of \d+" | head -1)
+          echo "line_coverage=$LINE_COV" >> "$RESULTS"
+          echo "function_coverage=$FUNC_COV" >> "$RESULTS"
+          echo "lines_detail=$LINES_HIT" >> "$RESULTS"
+          echo "functions_detail=$FUNCS_HIT" >> "$RESULTS"
+
+          TOTAL_ELAPSED=$(($(date +%s) - TOTAL_START))
+          echo "total_seconds=$TOTAL_ELAPSED" >> "$RESULTS"
+
+          echo ""
+          echo "========== COVERAGE SUMMARY =========="
+          echo "$SUMMARY"
+          echo "========== ALL PHASES COMPLETE (${TOTAL_ELAPSED}s) =========="
+          '
+
+          echo "Coverage run complete"
+          SCRIPT
+
+      - name: Fetch coverage results
+        id: results
+        run: |
+          scp ec2:/tmp/swss-coverage/results.txt /tmp/results.txt
+          cat /tmp/results.txt
+
+          while IFS='=' read -r key value; do
+            echo "${key}=${value}" >> "$GITHUB_OUTPUT"
+          done < /tmp/results.txt
+
+      - name: Set workflow run title
+        run: |
+          LINE_COV="${{ steps.results.outputs.line_coverage }}"
+          TOTAL_SEC="${{ steps.results.outputs.total_seconds }}"
+          TOTAL_MIN=$((TOTAL_SEC / 60))
+          TITLE="Coverage: ${LINE_COV} lines | ${TOTAL_MIN}m total"
+          gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }} \
+            --method PATCH --field name="$TITLE" || echo "::warning::Could not update run title"
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+
+      - name: Generate coverage badge
+        run: |
+          scp ec2:/tmp/swss-coverage/coverage.xml /tmp/coverage.xml
+          pip install genbadge[coverage] -q
+          mkdir -p badge-tmp
+          genbadge coverage -i /tmp/coverage.xml -o badge-tmp/coverage-badge.svg
+          echo "Badge generated:"
+          ls -la badge-tmp/coverage-badge.svg
+
+      - name: Push coverage badge to repo
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          REPO="${{ github.repository }}"
+          BRANCH="badges"
+          FILE_PATH="coverage-badge.svg"
+
+          CONTENT=$(base64 -w 0 badge-tmp/coverage-badge.svg)
+          EXISTING_SHA=$(gh api "repos/${REPO}/contents/${FILE_PATH}?ref=${BRANCH}" --jq '.sha' 2>/dev/null || echo "")
+
+          if [ -n "$EXISTING_SHA" ]; then
+            gh api "repos/${REPO}/contents/${FILE_PATH}" \
+              --method PUT \
+              --field message="Update coverage badge: ${{ steps.results.outputs.line_coverage }}" \
+              --field content="$CONTENT" \
+              --field branch="$BRANCH" \
+              --field sha="$EXISTING_SHA"
+          else
+            gh api "repos/${REPO}/contents/${FILE_PATH}" \
+              --method PUT \
+              --field message="Add coverage badge: ${{ steps.results.outputs.line_coverage }}" \
+              --field content="$CONTENT" \
+              --field branch="$BRANCH"
+          fi
+          echo "Badge pushed to ${BRANCH} branch"
+
+      - name: Upload coverage to S3
+        id: s3upload
+        env:
+          BRANCH_NAME: ${{ github.ref_name }}
+        run: |
+          SAFE_REF="${BRANCH_NAME//\//_}"
+          DATE="$(date -u +"%Y-%m-%d-%H:%M")"
+          S3_DEST="s3://${S3_COVERAGE_PATH}/sonic-swss/${DATE}/${SAFE_REF}"
+          echo "s3_dest=${S3_DEST}" >> "$GITHUB_OUTPUT"
+          ssh ec2 bash -s <<SCRIPT
+          set -ex
+          aws s3 sync /tmp/swss-coverage/html/ "${S3_DEST}/" \
+            --exclude "*.gcda" --exclude "*.gcno"
+          aws s3 cp /tmp/swss-coverage/coverage.info "${S3_DEST}/coverage.info"
+          aws s3 cp /tmp/swss-coverage/coverage.xml "${S3_DEST}/coverage.xml"
+          echo "Uploaded to ${S3_DEST}/"
+          SCRIPT
+
+      - name: Stop EC2 instance
+        if: always()
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          OWNER=$(aws ec2 describe-tags \
+            --filters "Name=resource-id,Values=$INSTANCE_ID" \
+                      "Name=key,Values=started-by" \
+            --query 'Tags[0].Value' --output text 2>/dev/null || echo "")
+          if [ "$OWNER" = "$RUN_ID" ]; then
+            aws ec2 stop-instances --instance-ids "$INSTANCE_ID" || true
+            echo "Stop request sent for $INSTANCE_ID (owned by this run)"
+          else
+            echo "Skipping stop: instance owned by run $OWNER, not this run $RUN_ID"
+          fi
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -rf ~/.ssh/ec2_key
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## SWSS Code Coverage Report
+
+          ### Coverage Results
+
+          | Metric | Value |
+          | --- | --- |
+          | **Line Coverage** | **${{ steps.results.outputs.line_coverage }}** (${{ steps.results.outputs.lines_detail }} lines) |
+          | **Function Coverage** | **${{ steps.results.outputs.function_coverage }}** (${{ steps.results.outputs.functions_detail }} functions) |
+
+          ### Test Results
+
+          | Metric | Value |
+          | --- | --- |
+          | Tests Run | ${{ steps.results.outputs.tests_total }} |
+          | Tests Passed | ${{ steps.results.outputs.tests_passed }} |
+          | Tests Failed | ${{ steps.results.outputs.tests_failed }} |
+          | Test Duration | ${{ steps.results.outputs.tests_time_ms }}ms |
+
+          ### Phase Timings
+
+          | Phase | Duration |
+          | --- | --- |
+          | Install dependencies | ${{ steps.results.outputs.install_deps_seconds }}s |
+          | Configure (gcov) | ${{ steps.results.outputs.configure_seconds }}s |
+          | Build | ${{ steps.results.outputs.build_seconds }}s |
+          | Mock tests | ${{ steps.results.outputs.tests_seconds }}s |
+          | lcov capture | ${{ steps.results.outputs.lcov_seconds }}s |
+          | Report generation | ${{ steps.results.outputs.reports_seconds }}s |
+          | **Total** | **${{ steps.results.outputs.total_seconds }}s** |
+
+          ### Run Details
+
+          | Property | Value |
+          | --- | --- |
+          | Commit | \`${{ github.sha }}\` |
+          | Branch | \`${{ github.ref_name }}\` |
+          | EC2 Instance | \`${INSTANCE_ID}\` |
+          | EC2 IP | \`${{ steps.ec2.outputs.host }}\` |
+          | S3 Report | \`${{ steps.s3upload.outputs.s3_dest }}/index.html\` |
+          EOF
