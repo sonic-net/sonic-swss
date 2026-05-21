@@ -787,6 +787,18 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
         {
             continue;
         }
+        // VNET_ROUTE_TUNNEL_TABLE endpoints carry only IPs, so the NextHopKey
+        // alias is empty. For directly-connected local endpoints, resolve the
+        // RIF alias from NeighOrch (indexed by IP+alias) before lookup.
+        if (isLocalEp && it.alias.empty())
+        {
+            NeighborEntry neigh_entry;
+            MacAddress mac;
+            if (gNeighOrch->getNeighborEntry(it.ip_address, neigh_entry, mac))
+            {
+                it = NextHopKey(it.ip_address, neigh_entry.alias);
+            }
+        }
         if (isLocalEp && !gNeighOrch->hasNextHop(it))
         {
             SWSS_LOG_NOTICE("Next hop %s not found in neighorch, skipping.", it.to_string().c_str());
@@ -947,6 +959,21 @@ bool VNetRouteOrch::createNextHopGroup(const string& vnet,
     {
         NextHopKey nexthop = *nexthops.getNextHops().begin();
         bool isLocalEp = isLocalEndpoint(vnet, nexthop.ip_address);
+        // VNET_ROUTE_TUNNEL_TABLE endpoints carry only IPs, so the NextHopKey
+        // alias is empty. For directly-connected local endpoints, resolve the
+        // RIF alias from NeighOrch (indexed by IP+alias) before lookup.
+        if (isLocalEp && nexthop.alias.empty())
+        {
+            NeighborEntry neigh_entry;
+            MacAddress mac;
+            if (gNeighOrch->getNeighborEntry(nexthop.ip_address, neigh_entry, mac))
+            {
+                nexthop = NextHopKey(nexthop.ip_address, neigh_entry.alias);
+                SWSS_LOG_INFO("Resolved local endpoint %s to interface %s",
+                              nexthop.ip_address.to_string().c_str(),
+                              neigh_entry.alias.c_str());
+            }
+        }
         if (isLocalEp && !gNeighOrch->hasNextHop(nexthop))
         {
             SWSS_LOG_NOTICE("Next hop %s not found in neighorch, skipping.", nexthop.to_string().c_str());
