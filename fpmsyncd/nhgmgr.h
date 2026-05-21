@@ -60,6 +60,12 @@ using namespace std;
         string ifName;
         sonicNhgObjType type;
 
+        std::vector<std::pair<uint32_t, uint32_t>> getSortedGroupMember() const {
+            std::vector<std::pair<uint32_t, uint32_t>> sorted = groupMember;
+            sort(sorted.begin(), sorted.end());
+            return sorted;
+        }
+
         bool operator<(const SonicNHGObjectKey &other) const {
             if (type != other.type) return type < other.type;
             if (nexthop != other.nexthop) return nexthop < other.nexthop;
@@ -68,11 +74,7 @@ using namespace std;
             if (segSrc != other.segSrc) return segSrc < other.segSrc;
             if (ifName != other.ifName) return ifName < other.ifName;
 
-            std::vector<std::pair<uint32_t, uint32_t>> lhs = groupMember;
-            std::vector<std::pair<uint32_t, uint32_t>> rhs = other.groupMember;
-            sort(lhs.begin(), lhs.end());
-            sort(rhs.begin(), rhs.end());
-            return lhs < rhs;
+            return getSortedGroupMember() < other.getSortedGroupMember();
         }
 
         /*
@@ -97,14 +99,7 @@ using namespace std;
             if (groupMember.size() != b.groupMember.size()) {
                 return false;
             }
-            vector<std::pair<uint32_t, uint32_t>> groupMemberA = groupMember;
-            vector<std::pair<uint32_t, uint32_t>> groupMemberB = b.groupMember;
-            sort(groupMemberA.begin(), groupMemberA.end());
-            sort(groupMemberB.begin(), groupMemberB.end());
-            if (groupMemberA != groupMemberB) {
-                return false;
-            }
-            return true;
+            return getSortedGroupMember() == b.getSortedGroupMember();
         }
 
         bool operator!=(const SonicNHGObjectKey &b) const {
@@ -307,16 +302,6 @@ using namespace std;
         int setEntry(SonicGateWayNHGObject nhg);
 
         /*
-         * add the ref count of the entry
-         */
-        void addRefCount();
-
-        /*
-         * subtract the ref count of the entry
-         */
-        void subRefCount();
-
-        /*
          * get the ref count of the entry
          */
         uint32_t getRefCount() {
@@ -400,11 +385,6 @@ using namespace std;
         void delEntry(sonicNhgObjType type, uint32_t id);
 
         /*
-         * get entry from SonicNHGTable by SonicNHGObjectKey
-         */
-        SonicGateWayNHGEntry *getEntry(SonicNHGObjectKey key);
-
-        /*
          * get entry from SonicNHGTable by type and sonic object id
          */
         SonicGateWayNHGEntry *getEntry(sonicNhgObjType type, uint32_t id);
@@ -436,12 +416,6 @@ using namespace std;
          * contain <id, entry> pair
          */
         map<uint32_t, SonicGateWayNHGEntry *> m_pic_map;
-
-        /*
-         * All Sonic Gateway NHG Objects map of the table
-         * contain <SonicNHGObjectKey, entry> pair
-         */
-        std::map<SonicNHGObjectKey, SonicGateWayNHGEntry *> m_sonic_nhg_map;
 
         /*
          * PIC context table
@@ -889,9 +863,6 @@ using namespace std;
 
         // get SonicGateWayNHGEntry by RIB id
         SonicGateWayNHGEntry *getSonicGatewayNHGByRIBID(uint32_t id);
-
-        // get SonicGateWayNHGEntry by SonicNHGObjectKey
-        SonicGateWayNHGEntry *getSonicGatewayNHGByKey(SonicNHGObjectKey key);
 
         // Not implemented
         void dump_sonic_nhg_table(string &ret);
