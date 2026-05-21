@@ -32,7 +32,9 @@ public:
 
     DBConnector m_db{"APPL_DB", 0};
     RedisPipeline m_pipeline{&m_db, 1};
-    RouteSync m_routeSync{&m_pipeline};
+    DBConnector m_appl_state_db{"APPL_STATE_DB", 0};
+    RedisPipeline m_app_state_pipeline{&m_appl_state_db};
+    RouteSync m_routeSync{&m_pipeline, &m_app_state_pipeline};
     FpmLink m_fpm{&m_routeSync};
     MockMsgHandler m_mock;
 };

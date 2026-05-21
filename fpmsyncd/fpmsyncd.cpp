@@ -85,7 +85,8 @@ int main(int argc, char **argv)
     std::unique_ptr<NotificationConsumer> routeResponseChannel;
 
     RedisPipeline pipeline(&db, ROUTE_SYNC_PPL_SIZE);
-    RouteSync sync(&pipeline);
+    RedisPipeline app_state_pipeline(&applStateDb);
+    RouteSync sync(&pipeline, &app_state_pipeline);
 
     DBConnector stateDb("STATE_DB", 0);
     Table bgpStateTable(&stateDb, STATE_BGP_TABLE_NAME);
