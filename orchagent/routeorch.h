@@ -83,6 +83,13 @@ struct RouteNhg
 
     std::string context_index;
 
+    /*
+     * When a route is using a temporary single next hop (because the desired
+     * NHG could not be created), this records the original desired NHG key.
+     * Used to detect NHG membership changes and allow re-randomization.
+     */
+    NextHopGroupKey desired_nhg_key;
+
     RouteNhg() = default;
     RouteNhg(const NextHopGroupKey& key, const std::string& index, const std::string &context_index = "") :
         nhg_key(key), nhg_index(index), context_index(context_index) {}
