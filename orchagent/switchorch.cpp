@@ -940,6 +940,466 @@ bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
     return true;
 }
 
+bool SwitchOrch::applySwitchPacketTypeHashConfiguration(const SwitchHash &hash)
+{
+    SWSS_LOG_ENTER();
+
+    auto currentConfig = swHlpr.getSwHash();
+    bool configurationChanged = false;
+
+    // We treat the CONFIG_DB row as authoritative for packet-type hash.
+    // Process ECMP/LAG packet-type hashes whenever either the new config
+    // (hash.*_pkt_type) or the current cached config has entries. This
+    // allows us to detect implicit deletions when a packet-type attribute
+    // disappears from CONFIG_DB.
+
+    bool hasEcmpPktTypeCfg = !hash.ecmp_hash_pkt_type.empty() ||
+                              !currentConfig.ecmp_hash_pkt_type.empty();
+
+    bool hasLagPktTypeCfg  = !hash.lag_hash_pkt_type.empty() ||
+                              !currentConfig.lag_hash_pkt_type.empty();
+
+    if (hasEcmpPktTypeCfg)
+    {
+        if (!swCap.isSwitchEcmpPktTypeHashSupported())
+        {
+            SWSS_LOG_WARN("Switch ECMP packet-type hash configuration is not supported: skipping...");
+        }
+        else
+        {
+            if (!processPacketTypeHash(hash, currentConfig, true, configurationChanged))
+            {
+                SWSS_LOG_ERROR("Failed to process ECMP packet-type hash configuration");
+                return false;
+            }
+        }
+    }
+
+    if (hasLagPktTypeCfg)
+    {
+        if (!swCap.isSwitchLagPktTypeHashSupported())
+        {
+            SWSS_LOG_WARN("Switch LAG packet-type hash configuration is not supported: skipping...");
+        }
+        else
+        {
+            if (!processPacketTypeHash(hash, currentConfig, false, configurationChanged))
+            {
+                SWSS_LOG_ERROR("Failed to process LAG packet-type hash configuration");
+                return false;
+            }
+        }
+    }
+
+    if (!configurationChanged)
+    {
+        SWSS_LOG_NOTICE("Switch packet-type hash configuration unchanged in SAI");
+        return true;
+    }
+
+    // Update internal cache for packet-type hashes only
+    swHlpr.setSwHashPacketType(hash);
+
+    SWSS_LOG_NOTICE("Applied switch packet-type hash configuration successfully");
+    return true;
+}
+
+bool SwitchOrch::processPacketTypeHash(const SwitchHash &hash,
+                                       const SwitchHash &currentConfig,
+                                       bool isEcmp,
+                                       bool &configChanged)
+{
+    SWSS_LOG_ENTER();
+
+    const auto &hashMap = isEcmp ? hash.ecmp_hash_pkt_type : hash.lag_hash_pkt_type;
+    const auto &currentMap = isEcmp ? currentConfig.ecmp_hash_pkt_type : currentConfig.lag_hash_pkt_type;
+    auto &oidMap = isEcmp ? m_switchHashEcmp : m_switchHashLag;
+    const char *hashType = isEcmp ? "ECMP" : "LAG";
+
+    // First, handle explicit operations (set/delete-all) for packet-types
+    // that appear in the new configuration map.
+    for (const auto &hashEntry : hashMap)
+    {
+        const auto &pktType = hashEntry.first;
+        const auto &hashField = hashEntry.second;
+        std::string pktTypeStr = hashPktTypeToString(pktType);
+
+        // Validate packet type capability
+        bool pktTypeSupported = isEcmp ?
+            swCap.validateSwitchEcmpPktTypeHashCap(pktType) :
+            swCap.validateSwitchLagPktTypeHashCap(pktType);
+
+        if (!pktTypeSupported)
+        {
+            SWSS_LOG_WARN("%s hash for packet type %s is not supported: skipping...",
+                         hashType, pktTypeStr.c_str());
+            continue;  // Skip unsupported packet types
+        }
+
+        if (hashField.isDeleteAll())
+        {
+            SWSS_LOG_NOTICE("Removing %s hash configuration for %s packet-type",
+                           hashType, pktTypeStr.c_str());
+
+            auto oidIt = oidMap.find(pktType);
+            if (oidIt != oidMap.end() && oidIt->second != SAI_NULL_OBJECT_ID)
+            {
+                // Step 1: Unbind hash from switch FIRST
+                if (!setPacketTypeHashOnSwitch(oidIt->second, isEcmp, pktType, false))
+                {
+                    SWSS_LOG_ERROR("Failed to unbind %s hash from switch for %s packet-type",
+                                  hashType, pktTypeStr.c_str());
+                    return false;
+                }
+
+                // Step 2: Remove hash object
+                if (!removePacketTypeHashOid(oidIt->second, hashType, pktTypeStr))
+                {
+                    SWSS_LOG_ERROR("Failed to remove %s hash OID for %s packet-type",
+                                  hashType, pktTypeStr.c_str());
+                    return false;
+                }
+
+                oidMap.erase(oidIt);
+                SWSS_LOG_NOTICE("Successfully removed %s hash for %s packet-type",
+                               hashType, pktTypeStr.c_str());
+            }
+            else
+            {
+                SWSS_LOG_INFO("%s hash OID for %s packet-type does not exist, nothing to remove",
+                             hashType, pktTypeStr.c_str());
+            }
+            configChanged = true;
+        }
+        else if (hashField.isSet())
+        {
+            // Validate hash fields before applying
+            if (!swCap.validateSwitchHashFieldCap(hashField.value))
+            {
+                SWSS_LOG_ERROR("Hash fields not supported for %s %s packet-type",
+                              hashType, pktTypeStr.c_str());
+                return false;
+            }
+
+            auto currentIt = currentMap.find(pktType);
+            bool isNewHash = (oidMap.find(pktType) == oidMap.end() || oidMap[pktType] == SAI_NULL_OBJECT_ID);
+            bool needsUpdate = (currentIt == currentMap.end() ||
+                               !currentIt->second.isSet() ||
+                               currentIt->second.value != hashField.value);
+
+            if (needsUpdate)
+            {
+                SWSS_LOG_NOTICE("Configuring %s hash for %s packet-type with %zu fields",
+                               hashType, pktTypeStr.c_str(), hashField.value.size());
+
+                // Step 1: Create or update hash object
+                if (!setPacketTypeHashOid(oidMap[pktType], hashField.value, isEcmp, pktTypeStr))
+                {
+                    SWSS_LOG_ERROR("Failed to configure %s hash for %s packet-type",
+                                  hashType, pktTypeStr.c_str());
+                    return false;
+                }
+
+                // Step 2: Bind to switch (only for new hash, not for updates)
+                if (isNewHash)
+                {
+                    if (!setPacketTypeHashOnSwitch(oidMap[pktType], isEcmp, pktType, true))
+                    {
+                        SWSS_LOG_ERROR("Failed to bind %s hash to switch for %s packet-type",
+                                      hashType, pktTypeStr.c_str());
+
+                        // Cleanup: remove the hash object we just created
+                        removePacketTypeHashOid(oidMap[pktType], hashType, pktTypeStr);
+                        oidMap.erase(pktType);
+                        return false;
+                    }
+                }
+
+                configChanged = true;
+                SWSS_LOG_NOTICE("Successfully configured %s hash for %s packet-type",
+                               hashType, pktTypeStr.c_str());
+            }
+            else
+            {
+                SWSS_LOG_INFO("%s hash for %s packet-type is already up-to-date",
+                             hashType, pktTypeStr.c_str());
+            }
+        }
+        else if (hashField.isNotSet())
+        {
+            // This packet-type was not in the configuration update, skip it
+            SWSS_LOG_DEBUG("%s hash for %s packet-type is not set in this update",
+                          hashType, pktTypeStr.c_str());
+        }
+    }
+
+    // Next, handle implicit deletions: packet-types that were present in the
+    // cached configuration but are absent from the new configuration map.
+    // This covers the case where the CLI/plugin removes the corresponding
+    // field from CONFIG_DB (e.g. "lag_hash_ipnip"), and we must unbind and
+    // delete the associated SAI hash object.
+
+    for (const auto &curEntry : currentMap)
+    {
+        const auto &pktType = curEntry.first;
+        const auto &curField = curEntry.second;
+
+        // If this packet-type was explicitly handled above (present in
+        // hashMap), skip it here.
+        if (hashMap.find(pktType) != hashMap.end())
+        {
+            continue;
+        }
+
+        // Only consider deletion if it was actually configured before.
+        if (!curField.isSet())
+        {
+            continue;
+        }
+
+        std::string pktTypeStr = hashPktTypeToString(pktType);
+
+        bool pktTypeSupported = isEcmp ?
+            swCap.validateSwitchEcmpPktTypeHashCap(pktType) :
+            swCap.validateSwitchLagPktTypeHashCap(pktType);
+
+        if (!pktTypeSupported)
+        {
+            SWSS_LOG_WARN("%s hash for packet type %s is not supported (current config), skipping implicit delete",
+                          hashType, pktTypeStr.c_str());
+            continue;
+        }
+
+        auto oidIt = oidMap.find(pktType);
+        if (oidIt == oidMap.end() || oidIt->second == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_INFO("%s hash OID for %s packet-type does not exist, nothing to implicitly remove",
+                          hashType, pktTypeStr.c_str());
+            continue;
+        }
+
+        SWSS_LOG_NOTICE("Implicitly removing %s hash configuration for %s packet-type (absent from new CONFIG_DB row)",
+                        hashType, pktTypeStr.c_str());
+
+        if (!setPacketTypeHashOnSwitch(oidIt->second, isEcmp, pktType, false))
+        {
+            SWSS_LOG_ERROR("Failed to unbind %s hash from switch for %s packet-type during implicit delete",
+                           hashType, pktTypeStr.c_str());
+            return false;
+        }
+
+        if (!removePacketTypeHashOid(oidIt->second, hashType, pktTypeStr))
+        {
+            SWSS_LOG_ERROR("Failed to remove %s hash OID for %s packet-type during implicit delete",
+                           hashType, pktTypeStr.c_str());
+            return false;
+        }
+
+        oidMap.erase(oidIt);
+        configChanged = true;
+    }
+
+    return true;
+}
+
+bool SwitchOrch::setPacketTypeHashOnSwitch(sai_object_id_t hashOid,
+                                           bool isEcmp,
+                                           HashPktType pktType,
+                                           bool bind)
+{
+    SWSS_LOG_ENTER();
+
+    const char *op = bind ? "bind" : "unbind";
+    const char *opPast = bind ? "Bound" : "Unbound";
+    const char *prep = bind ? "to" : "from";
+
+    sai_attribute_t attr;
+    attr.id = getSwitchAttrForPacketType(pktType, isEcmp);
+    attr.value.oid = bind ? hashOid : SAI_NULL_OBJECT_ID;
+
+    if (attr.id == SAI_SWITCH_ATTR_CUSTOM_RANGE_START)
+    {
+        SWSS_LOG_ERROR("Unsupported packet type for %sing %s switch", op, prep);
+        return false;
+    }
+
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to %s %s hash OID %" PRIx64 " for %s %s switch: SAI error %d",
+                      op, isEcmp ? "ECMP" : "LAG", hashOid,
+                      hashPktTypeToString(pktType).c_str(), prep, status);
+
+        task_process_status handleStatus = handleSaiSetStatus(SAI_API_SWITCH, status);
+        if (handleStatus != task_success)
+        {
+            SWSS_LOG_ERROR("SAI set status indicates: %d", handleStatus);
+        }
+
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("%s %s hash OID %" PRIx64 " for %s %s switch",
+                   opPast, isEcmp ? "ECMP" : "LAG", hashOid,
+                   hashPktTypeToString(pktType).c_str(), prep);
+    return true;
+}
+
+sai_switch_attr_t SwitchOrch::getSwitchAttrForPacketType(HashPktType pktType, bool isEcmp)
+{
+    // Map packet type to SAI switch attribute for binding
+    static const std::map<std::pair<HashPktType, bool>, sai_switch_attr_t> attrMap = {
+        // ECMP attributes
+        {{HashPktType::IPV4, true}, SAI_SWITCH_ATTR_ECMP_HASH_IPV4},
+        {{HashPktType::IPV6, true}, SAI_SWITCH_ATTR_ECMP_HASH_IPV6},
+        {{HashPktType::IPNIP, true}, SAI_SWITCH_ATTR_ECMP_HASH_IPV4_IN_IPV4},
+        {{HashPktType::IPV4_RDMA, true}, SAI_SWITCH_ATTR_ECMP_HASH_IPV4_RDMA},
+        {{HashPktType::IPV6_RDMA, true}, SAI_SWITCH_ATTR_ECMP_HASH_IPV6_RDMA},
+
+        // LAG attributes
+        {{HashPktType::IPV4, false}, SAI_SWITCH_ATTR_LAG_HASH_IPV4},
+        {{HashPktType::IPV6, false}, SAI_SWITCH_ATTR_LAG_HASH_IPV6},
+        {{HashPktType::IPNIP, false}, SAI_SWITCH_ATTR_LAG_HASH_IPV4_IN_IPV4},
+        {{HashPktType::IPV4_RDMA, false}, SAI_SWITCH_ATTR_LAG_HASH_IPV4_RDMA},
+        {{HashPktType::IPV6_RDMA, false}, SAI_SWITCH_ATTR_LAG_HASH_IPV6_RDMA},
+    };
+
+    auto it = attrMap.find({pktType, isEcmp});
+    if (it != attrMap.end())
+    {
+        return it->second;
+    }
+
+    SWSS_LOG_ERROR("No SAI switch attribute mapping for packet type %s %s",
+                  isEcmp ? "ECMP" : "LAG", hashPktTypeToString(pktType).c_str());
+    return SAI_SWITCH_ATTR_CUSTOM_RANGE_START; // Invalid attribute as error indicator
+}
+
+bool SwitchOrch::removePacketTypeHashOid(sai_object_id_t oid,
+                                         const std::string &hashType,
+                                         const std::string &pktType)
+{
+    SWSS_LOG_ENTER();
+
+    if (oid == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_INFO("%s hash OID for %s already null, nothing to remove",
+                     hashType.c_str(), pktType.c_str());
+        return true;
+    }
+
+    auto status = sai_hash_api->remove_hash(oid);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove %s hash OID %" PRIx64 " for %s: SAI error %d",
+                      hashType.c_str(), oid, pktType.c_str(), status);
+
+        task_process_status handleStatus = handleSaiRemoveStatus(SAI_API_HASH, status);
+        if (handleStatus != task_success)
+        {
+            SWSS_LOG_ERROR("SAI remove status indicates: %d", handleStatus);
+        }
+
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Successfully removed %s hash OID %" PRIx64 " for %s",
+                   hashType.c_str(), oid, pktType.c_str());
+    return true;
+}
+
+bool SwitchOrch::setPacketTypeHashOid(sai_object_id_t &oid,
+                                      const std::set<sai_native_hash_field_t> &fields,
+                                      bool isEcmp,
+                                      const std::string &pktType)
+{
+    SWSS_LOG_ENTER();
+
+    if (fields.empty())
+    {
+        SWSS_LOG_ERROR("Cannot set packet-type hash with empty field list for %s %s",
+                      isEcmp ? "ECMP" : "LAG", pktType.c_str());
+        return false;
+    }
+
+    // Convert set to vector for SAI
+    std::vector<sai_int32_t> fieldList;
+    fieldList.reserve(fields.size());
+    std::transform(fields.cbegin(), fields.cend(), std::back_inserter(fieldList),
+                   [](sai_native_hash_field_t f) { return static_cast<sai_int32_t>(f); });
+
+    sai_attribute_t attr;
+    attr.id = SAI_HASH_ATTR_NATIVE_HASH_FIELD_LIST;
+    attr.value.s32list.list = fieldList.data();
+    attr.value.s32list.count = static_cast<uint32_t>(fieldList.size());
+
+    sai_status_t status;
+    const char *hashType = isEcmp ? "ECMP" : "LAG";
+
+    if (oid == SAI_NULL_OBJECT_ID)
+    {
+        // Create new hash object
+        std::vector<sai_attribute_t> attrs = {attr};
+
+        SWSS_LOG_INFO("Creating new %s hash object for %s packet-type with %zu fields",
+                     hashType, pktType.c_str(), fields.size());
+
+        status = sai_hash_api->create_hash(&oid, gSwitchId,
+                                          static_cast<uint32_t>(attrs.size()),
+                                          attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create %s hash for %s packet-type: SAI error %d",
+                          hashType, pktType.c_str(), status);
+
+            task_process_status handleStatus = handleSaiCreateStatus(SAI_API_HASH, status);
+            if (handleStatus != task_success)
+            {
+                SWSS_LOG_ERROR("SAI create status indicates: %d", handleStatus);
+            }
+
+            return false;
+        }
+
+        SWSS_LOG_NOTICE("Created %s hash OID %" PRIx64 " for %s packet-type with %zu fields",
+                       hashType, oid, pktType.c_str(), fields.size());
+    }
+    else
+    {
+        // Update existing hash object (no need to rebind to switch)
+        SWSS_LOG_INFO("Updating existing %s hash OID %" PRIx64 " for %s packet-type with %zu fields",
+                     hashType, oid, pktType.c_str(), fields.size());
+
+        status = sai_hash_api->set_hash_attribute(oid, &attr);
+        if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
+        {
+            // Fields are already programmed identically in hardware; treat as success.
+            SWSS_LOG_NOTICE("%s hash OID %" PRIx64 " for %s packet-type already has the same field list; no update needed",
+                            hashType, oid, pktType.c_str());
+            return true;
+        }
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to update %s hash OID %" PRIx64 " for %s packet-type: SAI error %d",
+                          hashType, oid, pktType.c_str(), status);
+
+            task_process_status handleStatus = handleSaiSetStatus(SAI_API_HASH, status);
+            if (handleStatus != task_success)
+            {
+                SWSS_LOG_ERROR("SAI set status indicates: %d", handleStatus);
+            }
+
+            return false;
+        }
+
+        SWSS_LOG_NOTICE("Updated %s hash OID %" PRIx64 " for %s packet-type with %zu fields",
+                       hashType, oid, pktType.c_str(), fields.size());
+    }
+
+    return true;
+}
+
 void SwitchOrch::doCfgSwitchHashTableTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -976,12 +1436,39 @@ void SwitchOrch::doCfgSwitchHashTableTask(Consumer &consumer)
                 hash.fieldValueMap[fieldName] = fieldValue;
             }
 
-            if (swHlpr.parseSwHash(hash))
+            if (!swHlpr.parseSwHash(hash))
+            {
+                SWSS_LOG_ERROR("Configuration parsing failed for switch hash");
+                it = map.erase(it);
+                continue;
+            }
+
+            // Determine what types of hash configuration are present
+            bool hasGlobalHash = hash.ecmp_hash.is_set ||
+                                hash.lag_hash.is_set ||
+                                hash.ecmp_hash_algorithm.is_set ||
+                                hash.lag_hash_algorithm.is_set;
+
+            // Apply global hash configuration only if present
+            if (hasGlobalHash)
             {
                 if (!setSwitchHash(hash))
                 {
-                    SWSS_LOG_ERROR("Failed to set switch hash: ASIC and CONFIG DB are diverged");
+                    SWSS_LOG_ERROR("Failed to apply global switch hash configuration");
+                    it = map.erase(it);
+                    continue;
                 }
+            }
+
+            // Apply packet-type hash configuration based on the new CONFIG_DB
+            // row and the cached state. This will handle explicit updates as
+            // well as implicit deletions when packet-type fields disappear
+            // from the row.
+            if (!applySwitchPacketTypeHashConfiguration(hash))
+            {
+                SWSS_LOG_ERROR("Failed to apply packet-type switch hash configuration");
+                it = map.erase(it);
+                continue;
             }
         }
         else if (op == DEL_COMMAND)

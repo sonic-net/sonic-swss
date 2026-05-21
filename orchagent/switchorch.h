@@ -4,6 +4,7 @@
 #include "orch.h"
 #include "timer.h"
 #include "flex_counter/flex_counter_manager.h"
+#include "switch/switch_types.h"
 #include "switch/switch_capabilities.h"
 #include "switch/switch_helper.h"
 #include "switch/trimming/capabilities.h"
@@ -113,6 +114,16 @@ private:
 
     bool getSwitchHashOidSai(sai_object_id_t &oid, bool isEcmpHash) const;
     void querySwitchHashDefaults();
+
+    // Switch packet type hash
+    bool setPacketTypeHashOnSwitch(sai_object_id_t hashOid, bool isEcmp, HashPktType pktType, bool bind);
+    sai_switch_attr_t getSwitchAttrForPacketType(HashPktType pktType, bool isEcmp);
+
+    bool removePacketTypeHashOid(sai_object_id_t oid, const std::string &hashType, const std::string &pktType);
+    bool setPacketTypeHashOid(sai_object_id_t &oid, const std::set<sai_native_hash_field_t> &fields, bool isEcmp, const std::string &pktType);
+    bool applySwitchPacketTypeHashConfiguration(const SwitchHash &hash);
+    bool processPacketTypeHash(const SwitchHash &hash, const SwitchHash &currentConfig, bool isEcmp, bool &configChanged);
+
     void setSwitchIcmpOffloadCapability();
 
     // Fast link-up
@@ -210,6 +221,11 @@ private:
     FlexCounterManager m_counterManager;
     bool m_isSwitchCounterIdListGenerated = false;
 
+    // Switch packet-type hash for ECMP
+    std::map<HashPktType, sai_object_id_t> m_switchHashEcmp;
+
+    // Switch packet-type hash for LAG
+    std::map<HashPktType, sai_object_id_t> m_switchHashLag;
     // Information contained in the request from
     // external program for orchagent pre-shutdown state check
     WarmRestartCheck m_warmRestartCheck = {false, false, false};
