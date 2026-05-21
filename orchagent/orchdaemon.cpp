@@ -845,7 +845,37 @@ bool OrchDaemon::init()
     m_orchList.push_back(&CounterCheckOrch::getInstance(m_configDb));
 
     vector<string> p4rt_tables = {APP_P4RT_TABLE_NAME};
-    m_p4OrchZmqServer = new swss::ZmqServer(m_p4OrchZmqServerEp, "", false, true);
+
+    // Check if P4RT is enabled in CONFIG_DB using standard macro table name
+    Table featureTable(m_configDb, CFG_FEATURE_TABLE_NAME);
+    std::vector<FieldValueTuple> values;
+    bool isP4Enabled = false;
+
+    // Safely fetch "p4rt" key from FEATURE table
+    if (featureTable.get("p4rt", values))
+    {
+        for (const auto& v : values)
+        {
+            // Fully aligns with CoppMgr's feature evaluation logic
+            if (fvField(v) == "state" && (fvValue(v) == "enabled" || fvValue(v) == "always_enabled"))
+            {
+                isP4Enabled = true;
+                break;
+            }
+        }
+    }
+
+    if (isP4Enabled)
+    {
+        SWSS_LOG_NOTICE("P4RT is enabled. Initializing ZMQ server and P4Orch.");
+        m_p4OrchZmqServer = new swss::ZmqServer(m_p4OrchZmqServerEp, "", false, true);
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("P4RT is disabled. Skipping ZMQ server initialization to save memory.");
+        m_p4OrchZmqServer = nullptr;
+    }
+
     gP4Orch = new P4Orch(m_applDb, p4rt_tables, m_p4OrchZmqServer, vrf_orch, gCoppOrch);
     m_orchList.push_back(gP4Orch);
 
