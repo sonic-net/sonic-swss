@@ -394,4 +394,48 @@ namespace intfsorch_test
         m_syncdIntfses = gIntfsOrch->getSyncdIntfses();
         ASSERT_EQ(m_syncdIntfses["Loopback3"].vrf_id, gVirtualRouterId);    
     }
+
+    TEST_F(IntfsOrchTest, IntfsOrchOverlapIpSuccess)
+    {
+        // Create an interface (RIF) on Ethernet0
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", "SET", { {"mtu", "9100"}}});
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        auto current_create_count = create_rif_count;
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_EQ(current_create_count + 1, create_rif_count);
+
+        // Add IP address 10.0.0.1/24 to Ethernet0
+        entries.clear();
+        entries.push_back({"Ethernet0:10.0.0.1/24", "SET", {{"scope", "global"},{"family", "IPv4"}}});
+        consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        // Verify 10.0.0.1/24 was added to the synced interfaces
+        auto m_syncdIntfses = gIntfsOrch->getSyncdIntfses();
+        ASSERT_EQ(m_syncdIntfses["Ethernet0"].ip_addresses.count(IpPrefix("10.0.0.1/24")), 1);
+
+        // Now add an overlapping IP 10.0.0.2/24 to Ethernet0
+        // This overlaps with 10.0.0.1/24 (same subnet).
+        // With the change, this should return success (true) and the entry
+        // should be consumed from m_toSync (not retried).
+        entries.clear();
+        entries.push_back({"Ethernet0:10.0.0.2/24", "SET", {{"scope", "global"},{"family", "IPv4"}}});
+        consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        // Verify the entry was consumed (not left in m_toSync for retry)
+        ASSERT_TRUE(consumer->m_toSync.empty());
+
+        // The overlapping IP should NOT have been inserted into ip_addresses
+        // because the overlap path returns true before reaching the insert.
+        m_syncdIntfses = gIntfsOrch->getSyncdIntfses();
+        ASSERT_EQ(m_syncdIntfses["Ethernet0"].ip_addresses.count(IpPrefix("10.0.0.2/24")), 0);
+
+        // The original IP should still be present
+        ASSERT_EQ(m_syncdIntfses["Ethernet0"].ip_addresses.count(IpPrefix("10.0.0.1/24")), 1);
+    }
 }
