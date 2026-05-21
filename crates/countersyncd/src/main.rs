@@ -85,33 +85,64 @@ fn init_logging(log_level: &str, log_format: &str) {
     builder.init();
 }
 
-fn exit_on_join(name: &str, result: Result<(), tokio::task::JoinError>) -> ! {
-    match result {
-        Ok(()) => {
-            info!("{} actor exited normally; shutting down", name);
-            std::process::exit(EXIT_SUCCESS);
-        }
-        Err(e) => {
-            error!("{} actor join error: {:?}", name, e);
-            std::process::exit(EXIT_FAILURE);
-        }
+#[derive(Debug)]
+struct SupervisorExit {
+    actor_name: &'static str,
+    exit_code: i32,
+    message: String,
+}
+
+fn describe_join_error(e: tokio::task::JoinError) -> String {
+    if e.is_panic() {
+        format!("task panicked: {}", e)
+    } else if e.is_cancelled() {
+        format!("task was cancelled: {}", e)
+    } else {
+        format!("task join error: {}", e)
     }
 }
 
-fn exit_on_otel_join(result: Result<Result<(), Box<dyn ExportError>>, tokio::task::JoinError>) -> ! {
+fn classify_join(name: &'static str, result: Result<(), tokio::task::JoinError>) -> SupervisorExit {
+    match result {
+        Ok(()) => {
+            // Actors are expected to run indefinitely; a normal return is treated as an unexpected exit.
+            SupervisorExit {
+                actor_name: name,
+                exit_code: EXIT_FAILURE,
+                message: "exited unexpectedly".to_string(),
+            }
+        }
+        Err(e) => SupervisorExit {
+            actor_name: name,
+            exit_code: EXIT_FAILURE,
+            message: describe_join_error(e),
+        },
+    }
+}
+
+fn classify_otel_join(
+    name: &'static str,
+    result: Result<Result<(), Box<dyn ExportError>>, tokio::task::JoinError>,
+) -> SupervisorExit {
     match result {
         Ok(Ok(())) => {
-            info!("OpenTelemetry actor exited normally; shutting down");
-            std::process::exit(EXIT_SUCCESS);
+            // OpenTelemetry is also a long-running actor; a normal return is treated as an unexpected exit.
+            SupervisorExit {
+                actor_name: name,
+                exit_code: EXIT_FAILURE,
+                message: "exited unexpectedly".to_string(),
+            }
         }
-        Ok(Err(e)) => {
-            error!("OpenTelemetry actor failed: {:?}", e);
-            std::process::exit(EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED);
-        }
-        Err(e) => {
-            error!("OpenTelemetry actor join error: {:?}", e);
-            std::process::exit(EXIT_FAILURE);
-        }
+        Ok(Err(e)) => SupervisorExit {
+            actor_name: name,
+            exit_code: EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED,
+            message: format!("export failed after retries: {:?}", e),
+        },
+        Err(e) => SupervisorExit {
+            actor_name: name,
+            exit_code: EXIT_FAILURE,
+            message: describe_join_error(e),
+        },
     }
 }
 
@@ -486,30 +517,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    // Exit the program as soon as any actor completes
-    tokio::select! {
+    // All actors are treated as critical. If any actor exits, abort the rest and terminate.
+    let first_exit = tokio::select! {
         res = &mut data_netlink_handle => {
-            exit_on_join("Data netlink", res);
+            classify_join("Data netlink", res)
         }
         res = &mut control_netlink_handle => {
-            exit_on_join("Control netlink", res);
+            classify_join("Control netlink", res)
         }
         res = &mut ipfix_handle => {
-            exit_on_join("IPFIX", res);
+            classify_join("IPFIX", res)
         }
         res = &mut swss_handle => {
-            exit_on_join("SWSS", res);
+            classify_join("SWSS", res)
         }
         res = async { reporter_handle.as_mut().unwrap().await }, if reporter_handle.is_some() => {
-            exit_on_join("Stats reporter", res);
+            classify_join("Stats reporter", res)
         }
         res = async { counter_db_handle.as_mut().unwrap().await }, if counter_db_handle.is_some() => {
-            exit_on_join("Counter DB", res);
+            classify_join("Counter DB", res)
         }
         res = async { otel_handle.as_mut().unwrap().await }, if otel_handle.is_some() => {
-            exit_on_otel_join(res);
+            classify_otel_join("OpenTelemetry", res)
         }
+    };
+
+    error!(
+        "Critical actor '{}' triggered daemon shutdown: {}",
+        first_exit.actor_name,
+        first_exit.message
+    );
+
+    data_netlink_handle.abort();
+    control_netlink_handle.abort();
+    ipfix_handle.abort();
+    swss_handle.abort();
+
+    if let Some(handle) = reporter_handle.as_mut() {
+        handle.abort();
     }
+    if let Some(handle) = counter_db_handle.as_mut() {
+        handle.abort();
+    }
+    if let Some(handle) = otel_handle.as_mut() {
+        handle.abort();
+    }
+
+    std::process::exit(first_exit.exit_code);
 }
 
 #[cfg(test)]
