@@ -30,12 +30,18 @@ static int g_create_udf_calls    = 0;
 static int g_remove_udf_calls    = 0;
 static sai_object_id_t g_next_oid = 0x1000;
 static sai_status_t g_create_group_status = SAI_STATUS_SUCCESS;
+static sai_status_t g_remove_group_status = SAI_STATUS_SUCCESS;
+static sai_status_t g_create_match_status = SAI_STATUS_SUCCESS;
+static sai_status_t g_remove_match_status = SAI_STATUS_SUCCESS;
+static sai_status_t g_create_udf_status   = SAI_STATUS_SUCCESS;
+static sai_status_t g_remove_udf_status   = SAI_STATUS_SUCCESS;
 
 // Captured from last create_udf_group call
 static sai_udf_group_type_t g_last_group_type = SAI_UDF_GROUP_TYPE_GENERIC;
 // Set bits seen in last create_udf_match call (L2/L3/GRE/L4)
 static bool g_last_match_has_l2   = false;
 static bool g_last_match_has_l3   = false;
+static bool g_last_match_has_gre  = false;
 static bool g_last_match_has_l4   = false;
 
 static void reset_counters()
@@ -44,8 +50,13 @@ static void reset_counters()
     g_create_match_calls  = g_remove_match_calls = 0;
     g_create_udf_calls    = g_remove_udf_calls   = 0;
     g_last_group_type     = SAI_UDF_GROUP_TYPE_GENERIC;
-    g_last_match_has_l2   = g_last_match_has_l3 = g_last_match_has_l4 = false;
+    g_last_match_has_l2   = g_last_match_has_l3 = g_last_match_has_gre = g_last_match_has_l4 = false;
     g_create_group_status = SAI_STATUS_SUCCESS;
+    g_remove_group_status = SAI_STATUS_SUCCESS;
+    g_create_match_status = SAI_STATUS_SUCCESS;
+    g_remove_match_status = SAI_STATUS_SUCCESS;
+    g_create_udf_status   = SAI_STATUS_SUCCESS;
+    g_remove_udf_status   = SAI_STATUS_SUCCESS;
 }
 
 static sai_status_t stub_create_udf_group(sai_object_id_t *oid, sai_object_id_t,
@@ -62,36 +73,47 @@ static sai_status_t stub_create_udf_group(sai_object_id_t *oid, sai_object_id_t,
 }
 static sai_status_t stub_remove_udf_group(sai_object_id_t)
 {
+    if (g_remove_group_status != SAI_STATUS_SUCCESS)
+        return g_remove_group_status;
     g_remove_group_calls++;
     return SAI_STATUS_SUCCESS;
 }
 static sai_status_t stub_create_udf_match(sai_object_id_t *oid, sai_object_id_t,
                                             uint32_t attr_count, const sai_attribute_t *attrs)
 {
+    if (g_create_match_status != SAI_STATUS_SUCCESS)
+        return g_create_match_status;
     *oid = ++g_next_oid;
     g_create_match_calls++;
-    g_last_match_has_l2 = g_last_match_has_l3 = g_last_match_has_l4 = false;
+    g_last_match_has_l2 = g_last_match_has_l3 = g_last_match_has_gre = g_last_match_has_l4 = false;
     for (uint32_t i = 0; i < attr_count; i++)
     {
         if (attrs[i].id == SAI_UDF_MATCH_ATTR_L2_TYPE) g_last_match_has_l2 = true;
         if (attrs[i].id == SAI_UDF_MATCH_ATTR_L3_TYPE) g_last_match_has_l3 = true;
+        if (attrs[i].id == SAI_UDF_MATCH_ATTR_GRE_TYPE) g_last_match_has_gre = true;
         if (attrs[i].id == SAI_UDF_MATCH_ATTR_L4_DST_PORT_TYPE) g_last_match_has_l4 = true;
     }
     return SAI_STATUS_SUCCESS;
 }
 static sai_status_t stub_remove_udf_match(sai_object_id_t)
 {
+    if (g_remove_match_status != SAI_STATUS_SUCCESS)
+        return g_remove_match_status;
     g_remove_match_calls++;
     return SAI_STATUS_SUCCESS;
 }
 static sai_status_t stub_create_udf(sai_object_id_t *oid, sai_object_id_t, uint32_t, const sai_attribute_t *)
 {
+    if (g_create_udf_status != SAI_STATUS_SUCCESS)
+        return g_create_udf_status;
     *oid = ++g_next_oid;
     g_create_udf_calls++;
     return SAI_STATUS_SUCCESS;
 }
 static sai_status_t stub_remove_udf(sai_object_id_t)
 {
+    if (g_remove_udf_status != SAI_STATUS_SUCCESS)
+        return g_remove_udf_status;
     g_remove_udf_calls++;
     return SAI_STATUS_SUCCESS;
 }
@@ -464,6 +486,405 @@ TEST_F(UdfOrchTest, UdfRuleRefcountBlocksLastSelectorDelete)
     pushSelector("udf1|sel_a", {}, "DEL");
     ASSERT_EQ(m_orch->m_udfs.size(), 0u);
     ASSERT_EQ(g_remove_udf_calls, 1);
+}
+
+/* --- Direct object-level negative paths --------------------------------- */
+
+TEST_F(UdfOrchTest, UdfGroup_Create_AlreadyExists)
+{
+    UdfGroupConfig cfg = {"g", SAI_UDF_GROUP_TYPE_GENERIC, 4};
+    UdfGroup g(cfg);
+    ASSERT_EQ(g.create(), SAI_STATUS_SUCCESS);
+    ASSERT_EQ(g.create(), SAI_STATUS_ITEM_ALREADY_EXISTS);
+}
+
+TEST_F(UdfOrchTest, UdfGroup_Create_InvalidLength)
+{
+    UdfGroupConfig zero_len = {"g0", SAI_UDF_GROUP_TYPE_GENERIC, 0};
+    UdfGroup g_zero(zero_len);
+    ASSERT_EQ(g_zero.create(), SAI_STATUS_INVALID_PARAMETER);
+
+    UdfGroupConfig over_len = {"g1", SAI_UDF_GROUP_TYPE_GENERIC, UDF_GROUP_MAX_LENGTH + 1};
+    UdfGroup g_over(over_len);
+    ASSERT_EQ(g_over.create(), SAI_STATUS_INVALID_PARAMETER);
+}
+
+TEST_F(UdfOrchTest, UdfGroup_Create_NullSaiApi)
+{
+    UdfGroupConfig cfg = {"g", SAI_UDF_GROUP_TYPE_GENERIC, 4};
+    UdfGroup g(cfg);
+    auto *saved = sai_udf_api;
+    sai_udf_api = nullptr;
+    ASSERT_EQ(g.create(), SAI_STATUS_FAILURE);
+    sai_udf_api = saved;
+}
+
+TEST_F(UdfOrchTest, UdfGroup_Create_SaiFailure)
+{
+    UdfGroupConfig cfg = {"g", SAI_UDF_GROUP_TYPE_GENERIC, 4};
+    UdfGroup g(cfg);
+    g_create_group_status = SAI_STATUS_FAILURE;
+    ASSERT_EQ(g.create(), SAI_STATUS_FAILURE);
+}
+
+TEST_F(UdfOrchTest, UdfGroup_Remove_NullSaiApiAndSaiFailure)
+{
+    UdfGroupConfig cfg = {"g", SAI_UDF_GROUP_TYPE_GENERIC, 4};
+    {
+        UdfGroup g(cfg);
+        ASSERT_EQ(g.create(), SAI_STATUS_SUCCESS);
+        auto *saved = sai_udf_api;
+        sai_udf_api = nullptr;
+        ASSERT_FALSE(g.remove());
+        sai_udf_api = saved;
+
+        g_remove_group_status = SAI_STATUS_FAILURE;
+        ASSERT_FALSE(g.remove());
+        g_remove_group_status = SAI_STATUS_SUCCESS;
+    }
+    UdfGroup uncreated(cfg);
+    ASSERT_TRUE(uncreated.remove());  // no-op path: m_oid still NULL
+}
+
+TEST_F(UdfOrchTest, UdfMatch_Create_AllBranchesCaptured)
+{
+    UdfMatchConfig cfg = {};
+    cfg.name = "m_all";
+    cfg.l2_type_set = true;  cfg.l2_type = 0x0800; cfg.l2_type_mask = 0xFFFF;
+    cfg.l3_type_set = true;  cfg.l3_type = 0x06;   cfg.l3_type_mask = 0xFF;
+    cfg.gre_type_set = true; cfg.gre_type = 0x6558; cfg.gre_type_mask = 0xFFFF;
+    cfg.l4_dst_port_set = true; cfg.l4_dst_port = 80; cfg.l4_dst_port_mask = 0xFFFF;
+    cfg.priority = 5;
+    UdfMatch m(cfg);
+    ASSERT_TRUE(m.create());
+    ASSERT_TRUE(g_last_match_has_l2);
+    ASSERT_TRUE(g_last_match_has_l3);
+    ASSERT_TRUE(g_last_match_has_gre);
+    ASSERT_TRUE(g_last_match_has_l4);
+
+    // Re-create on same object hits the already-exists branch.
+    ASSERT_FALSE(m.create());
+}
+
+TEST_F(UdfOrchTest, UdfMatch_NullSaiApiAndSaiFailure)
+{
+    UdfMatchConfig cfg = {};
+    cfg.name = "m"; cfg.l3_type_set = true; cfg.l3_type = 0x11; cfg.l3_type_mask = 0xFF;
+
+    UdfMatch m_null(cfg);
+    auto *saved = sai_udf_api;
+    sai_udf_api = nullptr;
+    ASSERT_FALSE(m_null.create());
+    sai_udf_api = saved;
+
+    UdfMatch m_fail(cfg);
+    g_create_match_status = SAI_STATUS_FAILURE;
+    ASSERT_FALSE(m_fail.create());
+    g_create_match_status = SAI_STATUS_SUCCESS;
+
+    UdfMatch m_rm(cfg);
+    ASSERT_TRUE(m_rm.create());
+    sai_udf_api = nullptr;
+    ASSERT_FALSE(m_rm.remove());
+    sai_udf_api = saved;
+    g_remove_match_status = SAI_STATUS_FAILURE;
+    ASSERT_FALSE(m_rm.remove());
+    g_remove_match_status = SAI_STATUS_SUCCESS;
+
+    UdfMatch m_noop(cfg);
+    ASSERT_TRUE(m_noop.remove());  // m_oid still NULL
+}
+
+TEST_F(UdfOrchTest, Udf_Create_NegativePaths)
+{
+    UdfConfig cfg = {};
+    cfg.name = "u"; cfg.base = SAI_UDF_BASE_L3; cfg.offset = 0;
+
+    // Null match_id rejected before SAI call.
+    cfg.match_id = SAI_NULL_OBJECT_ID; cfg.group_id = 0x100;
+    { Udf u(cfg); ASSERT_FALSE(u.create()); }
+
+    // Null group_id rejected before SAI call.
+    cfg.match_id = 0x100; cfg.group_id = SAI_NULL_OBJECT_ID;
+    { Udf u(cfg); ASSERT_FALSE(u.create()); }
+
+    // Invalid offset rejected before SAI call.
+    cfg.match_id = 0x100; cfg.group_id = 0x200; cfg.offset = UDF_MAX_OFFSET + 1;
+    { Udf u(cfg); ASSERT_FALSE(u.create()); }
+
+    // Null SAI api.
+    cfg.offset = 0;
+    {
+        Udf u(cfg);
+        auto *saved = sai_udf_api;
+        sai_udf_api = nullptr;
+        ASSERT_FALSE(u.create());
+        sai_udf_api = saved;
+    }
+
+    // SAI create failure.
+    {
+        Udf u(cfg);
+        g_create_udf_status = SAI_STATUS_FAILURE;
+        ASSERT_FALSE(u.create());
+        g_create_udf_status = SAI_STATUS_SUCCESS;
+    }
+
+    // Already-exists path.
+    {
+        Udf u(cfg);
+        ASSERT_TRUE(u.create());
+        ASSERT_FALSE(u.create());
+    }
+}
+
+TEST_F(UdfOrchTest, Udf_RemoveNegativePaths)
+{
+    UdfConfig cfg = {};
+    cfg.name = "u"; cfg.match_id = 0x100; cfg.group_id = 0x200;
+    cfg.base = SAI_UDF_BASE_L3; cfg.offset = 0;
+
+    Udf u(cfg);
+    ASSERT_TRUE(u.create());
+
+    auto *saved = sai_udf_api;
+    sai_udf_api = nullptr;
+    ASSERT_FALSE(u.remove());
+    sai_udf_api = saved;
+
+    g_remove_udf_status = SAI_STATUS_FAILURE;
+    ASSERT_FALSE(u.remove());
+    g_remove_udf_status = SAI_STATUS_SUCCESS;
+
+    Udf u_noop(cfg);
+    ASSERT_TRUE(u_noop.remove());  // m_oid still NULL
+}
+
+/* --- Orch task-handler negative paths ----------------------------------- */
+
+TEST_F(UdfOrchTest, FieldTask_UnknownOp)
+{
+    pushUdf("udf1", {{ "length", "4" }}, "BOGUS_OP");
+    ASSERT_EQ(g_create_group_calls, 0);
+    ASSERT_EQ(m_orch->m_udfGroups.size(), 0u);
+}
+
+TEST_F(UdfOrchTest, FieldTask_RemoveHardwareFails_Retries)
+{
+    pushUdf("udf1", {{ "length", "4" }});
+    g_remove_group_status = SAI_STATUS_FAILURE;
+    pushUdf("udf1", {}, "DEL");
+    ASSERT_EQ(m_orch->m_udfGroups.size(), 1u);
+    auto *c = dynamic_cast<Consumer *>(m_orch->getExecutor(CFG_UDF_TABLE_NAME));
+    ASSERT_EQ(c->m_toSync.size(), 1u);
+
+    g_remove_group_status = SAI_STATUS_SUCCESS;
+    static_cast<Orch *>(m_orch)->doTask();
+    ASSERT_EQ(m_orch->m_udfGroups.size(), 0u);
+}
+
+TEST_F(UdfOrchTest, Selector_InvalidKeyFormat)
+{
+    pushSelector("nopipe", {{"select_base", "L3"}, {"select_offset", "0"},
+                            {"match_l3_type", "0x11"}});
+    ASSERT_EQ(g_create_match_calls, 0);
+}
+
+TEST_F(UdfOrchTest, Selector_MissingSelectBaseOrOffset)
+{
+    pushUdf("udf1", {{ "length", "4" }});
+    pushSelector("udf1|s1", {{"select_offset", "0"}, {"match_l3_type", "0x11"}});
+    pushSelector("udf1|s2", {{"select_base",   "L3"}, {"match_l3_type", "0x11"}});
+    ASSERT_EQ(g_create_match_calls, 0);
+}
+
+TEST_F(UdfOrchTest, Selector_ParseErrorAndInvalidBaseOrOffset)
+{
+    pushUdf("udf1", {{ "length", "4" }});
+    pushSelector("udf1|s1", {{"select_base", "L3"}, {"select_offset", "notanumber"},
+                              {"match_l3_type", "0x11"}});
+    pushSelector("udf1|s2", {{"select_base", "BOGUS"}, {"select_offset", "0"},
+                              {"match_l3_type", "0x11"}});
+    pushSelector("udf1|s3", {{"select_base", "L3"}, {"select_offset", "256"},
+                              {"match_l3_type", "0x11"}});
+    ASSERT_EQ(g_create_match_calls, 0);
+    ASSERT_EQ(g_create_udf_calls, 0);
+}
+
+TEST_F(UdfOrchTest, Selector_NoMatchCriteria)
+{
+    pushUdf("udf1", {{ "length", "4" }});
+    pushSelector("udf1|s1", {{"select_base", "L3"}, {"select_offset", "0"}});
+    ASSERT_EQ(g_create_match_calls, 0);
+}
+
+TEST_F(UdfOrchTest, Selector_UnknownOp)
+{
+    pushUdf("udf1", {{ "length", "4" }});
+    pushSelector("udf1|s1", {{"select_base", "L3"}, {"select_offset", "0"},
+                              {"match_l3_type", "0x11"}}, "BOGUS_OP");
+    ASSERT_EQ(g_create_udf_calls, 0);
+}
+
+TEST_F(UdfOrchTest, Selector_L2AndGreBranches)
+{
+    pushUdf("udf1", {{ "length", "2" }});
+    pushSelector("udf1|l2", {{"select_base", "L2"}, {"select_offset", "0"},
+                              {"match_l2_type", "0x0800"}});
+    ASSERT_TRUE(g_last_match_has_l2);
+
+    pushSelector("udf1|gre", {{"select_base", "L4"}, {"select_offset", "0"},
+                               {"match_gre_type", "0x6558"}});
+    ASSERT_TRUE(g_last_match_has_gre);
+}
+
+TEST_F(UdfOrchTest, Selector_IdempotentReplayShortCircuits)
+{
+    pushUdf("udf1", {{ "length", "4" }});
+    vector<FieldValueTuple> fv = {
+        {"select_base", "L3"}, {"select_offset", "0"},
+        {"match_l3_type", "0x11"}, {"match_priority", "10"}
+    };
+    pushSelector("udf1|s1", fv);
+    ASSERT_EQ(g_create_match_calls, 1);
+
+    int prior = g_create_match_calls;
+    pushSelector("udf1|s1", fv);  // replay must short-circuit before parsing
+    ASSERT_EQ(g_create_match_calls, prior);
+}
+
+/* --- UdfOrch add/remove API negative paths ------------------------------ */
+
+TEST_F(UdfOrchTest, AddUdfGroup_ImmutableType)
+{
+    pushUdf("udf1", {{ "length", "4" }, { "field_type", "GENERIC" }});
+    ASSERT_EQ(g_create_group_calls, 1);
+
+    // Same name, different type — must be rejected; existing config preserved.
+    pushUdf("udf1", {{ "length", "4" }, { "field_type", "HASH" }});
+    ASSERT_EQ(g_create_group_calls, 1);
+    ASSERT_EQ(m_orch->m_udfGroups.at("udf1")->getConfig().type,
+              SAI_UDF_GROUP_TYPE_GENERIC);
+}
+
+TEST_F(UdfOrchTest, RemoveUdfGroup_NotFoundReturnsTrue)
+{
+    pushUdf("never_existed", {}, "DEL");  // drained without error
+    ASSERT_EQ(g_remove_group_calls, 0);
+}
+
+TEST_F(UdfOrchTest, RemoveUdfGroup_ReferencedByUdfBlocks)
+{
+    pushUdf("udf1", {{ "length", "4" }});
+    pushSelector("udf1|sel", {{"select_base", "L3"}, {"select_offset", "0"},
+                               {"match_l3_type", "0x11"}});
+    ASSERT_EQ(m_orch->m_udfs.size(), 1u);
+
+    // Direct call bypasses the refcount path and hits the UDF-references check.
+    ASSERT_FALSE(m_orch->removeUdfGroup("udf1"));
+    ASSERT_EQ(m_orch->m_udfGroups.size(), 1u);
+}
+
+TEST_F(UdfOrchTest, AddUdfMatch_NoCriteriaRejected)
+{
+    UdfMatchConfig cfg = {};
+    cfg.name = "m_empty";
+    ASSERT_FALSE(m_orch->addUdfMatch("m_empty", cfg));
+}
+
+TEST_F(UdfOrchTest, AddUdfMatch_ImmutableFields)
+{
+    UdfMatchConfig cfg = {};
+    cfg.name = "m"; cfg.l3_type_set = true; cfg.l3_type = 0x11; cfg.l3_type_mask = 0xFF;
+    ASSERT_TRUE(m_orch->addUdfMatch("m", cfg));
+
+    UdfMatchConfig modified = cfg;
+    modified.l3_type = 0x06;
+    ASSERT_FALSE(m_orch->addUdfMatch("m", modified));
+
+    // Same config again is a no-op success.
+    ASSERT_TRUE(m_orch->addUdfMatch("m", cfg));
+}
+
+TEST_F(UdfOrchTest, AddUdfMatch_SaiCreateFailureCleansUp)
+{
+    UdfMatchConfig cfg = {};
+    cfg.name = "m"; cfg.l3_type_set = true; cfg.l3_type = 0x11; cfg.l3_type_mask = 0xFF;
+    g_create_match_status = SAI_STATUS_FAILURE;
+    ASSERT_FALSE(m_orch->addUdfMatch("m", cfg));
+    ASSERT_EQ(m_orch->m_udfMatches.count("m"), 0u);
+}
+
+TEST_F(UdfOrchTest, RemoveUdfMatch_NotFoundReturnsTrue)
+{
+    ASSERT_TRUE(m_orch->removeUdfMatch("nonexistent"));
+}
+
+TEST_F(UdfOrchTest, RemoveUdfMatch_ReferencedByUdfBlocks)
+{
+    pushUdf("udf1", {{ "length", "4" }});
+    pushSelector("udf1|sel", {{"select_base", "L3"}, {"select_offset", "0"},
+                               {"match_l3_type", "0x11"}});
+
+    const string &matchName = m_orch->m_selectorToMatchName.at("udf1|sel");
+    ASSERT_FALSE(m_orch->removeUdfMatch(matchName));
+}
+
+TEST_F(UdfOrchTest, AddUdf_NullMatchAndGroupIdsRejected)
+{
+    UdfConfig cfg = {};
+    cfg.name = "u"; cfg.base = SAI_UDF_BASE_L3; cfg.offset = 0;
+
+    cfg.match_id = SAI_NULL_OBJECT_ID; cfg.group_id = 0x100;
+    ASSERT_FALSE(m_orch->addUdf("u", cfg));
+
+    cfg.match_id = 0x100; cfg.group_id = SAI_NULL_OBJECT_ID;
+    ASSERT_FALSE(m_orch->addUdf("u", cfg));
+}
+
+TEST_F(UdfOrchTest, AddUdf_ImmutableFields)
+{
+    pushUdf("udf1", {{ "length", "4" }});
+    pushSelector("udf1|sel", {{"select_base", "L3"}, {"select_offset", "0"},
+                               {"match_l3_type", "0x11"}});
+    ASSERT_EQ(m_orch->m_udfs.count("udf1|sel"), 1u);
+
+    UdfConfig modified = m_orch->m_udfs.at("udf1|sel")->getConfig();
+    modified.offset = 8;
+    ASSERT_FALSE(m_orch->addUdf("udf1|sel", modified));
+
+    // Identical config is a no-op success.
+    UdfConfig same = m_orch->m_udfs.at("udf1|sel")->getConfig();
+    ASSERT_TRUE(m_orch->addUdf("udf1|sel", same));
+}
+
+TEST_F(UdfOrchTest, RemoveUdf_NotFoundReturnsTrue)
+{
+    ASSERT_TRUE(m_orch->removeUdf("nonexistent"));
+}
+
+TEST_F(UdfOrchTest, DecrementGroupAndUdfRuleRefCount_Underflow)
+{
+    // Unknown name — warn and return.
+    m_orch->decrementGroupRefCount("never_added");
+    m_orch->decrementUdfRuleRefCount("never_added");
+
+    // Zero refcount — warn and return.
+    m_orch->incrementGroupRefCount("g");
+    m_orch->decrementGroupRefCount("g");
+    m_orch->decrementGroupRefCount("g");
+    ASSERT_EQ(m_orch->getGroupRefCount("g"), 0u);
+
+    m_orch->incrementUdfRuleRefCount("u");
+    m_orch->decrementUdfRuleRefCount("u");
+    m_orch->decrementUdfRuleRefCount("u");
+    ASSERT_EQ(m_orch->getUdfRuleRefCount("u"), 0u);
+}
+
+TEST_F(UdfOrchTest, ReleaseSharedMatch_UnknownNameIsSafe)
+{
+    m_orch->releaseSharedMatch("nonexistent");  // log warn and return
+    ASSERT_EQ(g_remove_match_calls, 0);
 }
 
 } // namespace udforch_test
