@@ -56,7 +56,7 @@ public:
      */
     fpm_msg_hdr_t* buildFpmHeader(unsigned char* buffer)
     {
-        fpm_msg_hdr_t* fpm_hdr = reinterpret_cast<fpm_msg_hdr_t*>(buffer);
+        fpm_msg_hdr_t* fpm_hdr = reinterpret_cast<fpm_msg_hdr_t*>(static_cast<void*>(buffer));
         fpm_hdr->version = FPM_PROTO_VERSION;
         fpm_hdr->msg_type = FPM_MSG_TYPE_NETLINK;
         fpm_hdr->msg_len = htons(sizeof(fpm_msg_hdr_t));
@@ -72,7 +72,7 @@ public:
                             unsigned short nlmsg_flags,
                             size_t payload_size)
     {
-        nlmsghdr* nl_hdr = reinterpret_cast<nlmsghdr*>(buffer);
+        nlmsghdr* nl_hdr = reinterpret_cast<nlmsghdr*>(static_cast<void*>(buffer));
         nl_hdr->nlmsg_len = static_cast<__u32>(NLMSG_LENGTH(payload_size));
         nl_hdr->nlmsg_type = nlmsg_type;
         nl_hdr->nlmsg_flags = nlmsg_flags;
@@ -89,8 +89,8 @@ public:
     void addRtattr(nlmsghdr* nl_hdr, int type, const void* data, size_t len)
     {
         size_t rta_len = RTA_LENGTH(len);
-        rtattr* rta = reinterpret_cast<rtattr*>(
-            reinterpret_cast<char*>(nl_hdr) + NLMSG_ALIGN(nl_hdr->nlmsg_len));
+        rtattr* rta = reinterpret_cast<rtattr*>(static_cast<void*>(
+            reinterpret_cast<char*>(nl_hdr) + NLMSG_ALIGN(nl_hdr->nlmsg_len)));
 
         rta->rta_type = static_cast<unsigned short>(type);
         rta->rta_len = static_cast<unsigned short>(rta_len);
