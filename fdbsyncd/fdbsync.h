@@ -95,6 +95,9 @@ public:
     bool m_isEvpnNvoExist = false;
 
 private:
+    bool m_isFdbProtoSupported = false;
+    bool checkFdbProtoSupport();
+
     ProducerStateTable m_fdbTable;
     ProducerStateTable m_imetTable;
     ProducerStateTable m_l2NhgTable;

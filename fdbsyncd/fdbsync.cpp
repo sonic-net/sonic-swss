@@ -43,6 +43,7 @@ FdbSync::FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector
         m_AppRestartAssist->registerAppTable(APP_VXLAN_FDB_TABLE_NAME, &m_fdbTable);
         m_AppRestartAssist->registerAppTable(APP_VXLAN_REMOTE_VNI_TABLE_NAME, &m_imetTable);
     }
+    m_isFdbProtoSupported = checkFdbProtoSupport();
 }
 
 FdbSync::~FdbSync()
@@ -51,6 +52,31 @@ FdbSync::~FdbSync()
     {
         delete m_AppRestartAssist;
     }
+}
+
+bool FdbSync::checkFdbProtoSupport()
+{
+    /* Test whether the local bridge command and kernel both support the
+     * exact proto syntax used below. Some iproute2 versions advertise a
+     * protocol field but still reject the "proto hw" spelling/name. */
+    std::string res;
+    int ret = swss::exec("bridge fdb help 2>&1 | grep -q proto", res);
+    if (ret != 0)
+    {
+        SWSS_LOG_NOTICE("bridge fdb proto support not detected");
+        return false;
+    }
+
+    ret = swss::exec("bridge fdb add 00:00:00:00:00:00 dev lo proto hw 2>/dev/null", res);
+    swss::exec("bridge fdb del 00:00:00:00:00:00 dev lo 2>/dev/null", res);
+    if (ret != 0)
+    {
+        SWSS_LOG_NOTICE("bridge fdb proto support not detected");
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("bridge fdb proto support detected");
+    return true;
 }
 
 // Check if interface entries are restored in kernel
@@ -373,7 +399,7 @@ void FdbSync::updateLocalMac (struct m_fdb_info *info)
     if (fdb_type == FDB_TYPE_DYNAMIC)
     {
         type = "dynamic extern_learn";
-        proto_string = " proto hw";
+        proto_string = m_isFdbProtoSupported ? " proto hw" : "";
     }
     else
     {
@@ -441,7 +467,7 @@ void FdbSync::addLocalMac(string key, string op)
         if (m_fdb_mac[key].type == FDB_TYPE_DYNAMIC)
         {
             type = "dynamic extern_learn";
-            proto_string = " proto hw";
+            proto_string = m_isFdbProtoSupported ? " proto hw" : "";
         }
         else
         {
@@ -492,7 +518,7 @@ void FdbSync::updateMclagRemoteMac (struct m_fdb_info *info)
     if (fdb_type == FDB_TYPE_DYNAMIC)
     {
         type = "dynamic extern_learn";
-        proto_string = " proto hw";
+        proto_string = m_isFdbProtoSupported ? " proto hw" : "";
     }
     else
     {
@@ -525,10 +551,10 @@ void FdbSync::updateMclagRemoteMacPort(int ifindex, int vlan, std::string mac, u
         type = m_mclag_remote_fdb_mac[key].type;
         port_name = m_mclag_remote_fdb_mac[key].port_name;
         if (protocol == RTPROT_ZEBRA)
-            proto_string = " proto zebra";
+            proto_string = m_isFdbProtoSupported ? " proto zebra" : "";
         else if (protocol == RTPROT_HW)
             /* Unlikely this can happen, but keeping just in case */
-            proto_string = " proto hw";
+            proto_string = m_isFdbProtoSupported ? " proto hw" : "";
         SWSS_LOG_INFO(" port %s, type %d %s\n", port_name.c_str(), type, proto_string.c_str());
 
         if (type == FDB_TYPE_STATIC)
@@ -586,9 +612,9 @@ void FdbSync::macRefreshStateDB(int vlan, string kmac, uint8_t protocol)
         }
 
         if (protocol == RTPROT_ZEBRA)
-            proto_string = " proto zebra";
+            proto_string = m_isFdbProtoSupported ? " proto zebra" : "";
         else if (protocol == RTPROT_HW)
-            proto_string = " proto hw";
+            proto_string = m_isFdbProtoSupported ? " proto hw" : "";
 
         const std::string cmds = std::string("")
             + " bridge fdb " + "replace" + " " + kmac + " dev "
@@ -806,7 +832,10 @@ void FdbSync::macAddVxlan(string key, struct nl_addr *vtep, string type, uint32_
 
     fvVector.push_back(fv_type);
     fvVector.push_back(fv_vni);
-    fvVector.push_back(fv_protocol);
+    if (protocol != RTPROT_UNSPEC)
+    {
+        fvVector.push_back(fv_protocol);
+    }
 
     // If warmstart is in progress, we take all netlink changes into the cache map
     if (m_AppRestartAssist && m_AppRestartAssist->isWarmStartInProgress())
