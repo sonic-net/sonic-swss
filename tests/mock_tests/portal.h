@@ -8,6 +8,7 @@
 #include "copporch.h"
 #include "sfloworch.h"
 #include "twamporch.h"
+#include "udforch.h"
 #include "directory.h"
 
 #undef protected
@@ -30,6 +31,12 @@ struct Portal
         static const map<sai_acl_entry_attr_t, SaiAttrWrapper> &getActions(const AclRule *aclRule)
         {
             return aclRule->m_actions;
+        }
+
+        static const map<std::string, std::pair<std::vector<uint8_t>, std::vector<uint8_t>>>
+            &getUdfFieldValues(const AclRule *aclRule)
+        {
+            return aclRule->m_udfFieldValues;
         }
     };
 
@@ -122,6 +129,24 @@ struct Portal
         static TwampStatsTable getTwampSessionStatistics(TwampOrch &obj)
         {
             return obj.m_twampStatistics;
+        }
+    };
+
+    struct UdfOrchInternal
+    {
+        static uint32_t getGroupRefCount(const UdfOrch *orch, const std::string &name)
+        {
+            return orch->getGroupRefCount(name);
+        }
+
+        static uint32_t getUdfRuleRefCount(const UdfOrch *orch, const std::string &name)
+        {
+            return orch->getUdfRuleRefCount(name);
+        }
+
+        static void setUdfSupported(UdfOrch *orch, bool value)
+        {
+            orch->m_udfSupported = value;
         }
     };
 

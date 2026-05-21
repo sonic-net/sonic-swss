@@ -26,7 +26,7 @@ enum SubjectType
     SUBJECT_TYPE_FDB_FLUSH_CHANGE,
     SUBJECT_TYPE_BFD_SESSION_STATE_CHANGE
 };
-
+    
 class Observer
 {
 public:
