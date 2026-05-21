@@ -52,8 +52,6 @@ constexpr char* kMulticastMetadata = "multicast_metadata";
 constexpr char *kSetNexthopId = "set_nexthop_id";
 constexpr char *kSetWcmpGroupId = "set_wcmp_group_id";
 constexpr char* kSetMulticastGroupId = "set_multicast_group_id";
-constexpr char* kSetSrcMac = "set_src_mac";
-constexpr char* kSetMulticastSrcMac = "set_multicast_src_mac";
 constexpr char *kSetNexthopIdAndMetadata = "set_nexthop_id_and_metadata";
 constexpr char *kSetWcmpGroupIdAndMetadata = "set_wcmp_group_id_and_metadata";
 constexpr char *kSetMetadataAndDrop = "set_metadata_and_drop";
@@ -62,7 +60,6 @@ constexpr char *kSetIpNexthop = "set_ip_nexthop";
 constexpr char* kSetIpNexthopAndDisableRewrites =
     "set_ip_nexthop_and_disable_rewrites";
 constexpr char *kSetTunnelNexthop = "set_p2p_tunnel_encap_nexthop";
-constexpr char* kL2MulticastPassthrough = "l2_multicast_passthrough";
 constexpr char* kMulticastL2Passthrough = "multicast_l2_passthrough";
 constexpr char* kMulticastSetSrcMac = "multicast_set_src_mac";
 constexpr char* kMulticastSetSrcMacAndVlanId = "multicast_set_src_mac_and_vlan_id";
@@ -291,6 +288,12 @@ struct P4PacketActionWithColor
     std::string packet_color;
 };
 
+struct P4ActionWithColorParam {
+    std::string sai_action;
+    std::string packet_color;
+    std::string p4_param_name;
+};
+
 struct P4AclTableDefinitionAppDbEntry
 {
     // Key
@@ -302,6 +305,8 @@ struct P4AclTableDefinitionAppDbEntry
     std::map<std::string, std::string> match_field_lookup;
     std::map<std::string, std::vector<P4ActionParamName>> action_field_lookup;
     std::map<std::string, std::vector<P4PacketActionWithColor>> packet_action_color_lookup;
+    std::map<std::string, std::vector<P4ActionWithColorParam>>
+        action_color_param_lookup;
     std::string meter_unit;
     std::string counter_unit;
 };

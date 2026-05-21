@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 #include "acltable.h"
 #include "orch.h"
 #include "timer.h"
@@ -66,6 +68,8 @@ public:
     void initAclGroupsBindToSwitch();
 
     bool checkOrderedEcmpEnable() { return m_orderedEcmpEnable; }
+    sai_object_id_t getL3AdmitOid() { return m_l3AdmitOid; }
+    std::string getAliasMac() { return m_aliasMac; }
 
     void onSwitchAsicSdkHealthEvent(sai_object_id_t switch_id,
                                     sai_switch_asic_sdk_health_severity_t severity,
@@ -165,6 +169,8 @@ private:
     swss::Table m_switchTable;
     std::map<sai_acl_stage_t, referenced_object> m_aclGroups;
     sai_object_id_t m_switchTunnelId;
+    sai_object_id_t m_l3AdmitOid = SAI_NULL_OBJECT_ID;
+    std::string m_aliasMac;
 
     // ASIC temperature sensors
     std::shared_ptr<swss::DBConnector> m_stateDb = nullptr;

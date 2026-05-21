@@ -12,6 +12,7 @@ class P4RtL3MulticastRouterInterfaceWrapper(util.DBInterface):
   TBL_NAME = swsscommon.APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME
 
   ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE"
+  SAI_ATTR_LABEL = "SAI_ROUTER_INTERFACE_ATTR_LABEL"
   SAI_ATTR_VIRTUAL_ROUTER_ID = "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID"
   SAI_ATTR_SRC_MAC = "SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS"
   SAI_ATTR_TYPE = "SAI_ROUTER_INTERFACE_ATTR_TYPE"
@@ -34,6 +35,7 @@ class P4RtL3MulticastRouterInterfaceWrapper(util.DBInterface):
   SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW = "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW"
 
   NEXT_HOP_ASIC_DB_TABLE_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP"
+  SAI_NEXT_HOP_ATTR_LABEL = "SAI_NEXT_HOP_ATTR_LABEL"
   SAI_NEXT_HOP_ATTR_TYPE = "SAI_NEXT_HOP_ATTR_TYPE"
   SAI_NEXT_HOP_ATTR_TYPE_IPMC = "SAI_NEXT_HOP_TYPE_IPMC"
   SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID = "SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID"
@@ -152,11 +154,12 @@ class P4RtL3MulticastGroupWrapper(util.DBInterface):
   TBL_NAME = swsscommon.APP_P4RT_REPLICATION_IP_MULTICAST_TABLE_NAME
 
   ASIC_DB_GROUP_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_IPMC_GROUP"
-  ASIC_DB_GROUP_MEMBER_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER"
-  SAI_ATTR_IPMC_GROUP_ID = "SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_GROUP_ID"
-  SAI_ATTR_IPMC_OUTPUT_ID = "SAI_IPMC_GROUP_MEMBER_ATTR_IPMC_OUTPUT_ID"
+  SAI_ATTR_IPMC_GROUP_LABEL = "SAI_IPMC_GROUP_ATTR_LABEL"
+  SAI_ATTR_IPMC_GROUP_WITH_MEMBERS = "SAI_IPMC_GROUP_ATTR_IPMC_GROUP_WITH_MEMBERS"
+  SAI_ATTR_IPMC_GROUP_OUTPUT_NH_LIST = "SAI_IPMC_GROUP_ATTR_IPMC_OUTPUT_NH_LIST"
 
   L2_ASIC_DB_GROUP_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_L2MC_GROUP"
+  SAI_ATTR_L2MC_GROUP_LABEL = "SAI_L2MC_GROUP_ATTR_LABEL"
   L2_ASIC_DB_GROUP_MEMBER_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER"
   SAI_ATTR_L2MC_GROUP_ID = "SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_GROUP_ID"
   SAI_ATTR_L2MC_OUTPUT_ID = "SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_OUTPUT_ID"
@@ -172,7 +175,8 @@ class P4RtL3MulticastGroupWrapper(util.DBInterface):
     return self.TBL_NAME + ":" + multicast_group_id
 
   # Create default multicast group entry.
-  def create_multicast_group_entry(self, group_id=None, replicas=None):
+  def create_multicast_group_entry(self, group_id=None, replicas=None,
+                                   backups=[]):
     group_id = group_id or self.DEFAULT_GROUP_ID
     if replicas is None:
       local_replicas = [x for x in self.DEFAULT_REPLICAS]
@@ -186,6 +190,18 @@ class P4RtL3MulticastGroupWrapper(util.DBInterface):
           ",\"multicast_replica_port\":\"" + port_name + "\"}")
     replica_json_array = "[" + ",".join(replica_dicts) + "]"
     attr_list = [("replicas", replica_json_array)]
+
+    backup_lists = []
+    for replica_list in backups:
+      backup_list = []
+      for port_name, instance in replica_list:
+        d = {}
+        d["multicast_replica_instance"] = instance
+        d["multicast_replica_port"] = port_name
+        backup_list.append(d)
+      backup_lists.append(backup_list)
+    if len(backup_lists) != 0:
+      attr_list.append(("backups", json.dumps(backup_lists, separators=(",", ":"))))
 
     mcast_group_key = self.generate_app_db_key(group_id)
     self.set_app_db_entry(mcast_group_key, attr_list)
