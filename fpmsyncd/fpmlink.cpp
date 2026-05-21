@@ -180,6 +180,21 @@ FpmLink::~FpmLink()
         close(m_server_socket);
 }
 
+void FpmLink::forceDisconnect()
+{
+    if (m_connected)
+    {
+        SWSS_LOG_NOTICE("FpmLink: forceDisconnect — closing connection socket fd %d",
+                        m_connection_socket);
+        close(m_connection_socket);
+        m_connected = false;
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("FpmLink: forceDisconnect requested but no active connection (noop)");
+    }
+}
+
 void FpmLink::accept()
 {
     struct sockaddr_in client_addr;
@@ -192,6 +207,12 @@ void FpmLink::accept()
                                    &client_len);
     if (m_connection_socket < 0)
         throw system_error(errno, system_category());
+
+    /* Mark connection live. Pre-existing latent: m_connected was never set
+     * true after accept(), so the dtor's `if (m_connected) close(...)` never
+     * fired (harmless socket leak bounded by exception frequency). We need
+     * it true for FpmLink::forceDisconnect() to actually close the socket. */
+    m_connected = true;
 
     SWSS_LOG_INFO("New connection accepted from: %s\n", inet_ntoa(client_addr.sin_addr));
 }

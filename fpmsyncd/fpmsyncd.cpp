@@ -27,6 +27,18 @@ static int gFlushTimeout = FLUSH_TIMEOUT;
 
 #define STATE_FIB_SUPPRESS_TABLE_NAME "FIB_SUPPRESS_TABLE"
 
+/* Iteration 4: auto-resume timer. If warm-reboot is aborted after fpmsyncd
+ * entered drain mode (e.g., orchagent_restart_check failed and --force
+ * not set), this timer fires, clears the drain flag, removes itself from
+ * the Select set, and triggers a forced FPM disconnect so zebra re-dumps
+ * its full FIB. Without this, fpmsyncd would stay in drain mode forever
+ * and silently drop route updates from FRR.
+ *
+ * Default value; can be overridden per-call by the tool via the
+ * "autoResumeTimeoutSec" field in the FPMSYNCD_RESTARTCHECK notification
+ * payload. */
+#define DRAIN_AUTO_RESUME_DEFAULT_INTERVAL_SECONDS 20
+
 /**
  * @brief fpmsyncd invokes redispipeline's flush with a timer
  * 
@@ -151,6 +163,9 @@ int main(int argc, char **argv)
             SelectableTimer eoiuCheckTimer(timespec{0, 0});
             // After eoiu flags are detected, start a hold timer before starting reconciliation.
             SelectableTimer eoiuHoldTimer(timespec{0, 0});
+            // Iteration 4: drain auto-resume timer. Armed when the
+            // FPMSYNCD_RESTARTCHECK handler flips the drain flag.
+            SelectableTimer drainAutoResumeTimer(timespec{0, 0});
            
             /*
              * Pipeline should be flushed right away to deal with state pending
@@ -283,6 +298,29 @@ int main(int argc, char **argv)
                         sync.onRouteResponse(key, fieldValues);
                     }
                 }
+                else if (temps == &drainAutoResumeTimer)
+                {
+                    /* Iteration 4: 60s elapsed since drain mode entered and
+                     * fpmsyncd is still alive — warm-reboot must have been
+                     * aborted somewhere between fpmsyncd_restart_check READY
+                     * and SIGKILL. Clear the drain flag (so new route
+                     * SET/DEL flow normally again) and force an FPM
+                     * disconnect — zebra re-dumps its full FIB on reconnect,
+                     * recovering whatever route updates were dropped while
+                     * we were draining. */
+                    SWSS_LOG_WARN("fpmsyncd: drain auto-resume timer fired — warm-reboot was probably aborted. Clearing drain flag and forcing FPM disconnect to trigger zebra full-FIB re-dump.");
+                    sync.setDrainingForWarmRestart(false);
+                    s.removeSelectable(&drainAutoResumeTimer);
+                    fpm.forceDisconnect();
+                    /* Throw to enter the existing outer-catch reconnect path
+                     * (constructs a new FpmLink, blocks on accept() until
+                     * zebra reconnects, which causes zebra to re-dump its
+                     * full FIB via FPM). Without this explicit throw, the
+                     * closed fd doesn't reliably surface as readable to
+                     * select(), so readData() is never called and the
+                     * normal reconnection chain doesn't fire. */
+                    throw FpmLink::FpmConnectionClosedException();
+                }
                 else if (temps == &restartCheckConsumer)
                 {
                     /* Iteration 3: gate READY on AsyncDBUpdater queue actually
@@ -299,10 +337,45 @@ int main(int argc, char **argv)
                     SWSS_LOG_NOTICE("fpmsyncd: preparing for warm boot (received %s on FPMSYNCD_RESTARTCHECK, hasZmqProducerTables=%s, queueSize=%zu)",
                                     op.c_str(), hasZmq ? "true" : "false", qsize);
 
+                    /* Iteration 4: extract caller-supplied auto-resume timeout
+                     * from the notification's `autoResumeTimeoutSec` field
+                     * (set by fpmsyncd_restart_check via -t). Falls back to
+                     * the default if absent or malformed. */
+                    int autoResumeSec = DRAIN_AUTO_RESUME_DEFAULT_INTERVAL_SECONDS;
+                    for (const auto& fv : values)
+                    {
+                        if (fvField(fv) == "autoResumeTimeoutSec")
+                        {
+                            int parsed = atoi(fvValue(fv).c_str());
+                            if (parsed > 0) autoResumeSec = parsed;
+                            break;
+                        }
+                    }
+
                     if (hasZmq && !sync.isDrainingForWarmRestart())
                     {
                         sync.setDrainingForWarmRestart(true);
                         SWSS_LOG_NOTICE("fpmsyncd: drain flag set; new route SET/DEL via setRouteWithWarmRestart / delWithWarmRestart will be dropped");
+
+                        /* Iteration 4: arm the auto-resume timer. If warm-reboot
+                         * is aborted before fpmsyncd is killed, this timer
+                         * fires, clears the drain flag, and forces an FPM
+                         * disconnect so zebra re-dumps its FIB. */
+                        drainAutoResumeTimer.setInterval(timespec{autoResumeSec, 0});
+                        drainAutoResumeTimer.reset();
+                        drainAutoResumeTimer.start();
+                        s.addSelectable(&drainAutoResumeTimer);
+                        SWSS_LOG_NOTICE("fpmsyncd: drain auto-resume timer armed for %ds", autoResumeSec);
+                    }
+                    else if (hasZmq && sync.isDrainingForWarmRestart())
+                    {
+                        /* Re-notification during an active drain window:
+                         * re-arm the timer so a fresh window starts.
+                         * The timer is already in the Select set; just reset. */
+                        drainAutoResumeTimer.setInterval(timespec{autoResumeSec, 0});
+                        drainAutoResumeTimer.reset();
+                        drainAutoResumeTimer.start();
+                        SWSS_LOG_INFO("fpmsyncd: re-notification during drain; auto-resume timer re-armed for %ds", autoResumeSec);
                     }
 
                     const bool ready = (qsize == 0);

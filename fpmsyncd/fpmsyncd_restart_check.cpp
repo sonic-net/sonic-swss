@@ -23,6 +23,12 @@ void printUsage()
     std::cout << "    -i --interSleep" << std::endl;
     std::cout << "        Sleep between attempts, in milliseconds. Paces the polling so" << std::endl;
     std::cout << "        AsyncDBUpdater has time to drain between checks. Default: 500" << std::endl;
+    std::cout << "    -t --autoResumeTimeoutSec" << std::endl;
+    std::cout << "        Auto-resume timeout, in seconds. If warm-reboot is aborted after" << std::endl;
+    std::cout << "        fpmsyncd entered drain mode, fpmsyncd auto-clears the drain flag" << std::endl;
+    std::cout << "        and forces an FPM reconnect this many seconds after the last" << std::endl;
+    std::cout << "        notification. Sent to fpmsyncd in the notification payload." << std::endl;
+    std::cout << "        Default: 20" << std::endl;
     std::cout << "    -h --help:" << std::endl;
     std::cout << "        Print out this message" << std::endl;
     std::cout << "" << std::endl;
@@ -49,20 +55,23 @@ int main(int argc, char **argv)
     SWSS_LOG_ENTER();
 
     /* Defaults: 20 attempts (retryCount=19), 500ms reply wait per attempt,
-     * 500ms sleep between attempts. Happy-path drain budget = 10 s. */
+     * 500ms sleep between attempts, 20s auto-resume timeout. Happy-path
+     * drain budget = 10 s. */
     int waitTime = 500;
     int retryCount = 19;
     int interSleepMs = 500;
+    int autoResumeTimeoutSec = 20;
 
-    const char* const optstring = "w:r:i:h";
+    const char* const optstring = "w:r:i:t:h";
     while (true)
     {
         static struct option long_options[] =
         {
-            { "waitTime",   required_argument, 0, 'w' },
-            { "retryCount", required_argument, 0, 'r' },
-            { "interSleep", required_argument, 0, 'i' },
-            { "help",       no_argument,       0, 'h' },
+            { "waitTime",             required_argument, 0, 'w' },
+            { "retryCount",           required_argument, 0, 'r' },
+            { "interSleep",           required_argument, 0, 'i' },
+            { "autoResumeTimeoutSec", required_argument, 0, 't' },
+            { "help",                 no_argument,       0, 'h' },
             { 0, 0, 0, 0 }
         };
 
@@ -88,6 +97,10 @@ int main(int argc, char **argv)
                 SWSS_LOG_NOTICE("Inter-attempt sleep set to %s milliseconds", optarg);
                 interSleepMs = atoi(optarg);
                 break;
+            case 't':
+                SWSS_LOG_NOTICE("Auto-resume timeout set to %s seconds", optarg);
+                autoResumeTimeoutSec = atoi(optarg);
+                break;
             case 'h':
                 printUsage();
                 exit(EXIT_SUCCESS);
@@ -111,7 +124,9 @@ int main(int argc, char **argv)
     s.addSelectable(&restartQueryReply);
     swss::Selectable *sel;
 
-    std::vector<swss::FieldValueTuple> values;
+    std::vector<swss::FieldValueTuple> values{
+        swss::FieldValueTuple{"autoResumeTimeoutSec", std::to_string(autoResumeTimeoutSec)}
+    };
     std::string op = "fpmsyncd";
 
     auto findValue = [](const std::vector<swss::FieldValueTuple>& v, const std::string& key) -> std::string {
