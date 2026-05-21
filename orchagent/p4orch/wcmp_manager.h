@@ -17,6 +17,7 @@ extern "C"
 {
 #include "sai.h"
 }
+#include "selectableevent.h"
 
 namespace p4orch
 {
@@ -24,6 +25,8 @@ namespace test
 {
 class WcmpManagerTest;
 } // namespace test
+
+constexpr uint32_t kMaxWatchportGroupBulkSize = 30;
 
 struct P4WcmpGroupMemberEntry
 {
@@ -69,15 +72,17 @@ struct P4WcmpGroupEntry
 class WcmpManager : public ObjectManagerInterface
 {
   public:
-   WcmpManager(P4OidMapper* p4oidMapper,
-               ResponsePublisherInterface* publisher)
-       : m_asic_db("ASIC_DB", 0), m_asic_state_table(&m_asic_db, "ASIC_STATE") {
+   WcmpManager(P4OidMapper* p4oidMapper, ResponsePublisherInterface* publisher,
+	       swss::SelectableEvent* watchport_event)
+      : m_asic_db("ASIC_DB", 0), m_asic_state_table(&m_asic_db, "ASIC_STATE") {
      SWSS_LOG_ENTER();
 
      assert(p4oidMapper != nullptr);
      m_p4OidMapper = p4oidMapper;
      assert(publisher != nullptr);
      m_publisher = publisher;
+     assert(watchport_event != nullptr);
+     m_watchport_event = watchport_event;
    }
 
     virtual ~WcmpManager() = default;
@@ -89,11 +94,18 @@ class WcmpManager : public ObjectManagerInterface
     ReturnCode getSaiObject(const std::string &json_key, sai_object_type_t &object_type,
                             std::string &object_key) override;
 
-    // Prunes or restores next hop members.
-    void updateWatchPort(const std::string& port, bool prune);
+    // Updates m_port_oper_status_map and enqueues watchport events.
+    // This call only queues the group update event into m_watchport_groups.
+    // The real watchport update will happen in processWatchPortEvent().
+    void updateWatchPort(const std::string& port, sai_port_oper_status_t status);
 
-    // Inserts into/updates port_oper_status_map
-    void updatePortOperStatusMap(const std::string &port, const sai_port_oper_status_t &status);
+    // Update the WCMP group member if the member is also a member of an LACP
+    // LAG. Prune or restore this WCMP group member based on the LACP state.
+    void updateLagMemberWatchPort(const std::string& port, bool lacp_enable);
+
+    // Process group update in m_watchport_groups, maximum of
+    // kMaxWatchportGroupBulkSize groups per call.
+    void processWatchPortEvent();
 
     // Refreshes port oper-status with the latest values from PortsOrch.
     void refreshPortOperStatus();
@@ -129,23 +141,20 @@ class WcmpManager : public ObjectManagerInterface
 
     // Updates a list of WCMP groups in the WCMP group table.
     std::vector<ReturnCode> updateWcmpGroups(
-        std::vector<P4WcmpGroupEntry>& entries);
+        std::vector<P4WcmpGroupEntry>& entries, bool watchport = false);
 
-    // Fetches oper-status of port using port_oper_status_map or SAI.
-    ReturnCode fetchPortOperStatus(const std::string &port, sai_port_oper_status_t *oper_status);
+    // Fetches oper-status of port from portsorch.
+    void fetchPortOperStatus(const P4WcmpGroupEntry& wcmp_group);
 
-    // Inserts a next hop member in port_name_to_wcmp_group_member_map
+    // Inserts a next hop member in m_port_name_to_wcmp_group_member_map
     void insertMemberInPortNameToWcmpGroupMemberMap(std::shared_ptr<P4WcmpGroupMemberEntry> member);
 
-    // Removes a next hop member from port_name_to_wcmp_group_member_map
+    // Removes a next hop member from m_port_name_to_wcmp_group_member_map
     void removeMemberFromPortNameToWcmpGroupMemberMap(std::shared_ptr<P4WcmpGroupMemberEntry> member);
 
-    // Gets port oper-status from port_oper_status_map if present
-    bool getPortOperStatusFromMap(const std::string &port, sai_port_oper_status_t *status);
-
-    // Fetches group member info (pruned status, nexthop OID) that is required
+    // Populates group member info (pruned status, nexthop OID) that is required
     // before create or update.
-    ReturnCode fetchMemberInfo(P4WcmpGroupEntry* wcmp_group);
+    void populateMemberInfo(P4WcmpGroupEntry& wcmp_group);
 
     // Verifies the internal cache for an entry.
     std::string verifyStateCache(const P4WcmpGroupEntry &app_db_entry, const P4WcmpGroupEntry *wcmp_group_entry);
@@ -158,10 +167,14 @@ class WcmpManager : public ObjectManagerInterface
 
     // Maps port name to P4WcmpGroupMemberEntry
     std::unordered_map<std::string, std::unordered_set<std::shared_ptr<P4WcmpGroupMemberEntry>>>
-        port_name_to_wcmp_group_member_map;
+        m_port_name_to_wcmp_group_member_map;
 
     // Maps port name to oper-status
-    std::unordered_map<std::string, sai_port_oper_status_t> port_oper_status_map;
+    std::unordered_map<std::string, sai_port_oper_status_t>
+      m_port_oper_status_map;
+
+    // Maps port name to LACP enable status if the port is a LAG member
+    std::unordered_map<std::string, bool> m_port_lacp_enable_status_map;
 
     // Owners of pointers below must outlive this class's instance.
     P4OidMapper *m_p4OidMapper;
@@ -169,6 +182,11 @@ class WcmpManager : public ObjectManagerInterface
     swss::DBConnector m_asic_db;
     swss::Table m_asic_state_table;
     ResponsePublisherInterface* m_publisher;
+    swss::SelectableEvent* m_watchport_event;
+
+    // A set that stores the groups that need to be updated due to watchport
+    // events.
+    std::unordered_set<std::string> m_watchport_groups;
 
     friend class p4orch::test::WcmpManagerTest;
 };

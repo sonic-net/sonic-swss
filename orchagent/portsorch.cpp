@@ -6377,6 +6377,13 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
                     setDistributionOnLagMember(port, true))
                 {
                     it = consumer.m_toSync.erase(it);
+                    if (gP4Orch)
+                    {
+                        // Process port_state_change in P4Orch after PortsOrch
+                        gP4Orch->handleLagMemberLacpStatusUpdate(
+                            port.m_alias, /*lacp_enable=*/true);
+                    }
+
                 }
                 else
                 {
@@ -6394,6 +6401,12 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
                     setCollectionOnLagMember(port, false))
                 {
                     it = consumer.m_toSync.erase(it);
+                    if (gP4Orch)
+                    {
+                        // Process port_state_change in P4Orch after PortsOrch
+                        gP4Orch->handleLagMemberLacpStatusUpdate(
+                            port.m_alias, /*lacp_enable=*/false);
+                    }
                 }
                 else
                 {
@@ -9718,6 +9731,12 @@ void PortsOrch::handleNotification(NotificationConsumer &consumer, KeyOpFieldsVa
 
             /* update m_portList */
             m_portList[port.m_alias] = port;
+
+            if (gP4Orch)
+            {
+                // Process port_state_change in P4Orch after PortsOrch
+                gP4Orch->handlePortStatusUpdate(port.m_alias, status);
+            }
         }
 
         sai_deserialize_free_port_oper_status_ntf(count, portoperstatus);

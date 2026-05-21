@@ -308,7 +308,8 @@ ReturnCodeOr<std::vector<P4Replica>> deserializeReplicas(
 }  // namespace
 
 L3MulticastManager::L3MulticastManager(P4OidMapper* mapper, VRFOrch* vrfOrch,
-                                       ResponsePublisherInterface* publisher)
+	                               ResponsePublisherInterface* publisher,
+                                       swss::SelectableEvent* fallback_event)
     : m_p4OidMapper(mapper),
       m_vrfOrch(vrfOrch),
       m_asic_db("ASIC_DB", 0),
@@ -316,6 +317,8 @@ L3MulticastManager::L3MulticastManager(P4OidMapper* mapper, VRFOrch* vrfOrch,
   SWSS_LOG_ENTER();
   assert(publisher != nullptr);
   m_publisher = publisher;
+  assert(fallback_event != nullptr);
+  m_fallback_event = fallback_event;
 }
 
 ReturnCode L3MulticastManager::getSaiObject(const std::string& json_key,
@@ -567,6 +570,9 @@ ReturnCode L3MulticastManager::drainMulticastGroupEntries(
 
     // Select replicas to use.
     if (operation == SET_COMMAND) {
+      if (group_entry.is_ipmc) {
+        fetchPortOperStatus(group_entry);
+      }
       setActiveReplicas(group_entry);
     }
 
@@ -1065,10 +1071,8 @@ ReturnCode L3MulticastManager::validateSetMulticastGroupEntry(
       multicast_group_entry.multicast_group_id);
 
   sai_object_type_t sai_group_type = SAI_OBJECT_TYPE_IPMC_GROUP;
-  sai_object_type_t sai_group_member_type = SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER;
   if (!multicast_group_entry.is_ipmc) {
     sai_group_type = SAI_OBJECT_TYPE_L2MC_GROUP;
-    sai_group_member_type = SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER;
   }
 
   bool is_update_operation = group_entry_ptr != nullptr;
@@ -1081,32 +1085,6 @@ ReturnCode L3MulticastManager::validateSetMulticastGroupEntry(
           << group_entry_ptr->multicast_group_id;
     }
 
-    // Confirm we have references to the multicast group members also.
-    // An update operation may add or delete members.
-    // For add, confirm the member did not have an oid.
-    // For update, confirm the member had an oid.
-    for (auto& replica_list : multicast_group_entry.replicas) {
-      for (auto& replica : replica_list) {
-        bool member_exists_in_mapper =
-            m_p4OidMapper->existsOID(sai_group_member_type, replica.key);
-        if (group_entry_ptr->replica_keys.find(replica.key) ==
-            group_entry_ptr->replica_keys.end()) {  // Add member.
-          if (member_exists_in_mapper) {
-            LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                                 << "Multicast group member to add "
-                                 << QuotedVar(replica.key)
-                                 << " already exists in the central mapper.");
-          }
-        } else {  // Update member.
-          if (!member_exists_in_mapper) {
-            LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-                                 << "Multicast group member to delete "
-                                 << QuotedVar(replica.key)
-                                 << " does not exist in the central mapper.");
-          }
-        }
-      }
-    }
   }
   // No additional validation required for add operation.
   return ReturnCode();
@@ -1151,12 +1129,43 @@ ReturnCode L3MulticastManager::validateDelMulticastGroupEntry(
   return ReturnCode();
 }
 
+void L3MulticastManager::fetchPortOperStatus(
+    const P4MulticastGroupEntry& multicast_group_entry) {
+  SWSS_LOG_ENTER();
+
+  for (const auto& replica_list : multicast_group_entry.replicas) {
+    for (const auto& replica : replica_list) {
+      sai_port_oper_status_t oper_status = SAI_PORT_OPER_STATUS_DOWN;
+      Port port;
+      if (gPortsOrch->getPort(replica.port, port)) {
+        oper_status = port.m_oper_status;
+      }
+      m_port_oper_status_map[replica.port] = oper_status;
+    }
+  }
+}
+
 void L3MulticastManager::setActiveReplicas(
     P4MulticastGroupEntry& multicast_group_entry) {
-  // TODO: Implement active replica selection for IP multicast
-  // group. Currently just select the primary replica.
+  SWSS_LOG_ENTER();
+
+  multicast_group_entry.active_replicas.clear();
+  if (!multicast_group_entry.is_ipmc) {
+    for (const auto& replica_list : multicast_group_entry.replicas) {
+      multicast_group_entry.active_replicas.push_back(replica_list[0]);
+    }
+    return;
+  }
   for (const auto& replica_list : multicast_group_entry.replicas) {
-    multicast_group_entry.active_replicas.push_back(replica_list[0]);
+    // The primary replica is the default if no replica is up.
+    P4Replica active_replica = replica_list[0];
+    for (const auto& replica : replica_list) {
+      if (m_port_oper_status_map[replica.port] == SAI_PORT_OPER_STATUS_UP) {
+        active_replica = replica;
+        break;
+      }
+    }
+    multicast_group_entry.active_replicas.push_back(active_replica);
   }
 }
 
@@ -1399,6 +1408,10 @@ ReturnCode L3MulticastManager::processMulticastGroupEntries(
     m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(tuple_list[i]),
                          kfvFieldsValues(tuple_list[i]), statuses[i],
                          /*replace=*/true);
+    if (statuses[i].ok() && entries[i].is_ipmc) {
+      // Remove the queued fallback event if the group has been updated.
+      m_fallback_groups.erase(entries[i].multicast_group_id);
+    }
     if (status.ok() && !statuses[i].ok()) {
       status = statuses[i];
     }
@@ -2273,6 +2286,7 @@ ReturnCode L3MulticastManager::addIpMulticastGroupEntry(
   }
 
   // Update internal state.
+  insertGroupInPortNameToIpmcGroupMap(entry);
   m_multicastGroupEntryTable[entry.multicast_group_id] = entry;
   return ReturnCode();
 }
@@ -2622,6 +2636,9 @@ ReturnCode L3MulticastManager::updateIpMulticastGroupEntry(
     added_replicas.push_back(replica);
 
   }  // for replica (to add)
+
+  removeGroupFromPortNameToIpmcGroupMap(*old_entry);
+  insertGroupInPortNameToIpmcGroupMap(entry);
 
   // Final bookkeeping. Updated the original entry in place.
   *old_entry = entry;
@@ -2989,6 +3006,7 @@ ReturnCode L3MulticastManager::deleteIpMulticastGroupEntry(
   }
 
   // Do internal bookkeping to remove the multicast group.
+  removeGroupFromPortNameToIpmcGroupMap(entry);
   m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_IPMC_GROUP, entry.multicast_group_id);
   m_multicastGroupEntryTable.erase(entry.multicast_group_id);
   return ReturnCode();
@@ -3517,6 +3535,7 @@ std::string L3MulticastManager::verifyIpMulticastGroupStateAsicDb(
 std::string L3MulticastManager::verifyL2MulticastGroupStateAsicDb(
     const P4MulticastGroupEntry* multicast_group_entry) {
   // Confirm group settings.
+
   sai_object_id_t l2mc_group_oid = SAI_NULL_OBJECT_ID;
   m_p4OidMapper->getOID(SAI_OBJECT_TYPE_L2MC_GROUP,
                         multicast_group_entry->multicast_group_id,
@@ -3674,6 +3693,87 @@ sai_object_id_t L3MulticastManager::getBridgePortOid(const P4Replica& replica) {
   m_p4OidMapper->getOID(SAI_OBJECT_TYPE_BRIDGE_PORT, router_interface_key,
                         &bridge_port_oid);
   return bridge_port_oid;
+}
+
+void L3MulticastManager::refreshPortOperStatus() {
+  SWSS_LOG_ENTER();
+
+  for (const auto& it : m_port_oper_status_map) {
+    Port port;
+    if (!gPortsOrch->getPort(it.first, port)) {
+      SWSS_LOG_NOTICE("Failed to get port object for port %s",
+                      it.first.c_str());
+      continue;
+    }
+    updateFallbackGroup(it.first, port.m_oper_status);
+  }
+}
+
+void L3MulticastManager::updateFallbackGroup(const std::string& port,
+                                             sai_port_oper_status_t status) {
+  SWSS_LOG_ENTER();
+
+  m_port_oper_status_map[port] = status;
+  if (m_port_name_to_ipmc_group_map.find(port) ==
+      m_port_name_to_ipmc_group_map.end()) {
+    return;
+  }
+  for (const auto& group : m_port_name_to_ipmc_group_map[port]) {
+    auto* group_entry_ptr = getMulticastGroupEntry(group);
+    if (group_entry_ptr != nullptr &&
+        checkActiveReplicasChange(*group_entry_ptr)) {
+      m_fallback_groups.insert(group);
+    }
+  }
+  if (!m_fallback_groups.empty()) {
+    m_fallback_event->notify();
+  }
+}
+
+void L3MulticastManager::processFallbackGroupEvent() {
+  SWSS_LOG_ENTER();
+
+  // TODO(b/377401287): Process fallback group events in m_fallback_groups.
+  m_fallback_groups.clear();
+}
+
+bool L3MulticastManager::checkActiveReplicasChange(
+    const P4MulticastGroupEntry& multicast_group_entry) {
+  SWSS_LOG_ENTER();
+
+  std::vector<P4Replica> active_replicas;
+  for (const auto& replica_list : multicast_group_entry.replicas) {
+    // The primary replica is the default if no replica is up.
+    P4Replica active_replica = replica_list[0];
+    for (const auto& replica : replica_list) {
+      if (m_port_oper_status_map[replica.port] == SAI_PORT_OPER_STATUS_UP) {
+        active_replica = replica;
+        break;
+      }
+    }
+    active_replicas.push_back(active_replica);
+  }
+  return active_replicas != multicast_group_entry.active_replicas;
+}
+
+void L3MulticastManager::insertGroupInPortNameToIpmcGroupMap(
+    const P4MulticastGroupEntry& multicast_group_entry) {
+  for (const auto& replica_list : multicast_group_entry.replicas) {
+    for (const auto& replica : replica_list) {
+      m_port_name_to_ipmc_group_map[replica.port].insert(
+          multicast_group_entry.multicast_group_id);
+    }
+  }
+}
+
+void L3MulticastManager::removeGroupFromPortNameToIpmcGroupMap(
+    const P4MulticastGroupEntry& multicast_group_entry) {
+  for (const auto& replica_list : multicast_group_entry.replicas) {
+    for (const auto& replica : replica_list) {
+      m_port_name_to_ipmc_group_map[replica.port].erase(
+          multicast_group_entry.multicast_group_id);
+    }
+  }
 }
 
 }  // namespace p4orch
