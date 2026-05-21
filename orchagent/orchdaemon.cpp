@@ -7,6 +7,7 @@
 #include "orchdaemon.h"
 #include "logger.h"
 #include <sairedis.h>
+#include "namelabelmapper.h"
 #include "warm_restart.h"
 #include <iostream>
 #include "orch_zmq_config.h"
@@ -74,7 +75,7 @@ StpOrch *gStpOrch;
 MuxOrch *gMuxOrch;
 IcmpOrch *gIcmpOrch;
 HFTelOrch *gHFTOrch;
-
+NameLabelMapper *gLabelMapper;
 bool gIsNatSupported = false;
 event_handle_t g_events_handle;
 
@@ -186,6 +187,7 @@ void OrchDaemon::disableRingBuffer() {
 bool OrchDaemon::init()
 {
     SWSS_LOG_ENTER();
+    gLabelMapper = new NameLabelMapper();
 
     string platform = getenv("platform") ? getenv("platform") : "";
 
@@ -1097,7 +1099,8 @@ bool OrchDaemon::warmRestoreAndSyncUp()
     SWSS_LOG_ENTER();
 
     WarmStart::setWarmStartState("orchagent", WarmStart::INITIALIZED);
-
+    gLabelMapper->readMapperFromDb();
+     
     for (Orch *o : m_orchList)
     {
         o->bake();
@@ -1168,6 +1171,7 @@ bool OrchDaemon::warmRestoreAndSyncUp()
      * The "RECONCILED" state of orchagent doesn't mean the state related to neighbor is up to date.
      */
     WarmStart::setWarmStartState("orchagent", WarmStart::RECONCILED);
+    gLabelMapper->deleteMapperInDb();
     return true;
 }
 
