@@ -81,6 +81,8 @@ struct SavedFdbEntry
 
 typedef unordered_map<string, vector<SavedFdbEntry>> fdb_entries_by_port_t;
 
+#define ASIC_FDB_EVENT_STATE_TABLE "FDB_EVENT_STATE"
+
 class FdbOrch: public Orch, public Subject, public Observer
 {
 public:
