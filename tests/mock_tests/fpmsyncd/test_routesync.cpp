@@ -37,7 +37,7 @@ bool nlmsg_alloc_ret = true;
 class MockRouteSync : public RouteSync
 {
 public:
-    MockRouteSync(RedisPipeline *m_pipeline) : RouteSync(m_pipeline)
+    MockRouteSync(RedisPipeline *m_pipeline, RedisPipeline *app_state_pipeline) : RouteSync(m_pipeline, app_state_pipeline)
     {
     }
 
@@ -98,9 +98,11 @@ public:
 
     shared_ptr<swss::DBConnector> m_db = make_shared<swss::DBConnector>("APPL_DB", 0);
     shared_ptr<RedisPipeline> m_pipeline = make_shared<RedisPipeline>(m_db.get());
-    RouteSync m_routeSync{m_pipeline.get()};
+    shared_ptr<swss::DBConnector> m_appl_state_db = make_shared<swss::DBConnector>("APPL_STATE_DB", 0);
+    shared_ptr<RedisPipeline> m_app_state_pipeline = make_shared<RedisPipeline>(m_appl_state_db.get());
+    RouteSync m_routeSync{m_pipeline.get(), m_app_state_pipeline.get()};
     MockFpm m_mockFpm{&m_routeSync};
-    MockRouteSync m_mockRouteSync{m_pipeline.get()};
+    MockRouteSync m_mockRouteSync{m_pipeline.get(), m_app_state_pipeline.get()};
 
     const char* test_gateway = "192.168.1.1";
     const char* test_gateway_ = "192.168.1.2";
@@ -1278,7 +1280,9 @@ public:
 
     shared_ptr<swss::DBConnector> m_db = make_shared<swss::DBConnector>("APPL_DB", 0);
     shared_ptr<RedisPipeline> m_pipeline = make_shared<RedisPipeline>(m_db.get());
-    RouteSync m_testRouteSync{m_pipeline.get()};
+    shared_ptr<swss::DBConnector> m_appl_state_db = make_shared<swss::DBConnector>("APPL_STATE_DB", 0);
+    shared_ptr<RedisPipeline> m_app_state_pipeline = make_shared<RedisPipeline>(m_appl_state_db.get());
+    RouteSync m_testRouteSync{m_pipeline.get(), m_app_state_pipeline.get()};
 };
 
 TEST_F(WarmRestartRouteSyncTest, TestRouteMessageHandlingWarmRestartNotInProgress)
