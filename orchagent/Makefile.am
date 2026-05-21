@@ -90,6 +90,7 @@ orchagent_SOURCES = \
             switch/trimming/helper.cpp \
             switchorch.cpp \
             pfcwdorch.cpp \
+            pfcwdsworch.cpp \
             pfcactionhandler.cpp \
             crmorch.cpp \
             request_parser.cpp \
