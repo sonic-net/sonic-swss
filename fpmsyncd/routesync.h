@@ -27,7 +27,6 @@ using namespace std;
 /* Parse the Raw netlink msg */
 extern void netlink_parse_rtattr(struct rtattr **tb, int max, struct rtattr *rta,
                                                 int len);
-extern void netlink_parse_rtattr_nested(struct rtattr **tb, int max, const struct rtattr *rta);
 
 namespace swss {
 
@@ -37,21 +36,8 @@ struct NextHopGroup {
     string nexthop;
     string intf;
     bool installed;
-    string vni_label;
-    string vpn_sid;
-    string seg_src;
     NextHopGroup(uint32_t id, const string& nexthop, const string& interface) : installed(false), id(id), nexthop(nexthop), intf(interface) {};
     NextHopGroup(uint32_t id, const vector<pair<uint32_t,uint8_t>>& group) : installed(false), id(id), group(group) {};
-    NextHopGroup(uint32_t id, const string& nexthop, const string& interface,
-        const string& vpnsid, const string& segsrc) : installed(false), id(id), nexthop(nexthop), intf(interface), vpn_sid(vpnsid), seg_src(segsrc) {};
-};
-
-
-struct seg6_iptunnel_encap_pri {
-    int mode;
-    char segment_name[64];
-    struct in6_addr src;
-    struct ipv6_sr_hdr srh[0];
 };
 
 /* Path to protocol name database provided by iproute2 */
@@ -359,7 +345,7 @@ private:
     bool getSrv6SteerRouteNextHop(struct nlmsghdr *h, int received_bytes,
                         struct rtattr *tb[], string &vpn_sid, string &src_addr);
     bool getSrv6VpnRouteNextHop(struct nlmsghdr *h, int received_bytes,
-                               struct rtattr *tb[], uint32_t &pic_id,uint32_t &nhg_id);
+                               struct rtattr *tb[], uint32_t &nhg_received_id, uint32_t &nhg_id);
 
     /* Get next hop list */
     void getNextHopList(struct rtnl_route *route_obj, string& gw_list,
@@ -390,32 +376,18 @@ private:
 
     /* Handle Nexthop message */
     void onNextHopMsg(struct nlmsghdr *h, int len);
-    void onPicContextMsg(struct nlmsghdr *h, int len);
-    int parse_encap_seg6(const struct rtattr *tb, struct in6_addr *segs, struct in6_addr *src);
+
     /* Get next hop group key */
     const string getNextHopGroupKeyAsString(uint32_t id) const;
     void installNextHopGroup(uint32_t nh_id);
     void deleteNextHopGroup(uint32_t nh_id);
-    void deletePicContextGroup(uint32_t nh_id);
     void updateNextHopGroupDb(const NextHopGroup& nhg);
-    void updatePicContextGroupDb(const NextHopGroup& nhg);
     void getNextHopGroupFields(const NextHopGroup& nhg, string& nexthops, string& ifnames, string& weights, uint8_t af = AF_INET);
-    void getPicContextGroupFields(const NextHopGroup& nhg, struct NextHopField& nhField, uint8_t af = AF_INET);
     bool isNbZmqEnabled() const {
         return m_zmqClient != nullptr;
     }
 
 };
-struct NextHopField {
-    string nexthops;
-    string ifnames;
-    string vni_label;
-    string vpn_sid;
-    string mpls_nh;
-    string weights;
-    string seg_srcs;
-};
-
 }
 
 #endif
