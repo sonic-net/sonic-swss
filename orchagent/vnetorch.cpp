@@ -855,6 +855,36 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
         {
             SWSS_LOG_ERROR("Failed to create next hop group %" PRIx64 " member %" PRIx64 ": %d\n",
                            next_hop_group_id, next_hop_group_member_id, status);
+            
+            for (auto& nhop : next_hop_group_entry.active_members)
+            {
+                sai_status_t cleanup_status = sai_next_hop_group_api->remove_next_hop_group_member(nhop.second);
+                if (cleanup_status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to cleanup next hop group member %" PRIx64 ", rv:%d",
+                                   nhop.second, cleanup_status);
+                    return false;
+                }
+
+                if (!isLocalEndpoint(vnet, nhop.first.ip_address))
+                {
+                    NextHopKey nexthop = nhop.first;
+                    vrf_obj->removeTunnelNextHop(nexthop);
+                }
+
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+            }
+
+            sai_status_t cleanup_status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
+            if (cleanup_status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to cleanup next hop group %" PRIx64 ", rv:%d", next_hop_group_id, cleanup_status);
+                return false;
+            }
+
+            gRouteOrch->decreaseNextHopGroupCount();
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+
             return false;
         }
 
