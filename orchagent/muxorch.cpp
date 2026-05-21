@@ -1521,6 +1521,11 @@ sai_object_id_t MuxOrch::createNextHopTunnel(std::string tunnelKey, swss::IpAddr
     if (SAI_NULL_OBJECT_ID != nh)
     {
         mux_tunnel_nh_[ipAddr] = { nh, 1 };
+        NextHopKey nhKey(ipAddr, tunnelKey, true /*tunnel_nh*/, 0 /*tag*/);
+        if (gNeighOrch)
+        {
+            gNeighOrch->addIpinipTunnelNextHop(nhKey, nh);
+        }
     }
 
     return nh;
@@ -1545,6 +1550,12 @@ bool MuxOrch::removeNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipAddr
                            tunnelKey.c_str(), ipAddr.to_string().c_str());
         }
         mux_tunnel_nh_.erase(ipAddr);
+
+        NextHopKey nhKey(ipAddr, tunnelKey, true /*tunnel_nh*/, 0 /*tag*/);
+        if (gNeighOrch)
+        {
+            gNeighOrch->removeIpinipTunnelNextHop(nhKey);
+        }
     }
 
     SWSS_LOG_INFO("NH tunnel removed  %s, ip %s or decremented to ref count %d",
