@@ -4,6 +4,7 @@
 #include <map>
 #include <string>
 #include <memory>
+#include <deque>
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "selectable.h"
@@ -19,6 +20,15 @@ using namespace std::chrono;
 
 namespace swss {
 
+struct NetlinkEvent {
+    int nlmsg_type;         // RTM_NEWLINK or RTM_DELLINK
+    std::string lagName;
+    int ifindex;
+    bool admin_state;
+    bool oper_state;
+    unsigned int mtu;
+};
+
 class TeamSync : public NetMsg
 {
 public:
@@ -29,6 +39,15 @@ public:
 
     /* Listen to RTM_NEWLINK, RTM_DELLINK to track team devices */
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
+
+    /* Enqueue an event directly (for unit testing) */
+    void enqueueEvent(const NetlinkEvent &event);
+
+    /* Process all queued netlink events */
+    void processEventQueue();
+
+    /* Expose queue for testing */
+    const std::deque<NetlinkEvent>& getEventQueue() const { return m_eventQueue; }
 
     class TeamPortSync : public Selectable
     {
@@ -84,6 +103,9 @@ private:
     std::set<std::string> m_selectablesToAdd;
     std::set<std::string> m_selectablesToRemove;
     std::map<std::string, std::shared_ptr<TeamPortSync> > m_teamSelectables;
+
+    /* Queue of netlink events for deferred processing */
+    std::deque<NetlinkEvent> m_eventQueue;
 };
 
 }
