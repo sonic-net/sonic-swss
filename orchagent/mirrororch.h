@@ -57,6 +57,11 @@ struct MirrorEntry
         sai_object_id_t portId;
     } neighborInfo;
 
+    // Sampled mirroring fields
+    uint32_t sample_rate;                        // 0 = full mirror (default)
+    uint32_t truncate_size;                      // 0 = no truncation (default)
+    sai_object_id_t samplepacketId;              // SAI_NULL_OBJECT_ID if not sampled
+
     sai_object_id_t sessionId;
 
     int64_t refCount;
@@ -108,6 +113,7 @@ private:
     bool isHwResourcesAvailable();
 
     task_process_status createEntry(const string&, const vector<FieldValueTuple>&);
+    task_process_status updateEntry(const string&, const vector<FieldValueTuple>&);
     task_process_status deleteEntry(const string&);
 
     bool activateSession(const string&, MirrorEntry&);
@@ -136,8 +142,14 @@ private:
     bool validateSrcPortList(const string& srcPort);
     bool validateDstPort(const string& dstPort);
     bool setUnsetPortMirror(Port port, bool ingress, bool set,
-                                    sai_object_id_t sessionId);
+                                    sai_object_id_t sessionId,
+                                    sai_object_id_t samplepacketId = SAI_NULL_OBJECT_ID,
+                                    uint32_t sample_rate = 0);
     bool configurePortMirrorSession(const string&, MirrorEntry&, bool enable);
+
+    // Sampled mirroring helpers
+    bool createSamplePacket(const string& name, MirrorEntry& session);
+    bool removeSamplePacket(const string& name, MirrorEntry& session);
 
     void doTask(Consumer& consumer);
 };
