@@ -16,11 +16,17 @@ void printUsage()
 
     std::cout << "Usage: fpmsyncd_restart_check [options]" << std::endl;
     std::cout << "    -w --waitTime" << std::endl;
-    std::cout << "        Wait time for response from fpmsyncd, in milliseconds. Default: 5000" << std::endl;
+    std::cout << "        Per-attempt wait for reply on FPMSYNCD_RESTARTCHECKREPLY, in milliseconds." << std::endl;
+    std::cout << "        fpmsyncd typically replies in <1 ms; this is a backstop. Default: 500" << std::endl;
     std::cout << "    -r --retryCount" << std::endl;
-    std::cout << "        Number of retries for the request to fpmsyncd. Default: 5" << std::endl;
+    std::cout << "        Number of additional attempts after the first. Default: 19 (20 total)." << std::endl;
+    std::cout << "    -i --interSleep" << std::endl;
+    std::cout << "        Sleep between attempts, in milliseconds. Paces the polling so" << std::endl;
+    std::cout << "        AsyncDBUpdater has time to drain between checks. Default: 500" << std::endl;
     std::cout << "    -h --help:" << std::endl;
     std::cout << "        Print out this message" << std::endl;
+    std::cout << "" << std::endl;
+    std::cout << "Defaults give a ~10s drain budget under happy path (20 attempts * 500ms sleep)." << std::endl;
 }
 
 
@@ -42,17 +48,20 @@ int main(int argc, char **argv)
     swss::Logger::getInstance().setMinPrio(swss::Logger::SWSS_INFO);
     SWSS_LOG_ENTER();
 
-    /* Default wait time is 5000 milliseconds, default retry count is 5 */
-    int waitTime = 5000;
-    int retryCount = 5;
+    /* Defaults: 20 attempts (retryCount=19), 500ms reply wait per attempt,
+     * 500ms sleep between attempts. Happy-path drain budget = 10 s. */
+    int waitTime = 500;
+    int retryCount = 19;
+    int interSleepMs = 500;
 
-    const char* const optstring = "w:r:h";
+    const char* const optstring = "w:r:i:h";
     while (true)
     {
         static struct option long_options[] =
         {
             { "waitTime",   required_argument, 0, 'w' },
             { "retryCount", required_argument, 0, 'r' },
+            { "interSleep", required_argument, 0, 'i' },
             { "help",       no_argument,       0, 'h' },
             { 0, 0, 0, 0 }
         };
@@ -74,6 +83,10 @@ int main(int argc, char **argv)
             case 'r':
                 SWSS_LOG_NOTICE("Number of retries for the request to fpmsyncd is set to %s", optarg);
                 retryCount = atoi(optarg);
+                break;
+            case 'i':
+                SWSS_LOG_NOTICE("Inter-attempt sleep set to %s milliseconds", optarg);
+                interSleepMs = atoi(optarg);
                 break;
             case 'h':
                 printUsage();
@@ -150,6 +163,13 @@ int main(int argc, char **argv)
         }
         retries++;
         values_ret.clear();
+
+        /* Pace the next attempt so AsyncDBUpdater has time to drain.
+         * Skip the sleep before returning failure (last iteration). */
+        if (retries <= retryCount && interSleepMs > 0)
+        {
+            usleep(static_cast<useconds_t>(interSleepMs) * 1000);
+        }
     }
     std::cout << "FPMSYNCD_RESTARTCHECK failed" << std::endl;
     return EXIT_FAILURE;
