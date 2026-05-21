@@ -190,14 +190,12 @@ class TestMuxTunnelBase():
         # gets nexthop oid
         nexthop_keys = asicdb.get_keys(self.ASIC_NEXTHOP_TABLE)
 
-        nexthop_oid = ''
         for nexthop_key in nexthop_keys:
             entry = asicdb.get_entry(self.ASIC_NEXTHOP_TABLE, nexthop_key)
-            if entry["SAI_NEXT_HOP_ATTR_IP"] == nexthop:
-                nexthop_oid = nexthop_key
-                break
+            if entry.get("SAI_NEXT_HOP_ATTR_IP") == nexthop:
+                return nexthop_key
 
-        return nexthop_oid
+        return ''
 
     def get_route_nexthop_oid(self, route_key, asicdb):
         # gets nexthop oid
@@ -310,15 +308,47 @@ class TestMuxTunnelBase():
         """
         Checks if nexthop is a member of a given route
         """
-        route_key = dvs_route.check_asicdb_route_entries([route])
-        route_nexthop_oid = self.get_route_nexthop_oid(route_key[0], asicdb)
+        def _access_function():
+            route_key = dvs_route.check_asicdb_route_entries([route])
+            route_nexthop_oid = self.get_route_nexthop_oid(route_key[0], asicdb)
 
-        if tunnel:
-            return route_nexthop_oid == nexthop
+            if tunnel:
+                if route_nexthop_oid == nexthop:
+                    return (True, None)
 
-        nexthop_oid = self.get_nexthop_oid(asicdb, nexthop)
+                nhg_members = asicdb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
+                for member in nhg_members:
+                    fvs = asicdb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER", member)
+                    if fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID") != route_nexthop_oid:
+                        continue
+                    if fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID") == nexthop:
+                        return (True, None)
 
-        return route_nexthop_oid == nexthop_oid
+                return (False, None)
+
+            nexthop_oid = self.get_nexthop_oid(asicdb, nexthop)
+            if not nexthop_oid:
+                return (False, None)
+
+            if route_nexthop_oid == nexthop_oid:
+                return (True, None)
+
+            nhg_members = asicdb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
+            for member in nhg_members:
+                fvs = asicdb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER", member)
+                if fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID") != route_nexthop_oid:
+                    continue
+                if fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID") == nexthop_oid:
+                    return (True, None)
+
+            return (False, None)
+
+        status, _ = wait_for_result(
+            _access_function,
+            PollingConfig(polling_interval=0.1, timeout=5.0, strict=False)
+        )
+
+        return status
 
     def add_neighbor(self, dvs, ip, mac):
         if ip_address(ip).version == 6:
