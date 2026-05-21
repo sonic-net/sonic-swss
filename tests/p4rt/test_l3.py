@@ -578,7 +578,9 @@ class TestP4RTL3(object):
             (
                 self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
                 "1:" + str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
-            )
+            ),
+            (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
+                "any_value"),
         ]
         (status, fvs) = util.get_key(
             self._p4rt_wcmp_group_obj.asic_db,
@@ -1352,7 +1354,9 @@ class TestP4RTL3(object):
             (
                 self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
                 "1:" + str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
-            )
+            ),
+            (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
+                "any_value"),
         ]
         util.verify_attr(fvs, asic_attr_list)
 
@@ -1381,7 +1385,9 @@ class TestP4RTL3(object):
             (
                 self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
                 "0:null",
-            )
+            ),
+            (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
+                "any_value"),
         ]
         util.verify_attr(fvs, asic_attr_list)
 
@@ -1409,7 +1415,9 @@ class TestP4RTL3(object):
             (
                 self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
                 "1:" + str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
-            )
+            ),
+            (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
+                "any_value"),
         ]
         util.verify_attr(fvs, asic_attr_list)
 
@@ -1547,7 +1555,9 @@ class TestP4RTL3(object):
             (
                 self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
                 "1:" + str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
-            )
+            ),
+            (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
+                "any_value"),
         ]
         util.verify_attr(fvs, asic_attr_list)
 
@@ -1585,7 +1595,9 @@ class TestP4RTL3(object):
             (
                 self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
                 "0:null",
-            )
+            ),
+            (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
+                "any_value"),
         ]
         util.verify_attr(fvs, asic_attr_list)
 
@@ -1723,7 +1735,9 @@ class TestP4RTL3(object):
             (
                 self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
                 "0:null",
-            )
+            ),
+            (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
+                "any_value"),
         ]
         util.verify_attr(fvs, asic_attr_list)
 
@@ -1751,7 +1765,9 @@ class TestP4RTL3(object):
             (
                 self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
                 "1:" + str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
-            )
+            ),
+            (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
+                "any_value"),
         ]
         util.verify_attr(fvs, asic_attr_list)
 
@@ -1889,7 +1905,9 @@ class TestP4RTL3(object):
             (
                 self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
                 "0:null",
-            )
+            ),
+            (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
+                "any_value"),
         ]
         util.verify_attr(fvs, asic_attr_list)
 
@@ -2012,7 +2030,9 @@ class TestP4RTL3(object):
                     (
                         self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
                         "1:" + str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
-                    )
+                    ),
+                    (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
+                        "any_value"),
                 ]
                 util.verify_attr(fvs, asic_attr_list)
 
@@ -2043,7 +2063,9 @@ class TestP4RTL3(object):
                     (
                         self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
                         "0:null",
-                    )
+                    ),
+                    (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
+                        "any_value"),
                 ]
                 util.verify_attr(fvs, asic_attr_list)
 
@@ -2154,7 +2176,9 @@ class TestP4RTL3(object):
                     (
                         self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
                         "1:" + str(self._p4rt_wcmp_group_obj.DEFAULT_WEIGHT),
-                    )
+                    ),
+                    (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
+                        "any_value"),
                 ]
                 util.verify_attr(fvs, asic_attr_list)
 
@@ -2199,7 +2223,9 @@ class TestP4RTL3(object):
                     (
                         self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST,
                         "0:null",
-                    )
+                    ),
+                    (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
+                        "any_value"),
                 ]
                 util.verify_attr(fvs, asic_attr_list)
 

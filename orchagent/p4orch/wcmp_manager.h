@@ -47,6 +47,7 @@ struct P4WcmpGroupEntry
     sai_object_id_t wcmp_group_oid = SAI_NULL_OBJECT_ID;
     std::vector<sai_object_id_t> nexthop_ids;
     std::vector<uint32_t> nexthop_weights;
+    std::string wcmp_group_label;
 };
 
 // WcmpManager listens to changes in table APP_P4RT_WCMP_GROUP_TABLE_NAME and

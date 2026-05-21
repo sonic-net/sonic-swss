@@ -9,6 +9,7 @@
 #include "crmorch.h"
 #include "dbconnector.h"
 #include "logger.h"
+#include "namelabelmapper.h"
 #include "p4orch/p4orch_util.h"
 #include "portsorch.h"
 #include "sai_serialize.h"
@@ -23,6 +24,7 @@ using ::p4orch::kTableKeyDelimiter;
 extern sai_object_id_t gSwitchId;
 extern sai_next_hop_group_api_t *sai_next_hop_group_api;
 extern CrmOrch *gCrmOrch;
+extern NameLabelMapper *gLabelMapper;
 extern PortsOrch* gPortsOrch;
 
 namespace p4orch
@@ -68,6 +70,14 @@ std::vector<sai_attribute_t> prepareSaiGroupAttrs(
   attrs.push_back(nhl);
   attrs.push_back(nhmwl);
 
+  if (!update &&
+      gLabelMapper->isLabelValid(wcmp_group_entry.wcmp_group_label)) {
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_LABEL;
+    auto size = sizeof(attr.value.chardata);
+    snprintf(attr.value.chardata, size, "%s",
+             wcmp_group_entry.wcmp_group_label.c_str());
+    attrs.push_back(attr);
+  }
   return attrs;
 }
 
@@ -284,9 +294,19 @@ std::vector<ReturnCode> WcmpManager::createWcmpGroups(
   std::vector<sai_object_id_t> oids(entries.size());
   std::vector<sai_status_t> object_statuses(entries.size());
   std::vector<ReturnCode> statuses(entries.size());
+  sai_attribute_t attr;
+  std::vector<std::string> mapper_key(entries.size());
+  std::vector<std::string> label(entries.size());
+  std::vector<bool> label_present(entries.size());
 
   for (size_t i = 0; i < entries.size(); ++i) {
     sai_attrs[i] = prepareSaiGroupAttrs(entries[i]);
+    // Add label to the attributes to uniquely identify the wcmp group.
+    label_present[i] = gLabelMapper->addLabelToAttr(
+        SAI_OBJECT_TYPE_NEXT_HOP_GROUP, APP_P4RT_TABLE_NAME,
+        entries[i].wcmp_group_id, attr, SAI_NEXT_HOP_GROUP_ATTR_LABEL,
+        mapper_key[i], label[i]);
+    sai_attrs[i].push_back(attr);
     attrs_cnt[i] = static_cast<uint32_t>(sai_attrs[i].size());
     attrs_ptr[i] = sai_attrs[i].data();
   }
@@ -307,6 +327,11 @@ std::vector<ReturnCode> WcmpManager::createWcmpGroups(
       gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
       m_p4OidMapper->setOID(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, wcmp_group_key,
                             entries[i].wcmp_group_oid);
+      if (!label_present[i]) {
+        gLabelMapper->setLabel(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, mapper_key[i],
+                               label[i]);
+      }
+      entries[i].wcmp_group_label = label[i];
       for (auto& member : entries[i].wcmp_group_members) {
         const std::string& next_hop_key =
             KeyGenerator::generateNextHopKey(member->next_hop_id);
@@ -355,6 +380,9 @@ std::vector<ReturnCode> WcmpManager::removeWcmpGroups(
       const auto& wcmp_group_key =
           KeyGenerator::generateWcmpGroupKey(entry_ptrs[i]->wcmp_group_id);
       m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, wcmp_group_key);
+      std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+          APP_P4RT_TABLE_NAME, entry_ptrs[i]->wcmp_group_id);
+      gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, mapper_key);
       gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
       for (auto& member : entry_ptrs[i]->wcmp_group_members) {
         const std::string& next_hop_key =
@@ -399,6 +427,7 @@ std::vector<ReturnCode> WcmpManager::updateWcmpGroups(
   for (size_t i = 0; i < entries.size(); ++i) {
     old_entries[i] = getWcmpGroupEntry(entries[i].wcmp_group_id);
     entries[i].wcmp_group_oid = old_entries[i]->wcmp_group_oid;
+    entries[i].wcmp_group_label = old_entries[i]->wcmp_group_label;
     auto attrs = prepareSaiGroupAttrs(entries[i], /*update=*/true);
     // Only make the SAI call if SAI attributes change.
     if (entries[i].nexthop_ids != old_entries[i]->nexthop_ids ||
@@ -826,6 +855,15 @@ std::string WcmpManager::verifyStateCache(const P4WcmpGroupEntry &app_db_entry,
     if (!err_msg.empty())
     {
         return err_msg;
+    }
+
+    std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+        APP_P4RT_TABLE_NAME, app_db_entry.wcmp_group_id);
+    err_msg = gLabelMapper->verifyLabelMapping(
+        SAI_OBJECT_TYPE_NEXT_HOP_GROUP, mapper_key,
+        wcmp_group_entry->wcmp_group_label);
+    if (!err_msg.empty()) {
+      return err_msg;
     }
 
     if (wcmp_group_entry->wcmp_group_members.size() != app_db_entry.wcmp_group_members.size())
