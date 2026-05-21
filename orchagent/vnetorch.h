@@ -226,6 +226,7 @@ public:
     bool hasRoute(IpPrefix& ipPrefix);
 
     sai_object_id_t getTunnelNextHop(NextHopKey& nh);
+    sai_object_id_t getExistingTunnelNextHopId(NextHopKey& nh);
     bool removeTunnelNextHop(NextHopKey& nh);
     void increaseNextHopRefCount(const nextHop&);
     void decreaseNextHopRefCount(const nextHop&);
@@ -324,7 +325,8 @@ const request_description_t vnet_route_description = {
         { "rx_monitor_timer",       REQ_T_UINT },
         { "tx_monitor_timer",       REQ_T_UINT },
         { "pinned_state",           REQ_T_STRING_LIST },
-        { "metric",                 REQ_T_UINT }
+        { "metric",                 REQ_T_UINT },
+        { "consistent_hashing_buckets", REQ_T_UINT },
     },
     { }
 };
@@ -532,6 +534,8 @@ private:
     bool addNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj,
                             const string& monitoring, const bool isLocalEp=false);
     bool removeNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
+    bool removeNextHopGroupDirectly(const string&, NextHopGroupInfo&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
+    bool removeFgNextHopGroup(const string&, const NextHopGroupKey&, const IpPrefix&, VNetVrfObject *vrf_obj);
     bool createNextHopGroup(const string&, NextHopGroupKey&, VNetVrfObject *vrf_obj,
                             const string& monitoring);
     NextHopGroupKey getActiveNHSet(const string&, NextHopGroupKey&, const IpPrefix& );
@@ -540,6 +544,7 @@ private:
                             VNetVrfObject *vrf_obj, NextHopGroupKey&,
                             const std::map<NextHopKey,IpAddress>& monitors=std::map<NextHopKey, IpAddress>(),
                             const std::map<IpAddress, pinned_state_t>& monitor_addr_to_pinned_state={});
+    bool selectFgNextHopGroup(const string&, NextHopGroupKey&, IpPrefix&, VNetVrfObject *vrf_obj, const uint16_t consistent_hashing_buckets, bool &isNextHopIdChanged);
 
     void createBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer);
     void removeBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
@@ -580,7 +585,8 @@ private:
                     const string& monitoring, const int32_t rx_monitor_timer, const int32_t tx_monitor_timer,
                     NextHopGroupKey& nexthops_secondary, const IpPrefix& adv_prefix,
                     const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>(),
-                    const std::map<IpAddress, pinned_state_t>& monitor_addr_to_pinned_state = {});
+                    const std::map<IpAddress, pinned_state_t>& monitor_addr_to_pinned_state = {},
+                    const uint16_t consistent_hashing_buckets = 0);
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, nextHop& nh, string& op);
