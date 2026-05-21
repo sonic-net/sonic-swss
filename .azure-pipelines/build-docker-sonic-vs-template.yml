@@ -154,6 +154,17 @@ jobs:
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
+      project: ${{ parameters.buildimage_artifact_project }}
+      pipeline: Azure.sonic-buildimage.common_libs
+      artifact: common-lib
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/${{ parameters.buildimage_artifact_branch }}'
+      path: $(Build.ArtifactStagingDirectory)/download
+      patterns: '**/target/debs/${{ parameters.debian_version }}/libnexthopgroup_*.deb'
+    displayName: "Download sonic-buildimage libnexthopgroup package"
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      source: specific
       project: build
       pipeline: sonic-net.sonic-platform-vpp
       artifact: ${{ parameters.vpp_artifact_name }}
