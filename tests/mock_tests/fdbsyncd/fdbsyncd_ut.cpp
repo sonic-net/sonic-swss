@@ -15,12 +15,12 @@
 
 #ifndef NDA_RTA
 #define NDA_RTA(r)                                                             \
-    ((struct rtattr *)(((char *)(r)) + NLMSG_ALIGN(sizeof(struct ndmsg))))
+    ((struct rtattr *)(void *)(((char *)(r)) + NLMSG_ALIGN(sizeof(struct ndmsg))))
 #endif
 
 #ifndef RTM_NHA
 #define RTM_NHA(r)                                                             \
-    ((struct rtattr *)(((char *)(r)) + NLMSG_ALIGN(sizeof(struct nhmsg))))
+    ((struct rtattr *)(void *)(((char *)(r)) + NLMSG_ALIGN(sizeof(struct nhmsg))))
 #endif
 
 using namespace swss;
