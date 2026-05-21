@@ -303,7 +303,7 @@ void DashMeterOrch::doTaskMeterPolicyTable(ConsumerBase& consumer)
     }
 }
 
-bool DashMeterOrch::addMeterRule(const string& key, MeterRuleBulkContext& ctxt, uint32_t& result)
+bool DashMeterOrch::addMeterRule(const string& key, MeterRuleBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -317,7 +317,7 @@ bool DashMeterOrch::addMeterRule(const string& key, MeterRuleBulkContext& ctxt, 
     if (isMeterPolicyBound(ctxt.meter_policy))
     {
         SWSS_LOG_WARN("Cannot add new rule %s to Meter policy %s as it is already bound", key.c_str(), ctxt.meter_policy.c_str());
-        result = DASH_RESULT_FAILURE;
+        ctxt.pre_op_result = DASH_RESULT_FAILURE;
         return true;
     }
 
@@ -325,7 +325,7 @@ bool DashMeterOrch::addMeterRule(const string& key, MeterRuleBulkContext& ctxt, 
     if (meter_policy_oid == SAI_NULL_OBJECT_ID)
     {
         SWSS_LOG_ERROR("Meter policy %s not found for rule %s", ctxt.meter_policy.c_str(), key.c_str());
-        result = DASH_RESULT_FAILURE;
+        ctxt.pre_op_result = DASH_RESULT_FAILURE;
         return true;
     }
 
@@ -500,7 +500,7 @@ void DashMeterOrch::doTaskMeterRuleTable(ConsumerBase& consumer)
                         it = consumer.m_toSync.erase(it);
                         continue;
                     }
-                    if (addMeterRule(key, ctxt, result))
+                    if (addMeterRule(key, ctxt))
                     {
                         if (result == DASH_RESULT_FAILURE)
                         {

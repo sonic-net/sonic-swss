@@ -50,7 +50,7 @@ DashVnetOrch::DashVnetOrch(DBConnector *db, vector<string> &tables, DBConnector 
     dash_vnet_map_result_table_ = make_unique<Table>(app_state_db, APP_DASH_VNET_MAPPING_TABLE_NAME);
 }
 
-bool DashVnetOrch::addVnet(const string& vnet_name, DashVnetBulkContext& ctxt, uint32_t& result)
+bool DashVnetOrch::addVnet(const string& vnet_name, DashVnetBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -64,7 +64,7 @@ bool DashVnetOrch::addVnet(const string& vnet_name, DashVnetBulkContext& ctxt, u
     if (!dash_orch->hasApplianceEntry())
     {
         SWSS_LOG_ERROR("Failed to create vnet entry for %s: no appliance table entry found", vnet_name.c_str());
-        result = DASH_RESULT_FAILURE;
+        ctxt.pre_op_result = DASH_RESULT_FAILURE;
         return true;
     }
 
@@ -217,10 +217,10 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
                         it = consumer.m_toSync.erase(it);
                         continue;
                     }
-                    if (addVnet(key, vnet_ctxt, result))
+                    if (addVnet(key, vnet_ctxt))
                     {
                         it = consumer.m_toSync.erase(it);
-                        writeResultToDB(dash_vnet_result_table_, key, result);
+                        writeResultToDB(dash_vnet_result_table_, key, vnet_ctxt.pre_op_result);
                     }
                     else
                     {
@@ -314,7 +314,7 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
     }
 }
 
-bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt, uint32_t& result)
+bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -331,7 +331,7 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
     if (!dash_orch->getRouteTypeActions(ctxt.metadata.routing_type(), route_type_actions))
     {
         SWSS_LOG_ERROR("Failed to get route type actions for %s", key.c_str());
-        result = DASH_RESULT_FAILURE;
+        ctxt.pre_op_result = DASH_RESULT_FAILURE;
         return true;
     }
 
@@ -352,7 +352,7 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
             else
             {
                 SWSS_LOG_ERROR("Invalid encap type %d for %s", action.encap_type(), key.c_str());
-                result = DASH_RESULT_FAILURE;
+                ctxt.pre_op_result = DASH_RESULT_FAILURE;
                 return true;
             }
 
@@ -375,7 +375,7 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
         if (tunnel_oid == SAI_NULL_OBJECT_ID)
         {
             SWSS_LOG_ERROR("Tunnel %s for VnetMap %s does not exist", ctxt.metadata.tunnel().c_str(), key.c_str());
-            result = DASH_RESULT_FAILURE;
+            ctxt.pre_op_result = DASH_RESULT_FAILURE;
             return true;
         }
         outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_TUNNEL_ID;
@@ -433,7 +433,7 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
             {
                 SWSS_LOG_ERROR("Portmap %s for VnetMap %s does not exist",
                                ctxt.metadata.port_map().c_str(), key.c_str());
-                result = DASH_RESULT_FAILURE;
+                ctxt.pre_op_result = DASH_RESULT_FAILURE;
                 return true;
             }
             outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OUTBOUND_PORT_MAP_ID;
@@ -502,7 +502,7 @@ void DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
                     ctxt.vnet_name.c_str(), to_string(ctxt.metadata.underlay_ip()).c_str());
 }
 
-bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt, uint32_t& result)
+bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -510,10 +510,10 @@ bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt, uint3
     if (!vnet_exists)
     {
         SWSS_LOG_ERROR("Not creating VNET map for %s since VNET %s doesn't exist", key.c_str(), ctxt.vnet_name.c_str());
-        result = DASH_RESULT_FAILURE;
+        ctxt.pre_op_result = DASH_RESULT_FAILURE;
         return true;
     }
-    return addOutboundCaToPa(key, ctxt, result);
+    return addOutboundCaToPa(key, ctxt);
 }
 
 bool DashVnetOrch::addOutboundCaToPaPost(const string& key, const VnetMapBulkContext& ctxt)
@@ -801,10 +801,10 @@ void DashVnetOrch::doTaskVnetMapTable(ConsumerBase& consumer)
                         ctxt.metadata.set_routing_type(ctxt.metadata.action_type());
                         #pragma GCC diagnostic pop
                     }
-                    if (addVnetMap(key, ctxt, result))
+                    if (addVnetMap(key, ctxt))
                     {
                         it = consumer.m_toSync.erase(it);
-                        writeResultToDB(dash_vnet_map_result_table_, key, result);
+                        writeResultToDB(dash_vnet_map_result_table_, key, ctxt.pre_op_result);
                     }
                     else
                     {

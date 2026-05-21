@@ -134,10 +134,10 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
                         it = consumer.m_toSync.erase(it);
                         continue;
                     }
-                    if (addTunnel(tunnel_name, ctxt, result))
+                    if (addTunnel(tunnel_name, ctxt))
                     {
                         it = consumer.m_toSync.erase(it);
-                        writeResultToDB(dash_tunnel_result_table_, tunnel_name, result);
+                        writeResultToDB(dash_tunnel_result_table_, tunnel_name, ctxt.pre_op_result);
                     }
                     else
                     {
@@ -294,14 +294,14 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
     }
 }
 
-bool DashTunnelOrch::addTunnel(const std::string& tunnel_name, DashTunnelBulkContext& ctxt, uint32_t& result)
+bool DashTunnelOrch::addTunnel(const std::string& tunnel_name, DashTunnelBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
     auto dash_orch = gDirectory.get<DashOrch*>();
     if (!dash_orch->hasApplianceEntry())
     {
         SWSS_LOG_ERROR("DASH appliance entry not found, skipping DASH tunnel %s creation", tunnel_name.c_str());
-        result = DASH_RESULT_FAILURE;
+        ctxt.pre_op_result = DASH_RESULT_FAILURE;
         return true;
     }
     std::vector<sai_attribute_t> tunnel_attrs;
@@ -330,7 +330,7 @@ bool DashTunnelOrch::addTunnel(const std::string& tunnel_name, DashTunnelBulkCon
             break;
         default:
             SWSS_LOG_ERROR("Unsupported encap type %d", ctxt.metadata.encap_type());
-            result = DASH_RESULT_FAILURE;
+            ctxt.pre_op_result = DASH_RESULT_FAILURE;
             return remove_from_consumer;
     }
     tunnel_attrs.push_back(tunnel_attr);

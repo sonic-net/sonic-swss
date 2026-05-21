@@ -26,6 +26,7 @@ struct OutboundRoutingBulkContext
     swss::IpPrefix destination;
     dash::route::Route metadata;
     std::deque<sai_status_t> object_statuses;
+    uint32_t pre_op_result = DASH_RESULT_SUCCESS;
     OutboundRoutingBulkContext() {}
     OutboundRoutingBulkContext(const OutboundRoutingBulkContext&) = delete;
     OutboundRoutingBulkContext(OutboundRoutingBulkContext&&) = delete;
@@ -33,6 +34,7 @@ struct OutboundRoutingBulkContext
     void clear()
     {
         object_statuses.clear();
+        pre_op_result = DASH_RESULT_SUCCESS;
     }
 };
 
@@ -45,6 +47,7 @@ struct InboundRoutingBulkContext
     uint32_t priority;
     dash::route_rule::RouteRule metadata;
     std::deque<sai_status_t> object_statuses;
+    uint32_t pre_op_result = DASH_RESULT_SUCCESS;
     InboundRoutingBulkContext() {}
     InboundRoutingBulkContext(const InboundRoutingBulkContext&) = delete;
     InboundRoutingBulkContext(InboundRoutingBulkContext&&) = delete;
@@ -52,6 +55,7 @@ struct InboundRoutingBulkContext
     void clear()
     {
         object_statuses.clear();
+        pre_op_result = DASH_RESULT_SUCCESS;
     }
 };
 
@@ -78,11 +82,11 @@ private:
     void doTaskRouteTable(ConsumerBase &consumer);
     void doTaskRouteRuleTable(ConsumerBase &consumer);
     void doTaskRouteGroupTable(ConsumerBase &consumer);
-    bool addOutboundRouting(const std::string& key, OutboundRoutingBulkContext& ctxt, uint32_t& result);
+    bool addOutboundRouting(const std::string& key, OutboundRoutingBulkContext& ctxt);
     bool addOutboundRoutingPost(const std::string& key, const OutboundRoutingBulkContext& ctxt);
     bool removeOutboundRouting(const std::string& route_group, const swss::IpPrefix& destination, OutboundRoutingBulkContext& ctxt);
     bool removeOutboundRoutingPost(const std::string& key, const OutboundRoutingBulkContext& ctxt);
-    bool addInboundRouting(const std::string& key, InboundRoutingBulkContext& ctxt, uint32_t& result);
+    bool addInboundRouting(const std::string& key, InboundRoutingBulkContext& ctxt);
     bool addInboundRoutingPost(const std::string& key, const InboundRoutingBulkContext& ctxt);
     bool removeInboundRouting(const std::string& key, InboundRoutingBulkContext& ctxt);
     bool removeInboundRoutingPost(const std::string& key, const InboundRoutingBulkContext& ctxt);

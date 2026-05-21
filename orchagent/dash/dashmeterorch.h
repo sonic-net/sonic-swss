@@ -41,6 +41,7 @@ struct MeterRuleBulkContext
     dash::meter_rule::MeterRule metadata;
     std::deque<sai_object_id_t> object_ids;
     std::deque<sai_status_t> object_statuses;
+    uint32_t pre_op_result = DASH_RESULT_SUCCESS;
     MeterRuleBulkContext() {}
     MeterRuleBulkContext(const MeterRuleBulkContext&) = delete;
     MeterRuleBulkContext(MeterRuleBulkContext&&) = delete;
@@ -48,6 +49,7 @@ struct MeterRuleBulkContext
     void clear()
     {
         object_statuses.clear();
+        pre_op_result = DASH_RESULT_SUCCESS;
     }
 };
 
@@ -85,7 +87,7 @@ private:
     sai_ip_addr_family_t getMeterPolicyAddrFamily(const std::string& meter_policy) const;
     bool isV4(const std::string& meter_policy) const;
 
-    bool addMeterRule(const std::string& key, MeterRuleBulkContext& ctxt, uint32_t& result);
+    bool addMeterRule(const std::string& key, MeterRuleBulkContext& ctxt);
     bool addMeterRulePost(const std::string& key, const MeterRuleBulkContext& ctxt);
     bool removeMeterRule(const std::string& key, MeterRuleBulkContext& ctxt);
     bool removeMeterRulePost(const std::string& key, const MeterRuleBulkContext& ctxt);

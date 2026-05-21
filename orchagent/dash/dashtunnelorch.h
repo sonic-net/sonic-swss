@@ -29,6 +29,8 @@ struct DashTunnelBulkContext
     std::deque<sai_status_t> tunnel_nhop_object_statuses;
     dash::tunnel::Tunnel metadata;
 
+    uint32_t pre_op_result = 0;
+
     DashTunnelBulkContext() {}
     DashTunnelBulkContext(const DashTunnelBulkContext&) = delete;
     DashTunnelBulkContext(DashTunnelBulkContext&&) = delete;
@@ -41,6 +43,7 @@ struct DashTunnelBulkContext
         tunnel_member_object_statuses.clear();
         tunnel_nhop_object_ids.clear();
         tunnel_nhop_object_statuses.clear();
+        pre_op_result = 0;
     }
 };
 
@@ -63,7 +66,7 @@ private:
     std::unique_ptr<swss::Table> dash_tunnel_result_table_;
 
     void doTask(ConsumerBase &consumer);
-    bool addTunnel(const std::string& tunnel_name, DashTunnelBulkContext& ctxt, uint32_t& result);
+    bool addTunnel(const std::string& tunnel_name, DashTunnelBulkContext& ctxt);
     bool addTunnelPost(const std::string& tunnel_name, DashTunnelBulkContext& ctxt);
     void addTunnelNextHops(const std::string& tunnel_name, DashTunnelBulkContext& ctxt);
     bool addTunnelNextHopsPost(const std::string& tunnel_name, DashTunnelBulkContext& ctxt, const bool tunnel_succeess);

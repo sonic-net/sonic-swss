@@ -85,10 +85,10 @@ void DashPortMapOrch::doTaskPortMapTable(ConsumerBase &consumer)
                 // the only info we need is the port map ID which is provided in the key
                 // no need to parse protobuf message here
 
-                if (addPortMap(port_map_id, ctxt, result))
+                if (addPortMap(port_map_id, ctxt))
                 {
                     it = consumer.m_toSync.erase(it);
-                    writeResultToDB(dash_port_map_result_table_, port_map_id, result);
+                    writeResultToDB(dash_port_map_result_table_, port_map_id, ctxt.pre_op_result);
                 }
                 else
                 {
@@ -201,7 +201,7 @@ sai_object_id_t DashPortMapOrch::getPortMapOid(const std::string& port_map_name)
     return it->second;
 }
 
-bool DashPortMapOrch::addPortMap(const std::string &port_map_id, DashPortMapBulkContext &ctxt, uint32_t& /*result*/)
+bool DashPortMapOrch::addPortMap(const std::string &port_map_id, DashPortMapBulkContext &ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -352,10 +352,10 @@ void DashPortMapOrch::doTaskPortMapRangeTable(ConsumerBase &consumer)
                     continue;
                 }
 
-                if (addPortMapRange(ctxt, result))
+                if (addPortMapRange(ctxt))
                 {
                     it = consumer.m_toSync.erase(it);
-                    writeResultToDB(dash_port_map_range_result_table_, key, result);
+                    writeResultToDB(dash_port_map_range_result_table_, key, ctxt.pre_op_result);
                 }
                 else
                 {
@@ -456,7 +456,7 @@ void DashPortMapOrch::doTaskPortMapRangeTable(ConsumerBase &consumer)
     }
 }
 
-bool DashPortMapOrch::addPortMapRange(DashPortMapRangeBulkContext &ctxt, uint32_t& result)
+bool DashPortMapOrch::addPortMapRange(DashPortMapRangeBulkContext &ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -464,7 +464,7 @@ bool DashPortMapOrch::addPortMapRange(DashPortMapRangeBulkContext &ctxt, uint32_
     if (parent_it == port_map_table_.end())
     {
         SWSS_LOG_ERROR("Parent port map %s does not exist for port map range %d-%d", ctxt.parent_map_id.c_str(), ctxt.start_port, ctxt.end_port);
-        result = DASH_RESULT_FAILURE;
+        ctxt.pre_op_result = DASH_RESULT_FAILURE;
         return true;
     }
 
@@ -483,7 +483,7 @@ bool DashPortMapOrch::addPortMapRange(DashPortMapRangeBulkContext &ctxt, uint32_
     if (action_it == gPortMapRangeActionMap.end())
     {
         SWSS_LOG_ERROR("Unknown port map range action: %s", dash::outbound_port_map_range::PortMapRangeAction_Name(ctxt.metadata.action()).c_str());
-        result = DASH_RESULT_FAILURE;
+        ctxt.pre_op_result = DASH_RESULT_FAILURE;
         return true;
     }
 
@@ -495,7 +495,7 @@ bool DashPortMapOrch::addPortMapRange(DashPortMapRangeBulkContext &ctxt, uint32_
     if (!to_sai(ctxt.metadata.backend_ip(), attr.value.ipaddr))
     {
         SWSS_LOG_ERROR("Failed to convert backend IP %s to SAI format", ctxt.metadata.backend_ip().DebugString().c_str());
-        result = DASH_RESULT_FAILURE;
+        ctxt.pre_op_result = DASH_RESULT_FAILURE;
         return true;
     }
     attrs.push_back(attr);

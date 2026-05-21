@@ -58,21 +58,21 @@ DashRouteOrch::DashRouteOrch(DBConnector *db, vector<string> &tableName, DashOrc
     dash_route_group_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ROUTE_GROUP_TABLE_NAME);
 }
 
-bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkContext& ctxt, uint32_t& result)
+bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
     if (isRouteGroupBound(ctxt.route_group))
     {
         SWSS_LOG_WARN("Cannot add new route to route group %s as it is already bound", ctxt.route_group.c_str());
-        result = DASH_RESULT_FAILURE;
+        ctxt.pre_op_result = DASH_RESULT_FAILURE;
         return true;
     }
     sai_object_id_t route_group_oid = this->getRouteGroupOid(ctxt.route_group);
     if (route_group_oid == SAI_NULL_OBJECT_ID)
     {
         SWSS_LOG_ERROR("Route group %s not found for outbound routing entry %s", ctxt.route_group.c_str(), key.c_str());
-        result = DASH_RESULT_FAILURE;
+        ctxt.pre_op_result = DASH_RESULT_FAILURE;
         return true;
     }
 
@@ -84,7 +84,7 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
                        ctxt.metadata.vnet().c_str(),
                        key.c_str(),
                        routing_type_str.c_str());
-        result = DASH_RESULT_FAILURE;
+        ctxt.pre_op_result = DASH_RESULT_FAILURE;
         return true;
     }
     if (ctxt.metadata.routing_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET_DIRECT &&
@@ -94,7 +94,7 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
                        ctxt.metadata.vnet_direct().vnet().c_str(),
                        key.c_str(),
                        routing_type_str.c_str());
-        result = DASH_RESULT_FAILURE;
+        ctxt.pre_op_result = DASH_RESULT_FAILURE;
         return true;
     }
 
@@ -110,7 +110,7 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
     if (it == sOutboundAction.end())
     {
         SWSS_LOG_ERROR("Routing type %s for outbound routing entry %s not allowed", routing_type_str.c_str(), key.c_str());
-        result = DASH_RESULT_FAILURE;
+        ctxt.pre_op_result = DASH_RESULT_FAILURE;
         return true;
     }
 
@@ -143,7 +143,7 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
         if (!to_sai(ctxt.metadata.vnet_direct().overlay_ip(), outbound_routing_attr.value.ipaddr))
         {
             SWSS_LOG_ERROR("Failed to convert overlay IP for outbound routing entry %s", key.c_str());
-            result = DASH_RESULT_FAILURE;
+            ctxt.pre_op_result = DASH_RESULT_FAILURE;
             return true;
         }
         outbound_routing_attrs.push_back(outbound_routing_attr);
@@ -152,7 +152,7 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
     {
         SWSS_LOG_ERROR("Routing type %s for outbound routing entry %s either invalid or missing required attributes",
                        dash::route_type::RoutingType_Name(ctxt.metadata.routing_type()).c_str(), key.c_str());
-        result = DASH_RESULT_FAILURE;
+        ctxt.pre_op_result = DASH_RESULT_FAILURE;
         return true;
     }
 
@@ -162,7 +162,7 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
         if (!to_sai(ctxt.metadata.underlay_sip(), outbound_routing_attr.value.ipaddr))
         {
             SWSS_LOG_ERROR("Failed to convert underlay SIP for outbound routing entry %s", key.c_str());
-            result = DASH_RESULT_FAILURE;
+            ctxt.pre_op_result = DASH_RESULT_FAILURE;
             return true;
         }
         outbound_routing_attrs.push_back(outbound_routing_attr);
@@ -187,7 +187,7 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
         if (tunnel_oid == SAI_NULL_OBJECT_ID)
         {
             SWSS_LOG_ERROR("Tunnel %s not found for outbound routing entry %s", ctxt.metadata.tunnel().c_str(), key.c_str());
-            result = DASH_RESULT_FAILURE;
+            ctxt.pre_op_result = DASH_RESULT_FAILURE;
             return true;
         }
         outbound_routing_attr.id = SAI_OUTBOUND_ROUTING_ENTRY_ATTR_DASH_TUNNEL_ID;
@@ -353,10 +353,10 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
                         ctxt.metadata.set_routing_type(ctxt.metadata.action_type());
                         #pragma GCC diagnostic pop
                     }
-                    if (addOutboundRouting(key, ctxt, result))
+                    if (addOutboundRouting(key, ctxt))
                     {
                         it = consumer.m_toSync.erase(it);
-                        writeResultToDB(dash_route_result_table_, key, result);
+                        writeResultToDB(dash_route_result_table_, key, ctxt.pre_op_result);
                     }
                     else
                     {
@@ -446,20 +446,20 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
     }
 }
 
-bool DashRouteOrch::addInboundRouting(const string& key, InboundRoutingBulkContext& ctxt, uint32_t& result)
+bool DashRouteOrch::addInboundRouting(const string& key, InboundRoutingBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
     if (!dash_orch_->getEni(ctxt.eni))
     {
         SWSS_LOG_ERROR("ENI entry %s not found for inbound routing entry %s", ctxt.eni.c_str(), key.c_str());
-        result = DASH_RESULT_FAILURE;
+        ctxt.pre_op_result = DASH_RESULT_FAILURE;
         return true;
     }
     if (ctxt.metadata.has_vnet() && gVnetNameToId.find(ctxt.metadata.vnet()) == gVnetNameToId.end())
     {
         SWSS_LOG_ERROR("VNET %s not found for inbound routing entry %s", ctxt.metadata.vnet().c_str(), key.c_str());
-        result = DASH_RESULT_FAILURE;
+        ctxt.pre_op_result = DASH_RESULT_FAILURE;
         return true;
     }
 
@@ -672,10 +672,10 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
                         it = consumer.m_toSync.erase(it);
                         continue;
                     }
-                    if (addInboundRouting(key, ctxt, result))
+                    if (addInboundRouting(key, ctxt))
                     {
                         it = consumer.m_toSync.erase(it);
-                        writeResultToDB(dash_route_rule_result_table_, key, result);
+                        writeResultToDB(dash_route_rule_result_table_, key, ctxt.pre_op_result);
                     }
                     else
                     {
