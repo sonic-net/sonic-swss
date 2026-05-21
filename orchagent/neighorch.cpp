@@ -1610,7 +1610,7 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     string alias = neighborEntry.alias;
     IpAddress ip_address = neighborEntry.ip_address;
     bool bulk_op = ctx.bulk_op;
-    MacAddress neighbor_mac = neighborEntry.mac_address;
+    MacAddress neighbor_mac;
 
     NextHopKey nexthop = { ip_address, alias };
     sai_object_id_t port_vrf_id;
@@ -1636,10 +1636,12 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
         SWSS_LOG_ERROR("Port does not exist for %s!", alias.c_str());
     }
 
-    if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
+    auto neighborIt = m_syncdNeighbors.find(neighborEntry);
+    if (neighborIt == m_syncdNeighbors.end())
     {
         return true;
     }
+    neighbor_mac = neighborIt->second.mac;
 
     SWSS_LOG_INFO("Try to remove neighbor %s on %s",
                    ip_address.to_string().c_str(), alias.c_str());
@@ -1768,8 +1770,7 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     NeighborUpdate post_update = { neighborEntry, MacAddress(), false };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&post_update));
 
-    // TODO: added || isChassisDbInUse()) to Cisco PR
-    if (gMySwitchType == "voq" || isChassisDbInUse())
+    if (isChassisDbInUse())
     {
         //Sync the neighbor to delete from the CHASSIS_APP_DB
         voqSyncDelNeigh(alias, ip_address);
