@@ -6,6 +6,7 @@
 #include "netdispatcher.h"
 #include "netlink.h"
 #include "notificationconsumer.h"
+#include "notificationproducer.h"
 #include "warmRestartHelper.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/fpmsyncd.h"
@@ -88,6 +89,15 @@ int main(int argc, char **argv)
     DBConnector stateDb("STATE_DB", 0);
     Table bgpStateTable(&stateDb, STATE_BGP_TABLE_NAME);
 
+    /* Warm-restart preparation channels (iteration 1: minimal handler — log + STATE_DB
+     * update + reply, no drain flag / timer / queue check yet). The tool
+     * fpmsyncd_restart_check sends on FPMSYNCD_RESTARTCHECK, fpmsyncd replies
+     * on FPMSYNCD_RESTARTCHECKREPLY and writes WARM_RESTART_TABLE|fpmsyncd: state=ready.
+     */
+    Table warmRestartStateTable(&stateDb, STATE_WARM_RESTART_TABLE_NAME);
+    NotificationConsumer restartCheckConsumer(&db, "FPMSYNCD_RESTARTCHECK");
+    NotificationProducer restartCheckReply(&db, "FPMSYNCD_RESTARTCHECKREPLY");
+
     NetLink netlink;
 
     netlink.registerGroup(RTNLGRP_LINK);
@@ -154,6 +164,7 @@ int main(int argc, char **argv)
 
             s.addSelectable(&fpm);
             s.addSelectable(&netlink);
+            s.addSelectable(&restartCheckConsumer);
             if (sync.isSuppressionEnabled())
             {
                 s.addSelectable(routeResponseChannel.get());
@@ -271,6 +282,35 @@ int main(int argc, char **argv)
 
                         sync.onRouteResponse(key, fieldValues);
                     }
+                }
+                else if (temps == &restartCheckConsumer)
+                {
+                    /* Iteration 2: also flip the drain flag (gates new emissions
+                     * into m_routeTable / m_label_routeTable inside RouteSync).
+                     * Only meaningful when at least one of those is a
+                     * ZmqProducerStateTable; on non-ZMQ deployments the flag
+                     * stays false and behavior matches the pre-barrier
+                     * runtime. */
+                    std::string op, data;
+                    std::vector<FieldValueTuple> values;
+                    restartCheckConsumer.pop(op, data, values);
+
+                    bool hasZmq = sync.hasZmqProducerTables();
+                    SWSS_LOG_NOTICE("fpmsyncd: preparing for warm boot (received %s on FPMSYNCD_RESTARTCHECK, hasZmqProducerTables=%s)",
+                                    op.c_str(), hasZmq ? "true" : "false");
+
+                    if (hasZmq)
+                    {
+                        sync.setDrainingForWarmRestart(true);
+                        SWSS_LOG_NOTICE("fpmsyncd: drain flag set; new route SET/DEL via setRouteWithWarmRestart / delWithWarmRestart will be dropped");
+                    }
+
+                    warmRestartStateTable.hset("fpmsyncd", "state", "ready");
+
+                    SWSS_LOG_NOTICE("fpmsyncd: ready for warm boot (STATE_DB WARM_RESTART_TABLE|fpmsyncd state=ready)");
+
+                    std::vector<FieldValueTuple> reply;
+                    restartCheckReply.send("fpmsyncd", "READY", reply);
                 }
                 else if (!warmStartEnabled || sync.getWarmStartHelper().isReconciled())
                 {

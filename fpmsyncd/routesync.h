@@ -251,7 +251,28 @@ public:
         return m_warmStartHelper;
     }
 
+    /* Drain barrier for warm-reboot preparation.
+     * When set, setRouteWithWarmRestart / delWithWarmRestart early-return —
+     * preventing further enqueues into ZmqProducerStateTable's AsyncDBUpdater
+     * (the queue that, if lost at SIGTERM, would cause post-warm-boot
+     * apply_view to SAI-remove routes that are still in ASIC but absent
+     * from APPL_DB). Flag is meaningful only when hasZmqProducerTables()
+     * is true; the fpmsyncd handler enforces that gate before setting it.
+     */
+    bool isDrainingForWarmRestart() const { return m_drainingForWarmRestart; }
+    void setDrainingForWarmRestart(bool v) { m_drainingForWarmRestart = v; }
+
+    /* True iff any of the producer-state-tables that flow through the
+     * warm-restart gate (m_routeTable, m_label_routeTable) was constructed
+     * as a ZmqProducerStateTable. Computed once in the ctor; static for
+     * the lifetime of fpmsyncd.
+     */
+    bool hasZmqProducerTables() const { return m_hasZmqProducerTables; }
+
 private:
+    /* Drain-barrier state for warm-reboot preparation (see accessors). */
+    bool m_drainingForWarmRestart = false;
+    bool m_hasZmqProducerTables = false;
     /* ZMQ client */
     shared_ptr<ZmqClient> m_zmqClient;
     /* regular route table */

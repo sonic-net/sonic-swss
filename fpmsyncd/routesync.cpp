@@ -161,11 +161,34 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_nl_sock = nl_socket_alloc();
     nl_connect(m_nl_sock, NETLINK_ROUTE);
     rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
+
+    /* Computed once: did createProducerStateTable hand us a ZmqProducerStateTable
+     * for either route table? This is the gate that decides whether the drain
+     * flag is meaningful — when ZMQ is disabled, both casts fail, the flag is
+     * never set by the fpmsyncd handler, and the gate at setRouteWithWarmRestart
+     * / delWithWarmRestart is a no-op (so behavior is identical to today on
+     * non-ZMQ deployments). */
+    m_hasZmqProducerTables =
+        (dynamic_pointer_cast<ZmqProducerStateTable>(m_routeTable) != nullptr) ||
+        (dynamic_pointer_cast<ZmqProducerStateTable>(m_label_routeTable) != nullptr);
+    SWSS_LOG_NOTICE("RouteSync: hasZmqProducerTables=%s",
+                    m_hasZmqProducerTables ? "true" : "false");
 }
 
 void RouteSync::setRouteWithWarmRestart(FieldValueTupleWrapperBase & fvw,
                                         ProducerStateTable & table )
 {
+    /* Warm-reboot drain barrier: while preparing for warm reboot, drop new
+     * route updates so the ZmqProducerStateTable AsyncDBUpdater queue can
+     * reach zero before fpmsyncd is killed. The flag is only set by the
+     * FPMSYNCD_RESTARTCHECK handler when hasZmqProducerTables() is true,
+     * so non-ZMQ deployments are unaffected. */
+    if (m_drainingForWarmRestart)
+    {
+        SWSS_LOG_INFO("draining: dropping route SET for %s", fvw.key.c_str());
+        return;
+    }
+
     bool warmRestartInProgress = m_warmStartHelper.inProgress();
 
     if (!warmRestartInProgress)
@@ -191,6 +214,13 @@ void RouteSync::setTable(FieldValueTupleWrapperBase & fvw,
 
 void RouteSync::delWithWarmRestart(FieldValueTupleWrapperBase && fvw,
 				   ProducerStateTable & table) {
+    /* Warm-reboot drain barrier — see setRouteWithWarmRestart. */
+    if (m_drainingForWarmRestart)
+    {
+        SWSS_LOG_INFO("draining: dropping route DEL for %s", fvw.key.c_str());
+        return;
+    }
+
     bool warmRestartInProgress = m_warmStartHelper.inProgress();
     if (!warmRestartInProgress) {
         table.del(fvw.key);
