@@ -175,6 +175,20 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
                     m_hasZmqProducerTables ? "true" : "false");
 }
 
+size_t RouteSync::totalDbUpdaterQueueSize() const
+{
+    size_t total = 0;
+    if (auto z = dynamic_pointer_cast<ZmqProducerStateTable>(m_routeTable))
+    {
+        try { total += z->dbUpdaterQueueSize(); } catch (...) {}
+    }
+    if (auto z = dynamic_pointer_cast<ZmqProducerStateTable>(m_label_routeTable))
+    {
+        try { total += z->dbUpdaterQueueSize(); } catch (...) {}
+    }
+    return total;
+}
+
 void RouteSync::setRouteWithWarmRestart(FieldValueTupleWrapperBase & fvw,
                                         ProducerStateTable & table )
 {

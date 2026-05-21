@@ -269,6 +269,13 @@ public:
      */
     bool hasZmqProducerTables() const { return m_hasZmqProducerTables; }
 
+    /* Sum of the AsyncDBUpdater pending-queue depths across the ZMQ
+     * producer tables. Returns 0 when no ZMQ tables are present.
+     * Cheap: two dynamic_pointer_casts plus two atomic loads on the
+     * AsyncDBUpdater internal queue. Safe to call from the main select
+     * loop. */
+    size_t totalDbUpdaterQueueSize() const;
+
 private:
     /* Drain-barrier state for warm-reboot preparation (see accessors). */
     bool m_drainingForWarmRestart = false;

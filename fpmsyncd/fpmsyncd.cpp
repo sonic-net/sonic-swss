@@ -285,32 +285,44 @@ int main(int argc, char **argv)
                 }
                 else if (temps == &restartCheckConsumer)
                 {
-                    /* Iteration 2: also flip the drain flag (gates new emissions
-                     * into m_routeTable / m_label_routeTable inside RouteSync).
-                     * Only meaningful when at least one of those is a
-                     * ZmqProducerStateTable; on non-ZMQ deployments the flag
-                     * stays false and behavior matches the pre-barrier
-                     * runtime. */
+                    /* Iteration 3: gate READY on AsyncDBUpdater queue actually
+                     * draining to zero. Reply NOT_READY queueSize=N while
+                     * pending; tool's -r/-w retry loop drives polling. STATE_DB
+                     * reflects the same current state so 'show warm-restart
+                     * state' and `sonic-db-cli` give operators visibility. */
                     std::string op, data;
                     std::vector<FieldValueTuple> values;
                     restartCheckConsumer.pop(op, data, values);
 
                     bool hasZmq = sync.hasZmqProducerTables();
-                    SWSS_LOG_NOTICE("fpmsyncd: preparing for warm boot (received %s on FPMSYNCD_RESTARTCHECK, hasZmqProducerTables=%s)",
-                                    op.c_str(), hasZmq ? "true" : "false");
+                    size_t qsize = sync.totalDbUpdaterQueueSize();
+                    SWSS_LOG_NOTICE("fpmsyncd: preparing for warm boot (received %s on FPMSYNCD_RESTARTCHECK, hasZmqProducerTables=%s, queueSize=%zu)",
+                                    op.c_str(), hasZmq ? "true" : "false", qsize);
 
-                    if (hasZmq)
+                    if (hasZmq && !sync.isDrainingForWarmRestart())
                     {
                         sync.setDrainingForWarmRestart(true);
                         SWSS_LOG_NOTICE("fpmsyncd: drain flag set; new route SET/DEL via setRouteWithWarmRestart / delWithWarmRestart will be dropped");
                     }
 
-                    warmRestartStateTable.hset("fpmsyncd", "state", "ready");
+                    const bool ready = (qsize == 0);
+                    const char* state = ready ? "ready" : "draining";
+                    warmRestartStateTable.hset("fpmsyncd", "state", state);
+                    warmRestartStateTable.hset("fpmsyncd", "queueSize", std::to_string(qsize));
 
-                    SWSS_LOG_NOTICE("fpmsyncd: ready for warm boot (STATE_DB WARM_RESTART_TABLE|fpmsyncd state=ready)");
+                    if (ready)
+                    {
+                        SWSS_LOG_NOTICE("fpmsyncd: ready for warm boot (STATE_DB WARM_RESTART_TABLE|fpmsyncd state=ready queueSize=0)");
+                    }
+                    else
+                    {
+                        SWSS_LOG_NOTICE("fpmsyncd: still draining (STATE_DB WARM_RESTART_TABLE|fpmsyncd state=draining queueSize=%zu)", qsize);
+                    }
 
-                    std::vector<FieldValueTuple> reply;
-                    restartCheckReply.send("fpmsyncd", "READY", reply);
+                    std::vector<FieldValueTuple> reply{
+                        FieldValueTuple{"queueSize", std::to_string(qsize)}
+                    };
+                    restartCheckReply.send("fpmsyncd", ready ? "READY" : "NOT_READY", reply);
                 }
                 else if (!warmStartEnabled || sync.getWarmStartHelper().isReconciled())
                 {

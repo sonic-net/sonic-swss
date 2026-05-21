@@ -101,6 +101,14 @@ int main(int argc, char **argv)
     std::vector<swss::FieldValueTuple> values;
     std::string op = "fpmsyncd";
 
+    auto findValue = [](const std::vector<swss::FieldValueTuple>& v, const std::string& key) -> std::string {
+        for (const auto& fv : v)
+        {
+            if (fvField(fv) == key) return fvValue(fv);
+        }
+        return std::string();
+    };
+
     int retries = 0;
     while (retries <= retryCount)
     {
@@ -113,24 +121,31 @@ int main(int argc, char **argv)
         if (result == swss::Select::OBJECT)
         {
             restartQueryReply.pop(op_ret, data, values_ret);
+            const std::string qs = findValue(values_ret, "queueSize");
+            const std::string qsStr = qs.empty() ? "" : (" queueSize=" + qs);
+            std::cout << "FPMSYNCD_RESTARTCHECK retry " << retries
+                      << ": " << data << qsStr << std::endl;
             if (data == "READY")
             {
-                SWSS_LOG_NOTICE("FPMSYNCD_RESTARTCHECK success, %s is ready for warm restart", op_ret.c_str());
+                SWSS_LOG_NOTICE("FPMSYNCD_RESTARTCHECK success, %s is ready for warm restart (queueSize=%s)",
+                                op_ret.c_str(), qs.empty() ? "0" : qs.c_str());
                 std::cout << "FPMSYNCD_RESTARTCHECK succeeded" << std::endl;
                 return EXIT_SUCCESS;
             }
             else
             {
-                SWSS_LOG_NOTICE("FPMSYNCD_RESTARTCHECK retry %d: %s is not ready with status %s",
-                                retries, op_ret.c_str(), data.c_str());
+                SWSS_LOG_NOTICE("FPMSYNCD_RESTARTCHECK retry %d: %s reports status %s queueSize=%s",
+                                retries, op_ret.c_str(), data.c_str(), qs.empty() ? "?" : qs.c_str());
             }
         }
         else if (result == swss::Select::TIMEOUT)
         {
+            std::cout << "FPMSYNCD_RESTARTCHECK retry " << retries << ": TIMEOUT" << std::endl;
             SWSS_LOG_NOTICE("FPMSYNCD_RESTARTCHECK for %s timed out", op.c_str());
         }
         else
         {
+            std::cout << "FPMSYNCD_RESTARTCHECK retry " << retries << ": ERROR" << std::endl;
             SWSS_LOG_NOTICE("FPMSYNCD_RESTARTCHECK for %s error", op.c_str());
         }
         retries++;
