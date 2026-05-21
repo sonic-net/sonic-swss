@@ -49,7 +49,10 @@ namespace fdborch_vxlan_ut
         std::shared_ptr<swss::DBConnector> m_asic_db;
         std::shared_ptr<swss::DBConnector> m_chassis_app_db;
         std::shared_ptr<PortsOrch> m_portsOrch;
-        EvpnNvoOrch *m_EvpnNvoOrch;
+        EvpnNvoOrch *m_EvpnNvoOrch = nullptr;
+        FlexCounterOrch *m_flexCounterOrch = nullptr;
+        VxlanTunnelOrch *m_vxlanTunnelOrch = nullptr;
+        FlowCounterRouteOrch *m_flowCounterRouteOrch = nullptr;
 
         virtual void SetUp() override
         {
@@ -106,8 +109,8 @@ namespace fdborch_vxlan_ut
             // 3) Crmorch
             ASSERT_EQ(gCrmOrch, nullptr);
             gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
-            VxlanTunnelOrch *vxlan_tunnel_orch_1 = new VxlanTunnelOrch(m_state_db.get(), m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME);
-            gDirectory.set(vxlan_tunnel_orch_1);
+            m_vxlanTunnelOrch = new VxlanTunnelOrch(m_state_db.get(), m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME);
+            gDirectory.set(m_vxlanTunnelOrch);
 
             // 4) BufferOrch
             vector<string> buffer_tables = { APP_BUFFER_POOL_TABLE_NAME,
@@ -150,8 +153,15 @@ namespace fdborch_vxlan_ut
             vector<string> flex_counter_tables = {
                 CFG_FLEX_COUNTER_TABLE_NAME
             };
-            auto* flexCounterOrch = new FlexCounterOrch(m_config_db.get(), flex_counter_tables);
-            gDirectory.set(flexCounterOrch);
+            m_flexCounterOrch = new FlexCounterOrch(m_config_db.get(), flex_counter_tables);
+            gDirectory.set(m_flexCounterOrch);
+
+            static const vector<string> route_pattern_tables = {
+                CFG_FLOW_COUNTER_ROUTE_PATTERN_TABLE_NAME,
+            };
+            m_flowCounterRouteOrch = new FlowCounterRouteOrch(m_config_db.get(), route_pattern_tables);
+            gFlowCounterRouteOrch = m_flowCounterRouteOrch;
+            gDirectory.set(m_flowCounterRouteOrch);
 
             ASSERT_EQ(gL2NhgOrch, nullptr);
             gL2NhgOrch = new L2NhgOrch(m_app_db.get(), APP_L2_NEXTHOP_GROUP_TABLE_NAME);
@@ -227,6 +237,16 @@ namespace fdborch_vxlan_ut
 
             delete m_EvpnNvoOrch;
             m_EvpnNvoOrch = nullptr;
+
+            delete m_vxlanTunnelOrch;
+            m_vxlanTunnelOrch = nullptr;
+
+            delete m_flowCounterRouteOrch;
+            m_flowCounterRouteOrch = nullptr;
+            gFlowCounterRouteOrch = nullptr;
+
+            delete m_flexCounterOrch;
+            m_flexCounterOrch = nullptr;
 
             gDirectory.m_values.clear();
             sai_route_api = pold_sai_route_api;
