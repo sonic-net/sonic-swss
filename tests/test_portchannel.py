@@ -470,6 +470,146 @@ class TestPortchannel(object):
         # wait for port-channel deletion
         time.sleep(1)
 
+    def get_port_admin_state(self, dvs, port_name):
+        """Helper: return SAI_PORT_ATTR_ADMIN_STATE for a PHY port from ASIC_DB."""
+        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        tbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
+        (status, fvs) = tbl.get(dvs.asicdb.portnamemap[port_name])
+        assert status, "Port %s not found in ASIC_DB" % port_name
+        for fv in fvs:
+            if fv[0] == "SAI_PORT_ATTR_ADMIN_STATE":
+                return fv[1]
+        return None
+
+    def set_port_admin_status(self, dvs, port_name, admin_status):
+        """Helper: set admin_status for a PHY port via CONFIG_DB."""
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "PORT")
+        fvs = swsscommon.FieldValuePairs([("admin_status", admin_status)])
+        tbl.set(port_name, fvs)
+        time.sleep(1)
+
+    def test_lag_admin_down_cascades_to_members(self, dvs, testlog):
+        """Verify LAG admin-down cascades to member ports:
+        1. LAG admin-down forces all members admin-down
+        2. Manual admin-up of member is suppressed while LAG is down
+        3. Adding/removing members to admin-down LAG
+        4. LAG admin-up restores members to their configured state"""
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+
+        # Setup: Ethernet0 up, Ethernet4 up, Ethernet8 up (for later add/remove)
+        self.set_port_admin_status(dvs, "Ethernet0", "up")
+        self.set_port_admin_status(dvs, "Ethernet4", "up")
+        self.set_port_admin_status(dvs, "Ethernet8", "up")
+
+        # Create LAG with admin-up via CONFIG_DB
+        tbl = swsscommon.Table(cdb, "PORTCHANNEL")
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up"), ("mtu", "9100")])
+        tbl.set("PortChannel201", fvs)
+        time.sleep(1)
+
+        # Add Ethernet0 and Ethernet4 as members
+        tbl = swsscommon.Table(cdb, "PORTCHANNEL_MEMBER")
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        tbl.set("PortChannel201|Ethernet0", fvs)
+        tbl.set("PortChannel201|Ethernet4", fvs)
+        time.sleep(1)
+
+        # Set Ethernet0 individually admin-down (before LAG goes down)
+        self.set_port_admin_status(dvs, "Ethernet0", "down")
+        assert self.get_port_admin_state(dvs, "Ethernet0") == "false"
+        assert self.get_port_admin_state(dvs, "Ethernet4") == "true"
+
+        # --- Case 1: LAG admin-down forces all members admin-down ---
+        tbl = swsscommon.Table(cdb, "PORTCHANNEL")
+        fvs = swsscommon.FieldValuePairs([("admin_status", "down"), ("mtu", "9100")])
+        tbl.set("PortChannel201", fvs)
+        time.sleep(1)
+
+        assert self.get_port_admin_state(dvs, "Ethernet0") == "false"
+        assert self.get_port_admin_state(dvs, "Ethernet4") == "false"
+
+        # --- Case 2: Manual admin-up of member suppressed while LAG is down ---
+        self.set_port_admin_status(dvs, "Ethernet4", "up")
+        assert self.get_port_admin_state(dvs, "Ethernet4") == "false"
+
+        # --- Case 3: Add member to admin-down LAG, then remove it ---
+        tbl = swsscommon.Table(cdb, "PORTCHANNEL_MEMBER")
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        tbl.set("PortChannel201|Ethernet8", fvs)
+        time.sleep(1)
+
+        # New member should be forced admin-down
+        assert self.get_port_admin_state(dvs, "Ethernet8") == "false"
+
+        # Remove Ethernet8 — should restore its configured admin state (up)
+        tbl = swsscommon.Table(cdb, "PORTCHANNEL_MEMBER")
+        tbl._del("PortChannel201|Ethernet8")
+        time.sleep(1)
+
+        assert self.get_port_admin_state(dvs, "Ethernet8") == "true"
+
+        # --- Case 4: LAG admin-up restores members to configured state ---
+        # Ethernet0 was configured down before LAG went down — should stay down
+        # Ethernet4 was configured up — should be restored to up
+        tbl = swsscommon.Table(cdb, "PORTCHANNEL")
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up"), ("mtu", "9100")])
+        tbl.set("PortChannel201", fvs)
+        time.sleep(1)
+
+        assert self.get_port_admin_state(dvs, "Ethernet0") == "false"
+        assert self.get_port_admin_state(dvs, "Ethernet4") == "true"
+
+        # Cleanup
+        tbl = swsscommon.Table(cdb, "PORTCHANNEL_MEMBER")
+        tbl._del("PortChannel201|Ethernet0")
+        tbl._del("PortChannel201|Ethernet4")
+        time.sleep(1)
+        tbl = swsscommon.Table(cdb, "PORTCHANNEL")
+        tbl._del("PortChannel201")
+        time.sleep(1)
+        self.set_port_admin_status(dvs, "Ethernet0", "up")
+
+    def test_lag_deletion_restores_member_admin_state(self, dvs, testlog):
+        """Deleting an admin-down LAG restores member ports to their
+        configured admin state."""
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+
+        self.set_port_admin_status(dvs, "Ethernet0", "up")
+        self.set_port_admin_status(dvs, "Ethernet4", "up")
+
+        # Create LAG with two members via CONFIG_DB
+        tbl = swsscommon.Table(cdb, "PORTCHANNEL")
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up"), ("mtu", "9100")])
+        tbl.set("PortChannel202", fvs)
+        time.sleep(1)
+
+        tbl = swsscommon.Table(cdb, "PORTCHANNEL_MEMBER")
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        tbl.set("PortChannel202|Ethernet0", fvs)
+        tbl.set("PortChannel202|Ethernet4", fvs)
+        time.sleep(1)
+
+        assert self.get_port_admin_state(dvs, "Ethernet0") == "true"
+        assert self.get_port_admin_state(dvs, "Ethernet4") == "true"
+
+        # Set LAG admin-down
+        tbl = swsscommon.Table(cdb, "PORTCHANNEL")
+        fvs = swsscommon.FieldValuePairs([("admin_status", "down"), ("mtu", "9100")])
+        tbl.set("PortChannel202", fvs)
+        time.sleep(1)
+
+        assert self.get_port_admin_state(dvs, "Ethernet0") == "false"
+        assert self.get_port_admin_state(dvs, "Ethernet4") == "false"
+
+        # Delete the LAG — members should be restored
+        tbl = swsscommon.Table(cdb, "PORTCHANNEL")
+        tbl._del("PortChannel202")
+        time.sleep(1)
+
+        assert self.get_port_admin_state(dvs, "Ethernet0") == "true"
+        assert self.get_port_admin_state(dvs, "Ethernet4") == "true"
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
