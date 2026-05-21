@@ -12,6 +12,7 @@
 #include "bulker.h"
 
 extern string gMySwitchType;
+extern bool gEnableFibSuppress;
 
 extern std::unique_ptr<MockResponsePublisher> gMockResponsePublisher;
 
@@ -388,6 +389,8 @@ namespace routeorch_test
 
         void TearDown() override
         {
+            gEnableFibSuppress = false;
+
             RestoreSaiApis();
             DEINIT_SAI_API_MOCK(route);
 
@@ -718,6 +721,7 @@ namespace routeorch_test
 
     TEST_F(RouteOrchTest, RouteOrchTestSetDelResponse)
     {
+        gEnableFibSuppress = true;
         gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
 
         std::deque<KeyOpFieldsValuesTuple> entries;
@@ -754,6 +758,7 @@ namespace routeorch_test
 
     TEST_F(RouteOrchTest, RouteOrchSetFullMaskSubnetPrefix)
     {
+        gEnableFibSuppress = true;
         gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
 
         std::deque<KeyOpFieldsValuesTuple> entries;
@@ -772,6 +777,7 @@ namespace routeorch_test
 
     TEST_F(RouteOrchTest, RouteOrchLoopbackRoute)
     {
+        gEnableFibSuppress = true;
         gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
 
         std::deque<KeyOpFieldsValuesTuple> entries;
