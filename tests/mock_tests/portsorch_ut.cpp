@@ -562,6 +562,49 @@ namespace portsorch_test
         ASSERT_TRUE(taskList.empty());
     }
 
+    //
+    // Best-effort port cleanup used by tests that touch Path Tracing.
+    //
+    // After a port has had Path Tracing enabled+disabled within a test, the
+    // SAI virtual switch returns SAI_STATUS_OBJECT_IN_USE on
+    // sai_port_api->remove_port() for that port even though PortsOrch has
+    // unset its TAM and removed the TAM/INT/Report objects. The DEL task for
+    // that port therefore stays pending. This helper drains via repeated
+    // doTask() so the non-stuck ports still get removed, and does not assert
+    // on the residual VS-side leak so the test itself does not get marked
+    // failed by this cleanup.
+    //
+    void cleanupPortsBestEffort(PortsOrch *obj)
+    {
+        Port p;
+        obj->getCpuPort(p);
+
+        auto portList = obj->getAllPorts();
+        portList.erase(p.m_alias);
+
+        std::deque<KeyOpFieldsValuesTuple> kfvList;
+        for (const auto &cit : portList)
+        {
+            kfvList.push_back({ cit.first, DEL_COMMAND, { } });
+        }
+
+        auto consumer = dynamic_cast<Consumer*>(obj->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvList);
+
+        // Drain in a loop so multi-pass removals complete where possible.
+        std::vector<std::string> taskList;
+        for (int i = 0; i < 8; ++i)
+        {
+            static_cast<Orch*>(obj)->doTask();
+            taskList.clear();
+            obj->dumpPendingTasks(taskList);
+            if (taskList.empty())
+            {
+                break;
+            }
+        }
+    }
+
     struct PortsOrchTest : public ::testing::Test
     {
         shared_ptr<swss::DBConnector> m_app_db;
@@ -2431,6 +2474,8 @@ namespace portsorch_test
         std::vector<std::string> taskList;
         gPortsOrch->dumpPendingTasks(taskList);
         ASSERT_TRUE(taskList.empty());
+
+        cleanupPortsBestEffort(gPortsOrch);
     }
 
     TEST_F(PortsOrchTest, PortPTConfigNonDefaultTimestampTemplate)
@@ -2525,6 +2570,8 @@ namespace portsorch_test
         std::vector<std::string> taskList;
         gPortsOrch->dumpPendingTasks(taskList);
         ASSERT_TRUE(taskList.empty());
+
+        cleanupPortsBestEffort(gPortsOrch);
     }
 
     TEST_F(PortsOrchTest, PortPTConfigInvalidInterfaceID)
@@ -2593,6 +2640,8 @@ namespace portsorch_test
         std::vector<std::string> taskList;
         gPortsOrch->dumpPendingTasks(taskList);
         ASSERT_TRUE(taskList.empty());
+
+        cleanupPortsBestEffort(gPortsOrch);
     }
 
     TEST_F(PortsOrchTest, PortPTConfigInvalidInterfaceTimestampTemplate)
@@ -2661,6 +2710,8 @@ namespace portsorch_test
         std::vector<std::string> taskList;
         gPortsOrch->dumpPendingTasks(taskList);
         ASSERT_TRUE(taskList.empty());
+
+        cleanupPortsBestEffort(gPortsOrch);
     }
 
     TEST_F(PortsOrchTest, PortPTSAIFailureHandling)
@@ -2782,6 +2833,8 @@ namespace portsorch_test
 
         _unhook_sai_switch_api();
         _unhook_sai_port_api();
+
+        cleanupPortsBestEffort(gPortsOrch);
     }
 
     TEST_F(PortsOrchTest, PortPTCapabilityUnsupported)
@@ -2854,6 +2907,8 @@ namespace portsorch_test
 
         _unhook_sai_switch_api();
         _unhook_sai_port_api();
+
+        cleanupPortsBestEffort(gPortsOrch);
     }
 
     /**
