@@ -17,10 +17,12 @@ public:
     void execute() override
     {
         auto notificationConsumer = getNotificationConsumer();
+        size_t i = 0;
         /* Check before triggering doTask because pop() can throw an exception if there is no data */
-        if (notificationConsumer->hasData())
+        while (notificationConsumer->hasData() && (i < notificationConsumer->POP_BATCH_SIZE))
         {
             m_orch->doTask(*notificationConsumer);
+            i++;
         }
     }
 
