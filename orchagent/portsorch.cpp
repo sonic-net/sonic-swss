@@ -9743,6 +9743,17 @@ void PortsOrch::addWredQueueFlexCounters(map<string, FlexCounterQueueStates> que
                 addWredQueueFlexCountersPerPort(it.second, queuesStateVector.at(it.second.m_alias), true);
             }
         }
+
+        if (it.second.m_type == Port::SYSTEM)
+        {
+            if (!queuesStateVector.count(it.second.m_alias))
+            {
+                auto maxQueueNumber = getNumberOfPortSupportedQueueCounters(it.second.m_alias);
+                FlexCounterQueueStates flexCounterQueueState(maxQueueNumber);
+                queuesStateVector.insert(make_pair(it.second.m_alias, flexCounterQueueState));
+            }
+            addWredQueueFlexCountersPerPort(it.second, queuesStateVector.at(it.second.m_alias), true);
+        }
     }
 
     m_isWredQueueCounterMapGenerated = true;
