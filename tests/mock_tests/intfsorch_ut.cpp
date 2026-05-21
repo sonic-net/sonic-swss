@@ -9,7 +9,6 @@
 #include <vector>
 
 
-
 namespace intfsorch_test
 {
     using namespace std;
@@ -207,13 +206,23 @@ namespace intfsorch_test
             };
             gFlowCounterRouteOrch = new FlowCounterRouteOrch(m_config_db.get(), route_pattern_tables);
 
+            ASSERT_EQ(gArsOrch, nullptr);
+            vector<string> ars_tables = {
+                CFG_ARS_PROFILE_TABLE_NAME,
+                CFG_ARS_INTERFACE_TABLE_NAME,
+                CFG_ARS_OBJECT_TABLE_NAME,
+                CFG_ARS_NEXTHOP_TABLE_NAME
+            };
+            gArsOrch = new ArsOrch(m_config_db.get(), m_app_db.get(), m_state_db.get(), ars_tables, gVrfOrch);
+
+
             ASSERT_EQ(gRouteOrch, nullptr);
             const int routeorch_pri = 5;
             vector<table_name_with_pri_t> route_tables = {
                 { APP_ROUTE_TABLE_NAME,        routeorch_pri },
                 { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
             };
-            gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch, gSrv6Orch);
+            gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch, gSrv6Orch, gArsOrch);
             gNhgOrch = new NhgOrch(m_app_db.get(), APP_NEXTHOP_GROUP_TABLE_NAME);
 
             // Recreate buffer orch to read populated data
@@ -290,6 +299,9 @@ namespace intfsorch_test
 
             delete gFlowCounterRouteOrch;
             gFlowCounterRouteOrch = nullptr;
+
+            delete gArsOrch;
+            gArsOrch = nullptr;
 
             sai_router_intfs_api = pold_sai_rif_api;
             ut_helper::uninitSaiApi();
