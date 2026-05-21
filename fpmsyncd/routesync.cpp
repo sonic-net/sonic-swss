@@ -112,10 +112,14 @@ enum {
 
 enum {
     ROUTE_ENCAP_SRV6_UNSPEC            = 0,
-    ROUTE_ENCAP_SRV6_VPN_SID           = 1,
+    ROUTE_ENCAP_SRV6_SIDS              = 1,
     ROUTE_ENCAP_SRV6_ENCAP_SRC_ADDR    = 2,
-    ROUTE_ENCAP_SRV6_PIC_ID            = 3,
-    ROUTE_ENCAP_SRV6_NH_ID             = 4,
+    ROUTE_ENCAP_SRV6_PIC_ID                 = 3,
+    ROUTE_ENCAP_SRV6_NH_ID                  = 4,
+    ROUTE_ENCAP_SRV6_ENCAP_SIDLIST_NAME     = 5,
+    ROUTE_ENCAP_SRV6_ENCAP_SIDLIST_LEN      = 6,
+    ROUTE_ENCAP_SRV6_ENCAP_SIDLIST          = 7,
+    ROUTE_ENCAP_SRV6_NUM_SIDS               = 8,
 };
 
 #define MAX_MULTIPATH_NUM 514
@@ -167,6 +171,8 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_nl_sock = nl_socket_alloc();
     nl_connect(m_nl_sock, NETLINK_ROUTE);
     rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
+
+    m_appDb = make_shared<DBConnector>("APPL_DB", 0);
 }
 
 void RouteSync::setRouteWithWarmRestart(FieldValueTupleWrapperBase & fvw,
@@ -275,13 +281,32 @@ void RouteSync::parseEncapSrv6SteerRoute(struct rtattr *tb, string &vpn_sid,
     struct rtattr *tb_encap[256] = {};
     char vpn_sid_buf[MAX_ADDR_SIZE + 1] = {0};
     char src_addr_buf[MAX_ADDR_SIZE + 1] = {0};
+    uint8_t num_segs = 1;
+    struct in6_addr segs_buf[256] = {0};
+    bool is_first_sid = true;
 
     parseRtAttrNested(tb_encap, 256, tb);
 
-    if (tb_encap[ROUTE_ENCAP_SRV6_VPN_SID])
+    if (tb_encap[ROUTE_ENCAP_SRV6_NUM_SIDS])
     {
-        vpn_sid += inet_ntop(AF_INET6, RTA_DATA(tb_encap[ROUTE_ENCAP_SRV6_VPN_SID]),
-                             vpn_sid_buf, MAX_ADDR_SIZE);
+        num_segs = *(uint8_t *)RTA_DATA(tb_encap[ROUTE_ENCAP_SRV6_NUM_SIDS]);
+    }
+
+    if (tb_encap[ROUTE_ENCAP_SRV6_SIDS])
+    {
+        memset(segs_buf, 0, sizeof(segs_buf));
+        memcpy(segs_buf, (char *)RTA_DATA(tb_encap[ROUTE_ENCAP_SRV6_SIDS]),
+                                          num_segs * 16);
+
+        for (int i = 0; i < num_segs; i++)
+        {
+            if (!is_first_sid)
+                vpn_sid += "|";
+
+            vpn_sid += inet_ntop(AF_INET6, &segs_buf[i], vpn_sid_buf, MAX_ADDR_SIZE);
+
+            is_first_sid = false;
+        }
     }
 
     if (tb_encap[ROUTE_ENCAP_SRV6_ENCAP_SRC_ADDR])
@@ -957,8 +982,69 @@ bool RouteSync::getSrv6SteerRouteNextHop(struct nlmsghdr *h, int received_bytes,
     else
     {
         /* This is a multipath route */
-        SWSS_LOG_NOTICE("Multipath SRv6 routes aren't supported");
-        return false;
+        int len;
+        struct rtattr *subtb[RTA_MAX + 1];
+        struct rtnexthop *rtnh = (struct rtnexthop *)RTA_DATA(tb[RTA_MULTIPATH]);
+        len = (int)RTA_PAYLOAD(tb[RTA_MULTIPATH]);
+        bool first_nh = true;
+
+        for (;;)
+        {
+            uint16_t encap = 0;
+            string nh_sid;
+            string nh_src_addr;
+
+            if (len < (int)sizeof(*rtnh) || rtnh->rtnh_len > len)
+            {
+                break;
+            }
+
+            if (rtnh->rtnh_len > sizeof(*rtnh))
+            {
+                memset(subtb, 0, sizeof(subtb));
+
+                netlink_parse_rtattr(subtb, RTA_MAX, RTNH_DATA(rtnh),
+                                     (int)(rtnh->rtnh_len - sizeof(*rtnh)));
+
+                if (subtb[RTA_ENCAP_TYPE])
+                {
+                    encap = *(uint16_t *)RTA_DATA(subtb[RTA_ENCAP_TYPE]);
+                }
+
+                if (subtb[RTA_ENCAP] && subtb[RTA_ENCAP_TYPE] &&
+                    *(uint16_t *)RTA_DATA(subtb[RTA_ENCAP_TYPE]) ==
+                        NH_ENCAP_SRV6_ROUTE)
+                {
+                    parseEncapSrv6SteerRoute(subtb[RTA_ENCAP], nh_sid, nh_src_addr);
+                }
+                SWSS_LOG_DEBUG("Multipath nexthop encap:%d nh_sid:%s nh_src_addr:%s",
+                               encap, nh_sid.c_str(), nh_src_addr.c_str());
+
+                if (nh_sid.empty())
+                {
+                    SWSS_LOG_ERROR("Received an invalid SRv6 nexthop: SID is missing. Skipping.");
+                    continue;
+                }
+
+                if (!first_nh) {
+                    vpn_sid += ",";
+                    src_addr += ",";
+                }
+
+                vpn_sid += nh_sid;
+                src_addr += nh_src_addr;
+
+                first_nh = false;
+            }
+
+            if (rtnh->rtnh_len == 0)
+            {
+                break;
+            }
+
+            len -= NLMSG_ALIGN(rtnh->rtnh_len);
+            rtnh = RTNH_NEXT(rtnh);
+        }
     }
 
     return true;
@@ -1203,6 +1289,27 @@ Srv6SidListTableFieldValueTupleWrapper::fieldValueTupleVector() {
 }
 
 
+bool RouteSync::getSrv6SidListsFromRoute(string &routeTableKey, string &sidlists)
+{
+    SWSS_LOG_ENTER();
+
+    Table routeTable{m_appDb.get(), APP_ROUTE_TABLE_NAME};
+
+    std::vector<FieldValueTuple> fieldValues;
+    routeTable.get(routeTableKey, fieldValues);
+
+    for (auto iter : fieldValues)
+    {
+        if (fvField(iter) == "segment")
+        {
+            sidlists = fvValue(iter);
+            return true;
+        }
+    }
+
+    return false;
+}
+
 
 void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
 {
@@ -1366,36 +1473,44 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
     if (nlmsg_type == RTM_DELROUTE)
     {
         string routeTableKeyStr = string(routeTableKey);
-        string srv6SidListTableKey = vpn_sid_str;
 
         SWSS_LOG_INFO("SRV6 RouteTable del msg: %s", routeTableKeyStr.c_str());
         delWithWarmRestart(
             RouteTableFieldValueTupleWrapper{std::move(routeTableKeyStr), std::string(), isNbZmqEnabled()},
             *m_routeTable);
 
-        auto it = m_srv6_sidlist_refcnt.find(srv6SidListTableKey);
-        if (it != m_srv6_sidlist_refcnt.end())
+        getSrv6SidListsFromRoute(routeTableKeyStr, vpn_sid_str);
+        SWSS_LOG_INFO("Got Srv6 Sid list for route '%s' from route table: '%s'",
+                      routeTableKeyStr.c_str(), vpn_sid_str.c_str());
+
+        /* Delete SID lists from SRV6_SID_LIST_TABLE */
+        vector<string> sidlists = tokenize(vpn_sid_str, ',');
+        for (auto sidlist : sidlists)
         {
-            assert (it->second > 0);
-
-            /* Decrement the refcount for this SID list */
-            (it->second)--;
-            SWSS_LOG_INFO("Refcount for SID list '%s' decreased to %u",
-                          srv6SidListTableKey.c_str(), it->second);
-
-            /* If the refcount drops to zero, remove the SID list from ApplDB */
-            if (it->second == 0)
+            auto it = m_srv6_sidlist_refcnt.find(sidlist);
+            if (it != m_srv6_sidlist_refcnt.end())
             {
-                m_srv6SidListTable.del(srv6SidListTableKey);
-                SWSS_LOG_INFO("Refcount for SID list '%s' is zero. SID list removed from ApplDB",
-                              srv6SidListTableKey.c_str());
+                assert (it->second > 0);
 
-                m_srv6_sidlist_refcnt.erase(srv6SidListTableKey);
+                /* Decrement the refcount for this SID list */
+                (it->second)--;
+                SWSS_LOG_INFO("Refcount for SID list '%s' decreased to %u",
+                              sidlist.c_str(), it->second);
+
+                /* If the refcount drops to zero, remove the SID list from ApplDB */
+                if (it->second == 0)
+                {
+                    m_srv6SidListTable.del(sidlist);
+                    SWSS_LOG_INFO("Refcount for SID list '%s' is zero. SID list removed from ApplDB",
+                                  sidlist.c_str());
+
+                    m_srv6_sidlist_refcnt.erase(sidlist);
+                }
             }
-        }
-        else
-        {
-            SWSS_LOG_WARN("SID list '%s' not found in the map.", srv6SidListTableKey.c_str());
+            else
+            {
+                SWSS_LOG_WARN("SID list '%s' not found in the map.", sidlist.c_str());
+            }
         }
 
         return;
@@ -1403,31 +1518,38 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
     else if (nlmsg_type == RTM_NEWROUTE)
     {
         string routeTableKeyStr = string(routeTableKey);
-        /* Write SID list to SRV6_SID_LIST_TABLE */
 
-        string srv6SidListTableKey = vpn_sid_str;
-
-        auto it = m_srv6_sidlist_refcnt.find(srv6SidListTableKey);
-        if (it != m_srv6_sidlist_refcnt.end())
+        /* Write SID lists to SRV6_SID_LIST_TABLE */
+        vector<string> sidlists = tokenize(vpn_sid_str, ',');
+        for (auto sidlist : sidlists)
         {
-            /* SID list already exists: just bump the refcount */
-            (it->second)++;
-            SWSS_LOG_INFO("Refcount for SID list'%s' increased to %u",
-                          srv6SidListTableKey.c_str(), it->second);
-        }
-        else
-        {
-            /* First time we see this SID list: program it into ApplDB and initialize the refcount to 1 */
-            Srv6SidListTableFieldValueTupleWrapper fvw{srv6SidListTableKey, isNbZmqEnabled()};
-            fvw.path = vpn_sid_str;
+            vector<FieldValueTuple> fvVectorSidList;
 
-            setTable(fvw, m_srv6SidListTable);
-            SWSS_LOG_DEBUG("Srv6SidListTable set msg: %s path: %s",
-                           srv6SidListTableKey.c_str(), vpn_sid_str.c_str());
+            auto it = m_srv6_sidlist_refcnt.find(sidlist);
+            if (it != m_srv6_sidlist_refcnt.end())
+            {
+                /* SID list already exists: just bump the refcount */
+                (it->second)++;
+                SWSS_LOG_INFO("Refcount for SID list'%s' increased to %u",
+                              sidlist.c_str(), it->second);
+            }
+            else
+            {
+                string pathStr = sidlist;
+                boost::algorithm::replace_all(pathStr, "|", ",");
 
-            m_srv6_sidlist_refcnt[srv6SidListTableKey] = 1;
-            SWSS_LOG_INFO("SID list '%s' created and refcount initialized to 1",
-                          srv6SidListTableKey.c_str());
+                /* First time we see this SID list: program it into ApplDB and initialize the refcount to 1 */
+                Srv6SidListTableFieldValueTupleWrapper fvw{sidlist, isNbZmqEnabled()};
+                fvw.path = pathStr;
+
+                setTable(fvw, m_srv6SidListTable);
+                SWSS_LOG_DEBUG("Srv6SidListTable set msg: %s path: %s",
+                               sidlist.c_str(), pathStr.c_str());
+
+                m_srv6_sidlist_refcnt[sidlist] = 1;
+                SWSS_LOG_INFO("SID list '%s' created and refcount initialized to 1",
+                              sidlist.c_str());
+            }
         }
 
         /* Write route to ROUTE_TABLE */
@@ -1436,7 +1558,7 @@ void RouteSync::onSrv6SteerRouteMsg(struct nlmsghdr *h, int len)
                       routeTableKeyStr.c_str(), vpn_sid_str.c_str(),
                       src_addr_str.empty() ? "NONE" : src_addr_str.c_str());
         RouteTableFieldValueTupleWrapper rfvw{std::move(routeTableKeyStr), "", isNbZmqEnabled()};
-        rfvw.segment = std::move(srv6SidListTableKey);
+        rfvw.segment = std::move(vpn_sid_str);
 
         if (!src_addr_str.empty())
         {
