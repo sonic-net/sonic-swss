@@ -99,8 +99,8 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       mock_sai_next_hop.cpp \
 		       mock_sai_route.cpp \
 		       mock_sai_switch.cpp \
-                       mock_sai_tunnel.cpp \
-		       mock_sai_udf.cpp
+		       mock_sai_udf.cpp \
+		       mock_sai_tunnel.cpp
 
 p4orch_tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 p4orch_tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(CFLAGS_ASAN)

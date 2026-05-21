@@ -8,6 +8,7 @@
 #include "neighorch.h"
 #include "gearboxutils.h"
 #include "vxlanorch.h"
+#include "evpnmhorch.h"
 #include "directory.h"
 #include "subintf.h"
 #include "notifications.h"
@@ -70,6 +71,7 @@ extern string gMySwitchType;
 extern int32_t gVoqMySwitchId;
 extern string gMyHostName;
 extern string gMyAsicName;
+extern EvpnMhOrch *gEvpnMhOrch;
 extern event_handle_t g_events_handle;
 extern bool isChassisDbInUse();
 extern bool gMultiAsicVoq;
@@ -1799,6 +1801,24 @@ bool PortsOrch::getPort(sai_object_id_t id, Port &port)
     return false;
 }
 
+bool PortsOrch::getVlanMember(const string &alias, const Port &vlan, sai_object_id_t &vlan_member_id)
+{
+    auto portIt = m_portVlanMember.find(alias);
+    if (portIt == m_portVlanMember.end())
+    {
+        return false;
+    }
+    auto &vlanMap = portIt->second;
+    auto vlanMemberIt = vlanMap.find(vlan.m_vlan_info.vlan_id);
+    if (vlanMemberIt == vlanMap.end())
+    {
+        return false;
+    }
+    vlan_member_id = vlanMemberIt->second.vlan_member_id;
+
+    return true;
+}
+
 bool PortsOrch::isFrontPanelPort(Port& port)
 {
     return port.m_type == Port::PHY;
@@ -3034,7 +3054,7 @@ bool PortsOrch::setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip)
     SWSS_LOG_ENTER();
     vector<Port> portv;
 
-    if(port.m_type == Port::TUNNEL)
+    if(port.m_type == Port::TUNNEL || port.m_type == Port::NEXTHOP_GROUP)
     {
         return true;
     }
@@ -7250,6 +7270,20 @@ bool PortsOrch::addBridgePort(Port &port)
         attr.value.oid = m_default1QBridge;
         attrs.push_back(attr);
     }
+    else if (port.m_type == Port::NEXTHOP_GROUP)
+    {
+        attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
+        attr.value.s32 = SAI_BRIDGE_PORT_TYPE_BRIDGE_PORT_NEXT_HOP_GROUP;
+        attrs.push_back(attr);
+
+        attr.id = SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_NEXT_HOP_GROUP_ID;
+        attr.value.oid = port.m_nexthop_group_id;
+        attrs.push_back(attr);
+
+        attr.id = SAI_BRIDGE_PORT_ATTR_BRIDGE_ID;
+        attr.value.oid = m_default1QBridge;
+        attrs.push_back(attr);
+    }
     else
     {
         SWSS_LOG_ERROR("Failed to add bridge port %s to default 1Q bridge, invalid port type %d",
@@ -7267,6 +7301,14 @@ bool PortsOrch::addBridgePort(Port &port)
     attr.value.s32 = port.m_learn_mode;
     attrs.push_back(attr);
 
+    /* If the interface is associated with an ethernet segment, set the DF role */
+    if (gEvpnMhOrch && gEvpnMhOrch->isPortInterfaceAssociatedToEs(port.m_alias)) {
+        /* TODO FIXME: sridsant : Use proper attribute once its available in SAI */
+        attr.id = SAI_BRIDGE_PORT_ATTR_EGRESS_FILTERING;
+        attr.value.booldata = gEvpnMhOrch->isInterfaceDF(port.m_alias, DEFAULT_PORT_VLAN_ID);
+        attrs.push_back(attr);
+    }
+
     sai_status_t status = sai_bridge_api->create_bridge_port(&port.m_bridge_port_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -7277,6 +7319,7 @@ bool PortsOrch::addBridgePort(Port &port)
         {
             return parseHandleSaiStatusFailure(handle_status);
         }
+        return false;
     }
 
     if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_KEEP))
@@ -7330,8 +7373,9 @@ bool PortsOrch::removeBridgePort(Port &port)
     /* Remove STP ports before bridge port deletion*/
     gStpOrch->removeStpPorts(port);
 
-    //Flush the FDB entires corresponding to the port
-    gFdbOrch->flushFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+    //Flush all FDB entires corresponding to the port (including static entries
+    //on tunnel/nexthop_group bridge ports)
+    gFdbOrch->flushAllFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
     SWSS_LOG_INFO("Flush FDB entries for port %s", port.m_alias.c_str());
 
     /* Remove bridge port */
@@ -7560,6 +7604,14 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
     else assert(false);
     attr.value.s32 = sai_tagging_mode;
     attrs.push_back(attr);
+
+    /* If the interface is associated with an ethernet segment, send the SAI vlan DF attribute */
+    if (gEvpnMhOrch && gEvpnMhOrch->isPortAndVlanAssociatedToEs(port.m_alias, vlan.m_vlan_info.vlan_id)) {
+        /* TODO: Use proper attribute once its available in SAI */
+        attr.id = SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP;
+        attr.value.booldata = gEvpnMhOrch->isInterfaceDF(port.m_alias, vlan.m_vlan_info.vlan_id);
+        attrs.push_back(attr);
+    }
 
     sai_object_id_t vlan_member_id;
     sai_status_t status = sai_vlan_api->create_vlan_member(&vlan_member_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
@@ -8396,6 +8448,28 @@ bool PortsOrch::removeTunnel(Port tunnel)
 
     saiOidToAlias.erase(tunnel.m_tunnel_id);
     m_portList.erase(tunnel.m_alias);
+
+    return true;
+}
+
+bool PortsOrch::addL2NexthopGroup(string nhg_alias, sai_object_id_t nhg_oid)
+{
+    SWSS_LOG_ENTER();
+
+    Port nhgPort(nhg_alias, Port::NEXTHOP_GROUP);
+    nhgPort.m_nexthop_group_id = nhg_oid;
+    nhgPort.m_learn_mode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE;
+    m_portList[nhg_alias] = nhgPort;
+
+    SWSS_LOG_INFO("Created a l2 nhg port %s with oid: 0x%" PRIx64, nhg_alias.c_str(), nhg_oid);
+    return true;
+}
+
+bool PortsOrch::removeL2NexthopGroup(Port nhgPort)
+{
+    SWSS_LOG_ENTER();
+
+    m_portList.erase(nhgPort.m_alias);
 
     return true;
 }
@@ -9824,6 +9898,8 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
 
     if(port.m_type == Port::TUNNEL)
     {
+        VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
+        tunnel_orch->updateDbTunnelOperStatus(port.m_alias, status);
         return;
     }
 

@@ -67,6 +67,7 @@ namespace fdb_syncd_flush_test
         std::shared_ptr<swss::DBConnector> m_chassis_app_db;
         std::shared_ptr<PortsOrch> m_portsOrch;
         std::shared_ptr<FdbOrch> m_fdborch;
+        VxlanTunnelOrch *m_vxlanTunnelOrch = nullptr;
 
         virtual void SetUp() override
         {   
@@ -122,10 +123,10 @@ namespace fdb_syncd_flush_test
             // 3) Crmorch
             ASSERT_EQ(gCrmOrch, nullptr);
             gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
-            VxlanTunnelOrch *vxlan_tunnel_orch_1 = new VxlanTunnelOrch(m_state_db.get(), m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME);
-            gDirectory.set(vxlan_tunnel_orch_1);
-            
-             // Construct fdborch
+            m_vxlanTunnelOrch = new VxlanTunnelOrch(m_state_db.get(), m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME);
+            gDirectory.set(m_vxlanTunnelOrch);
+
+            // Construct fdborch
             vector<table_name_with_pri_t> app_fdb_tables = {
                 { APP_FDB_TABLE_NAME,        FdbOrch::fdborch_pri},
                 { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri},
@@ -140,6 +141,18 @@ namespace fdb_syncd_flush_test
                                                   stateDbFdb,
                                                   stateMclagDbFdb, 
                                                   m_portsOrch.get());
+
+            ASSERT_EQ(gVrfOrch, nullptr);
+            gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
+
+            ASSERT_EQ(gIntfsOrch, nullptr);
+            vector<table_name_with_pri_t> intf_tables = {
+                { APP_INTF_TABLE_NAME, IntfsOrch::intfsorch_pri }
+            };
+            gIntfsOrch = new IntfsOrch(m_app_db.get(), intf_tables, gVrfOrch, m_chassis_app_db.get());
+
+            ASSERT_EQ(gNeighOrch, nullptr);
+            gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, m_fdborch.get(), m_portsOrch.get(), m_chassis_app_db.get());
         }
 
         virtual void TearDown() override {
@@ -147,7 +160,21 @@ namespace fdb_syncd_flush_test
             gSwitchOrch = nullptr;
             delete gCrmOrch;
             gCrmOrch = nullptr;
+
+            delete m_vxlanTunnelOrch;
+            m_vxlanTunnelOrch = nullptr;
+
             gDirectory.m_values.clear();
+
+            delete gVrfOrch;
+            gVrfOrch = nullptr;
+
+            delete gIntfsOrch;
+            gIntfsOrch = nullptr;
+
+            delete gNeighOrch;
+            gNeighOrch = nullptr;
+
             ut_helper::uninitSaiApi();
         }
     };
@@ -640,7 +667,8 @@ namespace fdb_syncd_flush_test
         fdbData.bridge_port_id = SAI_NULL_OBJECT_ID;
         fdbData.type = "dynamic";
         fdbData.origin = FDB_ORIGIN_VXLAN_ADVERTIZED;
-        fdbData.remote_ip = "1.1.1.1";
+        fdbData.dest_type = VTEP;
+        fdbData.dest_value = "1.1.1.1";
         fdbData.esi = "";
         fdbData.vni = 100;
         FdbEntry entry;
