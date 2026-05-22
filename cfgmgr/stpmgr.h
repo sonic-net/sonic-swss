@@ -174,6 +174,7 @@ typedef struct STP_PORT_CONFIG_MSG {
     char        intf_name[IFNAMSIZ];
     uint8_t     enabled;
     uint8_t     root_guard;
+    uint8_t     loop_guard;
     uint8_t     bpdu_guard;
     uint8_t     bpdu_guard_do_disable;
     uint8_t     portfast;           // PVST only
@@ -184,7 +185,7 @@ typedef struct STP_PORT_CONFIG_MSG {
     int         priority;
     int         count;
     VLAN_ATTR   vlan_list[0];
-} STP_PORT_CONFIG_MSG;;
+} STP_PORT_CONFIG_MSG;
 
 typedef struct STP_VLAN_MEM_CONFIG_MSG {
     uint8_t opcode;   // enable/disable
@@ -305,4 +306,3 @@ private:
 
 }
 #endif
-
