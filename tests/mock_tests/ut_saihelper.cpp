@@ -1,6 +1,8 @@
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
 
+#include <saiicmpecho.h>
+
 namespace ut_helper
 {
     map<string, string> gProfileMap;
@@ -91,6 +93,7 @@ namespace ut_helper
         sai_api_query(SAI_API_COUNTER, (void**)&sai_counter_api);
         sai_api_query(SAI_API_FDB, (void**)&sai_fdb_api);
         sai_api_query(SAI_API_UDF, (void**)&sai_udf_api);
+        sai_api_query(SAI_API_ICMP_ECHO, (void**)&sai_icmp_echo_api);
         sai_api_query(SAI_API_TWAMP, (void**)&sai_twamp_api);
         sai_api_query(SAI_API_TAM, (void**)&sai_tam_api);
         sai_api_query((sai_api_t)SAI_API_DASH_VIP, (void**)&sai_dash_vip_api);
@@ -138,6 +141,7 @@ namespace ut_helper
         sai_buffer_api = nullptr;
         sai_queue_api = nullptr;
         sai_counter_api = nullptr;
+        sai_icmp_echo_api = nullptr;
         sai_twamp_api = nullptr;
         sai_tam_api = nullptr;
         sai_dash_vip_api = nullptr;
