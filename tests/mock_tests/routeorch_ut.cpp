@@ -430,6 +430,10 @@ namespace routeorch_test
             delete gFlowCounterRouteOrch;
             gFlowCounterRouteOrch = nullptr;
 
+            // Drop directory references before deleting orchs registered there,
+            // so later tests cannot observe stale pointers.
+            gDirectory.m_values.clear();
+
             delete gRouteOrch;
             gRouteOrch = nullptr;
 

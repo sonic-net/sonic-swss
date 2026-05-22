@@ -24,14 +24,17 @@ class TestInbandInterface(object):
         assert status == exists
         return status, fvs
 
-    def wait_for_vrf_table_empty(self):
-        tbl = swsscommon.Table(self.appl_db, 'VRF_TABLE')
+    def wait_for_table_empty(self, table_name):
+        tbl = swsscommon.Table(self.appl_db, table_name)
         for _ in range(10):
-            vrf_keys = tbl.getKeys()
-            if len(vrf_keys) == 0:
+            keys = tbl.getKeys()
+            if len(keys) == 0:
                 return
             time.sleep(1)
-        assert len(vrf_keys) == 0
+        assert len(keys) == 0
+
+    def wait_for_vrf_table_empty(self):
+        self.wait_for_table_empty('VRF_TABLE')
 
     def cleanup_mgmt_vrf(self, dvs):
         tbl = swsscommon.Table(self.cfg_db, 'MGMT_VRF_CONFIG')
@@ -200,6 +203,7 @@ class TestInbandInterface(object):
                     time.sleep(1)
                     # check application database
                     self.wait_for_table_entry(self.appl_db, 'INTF_TABLE', intf_name, exists=False)
+                    self.wait_for_table_empty('INTF_TABLE')
 
                     if not intf_name.startswith('Loopback'):
                         self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE", 1)
