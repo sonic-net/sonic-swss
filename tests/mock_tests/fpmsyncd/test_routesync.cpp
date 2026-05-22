@@ -3073,10 +3073,10 @@ TEST_F(FpmSyncdResponseTest, TestGetEvpnNextHopWithRtaVia)
 TEST_F(FpmSyncdResponseTest, TestGetEvpnNextHopIPv6V4Mapped)
 {
     /* Test IPv6 v4-mapped address handling */
-    struct nlmsghdr nlh_storage;
-    struct nlmsghdr *nlh = &nlh_storage;
+    struct nlmsghdr *nlh = (struct nlmsghdr *)malloc(NLMSG_SPACE(MAX_PAYLOAD));
+    ASSERT_NE(nlh, nullptr);
 
-    memset(nlh, 0, sizeof(*nlh));
+    memset(nlh, 0, NLMSG_SPACE(MAX_PAYLOAD));
     nlh->nlmsg_len = NLMSG_LENGTH(0);
     nlh->nlmsg_type = RTM_NEWROUTE;
 
@@ -3110,6 +3110,8 @@ TEST_F(FpmSyncdResponseTest, TestGetEvpnNextHopIPv6V4Mapped)
     EXPECT_TRUE(result);
     // Should be converted to IPv4
     EXPECT_EQ(nexthops, "10.1.1.1");
+
+    free(nlh);
 }
 
 TEST_F(FpmSyncdResponseTest, TestGetEvpnNextHopMissingEncap)
@@ -3186,10 +3188,10 @@ TEST_F(FpmSyncdResponseTest, TestGetEvpnNextHopZeroRmac)
 TEST_F(FpmSyncdResponseTest, TestGetEvpnNextHopUnknownInterface)
 {
     /* Test getEvpnNextHop returns false when interface name is unknown */
-    struct nlmsghdr nlh_storage;
-    struct nlmsghdr *nlh = &nlh_storage;
+    struct nlmsghdr *nlh = (struct nlmsghdr *)malloc(NLMSG_SPACE(MAX_PAYLOAD));
+    ASSERT_NE(nlh, nullptr);
 
-    memset(nlh, 0, sizeof(*nlh));
+    memset(nlh, 0, NLMSG_SPACE(MAX_PAYLOAD));
     nlh->nlmsg_len = NLMSG_LENGTH(0);
     nlh->nlmsg_type = RTM_NEWROUTE;
 
@@ -3221,6 +3223,8 @@ TEST_F(FpmSyncdResponseTest, TestGetEvpnNextHopUnknownInterface)
     bool result = m_routeSync.getEvpnNextHop(nlh, 100, tb, nexthops, vni_list, mac_list, intf_list);
 
     EXPECT_FALSE(result); // Should return false due to unknown interface
+
+    free(nlh);
 }
 
 TEST_F(FpmSyncdResponseTest, TestGetEvpnNextHopMultipath)
