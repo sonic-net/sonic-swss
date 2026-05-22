@@ -12,6 +12,8 @@
 #include "warm_restart.h"
 #include "teamsync.h"
 
+#include <team.h>
+#include <teamdctl.h>
 #include <unistd.h>
 
 using namespace std;
@@ -172,21 +174,54 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
 
     FieldValueTuple s("state", "ok");
     fvVector.push_back(s);
-    if (m_warmstart)
-    {
-        m_stateLagTablePreserved[lagName] = fvVector;
-    }
-    else
-    {
-        m_stateLagTable.set(lagName, fvVector);
-    }
 
     if (lag_update)
     {
-        /* Create the team instance */
-        auto sync = make_shared<TeamPortSync>(lagName, ifindex, &m_lagMemberTable);
-        m_teamSelectables[lagName] = sync;
-        m_selectablesToAdd.insert(lagName);
+        /* Create the team instance.
+         * On container restart, teamsyncd may receive RTM_NEWLINK for pre-existing
+         * team devices (from the kernel's initial dump) before teammgrd has had a
+         * chance to recreate them via "teamd -r".  The recreate deletes the old
+         * kernel device first, so team_init() fails with EADDRNOTAVAIL (errno 99)
+         * because the ifindex is no longer valid.  Catch the exception here so it
+         * does not propagate through NetLink::readData() into Select::poll_descriptors,
+         * which would abort the entire netlink processing loop.  When teamd finishes
+         * recreating the device the kernel emits a fresh RTM_NEWLINK with the correct
+         * new ifindex and addLag() is called again, at which point initialization
+         * succeeds.
+         * STATE_DB is written only after the team instance is successfully created
+         * to prevent dependent services (e.g. intfmgrd) from acting on a LAG that
+         * teamd has not yet finished setting up. */
+        try
+        {
+            auto sync = make_shared<TeamPortSync>(lagName, ifindex, &m_lagMemberTable);
+            if (m_warmstart)
+            {
+                m_stateLagTablePreserved[lagName] = fvVector;
+            }
+            else
+            {
+                m_stateLagTable.set(lagName, fvVector);
+            }
+            m_teamSelectables[lagName] = sync;
+            m_selectablesToAdd.insert(lagName);
+        }
+        catch (const system_error& e)
+        {
+            SWSS_LOG_ERROR("addLag: Failed to initialize team handler for LAG %s "
+                           "(ifindex %d): %d:%s. Waiting for next RTM_NEWLINK.",
+                           lagName.c_str(), ifindex, e.code().value(), e.what());
+        }
+    }
+    else
+    {
+        if (m_warmstart)
+        {
+            m_stateLagTablePreserved[lagName] = fvVector;
+        }
+        else
+        {
+            m_stateLagTable.set(lagName, fvVector);
+        }
     }
 }
 
@@ -279,18 +314,50 @@ TeamSync::TeamPortSync::TeamPortSync(const string &lagName, int ifindex,
                                    "Unable to register port change event");
             }
 
+            struct teamdctl *m_teamdctl = teamdctl_alloc();
+            if (!m_teamdctl)
+            {
+                team_free(m_team);
+                m_team = NULL;
+                throw system_error(make_error_code(errc::address_not_available),
+                                   "Unable to allocate teamdctl socket");
+            }
+
+            err = teamdctl_connect(m_teamdctl, lagName.c_str(), nullptr, "usock");
+            if (err)
+            {
+                team_free(m_team);
+                m_team = NULL;
+                teamdctl_free(m_teamdctl);
+                throw system_error(make_error_code(errc::connection_refused),
+                                   "Unable to connect to teamd");
+            }
+
+            char *response;
+            err = teamdctl_config_get_raw_direct(m_teamdctl, &response);
+            if (err)
+            {
+                team_free(m_team);
+                m_team = NULL;
+                teamdctl_disconnect(m_teamdctl);
+                teamdctl_free(m_teamdctl);
+                throw system_error(make_error_code(errc::io_error),
+                                   "Unable to get config from teamd (to prove that it is running and alive)");
+            }
+
+            teamdctl_disconnect(m_teamdctl);
+            teamdctl_free(m_teamdctl);
+
             break;
         }
         catch (const system_error& e)
         {
+            SWSS_LOG_WARN("Failed to initialize team handler. LAG=%s error=%d:%s, attempt=%d",
+                          lagName.c_str(), e.code().value(), e.what(), count);
+
             if (++count == max_retries)
             {
                 throw;
-            }
-            else
-            {
-                SWSS_LOG_WARN("Failed to initialize team handler. LAG=%s error=%d:%s, attempt=%d",
-                              lagName.c_str(), e.code().value(), e.what(), count);
             }
 
             sleep(1);

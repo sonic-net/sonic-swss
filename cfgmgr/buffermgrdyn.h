@@ -212,7 +212,9 @@ private:
 
     // BUFFER_PROFILE table and caches
     ProducerStateTable m_applBufferProfileTable;
+    Table m_applStateBufferProfileTable;
     Table m_stateBufferProfileTable;
+    bool m_bufferProfileApplDbWritten;
     // m_bufferProfileLookup - the cache for the following set:
     // 1. CFG_BUFFER_PROFILE
     // 2. Dynamically calculated headroom info stored in APPL_BUFFER_PROFILE
@@ -265,6 +267,9 @@ private:
 
     std::string m_overSubscribeRatio;
 
+    // Profiles waiting for SAI sync in refreshSharedHeadroomPool
+    std::vector<std::string> m_shpProfilesToCheck;
+
     // Initializers
     void initTableHandlerMap();
     void parseGearboxInfo(std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> gearboxInfo);
@@ -298,6 +303,8 @@ private:
     void releaseProfile(const std::string &profile_name);
     bool isHeadroomResourceValid(const std::string &port, const buffer_profile_t &profile, const std::string &new_pg);
     bool isSharedHeadroomPoolEnabledInSai();
+    bool isLosslessProfileSyncedInSai(const std::string &profileName);
+    task_process_status checkPendingProfilesSyncStatus();
     void refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size);
     task_process_status checkBufferProfileDirection(const std::string &profiles, buffer_direction_t dir);
     std::string constructZeroProfileListFromNormalProfileList(const std::string &normalProfileList, const std::string &port);

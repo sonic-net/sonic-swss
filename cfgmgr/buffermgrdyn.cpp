@@ -42,6 +42,7 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
         m_applBufferPoolTable(applDb, APP_BUFFER_POOL_TABLE_NAME),
         m_applStateBufferPoolTable(applStateDb, APP_BUFFER_POOL_TABLE_NAME),
         m_applBufferProfileTable(applDb, APP_BUFFER_PROFILE_TABLE_NAME),
+        m_applStateBufferProfileTable(applStateDb, APP_BUFFER_PROFILE_TABLE_NAME),
         m_applBufferObjectTables{ProducerStateTable(applDb, APP_BUFFER_PG_TABLE_NAME), ProducerStateTable(applDb, APP_BUFFER_QUEUE_TABLE_NAME)},
         m_applBufferProfileListTables{ProducerStateTable(applDb, APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME), ProducerStateTable(applDb, APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME)},
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
@@ -53,6 +54,7 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
         m_bufferPoolReady(false),
         m_bufferObjectsPending(true),
         m_bufferCompletelyInitialized(false),
+        m_bufferProfileApplDbWritten(false),
         m_mmuSizeNumber(0)
 {
     SWSS_LOG_ENTER();
@@ -916,6 +918,7 @@ void BufferMgrDynamic::updateBufferProfileToDb(const string &name, const buffer_
 
     m_applBufferProfileTable.set(name, fvVector);
     m_stateBufferProfileTable.set(name, fvVector);
+    m_bufferProfileApplDbWritten = true;
 }
 
 // Database operation
@@ -1647,6 +1650,7 @@ void BufferMgrDynamic::refreshSharedHeadroomPool(bool enable_state_updated_by_ra
     {
         SWSS_LOG_NOTICE("Updating dynamic buffer profiles due to shared headroom pool state updated");
 
+        vector<string> profilesToCheck;
         for (auto it = m_bufferProfileLookup.begin(); it != m_bufferProfileLookup.end(); ++it)
         {
             auto &name = it->first;
@@ -1661,12 +1665,27 @@ void BufferMgrDynamic::refreshSharedHeadroomPool(bool enable_state_updated_by_ra
                           profile.speed.c_str(), profile.cable_length.c_str(), profile.port_mtu.c_str(), profile.gearbox_model.c_str());
             // recalculate the headroom size
             calculateHeadroomSize(profile);
+            m_bufferProfileApplDbWritten = false;
             if (task_process_status::task_success != doUpdateBufferProfileForSize(profile, false))
             {
                 SWSS_LOG_ERROR("Failed to update buffer profile %s when toggle shared headroom pool. See previous message for detail. Please adjust the configuration manually", name.c_str());
             }
+            // Record profiles that need SAI sync check
+            // Only check when profile is actually written to APPL_DB
+            // Skip check if invoked by handleDefaultLossLessBufferParam (enable_state_updated_by_ratio is true)
+            if (m_portInitDone && !enable_state_updated_by_ratio && m_bufferProfileApplDbWritten)
+            {
+                profilesToCheck.push_back(name);
+            }
         }
         SWSS_LOG_NOTICE("Updating dynamic buffer profiles finished");
+
+        // Save profiles that need SAI sync check to member variable
+        // The caller is responsible for checking SAI sync status
+        if (!profilesToCheck.empty())
+        {
+            m_shpProfilesToCheck = profilesToCheck;
+        }
     }
 
     if (shp_enabled_by_size)
@@ -2029,6 +2048,77 @@ bool BufferMgrDynamic::isSharedHeadroomPoolEnabledInSai()
     }
 
     return true;
+}
+
+bool BufferMgrDynamic::isLosslessProfileSyncedInSai(const string &profileName)
+{
+    auto profileRef = m_bufferProfileLookup.find(profileName);
+    if (profileRef == m_bufferProfileLookup.end())
+    {
+        // Profile not found in cache, no need to check
+        return true;
+    }
+
+    const auto &profile = profileRef->second;
+
+    // Check xoff field
+    string xoff;
+    m_applStateBufferProfileTable.hget(profileName, "xoff", xoff);
+    if (xoff.empty())
+    {
+        SWSS_LOG_INFO("Lossless buffer profile %s has not been applied to SAI yet, retrying", profileName.c_str());
+        return false;
+    }
+    if (xoff != profile.xoff)
+    {
+        SWSS_LOG_INFO("Lossless buffer profile %s xoff mismatch (expected %s, got %s), retrying",
+                      profileName.c_str(), profile.xoff.c_str(), xoff.c_str());
+        return false;
+    }
+
+    // Check xon field
+    string xon;
+    m_applStateBufferProfileTable.hget(profileName, "xon", xon);
+    if (xon != profile.xon)
+    {
+        SWSS_LOG_INFO("Lossless buffer profile %s xon mismatch (expected %s, got %s), retrying",
+                      profileName.c_str(), profile.xon.c_str(), xon.c_str());
+        return false;
+    }
+
+    // Check size field
+    string size;
+    m_applStateBufferProfileTable.hget(profileName, "size", size);
+    if (size != profile.size)
+    {
+        SWSS_LOG_INFO("Lossless buffer profile %s size mismatch (expected %s, got %s), retrying",
+                      profileName.c_str(), profile.size.c_str(), size.c_str());
+        return false;
+    }
+
+    SWSS_LOG_DEBUG("Lossless buffer profile %s has been synced to SAI (xoff %s, xon %s, size %s)",
+                   profileName.c_str(), xoff.c_str(), xon.c_str(), size.c_str());
+    return true;
+}
+
+task_process_status BufferMgrDynamic::checkPendingProfilesSyncStatus()
+{
+    SWSS_LOG_NOTICE("Checking SAI sync status for %zu profiles", m_shpProfilesToCheck.size());
+    m_applBufferProfileTable.flush();
+
+    for (const auto &profileName : m_shpProfilesToCheck)
+    {
+        if (!isLosslessProfileSyncedInSai(profileName))
+        {
+            SWSS_LOG_NOTICE("BUFFER_PROFILE %s is still waiting to be synced to SAI", profileName.c_str());
+            return task_process_status::task_need_retry;
+        }
+    }
+
+    // All profiles synced successfully
+    SWSS_LOG_NOTICE("All profiles synced to SAI successfully");
+    m_shpProfilesToCheck.clear();
+    return task_process_status::task_success;
 }
 
 task_process_status BufferMgrDynamic::handleCableLenTable(KeyOpFieldsValuesTuple &tuple)
@@ -2486,8 +2576,38 @@ task_process_status BufferMgrDynamic::handleBufferPoolTable(KeyOpFieldsValuesTup
                     }
                 }
 
-                m_configuredSharedHeadroomPoolSize = newSHPSize;
-                refreshSharedHeadroomPool(false, isSHPEnabledBySize != willSHPBeEnabledBySize);
+                // Check if we are in retry mode (profiles waiting for SAI sync)
+                if (!m_shpProfilesToCheck.empty())
+                {
+                    // Retry mode: only check SAI sync status, don't refresh profiles
+                    SWSS_LOG_NOTICE("Retry mode: checking pending profiles");
+                    auto status = checkPendingProfilesSyncStatus();
+                    if (status == task_process_status::task_need_retry)
+                    {
+                        return task_process_status::task_need_retry;
+                    }
+                    // Profiles synced successfully, update configuration and continue
+                    m_configuredSharedHeadroomPoolSize = newSHPSize;
+                }
+                else
+                {
+                    // Not retry mode: refresh profiles
+                    string oldSHPSize = m_configuredSharedHeadroomPoolSize;
+                    m_configuredSharedHeadroomPoolSize = newSHPSize;
+                    refreshSharedHeadroomPool(false, isSHPEnabledBySize != willSHPBeEnabledBySize);
+
+                    // Check if there are profiles waiting for SAI sync
+                    if (!m_shpProfilesToCheck.empty())
+                    {
+                        auto status = checkPendingProfilesSyncStatus();
+                        if (status == task_process_status::task_need_retry)
+                        {
+                            // Rollback configuration change
+                            m_configuredSharedHeadroomPoolSize = oldSHPSize;
+                            return task_process_status::task_need_retry;
+                        }
+                    }
+                }
             }
             else if (!newSHPSize.empty())
             {

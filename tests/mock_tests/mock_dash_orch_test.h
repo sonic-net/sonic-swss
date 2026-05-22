@@ -14,6 +14,7 @@ namespace mock_orch_test
                 {APP_DASH_ROUTING_TYPE_TABLE_NAME, (Orch**) &m_DashOrch},
                 {APP_DASH_ROUTE_GROUP_TABLE_NAME, (Orch**) &m_DashRouteOrch},
                 {APP_DASH_ROUTE_TABLE_NAME, (Orch**) &m_DashRouteOrch},
+                {APP_DASH_ROUTE_RULE_TABLE_NAME, (Orch**) &m_DashRouteOrch},
                 {APP_DASH_TUNNEL_TABLE_NAME, (Orch**) &m_DashTunnelOrch},
                 {APP_DASH_ENI_TABLE_NAME, (Orch**) &m_DashOrch},
                 { APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, (Orch **)&m_dashPortMapOrch },
@@ -30,6 +31,9 @@ namespace mock_orch_test
             void RemoveVnetMap();
             void AddOutboundRoutingGroup();
             void AddOutboundRoutingEntry(bool expect_empty = true);
+            void RemoveOutboundRoutingEntry(bool expect_empty = true);
+            void AddInboundRoutingEntry(bool expect_empty = true);
+            void RemoveInboundRoutingEntry(bool expect_empty = true);
             void AddTunnel();
             void AddVnetMapPL(bool expect_empty = true);
             void RemoveVnetMapPL(bool expect_empty = true);

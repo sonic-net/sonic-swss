@@ -14,6 +14,7 @@
 #include "dbconnector.h"
 #include "logger.h"
 #include "p4orch/p4orch_util.h"
+#include "portsorch.h"
 #include "sai_serialize.h"
 #include "swssnet.h"
 #include "table.h"
@@ -23,51 +24,51 @@ using ::p4orch::kTableKeyDelimiter;
 extern sai_object_id_t gSwitchId;
 extern sai_object_id_t gVirtualRouterId;
 
-extern sai_route_api_t *sai_route_api;
+extern sai_route_api_t* sai_route_api;
 
 extern CrmOrch *gCrmOrch;
+extern PortsOrch* gPortsOrch;
 
 extern size_t gMaxBulkSize;
 
 namespace
 {
 
-ReturnCode checkNextHopAndWcmpGroupAndRouteMetadataExistence(bool expected_next_hop_existence,
-                                                             bool expected_wcmp_group_existence,
-                                                             bool expected_route_metadata_existence,
-                                                             const P4RouteEntry &route_entry)
-{
-    if (route_entry.nexthop_id.empty() && expected_next_hop_existence)
-    {
-        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-               << "Empty nexthop_id for route with " << route_entry.action << " action";
-    }
-    if (!route_entry.nexthop_id.empty() && !expected_next_hop_existence)
-    {
-        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-               << "Non-empty nexthop_id for route with " << route_entry.action << " action";
-    }
-    if (route_entry.wcmp_group.empty() && expected_wcmp_group_existence)
-    {
-        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-               << "Empty wcmp_group_id for route with " << route_entry.action << " action";
-    }
-    if (!route_entry.wcmp_group.empty() && !expected_wcmp_group_existence)
-    {
-        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-               << "Non-empty wcmp_group_id for route with " << route_entry.action << " action";
-    }
-    if (route_entry.route_metadata.empty() && expected_route_metadata_existence)
-    {
-        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-               << "Empty route_metadata for route with " << route_entry.action << " action";
-    }
-    if (!route_entry.route_metadata.empty() && !expected_route_metadata_existence)
-    {
-        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-               << "Non-empty route_metadata for route with " << route_entry.action << " action";
-    }
-    return ReturnCode();
+ReturnCode checkNextHopAndWcmpGroupAndRouteMetadataExistence(
+    bool expected_next_hop_existence, bool expected_wcmp_group_existence,
+    bool expected_route_metadata_existence, const P4RouteEntry& route_entry) {
+  if (route_entry.nexthop_id.empty() && expected_next_hop_existence) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Empty nexthop_id for route with " << route_entry.action
+           << " action";
+  }
+  if (!route_entry.nexthop_id.empty() && !expected_next_hop_existence) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Non-empty nexthop_id for route with " << route_entry.action
+           << " action";
+  }
+  if (route_entry.wcmp_group.empty() && expected_wcmp_group_existence) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Empty wcmp_group_id for route with " << route_entry.action
+           << " action";
+  }
+  if (!route_entry.wcmp_group.empty() && !expected_wcmp_group_existence) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Non-empty wcmp_group_id for route with " << route_entry.action
+           << " action";
+  }
+  if (route_entry.route_metadata.empty() && expected_route_metadata_existence) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Empty route_metadata for route with " << route_entry.action
+           << " action";
+  }
+  if (!route_entry.route_metadata.empty() &&
+      !expected_route_metadata_existence) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Non-empty route_metadata for route with " << route_entry.action
+           << " action";
+  }
+  return ReturnCode();
 }
 
 // Returns the nexthop OID of the given entry.
@@ -81,7 +82,8 @@ sai_object_id_t getNexthopOid(const P4RouteEntry &route_entry, const P4OidMapper
         if (!mapper.getOID(SAI_OBJECT_TYPE_NEXT_HOP, nexthop_key, &oid))
         {
             std::stringstream msg;
-            msg << "Nexthop " << QuotedVar(route_entry.nexthop_id) << " does not exist";
+            msg << "Nexthop " << QuotedVar(route_entry.nexthop_id)
+                << " does not exist";
             SWSS_LOG_ERROR("%s", msg.str().c_str());
             SWSS_RAISE_CRITICAL_STATE(msg.str());
             return oid;
@@ -93,7 +95,7 @@ sai_object_id_t getNexthopOid(const P4RouteEntry &route_entry, const P4OidMapper
         if (!mapper.getOID(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, wcmp_group_key, &oid))
         {
             std::stringstream msg;
-            msg << "WCMP group " << QuotedVar(route_entry.nexthop_id) << " does not exist";
+            msg << "WCMP group " << QuotedVar(route_entry.wcmp_group) << " does not exist";
             SWSS_LOG_ERROR("%s", msg.str().c_str());
             SWSS_RAISE_CRITICAL_STATE(msg.str());
             return oid;
@@ -295,8 +297,10 @@ bool RouteUpdater::checkAction(int idx) const {
 }
 
 RouteManager::RouteManager(P4OidMapper *p4oidMapper, VRFOrch *vrfOrch, ResponsePublisherInterface *publisher)
-    : m_vrfOrch(vrfOrch), m_routerBulker(sai_route_api, gMaxBulkSize)
-{
+    : m_vrfOrch(vrfOrch),
+      m_routerBulker(sai_route_api, gMaxBulkSize),
+      m_asic_db("ASIC_DB", 0),
+      m_asic_state_table(&m_asic_db, "ASIC_STATE") {
     SWSS_LOG_ENTER();
 
     assert(p4oidMapper != nullptr);
@@ -401,7 +405,8 @@ ReturnCodeOr<P4RouteEntry> RouteManager::deserializeRouteEntry(const std::string
         else if (field != p4orch::kControllerMetadata)
         {
             return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                   << "Unexpected field " << QuotedVar(field) << " in " << table_name;
+                   << "Unexpected field " << QuotedVar(field) << " in "
+                   << table_name;
         }
     }
 
@@ -459,7 +464,8 @@ ReturnCode RouteManager::validateRouteEntry(const P4RouteEntry &route_entry, con
 ReturnCode RouteManager::validateSetRouteEntry(const P4RouteEntry &route_entry)
 {
     auto *route_entry_ptr = getRouteEntry(route_entry.route_entry_key);
-    bool exist_in_mapper = m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_ROUTE_ENTRY, route_entry.route_entry_key);
+    bool exist_in_mapper = m_p4OidMapper->existsOID(
+        SAI_OBJECT_TYPE_ROUTE_ENTRY, route_entry.route_entry_key);
     if (route_entry_ptr == nullptr && exist_in_mapper)
     {
         return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND) << "Route entry does not exist in manager but exists in the "
@@ -482,49 +488,48 @@ ReturnCode RouteManager::validateSetRouteEntry(const P4RouteEntry &route_entry)
     }
     if (action == p4orch::kSetNexthopId)
     {
-        RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
-            /*expected_next_hop_existence=*/true,
-            /*expected_wcmp_group_existence=*/false,
-            /*expected_route_metadata_existence=*/false, route_entry));
+      RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
+          /*expected_next_hop_existence=*/true,
+          /*expected_wcmp_group_existence=*/false,
+          /*expected_route_metadata_existence=*/false, route_entry));
     }
     else if (action == p4orch::kSetWcmpGroupId)
     {
-        RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
-            /*expected_next_hop_existence=*/false,
-            /*expected_wcmp_group_existence=*/true,
-            /*expected_route_metadata_existence=*/false, route_entry));
+      RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
+          /*expected_next_hop_existence=*/false,
+          /*expected_wcmp_group_existence=*/true,
+          /*expected_route_metadata_existence=*/false, route_entry));
     }
     else if (action == p4orch::kSetNexthopIdAndMetadata)
     {
-        RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
-            /*expected_next_hop_existence=*/true,
-            /*expected_wcmp_group_existence=*/false,
-            /*expected_route_metadata_existence=*/true, route_entry));
+      RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
+          /*expected_next_hop_existence=*/true,
+          /*expected_wcmp_group_existence=*/false,
+          /*expected_route_metadata_existence=*/true, route_entry));
     }
     else if (action == p4orch::kSetWcmpGroupIdAndMetadata)
     {
-        RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
-            /*expected_next_hop_existence=*/false,
-            /*expected_wcmp_group_existence=*/true,
-            /*expected_route_metadata_existence=*/true, route_entry));
+      RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
+          /*expected_next_hop_existence=*/false,
+          /*expected_wcmp_group_existence=*/true,
+          /*expected_route_metadata_existence=*/true, route_entry));
     }
     else if (action == p4orch::kDrop || action == p4orch::kTrap)
     {
-        RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
-            /*expected_next_hop_existence=*/false,
-            /*expected_wcmp_group_existence=*/false,
-            /*expected_route_metadata_existence=*/false, route_entry));
+      RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
+          /*expected_next_hop_existence=*/false,
+          /*expected_wcmp_group_existence=*/false,
+          /*expected_route_metadata_existence=*/false, route_entry));
     }
     else if (action == p4orch::kSetMetadataAndDrop)
     {
-        RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
-            /*expected_next_hop_existence=*/false,
-            /*expected_wcmp_group_existence=*/false,
-            /*expected_route_metadata_existence=*/true, route_entry));
-    }
-    else
-    {
-        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Invalid action " << QuotedVar(action);
+      RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
+          /*expected_next_hop_existence=*/false,
+          /*expected_wcmp_group_existence=*/false,
+          /*expected_route_metadata_existence=*/true, route_entry));
+    } else {
+      return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+             << "Invalid action " << QuotedVar(action);
     }
 
     if (!route_entry.route_metadata.empty())
@@ -546,14 +551,15 @@ ReturnCode RouteManager::validateSetRouteEntry(const P4RouteEntry &route_entry)
 
 ReturnCode RouteManager::validateDelRouteEntry(const P4RouteEntry &route_entry)
 {
-    if (getRouteEntry(route_entry.route_entry_key) == nullptr)
-    {
-        return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND) << "Route entry does not exist";
-    }
-    if (!m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_ROUTE_ENTRY, route_entry.route_entry_key))
-    {
-        RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL("Route entry does not exist in the centralized map");
-    }
+  if (getRouteEntry(route_entry.route_entry_key) == nullptr) {
+    return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+           << "Route entry does not exist";
+  }
+  if (!m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_ROUTE_ENTRY,
+                                route_entry.route_entry_key)) {
+    RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL(
+        "Route entry does not exist in the centralized map");
+  }
     if (!route_entry.action.empty())
     {
         return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Non-empty action for Del route";
@@ -958,7 +964,8 @@ ReturnCode RouteManager::drain() {
     }
     route_entry_list.insert(route_entry.route_entry_key);
 
-    bool update = (getRouteEntry(route_entry.route_entry_key) != nullptr);
+    auto* old_route_entry_ptr = getRouteEntry(route_entry.route_entry_key);
+    bool update = (old_route_entry_ptr != nullptr);
     if (prev_op == "") {
       prev_op = operation;
       prev_update = update;
@@ -987,7 +994,8 @@ ReturnCode RouteManager::drain() {
   }
 
   if (!route_list.empty()) {
-    auto rc = processRouteEntries(route_list, tuple_list, prev_op, prev_update);
+    ReturnCode rc =
+        processRouteEntries(route_list, tuple_list, prev_op, prev_update);
     if (!rc.ok()) {
       status = rc;
     }
@@ -1117,7 +1125,6 @@ std::string RouteManager::verifyStateCache(const P4RouteEntry &app_db_entry, con
             << QuotedVar(route_entry->route_metadata) << " in route manager.";
         return msg.str();
     }
-
     return "";
 }
 
@@ -1146,20 +1153,29 @@ std::string RouteManager::verifyStateAsicDb(const P4RouteEntry *route_entry)
         exp_attrs.push_back(attr);
         attr.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
         attr.value.u32 = swss::to_uint<uint32_t>(route_entry->route_metadata);
-        exp_attrs.push_back(attr);
-    }
-    else
-    {
-        attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
-        attr.value.oid = getNexthopOid(*route_entry, *m_p4OidMapper);
-        exp_attrs.push_back(attr);
-        if (route_entry->action == p4orch::kSetNexthopIdAndMetadata ||
-            route_entry->action == p4orch::kSetWcmpGroupIdAndMetadata)
-        {
-            attr.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
-            attr.value.u32 = swss::to_uint<uint32_t>(route_entry->route_metadata);
-            exp_attrs.push_back(attr);
+        if (attr.value.u32 == 0) {
+          // OA might not set the metadata if it is zero since it is the
+          // default.
+          opt_attrs.push_back(attr);
+        } else {
+          exp_attrs.push_back(attr);
         }
+    } else {
+      attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+      attr.value.oid = getNexthopOid(*route_entry, *m_p4OidMapper);
+      exp_attrs.push_back(attr);
+      if (route_entry->action == p4orch::kSetNexthopIdAndMetadata ||
+          route_entry->action == p4orch::kSetWcmpGroupIdAndMetadata) {
+        attr.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
+        attr.value.u32 = swss::to_uint<uint32_t>(route_entry->route_metadata);
+        if (attr.value.u32 == 0) {
+          // OA might not set the metadata if it is zero since it is the
+          // default.
+          opt_attrs.push_back(attr);
+        } else {
+          exp_attrs.push_back(attr);
+        }
+      }
     }
 
     if (route_entry->action == p4orch::kDrop || route_entry->action == p4orch::kTrap)
@@ -1176,34 +1192,34 @@ std::string RouteManager::verifyStateAsicDb(const P4RouteEntry *route_entry)
         attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
         attr.value.oid = SAI_NULL_OBJECT_ID;
         opt_attrs.push_back(attr);
-    }
-    else
-    {
-        attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
-        attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+    } else {
+      attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+      attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+      opt_attrs.push_back(attr);
+      if (route_entry->action != p4orch::kSetNexthopIdAndMetadata &&
+          route_entry->action != p4orch::kSetWcmpGroupIdAndMetadata) {
+        attr.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
+        attr.value.u32 = 0;
         opt_attrs.push_back(attr);
-        if (route_entry->action != p4orch::kSetNexthopIdAndMetadata &&
-            route_entry->action != p4orch::kSetWcmpGroupIdAndMetadata)
-        {
-            attr.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
-            attr.value.u32 = 0;
-            opt_attrs.push_back(attr);
-        }
+      }
     }
 
-    std::vector<swss::FieldValueTuple> exp = saimeta::SaiAttributeList::serialize_attr_list(
-        SAI_OBJECT_TYPE_ROUTE_ENTRY, (uint32_t)exp_attrs.size(), exp_attrs.data(), /*countOnly=*/false);
-    std::vector<swss::FieldValueTuple> opt = saimeta::SaiAttributeList::serialize_attr_list(
-        SAI_OBJECT_TYPE_ROUTE_ENTRY, (uint32_t)opt_attrs.size(), opt_attrs.data(), /*countOnly=*/false);
+    std::vector<swss::FieldValueTuple> exp =
+        saimeta::SaiAttributeList::serialize_attr_list(
+            SAI_OBJECT_TYPE_ROUTE_ENTRY, (uint32_t)exp_attrs.size(),
+            exp_attrs.data(),
+            /*countOnly=*/false);
+    std::vector<swss::FieldValueTuple> opt =
+        saimeta::SaiAttributeList::serialize_attr_list(
+            SAI_OBJECT_TYPE_ROUTE_ENTRY, (uint32_t)opt_attrs.size(),
+            opt_attrs.data(),
+            /*countOnly=*/false);
 
-    swss::DBConnector db("ASIC_DB", 0);
-    swss::Table table(&db, "ASIC_STATE");
     std::string key = sai_serialize_object_type(SAI_OBJECT_TYPE_ROUTE_ENTRY) +
                       ":" +
                       sai_serialize_route_entry(prepareSaiEntry(*route_entry));
     std::vector<swss::FieldValueTuple> values;
-    if (!table.get(key, values))
-    {
+    if (!m_asic_state_table.get(key, values)) {
         return std::string("ASIC DB key not found ") + key;
     }
 

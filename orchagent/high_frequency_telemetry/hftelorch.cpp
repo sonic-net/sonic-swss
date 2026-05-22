@@ -173,8 +173,96 @@ bool HFTelOrch::isSupportedHFTel(sai_object_id_t switch_id)
     stats_st_capability.count = 0;
     stats_st_capability.list = nullptr;
     sai_status_t status = sai_query_stats_st_capability(switch_id, SAI_OBJECT_TYPE_PORT, &stats_st_capability);
+    if (status != SAI_STATUS_SUCCESS && status != SAI_STATUS_BUFFER_OVERFLOW)
+    {
+        SWSS_LOG_NOTICE("Streaming stats not supported, HFTel disabled");
+        return false;
+    }
 
-    return status == SAI_STATUS_SUCCESS || status == SAI_STATUS_BUFFER_OVERFLOW;
+    struct { sai_object_type_t obj; sai_attr_id_t attr; bool needCreate; bool needSet; const char *name; } attrChecks[] = {
+        {SAI_OBJECT_TYPE_TAM_COLLECTOR, SAI_TAM_COLLECTOR_ATTR_SRC_IP,       true, false, "SAI_TAM_COLLECTOR_ATTR_SRC_IP"},
+        {SAI_OBJECT_TYPE_TAM_COLLECTOR, SAI_TAM_COLLECTOR_ATTR_DST_IP,       true, false, "SAI_TAM_COLLECTOR_ATTR_DST_IP"},
+        {SAI_OBJECT_TYPE_TAM_COLLECTOR, SAI_TAM_COLLECTOR_ATTR_TRANSPORT,    true, false, "SAI_TAM_COLLECTOR_ATTR_TRANSPORT"},
+        {SAI_OBJECT_TYPE_TAM_COLLECTOR, SAI_TAM_COLLECTOR_ATTR_LOCALHOST,    true, false, "SAI_TAM_COLLECTOR_ATTR_LOCALHOST"},
+        {SAI_OBJECT_TYPE_TAM_COLLECTOR, SAI_TAM_COLLECTOR_ATTR_HOSTIF_TRAP,  true, false, "SAI_TAM_COLLECTOR_ATTR_HOSTIF_TRAP"},
+        {SAI_OBJECT_TYPE_TAM_COLLECTOR, SAI_TAM_COLLECTOR_ATTR_DSCP_VALUE,   true, false, "SAI_TAM_COLLECTOR_ATTR_DSCP_VALUE"},
+        {SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_TAM_TEL_TYPE_CONFIG_CHANGE_NOTIFY, false, true, "SAI_SWITCH_ATTR_TAM_TEL_TYPE_CONFIG_CHANGE_NOTIFY"},
+        {SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_TAM_OBJECT_ID,                     false, true, "SAI_SWITCH_ATTR_TAM_OBJECT_ID"},
+    };
+
+    for (const auto &chk : attrChecks)
+    {
+        sai_attr_capability_t capability = {};
+        status = sai_query_attribute_capability(switch_id, chk.obj, chk.attr, &capability);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_NOTICE("HFTel: %s capability query failed, HFTel disabled", chk.name);
+            return false;
+        }
+
+        if (chk.needCreate && !capability.create_implemented)
+        {
+            SWSS_LOG_NOTICE("HFTel: %s create not supported, HFTel disabled", chk.name);
+            return false;
+        }
+
+        if (chk.needSet && !capability.set_implemented)
+        {
+            SWSS_LOG_NOTICE("HFTel: %s set not supported, HFTel disabled", chk.name);
+            return false;
+        }
+    }
+
+    struct { sai_object_type_t obj; sai_attr_id_t attr; int32_t val; const char *valName; } enumChecks[] = {
+        {SAI_OBJECT_TYPE_TAM_TRANSPORT,
+            SAI_TAM_TRANSPORT_ATTR_TRANSPORT_TYPE,
+            SAI_TAM_TRANSPORT_TYPE_NONE,
+            "SAI_TAM_TRANSPORT_TYPE_NONE"},
+        {SAI_OBJECT_TYPE_TAM,
+            SAI_TAM_ATTR_TAM_BIND_POINT_TYPE_LIST,
+            SAI_TAM_BIND_POINT_TYPE_SWITCH,
+            "SAI_TAM_BIND_POINT_TYPE_SWITCH"},
+    };
+
+    for (const auto &chk : enumChecks)
+    {
+        const auto *meta = sai_metadata_get_attr_metadata(chk.obj, chk.attr);
+        if (!meta || (!meta->isenum && !meta->isenumlist))
+        {
+            SWSS_LOG_NOTICE("HFTel: %s is not an enum attribute, HFTel disabled", chk.valName);
+            return false;
+        }
+
+        std::vector<int32_t> valuesList(meta->enummetadata->valuescount);
+        sai_s32_list_t values;
+        values.count = static_cast<uint32_t>(valuesList.size());
+        values.list = valuesList.data();
+
+        status = sai_query_attribute_enum_values_capability(switch_id, chk.obj, chk.attr, &values);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_NOTICE("HFTel: enum capability query for %s failed, HFTel disabled", chk.valName);
+            return false;
+        }
+
+        bool found = false;
+        for (uint32_t i = 0; i < values.count; i++)
+        {
+            if (values.list[i] == chk.val)
+            {
+                found = true;
+                break;
+            }
+        }
+
+        if (!found)
+        {
+            SWSS_LOG_NOTICE("HFTel: enum value %s not supported, HFTel disabled", chk.valName);
+            return false;
+        }
+    }
+
+    return true;
 }
 
 task_process_status HFTelOrch::profileTableSet(const string &profile_name, const vector<FieldValueTuple> &values)

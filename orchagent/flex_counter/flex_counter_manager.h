@@ -27,6 +27,8 @@ enum class StatsMode
 enum class CounterType
 {
     PORT,
+    PORT_PHY_ATTR,
+    PORT_PHY_SERDES_ATTR,
     QUEUE,
     QUEUE_ATTR,
     PRIORITY_GROUP,
@@ -43,6 +45,7 @@ enum class CounterType
     DASH_METER,
     SRV6,
     SWITCH,
+    HA_SET,
 };
 
 extern bool gTraditionalFlexCounter;
