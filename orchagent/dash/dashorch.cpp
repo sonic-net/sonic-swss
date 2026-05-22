@@ -17,6 +17,7 @@
 #include "swssnet.h"
 #include "tokenize.h"
 #include "crmorch.h"
+#include "dashresulthelper.h"
 #include "saihelper.h"
 #include "directory.h"
 #include "flex_counter_manager.h"

@@ -8,6 +8,7 @@
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
 #include "mock_response_publisher.h"
+#include "dash/dashresulthelper.h"
 #include "saihelper.h"
 #include <sys/mman.h>
 

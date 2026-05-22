@@ -19,6 +19,7 @@
 #include "tokenize.h"
 #include "dashorch.h"
 #include "crmorch.h"
+#include "dashresulthelper.h"
 #include "saihelper.h"
 #include "directory.h"
 #include "dashtunnelorch.h"

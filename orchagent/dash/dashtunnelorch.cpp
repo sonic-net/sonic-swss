@@ -4,6 +4,7 @@
 #include "sai.h"
 #include "taskworker.h"
 #include "pbutils.h"
+#include "dashresulthelper.h"
 #include "directory.h"
 #include "saihelper.h"
 
