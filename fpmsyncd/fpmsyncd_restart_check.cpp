@@ -44,27 +44,19 @@ void printUsage()
 
 
 /*
- * Before warm reboot freezes orchagent, this tool asks fpmsyncd to prepare for
- * warm reboot. With the ZMQ route fast path enabled, fpmsyncd's
- * ZmqProducerStateTable mirrors APPL_DB asynchronously via AsyncDBUpdater;
- * queued entries are lost at SIGKILL, leaving APPL_DB out of sync with ASIC_DB
- * so post-warm-boot apply_view removes valid routes. This tool sends a
- * notification on FPMSYNCD_RESTARTCHECK; fpmsyncd's handler updates STATE_DB
- * (WARM_RESTART_TABLE|fpmsyncd: state=ready) and replies READY on
- * FPMSYNCD_RESTARTCHECKREPLY.
- *
- * Iteration 1: notification round-trip + STATE_DB update + log markers only.
- * No drain flag, no AsyncDBUpdater queue check, no auto-resume timer.
+ * Drives the FPMSYNCD_RESTARTCHECK → REPLY round-trip from the warm-reboot
+ * script. fpmsyncd's handler gates new route updates into the AsyncDBUpdater
+ * queue, waits for the queue to drain, updates STATE_DB, and replies READY
+ * once it's safe to SIGKILL. --resume / -R short-circuits drain mode without
+ * waiting for the auto-resume timer.
  */
 int main(int argc, char **argv)
 {
     swss::Logger::getInstance().setMinPrio(swss::Logger::SWSS_INFO);
     SWSS_LOG_ENTER();
 
-    /* Defaults: 20 attempts (retryCount=19), 500ms reply wait per attempt,
-     * 500ms sleep between attempts, auto-resume timeout 0 = "use fpmsyncd's
-     * server-side default" (CONFIG_DB knob or compile-time 30s). Happy-path
-     * drain budget = 10 s. */
+    /* Defaults: 20 attempts × 500ms = ~10s drain budget. autoResumeTimeoutSec=0
+     * means "use fpmsyncd's server-side default". */
     int waitTime = 500;
     int retryCount = 19;
     int interSleepMs = 500;

@@ -162,12 +162,8 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     nl_connect(m_nl_sock, NETLINK_ROUTE);
     rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
 
-    /* Computed once: did createProducerStateTable hand us a ZmqProducerStateTable
-     * for either route table? This is the gate that decides whether the drain
-     * flag is meaningful — when ZMQ is disabled, both casts fail, the flag is
-     * never set by the fpmsyncd handler, and the gate at setRouteWithWarmRestart
-     * / delWithWarmRestart is a no-op (so behavior is identical to today on
-     * non-ZMQ deployments). */
+    /* Drain-barrier gate: ZMQ off → both casts fail → handler never sets
+     * the drain flag → setRouteWithWarmRestart / delWithWarmRestart unaffected. */
     m_hasZmqProducerTables =
         (dynamic_pointer_cast<ZmqProducerStateTable>(m_routeTable) != nullptr) ||
         (dynamic_pointer_cast<ZmqProducerStateTable>(m_label_routeTable) != nullptr);
@@ -192,11 +188,8 @@ size_t RouteSync::totalDbUpdaterQueueSize() const
 void RouteSync::setRouteWithWarmRestart(FieldValueTupleWrapperBase & fvw,
                                         ProducerStateTable & table )
 {
-    /* Warm-reboot drain barrier: while preparing for warm reboot, drop new
-     * route updates so the ZmqProducerStateTable AsyncDBUpdater queue can
-     * reach zero before fpmsyncd is killed. The flag is only set by the
-     * FPMSYNCD_RESTARTCHECK handler when hasZmqProducerTables() is true,
-     * so non-ZMQ deployments are unaffected. */
+    /* Drain barrier: drop new SETs while preparing for warm-reboot so the
+     * AsyncDBUpdater queue can drain to zero before SIGKILL. */
     if (m_drainingForWarmRestart)
     {
         SWSS_LOG_INFO("draining: dropping route SET for %s", fvw.key.c_str());

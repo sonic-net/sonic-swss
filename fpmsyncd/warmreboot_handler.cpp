@@ -16,9 +16,7 @@ RestartCheckRequest parseRestartCheckValues(
 
         if (field == "autoResumeTimeoutSec")
         {
-            // Per-call override. Only honor positive values; anything else
-            // (0, negative, garbage) leaves req.autoResumeSec at 0 and the
-            // caller falls back to defaultAutoResumeSec.
+            // Positive override only; anything else falls back to default.
             int parsed = std::atoi(value.c_str());
             if (parsed > 0)
             {
@@ -29,8 +27,7 @@ RestartCheckRequest parseRestartCheckValues(
         {
             req.resumeRequested = true;
         }
-        // Unknown fields ignored — forward-compatibility with future
-        // tool versions that add new optional fields.
+        // Unknown fields ignored (forward compat).
     }
 
     return req;
@@ -43,28 +40,14 @@ RestartCheckOutcome handleRestartCheck(
     bool                       currentlyDraining,
     int                        defaultAutoResumeSec)
 {
-    // Effective auto-resume seconds: per-call override > default.
     const int effectiveAutoResumeSec =
         (req.autoResumeSec > 0) ? req.autoResumeSec : defaultAutoResumeSec;
 
     RestartCheckOutcome out;
     out.drainQueueSize = queueSize;
 
-    // -------------------- Explicit resume path --------------------
-    //
-    // The caller (warm-reboot abort cleanup, or operator with -R/--resume)
-    // wants us to exit drain mode NOW and force a zebra re-dump, instead
-    // of waiting for the auto-resume timer.
-    //
-    // Two sub-cases:
-    //   (a) currentlyDraining == false → no-op. We still reply RESUMED
-    //       (so the tool's exit code is 0) but do NOT clear a non-existent
-    //       drain flag, do NOT touch STATE_DB (so we don't overwrite the
-    //       "ready" / "auto_resumed" trail with bogus "resumed" state),
-    //       and do NOT force-disconnect a healthy FPM connection.
-    //   (b) currentlyDraining == true  → full resume sequence: clear drain
-    //       flag, disarm timer, write STATE_DB drain_state=resumed, send
-    //       RESUMED, force reconnect.
+    // Resume path: not-draining → reply-only no-op (preserve FPM, leave
+    // STATE_DB trail); draining → clear flag, disarm, force reconnect.
     if (req.resumeRequested)
     {
         const bool wasDraining = currentlyDraining;
@@ -76,11 +59,9 @@ RestartCheckOutcome handleRestartCheck(
 
         if (!wasDraining)
         {
-            // Sub-case (a): no-op. Leave outcome at NoChange / None / "".
             return out;
         }
 
-        // Sub-case (b): full resume.
         out.drainFlag      = RestartCheckOutcome::DrainFlag::Clear;
         out.timerAction    = RestartCheckOutcome::TimerAction::Disarm;
         out.drainState     = "resumed";
@@ -88,12 +69,8 @@ RestartCheckOutcome handleRestartCheck(
         return out;
     }
 
-    // -------------------- Normal restart-check path --------------------
-    //
-    // Decide drain flag and timer:
-    //   hasZmq && !currentlyDraining → enter drain mode; ArmFirst.
-    //   hasZmq &&  currentlyDraining → re-notification during drain; ReArm.
-    //   !hasZmq                      → nothing to drain; no flag, no timer.
+    // Normal path: ZMQ off → no drain/timer; ZMQ on → ArmFirst (or ReArm
+    // if already draining).
     if (hasZmq)
     {
         if (!currentlyDraining)
@@ -110,9 +87,6 @@ RestartCheckOutcome handleRestartCheck(
         }
     }
 
-    // Reply: READY when queue is empty (qsize == 0, always true when ZMQ
-    // is off because totalDbUpdaterQueueSize returns 0 in that case), else
-    // NOT_READY with queueSize for the tool's retry-loop logging.
     const bool ready  = (queueSize == 0);
     out.drainState    = ready ? "ready" : "draining";
     out.replyOp       = ready ? "READY" : "NOT_READY";
@@ -125,14 +99,10 @@ TimerFireOutcome handleDrainAutoResumeTimerFire(size_t queueSize)
 {
     TimerFireOutcome out;
     out.drainQueueSize = queueSize;
-    // Other fields fixed by struct defaults: clearDrainFlag=true,
-    // disarmTimer=true, drainState="auto_resumed", forceReconnect=true.
     return out;
 }
 
-// --------------------------------------------------------------
-// Startup helpers
-// --------------------------------------------------------------
+// ---------- Startup helpers ----------
 
 DrainAutoResumeSecParse parseDrainAutoResumeSec(
     const std::string& raw,
@@ -143,8 +113,7 @@ DrainAutoResumeSecParse parseDrainAutoResumeSec(
     DrainAutoResumeSecParse out;
     out.value = defaultSec;
 
-    // Empty or "None" — caller didn't set the field. (Python None gets
-    // serialized as the literal string "None" by sonic-cfggen renderers.)
+    // sonic-cfggen renders absent fields as literal "None".
     if (raw.empty() || raw == "None")
     {
         out.source = DrainAutoResumeSecParse::Source::Default;
@@ -154,14 +123,11 @@ DrainAutoResumeSecParse parseDrainAutoResumeSec(
     int parsed = 0;
     try
     {
-        // std::stoi parses leading digits and ignores trailing garbage
-        // ("5abc" → 5). We want strict — reject anything that isn't
-        // purely an integer (optionally with leading sign / whitespace).
+        // Strict: std::stoi tolerates trailing junk ("5abc" → 5); we don't.
         std::size_t consumed = 0;
         parsed = std::stoi(raw, &consumed);
         if (consumed != raw.size())
         {
-            // trailing non-digit chars: reject as invalid
             out.source = DrainAutoResumeSecParse::Source::Invalid;
             return out;
         }
@@ -176,7 +142,6 @@ DrainAutoResumeSecParse parseDrainAutoResumeSec(
 
     if (parsed < minSec || parsed > maxSec)
     {
-        // valid int, but outside the allowed range
         out.source = DrainAutoResumeSecParse::Source::OutOfRange;
         return out;
     }
@@ -194,18 +159,14 @@ int loadDrainAutoResumeSecFromConfigDb(
 {
     std::string raw;
     deviceMetadataTable.hget("localhost", "fpmsyncd_drain_auto_resume_sec", raw);
-    DrainAutoResumeSecParse p = parseDrainAutoResumeSec(raw, defaultSec, minSec, maxSec);
-    return p.value;
+    return parseDrainAutoResumeSec(raw, defaultSec, minSec, maxSec).value;
 }
 
 void clearStaleDrainStateFields(swss::Table& warmRestartStateTable)
 {
-    // Idempotent: hdel on an absent field is a no-op.
     warmRestartStateTable.hdel("fpmsyncd", "drain_state");
     warmRestartStateTable.hdel("fpmsyncd", "drain_queue_size");
-    // Legacy field name from an earlier iteration where we wrote a plain
-    // "queueSize" before introducing the drain_* namespace. Cleaned
-    // defensively in case the prior fpmsyncd was at that older version.
+    // Legacy field from before drain_* namespacing; cleaned defensively.
     warmRestartStateTable.hdel("fpmsyncd", "queueSize");
 }
 

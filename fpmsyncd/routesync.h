@@ -251,29 +251,16 @@ public:
         return m_warmStartHelper;
     }
 
-    /* Drain barrier for warm-reboot preparation.
-     * When set, setRouteWithWarmRestart / delWithWarmRestart early-return —
-     * preventing further enqueues into ZmqProducerStateTable's AsyncDBUpdater
-     * (the queue that, if lost at SIGTERM, would cause post-warm-boot
-     * apply_view to SAI-remove routes that are still in ASIC but absent
-     * from APPL_DB). Flag is meaningful only when hasZmqProducerTables()
-     * is true; the fpmsyncd handler enforces that gate before setting it.
-     */
+    /* Warm-reboot drain barrier: gates setRouteWithWarmRestart /
+     * delWithWarmRestart. Only meaningful when hasZmqProducerTables(). */
     bool isDrainingForWarmRestart() const { return m_drainingForWarmRestart; }
     void setDrainingForWarmRestart(bool v) { m_drainingForWarmRestart = v; }
 
-    /* True iff any of the producer-state-tables that flow through the
-     * warm-restart gate (m_routeTable, m_label_routeTable) was constructed
-     * as a ZmqProducerStateTable. Computed once in the ctor; static for
-     * the lifetime of fpmsyncd.
-     */
+    /* True if either route table is a ZmqProducerStateTable. Set once in ctor. */
     bool hasZmqProducerTables() const { return m_hasZmqProducerTables; }
 
-    /* Sum of the AsyncDBUpdater pending-queue depths across the ZMQ
-     * producer tables. Returns 0 when no ZMQ tables are present.
-     * Cheap: two dynamic_pointer_casts plus two atomic loads on the
-     * AsyncDBUpdater internal queue. Safe to call from the main select
-     * loop. */
+    /* Sum of AsyncDBUpdater pending-queue depths across ZMQ tables.
+     * Returns 0 if no ZMQ tables are wired. */
     size_t totalDbUpdaterQueueSize() const;
 
 private:
