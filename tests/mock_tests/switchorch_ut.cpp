@@ -290,11 +290,18 @@ namespace switchorch_test
         ASSERT_EQ(value, "true");
 
         // Test that mirror capabilities are also queried and stored
-        // The actual values depend on the SAI implementation, but we can verify the entries exist
         bool ingress_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_PORT_INGRESS_MIRROR_CAPABLE, value);
         ASSERT_TRUE(ingress_exists);
         bool egress_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_PORT_EGRESS_MIRROR_CAPABLE, value);
         ASSERT_TRUE(egress_exists);
+
+        // Verify new sampled mirror capability entries exist in STATE_DB
+        bool sample_mirror_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_PORT_INGRESS_SAMPLE_MIRROR_CAPABLE, value);
+        ASSERT_TRUE(sample_mirror_exists);
+        bool samplepacket_trunc_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE, value);
+        ASSERT_TRUE(samplepacket_trunc_exists);
+        bool erspan_id_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_MIRROR_ERSPAN_SESSION_ID_CAPABLE, value);
+        ASSERT_TRUE(erspan_id_exists);
     }
 
     TEST_F(SwitchOrchTest, SwitchOrchTestCheckCapabilityUnsupported)
@@ -316,11 +323,18 @@ namespace switchorch_test
         ASSERT_EQ(value, "false");
 
         // Test that mirror capabilities are also queried and stored
-        // The actual values depend on the SAI implementation, but we can verify the entries exist
         bool ingress_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_PORT_INGRESS_MIRROR_CAPABLE, value);
         ASSERT_TRUE(ingress_exists);
         bool egress_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_PORT_EGRESS_MIRROR_CAPABLE, value);
         ASSERT_TRUE(egress_exists);
+
+        // Verify new sampled mirror capability entries exist
+        bool sample_mirror_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_PORT_INGRESS_SAMPLE_MIRROR_CAPABLE, value);
+        ASSERT_TRUE(sample_mirror_exists);
+        bool samplepacket_trunc_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE, value);
+        ASSERT_TRUE(samplepacket_trunc_exists);
+        bool erspan_id_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_MIRROR_ERSPAN_SESSION_ID_CAPABLE, value);
+        ASSERT_TRUE(erspan_id_exists);
 
         // case: unsupported severity. To satisfy coverage.
         vector<string> ts;

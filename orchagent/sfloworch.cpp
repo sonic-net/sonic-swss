@@ -17,6 +17,18 @@ SflowOrch::SflowOrch(DBConnector* db, vector<string> &tableNames) :
     m_sflowStatus = false;
 }
 
+bool SflowOrch::isSflowSamplePacket(sai_object_id_t oid)
+{
+    for (const auto &it : m_sflowRateSampleMap)
+    {
+        if (it.second.m_sample_id == oid)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool SflowOrch::sflowCreateSession(uint32_t rate, SflowSession &session)
 {
     sai_attribute_t attr;
@@ -117,6 +129,25 @@ bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id,
 
     if (direction == "both" || direction == "rx")
     {
+        // Conflict detection: check if a sampled mirror session is already bound
+        // to this port's ingress. SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION and
+        // SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE share the underlying sampling
+        // hardware — they cannot coexist on the same port.
+        sai_attribute_t check_attr;
+        sai_object_id_t mirror_list[1] = { SAI_NULL_OBJECT_ID };
+        check_attr.id = SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION;
+        check_attr.value.objlist.count = 1;
+        check_attr.value.objlist.list = mirror_list;
+        sai_rc = sai_port_api->get_port_attribute(port_id, 1, &check_attr);
+        if (sai_rc == SAI_STATUS_SUCCESS && check_attr.value.objlist.count > 0 &&
+            mirror_list[0] != SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_ERROR("Port %" PRIx64 ": SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION "
+                           "is already set (sampled mirror active). Cannot enable sFlow "
+                           "on the same port", port_id);
+            return false;
+        }
+
         attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
         attr.value.oid = sample_id;
         sai_rc = sai_port_api->set_port_attribute(port_id, &attr);

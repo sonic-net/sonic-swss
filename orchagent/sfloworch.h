@@ -30,6 +30,7 @@ class SflowOrch : public Orch
 {
 public:
     SflowOrch(DBConnector* db, std::vector<std::string> &tableNames);
+    bool isSflowSamplePacket(sai_object_id_t oid);
 
 private:
     SflowPortInfoMap    m_sflowPortInfoMap;

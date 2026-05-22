@@ -37,11 +37,15 @@ struct MirrorEntry
     uint8_t dscp;
     uint8_t ttl;
     uint8_t queue;
+    uint16_t truncate_size;
+    uint16_t erspan_id;
+    uint32_t sample_rate;
     string policer;
     string dst_port;
     string src_port;
     string direction;
     string type;
+    string congestion_mode;
 
     struct
     {
@@ -58,6 +62,8 @@ struct MirrorEntry
     } neighborInfo;
 
     sai_object_id_t sessionId;
+    sai_object_id_t counterOid;
+    sai_object_id_t samplePacketId;
 
     int64_t refCount;
 
@@ -109,6 +115,7 @@ private:
 
     task_process_status createEntry(const string&, const vector<FieldValueTuple>&);
     task_process_status deleteEntry(const string&);
+    task_process_status updateEntry(const string&, const vector<FieldValueTuple>&);
 
     bool activateSession(const string&, MirrorEntry&);
     bool deactivateSession(const string&, MirrorEntry&);
@@ -116,6 +123,10 @@ private:
     bool updateSessionDstMac(const string&, MirrorEntry&);
     bool updateSessionDstPort(const string&, MirrorEntry&);
     bool updateSessionType(const string&, MirrorEntry&);
+    bool updateSessionTruncateSize(const string&, MirrorEntry&, const string& value);
+
+    bool createSamplePacket(const string&, MirrorEntry&);
+    bool removeSamplePacket(const string&, MirrorEntry&);
 
     /*
      * Store mirror session state in StateDB
@@ -137,6 +148,8 @@ private:
     bool validateDstPort(const string& dstPort);
     bool setUnsetPortMirror(Port port, bool ingress, bool set,
                                     sai_object_id_t sessionId);
+    bool setUnsetPortSampleMirror(Port port, bool ingress, bool set,
+                                    sai_object_id_t sessionId, sai_object_id_t samplePacketId);
     bool configurePortMirrorSession(const string&, MirrorEntry&, bool enable);
 
     void doTask(Consumer& consumer);
