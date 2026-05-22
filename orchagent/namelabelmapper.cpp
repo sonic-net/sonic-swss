@@ -59,6 +59,12 @@ bool NameLabelMapper::getLabel(_In_ sai_object_type_t object_type, _In_ const st
     return true;
 }
 
+bool NameLabelMapper::isLabelValid(std::string label) {
+  SWSS_LOG_ENTER();
+  size_t len = label.length();
+  return len >= 16 && len < 32;
+}
+
 bool NameLabelMapper::eraseLabel(_In_ sai_object_type_t object_type, _In_ const std::string &key)
 {
     SWSS_LOG_ENTER();
