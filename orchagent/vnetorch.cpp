@@ -772,19 +772,26 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
     vector<sai_object_id_t> next_hop_ids;
     set<NextHopKey> next_hop_set = nexthops.getNextHops();
     std::map<sai_object_id_t, NextHopKey> nhopgroup_members_set;
-    std::map<NextHopKey, uint32_t> nh_seq_id_in_nhgrp;
+    std::map<sai_object_id_t, uint32_t> nh_seq_id_in_nhgrp;
     uint32_t seq_id = 0;
 
     for (auto it : next_hop_set)
     {
-        nh_seq_id_in_nhgrp[it] = ++seq_id;
+        uint32_t nh_seq_id = ++seq_id;
         if (monitoring != VNET_MONITORING_TYPE_CUSTOM && monitoring != VNET_MONITORING_TYPE_CUSTOM_BFD && nexthop_info_[vnet].find(it.ip_address) != nexthop_info_[vnet].end() && nexthop_info_[vnet][it.ip_address].bfd_state != SAI_BFD_SESSION_STATE_UP)
         {
             continue;
         }
+<<<<<<< HEAD
         // VNET_ROUTE_TUNNEL_TABLE endpoints carry only IPs, so the NextHopKey
         // alias is empty. For directly-connected local endpoints, resolve the
         // RIF alias from NeighOrch (indexed by IP+alias) before lookup.
+=======
+        // VNET_ROUTE_TUNNEL_TABLE endpoints can be processed before the neighbor
+        // is resolved. In that ordering, the cached NextHopKey is created with
+        // only IP and an empty alias. For directly-connected local endpoints,
+        // resolve the current RIF alias from NeighOrch before has/getNextHop().
+>>>>>>> e712be0f (address comment)
         if (isLocalEp && it.alias.empty())
         {
             NeighborEntry neigh_entry;
@@ -802,6 +809,7 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
         sai_object_id_t next_hop_id = isLocalEp? gNeighOrch->getNextHopId(it):vrf_obj->getTunnelNextHop(it);
         next_hop_ids.push_back(next_hop_id);
         nhopgroup_members_set[next_hop_id] = it;
+        nh_seq_id_in_nhgrp[next_hop_id] = nh_seq_id;
     }
 
     sai_attribute_t nhg_attr;
@@ -848,7 +856,7 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
         if (gSwitchOrch->checkOrderedEcmpEnable())
         {
             nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID;
-            nhgm_attr.value.u32 = nh_seq_id_in_nhgrp[nhopgroup_members_set.find(nhid)->second];
+            nhgm_attr.value.u32 = nh_seq_id_in_nhgrp.at(nhid);
             nhgm_attrs.push_back(nhgm_attr);
         }
 
@@ -954,9 +962,16 @@ bool VNetRouteOrch::createNextHopGroup(const string& vnet,
     {
         NextHopKey nexthop = *nexthops.getNextHops().begin();
         bool isLocalEp = isLocalEndpoint(vnet, nexthop.ip_address);
+<<<<<<< HEAD
         // VNET_ROUTE_TUNNEL_TABLE endpoints carry only IPs, so the NextHopKey
         // alias is empty. For directly-connected local endpoints, resolve the
         // RIF alias from NeighOrch (indexed by IP+alias) before lookup.
+=======
+        // VNET_ROUTE_TUNNEL_TABLE endpoints can be seen before neighbor
+        // resolution. In that case, the stored NextHopKey may still carry an
+        // empty alias. For local endpoints, refresh alias from NeighOrch so the
+        // key matches the resolved IP@ifname form used by NeighOrch caches.
+>>>>>>> e712be0f (address comment)
         if (isLocalEp && nexthop.alias.empty())
         {
             NeighborEntry neigh_entry;
