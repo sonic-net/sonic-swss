@@ -4,6 +4,7 @@
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 #include <cstdlib>
+#include <cstring>
 #include <mutex>
 
 #define IPV6_MAX_BYTE      16
@@ -666,12 +667,15 @@ namespace ut_fpmsyncd
         bool has_srv6 = true;
         bool has_seg6_segs = true;
         fib::nexthop_srv6 *nh_srv6_in = new fib::nexthop_srv6();
-        fib::seg6_seg_stack *nh_seg6_segs_in = new fib::seg6_seg_stack();
-        std::vector<struct in6_addr> nh_segs_in;
         struct in6_addr sid;
         inet_pton(AF_INET6, vpnSid, &sid);
-        nh_segs_in.push_back(sid);
+        size_t seg_stack_size = sizeof(fib::seg6_seg_stack) + 1 * sizeof(struct in6_addr);
+        fib::seg6_seg_stack *nh_seg6_segs_in = static_cast<fib::seg6_seg_stack*>(malloc(seg_stack_size));
+        memset(nh_seg6_segs_in, 0, seg_stack_size);
         nh_seg6_segs_in->num_segs = 1;
+        memcpy(&nh_seg6_segs_in->seg[0], &sid, sizeof(struct in6_addr));
+        std::vector<struct in6_addr> nh_segs_in;
+        nh_segs_in.push_back(sid);
         std::vector<uint32_t> dependents_in;
         std::vector<uint32_t> depends_in;
         NextHopGroupFull nhg = NextHopGroupFull(id_in, key_in, type_in, vrf_id_in, ifindex_t_in, ifname_in, depends_in, dependents_in,
