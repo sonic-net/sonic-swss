@@ -246,10 +246,64 @@ void BfdOrch::doTask(NotificationConsumer &consumer)
 
             SWSS_LOG_INFO("Get BFD session state change notification id:%" PRIx64 " state: %s", id, session_state_lookup.at(state).c_str());
 
+            if (bfd_session_lookup.find(id) == bfd_session_lookup.end())
+            {
+                SWSS_LOG_NOTICE("BFD session missing at state change id:%" PRIx64 " state: %s", id, session_state_lookup.at(state).c_str());
+                continue;
+            }
+
             if (state != bfd_session_lookup[id].state)
             {
                 auto key = bfd_session_lookup[id].peer;
-                m_stateBfdSessionTable.hset(key, "state", session_state_lookup.at(state));
+                vector<FieldValueTuple> fvVector;
+                fvVector.emplace_back("state", session_state_lookup.at(state));
+
+                // Update remote parameter after each state change
+                sai_attribute_t attr;
+                vector<sai_attribute_t> attrs;
+
+                attr.id = SAI_BFD_SESSION_ATTR_REMOTE_DISCRIMINATOR;
+                attr.value.u32 = 0;
+                attrs.emplace_back(attr);
+
+                attr.id = SAI_BFD_SESSION_ATTR_REMOTE_MULTIPLIER;
+                attr.value.u32 = 0;
+                attrs.emplace_back(attr);
+
+                attr.id = SAI_BFD_SESSION_ATTR_REMOTE_MIN_RX;
+                attrs.emplace_back(attr);
+
+                attr.id = SAI_BFD_SESSION_ATTR_REMOTE_MIN_TX;
+                attrs.emplace_back(attr);
+
+                sai_status_t status = sai_bfd_api->get_bfd_session_attribute(id, (uint32_t)attrs.size(), attrs.data());
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    // Non-critical information, skip the debug info if the attributes are not available
+                    SWSS_LOG_WARN("BFD session id:%" PRIx64 " get attributes failed", id);
+                }
+                else
+                {
+                    for (uint32_t i = 0; i < attrs.size(); ++i) {
+                        sai_attribute_t attr = attrs[i];
+                        auto attr_id = attr.id;
+                        switch (attr_id) {
+                            case SAI_BFD_SESSION_ATTR_REMOTE_DISCRIMINATOR:
+                                fvVector.emplace_back("remote_discriminator", to_string((uint32_t)attr.value.u32));
+                                break;
+                            case SAI_BFD_SESSION_ATTR_REMOTE_MULTIPLIER:
+                                fvVector.emplace_back("remote_multiplier", to_string((uint32_t)attr.value.u32));
+                                break;
+                            case SAI_BFD_SESSION_ATTR_REMOTE_MIN_RX:
+                                fvVector.emplace_back("remote_min_rx", to_string((uint32_t)attr.value.u32));
+                                break;
+                            case SAI_BFD_SESSION_ATTR_REMOTE_MIN_TX:
+                                fvVector.emplace_back("remote_min_tx", to_string((uint32_t)attr.value.u32));
+                                break;
+                        }
+                    }
+                }
+                m_stateBfdSessionTable.set(key, fvVector);
 
                 SWSS_LOG_NOTICE("BFD session state for %s changed from %s to %s", key.c_str(),
                             session_state_lookup.at(bfd_session_lookup[id].state).c_str(), session_state_lookup.at(state).c_str());
@@ -315,8 +369,7 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     }
     if (bfd_session_map.find(key) != bfd_session_map.end())
     {
-        SWSS_LOG_ERROR("BFD session for %s already exists", key.c_str());
-        return true;
+        return update_bfd_session(key, data);
     }
 
     size_t found_vrf = key.find(delimiter);
@@ -481,6 +534,30 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
 
     if (alias != "default")
     {
+        bool is_link_local = false;
+        if (peer_address.isV4())
+        {
+            uint32_t v4 = ntohl(peer_address.getV4Addr());
+            is_link_local = (v4 & 0xFFFF0000U) == 0xA9FE0000U;
+        }
+        else
+        {
+            const uint8_t *v6 = peer_address.getV6Addr();
+            is_link_local = (v6[0] == 0xFE) && ((v6[1] & 0xC0) == 0x80);
+        }
+
+        if (is_link_local)
+        {
+            SWSS_LOG_ERROR("Failed to create BFD session %s: link-local BFD HW offload "
+                           "(HW_LOOKUP_VALID=false) is unsupported on this platform — "
+                           "the DNX BFD PD driver relies on FIB lookup of dst_ip, and "
+                           "link-local addresses cannot appear as FIB next-hops by RFC. "
+                           "Use numbered BGP peering, or fall back to software BFD via "
+                           "SYSTEM_DEFAULTS|software_bfd|status=enabled.",
+                           key.c_str());
+            return true;
+        }
+
         Port port;
         if (!gPortsOrch->getPort(alias, port))
         {
@@ -571,6 +648,110 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     update.state = SAI_BFD_SESSION_STATE_DOWN;
     notify(SUBJECT_TYPE_BFD_SESSION_STATE_CHANGE, static_cast<void *>(&update));
 
+    return true;
+}
+
+/* In-place update of an existing BFD session's timer attributes.
+ *
+ * Invoked when bfdsyncd re-emits a session row with new timer values
+ * (e.g. after a BFD P-bit poll sequence). The legacy approach was for
+ * bfdsyncd to issue del+set, which was both racy (the producer coalesces
+ * back-to-back ops on the same key) and wasteful (the SDK tears down and
+ * rebuilds the offloaded session for what is just a timer change).
+ *
+ * SAI declares MIN_TX / MIN_RX / MULTIPLIER as CREATE_AND_SET, so we can
+ * push them through set_bfd_session_attribute without touching the
+ * session OID. Non-timer changes are not handled here — those still
+ * require delete+create, which the caller can drive explicitly. */
+bool BfdOrch::update_bfd_session(const string& key, const vector<FieldValueTuple>& data)
+{
+    auto it = bfd_session_map.find(key);
+    if (it == bfd_session_map.end())
+    {
+        SWSS_LOG_ERROR("BFD session %s: not found for update", key.c_str());
+        return false;
+    }
+    sai_object_id_t bfd_session_id = it->second;
+
+    vector<string> ignored;
+    for (const auto& fv : data)
+    {
+        const auto& f = fvField(fv);
+        if (f != "tx_interval" && f != "rx_interval" && f != "multiplier")
+        {
+            ignored.push_back(f);
+        }
+    }
+    if (!ignored.empty())
+    {
+        string joined;
+        for (const auto& s : ignored)
+        {
+            if (!joined.empty()) joined += ",";
+            joined += s;
+        }
+        SWSS_LOG_NOTICE("BFD session %s: ignoring non-timer fields on existing session: %s "
+                        "(SAI requires recreate for these)", key.c_str(), joined.c_str());
+    }
+
+    vector<FieldValueTuple> accepted;
+
+    for (const auto& fv : data)
+    {
+        const auto& field = fvField(fv);
+        const auto& value = fvValue(fv);
+        sai_attribute_t attr;
+
+        if (field == "tx_interval")
+        {
+            attr.id = SAI_BFD_SESSION_ATTR_MIN_TX;
+            attr.value.u32 = to_uint<uint32_t>(value) * BFD_SESSION_MILLISECOND_TO_MICROSECOND;
+        }
+        else if (field == "rx_interval")
+        {
+            attr.id = SAI_BFD_SESSION_ATTR_MIN_RX;
+            attr.value.u32 = to_uint<uint32_t>(value) * BFD_SESSION_MILLISECOND_TO_MICROSECOND;
+        }
+        else if (field == "multiplier")
+        {
+            attr.id = SAI_BFD_SESSION_ATTR_MULTIPLIER;
+            attr.value.u8 = to_uint<uint8_t>(value);
+        }
+        else
+        {
+            continue;
+        }
+
+        sai_status_t status = sai_bfd_api->set_bfd_session_attribute(bfd_session_id, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("BFD session %s: failed to set attr %d to %s, rv:%d",
+                           key.c_str(), attr.id, value.c_str(), status);
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_BFD, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+            continue;
+        }
+        accepted.emplace_back(fv);
+    }
+
+    if (accepted.empty())
+    {
+        SWSS_LOG_INFO("BFD session %s: SET produced no accepted timer updates, no-op",
+                      key.c_str());
+        return true;
+    }
+
+    auto lookup_it = bfd_session_lookup.find(bfd_session_id);
+    if (lookup_it != bfd_session_lookup.end())
+    {
+        m_stateBfdSessionTable.set(lookup_it->second.peer, accepted);
+    }
+
+    SWSS_LOG_NOTICE("BFD session %s: %zu timer attribute(s) updated in place",
+                    key.c_str(), accepted.size());
     return true;
 }
 
@@ -733,6 +914,31 @@ BgpGlobalStateOrch::BgpGlobalStateOrch(DBConnector *db, string tableName):
     tsa_enabled = false;
     bool ipv6 = true;
     bfd_offload = (offload_supported(!ipv6) && offload_supported(ipv6));
+
+    /* When the operator explicitly sets SYSTEM_DEFAULTS|software_bfd to
+     * "enabled" in CONFIG_DB, honour that intent and use software BFD
+     * (FRR bfdd) regardless of what the ASIC/SAI reports for HW offload
+     * capability.  Operators who want HW-offloaded BFD should not set
+     * the software_bfd flag in CONFIG_DB.
+     *
+     * This is evaluated once at construction time.  A runtime change to
+     * SYSTEM_DEFAULTS requires a swss restart to take effect.
+     */
+    if (bfd_offload)
+    {
+        string value;
+        Table systemDefaultsTable(db, "SYSTEM_DEFAULTS");
+        if (systemDefaultsTable.hget("software_bfd", "status", value) && value == "enabled")
+        {
+            SWSS_LOG_WARN("software_bfd is enabled in SYSTEM_DEFAULTS — overriding HW BFD "
+                          "offload. BfdOrch will route sessions to the software state table; "
+                          "bfdsyncd (if started) will not see them. The supervisord template "
+                          "in dockers/docker-fpm-frr also gates bfdsyncd off when software_bfd "
+                          "is enabled, so this path is normally unreachable. Disable "
+                          "SYSTEM_DEFAULTS|hw_bfd_offload in CONFIG_DB to suppress this warning.");
+            bfd_offload = false;
+        }
+    }
 }
 
 BgpGlobalStateOrch::~BgpGlobalStateOrch(void)
