@@ -6679,6 +6679,12 @@ TEST_F(AclManagerTest, AclRuleVerifyStateTest)
         "\"Ethernet4,Ethernet5\", \"priority\":15,\"match/ipmc_table_hit\":"
         "\"0x1\",\"match/route_table_hit\":\"0x1\",\"match/"
         "vrf_id\":\"b4-traffic\"}";
+    std::string mapper_key =
+        "P4RT_TABLE:ACL_PUNT_TABLE:match/arp_tpa=0xff112231:match/"
+        "ether_type=0x0800:match/in_ports=Ethernet1,Ethernet2:match/"
+        "ipmc_table_hit=0x1:match/ipv6_dst=fdf8:f53b:82e4::53 & "
+        "fdf8:f53b:82e4::53:match/out_ports=Ethernet4,Ethernet5:match/"
+        "route_table_hit=0x1:match/vrf_id=b4-traffic:priority=15";
     const auto &rule_tuple_key = std::string(kAclIngressTableName) + kTableKeyDelimiter + acl_rule_json_key;
     EnqueueRuleTuple(std::string(kAclIngressTableName),
                      swss::KeyOpFieldsValuesTuple({rule_tuple_key, SET_COMMAND, attributes}));
@@ -6740,12 +6746,16 @@ TEST_F(AclManagerTest, AclRuleVerifyStateTest)
                   swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT", "true"},
                   swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_LABEL",
                                         kAclCounterLabel2}});
+    std::string label;
+    EXPECT_TRUE(
+        gLabelMapper->getLabel(SAI_OBJECT_TYPE_POLICER, mapper_key, label));
     table.set(
         "SAI_OBJECT_TYPE_POLICER:oid:0x7d1",
         std::vector<swss::FieldValueTuple>{
             swss::FieldValueTuple{"SAI_POLICER_ATTR_MODE", "SAI_POLICER_MODE_STORM_CONTROL"},
             swss::FieldValueTuple{"SAI_POLICER_ATTR_METER_TYPE", "SAI_METER_TYPE_BYTES"},
             swss::FieldValueTuple{"SAI_POLICER_ATTR_CBS", "80"}, swss::FieldValueTuple{"SAI_POLICER_ATTR_CIR", "80"},
+            swss::FieldValueTuple{"SAI_POLICER_ATTR_LABEL", label.c_str()},
             swss::FieldValueTuple{"SAI_POLICER_ATTR_GREEN_PACKET_ACTION", "SAI_PACKET_ACTION_COPY"}});
 
     // Verification should succeed with vaild key and value.
@@ -7241,6 +7251,9 @@ TEST_F(AclManagerTest, AclRuleVerifyStateAsicDbTest)
     const auto &acl_rule_json_key = "{\"match/ether_type\":\"0x0800\",\"match/"
                                     "ipv6_dst\":\"fdf8:f53b:82e4::53 & "
                                     "fdf8:f53b:82e4::53\",\"priority\":15}";
+    std::string mapper_key =
+      "P4RT_TABLE:ACL_PUNT_TABLE:match/ether_type=0x0800:match/"
+      "ipv6_dst=fdf8:f53b:82e4::53 & fdf8:f53b:82e4::53:priority=15";
     const auto &rule_tuple_key = std::string(kAclIngressTableName) + kTableKeyDelimiter + acl_rule_json_key;
     EnqueueRuleTuple(std::string(kAclIngressTableName),
                      swss::KeyOpFieldsValuesTuple({rule_tuple_key, SET_COMMAND, attributes}));
@@ -7279,12 +7292,16 @@ TEST_F(AclManagerTest, AclRuleVerifyStateAsicDbTest)
                   swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT", "true"},
                   swss::FieldValueTuple{"SAI_ACL_COUNTER_ATTR_LABEL",
                                         kAclCounterLabel1}});
+    std::string label;
+    EXPECT_TRUE(
+        gLabelMapper->getLabel(SAI_OBJECT_TYPE_POLICER, mapper_key, label));
     table.set(
         "SAI_OBJECT_TYPE_POLICER:oid:0x7d1",
         std::vector<swss::FieldValueTuple>{
             swss::FieldValueTuple{"SAI_POLICER_ATTR_MODE", "SAI_POLICER_MODE_STORM_CONTROL"},
             swss::FieldValueTuple{"SAI_POLICER_ATTR_METER_TYPE", "SAI_METER_TYPE_BYTES"},
             swss::FieldValueTuple{"SAI_POLICER_ATTR_CBS", "80"}, swss::FieldValueTuple{"SAI_POLICER_ATTR_CIR", "80"},
+            swss::FieldValueTuple{"SAI_POLICER_ATTR_LABEL", label.c_str()},
             swss::FieldValueTuple{"SAI_POLICER_ATTR_GREEN_PACKET_ACTION", "SAI_PACKET_ACTION_COPY"}});
 
     // Verification should succeed with correct ASIC DB values.

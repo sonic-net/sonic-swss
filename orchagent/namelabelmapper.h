@@ -38,6 +38,10 @@ class NameLabelMapper
     // Returns true on success.
     bool getLabel(_In_ sai_object_type_t object_type, _In_ const std::string &key, _Out_ std::string &label);
 
+    // Is the label valid. Label is valid if length is between [16, 32)
+    // Returns true if label is valid.
+    bool isLabelValid(std::string label);
+
     // Erases label for the given key for the SAI object_type.
     // Returns true on success.
     bool eraseLabel(_In_ sai_object_type_t object_type, _In_ const std::string &key);
