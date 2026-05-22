@@ -174,7 +174,6 @@ std::vector<sai_attribute_t> getMeterSaiAttrs(P4AclMeter &p4_acl_meter)
             meter_attrs.push_back(meter_attr);
         }
 
-        /* TBD
         if (gLabelMapper->isLabelValid(p4_acl_meter.policer_label)) {
           meter_attr.id = SAI_POLICER_ATTR_LABEL;
           auto size = sizeof(meter_attr.value.chardata);
@@ -182,7 +181,6 @@ std::vector<sai_attribute_t> getMeterSaiAttrs(P4AclMeter &p4_acl_meter)
                    p4_acl_meter.policer_label.c_str());
           meter_attrs.push_back(meter_attr);
         }
-       */
     }
 
     for (const auto &packet_color_action : p4_acl_meter.packet_color_actions)
