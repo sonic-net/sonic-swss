@@ -36,6 +36,15 @@ public:
     {
     };
 
+    /* Force the FPM connection closed. Used by the warm-restart auto-resume
+     * path: when the drain timer fires (warm-reboot aborted), closing the
+     * connection makes the next readData() return EOF and throw
+     * FpmConnectionClosedException, which the outer try-catch in
+     * fpmsyncd.cpp main() catches and triggers reconnection. zebra's FPM
+     * standard behavior re-dumps the full FIB on reconnect, recovering any
+     * route updates dropped while the drain flag was set. */
+    void forceDisconnect();
+
     bool isRawProcessing(struct nlmsghdr *h);
     void processRawMsg(struct nlmsghdr *h)
     {

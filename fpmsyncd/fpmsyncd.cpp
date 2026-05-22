@@ -6,10 +6,12 @@
 #include "netdispatcher.h"
 #include "netlink.h"
 #include "notificationconsumer.h"
+#include "notificationproducer.h"
 #include "warmRestartHelper.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/fpmsyncd.h"
 #include "fpmsyncd/routesync.h"
+#include "fpmsyncd/warmreboot_handler.h"
 
 #include <netlink/route/route.h>
 
@@ -25,6 +27,11 @@ static int gFlushTimeout = FLUSH_TIMEOUT;
 #define SMALL_TRAFFIC 500
 
 #define STATE_FIB_SUPPRESS_TABLE_NAME "FIB_SUPPRESS_TABLE"
+
+/* Drain auto-resume timer fallback (seconds). Per-call override via the
+ * tool's autoResumeTimeoutSec, CONFIG_DB override via
+ * fpmsyncd_drain_auto_resume_sec. */
+#define DRAIN_AUTO_RESUME_DEFAULT_INTERVAL_SECONDS 30
 
 /**
  * @brief fpmsyncd invokes redispipeline's flush with a timer
@@ -88,6 +95,16 @@ int main(int argc, char **argv)
     DBConnector stateDb("STATE_DB", 0);
     Table bgpStateTable(&stateDb, STATE_BGP_TABLE_NAME);
 
+    /* WARM_RESTART_TABLE|fpmsyncd drain_state / drain_queue_size are
+     * written by the drain-barrier handler. The `state` field is owned
+     * by WarmStartHelper and left alone. */
+    Table warmRestartStateTable(&stateDb, STATE_WARM_RESTART_TABLE_NAME);
+    fpmsyncd_warmreboot::clearStaleDrainStateFields(warmRestartStateTable);
+    SWSS_LOG_NOTICE("fpmsyncd: cleared stale drain_state / drain_queue_size / queueSize from STATE_DB WARM_RESTART_TABLE|fpmsyncd");
+
+    NotificationConsumer restartCheckConsumer(&db, "FPMSYNCD_RESTARTCHECK");
+    NotificationProducer restartCheckReply(&db, "FPMSYNCD_RESTARTCHECKREPLY");
+
     NetLink netlink;
 
     netlink.registerGroup(RTNLGRP_LINK);
@@ -129,6 +146,33 @@ int main(int argc, char **argv)
         }
     }
 
+    /* Auto-resume default: tool -t > CONFIG_DB > compile-time. */
+    int gDrainAutoResumeSec = DRAIN_AUTO_RESUME_DEFAULT_INTERVAL_SECONDS;
+    {
+        std::string drainAutoResumeStr;
+        deviceMetadataTable.hget("localhost", "fpmsyncd_drain_auto_resume_sec", drainAutoResumeStr);
+        auto p = fpmsyncd_warmreboot::parseDrainAutoResumeSec(
+            drainAutoResumeStr, gDrainAutoResumeSec, /*minSec=*/1, /*maxSec=*/600);
+        gDrainAutoResumeSec = p.value;
+        using Source = fpmsyncd_warmreboot::DrainAutoResumeSecParse::Source;
+        switch (p.source)
+        {
+        case Source::ConfigDb:
+            SWSS_LOG_NOTICE("fpmsyncd_drain_auto_resume_sec set to %d s from CONFIG_DB", p.rawParsed);
+            break;
+        case Source::OutOfRange:
+            SWSS_LOG_WARN("fpmsyncd_drain_auto_resume_sec out of range [1, 600]: %d (using default %d)",
+                          p.rawParsed, gDrainAutoResumeSec);
+            break;
+        case Source::Invalid:
+            SWSS_LOG_WARN("Invalid fpmsyncd_drain_auto_resume_sec value: %s", drainAutoResumeStr.c_str());
+            break;
+        case Source::Default:
+            break;
+        }
+    }
+    SWSS_LOG_NOTICE("fpmsyncd: drain auto-resume default = %ds (override per-call via FPMSYNCD_RESTARTCHECK autoResumeTimeoutSec)", gDrainAutoResumeSec);
+
     while (true)
     {
         try
@@ -141,6 +185,8 @@ int main(int argc, char **argv)
             SelectableTimer eoiuCheckTimer(timespec{0, 0});
             // After eoiu flags are detected, start a hold timer before starting reconciliation.
             SelectableTimer eoiuHoldTimer(timespec{0, 0});
+            // Drain auto-resume timer; armed by the drain-barrier handler.
+            SelectableTimer drainAutoResumeTimer(timespec{0, 0});
            
             /*
              * Pipeline should be flushed right away to deal with state pending
@@ -154,6 +200,7 @@ int main(int argc, char **argv)
 
             s.addSelectable(&fpm);
             s.addSelectable(&netlink);
+            s.addSelectable(&restartCheckConsumer);
             if (sync.isSuppressionEnabled())
             {
                 s.addSelectable(routeResponseChannel.get());
@@ -270,6 +317,125 @@ int main(int argc, char **argv)
                         const auto& fieldValues = kfvFieldsValues(notification);
 
                         sync.onRouteResponse(key, fieldValues);
+                    }
+                }
+                else if (temps == &drainAutoResumeTimer)
+                {
+                    /* Aborted warm-reboot: SIGKILL never came. Apply the
+                     * timer-fire outcome (clear flag, disarm, STATE_DB,
+                     * disconnect+throw). */
+                    SWSS_LOG_WARN("fpmsyncd: drain auto-resume timer fired — warm-reboot was probably aborted. Clearing drain flag and forcing FPM disconnect to trigger zebra full-FIB re-dump.");
+
+                    auto tfOut = fpmsyncd_warmreboot::handleDrainAutoResumeTimerFire(
+                        sync.totalDbUpdaterQueueSize());
+
+                    if (tfOut.clearDrainFlag)
+                    {
+                        sync.setDrainingForWarmRestart(false);
+                    }
+                    if (tfOut.disarmTimer)
+                    {
+                        s.removeSelectable(&drainAutoResumeTimer);
+                    }
+                    if (!tfOut.drainState.empty())
+                    {
+                        warmRestartStateTable.hset("fpmsyncd", "drain_state", tfOut.drainState);
+                        warmRestartStateTable.hset("fpmsyncd", "drain_queue_size",
+                                                   std::to_string(tfOut.drainQueueSize));
+                    }
+                    if (tfOut.forceReconnect)
+                    {
+                        fpm.forceDisconnect();
+                        /* Explicit throw: a closed fd doesn't reliably wake
+                         * select(). Unwinds to the outer catch, which
+                         * re-accepts and lets zebra reconnect + re-dump. */
+                        throw FpmLink::FpmConnectionClosedException();
+                    }
+                }
+                else if (temps == &restartCheckConsumer)
+                {
+                    /* Drain-barrier handler. Decision logic in
+                     * fpmsyncd_warmreboot::handleRestartCheck; apply block
+                     * below. */
+                    std::string op, data;
+                    std::vector<FieldValueTuple> values;
+                    restartCheckConsumer.pop(op, data, values);
+
+                    auto req = fpmsyncd_warmreboot::parseRestartCheckValues(values);
+
+                    const bool   hasZmq = sync.hasZmqProducerTables();
+                    const size_t qsize  = sync.totalDbUpdaterQueueSize();
+                    const bool   wasDraining = sync.isDrainingForWarmRestart();
+
+                    SWSS_LOG_NOTICE("fpmsyncd: %s (received %s on FPMSYNCD_RESTARTCHECK, hasZmqProducerTables=%s, queueSize=%zu, resume=%s)",
+                                    req.resumeRequested ? "explicit resume requested" : "preparing for warm boot",
+                                    op.c_str(), hasZmq ? "true" : "false", qsize,
+                                    req.resumeRequested ? "true" : "false");
+
+                    auto out = fpmsyncd_warmreboot::handleRestartCheck(
+                        req, hasZmq, qsize, wasDraining, gDrainAutoResumeSec);
+
+                    // Apply outcome: drain flag → timer → STATE_DB → reply → reconnect.
+                    using DrainFlag   = fpmsyncd_warmreboot::RestartCheckOutcome::DrainFlag;
+                    using TimerAction = fpmsyncd_warmreboot::RestartCheckOutcome::TimerAction;
+                    if (out.drainFlag == DrainFlag::Set)
+                    {
+                        sync.setDrainingForWarmRestart(true);
+                        SWSS_LOG_NOTICE("fpmsyncd: drain flag set; new route SET/DEL via setRouteWithWarmRestart / delWithWarmRestart will be dropped");
+                    }
+                    else if (out.drainFlag == DrainFlag::Clear)
+                    {
+                        sync.setDrainingForWarmRestart(false);
+                        SWSS_LOG_WARN("fpmsyncd: explicit resume — clearing drain flag and forcing FPM disconnect to trigger zebra full-FIB re-dump.");
+                    }
+
+                    if (out.timerAction == TimerAction::ArmFirst ||
+                        out.timerAction == TimerAction::ReArm)
+                    {
+                        drainAutoResumeTimer.setInterval(timespec{out.autoResumeSec, 0});
+                        drainAutoResumeTimer.reset();
+                        drainAutoResumeTimer.start();
+                        if (out.timerAction == TimerAction::ArmFirst)
+                        {
+                            s.addSelectable(&drainAutoResumeTimer);
+                            SWSS_LOG_NOTICE("fpmsyncd: drain auto-resume timer armed for %ds", out.autoResumeSec);
+                        }
+                        else
+                        {
+                            SWSS_LOG_INFO("fpmsyncd: re-notification during drain; auto-resume timer re-armed for %ds", out.autoResumeSec);
+                        }
+                    }
+                    else if (out.timerAction == TimerAction::Disarm)
+                    {
+                        s.removeSelectable(&drainAutoResumeTimer);
+                    }
+
+                    if (!out.drainState.empty())
+                    {
+                        warmRestartStateTable.hset("fpmsyncd", "drain_state",      out.drainState);
+                        warmRestartStateTable.hset("fpmsyncd", "drain_queue_size", std::to_string(out.drainQueueSize));
+
+                        if (out.drainState == "ready")
+                        {
+                            SWSS_LOG_NOTICE("fpmsyncd: ready for warm boot (STATE_DB WARM_RESTART_TABLE|fpmsyncd drain_state=ready drain_queue_size=0)");
+                        }
+                        else if (out.drainState == "draining")
+                        {
+                            SWSS_LOG_NOTICE("fpmsyncd: still draining (STATE_DB WARM_RESTART_TABLE|fpmsyncd drain_state=draining drain_queue_size=%zu)", out.drainQueueSize);
+                        }
+                    }
+                    else if (req.resumeRequested)
+                    {
+                        // Resume no-op: handler returns empty drainState when not draining.
+                        SWSS_LOG_NOTICE("fpmsyncd: explicit resume requested but not in drain mode — no-op (FPM connection preserved)");
+                    }
+
+                    restartCheckReply.send("fpmsyncd", out.replyOp, out.replyValues);
+
+                    if (out.forceReconnect)
+                    {
+                        fpm.forceDisconnect();
+                        throw FpmLink::FpmConnectionClosedException();
                     }
                 }
                 else if (!warmStartEnabled || sync.getWarmStartHelper().isReconciled())

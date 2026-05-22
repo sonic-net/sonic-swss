@@ -161,11 +161,41 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_nl_sock = nl_socket_alloc();
     nl_connect(m_nl_sock, NETLINK_ROUTE);
     rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
+
+    /* Drain-barrier gate: ZMQ off → both casts fail → handler never sets
+     * the drain flag → setRouteWithWarmRestart / delWithWarmRestart unaffected. */
+    m_hasZmqProducerTables =
+        (dynamic_pointer_cast<ZmqProducerStateTable>(m_routeTable) != nullptr) ||
+        (dynamic_pointer_cast<ZmqProducerStateTable>(m_label_routeTable) != nullptr);
+    SWSS_LOG_NOTICE("RouteSync: hasZmqProducerTables=%s",
+                    m_hasZmqProducerTables ? "true" : "false");
+}
+
+size_t RouteSync::totalDbUpdaterQueueSize() const
+{
+    size_t total = 0;
+    if (auto z = dynamic_pointer_cast<ZmqProducerStateTable>(m_routeTable))
+    {
+        try { total += z->dbUpdaterQueueSize(); } catch (...) {}
+    }
+    if (auto z = dynamic_pointer_cast<ZmqProducerStateTable>(m_label_routeTable))
+    {
+        try { total += z->dbUpdaterQueueSize(); } catch (...) {}
+    }
+    return total;
 }
 
 void RouteSync::setRouteWithWarmRestart(FieldValueTupleWrapperBase & fvw,
                                         ProducerStateTable & table )
 {
+    /* Drain barrier: drop new SETs while preparing for warm-reboot so the
+     * AsyncDBUpdater queue can drain to zero before SIGKILL. */
+    if (m_drainingForWarmRestart)
+    {
+        SWSS_LOG_INFO("draining: dropping route SET for %s", fvw.key.c_str());
+        return;
+    }
+
     bool warmRestartInProgress = m_warmStartHelper.inProgress();
 
     if (!warmRestartInProgress)
@@ -191,6 +221,13 @@ void RouteSync::setTable(FieldValueTupleWrapperBase & fvw,
 
 void RouteSync::delWithWarmRestart(FieldValueTupleWrapperBase && fvw,
 				   ProducerStateTable & table) {
+    /* Warm-reboot drain barrier — see setRouteWithWarmRestart. */
+    if (m_drainingForWarmRestart)
+    {
+        SWSS_LOG_INFO("draining: dropping route DEL for %s", fvw.key.c_str());
+        return;
+    }
+
     bool warmRestartInProgress = m_warmStartHelper.inProgress();
     if (!warmRestartInProgress) {
         table.del(fvw.key);

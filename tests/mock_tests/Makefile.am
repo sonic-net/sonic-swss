@@ -275,6 +275,12 @@ tests_fpmsyncd_SOURCES = fpmsyncd/test_fpmlink.cpp \
                          fpmsyncd/receive_srv6_steer_routes_ut.cpp \
                          fpmsyncd/receive_srv6_mysids_ut.cpp \
                          fpmsyncd/ut_helpers_fpmsyncd.cpp \
+                         fpmsyncd/ut_helpers_drain_barrier.cpp \
+                         fpmsyncd/test_drain_barrier_state.cpp \
+                         fpmsyncd/test_drain_barrier_gate.cpp \
+                         fpmsyncd/test_drain_barrier_fpmlink.cpp \
+                         fpmsyncd/test_drain_barrier_handler.cpp \
+                         fpmsyncd/test_drain_barrier_startup.cpp \
                          fake_netlink.cpp \
                          fake_warmstarthelper.cpp \
                          fake_producerstatetable.cpp \
@@ -284,7 +290,8 @@ tests_fpmsyncd_SOURCES = fpmsyncd/test_fpmlink.cpp \
                          $(top_srcdir)/lib/orch_zmq_config.cpp \
                          $(top_srcdir)/warmrestart/ \
                          $(top_srcdir)/fpmsyncd/fpmlink.cpp \
-                         $(top_srcdir)/fpmsyncd/routesync.cpp
+                         $(top_srcdir)/fpmsyncd/routesync.cpp \
+                         $(top_srcdir)/fpmsyncd/warmreboot_handler.cpp
 
 tests_fpmsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/tests_fpmsyncd -I$(top_srcdir)/lib -I$(top_srcdir)/warmrestart -I$(top_srcdir)/fpmsyncd
 tests_fpmsyncd_CXXFLAGS = -Wl,-wrap,rtnl_link_i2name

@@ -251,7 +251,22 @@ public:
         return m_warmStartHelper;
     }
 
+    /* Warm-reboot drain barrier: gates setRouteWithWarmRestart /
+     * delWithWarmRestart. Only meaningful when hasZmqProducerTables(). */
+    bool isDrainingForWarmRestart() const { return m_drainingForWarmRestart; }
+    void setDrainingForWarmRestart(bool v) { m_drainingForWarmRestart = v; }
+
+    /* True if either route table is a ZmqProducerStateTable. Set once in ctor. */
+    bool hasZmqProducerTables() const { return m_hasZmqProducerTables; }
+
+    /* Sum of AsyncDBUpdater pending-queue depths across ZMQ tables.
+     * Returns 0 if no ZMQ tables are wired. */
+    size_t totalDbUpdaterQueueSize() const;
+
 private:
+    /* Drain-barrier state for warm-reboot preparation (see accessors). */
+    bool m_drainingForWarmRestart = false;
+    bool m_hasZmqProducerTables = false;
     /* ZMQ client */
     shared_ptr<ZmqClient> m_zmqClient;
     /* regular route table */
