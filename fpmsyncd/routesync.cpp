@@ -2054,6 +2054,22 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
 {
     if (nlmsg_type == RTM_NEWLINK || nlmsg_type == RTM_DELLINK)
     {
+        struct rtnl_link *link_obj = (struct rtnl_link *)obj;
+        const char *link_name = rtnl_link_get_name(link_obj);
+        int link_ifindex = rtnl_link_get_ifindex(link_obj);
+
+        if (link_name)
+        {
+            if (strncmp(link_name, VRF_PREFIX, strlen(VRF_PREFIX)) == 0 ||
+                strncmp(link_name, VNET_PREFIX, strlen(VNET_PREFIX)) == 0 ||
+                strncmp(link_name, MGMT_VRF_PREFIX, strlen(MGMT_VRF_PREFIX)) == 0)
+            {
+                SWSS_LOG_NOTICE("VRF link event: %s dev %s ifindex %d",
+                    (nlmsg_type == RTM_NEWLINK) ? "RTM_NEWLINK" : "RTM_DELLINK",
+                    link_name, link_ifindex);
+            }
+        }
+
         nl_cache_refill(m_nl_sock, m_link_cache);
         return;
     }
@@ -2082,8 +2098,30 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
     if (master_index)
     {
         /* Get the name of the master device */
-        getIfName(master_index, master_name, IFNAMSIZ);
-    
+        if (!getIfName(master_index, master_name, IFNAMSIZ))
+        {
+            char prefix_buf[MAX_ADDR_SIZE + 1] = {0};
+            struct nl_addr *dip = rtnl_route_get_dst(route_obj);
+            if (dip)
+            {
+                nl_addr2str(dip, prefix_buf, MAX_ADDR_SIZE);
+            }
+
+            if (nlmsg_type == RTM_DELROUTE)
+            {
+                SWSS_LOG_INFO("Failed to get interface name for ifindex %u prefix %s, "
+                    "skipping route delete (VRF device may have been deleted)",
+                    master_index, prefix_buf);
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to get interface name for ifindex %u prefix %s, "
+                    "skipping route add (VRF device may have been deleted)",
+                    master_index, prefix_buf);
+            }
+            return;
+        }
+
         /* If the master device name starts with VNET_PREFIX, it is a VNET route.
            The VNET name is exactly the name of the associated master device. */
         if (string(master_name).find(VNET_PREFIX) == 0)
