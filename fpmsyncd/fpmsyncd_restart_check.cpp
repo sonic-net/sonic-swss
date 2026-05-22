@@ -28,7 +28,9 @@ void printUsage()
     std::cout << "        fpmsyncd entered drain mode, fpmsyncd auto-clears the drain flag" << std::endl;
     std::cout << "        and forces an FPM reconnect this many seconds after the last" << std::endl;
     std::cout << "        notification. Sent to fpmsyncd in the notification payload." << std::endl;
-    std::cout << "        Default: 20" << std::endl;
+    std::cout << "        Default: 0 (use fpmsyncd's server-side default — CONFIG_DB" << std::endl;
+    std::cout << "        DEVICE_METADATA|localhost fpmsyncd_drain_auto_resume_sec if set," << std::endl;
+    std::cout << "        else the compile-time default of 30s)." << std::endl;
     std::cout << "    -R --resume" << std::endl;
     std::cout << "        Immediately resume from drain mode: clear the drain flag and" << std::endl;
     std::cout << "        force an FPM disconnect (causing zebra to reconnect and re-dump" << std::endl;
@@ -60,12 +62,13 @@ int main(int argc, char **argv)
     SWSS_LOG_ENTER();
 
     /* Defaults: 20 attempts (retryCount=19), 500ms reply wait per attempt,
-     * 500ms sleep between attempts, 20s auto-resume timeout. Happy-path
+     * 500ms sleep between attempts, auto-resume timeout 0 = "use fpmsyncd's
+     * server-side default" (CONFIG_DB knob or compile-time 30s). Happy-path
      * drain budget = 10 s. */
     int waitTime = 500;
     int retryCount = 19;
     int interSleepMs = 500;
-    int autoResumeTimeoutSec = 20;
+    int autoResumeTimeoutSec = 0;   // 0 = "use fpmsyncd's server-side default"
     bool resumeRequested = false;
 
     const char* const optstring = "w:r:i:t:Rh";

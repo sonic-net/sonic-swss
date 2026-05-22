@@ -37,7 +37,7 @@ static int gFlushTimeout = FLUSH_TIMEOUT;
  * Default value; can be overridden per-call by the tool via the
  * "autoResumeTimeoutSec" field in the FPMSYNCD_RESTARTCHECK notification
  * payload. */
-#define DRAIN_AUTO_RESUME_DEFAULT_INTERVAL_SECONDS 20
+#define DRAIN_AUTO_RESUME_DEFAULT_INTERVAL_SECONDS 30
 
 /**
  * @brief fpmsyncd invokes redispipeline's flush with a timer
@@ -170,6 +170,40 @@ int main(int argc, char **argv)
             SWSS_LOG_WARN("Invalid fpmsyncd_flush_timeout value: %s", flushTimeoutStr.c_str());
         }
     }
+
+    /* Drain-barrier auto-resume default. Read once at startup from CONFIG_DB
+     * DEVICE_METADATA|localhost fpmsyncd_drain_auto_resume_sec, with the
+     * compile-time DRAIN_AUTO_RESUME_DEFAULT_INTERVAL_SECONDS as fallback.
+     * This is used by the FPMSYNCD_RESTARTCHECK handler when the caller
+     * does not specify an explicit autoResumeTimeoutSec in the notification
+     * payload (or sends 0 = "use server default").
+     *
+     * Precedence: explicit tool -t > CONFIG_DB > compile-time default. */
+    int gDrainAutoResumeSec = DRAIN_AUTO_RESUME_DEFAULT_INTERVAL_SECONDS;
+    std::string drainAutoResumeStr;
+    deviceMetadataTable.hget("localhost", "fpmsyncd_drain_auto_resume_sec", drainAutoResumeStr);
+    if (!drainAutoResumeStr.empty() && drainAutoResumeStr != "None")
+    {
+        try
+        {
+            int val = std::stoi(drainAutoResumeStr);
+            if (val >= 1 && val <= 600)
+            {
+                gDrainAutoResumeSec = val;
+                SWSS_LOG_NOTICE("fpmsyncd_drain_auto_resume_sec set to %d s from CONFIG_DB", val);
+            }
+            else
+            {
+                SWSS_LOG_WARN("fpmsyncd_drain_auto_resume_sec out of range [1, 600]: %d (using default %d)",
+                              val, gDrainAutoResumeSec);
+            }
+        }
+        catch (const std::exception& e)
+        {
+            SWSS_LOG_WARN("Invalid fpmsyncd_drain_auto_resume_sec value: %s", drainAutoResumeStr.c_str());
+        }
+    }
+    SWSS_LOG_NOTICE("fpmsyncd: drain auto-resume default = %ds (override per-call via FPMSYNCD_RESTARTCHECK autoResumeTimeoutSec)", gDrainAutoResumeSec);
 
     while (true)
     {
@@ -365,12 +399,14 @@ int main(int argc, char **argv)
                     size_t qsize = sync.totalDbUpdaterQueueSize();
 
                     /* Parse caller-supplied options from notification values:
-                     *   autoResumeTimeoutSec — drain auto-resume interval
+                     *   autoResumeTimeoutSec — drain auto-resume interval.
+                     *     If absent or <= 0, fall back to gDrainAutoResumeSec
+                     *     (CONFIG_DB-supplied or compile-time default).
                      *   resume — if "true", immediately resume (skip drain,
                      *            force FPM reconnect now). Used by the tool's
                      *            -R / --resume flag for warm-reboot abort
                      *            recovery without waiting for the timer. */
-                    int autoResumeSec = DRAIN_AUTO_RESUME_DEFAULT_INTERVAL_SECONDS;
+                    int autoResumeSec = gDrainAutoResumeSec;
                     bool resumeRequested = false;
                     for (const auto& fv : values)
                     {
