@@ -189,7 +189,7 @@ namespace dashportmaporch_test
         key_stream << port_map1 << ":" << port_map1_start_port << "-" << port_map1_end_port;
         std::string key = key_stream.str();
         EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_map_port_range_entries).Times(0);
-        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key, port_map_range, true, false);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key, port_map_range, true, true);
     }
 
     TEST_F(DashPortMapOrchTest, RemoveInUsePortMap)
@@ -205,6 +205,161 @@ namespace dashportmaporch_test
         SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, dash::outbound_port_map::OutboundPortMap());
         SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, port_map_range_key, port_map_range);
 
-        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, dash::outbound_port_map::OutboundPortMap(), false, false);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, dash::outbound_port_map::OutboundPortMap(), false, true);
+    }
+
+    TEST_F(DashPortMapOrchTest, PortMapSaiCreateFailureNotRetried)
+    {
+        dash::outbound_port_map::OutboundPortMap port_map;
+        std::vector<sai_object_id_t> exp_oids = {SAI_NULL_OBJECT_ID};
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_INSUFFICIENT_RESOURCES};
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_maps)
+            .WillOnce(DoAll(SetArgPointee<5>(SAI_NULL_OBJECT_ID), SetArrayArgument<6>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, port_map, true, true);
+    }
+
+    TEST_F(DashPortMapOrchTest, PortMapSaiRemoveFailureNotRetried)
+    {
+        dash::outbound_port_map::OutboundPortMap port_map;
+        // First create a port map
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_maps);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, port_map);
+
+        // Then try to remove with SAI failure
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_INVALID_PARAMETER};
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, remove_outbound_port_maps)
+            .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, port_map, false, true);
+    }
+
+    TEST_F(DashPortMapOrchTest, PortMapRangeSaiCreateFailureNotRetried)
+    {
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_maps);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, dash::outbound_port_map::OutboundPortMap());
+
+        auto port_map_range = BuildOutboundPortMapRange();
+        std::stringstream key_stream;
+        key_stream << port_map1 << ":" << port_map1_start_port << "-" << port_map1_end_port;
+        std::string key = key_stream.str();
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_INSUFFICIENT_RESOURCES};
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_map_port_range_entries)
+            .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key, port_map_range, true, true);
+    }
+
+    TEST_F(DashPortMapOrchTest, PortMapRangeSaiRemoveFailureNotRetried)
+    {
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_maps);
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_map_port_range_entries);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, dash::outbound_port_map::OutboundPortMap());
+
+        auto port_map_range = BuildOutboundPortMapRange();
+        std::stringstream key_stream;
+        key_stream << port_map1 << ":" << port_map1_start_port << "-" << port_map1_end_port;
+        std::string key = key_stream.str();
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key, port_map_range);
+
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_INVALID_PARAMETER};
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, remove_outbound_port_map_port_range_entries)
+            .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key, port_map_range, false, true);
+    }
+
+    TEST_F(DashPortMapOrchTest, InvalidPortMapRangeKeyFormat)
+    {
+        // Key should be "parent_map_id:start_port-end_port", send invalid format
+        auto port_map_range = BuildOutboundPortMapRange();
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_map_port_range_entries).Times(0);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, "INVALID_KEY_NO_COLON", port_map_range, true, true);
+    }
+
+    TEST_F(DashPortMapOrchTest, InvalidPortMapRangePortValues)
+    {
+        // Key with non-numeric port values
+        auto port_map_range = BuildOutboundPortMapRange();
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_map_port_range_entries).Times(0);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, "PORT_MAP_1:abc-def", port_map_range, true, true);
+    }
+
+    TEST_F(DashPortMapOrchTest, MissingProtobufPortMapRange)
+    {
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_maps);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, dash::outbound_port_map::OutboundPortMap());
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_map_port_range_entries).Times(0);
+        std::stringstream key_stream;
+        key_stream << port_map1 << ":" << port_map1_start_port << "-" << port_map1_end_port;
+        SetDashTableRaw(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key_stream.str(), {}, true, true);
+    }
+
+    TEST_F(DashPortMapOrchTest, PortMapCreateDeleteChurn)
+    {
+        dash::outbound_port_map::OutboundPortMap port_map;
+
+        for (int i = 0; i < 3; i++)
+        {
+            EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_maps).Times(1);
+            SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, port_map);
+
+            EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, remove_outbound_port_maps).Times(1);
+            SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, port_map, false, true);
+        }
+    }
+
+    TEST_F(DashPortMapOrchTest, PortMapRangeCreateDeleteChurn)
+    {
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_maps);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, dash::outbound_port_map::OutboundPortMap());
+
+        auto port_map_range = BuildOutboundPortMapRange();
+        std::stringstream key_stream;
+        key_stream << port_map1 << ":" << port_map1_start_port << "-" << port_map1_end_port;
+        std::string key = key_stream.str();
+
+        for (int i = 0; i < 3; i++)
+        {
+            EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_map_port_range_entries).Times(1);
+            SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key, port_map_range);
+
+            EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, remove_outbound_port_map_port_range_entries).Times(1);
+            SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key, port_map_range, false, true);
+        }
+    }
+
+    TEST_F(DashPortMapOrchTest, PortMapRangeKeyMissingRange)
+    {
+        // Key should be "port_map:start-end" — send just port_map without range
+        auto port_map_range = BuildOutboundPortMapRange();
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_map_port_range_entries).Times(0);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, port_map1, port_map_range, true, true);
+    }
+
+    TEST_F(DashPortMapOrchTest, PortMapRangeKeyMissingEndPort)
+    {
+        // Key should be "port_map:start-end" — send port_map:start without end
+        auto port_map_range = BuildOutboundPortMapRange();
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_map_port_range_entries).Times(0);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME,
+                     port_map1 + ":1000", port_map_range, true, true);
+    }
+
+    TEST_F(DashPortMapOrchTest, PortMapRangeAlreadyExistsInSai)
+    {
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_maps);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, dash::outbound_port_map::OutboundPortMap());
+
+        auto port_map_range = BuildOutboundPortMapRange();
+        std::stringstream key_stream;
+        key_stream << port_map1 << ":" << port_map1_start_port << "-" << port_map1_end_port;
+        std::string key = key_stream.str();
+
+        // First create succeeds normally
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_map_port_range_entries);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key, port_map_range);
+
+        // Second create returns ITEM_ALREADY_EXISTS from bulker — should be treated as success
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_ITEM_ALREADY_EXISTS};
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_map_port_range_entries)
+            .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key, port_map_range, true, true);
     }
 }

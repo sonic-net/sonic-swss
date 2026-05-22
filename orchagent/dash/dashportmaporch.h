@@ -9,6 +9,7 @@ struct DashPortMapBulkContext
 {
     std::deque<sai_object_id_t> port_map_oids;
     std::deque<sai_status_t> port_map_statuses;
+    uint32_t pre_op_result = 0;
 
     DashPortMapBulkContext() {}
     DashPortMapBulkContext(const DashPortMapBulkContext &) = delete;
@@ -18,6 +19,7 @@ struct DashPortMapBulkContext
     {
         port_map_oids.clear();
         port_map_statuses.clear();
+        pre_op_result = 0;
     }
 };
 
@@ -28,6 +30,7 @@ struct DashPortMapRangeBulkContext
     int end_port;
     dash::outbound_port_map_range::OutboundPortMapRange metadata;
     std::deque<sai_status_t> port_map_range_statuses;
+    uint32_t pre_op_result = 0;
 
     DashPortMapRangeBulkContext() {}
     DashPortMapRangeBulkContext(const DashPortMapRangeBulkContext &) = delete;
@@ -36,6 +39,7 @@ struct DashPortMapRangeBulkContext
     void clear()
     {
         port_map_range_statuses.clear();
+        pre_op_result = 0;
     }
 };
 

@@ -6,6 +6,7 @@
 #include "pbutils.h"
 #include "directory.h"
 #include "saihelper.h"
+#include <exception>
 
 extern size_t gMaxBulkSize;
 extern sai_dash_tunnel_api_t* sai_dash_tunnel_api;
@@ -111,55 +112,60 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
             swss::KeyOpFieldsValuesTuple t = it->second;
             std::string tunnel_name = kfvKey(t);
             std::string op = kfvOp(t);
-            auto rc = toBulk.emplace(std::piecewise_construct,
-                    std::forward_as_tuple(tunnel_name, op),
-                    std::forward_as_tuple());
-            bool inserted = rc.second;
-            auto& ctxt = rc.first->second;
-            result = DASH_RESULT_SUCCESS;
-            if (!inserted)
+
+            try
             {
-                ctxt.clear();
+                auto rc = toBulk.emplace(std::piecewise_construct,
+                        std::forward_as_tuple(tunnel_name, op),
+                        std::forward_as_tuple());
+                bool inserted = rc.second;
+                auto& ctxt = rc.first->second;
+                result = DASH_RESULT_SUCCESS;
+                if (!inserted)
+                {
+                    ctxt.clear();
+                }
+                if (op == SET_COMMAND)
+                {
+                    if (!parsePbMessage(kfvFieldsValues(t), ctxt.metadata))
+                    {
+                        SWSS_LOG_ERROR("Requires protobuf at Tunnel :%s", tunnel_name.c_str());
+                        writeResultToDB(dash_tunnel_result_table_, tunnel_name, DASH_RESULT_FAILURE);
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
+                    if (addTunnel(tunnel_name, ctxt))
+                    {
+                        it = consumer.m_toSync.erase(it);
+                        writeResultToDB(dash_tunnel_result_table_, tunnel_name, ctxt.pre_op_result);
+                    }
+                    else
+                    {
+                        it++;
+                    }
+                }
+                else if (op == DEL_COMMAND)
+                {
+                    if (removeTunnel(tunnel_name, ctxt))
+                    {
+                        /*
+                         * Postpone removal of result from result table until after
+                         * tunnel members are removed.
+                         */
+                        it = consumer.m_toSync.erase(it);
+                    }
+                    else
+                    {
+                        it++;
+                    }
+                }
             }
-            if (op == SET_COMMAND)
+            catch (const std::exception& e)
             {
-                if (!parsePbMessage(kfvFieldsValues(t), ctxt.metadata))
-                {
-                    SWSS_LOG_WARN("Requires protobuf at Tunnel :%s", tunnel_name.c_str());
-                    it = consumer.m_toSync.erase(it);
-                    continue;
-                }
-                if (addTunnel(tunnel_name, ctxt))
-                {
-                    it = consumer.m_toSync.erase(it);
-                    /*
-                     * Write result only when removing from consumer in pre-op
-                     * For other cases, this will be handled in post-op
-                     * TODO: There are cases where addTunnel returns true for
-                     * errors that are not retried. Such cases need to be
-                     * written to result table as a failure instead of success.
-                     */
-                    writeResultToDB(dash_tunnel_result_table_, tunnel_name, result);
-                }
-                else
-                {
-                    it++;
-                }
-            }
-            else if (op == DEL_COMMAND)
-            {
-                if (removeTunnel(tunnel_name, ctxt))
-                {
-                    /*
-                     * Postpone removal of result from result table until after
-                     * tunnel members are removed.
-                     */
-                    it = consumer.m_toSync.erase(it);
-                }
-                else
-                {
-                    it++;
-                }
+                SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", consumer.getTableName().c_str(), tunnel_name.c_str(), e.what());
+                writeResultToDB(dash_tunnel_result_table_, tunnel_name, DASH_RESULT_FAILURE);
+                it = consumer.m_toSync.erase(it);
+                continue;
             }
         }
 
@@ -173,47 +179,70 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
             swss::KeyOpFieldsValuesTuple t = it_prev->second;
             std::string tunnel_name = kfvKey(t);
             std::string op = kfvOp(t);
-            result = DASH_RESULT_SUCCESS;
-            auto found = toBulk.find(std::make_pair(tunnel_name, op));
-            if (found == toBulk.end())
-            {
-                it_prev++;
-                continue;
-            }
-            auto& ctxt = found->second;
 
-            if (op == SET_COMMAND)
+            try
             {
-                if (addTunnelPost(tunnel_name, ctxt))
+                result = DASH_RESULT_SUCCESS;
+                auto found = toBulk.find(std::make_pair(tunnel_name, op));
+                if (found == toBulk.end())
                 {
-                    it_prev = consumer.m_toSync.erase(it_prev);
-                    /*
-                     * The result should be written here only if the tunnel has
-                     * one endpoint. For more tunnel endpoints, we need to wait
-                     * until after tunnel members post-op.
-                     */
-                    if (ctxt.metadata.endpoints_size() == 1)
+                    it_prev++;
+                    continue;
+                }
+                auto& ctxt = found->second;
+
+                if (op == SET_COMMAND)
+                {
+                    bool handled = addTunnelPost(tunnel_name, ctxt);
+                    bool tunnel_created = !ctxt.tunnel_object_ids.empty() && ctxt.tunnel_object_ids.front() != SAI_NULL_OBJECT_ID;
+                    if (handled)
                     {
-                        writeResultToDB(dash_tunnel_result_table_, tunnel_name,
-                                        result);
+                        if (!tunnel_created)
+                        {
+                            result = DASH_RESULT_FAILURE;
+                        }
+                        it_prev = consumer.m_toSync.erase(it_prev);
+                        /*
+                         * The result should be written here only if the tunnel has
+                         * one endpoint. For more tunnel endpoints, we need to wait
+                         * until after tunnel members post-op unless tunnel creation
+                         * already failed.
+                         */
+                        if (ctxt.metadata.endpoints_size() == 1 || result == DASH_RESULT_FAILURE)
+                        {
+                            writeResultToDB(dash_tunnel_result_table_, tunnel_name,
+                                            result);
+                        }
+                    }
+                    else if (!ctxt.tunnel_member_object_ids.empty())
+                    {
+                        it_prev++;
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed post-processing DASH tunnel %s", tunnel_name.c_str());
+                        result = DASH_RESULT_FAILURE;
+                        it_prev = consumer.m_toSync.erase(it_prev);
+                        writeResultToDB(dash_tunnel_result_table_, tunnel_name, result);
                     }
                 }
-                else
+                else if (op == DEL_COMMAND)
                 {
-                    it_prev++;
+                    if (removeTunnelPost(tunnel_name, ctxt))
+                    {
+                        removeResultFromDB(dash_tunnel_result_table_, tunnel_name);
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed post-processing DASH tunnel removal %s", tunnel_name.c_str());
+                    }
+                    it_prev = consumer.m_toSync.erase(it_prev);
                 }
             }
-            else if (op == DEL_COMMAND)
+            catch (const std::exception& e)
             {
-                if (removeTunnelPost(tunnel_name, ctxt))
-                {
-                    it_prev = consumer.m_toSync.erase(it_prev);
-                    removeResultFromDB(dash_tunnel_result_table_, tunnel_name);
-                }
-                else
-                {
-                    it_prev++;
-                }
+                SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", consumer.getTableName().c_str(), tunnel_name.c_str(), e.what());
+                it_prev = consumer.m_toSync.erase(it_prev);
             }
         }
 
@@ -225,34 +254,40 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
             swss::KeyOpFieldsValuesTuple t = it_prev->second;
             std::string tunnel_name = kfvKey(t);
             std::string op = kfvOp(t);
-            result = DASH_RESULT_SUCCESS;
-            auto found = toBulk.find(std::make_pair(tunnel_name, op));
-            if (found == toBulk.end())
-            {
-                it_prev++;
-                continue;
-            }
-            auto& ctxt = found->second;
 
-            if (op == SET_COMMAND)
+            try
             {
-                if (addTunnelMemberPost(tunnel_name, ctxt))
+                result = DASH_RESULT_SUCCESS;
+                auto found = toBulk.find(std::make_pair(tunnel_name, op));
+                if (found == toBulk.end())
                 {
+                    it_prev++;
+                    continue;
+                }
+                auto& ctxt = found->second;
+
+                if (op == SET_COMMAND)
+                {
+                    if (!addTunnelMemberPost(tunnel_name, ctxt))
+                    {
+                        SWSS_LOG_ERROR("Failed post-processing DASH tunnel members for %s", tunnel_name.c_str());
+                        result = DASH_RESULT_FAILURE;
+                    }
+                    it_prev = consumer.m_toSync.erase(it_prev);
+                    /*
+                     * Write result for tunnels with more than one endpoint.
+                     */
+                    writeResultToDB(dash_tunnel_result_table_, tunnel_name, result);
+                }
+                else if (op == DEL_COMMAND)
+                {
+                    // We should never get here
                     it_prev = consumer.m_toSync.erase(it_prev);
                 }
-                else
-                {
-                    result = DASH_RESULT_FAILURE;
-                    it_prev++;
-                }
-                /*
-                 * Write result for tunnels with more than one endpoint.
-                 */
-                writeResultToDB(dash_tunnel_result_table_, tunnel_name, result);
             }
-            else if (op == DEL_COMMAND)
+            catch (const std::exception& e)
             {
-                // We should never get here
+                SWSS_LOG_ERROR("Exception caught in post-processing %s entry %s: %s", consumer.getTableName().c_str(), tunnel_name.c_str(), e.what());
                 it_prev = consumer.m_toSync.erase(it_prev);
             }
         }
@@ -265,8 +300,9 @@ bool DashTunnelOrch::addTunnel(const std::string& tunnel_name, DashTunnelBulkCon
     auto dash_orch = gDirectory.get<DashOrch*>();
     if (!dash_orch->hasApplianceEntry())
     {
-        SWSS_LOG_WARN("DASH appliance entry not found, skipping DASH tunnel %s creation", tunnel_name.c_str());
-        return false;
+        SWSS_LOG_ERROR("DASH appliance entry not found, skipping DASH tunnel %s creation", tunnel_name.c_str());
+        ctxt.pre_op_result = DASH_RESULT_FAILURE;
+        return true;
     }
     std::vector<sai_attribute_t> tunnel_attrs;
     sai_attribute_t tunnel_attr;
@@ -294,6 +330,7 @@ bool DashTunnelOrch::addTunnel(const std::string& tunnel_name, DashTunnelBulkCon
             break;
         default:
             SWSS_LOG_ERROR("Unsupported encap type %d", ctxt.metadata.encap_type());
+            ctxt.pre_op_result = DASH_RESULT_FAILURE;
             return remove_from_consumer;
     }
     tunnel_attrs.push_back(tunnel_attr);
@@ -368,7 +405,7 @@ bool DashTunnelOrch::addTunnelPost(const std::string& tunnel_name, DashTunnelBul
     {
         DashTunnelEntry entry = { tunnel_oid, std::map<std::string, DashTunnelEndpointEntry>(), std::string() };
         tunnel_table_[tunnel_name] = entry;
-        remove_from_consumer = false;
+        remove_from_consumer = (ctxt.metadata.endpoints_size() == 1);
         SWSS_LOG_INFO("Tunnel entry added for %s", tunnel_name.c_str());
     }
 
@@ -488,7 +525,7 @@ bool DashTunnelOrch::removeTunnelPost(const std::string& tunnel_name, const Dash
     bool remove_from_consumer = removeTunnelEndpointsPost(tunnel_name, ctxt);
     if (!remove_from_consumer)
     {
-        // If endpoint removal requires a retry, exit immediately since the tunnel can't be deleted if endpoints still exist
+        // If endpoint removal failed, exit immediately since the tunnel can't be deleted if endpoints still exist
         return remove_from_consumer;
     }
 
@@ -504,8 +541,7 @@ bool DashTunnelOrch::removeTunnelPost(const std::string& tunnel_name, const Dash
     {
         if (status == SAI_STATUS_OBJECT_IN_USE)
         {
-            // Retry later if object has non-zero reference to it
-            SWSS_LOG_WARN("DASH tunnel %s is in use, cannot remove", tunnel_name.c_str());
+            SWSS_LOG_ERROR("DASH tunnel %s is in use, cannot remove", tunnel_name.c_str());
             remove_from_consumer = false;
             return remove_from_consumer;
         }
@@ -513,7 +549,7 @@ bool DashTunnelOrch::removeTunnelPost(const std::string& tunnel_name, const Dash
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_TUNNEL, status);
         if (handle_status != task_success)
         {
-            remove_from_consumer = parseHandleSaiStatusFailure(handle_status);
+            remove_from_consumer = true;
             return remove_from_consumer;
         }
     }
@@ -579,12 +615,8 @@ bool DashTunnelOrch::removeTunnelEndpointsPost(const std::string& tunnel_name, c
         sai_status_t nh_status = *nh_it_status++;
         if (tm_status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_WARN("DASH tunnel member removal for tunnel %s endpoint %s failed with %s", tunnel_name.c_str(), endpoint_it->first.c_str(), sai_serialize_status(tm_status).c_str());
-            task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_TUNNEL, tm_status);
-            if (handle_status == task_need_retry)
-            {
-                remove_from_consumer = false;
-            }
+            SWSS_LOG_ERROR("DASH tunnel member removal for tunnel %s endpoint %s failed with %s", tunnel_name.c_str(), endpoint_it->first.c_str(), sai_serialize_status(tm_status).c_str());
+            handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_TUNNEL, tm_status);
         }
         else
         {
@@ -597,12 +629,9 @@ bool DashTunnelOrch::removeTunnelEndpointsPost(const std::string& tunnel_name, c
 
         if (nh_status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_WARN("DASH tunnel next hop removal for tunnel %s endpoint %s failed with %s", tunnel_name.c_str(), endpoint_it->first.c_str(), sai_serialize_status(tm_status).c_str());
-            task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_TUNNEL, nh_status);
-            if (handle_status == task_need_retry)
-            {
-                remove_from_consumer = false;
-            }
+            SWSS_LOG_ERROR("DASH tunnel next hop removal for tunnel %s endpoint %s failed with %s", tunnel_name.c_str(), endpoint_it->first.c_str(), sai_serialize_status(nh_status).c_str());
+            handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_TUNNEL, nh_status);
+            remove_from_consumer = false;
         }
         else
         {

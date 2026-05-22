@@ -243,6 +243,20 @@ namespace dashorch_test
         SetDashTable(APP_DASH_ENI_TABLE_NAME, "eni1", eni, false);
     }
 
+    TEST_F(DashOrchTest, RemoveNonExistentEni)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+        EXPECT_CALL(*mock_sai_dash_eni_api, remove_eni).Times(0);
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, dash::eni::Eni(), false, true);
+    }
+
+    TEST_F(DashOrchTest, RemoveNonExistentAppliance)
+    {
+        EXPECT_CALL(*mock_sai_dash_appliance_api, remove_dash_appliance).Times(0);
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, dash::appliance::Appliance(), false, true);
+    }
+
     TEST_F(DashOrchTest, CreateRemoveApplianceTrustedVnisSingleValue)
     {
         int trusted_vni = 100;
@@ -320,7 +334,7 @@ namespace dashorch_test
                 .Times(1);
         }
 
-        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance, true, false);
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance, true, true);
     }
 
     TEST_F(DashOrchTest, CreateRemoveApplianceTrustedVniRemoveFail)
@@ -341,7 +355,7 @@ namespace dashorch_test
         }
 
         SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance);
-        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, dash::appliance::Appliance(), false, false);
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, dash::appliance::Appliance(), false, true);
     }
 
     TEST_F(DashOrchTest, CreateRemoveApplianceTrustedVnisMixed)
@@ -521,7 +535,7 @@ namespace dashorch_test
                 .Times(1);
         }
 
-        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni, true, false);
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni, true, true);
     }
 
     TEST_F(DashOrchTest, CreateRemoveEniTrustedVniRemoveFail)
@@ -546,7 +560,7 @@ namespace dashorch_test
         }
 
         SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni);
-        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, dash::eni::Eni(), false, false);
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, dash::eni::Eni(), false, true);
     }
 
     TEST_F(DashOrchTest, CreateRemoveEniTrustedVnisMixed)
@@ -775,5 +789,299 @@ namespace dashorch_test
 
         SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, BuildEniEntry());
         VerifyNoAttribute(actual_attrs, SAI_ENI_ATTR_IS_HA_FLOW_OWNER);
+    }
+
+    TEST_F(DashOrchTest, CreateEniMissingVnetNotRetried)
+    {
+        CreateApplianceEntry();
+        // Build ENI referencing a VNET that doesn't exist
+        dash::eni::Eni eni = BuildEniEntry();
+        eni.set_vnet("NON_EXISTENT_VNET");
+        EXPECT_CALL(*mock_sai_dash_eni_api, create_eni).Times(0);
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni, true, true);
+    }
+
+    TEST_F(DashOrchTest, CreateEniMissingApplianceNotRetried)
+    {
+        // Do NOT create appliance — ENI requires appliance to exist
+        CreateVnet();
+        EXPECT_CALL(*mock_sai_dash_eni_api, create_eni).Times(0);
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, BuildEniEntry(), true, true);
+    }
+
+    TEST_F(DashOrchTest, CreateEniSaiFailureNotRetried)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+        EXPECT_CALL(*mock_sai_dash_eni_api, create_eni)
+            .WillOnce(Return(SAI_STATUS_INSUFFICIENT_RESOURCES));
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, BuildEniEntry(), true, true);
+    }
+
+    TEST_F(DashOrchTest, EniRouteMissingEniNotRetried)
+    {
+        CreateApplianceEntry();
+        // Do NOT create ENI — ENI route references eni1 which doesn't exist
+        dash::eni_route::EniRoute eni_route;
+        eni_route.set_group_id(route_group1);
+        SetDashTable(APP_DASH_ENI_ROUTE_TABLE_NAME, eni1, eni_route, true, true);
+    }
+
+    TEST_F(DashOrchTest, EniRouteMissingRouteGroupNotRetried)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+        auto eni = BuildEniEntry();
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni);
+        // Do NOT create route group — ENI route references route_group1 which doesn't exist
+        dash::eni_route::EniRoute eni_route;
+        eni_route.set_group_id(route_group1);
+        SetDashTable(APP_DASH_ENI_ROUTE_TABLE_NAME, eni1, eni_route, true, true);
+    }
+
+    TEST_F(DashOrchTest, ApplianceTrustedVniFailCleanupAllowsRetry)
+    {
+        dash::appliance::Appliance appliance = BuildApplianceEntry();
+        appliance.mutable_trusted_vnis_list()->Add()->set_value(100);
+
+        {
+            InSequence seq;
+            // First attempt: appliance created, VNI fails, appliance removed
+            EXPECT_CALL(*mock_sai_dash_appliance_api, create_dash_appliance).Times(1);
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_global_trusted_vni_entry)
+                .WillOnce(Return(SAI_STATUS_FAILURE));
+            EXPECT_CALL(*mock_sai_dash_appliance_api, remove_dash_appliance).Times(1);
+            // Second attempt: all SAI calls re-issued (cache was cleared)
+            EXPECT_CALL(*mock_sai_dash_appliance_api, create_dash_appliance).Times(1);
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_global_trusted_vni_entry).Times(1);
+        }
+
+        // First attempt fails
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance, true, true);
+        // Second attempt succeeds — verifies cache was not populated by failed first attempt
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance, true, true);
+    }
+
+    TEST_F(DashOrchTest, EniTrustedVniFailCleanupAllowsRetry)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+
+        dash::eni::Eni eni = BuildEniEntry();
+        eni.mutable_trusted_vnis_list()->Add()->set_value(200);
+
+        {
+            InSequence seq;
+            // First attempt: ENI created, VNI fails, ENI removed
+            EXPECT_CALL(*mock_sai_dash_eni_api, create_eni).Times(1);
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_eni_trusted_vni_entry)
+                .WillOnce(Return(SAI_STATUS_FAILURE));
+            EXPECT_CALL(*mock_sai_dash_eni_api, remove_eni).Times(1);
+            // Second attempt: all SAI calls re-issued (cache was cleared)
+            EXPECT_CALL(*mock_sai_dash_eni_api, create_eni).Times(1);
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, create_eni_trusted_vni_entry).Times(1);
+        }
+
+        // First attempt fails
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni, true, true);
+        // Second attempt succeeds — verifies cache was not populated by failed first attempt
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni, true, true);
+    }
+
+    TEST_F(DashOrchTest, AddRemoveEniRoute)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+        auto eni = BuildEniEntry();
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni);
+        AddOutboundRoutingGroup();
+
+        // SET ENI route — binds ENI to route group
+        dash::eni_route::EniRoute eni_route;
+        eni_route.set_group_id(route_group1);
+        SetDashTable(APP_DASH_ENI_ROUTE_TABLE_NAME, eni1, eni_route, true, true);
+
+        // DEL ENI route — unbinds
+        SetDashTable(APP_DASH_ENI_ROUTE_TABLE_NAME, eni1, dash::eni_route::EniRoute(), false, true);
+    }
+
+    TEST_F(DashOrchTest, AddRemoveTunnel)
+    {
+        CreateApplianceEntry();
+        AddTunnel();
+        RemoveTunnel();
+    }
+
+    TEST_F(DashOrchTest, RemoveEniPartialFailurePreservesCache)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+        auto eni = BuildEniEntry();
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni);
+
+        {
+            InSequence seq;
+            // First remove attempt: remove_eni fails
+            EXPECT_CALL(*mock_sai_dash_eni_api, remove_eni)
+                .WillOnce(Return(SAI_STATUS_OBJECT_IN_USE));
+            // Second remove attempt: remove_eni succeeds (cache was preserved)
+            EXPECT_CALL(*mock_sai_dash_eni_api, remove_eni).Times(1);
+        }
+
+        // First attempt — SAI failure, consumer still emptied but cache preserved
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, dash::eni::Eni(), false, true);
+        // Second attempt — succeeds because cache was preserved, so remove_eni is called again
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, dash::eni::Eni(), false, true);
+    }
+
+    TEST_F(DashOrchTest, RemoveApplianceDirectionLookupFailurePreservesCache)
+    {
+        CreateApplianceEntry();
+
+        {
+            InSequence seq;
+            // First remove attempt: direction_lookup remove fails
+            EXPECT_CALL(*mock_sai_dash_direction_lookup_api, remove_direction_lookup_entry)
+                .WillOnce(Return(SAI_STATUS_FAILURE));
+            // Second remove attempt: direction_lookup and appliance removes succeed
+            EXPECT_CALL(*mock_sai_dash_direction_lookup_api, remove_direction_lookup_entry).Times(1);
+            EXPECT_CALL(*mock_sai_dash_appliance_api, remove_dash_appliance).Times(1);
+        }
+
+        // First attempt — direction lookup removal fails, cache preserved
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, dash::appliance::Appliance(), false, true);
+        // Second attempt — succeeds, all SAI remove calls re-issued
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, dash::appliance::Appliance(), false, true);
+    }
+
+    TEST_F(DashOrchTest, RemoveApplianceTrustedVniFailurePreservesCache)
+    {
+        dash::appliance::Appliance appliance = BuildApplianceEntry();
+        appliance.mutable_trusted_vnis_list()->Add()->set_value(100);
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance);
+
+        {
+            InSequence seq;
+            // First remove attempt: trusted VNI removal fails
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_global_trusted_vni_entry)
+                .WillOnce(Return(SAI_STATUS_FAILURE));
+            // Second remove attempt: all removals succeed
+            EXPECT_CALL(*mock_sai_dash_trusted_vni_api, remove_global_trusted_vni_entry).Times(1);
+            EXPECT_CALL(*mock_sai_dash_appliance_api, remove_dash_appliance).Times(1);
+        }
+
+        // First attempt — VNI removal fails, cache preserved
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, dash::appliance::Appliance(), false, true);
+        // Second attempt — succeeds
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, dash::appliance::Appliance(), false, true);
+    }
+
+    TEST_F(DashOrchTest, MissingProtobufAppliance)
+    {
+        // SET with no pb field — should be consumed without creating anything
+        EXPECT_CALL(*mock_sai_dash_appliance_api, create_dash_appliance).Times(0);
+        SetDashTableRaw(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, {}, true, true);
+    }
+
+    TEST_F(DashOrchTest, InvalidProtobufAppliance)
+    {
+        // SET with garbage pb field — should be consumed without creating anything
+        EXPECT_CALL(*mock_sai_dash_appliance_api, create_dash_appliance).Times(0);
+        SetDashTableRaw(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, {{ "pb", "not_valid_protobuf" }}, true, true);
+    }
+
+    TEST_F(DashOrchTest, MissingProtobufEni)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+        EXPECT_CALL(*mock_sai_dash_eni_api, create_eni).Times(0);
+        SetDashTableRaw(APP_DASH_ENI_TABLE_NAME, eni1, {}, true, true);
+    }
+
+    TEST_F(DashOrchTest, MissingProtobufEniRoute)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+        SetDashTableRaw(APP_DASH_ENI_ROUTE_TABLE_NAME, eni1, {}, true, true);
+    }
+
+    TEST_F(DashOrchTest, InvalidRoutingTypeKey)
+    {
+        // Invalid routing type string that cannot be parsed
+        SetDashTableRaw(APP_DASH_ROUTING_TYPE_TABLE_NAME, "INVALID_NOT_A_REAL_TYPE",
+                        {{ "pb", dash::route_type::RouteType().SerializeAsString() }}, true, true);
+    }
+
+    TEST_F(DashOrchTest, EniCreateDeleteChurn)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+        auto eni = BuildEniEntry();
+
+        // Cycle ENI create/delete multiple times
+        for (int i = 0; i < 3; i++)
+        {
+            EXPECT_CALL(*mock_sai_dash_eni_api, create_eni).Times(1);
+            SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni);
+
+            EXPECT_CALL(*mock_sai_dash_eni_api, remove_eni).Times(1);
+            SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, dash::eni::Eni(), false, true);
+        }
+    }
+
+    TEST_F(DashOrchTest, EniCreateFailThenSucceed)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+        auto eni = BuildEniEntry();
+
+        {
+            InSequence seq;
+            // First create fails
+            EXPECT_CALL(*mock_sai_dash_eni_api, create_eni)
+                .WillOnce(Return(SAI_STATUS_INSUFFICIENT_RESOURCES));
+            // Second create succeeds
+            EXPECT_CALL(*mock_sai_dash_eni_api, create_eni).Times(1);
+        }
+
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni, true, true);
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni, true, true);
+    }
+
+    TEST_F(DashOrchTest, MultipleEniCreateDelete)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+        auto eni = BuildEniEntry();
+        std::string eni2 = "ENI_2";
+
+        // Create two different ENIs
+        EXPECT_CALL(*mock_sai_dash_eni_api, create_eni).Times(2);
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni);
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni2, eni);
+
+        // Delete both
+        EXPECT_CALL(*mock_sai_dash_eni_api, remove_eni).Times(2);
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, dash::eni::Eni(), false, true);
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni2, dash::eni::Eni(), false, true);
+    }
+
+    TEST_F(DashOrchTest, EniRouteBindUnbindChurn)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+        auto eni = BuildEniEntry();
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni);
+        AddOutboundRoutingGroup();
+
+        dash::eni_route::EniRoute eni_route;
+        eni_route.set_group_id(route_group1);
+
+        // Bind/unbind multiple times
+        for (int i = 0; i < 3; i++)
+        {
+            SetDashTable(APP_DASH_ENI_ROUTE_TABLE_NAME, eni1, eni_route, true, true);
+            SetDashTable(APP_DASH_ENI_ROUTE_TABLE_NAME, eni1, dash::eni_route::EniRoute(), false, true);
+        }
     }
 }

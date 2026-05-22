@@ -93,7 +93,7 @@ namespace dashrouteorch_test
             EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries).Times(1);
         }
         AddOutboundRoutingGroup();
-        AddOutboundRoutingEntry(false);
+        AddOutboundRoutingEntry(true);
         
         AddTunnel();
         AddOutboundRoutingEntry();
@@ -176,6 +176,20 @@ namespace dashrouteorch_test
         RemoveInboundRoutingEntry();
     }
 
+    TEST_F(DashRouteOrchTest, AddRemoveRouteGroup)
+    {
+        AddOutboundRoutingGroup();
+        SetDashTable(APP_DASH_ROUTE_GROUP_TABLE_NAME, route_group1, dash::route_group::RouteGroup(), false, true);
+    }
+
+    TEST_F(DashRouteOrchTest, InboundRouteSaiCreateFailureNotRetried)
+    {
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_INVALID_PARAMETER};
+        EXPECT_CALL(*mock_sai_dash_inbound_routing_api, create_inbound_routing_entries)
+            .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        AddInboundRoutingEntry(true);
+    }
+
     TEST_F(DashRouteOrchTest, RemoveNonexistInboundRoutingDoesNotDecrementCrm)
     {
         uint32_t baselineUsed = GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_INBOUND_ROUTING);
@@ -185,5 +199,247 @@ namespace dashrouteorch_test
             .Times(1).WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
         RemoveInboundRoutingEntry();
         EXPECT_EQ(GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_INBOUND_ROUTING), baselineUsed);
+    }
+
+    TEST_F(DashRouteOrchTest, OutboundRouteMissingVnetNotRetried)
+    {
+        // Route references VNET but VNET doesn't exist (PostSetUp creates it, so we need a route referencing a different VNET)
+        dash::route::Route route = dash::route::Route();
+        route.set_routing_type(dash::route_type::ROUTING_TYPE_VNET);
+        route.set_vnet("NON_EXISTENT_VNET");
+        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries).Times(0);
+        AddOutboundRoutingGroup();
+        SetDashTable(APP_DASH_ROUTE_TABLE_NAME, route_group1 + ":1.2.3.4/32", route, true, true);
+    }
+
+    TEST_F(DashRouteOrchTest, OutboundRouteSaiInvalidParameterNotRetried)
+    {
+        AddOutboundRoutingGroup();
+        AddTunnel();
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_INVALID_PARAMETER};
+        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries)
+            .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        AddOutboundRoutingEntry(true);
+    }
+
+    TEST_F(DashRouteOrchTest, OutboundRouteSaiInsufficientResourcesNotRetried)
+    {
+        AddOutboundRoutingGroup();
+        AddTunnel();
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_INSUFFICIENT_RESOURCES};
+        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries)
+            .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        AddOutboundRoutingEntry(true);
+    }
+
+    TEST_F(DashRouteOrchTest, OutboundRouteMissingRouteGroupNotRetried)
+    {
+        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries).Times(0);
+        dash::route::Route route = dash::route::Route();
+        route.set_routing_type(dash::route_type::ROUTING_TYPE_VNET);
+        route.set_vnet(vnet1);
+        SetDashTable(APP_DASH_ROUTE_TABLE_NAME, route_group1 + ":1.2.3.4/32", route, true, true);
+    }
+
+    TEST_F(DashRouteOrchTest, InboundRouteMissingEniNotRetried)
+    {
+        // Inbound route references an ENI that doesn't exist
+        dash::route_rule::RouteRule rule = dash::route_rule::RouteRule();
+        rule.set_pa_validation(true);
+        EXPECT_CALL(*mock_sai_dash_inbound_routing_api, create_inbound_routing_entries).Times(0);
+        SetDashTable(APP_DASH_ROUTE_RULE_TABLE_NAME, "NON_EXISTENT_ENI:5555:10.0.0.0/24", rule, true, true);
+    }
+
+    TEST_F(DashRouteOrchTest, RouteGroupSaiRemoveInUseNotRetried)
+    {
+        AddOutboundRoutingGroup();
+        // Route group remove with bound routes should not retry.
+        // Bind a route to the group, then try to remove the group
+        AddTunnel();
+        AddOutboundRoutingEntry();
+        // Removing the route group while routes are bound should consume the notification
+        SetDashTable(APP_DASH_ROUTE_GROUP_TABLE_NAME, route_group1, dash::route_group::RouteGroup(), false, true);
+    }
+
+    TEST_F(DashRouteOrchTest, OutboundRouteSaiRemoveNotExecutedNotRetried)
+    {
+        AddOutboundRoutingGroup();
+        AddTunnel();
+        AddOutboundRoutingEntry();
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_NOT_EXECUTED};
+        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, remove_outbound_routing_entries)
+            .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        RemoveOutboundRoutingEntry(true);
+    }
+
+    TEST_F(DashRouteOrchTest, InboundRouteSaiRemoveNotExecutedNotRetried)
+    {
+        AddInboundRoutingEntry();
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_NOT_EXECUTED};
+        EXPECT_CALL(*mock_sai_dash_inbound_routing_api, remove_inbound_routing_entries)
+            .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        RemoveInboundRoutingEntry(true);
+    }
+
+    TEST_F(DashRouteOrchTest, RemoveNonExistentRouteGroup)
+    {
+        SetDashTable(APP_DASH_ROUTE_GROUP_TABLE_NAME, route_group1, dash::route_group::RouteGroup(), false, true);
+    }
+
+    TEST_F(DashRouteOrchTest, MissingProtobufOutboundRoute)
+    {
+        AddOutboundRoutingGroup();
+        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries).Times(0);
+        SetDashTableRaw(APP_DASH_ROUTE_TABLE_NAME, route_group1 + ":1.2.3.4/32", {}, true, true);
+    }
+
+    TEST_F(DashRouteOrchTest, InvalidProtobufOutboundRoute)
+    {
+        AddOutboundRoutingGroup();
+        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries).Times(0);
+        SetDashTableRaw(APP_DASH_ROUTE_TABLE_NAME, route_group1 + ":1.2.3.4/32", {{ "pb", "garbage" }}, true, true);
+    }
+
+    TEST_F(DashRouteOrchTest, MissingProtobufInboundRoute)
+    {
+        EXPECT_CALL(*mock_sai_dash_inbound_routing_api, create_inbound_routing_entries).Times(0);
+        SetDashTableRaw(APP_DASH_ROUTE_RULE_TABLE_NAME, eni1 + ":5555:10.0.0.0/24", {}, true, true);
+    }
+
+    TEST_F(DashRouteOrchTest, MissingProtobufRouteGroup)
+    {
+        SetDashTableRaw(APP_DASH_ROUTE_GROUP_TABLE_NAME, route_group1, {}, true, true);
+    }
+
+    TEST_F(DashRouteOrchTest, InvalidKeyOutboundRoute)
+    {
+        // Invalid keys should be caught per-item and consumed without throwing.
+        AddOutboundRoutingGroup();
+        dash::route::Route route = dash::route::Route();
+        route.set_routing_type(dash::route_type::ROUTING_TYPE_VNET);
+        route.set_vnet(vnet1);
+        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries).Times(0);
+        EXPECT_NO_THROW(
+            SetDashTable(APP_DASH_ROUTE_TABLE_NAME, route_group1 + ":not_an_ip", route, true, true));
+    }
+
+    TEST_F(DashRouteOrchTest, InvalidKeyInboundRoute)
+    {
+        // Invalid keys should be caught per-item and consumed without throwing.
+        dash::route_rule::RouteRule rule = dash::route_rule::RouteRule();
+        EXPECT_CALL(*mock_sai_dash_inbound_routing_api, create_inbound_routing_entries).Times(0);
+        EXPECT_NO_THROW(
+            SetDashTable(APP_DASH_ROUTE_RULE_TABLE_NAME, eni1 + ":not_a_vni:10.0.0.0/24", rule, true, true));
+    }
+
+    TEST_F(DashRouteOrchTest, OutboundRouteCreateDeleteChurn)
+    {
+        AddOutboundRoutingGroup();
+        AddTunnel();
+
+        for (int i = 0; i < 3; i++)
+        {
+            EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries).Times(1);
+            AddOutboundRoutingEntry();
+
+            EXPECT_CALL(*mock_sai_dash_outbound_routing_api, remove_outbound_routing_entries).Times(1);
+            RemoveOutboundRoutingEntry();
+        }
+    }
+
+    TEST_F(DashRouteOrchTest, InboundRouteCreateDeleteChurn)
+    {
+        for (int i = 0; i < 3; i++)
+        {
+            EXPECT_CALL(*mock_sai_dash_inbound_routing_api, create_inbound_routing_entries).Times(1);
+            AddInboundRoutingEntry();
+
+            EXPECT_CALL(*mock_sai_dash_inbound_routing_api, remove_inbound_routing_entries).Times(1);
+            RemoveInboundRoutingEntry();
+        }
+    }
+
+    TEST_F(DashRouteOrchTest, RouteGroupCreateDeleteChurn)
+    {
+        for (int i = 0; i < 3; i++)
+        {
+            AddOutboundRoutingGroup();
+            SetDashTable(APP_DASH_ROUTE_GROUP_TABLE_NAME, route_group1, dash::route_group::RouteGroup(), false, true);
+        }
+    }
+
+    TEST_F(DashRouteOrchTest, OutboundRouteCreateFailThenSucceed)
+    {
+        AddOutboundRoutingGroup();
+        AddTunnel();
+
+        {
+            InSequence seq;
+            // First create returns INVALID_PARAMETER
+            EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries)
+                .WillOnce([](uint32_t count, const sai_outbound_routing_entry_t*, const uint32_t*, const sai_attribute_t**, sai_bulk_op_error_mode_t, sai_status_t* statuses) {
+                    statuses[0] = SAI_STATUS_INVALID_PARAMETER;
+                    return SAI_STATUS_SUCCESS;
+                });
+            // Second create succeeds
+            EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries).Times(1);
+        }
+
+        AddOutboundRoutingEntry(true);
+        AddOutboundRoutingEntry();
+    }
+
+    TEST_F(DashRouteOrchTest, OutboundRouteKeyMissingPrefix)
+    {
+        // Key should be "route_group:ip_prefix" — send just route group without prefix
+        AddOutboundRoutingGroup();
+        dash::route::Route route = dash::route::Route();
+        route.set_routing_type(dash::route_type::ROUTING_TYPE_VNET);
+        route.set_vnet(vnet1);
+        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries).Times(0);
+        EXPECT_NO_THROW(
+            SetDashTable(APP_DASH_ROUTE_TABLE_NAME, route_group1, route, true, true));
+    }
+
+    TEST_F(DashRouteOrchTest, InboundRouteKeyMissingVniAndPrefix)
+    {
+        // Key should be "eni:vni:prefix" — send just ENI without vni/prefix
+        dash::route_rule::RouteRule rule = dash::route_rule::RouteRule();
+        EXPECT_CALL(*mock_sai_dash_inbound_routing_api, create_inbound_routing_entries).Times(0);
+        EXPECT_NO_THROW(
+            SetDashTable(APP_DASH_ROUTE_RULE_TABLE_NAME, eni1, rule, true, true));
+    }
+
+    TEST_F(DashRouteOrchTest, InboundRouteKeyMissingPrefix)
+    {
+        // Key should be "eni:vni:prefix" — send eni:vni without prefix
+        dash::route_rule::RouteRule rule = dash::route_rule::RouteRule();
+        EXPECT_CALL(*mock_sai_dash_inbound_routing_api, create_inbound_routing_entries).Times(0);
+        EXPECT_NO_THROW(
+            SetDashTable(APP_DASH_ROUTE_RULE_TABLE_NAME, eni1 + ":5555", rule, true, true));
+    }
+
+    TEST_F(DashRouteOrchTest, OutboundRouteAlreadyExistsInSai)
+    {
+        AddOutboundRoutingGroup();
+        AddTunnel();
+        // First create succeeds normally
+        AddOutboundRoutingEntry();
+        // Second create returns ITEM_ALREADY_EXISTS from bulker — should be treated as success
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_ITEM_ALREADY_EXISTS};
+        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries)
+            .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        AddOutboundRoutingEntry(true);
+    }
+
+    TEST_F(DashRouteOrchTest, InboundRouteAlreadyExistsInSai)
+    {
+        // First create succeeds normally
+        AddInboundRoutingEntry();
+        // Second create returns ITEM_ALREADY_EXISTS from bulker — should be treated as success
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_ITEM_ALREADY_EXISTS};
+        EXPECT_CALL(*mock_sai_dash_inbound_routing_api, create_inbound_routing_entries)
+            .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        AddInboundRoutingEntry(true);
     }
 }
