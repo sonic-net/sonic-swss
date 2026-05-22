@@ -393,25 +393,37 @@ int main(int argc, char **argv)
                     /* Explicit resume path: caller (typically warm-reboot abort
                      * cleanup) wants us to immediately clear drain mode and
                      * force a zebra re-dump, instead of waiting up to
-                     * autoResumeTimeoutSec for the timer to fire. Send the
-                     * reply first, then re-use the same shutdown sequence
-                     * as the auto-resume timer's branch. */
+                     * autoResumeTimeoutSec for the timer to fire.
+                     *
+                     * No-op when fpmsyncd is not in drain mode: we still
+                     * reply RESUMED (so the caller's exit-0 check works) but
+                     * we do NOT disconnect a healthy FPM connection,
+                     * do NOT touch STATE_DB, and do NOT re-arm anything. */
                     if (resumeRequested)
                     {
-                        bool wasDraining = sync.isDrainingForWarmRestart();
-                        sync.setDrainingForWarmRestart(false);
-                        s.removeSelectable(&drainAutoResumeTimer);
-
-                        warmRestartStateTable.hset("fpmsyncd", "drain_state", "resumed");
-                        warmRestartStateTable.hset("fpmsyncd", "drain_queue_size", std::to_string(qsize));
-
-                        SWSS_LOG_WARN("fpmsyncd: explicit resume — clearing drain flag (wasDraining=%s) and forcing FPM disconnect to trigger zebra full-FIB re-dump.",
-                                      wasDraining ? "true" : "false");
+                        const bool wasDraining = sync.isDrainingForWarmRestart();
 
                         std::vector<FieldValueTuple> reply{
                             FieldValueTuple{"queueSize", std::to_string(qsize)},
-                            FieldValueTuple{"resumed", "true"}
+                            FieldValueTuple{"was_draining", wasDraining ? "true" : "false"},
+                            FieldValueTuple{"resumed",      wasDraining ? "true" : "false"}
                         };
+
+                        if (!wasDraining)
+                        {
+                            SWSS_LOG_NOTICE("fpmsyncd: explicit resume requested but not in drain mode — no-op (FPM connection preserved)");
+                            restartCheckReply.send("fpmsyncd", "RESUMED", reply);
+                            continue;
+                        }
+
+                        /* Was in drain mode — full resume sequence. */
+                        sync.setDrainingForWarmRestart(false);
+                        s.removeSelectable(&drainAutoResumeTimer);
+                        warmRestartStateTable.hset("fpmsyncd", "drain_state", "resumed");
+                        warmRestartStateTable.hset("fpmsyncd", "drain_queue_size", std::to_string(qsize));
+
+                        SWSS_LOG_WARN("fpmsyncd: explicit resume — clearing drain flag and forcing FPM disconnect to trigger zebra full-FIB re-dump.");
+
                         restartCheckReply.send("fpmsyncd", "RESUMED", reply);
 
                         fpm.forceDisconnect();
