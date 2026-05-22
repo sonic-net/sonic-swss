@@ -32,6 +32,7 @@ extern TunnelDecapOrch *gTunneldecapOrch;
 
 extern size_t gMaxBulkSize;
 extern string gMySwitchType;
+extern bool gRouteStateAsyncPublish;
 
 /* Default maximum number of next hop groups */
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
@@ -56,6 +57,7 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
 
     m_publisher.setBuffered(true);
     m_publisher.m_directDbWrite = true;
+    m_publisher.setAsyncFullPublish(true);
 
     sai_attribute_t attr;
     attr.id = SAI_SWITCH_ATTR_NUMBER_OF_ECMP_GROUPS;
@@ -1224,12 +1226,6 @@ void RouteOrch::doTask(ConsumerBase& consumer)
             }
         }
 
-        /* Flush response publisher so route notifications reach fpmsyncd every batch.
-         * Without this, notifications stay buffered in the Redis pipeline until the
-         * next OrchDaemon periodic flush (up to 1s), delaying the offload reply to
-         * zebra and causing BGP advertisement delay when supress fib pending is ON */
-        m_publisher.flush();
-
         /* Remove next hop group if the reference count decreases to zero */
         for (auto& it_nhg : m_bulkNhgReducedRefCnt)
         {
@@ -1249,6 +1245,13 @@ void RouteOrch::doTask(ConsumerBase& consumer)
         {
             m_srv6Orch->removeSrv6Nexthops(m_bulkSrv6NhgReducedVec);
         }
+
+        // One async batch + flush per gRouteBulker.flush(): drain batched publishAsync work to the worker,
+        // then enqueue the flush marker so fpmsyncd sees responses without waiting for OrchDaemon periodic 
+        // flush.
+        m_publisher.publishAsyncBatch();
+        m_publisher.flush();
+
         /* No Update to Default Route so we can return */
         if (!(v4_default_nhg_key.getSize()) && !(v6_default_nhg_key.getSize()))
         {
@@ -3038,8 +3041,10 @@ bool RouteOrch::removeRoutePrefix(const IpPrefix& prefix)
         return true;
     }
     gRouteBulker.flush();
-    return removeRoutePost(context);
-
+    bool ret = removeRoutePost(context);
+    m_publisher.publishAsyncBatch();
+    m_publisher.flush();
+    return ret;
 }
 
 bool RouteOrch::createRemoteVtep(sai_object_id_t vrf_id, const NextHopKey &nextHop)
@@ -3189,7 +3194,7 @@ void RouteOrch::publishRouteState(const RouteBulkContext& ctx, const ReturnCode&
     std::vector<FieldValueTuple> fvs;
 
     /* Leave the fvs empty if the operation type is "DEL".
-     * An empty fvs makes ResponsePublisher::publish() remove the state entry from APPL_STATE_DB
+     * An empty fvs makes ResponsePublisher remove the state entry from APPL_STATE_DB
      */
     if (ctx.is_set)
     {
@@ -3198,7 +3203,7 @@ void RouteOrch::publishRouteState(const RouteBulkContext& ctx, const ReturnCode&
 
     const bool replace = false;
 
-    m_publisher.publish(APP_ROUTE_TABLE_NAME, ctx.key, fvs, status, replace);
+    m_publisher.publishAsync(APP_ROUTE_TABLE_NAME, ctx.key, fvs, status, replace);
 }
 
 inline bool RouteOrch::isVipRoute(const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
@@ -3248,4 +3253,10 @@ inline void RouteOrch::removeVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix)
     string key = tunnel_name + ":" + ipPrefix.to_string();
     m_appTunnelDecapTermProducer.del(key);
     m_SubnetDecapTermsCreated.erase(it);
+}
+
+void RouteOrch::flushResponses()
+{
+    m_publisher.flush();
+    Orch::flushResponses();
 }

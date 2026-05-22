@@ -39,6 +39,24 @@ void ResponsePublisher::publish(
     }
 }
 
+void ResponsePublisher::setAsyncFullPublish(bool enable)
+{
+    (void)enable;
+}
+
+void ResponsePublisher::publishAsync(
+    const std::string& table, const std::string& key,
+    const std::vector<swss::FieldValueTuple>& intent_attrs, const ReturnCode& status, bool replace)
+{
+    // Fake has no state update thread; mirror synchronous publish() path.
+    publish(table, key, intent_attrs, status, replace);
+}
+
+void ResponsePublisher::publishAsyncBatch()
+{
+    // No pending batch: publishAsync already called publish() above.
+}
+
 void ResponsePublisher::writeToDB(
     const std::string& table, const std::string& key,
     const std::vector<swss::FieldValueTuple>& values, const std::string& op,

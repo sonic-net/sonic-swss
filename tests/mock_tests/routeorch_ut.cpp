@@ -1026,4 +1026,19 @@ namespace routeorch_test
         ASSERT_EQ(gRouteOrch->gRouteBulker.setting_entries_count(), 0);
         ASSERT_EQ(gRouteOrch->gRouteBulker.removing_entries_count(), 0);
     }
+
+    TEST_F(RouteOrchTest, RouteOrch_RemoveRoutePrefixRunsAsyncPublisherFlush)
+    {
+        auto *routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"7.7.7.0/24", "SET",
+                           {{"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"}}});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        (void)gRouteOrch->removeRoutePrefix(IpPrefix("7.7.7.0/24"));
+        ASSERT_TRUE(gRouteOrch->removeRoutePrefix(IpPrefix("7.7.7.0/24")));
+    }
 }
