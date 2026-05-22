@@ -4,8 +4,10 @@
 #define SAI_MOCK_FILENAME fdborch_vxlan_ut
 #include "mock_sai_api.h"
 #include "mock_table.h"
+#define private public
 #include "portsorch.h"
 #include "fdborch.h"
+#undef private
 
 #include "saimetadata.h"
 
@@ -237,6 +239,8 @@ namespace fdborch_vxlan_ut
 
             delete m_EvpnNvoOrch;
             m_EvpnNvoOrch = nullptr;
+
+            gPortsOrch = nullptr;
 
             delete m_vxlanTunnelOrch;
             m_vxlanTunnelOrch = nullptr;
@@ -1195,6 +1199,150 @@ namespace fdborch_vxlan_ut
 
         ASSERT_TRUE(found_entry1);
         ASSERT_TRUE(found_entry3);
+    }
+
+
+    // Test: AGE notification for MAC not present in m_entries (covers "mac not present" log path)
+    TEST_F(VxlanFdbOrchTest, AgeNotificationMacNotPresent)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+        m_portsOrch.get()->addExistingData(&portTable);
+        static_cast<Orch *>(m_portsOrch.get())->doTask();
+
+        setUpVlan(m_portsOrch.get());
+        setUpPort(m_portsOrch.get());
+        setUpVlanMember(m_portsOrch.get());
+
+        // Trigger AGE for a MAC that was never learned — covers the "not present" path
+        vector<uint8_t> mac_addr = {0xde, 0xad, 0xbe, 0xef, 0x00, 0x01};
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_AGED, mac_addr,
+                      m_portsOrch->m_portList[ETH0].m_bridge_port_id,
+                      m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid);
+
+        // No crash expected; fdb_count should remain 0
+        ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 0);
+    }
+
+    // Test: AGE notification with stale bridge_port_id (different from stored entry)
+    // The stale path requires: AGE bridge_port_id is a known port BUT differs from the
+    // bridge_port_id stored in m_entries for that MAC.
+    TEST_F(VxlanFdbOrchTest, AgeNotificationStaleBridgePort)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+        m_portsOrch.get()->addExistingData(&portTable);
+        static_cast<Orch *>(m_portsOrch.get())->doTask();
+
+        setUpVlan(m_portsOrch.get());
+        setUpPort(m_portsOrch.get());
+        setUpVxlanPort(m_portsOrch.get());
+        setUpVlanMember(m_portsOrch.get());
+        setUpVxlanMember(m_portsOrch.get());
+
+        // Learn MAC on ETH0's bridge_port_id
+        vector<uint8_t> mac_addr = {0xde, 0xad, 0xbe, 0xef, 0x00, 0x02};
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_LEARNED, mac_addr,
+                      m_portsOrch->m_portList[ETH0].m_bridge_port_id,
+                      m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid);
+        ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+
+        // Trigger AGE with VXLAN_REMOTE bridge_port_id — it is a known port but different
+        // from the stored ETH0 bridge_port_id, so this hits the stale aging code path
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_AGED, mac_addr,
+                      m_portsOrch->m_portList[VXLAN_REMOTE].m_bridge_port_id,
+                      m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid);
+
+        // Entry should be removed despite stale bp (SONiC/SAI sync)
+        ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 0);
+    }
+
+    // Test: MCLAG FDB ADD — covers FDB_ORIGIN_MCLAG_ADVERTIZED path
+    TEST_F(VxlanFdbOrchTest, MclagFdbAddDelete)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+        m_portsOrch.get()->addExistingData(&portTable);
+        static_cast<Orch *>(m_portsOrch.get())->doTask();
+
+        setUpVlan(m_portsOrch.get());
+        setUpPort(m_portsOrch.get());
+        setUpVlanMember(m_portsOrch.get());
+
+        auto consumer = dynamic_cast<Consumer *>(gFdbOrch->getExecutor("MCLAG_FDB_TABLE"));
+        ASSERT_NE(consumer, nullptr);
+
+        // ADD a MCLAG remote MAC — MCLAG entries use "port" field (not "ifname")
+        Table mclagFdbTable = Table(m_app_db.get(), "MCLAG_FDB_TABLE");
+        mclagFdbTable.set("Vlan40:aa:bb:cc:11:22:33", {
+            {"type", "dynamic"},
+            {"port", ETH0}
+        });
+        gFdbOrch->addExistingData(&mclagFdbTable);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+
+        ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+
+        // DEL the MCLAG remote MAC — covers MCLAG DEL path (m_mclagFdbStateTable.del)
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Vlan40:aa:bb:cc:11:22:33", "DEL", {
+            {"type", "dynamic"},
+            {"port", ETH0}
+        }});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+
+        ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 0);
+    }
+
+    // Test: Unknown operation type in doTask — covers the "Unknown operation type" error path
+    TEST_F(VxlanFdbOrchTest, UnknownOperationType)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+        m_portsOrch.get()->addExistingData(&portTable);
+        static_cast<Orch *>(m_portsOrch.get())->doTask();
+
+        setUpVlan(m_portsOrch.get());
+        setUpPort(m_portsOrch.get());
+        setUpVlanMember(m_portsOrch.get());
+
+        auto consumer = dynamic_cast<Consumer *>(gFdbOrch->getExecutor(APP_FDB_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+
+        // Inject an entry with an unknown operation
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Vlan40:aa:bb:cc:44:55:66", "UNKNOWN_OP", {
+            {"type", "dynamic"},
+            {"port", ETH0}
+        }});
+        consumer->addToSync(entries);
+        // Should not crash — entry is erased and processing continues
+        static_cast<Orch *>(gFdbOrch)->doTask();
     }
 
     TEST_F(VxlanFdbOrchTest, RemoveFdbEntryFromPortCacheNonExistentEntry)

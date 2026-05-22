@@ -290,6 +290,295 @@ TEST_F(FpmSyncdResponseTest, testEvpn)
 
 }
 
+
+// Helper: build a minimal RTM_NEWROUTE / RTM_DELROUTE nlmsghdr
+static struct nlmsghdr* createRouteNlmsg(uint16_t nlmsg_type, uint8_t family,
+                                          uint8_t rtm_type, const char* dst_ip,
+                                          uint8_t prefixlen, uint8_t protocol = 200)
+{
+    struct nlmsghdr *nlh = (struct nlmsghdr *)malloc(NLMSG_SPACE(MAX_PAYLOAD));
+    memset(nlh, 0, NLMSG_SPACE(MAX_PAYLOAD));
+    nlh->nlmsg_type = nlmsg_type;
+    nlh->nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg));
+
+    struct rtmsg *rtm = (struct rtmsg *)NLMSG_DATA(nlh);
+    rtm->rtm_family   = family;
+    rtm->rtm_protocol = protocol;
+    rtm->rtm_type     = rtm_type;
+    rtm->rtm_table    = 0;
+    rtm->rtm_dst_len  = prefixlen;
+
+    // Append RTA_DST attribute
+    struct rtattr *rta = (struct rtattr *)((char *)nlh + NLMSG_ALIGN(nlh->nlmsg_len));
+    rta->rta_type = RTA_DST;
+    if (family == AF_INET6)
+    {
+        struct in6_addr addr6;
+        inet_pton(AF_INET6, dst_ip, &addr6);
+        rta->rta_len = RTA_LENGTH(sizeof(addr6));
+        memcpy(RTA_DATA(rta), &addr6, sizeof(addr6));
+    }
+    else
+    {
+        struct in_addr addr4;
+        inet_pton(AF_INET, dst_ip, &addr4);
+        rta->rta_len = RTA_LENGTH(sizeof(addr4));
+        memcpy(RTA_DATA(rta), &addr4, sizeof(addr4));
+    }
+
+    nlh->nlmsg_len = NLMSG_ALIGN(nlh->nlmsg_len) + RTA_ALIGN(rta->rta_len);
+    return nlh;
+}
+
+// Test: RTM_DELROUTE for IPv4 prefix — covers del path in onMsgRaw
+TEST_F(FpmSyncdResponseTest, RouteDelIPv4)
+{
+    shared_ptr<swss::DBConnector> m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
+    Table app_route_table(m_app_db.get(), APP_ROUTE_TABLE_NAME);
+
+    // Pre-populate so we can verify deletion
+    app_route_table.set("10.0.0.0/24", {{"nexthop", "192.168.1.1"}});
+
+    struct nlmsghdr *nlh = createRouteNlmsg(RTM_DELROUTE, AF_INET, RTN_UNICAST,
+                                            "10.0.0.0", 24);
+    m_routeSync.onMsgRaw(nlh);
+    free(nlh);
+
+    // Key should be deleted
+    vector<FieldValueTuple> fvs;
+    EXPECT_FALSE(app_route_table.get("10.0.0.0/24", fvs));
+}
+
+// Test: RTM_NEWROUTE for IPv6 prefix — covers AF_INET6 path in onMsgRaw
+TEST_F(FpmSyncdResponseTest, RouteAddIPv6)
+{
+    struct nlmsghdr *nlh = createRouteNlmsg(RTM_NEWROUTE, AF_INET6, RTN_UNICAST,
+                                            "2001:db8::", 32);
+    EXPECT_CALL(m_mockRouteSync, getEvpnNextHop(_, _, _, _, _, _, _))
+        .WillOnce([](struct nlmsghdr*, int, struct rtattr*[], std::string& nexthops,
+                     std::string&, std::string&, std::string&) -> bool {
+            nexthops = "";
+            return false;
+        });
+    m_mockRouteSync.onMsgRaw(nlh);
+    free(nlh);
+}
+
+// Test: RTM_DELROUTE for IPv6 prefix — covers AF_INET6 del path
+TEST_F(FpmSyncdResponseTest, RouteDelIPv6)
+{
+    struct nlmsghdr *nlh = createRouteNlmsg(RTM_DELROUTE, AF_INET6, RTN_UNICAST,
+                                            "2001:db8::", 32);
+    m_routeSync.onMsgRaw(nlh);
+    free(nlh);
+}
+
+// Test: RTN_BLACKHOLE route type — covers blackhole error path
+TEST_F(FpmSyncdResponseTest, RouteBlackhole)
+{
+    struct nlmsghdr *nlh = createRouteNlmsg(RTM_NEWROUTE, AF_INET, RTN_BLACKHOLE,
+                                            "192.0.2.0", 24);
+    m_routeSync.onMsgRaw(nlh);
+    free(nlh);
+}
+
+// Test: RTN_MULTICAST route type — covers multicast/BUM not-supported path
+TEST_F(FpmSyncdResponseTest, RouteMulticast)
+{
+    struct nlmsghdr *nlh = createRouteNlmsg(RTM_NEWROUTE, AF_INET, RTN_MULTICAST,
+                                            "224.0.0.0", 4);
+    m_routeSync.onMsgRaw(nlh);
+    free(nlh);
+}
+
+// Test: getEvpnNextHop returns false with empty nexthops — covers EVPN issue log path
+TEST_F(FpmSyncdResponseTest, EvpnNextHopFailure)
+{
+    struct nlmsghdr *nlh = createRouteNlmsg(RTM_NEWROUTE, AF_INET, RTN_UNICAST,
+                                            "10.1.1.0", 24);
+    EXPECT_CALL(m_mockRouteSync, getEvpnNextHop(_, _, _, _, _, _, _))
+        .WillOnce([](struct nlmsghdr*, int, struct rtattr*[], std::string& nexthops,
+                     std::string& vni, std::string& mac, std::string& intf) -> bool {
+            // Non-empty vni/mac/intf but empty nexthops — triggers EVPN issue log
+            vni = "100";
+            mac = "aa:bb:cc:dd:ee:ff";
+            intf = "Ethernet0";
+            nexthops = "";
+            return true;
+        });
+    m_mockRouteSync.onMsgRaw(nlh);
+    free(nlh);
+}
+
+// Test: onRouteResponse with empty protocol — covers "without protocol, ignoring" path
+TEST_F(FpmSyncdResponseTest, RouteResponseEmptyProtocol)
+{
+    DBConnector applStateDb{"APPL_STATE_DB", 0};
+    Table routeStateTable{&applStateDb, APP_ROUTE_TABLE_NAME};
+    routeStateTable.set("10.2.0.0/24", {{"protocol", "kernel"}});
+
+    // No send() expected since we return early due to empty protocol
+    EXPECT_CALL(m_mockFpm, send(_)).Times(0);
+
+    m_routeSync.onRouteResponse("10.2.0.0/24", {
+        {"err_str", "SWSS_RC_SUCCESS"},
+        {"protocol", ""},
+    });
+}
+
+// Test: getProtocolString with unknown protocol number — covers to_string fallback
+TEST_F(FpmSyncdResponseTest, GetProtocolStringUnknown)
+{
+    // Proto 250 is not a standard protocol name, triggers the to_string fallback
+    struct nlmsghdr *nlh = createRouteNlmsg(RTM_NEWROUTE, AF_INET, RTN_UNICAST,
+                                            "10.3.0.0", 24, /*protocol=*/250);
+    EXPECT_CALL(m_mockRouteSync, getEvpnNextHop(_, _, _, _, _, _, _))
+        .WillOnce([](struct nlmsghdr*, int, struct rtattr*[], std::string& nexthops,
+                     std::string&, std::string&, std::string&) -> bool {
+            nexthops = "";
+            return false;
+        });
+    m_mockRouteSync.onMsgRaw(nlh);
+    free(nlh);
+}
+
+// Helper: build nlmsg with RTA_DST + RTA_TABLE (for VRF route testing)
+static struct nlmsghdr* createRouteNlmsgWithTable(uint16_t nlmsg_type, uint8_t family,
+                                                   uint8_t rtm_type, const char* dst_ip,
+                                                   uint8_t prefixlen, uint32_t table_id,
+                                                   uint8_t protocol = 200)
+{
+    struct nlmsghdr *nlh = createRouteNlmsg(nlmsg_type, family, rtm_type, dst_ip, prefixlen, protocol);
+
+    struct rtattr *rta = (struct rtattr *)((char *)nlh + NLMSG_ALIGN(nlh->nlmsg_len));
+    rta->rta_type = RTA_TABLE;
+    uint32_t tbl = table_id;
+    rta->rta_len = RTA_LENGTH(sizeof(tbl));
+    memcpy(RTA_DATA(rta), &tbl, sizeof(tbl));
+
+    nlh->nlmsg_len = NLMSG_ALIGN(nlh->nlmsg_len) + RTA_ALIGN(rta->rta_len);
+    return nlh;
+}
+
+// Test: IPv4 dst_len > 32 — covers early return at IPV4_MAX_BITLEN check
+TEST_F(FpmSyncdResponseTest, RouteIPv4BadPrefixLen)
+{
+    struct nlmsghdr *nlh = createRouteNlmsg(RTM_NEWROUTE, AF_INET, RTN_UNICAST,
+                                            "10.0.0.0", 33);
+    m_routeSync.onMsgRaw(nlh);
+    free(nlh);
+}
+
+// Test: IPv6 dst_len > 128 — covers early return at IPV6_MAX_BITLEN check
+TEST_F(FpmSyncdResponseTest, RouteIPv6BadPrefixLen)
+{
+    struct nlmsghdr *nlh = createRouteNlmsg(RTM_NEWROUTE, AF_INET6, RTN_UNICAST,
+                                            "2001:db8::", 129);
+    m_routeSync.onMsgRaw(nlh);
+    free(nlh);
+}
+
+// Test: onEvpnRouteMsg with unknown msg type — covers "else if (nlmsg_type != RTM_NEWROUTE)" path
+TEST_F(FpmSyncdResponseTest, OnEvpnRouteMsgUnknownType)
+{
+    // RTM_GETROUTE is neither RTM_DELROUTE nor RTM_NEWROUTE → hits line 963
+    struct nlmsghdr *nlh = createRouteNlmsg(RTM_GETROUTE, AF_INET, RTN_UNICAST,
+                                            "10.0.0.0", 24);
+    int len = (int)(nlh->nlmsg_len - NLMSG_LENGTH(sizeof(struct rtmsg)));
+    m_routeSync.onEvpnRouteMsg(nlh, len);
+    free(nlh);
+}
+
+// Test: VRF route where getIfName fails — covers getIfName error return path
+TEST_F(FpmSyncdResponseTest, VrfRouteGetIfNameFail)
+{
+    struct nlmsghdr *nlh = createRouteNlmsgWithTable(RTM_NEWROUTE, AF_INET, RTN_UNICAST,
+                                                      "10.10.0.0", 24, 100);
+    EXPECT_CALL(m_mockRouteSync, getIfName(100, _, _)).WillOnce(Return(false));
+    m_mockRouteSync.onMsgRaw(nlh);
+    free(nlh);
+}
+
+// Test: VRF route where getIfName returns non-"Vrf" name — covers invalid VRF name error path
+TEST_F(FpmSyncdResponseTest, VrfRouteInvalidName)
+{
+    struct nlmsghdr *nlh = createRouteNlmsgWithTable(RTM_NEWROUTE, AF_INET, RTN_UNICAST,
+                                                      "10.11.0.0", 24, 101);
+    EXPECT_CALL(m_mockRouteSync, getIfName(101, _, _))
+        .WillOnce(DoAll([](int, char* buf, size_t sz){ strncpy(buf, "eth1", sz); }, Return(true)));
+    m_mockRouteSync.onMsgRaw(nlh);
+    free(nlh);
+}
+
+// Test: VRF route with valid "Vrf" prefix — covers line 929 + sendOffloadReply with null FPM
+TEST_F(FpmSyncdResponseTest, VrfRouteValidName)
+{
+    struct nlmsghdr *nlh = createRouteNlmsgWithTable(RTM_NEWROUTE, AF_INET, RTN_UNICAST,
+                                                      "10.12.0.0", 24, 102);
+    EXPECT_CALL(m_mockRouteSync, getIfName(102, _, _))
+        .WillOnce(DoAll([](int, char* buf, size_t sz){ strncpy(buf, "Vrf1", sz); }, Return(true)));
+    EXPECT_CALL(m_mockRouteSync, getEvpnNextHop(_, _, _, _, _, _, _))
+        .WillOnce(Return(false));
+    m_mockRouteSync.onMsgRaw(nlh);
+    free(nlh);
+}
+
+// Test: installNextHopGroup with unknown ID — covers "nexthop not found" error path
+TEST_F(FpmSyncdResponseTest, InstallNhgNotFound)
+{
+    m_mockRouteSync.installNextHopGroup(9999);
+}
+
+// Test: installNextHopGroup on already-installed group — covers "already installed" return
+TEST_F(FpmSyncdResponseTest, InstallNhgAlreadyInstalled)
+{
+    NextHopGroup nhg(50, "192.168.5.1", "Ethernet5");
+    m_mockRouteSync.m_nh_groups.insert({50, nhg});
+    m_mockRouteSync.installNextHopGroup(50);   // installs
+    m_mockRouteSync.installNextHopGroup(50);   // hits "already installed" return
+}
+
+// Test: getNextHopGroupFields with group referencing missing member — covers incomplete group error
+TEST_F(FpmSyncdResponseTest, NhgFieldsIncompleteGroup)
+{
+    vector<pair<uint32_t,uint8_t>> members;
+    members.push_back({888, 1});  // ID 888 not in m_nh_groups
+    NextHopGroup nhg(60, members);
+    string nexthops, ifnames, weights;
+    m_mockRouteSync.getNextHopGroupFields(nhg, nexthops, ifnames, weights);
+    // Should log "incomplete" and return with empty strings
+    EXPECT_TRUE(nexthops.empty());
+}
+
+// Test: getPicContextGroupFields with group referencing missing member — covers incomplete group error
+TEST_F(FpmSyncdResponseTest, PicContextIncompleteGroup)
+{
+    vector<pair<uint32_t,uint8_t>> members;
+    members.push_back({889, 1});  // ID 889 not in m_nh_groups
+    NextHopGroup nhg(61, members);
+    struct NextHopField nhField;
+    m_mockRouteSync.getPicContextGroupFields(nhg, nhField, AF_INET);
+    // Should log "incomplete" and return with empty nhField
+    EXPECT_TRUE(nhField.nexthops.empty());
+}
+
+// Test: deletePicContextGroup with unknown ID — covers "nexthop not found" info path
+TEST_F(FpmSyncdResponseTest, DeletePicContextNhgNotFound)
+{
+    m_mockRouteSync.deletePicContextGroup(9998);
+}
+
+// Test: deletePicContextGroup on installed nhg — covers del from pic_context_groupTable
+TEST_F(FpmSyncdResponseTest, DeletePicContextInstalled)
+{
+    NextHopGroup nhg(70, "192.168.7.1", "Ethernet7");
+    nhg.installed = true;
+    m_mockRouteSync.m_nh_groups.insert({70, nhg});
+    m_mockRouteSync.deletePicContextGroup(70);
+    // nhg should be removed
+    EXPECT_EQ(m_mockRouteSync.m_nh_groups.find(70), m_mockRouteSync.m_nh_groups.end());
+}
+
 TEST_F(FpmSyncdResponseTest, testSendOffloadReply)
 {
     rt_build_ret = 1;
