@@ -101,12 +101,32 @@ int main(int argc, char **argv)
     DBConnector stateDb("STATE_DB", 0);
     Table bgpStateTable(&stateDb, STATE_BGP_TABLE_NAME);
 
-    /* Warm-restart preparation channels (iteration 1: minimal handler — log + STATE_DB
-     * update + reply, no drain flag / timer / queue check yet). The tool
-     * fpmsyncd_restart_check sends on FPMSYNCD_RESTARTCHECK, fpmsyncd replies
-     * on FPMSYNCD_RESTARTCHECKREPLY and writes WARM_RESTART_TABLE|fpmsyncd: state=ready.
+    /* Warm-restart drain-barrier channels and STATE_DB row. The tool
+     * fpmsyncd_restart_check sends on FPMSYNCD_RESTARTCHECK; fpmsyncd
+     * replies on FPMSYNCD_RESTARTCHECKREPLY. For operator visibility, the
+     * handler also writes two fields into WARM_RESTART_TABLE|fpmsyncd:
+     *   drain_state ∈ {draining, ready, auto_resumed}
+     *   drain_queue_size = <integer>
+     * These use a `drain_` prefix to namespace them away from the existing
+     * `state` field that fpmsyncd's WarmStartHelper writes during a real
+     * post-warm-boot reconciliation cycle (initialized/restored/reconciled).
+     *
+     * On fpmsyncd startup we HDEL any stale drain_* fields left over from
+     * a prior process instance so operators don't see misleading data when
+     * drain is not actually in progress.
      */
     Table warmRestartStateTable(&stateDb, STATE_WARM_RESTART_TABLE_NAME);
+    warmRestartStateTable.hdel("fpmsyncd", "drain_state");
+    warmRestartStateTable.hdel("fpmsyncd", "drain_queue_size");
+    /* One-time migration cleanup: previous fpmsyncd builds wrote the
+     * drain barrier's status into the bare `queueSize` field. Remove
+     * that stale field too. The `state` field is intentionally left
+     * alone — fpmsyncd's own WarmStartHelper owns it for the
+     * initialized/restored/reconciled post-warm-boot reconciliation
+     * state machine. */
+    warmRestartStateTable.hdel("fpmsyncd", "queueSize");
+    SWSS_LOG_NOTICE("fpmsyncd: cleared stale drain_state / drain_queue_size / queueSize from STATE_DB WARM_RESTART_TABLE|fpmsyncd");
+
     NotificationConsumer restartCheckConsumer(&db, "FPMSYNCD_RESTARTCHECK");
     NotificationProducer restartCheckReply(&db, "FPMSYNCD_RESTARTCHECKREPLY");
 
@@ -311,6 +331,15 @@ int main(int argc, char **argv)
                     SWSS_LOG_WARN("fpmsyncd: drain auto-resume timer fired — warm-reboot was probably aborted. Clearing drain flag and forcing FPM disconnect to trigger zebra full-FIB re-dump.");
                     sync.setDrainingForWarmRestart(false);
                     s.removeSelectable(&drainAutoResumeTimer);
+
+                    /* Reflect the runtime change in STATE_DB so operators
+                     * inspecting WARM_RESTART_TABLE|fpmsyncd see that an
+                     * auto-resume happened rather than the stale last-seen
+                     * drain state. */
+                    size_t qsizeNow = sync.totalDbUpdaterQueueSize();
+                    warmRestartStateTable.hset("fpmsyncd", "drain_state", "auto_resumed");
+                    warmRestartStateTable.hset("fpmsyncd", "drain_queue_size", std::to_string(qsizeNow));
+
                     fpm.forceDisconnect();
                     /* Throw to enter the existing outer-catch reconnect path
                      * (constructs a new FpmLink, blocks on accept() until
@@ -379,17 +408,17 @@ int main(int argc, char **argv)
                     }
 
                     const bool ready = (qsize == 0);
-                    const char* state = ready ? "ready" : "draining";
-                    warmRestartStateTable.hset("fpmsyncd", "state", state);
-                    warmRestartStateTable.hset("fpmsyncd", "queueSize", std::to_string(qsize));
+                    const char* drainState = ready ? "ready" : "draining";
+                    warmRestartStateTable.hset("fpmsyncd", "drain_state", drainState);
+                    warmRestartStateTable.hset("fpmsyncd", "drain_queue_size", std::to_string(qsize));
 
                     if (ready)
                     {
-                        SWSS_LOG_NOTICE("fpmsyncd: ready for warm boot (STATE_DB WARM_RESTART_TABLE|fpmsyncd state=ready queueSize=0)");
+                        SWSS_LOG_NOTICE("fpmsyncd: ready for warm boot (STATE_DB WARM_RESTART_TABLE|fpmsyncd drain_state=ready drain_queue_size=0)");
                     }
                     else
                     {
-                        SWSS_LOG_NOTICE("fpmsyncd: still draining (STATE_DB WARM_RESTART_TABLE|fpmsyncd state=draining queueSize=%zu)", qsize);
+                        SWSS_LOG_NOTICE("fpmsyncd: still draining (STATE_DB WARM_RESTART_TABLE|fpmsyncd drain_state=draining drain_queue_size=%zu)", qsize);
                     }
 
                     std::vector<FieldValueTuple> reply{
