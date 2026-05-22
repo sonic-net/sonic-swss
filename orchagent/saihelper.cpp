@@ -17,6 +17,7 @@ extern "C" {
 #include <vector>
 #include <linux/limits.h>
 #include <net/if.h>
+#include <nlohmann/json.hpp>
 #include "timestamp.h"
 #include "sai_serialize.h"
 #include "saihelper.h"
@@ -101,6 +102,7 @@ sai_stp_api_t*                      sai_stp_api;
 sai_dash_meter_api_t*               sai_dash_meter_api;
 sai_dash_outbound_port_map_api_t*   sai_dash_outbound_port_map_api;
 sai_dash_trusted_vni_api_t*         sai_dash_trusted_vni_api;
+sai_dash_flow_api_t*                sai_dash_flow_api;
 
 extern sai_object_id_t gSwitchId;
 extern bool gTraditionalFlexCounter;
@@ -191,14 +193,68 @@ const sai_service_method_table_t test_services = {
     test_profile_get_next_value
 };
 
+// Resolve gRedisCommunicationMode against context_config.json. When -z zmq_sync
+// was requested but the JSON disables zmq for the default context (guid=0),
+// demote to REDIS_SYNC. Notification handlers in notifications.cpp gate
+// forwarding on this global, so it must reflect the actual transport sairedis
+// will use. Symmetric with the fallback in sairedis/syncd Syncd.cpp.
+//
+// Takes an istream so it streams directly from the open file in production and
+// from std::istringstream in unit tests, with no intermediate copy.
+sai_redis_communication_mode_t resolveCommunicationModeFromContextConfig(
+        std::istream& jsonStream,
+        sai_redis_communication_mode_t currentMode)
+{
+    if (currentMode != SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
+    {
+        return currentMode;
+    }
+
+    try
+    {
+        nlohmann::json j;
+        jsonStream >> j;
+
+        for (auto& item : j["CONTEXTS"])
+        {
+            uint32_t guid = item["guid"];
+            if (guid != 0)
+            {
+                continue;
+            }
+
+            if (item.contains("zmq_enable") && item["zmq_enable"] == false)
+            {
+                SWSS_LOG_NOTICE(
+                    "context %u: zmq_enable=false in context config, demoting "
+                    "gRedisCommunicationMode from ZMQ_SYNC to REDIS_SYNC",
+                    guid);
+                return SAI_REDIS_COMMUNICATION_MODE_REDIS_SYNC;
+            }
+            break;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        SWSS_LOG_WARN("Failed to parse context config for comm-mode resolution: %s",
+                      e.what());
+    }
+
+    return currentMode;
+}
+
 void initSaiApi()
 {
     SWSS_LOG_ENTER();
 
-    if (ifstream(CONTEXT_CFG_FILE))
+    std::ifstream ifs(CONTEXT_CFG_FILE);
+    if (ifs.good())
     {
         SWSS_LOG_NOTICE("Context config file %s exists", CONTEXT_CFG_FILE);
         gProfileMap[SAI_REDIS_KEY_CONTEXT_CONFIG] = CONTEXT_CFG_FILE;
+
+        gRedisCommunicationMode = resolveCommunicationModeFromContextConfig(
+            ifs, gRedisCommunicationMode);
     }
 
     sai_api_initialize(0, (const sai_service_method_table_t *)&test_services);
@@ -261,7 +317,8 @@ void initSaiApi()
     sai_api_query((sai_api_t)SAI_API_DASH_TUNNEL,               (void**)&sai_dash_tunnel_api);
     sai_api_query((sai_api_t)SAI_API_DASH_HA,                   (void**)&sai_dash_ha_api);
     sai_api_query((sai_api_t)SAI_API_DASH_OUTBOUND_PORT_MAP,    (void**)&sai_dash_outbound_port_map_api);
-    sai_api_query((sai_api_t)SAI_API_DASH_TRUSTED_VNI,          (void**)&sai_dash_trusted_vni_api);    
+    sai_api_query((sai_api_t)SAI_API_DASH_TRUSTED_VNI,          (void**)&sai_dash_trusted_vni_api);
+    sai_api_query((sai_api_t)SAI_API_DASH_FLOW,                 (void**)&sai_dash_flow_api);
     sai_api_query(SAI_API_TWAMP,                (void **)&sai_twamp_api);
     sai_api_query(SAI_API_TAM,                  (void **)&sai_tam_api);
     sai_api_query(SAI_API_STP,                  (void **)&sai_stp_api);
@@ -757,6 +814,14 @@ bool parseHandleSaiStatusFailure(task_process_status status)
             SWSS_LOG_WARN("task_process_status %d is not expected in parseHandleSaiStatusFailure", status);
     }
     return true;
+}
+
+bool isSaiStatusResourceFull(sai_status_t status)
+{
+    return status == SAI_STATUS_INSUFFICIENT_RESOURCES ||
+           status == SAI_STATUS_TABLE_FULL ||
+           status == SAI_STATUS_NO_MEMORY ||
+           status == SAI_STATUS_NV_STORAGE_FULL;
 }
 
 /* Handling SAI failure. Request redis to invoke SAI failure dump */

@@ -17,6 +17,7 @@ extern "C"
 #include "mock_sai_virtual_router.h"
 #include "p4orch.h"
 #include "portsorch.h"
+#include "routeorch.h"
 #include "sai_serialize.h"
 #include "switchorch.h"
 #include "vrforch.h"
@@ -60,6 +61,7 @@ CrmOrch *gCrmOrch;
 P4Orch *gP4Orch;
 VRFOrch *gVrfOrch;
 FlowCounterRouteOrch *gFlowCounterRouteOrch;
+RouteOrch *gRouteOrch;
 SwitchOrch *gSwitchOrch;
 Directory<Orch *> gDirectory;
 swss::DBConnector *gAppDb;
@@ -202,6 +204,11 @@ int main(int argc, char *argv[])
 {
     gBatchSize = DEFAULT_BATCH_SIZE;
     testing::InitGoogleTest(&argc, argv);
+
+    swss::Table logging_table(nullptr, CFG_LOGGER_TABLE_NAME);
+    logging_table.hset("SWSS", DAEMON_LOGLEVEL, "NOTICE");
+    logging_table.hset("SWSS", DAEMON_LOGOUTPUT, "STDOUT");
+    swss::Logger::linkToDb("SWSS", [](std::string, std::string) {}, "NOTICE");
 
     sai_router_interface_api_t router_intfs_api;
     sai_neighbor_api_t neighbor_api;

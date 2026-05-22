@@ -2,7 +2,13 @@
 
 #include "gearboxutils.h"
 
+#include <iosfwd>
 #include <string>
+
+extern "C" {
+#include "sairedis.h"
+}
+
 #include "orch.h"
 #include "producertable.h"
 #include "events.h"
@@ -15,12 +21,17 @@ void initSaiApi();
 void initSaiRedis();
 sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy);
 
+sai_redis_communication_mode_t resolveCommunicationModeFromContextConfig(
+        std::istream& jsonStream,
+        sai_redis_communication_mode_t currentMode);
+
 /* Handling SAI status*/
 task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
 task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
 task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
 task_process_status handleSaiGetStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
 bool parseHandleSaiStatusFailure(task_process_status status);
+bool isSaiStatusResourceFull(sai_status_t status);
 void handleSaiFailure(sai_api_t api, std::string oper, sai_status_t status, bool abort_on_failure);
 
 void setFlexCounterGroupParameter(const std::string &group,

@@ -13,6 +13,7 @@
 #include "crmorch.h"
 #include "sai_serialize.h"
 #include "directory.h"
+#include "saihelper.h"
 
 using namespace std;
 using namespace swss;
@@ -85,6 +86,7 @@ acl_rule_attr_lookup_t aclMatchLookup =
     { MATCH_INNER_SRC_MAC,     SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_MAC },
     { MATCH_INNER_DST_MAC,     SAI_ACL_ENTRY_ATTR_FIELD_INNER_DST_MAC },
     { MATCH_INNER_SRC_IP,      SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP},
+    { MATCH_INNER_SRC_IPV6,    SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IPV6},
     { MATCH_INNER_L4_SRC_PORT, SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_SRC_PORT },
     { MATCH_INNER_L4_DST_PORT, SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_DST_PORT },
     { MATCH_BTH_OPCODE,        SAI_ACL_ENTRY_ATTR_FIELD_BTH_OPCODE},
@@ -1109,7 +1111,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
             matchData.data.ip4 = ip.getIp().getV4Addr();
             matchData.mask.ip4 = ip.getMask().getV4Addr();
         }
-        else if (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6)
+        else if (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6 || attr_name == MATCH_INNER_SRC_IPV6)
         {
             IpPrefix ip(attr_value);
             if (ip.isV4())
@@ -1341,6 +1343,7 @@ bool AclRule::createRule()
     }
 
     status = sai_acl_api->create_acl_entry(&m_ruleOid, gSwitchId, (uint32_t)rule_attrs.size(), rule_attrs.data());
+    m_lastSaiStatus = status;
     if (status != SAI_STATUS_SUCCESS)
     {
         if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
@@ -4214,6 +4217,11 @@ AclOrch::AclOrch(vector<TableConnector>& connectors, DBConnector* stateDb, Switc
 
     init(connectors, portOrch, mirrorOrch, neighOrch, routeOrch);
 
+    /* Initialize retry caches for rule consumers so that resource-exhaustion
+     * failures can be parked and retried only when resources are freed. */
+    createRetryCache(CFG_ACL_RULE_TABLE_NAME);
+    createRetryCache(APP_ACL_RULE_TABLE_NAME);
+
     if (m_dTelOrch)
     {
         m_dTelOrch->attach(this);
@@ -5594,7 +5602,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 {
                     bHasIPV4 = true;
                 }
-                if (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6)
+                if (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6 || attr_name == MATCH_INNER_SRC_IPV6)
                 {
                     bHasIPV6 = true;
                 }
@@ -5663,6 +5671,27 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                     setAclRuleStatus(table_id, rule_id, AclObjectStatus::ACTIVE);
                     it = consumer.m_toSync.erase(it);
                 }
+                else if (isSaiStatusResourceFull(newRule->getLastSaiStatus()))
+                {
+                    /* Park resource-exhaustion failures in the retry cache.
+                     * They will be re-queued when resources are freed (i.e.,
+                     * when an ACL rule is successfully removed from this table). */
+                    SWSS_LOG_WARN("ACL rule %s in table %s failed due to resource exhaustion, parking for retry",
+                            rule_id.c_str(), table_id.c_str());
+                    auto cst = make_constraint(RETRY_CST_SAI_RESOURCE, table_id);
+                    if (consumer.addToRetry(it->second, cst))
+                    {
+                        setAclRuleStatus(table_id, rule_id, AclObjectStatus::PENDING_CREATION);
+                        it = consumer.m_toSync.erase(it);
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to park ACL rule %s in table %s in retry cache",
+                                rule_id.c_str(), table_id.c_str());
+                        setAclRuleStatus(table_id, rule_id, AclObjectStatus::PENDING_CREATION);
+                        it++;
+                    }
+                }
                 else
                 {
                     setAclRuleStatus(table_id, rule_id, AclObjectStatus::PENDING_CREATION);
@@ -5679,10 +5708,18 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
+            bool ruleExisted = (getAclRule(table_id, rule_id) != nullptr);
             if (removeAclRule(table_id, rule_id))
             {
                 removeAclRuleStatus(table_id, rule_id);
                 it = consumer.m_toSync.erase(it);
+
+                /* Notify retry cache that resources may have been freed for this table,
+                 * but only if the rule actually existed (i.e., ASIC resources were freed). */
+                if (ruleExisted)
+                {
+                    notifyRetry(this, consumer.getTableName(), make_constraint(RETRY_CST_SAI_RESOURCE, table_id));
+                }
             }
             else
             {

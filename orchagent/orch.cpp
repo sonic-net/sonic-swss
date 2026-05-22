@@ -1,6 +1,5 @@
-#include <inttypes.h>
 #include <stdexcept>
-#include <sys/time.h>
+#include <thread>
 #include "timestamp.h"
 #include "orch.h"
 
@@ -242,16 +241,27 @@ size_t ConsumerBase::addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValue
 
 void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry, bool onRetry)
 {
+    addToSyncInternal(entry, onRetry, true);
+}
+
+void ConsumerBase::addToSyncInternal(const KeyOpFieldsValuesTuple &entry, bool onRetry, bool recordTask)
+{
     SWSS_LOG_ENTER();
 
     string key = kfvKey(entry);
     string op  = kfvOp(entry);
 
-    if (!onRetry)
-        /* Record incoming tasks */
-        Recorder::Instance().swss.record(dumpTuple(entry));
-    else
-        Recorder::Instance().retry.record(dumpTuple(entry).append(DECACHE));
+    if (recordTask)
+    {
+        if (!onRetry)
+        {
+            recordTuple(entry);
+        }
+        else
+        {
+            Recorder::Instance().retry.record(dumpTuple(entry).append(DECACHE));
+        }
+    }
 
     auto retryCache = getOrch() ? getOrch()->getRetryCache(getName()) : nullptr;
 
@@ -396,9 +406,14 @@ size_t ConsumerBase::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries
 {
     SWSS_LOG_ENTER();
 
+    if (!onRetry)
+    {
+        recordTuples(entries);
+    }
+
     for (auto& entry: entries)
     {
-        addToSync(entry, onRetry);
+        addToSyncInternal(entry, onRetry, onRetry);
     }
 
     return entries.size();
@@ -472,6 +487,39 @@ string ConsumerBase::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
     }
 
     return s;
+}
+
+void ConsumerBase::recordTuple(const KeyOpFieldsValuesTuple &tuple)
+{
+    auto& swssRecorder = Recorder::Instance().swss;
+
+    if (!swssRecorder.isAsyncEnabled())
+    {
+        swssRecorder.record(dumpTuple(tuple));
+        return;
+    }
+
+    swssRecorder.recordTupleAsync(
+        getTableName() + getConsumerTable()->getTableNameSeparator(),
+        tuple);
+}
+
+void ConsumerBase::recordTuples(const std::deque<KeyOpFieldsValuesTuple> &entries)
+{
+    auto& swssRecorder = Recorder::Instance().swss;
+
+    if (!swssRecorder.isAsyncEnabled())
+    {
+        for (const auto& entry : entries)
+        {
+            swssRecorder.record(dumpTuple(entry));
+        }
+        return;
+    }
+
+    swssRecorder.recordTuplesAsync(
+        getTableName() + getConsumerTable()->getTableNameSeparator(),
+        entries);
 }
 
 void ConsumerBase::dumpPendingTasks(vector<string> &ts)
@@ -556,7 +604,32 @@ void Executor::processAnyTask(AnyTask&& task)
 void Consumer::drain()
 {
     if (!m_toSync.empty())
-        ((Orch *)m_orch)->doTask((Consumer&)*this);
+    {
+        try
+        {
+            ((Orch *)m_orch)->doTask((Consumer&)*this);
+        }
+        catch (const std::invalid_argument& e)
+        {
+            SWSS_LOG_ERROR("Exception caught: type=invalid_argument, table=%s, error=%s",
+                           getName().c_str(), e.what());
+        }
+        catch (const std::logic_error& e)
+        {
+            SWSS_LOG_ERROR("Exception caught: type=logic_error, table=%s, error=%s",
+                           getName().c_str(), e.what());
+        }
+        catch (const std::exception& e)
+        {
+            SWSS_LOG_ERROR("Exception caught: type=exception, table=%s, error=%s",
+                           getName().c_str(), e.what());
+        }
+        catch (...)
+        {
+            SWSS_LOG_ERROR("Exception caught: type=unknown, table=%s",
+                           getName().c_str());
+        }
+    }
 }
 
 size_t Orch::addExistingData(const string& tableName)
@@ -843,8 +916,31 @@ void Orch::doTask()
 
     for (auto &it : m_consumerMap)
     {
-        count += retryToSync(it.first, threshold - count);
-        it.second->drain();
+        try
+        {
+            count += retryToSync(it.first, threshold - count);
+            it.second->drain();
+        }
+        catch (const std::invalid_argument& e)
+        {
+            SWSS_LOG_ERROR("Exception caught: type=invalid_argument, table=%s, orch=%s, error=%s",
+                           it.first.c_str(), typeid(*this).name(), e.what());
+        }
+        catch (const std::logic_error& e)
+        {
+            SWSS_LOG_ERROR("Exception caught: type=logic_error, table=%s, orch=%s, error=%s",
+                           it.first.c_str(), typeid(*this).name(), e.what());
+        }
+        catch (const std::exception& e)
+        {
+            SWSS_LOG_ERROR("Exception caught: type=exception, table=%s, orch=%s, error=%s",
+                           it.first.c_str(), typeid(*this).name(), e.what());
+        }
+        catch (...)
+        {
+            SWSS_LOG_ERROR("Exception caught: type=unknown, table=%s, orch=%s",
+                           it.first.c_str(), typeid(*this).name());
+        }
     }
 }
 
@@ -1157,19 +1253,23 @@ void Orch2::doTask(Consumer &consumer)
         }
         catch (const std::invalid_argument& e)
         {
-            SWSS_LOG_ERROR("Parse error in %s: %s", typeid(*this).name(), e.what());
+            SWSS_LOG_ERROR("Exception caught: type=invalid_argument, orch=%s, error=%s",
+                           typeid(*this).name(), e.what());
         }
         catch (const std::logic_error& e)
         {
-            SWSS_LOG_ERROR("Logic error in %s: %s", typeid(*this).name(), e.what());
+            SWSS_LOG_ERROR("Exception caught: type=logic_error, orch=%s, error=%s",
+                           typeid(*this).name(), e.what());
         }
         catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Exception was caught in the request parser in %s: %s", typeid(*this).name(), e.what());
+            SWSS_LOG_ERROR("Exception caught: type=exception, orch=%s, error=%s",
+                           typeid(*this).name(), e.what());
         }
         catch (...)
         {
-            SWSS_LOG_ERROR("Unknown exception was caught in the request parser");
+            SWSS_LOG_ERROR("Exception caught: type=unknown, orch=%s",
+                           typeid(*this).name());
         }
         request_.clear();
 

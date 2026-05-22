@@ -56,6 +56,7 @@
 #include "dash/dashtunnelorch.h"
 #include "dash/dashvnetorch.h"
 #include "dash/dashhaorch.h"
+#include "dash/dashhafloworch.h"
 #include "dash/dashmeterorch.h"
 #include "dash/dashportmaporch.h"
 #include "high_frequency_telemetry/hftelorch.h"
