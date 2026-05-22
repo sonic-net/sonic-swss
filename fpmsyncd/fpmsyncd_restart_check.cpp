@@ -29,6 +29,11 @@ void printUsage()
     std::cout << "        and forces an FPM reconnect this many seconds after the last" << std::endl;
     std::cout << "        notification. Sent to fpmsyncd in the notification payload." << std::endl;
     std::cout << "        Default: 20" << std::endl;
+    std::cout << "    -R --resume" << std::endl;
+    std::cout << "        Immediately resume from drain mode: clear the drain flag and" << std::endl;
+    std::cout << "        force an FPM disconnect (causing zebra to reconnect and re-dump" << std::endl;
+    std::cout << "        its full FIB), without waiting for the auto-resume timer." << std::endl;
+    std::cout << "        Intended for warm-reboot abort cleanup. Reply data is \"RESUMED\"." << std::endl;
     std::cout << "    -h --help:" << std::endl;
     std::cout << "        Print out this message" << std::endl;
     std::cout << "" << std::endl;
@@ -61,8 +66,9 @@ int main(int argc, char **argv)
     int retryCount = 19;
     int interSleepMs = 500;
     int autoResumeTimeoutSec = 20;
+    bool resumeRequested = false;
 
-    const char* const optstring = "w:r:i:t:h";
+    const char* const optstring = "w:r:i:t:Rh";
     while (true)
     {
         static struct option long_options[] =
@@ -71,6 +77,7 @@ int main(int argc, char **argv)
             { "retryCount",           required_argument, 0, 'r' },
             { "interSleep",           required_argument, 0, 'i' },
             { "autoResumeTimeoutSec", required_argument, 0, 't' },
+            { "resume",               no_argument,       0, 'R' },
             { "help",                 no_argument,       0, 'h' },
             { 0, 0, 0, 0 }
         };
@@ -101,6 +108,10 @@ int main(int argc, char **argv)
                 SWSS_LOG_NOTICE("Auto-resume timeout set to %s seconds", optarg);
                 autoResumeTimeoutSec = atoi(optarg);
                 break;
+            case 'R':
+                SWSS_LOG_NOTICE("Explicit resume requested");
+                resumeRequested = true;
+                break;
             case 'h':
                 printUsage();
                 exit(EXIT_SUCCESS);
@@ -127,6 +138,10 @@ int main(int argc, char **argv)
     std::vector<swss::FieldValueTuple> values{
         swss::FieldValueTuple{"autoResumeTimeoutSec", std::to_string(autoResumeTimeoutSec)}
     };
+    if (resumeRequested)
+    {
+        values.emplace_back("resume", "true");
+    }
     std::string op = "fpmsyncd";
 
     auto findValue = [](const std::vector<swss::FieldValueTuple>& v, const std::string& key) -> std::string {
@@ -153,10 +168,10 @@ int main(int argc, char **argv)
             const std::string qsStr = qs.empty() ? "" : (" queueSize=" + qs);
             std::cout << "FPMSYNCD_RESTARTCHECK retry " << retries
                       << ": " << data << qsStr << std::endl;
-            if (data == "READY")
+            if (data == "READY" || data == "RESUMED")
             {
-                SWSS_LOG_NOTICE("FPMSYNCD_RESTARTCHECK success, %s is ready for warm restart (queueSize=%s)",
-                                op_ret.c_str(), qs.empty() ? "0" : qs.c_str());
+                SWSS_LOG_NOTICE("FPMSYNCD_RESTARTCHECK success, %s reports status %s (queueSize=%s)",
+                                op_ret.c_str(), data.c_str(), qs.empty() ? "0" : qs.c_str());
                 std::cout << "FPMSYNCD_RESTARTCHECK succeeded" << std::endl;
                 return EXIT_SUCCESS;
             }

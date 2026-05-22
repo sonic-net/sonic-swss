@@ -363,22 +363,59 @@ int main(int argc, char **argv)
 
                     bool hasZmq = sync.hasZmqProducerTables();
                     size_t qsize = sync.totalDbUpdaterQueueSize();
-                    SWSS_LOG_NOTICE("fpmsyncd: preparing for warm boot (received %s on FPMSYNCD_RESTARTCHECK, hasZmqProducerTables=%s, queueSize=%zu)",
-                                    op.c_str(), hasZmq ? "true" : "false", qsize);
 
-                    /* Iteration 4: extract caller-supplied auto-resume timeout
-                     * from the notification's `autoResumeTimeoutSec` field
-                     * (set by fpmsyncd_restart_check via -t). Falls back to
-                     * the default if absent or malformed. */
+                    /* Parse caller-supplied options from notification values:
+                     *   autoResumeTimeoutSec — drain auto-resume interval
+                     *   resume — if "true", immediately resume (skip drain,
+                     *            force FPM reconnect now). Used by the tool's
+                     *            -R / --resume flag for warm-reboot abort
+                     *            recovery without waiting for the timer. */
                     int autoResumeSec = DRAIN_AUTO_RESUME_DEFAULT_INTERVAL_SECONDS;
+                    bool resumeRequested = false;
                     for (const auto& fv : values)
                     {
                         if (fvField(fv) == "autoResumeTimeoutSec")
                         {
                             int parsed = atoi(fvValue(fv).c_str());
                             if (parsed > 0) autoResumeSec = parsed;
-                            break;
                         }
+                        else if (fvField(fv) == "resume" && fvValue(fv) == "true")
+                        {
+                            resumeRequested = true;
+                        }
+                    }
+
+                    SWSS_LOG_NOTICE("fpmsyncd: %s (received %s on FPMSYNCD_RESTARTCHECK, hasZmqProducerTables=%s, queueSize=%zu, resume=%s)",
+                                    resumeRequested ? "explicit resume requested" : "preparing for warm boot",
+                                    op.c_str(), hasZmq ? "true" : "false", qsize,
+                                    resumeRequested ? "true" : "false");
+
+                    /* Explicit resume path: caller (typically warm-reboot abort
+                     * cleanup) wants us to immediately clear drain mode and
+                     * force a zebra re-dump, instead of waiting up to
+                     * autoResumeTimeoutSec for the timer to fire. Send the
+                     * reply first, then re-use the same shutdown sequence
+                     * as the auto-resume timer's branch. */
+                    if (resumeRequested)
+                    {
+                        bool wasDraining = sync.isDrainingForWarmRestart();
+                        sync.setDrainingForWarmRestart(false);
+                        s.removeSelectable(&drainAutoResumeTimer);
+
+                        warmRestartStateTable.hset("fpmsyncd", "drain_state", "resumed");
+                        warmRestartStateTable.hset("fpmsyncd", "drain_queue_size", std::to_string(qsize));
+
+                        SWSS_LOG_WARN("fpmsyncd: explicit resume — clearing drain flag (wasDraining=%s) and forcing FPM disconnect to trigger zebra full-FIB re-dump.",
+                                      wasDraining ? "true" : "false");
+
+                        std::vector<FieldValueTuple> reply{
+                            FieldValueTuple{"queueSize", std::to_string(qsize)},
+                            FieldValueTuple{"resumed", "true"}
+                        };
+                        restartCheckReply.send("fpmsyncd", "RESUMED", reply);
+
+                        fpm.forceDisconnect();
+                        throw FpmLink::FpmConnectionClosedException();
                     }
 
                     if (hasZmq && !sync.isDrainingForWarmRestart())
