@@ -455,7 +455,6 @@ void DashMeterOrch::doTaskMeterRuleTable(ConsumerBase& consumer)
     SWSS_LOG_ENTER();
 
     auto it = consumer.m_toSync.begin();
-    uint32_t result;
 
     while (it != consumer.m_toSync.end())
     {
@@ -475,7 +474,6 @@ void DashMeterOrch::doTaskMeterRuleTable(ConsumerBase& consumer)
                         std::forward_as_tuple());
                 bool inserted = rc.second;
                 auto &ctxt = rc.first->second;
-                result = DASH_RESULT_SUCCESS;
 
                 if (!inserted)
                 {
@@ -502,10 +500,6 @@ void DashMeterOrch::doTaskMeterRuleTable(ConsumerBase& consumer)
                     }
                     if (addMeterRule(key, ctxt))
                     {
-                        if (result == DASH_RESULT_FAILURE)
-                        {
-                            SWSS_LOG_ERROR("Failed to process meter rule %s", key.c_str());
-                        }
                         it = consumer.m_toSync.erase(it);
                     }
                     else

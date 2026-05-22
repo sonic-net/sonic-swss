@@ -100,6 +100,7 @@ void DashPortMapOrch::doTaskPortMapTable(ConsumerBase &consumer)
                 if (removePortMap(port_map_id, ctxt))
                 {
                     it = consumer.m_toSync.erase(it);
+                    removeResultFromDB(dash_port_map_result_table_, port_map_id);
                 }
                 else
                 {
