@@ -613,6 +613,7 @@ namespace portsorch_test
         shared_ptr<swss::DBConnector> m_counters_db;
         shared_ptr<swss::DBConnector> m_chassis_app_db;
         shared_ptr<swss::DBConnector> m_asic_db;
+        FlexCounterOrch *m_flexCounterOrch = nullptr;
 
         PortsOrchTest()
         {
@@ -666,8 +667,8 @@ namespace portsorch_test
             vector<string> flex_counter_tables = {
                 CFG_FLEX_COUNTER_TABLE_NAME
             };
-            auto* flexCounterOrch = new FlexCounterOrch(m_config_db.get(), flex_counter_tables);
-            gDirectory.set(flexCounterOrch);
+            m_flexCounterOrch = new FlexCounterOrch(m_config_db.get(), flex_counter_tables);
+            gDirectory.set(m_flexCounterOrch);
 
             vector<string> buffer_tables = { APP_BUFFER_POOL_TABLE_NAME,
                                              APP_BUFFER_PROFILE_TABLE_NAME,
@@ -801,6 +802,8 @@ namespace portsorch_test
             gSwitchOrch = nullptr;
             delete gMlagOrch;
             gMlagOrch = nullptr;
+            delete m_flexCounterOrch;
+            m_flexCounterOrch = nullptr;
             // clear orchs saved in directory
             gDirectory.m_values.clear();
         }

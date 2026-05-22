@@ -5,6 +5,7 @@ import subprocess
 import time
 from lxml import etree
 import sys
+import resource
 
 
 def str2bool(value):
@@ -33,6 +34,14 @@ def main():
         test_args.append("--gtest_color=yes")
     else:
         test_args.append("--gtest_color=no")
+
+    try:
+        soft_nofile, hard_nofile = resource.getrlimit(resource.RLIMIT_NOFILE)
+        target_nofile = min(max(soft_nofile, 4096), hard_nofile)
+        if target_nofile > soft_nofile:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (target_nofile, hard_nofile))
+    except (OSError, ValueError):
+        pass
 
     test_process = subprocess.run(args.test_binary + test_args, stdin=subprocess.DEVNULL, stdout=args.log_file, stderr=subprocess.STDOUT)
     args.log_file.flush()

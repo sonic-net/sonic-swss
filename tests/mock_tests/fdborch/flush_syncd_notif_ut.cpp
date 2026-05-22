@@ -67,6 +67,7 @@ namespace fdb_syncd_flush_test
         std::shared_ptr<swss::DBConnector> m_chassis_app_db;
         std::shared_ptr<PortsOrch> m_portsOrch;
         std::shared_ptr<FdbOrch> m_fdborch;
+        VxlanTunnelOrch *m_vxlanTunnelOrch = nullptr;
 
         virtual void SetUp() override
         {   
@@ -122,10 +123,10 @@ namespace fdb_syncd_flush_test
             // 3) Crmorch
             ASSERT_EQ(gCrmOrch, nullptr);
             gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
-            VxlanTunnelOrch *vxlan_tunnel_orch_1 = new VxlanTunnelOrch(m_state_db.get(), m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME);
-            gDirectory.set(vxlan_tunnel_orch_1);
-            
-             // Construct fdborch
+            m_vxlanTunnelOrch = new VxlanTunnelOrch(m_state_db.get(), m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME);
+            gDirectory.set(m_vxlanTunnelOrch);
+
+            // Construct fdborch
             vector<table_name_with_pri_t> app_fdb_tables = {
                 { APP_FDB_TABLE_NAME,        FdbOrch::fdborch_pri},
                 { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri},
@@ -147,6 +148,10 @@ namespace fdb_syncd_flush_test
             gSwitchOrch = nullptr;
             delete gCrmOrch;
             gCrmOrch = nullptr;
+
+            delete m_vxlanTunnelOrch;
+            m_vxlanTunnelOrch = nullptr;
+
             gDirectory.m_values.clear();
             ut_helper::uninitSaiApi();
         }
