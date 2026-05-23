@@ -26,9 +26,9 @@ using namespace std;
 
     /* Forward Declarations */
     class RIBNHGTable;
-    class SonicGateWayNHGTable;
+    class SonicPICNHGTable;
     class RIBNHGEntry;
-    struct SonicGateWayNHGObject;
+    struct SonicPICContentObject;
 
     /* description of sonic nexthop object creation info */
     struct SonicNHGObjectInfo {
@@ -51,7 +51,7 @@ using namespace std;
 
     };
 
-    /* Key Object used to hash Sonic Gateway nexthop object */
+    /* Key Object used to hash Sonic PIC nexthop object */
     struct SonicNHGObjectKey {
         vector<std::pair<uint32_t, uint32_t>> groupMember;
         string nexthop;
@@ -106,17 +106,17 @@ using namespace std;
             return !(*this == b);
         }
 
-        static SonicNHGObjectKey createSonicGateWayNHGObjectKey(SonicGateWayNHGObject obj);
+        static SonicNHGObjectKey createSonicPICContentObjectKey(SonicPICContentObject obj);
 
-        static int createSonicGateWayNHGObjectKey(RIBNHGEntry *entry, SonicNHGObjectKey &key_out);
+        static int createSonicPICContentObjectKey(RIBNHGEntry *entry, SonicNHGObjectKey &key_out);
 
         static void createSonicNormalNHGObjectKey(RIBNHGEntry *entry, SonicNHGObjectKey &key_out);
     };
 
-    /* Sonic Gateway nexthop object */
-    struct SonicGateWayNHGObject {
+    /* Sonic PIC object */
+    struct SonicPICContentObject {
         /*
-         * type of Sonic Gateway nexthop object
+         * type of Sonic PIC object
          * currently support three types:
          * SONIC_NHG_OBJ_TYPE_NHG_NORMAL: normal NHG Objects
          * SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY: SRv6 VPN PIC Contexts
@@ -124,38 +124,38 @@ using namespace std;
         sonicNhgObjType type;
 
         /*
-         * contain the <ribID, weight> pairs of Sonic Gateway NHG object
+         * contain the <ribID, weight> pairs of Sonic PIC object
          */
         vector<std::pair<uint32_t, uint32_t>> groupMember;
 
         /*
-         * nexthop of Sonic Gateway NHG object
+         * nexthop of Sonic PIC object
          */
         string nexthop;
 
         /*
-         * vpnSid of Sonic Gateway NHG object
+         * vpnSid of Sonic PIC object
          */
         string vpnSid;
 
         /*
-         * ifName of Sonic Gateway NHG object
+         * ifName of Sonic PIC object
          */
         string ifName;
 
         /*
-         * segSrc of Sonic Gateway NHG object
+         * segSrc of Sonic PIC object
          * optional
          */
         string segSrc;
 
         /*
-         * ifIndex of Sonic Gateway NHG object
+         * ifIndex of Sonic PIC object
          */
         uint32_t ifIndex;
 
         /*
-         * ID of Sonic Gateway NHG object
+         * ID of Sonic PIC object
          */
         uint32_t id;
     };
@@ -249,37 +249,37 @@ using namespace std;
         SonicIDAllocator *getAllocator(sonicNhgObjType type);
     };
 
-    /* Sonic Gateway nexthop entry */
-    class SonicGateWayNHGEntry {
+    /* Sonic PIC entry */
+    class SonicPICContentEntry {
     public:
-        SonicGateWayNHGEntry(SonicGateWayNHGTable *mTable);
-        ~SonicGateWayNHGEntry();
+        SonicPICContentEntry(SonicPICContentTable *mTable);
+        ~SonicPICContentEntry();
 
         /*
-         * static creation func for SonicGateWayNHGEntry
+         * static creation func for SonicPICContentEntry
          */
-        static SonicGateWayNHGEntry *createSonicGateWayNHGEntry(SonicGateWayNHGTable *mTable);
+        static SonicPICContentEntry *createSonicPICContentEntry(SonicPICContentTable *mTable);
 
         /*
-         * get DB Fv Vector of SonicGateWayNHGEntry
+         * get DB Fv Vector of SonicPICContentEntry
          */
         vector<FieldValueTuple> getFvVector();
 
         /*
-         * get SonicGateWayNHGObject of SonicGateWayNHGEntry
+         * get SonicPICContentObject of SonicPICContentEntry
          */
-        SonicGateWayNHGObject getNHG();
+        SonicPICContentObject getNHG();
 
         /*
-         * get the SonicNHGObjectKey of SonicGateWayNHGEntry
-         * SonicNHGObjectKey is used to map the SonicGateWayNHGObject from Object fields
+         * get the SonicNHGObjectKey of SonicPICContentEntry
+         * SonicNHGObjectKey is used to map the SonicPICContentObject from Object fields
          */
         SonicNHGObjectKey getSonicGateWayObjKey() {
             return m_sonic_obj_key;
         };
 
         /*
-         * get the type of SonicGateWayNHGEntry
+         * get the type of SonicPICContentEntry
          * below are the supported types:
          *    SONIC_NHG_OBJ_TYPE_NHG_NORMAL
          *    SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY
@@ -289,17 +289,17 @@ using namespace std;
         };
 
         /*
-         * get the SonicGateWayNHGObjectID of SonicGateWayNHGEntry
+         * get the SonicPICContentObjectID of SonicPICContentEntry
          */
         uint32_t getSonicGateWayObjID() {
             return m_sonic_obj_id;
         };
 
         /*
-         * set the value of entry from SonicGateWayNHGObject
+         * set the value of entry from SonicPICContentObject
          * and sync the FV vector of entry
          */
-        int setEntry(SonicGateWayNHGObject nhg);
+        int setEntry(SonicPICContentObject nhg);
 
         /*
          * get the ref count of the entry
@@ -309,19 +309,19 @@ using namespace std;
         };
     private:
         /*
-         * Sonic Gateway Object Key of the entry
+         * Sonic PIC Object Key of the entry
          */
         SonicNHGObjectKey m_sonic_obj_key;
 
         /*
-         * Sonic Gateway Object ID of the entry
+         * Sonic PIC Object ID of the entry
          */
         uint32_t m_sonic_obj_id;
 
         /*
-         * Sonic Gateway Object of the entry
+         * Sonic PIC Object of the entry
          */
-        SonicGateWayNHGObject m_sonic_obj;
+        SonicPICContentObject m_sonic_obj;
 
         /*
          * Group of the entry
@@ -332,7 +332,7 @@ using namespace std;
         /*
          * SonicNHGTable pointer of the entry
          */
-        SonicGateWayNHGTable *m_table;
+        SonicPICContentTable *m_table;
 
         /*
          * DB FV vector of the entry
@@ -345,9 +345,9 @@ using namespace std;
         uint32_t m_ref_count = 1;
 
         /*
-         * set the value of entry from SonicGateWayNHGObject for SRv6 Gateway Object
+         * set the value of entry from SonicPICContentObject for SRv6 PIC Object
          */
-        int setSRv6GatewayEntry(SonicGateWayNHGObject nhg);
+        int setSRv6PICEntry(SonicPICContentObject nhg);
 
         /*
          * sync the FV vector of entry
@@ -355,29 +355,29 @@ using namespace std;
         int syncFvVector();
 
         /*
-         * sync the FV vector of entry for SRv6 Gateway Object
+         * sync the FV vector of entry for SRv6 PIC Object
          */
-        int syncFvVectorForSRv6Gateway();
+        int syncFvVectorForSRv6PIC();
     };
 
-    /* Sonic Gateway NHG table */
-    class SonicGateWayNHGTable {
+    /* Sonic PIC NHG table */
+    class SonicPICContentTable {
 
     public:
-        SonicGateWayNHGTable(RedisPipeline *pipeline, const std::string &tableName, bool isStateTable);
-        ~SonicGateWayNHGTable(){
+        SonicPICContentTable(RedisPipeline *pipeline, const std::string &tableName, bool isStateTable);
+        ~SonicPICContentTable(){
 
         };
 
         /*
          * add entry to SonicNHGTable
          */
-        int addEntry(SonicGateWayNHGObject sonicObj);
+        int addEntry(SonicPICContentObject sonicObj);
 
         /*
-         * delete entry from SonicNHGTable by SonicGateWayNHGObject
+         * delete entry from SonicNHGTable by SonicPICContentObject
          */
-        void delEntry(SonicGateWayNHGObject sonicObj);
+        void delEntry(SonicPICContentObject sonicObj);
 
         /*
          * delete entry from SonicNHGTable by type and sonic object id
@@ -387,22 +387,22 @@ using namespace std;
         /*
          * get entry from SonicNHGTable by type and sonic object id
          */
-        SonicGateWayNHGEntry *getEntry(sonicNhgObjType type, uint32_t id);
+        SonicPICContentEntry *getEntry(sonicNhgObjType type, uint32_t id);
 
         /*
          * update entry in SonicNHGTable
          */
-        int updateEntry(SonicGateWayNHGObject nhg);
+        int updateEntry(SonicPICContentObject nhg);
 
         /*
          * write entry to DB
          */
-        int writeToDB(SonicGateWayNHGEntry *entry);
+        int writeToDB(SonicPICContentEntry *entry);
 
         /*
          * remove entry from DB
          */
-        void removeFromDB(SonicGateWayNHGEntry *entry);
+        void removeFromDB(SonicPICContentEntry *entry);
 
         /*
          * clean up SonicNHGTable
@@ -415,7 +415,7 @@ using namespace std;
          * PIC context map of the table
          * contain <id, entry> pair
          */
-        map<uint32_t, SonicGateWayNHGEntry *> m_pic_map;
+        map<uint32_t, SonicPICContentEntry *> m_pic_map;
 
         /*
          * PIC context table
@@ -435,14 +435,14 @@ using namespace std;
         static RIBNHGEntry *createNHGEntry(RIBNHGTable *mTable);
 
         /*
-         * create SonicGateWayNHGObject from RIBNHGEntry
+         * create SonicPICContentObject from RIBNHGEntry
          */
-        int createSonicGateWayNHGObjectFromRIBEntry(SonicGateWayNHGObject &sonicNhgOut);
+        int createSonicPICContentObjectFromRIBEntry(SonicPICContentObject &sonicNhgOut);
 
         /*
-         * create SonicGateWayNHGObject for SRv6 Gateway from RIBNHGEntry
+         * create SonicPICContentObject for SRv6 PIC from RIBNHGEntry
          */
-        int createSRv6GatewayObjFromRIBEntry(SonicGateWayNHGObject &sonicNhgOut);
+        int createSRv6PICObjFromRIBEntry(SonicPICContentObject &sonicNhgOut);
 
         /*
          * get the list of depends RIB ID
@@ -517,7 +517,7 @@ using namespace std;
          * get the Sonic Gateway Object ID of RIBNHGEntry
          * for now only used for SRv6 VPN case
          */
-        uint32_t getSonicGatewayObjID();
+        uint32_t getSonicPICObjID();
 
         /*
          * get the Sonic Gateway Object type of RIBNHGEntry
@@ -528,7 +528,7 @@ using namespace std;
         /*
          * check if RIBNHGEntry has Sonic Gateway Object
          */
-        bool hasSonicGatewayObj();
+        bool hasSonicPICObj();
 
         /*
          * check if RIBNHGEntry need write to DB
@@ -559,7 +559,7 @@ using namespace std;
         /*
          * set the Sonic Gateway Object ID of RIBNHGEntry
          */
-        void setSonicGatewayObjId(uint32_t id);
+        void setSonicPICObjId(uint32_t id);
 
         /*
          * set the value of entry from NextHopGroupFull Object
@@ -701,7 +701,7 @@ using namespace std;
         bool m_is_srv6_nhg = false;
 
         /*
-         * Sonic Gateway NHG Object ID of the entry
+         * Sonic PIC Content Object ID of the entry
          */
         uint32_t m_sonic_gateway_nhg_id = 0;
 
@@ -752,12 +752,12 @@ using namespace std;
         int getResolvedGroupFromNHGFull();
 
         /*
-        * check if need create Sonic Gateway NHG Object and Sonic gateway object type
+        * check if need create Sonic PIC Content Object and Sonic gateway object type
         */
-        void checkNeedCreateSonicGatewayNHGObj();
+        void checkNeedCreateSonicPICObj();
 
         /*
-         * check if need create Sonic Gateway NHG Object
+         * check if need create Sonic PIC Content Object
          */
         void checkNeedCreateSonicNHGObj();
     };
@@ -855,14 +855,14 @@ using namespace std;
         // check if Sonic NHG ID is in used
         bool isSonicNHGIDInUsed(uint32_t id);
 
-        // check if Sonic Gateway NHG ID is in used
-        bool isSonicGatewayNHGIDInUsed(sonicNhgObjType, uint32_t id);
+        // check if Sonic PIC Content ID is in used
+        bool isSonicPICIDInUsed(sonicNhgObjType, uint32_t id);
 
-        // get SonicGateWayNHGEntry by Sonic Object type and id
-        SonicGateWayNHGEntry *getSonicGatewayNHGByID(sonicNhgObjType type, uint32_t id);
+        // get SonicPICContentEntry by Sonic Object type and id
+        SonicPICContentEntry *getSonicPICByID(sonicNhgObjType type, uint32_t id);
 
-        // get SonicGateWayNHGEntry by RIB id
-        SonicGateWayNHGEntry *getSonicGatewayNHGByRIBID(uint32_t id);
+        // get SonicPICContentEntry by RIB id
+        SonicPICContentEntry *getSonicPICByRIBID(uint32_t id);
 
         // Not implemented
         void dump_sonic_nhg_table(string &ret);
@@ -878,7 +878,7 @@ using namespace std;
         RIBNHGTable *m_rib_nhg_table;
 
         // Map SONiC NHG id to SONiC Gateway Object
-        SonicGateWayNHGTable *m_sonic_nhg_table;
+        SonicPICContentTable *m_sonic_nhg_table;
 
         // Manage Sonic Object ID allocation
         SonicIDMgr m_sonic_id_manager;
@@ -889,11 +889,11 @@ using namespace std;
         // process of updating existing NHG Full
         int updateExistingNHGFull(NextHopGroupFull nhg, uint8_t af);
 
-        // create Sonic Gateway NHG Object
-        int createSonicGatewayNHGObject(RIBNHGEntry *entry);
+        // create Sonic PIC Content Object
+        int createSonicPICObject(RIBNHGEntry *entry);
 
-        // update Sonic Gateway NHG Object
-        int updateSonicGatewayNHGObject(RIBNHGEntry *entry, uint32_t previousSonicObjID);
+        // update Sonic PIC Content Object
+        int updateSonicPICObject(RIBNHGEntry *entry, uint32_t previousSonicObjID);
 
         // dump NHG Group Full for debugging
         void dumpNHGGroupFull(NextHopGroupFull nhg);
