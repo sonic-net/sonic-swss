@@ -507,6 +507,53 @@ namespace routeorch_test
 
     }
 
+    TEST_F(RouteOrchTest, NhgOrchTempNhgUniformSelection)
+    {
+        // Test NhgOrch::createTempNhg() randomization
+        // This covers the MT19937 randomization code in nhgorch.cpp
+
+        // --- Step 1: Setup resolved neighbors ---
+        Table neighborTable(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+
+        std::map<std::string, std::string> neighborIp2Mac = {
+            {"10.0.0.7", "00:00:0a:00:00:07"},
+            {"10.0.0.8", "00:00:0a:00:00:08"},
+            {"10.0.0.9", "00:00:0a:00:00:09"}
+        };
+
+        neighborTable.set("Ethernet0:10.0.0.7", {{"neigh", neighborIp2Mac["10.0.0.7"]}, {"family", "IPv4"}});
+        neighborTable.set("Ethernet0:10.0.0.8", {{"neigh", neighborIp2Mac["10.0.0.8"]}, {"family", "IPv4"}});
+        neighborTable.set("Ethernet0:10.0.0.9", {{"neigh", neighborIp2Mac["10.0.0.9"]}, {"family", "IPv4"}});
+
+        gNeighOrch->addExistingData(&neighborTable);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+
+        // --- Step 2: Create NextHopGroupKey with 3 next hops ---
+        NextHopGroupKey nhg_key("10.0.0.7,10.0.0.8,10.0.0.9");
+
+        // --- Step 3: Call createTempNhg() 100 times and collect selected NHs ---
+        std::set<std::string> selected_nhs;
+        constexpr int kIterations = 100;
+        
+        for (int i = 0; i < kIterations; ++i)
+        {
+            NextHopGroup temp_nhg = gNhgOrch->createTempNhg(nhg_key);
+            
+            // Get the single NH that was selected
+            const auto& nhs = temp_nhg.getNhgKey().getNextHops();
+            ASSERT_EQ(nhs.size(), 1u); // Temp NHG should have exactly one NH
+            
+            // Record which NH was selected
+            selected_nhs.insert(nhs.begin()->to_string());
+        }
+
+        // --- Step 4: Verify at least 3 distinct next hops were selected ---
+        ASSERT_GE(selected_nhs.size(), 3u) 
+            << "Expected all 3 next hops to be selected at least once across " 
+            << kIterations << " iterations, but only " << selected_nhs.size() 
+            << " were selected";
+    }
+
     TEST_F(RouteOrchTest, RouteOrch_AddDeleteIPv6)
     {
         // Add IPv6 interface IPs (like the pytest does) and an IPv6 neighbor.
@@ -1098,6 +1145,40 @@ namespace routeorch_test
         ASSERT_EQ(gRouteOrch->gRouteBulker.creating_entries_count(), 0);
         ASSERT_EQ(gRouteOrch->gRouteBulker.setting_entries_count(), 0);
         ASSERT_EQ(gRouteOrch->gRouteBulker.removing_entries_count(), 0);
+    }
+
+    TEST_F(RouteOrchTest, RouteOrchReachMaxNhgLimit)
+    {
+        // Test that covers the SWSS_LOG_INFO when NHG limit is reached (line 1488)
+        
+        // --- Step 1: Setup neighbors for ECMP route ---
+        Table neighborTable(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+        neighborTable.set("Ethernet0:10.0.0.20", {{"neigh", "00:00:0a:00:00:14"}, {"family", "IPv4"}});
+        neighborTable.set("Ethernet0:10.0.0.21", {{"neigh", "00:00:0a:00:00:15"}, {"family", "IPv4"}});
+        
+        gNeighOrch->addExistingData(&neighborTable);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+        
+        // --- Step 2: Artificially lower the max NHG count to current count ---
+        // This will force the next ECMP route creation to hit the limit
+        auto current_count = gRouteOrch->m_nextHopGroupCount + NhgOrch::getSyncedNhgCount();
+        auto saved_max = gRouteOrch->m_maxNextHopGroupCount;
+        gRouteOrch->m_maxNextHopGroupCount = current_count;
+        
+        // --- Step 3: Try to create an ECMP route (should fail and log) ---
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"5.5.5.0/24", "SET", {
+            {"ifname", "Ethernet0,Ethernet0"},
+            {"nexthop", "10.0.0.20,10.0.0.21"}
+        }});
+        consumer->addToSync(entries);
+        
+        // This should trigger the log at line 1488
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        
+        // --- Step 4: Restore the original max count ---
+        gRouteOrch->m_maxNextHopGroupCount = saved_max;
     }
 
     TEST_F(RouteOrchTest, RouteOrchTestTempRouteDesiredNhgKeyAssignment)
