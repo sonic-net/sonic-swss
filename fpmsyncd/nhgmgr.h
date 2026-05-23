@@ -26,7 +26,7 @@ using namespace std;
 
     /* Forward Declarations */
     class RIBNHGTable;
-    class SonicPICNHGTable;
+    class SonicPICContentTable;
     class RIBNHGEntry;
     struct SonicPICContentObject;
 
@@ -47,7 +47,7 @@ using namespace std;
         SONIC_NHG_OBJ_TYPE_NHG_NORMAL = 0,
 
         /* PIC_CONTEXT_TABLE type */
-        SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY = 1,
+        SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC = 1,
 
     };
 
@@ -69,7 +69,7 @@ using namespace std;
         bool operator<(const SonicNHGObjectKey &other) const {
             if (type != other.type) return type < other.type;
             if (nexthop != other.nexthop) return nexthop < other.nexthop;
-            if (type == SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY && vpnSid != other.vpnSid)
+            if (type == SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC && vpnSid != other.vpnSid)
                 return vpnSid < other.vpnSid;
             if (segSrc != other.segSrc) return segSrc < other.segSrc;
             if (ifName != other.ifName) return ifName < other.ifName;
@@ -87,7 +87,7 @@ using namespace std;
             if (nexthop != b.nexthop) {
                 return false;
             }
-            if (type == SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY && vpnSid != b.vpnSid) {
+            if (type == SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC && vpnSid != b.vpnSid) {
                 return false;
             }
             if (segSrc != b.segSrc) {
@@ -119,7 +119,7 @@ using namespace std;
          * type of Sonic PIC object
          * currently support three types:
          * SONIC_NHG_OBJ_TYPE_NHG_NORMAL: normal NHG Objects
-         * SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY: SRv6 VPN PIC Contexts
+         * SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC: SRv6 VPN PIC Contexts
          */
         sonicNhgObjType type;
 
@@ -211,7 +211,7 @@ using namespace std;
          * initialize Sonic ID Manager
          * supportObj: supported Sonic Object type list
          * for now only support SONIC_NHG_OBJ_TYPE_NHG_NORMAL for normal NHG Objects
-         * and SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY for SRv6 VPN PIC Contexts
+         * and SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC for SRv6 VPN PIC Contexts
          */
         int init(vector<sonicNhgObjType> supportObj);
 
@@ -239,7 +239,7 @@ using namespace std;
         SonicIDAllocator *m_nhg_id_allocator = nullptr;
 
         /*
-         * Sonic ID Allocator for SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY Objects
+         * Sonic ID Allocator for SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC Objects
          */
         SonicIDAllocator *m_pic_id_allocator = nullptr;
 
@@ -274,7 +274,7 @@ using namespace std;
          * get the SonicNHGObjectKey of SonicPICContentEntry
          * SonicNHGObjectKey is used to map the SonicPICContentObject from Object fields
          */
-        SonicNHGObjectKey getSonicGateWayObjKey() {
+        SonicNHGObjectKey getSonicPICContentObjKey() {
             return m_sonic_obj_key;
         };
 
@@ -282,7 +282,7 @@ using namespace std;
          * get the type of SonicPICContentEntry
          * below are the supported types:
          *    SONIC_NHG_OBJ_TYPE_NHG_NORMAL
-         *    SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY
+         *    SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC
          */
         sonicNhgObjType getType() {
             return m_sonic_obj.type;
@@ -291,7 +291,7 @@ using namespace std;
         /*
          * get the SonicPICContentObjectID of SonicPICContentEntry
          */
-        uint32_t getSonicGateWayObjID() {
+        uint32_t getSonicPicContentObjId() {
             return m_sonic_obj_id;
         };
 
@@ -360,7 +360,7 @@ using namespace std;
         int syncFvVectorForSRv6PIC();
     };
 
-    /* Sonic PIC NHG table */
+    /* Sonic PIC content table */
     class SonicPICContentTable {
 
     public:
@@ -603,7 +603,7 @@ using namespace std;
          * Sonic Object type of the entry
          * currently support three types:
          * SONIC_NHG_OBJ_TYPE_NHG_NORMAL: normal NHG Objects
-         * SONIC_NHG_OBJ_TYPE_NHG_SRV6_GATEWAY: SRv6 VPN PIC Contexts
+         * SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC: SRv6 VPN PIC Contexts
          * default: SONIC_NHG_OBJ_TYPE_NHG_NORMAL
          */
         sonicNhgObjType m_sonic_obj_type = SONIC_NHG_OBJ_TYPE_NHG_NORMAL;

@@ -231,7 +231,7 @@ namespace ut_fpmsyncd
         char *intf,
         uint16_t table_id,
         uint8_t prefixlen,
-        uint8_t address_family    
+        uint8_t address_family
         )
     {
         struct rtattr *nest;
@@ -652,8 +652,8 @@ namespace ut_fpmsyncd
         std::uint32_t key_in = rand() % 10000 + 1;
         fib::nexthop_types_t type_in = fib::NEXTHOP_TYPE_IPV6;
         fib::vrf_id_t vrf_id_in = rand() % 10000 + 1;
-        fib::ifindex_t ifindex_t_in = rand() % 10000 + 1;
-        std::string ifname_in = "Ethernet" + to_string(ifindex_t_in);
+        fib::ifindex_t ifindex_t_in = 1;
+        std::string ifname_in = "Ethernet1";
         fib::lsp_types_t label_type_in = fib::ZEBRA_LSP_NONE;
         fib::blackhole_type bh_type_in = fib::BLACKHOLE_UNSPEC;
         fib::g_addr gateway_in;
@@ -669,6 +669,7 @@ namespace ut_fpmsyncd
         fib::nexthop_srv6 *nh_srv6_in = new fib::nexthop_srv6();
         struct in6_addr sid;
         inet_pton(AF_INET6, vpnSid, &sid);
+        inet_pton(AF_INET6, src_addr, &nh_srv6_in->seg6_src);
         size_t seg_stack_size = sizeof(fib::seg6_seg_stack) + 1 * sizeof(struct in6_addr);
         fib::seg6_seg_stack *nh_seg6_segs_in = static_cast<fib::seg6_seg_stack*>(malloc(seg_stack_size));
         memset(nh_seg6_segs_in, 0, seg_stack_size);
