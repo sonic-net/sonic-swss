@@ -167,7 +167,13 @@ public:
     }
 
     std::string dumpTuple(const swss::KeyOpFieldsValuesTuple &tuple);
-    void dumpPendingTasks(std::vector<std::string> &ts);
+
+    /*
+     * dumpPendingTasks and the addToSync overloads are virtual so concurrent
+     * subclasses (e.g. ZmqRouteConsumer) can wrap the base implementation in
+     * a lock. The base class itself is single-threaded and takes no lock.
+     */
+    virtual void dumpPendingTasks(std::vector<std::string> &ts);
 
     /* Store the latest 'golden' status */
     // TODO: hide?
@@ -177,11 +183,11 @@ public:
     void recordTuple(const swss::KeyOpFieldsValuesTuple &tuple);
     void recordTuples(const std::deque<swss::KeyOpFieldsValuesTuple> &entries);
 
-    void addToSync(const swss::KeyOpFieldsValuesTuple &entry, bool onRetry=false);
+    virtual void addToSync(const swss::KeyOpFieldsValuesTuple &entry, bool onRetry=false);
 
     // Returns: the number of entries added to m_toSync
-    size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries, bool onRetry=false);
-    size_t addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries, bool onRetry=false); 
+    virtual size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries, bool onRetry=false);
+    size_t addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries, bool onRetry=false);
 
     /**
      * @brief Add the failed task and its constraint to the consumer's RetryCache

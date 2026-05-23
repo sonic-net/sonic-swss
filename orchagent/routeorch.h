@@ -16,8 +16,8 @@
 #include "bulker.h"
 #include "fgnhgorch.h"
 #include <map>
-#include "zmqorch.h"
-#include "zmqserver.h"
+#include "zmqrouteorch.h"
+#include "zmqrouteserver.h"
 #include <unordered_map>
 
 /* Maximum next hop group number */
@@ -212,10 +212,10 @@ struct LabelRouteBulkContext
     }
 };
 
-class RouteOrch : public ZmqOrch, public Subject
+class RouteOrch : public ZmqRouteOrch, public Subject
 {
 public:
-    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, swss::ZmqServer *zmqServer = nullptr);
+    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, ZmqRouteServer *zmqServer = nullptr);
 
     bool hasNextHopGroup(const NextHopGroupKey&) const;
     sai_object_id_t getNextHopGroupId(const NextHopGroupKey&);

@@ -29,6 +29,7 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       $(ORCHAGENT_DIR)/request_parser.cpp \
 		       $(top_srcdir)/lib/recorder.cpp \
 		       $(ORCHAGENT_DIR)/zmqorch.cpp \
+		       $(ORCHAGENT_DIR)/zmqrouteorch.cpp \
 		       $(ORCHAGENT_DIR)/flex_counter/flex_counter_manager.cpp \
 		       $(ORCHAGENT_DIR)/flex_counter/flow_counter_handler.cpp \
 		       $(ORCHAGENT_DIR)/port/port_capabilities.cpp \
