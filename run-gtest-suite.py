@@ -37,7 +37,7 @@ def main():
 
     try:
         soft_nofile, hard_nofile = resource.getrlimit(resource.RLIMIT_NOFILE)
-        target_nofile = min(max(soft_nofile, 4096), hard_nofile)
+        target_nofile = hard_nofile
         if target_nofile > soft_nofile:
             resource.setrlimit(resource.RLIMIT_NOFILE, (target_nofile, hard_nofile))
     except (OSError, ValueError):
