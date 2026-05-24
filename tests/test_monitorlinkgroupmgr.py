@@ -1,6 +1,4 @@
 import time
-import pytest
-from swsscommon import swsscommon
 from dvslib.dvs_common import PollingConfig
 
 CFG_MLG_TABLE = "MONITOR_LINK_GROUP"
