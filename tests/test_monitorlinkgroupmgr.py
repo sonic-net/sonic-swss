@@ -216,6 +216,61 @@ class TestMonitorLinkGroup:
         self.sdb.wait_for_deleted_entry(STATE_MLG_MEMBER_TABLE, "Ethernet4")
         self.sdb.wait_for_deleted_entry(STATE_MLG_MEMBER_TABLE, "Ethernet8")
 
+    def test_remove_monitored_link(self, dvs, testlog):
+        """Updating a group to drop a previously-included monitored or managed link
+        must run the removeInterfaceFromGroup path and clean state."""
+        self.setup_dbs(dvs)
+
+        for port in ("Ethernet0", "Ethernet4", "Ethernet8"):
+            self.set_port_cfg_admin(port, "up")
+            self.set_port_oper(port, "up")
+
+        self.create_group("ml_remove", ["Ethernet0", "Ethernet4"], ["Ethernet8"])
+        self.wait_group_state("ml_remove", "up")
+        self.wait_member_state("Ethernet8", "allow_up")
+
+        # Drop Ethernet4 from monitored-links; Ethernet0 is still up so group stays up.
+        self.create_group("ml_remove", ["Ethernet0"], ["Ethernet8"])
+        self.wait_group_state("ml_remove", "up")
+        self.wait_member_state("Ethernet8", "allow_up")
+
+        # Drop Ethernet8 from managed-links; its STATE_DB member entry must be cleared.
+        self.create_group("ml_remove", ["Ethernet0"], [])
+        self.wait_group_state("ml_remove", "up")
+        self.sdb.wait_for_deleted_entry(STATE_MLG_MEMBER_TABLE, "Ethernet8")
+
+        self.delete_group("ml_remove")
+        self.sdb.wait_for_deleted_entry(STATE_MLG_STATE_TABLE, "ml_remove")
+
+    def test_delay_reduced_while_pending(self, dvs, testlog):
+        """Reducing link-up-delay to 0 while a group is pending must bring it UP immediately."""
+        self.setup_dbs(dvs)
+
+        self.set_port_cfg_admin("Ethernet0", "up")
+        self.set_port_cfg_admin("Ethernet4", "up")
+        self.set_port_oper("Ethernet0", "down")
+        self.set_port_oper("Ethernet4", "up")
+
+        self.create_group("ml_delay_reduce", ["Ethernet0"], ["Ethernet4"], linkup_delay=20)
+        self.wait_group_state("ml_delay_reduce", "down")
+        self.wait_member_state("Ethernet4", "force_down")
+
+        # Eth0 recovers: with delay=20, group enters pending and stays there.
+        self.set_port_oper("Ethernet0", "up")
+        time.sleep(1)
+        fvs = self.sdb.get_entry(STATE_MLG_STATE_TABLE, "ml_delay_reduce")
+        assert fvs.get("state") == "pending", \
+            f"Expected pending after Eth0 recovery but got state={fvs.get('state')}"
+
+        # Reduce link-up-delay to 0 while pending: handleGroupDelayChange must fast-up.
+        self.create_group("ml_delay_reduce", ["Ethernet0"], ["Ethernet4"], linkup_delay=0)
+        self.wait_group_state("ml_delay_reduce", "up", timeout=5)
+        self.wait_member_state("Ethernet4", "allow_up", timeout=5)
+
+        self.delete_group("ml_delay_reduce")
+        self.sdb.wait_for_deleted_entry(STATE_MLG_STATE_TABLE, "ml_delay_reduce")
+        self.sdb.wait_for_deleted_entry(STATE_MLG_MEMBER_TABLE, "Ethernet4")
+
 # Dummy always-pass test guards against module teardown on final-test flaky retry
 def test_nonflaky_dummy():
     pass
