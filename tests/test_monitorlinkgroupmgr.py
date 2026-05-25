@@ -242,6 +242,96 @@ class TestMonitorLinkGroup:
         self.delete_group("ml_remove")
         self.sdb.wait_for_deleted_entry(STATE_MLG_STATE_TABLE, "ml_remove")
 
+    def test_delay_elapsed_branch(self, dvs, testlog):
+        """Reducing link-up-delay to a value <= elapsed time must fast-up the group."""
+        self.setup_dbs(dvs)
+
+        self.set_port_cfg_admin("Ethernet0", "up")
+        self.set_port_cfg_admin("Ethernet4", "up")
+        self.set_port_oper("Ethernet0", "down")
+        self.set_port_oper("Ethernet4", "up")
+
+        self.create_group("ml_delay_elapsed", ["Ethernet0"], ["Ethernet4"], linkup_delay=10)
+        self.wait_group_state("ml_delay_elapsed", "down")
+
+        self.set_port_oper("Ethernet0", "up")
+        time.sleep(3)
+        fvs = self.sdb.get_entry(STATE_MLG_STATE_TABLE, "ml_delay_elapsed")
+        assert fvs.get("state") == "pending", \
+            f"Expected pending after 3s but got state={fvs.get('state')}"
+
+        # elapsed=~3s, reduce delay to 2s: elapsed >= new_delay => fast-up
+        self.create_group("ml_delay_elapsed", ["Ethernet0"], ["Ethernet4"], linkup_delay=2)
+        self.wait_group_state("ml_delay_elapsed", "up", timeout=5)
+        self.wait_member_state("Ethernet4", "allow_up", timeout=5)
+
+        self.delete_group("ml_delay_elapsed")
+        self.sdb.wait_for_deleted_entry(STATE_MLG_STATE_TABLE, "ml_delay_elapsed")
+        self.sdb.wait_for_deleted_entry(STATE_MLG_MEMBER_TABLE, "Ethernet4")
+
+    def test_delay_restart_with_remaining(self, dvs, testlog):
+        """Reducing link-up-delay to a value > elapsed time must restart timer with remaining seconds."""
+        self.setup_dbs(dvs)
+
+        self.set_port_cfg_admin("Ethernet0", "up")
+        self.set_port_cfg_admin("Ethernet4", "up")
+        self.set_port_oper("Ethernet0", "down")
+        self.set_port_oper("Ethernet4", "up")
+
+        self.create_group("ml_delay_restart", ["Ethernet0"], ["Ethernet4"], linkup_delay=15)
+        self.wait_group_state("ml_delay_restart", "down")
+
+        self.set_port_oper("Ethernet0", "up")
+        time.sleep(2)
+        fvs = self.sdb.get_entry(STATE_MLG_STATE_TABLE, "ml_delay_restart")
+        assert fvs.get("state") == "pending"
+
+        # elapsed=~2s, reduce delay to 6s: elapsed < new_delay => timer restarts with ~4s remaining
+        self.create_group("ml_delay_restart", ["Ethernet0"], ["Ethernet4"], linkup_delay=6)
+        time.sleep(2)
+        fvs = self.sdb.get_entry(STATE_MLG_STATE_TABLE, "ml_delay_restart")
+        assert fvs.get("state") == "pending", \
+            f"Expected still pending at elapsed+2s but got state={fvs.get('state')}"
+
+        # After remaining time elapses, group should come up
+        self.wait_group_state("ml_delay_restart", "up", timeout=10)
+        self.wait_member_state("Ethernet4", "allow_up", timeout=10)
+
+        self.delete_group("ml_delay_restart")
+        self.sdb.wait_for_deleted_entry(STATE_MLG_STATE_TABLE, "ml_delay_restart")
+        self.sdb.wait_for_deleted_entry(STATE_MLG_MEMBER_TABLE, "Ethernet4")
+
+    def test_lag_in_mlg(self, dvs, testlog):
+        """A PortChannel as managed-link must be admin-down when MLG forces it,
+        and admin-up when MLG allows it; exercises teammgr/teammgrd paths."""
+        self.setup_dbs(dvs)
+
+        self.set_port_oper("Ethernet0", "up")
+
+        # Create PortChannel with admin=up
+        self.cfg_db.create_entry("PORTCHANNEL", "PortChannel0001",
+                                 {"admin_status": "up", "mtu": "9100"})
+        time.sleep(1)
+
+        self.create_group("ml_lag", ["Ethernet0"], ["PortChannel0001"])
+        self.wait_group_state("ml_lag", "up")
+        self.wait_member_state("PortChannel0001", "allow_up")
+
+        # Monitored goes down: group down, PortChannel force_down (teammgr applies admin-down)
+        self.set_port_oper("Ethernet0", "down")
+        self.wait_group_state("ml_lag", "down")
+        self.wait_member_state("PortChannel0001", "force_down")
+
+        # Recovery
+        self.set_port_oper("Ethernet0", "up")
+        self.wait_group_state("ml_lag", "up")
+        self.wait_member_state("PortChannel0001", "allow_up")
+
+        self.delete_group("ml_lag")
+        self.sdb.wait_for_deleted_entry(STATE_MLG_STATE_TABLE, "ml_lag")
+        self.sdb.wait_for_deleted_entry(STATE_MLG_MEMBER_TABLE, "PortChannel0001")
+        self.cfg_db.delete_entry("PORTCHANNEL", "PortChannel0001")
+
     def test_delay_reduced_while_pending(self, dvs, testlog):
         """Reducing link-up-delay to 0 while a group is pending must bring it UP immediately."""
         self.setup_dbs(dvs)
