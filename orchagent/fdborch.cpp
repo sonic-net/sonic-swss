@@ -45,7 +45,10 @@ FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> app
 
     /* Add FDB notifications support from ASIC */
     m_notificationsDb = make_shared<DBConnector>("ASIC_DB", 0);
-    m_fdbNotificationConsumer = new swss::NotificationConsumer(m_notificationsDb.get(), "NOTIFICATIONS");
+    m_fdbNotificationConsumer = new swss::NotificationConsumer(
+            m_notificationsDb.get(), "NOTIFICATIONS",
+            100, DEFAULT_NC_POP_BATCH_SIZE,
+            std::make_shared<swss::NotificationConsumer::DedupQueue>());
     auto fdbNotifier = new Notifier(m_fdbNotificationConsumer, this, "FDB_NOTIFICATIONS");
     Orch::addExecutor(fdbNotifier);
 }
