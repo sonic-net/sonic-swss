@@ -59,6 +59,7 @@ namespace portsorch_test
     uint32_t _sai_set_port_auto_neg_count;
     bool mock_autoneg_cap_supported = true;
     bool set_autoneg_need_retry = false;
+    bool set_autoneg_fail = false;
     uint32_t _sai_set_port_tpid_count;
     int32_t _sai_port_fec_mode;
     vector<sai_port_fec_mode_t> mock_port_fec_modes = {SAI_PORT_FEC_MODE_RS, SAI_PORT_FEC_MODE_FC};
@@ -182,8 +183,11 @@ namespace portsorch_test
             {
                 return SAI_STATUS_INSUFFICIENT_RESOURCES;
             }
-            /* Simulating failure case */
-            return SAI_STATUS_FAILURE;
+            if (set_autoneg_fail)
+            {
+                return SAI_STATUS_FAILURE;
+            }
+            return SAI_STATUS_SUCCESS;
         }
         else if (attr[0].id == SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_MODE)
         {
@@ -1156,8 +1160,7 @@ namespace portsorch_test
         gPortsOrch->dumpPendingTasks(taskList);
         ASSERT_TRUE(taskList.empty());
 
-        // Cleanup ports
-        cleanupPorts(gPortsOrch);
+        cleanupPortsBestEffort(gPortsOrch);
 
         // Check buffer maximum parameter table entries are removed
         auto bufferMaxParameterTable = Table(m_state_db.get(), STATE_BUFFER_MAXIMUM_VALUE_TABLE);
@@ -3700,6 +3703,8 @@ namespace portsorch_test
                     MAP_SHARED | MAP_ANONYMOUS, -1, 0);
         *_sai_syncd_notifications_count = 0;
 
+        set_autoneg_fail = true;
+
         entries.push_back({"Ethernet0", "SET",
                            {
                                {"autoneg", "on"}
@@ -3710,6 +3715,7 @@ namespace portsorch_test
 
         ASSERT_EQ(*_sai_syncd_notifications_count, 1);
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+        set_autoneg_fail = false;
         _unhook_sai_port_api();
         _unhook_sai_switch_api();
     }
