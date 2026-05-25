@@ -933,11 +933,13 @@ void OrchDaemon::publishQueueDepth()
 
     for (const Orch *o : m_orchList)
     {
-        for (const auto &[name, count] : o->getConsumerPendingCounts())
+        // Note: structured bindings would be cleaner here, but orchagent
+        // builds with -std=c++14 (configure.ac).
+        for (const auto &nameAndCount : o->getConsumerPendingCounts())
         {
             std::vector<FieldValueTuple> values;
-            values.emplace_back("pending_count", std::to_string(count));
-            m_queueDepthTable->set(name, values);
+            values.emplace_back("pending_count", std::to_string(nameAndCount.second));
+            m_queueDepthTable->set(nameAndCount.first, values);
         }
     }
 }
