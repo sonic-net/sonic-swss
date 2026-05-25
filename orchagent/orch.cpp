@@ -959,6 +959,19 @@ void Orch::dumpPendingTasks(vector<string> &ts)
     }
 }
 
+bool Orch::hasPendingTasks()
+{
+    for (auto &it : m_consumerMap)
+    {
+        ConsumerBase* consumer = dynamic_cast<ConsumerBase *>(it.second.get());
+        if (consumer != NULL && consumer->hasPendingTasks())
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 void Orch::flushResponses()
 {
     m_publisher.flush();

@@ -131,6 +131,11 @@ protected:
 
     void flush();
 
+    /* Return true if any orch in m_orchList has pending tasks. Used to gate
+     * the retry sweep on the SELECT_TIMEOUT path so idle systems with stuck
+     * retries get periodic re-attempts without waiting for the next event. */
+    bool hasPendingTasks();
+
     void heartBeat(std::chrono::time_point<std::chrono::high_resolution_clock> tcurrent, long interval);
 
     void freezeAndHeartBeat(unsigned int duration, long interval);

@@ -169,6 +169,9 @@ public:
     std::string dumpTuple(const swss::KeyOpFieldsValuesTuple &tuple);
     void dumpPendingTasks(std::vector<std::string> &ts);
 
+    /* Return true if any tasks are pending in m_toSync. Cheap, O(1) per call. */
+    bool hasPendingTasks() const { return !m_toSync.empty(); }
+
     /* Store the latest 'golden' status */
     // TODO: hide?
     SyncMap m_toSync;
@@ -321,7 +324,11 @@ public:
     virtual void onWarmBootEnd() { }
 
     void dumpPendingTasks(std::vector<std::string> &ts);
-    
+
+    /* Return true if any consumer in this Orch has pending tasks in m_toSync.
+     * Used by the main loop to decide whether to sweep on SELECT_TIMEOUT. */
+    bool hasPendingTasks();
+
     void createRetryCache(const std::string &executorName);
     RetryCache* getRetryCache(const std::string &executorName);
     ConsumerBase* getConsumerBase(const std::string &executorName);

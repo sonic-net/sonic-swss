@@ -881,6 +881,20 @@ bool OrchDaemon::init()
     return true;
 }
 
+bool OrchDaemon::hasPendingTasks()
+{
+    SWSS_LOG_ENTER();
+
+    for (Orch *o : m_orchList)
+    {
+        if (o->hasPendingTasks())
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 /* Flush redis through sairedis interface */
 void OrchDaemon::flush()
 {
@@ -1016,6 +1030,18 @@ void OrchDaemon::start(long heartBeatInterval)
                     for (Orch *o : m_orchList)
                         o->doTask();
                 }
+            }
+            else if (hasPendingTasks())
+            {
+                /* Without ring buffer, the doTask sweep below would never run on
+                 * SELECT_TIMEOUT. That leaves entries that returned task_need_retry
+                 * (or its bool-pattern equivalent) stuck in m_toSync until an
+                 * unrelated external event fires. On a quiescent system that can
+                 * be indefinitely long. Opportunistically sweep here when there
+                 * are pending tasks so transient SAI conditions (TABLE_FULL freeing
+                 * up later, dependencies becoming ready) get periodic re-attempts. */
+                for (Orch *o : m_orchList)
+                    o->doTask();
             }
 
             continue;
