@@ -119,6 +119,7 @@ private:
 
     void doTask(Consumer& consumer);
     void doTask(NotificationConsumer& consumer);
+    void handleNotification(NotificationConsumer& consumer, KeyOpFieldsValuesTuple& entry);
 
     void updateVlanMember(const VlanMemberUpdate&);
     void updatePortOperState(const PortOperStateUpdate&);
