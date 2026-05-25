@@ -87,6 +87,7 @@ MirrorEntry::MirrorEntry(const string& platform) :
         truncate_size(0),
         erspan_id(0),
         sample_rate(0),
+        direct_path(false),
         sessionId(0),
         counterOid(SAI_NULL_OBJECT_ID),
         samplePacketId(SAI_NULL_OBJECT_ID),
@@ -544,6 +545,25 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
                 }
                 entry.congestion_mode = mode;
             }
+            else if (fvField(i) == MIRROR_SESSION_MONITOR_PORT)
+            {
+                if (!validateDstPort(fvValue(i)))
+                {
+                    SWSS_LOG_ERROR("Session %s: invalid monitor_port %s", key.c_str(), fvValue(i).c_str());
+                    return task_process_status::task_invalid_entry;
+                }
+                entry.monitor_port_cfg = fvValue(i);
+                entry.direct_path = true;
+            }
+            else if (fvField(i) == MIRROR_SESSION_DST_MAC_ADDRESS)
+            {
+                try {
+                    entry.dst_mac_cfg = MacAddress(fvValue(i));
+                } catch (...) {
+                    SWSS_LOG_ERROR("Session %s: invalid dst_mac %s", key.c_str(), fvValue(i).c_str());
+                    return task_process_status::task_invalid_entry;
+                }
+            }
             else if (fvField(i) == MIRROR_SESSION_SAMPLE_RATE)
             {
                 entry.sample_rate = to_uint<uint32_t>(fvValue(i));
@@ -594,6 +614,16 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
         return task_process_status::task_invalid_entry;
     }
 
+    // ERSPAN direct path: monitor_port must not overlap with src_port list.
+    if (!entry.monitor_port_cfg.empty() && !entry.src_port.empty() &&
+        checkPortExistsInSrcPortList(entry.monitor_port_cfg, entry.src_port))
+    {
+        SWSS_LOG_ERROR("Session %s: monitor_port %s is also listed in src_port (%s); "
+                       "ERSPAN loop detected, rejecting session",
+                       key.c_str(), entry.monitor_port_cfg.c_str(), entry.src_port.c_str());
+        return task_process_status::task_invalid_entry;
+    }
+
     // Re-validate truncate_size now that we know the dst_ip address family.
     // The minimum must cover the full outer encapsulation so the collector can
     // decapsulate the frame: IPv4 outer = 38 B, IPv6 outer = 58 B.
@@ -639,9 +669,15 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
     }
 
     m_syncdMirrors.emplace(key, entry);
-    setSessionState(key, entry);
+
+    setSessionState(key, m_syncdMirrors.find(key)->second);
 
     if (entry.type == MIRROR_SESSION_SPAN && !entry.dst_port.empty())
+    {
+        auto &session1 = m_syncdMirrors.find(key)->second;
+        activateSession(key, session1);
+    }
+    else if (entry.direct_path)
     {
         auto &session1 = m_syncdMirrors.find(key)->second;
         activateSession(key, session1);
@@ -687,7 +723,15 @@ task_process_status MirrorOrch::deleteEntry(const string& name)
         }
     }
 
-    if (session.type != MIRROR_SESSION_SPAN)
+    // Destroy the counter object (created on first activation, survives deactivate cycles)
+    if (session.counterOid != SAI_NULL_OBJECT_ID &&
+        sai_counter_api != nullptr && sai_counter_api->remove_counter != nullptr)
+    {
+        sai_counter_api->remove_counter(session.counterOid);
+        session.counterOid = SAI_NULL_OBJECT_ID;
+    }
+
+    if (session.type != MIRROR_SESSION_SPAN && !session.direct_path)
     {
         m_routeOrch->detach(this, session.dstIp);
     }
@@ -1003,7 +1047,7 @@ bool MirrorOrch::setUnsetPortMirror(Port port,
             status = sai_port_api->set_port_attribute(p.m_port_id, &port_attr);
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to configure %s session on port %s: %s, status %d, sessionId %lx",
+                SWSS_LOG_ERROR("Failed to configure %s session on port %s: %s, status %d, sessionId 0x%" PRIx64,
                                 ingress ? "RX" : "TX", port.m_alias.c_str(),
                                 p.m_alias.c_str(), status, sessionId);
                 task_process_status handle_status =  handleSaiSetStatus(SAI_API_PORT, status);
@@ -1019,7 +1063,7 @@ bool MirrorOrch::setUnsetPortMirror(Port port,
         status = sai_port_api->set_port_attribute(port.m_port_id, &port_attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to configure %s session on port %s, status %d, sessionId %lx",
+            SWSS_LOG_ERROR("Failed to configure %s session on port %s, status %d, sessionId 0x%" PRIx64,
                             ingress ? "RX" : "TX", port.m_alias.c_str(), status, sessionId);
             task_process_status handle_status =  handleSaiSetStatus(SAI_API_PORT, status);
             if (handle_status != task_success)
@@ -1126,8 +1170,18 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
     else
     {
         attr.id = SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
-        // Set monitor port to recirc port in voq switch.
-        if (gMySwitchType == "voq")
+        if (session.direct_path)
+        {
+            Port mon_port;
+            if (!m_portsOrch->getPort(session.monitor_port_cfg, mon_port))
+            {
+                SWSS_LOG_ERROR("Session %s: failed to resolve monitor_port %s",
+                               name.c_str(), session.monitor_port_cfg.c_str());
+                return false;
+            }
+            attr.value.oid = mon_port.m_port_id;
+        }
+        else if (gMySwitchType == "voq")
         {
             Port recirc_port;
             if (!m_portsOrch->getRecircPort(recirc_port, Port::Role::Rec))
@@ -1202,8 +1256,30 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         attrs.push_back(attr);
 
         attr.id = SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS;
-        // Use router mac as mirror dst mac in voq switch.
-        if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN))
+        if (session.direct_path && session.dst_mac_cfg != MacAddress())
+        {
+            memcpy(attr.value.mac, session.dst_mac_cfg.getMac(), sizeof(sai_mac_t));
+        }
+        else if (session.direct_path)
+        {
+            // monitor_port set but no dst_mac: resolve via one-shot neighbor lookup
+            // for dst_ip on the monitor port's connected subnet.
+            NeighborEntry neigh_entry;
+            MacAddress resolved_mac;
+            if (m_neighOrch->getNeighborEntry(session.dstIp, neigh_entry, resolved_mac))
+            {
+                memcpy(attr.value.mac, resolved_mac.getMac(), sizeof(sai_mac_t));
+            }
+            else
+            {
+                SWSS_LOG_WARN("Session %s: monitor_port %s set but dst_mac not configured "
+                              "and neighbor for %s not resolved; using router MAC as fallback",
+                              name.c_str(), session.monitor_port_cfg.c_str(),
+                              session.dstIp.to_string().c_str());
+                memcpy(attr.value.mac, gMacAddress.getMac(), sizeof(sai_mac_t));
+            }
+        }
+        else if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN))
         {
              memcpy(attr.value.mac, gMacAddress.getMac(), sizeof(sai_mac_t));
         }
@@ -1295,7 +1371,10 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
 
     session.status = true;
 
-    // Attach a SAI counter to track mirrored packets/bytes (ASV2-1760)
+    // Lazily create counter on first activation (survives deactivate/reactivate
+    // cycles since deactivateSession only detaches, never destroys the counter).
+    if (session.counterOid == SAI_NULL_OBJECT_ID &&
+        sai_counter_api != nullptr && sai_counter_api->create_counter != nullptr)
     {
         sai_attribute_t counter_attr;
         counter_attr.id = SAI_COUNTER_ATTR_TYPE;
@@ -1307,30 +1386,33 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         if (cnt_status == SAI_STATUS_SUCCESS)
         {
             session.counterOid = counter_oid;
-
-            sai_attribute_t mirror_cnt_attr;
-            mirror_cnt_attr.id = SAI_MIRROR_SESSION_ATTR_COUNTER_ID;
-            mirror_cnt_attr.value.oid = counter_oid;
-            sai_status_t set_status = sai_mirror_api->set_mirror_session_attribute(
-                session.sessionId, &mirror_cnt_attr);
-            if (set_status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_WARN("Session %s: failed to attach counter (0x%lx); "
-                              "mirror counters unavailable", name.c_str(), counter_oid);
-                sai_counter_api->remove_counter(counter_oid);
-                session.counterOid = SAI_NULL_OBJECT_ID;
-            }
-            else
-            {
-                SWSS_LOG_NOTICE("Session %s: mirror counter attached (OID 0x%lx)",
-                                name.c_str(), counter_oid);
-            }
+            SWSS_LOG_NOTICE("Session %s: counter object created (OID 0x%" PRIx64 ")",
+                            name.c_str(), counter_oid);
         }
         else
         {
             SWSS_LOG_WARN("Session %s: failed to create counter object; "
                           "mirror counters unavailable", name.c_str());
-            session.counterOid = SAI_NULL_OBJECT_ID;
+        }
+    }
+
+    // Attach counter to mirror session (if available)
+    if (session.counterOid != SAI_NULL_OBJECT_ID)
+    {
+        sai_attribute_t mirror_cnt_attr;
+        mirror_cnt_attr.id = SAI_MIRROR_SESSION_ATTR_COUNTER_ID;
+        mirror_cnt_attr.value.oid = session.counterOid;
+        sai_status_t set_status = sai_mirror_api->set_mirror_session_attribute(
+            session.sessionId, &mirror_cnt_attr);
+        if (set_status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Session %s: failed to attach counter (0x%" PRIx64 "); "
+                          "mirror counters unavailable", name.c_str(), session.counterOid);
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("Session %s: mirror counter attached (OID 0x%" PRIx64 ")",
+                            name.c_str(), session.counterOid);
         }
     }
 
@@ -1447,11 +1529,14 @@ bool MirrorOrch::deactivateSession(const string& name, MirrorEntry& session)
         removeSamplePacket(name, session);
     }
 
-    // Remove attached counter before destroying the mirror session (ASV2-1760)
+    // Detach counter from mirror session (counter object survives deactivation
+    // so cumulative stats are preserved across route/ARP flap cycles).
     if (session.counterOid != SAI_NULL_OBJECT_ID)
     {
-        sai_counter_api->remove_counter(session.counterOid);
-        session.counterOid = SAI_NULL_OBJECT_ID;
+        sai_attribute_t mirror_cnt_attr;
+        mirror_cnt_attr.id = SAI_MIRROR_SESSION_ATTR_COUNTER_ID;
+        mirror_cnt_attr.value.oid = SAI_NULL_OBJECT_ID;
+        sai_mirror_api->set_mirror_session_attribute(session.sessionId, &mirror_cnt_attr);
     }
 
     status = sai_mirror_api->remove_mirror_session(session.sessionId);
@@ -2159,7 +2244,7 @@ void MirrorOrch::updateNextHop(const NextHopUpdate& update)
         auto& session = it->second;
 
         // SPAN sessions don't use L3 next-hop resolution.
-        if (session.type == MIRROR_SESSION_SPAN)
+        if (session.type == MIRROR_SESSION_SPAN || session.direct_path)
         {
             continue;
         }
@@ -2249,7 +2334,7 @@ void MirrorOrch::updateNeighbor(const NeighborUpdate& update)
 
         // SPAN sessions use a local dst_port — they don't participate in
         // L3 route/neighbor resolution, so skip them entirely.
-        if (session.type == MIRROR_SESSION_SPAN)
+        if (session.type == MIRROR_SESSION_SPAN || session.direct_path)
         {
             continue;
         }
