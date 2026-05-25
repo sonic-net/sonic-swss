@@ -198,7 +198,6 @@ class WcmpManagerTest : public ::testing::Test
             set_next_hop_group_member_attribute;
 
         sai_hostif_api->create_hostif_table_entry = mock_create_hostif_table_entry;
-        sai_hostif_api->create_hostif_trap = mock_create_hostif_trap;
         sai_switch_api->get_switch_attribute = mock_get_switch_attribute;
         sai_switch_api->set_switch_attribute = mock_set_switch_attribute;
         sai_acl_api->create_acl_table_group = create_acl_table_group;
@@ -209,7 +208,6 @@ class WcmpManagerTest : public ::testing::Test
     {
         // init copp orch
         EXPECT_CALL(mock_sai_hostif_, create_hostif_table_entry(_, _, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
-        EXPECT_CALL(mock_sai_hostif_, create_hostif_trap(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
         EXPECT_CALL(mock_sai_switch_, get_switch_attribute(_, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
 
         std::vector<std::string> p4_tables{APP_P4RT_TABLE_NAME};

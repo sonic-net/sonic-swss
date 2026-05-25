@@ -1067,7 +1067,6 @@ class AclManagerTest : public ::testing::Test
         sai_hostif_api->create_hostif_trap_group = mock_create_hostif_trap_group;
         sai_hostif_api->set_hostif_trap_group_attribute =
             mock_set_hostif_trap_group_attribute;
-        sai_hostif_api->create_hostif_trap = mock_create_hostif_trap;
         sai_hostif_api->create_hostif = mock_create_hostif;
         sai_hostif_api->remove_hostif = mock_remove_hostif;
         sai_hostif_api->create_hostif_user_defined_trap = mock_create_hostif_user_defined_trap;
@@ -1095,7 +1094,6 @@ class AclManagerTest : public ::testing::Test
     {
         // init copp orch
         EXPECT_CALL(mock_sai_hostif_, create_hostif_table_entry(_, _, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
-        EXPECT_CALL(mock_sai_hostif_, create_hostif_trap(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
         gCoppOrch = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
     }
 
@@ -1694,7 +1692,6 @@ TEST_F(AclManagerTest, DISABLED_CreatePuntTableFailsWhenUserTrapGroupOrHostifNot
     const auto skip_cpu_queue = kP4CpuQueueMinNum;
     // init copp orch
     EXPECT_CALL(mock_sai_hostif_, create_hostif_table_entry(_, _, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
-    EXPECT_CALL(mock_sai_hostif_, create_hostif_trap(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_switch_, get_switch_attribute(_, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
     swss::Table app_copp_table(gAppDb, APP_COPP_TABLE_NAME);
     // Clean up APP_COPP_TABLE_NAME table entries
