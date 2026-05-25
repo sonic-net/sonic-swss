@@ -185,9 +185,7 @@ static map<string, sai_packet_action_t> packet_action_map = {
 };
 
 const string default_trap_group = "default";
-const vector<sai_hostif_trap_type_t> default_trap_ids = {
-    SAI_HOSTIF_TRAP_TYPE_TTL_ERROR
-};
+const vector<sai_hostif_trap_type_t> default_trap_ids = {};
 
 const uint HOSTIF_TRAP_COUNTER_POLLING_INTERVAL_MS = 10000;
 
@@ -1005,12 +1003,7 @@ void CoppOrch::getTrapAddandRemoveList(string trap_group_name,
             /* The mapped Trap ID is not found on newly set list and to be removed*/
             else
             {
-                if ((trap_group_name != default_trap_group) ||
-                        ((trap_group_name == default_trap_group) &&
-                         (it.first != SAI_HOSTIF_TRAP_TYPE_TTL_ERROR)))
-                {
-                    rem_trap_ids.push_back(it.first);
-                }
+                rem_trap_ids.push_back(it.first);
             }
         }
     }
