@@ -81,6 +81,8 @@ using namespace std::rel_ops;
 
 MirrorEntry::MirrorEntry(const string& platform) :
         status(false),
+        srcIp(IpAddress("0.0.0.0")),
+        dstIp(IpAddress("0.0.0.0")),
         dscp(8),
         ttl(255),
         queue(0),
@@ -105,6 +107,7 @@ MirrorEntry::MirrorEntry(const string& platform) :
     string alias = "";
     nexthopInfo.prefix = IpPrefix("0.0.0.0/0");
     nexthopInfo.nexthop = NextHopKey("0.0.0.0", alias);
+    neighborInfo.portId = SAI_NULL_OBJECT_ID;
 }
 
 MirrorOrch::MirrorOrch(TableConnector stateDbConnector, TableConnector confDbConnector,
@@ -682,10 +685,15 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
         auto &session1 = m_syncdMirrors.find(key)->second;
         activateSession(key, session1);
     }
+    else if (dst_ip_initialized)
+    {
+        m_routeOrch->attach(this, entry.dstIp);
+    }
     else
     {
-        // Attach the destination IP to the routeOrch
-        m_routeOrch->attach(this, entry.dstIp);
+        SWSS_LOG_NOTICE("Session %s: ERSPAN config incomplete (no dst_ip yet), "
+                        "deferring route resolution until dst_ip is configured",
+                        key.c_str());
     }
 
     SWSS_LOG_NOTICE("Created mirror session %s", key.c_str());
@@ -731,7 +739,8 @@ task_process_status MirrorOrch::deleteEntry(const string& name)
         session.counterOid = SAI_NULL_OBJECT_ID;
     }
 
-    if (session.type != MIRROR_SESSION_SPAN && !session.direct_path)
+    if (session.type != MIRROR_SESSION_SPAN && !session.direct_path &&
+        session.dstIp.to_string() != "0.0.0.0")
     {
         m_routeOrch->detach(this, session.dstIp);
     }
