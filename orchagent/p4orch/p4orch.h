@@ -6,7 +6,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include "copporch.h"
 #include "notificationconsumer.h"
 #include "notifier.h"
 #include "orch.h"
@@ -48,7 +47,7 @@ class P4Orch : public ZmqOrch
 {
   public:
     P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames,
-        swss::ZmqServer* zmqServer, VRFOrch *vrfOrch, CoppOrch *coppOrch);
+        swss::ZmqServer* zmqServer, VRFOrch* vrfOrch);
     // Add ACL table to ACLRuleManager mapping in P4Orch.
     bool addAclTableToManagerMapping(const std::string &acl_table_name);
     // Remove the ACL table name to AclRuleManager mapping in P4Orch

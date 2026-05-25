@@ -7,6 +7,7 @@
 
 #include "SaiAttributeList.h"
 #include "converter.h"
+#include "copporch.h"
 #include "crmorch.h"
 #include "dbconnector.h"
 #include "intfsorch.h"
@@ -32,6 +33,7 @@ extern sai_policer_api_t *sai_policer_api;
 extern sai_hostif_api_t *sai_hostif_api;
 extern CrmOrch *gCrmOrch;
 extern PortsOrch *gPortsOrch;
+extern CoppOrch *gCoppOrch;
 extern P4Orch *gP4Orch;
 extern NameLabelMapper* gLabelMapper;
 
@@ -203,6 +205,93 @@ std::vector<sai_attribute_t> getMeterSaiAttrs(P4AclMeter &p4_acl_meter)
     return meter_attrs;
 }
 
+std::vector<sai_attribute_t> getUserDefinedTrapAttrs(
+    const sai_object_id_t trap_group_oid) {
+  std::vector<sai_attribute_t> trap_attrs;
+  sai_attribute_t attr;
+  attr.id = SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TRAP_GROUP;
+  attr.value.oid = trap_group_oid;
+  trap_attrs.push_back(attr);
+  attr.id = SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TYPE;
+  attr.value.s32 = SAI_HOSTIF_USER_DEFINED_TRAP_TYPE_ACL;
+  trap_attrs.push_back(attr);
+  return trap_attrs;
+}
+
+std::vector<sai_attribute_t> getUserDefinedTrapHostIfTableEntryAttrs(
+    const sai_object_id_t user_defined_trap_oid,
+    const sai_object_id_t hostif_oid) {
+  std::vector<sai_attribute_t> sai_host_table_attr;
+  sai_attribute_t attr;
+  attr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_TYPE;
+  attr.value.s32 = SAI_HOSTIF_TABLE_ENTRY_TYPE_TRAP_ID;
+  sai_host_table_attr.push_back(attr);
+
+  attr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_TRAP_ID;
+  attr.value.oid = user_defined_trap_oid;
+  sai_host_table_attr.push_back(attr);
+
+  attr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_CHANNEL_TYPE;
+  attr.value.s32 = SAI_HOSTIF_TABLE_ENTRY_CHANNEL_TYPE_GENETLINK;
+  sai_host_table_attr.push_back(attr);
+
+  attr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_HOST_IF;
+  attr.value.oid = hostif_oid;
+  sai_host_table_attr.push_back(attr);
+  return sai_host_table_attr;
+}
+
+ReturnCodeOr<P4UserDefinedTrapHostifTableEntry>
+createUserDefinedTrapAndHostIfTableEntry(const sai_object_id_t trap_group_oid,
+                                         const sai_object_id_t hostif_oid) {
+  P4UserDefinedTrapHostifTableEntry udt_hostif;
+  const auto trap_attrs = getUserDefinedTrapAttrs(trap_group_oid);
+  CHECK_ERROR_AND_LOG_AND_RETURN(
+      sai_hostif_api->create_hostif_user_defined_trap(
+          &udt_hostif.user_defined_trap, gSwitchId, (uint32_t)trap_attrs.size(),
+          trap_attrs.data()),
+      "Failed to create trap by calling "
+      "sai_hostif_api->create_hostif_user_defined_trap");
+  const auto sai_host_table_attrs = getUserDefinedTrapHostIfTableEntryAttrs(
+      udt_hostif.user_defined_trap, hostif_oid);
+  auto sai_status = sai_hostif_api->create_hostif_table_entry(
+      &udt_hostif.hostif_table_entry, gSwitchId,
+      (uint32_t)sai_host_table_attrs.size(), sai_host_table_attrs.data());
+  if (sai_status != SAI_STATUS_SUCCESS) {
+    ReturnCode return_code =
+        ReturnCode(sai_status)
+        << "Failed to create hostif table entry by calling "
+           "sai_hostif_api->create_hostif_table_entry";
+    auto recover_sai_status = sai_hostif_api->remove_hostif_user_defined_trap(
+        udt_hostif.user_defined_trap);
+    if (recover_sai_status != SAI_STATUS_SUCCESS) {
+      RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL(
+          "Failed to remove user defined traps during recovery.");
+    }
+    SWSS_LOG_ERROR("%s SAI_STATUS: %s", return_code.message().c_str(),
+                   sai_serialize_status(sai_status).c_str());
+    return return_code;
+  }
+  return udt_hostif;
+}
+
+ReturnCodeOr<uint32_t> parseQueueNumberFromStr(
+    const std::string& queue_num_str) {
+  uint32_t queue_num = 0;
+  try {
+    queue_num = to_uint<uint32_t>(queue_num_str);
+  } catch (std::exception& e) {
+    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                         << "Traps group names should start with "
+                         << GENL_PACKET_TRAP_GROUP_NAME_PREFIX
+                         << " and followed up by an unsigned number. e.g."
+                         << GENL_PACKET_TRAP_GROUP_NAME_PREFIX
+                         << "1. queue number " << QuotedVar(queue_num_str)
+                         << " is invalid.");
+  }
+  return queue_num;
+}
+
 } // namespace
 
 ReturnCode AclRuleManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type,
@@ -293,101 +382,154 @@ ReturnCode AclRuleManager::drain() {
   return status;
 }
 
-ReturnCode AclRuleManager::setUpUserDefinedTraps()
-{
+ReturnCode AclRuleManager::setUserDefinedTrap(
+    const uint32_t queue_num, const sai_object_id_t trap_group_oid,
+    const sai_object_id_t hostif_oid) {
     SWSS_LOG_ENTER();
 
-    const auto trapGroupMap = m_coppOrch->getTrapGroupMap();
-    const auto trapGroupHostIfMap = m_coppOrch->getTrapGroupHostIfMap();
-    for (int queue_num = 1; queue_num <= P4_CPU_QUEUE_MAX_NUM; queue_num++)
-    {
-        auto trap_group_it = trapGroupMap.find(GENL_PACKET_TRAP_GROUP_NAME_PREFIX + std::to_string(queue_num));
-        if (trap_group_it == trapGroupMap.end())
-        {
-	    SWSS_LOG_INFO("Trap group was not found given trap group name: %s%d",
-                    GENL_PACKET_TRAP_GROUP_NAME_PREFIX, queue_num);
+    auto udt_it = m_userDefinedTraps.find(queue_num);
+  if (udt_it != m_userDefinedTraps.end()) {
+    CHECK_ERROR_AND_LOG_AND_RETURN(
+        sai_hostif_api->remove_hostif_table_entry(
+            udt_it->second.hostif_table_entry),
+        "Received trap group update request but "
+        "failed to remove the old hostif table entry.");
+    CHECK_ERROR_AND_LOG_AND_RETURN(
+        sai_hostif_api->remove_hostif_user_defined_trap(
+            udt_it->second.user_defined_trap),
+        "Received trap group update request but "
+        "failed to remove the old user defined trap.");
+    m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
+                            std::to_string(queue_num));
+    m_userDefinedTraps.erase(queue_num);
+  }
+  ASSIGN_OR_RETURN(auto udt_hostif, createUserDefinedTrapAndHostIfTableEntry(
+                                        trap_group_oid, hostif_oid));
+  m_p4OidMapper->setOID(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
+                        std::to_string(queue_num), udt_hostif.user_defined_trap,
+                        /*ref_count=*/1);
+  m_userDefinedTraps[queue_num] = udt_hostif;
+  SWSS_LOG_NOTICE(
+      "Created user defined trap for QUEUE number %d: %s", queue_num,
+      sai_serialize_object_id(udt_hostif.user_defined_trap).c_str());
+  return ReturnCode();
+}
+
+ReturnCode AclRuleManager::initializeUserDefinedTraps() {
+  SWSS_LOG_ENTER();
+  // User Defined Traps should be initialized only once when an ACL table is
+  // referencing them created.
+  if (m_isAclTableReferencingUserDefinedTrapsAdded) return ReturnCode();
+
+  const auto trapGroupMap = gCoppOrch->getTrapGroupMap();
+  const auto trapGroupHostIfMap = gCoppOrch->getTrapGroupHostIfMap();
+  for (const auto& trap_group_it : trapGroupMap) {
+    const auto trap_group_name = trap_group_it.first;
+    if (trap_group_name.find(GENL_PACKET_TRAP_GROUP_NAME_PREFIX) ==
+        std::string::npos) {
+      SWSS_LOG_INFO("%s is not a trap group for user defined trap creation.",
+                    QuotedVar(trap_group_name).c_str());
               continue;
         }
-        const sai_object_id_t trap_group_oid = trap_group_it->second;
+        const auto queue_num_str =
+            trap_group_name.substr(strlen(GENL_PACKET_TRAP_GROUP_NAME_PREFIX));
+        ASSIGN_OR_RETURN(auto queue_num, parseQueueNumberFromStr(queue_num_str));
+        const sai_object_id_t trap_group_oid = trap_group_it.second;
         auto hostif_oid_it = trapGroupHostIfMap.find(trap_group_oid);
         if (hostif_oid_it == trapGroupHostIfMap.end())
         {
             LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-                                 << "Hostif object id was not found given trap group - " << trap_group_it->first);
-        }
-        // Create user defined trap
-        std::vector<sai_attribute_t> trap_attrs;
-        sai_attribute_t attr;
-        attr.id = SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TRAP_GROUP;
-        attr.value.oid = trap_group_oid;
-        trap_attrs.push_back(attr);
-        attr.id = SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TYPE;
-        attr.value.s32 = SAI_HOSTIF_USER_DEFINED_TRAP_TYPE_ACL;
-        trap_attrs.push_back(attr);
-        P4UserDefinedTrapHostifTableEntry udt_hostif;
-        CHECK_ERROR_AND_LOG_AND_RETURN(
-            sai_hostif_api->create_hostif_user_defined_trap(&udt_hostif.user_defined_trap, gSwitchId,
-                                                            (uint32_t)trap_attrs.size(), trap_attrs.data()),
-            "Failed to create trap by calling "
-            "sai_hostif_api->create_hostif_user_defined_trap");
-        std::vector<sai_attribute_t> sai_host_table_attr;
-
-        attr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_TYPE;
-        attr.value.s32 = SAI_HOSTIF_TABLE_ENTRY_TYPE_TRAP_ID;
-        sai_host_table_attr.push_back(attr);
-
-        attr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_TRAP_ID;
-        attr.value.oid = udt_hostif.user_defined_trap;
-        sai_host_table_attr.push_back(attr);
-
-        attr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_CHANNEL_TYPE;
-        attr.value.s32 = SAI_HOSTIF_TABLE_ENTRY_CHANNEL_TYPE_GENETLINK;
-        sai_host_table_attr.push_back(attr);
-
-        attr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_HOST_IF;
-        attr.value.oid = hostif_oid_it->second;
-        sai_host_table_attr.push_back(attr);
-
-        auto sai_status =
-            sai_hostif_api->create_hostif_table_entry(&udt_hostif.hostif_table_entry, gSwitchId,
-                                                      (uint32_t)sai_host_table_attr.size(), sai_host_table_attr.data());
-        if (sai_status != SAI_STATUS_SUCCESS)
-        {
-            ReturnCode return_code = ReturnCode(sai_status) << "Failed to create hostif table entry by calling "
-                                                               "sai_hostif_api->remove_hostif_user_defined_trap";
-            sai_hostif_api->remove_hostif_user_defined_trap(udt_hostif.user_defined_trap);
-            SWSS_LOG_ERROR("%s SAI_STATUS: %s", return_code.message().c_str(),
-                           sai_serialize_status(sai_status).c_str());
-            return return_code;
-        }
-        m_p4OidMapper->setOID(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP, std::to_string(queue_num),
-                              udt_hostif.user_defined_trap, /*ref_count=*/1);
-	m_userDefinedTraps[queue_num] = udt_hostif;
-        SWSS_LOG_NOTICE("Created user defined trap for QUEUE number %d: %s", queue_num,
-                        sai_serialize_object_id(udt_hostif.user_defined_trap).c_str());
+                                 << "Hostif object id was not found given trap group - "
+                                 << trap_group_it.first);
     }
+    // Create user defined trap and add it in hostif table.
+    LOG_AND_RETURN_IF_ERROR(
+        setUserDefinedTrap(queue_num, trap_group_oid, hostif_oid_it->second));
+    }
+    m_isAclTableReferencingUserDefinedTrapsAdded = true;
     return ReturnCode();
 }
 
-ReturnCode AclRuleManager::cleanUpUserDefinedTraps()
-{
+ReturnCode AclRuleManager::updateUserDefinedTrap(
+    const std::string& trap_group_name, bool is_delete) {
     SWSS_LOG_ENTER();
 
-    const auto trapGroupMap = m_coppOrch->getTrapGroupMap();
-    for (const auto& udt_it : m_userDefinedTraps) {
+    if (trap_group_name.find(GENL_PACKET_TRAP_GROUP_NAME_PREFIX) ==
+      std::string::npos) {
+    SWSS_LOG_INFO("%s is not a trap group for user defined trap update.",
+                  QuotedVar(trap_group_name).c_str());
+    return ReturnCode();
+  }
+  // User-defined traps are initially set up when P4Orch adds the first ACL
+  // table that references a user-defined trap as an action.  Subsequent updates
+  // to user-defined traps in the cache and hardware are only permitted after
+  // this initialization.
+  if (!m_isAclTableReferencingUserDefinedTrapsAdded) {
+    SWSS_LOG_INFO(
+        "User defined traps have not been initialized during ACL table "
+        "creation yet. They will not be created until an ACL table is "
+        "referencing them.");
+    return ReturnCode();
+  }
+  // Retrieve trapGroupMap and trapGroupHostIfMap from CoppOrch during runtime,
+  // as new trap groups might be added after the initial setup. This accounts
+  // for situations like CoPP table updates that occur following NSF
+  // reconciliation.
+  const auto trapGroupMap = gCoppOrch->getTrapGroupMap();
+  const auto trapGroupHostIfMap = gCoppOrch->getTrapGroupHostIfMap();
+  const auto queue_num_str =
+      trap_group_name.substr(strlen(GENL_PACKET_TRAP_GROUP_NAME_PREFIX));
+  ASSIGN_OR_RETURN(auto queue_num, parseQueueNumberFromStr(queue_num_str));
+  auto trap_group_it = trapGroupMap.find(trap_group_name);
+  auto udt_it = m_userDefinedTraps.find(queue_num);
+  if (!is_delete) {
+    if (trap_group_it == trapGroupMap.end()) {
+      SWSS_LOG_ERROR("trap_group_name %s was not found in CoppOrch cache.",
+                     QuotedVar(trap_group_name).c_str());
+      return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND);
+    }
+    // trap_group_name has been added to the trapGroupMap,
+    // create user defined trap referencing the trap group and hostif table
+    // entry.
+    const sai_object_id_t trap_group_oid = trap_group_it->second;
+    auto hostif_oid_it = trapGroupHostIfMap.find(trap_group_oid);
+    if (hostif_oid_it == trapGroupHostIfMap.end()) {
+      LOG_ERROR_AND_RETURN(
+          ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+          << "Hostif object id was not found given trap group - "
+          << QuotedVar(trap_group_name));
+    }
+    // Create user defined trap and add it in hostif table.
+    LOG_AND_RETURN_IF_ERROR(
+        setUserDefinedTrap(queue_num, trap_group_oid, hostif_oid_it->second));
+  } else {
+    // trap_group_name has been deleted from the trapGroupMap,
+    // if no ACL rules are referencing its corresponding user defined trap, then
+    // delete the user defined trap as well.
+    if (udt_it == m_userDefinedTraps.end()) {
+      return ReturnCode();
+    }
+    uint32_t ref_count = 0;
+    if (!m_p4OidMapper->getRefCount(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
+                                    std::to_string(queue_num), &ref_count) ||
+        ref_count > 1) {
+      return ReturnCode(StatusCode::SWSS_RC_IN_USE)
+             << "User defined trap for queue:" << QuotedVar(queue_num_str)
+             << " can not be removed as it is in use.";
+    }
         CHECK_ERROR_AND_LOG_AND_RETURN(sai_hostif_api->remove_hostif_table_entry(
-                                       fvValue(udt_it).hostif_table_entry),
+                                       udt_it->second.hostif_table_entry),
                                        "Failed to remove hostif table entry.");
 
         m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
-                                        std::to_string(fvField(udt_it)));
+                                        std::to_string(queue_num));
         sai_hostif_api->remove_hostif_user_defined_trap(
-            fvValue(udt_it).user_defined_trap);
+            udt_it->second.user_defined_trap);
         m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
-                                std::to_string(fvField(udt_it)));
+                                std::to_string(queue_num));
+        m_userDefinedTraps.erase(queue_num);
     }
 
-    m_userDefinedTraps.clear();
     return ReturnCode();
 }
 
@@ -1623,13 +1765,6 @@ ReturnCode AclRuleManager::setActionValue(const sai_acl_entry_attr_t attr_name,
         try
         {
             uint32_t queue_num = to_uint<uint32_t>(attr_value);
-            if (queue_num < 1 || queue_num > m_userDefinedTraps.size())
-            {
-                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                       << "Invalid CPU queue number " << QuotedVar(attr_value) << " for "
-                       << QuotedVar(acl_rule->acl_table_name)
-                       << ". Queue number should >= 1 and <= " << m_userDefinedTraps.size();
-            }
 	    const auto udt_it = m_userDefinedTraps.find(queue_num);
             if (udt_it == m_userDefinedTraps.end()) {
           	return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
