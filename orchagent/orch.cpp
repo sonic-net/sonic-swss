@@ -959,6 +959,20 @@ void Orch::dumpPendingTasks(vector<string> &ts)
     }
 }
 
+std::vector<std::pair<std::string, size_t>> Orch::getConsumerPendingCounts()
+{
+    std::vector<std::pair<std::string, size_t>> result;
+    for (auto &it : m_consumerMap)
+    {
+        ConsumerBase* consumer = dynamic_cast<ConsumerBase *>(it.second.get());
+        if (consumer != NULL)
+        {
+            result.emplace_back(it.first, consumer->m_toSync.size());
+        }
+    }
+    return result;
+}
+
 void Orch::flushResponses()
 {
     m_publisher.flush();

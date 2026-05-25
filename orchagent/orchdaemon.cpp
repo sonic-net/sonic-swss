@@ -91,6 +91,12 @@ OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *
     SWSS_LOG_ENTER();
     m_select = new Select();
     m_lastHeartBeat = std::chrono::high_resolution_clock::now();
+
+    if (m_stateDb != nullptr)
+    {
+        m_queueDepthTable.reset(new Table(m_stateDb, "ORCHAGENT_QUEUE"));
+    }
+    m_lastQueueDepthPublish = std::chrono::high_resolution_clock::now();
 }
 
 OrchDaemon::~OrchDaemon()
@@ -916,6 +922,26 @@ void OrchDaemon::flush()
     }
 }
 
+void OrchDaemon::publishQueueDepth()
+{
+    SWSS_LOG_ENTER();
+
+    if (m_queueDepthTable == nullptr)
+    {
+        return;
+    }
+
+    for (Orch *o : m_orchList)
+    {
+        for (auto &nc : o->getConsumerPendingCounts())
+        {
+            std::vector<FieldValueTuple> values;
+            values.emplace_back("pending_count", std::to_string(nc.second));
+            m_queueDepthTable->set(nc.first, values);
+        }
+    }
+}
+
 /* Release the file handle so the log can be rotated */
 void OrchDaemon::logRotate() {
     SWSS_LOG_ENTER();
@@ -983,6 +1009,16 @@ void OrchDaemon::start(long heartBeatInterval)
             tstart = std::chrono::high_resolution_clock::now();
 
             flush();
+        }
+
+        // Publish per-consumer queue depth to STATE_DB every 5 s. Independent of
+        // SELECT_TIMEOUT so it fires under load as well as idle.
+        constexpr int QUEUE_DEPTH_PUBLISH_INTERVAL_SEC = 5;
+        auto qdiff = std::chrono::duration_cast<std::chrono::seconds>(tend - m_lastQueueDepthPublish);
+        if (qdiff.count() >= QUEUE_DEPTH_PUBLISH_INTERVAL_SEC)
+        {
+            m_lastQueueDepthPublish = tend;
+            publishQueueDepth();
         }
 
         if (ret == Select::ERROR)

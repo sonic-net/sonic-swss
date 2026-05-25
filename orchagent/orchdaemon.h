@@ -4,6 +4,7 @@
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "consumertable.h"
+#include "table.h"
 #include "zmqserver.h"
 #include "select.h"
 
@@ -129,7 +130,16 @@ protected:
     Select *m_select;
     std::chrono::time_point<std::chrono::high_resolution_clock> m_lastHeartBeat;
 
+    // Queue-depth telemetry. Publishes STATE_DB:ORCHAGENT_QUEUE|<consumer>
+    // entries with pending_count, every QUEUE_DEPTH_PUBLISH_INTERVAL_SEC.
+    std::unique_ptr<swss::Table> m_queueDepthTable;
+    std::chrono::time_point<std::chrono::high_resolution_clock> m_lastQueueDepthPublish;
+
     void flush();
+
+    /* Publish per-consumer pending-count snapshot to STATE_DB. Called periodically
+     * from start(). Safe to call when m_queueDepthTable is null (no-op). */
+    void publishQueueDepth();
 
     void heartBeat(std::chrono::time_point<std::chrono::high_resolution_clock> tcurrent, long interval);
 
