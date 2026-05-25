@@ -959,11 +959,11 @@ void Orch::dumpPendingTasks(vector<string> &ts)
     }
 }
 
-bool Orch::hasPendingTasks()
+bool Orch::hasPendingTasks() const
 {
-    for (auto &it : m_consumerMap)
+    for (const auto &it : m_consumerMap)
     {
-        ConsumerBase* consumer = dynamic_cast<ConsumerBase *>(it.second.get());
+        const ConsumerBase* consumer = dynamic_cast<const ConsumerBase *>(it.second.get());
         if (consumer != NULL && consumer->hasPendingTasks())
         {
             return true;

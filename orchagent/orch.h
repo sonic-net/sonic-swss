@@ -327,7 +327,7 @@ public:
 
     /* Return true if any consumer in this Orch has pending tasks in m_toSync.
      * Used by the main loop to decide whether to sweep on SELECT_TIMEOUT. */
-    bool hasPendingTasks();
+    bool hasPendingTasks() const;
 
     void createRetryCache(const std::string &executorName);
     RetryCache* getRetryCache(const std::string &executorName);
