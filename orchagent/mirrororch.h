@@ -47,6 +47,10 @@ struct MirrorEntry
     string type;
     string congestion_mode;
 
+    string monitor_port_cfg;
+    MacAddress dst_mac_cfg;
+    bool direct_path;
+
     struct
     {
         IpPrefix prefix;
