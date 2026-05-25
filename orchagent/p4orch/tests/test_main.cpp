@@ -14,6 +14,8 @@ extern "C"
 #include "directory.h"
 #include "flowcounterrouteorch.h"
 #include "gtest/gtest.h"
+#include "mock_sai_hostif.h"
+#include "mock_sai_switch.h"
 #include "mock_sai_virtual_router.h"
 #include "p4orch.h"
 #include "portsorch.h"
@@ -61,6 +63,7 @@ P4Orch *gP4Orch;
 VRFOrch *gVrfOrch;
 FlowCounterRouteOrch *gFlowCounterRouteOrch;
 SwitchOrch *gSwitchOrch;
+CoppOrch *gCoppOrch;
 Directory<Orch *> gDirectory;
 swss::DBConnector *gAppDb;
 swss::DBConnector *gStateDb;
@@ -196,6 +199,21 @@ void AddVrf()
     static_cast<Orch *>(gVrfOrch)->doTask();
 }
 
+void SetUpCoppOrch() {
+  StrictMock<MockSaiHostif> mock_sai_hostif_;
+  mock_sai_hostif = &mock_sai_hostif_;
+  sai_hostif_api->create_hostif_table_entry = mock_create_hostif_table_entry;
+  StrictMock<MockSaiSwitch> mock_sai_switch_;
+  mock_sai_switch = &mock_sai_switch_;
+  sai_switch_api->get_switch_attribute = mock_get_switch_attribute;
+  EXPECT_CALL(mock_sai_hostif_, create_hostif_table_entry(_, _, _, _))
+      .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_switch_, get_switch_attribute(_, _, _))
+      .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+  CoppOrch coppOrch(gAppDb, APP_COPP_TABLE_NAME);
+  gCoppOrch = &coppOrch;
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -276,6 +294,8 @@ int main(int argc, char *argv[])
     FlowCounterRouteOrch flow_counter_route_orch(gConfigDb, std::vector<std::string>{});
     gFlowCounterRouteOrch = &flow_counter_route_orch;
     gDirectory.set(static_cast<FlowCounterRouteOrch *>(&flow_counter_route_orch));
+
+    SetUpCoppOrch();
 
     std::vector<TableConnector> acl_tables;
     AclOrch aclOrch(acl_tables, gStateDb, gSwitchOrch, gPortsOrch, NULL, NULL,

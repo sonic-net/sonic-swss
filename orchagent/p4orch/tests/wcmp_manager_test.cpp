@@ -176,7 +176,6 @@ class WcmpManagerTest : public ::testing::Test
             .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
         EXPECT_CALL(mock_sai_acl_, remove_acl_table_group(_)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
         delete gP4Orch;
-        delete copp_orch_;
         gMockResponsePublisher.reset();
     }
 
@@ -211,11 +210,10 @@ class WcmpManagerTest : public ::testing::Test
         // init copp orch
         EXPECT_CALL(mock_sai_hostif_, create_hostif_table_entry(_, _, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
         EXPECT_CALL(mock_sai_hostif_, create_hostif_trap(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
-        EXPECT_CALL(mock_sai_switch_, get_switch_attribute(_, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
-        copp_orch_ = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
+        EXPECT_CALL(mock_sai_switch_, get_switch_attribute(_, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
 
         std::vector<std::string> p4_tables{APP_P4RT_TABLE_NAME};
-        gP4Orch = new P4Orch(gAppDb, p4_tables, nullptr, gVrfOrch, copp_orch_);
+        gP4Orch = new P4Orch(gAppDb, p4_tables, nullptr, gVrfOrch);
         gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
     }
 
@@ -340,7 +338,6 @@ class WcmpManagerTest : public ::testing::Test
     StrictMock<MockSaiAcl> mock_sai_acl_;
     P4OidMapper *p4_oid_mapper_;
     WcmpManager *wcmp_group_manager_;
-    CoppOrch *copp_orch_;
 };
 
 P4WcmpGroupEntry WcmpManagerTest::getWcmpGroupEntryForTest(

@@ -29,7 +29,7 @@ NameLabelMapper::NameLabelMapper() : m_db("STATE_DB", 0), m_table(&m_db, "SAI_KE
 {
 }
 
-bool NameLabelMapper::setLabel(_In_ sai_object_type_t object_type, _In_ const std::string &key, _In_ std::string &label)
+bool NameLabelMapper::setLabel(_In_ sai_object_type_t object_type, _In_ const std::string &key, _In_ const std::string& label)
 {
     SWSS_LOG_ENTER();
 

@@ -28,7 +28,7 @@ class NameLabelMapper
 
     // Sets label for the given key for the specific object_type. Returns false if
     // the key already exists.
-    bool setLabel(_In_ sai_object_type_t object_type, _In_ const std::string &key, _In_ std::string &label);
+    bool setLabel(_In_ sai_object_type_t object_type, _In_ const std::string &key, _In_ const std::string& label);
 
     // Return true if label present in the mapper, and copy the label in the 3rd
     // argument; or false, and a new unique label is allocated and saved in mapper

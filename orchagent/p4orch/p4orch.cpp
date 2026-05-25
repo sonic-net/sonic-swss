@@ -5,7 +5,6 @@
 #include <string>
 #include <vector>
 
-#include "copporch.h"
 #include "eventexecutor.h"
 #include "logger.h"
 #include "namelabelmapper.h"
@@ -37,7 +36,7 @@ extern PortsOrch *gPortsOrch;
 #define APP_P4RT_EXT_TABLES_MANAGER "EXT_TABLES_MANAGER"
 
 P4Orch::P4Orch(swss::DBConnector* db, std::vector<std::string> tableNames,
-               ZmqServer* zmqServer, VRFOrch* vrfOrch, CoppOrch* coppOrch)
+               ZmqServer* zmqServer, VRFOrch* vrfOrch)
     : ZmqOrch(db, tableNames, zmqServer, /*orderedQueue=*/true,
               /*dbPersistence=*/false),
       m_zmqServer(zmqServer),
@@ -71,7 +70,7 @@ P4Orch::P4Orch(swss::DBConnector* db, std::vector<std::string> tableNames,
     m_routeManager = std::make_unique<RouteManager>(&m_p4OidMapper, vrfOrch, &m_publisher);
     m_mirrorSessionManager = std::make_unique<p4orch::MirrorSessionManager>(&m_p4OidMapper, &m_publisher);
     m_aclTableManager = std::make_unique<p4orch::AclTableManager>(&m_p4OidMapper, &m_publisher);
-    m_aclRuleManager = std::make_unique<p4orch::AclRuleManager>(&m_p4OidMapper, vrfOrch, coppOrch, &m_publisher);
+    m_aclRuleManager = std::make_unique<p4orch::AclRuleManager>(&m_p4OidMapper, vrfOrch, &m_publisher);
     m_wcmpManager = std::make_unique<p4orch::WcmpManager>(
         &m_p4OidMapper, &m_publisher, m_watchportEvent);
     m_l3AdmitManager = std::make_unique<L3AdmitManager>(&m_p4OidMapper, &m_publisher);

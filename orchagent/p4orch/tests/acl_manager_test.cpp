@@ -10,6 +10,7 @@
 #include "acl_util.h"
 #include "aclorch.h"
 #include "acltable.h"
+#include "copporch.h"
 #include "mock_response_publisher.h"
 #include "mock_sai_acl.h"
 #include "mock_sai_hostif.h"
@@ -44,6 +45,7 @@ extern P4Orch *gP4Orch;
 extern std::unique_ptr<MockResponsePublisher> gMockResponsePublisher;
 extern SwitchOrch *gSwitchOrch;
 extern AclOrch* gAclOrch;
+extern CoppOrch* gCoppOrch;
 extern sai_object_id_t gSwitchId;
 extern sai_object_id_t gVrfOid;
 extern sai_object_id_t gTrapGroupStartOid;
@@ -90,19 +92,22 @@ constexpr sai_object_id_t kUdfMatchOid1 = 5001;
 constexpr sai_object_id_t kUdfOid1 = 6001;
 constexpr char *kAclIngressTableName = "ACL_PUNT_TABLE";
 
-std::string kUdfGroupMapperKey = "P4RT_TABLE:ACL_PUNT_TABLE-udf2-0";
-std::string kUdfGroupMapperLabel = "1706901078193258";
-std::string kAclCounterMapperKey1 =
+constexpr char* kUdfGroupMapperKey = "P4RT_TABLE:ACL_PUNT_TABLE-udf2-0";
+constexpr char* kUdfGroupMapperLabel = "1706901078193258";
+constexpr char* kAclCounterMapperKey1 =
     "P4RT_TABLE:ACL_PUNT_TABLE:match/ether_type=0x0800:match/"
     "ipv6_dst=fdf8:f53b:82e4::53 & fdf8:f53b:82e4::53:priority=15";
-std::string kAclCounterLabel1 = "1707179015354132";
+constexpr char* kAclCounterLabel1 = "1707179015354132";
 constexpr char* kAclCounterMapperKey2 =
     "P4RT_TABLE:ACL_PUNT_TABLE:match/arp_tpa=0xff112231:match/"
     "ether_type=0x0800:match/in_ports=Ethernet1,Ethernet2:match/"
     "ipmc_table_hit=0x1:match/ipv6_dst=fdf8:f53b:82e4::53 & "
     "fdf8:f53b:82e4::53:match/out_ports=Ethernet4,Ethernet5:match/"
     "route_table_hit=0x1:match/vrf_id=b4-traffic:priority=15";
-std::string kAclCounterLabel2 = "1708458300499045";
+constexpr char* kAclCounterLabel2 = "1708458300499045";
+
+constexpr uint32_t kP4CpuQueueMinNum = 0;
+constexpr uint32_t kP4CpuQueueMaxNum = 47;
 
 // Matches the policer sai_attribute_t[] argument.
 bool MatchSaiPolicerAttributeInStormMode(const int attrs_size,
@@ -270,6 +275,35 @@ bool MatchSaiSwitchAttrByAclStage(const sai_switch_attr_t expected_switch_attr, 
         return false;
     }
     return true;
+}
+
+bool GetQueueNumberFromTrapGroupSaiAttributes(
+    sai_uint32_t* queue_num, const uint32_t attr_size,
+    const sai_attribute_t* attr_list) {
+  if (attr_list == nullptr) {
+    return false;
+  }
+  for (uint32_t i = 0; i < attr_size; i++) {
+    if (attr_list[i].id == SAI_HOSTIF_TRAP_GROUP_ATTR_QUEUE) {
+      *queue_num = attr_list[i].value.u32;
+      return true;
+    }
+  }
+  return false;
+}
+
+bool GetQueueNumberFromUserDefinedTrapSaiAttributes(
+    sai_object_id_t* queue_num, const sai_attribute_t* attr_list) {
+  if (attr_list == nullptr) {
+    return false;
+  }
+  for (int i = 0; i < 2; i++) {
+    if (attr_list[i].id == SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TRAP_GROUP) {
+      *queue_num = attr_list[i].value.oid - gTrapGroupStartOid - 1;
+      return true;
+    }
+  }
+  return false;
 }
 
 std::string BuildMatchFieldJsonStrKindSaiField(std::string sai_field, std::string format = P4_FORMAT_HEX_STRING,
@@ -969,9 +1003,10 @@ class AclManagerTest : public ::testing::Test
     AclManagerTest()
     {
         setUpMockApi();
-        setUpCoppOrch();
         setUpSwitchOrch();
+        initCoppOrch();
         setUpP4Orch();
+        setUpCoppOrch();
         // const auto& acl_groups = gSwitchOrch->getAclGroupsBindingToSwitch();
         // EXPECT_EQ(3, acl_groups.size());
         // EXPECT_NE(acl_groups.end(), acl_groups.find(SAI_ACL_STAGE_INGRESS));
@@ -998,7 +1033,7 @@ class AclManagerTest : public ::testing::Test
     {
         EXPECT_CALL(mock_sai_udf_, remove_udf_match(_)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
         delete gP4Orch;
-        delete copp_orch_;
+        delete gCoppOrch;
         delete gSwitchOrch;
         gMockResponsePublisher.reset();
     }
@@ -1030,6 +1065,8 @@ class AclManagerTest : public ::testing::Test
         sai_hostif_api->create_hostif_table_entry = mock_create_hostif_table_entry;
         sai_hostif_api->remove_hostif_table_entry = mock_remove_hostif_table_entry;
         sai_hostif_api->create_hostif_trap_group = mock_create_hostif_trap_group;
+        sai_hostif_api->set_hostif_trap_group_attribute =
+            mock_set_hostif_trap_group_attribute;
         sai_hostif_api->create_hostif_trap = mock_create_hostif_trap;
         sai_hostif_api->create_hostif = mock_create_hostif;
         sai_hostif_api->remove_hostif = mock_remove_hostif;
@@ -1050,42 +1087,50 @@ class AclManagerTest : public ::testing::Test
                                kAclCounterLabel1);
         gLabelMapper->setLabel(SAI_OBJECT_TYPE_ACL_COUNTER, kAclCounterMapperKey2,
                                kAclCounterLabel2);
+        EXPECT_CALL(mock_sai_switch_, get_switch_attribute(_, _, _))
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
     }
 
-    void setUpCoppOrch()
+    void initCoppOrch()
     {
         // init copp orch
         EXPECT_CALL(mock_sai_hostif_, create_hostif_table_entry(_, _, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
         EXPECT_CALL(mock_sai_hostif_, create_hostif_trap(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
-        EXPECT_CALL(mock_sai_switch_, get_switch_attribute(_, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
-        copp_orch_ = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
+        gCoppOrch = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
+    }
+
+    void setUpCoppOrch() {
         // add trap group and genetlink for each CPU queue
         swss::Table app_copp_table(gAppDb, APP_COPP_TABLE_NAME);
-        for (uint64_t queue_num = 1; queue_num <= P4_CPU_QUEUE_MAX_NUM; queue_num++)
-        {
+        for (auto queue_num = kP4CpuQueueMinNum; queue_num <= kP4CpuQueueMaxNum;
+            queue_num++) {
             std::vector<swss::FieldValueTuple> attrs;
             attrs.push_back({"queue", std::to_string(queue_num)});
             attrs.push_back({"genetlink_name", "genl_packet"});
             attrs.push_back({"genetlink_mcgrp_name", "packets"});
             app_copp_table.set(GENL_PACKET_TRAP_GROUP_NAME_PREFIX + std::to_string(queue_num), attrs);
         }
-        sai_object_id_t trap_group_oid = gTrapGroupStartOid;
         sai_object_id_t hostif_oid = gHostifStartOid;
         EXPECT_CALL(mock_sai_hostif_, create_hostif_trap_group(_, _, _, _))
-            .Times(P4_CPU_QUEUE_MAX_NUM)
+            .Times(kP4CpuQueueMaxNum - kP4CpuQueueMinNum + 1)
             .WillRepeatedly(
-                DoAll(Invoke([&trap_group_oid](sai_object_id_t *oid, sai_object_id_t switch_id, uint32_t attr_count,
-                                               const sai_attribute_t *attr_list) { *oid = ++trap_group_oid; }),
+                DoAll(Invoke([](sai_object_id_t* oid, sai_object_id_t switch_id,
+                      uint32_t attr_count, const sai_attribute_t* attr_list) {
+              sai_uint32_t queue_num = 0;
+              EXPECT_TRUE(GetQueueNumberFromTrapGroupSaiAttributes(
+                  &queue_num, attr_count, attr_list));
+              *oid = gTrapGroupStartOid + (uint64_t)queue_num + 1;
+                      }),
                       Return(SAI_STATUS_SUCCESS)));
         EXPECT_CALL(mock_sai_hostif_, create_hostif(_, _, _, _))
-            .Times(P4_CPU_QUEUE_MAX_NUM)
+            .Times(kP4CpuQueueMaxNum - kP4CpuQueueMinNum + 1)
             .WillRepeatedly(
                 DoAll(Invoke([&hostif_oid](sai_object_id_t *oid, sai_object_id_t switch_id, uint32_t attr_count,
                                            const sai_attribute_t *attr_list) { *oid = ++hostif_oid; }),
                       Return(SAI_STATUS_SUCCESS)));
 
-        copp_orch_->addExistingData(&app_copp_table);
-        static_cast<Orch *>(copp_orch_)->doTask();
+        gCoppOrch->addExistingData(&app_copp_table);
+        static_cast<Orch*>(gCoppOrch)->doTask();
     }
 
     void setUpSwitchOrch()
@@ -1132,20 +1177,24 @@ class AclManagerTest : public ::testing::Test
                                                          kAclGroupLookupOid, std::placeholders::_1))))
             .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
         std::vector<std::string> p4_tables;
-        gP4Orch = new P4Orch(gAppDb, p4_tables, nullptr, gVrfOrch, copp_orch_);
+        gP4Orch = new P4Orch(gAppDb, p4_tables, nullptr, gVrfOrch);
         acl_table_manager_ = gP4Orch->getAclTableManager();
         acl_rule_manager_ = gP4Orch->getAclRuleManager();
         p4_oid_mapper_ = acl_table_manager_->m_p4OidMapper;
         gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
     }
 
-    void AddDefaultUserTrapsSaiCalls(sai_object_id_t *user_defined_trap_oid)
+    void AddDefaultUserTrapsSaiCalls()
     {
         EXPECT_CALL(mock_sai_hostif_, create_hostif_user_defined_trap(_, _, _, _))
-            .Times(P4_CPU_QUEUE_MAX_NUM)
-            .WillRepeatedly(DoAll(Invoke([user_defined_trap_oid](
-                                             sai_object_id_t *oid, sai_object_id_t switch_id, uint32_t attr_count,
-                                             const sai_attribute_t *attr_list) { *oid = ++(*user_defined_trap_oid); }),
+            .Times(kP4CpuQueueMaxNum - kP4CpuQueueMinNum + 1)
+            .WillRepeatedly(DoAll(Invoke([](sai_object_id_t* oid, sai_object_id_t switch_id,
+                      uint32_t attr_count, const sai_attribute_t* attr_list) {
+              sai_object_id_t queue_num = 0;
+              EXPECT_TRUE(GetQueueNumberFromUserDefinedTrapSaiAttributes(
+                  &queue_num, attr_list));
+              *oid = gUserDefinedTrapStartOid + queue_num + 1;
+                                  }),
                                   Return(SAI_STATUS_SUCCESS)));
     }
 
@@ -1164,8 +1213,7 @@ class AclManagerTest : public ::testing::Test
         EXPECT_CALL(mock_sai_udf_, create_udf(_, _, _, _))
             .Times(3)
             .WillRepeatedly(DoAll(SetArgPointee<0>(kUdfOid1), Return(SAI_STATUS_SUCCESS)));
-        sai_object_id_t user_defined_trap_oid = gUserDefinedTrapStartOid;
-        AddDefaultUserTrapsSaiCalls(&user_defined_trap_oid);
+        AddDefaultUserTrapsSaiCalls();
         ASSERT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddTableRequest(app_db_entry));
         ASSERT_NO_FATAL_FAILURE(
             IsExpectedAclTableDefinitionMapping(*GetAclTable(app_db_entry.acl_table_name), app_db_entry));
@@ -1263,6 +1311,11 @@ class AclManagerTest : public ::testing::Test
         return acl_table_manager_->createAclGroupMember(acl_table, acl_grp_mem_oid);
     }
 
+    ReturnCode UpdateUserDefinedTrap(const std::string& trap_group_name,
+                                     bool is_delete) {
+        return acl_rule_manager_->updateUserDefinedTrap(trap_group_name, is_delete);
+    }
+
     StrictMock<MockSaiAcl> mock_sai_acl_;
     StrictMock<MockSaiSerialize> mock_sai_serialize_;
     StrictMock<MockSaiPolicer> mock_sai_policer_;
@@ -1270,7 +1323,6 @@ class AclManagerTest : public ::testing::Test
     StrictMock<MockSaiSwitch> mock_sai_switch_;
     StrictMock<MockSaiUdf> mock_sai_udf_;
     // StrictMock<MockResponsePublisher> *gMockResponsePublisher;
-    CoppOrch *copp_orch_;
     P4OidMapper *p4_oid_mapper_;
     p4orch::AclTableManager *acl_table_manager_;
     p4orch::AclRuleManager *acl_rule_manager_;
@@ -1566,23 +1618,8 @@ TEST_F(AclManagerTest, CreatePuntTableFailsWhenUserTrapsSaiCallFails)
 {
     auto app_db_entry = getDefaultAclTableDefAppDbEntry();
     EXPECT_CALL(mock_sai_hostif_, create_hostif_user_defined_trap(_, _, _, _))
-        .WillOnce(DoAll(SetArgPointee<0>(gUserDefinedTrapStartOid + 1), Return(SAI_STATUS_SUCCESS)))
-        .WillOnce(Return(SAI_STATUS_INSUFFICIENT_RESOURCES));
-    EXPECT_CALL(mock_sai_hostif_, create_hostif_table_entry(_, _, _, _))
-        .WillOnce(DoAll(SetArgPointee<0>(gHostifStartOid + 1), Return(SAI_STATUS_SUCCESS)));
-    EXPECT_CALL(mock_sai_hostif_, remove_hostif_table_entry(Eq(gHostifStartOid + 1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_CALL(mock_sai_hostif_, remove_hostif_user_defined_trap(Eq(gUserDefinedTrapStartOid + 1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-    // The user defined traps fail to create
-    EXPECT_EQ(StatusCode::SWSS_RC_FULL, ProcessAddTableRequest(app_db_entry));
-    EXPECT_EQ(nullptr, GetAclTable(app_db_entry.acl_table_name));
-    sai_object_id_t oid;
-    EXPECT_FALSE(p4_oid_mapper_->getOID(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
-                                        std::to_string(gUserDefinedTrapStartOid + 1), &oid));
-
-    EXPECT_CALL(mock_sai_hostif_, create_hostif_user_defined_trap(_, _, _, _))
-        .WillOnce(DoAll(SetArgPointee<0>(gUserDefinedTrapStartOid + 1), Return(SAI_STATUS_SUCCESS)));
+        .WillOnce(DoAll(SetArgPointee<0>(gUserDefinedTrapStartOid + 1),
+                        Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_hostif_, create_hostif_table_entry(_, _, _, _))
         .WillOnce(Return(SAI_STATUS_INSUFFICIENT_RESOURCES));
     EXPECT_CALL(mock_sai_hostif_, remove_hostif_user_defined_trap(Eq(gUserDefinedTrapStartOid + 1)))
@@ -1592,33 +1629,81 @@ TEST_F(AclManagerTest, CreatePuntTableFailsWhenUserTrapsSaiCallFails)
     EXPECT_EQ(nullptr, GetAclTable(app_db_entry.acl_table_name));
 
     EXPECT_CALL(mock_sai_hostif_, create_hostif_user_defined_trap(_, _, _, _))
-        .WillOnce(DoAll(SetArgPointee<0>(gUserDefinedTrapStartOid + 1), Return(SAI_STATUS_SUCCESS)))
+        .WillOnce(DoAll(SetArgPointee<0>(gUserDefinedTrapStartOid + 1),
+                        Return(SAI_STATUS_SUCCESS)))
         .WillOnce(Return(SAI_STATUS_INSUFFICIENT_RESOURCES));
     EXPECT_CALL(mock_sai_hostif_, create_hostif_table_entry(_, _, _, _))
-        .WillOnce(DoAll(SetArgPointee<0>(gHostifStartOid + 1), Return(SAI_STATUS_SUCCESS)));
-    EXPECT_CALL(mock_sai_hostif_, remove_hostif_table_entry(Eq(gHostifStartOid + 1)))
-        .WillOnce(Return(SAI_STATUS_OBJECT_IN_USE));
-    // The 2nd user defined trap fails to create, the 1st hostif table entry fails
-    // to remove
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    // The 2nd user defined trap fails to create.
     EXPECT_EQ(StatusCode::SWSS_RC_FULL, ProcessAddTableRequest(app_db_entry));
+    EXPECT_EQ(nullptr, GetAclTable(app_db_entry.acl_table_name));
+}
+
+TEST_F(AclManagerTest, UpdateUserDefinedTrapSucceeds) {
+    ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+
+    const std::string trap_group =
+        GENL_PACKET_TRAP_GROUP_NAME_PREFIX + std::to_string(kP4CpuQueueMinNum);
+
+    EXPECT_CALL(mock_sai_hostif_,
+                remove_hostif_user_defined_trap(Eq(gUserDefinedTrapStartOid + 1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_hostif_, remove_hostif_table_entry(_))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_hostif_, create_hostif_user_defined_trap(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(gUserDefinedTrapStartOid + 1),
+                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_hostif_, create_hostif_table_entry(_, _, _, _))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+    EXPECT_TRUE(UpdateUserDefinedTrap(trap_group, /*is_delete=*/false).ok());
+}
+
+TEST_F(
+    AclManagerTest,
+    UpdateUserDefinedTrapFailsRaisesCriticalStateWhenUserDefinedTrapRecoveryFails) {
+    ASSERT_NO_FATAL_FAILURE(AddDefaultIngressTable());
+    const std::string out_of_band_trap_group =
+        GENL_PACKET_TRAP_GROUP_NAME_PREFIX +
+        std::to_string(kP4CpuQueueMaxNum + 10);
+    EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND,
+              UpdateUserDefinedTrap(out_of_band_trap_group, /*is_delete=*/false));
+
+    const std::string trap_group =
+        GENL_PACKET_TRAP_GROUP_NAME_PREFIX + std::to_string(kP4CpuQueueMinNum);
+
+    EXPECT_CALL(mock_sai_hostif_,
+                remove_hostif_user_defined_trap(Eq(gUserDefinedTrapStartOid + 1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS))
+        .WillOnce(Return(SAI_STATUS_FAILURE));
+    EXPECT_CALL(mock_sai_hostif_, remove_hostif_table_entry(_))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_CALL(mock_sai_hostif_, create_hostif_user_defined_trap(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(gUserDefinedTrapStartOid + 1),
+                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_hostif_, create_hostif_table_entry(_, _, _, _))
+        .WillOnce(Return(SAI_STATUS_INSUFFICIENT_RESOURCES));
+
+    EXPECT_EQ(StatusCode::SWSS_RC_INTERNAL,
+              UpdateUserDefinedTrap(trap_group, /*is_delete=*/false));
 }
 
 TEST_F(AclManagerTest, DISABLED_CreatePuntTableFailsWhenUserTrapGroupOrHostifNotFound)
 {
     auto app_db_entry = getDefaultAclTableDefAppDbEntry();
-    const auto skip_cpu_queue = 1;
+    const auto skip_cpu_queue = kP4CpuQueueMinNum;
     // init copp orch
     EXPECT_CALL(mock_sai_hostif_, create_hostif_table_entry(_, _, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_hostif_, create_hostif_trap(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_switch_, get_switch_attribute(_, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
     swss::Table app_copp_table(gAppDb, APP_COPP_TABLE_NAME);
     // Clean up APP_COPP_TABLE_NAME table entries
-    for (int queue_num = 1; queue_num <= P4_CPU_QUEUE_MAX_NUM; queue_num++)
+    for (uint32_t queue_num = kP4CpuQueueMinNum; queue_num <= kP4CpuQueueMaxNum; queue_num++)
     {
         app_copp_table.del(GENL_PACKET_TRAP_GROUP_NAME_PREFIX + std::to_string(queue_num));
     }
     cleanupAclManagerTest();
-    copp_orch_ = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
+    gCoppOrch = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
     setUpSwitchOrch();
     // Update p4orch to use new copp orch
     setUpP4Orch();
@@ -1629,10 +1714,10 @@ TEST_F(AclManagerTest, DISABLED_CreatePuntTableFailsWhenUserTrapGroupOrHostifNot
     attrs.push_back({"queue", std::to_string(skip_cpu_queue)});
     // Add one COPP_TABLE entry with trap group info, without hostif info
     app_copp_table.set(GENL_PACKET_TRAP_GROUP_NAME_PREFIX + std::to_string(skip_cpu_queue), attrs);
-    copp_orch_->addExistingData(&app_copp_table);
+    gCoppOrch->addExistingData(&app_copp_table);
     EXPECT_CALL(mock_sai_hostif_, create_hostif_trap_group(_, _, _, _))
-        .WillOnce(DoAll(SetArgPointee<0>(gTrapGroupStartOid + skip_cpu_queue), Return(SAI_STATUS_SUCCESS)));
-    static_cast<Orch *>(copp_orch_)->doTask();
+        .WillOnce(DoAll(SetArgPointee<0>(gTrapGroupStartOid + skip_cpu_queue - kP4CpuQueueMinNum), Return(SAI_STATUS_SUCCESS)));
+    static_cast<Orch*>(gCoppOrch)->doTask();
     // Fail to create ACL table because the host interface is absent
     EXPECT_EQ("Hostif object id was not found given trap group - " + std::string(GENL_PACKET_TRAP_GROUP_NAME_PREFIX) +
                   std::to_string(skip_cpu_queue),
@@ -1643,8 +1728,7 @@ TEST_F(AclManagerTest, DISABLED_CreatePuntTableFailsWhenUserTrapGroupOrHostifNot
 TEST_F(AclManagerTest, CreateIngressPuntTableFailsWhenCapabilityExceeds)
 {
     auto app_db_entry = getDefaultAclTableDefAppDbEntry();
-    sai_object_id_t user_defined_trap_oid = gUserDefinedTrapStartOid;
-    AddDefaultUserTrapsSaiCalls(&user_defined_trap_oid);
+    AddDefaultUserTrapsSaiCalls();
     EXPECT_CALL(mock_sai_udf_, create_udf_match(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kUdfMatchOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf_group(_, _, _, _))
@@ -1671,8 +1755,7 @@ TEST_F(AclManagerTest, CreateIngressTableFailsWhenRedirectObjectTypeUnknown) {
 TEST_F(AclManagerTest, CreateIngressPuntTableFailsWhenFailedToCreateTableGroupMember)
 {
     auto app_db_entry = getDefaultAclTableDefAppDbEntry();
-    sai_object_id_t user_defined_trap_oid = gUserDefinedTrapStartOid;
-    AddDefaultUserTrapsSaiCalls(&user_defined_trap_oid);
+    AddDefaultUserTrapsSaiCalls();
     EXPECT_CALL(mock_sai_udf_, create_udf_match(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kUdfMatchOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf_group(_, _, _, _))
@@ -1692,8 +1775,7 @@ TEST_F(AclManagerTest, CreateIngressPuntTableFailsWhenFailedToCreateTableGroupMe
 TEST_F(AclManagerTest, CreateIngressPuntTableRaisesCriticalStateWhenAclTableRecoveryFails)
 {
     auto app_db_entry = getDefaultAclTableDefAppDbEntry();
-    sai_object_id_t user_defined_trap_oid = gUserDefinedTrapStartOid;
-    AddDefaultUserTrapsSaiCalls(&user_defined_trap_oid);
+    AddDefaultUserTrapsSaiCalls();
     EXPECT_CALL(mock_sai_udf_, create_udf_match(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kUdfMatchOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf_group(_, _, _, _))
@@ -1714,8 +1796,7 @@ TEST_F(AclManagerTest, CreateIngressPuntTableRaisesCriticalStateWhenAclTableReco
 TEST_F(AclManagerTest, CreateIngressPuntTableRaisesCriticalStateWhenUdfGroupRecoveryFails)
 {
     auto app_db_entry = getDefaultAclTableDefAppDbEntry();
-    sai_object_id_t user_defined_trap_oid = gUserDefinedTrapStartOid;
-    AddDefaultUserTrapsSaiCalls(&user_defined_trap_oid);
+    AddDefaultUserTrapsSaiCalls();
     EXPECT_CALL(mock_sai_udf_, create_udf_match(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kUdfMatchOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf_group(_, _, _, _))
@@ -1736,8 +1817,7 @@ TEST_F(AclManagerTest, CreateIngressPuntTableRaisesCriticalStateWhenUdfGroupReco
 TEST_F(AclManagerTest, CreateIngressPuntTableRaisesCriticalStateWhenUdfRecoveryFails)
 {
     auto app_db_entry = getDefaultAclTableDefAppDbEntry();
-    sai_object_id_t user_defined_trap_oid = gUserDefinedTrapStartOid;
-    AddDefaultUserTrapsSaiCalls(&user_defined_trap_oid);
+    AddDefaultUserTrapsSaiCalls();
     EXPECT_CALL(mock_sai_udf_, create_udf_match(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kUdfMatchOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf_group(_, _, _, _))
@@ -1759,8 +1839,7 @@ TEST_F(AclManagerTest, CreateIngressPuntTableRaisesCriticalStateWhenUdfRecoveryF
 TEST_F(AclManagerTest, CreateIngressPuntTableFailsWhenFailedToCreateUdf)
 {
     auto app_db_entry = getDefaultAclTableDefAppDbEntry();
-    sai_object_id_t user_defined_trap_oid = gUserDefinedTrapStartOid;
-    AddDefaultUserTrapsSaiCalls(&user_defined_trap_oid);
+    AddDefaultUserTrapsSaiCalls();
     // Fail to create the first UDF, and success to remove the first UDF
     // group
     EXPECT_CALL(mock_sai_udf_, create_udf_match(_, _, _, _))
@@ -2149,8 +2228,7 @@ TEST_F(AclManagerTest, CreatePuntTableWithInvalidActionFieldFails)
 TEST_F(AclManagerTest, CreatePuntTableWithInvalidPacketColorFieldFails)
 {
     auto app_db_entry = getDefaultAclTableDefAppDbEntry();
-    sai_object_id_t user_defined_trap_oid = gUserDefinedTrapStartOid;
-    AddDefaultUserTrapsSaiCalls(&user_defined_trap_oid);
+    AddDefaultUserTrapsSaiCalls();
 
     // Invalid packet_color field
     app_db_entry.packet_action_color_lookup["invalid_packet_color"].push_back(
@@ -2749,8 +2827,7 @@ TEST_F(AclManagerTest, DrainRuleTuplesToProcessSetRequestSucceeds)
     EXPECT_CALL(mock_sai_udf_, create_udf(_, _, _, _))
         .Times(3)
         .WillRepeatedly(DoAll(SetArgPointee<0>(kUdfOid1), Return(SAI_STATUS_SUCCESS)));
-    sai_object_id_t user_defined_trap_oid = gUserDefinedTrapStartOid;
-    AddDefaultUserTrapsSaiCalls(&user_defined_trap_oid);
+    AddDefaultUserTrapsSaiCalls();
     ASSERT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddTableRequest(app_db_entry));
     ASSERT_NO_FATAL_FAILURE(
         IsExpectedAclTableDefinitionMapping(*GetAclTable(app_db_entry.acl_table_name), app_db_entry));
@@ -2946,7 +3023,8 @@ TEST_F(AclManagerTest, DeserializeAclRuleAppDbWithInvalidMeterFieldFails)
 
     // ACL rule has invalid cir value in meter field
     attributes.pop_back();
-    attributes.push_back(swss::FieldValueTuple{"meter/cir", "18446744073709551616"});
+    attributes.push_back(
+        swss::FieldValueTuple{"meter/cir", "18446744073709551616"});
     EXPECT_FALSE(DeserializeAclRuleAppDbEntry(acl_table_name, acl_rule_json_key, attributes).ok());
 
     // ACL rule has max uint64 cir value in meter field
@@ -3479,7 +3557,7 @@ TEST_F(AclManagerTest, AclRuleWithColorPacketActionsButNoRateLimit)
     auto acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
     ASSERT_NE(nullptr, acl_rule);
     // Check action field value
-    EXPECT_EQ(gUserDefinedTrapStartOid + queue_num,
+    EXPECT_EQ(gUserDefinedTrapStartOid + queue_num - kP4CpuQueueMinNum + 1,
               acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID].aclaction.parameter.oid);
 }
 
@@ -3536,7 +3614,7 @@ TEST_F(AclManagerTest, AclRuleWithColorPacketActionsButWithRateLimit) {
   auto acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
   ASSERT_NE(nullptr, acl_rule);
   // Check action field value
-  EXPECT_EQ(gUserDefinedTrapStartOid + queue_num - P4_CPU_QUEUE_MIN_NUM ,
+  EXPECT_EQ(gUserDefinedTrapStartOid + queue_num - kP4CpuQueueMinNum + 1,
             acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID]
                 .aclaction.parameter.oid);
 }
@@ -4064,7 +4142,72 @@ TEST_F(AclManagerTest, AclRuleWithValidAction)
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
 
     // Set user defined trap for QOS_QUEUE
-    int queue_num = 2;
+    uint32_t queue_num = 8;
+  app_db_entry.action = "qos_queue";
+  app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(queue_num);
+  // Install rule
+  EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_policer_, create_policer(_, _, _, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kAclMeterOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ProcessAddRuleRequest(acl_rule_key, app_db_entry));
+  acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
+  ASSERT_NE(nullptr, acl_rule);
+  // Check action field value
+  EXPECT_EQ(gUserDefinedTrapStartOid + queue_num - kP4CpuQueueMinNum + 1,
+            acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID]
+                .aclaction.parameter.oid);
+  // Remove rule
+  EXPECT_CALL(mock_sai_acl_, remove_acl_entry(Eq(kAclIngressRuleOid1)))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_acl_, remove_acl_counter(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_policer_, remove_policer(Eq(kAclMeterOid1)))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS,
+            ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
+  EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
+
+  // Set new user defined trap for QOS_QUEUE
+  queue_num = kP4CpuQueueMaxNum + 1;
+  // add trap group and genetlink for the new CPU queue
+  swss::Table app_copp_table(gAppDb, APP_COPP_TABLE_NAME);
+
+  std::vector<swss::FieldValueTuple> attrs;
+  attrs.push_back({"queue", std::to_string(queue_num)});
+  attrs.push_back({"genetlink_name", "genl_packet"});
+  attrs.push_back({"genetlink_mcgrp_name", "packets"});
+  for (uint32_t queue_num = kP4CpuQueueMinNum; queue_num <= kP4CpuQueueMaxNum;
+       queue_num++) {
+    app_copp_table.del(GENL_PACKET_TRAP_GROUP_NAME_PREFIX +
+                       std::to_string(queue_num));
+  }
+  app_copp_table.set(
+      GENL_PACKET_TRAP_GROUP_NAME_PREFIX + std::to_string(queue_num), attrs);
+  EXPECT_CALL(mock_sai_hostif_, set_hostif_trap_group_attribute(_, _))
+      .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_hostif_, create_hostif_trap_group(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(gTrapGroupStartOid + queue_num -
+                                       kP4CpuQueueMinNum + 1),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_hostif_, create_hostif(_, _, _, _))
+      .WillOnce(DoAll(
+          SetArgPointee<0>(gHostifStartOid + queue_num - kP4CpuQueueMinNum + 1),
+          Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_hostif_, create_hostif_user_defined_trap(_, _, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(gUserDefinedTrapStartOid + queue_num -
+                                       kP4CpuQueueMinNum + 1),
+                      Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_hostif_, create_hostif_table_entry(_, _, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  gCoppOrch->addExistingData(&app_copp_table);
+  static_cast<Orch*>(gCoppOrch)->doTask();
+
     app_db_entry.action = "qos_queue";
     app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(queue_num);
     // Install rule
@@ -4077,7 +4220,7 @@ TEST_F(AclManagerTest, AclRuleWithValidAction)
     acl_rule = GetAclRule(kAclIngressTableName, acl_rule_key);
     ASSERT_NE(nullptr, acl_rule);
     // Check action field value
-    EXPECT_EQ(gUserDefinedTrapStartOid + queue_num,
+    EXPECT_EQ(gUserDefinedTrapStartOid + queue_num - kP4CpuQueueMinNum + 1,
               acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID].aclaction.parameter.oid);
     // Remove rule
     EXPECT_CALL(mock_sai_acl_, remove_acl_entry(Eq(kAclIngressRuleOid1))).WillOnce(Return(SAI_STATUS_SUCCESS));
@@ -4085,6 +4228,19 @@ TEST_F(AclManagerTest, AclRuleWithValidAction)
     EXPECT_CALL(mock_sai_policer_, remove_policer(Eq(kAclMeterOid1))).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessDeleteRuleRequest(kAclIngressTableName, acl_rule_key));
     EXPECT_EQ(nullptr, GetAclRule(kAclIngressTableName, acl_rule_key));
+
+    EXPECT_CALL(mock_sai_hostif_, remove_hostif_trap_group(_))
+      .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_hostif_, remove_hostif(_))
+      .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_hostif_, remove_hostif_user_defined_trap(_))
+      .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_hostif_, remove_hostif_table_entry(_))
+      .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+  app_copp_table.del(GENL_PACKET_TRAP_GROUP_NAME_PREFIX +
+                     std::to_string(queue_num));
+  gCoppOrch->addExistingData(&app_copp_table);
+  static_cast<Orch*>(gCoppOrch)->doTask();
 }
 
 #pragma GCC diagnostic pop
@@ -4909,7 +5065,7 @@ TEST_F(AclManagerTest, UpdateAclRuleWithActionMeterChange)
     EXPECT_TRUE(acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_FLOOD].aclaction.enable);
 
     // QOS_QUEUE action to set user defined trap for CPU queue number 3
-    int queue_num = 3;
+    int queue_num = 9;
     app_db_entry.action = "qos_queue";
     app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(queue_num);
 
@@ -4922,11 +5078,11 @@ TEST_F(AclManagerTest, UpdateAclRuleWithActionMeterChange)
     // Check action field value
     EXPECT_EQ(1, acl_rule->action_fvs.size());
     EXPECT_TRUE(acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID].aclaction.enable);
-    EXPECT_EQ(gUserDefinedTrapStartOid + queue_num,
+    EXPECT_EQ(gUserDefinedTrapStartOid + queue_num - kP4CpuQueueMinNum + 1,
               acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID].aclaction.parameter.oid);
 
     // QOS_QUEUE action to set user defined trap CPU queue number 4
-    queue_num = 4;
+    queue_num = 10;
     app_db_entry.action_param_fvs["cpu_queue"] = std::to_string(queue_num);
 
     EXPECT_CALL(mock_sai_acl_, set_acl_entry_attribute(Eq(kAclIngressRuleOid1), _))
@@ -4937,7 +5093,7 @@ TEST_F(AclManagerTest, UpdateAclRuleWithActionMeterChange)
     // Check action field value
     EXPECT_EQ(1, acl_rule->action_fvs.size());
     EXPECT_TRUE(acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID].aclaction.enable);
-    EXPECT_EQ(gUserDefinedTrapStartOid + queue_num,
+    EXPECT_EQ(gUserDefinedTrapStartOid + queue_num - kP4CpuQueueMinNum + 1,
               acl_rule->action_fvs[SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID].aclaction.parameter.oid);
 }
 
@@ -5791,7 +5947,8 @@ TEST_F(AclManagerTest, CreateAclRuleWithInvalidActionFails) {
     app_db_entry.action_param_fvs.erase("target");
     // Invalid cpu queue number
     app_db_entry.action = "qos_queue";
-    app_db_entry.action_param_fvs["cpu_queue"] = "48";
+    app_db_entry.action_param_fvs["cpu_queue"] =
+      std::to_string(kP4CpuQueueMaxNum + 1);
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessAddRuleRequest(acl_rule_key, app_db_entry));
     app_db_entry.action_param_fvs["cpu_queue"] = "invalid";
     EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessAddRuleRequest(acl_rule_key, app_db_entry));
@@ -5984,8 +6141,7 @@ TEST_F(AclManagerTest, DoAclCounterStatsTaskSucceeds)
     EXPECT_CALL(mock_sai_udf_, create_udf(_, _, _, _))
         .Times(3)
         .WillRepeatedly(DoAll(SetArgPointee<0>(kUdfOid1), Return(SAI_STATUS_SUCCESS)));
-    sai_object_id_t user_defined_trap_oid = gUserDefinedTrapStartOid;
-    AddDefaultUserTrapsSaiCalls(&user_defined_trap_oid);
+    AddDefaultUserTrapsSaiCalls();
     ASSERT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddTableRequest(app_db_def_entry));
     auto counters_table = std::make_unique<swss::Table>(gCountersDb, std::string(COUNTERS_TABLE) +
                                                                          DEFAULT_KEY_SEPARATOR + APP_P4RT_TABLE_NAME);
@@ -6204,8 +6360,7 @@ TEST_F(AclManagerTest, CreatePreIngressTableWillCreateDefaultRule) {
       .WillRepeatedly(
           DoAll(SetArgPointee<0>(kUdfOid1), Return(SAI_STATUS_SUCCESS)));
   EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _)).Times(0);
-  sai_object_id_t user_defined_trap_oid = gUserDefinedTrapStartOid;
-  AddDefaultUserTrapsSaiCalls(&user_defined_trap_oid);
+  AddDefaultUserTrapsSaiCalls();
   ASSERT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddTableRequest(app_db_entry));
   ASSERT_NO_FATAL_FAILURE(IsExpectedAclTableDefinitionMapping(
       *GetAclTable(app_db_entry.acl_table_name), app_db_entry));
