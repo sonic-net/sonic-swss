@@ -239,6 +239,7 @@ impl SwssActor {
     /// # Arguments
     /// * `key` - Session key (e.g., "test|PORT")  
     /// * `field_values` - HashMap of field-value pairs from the state DB
+    #[cfg(test)]
     async fn handle_session_update(
         &mut self,
         key: &str,
@@ -289,6 +290,7 @@ impl SwssActor {
     /// # Arguments
     /// * `key` - Session identifier
     /// * `session_data` - Parsed session configuration
+    #[cfg(test)]
     async fn validate_and_process_session(
         &mut self,
         key: &str,
@@ -360,6 +362,7 @@ impl SwssActor {
     ///
     /// # Arguments
     /// * `key` - Session key that was deleted
+    #[cfg(test)]
     async fn handle_session_delete(&mut self, key: &str) {
         Self::process_session_delete(&self.template_recipient, key).await;
     }
