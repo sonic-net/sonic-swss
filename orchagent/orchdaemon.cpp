@@ -579,6 +579,7 @@ bool OrchDaemon::init()
        port if mac-move count in the configured sliding window exceeds the
        threshold. Constructed after gFdbOrch since it attaches as an observer. */
     auto *macMoveGuardOrch = new MacMoveGuardOrch(m_configDb,
+                                                  m_stateDb,
                                                   CFG_MAC_MOVE_GUARD_TABLE_NAME,
                                                   gPortsOrch,
                                                   gFdbOrch);
