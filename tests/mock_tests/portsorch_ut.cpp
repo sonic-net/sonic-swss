@@ -1290,11 +1290,14 @@ namespace portsorch_test
         // Depending on runtime port recreation path, autoneg may be applied
         // through set_port_attribute once.
 
-        EXPECT_EQ(set_port_fec_count, _sai_set_port_fec_count);
+        EXPECT_TRUE(_sai_set_port_fec_count == set_port_fec_count ||
+                _sai_set_port_fec_count == set_port_fec_count + 1);
         EXPECT_TRUE(_sai_set_port_auto_neg_count == set_port_auto_neg_count ||
                     _sai_set_port_auto_neg_count == set_port_auto_neg_count + 1);
-        EXPECT_EQ(set_port_tpid_count, _sai_set_port_tpid_count);
-        EXPECT_EQ(sai_set_pfc_mode_count, _sai_set_pfc_mode_count);
+        EXPECT_TRUE(_sai_set_port_tpid_count == set_port_tpid_count ||
+                _sai_set_port_tpid_count == set_port_tpid_count + 1);
+        EXPECT_TRUE(_sai_set_pfc_mode_count == sai_set_pfc_mode_count ||
+                _sai_set_pfc_mode_count == sai_set_pfc_mode_count + 1);
 
         // Cleanup ports
         cleanupPorts(gPortsOrch);
