@@ -94,7 +94,7 @@ OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *
 
     if (m_stateDb != nullptr)
     {
-        m_queueDepthTable.reset(new Table(m_stateDb, "ORCHAGENT_QUEUE"));
+        m_queueDepthTable.reset(new Table(m_stateDb, ORCHAGENT_QUEUE_TABLE_NAME));
     }
     m_lastQueueDepthPublish = std::chrono::high_resolution_clock::now();
 }
@@ -931,13 +931,13 @@ void OrchDaemon::publishQueueDepth()
         return;
     }
 
-    for (Orch *o : m_orchList)
+    for (const Orch *o : m_orchList)
     {
-        for (auto &nc : o->getConsumerPendingCounts())
+        for (const auto &[name, count] : o->getConsumerPendingCounts())
         {
             std::vector<FieldValueTuple> values;
-            values.emplace_back("pending_count", std::to_string(nc.second));
-            m_queueDepthTable->set(nc.first, values);
+            values.emplace_back("pending_count", std::to_string(count));
+            m_queueDepthTable->set(name, values);
         }
     }
 }
@@ -1011,9 +1011,9 @@ void OrchDaemon::start(long heartBeatInterval)
             flush();
         }
 
-        // Publish per-consumer queue depth to STATE_DB every 5 s. Independent of
-        // SELECT_TIMEOUT so it fires under load as well as idle.
-        constexpr int QUEUE_DEPTH_PUBLISH_INTERVAL_SEC = 5;
+        // Publish per-consumer queue depth to STATE_DB every
+        // QUEUE_DEPTH_PUBLISH_INTERVAL_SEC. Independent of SELECT_TIMEOUT so it
+        // fires under load as well as idle.
         auto qdiff = std::chrono::duration_cast<std::chrono::seconds>(tend - m_lastQueueDepthPublish);
         if (qdiff.count() >= QUEUE_DEPTH_PUBLISH_INTERVAL_SEC)
         {

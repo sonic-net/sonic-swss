@@ -132,6 +132,8 @@ protected:
 
     // Queue-depth telemetry. Publishes STATE_DB:ORCHAGENT_QUEUE|<consumer>
     // entries with pending_count, every QUEUE_DEPTH_PUBLISH_INTERVAL_SEC.
+    static constexpr const char *ORCHAGENT_QUEUE_TABLE_NAME = "ORCHAGENT_QUEUE";
+    static constexpr int QUEUE_DEPTH_PUBLISH_INTERVAL_SEC = 5;
     std::unique_ptr<swss::Table> m_queueDepthTable;
     std::chrono::time_point<std::chrono::high_resolution_clock> m_lastQueueDepthPublish;
 

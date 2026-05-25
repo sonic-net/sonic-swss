@@ -326,7 +326,7 @@ public:
      * executors in this Orch. Used by OrchDaemon for queue-depth telemetry.
      * Non-ConsumerBase executors (NotificationConsumer, ExecutableTimer) are
      * skipped — they don't have an m_toSync queue. */
-    std::vector<std::pair<std::string, size_t>> getConsumerPendingCounts();
+    std::vector<std::pair<std::string, size_t>> getConsumerPendingCounts() const;
 
     void createRetryCache(const std::string &executorName);
     RetryCache* getRetryCache(const std::string &executorName);
