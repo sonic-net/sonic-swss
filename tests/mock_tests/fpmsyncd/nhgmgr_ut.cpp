@@ -1559,4 +1559,596 @@ namespace ut_fpmsyncd
         ASSERT_EQ(m_nhgmgr->delNHGFull(ribID), 0);
         ASSERT_EQ(m_nhgmgr->getRIBNHGEntryByRIBID(ribID), nullptr);
     }
+
+    /*
+     * Test: RIBNHGTable::addEntry returns error when NHG ID already exists.
+     */
+    TEST_F(FpmSyncdNhgMgr, DuplicateAddEntry)
+    {
+        NextHopGroupFull nhgObj = createSingleIPv4NextHopNHGFull("192.100.1.1", "120.0.0.1", 100);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObj, AF_INET), 0);
+
+        // Second add with same ID should fail (returns non-zero from addNHGFull
+        // which internally triggers updateExistingNHGFull, but direct addEntry would fail)
+        // Here the NHGMgr::addNHGFull detects existing ID and calls update instead,
+        // so let's test the RIBNHGTable::addEntry directly via the internal table
+        ASSERT_EQ(m_nhgmgr->m_rib_nhg_table->addEntry(nhgObj, AF_INET), -1);
+
+        ASSERT_EQ(m_nhgmgr->delNHGFull(100), 0);
+    }
+
+    /*
+     * Test: RIBNHGTable::updateEntry returns error when NHG ID does not exist.
+     */
+    TEST_F(FpmSyncdNhgMgr, UpdateNonExistentEntry)
+    {
+        NextHopGroupFull nhgObj = createSingleIPv4NextHopNHGFull("192.100.1.1", "120.0.0.1", 999);
+        bool updated = false;
+        ASSERT_EQ(m_nhgmgr->m_rib_nhg_table->updateEntry(nhgObj, AF_INET, updated), -1);
+        ASSERT_EQ(updated, false);
+    }
+
+    /*
+     * Test: delEntry for an entry that has no sonic NHG ID (sonicNHGID == 0).
+     * Covers the early-return branch in RIBNHGTable::delEntry.
+     */
+    TEST_F(FpmSyncdNhgMgr, DeleteEntryWithNoSonicNHGID)
+    {
+        uint32_t ribID = 60;
+        NextHopGroupFull nhgObj = createSingleIPv6NextHopNHGFull("fc00::1", "fc00::100", ribID);
+        nhgObj.nhg_flags = NEXTHOP_GROUP_RECEIVED_FLAG;
+        nhgObj.depends.resize(0);
+        nhgObj.nh_grp_full_list.resize(0);
+
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObj, AF_INET6), 0);
+        RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(ribID);
+        ASSERT_NE(entry, nullptr);
+        ASSERT_EQ(entry->getSonicObjID(), 0u);
+
+        ASSERT_EQ(m_nhgmgr->delNHGFull(ribID), 0);
+        ASSERT_EQ(m_nhgmgr->getRIBNHGEntryByRIBID(ribID), nullptr);
+    }
+
+    /*
+     * Test: delNHGFull for a non-existent NHG ID returns 0 (not an error).
+     */
+    TEST_F(FpmSyncdNhgMgr, DeleteNonExistentNHGReturnsZero)
+    {
+        ASSERT_EQ(m_nhgmgr->delNHGFull(99999), 0);
+    }
+
+    /*
+     * Test: SonicPICContentTable::addEntry returns error for duplicate entry.
+     */
+    TEST_F(FpmSyncdNhgMgr, SonicPICContentTableDuplicateAdd)
+    {
+        // First, add a valid SRv6 VPN NHG to create a PIC content entry
+        uint32_t ribID = 70;
+        NextHopGroupFull nhgObj = createSingleSRv6VPNNextHopNHGFull(
+            "fc00::1", "fc00::100", "10.0.0.1", ribID);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObj, AF_INET), 0);
+
+        RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(ribID);
+        ASSERT_NE(entry, nullptr);
+        ASSERT_TRUE(entry->hasSonicPICObj());
+
+        uint32_t picID = entry->getSonicPICObjID();
+        ASSERT_NE(picID, 0u);
+
+        // Try to add a duplicate SonicPICContentObject with the same type and id
+        SonicPICContentObject dupObj;
+        dupObj.type = SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC;
+        dupObj.id = picID;
+        dupObj.nexthop = "10.0.0.2";
+        dupObj.vpnSid = "fc00::2";
+        dupObj.segSrc = "fc00::200";
+        ASSERT_EQ(m_nhgmgr->m_sonic_nhg_table->addEntry(dupObj), -1);
+
+        ASSERT_EQ(m_nhgmgr->delNHGFull(ribID), 0);
+    }
+
+    /*
+     * Test: SonicPICContentTable::updateEntry returns error when entry does not exist.
+     */
+    TEST_F(FpmSyncdNhgMgr, SonicPICContentTableUpdateNonExistent)
+    {
+        SonicPICContentObject obj;
+        obj.type = SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC;
+        obj.id = 9999;
+        obj.nexthop = "10.0.0.1";
+        obj.vpnSid = "fc00::1";
+        obj.segSrc = "fc00::100";
+        ASSERT_EQ(m_nhgmgr->m_sonic_nhg_table->updateEntry(obj), -1);
+    }
+
+    /*
+     * Test: SonicPICContentTable::delEntry with non-existent entry (by type and id).
+     * Should not crash, just log a warning.
+     */
+    TEST_F(FpmSyncdNhgMgr, SonicPICContentTableDeleteNonExistent)
+    {
+        // Delete by type and id - entry not found
+        m_nhgmgr->m_sonic_nhg_table->delEntry(SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC, 9999);
+
+        // Delete by SonicPICContentObject - entry not found
+        SonicPICContentObject obj;
+        obj.type = SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC;
+        obj.id = 9999;
+        m_nhgmgr->m_sonic_nhg_table->delEntry(obj);
+    }
+
+    /*
+     * Test: SonicPICContentTable::delEntry with default (unsupported) type.
+     */
+    TEST_F(FpmSyncdNhgMgr, SonicPICContentTableDeleteUnsupportedType)
+    {
+        m_nhgmgr->m_sonic_nhg_table->delEntry(static_cast<sonicNhgObjType>(99), 1);
+    }
+
+    /*
+     * Test: SonicPICContentTable::getEntry with default (unsupported) type returns nullptr.
+     */
+    TEST_F(FpmSyncdNhgMgr, SonicPICContentTableGetEntryUnsupportedType)
+    {
+        SonicPICContentEntry *entry = m_nhgmgr->m_sonic_nhg_table->getEntry(
+            static_cast<sonicNhgObjType>(99), 1);
+        ASSERT_EQ(entry, nullptr);
+    }
+
+    /*
+     * Test: SonicIDMgr::allocateID and freeID with unsupported type.
+     * getAllocator returns nullptr for unknown types.
+     */
+    TEST_F(FpmSyncdNhgMgr, SonicIDMgrUnsupportedType)
+    {
+        uint32_t id = m_nhgmgr->m_sonic_id_manager.allocateID(static_cast<sonicNhgObjType>(99));
+        ASSERT_EQ(id, 0u);
+
+        // freeID with unsupported type should not crash
+        m_nhgmgr->m_sonic_id_manager.freeID(static_cast<sonicNhgObjType>(99), 1);
+    }
+
+    /*
+     * Test: SonicIDMgr::init with unsupported type returns error.
+     */
+    TEST_F(FpmSyncdNhgMgr, SonicIDMgrInitUnsupportedType)
+    {
+        SonicIDMgr idMgr;
+        int ret = idMgr.init({static_cast<sonicNhgObjType>(99)});
+        ASSERT_EQ(ret, -1);
+    }
+
+    /*
+     * Test: SonicNHGObjectKey comparison operators.
+     */
+    TEST_F(FpmSyncdNhgMgr, SonicNHGObjectKeyComparison)
+    {
+        SonicNHGObjectKey key1;
+        key1.type = SONIC_NHG_OBJ_TYPE_NHG_NORMAL;
+        key1.nexthop = "10.0.0.1";
+        key1.ifName = "eth0";
+        key1.segSrc = "";
+        key1.vpnSid = "";
+
+        SonicNHGObjectKey key2 = key1;
+        ASSERT_TRUE(key1 == key2);
+        ASSERT_FALSE(key1 != key2);
+
+        // Different type
+        key2.type = SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC;
+        ASSERT_TRUE(key1 != key2);
+        ASSERT_TRUE(key1 < key2);
+
+        // Same type, different nexthop
+        key2 = key1;
+        key2.nexthop = "10.0.0.2";
+        ASSERT_TRUE(key1 != key2);
+
+        // SRv6 PIC type, compare vpnSid
+        key1.type = SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC;
+        key1.vpnSid = "fc00::1";
+        key2 = key1;
+        key2.vpnSid = "fc00::2";
+        ASSERT_TRUE(key1 != key2);
+
+        // Different ifName
+        key2 = key1;
+        key2.ifName = "eth1";
+        ASSERT_TRUE(key1 != key2);
+
+        // Different segSrc
+        key2 = key1;
+        key2.segSrc = "fc00::100";
+        ASSERT_TRUE(key1 != key2);
+
+        // Different groupMember size
+        key2 = key1;
+        key2.groupMember.push_back(std::make_pair(1u, 10u));
+        ASSERT_TRUE(key1 != key2);
+
+        // Same groupMember content but different order (should be equal after sorting)
+        key1.groupMember.clear();
+        key1.groupMember.push_back(std::make_pair(2u, 20u));
+        key1.groupMember.push_back(std::make_pair(1u, 10u));
+        key2.groupMember.clear();
+        key2.groupMember.push_back(std::make_pair(1u, 10u));
+        key2.groupMember.push_back(std::make_pair(2u, 20u));
+        ASSERT_TRUE(key1 == key2);
+    }
+
+    /*
+     * Test: RIBNHGTable::subSonicNHGObjectRef with non-existent key (early return).
+     */
+    TEST_F(FpmSyncdNhgMgr, SubSonicNHGObjectRefNonExistentKey)
+    {
+        SonicNHGObjectKey key;
+        key.type = SONIC_NHG_OBJ_TYPE_NHG_NORMAL;
+        key.nexthop = "10.0.0.99";
+        // Should not crash, just return
+        m_nhgmgr->m_rib_nhg_table->subSonicNHGObjectRef(key);
+    }
+
+    /*
+     * Test: RIBNHGTable::subSonicNHGObjectRef with refCount already at 0 (underflow protection).
+     */
+    TEST_F(FpmSyncdNhgMgr, SubSonicNHGObjectRefUnderflow)
+    {
+        SonicNHGObjectKey key;
+        key.type = SONIC_NHG_OBJ_TYPE_NHG_NORMAL;
+        key.nexthop = "10.0.0.1";
+        key.ifName = "eth0";
+
+        // Manually insert with refCount = 0
+        m_nhgmgr->m_rib_nhg_table->m_created_shared_nhg_map.insert(
+            std::make_pair(key, SonicNHGObjectInfo(1, 0)));
+
+        // Should log error and return without decrementing
+        m_nhgmgr->m_rib_nhg_table->subSonicNHGObjectRef(key);
+
+        // Entry should still exist since underflow was prevented
+        ASSERT_NE(m_nhgmgr->m_rib_nhg_table->m_created_shared_nhg_map.find(key),
+                  m_nhgmgr->m_rib_nhg_table->m_created_shared_nhg_map.end());
+
+        // Clean up
+        m_nhgmgr->m_rib_nhg_table->m_created_shared_nhg_map.erase(key);
+    }
+
+    /*
+     * Test: RIBNHGTable::getCreatedSharedNHGObjectID returns 0 for non-existent key.
+     */
+    TEST_F(FpmSyncdNhgMgr, GetCreatedSharedNHGObjectIDNotFound)
+    {
+        SonicNHGObjectKey key;
+        key.type = SONIC_NHG_OBJ_TYPE_NHG_NORMAL;
+        key.nexthop = "nonexistent";
+        ASSERT_EQ(m_nhgmgr->m_rib_nhg_table->getCreatedSharedNHGObjectID(key), 0);
+    }
+
+    /*
+     * Test: RIBNHGTable::writeToDB returns error when fvVector is empty.
+     * We create a received-flag NHG (no sonic obj created), then manipulate
+     * the entry to have empty fvVector.
+     */
+    TEST_F(FpmSyncdNhgMgr, WriteToDBEmptyFvVector)
+    {
+        uint32_t ribID = 80;
+        NextHopGroupFull nhgObj = createSingleIPv6NextHopNHGFull("fc00::1", "fc00::100", ribID);
+        nhgObj.nhg_flags = NEXTHOP_GROUP_RECEIVED_FLAG;
+        nhgObj.depends.resize(0);
+        nhgObj.nh_grp_full_list.resize(0);
+
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObj, AF_INET6), 0);
+        RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(ribID);
+        ASSERT_NE(entry, nullptr);
+
+        // Clear fvVector to trigger the empty check
+        entry->m_fvVector.clear();
+        ASSERT_EQ(m_nhgmgr->m_rib_nhg_table->writeToDB(entry), -1);
+
+        ASSERT_EQ(m_nhgmgr->delNHGFull(ribID), 0);
+    }
+
+    /*
+     * Test: updateSonicPICObject with previousSonicPICObjID == 0 returns error.
+     */
+    TEST_F(FpmSyncdNhgMgr, UpdateSonicPICObjectInvalidPreviousID)
+    {
+        uint32_t ribID = 90;
+        NextHopGroupFull nhgObj = createSingleSRv6VPNNextHopNHGFull(
+            "fc00::1", "fc00::100", "10.0.0.1", ribID);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObj, AF_INET), 0);
+
+        RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(ribID);
+        ASSERT_NE(entry, nullptr);
+
+        // Call updateSonicPICObject with previousSonicPICObjID = 0
+        ASSERT_EQ(m_nhgmgr->updateSonicPICObject(entry, 0), -1);
+
+        ASSERT_EQ(m_nhgmgr->delNHGFull(ribID), 0);
+    }
+
+    /*
+     * Test: SonicPICContentTable::writeToDB returns error when fvVector is empty.
+     */
+    TEST_F(FpmSyncdNhgMgr, SonicPICContentWriteToDBEmptyFvVector)
+    {
+        uint32_t ribID = 91;
+        NextHopGroupFull nhgObj = createSingleSRv6VPNNextHopNHGFull(
+            "fc00::1", "fc00::100", "10.0.0.1", ribID);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObj, AF_INET), 0);
+
+        RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(ribID);
+        ASSERT_NE(entry, nullptr);
+        uint32_t picID = entry->getSonicPICObjID();
+        ASSERT_NE(picID, 0u);
+
+        SonicPICContentEntry *picEntry = m_nhgmgr->m_sonic_nhg_table->getEntry(
+            SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC, picID);
+        ASSERT_NE(picEntry, nullptr);
+
+        // Clear fvVector to trigger empty check
+        picEntry->m_fvVector.clear();
+        ASSERT_EQ(m_nhgmgr->m_sonic_nhg_table->writeToDB(picEntry), -1);
+
+        ASSERT_EQ(m_nhgmgr->delNHGFull(ribID), 0);
+    }
+
+    /*
+     * Test: SonicPICContentEntry::setEntry with unsupported type returns error.
+     */
+    TEST_F(FpmSyncdNhgMgr, SonicPICContentEntrySetEntryUnsupportedType)
+    {
+        SonicPICContentObject obj;
+        obj.type = static_cast<sonicNhgObjType>(99);
+        obj.id = 1;
+        // addEntry internally calls setEntry, which should fail
+        ASSERT_EQ(m_nhgmgr->m_sonic_nhg_table->addEntry(obj), -1);
+    }
+
+    /*
+     * Test: RIBNHGEntry::setEntry fails when group member does not exist in table.
+     * Covers the "NextHop id in group not found" error path.
+     */
+    TEST_F(FpmSyncdNhgMgr, SetEntryWithNonExistentGroupMember)
+    {
+        uint32_t ribIDMember = 200;
+        uint32_t ribIDParent = 201;
+
+        // Build a fake member NHG object to populate nh_grp_full_list,
+        // but do NOT add it to the manager — so isNHGExist(ribIDMember) returns false.
+        NextHopGroupFull fakeMember = createSingleIPv4NextHopNHGFull("192.100.1.1", "120.0.0.1", ribIDMember);
+        std::map<uint32_t, NextHopGroupFull> nhgFullParent;
+        nhgFullParent[ribIDMember] = fakeMember;
+
+        NextHopGroupFull nhgObjParent = createMultiNextHopNHGFull(
+            nhgFullParent,
+            { { ribIDMember, 10 } },
+            { { ribIDMember, 0 } },
+            { ribIDMember }, {}, ribIDParent);
+
+        // This should fail because member ribIDMember doesn't exist in the table
+        ASSERT_NE(m_nhgmgr->addNHGFull(nhgObjParent, AF_INET), 0);
+        ASSERT_EQ(m_nhgmgr->getRIBNHGEntryByRIBID(ribIDParent), nullptr);
+    }
+
+    /*
+     * Test: SonicIDAllocator allocateID and freeID basic operations.
+     */
+    TEST_F(FpmSyncdNhgMgr, SonicIDAllocatorBasicOps)
+    {
+        // Allocate two IDs for NHG_NORMAL type
+        uint32_t id1 = m_nhgmgr->m_sonic_id_manager.allocateID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL);
+        ASSERT_NE(id1, 0u);
+
+        uint32_t id2 = m_nhgmgr->m_sonic_id_manager.allocateID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL);
+        ASSERT_NE(id2, 0u);
+        ASSERT_NE(id1, id2);
+
+        // Free first ID
+        m_nhgmgr->m_sonic_id_manager.freeID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL, id1);
+
+        // Free second ID
+        m_nhgmgr->m_sonic_id_manager.freeID(SONIC_NHG_OBJ_TYPE_NHG_NORMAL, id2);
+
+        // Allocate for PIC type
+        uint32_t picId = m_nhgmgr->m_sonic_id_manager.allocateID(SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC);
+        ASSERT_NE(picId, 0u);
+        m_nhgmgr->m_sonic_id_manager.freeID(SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC, picId);
+    }
+
+    /*
+     * Test: RIBNHGTable::cleanUp properly clears all maps.
+     */
+    TEST_F(FpmSyncdNhgMgr, RIBNHGTableCleanUp)
+    {
+        NextHopGroupFull nhgObj1 = createSingleIPv4NextHopNHGFull("192.100.1.1", "120.0.0.1", 300);
+        NextHopGroupFull nhgObj2 = createSingleIPv4NextHopNHGFull("192.100.1.2", "120.0.0.2", 301);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObj1, AF_INET), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObj2, AF_INET), 0);
+
+        m_nhgmgr->m_rib_nhg_table->cleanUp();
+
+        ASSERT_EQ(m_nhgmgr->getRIBNHGEntryByRIBID(300), nullptr);
+        ASSERT_EQ(m_nhgmgr->getRIBNHGEntryByRIBID(301), nullptr);
+    }
+
+    /*
+     * Test: SonicPICContentTable::cleanUp properly clears all entries.
+     */
+    TEST_F(FpmSyncdNhgMgr, SonicPICContentTableCleanUp)
+    {
+        uint32_t ribID = 92;
+        NextHopGroupFull nhgObj = createSingleSRv6VPNNextHopNHGFull(
+            "fc00::1", "fc00::100", "10.0.0.1", ribID);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObj, AF_INET), 0);
+
+        RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(ribID);
+        ASSERT_NE(entry, nullptr);
+        uint32_t picID = entry->getSonicPICObjID();
+        ASSERT_NE(picID, 0u);
+
+        m_nhgmgr->m_sonic_nhg_table->cleanUp();
+
+        ASSERT_EQ(m_nhgmgr->m_sonic_nhg_table->getEntry(
+            SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC, picID), nullptr);
+
+        // Clean up RIB side too
+        m_nhgmgr->m_rib_nhg_table->cleanUp();
+    }
+
+    /*
+     * Test: updateSonicPICObject succeeds for valid SRv6 PIC entry.
+     * Covers the normal path of updateSonicPICObject.
+     */
+    TEST_F(FpmSyncdNhgMgr, UpdateSonicPICObjectSuccess)
+    {
+        uint32_t ribID = 93;
+        NextHopGroupFull nhgObj = createSingleSRv6VPNNextHopNHGFull(
+            "fc00::1", "fc00::100", "10.0.0.1", ribID);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObj, AF_INET), 0);
+
+        RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(ribID);
+        ASSERT_NE(entry, nullptr);
+        ASSERT_TRUE(entry->hasSonicPICObj());
+        uint32_t picID = entry->getSonicPICObjID();
+        ASSERT_NE(picID, 0u);
+
+        // Update with same entry and valid previous ID
+        ASSERT_EQ(m_nhgmgr->updateSonicPICObject(entry, picID), 0);
+
+        // Verify PIC entry still exists after update
+        SonicPICContentEntry *picEntry = m_nhgmgr->m_sonic_nhg_table->getEntry(
+            SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC, picID);
+        ASSERT_NE(picEntry, nullptr);
+
+        ASSERT_EQ(m_nhgmgr->delNHGFull(ribID), 0);
+    }
+
+    /*
+     * Test: isSonicNHGIDInUsed and isSonicPICIDInUsed checks.
+     */
+    TEST_F(FpmSyncdNhgMgr, SonicIDInUsedChecks)
+    {
+        // Initially no IDs in use (beyond what NHGMgr ctor set up)
+        ASSERT_FALSE(m_nhgmgr->isSonicNHGIDInUsed(99999));
+        ASSERT_FALSE(m_nhgmgr->isSonicPICIDInUsed(SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC, 99999));
+
+        // Add an entry and check its sonic IDs are tracked
+        uint32_t ribID = 94;
+        NextHopGroupFull nhgObj = createSingleSRv6VPNNextHopNHGFull(
+            "fc00::1", "fc00::100", "10.0.0.1", ribID);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObj, AF_INET), 0);
+
+        RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(ribID);
+        ASSERT_NE(entry, nullptr);
+
+        uint32_t sonicID = entry->getSonicObjID();
+        if (sonicID != 0) {
+            ASSERT_TRUE(m_nhgmgr->isSonicNHGIDInUsed(sonicID));
+        }
+
+        uint32_t picID = entry->getSonicPICObjID();
+        if (picID != 0) {
+            ASSERT_TRUE(m_nhgmgr->isSonicPICIDInUsed(SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC, picID));
+        }
+
+        ASSERT_EQ(m_nhgmgr->delNHGFull(ribID), 0);
+    }
+
+    /*
+     * Test: SonicNHGObjectKey::createSonicPICContentObjectKey from SonicPICContentObject
+     * covers the static creation function.
+     */
+    TEST_F(FpmSyncdNhgMgr, CreateSonicPICContentObjectKey)
+    {
+        SonicPICContentObject obj;
+        obj.type = SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC;
+        obj.nexthop = "10.0.0.1";
+        obj.vpnSid = "fc00::1";
+        obj.segSrc = "fc00::100";
+        obj.ifName = "eth0";
+        obj.groupMember.push_back(std::make_pair(1u, 10u));
+
+        SonicNHGObjectKey key = SonicNHGObjectKey::createSonicPICContentObjectKey(obj);
+        ASSERT_EQ(key.type, SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC);
+        ASSERT_EQ(key.nexthop, "10.0.0.1");
+        ASSERT_EQ(key.vpnSid, "fc00::1");
+        ASSERT_EQ(key.segSrc, "fc00::100");
+        ASSERT_EQ(key.ifName, "eth0");
+        ASSERT_EQ(key.groupMember.size(), 1u);
+
+        // Non-SRv6 type should not copy vpnSid
+        SonicPICContentObject obj2;
+        obj2.type = SONIC_NHG_OBJ_TYPE_NHG_NORMAL;
+        obj2.nexthop = "10.0.0.1";
+        obj2.vpnSid = "fc00::1";
+        SonicNHGObjectKey key2 = SonicNHGObjectKey::createSonicPICContentObjectKey(obj2);
+        ASSERT_EQ(key2.type, SONIC_NHG_OBJ_TYPE_NHG_NORMAL);
+        ASSERT_TRUE(key2.vpnSid.empty());
+    }
+
+    /*
+     * Test: RIBNHGEntry enable/disable NHG operations.
+     */
+    TEST_F(FpmSyncdNhgMgr, EnableDisableNHGEntry)
+    {
+        uint32_t ribID = 95;
+        NextHopGroupFull nhgObj = createSingleIPv4NextHopNHGFull("192.100.1.1", "120.0.0.1", ribID);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObj, AF_INET), 0);
+
+        RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(ribID);
+        ASSERT_NE(entry, nullptr);
+        ASSERT_TRUE(entry->getNhgEnableStatus());
+
+        entry->disableNHG();
+        ASSERT_FALSE(entry->getNhgEnableStatus());
+
+        entry->enableNHG();
+        ASSERT_TRUE(entry->getNhgEnableStatus());
+
+        ASSERT_EQ(m_nhgmgr->delNHGFull(ribID), 0);
+    }
+
+    /*
+     * Test: RIBNHGEntry getter functions for SRv6 fields.
+     */
+    TEST_F(FpmSyncdNhgMgr, RIBNHGEntrySRv6FieldGetters)
+    {
+        uint32_t ribID = 96;
+        NextHopGroupFull nhgObj = createSingleSRv6VPNNextHopNHGFull(
+            "fc00::1", "fc00::100", "10.0.0.1", ribID);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObj, AF_INET), 0);
+
+        RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(ribID);
+        ASSERT_NE(entry, nullptr);
+        ASSERT_TRUE(entry->isSRv6Nhg());
+        ASSERT_EQ(entry->getSonicObjType(), SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC);
+        ASSERT_FALSE(entry->getVPNSIDStr().empty());
+        ASSERT_FALSE(entry->getSegSrcStr().empty());
+        ASSERT_FALSE(entry->getNextHopStr().empty());
+
+        ASSERT_EQ(m_nhgmgr->delNHGFull(ribID), 0);
+    }
+
+    /*
+     * Test: getSonicPICByRIBID returns nullptr for non-SRv6 entry.
+     */
+    TEST_F(FpmSyncdNhgMgr, GetSonicPICByRIBIDNonSRv6)
+    {
+        uint32_t ribID = 97;
+        NextHopGroupFull nhgObj = createSingleIPv4NextHopNHGFull("192.100.1.1", "120.0.0.1", ribID);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObj, AF_INET), 0);
+
+        ASSERT_EQ(m_nhgmgr->getSonicPICByRIBID(ribID), nullptr);
+
+        ASSERT_EQ(m_nhgmgr->delNHGFull(ribID), 0);
+    }
+
+    /*
+     * Test: getSonicPICByRIBID returns nullptr for non-existent RIB ID.
+     */
+    TEST_F(FpmSyncdNhgMgr, GetSonicPICByRIBIDNonExistent)
+    {
+        ASSERT_EQ(m_nhgmgr->getSonicPICByRIBID(88888), nullptr);
+    }
 }
