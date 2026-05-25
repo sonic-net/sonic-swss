@@ -334,15 +334,13 @@ class NextHopManagerTest : public ::testing::Test
         EXPECT_CALL(mock_sai_hostif_, create_hostif_table_entry(_, _, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
         EXPECT_CALL(mock_sai_hostif_, create_hostif_trap(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
         EXPECT_CALL(mock_sai_switch_, get_switch_attribute(_, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
-        copp_orch_ = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
         std::vector<std::string> p4_tables;
-        gP4Orch = new P4Orch(gAppDb, p4_tables, nullptr, gVrfOrch, copp_orch_);
+        gP4Orch = new P4Orch(gAppDb, p4_tables, nullptr, gVrfOrch);
     }
 
     ~NextHopManagerTest()
     {
         delete gP4Orch;
-        delete copp_orch_;
     }
 
     void SetUp() override
@@ -449,7 +447,6 @@ class NextHopManagerTest : public ::testing::Test
     NextHopManager next_hop_manager_;
     StrictMock<MockSaiHostif> mock_sai_hostif_;
     StrictMock<MockSaiSwitch> mock_sai_switch_;
-    CoppOrch *copp_orch_;
 };
 
 bool NextHopManagerTest::ResolveNextHopEntryDependency(const P4NextHopAppDbEntry &app_db_entry,
