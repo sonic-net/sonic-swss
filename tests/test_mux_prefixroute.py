@@ -5,7 +5,7 @@ import itertools
 
 from ipaddress import ip_network, ip_address, IPv4Address
 from swsscommon import swsscommon
-from dvslib.dvs_common import PollingConfig
+from dvslib.dvs_common import PollingConfig, wait_for_result
 
 from mux_neigh_miss_tests import *
 
@@ -105,7 +105,7 @@ class TestMuxTunnelBase():
         "pipe"    : "SAI_TUNNEL_TTL_MODE_PIPE_MODEL",
         "uniform" : "SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL"
     }
-    
+
     TC_TO_DSCP_MAP = {str(i):str(i) for i in range(0, 8)}
     TC_TO_QUEUE_MAP = {str(i):str(i) for i in range(0, 8)}
     DSCP_TO_TC_MAP = {str(i):str(1) for i in range(0, 64)}
@@ -185,20 +185,18 @@ class TestMuxTunnelBase():
                 break
 
         return vlan_oid
-    
+
     def get_nexthop_oid(self, asicdb, nexthop):
         # gets nexthop oid
         nexthop_keys = asicdb.get_keys(self.ASIC_NEXTHOP_TABLE)
 
-        nexthop_oid = ''
         for nexthop_key in nexthop_keys:
             entry = asicdb.get_entry(self.ASIC_NEXTHOP_TABLE, nexthop_key)
-            if entry["SAI_NEXT_HOP_ATTR_IP"] == nexthop:
-                nexthop_oid = nexthop_key
-                break
+            if entry.get("SAI_NEXT_HOP_ATTR_IP") == nexthop:
+                return nexthop_key
 
-        return nexthop_oid
-    
+        return ''
+
     def get_route_nexthop_oid(self, route_key, asicdb):
         # gets nexthop oid
         entry = asicdb.get_entry(self.ASIC_ROUTE_TABLE, route_key)
@@ -242,20 +240,34 @@ class TestMuxTunnelBase():
         return ''
 
     def check_tnl_nexthop_in_asic_db(self, asicdb, expected=None):
+        """
+        Find and cache the tunnel nexthop OID.
 
+        When `expected` is provided, waits for at least that many NHs to exist
+        (using wait_at_least to handle residual NHs from prior tests).
+
+        Always refreshes the global tunnel_nh_id by scanning current NHs.
+        """
         global tunnel_nh_id
 
         if expected:
-            nh = asicdb.wait_for_n_keys(self.ASIC_NEXTHOP_TABLE, expected)
+            # Use wait_at_least to avoid false failures from stale NHs
+            # from prior tests that haven't fully drained yet
+            nh = asicdb.wait_for_n_keys(self.ASIC_NEXTHOP_TABLE, expected,
+                                        wait_at_least_n_keys=True)
         else:
             nh = asicdb.get_keys(self.ASIC_NEXTHOP_TABLE)
 
+        # Always refresh tunnel_nh_id by scanning current NHs
+        # This prevents stale OID references from prior tests
+        tunnel_nh_id = None
         for key in nh:
             fvs = asicdb.get_entry(self.ASIC_NEXTHOP_TABLE, key)
             if fvs.get("SAI_NEXT_HOP_ATTR_TYPE") == "SAI_NEXT_HOP_TYPE_TUNNEL_ENCAP":
                 tunnel_nh_id = key
+                break  # Use the first tunnel NH found
 
-        assert tunnel_nh_id
+        assert tunnel_nh_id, "No tunnel nexthop found in ASIC DB"
 
     def check_nexthop_in_asic_db(self, asicdb, key, standby=False):
 
@@ -296,15 +308,47 @@ class TestMuxTunnelBase():
         """
         Checks if nexthop is a member of a given route
         """
-        route_key = dvs_route.check_asicdb_route_entries([route])
-        route_nexthop_oid = self.get_route_nexthop_oid(route_key[0], asicdb)
+        def _access_function():
+            route_key = dvs_route.check_asicdb_route_entries([route])
+            route_nexthop_oid = self.get_route_nexthop_oid(route_key[0], asicdb)
 
-        if tunnel:
-            return route_nexthop_oid == nexthop
+            if tunnel:
+                if route_nexthop_oid == nexthop:
+                    return (True, None)
 
-        nexthop_oid = self.get_nexthop_oid(asicdb, nexthop)
+                nhg_members = asicdb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
+                for member in nhg_members:
+                    fvs = asicdb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER", member)
+                    if fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID") != route_nexthop_oid:
+                        continue
+                    if fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID") == nexthop:
+                        return (True, None)
 
-        return route_nexthop_oid == nexthop_oid
+                return (False, None)
+
+            nexthop_oid = self.get_nexthop_oid(asicdb, nexthop)
+            if not nexthop_oid:
+                return (False, None)
+
+            if route_nexthop_oid == nexthop_oid:
+                return (True, None)
+
+            nhg_members = asicdb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
+            for member in nhg_members:
+                fvs = asicdb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER", member)
+                if fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID") != route_nexthop_oid:
+                    continue
+                if fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID") == nexthop_oid:
+                    return (True, None)
+
+            return (False, None)
+
+        status, _ = wait_for_result(
+            _access_function,
+            PollingConfig(polling_interval=0.1, timeout=5.0, strict=False)
+        )
+
+        return status
 
     def add_neighbor(self, dvs, ip, mac):
         if ip_address(ip).version == 6:
@@ -324,7 +368,15 @@ class TestMuxTunnelBase():
 
         ps.set("Vlan1000:"+mac, fvs)
 
-        time.sleep(1)
+        # Wait until FdbOrch has consumed the APP_DB update.  Several MUX
+        # tests immediately add a neighbor with the same MAC and rely on
+        # MuxOrch resolving that MAC back to the MUX port from FdbOrch's cache.
+        # A fixed sleep is not enough under loaded CI runners and can race with
+        # neighbor programming, causing the neighbor to be treated as a regular
+        # host-route neighbor instead of a prefix-route MUX neighbor.
+        state_db = dvs.get_state_db()
+        state_mac = mac.replace("-", ":").lower()
+        state_db.wait_for_field_match("FDB_TABLE", "Vlan1000:"+state_mac, {"port": port})
 
     def del_fdb(self, dvs, mac):
 
@@ -332,7 +384,9 @@ class TestMuxTunnelBase():
         ps = swsscommon.ProducerStateTable(appdb.db_connection, "FDB_TABLE")
         ps._del("Vlan1000:"+mac)
 
-        time.sleep(1)
+        state_db = dvs.get_state_db()
+        state_mac = mac.replace("-", ":").lower()
+        state_db.wait_for_deleted_keys("FDB_TABLE", ["Vlan1000:"+state_mac])
 
     def simulate_fdb_learn_notification(self, dvs, port, mac, vlan_name="Vlan1000"):
         """
@@ -512,6 +566,17 @@ class TestMuxTunnelBase():
             for neigh_info in neighbor_list:
                 self.del_neighbor(dvs, neigh_info.ipv4)
                 self.del_neighbor(dvs, neigh_info.ipv6)
+
+            # Wait for neighbor deletion to fully drain through NeighOrch/RouteOrch
+            # before the rest of the test reuses the same DVS instance.  Without
+            # this, the following checks can race with hundreds of stale prefix
+            # routes/next-hops left by this bulk exercise.
+            for neigh_info in neighbor_list:
+                self.check_neigh_in_asic_db(asicdb, neigh_info.ipv4, expected=False)
+                self.check_neigh_in_asic_db(asicdb, neigh_info.ipv6, expected=False)
+                dvs_route.check_asicdb_deleted_route_entries(
+                    [neigh_info.ipv4+self.IPV4_MASK, neigh_info.ipv6+self.IPV6_MASK]
+                )
 
     def create_and_test_neighbor(self, confdb, appdb, asicdb, dvs, dvs_route):
 
@@ -1601,6 +1666,10 @@ class TestMuxTunnelBase():
             self.add_neighbor(dvs, test_info[IP], test_info[MAC])
         elif action == DELETE_ENTRY:
             self.del_neighbor(dvs, test_info[IP])
+            # Wait for neighbor deletion to propagate through the system
+            # before the next action checks state
+            asicdb = dvs.get_asic_db()
+            self.check_neigh_in_asic_db(asicdb, test_info[IP], expected=False)
         else:
             pytest.fail('Invalid test action {}'.format(action))
 
@@ -1734,6 +1803,34 @@ class TestMuxTunnelBase():
 
 class TestMuxTunnel(TestMuxTunnelBase):
     """ Tests for Mux tunnel creation and removal """
+
+    @pytest.fixture(autouse=True)
+    def ensure_clean_asic_state(self, dvs):
+        """
+        Ensure ASIC state drains between tests to prevent cross-test pollution.
+
+        Captures baseline counts of NHs, routes, and neighbors before each test,
+        then waits for counts to return to baseline after the test completes.
+        This prevents stale state from prior tests causing spurious failures.
+        """
+        asicdb = dvs.get_asic_db()
+
+        # Capture baseline before test
+        nh_baseline = len(asicdb.get_keys(self.ASIC_NEXTHOP_TABLE))
+        route_baseline = len(asicdb.get_keys(self.ASIC_ROUTE_TABLE))
+        neigh_baseline = len(asicdb.get_keys(self.ASIC_NEIGH_TABLE))
+
+        yield  # Test runs here
+
+        # Wait for state to return to baseline (with timeout)
+        def state_drained():
+            nhs = len(asicdb.get_keys(self.ASIC_NEXTHOP_TABLE))
+            routes = len(asicdb.get_keys(self.ASIC_ROUTE_TABLE))
+            neighs = len(asicdb.get_keys(self.ASIC_NEIGH_TABLE))
+            return (nhs <= nh_baseline and routes <= route_baseline and neighs <= neigh_baseline, None)
+
+        wait_for_result(state_drained, PollingConfig(polling_interval=0.5, timeout=30.0, strict=False))
+
     @pytest.fixture(scope='class')
     def setup(self, dvs):
         db = dvs.get_config_db()
@@ -1741,7 +1838,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
         tc_to_dscp_map_oid = self.add_qos_map(db, asicdb, swsscommon.CFG_TC_TO_DSCP_MAP_TABLE_NAME, self.TUNNEL_QOS_MAP_NAME, self.TC_TO_DSCP_MAP)
         tc_to_queue_map_oid = self.add_qos_map(db, asicdb, swsscommon.CFG_TC_TO_QUEUE_MAP_TABLE_NAME, self.TUNNEL_QOS_MAP_NAME, self.TC_TO_QUEUE_MAP)
-        
+
         dscp_to_tc_map_oid = self.add_qos_map(db, asicdb, swsscommon.CFG_DSCP_TO_TC_MAP_TABLE_NAME, self.TUNNEL_QOS_MAP_NAME, self.DSCP_TO_TC_MAP)
         tc_to_pg_map_oid = self.add_qos_map(db, asicdb, swsscommon.CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, self.TUNNEL_QOS_MAP_NAME, self.TC_TO_PRIORITY_GROUP_MAP)
 
@@ -1818,7 +1915,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
                 expect_neigh = (current_state == "active")
                 print("current state: %s" % current_state)
-                self.check_neighbor_state(dvs, dvs_route, test_ip_v4, 
+                self.check_neighbor_state(dvs, dvs_route, test_ip_v4,
                                         expect_route=True, expect_neigh=expect_neigh,
                                         expected_mac="00:00:00:11:11:11", no_host_route=True)
                 expected_tunnel_route = (current_state == "standby")
