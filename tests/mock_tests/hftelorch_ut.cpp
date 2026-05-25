@@ -184,4 +184,53 @@ namespace hftelorch_test
             },
             runtime_error);
     }
+
+    class HFTelOrchShutdownTest : public ::testing::Test
+    {
+    protected:
+        shared_ptr<swss::DBConnector> m_config_db;
+        shared_ptr<swss::DBConnector> m_state_db;
+
+        void SetUp() override
+        {
+            map<string, string> profile = {
+                {"SAI_VS_SWITCH_TYPE", "SAI_VS_SWITCH_TYPE_BCM56850"},
+                {"KV_DEVICE_MAC_ADDRESS", "20:03:04:05:06:00"},
+            };
+
+            ASSERT_EQ(ut_helper::initSaiApi(profile), SAI_STATUS_SUCCESS);
+
+            sai_attribute_t attr{};
+            attr.id = SAI_SWITCH_ATTR_INIT_SWITCH;
+            attr.value.booldata = true;
+
+            ASSERT_EQ(sai_switch_api->create_switch(&gSwitchId, 1, &attr), SAI_STATUS_SUCCESS);
+
+            m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
+            m_state_db = make_shared<swss::DBConnector>("STATE_DB", 0);
+        }
+
+        void TearDown() override
+        {
+            ASSERT_EQ(sai_switch_api->remove_switch(gSwitchId), SAI_STATUS_SUCCESS);
+            gSwitchId = SAI_NULL_OBJECT_ID;
+
+            ASSERT_EQ(ut_helper::uninitSaiApi(), SAI_STATUS_SUCCESS);
+        }
+    };
+
+    /*
+     * Successful ctor then dtor: Notifier/Executor owns the ASIC NotificationConsumer.
+     * Regression for double-delete on shutdown (shared_ptr member + ~Executor).
+     */
+    TEST_F(HFTelOrchShutdownTest, DestructorDoesNotDoubleDeleteNotificationConsumer)
+    {
+        const vector<string> stel_tables = {
+            CFG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE_NAME,
+            CFG_HIGH_FREQUENCY_TELEMETRY_GROUP_TABLE_NAME,
+        };
+
+        auto orch = make_unique<HFTelOrch>(m_config_db.get(), m_state_db.get(), stel_tables);
+        orch.reset();
+    }
 }
