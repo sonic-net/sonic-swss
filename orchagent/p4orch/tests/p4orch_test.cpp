@@ -53,7 +53,6 @@ class P4OrchTest : public ::testing::Test {
  protected:
   P4OrchTest() {
     mock_sai_hostif = &mock_sai_hostif_;
-    sai_hostif_api->create_hostif_trap = mock_create_hostif_trap;
     sai_hostif_api->create_hostif_table_entry = mock_create_hostif_table_entry;
     mock_sai_switch = &mock_sai_switch_;
     sai_switch_api->get_switch_attribute = mock_get_switch_attribute;

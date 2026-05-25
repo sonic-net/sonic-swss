@@ -329,10 +329,8 @@ class NextHopManagerTest : public ::testing::Test
         mock_sai_hostif = &mock_sai_hostif_;
         mock_sai_switch = &mock_sai_switch_;
         sai_switch_api->get_switch_attribute = mock_get_switch_attribute;
-        sai_hostif_api->create_hostif_trap = mock_create_hostif_trap;
         sai_hostif_api->create_hostif_table_entry = mock_create_hostif_table_entry;
         EXPECT_CALL(mock_sai_hostif_, create_hostif_table_entry(_, _, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
-        EXPECT_CALL(mock_sai_hostif_, create_hostif_trap(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
         EXPECT_CALL(mock_sai_switch_, get_switch_attribute(_, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
         std::vector<std::string> p4_tables;
         gP4Orch = new P4Orch(gAppDb, p4_tables, nullptr, gVrfOrch);
