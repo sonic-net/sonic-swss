@@ -106,6 +106,12 @@ bool MatchSaiAttribute(const sai_attribute_t& attr,
       }
     }
   }
+  if (exp_attr.id == SAI_NEXT_HOP_GROUP_ATTR_NATIVE_WCMP) {
+    if (attr.id != SAI_NEXT_HOP_GROUP_ATTR_NATIVE_WCMP ||
+        exp_attr.value.booldata != attr.value.booldata) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -148,6 +154,7 @@ void VerifyWcmpGroupMemberEntry(const std::string &expected_next_hop_id, const i
 void VerifyWcmpGroupEntry(const P4WcmpGroupEntry &expect_entry, const P4WcmpGroupEntry &wcmp_entry)
 {
     EXPECT_EQ(expect_entry.wcmp_group_id, wcmp_entry.wcmp_group_id);
+    EXPECT_EQ(expect_entry.native_wcmp, wcmp_entry.native_wcmp);
     ASSERT_EQ(expect_entry.wcmp_group_members.size(), wcmp_entry.wcmp_group_members.size());
     for (size_t i = 0; i < expect_entry.wcmp_group_members.size(); i++)
     {
@@ -319,7 +326,7 @@ class WcmpManagerTest : public ::testing::Test
     P4WcmpGroupEntry AddWcmpGroupEntryWithWatchport(
         const std::string& port, const bool oper_up = false,
         const std::string& group_id = kWcmpGroupId1);
-    P4WcmpGroupEntry getWcmpGroupEntryForTest(
+    P4WcmpGroupEntry getWcmpGroupEntryForTest(bool native_wcmp = false,
       const std::string& group_id = kWcmpGroupId1);
     std::shared_ptr<P4WcmpGroupMemberEntry> createWcmpGroupMemberEntry(
         const std::string& next_hop_id, const int weight, sai_object_id_t oid);
@@ -339,7 +346,7 @@ class WcmpManagerTest : public ::testing::Test
 };
 
 P4WcmpGroupEntry WcmpManagerTest::getWcmpGroupEntryForTest(
-    const std::string& group_id)
+    bool native_wcmp, const std::string& group_id)
 {
     P4WcmpGroupEntry app_db_entry;
     app_db_entry.wcmp_group_id = group_id;
@@ -355,6 +362,7 @@ P4WcmpGroupEntry WcmpManagerTest::getWcmpGroupEntryForTest(
     gm2->weight = 1;
     gm2->next_hop_oid = kNexthopOid2;
     app_db_entry.wcmp_group_members.push_back(gm2);
+    app_db_entry.native_wcmp = native_wcmp;
     return app_db_entry;
 }
 
@@ -399,7 +407,7 @@ P4WcmpGroupEntry WcmpManagerTest::AddWcmpGroupEntryWithWatchport(
     EXPECT_CALL(
         mock_sai_next_hop_group_,
         create_next_hop_groups(
-            Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{4}),
+            Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{5}),
             AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{attrs}),
             Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
         .WillOnce(DoAll(SetArrayArgument<5>(exp_oids.begin(), exp_oids.end()),
@@ -415,7 +423,7 @@ P4WcmpGroupEntry WcmpManagerTest::AddWcmpGroupEntryWithWatchport(
 
 P4WcmpGroupEntry WcmpManagerTest::AddWcmpGroupEntry(
     const std::string& group_id) {
-  P4WcmpGroupEntry app_db_entry = getWcmpGroupEntryForTest();
+  P4WcmpGroupEntry app_db_entry = getWcmpGroupEntryForTest(/*native_wcmp=*/true);
     p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1, kNexthopOid1);
     p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey2, kNexthopOid2);
 
@@ -434,13 +442,16 @@ P4WcmpGroupEntry WcmpManagerTest::AddWcmpGroupEntry(
     attr.value.u32list.count = static_cast<uint32_t>(member_weights.size());
     attr.value.u32list.list = member_weights.data();
     attrs.push_back(attr);
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_NATIVE_WCMP;
+    attr.value.booldata = true;
+    attrs.push_back(attr);
 
     std::vector<sai_object_id_t> exp_oids{kWcmpGroupOid1};
     std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
     EXPECT_CALL(
         mock_sai_next_hop_group_,
         create_next_hop_groups(
-            Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{4}),
+            Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{5}),
             AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{attrs}),
             Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
         .WillOnce(DoAll(SetArrayArgument<5>(exp_oids.begin(), exp_oids.end()),
@@ -491,7 +502,8 @@ TEST_F(WcmpManagerTest, CreateWcmpGroup)
                                      .wcmp_group_members = {},
                                      .nexthop_ids = {},
                                      .nexthop_weights = {},
-                                     .wcmp_group_label = ""};
+                                     .wcmp_group_label = "",
+                                     .native_wcmp = true};
     std::shared_ptr<P4WcmpGroupMemberEntry> gm_entry1 =
         createWcmpGroupMemberEntry(kNexthopId1, 2, kNexthopOid1);
     expect_entry.wcmp_group_members.push_back(gm_entry1);
@@ -1238,6 +1250,7 @@ TEST_F(WcmpManagerTest, DeserializeWcmpGroup)
     action[prependParamField(p4orch::kNexthopId)] = kNexthopId2;
     actions.push_back(action);
     attributes.push_back(swss::FieldValueTuple{p4orch::kActions, actions.dump()});
+    attributes.push_back(swss::FieldValueTuple{"native_wcmp", "true"});
     auto wcmp_group_entry_or = DeserializeP4WcmpGroupAppDbEntry(key, attributes);
     EXPECT_TRUE(wcmp_group_entry_or.ok());
     auto &wcmp_group_entry = *wcmp_group_entry_or;
@@ -1249,6 +1262,7 @@ TEST_F(WcmpManagerTest, DeserializeWcmpGroup)
     std::shared_ptr<P4WcmpGroupMemberEntry> gm_entry2 =
         createWcmpGroupMemberEntry(kNexthopId2, 1, kNexthopOid2);
     expect_entry.wcmp_group_members.push_back(gm_entry2);
+    expect_entry.native_wcmp = true;
     VerifyWcmpGroupEntry(expect_entry, wcmp_group_entry);
 }
 
@@ -2643,7 +2657,7 @@ TEST_F(WcmpManagerTest, WcmpGroupDrainStopOnFirstFailureMixedType) {
   EXPECT_CALL(
       mock_sai_next_hop_group_,
       create_next_hop_groups(
-          Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{4}),
+          Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{5}),
           AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{attrs}),
           Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
       .WillOnce(DoAll(
@@ -2707,7 +2721,9 @@ TEST_F(WcmpManagerTest, VerifyStateTest)
             swss::FieldValueTuple{
                 "SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST", "1:2"},
             swss::FieldValueTuple{"SAI_NEXT_HOP_GROUP_ATTR_LABEL",
-                                  label.c_str()}});
+                                  label.c_str()},
+            swss::FieldValueTuple{"SAI_NEXT_HOP_GROUP_ATTR_NATIVE_WCMP",
+                                  "false"}});
 
     // Verification should succeed with vaild key and value.
     nlohmann::json actions;
@@ -2802,6 +2818,12 @@ TEST_F(WcmpManagerTest, VerifyStateTest)
     p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1,
                            kNexthopOid1);
     p4_oid_mapper_->increaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1);
+
+    // Verification should fail if the native_wcmp config mismathces.
+    bool saved_native_wcmp = wcmp_group_entry_ptr->native_wcmp;
+    wcmp_group_entry_ptr->native_wcmp = !saved_native_wcmp;
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    wcmp_group_entry_ptr->native_wcmp = saved_native_wcmp;
 }
 
 TEST_F(WcmpManagerTest, VerifyStateAsicDbTest)
@@ -2838,7 +2860,9 @@ TEST_F(WcmpManagerTest, VerifyStateAsicDbTest)
             swss::FieldValueTuple{
                 "SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_WEIGHT_LIST", "1:2"},
             swss::FieldValueTuple{"SAI_NEXT_HOP_GROUP_ATTR_LABEL",
-                                  label.c_str()}});
+                                  label.c_str()},
+            swss::FieldValueTuple{"SAI_NEXT_HOP_GROUP_ATTR_NATIVE_WCMP",
+                                  "false"}});
 
     // Verification should succeed with correct ASIC DB values.
     EXPECT_EQ(VerifyState(db_key, attributes), "");

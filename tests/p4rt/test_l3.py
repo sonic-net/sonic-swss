@@ -582,6 +582,8 @@ class TestP4RTL3(object):
             ),
             (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
                 "any_value"),
+            (   self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_ATTR_NATIVE_WCMP,
+                "false"),
         ]
         (status, fvs) = util.get_key(
             self._p4rt_wcmp_group_obj.asic_db,
@@ -1358,6 +1360,8 @@ class TestP4RTL3(object):
             ),
             (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
                 "any_value"),
+            (   self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_ATTR_NATIVE_WCMP,
+                "false"),
         ]
         util.verify_attr(fvs, asic_attr_list)
 
@@ -1389,6 +1393,8 @@ class TestP4RTL3(object):
             ),
             (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
                 "any_value"),
+            (   self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_ATTR_NATIVE_WCMP,
+                "false"),
         ]
         util.verify_attr(fvs, asic_attr_list)
 
@@ -1419,6 +1425,8 @@ class TestP4RTL3(object):
             ),
             (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
                 "any_value"),
+            (   self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_ATTR_NATIVE_WCMP,
+                "false"),
         ]
         util.verify_attr(fvs, asic_attr_list)
 
@@ -1559,6 +1567,8 @@ class TestP4RTL3(object):
             ),
             (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
                 "any_value"),
+            (   self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_ATTR_NATIVE_WCMP,
+                "false"),
         ]
         util.verify_attr(fvs, asic_attr_list)
 
@@ -1599,6 +1609,8 @@ class TestP4RTL3(object):
             ),
             (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
                 "any_value"),
+            (   self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_ATTR_NATIVE_WCMP,
+                "false"),
         ]
         util.verify_attr(fvs, asic_attr_list)
 
@@ -1739,6 +1751,8 @@ class TestP4RTL3(object):
             ),
             (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
                 "any_value"),
+            (   self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_ATTR_NATIVE_WCMP,
+                "false"),
         ]
         util.verify_attr(fvs, asic_attr_list)
 
@@ -1769,6 +1783,8 @@ class TestP4RTL3(object):
             ),
             (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
                 "any_value"),
+            (   self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_ATTR_NATIVE_WCMP,
+                "false"),
         ]
         util.verify_attr(fvs, asic_attr_list)
 
@@ -1909,6 +1925,8 @@ class TestP4RTL3(object):
             ),
             (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
                 "any_value"),
+            (   self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_ATTR_NATIVE_WCMP,
+                "false"),
         ]
         util.verify_attr(fvs, asic_attr_list)
 
@@ -2034,6 +2052,8 @@ class TestP4RTL3(object):
                     ),
                     (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
                         "any_value"),
+                    (   self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_ATTR_NATIVE_WCMP,
+                        "false"),
                 ]
                 util.verify_attr(fvs, asic_attr_list)
 
@@ -2067,6 +2087,8 @@ class TestP4RTL3(object):
                     ),
                     (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
                         "any_value"),
+                    (   self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_ATTR_NATIVE_WCMP,
+                        "false"),
                 ]
                 util.verify_attr(fvs, asic_attr_list)
 
@@ -2180,6 +2202,8 @@ class TestP4RTL3(object):
                     ),
                     (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
                         "any_value"),
+                    (   self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_ATTR_NATIVE_WCMP,
+                        "false"),
                 ]
                 util.verify_attr(fvs, asic_attr_list)
 
@@ -2227,6 +2251,8 @@ class TestP4RTL3(object):
                     ),
                     (   self._p4rt_wcmp_group_obj.SAI_ATTR_NEXT_HOP_GROUP_LABEL,
                         "any_value"),
+                    (   self._p4rt_wcmp_group_obj.SAI_NEXT_HOP_GROUP_ATTR_NATIVE_WCMP,
+                        "false"),
                 ]
                 util.verify_attr(fvs, asic_attr_list)
 
