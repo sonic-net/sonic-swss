@@ -70,6 +70,10 @@ ReturnCodeOr<std::vector<sai_attribute_t>> prepareSaiAttrs(
     attr.id = SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID;
     attr.value.u16 = router_intf_entry.vlan_id;
     attrs.push_back(attr);
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_DISABLE_SUB_PORT_VLAN_CONFIG;
+    attr.value.booldata = true;
+    attrs.push_back(attr);
   } else {
     attr.id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
     switch (port.m_type) {
@@ -99,6 +103,9 @@ ReturnCodeOr<std::vector<sai_attribute_t>> prepareSaiAttrs(
         attrs.push_back(attr);
         attr.id = SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID;
         attr.value.u16 = port.m_vlan_info.vlan_id;
+        attrs.push_back(attr);
+        attr.id = SAI_ROUTER_INTERFACE_ATTR_DISABLE_SUB_PORT_VLAN_CONFIG;
+        attr.value.booldata = true;
         break;
 
       default:

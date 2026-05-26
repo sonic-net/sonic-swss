@@ -130,6 +130,7 @@ class TestP4RTL3(object):
             (self._p4rt_router_intf_obj.SAI_ATTR_MTU,
              self._p4rt_router_intf_obj.SAI_ATTR_DEFAULT_MTU),
             (self._p4rt_router_intf_obj.SAI_ATTR_OUTER_VLAN_ID, "65"),
+            (self._p4rt_router_intf_obj.SAI_ATTR_DISABLE_SUB_PORT_VLAN_CONFIG, "true"),
             (self._p4rt_router_intf_obj.SAI_ATTR_PORT_ID, port_oid),
             (self._p4rt_router_intf_obj.SAI_ATTR_V4_MCAST_ENABLE, "true"),
             (self._p4rt_router_intf_obj.SAI_ATTR_V6_MCAST_ENABLE, "true"),

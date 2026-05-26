@@ -18,6 +18,7 @@
 extern "C"
 {
 #include "sai.h"
+#include "saiextensions.h"
 }
 
 struct P4RouterInterfaceEntry

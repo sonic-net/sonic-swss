@@ -94,6 +94,12 @@ bool MatchSaiAttribute(const sai_attribute_t& attr,
         attr.value.u16 != exp_attr.value.u16) {
       return false;
     }
+  } else if (attr.id ==
+             SAI_ROUTER_INTERFACE_ATTR_DISABLE_SUB_PORT_VLAN_CONFIG) {
+    if (exp_attr.id != SAI_ROUTER_INTERFACE_ATTR_DISABLE_SUB_PORT_VLAN_CONFIG ||
+        attr.value.booldata != exp_attr.value.booldata) {
+      return false;
+    }
   } else if (attr.id == SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE) {
     if (exp_attr.id != SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE ||
         attr.value.booldata != exp_attr.value.booldata) {
@@ -173,6 +179,9 @@ std::vector<sai_attribute_t> CreateRouterInterfaceAttributeList(
   if (sub_port) {
     attr.id = SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID;
     attr.value.u16 = vlan_id;
+    attrs.push_back(attr);
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_DISABLE_SUB_PORT_VLAN_CONFIG;
+    attr.value.booldata = true;
     attrs.push_back(attr);
   }
 
@@ -1561,6 +1570,8 @@ TEST_F(RouterInterfaceManagerTest, VerifyStateWithVlanTest) {
                                 "SAI_ROUTER_INTERFACE_TYPE_SUB_PORT"},
           swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID",
                                 "291"},
+          swss::FieldValueTuple{
+              "SAI_ROUTER_INTERFACE_ATTR_DISABLE_SUB_PORT_VLAN_CONFIG", "true"},
           swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_PORT_ID",
                                 "oid:0x112233"},
           swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE",
@@ -1597,6 +1608,8 @@ TEST_F(RouterInterfaceManagerTest, VerifyStateWithVlanTest) {
                                 "SAI_ROUTER_INTERFACE_TYPE_SUB_PORT"},
           swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID",
                                 "700"},  // This should be 291.
+          swss::FieldValueTuple{
+              "SAI_ROUTER_INTERFACE_ATTR_DISABLE_SUB_PORT_VLAN_CONFIG", "true"},
           swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_PORT_ID",
                                 "oid:0x112233"},
           swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE",
