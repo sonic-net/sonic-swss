@@ -52,7 +52,8 @@ namespace dashorch_test
     };
 
     DEFINE_SAI_GENERIC_APIS_MOCK(dash_appliance, dash_appliance)
-    DEFINE_SAI_GENERIC_APIS_MOCK(dash_eni, eni)
+    DEFINE_SAI_API_COMBINED_MOCK(dash_eni, eni, eni_ether_address_map)
+    DEFINE_SAI_ENTRY_APIS_MOCK(dash_vip, vip)
     DEFINE_SAI_ENTRY_APIS_MOCK(dash_trusted_vni, global_trusted_vni, eni_trusted_vni)
     DEFINE_SAI_ENTRY_APIS_MOCK(dash_direction_lookup, direction_lookup)
     using namespace mock_orch_test;
@@ -103,6 +104,7 @@ namespace dashorch_test
         {
             INIT_SAI_API_MOCK(dash_appliance);
             INIT_SAI_API_MOCK(dash_eni);
+            INIT_SAI_API_MOCK(dash_vip);
             INIT_SAI_API_MOCK(dash_trusted_vni);
             INIT_SAI_API_MOCK(dash_direction_lookup);
             MockSaiApis();
@@ -119,6 +121,7 @@ namespace dashorch_test
             RestoreSaiApis();
             DEINIT_SAI_API_MOCK(dash_direction_lookup);
             DEINIT_SAI_API_MOCK(dash_trusted_vni);
+            DEINIT_SAI_API_MOCK(dash_vip);
             DEINIT_SAI_API_MOCK(dash_eni);
             DEINIT_SAI_API_MOCK(dash_appliance);
         }
@@ -1084,4 +1087,220 @@ namespace dashorch_test
             SetDashTable(APP_DASH_ENI_ROUTE_TABLE_NAME, eni1, dash::eni_route::EniRoute(), false, true);
         }
     }
+
+    TEST_F(DashOrchTest, ApplianceVipCreateFailCleansUpAppliance)
+    {
+        dash::appliance::Appliance appliance = BuildApplianceEntry();
+
+        {
+            InSequence seq;
+            EXPECT_CALL(*mock_sai_dash_appliance_api, create_dash_appliance).Times(1);
+            EXPECT_CALL(*mock_sai_dash_vip_api, create_vip_entry)
+                .WillOnce(Return(SAI_STATUS_FAILURE));
+            EXPECT_CALL(*mock_sai_dash_appliance_api, remove_dash_appliance).Times(1);
+        }
+
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance, true, true);
+        EXPECT_TRUE(m_DashOrch->appliance_entries_.empty());
+    }
+
+    TEST_F(DashOrchTest, ApplianceDirectionLookupFailCleansUpVipAndAppliance)
+    {
+        dash::appliance::Appliance appliance = BuildApplianceEntry();
+
+        {
+            InSequence seq;
+            EXPECT_CALL(*mock_sai_dash_appliance_api, create_dash_appliance).Times(1);
+            EXPECT_CALL(*mock_sai_dash_vip_api, create_vip_entry).Times(1);
+            EXPECT_CALL(*mock_sai_dash_direction_lookup_api, create_direction_lookup_entry)
+                .WillOnce(Return(SAI_STATUS_FAILURE));
+            EXPECT_CALL(*mock_sai_dash_vip_api, remove_vip_entry).Times(1);
+            EXPECT_CALL(*mock_sai_dash_appliance_api, remove_dash_appliance).Times(1);
+        }
+
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance, true, true);
+        EXPECT_TRUE(m_DashOrch->appliance_entries_.empty());
+    }
+
+    TEST_F(DashOrchTest, AddRemoveRoutingType)
+    {
+        dash::route_type::RouteType route_type;
+        route_type.add_items()->set_action_type(dash::route_type::ACTION_TYPE_STATICENCAP);
+
+        SetDashTable(APP_DASH_ROUTING_TYPE_TABLE_NAME, "VNET", route_type);
+        ASSERT_EQ(m_DashOrch->routing_type_entries_.count(dash::route_type::ROUTING_TYPE_VNET), 1u);
+
+        SetDashTable(APP_DASH_ROUTING_TYPE_TABLE_NAME, "VNET", dash::route_type::RouteType(), false);
+        EXPECT_TRUE(m_DashOrch->routing_type_entries_.empty());
+    }
+
+    TEST_F(DashOrchTest, RemoveNonExistentRoutingType)
+    {
+        SetDashTable(APP_DASH_ROUTING_TYPE_TABLE_NAME, "VNET", dash::route_type::RouteType(), false);
+        EXPECT_TRUE(m_DashOrch->routing_type_entries_.empty());
+    }
+
+    TEST_F(DashOrchTest, RoutingTypeMissingProtobuf)
+    {
+        SetDashTableRaw(APP_DASH_ROUTING_TYPE_TABLE_NAME, "VNET", {}, true, true);
+        EXPECT_TRUE(m_DashOrch->routing_type_entries_.empty());
+    }
+
+    TEST_F(DashOrchTest, RoutingTypeUnknownOp)
+    {
+        auto consumer = make_unique<Consumer>(
+            new swss::ConsumerStateTable(m_app_db.get(), APP_DASH_ROUTING_TYPE_TABLE_NAME),
+            m_DashOrch, APP_DASH_ROUTING_TYPE_TABLE_NAME);
+        consumer->addToSync(swss::KeyOpFieldsValuesTuple(
+            "VNET", "UNKNOWN", {{"pb", dash::route_type::RouteType().SerializeAsString()}}));
+
+        m_DashOrch->doTask(*consumer);
+        EXPECT_EQ(consumer->m_toSync.begin(), consumer->m_toSync.end());
+        EXPECT_TRUE(m_DashOrch->routing_type_entries_.empty());
+    }
+
+    TEST_F(DashOrchTest, AddRemoveQos)
+    {
+        dash::qos::Qos qos;
+        qos.set_bw(100);
+        qos.set_cps(200);
+        qos.set_flows(300);
+
+        SetDashTable(APP_DASH_QOS_TABLE_NAME, "QOS_1", qos);
+        ASSERT_EQ(m_DashOrch->qos_entries_.count("QOS_1"), 1u);
+        EXPECT_EQ(m_DashOrch->qos_entries_["QOS_1"].bw(), 100);
+
+        SetDashTable(APP_DASH_QOS_TABLE_NAME, "QOS_1", dash::qos::Qos(), false);
+        EXPECT_TRUE(m_DashOrch->qos_entries_.empty());
+    }
+
+    TEST_F(DashOrchTest, QosMissingProtobuf)
+    {
+        SetDashTableRaw(APP_DASH_QOS_TABLE_NAME, "QOS_1", {}, true, true);
+        EXPECT_TRUE(m_DashOrch->qos_entries_.empty());
+    }
+
+    TEST_F(DashOrchTest, QosUnknownOp)
+    {
+        auto consumer = make_unique<Consumer>(
+            new swss::ConsumerStateTable(m_app_db.get(), APP_DASH_QOS_TABLE_NAME),
+            m_DashOrch, APP_DASH_QOS_TABLE_NAME);
+        consumer->addToSync(swss::KeyOpFieldsValuesTuple(
+            "QOS_1", "UNKNOWN", {{"pb", dash::qos::Qos().SerializeAsString()}}));
+
+        m_DashOrch->doTask(*consumer);
+        EXPECT_EQ(consumer->m_toSync.begin(), consumer->m_toSync.end());
+        EXPECT_TRUE(m_DashOrch->qos_entries_.empty());
+    }
+
+    TEST_F(DashOrchTest, QosCreateDeleteChurn)
+    {
+        dash::qos::Qos qos;
+        qos.set_bw(100);
+        qos.set_cps(200);
+        qos.set_flows(300);
+
+        for (int i = 0; i < 3; i++)
+        {
+            SetDashTable(APP_DASH_QOS_TABLE_NAME, "QOS_1", qos);
+            ASSERT_EQ(m_DashOrch->qos_entries_.count("QOS_1"), 1u);
+            SetDashTable(APP_DASH_QOS_TABLE_NAME, "QOS_1", dash::qos::Qos(), false);
+            EXPECT_TRUE(m_DashOrch->qos_entries_.empty());
+        }
+    }
+
+    TEST_F(DashOrchTest, EniAdminStateUpdateSaiFailure)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+        auto eni = BuildEniEntry();
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni);
+
+        eni.set_admin_state(dash::eni::STATE_DISABLED);
+        EXPECT_CALL(*mock_sai_dash_eni_api, set_eni_attribute)
+            .WillOnce(Return(SAI_STATUS_FAILURE));
+
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni, true, true);
+        ASSERT_EQ(m_DashOrch->eni_entries_.count(eni1), 1u);
+        EXPECT_EQ(m_DashOrch->eni_entries_[eni1].metadata.admin_state(), dash::eni::STATE_ENABLED);
+    }
+
+    TEST_F(DashOrchTest, EniMissingV6MeterPolicy)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+
+        auto eni = BuildEniEntry();
+        eni.set_v6_meter_policy_id("MISSING_V6_POLICY");
+
+        EXPECT_CALL(*mock_sai_dash_eni_api, create_eni).Times(0);
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni, true, true);
+        EXPECT_TRUE(m_DashOrch->eni_entries_.empty());
+    }
+
+    TEST_F(DashOrchTest, EniAddrMapCreateFailCleansUpEniObject)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+        auto eni = BuildEniEntry();
+
+        {
+            InSequence seq;
+            EXPECT_CALL(*mock_sai_dash_eni_api, create_eni).Times(1);
+            EXPECT_CALL(*mock_sai_dash_eni_api, create_eni_ether_address_map_entry)
+                .WillOnce(Return(SAI_STATUS_FAILURE));
+            EXPECT_CALL(*mock_sai_dash_eni_api, remove_eni).Times(1);
+        }
+
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni, true, true);
+        EXPECT_TRUE(m_DashOrch->eni_entries_.empty());
+    }
+
+    TEST_F(DashOrchTest, EniRouteSetSaiFailure)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, BuildEniEntry());
+        AddOutboundRoutingGroup();
+
+        dash::eni_route::EniRoute eni_route;
+        eni_route.set_group_id(route_group1);
+
+        EXPECT_CALL(*mock_sai_dash_eni_api, set_eni_attribute)
+            .WillOnce(Return(SAI_STATUS_FAILURE));
+        SetDashTable(APP_DASH_ENI_ROUTE_TABLE_NAME, eni1, eni_route, true, true);
+        EXPECT_TRUE(m_DashOrch->eni_route_entries_.empty());
+    }
+
+    TEST_F(DashOrchTest, EniRouteRemoveSaiFailure)
+    {
+        CreateApplianceEntry();
+        CreateVnet();
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, BuildEniEntry());
+        AddOutboundRoutingGroup();
+
+        dash::eni_route::EniRoute eni_route;
+        eni_route.set_group_id(route_group1);
+        SetDashTable(APP_DASH_ENI_ROUTE_TABLE_NAME, eni1, eni_route, true, true);
+        ASSERT_EQ(m_DashOrch->eni_route_entries_.count(eni1), 1u);
+
+        EXPECT_CALL(*mock_sai_dash_eni_api, set_eni_attribute)
+            .WillOnce(Return(SAI_STATUS_FAILURE));
+        SetDashTable(APP_DASH_ENI_ROUTE_TABLE_NAME, eni1, dash::eni_route::EniRoute(), false, true);
+        EXPECT_EQ(m_DashOrch->eni_route_entries_.count(eni1), 1u);
+    }
+
+    TEST_F(DashOrchTest, EniRouteUnknownOp)
+    {
+        auto consumer = make_unique<Consumer>(
+            new swss::ConsumerStateTable(m_app_db.get(), APP_DASH_ENI_ROUTE_TABLE_NAME),
+            m_DashOrch, APP_DASH_ENI_ROUTE_TABLE_NAME);
+        consumer->addToSync(swss::KeyOpFieldsValuesTuple(
+            eni1, "UNKNOWN", {{"pb", dash::eni_route::EniRoute().SerializeAsString()}}));
+
+        m_DashOrch->doTask(*consumer);
+        EXPECT_EQ(consumer->m_toSync.begin(), consumer->m_toSync.end());
+        EXPECT_TRUE(m_DashOrch->eni_route_entries_.empty());
+    }
+
 }

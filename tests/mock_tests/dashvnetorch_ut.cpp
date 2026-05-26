@@ -15,6 +15,9 @@
 #include "dash_api/eni_route.pb.h"
 #include "gtest/gtest.h"
 #include "crmorch.h"
+#include "table.h"
+
+#include <deque>
 
 EXTERN_MOCK_FNS
 
@@ -39,6 +42,60 @@ namespace dashvnetorch_test
             CrmOrch::CrmResourceEntry entry = CrmOrch::CrmResourceEntry("", CrmThresholdType::CRM_PERCENTAGE, 0, 1);
             gCrmOrch->getResAvailability(type, entry);
             return entry.countersMap["STATS"].usedCounter;
+        }
+
+        void ProcessDashEntries(const std::string &table_name,
+                                const std::deque<swss::KeyOpFieldsValuesTuple> &entries,
+                                bool expect_empty = true)
+        {
+            Orch *target_orch = *(dash_table_orch_map.at(table_name));
+            auto consumer = std::make_unique<Consumer>(
+                new swss::ConsumerStateTable(m_app_db.get(), table_name),
+                target_orch, table_name);
+            consumer->addToSync(entries);
+            target_orch->doTask(*consumer.get());
+
+            if (expect_empty)
+            {
+                EXPECT_EQ(consumer->m_toSync.begin(), consumer->m_toSync.end());
+            }
+            else
+            {
+                EXPECT_NE(consumer->m_toSync.begin(), consumer->m_toSync.end());
+            }
+        }
+
+        void ProcessDashTupleRaw(const std::string &table_name,
+                                 const std::string &key,
+                                 const std::string &op,
+                                 const std::vector<swss::FieldValueTuple> &fvs,
+                                 bool expect_empty = true)
+        {
+            ProcessDashEntries(table_name, {swss::KeyOpFieldsValuesTuple(key, op, fvs)}, expect_empty);
+        }
+
+        bool DashResultExists(const std::string &table_name, const std::string &key)
+        {
+            swss::Table table(m_dpu_app_state_db.get(), table_name);
+            std::vector<swss::FieldValueTuple> values;
+            return table.get(key, values);
+        }
+
+        uint32_t GetDashResult(const std::string &table_name, const std::string &key)
+        {
+            swss::Table table(m_dpu_app_state_db.get(), table_name);
+            std::vector<swss::FieldValueTuple> values;
+            EXPECT_TRUE(table.get(key, values));
+            for (const auto &fv : values)
+            {
+                if (fvField(fv) == "result")
+                {
+                    return static_cast<uint32_t>(std::stoul(fvValue(fv)));
+                }
+            }
+
+            ADD_FAILURE() << "Result field not found for key " << key;
+            return 0xffffffffu;
         }
 
         void ApplySaiMock() override
@@ -193,6 +250,226 @@ namespace dashvnetorch_test
     {
         EXPECT_CALL(*mock_sai_dash_vnet_api, remove_vnets).Times(0);
         RemoveVnet(true);
+    }
+
+    TEST_F(DashVnetOrchTest, VnetRemoveItemNotFoundSuccess)
+    {
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_ITEM_NOT_FOUND};
+
+        CreateVnet();
+        int expectedUsed = GetCrmUsedCount(CrmResourceType::CRM_DASH_VNET);
+
+        EXPECT_CALL(*mock_sai_dash_vnet_api, remove_vnets)
+            .Times(1)
+            .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+
+        RemoveVnet();
+
+        EXPECT_EQ(expectedUsed, GetCrmUsedCount(CrmResourceType::CRM_DASH_VNET));
+        EXPECT_FALSE(DashResultExists(APP_DASH_VNET_TABLE_NAME, vnet1));
+    }
+
+    TEST_F(DashVnetOrchTest, VnetUnknownOpConsumed)
+    {
+        dash::vnet::Vnet vnet;
+        vnet.set_vni(5555);
+
+        EXPECT_CALL(*mock_sai_dash_vnet_api, create_vnets).Times(0);
+        EXPECT_CALL(*mock_sai_dash_vnet_api, remove_vnets).Times(0);
+
+        ProcessDashTupleRaw(APP_DASH_VNET_TABLE_NAME, vnet1, "UNKNOWN",
+                            {{"pb", vnet.SerializeAsString()}});
+
+        EXPECT_FALSE(DashResultExists(APP_DASH_VNET_TABLE_NAME, vnet1));
+    }
+
+    TEST_F(DashVnetOrchTest, VnetDuplicateDeleteNoopClearsBulkContext)
+    {
+        EXPECT_CALL(*mock_sai_dash_vnet_api, remove_vnets).Times(0);
+
+        ProcessDashEntries(
+            APP_DASH_VNET_TABLE_NAME,
+            {
+                swss::KeyOpFieldsValuesTuple(vnet1, DEL_COMMAND, {}),
+                swss::KeyOpFieldsValuesTuple(vnet1, DEL_COMMAND, {})
+            });
+    }
+
+    TEST_F(DashVnetOrchTest, VnetMapMissingRouteTypeActions)
+    {
+        std::string key = vnet1 + ":" + vnet_map_ip1;
+
+        CreateVnet();
+
+        EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries).Times(0);
+        EXPECT_CALL(*mock_sai_dash_pa_validation_api, create_pa_validation_entries).Times(0);
+
+        AddVnetMap();
+
+        EXPECT_EQ(GetDashResult(APP_DASH_VNET_MAPPING_TABLE_NAME, key), 1u);
+    }
+
+    TEST_F(DashVnetOrchTest, VnetMapDuplicateEntry)
+    {
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_ITEM_ALREADY_EXISTS};
+
+        AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
+        CreateVnet();
+        AddVnetMap();
+
+        int expectedCaUsed = GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA);
+        int expectedPaUsed = GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION);
+
+        EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries)
+            .Times(1)
+            .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        EXPECT_CALL(*mock_sai_dash_pa_validation_api, create_pa_validation_entries).Times(0);
+
+        AddVnetMap();
+
+        EXPECT_EQ(expectedCaUsed, GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA));
+        EXPECT_EQ(expectedPaUsed, GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION));
+    }
+
+    TEST_F(DashVnetOrchTest, VnetMapMissingPortMap)
+    {
+        std::string key = vnet1 + ":" + vnet_map_ip2;
+
+        AddPLRoutingType();
+        CreateVnet();
+
+        EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries).Times(0);
+        EXPECT_CALL(*mock_sai_dash_pa_validation_api, create_pa_validation_entries).Times(0);
+
+        AddVnetMapPL();
+
+        EXPECT_EQ(GetDashResult(APP_DASH_VNET_MAPPING_TABLE_NAME, key), 1u);
+    }
+
+    TEST_F(DashVnetOrchTest, VnetMapPaValidationSaiFailure)
+    {
+        std::vector<sai_status_t> create_status = {SAI_STATUS_SUCCESS};
+        std::vector<sai_status_t> pa_validation_status = {SAI_STATUS_INVALID_PARAMETER};
+        std::string key = vnet1 + ":" + vnet_map_ip1;
+
+        AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
+        CreateVnet();
+
+        EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries)
+            .Times(1)
+            .WillOnce(DoAll(SetArrayArgument<5>(create_status.begin(), create_status.end()), Return(SAI_STATUS_SUCCESS)));
+        EXPECT_CALL(*mock_sai_dash_pa_validation_api, create_pa_validation_entries)
+            .Times(1)
+            .WillOnce(DoAll(SetArrayArgument<5>(pa_validation_status.begin(), pa_validation_status.end()), Return(SAI_STATUS_SUCCESS)));
+
+        AddVnetMap();
+
+        EXPECT_EQ(GetDashResult(APP_DASH_VNET_MAPPING_TABLE_NAME, key), 1u);
+    }
+
+    TEST_F(DashVnetOrchTest, VnetMapRemoveSaiNotExecuted)
+    {
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_NOT_EXECUTED};
+        std::string key = vnet1 + ":" + vnet_map_ip1;
+
+        AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
+        CreateVnet();
+        AddVnetMap();
+
+        int expectedUsed = GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA);
+
+        EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, remove_outbound_ca_to_pa_entries)
+            .Times(1)
+            .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+
+        RemoveVnetMap();
+
+        EXPECT_EQ(expectedUsed, GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA));
+        EXPECT_TRUE(DashResultExists(APP_DASH_VNET_MAPPING_TABLE_NAME, key));
+    }
+
+    TEST_F(DashVnetOrchTest, VnetMapRemoveSaiFailure)
+    {
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_INVALID_PARAMETER};
+        std::string key = vnet1 + ":" + vnet_map_ip1;
+
+        AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
+        CreateVnet();
+        AddVnetMap();
+
+        int expectedUsed = GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA);
+
+        EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, remove_outbound_ca_to_pa_entries)
+            .Times(1)
+            .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+
+        RemoveVnetMap();
+
+        EXPECT_EQ(expectedUsed, GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA));
+        EXPECT_TRUE(DashResultExists(APP_DASH_VNET_MAPPING_TABLE_NAME, key));
+    }
+
+    TEST_F(DashVnetOrchTest, VnetMapUnknownOpConsumed)
+    {
+        dash::vnet_mapping::VnetMapping vnet_map;
+        // Use a unique key to avoid collision with result entries left by prior tests
+        std::string key = vnet1 + ":9.9.9.9";
+
+        vnet_map.set_routing_type(dash::route_type::ROUTING_TYPE_VNET_ENCAP);
+        vnet_map.mutable_underlay_ip()->set_ipv4(swss::IpAddress("7.7.7.7").getV4Addr());
+
+        EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries).Times(0);
+        EXPECT_CALL(*mock_sai_dash_pa_validation_api, create_pa_validation_entries).Times(0);
+
+        ProcessDashTupleRaw(APP_DASH_VNET_MAPPING_TABLE_NAME, key, "UNKNOWN",
+                            {{"pb", vnet_map.SerializeAsString()}});
+
+        EXPECT_FALSE(DashResultExists(APP_DASH_VNET_MAPPING_TABLE_NAME, key));
+    }
+
+    TEST_F(DashVnetOrchTest, VnetMapDuplicateFailedAddClearsBulkContext)
+    {
+        dash::vnet_mapping::VnetMapping vnet_map;
+        std::string key = vnet1 + ":" + vnet_map_ip1;
+
+        CreateVnet();
+        vnet_map.set_routing_type(dash::route_type::ROUTING_TYPE_VNET_ENCAP);
+        vnet_map.mutable_underlay_ip()->set_ipv4(swss::IpAddress("7.7.7.7").getV4Addr());
+
+        EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries).Times(0);
+        EXPECT_CALL(*mock_sai_dash_pa_validation_api, create_pa_validation_entries).Times(0);
+
+        ProcessDashEntries(
+            APP_DASH_VNET_MAPPING_TABLE_NAME,
+            {
+                swss::KeyOpFieldsValuesTuple(key, SET_COMMAND, {{"pb", vnet_map.SerializeAsString()}}),
+                swss::KeyOpFieldsValuesTuple(key, SET_COMMAND, {{"pb", vnet_map.SerializeAsString()}})
+            });
+
+        EXPECT_EQ(GetDashResult(APP_DASH_VNET_MAPPING_TABLE_NAME, key), 1u);
+    }
+
+    TEST_F(DashVnetOrchTest, VnetMapDeprecatedActionTypeFallback)
+    {
+        dash::vnet_mapping::VnetMapping vnet_map;
+        std::string key = vnet1 + ":" + vnet_map_ip1;
+
+        AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
+        CreateVnet();
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+        vnet_map.set_action_type(dash::route_type::ROUTING_TYPE_VNET_ENCAP);
+#pragma GCC diagnostic pop
+        vnet_map.mutable_underlay_ip()->set_ipv4(swss::IpAddress("7.7.7.7").getV4Addr());
+
+        EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries).Times(1);
+        EXPECT_CALL(*mock_sai_dash_pa_validation_api, create_pa_validation_entries).Times(1);
+
+        ProcessDashTupleRaw(APP_DASH_VNET_MAPPING_TABLE_NAME, key, SET_COMMAND,
+                            {{"pb", vnet_map.SerializeAsString()}});
+
+        EXPECT_EQ(GetDashResult(APP_DASH_VNET_MAPPING_TABLE_NAME, key), 0u);
     }
 
     class DashVnetOrchNoApplianceTest : public MockDashOrchTest

@@ -12,6 +12,7 @@ namespace mock_orch_test
                 {APP_DASH_VNET_MAPPING_TABLE_NAME, (Orch**) &m_dashVnetOrch},
                 {APP_DASH_APPLIANCE_TABLE_NAME, (Orch**) &m_DashOrch},
                 {APP_DASH_ROUTING_TYPE_TABLE_NAME, (Orch**) &m_DashOrch},
+                {APP_DASH_QOS_TABLE_NAME, (Orch**) &m_DashOrch},
                 {APP_DASH_ROUTE_GROUP_TABLE_NAME, (Orch**) &m_DashRouteOrch},
                 {APP_DASH_ROUTE_TABLE_NAME, (Orch**) &m_DashRouteOrch},
                 {APP_DASH_ROUTE_RULE_TABLE_NAME, (Orch**) &m_DashRouteOrch},
@@ -19,7 +20,9 @@ namespace mock_orch_test
                 {APP_DASH_ENI_TABLE_NAME, (Orch**) &m_DashOrch},
                 {APP_DASH_ENI_ROUTE_TABLE_NAME, (Orch**) &m_DashOrch},
                 { APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, (Orch **)&m_dashPortMapOrch },
-                { APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, (Orch **)&m_dashPortMapOrch }
+                { APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, (Orch **)&m_dashPortMapOrch },
+                { APP_DASH_METER_POLICY_TABLE_NAME, (Orch **)&m_DashMeterOrch },
+                { APP_DASH_METER_RULE_TABLE_NAME, (Orch **)&m_DashMeterOrch }
             };
             void SetDashTable(std::string table_name, std::string key, const google::protobuf::Message &message, bool set = true, bool expect_empty = true);
             void SetDashTableRaw(std::string table_name, std::string key, const std::vector<swss::FieldValueTuple> &fvs, bool set = true, bool expect_empty = true);

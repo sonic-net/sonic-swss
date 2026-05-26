@@ -21,9 +21,10 @@
 EXTERN_MOCK_FNS
 namespace dashrouteorch_test
 {
-    DEFINE_SAI_API_MOCK(dash_outbound_routing, outbound_routing);
+    DEFINE_SAI_API_COMBINED_MOCK(dash_outbound_routing, outbound_routing_group, outbound_routing);
     DEFINE_SAI_API_MOCK(dash_inbound_routing, inbound_routing);
     using namespace mock_orch_test;
+    using ::testing::_;
     using ::testing::InSequence;
     using ::testing::DoAll;
     using ::testing::SaveArgPointee;
@@ -51,6 +52,14 @@ namespace dashrouteorch_test
             INIT_SAI_API_MOCK(dash_outbound_routing);
             INIT_SAI_API_MOCK(dash_inbound_routing);
             MockSaiApis();
+        }
+
+        std::unique_ptr<Consumer> CreateDashRouteConsumer(const std::string &tableName)
+        {
+            return std::make_unique<Consumer>(
+                new swss::ConsumerStateTable(m_app_db.get(), tableName),
+                m_DashRouteOrch,
+                tableName);
         }
 
         void PreTearDown()
@@ -441,5 +450,232 @@ namespace dashrouteorch_test
         EXPECT_CALL(*mock_sai_dash_inbound_routing_api, create_inbound_routing_entries)
             .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
         AddInboundRoutingEntry(true);
+    }
+
+    TEST_F(DashRouteOrchTest, OutboundRouteBoundRouteGroupNotRetried)
+    {
+        AddOutboundRoutingGroup();
+        m_DashRouteOrch->bindRouteGroup(route_group1);
+
+        dash::route::Route route;
+        route.set_routing_type(dash::route_type::ROUTING_TYPE_VNET);
+        route.set_vnet(vnet1);
+
+        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries).Times(0);
+        SetDashTable(APP_DASH_ROUTE_TABLE_NAME, route_group1 + ":5.6.7.8/32", route, true, true);
+
+        m_DashRouteOrch->unbindRouteGroup(route_group1);
+    }
+
+    TEST_F(DashRouteOrchTest, OutboundRouteVnetDirectMissingVnet)
+    {
+        m_DashRouteOrch->route_group_oid_map_[route_group1] = 0x1234;
+
+        dash::route::Route route;
+        route.set_routing_type(dash::route_type::ROUTING_TYPE_VNET_DIRECT);
+        route.mutable_vnet_direct()->mutable_overlay_ip()->set_ipv4(swss::IpAddress("5.6.7.8").getV4Addr());
+
+        OutboundRoutingBulkContext ctxt;
+        ctxt.route_group = route_group1;
+        ctxt.destination = swss::IpPrefix("1.2.3.4/32");
+        ctxt.metadata = route;
+
+        EXPECT_TRUE(m_DashRouteOrch->addOutboundRouting(route_group1 + ":1.2.3.4/32", ctxt));
+        EXPECT_EQ(ctxt.pre_op_result, DASH_RESULT_FAILURE);
+        EXPECT_TRUE(ctxt.object_statuses.empty());
+    }
+
+    TEST_F(DashRouteOrchTest, OutboundRouteInvalidRoutingType)
+    {
+        m_DashRouteOrch->route_group_oid_map_[route_group1] = 0x1234;
+
+        dash::route::Route route;
+        route.set_routing_type(static_cast<dash::route_type::RoutingType>(999));
+
+        OutboundRoutingBulkContext ctxt;
+        ctxt.route_group = route_group1;
+        ctxt.destination = swss::IpPrefix("1.2.3.4/32");
+        ctxt.metadata = route;
+
+        EXPECT_TRUE(m_DashRouteOrch->addOutboundRouting(route_group1 + ":1.2.3.4/32", ctxt));
+        EXPECT_EQ(ctxt.pre_op_result, DASH_RESULT_FAILURE);
+        EXPECT_TRUE(ctxt.object_statuses.empty());
+    }
+
+    TEST_F(DashRouteOrchTest, OutboundRouteVnetDirectMissingOverlayIp)
+    {
+        m_DashRouteOrch->route_group_oid_map_[route_group1] = 0x1234;
+
+        dash::route::Route route;
+        route.set_routing_type(dash::route_type::ROUTING_TYPE_VNET_DIRECT);
+        route.mutable_vnet_direct()->set_vnet(vnet1);
+
+        OutboundRoutingBulkContext ctxt;
+        ctxt.route_group = route_group1;
+        ctxt.destination = swss::IpPrefix("1.2.3.4/32");
+        ctxt.metadata = route;
+
+        EXPECT_TRUE(m_DashRouteOrch->addOutboundRouting(route_group1 + ":1.2.3.4/32", ctxt));
+        EXPECT_EQ(ctxt.pre_op_result, DASH_RESULT_FAILURE);
+        EXPECT_TRUE(ctxt.object_statuses.empty());
+    }
+
+    TEST_F(DashRouteOrchTest, RemoveOutboundRouteBoundRouteGroup)
+    {
+        AddOutboundRoutingGroup();
+        m_DashRouteOrch->bindRouteGroup(route_group1);
+
+        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, remove_outbound_routing_entries).Times(0);
+        RemoveOutboundRoutingEntry();
+
+        m_DashRouteOrch->unbindRouteGroup(route_group1);
+    }
+
+    TEST_F(DashRouteOrchTest, OutboundRouteDeprecatedActionTypeFallback)
+    {
+        AddOutboundRoutingGroup();
+
+        dash::route::Route route;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+        route.set_action_type(dash::route_type::ROUTING_TYPE_VNET);
+#pragma GCC diagnostic pop
+        route.set_vnet(vnet1);
+
+        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries).Times(1);
+        SetDashTable(APP_DASH_ROUTE_TABLE_NAME, route_group1 + ":9.9.9.9/32", route, true, true);
+    }
+
+    TEST_F(DashRouteOrchTest, OutboundRouteUnknownOp)
+    {
+        auto consumer = CreateDashRouteConsumer(APP_DASH_ROUTE_TABLE_NAME);
+        consumer->m_toSync.emplace(
+            route_group1 + ":1.2.3.4/32",
+            swss::KeyOpFieldsValuesTuple(route_group1 + ":1.2.3.4/32", "UNKNOWN", {}));
+
+        m_DashRouteOrch->doTaskRouteTable(*consumer);
+
+        EXPECT_TRUE(consumer->m_toSync.empty());
+    }
+
+    TEST_F(DashRouteOrchTest, OutboundRouteDuplicateSetClearsContext)
+    {
+        AddOutboundRoutingGroup();
+
+        auto consumer = CreateDashRouteConsumer(APP_DASH_ROUTE_TABLE_NAME);
+        std::string key = route_group1 + ":1.2.3.4/32";
+
+        dash::route::Route validRoute;
+        validRoute.set_routing_type(dash::route_type::ROUTING_TYPE_VNET);
+        validRoute.set_vnet(vnet1);
+
+        dash::route::Route invalidRoute;
+        invalidRoute.set_routing_type(dash::route_type::ROUTING_TYPE_VNET_DIRECT);
+        invalidRoute.mutable_vnet_direct()->set_vnet(vnet1);
+
+        consumer->m_toSync.emplace(key, swss::KeyOpFieldsValuesTuple(key, SET_COMMAND, {{"pb", validRoute.SerializeAsString()}}));
+        consumer->m_toSync.emplace(key, swss::KeyOpFieldsValuesTuple(key, SET_COMMAND, {{"pb", invalidRoute.SerializeAsString()}}));
+
+        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries).Times(1);
+        m_DashRouteOrch->doTaskRouteTable(*consumer);
+
+        EXPECT_TRUE(consumer->m_toSync.empty());
+    }
+
+    TEST_F(DashRouteOrchTest, InboundRouteMissingVnet)
+    {
+        dash::route_rule::RouteRule rule;
+        rule.set_pa_validation(true);
+        rule.set_vnet("NON_EXISTENT_VNET");
+
+        EXPECT_CALL(*mock_sai_dash_inbound_routing_api, create_inbound_routing_entries).Times(0);
+        SetDashTable(APP_DASH_ROUTE_RULE_TABLE_NAME, eni1 + ":5555:10.0.1.0/24", rule, true, true);
+    }
+
+    TEST_F(DashRouteOrchTest, InboundRouteSaiRemoveFailureNotRetried)
+    {
+        AddInboundRoutingEntry();
+
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_INVALID_PARAMETER};
+        EXPECT_CALL(*mock_sai_dash_inbound_routing_api, remove_inbound_routing_entries)
+            .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        RemoveInboundRoutingEntry(true);
+    }
+
+    TEST_F(DashRouteOrchTest, InboundRouteUnknownOp)
+    {
+        auto consumer = CreateDashRouteConsumer(APP_DASH_ROUTE_RULE_TABLE_NAME);
+        consumer->m_toSync.emplace(
+            eni1 + ":5555:10.0.0.0/24",
+            swss::KeyOpFieldsValuesTuple(eni1 + ":5555:10.0.0.0/24", "UNKNOWN", {}));
+
+        m_DashRouteOrch->doTaskRouteRuleTable(*consumer);
+
+        EXPECT_TRUE(consumer->m_toSync.empty());
+    }
+
+    TEST_F(DashRouteOrchTest, InboundRouteDuplicateSetClearsContext)
+    {
+        auto consumer = CreateDashRouteConsumer(APP_DASH_ROUTE_RULE_TABLE_NAME);
+        std::string key = eni1 + ":5555:10.0.0.0/24";
+
+        dash::route_rule::RouteRule validRule;
+        validRule.set_pa_validation(true);
+
+        dash::route_rule::RouteRule invalidRule;
+        invalidRule.set_pa_validation(true);
+        invalidRule.set_vnet("NON_EXISTENT_VNET");
+
+        consumer->m_toSync.emplace(key, swss::KeyOpFieldsValuesTuple(key, SET_COMMAND, {{"pb", validRule.SerializeAsString()}}));
+        consumer->m_toSync.emplace(key, swss::KeyOpFieldsValuesTuple(key, SET_COMMAND, {{"pb", invalidRule.SerializeAsString()}}));
+
+        EXPECT_CALL(*mock_sai_dash_inbound_routing_api, create_inbound_routing_entries).Times(1);
+        m_DashRouteOrch->doTaskRouteRuleTable(*consumer);
+
+        EXPECT_TRUE(consumer->m_toSync.empty());
+    }
+
+    TEST_F(DashRouteOrchTest, RouteGroupSaiCreateFailure)
+    {
+        dash::route_group::RouteGroup route_group;
+        route_group.set_version("1");
+        route_group.set_guid("group_guid");
+
+        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_group).WillOnce(Return(SAI_STATUS_INVALID_PARAMETER));
+        SetDashTable(APP_DASH_ROUTE_GROUP_TABLE_NAME, route_group1, route_group, true, true);
+
+        EXPECT_EQ(m_DashRouteOrch->getRouteGroupOid(route_group1), SAI_NULL_OBJECT_ID);
+    }
+
+    TEST_F(DashRouteOrchTest, RouteGroupRemoveSaiFailureNotInUse)
+    {
+        AddOutboundRoutingGroup();
+
+        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, remove_outbound_routing_group(_)).WillOnce(Return(SAI_STATUS_INVALID_PARAMETER));
+        SetDashTable(APP_DASH_ROUTE_GROUP_TABLE_NAME, route_group1, dash::route_group::RouteGroup(), false, true);
+
+        EXPECT_NE(m_DashRouteOrch->getRouteGroupOid(route_group1), SAI_NULL_OBJECT_ID);
+    }
+
+    TEST_F(DashRouteOrchTest, RemoveBoundRouteGroup)
+    {
+        AddOutboundRoutingGroup();
+        m_DashRouteOrch->bindRouteGroup(route_group1);
+
+        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, remove_outbound_routing_group(_)).Times(0);
+        SetDashTable(APP_DASH_ROUTE_GROUP_TABLE_NAME, route_group1, dash::route_group::RouteGroup(), false, true);
+
+        EXPECT_NE(m_DashRouteOrch->getRouteGroupOid(route_group1), SAI_NULL_OBJECT_ID);
+        m_DashRouteOrch->unbindRouteGroup(route_group1);
+    }
+
+    TEST_F(DashRouteOrchTest, RouteGroupUnknownOp)
+    {
+        auto consumer = CreateDashRouteConsumer(APP_DASH_ROUTE_GROUP_TABLE_NAME);
+        consumer->m_toSync.emplace(route_group1, swss::KeyOpFieldsValuesTuple(route_group1, "UNKNOWN", {}));
+
+        m_DashRouteOrch->doTaskRouteGroupTable(*consumer);
+
+        EXPECT_TRUE(consumer->m_toSync.empty());
     }
 }
