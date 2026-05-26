@@ -17,6 +17,9 @@
 #define CHECK_FLAG(V,F)      ((V) & (F))
 
 
+/* Forward declaration for unit test friend access */
+namespace ut_fpmsyncd { struct FpmSyncdNhgMgr; }
+
 namespace swss {
 
 using namespace std;
@@ -49,6 +52,7 @@ using namespace std;
         /* PIC_CONTEXT_TABLE type */
         SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC = 1,
 
+        SONIC_NHG_OBJ_TYPE_MAX = 255,
     };
 
     /* Key Object used to hash Sonic PIC nexthop object */
@@ -199,6 +203,9 @@ using namespace std;
 
     /* Sonic ID Manager, used to manage all kinds of Sonic NHG id for Sonic NHG Object */
     class SonicIDMgr {
+        /* Allow unit test fixture to access private members for white-box testing */
+        friend struct ut_fpmsyncd::FpmSyncdNhgMgr;
+
     public:
 
         SonicIDMgr(){};
@@ -251,6 +258,9 @@ using namespace std;
 
     /* Sonic PIC entry */
     class SonicPICContentEntry {
+        /* Allow unit test fixture to access private members for white-box testing */
+        friend struct ut_fpmsyncd::FpmSyncdNhgMgr;
+
     public:
         SonicPICContentEntry(SonicPICContentTable *mTable);
         ~SonicPICContentEntry();
@@ -425,6 +435,9 @@ using namespace std;
 
     /* RIB NHG entry */
     class RIBNHGEntry {
+        /* Allow unit test fixture to access private members for white-box testing */
+        friend struct ut_fpmsyncd::FpmSyncdNhgMgr;
+
     public:
         RIBNHGEntry(RIBNHGTable *table);
         ~RIBNHGEntry();
@@ -764,6 +777,8 @@ using namespace std;
 
     /* RIB NHG table */
     class RIBNHGTable {
+        /* Allow unit test fixture to access private members for white-box testing */
+        friend struct ut_fpmsyncd::FpmSyncdNhgMgr;
 
     public:
         RIBNHGTable(RedisPipeline *pipeline, const std::string &tableName, bool isStateTable);
@@ -830,6 +845,9 @@ using namespace std;
     };
 
     class NHGMgr {
+        /* Allow unit test fixture to access private members for white-box testing */
+        friend struct ut_fpmsyncd::FpmSyncdNhgMgr;
+
     public:
         NHGMgr(RedisPipeline *pipeline, const std::string &nexthopTableName, const std::string &picTableName, bool isStateTable);
         ~NHGMgr() {
