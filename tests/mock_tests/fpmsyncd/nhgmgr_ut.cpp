@@ -2151,4 +2151,383 @@ namespace ut_fpmsyncd
     {
         ASSERT_EQ(m_nhgmgr->getSonicPICByRIBID(88888), nullptr);
     }
+
+    /*
+     * Test: checkNeedUpdate detects changes in depends vector.
+     * Exercises compareDependsAndDependents returning false on depends mismatch.
+     */
+    TEST_F(FpmSyncdNhgMgr, CheckNeedUpdateDependsChange)
+    {
+        uint32_t ribID = 200;
+        NextHopGroupFull nhgObj = createSingleIPv4NextHopNHGFull("10.1.1.1", "10.1.1.100", ribID);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObj, AF_INET), 0);
+
+        RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(ribID);
+        ASSERT_NE(entry, nullptr);
+
+        // Same object -> no update
+        bool updated = false;
+        entry->checkNeedUpdate(nhgObj, AF_INET, updated);
+        ASSERT_FALSE(updated);
+
+        // Modify depends
+        NextHopGroupFull nhgModified = nhgObj;
+        nhgModified.depends.push_back(999);
+        updated = false;
+        entry->checkNeedUpdate(nhgModified, AF_INET, updated);
+        ASSERT_TRUE(updated);
+
+        ASSERT_EQ(m_nhgmgr->delNHGFull(ribID), 0);
+    }
+
+    /*
+     * Test: checkNeedUpdate detects changes in dependents vector.
+     */
+    TEST_F(FpmSyncdNhgMgr, CheckNeedUpdateDependentsChange)
+    {
+        uint32_t ribID = 201;
+        NextHopGroupFull nhgObj = createSingleIPv4NextHopNHGFull("10.2.1.1", "10.2.1.100", ribID);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObj, AF_INET), 0);
+
+        RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(ribID);
+        ASSERT_NE(entry, nullptr);
+
+        NextHopGroupFull nhgModified = nhgObj;
+        nhgModified.dependents.push_back(888);
+        bool updated = false;
+        entry->checkNeedUpdate(nhgModified, AF_INET, updated);
+        ASSERT_TRUE(updated);
+
+        ASSERT_EQ(m_nhgmgr->delNHGFull(ribID), 0);
+    }
+
+    /*
+     * Test: checkNeedUpdate detects changes in nh_grp_full_list.
+     * Exercises compareNHGFullList branches: size mismatch, id/weight/num_direct mismatch.
+     */
+    TEST_F(FpmSyncdNhgMgr, CheckNeedUpdateNHGFullListChange)
+    {
+        // Setup member NHGs
+        uint32_t memberID1 = 210;
+        uint32_t memberID2 = 211;
+        uint32_t parentID = 212;
+
+        NextHopGroupFull mem1 = createSingleIPv4NextHopNHGFull("10.3.1.1", "10.3.1.100", memberID1);
+        NextHopGroupFull mem2 = createSingleIPv4NextHopNHGFull("10.3.1.2", "10.3.1.101", memberID2);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(mem1, AF_INET), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(mem2, AF_INET), 0);
+
+        map<uint32_t, NextHopGroupFull> members = {{memberID1, mem1}, {memberID2, mem2}};
+        map<uint32_t, uint32_t> weights = {{memberID1, 1}, {memberID2, 1}};
+        map<uint32_t, uint32_t> numDirects = {{memberID1, 1}, {memberID2, 1}};
+        vector<uint32_t> depends = {memberID1, memberID2};
+        vector<uint32_t> dependents;
+
+        NextHopGroupFull parentNhg = createMultiNextHopNHGFull(members, weights, numDirects, depends, dependents, parentID);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(parentNhg, AF_INET), 0);
+
+        RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(parentID);
+        ASSERT_NE(entry, nullptr);
+
+        // Size mismatch: remove one member from the list
+        NextHopGroupFull modified = parentNhg;
+        modified.nh_grp_full_list.pop_back();
+        bool updated = false;
+        entry->checkNeedUpdate(modified, AF_INET, updated);
+        ASSERT_TRUE(updated);
+
+        // Weight mismatch
+        NextHopGroupFull modifiedWeight = parentNhg;
+        modifiedWeight.nh_grp_full_list[0].weight = 99;
+        updated = false;
+        entry->checkNeedUpdate(modifiedWeight, AF_INET, updated);
+        ASSERT_TRUE(updated);
+
+        // num_direct mismatch
+        NextHopGroupFull modifiedNumDirect = parentNhg;
+        modifiedNumDirect.nh_grp_full_list[0].num_direct = 99;
+        updated = false;
+        entry->checkNeedUpdate(modifiedNumDirect, AF_INET, updated);
+        ASSERT_TRUE(updated);
+
+        // id mismatch
+        NextHopGroupFull modifiedId = parentNhg;
+        modifiedId.nh_grp_full_list[0].id = 9999;
+        updated = false;
+        entry->checkNeedUpdate(modifiedId, AF_INET, updated);
+        ASSERT_TRUE(updated);
+
+        // Clean up
+        ASSERT_EQ(m_nhgmgr->delNHGFull(parentID), 0);
+        ASSERT_EQ(m_nhgmgr->delNHGFull(memberID1), 0);
+        ASSERT_EQ(m_nhgmgr->delNHGFull(memberID2), 0);
+    }
+
+    /*
+     * Test: checkNeedUpdate detects SRv6 field changes.
+     * Exercises compareNHGSRv6Fields branches.
+     */
+    TEST_F(FpmSyncdNhgMgr, CheckNeedUpdateSRv6FieldsChange)
+    {
+        uint32_t ribID = 220;
+        NextHopGroupFull nhgObj = createSingleSRv6VPNNextHopNHGFull(
+            "fc00::1", "fc00::100", "10.0.0.1", ribID);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObj, AF_INET), 0);
+
+        RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(ribID);
+        ASSERT_NE(entry, nullptr);
+
+        // Same object -> no update
+        bool updated = false;
+        entry->checkNeedUpdate(nhgObj, AF_INET, updated);
+        ASSERT_FALSE(updated);
+
+        // One has srv6, other doesn't (set nh_srv6 to nullptr)
+        NextHopGroupFull noSrv6 = nhgObj;
+        noSrv6.nh_srv6 = nullptr;
+        updated = false;
+        entry->checkNeedUpdate(noSrv6, AF_INET, updated);
+        ASSERT_TRUE(updated);
+
+        // Different VPN SID content
+        NextHopGroupFull diffSid = nhgObj;
+        fib::nexthop_srv6 *newSrv6 = new fib::nexthop_srv6();
+        *newSrv6 = *(nhgObj.nh_srv6);
+        fib::seg6_seg_stack *newSegs = new fib::seg6_seg_stack();
+        newSegs->num_segs = 1;
+        inet_pton(AF_INET6, "fc00::99", &newSegs->seg[0]);
+        newSrv6->seg6_segs = newSegs;
+        diffSid.nh_srv6 = newSrv6;
+        updated = false;
+        entry->checkNeedUpdate(diffSid, AF_INET, updated);
+        ASSERT_TRUE(updated);
+
+        delete newSegs;
+        delete newSrv6;
+        ASSERT_EQ(m_nhgmgr->delNHGFull(ribID), 0);
+    }
+
+    /*
+     * Test: checkNeedUpdate detects weight, vrf_id, ifindex, ifname, type changes.
+     */
+    TEST_F(FpmSyncdNhgMgr, CheckNeedUpdateWeightVrfIfnameType)
+    {
+        uint32_t ribID = 230;
+        NextHopGroupFull nhgObj = createSingleIPv4NextHopNHGFull("10.5.1.1", "10.5.1.100", ribID);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObj, AF_INET), 0);
+
+        RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(ribID);
+        ASSERT_NE(entry, nullptr);
+
+        // weight change
+        NextHopGroupFull modWeight = nhgObj;
+        modWeight.weight = nhgObj.weight + 5;
+        bool updated = false;
+        entry->checkNeedUpdate(modWeight, AF_INET, updated);
+        ASSERT_TRUE(updated);
+
+        // vrf_id change
+        NextHopGroupFull modVrf = nhgObj;
+        modVrf.vrf_id = nhgObj.vrf_id + 1;
+        updated = false;
+        entry->checkNeedUpdate(modVrf, AF_INET, updated);
+        ASSERT_TRUE(updated);
+
+        // ifindex change
+        NextHopGroupFull modIfindex = nhgObj;
+        modIfindex.ifindex = nhgObj.ifindex + 1;
+        updated = false;
+        entry->checkNeedUpdate(modIfindex, AF_INET, updated);
+        ASSERT_TRUE(updated);
+
+        // ifname change
+        NextHopGroupFull modIfname = nhgObj;
+        modIfname.ifname = "EthernetChanged";
+        updated = false;
+        entry->checkNeedUpdate(modIfname, AF_INET, updated);
+        ASSERT_TRUE(updated);
+
+        // type change
+        NextHopGroupFull modType = nhgObj;
+        modType.type = fib::NEXTHOP_TYPE_IPV6;
+        updated = false;
+        entry->checkNeedUpdate(modType, AF_INET, updated);
+        ASSERT_TRUE(updated);
+
+        ASSERT_EQ(m_nhgmgr->delNHGFull(ribID), 0);
+    }
+
+    /*
+     * Test: checkNeedUpdate detects blackhole type changes.
+     */
+    TEST_F(FpmSyncdNhgMgr, CheckNeedUpdateBlackholeType)
+    {
+        uint32_t ribID = 231;
+        NextHopGroupFull nhgObj = createSingleIPv4NextHopNHGFull("10.6.1.1", "10.6.1.100", ribID);
+        // Make it a blackhole type
+        nhgObj.type = fib::NEXTHOP_TYPE_BLACKHOLE;
+        nhgObj.bh_type = fib::BLACKHOLE_UNSPEC;
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObj, AF_INET), 0);
+
+        RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(ribID);
+        ASSERT_NE(entry, nullptr);
+
+        // Same -> no update
+        bool updated = false;
+        entry->checkNeedUpdate(nhgObj, AF_INET, updated);
+        ASSERT_FALSE(updated);
+
+        // Change bh_type
+        NextHopGroupFull modBh = nhgObj;
+        modBh.bh_type = fib::BLACKHOLE_REJECT;
+        updated = false;
+        entry->checkNeedUpdate(modBh, AF_INET, updated);
+        ASSERT_TRUE(updated);
+
+        ASSERT_EQ(m_nhgmgr->delNHGFull(ribID), 0);
+    }
+
+    /*
+     * Test: createSonicNormalNHGObjectKey for single nexthop entry.
+     */
+    TEST_F(FpmSyncdNhgMgr, CreateSonicNormalNHGObjectKeySingleNexthop)
+    {
+        uint32_t ribID = 240;
+        NextHopGroupFull nhgObj = createSingleIPv4NextHopNHGFull("10.7.1.1", "10.7.1.100", ribID);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObj, AF_INET), 0);
+
+        RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(ribID);
+        ASSERT_NE(entry, nullptr);
+        ASSERT_TRUE(entry->isSingleNexthop());
+
+        SonicNHGObjectKey key;
+        SonicNHGObjectKey::createSonicNormalNHGObjectKey(entry, key);
+        ASSERT_EQ(key.type, SONIC_NHG_OBJ_TYPE_NHG_NORMAL);
+        ASSERT_FALSE(key.nexthop.empty());
+        ASSERT_FALSE(key.ifName.empty());
+        ASSERT_TRUE(key.groupMember.empty());
+
+        ASSERT_EQ(m_nhgmgr->delNHGFull(ribID), 0);
+    }
+
+    /*
+     * Test: createSonicNormalNHGObjectKey for multi nexthop entry.
+     */
+    TEST_F(FpmSyncdNhgMgr, CreateSonicNormalNHGObjectKeyMultiNexthop)
+    {
+        uint32_t memberID1 = 250;
+        uint32_t memberID2 = 251;
+        uint32_t parentID = 252;
+
+        NextHopGroupFull mem1 = createSingleIPv4NextHopNHGFull("10.8.1.1", "10.8.1.100", memberID1);
+        NextHopGroupFull mem2 = createSingleIPv4NextHopNHGFull("10.8.1.2", "10.8.1.101", memberID2);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(mem1, AF_INET), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(mem2, AF_INET), 0);
+
+        map<uint32_t, NextHopGroupFull> members = {{memberID1, mem1}, {memberID2, mem2}};
+        map<uint32_t, uint32_t> weights = {{memberID1, 1}, {memberID2, 1}};
+        map<uint32_t, uint32_t> numDirects = {{memberID1, 1}, {memberID2, 1}};
+        vector<uint32_t> depends = {memberID1, memberID2};
+        vector<uint32_t> dependents;
+
+        NextHopGroupFull parentNhg = createMultiNextHopNHGFull(members, weights, numDirects, depends, dependents, parentID);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(parentNhg, AF_INET), 0);
+
+        RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(parentID);
+        ASSERT_NE(entry, nullptr);
+        ASSERT_FALSE(entry->isSingleNexthop());
+
+        SonicNHGObjectKey key;
+        SonicNHGObjectKey::createSonicNormalNHGObjectKey(entry, key);
+        ASSERT_EQ(key.type, SONIC_NHG_OBJ_TYPE_NHG_NORMAL);
+        ASSERT_TRUE(key.nexthop.empty());
+        ASSERT_FALSE(key.groupMember.empty());
+
+        ASSERT_EQ(m_nhgmgr->delNHGFull(parentID), 0);
+        ASSERT_EQ(m_nhgmgr->delNHGFull(memberID1), 0);
+        ASSERT_EQ(m_nhgmgr->delNHGFull(memberID2), 0);
+    }
+
+    /*
+     * Test: createSonicPICContentObjectKey from RIBNHGEntry overload.
+     */
+    TEST_F(FpmSyncdNhgMgr, CreateSonicPICContentObjectKeyFromEntry)
+    {
+        uint32_t ribID = 260;
+        NextHopGroupFull nhgObj = createSingleSRv6VPNNextHopNHGFull(
+            "fc00::1", "fc00::100", "10.0.0.1", ribID);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObj, AF_INET), 0);
+
+        RIBNHGEntry *entry = m_nhgmgr->getRIBNHGEntryByRIBID(ribID);
+        ASSERT_NE(entry, nullptr);
+
+        SonicNHGObjectKey key;
+        int ret = SonicNHGObjectKey::createSonicPICContentObjectKey(entry, key);
+        ASSERT_EQ(ret, 0);
+        ASSERT_EQ(key.type, SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC);
+        ASSERT_FALSE(key.vpnSid.empty());
+        ASSERT_FALSE(key.segSrc.empty());
+
+        ASSERT_EQ(m_nhgmgr->delNHGFull(ribID), 0);
+    }
+
+    /*
+     * Test: recoverSonicIDMapFromDB returns 0 (stub).
+     */
+    TEST_F(FpmSyncdNhgMgr, RecoverSonicIDMapFromDB)
+    {
+        SonicIDAllocator *allocator = m_nhgmgr->m_sonic_id_manager.getAllocator(
+            SONIC_NHG_OBJ_TYPE_NHG_NORMAL);
+        ASSERT_NE(allocator, nullptr);
+        ASSERT_EQ(allocator->recoverSonicIDMapFromDB(), 0);
+    }
+
+    /*
+     * Test: getRIBNHGEntryByKey always returns NULL (not implemented).
+     */
+    TEST_F(FpmSyncdNhgMgr, GetRIBNHGEntryByKeyReturnsNull)
+    {
+        uint32_t ribID = 270;
+        NextHopGroupFull nhgObj = createSingleIPv4NextHopNHGFull("10.9.1.1", "10.9.1.100", ribID);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(nhgObj, AF_INET), 0);
+
+        ASSERT_EQ(m_nhgmgr->getRIBNHGEntryByKey("any_key"), nullptr);
+
+        ASSERT_EQ(m_nhgmgr->delNHGFull(ribID), 0);
+    }
+
+    /*
+     * Test: dumpNHGGroupFull does not crash on various NHG types.
+     */
+    TEST_F(FpmSyncdNhgMgr, DumpNHGGroupFullDoesNotCrash)
+    {
+        // IPv4 nexthop
+        NextHopGroupFull nhgIPv4 = createSingleIPv4NextHopNHGFull("10.10.1.1", "10.10.1.100", 280);
+        ASSERT_NO_FATAL_FAILURE(m_nhgmgr->dumpNHGGroupFull(nhgIPv4));
+
+        // IPv6 nexthop
+        NextHopGroupFull nhgIPv6 = createSingleIPv6NextHopNHGFull("fc00::10", "fc00::200", 281);
+        ASSERT_NO_FATAL_FAILURE(m_nhgmgr->dumpNHGGroupFull(nhgIPv6));
+
+        // SRv6 nexthop
+        NextHopGroupFull nhgSRv6 = createSingleSRv6VPNNextHopNHGFull(
+            "fc00::1", "fc00::100", "10.0.0.1", 282);
+        ASSERT_NO_FATAL_FAILURE(m_nhgmgr->dumpNHGGroupFull(nhgSRv6));
+
+        // Multi nexthop
+        NextHopGroupFull mem1 = createSingleIPv4NextHopNHGFull("10.10.2.1", "10.10.2.100", 283);
+        NextHopGroupFull mem2 = createSingleIPv4NextHopNHGFull("10.10.2.2", "10.10.2.101", 284);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(mem1, AF_INET), 0);
+        ASSERT_EQ(m_nhgmgr->addNHGFull(mem2, AF_INET), 0);
+        map<uint32_t, NextHopGroupFull> members = {{283, mem1}, {284, mem2}};
+        map<uint32_t, uint32_t> weights = {{283, 1}, {284, 1}};
+        map<uint32_t, uint32_t> numDirects = {{283, 1}, {284, 1}};
+        vector<uint32_t> depends = {283, 284};
+        vector<uint32_t> dependents;
+        NextHopGroupFull nhgMulti = createMultiNextHopNHGFull(members, weights, numDirects, depends, dependents, 285);
+        ASSERT_NO_FATAL_FAILURE(m_nhgmgr->dumpNHGGroupFull(nhgMulti));
+
+        ASSERT_EQ(m_nhgmgr->delNHGFull(283), 0);
+        ASSERT_EQ(m_nhgmgr->delNHGFull(284), 0);
+    }
 }
