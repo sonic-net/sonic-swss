@@ -2285,6 +2285,8 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
         if (!weights.empty())
         {
             fvw.weight = std::move(weights);
+            SWSS_LOG_DEBUG("msgtype: %d, DestIP: %s, weights: %s", nlmsg_type, destipprefix, weights.c_str());
+
         }
     }
 

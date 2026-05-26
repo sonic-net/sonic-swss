@@ -113,7 +113,11 @@ protected:
 
 private:
     std::unique_ptr<swss::Table> m_eni_name_table;
+    std::unique_ptr<swss::Table> m_eni_oid_table;
     std::shared_ptr<swss::DBConnector> m_counter_db;
+    std::shared_ptr<swss::DBConnector> m_dpu_counter_db;
+    std::unique_ptr<swss::Table> m_dpu_eni_name_table;
+    std::unique_ptr<swss::Table> m_dpu_eni_oid_table;
     std::shared_ptr<swss::DBConnector> m_asic_db;
     DashHaOrch* m_dash_ha_orch = nullptr;
     bool m_ha_flow_owner_attr_supported = false;

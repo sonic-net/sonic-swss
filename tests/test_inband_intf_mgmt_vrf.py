@@ -3,6 +3,8 @@ import pytest
 
 from swsscommon import swsscommon
 
+from dvslib.dvs_common import wait_for_result, PollingConfig
+
 MGMT_VRF_NAME = 'mgmt'
 INBAND_INTF_NAME = 'Ethernet4'
 
@@ -119,47 +121,64 @@ class TestInbandInterface(object):
         self.setup_db(dvs)
 
         vrf_oid = self.add_mgmt_vrf(dvs)
-        self.create_inband_intf(intf_name)
+        try:
+            self.create_inband_intf(intf_name)
 
-        # check application database
-        tbl = swsscommon.Table(self.appl_db, 'INTF_TABLE')
-        intf_keys = tbl.getKeys()
-        status, fvs = tbl.get(intf_name)
-        assert status == True
-        for fv in fvs:
-            if fv[0] == 'vrf_name':
-                assert fv[1] == MGMT_VRF_NAME
+            # check application database. INTF_TABLE is populated asynchronously by
+            # intfmgrd; PortChannel-backed interfaces add an extra teamd -> kernel
+            # round-trip that can push the row beyond the default 5s poll window
+            # (observed in CI: ~5.1s). Poll up to 30s instead.
+            tbl = swsscommon.Table(self.appl_db, 'INTF_TABLE')
 
-        if not intf_name.startswith('Loopback'):
-            # check ASIC router interface database
-            # one loopback router interface one port based router interface
-            intf_entries = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE", 2)
-            for key in intf_entries:
-                fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE", key)
-                loopback = False
-                intf_vrf_oid = None
-                for k, v in fvs.items():
-                    if k == 'SAI_ROUTER_INTERFACE_ATTR_TYPE' and v == 'SAI_ROUTER_INTERFACE_TYPE_LOOPBACK':
-                        loopback = True
-                        break
-                    if k == 'SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID':
-                        intf_vrf_oid = v
-                if loopback:
-                    continue
-                assert intf_vrf_oid == vrf_oid
+            def _intf_table_ready():
+                status, fvs = tbl.get(intf_name)
+                return (bool(status), fvs)
 
-        self.remove_inband_intf(intf_name)
-        time.sleep(1)
-        # check application database
-        tbl = swsscommon.Table(self.appl_db, 'INTF_TABLE')
-        intf_keys = tbl.getKeys()
-        assert len(intf_keys) == 0
+            _, fvs = wait_for_result(
+                _intf_table_ready,
+                PollingConfig(polling_interval=1, timeout=30, strict=True),
+                failure_message="INTF_TABLE entry for {} not created in time".format(intf_name),
+            )
+            for fv in fvs:
+                if fv[0] == 'vrf_name':
+                    assert fv[1] == MGMT_VRF_NAME
 
-        if not intf_name.startswith('Loopback'):
-            self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE", 1)
- 
-        self.del_inband_mgmt_vrf()
-        self.del_mgmt_vrf(dvs)
+            if not intf_name.startswith('Loopback'):
+                # check ASIC router interface database
+                # one loopback router interface one port based router interface
+                intf_entries = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE", 2)
+                for key in intf_entries:
+                    fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE", key)
+                    loopback = False
+                    intf_vrf_oid = None
+                    for k, v in fvs.items():
+                        if k == 'SAI_ROUTER_INTERFACE_ATTR_TYPE' and v == 'SAI_ROUTER_INTERFACE_TYPE_LOOPBACK':
+                            loopback = True
+                            break
+                        if k == 'SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID':
+                            intf_vrf_oid = v
+                    if loopback:
+                        continue
+                    assert intf_vrf_oid == vrf_oid
+
+            self.remove_inband_intf(intf_name)
+            time.sleep(1)
+            # check application database
+            tbl = swsscommon.Table(self.appl_db, 'INTF_TABLE')
+            intf_keys = tbl.getKeys()
+            assert len(intf_keys) == 0
+
+            if not intf_name.startswith('Loopback'):
+                self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE", 1)
+        finally:
+            # Always tear down the mgmt VRF, even when a parametrized assertion
+            # fails. Without this, a PortChannel5 failure leaks `mgmt` VRF state
+            # and causes the subsequent Loopback1 parametrization to fail as a
+            # cascade.
+            try:
+                self.del_inband_mgmt_vrf()
+            finally:
+                self.del_mgmt_vrf(dvs)
 
 
 # Add Dummy always-pass test at end as workaroud

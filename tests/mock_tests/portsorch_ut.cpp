@@ -109,14 +109,23 @@ namespace portsorch_test
         }
         else if (attr_count == 1 && attr_list[0].id == SAI_PORT_ATTR_PORT_SERDES_ID)
         {
-            // Check if serdes exists for this port
+            // Prefer test-tracked serdes if present.
             auto it = _port_to_serdes_map.find(port_id);
             if (it != _port_to_serdes_map.end()) {
                 attr_list[0].value.oid = it->second;
-            } else {
-                attr_list[0].value.oid = SAI_NULL_OBJECT_ID;
+                status = SAI_STATUS_SUCCESS;
             }
-            status = SAI_STATUS_SUCCESS;
+            // Fall through to the real SAI only for genuine VS PORT objects so
+            // default-port serdes (auto-created during init_switch) gets cleaned
+            // up. Synthetic OIDs used by gearbox tests (e.g., 0x2100...) decode
+            // to non-PORT types and would throw inside libsairedis-meta.
+            else if (sai_object_type_query(port_id) == SAI_OBJECT_TYPE_PORT) {
+                status = pold_sai_port_api->get_port_attribute(port_id, attr_count, attr_list);
+            }
+            else {
+                attr_list[0].value.oid = SAI_NULL_OBJECT_ID;
+                status = SAI_STATUS_SUCCESS;
+            }
         }
         else if (attr_count == 1 && attr_list[0].id == SAI_PORT_ATTR_SUPPORTED_AUTO_NEG_MODE)
         {
@@ -372,6 +381,7 @@ namespace portsorch_test
     {
         _sai_remove_port_serdes_calls.push_back(port_serdes_id);
 
+        bool tracked = false;
         // Erase any port-to-serdes mappings that reference this serdes ID,
         // so subsequent SAI_PORT_ATTR_PORT_SERDES_ID queries reflect removal.
         for (auto it = _port_to_serdes_map.begin(); it != _port_to_serdes_map.end(); )
@@ -379,11 +389,20 @@ namespace portsorch_test
             if (it->second == port_serdes_id)
             {
                 it = _port_to_serdes_map.erase(it);
+                tracked = true;
             }
             else
             {
                 ++it;
             }
+        }
+
+        // Forward to real SAI only for genuine PORT_SERDES OIDs so default VS
+        // port serdes objects get cleaned up. Test-fabricated OIDs would throw
+        // inside libsairedis-meta.
+        if (!tracked && sai_object_type_query(port_serdes_id) == SAI_OBJECT_TYPE_PORT_SERDES)
+        {
+            return pold_sai_port_api->remove_port_serdes(port_serdes_id);
         }
 
         return SAI_STATUS_SUCCESS;
@@ -541,6 +560,49 @@ namespace portsorch_test
         std::vector<std::string> taskList;
         obj->dumpPendingTasks(taskList);
         ASSERT_TRUE(taskList.empty());
+    }
+
+    //
+    // Best-effort port cleanup used by tests that touch Path Tracing.
+    //
+    // After a port has had Path Tracing enabled+disabled within a test, the
+    // SAI virtual switch returns SAI_STATUS_OBJECT_IN_USE on
+    // sai_port_api->remove_port() for that port even though PortsOrch has
+    // unset its TAM and removed the TAM/INT/Report objects. The DEL task for
+    // that port therefore stays pending. This helper drains via repeated
+    // doTask() so the non-stuck ports still get removed, and does not assert
+    // on the residual VS-side leak so the test itself does not get marked
+    // failed by this cleanup.
+    //
+    void cleanupPortsBestEffort(PortsOrch *obj)
+    {
+        Port p;
+        obj->getCpuPort(p);
+
+        auto portList = obj->getAllPorts();
+        portList.erase(p.m_alias);
+
+        std::deque<KeyOpFieldsValuesTuple> kfvList;
+        for (const auto &cit : portList)
+        {
+            kfvList.push_back({ cit.first, DEL_COMMAND, { } });
+        }
+
+        auto consumer = dynamic_cast<Consumer*>(obj->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvList);
+
+        // Drain in a loop so multi-pass removals complete where possible.
+        std::vector<std::string> taskList;
+        for (int i = 0; i < 8; ++i)
+        {
+            static_cast<Orch*>(obj)->doTask();
+            taskList.clear();
+            obj->dumpPendingTasks(taskList);
+            if (taskList.empty())
+            {
+                break;
+            }
+        }
     }
 
     struct PortsOrchTest : public ::testing::Test
@@ -1108,7 +1170,9 @@ namespace portsorch_test
         auto &ports = defaultPortList;
         ASSERT_TRUE(!ports.empty());
 
-        // default Ethernet0 has different lanes so create_ports() is triggered
+        // default Ethernet0 has different lanes so create_ports() is triggered.
+        // Set role explicitly: PortConfig::role.value has no default initializer,
+        // so leaving it unset would propagate uninitialized memory into Port::m_role.
         std::vector<FieldValueTuple> fvList = {
             { "alias",               alias       },
             { "index",               "0"         },
@@ -1123,6 +1187,7 @@ namespace portsorch_test
             { "tpid",                "0x8101"    },
             { "pfc_asym",            "on"        },
             { "admin_status",        "up"        },
+            { "role",                "Ext"       },
             { "description",         "FP port"   }
         };
 
@@ -2409,6 +2474,8 @@ namespace portsorch_test
         std::vector<std::string> taskList;
         gPortsOrch->dumpPendingTasks(taskList);
         ASSERT_TRUE(taskList.empty());
+
+        cleanupPortsBestEffort(gPortsOrch);
     }
 
     TEST_F(PortsOrchTest, PortPTConfigNonDefaultTimestampTemplate)
@@ -2503,6 +2570,8 @@ namespace portsorch_test
         std::vector<std::string> taskList;
         gPortsOrch->dumpPendingTasks(taskList);
         ASSERT_TRUE(taskList.empty());
+
+        cleanupPortsBestEffort(gPortsOrch);
     }
 
     TEST_F(PortsOrchTest, PortPTConfigInvalidInterfaceID)
@@ -2571,6 +2640,8 @@ namespace portsorch_test
         std::vector<std::string> taskList;
         gPortsOrch->dumpPendingTasks(taskList);
         ASSERT_TRUE(taskList.empty());
+
+        cleanupPortsBestEffort(gPortsOrch);
     }
 
     TEST_F(PortsOrchTest, PortPTConfigInvalidInterfaceTimestampTemplate)
@@ -2639,6 +2710,8 @@ namespace portsorch_test
         std::vector<std::string> taskList;
         gPortsOrch->dumpPendingTasks(taskList);
         ASSERT_TRUE(taskList.empty());
+
+        cleanupPortsBestEffort(gPortsOrch);
     }
 
     TEST_F(PortsOrchTest, PortPTSAIFailureHandling)
@@ -2760,6 +2833,8 @@ namespace portsorch_test
 
         _unhook_sai_switch_api();
         _unhook_sai_port_api();
+
+        cleanupPortsBestEffort(gPortsOrch);
     }
 
     TEST_F(PortsOrchTest, PortPTCapabilityUnsupported)
@@ -2832,6 +2907,8 @@ namespace portsorch_test
 
         _unhook_sai_switch_api();
         _unhook_sai_port_api();
+
+        cleanupPortsBestEffort(gPortsOrch);
     }
 
     /**
