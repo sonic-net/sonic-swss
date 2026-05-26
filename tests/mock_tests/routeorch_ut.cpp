@@ -540,7 +540,7 @@ namespace routeorch_test
             NextHopGroup temp_nhg = gNhgOrch->createTempNhg(nhg_key);
             
             // Get the single NH that was selected
-            const auto& nhs = temp_nhg.getNhgKey().getNextHops();
+            const auto nhs = temp_nhg.getNhgKey().getNextHops();
             ASSERT_EQ(nhs.size(), 1u); // Temp NHG should have exactly one NH
             
             // Record which NH was selected
