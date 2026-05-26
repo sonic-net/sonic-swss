@@ -682,6 +682,8 @@ namespace ut_fpmsyncd
         NextHopGroupFull nhg = NextHopGroupFull(id_in, key_in, type_in, vrf_id_in, ifindex_t_in, ifname_in, depends_in, dependents_in,
                                                 label_type_in, bh_type_in, gateway_in, src_in, rmap_src_in, weight_in,
                                                 flags_in, nhg_flags_in, has_srv6, has_seg6_segs, nh_srv6_in, nh_seg6_segs_in, nh_segs_in);
+        free(nh_seg6_segs_in);
+        delete nh_srv6_in;
         return nhg;
     }
     vector<string> splitResults(string result, string delimiter)
