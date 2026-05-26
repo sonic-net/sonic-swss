@@ -24,17 +24,14 @@ class TestInbandInterface(object):
         assert status == exists
         return status, fvs
 
-    def wait_for_table_empty(self, table_name):
-        tbl = swsscommon.Table(self.appl_db, table_name)
+    def wait_for_vrf_table_empty(self):
+        tbl = swsscommon.Table(self.appl_db, 'VRF_TABLE')
         for _ in range(10):
-            keys = tbl.getKeys()
-            if len(keys) == 0:
+            vrf_keys = tbl.getKeys()
+            if len(vrf_keys) == 0:
                 return
             time.sleep(1)
-        assert len(keys) == 0
-
-    def wait_for_vrf_table_empty(self):
-        self.wait_for_table_empty('VRF_TABLE')
+        assert len(vrf_keys) == 0
 
     def cleanup_mgmt_vrf(self, dvs):
         tbl = swsscommon.Table(self.cfg_db, 'MGMT_VRF_CONFIG')
