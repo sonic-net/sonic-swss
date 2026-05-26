@@ -175,6 +175,7 @@ public:
     void initializePortOperErrors(Port &port);
     bool getInbandPort(Port &port);
     bool getVlanByVlanId(sai_vlan_id_t vlan_id, Port &vlan);
+    bool getVlanMember(const string &alias, const Port &vlan, sai_object_id_t &vlan_member_id);
 
     bool setHostIntfsOperStatus(const Port& port, bool up) const;
     void updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const;
@@ -261,6 +262,8 @@ public:
 
     bool addTunnel(string tunnel,sai_object_id_t, bool learning=true);
     bool removeTunnel(Port tunnel);
+    bool addL2NexthopGroup(string nhg_alias, sai_object_id_t nhg_oid);
+    bool removeL2NexthopGroup(Port nhgPort);
     bool addBridgePort(Port &port);
     bool removeBridgePort(Port &port);
     bool addVlanMember(Port &vlan, Port &port, string& tagging_mode, string end_point_ip = "");
