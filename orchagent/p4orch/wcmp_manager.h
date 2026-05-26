@@ -48,6 +48,7 @@ struct P4WcmpGroupEntry
     std::vector<sai_object_id_t> nexthop_ids;
     std::vector<uint32_t> nexthop_weights;
     std::string wcmp_group_label;
+    bool native_wcmp = false;
 };
 
 // WcmpManager listens to changes in table APP_P4RT_WCMP_GROUP_TABLE_NAME and
