@@ -46,6 +46,50 @@ respective upstream branches, then the submodule SHAs are bumped in
 
 ---
 
+## Development Workflow (Phases)
+
+Every ERSPAN/SPAN change MUST follow these phases in order:
+
+| Phase | What | Deliverable |
+|-------|------|-------------|
+| 1. Design | Identify JIRA ticket, map to CONFIG_DB fields, SAI attrs, CLI commands | Brief plan in PR description |
+| 2. Implement | Code changes across repos (orchagent, UCLI, YANG, gNMI) | Commits on feature branch |
+| 3. Unit Test | Run SWSS mock tests + UCLI Python tests, all must pass | `make check` / `python3 -m unittest` output |
+| 4. Build | Build full SONiC image or deploy UCLI standalone | Successful build log |
+| 5. **On-Box Testing** | Deploy to lab switch, run all relevant test cases, capture raw logs | **Raw log file attached to PR and Jira** |
+| 6. PR + Review | Push, create PR, address review comments | Merged PR |
+
+### Phase 5: On-Box Testing (MANDATORY)
+
+This phase is **non-negotiable** for any PR that touches mirror session logic.
+
+**Steps:**
+
+1. Deploy the image (or hot-patch orchagent binary + UCLI scripts) to lab switch
+2. Run the relevant test scenarios from "On-Box Validation" section below
+3. Capture **full raw command output** for every test case (see "On-Box Test Log
+   Format" section for exact format requirements)
+4. Save all output to a single log file (e.g., `erspan_span_test_results.txt`)
+5. Attach the raw log file to:
+   - The GitHub PR as a comment or file attachment
+   - The relevant Jira ticket(s) as evidence
+
+**What the log file must contain:**
+
+- Pre-test baseline (clean state, SWSS uptime, INIT_VIEW count)
+- Each test case with: UCLI commands, CONFIG_DB/STATE_DB/ASIC_DB dumps, show output
+- Post-test cleanup verification
+- SWSS uptime check (must match pre-test — no crashes during testing)
+- Pass/fail annotation per test case with the raw evidence above it
+
+**The agent must NOT:**
+
+- Summarize or paraphrase switch output
+- Report pass/fail without the underlying raw logs
+- Skip this phase for "trivial" changes (any mirror logic change needs validation)
+
+---
+
 ## JIRA Requirements
 
 **Story:** [UPSW-1730](https://bugatti-asic.atlassian.net/browse/UPSW-1730)
@@ -118,7 +162,7 @@ respective upstream branches, then the submodule SHAs are bumped in
 │  ┌──────────── UCLI / Management ─────────────┐                       │
 │  │  port-mirror session <ID> erspan|span ...   │                       │
 │  │  ip access-list ... action span/erspan      │                       │
-│  │  show port-mirror [--detail|counters|hw]    │                       │
+│  │  show port-mirror [detail|counters|hardware]  │                       │
 │  └──────────────────────┬──────────────────────┘                       │
 │                         │ CONFIG_DB writes                             │
 │  ┌──────────────────────┴──────────────────────────────────────────┐   │
@@ -322,7 +366,7 @@ interface Ethernet<N>
 no port-mirror session <ID>
 no port-mirror
 no port-mirror session <ID> erspan|span <field>
-show port-mirror [--detail] [<session-id>]
+show port-mirror [detail] [<session-id>]
 show port-mirror counters
 show port-mirror hardware
 ```
@@ -385,7 +429,7 @@ sessions first.
 
 ```bash
 # 1. CLI → 2. CONFIG_DB → 3. STATE_DB → 4. ASIC_DB → 5. Port binding
-ucli -c "show port-mirror --detail"
+ucli -c "show port-mirror detail"
 redis-cli -n 4 HGETALL "MIRROR_SESSION|<id>"
 redis-cli -n 6 HGETALL "MIRROR_SESSION_TABLE|<id>"
 redis-cli -n 1 HGETALL "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION:<oid>"
@@ -415,85 +459,108 @@ cd /sonic/src/sonic-gnmi && python3 -m pytest test/test_gnmi_configdb_patch.py -
 
 ### On-Box Validation (T0 Topology: spine + fanout + server)
 
+**Note:** Configuration commands require `configure terminal` context. Use
+`ucli -c 'configure terminal' -c '<config-cmd>' -c 'exit'` or chain multiple
+config commands in a single invocation. Show commands work from exec mode.
+
 **SPAN basic:**
 
 ```bash
-ucli -c "port-mirror session 1 span source Ethernet0"
-ucli -c "port-mirror session 1 span destination Ethernet16"
-ucli -c "port-mirror session 1 span direction ingress"
+ucli -c 'configure terminal' \
+  -c 'port-mirror session 1 span source Ethernet0' \
+  -c 'port-mirror session 1 span destination Ethernet16' \
+  -c 'port-mirror session 1 span direction ingress' \
+  -c 'exit'
 ucli -c "show port-mirror"        # verify active
 redis-cli -n 1 KEYS "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION:*"  # verify SAI
-ucli -c "no port-mirror session 1"
+ucli -c 'configure terminal' -c 'no port-mirror session 1' -c 'exit'
 ```
 
 **ERSPAN basic:**
 
 ```bash
-ucli -c "port-mirror session 2 erspan source Ethernet0"
-ucli -c "port-mirror session 2 erspan source-ip 10.1.0.32"
-ucli -c "port-mirror session 2 erspan dest-ip 192.168.240.25"
-ucli -c "port-mirror session 2 erspan direction ingress"
+ucli -c 'configure terminal' \
+  -c 'port-mirror session 2 erspan source Ethernet0' \
+  -c 'port-mirror session 2 erspan source-ip 10.1.0.32' \
+  -c 'port-mirror session 2 erspan dest-ip 192.168.240.25' \
+  -c 'port-mirror session 2 erspan direction ingress' \
+  -c 'exit'
 ucli -c "show port-mirror"        # may be inactive until ARP resolves
 ip neigh add 192.168.240.25 lladdr 00:11:22:33:44:55 dev Ethernet48
 ucli -c "show port-mirror"        # now active
-ucli -c "no port-mirror session 2"
+ucli -c 'configure terminal' -c 'no port-mirror session 2' -c 'exit'
 ```
 
 **Truncation (in-place update):**
 
 ```bash
-ucli -c "port-mirror session 1 span source Ethernet0"
-ucli -c "port-mirror session 1 span destination Ethernet16"
-ucli -c "port-mirror session 1 span truncate 128"
-ucli -c "port-mirror session 1 span truncate 256"   # in-place, no teardown
+ucli -c 'configure terminal' \
+  -c 'port-mirror session 1 span source Ethernet0' \
+  -c 'port-mirror session 1 span destination Ethernet16' \
+  -c 'port-mirror session 1 span truncate 128' \
+  -c 'exit'
+ucli -c 'configure terminal' -c 'port-mirror session 1 span truncate 256' -c 'exit'
 show logging | grep -i truncate                       # verify no deactivate log
-ucli -c "no port-mirror session 1"
+ucli -c 'configure terminal' -c 'no port-mirror session 1' -c 'exit'
 ```
 
 **Sampled mirroring:**
 
 ```bash
-ucli -c "port-mirror session 2 erspan source Ethernet0"
-ucli -c "port-mirror session 2 erspan source-ip 10.1.0.32"
-ucli -c "port-mirror session 2 erspan dest-ip 192.168.240.25"
-ucli -c "port-mirror session 2 erspan direction ingress"
-ucli -c "port-mirror session 2 erspan sample-rate 1000"
+ucli -c 'configure terminal' \
+  -c 'port-mirror session 2 erspan source Ethernet0' \
+  -c 'port-mirror session 2 erspan source-ip 10.1.0.32' \
+  -c 'port-mirror session 2 erspan dest-ip 192.168.240.25' \
+  -c 'port-mirror session 2 erspan direction ingress' \
+  -c 'port-mirror session 2 erspan sample-rate 1000' \
+  -c 'exit'
 redis-cli -n 1 KEYS "ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET:*"  # verify
-ucli -c "port-mirror session 1 span source Ethernet4"
-ucli -c "port-mirror session 1 span destination Ethernet20"
-ucli -c "port-mirror session 1 span sample-rate 100"  # MUST fail (SPAN)
-ucli -c "no port-mirror"
+ucli -c 'configure terminal' \
+  -c 'port-mirror session 1 span source Ethernet4' \
+  -c 'port-mirror session 1 span destination Ethernet20' \
+  -c 'port-mirror session 1 span sample-rate 100' \
+  -c 'exit'
+# sample-rate on SPAN MUST fail (ERSPAN-only)
+ucli -c 'configure terminal' -c 'no port-mirror' -c 'exit'
 ```
 
 **Negative tests:**
 
 ```bash
-# 9th session fails
-for i in $(seq 1 9); do
-  ucli -c "port-mirror session $i span source Ethernet$((i*4))"
-  ucli -c "port-mirror session $i span destination Ethernet$((i*4+2))"
-done
-ucli -c "no port-mirror"
+# 9th session fails (max 8 supported)
+ucli -c 'configure terminal' \
+  $(for i in $(seq 1 9); do echo "-c 'port-mirror session $i span source Ethernet$((i*4))'"; echo "-c 'port-mirror session $i span destination Ethernet$((i*4+2))'"; done) \
+  -c 'exit'
+ucli -c 'configure terminal' -c 'no port-mirror' -c 'exit'
 
-# Recursive mirror
-ucli -c "port-mirror session 1 span source Ethernet0"
-ucli -c "port-mirror session 1 span destination Ethernet0"  # fails
+# Recursive mirror (dst in src list)
+ucli -c 'configure terminal' \
+  -c 'port-mirror session 1 span source Ethernet0' \
+  -c 'port-mirror session 1 span destination Ethernet0' \
+  -c 'exit'
+# destination Ethernet0 must be rejected
 
-# ERSPAN loop
-ucli -c "port-mirror session 2 erspan source-ip 10.1.0.1"
-ucli -c "port-mirror session 2 erspan dest-ip 10.1.0.1"    # fails
+# ERSPAN loop (src_ip == dst_ip)
+ucli -c 'configure terminal' \
+  -c 'port-mirror session 2 erspan source-ip 10.1.0.1' \
+  -c 'port-mirror session 2 erspan dest-ip 10.1.0.1' \
+  -c 'exit'
+# dest-ip same as src_ip must be rejected
 ```
 
 **SPAN stability under neighbor events:**
 
 ```bash
-ucli -c "port-mirror session 1 span source Ethernet0"
-ucli -c "port-mirror session 1 span destination Ethernet16"
+ucli -c 'configure terminal' \
+  -c 'port-mirror session 1 span source Ethernet0' \
+  -c 'port-mirror session 1 span destination Ethernet16' \
+  -c 'port-mirror session 1 span direction ingress' \
+  -c 'exit'
 ip neigh add 10.0.0.100 lladdr aa:bb:cc:dd:ee:ff dev Ethernet48
 ip neigh del 10.0.0.100 dev Ethernet48
 ucli -c "show port-mirror"   # session 1 still active
 show logging | grep -i "mirror.*session.*1"  # no deactivate
-ucli -c "no port-mirror session 1"
+ucli -c 'configure terminal' -c 'no port-mirror session 1' -c 'exit'
 ```
 
 ### Test Log Collection
@@ -525,7 +592,7 @@ returned.
 TEST: UPSW-1735 — port-mirror session 1 span truncate 128
 ==========================================
 
-$ ucli -c "port-mirror session 1 span truncate 128"
+$ ucli -c 'configure terminal' -c 'port-mirror session 1 span truncate 128' -c 'exit'
 
 $ redis-cli -n 4 HGET "MIRROR_SESSION|1" "truncate_size"
 128
@@ -536,12 +603,12 @@ $ redis-cli -n 6 HGETALL "MIRROR_SESSION_TABLE|1"
 3) "monitor_port"
 4) "Ethernet16"
 
-$ ucli -c "show port-mirror --detail"
+$ ucli -c "show port-mirror detail"
 Session  Type  Status  Direction  Source       Destination  Truncate  Congestion
 -------  ----  ------  ---------  ------       -----------  --------  ----------
 1        SPAN  active  ingress    Ethernet0    Ethernet16   128       independent
 
-$ ucli -c "no port-mirror session 1"
+$ ucli -c 'configure terminal' -c 'no port-mirror session 1' -c 'exit'
 ```
 
 **What NOT to do:**
@@ -557,7 +624,7 @@ $ ucli -c "no port-mirror session 1"
 2. **Each config change** — UCLI command, then all four verification layers:
    - CONFIG_DB via `redis-cli -n 4`
    - STATE_DB via `redis-cli -n 6`
-   - `show port-mirror --detail`
+   - `show port-mirror detail`
    - `show running-config` (verify setting survives `config save`/`config reload`)
 3. **ERSPAN encap verification** — `tcpdump -nn 'ip proto 47'` on collector for GRE
 4. **Validation rejection** — each guard must show the error message
