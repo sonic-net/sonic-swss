@@ -78,6 +78,11 @@ std::vector<sai_attribute_t> prepareSaiGroupAttrs(
              wcmp_group_entry.wcmp_group_label.c_str());
     attrs.push_back(attr);
   }
+
+  attr.id = SAI_NEXT_HOP_GROUP_ATTR_NATIVE_WCMP;
+  attr.value.booldata = wcmp_group_entry.native_wcmp;
+  attrs.push_back(attr);
+
   return attrs;
 }
 
@@ -210,6 +215,10 @@ ReturnCodeOr<P4WcmpGroupEntry> WcmpManager::deserializeP4WcmpGroupAppDbEntry(
                 return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
                        << "Failed to deserialize WCMP group actions fields: " << QuotedVar(value);
             }
+        }
+        else if (field == "native_wcmp")
+        {
+            app_db_entry.native_wcmp = (value == "true");
         }
         else if (field != kControllerMetadata)
         {
@@ -847,6 +856,16 @@ std::string WcmpManager::verifyStateCache(const P4WcmpGroupEntry &app_db_entry,
         std::stringstream msg;
         msg << "WCMP group ID " << QuotedVar(app_db_entry.wcmp_group_id) << " does not match internal cache "
             << QuotedVar(wcmp_group_entry->wcmp_group_id) << " in wcmp manager.";
+        return msg.str();
+    }
+
+    if (wcmp_group_entry->native_wcmp != app_db_entry.native_wcmp) {
+        std::stringstream msg;
+        msg << "WCMP group native WCMP profile "
+            << (app_db_entry.native_wcmp ? "true" : "false")
+            << " does not match internal cache "
+            << (wcmp_group_entry->native_wcmp ? "true" : "false")
+            << " in wcmp manager.";
         return msg.str();
     }
 
