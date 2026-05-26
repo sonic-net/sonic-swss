@@ -5,6 +5,7 @@ import pytest
 
 from swsscommon import swsscommon
 from pprint import pprint
+from dvslib.dvs_common import wait_for_result, PollingConfig
 
 
 class TestVrf(object):
@@ -247,6 +248,48 @@ class TestVrf(object):
             self.vrf_update("Vrf_a", req_attr, exp_attr, state)
 
         self.vrf_remove(dvs, "Vrf_a", state)
+
+    def test_VRFMgr_DestructorBulkDelete(self, dvs, testlog):
+        """~VrfMgr() bulk-deletes VRF netdevs via IFLA_GROUP on SIGTERM"""
+        self.setup_db(dvs)
+
+        num_vrfs = 100
+        vrf_group = 0x534F4E02  # matches VRF_MGR_NETLINK_GROUP
+
+        tbl = swsscommon.Table(self.cdb, "VRF")
+        fvs = swsscommon.FieldValuePairs([('empty', 'empty')])
+        vrf_names = [f"Vrf_{i}" for i in range(num_vrfs)]
+        for name in vrf_names:
+            tbl.set(name, fvs)
+
+        def _count_group1000():
+            _, out = dvs.runcmd(['sh', '-c',
+                f"ip -d link show type vrf | grep -c 'group {vrf_group}' || true"])
+            return int(out.strip()) if out.strip() else 0
+
+        wait_for_result(
+            lambda: (_count_group1000() >= num_vrfs, _count_group1000()),
+            polling_config=PollingConfig(polling_interval=1, timeout=60, strict=True),
+            failure_message=f"vrfmgrd did not create {num_vrfs} group-1000 VRFs",
+        )
+
+        # SIGTERM triggers ~VrfMgr() bulk delete
+        dvs.runcmd(['sh', '-c', "supervisorctl stop vrfmgrd"])
+
+        def _check_vrfs_gone():
+            remaining = _count_group1000()
+            return (remaining == 0, remaining)
+
+        try:
+            wait_for_result(
+                _check_vrfs_gone,
+                polling_config=PollingConfig(polling_interval=1, timeout=15, strict=True),
+                failure_message="~VrfMgr() did not bulk-delete group-1000 VRFs on SIGTERM",
+            )
+        finally:
+            for name in vrf_names:
+                tbl._del(name)
+            dvs.runcmd(['sh', '-c', "supervisorctl start vrfmgrd"])
 
     @pytest.mark.xfail(reason="Test unstable, blocking PR builds")
     def test_VRFMgr_Capacity(self, dvs, testlog):

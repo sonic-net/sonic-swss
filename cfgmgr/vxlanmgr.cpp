@@ -3,7 +3,7 @@
 #include <regex>
 #include <sstream>
 #include <string>
-#include <net/if.h>
+#include <cstring>
 
 #include "logger.h"
 #include "producerstatetable.h"
@@ -36,6 +36,8 @@ extern MacAddress gMacAddress;
 #define VLAN "vlan"
 #define DST_IP "dst_ip"
 #define SOURCE_VTEP "source_vtep"
+// IFLA_GROUP for vxlanmgr-owned netdevs (vxlan + bridge).
+#define VXLAN_MGR_NETLINK_GROUP   0x534F4E01u
 
 static std::string getVxlanName(const swss::VxlanMgr::VxlanInfo & info)
 {
@@ -53,10 +55,11 @@ static std::string getVxlanIfName(const swss::VxlanMgr::VxlanInfo & info)
 
 static int cmdCreateVxlan(const swss::VxlanMgr::VxlanInfo & info, std::string & res)
 {
-    // ip link add {{VXLAN}} type vxlan id {{VNI}} [local {{SOURCE IP}}] dstport 4789
+    // ip link add {{VXLAN}} group {{VXLAN_MGR_NETLINK_GROUP}} type vxlan id {{VNI}} [local {{SOURCE IP}}] dstport 4789
     ostringstream cmd;
     cmd << IP_CMD " link add "
         << shellquote(info.m_vxlan)
+        << " group " << VXLAN_MGR_NETLINK_GROUP
         << " type vxlan id "
         << shellquote(info.m_vni)
         << " ";
@@ -80,10 +83,11 @@ static int cmdUpVxlan(const swss::VxlanMgr::VxlanInfo & info, std::string & res)
 
 static int cmdCreateVxlanIf(const swss::VxlanMgr::VxlanInfo & info, std::string & res)
 {
-    // ip link add {{VXLAN_IF}} type bridge
+    // ip link add {{VXLAN_IF}} group {{VXLAN_MGR_NETLINK_GROUP}} type bridge
     ostringstream cmd;
     cmd << IP_CMD " link add "
         << shellquote(info.m_vxlanIf)
+        << " group " << VXLAN_MGR_NETLINK_GROUP
         << " type bridge";
     return swss::exec(cmd.str(), res);
 }
@@ -207,7 +211,21 @@ VxlanMgr::VxlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb,
 
 VxlanMgr::~VxlanMgr()
 {
-    clearAllVxlanDevices();
+    if (WarmStart::isWarmStart())
+    {
+        SWSS_LOG_NOTICE("vxlanmgr: warm restart, skipping bulk delete");
+        return;
+    }
+    for (const char *type : {"vxlan", "bridge"})
+    {
+        std::string res;
+        std::ostringstream cmd;
+        cmd << IP_CMD << " link delete group " << VXLAN_MGR_NETLINK_GROUP
+            << " type " << type;
+        int rc = swss::exec(cmd.str(), res);
+        SWSS_LOG_NOTICE("vxlanmgr: bulk delete group 0x%x type %s rc=%d out=%s",
+                        (unsigned)VXLAN_MGR_NETLINK_GROUP, type, rc, res.c_str());
+    }
 }
 
 void VxlanMgr::doTask(Consumer &consumer)
@@ -1009,6 +1027,7 @@ int VxlanMgr::createVxlanNetdevice(std::string vxlanTunnelName, std::string vni_
     // ip link set <vxlan_dev_name> up
 
     link_add_cmd = std::string("") + IP_CMD + " link add " + vxlan_dev_name + 
+                   " group " + std::to_string(VXLAN_MGR_NETLINK_GROUP) +
                    " address " + gMacAddress.to_string() + " type vxlan id " + 
                    std::string(vni_id) + " local " + src_ip + 
                    ((dst_ip  == "")? "":(" remote " + dst_ip)) + 
