@@ -325,7 +325,11 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::deleteEntry(const st
     SWSS_LOG_ENTER();
 
     Port port;
-    gPortsOrch->getPort(name, port);
+    if (!gPortsOrch->getPort(name, port))
+    {
+        SWSS_LOG_ERROR("Invalid port interface %s", name.c_str());
+        return task_process_status::task_invalid_entry;
+    }
 
     if (!stopWdOnPort(port))
     {
