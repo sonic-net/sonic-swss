@@ -780,7 +780,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
         /* Remove local neighbor entry if exists
          */
         SWSS_LOG_INFO("Received mac age out for mac:%s vlan:0x%" PRIx64 "of type:%d",
-				update.entry.mac.to_string().c_str(), update.entry.bv_id, existing_entry->second.dest_type);
+				update.entry.mac.to_string().c_str(), update.entry.bv_id, static_cast<int>(existing_entry->second.dest_type));
 
         gNeighOrch->processFDBResolve(update.entry);
 

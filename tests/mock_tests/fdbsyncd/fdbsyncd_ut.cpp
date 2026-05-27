@@ -1525,7 +1525,7 @@ TEST_F(FdbSyncdEvpnMhTest, TestMacDelVxlan)
     m_mockFdbSync.m_mac[key].vni = 20200;
     m_mockFdbSync.m_mac[key].ifname = "Vxlan-200";
     m_mockFdbSync.m_mac[key].protocol = RTPROT_UNSPEC;
-    m_mockFdbSync.m_mac[key].nhtype = NEXTHOPGROUP;
+    m_mockFdbSync.m_mac[key].nhtype = FdbDest::NEXTHOPGROUP;
     m_mockFdbSync.m_mac[key].nexthop_value = "536870912";
 
     // Now call macDelVxlan which should find and process the entry
@@ -1544,7 +1544,7 @@ TEST_F(FdbSyncdEvpnMhTest, TestMacDelVxlanEntryNHG)
     m_mockFdbSync.m_mac[key].vni = 30300;
     m_mockFdbSync.m_mac[key].ifname = "Vxlan-300";
     m_mockFdbSync.m_mac[key].protocol = RTPROT_UNSPEC;
-    m_mockFdbSync.m_mac[key].nhtype = NEXTHOPGROUP;
+    m_mockFdbSync.m_mac[key].nhtype = FdbDest::NEXTHOPGROUP;
     m_mockFdbSync.m_mac[key].nexthop_value = "536870913";
 
     // Create m_fdb_info and call macDelVxlanEntry directly
@@ -1811,7 +1811,7 @@ TEST_F(FdbSyncdEvpnMhTest, TestUpdateLocalMacWithVxlanEntry)
     m_mockFdbSync.m_mac[key].vni = 20200;
     m_mockFdbSync.m_mac[key].ifname = "Vxlan-200";
     m_mockFdbSync.m_mac[key].protocol = RTPROT_UNSPEC;
-    m_mockFdbSync.m_mac[key].nhtype = NEXTHOPGROUP;
+    m_mockFdbSync.m_mac[key].nhtype = FdbDest::NEXTHOPGROUP;
     m_mockFdbSync.m_mac[key].nexthop_value = "536870914";
 
     // Enable EVPN NVO

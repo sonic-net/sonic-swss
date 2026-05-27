@@ -668,7 +668,7 @@ namespace fdb_syncd_flush_test
         fdbData.bridge_port_id = SAI_NULL_OBJECT_ID;
         fdbData.type = "dynamic";
         fdbData.origin = FDB_ORIGIN_VXLAN_ADVERTIZED;
-        fdbData.dest_type = VTEP;
+        fdbData.dest_type = FdbDest::VTEP;
         fdbData.dest_value = "1.1.1.1";
         fdbData.esi = "";
         fdbData.vni = 100;
