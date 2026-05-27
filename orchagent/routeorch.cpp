@@ -1249,6 +1249,17 @@ void RouteOrch::doTask(ConsumerBase& consumer)
         {
             m_srv6Orch->removeSrv6Nexthops(m_bulkSrv6NhgReducedVec);
         }
+
+        // Drain queued re-suppress AFTER NHG/srv6 teardown so SAI
+        // neighbor_remove doesn't hit OBJECT_IN_USE.
+        {
+            MuxOrch* mux_orch_drain = gDirectory.get<MuxOrch*>();
+            if (mux_orch_drain)
+            {
+                mux_orch_drain->drainPendingReSuppress();
+            }
+        }
+
         /* No Update to Default Route so we can return */
         if (!(v4_default_nhg_key.getSize()) && !(v6_default_nhg_key.getSize()))
         {
@@ -2023,6 +2034,25 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
         srv6_nh = true;
     }
 
+    // Notify MuxOrch before SAI route_create is staged: any
+    // SuppressedResolved NH gets unsuppressed so its OID exists at flush.
+    if (!overlay_nh && !srv6_nh)
+    {
+        MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+        if (mux_orch && mux_orch->isAnySliceConfigured())
+        {
+            RouteKey rt_key = { vrf_id, ipPrefix };
+            for (const auto& nh : nextHops.getNextHops())
+            {
+                if (nh.ip_address.isZero() || nh.isIntfNextHop())
+                {
+                    continue;
+                }
+                mux_orch->onRouteAdd(nh, rt_key);
+            }
+        }
+    }
+
     auto it_route = m_syncdRoutes.at(vrf_id).find(ipPrefix);
 
     if (m_fgNhgOrch->isRouteFineGrained(vrf_id, ipPrefix, nextHops))
@@ -2599,6 +2629,41 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         {
             decreaseNextHopRefCount(it_route->second.nhg_key);
             auto ol_nextHops = it_route->second.nhg_key;
+
+            // Drop per-NH refs for the old NHG so an NH no longer used
+            // by any route becomes eligible for re-suppress at end of
+            // doTask. Skip NHs that survive in the new NHG — onRouteAdd
+            // above already counted them under the same RouteKey, so
+            // removing here would falsely queue a still-referenced NH.
+            if (!ol_nextHops.is_overlay_nexthop() && !ol_nextHops.is_srv6_nexthop())
+            {
+                MuxOrch* mux_orch_upd = gDirectory.get<MuxOrch*>();
+                if (mux_orch_upd && mux_orch_upd->isAnySliceConfigured())
+                {
+                    std::set<NextHopKey> new_nhs;
+                    if (!nextHops.is_overlay_nexthop() && !nextHops.is_srv6_nexthop())
+                    {
+                        for (const auto& nh : nextHops.getNextHops())
+                        {
+                            new_nhs.insert(nh);
+                        }
+                    }
+                    RouteKey rt_key = { vrf_id, ipPrefix };
+                    for (const auto& nh : ol_nextHops.getNextHops())
+                    {
+                        if (nh.ip_address.isZero() || nh.isIntfNextHop())
+                        {
+                            continue;
+                        }
+                        if (new_nhs.find(nh) != new_nhs.end())
+                        {
+                            continue;
+                        }
+                        mux_orch_upd->onRouteRemove(nh, rt_key);
+                    }
+                }
+            }
+
             if (ol_nextHops.is_srv6_nexthop())
             {
                 m_bulkSrv6NhgReducedVec.emplace_back(ol_nextHops);
@@ -2965,6 +3030,28 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
 
     SWSS_LOG_INFO("Remove route %s with next hop(s) %s",
             ipPrefix.to_string().c_str(), it_route->second.nhg_key.to_string().c_str());
+
+    // Drop per-NH ref now that SAI route_remove succeeded; queued
+    // re-suppress runs later in doTask once NHGs holding this NH drain.
+    {
+        const NextHopGroupKey& gone_nhg = it_route->second.nhg_key;
+        if (!gone_nhg.is_overlay_nexthop() && !gone_nhg.is_srv6_nexthop())
+        {
+            MuxOrch* mux_orch_post = gDirectory.get<MuxOrch*>();
+            if (mux_orch_post && mux_orch_post->isAnySliceConfigured())
+            {
+                RouteKey rt_key = { vrf_id, ipPrefix };
+                for (const auto& nh : gone_nhg.getNextHops())
+                {
+                    if (nh.ip_address.isZero() || nh.isIntfNextHop())
+                    {
+                        continue;
+                    }
+                    mux_orch_post->onRouteRemove(nh, rt_key);
+                }
+            }
+        }
+    }
 
     /* Publish removal status, removes route entry from APPL STATE DB */
     publishRouteState(ctx);
