@@ -1796,9 +1796,6 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
     }
     else
     {
-        // Populate next hop group string. nh.ips is now a std::vector that
-        // preserves duplicate IPs: unnumbered ECMP (which uses a
-        // shared link-local nexthop IP placeholder across paths) but over different ifnames.
         auto ifnames = tokenize(nh.ifname, ',');
         size_t idx = 0;
         for (const auto& ip : nh.ips)
