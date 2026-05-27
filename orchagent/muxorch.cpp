@@ -410,8 +410,8 @@ static bool remove_nh_tunnel(sai_object_id_t nh_id, IpAddress& ipAddr)
     return true;
 }
 
-MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress peer_ip, MuxCableType cable_type, MuxNbrHandlerType nbr_handler_type)
-         :mux_name_(name), srv_ip4_(srv_ip4), srv_ip6_(srv_ip6), peer_ip4_(peer_ip), cable_type_(cable_type), nbr_handler_type_(nbr_handler_type)
+MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress peer_ip, MuxCableType cable_type, MuxNbrHandlerType nbr_handler_type, IpPrefix slice_ip6)
+         :mux_name_(name), srv_ip4_(srv_ip4), srv_ip6_(srv_ip6), peer_ip4_(peer_ip), slice_ip6_(slice_ip6), cable_type_(cable_type), nbr_handler_type_(nbr_handler_type)
 {
     mux_orch_ = gDirectory.get<MuxOrch*>();
     mux_cb_orch_ = gDirectory.get<MuxCableOrch*>();
@@ -1675,6 +1675,55 @@ MuxCable* MuxOrch::findMuxCableInSubnet(IpAddress ip)
     return nullptr;
 }
 
+MuxCable* MuxOrch::findMuxCableBySlice(IpAddress ip)
+{
+    for (auto it = mux_cable_tb_.begin(); it != mux_cable_tb_.end(); it++)
+    {
+        MuxCable* ptr = it->second.get();
+        if (ptr->isIpInSlice(ip))
+        {
+            return ptr;
+        }
+    }
+    return nullptr;
+}
+
+bool MuxOrch::isSuppressedNeighbor(const IpAddress& ip, const std::string& port_name, MuxCable** out_cable)
+{
+    if (out_cable) *out_cable = nullptr;
+
+    if (!isSliceConfigured() || port_name.empty())
+    {
+        return false;
+    }
+
+    MuxCable* cable = findMuxCableBySlice(ip);
+    if (!cable)
+    {
+        return false;
+    }
+
+    // Only suppress on the slice cable's own port.
+    if (port_name != cable->getMuxName())
+    {
+        return false;
+    }
+
+    // server_ipv6 and skip neighbors (soc_ipv4/soc_ipv6) do not get suppressed.
+    if (ip == cable->getServerIp6().getIp())
+    {
+        return false;
+    }
+
+    if (skip_neighbors_.find(ip) != skip_neighbors_.end())
+    {
+        return false;
+    }
+
+    if (out_cable) *out_cable = cable;
+    return true;
+}
+
 bool MuxOrch::isMuxPortPrefixNbr(const IpAddress& nbr, const MacAddress& mac, string& alias)
 {
     // If prefix nbrs are not supported, return false
@@ -1813,6 +1862,41 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
          * Instead, wait for neighbor update events
          */
         return;
+    }
+
+    // A previously-suppressed neighbor whose MAC moved
+    // off the slice cable's port must be re-enabled in SAI.
+    if (isSliceConfigured() && !m_suppressed_neighbors.empty())
+    {
+        for (auto it = m_suppressed_neighbors.begin(); it != m_suppressed_neighbors.end(); )
+        {
+            if (it->second != update.entry.mac)
+            {
+                ++it;
+                continue;
+            }
+
+            MuxCable* slice_cable = findMuxCableBySlice(it->first.ip_address);
+            if (!slice_cable || update.entry.port_name == slice_cable->getMuxName())
+            {
+                ++it;
+                continue;
+            }
+
+            NeighborEntry nbr = it->first;
+            MacAddress saved_mac = it->second;
+            it = m_suppressed_neighbors.erase(it);
+            if (!neigh_orch_->enableNeighbor(nbr))
+            {
+                SWSS_LOG_WARN("Slice unsuppress (FDB move): enableNeighbor failed for %s",
+                              nbr.ip_address.to_string().c_str());
+                m_suppressed_neighbors[nbr] = saved_mac;
+                continue;
+            }
+            SWSS_LOG_NOTICE("Slice-unsuppressed neighbor %s due to FDB move to %s",
+                            nbr.ip_address.to_string().c_str(),
+                            update.entry.port_name.c_str());
+        }
     }
 
     NeighborEntry neigh;
@@ -1981,6 +2065,71 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
     if (is_tunnel_route_installed)
     {
         removeStandaloneTunnelRoute(update.entry.ip_address);
+    }
+
+    // Suppress in-slice IPs whose FDB resolves to the slice cable's own port
+    if (isSliceConfigured())
+    {
+        if (update.add)
+        {
+            std::string fdb_port;
+            getMuxPort(update.mac, update.entry.alias, fdb_port);
+
+            MuxCable* slice_cable = nullptr;
+            bool suppress = isSuppressedNeighbor(update.entry.ip_address, fdb_port, &slice_cable);
+
+            auto it = m_suppressed_neighbors.find(update.entry);
+
+            if (suppress)
+            {
+                if (it == m_suppressed_neighbors.end())
+                {
+                    // New suppressed neighbor, disable it and add to the suppressed neighbors map
+                    if (!neigh_orch_->disableNeighbor(update.entry))
+                    {
+                        SWSS_LOG_WARN("Slice suppress: disableNeighbor failed for %s on %s",
+                                      update.entry.ip_address.to_string().c_str(),
+                                      update.entry.alias.c_str());
+                        return;
+                    }
+                    m_suppressed_neighbors[update.entry] = update.mac;
+                    SWSS_LOG_NOTICE("Slice-suppressed neighbor %s on %s (slice port %s)",
+                                    update.entry.ip_address.to_string().c_str(),
+                                    update.entry.alias.c_str(),
+                                    slice_cable->getMuxName().c_str());
+                }
+                else
+                {
+                    // Existing suppressed neighbor, update its MAC.
+                    it->second = update.mac;
+                }
+                return;
+            }
+            else if (it != m_suppressed_neighbors.end())
+            {
+                // Neighbor is no longer suppressed, re-enable it.
+                NeighborEntry nbr = it->first;
+                MacAddress saved_mac = it->second;
+                m_suppressed_neighbors.erase(it);
+                if (!neigh_orch_->enableNeighbor(nbr))
+                {
+                    SWSS_LOG_WARN("Slice unsuppress: enableNeighbor failed for %s on %s",
+                                  update.entry.ip_address.to_string().c_str(),
+                                  update.entry.alias.c_str());
+                    m_suppressed_neighbors[nbr] = saved_mac;
+                    return;
+                }
+                SWSS_LOG_NOTICE("Slice-unsuppressed neighbor %s on %s",
+                                update.entry.ip_address.to_string().c_str(),
+                                update.entry.alias.c_str());
+                return;
+            }
+        }
+        else
+        {
+            // Neighbor is being deleted, remove it from the suppressed neighbors map.
+            m_suppressed_neighbors.erase(update.entry);
+        }
     }
 
     // Check if neighbor is in MUX subnet
@@ -2209,6 +2358,8 @@ bool MuxOrch::handleMuxCfg(const Request& request)
     MuxCableType cable_type = MuxCableType::ACTIVE_STANDBY;
     auto nbr_handler_type = MuxNbrHandlerType::NBR_HANDLER_HOST_ROUTE;
     std::set<IpAddress> skip_neighbors;
+    IpPrefix slice_ip6("::/0");
+    bool slice_ip6_present = false;
 
     const auto& port_name = request.getKeyString(0);
     auto op = request.getOperation();
@@ -2245,6 +2396,24 @@ bool MuxOrch::handleMuxCfg(const Request& request)
                 }
             }
         }
+        else if (name == "server_ipv6_subnet")
+        {
+            auto pfx = request.getAttrIpPrefix("server_ipv6_subnet");
+            if (pfx.getIp().isV4())
+            {
+                SWSS_LOG_ERROR("Mux port '%s': server_ipv6_subnet must be IPv6, rejecting '%s'",
+                               port_name.c_str(), pfx.to_string().c_str());
+                return false;
+            }
+            if (pfx.getIp().isZero())
+            {
+                SWSS_LOG_ERROR("Mux port '%s': server_ipv6_subnet must not be a zero-base prefix, rejecting '%s'",
+                               port_name.c_str(), pfx.to_string().c_str());
+                return false;
+            }
+            slice_ip6 = pfx;
+            slice_ip6_present = true;
+        }
     }
 
     if (op == SET_COMMAND)
@@ -2265,6 +2434,14 @@ bool MuxOrch::handleMuxCfg(const Request& request)
                 return false;
             }
 
+            // Slice prefix is immutable once set; only check when SET carries it.
+            if (mux_cable && slice_ip6_present && !(mux_cable->getSlicePrefix() == slice_ip6))
+            {
+                SWSS_LOG_ERROR("server_ipv6_subnet change is not allowed for existing mux port '%s'. "
+                              "Please delete and recreate the mux port.", port_name.c_str());
+                return false;
+            }
+
             return true;
         }
 
@@ -2277,8 +2454,21 @@ bool MuxOrch::handleMuxCfg(const Request& request)
                 "prefix-route" : "host-route", port_name.c_str());
 
         mux_cable_tb_[port_name] = std::make_unique<MuxCable>
-                                   (MuxCable(port_name, srv_ip, srv_ip6, mux_peer_switch_, cable_type, nbr_handler_type));
+                                   (MuxCable(port_name, srv_ip, srv_ip6, mux_peer_switch_, cable_type, nbr_handler_type, slice_ip6));
         addSkipNeighbors(skip_neighbors, port_name);
+
+        if (slice_ip6_present)
+        {
+            ++slicedCableCount;
+            SWSS_LOG_NOTICE("Mux port '%s' configured with server_ipv6_subnet %s (sliced cable count=%zu)",
+                            port_name.c_str(), slice_ip6.to_string().c_str(), slicedCableCount);
+            state_mux_cable_table_->hset(port_name, "server_ipv6_subnet",
+                                         slice_ip6.to_string());
+        }
+        else
+        {
+            state_mux_cable_table_->hdel(port_name, "server_ipv6_subnet");
+        }
 
         // Set neighbor_mode in state DB MUX_CABLE_TABLE
         std::string neighbor_mode_str = (nbr_handler_type == MuxNbrHandlerType::NBR_HANDLER_PREFIX_BASED) ? "prefix-route" : "host-route";
@@ -2325,6 +2515,18 @@ bool MuxOrch::handleMuxCfg(const Request& request)
         }
 
         removeSkipNeighbors(skip_neighbors);
+
+        auto it = mux_cable_tb_.find(port_name);
+        if (it != mux_cable_tb_.end() && it->second->hasSlicePrefix())
+        {
+            if (slicedCableCount > 0)
+            {
+                --slicedCableCount;
+            }
+            SWSS_LOG_NOTICE("Mux port '%s' removed had slice prefix (sliced cable count=%zu)",
+                            port_name.c_str(), slicedCableCount);
+        }
+        state_mux_cable_table_->hdel(port_name, "server_ipv6_subnet");
         mux_cable_tb_.erase(port_name);
 
         SWSS_LOG_NOTICE("Mux cable for port '%s' was removed", port_name.c_str());
