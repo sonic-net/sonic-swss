@@ -19,6 +19,7 @@
 #include "tokenize.h"
 #include "dashorch.h"
 #include "crmorch.h"
+#include "dashresulthelper.h"
 #include "saihelper.h"
 #include "directory.h"
 #include "dashtunnelorch.h"
@@ -46,8 +47,9 @@ DashVnetOrch::DashVnetOrch(DBConnector *db, vector<string> &tables, DBConnector 
     ZmqOrch(db, tables, zmqServer)
 {
     SWSS_LOG_ENTER();
-    dash_vnet_result_table_ = make_unique<Table>(app_state_db, APP_DASH_VNET_TABLE_NAME);
-    dash_vnet_map_result_table_ = make_unique<Table>(app_state_db, APP_DASH_VNET_MAPPING_TABLE_NAME);
+    m_resultPipeline = std::make_unique<RedisPipeline>(app_state_db);
+    dash_vnet_result_table_ = make_unique<Table>(m_resultPipeline.get(), APP_DASH_VNET_TABLE_NAME, true);
+    dash_vnet_map_result_table_ = make_unique<Table>(m_resultPipeline.get(), APP_DASH_VNET_MAPPING_TABLE_NAME, true);
 
     /* Disable swss.rec recording for high-volume VNET mapping table */
     auto *consumer = getConsumerBase(APP_DASH_VNET_MAPPING_TABLE_NAME);
@@ -302,6 +304,7 @@ void DashVnetOrch::doTaskVnetTable(ConsumerBase& consumer)
                 }
             }
         }
+        flushResultsToDB(dash_vnet_result_table_);
     }
 }
 
@@ -870,6 +873,7 @@ void DashVnetOrch::doTaskVnetMapTable(ConsumerBase& consumer)
                 }
             }
         }
+        flushResultsToDB(dash_vnet_map_result_table_);
     }
 }
 
