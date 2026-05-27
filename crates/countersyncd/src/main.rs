@@ -23,7 +23,7 @@ use crate::actor::{
 };
 
 // Internal exit codes
-use countersyncd::exit_codes::{EXIT_FAILURE, EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED, EXIT_SUCCESS};
+use countersyncd::exit_codes::{EXIT_FAILURE, EXIT_OTEL_EXPORT_RETRIES_EXHAUSTED};
 use crate::utilities::{set_comm_capacity, set_comm_log_interval_secs, ChannelLabel};
 
 /// Initialize logging based on command line arguments
