@@ -37,7 +37,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 bufferorch_ut.cpp \
                 buffermgrdyn_ut.cpp \
                 fdborch/flush_syncd_notif_ut.cpp \
-                macmoveguardorch/macmoveguardorch_ut.cpp \
+                macmoveguard/macmoveguard_ut.cpp \
                 copp_ut.cpp \
                 copporch_ut.cpp \
                 saispy_ut.cpp \
@@ -126,7 +126,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/bufferorch.cpp \
                 $(top_srcdir)/orchagent/mirrororch.cpp \
                 $(top_srcdir)/orchagent/fdborch.cpp \
-                $(top_srcdir)/orchagent/macmoveguardorch.cpp \
+                $(top_srcdir)/orchagent/macmoveguard.cpp \
                 $(top_srcdir)/orchagent/aclorch.cpp \
                 $(top_srcdir)/orchagent/pbh/pbhcap.cpp \
                 $(top_srcdir)/orchagent/pbh/pbhcnt.cpp \

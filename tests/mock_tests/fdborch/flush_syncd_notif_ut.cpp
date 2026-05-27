@@ -136,11 +136,12 @@ namespace fdb_syncd_flush_test
             TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
             TableConnector stateMclagDbFdb(m_state_db.get(), STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
 
-            m_fdborch = std::make_shared<FdbOrch>(m_app_db.get(), 
-                                                  app_fdb_tables, 
+            m_fdborch = std::make_shared<FdbOrch>(m_app_db.get(),
+                                                  app_fdb_tables,
                                                   stateDbFdb,
-                                                  stateMclagDbFdb, 
-                                                  m_portsOrch.get());
+                                                  stateMclagDbFdb,
+                                                  m_portsOrch.get(),
+                                                  m_config_db.get());
         }
 
         virtual void TearDown() override {

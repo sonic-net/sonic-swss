@@ -1,8 +1,7 @@
-#ifndef SWSS_MACMOVEGUARDORCH_H
-#define SWSS_MACMOVEGUARDORCH_H
+#ifndef SWSS_MACMOVEGUARD_H
+#define SWSS_MACMOVEGUARD_H
 
 #include "orch.h"
-#include "observer.h"
 #include "portsorch.h"
 #include "fdborch.h"
 #include "timer.h"
@@ -19,6 +18,11 @@
 
 #define CFG_MAC_MOVE_GUARD_TABLE_NAME       "MAC_MOVE_GUARD"
 #define STATE_MAC_MOVE_GUARD_TABLE_NAME     "MAC_MOVE_GUARD"
+
+// Name under which MacMoveGuard registers its recovery SelectableTimer with the
+// owning FdbOrch's executor list. Exposed so FdbOrch can dispatch timer ticks
+// back to the guard without hard-coding the string in multiple places.
+#define MAC_MOVE_GUARD_RECOVERY_TIMER_NAME  "MAC_MOVE_GUARD_RECOVERY"
 
 // Action types for MAC move guard
 enum class MacMoveGuardAction
@@ -98,20 +102,40 @@ struct LearntMacEntry
     std::chrono::steady_clock::time_point last_seen;
 };
 
-class MacMoveGuardOrch : public Orch, public Observer
+class FdbOrch;
+
+// MacMoveGuard: detects MACs flapping between ports faster than a configured
+// threshold and applies a remediation (admin-disable port, or install an ACL
+// entry that suppresses learning for the offending MAC). It is owned by
+// FdbOrch via composition: FdbOrch calls onMacMove()/onMacLearn() inline when
+// emitting FDB updates, and routes the guard's config-table consumer and
+// recovery SelectableTimer (both registered with FdbOrch's executor list)
+// back to doConfigTask()/doRecoveryTimerTask().
+class MacMoveGuard
 {
 public:
-    MacMoveGuardOrch(DBConnector *configDb, DBConnector *stateDb,
-                     const std::string &tableName,
-                     PortsOrch *portsOrch, FdbOrch *fdbOrch);
-    ~MacMoveGuardOrch();
+    MacMoveGuard(DBConnector *configDb, DBConnector *stateDb,
+                 const std::string &tableName,
+                 PortsOrch *portsOrch, FdbOrch *fdbOrch);
+    ~MacMoveGuard();
 
-    // Observer callback: receives MAC move notifications from FdbOrch
-    void update(SubjectType type, void *cntx) override;
+    // FDB event entry points. Called by FdbOrch when emitting MAC learn/move
+    // updates. No-op if the feature is disabled.
+    void onMacMove(const MacMoveNotification &notif);
+    void onMacLearn(const MacLearnNotification &notif);
+
+    // Dispatched by FdbOrch::doTask(Consumer&) when the consumer belongs to
+    // the MAC_MOVE_GUARD config table.
+    void doConfigTask(Consumer &consumer);
+
+    // Dispatched by FdbOrch::doTask(SelectableTimer&) when the recovery timer
+    // fires.
+    void doRecoveryTimerTask();
 
 private:
     PortsOrch *m_portsOrch;
     FdbOrch *m_fdbOrch;
+    std::string m_tableName;
 
     // Configuration. Defaults applied when the feature is enabled.
     bool m_enabled = false;
@@ -134,11 +158,19 @@ private:
     std::unordered_map<MacKey, LearntMacEntry, MacKeyHash> m_learntMac;
 
     // Recovery timer: fires periodically to check recovery conditions.
+    // Owned by the executor registered on the parent FdbOrch.
     swss::SelectableTimer *m_recoveryTimer = nullptr;
     static const int RECOVERY_CHECK_INTERVAL_SECS = 30;
 
-    // STATE_DB table for persisting bad-MAC state across orchagent restarts.
-    std::unique_ptr<swss::Table> m_stateBadMacTable;
+    // STATE_DB table used only to remember which ports we admin-disabled, so
+    // they can be re-enabled if orchagent restarts. A single row
+    // (HW_RESOURCES_KEY) holds a CSV of port aliases; no per-MAC state and no
+    // expiry timing is persisted. DLOMWA leaves no STATE_DB footprint — its
+    // ACL table is rediscovered on restart by signature-matching the table
+    // bound to SAI_SWITCH_ATTR_PRE_INGRESS_ACL.
+    std::unique_ptr<swss::Table> m_stateTable;
+    static constexpr const char *HW_RESOURCES_KEY    = "HW_RESOURCES";
+    static constexpr const char *DISABLED_PORTS_FIELD = "disabled_ports";
 
     // Shared ACL resources for the DISABLE_LEARN_ON_MAC_WITH_ACL action. The table
     // lifecycle is tied to CONFIG_DB: it is created when the feature is configured
@@ -154,12 +186,6 @@ private:
     // for the lifetime of the process.
     int m_aclSetDoNotLearnSupported = -1;
 
-    // Config DB task handler
-    void doTask(Consumer &consumer) override;
-
-    // Recovery timer handler
-    void doTask(swss::SelectableTimer &timer) override;
-
     // Core logic
     void handleMacMove(const MacMoveNotification &notif);
     void handleMacLearn(const MacLearnNotification &notif);
@@ -171,11 +197,12 @@ private:
     void checkRecovery();
     void reapplyActionIntervalToBadMacs(uint32_t prev_recovery_seconds);
 
-    // STATE_DB persistence helpers
-    std::string makeBadMacStateKey(const MacKey &key) const;
-    void persistBadMac(const MacKey &key, const MacMoveTrackingState &state);
-    void removeBadMacFromState(const MacKey &key);
-    void restoreBadMacState();
+    // STATE_DB persistence helpers (cleanup-on-restart model — only port
+    // admin-disable bookkeeping survives a restart, and only so we can revert
+    // it on startup).
+    void persistDisabledPorts();
+    void restoreHwResources();
+    bool aclTableMatchesOurSignature(sai_object_id_t table_oid) const;
 
     // DISABLE_LEARN_ON_MAC_WITH_ACL helpers
     bool isAclSetDoNotLearnSupported();
@@ -186,4 +213,4 @@ private:
     void removeLearnDisableAclEntry(MacMoveTrackingState &state);
 };
 
-#endif  // SWSS_MACMOVEGUARDORCH_H
+#endif  // SWSS_MACMOVEGUARD_H

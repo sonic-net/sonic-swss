@@ -1,14 +1,15 @@
-#include "macmoveguardorch.h"
+#include "macmoveguard.h"
 #include "fdborch.h"
 #include "logger.h"
 #include "notifier.h"
+#include "subscriberstatetable.h"
 #include "switchorch.h"
 #include "crmorch.h"
 
 #include <chrono>
 #include <inttypes.h>
-#include <sstream>
-#include <iomanip>
+#include <array>
+#include <vector>
 
 extern sai_fdb_api_t    *sai_fdb_api;
 extern sai_acl_api_t    *sai_acl_api;
@@ -20,49 +21,54 @@ extern CrmOrch       *gCrmOrch;
 using namespace std;
 using namespace std::chrono;
 
-const int MacMoveGuardOrch::RECOVERY_CHECK_INTERVAL_SECS;
+const int MacMoveGuard::RECOVERY_CHECK_INTERVAL_SECS;
+constexpr const char *MacMoveGuard::HW_RESOURCES_KEY;
+constexpr const char *MacMoveGuard::DISABLED_PORTS_FIELD;
 
-MacMoveGuardOrch::MacMoveGuardOrch(DBConnector *configDb, DBConnector *stateDb,
-                                   const string &tableName,
-                                   PortsOrch *portsOrch, FdbOrch *fdbOrch) :
-    Orch(configDb, tableName),
+MacMoveGuard::MacMoveGuard(DBConnector *configDb, DBConnector *stateDb,
+                           const string &tableName,
+                           PortsOrch *portsOrch, FdbOrch *fdbOrch) :
     m_portsOrch(portsOrch),
-    m_fdbOrch(fdbOrch)
+    m_fdbOrch(fdbOrch),
+    m_tableName(tableName)
 {
     SWSS_LOG_ENTER();
 
-    // Subscribe to FDB changes from FdbOrch to receive MAC move notifications
-    if (m_fdbOrch)
-    {
-        m_fdbOrch->attach(this);
-    }
+    // STATE_DB table for the cleanup-on-restart record. The constructor runs
+    // a one-shot sweep that reverts any hardware state we might have left
+    // behind in a previous orchagent run (admin-disabled ports + a stale
+    // pre-ingress ACL table). After this, the guard starts with no in-memory
+    // bad-MAC tracking and no continuity of action_interval — if the
+    // offending MAC is still flapping, it will re-trip the threshold and the
+    // mitigation will be re-applied.
+    m_stateTable.reset(new swss::Table(stateDb, STATE_MAC_MOVE_GUARD_TABLE_NAME));
+    restoreHwResources();
 
-    // STATE_DB table for persisting bad-MAC entries across orchagent restarts
-    if (stateDb)
-    {
-        m_stateBadMacTable.reset(new swss::Table(stateDb, STATE_MAC_MOVE_GUARD_TABLE_NAME));
-        restoreBadMacState();
-    }
+    // Register a Consumer for the MAC_MOVE_GUARD CONFIG_DB table on the owning
+    // FdbOrch. FdbOrch::doTask(Consumer&) dispatches back into doConfigTask().
+    auto *consumerTable = new swss::SubscriberStateTable(
+        configDb, tableName, swss::TableConsumable::DEFAULT_POP_BATCH_SIZE, default_orch_pri);
+    auto *consumer      = new Consumer(consumerTable, m_fdbOrch, tableName);
+    m_fdbOrch->addExecutor(consumer);
 
-    // Periodic recovery check timer
+    // Periodic recovery check timer, also registered on the owning FdbOrch.
     m_recoveryTimer = new swss::SelectableTimer(
         timespec{ .tv_sec = RECOVERY_CHECK_INTERVAL_SECS, .tv_nsec = 0 });
-    auto recoveryExecutor = new ExecutableTimer(m_recoveryTimer, this, "MAC_MOVE_GUARD_RECOVERY");
-    Orch::addExecutor(recoveryExecutor);
+    auto recoveryExecutor = new ExecutableTimer(m_recoveryTimer, m_fdbOrch,
+                                                MAC_MOVE_GUARD_RECOVERY_TIMER_NAME);
+    m_fdbOrch->addExecutor(recoveryExecutor);
     m_recoveryTimer->start();
 
-    SWSS_LOG_NOTICE("MacMoveGuardOrch initialized");
+    SWSS_LOG_NOTICE("MacMoveGuard initialized");
 }
 
-MacMoveGuardOrch::~MacMoveGuardOrch()
+MacMoveGuard::~MacMoveGuard()
 {
-    if (m_fdbOrch)
-    {
-        m_fdbOrch->detach(this);
-    }
+    // Executors registered on FdbOrch are owned by FdbOrch and will be
+    // destroyed with it; nothing to detach here.
 }
 
-void MacMoveGuardOrch::clearAllState()
+void MacMoveGuard::clearAllState()
 {
     // Re-enable any ports we have administratively disabled (DISABLE_PORT action)
     for (auto &kv : m_disabledPorts)
@@ -74,19 +80,14 @@ void MacMoveGuardOrch::clearAllState()
         }
     }
 
-    // Remove any ACL entries we programmed (DISABLE_LEARN_ON_MAC_WITH_ACL action) and
-    // drop every persisted bad-MAC row regardless of action.
+    // Remove any ACL entries we programmed (DISABLE_LEARN_ON_MAC_WITH_ACL action).
     for (auto &kv : m_macTrackingState)
     {
-        const MacKey &key = kv.first;
         MacMoveTrackingState &state = kv.second;
-
         if (state.learn_disable_acl_entry_id != SAI_NULL_OBJECT_ID)
         {
             removeLearnDisableAclEntry(state);
         }
-
-        removeBadMacFromState(key);
     }
 
     // Tear down the shared learn-disable ACL table; all entries have been removed above.
@@ -96,9 +97,12 @@ void MacMoveGuardOrch::clearAllState()
     m_disabledPorts.clear();
     m_macTrackingState.clear();
     m_learntMac.clear();
+
+    // No disabled ports remain — drop the STATE_DB row entirely.
+    persistDisabledPorts();
 }
 
-void MacMoveGuardOrch::doTask(Consumer &consumer)
+void MacMoveGuard::doConfigTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -214,7 +218,7 @@ void MacMoveGuardOrch::doTask(Consumer &consumer)
     }
 }
 
-void MacMoveGuardOrch::doTask(swss::SelectableTimer &timer)
+void MacMoveGuard::doRecoveryTimerTask()
 {
     SWSS_LOG_ENTER();
 
@@ -226,29 +230,27 @@ void MacMoveGuardOrch::doTask(swss::SelectableTimer &timer)
     checkRecovery();
 }
 
-void MacMoveGuardOrch::update(SubjectType type, void *cntx)
+void MacMoveGuard::onMacMove(const MacMoveNotification &notif)
 {
     SWSS_LOG_ENTER();
-
-    if (!m_enabled || !cntx)
+    if (!m_enabled)
     {
         return;
     }
-
-    switch (type)
-    {
-    case SUBJECT_TYPE_MAC_MOVE:
-        handleMacMove(*static_cast<MacMoveNotification *>(cntx));
-        break;
-    case SUBJECT_TYPE_MAC_LEARN:
-        handleMacLearn(*static_cast<MacLearnNotification *>(cntx));
-        break;
-    default:
-        break;
-    }
+    handleMacMove(notif);
 }
 
-void MacMoveGuardOrch::pruneWindow(MacMoveTrackingState &state)
+void MacMoveGuard::onMacLearn(const MacLearnNotification &notif)
+{
+    SWSS_LOG_ENTER();
+    if (!m_enabled)
+    {
+        return;
+    }
+    handleMacLearn(notif);
+}
+
+void MacMoveGuard::pruneWindow(MacMoveTrackingState &state)
 {
     auto cutoff = steady_clock::now() - seconds(m_durationSeconds);
 
@@ -272,7 +274,7 @@ void MacMoveGuardOrch::pruneWindow(MacMoveTrackingState &state)
     }
 }
 
-void MacMoveGuardOrch::handleMacLearn(const MacLearnNotification &notif)
+void MacMoveGuard::handleMacLearn(const MacLearnNotification &notif)
 {
     SWSS_LOG_ENTER();
 
@@ -312,7 +314,7 @@ void MacMoveGuardOrch::handleMacLearn(const MacLearnNotification &notif)
     handleMacMove(synth);
 }
 
-void MacMoveGuardOrch::handleMacMove(const MacMoveNotification &notif)
+void MacMoveGuard::handleMacMove(const MacMoveNotification &notif)
 {
     SWSS_LOG_ENTER();
 
@@ -373,7 +375,7 @@ void MacMoveGuardOrch::handleMacMove(const MacMoveNotification &notif)
     }
 }
 
-void MacMoveGuardOrch::markBadMac(const MacKey &key, MacMoveTrackingState &state, const string &portName)
+void MacMoveGuard::markBadMac(const MacKey &key, MacMoveTrackingState &state, const string &portName)
 {
     SWSS_LOG_ENTER();
 
@@ -492,8 +494,9 @@ void MacMoveGuardOrch::markBadMac(const MacKey &key, MacMoveTrackingState &state
                 state.disabled_ports.insert(port);
             }
 
-            // Persist so disabled ports can be re-enabled after an orchagent restart
-            persistBadMac(key, state);
+            // Update the persisted disabled-ports CSV so the cleanup sweep
+            // can re-enable these ports if orchagent restarts.
+            persistDisabledPorts();
             break;
         }
 
@@ -501,7 +504,9 @@ void MacMoveGuardOrch::markBadMac(const MacKey &key, MacMoveTrackingState &state
         {
             // Install a pre-ingress ACL entry (vlan, smac) -> SET_DO_NOT_LEARN
             // so the source MAC is not re-learned while forwarding continues
-            // via the normal FDB lookup.
+            // via the normal FDB lookup. Nothing is persisted to STATE_DB;
+            // on restart the cleanup sweep rediscovers the table via the
+            // SAI_SWITCH_ATTR_PRE_INGRESS_ACL binding.
             if (state.learn_disable_acl_entry_id != SAI_NULL_OBJECT_ID)
             {
                 // Entry already installed for this bad MAC
@@ -514,7 +519,6 @@ void MacMoveGuardOrch::markBadMac(const MacKey &key, MacMoveTrackingState &state
             // programming.
             if (m_learnDisableAclTable == SAI_NULL_OBJECT_ID)
             {
-                persistBadMac(key, state);
                 break;
             }
 
@@ -524,9 +528,6 @@ void MacMoveGuardOrch::markBadMac(const MacKey &key, MacMoveTrackingState &state
                               key.mac.to_string().c_str());
                 return;
             }
-
-            // Persist so the ACL entry can be cleaned up after an orchagent restart
-            persistBadMac(key, state);
             break;
         }
 
@@ -537,7 +538,7 @@ void MacMoveGuardOrch::markBadMac(const MacKey &key, MacMoveTrackingState &state
     }
 }
 
-void MacMoveGuardOrch::releaseBadMac(const MacKey &key, MacMoveTrackingState &state)
+void MacMoveGuard::releaseBadMac(const MacKey &key, MacMoveTrackingState &state)
 {
     SWSS_LOG_ENTER();
 
@@ -592,8 +593,8 @@ void MacMoveGuardOrch::releaseBadMac(const MacKey &key, MacMoveTrackingState &st
             state.disabled_ports.clear();
             state.pinned_port.clear();
 
-            // Drop the persisted entry; it is no longer needed for restart recovery
-            removeBadMacFromState(key);
+            // Rewrite the persisted disabled-ports CSV (may now be empty).
+            persistDisabledPorts();
             break;
         }
 
@@ -605,7 +606,6 @@ void MacMoveGuardOrch::releaseBadMac(const MacKey &key, MacMoveTrackingState &st
             {
                 removeLearnDisableAclEntry(state);
             }
-            removeBadMacFromState(key);
             break;
         }
 
@@ -615,7 +615,7 @@ void MacMoveGuardOrch::releaseBadMac(const MacKey &key, MacMoveTrackingState &st
     }
 }
 
-void MacMoveGuardOrch::pruneLearntMacCache()
+void MacMoveGuard::pruneLearntMacCache()
 {
     // Drop cached learnt-MAC entries that have not been seen within
     // detect_interval. This bounds memory use for MACs that have gone quiet
@@ -637,7 +637,7 @@ void MacMoveGuardOrch::pruneLearntMacCache()
     }
 }
 
-void MacMoveGuardOrch::checkRecovery()
+void MacMoveGuard::checkRecovery()
 {
     SWSS_LOG_ENTER();
 
@@ -681,7 +681,7 @@ void MacMoveGuardOrch::checkRecovery()
     }
 }
 
-void MacMoveGuardOrch::reapplyActionIntervalToBadMacs(uint32_t prev_recovery_seconds)
+void MacMoveGuard::reapplyActionIntervalToBadMacs(uint32_t prev_recovery_seconds)
 {
     SWSS_LOG_ENTER();
 
@@ -700,11 +700,11 @@ void MacMoveGuardOrch::reapplyActionIntervalToBadMacs(uint32_t prev_recovery_sec
 
         // Shortening the interval: cap the existing expiry so the new
         // (smaller) action_interval takes effect on entries that were
-        // marked under the previous, longer interval.
+        // marked under the previous, longer interval. Expiry is in-memory
+        // only — nothing to persist.
         if (new_expiry < state.action_expiry_time)
         {
             state.action_expiry_time = new_expiry;
-            persistBadMac(kv.first, state);
             ++shortened;
         }
         // Lengthening the interval: extend entries whose current
@@ -713,7 +713,6 @@ void MacMoveGuardOrch::reapplyActionIntervalToBadMacs(uint32_t prev_recovery_sec
         else if (new_expiry > state.action_expiry_time)
         {
             state.action_expiry_time = new_expiry;
-            persistBadMac(kv.first, state);
             ++extended;
         }
     }
@@ -728,257 +727,175 @@ void MacMoveGuardOrch::reapplyActionIntervalToBadMacs(uint32_t prev_recovery_sec
 }
 
 
-// STATE_DB key format: "<bv_id_hex>:<mac>" — bv_id is the SAI bridge VLAN OID.
-// Using bv_id (instead of vlan-id) keeps restoration independent of PortsOrch
-// having finished initialization.
-std::string MacMoveGuardOrch::makeBadMacStateKey(const MacKey &key) const
+// Persist the current set of admin-disabled ports as a single comma-separated
+// field in a single STATE_DB row. The constructor's restart sweep consumes
+// this CSV to re-enable any ports we left disabled in a previous run. If the
+// set is empty we delete the row outright.
+void MacMoveGuard::persistDisabledPorts()
 {
-    std::ostringstream oss;
-    oss << "0x" << std::hex << key.bv_id << ":" << key.mac.to_string();
-    return oss.str();
-}
-
-// String <-> MacMoveGuardAction helpers used for STATE_DB persistence.
-static const char *actionToString(MacMoveGuardAction a)
-{
-    switch (a)
+    if (m_disabledPorts.empty())
     {
-        case MacMoveGuardAction::DISABLE_PORT:                  return "DISABLE_PORT";
-        case MacMoveGuardAction::DISABLE_LEARN_ON_MAC_WITH_ACL: return "DISABLE_LEARN_ON_MAC_WITH_ACL";
-    }
-    return "DISABLE_PORT";
-}
-
-static bool stringToAction(const std::string &s, MacMoveGuardAction &out)
-{
-    if      (s == "DISABLE_PORT")                  { out = MacMoveGuardAction::DISABLE_PORT;                  return true; }
-    else if (s == "DISABLE_LEARN_ON_MAC_WITH_ACL") { out = MacMoveGuardAction::DISABLE_LEARN_ON_MAC_WITH_ACL; return true; }
-    return false;
-}
-
-void MacMoveGuardOrch::persistBadMac(const MacKey &key, const MacMoveTrackingState &state)
-{
-    if (!m_stateBadMacTable)
-    {
+        m_stateTable->del(HW_RESOURCES_KEY);
         return;
     }
 
-    // Persist the absolute wall-clock expiry so the remaining action interval
-    // can be reconstructed after an orchagent restart.
-    auto wall_now    = system_clock::now();
-    auto steady_now  = steady_clock::now();
-    auto remaining   = duration_cast<seconds>(state.action_expiry_time - steady_now).count();
-    if (remaining < 0) remaining = 0;
-    auto expiry_epoch = duration_cast<seconds>(wall_now.time_since_epoch()).count() + remaining;
+    std::string joined;
+    for (const auto &kv : m_disabledPorts)
+    {
+        if (!joined.empty()) joined += ",";
+        joined += kv.first;
+    }
 
     std::vector<FieldValueTuple> fvs = {
-        FieldValueTuple("action",              actionToString(state.action)),
-        FieldValueTuple("action_expiry_epoch", std::to_string(expiry_epoch)),
+        FieldValueTuple(DISABLED_PORTS_FIELD, joined),
     };
-
-    switch (state.action)
-    {
-        case MacMoveGuardAction::DISABLE_PORT:
-        {
-            fvs.emplace_back("pinned_port", state.pinned_port);
-            // Persist disabled ports as a comma-separated list
-            std::string joined;
-            for (const auto &p : state.disabled_ports)
-            {
-                if (!joined.empty()) joined += ",";
-                joined += p;
-            }
-            fvs.emplace_back("disabled_ports", joined);
-            break;
-        }
-        case MacMoveGuardAction::DISABLE_LEARN_ON_MAC_WITH_ACL:
-        {
-            std::ostringstream e_hex, t_hex;
-            e_hex << "0x" << std::hex << state.learn_disable_acl_entry_id;
-            t_hex << "0x" << std::hex << m_learnDisableAclTable;
-            // The shared table OID is stored redundantly on every entry so
-            // the table can be reattached on restart without an extra DB row.
-            fvs.emplace_back("acl_entry_id", e_hex.str());
-            fvs.emplace_back("acl_table_id", t_hex.str());
-            break;
-        }
-    }
-
-    m_stateBadMacTable->set(makeBadMacStateKey(key), fvs);
+    m_stateTable->set(HW_RESOURCES_KEY, fvs);
 }
 
-void MacMoveGuardOrch::removeBadMacFromState(const MacKey &key)
-{
-    if (!m_stateBadMacTable)
-    {
-        return;
-    }
-    m_stateBadMacTable->del(makeBadMacStateKey(key));
-}
-
-void MacMoveGuardOrch::restoreBadMacState()
+// One-shot cleanup sweep run from the constructor. Reverts any hardware state
+// we may have left behind in a previous orchagent run:
+//   1) Re-enables ports listed in STATE_DB's disabled_ports CSV.
+//   2) If SAI_SWITCH_ATTR_PRE_INGRESS_ACL is bound and the table's signature
+//      matches ours, deletes all of its entries, unbinds the switch attr, and
+//      deletes the table.
+// After this completes the in-memory bad-MAC tracking is empty and the
+// STATE_DB row is gone. There is no replay of per-MAC state.
+void MacMoveGuard::restoreHwResources()
 {
     SWSS_LOG_ENTER();
 
-    if (!m_stateBadMacTable)
+    // (1) Re-enable any previously disabled ports.
+    std::vector<FieldValueTuple> fvs;
+    if (m_stateTable->get(HW_RESOURCES_KEY, fvs))
     {
-        return;
-    }
-
-    std::vector<std::string> keys;
-    m_stateBadMacTable->getKeys(keys);
-
-    if (keys.empty())
-    {
-        return;
-    }
-
-    auto wall_now_epoch = duration_cast<seconds>(system_clock::now().time_since_epoch()).count();
-
-    for (const auto &state_key : keys)
-    {
-        // Parse "<bv_id_hex>:<mac>"
-        auto colon = state_key.find(':');
-        if (colon == std::string::npos)
-        {
-            SWSS_LOG_WARN("MAC_MOVE_GUARD: malformed bad-MAC state key '%s', skipping", state_key.c_str());
-            m_stateBadMacTable->del(state_key);
-            continue;
-        }
-
-        sai_object_id_t bv_id = SAI_NULL_OBJECT_ID;
-        try
-        {
-            bv_id = static_cast<sai_object_id_t>(std::stoull(state_key.substr(0, colon), nullptr, 16));
-        }
-        catch (const std::exception &e)
-        {
-            SWSS_LOG_WARN("MAC_MOVE_GUARD: invalid bv_id in state key '%s': %s", state_key.c_str(), e.what());
-            m_stateBadMacTable->del(state_key);
-            continue;
-        }
-
-        MacAddress mac;
-        try
-        {
-            mac = MacAddress(state_key.substr(colon + 1));
-        }
-        catch (const std::exception &e)
-        {
-            SWSS_LOG_WARN("MAC_MOVE_GUARD: invalid MAC in state key '%s': %s", state_key.c_str(), e.what());
-            m_stateBadMacTable->del(state_key);
-            continue;
-        }
-
-        MacKey key{ mac, bv_id };
-
-        std::vector<FieldValueTuple> fvs;
-        m_stateBadMacTable->get(state_key, fvs);
-
-        // Common + action-specific persisted fields
-        MacMoveGuardAction action  = MacMoveGuardAction::DISABLE_PORT;
-        bool   action_seen         = false;
-        long   expiry_epoch        = wall_now_epoch;
-        sai_object_id_t acl_entry_id        = SAI_NULL_OBJECT_ID;
-        sai_object_id_t acl_table_id        = SAI_NULL_OBJECT_ID;
-        std::string pinned_port;
-        std::string disabled_ports_csv;
-
-        auto parseOid = [](const std::string &s) -> sai_object_id_t {
-            try { return static_cast<sai_object_id_t>(std::stoull(s, nullptr, 16)); }
-            catch (const std::exception &) { return SAI_NULL_OBJECT_ID; }
-        };
-
+        std::string csv;
         for (const auto &fv : fvs)
         {
-            const auto &f = fvField(fv);
-            const auto &v = fvValue(fv);
-            if      (f == "action")              { action_seen = stringToAction(v, action); }
-            else if (f == "action_expiry_epoch") { try { expiry_epoch = std::stol(v); } catch (const std::exception &) {} }
-            else if (f == "pinned_port")         { pinned_port      = v; }
-            else if (f == "disabled_ports")      { disabled_ports_csv = v; }
-            else if (f == "acl_entry_id")        { acl_entry_id     = parseOid(v); }
-            else if (f == "acl_table_id")        { acl_table_id     = parseOid(v); }
-        }
-
-        if (!action_seen)
-        {
-            SWSS_LOG_WARN("MAC_MOVE_GUARD: missing/invalid action in state key '%s', dropping",
-                          state_key.c_str());
-            m_stateBadMacTable->del(state_key);
-            continue;
-        }
-
-        // Remaining action interval; clamp to 0 so the next checkRecovery()
-        // tears down the programmed hardware state immediately.
-        long remaining = expiry_epoch - wall_now_epoch;
-        if (remaining < 0) remaining = 0;
-
-        MacMoveTrackingState &state = m_macTrackingState[key];
-        state.is_bad_mac          = true;
-        state.action              = action;
-        state.action_expiry_time  = steady_clock::now() + seconds(remaining);
-
-        switch (action)
-        {
-            case MacMoveGuardAction::DISABLE_PORT:
+            if (fvField(fv) == DISABLED_PORTS_FIELD)
             {
-                state.pinned_port = pinned_port;
-                // Split comma-separated disabled-ports list and rebuild
-                // m_disabledPorts so per-port reference counts are preserved
-                // across the restart. We do NOT re-issue setPortAdminStatus
-                // here because the SAI admin state survives the restart.
-                size_t start = 0;
-                while (start < disabled_ports_csv.size())
-                {
-                    size_t comma = disabled_ports_csv.find(',', start);
-                    std::string p = disabled_ports_csv.substr(
-                        start, comma == std::string::npos ? std::string::npos : comma - start);
-                    if (!p.empty())
-                    {
-                        state.disabled_ports.insert(p);
-                        m_disabledPorts[p].insert(key);
-                    }
-                    if (comma == std::string::npos) break;
-                    start = comma + 1;
-                }
-                break;
-            }
-            case MacMoveGuardAction::DISABLE_LEARN_ON_MAC_WITH_ACL:
-            {
-                state.learn_disable_acl_entry_id = acl_entry_id;
-                // Adopt the previously created shared ACL table. All entries
-                // should reference the same table OID; warn if not. The
-                // switch-binding survives the restart on the SAI side, so we
-                // do not re-issue the SAI_SWITCH_ATTR_PRE_INGRESS_ACL bind here.
-                if (m_learnDisableAclTable == SAI_NULL_OBJECT_ID)
-                {
-                    m_learnDisableAclTable = acl_table_id;
-                }
-                else if (m_learnDisableAclTable != acl_table_id)
-                {
-                    SWSS_LOG_WARN("MAC_MOVE_GUARD: inconsistent acl_table_id in restored state for %s "
-                                  "(0x%" PRIx64 " vs 0x%" PRIx64 ")",
-                                  mac.to_string().c_str(), m_learnDisableAclTable, acl_table_id);
-                }
-                if (acl_entry_id != SAI_NULL_OBJECT_ID)
-                {
-                    m_learnDisableAclEntryCount++;
-                }
+                csv = fvValue(fv);
                 break;
             }
         }
 
-        SWSS_LOG_NOTICE("MAC_MOVE_GUARD: restored bad-MAC state for %s on bv_id=0x%" PRIx64
-                       " action=%s (action_interval remaining: %lds)",
-                       mac.to_string().c_str(), bv_id, actionToString(action), remaining);
+        size_t start = 0;
+        while (start < csv.size())
+        {
+            size_t comma = csv.find(',', start);
+            std::string port = csv.substr(
+                start, comma == std::string::npos ? std::string::npos : comma - start);
+            if (!port.empty() && m_portsOrch)
+            {
+                if (m_portsOrch->setPortAdminStatusByAlias(port, true))
+                {
+                    SWSS_LOG_NOTICE("MAC_MOVE_GUARD: restart cleanup re-enabled port %s",
+                                    port.c_str());
+                }
+                else
+                {
+                    SWSS_LOG_WARN("MAC_MOVE_GUARD: restart cleanup failed to re-enable port %s",
+                                  port.c_str());
+                }
+            }
+            if (comma == std::string::npos) break;
+            start = comma + 1;
+        }
+
+        m_stateTable->del(HW_RESOURCES_KEY);
     }
+
+    // (2) If a pre-ingress ACL table is bound and looks like ours
+    // (signature match on stage / fields / action_list), tear it down.
+    sai_attribute_t cur;
+    cur.id = SAI_SWITCH_ATTR_PRE_INGRESS_ACL;
+    cur.value.oid = SAI_NULL_OBJECT_ID;
+    if (sai_switch_api->get_switch_attribute(gSwitchId, 1, &cur) != SAI_STATUS_SUCCESS)
+    {
+        return;
+    }
+    sai_object_id_t bound = cur.value.oid;
+    if (bound == SAI_NULL_OBJECT_ID || !aclTableMatchesOurSignature(bound))
+    {
+        return;
+    }
+
+    SWSS_LOG_NOTICE("MAC_MOVE_GUARD: restart cleanup found pre-ingress ACL table 0x%" PRIx64
+                    " matching our signature; tearing down", bound);
+
+    // Enumerate and delete every entry in the table. We use a stack buffer
+    // sized generously; if the table somehow has more entries than that, we
+    // log and continue with a best-effort partial delete (subsequent passes
+    // when entries are recreated will not be a problem since the table will
+    // also be torn down below).
+    constexpr uint32_t MAX_ENTRIES = 4096;
+    std::vector<sai_object_id_t> entries(MAX_ENTRIES, SAI_NULL_OBJECT_ID);
+    sai_attribute_t list_attr;
+    list_attr.id = SAI_ACL_TABLE_ATTR_ENTRY_LIST;
+    list_attr.value.objlist.count = MAX_ENTRIES;
+    list_attr.value.objlist.list  = entries.data();
+    if (sai_acl_api->get_acl_table_attribute(bound, 1, &list_attr) == SAI_STATUS_SUCCESS)
+    {
+        for (uint32_t i = 0; i < list_attr.value.objlist.count; ++i)
+        {
+            sai_object_id_t entry = list_attr.value.objlist.list[i];
+            if (entry == SAI_NULL_OBJECT_ID) continue;
+            if (sai_acl_api->remove_acl_entry(entry) == SAI_STATUS_SUCCESS && gCrmOrch)
+            {
+                gCrmOrch->decCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_ENTRY, bound);
+            }
+        }
+    }
+
+    // Unbind the switch pre-ingress slot before deleting the table.
+    sai_attribute_t unbind;
+    unbind.id = SAI_SWITCH_ATTR_PRE_INGRESS_ACL;
+    unbind.value.oid = SAI_NULL_OBJECT_ID;
+    sai_switch_api->set_switch_attribute(gSwitchId, &unbind);
+
+    if (sai_acl_api->remove_acl_table(bound) == SAI_STATUS_SUCCESS && gCrmOrch)
+    {
+        gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE,
+                                       SAI_ACL_STAGE_PRE_INGRESS,
+                                       SAI_ACL_BIND_POINT_TYPE_SWITCH,
+                                       bound);
+    }
+}
+
+// Decide whether a pre-ingress ACL table looks like one we created. We check
+// the small set of attributes that define our table's contract: stage,
+// matched fields, and the action type list. Anything matching all three is
+// treated as ours.
+bool MacMoveGuard::aclTableMatchesOurSignature(sai_object_id_t table_oid) const
+{
+    std::array<sai_attribute_t, 4> attrs{};
+    std::array<int32_t, 16> action_list_buf{};
+
+    attrs[0].id = SAI_ACL_TABLE_ATTR_ACL_STAGE;
+    attrs[1].id = SAI_ACL_TABLE_ATTR_FIELD_SRC_MAC;
+    attrs[2].id = SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID;
+    attrs[3].id = SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST;
+    attrs[3].value.s32list.count = (uint32_t)action_list_buf.size();
+    attrs[3].value.s32list.list  = action_list_buf.data();
+
+    if (sai_acl_api->get_acl_table_attribute(table_oid,
+                                             (uint32_t)attrs.size(),
+                                             attrs.data()) != SAI_STATUS_SUCCESS)
+    {
+        return false;
+    }
+
+    if (attrs[0].value.s32 != SAI_ACL_STAGE_PRE_INGRESS)         return false;
+    if (!attrs[1].value.booldata)                                return false;
+    if (!attrs[2].value.booldata)                                return false;
+    if (attrs[3].value.s32list.count != 1)                       return false;
+    if (attrs[3].value.s32list.list[0] != SAI_ACL_ACTION_TYPE_SET_DO_NOT_LEARN) return false;
+    return true;
 }
 
 // Query the platform once for SAI_ACL_ACTION_TYPE_SET_DO_NOT_LEARN support at
 // the PRE_INGRESS stage and cache the result. Returns true if the action is
-// in the platform's pre-ingress capability list. 
-bool MacMoveGuardOrch::isAclSetDoNotLearnSupported()
+// in the platform's pre-ingress capability list.
+bool MacMoveGuard::isAclSetDoNotLearnSupported()
 {
     SWSS_LOG_ENTER();
 
@@ -1038,7 +955,7 @@ bool MacMoveGuardOrch::isAclSetDoNotLearnSupported()
 // Create the shared pre-ingress ACL table used by DISABLE_LEARN_ON_MAC_WITH_ACL and
 // bind it directly to the switch pre-ingress slot (SAI_SWITCH_ATTR_PRE_INGRESS_ACL).
 // Idempotent.
-bool MacMoveGuardOrch::ensureLearnDisableAclTable()
+bool MacMoveGuard::ensureLearnDisableAclTable()
 {
     SWSS_LOG_ENTER();
 
@@ -1149,7 +1066,7 @@ bool MacMoveGuardOrch::ensureLearnDisableAclTable()
 // Tear down the shared learn-disable ACL table. Caller is responsible for
 // removing any entries that reference the table before invoking this.
 // Unbind from the switch pre-ingress slot first, then delete the table.
-void MacMoveGuardOrch::destroyLearnDisableAclTable()
+void MacMoveGuard::destroyLearnDisableAclTable()
 {
     SWSS_LOG_ENTER();
 
@@ -1204,7 +1121,7 @@ void MacMoveGuardOrch::destroyLearnDisableAclTable()
 // The table is created when the feature is enabled with DISABLE_LEARN_ON_MAC_WITH_ACL
 // and destroyed when the feature leaves that state. Existing per-MAC entries are
 // torn down before the table is destroyed.
-void MacMoveGuardOrch::reconcileLearnDisableAclTable(bool prev_enabled, MacMoveGuardAction prev_action)
+void MacMoveGuard::reconcileLearnDisableAclTable(bool prev_enabled, MacMoveGuardAction prev_action)
 {
     SWSS_LOG_ENTER();
 
@@ -1215,7 +1132,8 @@ void MacMoveGuardOrch::reconcileLearnDisableAclTable(bool prev_enabled, MacMoveG
     {
         // Action changed away from DISABLE_LEARN_ON_MAC_WITH_ACL while the feature
         // remains enabled. Remove any installed entries and the bad-MAC tracking
-        // that was specific to this action, then destroy the table.
+        // that was specific to this action, then destroy the table. Nothing to
+        // remove from STATE_DB — DLOMWA does not persist per-MAC state.
         for (auto it = m_macTrackingState.begin(); it != m_macTrackingState.end(); )
         {
             MacMoveTrackingState &state = it->second;
@@ -1225,7 +1143,6 @@ void MacMoveGuardOrch::reconcileLearnDisableAclTable(bool prev_enabled, MacMoveG
                 {
                     removeLearnDisableAclEntry(state);
                 }
-                removeBadMacFromState(it->first);
                 it = m_macTrackingState.erase(it);
             }
             else
@@ -1258,7 +1175,7 @@ void MacMoveGuardOrch::reconcileLearnDisableAclTable(bool prev_enabled, MacMoveG
 // so the source MAC is not learned/relearned while forwarding continues via
 // the normal FDB lookup. The action parameter is not used; aclaction.enable
 // controls whether the action fires.
-bool MacMoveGuardOrch::installLearnDisableAclEntry(const MacKey &key, MacMoveTrackingState &state)
+bool MacMoveGuard::installLearnDisableAclEntry(const MacKey &key, MacMoveTrackingState &state)
 {
     SWSS_LOG_ENTER();
 
@@ -1333,7 +1250,7 @@ bool MacMoveGuardOrch::installLearnDisableAclEntry(const MacKey &key, MacMoveTra
 }
 
 // Remove the per-MAC ACL entry previously installed by installLearnDisableAclEntry.
-void MacMoveGuardOrch::removeLearnDisableAclEntry(MacMoveTrackingState &state)
+void MacMoveGuard::removeLearnDisableAclEntry(MacMoveTrackingState &state)
 {
     SWSS_LOG_ENTER();
 

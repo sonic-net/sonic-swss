@@ -241,7 +241,8 @@ bool OrchDaemon::init()
     gPortsOrch = new PortsOrch(m_applDb, m_stateDb, ports_tables, m_chassisAppDb);
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
     TableConnector stateMclagDbFdb(m_stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
-    gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
+    gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch,
+                           m_configDb);
 
     TableConnector stateDbBfdSessionTable(m_stateDb, STATE_BFD_SESSION_TABLE_NAME);
 
@@ -574,18 +575,6 @@ bool OrchDaemon::init()
     gPbhOrch = new PbhOrch(pbhTableConnectorList, gAclOrch, gPortsOrch);
 
     m_orchList.push_back(gFdbOrch);
-
-    /* MAC Move Guard: monitors MAC moves between port pairs and disables a
-       port if mac-move count in the configured sliding window exceeds the
-       threshold. Constructed after gFdbOrch since it attaches as an observer. */
-    auto *macMoveGuardOrch = new MacMoveGuardOrch(m_configDb,
-                                                  m_stateDb,
-                                                  CFG_MAC_MOVE_GUARD_TABLE_NAME,
-                                                  gPortsOrch,
-                                                  gFdbOrch);
-    gDirectory.set(macMoveGuardOrch);
-    m_orchList.push_back(macMoveGuardOrch);
-
     m_orchList.push_back(gMirrorOrch);
     m_orchList.push_back(gAclOrch);
     m_orchList.push_back(gPbhOrch);

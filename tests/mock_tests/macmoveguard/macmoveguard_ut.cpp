@@ -1,11 +1,11 @@
-// Unit tests for MacMoveGuardOrch.
+// Unit tests for MacMoveGuard.
 //
 // These tests exercise the behaviors enumerated in MAC_MOVE_GUARD_HLD.md
-// section 11.1. The orchestrator is instantiated directly against a mocked
-// CONFIG_DB / STATE_DB and a real PortsOrch / FdbOrch built on the VS SAI.
-// MAC move/learn events are delivered to the orch by calling its update()
-// observer entrypoint with synthesized notifications so we don't need to
-// drive SAI FDB events end-to-end.
+// section 11.1. MacMoveGuard is owned by FdbOrch via composition; in these
+// tests we construct it directly against a mocked CONFIG_DB / STATE_DB and a
+// real PortsOrch / FdbOrch built on the VS SAI. MAC move/learn events are
+// delivered by calling onMacMove()/onMacLearn() directly with synthesized
+// notifications so we don't need to drive SAI FDB events end-to-end.
 //
 // SAI ACL/switch/port APIs are hooked at the table level so we can:
 //   - record ACL table/entry create/remove operations
@@ -23,7 +23,7 @@
 #define protected public
 #include "portsorch.h"
 #include "fdborch.h"
-#include "macmoveguardorch.h"
+#include "macmoveguard.h"
 #include "crmorch.h"
 #undef protected
 #undef private
@@ -33,7 +33,7 @@
 
 extern CrmOrch *gCrmOrch;
 
-namespace macmoveguardorch_test
+namespace macmoveguard_test
 {
     using namespace std;
     using namespace swss;
@@ -84,6 +84,17 @@ namespace macmoveguardorch_test
 
     // Per-port admin status: alias -> last requested admin state (true=UP).
     static map<sai_object_id_t, bool> g_port_admin_status;
+
+    // Pre-staged ACL table attributes used to fake out the restart cleanup's
+    // signature match. When non-zero, _stub_get_acl_table_attribute returns
+    // these values for the relevant attribute ids. The entry list returned
+    // when SAI_ACL_TABLE_ATTR_ENTRY_LIST is queried.
+    static int32_t g_pre_staged_acl_stage   = SAI_ACL_STAGE_PRE_INGRESS;
+    static bool    g_pre_staged_acl_smac    = true;
+    static bool    g_pre_staged_acl_vlan    = true;
+    static int32_t g_pre_staged_acl_action  = SAI_ACL_ACTION_TYPE_SET_DO_NOT_LEARN;
+    static int     g_pre_staged_acl_action_count = 1;
+    static vector<sai_object_id_t> g_pre_staged_acl_entries;
 
     static sai_status_t _stub_get_switch_attribute(sai_object_id_t switch_id,
                                                    uint32_t attr_count,
@@ -147,6 +158,51 @@ namespace macmoveguardorch_test
         return SAI_STATUS_SUCCESS;
     }
 
+    // Answers attribute reads on a pre-staged table OID. Returns the values
+    // configured by the test via g_pre_staged_acl_* globals.
+    static sai_status_t _stub_get_acl_table_attribute(sai_object_id_t /*table*/,
+                                                      uint32_t attr_count,
+                                                      sai_attribute_t *attr_list)
+    {
+        for (uint32_t i = 0; i < attr_count; ++i)
+        {
+            auto &a = attr_list[i];
+            switch (a.id)
+            {
+                case SAI_ACL_TABLE_ATTR_ACL_STAGE:
+                    a.value.s32 = g_pre_staged_acl_stage;
+                    break;
+                case SAI_ACL_TABLE_ATTR_FIELD_SRC_MAC:
+                    a.value.booldata = g_pre_staged_acl_smac;
+                    break;
+                case SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID:
+                    a.value.booldata = g_pre_staged_acl_vlan;
+                    break;
+                case SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST:
+                {
+                    auto &l = a.value.s32list;
+                    if ((int)l.count < g_pre_staged_acl_action_count) return SAI_STATUS_BUFFER_OVERFLOW;
+                    l.count = g_pre_staged_acl_action_count;
+                    if (g_pre_staged_acl_action_count > 0 && l.list)
+                        l.list[0] = g_pre_staged_acl_action;
+                    break;
+                }
+                case SAI_ACL_TABLE_ATTR_ENTRY_LIST:
+                {
+                    auto &l = a.value.objlist;
+                    uint32_t n = (uint32_t)g_pre_staged_acl_entries.size();
+                    if (l.count < n) return SAI_STATUS_BUFFER_OVERFLOW;
+                    l.count = n;
+                    for (uint32_t k = 0; k < n; ++k) l.list[k] = g_pre_staged_acl_entries[k];
+                    break;
+                }
+                default:
+                    return SAI_STATUS_NOT_SUPPORTED;
+            }
+        }
+        return SAI_STATUS_SUCCESS;
+    }
+
     static sai_status_t _stub_create_acl_entry(sai_object_id_t *oid,
                                                sai_object_id_t,
                                                uint32_t, const sai_attribute_t *)
@@ -183,10 +239,11 @@ namespace macmoveguardorch_test
 
         ut_sai_acl_api  = *sai_acl_api;
         pold_sai_acl_api = sai_acl_api;
-        ut_sai_acl_api.create_acl_table  = _stub_create_acl_table;
-        ut_sai_acl_api.remove_acl_table  = _stub_remove_acl_table;
-        ut_sai_acl_api.create_acl_entry  = _stub_create_acl_entry;
-        ut_sai_acl_api.remove_acl_entry  = _stub_remove_acl_entry;
+        ut_sai_acl_api.create_acl_table        = _stub_create_acl_table;
+        ut_sai_acl_api.remove_acl_table        = _stub_remove_acl_table;
+        ut_sai_acl_api.create_acl_entry        = _stub_create_acl_entry;
+        ut_sai_acl_api.remove_acl_entry        = _stub_remove_acl_entry;
+        ut_sai_acl_api.get_acl_table_attribute = _stub_get_acl_table_attribute;
         sai_acl_api = &ut_sai_acl_api;
 
         ut_sai_port_api = *sai_port_api;
@@ -211,11 +268,20 @@ namespace macmoveguardorch_test
         g_pre_ingress_acl_bound  = SAI_NULL_OBJECT_ID;
         g_set_do_not_learn_supported = true;
         g_port_admin_status.clear();
+
+        // Reset pre-staged signature (defaults to our exact signature so a
+        // pre-bound table is treated as ours unless a test overrides).
+        g_pre_staged_acl_stage         = SAI_ACL_STAGE_PRE_INGRESS;
+        g_pre_staged_acl_smac          = true;
+        g_pre_staged_acl_vlan          = true;
+        g_pre_staged_acl_action        = SAI_ACL_ACTION_TYPE_SET_DO_NOT_LEARN;
+        g_pre_staged_acl_action_count  = 1;
+        g_pre_staged_acl_entries.clear();
     }
 
     // ---------- Test fixture ----------
 
-    struct MacMoveGuardOrchTest : public ::testing::Test
+    struct MacMoveGuardTest : public ::testing::Test
     {
         shared_ptr<DBConnector> m_config_db;
         shared_ptr<DBConnector> m_app_db;
@@ -223,9 +289,9 @@ namespace macmoveguardorch_test
         shared_ptr<DBConnector> m_asic_db;
         shared_ptr<DBConnector> m_chassis_app_db;
 
-        shared_ptr<PortsOrch>        m_portsOrch;
-        shared_ptr<FdbOrch>          m_fdbOrch;
-        shared_ptr<MacMoveGuardOrch> m_mmg;
+        shared_ptr<PortsOrch>  m_portsOrch;
+        shared_ptr<FdbOrch>    m_fdbOrch;
+        MacMoveGuard          *m_mmg = nullptr;   // owned by m_fdbOrch
 
         void SetUp() override
         {
@@ -272,22 +338,12 @@ namespace macmoveguardorch_test
             ASSERT_EQ(gCrmOrch, nullptr);
             gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
 
-            vector<table_name_with_pri_t> app_fdb_tables = {
-                { APP_FDB_TABLE_NAME,        FdbOrch::fdborch_pri },
-                { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri },
-                { APP_MCLAG_FDB_TABLE_NAME,  FdbOrch::fdborch_pri }
-            };
-            TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
-            TableConnector stateMclagDbFdb(m_state_db.get(), STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
-            m_fdbOrch = make_shared<FdbOrch>(m_app_db.get(), app_fdb_tables,
-                                             stateDbFdb, stateMclagDbFdb, m_portsOrch.get());
-
             seedPortsAndVlan();
         }
 
         void TearDown() override
         {
-            m_mmg.reset();
+            m_mmg = nullptr;
             m_fdbOrch.reset();
             m_portsOrch.reset();
 
@@ -301,15 +357,23 @@ namespace macmoveguardorch_test
             ut_helper::uninitSaiApi();
         }
 
-        // Build the orch under test. Done as a separate step (not in SetUp)
-        // so individual tests can pre-populate STATE_DB before the orch's
-        // constructor runs restoreBadMacState().
+        // Build FdbOrch (and, by composition, MacMoveGuard). Done as a
+        // separate step from SetUp so individual tests can pre-populate
+        // STATE_DB / pre-stage SAI state before the guard's constructor runs
+        // the one-shot restart cleanup sweep.
         void buildOrch()
         {
-            m_mmg = make_shared<MacMoveGuardOrch>(
-                m_config_db.get(), m_state_db.get(),
-                CFG_MAC_MOVE_GUARD_TABLE_NAME,
-                m_portsOrch.get(), m_fdbOrch.get());
+            vector<table_name_with_pri_t> app_fdb_tables = {
+                { APP_FDB_TABLE_NAME,        FdbOrch::fdborch_pri },
+                { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri },
+                { APP_MCLAG_FDB_TABLE_NAME,  FdbOrch::fdborch_pri }
+            };
+            TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
+            TableConnector stateMclagDbFdb(m_state_db.get(), STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
+            m_fdbOrch = make_shared<FdbOrch>(m_app_db.get(), app_fdb_tables,
+                                             stateDbFdb, stateMclagDbFdb, m_portsOrch.get(),
+                                             m_config_db.get());
+            m_mmg = m_fdbOrch->getMacMoveGuard();
         }
 
         void seedPortsAndVlan()
@@ -346,14 +410,14 @@ namespace macmoveguardorch_test
             auto consumer = unique_ptr<Consumer>(new Consumer(
                 new swss::ConsumerStateTable(m_config_db.get(),
                                              CFG_MAC_MOVE_GUARD_TABLE_NAME, 1, 1),
-                m_mmg.get(), CFG_MAC_MOVE_GUARD_TABLE_NAME));
+                m_fdbOrch.get(), CFG_MAC_MOVE_GUARD_TABLE_NAME));
 
             KeyOpFieldsValuesTuple kfv;
             kfvKey(kfv) = "GLOBAL";
             kfvOp(kfv)  = SET_COMMAND;
             kfvFieldsValues(kfv) = fvs;
             consumer->addToSync({ kfv });
-            static_cast<Orch *>(m_mmg.get())->doTask(*consumer.get());
+            m_mmg->doConfigTask(*consumer.get());
         }
 
         // As above but lets the caller pick the key (used for negative tests).
@@ -362,16 +426,16 @@ namespace macmoveguardorch_test
             auto consumer = unique_ptr<Consumer>(new Consumer(
                 new swss::ConsumerStateTable(m_config_db.get(),
                                              CFG_MAC_MOVE_GUARD_TABLE_NAME, 1, 1),
-                m_mmg.get(), CFG_MAC_MOVE_GUARD_TABLE_NAME));
+                m_fdbOrch.get(), CFG_MAC_MOVE_GUARD_TABLE_NAME));
             KeyOpFieldsValuesTuple kfv;
             kfvKey(kfv) = key;
             kfvOp(kfv)  = SET_COMMAND;
             kfvFieldsValues(kfv) = fvs;
             consumer->addToSync({ kfv });
-            static_cast<Orch *>(m_mmg.get())->doTask(*consumer.get());
+            m_mmg->doConfigTask(*consumer.get());
         }
 
-        // Helpers to inject MAC events into the orch the way FdbOrch would.
+        // Helpers to inject MAC events into the guard the way FdbOrch would.
         void injectMove(const string &mac, const string &old_alias,
                         const string &new_alias, sai_object_id_t bv_id = VLAN40_OID)
         {
@@ -380,7 +444,7 @@ namespace macmoveguardorch_test
             n.bv_id = bv_id;
             n.port_old = m_portsOrch->m_portList[old_alias];
             n.port_new = m_portsOrch->m_portList[new_alias];
-            m_mmg->update(SUBJECT_TYPE_MAC_MOVE, &n);
+            m_mmg->onMacMove(n);
         }
 
         void injectLearn(const string &mac, const string &alias,
@@ -390,7 +454,7 @@ namespace macmoveguardorch_test
             n.mac = MacAddress(mac);
             n.bv_id = bv_id;
             n.port = m_portsOrch->m_portList[alias];
-            m_mmg->update(SUBJECT_TYPE_MAC_LEARN, &n);
+            m_mmg->onMacLearn(n);
         }
 
         // Look up tracking state by string MAC (the test always uses VLAN40).
@@ -408,7 +472,7 @@ namespace macmoveguardorch_test
     };
 
     // -------- 11.1 #1: native move threshold ----------
-    TEST_F(MacMoveGuardOrchTest, ThresholdTripsOnNativeMoves)
+    TEST_F(MacMoveGuardTest, ThresholdTripsOnNativeMoves)
     {
         buildOrch();
         configure({
@@ -426,7 +490,7 @@ namespace macmoveguardorch_test
     }
 
     // -------- 11.1 #2: synthesized move from alternating LEARNs ----------
-    TEST_F(MacMoveGuardOrchTest, ThresholdTripsOnSynthesizedMovesFromLearns)
+    TEST_F(MacMoveGuardTest, ThresholdTripsOnSynthesizedMovesFromLearns)
     {
         buildOrch();
         configure({
@@ -449,7 +513,7 @@ namespace macmoveguardorch_test
     }
 
     // -------- 11.1 #3: sliding window forgets old moves ----------
-    TEST_F(MacMoveGuardOrchTest, SlidingWindowForgetsOldMoves)
+    TEST_F(MacMoveGuardTest, SlidingWindowForgetsOldMoves)
     {
         buildOrch();
         // Tiny detect_interval so we can sleep through it within the test.
@@ -473,7 +537,7 @@ namespace macmoveguardorch_test
     }
 
     // -------- 11.1 #4: DISABLE_PORT pinning + refcounting ----------
-    TEST_F(MacMoveGuardOrchTest, DisablePortPinningAndRefcount)
+    TEST_F(MacMoveGuardTest, DisablePortPinningAndRefcount)
     {
         buildOrch();
         configure({
@@ -504,7 +568,7 @@ namespace macmoveguardorch_test
     }
 
     // -------- 11.1 #5: DISABLE_PORT recovery + shared refcount ----------
-    TEST_F(MacMoveGuardOrchTest, DisablePortRecoveryRespectsRefcount)
+    TEST_F(MacMoveGuardTest, DisablePortRecoveryRespectsRefcount)
     {
         buildOrch();
         configure({
@@ -541,7 +605,7 @@ namespace macmoveguardorch_test
     }
 
     // -------- 11.1 #6: DLOMWA capability supported -> table created/bound ---
-    TEST_F(MacMoveGuardOrchTest, DlomwaCreatesAndBindsTableWhenSupported)
+    TEST_F(MacMoveGuardTest, DlomwaCreatesAndBindsTableWhenSupported)
     {
         buildOrch();
         g_set_do_not_learn_supported = true;
@@ -558,7 +622,7 @@ namespace macmoveguardorch_test
     }
 
     // -------- 11.1 #7: DLOMWA capability unsupported -> soft-disabled ------
-    TEST_F(MacMoveGuardOrchTest, DlomwaSoftDisabledWhenCapabilityMissing)
+    TEST_F(MacMoveGuardTest, DlomwaSoftDisabledWhenCapabilityMissing)
     {
         buildOrch();
         g_set_do_not_learn_supported = false;
@@ -574,22 +638,20 @@ namespace macmoveguardorch_test
         EXPECT_EQ(g_pre_ingress_acl_bound, SAI_NULL_OBJECT_ID);
         EXPECT_EQ(m_mmg->m_aclSetDoNotLearnSupported, 0);
 
-        // Detection still runs; bad MAC is persisted to STATE_DB though no
-        // ACL entry is programmed.
+        // Detection still runs but DLOMWA leaves no STATE_DB footprint.
         injectMove(MAC_A, ETH0, ETH1);
         injectMove(MAC_A, ETH1, ETH0);
         ASSERT_TRUE(state(MAC_A).is_bad_mac);
         EXPECT_EQ(state(MAC_A).learn_disable_acl_entry_id, SAI_NULL_OBJECT_ID);
         EXPECT_EQ(g_acl_entry_create_count, 0);
 
-        // STATE_DB row was written via persistBadMac().
         vector<string> keys;
-        m_mmg->m_stateBadMacTable->getKeys(keys);
-        EXPECT_EQ(keys.size(), 1u);
+        m_mmg->m_stateTable->getKeys(keys);
+        EXPECT_TRUE(keys.empty());
     }
 
     // -------- 11.1 #8: DLOMWA entry lifecycle ------------------------------
-    TEST_F(MacMoveGuardOrchTest, DlomwaEntryLifecycle)
+    TEST_F(MacMoveGuardTest, DlomwaEntryLifecycle)
     {
         buildOrch();
         g_set_do_not_learn_supported = true;
@@ -621,7 +683,7 @@ namespace macmoveguardorch_test
     }
 
     // -------- 11.1 #9: action transition tears down resources --------------
-    TEST_F(MacMoveGuardOrchTest, ActionTransitionTearsDownPreviousResources)
+    TEST_F(MacMoveGuardTest, ActionTransitionTearsDownPreviousResources)
     {
         buildOrch();
         g_set_do_not_learn_supported = true;
@@ -657,7 +719,7 @@ namespace macmoveguardorch_test
     }
 
     // -------- 11.1 #10: feature disable cleans everything ------------------
-    TEST_F(MacMoveGuardOrchTest, FeatureDisableCleanupReleasesAllResources)
+    TEST_F(MacMoveGuardTest, FeatureDisableCleanupReleasesAllResources)
     {
         buildOrch();
         g_set_do_not_learn_supported = true;
@@ -687,12 +749,12 @@ namespace macmoveguardorch_test
         EXPECT_EQ(g_pre_ingress_acl_bound, SAI_NULL_OBJECT_ID);
         EXPECT_TRUE(g_port_admin_status[ETH2_OID]);   // re-enabled
         vector<string> keys;
-        m_mmg->m_stateBadMacTable->getKeys(keys);
+        m_mmg->m_stateTable->getKeys(keys);
         EXPECT_TRUE(keys.empty());
     }
 
     // -------- 11.1 #11: GC of quiet MACs ------------------------------------
-    TEST_F(MacMoveGuardOrchTest, GcQuietNonBadMac)
+    TEST_F(MacMoveGuardTest, GcQuietNonBadMac)
     {
         buildOrch();
         configure({
@@ -715,7 +777,7 @@ namespace macmoveguardorch_test
     }
 
     // -------- 11.1 #12: config rejection -----------------------------------
-    TEST_F(MacMoveGuardOrchTest, ConfigRejectionHandling)
+    TEST_F(MacMoveGuardTest, ConfigRejectionHandling)
     {
         buildOrch();
 
@@ -744,205 +806,82 @@ namespace macmoveguardorch_test
     // 11.1 #13 (YANG validation) is exercised by the sonic-yang-models test
     // suite, not by this orch's unit tests. Skipped here on purpose.
 
-    // -------- 11.1 #14: restart restore — DISABLE_PORT ---------------------
-    TEST_F(MacMoveGuardOrchTest, RestartRestoreDisablePort)
+    // -------- 11.1 #14: restart cleanup — DISABLE_PORT --------------------
+    // Pre-populate STATE_DB with a disabled_ports CSV from a previous run,
+    // mark those ports as admin-down in the SAI mock, then build the orch.
+    // The constructor's restart sweep should re-enable the ports and drop
+    // the STATE_DB row. No bad-MAC tracking is rebuilt.
+    TEST_F(MacMoveGuardTest, ConstructorRestoresDisabledPorts)
     {
-        // Pre-populate STATE_DB before the orch is constructed; expiry far
-        // in the future so checkRecovery() should NOT revert on the first tick.
-        auto epoch_future = duration_cast<seconds>(
-            system_clock::now().time_since_epoch()).count() + 600;
-
         Table state_t(m_state_db.get(), STATE_MAC_MOVE_GUARD_TABLE_NAME);
-        ostringstream key;
-        key << "0x" << hex << VLAN40_OID << ":" << MAC_A;
-        state_t.set(key.str(), {
-            {"action",              "DISABLE_PORT"},
-            {"action_expiry_epoch", to_string(epoch_future)},
-            {"pinned_port",         ETH0},
-            {"disabled_ports",      ETH1 + "," + ETH2},
+        state_t.set("HW_RESOURCES", {
+            {"disabled_ports", ETH1 + "," + ETH2},
         });
+        g_port_admin_status[ETH1_OID] = false;
+        g_port_admin_status[ETH2_OID] = false;
 
         buildOrch();
 
-        // In-memory state rebuilt from STATE_DB.
-        ASSERT_TRUE(tracked(MAC_A));
-        EXPECT_TRUE(state(MAC_A).is_bad_mac);
-        EXPECT_EQ(state(MAC_A).pinned_port, ETH0);
-        EXPECT_EQ(state(MAC_A).disabled_ports.count(ETH1), 1u);
-        EXPECT_EQ(state(MAC_A).disabled_ports.count(ETH2), 1u);
-        EXPECT_EQ(m_mmg->m_disabledPorts[ETH1].size(), 1u);
-        EXPECT_EQ(m_mmg->m_disabledPorts[ETH2].size(), 1u);
-
-        // Enable feature so the recovery timer is allowed to do work.
-        configure({
-            {"enabled","true"}, {"threshold","100"}, {"detect_interval","60"},
-            {"action_interval","60"}, {"action","DISABLE_PORT"}
-        });
-
-        // First tick should NOT revert (deadline far in the future).
-        m_mmg->checkRecovery();
-        EXPECT_TRUE(state(MAC_A).is_bad_mac);
-
-        // Force expiry: re-enables ports, drops the STATE_DB row.
-        state(MAC_A).action_expiry_time = steady_clock::now() - seconds(1);
-        m_mmg->checkRecovery();
-        EXPECT_FALSE(state(MAC_A).is_bad_mac);
         EXPECT_TRUE(g_port_admin_status[ETH1_OID]);
         EXPECT_TRUE(g_port_admin_status[ETH2_OID]);
-
-        vector<string> keys;
-        m_mmg->m_stateBadMacTable->getKeys(keys);
-        EXPECT_TRUE(keys.empty());
-    }
-
-    // -------- 11.1 #15: restart restore — DLOMWA multiple entries ----------
-    TEST_F(MacMoveGuardOrchTest, RestartRestoreDlomwaSharedTable)
-    {
-        auto epoch_future = duration_cast<seconds>(
-            system_clock::now().time_since_epoch()).count() + 600;
-        sai_object_id_t shared_tbl   = 0xa1000000ULL;
-        sai_object_id_t entry_oid_a  = 0xb1000001ULL;
-        sai_object_id_t entry_oid_b  = 0xb1000002ULL;
-
-        Table state_t(m_state_db.get(), STATE_MAC_MOVE_GUARD_TABLE_NAME);
-        ostringstream tbl_hex; tbl_hex << "0x" << hex << shared_tbl;
-        ostringstream ea_hex;  ea_hex  << "0x" << hex << entry_oid_a;
-        ostringstream eb_hex;  eb_hex  << "0x" << hex << entry_oid_b;
-        ostringstream ka, kb;
-        ka << "0x" << hex << VLAN40_OID << ":" << MAC_A;
-        kb << "0x" << hex << VLAN40_OID << ":" << MAC_B;
-        state_t.set(ka.str(), {
-            {"action","DISABLE_LEARN_ON_MAC_WITH_ACL"},
-            {"action_expiry_epoch", to_string(epoch_future)},
-            {"acl_entry_id", ea_hex.str()},
-            {"acl_table_id", tbl_hex.str()},
-        });
-        state_t.set(kb.str(), {
-            {"action","DISABLE_LEARN_ON_MAC_WITH_ACL"},
-            {"action_expiry_epoch", to_string(epoch_future)},
-            {"acl_entry_id", eb_hex.str()},
-            {"acl_table_id", tbl_hex.str()},
-        });
-
-        buildOrch();
-
-        ASSERT_TRUE(tracked(MAC_A));
-        ASSERT_TRUE(tracked(MAC_B));
-        EXPECT_EQ(m_mmg->m_learnDisableAclTable, shared_tbl);
-        EXPECT_EQ(m_mmg->m_learnDisableAclEntryCount, 2u);
-        EXPECT_EQ(state(MAC_A).learn_disable_acl_entry_id, entry_oid_a);
-        EXPECT_EQ(state(MAC_B).learn_disable_acl_entry_id, entry_oid_b);
-
-        // Drive recovery by forcing expiry: each ACL entry should be removed
-        // via sai_acl_api->remove_acl_entry.
-        configure({
-            {"enabled","true"}, {"threshold","100"}, {"detect_interval","60"},
-            {"action_interval","60"}, {"action","DISABLE_LEARN_ON_MAC_WITH_ACL"}
-        });
-        state(MAC_A).action_expiry_time = steady_clock::now() - seconds(1);
-        state(MAC_B).action_expiry_time = steady_clock::now() - seconds(1);
-        m_mmg->checkRecovery();
-
-        EXPECT_FALSE(state(MAC_A).is_bad_mac);
-        EXPECT_FALSE(state(MAC_B).is_bad_mac);
-        EXPECT_EQ(g_acl_entry_remove_count, 2);
-        EXPECT_EQ(m_mmg->m_learnDisableAclEntryCount, 0u);
-    }
-
-    // -------- 11.1 #16: restart restore — expired action ------------------
-    TEST_F(MacMoveGuardOrchTest, RestartRestoreExpiredActionRevertsImmediately)
-    {
-        // Expiry already in the past: remaining clamps to 0, next checkRecovery
-        // should revert immediately.
-        auto epoch_past = duration_cast<seconds>(
-            system_clock::now().time_since_epoch()).count() - 30;
-
-        Table state_t(m_state_db.get(), STATE_MAC_MOVE_GUARD_TABLE_NAME);
-        ostringstream key;
-        key << "0x" << hex << VLAN40_OID << ":" << MAC_A;
-        state_t.set(key.str(), {
-            {"action","DISABLE_PORT"},
-            {"action_expiry_epoch", to_string(epoch_past)},
-            {"pinned_port",   ETH0},
-            {"disabled_ports", ETH1},
-        });
-
-        buildOrch();
-        configure({
-            {"enabled","true"}, {"threshold","100"}, {"detect_interval","60"},
-            {"action_interval","60"}, {"action","DISABLE_PORT"}
-        });
-
-        // First tick reverts.
-        m_mmg->checkRecovery();
-        EXPECT_FALSE(state(MAC_A).is_bad_mac);
-        EXPECT_TRUE(g_port_admin_status[ETH1_OID]);
-
-        vector<string> keys;
-        m_mmg->m_stateBadMacTable->getKeys(keys);
-        EXPECT_TRUE(keys.empty());
-    }
-
-    // -------- 11.1 #17: restart restore — feature now disabled ------------
-    TEST_F(MacMoveGuardOrchTest, RestartRestoreWithFeatureDisabledClearsAll)
-    {
-        auto epoch_future = duration_cast<seconds>(
-            system_clock::now().time_since_epoch()).count() + 600;
-        Table state_t(m_state_db.get(), STATE_MAC_MOVE_GUARD_TABLE_NAME);
-        ostringstream key;
-        key << "0x" << hex << VLAN40_OID << ":" << MAC_A;
-        state_t.set(key.str(), {
-            {"action","DISABLE_PORT"},
-            {"action_expiry_epoch", to_string(epoch_future)},
-            {"pinned_port",   ETH0},
-            {"disabled_ports", ETH1},
-        });
-
-        buildOrch();
-        ASSERT_TRUE(tracked(MAC_A));
-        ASSERT_EQ(m_mmg->m_disabledPorts[ETH1].size(), 1u);
-
-        // First doTask sees enabled=false and triggers clearAllState() which
-        // re-enables the ports and drops the STATE_DB row.
-        configure({ {"enabled","false"} });
-
-        EXPECT_FALSE(tracked(MAC_A));
+        EXPECT_TRUE(m_mmg->m_macTrackingState.empty());
         EXPECT_TRUE(m_mmg->m_disabledPorts.empty());
-        EXPECT_TRUE(g_port_admin_status[ETH1_OID]);
 
         vector<string> keys;
-        m_mmg->m_stateBadMacTable->getKeys(keys);
+        m_mmg->m_stateTable->getKeys(keys);
         EXPECT_TRUE(keys.empty());
     }
 
-    // -------- 11.1 #18: restart restore — malformed STATE_DB key ----------
-    TEST_F(MacMoveGuardOrchTest, RestartRestoreDropsMalformedRows)
+    // -------- 11.1 #15: restart cleanup — pre-ingress ACL table ----------
+    // Stage a pre-bound pre-ingress ACL table with our signature and a few
+    // entries; build the orch. The cleanup sweep should detect the table,
+    // delete its entries, unbind the switch attr, and delete the table.
+    TEST_F(MacMoveGuardTest, ConstructorTearsDownStaleAclTable)
+    {
+        g_pre_ingress_acl_bound = 0xa1000000ULL;
+        g_pre_staged_acl_entries = { 0xb1000001ULL, 0xb1000002ULL };
+
+        buildOrch();
+
+        EXPECT_EQ(g_acl_entry_remove_count, 2);
+        EXPECT_EQ(g_acl_table_remove_count, 1);
+        EXPECT_EQ(g_pre_ingress_acl_bound, SAI_NULL_OBJECT_ID);
+        EXPECT_TRUE(m_mmg->m_macTrackingState.empty());
+        EXPECT_EQ(m_mmg->m_learnDisableAclTable, SAI_NULL_OBJECT_ID);
+    }
+
+    // -------- 11.1 #16: restart cleanup — foreign ACL table left alone ---
+    // If the pre-ingress slot is bound to a table whose signature doesn't
+    // match ours, the cleanup sweep must leave it untouched.
+    TEST_F(MacMoveGuardTest, ConstructorLeavesForeignAclTableAlone)
+    {
+        g_pre_ingress_acl_bound = 0xa1000000ULL;
+        // Different action type than ours.
+        g_pre_staged_acl_action = SAI_ACL_ACTION_TYPE_PACKET_ACTION;
+
+        buildOrch();
+
+        EXPECT_EQ(g_acl_entry_remove_count, 0);
+        EXPECT_EQ(g_acl_table_remove_count, 0);
+        EXPECT_EQ(g_pre_ingress_acl_bound, 0xa1000000ULL);
+    }
+
+    // -------- 11.1 #17: malformed STATE_DB row is tolerated ---------------
+    TEST_F(MacMoveGuardTest, ConstructorTolerantOfStaleSchema)
     {
         Table state_t(m_state_db.get(), STATE_MAC_MOVE_GUARD_TABLE_NAME);
-
-        // Key missing the ':' separator.
-        state_t.set("no_colon_key", {
-            {"action","DISABLE_PORT"}, {"action_expiry_epoch","0"}
-        });
-        // bv_id parses as hex but the rest is not a MAC.
-        state_t.set("0xabc:not_a_mac", {
-            {"action","DISABLE_PORT"}, {"action_expiry_epoch","0"}
-        });
-        // Valid key but missing the 'action' field.
-        ostringstream good_key;
-        good_key << "0x" << hex << VLAN40_OID << ":" << MAC_A;
-        state_t.set(good_key.str(), {
-            {"action_expiry_epoch","0"}
+        // Junk row left over from an older schema; constructor must not throw
+        // and must clear the row.
+        state_t.set("0x123:00:11:22:33:44:01", {
+            {"action","DISABLE_PORT"},
+            {"action_expiry_epoch","0"},
         });
 
-        // Constructor must not throw.
         ASSERT_NO_THROW(buildOrch());
 
-        // None of the malformed rows produced a tracked entry, and they were
-        // all evicted from STATE_DB.
-        EXPECT_FALSE(tracked(MAC_A));
-        vector<string> keys;
-        m_mmg->m_stateBadMacTable->getKeys(keys);
-        EXPECT_TRUE(keys.empty());
+        // No tracked MAC, no in-memory state, and the unknown row is left
+        // in place — only HW_RESOURCES is consumed by the new sweep, so
+        // unknown keys are simply ignored.
+        EXPECT_TRUE(m_mmg->m_macTrackingState.empty());
     }
 }
