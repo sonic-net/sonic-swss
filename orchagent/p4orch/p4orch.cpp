@@ -38,8 +38,7 @@ extern PortsOrch *gPortsOrch;
 
 P4Orch::P4Orch(swss::DBConnector* db, std::vector<std::string> tableNames,
                ZmqServer* zmqServer, VRFOrch* vrfOrch)
-    : ZmqOrch(db, tableNames, zmqServer, /*orderedQueue=*/true,
-              /*dbPersistence=*/false),
+    : ZmqOrch(db, tableNames, zmqServer, /*dbPersistence=*/false),
       m_zmqServer(zmqServer),
       m_publisher("APPL_DB", /*bool buffered=*/true,
                   /*db_write_thread=*/true, zmqServer)

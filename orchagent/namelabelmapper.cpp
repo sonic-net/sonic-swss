@@ -112,7 +112,7 @@ std::string NameLabelMapper::generateUniqueLabel()
     uint64_t msec =
         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch())
             .count();
-    snprintf(label_buf, UNIQUE_LABEL_SIZE, "%" PRIu64 "", msec);
+    snprintf(label_buf, UNIQUE_LABEL_SIZE, "%" PRIx64 "", msec);
     return std::string(reinterpret_cast<char const *>(label_buf));
 }
 
