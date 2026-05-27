@@ -17,7 +17,7 @@ import json
 from ipaddress import ip_address
 from swsscommon import swsscommon
 
-from test_mux import TestMuxTunnelBase, create_fvs, tunnel_nh_id
+from test_mux import TestMuxTunnelBase
 
 
 ACTIVE = "active"
@@ -400,7 +400,6 @@ class TestMuxSubnetSlice(TestMuxSubnetSliceBase):
     ):
         """Link-local IPv6 neighbors are out-of-slice by definition."""
         appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-        asicdb = dvs.get_asic_db()
         try:
             self.set_mux_state(appdb, self.SLICED_PORT_A, ACTIVE)
             self.add_fdb(dvs, self.SLICED_PORT_A, self.MAC_A1_DASH)
@@ -989,6 +988,110 @@ class TestMuxSubnetSlice(TestMuxSubnetSliceBase):
             )
         finally:
             config_db.delete_entry(self.CONFIG_MUX_CABLE, self.LATE_CFG_PORT)
+
+
+    def test_slice_cable_removed_cleans_state(
+        self, dvs, dvs_route, setup, setup_vlan, setup_peer_switch,
+        setup_tunnel, setup_mux_cable, testlog
+    ):
+        """Deleting a slice-configured MUX_CABLE entry must withdraw the
+        supernet route, clear STATE_DB slice fields, and drop suppressed NHs.
+        Covers the slice cable teardown path in setMuxCable(remove)."""
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = dvs.get_asic_db()
+        config_db = dvs.get_config_db()
+
+        self.add_fdb(dvs, self.SLICED_PORT_A, self.MAC_A1_DASH)
+        self.add_neighbor(dvs, self.SERVER_IPV6_A, self.MAC_A1)
+        self.add_neighbor(dvs, self.IN_SLICE_A_1, self.MAC_A1)
+        self.set_mux_state(appdb, self.SLICED_PORT_A, ACTIVE)
+        try:
+            self.wait_for_slice_route(
+                asicdb, self.SLICE_PREFIX_A, self.SERVER_IPV6_A, present=True
+            )
+            self.check_state_db_slice_fields(
+                dvs, self.SLICED_PORT_A, expected_prefix=self.SLICE_PREFIX_A
+            )
+
+            # Tear down the slice-configured cable.
+            config_db.delete_entry(self.CONFIG_MUX_CABLE, self.SLICED_PORT_A)
+            time.sleep(2)
+
+            # Supernet route gone; STATE_DB slice field gone.
+            self.wait_for_slice_route(
+                asicdb, self.SLICE_PREFIX_A, self.SERVER_IPV6_A, present=False
+            )
+            entry = self.get_state_db_mux_entry(dvs, self.SLICED_PORT_A)
+            assert "server_ipv6_subnet" not in entry, (
+                f"slice field not cleared after cable removal: {entry}"
+            )
+        finally:
+            # Restore so later tests in same session see the original config.
+            config_db.create_entry(
+                self.CONFIG_MUX_CABLE, self.SLICED_PORT_A,
+                {
+                    "server_ipv4":        self.SERV2_IPV4 + self.IPV4_MASK,
+                    "server_ipv6":        self.SERVER_IPV6_A + self.IPV6_MASK,
+                    "server_ipv6_subnet": self.SLICE_PREFIX_A,
+                },
+            )
+            self.del_neighbor(dvs, self.SERVER_IPV6_A)
+            self.del_neighbor(dvs, self.IN_SLICE_A_1)
+            self.del_fdb(dvs, self.MAC_A1_DASH)
+
+    def test_mux_state_flip_updates_slice_route_nh(
+        self, dvs, dvs_route, setup, setup_vlan, setup_peer_switch,
+        setup_tunnel, setup_mux_cable, testlog
+    ):
+        """Flipping the sliced port's mux state changes the anchor NH OID
+        (direct neighbor vs. tunnel NH). The slice route must follow.
+        Covers the set_route branch in MuxCable::refreshSliceRoute."""
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = dvs.get_asic_db()
+
+        self.add_fdb(dvs, self.SLICED_PORT_A, self.MAC_A1_DASH)
+        self.add_neighbor(dvs, self.SERVER_IPV6_A, self.MAC_A1)
+        self.set_mux_state(appdb, self.SLICED_PORT_A, ACTIVE)
+        try:
+            self.wait_for_slice_route(
+                asicdb, self.SLICE_PREFIX_A, self.SERVER_IPV6_A, present=True
+            )
+            active_rt_key = self.find_route_key_for_prefix(
+                asicdb, self.SLICE_PREFIX_A
+            )
+            assert active_rt_key, "slice route missing on ACTIVE"
+            active_nh = self.get_route_nexthop_ip(asicdb, active_rt_key)
+
+            # STANDBY: anchor resolves via tunnel NH; slice route NH OID
+            # must change but route prefix remains present.
+            self.set_mux_state(appdb, self.SLICED_PORT_A, STANDBY)
+            time.sleep(2)
+            standby_rt_key = self.find_route_key_for_prefix(
+                asicdb, self.SLICE_PREFIX_A
+            )
+            assert standby_rt_key, "slice route disappeared on STANDBY"
+            standby_nh = self.get_route_nexthop_ip(asicdb, standby_rt_key)
+            assert active_nh != standby_nh, (
+                f"slice route NH did not change on state flip "
+                f"(active={active_nh}, standby={standby_nh})"
+            )
+
+            # Back to ACTIVE: NH flips again.
+            self.set_mux_state(appdb, self.SLICED_PORT_A, ACTIVE)
+            time.sleep(2)
+            back_rt_key = self.find_route_key_for_prefix(
+                asicdb, self.SLICE_PREFIX_A
+            )
+            assert back_rt_key, "slice route disappeared on ACTIVE re-set"
+            back_nh = self.get_route_nexthop_ip(asicdb, back_rt_key)
+            assert back_nh != standby_nh, (
+                f"slice route NH did not flip back to ACTIVE "
+                f"(standby={standby_nh}, back={back_nh})"
+            )
+        finally:
+            self.set_mux_state(appdb, self.SLICED_PORT_A, ACTIVE)
+            self.del_neighbor(dvs, self.SERVER_IPV6_A)
+            self.del_fdb(dvs, self.MAC_A1_DASH)
 
 
 # Dummy always-pass test at end as workaround for the issue where a Flaky
