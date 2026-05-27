@@ -12,8 +12,15 @@
 #include "saioffloadsession.h"
 #include <vector>
 #include <tuple>
+#include <string>
+#include <cctype>
 
 extern sai_icmp_echo_api_t* sai_icmp_echo_api;
+
+#define ICMP_SESSION_STAT_COUNTER_FLEX_COUNTER_GROUP "ICMP_SESSION_STAT_COUNTER"
+#define COUNTERS_ICMP_ECHO_SESSION_NAME_MAP          "COUNTERS_ICMP_ECHO_SESSION_NAME_MAP"
+#define ICMP_SESSION_STAT_COUNTER_POLLING_INTERVAL_MS 10000
+#define ICMP_SESSION_FLEX_COUNTER_UPDATE_TIMER_SEC    1
 
 extern void sai_deserialize_icmp_session_state_ntf( const std::string& s,
         uint32_t &count,
@@ -98,6 +105,20 @@ public:
      */
     void doTask(swss::NotificationConsumer &consumer) override;
 
+    /**
+     *@method doTask
+     *
+     *@brief Drives pending counter registration in traditional flex-counter mode.
+     */
+    void doTask(swss::SelectableTimer &timer) override;
+
+    /**
+     *@method setCountersState
+     *
+     *@brief Enable/disable ICMP echo session counters from FLEX_COUNTER_GROUP state.
+     */
+    void setCountersState(bool enable);
+
     // friend handler have access to IcmpOrch
     friend struct IcmpSaiSessionHandler;
 
@@ -159,6 +180,20 @@ private:
      */
     bool update_icmp_session(const string& key, const vector<FieldValueTuple>& data);
 
+    /**
+     *@method initializeCounters
+     *
+     *@brief Construct the stats handler and query platform capability.
+     */
+    void initializeCounters();
+
+    /**
+     *@method get_existing_session_map
+     *
+     *@brief session_key -> SAI session OID snapshot for setState().
+     */
+    std::map<std::string, sai_object_id_t> get_existing_session_map() const;
+
     // map of session key to session data cache
     std::map<std::string, IcmpSessionDataCache> m_icmp_session_map;
     // map of session object id to update data for handling notification from asic db 
@@ -187,6 +222,10 @@ private:
     static const std::map<sai_icmp_echo_session_state_t, std::string> m_session_state_lkup;
     // map of icmp session state string to sai icmp session state
     static const std::map<std::string, sai_icmp_echo_session_state_t> m_session_state_str_lkup;
+
+    // Manages per-session SAI selective counters and FlexCounterManager
+    // registration; instantiated once capability has been queried.
+    std::unique_ptr<SaiOffloadStatsHandler<IcmpSaiSessionHandler, sai_icmp_echo_api_t>> m_stats_handler;
 };
 
 /**
@@ -254,6 +293,55 @@ struct IcmpSaiSessionHandler : public SaiOffloadSessionHandler<IcmpSaiSessionHan
     enum class SAI_API_TYPE {
         API_TYPE = SAI_API_ICMP_ECHO
     };
+
+    /**
+     *@method make_counter_label
+     *
+     *@brief Build SAI_COUNTER_ATTR_LABEL for an ICMP echo session. The
+     *       full session_key exceeds SAI_HOSTIF_NAME_SIZE-1, so extract
+     *       the first "0x"-prefixed hex token (the session GUID, unique
+     *       per device). Falls back to trailing-char truncation if no
+     *       GUID-shaped token is found. The full key is preserved in
+     *       COUNTERS_ICMP_ECHO_SESSION_NAME_MAP.
+     */
+    static std::string make_counter_label(const std::string& session_key)
+    {
+        constexpr size_t kMaxLabelLen = SAI_HOSTIF_NAME_SIZE - 1;
+
+        // Scan for the first "0x"/"0X" hex token regardless of ':' or '|'
+        // separator usage.
+        for (size_t i = 0; i + 2 < session_key.size(); ++i)
+        {
+            if (session_key[i] != '0') continue;
+            if (session_key[i + 1] != 'x' && session_key[i + 1] != 'X') continue;
+            if (!std::isxdigit(static_cast<unsigned char>(session_key[i + 2]))) continue;
+
+            // Token must start at a non-alnum boundary to avoid matching
+            // inside arbitrary identifiers.
+            if (i > 0)
+            {
+                unsigned char prev = static_cast<unsigned char>(session_key[i - 1]);
+                if (std::isalnum(prev)) continue;
+            }
+
+            size_t end = i + 2;
+            while (end < session_key.size() &&
+                   std::isxdigit(static_cast<unsigned char>(session_key[end])))
+            {
+                ++end;
+            }
+
+            std::string guid = session_key.substr(i, end - i);
+            if (guid.size() > kMaxLabelLen)
+            {
+                guid.resize(kMaxLabelLen);
+            }
+            return guid;
+        }
+
+        return SaiOffloadStatsHandler<IcmpSaiSessionHandler,
+                                      sai_icmp_echo_api_t>::default_counter_label(session_key);
+    }
 
     /**
      *@method do_init
@@ -356,6 +444,23 @@ struct IcmpSaiSessionHandler : public SaiOffloadSessionHandler<IcmpSaiSessionHan
     static const uint32_t m_min_tx_interval_usec;
     static const uint32_t m_max_rx_interval_usec;
     static const uint32_t m_min_rx_interval_usec;
+
+    // Selective counter variants exposed per session. Two entries keep RX
+    // and TX visible as separate rows in COUNTERS_DB / `show icmp stats`.
+    static constexpr sai_object_type_t session_object_type = SAI_OBJECT_TYPE_ICMP_ECHO_SESSION;
+    static const std::vector<SelectiveCounterVariant> m_selective_counter_variants;
+
+    // Native FlexCounter fallback (required by SaiOffloadStatsHandler).
+    // Used when SAI_ICMP_ECHO_SESSION_ATTR_SELECTIVE_COUNTER_LIST is not
+    // implemented; syncd polls sai_get_icmp_echo_session_stats_ext() into
+    // COUNTERS_DB directly.
+    static CounterType native_counter_type();
+    static std::unordered_set<std::string> native_counter_stats();
+
+    // Thin wrapper so SaiOffloadStatsHandler stays API-agnostic.
+    static sai_status_t set_session_attribute(sai_icmp_echo_api_t* api,
+                                              sai_object_id_t session_id,
+                                              const sai_attribute_t* attr);
 };
 
 #endif /* SWSS_ICMPORCH_H */

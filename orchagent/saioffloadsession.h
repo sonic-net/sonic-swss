@@ -10,9 +10,20 @@
 #include <vector>
 #include <string>
 #include <tuple>
+#include <map>
+#include <memory>
 #include <unordered_map>
+#include <unordered_set>
+#include <algorithm>
+#include <cstring>
 #include "portsorch.h"
 #include "vrforch.h"
+#include "dbconnector.h"
+#include "table.h"
+#include "select.h"
+#include "timer.h"
+#include "sai_serialize.h"
+#include "flex_counter/flex_counter_manager.h"
 
 using namespace std;
 using namespace swss;
@@ -31,7 +42,24 @@ extern sai_object_id_t      gSwitchId;
 extern sai_object_id_t      gVirtualRouterId;
 extern PortsOrch*           gPortsOrch;
 extern sai_switch_api_t*    sai_switch_api;
+extern sai_counter_api_t*   sai_counter_api;
 extern Directory<Orch*>     gDirectory;
+extern bool                 gTraditionalFlexCounter;
+
+/**
+ *@struct SelectiveCounterVariant
+ *
+ *@brief One direction/aspect of a per-session selective counter. Each
+ *       variant becomes a distinct SAI counter aggregating stat_ids via
+ *       SAI_COUNTER_ATTR_STAT_ID_LIST. The suffix (e.g. "IN", "OUT") is
+ *       appended to the SAI counter label and to the COUNTERS_DB name-map
+ *       key; "<base_label>-<suffix>" must fit in SAI_HOSTIF_NAME_SIZE - 1.
+ */
+struct SelectiveCounterVariant
+{
+    std::string suffix;
+    std::vector<sai_stat_id_t> stat_ids;
+};
 
 // saioffload handler types for BFD and ICMP
 template<typename T>
@@ -574,5 +602,651 @@ bool SaiOffloadSessionHandler<SaiOrchHandlerClass, T>::register_state_change_not
     }
     return true;
 }
+
+/**
+ *@class SaiOffloadStatsHandler
+ *
+ *@brief Manages per-session SAI counters for offload sessions (ICMP Echo,
+ *       BFD, ...) and registers them with FlexCounterManager so syncd
+ *       polls them into COUNTERS_DB.
+ *
+ *       Mode is selected at initialize() based on platform capability:
+ *       - Selective-counter mode: creates one SAI counter per
+ *         Derived::m_selective_counter_variants, attaches via
+ *         SAI_*_ATTR_SELECTIVE_COUNTER_LIST, polls SAI_COUNTER_STAT_*.
+ *       - Native mode (fallback): registers the session OID itself with
+ *         FlexCounterManager using Derived::native_counter_{type,stats}().
+ *
+ *       Derived must provide:
+ *         - session_object_type, SAI_ATTR_ID::COUNTER_LIST_ID, m_name
+ *         - m_selective_counter_variants (>= 1 entry)
+ *         - make_counter_label() returning a printable ASCII base label
+ *           (<= SAI_HOSTIF_NAME_SIZE - 1 - len("-<suffix>"))
+ *         - native_counter_type() / native_counter_stats()
+ *         - set_session_attribute() wrapper over the object-type SAI API
+ */
+template <class Derived, typename T>
+class SaiOffloadStatsHandler
+{
+public:
+    using Traits = SaiOffloadHandlerTraits<T>;
+    using api_t = typename Traits::api_t;
+
+    SaiOffloadStatsHandler(const std::string& flex_counter_group,
+                           const std::string& counter_name_map,
+                           uint32_t polling_interval_ms,
+                           uint32_t update_timer_interval_sec = 1)
+        : m_group_name(flex_counter_group),
+          m_name_map_name(counter_name_map),
+          m_polling_interval_ms(polling_interval_ms),
+          m_update_timer_interval_sec(update_timer_interval_sec),
+          m_counter_manager(flex_counter_group, StatsMode::READ, polling_interval_ms, false)
+    {
+    }
+
+    /**
+     *@method default_counter_label
+     *
+     *@brief Generic SAI counter label builder; returns the trailing
+     *       SAI_HOSTIF_NAME_SIZE-1 chars of session_key. Deriveds with
+     *       embedded GUIDs should override make_counter_label() since
+     *       trailing truncation is not guaranteed to be unique.
+     */
+    static std::string default_counter_label(const std::string& session_key)
+    {
+        constexpr size_t kMaxLabelLen = SAI_HOSTIF_NAME_SIZE - 1;
+        if (session_key.size() <= kMaxLabelLen)
+        {
+            return session_key;
+        }
+        return session_key.substr(session_key.size() - kMaxLabelLen);
+    }
+
+    /**
+     *@method initialize
+     *
+     *@brief Query capability, pick mode, set up DB connectors. Call once
+     *       before adding counters. Returns true if counters are usable.
+     */
+    bool initialize()
+    {
+        if (m_initialized)
+        {
+            return m_supported;
+        }
+        m_initialized = true;
+
+        if (query_capability())
+        {
+            m_supported = true;
+        }
+        else
+        {
+            // Selective counter unsupported; fall back to native FlexCounter.
+            m_native_mode = true;
+            m_supported = true;
+            SWSS_LOG_NOTICE("%s using native FlexCounter fallback "
+                            "(selective counter unsupported on this platform)",
+                            Derived::m_name.c_str());
+        }
+
+        m_asic_db = std::make_shared<DBConnector>("ASIC_DB", 0);
+        m_counter_db = std::make_shared<DBConnector>("COUNTERS_DB", 0);
+        m_counters_name_map = std::make_unique<Table>(m_counter_db.get(), m_name_map_name);
+
+        if (gTraditionalFlexCounter)
+        {
+            m_vid_to_rid_table = std::make_unique<Table>(m_asic_db.get(), "VIDTORID");
+        }
+
+        return true;
+    }
+
+    /**
+     *@method createUpdateTimer
+     *
+     *@brief Returns a SelectableTimer used by the owning orch to drive
+     *       processPending() in traditional flex counter mode. Caller
+     *       registers it via Orch::addExecutor.
+     */
+    SelectableTimer* createUpdateTimer()
+    {
+        if (m_counter_update_timer == nullptr)
+        {
+            m_counter_update_timer = new SelectableTimer(
+                timespec{ .tv_sec = m_update_timer_interval_sec, .tv_nsec = 0 });
+        }
+        return m_counter_update_timer;
+    }
+
+    /**
+     *@method addSession
+     *
+     *@brief Create one SAI selective counter per variant, attach them via
+     *       SAI_*_ATTR_SELECTIVE_COUNTER_LIST, record name-map entries,
+     *       and register with FlexCounterManager (deferred in traditional
+     *       mode until VID->RID maps). Rolls back on failure.
+     */
+    bool addSession(const std::string& session_key, sai_object_id_t session_id, api_t* api)
+    {
+        SWSS_LOG_ENTER();
+
+        if (!m_enabled)
+        {
+            return false;
+        }
+
+        if (m_native_mode)
+        {
+            return addSessionNative(session_key, session_id);
+        }
+
+        const auto& variants = Derived::m_selective_counter_variants;
+        if (variants.empty())
+        {
+            SWSS_LOG_ERROR("%s, no selective counter variants declared by Derived; "
+                           "refusing to addSession(%s)",
+                    Derived::m_name.c_str(), session_key.c_str());
+            return false;
+        }
+
+        std::vector<sai_object_id_t> oids;
+        oids.reserve(variants.size());
+
+        for (const auto& v : variants)
+        {
+            sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+            if (!create_selective_counter(oid, session_key, v))
+            {
+                SWSS_LOG_ERROR("%s, Failed to create selective counter for %s "
+                               "variant '%s'",
+                        Derived::m_name.c_str(), session_key.c_str(),
+                        v.suffix.c_str());
+                for (auto created : oids)
+                {
+                    remove_selective_counter(created);
+                }
+                return false;
+            }
+            oids.push_back(oid);
+        }
+
+        if (!attach_counters_to_session(api, session_id, oids))
+        {
+            for (auto oid : oids)
+            {
+                remove_selective_counter(oid);
+            }
+            return false;
+        }
+
+        // Persist <session_key>|<SUFFIX> -> oid; '|' avoids colliding with
+        // the ':' tokens already present in session_key.
+        std::vector<FieldValueTuple> fvs;
+        fvs.reserve(variants.size());
+        for (size_t i = 0; i < variants.size(); ++i)
+        {
+            fvs.emplace_back(make_name_map_key(session_key, variants[i].suffix),
+                             sai_serialize_object_id(oids[i]));
+        }
+        m_counters_name_map->set("", fvs);
+
+        m_session_counters[session_key] = oids;
+
+        if (!gTraditionalFlexCounter)
+        {
+            std::unordered_set<std::string> counter_stats;
+            get_counter_stat_id_list(counter_stats);
+            for (auto oid : oids)
+            {
+                m_counter_manager.setCounterIdList(oid, CounterType::OFFLOAD_SESSION, counter_stats);
+            }
+        }
+        else
+        {
+            bool was_empty = m_pending_counters.empty();
+            for (auto oid : oids)
+            {
+                m_pending_counters[oid] = session_key;
+            }
+            if (was_empty && !m_pending_counters.empty() &&
+                m_counter_update_timer != nullptr)
+            {
+                m_counter_update_timer->start();
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     *@method removeSession
+     *
+     *@brief Detach counters from the session, clear name-map entries,
+     *       unregister from FlexCounterManager, and destroy SAI counters.
+     */
+    void removeSession(const std::string& session_key, sai_object_id_t session_id, api_t* api)
+    {
+        SWSS_LOG_ENTER();
+
+        auto it = m_session_counters.find(session_key);
+        if (it == m_session_counters.end())
+        {
+            return;
+        }
+        const auto oids = it->second;  // copy: we erase below
+
+        if (m_native_mode)
+        {
+            // oids[0] is the session OID itself; nothing to detach/destroy.
+            m_counters_name_map->hdel("", session_key);
+            for (auto oid : oids)
+            {
+                bool was_pending = m_pending_counters.erase(oid) == 1;
+                if (!was_pending)
+                {
+                    m_counter_manager.clearCounterIdList(oid);
+                }
+            }
+            m_session_counters.erase(it);
+            return;
+        }
+
+        detach_counter_from_session(api, session_id);
+
+        const auto& variants = Derived::m_selective_counter_variants;
+        for (const auto& v : variants)
+        {
+            m_counters_name_map->hdel("",
+                    make_name_map_key(session_key, v.suffix));
+        }
+
+        for (auto oid : oids)
+        {
+            bool was_pending = m_pending_counters.erase(oid) == 1;
+            if (!was_pending)
+            {
+                m_counter_manager.clearCounterIdList(oid);
+            }
+            remove_selective_counter(oid);
+        }
+        m_session_counters.erase(it);
+    }
+
+    /**
+     *@method processPending
+     *
+     *@brief Register pending counters with FlexCounterManager once their
+     *       VID->RID mapping resolves. Driven by the update timer.
+     */
+    void processPending()
+    {
+        SWSS_LOG_ENTER();
+
+        const CounterType counter_type = m_native_mode
+            ? Derived::native_counter_type()
+            : CounterType::OFFLOAD_SESSION;
+        std::unordered_set<std::string> counter_stats;
+        if (m_native_mode)
+        {
+            counter_stats = Derived::native_counter_stats();
+        }
+        else
+        {
+            get_counter_stat_id_list(counter_stats);
+        }
+
+        std::string value;
+        for (auto it = m_pending_counters.begin(); it != m_pending_counters.end();)
+        {
+            const auto oid_str = sai_serialize_object_id(it->first);
+            if (!gTraditionalFlexCounter ||
+                (m_vid_to_rid_table && m_vid_to_rid_table->hget("", oid_str, value)))
+            {
+                m_counter_manager.setCounterIdList(it->first, counter_type, counter_stats);
+                it = m_pending_counters.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+
+        if (m_pending_counters.empty() && m_counter_update_timer != nullptr)
+        {
+            m_counter_update_timer->stop();
+        }
+    }
+
+    /**
+     *@method setState
+     *
+     *@brief Enable/disable counter collection across existing_sessions.
+     *       Idempotent.
+     */
+    void setState(bool enable,
+                  const std::map<std::string, sai_object_id_t>& existing_sessions,
+                  api_t* api)
+    {
+        SWSS_LOG_ENTER();
+
+        if (!m_supported)
+        {
+            SWSS_LOG_WARN("%s selective counters not supported; ignoring state change",
+                    Derived::m_name.c_str());
+            return;
+        }
+
+        if (enable == m_enabled)
+        {
+            return;
+        }
+
+        SWSS_LOG_NOTICE("%s selective counters state -> %s",
+                Derived::m_name.c_str(), enable ? "enabled" : "disabled");
+
+        m_enabled = enable;
+
+        if (enable)
+        {
+            for (const auto& kv : existing_sessions)
+            {
+                addSession(kv.first, kv.second, api);
+            }
+        }
+        else
+        {
+            auto to_remove = m_session_counters;
+            for (const auto& kv : to_remove)
+            {
+                auto sit = existing_sessions.find(kv.first);
+                sai_object_id_t session_id = (sit != existing_sessions.end()) ? sit->second : SAI_NULL_OBJECT_ID;
+                removeSession(kv.first, session_id, api);
+            }
+        }
+    }
+
+    bool isEnabled()   const { return m_enabled; }
+    bool isSupported() const { return m_supported; }
+
+private:
+    bool query_capability() const
+    {
+        sai_attr_capability_t capability;
+        constexpr sai_attr_id_t counter_list_attr =
+            static_cast<sai_attr_id_t>(Derived::SAI_ATTR_ID::COUNTER_LIST_ID);
+        sai_status_t status = sai_query_attribute_capability(
+            gSwitchId, Derived::session_object_type, counter_list_attr, &capability);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("%s, Failed to query selective counter capability: %d",
+                    Derived::m_name.c_str(), status);
+            return false;
+        }
+        return capability.set_implemented && capability.create_implemented;
+    }
+
+    /**
+     *@method make_name_map_key
+     *
+     *@brief Build "<session_key>|<variant_suffix>" name-map field. '|'
+     *       avoids colliding with the ':' tokens inside session_key.
+     */
+    static std::string make_name_map_key(const std::string& session_key,
+                                         const std::string& variant_suffix)
+    {
+        return session_key + "|" + variant_suffix;
+    }
+
+    bool create_selective_counter(sai_object_id_t& counter_oid,
+                                  const std::string& session_key,
+                                  const SelectiveCounterVariant& variant)
+    {
+        std::vector<sai_attribute_t> attrs;
+
+        sai_attribute_t type_attr{};
+        type_attr.id = SAI_COUNTER_ATTR_TYPE;
+        type_attr.value.s32 = SAI_COUNTER_TYPE_SELECTIVE;
+        attrs.push_back(type_attr);
+
+        sai_attribute_t obj_type_attr{};
+        obj_type_attr.id = SAI_COUNTER_ATTR_OBJECT_TYPE;
+        obj_type_attr.value.s32 = Derived::session_object_type;
+        attrs.push_back(obj_type_attr);
+
+        std::vector<int32_t> id_list;
+        id_list.reserve(variant.stat_ids.size());
+        for (auto id : variant.stat_ids)
+        {
+            id_list.push_back(static_cast<int32_t>(id));
+        }
+
+        sai_attribute_t stat_ids_attr{};
+        stat_ids_attr.id = SAI_COUNTER_ATTR_STAT_ID_LIST;
+        stat_ids_attr.value.s32list.count = static_cast<uint32_t>(id_list.size());
+        stat_ids_attr.value.s32list.list = id_list.data();
+        attrs.push_back(stat_ids_attr);
+
+        sai_attribute_t label_attr{};
+        label_attr.id = SAI_COUNTER_ATTR_LABEL;
+
+        // SAI Meta caps every CHARDATA attribute at SAI_HOSTIF_NAME_SIZE-1
+        // printable ASCII chars; longer values are rejected with the
+        // misleading "host interface name is too long" error. The full
+        // session_key is still recorded in COUNTERS_DB name map.
+        constexpr size_t kMaxLabelLen = SAI_HOSTIF_NAME_SIZE - 1;
+        std::string base_label = Derived::make_counter_label(session_key);
+
+        // Truncate the base, not the suffix, so the direction stays visible.
+        const std::string suffix_part = variant.suffix.empty()
+            ? std::string()
+            : ("-" + variant.suffix);
+        if (base_label.size() + suffix_part.size() > kMaxLabelLen)
+        {
+            const size_t budget = (suffix_part.size() < kMaxLabelLen)
+                ? kMaxLabelLen - suffix_part.size()
+                : 0;
+            base_label.resize(budget);
+        }
+        const std::string compact_label = base_label + suffix_part;
+        const size_t copy_len = std::min(compact_label.size(), kMaxLabelLen);
+
+        // Reject non-printable bytes early; Meta would otherwise fail the
+        // create with a generic invalid-parameter.
+        for (size_t i = 0; i < copy_len; ++i)
+        {
+            char c = compact_label[i];
+            if (c < 0x20 || c > 0x7e)
+            {
+                SWSS_LOG_ERROR(
+                    "%s, counter label '%s' for session '%s' contains "
+                    "non-printable character 0x%02x; aborting create",
+                    Derived::m_name.c_str(),
+                    compact_label.c_str(), session_key.c_str(),
+                    static_cast<unsigned char>(c));
+                return false;
+            }
+        }
+
+        std::memcpy(label_attr.value.chardata, compact_label.data(), copy_len);
+        label_attr.value.chardata[copy_len] = '\0';
+
+        if (compact_label.size() > kMaxLabelLen)
+        {
+            SWSS_LOG_WARN(
+                "%s, counter label '%s' (from session '%s') truncated "
+                "to %zu chars to satisfy SAI Meta CHARDATA limit",
+                Derived::m_name.c_str(),
+                compact_label.c_str(), session_key.c_str(), kMaxLabelLen);
+        }
+        attrs.push_back(label_attr);
+
+        sai_status_t status = sai_counter_api->create_counter(
+            &counter_oid, gSwitchId,
+            static_cast<uint32_t>(attrs.size()), attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("%s, Failed to create SAI selective counter "
+                           "(session=%s variant=%s): %d",
+                    Derived::m_name.c_str(),
+                    session_key.c_str(), variant.suffix.c_str(), status);
+            return false;
+        }
+        return true;
+    }
+
+    bool remove_selective_counter(sai_object_id_t counter_oid)
+    {
+        if (counter_oid == SAI_NULL_OBJECT_ID)
+        {
+            return true;
+        }
+        sai_status_t status = sai_counter_api->remove_counter(counter_oid);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("%s, Failed to remove SAI selective counter %s: %d",
+                    Derived::m_name.c_str(),
+                    sai_serialize_object_id(counter_oid).c_str(), status);
+            return false;
+        }
+        return true;
+    }
+
+    bool attach_counters_to_session(api_t* api, sai_object_id_t session_id,
+                                    const std::vector<sai_object_id_t>& counter_oids)
+    {
+        constexpr sai_attr_id_t counter_list_attr =
+            static_cast<sai_attr_id_t>(Derived::SAI_ATTR_ID::COUNTER_LIST_ID);
+
+        sai_attribute_t attr{};
+        attr.id = counter_list_attr;
+        // const_cast is safe: SAI only reads objlist.list during the set.
+        attr.value.objlist.count = static_cast<uint32_t>(counter_oids.size());
+        attr.value.objlist.list  = const_cast<sai_object_id_t *>(counter_oids.data());
+
+        sai_status_t status = Derived::set_session_attribute(api, session_id, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("%s, Failed to attach %zu counter(s) to session %s: %d",
+                    Derived::m_name.c_str(), counter_oids.size(),
+                    sai_serialize_object_id(session_id).c_str(), status);
+            return false;
+        }
+        return true;
+    }
+
+    bool detach_counter_from_session(api_t* api, sai_object_id_t session_id)
+    {
+        if (session_id == SAI_NULL_OBJECT_ID)
+        {
+            return true;
+        }
+
+        constexpr sai_attr_id_t counter_list_attr =
+            static_cast<sai_attr_id_t>(Derived::SAI_ATTR_ID::COUNTER_LIST_ID);
+
+        sai_attribute_t attr{};
+        attr.id = counter_list_attr;
+        attr.value.objlist.count = 0;
+        attr.value.objlist.list = nullptr;
+
+        sai_status_t status = Derived::set_session_attribute(api, session_id, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("%s, Failed to detach counter from session %s: %d",
+                    Derived::m_name.c_str(),
+                    sai_serialize_object_id(session_id).c_str(), status);
+            return false;
+        }
+        return true;
+    }
+
+    static void get_counter_stat_id_list(std::unordered_set<std::string>& counter_stats)
+    {
+        static const sai_counter_stat_t s_ids[] = {
+            SAI_COUNTER_STAT_PACKETS,
+            SAI_COUNTER_STAT_BYTES,
+        };
+        for (auto id : s_ids)
+        {
+            counter_stats.emplace(sai_serialize_counter_stat(id));
+        }
+    }
+
+    /**
+     *@method addSessionNative
+     *
+     *@brief Native FlexCounter path: register the session OID itself with
+     *       Derived::native_counter_{type,stats}(). syncd polls via
+     *       sai_get_<obj>_session_stats_ext() into COUNTERS_DB.
+     */
+    bool addSessionNative(const std::string& session_key, sai_object_id_t session_id)
+    {
+        if (session_id == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_ERROR("%s, addSessionNative(%s) called with NULL session OID",
+                    Derived::m_name.c_str(), session_key.c_str());
+            return false;
+        }
+
+        auto counter_stats = Derived::native_counter_stats();
+        if (counter_stats.empty())
+        {
+            SWSS_LOG_ERROR("%s, Derived::native_counter_stats() returned empty; "
+                           "refusing to addSession(%s)",
+                    Derived::m_name.c_str(), session_key.c_str());
+            return false;
+        }
+
+        std::vector<FieldValueTuple> fvs;
+        fvs.emplace_back(session_key, sai_serialize_object_id(session_id));
+        m_counters_name_map->set("", fvs);
+
+        m_session_counters[session_key] = { session_id };
+
+        if (!gTraditionalFlexCounter)
+        {
+            m_counter_manager.setCounterIdList(session_id,
+                                               Derived::native_counter_type(),
+                                               counter_stats);
+        }
+        else
+        {
+            bool was_empty = m_pending_counters.empty();
+            m_pending_counters[session_id] = session_key;
+            if (was_empty && !m_pending_counters.empty() &&
+                m_counter_update_timer != nullptr)
+            {
+                m_counter_update_timer->start();
+            }
+        }
+
+        return true;
+    }
+
+    std::string m_group_name;
+    std::string m_name_map_name;
+    uint32_t    m_polling_interval_ms;
+    uint32_t    m_update_timer_interval_sec;
+
+    FlexCounterManager m_counter_manager;
+    std::unique_ptr<Table> m_counters_name_map;
+    std::unique_ptr<Table> m_vid_to_rid_table;
+    std::shared_ptr<DBConnector> m_counter_db;
+    std::shared_ptr<DBConnector> m_asic_db;
+
+    // session_key -> counter OIDs (one per variant, same order).
+    std::map<std::string, std::vector<sai_object_id_t>> m_session_counters;
+    // counter OID -> owning session_key while awaiting VID->RID resolution.
+    std::map<sai_object_id_t, std::string> m_pending_counters;
+    SelectableTimer* m_counter_update_timer = nullptr;
+
+    bool m_enabled     = false;
+    bool m_supported   = false;
+    bool m_initialized = false;
+    // Selective counter unsupported; register session OIDs directly with
+    // FlexCounterManager and skip SAI counter create/attach.
+    bool m_native_mode = false;
+};
 
 #endif
