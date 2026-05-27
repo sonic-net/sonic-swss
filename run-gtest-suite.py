@@ -5,7 +5,11 @@ import subprocess
 import time
 from lxml import etree
 import sys
-import resource
+
+try:
+    import resource  # POSIX-only; not available on Windows.
+except ImportError:
+    resource = None
 
 
 def str2bool(value):
@@ -35,13 +39,18 @@ def main():
     else:
         test_args.append("--gtest_color=no")
 
-    try:
-        soft_nofile, hard_nofile = resource.getrlimit(resource.RLIMIT_NOFILE)
-        target_nofile = hard_nofile
-        if target_nofile > soft_nofile:
-            resource.setrlimit(resource.RLIMIT_NOFILE, (target_nofile, hard_nofile))
-    except (OSError, ValueError):
-        pass
+    # Raise the open-file descriptor soft limit toward the hard limit so tests
+    # spawning many sockets/FDs do not exhaust the default cap. Best-effort:
+    # the `resource` module is unavailable on some platforms, and setrlimit may
+    # be denied; in either case we silently fall back to the inherited limit.
+    if resource is not None:
+        try:
+            soft_nofile, hard_nofile = resource.getrlimit(resource.RLIMIT_NOFILE)
+            target_nofile = hard_nofile
+            if target_nofile > soft_nofile:
+                resource.setrlimit(resource.RLIMIT_NOFILE, (target_nofile, hard_nofile))
+        except (OSError, ValueError):
+            pass
 
     test_process = subprocess.run(args.test_binary + test_args, stdin=subprocess.DEVNULL, stdout=args.log_file, stderr=subprocess.STDOUT)
     args.log_file.flush()
