@@ -1,4 +1,5 @@
 #include "dashportmaporch.h"
+#include "dashresulthelper.h"
 #include "orch.h"
 #include "dashorch.h"
 #include "taskworker.h"

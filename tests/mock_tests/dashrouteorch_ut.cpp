@@ -8,6 +8,7 @@
 #include "mock_orchagent_main.h"
 #include "mock_sai_api.h"
 #include "mock_dash_orch_test.h"
+#include "mock_table.h"
 #include "dash_api/appliance.pb.h"
 #include "dash_api/route_type.pb.h"
 #include "dash_api/route.pb.h"
@@ -82,6 +83,27 @@ namespace dashrouteorch_test
                 }
             }
             FAIL() << "SAI_INBOUND_ROUTING_ENTRY_ATTR_ACTION not found in attributes";
+        }
+
+    protected:
+        bool getResultEntry(const std::string& tableName, const std::string& key,
+                            std::vector<swss::FieldValueTuple>& values)
+        {
+            swss::Table resultTable(m_dpu_app_state_db.get(), tableName);
+            return resultTable.get(key, values);
+        }
+
+        std::string getResultField(const std::vector<swss::FieldValueTuple>& values,
+                                   const std::string& field)
+        {
+            for (const auto& fv : values)
+            {
+                if (fvField(fv) == field)
+                {
+                    return fvValue(fv);
+                }
+            }
+            return "";
         }
     };
 
@@ -185,5 +207,32 @@ namespace dashrouteorch_test
             .Times(1).WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
         RemoveInboundRoutingEntry();
         EXPECT_EQ(GetCrmUsedCount(CrmResourceType::CRM_DASH_IPV4_INBOUND_ROUTING), baselineUsed);
+    }
+
+    TEST_F(DashRouteOrchTest, RouteGroupResultWrittenToDb)
+    {
+        AddOutboundRoutingGroup();
+
+        // Verify result was written to DPU_APPL_STATE_DB
+        std::vector<swss::FieldValueTuple> values;
+        bool found = getResultEntry(APP_DASH_ROUTE_GROUP_TABLE_NAME, route_group1, values);
+        EXPECT_TRUE(found);
+        EXPECT_EQ(getResultField(values, "result"), to_string(DASH_RESULT_SUCCESS));
+        EXPECT_EQ(getResultField(values, "version"), "1");
+    }
+
+    TEST_F(DashRouteOrchTest, RouteResultWrittenToDb)
+    {
+        EXPECT_CALL(*mock_sai_dash_outbound_routing_api, create_outbound_routing_entries).Times(1);
+
+        AddOutboundRoutingGroup();
+        AddTunnel();
+        AddOutboundRoutingEntry();
+
+        // Verify route result was written to DPU_APPL_STATE_DB
+        std::vector<swss::FieldValueTuple> values;
+        bool found = getResultEntry(APP_DASH_ROUTE_TABLE_NAME, route_group1 + ":1.2.3.4/32", values);
+        EXPECT_TRUE(found);
+        EXPECT_EQ(getResultField(values, "result"), to_string(DASH_RESULT_SUCCESS));
     }
 }

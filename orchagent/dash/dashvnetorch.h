@@ -7,6 +7,7 @@
 #include <memory>
 #include "bulker.h"
 #include "dbconnector.h"
+#include "redispipeline.h"
 #include "ipaddress.h"
 #include "ipaddresses.h"
 #include "macaddress.h"
@@ -75,6 +76,7 @@ private:
     ObjectBulker<sai_dash_vnet_api_t> vnet_bulker_;
     EntityBulker<sai_dash_outbound_ca_to_pa_api_t> outbound_ca_to_pa_bulker_;
     EntityBulker<sai_dash_pa_validation_api_t> pa_validation_bulker_;
+    std::unique_ptr<swss::RedisPipeline> m_resultPipeline;
     std::unique_ptr<swss::Table> dash_vnet_result_table_;
     std::unique_ptr<swss::Table> dash_vnet_map_result_table_;
 

@@ -6,6 +6,7 @@
 #include "bfdorch.h"
 #include "dashorch.h"
 #include "crmorch.h"
+#include "dashresulthelper.h"
 #include "saihelper.h"
 #include "table.h"
 #include "taskworker.h"

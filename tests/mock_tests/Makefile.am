@@ -177,6 +177,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/dash/dashhafloworch.cpp \
                 $(top_srcdir)/orchagent/dash/dashmeterorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashportmaporch.cpp \
+                $(top_srcdir)/orchagent/dash/dashresulthelper.cpp \
                 $(top_srcdir)/orchagent/dash/dashcounter.cpp \
                 $(top_srcdir)/cfgmgr/buffermgrdyn.cpp \
                 $(top_srcdir)/warmrestart/warmRestartAssist.cpp \
