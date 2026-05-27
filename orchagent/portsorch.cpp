@@ -3754,43 +3754,6 @@ ReturnCode PortsOrch::setPortLinkEventDampingAiedConfig(Port &port,
 
     SWSS_LOG_ENTER();
 
-    // Validate configuration according to HLD specification
-    // All parameters must be non-zero
-    if (config.max_suppress_time <= 0 || config.max_suppress_time > 0xFFFFFFFF)
-    {
-        SWSS_LOG_ERROR("Invalid max_suppress_time damping configuration for port %s: ",
-                       port.m_alias.c_str());
-        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Invalid max_suppress_time";
-    }
-
-    if (config.decay_half_life <= 0 || config.decay_half_life > 0xFFFFFFFF)
-    {
-        SWSS_LOG_ERROR("Invalid decay_half_life damping configuration for port %s: ",
-                       port.m_alias.c_str());
-        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Invalid decay_half_life";
-    }
-
-    if (config.suppress_threshold <= 0 || config.suppress_threshold > 0xFFFFFFFF)
-    {
-        SWSS_LOG_ERROR("Invalid suppress_threshold damping configuration for port %s: ",
-                       port.m_alias.c_str());
-        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Invalid suppress_threshold";
-    }
-
-    if (config.reuse_threshold <= 0 || config.reuse_threshold > 0xFFFFFFFF)
-    {
-        SWSS_LOG_ERROR("Invalid reuse_threshold damping configuration for port %s: ",
-                       port.m_alias.c_str());
-        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Invalid reuse_threshold";
-    }
-
-    if (config.flap_penalty <= 0 || config.flap_penalty > 0xFFFFFFFF)
-    {
-        SWSS_LOG_ERROR("Invalid flap_penalty damping configuration for port %s: ",
-                       port.m_alias.c_str());
-        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Invalid flap_penalty";
-    }
-
     // Validate decay_half_life must not exceed max_suppress_time
     if (config.decay_half_life > config.max_suppress_time)
     {
