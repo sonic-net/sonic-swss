@@ -25,9 +25,6 @@ void swssLogBridge(fib::LogLevel level, const char* file, int line,
         default: swssLevel = swss::Logger::SWSS_WARN;
     }
 
-    // TODO FIXME Force all to NOTICE for developing. Remove this line after log level mapping is verified.
-    swssLevel = swss::Logger::SWSS_NOTICE;
-
     // Format message into buffer, max 2KB (adjust as needed)
     constexpr size_t BUFFER_SIZE = 2048;
     std::array<char, BUFFER_SIZE> buffer;
@@ -64,7 +61,7 @@ void swssLogBridge(fib::LogLevel level, const char* file, int line,
 // Registration helper
 void registerSwssLogger() {
     fib::registerLogCallback(swssLogBridge);
-    fib::setLogLevel(fib::LogLevel::DEBUG); // Or INFO for production as default
+    fib::setLogLevel(fib::LogLevel::INFO); // INFO for production as default
     SWSS_LOG_NOTICE("FIB logging initialized, log level set to %d",
                     static_cast<int>(fib::getLogLevel()));
 }
@@ -140,7 +137,7 @@ static bool compareNHGSRv6Fields(const NextHopGroupFull *new_nhg, const NextHopG
 
 NHGMgr::NHGMgr(RedisPipeline *pipeline, const std::string &nexthopTableName, const std::string &picTableName, bool isStateTable) {
     m_rib_nhg_table = new RIBNHGTable(pipeline, nexthopTableName, isStateTable);
-    m_sonic_nhg_table = new SonicPICContentTable(pipeline, picTableName, isStateTable);
+    m_sonic_pic_table = new SonicPICContentTable(pipeline, picTableName, isStateTable);
     m_sonic_id_manager.init({SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC, SONIC_NHG_OBJ_TYPE_NHG_NORMAL});
     m_rib_nhg_table->setSonicIDManager(&m_sonic_id_manager);
 
@@ -347,7 +344,7 @@ int NHGMgr::createSonicPICObject(RIBNHGEntry *entry) {
     int ret = 0;
     sonicNhgObjType sType = entry->getSonicObjType();
 
-    // allocate sonic gateway object id
+    // allocate sonic pic object id
     sonicPICContentID = m_sonic_id_manager.allocateID(sType);
     if (sonicPICContentID == 0) {
         SWSS_LOG_ERROR("Failed to allocate sonic nhg id");
@@ -369,14 +366,14 @@ int NHGMgr::createSonicPICObject(RIBNHGEntry *entry) {
     }
 
     // add the SonicPICContentEntry
-    ret = m_sonic_nhg_table->addEntry(sonicObj);
+    ret = m_sonic_pic_table->addEntry(sonicObj);
     if (ret != 0) {
         SWSS_LOG_ERROR("Failed to add sonic nhg %d", sonicPICContentID);
         m_sonic_id_manager.freeID(sType, sonicPICContentID);
         return ret;
     }
 
-    SonicPICContentEntry *sonicEntry = m_sonic_nhg_table->getEntry(sType, sonicPICContentID);
+    SonicPICContentEntry *sonicEntry = m_sonic_pic_table->getEntry(sType, sonicPICContentID);
     if (sonicEntry == nullptr) {
         SWSS_LOG_ERROR("Failed to get sonic nhg %d", sonicPICContentID);
         m_sonic_id_manager.freeID(sType, sonicPICContentID);
@@ -384,17 +381,17 @@ int NHGMgr::createSonicPICObject(RIBNHGEntry *entry) {
     }
 
     // write to DB
-    ret = m_sonic_nhg_table->writeToDB(sonicEntry);
+    ret = m_sonic_pic_table->writeToDB(sonicEntry);
     if (ret != 0) {
         SWSS_LOG_ERROR("Failed to write to DB for %d", sonicPICContentID);
         m_sonic_id_manager.freeID(sType, sonicPICContentID);
-        m_sonic_nhg_table->delEntry(sType, sonicPICContentID);
+        m_sonic_pic_table->delEntry(sType, sonicPICContentID);
         return ret;
     }
 
     // set the sonic PIC Content id of rib entry
     entry->setSonicPICObjId(sonicPICContentID);
-    SWSS_LOG_NOTICE("Create sonic PIC Content object for %d, sonic gateway id: %d, type: %d", entry->getRIBID(), sonicPICContentID, entry->getSonicObjType());
+    SWSS_LOG_NOTICE("Create sonic PIC Content object for %d, sonic pic id: %d, type: %d", entry->getRIBID(), sonicPICContentID, entry->getSonicObjType());
     return 0;
 }
 
@@ -423,19 +420,19 @@ int NHGMgr::updateSonicPICObject(RIBNHGEntry *entry, uint32_t previousSonicPICOb
         }
     }
 
-    ret = m_sonic_nhg_table->updateEntry(sonicObj);
+    ret = m_sonic_pic_table->updateEntry(sonicObj);
     if (ret != 0) {
         SWSS_LOG_ERROR("Failed to update sonic nhg %d", previousSonicPICObjID);
         return ret;
     }
 
-    SonicPICContentEntry *sonicEntry = m_sonic_nhg_table->getEntry(sType, previousSonicPICObjID);
+    SonicPICContentEntry *sonicEntry = m_sonic_pic_table->getEntry(sType, previousSonicPICObjID);
     if (sonicEntry == nullptr) {
         SWSS_LOG_ERROR("Failed to get sonic nhg %d", previousSonicPICObjID);
         return -1;
     }
 
-    ret = m_sonic_nhg_table->writeToDB(sonicEntry);
+    ret = m_sonic_pic_table->writeToDB(sonicEntry);
     if (ret != 0) {
         SWSS_LOG_ERROR("Failed to write to DB for %d", previousSonicPICObjID);
         return ret;
@@ -463,9 +460,9 @@ int NHGMgr::delNHGFull(uint32_t id) {
     // del the sonic PIC Content first
     if (entry->hasSonicPICObj()) {
         uint32_t sonicPICContentObjID = entry->getSonicPICObjID();
-        SonicPICContentEntry* sonicEntry = m_sonic_nhg_table->getEntry(entry->getSonicObjType(), sonicPICContentObjID);
+        SonicPICContentEntry* sonicEntry = m_sonic_pic_table->getEntry(entry->getSonicObjType(), sonicPICContentObjID);
         if (sonicEntry != nullptr){
-            m_sonic_nhg_table->delEntry(entry->getSonicObjType(), sonicPICContentObjID);
+            m_sonic_pic_table->delEntry(entry->getSonicObjType(), sonicPICContentObjID);
             m_sonic_id_manager.freeID(entry->getSonicObjType(), sonicPICContentObjID);
         }
     }
@@ -527,7 +524,7 @@ RIBNHGEntry *NHGMgr::getRIBNHGEntryByRIBID(uint32_t id) {
  * get Sonic PIC Content entry by Sonic PIC Content ID and type
  */
 SonicPICContentEntry *NHGMgr::getSonicPICByID(sonicNhgObjType type, uint32_t id) {
-    return m_sonic_nhg_table->getEntry(type, id);
+    return m_sonic_pic_table->getEntry(type, id);
 }
 
 /*
@@ -875,7 +872,7 @@ int RIBNHGEntry::createSRv6PICObjFromRIBEntry(SonicPICContentObject &sonicNhgOut
         return 0;
     }
 
-    // Multi-hop: only collect direct depends (m_depends) that have sonic gateway obj as group members.
+    // Multi-hop: only collect direct depends (m_depends) that have sonic pic obj as group members.
     // Use weight from m_group map.
     for (auto member: m_resolvedGroup) {
         RIBNHGEntry *memberEntry = m_table->getEntry(member.first);
@@ -971,7 +968,7 @@ int RIBNHGEntry::setEntry(NextHopGroupFull nhg, uint8_t af) {
 
     /*
      * check if we need to create sonic PIC Content obj
-     * and sonic gateway obj type
+     * and sonic pic obj type
      * */
     checkNeedCreateSonicPICObj();
 
@@ -1062,7 +1059,7 @@ int RIBNHGEntry::getNHGFields() {
 }
 
 /*
- * get FV vector fields and Sonic gateway Objects fields from multi nexthopgroup entry
+ * get FV vector fields and sonic pic Objects fields from multi nexthopgroup entry
  *
  * below fields of entry will be set:
  *      m_nexthop
@@ -1127,7 +1124,7 @@ int RIBNHGEntry::getNextHopGroupFields() {
 }
 
 /*
- * get FV vector fields and Sonic gateway Objects fields from multi nexthopgroup entry
+ * get FV vector fields and sonic pic Objects fields from multi nexthopgroup entry
  *
  * below fields of entry will be set:
  *      m_nexthop
@@ -1211,7 +1208,7 @@ int RIBNHGEntry::getResolvedGroupFromNHGFull() {
 }
 
 /*
- * check if we need to create sonic gateway obj and the object type
+ * check if we need to create sonic pic obj and the object type
  * below fields of entry will be set:
  *      m_sonic_obj_type
  *      m_has_sonic_gateway_obj
@@ -1228,7 +1225,7 @@ void RIBNHGEntry::checkNeedCreateSonicPICObj() {
             m_has_sonic_gateway_obj = true;
             m_is_srv6_nhg = true;
             m_is_shared_sonic_nhg = true;
-            SWSS_LOG_DEBUG("NextHop id %d has sonic gateway obj, is multi nexthop group.", it->first);
+            SWSS_LOG_DEBUG("NextHop id %d has sonic pic obj, is multi nexthop group.", it->first);
             return;
         }
         if(entry->isSRv6Nhg()) {
@@ -1241,7 +1238,7 @@ void RIBNHGEntry::checkNeedCreateSonicPICObj() {
     }
 
     /*
-     * For srv6 received nexthop, should create a sonic gateway obj and shared sonic NHG object.
+     * For srv6 received nexthop, should create a sonic pic obj and shared sonic NHG object.
      * This covers both single-hop SRv6 VPN nexthops (no group members) and
      * recursive SRv6 VPN nexthops that carry their own SRv6 VPN info.
      */
@@ -1249,7 +1246,7 @@ void RIBNHGEntry::checkNeedCreateSonicPICObj() {
         m_sonic_obj_type = SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC;
         m_has_sonic_gateway_obj = true;
         m_is_shared_sonic_nhg = true;
-        SWSS_LOG_DEBUG("NextHop id %d has sonic gateway obj.", m_rib_id);
+        SWSS_LOG_DEBUG("NextHop id %d has sonic pic obj.", m_rib_id);
         return;
     }
 
@@ -1257,14 +1254,14 @@ void RIBNHGEntry::checkNeedCreateSonicPICObj() {
 }
 
 /*
- * check if the entry has sonic gateway obj
+ * check if the entry has sonic pic obj
  */
 bool RIBNHGEntry::hasSonicPICObj() {
     return m_has_sonic_gateway_obj;
 }
 
 /*
- * get sonic gateway obj type
+ * get sonic pic obj type
  */
 sonicNhgObjType RIBNHGEntry::getSonicObjType() {
     return m_sonic_obj_type;
@@ -1278,17 +1275,17 @@ string RIBNHGEntry::getVPNSIDStr() {
 }
 
 /*
- * get sonic gateway obj id
+ * get sonic pic obj id
  */
 uint32_t RIBNHGEntry::getSonicPICObjID() {
-    return m_sonic_gateway_nhg_id;
+    return m_sonic_gateway_obj_id;
 }
 
 /*
- * set sonic gateway obj id
+ * set sonic pic obj id
  */
 void RIBNHGEntry::setSonicPICObjId(uint32_t id) {
-    m_sonic_gateway_nhg_id = id;
+    m_sonic_gateway_obj_id = id;
 }
 
 /*
@@ -1374,7 +1371,7 @@ SonicPICContentTable::SonicPICContentTable(RedisPipeline *pipeline, const std::s
 }
 
 /*
- * write the Sonic gateway object into DB
+ * write the sonic pic object into DB
  * SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC into PIC_CONTEXT_TABLE
  */
 int SonicPICContentTable::writeToDB(SonicPICContentEntry *entry) {
@@ -1390,7 +1387,7 @@ int SonicPICContentTable::writeToDB(SonicPICContentEntry *entry) {
 }
 
 /*
- * remove the Sonic gateway object from DB
+ * remove the sonic pic object from DB
  */
 void SonicPICContentTable::removeFromDB(SonicPICContentEntry *entry) {
     if (entry->getType() == SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC) {

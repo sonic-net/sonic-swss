@@ -66,9 +66,9 @@ namespace ut_fpmsyncd
             return m_nhgmgr->m_rib_nhg_table;
         }
 
-        swss::SonicPICContentTable* getSonicNhgTable()
+        swss::SonicPICContentTable* getSonicPICTable()
         {
-            return m_nhgmgr->m_sonic_nhg_table;
+            return m_nhgmgr->m_sonic_pic_table;
         }
 
         swss::SonicIDMgr& getSonicIdManager()
@@ -1687,7 +1687,7 @@ namespace ut_fpmsyncd
         dupObj.nexthop = "10.0.0.2";
         dupObj.vpnSid = "fc00::2";
         dupObj.segSrc = "fc00::200";
-        ASSERT_EQ(getSonicNhgTable()->addEntry(dupObj), -1);
+        ASSERT_EQ(getSonicPICTable()->addEntry(dupObj), -1);
 
         ASSERT_EQ(m_nhgmgr->delNHGFull(ribID), 0);
     }
@@ -1703,7 +1703,7 @@ namespace ut_fpmsyncd
         obj.nexthop = "10.0.0.1";
         obj.vpnSid = "fc00::1";
         obj.segSrc = "fc00::100";
-        ASSERT_EQ(getSonicNhgTable()->updateEntry(obj), -1);
+        ASSERT_EQ(getSonicPICTable()->updateEntry(obj), -1);
     }
 
     /*
@@ -1713,13 +1713,13 @@ namespace ut_fpmsyncd
     TEST_F(FpmSyncdNhgMgr, SonicPICContentTableDeleteNonExistent)
     {
         // Delete by type and id - entry not found
-        getSonicNhgTable()->delEntry(SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC, 9999);
+        getSonicPICTable()->delEntry(SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC, 9999);
 
         // Delete by SonicPICContentObject - entry not found
         SonicPICContentObject obj;
         obj.type = SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC;
         obj.id = 9999;
-        getSonicNhgTable()->delEntry(obj);
+        getSonicPICTable()->delEntry(obj);
     }
 
     /*
@@ -1727,7 +1727,7 @@ namespace ut_fpmsyncd
      */
     TEST_F(FpmSyncdNhgMgr, SonicPICContentTableDeleteUnsupportedType)
     {
-        getSonicNhgTable()->delEntry(static_cast<sonicNhgObjType>(99), 1);
+        getSonicPICTable()->delEntry(static_cast<sonicNhgObjType>(99), 1);
     }
 
     /*
@@ -1735,7 +1735,7 @@ namespace ut_fpmsyncd
      */
     TEST_F(FpmSyncdNhgMgr, SonicPICContentTableGetEntryUnsupportedType)
     {
-        SonicPICContentEntry *entry = getSonicNhgTable()->getEntry(
+        SonicPICContentEntry *entry = getSonicPICTable()->getEntry(
             static_cast<sonicNhgObjType>(99), 1);
         ASSERT_EQ(entry, nullptr);
     }
@@ -1927,13 +1927,13 @@ namespace ut_fpmsyncd
         uint32_t picID = entry->getSonicPICObjID();
         ASSERT_NE(picID, 0u);
 
-        SonicPICContentEntry *picEntry = getSonicNhgTable()->getEntry(
+        SonicPICContentEntry *picEntry = getSonicPICTable()->getEntry(
             SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC, picID);
         ASSERT_NE(picEntry, nullptr);
 
         // Clear fvVector to trigger empty check
         getPicEntryFvVector(picEntry).clear();
-        ASSERT_EQ(getSonicNhgTable()->writeToDB(picEntry), -1);
+        ASSERT_EQ(getSonicPICTable()->writeToDB(picEntry), -1);
 
         ASSERT_EQ(m_nhgmgr->delNHGFull(ribID), 0);
     }
@@ -1947,7 +1947,7 @@ namespace ut_fpmsyncd
         obj.type = static_cast<sonicNhgObjType>(99);
         obj.id = 1;
         // addEntry internally calls setEntry, which should fail
-        ASSERT_EQ(getSonicNhgTable()->addEntry(obj), -1);
+        ASSERT_EQ(getSonicPICTable()->addEntry(obj), -1);
     }
 
     /*
@@ -2032,9 +2032,9 @@ namespace ut_fpmsyncd
         uint32_t picID = entry->getSonicPICObjID();
         ASSERT_NE(picID, 0u);
 
-        getSonicNhgTable()->cleanUp();
+        getSonicPICTable()->cleanUp();
 
-        ASSERT_EQ(getSonicNhgTable()->getEntry(
+        ASSERT_EQ(getSonicPICTable()->getEntry(
             SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC, picID), nullptr);
 
         // Clean up RIB side too
@@ -2062,7 +2062,7 @@ namespace ut_fpmsyncd
         ASSERT_EQ(callUpdateSonicPICObject(entry, picID), 0);
 
         // Verify PIC entry still exists after update
-        SonicPICContentEntry *picEntry = getSonicNhgTable()->getEntry(
+        SonicPICContentEntry *picEntry = getSonicPICTable()->getEntry(
             SONIC_NHG_OBJ_TYPE_NHG_WITH_SRV6_PIC, picID);
         ASSERT_NE(picEntry, nullptr);
 
