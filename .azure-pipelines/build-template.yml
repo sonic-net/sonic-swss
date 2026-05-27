@@ -172,6 +172,8 @@ jobs:
         target/debs/${{ parameters.debian_version }}/libnl-nf-3-200_*.deb
         target/debs/${{ parameters.debian_version }}/libnl-nf-3-dev_*.deb
         target/debs/${{ parameters.debian_version }}/libyang_*.deb
+        target/debs/${{ parameters.debian_version }}/libnexthopgroup_*.deb
+        target/debs/${{ parameters.debian_version }}/libnexthopgroup-dev_*.deb
     displayName: "Download common libs"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -212,7 +214,7 @@ jobs:
       pipeline: sonic-net.sonic-platform-vpp
       artifact: vpp
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/main'
+      runBranch: 'refs/heads/master'
       allowPartiallySucceededBuilds: true
       path: $(Build.ArtifactStagingDirectory)/download
     displayName: "Download sonic platform-vpp deb packages"
