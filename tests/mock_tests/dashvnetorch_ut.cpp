@@ -536,6 +536,71 @@ namespace dashvnetorch_test
             SetDashTable(APP_DASH_VNET_MAPPING_TABLE_NAME, vnet1 + ":not_an_ip", vnet_map, true, true));
     }
 
+    TEST_F(DashVnetOrchTest, VnetMapKeyMissingIp)
+    {
+        // Key should be "vnet:ip" — send just vnet without IP
+        CreateVnet();
+        dash::vnet_mapping::VnetMapping vnet_map = dash::vnet_mapping::VnetMapping();
+        vnet_map.set_routing_type(dash::route_type::ROUTING_TYPE_VNET_ENCAP);
+        vnet_map.mutable_underlay_ip()->set_ipv4(swss::IpAddress("7.7.7.7").getV4Addr());
+        EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries).Times(0);
+        EXPECT_NO_THROW(
+            SetDashTable(APP_DASH_VNET_MAPPING_TABLE_NAME, vnet1, vnet_map, true, true));
+    }
+
+    TEST_F(DashVnetOrchTest, RemoveVnetSaiFailureWritesFailureResult)
+    {
+        // When SAI vnet remove returns an unrecoverable error code, the orch should
+        // not retry — the consumer entry is consumed and a failure result is recorded.
+        // Exercises lines 162-167 in dashvnetorch.cpp.
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_INVALID_PARAMETER};
+        CreateVnet();
+        EXPECT_CALL(*mock_sai_dash_vnet_api, remove_vnets)
+            .Times(1)
+            .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+
+        RemoveVnet();
+        EXPECT_TRUE(DashResultExists(APP_DASH_VNET_TABLE_NAME, vnet1));
+    }
+
+    TEST_F(DashVnetOrchTest, VnetMapTunnelNotFoundConsumed)
+    {
+        // VnetMap entry references a tunnel that does not exist — addOutboundCaToPa
+        // should set pre_op_result to FAILURE and return true so the entry is consumed
+        // before reaching the bulker.  Covers lines 377-379 in dashvnetorch.cpp.
+        std::string key = vnet1 + ":" + vnet_map_ip1;
+
+        AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
+        CreateVnet();
+
+        dash::vnet_mapping::VnetMapping vnet_map = dash::vnet_mapping::VnetMapping();
+        vnet_map.set_routing_type(dash::route_type::ROUTING_TYPE_VNET_ENCAP);
+        vnet_map.mutable_underlay_ip()->set_ipv4(swss::IpAddress("7.7.7.7").getV4Addr());
+        vnet_map.set_tunnel("NONEXISTENT_TUNNEL");
+
+        EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries).Times(0);
+        SetDashTable(APP_DASH_VNET_MAPPING_TABLE_NAME, key, vnet_map, true, true);
+        EXPECT_EQ(GetDashResult(APP_DASH_VNET_MAPPING_TABLE_NAME, key), 1u);
+    }
+
+    TEST_F(DashVnetOrchTest, VnetMapInvalidEncapTypeConsumed)
+    {
+        // VnetMap with a routing type whose encap type is invalid (not VXLAN/NVGRE) —
+        // addOutboundCaToPa should set pre_op_result to FAILURE and return true.
+        // Covers the "Invalid encap type" path in addOutboundCaToPa.
+        std::string key = vnet1 + ":" + vnet_map_ip1;
+        AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_UNSPECIFIED);
+        CreateVnet();
+
+        dash::vnet_mapping::VnetMapping vnet_map = dash::vnet_mapping::VnetMapping();
+        vnet_map.set_routing_type(dash::route_type::ROUTING_TYPE_VNET_ENCAP);
+        vnet_map.mutable_underlay_ip()->set_ipv4(swss::IpAddress("7.7.7.7").getV4Addr());
+
+        EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries).Times(0);
+        SetDashTable(APP_DASH_VNET_MAPPING_TABLE_NAME, key, vnet_map, true, true);
+        EXPECT_EQ(GetDashResult(APP_DASH_VNET_MAPPING_TABLE_NAME, key), 1u);
+    }
+
     TEST_F(DashVnetOrchTest, VnetCreateDeleteChurn)
     {
         for (int i = 0; i < 3; i++)
@@ -564,17 +629,5 @@ namespace dashvnetorch_test
             EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, remove_outbound_ca_to_pa_entries).Times(1);
             RemoveVnetMap();
         }
-    }
-
-    TEST_F(DashVnetOrchTest, VnetMapKeyMissingIp)
-    {
-        // Key should be "vnet:ip" — send just vnet without IP
-        CreateVnet();
-        dash::vnet_mapping::VnetMapping vnet_map = dash::vnet_mapping::VnetMapping();
-        vnet_map.set_routing_type(dash::route_type::ROUTING_TYPE_VNET_ENCAP);
-        vnet_map.mutable_underlay_ip()->set_ipv4(swss::IpAddress("7.7.7.7").getV4Addr());
-        EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, create_outbound_ca_to_pa_entries).Times(0);
-        EXPECT_NO_THROW(
-            SetDashTable(APP_DASH_VNET_MAPPING_TABLE_NAME, vnet1, vnet_map, true, true));
     }
 }

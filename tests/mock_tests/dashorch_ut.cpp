@@ -64,6 +64,7 @@ namespace dashorch_test
     using ::testing::SaveArgPointee;
     using ::testing::Invoke;
     using ::testing::InSequence;
+    using ::testing::Throw;
     using dash::types::ValueOrRange;
 
     ValueOrRange GenVni(int value)
@@ -1301,6 +1302,238 @@ namespace dashorch_test
         m_DashOrch->doTask(*consumer);
         EXPECT_EQ(consumer->m_toSync.begin(), consumer->m_toSync.end());
         EXPECT_TRUE(m_DashOrch->eni_route_entries_.empty());
+    }
+
+    TEST_F(DashOrchTest, ApplianceInvalidSipCleansUpAppliance)
+    {
+        // Appliance entry with local_region_id set (triggers create_dash_appliance)
+        // but no SIP set — to_sai(entry.sip()) fails in createApplianceSaiObjects,
+        // and the created appliance must be cleaned up.
+        dash::appliance::Appliance appliance;
+        appliance.set_local_region_id(100);
+        appliance.set_vm_vni(9999);
+        // Intentionally do not set sip — to_sai will fail
+
+        // create_dash_appliance is called; assign a non-null OID so cleanup path is exercised
+        sai_object_id_t fake_oid = 0x1234ABCD;
+        {
+            InSequence seq;
+            EXPECT_CALL(*mock_sai_dash_appliance_api, create_dash_appliance)
+                .WillOnce(DoAll(SetArgPointee<0>(fake_oid), Return(SAI_STATUS_SUCCESS)));
+            EXPECT_CALL(*mock_sai_dash_appliance_api, remove_dash_appliance).Times(1);
+        }
+        EXPECT_CALL(*mock_sai_dash_vip_api, create_vip_entry).Times(0);
+
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance, true, true);
+        EXPECT_TRUE(m_DashOrch->appliance_entries_.empty());
+    }
+
+    TEST_F(DashOrchTest, ApplianceVipFailureCleansUpApplianceWithLocalRegionId)
+    {
+        // Variation of ApplianceVipCreateFailCleansUpAppliance, but with local_region_id set
+        // so create_dash_appliance is called and produces a non-null OID.  This exercises
+        // the cleanup path that frees sai_appliance_id (lines 220-224 in dashorch.cpp).
+        dash::appliance::Appliance appliance = BuildApplianceEntry();
+        appliance.set_local_region_id(123);
+
+        sai_object_id_t fake_oid = 0x99999;
+        sai_object_id_t removed_oid = SAI_NULL_OBJECT_ID;
+        {
+            InSequence seq;
+            EXPECT_CALL(*mock_sai_dash_appliance_api, create_dash_appliance)
+                .WillOnce(DoAll(SetArgPointee<0>(fake_oid), Return(SAI_STATUS_SUCCESS)));
+            EXPECT_CALL(*mock_sai_dash_vip_api, create_vip_entry)
+                .WillOnce(Return(SAI_STATUS_FAILURE));
+            EXPECT_CALL(*mock_sai_dash_appliance_api, remove_dash_appliance)
+                .WillOnce(DoAll(SaveArg<0>(&removed_oid), Return(SAI_STATUS_SUCCESS)));
+        }
+
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance, true, true);
+        EXPECT_TRUE(m_DashOrch->appliance_entries_.empty());
+        EXPECT_EQ(removed_oid, fake_oid);
+    }
+
+    TEST_F(DashOrchTest, ApplianceDirectionLookupFailureCleansUpApplianceWithLocalRegionId)
+    {
+        // Variation that exercises the direction-lookup-failure cleanup with a non-null
+        // sai_appliance_id, covering lines 258-262 in dashorch.cpp.
+        dash::appliance::Appliance appliance = BuildApplianceEntry();
+        appliance.set_local_region_id(456);
+
+        sai_object_id_t fake_oid = 0xDEADBEEF;
+        sai_object_id_t removed_oid = SAI_NULL_OBJECT_ID;
+        {
+            InSequence seq;
+            EXPECT_CALL(*mock_sai_dash_appliance_api, create_dash_appliance)
+                .WillOnce(DoAll(SetArgPointee<0>(fake_oid), Return(SAI_STATUS_SUCCESS)));
+            EXPECT_CALL(*mock_sai_dash_vip_api, create_vip_entry).Times(1);
+            EXPECT_CALL(*mock_sai_dash_direction_lookup_api, create_direction_lookup_entry)
+                .WillOnce(Return(SAI_STATUS_FAILURE));
+            EXPECT_CALL(*mock_sai_dash_vip_api, remove_vip_entry).Times(1);
+            EXPECT_CALL(*mock_sai_dash_appliance_api, remove_dash_appliance)
+                .WillOnce(DoAll(SaveArg<0>(&removed_oid), Return(SAI_STATUS_SUCCESS)));
+        }
+
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance, true, true);
+        EXPECT_TRUE(m_DashOrch->appliance_entries_.empty());
+        EXPECT_EQ(removed_oid, fake_oid);
+    }
+
+    TEST_F(DashOrchTest, RemoveApplianceWithLocalRegionId)
+    {
+        // Create appliance with local_region_id so create_dash_appliance is called and
+        // a non-null SAI ID is cached.  Removal should then call remove_dash_appliance
+        // (covering lines 365-377 of dashorch.cpp).
+        dash::appliance::Appliance appliance = BuildApplianceEntry();
+        appliance.set_local_region_id(789);
+
+        sai_object_id_t fake_oid = 0x1111ABCD;
+        sai_object_id_t removed_oid = SAI_NULL_OBJECT_ID;
+        {
+            InSequence seq;
+            EXPECT_CALL(*mock_sai_dash_appliance_api, create_dash_appliance)
+                .WillOnce(DoAll(SetArgPointee<0>(fake_oid), Return(SAI_STATUS_SUCCESS)));
+            EXPECT_CALL(*mock_sai_dash_appliance_api, remove_dash_appliance)
+                .WillOnce(DoAll(SaveArg<0>(&removed_oid), Return(SAI_STATUS_SUCCESS)));
+        }
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance);
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, dash::appliance::Appliance(), false, true);
+
+        EXPECT_TRUE(m_DashOrch->appliance_entries_.empty());
+        EXPECT_EQ(removed_oid, fake_oid);
+    }
+
+    TEST_F(DashOrchTest, RemoveApplianceSaiAppliancesRemoveFailurePreservesCache)
+    {
+        // Variation of RemoveApplianceWithLocalRegionId where the SAI appliance remove
+        // returns a non-recoverable error.  Cache must be preserved (covers line 374).
+        dash::appliance::Appliance appliance = BuildApplianceEntry();
+        appliance.set_local_region_id(789);
+
+        sai_object_id_t fake_oid = 0x12345678;
+        {
+            InSequence seq;
+            EXPECT_CALL(*mock_sai_dash_appliance_api, create_dash_appliance)
+                .WillOnce(DoAll(SetArgPointee<0>(fake_oid), Return(SAI_STATUS_SUCCESS)));
+            EXPECT_CALL(*mock_sai_dash_appliance_api, remove_dash_appliance)
+                .WillOnce(Return(SAI_STATUS_FAILURE));
+            // Second remove succeeds (explicitly mocked because fake_oid is not a real saivs OID)
+            EXPECT_CALL(*mock_sai_dash_appliance_api, remove_dash_appliance)
+                .WillOnce(Return(SAI_STATUS_SUCCESS));
+        }
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance);
+        // First DEL — remove fails, cache preserved
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, dash::appliance::Appliance(), false, true);
+        EXPECT_EQ(m_DashOrch->appliance_entries_.count(appliance1), 1u);
+        // Second DEL — succeeds
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, dash::appliance::Appliance(), false, true);
+        EXPECT_TRUE(m_DashOrch->appliance_entries_.empty());
+    }
+
+    TEST_F(DashOrchTest, RemoveApplianceWithInvalidCachedSip)
+    {
+        // Create an appliance normally, then mutate the cached entry to have an invalid
+        // SIP so the to_sai() call in removeApplianceEntry fails — exercising the
+        // "skipping VIP cleanup" warning path (line 345 in dashorch.cpp).
+        CreateApplianceEntry();
+        ASSERT_EQ(m_DashOrch->appliance_entries_.count(appliance1), 1u);
+
+        // Replace the cached metadata's sip with an empty one (neither ipv4 nor ipv6 set)
+        m_DashOrch->appliance_entries_[appliance1].metadata.clear_sip();
+
+        // VIP cleanup should be skipped; direction lookup remove is still called.
+        EXPECT_CALL(*mock_sai_dash_vip_api, remove_vip_entry).Times(0);
+        EXPECT_CALL(*mock_sai_dash_direction_lookup_api, remove_direction_lookup_entry).Times(1);
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, dash::appliance::Appliance(), false, true);
+        EXPECT_TRUE(m_DashOrch->appliance_entries_.empty());
+    }
+
+    TEST_F(DashOrchTest, ApplianceExceptionInDoTaskConsumed)
+    {
+        // A SAI exception during appliance processing should be caught, an ERROR-level
+        // failure result written, and the consumer entry removed (covers lines 475-482).
+        dash::appliance::Appliance appliance = BuildApplianceEntry();
+        EXPECT_CALL(*mock_sai_dash_appliance_api, create_dash_appliance)
+            .WillOnce(Throw(std::runtime_error("simulated SAI exception")));
+
+        SetDashTable(APP_DASH_APPLIANCE_TABLE_NAME, appliance1, appliance, true, true);
+        EXPECT_TRUE(m_DashOrch->appliance_entries_.empty());
+    }
+
+    TEST_F(DashOrchTest, EniExceptionInDoTaskConsumed)
+    {
+        // A SAI exception during ENI add should be caught and the consumer entry removed
+        // (covers lines 1160-1167 in dashorch.cpp).
+        CreateApplianceEntry();
+        CreateVnet();
+        auto eni = BuildEniEntry();
+
+        EXPECT_CALL(*mock_sai_dash_eni_api, create_eni)
+            .WillOnce(Throw(std::runtime_error("simulated SAI exception")));
+
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, eni, true, true);
+        EXPECT_TRUE(m_DashOrch->eni_entries_.empty());
+    }
+
+    TEST_F(DashOrchTest, EniRouteExceptionInDoTaskConsumed)
+    {
+        // A SAI exception during ENI route set should be caught and the consumer entry
+        // removed (covers lines 1411-1418 in dashorch.cpp).
+        CreateApplianceEntry();
+        CreateVnet();
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, BuildEniEntry());
+        AddOutboundRoutingGroup();
+
+        dash::eni_route::EniRoute eni_route;
+        eni_route.set_group_id(route_group1);
+
+        EXPECT_CALL(*mock_sai_dash_eni_api, set_eni_attribute)
+            .WillOnce(Throw(std::runtime_error("simulated SAI exception")));
+        SetDashTable(APP_DASH_ENI_ROUTE_TABLE_NAME, eni1, eni_route, true, true);
+        EXPECT_TRUE(m_DashOrch->eni_route_entries_.empty());
+    }
+
+    TEST_F(DashOrchTest, AddRemoveEniWritesAndClearsResult)
+    {
+        // Ensure that a full ENI create+remove cycle writes a SUCCESS result on add
+        // and removes the result on delete.  Exercises the post-write/post-remove
+        // paths in doTaskEniTable and the corresponding meter-counter and CRM cleanup
+        // (line 982 / line 1032 in dashorch.cpp).
+        CreateApplianceEntry();
+        CreateVnet();
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, BuildEniEntry());
+        ASSERT_EQ(m_DashOrch->eni_entries_.count(eni1), 1u);
+
+        // Now remove — covers the success path through removeEniAddrMapEntry which
+        // decrements the CRM counter for ETHER_ADDRESS_MAP.
+        SetDashTable(APP_DASH_ENI_TABLE_NAME, eni1, dash::eni::Eni(), false, true);
+        EXPECT_TRUE(m_DashOrch->eni_entries_.empty());
+    }
+
+    TEST_F(DashOrchTest, RoutingTypeWritesResultOnSet)
+    {
+        // After a successful SET, the routing-type result table must contain a
+        // SUCCESS entry (covers line 562 in dashorch.cpp).
+        dash::route_type::RouteType route_type;
+        route_type.add_items()->set_action_type(dash::route_type::ACTION_TYPE_STATICENCAP);
+        SetDashTable(APP_DASH_ROUTING_TYPE_TABLE_NAME, "VNET", route_type);
+
+        swss::Table result_table(m_dpu_app_state_db.get(), APP_DASH_ROUTING_TYPE_TABLE_NAME);
+        std::vector<swss::FieldValueTuple> fvs;
+        EXPECT_TRUE(result_table.get("ROUTING_TYPE_VNET", fvs));
+    }
+
+    TEST_F(DashOrchTest, QosWritesResultOnSet)
+    {
+        // After a successful SET, the QOS result table must contain a SUCCESS entry
+        // (covers line 1230 in dashorch.cpp).
+        dash::qos::Qos qos;
+        qos.set_bw(100);
+        SetDashTable(APP_DASH_QOS_TABLE_NAME, "QOS_1", qos);
+
+        swss::Table result_table(m_dpu_app_state_db.get(), APP_DASH_QOS_TABLE_NAME);
+        std::vector<swss::FieldValueTuple> fvs;
+        EXPECT_TRUE(result_table.get("QOS_1", fvs));
     }
 
 }

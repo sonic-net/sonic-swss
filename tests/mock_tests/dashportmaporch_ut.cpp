@@ -362,4 +362,207 @@ namespace dashportmaporch_test
             .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
         SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key, port_map_range, true, true);
     }
+
+    TEST_F(DashPortMapOrchTest, PortMapUnknownOpInPreLoop)
+    {
+        auto consumer = make_unique<Consumer>(
+            new swss::ConsumerStateTable(m_app_db.get(), APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME),
+            m_dashPortMapOrch, APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME);
+        consumer->addToSync(swss::KeyOpFieldsValuesTuple(
+            port_map1, "UNKNOWN", {{"pb", dash::outbound_port_map::OutboundPortMap().SerializeAsString()}}));
+
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_maps).Times(0);
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, remove_outbound_port_maps).Times(0);
+        static_cast<Orch *>(m_dashPortMapOrch)->doTask(*consumer);
+        EXPECT_EQ(consumer->m_toSync.begin(), consumer->m_toSync.end());
+    }
+
+    TEST_F(DashPortMapOrchTest, PortMapDuplicateSetClearsBulkContext)
+    {
+        // Submit two SET ops for the same key in a single doTask invocation.
+        // The second SET enters the same toBulk slot (inserted=false), triggering ctxt.clear()
+        // which resets the bulk context vectors.
+        auto consumer = make_unique<Consumer>(
+            new swss::ConsumerStateTable(m_app_db.get(), APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME),
+            m_dashPortMapOrch, APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME);
+        consumer->addToSync({
+            swss::KeyOpFieldsValuesTuple(port_map1, SET_COMMAND,
+                {{"pb", dash::outbound_port_map::OutboundPortMap().SerializeAsString()}}),
+            swss::KeyOpFieldsValuesTuple(port_map1, SET_COMMAND,
+                {{"pb", dash::outbound_port_map::OutboundPortMap().SerializeAsString()}})
+        });
+        // Both SETs collapse into one bulk slot, so create_outbound_port_maps is called once.
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_maps).Times(1);
+        static_cast<Orch *>(m_dashPortMapOrch)->doTask(*consumer);
+        EXPECT_EQ(consumer->m_toSync.begin(), consumer->m_toSync.end());
+    }
+
+    TEST_F(DashPortMapOrchTest, PortMapRemoveItemNotFoundTreatedAsSuccess)
+    {
+        dash::outbound_port_map::OutboundPortMap port_map;
+
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_maps);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, port_map);
+
+        // Remove returns ITEM_NOT_FOUND — removePortMapPost should return true (idempotent)
+        // and the consumer entry must be consumed.
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_ITEM_NOT_FOUND};
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, remove_outbound_port_maps)
+            .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, port_map, false, true);
+    }
+
+    TEST_F(DashPortMapOrchTest, PortMapRemoveNotExecutedKeepsCache)
+    {
+        dash::outbound_port_map::OutboundPortMap port_map;
+
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_maps);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, port_map);
+
+        // Bulker returns NOT_EXECUTED — should be logged as error, port map remains in cache
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_NOT_EXECUTED};
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, remove_outbound_port_maps)
+            .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, port_map, false, true);
+        EXPECT_NE(m_dashPortMapOrch->getPortMapOid(port_map1), SAI_NULL_OBJECT_ID);
+    }
+
+    TEST_F(DashPortMapOrchTest, PortMapRangeUnknownOpInPreLoop)
+    {
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_maps);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, dash::outbound_port_map::OutboundPortMap());
+
+        auto port_map_range = BuildOutboundPortMapRange();
+        std::stringstream key_stream;
+        key_stream << port_map1 << ":" << port_map1_start_port << "-" << port_map1_end_port;
+        std::string key = key_stream.str();
+
+        auto consumer = make_unique<Consumer>(
+            new swss::ConsumerStateTable(m_app_db.get(), APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME),
+            m_dashPortMapOrch, APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME);
+        consumer->addToSync(swss::KeyOpFieldsValuesTuple(
+            key, "UNKNOWN", {{"pb", port_map_range.SerializeAsString()}}));
+
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_map_port_range_entries).Times(0);
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, remove_outbound_port_map_port_range_entries).Times(0);
+        static_cast<Orch *>(m_dashPortMapOrch)->doTask(*consumer);
+        EXPECT_EQ(consumer->m_toSync.begin(), consumer->m_toSync.end());
+    }
+
+    TEST_F(DashPortMapOrchTest, PortMapRangeDuplicateSetClearsBulkContext)
+    {
+        // Pre-create parent port map
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_maps);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, dash::outbound_port_map::OutboundPortMap());
+
+        auto port_map_range = BuildOutboundPortMapRange();
+        std::stringstream key_stream;
+        key_stream << port_map1 << ":" << port_map1_start_port << "-" << port_map1_end_port;
+        std::string key = key_stream.str();
+
+        auto consumer = make_unique<Consumer>(
+            new swss::ConsumerStateTable(m_app_db.get(), APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME),
+            m_dashPortMapOrch, APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME);
+        consumer->addToSync({
+            swss::KeyOpFieldsValuesTuple(key, SET_COMMAND, {{"pb", port_map_range.SerializeAsString()}}),
+            swss::KeyOpFieldsValuesTuple(key, SET_COMMAND, {{"pb", port_map_range.SerializeAsString()}})
+        });
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_map_port_range_entries).Times(1);
+        static_cast<Orch *>(m_dashPortMapOrch)->doTask(*consumer);
+        EXPECT_EQ(consumer->m_toSync.begin(), consumer->m_toSync.end());
+    }
+
+    TEST_F(DashPortMapOrchTest, PortMapRangeRemoveItemNotFoundConsumed)
+    {
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_maps);
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_map_port_range_entries);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, dash::outbound_port_map::OutboundPortMap());
+
+        auto port_map_range = BuildOutboundPortMapRange();
+        std::stringstream key_stream;
+        key_stream << port_map1 << ":" << port_map1_start_port << "-" << port_map1_end_port;
+        std::string key = key_stream.str();
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key, port_map_range);
+
+        // Remove returns ITEM_NOT_FOUND — treated as success
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_ITEM_NOT_FOUND};
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, remove_outbound_port_map_port_range_entries)
+            .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key, port_map_range, false, true);
+    }
+
+    TEST_F(DashPortMapOrchTest, PortMapRangeRemoveNotExecutedConsumed)
+    {
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_maps);
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_map_port_range_entries);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, dash::outbound_port_map::OutboundPortMap());
+
+        auto port_map_range = BuildOutboundPortMapRange();
+        std::stringstream key_stream;
+        key_stream << port_map1 << ":" << port_map1_start_port << "-" << port_map1_end_port;
+        std::string key = key_stream.str();
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key, port_map_range);
+
+        // Remove returns NOT_EXECUTED — should be logged as error and dropped
+        std::vector<sai_status_t> exp_status = {SAI_STATUS_NOT_EXECUTED};
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, remove_outbound_port_map_port_range_entries)
+            .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key, port_map_range, false, true);
+    }
+
+    TEST_F(DashPortMapOrchTest, PortMapRangeInvalidAction)
+    {
+        // Pre-create parent port map
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_maps);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, dash::outbound_port_map::OutboundPortMap());
+
+        // Build a port map range with an unmapped action (default value 0 = INVALID)
+        dash::outbound_port_map_range::OutboundPortMapRange port_map_range;
+        port_map_range.mutable_backend_ip()->set_ipv4(port_map1_backend_ip.getV4Addr());
+        // Don't call set_action() — leave it at the default unmapped value
+        port_map_range.set_backend_port_base(port_map1_backend_port_base);
+
+        std::stringstream key_stream;
+        key_stream << port_map1 << ":" << port_map1_start_port << "-" << port_map1_end_port;
+        std::string key = key_stream.str();
+
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_map_port_range_entries).Times(0);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key, port_map_range, true, true);
+    }
+
+    TEST_F(DashPortMapOrchTest, PortMapRangeInvalidBackendIp)
+    {
+        // Pre-create parent port map
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_maps);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME, port_map1, dash::outbound_port_map::OutboundPortMap());
+
+        // Build a port map range with a backend_ip that has neither ipv4 nor ipv6 set (to_sai fails)
+        dash::outbound_port_map_range::OutboundPortMapRange port_map_range;
+        port_map_range.mutable_backend_ip(); // empty IP address
+        port_map_range.set_action(dash::outbound_port_map_range::PortMapRangeAction::ACTION_MAP_PRIVATE_LINK_SERVICE);
+        port_map_range.set_backend_port_base(port_map1_backend_port_base);
+
+        std::stringstream key_stream;
+        key_stream << port_map1 << ":" << port_map1_start_port << "-" << port_map1_end_port;
+        std::string key = key_stream.str();
+
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, create_outbound_port_map_port_range_entries).Times(0);
+        SetDashTable(APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME, key, port_map_range, true, true);
+    }
+
+    TEST_F(DashPortMapOrchTest, PortMapDoubleDeleteNoopClearsBulkContext)
+    {
+        // Two DEL ops for the same nonexistent port_map id should both be consumed (no-op).
+        // The second DEL enters the same toBulk slot (inserted=false), triggering ctxt.clear().
+        auto consumer = make_unique<Consumer>(
+            new swss::ConsumerStateTable(m_app_db.get(), APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME),
+            m_dashPortMapOrch, APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME);
+        consumer->addToSync({
+            swss::KeyOpFieldsValuesTuple(port_map1, DEL_COMMAND, {}),
+            swss::KeyOpFieldsValuesTuple(port_map1, DEL_COMMAND, {})
+        });
+        EXPECT_CALL(*mock_sai_dash_outbound_port_map_api, remove_outbound_port_maps).Times(0);
+        static_cast<Orch *>(m_dashPortMapOrch)->doTask(*consumer);
+        EXPECT_EQ(consumer->m_toSync.begin(), consumer->m_toSync.end());
+    }
 }
