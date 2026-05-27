@@ -883,6 +883,114 @@ class TestMuxSubnetSlice(TestMuxSubnetSliceBase):
             self.del_fdb(dvs, self.MAC_A1_DASH)
 
 
+    def test_route_pinned_nh_survives_fdb_churn(
+        self, dvs, intf_fdb_map, dvs_route, setup, setup_vlan,
+        setup_peer_switch, setup_tunnel, setup_mux_cable, testlog
+    ):
+        """An in-slice NH un-suppressed by a route ref must stay Programmed
+        when a later FDB event re-runs convertNeighborToMux on the same NH.
+        Regression for convertNeighborToMux overwriting Programmed state."""
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = dvs.get_asic_db()
+        mac_E4 = intf_fdb_map[self.SLICED_PORT_A]
+
+        self.add_neighbor(dvs, self.SERVER_IPV6_A, mac_E4)
+        self.add_neighbor(dvs, self.IN_SLICE_A_1, mac_E4)
+        self.set_mux_state(appdb, self.SLICED_PORT_A, ACTIVE)
+        time.sleep(2)
+
+        rtprefix = "2024:abcd:f::/64"
+        try:
+            self.check_neigh_in_asic_db(asicdb, self.IN_SLICE_A_1, expected=False)
+            self.add_route(dvs, rtprefix, [self.IN_SLICE_A_1])
+            time.sleep(3)
+            self.check_neigh_in_asic_db(asicdb, self.IN_SLICE_A_1, expected=True)
+
+            # Force FDB churn: clear and re-add the FDB entry that resolves
+            # the in-slice MAC. This re-runs the slice gate in
+            # convertNeighborToMux for an already-Programmed NH.
+            self.del_fdb(dvs, self.MAC_A1_DASH)
+            time.sleep(1)
+            self.add_fdb(dvs, self.SLICED_PORT_A, self.MAC_A1_DASH)
+            time.sleep(2)
+
+            # NH must remain Programmed in ASIC: route still has a valid NH.
+            self.check_neigh_in_asic_db(asicdb, self.IN_SLICE_A_1, expected=True)
+        finally:
+            self.del_route(dvs, rtprefix)
+            self.del_neighbor(dvs, self.IN_SLICE_A_1)
+            self.del_neighbor(dvs, self.SERVER_IPV6_A)
+            self.del_fdb(dvs, self.MAC_A1_DASH)
+
+    def test_cross_port_in_slice_fdb_falls_through_to_mux(
+        self, dvs, dvs_route, setup, setup_vlan, setup_peer_switch,
+        setup_tunnel, setup_mux_cable, testlog
+    ):
+        """An in-slice IP whose FDB resolves to a non-owner mux port must
+        get that port's mux state machine, including standby tunnel
+        behavior. Regression for the slice gate returning early."""
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = dvs.get_asic_db()
+        cross_ip = self.IN_SLICE_A_2  # inside SLICED_PORT_A's slice
+
+        try:
+            self.set_mux_state(appdb, self.SLICED_PORT_A, ACTIVE)
+            self.set_mux_state(appdb, self.NON_SLICED_PORT, STANDBY)
+
+            # MAC resolves to NON_SLICED_PORT (which is STANDBY).
+            self.add_fdb(dvs, self.NON_SLICED_PORT, self.MAC_A2_DASH)
+            self.add_neighbor(dvs, cross_ip, self.MAC_A2)
+            time.sleep(2)
+
+            # Standby owner -> tunnel host-route, no direct neighbor in ASIC.
+            self.check_neigh_in_asic_db(asicdb, cross_ip, expected=False)
+            self.check_tunnel_route_in_app_db(
+                dvs, [cross_ip + self.IPV6_MASK], expected=True
+            )
+
+            # Flip the owning port to ACTIVE -> direct neighbor, no tunnel.
+            self.set_mux_state(appdb, self.NON_SLICED_PORT, ACTIVE)
+            time.sleep(2)
+            self.check_neigh_in_asic_db(asicdb, cross_ip, expected=True)
+            self.check_tunnel_route_in_app_db(
+                dvs, [cross_ip + self.IPV6_MASK], expected=False
+            )
+        finally:
+            self.del_neighbor(dvs, cross_ip)
+            self.del_fdb(dvs, self.MAC_A2_DASH)
+            self.set_mux_state(appdb, self.NON_SLICED_PORT, ACTIVE)
+
+    def test_overlapping_slice_prefix_rejected(
+        self, dvs, dvs_route, setup, setup_vlan, setup_peer_switch,
+        setup_tunnel, setup_mux_cable, testlog
+    ):
+        """A new mux cable whose server_ipv6_subnet overlaps an existing
+        cable's slice must be rejected: no STATE_DB entry created."""
+        config_db = dvs.get_config_db()
+        # SLICED_PORT_A holds fc02:1000::100/120. Try a /112 supernet on a
+        # different port — it strictly contains the existing slice.
+        config_db.create_entry(
+            self.CONFIG_MUX_CABLE, self.LATE_CFG_PORT,
+            {
+                "server_ipv4":        "192.168.0.252/32",
+                "server_ipv6":        "fc02:1000::401/128",
+                "server_ipv6_subnet": "fc02:1000::/112",
+            },
+        )
+        time.sleep(1)
+        try:
+            entry = self.get_state_db_mux_entry(dvs, self.LATE_CFG_PORT)
+            assert "server_ipv6_subnet" not in entry, (
+                f"Overlapping slice was not rejected; got {entry}"
+            )
+            # Existing slice must remain intact.
+            self.check_state_db_slice_fields(
+                dvs, self.SLICED_PORT_A, expected_prefix=self.SLICE_PREFIX_A
+            )
+        finally:
+            config_db.delete_entry(self.CONFIG_MUX_CABLE, self.LATE_CFG_PORT)
+
+
 # Dummy always-pass test at end as workaround for the issue where a Flaky
 # fail on the final test invokes module tear-down before retrying.
 def test_nonflaky_dummy():

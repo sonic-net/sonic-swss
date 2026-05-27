@@ -2072,6 +2072,19 @@ bool MuxOrch::convertNeighborToMux(const NeighborEntry& neighbor_entry, const st
     {
         NextHopKey nh_key = { neighbor_entry.ip_address, neighbor_entry.alias };
         auto existing = mux_nexthop_tb_.find(nh_key);
+
+        // Route-ref-pinned NH: leave Programmed state intact. Overwriting to
+        // SuppressedResolved here would leave the SAI mux NH live while the
+        // table claims it is suppressed, breaking getProgrammedNextHopId().
+        if (existing != mux_nexthop_tb_.end() &&
+            muxNhIsProgrammed(existing->second.state))
+        {
+            SWSS_LOG_INFO("Slice gate (convert): %s on %s already Programmed (route-pinned); preserving",
+                          neighbor_entry.ip_address.to_string().c_str(),
+                          port_name.c_str());
+            return true;
+        }
+
         if (existing == mux_nexthop_tb_.end() ||
             existing->second.state != MuxNhState::SuppressedResolved)
         {
@@ -2232,35 +2245,40 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
             {
                 const std::string owner_port = findSliceOwnerPort(update.entry.ip_address);
 
-                // Port affinity: if FDB resolves the MAC to a non-owner port,
-                // the IP lives behind a different cable; skip suppress.
+                // Port affinity: if FDB resolves the MAC to a non-owner mux
+                // port, the IP lives behind a different cable. Skip suppress
+                // and fall through to the normal mux subnet loop so that
+                // cable's state machine (incl. standby tunnel) applies.
                 std::string fdb_port;
-                if (getMuxPort(update.mac, update.entry.alias, fdb_port) &&
-                    !fdb_port.empty() && fdb_port != owner_port)
-                {
-                    SWSS_LOG_NOTICE("Slice gate: %s FDB-resolved on %s (slice owner %s); skip suppress",
-                                    update.entry.ip_address.to_string().c_str(),
-                                    fdb_port.c_str(), owner_port.c_str());
-                    return;
-                }
+                bool fdb_on_non_owner =
+                    getMuxPort(update.mac, update.entry.alias, fdb_port) &&
+                    !fdb_port.empty() && fdb_port != owner_port;
 
-                // Only record SuppressedResolved on successful disable so the
-                // table never disagrees with ASIC state.
-                if (!neigh_orch_->disableNeighbor(update.entry))
+                if (!fdb_on_non_owner)
                 {
-                    SWSS_LOG_WARN("Slice suppress: disableNeighbor failed for %s on %s; leaving SAI neighbor programmed",
+                    // Only record SuppressedResolved on successful disable so
+                    // the table never disagrees with ASIC state.
+                    if (!neigh_orch_->disableNeighbor(update.entry))
+                    {
+                        SWSS_LOG_WARN("Slice suppress: disableNeighbor failed for %s on %s; leaving SAI neighbor programmed",
+                                      update.entry.ip_address.to_string().c_str(),
+                                      update.entry.alias.c_str());
+                        return;
+                    }
+
+                    mux_nexthop_tb_[nh_key] = MuxNhEntry(owner_port, MuxNhState::SuppressedResolved);
+
+                    SWSS_LOG_INFO("Slice-suppressed neighbor %s on %s (owner=%s, SuppressedResolved)",
                                   update.entry.ip_address.to_string().c_str(),
-                                  update.entry.alias.c_str());
+                                  update.entry.alias.c_str(),
+                                  owner_port.c_str());
                     return;
                 }
 
-                mux_nexthop_tb_[nh_key] = MuxNhEntry(owner_port, MuxNhState::SuppressedResolved);
-
-                SWSS_LOG_INFO("Slice-suppressed neighbor %s on %s (owner=%s, SuppressedResolved)",
-                              update.entry.ip_address.to_string().c_str(),
-                              update.entry.alias.c_str(),
-                              owner_port.c_str());
-                return;
+                SWSS_LOG_NOTICE("Slice gate: %s FDB-resolved on %s (slice owner %s); fall through to mux handling",
+                                update.entry.ip_address.to_string().c_str(),
+                                fdb_port.c_str(), owner_port.c_str());
+                // Fall through to mux subnet loop below.
             }
         }
 
@@ -2902,6 +2920,32 @@ bool MuxOrch::handleMuxCfg(const Request& request)
             SWSS_LOG_INFO("Mux Peer switch addr not yet configured, port '%s'", port_name.c_str());
             return false;
         }
+
+        // Reject a slice prefix that overlaps any existing cable's slice:
+        // findMuxCableBySlice returns the first match, so overlapping slices
+        // would suppress hosts against a non-deterministic owner.
+        if (slice_ip6_present)
+        {
+            for (const auto& kv : mux_cable_tb_)
+            {
+                if (!kv.second->hasSlicePrefix())
+                {
+                    continue;
+                }
+                const IpPrefix& existing = kv.second->getSlicePrefix();
+                if (existing.isAddressInSubnet(slice_ip6.getIp()) ||
+                    slice_ip6.isAddressInSubnet(existing.getIp()))
+                {
+                    SWSS_LOG_ERROR("Mux port '%s': server_ipv6_subnet %s overlaps cable '%s' slice %s; rejecting",
+                                   port_name.c_str(),
+                                   slice_ip6.to_string().c_str(),
+                                   kv.first.c_str(),
+                                   existing.to_string().c_str());
+                    return false;
+                }
+            }
+        }
+
         SWSS_LOG_NOTICE("Mux nbr_type set to %s for port %s", nbr_handler_type == MuxNbrHandlerType::NBR_HANDLER_PREFIX_BASED ?
                 "prefix-route" : "host-route", port_name.c_str());
 
