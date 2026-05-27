@@ -106,7 +106,8 @@ class P4Orch : public ZmqOrch
     // DBConnector backing the port-state notification consumer.
     std::shared_ptr<swss::DBConnector> m_notificationsDb;
 
-    // Notification consumer
+    // Notification consumer for port state change
+    swss::NotificationConsumer* m_portStatusNotificationConsumer;
 
     swss::ZmqServer* m_zmqServer;
     // Sepcial publisher that writes to APPL DB instead of APPL STATE DB.
