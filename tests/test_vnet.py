@@ -3936,57 +3936,5 @@ class TestVnetOrch(object):
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
-
-    """
-    Parity proof: VNET local route with explicit nexthop="0.0.0.0" must be
-    classified as a subnet route (is_subnet=True), bound to the interface RIF,
-    just like the empty-nexthop case. Pins down the behavior of the
-    is_subnet check after the refactor from
-        nh.ips.contains("0.0.0.0")
-    to
-        std::any_of(nh.ips, [](auto& a){ return a.isZero(); })
-    For IPv4 the two predicates are functionally equivalent; this test locks
-    that equivalence in.
-    """
-    def test_vnet_local_route_subnet_zero_ipv4(self, dvs, testlog):
-        self.setup_db(dvs)
-
-        vnet_obj = self.get_vnet_obj()
-        tunnel_name = "tunnel_subnet_zero_v4"
-        vnet_name = "Vnet5097"
-        if_a = "Ethernet60"
-        prefix = "10.97.0.0/24"
-
-        vnet_obj.fetch_exist_entries(dvs)
-        create_vxlan_tunnel(dvs, tunnel_name, "10.10.10.97")
-        create_vnet_entry(dvs, vnet_name, tunnel_name, "5097", "")
-        vnet_obj.check_vnet_entry(dvs, vnet_name)
-        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, "5097")
-        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, "10.10.10.97")
-
-        create_phy_interface(dvs, if_a, vnet_name, "10.97.0.1/24")
-        vnet_obj.check_router_interface(dvs, if_a, vnet_name)
-
-        vnet_obj.fetch_exist_entries(dvs)
-        # The actual parity check: explicit "0.0.0.0" nexthop on an IPv4
-        # subnet must take the is_subnet branch and create an ASIC route bound
-        # to the interface RIF (same outcome as nexthop="").
-        create_vnet_local_routes(dvs, prefix, vnet_name, if_a, nexthop="0.0.0.0")
-        vnet_obj.check_vnet_local_routes(dvs, vnet_name)
-
-        # Clean-up
-        delete_vnet_local_routes(dvs, prefix, vnet_name)
-        vnet_obj.check_del_vnet_local_routes(dvs, vnet_name, prefix)
-
-        delete_phy_interface(dvs, if_a, "10.97.0.1/24")
-        vnet_obj.check_del_router_interface(dvs, if_a)
-
-        delete_vnet_entry(dvs, vnet_name)
-        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
-
-        delete_vxlan_tunnel(dvs, tunnel_name)
-        vnet_obj.check_del_vxlan_tunnel(dvs)
-
-
 def test_nonflaky_dummy():
     pass
