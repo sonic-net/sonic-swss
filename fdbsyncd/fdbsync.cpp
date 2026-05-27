@@ -350,7 +350,7 @@ void FdbSync::macDelVxlanEntry(struct m_fdb_info *info)
     {
         SWSS_LOG_INFO("Delete of this Vxlan entry is not supported. \
                        Mac points to neither a NHG or VTEP. \
-                        nhtype: %d", it->second.nhtype);
+                        nhtype: %d", static_cast<int>(it->second.nhtype));
         return;
     }
 
@@ -826,7 +826,7 @@ void FdbSync::macAddVxlan(string key, struct nl_addr *vtep, string type, uint32_
                       key.c_str(), intf_name.c_str(), type.c_str(), svni.c_str(), intf_name.c_str(), protocol);
     } else {
         SWSS_LOG_ERROR("VXLAN_FDB_TABLE: dest_type:%d is invalid, ADD_KEY %s type:%s vni:%s ifname:%s",
-                dest_type, key.c_str(), type.c_str(), svni.c_str(), intf_name.c_str());
+                static_cast<int>(dest_type), key.c_str(), type.c_str(), svni.c_str(), intf_name.c_str());
         return;
     }
 
@@ -873,7 +873,7 @@ void FdbSync::macDelVxlan(string key)
         }
         else {
             SWSS_LOG_ERROR("DEL_KEY %s type: %s vni:%s ifname:%s protocol:%u, entry nhtype is invalid, nhtype: %d", key.c_str(),
-                m_mac[key].type.c_str(), to_string(m_mac[key].vni).c_str(), m_mac[key].ifname.c_str(), m_mac[key].protocol, m_mac[key].nhtype);
+                m_mac[key].type.c_str(), to_string(m_mac[key].vni).c_str(), m_mac[key].ifname.c_str(), m_mac[key].protocol, static_cast<int>(m_mac[key].nhtype));
 
         }
         macDelVxlanDB(key);
