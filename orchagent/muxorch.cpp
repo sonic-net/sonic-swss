@@ -410,8 +410,12 @@ static bool remove_nh_tunnel(sai_object_id_t nh_id, IpAddress& ipAddr)
     return true;
 }
 
-MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress peer_ip, MuxCableType cable_type, MuxNbrHandlerType nbr_handler_type)
-         :mux_name_(name), srv_ip4_(srv_ip4), srv_ip6_(srv_ip6), peer_ip4_(peer_ip), cable_type_(cable_type), nbr_handler_type_(nbr_handler_type)
+MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress peer_ip, MuxCableType cable_type, MuxNbrHandlerType nbr_handler_type, IpPrefix slice_ip6)
+         :mux_name_(name),
+          cable_type_(cable_type),
+          nbr_handler_type_(nbr_handler_type),
+          srv_ip4_(srv_ip4), srv_ip6_(srv_ip6), peer_ip4_(peer_ip),
+          slice_ip6_(slice_ip6)
 {
     mux_orch_ = gDirectory.get<MuxOrch*>();
     mux_cb_orch_ = gDirectory.get<MuxCableOrch*>();
@@ -457,6 +461,7 @@ bool MuxCable::stateInitActive()
         return false;
     }
 
+    refreshSliceRoute();
     return true;
 }
 
@@ -482,6 +487,7 @@ bool MuxCable::stateActive()
         return false;
     }
 
+    refreshSliceRoute();
     return true;
 }
 
@@ -500,6 +506,8 @@ bool MuxCable::stateStandby()
     {
         return false;
     }
+
+    refreshSliceRoute();
 
     if (!aclHandler(port.m_port_id, mux_name_))
     {
@@ -681,6 +689,14 @@ void MuxCable::updateNeighbor(NextHopKey nh, bool add)
 {
     SWSS_LOG_NOTICE("Processing update on neighbor %s for mux %s, add %d, state %d",
                      nh.ip_address.to_string().c_str(), mux_name_.c_str(), add, state_);
+
+    if (!add && hasSlicePrefix() && nh.ip_address == srv_ip6_.getIp())
+    {
+        SWSS_LOG_ERROR("Mux %s: anchor %s removed while slice %s active; supernet route will be withdrawn",
+                       mux_name_.c_str(), nh.ip_address.to_string().c_str(),
+                       slice_ip6_.to_string().c_str());
+    }
+
     sai_object_id_t tnh = mux_orch_->getNextHopTunnelId(MUX_TUNNEL, peer_ip4_);
     nbr_handler_->update(nh, tnh, add, state_);
     if (add)
@@ -692,6 +708,13 @@ void MuxCable::updateNeighbor(NextHopKey nh, bool add)
         mux_orch_->removeNexthop(nh);
     }
     updateRoutesForNextHop(nh);
+
+    // If the changed neighbor is the slice anchor (server_ipv6), the slice
+    // route NH may need to be (re)installed or withdrawn.
+    if (hasSlicePrefix() && nh.ip_address == srv_ip6_.getIp())
+    {
+        refreshSliceRoute();
+    }
 }
 
 /**
@@ -733,6 +756,81 @@ void MuxCable::updateRoutesForNextHop(NextHopKey nh)
             mux_orch_->updateRoute(rt->prefix);
         }
     }
+}
+
+void MuxCable::refreshSliceRoute()
+{
+    if (!hasSlicePrefix())
+    {
+        withdrawSliceRoute();
+        return;
+    }
+
+    IpPrefix slice_pfx = slice_ip6_;
+    IpAddress anchor_ip = srv_ip6_.getIp();
+    NextHopKey anchor_nh(anchor_ip, mux_name_);
+    sai_object_id_t desired = nbr_handler_->getNextHopId(anchor_nh);
+
+    if (desired == SAI_NULL_OBJECT_ID)
+    {
+        if (slice_route_nh_oid_ != SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_NOTICE("Mux %s: anchor %s not ready, withdrawing slice route %s",
+                            mux_name_.c_str(), anchor_ip.to_string().c_str(),
+                            slice_pfx.to_string().c_str());
+            withdrawSliceRoute();
+        }
+        return;
+    }
+
+    if (slice_route_nh_oid_ == SAI_NULL_OBJECT_ID)
+    {
+        sai_status_t status = create_route(slice_pfx, desired);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Mux %s: failed to install slice route %s nh 0x%" PRIx64 " rv %d",
+                           mux_name_.c_str(), slice_pfx.to_string().c_str(),
+                           desired, status);
+            return;
+        }
+        slice_route_nh_oid_ = desired;
+        SWSS_LOG_NOTICE("Mux %s: installed slice route %s -> anchor nh 0x%" PRIx64,
+                        mux_name_.c_str(), slice_pfx.to_string().c_str(), desired);
+    }
+    else if (slice_route_nh_oid_ != desired)
+    {
+        sai_status_t status = set_route(slice_pfx, desired);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Mux %s: failed to update slice route %s nh 0x%" PRIx64 " rv %d",
+                           mux_name_.c_str(), slice_pfx.to_string().c_str(),
+                           desired, status);
+            return;
+        }
+        SWSS_LOG_NOTICE("Mux %s: slice route %s nh 0x%" PRIx64 " -> 0x%" PRIx64,
+                        mux_name_.c_str(), slice_pfx.to_string().c_str(),
+                        slice_route_nh_oid_, desired);
+        slice_route_nh_oid_ = desired;
+    }
+}
+
+void MuxCable::withdrawSliceRoute()
+{
+    if (slice_route_nh_oid_ == SAI_NULL_OBJECT_ID)
+    {
+        return;
+    }
+    IpPrefix slice_pfx = slice_ip6_;
+    sai_status_t status = remove_route(slice_pfx);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Mux %s: failed to remove slice route %s rv %d (state retained for retry)",
+                       mux_name_.c_str(), slice_pfx.to_string().c_str(), status);
+        return;
+    }
+    SWSS_LOG_NOTICE("Mux %s: removed slice route %s",
+                    mux_name_.c_str(), slice_pfx.to_string().c_str());
+    slice_route_nh_oid_ = SAI_NULL_OBJECT_ID;
 }
 
 void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, MuxState state)
@@ -1675,6 +1773,52 @@ MuxCable* MuxOrch::findMuxCableInSubnet(IpAddress ip)
     return nullptr;
 }
 
+MuxCable* MuxOrch::findMuxCableBySlice(IpAddress ip)
+{
+    for (auto it = mux_cable_tb_.begin(); it != mux_cable_tb_.end(); it++)
+    {
+        MuxCable* ptr = it->second.get();
+        if (ptr->isIpInSlice(ip))
+        {
+            return ptr;
+        }
+    }
+
+    SWSS_LOG_INFO("No mux cable found with slice containing ip %s",
+                  ip.to_string().c_str());
+    return nullptr;
+}
+
+bool MuxOrch::isInSliceSuppressed(const IpAddress& ip)
+{
+    // Fast bail when no slice is configured anywhere.
+    if (!isAnySliceConfigured())
+    {
+        return false;
+    }
+
+    MuxCable* cable = findMuxCableBySlice(ip);
+    if (!cable)
+    {
+        return false;
+    }
+
+    // Anchor (server_ipv6) is always programmed as a host neighbor.
+    if (ip == cable->getServerIp6().getIp())
+    {
+        return false;
+    }
+
+    // soc_ipv4 / soc_ipv6 (skip neighbors) keep existing semantics.
+    if (skip_neighbors_.find(ip) != skip_neighbors_.end())
+    {
+        return false;
+    }
+
+    return true;
+}
+
+
 bool MuxOrch::isMuxPortPrefixNbr(const IpAddress& nbr, const MacAddress& mac, string& alias)
 {
     // If prefix nbrs are not supported, return false
@@ -1823,6 +1967,12 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
     // Handle existing MUX neighbors that might be moving between ports
     for (auto nh = mux_nexthop_tb_.begin(); nh != mux_nexthop_tb_.end(); ++nh)
     {
+        // Only programmed NHs have a SAI neighbor to move.
+        if (!muxNhIsProgrammed(nh->second.state))
+        {
+            continue;
+        }
+
         auto res = neigh_orch_->getNeighborEntry(nh->first, neigh, mac);
         if (!res || update.entry.mac != mac)
         {
@@ -1831,16 +1981,16 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
 
         found_existing_mux_neighbor = true;
 
-        if (nh->second != update.entry.port_name)
+        if (nh->second.port_name != update.entry.port_name)
         {
-            if (!nh->second.empty() && isMuxExists(nh->second))
+            if (!nh->second.port_name.empty() && isMuxExists(nh->second.port_name))
             {
-                ptr = getMuxCable(nh->second);
+                ptr = getMuxCable(nh->second.port_name);
                 if (ptr->isIpInSubnet(nh->first.ip_address))
                 {
                     continue;
                 }
-                nh->second = update.entry.port_name;
+                nh->second.port_name = update.entry.port_name;
                 ptr->updateNeighbor(nh->first, false);
             }
 
@@ -1901,12 +2051,42 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
 
 bool MuxOrch::convertNeighborToMux(const NeighborEntry& neighbor_entry, const string& port_name, const string& context)
 {
+
     // Verify MUX cable exists and is properly configured before conversion
     MuxCable* ptr = getMuxCable(port_name);
     if (!ptr)
     {
         SWSS_LOG_WARN("MUX cable for port %s not found, skipping neighbor conversion", port_name.c_str());
         return false;
+    }
+
+    // Slice gate: in-slice IP on its owning slice port stays suppressed;
+    // FDB resolution must not re-program the SAI neighbor.
+    bool slice_owner_match = false;
+    if (isInSliceSuppressed(neighbor_entry.ip_address))
+    {
+        const std::string owner_port = findSliceOwnerPort(neighbor_entry.ip_address);
+        slice_owner_match = !owner_port.empty() && owner_port == port_name;
+    }
+    if (slice_owner_match)
+    {
+        NextHopKey nh_key = { neighbor_entry.ip_address, neighbor_entry.alias };
+        auto existing = mux_nexthop_tb_.find(nh_key);
+        if (existing == mux_nexthop_tb_.end() ||
+            existing->second.state != MuxNhState::SuppressedResolved)
+        {
+            // Tear down any SAI neighbor that slipped through before recording the row.
+            if (existing == mux_nexthop_tb_.end())
+            {
+                neigh_orch_->disableNeighbor(neighbor_entry);
+            }
+            mux_nexthop_tb_[nh_key] = MuxNhEntry(port_name, MuxNhState::SuppressedResolved);
+        }
+        SWSS_LOG_NOTICE("Skipping convertNeighborToMux for %s on %s (%s): in-slice, keep suppressed",
+                        neighbor_entry.ip_address.to_string().c_str(),
+                        neighbor_entry.alias.c_str(),
+                        context.c_str());
+        return true;
     }
 
     // Get tunnel nexthop if needed (for standby state)
@@ -1923,7 +2103,7 @@ bool MuxOrch::convertNeighborToMux(const NeighborEntry& neighbor_entry, const st
     {
         // Add to MUX nexthop table
         NextHopKey nh_key = { neighbor_entry.ip_address, neighbor_entry.alias };
-        mux_nexthop_tb_[nh_key] = port_name;
+        mux_nexthop_tb_[nh_key] = MuxNhEntry(port_name);
 
         // Update MUX cable with the new neighbor
         ptr->updateNeighbor(nh_key, true);
@@ -1983,6 +2163,123 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
         removeStandaloneTunnelRoute(update.entry.ip_address);
     }
 
+    // slice gate. Runs before the per-cable subnet loop so slice
+    // decisions are independent of subnet overlap.
+    if (isAnySliceConfigured())
+    {
+        NextHopKey nh_key(update.entry.ip_address, update.entry.alias);
+
+        if (update.add && isInSliceSuppressed(update.entry.ip_address))
+        {
+            auto existing = mux_nexthop_tb_.find(nh_key);
+
+            // Already programmed (e.g. unsuppression mid-flight); don't disable.
+            if (existing != mux_nexthop_tb_.end() &&
+                muxNhIsProgrammed(existing->second.state))
+            {
+                SWSS_LOG_INFO("Slice NH %s: already programmed on %s, skipping slice gate",
+                              update.entry.ip_address.to_string().c_str(),
+                              existing->second.port_name.c_str());
+                return;
+            }
+
+            // Placeholder + real route refs: promote to Programmed via the cable.
+            if (existing != mux_nexthop_tb_.end() &&
+                existing->second.state == MuxNhState::PlaceholderUnresolved &&
+                hasRouteRefsForNh(nh_key))
+            {
+                const std::string owner_port = existing->second.port_name.empty()
+                    ? findSliceOwnerPort(update.entry.ip_address)
+                    : existing->second.port_name;
+
+                MuxCable* owner_cable = nullptr;
+                auto cable_it = mux_cable_tb_.find(owner_port);
+                if (cable_it != mux_cable_tb_.end())
+                {
+                    owner_cable = cable_it->second.get();
+                }
+
+                mux_nexthop_tb_.erase(existing);
+
+                if (owner_cable)
+                {
+                    SWSS_LOG_NOTICE("Slice NH %s: learn promoted placeholder -> Programmed on %s",
+                                    update.entry.ip_address.to_string().c_str(),
+                                    owner_port.c_str());
+                    owner_cable->updateNeighbor(update.entry, true);
+
+                    // Verify the cable replaced the placeholder with a programmed row.
+                    // If not, restore the placeholder so the table stays consistent
+                    // with the route refs that are still tracking this NH.
+                    auto post = mux_nexthop_tb_.find(nh_key);
+                    if (post == mux_nexthop_tb_.end() ||
+                        !muxNhIsProgrammed(post->second.state))
+                    {
+                        SWSS_LOG_ERROR("Slice NH %s: placeholder promotion did not program on %s; restoring placeholder",
+                                       update.entry.ip_address.to_string().c_str(),
+                                       owner_port.c_str());
+                        mux_nexthop_tb_[nh_key] = MuxNhEntry(owner_port, MuxNhState::PlaceholderUnresolved);
+                    }
+                    return;
+                }
+
+                SWSS_LOG_WARN("Slice NH %s: placeholder owner port '%s' not found; falling back",
+                              update.entry.ip_address.to_string().c_str(),
+                              owner_port.c_str());
+                // Safety net: fall through to default subnet loop.
+            }
+            else
+            {
+                const std::string owner_port = findSliceOwnerPort(update.entry.ip_address);
+
+                // Port affinity: if FDB resolves the MAC to a non-owner port,
+                // the IP lives behind a different cable; skip suppress.
+                std::string fdb_port;
+                if (getMuxPort(update.mac, update.entry.alias, fdb_port) &&
+                    !fdb_port.empty() && fdb_port != owner_port)
+                {
+                    SWSS_LOG_NOTICE("Slice gate: %s FDB-resolved on %s (slice owner %s); skip suppress",
+                                    update.entry.ip_address.to_string().c_str(),
+                                    fdb_port.c_str(), owner_port.c_str());
+                    return;
+                }
+
+                // Only record SuppressedResolved on successful disable so the
+                // table never disagrees with ASIC state.
+                if (!neigh_orch_->disableNeighbor(update.entry))
+                {
+                    SWSS_LOG_WARN("Slice suppress: disableNeighbor failed for %s on %s; leaving SAI neighbor programmed",
+                                  update.entry.ip_address.to_string().c_str(),
+                                  update.entry.alias.c_str());
+                    return;
+                }
+
+                mux_nexthop_tb_[nh_key] = MuxNhEntry(owner_port, MuxNhState::SuppressedResolved);
+
+                SWSS_LOG_INFO("Slice-suppressed neighbor %s on %s (owner=%s, SuppressedResolved)",
+                              update.entry.ip_address.to_string().c_str(),
+                              update.entry.alias.c_str(),
+                              owner_port.c_str());
+                return;
+            }
+        }
+
+        // Remove of a previously-suppressed NH: no SAI mux NH ever existed,
+        // just drop the tracking row.
+        if (!update.add)
+        {
+            auto nh_it = mux_nexthop_tb_.find(nh_key);
+            if (nh_it != mux_nexthop_tb_.end() &&
+                nh_it->second.state == MuxNhState::SuppressedResolved)
+            {
+                SWSS_LOG_INFO("Slice-suppressed neighbor %s removed",
+                              update.entry.ip_address.to_string().c_str());
+                mux_nexthop_tb_.erase(nh_it);
+                return;
+            }
+        }
+    }
+
     // Check if neighbor is in MUX subnet
     for (auto it = mux_cable_tb_.begin(); it != mux_cable_tb_.end(); it++)
     {
@@ -2019,8 +2316,8 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
         auto it = mux_nexthop_tb_.find(update.entry);
         if (it != mux_nexthop_tb_.end())
         {
-            SWSS_LOG_INFO("port %s, nexthop %s", port.c_str(), it->second.c_str());
-            port = it->second;
+            SWSS_LOG_INFO("port %s, nexthop %s", port.c_str(), it->second.port_name.c_str());
+            port = it->second.port_name;
             removeNexthop(update.entry);
         }
     }
@@ -2042,7 +2339,7 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
 
 void MuxOrch::addNexthop(NextHopKey nh, string muxName)
 {
-    mux_nexthop_tb_[nh] = muxName;
+    mux_nexthop_tb_[nh] = MuxNhEntry(muxName);
 }
 
 void MuxOrch::removeNexthop(NextHopKey nh)
@@ -2051,13 +2348,22 @@ void MuxOrch::removeNexthop(NextHopKey nh)
 }
 
 /**
- * @brief checks if mux nexthop tb contains nexthop
+ * @brief checks if a given nexthop is programmed as a mux SAI nexthop
  * @param nexthop NextHopKey
- * @return true if a mux contains the nexthop
+ * @return true iff the nexthop is currently in MuxNhState ProgrammedActive
+ *         or ProgrammedStandby (i.e. has a SAI mux NH OID). Suppressed /
+ *         Placeholder entries return false — they're tracked by MuxOrch
+ *         but RouteOrch must NOT treat them as mux-managed for SAI route
+ *         purposes (no OID exists).
  */
 bool MuxOrch::containsNextHop(const NextHopKey& nexthop)
 {
-    return mux_nexthop_tb_.find(nexthop) != mux_nexthop_tb_.end();
+    auto it = mux_nexthop_tb_.find(nexthop);
+    if (it == mux_nexthop_tb_.end())
+    {
+        return false;
+    }
+    return muxNhIsProgrammed(it->second.state);
 }
 
 /**
@@ -2091,7 +2397,14 @@ bool MuxOrch::hasPrefixBasedMuxNexthop(const std::set<NextHopKey>& nextHops)
             continue;
         }
 
-        if (isMuxCablePrefixBased(it->second))
+        // Only consider programmed mux NHs: Suppressed / Placeholder
+        // entries have no SAI NH OID and must not influence NHG building.
+        if (!muxNhIsProgrammed(it->second.state))
+        {
+            continue;
+        }
+
+        if (isMuxCablePrefixBased(it->second.port_name))
         {
             return true;
         }
@@ -2107,7 +2420,7 @@ string MuxOrch::getNexthopMuxName(NextHopKey nh)
         return std::string();
     }
 
-    return mux_nexthop_tb_[nh];
+    return mux_nexthop_tb_[nh].port_name;
 }
 
 sai_object_id_t MuxOrch::getNextHopId(const NextHopKey &nh)
@@ -2117,7 +2430,7 @@ sai_object_id_t MuxOrch::getNextHopId(const NextHopKey &nh)
         return SAI_NULL_OBJECT_ID;
     }
 
-    auto mux_name = mux_nexthop_tb_[nh];
+    auto mux_name = mux_nexthop_tb_[nh].port_name;
     if (!isMuxExists(mux_name))
     {
         SWSS_LOG_INFO("Mux entry for nh '%s' port '%s' doesn't exist",
@@ -2128,6 +2441,290 @@ sai_object_id_t MuxOrch::getNextHopId(const NextHopKey &nh)
     auto ptr = getMuxCable(mux_name);
 
     return ptr->getNextHopId(nh);
+}
+
+
+bool MuxOrch::hasKnownMuxNextHop(const NextHopKey& nh) const
+{
+    return mux_nexthop_tb_.find(nh) != mux_nexthop_tb_.end();
+}
+
+bool MuxOrch::hasProgrammedMuxNextHop(const NextHopKey& nh) const
+{
+    auto it = mux_nexthop_tb_.find(nh);
+    if (it == mux_nexthop_tb_.end())
+    {
+        return false;
+    }
+    return muxNhIsProgrammed(it->second.state);
+}
+
+sai_object_id_t MuxOrch::getProgrammedNextHopId(const NextHopKey& nh)
+{
+    if (!hasProgrammedMuxNextHop(nh))
+    {
+        return SAI_NULL_OBJECT_ID;
+    }
+    // Reuse the existing OID lookup so we stay consistent with the
+    // MuxNbrHandler::neighbors_ cache where the real OID lives.
+    return getNextHopId(nh);
+}
+
+std::string MuxOrch::getMuxOwnerIfKnown(const NextHopKey& nh) const
+{
+    auto it = mux_nexthop_tb_.find(nh);
+    if (it == mux_nexthop_tb_.end())
+    {
+        return std::string();
+    }
+    return it->second.port_name;
+}
+
+MuxNhState MuxOrch::getNhState(const NextHopKey& nh) const
+{
+    auto it = mux_nexthop_tb_.find(nh);
+    if (it == mux_nexthop_tb_.end())
+    {
+        return MuxNhState::PlaceholderUnresolved;
+    }
+    return it->second.state;
+}
+
+
+void MuxOrch::addRouteRefForNh(const NextHopKey& nh, const RouteKey& route)
+{
+    nh_route_refs_[nh].insert(route);
+}
+
+void MuxOrch::removeRouteRefForNh(const NextHopKey& nh, const RouteKey& route)
+{
+    auto it = nh_route_refs_.find(nh);
+    if (it == nh_route_refs_.end())
+    {
+        return;
+    }
+    it->second.erase(route);
+    if (it->second.empty())
+    {
+        nh_route_refs_.erase(it);
+    }
+}
+
+bool MuxOrch::hasRouteRefsForNh(const NextHopKey& nh) const
+{
+    auto it = nh_route_refs_.find(nh);
+    return it != nh_route_refs_.end() && !it->second.empty();
+}
+
+size_t MuxOrch::routeRefCountForNh(const NextHopKey& nh) const
+{
+    auto it = nh_route_refs_.find(nh);
+    if (it == nh_route_refs_.end())
+    {
+        return 0;
+    }
+    return it->second.size();
+}
+
+std::string MuxOrch::findSliceOwnerPort(const IpAddress& ip) const
+{
+    for (auto it = mux_cable_tb_.begin(); it != mux_cable_tb_.end(); it++)
+    {
+        if (it->second->isIpInSlice(ip))
+        {
+            return it->first;
+        }
+    }
+    return std::string();
+}
+
+void MuxOrch::unsuppressNeighbor(const NextHopKey& nh)
+{
+
+    auto it = mux_nexthop_tb_.find(nh);
+    if (it == mux_nexthop_tb_.end())
+    {
+        return;
+    }
+
+    const std::string owner_port = it->second.port_name;
+    if (owner_port.empty() || !isMuxExists(owner_port))
+    {
+        SWSS_LOG_WARN("Slice unsuppress: owner port '%s' unknown for NH %s",
+                      owner_port.c_str(), nh.ip_address.to_string().c_str());
+        return;
+    }
+
+    // Flip state to Programmed BEFORE enableNeighbor: that call fires
+    // NeighborUpdate synchronously, re-entering updateNeighbor's slice gate
+    // which must see Programmed to skip re-disabling.
+    it->second.state = MuxNhState::ProgrammedActive;
+
+    NeighborEntry nbr(nh.ip_address, nh.alias);
+    if (!neigh_orch_->enableNeighbor(nbr))
+    {
+        SWSS_LOG_WARN("Slice unsuppress: enableNeighbor failed for %s; aborting",
+                      nh.ip_address.to_string().c_str());
+        auto rb = mux_nexthop_tb_.find(nh);
+        if (rb != mux_nexthop_tb_.end())
+        {
+            rb->second.state = MuxNhState::SuppressedResolved;
+        }
+        return;
+    }
+
+    // cable->updateNeighbor(true) programs the SAI mux NH and overwrites
+    // mux_nexthop_tb_[nh] via addNexthop() (defaults to ProgrammedActive).
+    MuxCable* cable = getMuxCable(owner_port);
+    cable->updateNeighbor(nh, true);
+
+    SWSS_LOG_NOTICE("Slice unsuppress NH %s on %s (state=Programmed)",
+                    nh.ip_address.to_string().c_str(), owner_port.c_str());
+}
+
+void MuxOrch::reSuppressNeighbor(const NextHopKey& nh)
+{
+
+    auto it = mux_nexthop_tb_.find(nh);
+    if (it == mux_nexthop_tb_.end())
+    {
+        return;
+    }
+
+    const std::string owner_port = it->second.port_name;
+    if (owner_port.empty() || !isMuxExists(owner_port))
+    {
+        return;
+    }
+
+    // updateNeighbor(false) tears down the SAI mux NH and erases
+    // mux_nexthop_tb_[nh]; we re-insert as SuppressedResolved below.
+    MuxCable* cable = getMuxCable(owner_port);
+    cable->updateNeighbor(nh, false);
+
+    NeighborEntry nbr(nh.ip_address, nh.alias);
+    if (!neigh_orch_->disableNeighbor(nbr))
+    {
+        SWSS_LOG_WARN("Slice re-suppress: disableNeighbor failed for %s; "
+                      "SAI may still hold neighbor",
+                      nh.ip_address.to_string().c_str());
+    }
+
+    mux_nexthop_tb_[nh] = MuxNhEntry(owner_port, MuxNhState::SuppressedResolved);
+
+    SWSS_LOG_NOTICE("Slice re-suppress NH %s on %s (state=SuppressedResolved)",
+                    nh.ip_address.to_string().c_str(), owner_port.c_str());
+}
+
+void MuxOrch::onRouteAdd(const NextHopKey& nh, const RouteKey& route)
+{
+
+    if (!isAnySliceConfigured())
+    {
+        return;
+    }
+    // Slice config lives in the default VRF; routes in other VRFs are unrelated.
+    if (route.vrf_id != gVirtualRouterId)
+    {
+        return;
+    }
+    if (!isInSliceSuppressed(nh.ip_address))
+    {
+        return;
+    }
+
+    addRouteRefForNh(nh, route);
+
+    auto it = mux_nexthop_tb_.find(nh);
+    if (it == mux_nexthop_tb_.end())
+    {
+        // Route before learn: leave a placeholder so the eventual learn
+        // promotes to Programmed instead of suppressing.
+        const std::string owner = findSliceOwnerPort(nh.ip_address);
+        mux_nexthop_tb_[nh] = MuxNhEntry(owner, MuxNhState::PlaceholderUnresolved);
+        SWSS_LOG_INFO("Slice route arrived before learn for %s; placeholder (owner=%s)",
+                      nh.ip_address.to_string().c_str(), owner.c_str());
+        return;
+    }
+
+    if (it->second.state == MuxNhState::SuppressedResolved)
+    {
+        unsuppressNeighbor(nh);
+    }
+    // Placeholder/Programmed: ref bump is sufficient.
+}
+
+void MuxOrch::onRouteRemove(const NextHopKey& nh, const RouteKey& route)
+{
+
+    if (!isAnySliceConfigured())
+    {
+        return;
+    }
+    if (route.vrf_id != gVirtualRouterId)
+    {
+        return;
+    }
+    removeRouteRefForNh(nh, route);
+
+    auto it = mux_nexthop_tb_.find(nh);
+    if (it == mux_nexthop_tb_.end())
+    {
+        return;
+    }
+
+    if (!isInSliceSuppressed(nh.ip_address))
+    {
+        return;
+    }
+
+    if (!hasRouteRefsForNh(nh) && muxNhIsProgrammed(it->second.state))
+    {
+        // Defer: NHG bulker hasn't flushed; neighbor_remove would hit
+        // OBJECT_IN_USE. drainPendingReSuppress runs post-flush.
+        m_pendingReSuppress.insert(nh);
+        SWSS_LOG_INFO("Slice NH %s queued for deferred re-suppress (refs=0)",
+                      nh.ip_address.to_string().c_str());
+    }
+    else if (!hasRouteRefsForNh(nh) && it->second.state == MuxNhState::PlaceholderUnresolved)
+    {
+        // Placeholder's only ref is gone and learn never arrived; drop it.
+        mux_nexthop_tb_.erase(it);
+        SWSS_LOG_INFO("Slice NH %s placeholder dropped (no refs, no learn)",
+                      nh.ip_address.to_string().c_str());
+    }
+}
+
+void MuxOrch::drainPendingReSuppress()
+{
+    if (m_pendingReSuppress.empty())
+    {
+        return;
+    }
+    auto pending = std::move(m_pendingReSuppress);
+    m_pendingReSuppress.clear();
+
+    for (const auto& nh : pending)
+    {
+        // A new route may have re-acquired this NH within the same tick;
+        // double-check refs before re-suppressing.
+        if (hasRouteRefsForNh(nh))
+        {
+            SWSS_LOG_INFO("Slice NH %s: re-suppress skipped (ref re-acquired)",
+                          nh.ip_address.to_string().c_str());
+            continue;
+        }
+        auto it = mux_nexthop_tb_.find(nh);
+        if (it == mux_nexthop_tb_.end() || !muxNhIsProgrammed(it->second.state))
+        {
+            continue;
+        }
+        if (!isInSliceSuppressed(nh.ip_address))
+        {
+            continue;
+        }
+        reSuppressNeighbor(nh);
+    }
 }
 
 void MuxOrch::update(SubjectType type, void *cntx)
@@ -2203,12 +2800,15 @@ bool MuxOrch::handleMuxCfg(const Request& request)
 {
     SWSS_LOG_ENTER();
 
+
     auto srv_ip = request.getAttrIpPrefix("server_ipv4");
     auto srv_ip6 = request.getAttrIpPrefix("server_ipv6");
 
     MuxCableType cable_type = MuxCableType::ACTIVE_STANDBY;
     auto nbr_handler_type = MuxNbrHandlerType::NBR_HANDLER_HOST_ROUTE;
     std::set<IpAddress> skip_neighbors;
+    IpPrefix slice_ip6("::/0");
+    bool slice_ip6_present = false;
 
     const auto& port_name = request.getKeyString(0);
     auto op = request.getOperation();
@@ -2245,6 +2845,24 @@ bool MuxOrch::handleMuxCfg(const Request& request)
                 }
             }
         }
+        else if (name == "server_ipv6_subnet")
+        {
+            auto pfx = request.getAttrIpPrefix("server_ipv6_subnet");
+            if (pfx.isV4())
+            {
+                SWSS_LOG_ERROR("Mux port '%s': server_ipv6_subnet must be IPv6, rejecting '%s'",
+                               port_name.c_str(), pfx.to_string().c_str());
+                return false;
+            }
+            if (pfx.getIp().isZero())
+            {
+                SWSS_LOG_ERROR("Mux port '%s': server_ipv6_subnet must not be a zero-base prefix, rejecting '%s'",
+                               port_name.c_str(), pfx.to_string().c_str());
+                return false;
+            }
+            slice_ip6 = pfx;
+            slice_ip6_present = true;
+        }
     }
 
     if (op == SET_COMMAND)
@@ -2265,6 +2883,17 @@ bool MuxOrch::handleMuxCfg(const Request& request)
                 return false;
             }
 
+            // Runtime mutation of slice prefix is not allowed. Only compare
+            // when the field was present in this request — partial SET updates
+            // that omit server_ipv6_subnet must not trigger a false mismatch.
+            if (mux_cable && slice_ip6_present && !(mux_cable->getSlicePrefix() == slice_ip6))
+            {
+                SWSS_LOG_ERROR("server_ipv6_subnet change is not allowed for existing mux port '%s'. "
+                               "Please delete and recreate the mux port.",
+                               port_name.c_str());
+                return false;
+            }
+
             return true;
         }
 
@@ -2277,20 +2906,40 @@ bool MuxOrch::handleMuxCfg(const Request& request)
                 "prefix-route" : "host-route", port_name.c_str());
 
         mux_cable_tb_[port_name] = std::make_unique<MuxCable>
-                                   (MuxCable(port_name, srv_ip, srv_ip6, mux_peer_switch_, cable_type, nbr_handler_type));
+                                   (MuxCable(port_name, srv_ip, srv_ip6, mux_peer_switch_, cable_type, nbr_handler_type, slice_ip6));
         addSkipNeighbors(skip_neighbors, port_name);
+
+        if (slice_ip6_present)
+        {
+            ++m_slicedCableCount;
+            SWSS_LOG_NOTICE("Mux port '%s' configured with server_ipv6_subnet %s (sliced cable count=%zu)",
+                            port_name.c_str(), slice_ip6.to_string().c_str(), m_slicedCableCount);
+        }
 
         // Set neighbor_mode in state DB MUX_CABLE_TABLE
         std::string neighbor_mode_str = (nbr_handler_type == MuxNbrHandlerType::NBR_HANDLER_PREFIX_BASED) ? "prefix-route" : "host-route";
         state_mux_cable_table_->hset(port_name, "neighbor_mode", neighbor_mode_str);
         SWSS_LOG_INFO("Set neighbor_mode '%s' for port '%s' in state DB", neighbor_mode_str.c_str(), port_name.c_str());
 
+        // Publish slice prefix (CONFIG_DB server_ipv6_subnet) to STATE_DB so
+        // operators can see which cables are sliced and which prefix is in
+        // effect. Field name mirrors the CONFIG_DB schema.
+        if (slice_ip6_present)
+        {
+            state_mux_cable_table_->hset(port_name, "server_ipv6_subnet",
+                                         slice_ip6.to_string());
+        }
+        else
+        {
+            state_mux_cable_table_->hdel(port_name, "server_ipv6_subnet");
+        }
+
         // Add neighbors that were learned before this mux port was configured.
         NeighborTable m_neighbors;
         gNeighOrch->getMuxNeighborsForPort(port_name, m_neighbors);
         for (const auto &entry : m_neighbors)
         {
-            bool nexthop_found = containsNextHop(entry.first);
+            bool nexthop_found = hasKnownMuxNextHop(entry.first);
             bool is_skip_neighbor = isSkipNeighbor(entry.first.ip_address);
             if (!nexthop_found && !is_skip_neighbor)
             {
@@ -2314,6 +2963,44 @@ bool MuxOrch::handleMuxCfg(const Request& request)
             }
         }
 
+        // Late-slice reconcile: the loop above only covers FDB-resolved
+        // neighbors. Replay any in-slice IPs (plus the anchor) from
+        // NeighOrch so the slice gate can suppress hosts and promote the
+        // anchor; updateNeighbor is idempotent for the rest.
+        if (slice_ip6_present)
+        {
+            const NeighborTable& all_neighbors = gNeighOrch->getNeighborTable();
+            const IpAddress anchor_ip = srv_ip6.getIp();
+            for (const auto& nentry : all_neighbors)
+            {
+                const IpAddress& ip = nentry.first.ip_address;
+                const bool is_anchor = (ip == anchor_ip);
+                if (!is_anchor && !slice_ip6.isAddressInSubnet(ip))
+                {
+                    continue;
+                }
+                if (!is_anchor && !isInSliceSuppressed(ip))
+                {
+                    continue;
+                }
+                NextHopKey nh_key(ip, nentry.first.alias);
+                if (!is_anchor)
+                {
+                    auto existing = mux_nexthop_tb_.find(nh_key);
+                    if (existing != mux_nexthop_tb_.end() &&
+                        existing->second.state == MuxNhState::SuppressedResolved)
+                    {
+                        continue;
+                    }
+                }
+                SWSS_LOG_NOTICE("Slice reconcile: replaying %s %s for late slice on %s",
+                                is_anchor ? "anchor" : "neighbor",
+                                ip.to_string().c_str(), port_name.c_str());
+                NeighborUpdate replay = { nentry.first, nentry.second.mac, 1 };
+                updateNeighbor(replay);
+            }
+        }
+
         SWSS_LOG_NOTICE("Mux entry for port '%s' was added, cable type %d", port_name.c_str(), cable_type);
     }
     else
@@ -2325,7 +3012,55 @@ bool MuxOrch::handleMuxCfg(const Request& request)
         }
 
         removeSkipNeighbors(skip_neighbors);
+        {
+            auto it = mux_cable_tb_.find(port_name);
+            if (it != mux_cable_tb_.end() && it->second->hasSlicePrefix())
+            {
+                if (m_slicedCableCount > 0)
+                {
+                    --m_slicedCableCount;
+                }
+                SWSS_LOG_NOTICE("Mux port '%s' removed had slice prefix (sliced cable count=%zu)",
+                                port_name.c_str(), m_slicedCableCount);
+
+                // Drop non-programmed slice rows owned by this port; they
+                // have no SAI footprint but would dangle through queries.
+                // Programmed rows are handled by the normal cable teardown.
+                // Previously-suppressed in-slice neighbors are intentionally
+                // NOT re-programmed: re-enabling at scale would flood TCAM.
+                std::set<NextHopKey> orphaned_nhs;
+                for (auto nh_it = mux_nexthop_tb_.begin(); nh_it != mux_nexthop_tb_.end(); )
+                {
+                    if (nh_it->second.port_name == port_name &&
+                        (nh_it->second.state == MuxNhState::SuppressedResolved ||
+                         nh_it->second.state == MuxNhState::PlaceholderUnresolved))
+                    {
+                        SWSS_LOG_NOTICE("Slice cable '%s' removed: dropping %s NH %s",
+                                        port_name.c_str(),
+                                        nh_it->second.state == MuxNhState::SuppressedResolved
+                                            ? "suppressed" : "placeholder",
+                                        nh_it->first.ip_address.to_string().c_str());
+                        orphaned_nhs.insert(nh_it->first);
+                        nh_it = mux_nexthop_tb_.erase(nh_it);
+                    }
+                    else
+                    {
+                        ++nh_it;
+                    }
+                }
+                for (const auto& nh : orphaned_nhs)
+                {
+                    m_pendingReSuppress.erase(nh);
+                    nh_route_refs_.erase(nh);
+                }
+
+                // Withdraw supernet route while the cable still exists.
+                it->second->withdrawSliceRoute();
+            }
+        }
         mux_cable_tb_.erase(port_name);
+
+        state_mux_cable_table_->hdel(port_name, "server_ipv6_subnet");
 
         SWSS_LOG_NOTICE("Mux cable for port '%s' was removed", port_name.c_str());
     }
