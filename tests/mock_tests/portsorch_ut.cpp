@@ -57,6 +57,8 @@ namespace portsorch_test
     bool not_support_fetching_fec;
     uint32_t _sai_set_port_fec_count;
     uint32_t _sai_set_port_auto_neg_count;
+    bool mock_autoneg_cap_supported = true;
+    bool set_autoneg_need_retry = false;
     uint32_t _sai_set_port_tpid_count;
     int32_t _sai_port_fec_mode;
     vector<sai_port_fec_mode_t> mock_port_fec_modes = {SAI_PORT_FEC_MODE_RS, SAI_PORT_FEC_MODE_FC};
@@ -107,13 +109,27 @@ namespace portsorch_test
         }
         else if (attr_count == 1 && attr_list[0].id == SAI_PORT_ATTR_PORT_SERDES_ID)
         {
-            // Check if serdes exists for this port
+            // Prefer test-tracked serdes if present.
             auto it = _port_to_serdes_map.find(port_id);
             if (it != _port_to_serdes_map.end()) {
                 attr_list[0].value.oid = it->second;
-            } else {
-                attr_list[0].value.oid = SAI_NULL_OBJECT_ID;
+                status = SAI_STATUS_SUCCESS;
             }
+            // Fall through to the real SAI only for genuine VS PORT objects so
+            // default-port serdes (auto-created during init_switch) gets cleaned
+            // up. Synthetic OIDs used by gearbox tests (e.g., 0x2100...) decode
+            // to non-PORT types and would throw inside libsairedis-meta.
+            else if (sai_object_type_query(port_id) == SAI_OBJECT_TYPE_PORT) {
+                status = pold_sai_port_api->get_port_attribute(port_id, attr_count, attr_list);
+            }
+            else {
+                attr_list[0].value.oid = SAI_NULL_OBJECT_ID;
+                status = SAI_STATUS_SUCCESS;
+            }
+        }
+        else if (attr_count == 1 && attr_list[0].id == SAI_PORT_ATTR_SUPPORTED_AUTO_NEG_MODE)
+        {
+            attr_list[0].value.booldata = mock_autoneg_cap_supported;
             status = SAI_STATUS_SUCCESS;
         }
         else
@@ -162,6 +178,10 @@ namespace portsorch_test
         else if (attr[0].id == SAI_PORT_ATTR_AUTO_NEG_MODE)
         {
             _sai_set_port_auto_neg_count++;
+            if (set_autoneg_need_retry)
+            {
+                return SAI_STATUS_INSUFFICIENT_RESOURCES;
+            }
             /* Simulating failure case */
             return SAI_STATUS_FAILURE;
         }
@@ -361,6 +381,7 @@ namespace portsorch_test
     {
         _sai_remove_port_serdes_calls.push_back(port_serdes_id);
 
+        bool tracked = false;
         // Erase any port-to-serdes mappings that reference this serdes ID,
         // so subsequent SAI_PORT_ATTR_PORT_SERDES_ID queries reflect removal.
         for (auto it = _port_to_serdes_map.begin(); it != _port_to_serdes_map.end(); )
@@ -368,11 +389,20 @@ namespace portsorch_test
             if (it->second == port_serdes_id)
             {
                 it = _port_to_serdes_map.erase(it);
+                tracked = true;
             }
             else
             {
                 ++it;
             }
+        }
+
+        // Forward to real SAI only for genuine PORT_SERDES OIDs so default VS
+        // port serdes objects get cleaned up. Test-fabricated OIDs would throw
+        // inside libsairedis-meta.
+        if (!tracked && sai_object_type_query(port_serdes_id) == SAI_OBJECT_TYPE_PORT_SERDES)
+        {
+            return pold_sai_port_api->remove_port_serdes(port_serdes_id);
         }
 
         return SAI_STATUS_SUCCESS;
@@ -530,6 +560,49 @@ namespace portsorch_test
         std::vector<std::string> taskList;
         obj->dumpPendingTasks(taskList);
         ASSERT_TRUE(taskList.empty());
+    }
+
+    //
+    // Best-effort port cleanup used by tests that touch Path Tracing.
+    //
+    // After a port has had Path Tracing enabled+disabled within a test, the
+    // SAI virtual switch returns SAI_STATUS_OBJECT_IN_USE on
+    // sai_port_api->remove_port() for that port even though PortsOrch has
+    // unset its TAM and removed the TAM/INT/Report objects. The DEL task for
+    // that port therefore stays pending. This helper drains via repeated
+    // doTask() so the non-stuck ports still get removed, and does not assert
+    // on the residual VS-side leak so the test itself does not get marked
+    // failed by this cleanup.
+    //
+    void cleanupPortsBestEffort(PortsOrch *obj)
+    {
+        Port p;
+        obj->getCpuPort(p);
+
+        auto portList = obj->getAllPorts();
+        portList.erase(p.m_alias);
+
+        std::deque<KeyOpFieldsValuesTuple> kfvList;
+        for (const auto &cit : portList)
+        {
+            kfvList.push_back({ cit.first, DEL_COMMAND, { } });
+        }
+
+        auto consumer = dynamic_cast<Consumer*>(obj->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvList);
+
+        // Drain in a loop so multi-pass removals complete where possible.
+        std::vector<std::string> taskList;
+        for (int i = 0; i < 8; ++i)
+        {
+            static_cast<Orch*>(obj)->doTask();
+            taskList.clear();
+            obj->dumpPendingTasks(taskList);
+            if (taskList.empty())
+            {
+                break;
+            }
+        }
     }
 
     struct PortsOrchTest : public ::testing::Test
@@ -1097,7 +1170,9 @@ namespace portsorch_test
         auto &ports = defaultPortList;
         ASSERT_TRUE(!ports.empty());
 
-        // default Ethernet0 has different lanes so create_ports() is triggered
+        // default Ethernet0 has different lanes so create_ports() is triggered.
+        // Set role explicitly: PortConfig::role.value has no default initializer,
+        // so leaving it unset would propagate uninitialized memory into Port::m_role.
         std::vector<FieldValueTuple> fvList = {
             { "alias",               alias       },
             { "index",               "0"         },
@@ -1112,6 +1187,7 @@ namespace portsorch_test
             { "tpid",                "0x8101"    },
             { "pfc_asym",            "on"        },
             { "admin_status",        "up"        },
+            { "role",                "Ext"       },
             { "description",         "FP port"   }
         };
 
@@ -2398,6 +2474,8 @@ namespace portsorch_test
         std::vector<std::string> taskList;
         gPortsOrch->dumpPendingTasks(taskList);
         ASSERT_TRUE(taskList.empty());
+
+        cleanupPortsBestEffort(gPortsOrch);
     }
 
     TEST_F(PortsOrchTest, PortPTConfigNonDefaultTimestampTemplate)
@@ -2492,6 +2570,8 @@ namespace portsorch_test
         std::vector<std::string> taskList;
         gPortsOrch->dumpPendingTasks(taskList);
         ASSERT_TRUE(taskList.empty());
+
+        cleanupPortsBestEffort(gPortsOrch);
     }
 
     TEST_F(PortsOrchTest, PortPTConfigInvalidInterfaceID)
@@ -2560,6 +2640,8 @@ namespace portsorch_test
         std::vector<std::string> taskList;
         gPortsOrch->dumpPendingTasks(taskList);
         ASSERT_TRUE(taskList.empty());
+
+        cleanupPortsBestEffort(gPortsOrch);
     }
 
     TEST_F(PortsOrchTest, PortPTConfigInvalidInterfaceTimestampTemplate)
@@ -2628,6 +2710,8 @@ namespace portsorch_test
         std::vector<std::string> taskList;
         gPortsOrch->dumpPendingTasks(taskList);
         ASSERT_TRUE(taskList.empty());
+
+        cleanupPortsBestEffort(gPortsOrch);
     }
 
     TEST_F(PortsOrchTest, PortPTSAIFailureHandling)
@@ -2749,6 +2833,8 @@ namespace portsorch_test
 
         _unhook_sai_switch_api();
         _unhook_sai_port_api();
+
+        cleanupPortsBestEffort(gPortsOrch);
     }
 
     TEST_F(PortsOrchTest, PortPTCapabilityUnsupported)
@@ -2821,6 +2907,8 @@ namespace portsorch_test
 
         _unhook_sai_switch_api();
         _unhook_sai_port_api();
+
+        cleanupPortsBestEffort(gPortsOrch);
     }
 
     /**
@@ -3588,6 +3676,149 @@ namespace portsorch_test
         ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
         _unhook_sai_port_api();
         _unhook_sai_switch_api();
+    }
+
+    TEST_F(PortsOrchTest, AutonegOnUnsupportedPort)
+    {
+        // Configuring autoneg on a port that doesn't support it (either on or off)
+        // must skip the ASIC call, mark the port configured so we don't retry, and
+        // not drop the rest of the task's config. The requested value is mirrored
+        // in cache.
+        _hook_sai_port_api();
+        mock_autoneg_cap_supported = false;
+
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+
+        for (const auto &requested : {std::string("off"), std::string("on")})
+        {
+            const auto an_call_count = _sai_set_port_auto_neg_count;
+
+            // Reset the port's AN-configured flag so each iteration re-enters the AN block
+            Port pre;
+            ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", pre));
+            pre.m_an_cfg = false;
+            gPortsOrch->m_portList["Ethernet0"] = pre;
+
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            entries.push_back({"Ethernet0", SET_COMMAND, { { "autoneg", requested } }});
+            consumer->addToSync(entries);
+            static_cast<Orch *>(gPortsOrch)->doTask();
+
+            // No SAI set call should have been made
+            EXPECT_EQ(_sai_set_port_auto_neg_count, an_call_count) << "requested=" << requested;
+
+            // Port marked configured; requested value reflected in cache
+            Port p;
+            ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+            EXPECT_TRUE(p.m_an_cfg) << "requested=" << requested;
+            EXPECT_EQ(p.m_autoneg, requested == "on") << "requested=" << requested;
+
+            // Task consumed (no pending) — sibling config in the same task is no longer dropped
+            vector<string> ts;
+            gPortsOrch->dumpPendingTasks(ts);
+            EXPECT_TRUE(ts.empty()) << "requested=" << requested;
+        }
+
+        mock_autoneg_cap_supported = true;
+        _unhook_sai_port_api();
+    }
+
+    TEST_F(PortsOrchTest, AutonegAdminDownFailure)
+    {
+        // When autoneg is configured on a port that is admin UP and bringing the
+        // port DOWN fails, the task must be retried (it++, not erased).
+        _hook_sai_port_api();
+
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Force Ethernet0 into admin UP state
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        p.m_admin_state_up = true;
+        gPortsOrch->m_portList["Ethernet0"] = p;
+
+        set_admin_status_fail = true;
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", SET_COMMAND,
+                           {
+                               { "autoneg", "on" }
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        EXPECT_EQ(set_admin_status_failures, 1);
+
+        // Task should remain queued for retry
+        vector<string> ts;
+        gPortsOrch->dumpPendingTasks(ts);
+        EXPECT_FALSE(ts.empty());
+
+        set_admin_status_fail = false;
+        set_admin_status_failures = 0;
+        _unhook_sai_port_api();
+    }
+
+    TEST_F(PortsOrchTest, AutonegSetNeedsRetry)
+    {
+        // When setPortAutoNeg returns task_need_retry (SAI_STATUS_INSUFFICIENT_RESOURCES),
+        // the task must stay queued (it++) rather than being dropped.
+        _hook_sai_port_api();
+        set_autoneg_need_retry = true;
+
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        const auto an_call_count = _sai_set_port_auto_neg_count;
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", SET_COMMAND,
+                           {
+                               { "autoneg", "on" }
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // SAI set was attempted
+        EXPECT_GT(_sai_set_port_auto_neg_count, an_call_count);
+
+        // Task should remain queued for retry
+        vector<string> ts;
+        gPortsOrch->dumpPendingTasks(ts);
+        EXPECT_FALSE(ts.empty());
+
+        set_autoneg_need_retry = false;
+        _unhook_sai_port_api();
     }
 
     TEST_F(PortsOrchTest, PortReadinessColdBoot)

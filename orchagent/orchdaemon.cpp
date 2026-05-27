@@ -1,8 +1,9 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <chrono>
-#include <thread>
 #include <limits.h>
+#include <errno.h>
+#include <signal.h>
 #include "orchdaemon.h"
 #include "logger.h"
 #include <sairedis.h>
@@ -31,6 +32,7 @@ extern string                      gMySwitchType;
 extern string                      gMySwitchSubType;
 extern bool                        gOrchUnhealthy;
 extern string                      gSaiErrorString;
+volatile sig_atomic_t              gOrchShutdownRequested = 0;
 
 extern void syncd_apply_view();
 /*
@@ -95,14 +97,30 @@ OrchDaemon::~OrchDaemon()
 {
     SWSS_LOG_ENTER();
 
-    // Stop the ring thread before delete orch pointers
+    /*
+     * Stop the ring thread before deleting orch pointers.
+     *
+     * OrchDaemon::start() always launches ring_thread, but popRingBuffer()
+     * returns immediately when gRingBuffer is null (ring mode disabled).
+     * In that case ring_thread is still "joinable" after its entry function
+     * returns, so this teardown path would otherwise dereference a null
+     * gRingBuffer. Before PR #4400 this was unreachable: SIGTERM was not
+     * handled, so ~OrchDaemon() never ran on signal-driven shutdown. The
+     * new graceful shutdown path reaches this destructor on clean exit and
+     * exposes the latent null dereference. Guard the ring buffer accesses
+     * so teardown is safe whether ring mode is enabled or not.
+     */
     if (ring_thread.joinable()) {
-        // notify the ring_thread to exit
-        gRingBuffer->thread_exited = true;
-        gRingBuffer->notify();
+        if (gRingBuffer) {
+            // notify the ring_thread to exit
+            gRingBuffer->thread_exited = true;
+            gRingBuffer->notify();
+        }
         // wait for the ring_thread to exit
         ring_thread.join();
-        disableRingBuffer();
+        if (gRingBuffer) {
+            disableRingBuffer();
+        }
     }
 
     /*
@@ -932,18 +950,27 @@ void OrchDaemon::start(long heartBeatInterval)
         Selectable *s;
         int ret;
 
+        if (gOrchShutdownRequested != 0)
+        {
+            SWSS_LOG_NOTICE("Received signal %d, shutting down orchagent gracefully", gOrchShutdownRequested);
+            break;
+        }
+
         ret = m_select->select(&s, SELECT_TIMEOUT);
 
-        /*
-         * When gOrchUnhealthy is set, the Select event loop spins with
-         * epoll_wait(timeout=0) because poll_descriptors phase 1 always
-         * finds "ready" Selectables (the notification channel stays readable
-         * after the SAI failure), so the blocking phase 2 poll is never
-         * reached. This causes 100% CPU. Sleep to throttle the loop.
-         */
-        if (gOrchUnhealthy && ret != Select::TIMEOUT)
+        if (gOrchShutdownRequested != 0)
         {
-            std::this_thread::sleep_for(std::chrono::milliseconds(SELECT_TIMEOUT));
+            SWSS_LOG_NOTICE("Received signal %d, shutting down orchagent gracefully", gOrchShutdownRequested);
+            break;
+        }
+
+        /*
+         * Log an error message periodically if a previous SAI API call failed with
+         * an unrecoverable error.
+         */
+        if (gOrchUnhealthy)
+        {
+            SWSS_LOG_ERROR("%s", gSaiErrorString.c_str());
         }
 
         auto tend = std::chrono::high_resolution_clock::now();
@@ -955,21 +982,16 @@ void OrchDaemon::start(long heartBeatInterval)
         {
             tstart = std::chrono::high_resolution_clock::now();
 
-            /*
-             * Log an error message periodically if a previous SAI API call failed with
-             * an unrecoverable error. Rate-limit to once per SELECT_TIMEOUT interval
-             * to avoid busy-loop CPU spin from excessive syslog writes.
-             */
-            if (gOrchUnhealthy)
-            {
-                SWSS_LOG_ERROR("%s", gSaiErrorString.c_str());
-            }
-
             flush();
         }
 
         if (ret == Select::ERROR)
         {
+            if (errno == EINTR && gOrchShutdownRequested != 0)
+            {
+                SWSS_LOG_NOTICE("Interrupted by signal %d, shutting down orchagent gracefully", gOrchShutdownRequested);
+                break;
+            }
             SWSS_LOG_NOTICE("Error: %s!\n", strerror(errno));
             continue;
         }

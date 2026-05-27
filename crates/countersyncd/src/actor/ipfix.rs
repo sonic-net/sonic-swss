@@ -171,10 +171,7 @@ impl IpfixActor {
             if set_id >= 256 && set_length > 4 {
                 let data_length = set_length as usize - 4; // Exclude 4-byte set header
                 let data_start = offset + 4;
-                result.push_str(&format!(
-                    "        Data payload: {} bytes",
-                    data_length
-                ));
+                result.push_str(&format!("        Data payload: {} bytes", data_length));
 
                 // Show complete data payload
                 if data_length > 0 {
@@ -198,11 +195,7 @@ impl IpfixActor {
                                 .map(|b| format!("{:02x}", b))
                                 .collect::<Vec<_>>()
                                 .join(" ");
-                            result.push_str(&format!(
-                                "          {:04x}: {}\n",
-                                i * 16,
-                                chunk_hex
-                            ));
+                            result.push_str(&format!("          {:04x}: {}\n", i * 16, chunk_hex));
                         }
                     }
                 } else {
@@ -499,8 +492,8 @@ pub struct IpfixActor {
     temporary_templates_map: HashMap<u16, String>,
     /// Mapping from message key to template IDs for applied templates
     applied_templates_map: HashMap<String, Vec<u16>>,
-    /// Mapping from message key to object names for converting label IDs
-    object_names_map: HashMap<String, Vec<String>>,
+    /// Precomputed lookup from object ID/label to object name for O(1) stat resolution
+    object_id_name_map: HashMap<String, HashMap<u16, String>>,
 }
 
 impl IpfixActor {
@@ -524,7 +517,7 @@ impl IpfixActor {
             record_recipient,
             temporary_templates_map: HashMap::new(),
             applied_templates_map: HashMap::new(),
-            object_names_map: HashMap::new(),
+            object_id_name_map: HashMap::new(),
         }
     }
 
@@ -617,8 +610,8 @@ impl IpfixActor {
         };
 
         debug!(
-            "Processing IPFIX templates for key: {}, object_names: {:?}",
-            templates.key, templates.object_names
+            "Processing IPFIX templates for key: {}, object_names: {:?}, object_ids: {:?}",
+            templates.key, templates.object_names, templates.object_ids
         );
 
         // Add detailed debug logging for template content if debug level is enabled
@@ -630,14 +623,46 @@ impl IpfixActor {
             }
         }
 
-        // Update object name mapping for the session key.
-        // A missing object_names field means the latest template update no longer
-        // provides object name mapping, so any stale value must be cleared.
-        if let Some(object_names) = &templates.object_names {
-            self.object_names_map
-                .insert(templates.key.clone(), object_names.clone());
+        if let (Some(object_names), Some(object_ids)) =
+            (&templates.object_names, &templates.object_ids)
+        {
+            if object_ids.len() == object_names.len() {
+                let mut lookup = HashMap::with_capacity(object_ids.len());
+                let mut has_duplicate_object_id = false;
+
+                for (object_id, object_name) in
+                    object_ids.iter().copied().zip(object_names.iter().cloned())
+                {
+                    if let Some(previous_name) = lookup.insert(object_id, object_name.clone()) {
+                        warn!(
+                            "IPFIX template key {} contains duplicate object_id {} ({} -> {}). Skipping object_id_name_map entry to avoid ambiguous label resolution.",
+                            templates.key,
+                            object_id,
+                            previous_name,
+                            object_name
+                        );
+                        has_duplicate_object_id = true;
+                        break;
+                    }
+                }
+
+                if has_duplicate_object_id {
+                    self.object_id_name_map.remove(&templates.key);
+                } else {
+                    self.object_id_name_map
+                        .insert(templates.key.clone(), lookup);
+                }
+            } else {
+                warn!(
+                    "IPFIX template object_ids/object_names length mismatch for key {}: ids={}, names={}. Skipping object_id_name_map entry.",
+                    templates.key,
+                    object_ids.len(),
+                    object_names.len()
+                );
+                self.object_id_name_map.remove(&templates.key);
+            }
         } else {
-            self.object_names_map.remove(&templates.key);
+            self.object_id_name_map.remove(&templates.key);
         }
 
         let cache_ref = Self::get_cache();
@@ -705,8 +730,8 @@ impl IpfixActor {
         self.temporary_templates_map
             .retain(|_, msg_key| msg_key != key);
 
-        // Remove object names for this key
-        self.object_names_map.remove(key);
+        // Remove object metadata for this key
+        self.object_id_name_map.remove(key);
 
         debug!("Template deletion completed for key: {}", key);
     }
@@ -784,9 +809,7 @@ impl IpfixActor {
             });
 
             if should_drop_message {
-                debug!(
-                    "Dropping IPFIX data message because template was deleted or unknown"
-                );
+                debug!("Dropping IPFIX data message because template was deleted or unknown");
                 read_size += len as usize;
                 continue;
             }
@@ -797,11 +820,9 @@ impl IpfixActor {
                     _ => continue,
                 };
 
-                let object_names = self
+                let object_name_lookup = self
                     .get_template_key(template_id)
-                    .and_then(|key| self.object_names_map.get(key))
-                    .map(|names| names.as_slice())
-                    .unwrap_or(&[]);
+                    .and_then(|key| self.object_id_name_map.get(key));
 
                 let mut observation_time: Option<u64>;
 
@@ -882,7 +903,7 @@ impl IpfixActor {
 
                         match key {
                             DataRecordKey::Unrecognized(field_spec) => {
-                                let stat = SAIStat::from_ipfix(field_spec, val, object_names);
+                                let stat = SAIStat::from_ipfix(field_spec, val, object_name_lookup);
                                 debug!("Created SAIStat: {:?}", stat);
                                 final_stats.push(stat);
                             }
@@ -966,11 +987,11 @@ impl Drop for IpfixActor {
 }
 
 /// IPFIX Information Element ID for observationTimeNanoseconds (Field ID 325).
-/// 
+///
 /// This field represents the absolute timestamp of the observation of the packet
-/// within a nanosecond resolution. The timestamp is based on the local time zone 
+/// within a nanosecond resolution. The timestamp is based on the local time zone
 /// of the Exporter and is represented as nanoseconds since the UNIX epoch.
-/// 
+///
 /// According to IANA IPFIX Information Elements Registry:
 /// - ElementId: 325
 /// - Data Type: dateTimeNanoseconds
@@ -979,11 +1000,11 @@ impl Drop for IpfixActor {
 const OBSERVATION_TIME_NANOSECONDS: u16 = 325;
 
 /// IPFIX Information Element ID for observationTimeSeconds (Field ID 322).
-/// 
+///
 /// This field represents the absolute timestamp of the observation of the packet
 /// within a second resolution. The timestamp is based on the local time zone
 /// of the Exporter and is represented as seconds since the UNIX epoch.
-/// 
+///
 /// According to IANA IPFIX Information Elements Registry:
 /// - ElementId: 322
 /// - Data Type: dateTimeSeconds  
@@ -992,7 +1013,7 @@ const OBSERVATION_TIME_NANOSECONDS: u16 = 325;
 const OBSERVATION_TIME_SECONDS: u16 = 322;
 
 /// Extracts observation time from an IPFIX data record.
-/// 
+///
 /// Converts timestamp to 64-bit nanoseconds following this priority:
 /// 1. If 64-bit nanoseconds field exists, use it directly
 /// 2. If 32-bit seconds and 32-bit nanoseconds fields exist, combine them
@@ -1016,15 +1037,24 @@ fn get_observation_time(data_record: &DataRecord) -> Option<u64> {
             if field_spec.enterprise_number.is_none() {
                 match field_spec.information_element_identifier {
                     OBSERVATION_TIME_NANOSECONDS => {
-                        debug!("Found observation time nanoseconds field with value: {:?}", val);
+                        debug!(
+                            "Found observation time nanoseconds field with value: {:?}",
+                            val
+                        );
                         match val {
                             DataRecordValue::Bytes(bytes) => {
                                 if bytes.len() == 8 {
                                     full_nanoseconds_value = Some(NetworkEndian::read_u64(bytes));
-                                    debug!("Extracted 64-bit nanoseconds: {}", full_nanoseconds_value.unwrap());
+                                    debug!(
+                                        "Extracted 64-bit nanoseconds: {}",
+                                        full_nanoseconds_value.unwrap()
+                                    );
                                 } else if bytes.len() == 4 {
                                     nanoseconds_value = Some(NetworkEndian::read_u32(bytes));
-                                    debug!("Extracted 32-bit nanoseconds: {}", nanoseconds_value.unwrap());
+                                    debug!(
+                                        "Extracted 32-bit nanoseconds: {}",
+                                        nanoseconds_value.unwrap()
+                                    );
                                 }
                             }
                             DataRecordValue::U64(val) => {
@@ -1073,8 +1103,10 @@ fn get_observation_time(data_record: &DataRecord) -> Option<u64> {
     // Priority 2: Combine 32-bit seconds and 32-bit nanoseconds
     if let (Some(seconds), Some(nanoseconds)) = (seconds_value, nanoseconds_value) {
         let combined_timestamp = (seconds as u64) * 1_000_000_000 + (nanoseconds as u64);
-        debug!("Combined timestamp from seconds({}) and nanoseconds({}): {}", 
-               seconds, nanoseconds, combined_timestamp);
+        debug!(
+            "Combined timestamp from seconds({}) and nanoseconds({}): {}",
+            seconds, nanoseconds, combined_timestamp
+        );
         return Some(combined_timestamp);
     }
 
@@ -1084,7 +1116,10 @@ fn get_observation_time(data_record: &DataRecord) -> Option<u64> {
         .duration_since(SystemTime::UNIX_EPOCH)
         .expect("System time should be after Unix epoch")
         .as_nanos() as u64;
-    debug!("Using current UTC time as observation time: {}", current_time);
+    debug!(
+        "Using current UTC time as observation time: {}",
+        current_time
+    );
     Some(current_time)
 }
 
@@ -1193,11 +1228,13 @@ mod test {
             String::from("session_a"),
             Arc::new(Vec::from(template_256_bytes)),
             Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
+            Some(vec![1, 3]),
         ));
         actor.handle_template(IPFixTemplatesMessage::new(
             String::from("session_b"),
             Arc::new(Vec::from(template_257_bytes)),
             Some(vec!["Ethernet8".to_string(), "Ethernet12".to_string()]),
+            Some(vec![1, 3]),
         ));
 
         let valid_records_bytes: [u8; 144] = [
@@ -1241,8 +1278,14 @@ mod test {
             saw_session_b |= only_session_b;
         }
 
-        assert!(saw_session_a, "did not observe any stats for session A/template 256");
-        assert!(saw_session_b, "did not observe any stats for session B/template 257");
+        assert!(
+            saw_session_a,
+            "did not observe any stats for session A/template 256"
+        );
+        assert!(
+            saw_session_b,
+            "did not observe any stats for session B/template 257"
+        );
     }
 
     #[test]
@@ -1262,21 +1305,26 @@ mod test {
             String::from("session_a"),
             Arc::new(Vec::from(template_bytes)),
             Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
+            Some(vec![1, 2]),
         ));
         assert_eq!(
-            actor.object_names_map.get("session_a"),
-            Some(&vec!["Ethernet0".to_string(), "Ethernet1".to_string()])
+            actor
+                .object_id_name_map
+                .get("session_a")
+                .and_then(|lookup| lookup.get(&1)),
+            Some(&"Ethernet0".to_string())
         );
 
         actor.handle_template(IPFixTemplatesMessage::new(
             String::from("session_a"),
             Arc::new(Vec::from(template_bytes)),
             None,
+            None,
         ));
 
         assert!(
-            actor.object_names_map.get("session_a").is_none(),
-            "stale object_names should be cleared when a template update omits them"
+            actor.object_id_name_map.get("session_a").is_none(),
+            "stale object metadata should be cleared when a template update omits it"
         );
     }
 
@@ -1329,6 +1377,7 @@ mod test {
                 String::from("test_key"),
                 Arc::new(Vec::from(template_bytes)),
                 Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
+                Some(vec![1, 2]),
             ))
             .await
             .unwrap();
