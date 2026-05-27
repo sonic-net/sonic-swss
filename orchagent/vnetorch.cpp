@@ -109,19 +109,8 @@ bool VNetVrfObject::createObj(vector<sai_attribute_t>& attrs)
          * constructor only installs these for the default VR, so without
          * this call IPv6 link-local traffic destined to interfaces in
          * this VNET (e.g. unnumbered BGP) is dropped at the chip. */
-        if (gRouteOrch)
-        {
-            try
-            {
-                gRouteOrch->addLinkLocalRouteToMe(
-                    router_id, IpPrefix("fe80::/10"));
-            }
-            catch (const std::exception& e)
-            {
-                SWSS_LOG_ERROR("Failed to add link-local trap routes for "
-                               "VNET '%s': %s", vnet_name_.c_str(), e.what());
-            }
-        }
+        gRouteOrch->addLinkLocalRouteToMe(router_id, IpPrefix("fe80::/10"));
+
         return true;
     };
 
@@ -371,20 +360,7 @@ VNetVrfObject::~VNetVrfObject()
             /* Remove the IPv6 link-local trap routes installed at VR
              * creation. Must precede remove_virtual_router or SAI will
              * reject the VR delete because of dependent route entries. */
-            if (gRouteOrch)
-            {
-                try
-                {
-                    gRouteOrch->delLinkLocalRouteToMe(
-                        it, IpPrefix("fe80::/10"));
-                }
-                catch (const std::exception& e)
-                {
-                    SWSS_LOG_WARN("Failed to remove link-local trap routes "
-                                  "for VNET '%s': %s",
-                                  vnet_name_.c_str(), e.what());
-                }
-            }
+            gRouteOrch->delLinkLocalRouteToMe(it, IpPrefix("fe80::/10"));
 
             sai_status_t status = sai_virtual_router_api->remove_virtual_router(it);
             if (status != SAI_STATUS_SUCCESS)
