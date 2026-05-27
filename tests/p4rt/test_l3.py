@@ -44,6 +44,30 @@ class TestP4RTL3(object):
         # Remove VRF.
         self._vrf_obj.vrf_remove(dvs, self.vrf_id, self.vrf_state)
 
+    def _set_cluster_mac(self):
+        # Setup cluster MAC
+        original_my_mac_asic_db_entries = util.get_keys(
+            self._p4rt_router_intf_obj.asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_MY_MAC")
+        self.my_mac_asic_db_key = None
+        if len(original_my_mac_asic_db_entries) == 1:
+            self.my_mac_asic_db_key = original_my_mac_asic_db_entries[0]
+        else:
+            ps = swsscommon.ProducerStateTable(self._p4rt_router_intf_obj.appl_db, "SWITCH_TABLE")
+            fvs = swsscommon.FieldValuePairs([("alias_mac", "00:1a:11:17:5f:80")])
+            ps.set("switch", fvs)
+            time.sleep(1)
+            my_mac_asic_entries = util.get_keys(
+                self._p4rt_router_intf_obj.asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_MY_MAC")
+            assert len(my_mac_asic_entries) == (
+                len(original_my_mac_asic_db_entries) + 1)
+
+            self.my_mac_asic_db_key = None
+            for key in my_mac_asic_entries:
+                if key not in original_my_mac_asic_db_entries:
+                    self.my_mac_asic_db_key = key
+                    break
+        assert self.my_mac_asic_db_key is not None
+
     def get_global_vrf_id(self):
         virt_entries = util.get_keys(self._p4rt_router_intf_obj.asic_db,
                                      "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
@@ -54,6 +78,7 @@ class TestP4RTL3(object):
     def test_CreateRouterInterfaceWithVlanAddDeletePass(self, dvs, testlog):
         # Initialize L3 objects and database connectors.
         self._set_up(dvs)
+        self._set_cluster_mac()
 
         appl_db_table_name = (
             self._p4rt_router_intf_obj.APP_DB_TBL_NAME + ":" +
@@ -134,6 +159,7 @@ class TestP4RTL3(object):
             (self._p4rt_router_intf_obj.SAI_ATTR_PORT_ID, port_oid),
             (self._p4rt_router_intf_obj.SAI_ATTR_V4_MCAST_ENABLE, "true"),
             (self._p4rt_router_intf_obj.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+            (self._p4rt_router_intf_obj.SAI_ATTR_MY_MAC, self.my_mac_asic_db_key),
         ]
         util.verify_attr(fvs, attr_list)
 

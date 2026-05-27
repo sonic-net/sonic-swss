@@ -1496,7 +1496,7 @@ ReturnCode L3MulticastManager::createRouterInterface(
     if (m_my_mac_oid == SAI_NULL_OBJECT_ID) {
       LOG_ERROR_AND_RETURN(
           ReturnCode(StatusCode::SWSS_RC_INTERNAL)
-          << "Failed to create router interface due to NULL l3 admin oid");
+          << "Failed to create router interface due to NULL l3 admit oid");
     }
   }
 
