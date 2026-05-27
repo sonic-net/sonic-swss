@@ -140,6 +140,10 @@ namespace routeorch_test
 
     struct RouteOrchTest : public ::testing::Test
     {
+        FlexCounterOrch *m_flexCounterOrch = nullptr;
+        EvpnNvoOrch *m_evpnNvoOrch = nullptr;
+        MuxOrch *m_muxOrch = nullptr;
+
         RouteOrchTest()
         {
         }
@@ -234,8 +238,8 @@ namespace routeorch_test
             vector<string> flex_counter_tables = {
                 CFG_FLEX_COUNTER_TABLE_NAME
             };
-            auto* flexCounterOrch = new FlexCounterOrch(m_config_db.get(), flex_counter_tables);
-            gDirectory.set(flexCounterOrch);
+            m_flexCounterOrch = new FlexCounterOrch(m_config_db.get(), flex_counter_tables);
+            gDirectory.set(m_flexCounterOrch);
 
             static const  vector<string> route_pattern_tables = {
                 CFG_FLOW_COUNTER_ROUTE_PATTERN_TABLE_NAME,
@@ -247,8 +251,8 @@ namespace routeorch_test
             gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
             gDirectory.set(gVrfOrch);
 
-            EvpnNvoOrch *evpn_orch = new EvpnNvoOrch(m_app_db.get(), APP_VXLAN_EVPN_NVO_TABLE_NAME);
-            gDirectory.set(evpn_orch);
+            m_evpnNvoOrch = new EvpnNvoOrch(m_app_db.get(), APP_VXLAN_EVPN_NVO_TABLE_NAME);
+            gDirectory.set(m_evpnNvoOrch);
 
             ASSERT_EQ(gIntfsOrch, nullptr);
             gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch, m_chassis_app_db.get());
@@ -280,8 +284,8 @@ namespace routeorch_test
                 CFG_MUX_CABLE_TABLE_NAME,
                 CFG_PEER_SWITCH_TABLE_NAME
             };
-            MuxOrch *mux_orch = new MuxOrch(m_config_db.get(), mux_tables, gTunneldecapOrch, gNeighOrch, gFdbOrch);
-            gDirectory.set(mux_orch);
+            m_muxOrch = new MuxOrch(m_config_db.get(), mux_tables, gTunneldecapOrch, gNeighOrch, gFdbOrch);
+            gDirectory.set(m_muxOrch);
 
             ASSERT_EQ(gFgNhgOrch, nullptr);
             const int fgnhgorch_pri = 15;
@@ -420,6 +424,16 @@ namespace routeorch_test
             delete gFgNhgOrch;
             gFgNhgOrch = nullptr;
 
+            delete gNhgOrch;
+            gNhgOrch = nullptr;
+
+            delete gFlowCounterRouteOrch;
+            gFlowCounterRouteOrch = nullptr;
+
+            // Drop directory references before deleting orchs registered there,
+            // so later tests cannot observe stale pointers.
+            gDirectory.m_values.clear();
+
             delete gRouteOrch;
             gRouteOrch = nullptr;
 
@@ -428,6 +442,15 @@ namespace routeorch_test
 
             delete gBufferOrch;
             gBufferOrch = nullptr;
+
+            delete m_muxOrch;
+            m_muxOrch = nullptr;
+
+            delete m_evpnNvoOrch;
+            m_evpnNvoOrch = nullptr;
+
+            delete m_flexCounterOrch;
+            m_flexCounterOrch = nullptr;
 
             sai_route_api = pold_sai_route_api;
             ut_helper::uninitSaiApi();
