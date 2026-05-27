@@ -170,7 +170,7 @@ bool FdbOrch::storeFdbEntryState(const FdbUpdate& update)
         fdbdata.type = update.type;
         fdbdata.sai_fdb_type = update.sai_fdb_type;
         fdbdata.origin = FDB_ORIGIN_LEARN;
-        fdbdata.dest_type = IFNAME;
+        fdbdata.dest_type = FdbDest::IFNAME;
         fdbdata.dest_value = portName;
         fdbdata.esi = "";
         fdbdata.vni = 0;
@@ -542,7 +542,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
             else
             {
                 SWSS_LOG_INFO("update: EVPN_MH_UC: remote mac entry exists for this Received LEARN event for bvid=0x%" PRIx64 "mac=%s port=0x%" PRIx64, entry->bv_id, update.entry.mac.to_string().c_str(), bridge_port_id);
-                if (existing_entry->second.dest_type == IFNAME && existing_entry->second.type == "dynamic" && bridge_port_id == existing_entry->second.bridge_port_id) {
+                if (existing_entry->second.dest_type == FdbDest::IFNAME && existing_entry->second.type == "dynamic" && bridge_port_id == existing_entry->second.bridge_port_id) {
                     SWSS_LOG_NOTICE("update: EVPN_MH_UC: C -> (C+D) transition bvid=0x%" PRIx64 "mac=%s port=0x%" PRIx64, entry->bv_id, update.entry.mac.to_string().c_str(), bridge_port_id);
                     m_entries[update.entry].type = "dynamic";
                     return;
@@ -720,7 +720,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
             return;
         }
 
-        if (existing_entry->second.origin == FDB_ORIGIN_LEARN && existing_entry->second.dest_type == IFNAME) {
+        if (existing_entry->second.origin == FDB_ORIGIN_LEARN && existing_entry->second.dest_type == FdbDest::IFNAME) {
             if (existing_entry->second.type == "dynamic_control_learn") {
                 SWSS_LOG_NOTICE("update: EVPN_MH_UC: ageout (C+D) -> C, type %s FDB %s in %s on %s",
                         existing_entry->second.type.c_str(), update.entry.mac.to_string().c_str(),
@@ -1084,7 +1084,7 @@ void FdbOrch::doTask(Consumer& consumer)
             unsigned int vni = 0;
             string sticky = "";
             string discard = "false";
-            NEXT_HOP_VALUE_TYPE dest_type = UNKNOWN;
+            FdbDest dest_type = FdbDest::UNKNOWN;
             string dest_value;
 
             for (auto i : kfvFieldsValues(t))
@@ -1105,7 +1105,7 @@ void FdbOrch::doTask(Consumer& consumer)
                 if(origin == FDB_ORIGIN_VXLAN_ADVERTIZED)
                 {
                     if (fvField(i) == "remote_vtep") {
-                        dest_type = VTEP;
+                        dest_type = FdbDest::VTEP;
                         dest_value = fvValue(i);
                         // Creating an IpAddress object to validate if remote_ip is valid
                         // if invalid it will throw the exception and we will ignore the
@@ -1119,10 +1119,10 @@ void FdbOrch::doTask(Consumer& consumer)
                             break;
                         }
                     } else if (fvField(i) == "nexthop_group") {
-                        dest_type = NEXTHOPGROUP;
+                        dest_type = FdbDest::NEXTHOPGROUP;
                         dest_value = fvValue(i);
                     }  else if (fvField(i) == "ifname") {
-                        dest_type = IFNAME;
+                        dest_type = FdbDest::IFNAME;
                         dest_value = fvValue(i);
                     }
 
@@ -1149,7 +1149,7 @@ void FdbOrch::doTask(Consumer& consumer)
 
             if(origin == FDB_ORIGIN_VXLAN_ADVERTIZED)
             {
-                if (dest_type == VTEP) {
+                if (dest_type == FdbDest::VTEP) {
                     VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
                     if (tunnel_orch->isDipTunnelsSupported())
                     {
@@ -1172,7 +1172,7 @@ void FdbOrch::doTask(Consumer& consumer)
                         port = tunnel_orch->getTunnelPortName(sip_tunnel->getSrcIP().to_string(), true);
                     }
                 }
-                if (dest_type == NEXTHOPGROUP) {
+                if (dest_type == FdbDest::NEXTHOPGROUP) {
                     /* get the port_name from l2nhgorch so that we can populate the port structure  */
                     if (!gL2NhgOrch->hasActiveL2Nhg(dest_value))
                     {
@@ -1182,7 +1182,7 @@ void FdbOrch::doTask(Consumer& consumer)
                     }
                     port = gL2NhgOrch->getNextHopGroupPortName(dest_value);
                 }
-                if (dest_type == IFNAME) {
+                if (dest_type == FdbDest::IFNAME) {
                     port = dest_value;
                 }
             }
@@ -1213,7 +1213,7 @@ void FdbOrch::doTask(Consumer& consumer)
 
                 if(origin == FDB_ORIGIN_VXLAN_ADVERTIZED)
                 {
-                    if (dest_type == VTEP) {
+                    if (dest_type == FdbDest::VTEP) {
                         VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
 
                         if(!dest_value.length())
@@ -1811,8 +1811,8 @@ void FdbOrch::removeFdbEntryFromPortCache(const FdbEntry& entry, const Port& por
 }
 
 bool FdbOrch::isDestinationSame(FdbData &oldFdbData, FdbData &newFdbData) {
-    NEXT_HOP_VALUE_TYPE oldDestType = oldFdbData.dest_type;
-    NEXT_HOP_VALUE_TYPE newDestType = newFdbData.dest_type;
+    FdbDest oldDestType = oldFdbData.dest_type;
+    FdbDest newDestType = newFdbData.dest_type;
 
     if (oldDestType != newDestType) {
         return false;
@@ -1853,7 +1853,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         return true;
     }
 
-    if (fdbData.dest_type == VTEP) {
+    if (fdbData.dest_type == FdbDest::VTEP) {
         /* Assign end point IP only in SIP tunnel scenario since Port + IP address
         needed to uniquely identify Vlan member */
         if (!tunnel_orch->isDipTunnelsSupported())
@@ -2067,7 +2067,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         // Multihoming - Remote MAC with no local ESI: MAC -> NHGROUP
         // Multihoming - Remote MAC with local ESI:    MAC -> ifname
         // (just SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID is enough, no need to set vtep or nhgroup attr)
-        if (fdbData.dest_type == VTEP) {
+        if (fdbData.dest_type == FdbDest::VTEP) {
             IpAddress remote = IpAddress(fdbData.dest_value);
             sai_ip_address_t ipaddr;
             if (remote.isV4())
@@ -2085,7 +2085,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             attrs.push_back(attr);
         }
 
-        if (fdbData.dest_type == VTEP || fdbData.dest_type == NEXTHOPGROUP) {
+        if (fdbData.dest_type == FdbDest::VTEP || fdbData.dest_type == FdbDest::NEXTHOPGROUP) {
             /* Try to remvoe local neighbor entry if exists
             * Since this mac is at the remote vxlan side now
             */
@@ -2349,7 +2349,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
             SWSS_LOG_NOTICE("RemoveFDBEntry: EVPN_MH_UC: (C+D) / D -> C : mac=%s fdb origin is different; found_origin:%d delete_origin:%d",
                     entry.mac.to_string().c_str(), origin, fdbData.origin);
             if (fdbData.type == "dynamic_control_learn") {
-                if (fdbData.dest_type == IFNAME) {
+                if (fdbData.dest_type == FdbDest::IFNAME) {
                     m_entries[entry].type = "dynamic";
                     return true;
                 } else {

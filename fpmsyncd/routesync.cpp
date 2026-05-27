@@ -226,9 +226,17 @@ void RouteSync::delWithWarmRestart(FieldValueTupleWrapperBase && fvw,
 
 RouteSync::~RouteSync()
 {
-    /* libnl has no destructor for rtnl_link_alloc_cache */
-    nl_close(m_nl_sock);
-    nl_socket_free(m_nl_sock);
+    if (m_link_cache)
+    {
+        nl_cache_free(m_link_cache);
+        m_link_cache = nullptr;
+    }
+    if (m_nl_sock)
+    {
+        nl_close(m_nl_sock);
+        nl_socket_free(m_nl_sock);
+        m_nl_sock = nullptr;
+    }
 }
 
 char *RouteSync::prefixMac2Str(char *mac, char *buf, int size)

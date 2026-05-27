@@ -323,7 +323,7 @@ void FdbSync::macDelVxlanEntry(struct m_fdb_info *info)
     }
 
     auto ifname = it->second.ifname;
-    if (it->second.nhtype == VTEP)
+    if (it->second.nhtype == FdbDest::VTEP)
     {
         std::string vtep = it->second.nexthop_value;
 
@@ -335,7 +335,7 @@ void FdbSync::macDelVxlanEntry(struct m_fdb_info *info)
         //bridge fdb del 00:00:00:00:66:66 dev Ethernet1_13 vlan 10 master
 
     }
-    else if (it->second.nhtype == NEXTHOPGROUP)
+    else if (it->second.nhtype == FdbDest::NEXTHOPGROUP)
     {
         std::string nexthop_group = it->second.nexthop_value;
 
@@ -729,7 +729,7 @@ void FdbSync::macDelVxlanDB(string key)
     FieldValueTuple f("ifname", ifname);
     FieldValueTuple p("protocol", protocol);
 
-    if (m_mac[key].nhtype == VTEP)
+    if (m_mac[key].nhtype == FdbDest::VTEP)
     {
         // VTEP destination
         string vtep = m_mac[key].nexthop_value;
@@ -738,7 +738,7 @@ void FdbSync::macDelVxlanDB(string key)
         SWSS_LOG_NOTICE("VXLAN_FDB_TABLE: DEL_KEY %s vtep:%s type:%s vni:%s protocol:%u",
                         key.c_str(), vtep.c_str(), type.c_str(), vni.c_str(), m_mac[key].protocol);
     }
-    else if (m_mac[key].nhtype == NEXTHOPGROUP)
+    else if (m_mac[key].nhtype == FdbDest::NEXTHOPGROUP)
     {
         // Nexthop group destination
         string nexthop_group = m_mac[key].nexthop_value;
@@ -747,7 +747,7 @@ void FdbSync::macDelVxlanDB(string key)
         SWSS_LOG_NOTICE("VXLAN_FDB_TABLE: DEL_KEY %s nexthop_group:%s type:%s vni:%s protocol:%u",
                         key.c_str(), nexthop_group.c_str(), type.c_str(), vni.c_str(), m_mac[key].protocol);
     }
-    else if (m_mac[key].nhtype == IFNAME)
+    else if (m_mac[key].nhtype == FdbDest::IFNAME)
     {
         // Interface name destination
         string ifname = m_mac[key].nexthop_value;
@@ -775,7 +775,7 @@ void FdbSync::macDelVxlanDB(string key)
 }
 
 void FdbSync::macAddVxlan(string key, struct nl_addr *vtep, string type, uint32_t vni, string intf_name,
-     string nexthop_group, NEXT_HOP_VALUE_TYPE dest_type, uint8_t protocol)
+     string nexthop_group, FdbDest dest_type, uint8_t protocol)
 {
     std::vector<FieldValueTuple> fvVector;
     string svni = to_string(vni);
@@ -790,23 +790,23 @@ void FdbSync::macAddVxlan(string key, struct nl_addr *vtep, string type, uint32_
     FieldValueTuple fv_vni("vni", svni);
     FieldValueTuple fv_protocol("protocol", to_string(protocol));
 
-    if (dest_type == NEXTHOPGROUP)
+    if (dest_type == FdbDest::NEXTHOPGROUP)
     {
         if (m_mac.find(key) != m_mac.end())
             m_fdbTable.del(key);
-        m_mac[key].nhtype = NEXTHOPGROUP;
+        m_mac[key].nhtype = FdbDest::NEXTHOPGROUP;
         m_mac[key].nexthop_value = nexthop_group;
         FieldValueTuple nh("nexthop_group", nexthop_group);
         fvVector.push_back(nh);
         SWSS_LOG_INFO("VXLAN_FDB_TABLE: ADD_KEY %s nexthop_group:%s type:%s vni:%s ifname:%s protocol:%u",
                       key.c_str(), nexthop_group.c_str(), type.c_str(), svni.c_str(), intf_name.c_str(), protocol);
     }
-    else if (dest_type == VTEP)
+    else if (dest_type == FdbDest::VTEP)
     {
         if (m_mac.find(key) != m_mac.end())
             m_fdbTable.del(key);
         char buf[MAX_ADDR_SIZE + 1] = {0};
-        m_mac[key].nhtype = VTEP;
+        m_mac[key].nhtype = FdbDest::VTEP;
         string svtep = nl_addr2str(vtep, buf, sizeof(buf));
         m_mac[key].nexthop_value = svtep;
         FieldValueTuple nh("remote_vtep", svtep);
@@ -814,11 +814,11 @@ void FdbSync::macAddVxlan(string key, struct nl_addr *vtep, string type, uint32_
         SWSS_LOG_INFO("VXLAN_FDB_TABLE: ADD_KEY %s vtep:%s type:%s vni:%s ifname:%s protocol:%u",
                       key.c_str(), svtep.c_str(), type.c_str(), svni.c_str(), intf_name.c_str(), protocol);
     }
-    else if (dest_type == IFNAME)
+    else if (dest_type == FdbDest::IFNAME)
     {
         if (m_mac.find(key) != m_mac.end())
             m_fdbTable.del(key);
-        m_mac[key].nhtype = IFNAME;
+        m_mac[key].nhtype = FdbDest::IFNAME;
         m_mac[key].nexthop_value = intf_name;
         FieldValueTuple fv_ifname("ifname", intf_name);
         fvVector.push_back(fv_ifname);
@@ -853,19 +853,19 @@ void FdbSync::macDelVxlan(string key)
 {
     if (m_mac.find(key) != m_mac.end())
     {
-        if (m_mac[key].nhtype == VTEP)
+        if (m_mac[key].nhtype == FdbDest::VTEP)
         {
             SWSS_LOG_INFO("DEL_KEY %s vtep:%s type:%s vni:%s ifname:%s protocol:%u", key.c_str(),
                            m_mac[key].nexthop_value.c_str(), m_mac[key].type.c_str(),
                            to_string(m_mac[key].vni).c_str(), m_mac[key].ifname.c_str(), m_mac[key].protocol);
         }
-        else if (m_mac[key].nhtype == NEXTHOPGROUP)
+        else if (m_mac[key].nhtype == FdbDest::NEXTHOPGROUP)
         {
             SWSS_LOG_INFO("DEL_KEY %s nexthop:%s type:%s vni:%s ifname:%s protocol:%u", key.c_str(),
                            m_mac[key].nexthop_value.c_str(), m_mac[key].type.c_str(),
                            to_string(m_mac[key].vni).c_str(), m_mac[key].ifname.c_str(), m_mac[key].protocol);
         }
-        else if (m_mac[key].nhtype == IFNAME)
+        else if (m_mac[key].nhtype == FdbDest::IFNAME)
         {
             SWSS_LOG_INFO("DEL_KEY %s ifname:%s type:%s vni:%s protocol:%u", key.c_str(),
                            m_mac[key].nexthop_value.c_str(), m_mac[key].type.c_str(),
@@ -901,7 +901,7 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h
     string type = "";
     string vlan_id = "";
     bool isVxlanIntf = false;
-    NEXT_HOP_VALUE_TYPE dest_type = UNKNOWN;
+    FdbDest dest_type = FdbDest::UNKNOWN;
     bool is_imet_mac = false;
 
     if ((nlmsg_type != RTM_NEWNEIGH) && (nlmsg_type != RTM_GETNEIGH) &&
@@ -950,7 +950,7 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h
         nexthop_group = std::to_string(*(uint32_t *)RTA_DATA(tb[NDA_NH_ID]));
         if (nexthop_group != "0")
         {
-            dest_type = NEXTHOPGROUP;
+            dest_type = FdbDest::NEXTHOPGROUP;
         }
     }
 
@@ -1016,7 +1016,7 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h
      *
      * VTEP can only be applicable if dest_type is not NEXTHOPGROUP
      */
-    if ((nlmsg_type != RTM_DELNEIGH && dest_type != NEXTHOPGROUP) ||
+    if ((nlmsg_type != RTM_DELNEIGH && dest_type != FdbDest::NEXTHOPGROUP) ||
         is_imet_mac)
     {
         vtep_addr = rtnl_neigh_get_dst(neigh);
@@ -1028,7 +1028,7 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h
         else
         {
             SWSS_LOG_INFO("Tunnel IP %s", nl_addr2str(vtep_addr, buf, sizeof(buf)));
-            dest_type = VTEP;
+            dest_type = FdbDest::VTEP;
         }
     }
 

@@ -630,7 +630,10 @@ int TeamMgr::update_kernel(const string &alias, const string &system_mac)
         nl_socket_free(sockk);
         return -1;
     }
-    if (rtnl_link_change(sockk, orig_link, link, ifindex) < 0) {
+    /* The 4th arg of rtnl_link_change() is a netlink flags bitmask, not the
+     * interface index. The target interface is already identified by
+     * orig_link, so pass 0 here. */
+    if (rtnl_link_change(sockk, orig_link, link, 0) < 0) {
         SWSS_LOG_ERROR("Failed to change the MAC address.\n");
         rtnl_link_put(orig_link);
         rtnl_link_put(link);

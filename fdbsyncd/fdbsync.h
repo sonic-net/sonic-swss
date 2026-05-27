@@ -10,6 +10,7 @@
 #include "subscriberstatetable.h"
 #include "netmsg.h"
 #include "warmRestartAssist.h"
+#include "lib/fdb_defs.h"
 
 /*
  * Default timer interval for fdbsyncd reconcillation
@@ -33,13 +34,6 @@ enum FDB_OP_TYPE {
 enum FDB_TYPE {
     FDB_TYPE_STATIC = 1,
     FDB_TYPE_DYNAMIC = 2,
-};
-
-enum NEXT_HOP_VALUE_TYPE {
-    UNKNOWN = 0,
-    VTEP = 1,
-    NEXTHOPGROUP = 2,
-    IFNAME = 3,
 };
 
 struct m_fdb_info
@@ -139,7 +133,7 @@ private:
 
     struct m_mac_info
     {
-        NEXT_HOP_VALUE_TYPE nhtype;
+        FdbDest nhtype;
         std::string type;
         unsigned int vni;
         std::string ifname;
@@ -167,7 +161,7 @@ private:
     std::unordered_map<int, intf> m_intf_info;
 
     void addLocalMac(std::string key, std::string op);
-    void macAddVxlan(std::string key, struct nl_addr *vtep, std::string type, uint32_t vni, std::string intf_name, std::string nexthop_group, NEXT_HOP_VALUE_TYPE dest_type, uint8_t protocol);
+    void macAddVxlan(std::string key, struct nl_addr *vtep, std::string type, uint32_t vni, std::string intf_name, std::string nexthop_group, FdbDest dest_type, uint8_t protocol);
     void macDelVxlan(std::string auxkey);
     void macDelVxlanDB(std::string key);
     void imetAddRoute(struct nl_addr *vtep, std::string ifname, uint32_t vni);
