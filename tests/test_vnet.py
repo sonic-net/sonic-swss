@@ -3667,6 +3667,7 @@ class TestVnetOrch(object):
             self.set_admin_status("Ethernet0", "down")
             self.cdb.delete_entry("INTERFACE", "Ethernet0")
 
+
     '''
     IP2Me link-local trap route install test for VNET VRs(fe80::/10 tracp to CPU route)
     '''
