@@ -6,7 +6,6 @@
 #define private public
 #include "fpmsyncd/routesync.h"
 #include "fpmsyncd/fpmlink.h"
-#include "fpmsyncd/nhgmgr.h"
 #undef private
 #include "orch_zmq_config.h"
 
