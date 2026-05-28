@@ -775,12 +775,13 @@ void FdbOrch::update(sai_fdb_event_t        type,
             SWSS_LOG_DEBUG("Received AGEOUT event, vlan %s, m_fdb_count %d", vlan.m_alias.c_str(), vlan.m_fdb_count);
             m_portsOrch->setPort(vlan.m_alias, vlan);
         }
+        auto dest_type = existing_entry->second.dest_type;
         storeFdbEntryState(update);
 
         /* Remove local neighbor entry if exists
          */
         SWSS_LOG_INFO("Received mac age out for mac:%s vlan:0x%" PRIx64 "of type:%d",
-				update.entry.mac.to_string().c_str(), update.entry.bv_id, static_cast<int>(existing_entry->second.dest_type));
+                                update.entry.mac.to_string().c_str(), update.entry.bv_id, static_cast<int>(dest_type));
 
         gNeighOrch->processFDBResolve(update.entry);
 
