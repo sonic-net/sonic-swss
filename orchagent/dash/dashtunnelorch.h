@@ -29,6 +29,8 @@ struct DashTunnelBulkContext
     std::deque<sai_status_t> tunnel_nhop_object_statuses;
     dash::tunnel::Tunnel metadata;
 
+    uint32_t pre_op_result = 0;
+
     DashTunnelBulkContext() {}
     DashTunnelBulkContext(const DashTunnelBulkContext&) = delete;
     DashTunnelBulkContext(DashTunnelBulkContext&&) = delete;
@@ -41,6 +43,7 @@ struct DashTunnelBulkContext
         tunnel_member_object_statuses.clear();
         tunnel_nhop_object_ids.clear();
         tunnel_nhop_object_statuses.clear();
+        pre_op_result = 0;
     }
 };
 
