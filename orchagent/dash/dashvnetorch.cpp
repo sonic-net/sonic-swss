@@ -590,16 +590,16 @@ bool DashVnetOrch::addVnetMapPost(const string& key, const VnetMapBulkContext& c
 {
     SWSS_LOG_ENTER();
 
-    bool remove_from_consumer = addOutboundCaToPaPost(key, ctxt) && addPaValidationPost(key, ctxt);
-    if (!remove_from_consumer)
+    bool success = addOutboundCaToPaPost(key, ctxt) && addPaValidationPost(key, ctxt);
+    if (!success)
     {
         SWSS_LOG_ERROR("addVnetMapPost failed for %s ", key.c_str());
-        return remove_from_consumer;
+        return success;
     }
 
     SWSS_LOG_INFO("Vnet map added for %s", key.c_str());
 
-    return remove_from_consumer;
+    return success;
 }
 
 void DashVnetOrch::removeOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt)
@@ -690,7 +690,7 @@ bool DashVnetOrch::removeOutboundCaToPaPost(const string& key, const VnetMapBulk
 bool DashVnetOrch::removePaValidationPost(const string& key, const DashVnetBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
-    bool remove_from_consumer = true;
+    bool success = true;
 
     const auto& object_statuses = ctxt.pa_validation_statuses;
     if (object_statuses.empty())
@@ -711,7 +711,7 @@ bool DashVnetOrch::removePaValidationPost(const string& key, const DashVnetBulkC
             handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_PA_VALIDATION, status);
             // Leave the IP in underlay_ips so the cache stays consistent with ASIC_DB
             // and signal the caller that removal did not fully succeed.
-            remove_from_consumer = false;
+            success = false;
             it_ip++;
             continue;
         }
@@ -727,22 +727,22 @@ bool DashVnetOrch::removePaValidationPost(const string& key, const DashVnetBulkC
         it_ip = vnet_table_[ctxt.vnet_name].underlay_ips.erase(it_ip);
         gCrmOrch->decCrmResUsedCounter(underlay_ip.isV4() ? CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION : CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION);
     }
-    return remove_from_consumer;
+    return success;
 }
 
 bool DashVnetOrch::removeVnetMapPost(const string& key, const VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
-    bool remove_from_consumer = removeOutboundCaToPaPost(key, ctxt);
-    if (!remove_from_consumer)
+    bool success = removeOutboundCaToPaPost(key, ctxt);
+    if (!success)
     {
         SWSS_LOG_ERROR("removeVnetMapPost failed for %s ", key.c_str());
-        return remove_from_consumer;
+        return success;
     }
     SWSS_LOG_INFO("Vnet map removed for %s", key.c_str());
 
-    return remove_from_consumer;
+    return success;
 }
 
 void DashVnetOrch::doTaskVnetMapTable(ConsumerBase& consumer)

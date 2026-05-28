@@ -306,13 +306,13 @@ bool DashTunnelOrch::addTunnel(const std::string& tunnel_name, DashTunnelBulkCon
     }
     std::vector<sai_attribute_t> tunnel_attrs;
     sai_attribute_t tunnel_attr;
-    bool remove_from_consumer = true;
+    bool pre_op_exit_early = true;
 
     bool exists = (tunnel_table_.find(tunnel_name) != tunnel_table_.end());
     if (exists)
     {
         SWSS_LOG_WARN("DASH tunnel %s already exists", tunnel_name.c_str());
-        return remove_from_consumer;
+        return pre_op_exit_early;
     }
 
     tunnel_attr.id = SAI_DASH_TUNNEL_ATTR_MAX_MEMBER_SIZE;
@@ -331,7 +331,7 @@ bool DashTunnelOrch::addTunnel(const std::string& tunnel_name, DashTunnelBulkCon
         default:
             SWSS_LOG_ERROR("Unsupported encap type %d", ctxt.metadata.encap_type());
             ctxt.pre_op_result = DASH_RESULT_FAILURE;
-            return remove_from_consumer;
+            return pre_op_exit_early;
     }
     tunnel_attrs.push_back(tunnel_attr);
 
@@ -364,8 +364,8 @@ bool DashTunnelOrch::addTunnel(const std::string& tunnel_name, DashTunnelBulkCon
     object_ids.emplace_back();
     tunnel_bulker_.create_entry(&object_ids.back(), (uint32_t) tunnel_attrs.size(), tunnel_attrs.data());
 
-    remove_from_consumer = false;
-    return remove_from_consumer;
+    pre_op_exit_early = false;
+    return pre_op_exit_early;
 }
 
 void DashTunnelOrch::addTunnelNextHops(const std::string& tunnel_name, DashTunnelBulkContext& ctxt)
@@ -386,11 +386,11 @@ bool DashTunnelOrch::addTunnelPost(const std::string& tunnel_name, DashTunnelBul
 {
     SWSS_LOG_ENTER();
 
-    bool remove_from_consumer = true;
+    bool processing_complete = true;
     const auto& object_ids = ctxt.tunnel_object_ids;
     if (object_ids.empty())
     {
-        return remove_from_consumer;
+        return processing_complete;
     }
 
     auto it_id = object_ids.begin();
@@ -405,11 +405,11 @@ bool DashTunnelOrch::addTunnelPost(const std::string& tunnel_name, DashTunnelBul
     {
         DashTunnelEntry entry = { tunnel_oid, std::map<std::string, DashTunnelEndpointEntry>(), std::string() };
         tunnel_table_[tunnel_name] = entry;
-        remove_from_consumer = (ctxt.metadata.endpoints_size() == 1);
+        processing_complete = (ctxt.metadata.endpoints_size() == 1);
         SWSS_LOG_INFO("Tunnel entry added for %s", tunnel_name.c_str());
     }
 
-    return addTunnelNextHopsPost(tunnel_name, ctxt, remove_from_consumer);
+    return addTunnelNextHopsPost(tunnel_name, ctxt, processing_complete);
 }
 
 bool DashTunnelOrch::addTunnelNextHopsPost(const std::string& tunnel_name, DashTunnelBulkContext& ctxt, const bool parent_tunnel_removed)
@@ -421,7 +421,7 @@ bool DashTunnelOrch::addTunnelNextHopsPost(const std::string& tunnel_name, DashT
         return parent_tunnel_removed;
     }
 
-    bool remove_from_consumer = true;
+    bool processing_complete = true;
     const auto& nhop_oids = ctxt.tunnel_nhop_object_ids;
     auto it_nhop = nhop_oids.begin();
     for (auto ip : ctxt.metadata.endpoints())
@@ -448,9 +448,9 @@ bool DashTunnelOrch::addTunnelNextHopsPost(const std::string& tunnel_name, DashT
         tunnel_table_[tunnel_name].endpoints[to_string(ip)] = endpoint;
         SWSS_LOG_INFO("Tunnel next hop entry added for tunnel %s, endpoint %s", tunnel_name.c_str(), to_string(ip).c_str());
         addTunnelMember(tunnel_table_[tunnel_name].tunnel_oid, nhop_oid, ctxt);
-        remove_from_consumer = false; // if we add at least one tunnel member, tunnel needs to stay in consumer for tunnel member post-bulk ops
+        processing_complete = false; // if we add at least one tunnel member, tunnel needs to stay in consumer for tunnel member post-bulk ops
     }
-    return remove_from_consumer;
+    return processing_complete;
 }
 
 void DashTunnelOrch::addTunnelMember(const sai_object_id_t tunnel_oid, const sai_object_id_t nhop_oid, DashTunnelBulkContext& ctxt)
@@ -475,7 +475,7 @@ void DashTunnelOrch::addTunnelMember(const sai_object_id_t tunnel_oid, const sai
 bool DashTunnelOrch::addTunnelMemberPost(const std::string& tunnel_name, const DashTunnelBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
-    bool remove_from_consumer = true;
+    bool success = true;
     const auto& member_oids = ctxt.tunnel_member_object_ids;
     auto it_member = member_oids.begin();
     for (auto ip : ctxt.metadata.endpoints())
@@ -489,19 +489,19 @@ bool DashTunnelOrch::addTunnelMemberPost(const std::string& tunnel_name, const D
         tunnel_table_[tunnel_name].endpoints[to_string(ip)].tunnel_member_oid = member_oid;
         SWSS_LOG_INFO("Tunnel member entry added for tunnel %s, endpoint %s", tunnel_name.c_str(), to_string(ip).c_str());
     }
-    return remove_from_consumer;
+    return success;
 }
 
 bool DashTunnelOrch::removeTunnel(const std::string& tunnel_name, DashTunnelBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
-    bool remove_from_consumer = true;
+    bool pre_op_exit_early = true;
 
     auto it = tunnel_table_.find(tunnel_name);
     if (it == tunnel_table_.end())
     {
         SWSS_LOG_WARN("Failed to find DASH tunnel %s to remove", tunnel_name.c_str());
-        return remove_from_consumer;
+        return pre_op_exit_early;
     }
 
     auto& endpoints = it->second.endpoints;
@@ -515,24 +515,24 @@ bool DashTunnelOrch::removeTunnel(const std::string& tunnel_name, DashTunnelBulk
     object_statuses.emplace_back();
     tunnel_bulker_.remove_entry(&object_statuses.back(), it->second.tunnel_oid);
 
-    remove_from_consumer = false;
-    return remove_from_consumer;
+    pre_op_exit_early = false;
+    return pre_op_exit_early;
 }
 
 bool DashTunnelOrch::removeTunnelPost(const std::string& tunnel_name, const DashTunnelBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
-    bool remove_from_consumer = removeTunnelEndpointsPost(tunnel_name, ctxt);
-    if (!remove_from_consumer)
+    bool success = removeTunnelEndpointsPost(tunnel_name, ctxt);
+    if (!success)
     {
         // If endpoint removal failed, exit immediately since the tunnel can't be deleted if endpoints still exist
-        return remove_from_consumer;
+        return success;
     }
 
     const auto& object_statuses = ctxt.tunnel_object_statuses;
     if (object_statuses.empty())
     {
-        return remove_from_consumer;
+        return success;
     }
 
     auto it_status = object_statuses.begin();
@@ -542,23 +542,23 @@ bool DashTunnelOrch::removeTunnelPost(const std::string& tunnel_name, const Dash
         if (status == SAI_STATUS_OBJECT_IN_USE)
         {
             SWSS_LOG_ERROR("DASH tunnel %s is in use, cannot remove", tunnel_name.c_str());
-            remove_from_consumer = false;
-            return remove_from_consumer;
+            success = false;
+            return success;
         }
 
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_TUNNEL, status);
         if (handle_status != task_success)
         {
-            remove_from_consumer = true;
-            return remove_from_consumer;
+            success = true;
+            return success;
         }
     }
 
     tunnel_table_.erase(tunnel_name);
     SWSS_LOG_NOTICE("DASH tunnel entry removed for %s", tunnel_name.c_str());
 
-    remove_from_consumer = true;
-    return remove_from_consumer;
+    success = true;
+    return success;
 }
 
 void DashTunnelOrch::removeTunnelEndpoints(const std::string& tunnel_name, DashTunnelBulkContext& ctxt)
@@ -597,13 +597,13 @@ void DashTunnelOrch::removeTunnelEndpoints(const std::string& tunnel_name, DashT
 bool DashTunnelOrch::removeTunnelEndpointsPost(const std::string& tunnel_name, const DashTunnelBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
-    bool remove_from_consumer = true;
+    bool success = true;
 
     const auto& tunnel_member_statuses = ctxt.tunnel_member_object_statuses;
     const auto& tunnel_nhop_statuses = ctxt.tunnel_nhop_object_statuses;
     if (tunnel_member_statuses.empty() && tunnel_nhop_statuses.empty())
     {
-        return remove_from_consumer;
+        return success;
     }
 
     auto tm_it_status = tunnel_member_statuses.begin();
@@ -631,7 +631,7 @@ bool DashTunnelOrch::removeTunnelEndpointsPost(const std::string& tunnel_name, c
         {
             SWSS_LOG_ERROR("DASH tunnel next hop removal for tunnel %s endpoint %s failed with %s", tunnel_name.c_str(), endpoint_it->first.c_str(), sai_serialize_status(nh_status).c_str());
             handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_TUNNEL, nh_status);
-            remove_from_consumer = false;
+            success = false;
         }
         else
         {
@@ -642,5 +642,5 @@ bool DashTunnelOrch::removeTunnelEndpointsPost(const std::string& tunnel_name, c
         endpoint_it++;
     }
 
-    return remove_from_consumer;
+    return success;
 }
