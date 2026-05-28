@@ -4156,7 +4156,8 @@ void PortsOrch::registerPort(Port &p)
     }
     if (flex_counters_orch->getPortPhyAttrCounterState())
     {
-        if (!m_supported_phy_attrs.empty() && p.m_type == Port::Type::PHY)
+        if (!m_supported_phy_attrs.empty() && p.m_type == Port::Type::PHY &&
+            p.m_role != Port::Role::Rec && p.m_role != Port::Role::Inb)
         {
             auto supported_attrs = getPortPhySupportedAttrs(p.m_port_id, p.m_alias.c_str());
             if (!supported_attrs.empty())
@@ -4288,7 +4289,8 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     {
         wred_port_stat_manager.clearCounterIdList(p.m_port_id);
     }
-    if (!m_supported_phy_attrs.empty() && p.m_type == Port::Type::PHY)
+    if (!m_supported_phy_attrs.empty() && p.m_type == Port::Type::PHY &&
+        p.m_role != Port::Role::Rec && p.m_role != Port::Role::Inb)
     {
         port_phy_attr_manager.clearCounterIdList(p.m_port_id);
     }
@@ -4501,6 +4503,13 @@ bool PortsOrch::programSerdes(
     sai_object_id_t switch_id,
     PortSerdesAttrMap_t &serdes_attr)
 {
+    if (port.m_role == Port::Role::Rec || port.m_role == Port::Role::Inb)
+    {
+        SWSS_LOG_INFO("Skipping serdes programming for recirc/inband port %s",
+                      port.m_alias.c_str());
+        return true;
+    }
+
     // Validate port_id and determine serdes type
     const char* serdes_type_name;
     if (port_id == port.m_port_id)
@@ -4816,44 +4825,47 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         }
                         if (p.m_cap_an < 1)
                         {
-                            SWSS_LOG_ERROR("%s: autoneg is not supported (cap=%d)", p.m_alias.c_str(), p.m_cap_an);
-                            // autoneg is not supported, don't retry
-                            it = taskMap.erase(it);
-                            continue;
+                            /* autoneg not supported: log and continue applying remaining config (disable is a no-op; enable cannot be honored) */
+                            SWSS_LOG_WARN("%s: autoneg is not supported (cap=%d), requested=%s",
+                                          p.m_alias.c_str(), p.m_cap_an,
+                                          pCfg.autoneg.value ? "on" : "off");
                         }
-                        if (p.m_admin_state_up)
+                        else
                         {
-                            /* Bring port down before applying speed */
-                            if (!setPortAdminStatus(p, false))
+                            if (p.m_admin_state_up)
+                            {
+                                /* Bring port down before changing autoneg mode */
+                                if (!setPortAdminStatus(p, false))
+                                {
+                                    SWSS_LOG_ERROR(
+                                        "Failed to set port %s admin status DOWN to set port autoneg mode",
+                                        p.m_alias.c_str()
+                                    );
+                                    it++;
+                                    continue;
+                                }
+
+                                p.m_admin_state_up = false;
+                                m_portList[p.m_alias] = p;
+                            }
+
+                            auto status = setPortAutoNeg(p, pCfg.autoneg.value);
+                            if (status != task_success)
                             {
                                 SWSS_LOG_ERROR(
-                                    "Failed to set port %s admin status DOWN to set port autoneg mode",
-                                    p.m_alias.c_str()
+                                    "Failed to set port %s AN from %d to %d",
+                                    p.m_alias.c_str(), p.m_autoneg, pCfg.autoneg.value
                                 );
-                                it++;
+                                if (status == task_need_retry)
+                                {
+                                    it++;
+                                }
+                                else
+                                {
+                                    it = taskMap.erase(it);
+                                }
                                 continue;
                             }
-
-                            p.m_admin_state_up = false;
-                            m_portList[p.m_alias] = p;
-                        }
-
-                        auto status = setPortAutoNeg(p, pCfg.autoneg.value);
-                        if (status != task_success)
-                        {
-                            SWSS_LOG_ERROR(
-                                "Failed to set port %s AN from %d to %d",
-                                p.m_alias.c_str(), p.m_autoneg, pCfg.autoneg.value
-                            );
-                            if (status == task_need_retry)
-                            {
-                                it++;
-                            }
-                            else
-                            {
-                                it = taskMap.erase(it);
-                            }
-                            continue;
                         }
 
                         p.m_autoneg = pCfg.autoneg.value;
@@ -9253,7 +9265,9 @@ void PortsOrch::generatePortPhyAttrCounterMap()
 
     for (const auto& it: m_portList)
     {
-        if (it.second.m_type == Port::Type::PHY)
+        if (it.second.m_type == Port::Type::PHY &&
+            it.second.m_role != Port::Role::Rec &&
+            it.second.m_role != Port::Role::Inb)
         {
             auto supported_attrs = getPortPhySupportedAttrs(it.second.m_port_id, it.second.m_alias.c_str());
             if (!supported_attrs.empty())
@@ -9436,7 +9450,9 @@ void PortsOrch::clearPortPhySerdesAttrCounterMap()
     for (const auto& it: m_portList)
     {
         // Clear counter stats only for PHY ports that were previously configured
-        if (it.second.m_type != Port::Type::PHY)
+        if (it.second.m_type != Port::Type::PHY ||
+            it.second.m_role == Port::Role::Rec ||
+            it.second.m_role == Port::Role::Inb)
         {
             continue;
         }
@@ -9453,7 +9469,7 @@ void PortsOrch::clearPortPhySerdesAttrCounterMap()
 
         if (port_serdes_id == SAI_NULL_OBJECT_ID)
         {
-            SWSS_LOG_ERROR("PORT_PHY_SERDES_ATTR: Port %s has no serdes object", it.second.m_alias.c_str());
+            SWSS_LOG_WARN("PORT_PHY_SERDES_ATTR: Port %s has no serdes object", it.second.m_alias.c_str());
             continue;
         }
 
@@ -10270,6 +10286,13 @@ bool PortsOrch::setPortMediaType(Port& port, const string &media_type)
 void PortsOrch::removePortSerdesAttribute(sai_object_id_t port_id)
 {
     SWSS_LOG_ENTER();
+
+    Port port;
+    if (getPort(port_id, port) &&
+        (port.m_role == Port::Role::Rec || port.m_role == Port::Role::Inb))
+    {
+        return;
+    }
 
     sai_attribute_t port_attr;
     sai_status_t status;

@@ -6,6 +6,7 @@
 #include "bfdorch.h"
 #include "dashorch.h"
 #include "crmorch.h"
+#include "dashresulthelper.h"
 #include "saihelper.h"
 #include "table.h"
 #include "taskworker.h"
@@ -391,6 +392,7 @@ bool DashHaOrch::removeHaSetEntry(const std::string &key)
     }
     m_ha_set_entries.erase(it);
     m_counter_ha_set_name_map_table->hdel("", key);
+    m_dpuStateDbHaSetTable->del(key);
     SWSS_LOG_NOTICE("Removed HA Set object for %s", key.c_str());
 
     return true;
@@ -922,6 +924,7 @@ bool DashHaOrch::removeHaScopeEntry(const std::string &key)
         }
     }
     m_ha_scope_entries.erase(it);
+    m_dpuStateDbHaScopeTable->del(key);
     SWSS_LOG_NOTICE("Removed HA Scope object for %s", key.c_str());
 
     return true;

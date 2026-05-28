@@ -8,6 +8,7 @@
 #include "mock_orchagent_main.h"
 #include "mock_sai_api.h"
 #include "mock_dash_orch_test.h"
+#include "mock_table.h"
 #include "dash_api/appliance.pb.h"
 #include "dash_api/route_type.pb.h"
 #include "dash_api/eni.pb.h"
@@ -118,6 +119,25 @@ namespace dashvnetorch_test
             DEINIT_SAI_API_MOCK(dash_vnet);
         }
 
+        bool getResultEntry(const std::string& tableName, const std::string& key,
+                            std::vector<swss::FieldValueTuple>& values)
+        {
+            swss::Table resultTable(m_dpu_app_state_db.get(), tableName);
+            return resultTable.get(key, values);
+        }
+
+        std::string getResultField(const std::vector<swss::FieldValueTuple>& values,
+                                   const std::string& field)
+        {
+            for (const auto& fv : values)
+            {
+                if (fvField(fv) == field)
+                {
+                    return fvValue(fv);
+                }
+            }
+            return "";
+        }
     };
 
     TEST_F(DashVnetOrchTest, AddRemoveVnet)
@@ -629,5 +649,51 @@ namespace dashvnetorch_test
             EXPECT_CALL(*mock_sai_dash_outbound_ca_to_pa_api, remove_outbound_ca_to_pa_entries).Times(1);
             RemoveVnetMap();
         }
+    }
+  
+    TEST_F(DashVnetOrchTest, VnetResultWrittenToDb)
+    {
+        AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
+        CreateVnet();
+
+        // Verify vnet result was written to DPU_APPL_STATE_DB
+        std::vector<swss::FieldValueTuple> values;
+        bool found = getResultEntry(APP_DASH_VNET_TABLE_NAME, vnet1, values);
+        EXPECT_TRUE(found);
+        EXPECT_EQ(getResultField(values, "result"), to_string(DASH_RESULT_SUCCESS));
+    }
+
+    TEST_F(DashVnetOrchTest, VnetMapResultWrittenToDb)
+    {
+        AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
+        CreateVnet();
+        AddVnetMap();
+
+        // Verify vnet map result was written to DPU_APPL_STATE_DB
+        std::vector<swss::FieldValueTuple> values;
+        bool found = getResultEntry(APP_DASH_VNET_MAPPING_TABLE_NAME, vnet1 + ":" + vnet_map_ip1, values);
+        EXPECT_TRUE(found);
+        EXPECT_EQ(getResultField(values, "result"), to_string(DASH_RESULT_SUCCESS));
+    }
+
+    TEST_F(DashVnetOrchTest, VnetResultRemovedFromDbOnDelete)
+    {
+        AddVnetEncapRoutingType(dash::route_type::ENCAP_TYPE_VXLAN);
+        EXPECT_CALL(*mock_sai_dash_vnet_api, create_vnets).Times(1);
+        EXPECT_CALL(*mock_sai_dash_vnet_api, remove_vnets).Times(1);
+
+        CreateVnet();
+
+        // Verify result exists after create
+        std::vector<swss::FieldValueTuple> values;
+        bool found = getResultEntry(APP_DASH_VNET_TABLE_NAME, vnet1, values);
+        EXPECT_TRUE(found);
+
+        RemoveVnet();
+
+        // Verify result is removed after delete
+        values.clear();
+        found = getResultEntry(APP_DASH_VNET_TABLE_NAME, vnet1, values);
+        EXPECT_FALSE(found);
     }
 }

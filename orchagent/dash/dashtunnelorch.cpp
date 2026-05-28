@@ -4,6 +4,7 @@
 #include "sai.h"
 #include "taskworker.h"
 #include "pbutils.h"
+#include "dashresulthelper.h"
 #include "directory.h"
 #include "saihelper.h"
 #include <exception>
@@ -60,7 +61,8 @@ DashTunnelOrch::DashTunnelOrch(
     ZmqOrch(db, tables, zmqServer)
 {
     SWSS_LOG_ENTER();
-    dash_tunnel_result_table_ = std::make_unique<swss::Table>(app_state_db, APP_DASH_TUNNEL_TABLE_NAME);
+    m_resultPipeline = std::make_unique<swss::RedisPipeline>(app_state_db);
+    dash_tunnel_result_table_ = std::make_unique<swss::Table>(m_resultPipeline.get(), APP_DASH_TUNNEL_TABLE_NAME, true);
 }
 
 sai_object_id_t DashTunnelOrch::getTunnelOid(const std::string& tunnel_name)
@@ -291,6 +293,7 @@ void DashTunnelOrch::doTask(ConsumerBase &consumer)
                 it_prev = consumer.m_toSync.erase(it_prev);
             }
         }
+        flushResultsToDB(dash_tunnel_result_table_);
     }
 }
 

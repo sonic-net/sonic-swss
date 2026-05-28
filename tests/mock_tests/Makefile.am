@@ -88,10 +88,13 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_dash_orch_test.cpp \
                 zmq_orch_ut.cpp \
                 retrycache_ut.cpp \
+                saihelper_ut.cpp \
                 mock_saihelper.cpp \
                 mirrororch_ut.cpp \
                 hftelorch_ut.cpp \
                 hftelorch_is_supported_sai_wrap.cpp \
+                icmporch_ut.cpp \
+                icmporch_sai_wrap.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
@@ -176,6 +179,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/dash/dashhafloworch.cpp \
                 $(top_srcdir)/orchagent/dash/dashmeterorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashportmaporch.cpp \
+                $(top_srcdir)/orchagent/dash/dashresulthelper.cpp \
                 $(top_srcdir)/orchagent/dash/dashcounter.cpp \
                 $(top_srcdir)/cfgmgr/buffermgrdyn.cpp \
                 $(top_srcdir)/warmrestart/warmRestartAssist.cpp \
@@ -216,7 +220,8 @@ tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
 
 tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_INCLUDES)
-tests_LDFLAGS = -Wl,--wrap=sai_query_stats_st_capability -Wl,--wrap=sai_query_attribute_capability
+tests_LDFLAGS = -Wl,--wrap=sai_query_stats_st_capability -Wl,--wrap=sai_query_attribute_capability \
+                -Wl,--wrap=sai_query_attribute_enum_values_capability -Wl,--wrap=sai_metadata_get_attr_metadata
 tests_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis -lpthread \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lgmock -lgmock_main -lprotobuf -ldashapi
 
@@ -350,12 +355,16 @@ tests_nbrmgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredi
 
 
 tests_teamsyncd_SOURCES = teamsync_ut.cpp \
-                          $(top_srcdir)/teamsyncd/teamsync.cpp
+                          $(top_srcdir)/teamsyncd/teamsync.cpp \
+                          mock_dbconnector.cpp \
+                          mock_table.cpp \
+                          mock_hiredis.cpp \
+                          mock_redisreply.cpp
 
 tests_teamsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/teamsyncd
 tests_teamsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_teamsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_teamsyncd_INCLUDES)
 tests_teamsyncd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 \
-        -lswsscommon -lgtest -lgtest_main -lpthread -lteam -lteamdctl
+        -lswsscommon -ldl -lhiredis -lgtest -lgtest_main -lpthread -lteam -lteamdctl -lnl-route-3
 
 LOG_DRIVER = $(top_srcdir)/run-gtest-suite.py
