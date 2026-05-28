@@ -338,24 +338,29 @@ bool DashOrch::removeApplianceEntry(const string& appliance_id)
                 return false;
             }
         }
+        appliance_entries_[appliance_id].metadata.clear_sip();
     }
     else
     {
         SWSS_LOG_WARN("Failed to convert SIP for appliance %s during removal, skipping VIP cleanup", appliance_id.c_str());
     }
 
-    sai_direction_lookup_entry_t direction_lookup_entry;
-    direction_lookup_entry.switch_id = gSwitchId;
-    direction_lookup_entry.vni = entry.vm_vni();
-    status = sai_dash_direction_lookup_api->remove_direction_lookup_entry(&direction_lookup_entry);
-    if (status != SAI_STATUS_SUCCESS)
+    if (entry.vm_vni() != 0)
     {
-        SWSS_LOG_ERROR("Failed to remove direction lookup entry for %s", appliance_id.c_str());
-        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_DIRECTION_LOOKUP, status);
-        if (handle_status != task_success)
+        sai_direction_lookup_entry_t direction_lookup_entry;
+        direction_lookup_entry.switch_id = gSwitchId;
+        direction_lookup_entry.vni = entry.vm_vni();
+        status = sai_dash_direction_lookup_api->remove_direction_lookup_entry(&direction_lookup_entry);
+        if (status != SAI_STATUS_SUCCESS)
         {
-            return false;
+            SWSS_LOG_ERROR("Failed to remove direction lookup entry for %s", appliance_id.c_str());
+            task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_DIRECTION_LOOKUP, status);
+            if (handle_status != task_success)
+            {
+                return false;
+            }
         }
+        appliance_entries_[appliance_id].metadata.clear_vm_vni();
     }
 
     auto sai_appliance_id = appliance_entries_[appliance_id].appliance_id;
