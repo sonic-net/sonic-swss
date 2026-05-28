@@ -95,6 +95,7 @@ public:
     bool isPortIngressSampleMirrorSupported() const { return m_portIngressSampleMirrorSupported; }
     bool isSamplepacketTruncationSupported() const { return m_samplepacketTruncationSupported; }
     bool isMirrorErspanSessionIdSupported() const { return m_mirrorErspanSessionIdSupported; }
+    bool isMirrorCounterIdSupported() const { return m_mirrorCounterIdSupported; }
 
 private:
     void doTask(Consumer &consumer);
@@ -176,6 +177,7 @@ private:
     bool m_portIngressSampleMirrorSupported = false;
     bool m_samplepacketTruncationSupported = false;
     bool m_mirrorErspanSessionIdSupported = false;
+    bool m_mirrorCounterIdSupported = false;
 
     // ASIC SDK health event
     std::shared_ptr<swss::DBConnector> m_stateDbForNotification = nullptr;
