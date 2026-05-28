@@ -1864,38 +1864,92 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
         return;
     }
 
-    // A previously-suppressed neighbor whose MAC moved
-    // off the slice cable's port must be re-enabled in SAI.
-    if (isSliceConfigured() && !suppressed_neighbors_.empty())
+    // Slice port-affinity reconcile on FDB move.
+    if (isSliceConfigured())
     {
-        for (auto it = suppressed_neighbors_.begin(); it != suppressed_neighbors_.end(); )
+        // (a) MAC moved off the slice cable's port: un-suppress.
+        if (!suppressed_neighbors_.empty())
         {
-            if (it->second != update.entry.mac)
+            for (auto it = suppressed_neighbors_.begin(); it != suppressed_neighbors_.end(); )
             {
-                ++it;
-                continue;
-            }
+                if (it->second != update.entry.mac)
+                {
+                    ++it;
+                    continue;
+                }
 
-            MuxCable* slice_cable = findMuxCableBySlice(it->first.ip_address);
-            if (!slice_cable || update.entry.port_name == slice_cable->getMuxName())
-            {
-                ++it;
-                continue;
-            }
+                MuxCable* slice_cable = findMuxCableBySlice(it->first.ip_address);
+                if (!slice_cable || update.entry.port_name == slice_cable->getMuxName())
+                {
+                    ++it;
+                    continue;
+                }
 
-            NeighborEntry nbr = it->first;
-            MacAddress saved_mac = it->second;
-            it = suppressed_neighbors_.erase(it);
-            if (!neigh_orch_->enableNeighbor(nbr))
-            {
-                SWSS_LOG_WARN("Slice unsuppress (FDB move): enableNeighbor failed for %s",
-                              nbr.ip_address.to_string().c_str());
-                suppressed_neighbors_[nbr] = saved_mac;
-                continue;
+                NeighborEntry nbr = it->first;
+                MacAddress saved_mac = it->second;
+                it = suppressed_neighbors_.erase(it);
+                if (!neigh_orch_->enableNeighbor(nbr))
+                {
+                    SWSS_LOG_WARN("Slice unsuppress (FDB move): enableNeighbor failed for %s",
+                                  nbr.ip_address.to_string().c_str());
+                    suppressed_neighbors_[nbr] = saved_mac;
+                    continue;
+                }
+                SWSS_LOG_NOTICE("Slice-unsuppressed neighbor %s due to FDB move to %s",
+                                nbr.ip_address.to_string().c_str(),
+                                update.entry.port_name.c_str());
             }
-            SWSS_LOG_NOTICE("Slice-unsuppressed neighbor %s due to FDB move to %s",
-                            nbr.ip_address.to_string().c_str(),
-                            update.entry.port_name.c_str());
+        }
+
+        // (b) MAC landed on the slice cable's port: suppress any in-slice
+        //     neighbor pointing at it. Erase from mux_nexthop_tb_ first so
+        //     the port-move loop below does not re-assert SAI state.
+        MuxCable* slice_cable = nullptr;
+        auto cable_it = mux_cable_tb_.find(update.entry.port_name);
+        if (cable_it != mux_cable_tb_.end() && cable_it->second->hasSlicePrefix())
+        {
+            slice_cable = cable_it->second.get();
+        }
+
+        if (slice_cable)
+        {
+            for (auto nh_it = mux_nexthop_tb_.begin(); nh_it != mux_nexthop_tb_.end(); )
+            {
+                NeighborEntry nbr;
+                MacAddress nbr_mac;
+                if (!neigh_orch_->getNeighborEntry(nh_it->first, nbr, nbr_mac))
+                {
+                    ++nh_it;
+                    continue;
+                }
+                if (nbr_mac != update.entry.mac ||
+                    !slice_cable->isIpInSlice(nbr.ip_address) ||
+                    suppressed_neighbors_.find(nbr) != suppressed_neighbors_.end())
+                {
+                    ++nh_it;
+                    continue;
+                }
+
+                NextHopKey nh_key = nh_it->first;
+                std::string old_port = nh_it->second;
+                nh_it = mux_nexthop_tb_.erase(nh_it);
+
+                if (!old_port.empty() && isMuxExists(old_port))
+                {
+                    getMuxCable(old_port)->updateNeighbor(nh_key, false);
+                }
+
+                if (!neigh_orch_->disableNeighbor(nbr))
+                {
+                    SWSS_LOG_WARN("Slice suppress (FDB move): disableNeighbor failed for %s",
+                                  nbr.ip_address.to_string().c_str());
+                    continue;
+                }
+                suppressed_neighbors_[nbr] = nbr_mac;
+                SWSS_LOG_NOTICE("Slice-suppressed neighbor %s due to FDB move to slice port %s",
+                                nbr.ip_address.to_string().c_str(),
+                                update.entry.port_name.c_str());
+            }
         }
     }
 
@@ -1966,6 +2020,13 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
                 // Check if MAC matches and it's on a VLAN interface
                 if (neighbor_data.mac == update.entry.mac && neighbor_entry.alias == vlan_alias)
                 {
+                    // Skip slice-suppressed neighbors; converting them here
+                    // would re-enable the SAI entry we just dropped.
+                    if (suppressed_neighbors_.find(neighbor_entry) != suppressed_neighbors_.end())
+                    {
+                        continue;
+                    }
+
                     // Check if this neighbor should be a MUX neighbor based on the FDB update
                     string port_name;
                     if (getMuxPort(update.entry.mac, vlan_alias, port_name) && 

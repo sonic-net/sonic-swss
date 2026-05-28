@@ -238,3 +238,49 @@ class TestMuxSubnetSlice(TestMuxSubnetSliceBase):
             )
         finally:
             self.del_neigh_on_port(dvs, self.OUT_OF_SLICE_IPV6, self.MAC_DASH)
+
+    def test_in_slice_fdb_move_to_slice_port_suppresses(
+        self, dvs, dvs_route, setup, setup_vlan, setup_peer_switch,
+        setup_tunnel, setup_mux_cable, testlog
+    ):
+        """Reverse direction of port-affinity: an in-slice IPv6 neighbor
+        that was programmed in SAI because its FDB initially resolved to
+        the non-sliced port must be retroactively suppressed when the MAC
+        moves onto the slice cable's own port. Then moving the MAC back
+        off the slice port un-suppresses it again.
+
+        Both cables are ACTIVE so the slice gate is isolated from
+        active-standby teardown.
+        """
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = dvs.get_asic_db()
+
+        self.set_mux_state(appdb, self.SLICED_PORT, ACTIVE)
+        self.set_mux_state(appdb, self.NON_SLICED_PORT, ACTIVE)
+
+        # Seed: FDB on non-sliced port -> in-slice IPv6 is programmed.
+        self.add_neigh_on_port(dvs, self.IN_SLICE_IPV6, self.MAC,
+                               self.MAC_DASH, self.NON_SLICED_PORT)
+        try:
+            neigh_key = self.check_neigh_in_asic_db(
+                asicdb, self.IN_SLICE_IPV6, expected=True
+            )
+
+            # FDB move ONTO the slice cable's port -> must be suppressed.
+            self.del_fdb(dvs, self.MAC_DASH)
+            self.add_fdb(dvs, self.SLICED_PORT, self.MAC_DASH)
+            time.sleep(2)
+
+            asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, neigh_key)
+            self.check_neigh_in_asic_db(asicdb, self.IN_SLICE_IPV6,
+                                        expected=False)
+
+            # FDB back to non-slice port -> re-programmed (exercises the
+            # forward unsuppress path; guards against regressions in (a)).
+            self.del_fdb(dvs, self.MAC_DASH)
+            self.add_fdb(dvs, self.NON_SLICED_PORT, self.MAC_DASH)
+            time.sleep(2)
+            self.check_neigh_in_asic_db(asicdb, self.IN_SLICE_IPV6,
+                                        expected=True)
+        finally:
+            self.del_neigh_on_port(dvs, self.IN_SLICE_IPV6, self.MAC_DASH)
