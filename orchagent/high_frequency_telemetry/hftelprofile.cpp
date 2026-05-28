@@ -716,14 +716,6 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
         attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS;
         attr.value.booldata = true;
         attrs.push_back(attr);
-
-        attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS_INGRESS;
-        attr.value.booldata = true;
-        attrs.push_back(attr);
-
-        attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS_EGRESS;
-        attr.value.booldata = true;
-        attrs.push_back(attr);
     }
     else if (object_type == SAI_OBJECT_TYPE_BUFFER_POOL ||
              object_type == SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP)

@@ -19,6 +19,7 @@
 #include "tokenize.h"
 #include "dashorch.h"
 #include "crmorch.h"
+#include "dashresulthelper.h"
 #include "saihelper.h"
 #include "dashtunnelorch.h"
 
@@ -53,9 +54,10 @@ DashRouteOrch::DashRouteOrch(DBConnector *db, vector<string> &tableName, DashOrc
     dash_orch_(dash_orch)
 {
     SWSS_LOG_ENTER();
-    dash_route_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ROUTE_TABLE_NAME);
-    dash_route_rule_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ROUTE_RULE_TABLE_NAME);
-    dash_route_group_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ROUTE_GROUP_TABLE_NAME);
+    m_resultPipeline = std::make_unique<RedisPipeline>(app_state_db);
+    dash_route_result_table_ = make_unique<Table>(m_resultPipeline.get(), APP_DASH_ROUTE_TABLE_NAME, true);
+    dash_route_rule_result_table_ = make_unique<Table>(m_resultPipeline.get(), APP_DASH_ROUTE_RULE_TABLE_NAME, true);
+    dash_route_group_result_table_ = make_unique<Table>(m_resultPipeline.get(), APP_DASH_ROUTE_GROUP_TABLE_NAME, true);
 }
 
 bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkContext& ctxt)
@@ -257,25 +259,23 @@ bool DashRouteOrch::removeOutboundRoutingPost(const string& key, const OutboundR
 
     auto it_status = object_statuses.begin();
     sai_status_t status = *it_status++;
-    if (status != SAI_STATUS_SUCCESS)
+    if (status == SAI_STATUS_SUCCESS)
     {
-        if (status == SAI_STATUS_NOT_EXECUTED)
-        {
-            // Retry if bulk operation did not execute
-            return false;
-        }
-        SWSS_LOG_ERROR("Failed to remove outbound routing entry for %s", key.c_str());
-        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
+        gCrmOrch->decCrmResUsedCounter(ctxt.destination.isV4() ? CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING : CrmResourceType::CRM_DASH_IPV6_OUTBOUND_ROUTING);
+        SWSS_LOG_INFO("Outbound routing entry for %s removed", key.c_str());
+        return true;
     }
-
-    gCrmOrch->decCrmResUsedCounter(ctxt.destination.isV4() ? CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING : CrmResourceType::CRM_DASH_IPV6_OUTBOUND_ROUTING);
-
-    SWSS_LOG_INFO("Outbound routing entry for %s removed", key.c_str());
-
+    if (status == SAI_STATUS_NOT_EXECUTED)
+    {
+        // Retry if bulk operation did not execute
+        return false;
+    }
+    task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, status);
+    if (handle_status != task_success)
+    {
+        SWSS_LOG_ERROR("Failed to remove outbound routing entry for %s", key.c_str());
+        return parseHandleSaiStatusFailure(handle_status);
+    }
     return true;
 }
 
@@ -417,6 +417,7 @@ void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
                 }
             }
         }
+        flushResultsToDB(dash_route_result_table_);
     }
 }
 
@@ -543,25 +544,23 @@ bool DashRouteOrch::removeInboundRoutingPost(const string& key, const InboundRou
 
     auto it_status = object_statuses.begin();
     sai_status_t status = *it_status++;
-    if (status != SAI_STATUS_SUCCESS)
+    if (status == SAI_STATUS_SUCCESS)
     {
-        if (status == SAI_STATUS_NOT_EXECUTED)
-        {
-            // Retry if bulk operation did not execute
-            return false;
-        }
-        SWSS_LOG_ERROR("Failed to remove inbound routing entry for %s", key.c_str());
-        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_INBOUND_ROUTING, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
+        gCrmOrch->decCrmResUsedCounter(ctxt.sip.isV4() ? CrmResourceType::CRM_DASH_IPV4_INBOUND_ROUTING : CrmResourceType::CRM_DASH_IPV6_INBOUND_ROUTING);
+        SWSS_LOG_INFO("Inbound routing entry for %s removed", key.c_str());
+        return true;
     }
-
-    gCrmOrch->decCrmResUsedCounter(ctxt.sip.isV4() ? CrmResourceType::CRM_DASH_IPV4_INBOUND_ROUTING : CrmResourceType::CRM_DASH_IPV6_INBOUND_ROUTING);
-
-    SWSS_LOG_INFO("Inbound routing entry for %s removed", key.c_str());
-
+    if (status == SAI_STATUS_NOT_EXECUTED)
+    {
+        // Retry if bulk operation did not execute
+        return false;
+    }
+    task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_INBOUND_ROUTING, status);
+    if (handle_status != task_success)
+    {
+        SWSS_LOG_ERROR("Failed to remove inbound routing entry for %s", key.c_str());
+        return parseHandleSaiStatusFailure(handle_status);
+    }
     return true;
 }
 
@@ -721,6 +720,7 @@ void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
                 }
             }
         }
+        flushResultsToDB(dash_route_rule_result_table_);
     }
 }
 
@@ -895,6 +895,7 @@ void DashRouteOrch::doTaskRouteGroupTable(ConsumerBase& consumer)
             it = consumer.m_toSync.erase(it);
         }
     }
+    flushResultsToDB(dash_route_group_result_table_);
 }
 
 void DashRouteOrch::doTask(ConsumerBase& consumer)

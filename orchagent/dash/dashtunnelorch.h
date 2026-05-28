@@ -4,6 +4,7 @@
 #include "dash_api/tunnel.pb.h"
 #include "bulker.h"
 #include "dbconnector.h"
+#include "redispipeline.h"
 #include "zmqorch.h"
 #include "zmqserver.h"
 
@@ -60,6 +61,7 @@ private:
     ObjectBulker<sai_dash_tunnel_api_t> tunnel_member_bulker_;
     ObjectBulker<sai_dash_tunnel_api_t> tunnel_nhop_bulker_;
     std::unordered_map<std::string, DashTunnelEntry> tunnel_table_;
+    std::unique_ptr<swss::RedisPipeline> m_resultPipeline;
     std::unique_ptr<swss::Table> dash_tunnel_result_table_;
 
     void doTask(ConsumerBase &consumer);
