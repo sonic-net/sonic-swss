@@ -7,6 +7,9 @@
 #include <unordered_map>
 #include <set>
 #include <memory>
+#include <algorithm>
+#include <type_traits>
+#include <cstring>
 
 #define private public
 #define protected public
@@ -307,5 +310,197 @@ namespace hftelprofile_ut
         EXPECT_TRUE(s.p->m_sai_tam_tel_type_states.empty());
         EXPECT_TRUE(s.p->m_sai_tam_tel_type_templates.empty());
         EXPECT_TRUE(s.p->m_sai_tam_report_objs.empty());
+    }
+
+    struct SetStatsIDsTest : public ::testing::Test
+    {
+        struct SetStatsIDsStub
+        {
+            alignas(HFTelProfile) unsigned char buf[sizeof(HFTelProfile)];
+            HFTelProfile *p = nullptr;
+
+            void init()
+            {
+                memset(buf, 0, sizeof(buf));
+                p = reinterpret_cast<HFTelProfile *>(static_cast<void *>(buf));
+
+                new (const_cast<string*>(&p->m_profile_name)) string("test_profile");
+                p->m_setting_state = SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
+                p->m_poll_interval = 0;
+                new (&p->m_groups) decay_t<decltype(p->m_groups)>();
+                new (&p->m_name_sai_map) decay_t<decltype(p->m_name_sai_map)>();
+                new (&p->m_sai_tam_counter_subscription_objs)
+                    decay_t<decltype(p->m_sai_tam_counter_subscription_objs)>();
+                new (&p->m_sai_tam_tel_type_objs)
+                    decay_t<decltype(p->m_sai_tam_tel_type_objs)>();
+                new (&p->m_sai_tam_tel_type_states)
+                    decay_t<decltype(p->m_sai_tam_tel_type_states)>();
+            }
+
+            ~SetStatsIDsStub()
+            {
+                if (!p) return;
+                p->m_profile_name.~basic_string();
+                p->m_groups.~map();
+                p->m_name_sai_map.~unordered_map();
+                p->m_sai_tam_counter_subscription_objs.~unordered_map();
+                p->m_sai_tam_tel_type_objs.~unordered_map();
+                p->m_sai_tam_tel_type_states.~unordered_map();
+                p = nullptr;
+            }
+        };
+    };
+
+    TEST_F(SetStatsIDsTest, SetStatsIDsCreatesAndUpdatesGroup)
+    {
+        SetStatsIDsStub s;
+        s.init();
+
+        s.p->setStatsIDs("port", {"IF_IN_OCTETS"});
+        ASSERT_EQ(s.p->m_groups.size(), 1u);
+        EXPECT_EQ(s.p->m_groups.at(SAI_OBJECT_TYPE_PORT).getStatsIDs(),
+                  set<sai_stat_id_t>({SAI_PORT_STAT_IF_IN_OCTETS}));
+
+        s.p->setStatsIDs("port", {"IF_OUT_OCTETS"});
+        ASSERT_EQ(s.p->m_groups.size(), 1u);
+        EXPECT_EQ(s.p->m_groups.at(SAI_OBJECT_TYPE_PORT).getStatsIDs(),
+                  set<sai_stat_id_t>({SAI_PORT_STAT_IF_OUT_OCTETS}));
+    }
+
+    struct SaiAttrTest : public ::testing::Test
+    {
+        sai_tam_api_t ut_api;
+        sai_tam_api_t *orig_api = nullptr;
+
+        struct SaiAttrStub
+        {
+            alignas(HFTelProfile) unsigned char buf[sizeof(HFTelProfile)];
+            HFTelProfile *p = nullptr;
+
+            void init()
+            {
+                memset(buf, 0, sizeof(buf));
+                p = reinterpret_cast<HFTelProfile *>(static_cast<void *>(buf));
+
+                new (const_cast<string*>(&p->m_profile_name)) string("test_profile");
+                p->m_setting_state = SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
+                p->m_poll_interval = 100;
+                new (&p->m_sai_tam_counter_subscription_objs)
+                    decay_t<decltype(p->m_sai_tam_counter_subscription_objs)>();
+                new (&p->m_sai_tam_tel_type_objs)
+                    decay_t<decltype(p->m_sai_tam_tel_type_objs)>();
+                new (&p->m_sai_tam_report_objs)
+                    decay_t<decltype(p->m_sai_tam_report_objs)>();
+
+                p->m_sai_tam_tel_type_objs[SAI_OBJECT_TYPE_PORT] =
+                    make_shared<sai_object_id_t>(0x200);
+            }
+
+            ~SaiAttrStub()
+            {
+                if (!p) return;
+                p->m_profile_name.~basic_string();
+                p->m_sai_tam_counter_subscription_objs.~unordered_map();
+                p->m_sai_tam_tel_type_objs.~unordered_map();
+                p->m_sai_tam_report_objs.~unordered_map();
+                p = nullptr;
+            }
+        };
+
+        static vector<sai_attribute_t> report_attrs;
+        static vector<sai_attribute_t> counter_attrs;
+
+        static sai_status_t mock_create_tam_report(
+            sai_object_id_t *report_id,
+            sai_object_id_t /*switch_id*/,
+            uint32_t attr_count,
+            const sai_attribute_t *attr_list)
+        {
+            report_attrs.assign(attr_list, attr_list + attr_count);
+            *report_id = 0x500;
+            return SAI_STATUS_SUCCESS;
+        }
+
+        static sai_status_t mock_remove_tam_report(sai_object_id_t /*report_id*/)
+        {
+            return SAI_STATUS_SUCCESS;
+        }
+
+        static sai_status_t mock_create_tam_counter_subscription(
+            sai_object_id_t *counter_subscription_id,
+            sai_object_id_t /*switch_id*/,
+            uint32_t attr_count,
+            const sai_attribute_t *attr_list)
+        {
+            counter_attrs.assign(attr_list, attr_list + attr_count);
+            *counter_subscription_id = 0x600;
+            return SAI_STATUS_SUCCESS;
+        }
+
+        static sai_status_t mock_remove_tam_counter_subscription(
+            sai_object_id_t /*counter_subscription_id*/)
+        {
+            return SAI_STATUS_SUCCESS;
+        }
+
+        void SetUp() override
+        {
+            if (sai_tam_api == nullptr)
+            {
+                static sai_tam_api_t default_tam_api{};
+                sai_tam_api = &default_tam_api;
+            }
+            ut_api = *sai_tam_api;
+            orig_api = sai_tam_api;
+            ut_api.create_tam_report = mock_create_tam_report;
+            ut_api.remove_tam_report = mock_remove_tam_report;
+            ut_api.create_tam_counter_subscription = mock_create_tam_counter_subscription;
+            ut_api.remove_tam_counter_subscription = mock_remove_tam_counter_subscription;
+            sai_tam_api = &ut_api;
+            report_attrs.clear();
+            counter_attrs.clear();
+        }
+
+        void TearDown() override
+        {
+            sai_tam_api = orig_api;
+        }
+    };
+
+    vector<sai_attribute_t> SaiAttrTest::report_attrs;
+    vector<sai_attribute_t> SaiAttrTest::counter_attrs;
+
+    TEST_F(SaiAttrTest, GetTAMReportAddsIntervalUnit)
+    {
+        SaiAttrStub s;
+        s.init();
+
+        ASSERT_EQ(s.p->getTAMReportObjID(SAI_OBJECT_TYPE_PORT), 0x500ULL);
+
+        auto itr = find_if(report_attrs.begin(), report_attrs.end(), [](const auto &attr)
+        {
+            return attr.id == SAI_TAM_REPORT_ATTR_REPORT_INTERVAL_UNIT;
+        });
+        ASSERT_NE(itr, report_attrs.end());
+        EXPECT_EQ(itr->value.s32, SAI_TAM_REPORT_INTERVAL_UNIT_USEC);
+    }
+
+    TEST_F(SaiAttrTest, DeployCounterSubscriptionUsesStatIdU32)
+    {
+        SaiAttrStub s;
+        s.init();
+
+        s.p->deployCounterSubscription(
+            SAI_OBJECT_TYPE_PORT,
+            0x1000000000001ULL,
+            SAI_PORT_STAT_IF_IN_OCTETS,
+            7);
+
+        auto itr = find_if(counter_attrs.begin(), counter_attrs.end(), [](const auto &attr)
+        {
+            return attr.id == SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_STAT_ID;
+        });
+        ASSERT_NE(itr, counter_attrs.end());
+        EXPECT_EQ(itr->value.u32, static_cast<uint32_t>(SAI_PORT_STAT_IF_IN_OCTETS));
     }
 }
