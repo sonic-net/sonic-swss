@@ -83,6 +83,16 @@ DashAclOrch::DashAclOrch(DBConnector *db, const vector<string> &tables, DashOrch
 
 {
     SWSS_LOG_ENTER();
+
+    /* Disable swss.rec recording for high-volume child tables */
+    for (const auto &tbl : {APP_DASH_ACL_RULE_TABLE_NAME, APP_DASH_PREFIX_TAG_TABLE_NAME})
+    {
+        auto *consumer = getConsumerBase(tbl);
+        if (consumer)
+        {
+            consumer->setRecordable(false);
+        }
+    }
 }
 
 DashAclGroupMgr& DashAclOrch::getDashAclGroupMgr()

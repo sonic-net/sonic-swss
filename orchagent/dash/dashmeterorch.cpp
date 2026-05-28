@@ -30,6 +30,13 @@ DashMeterOrch::DashMeterOrch(DBConnector *db, const vector<string> &tables, DBCo
     ZmqOrch(db, tables, zmqServer)
 {
     SWSS_LOG_ENTER();
+
+    /* Disable swss.rec recording for high-volume meter rule table */
+    auto *consumer = getConsumerBase(APP_DASH_METER_RULE_TABLE_NAME);
+    if (consumer)
+    {
+        consumer->setRecordable(false);
+    }
 }
 
 sai_object_id_t DashMeterOrch::getMeterPolicyOid(const string& meter_policy) const
