@@ -1382,7 +1382,8 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
 
     // Lazily create counter on first activation (survives deactivate/reactivate
     // cycles since deactivateSession only detaches, never destroys the counter).
-    if (session.counterOid == SAI_NULL_OBJECT_ID &&
+    if (m_switchOrch->isMirrorCounterIdSupported() &&
+        session.counterOid == SAI_NULL_OBJECT_ID &&
         sai_counter_api != nullptr && sai_counter_api->create_counter != nullptr)
     {
         sai_attribute_t counter_attr;
@@ -1540,7 +1541,7 @@ bool MirrorOrch::deactivateSession(const string& name, MirrorEntry& session)
 
     // Detach counter from mirror session (counter object survives deactivation
     // so cumulative stats are preserved across route/ARP flap cycles).
-    if (session.counterOid != SAI_NULL_OBJECT_ID)
+    if (session.counterOid != SAI_NULL_OBJECT_ID && m_switchOrch->isMirrorCounterIdSupported())
     {
         sai_attribute_t mirror_cnt_attr;
         mirror_cnt_attr.id = SAI_MIRROR_SESSION_ATTR_COUNTER_ID;
