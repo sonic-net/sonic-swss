@@ -676,6 +676,13 @@ public:
         }
         m_initialized = true;
 
+        if (!resolve_stats_count_mode())
+        {
+            SWSS_LOG_WARN("%s, stats count mode resolution failed; sessions will be "
+                          "created without explicit stats count mode",
+                          Derived::m_name.c_str());
+        }
+
         if (query_capability())
         {
             m_supported = true;
@@ -700,6 +707,31 @@ public:
         }
 
         return true;
+    }
+
+    /**
+     *@method applyStatsCountMode
+     *
+     *@brief If the platform reported a supported stats count mode at
+     *       initialize() time, inject it into the session create attribute
+     *       map under Derived::SAI_ATTR_ID::COUNT_MODE_ID. Logs a warning
+     *       and is a no-op when the capability was not resolved.
+     */
+    void applyStatsCountMode(sai_attr_id_val_map_t& attr_val_map) const
+    {
+        if (!m_stats_count_mode_initialized)
+        {
+            SWSS_LOG_WARN("%s, Stats count mode capability unresolved",
+                          Derived::m_name.c_str());
+            return;
+        }
+
+        constexpr sai_attr_id_t count_mode_attr =
+            static_cast<sai_attr_id_t>(Derived::SAI_ATTR_ID::COUNT_MODE_ID);
+
+        sai_attribute_value_t val{};
+        val.s32 = m_stats_count_mode;
+        attr_val_map[count_mode_attr] = val;
     }
 
     /**
@@ -987,6 +1019,71 @@ private:
     }
 
     /**
+     *@method resolve_stats_count_mode
+     *
+     *@brief Query the platform for the supported enum values of
+     *       Derived::SAI_ATTR_ID::COUNT_MODE_ID on Derived::session_object_type
+     *       and pick the most informative supported mode. Result is stored
+     *       in m_stats_count_mode for later use by applyStatsCountMode().
+     */
+    bool resolve_stats_count_mode()
+    {
+        m_stats_count_mode_initialized = false;
+
+        constexpr sai_attr_id_t count_mode_attr =
+            static_cast<sai_attr_id_t>(Derived::SAI_ATTR_ID::COUNT_MODE_ID);
+
+        const auto *meta = sai_metadata_get_attr_metadata(
+            Derived::session_object_type, count_mode_attr);
+        if (!meta || !meta->isenum)
+        {
+            SWSS_LOG_WARN("%s, sai_metadata_get_attr_metadata for stats count mode failed",
+                    Derived::m_name.c_str());
+            return false;
+        }
+
+        std::vector<int32_t> values_list(meta->enummetadata->valuescount);
+        sai_s32_list_t values;
+        values.count = static_cast<uint32_t>(values_list.size());
+        values.list = values_list.data();
+
+        sai_status_t status = sai_query_attribute_enum_values_capability(
+            gSwitchId,
+            Derived::session_object_type,
+            count_mode_attr,
+            &values);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("%s, sai_query_attribute_enum_values_capability for stats count mode failed",
+                    Derived::m_name.c_str());
+            return false;
+        }
+
+        auto *end = values.list + values.count;
+
+        static const sai_stats_count_mode_t preferred_modes[] = {
+            SAI_STATS_COUNT_MODE_PACKET_AND_BYTE,
+            SAI_STATS_COUNT_MODE_PACKET,
+            SAI_STATS_COUNT_MODE_BYTE,
+            SAI_STATS_COUNT_MODE_NONE,
+        };
+
+        for (auto mode : preferred_modes)
+        {
+            if (std::find(values.list, end, static_cast<int32_t>(mode)) != end)
+            {
+                m_stats_count_mode = mode;
+                m_stats_count_mode_initialized = true;
+                return true;
+            }
+        }
+
+        SWSS_LOG_WARN("%s, No supported stats count mode found",
+                Derived::m_name.c_str());
+        return false;
+    }
+
+    /**
      *@method make_name_map_key
      *
      *@brief Build "<session_key>|<variant_suffix>" name-map field. '|'
@@ -1247,6 +1344,10 @@ private:
     // Selective counter unsupported; register session OIDs directly with
     // FlexCounterManager and skip SAI counter create/attach.
     bool m_native_mode = false;
+
+    // Resolved per-platform stats count mode reused across session creates.
+    sai_stats_count_mode_t m_stats_count_mode = SAI_STATS_COUNT_MODE_PACKET;
+    bool m_stats_count_mode_initialized = false;
 };
 
 #endif

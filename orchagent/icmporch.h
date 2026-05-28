@@ -131,16 +131,6 @@ public:
 private:
 
     /**
-     *@method resolve_stats_count_mode
-     *
-     *@brief resolves supported stats count mode for ICMP sessions once
-     *
-     *@return true on success, false on failure
-     */
-    bool resolve_stats_count_mode();
-
-
-    /**
      *@method create_icmp_session
      *
      *@brief creates icmp echo sessions in hardware
@@ -209,11 +199,6 @@ private:
 
     // keeps track of number of sessions
     uint32_t m_num_sessions = 0;
-
-    // resolved ICMP stats count mode reused across session creates
-    sai_stats_count_mode_t m_stats_count_mode = SAI_STATS_COUNT_MODE_PACKET;
-    // set to true only if ICMP stats count mode is resolved
-    bool m_stats_count_mode_initialized = false;
 
     // max number of sessions
     static const uint32_t m_max_sessions;
