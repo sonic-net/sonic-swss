@@ -26,7 +26,7 @@ struct IntfsEntry
     int                 ref_count;
     sai_object_id_t     vrf_id;
     bool                proxy_arp;
-    bool                sag_enabled;
+    bool                sag_enabled = false;
     MacAddress          mac;
 };
 

@@ -169,6 +169,7 @@ private:
     void onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h);
     void onMsgLink(int nlmsg_type, struct nl_object *obj);
     void onMsgNhg(struct nlmsghdr *msg);
+    void clearL2Nhg();
 
     enum L2NhgType {
         L2_NHG_TYPE_VTEP,

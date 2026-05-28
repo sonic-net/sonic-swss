@@ -285,8 +285,25 @@ TEST_F(FdbSyncdTest, testaddNhgMacRoute)
     ASSERT_EQ(keys.size(), 0);
 }
 
+TEST_F(FdbSyncdTest, testNextHopGroupIgnoredWithoutEvpnNvo)
+{
+    std::shared_ptr<swss::DBConnector> m_app_db;
+    m_app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
+    Table app_l2_nhg_table(m_app_db.get(), "L2_NEXTHOP_GROUP_TABLE");
+
+    struct nlmsghdr *nlmsg = new_nhg_msg(268435458, "1.1.1.1", 0, NULL, 0);
+    m_mockFdbSync.onMsgRaw(nlmsg);
+    free(nlmsg);
+
+    std::vector<std::string> keys;
+    app_l2_nhg_table.getKeys(keys);
+    ASSERT_EQ(keys.size(), 0);
+}
+
 TEST_F(FdbSyncdTest, testSingletonNextHopGroup)
 {
+    m_mockFdbSync.m_isEvpnNvoExist = true;
+
     std::shared_ptr<swss::DBConnector> m_app_db;
     m_app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
     Table app_l2_nhg_table(m_app_db.get(), "L2_NEXTHOP_GROUP_TABLE");
@@ -316,6 +333,8 @@ TEST_F(FdbSyncdTest, testSingletonNextHopGroup)
 
 TEST_F(FdbSyncdTest, testGroupedNextHopGroup)
 {
+    m_mockFdbSync.m_isEvpnNvoExist = true;
+
     std::shared_ptr<swss::DBConnector> m_app_db;
     m_app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
     Table app_l2_nhg_table(m_app_db.get(), "L2_NEXTHOP_GROUP_TABLE");
@@ -530,6 +549,8 @@ TEST_F(FdbSyncdTest, testNetlinkMessageFlags)
 
 TEST_F(FdbSyncdTest, testInvalidNextHopGroupId)
 {
+    m_mockFdbSync.m_isEvpnNvoExist = true;
+
     std::shared_ptr<swss::DBConnector> m_app_db;
     m_app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
     Table app_l2_nhg_table(m_app_db.get(), "L2_NEXTHOP_GROUP_TABLE");
@@ -601,6 +622,8 @@ TEST_F(FdbSyncdTest, testInvalidNextHopGroupId)
 
 TEST_F(FdbSyncdTest, testInvalidNextHopGroupIds)
 {
+    m_mockFdbSync.m_isEvpnNvoExist = true;
+
     std::shared_ptr<swss::DBConnector> m_app_db;
     m_app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
     Table app_l2_nhg_table(m_app_db.get(), "L2_NEXTHOP_GROUP_TABLE");
@@ -666,6 +689,7 @@ public:
     void SetUp() override
     {
         ::testing_db::reset();
+        m_mockFdbSync.m_isEvpnNvoExist = true;
     }
 
     void TearDown() override

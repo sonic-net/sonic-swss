@@ -451,12 +451,12 @@ public:
 };
 
 struct vrf_map_entry_t {
-    sai_object_id_t encap_id;
-    sai_object_id_t decap_id;
-    bool isL2Vni;
+    sai_object_id_t encap_id = SAI_NULL_OBJECT_ID;
+    sai_object_id_t decap_id = SAI_NULL_OBJECT_ID;
+    bool isL2Vni = false;
     std::string vniVlanMapName;
-    uint32_t vlan_id;
-    uint32_t vni_id;
+    uint32_t vlan_id = 0;
+    uint32_t vni_id = 0;
 };
 
 typedef std::map<string, vrf_map_entry_t> VxlanVrfTable;

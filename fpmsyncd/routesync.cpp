@@ -2085,7 +2085,7 @@ void RouteSync::onTcFilterMsg(struct nlmsghdr *h, int len)
 
             snprintf(shl_entry_key, sizeof(shl_entry_key),
                      "Vlan%04u:%s",
-                     0 /* No vlans sent yet */,
+                     0u /* No vlans sent yet */,
                      if_name);
 
             if (msg_type == RTM_DELTFILTER)

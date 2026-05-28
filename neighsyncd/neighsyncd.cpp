@@ -67,10 +67,16 @@ int main(int argc, char **argv)
             netlink.dumpRequest(RTM_GETNEIGH);
 
             s.addSelectable(&netlink);
+            s.addSelectable(sync.getCfgEvpnNvoTable());
             while (true)
             {
                 Selectable *temps;
                 s.select(&temps);
+                if (temps == (Selectable *)sync.getCfgEvpnNvoTable())
+                {
+                    sync.processCfgEvpnNvo();
+                    continue;
+                }
                 /*
                  * If warmstart is in progress, we check the reconcile timer,
                  * if timer expired, we stop the timer and start the reconcile process

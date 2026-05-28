@@ -3,6 +3,7 @@
 
 #include "dbconnector.h"
 #include "producerstatetable.h"
+#include "subscriberstatetable.h"
 #include "netmsg.h"
 #include "warmRestartAssist.h"
 
@@ -38,14 +39,23 @@ public:
         return m_AppRestartAssist;
     }
 
+    SubscriberStateTable *getCfgEvpnNvoTable()
+    {
+        return &m_cfgEvpnNvoTable;
+    }
+
+    void processCfgEvpnNvo();
+
 private:
     Table m_stateNeighRestoreTable, m_cfgPeerSwitchTable, m_routeCheckTable;
     ProducerStateTable m_neighTable;
     ProducerStateTable m_routeTable;
+    SubscriberStateTable m_cfgEvpnNvoTable;
     struct nl_cache    *m_link_cache;
     struct nl_sock     *m_nl_sock;
     AppRestartAssist  *m_AppRestartAssist;
     Table m_cfgVlanInterfaceTable, m_cfgLagInterfaceTable, m_cfgInterfaceTable;
+    bool m_isEvpnNvoExist = false;
 
     bool isLinkLocalEnabled(const std::string &port);
 };

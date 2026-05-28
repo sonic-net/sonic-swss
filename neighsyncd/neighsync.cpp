@@ -33,6 +33,7 @@ NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConne
     m_cfgLagInterfaceTable(cfgDb, CFG_LAG_INTF_TABLE_NAME),
     m_cfgVlanInterfaceTable(cfgDb, CFG_VLAN_INTF_TABLE_NAME),
     m_cfgPeerSwitchTable(cfgDb, CFG_PEER_SWITCH_TABLE_NAME),
+    m_cfgEvpnNvoTable(cfgDb, CFG_VXLAN_EVPN_NVO_TABLE_NAME),
     m_nl_sock(NULL), m_link_cache(NULL)
 {
     m_AppRestartAssist = new AppRestartAssist(pipelineAppDB, "neighsyncd", "swss", DEFAULT_NEIGHSYNC_WARMSTART_TIMER);
@@ -111,6 +112,25 @@ bool NeighSync::getIfName(int if_index, char *if_name, size_t name_len)
     }
 
     return true;
+}
+
+void NeighSync::processCfgEvpnNvo()
+{
+    std::deque<KeyOpFieldsValuesTuple> entries;
+    m_cfgEvpnNvoTable.pops(entries);
+
+    for (const auto &entry : entries)
+    {
+        const std::string &op = kfvOp(entry);
+        if (op == SET_COMMAND)
+        {
+            m_isEvpnNvoExist = true;
+        }
+        else if (op == DEL_COMMAND)
+        {
+            m_isEvpnNvoExist = false;
+        }
+    }
 }
 
 
@@ -243,6 +263,12 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
          * NUD_NOARP without NTF_EXT_LEARNED means moved to remote — delete. */
         if (!(rtnl_neigh_get_flags(neigh) & NTF_EXT_LEARNED))
         {
+            if (!m_isEvpnNvoExist)
+            {
+                SWSS_LOG_INFO("NUD_NOARP without NTF_EXT_LEARNED and EVPN NVO is not configured, ignoring for %s", ipStr);
+                return;
+            }
+
             SWSS_LOG_INFO("NUD_NOARP without NTF_EXT_LEARNED, neighbor moved to remote for %s", ipStr);
             delete_key = true;
         }

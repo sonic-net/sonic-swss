@@ -125,6 +125,7 @@ void FdbSync::processCfgEvpnNvo()
         else if (op == DEL_COMMAND)
         {
             m_isEvpnNvoExist = false;
+            clearL2Nhg();
         }
 
         if (lastNvoState != m_isEvpnNvoExist)
@@ -133,6 +134,15 @@ void FdbSync::processCfgEvpnNvo()
         }
     }
     return;
+}
+
+void FdbSync::clearL2Nhg()
+{
+    for (const auto &entry : m_l2NhgMap)
+    {
+        m_l2NhgTable.del(to_string(entry.first));
+    }
+    m_l2NhgMap.clear();
 }
 
 void FdbSync::updateAllLocalMac()
@@ -1127,6 +1137,12 @@ void FdbSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
 void FdbSync::onMsgNhg(struct nlmsghdr *msg)
 {
+    if (!m_isEvpnNvoExist)
+    {
+        SWSS_LOG_DEBUG("EVPN NVO is not configured, skipping L2 nexthop group message");
+        return;
+    }
+
     struct nhmsg *nhm = (struct nhmsg *)NLMSG_DATA(msg);
     int len = (int)(msg->nlmsg_len - NLMSG_LENGTH(sizeof(*nhm)));
 
