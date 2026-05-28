@@ -123,7 +123,6 @@ class TestInbandInterface(object):
 
         # check application database
         tbl = swsscommon.Table(self.appl_db, 'INTF_TABLE')
-        intf_keys = tbl.getKeys()
         status, fvs = tbl.get(intf_name)
         assert status == True
         for fv in fvs:

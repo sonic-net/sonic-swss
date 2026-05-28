@@ -103,7 +103,6 @@ class TestAclMarkMeta:
         members = dvs_acl.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY",
                                                total_rules)
 
-        member_groups = []
         table_member_map = {}
         for member in members:
             fvs = dvs_acl.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", member)

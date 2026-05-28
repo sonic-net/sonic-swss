@@ -126,7 +126,6 @@ class TestP4RTVIPLB(object):
         # get crm counters
         time.sleep(1)
         used_counter = getCrmCounterValue(dvs, "EXT_TABLE_STATS:"+self._p4rt_viplb_obj.TBL_NAME, 'crm_stats_extension_table_used')
-        avail_counter = getCrmCounterValue(dvs, "EXT_TABLE_STATS:"+self._p4rt_viplb_obj.TBL_NAME, 'crm_stats_extension_table_available')
         assert used_counter is 1
 
         # Create another router interface.
@@ -166,7 +165,6 @@ class TestP4RTVIPLB(object):
         # get crm counters
         time.sleep(1)
         used_counter = getCrmCounterValue(dvs, "EXT_TABLE_STATS:"+self._p4rt_viplb_obj.TBL_NAME, 'crm_stats_extension_table_used')
-        avail_counter = getCrmCounterValue(dvs, "EXT_TABLE_STATS:"+self._p4rt_viplb_obj.TBL_NAME, 'crm_stats_extension_table_available')
         assert used_counter is 1
 
         # Remove viplb entry.
@@ -177,7 +175,6 @@ class TestP4RTVIPLB(object):
         # get crm counters
         time.sleep(1)
         used_counter = getCrmCounterValue(dvs, "EXT_TABLE_STATS:"+self._p4rt_viplb_obj.TBL_NAME, 'crm_stats_extension_table_used')
-        avail_counter = getCrmCounterValue(dvs, "EXT_TABLE_STATS:"+self._p4rt_viplb_obj.TBL_NAME, 'crm_stats_extension_table_available')
         assert used_counter is 0
 
 

@@ -2032,7 +2032,6 @@ class TestMuxTunnel(TestMuxTunnelBase):
             self, dvs, dvs_route, setup_vlan, setup_tunnel, setup,
             setup_peer_switch, neighbor_cleanup, testlog
     ):
-        config_db = dvs.get_config_db()
         appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
         test_ip = self.SERV1_SOC_IPV4
