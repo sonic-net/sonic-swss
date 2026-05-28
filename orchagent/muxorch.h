@@ -287,7 +287,7 @@ public:
 
     MuxCable* findMuxCableBySlice(IpAddress);
     bool isSuppressedNeighbor(const IpAddress& ip, const std::string& port_name, MuxCable** out_cable = nullptr);
-    bool isSliceConfigured() const { return slicedCableCount > 0; }
+    bool isSliceConfigured() const { return sliced_cable_count_ > 0; }
     bool isMuxPortPrefixNbr(const IpAddress&, const MacAddress&, string&);
     bool isNeighborActive(const IpAddress&, const MacAddress&, string&);
     void update(SubjectType, void *);
@@ -372,8 +372,8 @@ private:
     std::set<IpAddress> standalone_tunnel_neighbors_;
     std::map<IpAddress, std::string> skip_neighbors_;
     // NHs disabled in SAI due to slice port-affinity; MAC kept for FDB-move lookup.
-    std::map<NeighborEntry, MacAddress> m_suppressed_neighbors;
-    size_t slicedCableCount = 0;
+    std::map<NeighborEntry, MacAddress> suppressed_neighbors_;
+    size_t sliced_cable_count_ = 0;
 
     bool enable_cache_neigh_updates_ = false;
     std::vector<NeighborUpdate> cached_neigh_updates_;

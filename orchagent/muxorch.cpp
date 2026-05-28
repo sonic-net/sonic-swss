@@ -1866,9 +1866,9 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
 
     // A previously-suppressed neighbor whose MAC moved
     // off the slice cable's port must be re-enabled in SAI.
-    if (isSliceConfigured() && !m_suppressed_neighbors.empty())
+    if (isSliceConfigured() && !suppressed_neighbors_.empty())
     {
-        for (auto it = m_suppressed_neighbors.begin(); it != m_suppressed_neighbors.end(); )
+        for (auto it = suppressed_neighbors_.begin(); it != suppressed_neighbors_.end(); )
         {
             if (it->second != update.entry.mac)
             {
@@ -1885,12 +1885,12 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
 
             NeighborEntry nbr = it->first;
             MacAddress saved_mac = it->second;
-            it = m_suppressed_neighbors.erase(it);
+            it = suppressed_neighbors_.erase(it);
             if (!neigh_orch_->enableNeighbor(nbr))
             {
                 SWSS_LOG_WARN("Slice unsuppress (FDB move): enableNeighbor failed for %s",
                               nbr.ip_address.to_string().c_str());
-                m_suppressed_neighbors[nbr] = saved_mac;
+                suppressed_neighbors_[nbr] = saved_mac;
                 continue;
             }
             SWSS_LOG_NOTICE("Slice-unsuppressed neighbor %s due to FDB move to %s",
@@ -2078,11 +2078,11 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
             MuxCable* slice_cable = nullptr;
             bool suppress = isSuppressedNeighbor(update.entry.ip_address, fdb_port, &slice_cable);
 
-            auto it = m_suppressed_neighbors.find(update.entry);
+            auto it = suppressed_neighbors_.find(update.entry);
 
             if (suppress)
             {
-                if (it == m_suppressed_neighbors.end())
+                if (it == suppressed_neighbors_.end())
                 {
                     // New suppressed neighbor, disable it and add to the suppressed neighbors map
                     if (!neigh_orch_->disableNeighbor(update.entry))
@@ -2092,7 +2092,7 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
                                       update.entry.alias.c_str());
                         return;
                     }
-                    m_suppressed_neighbors[update.entry] = update.mac;
+                    suppressed_neighbors_[update.entry] = update.mac;
                     SWSS_LOG_NOTICE("Slice-suppressed neighbor %s on %s (slice port %s)",
                                     update.entry.ip_address.to_string().c_str(),
                                     update.entry.alias.c_str(),
@@ -2105,18 +2105,18 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
                 }
                 return;
             }
-            else if (it != m_suppressed_neighbors.end())
+            else if (it != suppressed_neighbors_.end())
             {
                 // Neighbor is no longer suppressed, re-enable it.
                 NeighborEntry nbr = it->first;
                 MacAddress saved_mac = it->second;
-                m_suppressed_neighbors.erase(it);
+                suppressed_neighbors_.erase(it);
                 if (!neigh_orch_->enableNeighbor(nbr))
                 {
                     SWSS_LOG_WARN("Slice unsuppress: enableNeighbor failed for %s on %s",
                                   update.entry.ip_address.to_string().c_str(),
                                   update.entry.alias.c_str());
-                    m_suppressed_neighbors[nbr] = saved_mac;
+                    suppressed_neighbors_[nbr] = saved_mac;
                     return;
                 }
                 SWSS_LOG_NOTICE("Slice-unsuppressed neighbor %s on %s",
@@ -2128,7 +2128,7 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
         else
         {
             // Neighbor is being deleted, remove it from the suppressed neighbors map.
-            m_suppressed_neighbors.erase(update.entry);
+            suppressed_neighbors_.erase(update.entry);
         }
     }
 
@@ -2459,9 +2459,9 @@ bool MuxOrch::handleMuxCfg(const Request& request)
 
         if (slice_ip6_present)
         {
-            ++slicedCableCount;
+            ++sliced_cable_count_;
             SWSS_LOG_NOTICE("Mux port '%s' configured with server_ipv6_subnet %s (sliced cable count=%zu)",
-                            port_name.c_str(), slice_ip6.to_string().c_str(), slicedCableCount);
+                            port_name.c_str(), slice_ip6.to_string().c_str(), sliced_cable_count_);
             state_mux_cable_table_->hset(port_name, "server_ipv6_subnet",
                                          slice_ip6.to_string());
         }
@@ -2519,12 +2519,12 @@ bool MuxOrch::handleMuxCfg(const Request& request)
         auto it = mux_cable_tb_.find(port_name);
         if (it != mux_cable_tb_.end() && it->second->hasSlicePrefix())
         {
-            if (slicedCableCount > 0)
+            if (sliced_cable_count_ > 0)
             {
-                --slicedCableCount;
+                --sliced_cable_count_;
             }
             SWSS_LOG_NOTICE("Mux port '%s' removed had slice prefix (sliced cable count=%zu)",
-                            port_name.c_str(), slicedCableCount);
+                            port_name.c_str(), sliced_cable_count_);
         }
         state_mux_cable_table_->hdel(port_name, "server_ipv6_subnet");
         mux_cable_tb_.erase(port_name);
