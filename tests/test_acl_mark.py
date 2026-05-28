@@ -1,6 +1,5 @@
 import pytest
 from requests import request
-from dvslib.dvs_common import PollingConfig, wait_for_result
 
 OVERLAY_TABLE_TYPE = "UNDERLAY_SET_DSCP"
 OVERLAY_TABLE_NAME = "OVERLAY_MARK_META_TEST"
@@ -100,60 +99,32 @@ class TestAclMarkMeta:
 
 
     def get_acl_rules_with_action(self, dvs_acl, total_rules):
-        """Verify that there are N fully programmed ACL rules in ASIC DB."""
-        return self.wait_for_acl_rules_with_action(dvs_acl, total_rules)
+        """Verify that there are N rules in the ASIC DB."""
+        members = dvs_acl.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY",
+                                               total_rules)
 
-    def wait_for_acl_rules_with_action(self, dvs_acl, total_rules):
-        def _get_acl_rules_with_action():
-            members = dvs_acl.asic_db.wait_for_n_keys(
-                "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY",
-                total_rules,
-                polling_config=PollingConfig(timeout=0, strict=False)
-            )
-            if len(members) != total_rules:
-                return False, {}
+        member_groups = []
+        table_member_map = {}
+        for member in members:
+            fvs = dvs_acl.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", member)
+            table_id = fvs.get("SAI_ACL_ENTRY_ATTR_TABLE_ID")
+            entry = {}
+            entry['id'] = member
+            action = fvs.get("SAI_ACL_ENTRY_ATTR_ACTION_SET_DSCP")
+            if action:
+                entry['action_type'] = "dscp"
+                entry['action_value'] = action
+                meta = fvs.get("SAI_ACL_ENTRY_ATTR_FIELD_ACL_USER_META")
+                entry['match_meta'] = meta.split('&')[0]
+            action = fvs.get("SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA")
+            if action:
+                entry['action_type'] = "meta"
+                entry['action_value'] = action
 
-            table_member_map = {}
-            for member in members:
-                fvs = dvs_acl.asic_db.wait_for_entry(
-                    "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY",
-                    member,
-                    polling_config=PollingConfig(timeout=0, strict=False)
-                )
-                if not fvs:
-                    return False, table_member_map
-
-                table_id = fvs.get("SAI_ACL_ENTRY_ATTR_TABLE_ID")
-                entry = {'id': member}
-                action = fvs.get("SAI_ACL_ENTRY_ATTR_ACTION_SET_DSCP")
-                if action:
-                    meta = fvs.get("SAI_ACL_ENTRY_ATTR_FIELD_ACL_USER_META")
-                    if not meta:
-                        return False, table_member_map
-                    entry['action_type'] = "dscp"
-                    entry['action_value'] = action
-                    entry['match_meta'] = meta.split('&')[0]
-
-                action = fvs.get("SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA")
-                if action:
-                    entry['action_type'] = "meta"
-                    entry['action_value'] = action
-
-                if 'action_type' not in entry or not table_id:
-                    return False, table_member_map
-
-                if table_id not in table_member_map:
-                    table_member_map[table_id] = []
-                table_member_map[table_id].append(entry)
-
-            return True, table_member_map
-
-        _, table_rules = wait_for_result(
-            _get_acl_rules_with_action,
-            PollingConfig(timeout=30.0),
-            f"ACL rules with actions were not fully programmed, expected={total_rules}"
-        )
-        return table_rules
+            if table_id not in table_member_map:
+                table_member_map[table_id] = []
+            table_member_map[table_id].append(entry)
+        return table_member_map
 
     def verify_acl_rules_with_action(self, table_names, acl_table_id, table_rules, meta, dscp):
         for i in range(0, len(table_names)):
@@ -468,7 +439,6 @@ class TestAclMarkMeta:
             for i in range(1, 9):
                 dvs_acl.remove_acl_rule(OVERLAY_TABLE_NAME, str(i))
                 dvs_acl.verify_acl_rule_status(OVERLAY_TABLE_NAME, str(i), None)
-            dvs_acl.verify_no_acl_rules()
         dvs_acl.verify_no_acl_rules()
 
  # Add Dummy always-pass test at end as workaroud

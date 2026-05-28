@@ -2,7 +2,6 @@ import time
 import pytest
 
 from swsscommon import swsscommon
-from dvslib.dvs_common import PollingConfig, wait_for_result
 
 # Supported drop counters
 PORT_INGRESS_DROPS = 'PORT_INGRESS_DROPS'
@@ -65,7 +64,6 @@ PORT_TABLE_NAME = "PORT"
 # applying changes to config DB
 class TestDropCounters(object):
     def setup_db(self, dvs):
-        self.dvs = dvs
         self.asic_db = swsscommon.DBConnector(1, dvs.redis_sock, 0)
         self.config_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         self.flex_db = swsscommon.DBConnector(5, dvs.redis_sock, 0)
@@ -76,36 +74,6 @@ class TestDropCounters(object):
         status, fields = table.get(key)
         assert status
         return fields
-
-    def waitForFlexState(self, stats, counter_list_type):
-        flex_db = self.dvs.get_flex_db()
-
-        def _all_flex_entries_match():
-            keys = flex_db.get_keys(FLEX_COUNTER_TABLE)
-            if not keys:
-                return (False, None)
-
-            observed = {}
-            for oid in keys:
-                attributes = flex_db.get_entry(FLEX_COUNTER_TABLE, oid)
-                if len(attributes) != 1:
-                    return (False, attributes)
-
-                tracked_stats = attributes.get(counter_list_type)
-                if tracked_stats is None:
-                    return (False, attributes)
-
-                observed[oid] = tracked_stats
-                if not all(stat in tracked_stats for stat in stats):
-                    return (False, observed)
-
-            return (True, observed)
-
-        wait_for_result(_all_flex_entries_match, PollingConfig(1, 20, strict=True))
-
-    def waitForNoFlexCounter(self, oid):
-        flex_db = self.dvs.get_flex_db()
-        flex_db.wait_for_deleted_entry(FLEX_COUNTER_TABLE, oid, PollingConfig(1, 20, strict=True))
 
     def checkFlexCounterGroup(self):
         flex_group_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_GROUP_TABLE)
@@ -128,6 +96,17 @@ class TestDropCounters(object):
                 assert group_contents == FLEX_STATUS_ENABLE
             else:
                 assert False
+
+    def checkFlexState(self, stats, counter_list_type):
+        flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
+
+        for oid in flex_counter_table.getKeys():
+            attributes = self.genericGetAndAssert(flex_counter_table, oid)
+            assert len(attributes) == 1
+            field, tracked_stats = attributes[0]
+            assert field == counter_list_type
+            for stat in stats:
+                assert stat in tracked_stats
 
     def checkASICState(self, counter, counter_type, reasons):
         asic_state_table = swsscommon.Table(self.asic_db, ASIC_STATE_TABLE)
@@ -248,7 +227,7 @@ class TestDropCounters(object):
 
         # Verify that the flex counters have been created to poll the new
         # counter.
-        self.waitForFlexState([PORT_STAT_BASE], PORT_DEBUG_COUNTER_LIST)
+        self.checkFlexState([PORT_STAT_BASE], PORT_DEBUG_COUNTER_LIST)
 
         # Verify that the drop counter has been added to ASIC DB with the
         # correct reason added.
@@ -293,7 +272,7 @@ class TestDropCounters(object):
 
         # Verify that the flex counters have been created to poll the new
         # counter.
-        self.waitForFlexState([PORT_STAT_BASE], PORT_DEBUG_COUNTER_LIST)
+        self.checkFlexState([PORT_STAT_BASE], PORT_DEBUG_COUNTER_LIST)
 
         # Verify that the drop counter has been added to ASIC DB with the
         # correct reason added.
@@ -384,7 +363,7 @@ class TestDropCounters(object):
         # Verify that a counter has been created. We will verify the state of
         # the counter in the next step.
         assert len(asic_state_table.getKeys()) == 1
-        self.waitForFlexState([SWITCH_STAT_BASE], SWITCH_DEBUG_COUNTER_LIST)
+        self.checkFlexState([SWITCH_STAT_BASE], SWITCH_DEBUG_COUNTER_LIST)
 
         reason2 = 'ACL_ANY'
         self.add_drop_reason(name, reason2)
@@ -423,7 +402,7 @@ class TestDropCounters(object):
         # Verify that a counter has been created. We will verify the state of
         # the counter in the next step.
         assert len(asic_state_table.getKeys()) == 1
-        self.waitForFlexState([SWITCH_STAT_BASE], SWITCH_DEBUG_COUNTER_LIST)
+        self.checkFlexState([SWITCH_STAT_BASE], SWITCH_DEBUG_COUNTER_LIST)
 
         self.remove_drop_reason(name, reason2)
         time.sleep(3)
@@ -458,7 +437,7 @@ class TestDropCounters(object):
         # Verify that a counter has been created. We will verify the state of
         # the counter in the next step.
         assert len(asic_state_table.getKeys()) == 1
-        self.waitForFlexState([SWITCH_STAT_BASE], SWITCH_DEBUG_COUNTER_LIST)
+        self.checkFlexState([SWITCH_STAT_BASE], SWITCH_DEBUG_COUNTER_LIST)
 
         self.remove_drop_reason(name, reason1)
         time.sleep(3)
@@ -492,7 +471,7 @@ class TestDropCounters(object):
         # Verify that a counter has been created. We will verify the state of
         # the counter in the next step.
         assert len(asic_state_table.getKeys()) == 1
-        self.waitForFlexState([SWITCH_STAT_BASE], SWITCH_DEBUG_COUNTER_LIST)
+        self.checkFlexState([SWITCH_STAT_BASE], SWITCH_DEBUG_COUNTER_LIST)
 
         reason2 = 'ACL_ANY'
         self.add_drop_reason(name, reason2)
@@ -538,7 +517,7 @@ class TestDropCounters(object):
         # Verify that a counter has been created. We will verify the state of
         # the counter in the next step.
         assert len(asic_state_table.getKeys()) == 1
-        self.waitForFlexState([SWITCH_STAT_BASE], SWITCH_DEBUG_COUNTER_LIST)
+        self.checkFlexState([SWITCH_STAT_BASE], SWITCH_DEBUG_COUNTER_LIST)
 
         reason2 = 'ACL_ANY'
         self.add_drop_reason(name, reason2)
@@ -587,7 +566,7 @@ class TestDropCounters(object):
         # Verify that a counter has been created. We will verify the state of
         # the counter in the next step.
         assert len(asic_state_table.getKeys()) == 1
-        self.waitForFlexState([SWITCH_STAT_BASE], SWITCH_DEBUG_COUNTER_LIST)
+        self.checkFlexState([SWITCH_STAT_BASE], SWITCH_DEBUG_COUNTER_LIST)
 
         self.remove_drop_reason(name, reason2)
         time.sleep(3)
@@ -703,8 +682,10 @@ class TestDropCounters(object):
         # get counter oid
         oid = self.getPortOid(dvs, PORT)
 
-        # verifies debug counter doesn't exist for port
-        self.waitForNoFlexCounter(oid)
+        # verifies debug coutner dont exist for port
+        flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
+        status, fields = flex_counter_table.get(oid)
+        assert len(fields) == 0
  
         # add debug counters
         name1 = 'DEBUG_0'
@@ -719,16 +700,19 @@ class TestDropCounters(object):
         self.add_drop_reason(name2, reason2)
         time.sleep(3)
  
-        # verifies debug counter exists for port
-        self.waitForFlexState([PORT_STAT_BASE, 'SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_1_DROPPED_PKTS'],
-                              PORT_DEBUG_COUNTER_LIST)
+        # verifies debug counter exist for port
+        flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
+        status, fields = flex_counter_table.get(oid)
+        assert status == True
+        assert len(fields) == 1
          
         # remove port and wait until it was removed from ASIC DB
         self.dvs_port.remove_port(PORT)
         dvs.get_asic_db().wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", oid)
 
-        # verify that debug counters were removed
-        self.waitForNoFlexCounter(oid)
+        # verify that debug counter were removed
+        status, fields = flex_counter_table.get(oid)
+        assert len(fields) == 0
  
         # add port and wait until the port is added on asic db
         num_of_keys_without_port = len(dvs.get_asic_db().get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT"))
@@ -738,8 +722,9 @@ class TestDropCounters(object):
         
         # verifies that debug counters were added for port
         oid = self.getPortOid(dvs, PORT)
-        self.waitForFlexState([PORT_STAT_BASE, 'SAI_PORT_STAT_OUT_CONFIGURED_DROP_REASONS_1_DROPPED_PKTS'],
-                              PORT_DEBUG_COUNTER_LIST)
+        status, fields = flex_counter_table.get(oid)
+        assert status == True
+        assert len(fields) == 1
         
         # Cleanup for the next test.
         self.delete_drop_counter(name1)
@@ -774,7 +759,7 @@ class TestDropCounters(object):
 
         # Verify that the flex counters are correctly tracking two different
         # drop counters.
-        self.waitForFlexState([PORT_STAT_BASE, PORT_STAT_INDEX_1], PORT_DEBUG_COUNTER_LIST)
+        self.checkFlexState([PORT_STAT_BASE, PORT_STAT_INDEX_1], PORT_DEBUG_COUNTER_LIST)
 
         # Verify that there are two entries in the ASIC DB, one for each counter.
         asic_keys = asic_state_table.getKeys()
@@ -788,7 +773,7 @@ class TestDropCounters(object):
 
         # Verify that the flex counters are tracking ONE drop counter after
         # the update.
-        self.waitForFlexState([PORT_STAT_BASE], PORT_DEBUG_COUNTER_LIST)
+        self.checkFlexState([PORT_STAT_BASE], PORT_DEBUG_COUNTER_LIST)
 
         # Verify that there is ONE entry in the ASIC DB after the update.
         asic_keys = asic_state_table.getKeys()

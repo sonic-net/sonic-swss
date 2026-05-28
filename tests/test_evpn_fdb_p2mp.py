@@ -347,7 +347,7 @@ def test_evpnFdbP2MP(dvs, testlog):
 
     ntf = swsscommon.NotificationProducer(dvs.adb, "NOTIFICATIONS")
     fvp = swsscommon.FieldValuePairs()
-    ntf_data = "[{\"fdb_entry\":\"{\\\"bvid\\\":\\\""+vlan_oid_3+"\\\",\\\"mac\\\":\\\"52:54:00:25:06:E9\\\",\\\"switch_id\\\":\\\""+switch_id+"\\\"}\",\"fdb_event\":\"SAI_FDB_EVENT_MOVE\",\"list\":[{\"id\":\"SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID\",\"value\":\""+iface_2_bridge_port_id["Ethernet0"]+"\"}]}]"
+    ntf_data = "[{\"fdb_entry\":\"{\\\"bvid\\\":\\\""+vlan_oid_3+"\\\",\\\"mac\\\":\\\"52:54:00:25:06:E9\\\",\\\"switch_id\\\":\\\""+switch_id+"\\\"}\",\"fdb_event\":\"SAI_FDB_EVENT_LEARNED\",\"list\":[{\"id\":\"SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID\",\"value\":\""+iface_2_bridge_port_id["Ethernet0"]+"\"}]}]"
     ntf.send("fdb_event", ntf_data, fvp)
 
     time.sleep(2)

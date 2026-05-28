@@ -8,11 +8,9 @@ import l3
 import viplb
 import tables_definition
 
-
 def getCrmCounterValue(dvs, key, counter):
 
-    counters_db = swsscommon.DBConnector(
-        swsscommon.COUNTERS_DB, dvs.redis_sock, 0)
+    counters_db = swsscommon.DBConnector(swsscommon.COUNTERS_DB, dvs.redis_sock, 0)
     crm_stats_table = swsscommon.Table(counters_db, 'CRM')
 
     for k in crm_stats_table.get(key)[1]:
@@ -20,7 +18,6 @@ def getCrmCounterValue(dvs, key, counter):
             return int(k[1])
 
     return 0
-
 
 def crm_update(dvs, field, value):
     cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
@@ -44,13 +41,10 @@ class TestP4RTVIPLB(object):
         self._p4rt_neighbor_obj.set_up_databases(dvs)
         self._p4rt_nexthop_obj.set_up_databases(dvs)
         self._p4rt_viplb_obj.set_up_databases(dvs)
-
-    def _cleanup(self):
-        self._p4rt_tables_definition_obj.clean_up()
-        self._p4rt_router_intf_obj.clean_up()
-        self._p4rt_neighbor_obj.clean_up()
-        self._p4rt_nexthop_obj.clean_up()
-        self._p4rt_viplb_obj.clean_up()
+        self.response_consumer = swsscommon.NotificationConsumer(
+            self._p4rt_viplb_obj.appl_db, "APPL_DB_" +
+            swsscommon.APP_P4RT_TABLE_NAME + "_RESPONSE_CHANNEL"
+        )
 
     def test_VIPv4LBWithGoodNexthopAddUpdateDeletePass(self, dvs, testlog):
         # Initialize L3 objects and database connectors.
@@ -61,8 +55,8 @@ class TestP4RTVIPLB(object):
         tables_definition_key, attr_list = (
             self._p4rt_tables_definition_obj.create_tables_definition()
         )
-        self._p4rt_tables_definition_obj.verify_response(tables_definition_key,
-                                                         attr_list, "SWSS_RC_SUCCESS")
+        util.verify_response(self.response_consumer, tables_definition_key,
+                             attr_list, "SWSS_RC_SUCCESS")
 
         # Set IP type for viplb object.
         self._p4rt_viplb_obj.set_ip_type("IPV4")
@@ -83,22 +77,22 @@ class TestP4RTVIPLB(object):
         router_interface_id, router_intf_key, attr_list = (
             self._p4rt_router_intf_obj.create_router_interface()
         )
-        self._p4rt_router_intf_obj.verify_response(router_intf_key,
-                                                   attr_list, "SWSS_RC_SUCCESS")
+        util.verify_response(self.response_consumer, router_intf_key,
+                             attr_list, "SWSS_RC_SUCCESS")
 
         # Create neighbor.
         neighbor_id, neighbor_key, attr_list = (
             self._p4rt_neighbor_obj.create_neighbor()
         )
-        self._p4rt_neighbor_obj.verify_response(neighbor_key, attr_list,
-                                                "SWSS_RC_SUCCESS")
+        util.verify_response(self.response_consumer, neighbor_key, attr_list,
+                             "SWSS_RC_SUCCESS")
 
         # Create nexthop.
         first_nexthop_id, first_nexthop_key, attr_list = (
             self._p4rt_nexthop_obj.create_next_hop()
         )
-        self._p4rt_nexthop_obj.verify_response(first_nexthop_key, attr_list,
-                                               "SWSS_RC_SUCCESS")
+        util.verify_response(self.response_consumer, first_nexthop_key, attr_list,
+                             "SWSS_RC_SUCCESS")
         # get nexthop_oid of newly created nexthop
         first_nexthop_oid = self._p4rt_nexthop_obj.get_newly_created_nexthop_oid()
         assert first_nexthop_oid is not None
@@ -107,8 +101,8 @@ class TestP4RTVIPLB(object):
         viplb_key, attr_list = (
             self._p4rt_viplb_obj.create_viplb(first_nexthop_id)
         )
-        self._p4rt_viplb_obj.verify_response(viplb_key, attr_list,
-                                             "SWSS_RC_SUCCESS")
+        util.verify_response(self.response_consumer, viplb_key, attr_list,
+                             "SWSS_RC_SUCCESS")
 
         # Query application database for viplb entries.
         viplb_entries = util.get_keys(
@@ -131,70 +125,61 @@ class TestP4RTVIPLB(object):
 
         # get crm counters
         time.sleep(1)
-        used_counter = getCrmCounterValue(
-            dvs, "EXT_TABLE_STATS:"+self._p4rt_viplb_obj.TBL_NAME, 'crm_stats_extension_table_used')
-        avail_counter = getCrmCounterValue(
-            dvs, "EXT_TABLE_STATS:"+self._p4rt_viplb_obj.TBL_NAME, 'crm_stats_extension_table_available')
+        used_counter = getCrmCounterValue(dvs, "EXT_TABLE_STATS:"+self._p4rt_viplb_obj.TBL_NAME, 'crm_stats_extension_table_used')
+        avail_counter = getCrmCounterValue(dvs, "EXT_TABLE_STATS:"+self._p4rt_viplb_obj.TBL_NAME, 'crm_stats_extension_table_available')
         assert used_counter is 1
 
         # Create another router interface.
         router_interface_id, router_intf_key, attr_list = (
-            self._p4rt_router_intf_obj.create_router_interface(
-                router_interace_id="20")
+                self._p4rt_router_intf_obj.create_router_interface(router_interace_id="20")
         )
-        self._p4rt_router_intf_obj.verify_response(router_intf_key,
-                                                   attr_list, "SWSS_RC_SUCCESS")
+        util.verify_response(self.response_consumer, router_intf_key,
+                             attr_list, "SWSS_RC_SUCCESS")
 
         # Create another neighbor.
         neighbor_id, neighbor_key, attr_list = (
-            self._p4rt_neighbor_obj.create_neighbor(
-                router_interface_id="20", neighbor_id="10.0.0.1")
+            self._p4rt_neighbor_obj.create_neighbor(router_interface_id="20", neighbor_id="10.0.0.1")
         )
-        self._p4rt_neighbor_obj.verify_response(neighbor_key, attr_list,
-                                                "SWSS_RC_SUCCESS")
+        util.verify_response(self.response_consumer, neighbor_key, attr_list,
+                             "SWSS_RC_SUCCESS")
 
         # Create another nexthop.
         second_nexthop_id, second_nexthop_key, attr_list = (
-            self._p4rt_nexthop_obj.create_next_hop(
-                router_interface_id="20", neighbor_id="10.0.0.1", nexthop_id="16")
+            self._p4rt_nexthop_obj.create_next_hop(router_interface_id="20", neighbor_id="10.0.0.1", nexthop_id="16")
         )
-        self._p4rt_nexthop_obj.verify_response(second_nexthop_key, attr_list,
-                                               "SWSS_RC_SUCCESS")
+        util.verify_response(self.response_consumer, second_nexthop_key, attr_list,
+                             "SWSS_RC_SUCCESS")
 
         # Update viplb.
         viplb_key, attr_list = (
             self._p4rt_viplb_obj.create_viplb(second_nexthop_id)
         )
-        self._p4rt_viplb_obj.verify_response(viplb_key, attr_list,
-                                             "SWSS_RC_SUCCESS")
+        util.verify_response(self.response_consumer, viplb_key, attr_list,
+                             "SWSS_RC_SUCCESS")
+        
 
         # Remove nexthop.
         self._p4rt_nexthop_obj.remove_app_db_entry(first_nexthop_key)
-        self._p4rt_nexthop_obj.verify_response(first_nexthop_key, [],
-                                               "SWSS_RC_SUCCESS")
+        util.verify_response(self.response_consumer, first_nexthop_key, [],
+                             "SWSS_RC_SUCCESS")
 
         # get crm counters
         time.sleep(1)
-        used_counter = getCrmCounterValue(
-            dvs, "EXT_TABLE_STATS:"+self._p4rt_viplb_obj.TBL_NAME, 'crm_stats_extension_table_used')
-        avail_counter = getCrmCounterValue(
-            dvs, "EXT_TABLE_STATS:"+self._p4rt_viplb_obj.TBL_NAME, 'crm_stats_extension_table_available')
+        used_counter = getCrmCounterValue(dvs, "EXT_TABLE_STATS:"+self._p4rt_viplb_obj.TBL_NAME, 'crm_stats_extension_table_used')
+        avail_counter = getCrmCounterValue(dvs, "EXT_TABLE_STATS:"+self._p4rt_viplb_obj.TBL_NAME, 'crm_stats_extension_table_available')
         assert used_counter is 1
 
         # Remove viplb entry.
         self._p4rt_viplb_obj.remove_app_db_entry(viplb_key)
-        self._p4rt_viplb_obj.verify_response(
-            viplb_key, [], "SWSS_RC_SUCCESS")
+        util.verify_response(
+            self.response_consumer, viplb_key, [], "SWSS_RC_SUCCESS")
 
         # get crm counters
         time.sleep(1)
-        used_counter = getCrmCounterValue(
-            dvs, "EXT_TABLE_STATS:"+self._p4rt_viplb_obj.TBL_NAME, 'crm_stats_extension_table_used')
-        avail_counter = getCrmCounterValue(
-            dvs, "EXT_TABLE_STATS:"+self._p4rt_viplb_obj.TBL_NAME, 'crm_stats_extension_table_available')
+        used_counter = getCrmCounterValue(dvs, "EXT_TABLE_STATS:"+self._p4rt_viplb_obj.TBL_NAME, 'crm_stats_extension_table_used')
+        avail_counter = getCrmCounterValue(dvs, "EXT_TABLE_STATS:"+self._p4rt_viplb_obj.TBL_NAME, 'crm_stats_extension_table_available')
         assert used_counter is 0
 
-        self._cleanup()
 
     def test_VIPv4LBWithBadNexthopAddUpdateDeletePass(self, dvs, testlog):
         # Initialize L3 objects and database connectors.
@@ -205,8 +190,8 @@ class TestP4RTVIPLB(object):
         tables_definition_key, attr_list = (
             self._p4rt_tables_definition_obj.create_tables_definition()
         )
-        self._p4rt_tables_definition_obj.verify_response(tables_definition_key,
-                                                         attr_list, "SWSS_RC_SUCCESS")
+        util.verify_response(self.response_consumer, tables_definition_key,
+                             attr_list, "SWSS_RC_SUCCESS")
 
         # Set IP type for viplb object.
         self._p4rt_viplb_obj.set_ip_type("IPV4")
@@ -215,8 +200,6 @@ class TestP4RTVIPLB(object):
         viplb_key, attr_list = (
             self._p4rt_viplb_obj.create_viplb()
         )
+        util.verify_response(self.response_consumer, viplb_key, attr_list,
+                             "SWSS_RC_INVALID_PARAM", "[OrchAgent] Cross-table reference valdiation failed, no OID found")
 
-        self._cleanup()
-
-        self._p4rt_viplb_obj.verify_response(viplb_key, attr_list,
-                                             "SWSS_RC_INVALID_PARAM", "[OrchAgent] Cross-table reference valdiation failed, no OID found")
