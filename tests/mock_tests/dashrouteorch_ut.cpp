@@ -699,6 +699,7 @@ namespace dashrouteorch_test
         m_DashRouteOrch->doTaskRouteGroupTable(*consumer);
 
         EXPECT_TRUE(consumer->m_toSync.empty());
+    }
 
     TEST_F(DashRouteOrchTest, RouteGroupResultWrittenToDb)
     {
