@@ -6,6 +6,7 @@
 #include "dbconnector.h"
 #include "zmqorch.h"
 #include "zmqserver.h"
+#include "dashorch.h"
 
 struct DashTunnelEndpointEntry
 {
@@ -29,7 +30,7 @@ struct DashTunnelBulkContext
     std::deque<sai_status_t> tunnel_nhop_object_statuses;
     dash::tunnel::Tunnel metadata;
 
-    uint32_t pre_op_result = 0;
+    uint32_t pre_op_result = DASH_RESULT_SUCCESS;
 
     DashTunnelBulkContext() {}
     DashTunnelBulkContext(const DashTunnelBulkContext&) = delete;
@@ -43,7 +44,7 @@ struct DashTunnelBulkContext
         tunnel_member_object_statuses.clear();
         tunnel_nhop_object_ids.clear();
         tunnel_nhop_object_statuses.clear();
-        pre_op_result = 0;
+        pre_op_result = DASH_RESULT_SUCCESS;
     }
 };
 

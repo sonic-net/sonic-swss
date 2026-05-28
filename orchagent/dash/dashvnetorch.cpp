@@ -704,24 +704,27 @@ bool DashVnetOrch::removePaValidationPost(const string& key, const DashVnetBulkC
     {
         sai_status_t status = *it_status++;
         swss::IpAddress underlay_ip(*it_ip);
-        if (status != SAI_STATUS_SUCCESS)
+        if (status != SAI_STATUS_SUCCESS && status != SAI_STATUS_ITEM_NOT_FOUND)
         {
-            if (status == SAI_STATUS_OBJECT_IN_USE)
-            {
-                SWSS_LOG_ERROR("PA validation entry for Vnet %s IP %s still in use",
-                                ctxt.vnet_name.c_str(), it_ip->c_str());
-                it_ip++;
-                continue;
-            }
-
-            SWSS_LOG_ERROR("Failed to remove PA validation entry for %s", key.c_str());
-            
+            SWSS_LOG_ERROR("Failed to remove PA validation entry for Vnet %s IP %s",
+                           ctxt.vnet_name.c_str(), it_ip->c_str());
+            handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_PA_VALIDATION, status);
+            // Leave the IP in underlay_ips so the cache stays consistent with ASIC_DB
+            // and signal the caller that removal did not fully succeed.
+            remove_from_consumer = false;
+            it_ip++;
+            continue;
         }
-        it_ip = vnet_table_[ctxt.vnet_name].underlay_ips.erase(it_ip);
-        if (*it_status == SAI_STATUS_SUCCESS)
+        if (status == SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_INFO("PA validation entry for %s removed", key.c_str());
         }
+        else
+        {
+            SWSS_LOG_INFO("PA validation entry for Vnet %s IP %s already removed",
+                          ctxt.vnet_name.c_str(), it_ip->c_str());
+        }
+        it_ip = vnet_table_[ctxt.vnet_name].underlay_ips.erase(it_ip);
         gCrmOrch->decCrmResUsedCounter(underlay_ip.isV4() ? CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION : CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION);
     }
     return remove_from_consumer;
