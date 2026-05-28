@@ -184,13 +184,6 @@ using namespace std;
         void freeID(uint32_t id);
 
         /*
-         * recover Sonic Object ID map from DB
-         * used in warm reboot
-         * not implemented
-         */
-        int recoverSonicIDMapFromDB();
-
-        /*
          * check if the id is in used
          */
         bool isInUsed(uint32_t id);
@@ -203,7 +196,7 @@ using namespace std;
 
     /* Sonic ID Manager, used to manage all kinds of Sonic NHG id for Sonic NHG Object */
     class SonicIDMgr {
-        /* Allow unit test fixture to access private members for white-box testing */
+        /* Allow unit test fixture to access private members for testing */
         friend struct ut_fpmsyncd::FpmSyncdNhgMgr;
 
     public:
@@ -258,7 +251,7 @@ using namespace std;
 
     /* Sonic PIC entry */
     class SonicPICContentEntry {
-        /* Allow unit test fixture to access private members for white-box testing */
+        /* Allow unit test fixture to access private members for testing */
         friend struct ut_fpmsyncd::FpmSyncdNhgMgr;
 
     public:
@@ -273,12 +266,12 @@ using namespace std;
         /*
          * get DB Fv Vector of SonicPICContentEntry
          */
-        vector<FieldValueTuple> getFvVector();
+        vector<FieldValueTuple> getFvVector() { return m_fvVector; }
 
         /*
          * get SonicPICContentObject of SonicPICContentEntry
          */
-        SonicPICContentObject getNHG();
+        SonicPICContentObject getObj() { return m_sonic_obj; }
 
         /*
          * get the SonicNHGObjectKey of SonicPICContentEntry
@@ -385,11 +378,6 @@ using namespace std;
         int addEntry(SonicPICContentObject sonicObj);
 
         /*
-         * delete entry from SonicPICTable by SonicPICContentObject
-         */
-        void delEntry(SonicPICContentObject sonicObj);
-
-        /*
          * delete entry from SonicPICTable by type and sonic object id
          */
         void delEntry(sonicNhgObjType type, uint32_t id);
@@ -398,11 +386,6 @@ using namespace std;
          * get entry from SonicPICTable by type and sonic object id
          */
         SonicPICContentEntry *getEntry(sonicNhgObjType type, uint32_t id);
-
-        /*
-         * update entry in SonicPICTable
-         */
-        int updateEntry(SonicPICContentObject nhg);
 
         /*
          * write entry to DB
@@ -435,7 +418,7 @@ using namespace std;
 
     /* RIB NHG entry */
     class RIBNHGEntry {
-        /* Allow unit test fixture to access private members for white-box testing */
+        /* Allow unit test fixture to access private members for testing */
         friend struct ut_fpmsyncd::FpmSyncdNhgMgr;
 
     public:
@@ -460,119 +443,115 @@ using namespace std;
         /*
          * get the list of depends RIB ID
          */
-        set<uint32_t> getDependsID();
+        set<uint32_t> getDependsID() { return m_depends; }
 
         /*
          * get the list of dependents RIB ID
          */
-        set<uint32_t> getDependentsID();
+        set<uint32_t> getDependentsID() { return m_dependents; }
 
         /*
          * get the full group of RIBNHGEntry
          * contain <ribID, weight> pair
          */
-        unordered_map<uint32_t, uint16_t> getGroup();
+        unordered_map<uint32_t, uint16_t> getGroup() { return m_group; }
 
         /*
          * get the resolved group of RIBNHGEntry
          * contain <ribID, weight> pair
          */
-        unordered_map<uint32_t, uint16_t> getResolvedGroup();
+        unordered_map<uint32_t, uint16_t> getResolvedGroup() { return m_resolvedGroup; }
 
         /*
          * get the DB FV vector of RIBNHGEntry
          */
-        vector<FieldValueTuple> getFvVector();
+        vector<FieldValueTuple> getFvVector() { return m_fvVector; }
 
         /*
          * get the NextHopGroupFull Object of RIBNHGEntry
          */
-        NextHopGroupFull getNHG();
+        NextHopGroupFull getNHG() { return m_nhg; }
 
         /*
          * get the Sonic Object ID of RIBNHGEntry
          */
-        uint32_t getSonicObjID();
+        uint32_t getSonicObjID() { return m_sonic_obj_id; }
 
         /*
          * get the RIB ID of RIBNHGEntry
          */
-        uint32_t getRIBID();
+        uint32_t getRIBID() { return m_rib_id; }
 
         /*
          * get the address family of RIBNHGEntry
          */
-        uint8_t getAddressFamily();
+        uint8_t getAddressFamily() { return m_af; }
 
         /*
          * get the nexthop str in FV Vector of RIBNHGEntry
          */
-        string getNextHopStr();
+        string getNextHopStr() { return m_nexthop; }
 
         /*
          * get the vpn sid str in FV Vector of RIBNHGEntry
          * only for SRv6 Gateway
          */
-        string getVPNSIDStr();
+        string getVPNSIDStr() { return m_vpnSid; }
 
         /*
          * get the seg src str in FV Vector of RIBNHGEntry
          * only for SRv6 Gateway
          */
-        string getSegSrcStr();
+        string getSegSrcStr() { return m_segSrc; }
 
         /*
          * get the interface name str in FV Vector of RIBNHGEntry
          */
-        string getInterfaceNameStr();
+        string getInterfaceNameStr(){ return m_ifName; }
 
         /*
          * get the sonic pic Object ID of RIBNHGEntry
          * for now only used for SRv6 VPN case
          */
-        uint32_t getSonicPICObjID();
+        uint32_t getSonicPICObjID(){ return m_sonic_pic_obj_id;}
 
         /*
          * get the sonic pic Object type of RIBNHGEntry
          * if not exist, return SONIC_NHG_OBJ_TYPE_NHG_NORMAL
          */
-        sonicNhgObjType getSonicObjType();
+        sonicNhgObjType getSonicObjType(){
+            return m_sonic_obj_type;
+        }
 
         /*
          * check if RIBNHGEntry has sonic pic Object
          */
-        bool hasSonicPICObj();
+        bool hasSonicPICObj() { return m_has_sonic_pic_obj; }
 
         /*
          * check if RIBNHGEntry need write to DB
          */
-        bool needCreateSonicObject() {
-            return m_create_sonic_nhg_obj;
-        }
+        bool needCreateSonicObject() {  return m_create_sonic_nhg_obj; }
 
         /*
          * check if RIBNHGEntry is single nexthop
          */
-        bool isSingleNexthop() {
-            return m_is_single;
-        }
+        bool isSingleNexthop() { return m_is_single;}
 
         /*
          * check if RIBNHGEntry uses shared Sonic NHG
          */
-        bool isSharedSonicNHG() {
-            return m_is_shared_sonic_nhg;
-        }
+        bool isSharedSonicNHG() { return m_is_shared_sonic_nhg; }
 
         /*
          * set the Sonic NHG Object ID of RIBNHGEntry
          */
-        void setSonicNHGObjId(uint32_t id);
+        void setSonicNHGObjId(uint32_t id) { m_sonic_obj_id = id; }
 
         /*
          * set the sonic pic Object ID of RIBNHGEntry
          */
-        void setSonicPICObjId(uint32_t id);
+        void setSonicPICObjId(uint32_t id) { m_sonic_pic_obj_id = id; }
 
         /*
          * set the value of entry from NextHopGroupFull Object
@@ -583,32 +562,33 @@ using namespace std;
         /*
          * set the enable flag true of RIBNHGEntry
          */
-        void enableNHG();
+        void enableNHG() { m_enable = true; }
 
         /*
          * set the enable flag false of RIBNHGEntry
          */
-        void disableNHG();
+        void disableNHG() { m_enable = false; }
 
         /*
          * get the NHG enable status of RIBNHGEntry
          */
-        bool getNhgEnableStatus();
+        bool getNhgEnableStatus() { return m_enable; }
 
         /*
          * get the m_is_srv6_nhg fields to check if NHG has SRv6 Infos
          */
-        bool isSRv6Nhg();
+        bool isSRv6Nhg() { return m_is_srv6_nhg; }
 
         SonicNHGObjectKey getSonicNHGObjectKey(){
             return m_sonic_nhg_key;
         }
+
         /*
          * update entry from NextHopGroupFull Object
          * out: updated, true if the entry is updated
          * out: updatedDependency, true if the entry dependency is updated
          */
-        void checkNeedUpdate(NextHopGroupFull newNHG, uint8_t newAF, bool &updated);
+        bool checkNeedUpdate(NextHopGroupFull newNHG, uint8_t newAF);
 
     private:
 
@@ -706,7 +686,7 @@ using namespace std;
         /*
          * has sonic pic Object flag of the entry
          */
-        bool m_has_sonic_gateway_obj = false;
+        bool m_has_sonic_pic_obj = false;
 
         /*
          * True if with srv6 information or member with srv6 information
@@ -716,7 +696,7 @@ using namespace std;
         /*
          * Sonic PIC Content Object ID of the entry
          */
-        uint32_t m_sonic_gateway_obj_id = 0;
+        uint32_t m_sonic_pic_obj_id = 0;
 
         /*
          * VPN SID str of the entry
@@ -777,7 +757,7 @@ using namespace std;
 
     /* RIB NHG table */
     class RIBNHGTable {
-        /* Allow unit test fixture to access private members for white-box testing */
+        /* Allow unit test fixture to access private members for testing */
         friend struct ut_fpmsyncd::FpmSyncdNhgMgr;
 
     public:
@@ -790,7 +770,7 @@ using namespace std;
         int addEntry(NextHopGroupFull nhg, uint8_t af);
 
         // delete entry from table
-        int delEntry(uint32_t id);
+        void delEntry(uint32_t id);
 
         // update entry in table
         int updateEntry(NextHopGroupFull nhg, uint8_t af, bool &updated);
@@ -845,7 +825,7 @@ using namespace std;
     };
 
     class NHGMgr {
-        /* Allow unit test fixture to access private members for white-box testing */
+        /* Allow unit test fixture to access private members for testing */
         friend struct ut_fpmsyncd::FpmSyncdNhgMgr;
 
     public:
@@ -882,15 +862,6 @@ using namespace std;
         // get SonicPICContentEntry by RIB id
         SonicPICContentEntry *getSonicPICByRIBID(uint32_t id);
 
-        // Not implemented
-        void dump_sonic_pic_table(string &ret);
-
-        // Not implemented
-        void dumpZebraNhgTable(string &ret);
-
-        // Not implemented
-        RIBNHGEntry *getRIBNHGEntryByKey(string key);
-
     private:
         // Map zebra NHG id to received zebra_dplane_ctx + SONIC Context (a.k.a SONIC ZEBRA NHG)
         RIBNHGTable *m_rib_nhg_table;
@@ -909,9 +880,6 @@ using namespace std;
 
         // create Sonic PIC Content Object
         int createSonicPICObject(RIBNHGEntry *entry);
-
-        // update Sonic PIC Content Object
-        int updateSonicPICObject(RIBNHGEntry *entry, uint32_t previousSonicObjID);
 
         // dump NHG Group Full for debugging
         void dumpNHGGroupFull(NextHopGroupFull nhg);
