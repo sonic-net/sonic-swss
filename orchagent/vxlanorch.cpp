@@ -1337,6 +1337,12 @@ VxlanTunnelOrch::VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const st
 
 }
 
+VxlanTunnelOrch::~VxlanTunnelOrch()
+{
+    vxlan_tunnel_table_.clear();
+    vtep_table_.clear();
+}
+
 void VxlanTunnelOrch::doTask(SelectableTimer &timer)
 {
     SWSS_LOG_ENTER();

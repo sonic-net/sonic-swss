@@ -875,6 +875,7 @@ static inline void initSaiRedisCounterEmptyParameter(sai_s8_list_t &sai_s8_list)
 
 static inline void initSaiRedisCounterEmptyParameter(sai_redis_flex_counter_group_parameter_t &flex_counter_group_param)
 {
+    initSaiRedisCounterEmptyParameter(flex_counter_group_param.counter_group_name);
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.poll_interval);
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.operation);
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.stats_mode);

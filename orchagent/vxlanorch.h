@@ -271,6 +271,7 @@ class VxlanTunnelOrch : public Orch2
 {
 public:
     VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const std::string& tableName);
+    ~VxlanTunnelOrch() override;
 
     bool isTunnelExists(const std::string& tunnelName) const
     {
