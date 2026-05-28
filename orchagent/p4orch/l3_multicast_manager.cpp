@@ -26,6 +26,7 @@
 
 extern "C" {
 #include "sai.h"
+#include "saiextensions.h"
 }
 
 using ::p4orch::kTableKeyDelimiter;
@@ -109,6 +110,9 @@ ReturnCodeOr<std::vector<sai_attribute_t>> prepareRifSaiAttrs(
   if (use_vlan) {
     attr.id = SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID;
     attr.value.u16 = multicast_router_interface_entry.vlan_id;
+    attrs.push_back(attr);
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_DISABLE_SUB_PORT_VLAN_CONFIG;
+    attr.value.booldata = true;
     attrs.push_back(attr);
   }
 
