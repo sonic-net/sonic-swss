@@ -1228,13 +1228,13 @@ mod test {
             String::from("session_a"),
             Arc::new(Vec::from(template_256_bytes)),
             Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
-            Some(vec![1, 3]),
+            Some(vec![1, 2]),
         ));
         actor.handle_template(IPFixTemplatesMessage::new(
             String::from("session_b"),
             Arc::new(Vec::from(template_257_bytes)),
             Some(vec!["Ethernet8".to_string(), "Ethernet12".to_string()]),
-            Some(vec![1, 3]),
+            Some(vec![1, 2]),
         ));
 
         let valid_records_bytes: [u8; 144] = [
@@ -1307,12 +1307,12 @@ mod test {
             Some(vec!["Ethernet0".to_string(), "Ethernet1".to_string()]),
             Some(vec![1, 2]),
         ));
+        let mut expected = HashMap::new();
+        expected.insert(1u16, "Ethernet0".to_string());
+        expected.insert(2u16, "Ethernet1".to_string());
         assert_eq!(
-            actor
-                .object_id_name_map
-                .get("session_a")
-                .and_then(|lookup| lookup.get(&1)),
-            Some(&"Ethernet0".to_string())
+            actor.object_id_name_map.get("session_a"),
+            Some(&expected)
         );
 
         actor.handle_template(IPFixTemplatesMessage::new(
@@ -1324,7 +1324,7 @@ mod test {
 
         assert!(
             actor.object_id_name_map.get("session_a").is_none(),
-            "stale object metadata should be cleared when a template update omits it"
+            "stale object_id_name_map entries should be cleared when a template update omits object metadata"
         );
     }
 
