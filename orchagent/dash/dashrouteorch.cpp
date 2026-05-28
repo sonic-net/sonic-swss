@@ -242,6 +242,9 @@ bool DashRouteOrch::removeOutboundRouting(const string& route_group, const IpPre
 
     if (isRouteGroupBound(ctxt.route_group))
     {
+        // Route group is still bound to an ENI, so the route cannot be removed.
+        // Always consume the entry; the existing result row in APP_STATE_DB is left
+        // intact, signaling to the controller that the DEL did not succeed.
         SWSS_LOG_ERROR("Cannot remove route from route group %s as it is already bound", ctxt.route_group.c_str());
         return true;
     }

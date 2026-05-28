@@ -4,12 +4,13 @@
 #include "zmqorch.h"
 #include "dash_api/outbound_port_map_range.pb.h"
 #include "bulker.h"
+#include "dashorch.h"
 
 struct DashPortMapBulkContext
 {
     std::deque<sai_object_id_t> port_map_oids;
     std::deque<sai_status_t> port_map_statuses;
-    uint32_t pre_op_result = 0;
+    uint32_t pre_op_result = DASH_RESULT_SUCCESS;
 
     DashPortMapBulkContext() {}
     DashPortMapBulkContext(const DashPortMapBulkContext &) = delete;
@@ -19,7 +20,7 @@ struct DashPortMapBulkContext
     {
         port_map_oids.clear();
         port_map_statuses.clear();
-        pre_op_result = 0;
+        pre_op_result = DASH_RESULT_SUCCESS;
     }
 };
 
@@ -30,7 +31,7 @@ struct DashPortMapRangeBulkContext
     int end_port;
     dash::outbound_port_map_range::OutboundPortMapRange metadata;
     std::deque<sai_status_t> port_map_range_statuses;
-    uint32_t pre_op_result = 0;
+    uint32_t pre_op_result = DASH_RESULT_SUCCESS;
 
     DashPortMapRangeBulkContext() {}
     DashPortMapRangeBulkContext(const DashPortMapRangeBulkContext &) = delete;
@@ -39,7 +40,7 @@ struct DashPortMapRangeBulkContext
     void clear()
     {
         port_map_range_statuses.clear();
-        pre_op_result = 0;
+        pre_op_result = DASH_RESULT_SUCCESS;
     }
 };
 
