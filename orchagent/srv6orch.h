@@ -5,6 +5,7 @@
 #include <string>
 #include <set>
 #include <unordered_map>
+#include <boost/optional.hpp>
 
 #include "dbconnector.h"
 #include "orch.h"
@@ -144,7 +145,7 @@ typedef map<string, Srv6PrefixAggIdEntry> Srv6PrefixAggIdTableForNhg;
 typedef set<uint32_t> Srv6PrefixAggIdSet;
 typedef map<Srv6TunnelMapEntryKey, Srv6TunnelMapEntryEntry> Srv6TunnelMapEntryTable;
 typedef map<string, Srv6PicContextInfo> Srv6PicContextTable;
-typedef pair<string, sai_tunnel_dscp_mode_t> Srv6MySidDscpCfgCacheVal;
+typedef pair<string, boost::optional<sai_tunnel_dscp_mode_t>> Srv6MySidDscpCfgCacheVal;
 typedef std::unordered_multimap<string, Srv6MySidDscpCfgCacheVal> Srv6MySidDscpCfg;
 
 #define SID_LIST_DELIMITER ','
@@ -196,11 +197,11 @@ class Srv6Orch : public Orch, public Observer
         void mySidCfgCacheRefresh();
         void addMySidCfgCacheEntry(const string& my_sid_key, const vector<FieldValueTuple>& fvs);
         void removeMySidCfgCacheEntry(const string& my_sid_key);
-        bool getMySidEntryDscpMode(const string& my_sid_addr, const MySidLocatorCfg& locator_cfg, sai_tunnel_dscp_mode_t& dscp_mode);
+        bool getMySidEntryDscpMode(const string& my_sid_addr, const MySidLocatorCfg& locator_cfg, boost::optional<sai_tunnel_dscp_mode_t>& dscp_mode);
         bool mySidExists(const string mysid_string);
         bool mySidVrfRequired(const sai_my_sid_entry_endpoint_behavior_t end_behavior);
         bool mySidNextHopRequired(const sai_my_sid_entry_endpoint_behavior_t end_behavior);
-        bool mySidTunnelRequired(const string& my_sid_addr, const sai_my_sid_entry_t& sai_entry, sai_my_sid_entry_endpoint_behavior_t end_behavior, sai_tunnel_dscp_mode_t& dscp_mode);
+        bool mySidTunnelRequired(const string& my_sid_addr, const sai_my_sid_entry_t& sai_entry, sai_my_sid_entry_endpoint_behavior_t end_behavior, boost::optional<sai_tunnel_dscp_mode_t>& dscp_mode);
         void srv6TunnelUpdateNexthops(const string srv6_source, const NextHopKey nhkey, bool insert);
         size_t srv6TunnelNexthopSize(const string srv6_source);
         bool initIpInIpTunnel(MySidIpInIpTunnel& tunnel, sai_tunnel_dscp_mode_t dscp_mode);

@@ -38,6 +38,7 @@ const unordered_map<CounterType, string> FlexCounterManager::counter_id_field_lo
 {
     { CounterType::PORT_DEBUG,          PORT_DEBUG_COUNTER_ID_LIST },
     { CounterType::PORT_PHY_ATTR,       PORT_PHY_ATTR_ID_LIST },
+    { CounterType::PORT_PHY_SERDES_ATTR,PORT_PHY_SERDES_ATTR_ID_LIST },
     { CounterType::SWITCH_DEBUG,        SWITCH_DEBUG_COUNTER_ID_LIST },
     { CounterType::PORT,                PORT_COUNTER_ID_LIST },
     { CounterType::QUEUE,               QUEUE_COUNTER_ID_LIST },
