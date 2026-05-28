@@ -33,6 +33,15 @@ class TestInbandInterface(object):
             time.sleep(1)
         assert len(vrf_keys) == 0
 
+    def wait_for_table_empty(self, table_name):
+        tbl = swsscommon.Table(self.appl_db, table_name)
+        for _ in range(10):
+            keys = tbl.getKeys()
+            if len(keys) == 0:
+                return
+            time.sleep(1)
+        assert len(keys) == 0
+
     def cleanup_mgmt_vrf(self, dvs):
         tbl = swsscommon.Table(self.cfg_db, 'MGMT_VRF_CONFIG')
         tbl._del('vrf_global')
