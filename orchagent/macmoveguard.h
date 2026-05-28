@@ -19,6 +19,15 @@
 #define CFG_MAC_MOVE_GUARD_TABLE_NAME       "MAC_MOVE_GUARD"
 #define STATE_MAC_MOVE_GUARD_TABLE_NAME     "MAC_MOVE_GUARD"
 
+// STATE_DB table where MacMoveGuard publishes which actions it supports on
+// this platform. Single row "ACTIONS"; per-action boolean fields. DISABLE_PORT
+// is always "true"; DISABLE_LEARN_ON_MAC_WITH_ACL depends on a SAI capability
+// probe done in the guard's constructor.
+#define STATE_MMG_CAPABILITY_TABLE_NAME     "MMG_CAPABILITY_TABLE"
+#define MMG_CAPABILITY_ACTIONS_KEY          "ACTIONS"
+#define MMG_ACTION_DISABLE_PORT             "DISABLE_PORT"
+#define MMG_ACTION_DISABLE_LEARN_ON_MAC_WITH_ACL  "DISABLE_LEARN_ON_MAC_WITH_ACL"
+
 // Name under which MacMoveGuard registers its recovery SelectableTimer with the
 // owning FdbOrch's executor list. Exposed so FdbOrch can dispatch timer ticks
 // back to the guard without hard-coding the string in multiple places.
@@ -172,6 +181,10 @@ private:
     static constexpr const char *HW_RESOURCES_KEY    = "HW_RESOURCES";
     static constexpr const char *DISABLED_PORTS_FIELD = "disabled_ports";
 
+    // STATE_DB table where we publish which mitigation actions this platform
+    // supports. Single row, written once from the constructor.
+    std::unique_ptr<swss::Table> m_capabilityTable;
+
     // Shared ACL resources for the DISABLE_LEARN_ON_MAC_WITH_ACL action. The table
     // lifecycle is tied to CONFIG_DB: it is created when the feature is configured
     // with this action and destroyed when the feature is disabled or the action
@@ -182,8 +195,8 @@ private:
 
     // Platform capability for SAI_ACL_ACTION_TYPE_SET_DO_NOT_LEARN at
     // the PRE_INGRESS stage. -1 = not yet queried, 0 = unsupported (action is
-    // soft-disabled), 1 = supported. Queried lazily on first need and cached
-    // for the lifetime of the process.
+    // soft-disabled), 1 = supported. Probed once via SAI from the constructor
+    // and cached for the lifetime of the process.
     int m_aclSetDoNotLearnSupported = -1;
 
     // Core logic
@@ -205,6 +218,7 @@ private:
     bool aclTableMatchesOurSignature(sai_object_id_t table_oid) const;
 
     // DISABLE_LEARN_ON_MAC_WITH_ACL helpers
+    void publishActionCapabilities();
     bool isAclSetDoNotLearnSupported();
     bool ensureLearnDisableAclTable();
     void destroyLearnDisableAclTable();

@@ -42,7 +42,16 @@ MacMoveGuard::MacMoveGuard(DBConnector *configDb, DBConnector *stateDb,
     // offending MAC is still flapping, it will re-trip the threshold and the
     // mitigation will be re-applied.
     m_stateTable.reset(new swss::Table(stateDb, STATE_MAC_MOVE_GUARD_TABLE_NAME));
+    m_capabilityTable.reset(new swss::Table(stateDb, STATE_MMG_CAPABILITY_TABLE_NAME));
     restoreHwResources();
+
+    // Probe DLOMWA support and publish the action-capability row to STATE_DB.
+    // Probing eagerly here (rather than lazily on first DLOMWA configure)
+    // keeps the published row's contents stable for the lifetime of the
+    // process and lets consumers learn what's available before any config is
+    // applied. The result is cached in m_aclSetDoNotLearnSupported.
+    (void)isAclSetDoNotLearnSupported();
+    publishActionCapabilities();
 
     // Register a Consumer for the MAC_MOVE_GUARD CONFIG_DB table on the owning
     // FdbOrch. FdbOrch::doTask(Consumer&) dispatches back into doConfigTask().
@@ -357,18 +366,18 @@ void MacMoveGuard::handleMacMove(const MacMoveNotification &notif)
         if (state.is_bad_mac)
         {
             // Already a bad MAC - extend the action interval
-            SWSS_LOG_NOTICE("MAC_MOVE_GUARD: BAD MAC %s on vlan_oid=0x%" PRIx64
-                           " continues to move (port %s), extending action interval by %us",
-                           notif.mac.to_string().c_str(), notif.bv_id, new_alias.c_str(),
-                           m_recoverySeconds);
+            SWSS_LOG_INFO("MAC_MOVE_GUARD: BAD MAC %s on vlan_oid=0x%" PRIx64
+                          " continues to move (port %s), extending action interval by %us",
+                          notif.mac.to_string().c_str(), notif.bv_id, new_alias.c_str(),
+                          m_recoverySeconds);
         }
         else
         {
             // First time exceeding threshold - mark as bad MAC
-            SWSS_LOG_NOTICE("MAC_MOVE_GUARD: BAD MAC detected: %s on vlan_oid=0x%" PRIx64
-                           ", threshold %u exceeded with %zu moves seen on %zu ports in %us",
-                           notif.mac.to_string().c_str(), notif.bv_id,
-                           m_threshold, state.move_count, state.ports_seen.size(), m_durationSeconds);
+            SWSS_LOG_INFO("MAC_MOVE_GUARD: BAD MAC detected: %s on vlan_oid=0x%" PRIx64
+                          ", threshold %u exceeded with %zu moves seen on %zu ports in %us",
+                          notif.mac.to_string().c_str(), notif.bv_id,
+                          m_threshold, state.move_count, state.ports_seen.size(), m_durationSeconds);
         }
 
         markBadMac(key, state, new_alias);
@@ -950,6 +959,20 @@ bool MacMoveGuard::isAclSetDoNotLearnSupported()
                     "created and no per-MAC entries will be installed", list.count);
     m_aclSetDoNotLearnSupported = 0;
     return false;
+}
+
+// Publish the per-action capability row to STATE_DB. DISABLE_PORT is always
+// "true"; DISABLE_LEARN_ON_MAC_WITH_ACL reflects the platform probe.
+void MacMoveGuard::publishActionCapabilities()
+{
+    SWSS_LOG_ENTER();
+
+    std::vector<FieldValueTuple> fvs = {
+        FieldValueTuple(MMG_ACTION_DISABLE_PORT, "true"),
+        FieldValueTuple(MMG_ACTION_DISABLE_LEARN_ON_MAC_WITH_ACL,
+                        (m_aclSetDoNotLearnSupported == 1) ? "true" : "false"),
+    };
+    m_capabilityTable->set(MMG_CAPABILITY_ACTIONS_KEY, fvs);
 }
 
 // Create the shared pre-ingress ACL table used by DISABLE_LEARN_ON_MAC_WITH_ACL and

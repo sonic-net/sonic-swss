@@ -71,6 +71,8 @@ namespace macmoveguard_test
     static sai_port_api_t   *pold_sai_port_api   = nullptr;
 
     // Capability toggle for SAI_ACL_ACTION_TYPE_SET_DO_NOT_LEARN at PRE_INGRESS.
+    // Drives the SAI hook below; tests flip this BEFORE buildOrch() so the
+    // guard's constructor-time probe sees the desired state.
     static bool g_set_do_not_learn_supported = true;
     // The OID currently bound to SAI_SWITCH_ATTR_PRE_INGRESS_ACL (we mock it).
     static sai_object_id_t g_pre_ingress_acl_bound = SAI_NULL_OBJECT_ID;
@@ -607,8 +609,8 @@ namespace macmoveguard_test
     // -------- 11.1 #6: DLOMWA capability supported -> table created/bound ---
     TEST_F(MacMoveGuardTest, DlomwaCreatesAndBindsTableWhenSupported)
     {
+        // Default _reset_counters leaves g_set_do_not_learn_supported=true.
         buildOrch();
-        g_set_do_not_learn_supported = true;
 
         configure({
             {"enabled","true"}, {"threshold","100"}, {"detect_interval","60"},
@@ -619,13 +621,23 @@ namespace macmoveguard_test
         EXPECT_EQ(g_acl_table_create_count, 1);
         EXPECT_EQ(g_pre_ingress_acl_bound, m_mmg->m_learnDisableAclTable);
         EXPECT_EQ(m_mmg->m_aclSetDoNotLearnSupported, 1);
+
+        // STATE_DB:MMG_CAPABILITY_TABLE|ACTIONS reports both actions supported.
+        swss::Table cap(m_state_db.get(), STATE_MMG_CAPABILITY_TABLE_NAME);
+        std::vector<swss::FieldValueTuple> fvs;
+        ASSERT_TRUE(cap.get(MMG_CAPABILITY_ACTIONS_KEY, fvs));
+        std::map<std::string, std::string> kv;
+        for (auto &fv : fvs) kv[fvField(fv)] = fvValue(fv);
+        EXPECT_EQ(kv[MMG_ACTION_DISABLE_PORT], "true");
+        EXPECT_EQ(kv[MMG_ACTION_DISABLE_LEARN_ON_MAC_WITH_ACL], "true");
     }
 
     // -------- 11.1 #7: DLOMWA capability unsupported -> soft-disabled ------
     TEST_F(MacMoveGuardTest, DlomwaSoftDisabledWhenCapabilityMissing)
     {
-        buildOrch();
+        // Probe runs in the ctor, so the global must be flipped first.
         g_set_do_not_learn_supported = false;
+        buildOrch();
 
         configure({
             {"enabled","true"}, {"threshold","2"}, {"detect_interval","60"},
@@ -648,13 +660,21 @@ namespace macmoveguard_test
         vector<string> keys;
         m_mmg->m_stateTable->getKeys(keys);
         EXPECT_TRUE(keys.empty());
+
+        // STATE_DB:MMG_CAPABILITY_TABLE|ACTIONS reflects DLOMWA as unsupported.
+        swss::Table cap(m_state_db.get(), STATE_MMG_CAPABILITY_TABLE_NAME);
+        std::vector<swss::FieldValueTuple> fvs;
+        ASSERT_TRUE(cap.get(MMG_CAPABILITY_ACTIONS_KEY, fvs));
+        std::map<std::string, std::string> kv;
+        for (auto &fv : fvs) kv[fvField(fv)] = fvValue(fv);
+        EXPECT_EQ(kv[MMG_ACTION_DISABLE_PORT], "true");
+        EXPECT_EQ(kv[MMG_ACTION_DISABLE_LEARN_ON_MAC_WITH_ACL], "false");
     }
 
     // -------- 11.1 #8: DLOMWA entry lifecycle ------------------------------
     TEST_F(MacMoveGuardTest, DlomwaEntryLifecycle)
     {
         buildOrch();
-        g_set_do_not_learn_supported = true;
 
         configure({
             {"enabled","true"}, {"threshold","2"}, {"detect_interval","60"},
@@ -686,7 +706,6 @@ namespace macmoveguard_test
     TEST_F(MacMoveGuardTest, ActionTransitionTearsDownPreviousResources)
     {
         buildOrch();
-        g_set_do_not_learn_supported = true;
 
         // Start with DLOMWA, install an entry.
         configure({
@@ -722,7 +741,6 @@ namespace macmoveguard_test
     TEST_F(MacMoveGuardTest, FeatureDisableCleanupReleasesAllResources)
     {
         buildOrch();
-        g_set_do_not_learn_supported = true;
 
         configure({
             {"enabled","true"}, {"threshold","2"}, {"detect_interval","60"},
