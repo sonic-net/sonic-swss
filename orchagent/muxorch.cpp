@@ -2183,7 +2183,8 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
                 SWSS_LOG_NOTICE("Slice-unsuppressed neighbor %s on %s",
                                 update.entry.ip_address.to_string().c_str(),
                                 update.entry.alias.c_str());
-                return;
+                // Fall through to the mux subnet loop so the now-enabled
+                // neighbor gets associated with its mux cable.
             }
         }
         else
