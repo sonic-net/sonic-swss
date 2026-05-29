@@ -54,46 +54,64 @@ namespace mirrororch_test
         ASSERT_FALSE(ret);
     }
 
-    TEST_F(MirrorOrchTest, FallbackToFullMirrorWhenSampledUnsupported)
+    TEST_F(MirrorOrchTest, CreateEntryRejectsSampledWhenUnsupported)
     {
-        // Verify activateSession falls back to full mirror when sampled not supported
+        // Verify createEntry rejects sample_rate > 0 when platform does not
+        // advertise PORT_INGRESS_SAMPLE_MIRROR capability.
         ASSERT_NE(gSwitchOrch, nullptr);
         ASSERT_NE(gMirrorOrch, nullptr);
 
         gSwitchOrch->m_portIngressMirrorSupported = true;
         gSwitchOrch->m_portIngressSampleMirrorSupported = false;
+        gSwitchOrch->m_samplepacketTruncationSupported = true;
 
-        MirrorEntry entry("");
-        entry.sample_rate = 50000;
-        entry.truncate_size = 128;
+        std::vector<swss::FieldValueTuple> data;
+        data.emplace_back("type", "ERSPAN");
+        data.emplace_back("src_ip", "10.0.0.1");
+        data.emplace_back("dst_ip", "10.0.0.2");
+        data.emplace_back("gre_type", "0x88be");
+        data.emplace_back("dscp", "0");
+        data.emplace_back("ttl", "64");
+        data.emplace_back("queue", "0");
+        data.emplace_back("src_port", "Ethernet0");
+        data.emplace_back("direction", "RX");
+        data.emplace_back("sample_rate", "50000");
 
-        // Note: activateSession requires full neighbor/route resolution which is
-        // not available in mock environment. Testing capability check logic directly.
-        if (!gSwitchOrch->isPortIngressSampleMirrorSupported())
-        {
-            entry.sample_rate = 0;
-            entry.truncate_size = 0;
-        }
-        ASSERT_EQ(entry.sample_rate, (uint32_t)0);
-        ASSERT_EQ(entry.truncate_size, (uint32_t)0);
+        auto status = gMirrorOrch->createEntry("test_reject_sampled", data);
+        ASSERT_EQ(status, task_process_status::task_invalid_entry);
+
+        // No session should have been registered
+        ASSERT_EQ(gMirrorOrch->m_syncdMirrors.count("test_reject_sampled"), (size_t)0);
     }
 
-    TEST_F(MirrorOrchTest, SkipTruncationWhenUnsupported)
+    TEST_F(MirrorOrchTest, CreateEntryRejectsTruncationWhenUnsupported)
     {
-        // Verify createSamplePacket skips truncation when not supported
+        // Verify createEntry rejects truncate_size > 0 when platform does not
+        // advertise SAMPLEPACKET_TRUNCATION capability.
         ASSERT_NE(gSwitchOrch, nullptr);
         ASSERT_NE(gMirrorOrch, nullptr);
 
+        gSwitchOrch->m_portIngressMirrorSupported = true;
         gSwitchOrch->m_portIngressSampleMirrorSupported = true;
         gSwitchOrch->m_samplepacketTruncationSupported = false;
 
-        MirrorEntry entry("");
-        entry.sample_rate = 50000;
-        entry.truncate_size = 128;
+        std::vector<swss::FieldValueTuple> data;
+        data.emplace_back("type", "ERSPAN");
+        data.emplace_back("src_ip", "10.0.0.1");
+        data.emplace_back("dst_ip", "10.0.0.2");
+        data.emplace_back("gre_type", "0x88be");
+        data.emplace_back("dscp", "0");
+        data.emplace_back("ttl", "64");
+        data.emplace_back("queue", "0");
+        data.emplace_back("src_port", "Ethernet0");
+        data.emplace_back("direction", "RX");
+        data.emplace_back("sample_rate", "50000");
+        data.emplace_back("truncate_size", "128");
 
-        // createSamplePacket should detect truncation unsupported and clear truncate_size
-        gMirrorOrch->createSamplePacket("test_session", entry);
-        ASSERT_EQ(entry.truncate_size, (uint32_t)0);
+        auto status = gMirrorOrch->createEntry("test_reject_trunc", data);
+        ASSERT_EQ(status, task_process_status::task_invalid_entry);
+
+        ASSERT_EQ(gMirrorOrch->m_syncdMirrors.count("test_reject_trunc"), (size_t)0);
     }
 
     TEST_F(MirrorOrchTest, RemoveSamplePacketHandlesNullOid)

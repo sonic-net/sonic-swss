@@ -545,6 +545,22 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
         return task_process_status::task_invalid_entry;
     }
 
+    // Platform capability: reject early if sampled mirroring is not supported
+    if (entry.sample_rate > 0 && !m_switchOrch->isPortIngressSampleMirrorSupported())
+    {
+        SWSS_LOG_ERROR("Sampled mirroring not supported on this platform, "
+                       "rejecting session %s", key.c_str());
+        return task_process_status::task_invalid_entry;
+    }
+
+    // Platform capability: reject early if samplepacket truncation is not supported
+    if (entry.truncate_size > 0 && !m_switchOrch->isSamplepacketTruncationSupported())
+    {
+        SWSS_LOG_ERROR("Samplepacket truncation not supported on this platform, "
+                       "rejecting session %s", key.c_str());
+        return task_process_status::task_invalid_entry;
+    }
+
     if (!isHwResourcesAvailable())
     {
         SWSS_LOG_ERROR("Failed to create session %s: HW resources are not available", key.c_str());
@@ -1384,17 +1400,10 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
 
     session.status = true;
 
-    // Create SamplePacket if sample_rate > 0
+    // Create SamplePacket if sample_rate > 0 (capability already verified in createEntry)
     if (session.sample_rate > 0) // LCOV_EXCL_LINE: Covered by VS test
     {
-        if (!m_switchOrch->isPortIngressSampleMirrorSupported()) // LCOV_EXCL_LINE: Covered by VS test
-        {
-            SWSS_LOG_WARN("Sampled mirroring not supported on this platform, " // LCOV_EXCL_LINE: VS always reports capable
-                          "falling back to full mirror for session %s", name.c_str()); // LCOV_EXCL_LINE
-            session.sample_rate = 0; // LCOV_EXCL_LINE
-            session.truncate_size = 0; // LCOV_EXCL_LINE
-        }
-        else if (!createSamplePacket(name, session)) // LCOV_EXCL_LINE: Covered by VS test
+        if (!createSamplePacket(name, session)) // LCOV_EXCL_LINE: Covered by VS test
         {
             SWSS_LOG_ERROR("Failed to create samplepacket, removing mirror session %s", name.c_str()); // LCOV_EXCL_LINE: SAI VS create always succeeds
             sai_mirror_api->remove_mirror_session(session.sessionId); // LCOV_EXCL_LINE
@@ -1534,24 +1543,16 @@ bool MirrorOrch::createSamplePacket(const string& name, MirrorEntry& session)
     attrs[attr_count].value.s32 = SAI_SAMPLEPACKET_TYPE_MIRROR_SESSION;
     attr_count++;
 
+    // Truncation capability already verified in createEntry
     if (session.truncate_size > 0)
     {
-        if (!m_switchOrch->isSamplepacketTruncationSupported())
-        {
-            SWSS_LOG_WARN("Truncation not supported on this platform, "
-                          "skipping truncation for session %s", name.c_str());
-            session.truncate_size = 0;
-        }
-        else
-        {
-            attrs[attr_count].id = SAI_SAMPLEPACKET_ATTR_TRUNCATE_ENABLE;
-            attrs[attr_count].value.booldata = true;
-            attr_count++;
+        attrs[attr_count].id = SAI_SAMPLEPACKET_ATTR_TRUNCATE_ENABLE;
+        attrs[attr_count].value.booldata = true;
+        attr_count++;
 
-            attrs[attr_count].id = SAI_SAMPLEPACKET_ATTR_TRUNCATE_SIZE;
-            attrs[attr_count].value.u32 = session.truncate_size;
-            attr_count++;
-        }
+        attrs[attr_count].id = SAI_SAMPLEPACKET_ATTR_TRUNCATE_SIZE;
+        attrs[attr_count].value.u32 = session.truncate_size;
+        attr_count++;
     }
 
     sai_status_t status = sai_samplepacket_api->create_samplepacket(
