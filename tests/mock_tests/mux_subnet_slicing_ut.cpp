@@ -38,7 +38,9 @@ namespace mux_subnet_slicing_test
     static const string TEST_INTERFACE = "Ethernet4";
     static const string OTHER_INTERFACE = "Ethernet0";
     static const string SLICE_PREFIX = "fc02:1000::/64";
-    static const string SERVER_IP6 = "a::a";
+    // Make server_ipv6 in-slice so the anchor-skip branch of
+    // isSuppressedNeighbor is reachable from tests.
+    static const string SERVER_IP6 = "fc02:1000::1";
     static const string IN_SLICE_IP = "fc02:1000::5";
     static const string IN_SLICE_IP2 = "fc02:1000::6";
     static const string OUT_OF_SLICE_IP = "b::1";
@@ -97,7 +99,7 @@ namespace mux_subnet_slicing_test
                                                                                         { "family", "IPv4" },
                                                                                     });
             intf_table.set(
-                VLAN_1000 + neigh_table.getTableNameSeparator() + "a::1/64", {
+                VLAN_1000 + neigh_table.getTableNameSeparator() + "fc02:1000::100/64", {
                                                                                 { "scope", "global" },
                                                                                 { "family", "IPv6" },
                                                                             });
@@ -234,8 +236,9 @@ namespace mux_subnet_slicing_test
         EXPECT_EQ(nullptr, m_MuxOrch->findMuxCableBySlice(IpAddress(OUT_OF_SLICE_IP)));
     }
 
-    // Truth table for isSuppressedNeighbor: empty port, non-slice port, the
-    // server_ipv6 anchor, and a positive case must all behave correctly.
+    // Truth table for isSuppressedNeighbor: empty port, non-slice port, IP
+    // out of slice, the server_ipv6 anchor (in-slice), a skip neighbor,
+    // and the positive case.
     TEST_F(MuxSubnetSlicingTest, IsSuppressedNeighborTruthTable)
     {
         MuxCable* out = nullptr;
@@ -255,6 +258,13 @@ namespace mux_subnet_slicing_test
         // server_ipv6 anchor on its own port → never suppressed.
         EXPECT_FALSE(m_MuxOrch->isSuppressedNeighbor(IpAddress(SERVER_IP6), TEST_INTERFACE, &out));
         EXPECT_EQ(nullptr, out);
+
+        // Skip neighbor (soc_ipv4/soc_ipv6) → never suppressed even when in slice.
+        const IpAddress skip_ip(IN_SLICE_IP2);
+        m_MuxOrch->skip_neighbors_[skip_ip] = TEST_INTERFACE;
+        EXPECT_FALSE(m_MuxOrch->isSuppressedNeighbor(skip_ip, TEST_INTERFACE, &out));
+        EXPECT_EQ(nullptr, out);
+        m_MuxOrch->skip_neighbors_.erase(skip_ip);
 
         // In-slice IPv6 on the slice cable's port → suppressed, returns cable.
         EXPECT_TRUE(m_MuxOrch->isSuppressedNeighbor(IpAddress(IN_SLICE_IP), TEST_INTERFACE, &out));
@@ -406,5 +416,93 @@ namespace mux_subnet_slicing_test
         gNeighOrch->m_syncdNeighbors.erase(entry);
         gNeighOrch->m_syncdNextHops.erase(nh_key);
         m_MuxOrch->mux_nexthop_tb_.erase(nh_key);
+    }
+
+    // Exercise the "continue" branches in updateFdb's slice reconcile:
+    //   (a-1) MAC mismatch in the suppressed_neighbors_ loop
+    //   (a-2) suppressed entry whose IP is not in any slice
+    //   (b-1) mux_nexthop_tb_ entry with no NH backing → getNeighborEntry fails
+    TEST_F(MuxSubnetSlicingTest, UpdateFdbContinueBranches)
+    {
+        const MacAddress mac_target("aa:bb:cc:dd:ee:10");
+        const MacAddress mac_other("aa:bb:cc:dd:ee:11");
+
+        // (a-1) Suppressed entry whose MAC does not match the FDB update.
+        NeighborEntry other_mac_entry(IpAddress(IN_SLICE_IP), VLAN_1000);
+        m_MuxOrch->suppressed_neighbors_[other_mac_entry] = mac_other;
+
+        // (a-2) Suppressed entry whose IP is out of slice — findMuxCableBySlice
+        // returns null, so the loop must continue past it.
+        NeighborEntry no_slice_entry(IpAddress(OUT_OF_SLICE_IP), VLAN_1000);
+        m_MuxOrch->suppressed_neighbors_[no_slice_entry] = mac_target;
+
+        // (b-1) mux_nexthop_tb_ entry without a corresponding m_syncdNextHops
+        // record forces NeighOrch::getNeighborEntry to short-circuit.
+        NextHopKey orphan_nh(IpAddress("fc02:1000::99"), VLAN_1000);
+        m_MuxOrch->mux_nexthop_tb_[orphan_nh] = OTHER_INTERFACE;
+
+        FdbUpdate update;
+        update.entry.mac = mac_target;
+        update.entry.port_name = TEST_INTERFACE;
+        update.add = true;
+        update.type = "dynamic";
+        m_MuxOrch->updateFdb(update);
+
+        // Entries must remain in place (they were skipped, not acted on).
+        EXPECT_NE(m_MuxOrch->suppressed_neighbors_.end(),
+                  m_MuxOrch->suppressed_neighbors_.find(other_mac_entry));
+        EXPECT_NE(m_MuxOrch->suppressed_neighbors_.end(),
+                  m_MuxOrch->suppressed_neighbors_.find(no_slice_entry));
+        EXPECT_NE(m_MuxOrch->mux_nexthop_tb_.end(),
+                  m_MuxOrch->mux_nexthop_tb_.find(orphan_nh));
+
+        m_MuxOrch->suppressed_neighbors_.erase(other_mac_entry);
+        m_MuxOrch->suppressed_neighbors_.erase(no_slice_entry);
+        m_MuxOrch->mux_nexthop_tb_.erase(orphan_nh);
+    }
+
+    // handleMuxCfg validation paths: IPv4 prefix rejected, zero prefix
+    // rejected, and immutability rejected on the existing cable.
+    TEST_F(MuxSubnetSlicingTest, HandleMuxCfgRejectsInvalidSliceConfigs)
+    {
+        Table cfg = Table(m_config_db.get(), CFG_MUX_CABLE_TABLE_NAME);
+
+        auto reset_to_existing = [&]() {
+            cfg.set(TEST_INTERFACE, { { "server_ipv4", SERVER_IP1 + "/32" },
+                                      { "server_ipv6", SERVER_IP6 + "/128" },
+                                      { "server_ipv6_subnet", SLICE_PREFIX },
+                                      { "state", "auto" } });
+            m_MuxOrch->addExistingData(&cfg);
+            static_cast<Orch *>(m_MuxOrch)->doTask();
+        };
+
+        // (1) IPv4 prefix in server_ipv6_subnet must be rejected.
+        cfg.set(TEST_INTERFACE, { { "server_ipv4", SERVER_IP1 + "/32" },
+                                  { "server_ipv6", SERVER_IP6 + "/128" },
+                                  { "server_ipv6_subnet", "10.0.0.0/8" },
+                                  { "state", "auto" } });
+        m_MuxOrch->addExistingData(&cfg);
+        static_cast<Orch *>(m_MuxOrch)->doTask();
+        // Cable still has the original valid slice — rejection left state intact.
+        EXPECT_EQ(IpPrefix(SLICE_PREFIX), m_MuxCable->getSlicePrefix());
+
+        // (2) Zero-base slice prefix must be rejected.
+        reset_to_existing();
+        cfg.set(TEST_INTERFACE, { { "server_ipv4", SERVER_IP1 + "/32" },
+                                  { "server_ipv6", SERVER_IP6 + "/128" },
+                                  { "server_ipv6_subnet", "::/0" },
+                                  { "state", "auto" } });
+        m_MuxOrch->addExistingData(&cfg);
+        static_cast<Orch *>(m_MuxOrch)->doTask();
+        EXPECT_EQ(IpPrefix(SLICE_PREFIX), m_MuxCable->getSlicePrefix());
+
+        // (3) Changing slice on an existing cable must be rejected.
+        cfg.set(TEST_INTERFACE, { { "server_ipv4", SERVER_IP1 + "/32" },
+                                  { "server_ipv6", SERVER_IP6 + "/128" },
+                                  { "server_ipv6_subnet", "fc02:2000::/64" },
+                                  { "state", "auto" } });
+        m_MuxOrch->addExistingData(&cfg);
+        static_cast<Orch *>(m_MuxOrch)->doTask();
+        EXPECT_EQ(IpPrefix(SLICE_PREFIX), m_MuxCable->getSlicePrefix());
     }
 }
