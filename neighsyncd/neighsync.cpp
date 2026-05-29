@@ -175,28 +175,31 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     intfName = key;
     key+= ":";
 
-    /* Get the vrf name */
-    int ifindex = rtnl_neigh_get_ifindex(neigh);
+    /* Get the vrf name (only needed for the EVPN host-route cleanup path) */
     char master_name[IFNAMSIZ] = {0};
-    if (ifindex > 0)
+    if (m_isEvpnNvoExist)
     {
-        struct rtnl_link *link = rtnl_link_get(m_link_cache, ifindex);
-        if (!link)
+        int ifindex = rtnl_neigh_get_ifindex(neigh);
+        if (ifindex > 0)
         {
-            /* Trying to refill cache */
-            nl_cache_refill(m_nl_sock, m_link_cache);
-            link = rtnl_link_get(m_link_cache, ifindex);
-        }
-
-        if (link)
-        {
-            int master_index = rtnl_link_get_master(link);
-            if (master_index)
+            struct rtnl_link *link = rtnl_link_get(m_link_cache, ifindex);
+            if (!link)
             {
-                /* Get the name of the master device */
-                getIfName(master_index, master_name, IFNAMSIZ);
+                /* Trying to refill cache */
+                nl_cache_refill(m_nl_sock, m_link_cache);
+                link = rtnl_link_get(m_link_cache, ifindex);
             }
-			rtnl_link_put(link);
+
+            if (link)
+            {
+                int master_index = rtnl_link_get_master(link);
+                if (master_index)
+                {
+                    /* Get the name of the master device */
+                    getIfName(master_index, master_name, IFNAMSIZ);
+                }
+                rtnl_link_put(link);
+            }
         }
     }
 
@@ -228,10 +231,21 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     key+= ipStr;
 
     int state = rtnl_neigh_get_state(neigh);
-    /* Ignore probe msg */
-    if ((nlmsg_type == RTM_NEWNEIGH) && (state == NUD_PROBE))
+    /* Ignore probe msg (EVPN only) */
+    if (m_isEvpnNvoExist && (nlmsg_type == RTM_NEWNEIGH) && (state == NUD_PROBE))
     {
         return;
+    }
+
+    /* When EVPN NVO is not configured, preserve the original NUD_NOARP
+     * handling: ignore NOARP neighbors unless they are externally learned. */
+    if (!m_isEvpnNvoExist && (state == NUD_NOARP))
+    {
+        if (!(rtnl_neigh_get_flags(neigh) & NTF_EXT_LEARNED))
+        {
+            SWSS_LOG_INFO("NOARP address received, ignoring for %s", ipStr);
+            return;
+        }
     }
 
     SWSS_LOG_INFO("Get neighbor msg %s, state %d, type %d", ipStr, state, nlmsg_type);
@@ -256,19 +270,13 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     {
         delete_key = true;
     }
-    else if (state == NUD_NOARP)
+    else if (m_isEvpnNvoExist && (state == NUD_NOARP))
     {
         /* NUD_NOARP with NTF_EXT_LEARNED means this is an EVPN-synced neighbor
          * (e.g., from RT-2 MAC/IP via FRR zebra). Keep it — don't delete.
          * NUD_NOARP without NTF_EXT_LEARNED means moved to remote — delete. */
         if (!(rtnl_neigh_get_flags(neigh) & NTF_EXT_LEARNED))
         {
-            if (!m_isEvpnNvoExist)
-            {
-                SWSS_LOG_INFO("NUD_NOARP without NTF_EXT_LEARNED and EVPN NVO is not configured, ignoring for %s", ipStr);
-                return;
-            }
-
             SWSS_LOG_INFO("NUD_NOARP without NTF_EXT_LEARNED, neighbor moved to remote for %s", ipStr);
             delete_key = true;
         }
@@ -321,8 +329,8 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
         }
 
         string hostRoute;
-        /* Always try to del the host route before add neighbor */
-        if (string(master_name).compare(0, 3, VRF_PREFIX) == 0)
+        /* EVPN only: always try to del the host route before add neighbor */
+        if (m_isEvpnNvoExist && string(master_name).compare(0, 3, VRF_PREFIX) == 0)
         {
             hostRoute += master_name;
             hostRoute += ":";

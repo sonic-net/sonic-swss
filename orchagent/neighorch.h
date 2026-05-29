@@ -29,8 +29,6 @@ struct NeighborData
 {
     MacAddress    mac;
     bool          hw_configured = false; // False means, entry is not written to HW
-    bool          deletion_pending = false; // Set to true during the deletion process
-                                            // so that external neighbor lookups fail
     uint32_t      voq_encap_index = 0;
     bool          prefix_route = false; // True means full prefix route is created for this neighbor
 };

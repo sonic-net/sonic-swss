@@ -96,7 +96,7 @@ static inline MuxStateChange mux_state_change (MuxState prev, MuxState curr)
     return MuxStateChange::MUX_STATE_UNKNOWN_STATE;
 }
 
-static sai_status_t create_route(const IpPrefix &pfx, sai_object_id_t nh)
+static sai_status_t create_route(IpPrefix &pfx, sai_object_id_t nh)
 {
     sai_route_entry_t route_entry;
     route_entry.switch_id = gSwitchId;
@@ -193,10 +193,6 @@ static sai_status_t set_route(const IpPrefix& pfx, sai_object_id_t next_hop_id, 
     route_attr.value.oid = next_hop_id;
 
     sai_status_t status = sai_route_api->set_route_entry_attribute(&route_entry, &route_attr);
-    if (status == SAI_STATUS_ITEM_NOT_FOUND && mux_prefix_route)
-    {
-        return create_route(pfx, next_hop_id);
-    }
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set route entry %s nh %" PRIx64 " rv:%d",
@@ -788,23 +784,10 @@ void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, Mu
     }
     else
     {
-        /* Remove the prefix route from ASIC if either:
-         * 1. We are tracking this neighbor in MuxNbrHandler. This covers cases
-         *    where the route was created by addPrefixRouteForNeighbor or
-         *    createStandaloneTunnelRoute, but the prefix_route flag in
-         *    m_syncdNeighbors is inconsistent for zero-MAC ping paths.
-         * 2. The MUX cable is currently standby. This preserves the original
-         *    standby-delete behavior, where the handler removes the tunnel
-         *    prefix route even if its local tracking was already cleared.
-         */
-        if (neighbors_.find(nh.ip_address) != neighbors_.end() || state == MuxState::MUX_STATE_STANDBY)
-        {
-            remove_route(pfx);
-        }
-
         /* if current state is standby, remove the tunnel route */
         if (state == MuxState::MUX_STATE_STANDBY)
         {
+            remove_route(pfx);
             updateTunnelRoute(nh, false);
         }
         neighbors_.erase(nh.ip_address);
@@ -1253,18 +1236,7 @@ void MuxPrefixBasedNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, b
     }
     else
     {
-        /* Remove the prefix route from ASIC if this handler was tracking the
-         * neighbor.  Prefix-based MUX neighbors install a host prefix route in
-         * both ACTIVE and STANDBY states, so deletion must clean it up in both
-         * cases.  The explicit neighbors_ membership check prevents us from
-         * deleting unrelated standalone routes.
-         */
-        if (neighbors_.find(nh.ip_address) != neighbors_.end())
-        {
-            remove_route(pfx);
-        }
-
-        /* For STANDBY, also remove from the tunnel route table. */
+        /* if current state is standby, remove the tunnel route */
         if (state == MuxState::MUX_STATE_STANDBY)
         {
             updateTunnelRoute(nh, false);

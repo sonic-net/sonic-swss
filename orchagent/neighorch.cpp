@@ -961,8 +961,7 @@ bool NeighOrch::getNeighborEntry(const NextHopKey &nexthop, NeighborEntry &neigh
            {
                nbr_alias = entry.first.alias;
            }
-           if (nbr_alias == nexthop.alias &&
-               !entry.second.deletion_pending)
+           if (nbr_alias == nexthop.alias)
            {
               neighborEntry = entry.first;
               macAddress = entry.second.mac;
@@ -1473,7 +1472,7 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
         {
             /* The fdb is still in vxlan port, just save neighbor info */
             SWSS_LOG_NOTICE("Mac %s is still in vxlan port, skip hw programming!", macAddress.to_string().c_str());
-            m_syncdNeighbors[neighborEntry] = { macAddress, hw_config, false, 0, prefix_route };
+            m_syncdNeighbors[neighborEntry] = { macAddress, hw_config, 0, prefix_route };
             return true;
         }
     }
@@ -1585,7 +1584,7 @@ bool NeighOrch::addNeighbor(NeighborContext& ctx)
         SWSS_LOG_NOTICE("Updated neighbor %s on %s", macAddress.to_string().c_str(), alias.c_str());
     }
 
-    m_syncdNeighbors[neighborEntry] = { macAddress, hw_config, false, 0, prefix_route };
+    m_syncdNeighbors[neighborEntry] = { macAddress, hw_config, 0, prefix_route };
 
     NeighborUpdate update = { neighborEntry, macAddress, true };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
@@ -1762,15 +1761,10 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
 
     m_syncdNeighbors.erase(neighborEntry);
 
-    /* Notify observers after the neighbor is removed from the syncd table.
-     * This keeps MuxOrch from dropping references for neighbors that failed
-     * deletion, while still clearing mux nexthop state for neighbors that
-     * are actually removed.
-     */
-    NeighborUpdate post_update = { neighborEntry, MacAddress(), false };
-    notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&post_update));
+    NeighborUpdate update = { neighborEntry, MacAddress(), false };
+    notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
 
-    if (isChassisDbInUse())
+    if(isChassisDbInUse())
     {
         //Sync the neighbor to delete from the CHASSIS_APP_DB
         voqSyncDelNeigh(alias, ip_address);
