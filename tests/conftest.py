@@ -44,6 +44,8 @@ NUM_PORTS = 32
 # Voq asics will have 16 fabric ports created (defined in Azure/sonic-buildimage#7629).
 FABRIC_NUM_PORTS = 16
 
+SINGLE_ASIC_VOQ_FS = "single_asic_voq_fs"
+
 def ensure_system(cmd):
     rc, output = subprocess.getstatusoutput(cmd)
     if rc:
@@ -111,6 +113,12 @@ def pytest_addoption(parser):
                      action="store_true",
                      default=False,
                      help="Collect the test coverage information")
+
+    parser.addoption("--switch-mode",
+                     action="store",
+                     default=None,
+                     type=str,
+                     help="Set switch mode information")
 
 
 def random_string(size=4, chars=string.ascii_uppercase + string.digits):
@@ -294,7 +302,8 @@ class DockerVirtualSwitch:
         newctnname: str = None,
         ctnmounts: Dict[str, str] = None,
         buffer_model: str = None,
-        enable_coverage: bool = False
+        enable_coverage: bool = False,
+        switch_mode: str = None
     ):
         self.basicd = ["redis-server", "rsyslogd"]
         self.swssd = [
@@ -317,6 +326,7 @@ class DockerVirtualSwitch:
         self.vct = vct
         self.ctn = None
         self.enable_coverage = enable_coverage
+        self.switch_mode = switch_mode
 
         self.cleanup = not keeptb
 
@@ -367,8 +377,10 @@ class DockerVirtualSwitch:
                     self.servers.append(server)
 
                 self.mount = f"/var/run/redis-vs/{ctn_sw_name}"
+                self.zmq_mount = f"/zmq/{ctn_sw_name}"
             else:
                 self.mount = "/var/run/redis-vs/{}".format(name)
+                self.zmq_mount = "/zmq/{}".format(name)
 
             self.net_cleanup()
 
@@ -384,11 +396,20 @@ class DockerVirtualSwitch:
                 cr_prefix = os.environ['DEFAULT_CONTAINER_REGISTRY'].rstrip("/") + "/"
             else:
                 cr_prefix = ''
-            self.ctn_sw = self.client.containers.run(cr_prefix + "debian:jessie",
+            self.ctn_sw = self.client.containers.run(cr_prefix + "debian:bookworm",
                                                      privileged=True,
                                                      detach=True,
                                                      command="bash",
                                                      stdin_open=True)
+
+            # Install iproute2 for 'ip' commands used by vct_connect()
+            self.ctn_sw.exec_run("bash -c 'apt-get update -qq && apt-get install -y -qq iproute2'")
+
+            # Clean up eth0 (Docker bridge) to prevent spurious neighbor entries
+            # in NEIGH_TABLE. The apt-get above creates ARP entries on eth0 that
+            # neighsyncd would pick up when the sonic-vs container starts.
+            self.ctn_sw.exec_run("ip addr flush dev eth0")
+            self.ctn_sw.exec_run("sysctl -w net.ipv6.conf.eth0.disable_ipv6=1")
 
             _, output = subprocess.getstatusoutput(f"docker inspect --format '{{{{.State.Pid}}}}' {self.ctn_sw.name}")
             self.ctn_sw_pid = int(output)
@@ -403,12 +424,18 @@ class DockerVirtualSwitch:
             # mount redis to base to unique directory
             self.mount = f"/var/run/redis-vs/{self.ctn_sw.name}"
             ensure_system(f"mkdir -p {self.mount}")
+            self.zmq_mount = f"/zmq/{self.ctn_sw.name}"
+            ensure_system(f"mkdir -p {self.zmq_mount}")
+            print(f"Container Name: {self.ctn_sw.name}")
 
             kwargs = {}
             if newctnname:
                 kwargs["name"] = newctnname
                 self.dvsname = newctnname
-            vols = {self.mount: {"bind": "/var/run/redis", "mode": "rw"}}
+            vols = {
+                self.mount: {"bind": "/var/run/redis", "mode": "rw"},
+                self.zmq_mount: {"bind": "/zmq_swss", "mode": "rw"},
+            }
             if ctnmounts:
                 for k, v in ctnmounts.items():
                     vols[k] = v
@@ -428,6 +455,9 @@ class DockerVirtualSwitch:
         self.pid = int(output)
         self.redis_sock = os.path.join(self.mount, "redis.sock")
         self.redis_chassis_sock = os.path.join(self.mount, "redis_chassis.sock")
+        self.p4orch_zmq_sock = os.path.join(self.zmq_mount, "p4orch_zmq_swss_ep")
+        ensure_system(f"rm -rf /var/run/redis/redis.sock")
+        ensure_system(f"ln -sf {self.redis_sock} /var/run/redis/redis.sock")
 
         self.reset_dbs()
 
@@ -513,6 +543,10 @@ class DockerVirtualSwitch:
         try:
             # temp fix: remove them once they are moved to vs start.sh
             self.ctn.exec_run("sysctl -w net.ipv6.conf.default.disable_ipv6=0")
+            # Disable IPv6 on the Docker bridge interface to prevent
+            # auto-configured link-local addresses from creating spurious
+            # neighbor entries in NEIGH_TABLE.
+            self.ctn.exec_run("sysctl -w net.ipv6.conf.eth0.disable_ipv6=1")
             for i in range(0, 128, 4):
                 self.ctn.exec_run(f"sysctl -w net.ipv6.conf.eth{i + 1}.disable_ipv6=1")
 
@@ -583,7 +617,10 @@ class DockerVirtualSwitch:
         self.get_config_db()
         metadata = self.config_db.get_entry('DEVICE_METADATA|localhost', '')
         if metadata.get('switch_type', 'npu') in ['voq', 'fabric']:
-            num_ports = NUM_PORTS + FABRIC_NUM_PORTS
+            if self.switch_mode and self.switch_mode == SINGLE_ASIC_VOQ_FS:
+                num_ports = NUM_PORTS
+            else:
+                num_ports = NUM_PORTS + FABRIC_NUM_PORTS
 
         # Verify that all ports have been initialized and configured
         app_db = self.get_app_db()
@@ -603,8 +640,9 @@ class DockerVirtualSwitch:
 
         # Verify that fabric ports are monitored in STATE_DB
         if metadata.get('switch_type', 'npu') in ['voq', 'fabric']:
-            self.get_state_db()
-            self.state_db.wait_for_n_keys("FABRIC_PORT_TABLE", FABRIC_NUM_PORTS)
+            if not self.switch_mode or (self.switch_mode and self.switch_mode != SINGLE_ASIC_VOQ_FS):
+                self.get_state_db()
+                self.state_db.wait_for_n_keys("FABRIC_PORT_TABLE", FABRIC_NUM_PORTS)
 
     def net_cleanup(self) -> None:
         """Clean up network, remove extra links."""
@@ -1146,7 +1184,12 @@ class DockerVirtualSwitch:
         If subnet is True, the returned address will include the subnet length (e.g., fe80::aa:bbff:fecc:ddee/64)
         """
         _, output = self.runcmd(f"ip --brief address show {interface}")
-        ipv6 = output.split()[2]
+        ipv6 = None
+        for token in output.split():
+            if token.startswith("fe80:"):
+                ipv6 = token
+                break
+        assert ipv6 is not None, f"No link-local IPv6 address found on {interface}: {output}"
         if not subnet:
             slash = ipv6.find('/')
             if slash > 0:
@@ -1880,6 +1923,7 @@ def manage_dvs(request) -> str:
     force_recreate = request.config.getoption("--force-recreate-dvs")
     graceful_stop = request.config.getoption("--graceful-stop")
     enable_coverage = request.config.getoption("--enable-coverage")
+    switch_mode = request.config.getoption("--switch-mode")
 
     dvs = None
     curr_dvs_env = [] # lgtm[py/unused-local-variable]
@@ -1911,7 +1955,13 @@ def manage_dvs(request) -> str:
                 dvs.get_logs()
                 dvs.destroy()
 
-            dvs = DockerVirtualSwitch(name, imgname, keeptb, new_dvs_env, log_path, max_cpu, forcedvs, buffer_model = buffer_model, enable_coverage=enable_coverage)
+            vol = {}
+            if switch_mode and switch_mode == SINGLE_ASIC_VOQ_FS:
+                cwd = os.getcwd()
+                voq_configs = cwd + "/single_asic_voq_fs"
+                vol[voq_configs] = {"bind": "/usr/share/sonic/single_asic_voq_fs", "mode": "ro"}
+
+            dvs = DockerVirtualSwitch(name, imgname, keeptb, new_dvs_env, log_path, max_cpu, forcedvs, buffer_model = buffer_model, enable_coverage=enable_coverage, ctnmounts=vol, switch_mode=switch_mode)
 
             curr_dvs_env = new_dvs_env
 
