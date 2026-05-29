@@ -6,7 +6,7 @@ import util
 import l3
 import l3_multicast
 import test_vrf
-
+import time
 
 class TestP4RTL3MulticastRouterInterface(object):
   """Tests interacting with multicast router interface table"""
@@ -26,6 +26,29 @@ class TestP4RTL3MulticastRouterInterface(object):
     self.neighbor_asic_db_table = self._p4rt_l3_multicast_router_intf.NEIGHBOR_ENTRY_ASIC_DB_TABLE_NAME
     self.my_mac_asic_db_table = self._p4rt_l3_multicast_router_intf.MY_MAC_ASIC_DB_TABLE_NAME
 
+    # Setup cluster MAC
+        original_my_mac_asic_db_entries = util.get_keys(
+            self._p4rt_l3_multicast_router_intf.asic_db, self.my_mac_asic_db_table)
+        self.my_mac_asic_db_key = None
+        if len(original_my_mac_asic_db_entries) == 1:
+            self.my_mac_asic_db_key = original_my_mac_asic_db_entries[0]
+        else:
+            ps = swsscommon.ProducerStateTable(self._p4rt_l3_multicast_router_intf.appl_db, "SWITCH_TABLE")
+            fvs = swsscommon.FieldValuePairs([("alias_mac", "00:1a:11:17:5f:80")])
+            ps.set("switch", fvs)
+            time.sleep(1)
+            my_mac_asic_entries = util.get_keys(
+                self._p4rt_l3_multicast_router_intf.asic_db, self.my_mac_asic_db_table)
+            assert len(my_mac_asic_entries) == (
+                len(original_my_mac_asic_db_entries) + 1)
+
+            self.my_mac_asic_db_key = None
+            for key in my_mac_asic_entries:
+                if key not in original_my_mac_asic_db_entries:
+                    self.my_mac_asic_db_key = key
+                    break
+        assert self.my_mac_asic_db_key is not None
+
   def _cleanup(self):
     self._p4rt_l3_multicast_router_intf.clean_up()
 
@@ -35,154 +58,6 @@ class TestP4RTL3MulticastRouterInterface(object):
     for key in virt_entries:
       return key
     return "0"
-
-  def test_L3MulticastRouterInterfaceAddUpdateDelete(self, dvs, testlog):
-    """
-    This test attempts to add a multicast router interface entry, confirms the
-    databases are setup correctly, updates the entry to use a different MAC
-    address, confirms the databases are setup correctly, and then deletes the
-    entry.
-    """
-    # Initialize database connectors
-    self._set_up(dvs)
-
-    # Fetch database state after init.
-    original_app_db_entries = util.get_keys(
-        self._p4rt_l3_multicast_router_intf.appl_db, self.appl_db_table)
-    original_asic_db_entries = util.get_keys(
-        self._p4rt_l3_multicast_router_intf.asic_db, self.asic_db_table)
-
-    ####################################
-    # Add operation
-    ####################################
-    # Add one L3 multicast router interface entry.
-    mcast_router_intf_key, attr_list = (
-        self._p4rt_l3_multicast_router_intf.create_router_interface(
-            port_id=None, instance=None, src_mac=None))
-    self._p4rt_l3_multicast_router_intf.verify_response(mcast_router_intf_key,
-                                                        attr_list, "SWSS_RC_SUCCESS")
-
-    # Check that APP DB has expected entry with expected values.
-    mcast_rif_entries = util.get_keys(
-        self._p4rt_l3_multicast_router_intf.appl_db, self.appl_db_table)
-    assert len(mcast_rif_entries) == (len(original_app_db_entries) + 1)
-
-    (status, fvs) = util.get_key(
-        self._p4rt_l3_multicast_router_intf.appl_db,
-        self._p4rt_l3_multicast_router_intf.APP_DB_TBL_NAME,
-        mcast_router_intf_key)
-    assert status == True
-    util.verify_attr(fvs, attr_list)
-
-    # Check that ASIC DB has expected values.
-    mcast_rif_asic_entries = util.get_keys(
-        self._p4rt_l3_multicast_router_intf.asic_db, self.asic_db_table)
-    assert len(mcast_rif_asic_entries) == (len(original_asic_db_entries) + 1)
-
-    asic_db_key = None
-    for key in mcast_rif_asic_entries:
-      if key not in original_asic_db_entries:
-        asic_db_key = key
-        break
-    assert asic_db_key is not None
-    (status, fvs) = util.get_key(
-        self._p4rt_l3_multicast_router_intf.asic_db,
-        self._p4rt_l3_multicast_router_intf.ASIC_DB_TBL_NAME,
-        asic_db_key)
-    assert status == True
-
-    global_vrf_id = self.get_global_vrf_id()
-    port_oid = util.get_port_oid_by_name(
-        dvs, self._p4rt_l3_multicast_router_intf.DEFAULT_PORT_ID)
-
-    attr_list = [
-        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_VIRTUAL_ROUTER_ID,
-         global_vrf_id),
-        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_SRC_MAC,
-         self._p4rt_l3_multicast_router_intf.DEFAULT_SRC_MAC),
-        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_TYPE,
-         self._p4rt_l3_multicast_router_intf.SAI_ATTR_TYPE_PORT),
-        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MTU,
-         self._p4rt_l3_multicast_router_intf.SAI_ATTR_DEFAULT_MTU),
-        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
-        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
-        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
-    ]
-    util.verify_attr(fvs, attr_list)
-
-    ####################################
-    # Update operation
-    ####################################
-    # Update L3 multicast router interface entry to use a different MAC.
-    new_src_mac = "00:66:77:88:99:AA"
-    mcast_router_intf_key, attr_list = (
-        self._p4rt_l3_multicast_router_intf.create_router_interface(
-            port_id=None, instance=None, src_mac=new_src_mac))
-    self._p4rt_l3_multicast_router_intf.verify_response(mcast_router_intf_key,
-                                                        attr_list, "SWSS_RC_SUCCESS")
-
-    # Check that APP DB has expected entry with expected values.
-    mcast_rif_entries = util.get_keys(
-        self._p4rt_l3_multicast_router_intf.appl_db, self.appl_db_table)
-    assert len(mcast_rif_entries) == (len(original_app_db_entries) + 1)
-
-    (status, fvs) = util.get_key(
-        self._p4rt_l3_multicast_router_intf.appl_db,
-        self._p4rt_l3_multicast_router_intf.APP_DB_TBL_NAME,
-        mcast_router_intf_key)
-    assert status == True
-    util.verify_attr(fvs, attr_list)
-
-    # Check that ASIC DB has expected values.
-    mcast_rif_asic_entries = util.get_keys(
-        self._p4rt_l3_multicast_router_intf.asic_db, self.asic_db_table)
-    assert len(mcast_rif_asic_entries) == (len(original_asic_db_entries) + 1)
-
-    asic_db_key = None
-    for key in mcast_rif_asic_entries:
-      if key not in original_asic_db_entries:
-        asic_db_key = key
-        break
-    assert asic_db_key is not None
-    (status, fvs) = util.get_key(
-        self._p4rt_l3_multicast_router_intf.asic_db,
-        self._p4rt_l3_multicast_router_intf.ASIC_DB_TBL_NAME,
-        asic_db_key)
-    assert status == True
-
-    attr_list = [
-        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_VIRTUAL_ROUTER_ID,
-         global_vrf_id),
-        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_SRC_MAC, new_src_mac),
-        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_TYPE,
-         self._p4rt_l3_multicast_router_intf.SAI_ATTR_TYPE_PORT),
-        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MTU,
-         self._p4rt_l3_multicast_router_intf.SAI_ATTR_DEFAULT_MTU),
-        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
-        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
-        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
-    ]
-    util.verify_attr(fvs, attr_list)
-
-    ####################################
-    # Delete operation
-    ####################################
-    self._p4rt_l3_multicast_router_intf.remove_app_db_entry(
-        mcast_router_intf_key)
-    self._p4rt_l3_multicast_router_intf.verify_response(mcast_router_intf_key, [],
-                                                        "SWSS_RC_SUCCESS")
-
-    # Check that entries are gone.
-    mcast_rif_entries = util.get_keys(
-        self._p4rt_l3_multicast_router_intf.appl_db, self.appl_db_table)
-    assert len(mcast_rif_entries) == len(original_app_db_entries)
-
-    # Check that ASIC DB has expected values.
-    mcast_rif_asic_entries = util.get_keys(
-        self._p4rt_l3_multicast_router_intf.asic_db, self.asic_db_table)
-    assert len(mcast_rif_asic_entries) == len(original_asic_db_entries)
-
-    self._cleanup()
 
   def test_L3MulticastRouterInterfaceDeleteUnknown(self, dvs, testlog):
     """
@@ -304,6 +179,8 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, self.my_mac_asic_db_key),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_LABEL, "any_value"),
     ]
     util.verify_attr(fvs_asic, asic_attr_list)
 
@@ -487,7 +364,7 @@ class TestP4RTL3MulticastRouterInterface(object):
             port_id=None, instance=None, src_mac=None,
             dst_mac=self._p4rt_l3_multicast_router_intf.UNUSED_MAC_ADDRESS,
             vlan_id="0x000",
-            action=self._p4rt_l3_multicast_router_intf.MULTICAST_SET_SRC_MAC))
+            action=self._p4rt_l3_multicast_router_intf.DEFAULT_ACTION))
     self._p4rt_l3_multicast_router_intf.verify_response(mcast_router_intf_key,
                                                         attr_list, "SWSS_RC_SUCCESS")
 
@@ -502,26 +379,6 @@ class TestP4RTL3MulticastRouterInterface(object):
         mcast_router_intf_key)
     assert status == True
     util.verify_attr(fvs, attr_list)
-
-    # ------------------------------------------------------
-    # Fetch my MAC oid
-    # ------------------------------------------------------
-    mcast_my_mac_asic_entries = util.get_keys(
-        self._p4rt_l3_multicast_router_intf.asic_db, self.my_mac_asic_db_table)
-    assert len(mcast_my_mac_asic_entries) == (
-        len(original_my_mac_asic_db_entries) + 1)
-
-    my_mac_asic_db_key = None
-    for key in mcast_my_mac_asic_entries:
-      if key not in original_my_mac_asic_db_entries:
-          my_mac_asic_db_key = key
-          break
-    assert my_mac_asic_db_key is not None
-    (status, fvs) = util.get_key(
-        self._p4rt_l3_multicast_router_intf.asic_db,
-        self._p4rt_l3_multicast_router_intf.MY_MAC_ASIC_DB_TABLE_NAME,
-        my_mac_asic_db_key)
-    assert status == True
 
     # ------------------------------------------------------
     # Check that ASIC DB has expected values (RIF).
@@ -559,7 +416,8 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
-        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, my_mac_asic_db_key),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_LABEL, "any_value"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, self.my_mac_asic_db_key),
     ]
     util.verify_attr(fvs, attr_list)
 
@@ -593,6 +451,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE, "false"),
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE, "false"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_LABEL, "any_value"),
     ]
     util.verify_attr(nh_fvs, nh_attr_list)
 
@@ -635,7 +494,7 @@ class TestP4RTL3MulticastRouterInterface(object):
             port_id=None, instance=None, src_mac=new_src_mac,
             dst_mac=self._p4rt_l3_multicast_router_intf.UNUSED_MAC_ADDRESS,
             vlan_id="0x000",
-            action=self._p4rt_l3_multicast_router_intf.MULTICAST_SET_SRC_MAC))
+            action=self._p4rt_l3_multicast_router_intf.DEFAULT_ACTION))
     self._p4rt_l3_multicast_router_intf.verify_response(mcast_router_intf_key,
                                                         attr_list, "SWSS_RC_SUCCESS")
 
@@ -686,7 +545,8 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
-        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, my_mac_asic_db_key),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_LABEL, "any_value"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, self.my_mac_asic_db_key),
     ]
     util.verify_attr(fvs, attr_list)
 
@@ -720,6 +580,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE, "false"),
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE, "false"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_LABEL, "any_value"),
     ]
     util.verify_attr(nh_fvs, nh_attr_list)
 
@@ -833,26 +694,6 @@ class TestP4RTL3MulticastRouterInterface(object):
     util.verify_attr(fvs, attr_list)
 
     # ------------------------------------------------------
-    # Fetch my MAC oid
-    # ------------------------------------------------------
-    mcast_my_mac_asic_entries = util.get_keys(
-        self._p4rt_l3_multicast_router_intf.asic_db, self.my_mac_asic_db_table)
-    assert len(mcast_my_mac_asic_entries) == (
-        len(original_my_mac_asic_db_entries) + 1)
-
-    my_mac_asic_db_key = None
-    for key in mcast_my_mac_asic_entries:
-        if key not in original_my_mac_asic_db_entries:
-            my_mac_asic_db_key = key
-            break
-    assert my_mac_asic_db_key is not None
-    (status, fvs) = util.get_key(
-        self._p4rt_l3_multicast_router_intf.asic_db,
-        self._p4rt_l3_multicast_router_intf.MY_MAC_ASIC_DB_TABLE_NAME,
-        my_mac_asic_db_key)
-    assert status == True
-
-    # ------------------------------------------------------
     # Check that ASIC DB has expected values (RIF).
     # ------------------------------------------------------
     mcast_rif_asic_entries = util.get_keys(
@@ -884,12 +725,14 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_TYPE,
          self._p4rt_l3_multicast_router_intf.SAI_ATTR_TYPE_SUB_PORT),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_OUTER_VLAN_ID, "291"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_DISABLE_SUB_PORT_VLAN_CONFIG, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MTU,
          self._p4rt_l3_multicast_router_intf.SAI_ATTR_DEFAULT_MTU),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
-        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, my_mac_asic_db_key),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_LABEL, "any_value"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, self.my_mac_asic_db_key),
     ]
     util.verify_attr(fvs, attr_list)
 
@@ -923,6 +766,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE, "false"),
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE, "false"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_LABEL, "any_value"),
     ]
     util.verify_attr(nh_fvs, nh_attr_list)
 
@@ -1012,12 +856,14 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_TYPE,
          self._p4rt_l3_multicast_router_intf.SAI_ATTR_TYPE_SUB_PORT),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_OUTER_VLAN_ID, "291"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_DISABLE_SUB_PORT_VLAN_CONFIG, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MTU,
          self._p4rt_l3_multicast_router_intf.SAI_ATTR_DEFAULT_MTU),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
-        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, my_mac_asic_db_key),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_LABEL, "any_value"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, self.my_mac_asic_db_key),
     ]
     util.verify_attr(fvs, attr_list)
 
@@ -1051,6 +897,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE, "false"),
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE, "false"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_LABEL, "any_value"),
     ]
     util.verify_attr(nh_fvs, nh_attr_list)
 
@@ -1164,26 +1011,6 @@ class TestP4RTL3MulticastRouterInterface(object):
     util.verify_attr(fvs, attr_list)
 
     # ------------------------------------------------------
-    # Fetch my MAC oid
-    # ------------------------------------------------------
-    mcast_my_mac_asic_entries = util.get_keys(
-        self._p4rt_l3_multicast_router_intf.asic_db, self.my_mac_asic_db_table)
-    assert len(mcast_my_mac_asic_entries) == (
-        len(original_my_mac_asic_db_entries) + 1)
-
-    my_mac_asic_db_key = None
-    for key in mcast_my_mac_asic_entries:
-        if key not in original_my_mac_asic_db_entries:
-            my_mac_asic_db_key = key
-            break
-    assert my_mac_asic_db_key is not None
-    (status, fvs) = util.get_key(
-        self._p4rt_l3_multicast_router_intf.asic_db,
-        self._p4rt_l3_multicast_router_intf.MY_MAC_ASIC_DB_TABLE_NAME,
-        my_mac_asic_db_key)
-    assert status == True
-
-    # ------------------------------------------------------
     # Check that ASIC DB has expected values (RIF).
     # ------------------------------------------------------
     mcast_rif_asic_entries = util.get_keys(
@@ -1215,12 +1042,14 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_TYPE,
          self._p4rt_l3_multicast_router_intf.SAI_ATTR_TYPE_SUB_PORT),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_OUTER_VLAN_ID, "291"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_DISABLE_SUB_PORT_VLAN_CONFIG, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MTU,
          self._p4rt_l3_multicast_router_intf.SAI_ATTR_DEFAULT_MTU),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
-        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, my_mac_asic_db_key),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_LABEL, "any_value"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, self.my_mac_asic_db_key),
     ]
     util.verify_attr(fvs, attr_list)
 
@@ -1254,6 +1083,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE, "false"),
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE, "false"),
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE, "false"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_LABEL, "any_value"),
     ]
     util.verify_attr(nh_fvs, nh_attr_list)
 
@@ -1343,12 +1173,14 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_TYPE,
          self._p4rt_l3_multicast_router_intf.SAI_ATTR_TYPE_SUB_PORT),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_OUTER_VLAN_ID, "291"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_DISABLE_SUB_PORT_VLAN_CONFIG, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MTU,
          self._p4rt_l3_multicast_router_intf.SAI_ATTR_DEFAULT_MTU),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_PORT_ID, port_oid),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V4_MCAST_ENABLE, "true"),
         (self._p4rt_l3_multicast_router_intf.SAI_ATTR_V6_MCAST_ENABLE, "true"),
-        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, my_mac_asic_db_key),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_LABEL, "any_value"),
+        (self._p4rt_l3_multicast_router_intf.SAI_ATTR_MY_MAC, self.my_mac_asic_db_key),
     ]
     util.verify_attr(fvs, attr_list)
 
@@ -1382,6 +1214,7 @@ class TestP4RTL3MulticastRouterInterface(object):
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_SRC_MAC_REWRITE, "false"),
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_DST_MAC_REWRITE, "false"),
         (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_DISABLE_VLAN_REWRITE, "false"),
+        (self._p4rt_l3_multicast_router_intf.SAI_NEXT_HOP_ATTR_LABEL, "any_value"),
     ]
     util.verify_attr(nh_fvs, nh_attr_list)
 
@@ -1463,8 +1296,6 @@ class TestP4RTL3MulticastGroup(object):
         self._p4rt_l3_multicast_group_intf.TBL_NAME)
     self.asic_db_group_table = (
         self._p4rt_l3_multicast_group_intf.ASIC_DB_GROUP_TBL_NAME)
-    self.asic_db_group_member_table = (
-        self._p4rt_l3_multicast_group_intf.ASIC_DB_GROUP_MEMBER_TBL_NAME)
     self.asic_db_rif_table = (
         self._p4rt_l3_multicast_router_intf.ASIC_DB_TBL_NAME)
     self.asic_db_next_hop_table = (
@@ -1475,6 +1306,30 @@ class TestP4RTL3MulticastGroup(object):
         self._p4rt_l3_multicast_group_intf.L2_ASIC_DB_GROUP_MEMBER_TBL_NAME)
     self.asic_db_bridge_port_table = (
         self._p4rt_l3_multicast_router_intf.L2_ASIC_DB_TBL_NAME)
+
+    # Setup cluster MAC
+        self.my_mac_asic_db_table = self._p4rt_l3_multicast_router_intf.MY_MAC_ASIC_DB_TABLE_NAME
+        original_my_mac_asic_db_entries = util.get_keys(
+            self._p4rt_l3_multicast_router_intf.asic_db, self.my_mac_asic_db_table)
+        self.my_mac_asic_db_key = None
+        if len(original_my_mac_asic_db_entries) == 1:
+            self.my_mac_asic_db_key = original_my_mac_asic_db_entries[0]
+        else:
+            ps = swsscommon.ProducerStateTable(self._p4rt_l3_multicast_router_intf.appl_db, "SWITCH_TABLE")
+            fvs = swsscommon.FieldValuePairs([("alias_mac", "00:1a:11:17:5f:80")])
+            ps.set("switch", fvs)
+            time.sleep(1)
+            my_mac_asic_entries = util.get_keys(
+                self._p4rt_l3_multicast_router_intf.asic_db, self.my_mac_asic_db_table)
+            assert len(my_mac_asic_entries) == (
+                len(original_my_mac_asic_db_entries) + 1)
+
+            self.my_mac_asic_db_key = None
+            for key in my_mac_asic_entries:
+                if key not in original_my_mac_asic_db_entries:
+                    self.my_mac_asic_db_key = key
+                    break
+        assert self.my_mac_asic_db_key is not None
 
   def _cleanup(self):
     self._p4rt_l3_multicast_router_intf.clean_up()
@@ -1499,18 +1354,6 @@ class TestP4RTL3MulticastGroup(object):
       if key not in original_entries:
         return key
     return "0"
-
-  def get_added_multicast_group_member_oids(self, original_entries):
-    """Returns OID keys of multicast group members added"""
-    member_oids = []
-
-    group_member_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self._p4rt_l3_multicast_group_intf.ASIC_DB_GROUP_MEMBER_TBL_NAME)
-    for key in group_member_entries:
-      if key not in original_entries:
-        member_oids.append(key)
-    return member_oids
 
   def get_added_l2_multicast_group_member_oids(self, original_entries):
     """Returns OID keys of L2 multicast group members added"""
@@ -1585,7 +1428,7 @@ class TestP4RTL3MulticastGroup(object):
             port_id, instance, src_mac,
             dst_mac=self._p4rt_l3_multicast_router_intf.UNUSED_MAC_ADDRESS,
             vlan_id="0x000",
-            action=self._p4rt_l3_multicast_router_intf.MULTICAST_SET_SRC_MAC))
+            action=self._p4rt_l3_multicast_router_intf.DEFAULT_ACTION))
     self._p4rt_l3_multicast_router_intf.verify_response(mcast_router_intf_key,
                                                         attr_list, "SWSS_RC_SUCCESS")
     rif_oid = self.get_added_rif_oid(start_asic_db_rif_entries)
@@ -1606,103 +1449,20 @@ class TestP4RTL3MulticastGroup(object):
     bridge_port_oid = self.get_added_bridge_port_oid(start_asic_db_bridge_port_entries)
     return bridge_port_oid
 
-  def add_and_verify_multicast_group(self, group_id=None, replicas=None,
-                                     rif_oids=None, new_replicas=None,
-                                     group_oid=None):
-    """Adds a multicast group entry and verifies APP DB and ASIC DB"""
-    start_app_db_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.appl_db, self.appl_db_table)
-    start_asic_db_group_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_table)
-    start_asic_db_group_member_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_member_table)
-    assert len(rif_oids) == len(new_replicas)
-
-    # Add the group member.
-    mcast_group_key, attr_list = (
-        self._p4rt_l3_multicast_group_intf.create_multicast_group_entry(
-            group_id=group_id, replicas=replicas))
-    self._p4rt_l3_multicast_group_intf.verify_response(mcast_group_key,
-                                                       attr_list, "SWSS_RC_SUCCESS")
-
-    # Check that APP DB has expected entry with expected values.
-    mcast_group_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.appl_db, self.appl_db_table)
-    # If we provided a group_oid, we expected the entry to already exist.
-    if group_oid is not None:
-      assert len(mcast_group_entries) == len(start_app_db_entries)
-
-    (status, fvs) = util.get_key(
-        self._p4rt_l3_multicast_group_intf.appl_db,
-        self._p4rt_l3_multicast_group_intf.APP_DB_TBL_NAME,
-        mcast_group_key)
-    assert status == True
-    util.verify_attr(fvs, attr_list)
-
-    # Check that ASIC DB has expected value
-    mcast_group_asic_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_table)
-    if group_oid is not None:
-      # If we provided a group_oid, that means we expected the group OID to
-      # already exist.
-      assert len(mcast_group_asic_entries) == (
-          len(start_asic_db_group_entries))
-      group_oid_to_ret = group_oid
-    else:
-      # There are no attributes to check for the group.  We just need to check
-      # that there is a new entry.
-      assert len(mcast_group_asic_entries) == (len(start_asic_db_group_entries) + 1)
-      group_oid_to_ret = self.get_added_multicast_group_oid(
-          start_asic_db_group_entries)
-
-    # Verify group member.
-    mcast_group_member_asic_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_member_table)
-    assert len(mcast_group_member_asic_entries) == (
-        len(start_asic_db_group_member_entries) + len(new_replicas))
-
-    new_group_member_oids = self.get_added_multicast_group_member_oids(
-        start_asic_db_group_member_entries)
-    assert len(new_group_member_oids) == len(new_replicas)
-
-    for idx, group_member_oid in enumerate(new_group_member_oids):
-      (status_asic_group_member, fvs_asic_group_member) = util.get_key(
-          self._p4rt_l3_multicast_group_intf.asic_db,
-          self._p4rt_l3_multicast_group_intf.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-          group_member_oid)
-      assert status_asic_group_member == True
-
-      asic_group_member_attr_list = [
-          (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_ID,
-           group_oid_to_ret),
-          (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_OUTPUT_ID,
-           rif_oids[idx]),
-      ]
-      util.verify_attr(fvs_asic_group_member, asic_group_member_attr_list)
-    return mcast_group_key, attr_list, group_oid_to_ret, new_group_member_oids
-
-  def add_and_verify_multicast_group_with_next_hop(self, group_id=None,
-                                                   replicas=None, next_hop_oids=None,
-                                                   new_replicas=None, group_oid=None):
+  def add_and_verify_multicast_group_with_next_hop(
+    self, group_id=None, replicas=None, backups=[], next_hop_oids=None,
+    group_oid=None):
     """Adds a multicast group entry that uses next hop and verifies APP DB and ASIC DB"""
     start_app_db_entries = util.get_keys(
         self._p4rt_l3_multicast_group_intf.appl_db, self.appl_db_table)
     start_asic_db_group_entries = util.get_keys(
         self._p4rt_l3_multicast_group_intf.asic_db,
         self.asic_db_group_table)
-    start_asic_db_group_member_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_member_table)
-    assert len(next_hop_oids) == len(new_replicas)
 
     # Add the group member.
     mcast_group_key, attr_list = (
         self._p4rt_l3_multicast_group_intf.create_multicast_group_entry(
-            group_id=group_id, replicas=replicas))
+            group_id=group_id, replicas=replicas, backups=backups))
     self._p4rt_l3_multicast_group_intf.verify_response(mcast_group_key,
                                                        attr_list, "SWSS_RC_SUCCESS")
 
@@ -1733,40 +1493,26 @@ class TestP4RTL3MulticastGroup(object):
             len(start_asic_db_group_entries))
         group_oid_to_ret = group_oid
     else:
-        # There are no attributes to check for the group.  We just need to check
-        # that there is a new entry.
         assert len(mcast_group_asic_entries) == (
             len(start_asic_db_group_entries) + 1)
         group_oid_to_ret = self.get_added_multicast_group_oid(
             start_asic_db_group_entries)
 
-    # Verify group member.
-    mcast_group_member_asic_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_member_table)
-    assert len(mcast_group_member_asic_entries) == (
-        len(start_asic_db_group_member_entries) + len(new_replicas))
-
-    new_group_member_oids = self.get_added_multicast_group_member_oids(
-        start_asic_db_group_member_entries)
-    assert len(new_group_member_oids) == len(new_replicas)
-
-    for idx, group_member_oid in enumerate(new_group_member_oids):
-        (status_asic_group_member, fvs_asic_group_member) = util.get_key(
-            self._p4rt_l3_multicast_group_intf.asic_db,
-            self._p4rt_l3_multicast_group_intf.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-            group_member_oid)
-        assert status_asic_group_member == True
-
-        asic_group_member_attr_list = [
-            (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_ID,
-             group_oid_to_ret),
-            (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_OUTPUT_ID,
-             next_hop_oids[idx]),
-        ]
-        util.verify_attr(fvs_asic_group_member,
-                         asic_group_member_attr_list)
-    return mcast_group_key, attr_list, group_oid_to_ret, new_group_member_oids
+    (status_asic_group, fvs_asic_group) = util.get_key(
+         self._p4rt_l3_multicast_group_intf.asic_db,
+            self._p4rt_l3_multicast_group_intf.ASIC_DB_GROUP_TBL_NAME,
+            group_oid_to_ret)
+    assert status_asic_group == True
+    asic_group_attr_list = [
+        (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_LABEL,
+            "any_value"),
+        (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_WITH_MEMBERS,
+            "true"),
+        (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_OUTPUT_NH_LIST,
+            str(len(next_hop_oids)) + ":" + ",".join(next_hop_oids)),
+    ]
+    util.verify_attr(fvs_asic_group, asic_group_attr_list)
+    return mcast_group_key, attr_list, group_oid_to_ret
 
   def add_and_verify_l2_multicast_group(self, group_id=None, replicas=None,
                                         bridge_port_oids=None,
@@ -1824,6 +1570,17 @@ class TestP4RTL3MulticastGroup(object):
         group_oid_to_ret = self.get_added_l2_multicast_group_oid(
             start_asic_db_group_entries)
 
+    (status_asic_group, fvs_asic_group) = util.get_key(
+         self._p4rt_l3_multicast_group_intf.asic_db,
+         self._p4rt_l3_multicast_group_intf.L2_ASIC_DB_GROUP_TBL_NAME,
+         group_oid_to_ret)
+    assert status_asic_group == True
+    asic_group_attr_list = [
+        (self._p4rt_l3_multicast_group_intf.SAI_ATTR_L2MC_GROUP_LABEL,
+         "any_value"),
+    ]
+    util.verify_attr(fvs_asic_group, asic_group_attr_list)
+
     # Verify group member.
     mcast_group_member_asic_entries = util.get_keys(
         self._p4rt_l3_multicast_group_intf.asic_db,
@@ -1854,82 +1611,6 @@ class TestP4RTL3MulticastGroup(object):
 
     self._cleanup()
 
-  def test_L3MulticastGroupAddUpdateDelete(self, dvs, testlog):
-    """
-    This test adds a muliticast group member, confirms a group and a member
-    were created, confirms an update operation can add a new member, and then
-    deletes the group.
-    """
-    self._set_up(dvs)
-
-    # Fetch database state after init.
-    original_app_db_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.appl_db, self.appl_db_table)
-    original_asic_db_rif_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_rif_table)
-    original_asic_db_group_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_table)
-    original_asic_db_group_member_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_member_table)
-
-    # To be able to add multicast groups and members, we need the corresponding
-    # router interface to have been created.
-    rif_oid_0 = self.add_rif()
-    rif_oid_1 = self.add_rif(port_id="Ethernet4")
-
-    ####################################
-    # Add operation
-    ####################################
-    # Add one L3 multicast group entry (one group member).
-    mcast_group_key, attr_list, group_oid, group_member_oids = (
-        self.add_and_verify_multicast_group(replicas=[("Ethernet8", "0x0")],
-                                            rif_oids=[rif_oid_0],
-                                            new_replicas=[("Ethernet8", "0x0")]))
-
-    ####################################
-    # Update operation
-    ####################################
-    # We'll add a new replica to the same multicast group.
-    mcast_group_key_1, attr_list_1, group_oid_1, group_member_oids_1 = (
-        self.add_and_verify_multicast_group(replicas=[("Ethernet8", "0x0"),
-                                                      ("Ethernet4", "0x0")],
-                                            rif_oids=[rif_oid_1],
-                                            new_replicas=[("Ethernet4", "0x0")],
-                                            group_oid=group_oid))
-
-    ####################################
-    # Delete operation
-    ####################################
-    self._p4rt_l3_multicast_group_intf.remove_app_db_entry(mcast_group_key)
-    self._p4rt_l3_multicast_group_intf.verify_response(mcast_group_key, [],
-                                                       "SWSS_RC_SUCCESS")
-
-    # Check that APP DB entry was removed.
-    mcast_group_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.appl_db, self.appl_db_table)
-    assert len(mcast_group_entries) == len(original_app_db_entries)
-
-    # Check that ASIC DB entries were removed (both group and member).
-    mcast_group_asic_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_table)
-    assert len(mcast_group_asic_entries) == len(original_asic_db_group_entries)
-    mcast_group_member_asic_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_member_table)
-    assert len(mcast_group_member_asic_entries) == (
-        len(original_asic_db_group_member_entries))
-
-    self._cleanup()
-
-    ####################################
-    # Cleanup
-    ####################################
-    dvs.restart()
-
   def test_L3MulticastGroupAddTwoDeleteOne(self, dvs, testlog):
     """
     This test adds two muliticast group members, confirms the group members were
@@ -1946,70 +1627,36 @@ class TestP4RTL3MulticastGroup(object):
     original_asic_db_group_entries = util.get_keys(
         self._p4rt_l3_multicast_group_intf.asic_db,
         self.asic_db_group_table)
-    original_asic_db_group_member_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_member_table)
 
     # For this test, we need to setup two RIFs (for the two group members).
-    rif_oid_0 = self.add_rif()
-    rif_oid_1 = self.add_rif(port_id="Ethernet4")
+    rif_oid_0, next_hop_oid_0 = self.add_rif_and_next_hop()
+    rif_oid_1, next_hop_oid_1 = self.add_rif_and_next_hop(port_id="Ethernet4")
 
     ####################################
-    # Add operations
+    # Create group
     ####################################
-    # Add two group members to same multicast group.  We add one replica at a
-    # time to allow us to determine which group_member oid was assigned to each.
-    mcast_group_key_a, attr_list_a, group_oid_a, group_member_oids_a = (
-        self.add_and_verify_multicast_group(replicas=[("Ethernet8", "0x0")],
-                                            rif_oids=[rif_oid_0],
-                                            new_replicas=[("Ethernet8", "0x0")]))
-    mcast_group_key_b, attr_list_b, group_oid_b, group_member_oids_b = (
-        self.add_and_verify_multicast_group(replicas=[("Ethernet8", "0x0"),
-                                                      ("Ethernet4", "0x0")],
-                                            rif_oids=[rif_oid_1],
-                                            new_replicas=[("Ethernet4", "0x0")],
-                                            group_oid=group_oid_a))
+    mcast_group_key_a, attr_list_a, group_oid_a = (
+        self.add_and_verify_multicast_group_with_next_hop(
+            replicas=[("Ethernet8", "0x0")],
+            next_hop_oids=[next_hop_oid_0]))
 
     ####################################
-    # Delete group member (via update operation)
+    # Add a new group member
     ####################################
-    mcast_group_key_1, attr_list_1 = (
-        self._p4rt_l3_multicast_group_intf.create_multicast_group_entry(
-            replicas=[("Ethernet4", "0x0")]))
-    self._p4rt_l3_multicast_group_intf.verify_response(mcast_group_key_1,
-                                                       attr_list_1, "SWSS_RC_SUCCESS")
+    mcast_group_key_b, attr_list_b, group_oid_b = (
+        self.add_and_verify_multicast_group_with_next_hop(
+            replicas=[("Ethernet8", "0x0"), ("Ethernet4", "0x0")],
+            next_hop_oids=[next_hop_oid_0, next_hop_oid_1],
+            group_oid=group_oid_a))
 
-    # Check that APP DB entry is still there.
-    mcast_group_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.appl_db, self.appl_db_table)
-    assert len(mcast_group_entries) == (len(original_app_db_entries) + 1)
-
-    # Check that ASIC DB entries were removed (both group and member).
-    mcast_group_asic_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_table)
-    assert len(mcast_group_asic_entries) == (
-        len(original_asic_db_group_entries) + 1)
-    mcast_group_member_asic_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_member_table)
-    assert len(mcast_group_member_asic_entries) == (
-        len(original_asic_db_group_member_entries) + 1)
-
-    # Confirm that Ethernet4 replica is still there.
-    (status_asic_group_member, fvs_asic_group_member) = util.get_key(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self._p4rt_l3_multicast_group_intf.ASIC_DB_GROUP_MEMBER_TBL_NAME,
-        group_member_oids_b[0])
-    assert status_asic_group_member == True
-
-    asic_group_member_attr_list = [
-        (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_ID,
-         group_oid_a),
-        (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_OUTPUT_ID,
-         rif_oid_1),
-    ]
-    util.verify_attr(fvs_asic_group_member, asic_group_member_attr_list)
+    ####################################
+    # Delete a group member
+    ####################################
+    mcast_group_key_c, attr_list_c, group_oid_c = (
+        self.add_and_verify_multicast_group_with_next_hop(
+            replicas=[("Ethernet4", "0x0")],
+            next_hop_oids=[next_hop_oid_1],
+            group_oid=group_oid_b))
 
     self._cleanup()
 
@@ -2030,9 +1677,6 @@ class TestP4RTL3MulticastGroup(object):
     original_asic_db_group_entries = util.get_keys(
         self._p4rt_l3_multicast_group_intf.asic_db,
         self.asic_db_group_table)
-    original_asic_db_group_member_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_member_table)
 
     ####################################
     # Delete operation
@@ -2055,11 +1699,6 @@ class TestP4RTL3MulticastGroup(object):
         self._p4rt_l3_multicast_group_intf.asic_db,
         self.asic_db_group_table)
     assert len(mcast_group_asic_entries) == len(original_asic_db_group_entries)
-    mcast_group_member_asic_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_member_table)
-    assert len(mcast_group_member_asic_entries) == (
-        len(original_asic_db_group_member_entries))
 
     self._cleanup()
 
@@ -2073,9 +1712,6 @@ class TestP4RTL3MulticastGroup(object):
     original_asic_db_group_entries = util.get_keys(
         self._p4rt_l3_multicast_group_intf.asic_db,
         self.asic_db_group_table)
-    original_asic_db_group_member_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_member_table)
 
     ####################################
     # Add operation
@@ -2095,11 +1731,6 @@ class TestP4RTL3MulticastGroup(object):
         self._p4rt_l3_multicast_group_intf.asic_db,
         self.asic_db_group_table)
     assert len(mcast_group_asic_entries) == len(original_asic_db_group_entries)
-    mcast_group_member_asic_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_member_table)
-    assert len(mcast_group_member_asic_entries) == (
-        len(original_asic_db_group_member_entries))
 
     self._cleanup()
 
@@ -2202,9 +1833,6 @@ class TestP4RTL3MulticastGroup(object):
     original_asic_db_group_entries = util.get_keys(
         self._p4rt_l3_multicast_group_intf.asic_db,
         self.asic_db_group_table)
-    original_asic_db_group_member_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_member_table)
 
     # To be able to add multicast groups and members, we need the corresponding
     # router interfaces and next hops to have been created.
@@ -2215,21 +1843,19 @@ class TestP4RTL3MulticastGroup(object):
     # Add operation
     ####################################
     # Add one L3 multicast group entry (one group member).
-    mcast_group_key, attr_list, group_oid, group_member_oids = (
+    mcast_group_key, attr_list, group_oid = (
         self.add_and_verify_multicast_group_with_next_hop(
             replicas=[("Ethernet8", "0x0")],
-            next_hop_oids=[next_hop_oid_0],
-            new_replicas=[("Ethernet8", "0x0")]))
+            next_hop_oids=[next_hop_oid_0]))
 
     ####################################
     # Update operation
     ####################################
     # We'll add a new replica to the same multicast group.
-    mcast_group_key_1, attr_list_1, group_oid_1, group_member_oids_1 = (
+    mcast_group_key_1, attr_list_1, group_oid_1 = (
         self.add_and_verify_multicast_group_with_next_hop(
             replicas=[("Ethernet8", "0x0"), ("Ethernet4", "0x0")],
-            next_hop_oids=[next_hop_oid_1],
-            new_replicas=[("Ethernet4", "0x0")],
+            next_hop_oids=[next_hop_oid_0, next_hop_oid_1],
             group_oid=group_oid))
 
     ####################################
@@ -2250,11 +1876,6 @@ class TestP4RTL3MulticastGroup(object):
         self.asic_db_group_table)
     assert len(mcast_group_asic_entries) == len(
         original_asic_db_group_entries)
-    mcast_group_member_asic_entries = util.get_keys(
-        self._p4rt_l3_multicast_group_intf.asic_db,
-        self.asic_db_group_member_table)
-    assert len(mcast_group_member_asic_entries) == (
-        len(original_asic_db_group_member_entries))
 
     self._cleanup()
 
@@ -2262,6 +1883,80 @@ class TestP4RTL3MulticastGroup(object):
     # Cleanup
     ####################################
     dvs.restart()
+
+  def test_L3MulticastGroupWithBackups(self, dvs, testlog):
+      """
+      This test creates an L3 multicast group with backups and verify the ASIC
+      DB.
+      """
+      self._set_up(dvs)
+      util.initialize_interface(dvs, "Ethernet0", "10.0.0.0/31")
+      util.initialize_interface(dvs, "Ethernet4", "10.0.0.2/31")
+      util.initialize_interface(dvs, "Ethernet8", "10.0.0.4/31")
+      util.initialize_interface(dvs, "Ethernet12", "10.0.0.6/31")
+      util.set_interface_status(dvs, "eth0", "up")
+      util.set_interface_status(dvs, "eth4", "up")
+      util.set_interface_status(dvs, "eth8", "up")
+      util.set_interface_status(dvs, "eth12", "up")
+
+      # To be able to add multicast groups and members, we need the corresponding
+      # router interfaces and next hops to have been created.
+      rif_oid_0, next_hop_oid_0 = self.add_rif_and_next_hop(port_id="Ethernet0")
+      rif_oid_1, next_hop_oid_1 = self.add_rif_and_next_hop(port_id="Ethernet4")
+      rif_oid_2, next_hop_oid_2 = self.add_rif_and_next_hop(port_id="Ethernet8")
+      rif_oid_3, next_hop_oid_3 = self.add_rif_and_next_hop(port_id="Ethernet12")
+
+      next_hop_oids=[next_hop_oid_0, next_hop_oid_1]
+      mcast_group_key, attr_list, group_oid = (
+          self.add_and_verify_multicast_group_with_next_hop(
+              replicas = [("Ethernet0", "0x0"), ("Ethernet4", "0x0")],
+              backups = [[("Ethernet8", "0x0"), ("Ethernet12", "0x0")], []],
+              next_hop_oids=next_hop_oids))
+
+      # Bring down Ethernet0. The first replica should fallback to Ethernet8.
+      util.set_interface_status(dvs, "eth0", "down")
+      time.sleep(1)
+      next_hop_oids=[next_hop_oid_2, next_hop_oid_1]
+      (status_asic_group, fvs_asic_group) = util.get_key(
+          self._p4rt_l3_multicast_group_intf.asic_db,
+          self._p4rt_l3_multicast_group_intf.ASIC_DB_GROUP_TBL_NAME,
+          group_oid)
+      assert status_asic_group == True
+      asic_group_attr_list = [
+          (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_LABEL,
+              "any_value"),
+          (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_WITH_MEMBERS,
+              "true"),
+          (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_OUTPUT_NH_LIST,
+              str(len(next_hop_oids)) + ":" + ",".join(next_hop_oids)),
+      ]
+      util.verify_attr(fvs_asic_group, asic_group_attr_list)
+
+      # Bring up Ethernet0. The first replica should restore to Ethernet0.
+      util.set_interface_status(dvs, "eth0", "up")
+      time.sleep(1)
+      next_hop_oids=[next_hop_oid_0, next_hop_oid_1]
+      (status_asic_group, fvs_asic_group) = util.get_key(
+          self._p4rt_l3_multicast_group_intf.asic_db,
+          self._p4rt_l3_multicast_group_intf.ASIC_DB_GROUP_TBL_NAME,
+          group_oid)
+      assert status_asic_group == True
+      asic_group_attr_list = [
+          (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_LABEL,
+              "any_value"),
+          (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_WITH_MEMBERS,
+              "true"),
+          (self._p4rt_l3_multicast_group_intf.SAI_ATTR_IPMC_GROUP_OUTPUT_NH_LIST,
+              str(len(next_hop_oids)) + ":" + ",".join(next_hop_oids)),
+      ]
+      util.verify_attr(fvs_asic_group, asic_group_attr_list)
+
+      ####################################
+      # Cleanup
+      ####################################
+      self._p4rt_l3_multicast_group_intf.remove_app_db_entry(mcast_group_key)
+      self._p4rt_l3_multicast_group_intf.verify_response(mcast_group_key, [],
+                                                         "SWSS_RC_SUCCESS")
 
 class TestP4RTIpMulticast(object):
   """Tests for interacting with the route tables ipv4_multicast_table and ipv6_multicast_table"""
@@ -2292,6 +1987,30 @@ class TestP4RTIpMulticast(object):
             self._p4rt_ip_multicast.TBL_NAME_IPV6)
     self.asic_db_route_table = self._p4rt_ip_multicast.ASIC_DB_TBL_NAME
 
+    # Setup cluster MAC
+        self.my_mac_asic_db_table = self._p4rt_l3_multicast_router_intf.MY_MAC_ASIC_DB_TABLE_NAME
+        original_my_mac_asic_db_entries = util.get_keys(
+            self._p4rt_l3_multicast_router_intf.asic_db, self.my_mac_asic_db_table)
+        self.my_mac_asic_db_key = None
+        if len(original_my_mac_asic_db_entries) == 1:
+            self.my_mac_asic_db_key = original_my_mac_asic_db_entries[0]
+        else:
+            ps = swsscommon.ProducerStateTable(self._p4rt_l3_multicast_router_intf.appl_db, "SWITCH_TABLE")
+            fvs = swsscommon.FieldValuePairs([("alias_mac", "00:1a:11:17:5f:80")])
+            ps.set("switch", fvs)
+            time.sleep(1)
+            my_mac_asic_entries = util.get_keys(
+                self._p4rt_l3_multicast_router_intf.asic_db, self.my_mac_asic_db_table)
+            assert len(my_mac_asic_entries) == (
+                len(original_my_mac_asic_db_entries) + 1)
+
+            self.my_mac_asic_db_key = None
+            for key in my_mac_asic_entries:
+                if key not in original_my_mac_asic_db_entries:
+                    self.my_mac_asic_db_key = key
+                    break
+        assert self.my_mac_asic_db_key is not None
+
   def _cleanup(self):
     self._p4rt_l3_multicast_router_intf.clean_up()
     self._p4rt_l3_multicast_group_intf.clean_up()
@@ -2302,6 +2021,10 @@ class TestP4RTIpMulticast(object):
     self._vrf_obj.setup_db(dvs)
     self.default_vrf_state = self._vrf_obj.vrf_create(
         dvs, self._p4rt_ip_multicast.DEFAULT_VRF_ID, [], {})
+
+  def _clean_vrf(self, dvs):
+    """Remove VRF"""
+    self._vrf_obj.vrf_remove(dvs, self._p4rt_ip_multicast.DEFAULT_VRF_ID, self.default_vrf_state)
 
   def get_added_rif_oid(self, original_entries):
     """Returns OID key if single RIF was added"""
@@ -2525,7 +2248,7 @@ class TestP4RTIpMulticast(object):
     ####################################
     # Cleanup
     ####################################
-    dvs.restart()
+    self._clean_vrf(dvs)
 
   def test_IpMulticastDeleteUnknown(self, dvs, testlog):
     """
@@ -2550,7 +2273,7 @@ class TestP4RTIpMulticast(object):
     ####################################
     # Cleanup
     ####################################
-    dvs.restart()
+    self._clean_vrf(dvs)
 
   def test_IpMulticastAddBeforeGroup(self, dvs, testlog):
     """
@@ -2572,4 +2295,4 @@ class TestP4RTIpMulticast(object):
     ####################################
     # Cleanup
     ####################################
-    dvs.restart()
+    self._clean_vrf(dvs)

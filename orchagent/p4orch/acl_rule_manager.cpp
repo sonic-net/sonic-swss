@@ -7,10 +7,12 @@
 
 #include "SaiAttributeList.h"
 #include "converter.h"
+#include "copporch.h"
 #include "crmorch.h"
 #include "dbconnector.h"
 #include "intfsorch.h"
 #include "logger.h"
+#include "namelabelmapper.h"
 #include "orch.h"
 #include "p4orch.h"
 #include "p4orch/p4orch_util.h"
@@ -31,7 +33,9 @@ extern sai_policer_api_t *sai_policer_api;
 extern sai_hostif_api_t *sai_hostif_api;
 extern CrmOrch *gCrmOrch;
 extern PortsOrch *gPortsOrch;
+extern CoppOrch *gCoppOrch;
 extern P4Orch *gP4Orch;
+extern NameLabelMapper* gLabelMapper;
 
 namespace p4orch
 {
@@ -96,8 +100,9 @@ std::vector<sai_attribute_t> getRuleSaiAttrs(const P4AclRule &acl_rule)
     return acl_entry_attrs;
 }
 
-std::vector<sai_attribute_t> getCounterSaiAttrs(const P4AclRule &acl_rule)
-{
+std::vector<sai_attribute_t> getCounterSaiAttrs(const P4AclRule& acl_rule,
+                                                std::string& mapper_key,
+                                                std::string& counter_label) {
     sai_attribute_t attr;
     std::vector<sai_attribute_t> counter_attrs;
     attr.id = SAI_ACL_COUNTER_ATTR_TABLE_ID;
@@ -118,10 +123,23 @@ std::vector<sai_attribute_t> getCounterSaiAttrs(const P4AclRule &acl_rule)
         counter_attrs.push_back(attr);
     }
 
+    // Add label to uniquely identify acl counters.
+    const std::string counter_key =
+        concatTableNameAndRuleKey(acl_rule.acl_table_name, acl_rule.acl_rule_key);
+
+    bool label_present = gLabelMapper->addLabelToAttr(
+        SAI_OBJECT_TYPE_ACL_COUNTER, APP_P4RT_TABLE_NAME, counter_key, attr,
+        SAI_ACL_COUNTER_ATTR_LABEL, mapper_key, counter_label);
+
+    if (label_present) {
+        mapper_key = "";
+    }
+    counter_attrs.push_back(attr);
+
     return counter_attrs;
 }
 
-std::vector<sai_attribute_t> getMeterSaiAttrs(const P4AclMeter &p4_acl_meter)
+std::vector<sai_attribute_t> getMeterSaiAttrs(P4AclMeter &p4_acl_meter)
 {
     std::vector<sai_attribute_t> meter_attrs;
     sai_attribute_t meter_attr;
@@ -158,7 +176,6 @@ std::vector<sai_attribute_t> getMeterSaiAttrs(const P4AclMeter &p4_acl_meter)
             meter_attrs.push_back(meter_attr);
         }
 
-        /* TBD
         if (gLabelMapper->isLabelValid(p4_acl_meter.policer_label)) {
           meter_attr.id = SAI_POLICER_ATTR_LABEL;
           auto size = sizeof(meter_attr.value.chardata);
@@ -166,7 +183,6 @@ std::vector<sai_attribute_t> getMeterSaiAttrs(const P4AclMeter &p4_acl_meter)
                    p4_acl_meter.policer_label.c_str());
           meter_attrs.push_back(meter_attr);
         }
-       */
     }
 
     for (const auto &packet_color_action : p4_acl_meter.packet_color_actions)
@@ -176,7 +192,104 @@ std::vector<sai_attribute_t> getMeterSaiAttrs(const P4AclMeter &p4_acl_meter)
         meter_attrs.push_back(meter_attr);
     }
 
+    for (auto &metered_queues : p4_acl_meter.packet_metered_queues) {
+        meter_attr.id = fvField(metered_queues);
+
+        sai_qos_map_list_t qos_map_list;
+        qos_map_list.count = (uint32_t)fvValue(metered_queues).size();
+        qos_map_list.list = fvValue(metered_queues).data();
+        meter_attr.value.qosmap = qos_map_list;
+        meter_attrs.push_back(meter_attr);
+    }
+
     return meter_attrs;
+}
+
+std::vector<sai_attribute_t> getUserDefinedTrapAttrs(
+    const sai_object_id_t trap_group_oid) {
+  std::vector<sai_attribute_t> trap_attrs;
+  sai_attribute_t attr;
+  attr.id = SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TRAP_GROUP;
+  attr.value.oid = trap_group_oid;
+  trap_attrs.push_back(attr);
+  attr.id = SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TYPE;
+  attr.value.s32 = SAI_HOSTIF_USER_DEFINED_TRAP_TYPE_ACL;
+  trap_attrs.push_back(attr);
+  return trap_attrs;
+}
+
+std::vector<sai_attribute_t> getUserDefinedTrapHostIfTableEntryAttrs(
+    const sai_object_id_t user_defined_trap_oid,
+    const sai_object_id_t hostif_oid) {
+  std::vector<sai_attribute_t> sai_host_table_attr;
+  sai_attribute_t attr;
+  attr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_TYPE;
+  attr.value.s32 = SAI_HOSTIF_TABLE_ENTRY_TYPE_TRAP_ID;
+  sai_host_table_attr.push_back(attr);
+
+  attr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_TRAP_ID;
+  attr.value.oid = user_defined_trap_oid;
+  sai_host_table_attr.push_back(attr);
+
+  attr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_CHANNEL_TYPE;
+  attr.value.s32 = SAI_HOSTIF_TABLE_ENTRY_CHANNEL_TYPE_GENETLINK;
+  sai_host_table_attr.push_back(attr);
+
+  attr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_HOST_IF;
+  attr.value.oid = hostif_oid;
+  sai_host_table_attr.push_back(attr);
+  return sai_host_table_attr;
+}
+
+ReturnCodeOr<P4UserDefinedTrapHostifTableEntry>
+createUserDefinedTrapAndHostIfTableEntry(const sai_object_id_t trap_group_oid,
+                                         const sai_object_id_t hostif_oid) {
+  P4UserDefinedTrapHostifTableEntry udt_hostif;
+  const auto trap_attrs = getUserDefinedTrapAttrs(trap_group_oid);
+  CHECK_ERROR_AND_LOG_AND_RETURN(
+      sai_hostif_api->create_hostif_user_defined_trap(
+          &udt_hostif.user_defined_trap, gSwitchId, (uint32_t)trap_attrs.size(),
+          trap_attrs.data()),
+      "Failed to create trap by calling "
+      "sai_hostif_api->create_hostif_user_defined_trap");
+  const auto sai_host_table_attrs = getUserDefinedTrapHostIfTableEntryAttrs(
+      udt_hostif.user_defined_trap, hostif_oid);
+  auto sai_status = sai_hostif_api->create_hostif_table_entry(
+      &udt_hostif.hostif_table_entry, gSwitchId,
+      (uint32_t)sai_host_table_attrs.size(), sai_host_table_attrs.data());
+  if (sai_status != SAI_STATUS_SUCCESS) {
+    ReturnCode return_code =
+        ReturnCode(sai_status)
+        << "Failed to create hostif table entry by calling "
+           "sai_hostif_api->create_hostif_table_entry";
+    auto recover_sai_status = sai_hostif_api->remove_hostif_user_defined_trap(
+        udt_hostif.user_defined_trap);
+    if (recover_sai_status != SAI_STATUS_SUCCESS) {
+      RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL(
+          "Failed to remove user defined traps during recovery.");
+    }
+    SWSS_LOG_ERROR("%s SAI_STATUS: %s", return_code.message().c_str(),
+                   sai_serialize_status(sai_status).c_str());
+    return return_code;
+  }
+  return udt_hostif;
+}
+
+ReturnCodeOr<uint32_t> parseQueueNumberFromStr(
+    const std::string& queue_num_str) {
+  uint32_t queue_num = 0;
+  try {
+    queue_num = to_uint<uint32_t>(queue_num_str);
+  } catch (std::exception& e) {
+    LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                         << "Traps group names should start with "
+                         << GENL_PACKET_TRAP_GROUP_NAME_PREFIX
+                         << " and followed up by an unsigned number. e.g."
+                         << GENL_PACKET_TRAP_GROUP_NAME_PREFIX
+                         << "1. queue number " << QuotedVar(queue_num_str)
+                         << " is invalid.");
+  }
+  return queue_num;
 }
 
 } // namespace
@@ -269,101 +382,154 @@ ReturnCode AclRuleManager::drain() {
   return status;
 }
 
-ReturnCode AclRuleManager::setUpUserDefinedTraps()
-{
+ReturnCode AclRuleManager::setUserDefinedTrap(
+    const uint32_t queue_num, const sai_object_id_t trap_group_oid,
+    const sai_object_id_t hostif_oid) {
     SWSS_LOG_ENTER();
 
-    const auto trapGroupMap = m_coppOrch->getTrapGroupMap();
-    const auto trapGroupHostIfMap = m_coppOrch->getTrapGroupHostIfMap();
-    for (int queue_num = 1; queue_num <= P4_CPU_QUEUE_MAX_NUM; queue_num++)
-    {
-        auto trap_group_it = trapGroupMap.find(GENL_PACKET_TRAP_GROUP_NAME_PREFIX + std::to_string(queue_num));
-        if (trap_group_it == trapGroupMap.end())
-        {
-	    SWSS_LOG_INFO("Trap group was not found given trap group name: %s%d",
-                    GENL_PACKET_TRAP_GROUP_NAME_PREFIX, queue_num);
+    auto udt_it = m_userDefinedTraps.find(queue_num);
+  if (udt_it != m_userDefinedTraps.end()) {
+    CHECK_ERROR_AND_LOG_AND_RETURN(
+        sai_hostif_api->remove_hostif_table_entry(
+            udt_it->second.hostif_table_entry),
+        "Received trap group update request but "
+        "failed to remove the old hostif table entry.");
+    CHECK_ERROR_AND_LOG_AND_RETURN(
+        sai_hostif_api->remove_hostif_user_defined_trap(
+            udt_it->second.user_defined_trap),
+        "Received trap group update request but "
+        "failed to remove the old user defined trap.");
+    m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
+                            std::to_string(queue_num));
+    m_userDefinedTraps.erase(queue_num);
+  }
+  ASSIGN_OR_RETURN(auto udt_hostif, createUserDefinedTrapAndHostIfTableEntry(
+                                        trap_group_oid, hostif_oid));
+  m_p4OidMapper->setOID(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
+                        std::to_string(queue_num), udt_hostif.user_defined_trap,
+                        /*ref_count=*/1);
+  m_userDefinedTraps[queue_num] = udt_hostif;
+  SWSS_LOG_NOTICE(
+      "Created user defined trap for QUEUE number %d: %s", queue_num,
+      sai_serialize_object_id(udt_hostif.user_defined_trap).c_str());
+  return ReturnCode();
+}
+
+ReturnCode AclRuleManager::initializeUserDefinedTraps() {
+  SWSS_LOG_ENTER();
+  // User Defined Traps should be initialized only once when an ACL table is
+  // referencing them created.
+  if (m_isAclTableReferencingUserDefinedTrapsAdded) return ReturnCode();
+
+  const auto trapGroupMap = gCoppOrch->getTrapGroupMap();
+  const auto trapGroupHostIfMap = gCoppOrch->getTrapGroupHostIfMap();
+  for (const auto& trap_group_it : trapGroupMap) {
+    const auto trap_group_name = trap_group_it.first;
+    if (trap_group_name.find(GENL_PACKET_TRAP_GROUP_NAME_PREFIX) ==
+        std::string::npos) {
+      SWSS_LOG_INFO("%s is not a trap group for user defined trap creation.",
+                    QuotedVar(trap_group_name).c_str());
               continue;
         }
-        const sai_object_id_t trap_group_oid = trap_group_it->second;
+        const auto queue_num_str =
+            trap_group_name.substr(strlen(GENL_PACKET_TRAP_GROUP_NAME_PREFIX));
+        ASSIGN_OR_RETURN(auto queue_num, parseQueueNumberFromStr(queue_num_str));
+        const sai_object_id_t trap_group_oid = trap_group_it.second;
         auto hostif_oid_it = trapGroupHostIfMap.find(trap_group_oid);
         if (hostif_oid_it == trapGroupHostIfMap.end())
         {
             LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-                                 << "Hostif object id was not found given trap group - " << trap_group_it->first);
-        }
-        // Create user defined trap
-        std::vector<sai_attribute_t> trap_attrs;
-        sai_attribute_t attr;
-        attr.id = SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TRAP_GROUP;
-        attr.value.oid = trap_group_oid;
-        trap_attrs.push_back(attr);
-        attr.id = SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TYPE;
-        attr.value.s32 = SAI_HOSTIF_USER_DEFINED_TRAP_TYPE_ACL;
-        trap_attrs.push_back(attr);
-        P4UserDefinedTrapHostifTableEntry udt_hostif;
-        CHECK_ERROR_AND_LOG_AND_RETURN(
-            sai_hostif_api->create_hostif_user_defined_trap(&udt_hostif.user_defined_trap, gSwitchId,
-                                                            (uint32_t)trap_attrs.size(), trap_attrs.data()),
-            "Failed to create trap by calling "
-            "sai_hostif_api->create_hostif_user_defined_trap");
-        std::vector<sai_attribute_t> sai_host_table_attr;
-
-        attr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_TYPE;
-        attr.value.s32 = SAI_HOSTIF_TABLE_ENTRY_TYPE_TRAP_ID;
-        sai_host_table_attr.push_back(attr);
-
-        attr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_TRAP_ID;
-        attr.value.oid = udt_hostif.user_defined_trap;
-        sai_host_table_attr.push_back(attr);
-
-        attr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_CHANNEL_TYPE;
-        attr.value.s32 = SAI_HOSTIF_TABLE_ENTRY_CHANNEL_TYPE_GENETLINK;
-        sai_host_table_attr.push_back(attr);
-
-        attr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_HOST_IF;
-        attr.value.oid = hostif_oid_it->second;
-        sai_host_table_attr.push_back(attr);
-
-        auto sai_status =
-            sai_hostif_api->create_hostif_table_entry(&udt_hostif.hostif_table_entry, gSwitchId,
-                                                      (uint32_t)sai_host_table_attr.size(), sai_host_table_attr.data());
-        if (sai_status != SAI_STATUS_SUCCESS)
-        {
-            ReturnCode return_code = ReturnCode(sai_status) << "Failed to create hostif table entry by calling "
-                                                               "sai_hostif_api->remove_hostif_user_defined_trap";
-            sai_hostif_api->remove_hostif_user_defined_trap(udt_hostif.user_defined_trap);
-            SWSS_LOG_ERROR("%s SAI_STATUS: %s", return_code.message().c_str(),
-                           sai_serialize_status(sai_status).c_str());
-            return return_code;
-        }
-        m_p4OidMapper->setOID(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP, std::to_string(queue_num),
-                              udt_hostif.user_defined_trap, /*ref_count=*/1);
-	m_userDefinedTraps[queue_num] = udt_hostif;
-        SWSS_LOG_NOTICE("Created user defined trap for QUEUE number %d: %s", queue_num,
-                        sai_serialize_object_id(udt_hostif.user_defined_trap).c_str());
+                                 << "Hostif object id was not found given trap group - "
+                                 << trap_group_it.first);
     }
+    // Create user defined trap and add it in hostif table.
+    LOG_AND_RETURN_IF_ERROR(
+        setUserDefinedTrap(queue_num, trap_group_oid, hostif_oid_it->second));
+    }
+    m_isAclTableReferencingUserDefinedTrapsAdded = true;
     return ReturnCode();
 }
 
-ReturnCode AclRuleManager::cleanUpUserDefinedTraps()
-{
+ReturnCode AclRuleManager::updateUserDefinedTrap(
+    const std::string& trap_group_name, bool is_delete) {
     SWSS_LOG_ENTER();
 
-    const auto trapGroupMap = m_coppOrch->getTrapGroupMap();
-    for (const auto& udt_it : m_userDefinedTraps) {
+    if (trap_group_name.find(GENL_PACKET_TRAP_GROUP_NAME_PREFIX) ==
+      std::string::npos) {
+    SWSS_LOG_INFO("%s is not a trap group for user defined trap update.",
+                  QuotedVar(trap_group_name).c_str());
+    return ReturnCode();
+  }
+  // User-defined traps are initially set up when P4Orch adds the first ACL
+  // table that references a user-defined trap as an action.  Subsequent updates
+  // to user-defined traps in the cache and hardware are only permitted after
+  // this initialization.
+  if (!m_isAclTableReferencingUserDefinedTrapsAdded) {
+    SWSS_LOG_INFO(
+        "User defined traps have not been initialized during ACL table "
+        "creation yet. They will not be created until an ACL table is "
+        "referencing them.");
+    return ReturnCode();
+  }
+  // Retrieve trapGroupMap and trapGroupHostIfMap from CoppOrch during runtime,
+  // as new trap groups might be added after the initial setup. This accounts
+  // for situations like CoPP table updates that occur following NSF
+  // reconciliation.
+  const auto trapGroupMap = gCoppOrch->getTrapGroupMap();
+  const auto trapGroupHostIfMap = gCoppOrch->getTrapGroupHostIfMap();
+  const auto queue_num_str =
+      trap_group_name.substr(strlen(GENL_PACKET_TRAP_GROUP_NAME_PREFIX));
+  ASSIGN_OR_RETURN(auto queue_num, parseQueueNumberFromStr(queue_num_str));
+  auto trap_group_it = trapGroupMap.find(trap_group_name);
+  auto udt_it = m_userDefinedTraps.find(queue_num);
+  if (!is_delete) {
+    if (trap_group_it == trapGroupMap.end()) {
+      SWSS_LOG_ERROR("trap_group_name %s was not found in CoppOrch cache.",
+                     QuotedVar(trap_group_name).c_str());
+      return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND);
+    }
+    // trap_group_name has been added to the trapGroupMap,
+    // create user defined trap referencing the trap group and hostif table
+    // entry.
+    const sai_object_id_t trap_group_oid = trap_group_it->second;
+    auto hostif_oid_it = trapGroupHostIfMap.find(trap_group_oid);
+    if (hostif_oid_it == trapGroupHostIfMap.end()) {
+      LOG_ERROR_AND_RETURN(
+          ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+          << "Hostif object id was not found given trap group - "
+          << QuotedVar(trap_group_name));
+    }
+    // Create user defined trap and add it in hostif table.
+    LOG_AND_RETURN_IF_ERROR(
+        setUserDefinedTrap(queue_num, trap_group_oid, hostif_oid_it->second));
+  } else {
+    // trap_group_name has been deleted from the trapGroupMap,
+    // if no ACL rules are referencing its corresponding user defined trap, then
+    // delete the user defined trap as well.
+    if (udt_it == m_userDefinedTraps.end()) {
+      return ReturnCode();
+    }
+    uint32_t ref_count = 0;
+    if (!m_p4OidMapper->getRefCount(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
+                                    std::to_string(queue_num), &ref_count) ||
+        ref_count > 1) {
+      return ReturnCode(StatusCode::SWSS_RC_IN_USE)
+             << "User defined trap for queue:" << QuotedVar(queue_num_str)
+             << " can not be removed as it is in use.";
+    }
         CHECK_ERROR_AND_LOG_AND_RETURN(sai_hostif_api->remove_hostif_table_entry(
-                                       fvValue(udt_it).hostif_table_entry),
+                                       udt_it->second.hostif_table_entry),
                                        "Failed to remove hostif table entry.");
 
         m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
-                                        std::to_string(fvField(udt_it)));
+                                        std::to_string(queue_num));
         sai_hostif_api->remove_hostif_user_defined_trap(
-            fvValue(udt_it).user_defined_trap);
+            udt_it->second.user_defined_trap);
         m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
-                                std::to_string(fvField(udt_it)));
+                                std::to_string(queue_num));
+        m_userDefinedTraps.erase(queue_num);
     }
 
-    m_userDefinedTraps.clear();
     return ReturnCode();
 }
 
@@ -394,8 +560,10 @@ ReturnCode AclRuleManager::createAclCounter(const std::string &acl_table_name, c
                                             const P4AclRule &acl_rule, sai_object_id_t *counter_oid)
 {
     SWSS_LOG_ENTER();
+    std::string mapper_key;
+    std::string counter_label;
 
-    auto attrs = getCounterSaiAttrs(acl_rule);
+    auto attrs = getCounterSaiAttrs(acl_rule, mapper_key, counter_label);
 
     CHECK_ERROR_AND_LOG_AND_RETURN(
         sai_acl_api->create_acl_counter(counter_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data()),
@@ -404,6 +572,11 @@ ReturnCode AclRuleManager::createAclCounter(const std::string &acl_table_name, c
     m_p4OidMapper->setOID(SAI_OBJECT_TYPE_ACL_COUNTER, counter_key, *counter_oid);
     gCrmOrch->incCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_COUNTER, acl_rule.acl_table_oid);
     m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_ACL_TABLE, acl_table_name);
+
+    if (mapper_key != "") {
+        gLabelMapper->setLabel(SAI_OBJECT_TYPE_ACL_COUNTER, mapper_key,
+                               counter_label);
+    }
     return ReturnCode();
 }
 
@@ -430,21 +603,38 @@ ReturnCode AclRuleManager::removeAclCounter(const std::string &acl_table_name, c
     gCrmOrch->decCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_COUNTER, table_oid);
     m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_ACL_COUNTER, counter_key);
     m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_ACL_TABLE, acl_table_name);
+    gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_ACL_COUNTER,
+                             gLabelMapper->generateKeyFromTableAndObjectName(
+                                 APP_P4RT_TABLE_NAME, counter_key));
+
     SWSS_LOG_NOTICE("Removing record about the counter %s from the DB", sai_serialize_object_id(counter_oid).c_str());
     return ReturnCode();
 }
 
-ReturnCode AclRuleManager::createAclMeter(const P4AclMeter &p4_acl_meter, const std::string &meter_key,
+ReturnCode AclRuleManager::createAclMeter(P4AclMeter& p4_acl_meter, const std::string &meter_key,
                                           sai_object_id_t *meter_oid)
 {
     SWSS_LOG_ENTER();
 
     auto attrs = getMeterSaiAttrs(p4_acl_meter);
 
+    // Add label to the attributes to uniquely identify the policer.
+    sai_attribute_t attr;
+    std::string mapper_key;
+    std::string label;
+    bool label_present = gLabelMapper->addLabelToAttr(
+        SAI_OBJECT_TYPE_POLICER, APP_P4RT_TABLE_NAME, meter_key, attr,
+        SAI_POLICER_ATTR_LABEL, mapper_key, label);
+    attrs.push_back(attr);
+
     CHECK_ERROR_AND_LOG_AND_RETURN(
         sai_policer_api->create_policer(meter_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data()),
         "Failed to create ACL meter");
     m_p4OidMapper->setOID(SAI_OBJECT_TYPE_POLICER, meter_key, *meter_oid);
+    if (!label_present) {
+      gLabelMapper->setLabel(SAI_OBJECT_TYPE_POLICER, mapper_key, label);
+    }
+    p4_acl_meter.policer_label = label;
     SWSS_LOG_NOTICE("Suceeded to create ACL meter %s ", sai_serialize_object_id(*meter_oid).c_str());
     return ReturnCode();
 }
@@ -524,6 +714,86 @@ ReturnCode AclRuleManager::updateAclMeter(const P4AclMeter &new_acl_meter, const
         rollback_attrs.push_back(meter_attr);
     }
 
+    // Already set policer attributes may need to be reset to null.
+    std::set<sai_policer_attr_t> metered_queues_to_reset;
+    for (const auto& metered_queues : old_acl_meter.packet_metered_queues) {
+      metered_queues_to_reset.insert(fvField(metered_queues));
+    }
+
+    std::map<sai_policer_attr_t, std::vector<sai_qos_map_t>>
+        old_packet_metered_queues = old_acl_meter.packet_metered_queues;
+    std::map<sai_policer_attr_t, std::vector<sai_qos_map_t>>
+        new_packet_metered_queues = new_acl_meter.packet_metered_queues;
+
+    for (auto& metered_queues : new_packet_metered_queues) {
+      auto it = old_packet_metered_queues.find(fvField(metered_queues));
+
+      // Find policer attributes that are not set, or already set but the value
+      // should be updated.
+      bool update = true;
+      if (it != old_packet_metered_queues.end() &&
+          it->second.size() == fvValue(metered_queues).size()) {
+        update = false;
+        for (size_t i = 0; i < it->second.size(); ++i) {
+          if (it->second[i].key.color != fvValue(metered_queues)[i].key.color ||
+              it->second[i].value.queue_index !=
+                  fvValue(metered_queues)[i].value.queue_index) {
+            update = true;
+            break;
+          }
+        }
+      }
+
+      if (update) {
+        meter_attr.id = fvField(metered_queues);
+        sai_qos_map_list_t qos_map_list;
+        qos_map_list.count = (uint32_t)fvValue(metered_queues).size();
+        qos_map_list.list = fvValue(metered_queues).data();
+        meter_attr.value.qosmap = qos_map_list;
+        meter_attrs.push_back(meter_attr);
+
+        // Keep record of the old value so that we can rollback in case of update
+        // failure.
+        if (it == old_packet_metered_queues.end()) {
+          sai_qos_map_list_t qos_map_list;
+          qos_map_list.count = 0;
+          qos_map_list.list = NULL;
+          meter_attr.value.qosmap = qos_map_list;
+        } else {
+          sai_qos_map_list_t qos_map_list;
+          qos_map_list.count = (uint32_t)it->second.size();
+          qos_map_list.list = it->second.data();
+          meter_attr.value.qosmap = qos_map_list;
+        }
+        rollback_attrs.push_back(meter_attr);
+      }
+
+      // If an already set policer attribute is being updated, then it need not be
+      // reset to null.
+      if (it != old_packet_metered_queues.end()) {
+        metered_queues_to_reset.erase(fvField(metered_queues));
+      }
+    }
+
+    // For already set policer attributes that are not found in updated
+    // attributes, reset to null.
+    for (const auto& metered_queues : metered_queues_to_reset) {
+      meter_attr.id = metered_queues;
+      sai_qos_map_list_t qos_map_list;
+      qos_map_list.count = 0;
+      qos_map_list.list = NULL;
+      meter_attr.value.qosmap = qos_map_list;
+      meter_attrs.push_back(meter_attr);
+
+      // Keep record of the old values of the attributes to be reset so that we
+      // can rollback if update fails.
+      auto it = old_packet_metered_queues.find(metered_queues);
+      qos_map_list.count = (uint32_t)it->second.size();
+      qos_map_list.list = it->second.data();
+      meter_attr.value.qosmap = qos_map_list;
+      rollback_attrs.push_back(meter_attr);
+    }
+
     ReturnCode status;
     int i;
     for (i = 0; i < static_cast<int>(meter_attrs.size()); ++i)
@@ -565,6 +835,9 @@ ReturnCode AclRuleManager::removeAclMeter(const std::string &meter_key)
     CHECK_ERROR_AND_LOG_AND_RETURN(sai_policer_api->remove_policer(meter_oid),
                                    "Failed to remove ACL meter for ACL rule " << QuotedVar(meter_key));
     m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_POLICER, meter_key);
+    std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+        APP_P4RT_TABLE_NAME, meter_key);
+    gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_POLICER, mapper_key);
     SWSS_LOG_NOTICE("Suceeded to remove ACL meter %s: %s ", QuotedVar(meter_key).c_str(),
                     sai_serialize_object_id(meter_oid).c_str());
     return ReturnCode();
@@ -1492,13 +1765,6 @@ ReturnCode AclRuleManager::setActionValue(const sai_acl_entry_attr_t attr_name,
         try
         {
             uint32_t queue_num = to_uint<uint32_t>(attr_value);
-            if (queue_num < 1 || queue_num > m_userDefinedTraps.size())
-            {
-                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                       << "Invalid CPU queue number " << QuotedVar(attr_value) << " for "
-                       << QuotedVar(acl_rule->acl_table_name)
-                       << ". Queue number should >= 1 and <= " << m_userDefinedTraps.size();
-            }
 	    const auto udt_it = m_userDefinedTraps.find(queue_num);
             if (udt_it == m_userDefinedTraps.end()) {
           	return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
@@ -1633,6 +1899,45 @@ ReturnCode AclRuleManager::setMeterValue(const P4AclTableDefinition *acl_table, 
             SAI_POLICER_ATTR_YELLOW_PACKET_ACTION) !=
             acl_meter.packet_color_actions.end()) {
     acl_meter.packet_color_actions.erase(SAI_POLICER_ATTR_YELLOW_PACKET_ACTION);
+    }
+
+    const auto& rule_action_color_param_it =
+        acl_table->rule_action_color_param_lookup.find(app_db_entry.action);
+    if (rule_action_color_param_it !=
+            acl_table->rule_action_color_param_lookup.end() &&
+        !rule_action_color_param_it->second.empty()) {
+      for (auto& color_param_it : rule_action_color_param_it->second) {
+        for (auto& color_param : color_param_it.second) {
+          if (!color_param.param_name.empty()) {
+            const auto& param_value_it =
+                app_db_entry.action_param_fvs.find(color_param.param_name);
+            if (param_value_it == app_db_entry.action_param_fvs.end()) {
+              ReturnCode status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                                  << "No action param found for action "
+                                  << app_db_entry.action;
+              return status;
+            }
+            if (!param_value_it->second.empty()) {
+              uint8_t queue_num;
+              try {
+                queue_num = to_uint<uint8_t>(param_value_it->second);
+              } catch (std::exception& e) {
+                return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                       << "Action attribute " << QuotedVar(color_param.param_name)
+                       << " is invalid, Expect integer but got "
+                       << QuotedVar(param_value_it->second);
+              }
+
+              sai_qos_map_t qos_map;
+              memset(&qos_map, 0, sizeof(qos_map));
+              qos_map.key.color = color_param.color;
+              qos_map.value.queue_index = queue_num;
+              acl_meter.packet_metered_queues[color_param_it.first].push_back(
+                  qos_map);
+            }
+          }
+        }
+      }
     }
 
     // SAI_POLICER_MODE_STORM_CONTROL mode is used by default.
@@ -2665,6 +2970,13 @@ std::string AclRuleManager::verifyStateCache(const P4AclRuleAppDbEntry &app_db_e
         {
             return err_msg;
         }
+        std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+            APP_P4RT_TABLE_NAME, table_name_and_rule_key);
+        err_msg = gLabelMapper->verifyLabelMapping(
+            SAI_OBJECT_TYPE_POLICER, mapper_key, acl_rule->meter.policer_label);
+        if (!err_msg.empty()) {
+          return err_msg;
+        }
     }
 
     return "";
@@ -2692,9 +3004,10 @@ std::string AclRuleManager::verifyStateAsicDb(const P4AclRule *acl_rule)
     }
 
     // Verify counter.
-    if (acl_rule->counter.packets_enabled || acl_rule->counter.bytes_enabled)
-    {
-        attrs = getCounterSaiAttrs(*acl_rule);
+    std::string mapper_key;
+    std::string counter_label;
+    if (acl_rule->counter.packets_enabled || acl_rule->counter.bytes_enabled) {
+      attrs = getCounterSaiAttrs(*acl_rule, mapper_key, counter_label);
         exp = saimeta::SaiAttributeList::serialize_attr_list(SAI_OBJECT_TYPE_ACL_COUNTER, (uint32_t)attrs.size(),
                                                              attrs.data(),
                                                              /*countOnly=*/false);
@@ -2716,7 +3029,8 @@ std::string AclRuleManager::verifyStateAsicDb(const P4AclRule *acl_rule)
     // Verify meter.
     if (acl_rule->meter.enabled)
     {
-        attrs = getMeterSaiAttrs(acl_rule->meter);
+        auto meter = acl_rule->meter;
+        attrs = getMeterSaiAttrs(meter);
         exp = saimeta::SaiAttributeList::serialize_attr_list(SAI_OBJECT_TYPE_POLICER, (uint32_t)attrs.size(),
                                                              attrs.data(),
                                                              /*countOnly=*/false);

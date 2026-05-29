@@ -20,6 +20,7 @@
 #include "mock_sai_switch.h"
 
 using ::p4orch::kTableKeyDelimiter;
+using namespace swss;
 
 extern P4Orch* gP4Orch;
 extern VRFOrch* gVrfOrch;
@@ -52,7 +53,6 @@ class P4OrchTest : public ::testing::Test {
  protected:
   P4OrchTest() {
     mock_sai_hostif = &mock_sai_hostif_;
-    sai_hostif_api->create_hostif_trap = mock_create_hostif_trap;
     sai_hostif_api->create_hostif_table_entry = mock_create_hostif_table_entry;
     mock_sai_switch = &mock_sai_switch_;
     sai_switch_api->get_switch_attribute = mock_get_switch_attribute;
@@ -165,15 +165,13 @@ class P4OrchTest : public ::testing::Test {
     sai_bridge_api->get_bridge_port_stats_ext = mock_get_bridge_port_stats_ext;
     sai_bridge_api->clear_bridge_port_stats = mock_clear_bridge_port_stats;
 
-    copp_orch_ = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
     std::vector<std::string> p4_tables{APP_P4RT_TABLE_NAME};
-    gP4Orch = new P4Orch(gAppDb, p4_tables, nullptr, gVrfOrch, copp_orch_);
+    gP4Orch = new P4Orch(gAppDb, p4_tables, nullptr, gVrfOrch);
     gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
   }
 
   ~P4OrchTest() {
     delete gP4Orch;
-    delete copp_orch_;
     gMockResponsePublisher.reset();
   }
 
@@ -191,7 +189,6 @@ class P4OrchTest : public ::testing::Test {
   NiceMock<MockSaiBridge> mock_sai_bridge_;
   NiceMock<MockSaiL2mc> mock_sai_l2mc_;
   NiceMock<MockSaiL2mcGroup> mock_sai_l2mc_group_;
-  CoppOrch* copp_orch_;
 };
 
 TEST_F(P4OrchTest, ProcessInvalidEntry) {

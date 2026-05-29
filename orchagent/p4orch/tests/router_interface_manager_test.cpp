@@ -7,11 +7,19 @@
 #include <string>
 
 #include "mock_response_publisher.h"
+#include "mock_sai_acl.h"
+#include "mock_sai_my_mac.h"
 #include "mock_sai_router_interface.h"
+#include "mock_sai_serialize.h"
+#include "mock_sai_switch.h"
 #include "p4orch.h"
 #include "p4orch/p4orch_util.h"
 #include "portsorch.h"
+#include "rediscommand.h"
 #include "return_code.h"
+#include "sairouterinterface.h"
+#include "saitypes.h"
+#include "switchorch.h"
 #include "swssnet.h"
 
 using ::p4orch::kTableKeyDelimiter;
@@ -26,10 +34,18 @@ using ::testing::SetArrayArgument;
 using ::testing::StrictMock;
 
 extern PortsOrch *gPortsOrch;
+extern SwitchOrch* gSwitchOrch;
+
+extern swss::DBConnector* gAppDb;
+extern swss::DBConnector* gStateDb;
+extern swss::DBConnector* gConfigDb;
 
 extern sai_object_id_t gSwitchId;
 extern sai_object_id_t gVirtualRouterId;
 extern sai_router_interface_api_t *sai_router_intfs_api;
+extern sai_my_mac_api_t* sai_my_mac_api;
+extern sai_switch_api_t* sai_switch_api;
+extern sai_acl_api_t* sai_acl_api;
 
 namespace
 {
@@ -55,10 +71,13 @@ constexpr sai_object_id_t kRouterInterfaceOid2 = 0x51411;
 const swss::MacAddress kMacAddress2("00:ff:ee:dd:cc:bb");
 
 const swss::MacAddress kZeroMacAddress("00:00:00:00:00:00");
+const swss::MacAddress kClusterMacAddress("00:1a:11:17:5f:80");
 
 constexpr uint16_t kVlanId0 = 0;
 constexpr uint16_t kVlanId1 = 0x123;
 constexpr uint16_t kVlanId2 = 0x2;
+
+constexpr sai_object_id_t kDefaultMyMacOid = 0x101;
 
 constexpr char *kRouterIntfAppDbKey = R"({"match/router_interface_id":"intf-3/4"})";
 
@@ -94,6 +113,12 @@ bool MatchSaiAttribute(const sai_attribute_t& attr,
         attr.value.u16 != exp_attr.value.u16) {
       return false;
     }
+  } else if (attr.id ==
+             SAI_ROUTER_INTERFACE_ATTR_DISABLE_SUB_PORT_VLAN_CONFIG) {
+    if (exp_attr.id != SAI_ROUTER_INTERFACE_ATTR_DISABLE_SUB_PORT_VLAN_CONFIG ||
+        attr.value.booldata != exp_attr.value.booldata) {
+      return false;
+    }
   } else if (attr.id == SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE) {
     if (exp_attr.id != SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE ||
         attr.value.booldata != exp_attr.value.booldata) {
@@ -102,6 +127,11 @@ bool MatchSaiAttribute(const sai_attribute_t& attr,
   } else if (attr.id == SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE) {
     if (exp_attr.id != SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE ||
         attr.value.booldata != exp_attr.value.booldata) {
+      return false;
+    }
+  } else if (attr.id == SAI_ROUTER_INTERFACE_ATTR_MY_MAC) {
+    if (exp_attr.id != SAI_ROUTER_INTERFACE_ATTR_MY_MAC ||
+        attr.value.oid != exp_attr.value.oid) {
       return false;
     }
   } else {
@@ -145,7 +175,7 @@ std::vector<sai_attribute_t> CreateRouterInterfaceAttributeList(
     const sai_object_id_t& virtual_router_oid,
     const swss::MacAddress mac_address, const sai_object_id_t& port_oid,
     const uint32_t mtu, const bool sub_port = false,
-    const uint16_t vlan_id = 0) {
+    const uint16_t vlan_id = 0, const sai_object_id_t my_mac_oid = SAI_NULL_OBJECT_ID) {
   std::vector<sai_attribute_t> attrs;
   sai_attribute_t attr;
 
@@ -174,6 +204,9 @@ std::vector<sai_attribute_t> CreateRouterInterfaceAttributeList(
     attr.id = SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID;
     attr.value.u16 = vlan_id;
     attrs.push_back(attr);
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_DISABLE_SUB_PORT_VLAN_CONFIG;
+    attr.value.booldata = true;
+    attrs.push_back(attr);
   }
 
   attr.id = SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE;
@@ -187,6 +220,12 @@ std::vector<sai_attribute_t> CreateRouterInterfaceAttributeList(
   attr.id = SAI_ROUTER_INTERFACE_ATTR_MTU;
   attr.value.u32 = mtu;
   attrs.push_back(attr);
+
+  if (my_mac_oid != SAI_NULL_OBJECT_ID) {
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_MY_MAC;
+    attr.value.oid = my_mac_oid;
+    attrs.push_back(attr);
+  }
 
   return attrs;
 }
@@ -211,7 +250,54 @@ class RouterInterfaceManagerTest : public ::testing::Test
         sai_router_intfs_api->remove_router_interfaces = mock_remove_router_interfaces;
         sai_router_intfs_api->set_router_interfaces_attribute = mock_set_router_interfaces_attribute;
         sai_router_intfs_api->get_router_interfaces_attribute = mock_get_router_interfaces_attribute;
+
+        mock_sai_my_mac = &mock_sai_my_mac_;
+        sai_my_mac_api->create_my_mac = mock_create_my_mac;
+        sai_my_mac_api->remove_my_mac = mock_remove_my_mac;
+
+        mock_sai_switch = &mock_sai_switch_;
+        sai_switch_api->get_switch_attribute = mock_get_switch_attribute;
+        sai_switch_api->set_switch_attribute = mock_set_switch_attribute;
+
+        mock_sai_acl = &mock_sai_acl_;
+        sai_acl_api->create_acl_table_group = create_acl_table_group;
+        mock_sai_serialize = &mock_sai_serialize_;
+
+        setUpSwitchOrch();
     }
+
+    void setUpSwitchOrch() {
+        EXPECT_CALL(mock_sai_serialize_, sai_serialize_object_id(_))
+            .WillRepeatedly(Return(EMPTY_STRING));
+        EXPECT_CALL(mock_sai_acl_, create_acl_table_group(_, _, _, _))
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(mock_sai_switch_, get_switch_attribute(_, _, _))
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(mock_sai_switch_, set_switch_attribute(_, _))
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+        TableConnector stateDbSwitchTable(gStateDb, "SWITCH_CAPABILITY");
+        TableConnector app_switch_table(gAppDb, APP_SWITCH_TABLE_NAME);
+        TableConnector conf_asic_sensors(gConfigDb, CFG_ASIC_SENSORS_TABLE_NAME);
+        std::vector<TableConnector> switch_tables = {conf_asic_sensors,
+                                                     app_switch_table};
+        gSwitchOrch = new SwitchOrch(gAppDb, switch_tables, stateDbSwitchTable);
+    }
+
+    void SetMyMacOid() {
+        swss::Table table(nullptr, APP_SWITCH_TABLE_NAME);
+        std::vector<swss::FieldValueTuple> values;
+        values.push_back(swss::FieldValueTuple{"alias_mac", kClusterMacAddress.to_string()});
+        table.set("switch", values);
+        gSwitchOrch->addExistingData(&table);
+        EXPECT_CALL(mock_sai_my_mac_, create_my_mac(_, _, _, _))
+            .WillOnce(DoAll(SetArgPointee<0>(kDefaultMyMacOid),
+                            Return(SAI_STATUS_SUCCESS)));
+        Orch* switch_orch = gSwitchOrch;
+        switch_orch->doTask();
+        EXPECT_EQ(gSwitchOrch->getL3AdmitOid(), kDefaultMyMacOid);
+    }
+
+    void TearDown() override { delete gSwitchOrch; }
 
     void Enqueue(const swss::KeyOpFieldsValuesTuple &entry)
     {
@@ -305,10 +391,15 @@ class RouterInterfaceManagerTest : public ::testing::Test
       const P4RouterInterfaceAppDbEntry& router_intf_entry,
       const sai_object_id_t ritf_oid, const sai_object_id_t port_oid,
       const uint32_t mtu, const bool sub_port = false,
-      const uint16_t vlan_id = 0) {
+      const uint16_t vlan_id = 0, const sai_object_id_t my_mac_oid = SAI_NULL_OBJECT_ID) {
+    if (my_mac_oid != SAI_NULL_OBJECT_ID &&
+        gSwitchOrch->getL3AdmitOid() == SAI_NULL_OBJECT_ID) {
+      SetMyMacOid();
+    }
+
     auto attrs = CreateRouterInterfaceAttributeList(
         gVirtualRouterId, router_intf_entry.src_mac_address, port_oid, mtu,
-        sub_port, vlan_id);
+        sub_port, vlan_id, my_mac_oid);
     std::vector<sai_object_id_t> oids{ritf_oid};
     std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
     EXPECT_CALL(
@@ -329,6 +420,10 @@ class RouterInterfaceManagerTest : public ::testing::Test
   }
 
   StrictMock<MockSaiRouterInterface> mock_sai_router_intf_;
+  StrictMock<MockSaiMyMac> mock_sai_my_mac_;
+  StrictMock<MockSaiSwitch> mock_sai_switch_;
+  StrictMock<MockSaiAcl> mock_sai_acl_;
+  StrictMock<MockSaiSerialize> mock_sai_serialize_;
   StrictMock<MockResponsePublisher> publisher_;
   P4OidMapper p4_oid_mapper_;
   RouterInterfaceManager router_intf_manager_;
@@ -343,13 +438,37 @@ TEST_F(RouterInterfaceManagerTest, CreateRouterInterfaceValidAttributes) {
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = p4orch::kSetPortAndSrcMac
   };
   AddRouterInterfaceEntry(router_intf_entry, kRouterInterfaceOid1, kPortOid1,
                           kMtu1);
 
   P4RouterInterfaceEntry entry(kRouterInterfaceId1, kPortName1, kMacAddress1,
                                kVlanId0,
-                               /*has_vlan=*/false);
+                               /*has_vlan=*/false, /*creates_my_mac*/true);
+  entry.router_interface_oid = kRouterInterfaceOid1;
+  ValidateRouterInterfaceEntry(entry);
+}
+
+TEST_F(RouterInterfaceManagerTest, CreateRouterInterfaceNoMyMac) {
+  P4RouterInterfaceAppDbEntry router_intf_entry{
+      .router_interface_id = kRouterInterfaceId1,
+      .port_name = kPortName1,
+      .src_mac_address = kMacAddress1,
+      .vlan_id = kVlanId0,
+      .is_set_port_name = true,
+      .is_set_src_mac = true,
+      .is_set_vlan_id = false,
+      .creates_my_mac = false,
+      .action = p4orch::kUnicastSetPortAndSrcMac
+  };
+  AddRouterInterfaceEntry(router_intf_entry, kRouterInterfaceOid1, kPortOid1,
+                          kMtu1, false, 0, kDefaultMyMacOid);
+
+  P4RouterInterfaceEntry entry(kRouterInterfaceId1, kPortName1, kMacAddress1,
+                               kVlanId0,
+                               /*has_vlan=*/false, /*creates_my_mac*/false);
   entry.router_interface_oid = kRouterInterfaceOid1;
   ValidateRouterInterfaceEntry(entry);
 }
@@ -363,13 +482,15 @@ TEST_F(RouterInterfaceManagerTest, CreateRouterInterfaceWithSubport) {
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = ""
   };
   AddRouterInterfaceEntry(router_intf_entry, kRouterInterfaceOid1, kPortOid10,
                           kMtu10, true, kVlanId2);
 
   P4RouterInterfaceEntry entry(kRouterInterfaceId1, kPortName10, kMacAddress1,
                                kVlanId0,
-                               /*has_vlan=*/false);
+                               /*has_vlan=*/false, /*creates_my_mac*/true);
   entry.router_interface_oid = kRouterInterfaceOid1;
   ValidateRouterInterfaceEntry(entry);
 }
@@ -388,10 +509,62 @@ TEST_F(RouterInterfaceManagerTest,
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = p4orch::kSetPortAndSrcMac
   };
 
   EXPECT_EQ(StatusCode::SWSS_RC_INTERNAL, ValidateRouterInterfaceEntryOperation(
                                               router_intf_entry, SET_COMMAND));
+}
+
+TEST_F(RouterInterfaceManagerTest, ValidateRouterInterfaceActionParamsMismatch) {
+  P4RouterInterfaceAppDbEntry router_intf_entry{
+      .router_interface_id = kRouterInterfaceId1,
+      .port_name = kPortName1,
+      .src_mac_address = kMacAddress1,
+      .vlan_id = kVlanId0,
+      .is_set_port_name = true,
+      .is_set_src_mac = true,
+      .is_set_vlan_id = false,
+      .creates_my_mac = false,
+      .action = ""
+  };
+
+  router_intf_entry.action = p4orch::kUnicastSetPortAndSrcMac;
+  router_intf_entry.is_set_port_name = false;
+  EXPECT_EQ(
+      StatusCode::SWSS_RC_INVALID_PARAM,
+      ValidateRouterInterfaceEntryOperation(router_intf_entry, SET_COMMAND));
+
+  router_intf_entry.is_set_port_name = true;
+  router_intf_entry.is_set_port_name = false;
+  EXPECT_EQ(
+      StatusCode::SWSS_RC_INVALID_PARAM,
+      ValidateRouterInterfaceEntryOperation(router_intf_entry, SET_COMMAND));
+
+  router_intf_entry.is_set_port_name = true;
+  router_intf_entry.is_set_vlan_id = true;
+  EXPECT_EQ(
+      StatusCode::SWSS_RC_INVALID_PARAM,
+      ValidateRouterInterfaceEntryOperation(router_intf_entry, SET_COMMAND));
+
+  router_intf_entry.action = p4orch::kUnicastSetPortAndSrcMacAndVlanId;
+  router_intf_entry.is_set_port_name = false;
+  EXPECT_EQ(
+      StatusCode::SWSS_RC_INVALID_PARAM,
+      ValidateRouterInterfaceEntryOperation(router_intf_entry, SET_COMMAND));
+
+  router_intf_entry.is_set_port_name = true;
+  router_intf_entry.is_set_port_name = false;
+  EXPECT_EQ(
+      StatusCode::SWSS_RC_INVALID_PARAM,
+      ValidateRouterInterfaceEntryOperation(router_intf_entry, SET_COMMAND));
+
+  router_intf_entry.is_set_port_name = true;
+  router_intf_entry.is_set_vlan_id = false;
+  EXPECT_EQ(
+      StatusCode::SWSS_RC_INVALID_PARAM,
+      ValidateRouterInterfaceEntryOperation(router_intf_entry, SET_COMMAND));
 }
 
 TEST_F(RouterInterfaceManagerTest, ValidateRouterInterfacePortNameNotSet) {
@@ -403,10 +576,33 @@ TEST_F(RouterInterfaceManagerTest, ValidateRouterInterfacePortNameNotSet) {
       .is_set_port_name = false,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = ""
   };
   EXPECT_EQ(
       StatusCode::SWSS_RC_INVALID_PARAM,
       ValidateRouterInterfaceEntryOperation(router_intf_entry, SET_COMMAND));
+}
+
+TEST_F(RouterInterfaceManagerTest, CreateRouterInterfaceMyMacNotSet) {
+  P4RouterInterfaceAppDbEntry router_intf_entry{
+      .router_interface_id = kRouterInterfaceId1,
+      .port_name = kPortName1,
+      .src_mac_address = kMacAddress1,
+      .vlan_id = kVlanId0,
+      .is_set_port_name = true,
+      .is_set_src_mac = true,
+      .is_set_vlan_id = false,
+      .creates_my_mac = false,
+      .action = p4orch::kUnicastSetPortAndSrcMac
+  };
+  EXPECT_EQ(StatusCode::SWSS_RC_INTERNAL, ValidateRouterInterfaceEntryOperation(
+                                              router_intf_entry, SET_COMMAND));
+  EXPECT_THAT(CreateRouterInterfaces(
+                  std::vector<P4RouterInterfaceAppDbEntry>{router_intf_entry}),
+              ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_INTERNAL}));
+
+  ValidateRouterInterfaceEntryNotPresent(kRouterInterfaceId1);
 }
 
 TEST_F(RouterInterfaceManagerTest, CreateRouterInterfaceInvalidPort) {
@@ -419,6 +615,8 @@ TEST_F(RouterInterfaceManagerTest, CreateRouterInterfaceInvalidPort) {
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = p4orch::kSetPortAndSrcMac
   };
 
   EXPECT_THAT(CreateRouterInterfaces(
@@ -437,6 +635,8 @@ TEST_F(RouterInterfaceManagerTest, CreateRouterInterfaceNoMacAddress) {
       .is_set_port_name = true,
       .is_set_src_mac = false,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = ""
   };
 
   auto attrs = CreateRouterInterfaceAttributeList(
@@ -473,6 +673,8 @@ TEST_F(RouterInterfaceManagerTest, CreateRouterInterfaceSaiApiFails) {
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = p4orch::kSetPortAndSrcMac
   };
   auto attrs = CreateRouterInterfaceAttributeList(
       gVirtualRouterId, router_intf_entry.src_mac_address, kPortOid1, kMtu1);
@@ -502,6 +704,8 @@ TEST_F(RouterInterfaceManagerTest, RemoveRouterInterfaceExistingInterface) {
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = p4orch::kSetPortAndSrcMac
   };
   AddRouterInterfaceEntry(router_intf_entry, kRouterInterfaceOid2, kPortOid2,
                           kMtu2);
@@ -531,6 +735,8 @@ TEST_F(RouterInterfaceManagerTest,
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = p4orch::kSetPortAndSrcMac
   };
   EXPECT_EQ(
       StatusCode::SWSS_RC_NOT_FOUND,
@@ -546,6 +752,8 @@ TEST_F(RouterInterfaceManagerTest, ValideDelRouterInterfaceNonZeroRefCount) {
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = p4orch::kSetPortAndSrcMac
   };
   AddRouterInterfaceEntry(router_intf_entry, kRouterInterfaceOid2, kPortOid2,
                           kMtu2);
@@ -561,7 +769,7 @@ TEST_F(RouterInterfaceManagerTest, ValideDelRouterInterfaceNonZeroRefCount) {
 
   P4RouterInterfaceEntry entry(kRouterInterfaceId2, kPortName2, kMacAddress2,
                                kVlanId0,
-                               /*has_vlan=*/false);
+                               /*has_vlan=*/false, /*creates_my_mac*/true);
   entry.router_interface_oid = kRouterInterfaceOid2;
   ValidateRouterInterfaceEntry(entry);
 }
@@ -575,6 +783,8 @@ TEST_F(RouterInterfaceManagerTest, RemoveRouterInterfaceSaiApiFails) {
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = p4orch::kSetPortAndSrcMac
   };
   AddRouterInterfaceEntry(router_intf_entry, kRouterInterfaceOid2, kPortOid2,
                           kMtu2);
@@ -593,7 +803,7 @@ TEST_F(RouterInterfaceManagerTest, RemoveRouterInterfaceSaiApiFails) {
 
   P4RouterInterfaceEntry entry(kRouterInterfaceId2, kPortName2, kMacAddress2,
                                kVlanId0,
-                               /*has_vlan=*/false);
+                               /*has_vlan=*/false, /*creates_my_mac*/true);
   entry.router_interface_oid = kRouterInterfaceOid2;
   ValidateRouterInterfaceEntry(entry);
 }
@@ -607,6 +817,8 @@ TEST_F(RouterInterfaceManagerTest, SetSourceMacAddressModifyMacAddress) {
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = p4orch::kSetPortAndSrcMac
   };
   AddRouterInterfaceEntry(router_intf_entry, kRouterInterfaceOid1, kPortOid1,
                           kMtu1);
@@ -644,6 +856,8 @@ TEST_F(RouterInterfaceManagerTest, SetSourceMacAddressIdempotent) {
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = p4orch::kSetPortAndSrcMac
   };
   AddRouterInterfaceEntry(router_intf_entry, kRouterInterfaceOid1, kPortOid1,
                           kMtu1);
@@ -669,6 +883,8 @@ TEST_F(RouterInterfaceManagerTest, SetSourceMacAddressSaiApiFails) {
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = p4orch::kSetPortAndSrcMac
   };
   AddRouterInterfaceEntry(router_intf_entry, kRouterInterfaceOid1, kPortOid1,
                           kMtu1);
@@ -703,7 +919,10 @@ TEST_F(RouterInterfaceManagerTest, ProcessAddRequestValidAppDbParams) {
       .port_name = kPortName1,
       .src_mac_address = kMacAddress1,
       .is_set_port_name = true,
-      .is_set_src_mac = true};
+      .is_set_src_mac = true,
+      .creates_my_mac = true,
+      .action = ""
+  };
 
   auto attrs = CreateRouterInterfaceAttributeList(
       gVirtualRouterId, app_db_entry.src_mac_address, kPortOid1, kMtu1);
@@ -741,7 +960,7 @@ TEST_F(RouterInterfaceManagerTest, ProcessAddRequestValidAppDbParams) {
 
   P4RouterInterfaceEntry router_intf_entry(
       app_db_entry.router_interface_id, app_db_entry.port_name,
-      app_db_entry.src_mac_address, kVlanId0, /*has_vlan=*/false);
+      app_db_entry.src_mac_address, kVlanId0, /*has_vlan=*/false, /*creates_my_mac*/true);
   router_intf_entry.router_interface_oid = kRouterInterfaceOid1;
   ValidateRouterInterfaceEntry(router_intf_entry);
 }
@@ -755,6 +974,8 @@ TEST_F(RouterInterfaceManagerTest, ProcessUpdateRequestSetSourceMacAddress) {
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = p4orch::kSetPortAndSrcMac
   };
   AddRouterInterfaceEntry(router_intf_entry, kRouterInterfaceOid1, kPortOid1,
                           kMtu1);
@@ -796,7 +1017,7 @@ TEST_F(RouterInterfaceManagerTest, ProcessUpdateRequestSetSourceMacAddress) {
   // MacAddress.
   P4RouterInterfaceEntry entry(kRouterInterfaceId1, kPortName1, kMacAddress2,
                                kVlanId0,
-                               /*has_vlan=*/false);
+                               /*has_vlan=*/false, /*creates_my_mac*/true);
   entry.router_interface_oid = kRouterInterfaceOid1;
   ValidateRouterInterfaceEntry(entry);
 }
@@ -810,6 +1031,8 @@ TEST_F(RouterInterfaceManagerTest, ProcessUpdateRequestSetPortNameIdempotent) {
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = p4orch::kSetPortAndSrcMac
   };
   AddRouterInterfaceEntry(router_intf_entry, kRouterInterfaceOid1, kPortOid1,
                           kMtu1);
@@ -837,7 +1060,7 @@ TEST_F(RouterInterfaceManagerTest, ProcessUpdateRequestSetPortNameIdempotent) {
   // changed.
   P4RouterInterfaceEntry entry(kRouterInterfaceId1, kPortName1, kMacAddress1,
                                kVlanId0,
-                               /*has_vlan=*/false);
+                               /*has_vlan=*/false, /*creates_my_mac*/true);
   entry.router_interface_oid = kRouterInterfaceOid1;
   ValidateRouterInterfaceEntry(entry);
 }
@@ -851,6 +1074,8 @@ TEST_F(RouterInterfaceManagerTest, ValidateUpdateRequestSetPortName) {
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = p4orch::kSetPortAndSrcMac
   };
   AddRouterInterfaceEntry(router_intf_entry, kRouterInterfaceOid1, kPortOid1,
                           kMtu1);
@@ -870,6 +1095,8 @@ TEST_F(RouterInterfaceManagerTest, ValidateUpdateRequestMacAddrAndPort) {
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = p4orch::kSetPortAndSrcMac
   };
   AddRouterInterfaceEntry(router_intf_entry, kRouterInterfaceOid1, kPortOid1,
                           kMtu1);
@@ -890,12 +1117,15 @@ TEST_F(RouterInterfaceManagerTest, ValidateUpdateRequestVlanId) {
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = p4orch::kSetPortAndSrcMac
   };
   AddRouterInterfaceEntry(router_intf_entry, kRouterInterfaceOid1, kPortOid1,
                           kMtu1);
 
   router_intf_entry.vlan_id = kVlanId1;
   router_intf_entry.is_set_vlan_id = true;
+  router_intf_entry.action = p4orch::kSetPortAndSrcMacAndVlanId;
   EXPECT_EQ(
       StatusCode::SWSS_RC_UNIMPLEMENTED,
       ValidateRouterInterfaceEntryOperation(router_intf_entry, SET_COMMAND));
@@ -910,6 +1140,8 @@ TEST_F(RouterInterfaceManagerTest, ProcessDeleteRequestExistingInterface) {
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = p4orch::kSetPortAndSrcMac
   };
   AddRouterInterfaceEntry(router_intf_entry, kRouterInterfaceOid1, kPortOid1,
                           kMtu1);
@@ -950,6 +1182,8 @@ TEST_F(RouterInterfaceManagerTest, ValidateDeleteRequestNonExistingInterface) {
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = ""
   };
   EXPECT_EQ(
       StatusCode::SWSS_RC_NOT_FOUND,
@@ -966,6 +1200,8 @@ TEST_F(RouterInterfaceManagerTest,
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = p4orch::kSetPortAndSrcMac
   };
   AddRouterInterfaceEntry(router_intf_entry, kRouterInterfaceOid1, kPortOid1,
                           kMtu1);
@@ -980,7 +1216,7 @@ TEST_F(RouterInterfaceManagerTest,
 TEST_F(RouterInterfaceManagerTest, DeserializeRouterIntfEntryValidAttributes)
 {
     const std::vector<swss::FieldValueTuple> attributes = {
-        swss::FieldValueTuple(p4orch::kAction, "set_port_and_src_mac"),
+        swss::FieldValueTuple(p4orch::kAction, p4orch::kSetPortAndSrcMac),
         swss::FieldValueTuple(prependParamField(p4orch::kPort), kPortName1),
         swss::FieldValueTuple(prependParamField(p4orch::kSrcMac), kMacAddress1.to_string()),
     };
@@ -994,13 +1230,15 @@ TEST_F(RouterInterfaceManagerTest, DeserializeRouterIntfEntryValidAttributes)
     EXPECT_TRUE(app_db_entry.is_set_port_name);
     EXPECT_TRUE(app_db_entry.is_set_src_mac);
     EXPECT_FALSE(app_db_entry.is_set_vlan_id);
+    EXPECT_TRUE(app_db_entry.creates_my_mac);
+    EXPECT_EQ(app_db_entry.action, p4orch::kSetPortAndSrcMac);
 }
 
 TEST_F(RouterInterfaceManagerTest,
        DeserializeRouterIntfEntryWithVlanValidAttributes) {
   const std::vector<swss::FieldValueTuple> attributes = {
       swss::FieldValueTuple(p4orch::kAction,
-                            "set_port_and_src_mac_and_vlan_id"),
+                            p4orch::kSetPortAndSrcMacAndVlanId),
       swss::FieldValueTuple(prependParamField(p4orch::kPort), kPortName1),
       swss::FieldValueTuple(prependParamField(p4orch::kSrcMac),
                             kMacAddress1.to_string()),
@@ -1018,6 +1256,55 @@ TEST_F(RouterInterfaceManagerTest,
   EXPECT_TRUE(app_db_entry.is_set_port_name);
   EXPECT_TRUE(app_db_entry.is_set_src_mac);
   EXPECT_TRUE(app_db_entry.is_set_vlan_id);
+  EXPECT_FALSE(app_db_entry.creates_my_mac);
+  EXPECT_EQ(app_db_entry.action, p4orch::kSetPortAndSrcMacAndVlanId);
+}
+
+TEST_F(RouterInterfaceManagerTest, DeserializeRouterIntfEntryNoMyMacAction) {
+  const std::vector<swss::FieldValueTuple> attributes = {
+      swss::FieldValueTuple(p4orch::kAction, p4orch::kUnicastSetPortAndSrcMac),
+      swss::FieldValueTuple(prependParamField(p4orch::kPort), kPortName1),
+      swss::FieldValueTuple(prependParamField(p4orch::kSrcMac),
+                            kMacAddress1.to_string()),
+  };
+
+  auto app_db_entry_or =
+      DeserializeRouterIntfEntry(kRouterIntfAppDbKey, attributes);
+  EXPECT_TRUE(app_db_entry_or.ok());
+  auto& app_db_entry = *app_db_entry_or;
+  EXPECT_EQ(app_db_entry.router_interface_id, kRouterInterfaceId1);
+  EXPECT_EQ(app_db_entry.port_name, kPortName1);
+  EXPECT_EQ(app_db_entry.src_mac_address, kMacAddress1);
+  EXPECT_TRUE(app_db_entry.is_set_port_name);
+  EXPECT_TRUE(app_db_entry.is_set_src_mac);
+  EXPECT_FALSE(app_db_entry.is_set_vlan_id);
+  EXPECT_FALSE(app_db_entry.creates_my_mac);
+  EXPECT_EQ(app_db_entry.action, p4orch::kUnicastSetPortAndSrcMac);
+}
+
+TEST_F(RouterInterfaceManagerTest,
+       DeserializeRouterIntfEntryNoMyMacActionWithVlan) {
+  const std::vector<swss::FieldValueTuple> attributes = {
+      swss::FieldValueTuple(p4orch::kAction,
+                            p4orch::kUnicastSetPortAndSrcMacAndVlanId),
+      swss::FieldValueTuple(prependParamField(p4orch::kPort), kPortName1),
+      swss::FieldValueTuple(prependParamField(p4orch::kSrcMac),
+                            kMacAddress1.to_string()),
+      swss::FieldValueTuple(prependParamField(p4orch::kVlanId), "0x123"),
+  };
+
+  auto app_db_entry_or =
+      DeserializeRouterIntfEntry(kRouterIntfAppDbKey, attributes);
+  EXPECT_TRUE(app_db_entry_or.ok());
+  auto& app_db_entry = *app_db_entry_or;
+  EXPECT_EQ(app_db_entry.router_interface_id, kRouterInterfaceId1);
+  EXPECT_EQ(app_db_entry.port_name, kPortName1);
+  EXPECT_EQ(app_db_entry.src_mac_address, kMacAddress1);
+  EXPECT_TRUE(app_db_entry.is_set_port_name);
+  EXPECT_TRUE(app_db_entry.is_set_src_mac);
+  EXPECT_TRUE(app_db_entry.is_set_vlan_id);
+  EXPECT_FALSE(app_db_entry.creates_my_mac);
+  EXPECT_EQ(app_db_entry.action, p4orch::kUnicastSetPortAndSrcMacAndVlanId);
 }
 
 TEST_F(RouterInterfaceManagerTest, DeserializeRouterIntfEntryWithInvalidVlan) {
@@ -1064,6 +1351,19 @@ TEST_F(RouterInterfaceManagerTest, DeserializeRouterIntfEntryInvalidKeyFormat)
     EXPECT_FALSE(app_db_entry_or.ok());
 }
 
+TEST_F(RouterInterfaceManagerTest, DeserializeRouterIntfEntryWithInvalidAction) {
+  const std::vector<swss::FieldValueTuple> attributes = {
+      swss::FieldValueTuple(p4orch::kAction, "invalid_set_port_and_src_mac"),
+      swss::FieldValueTuple(prependParamField(p4orch::kPort), kPortName1),
+      swss::FieldValueTuple(prependParamField(p4orch::kSrcMac),
+                            kMacAddress1.to_string()),
+  };
+
+  auto app_db_entry_or =
+      DeserializeRouterIntfEntry(kRouterIntfAppDbKey, attributes);
+  EXPECT_FALSE(app_db_entry_or.ok());
+}
+
 TEST_F(RouterInterfaceManagerTest, DeserializeRouterIntfEntryMissingAction)
 {
     const std::vector<swss::FieldValueTuple> attributes = {
@@ -1079,6 +1379,8 @@ TEST_F(RouterInterfaceManagerTest, DeserializeRouterIntfEntryMissingAction)
     EXPECT_EQ(app_db_entry.src_mac_address, kMacAddress1);
     EXPECT_TRUE(app_db_entry.is_set_port_name);
     EXPECT_TRUE(app_db_entry.is_set_src_mac);
+    EXPECT_TRUE(app_db_entry.creates_my_mac);
+    EXPECT_TRUE(app_db_entry.action.empty());
 }
 
 TEST_F(RouterInterfaceManagerTest, DeserializeRouterIntfEntryOnlyPortNameAttribute)
@@ -1094,6 +1396,8 @@ TEST_F(RouterInterfaceManagerTest, DeserializeRouterIntfEntryOnlyPortNameAttribu
     EXPECT_EQ(app_db_entry.src_mac_address, kZeroMacAddress);
     EXPECT_TRUE(app_db_entry.is_set_port_name);
     EXPECT_FALSE(app_db_entry.is_set_src_mac);
+    EXPECT_TRUE(app_db_entry.creates_my_mac);
+    EXPECT_TRUE(app_db_entry.action.empty());
 }
 
 TEST_F(RouterInterfaceManagerTest, DeserializeRouterIntfEntryOnlyMacAddrAttribute)
@@ -1109,6 +1413,8 @@ TEST_F(RouterInterfaceManagerTest, DeserializeRouterIntfEntryOnlyMacAddrAttribut
     EXPECT_EQ(app_db_entry.src_mac_address, kMacAddress1);
     EXPECT_FALSE(app_db_entry.is_set_port_name);
     EXPECT_TRUE(app_db_entry.is_set_src_mac);
+    EXPECT_TRUE(app_db_entry.creates_my_mac);
+    EXPECT_TRUE(app_db_entry.action.empty());
 }
 
 TEST_F(RouterInterfaceManagerTest, DeserializeRouterIntfEntryNoAttributes)
@@ -1123,6 +1429,8 @@ TEST_F(RouterInterfaceManagerTest, DeserializeRouterIntfEntryNoAttributes)
     EXPECT_EQ(app_db_entry.src_mac_address, kZeroMacAddress);
     EXPECT_FALSE(app_db_entry.is_set_port_name);
     EXPECT_FALSE(app_db_entry.is_set_src_mac);
+    EXPECT_TRUE(app_db_entry.creates_my_mac);
+    EXPECT_TRUE(app_db_entry.action.empty());
 }
 
 TEST_F(RouterInterfaceManagerTest, DeserializeRouterIntfEntryInvalidField)
@@ -1164,9 +1472,9 @@ TEST_F(RouterInterfaceManagerTest, DrainValidAttributes)
                       Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)));
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
 
-    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1,
-                                             kMacAddress1, kVlanId0,
-                                             /*has_vlan=*/false);
+    P4RouterInterfaceEntry router_intf_entry(
+        kRouterInterfaceId1, kPortName1, kMacAddress1, kVlanId0,
+        /*has_vlan=*/false, /*creates_my_mac*/ true);
     router_intf_entry.router_interface_oid = kRouterInterfaceOid1;
     ValidateRouterInterfaceEntry(router_intf_entry);
 
@@ -1232,7 +1540,7 @@ TEST_F(RouterInterfaceManagerTest, DrainValidAttributesWithVlan) {
 
   P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1,
                                            kMacAddress1, kVlanId1,
-                                           /*has_vlan=*/true);
+                                           /*has_vlan=*/true, /*creates_my_mac*/true);
   router_intf_entry.router_interface_oid = kRouterInterfaceOid1;
   ValidateRouterInterfaceEntry(router_intf_entry);
 
@@ -1464,6 +1772,8 @@ TEST_F(RouterInterfaceManagerTest, VerifyStateTest) {
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = p4orch::kSetPortAndSrcMac
   };
   AddRouterInterfaceEntry(router_intf_entry, kRouterInterfaceOid1, kPortOid1,
                           kMtu1);
@@ -1535,6 +1845,76 @@ TEST_F(RouterInterfaceManagerTest, VerifyStateTest) {
     EXPECT_FALSE(VerifyState(db_key, attributes).empty());
 }
 
+TEST_F(RouterInterfaceManagerTest, VerifyStateNoMyMacTest) {
+  P4RouterInterfaceAppDbEntry router_intf_entry{
+      .router_interface_id = kRouterInterfaceId1,
+      .port_name = kPortName1,
+      .src_mac_address = kMacAddress1,
+      .vlan_id = kVlanId0,
+      .is_set_port_name = true,
+      .is_set_src_mac = true,
+      .is_set_vlan_id = false,
+      .creates_my_mac = false,
+      .action = p4orch::kUnicastSetPortAndSrcMac
+  };
+  AddRouterInterfaceEntry(router_intf_entry, kRouterInterfaceOid1, kPortOid1,
+                          kMtu1, false, 0, kDefaultMyMacOid);
+
+  // Setup ASIC DB.
+  swss::Table table(nullptr, "ASIC_STATE");
+  table.set(
+      "SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x295100",
+      std::vector<swss::FieldValueTuple>{
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID",
+                                "oid:0x0"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS",
+                                "00:01:02:03:04:05"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_TYPE",
+                                "SAI_ROUTER_INTERFACE_TYPE_PORT"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_PORT_ID",
+                                "oid:0x112233"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE",
+                                "true"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE",
+                                "true"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MY_MAC",
+                                "oid:0x101"}});
+
+  const std::string db_key = std::string(APP_P4RT_TABLE_NAME) +
+                             kTableKeyDelimiter +
+                             APP_P4RT_ROUTER_INTERFACE_TABLE_NAME +
+                             kTableKeyDelimiter + kRouterIntfAppDbKey;
+  std::vector<swss::FieldValueTuple> attributes;
+
+  // Verification should succeed with vaild key and value.
+  attributes.push_back(swss::FieldValueTuple{
+      p4orch::kAction, p4orch::kUnicastSetPortAndSrcMac});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kPort), kPortName1});
+  attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac),
+                                             kMacAddress1.to_string()});
+  EXPECT_EQ(VerifyState(db_key, attributes), "");
+
+  // Deprecated action should fail verification.
+  attributes.clear();
+  attributes.push_back(swss::FieldValueTuple{
+      p4orch::kAction, p4orch::kSetPortAndSrcMac});
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kPort), kPortName1});
+  attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac),
+                                             kMacAddress1.to_string()});
+  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+
+  // Missing action should fail verification.
+  attributes.clear();
+  attributes.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kPort), kPortName1});
+  attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac),
+                                             kMacAddress1.to_string()});
+  EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+}
+
 TEST_F(RouterInterfaceManagerTest, VerifyStateWithVlanTest) {
   P4RouterInterfaceAppDbEntry router_intf_entry{
       .router_interface_id = kRouterInterfaceId1,
@@ -1544,9 +1924,11 @@ TEST_F(RouterInterfaceManagerTest, VerifyStateWithVlanTest) {
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = true,
+      .creates_my_mac = false,
+      .action = p4orch::kSetPortAndSrcMacAndVlanId
   };
   AddRouterInterfaceEntry(router_intf_entry, kRouterInterfaceOid1, kPortOid1,
-                          kMtu1, /*subport=*/true, kVlanId1);
+                          kMtu1, /*subport=*/true, kVlanId1, kDefaultMyMacOid);
 
   // Setup ASIC DB.
   swss::Table table(nullptr, "ASIC_STATE");
@@ -1561,13 +1943,17 @@ TEST_F(RouterInterfaceManagerTest, VerifyStateWithVlanTest) {
                                 "SAI_ROUTER_INTERFACE_TYPE_SUB_PORT"},
           swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID",
                                 "291"},
+          swss::FieldValueTuple{
+              "SAI_ROUTER_INTERFACE_ATTR_DISABLE_SUB_PORT_VLAN_CONFIG", "true"},
           swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_PORT_ID",
                                 "oid:0x112233"},
           swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE",
                                 "true"},
           swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE",
                                 "true"},
-          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"}});
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"},
+          swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MY_MAC",
+                                "oid:0x101"}});
 
   const std::string db_key = std::string(APP_P4RT_TABLE_NAME) +
                              kTableKeyDelimiter +
@@ -1576,6 +1962,8 @@ TEST_F(RouterInterfaceManagerTest, VerifyStateWithVlanTest) {
   std::vector<swss::FieldValueTuple> attributes;
 
   // Verification should succeed with vaild key and value.
+  attributes.push_back(swss::FieldValueTuple{
+      p4orch::kAction, p4orch::kUnicastSetPortAndSrcMacAndVlanId});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kPort), kPortName1});
   attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac),
@@ -1597,6 +1985,8 @@ TEST_F(RouterInterfaceManagerTest, VerifyStateWithVlanTest) {
                                 "SAI_ROUTER_INTERFACE_TYPE_SUB_PORT"},
           swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID",
                                 "700"},  // This should be 291.
+          swss::FieldValueTuple{
+              "SAI_ROUTER_INTERFACE_ATTR_DISABLE_SUB_PORT_VLAN_CONFIG", "true"},
           swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_PORT_ID",
                                 "oid:0x112233"},
           swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE",
@@ -1608,6 +1998,8 @@ TEST_F(RouterInterfaceManagerTest, VerifyStateWithVlanTest) {
 
   // Missing VLAN ID should fail verification.
   attributes.clear();
+  attributes.push_back(swss::FieldValueTuple{
+      p4orch::kAction, p4orch::kUnicastSetPortAndSrcMacAndVlanId});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kPort), kPortName1});
   attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac),
@@ -1616,6 +2008,8 @@ TEST_F(RouterInterfaceManagerTest, VerifyStateWithVlanTest) {
 
   // Different VLAN ID should fail verification.
   attributes.clear();
+  attributes.push_back(swss::FieldValueTuple{
+      p4orch::kAction, p4orch::kUnicastSetPortAndSrcMacAndVlanId});
   attributes.push_back(
       swss::FieldValueTuple{prependParamField(p4orch::kPort), kPortName1});
   attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac),
@@ -1636,6 +2030,8 @@ TEST_F(RouterInterfaceManagerTest, VerifyStateAsicDbTest) {
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = p4orch::kSetPortAndSrcMac
   };
   AddRouterInterfaceEntry(router_intf_entry, kRouterInterfaceOid1, 0x1234,
                           9100);
@@ -1697,6 +2093,8 @@ TEST_F(RouterInterfaceManagerTest, UpdateRifMtuWhenPortMtuChanges) {
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = p4orch::kSetPortAndSrcMac
   };
   AddRouterInterfaceEntry(router_intf_entry1, kRouterInterfaceOid1, kPortOid1,
                           kMtu1);
@@ -1709,6 +2107,8 @@ TEST_F(RouterInterfaceManagerTest, UpdateRifMtuWhenPortMtuChanges) {
       .is_set_port_name = true,
       .is_set_src_mac = true,
       .is_set_vlan_id = false,
+      .creates_my_mac = true,
+      .action = p4orch::kSetPortAndSrcMac
   };
   AddRouterInterfaceEntry(router_intf_entry2, kRouterInterfaceOid2, kPortOid2,
                           kMtu2);

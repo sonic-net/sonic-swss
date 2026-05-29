@@ -10,6 +10,7 @@
 #include "crmorch.h"
 #include "dbconnector.h"
 #include "logger.h"
+#include "namelabelmapper.h"
 #include "orchagent/aclorch.h"
 #include "orchagent/crmorch.h"
 #include "orch.h"
@@ -35,6 +36,7 @@ extern CrmOrch *gCrmOrch;
 extern P4Orch *gP4Orch;
 extern SwitchOrch *gSwitchOrch;
 extern AclOrch* gAclOrch;
+extern NameLabelMapper* gLabelMapper;
 extern int gBatchSize;
 
 namespace p4orch
@@ -61,8 +63,9 @@ std::vector<sai_attribute_t> getGroupMemSaiAttrs(const P4AclTableDefinition &acl
     return acl_mem_attrs;
 }
 
-std::vector<sai_attribute_t> getUdfGroupSaiAttrs(const P4UdfField &udf_field)
-{
+std::vector<sai_attribute_t> getUdfGroupSaiAttrs(const P4UdfField& udf_field,
+                                                 bool& label_present,
+                                                 std::string& group_label) {
     std::vector<sai_attribute_t> udf_group_attrs;
     sai_attribute_t udf_group_attr;
     udf_group_attr.id = SAI_UDF_GROUP_ATTR_TYPE;
@@ -71,6 +74,13 @@ std::vector<sai_attribute_t> getUdfGroupSaiAttrs(const P4UdfField &udf_field)
 
     udf_group_attr.id = SAI_UDF_GROUP_ATTR_LENGTH;
     udf_group_attr.value.u16 = udf_field.length;
+    udf_group_attrs.push_back(udf_group_attr);
+
+    // Add label to uniquely identify udf group.
+    std::string mapper_key;
+    label_present = gLabelMapper->addLabelToAttr(
+                                                 SAI_OBJECT_TYPE_UDF_GROUP, APP_P4RT_TABLE_NAME, udf_field.group_id,
+                                                 udf_group_attr, SAI_UDF_GROUP_ATTR_LABEL, mapper_key, group_label);
     udf_group_attrs.push_back(udf_group_attr);
 
     return udf_group_attrs;
@@ -380,7 +390,8 @@ ReturnCodeOr<P4AclTableDefinitionAppDbEntry> AclTableManager::deserializeAclTabl
         else if (tokenized_field[0] == kAction)
         {
             if (!parseAclTableAppDbActionField(value, &app_db_entry.action_field_lookup[p4_field],
-                                               &app_db_entry.packet_action_color_lookup[p4_field]))
+                                               &app_db_entry.packet_action_color_lookup[p4_field],
+                                               &app_db_entry.action_color_param_lookup[p4_field]))
             {
                 return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
                        << "Error parsing ACL table definition action " << QuotedVar(field) << ":" << QuotedVar(value);
@@ -476,12 +487,8 @@ ReturnCode AclTableManager::processAddTableRequest(const P4AclTableDefinitionApp
         isSetUserTrapActionInAclTableDefinition(acl_table_definition.rule_action_field_lookup))
     {
         // Set up User Defined Traps for QOS_QUEUE action
-        auto status = gP4Orch->getAclRuleManager()->setUpUserDefinedTraps();
-        if (!status.ok())
-        {
-            gP4Orch->getAclRuleManager()->cleanUpUserDefinedTraps();
-            LOG_ERROR_AND_RETURN(status);
-        }
+        LOG_AND_RETURN_IF_ERROR(
+        gP4Orch->getAclRuleManager()->initializeUserDefinedTraps());
     }
 
     auto build_action_color_rc = buildAclTableDefinitionActionColorFieldValues(
@@ -493,6 +500,16 @@ ReturnCode AclTableManager::processAddTableRequest(const P4AclTableDefinitionApp
     LOG_AND_RETURN_IF_ERROR(build_action_color_rc.prepend("Failed to build ACL table definition "
                                                           "action color fields with table name " +
                                                           QuotedVar(app_db_entry.acl_table_name) + ": "));
+
+    auto build_action_color_param_rc =
+        buildAclTableDefinitionActionColorParamFieldValues(
+            app_db_entry.action_color_param_lookup,
+            &acl_table_definition.rule_action_color_param_lookup,
+            &acl_action_type_set);
+    LOG_AND_RETURN_IF_ERROR(build_action_color_param_rc.prepend(
+        "Failed to build ACL table definition "
+        "action color param fields with table name " +
+        QuotedVar(app_db_entry.acl_table_name) + ": "));
 
     if (!acl_table_definition.meter_unit.empty()) {
       acl_action_type_set.insert(SAI_ACL_ACTION_TYPE_SET_POLICER);
@@ -604,13 +621,24 @@ ReturnCode AclTableManager::createUdfGroup(const P4UdfField &udf_field)
 {
     SWSS_LOG_ENTER();
     sai_object_id_t udf_group_oid;
-    auto attrs = getUdfGroupSaiAttrs(udf_field);
+    bool label_present;
+    std::string group_label;
+
+    auto attrs = getUdfGroupSaiAttrs(udf_field, label_present, group_label);
 
     CHECK_ERROR_AND_LOG_AND_RETURN(
         sai_udf_api->create_udf_group(&udf_group_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data()),
         "Failed to create UDF group " << QuotedVar(udf_field.group_id)
                                       << " from SAI call sai_udf_api->create_udf_group");
     m_p4OidMapper->setOID(SAI_OBJECT_TYPE_UDF_GROUP, udf_field.group_id, udf_group_oid);
+
+    std::string mapper_key = gLabelMapper->generateKeyFromTableAndObjectName(
+                                                                             APP_P4RT_TABLE_NAME, udf_field.group_id);
+    if (!label_present)
+    {
+      gLabelMapper->setLabel(SAI_OBJECT_TYPE_UDF_GROUP, mapper_key, group_label);
+    }
+
     SWSS_LOG_INFO("Suceeded to create UDF group %s with object ID %s ", QuotedVar(udf_field.group_id).c_str(),
                   sai_serialize_object_id(udf_group_oid).c_str());
     return ReturnCode();
@@ -642,6 +670,9 @@ ReturnCode AclTableManager::removeUdfGroup(const std::string &udf_group_id)
     CHECK_ERROR_AND_LOG_AND_RETURN(sai_udf_api->remove_udf_group(group_oid),
                                    "Failed to remove UDF group with id " << QuotedVar(udf_group_id));
     m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_UDF_GROUP, udf_group_id);
+    gLabelMapper->eraseLabel(SAI_OBJECT_TYPE_UDF_GROUP,
+                             gLabelMapper->generateKeyFromTableAndObjectName(
+                                 APP_P4RT_TABLE_NAME, udf_group_id));
 
     SWSS_LOG_NOTICE("Suceeded to remove UDF group %s: %s", QuotedVar(udf_group_id).c_str(),
                     sai_serialize_object_id(group_oid).c_str());
@@ -1162,7 +1193,17 @@ std::string AclTableManager::verifyStateCache(const P4AclTableDefinitionAppDbEnt
             << QuotedVar(app_db_entry.acl_table_name);
         return msg.str();
     }
-
+    status = buildAclTableDefinitionActionColorParamFieldValues(
+        app_db_entry.action_color_param_lookup,
+        &acl_table_definition_entry.rule_action_color_param_lookup,
+        &acl_action_type_set);
+    if (!status.ok()) {
+      std::stringstream msg;
+      msg << "Failed to build ACL table action color param field values for "
+             "table "
+          << QuotedVar(app_db_entry.acl_table_name);
+      return msg.str();
+    }
     if (!acl_table_definition_entry.meter_unit.empty()) {
       acl_action_type_set.insert(SAI_ACL_ACTION_TYPE_SET_POLICER);
     }
@@ -1221,6 +1262,13 @@ std::string AclTableManager::verifyStateCache(const P4AclTableDefinitionAppDbEnt
         std::stringstream msg;
         msg << "Rule packet action color lookup mismatch on ACL table " << QuotedVar(app_db_entry.acl_table_name);
         return msg.str();
+    }
+    if (acl_table->rule_action_color_param_lookup !=
+        acl_table_definition_entry.rule_action_color_param_lookup) {
+      std::stringstream msg;
+      msg << "Rule packet action color param lookup mismatch on ACL table "
+          << QuotedVar(app_db_entry.acl_table_name);
+      return msg.str();
     }
 
     std::string err_msg = m_p4OidMapper->verifyOIDMapping(SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER,
@@ -1297,8 +1345,10 @@ std::string AclTableManager::verifyStateAsicDb(
         return std::string("UDF ") + udf_field.udf_id + " does not exist";
       }
 
+      bool label_present;
+      std::string group_label;
       // Verify UDF group.
-      attrs = getUdfGroupSaiAttrs(udf_field);
+      attrs = getUdfGroupSaiAttrs(udf_field, label_present, group_label);
       exp = saimeta::SaiAttributeList::serialize_attr_list(
           SAI_OBJECT_TYPE_UDF_GROUP, (uint32_t)attrs.size(), attrs.data(),
           /*countOnly=*/false);

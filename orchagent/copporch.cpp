@@ -15,6 +15,7 @@ extern "C" {
 #include "directory.h"
 #include "flow_counter_handler.h"
 #include "timer.h"
+#include "p4orch/p4orch.h"
 
 #include <inttypes.h>
 #include <sstream>
@@ -33,6 +34,8 @@ extern PortsOrch*           gPortsOrch;
 extern Directory<Orch*>     gDirectory;
 extern bool                 gIsNatSupported;
 extern bool                 gTraditionalFlexCounter;
+
+extern P4Orch *gP4Orch;
 
 #define FLEX_COUNTER_UPD_INTERVAL 1
 
@@ -182,9 +185,7 @@ static map<string, sai_packet_action_t> packet_action_map = {
 };
 
 const string default_trap_group = "default";
-const vector<sai_hostif_trap_type_t> default_trap_ids = {
-    SAI_HOSTIF_TRAP_TYPE_TTL_ERROR
-};
+const vector<sai_hostif_trap_type_t> default_trap_ids = {};
 
 const uint HOSTIF_TRAP_COUNTER_POLLING_INTERVAL_MS = 10000;
 
@@ -849,6 +850,11 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
             {
                 return task_process_status::task_failed;
             }
+            if (gP4Orch &&
+                !gP4Orch->getAclRuleManager()->updateUserDefinedTrap(trap_group_name, /*is_delete=*/false).ok())
+            {
+                return task_process_status::task_failed;
+            }
         }
         if (!trapGroupProcessTrapIdChange(trap_group_name, add_trap_ids, rem_trap_ids))
         {
@@ -864,6 +870,11 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
             return task_process_status::task_ignore;
         }
 
+        if (gP4Orch &&
+            !gP4Orch->getAclRuleManager()->updateUserDefinedTrap(trap_group_name, /*is_delete=*/true).ok())
+        {
+            return task_process_status::task_failed;
+        }
         if (!processTrapGroupDel(trap_group_name))
         {
             return task_process_status::task_failed;
@@ -992,12 +1003,7 @@ void CoppOrch::getTrapAddandRemoveList(string trap_group_name,
             /* The mapped Trap ID is not found on newly set list and to be removed*/
             else
             {
-                if ((trap_group_name != default_trap_group) ||
-                        ((trap_group_name == default_trap_group) &&
-                         (it.first != SAI_HOSTIF_TRAP_TYPE_TTL_ERROR)))
-                {
-                    rem_trap_ids.push_back(it.first);
-                }
+                rem_trap_ids.push_back(it.first);
             }
         }
     }
