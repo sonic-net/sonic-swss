@@ -9,6 +9,7 @@
 #define protected public
 #include "neighorch.h"
 #include "muxorch.h"
+#include "fdborch.h"
 #undef protected
 #undef private
 #include "mock_orchagent_main.h"
@@ -441,5 +442,101 @@ namespace mux_rollback_test
             // Without prefix-based neighbors, expect rollback to standby
             EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
         }
+    }
+
+    // Covers MuxOrch::updateFdb shared-MAC fallback: when an FDB add on a
+    // mux port matches the MAC of a neighbor that bypassed mux registration
+    // (e.g. learned while the FDB was aged out), the fallback loop converts
+    // it. The negative-filter neighbors (different MAC, prefix_route) must
+    // be skipped so unrelated NeighOrch entries are not touched.
+    TEST_F(MuxRollbackTest, UpdateFdbConvertsStrandedSharedMacNeighbor)
+    {
+        if (IsPrefixBasedMuxNeighbor())
+        {
+            GTEST_SKIP() << "Fallback path is for host-route mux neighbors";
+        }
+
+        // Use a MAC distinct from the fixture's SERVER_IP1 (MAC4) so the
+        // first loop's port-move branch finds no match and leaves
+        // found_existing_mux_neighbor false, letting the fallback fire.
+        const MacAddress shared_mac("62:f9:65:10:2f:05");
+        const MacAddress other_mac("aa:bb:cc:dd:ee:ff");
+
+        // Stranded same-MAC neighbor that the fallback should convert.
+        IpAddress ip_stranded("192.168.0.3");
+        NeighborEntry stranded_entry(ip_stranded, VLAN_1000);
+        NextHopKey stranded_nh(ip_stranded, VLAN_1000);
+        gNeighOrch->m_syncdNeighbors[stranded_entry] =
+            { shared_mac, /*hw_configured*/ false, 0, /*prefix_route*/ false };
+
+        // Different-MAC neighbor — must hit the mac-mismatch continue.
+        IpAddress ip_other_mac("192.168.0.4");
+        NeighborEntry other_mac_entry(ip_other_mac, VLAN_1000);
+        NextHopKey other_mac_nh(ip_other_mac, VLAN_1000);
+        gNeighOrch->m_syncdNeighbors[other_mac_entry] =
+            { other_mac, false, 0, false };
+
+        // Prefix-route same-MAC neighbor — must hit the prefix_route continue.
+        IpAddress ip_prefix("192.168.0.5");
+        NeighborEntry prefix_entry(ip_prefix, VLAN_1000);
+        NextHopKey prefix_nh(ip_prefix, VLAN_1000);
+        gNeighOrch->m_syncdNeighbors[prefix_entry] =
+            { shared_mac, false, 0, /*prefix_route*/ true };
+
+        // Pre-populate the FDB cache so getMuxPort() resolves shared_mac to
+        // TEST_INTERFACE without going through SAI notifications.
+        Port vlan_port, eth_port;
+        ASSERT_TRUE(gPortsOrch->getVlanByVlanId(1000, vlan_port));
+        ASSERT_TRUE(gPortsOrch->getPort(TEST_INTERFACE, eth_port));
+        FdbEntry fdb_entry;
+        fdb_entry.mac = shared_mac;
+        fdb_entry.bv_id = vlan_port.m_vlan_info.vlan_oid;
+        fdb_entry.port_name = TEST_INTERFACE;
+        FdbData fdb_data{};
+        fdb_data.bridge_port_id = eth_port.m_bridge_port_id;
+        fdb_data.type = "dynamic";
+        fdb_data.origin = FDB_ORIGIN_LEARN;
+        gFdbOrch->m_entries[fdb_entry] = fdb_data;
+
+        ASSERT_EQ(m_MuxOrch->mux_nexthop_tb_.find(stranded_nh),
+                  m_MuxOrch->mux_nexthop_tb_.end());
+
+        FdbUpdate update;
+        update.entry = fdb_entry;
+        update.add = true;
+        update.type = "dynamic";
+        m_MuxOrch->updateFdb(update);
+
+        // The stranded neighbor must now be a mux nexthop on TEST_INTERFACE.
+        auto it = m_MuxOrch->mux_nexthop_tb_.find(stranded_nh);
+        ASSERT_NE(it, m_MuxOrch->mux_nexthop_tb_.end());
+        EXPECT_EQ(TEST_INTERFACE, it->second);
+
+        // Mac-mismatch and prefix-route neighbors must remain untouched.
+        EXPECT_EQ(m_MuxOrch->mux_nexthop_tb_.find(other_mac_nh),
+                  m_MuxOrch->mux_nexthop_tb_.end());
+        EXPECT_EQ(m_MuxOrch->mux_nexthop_tb_.find(prefix_nh),
+                  m_MuxOrch->mux_nexthop_tb_.end());
+
+        // Clean up the entries we injected so we don't bleed into other tests.
+        gNeighOrch->m_syncdNeighbors.erase(stranded_entry);
+        gNeighOrch->m_syncdNeighbors.erase(other_mac_entry);
+        gNeighOrch->m_syncdNeighbors.erase(prefix_entry);
+        m_MuxOrch->mux_nexthop_tb_.erase(stranded_nh);
+        gFdbOrch->m_entries.erase(fdb_entry);
+    }
+
+    // Delete FDB events must be a no-op for updateFdb so that mac aging does
+    // not tear down mux neighbor state out from under the cable.
+    TEST_F(MuxRollbackTest, UpdateFdbDeleteIsNoOp)
+    {
+        FdbUpdate update;
+        update.entry.mac = MacAddress("62:f9:65:10:2f:04");
+        update.entry.port_name = TEST_INTERFACE;
+        update.add = false;
+
+        size_t before = m_MuxOrch->mux_nexthop_tb_.size();
+        m_MuxOrch->updateFdb(update);
+        EXPECT_EQ(before, m_MuxOrch->mux_nexthop_tb_.size());
     }
 }
