@@ -137,6 +137,11 @@ public:
      * Protection NHG APIs.
      * MuxOrch is the primary consumer of these for dual-ToR hardware
      * protection switching. Capacity accounting is shared with ECMP NHGs.
+     *
+     * All createProtNhg overloads are idempotent: re-creating with an
+     * existing canonical key is a no-op that returns true. Membership
+     * is immutable once created -- callers wishing to change membership
+     * must removeProtNhg() first.
      */
 
     /* Create a protection NHG with one or more primary and one standby next hop.

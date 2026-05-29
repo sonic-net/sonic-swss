@@ -1229,8 +1229,8 @@ bool NhgOrch::createProtNhg(const string &key,
 
     if (m_protNhgs.find(key) != m_protNhgs.end())
     {
-        SWSS_LOG_ERROR("Protection NHG %s already exists", key.c_str());
-        return false;
+        SWSS_LOG_INFO("Protection NHG %s already exists", key.c_str());
+        return true;
     }
 
     if (gRouteOrch->getNhgCount() + NhgBase::getSyncedCount() >=
@@ -1332,6 +1332,15 @@ bool NhgOrch::createProtNhg(const string &key,
         return false;
     }
 
+    /* Idempotent re-create: short-circuit before reference / capacity checks
+     * so a repeat call after a transient member-NHG removal still returns
+     * success, matching the individual-NH overload's contract. */
+    if (m_protNhgs.find(key) != m_protNhgs.end())
+    {
+        SWSS_LOG_INFO("Protection NHG %s already exists", key.c_str());
+        return true;
+    }
+
     string primary_key_str = primary_nhg_key.to_string();
     string standby_key_str = standby_nhg_key.to_string();
 
@@ -1346,12 +1355,6 @@ bool NhgOrch::createProtNhg(const string &key,
     {
         SWSS_LOG_ERROR("Protection NHG %s: standby NHG %s does not exist",
                        key.c_str(), standby_key_str.c_str());
-        return false;
-    }
-
-    if (m_protNhgs.find(key) != m_protNhgs.end())
-    {
-        SWSS_LOG_ERROR("Protection NHG %s already exists", key.c_str());
         return false;
     }
 
