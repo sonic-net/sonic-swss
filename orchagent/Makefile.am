@@ -133,6 +133,7 @@ orchagent_SOURCES = \
             dash/dashhaorch.cpp \
             dash/dashhafloworch.cpp \
             dash/dashportmaporch.cpp \
+            dash/dashresulthelper.cpp \
             twamporch.cpp \
             stporch.cpp \
             nexthopkey.cpp \

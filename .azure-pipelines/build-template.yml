@@ -171,7 +171,9 @@ jobs:
         target/debs/${{ parameters.debian_version }}/libnl-route-3-dev_*.deb
         target/debs/${{ parameters.debian_version }}/libnl-nf-3-200_*.deb
         target/debs/${{ parameters.debian_version }}/libnl-nf-3-dev_*.deb
-        target/debs/${{ parameters.debian_version }}/libyang_*.deb
+        target/debs/${{ parameters.debian_version }}/libyang3_*.deb
+        target/debs/${{ parameters.debian_version }}/libnexthopgroup_*.deb
+        target/debs/${{ parameters.debian_version }}/libnexthopgroup-dev_*.deb
     displayName: "Download common libs"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -204,7 +206,7 @@ jobs:
       sudo dpkg -i $(find common -type f -name '*.deb')
       cd ..
     workingDirectory: $(Build.ArtifactStagingDirectory)
-    displayName: "Install libnl3"
+    displayName: "Install SONiC-built dependencies"
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
@@ -212,7 +214,7 @@ jobs:
       pipeline: sonic-net.sonic-platform-vpp
       artifact: vpp
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/main'
+      runBranch: 'refs/heads/master'
       allowPartiallySucceededBuilds: true
       path: $(Build.ArtifactStagingDirectory)/download
     displayName: "Download sonic platform-vpp deb packages"
