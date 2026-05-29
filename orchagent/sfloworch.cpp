@@ -165,8 +165,16 @@ bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id,
 
     // Phase 2: apply ingress
     bool ingress_applied = false;
+    sai_object_id_t prev_ingress_oid = SAI_NULL_OBJECT_ID;
     if (need_ingress)
     {
+        sai_attribute_t save_attr;
+        save_attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
+        if (sai_port_api->get_port_attribute(port_id, 1, &save_attr) == SAI_STATUS_SUCCESS)
+        {
+            prev_ingress_oid = save_attr.value.oid;
+        }
+
         attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
         attr.value.oid = sample_id;
         sai_rc = sai_port_api->set_port_attribute(port_id, &attr);
@@ -201,7 +209,7 @@ bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id,
             {
                 sai_attribute_t rollback_attr;
                 rollback_attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
-                rollback_attr.value.oid = SAI_NULL_OBJECT_ID;
+                rollback_attr.value.oid = prev_ingress_oid;
                 sai_status_t rb_rc = sai_port_api->set_port_attribute(port_id, &rollback_attr);
                 if (rb_rc != SAI_STATUS_SUCCESS)
                 {
@@ -291,6 +299,39 @@ bool SflowOrch::sflowUpdateSampleDirection(sai_object_id_t port_id, string old_d
     {
         ing_sample_oid = port_info->second.m_sample_id;
         egr_sample_oid = port_info->second.m_sample_id;
+    }
+
+    // Pre-check both directions before touching any SAI state
+    if (ing_sample_oid != SAI_NULL_OBJECT_ID)
+    {
+        sai_attribute_t check_attr;
+        check_attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
+        if (sai_port_api->get_port_attribute(port_id, 1, &check_attr) == SAI_STATUS_SUCCESS
+            && check_attr.value.oid != SAI_NULL_OBJECT_ID
+            && check_attr.value.oid != ing_sample_oid
+            && !isSflowSamplePacket(check_attr.value.oid))
+        {
+            SWSS_LOG_ERROR("Port %" PRIx64 " INGRESS_SAMPLEPACKET_ENABLE already bound to "
+                           "OID 0x%" PRIx64 ", cannot update sFlow direction",
+                           port_id, check_attr.value.oid);
+            return false;
+        }
+    }
+
+    if (egr_sample_oid != SAI_NULL_OBJECT_ID)
+    {
+        sai_attribute_t check_attr_egr;
+        check_attr_egr.id = SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
+        if (sai_port_api->get_port_attribute(port_id, 1, &check_attr_egr) == SAI_STATUS_SUCCESS
+            && check_attr_egr.value.oid != SAI_NULL_OBJECT_ID
+            && check_attr_egr.value.oid != egr_sample_oid
+            && !isSflowSamplePacket(check_attr_egr.value.oid))
+        {
+            SWSS_LOG_ERROR("Port %" PRIx64 " EGRESS_SAMPLEPACKET_ENABLE already bound to "
+                           "OID 0x%" PRIx64 ", cannot update sFlow direction",
+                           port_id, check_attr_egr.value.oid);
+            return false;
+        }
     }
 
     attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
