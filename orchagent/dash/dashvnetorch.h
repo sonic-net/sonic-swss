@@ -13,6 +13,7 @@
 #include "timer.h"
 #include "zmqorch.h"
 #include "zmqserver.h"
+#include "dashorch.h"
 
 #include "dash_api/vnet.pb.h"
 #include "dash_api/vnet_mapping.pb.h"
@@ -33,6 +34,7 @@ struct DashVnetBulkContext
     std::deque<sai_object_id_t> object_ids;
     std::deque<sai_status_t> vnet_statuses;
     std::deque<sai_status_t> pa_validation_statuses;
+    uint32_t pre_op_result = DASH_RESULT_SUCCESS;
     DashVnetBulkContext() {}
 
     DashVnetBulkContext(const DashVnetBulkContext&) = delete;
@@ -43,6 +45,7 @@ struct DashVnetBulkContext
         object_ids.clear();
         vnet_statuses.clear();
         pa_validation_statuses.clear();
+        pre_op_result = DASH_RESULT_SUCCESS;
     }
 };
 
@@ -53,6 +56,7 @@ struct VnetMapBulkContext
     dash::vnet_mapping::VnetMapping metadata;
     std::deque<sai_status_t> outbound_ca_to_pa_object_statuses;
     std::deque<sai_status_t> pa_validation_object_statuses;
+    uint32_t pre_op_result = DASH_RESULT_SUCCESS;
     VnetMapBulkContext() {}
 
     VnetMapBulkContext(const VnetMapBulkContext&) = delete;
@@ -62,6 +66,7 @@ struct VnetMapBulkContext
     {
         outbound_ca_to_pa_object_statuses.clear();
         pa_validation_object_statuses.clear();
+        pre_op_result = DASH_RESULT_SUCCESS;
     }
 };
 
