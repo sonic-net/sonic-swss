@@ -90,6 +90,7 @@ private:
     void doTaskEniRouteTable(ConsumerBase &consumer);
     void doTaskRouteGroupTable(ConsumerBase &consumer);
     bool addApplianceEntry(const std::string& appliance_id, const dash::appliance::Appliance &entry);
+    bool createApplianceSaiObjects(const std::string& appliance_id, const dash::appliance::Appliance &entry, sai_object_id_t &sai_appliance_id);
     bool addApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance& entry);
     bool removeApplianceEntry(const std::string& appliance_id);
     bool removeApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance& entry);

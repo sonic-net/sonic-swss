@@ -268,10 +268,11 @@ This is required since some sai_api do not support this function call yet.
 /* Helper macros to iterate over multiple sai_object_type inputs */
 #define FOR_EACH_1(action, api_name, x) action(api_name, x)
 #define FOR_EACH_2(action, api_name, x, ...) action(api_name, x) FOR_EACH_1(action, api_name, __VA_ARGS__)
+#define FOR_EACH_3(action, api_name, x, ...) action(api_name, x) FOR_EACH_2(action, api_name, __VA_ARGS__)
 
-#define GET_FOR_EACH_MACRO(_1, _2, NAME, ...) NAME
+#define GET_FOR_EACH_MACRO(_1, _2, _3, NAME, ...) NAME
 #define FOR_EACH(action, api_name, ...) \
-    GET_FOR_EACH_MACRO(__VA_ARGS__, FOR_EACH_2, FOR_EACH_1)(action, api_name, __VA_ARGS__)
+    GET_FOR_EACH_MACRO(__VA_ARGS__, FOR_EACH_3, FOR_EACH_2, FOR_EACH_1)(action, api_name, __VA_ARGS__)
 
 #define DEFINE_ON_CALL_DEFAULTS(sai_api_name, sai_object_type)                                                                 \
     ON_CALL(*this, create_##sai_object_type).WillByDefault([this](GENERIC_CREATE_PARAMS(sai_object_type)) {                    \
