@@ -666,6 +666,15 @@ task_process_status MirrorOrch::updateEntry(const string& key, const vector<Fiel
         }
     }
 
+    // Sampled <-> full mode switch needs delete+recreate; in-place would
+    // strand the samplepacket OID and port sampled-attr bindings.
+    if ((session.sample_rate == 0) != (new_sample_rate == 0))
+    {
+        SWSS_LOG_NOTICE("Mirror mode transition (sampled <-> full) for session %s, "
+                        "performing delete+recreate", key.c_str());
+        immutable_changed = true;
+    }
+
     // If any immutable fields changed, must delete and recreate
     if (immutable_changed)
     {
