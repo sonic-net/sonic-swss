@@ -1070,80 +1070,40 @@ bool MirrorOrch::setUnsetPortMirror(Port port,
             return false; // LCOV_EXCL_LINE
         }
 
-        // Sampled mirroring path: use SAMPLEPACKET_ENABLE + SAMPLE_MIRROR_SESSION
-        sai_attribute_t sp_attr;
-        sp_attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
-        sp_attr.value.oid = set ? samplepacketId : SAI_NULL_OBJECT_ID;
-
-        sai_attribute_t mirror_attr;
-        mirror_attr.id = SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION;
-        if (set)
+        // Sampled mirroring path: dispatch to per-PHY helper; LAG must be
+        // expanded to its member ports because SAMPLEPACKET/SAMPLE_MIRROR_SESSION
+        // are port-level SAI attributes and a LAG OID is not a valid target.
+        if (port.m_type == Port::LAG)
         {
-            mirror_attr.value.objlist.count = 1;
-            mirror_attr.value.objlist.list = &sessionId;
+            std::vector<Port> portv;
+            m_portsOrch->getLagMember(port, portv);
+            for (const auto &p : portv)
+            {
+                if (p.m_type != Port::PHY)
+                {
+                    SWSS_LOG_ERROR("Failed to locate PHY member port %s of LAG %s",
+                                   p.m_alias.c_str(), port.m_alias.c_str());
+                    return false;
+                }
+                if (!setUnsetSampledMirrorOnPhyPort(p.m_port_id, p.m_alias, set,
+                                                    sessionId, samplepacketId))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+        else if (port.m_type == Port::PHY)
+        {
+            return setUnsetSampledMirrorOnPhyPort(port.m_port_id, port.m_alias, set,
+                                                  sessionId, samplepacketId);
         }
         else
         {
-            mirror_attr.value.objlist.count = 0; // LCOV_EXCL_LINE: Covered by VS test
+            SWSS_LOG_ERROR("Sampled mirror not supported on port %s of type %d",
+                           port.m_alias.c_str(), port.m_type);
+            return false;
         }
-
-        // Check for samplepacket conflict before binding
-        if (set)
-        {
-            sai_attribute_t check_attr;
-            check_attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
-            if (sai_port_api->get_port_attribute(port.m_port_id, 1, &check_attr) == SAI_STATUS_SUCCESS
-                && check_attr.value.oid != SAI_NULL_OBJECT_ID
-                && check_attr.value.oid != samplepacketId)
-            {
-                SWSS_LOG_ERROR("Port %s INGRESS_SAMPLEPACKET_ENABLE already bound to "
-                               "OID 0x%" PRIx64 ", cannot bind sampled mirror",
-                               port.m_alias.c_str(), check_attr.value.oid);
-                return false;
-            }
-        }
-
-        // Set/clear in correct order
-        if (set)
-        {
-            // Set: SAMPLEPACKET_ENABLE first, then SAMPLE_MIRROR_SESSION
-            status = sai_port_api->set_port_attribute(port.m_port_id, &sp_attr);
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_ERROR("Failed to set SAMPLEPACKET_ENABLE on port %s, status %d",
-                                port.m_alias.c_str(), status);
-                return false;
-            }
-            status = sai_port_api->set_port_attribute(port.m_port_id, &mirror_attr); // LCOV_EXCL_LINE: Covered by VS test
-            if (status != SAI_STATUS_SUCCESS) // LCOV_EXCL_LINE: Covered by VS test
-            {
-                SWSS_LOG_ERROR("Failed to set SAMPLE_MIRROR_SESSION on port %s, status %d", // LCOV_EXCL_LINE: SAI VS set always succeeds
-                                port.m_alias.c_str(), status); // LCOV_EXCL_LINE
-                // Rollback: clear SAMPLEPACKET_ENABLE
-                sp_attr.value.oid = SAI_NULL_OBJECT_ID; // LCOV_EXCL_LINE
-                sai_port_api->set_port_attribute(port.m_port_id, &sp_attr); // LCOV_EXCL_LINE
-                return false; // LCOV_EXCL_LINE
-            }
-        }
-        else
-        {
-            // Clear: SAMPLE_MIRROR_SESSION first, then SAMPLEPACKET_ENABLE (reverse order)
-            status = sai_port_api->set_port_attribute(port.m_port_id, &mirror_attr); // LCOV_EXCL_LINE: Covered by VS test
-            if (status != SAI_STATUS_SUCCESS) // LCOV_EXCL_LINE: Covered by VS test
-            {
-                SWSS_LOG_ERROR("Failed to clear SAMPLE_MIRROR_SESSION on port %s, status %d", // LCOV_EXCL_LINE: SAI VS set always succeeds
-                                port.m_alias.c_str(), status); // LCOV_EXCL_LINE
-                return false; // LCOV_EXCL_LINE
-            }
-            status = sai_port_api->set_port_attribute(port.m_port_id, &sp_attr); // LCOV_EXCL_LINE: Covered by VS test
-            if (status != SAI_STATUS_SUCCESS) // LCOV_EXCL_LINE: Covered by VS test
-            {
-                SWSS_LOG_ERROR("Failed to clear SAMPLEPACKET_ENABLE on port %s, status %d", // LCOV_EXCL_LINE: SAI VS set always succeeds
-                                port.m_alias.c_str(), status); // LCOV_EXCL_LINE
-                return false; // LCOV_EXCL_LINE
-            }
-        }
-        return true; // LCOV_EXCL_LINE: Covered by VS test
     }
 
     // Full mirror path (existing behavior)
@@ -1527,6 +1487,90 @@ bool MirrorOrch::updateSessionDstMac(const string& name, MirrorEntry& session)
     return true;
 }
 
+
+bool MirrorOrch::setUnsetSampledMirrorOnPhyPort(sai_object_id_t phy_port_id,
+                                                const std::string& phy_port_alias,
+                                                bool set,
+                                                sai_object_id_t sessionId,
+                                                sai_object_id_t samplepacketId)
+{
+    SWSS_LOG_ENTER();
+
+    sai_status_t status;
+
+    sai_attribute_t sp_attr;
+    sp_attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
+    sp_attr.value.oid = set ? samplepacketId : SAI_NULL_OBJECT_ID;
+
+    sai_attribute_t mirror_attr;
+    mirror_attr.id = SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION;
+    if (set)
+    {
+        mirror_attr.value.objlist.count = 1;
+        mirror_attr.value.objlist.list = &sessionId;
+    }
+    else
+    {
+        mirror_attr.value.objlist.count = 0; // LCOV_EXCL_LINE: Covered by VS test
+    }
+
+    // Check for samplepacket conflict before binding
+    if (set)
+    {
+        sai_attribute_t check_attr;
+        check_attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
+        if (sai_port_api->get_port_attribute(phy_port_id, 1, &check_attr) == SAI_STATUS_SUCCESS
+            && check_attr.value.oid != SAI_NULL_OBJECT_ID
+            && check_attr.value.oid != samplepacketId)
+        {
+            SWSS_LOG_ERROR("Port %s INGRESS_SAMPLEPACKET_ENABLE already bound to "
+                           "OID 0x%" PRIx64 ", cannot bind sampled mirror",
+                           phy_port_alias.c_str(), check_attr.value.oid);
+            return false;
+        }
+    }
+
+    if (set)
+    {
+        // Set: SAMPLEPACKET_ENABLE first, then SAMPLE_MIRROR_SESSION
+        status = sai_port_api->set_port_attribute(phy_port_id, &sp_attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set SAMPLEPACKET_ENABLE on port %s, status %d",
+                            phy_port_alias.c_str(), status);
+            return false;
+        }
+        status = sai_port_api->set_port_attribute(phy_port_id, &mirror_attr); // LCOV_EXCL_LINE: Covered by VS test
+        if (status != SAI_STATUS_SUCCESS) // LCOV_EXCL_LINE: Covered by VS test
+        {
+            SWSS_LOG_ERROR("Failed to set SAMPLE_MIRROR_SESSION on port %s, status %d", // LCOV_EXCL_LINE: SAI VS set always succeeds
+                            phy_port_alias.c_str(), status); // LCOV_EXCL_LINE
+            // Rollback: clear SAMPLEPACKET_ENABLE
+            sp_attr.value.oid = SAI_NULL_OBJECT_ID; // LCOV_EXCL_LINE
+            sai_port_api->set_port_attribute(phy_port_id, &sp_attr); // LCOV_EXCL_LINE
+            return false; // LCOV_EXCL_LINE
+        }
+    }
+    else
+    {
+        // Clear: SAMPLE_MIRROR_SESSION first, then SAMPLEPACKET_ENABLE (reverse order)
+        status = sai_port_api->set_port_attribute(phy_port_id, &mirror_attr); // LCOV_EXCL_LINE: Covered by VS test
+        if (status != SAI_STATUS_SUCCESS) // LCOV_EXCL_LINE: Covered by VS test
+        {
+            SWSS_LOG_ERROR("Failed to clear SAMPLE_MIRROR_SESSION on port %s, status %d", // LCOV_EXCL_LINE: SAI VS set always succeeds
+                            phy_port_alias.c_str(), status); // LCOV_EXCL_LINE
+            return false; // LCOV_EXCL_LINE
+        }
+        status = sai_port_api->set_port_attribute(phy_port_id, &sp_attr); // LCOV_EXCL_LINE: Covered by VS test
+        if (status != SAI_STATUS_SUCCESS) // LCOV_EXCL_LINE: Covered by VS test
+        {
+            SWSS_LOG_ERROR("Failed to clear SAMPLEPACKET_ENABLE on port %s, status %d", // LCOV_EXCL_LINE: SAI VS set always succeeds
+                            phy_port_alias.c_str(), status); // LCOV_EXCL_LINE
+            return false; // LCOV_EXCL_LINE
+        }
+    }
+    return true; // LCOV_EXCL_LINE: Covered by VS test
+}
 
 bool MirrorOrch::createSamplePacket(const string& name, MirrorEntry& session)
 {

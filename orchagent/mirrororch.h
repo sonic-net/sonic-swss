@@ -150,6 +150,11 @@ private:
     // Sampled mirroring helpers
     bool createSamplePacket(const string& name, MirrorEntry& session);
     bool removeSamplePacket(const string& name, MirrorEntry& session);
+    bool setUnsetSampledMirrorOnPhyPort(sai_object_id_t phy_port_id,
+                                        const std::string& phy_port_alias,
+                                        bool set,
+                                        sai_object_id_t sessionId,
+                                        sai_object_id_t samplepacketId);
 
     void doTask(Consumer& consumer);
 };
