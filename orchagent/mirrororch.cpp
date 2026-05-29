@@ -91,7 +91,8 @@ MirrorOrch::MirrorOrch(TableConnector stateDbConnector, TableConnector confDbCon
         m_fdbOrch(fdbOrch),
         m_policerOrch(policerOrch),
         m_switchOrch(switchOrch),
-        m_mirrorTable(stateDbConnector.first, stateDbConnector.second)
+        m_mirrorTable(stateDbConnector.first, stateDbConnector.second),
+        m_cfgMirrorTable(confDbConnector.first, confDbConnector.second)
 {
     sai_status_t status;
     sai_attribute_t attr;
@@ -675,17 +676,27 @@ task_process_status MirrorOrch::updateEntry(const string& key, const vector<Fiel
         immutable_changed = true;
     }
 
-    // If any immutable fields changed, must delete and recreate
+    // If any immutable fields changed, must delete and recreate.
+    // Rebuild from the full CONFIG_DB row so a partial SET payload (e.g. HSET
+    // of a single field) does not recreate a session with missing fields.
     if (immutable_changed)
     {
         SWSS_LOG_NOTICE("Immutable fields changed for session %s, performing delete+recreate", key.c_str());
+
+        vector<FieldValueTuple> fullRow;
+        if (!m_cfgMirrorTable.get(key, fullRow))
+        {
+            SWSS_LOG_ERROR("Cannot rebuild mirror session %s: missing from CONFIG_DB", key.c_str());
+            return task_process_status::task_failed;
+        }
+
         auto task_status = deleteEntry(key);
         if (task_status != task_process_status::task_success)
         {
             SWSS_LOG_ERROR("Failed to delete mirror session %s during update", key.c_str());
             return task_status;
         }
-        return createEntry(key, data);
+        return createEntry(key, fullRow);
     }
 
     // Only mutable fields (sample_rate, truncate_size) changed - update in-place
@@ -719,16 +730,33 @@ task_process_status MirrorOrch::updateEntry(const string& key, const vector<Fiel
 
         if (truncate_size_changed)
         {
-            sai_attribute_t attr;
-            attr.id = SAI_SAMPLEPACKET_ATTR_TRUNCATE_SIZE;
-            attr.value.u32 = new_truncate_size;
+            // Keep TRUNCATE_ENABLE in sync with TRUNCATE_SIZE so 0 <-> non-zero
+            sai_attribute_t enable_attr;
+            enable_attr.id = SAI_SAMPLEPACKET_ATTR_TRUNCATE_ENABLE;
+            enable_attr.value.booldata = (new_truncate_size > 0);
             sai_status_t status = sai_samplepacket_api->set_samplepacket_attribute(
-                session.samplepacketId, &attr);
+                session.samplepacketId, &enable_attr);
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to update truncate_size for session %s, status %d", key.c_str(), status); // LCOV_EXCL_LINE: SAI VS set always succeeds
+                SWSS_LOG_ERROR("Failed to update truncate_enable for session %s, status %d", key.c_str(), status); // LCOV_EXCL_LINE: SAI VS set always succeeds
                 return task_process_status::task_failed; // LCOV_EXCL_LINE
             }
+
+            // Only set SIZE when truncation is enabled; SAI may reject SIZE=0.
+            if (new_truncate_size > 0)
+            {
+                sai_attribute_t size_attr;
+                size_attr.id = SAI_SAMPLEPACKET_ATTR_TRUNCATE_SIZE;
+                size_attr.value.u32 = new_truncate_size;
+                status = sai_samplepacket_api->set_samplepacket_attribute(
+                    session.samplepacketId, &size_attr);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to update truncate_size for session %s, status %d", key.c_str(), status); // LCOV_EXCL_LINE: SAI VS set always succeeds
+                    return task_process_status::task_failed; // LCOV_EXCL_LINE
+                }
+            }
+
             session.truncate_size = new_truncate_size;
             SWSS_LOG_NOTICE("Updated truncate_size to %u for session %s", new_truncate_size, key.c_str());
         }
@@ -865,6 +893,10 @@ void MirrorOrch::setSessionState(const string& name, const MirrorEntry& session,
         {
             fvVector.emplace_back(MIRROR_SESSION_SAMPLE_RATE, to_string(session.sample_rate));
         }
+        else
+        {
+            m_mirrorTable.hdel(name, MIRROR_SESSION_SAMPLE_RATE);
+        }
     }
 
     if (attr.empty() || attr == MIRROR_SESSION_TRUNCATE_SIZE)
@@ -872,6 +904,10 @@ void MirrorOrch::setSessionState(const string& name, const MirrorEntry& session,
         if (session.truncate_size > 0)
         {
             fvVector.emplace_back(MIRROR_SESSION_TRUNCATE_SIZE, to_string(session.truncate_size));
+        }
+        else
+        {
+            m_mirrorTable.hdel(name, MIRROR_SESSION_TRUNCATE_SIZE);
         }
     }
 
