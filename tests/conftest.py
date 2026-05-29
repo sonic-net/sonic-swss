@@ -492,6 +492,7 @@ class DockerVirtualSwitch:
         if not self.enable_coverage:
             return
         try:
+            print("Collecting coverage data for container {}".format(self.ctn.short_id))
             # Generate the gcda files
             self.runcmd('killall5 -15')
             time.sleep(1)
@@ -502,15 +503,15 @@ class DockerVirtualSwitch:
 
             # Generate the converage info by lcov and copy to the host
             cmd = f"docker exec {self.ctn.short_id} sh -c 'cd $BUILD_DIR; rm -rf **/.libs ./lib/libSaiRedis*; lcov -c --directory . --no-external --exclude tests --ignore-errors gcov,unused --output-file /tmp/coverage.info && lcov --add-tracefile /tmp/coverage.info -o /tmp/coverage.info; sed -i \"s#SF:$BUILD_DIR/#SF:#\" /tmp/coverage.info; lcov_cobertura /tmp/coverage.info -o /tmp/coverage.xml'"
-            subprocess.getstatusoutput(cmd)
+            print(subprocess.getstatusoutput(cmd))
             cmd = f"docker exec {self.ctn.short_id} sh -c 'cd $BUILD_DIR; find . -name *.gcda -type f   -exec tar -rf /tmp/gcda.tar {{}} \\;'"
-            subprocess.getstatusoutput(cmd)
+            print(subprocess.getstatusoutput(cmd))
             cmd = f"docker cp {self.ctn.short_id}:/tmp/gcda.tar {self.ctn.short_id}.gcda.tar"
-            subprocess.getstatusoutput(cmd)
+            print(subprocess.getstatusoutput(cmd))
             cmd = f"docker cp {self.ctn.short_id}:/tmp/coverage.info {self.ctn.short_id}.coverage.info"
-            subprocess.getstatusoutput(cmd)
+            print(subprocess.getstatusoutput(cmd))
             cmd = f"docker cp {self.ctn.short_id}:/tmp/coverage.xml {self.ctn.short_id}.coverage.xml"
-            subprocess.getstatusoutput(cmd)
+            print(subprocess.getstatusoutput(cmd))
         except:
             traceback.print_exc()
 
@@ -702,7 +703,9 @@ class DockerVirtualSwitch:
         self.ctn_restart()
         self.check_ready_status_and_init_db()
 
-    def runcmd(self, cmd: str, include_stderr=True) -> Tuple[int, str]:
+    def runcmd(self, cmd: str, include_stderr=True, write_to_syslog=True) -> Tuple[int, str]:
+        if write_to_syslog:
+            self.runcmd(["logger", f"Running cmd: {cmd}"], write_to_syslog=False)
         res = self.ctn.exec_run(cmd, stdout=True, stderr=include_stderr)
         exitcode = res.exit_code
         out = res.output.decode("utf-8")
@@ -1962,6 +1965,7 @@ def manage_dvs(request) -> str:
                 vol[voq_configs] = {"bind": "/usr/share/sonic/single_asic_voq_fs", "mode": "ro"}
 
             dvs = DockerVirtualSwitch(name, imgname, keeptb, new_dvs_env, log_path, max_cpu, forcedvs, buffer_model = buffer_model, enable_coverage=enable_coverage, ctnmounts=vol, switch_mode=switch_mode)
+            print("Created new DVS: {}".format(dvs.ctn.short_id))
 
             curr_dvs_env = new_dvs_env
 
@@ -1974,6 +1978,7 @@ def manage_dvs(request) -> str:
             dvs.destroy_servers()
             dvs.create_servers()
             dvs.restart()
+            print("Restarted DVS: {}".format(dvs.ctn.short_id))
 
         return dvs
 
@@ -1983,6 +1988,7 @@ def manage_dvs(request) -> str:
         dvs.stop_swss()
         dvs.stop_syncd()
 
+    print("Destroying DVS at session exit: {}".format(dvs.ctn.short_id))
     dvs.get_logs()
     dvs.destroy()
 

@@ -9,5 +9,9 @@ JUNITXML=$(echo "$TESTS" | cut -d "." -f1)_tr.xml
 
 for ((i=1; i<=$RETRY; i++)); do
     echo "Running the py test for tests: $TESTS, $i/$RETRY..."
+    set -x
     pytest -v --junitxml="$JUNITXML" $PY_TEST_PARAMS --imgname="$IMAGE_NAME" $TESTS && break
+    set +x
+    ls -l *gcda*
+    ls -l *coverage*
 done
