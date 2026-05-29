@@ -24,6 +24,7 @@ class DVSMirror(object):
 
     def create_erspan_session(self, name, src, dst, gre, dscp, ttl, queue, policer=None, src_ports=None, direction="BOTH"):
         mirror_entry = {
+            "type": "ERSPAN",
             "src_ip": src,
             "dst_ip": dst,
             "gre_type": gre,

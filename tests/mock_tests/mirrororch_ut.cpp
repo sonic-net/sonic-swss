@@ -432,6 +432,10 @@ namespace mirrororch_test
         update_data.emplace_back("direction", "RX");
         update_data.emplace_back("sample_rate", "50000");
 
+        // updateEntry rebuilds the session from CONFIG_DB on immutable changes
+        swss::Table cfgMirrorTable(m_config_db.get(), CFG_MIRROR_SESSION_TABLE_NAME);
+        cfgMirrorTable.set("immutable_test", update_data);
+
         status = gMirrorOrch->updateEntry("immutable_test", update_data);
         ASSERT_EQ(status, task_process_status::task_success);
 
@@ -446,6 +450,7 @@ namespace mirrororch_test
         ASSERT_EQ(session.src_port, "Ethernet4");
 
         // Cleanup
+        cfgMirrorTable.del("immutable_test");
         gMirrorOrch->m_syncdMirrors.erase("immutable_test");
     }
 

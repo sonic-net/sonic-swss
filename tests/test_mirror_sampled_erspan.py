@@ -1,5 +1,6 @@
 # This test suite covers the functionality of sampled port mirroring with truncation on ERSPAN sessions
 import pytest
+import time
 
 @pytest.mark.usefixtures("testlog")
 @pytest.mark.usefixtures('dvs_vlan_manager')
@@ -181,6 +182,9 @@ class TestSampledMirror(object):
             src_ports="Ethernet12", direction="TX",
             sample_rate="50000")
 
+        # Give orchagent time to consume and reject the invalid config
+        time.sleep(1)
+
         # Session should not be created in STATE_DB
         dvs.state_db.wait_for_deleted_entry("MIRROR_SESSION_TABLE", session)
 
@@ -200,6 +204,9 @@ class TestSampledMirror(object):
             session, "1.1.1.1", "2.2.2.2", "0x8949", "8", "64", "0",
             src_ports="Ethernet12", direction="RX",
             truncate_size="128")
+
+        # Give orchagent time to consume and reject the invalid config
+        time.sleep(1)
 
         # Session should not be created in STATE_DB
         dvs.state_db.wait_for_deleted_entry("MIRROR_SESSION_TABLE", session)
@@ -289,24 +296,10 @@ class TestSampledMirror(object):
         port_entry = dvs.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid)
         assert "SAI_PORT_ATTR_INGRESS_MIRROR_SESSION" in port_entry
 
-        # Transition to sampled mirror: delete and recreate with sample_rate
-        dvs.remove_route("2.2.2.2")
-        dvs.remove_neighbor("Ethernet16", "10.0.0.1")
-        dvs.remove_ip_address("Ethernet16", "10.0.0.0/30")
-        dvs.set_interface_status("Ethernet16", "down")
-        self.dvs_mirror.remove_mirror_session(session)
-        dvs.state_db.wait_for_deleted_entry("MIRROR_SESSION_TABLE", session)
-
-        # Recreate with sample_rate
-        self.dvs_mirror.create_erspan_session_sampled(
-            session, "1.1.1.1", "2.2.2.2", "0x8949", "8", "64", "0",
-            src_ports="Ethernet12", direction="RX",
-            sample_rate="50000")
-
-        dvs.set_interface_status("Ethernet16", "up")
-        dvs.add_ip_address("Ethernet16", "10.0.0.0/30")
-        dvs.add_neighbor("Ethernet16", "10.0.0.1", "02:04:06:08:10:12")
-        dvs.add_route("2.2.2.2", "10.0.0.1")
+        # Transition to sampled mirror by updating CONFIG_DB in place.
+        # This sends a partial SET (only sample_rate) on an existing key
+        self.dvs_mirror.config_db.set_field(
+            "MIRROR_SESSION", session, "sample_rate", "50000")
         dvs.state_db.wait_for_field_match("MIRROR_SESSION_TABLE", session, {"status": "active"})
 
         # Verify SAMPLEPACKET created
@@ -340,23 +333,10 @@ class TestSampledMirror(object):
         assert "SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE" in port_entry
         assert "SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION" in port_entry
 
-        # Transition to full mirror: remove mirror session and recreate without sample_rate
-        dvs.remove_route("2.2.2.2")
-        dvs.remove_neighbor("Ethernet16", "10.0.0.1")
-        dvs.remove_ip_address("Ethernet16", "10.0.0.0/30")
-        dvs.set_interface_status("Ethernet16", "down")
-        self.dvs_mirror.remove_mirror_session(session)
-        dvs.state_db.wait_for_deleted_entry("MIRROR_SESSION_TABLE", session)
-
-        # Recreate as full mirror (no sample_rate)
-        self.dvs_mirror.create_erspan_session(
-            session, "1.1.1.1", "2.2.2.2", "0x8949", "8", "64", "0",
-            src_ports="Ethernet12", direction="RX")
-
-        dvs.set_interface_status("Ethernet16", "up")
-        dvs.add_ip_address("Ethernet16", "10.0.0.0/30")
-        dvs.add_neighbor("Ethernet16", "10.0.0.1", "02:04:06:08:10:12")
-        dvs.add_route("2.2.2.2", "10.0.0.1")
+        # Transition to full mirror by updating CONFIG_DB in place.
+        # Setting sample_rate to 0 sends a partial SET on an existing key
+        self.dvs_mirror.config_db.set_field(
+            "MIRROR_SESSION", session, "sample_rate", "0")
         dvs.state_db.wait_for_field_match("MIRROR_SESSION_TABLE", session, {"status": "active"})
 
         # Verify SAMPLEPACKET removed
@@ -381,6 +361,9 @@ class TestSampledMirror(object):
             session, "1.1.1.1", "2.2.2.2", "0x8949", "8", "64", "0",
             src_ports="Ethernet12", direction="BOTH",
             sample_rate="50000")
+
+        # Give orchagent time to consume and reject the invalid config
+        time.sleep(1)
 
         # Session should not be created in STATE_DB
         dvs.state_db.wait_for_deleted_entry("MIRROR_SESSION_TABLE", session)
