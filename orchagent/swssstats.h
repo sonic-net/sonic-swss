@@ -67,7 +67,17 @@ private:
     SwssStats();
     ~SwssStats() = default;
 
-    std::shared_ptr<swss::ComponentStats> m_impl;
+    // m_impl is initialised exactly once in SwssStats::SwssStats(), which runs
+    // at the first call to getInstance() under the C++11 thread-safe
+    // static-local-initialisation guarantee. It is never reassigned after
+    // construction, so concurrent reads from many threads are safe -- the
+    // dangerous case (concurrent read+write on the same shared_ptr instance)
+    // does not occur here. The const qualifier enforces no-reassignment at
+    // compile time so future edits cannot reintroduce a race. The pointed-to
+    // ComponentStats object is itself internally thread-safe (atomic counters
+    // + shared_timed_mutex), so m_impl->increment(...) etc. are safe to call
+    // concurrently from any number of threads.
+    const std::shared_ptr<swss::ComponentStats> m_impl;
 
     static std::atomic<bool> s_enabled;
 };
