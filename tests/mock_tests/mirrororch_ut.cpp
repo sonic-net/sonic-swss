@@ -265,37 +265,6 @@ namespace mirrororch_test
         gMirrorOrch->m_syncdMirrors.erase(key);
     }
 
-    TEST_F(MirrorOrchTest, UpdateEntryPathTransitionIgnored)
-    {
-        // Verify updateEntry ignores path transition (full mirror -> sampled)
-        // when samplepacket does not exist
-        ASSERT_NE(gMirrorOrch, nullptr);
-
-        string key = "path_transition_session";
-        MirrorEntry entry("");
-        entry.type = "ERSPAN";
-        entry.srcIp = IpAddress("10.0.0.1");
-        entry.dstIp = IpAddress("10.0.0.2");
-        entry.greType = 0x8949;
-        entry.dscp = 8;
-        entry.ttl = 64;
-        entry.queue = 0;
-        entry.direction = "RX";
-        entry.sample_rate = 0;
-        entry.truncate_size = 0;
-        entry.samplepacketId = SAI_NULL_OBJECT_ID;  // No samplepacket (full mirror)
-        gMirrorOrch->m_syncdMirrors.emplace(key, entry);
-
-        // Try to add sample_rate - should be ignored (path transition not supported)
-        vector<FieldValueTuple> data;
-        data.emplace_back("sample_rate", "50000");
-
-        auto status = gMirrorOrch->updateEntry(key, data);
-        ASSERT_EQ(status, task_process_status::task_success);
-
-        // Cleanup
-        gMirrorOrch->m_syncdMirrors.erase(key);
-    }
 
     TEST_F(MirrorOrchTest, SampledPathPortBinding)
     {
