@@ -74,7 +74,9 @@ tests_SOURCES = aclorch_ut.cpp \
                 dashhaorch_ut.cpp \
                 dashhafloworch_ut.cpp \
                 dashrouteorch_ut.cpp \
+                dashtunnelorch_ut.cpp \
                 dashportmaporch_ut.cpp \
+                dashmeterorch_ut.cpp \
                 twamporch_ut.cpp \
                 stporch_ut.cpp \
                 srv6orch_ut.cpp \
@@ -82,6 +84,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 portphyattr_ut.cpp \
 		portphyserdesattr_ut.cpp \
                 counternameupdater_ut.cpp \
+                hftelgroup_ut.cpp \
                 hftelprofile_ut.cpp \
                 mock_orch_test.cpp \
                 mock_dash_orch_test.cpp \
@@ -91,6 +94,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_saihelper.cpp \
                 mirrororch_ut.cpp \
                 hftelorch_ut.cpp \
+                hftelorch_notify_ut.cpp \
                 hftelorch_is_supported_sai_wrap.cpp \
                 icmporch_ut.cpp \
                 icmporch_sai_wrap.cpp \
@@ -178,6 +182,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/dash/dashhafloworch.cpp \
                 $(top_srcdir)/orchagent/dash/dashmeterorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashportmaporch.cpp \
+                $(top_srcdir)/orchagent/dash/dashresulthelper.cpp \
                 $(top_srcdir)/orchagent/dash/dashcounter.cpp \
                 $(top_srcdir)/cfgmgr/buffermgrdyn.cpp \
                 $(top_srcdir)/warmrestart/warmRestartAssist.cpp \
