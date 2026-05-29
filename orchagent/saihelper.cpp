@@ -13,6 +13,7 @@ extern "C" {
 #include <logger.h>
 #include <sairedis.h>
 #include <set>
+#include <atomic>
 #include <tuple>
 #include <vector>
 #include <linux/limits.h>
@@ -22,6 +23,8 @@ extern "C" {
 #include "sai_serialize.h"
 #include "saihelper.h"
 #include "orch.h"
+#include "dbconnector.h"
+#include "table.h"
 
 using namespace std;
 using namespace swss;
@@ -109,8 +112,13 @@ extern bool gTraditionalFlexCounter;
 extern bool gSyncMode;
 extern sai_redis_communication_mode_t gRedisCommunicationMode;
 extern event_handle_t g_events_handle;
-extern bool gOrchUnhealthy;
-extern string gSaiErrorString;
+
+#define STATE_PROCESS_HEALTH_TABLE_NAME "PROCESS_HEALTH"
+#define PROCESS_HEALTH_KEY "orchagent"
+
+unique_ptr<DBConnector> gHealthStateDb;
+unique_ptr<Table> gOrchHealthTable;
+std::atomic<bool> gOrchUnhealthyCached{false};
 
 vector<sai_object_id_t> gGearboxOids;
 
@@ -831,10 +839,10 @@ void handleSaiFailure(sai_api_t api, string oper, sai_status_t status, bool abor
 
     string s_api = sai_serialize_api(api);
     string s_status = sai_serialize_status(status);
-    gOrchUnhealthy = true;
-    gSaiErrorString = "Encountered failure in " + oper +
-                      " operation, SAI API: " + s_api + ", status: " + s_status;
-    SWSS_LOG_ERROR("%s", gSaiErrorString.c_str());
+    string errorString = "Encountered failure in " + oper +
+                         " operation, SAI API: " + s_api + ", status: " + s_status;
+    setSaiFailureStatus(true, errorString);
+    SWSS_LOG_ERROR("%s", errorString.c_str());
 
     // Publish a structured syslog event
     event_params_t params = {
@@ -1175,5 +1183,82 @@ std::vector<sai_stat_id_t> queryAvailableCounterStats(const sai_object_type_t ob
         stat_list.push_back(static_cast<sai_stat_id_t>(statenumlist[i]));
     }
     return stat_list;
+}
+
+void initSaiFailureTable()
+{
+    gHealthStateDb = make_unique<DBConnector>("STATE_DB", 0);
+    gOrchHealthTable = make_unique<Table>(gHealthStateDb.get(), STATE_PROCESS_HEALTH_TABLE_NAME);
+}
+
+void setSaiFailureStatus(bool unhealthy, const std::string& error)
+{
+    gOrchUnhealthyCached = unhealthy;
+    if (!gOrchHealthTable)
+    {
+        return;
+    }
+    try
+    {
+        vector<FieldValueTuple> fvs;
+        fvs.emplace_back("unhealthy", unhealthy ? "true" : "false");
+        fvs.emplace_back("error", error);
+        gOrchHealthTable->set(PROCESS_HEALTH_KEY, fvs);
+    }
+    catch (const std::exception& e)
+    {
+        SWSS_LOG_WARN("Failed to write health status to STATE_DB: %s", e.what());
+    }
+}
+
+bool getSaiFailureStatus(std::string& error)
+{
+    /* Fast path: when the local cache says healthy, skip Redis entirely.
+     * Only read STATE_DB when unhealthy, so an external reset
+     * (operator clearing the flag in Redis) is still detected. */
+    if (!gOrchUnhealthyCached)
+    {
+        return false;
+    }
+    if (!gOrchHealthTable)
+    {
+        error = "Orchagent is in unhealthy state (health table not initialized)";
+        return true;
+    }
+    /* Fetch all fields in a single Redis round-trip */
+    vector<FieldValueTuple> fvs;
+    try
+    {
+        if (!gOrchHealthTable->get(PROCESS_HEALTH_KEY, fvs))
+        {
+            /* Key missing but cache says unhealthy — keep reporting unhealthy
+             * with a generic message rather than silently clearing. */
+            error = "Orchagent is in unhealthy state (STATE_DB key missing)";
+            return true;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        SWSS_LOG_WARN("Failed to read health status from STATE_DB: %s", e.what());
+        error = "Orchagent is in unhealthy state (STATE_DB read failed)";
+        return true;
+    }
+    bool unhealthy = false;
+    error = "";
+    for (const auto& fv : fvs)
+    {
+        if (fvField(fv) == "unhealthy")
+            unhealthy = (fvValue(fv) == "true");
+        else if (fvField(fv) == "error")
+            error = fvValue(fv);
+    }
+    if (!unhealthy)
+    {
+        /* External reset detected — update local cache */
+        gOrchUnhealthyCached = false;
+        error = "";
+        return false;
+    }
+    return true;
 }
 
