@@ -125,9 +125,14 @@ bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id,
     SWSS_LOG_DEBUG("sflowAddPort  %" PRIx64 " portOid %" PRIx64 " dir %s",
                            sample_id, port_id, direction.c_str());
 
-    if (direction == "both" || direction == "rx")
+    bool need_ingress = (direction == "both" || direction == "rx");
+    bool need_egress  = (direction == "both" || direction == "tx");
+
+    // Phase 1: pre-check both directions before touching any SAI state, so that
+    // a conflict on the second direction never leaves the first direction in a
+    // half-applied state with no refcount.
+    if (need_ingress)
     {
-        // Check for samplepacket conflict before binding
         sai_attribute_t check_attr;
         check_attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
         if (sai_port_api->get_port_attribute(port_id, 1, &check_attr) == SAI_STATUS_SUCCESS
@@ -140,7 +145,28 @@ bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id,
                            port_id, check_attr.value.oid);
             return false;
         }
+    }
 
+    if (need_egress)
+    {
+        sai_attribute_t check_attr_egr;
+        check_attr_egr.id = SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
+        if (sai_port_api->get_port_attribute(port_id, 1, &check_attr_egr) == SAI_STATUS_SUCCESS
+            && check_attr_egr.value.oid != SAI_NULL_OBJECT_ID
+            && check_attr_egr.value.oid != sample_id
+            && !isSflowSamplePacket(check_attr_egr.value.oid))
+        {
+            SWSS_LOG_ERROR("Port %" PRIx64 " EGRESS_SAMPLEPACKET_ENABLE already bound to "
+                           "OID 0x%" PRIx64 ", cannot bind sFlow",
+                           port_id, check_attr_egr.value.oid);
+            return false;
+        }
+    }
+
+    // Phase 2: apply ingress
+    bool ingress_applied = false;
+    if (need_ingress)
+    {
         attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
         attr.value.oid = sample_id;
         sai_rc = sai_port_api->set_port_attribute(port_id, &attr);
@@ -154,24 +180,15 @@ bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id,
                 return parseHandleSaiStatusFailure(handle_status);
             }
         }
+        else
+        {
+            ingress_applied = true;
+        }
     }
 
-    if (direction == "both" || direction == "tx")
+    // Phase 2: apply egress (rollback ingress on failure to keep state atomic)
+    if (need_egress)
     {
-        // Check for samplepacket conflict before binding
-        sai_attribute_t check_attr_egr;
-        check_attr_egr.id = SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
-        if (sai_port_api->get_port_attribute(port_id, 1, &check_attr_egr) == SAI_STATUS_SUCCESS
-            && check_attr_egr.value.oid != SAI_NULL_OBJECT_ID
-            && check_attr_egr.value.oid != sample_id
-            && !isSflowSamplePacket(check_attr_egr.value.oid))
-        {
-            SWSS_LOG_ERROR("Port %" PRIx64 " EGRESS_SAMPLEPACKET_ENABLE already bound to "
-                           "OID 0x%" PRIx64 ", cannot bind sFlow",
-                           port_id, check_attr_egr.value.oid);
-            return false;
-        }
-
         attr.id = SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
         attr.value.oid = sample_id;
         sai_rc = sai_port_api->set_port_attribute(port_id, &attr);
@@ -179,6 +196,20 @@ bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id,
         if (sai_rc != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to set session %" PRIx64 " on port %" PRIx64, sample_id, port_id);
+
+            if (ingress_applied)
+            {
+                sai_attribute_t rollback_attr;
+                rollback_attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
+                rollback_attr.value.oid = SAI_NULL_OBJECT_ID;
+                sai_status_t rb_rc = sai_port_api->set_port_attribute(port_id, &rollback_attr);
+                if (rb_rc != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to rollback ingress samplepacket on port %" PRIx64
+                                   " after egress failure, status %d", port_id, rb_rc);
+                }
+            }
+
             task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, sai_rc);
             if (handle_status != task_success)
             {
