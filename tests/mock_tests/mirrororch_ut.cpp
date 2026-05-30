@@ -454,6 +454,225 @@ namespace mirrororch_test
         gMirrorOrch->m_syncdMirrors.erase("immutable_test");
     }
 
+    TEST_F(MirrorOrchTest, UpdateEntryTruncateEnableTransition)
+    {
+        // Cover the new TRUNCATE_ENABLE-in-sync-with-TRUNCATE_SIZE logic in
+        // updateEntry: ENABLE must flip when SIZE crosses 0, and SIZE must
+        // not be pushed to SAI when truncation is being disabled.
+        ASSERT_NE(gMirrorOrch, nullptr);
+        ASSERT_NE(gSwitchOrch, nullptr);
+
+        gSwitchOrch->m_portIngressSampleMirrorSupported = true;
+        gSwitchOrch->m_samplepacketTruncationSupported = true;
+
+        string key = "trunc_transition_session";
+        MirrorEntry entry("");
+        entry.type = "ERSPAN";
+        entry.srcIp = IpAddress("10.0.0.1");
+        entry.dstIp = IpAddress("10.0.0.2");
+        entry.greType = 0x8949;
+        entry.dscp = 8;
+        entry.ttl = 64;
+        entry.queue = 0;
+        entry.src_port = "Ethernet0";
+        entry.direction = "RX";
+        entry.policer = "";
+        entry.sample_rate = 50000;
+        entry.truncate_size = 128;
+        entry.status = false;
+        entry.refCount = 0;
+
+        gMirrorOrch->createSamplePacket(key, entry);
+        ASSERT_NE(entry.samplepacketId, SAI_NULL_OBJECT_ID);
+        gMirrorOrch->m_syncdMirrors.emplace(key, entry);
+
+        auto buildData = [](uint32_t trunc) {
+            vector<FieldValueTuple> d;
+            d.emplace_back("type", "ERSPAN");
+            d.emplace_back("src_ip", "10.0.0.1");
+            d.emplace_back("dst_ip", "10.0.0.2");
+            d.emplace_back("gre_type", "0x8949");
+            d.emplace_back("dscp", "8");
+            d.emplace_back("ttl", "64");
+            d.emplace_back("queue", "0");
+            d.emplace_back("src_port", "Ethernet0");
+            d.emplace_back("direction", "RX");
+            d.emplace_back("policer", "");
+            d.emplace_back("sample_rate", "50000");
+            d.emplace_back("truncate_size", to_string(trunc));
+            return d;
+        };
+
+        // Phase 1: 128 -> 0 (disable truncation; SIZE must NOT be set)
+        auto status = gMirrorOrch->updateEntry(key, buildData(0));
+        ASSERT_EQ(status, task_process_status::task_success);
+        ASSERT_EQ(gMirrorOrch->m_syncdMirrors.find(key)->second.truncate_size, (uint32_t)0);
+
+        // Phase 2: 0 -> 256 (enable truncation; ENABLE=true then SIZE=256)
+        status = gMirrorOrch->updateEntry(key, buildData(256));
+        ASSERT_EQ(status, task_process_status::task_success);
+        ASSERT_EQ(gMirrorOrch->m_syncdMirrors.find(key)->second.truncate_size, (uint32_t)256);
+
+        // Phase 3: 256 -> 512 (still enabled; ENABLE=true and SIZE=512)
+        status = gMirrorOrch->updateEntry(key, buildData(512));
+        ASSERT_EQ(status, task_process_status::task_success);
+        ASSERT_EQ(gMirrorOrch->m_syncdMirrors.find(key)->second.truncate_size, (uint32_t)512);
+
+        // Cleanup
+        auto& final_entry = gMirrorOrch->m_syncdMirrors.find(key)->second;
+        sai_samplepacket_api->remove_samplepacket(final_entry.samplepacketId);
+        gMirrorOrch->m_syncdMirrors.erase(key);
+    }
+
+    TEST_F(MirrorOrchTest, SetSessionStateHdelsClearedSampleRate)
+    {
+        // When sample_rate becomes 0, setSessionState must HDEL the field
+        // from STATE_DB so consumers do not see a stale rate.
+        ASSERT_NE(gMirrorOrch, nullptr);
+
+        string key = "hdel_sample_rate_session";
+        swss::Table stateTable(m_state_db.get(), STATE_MIRROR_SESSION_TABLE_NAME);
+        stateTable.hset(key, "sample_rate", "50000");
+
+        string seeded;
+        ASSERT_TRUE(stateTable.hget(key, "sample_rate", seeded));
+        ASSERT_EQ(seeded, "50000");
+
+        MirrorEntry session("");
+        session.type = "ERSPAN";
+        session.sample_rate = 0;
+        session.truncate_size = 0;
+
+        gMirrorOrch->setSessionState(key, session, "sample_rate");
+
+        string after;
+        ASSERT_FALSE(stateTable.hget(key, "sample_rate", after));
+
+        stateTable.del(key);
+    }
+
+    TEST_F(MirrorOrchTest, SetSessionStateHdelsClearedTruncateSize)
+    {
+        // When truncate_size becomes 0, setSessionState must HDEL the field
+        // from STATE_DB so consumers do not see a stale size.
+        ASSERT_NE(gMirrorOrch, nullptr);
+
+        string key = "hdel_truncate_session";
+        swss::Table stateTable(m_state_db.get(), STATE_MIRROR_SESSION_TABLE_NAME);
+        stateTable.hset(key, "truncate_size", "128");
+
+        string seeded;
+        ASSERT_TRUE(stateTable.hget(key, "truncate_size", seeded));
+        ASSERT_EQ(seeded, "128");
+
+        MirrorEntry session("");
+        session.type = "ERSPAN";
+        session.sample_rate = 0;
+        session.truncate_size = 0;
+
+        gMirrorOrch->setSessionState(key, session, "truncate_size");
+
+        string after;
+        ASSERT_FALSE(stateTable.hget(key, "truncate_size", after));
+
+        stateTable.del(key);
+    }
+
+    TEST_F(MirrorOrchPortTest, UpdateEntryRecreateUsesCfgDbFullRow)
+    {
+        // When CONFIG_DB receives a partial HSET (single field), updateEntry
+        // must rebuild the session from the full CONFIG_DB row instead of the
+        // partial payload, otherwise the recreated session loses fields.
+        ASSERT_NE(gMirrorOrch, nullptr);
+
+        string key = "partial_hset_session";
+
+        vector<FieldValueTuple> create_data;
+        create_data.emplace_back("type", "ERSPAN");
+        create_data.emplace_back("src_ip", "10.0.0.1");
+        create_data.emplace_back("dst_ip", "10.0.0.2");
+        create_data.emplace_back("gre_type", "0x8949");
+        create_data.emplace_back("dscp", "8");
+        create_data.emplace_back("ttl", "64");
+        create_data.emplace_back("queue", "0");
+        create_data.emplace_back("src_port", "Ethernet0");
+        create_data.emplace_back("direction", "RX");
+
+        swss::Table cfgMirrorTable(m_config_db.get(), CFG_MIRROR_SESSION_TABLE_NAME);
+        cfgMirrorTable.set(key, create_data);
+
+        auto status = gMirrorOrch->createEntry(key, create_data);
+        ASSERT_EQ(status, task_process_status::task_success);
+
+        // Simulate user HSET sample_rate=50000: CONFIG_DB now has the full
+        // row + new sample_rate, but the SET notification payload only
+        // carries the single changed field.
+        vector<FieldValueTuple> full_after_hset = create_data;
+        full_after_hset.emplace_back("sample_rate", "50000");
+        cfgMirrorTable.set(key, full_after_hset);
+
+        vector<FieldValueTuple> partial;
+        partial.emplace_back("sample_rate", "50000");
+
+        status = gMirrorOrch->updateEntry(key, partial);
+        ASSERT_EQ(status, task_process_status::task_success);
+
+        // Recreated session must carry all original fields PLUS the new sample_rate
+        auto& session = gMirrorOrch->m_syncdMirrors.find(key)->second;
+        ASSERT_EQ(session.srcIp, IpAddress("10.0.0.1"));
+        ASSERT_EQ(session.dstIp, IpAddress("10.0.0.2"));
+        ASSERT_EQ(session.greType, (uint16_t)0x8949);
+        ASSERT_EQ(session.dscp, (uint8_t)8);
+        ASSERT_EQ(session.ttl, (uint8_t)64);
+        ASSERT_EQ(session.src_port, "Ethernet0");
+        ASSERT_EQ(session.sample_rate, (uint32_t)50000);
+
+        cfgMirrorTable.del(key);
+        gMirrorOrch->m_syncdMirrors.erase(key);
+    }
+
+    TEST_F(MirrorOrchPortTest, UpdateEntryRecreateFailsWhenCfgDbMissing)
+    {
+        // If the CONFIG_DB row is missing when an immutable change is detected,
+        // updateEntry must return task_failed (defensive) instead of recreating
+        // the session with a partial payload that would strip fields.
+        ASSERT_NE(gMirrorOrch, nullptr);
+
+        string key = "cfgdb_missing_session";
+        MirrorEntry entry("");
+        entry.type = "ERSPAN";
+        entry.srcIp = IpAddress("10.0.0.1");
+        entry.dstIp = IpAddress("10.0.0.2");
+        entry.greType = 0x8949;
+        entry.dscp = 8;
+        entry.ttl = 64;
+        entry.queue = 0;
+        entry.src_port = "Ethernet0";
+        entry.direction = "RX";
+        entry.policer = "";
+        entry.sample_rate = 0;
+        entry.truncate_size = 0;
+        entry.status = false;
+        entry.refCount = 0;
+        gMirrorOrch->m_syncdMirrors.emplace(key, entry);
+
+        // Ensure CONFIG_DB has no row for this key
+        swss::Table cfgMirrorTable(m_config_db.get(), CFG_MIRROR_SESSION_TABLE_NAME);
+        cfgMirrorTable.del(key);
+
+        // Trigger an immutable change (sample_rate 0 -> 50000 flips mode)
+        vector<FieldValueTuple> partial;
+        partial.emplace_back("sample_rate", "50000");
+
+        auto status = gMirrorOrch->updateEntry(key, partial);
+        ASSERT_EQ(status, task_process_status::task_failed);
+
+        // Session must still be present (delete was not invoked on the failure path)
+        ASSERT_TRUE(gMirrorOrch->sessionExists(key));
+
+        gMirrorOrch->m_syncdMirrors.erase(key);
+    }
+
 
 
 
