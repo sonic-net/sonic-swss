@@ -16,6 +16,14 @@
 #include <unordered_map>
 #include <cstdint>
 
+// Acronyms used throughout this header / implementation:
+//   MMG    = MAC Move Guard (this feature)
+//   DLOMWA = Disable Learn On Mac With Acl
+//            One of MMG's mitigation actions: install a pre-ingress ACL entry
+//            (vlan, smac) -> SAI_ACL_ACTION_TYPE_SET_DO_NOT_LEARN to suppress
+//            learning of the offending source MAC while forwarding via the
+//            existing FDB lookup continues.
+
 #define CFG_MAC_MOVE_GUARD_TABLE_NAME       "MAC_MOVE_GUARD"
 #define STATE_MAC_MOVE_GUARD_TABLE_NAME     "MAC_MOVE_GUARD"
 
@@ -141,6 +149,10 @@ public:
     // fires.
     void doRecoveryTimerTask();
 
+    // Identity check used by FdbOrch::doTask(SelectableTimer&) so the guard's
+    // private timer pointer does not have to be exposed.
+    bool isMyTimer(const swss::SelectableTimer *t) const { return t == m_recoveryTimer; }
+
 private:
     PortsOrch *m_portsOrch;
     FdbOrch *m_fdbOrch;
@@ -199,6 +211,23 @@ private:
     // and cached for the lifetime of the process.
     int m_aclSetDoNotLearnSupported = -1;
 
+    // Latches to true the first time a native SAI_FDB_EVENT_MOVE is observed
+    // (i.e. handleMacMove is invoked from FdbOrch's MOVE path). On platforms
+    // that emit native MOVE, this disables the LEARN-path synthesis in
+    // handleMacLearn() — otherwise a single SAI move would count twice (once
+    // via native MOVE, once via the synthesized LEARN-after-different-port).
+    // Platforms that emit AGE+LEARN instead of MOVE never set this and the
+    // synthesis path stays active. Intentionally not persisted across
+    // restarts: it re-latches naturally on the first move after restart.
+    bool m_nativeMovesSeen = false;
+
+    // Set once the one-shot post-ports-ready reconcile (restore from STATE_DB
+    // if the feature is enabled, otherwise clean up any leftover HW state)
+    // has run. The recovery timer callback drives this on its first tick
+    // after allPortsReady() — keeping reconcile out of the constructor so
+    // PortsOrch has time to populate port OIDs from APP_DB.
+    bool m_reconcileDone = false;
+
     // Core logic
     void handleMacMove(const MacMoveNotification &notif);
     void handleMacLearn(const MacLearnNotification &notif);
@@ -225,6 +254,16 @@ private:
     void reconcileLearnDisableAclTable(bool prev_enabled, MacMoveGuardAction prev_action);
     bool installLearnDisableAclEntry(const MacKey &key, MacMoveTrackingState &state);
     void removeLearnDisableAclEntry(MacMoveTrackingState &state);
+
+    // Pre-ingress ACL slot helpers. The bind / unbind / CRM operations on
+    // SAI_SWITCH_ATTR_PRE_INGRESS_ACL appear in three callers
+    // (ensureLearnDisableAclTable, destroyLearnDisableAclTable,
+    // restoreHwResources); these wrappers keep the SAI get-then-set dance
+    // and the CRM bookkeeping in one place.
+    bool bindPreIngressAclTable(sai_object_id_t table_oid);
+    bool unbindPreIngressAclTable(sai_object_id_t expected_table_oid);
+    void crmPreIngressAclTableInc();
+    void crmPreIngressAclTableDec(sai_object_id_t table_oid);
 };
 
 #endif  // SWSS_MACMOVEGUARD_H

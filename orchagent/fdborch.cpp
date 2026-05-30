@@ -1003,11 +1003,20 @@ void FdbOrch::doTask(Consumer& consumer)
 }
 
 /* The recovery SelectableTimer registered by the embedded MacMoveGuard fires
-   on this Orch's executor list; route it back to the guard. */
-void FdbOrch::doTask(swss::SelectableTimer& /*timer*/)
+   on this Orch's executor list; route it back to the guard. Future timers
+   added to FdbOrch must be dispatched here as well — gate on identity so an
+   unrelated timer firing does not accidentally invoke MacMoveGuard. */
+void FdbOrch::doTask(swss::SelectableTimer &timer)
 {
     SWSS_LOG_ENTER();
-    m_macMoveGuard->doRecoveryTimerTask();
+
+    if (m_macMoveGuard && m_macMoveGuard->isMyTimer(&timer))
+    {
+        m_macMoveGuard->doRecoveryTimerTask();
+        return;
+    }
+
+    SWSS_LOG_WARN("FdbOrch::doTask(SelectableTimer&) fired for an unrecognized timer");
 }
 
 void FdbOrch::doTask(NotificationConsumer& consumer)

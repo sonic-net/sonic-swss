@@ -361,8 +361,15 @@ namespace macmoveguard_test
 
         // Build FdbOrch (and, by composition, MacMoveGuard). Done as a
         // separate step from SetUp so individual tests can pre-populate
-        // STATE_DB / pre-stage SAI state before the guard's constructor runs
-        // the one-shot restart cleanup sweep.
+        // STATE_DB / pre-stage SAI state before the one-shot restart
+        // cleanup sweep runs.
+        //
+        // Reconcile is no longer driven from MacMoveGuard's constructor; it
+        // runs on the recovery timer's first tick once PortsOrch reports
+        // allPortsReady(). For the unit tests we force m_initDone (via the
+        // private->public macro) and synchronously invoke doRecoveryTimerTask()
+        // so tests that depended on the old ctor-time sweep observe the same
+        // post-construction state as before.
         void buildOrch()
         {
             vector<table_name_with_pri_t> app_fdb_tables = {
@@ -376,6 +383,9 @@ namespace macmoveguard_test
                                              stateDbFdb, stateMclagDbFdb, m_portsOrch.get(),
                                              m_config_db.get());
             m_mmg = m_fdbOrch->getMacMoveGuard();
+
+            m_portsOrch->m_initDone = true;
+            m_mmg->doRecoveryTimerTask();
         }
 
         void seedPortsAndVlan()

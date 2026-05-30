@@ -9,6 +9,7 @@
 #include <chrono>
 #include <inttypes.h>
 #include <array>
+#include <cstring>
 #include <vector>
 #include <cstring>
 extern sai_fdb_api_t    *sai_fdb_api;
@@ -34,16 +35,15 @@ MacMoveGuard::MacMoveGuard(DBConnector *configDb, DBConnector *stateDb,
 {
     SWSS_LOG_ENTER();
 
-    // STATE_DB table for the cleanup-on-restart record. The constructor runs
-    // a one-shot sweep that reverts any hardware state we might have left
-    // behind in a previous orchagent run (admin-disabled ports + a stale
-    // pre-ingress ACL table). After this, the guard starts with no in-memory
-    // bad-MAC tracking and no continuity of action_interval — if the
-    // offending MAC is still flapping, it will re-trip the threshold and the
-    // mitigation will be re-applied.
+    // STATE_DB table for the cleanup-on-restart record. The recovery timer's
+    // first eligible tick (once PortsOrch reports allPortsReady()) runs a
+    // one-shot reconcile via restoreHwResources() that reverts any hardware
+    // state we may have left behind in a previous orchagent run
+    // (admin-disabled ports + a stale pre-ingress ACL table). Reconcile is
+    // deliberately deferred out of the constructor so that PortsOrch has
+    // finished populating port OIDs from APP_DB before we try to drive SAI.
     m_stateTable.reset(new swss::Table(stateDb, STATE_MAC_MOVE_GUARD_TABLE_NAME));
     m_capabilityTable.reset(new swss::Table(stateDb, STATE_MMG_CAPABILITY_TABLE_NAME));
-    restoreHwResources();
 
     // Probe DLOMWA support and publish the action-capability row to STATE_DB.
     // Probing eagerly here (rather than lazily on first DLOMWA configure)
@@ -79,13 +79,24 @@ MacMoveGuard::~MacMoveGuard()
 
 void MacMoveGuard::clearAllState()
 {
-    // Re-enable any ports we have administratively disabled (DISABLE_PORT action)
-    for (auto &kv : m_disabledPorts)
+    // Re-enable any ports we have administratively disabled (DISABLE_PORT
+    // action). Only drop a port from m_disabledPorts if SAI actually accepted
+    // the re-enable — otherwise the port stays in the in-memory set and the
+    // STATE_DB row remains populated, so the next reconcile (this run or a
+    // subsequent restart) can retry rather than orphaning the port.
+    for (auto it = m_disabledPorts.begin(); it != m_disabledPorts.end(); )
     {
-        if (m_portsOrch)
+        if (m_portsOrch && m_portsOrch->setPortAdminStatusByAlias(it->first, true))
         {
-            m_portsOrch->setPortAdminStatusByAlias(kv.first, true);
-            SWSS_LOG_NOTICE("MAC_MOVE_GUARD: re-enabling port %s (feature disabled)", kv.first.c_str());
+            SWSS_LOG_NOTICE("MAC_MOVE_GUARD: re-enabled port %s (feature disabled)",
+                            it->first.c_str());
+            it = m_disabledPorts.erase(it);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("MAC_MOVE_GUARD: failed to re-enable port %s on feature "
+                           "disable; keeping it persisted for retry", it->first.c_str());
+            ++it;
         }
     }
 
@@ -102,12 +113,12 @@ void MacMoveGuard::clearAllState()
     // Tear down the shared learn-disable ACL table; all entries have been removed above.
     destroyLearnDisableAclTable();
 
-    // Clear all tracking state when feature is disabled
-    m_disabledPorts.clear();
+    // Clear tracking state that is unrelated to the disabled-ports retry set.
     m_macTrackingState.clear();
     m_learntMac.clear();
 
-    // No disabled ports remain — drop the STATE_DB row entirely.
+    // Persist whatever ports remain (may be empty, in which case the row is
+    // deleted) so a restart will reattempt the failed re-enables.
     persistDisabledPorts();
 }
 
@@ -151,15 +162,42 @@ void MacMoveGuard::doConfigTask(Consumer &consumer)
                     }
                     else if (field == "threshold")
                     {
-                        m_threshold = static_cast<uint32_t>(stoul(value));
+                        uint32_t v = static_cast<uint32_t>(stoul(value));
+                        if (v < 1)
+                        {
+                            SWSS_LOG_WARN("MAC_MOVE_GUARD: ignoring threshold=%u (must be >= 1); "
+                                          "keeping current value %u", v, m_threshold);
+                        }
+                        else
+                        {
+                            m_threshold = v;
+                        }
                     }
                     else if (field == "detect_interval")
                     {
-                        m_durationSeconds = static_cast<uint32_t>(stoul(value));
+                        uint32_t v = static_cast<uint32_t>(stoul(value));
+                        if (v < 1)
+                        {
+                            SWSS_LOG_WARN("MAC_MOVE_GUARD: ignoring detect_interval=%u (must be >= 1s); "
+                                          "keeping current value %us", v, m_durationSeconds);
+                        }
+                        else
+                        {
+                            m_durationSeconds = v;
+                        }
                     }
                     else if (field == "action_interval")
                     {
-                        m_recoverySeconds = static_cast<uint32_t>(stoul(value));
+                        uint32_t v = static_cast<uint32_t>(stoul(value));
+                        if (v < 1)
+                        {
+                            SWSS_LOG_WARN("MAC_MOVE_GUARD: ignoring action_interval=%u (must be >= 1s); "
+                                          "keeping current value %us", v, m_recoverySeconds);
+                        }
+                        else
+                        {
+                            m_recoverySeconds = v;
+                        }
                     }
                     else if (field == "action")
                     {
@@ -231,6 +269,25 @@ void MacMoveGuard::doRecoveryTimerTask()
 {
     SWSS_LOG_ENTER();
 
+    // One-shot post-ports-ready reconcile. Runs at most once per process
+    // lifetime, on the first tick where PortsOrch reports allPortsReady().
+    // We defer this out of the constructor because reconcile may issue SAI
+    // port and ACL operations, and during FdbOrch construction PortsOrch
+    // has not necessarily finished populating port OIDs from APP_DB.
+    //
+    // Reconcile runs regardless of m_enabled: if the feature was enabled in
+    // a previous orchagent run and is now disabled, we still need to revert
+    // any HW state recorded in STATE_DB rather than orphan it.
+    if (!m_reconcileDone)
+    {
+        if (m_portsOrch && !m_portsOrch->allPortsReady())
+        {
+            return;
+        }
+        restoreHwResources();
+        m_reconcileDone = true;
+    }
+
     if (!m_enabled)
     {
         return;
@@ -242,6 +299,19 @@ void MacMoveGuard::doRecoveryTimerTask()
 void MacMoveGuard::onMacMove(const MacMoveNotification &notif)
 {
     SWSS_LOG_ENTER();
+
+    // Latch the native-MOVE indicator regardless of whether the feature is
+    // currently enabled. The latch reflects platform behaviour, not feature
+    // state — and we want it set as early as possible so that any LEARN
+    // notifications interleaved with the first native MOVE after the feature
+    // is enabled do not double-count.
+    if (!m_nativeMovesSeen)
+    {
+        m_nativeMovesSeen = true;
+        SWSS_LOG_NOTICE("MAC_MOVE_GUARD: observed native SAI_FDB_EVENT_MOVE; "
+                        "disabling LEARN-path move synthesis for this run");
+    }
+
     if (!m_enabled)
     {
         return;
@@ -310,6 +380,15 @@ void MacMoveGuard::handleMacLearn(const MacLearnNotification &notif)
     if (prev_port.empty() || prev_port == notif.port.m_alias)
     {
         // First time we see this MAC, or same port — not a move.
+        return;
+    }
+
+    // On platforms that emit a native SAI_FDB_EVENT_MOVE for MAC moves, the
+    // MOVE path has already counted this event. Suppress the LEARN-synthesis
+    // path so the same move is not counted twice. m_learntMac is still
+    // updated above so that the cache stays current.
+    if (m_nativeMovesSeen)
+    {
         return;
     }
 
@@ -773,7 +852,10 @@ void MacMoveGuard::restoreHwResources()
 {
     SWSS_LOG_ENTER();
 
-    // (1) Re-enable any previously disabled ports.
+    // (1) Re-enable any previously disabled ports. We only erase a port from
+    // STATE_DB if SAI accepted the re-enable; ports that fail are kept in
+    // m_disabledPorts (and re-persisted at the end) so a subsequent reconcile
+    // or restart can retry them rather than orphaning the admin-down state.
     std::vector<FieldValueTuple> fvs;
     if (m_stateTable->get(HW_RESOURCES_KEY, fvs))
     {
@@ -802,15 +884,23 @@ void MacMoveGuard::restoreHwResources()
                 }
                 else
                 {
-                    SWSS_LOG_WARN("MAC_MOVE_GUARD: restart cleanup failed to re-enable port %s",
-                                  port.c_str());
+                    SWSS_LOG_WARN("MAC_MOVE_GUARD: restart cleanup failed to re-enable port %s; "
+                                  "keeping it persisted for retry", port.c_str());
+                    // Track unresolved ports so the row survives the
+                    // persistDisabledPorts() rewrite below. The MacKey set is
+                    // left empty — there is no per-MAC tracking restored on
+                    // restart by design.
+                    m_disabledPorts[port];
                 }
             }
             if (comma == std::string::npos) break;
             start = comma + 1;
         }
 
-        m_stateTable->del(HW_RESOURCES_KEY);
+        // Rewrite the STATE_DB row from the (possibly reduced) in-memory set.
+        // If everything was re-enabled, m_disabledPorts is empty and
+        // persistDisabledPorts() will delete the row.
+        persistDisabledPorts();
     }
 
     // (2) If a pre-ingress ACL table is bound and looks like ours
@@ -855,18 +945,15 @@ void MacMoveGuard::restoreHwResources()
         }
     }
 
-    // Unbind the switch pre-ingress slot before deleting the table.
-    sai_attribute_t unbind;
-    unbind.id = SAI_SWITCH_ATTR_PRE_INGRESS_ACL;
-    unbind.value.oid = SAI_NULL_OBJECT_ID;
-    sai_switch_api->set_switch_attribute(gSwitchId, &unbind);
+    // Unbind via helper. Helper re-reads the binding and only writes when it
+    // still equals `bound`; if another feature has taken the slot since our
+    // initial read, the helper logs a warning and we proceed to remove the
+    // table without touching the binding.
+    (void)unbindPreIngressAclTable(bound);
 
-    if (sai_acl_api->remove_acl_table(bound) == SAI_STATUS_SUCCESS && gCrmOrch)
+    if (sai_acl_api->remove_acl_table(bound) == SAI_STATUS_SUCCESS)
     {
-        gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE,
-                                       SAI_ACL_STAGE_PRE_INGRESS,
-                                       SAI_ACL_BIND_POINT_TYPE_SWITCH,
-                                       bound);
+        crmPreIngressAclTableDec(bound);
     }
 }
 
@@ -992,26 +1079,6 @@ bool MacMoveGuard::ensureLearnDisableAclTable()
         return false;
     }
 
-    // Refuse to displace another feature that has already written into
-    // SAI_SWITCH_ATTR_PRE_INGRESS_ACL. The attribute holds a single OID,
-    // so silently overwriting it would break the other feature.
-    sai_attribute_t pre_ingress_acl_attr;
-    pre_ingress_acl_attr.id = SAI_SWITCH_ATTR_PRE_INGRESS_ACL;
-    pre_ingress_acl_attr.value.oid = SAI_NULL_OBJECT_ID;
-    sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &pre_ingress_acl_attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("MAC_MOVE_GUARD: Failed to read SAI_SWITCH_ATTR_PRE_INGRESS_ACL, rv:%d", status);
-        return false;
-    }
-    if (pre_ingress_acl_attr.value.oid != SAI_NULL_OBJECT_ID)
-    {
-        SWSS_LOG_ERROR("MAC_MOVE_GUARD: SAI_SWITCH_ATTR_PRE_INGRESS_ACL already bound to 0x%" PRIx64
-                      " by another feature; DISABLE_LEARN_ON_MAC_WITH_ACL cannot coexist",
-                      pre_ingress_acl_attr.value.oid);
-        return false;
-    }
-
     std::vector<sai_attribute_t> attrs;
     sai_attribute_t a;
 
@@ -1039,8 +1106,8 @@ bool MacMoveGuard::ensureLearnDisableAclTable()
     a.value.s32list.list  = action_list.data();
     attrs.push_back(a);
 
-    status = sai_acl_api->create_acl_table(&m_learnDisableAclTable, gSwitchId,
-                                           (uint32_t)attrs.size(), attrs.data());
+    sai_status_t status = sai_acl_api->create_acl_table(&m_learnDisableAclTable, gSwitchId,
+                                                        (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("MAC_MOVE_GUARD: Failed to create learn-disable ACL table, rv:%d", status);
@@ -1048,34 +1115,23 @@ bool MacMoveGuard::ensureLearnDisableAclTable()
         return false;
     }
 
-    if (gCrmOrch)
-    {
-        gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE,
-                                       SAI_ACL_STAGE_PRE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH);
-    }
+    crmPreIngressAclTableInc();
 
-    // Bind table directly to SAI_SWITCH_ATTR_PRE_INGRESS_ACL.
-    // SwitchOrch::bindAclTableToSwitch() does not support the PRE_INGRESS stage.
-    sai_attribute_t bind_attr;
-    bind_attr.id = SAI_SWITCH_ATTR_PRE_INGRESS_ACL;
-    bind_attr.value.oid = m_learnDisableAclTable;
-    sai_status_t bind_status = sai_switch_api->set_switch_attribute(gSwitchId, &bind_attr);
-    if (bind_status != SAI_STATUS_SUCCESS)
+    // Bind directly to SAI_SWITCH_ATTR_PRE_INGRESS_ACL via helper. Helper
+    // refuses if another feature has the slot, in which case we roll back
+    // the table we just created. SwitchOrch::bindAclTableToSwitch() does
+    // not support the PRE_INGRESS stage, so this is the only bind path.
+    if (!bindPreIngressAclTable(m_learnDisableAclTable))
     {
-        SWSS_LOG_ERROR("MAC_MOVE_GUARD: Failed to bind learn-disable ACL table 0x%" PRIx64
-                      " to SAI_SWITCH_ATTR_PRE_INGRESS_ACL, rv:%d",
-                      m_learnDisableAclTable, bind_status);
         sai_status_t rm_status = sai_acl_api->remove_acl_table(m_learnDisableAclTable);
         if (rm_status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("MAC_MOVE_GUARD: Failed to roll back ACL table 0x%" PRIx64 ", rv:%d",
                           m_learnDisableAclTable, rm_status);
         }
-        else if (gCrmOrch)
+        else
         {
-            gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE,
-                                           SAI_ACL_STAGE_PRE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH,
-                                           m_learnDisableAclTable);
+            crmPreIngressAclTableDec(m_learnDisableAclTable);
         }
         m_learnDisableAclTable = SAI_NULL_OBJECT_ID;
         return false;
@@ -1106,18 +1162,16 @@ void MacMoveGuard::destroyLearnDisableAclTable()
         return;
     }
 
-    // Unbind from SAI_SWITCH_ATTR_PRE_INGRESS_ACL inline; SwitchOrch's helper
-    // does not support the PRE_INGRESS stage.
-    sai_attribute_t unbind_attr;
-    unbind_attr.id = SAI_SWITCH_ATTR_PRE_INGRESS_ACL;
-    unbind_attr.value.oid = SAI_NULL_OBJECT_ID;
-    sai_status_t unbind_status = sai_switch_api->set_switch_attribute(gSwitchId, &unbind_attr);
-    if (unbind_status != SAI_STATUS_SUCCESS)
+    // Unbind from the pre-ingress slot via helper. Helper is conservative —
+    // it only writes when the current binding still equals our table, so a
+    // foreign feature that replaced our binding after we created the table
+    // is left untouched. We treat helper-failure (couldn't read or couldn't
+    // write the set) as a teardown abort to avoid leaking a bound table.
+    if (!unbindPreIngressAclTable(m_learnDisableAclTable))
     {
-        SWSS_LOG_ERROR("MAC_MOVE_GUARD: Failed to unbind learn-disable ACL table 0x%" PRIx64
-                      " from SAI_SWITCH_ATTR_PRE_INGRESS_ACL, rv:%d;"
-                      " aborting teardown to avoid leaking a bound table",
-                      m_learnDisableAclTable, unbind_status);
+        SWSS_LOG_ERROR("MAC_MOVE_GUARD: unbind failed for learn-disable ACL table 0x%" PRIx64
+                      "; aborting teardown",
+                      m_learnDisableAclTable);
         return;
     }
 
@@ -1129,12 +1183,7 @@ void MacMoveGuard::destroyLearnDisableAclTable()
         return;
     }
 
-    if (gCrmOrch)
-    {
-        gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE,
-                                       SAI_ACL_STAGE_PRE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH,
-                                       m_learnDisableAclTable);
-    }
+    crmPreIngressAclTableDec(m_learnDisableAclTable);
 
     SWSS_LOG_NOTICE("MAC_MOVE_GUARD: removed learn-disable ACL table 0x%" PRIx64, m_learnDisableAclTable);
     m_learnDisableAclTable = SAI_NULL_OBJECT_ID;
@@ -1194,6 +1243,111 @@ void MacMoveGuard::reconcileLearnDisableAclTable(bool prev_enabled, MacMoveGuard
     }
 }
 
+// Bind the given table OID into SAI_SWITCH_ATTR_PRE_INGRESS_ACL. Refuses if
+// the slot is already occupied so we don't overwrite another feature's
+// binding. Caller is responsible for any rollback (e.g. removing the table
+// it just created) when this returns false.
+bool MacMoveGuard::bindPreIngressAclTable(sai_object_id_t table_oid)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t cur;
+    cur.id = SAI_SWITCH_ATTR_PRE_INGRESS_ACL;
+    cur.value.oid = SAI_NULL_OBJECT_ID;
+    sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &cur);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("MAC_MOVE_GUARD: Failed to read SAI_SWITCH_ATTR_PRE_INGRESS_ACL "
+                       "before binding 0x%" PRIx64 ", rv:%d",
+                       table_oid, status);
+        return false;
+    }
+    if (cur.value.oid != SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("MAC_MOVE_GUARD: SAI_SWITCH_ATTR_PRE_INGRESS_ACL already bound to 0x%" PRIx64
+                       " by another feature; refusing to overwrite with 0x%" PRIx64,
+                       cur.value.oid, table_oid);
+        return false;
+    }
+
+    sai_attribute_t bind;
+    bind.id = SAI_SWITCH_ATTR_PRE_INGRESS_ACL;
+    bind.value.oid = table_oid;
+    status = sai_switch_api->set_switch_attribute(gSwitchId, &bind);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("MAC_MOVE_GUARD: Failed to bind ACL table 0x%" PRIx64
+                       " to SAI_SWITCH_ATTR_PRE_INGRESS_ACL, rv:%d",
+                       table_oid, status);
+        return false;
+    }
+    return true;
+}
+
+// Unbind SAI_SWITCH_ATTR_PRE_INGRESS_ACL when its current value matches the
+// expected OID. If the slot is bound to something else (another feature has
+// replaced our binding since we last set it), we skip the write to avoid
+// clobbering them and return true so the caller may still proceed to remove
+// its own table. Returns false only if the SAI get itself failed or the
+// matching set failed.
+bool MacMoveGuard::unbindPreIngressAclTable(sai_object_id_t expected_table_oid)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t cur;
+    cur.id = SAI_SWITCH_ATTR_PRE_INGRESS_ACL;
+    cur.value.oid = SAI_NULL_OBJECT_ID;
+    sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &cur);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("MAC_MOVE_GUARD: Failed to read SAI_SWITCH_ATTR_PRE_INGRESS_ACL "
+                       "before unbinding 0x%" PRIx64 ", rv:%d",
+                       expected_table_oid, status);
+        return false;
+    }
+    if (cur.value.oid != expected_table_oid)
+    {
+        SWSS_LOG_WARN("MAC_MOVE_GUARD: pre-ingress binding is 0x%" PRIx64 ", not our table "
+                      "0x%" PRIx64 "; skipping unbind",
+                      cur.value.oid, expected_table_oid);
+        return true;
+    }
+
+    sai_attribute_t unbind;
+    unbind.id = SAI_SWITCH_ATTR_PRE_INGRESS_ACL;
+    unbind.value.oid = SAI_NULL_OBJECT_ID;
+    status = sai_switch_api->set_switch_attribute(gSwitchId, &unbind);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("MAC_MOVE_GUARD: Failed to unbind ACL table 0x%" PRIx64
+                       " from SAI_SWITCH_ATTR_PRE_INGRESS_ACL, rv:%d",
+                       expected_table_oid, status);
+        return false;
+    }
+    return true;
+}
+
+void MacMoveGuard::crmPreIngressAclTableInc()
+{
+    if (gCrmOrch)
+    {
+        gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE,
+                                       SAI_ACL_STAGE_PRE_INGRESS,
+                                       SAI_ACL_BIND_POINT_TYPE_SWITCH);
+    }
+}
+
+void MacMoveGuard::crmPreIngressAclTableDec(sai_object_id_t table_oid)
+{
+    if (gCrmOrch)
+    {
+        gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE,
+                                       SAI_ACL_STAGE_PRE_INGRESS,
+                                       SAI_ACL_BIND_POINT_TYPE_SWITCH,
+                                       table_oid);
+    }
+}
+
 // Install one per-MAC ACL entry: match (vlan, smac) and apply SET_DO_NOT_LEARN
 // so the source MAC is not learned/relearned while forwarding continues via
 // the normal FDB lookup. The action parameter is not used; aclaction.enable
@@ -1212,6 +1366,52 @@ bool MacMoveGuard::installLearnDisableAclEntry(const MacKey &key, MacMoveTrackin
     if (!m_portsOrch->getPort(key.bv_id, vlan))
     {
         SWSS_LOG_ERROR("MAC_MOVE_GUARD: Failed to resolve VLAN for bv_id=0x%" PRIx64, key.bv_id);
+        return false;
+    }
+
+    // Defensive duplicate-key check: the SAI ACL entry match key is
+    // (vlan_id, smac), not (bv_id, smac). If a prior bad MAC happened to
+    // resolve to the same vlan_id with the same MAC (e.g. two bridge
+    // objects mapping to the same VLAN), pushing another entry would burn
+    // an ACL hardware slot for an identical match. Scan our tracking state
+    // and reuse the existing OID instead of issuing a duplicate create.
+    for (const auto &kv : m_macTrackingState)
+    {
+        const MacMoveTrackingState &other = kv.second;
+        if (other.learn_disable_acl_entry_id == SAI_NULL_OBJECT_ID) continue;
+        if (!(kv.first.mac == key.mac)) continue;
+
+        Port other_vlan;
+        if (!m_portsOrch->getPort(kv.first.bv_id, other_vlan)) continue;
+        if (other_vlan.m_vlan_info.vlan_id != vlan.m_vlan_info.vlan_id) continue;
+
+        SWSS_LOG_WARN("MAC_MOVE_GUARD: learn-disable ACL entry 0x%" PRIx64
+                      " already covers mac=%s vlan=%u (peer bv_id=0x%" PRIx64
+                      "); not installing a duplicate for bv_id=0x%" PRIx64
+                      ". The existing entry's SET_DO_NOT_LEARN action will apply.",
+                      other.learn_disable_acl_entry_id,
+                      key.mac.to_string().c_str(), vlan.m_vlan_info.vlan_id,
+                      kv.first.bv_id, key.bv_id);
+        // Leave state.learn_disable_acl_entry_id == SAI_NULL_OBJECT_ID so the
+        // symmetric removeLearnDisableAclEntry() path will not attempt to
+        // remove an OID it does not own. The peer state remains the sole
+        // owner of the SAI entry and will tear it down on its own release.
+        return true;
+    }
+
+    // Check CRM availability for the pre-ingress ACL entry resource before
+    // issuing the SAI create. The "available" attribute is reported by SAI
+    // on the table OID itself; treating 0 as a hard failure avoids a futile
+    // SAI call that would also bump used counters incorrectly on failure.
+    sai_attribute_t avail_attr;
+    avail_attr.id = SAI_ACL_TABLE_ATTR_AVAILABLE_ACL_ENTRY;
+    avail_attr.value.u32 = 0;
+    if (sai_acl_api->get_acl_table_attribute(m_learnDisableAclTable, 1, &avail_attr) == SAI_STATUS_SUCCESS &&
+        avail_attr.value.u32 == 0)
+    {
+        SWSS_LOG_ERROR("MAC_MOVE_GUARD: pre-ingress ACL entry resource exhausted "
+                       "(available=0 on table 0x%" PRIx64 "); skipping create for mac=%s vlan=%u",
+                       m_learnDisableAclTable, key.mac.to_string().c_str(), vlan.m_vlan_info.vlan_id);
         return false;
     }
 
