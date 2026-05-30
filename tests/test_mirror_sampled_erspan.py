@@ -424,3 +424,64 @@ class TestSampledMirror(object):
         time.sleep(2)
         dvs.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", 0)
 
+
+    def test_SampledMirrorOnLag(self, dvs, testlog):
+        """
+        Sampled ERSPAN mirror session with a LAG as src_port.
+        Verifies that LAG members each get SAMPLEPACKET/SAMPLE_MIRROR_SESSION
+        bindings (LAG OID itself is not a valid SAI target for these attrs).
+        Covers MirrorOrch::setUnsetPortMirror LAG dispatch branch.
+        """
+        dvs.setup_db()
+
+        session = "SAMPLED_LAG_SESSION"
+        po = "001"
+        po_name = "PortChannel" + po
+        member1 = "Ethernet0"
+        member2 = "Ethernet4"
+
+        # create LAG and add two members
+        self.dvs_lag.create_port_channel(po)
+        self.dvs_lag.create_port_channel_member(po, member1)
+        self.dvs_lag.create_port_channel_member(po, member2)
+        dvs.set_interface_status(po_name, "up")
+        dvs.set_interface_status(member1, "up")
+        dvs.set_interface_status(member2, "up")
+
+        # create sampled mirror session with LAG as src_port
+        self.dvs_mirror.create_erspan_session_sampled(
+            session, "1.1.1.1", "2.2.2.2", "0x8949", "8", "64", "0",
+            src_ports=po_name, direction="RX",
+            sample_rate="50000", truncate_size=None)
+
+        # set up neighbor on a separate PHY port to activate session
+        dvs.set_interface_status("Ethernet16", "up")
+        dvs.add_ip_address("Ethernet16", "10.0.0.0/30")
+        dvs.add_neighbor("Ethernet16", "10.0.0.1", "02:04:06:08:10:12")
+        dvs.add_route("2.2.2.2", "10.0.0.1")
+        dvs.state_db.wait_for_field_match("MIRROR_SESSION_TABLE", session, {"status": "active"})
+
+        # SAMPLEPACKET object should be created
+        dvs.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", 1)
+
+        # Both LAG members should have INGRESS_SAMPLEPACKET_ENABLE +
+        # INGRESS_SAMPLE_MIRROR_SESSION attributes set on their port objects.
+        fvs = dict(dvs.counters_db.get_entry("COUNTERS_PORT_NAME_MAP", ""))
+        for member in (member1, member2):
+            port_oid = fvs.get(member)
+            assert port_oid is not None
+            entry = dvs.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid)
+            assert "SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE" in entry
+            assert "SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION" in entry
+
+        # Cleanup
+        dvs.remove_route("2.2.2.2")
+        dvs.remove_neighbor("Ethernet16", "10.0.0.1")
+        dvs.remove_ip_address("Ethernet16", "10.0.0.0/30")
+        dvs.set_interface_status("Ethernet16", "down")
+        self.dvs_mirror.remove_mirror_session(session)
+        dvs.state_db.wait_for_deleted_entry("MIRROR_SESSION_TABLE", session)
+        dvs.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", 0)
+        self.dvs_lag.remove_port_channel_member(po, member1)
+        self.dvs_lag.remove_port_channel_member(po, member2)
+        self.dvs_lag.remove_port_channel(po)
