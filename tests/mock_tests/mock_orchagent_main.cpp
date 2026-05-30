@@ -30,7 +30,3 @@ bool isChassisDbInUse()
 {
     return gMultiAsicVoq;
 }
-
-unique_ptr<DBConnector> gHealthStateDb;
-unique_ptr<Table> gOrchHealthTable;
-std::atomic<bool> gOrchUnhealthyCached{false};

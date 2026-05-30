@@ -178,7 +178,7 @@ namespace sai_failure_status_test
         // getSaiFailureStatus should still report unhealthy
         std::string error;
         EXPECT_TRUE(getSaiFailureStatus(error));
-        EXPECT_EQ(error, "Orchagent is in unhealthy state (STATE_DB key missing)");
+        EXPECT_EQ(error, "Orchagent is unhealthy (STATE_DB key missing)");
     }
 
     TEST_F(SaiFailureStatusTest, NullTableReturnsUnhealthy)
@@ -193,7 +193,7 @@ namespace sai_failure_status_test
         // getSaiFailureStatus should hit the null table guard
         std::string error;
         EXPECT_TRUE(getSaiFailureStatus(error));
-        EXPECT_EQ(error, "Orchagent is in unhealthy state (health table not initialized)");
+        EXPECT_EQ(error, "Orchagent is unhealthy (health table not initialized)");
 
         // Re-init for TearDown safety
         initSaiFailureTable();

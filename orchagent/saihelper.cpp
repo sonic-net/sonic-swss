@@ -1222,7 +1222,7 @@ bool getSaiFailureStatus(std::string& error)
     }
     if (!gOrchHealthTable)
     {
-        error = "Orchagent is in unhealthy state (health table not initialized)";
+        error = "Orchagent is unhealthy (health table not initialized)";
         return true;
     }
     /* Fetch all fields in a single Redis round-trip */
@@ -1233,18 +1233,18 @@ bool getSaiFailureStatus(std::string& error)
         {
             /* Key missing but cache says unhealthy — keep reporting unhealthy
              * with a generic message rather than silently clearing. */
-            error = "Orchagent is in unhealthy state (STATE_DB key missing)";
+            error = "Orchagent is unhealthy (STATE_DB key missing)";
             return true;
         }
     }
     catch (const std::exception& e)
     {
         SWSS_LOG_WARN("Failed to read health status from STATE_DB: %s", e.what());
-        error = "Orchagent is in unhealthy state (STATE_DB read failed)";
+        error = "Orchagent is unhealthy (STATE_DB read failed)";
         return true;
     }
-    bool unhealthy = false;
-    error = "";
+    bool unhealthy = true;
+    error = "Orchagent is unhealthy";
     for (const auto& fv : fvs)
     {
         if (fvField(fv) == "unhealthy")
