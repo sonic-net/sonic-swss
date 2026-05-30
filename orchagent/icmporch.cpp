@@ -8,6 +8,7 @@
 #include "converter.h"
 #include "swssnet.h"
 #include "notifier.h"
+#include "notificationconsumerstatsorch.h"
 #include "sai_serialize.h"
 #include "directory.h"
 #include "notifications.h"
@@ -58,6 +59,10 @@ IcmpOrch::IcmpOrch(DBConnector *db, string tableName, TableConnector stateDbIcmp
 
     DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
     m_icmpStateNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    m_icmpStateNotificationConsumer->setOpAllowList({"icmp_echo_session_state_change"});
+    m_icmpStateNotificationConsumer->setStatsLabel("IcmpOrch:icmp_echo_session_state_change");
+    if (gNotifConsumerStatsOrch)
+        gNotifConsumerStatsOrch->registerConsumer("IcmpOrch:icmp_echo_session_state_change", m_icmpStateNotificationConsumer);
 
     // Clean up state database ICMP entries
     vector<string> keys;
