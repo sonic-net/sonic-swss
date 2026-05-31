@@ -2051,6 +2051,28 @@ void SwitchOrch::querySwitchSampledMirrorCapability()
         SWSS_LOG_NOTICE("mirror ERSPAN session ID capability %d", capability.create_implemented);
     }
 
+    // Check if SAI supports attaching a counter to a mirror session
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_MIRROR_SESSION,
+                            SAI_MIRROR_SESSION_ATTR_COUNTER_ID, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("SAI_MIRROR_SESSION_ATTR_COUNTER_ID capability query failed (status=%d); assuming unsupported", status);
+        m_mirrorCounterIdSupported = false;
+    }
+    else
+    {
+        if (capability.set_implemented)
+        {
+            m_mirrorCounterIdSupported = true;
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("SAI_MIRROR_SESSION_ATTR_COUNTER_ID not supported on this platform");
+            m_mirrorCounterIdSupported = false;
+        }
+        SWSS_LOG_NOTICE("mirror session counter ID capability: set=%d", capability.set_implemented);
+    }
+
     set_switch_capability(fvVector);
 }
 
