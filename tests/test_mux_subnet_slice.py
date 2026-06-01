@@ -19,6 +19,7 @@ import pytest
 
 from swsscommon import swsscommon
 
+import test_mux
 from test_mux import TestMuxTunnelBase
 
 
@@ -284,3 +285,77 @@ class TestMuxSubnetSlice(TestMuxSubnetSliceBase):
                                         expected=True)
         finally:
             self.del_neigh_on_port(dvs, self.IN_SLICE_IPV6, self.MAC_DASH)
+
+    def _wait_route_nexthop(self, asicdb, route_key, expected_oid, retries=20):
+        """Poll the slice route's SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID until it
+        equals expected_oid (handles the async repoint after a state change)."""
+        last = None
+        for _ in range(retries):
+            fvs = asicdb.get_entry(self.ASIC_ROUTE_TABLE, route_key)
+            last = fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID")
+            if last == expected_oid:
+                return last
+            time.sleep(0.5)
+        assert False, (
+            f"slice route {route_key} nexthop {last} != expected {expected_oid}"
+        )
+        return last
+
+    def _wait_anchor_local_oid(self, asicdb, ip, tunnel_oid, retries=20):
+        """Poll until the anchor IP's local (non-tunnel) nexthop OID appears."""
+        oid = ""
+        for _ in range(retries):
+            oid = self.get_nexthop_oid(asicdb, ip)
+            if oid and oid != tunnel_oid:
+                return oid
+            time.sleep(0.5)
+        assert False, f"anchor {ip} local nexthop OID not found in ASIC"
+        return oid
+
+    def test_slice_prefix_route_programmed_and_follows_switchover(
+        self, dvs, dvs_route, setup, setup_vlan, setup_peer_switch,
+        setup_tunnel, setup_mux_cable, testlog
+    ):
+        """The slice supernet route (server_ipv6_subnet) must be programmed in
+        the ASIC pointing at the server_ipv6 anchor's mux nexthop, and must
+        follow the cable's mux state:
+          ACTIVE  -> anchor local nexthop OID
+          STANDBY -> tunnel nexthop OID
+
+        This guards the core slice invariant: in-slice per-host neighbors are
+        suppressed, so the covering slice route is what keeps them reachable.
+        """
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = dvs.get_asic_db()
+
+        # Resolve the tunnel nexthop OID (populates test_mux.tunnel_nh_id).
+        self.check_tnl_nexthop_in_asic_db(asicdb)
+        tunnel_oid = test_mux.tunnel_nh_id
+
+        # Anchor (server_ipv6) is in-slice but exempt from suppression, so
+        # adding it resolves the anchor nexthop the slice route points to.
+        self.set_mux_state(appdb, self.SLICED_PORT, ACTIVE)
+        self.add_neigh_on_port(dvs, self.SERVER_IPV6, self.MAC,
+                               self.MAC_DASH, self.SLICED_PORT)
+        try:
+            # Slice route exists in the ASIC.
+            route_key = dvs_route.check_asicdb_route_entries(
+                [self.SLICE_PREFIX])[0]
+
+            # ACTIVE -> points at the anchor's local nexthop OID.
+            local_oid = self._wait_anchor_local_oid(
+                asicdb, self.SERVER_IPV6, tunnel_oid)
+            self._wait_route_nexthop(asicdb, route_key, local_oid)
+
+            # STANDBY -> repointed to the tunnel nexthop OID.
+            self.set_mux_state(appdb, self.SLICED_PORT, STANDBY)
+            self._wait_route_nexthop(asicdb, route_key, tunnel_oid)
+
+            # Back to ACTIVE -> repointed to the anchor's local nexthop again
+            # (the local NH may be re-created with a new OID, so re-fetch it).
+            self.set_mux_state(appdb, self.SLICED_PORT, ACTIVE)
+            local_oid = self._wait_anchor_local_oid(
+                asicdb, self.SERVER_IPV6, tunnel_oid)
+            self._wait_route_nexthop(asicdb, route_key, local_oid)
+        finally:
+            self.del_neigh_on_port(dvs, self.SERVER_IPV6, self.MAC_DASH)

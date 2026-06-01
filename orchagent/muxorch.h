@@ -162,6 +162,9 @@ public:
     void updateNeighbor(NextHopKey nh, bool add);
     void updateRoutes();
     void updateRoutesForNextHop(NextHopKey nh);
+
+    // Slice supernet route tracking (see refreshSliceRoute in muxorch.cpp).
+    void refreshSliceRoute();
     sai_object_id_t getNextHopId(const NextHopKey nh)
     {
         return nbr_handler_->getNextHopId(nh);
@@ -194,6 +197,9 @@ private:
 
     // "::/0" sentinel = no slice configured.
     IpPrefix slice_ip6_;
+
+    // Nexthop OID the slice route points at; NULL when not installed.
+    sai_object_id_t slice_route_nh_oid_ = SAI_NULL_OBJECT_ID;
 
     MuxOrch *mux_orch_;
     MuxCableOrch *mux_cb_orch_;

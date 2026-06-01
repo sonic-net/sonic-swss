@@ -458,6 +458,7 @@ bool MuxCable::stateInitActive()
         return false;
     }
 
+    refreshSliceRoute();
     return true;
 }
 
@@ -483,6 +484,7 @@ bool MuxCable::stateActive()
         return false;
     }
 
+    refreshSliceRoute();
     return true;
 }
 
@@ -501,6 +503,8 @@ bool MuxCable::stateStandby()
     {
         return false;
     }
+
+    refreshSliceRoute();
 
     if (!aclHandler(port.m_port_id, mux_name_))
     {
@@ -682,6 +686,7 @@ void MuxCable::updateNeighbor(NextHopKey nh, bool add)
 {
     SWSS_LOG_NOTICE("Processing update on neighbor %s for mux %s, add %d, state %d",
                      nh.ip_address.to_string().c_str(), mux_name_.c_str(), add, state_);
+
     sai_object_id_t tnh = mux_orch_->getNextHopTunnelId(MUX_TUNNEL, peer_ip4_);
     nbr_handler_->update(nh, tnh, add, state_);
     if (add)
@@ -693,6 +698,12 @@ void MuxCable::updateNeighbor(NextHopKey nh, bool add)
         mux_orch_->removeNexthop(nh);
     }
     updateRoutesForNextHop(nh);
+
+    // Anchor neighbor changed: refresh the slice route to track its nexthop.
+    if (hasSlicePrefix() && nh.ip_address == srv_ip6_.getIp())
+    {
+        refreshSliceRoute();
+    }
 }
 
 /**
@@ -733,6 +744,55 @@ void MuxCable::updateRoutesForNextHop(NextHopKey nh)
         {
             mux_orch_->updateRoute(rt->prefix);
         }
+    }
+}
+
+void MuxCable::refreshSliceRoute()
+{
+    if (!hasSlicePrefix())
+    {
+        return;
+    }
+
+    IpPrefix slice_pfx = slice_ip6_;
+    IpAddress anchor_ip = srv_ip6_.getIp();
+    NextHopKey anchor_nh(anchor_ip, mux_name_);
+    sai_object_id_t desired = nbr_handler_->getNextHopId(anchor_nh);
+
+    // Anchor not resolved yet: keep any existing route; a later neighbor update re-drives this.
+    if (desired == SAI_NULL_OBJECT_ID)
+    {
+        return;
+    }
+
+    if (slice_route_nh_oid_ == SAI_NULL_OBJECT_ID)
+    {
+        sai_status_t status = create_route(slice_pfx, desired);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Mux %s: failed to install slice route %s nh 0x%" PRIx64 " rv %d",
+                           mux_name_.c_str(), slice_pfx.to_string().c_str(),
+                           desired, status);
+            return;
+        }
+        slice_route_nh_oid_ = desired;
+        SWSS_LOG_NOTICE("Mux %s: installed slice route %s -> anchor nh 0x%" PRIx64,
+                        mux_name_.c_str(), slice_pfx.to_string().c_str(), desired);
+    }
+    else if (slice_route_nh_oid_ != desired)
+    {
+        sai_status_t status = set_route(slice_pfx, desired);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Mux %s: failed to update slice route %s nh 0x%" PRIx64 " rv %d",
+                           mux_name_.c_str(), slice_pfx.to_string().c_str(),
+                           desired, status);
+            return;
+        }
+        SWSS_LOG_NOTICE("Mux %s: slice route %s nh 0x%" PRIx64 " -> 0x%" PRIx64,
+                        mux_name_.c_str(), slice_pfx.to_string().c_str(),
+                        slice_route_nh_oid_, desired);
+        slice_route_nh_oid_ = desired;
     }
 }
 
@@ -2529,10 +2589,6 @@ bool MuxOrch::handleMuxCfg(const Request& request)
                             port_name.c_str(), slice_ip6.to_string().c_str(), sliced_cable_count_);
             state_mux_cable_table_->hset(port_name, "server_ipv6_subnet",
                                          slice_ip6.to_string());
-        }
-        else
-        {
-            state_mux_cable_table_->hdel(port_name, "server_ipv6_subnet");
         }
 
         // Set neighbor_mode in state DB MUX_CABLE_TABLE

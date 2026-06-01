@@ -505,4 +505,41 @@ namespace mux_subnet_slicing_test
         static_cast<Orch *>(m_MuxOrch)->doTask();
         EXPECT_EQ(IpPrefix(SLICE_PREFIX), m_MuxCable->getSlicePrefix());
     }
+
+    // refreshSliceRoute bookkeeping: the slice supernet route is installed
+    // once the server_ipv6 anchor resolves to a nexthop and is idempotent
+    // while the anchor nexthop is unchanged. It is never withdrawn — it
+    // persists (last-good) even if the anchor neighbor transiently
+    // disappears, since the in-slice neighbors it covers stay suppressed.
+    // create_route is stubbed to SUCCESS; remove must never be called.
+    TEST_F(MuxSubnetSlicingTest, SliceRouteInstallAndPersist)
+    {
+        using ::testing::AtLeast;
+        EXPECT_CALL(*mock_sai_route_api, create_route_entry(_, _, _))
+            .Times(AtLeast(1))
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_route_api, remove_route_entry(_)).Times(0);
+
+        const IpAddress anchor(SERVER_IP6);
+        const sai_object_id_t local_nh = 0xA001;
+
+        // Anchor not resolved yet → refresh installs nothing.
+        ASSERT_EQ(SAI_NULL_OBJECT_ID, m_MuxCable->slice_route_nh_oid_);
+        m_MuxCable->refreshSliceRoute();
+        EXPECT_EQ(SAI_NULL_OBJECT_ID, m_MuxCable->slice_route_nh_oid_);
+
+        // Anchor resolves to a local nexthop (ACTIVE) → route installed to it.
+        m_MuxCable->nbr_handler_->neighbors_[anchor] = local_nh;
+        m_MuxCable->refreshSliceRoute();
+        EXPECT_EQ(local_nh, m_MuxCable->slice_route_nh_oid_);
+
+        // Same anchor nexthop → idempotent, oid unchanged.
+        m_MuxCable->refreshSliceRoute();
+        EXPECT_EQ(local_nh, m_MuxCable->slice_route_nh_oid_);
+
+        // Anchor neighbor disappears → route persists (never withdrawn).
+        m_MuxCable->nbr_handler_->neighbors_.erase(anchor);
+        m_MuxCable->refreshSliceRoute();
+        EXPECT_EQ(local_nh, m_MuxCable->slice_route_nh_oid_);
+    }
 }
