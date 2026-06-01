@@ -1222,7 +1222,7 @@ bool MirrorOrch::configurePortMirrorSession(const string& name, MirrorEntry& ses
             }
             if (session.direction == MIRROR_RX_DIRECTION  || session.direction == MIRROR_BOTH_DIRECTION)
             {
-                if (!setUnsetPortMirror(port, true, set, session.sessionId, session.samplepacketId, session.sample_rate)) // LCOV_EXCL_LINE: Covered by VS test
+                if (!setUnsetPortMirror(port, true, set, session.sessionId, session.samplepacketId, session.sample_rate))
                 {
                     SWSS_LOG_ERROR("Failed to configure mirror session %s port %s",
                         name.c_str(), port.m_alias.c_str());
@@ -1406,9 +1406,9 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
     session.status = true;
 
     // Create SamplePacket if sample_rate > 0 (capability already verified in createEntry)
-    if (session.sample_rate > 0) // LCOV_EXCL_LINE: Covered by VS test
+    if (session.sample_rate > 0)
     {
-        if (!createSamplePacket(name, session)) // LCOV_EXCL_LINE: Covered by VS test
+        if (!createSamplePacket(name, session))
         {
             SWSS_LOG_ERROR("Failed to create samplepacket, removing mirror session %s", name.c_str()); // LCOV_EXCL_LINE: SAI VS create always succeeds
             sai_mirror_api->remove_mirror_session(session.sessionId); // LCOV_EXCL_LINE
@@ -1465,9 +1465,9 @@ bool MirrorOrch::deactivateSession(const string& name, MirrorEntry& session)
     }
 
     // Remove SamplePacket if it exists
-    if (session.samplepacketId != SAI_NULL_OBJECT_ID) // LCOV_EXCL_LINE: Covered by VS test
+    if (session.samplepacketId != SAI_NULL_OBJECT_ID)
     {
-        if (!removeSamplePacket(name, session)) // LCOV_EXCL_LINE: Covered by VS test
+        if (!removeSamplePacket(name, session))
         {
             SWSS_LOG_ERROR("Failed to remove samplepacket for session %s", name.c_str()); // LCOV_EXCL_LINE: SAI VS remove always succeeds
             return false; // LCOV_EXCL_LINE
@@ -1556,7 +1556,7 @@ bool MirrorOrch::setUnsetSampledMirrorOnPhyPort(sai_object_id_t phy_port_id,
     }
     else
     {
-        mirror_attr.value.objlist.count = 0; // LCOV_EXCL_LINE: Covered by VS test
+        mirror_attr.value.objlist.count = 0;
     }
 
     // Check for samplepacket conflict before binding
@@ -1585,8 +1585,8 @@ bool MirrorOrch::setUnsetSampledMirrorOnPhyPort(sai_object_id_t phy_port_id,
                             phy_port_alias.c_str(), status);
             return false;
         }
-        status = sai_port_api->set_port_attribute(phy_port_id, &mirror_attr); // LCOV_EXCL_LINE: Covered by VS test
-        if (status != SAI_STATUS_SUCCESS) // LCOV_EXCL_LINE: Covered by VS test
+        status = sai_port_api->set_port_attribute(phy_port_id, &mirror_attr);
+        if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to set SAMPLE_MIRROR_SESSION on port %s, status %d", // LCOV_EXCL_LINE: SAI VS set always succeeds
                             phy_port_alias.c_str(), status); // LCOV_EXCL_LINE
@@ -1599,22 +1599,22 @@ bool MirrorOrch::setUnsetSampledMirrorOnPhyPort(sai_object_id_t phy_port_id,
     else
     {
         // Clear: SAMPLE_MIRROR_SESSION first, then SAMPLEPACKET_ENABLE (reverse order)
-        status = sai_port_api->set_port_attribute(phy_port_id, &mirror_attr); // LCOV_EXCL_LINE: Covered by VS test
-        if (status != SAI_STATUS_SUCCESS) // LCOV_EXCL_LINE: Covered by VS test
+        status = sai_port_api->set_port_attribute(phy_port_id, &mirror_attr);
+        if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to clear SAMPLE_MIRROR_SESSION on port %s, status %d", // LCOV_EXCL_LINE: SAI VS set always succeeds
                             phy_port_alias.c_str(), status); // LCOV_EXCL_LINE
             return false; // LCOV_EXCL_LINE
         }
-        status = sai_port_api->set_port_attribute(phy_port_id, &sp_attr); // LCOV_EXCL_LINE: Covered by VS test
-        if (status != SAI_STATUS_SUCCESS) // LCOV_EXCL_LINE: Covered by VS test
+        status = sai_port_api->set_port_attribute(phy_port_id, &sp_attr);
+        if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to clear SAMPLEPACKET_ENABLE on port %s, status %d", // LCOV_EXCL_LINE: SAI VS set always succeeds
                             phy_port_alias.c_str(), status); // LCOV_EXCL_LINE
             return false; // LCOV_EXCL_LINE
         }
     }
-    return true; // LCOV_EXCL_LINE: Covered by VS test
+    return true;
 }
 
 bool MirrorOrch::createSamplePacket(const string& name, MirrorEntry& session)
@@ -1676,9 +1676,9 @@ bool MirrorOrch::removeSamplePacket(const string& name, MirrorEntry& session)
         return true;
     }
 
-    sai_status_t status = sai_samplepacket_api->remove_samplepacket(session.samplepacketId); // LCOV_EXCL_LINE: Covered by VS test
+    sai_status_t status = sai_samplepacket_api->remove_samplepacket(session.samplepacketId);
 
-    if (status != SAI_STATUS_SUCCESS) // LCOV_EXCL_LINE: Covered by VS test
+    if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove samplepacket for session %s, status %d", // LCOV_EXCL_LINE: SAI VS remove always succeeds
                        name.c_str(), status); // LCOV_EXCL_LINE
@@ -1689,9 +1689,9 @@ bool MirrorOrch::removeSamplePacket(const string& name, MirrorEntry& session)
         }
     }
 
-    session.samplepacketId = SAI_NULL_OBJECT_ID; // LCOV_EXCL_LINE: Covered by VS test
-    SWSS_LOG_NOTICE("Removed samplepacket for session %s", name.c_str()); // LCOV_EXCL_LINE: Covered by VS test
-    return true; // LCOV_EXCL_LINE: Covered by VS test
+    session.samplepacketId = SAI_NULL_OBJECT_ID;
+    SWSS_LOG_NOTICE("Removed samplepacket for session %s", name.c_str());
+    return true;
 }
 
 bool MirrorOrch::updateSessionDstPort(const string& name, MirrorEntry& session)

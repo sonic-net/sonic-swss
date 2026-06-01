@@ -673,7 +673,25 @@ namespace mirrororch_test
         gMirrorOrch->m_syncdMirrors.erase(key);
     }
 
+    TEST_F(MirrorOrchTest, RemoveSamplePacketSuccess)
+    {
+        // Cover removeSamplePacket success path on a real (non-NULL) OID:
+        // remove_samplepacket call, success branch, and OID reset.
+        ASSERT_NE(gMirrorOrch, nullptr);
 
+        MirrorEntry entry("");
+        entry.type = "ERSPAN";
+        entry.sample_rate = 50000;
+        entry.truncate_size = 0;
+
+        // createSamplePacket yields a real samplepacket OID from the VS switch.
+        ASSERT_TRUE(gMirrorOrch->createSamplePacket("rm_sp_session", entry));
+        ASSERT_NE(entry.samplepacketId, SAI_NULL_OBJECT_ID);
+
+        // Exercise the real removal branch (non-NULL OID).
+        ASSERT_TRUE(gMirrorOrch->removeSamplePacket("rm_sp_session", entry));
+        ASSERT_EQ(entry.samplepacketId, SAI_NULL_OBJECT_ID);
+    }
 
 
 }
