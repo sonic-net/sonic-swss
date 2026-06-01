@@ -47,6 +47,7 @@ jobs:
           token: ${{ secrets.PAT_TOKEN }}
           path: sonic-swss-common
           fetch-depth: 1
+          persist-credentials: false
 
       - name: Resolve Docker image
         id: docker
@@ -148,16 +149,16 @@ jobs:
           SKIP_DPKG: ${{ inputs.skip_dpkg }}
           SWSS_COMMON_REF: ${{ inputs.swss_common_ref }}
         run: |
-          SWSS_COMMON_MOUNT=""
+          MOUNT_ARGS=()
           if [ -d "${{ github.workspace }}/sonic-swss-common" ]; then
-            SWSS_COMMON_MOUNT="-v ${{ github.workspace }}/sonic-swss-common:/build/sonic-swss-common"
+            MOUNT_ARGS+=(-v "${{ github.workspace }}/sonic-swss-common:/build/sonic-swss-common")
           fi
 
           docker run --rm --privileged --init \
             --ulimit nofile=65536:65536 \
             -v "${{ github.workspace }}:/build/sonic-swss" \
             -v "${DEBS_DIR}:/debs:ro" \
-            ${SWSS_COMMON_MOUNT} \
+            "${MOUNT_ARGS[@]}" \
             -w "/build/sonic-swss" \
             -e CARGO_NET_GIT_FETCH_WITH_CLI=true \
             -e SKIP_DPKG="${SKIP_DPKG}" \
@@ -224,8 +225,18 @@ jobs:
             sudo ldconfig
 
             echo "=== Installing swss-common headers ==="
+            # Preserve cfg_schema.h from cached deb -- it contains all CFG_*_TABLE_NAME
+            # macros generated from YANG models.  The source build with --disable-yangmodules
+            # produces only a minimal stub, so overwriting it would break SWSS compilation.
+            if [ -f /usr/include/swss/cfg_schema.h ]; then
+              cp /usr/include/swss/cfg_schema.h /tmp/cfg_schema.h.preserved
+            fi
             sudo cp common/*.h /usr/include/swss/
-            echo "  $(ls common/*.h | wc -l) headers copied to /usr/include/swss/"
+            if [ -f /tmp/cfg_schema.h.preserved ]; then
+              sudo cp /tmp/cfg_schema.h.preserved /usr/include/swss/cfg_schema.h
+              echo "  Restored cfg_schema.h from cached deb (yang-generated)"
+            fi
+            echo "  $(ls common/*.h | wc -l) source headers synced to /usr/include/swss/"
             echo "=== sonic-swss-common installed from source ==="
             cd /build/sonic-swss
           fi
