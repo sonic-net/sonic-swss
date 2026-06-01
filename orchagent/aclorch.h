@@ -31,6 +31,8 @@ class DTelOrch;
 class NeighOrch;
 // #include "routeorch.h"
 class RouteOrch;
+//#include "policerorch.h"
+class PolicerOrch;
 
 #define RULE_PRIORITY           "PRIORITY"
 #define MATCH_IN_PORTS          "IN_PORTS"
@@ -76,6 +78,7 @@ class RouteOrch;
 #define ACTION_REDIRECT_ACTION              "REDIRECT_ACTION"
 #define ACTION_DO_NOT_NAT_ACTION            "DO_NOT_NAT_ACTION"
 #define ACTION_DISABLE_TRIM                 "DISABLE_TRIM_ACTION"
+#define ACTION_POLICER                      "POLICER"
 #define ACTION_MIRROR_ACTION                "MIRROR_ACTION"
 #define ACTION_MIRROR_INGRESS_ACTION        "MIRROR_INGRESS_ACTION"
 #define ACTION_MIRROR_EGRESS_ACTION         "MIRROR_EGRESS_ACTION"
@@ -422,11 +425,15 @@ public:
     const string& getTrapGroup() const;
     bool needsUserDefinedTrap() const;
 
+    void setPolicer(const string& policer);
+    const string& getPolicer() const;
+
 protected:
     sai_object_id_t getRedirectObjectId(const string& redirect_param);
 
 private:
     string m_trapGroup;
+    string m_policer;
     sai_object_id_t m_userDefinedTrapOid = SAI_NULL_OBJECT_ID;
     sai_object_id_t m_hostifTableEntryOid = SAI_NULL_OBJECT_ID;
 };

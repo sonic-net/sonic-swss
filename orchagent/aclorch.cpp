@@ -11,6 +11,7 @@
 #include "routeorch.h"
 #include "vxlanorch.h"
 #include "copporch.h"
+#include "policerorch.h"
 #include "logger.h"
 #include "schema.h"
 #include "ipprefix.h"
@@ -40,6 +41,7 @@ extern PortsOrch*        gPortsOrch;
 extern CrmOrch *gCrmOrch;
 extern SwitchOrch *gSwitchOrch;
 extern CoppOrch *gCoppOrch;
+extern PolicerOrch *gPolicerOrch;
 extern string gMySwitchType;
 extern Directory<Orch*> gDirectory;
 
@@ -2203,6 +2205,17 @@ const string& AclRulePacket::getTrapGroup() const
     return m_trapGroup;
 }
 
+void AclRulePacket::setPolicer(const string& policer)
+{
+    m_policer = policer;
+    SWSS_LOG_NOTICE("ACL rule %s: POLICER set to '%s'", m_id.c_str(), policer.c_str());
+}
+
+const string& AclRulePacket::getPolicer() const
+{
+    return m_policer;
+}
+
 bool AclRulePacket::createRule()
 {
     SWSS_LOG_ENTER();
@@ -2299,6 +2312,27 @@ bool AclRulePacket::createRule()
             SaiAttrWrapper(SAI_OBJECT_TYPE_ACL_ENTRY, trapAttr);
     }
 
+    if (!m_policer.empty())
+    {
+        sai_object_id_t policer_oid = SAI_NULL_OBJECT_ID;
+        if (!gPolicerOrch->getPolicerOid(m_policer, policer_oid))
+        {
+            SWSS_LOG_ERROR("ACL rule %s: policer '%s' not found",
+                           m_id.c_str(), m_policer.c_str());
+            return false;
+        }
+
+        gPolicerOrch->increaseRefCount(m_policer);
+
+        sai_attribute_t policerAttr;
+        policerAttr.id = SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER;
+        policerAttr.value.aclaction.enable = true;
+        policerAttr.value.aclaction.parameter.oid = policer_oid;
+
+        m_actions[SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER] =
+            SaiAttrWrapper(SAI_OBJECT_TYPE_ACL_ENTRY, policerAttr);
+    }
+
     if (!AclRule::createRule())
     {
         if (m_hostifTableEntryOid != SAI_NULL_OBJECT_ID)
@@ -2314,6 +2348,11 @@ bool AclRulePacket::createRule()
             m_userDefinedTrapOid = SAI_NULL_OBJECT_ID;
             m_actions.erase(SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID);
         }
+        if (!m_policer.empty())
+        {
+            gPolicerOrch->decreaseRefCount(m_policer);
+            m_actions.erase(SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER);
+        }
         return false;
     }
 
@@ -2323,6 +2362,13 @@ bool AclRulePacket::createRule()
 bool AclRulePacket::removeRule()
 {
     SWSS_LOG_ENTER();
+
+    if (!m_policer.empty())
+    {
+        gPolicerOrch->decreaseRefCount(m_policer);
+        SWSS_LOG_NOTICE("ACL rule %s: released policer '%s'",
+                        m_id.c_str(), m_policer.c_str());
+    }
 
     if (!AclRule::removeRule())
     {
@@ -5863,6 +5909,18 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                     else
                     {
                         SWSS_LOG_WARN("ACL rule %s: TRAP_GROUP ignored (not a packet rule)", rule_id.c_str());
+                    }
+                }
+                else if (attr_name == ACTION_POLICER)
+                {
+                    auto pktRule = dynamic_cast<AclRulePacket*>(newRule.get());
+                    if (pktRule)
+                    {
+                        pktRule->setPolicer(attr_value);
+                    }
+                    else
+                    {
+                        SWSS_LOG_WARN("ACL rule %s: POLICER ignored (not a packet rule)", rule_id.c_str());
                     }
                 }
                 else if (newRule->validateAddAction(attr_name, attr_value))
