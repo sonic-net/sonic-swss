@@ -6,6 +6,7 @@
 #include "fdborch.h"
 #include "timer.h"
 
+#include <boost/functional/hash.hpp>
 #include <deque>
 #include <chrono>
 #include <map>
@@ -70,24 +71,21 @@ struct MacKey
     }
 };
 
-// Hash functor for MacKey, used by std::unordered_map. Packs the 6 MAC
-// bytes into a uint64 and combines with bv_id using boost-style mixing.
+// Hash functor for MacKey, used by std::unordered_map. Built on
+// boost::hash_combine (the same pattern bulker.h uses for composite SAI
+// keys); portable across 32-bit and 64-bit targets.
 struct MacKeyHash
 {
     std::size_t operator()(const MacKey &k) const noexcept
     {
+        std::size_t seed = 0;
         const uint8_t *m = k.mac.getMac();
-        uint64_t mac_int =
-            (static_cast<uint64_t>(m[0]) << 40) |
-            (static_cast<uint64_t>(m[1]) << 32) |
-            (static_cast<uint64_t>(m[2]) << 24) |
-            (static_cast<uint64_t>(m[3]) << 16) |
-            (static_cast<uint64_t>(m[4]) << 8)  |
-             static_cast<uint64_t>(m[5]);
-        std::size_t h1 = std::hash<uint64_t>()(mac_int);
-        std::size_t h2 = std::hash<sai_object_id_t>()(k.bv_id);
-        // boost::hash_combine pattern
-        return h1 ^ (h2 + 0x9e3779b97f4a7c15ULL + (h1 << 6) + (h1 >> 2));
+        for (int i = 0; i < 6; ++i)
+        {
+            boost::hash_combine(seed, m[i]);
+        }
+        boost::hash_combine(seed, k.bv_id);
+        return seed;
     }
 };
 
