@@ -184,7 +184,7 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
      * Hence add a single /128 route entry for the link-local interface
      * address pointing to the CPU port.
      */
-    IpPrefix linklocal_prefix = getLinkLocalEui64Addr(gMacAddress);
+    IpPrefix linklocal_prefix = getLinkLocalEui64Addr();
 
     addLinkLocalRouteToMe(gVirtualRouterId, linklocal_prefix);
     SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu", linklocal_prefix.to_string().c_str());
@@ -197,6 +197,11 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
     SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu", default_link_local_prefix.to_string().c_str());
 
     createRetryCache(APP_ROUTE_TABLE_NAME);
+}
+
+std::string RouteOrch::getLinkLocalEui64Addr(void)
+{
+    return getLinkLocalEui64Addr(gMacAddress);
 }
 
 std::string RouteOrch::getLinkLocalEui64Addr(const MacAddress &mac)
