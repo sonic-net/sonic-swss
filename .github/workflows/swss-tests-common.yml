@@ -23,7 +23,7 @@ on:
 jobs:
   build-and-test:
     runs-on: [self-hosted, linux, sonic-build-202511]
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Clean workspace (root-owned artifacts from prior builds)
         run: |

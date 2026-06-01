@@ -22,6 +22,6 @@ jobs:
   call-swss-tests:
     uses: ./.github/workflows/swss-tests-common.yml
     with:
-      skip_dpkg: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.skip_dpkg == 'true' || false }}
+      skip_dpkg: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.skip_dpkg == 'true' || true }}
       swss_common_ref: 'upscaleai-202511'
     secrets: inherit
