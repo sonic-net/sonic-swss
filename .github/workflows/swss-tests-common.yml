@@ -14,6 +14,11 @@ on:
         required: false
         default: false
         type: boolean
+      swss_common_ref:
+        description: 'sonic-swss-common branch/ref to build from source (overrides cached deb headers). Leave empty to use cached deb only.'
+        required: false
+        default: ''
+        type: string
 
 jobs:
   build-and-test:
@@ -31,6 +36,15 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+
+      - name: Checkout sonic-swss-common (from source branch)
+        if: inputs.swss_common_ref != ''
+        uses: actions/checkout@v4
+        with:
+          repository: upscale-ai-network/sonic-swss-common
+          ref: ${{ inputs.swss_common_ref }}
+          path: sonic-swss-common
           fetch-depth: 1
 
       - name: Resolve Docker image
@@ -131,14 +145,22 @@ jobs:
           DOCKER_IMG: ${{ steps.docker.outputs.image }}
           DEBS_DIR: ${{ steps.debs.outputs.debs_dir }}
           SKIP_DPKG: ${{ inputs.skip_dpkg }}
+          SWSS_COMMON_REF: ${{ inputs.swss_common_ref }}
         run: |
+          SWSS_COMMON_MOUNT=""
+          if [ -d "${{ github.workspace }}/sonic-swss-common" ]; then
+            SWSS_COMMON_MOUNT="-v ${{ github.workspace }}/sonic-swss-common:/build/sonic-swss-common"
+          fi
+
           docker run --rm --privileged --init \
             --ulimit nofile=65536:65536 \
             -v "${{ github.workspace }}:/build/sonic-swss" \
             -v "${DEBS_DIR}:/debs:ro" \
+            ${SWSS_COMMON_MOUNT} \
             -w "/build/sonic-swss" \
             -e CARGO_NET_GIT_FETCH_WITH_CLI=true \
             -e SKIP_DPKG="${SKIP_DPKG}" \
+            -e SWSS_COMMON_REF="${SWSS_COMMON_REF}" \
             "${DOCKER_IMG}" \
             bash -c '
           set -ex
@@ -189,6 +211,23 @@ jobs:
             test -f "$hdr" || { echo "FAIL: missing $hdr"; exit 1; }
           done
           echo "OK: all key headers present"
+
+          # ── Phase 1b: Build sonic-swss-common from source (if provided) ──
+          if [ -d "/build/sonic-swss-common" ] && [ -n "${SWSS_COMMON_REF}" ]; then
+            echo "=== Building sonic-swss-common from source (ref: ${SWSS_COMMON_REF}) ==="
+            cd /build/sonic-swss-common
+            ./autogen.sh
+            ./configure --prefix=/usr
+            make -j$(nproc)
+            sudo make install
+            sudo ldconfig
+
+            echo "=== Installing swss-common headers ==="
+            sudo cp common/*.h /usr/include/swss/
+            echo "  $(ls common/*.h | wc -l) headers copied to /usr/include/swss/"
+            echo "=== sonic-swss-common installed from source ==="
+            cd /build/sonic-swss
+          fi
 
           # ── Phase 2: Configure ──
           cd /build/sonic-swss
