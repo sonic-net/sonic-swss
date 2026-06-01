@@ -58,7 +58,8 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
         m_bufferObjectsPending(true),
         m_bufferCompletelyInitialized(false),
         m_bufferProfileApplDbWritten(false),
-        m_mmuSizeNumber(0)
+        m_mmuSizeNumber(0),
+        m_saiSyncPollIntervalSec(1)
 {
     SWSS_LOG_ENTER();
 
@@ -2058,8 +2059,10 @@ bool BufferMgrDynamic::isSharedHeadroomPoolEnabledInSai()
 
 task_process_status BufferMgrDynamic::waitWithRetry(const function<bool()> &checker, const string &description)
 {
-    SWSS_LOG_NOTICE("Checking SAI sync status up to %d times for %s",
-                    BUFFER_PROFILE_SYNC_MAX_CHECKS, description.c_str());
+    SWSS_LOG_NOTICE("Checking SAI sync status: %d checks (up to ~%d s) for %s",
+                    BUFFER_PROFILE_SYNC_MAX_CHECKS,
+                    BUFFER_PROFILE_SYNC_MAX_CHECKS - 1,
+                    description.c_str());
 
     if (checker())
     {
@@ -2068,7 +2071,14 @@ task_process_status BufferMgrDynamic::waitWithRetry(const function<bool()> &chec
 
     for (int i = 0; i < BUFFER_PROFILE_SYNC_MAX_CHECKS - 1; i++)
     {
-        sleep(1);
+        if (m_saiSyncPollIntervalSec > 0)
+        {
+            sleep(m_saiSyncPollIntervalSec);
+        }
+        else
+        {
+            usleep(100000);
+        }
 
         if (checker())
         {
