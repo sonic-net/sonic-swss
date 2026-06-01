@@ -3,6 +3,13 @@
 #include <unordered_map>
 #include <algorithm>
 #include "aclorch.h"
+#include "switchorch.h"
+#include "portsorch.h"
+#include "mirrororch.h"
+#include "dtelorch.h"
+#include "neighorch.h"
+#include "routeorch.h"
+#include "vxlanorch.h"
 #include "copporch.h"
 #include "logger.h"
 #include "schema.h"

@@ -224,13 +224,27 @@ jobs:
             ./configure --prefix=/usr --disable-yangmodules >/dev/null 2>&1 \
               || { echo "FAIL: swss-common configure failed"; ./configure --prefix=/usr --disable-yangmodules; exit 1; }
             make -j$(nproc) V=0
-            sudo make install >/dev/null 2>&1
+
+            # Targeted install: only headers + shared lib + pkg-config.
+            # Skips full "make install" which does expensive libtool re-linking
+            # of SWIG Python extensions (~24 min) that swss doesn't need.
+            echo "=== Installing swss-common (targeted) ==="
+            sudo install -d /usr/lib /usr/include/swss /usr/lib/pkgconfig
+
+            # Shared libraries (from libtool build directory)
+            sudo cp -a common/.libs/libswsscommon.so* /usr/lib/
+            sudo cp -a common/.libs/libswsscommon.la /usr/lib/ 2>/dev/null || true
+            sudo cp -a sonic-db-cli/.libs/libsonicdbcli.so* /usr/lib/ 2>/dev/null || true
             sudo ldconfig
 
-            echo "=== Installing swss-common headers ==="
-            # Preserve cfg_schema.h from cached deb -- it contains all CFG_*_TABLE_NAME
-            # macros generated from YANG models.  The source build with --disable-yangmodules
-            # produces only a minimal stub, so overwriting it would break SWSS compilation.
+            # pkg-config files
+            for pc in common/*.pc sonic-db-cli/*.pc; do
+              [ -f "$pc" ] && sudo cp "$pc" /usr/lib/pkgconfig/
+            done
+
+            # Headers: preserve cfg_schema.h from cached deb -- it contains all
+            # CFG_*_TABLE_NAME macros generated from YANG models. The source build
+            # with --disable-yangmodules produces only a minimal stub.
             if [ -f /usr/include/swss/cfg_schema.h ]; then
               cp /usr/include/swss/cfg_schema.h /tmp/cfg_schema.h.preserved
             fi

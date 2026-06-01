@@ -3,9 +3,15 @@
 
 #include "orch.h"
 #include "observer.h"
-#include "intfsorch.h"
-#include "neighorch.h"
 #include "producerstatetable.h"
+
+// #include "intfsorch.h"
+class IntfsOrch;
+// #include "neighorch.h"
+class NeighOrch;
+// #include "vrforch.h"
+class VRFOrch;
+
 #include "zmqclient.h"
 #include "zmqproducerstatetable.h"
 

@@ -3,8 +3,10 @@
 
 #include "orch.h"
 #include "portsorch.h"
-#include "vrforch.h"
 #include "timer.h"
+
+// #include "vrforch.h"
+class VRFOrch;
 
 #include "ipaddresses.h"
 #include "ipprefix.h"

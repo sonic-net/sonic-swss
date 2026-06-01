@@ -329,7 +329,7 @@ jobs:
 
           phase "3/7 — Build"
           timer_start
-          make -j$(nproc) || fail "make"
+          make V=0 -j$(nproc) || fail "make"
           timer_end "build"
 
           phase "4/7 — Start redis"

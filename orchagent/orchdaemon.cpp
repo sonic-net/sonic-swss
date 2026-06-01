@@ -2,18 +2,73 @@
 #include <unordered_map>
 #include <chrono>
 #include <limits.h>
+#include <iostream>
+#include <sairedis.h>
+
 #include "orchdaemon.h"
 #include "logger.h"
-#include <sairedis.h>
 #include "warm_restart.h"
-#include <iostream>
 #include "orch_zmq_config.h"
 
-#define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
-#include "sairedis.h"
-#include "chassisorch.h"
+#include "portsorch.h"
+#include "fabricportsorch.h"
+#include "intfsorch.h"
+#include "neighorch.h"
+#include "routeorch.h"
+#include "flowcounterrouteorch.h"
+#include "nhgorch.h"
+#include "cbf/cbfnhgorch.h"
+#include "cbf/nhgmaporch.h"
+#include "copporch.h"
+#include "tunneldecaporch.h"
+#include "qosorch.h"
+#include "bufferorch.h"
+#include "mirrororch.h"
+#include "fdborch.h"
+#include "aclorch.h"
+#include "pbhorch.h"
+#include "pfcwdorch.h"
+#include "switchorch.h"
+#include "crmorch.h"
+#include "vrforch.h"
+#include "vxlanorch.h"
+#include "vnetorch.h"
+#include "countercheckorch.h"
+#include "flexcounterorch.h"
+#include "watermarkorch.h"
+#include "policerorch.h"
+#include "sfloworch.h"
+#include "debugcounterorch.h"
+#include "tamorch.h"
+#include "directory.h"
+#include "natorch.h"
+#include "isolationgrouporch.h"
+#include "mlagorch.h"
+#include "muxorch.h"
+#include "macsecorch.h"
+#include "p4orch/p4orch.h"
+#include "bfdorch.h"
+#include "icmporch.h"
+#include "srv6orch.h"
+#include "nvgreorch.h"
+#include "twamporch.h"
 #include "stporch.h"
 #include "arsorch.h"
+#include "dtelorch.h"
+#include "fgnhgorch.h"
+#include "chassisorch.h"
+#include "dash/dashenifwdorch.h"
+#include "dash/dashaclorch.h"
+#include "dash/dashorch.h"
+#include "dash/dashrouteorch.h"
+#include "dash/dashtunnelorch.h"
+#include "dash/dashvnetorch.h"
+#include "dash/dashhaorch.h"
+#include "dash/dashmeterorch.h"
+#include "dash/dashportmaporch.h"
+#include "high_frequency_telemetry/hftelorch.h"
+
+#define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 
 using namespace std;
 using namespace swss;

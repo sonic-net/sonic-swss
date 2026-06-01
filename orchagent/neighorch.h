@@ -3,16 +3,22 @@
 
 #include "orch.h"
 #include "observer.h"
-#include "portsorch.h"
-#include "intfsorch.h"
-#include "fdborch.h"
 
 #include "ipaddress.h"
 #include "nexthopkey.h"
 #include "producerstatetable.h"
 #include "schema.h"
-#include "bfdorch.h"
 #include "bulker.h"
+
+// #include "portsorch.h"
+class PortsOrch;
+// #include "intfsorch.h"
+class IntfsOrch;
+// #include "fdborch.h"
+class FdbOrch;
+struct FdbFlushUpdate;
+// #include "bfdorch.h"
+struct BfdUpdate;
 
 #define NHFLAGS_IFDOWN                  0x1 // nexthop's outbound i/f is down
 

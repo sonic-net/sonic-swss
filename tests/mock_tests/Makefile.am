@@ -9,6 +9,20 @@ CXXFLAGS = -g -O0
 
 CFLAGS_SAI = -I /usr/include/sai
 
+BUILT_SOURCES = tests_pch.h tests_pch.h.gch
+CLEANFILES = tests_pch.h tests_pch.h.gch
+
+TESTS_PCH_CPPFLAGS = $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) \
+                     $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) \
+                     $(CFLAGS_ASAN) $(tests_INCLUDES) $(CPPFLAGS) $(CXXFLAGS)
+
+tests_pch.h: $(top_srcdir)/orchagent/swss_pch.h
+	@sed 's/SWSS_ORCHAGENT_PCH_H/SWSS_TESTS_PCH_H/g' $< > $@
+
+tests_pch.h.gch: tests_pch.h
+	@echo "  [PCH]    $< (tests, -O0)"
+	@$(CXX) $(TESTS_PCH_CPPFLAGS) -x c++-header -o $@ $<
+
 TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher tests_teamsyncd
 
 noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher tests_teamsyncd
@@ -92,124 +106,19 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
                 $(top_srcdir)/lib/recorder.cpp \
                 $(top_srcdir)/lib/orch_zmq_config.cpp \
-                $(top_srcdir)/orchagent/orchdaemon.cpp \
-                $(top_srcdir)/orchagent/orch.cpp \
-                $(top_srcdir)/orchagent/notifications.cpp \
-                $(top_srcdir)/orchagent/routeorch.cpp \
-                $(top_srcdir)/orchagent/mplsrouteorch.cpp \
-                $(top_srcdir)/orchagent/fgnhgorch.cpp \
-                $(top_srcdir)/orchagent/nhgbase.cpp \
-                $(top_srcdir)/orchagent/nhgorch.cpp \
-                $(top_srcdir)/orchagent/cbf/cbfnhgorch.cpp \
-                $(top_srcdir)/orchagent/cbf/nhgmaporch.cpp \
-                $(top_srcdir)/orchagent/neighorch.cpp \
-                $(top_srcdir)/orchagent/intfsorch.cpp \
-                $(top_srcdir)/orchagent/port/port_capabilities.cpp \
-                $(top_srcdir)/orchagent/port/porthlpr.cpp \
-                $(top_srcdir)/orchagent/portsorch.cpp \
-                $(top_srcdir)/orchagent/fabricportsorch.cpp \
-                $(top_srcdir)/orchagent/copporch.cpp \
-                $(top_srcdir)/orchagent/tunneldecaporch.cpp \
-                $(top_srcdir)/orchagent/qosorch.cpp \
-                $(top_srcdir)/orchagent/buffer/bufferhelper.cpp \
-                $(top_srcdir)/orchagent/bufferorch.cpp \
-                $(top_srcdir)/orchagent/mirrororch.cpp \
-                $(top_srcdir)/orchagent/fdborch.cpp \
-                $(top_srcdir)/orchagent/aclorch.cpp \
-                $(top_srcdir)/orchagent/pbh/pbhcap.cpp \
-                $(top_srcdir)/orchagent/pbh/pbhcnt.cpp \
-                $(top_srcdir)/orchagent/pbh/pbhmgr.cpp \
-                $(top_srcdir)/orchagent/pbh/pbhrule.cpp \
-                $(top_srcdir)/orchagent/pbhorch.cpp \
-                $(top_srcdir)/orchagent/saihelper.cpp \
-                $(top_srcdir)/orchagent/saiattr.cpp \
-                $(top_srcdir)/orchagent/switch/switch_capabilities.cpp \
-                $(top_srcdir)/orchagent/switch/switch_helper.cpp \
-                $(top_srcdir)/orchagent/switch/trimming/capabilities.cpp \
-                $(top_srcdir)/orchagent/switch/trimming/helper.cpp \
-                $(top_srcdir)/orchagent/switchorch.cpp \
-                $(top_srcdir)/orchagent/pfcwdorch.cpp \
-                $(top_srcdir)/orchagent/pfcactionhandler.cpp \
-                $(top_srcdir)/orchagent/policerorch.cpp \
-                $(top_srcdir)/orchagent/crmorch.cpp \
-                $(top_srcdir)/orchagent/request_parser.cpp \
-                $(top_srcdir)/orchagent/vrforch.cpp \
-                $(top_srcdir)/orchagent/countercheckorch.cpp \
-                $(top_srcdir)/orchagent/vxlanorch.cpp \
-                $(top_srcdir)/orchagent/tunneltermhelper.cpp \
-                $(top_srcdir)/orchagent/vnetorch.cpp \
-                $(top_srcdir)/orchagent/dtelorch.cpp \
-                $(top_srcdir)/orchagent/flexcounterorch.cpp \
-                $(top_srcdir)/orchagent/watermarkorch.cpp \
-                $(top_srcdir)/orchagent/chassisorch.cpp \
-                $(top_srcdir)/orchagent/sfloworch.cpp \
-                $(top_srcdir)/orchagent/debugcounterorch.cpp \
-                $(top_srcdir)/orchagent/tamorch.cpp \
-                $(top_srcdir)/orchagent/natorch.cpp \
-                $(top_srcdir)/orchagent/muxorch.cpp \
-                $(top_srcdir)/orchagent/mlagorch.cpp \
-                $(top_srcdir)/orchagent/isolationgrouporch.cpp \
-                $(top_srcdir)/orchagent/macsecorch.cpp \
-                $(top_srcdir)/orchagent/macsecpost.cpp \
-                $(top_srcdir)/orchagent/lagid.cpp \
-                $(top_srcdir)/orchagent/bfdorch.cpp \
-                $(top_srcdir)/orchagent/icmporch.cpp \
-                $(top_srcdir)/orchagent/srv6orch.cpp \
-                $(top_srcdir)/orchagent/nvgreorch.cpp \
                 $(top_srcdir)/cfgmgr/portmgr.cpp \
                 $(top_srcdir)/cfgmgr/sflowmgr.cpp \
-                $(top_srcdir)/orchagent/zmqorch.cpp \
-                $(top_srcdir)/orchagent/dash/dashenifwdorch.cpp \
-                $(top_srcdir)/orchagent/dash/dashenifwdinfo.cpp \
-                $(top_srcdir)/orchagent/dash/dashaclorch.cpp \
-                $(top_srcdir)/orchagent/dash/dashorch.cpp \
-                $(top_srcdir)/orchagent/dash/dashaclgroupmgr.cpp \
-                $(top_srcdir)/orchagent/dash/dashtagmgr.cpp \
-                $(top_srcdir)/orchagent/dash/dashrouteorch.cpp \
-                $(top_srcdir)/orchagent/dash/dashtunnelorch.cpp \
-                $(top_srcdir)/orchagent/dash/dashvnetorch.cpp \
-                $(top_srcdir)/orchagent/dash/dashhaorch.cpp \
-                $(top_srcdir)/orchagent/dash/dashmeterorch.cpp \
-                $(top_srcdir)/orchagent/dash/dashportmaporch.cpp \
                 $(top_srcdir)/cfgmgr/buffermgrdyn.cpp \
                 $(top_srcdir)/warmrestart/warmRestartAssist.cpp \
-                $(top_srcdir)/orchagent/dash/pbutils.cpp \
                 $(top_srcdir)/cfgmgr/coppmgr.cpp \
-                $(top_srcdir)/orchagent/twamporch.cpp \
-                $(top_srcdir)/orchagent/stporch.cpp \
-                $(top_srcdir)/orchagent/arsorch.cpp \
-                $(top_srcdir)/orchagent/nexthopkey.cpp \
-                $(top_srcdir)/orchagent/high_frequency_telemetry/hftelorch.cpp \
-                $(top_srcdir)/orchagent/high_frequency_telemetry/hftelprofile.cpp \
-                $(top_srcdir)/orchagent/high_frequency_telemetry/counternameupdater.cpp \
-                $(top_srcdir)/orchagent/high_frequency_telemetry/hftelutils.cpp \
-                $(top_srcdir)/orchagent/high_frequency_telemetry/hftelgroup.cpp
-
-
-tests_SOURCES += $(FLEX_CTR_DIR)/flex_counter_manager.cpp $(FLEX_CTR_DIR)/flex_counter_stat_manager.cpp $(FLEX_CTR_DIR)/flow_counter_handler.cpp $(FLEX_CTR_DIR)/flowcounterrouteorch.cpp
-tests_SOURCES += $(DEBUG_CTR_DIR)/debug_counter.cpp $(DEBUG_CTR_DIR)/drop_counter.cpp
-tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
-		 $(P4_ORCH_DIR)/p4orch_util.cpp \
-		 $(P4_ORCH_DIR)/p4oidmapper.cpp \
-		 $(P4_ORCH_DIR)/tables_definition_manager.cpp \
-		 $(P4_ORCH_DIR)/router_interface_manager.cpp \
-		 $(P4_ORCH_DIR)/neighbor_manager.cpp \
-		 $(P4_ORCH_DIR)/next_hop_manager.cpp \
-		 $(P4_ORCH_DIR)/route_manager.cpp \
-		 $(P4_ORCH_DIR)/acl_util.cpp \
-		 $(P4_ORCH_DIR)/acl_table_manager.cpp \
-		 $(P4_ORCH_DIR)/acl_rule_manager.cpp \
-		 $(P4_ORCH_DIR)/wcmp_manager.cpp \
-		 $(P4_ORCH_DIR)/mirror_session_manager.cpp \
-		 $(P4_ORCH_DIR)/gre_tunnel_manager.cpp \
-		 $(P4_ORCH_DIR)/l3_admit_manager.cpp \
-		 $(P4_ORCH_DIR)/ext_tables_manager.cpp \
-		 $(P4_ORCH_DIR)/tests/mock_sai_switch.cpp
+                $(P4_ORCH_DIR)/tests/mock_sai_switch.cpp
 
 tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
-tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_INCLUDES)
+tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(CFLAGS_ASAN) $(tests_INCLUDES) \
+                 -include ./tests_pch.h -Winvalid-pch
 tests_LDFLAGS = -Wl,--wrap=sai_query_stats_st_capability -Wl,--wrap=sai_query_attribute_capability
-tests_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis -lpthread \
+tests_LDADD = $(top_builddir)/orchagent/libswssorchagent.a $(LDFLAGS_ASAN) \
+        $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis -lpthread \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lgmock -lgmock_main -lprotobuf -ldashapi
 
 ## portsyncd unit tests

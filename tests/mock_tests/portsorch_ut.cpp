@@ -35,9 +35,11 @@ namespace portsorch_test
     std::map<std::string, std::vector<swss::FieldValueTuple>> defaultPortList;
 
     sai_port_api_t ut_sai_port_api;
-    sai_port_api_t *pold_sai_port_api;
+    sai_port_api_t *pold_sai_port_api = nullptr;
+    bool sai_port_api_hooked = false;
     sai_switch_api_t ut_sai_switch_api;
-    sai_switch_api_t *pold_sai_switch_api;
+    sai_switch_api_t *pold_sai_switch_api = nullptr;
+    bool sai_switch_api_hooked = false;
 
     bool not_support_fetching_fec;
     uint32_t _sai_set_port_fec_count;
@@ -348,6 +350,7 @@ namespace portsorch_test
 
     void _hook_sai_port_api()
     {
+        if (sai_port_api_hooked) return;
         ut_sai_port_api = *sai_port_api;
         pold_sai_port_api = sai_port_api;
         ut_sai_port_api.get_port_attribute = _ut_stub_sai_get_port_attribute;
@@ -355,29 +358,37 @@ namespace portsorch_test
         ut_sai_port_api.create_port_serdes = _ut_stub_sai_create_port_serdes;
         ut_sai_port_api.remove_port_serdes = _ut_stub_sai_remove_port_serdes;
         sai_port_api = &ut_sai_port_api;
+        sai_port_api_hooked = true;
     }
 
     void _unhook_sai_port_api()
     {
+        if (!sai_port_api_hooked) return;
         sai_port_api = pold_sai_port_api;
+        sai_port_api_hooked = false;
     }
 
     void _hook_sai_switch_api()
     {
+        if (sai_switch_api_hooked) return;
         ut_sai_switch_api = *sai_switch_api;
         pold_sai_switch_api = sai_switch_api;
         ut_sai_switch_api.set_switch_attribute = _ut_stub_sai_set_switch_attribute;
         ut_sai_switch_api.get_switch_attribute = _ut_stub_sai_get_switch_attribute;
         sai_switch_api = &ut_sai_switch_api;
+        sai_switch_api_hooked = true;
     }
 
     void _unhook_sai_switch_api()
     {
+        if (!sai_switch_api_hooked) return;
         sai_switch_api = pold_sai_switch_api;
+        sai_switch_api_hooked = false;
     }
 
     sai_queue_api_t ut_sai_queue_api;
-    sai_queue_api_t *pold_sai_queue_api;
+    sai_queue_api_t *pold_sai_queue_api = nullptr;
+    bool sai_queue_api_hooked = false;
     int _sai_set_queue_attr_count = 0;
 
     sai_status_t _ut_stub_sai_set_queue_attribute(sai_object_id_t queue_id, const sai_attribute_t *attr)
@@ -428,33 +439,42 @@ namespace portsorch_test
 
     void _hook_sai_queue_api()
     {
+        if (sai_queue_api_hooked) return;
         _sai_mock_queue_attr = true;
         ut_sai_queue_api = *sai_queue_api;
         pold_sai_queue_api = sai_queue_api;
         ut_sai_queue_api.set_queue_attribute = _ut_stub_sai_set_queue_attribute;
         ut_sai_queue_api.get_queue_attribute = _ut_stub_sai_get_queue_attribute;
         sai_queue_api = &ut_sai_queue_api;
+        sai_queue_api_hooked = true;
     }
 
     void _unhook_sai_queue_api()
     {
+        if (!sai_queue_api_hooked) return;
         sai_queue_api = pold_sai_queue_api;
         _sai_mock_queue_attr = false;
+        sai_queue_api_hooked = false;
     }
 
     sai_bridge_api_t ut_sai_bridge_api;
-    sai_bridge_api_t *org_sai_bridge_api;
+    sai_bridge_api_t *org_sai_bridge_api = nullptr;
+    bool sai_bridge_api_hooked = false;
 
     void _hook_sai_bridge_api()
     {
+        if (sai_bridge_api_hooked) return;
         ut_sai_bridge_api = *sai_bridge_api;
         org_sai_bridge_api = sai_bridge_api;
         sai_bridge_api = &ut_sai_bridge_api;
+        sai_bridge_api_hooked = true;
     }
 
     void _unhook_sai_bridge_api()
     {
+        if (!sai_bridge_api_hooked) return;
         sai_bridge_api = org_sai_bridge_api;
+        sai_bridge_api_hooked = false;
     }
 
     void cleanupPorts(PortsOrch *obj)
@@ -656,6 +676,11 @@ namespace portsorch_test
 
         virtual void TearDown() override
         {
+            _unhook_sai_port_api();
+            _unhook_sai_switch_api();
+            _unhook_sai_queue_api();
+            _unhook_sai_bridge_api();
+
             ::testing_db::reset();
 
             auto buffer_maps = BufferOrch::m_buffer_type_maps;

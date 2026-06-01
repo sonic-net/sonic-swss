@@ -6,11 +6,20 @@
 #include <memory>
 
 #include "request_parser.h"
-#include "portsorch.h"
-#include "tunneldecaporch.h"
-#include "aclorch.h"
 #include "neighorch.h"
+#include "nexthopgroupkey.h"
 #include "bulker.h"
+
+// #include "portsorch.h"
+class PortsOrch;
+// #include "tunneldecaporch.h"
+class TunnelDecapOrch;
+// #include "aclorch.h"
+class AclRulePacket;
+class AclTable;
+// #include "fdborch.h"
+class FdbOrch;
+struct FdbUpdate;
 
 enum MuxState
 {

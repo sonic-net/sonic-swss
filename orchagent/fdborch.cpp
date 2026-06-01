@@ -8,6 +8,7 @@
 #include "logger.h"
 #include "tokenize.h"
 #include "fdborch.h"
+#include "portsorch.h"
 #include "crmorch.h"
 #include "notifier.h"
 #include "sai_serialize.h"

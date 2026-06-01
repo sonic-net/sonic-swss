@@ -10,7 +10,10 @@
 #include "producerstatetable.h"
 #include "orch.h"
 #include "observer.h"
-#include "vnetorch.h"
+
+// #include "vnetorch.h"
+class VNetRouteOrch;
+struct VNetNextHopUpdate;
 
 class ChassisOrch : public Orch, public Observer
 {

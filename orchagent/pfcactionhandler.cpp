@@ -3,6 +3,7 @@
 #include "logger.h"
 #include "sai_serialize.h"
 #include "portsorch.h"
+#include "switchorch.h"
 #include <vector>
 #include <inttypes.h>
 

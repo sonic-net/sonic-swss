@@ -4,6 +4,9 @@
 #include <iterator>
 
 #include "routeorch.h"
+#include "switchorch.h"
+#include "neighorch.h"
+#include "vrforch.h"
 #include "logger.h"
 #include "srv6orch.h"
 #include "sai_serialize.h"

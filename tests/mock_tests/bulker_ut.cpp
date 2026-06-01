@@ -1,5 +1,7 @@
 #include "ut_helper.h"
+#define private public
 #include "bulker.h"
+#undef private
 
 extern sai_route_api_t *sai_route_api;
 extern sai_neighbor_api_t *sai_neighbor_api;

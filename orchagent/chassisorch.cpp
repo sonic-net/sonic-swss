@@ -1,5 +1,6 @@
 #include "chassisorch.h"
 #include "routeorch.h"
+#include "vnetorch.h"
 
 ChassisOrch::ChassisOrch(
     DBConnector* cfgDb,

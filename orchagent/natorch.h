@@ -19,18 +19,27 @@
 
 #include "orch.h"
 #include "observer.h"
-#include "portsorch.h"
-#include "intfsorch.h"
 #include "ipaddress.h"
 #include "ipaddresses.h"
 #include "ipprefix.h"
 #include "nfnetlink.h"
 #include "timer.h"
-#include "routeorch.h"
 #include "nexthopgroupkey.h"
 #include "notificationproducer.h"
+
+// #include "portsorch.h"
+class PortsOrch;
+// #include "intfsorch.h"
+class IntfsOrch;
+// #include "routeorch.h"
+class RouteOrch;
+struct NextHopUpdate;
+// #include "neighorch.h"
+class NeighOrch;
+struct NeighborUpdate;
 #ifdef DEBUG_FRAMEWORK
-#include "debugdumporch.h"
+// #include "debugdumporch.h"
+class DebugDumpOrch;
 #endif
 
 #define VALUES                            "Values" // Global Values Key

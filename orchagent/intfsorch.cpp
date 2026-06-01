@@ -7,6 +7,8 @@
 
 #include "sai_serialize.h"
 #include "intfsorch.h"
+#include "vrforch.h"
+#include "neighorch.h"
 #include "ipprefix.h"
 #include "logger.h"
 #include "swssnet.h"
@@ -857,7 +859,7 @@ void IntfsOrch::doTask(Consumer &consumer)
                         }
                         else
                         {
-                            SWSS_LOG_ERROR("Failed to set interface '%s' to VRF ID '%d' because it has IP addresses associated with it.", alias.c_str(), vrf_id);
+                            SWSS_LOG_ERROR("Failed to set interface '%s' to VRF ID '%lu' because it has IP addresses associated with it.", alias.c_str(), vrf_id);
                         }
                     }
                 }

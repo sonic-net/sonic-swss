@@ -4,6 +4,9 @@ extern "C" {
 }
 
 #include "orchdaemon.h"
+#include "vrforch.h"
+
+using namespace std;
 
 /* Global variables */
 sai_object_id_t gVirtualRouterId;

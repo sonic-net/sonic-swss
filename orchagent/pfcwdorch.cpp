@@ -4,6 +4,7 @@
 #include "pfcwdorch.h"
 #include "sai_serialize.h"
 #include "portsorch.h"
+#include "switchorch.h"
 #include "converter.h"
 #include "redisapi.h"
 #include "select.h"

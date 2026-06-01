@@ -27,6 +27,12 @@
 #include "notifier.h"
 #include "sai_serialize.h"
 #include "crmorch.h"
+#include "portsorch.h"
+#include "routeorch.h"
+#include "neighorch.h"
+#ifdef DEBUG_FRAMEWORK
+#include "debugdumporch.h"
+#endif
 
 extern CrmOrch            *gCrmOrch;
 extern PortsOrch          *gPortsOrch;

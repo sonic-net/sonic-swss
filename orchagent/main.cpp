@@ -25,6 +25,8 @@ extern "C" {
 #include <logger.h>
 
 #include "orchdaemon.h"
+#include "flexcounterorch.h"
+#include "converter.h"
 #include "orch_zmq_config.h"
 #include "sai_serialize.h"
 #include "saihelper.h"

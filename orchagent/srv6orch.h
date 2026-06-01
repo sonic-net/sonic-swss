@@ -10,15 +10,22 @@
 #include "dbconnector.h"
 #include "orch.h"
 #include "observer.h"
-#include "switchorch.h"
-#include "portsorch.h"
-#include "vrforch.h"
 #include "redisapi.h"
-#include "intfsorch.h"
 #include "nexthopgroupkey.h"
 #include "nexthopkey.h"
-#include "neighorch.h"
 #include "producerstatetable.h"
+
+// #include "switchorch.h"
+class SwitchOrch;
+// #include "portsorch.h"
+class PortsOrch;
+// #include "vrforch.h"
+class VRFOrch;
+// #include "intfsorch.h"
+class IntfsOrch;
+// #include "neighorch.h"
+class NeighOrch;
+struct NeighborUpdate;
 
 #include "ipaddress.h"
 #include "ipaddresses.h"

@@ -1,4 +1,5 @@
 #include "ut_helper.h"
+#include "mock_orchagent_main.h"
 #include "flowcounterrouteorch.h"
 
 extern sai_object_id_t gSwitchId;
@@ -24,8 +25,8 @@ extern sai_port_api_t *sai_port_api;
 extern sai_vlan_api_t *sai_vlan_api;
 extern sai_bridge_api_t *sai_bridge_api;
 extern sai_route_api_t *sai_route_api;
-extern sai_route_api_t *sai_neighbor_api;
-extern sai_route_api_t *sai_next_hop_api;
+extern sai_neighbor_api_t *sai_neighbor_api;
+extern sai_next_hop_api_t *sai_next_hop_api;
 extern sai_mpls_api_t *sai_mpls_api;
 extern sai_next_hop_group_api_t* sai_next_hop_group_api;
 extern string gMySwitchType;

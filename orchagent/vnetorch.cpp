@@ -24,6 +24,9 @@
 #include "routeorch.h"
 #include "tunneldecaporch.h"
 #include "flowcounterrouteorch.h"
+#include "switchorch.h"
+#include "aclorch.h"
+#include "bfdorch.h"
 
 extern sai_virtual_router_api_t* sai_virtual_router_api;
 extern sai_route_api_t* sai_route_api;

@@ -19,7 +19,8 @@ namespace saihelper_test
     using namespace testing_db;
 
     sai_switch_api_t ut_sai_switch_api;
-    sai_switch_api_t *old_sai_switch_api;
+    sai_switch_api_t *old_sai_switch_api = nullptr;
+    bool saihelper_switch_api_hooked = false;
 
     shared_ptr<swss::DBConnector> m_app_db;
     shared_ptr<swss::DBConnector> m_config_db;
@@ -93,15 +94,19 @@ namespace saihelper_test
 
     void _hook_sai_apis()
     {
+        if (saihelper_switch_api_hooked) return;
         ut_sai_switch_api = *sai_switch_api;
         old_sai_switch_api = sai_switch_api;
         ut_sai_switch_api.set_switch_attribute = _ut_stub_sai_set_switch_attribute;
         sai_switch_api = &ut_sai_switch_api;
+        saihelper_switch_api_hooked = true;
     }
 
     void _unhook_sai_apis()
     {
+        if (!saihelper_switch_api_hooked) return;
         sai_switch_api = old_sai_switch_api;
+        saihelper_switch_api_hooked = false;
     }
 
     class MockDBTable : public Table {
@@ -174,6 +179,8 @@ namespace saihelper_test
 
             void TearDown() override
             {
+                _unhook_sai_apis();
+
                 ::testing_db::reset();
 
                 gDirectory.m_values.clear();

@@ -1,5 +1,7 @@
 #include "arsorch.h"
 #include "routeorch.h"
+#include "switchorch.h"
+#include "portsorch.h"
 #include "logger.h"
 #include "schema.h"
 #include "tokenize.h"

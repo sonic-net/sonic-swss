@@ -8,6 +8,7 @@
 #include "aclorch.h"
 #include "neighorch.h"
 #include "vnetorch.h"
+#include "vxlanorch.h"
 #include "observer.h"
 #include "request_parser.h"
 #include <exception>
