@@ -44,6 +44,7 @@ jobs:
         with:
           repository: upscale-ai-network/sonic-swss-common
           ref: ${{ inputs.swss_common_ref }}
+          token: ${{ secrets.PAT_TOKEN }}
           path: sonic-swss-common
           fetch-depth: 1
 
