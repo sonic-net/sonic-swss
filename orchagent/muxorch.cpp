@@ -23,6 +23,7 @@
 #include "aclorch.h"
 #include "routeorch.h"
 #include "fdborch.h"
+#include "tunneldecaporch.h"
 #include "qosorch.h"
 #include "warm_restart.h"
 

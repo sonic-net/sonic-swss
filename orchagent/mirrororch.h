@@ -3,11 +3,26 @@
 
 #include "orch.h"
 #include "observer.h"
-#include "portsorch.h"
-#include "neighorch.h"
-#include "routeorch.h"
-#include "fdborch.h"
-#include "policerorch.h"
+#include "port.h"
+#include "nexthopkey.h"
+
+// #include "portsorch.h"
+class PortsOrch;
+struct LagMemberUpdate;
+struct VlanMemberUpdate;
+// #include "neighorch.h"
+class NeighOrch;
+struct NeighborUpdate;
+// #include "routeorch.h"
+class RouteOrch;
+struct NextHopUpdate;
+// #include "fdborch.h"
+class FdbOrch;
+struct FdbUpdate;
+// #include "policerorch.h"
+class PolicerOrch;
+// #include "switchorch.h"
+class SwitchOrch;
 
 #include "ipaddress.h"
 #include "ipaddresses.h"
@@ -59,7 +74,7 @@ struct MirrorEntry
 
     struct
     {
-        NeighborEntry neighbor;
+        NextHopKey neighbor;
         MacAddress mac;
         Port port;
         sai_object_id_t portId;

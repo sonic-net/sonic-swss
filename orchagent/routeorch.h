@@ -3,22 +3,31 @@
 
 #include "orch.h"
 #include "observer.h"
-#include "switchorch.h"
-#include "intfsorch.h"
-#include "neighorch.h"
-#include "vxlanorch.h"
-#include "srv6orch.h"
+#include "zmqorch.h"
+#include "zmqserver.h"
 
 #include "ipaddress.h"
 #include "ipaddresses.h"
 #include "ipprefix.h"
 #include "nexthopgroupkey.h"
 #include "bulker.h"
-#include "fgnhgorch.h"
+#include "producerstatetable.h"
 #include <map>
-#include "zmqorch.h"
-#include "zmqserver.h"
 #include <unordered_map>
+
+// #include "switchorch.h"
+class SwitchOrch;
+// #include "intfsorch.h"
+class IntfsOrch;
+// #include "neighorch.h"
+class NeighOrch;
+// #include "vxlanorch.h"        — not referenced in this header at all
+// #include "srv6orch.h"
+class Srv6Orch;
+// #include "fgnhgorch.h"
+class FgNhgOrch;
+// #include "vrforch.h"
+class VRFOrch;
 
 /* Maximum next hop group number */
 #define NHGRP_MAX_SIZE 128

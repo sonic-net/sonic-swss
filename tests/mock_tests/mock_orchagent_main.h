@@ -1,6 +1,7 @@
 #pragma once
 
 #include "orch.h"
+#define private public
 #include "switchorch.h"
 #include "crmorch.h"
 #include "portsorch.h"
@@ -11,7 +12,7 @@
 #include "neighorch.h"
 #include "fdborch.h"
 #include "mirrororch.h"
-#define private public
+#include "srv6orch.h"
 #include "dashorch.h"
 #include "dashrouteorch.h"
 #include "dashmeterorch.h"

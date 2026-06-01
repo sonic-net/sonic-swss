@@ -2,6 +2,8 @@
 #include <inttypes.h>
 #include <algorithm>
 #include "routeorch.h"
+#include "vrforch.h"
+#include "neighorch.h"
 #include "logger.h"
 #include "swssnet.h"
 #include "converter.h"

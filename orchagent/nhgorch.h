@@ -2,8 +2,11 @@
 
 #include "cbf/cbfnhgorch.h"
 #include "vector"
-#include "portsorch.h"
-#include "routeorch.h"
+
+// #include "portsorch.h"
+class PortsOrch;
+// #include "routeorch.h"
+class RouteOrch;
 
 using namespace std;
 

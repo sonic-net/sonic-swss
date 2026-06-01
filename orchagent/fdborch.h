@@ -3,6 +3,8 @@
 
 #include "orch.h"
 #include "observer.h"
+#include "port.h"
+
 #include "portsorch.h"
 
 enum FdbOrigin

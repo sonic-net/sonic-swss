@@ -4,6 +4,7 @@
 #include "logger.h"
 #include "routeorch.h"
 #include "flowcounterrouteorch.h"
+#include "vrforch.h"
 #include "schema.h"
 #include "swssnet.h"
 #include "table.h"

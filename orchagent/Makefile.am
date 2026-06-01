@@ -12,6 +12,17 @@ SUBDIRS = p4orch/tests
 
 CFLAGS_SAI = -I /usr/include/sai
 
+BUILT_SOURCES = swss_pch.h.gch
+CLEANFILES = swss_pch.h.gch
+
+PCH_CPPFLAGS = $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) \
+               $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) \
+               $(CFLAGS_ASAN) $(CPPFLAGS) $(CXXFLAGS)
+
+swss_pch.h.gch: $(srcdir)/swss_pch.h
+	@echo "  [PCH]    $<"
+	@$(CXX) $(PCH_CPPFLAGS) -x c++-header -o $@ $<
+
 swssdir = $(datadir)/swss
 
 dist_swss_DATA = \
@@ -39,6 +50,7 @@ dist_swss_DATA = \
 		 trap_rates.lua
 
 bin_PROGRAMS = orchagent routeresync orchagent_restart_check
+noinst_LIBRARIES = libswssorchagent.a
 
 if DEBUG
 DBGFLAGS = -ggdb -DDEBUG
@@ -46,12 +58,10 @@ else
 DBGFLAGS = -g -DNDEBUG
 endif
 
-orchagent_SOURCES = \
-            main.cpp \
-            $(top_srcdir)/lib/gearboxutils.cpp \
-            $(top_srcdir)/lib/subintf.cpp \
-            $(top_srcdir)/lib/recorder.cpp \
-            $(top_srcdir)/lib/orch_zmq_config.cpp \
+ORCH_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN) \
+                -include $(srcdir)/swss_pch.h -Winvalid-pch
+
+libswssorchagent_a_SOURCES = \
             orchdaemon.cpp \
             orch.cpp \
             notifications.cpp \
@@ -141,9 +151,9 @@ orchagent_SOURCES = \
             high_frequency_telemetry/hftelutils.cpp \
             high_frequency_telemetry/hftelgroup.cpp
 
-orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp flex_counter/flow_counter_handler.cpp flex_counter/flowcounterrouteorch.cpp
-orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
-orchagent_SOURCES += p4orch/p4orch.cpp \
+libswssorchagent_a_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp flex_counter/flow_counter_handler.cpp flex_counter/flowcounterrouteorch.cpp
+libswssorchagent_a_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
+libswssorchagent_a_SOURCES += p4orch/p4orch.cpp \
 		     p4orch/p4orch_util.cpp \
 		     p4orch/p4oidmapper.cpp \
  		     p4orch/tables_definition_manager.cpp \
@@ -160,9 +170,18 @@ orchagent_SOURCES += p4orch/p4orch.cpp \
 		     p4orch/l3_admit_manager.cpp \
  		     p4orch/ext_tables_manager.cpp
 
+libswssorchagent_a_CPPFLAGS = $(ORCH_CPPFLAGS)
+
+orchagent_SOURCES = \
+            main.cpp \
+            $(top_srcdir)/lib/gearboxutils.cpp \
+            $(top_srcdir)/lib/subintf.cpp \
+            $(top_srcdir)/lib/recorder.cpp \
+            $(top_srcdir)/lib/orch_zmq_config.cpp
+
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-orchagent_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lpthread -lsairedis -lsaimeta -lsaimetadata -lswsscommon -lzmq -lprotobuf -ldashapi -ljemalloc
+orchagent_CPPFLAGS = $(ORCH_CPPFLAGS)
+orchagent_LDADD = libswssorchagent.a $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lpthread -lsairedis -lsaimeta -lsaimetadata -lswsscommon -lzmq -lprotobuf -ldashapi -ljemalloc
 
 routeresync_SOURCES = routeresync.cpp \
              $(top_srcdir)/lib/orch_zmq_config.cpp

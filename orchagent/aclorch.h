@@ -10,17 +10,27 @@
 #include <condition_variable>
 
 #include "orch.h"
-#include "switchorch.h"
-#include "portsorch.h"
-#include "mirrororch.h"
-#include "dtelorch.h"
 #include "observer.h"
-#include "vxlanorch.h"
 #include "flex_counter_manager.h"
 
 #include "acltable.h"
 
 #include "saiattr.h"
+
+// #include "switchorch.h"
+class SwitchOrch;
+// #include "portsorch.h"
+#include "port.h"
+class PortsOrch;
+// #include "mirrororch.h"
+class MirrorOrch;
+// #include "dtelorch.h"
+class DTelOrch;
+// #include "vxlanorch.h"
+// #include "neighorch.h"
+class NeighOrch;
+// #include "routeorch.h"
+class RouteOrch;
 
 #define RULE_PRIORITY           "PRIORITY"
 #define MATCH_IN_PORTS          "IN_PORTS"

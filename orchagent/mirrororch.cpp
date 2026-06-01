@@ -10,6 +10,12 @@
 #include "swssnet.h"
 #include "converter.h"
 #include "mirrororch.h"
+#include "portsorch.h"
+#include "neighorch.h"
+#include "routeorch.h"
+#include "fdborch.h"
+#include "policerorch.h"
+#include "switchorch.h"
 #include "tokenize.h"
 
 #define MIRROR_SESSION_STATUS               "status"

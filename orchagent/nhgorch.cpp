@@ -1,5 +1,8 @@
 #include "nhgorch.h"
 #include "neighorch.h"
+#include "portsorch.h"
+#include "intfsorch.h"
+#include "switchorch.h"
 #include "crmorch.h"
 #include "routeorch.h"
 #include "srv6orch.h"

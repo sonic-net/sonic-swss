@@ -3,6 +3,8 @@
 #include "orchdaemon.h"
 #undef protected
 #include "dbconnector.h"
+#include <memory>
+using namespace std;
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 #include "mock_sai_switch.h"

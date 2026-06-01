@@ -2,7 +2,10 @@ AC_INIT([sonic-swss],[1.0])
 AC_CONFIG_SRCDIR([])
 AC_CONFIG_AUX_DIR(config)
 AM_CONFIG_HEADER(config.h)
-AM_INIT_AUTOMAKE([foreign])
+AM_INIT_AUTOMAKE([foreign subdir-objects])
+AM_SILENT_RULES([yes])
+ARFLAGS=cr
+AC_SUBST(ARFLAGS)
 AC_LANG_C
 AC_LANG([C++])
 AC_PROG_CC
@@ -147,6 +150,12 @@ if test "x$asan_enabled" = "xtrue"; then
 fi
 
 AM_CONDITIONAL(ASAN_ENABLED, test x$asan_enabled = xtrue)
+
+AC_CHECK_PROG([HAVE_MOLD], [mold], [yes], [no])
+if test "x$HAVE_MOLD" = "xyes"; then
+    LDFLAGS+=" -fuse-ld=mold"
+    AC_SUBST(LDFLAGS)
+fi
 
 AC_SUBST(CFLAGS_COMMON)
 
