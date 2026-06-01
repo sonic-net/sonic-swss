@@ -29,6 +29,41 @@ use netlink_packet_generic::{
 #[cfg(not(test))]
 use netlink_sys::{protocols::NETLINK_GENERIC, SocketAddr};
 
+/// Sets SO_RCVBUF on a netlink socket to reduce ENOBUFS under high HFT load.
+///
+/// Logs the actual buffer size granted by the kernel after setting, since Linux
+/// may cap it at net.core.rmem_max and doubles it internally.
+#[cfg(not(test))]
+pub fn set_socket_rcvbuf(socket: &Socket, bytes: usize) {
+    if bytes == 0 {
+        return;
+    }
+    let v: libc::c_int = match bytes.try_into() {
+        Ok(v) => v,
+        Err(_) => {
+            warn!(
+                "netlink_rcvbuf {} exceeds c_int::MAX, clamping to {}",
+                bytes,
+                libc::c_int::MAX
+            );
+            libc::c_int::MAX
+        }
+    };
+    if let Err(e) = socket.set_rx_buf_sz(v) {
+        warn!("Failed to set netlink SO_RCVBUF to {}: {:?}", bytes, e);
+        return;
+    }
+    match socket.get_rx_buf_sz() {
+        Ok(actual) => info!(
+            "Netlink SO_RCVBUF: requested={} bytes, actual={} bytes{}",
+            bytes,
+            actual,
+            if actual < bytes { " (capped by net.core.rmem_max — consider raising it)" } else { "" }
+        ),
+        Err(e) => warn!("Failed to read back SO_RCVBUF: {:?}", e),
+    }
+}
+
 /// Creates a netlink socket for family/group resolution.
 ///
 /// The socket is configured in blocking mode for request-response operations.

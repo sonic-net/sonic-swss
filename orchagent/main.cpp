@@ -399,7 +399,7 @@ int main(int argc, char **argv)
     // Disable SAI MACSec POST by default. Use option -M to enable it.
     bool macsec_post_enabled = false;
 
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:R:D:MF")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:c:t:v:I:R:MF")) != -1)
     {
         switch (opt)
         {
@@ -523,7 +523,6 @@ int main(int argc, char **argv)
         case 'F':
             gEnableFibSuppress = true;
             break;
-        case 'D': { gFlexCounterDelaySec = swss::to_int<int>(optarg); } break;
         default: /* '?' */
             exit(EXIT_FAILURE);
         }
