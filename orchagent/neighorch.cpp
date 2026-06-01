@@ -1609,7 +1609,6 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     string alias = neighborEntry.alias;
     IpAddress ip_address = neighborEntry.ip_address;
     bool bulk_op = ctx.bulk_op;
-    MacAddress neighbor_mac;
 
     NextHopKey nexthop = { ip_address, alias };
     sai_object_id_t port_vrf_id;
@@ -1640,7 +1639,6 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
     {
         return true;
     }
-    neighbor_mac = neighborIt->second.mac;
 
     SWSS_LOG_INFO("Try to remove neighbor %s on %s",
                    ip_address.to_string().c_str(), alias.c_str());
@@ -1720,12 +1718,12 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
             if (status == SAI_STATUS_ITEM_NOT_FOUND)
             {
                 SWSS_LOG_NOTICE("Neighbor %s on %s already removed, rv:%d",
-                        neighbor_mac.to_string().c_str(), alias.c_str(), status);
+                        m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str(), status);
             }
             else
             {
                 SWSS_LOG_ERROR("Failed to remove neighbor %s on %s, rv:%d",
-                        neighbor_mac.to_string().c_str(), alias.c_str(), status);
+                        m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str(), status);
                 task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEIGHBOR, status);
                 if (handle_status != task_success)
                 {
@@ -1747,7 +1745,7 @@ bool NeighOrch::removeNeighbor(NeighborContext& ctx, bool disable)
             removeNextHop(ip_address, alias);
             m_intfsOrch->decreaseRouterIntfsRefCount(alias);
             SWSS_LOG_NOTICE("Removed neighbor %s on %s",
-                    neighbor_mac.to_string().c_str(), alias.c_str());
+                    m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str());
         }
 
     }
