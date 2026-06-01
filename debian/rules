@@ -28,7 +28,7 @@ include /usr/share/dpkg/default.mk
 #	-DCMAKE_LIBRARY_PATH=$(DEB_HOST_MULTIARCH)
 
 configure_opts =
-ifeq ($(ENABLE_ASAN), y)
+ifneq ($(filter asan,$(DEB_BUILD_PROFILES)),)
 	configure_opts += --enable-asan
 endif
 
@@ -44,14 +44,22 @@ override_dh_auto_build:
 	# Build and test countersyncd Rust project
 	cargo build --release --locked
 
+ifneq ($(filter asan,$(DEB_BUILD_PROFILES)),)
+SWSS_PKG = swss-asan
+SWSS_DBG_PKG = swss-dbg-asan
+else
+SWSS_PKG = swss
+SWSS_DBG_PKG = swss-dbg
+endif
+
 override_dh_auto_install:
-	dh_auto_install --destdir=debian/swss
+	dh_auto_install --destdir=debian/$(SWSS_PKG)
 ifeq ($(ENABLE_GCOV), y)
-	mkdir -p debian/swss/tmp/gcov
+	mkdir -p debian/$(SWSS_PKG)/tmp/gcov
 	lcov -c --directory . --no-external --exclude "$(shell pwd)/tests/*" --exclude "$(shell pwd)/**/tests/*" --ignore-errors gcov --output-file coverage.info
 	lcov --add-tracefile coverage.info -o coverage.info
 	lcov_cobertura coverage.info -o coverage.xml
-	find ./ -type f -regex '.*\.\(h\|cpp\|gcno\|info\)' | tar -cf debian/swss/tmp/gcov/gcov-source.tar -T -
+	find ./ -type f -regex '.*\.\(h\|cpp\|gcno\|info\)' | tar -cf debian/$(SWSS_PKG)/tmp/gcov/gcov-source.tar -T -
 endif
 
 override_dh_auto_clean:
@@ -60,4 +68,4 @@ override_dh_auto_clean:
 	cargo clean || true
 
 override_dh_strip:
-	dh_strip --dbg-package=swss-dbg
+	dh_strip -p$(SWSS_PKG) --dbg-package=$(SWSS_DBG_PKG)
