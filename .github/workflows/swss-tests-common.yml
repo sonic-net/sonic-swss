@@ -165,9 +165,9 @@ jobs:
             -e SWSS_COMMON_REF="${SWSS_COMMON_REF}" \
             "${DOCKER_IMG}" \
             bash -c '
-          set -ex
+          set -eo pipefail
 
-          # ── Phase 1: Install SONiC build dependencies ──
+          # ── Phase 1: Install SONiC build dependencies (quiet) ──
           cd /debs
 
           dep_warnings=0
@@ -175,9 +175,8 @@ jobs:
             local pattern="$1"
             local deb=$(ls ${pattern} 2>/dev/null | sort -V | tail -1)
             if [ -n "$deb" ]; then
-              echo "  Installing: $deb"
-              if ! sudo dpkg --force-depends --force-overwrite -i "$deb" 2>&1; then
-                echo "::warning::dpkg install returned non-zero for $deb (may be dependency warnings)"
+              if ! sudo dpkg --force-depends --force-overwrite -i "$deb" >/dev/null 2>&1; then
+                echo "::warning::dpkg install issue: $deb"
                 dep_warnings=$((dep_warnings + 1))
               fi
             else
@@ -186,7 +185,7 @@ jobs:
             fi
           }
 
-          echo "=== Installing SONiC-patched dependencies ==="
+          echo "=== Installing SONiC dependencies (27 packages) ==="
           for pkg in \
             "libyang_*.deb" "libyang-cpp_*.deb" "libyang-dev_*.deb" \
             "libnl-3-200_*.deb" "libnl-3-dev_*.deb" \
@@ -206,6 +205,8 @@ jobs:
           sudo ldconfig
           if [ "$dep_warnings" -gt 0 ]; then
             echo "::warning::$dep_warnings package(s) had install issues (see above)"
+          else
+            echo "OK: all 27 packages installed"
           fi
 
           echo "=== Verify key headers ==="
@@ -218,10 +219,12 @@ jobs:
           if [ -d "/build/sonic-swss-common" ] && [ -n "${SWSS_COMMON_REF}" ]; then
             echo "=== Building sonic-swss-common from source (ref: ${SWSS_COMMON_REF}) ==="
             cd /build/sonic-swss-common
-            ./autogen.sh
-            ./configure --prefix=/usr --disable-yangmodules
-            make -j$(nproc)
-            sudo make install
+            SECONDS=0
+            ./autogen.sh >/dev/null 2>&1
+            ./configure --prefix=/usr --disable-yangmodules >/dev/null 2>&1 \
+              || { echo "FAIL: swss-common configure failed"; ./configure --prefix=/usr --disable-yangmodules; exit 1; }
+            make -j$(nproc) V=0
+            sudo make install >/dev/null 2>&1
             sudo ldconfig
 
             echo "=== Installing swss-common headers ==="
@@ -237,52 +240,58 @@ jobs:
               echo "  Restored cfg_schema.h from cached deb (yang-generated)"
             fi
             echo "  $(ls common/*.h | wc -l) source headers synced to /usr/include/swss/"
-            echo "=== sonic-swss-common installed from source ==="
+            echo "=== sonic-swss-common installed from source (${SECONDS}s) ==="
             cd /build/sonic-swss
           fi
 
-          # ── Phase 2: Configure ──
+          # ── Phase 2: Configure (quiet) ──
           cd /build/sonic-swss
-          ./autogen.sh
-          ./configure
+          ./autogen.sh >/dev/null 2>&1
+          ./configure >/dev/null 2>&1 || { echo "FAIL: configure failed"; ./configure; exit 1; }
 
-          # ── Phase 3: Build (mock tests compile via noinst_PROGRAMS) ──
-          make -j$(nproc)
-          echo "=== SWSS make all SUCCEEDED ==="
-
-          ls -la orchagent/orchagent fpmsyncd/fpmsyncd neighsyncd/neighsyncd 2>/dev/null || true
+          # ── Phase 3: Build ──
+          echo "=== Phase 3: make (V=0, -j$(nproc)) ==="
+          SECONDS=0
+          make V=0 -j$(nproc)
+          echo "=== make SUCCEEDED (${SECONDS}s) ==="
 
           # ── Phase 4: Run mock tests ──
-          echo "=== Running mock tests (make check) ==="
-          make check -j$(nproc) 2>&1 || {
-            echo "=== Mock test failures detected ==="
+          echo "=== Phase 4: mock tests ==="
+          SECONDS=0
+          make check V=0 -j$(nproc) 2>&1 || {
+            echo "=== Mock test failures ==="
             cat tests/mock_tests/test-suite.log 2>/dev/null || true
             cat tests/mock_tests/tests.log 2>/dev/null || true
             exit 1
           }
-          echo "=== Mock tests PASSED ==="
+          echo "=== Mock tests PASSED (${SECONDS}s) ==="
 
           # ── Phase 5: Rust countersyncd build ──
-          echo "=== Building countersyncd (Rust) ==="
-          cargo --version
-          rustc --version
-          echo "Cargo.lock present: $(test -f Cargo.lock && echo YES || echo NO)"
-          cargo build --release --locked
-          echo "=== Rust build SUCCEEDED ==="
+          echo "=== Phase 5: Rust build ==="
+          SECONDS=0
+          if ! cargo build --release --locked > /tmp/cargo.log 2>&1; then
+            cat /tmp/cargo.log
+            echo "=== Rust build FAILED ==="
+            exit 1
+          fi
+          tail -3 /tmp/cargo.log
+          echo "=== Rust build SUCCEEDED (${SECONDS}s) ==="
 
           # ── Phase 6: dpkg-buildpackage (optional) ──
-          # dpkg-buildpackage writes .debs to ../ (parent of source tree).
-          # The container runs as a non-root user (baked into the sonic-slave image),
-          # and fakeroot only fakes ownership -- it cannot grant real write access.
-          # Ensure the parent directory is writable.
           sudo chmod 1777 ..
           if [ "${SKIP_DPKG}" = "true" ]; then
             echo "=== Skipping dpkg-buildpackage (SKIP_DPKG=true) ==="
           else
-            echo "=== Building .deb packages ==="
-            DEB_BUILD_OPTIONS="nocheck" dpkg-buildpackage -us -uc -b -j$(nproc) -d 2>&1
-            echo "=== DPKG-BUILDPACKAGE SUCCEEDED ==="
-            ls -la ../swss_*.deb ../swss-dbg_*.deb 2>/dev/null || echo "debs produced in parent dir"
+            echo "=== Phase 6: dpkg-buildpackage ==="
+            SECONDS=0
+            if ! DEB_BUILD_OPTIONS="nocheck" dpkg-buildpackage -us -uc -b -j$(nproc) -d > /tmp/dpkg.log 2>&1; then
+              tail -50 /tmp/dpkg.log
+              echo "=== dpkg-buildpackage FAILED ==="
+              exit 1
+            fi
+            tail -5 /tmp/dpkg.log
+            echo "=== dpkg-buildpackage SUCCEEDED (${SECONDS}s) ==="
+            ls -la ../swss_*.deb ../swss-dbg_*.deb 2>/dev/null || true
             cp ../swss_*.deb ../swss-dbg_*.deb /build/sonic-swss/ 2>/dev/null || true
           fi
 
