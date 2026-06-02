@@ -396,18 +396,18 @@ uint32_t TamOrch::getSystemUniqueId()
 
 uint32_t TamOrch::getDeviceId()
 {
-    if (globalSettings.find("device-id") == globalSettings.end()) {
+    if (globalSettings.find("device_id") == globalSettings.end()) {
         return getSystemUniqueId();
     }
-    return to_uint<uint32_t>(globalSettings["device-id"]);
+    return to_uint<uint32_t>(globalSettings["device_id"]);
 }
 
 uint32_t TamOrch::getEnterpriseId()
 {
-    if (globalSettings.find("enterprise-id") == globalSettings.end()) {
+    if (globalSettings.find("enterprise_id") == globalSettings.end()) {
         return getSystemUniqueId();
     }
-    return to_uint<uint32_t>(globalSettings["enterprise-id"]);
+    return to_uint<uint32_t>(globalSettings["enterprise_id"]);
 }
 
 bool TamOrch::getIfaEnabled()
@@ -900,7 +900,7 @@ bool TamOrch::doIfaTransitDelete()
  * this method implements a tear-down and recreation approach:
  * 1. Collects all active drop monitor sessions
  * 2. Tears down all sessions in a batch
- * 3. Recreates all sessions with the new device-id/enterprise-id
+ * 3. Recreates all sessions with the new device_id/enterprise_id
  *
  * @return true if all sessions were successfully recreated, false if any errors occurred
  */
@@ -1004,7 +1004,7 @@ void TamOrch::doTamDeviceTableTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    // Track if device-id or enterprise-id changed across all updates in this batch
+    // Track if device_id or enterprise_id changed across all updates in this batch
     // We batch the detection to avoid multiple recreations if both fields change together
     bool deviceIdChanged = false;
     bool enterpriseIdChanged = false;
@@ -1024,25 +1024,25 @@ void TamOrch::doTamDeviceTableTask(Consumer &consumer)
             if (tableAttr == "device")
             {
                 // Partial update support: merge incoming fields with existing globalSettings
-                // instead of clearing all settings. This preserves enterprise-id when only
-                // device-id is updated, and vice versa.
+                // instead of clearing all settings. This preserves enterprise_id when only
+                // device_id is updated, and vice versa.
                 for (auto i : kfvFieldsValues(t))
                 {
                     const std::string& field = fvField(i);
                     const std::string& value = fvValue(i);
 
-                    // Check if device-id is changing
-                    if (field == "device-id" &&
+                    // Check if device_id is changing
+                    if (field == "device_id" &&
 		        oldDeviceId != to_uint<uint32_t>(value.c_str())) {
                         deviceIdChanged = true;
-                        SWSS_LOG_NOTICE("TAM: device-id changing from '%d' to '%s'",
+                        SWSS_LOG_NOTICE("TAM: device_id changing from '%d' to '%s'",
                                          oldDeviceId, value.c_str());
                     }
-                    // Check if enterprise-id is changing
-                    else if (field == "enterprise-id" &&
+                    // Check if enterprise_id is changing
+                    else if (field == "enterprise_id" &&
 		             oldEnterpriseId != to_uint<uint32_t>(value.c_str())) {
                         enterpriseIdChanged = true;
-                        SWSS_LOG_NOTICE("TAM: enterprise-id changing from '%d' to '%s'",
+                        SWSS_LOG_NOTICE("TAM: enterprise_id changing from '%d' to '%s'",
                                          oldEnterpriseId, value.c_str());
                     }
 
@@ -1066,12 +1066,12 @@ void TamOrch::doTamDeviceTableTask(Consumer &consumer)
         it = consumer.m_toSync.erase(it);
     }
 
-    // Recreate drop monitor sessions if device-id or enterprise-id changed
+    // Recreate drop monitor sessions if device_id or enterprise_id changed
     // This is done after processing all updates to batch the recreation
-    // (i.e., if both device-id and enterprise-id change, sessions are only recreated once)
+    // (i.e., if both device_id and enterprise_id change, sessions are only recreated once)
     if (deviceIdChanged || enterpriseIdChanged)
     {
-        SWSS_LOG_NOTICE("TAM: Device config changed (device-id: %s, enterprise-id: %s), "
+        SWSS_LOG_NOTICE("TAM: Device config changed (device_id: %s, enterprise_id: %s), "
                        "recreating affected drop monitor sessions",
                        deviceIdChanged ? "changed" : "unchanged",
                        enterpriseIdChanged ? "changed" : "unchanged");

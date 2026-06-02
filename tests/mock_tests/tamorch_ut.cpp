@@ -714,45 +714,45 @@ TEST_F(TamOrchFlowUnawareModTest, FlowUnawareDropMonitorCollectorFlap)
 // Test partial update support for TAM device table: updating only one field preserves others
 TEST_F(TamOrchFlowUnawareModTest, DeviceTablePartialUpdate)
 {
-    // 1) Configure initial device settings with both device-id and enterprise-id
+    // 1) Configure initial device settings with both device_id and enterprise_id
     deque<KeyOpFieldsValuesTuple> device_entries;
     vector<FieldValueTuple> device_fvs = {
-        { "device-id", "100" },
-        { "enterprise-id", "200" },
+        { "device_id", "100" },
+        { "enterprise_id", "200" },
         { "ifa", "enabled" },
     };
     device_entries.emplace_back("device", SET_COMMAND, device_fvs);
     processConfigEntries(CFG_TAM_TABLE_NAME, device_entries);
 
     // Verify all settings are stored
-    EXPECT_EQ(m_tam_orch->globalSettings["device-id"], "100");
-    EXPECT_EQ(m_tam_orch->globalSettings["enterprise-id"], "200");
+    EXPECT_EQ(m_tam_orch->globalSettings["device_id"], "100");
+    EXPECT_EQ(m_tam_orch->globalSettings["enterprise_id"], "200");
     EXPECT_EQ(m_tam_orch->globalSettings["ifa"], "enabled");
 
-    // 2) Update only device-id - enterprise-id should be preserved
+    // 2) Update only device_id - enterprise_id should be preserved
     deque<KeyOpFieldsValuesTuple> partial_entries;
     vector<FieldValueTuple> partial_fvs = {
-        { "device-id", "150" },
+        { "device_id", "150" },
     };
     partial_entries.emplace_back("device", SET_COMMAND, partial_fvs);
     processConfigEntries(CFG_TAM_TABLE_NAME, partial_entries);
 
-    // Verify device-id changed but enterprise-id and ifa are preserved
-    EXPECT_EQ(m_tam_orch->globalSettings["device-id"], "150");
-    EXPECT_EQ(m_tam_orch->globalSettings["enterprise-id"], "200");
+    // Verify device_id changed but enterprise_id and ifa are preserved
+    EXPECT_EQ(m_tam_orch->globalSettings["device_id"], "150");
+    EXPECT_EQ(m_tam_orch->globalSettings["enterprise_id"], "200");
     EXPECT_EQ(m_tam_orch->globalSettings["ifa"], "enabled");
 
-    // 3) Update only enterprise-id - device-id and ifa should be preserved
+    // 3) Update only enterprise_id - device_id and ifa should be preserved
     deque<KeyOpFieldsValuesTuple> partial_entries2;
     vector<FieldValueTuple> partial_fvs2 = {
-        { "enterprise-id", "300" },
+        { "enterprise_id", "300" },
     };
     partial_entries2.emplace_back("device", SET_COMMAND, partial_fvs2);
     processConfigEntries(CFG_TAM_TABLE_NAME, partial_entries2);
 
-    // Verify enterprise-id changed but device-id and ifa are preserved
-    EXPECT_EQ(m_tam_orch->globalSettings["device-id"], "150");
-    EXPECT_EQ(m_tam_orch->globalSettings["enterprise-id"], "300");
+    // Verify enterprise_id changed but device_id and ifa are preserved
+    EXPECT_EQ(m_tam_orch->globalSettings["device_id"], "150");
+    EXPECT_EQ(m_tam_orch->globalSettings["enterprise_id"], "300");
     EXPECT_EQ(m_tam_orch->globalSettings["ifa"], "enabled");
 
     // 4) DEL should clear all settings
@@ -763,14 +763,14 @@ TEST_F(TamOrchFlowUnawareModTest, DeviceTablePartialUpdate)
     EXPECT_TRUE(m_tam_orch->globalSettings.empty());
 }
 
-// Test that device-id/enterprise-id changes trigger session recreation
+// Test that device_id/enterprise_id changes trigger session recreation
 TEST_F(TamOrchFlowUnawareModTest, DeviceTableChangeRecreatesSessions)
 {
     // 1) Configure initial device settings
     deque<KeyOpFieldsValuesTuple> device_entries;
     vector<FieldValueTuple> device_fvs = {
-        { "device-id", "100" },
-        { "enterprise-id", "200" },
+        { "device_id", "100" },
+        { "enterprise_id", "200" },
     };
     device_entries.emplace_back("device", SET_COMMAND, device_fvs);
     processConfigEntries(CFG_TAM_TABLE_NAME, device_entries);
@@ -816,23 +816,23 @@ TEST_F(TamOrchFlowUnawareModTest, DeviceTableChangeRecreatesSessions)
     ASSERT_NE(session, nullptr);
     ASSERT_TRUE(session->active);
 
-    // Record SAI counters before device-id change
+    // Record SAI counters before device_id change
     int tam_create_before = g_tam_create_count;
     int tam_remove_before = g_tam_remove_count;
     int switch_bind_before = g_switch_bind_tam_count;
     int switch_unbind_before = g_switch_unbind_tam_count;
 
-    // 5) Update device-id - this should trigger session recreation
+    // 5) Update device_id - this should trigger session recreation
     deque<KeyOpFieldsValuesTuple> device_update;
     vector<FieldValueTuple> device_update_fvs = {
-        { "device-id", "999" },
+        { "device_id", "999" },
     };
     device_update.emplace_back("device", SET_COMMAND, device_update_fvs);
     processConfigEntries(CFG_TAM_TABLE_NAME, device_update);
 
-    // Verify device-id was updated and enterprise-id preserved
-    EXPECT_EQ(m_tam_orch->globalSettings["device-id"], "999");
-    EXPECT_EQ(m_tam_orch->globalSettings["enterprise-id"], "200");
+    // Verify device_id was updated and enterprise_id preserved
+    EXPECT_EQ(m_tam_orch->globalSettings["device_id"], "999");
+    EXPECT_EQ(m_tam_orch->globalSettings["enterprise_id"], "200");
 
     // Session should still be active after recreation
     session = getSession("DROP_SESSION0");
@@ -845,7 +845,7 @@ TEST_F(TamOrchFlowUnawareModTest, DeviceTableChangeRecreatesSessions)
     EXPECT_GT(g_switch_unbind_tam_count, switch_unbind_before);
     EXPECT_GT(g_switch_bind_tam_count, switch_bind_before);
 
-    // 6) Update enterprise-id - this should also trigger session recreation
+    // 6) Update enterprise_id - this should also trigger session recreation
     tam_create_before = g_tam_create_count;
     tam_remove_before = g_tam_remove_count;
     switch_bind_before = g_switch_bind_tam_count;
@@ -853,14 +853,14 @@ TEST_F(TamOrchFlowUnawareModTest, DeviceTableChangeRecreatesSessions)
 
     deque<KeyOpFieldsValuesTuple> device_update2;
     vector<FieldValueTuple> device_update_fvs2 = {
-        { "enterprise-id", "888" },
+        { "enterprise_id", "888" },
     };
     device_update2.emplace_back("device", SET_COMMAND, device_update_fvs2);
     processConfigEntries(CFG_TAM_TABLE_NAME, device_update2);
 
-    // Verify enterprise-id was updated and device-id preserved
-    EXPECT_EQ(m_tam_orch->globalSettings["device-id"], "999");
-    EXPECT_EQ(m_tam_orch->globalSettings["enterprise-id"], "888");
+    // Verify enterprise_id was updated and device_id preserved
+    EXPECT_EQ(m_tam_orch->globalSettings["device_id"], "999");
+    EXPECT_EQ(m_tam_orch->globalSettings["enterprise_id"], "888");
 
     // Session should still be active after recreation
     session = getSession("DROP_SESSION0");
@@ -888,14 +888,14 @@ TEST_F(TamOrchFlowUnawareModTest, DeviceTableChangeRecreatesSessions)
     processConfigEntries(CFG_TAM_TABLE_NAME, device_del_entries);
 }
 
-// Test that unchanged device-id/enterprise-id does NOT trigger session recreation
+// Test that unchanged device_id/enterprise_id does NOT trigger session recreation
 TEST_F(TamOrchFlowUnawareModTest, SameDeviceTableDoesNotRecreateSessions)
 {
     // 1) Configure initial device settings
     deque<KeyOpFieldsValuesTuple> device_entries;
     vector<FieldValueTuple> device_fvs = {
-        { "device-id", "100" },
-        { "enterprise-id", "200" },
+        { "device_id", "100" },
+        { "enterprise_id", "200" },
     };
     device_entries.emplace_back("device", SET_COMMAND, device_fvs);
     processConfigEntries(CFG_TAM_TABLE_NAME, device_entries);
@@ -945,11 +945,11 @@ TEST_F(TamOrchFlowUnawareModTest, SameDeviceTableDoesNotRecreateSessions)
     int tam_create_before = g_tam_create_count;
     int tam_remove_before = g_tam_remove_count;
 
-    // 5) Send the same device-id value - should NOT trigger recreation
+    // 5) Send the same device_id value - should NOT trigger recreation
     {
         deque<KeyOpFieldsValuesTuple> device_update;
         vector<FieldValueTuple> device_update_fvs = {
-            { "device-id", "100" },  // Same value as before
+            { "device_id", "100" },  // Same value as before
         };
         device_update.emplace_back("device", SET_COMMAND, device_update_fvs);
         processConfigEntries(CFG_TAM_TABLE_NAME, device_update);
@@ -964,14 +964,14 @@ TEST_F(TamOrchFlowUnawareModTest, SameDeviceTableDoesNotRecreateSessions)
         EXPECT_EQ(g_tam_create_count, tam_create_before);
     }
 
-    // 6) Send the same enterprise-id value - should NOT trigger recreation
+    // 6) Send the same enterprise_id value - should NOT trigger recreation
     tam_create_before = g_tam_create_count;
     tam_remove_before = g_tam_remove_count;
 
     {
         deque<KeyOpFieldsValuesTuple> device_update;
         vector<FieldValueTuple> device_update_fvs = {
-            { "enterprise-id", "200" },  // Same value as before
+            { "enterprise_id", "200" },  // Same value as before
         };
         device_update.emplace_back("device", SET_COMMAND, device_update_fvs);
         processConfigEntries(CFG_TAM_TABLE_NAME, device_update);
@@ -1006,8 +1006,8 @@ TEST_F(TamOrchFlowUnawareModTest, DeviceTableChangeNoActiveSessions)
     // 1) Configure initial device settings
     deque<KeyOpFieldsValuesTuple> device_entries;
     vector<FieldValueTuple> device_fvs = {
-        { "device-id", "100" },
-        { "enterprise-id", "200" },
+        { "device_id", "100" },
+        { "enterprise_id", "200" },
     };
     device_entries.emplace_back("device", SET_COMMAND, device_fvs);
     processConfigEntries(CFG_TAM_TABLE_NAME, device_entries);
@@ -1016,39 +1016,39 @@ TEST_F(TamOrchFlowUnawareModTest, DeviceTableChangeNoActiveSessions)
     int tam_create_before = g_tam_create_count;
     int tam_remove_before = g_tam_remove_count;
 
-    // 2) Update device-id - no sessions to recreate
+    // 2) Update device_id - no sessions to recreate
     {
         deque<KeyOpFieldsValuesTuple> device_update;
         vector<FieldValueTuple> device_update_fvs = {
-            { "device-id", "999" },
+            { "device_id", "999" },
         };
         device_update.emplace_back("device", SET_COMMAND, device_update_fvs);
         processConfigEntries(CFG_TAM_TABLE_NAME, device_update);
 
-        // Verify device-id was updated
-        EXPECT_EQ(m_tam_orch->globalSettings["device-id"], "999");
-        EXPECT_EQ(m_tam_orch->globalSettings["enterprise-id"], "200");
+        // Verify device_id was updated
+        EXPECT_EQ(m_tam_orch->globalSettings["device_id"], "999");
+        EXPECT_EQ(m_tam_orch->globalSettings["enterprise_id"], "200");
 
         // No TAM operations should have occurred since no sessions exist
         EXPECT_EQ(g_tam_remove_count, tam_remove_before);
         EXPECT_EQ(g_tam_create_count, tam_create_before);
     }
 
-    // 3) Update enterprise-id - no sessions to recreate
+    // 3) Update enterprise_id - no sessions to recreate
     tam_create_before = g_tam_create_count;
     tam_remove_before = g_tam_remove_count;
 
     {
         deque<KeyOpFieldsValuesTuple> device_update;
         vector<FieldValueTuple> device_update_fvs = {
-            { "enterprise-id", "888" },
+            { "enterprise_id", "888" },
         };
         device_update.emplace_back("device", SET_COMMAND, device_update_fvs);
         processConfigEntries(CFG_TAM_TABLE_NAME, device_update);
 
-        // Verify enterprise-id was updated
-        EXPECT_EQ(m_tam_orch->globalSettings["device-id"], "999");
-        EXPECT_EQ(m_tam_orch->globalSettings["enterprise-id"], "888");
+        // Verify enterprise_id was updated
+        EXPECT_EQ(m_tam_orch->globalSettings["device_id"], "999");
+        EXPECT_EQ(m_tam_orch->globalSettings["enterprise_id"], "888");
 
         // No TAM operations should have occurred since no sessions exist
         EXPECT_EQ(g_tam_remove_count, tam_remove_before);

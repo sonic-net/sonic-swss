@@ -295,8 +295,8 @@ private:
     void removeDropMonitorSessionState(const string& sessionName);
 
     /* globalSettings contains settings from the TAM->device table.
-     * - device-id
-     * - enterprise-id
+     * - device_id
+     * - enterprise_id
      * - ifa
      */
     map<string, string> globalSettings;
