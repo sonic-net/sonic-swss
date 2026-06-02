@@ -549,17 +549,17 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
     // Platform capability: reject early if sampled mirroring is not supported
     if (entry.sample_rate > 0 && !m_switchOrch->isPortIngressSampleMirrorSupported())
     {
-        SWSS_LOG_ERROR("Sampled mirroring not supported on this platform, "  // LCOV_EXCL_LINE: Negative capability path; covered by gtest only
-                       "rejecting session %s", key.c_str());  // LCOV_EXCL_LINE: Negative capability path; covered by gtest only
-        return task_process_status::task_invalid_entry;  // LCOV_EXCL_LINE: Negative capability path; covered by gtest only
+        SWSS_LOG_ERROR("Sampled mirroring not supported on this platform, "
+                       "rejecting session %s", key.c_str());
+        return task_process_status::task_invalid_entry;
     }
 
     // Platform capability: reject early if samplepacket truncation is not supported
     if (entry.truncate_size > 0 && !m_switchOrch->isSamplepacketTruncationSupported())
     {
-        SWSS_LOG_ERROR("Samplepacket truncation not supported on this platform, "  // LCOV_EXCL_LINE: Negative capability path; covered by gtest only
-                       "rejecting session %s", key.c_str());  // LCOV_EXCL_LINE: Negative capability path; covered by gtest only
-        return task_process_status::task_invalid_entry;  // LCOV_EXCL_LINE: Negative capability path; covered by gtest only
+        SWSS_LOG_ERROR("Samplepacket truncation not supported on this platform, "
+                       "rejecting session %s", key.c_str());
+        return task_process_status::task_invalid_entry;
     }
 
     if (!isHwResourcesAvailable())
@@ -658,12 +658,12 @@ task_process_status MirrorOrch::updateEntry(const string& key, const vector<Fiel
         else if (field == MIRROR_SESSION_DIRECTION)
         {
             if (value != session.direction)
-                immutable_changed = true; // LCOV_EXCL_LINE: Requires direction change, conflicts with sample_rate RX constraint
+                immutable_changed = true;
         }
         else if (field == MIRROR_SESSION_POLICER)
         {
             if (value != session.policer)
-                immutable_changed = true; // LCOV_EXCL_LINE: Requires policer setup in mock
+                immutable_changed = true;
         }
     }
 
@@ -693,8 +693,8 @@ task_process_status MirrorOrch::updateEntry(const string& key, const vector<Fiel
         auto task_status = deleteEntry(key);
         if (task_status != task_process_status::task_success)
         {
-            SWSS_LOG_ERROR("Failed to delete mirror session %s during update", key.c_str());  // LCOV_EXCL_LINE: deleteEntry failure not reachable in VS
-            return task_status;  // LCOV_EXCL_LINE: deleteEntry failure not reachable in VS
+            SWSS_LOG_ERROR("Failed to delete mirror session %s during update", key.c_str());
+            return task_status;
         }
         return createEntry(key, fullRow);
     }
@@ -721,8 +721,8 @@ task_process_status MirrorOrch::updateEntry(const string& key, const vector<Fiel
                 session.samplepacketId, &attr);
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to update sample_rate for session %s, status %d", key.c_str(), status); // LCOV_EXCL_LINE: SAI VS set always succeeds
-                return task_process_status::task_failed; // LCOV_EXCL_LINE
+                SWSS_LOG_ERROR("Failed to update sample_rate for session %s, status %d", key.c_str(), status);
+                return task_process_status::task_failed;
             }
             session.sample_rate = new_sample_rate;
             SWSS_LOG_NOTICE("Updated sample_rate to %u for session %s", new_sample_rate, key.c_str());
@@ -738,8 +738,8 @@ task_process_status MirrorOrch::updateEntry(const string& key, const vector<Fiel
                 session.samplepacketId, &enable_attr);
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to update truncate_enable for session %s, status %d", key.c_str(), status); // LCOV_EXCL_LINE: SAI VS set always succeeds
-                return task_process_status::task_failed; // LCOV_EXCL_LINE
+                SWSS_LOG_ERROR("Failed to update truncate_enable for session %s, status %d", key.c_str(), status);
+                return task_process_status::task_failed;
             }
 
             // Only set SIZE when truncation is enabled; SAI may reject SIZE=0.
@@ -752,8 +752,8 @@ task_process_status MirrorOrch::updateEntry(const string& key, const vector<Fiel
                     session.samplepacketId, &size_attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
-                    SWSS_LOG_ERROR("Failed to update truncate_size for session %s, status %d", key.c_str(), status); // LCOV_EXCL_LINE: SAI VS set always succeeds
-                    return task_process_status::task_failed; // LCOV_EXCL_LINE
+                    SWSS_LOG_ERROR("Failed to update truncate_size for session %s, status %d", key.c_str(), status);
+                    return task_process_status::task_failed;
                 }
             }
 
@@ -1110,9 +1110,9 @@ bool MirrorOrch::setUnsetPortMirror(Port port,
     {
         if (!ingress)
         {
-            SWSS_LOG_ERROR("Sampled mirroring on egress is not supported for port %s", // LCOV_EXCL_LINE: createEntry rejects non-RX direction
-                            port.m_alias.c_str()); // LCOV_EXCL_LINE
-            return false; // LCOV_EXCL_LINE
+            SWSS_LOG_ERROR("Sampled mirroring on egress is not supported for port %s",
+                            port.m_alias.c_str());
+            return false;
         }
 
         // Sampled mirroring path: dispatch to per-PHY helper; LAG must be
@@ -1469,8 +1469,8 @@ bool MirrorOrch::deactivateSession(const string& name, MirrorEntry& session)
     {
         if (!removeSamplePacket(name, session))
         {
-            SWSS_LOG_ERROR("Failed to remove samplepacket for session %s", name.c_str()); // LCOV_EXCL_LINE: SAI VS remove always succeeds
-            return false; // LCOV_EXCL_LINE
+            SWSS_LOG_ERROR("Failed to remove samplepacket for session %s", name.c_str());
+            return false;
         }
     }
 
