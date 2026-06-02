@@ -148,7 +148,8 @@ namespace fdborch_vxlan_ut
                                     app_fdb_tables,
                                     stateDbFdb,
                                     stateMclagDbFdb,
-                                    m_portsOrch.get());
+                                    m_portsOrch.get(),
+                                    m_config_db.get());
 
             ASSERT_EQ(gVrfOrch, nullptr);
             gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
