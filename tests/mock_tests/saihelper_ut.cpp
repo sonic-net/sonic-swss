@@ -9,6 +9,7 @@
 extern std::unique_ptr<swss::DBConnector> gHealthStateDb;
 extern std::unique_ptr<swss::Table> gOrchHealthTable;
 extern std::atomic<bool> gOrchUnhealthyCached;
+extern std::string gLastSaiError;
 
 namespace saihelper_test
 {
@@ -94,12 +95,14 @@ namespace sai_failure_status_test
         void SetUp() override
         {
             testing_db::reset();
+            gLastSaiError.clear();
             initSaiFailureTable();
         }
 
         void TearDown() override
         {
             testing_db::reset();
+            gLastSaiError.clear();
         }
     };
 
@@ -175,10 +178,10 @@ namespace sai_failure_status_test
         // Delete the key from mock DB to simulate missing key
         testing_db::reset();
 
-        // getSaiFailureStatus should still report unhealthy
+        // getSaiFailureStatus should still report unhealthy with cached error
         std::string error;
         EXPECT_TRUE(getSaiFailureStatus(error));
-        EXPECT_EQ(error, "Orchagent is unhealthy (STATE_DB key missing)");
+        EXPECT_EQ(error, "SAI failure");
     }
 
     TEST_F(SaiFailureStatusTest, NullTableReturnsUnhealthy)
@@ -190,10 +193,10 @@ namespace sai_failure_status_test
         // Set cache to unhealthy (table is null, so DB write is skipped)
         setSaiFailureStatus(true, "SAI failure");
 
-        // getSaiFailureStatus should hit the null table guard
+        // getSaiFailureStatus should hit the null table guard with cached error
         std::string error;
         EXPECT_TRUE(getSaiFailureStatus(error));
-        EXPECT_EQ(error, "Orchagent is unhealthy (health table not initialized)");
+        EXPECT_EQ(error, "SAI failure");
 
         // Re-init for TearDown safety
         initSaiFailureTable();

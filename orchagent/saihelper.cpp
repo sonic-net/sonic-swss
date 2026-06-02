@@ -119,6 +119,7 @@ extern event_handle_t g_events_handle;
 unique_ptr<DBConnector> gHealthStateDb;
 unique_ptr<Table> gOrchHealthTable;
 std::atomic<bool> gOrchUnhealthyCached{false};
+std::string gLastSaiError;
 
 vector<sai_object_id_t> gGearboxOids;
 
@@ -1194,6 +1195,10 @@ void initSaiFailureTable()
 void setSaiFailureStatus(bool unhealthy, const std::string& error)
 {
     gOrchUnhealthyCached = unhealthy;
+    if (unhealthy && !error.empty())
+    {
+        gLastSaiError = error;
+    }
     if (!gOrchHealthTable)
     {
         return;
@@ -1222,7 +1227,7 @@ bool getSaiFailureStatus(std::string& error)
     }
     if (!gOrchHealthTable)
     {
-        error = "Orchagent is unhealthy (health table not initialized)";
+        error = gLastSaiError.empty() ? "Orchagent is unhealthy (health table not initialized)" : gLastSaiError;
         return true;
     }
     /* Fetch all fields in a single Redis round-trip */
@@ -1232,15 +1237,15 @@ bool getSaiFailureStatus(std::string& error)
         if (!gOrchHealthTable->get(PROCESS_HEALTH_KEY, fvs))
         {
             /* Key missing but cache says unhealthy — keep reporting unhealthy
-             * with a generic message rather than silently clearing. */
-            error = "Orchagent is unhealthy (STATE_DB key missing)";
+             * with the last known error rather than silently clearing. */
+            error = gLastSaiError.empty() ? "Orchagent is unhealthy (STATE_DB key missing)" : gLastSaiError;
             return true;
         }
     }
     catch (const std::exception& e)
     {
         SWSS_LOG_WARN("Failed to read health status from STATE_DB: %s", e.what());
-        error = "Orchagent is unhealthy (STATE_DB read failed)";
+        error = gLastSaiError.empty() ? "Orchagent is unhealthy (STATE_DB read failed)" : gLastSaiError;
         return true;
     }
     bool unhealthy = true;
