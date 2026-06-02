@@ -140,10 +140,10 @@ bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id,
             && check_attr.value.oid != sample_id
             && !isSflowSamplePacket(check_attr.value.oid))
         {
-            SWSS_LOG_ERROR("Port %" PRIx64 " INGRESS_SAMPLEPACKET_ENABLE already bound to "  // LCOV_EXCL_LINE: Ingress not testable in VS (preSetPort fails on mock tap)
+            SWSS_LOG_ERROR("Port %" PRIx64 " INGRESS_SAMPLEPACKET_ENABLE already bound to "
                            "OID 0x%" PRIx64 ", cannot bind sFlow",
                            port_id, check_attr.value.oid);
-            return false;  // LCOV_EXCL_LINE: Ingress not testable in VS (preSetPort fails on mock tap)
+            return false;
         }
     }
 
@@ -201,7 +201,7 @@ bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id,
         attr.value.oid = sample_id;
         sai_rc = sai_port_api->set_port_attribute(port_id, &attr);
 
-        if (sai_rc != SAI_STATUS_SUCCESS) // LCOV_EXCL_LINE: SAI VS set_port_attribute always succeeds; egress rollback path requires SAI failure injection
+        if (sai_rc != SAI_STATUS_SUCCESS) // LCOV_EXCL_LINE: SAI VS set_port_attribute always succeeds
         {
             SWSS_LOG_ERROR("Failed to set session %" PRIx64 " on port %" PRIx64, sample_id, port_id); // LCOV_EXCL_LINE
 
@@ -311,10 +311,10 @@ bool SflowOrch::sflowUpdateSampleDirection(sai_object_id_t port_id, string old_d
             && check_attr.value.oid != ing_sample_oid
             && !isSflowSamplePacket(check_attr.value.oid))
         {
-            SWSS_LOG_ERROR("Port %" PRIx64 " INGRESS_SAMPLEPACKET_ENABLE already bound to "  // LCOV_EXCL_LINE: Ingress not testable in VS (preSetPort fails on mock tap)
+            SWSS_LOG_ERROR("Port %" PRIx64 " INGRESS_SAMPLEPACKET_ENABLE already bound to "
                            "OID 0x%" PRIx64 ", cannot update sFlow direction",
                            port_id, check_attr.value.oid);
-            return false;  // LCOV_EXCL_LINE: Ingress not testable in VS (preSetPort fails on mock tap)
+            return false;
         }
     }
 

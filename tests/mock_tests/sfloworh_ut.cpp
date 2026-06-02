@@ -6,6 +6,7 @@
 
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
+#include "mirrororch_sample_port_sai_wrap.h"
 
 using namespace swss;
 
@@ -504,6 +505,99 @@ namespace sflow_test
         sai_samplepacket_api->remove_samplepacket(my_sflow_oid);
         sai_samplepacket_api->remove_samplepacket(foreign_oid);
     }
+
+    TEST_F(SflowOrchTest, SflowAddPortRejectsConflictingIngressBinding)
+    {
+        mirror_sample_port_wrap_ut::PortSampleSaiGuard saiPortSampleGuard;
+
+        MockSflowOrch mock_orch;
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        ASSERT_NE(port.m_port_id, SAI_NULL_OBJECT_ID);
+
+        // Pre-bind port ingress to a foreign (non-sflow) OID via the wrap.
+        sai_object_id_t foreign_oid;
+        sai_attribute_t sp_attr;
+        sp_attr.id = SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE;
+        sp_attr.value.u32 = 8888;
+        ASSERT_EQ(sai_samplepacket_api->create_samplepacket(&foreign_oid, gSwitchId, 1, &sp_attr),
+                  SAI_STATUS_SUCCESS);
+
+        sai_attribute_t attr;
+        attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
+        attr.value.oid = foreign_oid;
+        ASSERT_EQ(sai_port_api->set_port_attribute(port.m_port_id, &attr), SAI_STATUS_SUCCESS);
+
+        sai_object_id_t sflow_sample;
+        sai_attribute_t sp_attr2;
+        sp_attr2.id = SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE;
+        sp_attr2.value.u32 = 5678;
+        ASSERT_EQ(sai_samplepacket_api->create_samplepacket(&sflow_sample, gSwitchId, 1, &sp_attr2),
+                  SAI_STATUS_SUCCESS);
+
+        // rx bind must be rejected because ingress is held by a foreign OID.
+        ASSERT_FALSE(Portal::SflowOrchInternal::sflowAddPort(
+            mock_orch.get(), sflow_sample, port.m_port_id, "rx"));
+
+        // Ingress binding must remain the foreign OID (pre-check bails before mutation).
+        sai_attribute_t after;
+        after.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
+        ASSERT_EQ(sai_port_api->get_port_attribute(port.m_port_id, 1, &after), SAI_STATUS_SUCCESS);
+        ASSERT_EQ(after.value.oid, foreign_oid);
+
+        attr.value.oid = SAI_NULL_OBJECT_ID;
+        sai_port_api->set_port_attribute(port.m_port_id, &attr);
+        sai_samplepacket_api->remove_samplepacket(foreign_oid);
+        sai_samplepacket_api->remove_samplepacket(sflow_sample);
+    }
+
+    TEST_F(SflowOrchTest, SflowUpdateDirectionRejectsConflictingIngressBinding)
+    {
+        mirror_sample_port_wrap_ut::PortSampleSaiGuard saiPortSampleGuard;
+
+        MockSflowOrch mock_orch;
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        ASSERT_NE(port.m_port_id, SAI_NULL_OBJECT_ID);
+
+        // Seed port info with initial direction "tx"; transition tx -> rx assigns
+        // ingress, so the ingress conflict pre-check runs.
+        sai_object_id_t my_sflow_oid;
+        sai_attribute_t sp_attr;
+        sp_attr.id = SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE;
+        sp_attr.value.u32 = 4242;
+        ASSERT_EQ(sai_samplepacket_api->create_samplepacket(&my_sflow_oid, gSwitchId, 1, &sp_attr),
+                  SAI_STATUS_SUCCESS);
+        Portal::SflowOrchInternal::seedPortInfo(
+            mock_orch.get(), port.m_port_id, my_sflow_oid, "tx");
+
+        // Pre-bind port ingress to a foreign (non-sflow) OID via the wrap.
+        sai_object_id_t foreign_oid;
+        sai_attribute_t sp_attr2;
+        sp_attr2.id = SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE;
+        sp_attr2.value.u32 = 7777;
+        ASSERT_EQ(sai_samplepacket_api->create_samplepacket(&foreign_oid, gSwitchId, 1, &sp_attr2),
+                  SAI_STATUS_SUCCESS);
+
+        sai_attribute_t attr;
+        attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
+        attr.value.oid = foreign_oid;
+        ASSERT_EQ(sai_port_api->set_port_attribute(port.m_port_id, &attr), SAI_STATUS_SUCCESS);
+
+        // tx -> rx wants to assign ingress; pre-check must detect the conflict
+        // and bail out before any SAI mutation happens.
+        ASSERT_FALSE(Portal::SflowOrchInternal::sflowUpdateSampleDirection(
+            mock_orch.get(), port.m_port_id, "tx", "rx"));
+
+        // Ingress binding must remain the foreign OID (no SAI mutation happened).
+        sai_attribute_t after;
+        after.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
+        ASSERT_EQ(sai_port_api->get_port_attribute(port.m_port_id, 1, &after), SAI_STATUS_SUCCESS);
+        ASSERT_EQ(after.value.oid, foreign_oid);
+
+        attr.value.oid = SAI_NULL_OBJECT_ID;
+        sai_port_api->set_port_attribute(port.m_port_id, &attr);
+        sai_samplepacket_api->remove_samplepacket(my_sflow_oid);
+        sai_samplepacket_api->remove_samplepacket(foreign_oid);
+    }
 }
-
-
