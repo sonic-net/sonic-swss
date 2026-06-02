@@ -13,7 +13,6 @@ extern "C" {
 #include <logger.h>
 #include <sairedis.h>
 #include <set>
-#include <atomic>
 #include <tuple>
 #include <vector>
 #include <linux/limits.h>
@@ -118,7 +117,7 @@ extern event_handle_t g_events_handle;
 
 unique_ptr<DBConnector> gHealthStateDb;
 unique_ptr<Table> gOrchHealthTable;
-std::atomic<bool> gOrchUnhealthyCached{false};
+bool gOrchUnhealthyCached = false;
 std::string gLastSaiError;
 
 vector<sai_object_id_t> gGearboxOids;

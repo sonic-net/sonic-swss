@@ -2,13 +2,12 @@
 #include "saihelper.h"
 #include "mock_table.h"
 
-#include <atomic>
 #include <memory>
 #include <sstream>
 
 extern std::unique_ptr<swss::DBConnector> gHealthStateDb;
 extern std::unique_ptr<swss::Table> gOrchHealthTable;
-extern std::atomic<bool> gOrchUnhealthyCached;
+extern bool gOrchUnhealthyCached;
 extern std::string gLastSaiError;
 
 namespace saihelper_test
