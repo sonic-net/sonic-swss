@@ -2,8 +2,6 @@
 #include <unordered_map>
 #include <chrono>
 #include <limits.h>
-#include <errno.h>
-#include <signal.h>
 #include "orchdaemon.h"
 #include "logger.h"
 #include <sairedis.h>
@@ -32,7 +30,6 @@ extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
 extern string                      gMySwitchType;
 extern string                      gMySwitchSubType;
-volatile sig_atomic_t              gOrchShutdownRequested = 0;
 
 extern void syncd_apply_view();
 /*
@@ -97,30 +94,14 @@ OrchDaemon::~OrchDaemon()
 {
     SWSS_LOG_ENTER();
 
-    /*
-     * Stop the ring thread before deleting orch pointers.
-     *
-     * OrchDaemon::start() always launches ring_thread, but popRingBuffer()
-     * returns immediately when gRingBuffer is null (ring mode disabled).
-     * In that case ring_thread is still "joinable" after its entry function
-     * returns, so this teardown path would otherwise dereference a null
-     * gRingBuffer. Before PR #4400 this was unreachable: SIGTERM was not
-     * handled, so ~OrchDaemon() never ran on signal-driven shutdown. The
-     * new graceful shutdown path reaches this destructor on clean exit and
-     * exposes the latent null dereference. Guard the ring buffer accesses
-     * so teardown is safe whether ring mode is enabled or not.
-     */
+    // Stop the ring thread before delete orch pointers
     if (ring_thread.joinable()) {
-        if (gRingBuffer) {
-            // notify the ring_thread to exit
-            gRingBuffer->thread_exited = true;
-            gRingBuffer->notify();
-        }
+        // notify the ring_thread to exit
+        gRingBuffer->thread_exited = true;
+        gRingBuffer->notify();
         // wait for the ring_thread to exit
         ring_thread.join();
-        if (gRingBuffer) {
-            disableRingBuffer();
-        }
+        disableRingBuffer();
     }
 
     /*
@@ -959,19 +940,7 @@ void OrchDaemon::start(long heartBeatInterval)
         Selectable *s;
         int ret;
 
-        if (gOrchShutdownRequested != 0)
-        {
-            SWSS_LOG_NOTICE("Received signal %d, shutting down orchagent gracefully", gOrchShutdownRequested);
-            break;
-        }
-
         ret = m_select->select(&s, SELECT_TIMEOUT);
-
-        if (gOrchShutdownRequested != 0)
-        {
-            SWSS_LOG_NOTICE("Received signal %d, shutting down orchagent gracefully", gOrchShutdownRequested);
-            break;
-        }
 
         auto tend = std::chrono::high_resolution_clock::now();
         heartBeat(tend, heartBeatInterval);
@@ -997,11 +966,6 @@ void OrchDaemon::start(long heartBeatInterval)
 
         if (ret == Select::ERROR)
         {
-            if (errno == EINTR && gOrchShutdownRequested != 0)
-            {
-                SWSS_LOG_NOTICE("Interrupted by signal %d, shutting down orchagent gracefully", gOrchShutdownRequested);
-                break;
-            }
             SWSS_LOG_NOTICE("Error: %s!\n", strerror(errno));
             continue;
         }

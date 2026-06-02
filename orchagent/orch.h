@@ -175,7 +175,6 @@ public:
 
     /* record the tuple */
     void recordTuple(const swss::KeyOpFieldsValuesTuple &tuple);
-    void recordTuples(const std::deque<swss::KeyOpFieldsValuesTuple> &entries);
 
     /* Enable or disable swss.rec recording for this consumer */
     void setRecordable(bool recordable) { m_recordable = recordable; }
@@ -198,7 +197,6 @@ public:
     size_t refillToSync(swss::Table* table);
 
 private:
-    void addToSyncInternal(const swss::KeyOpFieldsValuesTuple &entry, bool onRetry, bool recordTask);
     bool m_recordable = true;
 };
 
