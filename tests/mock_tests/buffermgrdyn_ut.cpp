@@ -7,9 +7,7 @@
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
-#include <chrono>
 #include <hiredis/hiredis.h>
-#include <thread>
 #define private public
 #include "buffermgrdyn.h"
 #include "warm_restart.h"
@@ -2464,6 +2462,42 @@ namespace buffermgrdyn_test
             << "Should not add profiles to check list when SHP size unchanged";
     }
 
+    /*
+     * waitWithRetry polling is covered here with a mock checker. Production
+     * callers use isSharedHeadroomPoolEnabledInSai and checkPendingProfilesSyncStatus.
+     */
+    TEST_F(BufferMgrDynTest, TestWaitWithRetry)
+    {
+        constexpr size_t bufferProfileSyncMaxChecks = 30;
+
+        StartBufferManager();
+        EXPECT_EQ(m_dynamicBuffer->m_saiSyncPollIntervalSec, 0u);
+
+        size_t checkerCalls = 0;
+        auto status = m_dynamicBuffer->waitWithRetry([&]() {
+            checkerCalls++;
+            return true;
+        }, "immediate success");
+        EXPECT_EQ(status, task_process_status::task_success);
+        EXPECT_EQ(checkerCalls, 1u);
+
+        checkerCalls = 0;
+        status = m_dynamicBuffer->waitWithRetry([&]() {
+            checkerCalls++;
+            return checkerCalls >= 3;
+        }, "success after retries");
+        EXPECT_EQ(status, task_process_status::task_success);
+        EXPECT_EQ(checkerCalls, 3u);
+
+        checkerCalls = 0;
+        status = m_dynamicBuffer->waitWithRetry([&]() {
+            checkerCalls++;
+            return false;
+        }, "timeout");
+        EXPECT_EQ(status, task_process_status::task_failed);
+        EXPECT_EQ(checkerCalls, bufferProfileSyncMaxChecks);
+    }
+
     TEST_F(BufferMgrDynTest, TestHandleBufferPoolTableSHPEnableBySizeWaitsForSaiSync)
     {
         InitDefaultLosslessParameter();
@@ -2478,7 +2512,8 @@ namespace buffermgrdyn_test
 
         m_dynamicBuffer->m_configuredSharedHeadroomPoolSize = "0";
         m_dynamicBuffer->m_bufferPoolLookup[INGRESS_LOSSLESS_PG_POOL_NAME].xoff = "0";
-        m_dynamicBuffer->m_applStateBufferPoolTable.del(INGRESS_LOSSLESS_PG_POOL_NAME);
+        m_dynamicBuffer->m_applStateBufferPoolTable.set(INGRESS_LOSSLESS_PG_POOL_NAME,
+                                                        {{"xoff", "1024000"}});
 
         vector<FieldValueTuple> fvVector = {
             {"mode", "dynamic"},
@@ -2487,20 +2522,12 @@ namespace buffermgrdyn_test
         };
         KeyOpFieldsValuesTuple tuple = {INGRESS_LOSSLESS_PG_POOL_NAME, "SET", fvVector};
 
-        thread syncPoolThread([&]()
-        {
-            this_thread::sleep_for(chrono::milliseconds(100));
-            m_dynamicBuffer->m_applStateBufferPoolTable.set(INGRESS_LOSSLESS_PG_POOL_NAME,
-                                                            {{"xoff", "1024000"}});
-        });
-
         SetRedisScriptReply({"ingress_lossless_pool:1024000:1024000"});
         auto status = m_dynamicBuffer->handleBufferPoolTable(tuple);
-        syncPoolThread.join();
         ClearMockRedisReply();
 
         EXPECT_EQ(status, task_process_status::task_success)
-            << "SHP enable by size should wait until the pool xoff is applied to SAI";
+            << "SHP enable by size should succeed when pool xoff is already in APPL_STATE_DB";
         EXPECT_EQ(m_dynamicBuffer->m_configuredSharedHeadroomPoolSize, "1024000")
             << "The old enable task must not be left in m_toSync for a later retry";
     }
@@ -2520,7 +2547,8 @@ namespace buffermgrdyn_test
         m_dynamicBuffer->m_overSubscribeRatio = "";
         m_dynamicBuffer->m_configuredSharedHeadroomPoolSize = "0";
         m_dynamicBuffer->m_bufferPoolLookup[INGRESS_LOSSLESS_PG_POOL_NAME].xoff = "0";
-        m_dynamicBuffer->m_applStateBufferPoolTable.del(INGRESS_LOSSLESS_PG_POOL_NAME);
+        m_dynamicBuffer->m_applStateBufferPoolTable.set(INGRESS_LOSSLESS_PG_POOL_NAME,
+                                                        {{"xoff", "655360"}});
 
         vector<FieldValueTuple> fvVector = {
             {"default_dynamic_th", "0"},
@@ -2528,20 +2556,12 @@ namespace buffermgrdyn_test
         };
         KeyOpFieldsValuesTuple tuple = {"AZURE", "SET", fvVector};
 
-        thread syncPoolThread([&]()
-        {
-            this_thread::sleep_for(chrono::milliseconds(100));
-            m_dynamicBuffer->m_applStateBufferPoolTable.set(INGRESS_LOSSLESS_PG_POOL_NAME,
-                                                            {{"xoff", "655360"}});
-        });
-
         SetRedisScriptReply({"ingress_lossless_pool:97001472:655360"});
         auto status = m_dynamicBuffer->handleDefaultLossLessBufferParam(tuple);
-        syncPoolThread.join();
         ClearMockRedisReply();
 
         EXPECT_EQ(status, task_process_status::task_success)
-            << "SHP enable by ratio should wait until the pool xoff is applied to SAI";
+            << "SHP enable by ratio should succeed when pool xoff is already in APPL_STATE_DB";
         EXPECT_EQ(m_dynamicBuffer->m_overSubscribeRatio, "2")
             << "The old ratio enable task must not be left in m_toSync for a later retry";
     }
@@ -2592,7 +2612,11 @@ namespace buffermgrdyn_test
         m_dynamicBuffer->m_configuredSharedHeadroomPoolSize = "1024000";
         m_dynamicBuffer->m_overSubscribeRatio = "";
         m_dynamicBuffer->m_shpProfilesToCheck.clear();
-        m_dynamicBuffer->m_applStateBufferProfileTable.del(testProfile.name);
+        m_dynamicBuffer->m_applStateBufferProfileTable.set(testProfile.name, {
+            {"xoff", "50176"},
+            {"xon", "43008"},
+            {"size", "93184"}
+        });
 
         vector<FieldValueTuple> fvVector = {
             {"mode", "dynamic"},
@@ -2600,22 +2624,11 @@ namespace buffermgrdyn_test
         };
         KeyOpFieldsValuesTuple tuple = {INGRESS_LOSSLESS_PG_POOL_NAME, "SET", fvVector};
 
-        thread syncProfileThread([&]()
-        {
-            this_thread::sleep_for(chrono::milliseconds(100));
-            m_dynamicBuffer->m_applStateBufferProfileTable.set(testProfile.name, {
-                {"xoff", "50176"},
-                {"xon", "43008"},
-                {"size", "93184"}
-            });
-        });
-
         SetRedisScriptReply({"xon:43008", "xoff:50176", "size:93184"});
         auto status = m_dynamicBuffer->handleBufferPoolTable(tuple);
-        syncProfileThread.join();
         ClearMockRedisReply();
         EXPECT_EQ(status, task_process_status::task_success)
-            << "SHP disable should wait until recalculated profiles are synced";
+            << "SHP disable should succeed when recalculated profiles are already synced";
         EXPECT_EQ(m_dynamicBuffer->m_configuredSharedHeadroomPoolSize, "0")
             << "Desired SHP size must not be rolled back during retry";
 
