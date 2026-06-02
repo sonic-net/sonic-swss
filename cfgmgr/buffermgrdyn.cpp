@@ -2075,10 +2075,6 @@ task_process_status BufferMgrDynamic::waitWithRetry(const function<bool()> &chec
         {
             sleep(m_saiSyncPollIntervalSec);
         }
-        else
-        {
-            usleep(100000);
-        }
 
         if (checker())
         {
