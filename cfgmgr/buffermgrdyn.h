@@ -271,7 +271,7 @@ private:
     // Profiles waiting for SAI sync in refreshSharedHeadroomPool
     std::vector<std::string> m_shpProfilesToCheck;
 
-    // Seconds between SAI sync polls in waitWithRetry. 0 selects a 100 ms poll.
+    // Seconds between SAI sync polls in waitWithRetry. 0 means no sleep (UT only).
     unsigned int m_saiSyncPollIntervalSec;
 
     // Initializers
