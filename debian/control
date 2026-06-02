@@ -24,7 +24,9 @@ Package: swss-asan
 Architecture: any
 Build-Profiles: <asan>
 Depends: ${shlibs:Depends}
+Provides: swss
 Conflicts: swss
+Replaces: swss
 Description: This package contains ASAN-instrumented Switch State Service for SONiC project.
 
 Package: swss-dbg-asan
