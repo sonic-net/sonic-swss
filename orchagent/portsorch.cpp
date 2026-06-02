@@ -1776,6 +1776,27 @@ bool PortsOrch::isPortAdminUp(const string &alias)
     return it->second.m_admin_state_up;
 }
 
+bool PortsOrch::setPortAdminStatusByAlias(const string &alias, bool up)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_portList.find(alias);
+    if (it == m_portList.end())
+    {
+        SWSS_LOG_ERROR("Failed to get Port object by port alias: %s", alias.c_str());
+        return false;
+    }
+
+    Port &port = it->second;
+    if (!setPortAdminStatus(port, up))
+    {
+        return false;
+    }
+
+    port.m_admin_state_up = up;
+    return true;
+}
+
 map<string, Port>& PortsOrch::getAllPorts()
 {
     return m_portList;

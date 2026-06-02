@@ -158,6 +158,7 @@ public:
     bool isConfigDone();
     bool isGearboxEnabled();
     bool isPortAdminUp(const string &alias);
+    bool setPortAdminStatusByAlias(const string &alias, bool up);
 
     map<string, Port>& getAllPorts();
     bool bake() override;
