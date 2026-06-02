@@ -16,6 +16,10 @@
 #include "mirrororch.h"
 #undef private
 #include "mock_orch_test.h"
+#include <arpa/inet.h>
+#include <cstring>
+
+extern sai_mirror_api_t *sai_mirror_api;
 
 namespace mirrororch_test
 {
@@ -693,5 +697,170 @@ namespace mirrororch_test
         ASSERT_EQ(entry.samplepacketId, SAI_NULL_OBJECT_ID);
     }
 
+
+    // Build a real ERSPAN mirror-session OID (GRE protocol type 0x8949) bound to a real monitor port.
+    static sai_object_id_t createErspanSessionOid(sai_object_id_t monitor_port_id)
+    {
+        std::vector<sai_attribute_t> attrs;
+        sai_attribute_t attr;
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
+        attr.value.oid = monitor_port_id;
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_TYPE;
+        attr.value.s32 = SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE;
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_ERSPAN_ENCAPSULATION_TYPE;
+        attr.value.s32 = SAI_ERSPAN_ENCAPSULATION_TYPE_MIRROR_L3_GRE_TUNNEL;
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION;
+        attr.value.u8 = 4;
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_TOS;
+        attr.value.u16 = 0;
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_TTL;
+        attr.value.u8 = 64;
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_SRC_IP_ADDRESS;
+        attr.value.ipaddr.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+        attr.value.ipaddr.addr.ip4 = htonl(0x0a000001); // 10.0.0.1
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_DST_IP_ADDRESS;
+        attr.value.ipaddr.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+        attr.value.ipaddr.addr.ip4 = htonl(0x0a000002); // 10.0.0.2
+        attrs.push_back(attr);
+
+        sai_mac_t src_mac = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
+        attr.id = SAI_MIRROR_SESSION_ATTR_SRC_MAC_ADDRESS;
+        memcpy(attr.value.mac, src_mac, sizeof(sai_mac_t));
+        attrs.push_back(attr);
+
+        sai_mac_t dst_mac = {0x00, 0xaa, 0xbb, 0xcc, 0xdd, 0xee};
+        attr.id = SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS;
+        memcpy(attr.value.mac, dst_mac, sizeof(sai_mac_t));
+        attrs.push_back(attr);
+
+        // Sampled-ERSPAN GRE protocol type per the test plan.
+        attr.id = SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE;
+        attr.value.u16 = 0x8949;
+        attrs.push_back(attr);
+
+        sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+        EXPECT_NE(sai_mirror_api, nullptr);
+        if (sai_mirror_api == nullptr) return SAI_NULL_OBJECT_ID;
+        sai_status_t status = sai_mirror_api->create_mirror_session(
+            &oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+        EXPECT_EQ(status, SAI_STATUS_SUCCESS);
+        return oid;
+    }
+
+    TEST_F(MirrorOrchPortTest, SampledMirrorPhyPortSetClear)
+    {
+        // Covers setUnsetSampledMirrorOnPhyPort path for both set and clear
+        // (SAMPLEPACKET_ENABLE + SAMPLE_MIRROR_SESSION bind, then reverse-order unbind).
+        ASSERT_NE(gMirrorOrch, nullptr);
+        ASSERT_NE(gPortsOrch, nullptr);
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+
+        sai_object_id_t sessionOid = createErspanSessionOid(port.m_port_id);
+        ASSERT_NE(sessionOid, SAI_NULL_OBJECT_ID);
+
+        MirrorEntry entry("");
+        entry.sample_rate = 50000;
+        ASSERT_TRUE(gMirrorOrch->createSamplePacket("phy_set_clear", entry));
+        ASSERT_NE(entry.samplepacketId, SAI_NULL_OBJECT_ID);
+
+        // SET: SAMPLEPACKET_ENABLE first, then SAMPLE_MIRROR_SESSION.
+        ASSERT_TRUE(gMirrorOrch->setUnsetSampledMirrorOnPhyPort(
+            port.m_port_id, port.m_alias, /*set*/ true, sessionOid, entry.samplepacketId));
+
+        // CLEAR: SAMPLE_MIRROR_SESSION first, then SAMPLEPACKET_ENABLE.
+        ASSERT_TRUE(gMirrorOrch->setUnsetSampledMirrorOnPhyPort(
+            port.m_port_id, port.m_alias, /*set*/ false, sessionOid, entry.samplepacketId));
+
+        sai_samplepacket_api->remove_samplepacket(entry.samplepacketId);
+        sai_mirror_api->remove_mirror_session(sessionOid);
+    }
+
+    TEST_F(MirrorOrchPortTest, SampledMirrorPhyPortConflict)
+    {
+        // Covers the samplepacket-conflict guard: a port already bound to a
+        // different INGRESS_SAMPLEPACKET_ENABLE OID must reject the new bind.
+        ASSERT_NE(gMirrorOrch, nullptr);
+        ASSERT_NE(gPortsOrch, nullptr);
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+
+        sai_object_id_t sessionOid = createErspanSessionOid(port.m_port_id);
+        ASSERT_NE(sessionOid, SAI_NULL_OBJECT_ID);
+
+        MirrorEntry existing("");
+        existing.sample_rate = 50000;
+        ASSERT_TRUE(gMirrorOrch->createSamplePacket("conflict_existing", existing));
+        MirrorEntry incoming("");
+        incoming.sample_rate = 60000;
+        ASSERT_TRUE(gMirrorOrch->createSamplePacket("conflict_incoming", incoming));
+        ASSERT_NE(existing.samplepacketId, incoming.samplepacketId);
+
+        // Pre-bind a DIFFERENT samplepacket OID directly onto the port.
+        sai_attribute_t pre;
+        pre.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
+        pre.value.oid = existing.samplepacketId;
+        ASSERT_EQ(sai_port_api->set_port_attribute(port.m_port_id, &pre), SAI_STATUS_SUCCESS);
+
+        // Binding a different samplepacket must fail the conflict check.
+        ASSERT_FALSE(gMirrorOrch->setUnsetSampledMirrorOnPhyPort(
+            port.m_port_id, port.m_alias, /*set*/ true, sessionOid, incoming.samplepacketId));
+
+        // Cleanup: clear binding and remove real objects.
+        pre.value.oid = SAI_NULL_OBJECT_ID;
+        sai_port_api->set_port_attribute(port.m_port_id, &pre);
+        sai_samplepacket_api->remove_samplepacket(existing.samplepacketId);
+        sai_samplepacket_api->remove_samplepacket(incoming.samplepacketId);
+        sai_mirror_api->remove_mirror_session(sessionOid);
+    }
+
+    TEST_F(MirrorOrchPortTest, ConfigurePortMirrorSessionSampledPhy)
+    {
+        // Covers configurePortMirrorSession RX dispatch into the sampled
+        // PHY-direct branch of setUnsetPortMirror.
+        ASSERT_NE(gMirrorOrch, nullptr);
+        ASSERT_NE(gPortsOrch, nullptr);
+        ASSERT_NE(gSwitchOrch, nullptr);
+
+        gSwitchOrch->m_portIngressMirrorSupported = true;
+        gSwitchOrch->m_portIngressSampleMirrorSupported = true;
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+
+        sai_object_id_t sessionOid = createErspanSessionOid(port.m_port_id);
+        ASSERT_NE(sessionOid, SAI_NULL_OBJECT_ID);
+
+        MirrorEntry entry("");
+        entry.sample_rate = 50000;
+        ASSERT_TRUE(gMirrorOrch->createSamplePacket("cfg_phy", entry));
+        ASSERT_NE(entry.samplepacketId, SAI_NULL_OBJECT_ID);
+        entry.sessionId = sessionOid;
+        entry.src_port = "Ethernet0";
+        entry.direction = MIRROR_RX_DIRECTION;
+
+        ASSERT_TRUE(gMirrorOrch->configurePortMirrorSession("cfg_phy", entry, /*set*/ true));
+        ASSERT_TRUE(gMirrorOrch->configurePortMirrorSession("cfg_phy", entry, /*set*/ false));
+
+        sai_samplepacket_api->remove_samplepacket(entry.samplepacketId);
+        sai_mirror_api->remove_mirror_session(sessionOid);
+    }
 
 }
