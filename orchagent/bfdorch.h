@@ -29,6 +29,7 @@ public:
 
 private:
     bool create_bfd_session(const std::string& key, const std::vector<swss::FieldValueTuple>& data);
+    bool update_bfd_session(const std::string& key, const std::vector<swss::FieldValueTuple>& data);
     bool remove_bfd_session(const std::string& key);
     std::string get_state_db_key(const std::string& vrf_name, const std::string& alias, const swss::IpAddress& peer_address);
 
