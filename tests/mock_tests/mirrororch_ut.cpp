@@ -16,6 +16,7 @@
 #include "mirrororch.h"
 #undef private
 #include "mock_orch_test.h"
+#include "mirrororch_sample_port_sai_wrap.h"
 #include <arpa/inet.h>
 #include <cstring>
 
@@ -764,6 +765,7 @@ namespace mirrororch_test
 
     TEST_F(MirrorOrchPortTest, SampledMirrorPhyPortSetClear)
     {
+        mirror_sample_port_wrap_ut::PortSampleSaiGuard saiPortSampleGuard;
         // Covers setUnsetSampledMirrorOnPhyPort path for both set and clear
         // (SAMPLEPACKET_ENABLE + SAMPLE_MIRROR_SESSION bind, then reverse-order unbind).
         ASSERT_NE(gMirrorOrch, nullptr);
@@ -794,6 +796,7 @@ namespace mirrororch_test
 
     TEST_F(MirrorOrchPortTest, SampledMirrorPhyPortConflict)
     {
+        mirror_sample_port_wrap_ut::PortSampleSaiGuard saiPortSampleGuard;
         // Covers the samplepacket-conflict guard: a port already bound to a
         // different INGRESS_SAMPLEPACKET_ENABLE OID must reject the new bind.
         ASSERT_NE(gMirrorOrch, nullptr);
@@ -833,6 +836,7 @@ namespace mirrororch_test
 
     TEST_F(MirrorOrchPortTest, ConfigurePortMirrorSessionSampledPhy)
     {
+        mirror_sample_port_wrap_ut::PortSampleSaiGuard saiPortSampleGuard;
         // Covers configurePortMirrorSession RX dispatch into the sampled
         // PHY-direct branch of setUnsetPortMirror.
         ASSERT_NE(gMirrorOrch, nullptr);
