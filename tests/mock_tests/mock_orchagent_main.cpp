@@ -20,8 +20,6 @@ string gMyAsicName = "Asic0";
 bool gTraditionalFlexCounter = false;
 bool gSyncMode = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
-bool gOrchUnhealthy = false;
-string gSaiErrorString;
 
 VRFOrch *gVrfOrch;
 

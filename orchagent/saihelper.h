@@ -34,6 +34,10 @@ bool parseHandleSaiStatusFailure(task_process_status status);
 bool isSaiStatusResourceFull(sai_status_t status);
 void handleSaiFailure(sai_api_t api, std::string oper, sai_status_t status, bool abort_on_failure);
 
+void initSaiFailureTable();
+void setSaiFailureStatus(bool unhealthy, const std::string& error = "");
+bool getSaiFailureStatus(std::string& error);
+
 void setFlexCounterGroupParameter(const std::string &group,
                                   const std::string &poll_interval,
                                   const std::string &stats_mode,

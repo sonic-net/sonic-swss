@@ -50,9 +50,7 @@ sai_object_id_t gUnderlayIfId;
 sai_object_id_t gSwitchId = SAI_NULL_OBJECT_ID;
 MacAddress gMacAddress;
 MacAddress gVxlanMacAddress;
-bool gOrchUnhealthy = false;
 extern volatile sig_atomic_t gOrchShutdownRequested;
-string gSaiErrorString;
 
 extern size_t gMaxBulkSize;
 
@@ -429,7 +427,6 @@ int main(int argc, char **argv)
 
     SWSS_LOG_ENTER();
 
-    gOrchUnhealthy = false;
     WarmStart::initialize("orchagent", "swss");
     WarmStart::checkWarmStart("orchagent", "swss");
 
@@ -608,6 +605,11 @@ int main(int argc, char **argv)
     );
     Recorder::Instance().sairedis.setLocation(record_location);
     Recorder::Instance().sairedis.setFileName(sairedis_rec_filename);
+
+    /* Initialize SAI failure health table before SAI init so all
+     * handleSaiFailure() paths can persist status to STATE_DB. */
+    initSaiFailureTable();
+    setSaiFailureStatus(false);
 
     /* Initialize sairedis */
     initSaiApi();
