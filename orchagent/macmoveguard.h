@@ -158,9 +158,9 @@ private:
 
     // Configuration. Defaults applied when the feature is enabled.
     bool m_enabled = false;
-    uint32_t m_threshold = 10000;                      // max mac moves allowed in window
+    uint32_t m_threshold = 1000;                       // max mac moves allowed in window
     uint32_t m_durationSeconds = 5;                    // detect_interval: sliding window in seconds
-    uint32_t m_recoverySeconds = 120;                  // action_interval: recovery period in seconds
+    uint32_t m_recoverySeconds = 600;                  // action_interval: recovery period in seconds
     MacMoveGuardAction m_action = MacMoveGuardAction::DISABLE_PORT;  // action to take on bad MAC
 
     // Per-MAC move tracking state, keyed by (mac, bv_id).

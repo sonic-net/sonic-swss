@@ -96,6 +96,12 @@ void MacMoveGuard::clearAllState()
         {
             SWSS_LOG_ERROR("MAC_MOVE_GUARD: failed to re-enable port %s on feature "
                            "disable; keeping it persisted for retry", it->first.c_str());
+            // Drop the now-orphaned bad-MAC refs: m_macTrackingState is wiped
+            // below, so these MacKey copies no longer correspond to anything.
+            // Only the port-name key matters for the retry path (in-run via
+            // a later clearAllState/markBadMac, or across restart via the
+            // STATE_DB CSV that persistDisabledPorts writes).
+            it->second.clear();
             ++it;
         }
     }
