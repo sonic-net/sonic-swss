@@ -197,7 +197,7 @@ def verify_programmed_fg_asic_db_entry(asic_db,prev_memb_dict,num_exp_changes,nh
                 if nh_oid_map.get(nh_oid,"NULL") == "NULL":
                     print("nh_oid is null")
                 if nh_oid_map.get(nh_oid) not in nh_memb_exp_count:
-                    print("nh_memb_exp_count is " + str(nh_memb_exp_count) + " nh_oid_map val is " + nh_oid_map.get(nh_oid))
+                    print("nh_memb_exp_count is " + str(nh_memb_exp_count) + " nh_oid_map val is " + str(nh_oid_map.get(nh_oid)))
                 return false_ret
             memb_dict[index] = nh_oid_map.get(nh_oid)
         idxs = [0]*bucket_size
@@ -1345,6 +1345,41 @@ def fine_grained_ecmp_match_mode_prefix_even_distribution_test(dvs):
         dvs.servers[i].runcmd("ip link set down dev eth0") == 0
 
 
+def fine_grained_ecmp_member_count_exceeds_bucket_size_test(dvs):
+    app_db = dvs.get_app_db()
+    asic_db = dvs.get_asic_db()
+    config_db = dvs.get_config_db()
+    state_db = dvs.get_state_db()
+
+    fg_nhg_name = "fgnhg_oversized_v4"
+    fg_nhg_prefix = "4.4.4.0/24"
+    bucket_size = 2
+    NUM_NHs = 3
+
+    fvs = {"bucket_size": str(bucket_size)}
+    create_entry(config_db, FG_NHG, fg_nhg_name, fvs)
+
+    fvs = {"FG_NHG": fg_nhg_name}
+    create_entry(config_db, FG_NHG_PREFIX, fg_nhg_prefix, fvs)
+
+    create_interface_n_fg_ecmp_config(dvs, 0, NUM_NHs, fg_nhg_name)
+
+    # 3 FG next hops for a route while bucket_size only allows 2
+    ps = swsscommon.ProducerStateTable(app_db.db_connection, ROUTE_TB)
+    fvs = swsscommon.FieldValuePairs([("nexthop", "10.0.0.1,10.0.0.3,10.0.0.5"),
+        ("ifname", "Ethernet0,Ethernet4,Ethernet8")])
+    ps.set(fg_nhg_prefix, fvs)
+    time.sleep(2)
+
+    assert fg_nhg_prefix not in state_db.get_keys("FG_ROUTE_TABLE")
+
+    # cleanup
+    ps._del(fg_nhg_prefix)
+    time.sleep(1)
+    remove_interface_n_fg_ecmp_config(dvs, 0, NUM_NHs, fg_nhg_name)
+    remove_entry(config_db, FG_NHG_PREFIX, fg_nhg_prefix)
+
+
 class TestFineGrainedNextHopGroup(object):
     def test_fgnhg_matchmode_route(self, dvs, testlog):
         '''
@@ -1616,6 +1651,13 @@ class TestFineGrainedNextHopGroup(object):
 
         # cleanup all entries
         remove_interface_n_fg_ecmp_config(dvs, 0, NUM_NHs+NUM_NHs_non_fgnhg, fg_nhg_name)
+
+    def test_fgnhg_member_count_exceeds_bucket_size(self, dvs, testlog):
+        '''
+        Test that a route is rejected as fine grained ECMP when its next hop
+        count exceeds the configured bucket_size
+        '''
+        fine_grained_ecmp_member_count_exceeds_bucket_size_test(dvs)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

@@ -192,7 +192,10 @@ def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor=
 
     tbl = swsscommon.Table(conf_db, "VNET_ROUTE_TUNNEL")
     fvs = swsscommon.FieldValuePairs(attrs)
-    tbl.set("%s|%s" % (vnet_name, prefix), fvs)
+    key = "%s|%s" % (vnet_name, prefix)
+    if consistent_hashing_buckets <= 0:
+        tbl.hdel(key, 'consistent_hashing_buckets')
+    tbl.set(key, fvs)
 
     time.sleep(2)
 
@@ -1192,7 +1195,7 @@ class VnetVxlanVrfTunnel(object):
 
         if nhg:
             new_nhg = nhg
-        elif endpoint_str in self.nhg_ids:
+        elif endpoint_str in self.nhg_ids and self.nhg_ids[endpoint_str] in self.nhgs:
             new_nhg = self.nhg_ids[endpoint_str]
         else:
             new_nhg = get_created_entry(asic_db, self.ASIC_NEXT_HOP_GROUP, self.nhgs)
