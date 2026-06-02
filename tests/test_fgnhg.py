@@ -197,7 +197,7 @@ def verify_programmed_fg_asic_db_entry(asic_db,prev_memb_dict,num_exp_changes,nh
                 if nh_oid_map.get(nh_oid,"NULL") == "NULL":
                     print("nh_oid is null")
                 if nh_oid_map.get(nh_oid) not in nh_memb_exp_count:
-                    print("nh_memb_exp_count is " + str(nh_memb_exp_count) + " nh_oid_map val is " + nh_oid_map.get(nh_oid))
+                    print("nh_memb_exp_count is " + str(nh_memb_exp_count) + " nh_oid_map val is " + str(nh_oid_map.get(nh_oid)))
                 return false_ret
             memb_dict[index] = nh_oid_map.get(nh_oid)
         idxs = [0]*bucket_size

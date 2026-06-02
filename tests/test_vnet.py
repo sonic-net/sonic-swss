@@ -3705,6 +3705,8 @@ class TestVnetOrch(object):
         asic_db.wait_for_n_keys(test_fgnhg.ASIC_NHG_MEMB, 120)
         nhgid = test_fgnhg.validate_asic_nhg_fine_grained_ecmp(asic_db, fg_nhg_prefix, bucket_size, vr_id_2)
         
+        nh_oid_map = test_fgnhg.get_nh_oid_map(asic_db)
+                
         check_state_db_routes(dvs, vnet_name_2, fg_nhg_prefix, ['38.0.0.1', '38.0.0.2', '38.0.0.3'])
 
         num_exp_changes = 60
