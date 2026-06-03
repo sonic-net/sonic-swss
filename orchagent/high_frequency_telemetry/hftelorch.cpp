@@ -293,8 +293,12 @@ bool HFTelOrch::isSupportedHFTel(sai_object_id_t switch_id)
     bool mixed_supported = false;
     if (!querySupportedTelTypeModes(switch_id, single_supported, mixed_supported))
     {
-        SWSS_LOG_NOTICE("HFTel: SAI_TAM_TEL_TYPE_ATTR_MODE capability unavailable, HFTel disabled");
-        return false;
+        // The SAI capability query for SAI_TAM_TEL_TYPE_ATTR_MODE is optional;
+        // older or simpler SAI implementations (e.g. saivs) return
+        // SAI_STATUS_NOT_SUPPORTED. The SAI spec declares SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE
+        // as the default value, so fall back to that and let HFT proceed.
+        SWSS_LOG_NOTICE("HFTel: SAI_TAM_TEL_TYPE_ATTR_MODE capability query unavailable; assuming SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE");
+        single_supported = true;
     }
 
     if (!single_supported && !mixed_supported)
