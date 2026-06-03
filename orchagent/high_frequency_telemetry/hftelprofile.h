@@ -36,6 +36,7 @@ public:
     using sai_guard_t = std::shared_ptr<sai_object_id_t>;
 
     const std::string& getProfileName() const;
+    bool isMixedTypeMode() const { return m_tel_type_mode == SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE; }
     void setStreamState(sai_tam_tel_type_state_t state);
     void setStreamState(sai_object_type_t object_type, sai_tam_tel_type_state_t state);
     sai_tam_tel_type_state_t getStreamState(sai_object_type_t object_type) const;
@@ -81,6 +82,10 @@ private:
         m_name_sai_map;
 
     const sai_tam_tel_type_mode_t m_tel_type_mode;
+
+    // Next IPFIX label to allocate in MIXED_TYPE mode. Unused in SINGLE_TYPE.
+    // labels are monotonic and never reused within a profile.
+    sai_uint16_t m_next_label = 1;
 
     // SAI objects
     const sai_object_id_t m_sai_tam_obj;
