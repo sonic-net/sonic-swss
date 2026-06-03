@@ -249,7 +249,7 @@ jobs:
          echo BUILD_DIR=$(pwd) > build.info
       fi
       if [ '${{ parameters.asan }}' == True ]; then
-         export ENABLE_ASAN=y
+         export DEB_BUILD_PROFILES=asan
       fi
       ./autogen.sh
       RUSTFLAGS=-Dwarnings dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
