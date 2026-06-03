@@ -9,48 +9,77 @@ void ZmqConsumer::execute()
 {
     SWSS_LOG_ENTER();
 
+    size_t update_size = 0;
     auto table = static_cast<swss::ZmqConsumerStateTable*>(getSelectable());
 
-    std::deque<KeyOpFieldsValuesTuple> entries;
-    table->pops(entries);
-    addToSync(entries);
+    if (!m_ordered_queue)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        table->pops(entries);
+        addToSync(entries);
+    }
+    else
+    {
+        do
+        {
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            table->pops(entries);
+            update_size = entries.size();
+            m_queue.insert(m_queue.end(), entries.begin(), entries.end());
+        } while (update_size != 0);
+    }
+
+    drain();
+}
+
+void ZmqRouteConsumer::execute()
+{
+    SWSS_LOG_ENTER();
+
+    size_t update_size = 0;
+    auto table = static_cast<swss::ZmqConsumerStateTable*>(getSelectable());
+    do
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        table->pops(entries);
+        update_size = addToSync(entries);
+    } while (update_size != 0);
 
     drain();
 }
 
 void ZmqConsumer::drain()
 {
-    if (!m_toSync.empty())
+    if (!m_toSync.empty() || !m_queue.empty())
         (static_cast<ZmqOrch*>(m_orch))->doTask(*this);
 }
 
-
-ZmqOrch::ZmqOrch(DBConnector *db, const vector<string> &tableNames, ZmqServer *zmqServer)
+ZmqOrch::ZmqOrch(DBConnector *db, const vector<string> &tableNames, ZmqServer *zmqServer, bool orderedQueue, bool dbPersistence)
 : Orch()
 {
     for (auto it : tableNames)
     {
-        addConsumer(db, it, default_orch_pri, zmqServer);
+        addConsumer(db, it, default_orch_pri, zmqServer, orderedQueue, dbPersistence);
     }
 }
 
 
-ZmqOrch::ZmqOrch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with_pri, ZmqServer *zmqServer)
+ZmqOrch::ZmqOrch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with_pri, ZmqServer *zmqServer, bool orderedQueue, bool dbPersistence)
 {
     for (const auto& it : tableNames_with_pri)
     {
-        addConsumer(db, it.first, it.second, zmqServer);
+        addConsumer(db, it.first, it.second, zmqServer, orderedQueue, dbPersistence);
     }
 }
 
-void ZmqOrch::addConsumer(DBConnector *db, string tableName, int pri, ZmqServer *zmqServer)
+void ZmqOrch::addConsumer(DBConnector *db, string tableName, int pri, ZmqServer *zmqServer, bool orderedQueue, bool dbPersistence)
 {
     if (db->getDbId() == APPL_DB || db->getDbId() == DPU_APPL_DB)
     {
         if (zmqServer != nullptr)
         {
             SWSS_LOG_DEBUG("ZmqConsumer initialize for: %s", tableName.c_str());
-            addExecutor(new ZmqConsumer(new ZmqConsumerStateTable(db, tableName, *zmqServer, gBatchSize, pri), this, tableName));
+            addExecutor(new ZmqConsumer(new ZmqConsumerStateTable(db, tableName, *zmqServer, gBatchSize, pri, dbPersistence), this, tableName, orderedQueue));
         }
         else
         {
@@ -68,4 +97,43 @@ void ZmqOrch::doTask(Consumer &consumer)
 {
     // When ZMQ disabled, forward data from Consumer
     doTask((ConsumerBase &)consumer);
+}
+
+ZmqRouteOrch::ZmqRouteOrch(DBConnector *db, const vector<string> &tableNames, ZmqServer *zmqServer, bool dbPersistence)
+: ZmqOrch()
+{
+    for (auto it : tableNames)
+    {
+        addConsumer(db, it, default_orch_pri, zmqServer, dbPersistence);
+    }
+}
+
+ZmqRouteOrch::ZmqRouteOrch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with_pri, ZmqServer *zmqServer, bool dbPersistence)
+: ZmqOrch()
+{
+    for (const auto& it : tableNames_with_pri)
+    {
+        addConsumer(db, it.first, it.second, zmqServer, dbPersistence);
+    }
+}
+
+void ZmqRouteOrch::addConsumer(DBConnector *db, string tableName, int pri, ZmqServer *zmqServer, bool dbPersistence)
+{
+    if (db->getDbId() == APPL_DB || db->getDbId() == DPU_APPL_DB)
+    {
+        if (zmqServer != nullptr)
+        {
+            SWSS_LOG_DEBUG("ZmqRouteConsumer initialize for: %s", tableName.c_str());
+            addExecutor(new ZmqRouteConsumer(new ZmqConsumerStateTable(db, tableName, *zmqServer, gBatchSize, pri, dbPersistence), this, tableName));
+        }
+        else
+        {
+            SWSS_LOG_DEBUG("Consumer initialize for: %s", tableName.c_str());
+            addExecutor(new Consumer(new ConsumerStateTable(db, tableName, gBatchSize, pri), this, tableName));
+        }
+    }
+    else
+    {
+        SWSS_LOG_WARN("ZmqRouteOrch does not support create consumer for db: %d, table: %s", db->getDbId(), tableName.c_str());
+    }
 }

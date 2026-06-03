@@ -1,6 +1,7 @@
 #include <cassert>
 #include <string>
 #include <vector>
+#include <set>
 #include <unordered_map>
 #include <unordered_set>
 #include <stdexcept>
@@ -1818,7 +1819,7 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
     NeighborEntry neigh;
     MacAddress mac;
     MuxCable* ptr;
-    bool found_existing_mux_neighbor = false;
+    std::set<NeighborEntry> handled;
 
     // Handle existing MUX neighbors that might be moving between ports
     for (auto nh = mux_nexthop_tb_.begin(); nh != mux_nexthop_tb_.end(); ++nh)
@@ -1829,7 +1830,7 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
             continue;
         }
 
-        found_existing_mux_neighbor = true;
+        handled.insert(nh->first);
 
         if (nh->second != update.entry.port_name)
         {
@@ -1852,48 +1853,50 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
         }
     }
 
-    // Handle case where neighbor exists but is not yet a MUX neighbor
-    // This can happen when FDB entry is learned after neighbor is added
-    if (!found_existing_mux_neighbor && isMuxCablePrefixBased(update.entry.port_name))
+    // Fallback: convert any NeighOrch entry that shares this MAC on the FDB's
+    // mux port but is not yet in mux_nexthop_tb_. Always runs when the FDB
+    // port is a mux; the `handled` set prevents re-processing neighbors that
+    // the loop above already re-bound.
+    if (isMuxExists(update.entry.port_name))
     {
-        // Check if there's an existing neighbor with this MAC on any VLAN interface
-        // that could be converted to a MUX neighbor
-        auto vlan_ports = gPortsOrch->getAllVlans();
-        SWSS_LOG_INFO("FDB update without mux neighbor on mux port %s, mac %s", update.entry.port_name.c_str(),
-                update.entry.mac.to_string().c_str());
+        SWSS_LOG_INFO("FDB update on mux port %s, mac %s — scanning for stranded neighbors",
+                update.entry.port_name.c_str(), update.entry.mac.to_string().c_str());
 
-        for (auto vlan_alias : vlan_ports)
+        const auto& neighbors = neigh_orch_->getNeighborTable();
+        for (const auto& neighbor_pair : neighbors)
         {
-            // Check all existing neighbors on this VLAN interface
-            auto neighbors = neigh_orch_->getNeighborTable();
-            for (const auto& neighbor_pair : neighbors)
+            const NeighborEntry& neighbor_entry = neighbor_pair.first;
+            const auto& neighbor_data = neighbor_pair.second;
+
+            // Already re-bound by the loop above — skip.
+            if (handled.count(neighbor_entry))
             {
-                const NeighborEntry& neighbor_entry = neighbor_pair.first;
-                const auto& neighbor_data = neighbor_pair.second;
+                continue;
+            }
 
-                // Skip if this neighbor is already a MUX neighbor
-                // soc neighbors will get added with prefix_route but
-                // they may not be yet qualified as mux neighbor
-                if (neighbor_data.prefix_route && !isSkipNeighbor(neighbor_entry.ip_address))
-                {
-                    continue;
-                }
+            // MAC must match the FDB update.
+            if (neighbor_data.mac != update.entry.mac)
+            {
+                continue;
+            }
 
-                // Check if MAC matches and it's on a VLAN interface
-                if (neighbor_data.mac == update.entry.mac && neighbor_entry.alias == vlan_alias)
-                {
-                    // Check if this neighbor should be a MUX neighbor based on the FDB update
-                    string port_name;
-                    if (getMuxPort(update.entry.mac, vlan_alias, port_name) && 
-                        !port_name.empty() && port_name == update.entry.port_name)
-                    {
-                        // Convert this neighbor to a MUX neighbor
-                        SWSS_LOG_INFO("Converting existing neighbor %s on %s to MUX neighbor due to FDB update",
-                                      neighbor_entry.ip_address.to_string().c_str(), vlan_alias.c_str());
+            // Skip prefix_route neighbors that are not skip neighbors
+            // soc neighbors will get added with prefix_route but
+            // they may not be yet qualified as mux neighbor
+            if (neighbor_data.prefix_route && !isSkipNeighbor(neighbor_entry.ip_address))
+            {
+                continue;
+            }
 
-                        convertNeighborToMux(neighbor_entry, port_name, "due to FDB update");
-                    }
-                }
+            // Check if this neighbor should be a MUX neighbor on the FDB's port.
+            string port_name;
+            if (getMuxPort(update.entry.mac, neighbor_entry.alias, port_name) &&
+                !port_name.empty() && port_name == update.entry.port_name)
+            {
+                SWSS_LOG_INFO("Converting existing neighbor %s on %s to MUX neighbor due to FDB update",
+                              neighbor_entry.ip_address.to_string().c_str(), neighbor_entry.alias.c_str());
+
+                convertNeighborToMux(neighbor_entry, port_name, "due to FDB update");
             }
         }
     }
@@ -1917,6 +1920,7 @@ bool MuxOrch::convertNeighborToMux(const NeighborEntry& neighbor_entry, const st
     }
 
     // Convert to MUX neighbor for prefix based nbr handler before adding the nbr entry to mux port
+    // If the mux port uses the host-route nbr handler, convertToPrefixBasedNbr will not be called (short-circuit)
     if (ptr->getNbrHandlerType() == MuxNbrHandlerType::NBR_HANDLER_HOST_ROUTE ||
             neigh_orch_->convertToPrefixBasedNbr(neighbor_entry, tunnel_nh_id))
     {

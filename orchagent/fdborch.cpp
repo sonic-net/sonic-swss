@@ -7,6 +7,7 @@
 
 #include "logger.h"
 #include "tokenize.h"
+#include "notificationconsumerstatsorch.h"
 #include "fdborch.h"
 #include "crmorch.h"
 #include "notifier.h"
@@ -14,6 +15,8 @@
 #include "mlagorch.h"
 #include "vxlanorch.h"
 #include "directory.h"
+
+#define VLAN_PREFIX         "Vlan"
 
 extern sai_fdb_api_t    *sai_fdb_api;
 
@@ -38,12 +41,44 @@ FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> app
 
     m_portsOrch->attach(this);
     m_flushNotificationsConsumer = new NotificationConsumer(applDbConnector, "FLUSHFDBREQUEST");
+    m_flushNotificationsConsumer->setOpAllowList({"ALL", "PORT", "VLAN", "PORTVLAN"});
+    m_flushNotificationsConsumer->setStatsLabel("FdbOrch:flush");
+    if (gNotifConsumerStatsOrch)
+        gNotifConsumerStatsOrch->registerConsumer("FdbOrch:flush", m_flushNotificationsConsumer);
     auto flushNotifier = new Notifier(m_flushNotificationsConsumer, this, "FLUSHFDBREQUEST");
     Orch::addExecutor(flushNotifier);
 
-    /* Add FDB notifications support from ASIC */
+    /* Add FDB notifications support from ASIC.
+     *
+     * Opt the FDB consumer into the LRU-dedup queue policy.  LruDedup
+     * collapses *byte-identical* in-flight payloads at enqueue -- two
+     * consecutive identical SAI fdb_event notifications (same vlan/mac/
+     * port/event_type) become one queue entry; distinct event types
+     * (LEARN vs AGE) and distinct ports for the same MAC are different
+     * byte strings and queue separately, so no event-shadowing happens.
+     *
+     * FdbOrch's update() is end-state-idempotent under identical
+     * payloads: repeated LEARN on the same (vlan, mac, port) is a
+     * no-op after the first; repeated AGE on an already-aged entry
+     * is a no-op; so collapsing only byte-identical duplicates
+     * preserves the final FDB_TABLE state while bounding queue depth
+     * to count(distinct in-flight payloads) instead of event rate.
+     *
+     * pri=100 / popBatchSize match swss-common's 4-arg ctor defaults;
+     * the 5-arg ctor has no defaults so they must be passed
+     * explicitly.  No change in Select-loop priority vs. the prior
+     * 2-arg call.
+     */
     m_notificationsDb = make_shared<DBConnector>("ASIC_DB", 0);
-    m_fdbNotificationConsumer = new swss::NotificationConsumer(m_notificationsDb.get(), "NOTIFICATIONS");
+    m_fdbNotificationConsumer = new swss::NotificationConsumer(
+        m_notificationsDb.get(), "NOTIFICATIONS",
+        100,                                       // pri -- match swss-common default
+        swss::DEFAULT_NC_POP_BATCH_SIZE,
+        swss::NotificationQueuePolicy::LruDedup);
+    m_fdbNotificationConsumer->setOpAllowList({"fdb_event"});
+    m_fdbNotificationConsumer->setStatsLabel("FdbOrch:fdb_event");
+    if (gNotifConsumerStatsOrch)
+        gNotifConsumerStatsOrch->registerConsumer("FdbOrch:fdb_event", m_fdbNotificationConsumer);
     auto fdbNotifier = new Notifier(m_fdbNotificationConsumer, this, "FDB_NOTIFICATIONS");
     Orch::addExecutor(fdbNotifier);
 }
@@ -988,7 +1023,7 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
         }
         else if (op == "VLAN")
         {
-            vlan = data;
+            vlan = VLAN_PREFIX + data;
             if (vlan.empty())
             {
                 SWSS_LOG_ERROR("Receive wrong vlan to flush fdb!");
@@ -1013,7 +1048,7 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
             if (found != string::npos)
             {
                 alias = data.substr(0, found);
-                vlan = data.substr(found+1);
+                vlan = VLAN_PREFIX + data.substr(found+1);
             }
             if (alias.empty() || vlan.empty())
             {
@@ -1049,13 +1084,12 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
     {
         uint32_t count;
         sai_fdb_event_notification_data_t *fdbevent = nullptr;
-        sai_fdb_entry_type_t sai_fdb_type = SAI_FDB_ENTRY_TYPE_DYNAMIC;
-
         sai_deserialize_fdb_event_ntf(data, count, &fdbevent);
 
         for (uint32_t i = 0; i < count; ++i)
         {
             sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+            sai_fdb_entry_type_t sai_fdb_type = SAI_FDB_ENTRY_TYPE_DYNAMIC;
 
             for (uint32_t j = 0; j < fdbevent[i].attr_count; ++j)
             {

@@ -70,5 +70,6 @@ namespace mock_orch_test
         virtual void PreTearDown();
         virtual void ApplySaiMock();
         void initTestLogger(const std::string &appName = "mock_tests", int minPrio = swss::Logger::SWSS_INFO);
+        virtual DashOrch* CreateDashOrch(swss::DBConnector* app_db, const std::vector<std::string>& dash_tables, swss::DBConnector* state_db, swss::ZmqServer* zmq);
     };
 }

@@ -2,6 +2,8 @@
 #include <unordered_map>
 #include <chrono>
 #include <limits.h>
+#include <errno.h>
+#include <signal.h>
 #include "orchdaemon.h"
 #include "logger.h"
 #include <sairedis.h>
@@ -12,6 +14,7 @@
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
 #include "chassisorch.h"
+#include "notificationconsumerstatsorch.h"
 #include "stporch.h"
 
 using namespace std;
@@ -30,6 +33,7 @@ extern string                      gMySwitchType;
 extern string                      gMySwitchSubType;
 extern bool                        gOrchUnhealthy;
 extern string                      gSaiErrorString;
+volatile sig_atomic_t              gOrchShutdownRequested = 0;
 
 extern void syncd_apply_view();
 /*
@@ -94,14 +98,30 @@ OrchDaemon::~OrchDaemon()
 {
     SWSS_LOG_ENTER();
 
-    // Stop the ring thread before delete orch pointers
+    /*
+     * Stop the ring thread before deleting orch pointers.
+     *
+     * OrchDaemon::start() always launches ring_thread, but popRingBuffer()
+     * returns immediately when gRingBuffer is null (ring mode disabled).
+     * In that case ring_thread is still "joinable" after its entry function
+     * returns, so this teardown path would otherwise dereference a null
+     * gRingBuffer. Before PR #4400 this was unreachable: SIGTERM was not
+     * handled, so ~OrchDaemon() never ran on signal-driven shutdown. The
+     * new graceful shutdown path reaches this destructor on clean exit and
+     * exposes the latent null dereference. Guard the ring buffer accesses
+     * so teardown is safe whether ring mode is enabled or not.
+     */
     if (ring_thread.joinable()) {
-        // notify the ring_thread to exit
-        gRingBuffer->thread_exited = true;
-        gRingBuffer->notify();
+        if (gRingBuffer) {
+            // notify the ring_thread to exit
+            gRingBuffer->thread_exited = true;
+            gRingBuffer->notify();
+        }
         // wait for the ring_thread to exit
         ring_thread.join();
-        disableRingBuffer();
+        if (gRingBuffer) {
+            disableRingBuffer();
+        }
     }
 
     /*
@@ -174,16 +194,26 @@ bool OrchDaemon::init()
 
     gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);
 
+    // Construct the NotificationConsumer stats publisher before any
+    // orch that owns a NotificationConsumer it cares to publish, so
+    // each of those orchs can call
+    // gNotifConsumerStatsOrch->registerConsumer(...) from its
+    // constructor.  A null gNotifConsumerStatsOrch means publish is
+    // disabled; the registerConsumer call sites all null-check.
+    gNotifConsumerStatsOrch = new NotificationConsumerStatsOrch();
+
     TableConnector stateDbSwitchTable(m_stateDb, STATE_SWITCH_CAPABILITY_TABLE_NAME);
     TableConnector app_switch_table(m_applDb, APP_SWITCH_TABLE_NAME);
     TableConnector conf_asic_sensors(m_configDb, CFG_ASIC_SENSORS_TABLE_NAME);
     TableConnector conf_switch_hash(m_configDb, CFG_SWITCH_HASH_TABLE_NAME);
     TableConnector conf_switch_trim(m_configDb, CFG_SWITCH_TRIMMING_TABLE_NAME);
+    TableConnector conf_switch_fast_linkup(m_configDb, CFG_SWITCH_FAST_LINKUP_TABLE_NAME);
     TableConnector conf_suppress_asic_sdk_health_categories(m_configDb, CFG_SUPPRESS_ASIC_SDK_HEALTH_EVENT_NAME);
 
     vector<TableConnector> switch_tables = {
         conf_switch_hash,
         conf_switch_trim,
+        conf_switch_fast_linkup,
         conf_asic_sensors,
         conf_suppress_asic_sdk_health_categories,
         app_switch_table
@@ -476,7 +506,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch, gNotifConsumerStatsOrch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
@@ -824,7 +854,8 @@ bool OrchDaemon::init()
     m_orchList.push_back(&CounterCheckOrch::getInstance(m_configDb));
 
     vector<string> p4rt_tables = {APP_P4RT_TABLE_NAME};
-    gP4Orch = new P4Orch(m_applDb, p4rt_tables, vrf_orch, gCoppOrch);
+    m_p4OrchZmqServer = new swss::ZmqServer(m_p4OrchZmqServerEp, "", false, true);
+    gP4Orch = new P4Orch(m_applDb, p4rt_tables, m_p4OrchZmqServer, vrf_orch, gCoppOrch);
     m_orchList.push_back(gP4Orch);
 
     TableConnector confDbTwampTable(m_configDb, CFG_TWAMP_SESSION_TABLE_NAME);
@@ -928,7 +959,19 @@ void OrchDaemon::start(long heartBeatInterval)
         Selectable *s;
         int ret;
 
+        if (gOrchShutdownRequested != 0)
+        {
+            SWSS_LOG_NOTICE("Received signal %d, shutting down orchagent gracefully", gOrchShutdownRequested);
+            break;
+        }
+
         ret = m_select->select(&s, SELECT_TIMEOUT);
+
+        if (gOrchShutdownRequested != 0)
+        {
+            SWSS_LOG_NOTICE("Received signal %d, shutting down orchagent gracefully", gOrchShutdownRequested);
+            break;
+        }
 
         /*
          * Log an error message periodically if a previous SAI API call failed with
@@ -953,6 +996,11 @@ void OrchDaemon::start(long heartBeatInterval)
 
         if (ret == Select::ERROR)
         {
+            if (errno == EINTR && gOrchShutdownRequested != 0)
+            {
+                SWSS_LOG_NOTICE("Interrupted by signal %d, shutting down orchagent gracefully", gOrchShutdownRequested);
+                break;
+            }
             SWSS_LOG_NOTICE("Error: %s!\n", strerror(errno));
             continue;
         }
@@ -1360,6 +1408,13 @@ bool DpuOrchDaemon::init()
     DashPortMapOrch *dash_port_map_orch = new DashPortMapOrch(m_dpu_appDb, dash_port_map_tables, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_port_map_orch);
 
+    vector<string> dash_ha_flow_tables = {
+        APP_DASH_FLOW_SYNC_SESSION_TABLE_NAME,
+        APP_DASH_FLOW_DUMP_FILTER_TABLE_NAME
+    };
+    DashHaFlowOrch *dash_ha_flow_orch = new DashHaFlowOrch(m_dpu_appDb, dash_ha_flow_tables, m_dpu_appstateDb, dash_zmq_server);
+    gDirectory.set(dash_ha_flow_orch);
+
     addOrchList(dash_acl_orch);
     addOrchList(dash_vnet_orch);
     addOrchList(dash_route_orch);
@@ -1368,6 +1423,7 @@ bool DpuOrchDaemon::init()
     addOrchList(dash_meter_orch);
     addOrchList(dash_ha_orch);
     addOrchList(dash_port_map_orch);
+    addOrchList(dash_ha_flow_orch);
 
     return true;
 }

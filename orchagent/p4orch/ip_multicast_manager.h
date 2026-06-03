@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "dbconnector.h"
 #include "ipaddress.h"
 #include "orch.h"
 #include "p4orch/object_manager_interface.h"
@@ -12,6 +13,7 @@
 #include "response_publisher_interface.h"
 #include "return_code.h"
 #include "vrforch.h"
+#include "table.h"
 
 extern "C" {
 #include "sai.h"
@@ -66,6 +68,19 @@ class IpMulticastManager : public ObjectManagerInterface {
   P4IpMulticastEntry* getIpMulticastEntry(
       const std::string& ip_multicast_entry_key);
 
+  // Performs IP multicast entry validation.
+  ReturnCode validateIpMulticastEntry(
+      const P4IpMulticastEntry& ip_multicast_entry,
+      const std::string& operation);
+
+  // Performs IP multicast entry validation for SET command.
+  ReturnCode validateSetIpMulticastEntry(
+      const P4IpMulticastEntry& ip_multicast_entry);
+
+  // Performs IP multicast entry validation for DEL command.
+  ReturnCode validateDelIpMulticastEntry(
+      const P4IpMulticastEntry& ip_multicast_entry);
+
   // Returns the SAI IPMC entry (for multicast).
   sai_ipmc_entry_t prepareSaiIpmcEntry(
       const P4IpMulticastEntry& ip_multicast_entry) const;
@@ -80,6 +95,9 @@ class IpMulticastManager : public ObjectManagerInterface {
   // Creates a router interface object to be used by the RPF group member.
   ReturnCode createRouterInterfaceForDefaultRpfGroupMember();
 
+  // Deletes the default RPF group.
+  ReturnCode deleteDefaultRpfGroup();
+
   // Creates a list of IP multicast entries.
   std::vector<ReturnCode> createIpMulticastEntries(
       const std::vector<P4IpMulticastEntry>& ip_multicast_entries);
@@ -92,11 +110,26 @@ class IpMulticastManager : public ObjectManagerInterface {
   std::vector<ReturnCode> deleteIpMulticastEntries(
       const std::vector<P4IpMulticastEntry>& ip_multicast_entries);
 
+  // Process a list of IP multicast entries by the given operation.
+  ReturnCode processIpMulticastEntries(
+      const std::vector<P4IpMulticastEntry>& ip_multicast_entries,
+      const std::vector<swss::KeyOpFieldsValuesTuple>& tuple_list,
+      const std::string& op, bool update);
+
+  // Verifies internal cache for an entry.
+  std::string verifyStateCache(const P4IpMulticastEntry& app_db_entry,
+                               const P4IpMulticastEntry* ip_multicast_entry);
+
+  // Verifies ASIC DB for an entry.
+  std::string verifyStateAsicDb(const P4IpMulticastEntry* ip_multicast_entry);
+
   // Internal cache of entries.
   P4IpMulticastTable m_ipMulticastTable;
 
   P4OidMapper* m_p4OidMapper;
   VRFOrch* m_vrfOrch;
+  swss::DBConnector m_asic_db;
+  swss::Table m_asic_state_table;
   ResponsePublisherInterface* m_publisher;
   std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
 

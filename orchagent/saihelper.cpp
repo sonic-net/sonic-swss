@@ -17,6 +17,7 @@ extern "C" {
 #include <vector>
 #include <linux/limits.h>
 #include <net/if.h>
+#include <nlohmann/json.hpp>
 #include "timestamp.h"
 #include "sai_serialize.h"
 #include "saihelper.h"
@@ -29,7 +30,11 @@ using namespace swss;
 #define STR(s) _STR(s)
 
 #define CONTEXT_CFG_FILE "/usr/share/sonic/hwsku/context_config.json"
+#if defined(__arm__)
+#define SAI_REDIS_SYNC_OPERATION_RESPONSE_TIMEOUT ((480*1000)*2)
+#else
 #define SAI_REDIS_SYNC_OPERATION_RESPONSE_TIMEOUT (480*1000)
+#endif
 
 // hwinfo = "INTERFACE_NAME/PHY ID", mii_ioctl_data->phy_id is a __u16
 #define HWINFO_MAX_SIZE IFNAMSIZ + 1 + 5
@@ -97,6 +102,7 @@ sai_stp_api_t*                      sai_stp_api;
 sai_dash_meter_api_t*               sai_dash_meter_api;
 sai_dash_outbound_port_map_api_t*   sai_dash_outbound_port_map_api;
 sai_dash_trusted_vni_api_t*         sai_dash_trusted_vni_api;
+sai_dash_flow_api_t*                sai_dash_flow_api;
 
 extern sai_object_id_t gSwitchId;
 extern bool gTraditionalFlexCounter;
@@ -187,14 +193,68 @@ const sai_service_method_table_t test_services = {
     test_profile_get_next_value
 };
 
+// Resolve gRedisCommunicationMode against context_config.json. When -z zmq_sync
+// was requested but the JSON disables zmq for the default context (guid=0),
+// demote to REDIS_SYNC. Notification handlers in notifications.cpp gate
+// forwarding on this global, so it must reflect the actual transport sairedis
+// will use. Symmetric with the fallback in sairedis/syncd Syncd.cpp.
+//
+// Takes an istream so it streams directly from the open file in production and
+// from std::istringstream in unit tests, with no intermediate copy.
+sai_redis_communication_mode_t resolveCommunicationModeFromContextConfig(
+        std::istream& jsonStream,
+        sai_redis_communication_mode_t currentMode)
+{
+    if (currentMode != SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
+    {
+        return currentMode;
+    }
+
+    try
+    {
+        nlohmann::json j;
+        jsonStream >> j;
+
+        for (auto& item : j["CONTEXTS"])
+        {
+            uint32_t guid = item["guid"];
+            if (guid != 0)
+            {
+                continue;
+            }
+
+            if (item.contains("zmq_enable") && item["zmq_enable"] == false)
+            {
+                SWSS_LOG_NOTICE(
+                    "context %u: zmq_enable=false in context config, demoting "
+                    "gRedisCommunicationMode from ZMQ_SYNC to REDIS_SYNC",
+                    guid);
+                return SAI_REDIS_COMMUNICATION_MODE_REDIS_SYNC;
+            }
+            break;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        SWSS_LOG_WARN("Failed to parse context config for comm-mode resolution: %s",
+                      e.what());
+    }
+
+    return currentMode;
+}
+
 void initSaiApi()
 {
     SWSS_LOG_ENTER();
 
-    if (ifstream(CONTEXT_CFG_FILE))
+    std::ifstream ifs(CONTEXT_CFG_FILE);
+    if (ifs.good())
     {
         SWSS_LOG_NOTICE("Context config file %s exists", CONTEXT_CFG_FILE);
         gProfileMap[SAI_REDIS_KEY_CONTEXT_CONFIG] = CONTEXT_CFG_FILE;
+
+        gRedisCommunicationMode = resolveCommunicationModeFromContextConfig(
+            ifs, gRedisCommunicationMode);
     }
 
     sai_api_initialize(0, (const sai_service_method_table_t *)&test_services);
@@ -257,7 +317,8 @@ void initSaiApi()
     sai_api_query((sai_api_t)SAI_API_DASH_TUNNEL,               (void**)&sai_dash_tunnel_api);
     sai_api_query((sai_api_t)SAI_API_DASH_HA,                   (void**)&sai_dash_ha_api);
     sai_api_query((sai_api_t)SAI_API_DASH_OUTBOUND_PORT_MAP,    (void**)&sai_dash_outbound_port_map_api);
-    sai_api_query((sai_api_t)SAI_API_DASH_TRUSTED_VNI,          (void**)&sai_dash_trusted_vni_api);    
+    sai_api_query((sai_api_t)SAI_API_DASH_TRUSTED_VNI,          (void**)&sai_dash_trusted_vni_api);
+    sai_api_query((sai_api_t)SAI_API_DASH_FLOW,                 (void**)&sai_dash_flow_api);
     sai_api_query(SAI_API_TWAMP,                (void **)&sai_twamp_api);
     sai_api_query(SAI_API_TAM,                  (void **)&sai_tam_api);
     sai_api_query(SAI_API_STP,                  (void **)&sai_stp_api);
@@ -755,6 +816,14 @@ bool parseHandleSaiStatusFailure(task_process_status status)
     return true;
 }
 
+bool isSaiStatusResourceFull(sai_status_t status)
+{
+    return status == SAI_STATUS_INSUFFICIENT_RESOURCES ||
+           status == SAI_STATUS_TABLE_FULL ||
+           status == SAI_STATUS_NO_MEMORY ||
+           status == SAI_STATUS_NV_STORAGE_FULL;
+}
+
 /* Handling SAI failure. Request redis to invoke SAI failure dump */
 void handleSaiFailure(sai_api_t api, string oper, sai_status_t status, bool abort_on_failure)
 {
@@ -1108,56 +1177,3 @@ std::vector<sai_stat_id_t> queryAvailableCounterStats(const sai_object_type_t ob
     return stat_list;
 }
 
-void writeResultToDB(const std::unique_ptr<swss::Table>& table, const string& key,
-                     uint32_t res, const string& version)
-{
-    SWSS_LOG_ENTER();
-
-    if (!table)
-    {
-        SWSS_LOG_WARN("Table passed in is NULL");
-        return;
-    }
-
-    std::vector<FieldValueTuple> fvVector;
-
-    fvVector.emplace_back("result", std::to_string(res));
-
-    if (!version.empty())
-    {
-        fvVector.emplace_back("version", version);
-    }
-
-    try
-    {
-        table->set(key, fvVector);
-    }
-    catch (const exception &e)
-    {
-        SWSS_LOG_ERROR("Exception caught while writing to DB: %s", e.what());
-        return;
-    }
-    SWSS_LOG_INFO("Wrote result to DB for key %s", key.c_str());
-}
-
-void removeResultFromDB(const std::unique_ptr<swss::Table>& table, const string& key)
-{
-    SWSS_LOG_ENTER();
-
-    if (!table)
-    {
-        SWSS_LOG_WARN("Table passed in is NULL");
-        return;
-    }
-
-    try
-    {
-        table->del(key);
-    }
-    catch (const exception &e)
-    {
-        SWSS_LOG_ERROR("Exception caught while removing from DB: %s", e.what());
-        return;
-    }
-    SWSS_LOG_INFO("Removed result from DB for key %s", key.c_str());
-}
