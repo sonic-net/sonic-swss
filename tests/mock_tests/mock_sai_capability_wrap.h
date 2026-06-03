@@ -79,6 +79,7 @@ namespace hftelorch_sai_wrap_ut
     void setSaiHookModeAdvertisedMixedOnly();
     void setSaiHookModeAdvertisedBoth();
     void setSaiHookModeAdvertisedNeither();
+    void setSaiHookModeQueryNotSupported();
 
     /** RAII: restores the HFTel hook to None on scope exit. */
     struct HFTelSaiHookGuard
