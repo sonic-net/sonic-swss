@@ -286,4 +286,15 @@ namespace hftelorch_test
         auto orch = make_unique<HFTelOrch>(m_config_db.get(), m_state_db.get(), stel_tables);
         orch.reset();
     }
+
+    /*
+     * SAI_TAM_TEL_TYPE_ATTR_MODE capability query returns NOT_SUPPORTED
+     * (current saivs behavior). HFT should still be enabled via the
+     * spec-default SINGLE_TYPE fallback.
+     */
+    TEST_F(HFTelOrchIsSupportedTest, IsSupportedHFTel_mode_query_not_supported)
+    {
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeQueryNotSupported);
+        EXPECT_TRUE(HFTelOrch::isSupportedHFTel(gSwitchId));
+    }
 }
