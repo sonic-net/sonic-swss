@@ -19,11 +19,13 @@ HFTelProfile::HFTelProfile(
     const string &profile_name,
     sai_object_id_t sai_tam_obj,
     sai_object_id_t sai_tam_collector_obj,
-    const CounterNameCache &cache)
+    const CounterNameCache &cache,
+    sai_tam_tel_type_mode_t tel_type_mode)
     : m_profile_name(profile_name),
       m_setting_state(SAI_TAM_TEL_TYPE_STATE_STOP_STREAM),
       m_poll_interval(0),
       m_counter_name_cache(cache),
+      m_tel_type_mode(tel_type_mode),
       m_sai_tam_obj(sai_tam_obj),
       m_sai_tam_collector_obj(sai_tam_collector_obj)
 {

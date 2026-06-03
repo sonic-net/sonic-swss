@@ -25,7 +25,8 @@ public:
         const std::string &profile_name,
         sai_object_id_t sai_tam_obj,
         sai_object_id_t sai_tam_collector_obj,
-        const CounterNameCache &cache);
+        const CounterNameCache &cache,
+        sai_tam_tel_type_mode_t tel_type_mode);
     ~HFTelProfile();
     HFTelProfile(const HFTelProfile &) = delete;
     HFTelProfile &operator=(const HFTelProfile &) = delete;
@@ -78,6 +79,8 @@ private:
             std::string,
             sai_object_id_t>>
         m_name_sai_map;
+
+    const sai_tam_tel_type_mode_t m_tel_type_mode;
 
     // SAI objects
     const sai_object_id_t m_sai_tam_obj;
