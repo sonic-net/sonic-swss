@@ -1,5 +1,5 @@
-# Gating: runs on PRs targeting upscaleai-202511. Optional manual dispatch.
-name: swss-gating
+# gate-sonic-swss — self-hosted build + mock tests (sonic-slave + buildimage debs).
+name: gate-sonic-swss
 on:
   pull_request:
     branches: [upscaleai-202511]
@@ -19,9 +19,56 @@ permissions:
   contents: read
 
 jobs:
-  call-swss-tests:
+  swss-build-test:
     uses: ./.github/workflows/swss-tests-common.yml
     with:
       skip_dpkg: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.event.inputs.skip_dpkg == 'true') }}
       swss_common_ref: 'upscaleai-202511'
     secrets: inherit
+
+  gate-report:
+    runs-on: ubuntu-22.04
+    needs: [swss-build-test]
+    if: always() && github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Build PR comment
+        env:
+          BUILD_RESULT: ${{ needs.swss-build-test.result }}
+        run: |
+          python3 <<'PY'
+          import os
+          from pathlib import Path
+
+          result = os.environ["BUILD_RESULT"]
+          icon = {"success": "✅", "failure": "❌", "cancelled": "⚠️", "skipped": "⏭️"}
+
+          lines = [
+              "## gate-sonic-swss",
+              "",
+              "| Stage | Result |",
+              "|-------|--------|",
+              f"| Build + mock tests + cargo (self-hosted) | {icon.get(result, result)} {result} |",
+              "",
+              "_Runs on runner label `sonic-build-202511` with sonic-slave-bookworm and buildimage debs._",
+              "",
+          ]
+
+          if result == "success":
+              lines += ["All gate stages passed.", ""]
+          else:
+              lines += [
+                  "Self-hosted gate failed. Open the **swss-tests-common / build-and-test** job log for details.",
+                  "",
+              ]
+
+          Path("gate-report.md").write_text("\n".join(lines))
+          PY
+
+      - name: Post gate summary on PR
+        uses: marocchino/sticky-pull-request-comment@773744901bac0e8cbb5a0dc842800d45e9b2b405 # v2.9.4
+        with:
+          header: gate-sonic-swss
+          path: gate-report.md
