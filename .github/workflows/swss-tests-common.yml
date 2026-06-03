@@ -227,7 +227,7 @@ jobs:
 
             # Targeted install: only headers + shared lib + pkg-config.
             # Skips full "make install" which does expensive libtool re-linking
-            # of SWIG Python extensions (~24 min) that swss doesn't need.
+            # of SWIG Python extensions (~24 min) that swss does not need.
             echo "=== Installing swss-common (targeted) ==="
             sudo install -d /usr/lib /usr/include/swss /usr/lib/pkgconfig
 
