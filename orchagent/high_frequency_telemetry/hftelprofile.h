@@ -102,6 +102,18 @@ private:
     bool isObjectTypeInProfile(sai_object_type_t object_type, const std::string &object_name) const;
     bool isMonitoringObjectReady(sai_object_type_t object_type) const;
 
+    // In MIXED mode the per-profile sai_tam_tel_type / sai_tam_report /
+    // IPFIX template are shared across object types, so they live in the
+    // three maps below under a single key. Callers funnel their
+    // sai_object_type_t lookups through mapKey so SINGLE-mode behavior
+    // (one entry per object type) is preserved without per-call branching.
+    sai_object_type_t mapKey(sai_object_type_t object_type) const
+    {
+        return m_tel_type_mode == SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE
+            ? SAI_OBJECT_TYPE_NULL
+            : object_type;
+    }
+
     // SAI calls
     sai_object_id_t getTAMReportObjID(sai_object_type_t object_type);
     sai_object_id_t getTAMTelTypeObjID(sai_object_type_t object_type);
