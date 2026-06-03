@@ -69,9 +69,24 @@ HFTelOrch::HFTelOrch(
       m_sai_hostif_table_entry_obj(SAI_NULL_OBJECT_ID),
       m_sai_tam_transport_obj(SAI_NULL_OBJECT_ID),
       m_sai_tam_collector_obj(SAI_NULL_OBJECT_ID),
-      m_sai_tam_obj(SAI_NULL_OBJECT_ID)
+      m_sai_tam_obj(SAI_NULL_OBJECT_ID),
+      m_tel_type_mode(SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE)
 {
     SWSS_LOG_ENTER();
+
+    bool single_supported = false;
+    bool mixed_supported = false;
+    if (querySupportedTelTypeModes(gSwitchId, single_supported, mixed_supported)
+        && (single_supported || mixed_supported))
+    {
+        m_tel_type_mode = single_supported
+            ? SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE
+            : SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE;
+    }
+    SWSS_LOG_NOTICE("HFTel: selected TAM tel_type mode %s",
+                    m_tel_type_mode == SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE
+                        ? "SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE"
+                        : "SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE");
 
     createNetlinkChannel("sonic_stel", "ipfix");
     createTAM();
