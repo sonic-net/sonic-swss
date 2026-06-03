@@ -32,6 +32,11 @@ public:
     static bool isSupportedHFTel(sai_object_id_t switch_id);
 
 private:
+    static bool querySupportedTelTypeModes(
+        sai_object_id_t switch_id,
+        bool &single_supported,
+        bool &mixed_supported);
+
     swss::Table m_state_telemetry_session;
     swss::DBConnector m_asic_db;
     swss::NotificationConsumer* m_asic_notification_consumer = nullptr;

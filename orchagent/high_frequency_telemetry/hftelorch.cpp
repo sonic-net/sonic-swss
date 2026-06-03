@@ -268,6 +268,74 @@ bool HFTelOrch::isSupportedHFTel(sai_object_id_t switch_id)
         }
     }
 
+    bool single_supported = false;
+    bool mixed_supported = false;
+    if (!querySupportedTelTypeModes(switch_id, single_supported, mixed_supported))
+    {
+        SWSS_LOG_NOTICE("HFTel: SAI_TAM_TEL_TYPE_ATTR_MODE capability unavailable, HFTel disabled");
+        return false;
+    }
+
+    if (!single_supported && !mixed_supported)
+    {
+        SWSS_LOG_NOTICE("HFTel: neither SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE nor SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE advertised, HFTel disabled");
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("HFTel: TAM tel_type modes advertised: SINGLE_TYPE=%s MIXED_TYPE=%s",
+                    single_supported ? "yes" : "no",
+                    mixed_supported ? "yes" : "no");
+
+    return true;
+}
+
+bool HFTelOrch::querySupportedTelTypeModes(
+    sai_object_id_t switch_id,
+    bool &single_supported,
+    bool &mixed_supported)
+{
+    SWSS_LOG_ENTER();
+
+    single_supported = false;
+    mixed_supported = false;
+
+    const auto *meta = sai_metadata_get_attr_metadata(
+        SAI_OBJECT_TYPE_TAM_TEL_TYPE,
+        SAI_TAM_TEL_TYPE_ATTR_MODE);
+    if (!meta || (!meta->isenum && !meta->isenumlist))
+    {
+        SWSS_LOG_NOTICE("HFTel: SAI_TAM_TEL_TYPE_ATTR_MODE is not an enum attribute");
+        return false;
+    }
+
+    std::vector<int32_t> valuesList(meta->enummetadata->valuescount);
+    sai_s32_list_t values;
+    values.count = static_cast<uint32_t>(valuesList.size());
+    values.list = valuesList.data();
+
+    sai_status_t status = sai_query_attribute_enum_values_capability(
+        switch_id,
+        SAI_OBJECT_TYPE_TAM_TEL_TYPE,
+        SAI_TAM_TEL_TYPE_ATTR_MODE,
+        &values);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_NOTICE("HFTel: SAI_TAM_TEL_TYPE_ATTR_MODE capability query failed (status=%d)", status);
+        return false;
+    }
+
+    for (uint32_t i = 0; i < values.count; i++)
+    {
+        if (values.list[i] == SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE)
+        {
+            single_supported = true;
+        }
+        else if (values.list[i] == SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE)
+        {
+            mixed_supported = true;
+        }
+    }
+
     return true;
 }
 
