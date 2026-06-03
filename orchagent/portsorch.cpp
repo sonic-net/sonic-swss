@@ -10044,13 +10044,25 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id, sai_object_id_t 
 {
     SWSS_LOG_ENTER();
 
-    Port port;
-    if (getPort(port_id, port) &&
-        (port.m_role == Port::Role::Rec || port.m_role == Port::Role::Inb))
+    // Skip serdes programming for recycle/inband ports: they have no SERDES
+    // object and the brcm SAI rejects SAI_PORT_ATTR_PORT_SERDES_ID GETs on them.
+    // Resolve the role with a non-throwing lookup rather than getPort(): during
+    // initGearboxPort() this is called with gearbox system/line-side OIDs that
+    // are already in saiOidToAlias while the host port has not yet been inserted
+    // into m_portList, and getPort() would SWSS_LOG_THROW (crashing orchagent)
+    // on that transient map inconsistency.
+    auto alias_it = saiOidToAlias.find(port_id);
+    if (alias_it != saiOidToAlias.end())
     {
-        SWSS_LOG_INFO("Skipping serdes programming for recirc/inband port %s",
-                      port.m_alias.c_str());
-        return true;
+        auto port_it = m_portList.find(alias_it->second);
+        if (port_it != m_portList.end() &&
+            (port_it->second.m_role == Port::Role::Rec ||
+             port_it->second.m_role == Port::Role::Inb))
+        {
+            SWSS_LOG_INFO("Skipping serdes programming for recirc/inband port %s",
+                          port_it->second.m_alias.c_str());
+            return true;
+        }
     }
 
     vector<sai_attribute_t> attr_list;
@@ -10196,11 +10208,20 @@ void PortsOrch::removePortSerdesAttribute(sai_object_id_t port_id)
 {
     SWSS_LOG_ENTER();
 
-    Port port;
-    if (getPort(port_id, port) &&
-        (port.m_role == Port::Role::Rec || port.m_role == Port::Role::Inb))
+    // See setPortSerdesAttribute(): use a non-throwing lookup instead of
+    // getPort() so a transient saiOidToAlias/m_portList inconsistency (as
+    // happens for gearbox side-OIDs during initGearboxPort()) cannot crash
+    // orchagent. Recycle/inband ports have no SERDES object to remove.
+    auto alias_it = saiOidToAlias.find(port_id);
+    if (alias_it != saiOidToAlias.end())
     {
-        return;
+        auto port_it = m_portList.find(alias_it->second);
+        if (port_it != m_portList.end() &&
+            (port_it->second.m_role == Port::Role::Rec ||
+             port_it->second.m_role == Port::Role::Inb))
+        {
+            return;
+        }
     }
 
     sai_attribute_t port_attr;
