@@ -612,11 +612,15 @@ void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
 
     for (auto &profile : m_name_profile_mapping)
     {
-        auto type = profile.second->getObjectType(tam_tel_type_obj);
-        if (type == SAI_OBJECT_TYPE_NULL)
+        // In MIXED mode getObjectType returns the singleton SAI_OBJECT_TYPE_NULL
+        // for the matching profile, which collides with the not-found marker.
+        // Disambiguate via the guard before treating the profile as a miss.
+        if (!profile.second->getTAMTelTypeGuard(tam_tel_type_obj))
         {
             continue;
         }
+
+        auto type = profile.second->getObjectType(tam_tel_type_obj);
 
         // TODO: A potential optimization
         // We need to notify Config Ready only when the message of State DB is delivered to the CounterSyncd
