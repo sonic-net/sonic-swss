@@ -10,15 +10,15 @@ HFTelGroup::HFTelGroup(const string &group_name) : m_group_name(group_name)
     SWSS_LOG_ENTER();
 }
 
-void HFTelGroup::updateObjects(const set<string> &object_names)
+void HFTelGroup::updateObjects(const set<string> &object_names, sai_uint16_t start_label)
 {
     SWSS_LOG_ENTER();
 
     m_objects.clear();
-    sai_uint16_t lable = 1;
+    sai_uint16_t label = start_label;
     for (auto &name : object_names)
     {
-        m_objects[name] = lable++;
+        m_objects[name] = label++;
     }
 }
 

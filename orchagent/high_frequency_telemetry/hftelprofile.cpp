@@ -287,11 +287,21 @@ void HFTelProfile::setObjectNames(const string &group_name, set<string> &&object
 
     auto itr = m_groups.lower_bound(sai_object_type);
 
+    // In MIXED_TYPE mode all groups in a profile share one IPFIX template and
+    // labels must be globally unique within the profile. Allocate from
+    // m_next_label and never reuse. In SINGLE_TYPE the label space is per-group
+    // (legacy behavior) so we keep the default start_label of 1.
+    const sai_uint16_t start_label = isMixedTypeMode() ? m_next_label : 1;
+
     if (itr == m_groups.end() || itr->first != sai_object_type)
     {
         HFTelGroup group(group_name);
-        group.updateObjects(object_names);
+        group.updateObjects(object_names, start_label);
         m_groups.insert(itr, {sai_object_type, move(group)});
+        if (isMixedTypeMode())
+        {
+            m_next_label = static_cast<sai_uint16_t>(start_label + object_names.size());
+        }
     }
     else
     {
@@ -303,7 +313,11 @@ void HFTelProfile::setObjectNames(const string &group_name, set<string> &&object
         {
             delObjectSAIID(sai_object_type, obj.first.c_str());
         }
-        itr->second.updateObjects(object_names);
+        itr->second.updateObjects(object_names, start_label);
+        if (isMixedTypeMode())
+        {
+            m_next_label = static_cast<sai_uint16_t>(start_label + object_names.size());
+        }
     }
     loadCounterNameCache(sai_object_type);
 
