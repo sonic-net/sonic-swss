@@ -28,6 +28,12 @@ public:
 
     static const std::unordered_map<std::string, sai_object_type_t> SUPPORT_COUNTER_TABLES;
 
+    // Mode used when the vendor SAI advertises both SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE
+    // and SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE. SINGLE_TYPE preserves historical behavior
+    // on every platform that supports it; flip in source to force MIXED_TYPE for debug
+    // or bring-up. Not exposed via CONFIG_DB, YANG, or CLI by design.
+    static constexpr sai_tam_tel_type_mode_t DEFAULT_TEL_TYPE_MODE = SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE;
+
     void locallyNotify(const CounterNameMapUpdater::Message &msg);
     static bool isSupportedHFTel(sai_object_id_t switch_id);
 

@@ -70,19 +70,25 @@ HFTelOrch::HFTelOrch(
       m_sai_tam_transport_obj(SAI_NULL_OBJECT_ID),
       m_sai_tam_collector_obj(SAI_NULL_OBJECT_ID),
       m_sai_tam_obj(SAI_NULL_OBJECT_ID),
-      m_tel_type_mode(SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE)
+      m_tel_type_mode(DEFAULT_TEL_TYPE_MODE)
 {
     SWSS_LOG_ENTER();
 
     bool single_supported = false;
     bool mixed_supported = false;
-    if (querySupportedTelTypeModes(gSwitchId, single_supported, mixed_supported)
-        && (single_supported || mixed_supported))
+    querySupportedTelTypeModes(gSwitchId, single_supported, mixed_supported);
+
+    if (single_supported && !mixed_supported)
     {
-        m_tel_type_mode = single_supported
-            ? SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE
-            : SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE;
+        m_tel_type_mode = SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE;
     }
+    else if (mixed_supported && !single_supported)
+    {
+        m_tel_type_mode = SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE;
+    }
+    // Both advertised (or neither, which isSupportedHFTel filters out earlier):
+    // keep DEFAULT_TEL_TYPE_MODE.
+
     SWSS_LOG_NOTICE("HFTel: selected TAM tel_type mode %s",
                     m_tel_type_mode == SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE
                         ? "SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE"
