@@ -997,11 +997,15 @@ void HFTelProfile::updateTemplates(sai_object_id_t tam_tel_type_obj)
 {
     SWSS_LOG_ENTER();
 
-    auto object_type = getObjectType(tam_tel_type_obj);
-    if (object_type == SAI_OBJECT_TYPE_NULL)
+    // In MIXED mode the stored key is the singleton (SAI_OBJECT_TYPE_NULL),
+    // which collides with getObjectType's "not found" sentinel. Use the
+    // guard to disambiguate.
+    if (!getTAMTelTypeGuard(tam_tel_type_obj))
     {
-        SWSS_LOG_THROW("The object type is not found");
+        SWSS_LOG_THROW("The TAM tel type object %s is not registered with this profile",
+                       sai_serialize_object_id(tam_tel_type_obj).c_str());
     }
+    auto object_type = getObjectType(tam_tel_type_obj);
 
     // Query the required buffer size first by passing count=0 and list=nullptr,
     // then allocate and fetch the actual data.
