@@ -727,7 +727,24 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
     attr.value.s32 = SAI_TAM_TELEMETRY_TYPE_COUNTER_SUBSCRIPTION;
     attrs.push_back(attr);
 
-    if (object_type == SAI_OBJECT_TYPE_PORT)
+    if (m_tel_type_mode == SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE)
+    {
+        // The single tel_type for this profile must cover every counter
+        // category; individual sai_tam_counter_subscription objects scope
+        // what is actually streamed.
+        attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
+
+        attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_MMU_STATS;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
+
+        attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_OUTPUT_QUEUE_STATS;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
+    }
+    else if (object_type == SAI_OBJECT_TYPE_PORT)
     {
         attr.id = SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_PORT_STATS;
         attr.value.booldata = true;
@@ -752,8 +769,8 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
                        sai_serialize_object_type(object_type).c_str());
     }
 
-    attr.id = SAI_TAM_TEL_TYPE_ATTR_MODE ;
-    attr.value.s32 = SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE;
+    attr.id = SAI_TAM_TEL_TYPE_ATTR_MODE;
+    attr.value.s32 = m_tel_type_mode;
     attrs.push_back(attr);
 
     attr.id = SAI_TAM_TEL_TYPE_ATTR_REPORT_ID;
