@@ -143,6 +143,44 @@ namespace hftelorch_test
         (void)supported;
     }
 
+    /*
+     * SAI_TAM_TEL_TYPE_ATTR_MODE advertises SINGLE only.
+     */
+    TEST_F(HFTelOrchIsSupportedTest, IsSupportedHFTel_mode_single_only)
+    {
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeAdvertisedSingleOnly);
+        EXPECT_TRUE(HFTelOrch::isSupportedHFTel(gSwitchId));
+    }
+
+    /*
+     * SAI_TAM_TEL_TYPE_ATTR_MODE advertises MIXED only.
+     */
+    TEST_F(HFTelOrchIsSupportedTest, IsSupportedHFTel_mode_mixed_only)
+    {
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeAdvertisedMixedOnly);
+        EXPECT_TRUE(HFTelOrch::isSupportedHFTel(gSwitchId));
+    }
+
+    /*
+     * SAI_TAM_TEL_TYPE_ATTR_MODE advertises both SINGLE and MIXED.
+     */
+    TEST_F(HFTelOrchIsSupportedTest, IsSupportedHFTel_mode_both)
+    {
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeAdvertisedBoth);
+        EXPECT_TRUE(HFTelOrch::isSupportedHFTel(gSwitchId));
+    }
+
+    /*
+     * SAI_TAM_TEL_TYPE_ATTR_MODE advertises neither SINGLE nor MIXED.
+     * Covers: "HFTel: neither SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE nor
+     *          SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE advertised, HFTel disabled"
+     */
+    TEST_F(HFTelOrchIsSupportedTest, IsSupportedHFTel_mode_neither)
+    {
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeAdvertisedNeither);
+        EXPECT_FALSE(HFTelOrch::isSupportedHFTel(gSwitchId));
+    }
+
     class HFTelOrchConstructorTest : public ::testing::Test
     {
     protected:

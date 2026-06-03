@@ -56,6 +56,20 @@ namespace
         };
 
         thread_local Hook g_hook = Hook::None;
+
+        // Independent hook driving the SAI_TAM_TEL_TYPE_ATTR_MODE
+        // enum-values capability response. Drives the four advertisement
+        // outcomes.
+        enum class ModeHook
+        {
+            None = 0,
+            SingleOnly,
+            MixedOnly,
+            Both,
+            Neither,
+        };
+
+        thread_local ModeHook g_mode_hook = ModeHook::None;
     }
 }
 
@@ -139,6 +153,63 @@ extern "C"
             }
             enum_values_capability->count = 1;
             enum_values_capability->list[0] = SAI_STATS_COUNT_MODE_PACKET_AND_BYTE;
+            return SAI_STATUS_SUCCESS;
+        }
+
+        // HFTel SAI_TAM_TEL_TYPE_ATTR_MODE enum-values capability.
+        const bool is_hftel_tel_type_mode =
+                (object_type == SAI_OBJECT_TYPE_TAM_TEL_TYPE)
+                && (attr_id == SAI_TAM_TEL_TYPE_ATTR_MODE);
+        if (is_hftel_tel_type_mode && hftel::g_mode_hook != hftel::ModeHook::None)
+        {
+            int32_t values[2];
+            uint32_t needed = 0;
+            switch (hftel::g_mode_hook)
+            {
+            case hftel::ModeHook::SingleOnly:
+                values[needed++] = SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE;
+                break;
+            case hftel::ModeHook::MixedOnly:
+                values[needed++] = SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE;
+                break;
+            case hftel::ModeHook::Both:
+                values[needed++] = SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE;
+                values[needed++] = SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE;
+                break;
+            case hftel::ModeHook::Neither:
+                break;
+            case hftel::ModeHook::None:
+                // Unreachable (guarded above).
+                break;
+            }
+
+            if (needed == 0)
+            {
+                // Empty capability set (ModeHook::Neither): return SUCCESS
+                // with count = 0 regardless of how the caller passed the list.
+                if (enum_values_capability)
+                {
+                    enum_values_capability->count = 0;
+                }
+                return SAI_STATUS_SUCCESS;
+            }
+
+            if (!enum_values_capability
+                    || !enum_values_capability->list
+                    || enum_values_capability->count < needed)
+            {
+                if (enum_values_capability)
+                {
+                    enum_values_capability->count = needed;
+                }
+                return SAI_STATUS_BUFFER_OVERFLOW;
+            }
+
+            for (uint32_t i = 0; i < needed; ++i)
+            {
+                enum_values_capability->list[i] = values[i];
+            }
+            enum_values_capability->count = needed;
             return SAI_STATUS_SUCCESS;
         }
 
@@ -302,6 +373,7 @@ namespace hftelorch_sai_wrap_ut
     void setSaiHookNone()
     {
         hftel::g_hook = hftel::Hook::None;
+        hftel::g_mode_hook = hftel::ModeHook::None;
     }
 
     void setSaiHookStatsStFail()
@@ -327,6 +399,26 @@ namespace hftelorch_sai_wrap_ut
     void setSaiHookAllSupported()
     {
         hftel::g_hook = hftel::Hook::AllSupported;
+    }
+
+    void setSaiHookModeAdvertisedSingleOnly()
+    {
+        hftel::g_mode_hook = hftel::ModeHook::SingleOnly;
+    }
+
+    void setSaiHookModeAdvertisedMixedOnly()
+    {
+        hftel::g_mode_hook = hftel::ModeHook::MixedOnly;
+    }
+
+    void setSaiHookModeAdvertisedBoth()
+    {
+        hftel::g_mode_hook = hftel::ModeHook::Both;
+    }
+
+    void setSaiHookModeAdvertisedNeither()
+    {
+        hftel::g_mode_hook = hftel::ModeHook::Neither;
     }
 
     HFTelSaiHookGuard::HFTelSaiHookGuard(void (*apply)())
