@@ -65,6 +65,8 @@ private:
     sai_object_id_t m_sai_tam_collector_obj;
     sai_object_id_t m_sai_tam_obj;
 
+    sai_tam_tel_type_mode_t m_tel_type_mode;
+
     // SAI calls
     void createNetlinkChannel(const std::string &genl_family, const std::string &genl_group);
     void deleteNetlinkChannel();
