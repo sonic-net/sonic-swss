@@ -543,7 +543,8 @@ shared_ptr<HFTelProfile> HFTelOrch::getProfile(const string &profile_name)
                 profile_name,
                 m_sai_tam_obj,
                 m_sai_tam_collector_obj,
-                m_counter_name_cache));
+                m_counter_name_cache,
+                m_tel_type_mode));
     }
 
     return m_name_profile_mapping.at(profile_name);
