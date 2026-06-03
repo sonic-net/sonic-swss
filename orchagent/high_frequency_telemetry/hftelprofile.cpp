@@ -88,13 +88,17 @@ void HFTelProfile::setStreamState(sai_object_type_t type, sai_tam_tel_type_state
         return;
     }
 
+    const bool ready = (m_tel_type_mode == SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE)
+        ? areAllMonitoringObjectsReady()
+        : isMonitoringObjectReady(type);
+
     do
     {
         if (stats->second == SAI_TAM_TEL_TYPE_STATE_STOP_STREAM)
         {
             if (state == SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG)
             {
-                if (!isMonitoringObjectReady(type))
+                if (!ready)
                 {
                     return;
                 }
@@ -108,7 +112,7 @@ void HFTelProfile::setStreamState(sai_object_type_t type, sai_tam_tel_type_state
                     // The template isn't ready
                     return;
                 }
-                if (!isMonitoringObjectReady(type))
+                if (!ready)
                 {
                     return;
                 }
@@ -641,6 +645,20 @@ bool HFTelProfile::isMonitoringObjectReady(sai_object_type_t object_type) const
         return false;
     }
 
+    return true;
+}
+
+bool HFTelProfile::areAllMonitoringObjectsReady() const
+{
+    SWSS_LOG_ENTER();
+
+    for (const auto &group : m_groups)
+    {
+        if (!isMonitoringObjectReady(group.first))
+        {
+            return false;
+        }
+    }
     return true;
 }
 
