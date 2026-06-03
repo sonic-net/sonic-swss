@@ -617,6 +617,17 @@ map<string, FlexCounterPgStates> FlexCounterOrch::getPgConfigurations()
     std::vector<std::string> portPgKeys;
     gBufferOrch->getBufferObjectsWithNonZeroProfile(portPgKeys, APP_BUFFER_PG_TABLE_NAME);
 
+    // No BUFFER_PG entries: register PG counters for all priority groups on each port
+    // (same outcome as non-create-only mode). Mirrors queue counter fallback when no
+    // BUFFER_QUEUE config exists (host TX queue still gets a map entry).
+    if (portPgKeys.empty())
+    {
+        SWSS_LOG_NOTICE("No BUFFER_PG entries; enabling PG flex counters for all priority groups");
+        FlexCounterPgStates flexCounterPgState(0);
+        pgsStateVector.insert(make_pair(createAllAvailableBuffersStr, flexCounterPgState));
+        return pgsStateVector;
+    }
+
     for (const auto& portPgKey : portPgKeys)
     {
         auto toks = tokenize(portPgKey, ':');
