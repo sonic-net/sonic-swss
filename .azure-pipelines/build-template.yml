@@ -212,7 +212,7 @@ jobs:
       source: specific
       project: build
       pipeline: sonic-net.sonic-platform-vpp
-      artifact: vpp
+      artifact: vpp-${{ parameters.debian_version }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/master'
       allowPartiallySucceededBuilds: true
