@@ -70,7 +70,8 @@ void HFTelProfile::setStreamState(sai_object_type_t type, sai_tam_tel_type_state
 {
     SWSS_LOG_ENTER();
 
-    auto type_itr = m_sai_tam_tel_type_objs.find(type);
+    const auto key = mapKey(type);
+    auto type_itr = m_sai_tam_tel_type_objs.find(key);
     if (type_itr == m_sai_tam_tel_type_objs.end())
     {
         return;
@@ -98,11 +99,11 @@ void HFTelProfile::setStreamState(sai_object_type_t type, sai_tam_tel_type_state
                     return;
                 }
                 // Clearup the previous templates
-                m_sai_tam_tel_type_templates.erase(type);
+                m_sai_tam_tel_type_templates.erase(key);
             }
             else if (state == SAI_TAM_TEL_TYPE_STATE_START_STREAM)
             {
-                if (m_sai_tam_tel_type_templates.find(type) == m_sai_tam_tel_type_templates.end())
+                if (m_sai_tam_tel_type_templates.find(key) == m_sai_tam_tel_type_templates.end())
                 {
                     // The template isn't ready
                     return;
@@ -173,7 +174,7 @@ void HFTelProfile::setStreamState(sai_object_type_t type, sai_tam_tel_type_state
 sai_tam_tel_type_state_t HFTelProfile::getStreamState(sai_object_type_t object_type) const
 {
     SWSS_LOG_ENTER();
-    auto itr = m_sai_tam_tel_type_objs.find(object_type);
+    auto itr = m_sai_tam_tel_type_objs.find(mapKey(object_type));
     if (itr == m_sai_tam_tel_type_objs.end())
     {
         return SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
@@ -190,7 +191,7 @@ void HFTelProfile::notifyConfigReady(sai_object_type_t object_type)
 {
     SWSS_LOG_ENTER();
 
-    auto itr = m_sai_tam_tel_type_objs.find(object_type);
+    auto itr = m_sai_tam_tel_type_objs.find(mapKey(object_type));
     if (itr == m_sai_tam_tel_type_objs.end())
     {
         return;
@@ -204,7 +205,7 @@ sai_tam_tel_type_state_t HFTelProfile::getTelemetryTypeState(sai_object_type_t o
 {
     SWSS_LOG_ENTER();
 
-    auto itr = m_sai_tam_tel_type_objs.find(object_type);
+    auto itr = m_sai_tam_tel_type_objs.find(mapKey(object_type));
     if (itr == m_sai_tam_tel_type_objs.end())
     {
         return SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
@@ -462,15 +463,16 @@ void HFTelProfile::clearGroup(const std::string &group_name)
         }
         m_groups.erase(itr);
     }
-    m_sai_tam_tel_type_templates.erase(sai_object_type);
+    const auto shared_key = mapKey(sai_object_type);
+    m_sai_tam_tel_type_templates.erase(shared_key);
     m_sai_tam_counter_subscription_objs.erase(sai_object_type);
-    auto tel_type_itr = m_sai_tam_tel_type_objs.find(sai_object_type);
+    auto tel_type_itr = m_sai_tam_tel_type_objs.find(shared_key);
     if (tel_type_itr != m_sai_tam_tel_type_objs.end())
     {
         m_sai_tam_tel_type_states.erase(tel_type_itr->second);
         m_sai_tam_tel_type_objs.erase(tel_type_itr);
     }
-    m_sai_tam_report_objs.erase(sai_object_type);
+    m_sai_tam_report_objs.erase(shared_key);
     m_name_sai_map.erase(sai_object_type);
 
     SWSS_LOG_NOTICE("Cleared high frequency telemetry group %s with no objects", group_name.c_str());
@@ -480,7 +482,7 @@ const vector<uint8_t> &HFTelProfile::getTemplates(sai_object_type_t object_type)
 {
     SWSS_LOG_ENTER();
 
-    return m_sai_tam_tel_type_templates.at(object_type);
+    return m_sai_tam_tel_type_templates.at(mapKey(object_type));
 }
 
 const vector<string> HFTelProfile::getObjectNames(sai_object_type_t object_type) const
@@ -646,7 +648,8 @@ sai_object_id_t HFTelProfile::getTAMReportObjID(sai_object_type_t object_type)
 {
     SWSS_LOG_ENTER();
 
-    auto itr = m_sai_tam_report_objs.find(object_type);
+    const auto key = mapKey(object_type);
+    auto itr = m_sai_tam_report_objs.find(key);
     if (itr != m_sai_tam_report_objs.end())
     {
         return *itr->second;
@@ -689,7 +692,7 @@ sai_object_id_t HFTelProfile::getTAMReportObjID(sai_object_type_t object_type)
             static_cast<uint32_t>(attrs.size()),
             attrs.data()));
 
-    m_sai_tam_report_objs[object_type] = move(
+    m_sai_tam_report_objs[key] = move(
         sai_guard_t(
             new sai_object_id_t(sai_object),
             [this](sai_object_id_t *p)
@@ -707,7 +710,8 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
 {
     SWSS_LOG_ENTER();
 
-    auto itr = m_sai_tam_tel_type_objs.find(object_type);
+    const auto key = mapKey(object_type);
+    auto itr = m_sai_tam_tel_type_objs.find(key);
     if (itr != m_sai_tam_tel_type_objs.end())
     {
         return *itr->second;
@@ -764,7 +768,7 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
             static_cast<uint32_t>(attrs.size()),
             attrs.data()));
 
-    m_sai_tam_tel_type_objs[object_type] = move(
+    m_sai_tam_tel_type_objs[key] = move(
         sai_guard_t(
             new sai_object_id_t(sai_object),
             [this](sai_object_id_t *p)
@@ -782,7 +786,7 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
                     sai_tam_api->remove_tam_tel_type(*p));
                 delete p;
             }));
-    m_sai_tam_tel_type_states[m_sai_tam_tel_type_objs[object_type]] = SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
+    m_sai_tam_tel_type_states[m_sai_tam_tel_type_objs[key]] = SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
 
     HFTELUTILS_ADD_SAI_OBJECT_LIST(
         *m_sai_tam_telemetry_obj,
