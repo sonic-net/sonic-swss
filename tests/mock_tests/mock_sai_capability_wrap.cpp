@@ -65,7 +65,8 @@ namespace
 
         // Independent hook driving the SAI_TAM_TEL_TYPE_ATTR_MODE
         // enum-values capability response. Drives the four advertisement
-        // outcomes.
+        // outcomes plus a NOT_SUPPORTED variant that mirrors saivs's
+        // current behavior.
         enum class ModeHook
         {
             None = 0,
@@ -73,6 +74,7 @@ namespace
             MixedOnly,
             Both,
             Neither,
+            QueryNotSupported,
         };
 
         thread_local ModeHook g_mode_hook = ModeHook::None;
@@ -176,6 +178,11 @@ extern "C"
                 && (attr_id == SAI_TAM_TEL_TYPE_ATTR_MODE);
         if (is_hftel_tel_type_mode && hftel::g_mode_hook != hftel::ModeHook::None)
         {
+            if (hftel::g_mode_hook == hftel::ModeHook::QueryNotSupported)
+            {
+                return SAI_STATUS_NOT_SUPPORTED;
+            }
+
             int32_t values[2];
             uint32_t needed = 0;
             switch (hftel::g_mode_hook)
@@ -192,8 +199,9 @@ extern "C"
                 break;
             case hftel::ModeHook::Neither:
                 break;
+            case hftel::ModeHook::QueryNotSupported:
             case hftel::ModeHook::None:
-                // Unreachable (guarded above).
+                // Handled above / unreachable.
                 break;
             }
 
@@ -433,6 +441,11 @@ namespace hftelorch_sai_wrap_ut
     void setSaiHookModeAdvertisedNeither()
     {
         hftel::g_mode_hook = hftel::ModeHook::Neither;
+    }
+
+    void setSaiHookModeQueryNotSupported()
+    {
+        hftel::g_mode_hook = hftel::ModeHook::QueryNotSupported;
     }
 
     HFTelSaiHookGuard::HFTelSaiHookGuard(void (*apply)())
