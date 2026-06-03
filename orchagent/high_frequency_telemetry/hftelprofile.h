@@ -101,6 +101,7 @@ private:
 
     bool isObjectTypeInProfile(sai_object_type_t object_type, const std::string &object_name) const;
     bool isMonitoringObjectReady(sai_object_type_t object_type) const;
+    bool areAllMonitoringObjectsReady() const;
 
     // In MIXED mode the per-profile sai_tam_tel_type / sai_tam_report /
     // IPFIX template are shared across object types, so they live in the
