@@ -37,6 +37,10 @@ namespace std {
 
 extern redisReply *mockReply;
 extern sai_redis_communication_mode_t gRedisCommunicationMode;
+extern string gMySwitchType;
+extern string gMyHostName;
+extern string gMyAsicName;
+extern bool gMultiAsicVoq;
 using ::testing::_;
 using ::testing::StrictMock;
 
@@ -4786,6 +4790,99 @@ namespace portsorch_test
         ts.clear();
         consumer->dumpPendingTasks(ts);
         ASSERT_FALSE(ts.empty());
+    }
+
+    /* Test that a LAG member entry from a different ASIC on the same host is NOT
+     * erased from the consumer table in VoQ mode. The entry has the same hostname
+     * but a different ASIC name, so it must remain pending.
+     */
+    TEST_F(PortsOrchTest, LagMemberFromDifferentAsicOnSameHost)
+    {
+        string savedSwitchType = gMySwitchType;
+        bool savedMultiAsicVoq = gMultiAsicVoq;
+        gMySwitchType = "voq";
+        gMultiAsicVoq = true;
+
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table lagMemberTable = Table(m_app_db.get(), APP_LAG_MEMBER_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+
+        // LAG member from same hostname but different ASIC (Asic1 vs local Asic0)
+        string remoteAsicLag = gMyHostName + "|Asic1|PortChannel999";
+        lagMemberTable.set(
+            remoteAsicLag + lagMemberTable.getTableNameSeparator() + ports.begin()->first,
+            { {"status", "enabled"} });
+
+        gPortsOrch->addExistingData(&portTable);
+        gPortsOrch->addExistingData(&lagMemberTable);
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Entry must NOT be erased — it's for a different ASIC on the same host
+        vector<string> ts;
+        auto exec = gPortsOrch->getExecutor(APP_LAG_MEMBER_TABLE_NAME);
+        auto consumer = static_cast<Consumer*>(exec);
+        consumer->dumpPendingTasks(ts);
+        ASSERT_FALSE(ts.empty());
+
+        gMySwitchType = savedSwitchType;
+        gMultiAsicVoq = savedMultiAsicVoq;
+    }
+
+    /* Test that a LAG member entry from the same ASIC on the same host IS erased
+     * from the consumer table in VoQ mode. Both hostname and ASIC name match the
+     * local instance, so the entry is a duplicate local reference and should be
+     * silently dropped.
+     */
+    TEST_F(PortsOrchTest, LagMemberFromSameAsicOnSameHost)
+    {
+        string savedSwitchType = gMySwitchType;
+        bool savedMultiAsicVoq = gMultiAsicVoq;
+        gMySwitchType = "voq";
+        gMultiAsicVoq = true;
+
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table lagMemberTable = Table(m_app_db.get(), APP_LAG_MEMBER_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+
+        // LAG member from same hostname AND same ASIC (Asic0 matches local gMyAsicName)
+        string localAsicLag = gMyHostName + "|" + gMyAsicName + "|PortChannel999";
+        lagMemberTable.set(
+            localAsicLag + lagMemberTable.getTableNameSeparator() + ports.begin()->first,
+            { {"status", "enabled"} });
+
+        gPortsOrch->addExistingData(&portTable);
+        gPortsOrch->addExistingData(&lagMemberTable);
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Entry MUST be erased — same hostname and same ASIC means local duplicate
+        vector<string> ts;
+        auto exec = gPortsOrch->getExecutor(APP_LAG_MEMBER_TABLE_NAME);
+        auto consumer = static_cast<Consumer*>(exec);
+        consumer->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        gMySwitchType = savedSwitchType;
+        gMultiAsicVoq = savedMultiAsicVoq;
     }
 
     /* This test checks that a LAG member validation happens on orchagent level
