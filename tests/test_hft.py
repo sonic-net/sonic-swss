@@ -1,5 +1,7 @@
 import time
 
+import pytest
+
 from swsscommon import swsscommon
 
 
@@ -706,6 +708,86 @@ class TestHFT(object):
         asic_db = self.get_asic_db_objects(dvs)
         assert len(asic_db["tam_telemetry"]) == 0, \
             "Expected TAM_TELEMETRY object to be deleted after profile and group deletion"
+
+
+    def test_hft_per_group_session_config_populated(self, dvs, testlog):
+        """STATE_DB session_config must be non-empty for every per-group
+        HIGH_FREQUENCY_TELEMETRY_SESSION entry.
+
+        Regression test for the per-group SESSION-writing path used by both
+        SINGLE and MIXED modes. In SINGLE mode each tel_type emits its own
+        IPFIX template; in MIXED mode the single tel_type's combined template
+        is replicated across per-group entries. Either way, every entry must
+        carry session_config so CounterSyncd can register the template.
+        """
+        profile_name = "test"
+        port_group = "PORT"
+        buffer_pool_group = "BUFFER_POOL"
+
+        state_db = swsscommon.DBConnector(6, dvs.redis_sock, 0)
+        state_tbl = swsscommon.Table(state_db, "HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE")
+
+        self.create_hft_profile(dvs, name=profile_name, status="enabled")
+        self.create_hft_group(
+            dvs,
+            profile_name=profile_name,
+            group_name=port_group,
+            object_names="Ethernet0",
+            object_counters="IF_IN_OCTETS",
+        )
+        self.create_hft_group(
+            dvs,
+            profile_name=profile_name,
+            group_name=buffer_pool_group,
+            object_names="egress_lossless_pool",
+            object_counters="CURR_OCCUPANCY_BYTES",
+        )
+
+        time.sleep(5)
+
+        for group_name in (port_group, buffer_pool_group):
+            key = f"{profile_name}|{group_name}"
+            status, fvs = state_tbl.get(key)
+            assert status, f"Expected STATE_DB entry for {key}"
+            entry = dict(fvs)
+            assert entry.get("session_type") == "ipfix", (
+                f"Expected session_type=ipfix for {key}, got {entry.get('session_type')}"
+            )
+            assert entry.get("session_config", ""), (
+                f"Expected non-empty session_config for {key}; entry={entry}"
+            )
+            assert entry.get("object_names", ""), (
+                f"Expected non-empty object_names for {key}; entry={entry}"
+            )
+            assert entry.get("object_ids", ""), (
+                f"Expected non-empty object_ids for {key}; entry={entry}"
+            )
+
+        self.delete_hft_group(dvs, profile_name=profile_name, group_name=port_group)
+        self.delete_hft_group(dvs, profile_name=profile_name, group_name=buffer_pool_group)
+        self.delete_hft_profile(dvs, name=profile_name)
+
+    @pytest.mark.skip(
+        reason=(
+            "MIXED-mode end-to-end DVS test requires saivs to advertise "
+            "SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE via "
+            "queryAttrEnumValuesCapability(TAM_TEL_TYPE, ATTR_MODE). "
+            "Today saivs returns SAI_STATUS_NOT_SUPPORTED for that query and "
+            "the orchagent falls back to SINGLE_TYPE. Once sonic-sairedis "
+            "lands MIXED-mode capability advertisement, drop this skip and "
+            "either force MIXED-only or rely on the DEFAULT_TEL_TYPE_MODE "
+            "preference rule (which is SINGLE when both are advertised). "
+            "Then assert: exactly one tam_tel_type with "
+            "SAI_TAM_TEL_TYPE_ATTR_MODE=MIXED_TYPE and all three "
+            "SWITCH_ENABLE_*_STATS set true; exactly one tam_report; every "
+            "tam_counter_subscription references the same tel_type oid; the "
+            "per-group HIGH_FREQUENCY_TELEMETRY_SESSION entries carry "
+            "*identical* session_config bytes."
+        )
+    )
+    def test_hft_mixed_mode_single_tel_type(self, dvs, testlog):
+        """Placeholder for the MIXED-mode end-to-end DVS test."""
+        pass
 
 
 # Add Dummy always-pass test at end as workaroud
