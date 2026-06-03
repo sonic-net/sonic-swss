@@ -626,39 +626,60 @@ void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
         // We need to notify Config Ready only when the message of State DB is delivered to the CounterSyncd
         profile.second->notifyConfigReady(type);
 
-        // Update state db
-        vector<FieldValueTuple> values;
+        // In SINGLE mode SAI fires this callback once per object type, so we
+        // write the matching per-group STATE_DB entry. In MIXED mode the
+        // callback fires once per profile with the single tel_type oid, so
+        // we replicate the same combined IPFIX template into every per-group
+        // entry the profile owns. CounterSyncd reads per-group session_config
+        // unchanged.
+        vector<sai_object_type_t> session_types;
+        if (profile.second->isMixedTypeMode())
+        {
+            session_types = profile.second->getObjectTypes();
+        }
+        else
+        {
+            session_types.push_back(type);
+        }
+
         auto state = profile.second->getTelemetryTypeState(type);
+        string stream_status;
         if (state == SAI_TAM_TEL_TYPE_STATE_START_STREAM)
         {
-            values.emplace_back("stream_status", "enabled");
+            stream_status = "enabled";
         }
         else if (state == SAI_TAM_TEL_TYPE_STATE_STOP_STREAM)
         {
-            values.emplace_back("stream_status", "disabled");
+            stream_status = "disabled";
         }
         else
         {
             SWSS_LOG_THROW("Unexpected state %d for high frequency telemetry", state);
         }
 
-
-        values.emplace_back("object_names", boost::algorithm::join(profile.second->getObjectNames(type), ","));
+        auto templates = profile.second->getTemplates(type);
         auto to_string = boost::adaptors::transformed([](sai_uint16_t n)
                                                         { return boost::lexical_cast<std::string>(n); });
-        values.emplace_back("object_ids", boost::algorithm::join(profile.second->getObjectLabels(type) | to_string, ","));
 
+        for (auto session_type : session_types)
+        {
+            vector<FieldValueTuple> values;
+            values.emplace_back("stream_status", stream_status);
+            values.emplace_back("object_names",
+                                boost::algorithm::join(profile.second->getObjectNames(session_type), ","));
+            values.emplace_back("object_ids",
+                                boost::algorithm::join(profile.second->getObjectLabels(session_type) | to_string, ","));
+            values.emplace_back("session_type", "ipfix");
+            values.emplace_back("session_config", string(templates.begin(), templates.end()));
 
-        values.emplace_back("session_type", "ipfix");
+            m_state_telemetry_session.set(
+                profile.first + "|" + HFTelUtils::sai_type_to_group_name(session_type),
+                values);
 
-        auto templates = profile.second->getTemplates(type);
-        values.emplace_back("session_config", string(templates.begin(), templates.end()));
-
-        m_state_telemetry_session.set(profile.first + "|" + HFTelUtils::sai_type_to_group_name(type), values);
-
-        SWSS_LOG_NOTICE("The high frequency telemetry group %s with profile %s is ready",
-                        HFTelUtils::sai_type_to_group_name(type).c_str(),
-                        profile.first.c_str());
+            SWSS_LOG_NOTICE("The high frequency telemetry group %s with profile %s is ready",
+                            HFTelUtils::sai_type_to_group_name(session_type).c_str(),
+                            profile.first.c_str());
+        }
 
         return;
     }
