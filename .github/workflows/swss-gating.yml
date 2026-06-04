@@ -5,11 +5,6 @@ on:
     branches: [upscaleai-202511]
   workflow_dispatch:
     inputs:
-      ref:
-        description: Branch, tag, or commit SHA to build (must exist on origin)
-        required: true
-        type: string
-        default: upscaleai-202511
       skip_dpkg:
         description: 'Skip dpkg-buildpackage step (faster iteration)'
         required: false
@@ -17,7 +12,7 @@ on:
         type: boolean
 
 concurrency:
-  group: swss-gating-${{ github.event.pull_request.number || github.event.inputs.ref || github.run_id }}
+  group: swss-gating-${{ github.event.pull_request.number || github.ref_name || github.run_id }}
   cancel-in-progress: true
 
 permissions:
@@ -28,7 +23,6 @@ jobs:
     uses: ./.github/workflows/swss-tests-common.yml
     with:
       skip_dpkg: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.event.inputs.skip_dpkg == 'true') }}
-      swss_ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || '' }}
       swss_common_ref: 'upscaleai-202511'
     secrets: inherit
 
