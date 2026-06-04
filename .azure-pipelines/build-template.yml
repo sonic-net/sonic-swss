@@ -85,6 +85,10 @@ parameters:
 - name: debian_version
   type: string
 
+- name: vpp_artifact_name
+  type: string
+  default: 'vpp-bookworm'
+
 jobs:
 - job:
   displayName: ${{ parameters.arch }}
@@ -212,7 +216,7 @@ jobs:
       source: specific
       project: build
       pipeline: sonic-net.sonic-platform-vpp
-      artifact: vpp
+      artifact: ${{ parameters.vpp_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/master'
       allowPartiallySucceededBuilds: true
