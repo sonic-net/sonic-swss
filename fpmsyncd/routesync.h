@@ -232,6 +232,16 @@ public:
         return m_isSuppressionEnabled;
     }
 
+    void setNhgFibEnabled(bool enabled)
+    {
+        m_nhgFibEnabled = enabled;
+    }
+
+    bool isNhgFibEnabled() const
+    {
+        return m_nhgFibEnabled;
+    }
+
     /* Helper method to set route table with warm restart support */
     void setRouteWithWarmRestart(
         FieldValueTupleWrapperBase & fvw,
@@ -295,6 +305,7 @@ private:
     map<string, uint32_t> m_srv6_sidlist_refcnt;
 
     bool                m_isSuppressionEnabled{false};
+    bool                m_nhgFibEnabled{false};
     FpmInterface*       m_fpmInterface {nullptr};
 
     /* Handle regular route (include VRF route) */
@@ -392,6 +403,7 @@ private:
     void onNextHopMsg(struct nlmsghdr *h, int len);
     void onPicContextMsg(struct nlmsghdr *h, int len);
     int parse_encap_seg6(const struct rtattr *tb, struct in6_addr *segs, struct in6_addr *src);
+    void onNextHopGroupFullMsg(struct nlmsghdr *h, int len);
     /* Get next hop group key */
     const string getNextHopGroupKeyAsString(uint32_t id) const;
     void installNextHopGroup(uint32_t nh_id);
