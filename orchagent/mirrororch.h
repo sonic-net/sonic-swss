@@ -105,7 +105,6 @@ private:
     uint8_t m_maxNumTC;
 
     Table m_mirrorTable;
-    Table m_cfgMirrorTable;
 
     MirrorTable m_syncdMirrors;
     // session_name -> VLAN | monitor_port_alias | next_hop_ip
@@ -114,7 +113,6 @@ private:
     bool isHwResourcesAvailable();
 
     task_process_status createEntry(const string&, const vector<FieldValueTuple>&);
-    task_process_status updateEntry(const string&, const vector<FieldValueTuple>&);
     task_process_status deleteEntry(const string&);
 
     bool activateSession(const string&, MirrorEntry&);

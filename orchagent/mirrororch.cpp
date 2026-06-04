@@ -91,8 +91,7 @@ MirrorOrch::MirrorOrch(TableConnector stateDbConnector, TableConnector confDbCon
         m_fdbOrch(fdbOrch),
         m_policerOrch(policerOrch),
         m_switchOrch(switchOrch),
-        m_mirrorTable(stateDbConnector.first, stateDbConnector.second),
-        m_cfgMirrorTable(confDbConnector.first, confDbConnector.second)
+        m_mirrorTable(stateDbConnector.first, stateDbConnector.second)
 {
     sai_status_t status;
     sai_attribute_t attr;
@@ -392,12 +391,6 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
 
     if (m_syncdMirrors.find(key) != m_syncdMirrors.end())
     {
-        // Only support update for ERSPAN sessions
-        auto& existing = m_syncdMirrors.find(key)->second;
-        if (existing.type == MIRROR_SESSION_ERSPAN)
-        {
-            return updateEntry(key, data);
-        }
         SWSS_LOG_NOTICE("Failed to create session %s: object already exists", key.c_str());
         return task_process_status::task_duplicated;
     }
@@ -583,194 +576,6 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
     }
 
     SWSS_LOG_NOTICE("Created mirror session %s", key.c_str());
-
-    return task_process_status::task_success;
-}
-
-task_process_status MirrorOrch::updateEntry(const string& key, const vector<FieldValueTuple>& data)
-{
-    SWSS_LOG_ENTER();
-
-    SWSS_LOG_NOTICE("Updating mirror session %s", key.c_str());
-
-    auto sessionIter = m_syncdMirrors.find(key);
-    if (sessionIter == m_syncdMirrors.end())
-    {
-        SWSS_LOG_ERROR("Failed to update non-existent mirror session %s", key.c_str());
-        return task_process_status::task_invalid_entry;
-    }
-
-    auto& session = sessionIter->second;
-
-    // Determine if any immutable fields have changed
-    bool immutable_changed = false;
-    uint32_t new_sample_rate = session.sample_rate;
-    uint32_t new_truncate_size = session.truncate_size;
-
-    for (auto& fv : data)
-    {
-        const auto& field = fvField(fv);
-        const auto& value = fvValue(fv);
-
-        if (field == MIRROR_SESSION_SAMPLE_RATE)
-        {
-            new_sample_rate = to_uint<uint32_t>(value);
-        }
-        else if (field == MIRROR_SESSION_TRUNCATE_SIZE)
-        {
-            new_truncate_size = to_uint<uint32_t>(value);
-        }
-        else if (field == MIRROR_SESSION_SRC_IP)
-        {
-            if (value != session.srcIp.to_string())
-                immutable_changed = true;
-        }
-        else if (field == MIRROR_SESSION_DST_IP)
-        {
-            if (value != session.dstIp.to_string())
-                immutable_changed = true;
-        }
-        else if (field == MIRROR_SESSION_GRE_TYPE)
-        {
-            if (to_uint<uint16_t>(value) != session.greType)
-                immutable_changed = true;
-        }
-        else if (field == MIRROR_SESSION_DSCP)
-        {
-            if (to_uint<uint8_t>(value) != session.dscp)
-                immutable_changed = true;
-        }
-        else if (field == MIRROR_SESSION_TTL)
-        {
-            if (to_uint<uint8_t>(value) != session.ttl)
-                immutable_changed = true;
-        }
-        else if (field == MIRROR_SESSION_QUEUE)
-        {
-            if (to_uint<uint8_t>(value) != session.queue)
-                immutable_changed = true;
-        }
-        else if (field == MIRROR_SESSION_SRC_PORT)
-        {
-            if (value != session.src_port)
-                immutable_changed = true;
-        }
-        else if (field == MIRROR_SESSION_DIRECTION)
-        {
-            if (value != session.direction)
-                immutable_changed = true;
-        }
-        else if (field == MIRROR_SESSION_POLICER)
-        {
-            if (value != session.policer)
-                immutable_changed = true;
-        }
-    }
-
-    // Sampled <-> full mode switch needs delete+recreate; in-place would
-    // strand the samplepacket OID and port sampled-attr bindings.
-    if ((session.sample_rate == 0) != (new_sample_rate == 0))
-    {
-        SWSS_LOG_NOTICE("Mirror mode transition (sampled <-> full) for session %s, "
-                        "performing delete+recreate", key.c_str());
-        immutable_changed = true;
-    }
-
-    // If any immutable fields changed, must delete and recreate.
-    // Rebuild from the full CONFIG_DB row so a partial SET payload (e.g. HSET
-    // of a single field) does not recreate a session with missing fields.
-    if (immutable_changed)
-    {
-        SWSS_LOG_NOTICE("Immutable fields changed for session %s, performing delete+recreate", key.c_str());
-
-        vector<FieldValueTuple> fullRow;
-        if (!m_cfgMirrorTable.get(key, fullRow))
-        {
-            SWSS_LOG_ERROR("Cannot rebuild mirror session %s: missing from CONFIG_DB", key.c_str());
-            return task_process_status::task_failed;
-        }
-
-        auto task_status = deleteEntry(key);
-        if (task_status != task_process_status::task_success)
-        {
-            SWSS_LOG_ERROR("Failed to delete mirror session %s during update", key.c_str());
-            return task_status;
-        }
-        return createEntry(key, fullRow);
-    }
-
-    // Only mutable fields (sample_rate, truncate_size) changed - update in-place
-    bool sample_rate_changed = (new_sample_rate != session.sample_rate);
-    bool truncate_size_changed = (new_truncate_size != session.truncate_size);
-
-    if (!sample_rate_changed && !truncate_size_changed)
-    {
-        SWSS_LOG_NOTICE("No field changes detected for session %s", key.c_str());
-        return task_process_status::task_success;
-    }
-
-    // If samplepacket exists, update its attributes in-place
-    if (session.samplepacketId != SAI_NULL_OBJECT_ID)
-    {
-        if (sample_rate_changed)
-        {
-            sai_attribute_t attr;
-            attr.id = SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE;
-            attr.value.u32 = new_sample_rate;
-            sai_status_t status = sai_samplepacket_api->set_samplepacket_attribute(
-                session.samplepacketId, &attr);
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_ERROR("Failed to update sample_rate for session %s, status %d", key.c_str(), status);
-                return task_process_status::task_failed;
-            }
-            session.sample_rate = new_sample_rate;
-            SWSS_LOG_NOTICE("Updated sample_rate to %u for session %s", new_sample_rate, key.c_str());
-        }
-
-        if (truncate_size_changed)
-        {
-            // Keep TRUNCATE_ENABLE in sync with TRUNCATE_SIZE so 0 <-> non-zero
-            sai_attribute_t enable_attr;
-            enable_attr.id = SAI_SAMPLEPACKET_ATTR_TRUNCATE_ENABLE;
-            enable_attr.value.booldata = (new_truncate_size > 0);
-            sai_status_t status = sai_samplepacket_api->set_samplepacket_attribute(
-                session.samplepacketId, &enable_attr);
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_ERROR("Failed to update truncate_enable for session %s, status %d", key.c_str(), status);
-                return task_process_status::task_failed;
-            }
-
-            // Only set SIZE when truncation is enabled; SAI may reject SIZE=0.
-            if (new_truncate_size > 0)
-            {
-                sai_attribute_t size_attr;
-                size_attr.id = SAI_SAMPLEPACKET_ATTR_TRUNCATE_SIZE;
-                size_attr.value.u32 = new_truncate_size;
-                status = sai_samplepacket_api->set_samplepacket_attribute(
-                    session.samplepacketId, &size_attr);
-                if (status != SAI_STATUS_SUCCESS)
-                {
-                    SWSS_LOG_ERROR("Failed to update truncate_size for session %s, status %d", key.c_str(), status);
-                    return task_process_status::task_failed;
-                }
-            }
-
-            session.truncate_size = new_truncate_size;
-            SWSS_LOG_NOTICE("Updated truncate_size to %u for session %s", new_truncate_size, key.c_str());
-        }
-    }
-    else
-    {
-        // No samplepacket exists (full mirror path) - cannot transition in-place.
-        // User must delete and recreate the session to change mirroring mode.
-        SWSS_LOG_NOTICE("Session %s requires delete and recreate to change mirroring mode", key.c_str());
-        return task_process_status::task_success;
-    }
-
-    // Update STATE_DB with new values
-    setSessionState(key, session);
 
     return task_process_status::task_success;
 }
