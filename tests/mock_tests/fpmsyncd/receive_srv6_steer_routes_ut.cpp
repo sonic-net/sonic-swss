@@ -25,6 +25,8 @@ namespace ut_fpmsyncd
     {
         std::shared_ptr<swss::DBConnector> m_app_db;
         std::shared_ptr<swss::RedisPipeline> pipeline;
+        std::shared_ptr<swss::DBConnector> m_appl_state_db;
+        std::shared_ptr<swss::RedisPipeline> app_state_pipeline;
         std::shared_ptr<RouteSync> m_routeSync;
         std::shared_ptr<FpmLink> m_fpmLink;
         std::shared_ptr<swss::Table> m_routeTable;
@@ -40,7 +42,9 @@ namespace ut_fpmsyncd
 
             /* 1) RouteSync */
             pipeline = std::make_shared<swss::RedisPipeline>(m_app_db.get());
-            m_routeSync = std::make_shared<RouteSync>(pipeline.get());
+            m_appl_state_db = std::make_shared<swss::DBConnector>("APPL_STATE_DB", 0);
+            app_state_pipeline = std::make_shared<swss::RedisPipeline>(m_appl_state_db.get());
+            m_routeSync = std::make_shared<RouteSync>(pipeline.get(), app_state_pipeline.get());
 
             /* 2) FpmLink */
             m_fpmLink = std::make_shared<FpmLink>(m_routeSync.get());
