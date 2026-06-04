@@ -21,6 +21,7 @@ extern MacAddress gMacAddress;
 
 // Fields name
 #define VXLAN_TUNNEL "vxlan_tunnel"
+#define VXLAN_TUNNEL_LIST "vxlan_tunnel_list"
 #define SOURCE_IP "src_ip"
 #define VNI "vni"
 #define VNET "vnet"
@@ -306,7 +307,7 @@ bool VxlanMgr::doVxlanCreateTask(const KeyOpFieldsValuesTuple & t)
 
     // If all information of vnet has been set
     if (info.m_vxlanTunnel.empty() 
-     || info.m_vni.empty())
+    || info.m_vni.empty())
     {
         SWSS_LOG_DEBUG("Vnet %s information is incomplete", info.m_vnet.c_str());
         // if the information is incomplete, just ignore this message
