@@ -19,6 +19,11 @@ on:
         required: false
         default: ''
         type: string
+      swss_ref:
+        description: 'sonic-swss branch/ref to build (manual gate). Empty uses the PR head or default ref.'
+        required: false
+        default: ''
+        type: string
 
 jobs:
   build-and-test:
@@ -35,7 +40,7 @@ jobs:
       - name: Checkout sonic-swss
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ inputs.swss_ref != '' && inputs.swss_ref || github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
 
