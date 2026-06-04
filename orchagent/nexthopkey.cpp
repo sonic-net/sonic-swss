@@ -12,7 +12,6 @@ std::size_t hash_value(const NextHopKey& obj) {
     boost::hash_combine(nh_hash, obj.srv6_segment);
     boost::hash_combine(nh_hash, obj.srv6_source);
     boost::hash_combine(nh_hash, obj.srv6_vpn_sid);
-    boost::hash_combine(nh_hash, obj.tunnel_name);
 
     return nh_hash;
 }

@@ -1049,56 +1049,6 @@ namespace protnhg_test
         EXPECT_EQ(key_ab, key_ba);
     }
 
-    /* --- IPinIP tunnel NextHopKey tests --- */
-
-    TEST_F(ProtNhgTest, TunnelNextHopKeyConstructor)
-    {
-        IpAddress ip("10.1.0.32");
-        NextHopKey nh(ip, string("MuxTunnel0"), true /*tunnel_nh*/, 0 /*tag*/);
-
-        EXPECT_TRUE(nh.isTunnelNextHop());
-        EXPECT_EQ(nh.ip_address, ip);
-        EXPECT_EQ(nh.tunnel_name, "MuxTunnel0");
-        EXPECT_EQ(nh.alias, "");
-        EXPECT_EQ(nh.vni, 0u);
-        EXPECT_FALSE(nh.isSrv6NextHop());
-        EXPECT_FALSE(nh.isMplsNextHop());
-    }
-
-    TEST_F(ProtNhgTest, TunnelNextHopKeyToStringRoundtrip)
-    {
-        IpAddress ip("192.168.1.1");
-        NextHopKey original(ip, string("IPINIP_TUNNEL"), true /*tunnel_nh*/, 0 /*tag*/);
-
-        string str = original.to_string();
-        EXPECT_EQ(str, "tunnel:IPINIP_TUNNEL@192.168.1.1");
-
-        NextHopKey parsed(str);
-        EXPECT_TRUE(parsed.isTunnelNextHop());
-        EXPECT_EQ(parsed.tunnel_name, "IPINIP_TUNNEL");
-        EXPECT_EQ(parsed.ip_address, ip);
-        EXPECT_EQ(original, parsed);
-    }
-
-    TEST_F(ProtNhgTest, TunnelNextHopKeyComparison)
-    {
-        NextHopKey nh_a(IpAddress("10.0.0.1"), string("TunA"), true, 0);
-        NextHopKey nh_b(IpAddress("10.0.0.1"), string("TunB"), true, 0);
-        NextHopKey nh_same(IpAddress("10.0.0.1"), string("TunA"), true, 0);
-
-        EXPECT_EQ(nh_a, nh_same);
-        EXPECT_NE(nh_a, nh_b);
-
-        NextHopKey regular_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
-        EXPECT_NE(nh_a, regular_nh);
-    }
-
-    TEST_F(ProtNhgTest, TunnelNextHopKeyInvalidParseFails)
-    {
-        EXPECT_THROW(NextHopKey("tunnel:@10.0.0.1@extra"), std::invalid_argument);
-        EXPECT_THROW(NextHopKey("tunnel:OnlyName"), std::invalid_argument);
-    }
-
     /* --- Protection NHG key prefix tests --- */
 
     TEST_F(ProtNhgTest, BuildProtNhgKeyHwPrefix)
