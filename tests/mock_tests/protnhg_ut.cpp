@@ -157,9 +157,7 @@ namespace protnhg_test
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        vector<NextHopKey> primaries = {primary_nh};
-
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
         EXPECT_TRUE(gNhgOrch->hasProtNhg(key));
         EXPECT_NE(gNhgOrch->getProtNhgId(key), SAI_NULL_OBJECT_ID);
 
@@ -176,26 +174,15 @@ namespace protnhg_test
         string key = "prot_nhg_dup";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
-        EXPECT_FALSE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
+        EXPECT_FALSE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
 
         ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
         unregisterNextHop(primary_nh);
         unregisterNextHop(standby_nh);
-    }
-
-    TEST_F(ProtNhgTest, CreateProtNhgEmptyPrimariesFails)
-    {
-        NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries;
-
-        EXPECT_FALSE(gNhgOrch->createProtNhg("empty", primaries, standby_nh));
-        EXPECT_FALSE(gNhgOrch->hasProtNhg("empty"));
     }
 
     TEST_F(ProtNhgTest, RemoveNonExistentProtNhgFails)
@@ -208,12 +195,10 @@ namespace protnhg_test
         string key = "prot_nhg_ref";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
 
         gNhgOrch->incProtNhgRefCount(key);
         EXPECT_FALSE(gNhgOrch->removeProtNhg(key));
@@ -232,12 +217,10 @@ namespace protnhg_test
         string key = "prot_nhg_members";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
 
         const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
         EXPECT_NE(nhg.getId(), SAI_NULL_OBJECT_ID);
@@ -255,41 +238,15 @@ namespace protnhg_test
         unregisterNextHop(standby_nh);
     }
 
-    TEST_F(ProtNhgTest, MultiplePrimaryMembers)
-    {
-        string key = "prot_nhg_multi";
-        NextHopKey primary1(IpAddress("10.0.0.1"), string("Ethernet0"));
-        NextHopKey primary2(IpAddress("10.0.0.2"), string("Ethernet0"));
-        NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary1, primary2};
-
-        registerNextHop(primary1);
-        registerNextHop(primary2);
-        registerNextHop(standby_nh);
-
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
-
-        const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
-        auto primary_out = nhg.getPrimaryMembers();
-        EXPECT_EQ(primary_out.size(), 2u);
-
-        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
-        unregisterNextHop(primary1);
-        unregisterNextHop(primary2);
-        unregisterNextHop(standby_nh);
-    }
-
     TEST_F(ProtNhgTest, SetAdminRole)
     {
         string key = "prot_nhg_admin";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
 
         EXPECT_CALL(*mock_sai_next_hop_group_api,
                     set_next_hop_group_attribute(_, _))
@@ -315,12 +272,10 @@ namespace protnhg_test
         string key = "prot_nhg_admin_fail";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
 
         EXPECT_CALL(*mock_sai_next_hop_group_api,
                     set_next_hop_group_attribute(_, _))
@@ -341,13 +296,11 @@ namespace protnhg_test
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
         sai_object_id_t session_oid = 0xABCD;
-        vector<NextHopKey> primaries = {primary_nh};
-
 
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
         EXPECT_TRUE(gNhgOrch->setProtNhgMonitoredObject(key, standby_nh, session_oid));
 
         ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
@@ -367,12 +320,10 @@ namespace protnhg_test
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
         NextHopKey unknown_nh(IpAddress("10.0.0.99"), string("Ethernet0"));
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
         EXPECT_FALSE(gNhgOrch->setProtNhgMonitoredObject(key, unknown_nh, 0xABCD));
 
         ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
@@ -402,12 +353,10 @@ namespace protnhg_test
         string key = "prot_nhg_sai_fail";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        EXPECT_FALSE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
+        EXPECT_FALSE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
         EXPECT_FALSE(gNhgOrch->hasProtNhg(key));
 
         unregisterNextHop(primary_nh);
@@ -425,12 +374,10 @@ namespace protnhg_test
         string key = "prot_nhg_double_sync";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
 
         auto &nhg = const_cast<ProtNhg&>(gNhgOrch->getProtNhg(key));
         EXPECT_TRUE(nhg.sync());
@@ -460,12 +407,10 @@ namespace protnhg_test
         string key = "prot_nhg_sync_mbr_fail";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        EXPECT_FALSE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
+        EXPECT_FALSE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
         EXPECT_FALSE(gNhgOrch->hasProtNhg(key));
 
         unregisterNextHop(primary_nh);
@@ -476,9 +421,7 @@ namespace protnhg_test
     {
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
-        ProtNhg nhg("unsynced_nhg", primaries, standby_nh);
+        ProtNhg nhg("unsynced_nhg", primary_nh, standby_nh);
         EXPECT_FALSE(nhg.setAdminRole(
             SAI_NEXT_HOP_GROUP_MEMBER_CONFIGURED_ROLE_PRIMARY));
     }
@@ -487,9 +430,7 @@ namespace protnhg_test
     {
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
-        ProtNhg nhg("unsynced_mon", primaries, standby_nh);
+        ProtNhg nhg("unsynced_mon", primary_nh, standby_nh);
         EXPECT_TRUE(nhg.updateMemberMonitoredObject(standby_nh, 0xABCD));
     }
 
@@ -498,12 +439,10 @@ namespace protnhg_test
         string key = "prot_nhg_mon_sai_fail";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
 
         EXPECT_CALL(*mock_sai_next_hop_group_api,
                     set_next_hop_group_member_attribute(_, _))
@@ -521,11 +460,9 @@ namespace protnhg_test
         string key = "prot_nhg_obs_unsynced";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(standby_nh);
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
 
         sai_next_hop_group_member_observed_role_t role;
         EXPECT_FALSE(gNhgOrch->getProtNhgMemberObservedRole(
@@ -540,12 +477,10 @@ namespace protnhg_test
         string key = "prot_nhg_obs_ok";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
 
         auto old_get_fn =
             ut_sai_next_hop_group_api.get_next_hop_group_member_attribute;
@@ -573,12 +508,10 @@ namespace protnhg_test
         string key = "prot_nhg_obs_fail";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
 
         auto old_get_fn =
             ut_sai_next_hop_group_api.get_next_hop_group_member_attribute;
@@ -605,12 +538,10 @@ namespace protnhg_test
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
         NextHopKey unknown_nh(IpAddress("10.0.0.99"), string("Ethernet0"));
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
 
         sai_next_hop_group_member_observed_role_t role;
         EXPECT_FALSE(gNhgOrch->getProtNhgMemberObservedRole(
@@ -626,12 +557,10 @@ namespace protnhg_test
         string key = "prot_nhg_all_obs";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
 
         auto old_get_fn =
             ut_sai_next_hop_group_api.get_next_hop_group_member_attribute;
@@ -658,12 +587,10 @@ namespace protnhg_test
         string key = "prot_nhg_all_obs_fail";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
 
         auto old_get_fn =
             ut_sai_next_hop_group_api.get_next_hop_group_member_attribute;
@@ -689,12 +616,10 @@ namespace protnhg_test
         string key = "prot_nhg_remove_fail";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
 
         EXPECT_CALL(*mock_sai_next_hop_group_api,
                     remove_next_hop_group(_))
@@ -714,12 +639,10 @@ namespace protnhg_test
         string key = "prot_nhg_inline";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
 
         const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
         EXPECT_FALSE(nhg.isTemp());
@@ -736,12 +659,10 @@ namespace protnhg_test
         string key = "prot_nhg_mbr_str";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
 
         const ProtNhg &nhg = gNhgOrch->getProtNhg(key);
         const ProtNhgMember *standby = nhg.getStandbyMember();
@@ -774,9 +695,7 @@ namespace protnhg_test
     {
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
-        ProtNhg nhg1("nhg_move", primaries, standby_nh);
+        ProtNhg nhg1("nhg_move", primary_nh, standby_nh);
         ProtNhg nhg2(std::move(nhg1));
 
         EXPECT_NE(nhg2.getStandbyMember(), nullptr);
@@ -788,12 +707,10 @@ namespace protnhg_test
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
         sai_object_id_t session_oid = 0xABCD;
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        ProtNhg nhg("nhg_mon_sync", primaries, standby_nh);
+        ProtNhg nhg("nhg_mon_sync", primary_nh, standby_nh);
 
         EXPECT_TRUE(nhg.updateMemberMonitoredObject(standby_nh, session_oid));
         EXPECT_TRUE(nhg.sync());
@@ -903,8 +820,6 @@ namespace protnhg_test
         string key = "prot_nhg_sw";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
@@ -925,7 +840,7 @@ namespace protnhg_test
                     return SAI_STATUS_SUCCESS;
                 });
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh,
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh,
                                              false));
         EXPECT_TRUE(gNhgOrch->hasProtNhg(key));
 
@@ -939,12 +854,10 @@ namespace protnhg_test
         string key = "prot_nhg_admin_prot";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh,
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh,
                                              false));
 
         EXPECT_FALSE(gNhgOrch->setProtNhgAdminRole(
@@ -960,12 +873,10 @@ namespace protnhg_test
         string key = "prot_nhg_switchover";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh,
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh,
                                              false));
 
         EXPECT_CALL(*mock_sai_next_hop_group_api,
@@ -985,12 +896,10 @@ namespace protnhg_test
         string key = "prot_nhg_switchover_hw";
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh,
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh,
                                              true));
 
         EXPECT_FALSE(gNhgOrch->setProtNhgSwitchover(key, true));
@@ -1009,18 +918,16 @@ namespace protnhg_test
     {
         NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
-        vector<NextHopKey> primaries = {primary_nh};
-
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        string expected_key = NhgOrch::buildProtNhgKey(primaries, standby_nh);
+        string expected_key = NhgOrch::buildProtNhgKey(primary_nh, standby_nh);
         EXPECT_FALSE(expected_key.empty());
 
-        ASSERT_TRUE(gNhgOrch->createProtNhg(primaries, standby_nh));
+        ASSERT_TRUE(gNhgOrch->createProtNhg(primary_nh, standby_nh));
         EXPECT_TRUE(gNhgOrch->hasProtNhg(expected_key));
 
-        EXPECT_FALSE(gNhgOrch->createProtNhg(primaries, standby_nh));
+        EXPECT_FALSE(gNhgOrch->createProtNhg(primary_nh, standby_nh));
 
         ASSERT_TRUE(gNhgOrch->removeProtNhg(expected_key));
         EXPECT_FALSE(gNhgOrch->hasProtNhg(expected_key));
@@ -1171,13 +1078,11 @@ namespace protnhg_test
         registerNextHop(primary_nh);
         registerNextHop(standby_nh);
 
-        vector<NextHopKey> primaries = {primary_nh};
-
         uint32_t grp_before = crmUsed(CrmResourceType::CRM_NEXTHOP_GROUP);
         uint32_t mbr_before = crmUsed(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
 
         string key = "prot_crm";
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primary_nh, standby_nh));
 
         /* One protection group with two synced members (1 primary + 1 standby). */
         EXPECT_EQ(crmUsed(CrmResourceType::CRM_NEXTHOP_GROUP), grp_before + 1);

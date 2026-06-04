@@ -158,7 +158,7 @@ string ProtNhgMember::to_string() const
 /* ----------------------------------------------------------------------- */
 
 ProtNhg::ProtNhg(const string &key,
-                  const vector<NextHopKey> &primary_nhs,
+                  const NextHopKey &primary_nh,
                   const NextHopKey &standby_nh,
                   bool hw_protection) :
     NhgCommon(key),
@@ -166,10 +166,8 @@ ProtNhg::ProtNhg(const string &key,
 {
     SWSS_LOG_ENTER();
 
-    for (const auto &nh : primary_nhs)
-    {
-        m_members.emplace(nh, ProtNhgMember(nh, ProtNhgRole::PRIMARY));
-    }
+    m_members.emplace(primary_nh,
+                      ProtNhgMember(primary_nh, ProtNhgRole::PRIMARY));
     m_members.emplace(standby_nh,
                       ProtNhgMember(standby_nh, ProtNhgRole::STANDBY));
 }

@@ -149,16 +149,17 @@ public:
      * must removeProtNhg() first.
      */
 
-    /* Create a protection NHG with one or more primary and one standby next hop.
-     * Individual NHs are resolved via NeighOrch at sync time.
+    /* Create a protection NHG as a strict pair: one primary and one standby
+     * next hop. Individual NHs are resolved via NeighOrch at sync time.
+     * For N:M, use the recursive NextHopGroupKey-pair overloads below.
      */
     bool createProtNhg(const string &key,
-                       const vector<NextHopKey> &primary_nhs,
+                       const NextHopKey &primary_nh,
                        const NextHopKey &standby_nh,
                        bool hw_protection = true);
 
     /* Auto-keyed convenience overload -- key is derived from the members. */
-    bool createProtNhg(const vector<NextHopKey> &primary_nhs,
+    bool createProtNhg(const NextHopKey &primary_nh,
                        const NextHopKey &standby_nh,
                        bool hw_protection = true);
 
@@ -176,7 +177,7 @@ public:
                        bool hw_protection = true);
 
     /* Build the deterministic key for a protection NHG from its members. */
-    static string buildProtNhgKey(const vector<NextHopKey> &primary_nhs,
+    static string buildProtNhgKey(const NextHopKey &primary_nh,
                                   const NextHopKey &standby_nh,
                                   bool hw_protection = true);
     static string buildProtNhgKey(const NextHopGroupKey &primary_nhg_key,

@@ -60,17 +60,22 @@ private:
  * at construction via the hw_protection flag:
  *   - SAI_NEXT_HOP_GROUP_TYPE_PROTECTION    (software protection), or
  *   - SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION (hardware protection).
- * It has one or more primary next hops and exactly one standby next hop.
- * For HW protection, the hardware toggles traffic between the primary set and
- * the standby based on the monitored object state, with software override via
+ * It is a strict pair: exactly one primary next hop and exactly one standby
+ * next hop, matching the SAI protection-group model (a primary-backup pair).
+ * For HW protection, the hardware toggles traffic between the primary and the
+ * standby based on the monitored object state, with software override via
  * SAI_NEXT_HOP_GROUP_ATTR_ADMIN_ROLE. For SW protection, the switchover is
  * driven by software via SAI_NEXT_HOP_GROUP_ATTR_SET_SWITCHOVER.
+ *
+ * Multi-primary (N:M) is expressed via the recursive NextHopGroupKey-pair
+ * constructor, where the primary/standby members each point to an ECMP (or
+ * fine-grained) NHG resolved through NhgOrch.
  */
 class ProtNhg : public NhgCommon<string, NextHopKey, ProtNhgMember>
 {
 public:
     ProtNhg(const string &key,
-            const vector<NextHopKey> &primary_nhs,
+            const NextHopKey &primary_nh,
             const NextHopKey &standby_nh,
             bool hw_protection = true);
 
