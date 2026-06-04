@@ -1,6 +1,8 @@
 #ifndef DASHHAORCH_H
 #define DASHHAORCH_H
 #include <map>
+#include <mutex>
+#include <chrono>
 
 #include "dbconnector.h"
 #include "dashorch.h"
@@ -18,11 +20,8 @@
 
 #include "pbutils.h"
 
-struct HaSetEntry
-{
-    sai_object_id_t ha_set_id;
-    dash::ha_set::HaSet metadata;
-};
+#define HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP "HA_SET_STAT_COUNTER"
+#define HA_SET_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
 
 struct HaScopeEntry
 {
@@ -34,9 +33,18 @@ struct HaScopeEntry
     std::time_t last_state_start_time;
 };
 
+struct HaSetEntry
+{
+    sai_object_id_t ha_set_id;
+    dash::ha_set::HaSet metadata;
+    sai_object_id_t getOid() const { return ha_set_id; }
+};
+
 typedef std::map<std::string, HaSetEntry> HaSetTable;
 typedef std::map<std::string, HaScopeEntry> HaScopeTable;
 typedef std::map<std::string, vector<swss::FieldValueTuple>> DashBfdSessionTable;
+
+using DashHaCounter = DashCounter<CounterType::HA_SET, HaSetTable>;
 
 template <typename T>
 bool in(T value, std::initializer_list<T> list) {
@@ -68,9 +76,11 @@ protected:
     bool addHaScopeEntry(const std::string &key, const dash::ha_scope::HaScope &entry);
     bool removeHaScopeEntry(const std::string &key);
     bool setHaScopeHaRole(const std::string &key, const dash::ha_scope::HaScope &entry);
+    void updateHaScopeStateForSwitchOwner(const std::string &key, const dash::ha_scope::HaScope &entry);
     bool setHaScopeFlowReconcileRequest(const  std::string &key);
     bool setHaScopeActivateRoleRequest(const std::string &key);
     bool setHaScopeDisabled(const std::string &key, bool disabled);
+    virtual bool isHaScopeAdminStateAttrSupported();
     bool setEniHaScopeId(const sai_object_id_t eni_id, const sai_object_id_t ha_scope_id);
     bool register_ha_set_notifier();
     bool register_ha_scope_notifier();
@@ -100,6 +110,9 @@ protected:
     std::unique_ptr<swss::Table> dash_ha_set_result_table_;
     std::unique_ptr<swss::Table> dash_ha_scope_result_table_;
 
+    std::shared_ptr<swss::DBConnector> m_counter_db;
+    std::unique_ptr<swss::Table> m_counter_ha_set_name_map_table;
+
     std::unique_ptr<swss::DBConnector> m_dpuStateDbConnector;
     std::unique_ptr<swss::Table> m_dpuStateDbHaSetTable;
     std::unique_ptr<swss::Table> m_dpuStateDbHaScopeTable;
@@ -107,11 +120,18 @@ protected:
     swss::NotificationConsumer* m_haSetNotificationConsumer;
     swss::NotificationConsumer* m_haScopeNotificationConsumer;
 
+    bool m_ha_scope_admin_state_attr_supported = false;
+    std::once_flag m_ha_scope_admin_state_attr_once_flag;
+
+private:
+    DashHaCounter HaSetCounter;
+
 public:
     const HaSetTable& getHaSetEntries() const { return m_ha_set_entries; };
     const HaScopeTable& getHaScopeEntries() const { return m_ha_scope_entries; };
     const DashBfdSessionTable& getBfdSessionPendingCreation() const { return m_bfd_session_pending_creation; };
     virtual HaScopeEntry getHaScopeForEni(const std::string& eni);
+    void handleHaSetFCStatusUpdate(bool is_enabled) { HaSetCounter.handleStatusUpdate(is_enabled, m_ha_set_entries); }
 };
 
 #endif // DASHHAORCH_H

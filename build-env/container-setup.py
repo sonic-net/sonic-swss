@@ -33,7 +33,7 @@ pipeline_artifact_map = {
     DASH_API: 'sonic-dash-api'
 }
 
-deb_files_regex = ['libswsscommon*.deb', 'libnl*.deb', 'libsai*.deb', 'syncd-vs*.deb', 'libyang_*.deb', 'libyang-*_1.0*.deb', 'python3-swsscommon*.deb', '*vpp*.deb', 'libdash*.deb']
+deb_files_regex = ['libswsscommon*.deb', 'libnl*.deb', 'libsai*.deb', 'syncd-vs*.deb', 'libyang3_*.deb', 'libyang-dev_3*.deb', 'python3-swsscommon*.deb', '*vpp*.deb', 'libdash*.deb']
 
 pipeline_out_file_map = {
     SAIREDIS: 'sairedis.zip',
@@ -43,15 +43,15 @@ pipeline_out_file_map = {
     DASH_API: 'dash-api.zip'
 }
 
-force_master_branch = [VPP]
+force_main_branch = [VPP]
 
 build_url = 'https://dev.azure.com/mssonic/build/_apis/build/builds?definitions={}&branchName=refs/heads/{}&resultFilter=succeeded,partiallySucceeded&statusFilter=completed&maxBuildsPerDefinition=1&queryOrder=finishTimeDescending'
 artifact_url = 'https://dev.azure.com/mssonic/build/_apis/build/builds/{}/artifacts?artifactName={}&api-version=5.1'
 
 
 def get_latest_build(pipeline, branch):
-    if pipeline in force_master_branch:
-        target_branch = "master"
+    if pipeline in force_main_branch:
+        target_branch = "main"
     else:
         target_branch = branch
 

@@ -18,10 +18,10 @@ dist_swss_DATA = \
 		 nvda_port_trim_drop.lua \
 		 eliminate_events.lua \
 		 rif_rates.lua \
-		 pfc_detect_marvell_teralynx.lua  \
+		 pfc_detect_marvell-teralynx.lua  \
 		 pfc_detect_mellanox.lua  \
 		 pfc_detect_broadcom.lua \
-		 pfc_detect_marvell_prestera.lua \
+		 pfc_detect_marvell-prestera.lua \
 		 pfc_detect_barefoot.lua \
 		 pfc_detect_nephos.lua \
 		 pfc_detect_cisco-8000.lua \
@@ -77,6 +77,7 @@ orchagent_SOURCES = \
             bufferorch.cpp \
             mirrororch.cpp \
             fdborch.cpp \
+            macmoveguard.cpp \
             aclorch.cpp \
             pbh/pbhcap.cpp \
             pbh/pbhcnt.cpp \
@@ -102,6 +103,7 @@ orchagent_SOURCES = \
             dtelorch.cpp \
             flexcounterorch.cpp \
             watermarkorch.cpp \
+            notificationconsumerstatsorch.cpp \
             policerorch.cpp \
             sfloworch.cpp \
             chassisorch.cpp \
@@ -120,6 +122,7 @@ orchagent_SOURCES = \
             zmqorch.cpp \
             dash/dashenifwdorch.cpp \
             dash/dashenifwdinfo.cpp \
+            dash/dashcounter.cpp \
             dash/dashorch.cpp \
             dash/dashrouteorch.cpp \
             dash/dashvnetorch.cpp \
@@ -130,7 +133,9 @@ orchagent_SOURCES = \
             dash/dashtunnelorch.cpp \
             dash/pbutils.cpp \
             dash/dashhaorch.cpp \
+            dash/dashhafloworch.cpp \
             dash/dashportmaporch.cpp \
+            dash/dashresulthelper.cpp \
             twamporch.cpp \
             stporch.cpp \
             nexthopkey.cpp \
@@ -157,8 +162,10 @@ orchagent_SOURCES += p4orch/p4orch.cpp \
 		     p4orch/acl_rule_manager.cpp \
 		     p4orch/wcmp_manager.cpp \
 		     p4orch/mirror_session_manager.cpp \
+                     p4orch/tunnel_decap_group_manager.cpp \
 		     p4orch/l3_admit_manager.cpp \
 		     p4orch/l3_multicast_manager.cpp \
+		     p4orch/ip_multicast_manager.cpp \
  		     p4orch/ext_tables_manager.cpp
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)

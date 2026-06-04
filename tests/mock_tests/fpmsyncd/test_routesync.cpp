@@ -16,6 +16,7 @@
 #include <linux/nexthop.h>
 #include <linux/lwtunnel.h>
 #include <linux/seg6_iptunnel.h>
+#include <sys/stat.h>
 
 #include <sstream>
 
@@ -76,8 +77,17 @@ class FpmSyncdResponseTest : public ::testing::Test
 public:
     void SetUp() override
     {
+        struct stat st;
         testing_db::reset();
-        EXPECT_EQ(rtnl_route_read_protocol_names(DefaultRtProtoPath), 0);
+        if (stat(DefaultRtProtoPath, &st) == 0) {
+            EXPECT_EQ(rtnl_route_read_protocol_names(DefaultRtProtoPath), 0);
+        } else if (stat(OverrideRtProtoPath, &st) == 0) {
+            EXPECT_EQ(rtnl_route_read_protocol_names(OverrideRtProtoPath), 0);
+        } else {
+            FAIL() << "Neither " << DefaultRtProtoPath
+                   << " nor " << OverrideRtProtoPath
+                   << " exists; failed to load route protocol names required for tests.";
+        }
         m_routeSync.setSuppressionEnabled(true);
     }
 
@@ -1246,9 +1256,18 @@ class WarmRestartRouteSyncTest : public ::testing::Test
 public:
     void SetUp() override
     {
+        struct stat st;
         resetMockWarmStartHelper();  // Reset warm restart state before each test
         testing_db::reset();
-        EXPECT_EQ(rtnl_route_read_protocol_names(DefaultRtProtoPath), 0);
+        if (stat(DefaultRtProtoPath, &st) == 0) {
+            EXPECT_EQ(rtnl_route_read_protocol_names(DefaultRtProtoPath), 0);
+        } else if (stat(OverrideRtProtoPath, &st) == 0) {
+            EXPECT_EQ(rtnl_route_read_protocol_names(OverrideRtProtoPath), 0);
+        } else {
+            FAIL() << "Neither " << DefaultRtProtoPath
+                   << " nor " << OverrideRtProtoPath
+                   << " exists; failed to load route protocol names required for tests.";
+        }
     }
 
     void TearDown() override

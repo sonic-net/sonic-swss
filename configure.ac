@@ -107,6 +107,8 @@ CFLAGS_COMMON+=" -Wno-switch-default"
 CFLAGS_COMMON+=" -Wno-long-long"
 CFLAGS_COMMON+=" -Wno-redundant-decls"
 CFLAGS_COMMON+=" -Wno-error=missing-field-initializers"
+CFLAGS_COMMON+=" -Wno-error=overloaded-virtual"
+CFLAGS_COMMON+=" -Wno-psabi"
 
 # Code testing coverage with gcov
 AC_MSG_CHECKING(whether to build with gcov testing)

@@ -51,7 +51,9 @@ stages:
       common_lib_artifact_name: common-lib
       swss_common_artifact_name: sonic-swss-common-${{ parameters.debian_version }}
       sairedis_artifact_name: sonic-sairedis-${{ parameters.debian_version }}
+      dash_artifact_name: sonic-dash-api
       artifact_name: sonic-swss-${{ parameters.debian_version }}
+      debian_version: ${{ parameters.debian_version }}
       archive_pytests: true
       archive_gcov: true
 
@@ -66,7 +68,9 @@ stages:
       common_lib_artifact_name: common-lib
       swss_common_artifact_name: sonic-swss-common-${{ parameters.debian_version }}
       sairedis_artifact_name: sonic-sairedis-${{ parameters.debian_version }}
+      dash_artifact_name: sonic-dash-api
       artifact_name: sonic-swss-asan-${{ parameters.debian_version }}
+      debian_version: ${{ parameters.debian_version }}
       asan: true
 
 - stage: BuildArm
@@ -82,7 +86,9 @@ stages:
       common_lib_artifact_name: common-lib.armhf
       swss_common_artifact_name: sonic-swss-common-${{ parameters.debian_version }}.armhf
       sairedis_artifact_name: sonic-sairedis-${{ parameters.debian_version }}.armhf
+      dash_artifact_name: sonic-dash-api.armhf
       artifact_name: sonic-swss-${{ parameters.debian_version }}.armhf
+      debian_version: ${{ parameters.debian_version }}
       archive_gcov: false
 
   - template: .azure-pipelines/build-template.yml
@@ -94,7 +100,54 @@ stages:
       common_lib_artifact_name: common-lib.arm64
       swss_common_artifact_name: sonic-swss-common-${{ parameters.debian_version }}.arm64
       sairedis_artifact_name: sonic-sairedis-${{ parameters.debian_version }}.arm64
+      dash_artifact_name: sonic-dash-api.arm64
       artifact_name: sonic-swss-${{ parameters.debian_version }}.arm64
+      debian_version: ${{ parameters.debian_version }}
+      archive_gcov: false
+
+- stage: BuildTrixie
+  dependsOn: BuildArm
+  condition: succeeded('BuildArm')
+  jobs:
+  - template: .azure-pipelines/build-template.yml
+    parameters:
+      arch: amd64
+      pool: sonicso1ES-amd64
+      sonic_slave: sonic-slave-trixie
+      common_lib_artifact_name: common-lib
+      swss_common_artifact_name: sonic-swss-common-trixie
+      sairedis_artifact_name: sonic-sairedis-trixie
+      dash_artifact_name: sonic-dash-api-trixie
+      artifact_name: sonic-swss-trixie
+      debian_version: trixie
+      archive_gcov: false
+
+  - template: .azure-pipelines/build-template.yml
+    parameters:
+      arch: armhf
+      timeout: 240
+      pool: sonicso1ES-armhf
+      sonic_slave: sonic-slave-trixie
+      common_lib_artifact_name: common-lib.armhf
+      swss_common_artifact_name: sonic-swss-common-trixie.armhf
+      sairedis_artifact_name: sonic-sairedis-trixie.armhf
+      dash_artifact_name: sonic-dash-api-trixie.armhf
+      artifact_name: sonic-swss-trixie.armhf
+      debian_version: trixie
+      archive_gcov: false
+
+  - template: .azure-pipelines/build-template.yml
+    parameters:
+      arch: arm64
+      timeout: 240
+      pool: sonicso1ES-arm64
+      sonic_slave: sonic-slave-trixie
+      common_lib_artifact_name: common-lib.arm64
+      swss_common_artifact_name: sonic-swss-common-trixie.arm64
+      sairedis_artifact_name: sonic-sairedis-trixie.arm64
+      dash_artifact_name: sonic-dash-api-trixie.arm64
+      artifact_name: sonic-swss-trixie.arm64
+      debian_version: trixie
       archive_gcov: false
 
 - stage: BuildDocker
