@@ -10,6 +10,7 @@
 #include "orch_zmq_config.h"
 
 #include <arpa/inet.h>
+#include <linux/pkt_cls.h>
 #include <linux/rtnetlink.h>
 #include <netlink/route/link.h>
 #include <netlink/route/nexthop.h>
@@ -3652,6 +3653,209 @@ TEST_F(FpmSyncdResponseTest, TestGetEvpnNextHopMultipath)
     EXPECT_EQ(vni_list, "10100,10100");
     EXPECT_EQ(mac_list, "aa:bb:cc:dd:ee:01,aa:bb:cc:dd:ee:02");
     EXPECT_EQ(intf_list, "Vrf10,Vrf10");
+}
+
+static nlmsghdr *initRawNlMsg(unsigned char *buffer, uint16_t msgType, unsigned int payloadLen)
+{
+    memset(buffer, 0, NLMSG_SPACE(MAX_PAYLOAD));
+    auto *nlh = reinterpret_cast<nlmsghdr *>(static_cast<void *>(buffer));
+    nlh->nlmsg_len = NLMSG_LENGTH(payloadLen);
+    nlh->nlmsg_type = msgType;
+    return nlh;
+}
+
+static bool addVxlanEncap(nlmsghdr *nlh, uint32_t vni, const uint8_t (&rmac)[6])
+{
+    uint16_t encapType = 100;
+    if (!ut_fpmsyncd::nl_attr_put16(nlh, MAX_PAYLOAD, RTA_ENCAP_TYPE, encapType))
+    {
+        return false;
+    }
+
+    struct rtattr *nest = ut_fpmsyncd::nl_attr_nest(nlh, MAX_PAYLOAD, RTA_ENCAP);
+    if (!nest || !ut_fpmsyncd::nl_attr_put32(nlh, MAX_PAYLOAD, 0, vni) ||
+        !ut_fpmsyncd::nl_attr_put(nlh, MAX_PAYLOAD, 1, rmac, static_cast<unsigned int>(sizeof(rmac))))
+    {
+        return false;
+    }
+    ut_fpmsyncd::nl_attr_nest_end(nlh, nest);
+    return true;
+}
+
+static int appendRtAttr(char *buffer, int offset, int type, const void *data, unsigned int len)
+{
+    auto *attr = reinterpret_cast<rtattr *>(static_cast<void *>(buffer + offset));
+    attr->rta_type = static_cast<unsigned short>(type);
+    attr->rta_len = static_cast<unsigned short>(RTA_LENGTH(len));
+    memcpy(RTA_DATA(attr), data, len);
+    return offset + static_cast<int>(RTA_ALIGN(attr->rta_len));
+}
+
+static int appendVxlanEncapAttrs(char *buffer, int offset, uint32_t vni, const uint8_t (&rmac)[6])
+{
+    uint16_t encapType = 100;
+    offset = appendRtAttr(buffer, offset, RTA_ENCAP_TYPE, &encapType, static_cast<unsigned int>(sizeof(encapType)));
+
+    auto *encap = reinterpret_cast<rtattr *>(static_cast<void *>(buffer + offset));
+    encap->rta_type = static_cast<unsigned short>(RTA_ENCAP | NLA_F_NESTED);
+    encap->rta_len = static_cast<unsigned short>(RTA_LENGTH(0));
+    int encapOffset = offset + static_cast<int>(RTA_ALIGN(RTA_LENGTH(0)));
+
+    int nestedLen = 0;
+    nestedLen = appendRtAttr(buffer, encapOffset + nestedLen, 0, &vni, static_cast<unsigned int>(sizeof(vni))) - encapOffset;
+    nestedLen = appendRtAttr(buffer, encapOffset + nestedLen, 1, rmac, static_cast<unsigned int>(sizeof(rmac))) - encapOffset;
+
+    encap->rta_len = static_cast<unsigned short>(RTA_LENGTH(nestedLen));
+    return offset + static_cast<int>(RTA_ALIGN(encap->rta_len));
+}
+
+TEST_F(FpmSyncdResponseTest, TestGetEvpnNextHopWithIpv6RtaVia)
+{
+    unsigned char buffer[NLMSG_SPACE(MAX_PAYLOAD)] = {0};
+    nlmsghdr *nlh = initRawNlMsg(buffer, RTM_NEWROUTE, 0);
+
+    struct
+    {
+        uint16_t family;
+        uint8_t addr[16];
+    } via = {};
+    via.family = static_cast<uint16_t>(AF_INET6);
+    ASSERT_EQ(inet_pton(AF_INET6, "2001:db8:100::1", via.addr), 1);
+    ASSERT_TRUE(ut_fpmsyncd::nl_attr_put(nlh, MAX_PAYLOAD, RTA_VIA, &via, static_cast<unsigned int>(sizeof(via))));
+
+    ASSERT_TRUE(ut_fpmsyncd::nl_attr_put32(nlh, MAX_PAYLOAD, RTA_OIF, 10u));
+    const uint8_t rmac[6] = {0x02, 0x04, 0x06, 0x08, 0x0a, 0x0c};
+    ASSERT_TRUE(addVxlanEncap(nlh, 70700, rmac));
+
+    struct rtattr *tb[RTA_MAX + 1] = {0};
+    netlink_parse_rtattr(tb, RTA_MAX, reinterpret_cast<rtattr *>(NLMSG_DATA(nlh)),
+                         static_cast<int>(nlh->nlmsg_len - NLMSG_LENGTH(0)));
+
+    string nexthops, vniList, macList, intfList;
+    EXPECT_TRUE(m_routeSync.getEvpnNextHop(nlh, 100, tb, nexthops, vniList, macList, intfList));
+    EXPECT_EQ(nexthops, "2001:db8:100::1");
+    EXPECT_EQ(vniList, "70700");
+    EXPECT_EQ(macList, "02:04:06:08:0a:0c");
+    EXPECT_EQ(intfList, "Vrf10");
+}
+
+TEST_F(FpmSyncdResponseTest, TestGetEvpnNextHopMultipathWithRtaVia)
+{
+    unsigned char buffer[NLMSG_SPACE(MAX_PAYLOAD)] = {0};
+    nlmsghdr *nlh = initRawNlMsg(buffer, RTM_NEWROUTE, 0);
+
+    char multipath[512] = {0};
+    int multipathLen = 0;
+
+    auto addNexthop = [&](int family, const char *address, uint32_t vni, const uint8_t (&rmac)[6]) {
+        auto *rtnh = reinterpret_cast<rtnexthop *>(static_cast<void *>(multipath + multipathLen));
+        memset(rtnh, 0, sizeof(*rtnh));
+        rtnh->rtnh_ifindex = 10;
+
+        int attrOffset = multipathLen + sizeof(*rtnh);
+        if (family == AF_INET)
+        {
+            struct
+            {
+                uint16_t family;
+                uint8_t addr[4];
+            } via = {};
+            via.family = static_cast<uint16_t>(AF_INET);
+            EXPECT_EQ(inet_pton(AF_INET, address, via.addr), 1);
+            attrOffset = appendRtAttr(multipath, attrOffset, RTA_VIA, &via, static_cast<unsigned int>(sizeof(via)));
+        }
+        else
+        {
+            struct
+            {
+                uint16_t family;
+                uint8_t addr[16];
+            } via = {};
+            via.family = static_cast<uint16_t>(AF_INET6);
+            EXPECT_EQ(inet_pton(AF_INET6, address, via.addr), 1);
+            attrOffset = appendRtAttr(multipath, attrOffset, RTA_VIA, &via, static_cast<unsigned int>(sizeof(via)));
+        }
+
+        attrOffset = appendVxlanEncapAttrs(multipath, attrOffset, vni, rmac);
+        rtnh->rtnh_len = static_cast<uint16_t>(attrOffset - multipathLen);
+        multipathLen += static_cast<int>(NLMSG_ALIGN(rtnh->rtnh_len));
+    };
+
+    const uint8_t rmac1[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x01};
+    const uint8_t rmac2[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x02};
+    addNexthop(AF_INET, "10.10.20.1", 80800, rmac1);
+    addNexthop(AF_INET6, "2001:db8:200::1", 80801, rmac2);
+
+    ASSERT_TRUE(ut_fpmsyncd::nl_attr_put(nlh, MAX_PAYLOAD, RTA_MULTIPATH, multipath,
+                                         static_cast<unsigned int>(multipathLen)));
+
+    struct rtattr *tb[RTA_MAX + 1] = {0};
+    netlink_parse_rtattr(tb, RTA_MAX, reinterpret_cast<rtattr *>(NLMSG_DATA(nlh)),
+                         static_cast<int>(nlh->nlmsg_len - NLMSG_LENGTH(0)));
+
+    string nexthops, vniList, macList, intfList;
+    EXPECT_TRUE(m_routeSync.getEvpnNextHop(nlh, 100, tb, nexthops, vniList, macList, intfList));
+    EXPECT_EQ(nexthops, "10.10.20.1,2001:db8:200::1");
+    EXPECT_EQ(vniList, "80800,80801");
+    EXPECT_EQ(macList, "00:11:22:33:44:01,00:11:22:33:44:02");
+    EXPECT_EQ(intfList, "Vrf10,Vrf10");
+}
+
+TEST_F(FpmSyncdResponseTest, TestOnTcFilterMsgShlAddAndDelete)
+{
+    unsigned char buffer[NLMSG_SPACE(MAX_PAYLOAD)] = {0};
+    nlmsghdr *nlh = initRawNlMsg(buffer, RTM_NEWTFILTER, static_cast<unsigned int>(sizeof(tcmsg)));
+    auto *tcm = reinterpret_cast<tcmsg *>(NLMSG_DATA(nlh));
+    tcm->tcm_ifindex = 10;
+
+    char kind[] = "shl";
+    ASSERT_TRUE(ut_fpmsyncd::nl_attr_put(nlh, MAX_PAYLOAD, TCA_KIND, kind, static_cast<unsigned int>(sizeof(kind))));
+    struct rtattr *options = ut_fpmsyncd::nl_attr_nest(nlh, MAX_PAYLOAD, TCA_OPTIONS);
+    ASSERT_NE(options, nullptr);
+
+    struct in_addr vtep4;
+    ASSERT_EQ(inet_pton(AF_INET, "10.20.30.40", &vtep4), 1);
+    ASSERT_TRUE(ut_fpmsyncd::nl_attr_put(nlh, MAX_PAYLOAD, TCA_FLOWER_KEY_IPV4_SRC, &vtep4,
+                                         static_cast<unsigned int>(sizeof(vtep4))));
+
+    struct in6_addr vtep6;
+    ASSERT_EQ(inet_pton(AF_INET6, "2001:db8:300::1", &vtep6), 1);
+    ASSERT_TRUE(ut_fpmsyncd::nl_attr_put(nlh, MAX_PAYLOAD, TCA_FLOWER_KEY_IPV6_SRC, &vtep6,
+                                         static_cast<unsigned int>(sizeof(vtep6))));
+    ut_fpmsyncd::nl_attr_nest_end(nlh, options);
+
+    m_routeSync.onTcFilterMsg(nlh, static_cast<int>(nlh->nlmsg_len - NLMSG_LENGTH(sizeof(tcmsg))));
+    m_pipeline->flush();
+
+    Table shlTable(m_db.get(), APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+    vector<FieldValueTuple> values;
+    ASSERT_TRUE(shlTable.get("Vlan0000:Vrf10", values));
+    auto vteps = swss::fvsGetValue(values, "vteps", true);
+    ASSERT_TRUE(vteps.has_value());
+    EXPECT_EQ(*vteps, "10.20.30.40,2001:db8:300::1");
+
+    nlh->nlmsg_type = RTM_DELTFILTER;
+    m_routeSync.onTcFilterMsg(nlh, static_cast<int>(nlh->nlmsg_len - NLMSG_LENGTH(sizeof(tcmsg))));
+    m_pipeline->flush();
+    EXPECT_FALSE(shlTable.get("Vlan0000:Vrf10", values));
+}
+
+TEST_F(FpmSyncdResponseTest, TestOnTcFilterMsgShlMissingOptions)
+{
+    unsigned char buffer[NLMSG_SPACE(MAX_PAYLOAD)] = {0};
+    nlmsghdr *nlh = initRawNlMsg(buffer, RTM_NEWTFILTER, static_cast<unsigned int>(sizeof(tcmsg)));
+    auto *tcm = reinterpret_cast<tcmsg *>(NLMSG_DATA(nlh));
+    tcm->tcm_ifindex = 10;
+
+    char kind[] = "shl";
+    ASSERT_TRUE(ut_fpmsyncd::nl_attr_put(nlh, MAX_PAYLOAD, TCA_KIND, kind, static_cast<unsigned int>(sizeof(kind))));
+
+    m_routeSync.onTcFilterMsg(nlh, static_cast<int>(nlh->nlmsg_len - NLMSG_LENGTH(sizeof(tcmsg))));
+    m_pipeline->flush();
+
+    Table shlTable(m_db.get(), APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+    vector<FieldValueTuple> values;
+    EXPECT_FALSE(shlTable.get("Vlan0000:Vrf10", values));
 }
 
 // Helper to create a VNET route with nexthop

@@ -400,4 +400,40 @@ namespace intfsorch_test
         m_syncdIntfses = gIntfsOrch->getSyncdIntfses();
         ASSERT_EQ(m_syncdIntfses["Loopback3"].vrf_id, gVirtualRouterId);    
     }
+
+    TEST_F(IntfsOrchTest, IntfsOrchSagEnableDisable)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        entries.push_back({"GLOBAL", "SET", {{"gateway_mac", "02:03:04:05:06:07"}}});
+        auto sagConsumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_SAG_TABLE_NAME));
+        ASSERT_NE(sagConsumer, nullptr);
+        sagConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        entries.clear();
+        entries.push_back({"Ethernet0", "SET", {{"mtu", "9100"}, {"static_anycast_gateway", "true"}}});
+        auto intfConsumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(intfConsumer, nullptr);
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        auto syncdIntfses = gIntfsOrch->getSyncdIntfses();
+        ASSERT_NE(syncdIntfses.find("Ethernet0"), syncdIntfses.end());
+        EXPECT_TRUE(syncdIntfses.at("Ethernet0").sag_enabled);
+
+        entries.clear();
+        entries.push_back({"Ethernet0", "SET", {{"static_anycast_gateway", "false"}}});
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        syncdIntfses = gIntfsOrch->getSyncdIntfses();
+        ASSERT_NE(syncdIntfses.find("Ethernet0"), syncdIntfses.end());
+        EXPECT_FALSE(syncdIntfses.at("Ethernet0").sag_enabled);
+
+        entries.clear();
+        entries.push_back({"GLOBAL", "DEL", {}});
+        sagConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+    }
 }

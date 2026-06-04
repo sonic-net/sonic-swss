@@ -299,6 +299,10 @@ tests_teammgrd_SOURCES = teammgrd/teammgr_ut.cpp \
 tests_teammgrd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/cfgmgr -I$(top_srcdir)/lib
 tests_teammgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_teammgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_teammgrd_INCLUDES)
+tests_teammgrd_CXXFLAGS = -Wl,-wrap,nl_socket_alloc -Wl,-wrap,nl_socket_free -Wl,-wrap,nl_connect \
+        -Wl,-wrap,nl_close -Wl,-wrap,if_nametoindex -Wl,-wrap,rtnl_link_alloc \
+        -Wl,-wrap,rtnl_link_put -Wl,-wrap,nl_addr_build -Wl,-wrap,nl_addr_put \
+        -Wl,-wrap,rtnl_link_set_addr -Wl,-wrap,rtnl_link_get_kernel -Wl,-wrap,rtnl_link_change
 tests_teammgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -ldl -lhiredis \
         -lswsscommon -lgtest -lgtest_main -lzmq -lpthread -lgmock -lgmock_main
 
