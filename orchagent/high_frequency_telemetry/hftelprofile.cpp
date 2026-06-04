@@ -481,17 +481,28 @@ void HFTelProfile::clearGroup(const std::string &group_name)
         }
         m_groups.erase(itr);
     }
-    const auto shared_key = mapKey(sai_object_type);
-    m_sai_tam_tel_type_templates.erase(shared_key);
     m_sai_tam_counter_subscription_objs.erase(sai_object_type);
-    auto tel_type_itr = m_sai_tam_tel_type_objs.find(shared_key);
-    if (tel_type_itr != m_sai_tam_tel_type_objs.end())
-    {
-        m_sai_tam_tel_type_states.erase(tel_type_itr->second);
-        m_sai_tam_tel_type_objs.erase(tel_type_itr);
-    }
-    m_sai_tam_report_objs.erase(shared_key);
     m_name_sai_map.erase(sai_object_type);
+
+    // In SINGLE mode each object type owns its own tam_tel_type / tam_report,
+    // so the shared_key below is just sai_object_type and erasing only
+    // touches the group being cleared. In MIXED mode the shared_key is the
+    // singleton and these maps hold resources shared across every group in the
+    // profile, so we must only tear them down when this is the last group.
+    const bool teardown_shared =
+        m_tel_type_mode != SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE || m_groups.empty();
+    if (teardown_shared)
+    {
+        const auto shared_key = mapKey(sai_object_type);
+        m_sai_tam_tel_type_templates.erase(shared_key);
+        auto type_itr = m_sai_tam_tel_type_objs.find(shared_key);
+        if (type_itr != m_sai_tam_tel_type_objs.end())
+        {
+            m_sai_tam_tel_type_states.erase(type_itr->second);
+            m_sai_tam_tel_type_objs.erase(type_itr);
+        }
+        m_sai_tam_report_objs.erase(shared_key);
+    }
 
     SWSS_LOG_NOTICE("Cleared high frequency telemetry group %s with no objects", group_name.c_str());
 }
