@@ -21,6 +21,7 @@
 #include "mock_orch_test.h"
 #include "nhgorch.h"
 #include "protnhg.h"
+#include "portal.h"
 
 #include "gtest/gtest.h"
 
@@ -56,6 +57,18 @@ namespace protnhg_test
     static void unregisterNextHop(const NextHopKey &nh)
     {
         gNeighOrch->m_syncdNextHops.erase(nh);
+    }
+
+    /* Sum the CRM "used" counter across all keys for a resource type. */
+    static uint32_t crmUsed(CrmResourceType type)
+    {
+        uint32_t count = 0;
+        const auto &resourceMap = Portal::CrmOrchInternal::getResourceMap(gCrmOrch);
+        for (const auto &kv : resourceMap.at(type).countersMap)
+        {
+            count += kv.second.usedCounter;
+        }
+        return count;
     }
 
     class ProtNhgTest : public MockOrchTest
@@ -1146,5 +1159,37 @@ namespace protnhg_test
             SWITCH_CAPABILITY_TABLE_SW_NHG_PROTECTION_CAPABLE, sw_val);
         EXPECT_FALSE(sw_val.empty());
         EXPECT_EQ(sw_val, sw_supported ? "true" : "false");
+    }
+
+    /* --- CRM resource accounting --- */
+
+    TEST_F(ProtNhgTest, CrmAccountingOnCreateAndRemove)
+    {
+        NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
+        NextHopKey standby_nh(IpAddress("10.0.0.100"), string("Ethernet4"));
+
+        registerNextHop(primary_nh);
+        registerNextHop(standby_nh);
+
+        vector<NextHopKey> primaries = {primary_nh};
+
+        uint32_t grp_before = crmUsed(CrmResourceType::CRM_NEXTHOP_GROUP);
+        uint32_t mbr_before = crmUsed(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+
+        string key = "prot_crm";
+        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
+
+        /* One protection group with two synced members (1 primary + 1 standby). */
+        EXPECT_EQ(crmUsed(CrmResourceType::CRM_NEXTHOP_GROUP), grp_before + 1);
+        EXPECT_EQ(crmUsed(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER), mbr_before + 2);
+
+        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
+
+        /* Removal must release both the group and the member counters. */
+        EXPECT_EQ(crmUsed(CrmResourceType::CRM_NEXTHOP_GROUP), grp_before);
+        EXPECT_EQ(crmUsed(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER), mbr_before);
+
+        unregisterNextHop(primary_nh);
+        unregisterNextHop(standby_nh);
     }
  }

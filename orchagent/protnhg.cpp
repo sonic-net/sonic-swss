@@ -475,6 +475,12 @@ bool ProtNhg::syncMembers(const set<NextHopKey> &member_keys)
 
     bulker.flush();
 
+    /*
+     * Go through the synced members and, for the successful ones, call sync()
+     * which records the SAI member ID and increments the CRM_NEXTHOP_GROUP_MEMBER
+     * ref count (via NhgMember::sync()). The matching decrement happens in
+     * NhgMember::remove() through ProtNhg::remove() -> NhgCommon::removeMembers().
+     */
     bool success = true;
     for (const auto &entry : syncing)
     {
