@@ -56,11 +56,15 @@ private:
 };
 
 /*
- * ProtNhg represents a SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION group.
+ * ProtNhg represents a SAI protection next hop group of either type, selected
+ * at construction via the hw_protection flag:
+ *   - SAI_NEXT_HOP_GROUP_TYPE_PROTECTION    (software protection), or
+ *   - SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION (hardware protection).
  * It has one or more primary next hops and exactly one standby next hop.
- * Hardware toggles traffic between the primary set and the standby based on
- * the monitored object state. Administrative override is supported via
- * SAI_NEXT_HOP_GROUP_ATTR_ADMIN_ROLE.
+ * For HW protection, the hardware toggles traffic between the primary set and
+ * the standby based on the monitored object state, with software override via
+ * SAI_NEXT_HOP_GROUP_ATTR_ADMIN_ROLE. For SW protection, the switchover is
+ * driven by software via SAI_NEXT_HOP_GROUP_ATTR_SET_SWITCHOVER.
  */
 class ProtNhg : public NhgCommon<string, NextHopKey, ProtNhgMember>
 {

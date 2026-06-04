@@ -3,6 +3,7 @@
 #include "crmorch.h"
 #include "routeorch.h"
 #include "srv6orch.h"
+#include "switchorch.h"
 #include "bulker.h"
 #include "logger.h"
 #include "swssnet.h"
@@ -14,6 +15,7 @@ extern NeighOrch *gNeighOrch;
 extern RouteOrch *gRouteOrch;
 extern NhgOrch *gNhgOrch;
 extern Srv6Orch *gSrv6Orch;
+extern SwitchOrch *gSwitchOrch;
 
 extern size_t gMaxBulkSize;
 
@@ -1163,17 +1165,14 @@ bool NextHopGroup::invalidateNextHop(const NextHopKey& nh_key)
 /* Protection NHG management APIs                                          */
 /* ----------------------------------------------------------------------- */
 
-bool NhgOrch::isHwProtectionSupported()
+void NhgOrch::probeProtectionCapabilities()
 {
-    static bool checked = false;
-    static bool supported = false;
-
-    if (checked)
+    if (m_protCapChecked)
     {
-        return supported;
+        return;
     }
 
-    checked = true;
+    m_protCapChecked = true;
 
     const auto *meta = sai_metadata_get_attr_metadata(
                            SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
@@ -1181,37 +1180,66 @@ bool NhgOrch::isHwProtectionSupported()
     if (!meta || !meta->isenum)
     {
         SWSS_LOG_NOTICE("Cannot query NHG type enum metadata");
-        return false;
     }
-
-    vector<int32_t> values_list(meta->enummetadata->valuescount);
-    sai_s32_list_t values;
-    values.count = static_cast<uint32_t>(values_list.size());
-    values.list = values_list.data();
-
-    sai_status_t status = sai_query_attribute_enum_values_capability(
-                              gSwitchId,
-                              SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
-                              SAI_NEXT_HOP_GROUP_ATTR_TYPE,
-                              &values);
-    if (status != SAI_STATUS_SUCCESS)
+    else
     {
-        SWSS_LOG_NOTICE("Failed to query NHG type capabilities, rv: %d", status);
-        return false;
-    }
+        vector<int32_t> values_list(meta->enummetadata->valuescount);
+        sai_s32_list_t values;
+        values.count = static_cast<uint32_t>(values_list.size());
+        values.list = values_list.data();
 
-    for (uint32_t i = 0; i < values.count; i++)
-    {
-        if (values.list[i] == SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION)
+        sai_status_t status = sai_query_attribute_enum_values_capability(
+                                  gSwitchId,
+                                  SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+                                  SAI_NEXT_HOP_GROUP_ATTR_TYPE,
+                                  &values);
+        if (status != SAI_STATUS_SUCCESS)
         {
-            supported = true;
-            break;
+            SWSS_LOG_NOTICE("Failed to query NHG type capabilities, rv: %d", status);
+        }
+        else
+        {
+            for (uint32_t i = 0; i < values.count; i++)
+            {
+                if (values.list[i] == SAI_NEXT_HOP_GROUP_TYPE_PROTECTION)
+                {
+                    m_swProtectionSupported = true;
+                }
+                else if (values.list[i] == SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION)
+                {
+                    m_hwProtectionSupported = true;
+                }
+            }
         }
     }
 
-    SWSS_LOG_NOTICE("SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION is %s",
-                    supported ? "supported" : "not supported");
-    return supported;
+    SWSS_LOG_NOTICE("SAI_NEXT_HOP_GROUP_TYPE_PROTECTION is %s; "
+                    "SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION is %s",
+                    m_swProtectionSupported ? "supported" : "not supported",
+                    m_hwProtectionSupported ? "supported" : "not supported");
+
+    /* Publish both capabilities to STATE_DB|SWITCH_CAPABILITY so consumers and
+     * CLI can discover which protection NHG types are available. */
+    if (gSwitchOrch)
+    {
+        gSwitchOrch->set_switch_capability(
+            { swss::FieldValueTuple(SWITCH_CAPABILITY_TABLE_SW_NHG_PROTECTION_CAPABLE,
+                                    m_swProtectionSupported ? "true" : "false"),
+              swss::FieldValueTuple(SWITCH_CAPABILITY_TABLE_HW_NHG_PROTECTION_CAPABLE,
+                                    m_hwProtectionSupported ? "true" : "false") });
+    }
+}
+
+bool NhgOrch::isSwProtectionSupported()
+{
+    probeProtectionCapabilities();
+    return m_swProtectionSupported;
+}
+
+bool NhgOrch::isHwProtectionSupported()
+{
+    probeProtectionCapabilities();
+    return m_hwProtectionSupported;
 }
 
 bool NhgOrch::createProtNhg(const string &key,

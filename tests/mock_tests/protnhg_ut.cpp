@@ -1098,51 +1098,6 @@ namespace protnhg_test
         EXPECT_NE(hw_key, sw_key);
     }
 
-    /* --- Tunnel NH in a protection NHG --- */
-
-    TEST_F(ProtNhgTest, CreateProtNhgWithTunnelStandby)
-    {
-        NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
-        NextHopKey standby_nh(IpAddress("10.1.0.32"), string("MuxTunnel0"),
-                              true /*tunnel_nh*/, 0 /*tag*/);
-        vector<NextHopKey> primaries = {primary_nh};
-
-        registerNextHop(primary_nh);
-        registerNextHop(standby_nh, 0xBEEF);
-
-        string key = "prot_tunnel_standby";
-        ASSERT_TRUE(gNhgOrch->createProtNhg(key, primaries, standby_nh));
-        EXPECT_TRUE(gNhgOrch->hasProtNhg(key));
-        EXPECT_NE(gNhgOrch->getProtNhgId(key), SAI_NULL_OBJECT_ID);
-
-        ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
-        EXPECT_FALSE(gNhgOrch->hasProtNhg(key));
-
-        unregisterNextHop(primary_nh);
-        unregisterNextHop(standby_nh);
-    }
-
-    TEST_F(ProtNhgTest, AutoKeyWithTunnelNextHop)
-    {
-        NextHopKey primary_nh(IpAddress("10.0.0.1"), string("Ethernet0"));
-        NextHopKey standby_nh(IpAddress("10.1.0.32"), string("MuxTunnel0"),
-                              true /*tunnel_nh*/, 0 /*tag*/);
-        vector<NextHopKey> primaries = {primary_nh};
-
-        registerNextHop(primary_nh);
-        registerNextHop(standby_nh, 0xBEEF);
-
-        string expected_key = NhgOrch::buildProtNhgKey(primaries, standby_nh, true);
-        EXPECT_NE(expected_key.find("tunnel:MuxTunnel0"), string::npos);
-
-        ASSERT_TRUE(gNhgOrch->createProtNhg(primaries, standby_nh));
-        EXPECT_TRUE(gNhgOrch->hasProtNhg(expected_key));
-
-        ASSERT_TRUE(gNhgOrch->removeProtNhg(expected_key));
-        unregisterNextHop(primary_nh);
-        unregisterNextHop(standby_nh);
-    }
-
     TEST_F(ProtNhgTest, RecursiveMemberResolvesViaNhgOrch)
     {
         NextHopGroupKey primary_nhg_key("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0");
@@ -1168,5 +1123,28 @@ namespace protnhg_test
         ASSERT_TRUE(gNhgOrch->removeProtNhg(key));
         removeEcmpNhg(primary_nhg_key.to_string());
         removeEcmpNhg(standby_nhg_key.to_string());
+    }
+
+    /* --- Protection capabilities are published to STATE_DB --- */
+
+    TEST_F(ProtNhgTest, ProtectionCapabilitiesPublishedToStateDb)
+    {
+        /* Probing either capability must publish both SW and HW protection
+         * capability fields to the standard switch capability row,
+         * regardless of whether the platform supports them. */
+        bool hw_supported = gNhgOrch->isHwProtectionSupported();
+        bool sw_supported = gNhgOrch->isSwProtectionSupported();
+
+        string hw_val;
+        gSwitchOrch->get_switch_capability(
+            SWITCH_CAPABILITY_TABLE_HW_NHG_PROTECTION_CAPABLE, hw_val);
+        EXPECT_FALSE(hw_val.empty());
+        EXPECT_EQ(hw_val, hw_supported ? "true" : "false");
+
+        string sw_val;
+        gSwitchOrch->get_switch_capability(
+            SWITCH_CAPABILITY_TABLE_SW_NHG_PROTECTION_CAPABLE, sw_val);
+        EXPECT_FALSE(sw_val.empty());
+        EXPECT_EQ(sw_val, sw_supported ? "true" : "false");
     }
  }

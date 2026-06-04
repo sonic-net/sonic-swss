@@ -130,7 +130,12 @@ public:
     bool validateNextHop(const NextHopKey& nh_key);
     bool invalidateNextHop(const NextHopKey& nh_key);
 
-    /* Check if hardware supports protection NHG type. */
+    /* Check if the ASIC supports the SW protection NHG type
+     * (SAI_NEXT_HOP_GROUP_TYPE_PROTECTION). */
+    bool isSwProtectionSupported();
+
+    /* Check if the ASIC supports the HW protection NHG type
+     * (SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION). */
     bool isHwProtectionSupported();
 
     /*
@@ -217,6 +222,15 @@ public:
 
 private:
     void doTask(Consumer& consumer) override;
+
+    /* Probe the ASIC once for SW/HW protection NHG support and publish the
+     * result to STATE_DB|SWITCH_CAPABILITY. Subsequent calls are no-ops. */
+    void probeProtectionCapabilities();
+
+    /* Cached protection-capability probe results. */
+    bool m_protCapChecked = false;
+    bool m_swProtectionSupported = false;
+    bool m_hwProtectionSupported = false;
 
     /* Storage for protection NHGs, keyed by a string identifier (e.g., port name). */
     unordered_map<string, NhgEntry<ProtNhg>> m_protNhgs;
