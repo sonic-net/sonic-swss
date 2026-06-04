@@ -3,6 +3,7 @@
 #include "tunneldecaporch.h"
 #include "portsorch.h"
 #include "crmorch.h"
+#include "neighorch.h"
 #include "logger.h"
 #include "swssnet.h"
 #include "qosorch.h"
@@ -26,6 +27,7 @@ extern sai_object_id_t  gSwitchId;
 extern PortsOrch*       gPortsOrch;
 extern CrmOrch*         gCrmOrch;
 extern QosOrch*         gQosOrch;
+extern NeighOrch*       gNeighOrch;
 
 TunnelDecapOrch::TunnelDecapOrch(
     DBConnector *appDb, DBConnector *stateDb,
@@ -1351,6 +1353,12 @@ sai_object_id_t TunnelDecapOrch::createNextHopTunnel(std::string tunnelKey, IpAd
         }
 
         tunnelNhs[tunnelKey][ipAddr] = { next_hop_id, 1 };
+
+        NextHopKey nhKey(ipAddr, tunnelKey, true /*tunnel_nh*/, 0 /*tag*/);
+        if (gNeighOrch)
+        {
+            gNeighOrch->addIpinipTunnelNextHop(nhKey, next_hop_id);
+        }
     }
 
     return next_hop_id;
@@ -1413,6 +1421,12 @@ bool TunnelDecapOrch::removeNextHopTunnel(std::string tunnelKey, IpAddress& ipAd
     }
 
     tunnelNhs[tunnelKey].erase(ipAddr);
+
+    NextHopKey nhKey(ipAddr, tunnelKey, true /*tunnel_nh*/, 0 /*tag*/);
+    if (gNeighOrch)
+    {
+        gNeighOrch->removeIpinipTunnelNextHop(nhKey);
+    }
 
     return true;
 }

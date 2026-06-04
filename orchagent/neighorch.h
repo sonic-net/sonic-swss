@@ -100,6 +100,9 @@ public:
     sai_object_id_t addTunnelNextHop(const NextHopKey&);
     bool removeTunnelNextHop(const NextHopKey&);
 
+    bool addIpinipTunnelNextHop(const NextHopKey& nh, sai_object_id_t nh_id);
+    bool removeIpinipTunnelNextHop(const NextHopKey& nh);
+
     bool ifChangeInformNextHop(const string &, bool);
     
     bool isNextHopFlagSet(const NextHopKey &, const uint32_t);
