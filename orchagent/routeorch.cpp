@@ -1358,8 +1358,19 @@ void RouteOrch::increaseNextHopRefCount(const NextHopGroupKey &nexthops)
     }
     else
     {
-        m_syncdNextHopGroups[nexthops].ref_count ++;
-        SWSS_LOG_INFO("Routeorch inc Ref count %u for next_hops: %s", m_syncdNextHopGroups[nexthops].ref_count, nexthops.to_string().c_str());
+        auto it = m_syncdNextHopGroups.find(nexthops);
+        if (it != m_syncdNextHopGroups.end())
+        {
+            it->second.ref_count++;
+            SWSS_LOG_INFO("Routeorch inc Ref count %u for next_hops: %s",
+                          it->second.ref_count, nexthops.to_string().c_str());
+        }
+        else
+        {
+            SWSS_LOG_WARN("increaseNextHopRefCount: NHG %s not in "
+                          "m_syncdNextHopGroups — skip to avoid ghost entry",
+                          nexthops.to_string().c_str());
+        }
     }
 }
 
@@ -1380,8 +1391,19 @@ void RouteOrch::decreaseNextHopRefCount(const NextHopGroupKey &nexthops)
     }
     else
     {
-        m_syncdNextHopGroups[nexthops].ref_count --;
-        SWSS_LOG_INFO("Routeorch dec Ref count %u for next_hops: %s", m_syncdNextHopGroups[nexthops].ref_count, nexthops.to_string().c_str());
+        auto it = m_syncdNextHopGroups.find(nexthops);
+        if (it != m_syncdNextHopGroups.end())
+        {
+            it->second.ref_count--;
+            SWSS_LOG_INFO("Routeorch dec Ref count %u for next_hops: %s",
+                          it->second.ref_count, nexthops.to_string().c_str());
+        }
+        else
+        {
+            SWSS_LOG_WARN("decreaseNextHopRefCount: NHG %s not in "
+                          "m_syncdNextHopGroups — skip to avoid ghost entry",
+                          nexthops.to_string().c_str());
+        }
     }
 }
 
@@ -1791,6 +1813,15 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops, const bool i
         }
 
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+    }
+
+    if (next_hop_group_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Attempted to remove NHG with NULL OID for %s "
+                       "— skipping SAI call to prevent crash",
+                       nexthops.to_string().c_str());
+        m_syncdNextHopGroups.erase(nexthops);
+        return true;
     }
 
     status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
@@ -2452,6 +2483,22 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
         }
 
         next_hop_id = m_syncdNextHopGroups[nextHops].next_hop_group_id;
+
+        if (next_hop_id == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_ERROR("NHG for %s has NULL OID in m_syncdNextHopGroups "
+                           "— likely a ghost entry from operator[]. "
+                           "Erasing and rebuilding.",
+                           nextHops.to_string().c_str());
+            m_syncdNextHopGroups.erase(nextHops);
+
+            if (!addNextHopGroup(nextHops))
+            {
+                addTempRoute(ctx, nextHops);
+                return false;
+            }
+            next_hop_id = m_syncdNextHopGroups[nextHops].next_hop_group_id;
+        }
     }
 
     /* Sync the route entry */
