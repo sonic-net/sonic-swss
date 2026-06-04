@@ -9,12 +9,14 @@
 #include "tokenize.h"
 #include "notificationconsumerstatsorch.h"
 #include "fdborch.h"
+#include "macmoveguard.h"
 #include "crmorch.h"
 #include "notifier.h"
 #include "sai_serialize.h"
 #include "mlagorch.h"
 #include "vxlanorch.h"
 #include "directory.h"
+#include "timer.h"
 
 #define VLAN_PREFIX         "Vlan"
 
@@ -28,7 +30,8 @@ extern Directory<Orch*> gDirectory;
 const int FdbOrch::fdborch_pri = 20;
 
 FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> appFdbTables,
-    TableConnector stateDbFdbConnector, TableConnector stateDbMclagFdbConnector, PortsOrch *port) :
+    TableConnector stateDbFdbConnector, TableConnector stateDbMclagFdbConnector, PortsOrch *port,
+    DBConnector* configDb) :
     Orch(applDbConnector, appFdbTables),
     m_portsOrch(port),
     m_fdbStateTable(stateDbFdbConnector.first, stateDbFdbConnector.second),
@@ -81,6 +84,20 @@ FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> app
         gNotifConsumerStatsOrch->registerConsumer("FdbOrch:fdb_event", m_fdbNotificationConsumer);
     auto fdbNotifier = new Notifier(m_fdbNotificationConsumer, this, "FDB_NOTIFICATIONS");
     Orch::addExecutor(fdbNotifier);
+
+    /* MAC Move Guard: detects MAC flapping between ports and applies a
+       remediation (admin-disable port, or pre-ingress ACL learn-suppress).
+       Owned by FdbOrch via composition; its config-table Consumer and
+       recovery SelectableTimer are added to this Orch's executor list and
+       dispatched from doTask() below. */
+    m_macMoveGuard.reset(new MacMoveGuard(configDb, stateDbFdbConnector.first,
+                                          CFG_MAC_MOVE_GUARD_TABLE_NAME,
+                                          m_portsOrch, this));
+}
+
+FdbOrch::~FdbOrch()
+{
+    m_portsOrch->detach(this);
 }
 
 bool FdbOrch::bake()
@@ -449,6 +466,16 @@ void FdbOrch::update(sai_fdb_event_t        type,
         storeFdbEntryState(update);
         notify(SUBJECT_TYPE_FDB_CHANGE, &update);
 
+        /* Forward the LEARN to the embedded MacMoveGuard so a preceding AGED
+           tombstone can be matched as a synthesized move. */
+        {
+            MacLearnNotification learn_notif;
+            learn_notif.port = update.port;
+            learn_notif.mac = update.entry.mac;
+            learn_notif.bv_id = update.entry.bv_id;
+            m_macMoveGuard->onMacLearn(learn_notif);
+        }
+
         break;
     }
     case SAI_FDB_EVENT_AGED:
@@ -653,6 +680,16 @@ void FdbOrch::update(sai_fdb_event_t        type,
 
         notify(SUBJECT_TYPE_FDB_CHANGE, &update);
 
+        /* Forward the MAC move (with both ports) to the embedded MacMoveGuard. */
+        {
+            MacMoveNotification move_notif;
+            move_notif.port_old = port_old;
+            move_notif.port_new = update.port;
+            move_notif.mac = update.entry.mac;
+            move_notif.bv_id = update.entry.bv_id;
+            m_macMoveGuard->onMacMove(move_notif);
+        }
+
         notifyTunnelOrch(port_old);
 
         break;
@@ -743,6 +780,17 @@ void FdbOrch::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
 
+    string table_name = consumer.getTableName();
+
+    /* MAC_MOVE_GUARD config consumer is registered against this Orch's
+       executor list — dispatch to the embedded guard. It does not require
+       ports to be ready, so handle it before the allPortsReady() gate. */
+    if (table_name == CFG_MAC_MOVE_GUARD_TABLE_NAME)
+    {
+        m_macMoveGuard->doConfigTask(consumer);
+        return;
+    }
+
     if (!m_portsOrch->allPortsReady())
     {
         return;
@@ -750,7 +798,6 @@ void FdbOrch::doTask(Consumer& consumer)
 
     FdbOrigin origin = FDB_ORIGIN_PROVISIONED;
 
-    string table_name = consumer.getTableName();
     if(table_name == APP_VXLAN_FDB_TABLE_NAME)
     {
         origin = FDB_ORIGIN_VXLAN_ADVERTIZED;
@@ -953,6 +1000,23 @@ void FdbOrch::doTask(Consumer& consumer)
             it = consumer.m_toSync.erase(it);
         }
     }
+}
+
+/* The recovery SelectableTimer registered by the embedded MacMoveGuard fires
+   on this Orch's executor list; route it back to the guard. Future timers
+   added to FdbOrch must be dispatched here as well — gate on identity so an
+   unrelated timer firing does not accidentally invoke MacMoveGuard. */
+void FdbOrch::doTask(swss::SelectableTimer &timer)
+{
+    SWSS_LOG_ENTER();
+
+    if (m_macMoveGuard && m_macMoveGuard->isMyTimer(&timer))
+    {
+        m_macMoveGuard->doRecoveryTimerTask();
+        return;
+    }
+
+    SWSS_LOG_WARN("FdbOrch::doTask(SelectableTimer&) fired for an unrecognized timer");
 }
 
 void FdbOrch::doTask(NotificationConsumer& consumer)

@@ -5,6 +5,10 @@
 #include "observer.h"
 #include "portsorch.h"
 
+#include <memory>
+
+class MacMoveGuard;
+
 enum FdbOrigin
 {
     FDB_ORIGIN_INVALID = 0,
@@ -45,6 +49,24 @@ struct FdbFlushUpdate
     Port port;
 };
 
+/* Carries both the old and new ports for a MAC move; passed to the embedded
+   MacMoveGuard so it can track per-port-pair behavior. */
+struct MacMoveNotification
+{
+    Port port_old;
+    Port port_new;
+    MacAddress mac;
+    sai_object_id_t bv_id;
+};
+
+/* Emitted on SAI_FDB_EVENT_LEARNED. */
+struct MacLearnNotification
+{
+    Port port;
+    MacAddress mac;
+    sai_object_id_t bv_id;
+};
+
 struct FdbData
 {
     sai_object_id_t bridge_port_id;
@@ -83,15 +105,20 @@ typedef unordered_map<string, vector<SavedFdbEntry>> fdb_entries_by_port_t;
 
 class FdbOrch: public Orch, public Subject, public Observer
 {
+    /* Embedded MacMoveGuard registers its config-table Consumer and recovery
+       SelectableTimer with this Orch's executor list via the protected
+       addExecutor(). Friend access keeps the coupling explicit and avoids
+       exposing addExecutor() to the wider codebase. */
+    friend class ::MacMoveGuard;
+
 public:
 
     FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> appFdbTables,
-                TableConnector stateDbFdbConnector, TableConnector stateDbMclagFdbConnector, PortsOrch *port);
+                TableConnector stateDbFdbConnector, TableConnector stateDbMclagFdbConnector,
+                PortsOrch *port,
+                DBConnector* configDb);
 
-    ~FdbOrch()
-    {
-        m_portsOrch->detach(this);
-    }
+    ~FdbOrch();
 
     bool bake() override;
     void update(sai_fdb_event_t, const sai_fdb_entry_t *, sai_object_id_t, const sai_fdb_entry_type_t &);
@@ -106,6 +133,8 @@ public:
     void flushFdbByVlan(const string &);
     void notifyObserversFDBFlush(Port &p, sai_object_id_t&);
 
+    MacMoveGuard* getMacMoveGuard() { return m_macMoveGuard.get(); }
+
 private:
     PortsOrch *m_portsOrch;
     map<FdbEntry, FdbData> m_entries;
@@ -116,9 +145,11 @@ private:
     NotificationConsumer* m_flushNotificationsConsumer;
     NotificationConsumer* m_fdbNotificationConsumer;
     shared_ptr<DBConnector> m_notificationsDb;
+    std::unique_ptr<MacMoveGuard> m_macMoveGuard;
 
     void doTask(Consumer& consumer);
     void doTask(NotificationConsumer& consumer);
+    void doTask(swss::SelectableTimer& timer) override;
 
     void updateVlanMember(const VlanMemberUpdate&);
     void updatePortOperState(const PortOperStateUpdate&);

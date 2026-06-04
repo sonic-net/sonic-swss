@@ -10,6 +10,7 @@
 #include "warm_restart.h"
 #include <iostream>
 #include "orch_zmq_config.h"
+#include "saihelper.h"
 
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
@@ -31,8 +32,6 @@ extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
 extern string                      gMySwitchType;
 extern string                      gMySwitchSubType;
-extern bool                        gOrchUnhealthy;
-extern string                      gSaiErrorString;
 volatile sig_atomic_t              gOrchShutdownRequested = 0;
 
 extern void syncd_apply_view();
@@ -241,7 +240,8 @@ bool OrchDaemon::init()
     gPortsOrch = new PortsOrch(m_applDb, m_stateDb, ports_tables, m_chassisAppDb);
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
     TableConnector stateMclagDbFdb(m_stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
-    gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
+    gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch,
+                           m_configDb);
 
     TableConnector stateDbBfdSessionTable(m_stateDb, STATE_BFD_SESSION_TABLE_NAME);
 
@@ -973,15 +973,6 @@ void OrchDaemon::start(long heartBeatInterval)
             break;
         }
 
-        /*
-         * Log an error message periodically if a previous SAI API call failed with
-         * an unrecoverable error.
-         */
-        if (gOrchUnhealthy)
-        {
-            SWSS_LOG_ERROR("%s", gSaiErrorString.c_str());
-        }
-
         auto tend = std::chrono::high_resolution_clock::now();
         heartBeat(tend, heartBeatInterval);
 
@@ -990,6 +981,16 @@ void OrchDaemon::start(long heartBeatInterval)
         if (diff.count() >= SELECT_TIMEOUT)
         {
             tstart = std::chrono::high_resolution_clock::now();
+
+            /*
+             * Log an error message periodically if a previous SAI API call failed with
+             * an unrecoverable error.
+             */
+            string orchHealthError;
+            if (getSaiFailureStatus(orchHealthError))
+            {
+                SWSS_LOG_ERROR("%s", orchHealthError.c_str());
+            }
 
             flush();
         }
