@@ -326,6 +326,8 @@ namespace neighorch_test
     {
         EXPECT_THROW(NextHopKey("tunnel:@10.0.0.1@extra"), std::invalid_argument);
         EXPECT_THROW(NextHopKey("tunnel:OnlyName"), std::invalid_argument);
+    }
+
     TEST_F(NeighOrchTest, ProcessFDBAdd_EnableNeighbor)
     {
         // Setup: Learn a neighbor first
