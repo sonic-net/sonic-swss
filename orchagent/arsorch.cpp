@@ -593,10 +593,9 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                 anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_FUTURE_MAX_VAL,      entry.loadFutureMaxVal);
                 anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_CURRENT_MIN_VAL,     entry.loadCurrentMinVal);
                 anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_CURRENT_MAX_VAL,     entry.loadCurrentMaxVal);
-                if (m_profileIpv4Supported)
-                    anyFailed |= !updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_ENABLE_IPV4,          entry.ipv4Enable);
-                if (m_profileIpv6Supported)
-                    anyFailed |= !updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_ENABLE_IPV6,          entry.ipv6Enable);
+                // ENABLE_IPV4/IPV6 are NOT pushed to SAI — Mellanox SAI reports
+                // SET_IMP=false for these. The ars-classifier-daemon handles
+                // IPv4/IPv6 classification via sx_api_ar_default_classification_set.
                 if (entry.samplingInterval > 0)
                     anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_SAMPLING_INTERVAL,    entry.samplingInterval);
                 if (entry.randomSeed > 0)
@@ -1575,116 +1574,21 @@ bool ArsOrch::createArsProfile(const string &name, const ArsProfileEntry &entry)
         }
     }
 
-    vector<sai_attribute_t> attrs;
-    sai_attribute_t attr;
-
-    attr.id = SAI_ARS_PROFILE_ATTR_ALGO;
-    attr.value.s32 = entry.algorithm;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ARS_PROFILE_ATTR_PORT_LOAD_PAST;
-    attr.value.booldata = entry.loadPastEnable;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ARS_PROFILE_ATTR_PORT_LOAD_PAST_WEIGHT;
-    attr.value.u8 = (uint8_t)entry.loadPastWeight;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ARS_PROFILE_ATTR_PORT_LOAD_FUTURE;
-    attr.value.booldata = entry.loadFutureEnable;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ARS_PROFILE_ATTR_PORT_LOAD_FUTURE_WEIGHT;
-    attr.value.u8 = (uint8_t)entry.loadFutureWeight;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ARS_PROFILE_ATTR_PORT_LOAD_CURRENT;
-    attr.value.booldata = entry.loadCurrentEnable;
-    attrs.push_back(attr);
-
-    // Note: SAI has no PORT_LOAD_CURRENT_WEIGHT attribute (only PAST_WEIGHT
-    // and FUTURE_WEIGHT). loadCurrentWeight is retained in ArsProfileEntry
-    // only to seed loadCurrentEnable when the operator writes
-    // load_current_weight without an explicit port_load_current.
-
-    attr.id = SAI_ARS_PROFILE_ATTR_PORT_LOAD_EXPONENT;
-    attr.value.u8 = (uint8_t)entry.loadExponent;
-    attrs.push_back(attr);
-
-    if (m_profileIpv4Supported)
-    {
-        attr.id = SAI_ARS_PROFILE_ATTR_ENABLE_IPV4;
-        attr.value.booldata = entry.ipv4Enable;
-        attrs.push_back(attr);
-    }
-
-    if (m_profileIpv6Supported)
-    {
-        attr.id = SAI_ARS_PROFILE_ATTR_ENABLE_IPV6;
-        attr.value.booldata = entry.ipv6Enable;
-        attrs.push_back(attr);
-    }
-
-    if (entry.samplingInterval > 0)
-    {
-        attr.id = SAI_ARS_PROFILE_ATTR_SAMPLING_INTERVAL;
-        attr.value.u32 = entry.samplingInterval;
-        attrs.push_back(attr);
-    }
-
-    if (entry.randomSeed > 0)
-    {
-        attr.id = SAI_ARS_PROFILE_ATTR_ARS_RANDOM_SEED;
-        attr.value.u32 = entry.randomSeed;
-        attrs.push_back(attr);
-    }
-
-    if (entry.maxFlows > 0)
-    {
-        attr.id = SAI_ARS_PROFILE_ATTR_MAX_FLOWS;
-        attr.value.u32 = entry.maxFlows;
-        attrs.push_back(attr);
-    }
-
-    if (entry.loadPastMinVal > 0 || entry.loadPastMaxVal > 0)
-    {
-        attr.id = SAI_ARS_PROFILE_ATTR_LOAD_PAST_MIN_VAL;
-        attr.value.u32 = entry.loadPastMinVal;
-        attrs.push_back(attr);
-        attr.id = SAI_ARS_PROFILE_ATTR_LOAD_PAST_MAX_VAL;
-        attr.value.u32 = entry.loadPastMaxVal;
-        attrs.push_back(attr);
-    }
-
-    if (entry.loadFutureMinVal > 0 || entry.loadFutureMaxVal > 0)
-    {
-        attr.id = SAI_ARS_PROFILE_ATTR_LOAD_FUTURE_MIN_VAL;
-        attr.value.u32 = entry.loadFutureMinVal;
-        attrs.push_back(attr);
-        attr.id = SAI_ARS_PROFILE_ATTR_LOAD_FUTURE_MAX_VAL;
-        attr.value.u32 = entry.loadFutureMaxVal;
-        attrs.push_back(attr);
-    }
-
-    if (entry.loadCurrentMinVal > 0 || entry.loadCurrentMaxVal > 0)
-    {
-        attr.id = SAI_ARS_PROFILE_ATTR_LOAD_CURRENT_MIN_VAL;
-        attr.value.u32 = entry.loadCurrentMinVal;
-        attrs.push_back(attr);
-        attr.id = SAI_ARS_PROFILE_ATTR_LOAD_CURRENT_MAX_VAL;
-        attr.value.u32 = entry.loadCurrentMaxVal;
-        attrs.push_back(attr);
-    }
-
-    // Per-band congestion thresholds (Mbps). Sending non-zero values at
-    // CREATE is what tells Mellanox SAI to take the non-hardened path and
-    // call sx_api_ar_congestion_threshold_set — without them, SAI treats
-    // the profile as "hardened" and rejects flowlet-quality ARS objects.
+    // Mellanox SAI only implements quant-band threshold attributes on
+    // ARS_PROFILE. Attributes like ALGO, PORT_LOAD_*, ENABLE_IPV4/6,
+    // SAMPLING_INTERVAL are handled internally by the SDK and the
+    // ars-classifier-daemon (via sx_api_ar_default_classification_set).
     //
-    // When the operator omits all three bands (all zero), auto-fill with
-    // conservative defaults (1/2/4 Gbps) so flowlet works out of the box.
-    // This mirrors createDefaultProfileIfNeeded() and avoids forcing users
-    // to manually set thresholds just to get basic flowlet behavior.
+    // Sending unsupported attrs works at runtime (SAI ignores them) but
+    // FAILS during config-reload APPLY_VIEW: syncd validates each attribute
+    // against capability metadata (CREATE_IMP=false) and rejects the entire
+    // CREATE with SAI_STATUS_ATTR_NOT_IMPLEMENTED_0. Sending only quant-band
+    // thresholds avoids this and works in both runtime and apply-view paths.
+    //
+    // When all three bands are zero, auto-fill with conservative defaults
+    // (1/2/4 Gbps) so flowlet works out of the box. Non-zero quant-band
+    // values at CREATE tell Mellanox SAI to call
+    // sx_api_ar_congestion_threshold_set (non-hardened mode).
     uint32_t qb0 = entry.quantBand0MinThreshold;
     uint32_t qb1 = entry.quantBand1MinThreshold;
     uint32_t qb2 = entry.quantBand2MinThreshold;
@@ -1697,54 +1601,25 @@ bool ArsOrch::createArsProfile(const string &name, const ArsProfileEntry &entry)
                         "using defaults (%u/%u/%u Mbps) to avoid hardened mode",
                         name.c_str(), qb0, qb1, qb2);
     }
-    {
-        attr.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_0_MIN_THRESHOLD;
-        attr.value.u32 = qb0;
-        attrs.push_back(attr);
-        attr.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_1_MIN_THRESHOLD;
-        attr.value.u32 = qb1;
-        attrs.push_back(attr);
-        attr.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_2_MIN_THRESHOLD;
-        attr.value.u32 = qb2;
-        attrs.push_back(attr);
-    }
+
+    vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+
+    attr.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_0_MIN_THRESHOLD;
+    attr.value.u32 = qb0;
+    attrs.push_back(attr);
+
+    attr.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_1_MIN_THRESHOLD;
+    attr.value.u32 = qb1;
+    attrs.push_back(attr);
+
+    attr.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_2_MIN_THRESHOLD;
+    attr.value.u32 = qb2;
+    attrs.push_back(attr);
 
     sai_object_id_t profileOid;
     sai_status_t status = sai_ars_profile_api->create_ars_profile(
         &profileOid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
-
-    // Mellanox SAI only implements quant-band threshold attributes on
-    // ARS_PROFILE (SAI_ARS_PROFILE_ATTR_QUANT_BAND_{0,1,2}_MIN_THRESHOLD).
-    // Standard EWMA attributes like ALGO, PORT_LOAD_*, ENABLE_IPV4/6,
-    // SAMPLING_INTERVAL etc. are handled internally by the SDK and not
-    // exposed through SAI. If the full attribute list fails with
-    // ATTR_NOT_IMPLEMENTED, retry with only the quant-band thresholds.
-    if (SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status) ||
-        SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status))
-    {
-        SWSS_LOG_NOTICE("ARS: full profile create for '%s' returned %s — "
-                        "retrying with quant-band thresholds only "
-                        "(Mellanox SAI handles EWMA tuning via SDK internally)",
-                        name.c_str(), sai_serialize_status(status).c_str());
-
-        vector<sai_attribute_t> qb_attrs;
-        sai_attribute_t qb;
-
-        qb.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_0_MIN_THRESHOLD;
-        qb.value.u32 = qb0;
-        qb_attrs.push_back(qb);
-
-        qb.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_1_MIN_THRESHOLD;
-        qb.value.u32 = qb1;
-        qb_attrs.push_back(qb);
-
-        qb.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_2_MIN_THRESHOLD;
-        qb.value.u32 = qb2;
-        qb_attrs.push_back(qb);
-
-        status = sai_ars_profile_api->create_ars_profile(
-            &profileOid, gSwitchId, (uint32_t)qb_attrs.size(), qb_attrs.data());
-    }
 
     if (status != SAI_STATUS_SUCCESS)
     {
