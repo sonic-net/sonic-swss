@@ -8,6 +8,11 @@
  */
 namespace mirror_sample_port_wrap_ut
 {
+    // Test-only fault injection: when set, the wrapped set_port_attribute
+    // returns SAI_STATUS_FAILURE for the matching attribute.
+    extern bool g_fail_mirror_session_set;
+    extern bool g_fail_samplepacket_enable_set;
+
     void install();
     void uninstall();
 

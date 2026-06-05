@@ -41,6 +41,10 @@ namespace
         if (attr->id == SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE
             || attr->id == SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE)
         {
+            if (mirror_sample_port_wrap_ut::g_fail_samplepacket_enable_set)
+            {
+                return SAI_STATUS_FAILURE;
+            }
             auto &store = (attr->id == SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE)
                 ? g_ingress_samplepacket : g_egress_samplepacket;
             if (attr->value.oid == SAI_NULL_OBJECT_ID)
@@ -57,6 +61,10 @@ namespace
         if (attr->id == SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION
             || attr->id == SAI_PORT_ATTR_EGRESS_SAMPLE_MIRROR_SESSION)
         {
+            if (mirror_sample_port_wrap_ut::g_fail_mirror_session_set)
+            {
+                return SAI_STATUS_FAILURE;
+            }
             // Validate the call framing the production code uses (bind: a
             // single non-null session; unbind: an empty list) so a malformed
             // attribute is still caught, without depending on libsaivs.
@@ -106,8 +114,14 @@ namespace
 
 namespace mirror_sample_port_wrap_ut
 {
+    bool g_fail_mirror_session_set = false;
+    bool g_fail_samplepacket_enable_set = false;
+
     void install()
     {
+        g_fail_mirror_session_set = false;
+        g_fail_samplepacket_enable_set = false;
+
         if (sai_port_api == &g_wrap_port_api)
         {
             // Already wrapped (defensive against accidental nesting): keep the
@@ -127,6 +141,9 @@ namespace mirror_sample_port_wrap_ut
 
     void uninstall()
     {
+        g_fail_mirror_session_set = false;
+        g_fail_samplepacket_enable_set = false;
+
         if (sai_port_api == &g_wrap_port_api && g_real_port_api != nullptr)
         {
             sai_port_api = g_real_port_api;

@@ -1238,13 +1238,13 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         status = configurePortMirrorSession(name, session, true);
         if (status == false)
         {
-            SWSS_LOG_ERROR("Failed to activate port mirror session %s", name.c_str()); // LCOV_EXCL_LINE: SAI VS set always succeeds
+            SWSS_LOG_ERROR("Failed to activate port mirror session %s", name.c_str());
             // Clean up samplepacket if it was created
-            if (session.samplepacketId != SAI_NULL_OBJECT_ID) // LCOV_EXCL_LINE
+            if (session.samplepacketId != SAI_NULL_OBJECT_ID)
             {
-                removeSamplePacket(name, session); // LCOV_EXCL_LINE
+                removeSamplePacket(name, session);
             }
-            sai_mirror_api->remove_mirror_session(session.sessionId); // LCOV_EXCL_LINE
+            sai_mirror_api->remove_mirror_session(session.sessionId);
             session.status = false;
             return false;
         }
@@ -1413,12 +1413,12 @@ bool MirrorOrch::setUnsetSampledMirrorOnPhyPort(sai_object_id_t phy_port_id,
         status = sai_port_api->set_port_attribute(phy_port_id, &mirror_attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to set SAMPLE_MIRROR_SESSION on port %s, status %d", // LCOV_EXCL_LINE: SAI VS set always succeeds
-                            phy_port_alias.c_str(), status); // LCOV_EXCL_LINE
+            SWSS_LOG_ERROR("Failed to set SAMPLE_MIRROR_SESSION on port %s, status %d",
+                            phy_port_alias.c_str(), status);
             // Rollback: clear SAMPLEPACKET_ENABLE
-            sp_attr.value.oid = SAI_NULL_OBJECT_ID; // LCOV_EXCL_LINE
-            sai_port_api->set_port_attribute(phy_port_id, &sp_attr); // LCOV_EXCL_LINE
-            return false; // LCOV_EXCL_LINE
+            sp_attr.value.oid = SAI_NULL_OBJECT_ID;
+            sai_port_api->set_port_attribute(phy_port_id, &sp_attr);
+            return false;
         }
     }
     else
@@ -1427,16 +1427,16 @@ bool MirrorOrch::setUnsetSampledMirrorOnPhyPort(sai_object_id_t phy_port_id,
         status = sai_port_api->set_port_attribute(phy_port_id, &mirror_attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to clear SAMPLE_MIRROR_SESSION on port %s, status %d", // LCOV_EXCL_LINE: SAI VS set always succeeds
-                            phy_port_alias.c_str(), status); // LCOV_EXCL_LINE
-            return false; // LCOV_EXCL_LINE
+            SWSS_LOG_ERROR("Failed to clear SAMPLE_MIRROR_SESSION on port %s, status %d",
+                            phy_port_alias.c_str(), status);
+            return false;
         }
         status = sai_port_api->set_port_attribute(phy_port_id, &sp_attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to clear SAMPLEPACKET_ENABLE on port %s, status %d", // LCOV_EXCL_LINE: SAI VS set always succeeds
-                            phy_port_alias.c_str(), status); // LCOV_EXCL_LINE
-            return false; // LCOV_EXCL_LINE
+            SWSS_LOG_ERROR("Failed to clear SAMPLEPACKET_ENABLE on port %s, status %d",
+                            phy_port_alias.c_str(), status);
+            return false;
         }
     }
     return true;

@@ -912,4 +912,156 @@ namespace mirrororch_test
         sai_mirror_api->remove_mirror_session(sessionOid);
     }
 
+    TEST_F(MirrorOrchPortTest, SampledMirrorSetMirrorSessionFailsRollsBack)
+    {
+        mirror_sample_port_wrap_ut::PortSampleSaiGuard saiPortSampleGuard;
+        // Covers the set path when SAMPLE_MIRROR_SESSION fails after
+        // SAMPLEPACKET_ENABLE succeeded: the bind must report failure and roll
+        // back the already-programmed SAMPLEPACKET_ENABLE to NULL.
+        ASSERT_NE(gMirrorOrch, nullptr);
+        ASSERT_NE(gPortsOrch, nullptr);
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+
+        sai_object_id_t sessionOid = createErspanSessionOid(port.m_port_id);
+        ASSERT_NE(sessionOid, SAI_NULL_OBJECT_ID);
+
+        MirrorEntry entry("");
+        entry.sample_rate = 50000;
+        ASSERT_TRUE(gMirrorOrch->createSamplePacket("set_fail_rollback", entry));
+        ASSERT_NE(entry.samplepacketId, SAI_NULL_OBJECT_ID);
+
+        mirror_sample_port_wrap_ut::g_fail_mirror_session_set = true;
+        ASSERT_FALSE(gMirrorOrch->setUnsetSampledMirrorOnPhyPort(
+            port.m_port_id, port.m_alias, /*set*/ true, MirrorBindDirection::Ingress, sessionOid, entry.samplepacketId));
+
+        // Rollback must have cleared the SAMPLEPACKET_ENABLE binding.
+        ASSERT_EQ(readSamplePacketEnable(port.m_port_id, SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE), SAI_NULL_OBJECT_ID);
+
+        sai_samplepacket_api->remove_samplepacket(entry.samplepacketId);
+        sai_mirror_api->remove_mirror_session(sessionOid);
+    }
+
+    TEST_F(MirrorOrchPortTest, SampledMirrorClearMirrorSessionFails)
+    {
+        mirror_sample_port_wrap_ut::PortSampleSaiGuard saiPortSampleGuard;
+        // Covers the clear path when the SAMPLE_MIRROR_SESSION fails:
+        // the unbind must report failure.
+        ASSERT_NE(gMirrorOrch, nullptr);
+        ASSERT_NE(gPortsOrch, nullptr);
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+
+        sai_object_id_t sessionOid = createErspanSessionOid(port.m_port_id);
+        ASSERT_NE(sessionOid, SAI_NULL_OBJECT_ID);
+
+        MirrorEntry entry("");
+        entry.sample_rate = 50000;
+        ASSERT_TRUE(gMirrorOrch->createSamplePacket("clear_mirror_fail", entry));
+        ASSERT_NE(entry.samplepacketId, SAI_NULL_OBJECT_ID);
+
+        // Bind successfully first so the clear operates on real state.
+        ASSERT_TRUE(gMirrorOrch->setUnsetSampledMirrorOnPhyPort(
+            port.m_port_id, port.m_alias, /*set*/ true, MirrorBindDirection::Ingress, sessionOid, entry.samplepacketId));
+        ASSERT_EQ(readSamplePacketEnable(port.m_port_id, SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE), entry.samplepacketId);
+
+        // The clear fails at SAMPLE_MIRROR_SESSION, so it must
+        // report failure before touching SAMPLEPACKET_ENABLE (still bound).
+        mirror_sample_port_wrap_ut::g_fail_mirror_session_set = true;
+        ASSERT_FALSE(gMirrorOrch->setUnsetSampledMirrorOnPhyPort(
+            port.m_port_id, port.m_alias, /*set*/ false, MirrorBindDirection::Ingress, sessionOid, entry.samplepacketId));
+        ASSERT_EQ(readSamplePacketEnable(port.m_port_id, SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE), entry.samplepacketId);
+
+        sai_samplepacket_api->remove_samplepacket(entry.samplepacketId);
+        sai_mirror_api->remove_mirror_session(sessionOid);
+    }
+
+    TEST_F(MirrorOrchPortTest, SampledMirrorClearSamplePacketEnableFails)
+    {
+        mirror_sample_port_wrap_ut::PortSampleSaiGuard saiPortSampleGuard;
+        // Covers the clear path when the SAMPLEPACKET_ENABLE fails after 
+        // the SAMPLE_MIRROR_SESSION clear succeeded: the
+        // unbind must report failure.
+        ASSERT_NE(gMirrorOrch, nullptr);
+        ASSERT_NE(gPortsOrch, nullptr);
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+
+        sai_object_id_t sessionOid = createErspanSessionOid(port.m_port_id);
+        ASSERT_NE(sessionOid, SAI_NULL_OBJECT_ID);
+
+        MirrorEntry entry("");
+        entry.sample_rate = 50000;
+        ASSERT_TRUE(gMirrorOrch->createSamplePacket("clear_enable_fail", entry));
+        ASSERT_NE(entry.samplepacketId, SAI_NULL_OBJECT_ID);
+
+        // Bind successfully first so the clear operates on real state.
+        ASSERT_TRUE(gMirrorOrch->setUnsetSampledMirrorOnPhyPort(
+            port.m_port_id, port.m_alias, /*set*/ true, MirrorBindDirection::Ingress, sessionOid, entry.samplepacketId));
+        ASSERT_EQ(readSamplePacketEnable(port.m_port_id, SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE), entry.samplepacketId);
+
+        mirror_sample_port_wrap_ut::g_fail_samplepacket_enable_set = true;
+        ASSERT_FALSE(gMirrorOrch->setUnsetSampledMirrorOnPhyPort(
+            port.m_port_id, port.m_alias, /*set*/ false, MirrorBindDirection::Ingress, sessionOid, entry.samplepacketId));
+        ASSERT_EQ(readSamplePacketEnable(port.m_port_id, SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE), entry.samplepacketId);
+
+        sai_samplepacket_api->remove_samplepacket(entry.samplepacketId);
+        sai_mirror_api->remove_mirror_session(sessionOid);
+    }
+
+    TEST_F(MirrorOrchPortTest, ActivateSessionPortBindFailRollsBack)
+    {
+        mirror_sample_port_wrap_ut::PortSampleSaiGuard saiPortSampleGuard;
+        // Covers activateSession's rollback when configurePortMirrorSession
+        // fails: the samplepacket created during activation must be removed,
+        // the mirror session torn down, and activation must report failure.
+        ASSERT_NE(gMirrorOrch, nullptr);
+        ASSERT_NE(gPortsOrch, nullptr);
+        ASSERT_NE(gSwitchOrch, nullptr);
+
+        gSwitchOrch->m_portIngressSampleMirrorSupported = true;
+        gSwitchOrch->m_portEgressSampleMirrorSupported = false;
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+
+        // Build a sampled ERSPAN session bound to a PHY src port via createEntry.
+        std::vector<FieldValueTuple> data;
+        data.emplace_back("type", "ERSPAN");
+        data.emplace_back("src_ip", "10.0.0.1");
+        data.emplace_back("dst_ip", "10.0.0.2");
+        data.emplace_back("gre_type", "0x8949");
+        data.emplace_back("dscp", "8");
+        data.emplace_back("ttl", "64");
+        data.emplace_back("queue", "0");
+        data.emplace_back("direction", "RX");
+        data.emplace_back("sample_rate", "50000");
+        data.emplace_back("src_port", "Ethernet0");
+        ASSERT_EQ(gMirrorOrch->createEntry("activate_rollback", data), task_process_status::task_success);
+        ASSERT_TRUE(gMirrorOrch->sessionExists("activate_rollback"));
+
+        auto& session = gMirrorOrch->m_syncdMirrors.find("activate_rollback")->second;
+        ASSERT_FALSE(session.status);
+
+        // Resolve the destination so activateSession can build the ERSPAN attrs
+        // and create the underlying mirror session.
+        session.neighborInfo.portId = port.m_port_id;
+        session.neighborInfo.mac = MacAddress("00:11:22:33:44:55");
+        session.neighborInfo.port.m_type = Port::PHY;
+
+        // Fail the SAMPLE_MIRROR_SESSION bind so configurePortMirrorSession
+        // fails inside activateSession and the rollback path runs.
+        mirror_sample_port_wrap_ut::g_fail_mirror_session_set = true;
+        ASSERT_FALSE(gMirrorOrch->activateSession("activate_rollback", session));
+
+        ASSERT_NE(session.sessionId, SAI_NULL_OBJECT_ID);
+        ASSERT_EQ(session.samplepacketId, SAI_NULL_OBJECT_ID);
+        ASSERT_FALSE(session.status);
+
+        gMirrorOrch->m_syncdMirrors.erase("activate_rollback");
+    }
+
 }
