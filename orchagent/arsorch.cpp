@@ -1637,17 +1637,44 @@ bool ArsOrch::createArsProfile(const string &name, const ArsProfileEntry &entry)
     attrs.push_back(attr);
 
     sai_object_id_t profileOid;
-    sai_status_t status = sai_ars_profile_api->create_ars_profile(
-        &profileOid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
 
-    if (status != SAI_STATUS_SUCCESS)
+    // A previous removeArsProfile may have deferred the SAI removal because
+    // ports still had ARS enabled (RIF guard). The old profile OID is still
+    // live in the ASIC — calling create_ars_profile would return
+    // SAI_STATUS_ITEM_ALREADY_EXISTS and crash syncd. Reuse the leaked OID
+    // and update its quant-band thresholds via SET instead.
+    if (m_deferredProfileOid != SAI_NULL_OBJECT_ID)
     {
-        SWSS_LOG_ERROR("ARS: create_ars_profile failed for %s: %s",
-                       name.c_str(), sai_serialize_status(status).c_str());
-        return false;
-    }
+        profileOid = m_deferredProfileOid;
+        m_deferredProfileOid = SAI_NULL_OBJECT_ID;
 
-    SWSS_LOG_NOTICE("ARS: created profile %s OID 0x%" PRIx64, name.c_str(), profileOid);
+        SWSS_LOG_NOTICE("ARS: reusing deferred profile OID 0x%" PRIx64
+                        " for '%s' (previous removal was skipped because "
+                        "ports still had ARS enabled in ASIC)",
+                        profileOid, name.c_str());
+
+        updateArsProfileAttr(profileOid,
+                             SAI_ARS_PROFILE_ATTR_QUANT_BAND_0_MIN_THRESHOLD, qb0);
+        updateArsProfileAttr(profileOid,
+                             SAI_ARS_PROFILE_ATTR_QUANT_BAND_1_MIN_THRESHOLD, qb1);
+        updateArsProfileAttr(profileOid,
+                             SAI_ARS_PROFILE_ATTR_QUANT_BAND_2_MIN_THRESHOLD, qb2);
+    }
+    else
+    {
+        sai_status_t status = sai_ars_profile_api->create_ars_profile(
+            &profileOid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("ARS: create_ars_profile failed for %s: %s",
+                           name.c_str(), sai_serialize_status(status).c_str());
+            return false;
+        }
+
+        SWSS_LOG_NOTICE("ARS: created profile %s OID 0x%" PRIx64,
+                        name.c_str(), profileOid);
+    }
 
     ArsProfileEntry stored = entry;
     stored.profileOid = profileOid;
@@ -1694,12 +1721,15 @@ bool ArsOrch::removeArsProfile(const string &name)
             if (!portList.empty()) portList += ", ";
             portList += p;
         }
-        SWSS_LOG_NOTICE("ARS: deferring SAI removal of profile '%s' — %zu "
-                        "port(s) still have ARS enabled in ASIC (%s). "
-                        "Removing from orchagent cache only; the ASIC state "
-                        "will be reconciled on the next config reload.",
-                        name.c_str(), m_arsEnabledPorts.size(),
-                        portList.c_str());
+        SWSS_LOG_NOTICE("ARS: deferring SAI removal of profile '%s' (OID "
+                        "0x%" PRIx64 ") — %zu port(s) still have ARS enabled "
+                        "in ASIC (%s). Removing from orchagent cache only; "
+                        "the ASIC state will be reconciled on the next config "
+                        "reload. The leaked OID will be reused if a new "
+                        "profile is created before reload.",
+                        name.c_str(), it->second.profileOid,
+                        m_arsEnabledPorts.size(), portList.c_str());
+        m_deferredProfileOid = it->second.profileOid;
         m_arsProfiles.erase(it);
         m_activeSwitchProfileOid = SAI_NULL_OBJECT_ID;
         return true;
@@ -1824,14 +1854,37 @@ bool ArsOrch::createArsObject(const string &name, const ArsObjectEntry &entry)
     attrs.push_back(attr);
 
     sai_object_id_t arsOid;
-    sai_status_t status = sai_ars_api->create_ars(
-        &arsOid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
 
-    if (status != SAI_STATUS_SUCCESS)
+    // A previous removeArsObject may have deferred the SAI removal because
+    // ports still had ARS enabled (RIF guard). The old ARS OID is still live
+    // in the ASIC — calling create_ars would return ITEM_ALREADY_EXISTS and
+    // crash syncd. Reuse the leaked OID and update its attributes via SET.
+    if (m_deferredArsOid != SAI_NULL_OBJECT_ID)
     {
-        SWSS_LOG_ERROR("ARS: create_ars failed for %s: %s",
-                       name.c_str(), sai_serialize_status(status).c_str());
-        return false;
+        arsOid = m_deferredArsOid;
+        m_deferredArsOid = SAI_NULL_OBJECT_ID;
+
+        SWSS_LOG_NOTICE("ARS: reusing deferred ARS OID 0x%" PRIx64
+                        " for '%s' (previous removal was skipped because "
+                        "ports still had ARS enabled in ASIC)",
+                        arsOid, name.c_str());
+
+        setArsObjectAttr(arsOid, SAI_ARS_ATTR_MODE, entry.mode);
+        if (isFlowletMode(entry.mode))
+            setArsObjectAttr(arsOid, SAI_ARS_ATTR_IDLE_TIME, entry.idleTime);
+        setArsObjectAttr(arsOid, SAI_ARS_ATTR_MAX_FLOWS, entry.maxFlows);
+    }
+    else
+    {
+        sai_status_t status = sai_ars_api->create_ars(
+            &arsOid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("ARS: create_ars failed for %s: %s",
+                           name.c_str(), sai_serialize_status(status).c_str());
+            return false;
+        }
     }
 
     SWSS_LOG_NOTICE("ARS: created object %s OID 0x%" PRIx64 " mode %d",
@@ -1887,11 +1940,15 @@ bool ArsOrch::removeArsObject(const string &name)
             if (!portList.empty()) portList += ", ";
             portList += p;
         }
-        SWSS_LOG_NOTICE("ARS: deferring SAI removal of object '%s' — %zu "
-                        "port(s) still have ARS enabled in ASIC (%s). "
-                        "Removing from orchagent cache only; the ASIC state "
-                        "will be reconciled on the next config reload.",
-                        name.c_str(), stuckPorts.size(), portList.c_str());
+        SWSS_LOG_NOTICE("ARS: deferring SAI removal of object '%s' (OID "
+                        "0x%" PRIx64 ") — %zu port(s) still have ARS enabled "
+                        "in ASIC (%s). Removing from orchagent cache only; "
+                        "the ASIC state will be reconciled on the next config "
+                        "reload. The leaked OID will be reused if a new "
+                        "object is created before reload.",
+                        name.c_str(), oid, stuckPorts.size(),
+                        portList.c_str());
+        m_deferredArsOid = oid;
         m_arsObjects.erase(it);
         return true;
     }

@@ -193,6 +193,8 @@ private:
     bool m_arsEnabled = false;
     std::string m_globalProfileName;
     sai_object_id_t m_activeSwitchProfileOid = SAI_NULL_OBJECT_ID;
+    sai_object_id_t m_deferredProfileOid = SAI_NULL_OBJECT_ID;
+    sai_object_id_t m_deferredArsOid = SAI_NULL_OBJECT_ID;
 
     std::unordered_map<std::string, ArsProfileEntry>    m_arsProfiles;
     std::unordered_map<std::string, ArsObjectEntry>     m_arsObjects;
