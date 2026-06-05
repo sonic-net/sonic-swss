@@ -180,3 +180,40 @@ TEST(ZmqOrchTest, GetFeatureStatusException)
     enabled = swss::get_feature_status(HGET_THROW_EXCEPTION_FIELD_NAME, false);
     EXPECT_FALSE(enabled);
 }
+
+TEST(ZmqOrchTest, GetRoutePerfZmqEnabled)
+{
+    DBConnector config_db("CONFIG_DB", 0);
+
+    // Test: enabled
+    config_db.hset(SYSTEM_DEFAULTS_SWSS_ZMQ_KEY, SYSTEM_DEFAULTS_STATUS_FIELD, "enabled");
+    EXPECT_TRUE(swss::get_route_perf_zmq_enabled());
+
+    // Test: disabled
+    config_db.hset(SYSTEM_DEFAULTS_SWSS_ZMQ_KEY, SYSTEM_DEFAULTS_STATUS_FIELD, "disabled");
+    EXPECT_FALSE(swss::get_route_perf_zmq_enabled());
+
+    // Test: missing key → default false
+    config_db.del(SYSTEM_DEFAULTS_SWSS_ZMQ_KEY);
+    EXPECT_FALSE(swss::get_route_perf_zmq_enabled());
+}
+
+TEST(ZmqOrchTest, CreateRoutePerfZmqClient)
+{
+    DBConnector config_db("CONFIG_DB", 0);
+
+    // When enabled: returns a non-null ZmqClient
+    config_db.hset(SYSTEM_DEFAULTS_SWSS_ZMQ_KEY, SYSTEM_DEFAULTS_STATUS_FIELD, "enabled");
+    auto client = swss::create_route_perf_zmq_client();
+    EXPECT_NE(client, nullptr);
+
+    // When disabled: returns nullptr
+    config_db.hset(SYSTEM_DEFAULTS_SWSS_ZMQ_KEY, SYSTEM_DEFAULTS_STATUS_FIELD, "disabled");
+    client = swss::create_route_perf_zmq_client();
+    EXPECT_EQ(client, nullptr);
+
+    // When key missing: returns nullptr
+    config_db.del(SYSTEM_DEFAULTS_SWSS_ZMQ_KEY);
+    client = swss::create_route_perf_zmq_client();
+    EXPECT_EQ(client, nullptr);
+}
