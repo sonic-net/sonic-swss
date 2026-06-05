@@ -1057,11 +1057,95 @@ namespace mirrororch_test
         mirror_sample_port_wrap_ut::g_fail_mirror_session_set = true;
         ASSERT_FALSE(gMirrorOrch->activateSession("activate_rollback", session));
 
+        // The mirror session must have been created (so the failure happened at
+        // the port-bind step, not an early create_mirror_session exit), and the
+        // rollback must have removed the samplepacket and left it inactive.
         ASSERT_NE(session.sessionId, SAI_NULL_OBJECT_ID);
         ASSERT_EQ(session.samplepacketId, SAI_NULL_OBJECT_ID);
         ASSERT_FALSE(session.status);
 
         gMirrorOrch->m_syncdMirrors.erase("activate_rollback");
+    }
+
+    TEST_F(MirrorOrchPortTest, ActivateSessionSamplePacketCreateFails)
+    {
+        mirror_sample_port_wrap_ut::PortSampleSaiGuard saiPortSampleGuard;
+        // Covers activateSession's samplepacket-create failure handling: after
+        // create_mirror_session succeeds, createSamplePacket fails, so the
+        // mirror session must be torn down and activation must report failure.
+        ASSERT_NE(gMirrorOrch, nullptr);
+        ASSERT_NE(gPortsOrch, nullptr);
+        ASSERT_NE(gSwitchOrch, nullptr);
+
+        gSwitchOrch->m_portIngressSampleMirrorSupported = true;
+        gSwitchOrch->m_portEgressSampleMirrorSupported = false;
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+
+        // Build a sampled ERSPAN session bound to a PHY src port via createEntry.
+        std::vector<FieldValueTuple> data;
+        data.emplace_back("type", "ERSPAN");
+        data.emplace_back("src_ip", "10.0.0.1");
+        data.emplace_back("dst_ip", "10.0.0.2");
+        data.emplace_back("gre_type", "0x8949");
+        data.emplace_back("dscp", "8");
+        data.emplace_back("ttl", "64");
+        data.emplace_back("queue", "0");
+        data.emplace_back("direction", "RX");
+        data.emplace_back("sample_rate", "50000");
+        data.emplace_back("src_port", "Ethernet0");
+        ASSERT_EQ(gMirrorOrch->createEntry("sp_create_fail", data), task_process_status::task_success);
+        ASSERT_TRUE(gMirrorOrch->sessionExists("sp_create_fail"));
+
+        auto& session = gMirrorOrch->m_syncdMirrors.find("sp_create_fail")->second;
+        ASSERT_FALSE(session.status);
+
+        // Resolve the destination so activateSession reaches createSamplePacket.
+        session.neighborInfo.portId = port.m_port_id;
+        session.neighborInfo.mac = MacAddress("00:11:22:33:44:55");
+        session.neighborInfo.port.m_type = Port::PHY;
+
+        // Fail the samplepacket creation so activateSession aborts and removes
+        // the mirror session it just created.
+        mirror_sample_port_wrap_ut::g_fail_samplepacket_create = true;
+        ASSERT_FALSE(gMirrorOrch->activateSession("sp_create_fail", session));
+
+        // createSamplePacket nulls the OID on failure, and the session is left
+        // inactive after the mirror session is torn down.
+        ASSERT_EQ(session.samplepacketId, SAI_NULL_OBJECT_ID);
+        ASSERT_FALSE(session.status);
+
+        gMirrorOrch->m_syncdMirrors.erase("sp_create_fail");
+    }
+
+    TEST_F(MirrorOrchPortTest, RemoveSamplePacketFails)
+    {
+        mirror_sample_port_wrap_ut::PortSampleSaiGuard saiPortSampleGuard;
+        // Covers removeSamplePacket's SAI-failure branch: remove_samplepacket
+        // returns failure, so the function reports failure via
+        // handleSaiRemoveStatus and retains the (non-NULL) OID.
+        ASSERT_NE(gMirrorOrch, nullptr);
+
+        MirrorEntry entry("");
+        entry.type = "ERSPAN";
+        entry.sample_rate = 50000;
+        entry.truncate_size = 0;
+
+        // createSamplePacket yields a real samplepacket OID from the VS switch.
+        ASSERT_TRUE(gMirrorOrch->createSamplePacket("rm_sp_fail", entry));
+        ASSERT_NE(entry.samplepacketId, SAI_NULL_OBJECT_ID);
+        sai_object_id_t created = entry.samplepacketId;
+
+        // Fail only the removal so the SAI-failure branch runs.
+        mirror_sample_port_wrap_ut::g_fail_samplepacket_remove = true;
+        ASSERT_FALSE(gMirrorOrch->removeSamplePacket("rm_sp_fail", entry));
+        // The failure returns before the OID is cleared, so it is retained.
+        ASSERT_EQ(entry.samplepacketId, created);
+
+        // Clean up for real now that the fault is disabled.
+        mirror_sample_port_wrap_ut::g_fail_samplepacket_remove = false;
+        sai_samplepacket_api->remove_samplepacket(created);
     }
 
 }

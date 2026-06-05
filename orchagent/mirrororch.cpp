@@ -398,8 +398,6 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
     bool src_ip_initialized = false;
     bool dst_ip_initialized = false;
 
-
-
     string platform = getenv("platform") ? getenv("platform") : "";
     MirrorEntry entry(platform);
 
@@ -523,9 +521,9 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
         return task_process_status::task_invalid_entry;
     }
 
-    // Truncation implies sampled mirroring. If a truncate size is configured
-    // without an explicit sample rate, default the rate to 1 (sample every
-    // packet) so a samplepacket object is still created to carry the truncation.
+    // If a truncate size is configured, without an explicit sample rate,
+    // default the rate to 1 (sample every packet) so a samplepacket object
+    // is still created to carry the truncation.
     if (entry.truncate_size > 0 && entry.sample_rate == 0)
     {
         entry.sample_rate = 1;
@@ -938,11 +936,11 @@ bool MirrorOrch::setUnsetPortMirror(Port port,
             m_portsOrch->getLagMember(port, portv);
             for (const auto &p : portv)
             {
-                if (p.m_type != Port::PHY)  // LCOV_EXCL_LINE
-                {  // LCOV_EXCL_LINE
-                    SWSS_LOG_ERROR("Failed to locate PHY member port %s of LAG %s",  // LCOV_EXCL_LINE
-                                   p.m_alias.c_str(), port.m_alias.c_str());  // LCOV_EXCL_LINE
-                    return false;  // LCOV_EXCL_LINE
+                if (p.m_type != Port::PHY)
+                {
+                    SWSS_LOG_ERROR("Failed to locate PHY member port %s of LAG %s",
+                                   p.m_alias.c_str(), port.m_alias.c_str());
+                    return false;
                 }
                 if (!setUnsetSampledMirrorOnPhyPort(p.m_port_id, p.m_alias, set,
                         ingress ? MirrorBindDirection::Ingress : MirrorBindDirection::Egress,
@@ -1226,10 +1224,10 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
     {
         if (!createSamplePacket(name, session))
         {
-            SWSS_LOG_ERROR("Failed to create samplepacket, removing mirror session %s", name.c_str()); // LCOV_EXCL_LINE: SAI VS create always succeeds
-            sai_mirror_api->remove_mirror_session(session.sessionId); // LCOV_EXCL_LINE
-            session.status = false; // LCOV_EXCL_LINE
-            return false; // LCOV_EXCL_LINE
+            SWSS_LOG_ERROR("Failed to create samplepacket, removing mirror session %s", name.c_str());
+            sai_mirror_api->remove_mirror_session(session.sessionId);
+            session.status = false;
+            return false;
         }
     }
 
@@ -1474,13 +1472,13 @@ bool MirrorOrch::createSamplePacket(const string& name, MirrorEntry& session)
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create samplepacket for session %s, status %d", // LCOV_EXCL_LINE: SAI VS create always succeeds
-                       name.c_str(), status); // LCOV_EXCL_LINE
-        session.samplepacketId = SAI_NULL_OBJECT_ID; // LCOV_EXCL_LINE
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_SAMPLEPACKET, status); // LCOV_EXCL_LINE
-        if (handle_status != task_success) // LCOV_EXCL_LINE
+        SWSS_LOG_ERROR("Failed to create samplepacket for session %s, status %d",
+                       name.c_str(), status);
+        session.samplepacketId = SAI_NULL_OBJECT_ID;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_SAMPLEPACKET, status);
+        if (handle_status != task_success)
         {
-            return parseHandleSaiStatusFailure(handle_status); // LCOV_EXCL_LINE
+            return parseHandleSaiStatusFailure(handle_status);
         }
     }
     else
@@ -1505,12 +1503,12 @@ bool MirrorOrch::removeSamplePacket(const string& name, MirrorEntry& session)
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove samplepacket for session %s, status %d", // LCOV_EXCL_LINE: SAI VS remove always succeeds
-                       name.c_str(), status); // LCOV_EXCL_LINE
-        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_SAMPLEPACKET, status); // LCOV_EXCL_LINE
-        if (handle_status != task_success) // LCOV_EXCL_LINE
+        SWSS_LOG_ERROR("Failed to remove samplepacket for session %s, status %d",
+                       name.c_str(), status);
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_SAMPLEPACKET, status);
+        if (handle_status != task_success)
         {
-            return parseHandleSaiStatusFailure(handle_status); // LCOV_EXCL_LINE
+            return parseHandleSaiStatusFailure(handle_status);
         }
     }
 
@@ -1814,12 +1812,12 @@ void MirrorOrch::updateLagMember(const LagMemberUpdate& update)
         {
             if (session.direction == MIRROR_RX_DIRECTION  || session.direction == MIRROR_BOTH_DIRECTION)
             {
-                setUnsetPortMirror(update.member, true, update.add, session.sessionId, // LCOV_EXCL_LINE
+                setUnsetPortMirror(update.member, true, update.add, session.sessionId,
                                    session.samplepacketId, session.sample_rate);
             }
             if (session.direction == MIRROR_TX_DIRECTION || session.direction == MIRROR_BOTH_DIRECTION)
             {
-                setUnsetPortMirror(update.member, false, update.add, session.sessionId, // LCOV_EXCL_LINE
+                setUnsetPortMirror(update.member, false, update.add, session.sessionId,
                                    session.samplepacketId, session.sample_rate);
             }
         }

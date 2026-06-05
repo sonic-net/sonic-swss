@@ -9,9 +9,14 @@
 namespace mirror_sample_port_wrap_ut
 {
     // Test-only fault injection: when set, the wrapped set_port_attribute
-    // returns SAI_STATUS_FAILURE for the matching attribute.
+    // returns SAI_STATUS_FAILURE for the matching attribute so the error/rollback
+    // paths in mirrororch can be exercised. Reset by install()/uninstall().
     extern bool g_fail_mirror_session_set;
     extern bool g_fail_samplepacket_enable_set;
+    // Fault injection for the sai_samplepacket_api: fail create/remove so the
+    // samplepacket create/remove error paths in mirrororch can be exercised.
+    extern bool g_fail_samplepacket_create;
+    extern bool g_fail_samplepacket_remove;
 
     void install();
     void uninstall();
