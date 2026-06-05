@@ -179,13 +179,13 @@ bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id,
         attr.value.oid = sample_id;
         sai_rc = sai_port_api->set_port_attribute(port_id, &attr);
 
-        if (sai_rc != SAI_STATUS_SUCCESS) // LCOV_EXCL_LINE: SAI VS set_port_attribute always succeeds
+        if (sai_rc != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to set session %" PRIx64 " on port %" PRIx64, sample_id, port_id); // LCOV_EXCL_LINE
-            task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, sai_rc); // LCOV_EXCL_LINE
-            if (handle_status != task_success) // LCOV_EXCL_LINE
+            SWSS_LOG_ERROR("Failed to set session %" PRIx64 " on port %" PRIx64, sample_id, port_id);
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, sai_rc);
+            if (handle_status != task_success)
             {
-                return parseHandleSaiStatusFailure(handle_status); // LCOV_EXCL_LINE
+                return parseHandleSaiStatusFailure(handle_status);
             }
         }
         else
@@ -201,27 +201,27 @@ bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id,
         attr.value.oid = sample_id;
         sai_rc = sai_port_api->set_port_attribute(port_id, &attr);
 
-        if (sai_rc != SAI_STATUS_SUCCESS) // LCOV_EXCL_LINE: SAI VS set_port_attribute always succeeds
+        if (sai_rc != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to set session %" PRIx64 " on port %" PRIx64, sample_id, port_id); // LCOV_EXCL_LINE
+            SWSS_LOG_ERROR("Failed to set session %" PRIx64 " on port %" PRIx64, sample_id, port_id);
 
-            if (ingress_applied) // LCOV_EXCL_LINE
+            if (ingress_applied)
             {
-                sai_attribute_t rollback_attr; // LCOV_EXCL_LINE
-                rollback_attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE; // LCOV_EXCL_LINE
-                rollback_attr.value.oid = prev_ingress_oid; // LCOV_EXCL_LINE
-                sai_status_t rb_rc = sai_port_api->set_port_attribute(port_id, &rollback_attr); // LCOV_EXCL_LINE
-                if (rb_rc != SAI_STATUS_SUCCESS) // LCOV_EXCL_LINE
+                sai_attribute_t rollback_attr;
+                rollback_attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
+                rollback_attr.value.oid = prev_ingress_oid;
+                sai_status_t rb_rc = sai_port_api->set_port_attribute(port_id, &rollback_attr);
+                if (rb_rc != SAI_STATUS_SUCCESS)
                 {
-                    SWSS_LOG_ERROR("Failed to rollback ingress samplepacket on port %" PRIx64 // LCOV_EXCL_LINE
-                                   " after egress failure, status %d", port_id, rb_rc); // LCOV_EXCL_LINE
+                    SWSS_LOG_ERROR("Failed to rollback ingress samplepacket on port %" PRIx64
+                                   " after egress failure, status %d", port_id, rb_rc);
                 }
             }
 
-            task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, sai_rc); // LCOV_EXCL_LINE
-            if (handle_status != task_success) // LCOV_EXCL_LINE
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, sai_rc);
+            if (handle_status != task_success)
             {
-                return parseHandleSaiStatusFailure(handle_status); // LCOV_EXCL_LINE
+                return parseHandleSaiStatusFailure(handle_status);
             }
         }
     }
