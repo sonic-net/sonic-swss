@@ -593,8 +593,10 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                 anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_FUTURE_MAX_VAL,      entry.loadFutureMaxVal);
                 anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_CURRENT_MIN_VAL,     entry.loadCurrentMinVal);
                 anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_CURRENT_MAX_VAL,     entry.loadCurrentMaxVal);
-                anyFailed |= !updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_ENABLE_IPV4,          entry.ipv4Enable);
-                anyFailed |= !updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_ENABLE_IPV6,          entry.ipv6Enable);
+                if (m_profileIpv4Supported)
+                    anyFailed |= !updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_ENABLE_IPV4,          entry.ipv4Enable);
+                if (m_profileIpv6Supported)
+                    anyFailed |= !updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_ENABLE_IPV6,          entry.ipv6Enable);
                 if (entry.samplingInterval > 0)
                     anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_SAMPLING_INTERVAL,    entry.samplingInterval);
                 if (entry.randomSeed > 0)
@@ -1609,13 +1611,19 @@ bool ArsOrch::createArsProfile(const string &name, const ArsProfileEntry &entry)
     attr.value.u8 = (uint8_t)entry.loadExponent;
     attrs.push_back(attr);
 
-    attr.id = SAI_ARS_PROFILE_ATTR_ENABLE_IPV4;
-    attr.value.booldata = entry.ipv4Enable;
-    attrs.push_back(attr);
+    if (m_profileIpv4Supported)
+    {
+        attr.id = SAI_ARS_PROFILE_ATTR_ENABLE_IPV4;
+        attr.value.booldata = entry.ipv4Enable;
+        attrs.push_back(attr);
+    }
 
-    attr.id = SAI_ARS_PROFILE_ATTR_ENABLE_IPV6;
-    attr.value.booldata = entry.ipv6Enable;
-    attrs.push_back(attr);
+    if (m_profileIpv6Supported)
+    {
+        attr.id = SAI_ARS_PROFILE_ATTR_ENABLE_IPV6;
+        attr.value.booldata = entry.ipv6Enable;
+        attrs.push_back(attr);
+    }
 
     if (entry.samplingInterval > 0)
     {
@@ -2886,6 +2894,10 @@ void ArsOrch::publishArsCaps()
             capStr = string("create=") + (ac.create_implemented ? "true" : "false") +
                      ",set=" + (ac.set_implemented ? "true" : "false") +
                      ",get=" + (ac.get_implemented ? "true" : "false");
+            if (attrId == SAI_ARS_PROFILE_ATTR_ENABLE_IPV4)
+                m_profileIpv4Supported = ac.create_implemented;
+            else if (attrId == SAI_ARS_PROFILE_ATTR_ENABLE_IPV6)
+                m_profileIpv6Supported = ac.create_implemented;
         }
         SWSS_LOG_NOTICE("ARS profile capability %s: %s", attrName.c_str(), capStr.c_str());
         m_stateArsCapTable.set(attrName, {{attrName, capStr}});
