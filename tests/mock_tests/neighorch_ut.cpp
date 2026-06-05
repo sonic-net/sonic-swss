@@ -328,6 +328,45 @@ namespace neighorch_test
         EXPECT_THROW(NextHopKey("tunnel:OnlyName"), std::invalid_argument);
     }
 
+    /*
+     * MuxOrch and TunnelDecapOrch can both register the same {ip, "MuxTunnel0"}
+     * tunnel NH key with distinct SAI OIDs. The registry must keep the entry
+     * alive until the last producer unregisters and must not silently swap OIDs.
+     */
+    TEST_F(NeighOrchTest, IpinipTunnelNextHopMultiProducerRegistration)
+    {
+        IpAddress ip("10.2.0.1");
+        NextHopKey nh(ip, string("MuxTunnel0"), true /*tunnel_nh*/, 0 /*tag*/);
+
+        const sai_object_id_t oid_mux = 0x1001;
+        const sai_object_id_t oid_decap = 0x2002;
+
+        // First producer registers the key.
+        ASSERT_TRUE(gNeighOrch->addIpinipTunnelNextHop(nh, oid_mux));
+        ASSERT_EQ(gNeighOrch->m_syncdNextHops.count(nh), 1);
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh].next_hop_id, oid_mux);
+
+        // Second producer registers the same key with a different OID: the
+        // conflicting OID is rejected (first OID retained) but the additional
+        // registrant is tracked.
+        ASSERT_TRUE(gNeighOrch->addIpinipTunnelNextHop(nh, oid_decap));
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh].next_hop_id, oid_mux);
+        EXPECT_EQ(gNeighOrch->m_ipinipTunnelNextHopRegRefs[nh], 2u);
+
+        // First producer tears down: entry must survive for the second producer.
+        ASSERT_TRUE(gNeighOrch->removeIpinipTunnelNextHop(nh));
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops.count(nh), 1);
+        EXPECT_EQ(gNeighOrch->m_ipinipTunnelNextHopRegRefs[nh], 1u);
+
+        // Last producer tears down: entry is finally erased.
+        ASSERT_TRUE(gNeighOrch->removeIpinipTunnelNextHop(nh));
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops.count(nh), 0);
+        EXPECT_EQ(gNeighOrch->m_ipinipTunnelNextHopRegRefs.count(nh), 0);
+
+        // Removing an unregistered key fails.
+        EXPECT_FALSE(gNeighOrch->removeIpinipTunnelNextHop(nh));
+    }
+
     TEST_F(NeighOrchTest, ProcessFDBAdd_EnableNeighbor)
     {
         // Setup: Learn a neighbor first

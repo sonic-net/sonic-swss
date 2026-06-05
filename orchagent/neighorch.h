@@ -138,6 +138,14 @@ private:
     NeighborTable m_syncdNeighbors;
     NextHopTable m_syncdNextHops;
 
+    /*
+     * Number of producers (e.g. MuxOrch, TunnelDecapOrch) that have registered
+     * a given IPinIP tunnel NextHopKey. Multiple producers may register the same
+     * {ip, tunnel_name} key, so the synced entry must survive until the last
+     * producer unregisters it.
+     */
+    std::map<NextHopKey, uint32_t> m_ipinipTunnelNextHopRegRefs;
+
     std::set<NextHopKey> m_neighborToResolve;
 
     EntityBulker<sai_neighbor_api_t> gNeighBulker;
