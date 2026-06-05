@@ -531,20 +531,34 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
         return task_process_status::task_invalid_entry;
     }
 
-    // Sampled mirroring requires RX direction
-    if (entry.sample_rate > 0 && entry.direction != MIRROR_RX_DIRECTION)
+    // Sampled mirroring requires an explicit direction
+    if (entry.sample_rate > 0 && entry.direction.empty())
     {
-        SWSS_LOG_ERROR("Sampled mirroring requires RX direction for session %s",
+        SWSS_LOG_ERROR("Sampled mirroring requires RX, TX or BOTH direction for session %s",
                        key.c_str());
         return task_process_status::task_invalid_entry;
     }
 
-    // Platform capability: reject early if sampled mirroring is not supported
-    if (entry.sample_rate > 0 && !m_switchOrch->isPortIngressSampleMirrorSupported())
+    // Platform capability: reject early if the per-direction sampled mirroring
+    // capability is not supported by the ASIC.
+    if (entry.sample_rate > 0)
     {
-        SWSS_LOG_ERROR("Sampled mirroring not supported on this platform, "
-                       "rejecting session %s", key.c_str());
-        return task_process_status::task_invalid_entry;
+        bool needIngressSample = (entry.direction == MIRROR_RX_DIRECTION ||
+                                  entry.direction == MIRROR_BOTH_DIRECTION);
+        bool needEgressSample = (entry.direction == MIRROR_TX_DIRECTION ||
+                                 entry.direction == MIRROR_BOTH_DIRECTION);
+        if (needIngressSample && !m_switchOrch->isPortIngressSampleMirrorSupported())
+        {
+            SWSS_LOG_ERROR("Ingress sampled mirroring not supported on this platform, "
+                           "rejecting session %s", key.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+        if (needEgressSample && !m_switchOrch->isPortEgressSampleMirrorSupported())
+        {
+            SWSS_LOG_ERROR("Egress sampled mirroring not supported on this platform, "
+                           "rejecting session %s", key.c_str());
+            return task_process_status::task_invalid_entry;
+        }
     }
 
     // Platform capability: reject early if samplepacket truncation is not supported
@@ -913,13 +927,6 @@ bool MirrorOrch::setUnsetPortMirror(Port port,
 
     if (sample_rate > 0)
     {
-        if (!ingress)
-        {
-            SWSS_LOG_ERROR("Sampled mirroring on egress is not supported for port %s",
-                            port.m_alias.c_str());
-            return false;
-        }
-
         // Sampled mirroring path: dispatch to per-PHY helper; LAG must be
         // expanded to its member ports because SAMPLEPACKET/SAMPLE_MIRROR_SESSION
         // are port-level SAI attributes and a LAG OID is not a valid target.
@@ -936,7 +943,8 @@ bool MirrorOrch::setUnsetPortMirror(Port port,
                     return false;  // LCOV_EXCL_LINE
                 }
                 if (!setUnsetSampledMirrorOnPhyPort(p.m_port_id, p.m_alias, set,
-                                                    sessionId, samplepacketId))
+                        ingress ? MirrorBindDirection::Ingress : MirrorBindDirection::Egress,
+                        sessionId, samplepacketId))
                 {
                     return false;
                 }
@@ -946,7 +954,8 @@ bool MirrorOrch::setUnsetPortMirror(Port port,
         else if (port.m_type == Port::PHY)
         {
             return setUnsetSampledMirrorOnPhyPort(port.m_port_id, port.m_alias, set,
-                                                  sessionId, samplepacketId);
+                        ingress ? MirrorBindDirection::Ingress : MirrorBindDirection::Egress,
+                        sessionId, samplepacketId);
         }
         else
         {
@@ -1036,7 +1045,7 @@ bool MirrorOrch::configurePortMirrorSession(const string& name, MirrorEntry& ses
             }
             if (session.direction == MIRROR_TX_DIRECTION || session.direction == MIRROR_BOTH_DIRECTION)
             {
-                if (!setUnsetPortMirror(port, false, set, session.sessionId, session.samplepacketId, session.sample_rate)) // LCOV_EXCL_LINE
+                if (!setUnsetPortMirror(port, false, set, session.sessionId, session.samplepacketId, session.sample_rate))
                 {
                     SWSS_LOG_ERROR("Failed to configure mirror session %s port %s",
                         name.c_str(), port.m_alias.c_str());
@@ -1341,6 +1350,7 @@ bool MirrorOrch::updateSessionDstMac(const string& name, MirrorEntry& session)
 bool MirrorOrch::setUnsetSampledMirrorOnPhyPort(sai_object_id_t phy_port_id,
                                                 const std::string& phy_port_alias,
                                                 bool set,
+                                                MirrorBindDirection direction,
                                                 sai_object_id_t sessionId,
                                                 sai_object_id_t samplepacketId)
 {
@@ -1348,12 +1358,20 @@ bool MirrorOrch::setUnsetSampledMirrorOnPhyPort(sai_object_id_t phy_port_id,
 
     sai_status_t status;
 
+    const bool ingress = (direction == MirrorBindDirection::Ingress);
+    const sai_port_attr_t samplepacketEnableAttrId = ingress ?
+        SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE :
+        SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
+    const sai_port_attr_t sampleMirrorSessionAttrId = ingress ?
+        SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION :
+        SAI_PORT_ATTR_EGRESS_SAMPLE_MIRROR_SESSION;
+
     sai_attribute_t sp_attr;
-    sp_attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
+    sp_attr.id = samplepacketEnableAttrId;
     sp_attr.value.oid = set ? samplepacketId : SAI_NULL_OBJECT_ID;
 
     sai_attribute_t mirror_attr;
-    mirror_attr.id = SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION;
+    mirror_attr.id = sampleMirrorSessionAttrId;
     if (set)
     {
         mirror_attr.value.objlist.count = 1;
@@ -1368,12 +1386,12 @@ bool MirrorOrch::setUnsetSampledMirrorOnPhyPort(sai_object_id_t phy_port_id,
     if (set)
     {
         sai_attribute_t check_attr;
-        check_attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
+        check_attr.id = samplepacketEnableAttrId;
         if (sai_port_api->get_port_attribute(phy_port_id, 1, &check_attr) == SAI_STATUS_SUCCESS
             && check_attr.value.oid != SAI_NULL_OBJECT_ID
             && check_attr.value.oid != samplepacketId)
         {
-            SWSS_LOG_ERROR("Port %s INGRESS_SAMPLEPACKET_ENABLE already bound to "
+            SWSS_LOG_ERROR("Port %s SAMPLEPACKET_ENABLE already bound to "
                            "OID 0x%" PRIx64 ", cannot bind sampled mirror",
                            phy_port_alias.c_str(), check_attr.value.oid);
             return false;

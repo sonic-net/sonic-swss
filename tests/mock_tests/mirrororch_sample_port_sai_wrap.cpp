@@ -1,5 +1,5 @@
 /*
- * Runtime emulation of the INGRESS sample port attributes for mirrororch_ut.
+ * Runtime emulation of the INGRESS/EGRESS sample port attributes for mirrororch_ut.
  * See mirrororch_sample_port_sai_wrap.h for the rationale.
  */
 #include "mirrororch_sample_port_sai_wrap.h"
@@ -17,13 +17,16 @@ namespace
     sai_port_api_t *g_real_port_api = nullptr;
     sai_port_api_t g_wrap_port_api;
 
-    // Per-port emulated value of SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE.
+    // Per-port emulated value of SAI_PORT_ATTR_{INGRESS,EGRESS}_SAMPLEPACKET_ENABLE.
     std::map<sai_object_id_t, sai_object_id_t> g_ingress_samplepacket;
+    std::map<sai_object_id_t, sai_object_id_t> g_egress_samplepacket;
 
     bool isIntercepted(sai_attr_id_t id)
     {
         return id == SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE
-            || id == SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION;
+            || id == SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION
+            || id == SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE
+            || id == SAI_PORT_ATTR_EGRESS_SAMPLE_MIRROR_SESSION;
     }
 
     extern "C" sai_status_t wrap_set_port_attribute(
@@ -35,20 +38,24 @@ namespace
             return SAI_STATUS_INVALID_PARAMETER;
         }
 
-        if (attr->id == SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE)
+        if (attr->id == SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE
+            || attr->id == SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE)
         {
+            auto &store = (attr->id == SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE)
+                ? g_ingress_samplepacket : g_egress_samplepacket;
             if (attr->value.oid == SAI_NULL_OBJECT_ID)
             {
-                g_ingress_samplepacket.erase(port_id);
+                store.erase(port_id);
             }
             else
             {
-                g_ingress_samplepacket[port_id] = attr->value.oid;
+                store[port_id] = attr->value.oid;
             }
             return SAI_STATUS_SUCCESS;
         }
 
-        if (attr->id == SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION)
+        if (attr->id == SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION
+            || attr->id == SAI_PORT_ATTR_EGRESS_SAMPLE_MIRROR_SESSION)
         {
             // Validate the call framing the production code uses (bind: a
             // single non-null session; unbind: an empty list) so a malformed
@@ -76,15 +83,19 @@ namespace
     {
         if (attr_list != nullptr && attr_count == 1 && isIntercepted(attr_list[0].id))
         {
-            if (attr_list[0].id == SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE)
+            if (attr_list[0].id == SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE
+                || attr_list[0].id == SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE)
             {
-                auto it = g_ingress_samplepacket.find(port_id);
+                auto &store =
+                    (attr_list[0].id == SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE)
+                    ? g_ingress_samplepacket : g_egress_samplepacket;
+                auto it = store.find(port_id);
                 attr_list[0].value.oid =
-                    (it != g_ingress_samplepacket.end()) ? it->second : SAI_NULL_OBJECT_ID;
+                    (it != store.end()) ? it->second : SAI_NULL_OBJECT_ID;
                 return SAI_STATUS_SUCCESS;
             }
 
-            // SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION: report unbound.
+            // {INGRESS,EGRESS}_SAMPLE_MIRROR_SESSION: report unbound.
             attr_list[0].value.objlist.count = 0;
             return SAI_STATUS_SUCCESS;
         }
@@ -110,6 +121,7 @@ namespace mirror_sample_port_wrap_ut
         g_wrap_port_api.get_port_attribute = wrap_get_port_attribute;
 
         g_ingress_samplepacket.clear();
+        g_egress_samplepacket.clear();
         sai_port_api = &g_wrap_port_api;
     }
 
@@ -120,5 +132,6 @@ namespace mirror_sample_port_wrap_ut
             sai_port_api = g_real_port_api;
         }
         g_ingress_samplepacket.clear();
+        g_egress_samplepacket.clear();
     }
 }
