@@ -508,7 +508,25 @@ bool RouteOrch::validnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t& 
             m_switchOrch->getEcmpNhgType() == SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP)
         {
             nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID;
-            nhgm_attr.value.u32 = nhopgroup->second.nhopgroup_members[nexthop].seq_id;
+            auto seq_it = nhopgroup->second.nhopgroup_members.find(nexthop);
+            if (seq_it != nhopgroup->second.nhopgroup_members.end())
+            {
+                nhgm_attr.value.u32 = seq_it->second.seq_id;
+            }
+            else
+            {
+                uint32_t seq_id = 1;
+                for (auto key_it = nhopgroup->first.getNextHops().begin();
+                     key_it != nhopgroup->first.getNextHops().end();
+                     ++key_it, ++seq_id)
+                {
+                    if (*key_it == *nhkey)
+                    {
+                        break;
+                    }
+                }
+                nhgm_attr.value.u32 = seq_id;
+            }
             nhgm_attrs.push_back(nhgm_attr);
         }
 
@@ -568,7 +586,27 @@ bool RouteOrch::invalidnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t
         }
  
 
-        nexthop_id = nhopgroup->second.nhopgroup_members[nexthop].next_hop_id;
+        auto member_it = nhopgroup->second.nhopgroup_members.find(nexthop);
+        if (member_it == nhopgroup->second.nhopgroup_members.end())
+        {
+            SWSS_LOG_WARN("invalidnexthopinNextHopGroup: nexthop %s is in NHG key but not in "
+                          "nhopgroup_members (was skipped during creation due to IFDOWN) — "
+                          "skip SAI removal to avoid ghost entry",
+                          nexthop.to_string().c_str());
+            continue;
+        }
+
+        nexthop_id = member_it->second.next_hop_id;
+
+        if (nexthop_id == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_WARN("invalidnexthopinNextHopGroup: nexthop %s has NULL member OID — "
+                          "erasing stale member entry",
+                          nexthop.to_string().c_str());
+            nhopgroup->second.nhopgroup_members.erase(member_it);
+            continue;
+        }
+
         status = sai_next_hop_group_api->remove_next_hop_group_member(nexthop_id);
 
         if (status != SAI_STATUS_SUCCESS)
@@ -1358,8 +1396,19 @@ void RouteOrch::increaseNextHopRefCount(const NextHopGroupKey &nexthops)
     }
     else
     {
-        m_syncdNextHopGroups[nexthops].ref_count ++;
-        SWSS_LOG_INFO("Routeorch inc Ref count %u for next_hops: %s", m_syncdNextHopGroups[nexthops].ref_count, nexthops.to_string().c_str());
+        auto it = m_syncdNextHopGroups.find(nexthops);
+        if (it != m_syncdNextHopGroups.end())
+        {
+            it->second.ref_count++;
+            SWSS_LOG_INFO("Routeorch inc Ref count %u for next_hops: %s",
+                          it->second.ref_count, nexthops.to_string().c_str());
+        }
+        else
+        {
+            SWSS_LOG_WARN("increaseNextHopRefCount: NHG %s not in "
+                          "m_syncdNextHopGroups — skip to avoid ghost entry",
+                          nexthops.to_string().c_str());
+        }
     }
 }
 
@@ -1380,8 +1429,19 @@ void RouteOrch::decreaseNextHopRefCount(const NextHopGroupKey &nexthops)
     }
     else
     {
-        m_syncdNextHopGroups[nexthops].ref_count --;
-        SWSS_LOG_INFO("Routeorch dec Ref count %u for next_hops: %s", m_syncdNextHopGroups[nexthops].ref_count, nexthops.to_string().c_str());
+        auto it = m_syncdNextHopGroups.find(nexthops);
+        if (it != m_syncdNextHopGroups.end())
+        {
+            it->second.ref_count--;
+            SWSS_LOG_INFO("Routeorch dec Ref count %u for next_hops: %s",
+                          it->second.ref_count, nexthops.to_string().c_str());
+        }
+        else
+        {
+            SWSS_LOG_WARN("decreaseNextHopRefCount: NHG %s not in "
+                          "m_syncdNextHopGroups — skip to avoid ghost entry",
+                          nexthops.to_string().c_str());
+        }
     }
 }
 
@@ -1793,10 +1853,33 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops, const bool i
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
     }
 
+    if (next_hop_group_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Attempted to remove NHG with NULL OID for %s "
+                       "— skipping SAI call to prevent crash",
+                       nexthops.to_string().c_str());
+        m_syncdNextHopGroups.erase(nexthops);
+        return true;
+    }
+
     status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove next hop group %" PRIx64 ", rv:%d", next_hop_group_id, status);
+        SWSS_LOG_ERROR("Failed to remove next hop group %" PRIx64 " for %s, rv:%d",
+                       next_hop_group_id, nexthops.to_string().c_str(), status);
+
+        if (status == SAI_STATUS_OBJECT_IN_USE)
+        {
+            SWSS_LOG_ERROR("NHG %" PRIx64 " stuck in ASIC (OBJECT_IN_USE) — erasing from "
+                           "m_syncdNextHopGroups to prevent stale NHG reuse by future routes. "
+                           "The ASIC NHG is leaked but will be reclaimed on restart.",
+                           next_hop_group_id);
+            if (gArsOrch)
+                gArsOrch->forgetNhg(next_hop_group_id);
+            m_syncdNextHopGroups.erase(nexthops);
+            return true;
+        }
+
         task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP_GROUP, status);
         if (handle_status != task_success)
         {
@@ -2451,7 +2534,36 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             }
         }
 
-        next_hop_id = m_syncdNextHopGroups[nextHops].next_hop_group_id;
+        auto it_nhg = m_syncdNextHopGroups.find(nextHops);
+        if (it_nhg != m_syncdNextHopGroups.end())
+        {
+            next_hop_id = it_nhg->second.next_hop_group_id;
+        }
+        else
+        {
+            next_hop_id = SAI_NULL_OBJECT_ID;
+        }
+
+        if (next_hop_id == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_ERROR("NHG for %s has NULL OID — missing or ghost entry. "
+                           "Erasing and rebuilding.",
+                           nextHops.to_string().c_str());
+            if (it_nhg != m_syncdNextHopGroups.end())
+            {
+                m_syncdNextHopGroups.erase(it_nhg);
+            }
+
+            if (!addNextHopGroup(nextHops))
+            {
+                addTempRoute(ctx, nextHops);
+                return false;
+            }
+            it_nhg = m_syncdNextHopGroups.find(nextHops);
+            next_hop_id = (it_nhg != m_syncdNextHopGroups.end())
+                              ? it_nhg->second.next_hop_group_id
+                              : SAI_NULL_OBJECT_ID;
+        }
     }
 
     /* Sync the route entry */

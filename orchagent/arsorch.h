@@ -193,6 +193,8 @@ private:
     bool m_arsEnabled = false;
     std::string m_globalProfileName;
     sai_object_id_t m_activeSwitchProfileOid = SAI_NULL_OBJECT_ID;
+    sai_object_id_t m_deferredProfileOid = SAI_NULL_OBJECT_ID;
+    sai_object_id_t m_deferredArsOid = SAI_NULL_OBJECT_ID;
 
     std::unordered_map<std::string, ArsProfileEntry>    m_arsProfiles;
     std::unordered_map<std::string, ArsObjectEntry>     m_arsObjects;
@@ -227,6 +229,12 @@ private:
     // move it back into m_arsEnabledPorts / m_arsInterfaces[].enabled
     // and ask RouteOrch to re-evaluate NHG bindings.
     std::set<std::string> m_arsInterfacesPendingEnable;
+
+    bool m_portScalingFactorSupported = true;
+    bool m_portPastWeightSupported    = true;
+    bool m_portFutureWeightSupported  = true;
+    bool m_profileIpv4Supported      = true;
+    bool m_profileIpv6Supported      = true;
 
     std::unordered_map<std::string, std::string> m_nexthopArsBindings;
     // nhgOid → ARS_NHG_TABLE row key. Written by bindArsToNhg so we can

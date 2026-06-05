@@ -304,7 +304,15 @@ void ArsOrch::doArsGlobalTask(Consumer &consumer)
             }
             else if (hasProfileField && profileName.empty() && !m_globalProfileName.empty())
             {
-                if (bindArsProfileToSwitch(SAI_NULL_OBJECT_ID))
+                if (!m_arsEnabledPorts.empty())
+                {
+                    SWSS_LOG_NOTICE("ARS: deferring profile unbind — %zu port(s) "
+                                    "still ARS-enabled in ASIC. Will reconcile "
+                                    "on config reload.", m_arsEnabledPorts.size());
+                    m_activeSwitchProfileOid = SAI_NULL_OBJECT_ID;
+                    m_globalProfileName.clear();
+                }
+                else if (bindArsProfileToSwitch(SAI_NULL_OBJECT_ID))
                 {
                     m_globalProfileName.clear();
                     SWSS_LOG_NOTICE("ARS: unbound profile from switch");
@@ -327,7 +335,18 @@ void ArsOrch::doArsGlobalTask(Consumer &consumer)
             }
             if (m_activeSwitchProfileOid != SAI_NULL_OBJECT_ID)
             {
-                bindArsProfileToSwitch(SAI_NULL_OBJECT_ID);
+                if (m_arsEnabledPorts.empty())
+                {
+                    bindArsProfileToSwitch(SAI_NULL_OBJECT_ID);
+                }
+                else
+                {
+                    SWSS_LOG_NOTICE("ARS: deferring profile unbind from switch "
+                                    "— %zu port(s) still ARS-enabled in ASIC. "
+                                    "Will reconcile on config reload.",
+                                    m_arsEnabledPorts.size());
+                    m_activeSwitchProfileOid = SAI_NULL_OBJECT_ID;
+                }
                 m_globalProfileName.clear();
             }
         }
@@ -593,8 +612,9 @@ void ArsOrch::doArsProfileTask(Consumer &consumer)
                 anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_FUTURE_MAX_VAL,      entry.loadFutureMaxVal);
                 anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_CURRENT_MIN_VAL,     entry.loadCurrentMinVal);
                 anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_LOAD_CURRENT_MAX_VAL,     entry.loadCurrentMaxVal);
-                anyFailed |= !updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_ENABLE_IPV4,          entry.ipv4Enable);
-                anyFailed |= !updateArsProfileAttrBool(oid, SAI_ARS_PROFILE_ATTR_ENABLE_IPV6,          entry.ipv6Enable);
+                // ENABLE_IPV4/IPV6 are NOT pushed to SAI — Mellanox SAI reports
+                // SET_IMP=false for these. The ars-classifier-daemon handles
+                // IPv4/IPv6 classification via sx_api_ar_default_classification_set.
                 if (entry.samplingInterval > 0)
                     anyFailed |= !updateArsProfileAttr(oid, SAI_ARS_PROFILE_ATTR_SAMPLING_INTERVAL,    entry.samplingInterval);
                 if (entry.randomSeed > 0)
@@ -1573,110 +1593,21 @@ bool ArsOrch::createArsProfile(const string &name, const ArsProfileEntry &entry)
         }
     }
 
-    vector<sai_attribute_t> attrs;
-    sai_attribute_t attr;
-
-    attr.id = SAI_ARS_PROFILE_ATTR_ALGO;
-    attr.value.s32 = entry.algorithm;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ARS_PROFILE_ATTR_PORT_LOAD_PAST;
-    attr.value.booldata = entry.loadPastEnable;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ARS_PROFILE_ATTR_PORT_LOAD_PAST_WEIGHT;
-    attr.value.u8 = (uint8_t)entry.loadPastWeight;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ARS_PROFILE_ATTR_PORT_LOAD_FUTURE;
-    attr.value.booldata = entry.loadFutureEnable;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ARS_PROFILE_ATTR_PORT_LOAD_FUTURE_WEIGHT;
-    attr.value.u8 = (uint8_t)entry.loadFutureWeight;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ARS_PROFILE_ATTR_PORT_LOAD_CURRENT;
-    attr.value.booldata = entry.loadCurrentEnable;
-    attrs.push_back(attr);
-
-    // Note: SAI has no PORT_LOAD_CURRENT_WEIGHT attribute (only PAST_WEIGHT
-    // and FUTURE_WEIGHT). loadCurrentWeight is retained in ArsProfileEntry
-    // only to seed loadCurrentEnable when the operator writes
-    // load_current_weight without an explicit port_load_current.
-
-    attr.id = SAI_ARS_PROFILE_ATTR_PORT_LOAD_EXPONENT;
-    attr.value.u8 = (uint8_t)entry.loadExponent;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ARS_PROFILE_ATTR_ENABLE_IPV4;
-    attr.value.booldata = entry.ipv4Enable;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ARS_PROFILE_ATTR_ENABLE_IPV6;
-    attr.value.booldata = entry.ipv6Enable;
-    attrs.push_back(attr);
-
-    if (entry.samplingInterval > 0)
-    {
-        attr.id = SAI_ARS_PROFILE_ATTR_SAMPLING_INTERVAL;
-        attr.value.u32 = entry.samplingInterval;
-        attrs.push_back(attr);
-    }
-
-    if (entry.randomSeed > 0)
-    {
-        attr.id = SAI_ARS_PROFILE_ATTR_ARS_RANDOM_SEED;
-        attr.value.u32 = entry.randomSeed;
-        attrs.push_back(attr);
-    }
-
-    if (entry.maxFlows > 0)
-    {
-        attr.id = SAI_ARS_PROFILE_ATTR_MAX_FLOWS;
-        attr.value.u32 = entry.maxFlows;
-        attrs.push_back(attr);
-    }
-
-    if (entry.loadPastMinVal > 0 || entry.loadPastMaxVal > 0)
-    {
-        attr.id = SAI_ARS_PROFILE_ATTR_LOAD_PAST_MIN_VAL;
-        attr.value.u32 = entry.loadPastMinVal;
-        attrs.push_back(attr);
-        attr.id = SAI_ARS_PROFILE_ATTR_LOAD_PAST_MAX_VAL;
-        attr.value.u32 = entry.loadPastMaxVal;
-        attrs.push_back(attr);
-    }
-
-    if (entry.loadFutureMinVal > 0 || entry.loadFutureMaxVal > 0)
-    {
-        attr.id = SAI_ARS_PROFILE_ATTR_LOAD_FUTURE_MIN_VAL;
-        attr.value.u32 = entry.loadFutureMinVal;
-        attrs.push_back(attr);
-        attr.id = SAI_ARS_PROFILE_ATTR_LOAD_FUTURE_MAX_VAL;
-        attr.value.u32 = entry.loadFutureMaxVal;
-        attrs.push_back(attr);
-    }
-
-    if (entry.loadCurrentMinVal > 0 || entry.loadCurrentMaxVal > 0)
-    {
-        attr.id = SAI_ARS_PROFILE_ATTR_LOAD_CURRENT_MIN_VAL;
-        attr.value.u32 = entry.loadCurrentMinVal;
-        attrs.push_back(attr);
-        attr.id = SAI_ARS_PROFILE_ATTR_LOAD_CURRENT_MAX_VAL;
-        attr.value.u32 = entry.loadCurrentMaxVal;
-        attrs.push_back(attr);
-    }
-
-    // Per-band congestion thresholds (Mbps). Sending non-zero values at
-    // CREATE is what tells Mellanox SAI to take the non-hardened path and
-    // call sx_api_ar_congestion_threshold_set — without them, SAI treats
-    // the profile as "hardened" and rejects flowlet-quality ARS objects.
+    // Mellanox SAI only implements quant-band threshold attributes on
+    // ARS_PROFILE. Attributes like ALGO, PORT_LOAD_*, ENABLE_IPV4/6,
+    // SAMPLING_INTERVAL are handled internally by the SDK and the
+    // ars-classifier-daemon (via sx_api_ar_default_classification_set).
     //
-    // When the operator omits all three bands (all zero), auto-fill with
-    // conservative defaults (1/2/4 Gbps) so flowlet works out of the box.
-    // This mirrors createDefaultProfileIfNeeded() and avoids forcing users
-    // to manually set thresholds just to get basic flowlet behavior.
+    // Sending unsupported attrs works at runtime (SAI ignores them) but
+    // FAILS during config-reload APPLY_VIEW: syncd validates each attribute
+    // against capability metadata (CREATE_IMP=false) and rejects the entire
+    // CREATE with SAI_STATUS_ATTR_NOT_IMPLEMENTED_0. Sending only quant-band
+    // thresholds avoids this and works in both runtime and apply-view paths.
+    //
+    // When all three bands are zero, auto-fill with conservative defaults
+    // (1/2/4 Gbps) so flowlet works out of the box. Non-zero quant-band
+    // values at CREATE tell Mellanox SAI to call
+    // sx_api_ar_congestion_threshold_set (non-hardened mode).
     uint32_t qb0 = entry.quantBand0MinThreshold;
     uint32_t qb1 = entry.quantBand1MinThreshold;
     uint32_t qb2 = entry.quantBand2MinThreshold;
@@ -1689,63 +1620,61 @@ bool ArsOrch::createArsProfile(const string &name, const ArsProfileEntry &entry)
                         "using defaults (%u/%u/%u Mbps) to avoid hardened mode",
                         name.c_str(), qb0, qb1, qb2);
     }
-    {
-        attr.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_0_MIN_THRESHOLD;
-        attr.value.u32 = qb0;
-        attrs.push_back(attr);
-        attr.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_1_MIN_THRESHOLD;
-        attr.value.u32 = qb1;
-        attrs.push_back(attr);
-        attr.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_2_MIN_THRESHOLD;
-        attr.value.u32 = qb2;
-        attrs.push_back(attr);
-    }
+
+    vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+
+    attr.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_0_MIN_THRESHOLD;
+    attr.value.u32 = qb0;
+    attrs.push_back(attr);
+
+    attr.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_1_MIN_THRESHOLD;
+    attr.value.u32 = qb1;
+    attrs.push_back(attr);
+
+    attr.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_2_MIN_THRESHOLD;
+    attr.value.u32 = qb2;
+    attrs.push_back(attr);
 
     sai_object_id_t profileOid;
-    sai_status_t status = sai_ars_profile_api->create_ars_profile(
-        &profileOid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
 
-    // Mellanox SAI only implements quant-band threshold attributes on
-    // ARS_PROFILE (SAI_ARS_PROFILE_ATTR_QUANT_BAND_{0,1,2}_MIN_THRESHOLD).
-    // Standard EWMA attributes like ALGO, PORT_LOAD_*, ENABLE_IPV4/6,
-    // SAMPLING_INTERVAL etc. are handled internally by the SDK and not
-    // exposed through SAI. If the full attribute list fails with
-    // ATTR_NOT_IMPLEMENTED, retry with only the quant-band thresholds.
-    if (SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status) ||
-        SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status))
+    // A previous removeArsProfile may have deferred the SAI removal because
+    // ports still had ARS enabled (RIF guard). The old profile OID is still
+    // live in the ASIC — calling create_ars_profile would return
+    // SAI_STATUS_ITEM_ALREADY_EXISTS and crash syncd. Reuse the leaked OID
+    // and update its quant-band thresholds via SET instead.
+    if (m_deferredProfileOid != SAI_NULL_OBJECT_ID)
     {
-        SWSS_LOG_NOTICE("ARS: full profile create for '%s' returned %s — "
-                        "retrying with quant-band thresholds only "
-                        "(Mellanox SAI handles EWMA tuning via SDK internally)",
-                        name.c_str(), sai_serialize_status(status).c_str());
+        profileOid = m_deferredProfileOid;
+        m_deferredProfileOid = SAI_NULL_OBJECT_ID;
 
-        vector<sai_attribute_t> qb_attrs;
-        sai_attribute_t qb;
+        SWSS_LOG_NOTICE("ARS: reusing deferred profile OID 0x%" PRIx64
+                        " for '%s' (previous removal was skipped because "
+                        "ports still had ARS enabled in ASIC)",
+                        profileOid, name.c_str());
 
-        qb.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_0_MIN_THRESHOLD;
-        qb.value.u32 = qb0;
-        qb_attrs.push_back(qb);
-
-        qb.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_1_MIN_THRESHOLD;
-        qb.value.u32 = qb1;
-        qb_attrs.push_back(qb);
-
-        qb.id = SAI_ARS_PROFILE_ATTR_QUANT_BAND_2_MIN_THRESHOLD;
-        qb.value.u32 = qb2;
-        qb_attrs.push_back(qb);
-
-        status = sai_ars_profile_api->create_ars_profile(
-            &profileOid, gSwitchId, (uint32_t)qb_attrs.size(), qb_attrs.data());
+        updateArsProfileAttr(profileOid,
+                             SAI_ARS_PROFILE_ATTR_QUANT_BAND_0_MIN_THRESHOLD, qb0);
+        updateArsProfileAttr(profileOid,
+                             SAI_ARS_PROFILE_ATTR_QUANT_BAND_1_MIN_THRESHOLD, qb1);
+        updateArsProfileAttr(profileOid,
+                             SAI_ARS_PROFILE_ATTR_QUANT_BAND_2_MIN_THRESHOLD, qb2);
     }
-
-    if (status != SAI_STATUS_SUCCESS)
+    else
     {
-        SWSS_LOG_ERROR("ARS: create_ars_profile failed for %s: %s",
-                       name.c_str(), sai_serialize_status(status).c_str());
-        return false;
-    }
+        sai_status_t status = sai_ars_profile_api->create_ars_profile(
+            &profileOid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
 
-    SWSS_LOG_NOTICE("ARS: created profile %s OID 0x%" PRIx64, name.c_str(), profileOid);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("ARS: create_ars_profile failed for %s: %s",
+                           name.c_str(), sai_serialize_status(status).c_str());
+            return false;
+        }
+
+        SWSS_LOG_NOTICE("ARS: created profile %s OID 0x%" PRIx64,
+                        name.c_str(), profileOid);
+    }
 
     ArsProfileEntry stored = entry;
     stored.profileOid = profileOid;
@@ -1777,6 +1706,34 @@ bool ArsOrch::removeArsProfile(const string &name)
     auto it = m_arsProfiles.find(name);
     if (it == m_arsProfiles.end())
         return true;
+
+    // Mellanox SAI rejects profile unbind/removal when ports still have
+    // SAI_PORT_ATTR_ARS_ENABLE=true ("ARS ports exist - remove N ports
+    // before unbinding"). syncd treats any SAI failure as fatal in async
+    // mode, crashing the switch. If ports are still ARS-enabled in ASIC
+    // (because setPortArsEnable was blocked by the RIF guard), defer the
+    // SAI removal and let config reload reconcile the ASIC state.
+    if (!m_arsEnabledPorts.empty())
+    {
+        string portList;
+        for (const auto &p : m_arsEnabledPorts)
+        {
+            if (!portList.empty()) portList += ", ";
+            portList += p;
+        }
+        SWSS_LOG_NOTICE("ARS: deferring SAI removal of profile '%s' (OID "
+                        "0x%" PRIx64 ") — %zu port(s) still have ARS enabled "
+                        "in ASIC (%s). Removing from orchagent cache only; "
+                        "the ASIC state will be reconciled on the next config "
+                        "reload. The leaked OID will be reused if a new "
+                        "profile is created before reload.",
+                        name.c_str(), it->second.profileOid,
+                        m_arsEnabledPorts.size(), portList.c_str());
+        m_deferredProfileOid = it->second.profileOid;
+        m_arsProfiles.erase(it);
+        m_activeSwitchProfileOid = SAI_NULL_OBJECT_ID;
+        return true;
+    }
 
     sai_object_id_t oid = it->second.profileOid;
 
@@ -1897,14 +1854,37 @@ bool ArsOrch::createArsObject(const string &name, const ArsObjectEntry &entry)
     attrs.push_back(attr);
 
     sai_object_id_t arsOid;
-    sai_status_t status = sai_ars_api->create_ars(
-        &arsOid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
 
-    if (status != SAI_STATUS_SUCCESS)
+    // A previous removeArsObject may have deferred the SAI removal because
+    // ports still had ARS enabled (RIF guard). The old ARS OID is still live
+    // in the ASIC — calling create_ars would return ITEM_ALREADY_EXISTS and
+    // crash syncd. Reuse the leaked OID and update its attributes via SET.
+    if (m_deferredArsOid != SAI_NULL_OBJECT_ID)
     {
-        SWSS_LOG_ERROR("ARS: create_ars failed for %s: %s",
-                       name.c_str(), sai_serialize_status(status).c_str());
-        return false;
+        arsOid = m_deferredArsOid;
+        m_deferredArsOid = SAI_NULL_OBJECT_ID;
+
+        SWSS_LOG_NOTICE("ARS: reusing deferred ARS OID 0x%" PRIx64
+                        " for '%s' (previous removal was skipped because "
+                        "ports still had ARS enabled in ASIC)",
+                        arsOid, name.c_str());
+
+        setArsObjectAttr(arsOid, SAI_ARS_ATTR_MODE, entry.mode);
+        if (isFlowletMode(entry.mode))
+            setArsObjectAttr(arsOid, SAI_ARS_ATTR_IDLE_TIME, entry.idleTime);
+        setArsObjectAttr(arsOid, SAI_ARS_ATTR_MAX_FLOWS, entry.maxFlows);
+    }
+    else
+    {
+        sai_status_t status = sai_ars_api->create_ars(
+            &arsOid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("ARS: create_ars failed for %s: %s",
+                           name.c_str(), sai_serialize_status(status).c_str());
+            return false;
+        }
     }
 
     SWSS_LOG_NOTICE("ARS: created object %s OID 0x%" PRIx64 " mode %d",
@@ -1932,6 +1912,43 @@ bool ArsOrch::removeArsObject(const string &name)
     {
         SWSS_LOG_NOTICE("ARS: removed deferred-creation entry for object %s",
                         name.c_str());
+        m_arsObjects.erase(it);
+        return true;
+    }
+
+    // Mellanox SAI crashes (SDK health-check FATAL) if we remove an ARS
+    // object while ports still have SAI_PORT_ATTR_ARS_ENABLE=true in the
+    // ASIC — the hardware ends up with dangling ARS references. Check
+    // whether any ports associated with this object are still ARS-enabled
+    // in hardware (i.e. still in m_arsEnabledPorts because setPortArsEnable
+    // was blocked by the RIF guard). If so, skip the SAI removal and let
+    // config reload reconcile the ASIC state from a clean CONFIG_DB.
+    vector<string> stuckPorts;
+    for (const auto &kv : m_arsInterfaces)
+    {
+        if (kv.second.arsObject == name &&
+            m_arsEnabledPorts.count(kv.first))
+        {
+            stuckPorts.push_back(kv.first);
+        }
+    }
+    if (!stuckPorts.empty())
+    {
+        string portList;
+        for (const auto &p : stuckPorts)
+        {
+            if (!portList.empty()) portList += ", ";
+            portList += p;
+        }
+        SWSS_LOG_NOTICE("ARS: deferring SAI removal of object '%s' (OID "
+                        "0x%" PRIx64 ") — %zu port(s) still have ARS enabled "
+                        "in ASIC (%s). Removing from orchagent cache only; "
+                        "the ASIC state will be reconciled on the next config "
+                        "reload. The leaked OID will be reused if a new "
+                        "object is created before reload.",
+                        name.c_str(), oid, stuckPorts.size(),
+                        portList.c_str());
+        m_deferredArsOid = oid;
         m_arsObjects.erase(it);
         return true;
     }
@@ -2372,6 +2389,23 @@ bool ArsOrch::setPortArsEnable(const string &portName, bool enable)
         return false;
     }
 
+    // Mellanox SAI rejects SAI_PORT_ATTR_ARS_ENABLE with
+    // SAI_STATUS_INVALID_PARAMETER when port_config->rifs > 0. syncd
+    // treats the rejection as fatal and sends switch_shutdown_request,
+    // killing orchagent. Guard BEFORE the SAI call so syncd never sees
+    // the known-failure case.
+    if (port.m_rif_id != 0)
+    {
+        SWSS_LOG_ERROR("ARS: skipping SAI_PORT_ATTR_ARS_ENABLE=%s on %s — "
+                       "port has RIF oid:0x%" PRIx64 ". Mellanox SAI forbids "
+                       "toggling ARS on a port with RIFs. Use config reload "
+                       "with ARS pre-configured, or remove IPs before "
+                       "enabling ARS.",
+                       enable ? "true" : "false", portName.c_str(),
+                       port.m_rif_id);
+        return false;
+    }
+
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_ARS_ENABLE;
     attr.value.booldata = enable;
@@ -2380,46 +2414,8 @@ bool ArsOrch::setPortArsEnable(const string &portName, bool enable)
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        // Mellanox SAI rejects SAI_PORT_ATTR_ARS_ENABLE with
-        // SAI_STATUS_INVALID_PARAMETER when port_config->rifs > 0, i.e.
-        // when a router interface is bound to the port.  The supported
-        // workaround is to enable ARS BEFORE any RIF is created — the
-        // orch-list ordering (gArsOrch before gIntfsOrch, commit cbb87df6)
-        // ensures this at cold boot / config reload.  The port-up retry
-        // handler (eb8f03bd) covers transient boot-time failures.
-        //
-        // A previous implementation (commit 16845cf0) attempted an
-        // automatic "RIF bounce" here: remove the RIF via SAI, enable
-        // ARS, then re-create the RIF.  This was removed because:
-        //
-        //  1. It destroys the RIF behind IntfsOrch/NeighOrch's back,
-        //     orphaning next-hop objects that reference the old RIF OID.
-        //     Subsequent neighbor programming fails with
-        //     SAI_STATUS_INVALID_PARAMETER on SAI_API_NEXT_HOP (stale
-        //     OID removal) and orchagent enters an infinite retry loop.
-        //
-        //  2. On Spectrum-4, the SAI often returns SAI_STATUS_NOT_SUPPORTED
-        //     even after the RIF is removed, so the bounce destroys the
-        //     RIF for nothing and leaves the port in a broken state.
-        //
-        // If this error appears at runtime, the operator should remove
-        // IPs from the port, enable ARS, then re-add IPs — or use
-        // config reload with ARS config pre-written to CONFIG_DB.
-        if (status == SAI_STATUS_INVALID_PARAMETER && port.m_rif_id != 0)
-        {
-            SWSS_LOG_ERROR("ARS: set SAI_PORT_ATTR_ARS_ENABLE=%s on %s failed "
-                           "(INVALID_PARAMETER — port has RIF oid:0x%" PRIx64 "). "
-                           "Mellanox SAI forbids toggling ARS on a port with "
-                           "RIFs. Use config reload with ARS pre-configured, "
-                           "or remove IPs before enabling ARS.",
-                           enable ? "true" : "false", portName.c_str(),
-                           port.m_rif_id);
-        }
-        else
-        {
-            SWSS_LOG_ERROR("ARS: set SAI_PORT_ATTR_ARS_ENABLE on %s failed: %s",
-                           portName.c_str(), sai_serialize_status(status).c_str());
-        }
+        SWSS_LOG_ERROR("ARS: set SAI_PORT_ATTR_ARS_ENABLE on %s failed: %s",
+                       portName.c_str(), sai_serialize_status(status).c_str());
         return false;
     }
 
@@ -2608,6 +2604,15 @@ bool ArsOrch::setPortArsScalingFactor(const string &portName, const ArsPortProfi
                         portName.c_str(), speedMbps, factor / 10, factor % 10, factor);
     }
 
+    if (!m_portScalingFactorSupported)
+    {
+        SWSS_LOG_NOTICE("ARS: SAI_PORT_ATTR_ARS_PORT_LOAD_SCALING_FACTOR not "
+                        "implemented on this platform — skipping SET on %s "
+                        "(factor=%u). The SDK may derive scaling internally.",
+                        portName.c_str(), factor);
+        return true;
+    }
+
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_ARS_PORT_LOAD_SCALING_FACTOR;
     attr.value.u32 = factor;
@@ -2669,27 +2674,45 @@ bool ArsOrch::setPortArsWeights(const string &portName, uint32_t pastWeight, uin
 
     if (pastWeight > 0)
     {
-        attr.id = SAI_PORT_ATTR_ARS_PORT_LOAD_PAST_WEIGHT;
-        attr.value.u32 = pastWeight;
-        sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
-        if (status != SAI_STATUS_SUCCESS)
+        if (!m_portPastWeightSupported)
         {
-            SWSS_LOG_WARN("ARS: set past weight on %s failed: %s",
-                          portName.c_str(), sai_serialize_status(status).c_str());
-            success = false;
+            SWSS_LOG_NOTICE("ARS: SAI_PORT_ATTR_ARS_PORT_LOAD_PAST_WEIGHT not "
+                            "implemented — skipping SET on %s (weight=%u)",
+                            portName.c_str(), pastWeight);
+        }
+        else
+        {
+            attr.id = SAI_PORT_ATTR_ARS_PORT_LOAD_PAST_WEIGHT;
+            attr.value.u32 = pastWeight;
+            sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_WARN("ARS: set past weight on %s failed: %s",
+                              portName.c_str(), sai_serialize_status(status).c_str());
+                success = false;
+            }
         }
     }
 
     if (futureWeight > 0)
     {
-        attr.id = SAI_PORT_ATTR_ARS_PORT_LOAD_FUTURE_WEIGHT;
-        attr.value.u32 = futureWeight;
-        sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
-        if (status != SAI_STATUS_SUCCESS)
+        if (!m_portFutureWeightSupported)
         {
-            SWSS_LOG_WARN("ARS: set future weight on %s failed: %s",
-                          portName.c_str(), sai_serialize_status(status).c_str());
-            success = false;
+            SWSS_LOG_NOTICE("ARS: SAI_PORT_ATTR_ARS_PORT_LOAD_FUTURE_WEIGHT not "
+                            "implemented — skipping SET on %s (weight=%u)",
+                            portName.c_str(), futureWeight);
+        }
+        else
+        {
+            attr.id = SAI_PORT_ATTR_ARS_PORT_LOAD_FUTURE_WEIGHT;
+            attr.value.u32 = futureWeight;
+            sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_WARN("ARS: set future weight on %s failed: %s",
+                              portName.c_str(), sai_serialize_status(status).c_str());
+                success = false;
+            }
         }
     }
 
@@ -2880,9 +2903,43 @@ void ArsOrch::publishArsCaps()
             capStr = string("create=") + (ac.create_implemented ? "true" : "false") +
                      ",set=" + (ac.set_implemented ? "true" : "false") +
                      ",get=" + (ac.get_implemented ? "true" : "false");
+            if (attrId == SAI_ARS_PROFILE_ATTR_ENABLE_IPV4)
+                m_profileIpv4Supported = ac.create_implemented;
+            else if (attrId == SAI_ARS_PROFILE_ATTR_ENABLE_IPV6)
+                m_profileIpv6Supported = ac.create_implemented;
         }
         SWSS_LOG_NOTICE("ARS profile capability %s: %s", attrName.c_str(), capStr.c_str());
         m_stateArsCapTable.set(attrName, {{attrName, capStr}});
+    }
+
+    // Probe per-port ARS attributes so we never send unsupported SETs to
+    // syncd (which treats any SET failure as fatal -> shutdown).
+    {
+        sai_attr_capability_t ac = {};
+        sai_status_t qs = sai_query_attribute_capability(
+            gSwitchId, SAI_OBJECT_TYPE_PORT,
+            (sai_attr_id_t)SAI_PORT_ATTR_ARS_PORT_LOAD_SCALING_FACTOR, &ac);
+        m_portScalingFactorSupported = (qs == SAI_STATUS_SUCCESS && ac.set_implemented);
+        SWSS_LOG_NOTICE("ARS: SAI_PORT_ATTR_ARS_PORT_LOAD_SCALING_FACTOR set_supported=%s",
+                        m_portScalingFactorSupported ? "true" : "false");
+    }
+    {
+        sai_attr_capability_t ac = {};
+        sai_status_t qs = sai_query_attribute_capability(
+            gSwitchId, SAI_OBJECT_TYPE_PORT,
+            (sai_attr_id_t)SAI_PORT_ATTR_ARS_PORT_LOAD_PAST_WEIGHT, &ac);
+        m_portPastWeightSupported = (qs == SAI_STATUS_SUCCESS && ac.set_implemented);
+        SWSS_LOG_NOTICE("ARS: SAI_PORT_ATTR_ARS_PORT_LOAD_PAST_WEIGHT set_supported=%s",
+                        m_portPastWeightSupported ? "true" : "false");
+    }
+    {
+        sai_attr_capability_t ac = {};
+        sai_status_t qs = sai_query_attribute_capability(
+            gSwitchId, SAI_OBJECT_TYPE_PORT,
+            (sai_attr_id_t)SAI_PORT_ATTR_ARS_PORT_LOAD_FUTURE_WEIGHT, &ac);
+        m_portFutureWeightSupported = (qs == SAI_STATUS_SUCCESS && ac.set_implemented);
+        SWSS_LOG_NOTICE("ARS: SAI_PORT_ATTR_ARS_PORT_LOAD_FUTURE_WEIGHT set_supported=%s",
+                        m_portFutureWeightSupported ? "true" : "false");
     }
 }
 
