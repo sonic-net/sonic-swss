@@ -121,6 +121,16 @@ void ResponsePublisher::publish(const std::string &table, const std::string &key
                                 const std::vector<swss::FieldValueTuple> &intent_attrs, const ReturnCode &status,
                                 const std::vector<swss::FieldValueTuple> &state_attrs, bool replace)
 {
+    publishWrite(table, key, intent_attrs, status, state_attrs, replace, /*record_ts=*/nullptr,
+                 /*sync_publish=*/false);
+}
+
+void ResponsePublisher::publishWrite(const std::string &table, const std::string &key,
+                                     const std::vector<swss::FieldValueTuple> &intent_attrs,
+                                     const ReturnCode &status,
+                                     const std::vector<swss::FieldValueTuple> &state_attrs,
+                                     bool replace, const std::string *record_ts, bool sync_publish)
+{
     auto intent_attrs_copy = intent_attrs;
     // Add error message as the first field-value-pair.
     swss::FieldValueTuple err_str("err_str", PrependedComponent(status) + status.message());
@@ -145,7 +155,7 @@ void ResponsePublisher::publish(const std::string &table, const std::string &key
       }
     }
 
-    RecordResponse(response_channel, key, intent_attrs_copy, status.codeStr());
+    RecordResponse(response_channel, key, intent_attrs_copy, status.codeStr(), record_ts);
 
     // Write to the DB only if: m_enable_db_write_and_notify is true and:
     // 1) A write operation is being performed and state attributes are specified.
@@ -153,7 +163,16 @@ void ResponsePublisher::publish(const std::string &table, const std::string &key
     if (m_enable_db_write_and_notify &&
          ((intent_attrs.size() && state_attrs.size()) ||
          (status.ok() && !intent_attrs.size()))) {
-            writeToDB(table, key, state_attrs, intent_attrs.size() ? SET_COMMAND : DEL_COMMAND, replace);
+            const auto op = intent_attrs.size() ? SET_COMMAND : DEL_COMMAND;
+            if (sync_publish)
+            {
+                writeToDBInternal(table, key, state_attrs, op, replace);
+                RecordDBWrite(table, key, state_attrs, op, record_ts);
+            }
+            else
+            {
+                writeToDB(table, key, state_attrs, op, replace);
+            }
     }
 }
 
@@ -225,45 +244,17 @@ void ResponsePublisher::publishFullBatchFromThread(std::vector<asyncPublishItem>
         return;
     }
 
-    // Per item, match publish(): ZMQ queues responses[table]; else Redis notification. Then RecordResponse,
-    // then APPL_STATE write (writeToDBInternal on worker). Pipelines / ZMQ send drain in flush().
+    // Per item, use the same core publish logic as synchronous publish().
     for (const auto &it : items)
     {
-        auto intent_attrs_copy = it.intent_attrs;
-        swss::FieldValueTuple err_str("err_str", PrependedComponent(it.status) + it.status.message());
-        intent_attrs_copy.insert(intent_attrs_copy.begin(), err_str);
-
-        std::string response_channel = "APPL_DB_" + it.table + "_RESPONSE_CHANNEL";
-        const std::string *ts_ptr = it.record_ts.empty() ? nullptr : &it.record_ts;
-
-        if (m_zmqServer != nullptr)
-        {
-            auto intent_attrs_zmq_copy = it.intent_attrs;
-            swss::FieldValueTuple fvs(it.status.codeStr(),
-                                      PrependedComponent(it.status) + it.status.message());
-            intent_attrs_zmq_copy.insert(intent_attrs_zmq_copy.begin(), fvs);
-            responses[it.table].push_back(
-                swss::KeyOpFieldsValuesTuple{it.key, SET_COMMAND, intent_attrs_zmq_copy});
-        }
-        else
-        {
-            swss::NotificationProducer notificationProducer{m_ntf_pipe.get(), response_channel, m_buffered};
-            notificationProducer.send(it.status.codeStr(), it.key, intent_attrs_copy);
-        }
-
-        RecordResponse(response_channel, it.key, intent_attrs_copy, it.status.codeStr(), ts_ptr);
-
         std::vector<swss::FieldValueTuple> state_attrs;
         if (it.status.ok())
         {
             state_attrs = it.intent_attrs;
         }
-        if ((it.intent_attrs.size() && state_attrs.size()) || (it.status.ok() && !it.intent_attrs.size()))
-        {
-            std::string op = it.intent_attrs.size() ? SET_COMMAND : DEL_COMMAND;
-            writeToDBInternal(it.table, it.key, state_attrs, op, it.replace);
-            RecordDBWrite(it.table, it.key, state_attrs, op, ts_ptr);
-        }
+        const std::string *ts_ptr = it.record_ts.empty() ? nullptr : &it.record_ts;
+        publishWrite(it.table, it.key, it.intent_attrs, it.status, state_attrs, it.replace, ts_ptr,
+                     /*sync_publish=*/true);
     }
 }
 

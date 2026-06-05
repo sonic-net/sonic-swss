@@ -56,9 +56,9 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
 {
     SWSS_LOG_ENTER();
 
-    m_publisher.setBuffered(true);
-    m_publisher.m_directDbWrite = true;
-    m_publisher.setAsyncFullPublish(true);
+    m_routeStatePublisher.setBuffered(true);
+    m_routeStatePublisher.m_directDbWrite = true;
+    m_routeStatePublisher.setAsyncFullPublish(true);
 
     sai_attribute_t attr;
     attr.id = SAI_SWITCH_ATTR_NUMBER_OF_ECMP_GROUPS;
@@ -1261,8 +1261,8 @@ void RouteOrch::doTask(ConsumerBase& consumer)
         // One async batch + flush per gRouteBulker.flush(): drain batched publishAsync work to the worker,
         // then enqueue the flush marker so fpmsyncd sees responses without waiting for OrchDaemon periodic 
         // flush.
-        m_publisher.publishAsyncBatch();
-        m_publisher.flush();
+        m_routeStatePublisher.publishAsyncBatch();
+        m_routeStatePublisher.flush();
 
         /* No Update to Default Route so we can return */
         if (!(v4_default_nhg_key.getSize()) && !(v6_default_nhg_key.getSize()))
@@ -3069,8 +3069,8 @@ bool RouteOrch::removeRoutePrefix(const IpPrefix& prefix)
     }
     gRouteBulker.flush();
     bool ret = removeRoutePost(context);
-    m_publisher.publishAsyncBatch();
-    m_publisher.flush();
+    m_routeStatePublisher.publishAsyncBatch();
+    m_routeStatePublisher.flush();
     return ret;
 }
 
@@ -3230,7 +3230,7 @@ void RouteOrch::publishRouteState(const RouteBulkContext& ctx, const ReturnCode&
 
     const bool replace = false;
 
-    m_publisher.publishAsync(APP_ROUTE_TABLE_NAME, ctx.key, fvs, status, replace);
+    m_routeStatePublisher.publishAsync(APP_ROUTE_TABLE_NAME, ctx.key, fvs, status, replace);
 }
 
 inline bool RouteOrch::isVipRoute(const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
@@ -3284,6 +3284,7 @@ inline void RouteOrch::removeVipRouteSubnetDecapTerm(const IpPrefix &ipPrefix)
 
 void RouteOrch::flushResponses()
 {
-    m_publisher.flush();
+    m_routeStatePublisher.publishAsyncBatch();
+    m_routeStatePublisher.flush();
     Orch::flushResponses();
 }

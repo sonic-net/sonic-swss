@@ -124,6 +124,10 @@ class ResponsePublisher : public ResponsePublisherInterface
 
     void stateUpdateThread();
     void publishFullBatchFromThread(std::vector<asyncPublishItem> &&items);
+    void publishWrite(const std::string &table, const std::string &key,
+                      const std::vector<swss::FieldValueTuple> &intent_attrs, const ReturnCode &status,
+                      const std::vector<swss::FieldValueTuple> &state_attrs, bool replace,
+                      const std::string *record_ts, bool sync_publish);
     void writeToDBInternal(const std::string &table, const std::string &key,
                            const std::vector<swss::FieldValueTuple> &values, const std::string &op, bool replace);
 

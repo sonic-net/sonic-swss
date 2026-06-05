@@ -318,8 +318,9 @@ private:
     EntityBulker<sai_mpls_api_t>            gLabelRouteBulker;
     ObjectBulker<sai_next_hop_group_api_t>  gNextHopGroupMemberBulker;
 
-    // Shadows Orch::m_publisher: APPL_STATE_DB + optional async thread for route state publish (publishAsync).
-    ResponsePublisher m_publisher{"APPL_STATE_DB", /*buffered=*/false, gRouteStateAsyncPublish};
+    // Dedicated APPL_STATE_DB publisher for route state (publishAsync path).
+    // Keep this distinct from Orch::m_publisher to avoid shadowing confusion.
+    ResponsePublisher m_routeStatePublisher{"APPL_STATE_DB", /*buffered=*/false, gRouteStateAsyncPublish};
 
     void addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
 
