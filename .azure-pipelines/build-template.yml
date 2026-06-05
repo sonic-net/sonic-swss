@@ -85,6 +85,10 @@ parameters:
 - name: debian_version
   type: string
 
+- name: vpp_artifact_name
+  type: string
+  default: 'vpp-bookworm'
+
 jobs:
 - job:
   displayName: ${{ parameters.arch }}
@@ -171,7 +175,7 @@ jobs:
         target/debs/${{ parameters.debian_version }}/libnl-route-3-dev_*.deb
         target/debs/${{ parameters.debian_version }}/libnl-nf-3-200_*.deb
         target/debs/${{ parameters.debian_version }}/libnl-nf-3-dev_*.deb
-        target/debs/${{ parameters.debian_version }}/libyang_*.deb
+        target/debs/${{ parameters.debian_version }}/libyang3_*.deb
         target/debs/${{ parameters.debian_version }}/libnexthopgroup_*.deb
         target/debs/${{ parameters.debian_version }}/libnexthopgroup-dev_*.deb
     displayName: "Download common libs"
@@ -206,13 +210,13 @@ jobs:
       sudo dpkg -i $(find common -type f -name '*.deb')
       cd ..
     workingDirectory: $(Build.ArtifactStagingDirectory)
-    displayName: "Install libnl3"
+    displayName: "Install SONiC-built dependencies"
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
       project: build
       pipeline: sonic-net.sonic-platform-vpp
-      artifact: vpp
+      artifact: ${{ parameters.vpp_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/master'
       allowPartiallySucceededBuilds: true

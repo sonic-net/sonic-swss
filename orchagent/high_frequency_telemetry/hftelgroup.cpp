@@ -22,11 +22,11 @@ void HFTelGroup::updateObjects(const set<string> &object_names)
     }
 }
 
-void HFTelGroup::updateStatsIDs(const std::set<sai_stat_id_t> &stats_ids)
+void HFTelGroup::updateStatsIDs(std::set<sai_stat_id_t> &&stats_ids)
 {
     SWSS_LOG_ENTER();
 
-    m_stats_ids = move(stats_ids);
+    m_stats_ids = std::move(stats_ids);
 }
 
 bool HFTelGroup::isSameObjects(const std::set<std::string> &object_names) const

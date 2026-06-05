@@ -2,21 +2,24 @@
 #define __FDBSYNC__
 
 #include <string>
+#include <vector>
+#include <unordered_map>
 #include <arpa/inet.h>
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "subscriberstatetable.h"
 #include "netmsg.h"
 #include "warmRestartAssist.h"
+#include "lib/fdb_defs.h"
 
 /*
- * Default timer interval for fdbsyncd reconcillation 
+ * Default timer interval for fdbsyncd reconcillation
  */
 #define DEFAULT_FDBSYNC_WARMSTART_TIMER 120
 
 /*
  * This is the MAX time in seconds, fdbsyncd will wait after warm-reboot
- * for the interface entries to be recreated in kernel before attempting to 
+ * for the interface entries to be recreated in kernel before attempting to
  * write the FDB data to kernel
  */
 #define INTF_RESTORE_MAX_WAIT_TIME 180
@@ -48,9 +51,10 @@ public:
     enum { MAX_ADDR_SIZE = 64 };
 
     FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector *config_db);
-    ~FdbSync();
+    virtual ~FdbSync();
 
-    virtual void onMsg(int nlmsg_type, struct nl_object *obj);
+    virtual void onMsg(int nlmsg_type, struct nl_object *obj) override;
+    virtual void onMsgRaw(struct nlmsghdr *) override;
 
     bool isIntfRestoreDone();
 
@@ -85,8 +89,12 @@ public:
     bool m_isEvpnNvoExist = false;
 
 private:
+    bool m_isFdbProtoSupported = false;
+    bool checkFdbProtoSupport();
+
     ProducerStateTable m_fdbTable;
     ProducerStateTable m_imetTable;
+    ProducerStateTable m_l2NhgTable;
     SubscriberStateTable m_fdbStateTable;
     SubscriberStateTable m_mclagRemoteFdbStateTable;
     AppRestartAssist  *m_AppRestartAssist;
@@ -101,7 +109,7 @@ private:
 
     std::unordered_map<std::string, m_local_fdb_info> m_mclag_remote_fdb_mac;
 
-    void macDelVxlanEntry(std::string auxkey, struct m_fdb_info *info);
+    void macDelVxlanEntry(struct m_fdb_info *info);
 
     void macUpdateCache(struct m_fdb_info *info);
 
@@ -111,11 +119,11 @@ private:
 
     void updateAllLocalMac();
 
-    void macRefreshStateDB(int vlan, std::string kmac);
+    void macRefreshStateDB(int vlan, std::string kmac, uint8_t protocol);
 
     void updateMclagRemoteMac(struct m_fdb_info *info);
 
-    void updateMclagRemoteMacPort(int ifindex, int vlan, std::string mac);
+    void updateMclagRemoteMacPort(int ifindex, int vlan, std::string mac, uint8_t protocol);
 
     void macUpdateMclagRemoteCache(struct m_fdb_info *info);
 
@@ -125,10 +133,17 @@ private:
 
     struct m_mac_info
     {
-        std::string vtep;
+        FdbDest nhtype;
         std::string type;
         unsigned int vni;
-        std::string  ifname;
+        std::string ifname;
+        uint8_t protocol;
+
+        // Nexthop destination value - interpretation depends on nhtype:
+        // - nhtype == VTEP: contains remote VTEP IP address
+        // - nhtype == NEXTHOPGROUP: contains nexthop group ID
+        // - nhtype == IFNAME: contains interface name
+        std::string nexthop_value;
     };
     std::unordered_map<std::string, m_mac_info> m_mac;
 
@@ -146,13 +161,28 @@ private:
     std::unordered_map<int, intf> m_intf_info;
 
     void addLocalMac(std::string key, std::string op);
-    void macAddVxlan(std::string key, struct in_addr vtep, std::string type, uint32_t vni, std::string intf_name);
+    void macAddVxlan(std::string key, struct nl_addr *vtep, std::string type, uint32_t vni, std::string intf_name, std::string nexthop_group, FdbDest dest_type, uint8_t protocol);
     void macDelVxlan(std::string auxkey);
     void macDelVxlanDB(std::string key);
-    void imetAddRoute(struct in_addr vtep, std::string ifname, uint32_t vni);
-    void imetDelRoute(struct in_addr vtep, std::string ifname, uint32_t vni);
-    void onMsgNbr(int nlmsg_type, struct nl_object *obj);
+    void imetAddRoute(struct nl_addr *vtep, std::string ifname, uint32_t vni);
+    void imetDelRoute(struct nl_addr *vtep, std::string ifname, uint32_t vni);
+    void onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h);
     void onMsgLink(int nlmsg_type, struct nl_object *obj);
+    void onMsgNhg(struct nlmsghdr *msg);
+    void clearL2Nhg();
+
+    enum L2NhgType {
+        L2_NHG_TYPE_VTEP,
+        L2_NHG_TYPE_GROUP,
+    };
+
+    struct l2_nhg_info
+    {
+        L2NhgType type;
+        std::string vtep_ip;                /* For VTEP type */
+        std::vector<uint32_t> member_ids;   /* For GROUP type */
+    };
+    std::unordered_map<uint32_t, l2_nhg_info> m_l2NhgMap;
 };
 
 }

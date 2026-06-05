@@ -234,7 +234,7 @@ task_process_status DashAclGroupMgr::remove(const string& group_id)
     if (isBound(group))
     {
         SWSS_LOG_ERROR("ACL group %s still has %zu references", group_id.c_str(), group.m_in_tables.size() + group.m_out_tables.size());
-        return task_need_retry;
+        return task_failed;
     }
 
     remove(group);
@@ -385,8 +385,8 @@ task_process_status DashAclGroupMgr::createRule(const string& group_id, const st
     auto group_it = m_groups_table.find(group_id);
     if (group_it == m_groups_table.end())
     {
-        SWSS_LOG_INFO("ACL group %s doesn't exist, waiting for group creating before creating rule %s", group_id.c_str(), rule_id.c_str());
-        return task_need_retry;
+        SWSS_LOG_ERROR("ACL group %s doesn't exist, cannot create rule %s", group_id.c_str(), rule_id.c_str());
+        return task_failed;
     }
     auto& group = group_it->second;
 
@@ -394,8 +394,8 @@ task_process_status DashAclGroupMgr::createRule(const string& group_id, const st
     {
         if (!m_dash_acl_orch->getDashAclTagMgr().exists(tag_id))
         {
-            SWSS_LOG_INFO("ACL tag %s doesn't exist, waiting for tag creating before creating rule %s", tag_id.c_str(), rule_id.c_str());
-            return task_need_retry;
+            SWSS_LOG_ERROR("ACL src tag %s doesn't exist, cannot create rule %s", tag_id.c_str(), rule_id.c_str());
+            return task_failed;
         }
     }
 
@@ -403,8 +403,8 @@ task_process_status DashAclGroupMgr::createRule(const string& group_id, const st
     {
         if (!m_dash_acl_orch->getDashAclTagMgr().exists(tag_id))
         {
-            SWSS_LOG_INFO("ACL tag %s doesn't exist, waiting for tag creating before creating rule %s", tag_id.c_str(), rule_id.c_str());
-            return task_need_retry;
+            SWSS_LOG_ERROR("ACL dst tag %s doesn't exist, cannot create rule %s", tag_id.c_str(), rule_id.c_str());
+            return task_failed;
         }
     }
 
@@ -457,8 +457,8 @@ task_process_status DashAclGroupMgr::bind(const string& group_id, const string& 
     auto eni = m_dash_orch->getEni(eni_id);
     if (!eni)
     {
-        SWSS_LOG_INFO("eni %s cannot be found", eni_id.c_str());
-        return task_need_retry;
+        SWSS_LOG_ERROR("ENI %s not found, cannot bind ACL group %s", eni_id.c_str(), group_id.c_str());
+        return task_failed;
     }
 
     bind(group, *eni, direction, stage);
