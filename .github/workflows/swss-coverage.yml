@@ -302,6 +302,7 @@ jobs:
             libnl-route-3-200_*.deb libnl-route-3-dev_*.deb \
             libnl-genl-3-200_*.deb libnl-genl-3-dev_*.deb \
             libnl-nf-3-200_*.deb libnl-nf-3-dev_*.deb \
+            libnl-cli-3-200_*.deb libnl-cli-3-dev_*.deb \
             libswsscommon_*.deb libswsscommon-dev_*.deb \
             libsairedis_*.deb libsairedis-dev_*.deb \
             libsaimetadata_*.deb libsaimetadata-dev_*.deb \
