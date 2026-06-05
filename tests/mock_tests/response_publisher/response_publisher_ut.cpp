@@ -186,6 +186,32 @@ TEST(ResponsePublisher, PublishAsyncErrorStatusSkipsApplStateWrite)
     ASSERT_FALSE(pollHget(stateTable, "10.8.0.0/24", "state", &dummy, 200));
 }
 
+TEST(ResponsePublisher, PublishAsyncRespectsEnableDbWriteAndNotifyToggle)
+{
+    DBConnector conn{"APPL_STATE_DB", 0};
+    Table stateTable{&conn, "ROUTE_TABLE"};
+
+    ResponsePublisher publisher{"APPL_STATE_DB", false, true};
+    publisher.m_directDbWrite = true;
+    publisher.setAsyncFullPublish(true);
+    publisher.setEnableDbWriteAndNotify(false);
+
+    publisher.publishAsync("ROUTE_TABLE", "10.8.1.0/24", {{"state", "off"}}, ReturnCode(SAI_STATUS_SUCCESS));
+    publisher.publishAsyncBatch();
+    publisher.flush();
+
+    std::string v;
+    ASSERT_FALSE(pollHget(stateTable, "10.8.1.0/24", "state", &v, 200));
+
+    publisher.setEnableDbWriteAndNotify(true);
+    publisher.publishAsync("ROUTE_TABLE", "10.8.1.0/24", {{"state", "on"}}, ReturnCode(SAI_STATUS_SUCCESS));
+    publisher.publishAsyncBatch();
+    publisher.flush();
+
+    ASSERT_TRUE(pollHget(stateTable, "10.8.1.0/24", "state", &v));
+    ASSERT_EQ(v, "on");
+}
+
 TEST(ResponsePublisher, PublishAsyncTwoSequentialBatches)
 {
     DBConnector conn{"APPL_STATE_DB", 0};
