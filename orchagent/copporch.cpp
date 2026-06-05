@@ -27,6 +27,9 @@ using namespace std;
 extern sai_hostif_api_t*    sai_hostif_api;
 extern sai_policer_api_t*   sai_policer_api;
 extern sai_switch_api_t*    sai_switch_api;
+extern sai_port_api_t*      sai_port_api;
+extern sai_scheduler_api_t* sai_scheduler_api;
+extern sai_queue_api_t*     sai_queue_api;
 
 extern sai_object_id_t      gSwitchId;
 extern PortsOrch*           gPortsOrch;
@@ -211,8 +214,125 @@ CoppOrch::CoppOrch(DBConnector* db, string tableName) :
     initDefaultHostIntfTable();
     initDefaultTrapGroup();
     initDefaultTrapIds();
+    applyCpuQueueShaper();
 
 };
+
+void CoppOrch::applyCpuQueueShaper()
+{
+    SWSS_LOG_ENTER();
+
+    // Capability query: SAI_QUEUE_ATTR_SCHEDULER_PROFILE_ID (set)
+    sai_attr_capability_t capability;
+    sai_status_t status;
+
+    status = sai_query_attribute_capability(gSwitchId,
+                SAI_OBJECT_TYPE_QUEUE,
+                SAI_QUEUE_ATTR_SCHEDULER_PROFILE_ID,
+                &capability);
+    if (status != SAI_STATUS_SUCCESS || !capability.set_implemented)
+    {
+        SWSS_LOG_NOTICE("CPU queue shaper: SAI_QUEUE_ATTR_SCHEDULER_PROFILE_ID "
+                        "set not supported (status=%d), skipping", status);
+        return;
+    }
+
+    // Capability query: SAI_SCHEDULER_ATTR_METER_TYPE (create)
+    status = sai_query_attribute_capability(gSwitchId,
+                SAI_OBJECT_TYPE_SCHEDULER,
+                SAI_SCHEDULER_ATTR_METER_TYPE,
+                &capability);
+    if (status != SAI_STATUS_SUCCESS || !capability.create_implemented)
+    {
+        SWSS_LOG_NOTICE("CPU queue shaper: SAI_SCHEDULER_ATTR_METER_TYPE "
+                        "create not supported (status=%d), skipping", status);
+        return;
+    }
+
+    // Capability query: SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_RATE (create)
+    status = sai_query_attribute_capability(gSwitchId,
+                SAI_OBJECT_TYPE_SCHEDULER,
+                SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_RATE,
+                &capability);
+    if (status != SAI_STATUS_SUCCESS || !capability.create_implemented)
+    {
+        SWSS_LOG_NOTICE("CPU queue shaper: SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_RATE "
+                        "create not supported (status=%d), skipping", status);
+        return;
+    }
+
+    // Get CPU port
+    Port cpu;
+    gPortsOrch->getCpuPort(cpu);
+    if (cpu.m_port_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_NOTICE("CPU port not initialized, skipping CPU queue shaper");
+        return;
+    }
+
+    // Get CPU queue count and list
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_QOS_NUMBER_OF_QUEUES;
+    status = sai_port_api->get_port_attribute(cpu.m_port_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get CPU port queue count, rv:%d", status);
+        return;
+    }
+
+    uint32_t queue_count = attr.value.u32;
+    vector<sai_object_id_t> queue_list(queue_count);
+
+    attr.id = SAI_PORT_ATTR_QOS_QUEUE_LIST;
+    attr.value.objlist.count = queue_count;
+    attr.value.objlist.list = queue_list.data();
+    status = sai_port_api->get_port_attribute(cpu.m_port_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get CPU port queue list, rv:%d", status);
+        return;
+    }
+
+    // Create scheduler: 600 pps max shaper
+    sai_object_id_t scheduler_id;
+    vector<sai_attribute_t> sched_attrs;
+    sai_attribute_t sa;
+
+    sa.id = SAI_SCHEDULER_ATTR_METER_TYPE;
+    sa.value.s32 = SAI_METER_TYPE_PACKETS;
+    sched_attrs.push_back(sa);
+
+    sa.id = SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_RATE;
+    sa.value.u64 = 600;
+    sched_attrs.push_back(sa);
+
+    status = sai_scheduler_api->create_scheduler(&scheduler_id, gSwitchId,
+                (uint32_t)sched_attrs.size(), sched_attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create CPU queue shaper scheduler, rv:%d", status);
+        return;
+    }
+
+    // Apply to CPU queue 0 and queue 7 by direct index
+    const uint32_t target_queues[] = {0, 7};
+    for (auto qindex : target_queues)
+    {
+        if (qindex >= queue_count)
+        {
+            SWSS_LOG_WARN("CPU port has only %u queues, skipping queue %u",
+                          queue_count, qindex);
+            continue;
+        }
+
+        sai_attribute_t set_attr;
+        set_attr.id = SAI_QUEUE_ATTR_SCHEDULER_PROFILE_ID;
+        set_attr.value.oid = scheduler_id;
+        status = sai_queue_api->set_queue_attribute(queue_list[qindex], &set_attr);
+        SWSS_LOG_NOTICE("Applied 600 pps shaper to CPU queue %u, status:%d",
+                        qindex, status);
+    }
+}
 
 bool CoppOrch::isTrapIdSupported(sai_hostif_trap_type_t trap_id) const
 {
