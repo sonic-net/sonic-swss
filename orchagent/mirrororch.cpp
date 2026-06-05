@@ -523,12 +523,14 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
         return task_process_status::task_invalid_entry;
     }
 
-    // Truncate size requires sampled mirroring to be enabled
+    // Truncation implies sampled mirroring. If a truncate size is configured
+    // without an explicit sample rate, default the rate to 1 (sample every
+    // packet) so a samplepacket object is still created to carry the truncation.
     if (entry.truncate_size > 0 && entry.sample_rate == 0)
     {
-        SWSS_LOG_ERROR("Truncate size requires sampled mirroring to be enabled for session %s",
-                       key.c_str());
-        return task_process_status::task_invalid_entry;
+        entry.sample_rate = 1;
+        SWSS_LOG_NOTICE("Truncate size configured without sample rate for session %s; "
+                        "defaulting sample rate to 1", key.c_str());
     }
 
     // Sampled mirroring requires an explicit direction

@@ -142,10 +142,52 @@ namespace mirrororch_test
         ASSERT_EQ(entry.samplepacketId, SAI_NULL_OBJECT_ID);
     }
 
-    TEST_F(MirrorOrchTest, ValidationRejectsTruncateWithoutSampleRate)
+    TEST_F(MirrorOrchTest, CreateEntryTruncateWithoutSampleRateDefaultsRateToOne)
     {
-        // Verify createEntry rejects truncate_size > 0 when sample_rate == 0
+        // Truncation implies sampled mirroring. When truncate_size is configured
+        // without an explicit sample_rate, createEntry must default the rate to 1
+        // (sample every packet).
+        ASSERT_NE(gSwitchOrch, nullptr);
         ASSERT_NE(gMirrorOrch, nullptr);
+
+        gSwitchOrch->m_portIngressSampleMirrorSupported = true;
+        gSwitchOrch->m_portEgressSampleMirrorSupported = false;
+        gSwitchOrch->m_samplepacketTruncationSupported = true;
+
+        vector<FieldValueTuple> data;
+        data.emplace_back("type", "ERSPAN");
+        data.emplace_back("src_ip", "10.0.0.1");
+        data.emplace_back("dst_ip", "10.0.0.2");
+        data.emplace_back("gre_type", "0x8949");
+        data.emplace_back("dscp", "8");
+        data.emplace_back("ttl", "64");
+        data.emplace_back("queue", "0");
+        data.emplace_back("direction", "RX");
+        data.emplace_back("truncate_size", "128");
+
+        auto status = gMirrorOrch->createEntry("truncate_default_session", data);
+        ASSERT_EQ(status, task_process_status::task_success);
+
+        ASSERT_TRUE(gMirrorOrch->sessionExists("truncate_default_session"));
+        auto& session = gMirrorOrch->m_syncdMirrors.find("truncate_default_session")->second;
+        ASSERT_EQ(session.sample_rate, (uint32_t)1);
+        ASSERT_EQ(session.truncate_size, (uint32_t)128);
+
+        // Cleanup
+        gMirrorOrch->m_syncdMirrors.erase("truncate_default_session");
+    }
+
+    TEST_F(MirrorOrchTest, CreateEntryRejectsTruncateWithoutDirection)
+    {
+        // After defaulting the sample rate to 1, the session is sampled and must
+        // still carry an explicit direction. Truncation configured without a
+        // direction is therefore rejected.
+        ASSERT_NE(gSwitchOrch, nullptr);
+        ASSERT_NE(gMirrorOrch, nullptr);
+
+        gSwitchOrch->m_portIngressSampleMirrorSupported = true;
+        gSwitchOrch->m_portEgressSampleMirrorSupported = true;
+        gSwitchOrch->m_samplepacketTruncationSupported = true;
 
         vector<FieldValueTuple> data;
         data.emplace_back("type", "ERSPAN");
@@ -155,8 +197,36 @@ namespace mirrororch_test
         data.emplace_back("ttl", "64");
         data.emplace_back("truncate_size", "128");
 
-        auto status = gMirrorOrch->createEntry("invalid_session", data);
+        auto status = gMirrorOrch->createEntry("truncate_nodir_session", data);
         ASSERT_EQ(status, task_process_status::task_invalid_entry);
+        ASSERT_FALSE(gMirrorOrch->sessionExists("truncate_nodir_session"));
+    }
+
+    TEST_F(MirrorOrchTest, CreateEntryRejectsTruncateDefaultedWhenTruncationUnsupported)
+    {
+        // Defaulting the sample rate to 1 must not bypass the truncation
+        // capability gate: a truncate-only session with a valid direction and
+        // sample-mirror capability is still rejected when the platform does not
+        // advertise SAMPLEPACKET_TRUNCATION support.
+        ASSERT_NE(gSwitchOrch, nullptr);
+        ASSERT_NE(gMirrorOrch, nullptr);
+
+        gSwitchOrch->m_portIngressSampleMirrorSupported = true;
+        gSwitchOrch->m_portEgressSampleMirrorSupported = false;
+        gSwitchOrch->m_samplepacketTruncationSupported = false;
+
+        vector<FieldValueTuple> data;
+        data.emplace_back("type", "ERSPAN");
+        data.emplace_back("src_ip", "10.0.0.1");
+        data.emplace_back("dst_ip", "10.0.0.2");
+        data.emplace_back("dscp", "8");
+        data.emplace_back("ttl", "64");
+        data.emplace_back("direction", "RX");
+        data.emplace_back("truncate_size", "128");
+
+        auto status = gMirrorOrch->createEntry("truncate_nocap_session", data);
+        ASSERT_EQ(status, task_process_status::task_invalid_entry);
+        ASSERT_FALSE(gMirrorOrch->sessionExists("truncate_nocap_session"));
     }
 
     TEST_F(MirrorOrchTest, CreateEntryWithSampleRate)
