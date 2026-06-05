@@ -304,7 +304,15 @@ void ArsOrch::doArsGlobalTask(Consumer &consumer)
             }
             else if (hasProfileField && profileName.empty() && !m_globalProfileName.empty())
             {
-                if (bindArsProfileToSwitch(SAI_NULL_OBJECT_ID))
+                if (!m_arsEnabledPorts.empty())
+                {
+                    SWSS_LOG_NOTICE("ARS: deferring profile unbind — %zu port(s) "
+                                    "still ARS-enabled in ASIC. Will reconcile "
+                                    "on config reload.", m_arsEnabledPorts.size());
+                    m_activeSwitchProfileOid = SAI_NULL_OBJECT_ID;
+                    m_globalProfileName.clear();
+                }
+                else if (bindArsProfileToSwitch(SAI_NULL_OBJECT_ID))
                 {
                     m_globalProfileName.clear();
                     SWSS_LOG_NOTICE("ARS: unbound profile from switch");
@@ -327,7 +335,18 @@ void ArsOrch::doArsGlobalTask(Consumer &consumer)
             }
             if (m_activeSwitchProfileOid != SAI_NULL_OBJECT_ID)
             {
-                bindArsProfileToSwitch(SAI_NULL_OBJECT_ID);
+                if (m_arsEnabledPorts.empty())
+                {
+                    bindArsProfileToSwitch(SAI_NULL_OBJECT_ID);
+                }
+                else
+                {
+                    SWSS_LOG_NOTICE("ARS: deferring profile unbind from switch "
+                                    "— %zu port(s) still ARS-enabled in ASIC. "
+                                    "Will reconcile on config reload.",
+                                    m_arsEnabledPorts.size());
+                    m_activeSwitchProfileOid = SAI_NULL_OBJECT_ID;
+                }
                 m_globalProfileName.clear();
             }
         }
@@ -1661,6 +1680,31 @@ bool ArsOrch::removeArsProfile(const string &name)
     if (it == m_arsProfiles.end())
         return true;
 
+    // Mellanox SAI rejects profile unbind/removal when ports still have
+    // SAI_PORT_ATTR_ARS_ENABLE=true ("ARS ports exist - remove N ports
+    // before unbinding"). syncd treats any SAI failure as fatal in async
+    // mode, crashing the switch. If ports are still ARS-enabled in ASIC
+    // (because setPortArsEnable was blocked by the RIF guard), defer the
+    // SAI removal and let config reload reconcile the ASIC state.
+    if (!m_arsEnabledPorts.empty())
+    {
+        string portList;
+        for (const auto &p : m_arsEnabledPorts)
+        {
+            if (!portList.empty()) portList += ", ";
+            portList += p;
+        }
+        SWSS_LOG_NOTICE("ARS: deferring SAI removal of profile '%s' — %zu "
+                        "port(s) still have ARS enabled in ASIC (%s). "
+                        "Removing from orchagent cache only; the ASIC state "
+                        "will be reconciled on the next config reload.",
+                        name.c_str(), m_arsEnabledPorts.size(),
+                        portList.c_str());
+        m_arsProfiles.erase(it);
+        m_activeSwitchProfileOid = SAI_NULL_OBJECT_ID;
+        return true;
+    }
+
     sai_object_id_t oid = it->second.profileOid;
 
     if (oid == m_activeSwitchProfileOid)
@@ -1815,6 +1859,39 @@ bool ArsOrch::removeArsObject(const string &name)
     {
         SWSS_LOG_NOTICE("ARS: removed deferred-creation entry for object %s",
                         name.c_str());
+        m_arsObjects.erase(it);
+        return true;
+    }
+
+    // Mellanox SAI crashes (SDK health-check FATAL) if we remove an ARS
+    // object while ports still have SAI_PORT_ATTR_ARS_ENABLE=true in the
+    // ASIC — the hardware ends up with dangling ARS references. Check
+    // whether any ports associated with this object are still ARS-enabled
+    // in hardware (i.e. still in m_arsEnabledPorts because setPortArsEnable
+    // was blocked by the RIF guard). If so, skip the SAI removal and let
+    // config reload reconcile the ASIC state from a clean CONFIG_DB.
+    vector<string> stuckPorts;
+    for (const auto &kv : m_arsInterfaces)
+    {
+        if (kv.second.arsObject == name &&
+            m_arsEnabledPorts.count(kv.first))
+        {
+            stuckPorts.push_back(kv.first);
+        }
+    }
+    if (!stuckPorts.empty())
+    {
+        string portList;
+        for (const auto &p : stuckPorts)
+        {
+            if (!portList.empty()) portList += ", ";
+            portList += p;
+        }
+        SWSS_LOG_NOTICE("ARS: deferring SAI removal of object '%s' — %zu "
+                        "port(s) still have ARS enabled in ASIC (%s). "
+                        "Removing from orchagent cache only; the ASIC state "
+                        "will be reconciled on the next config reload.",
+                        name.c_str(), stuckPorts.size(), portList.c_str());
         m_arsObjects.erase(it);
         return true;
     }
