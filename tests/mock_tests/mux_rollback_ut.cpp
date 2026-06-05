@@ -35,6 +35,7 @@ namespace mux_rollback_test
     using ::testing::Throw;
     using ::testing::DoAll;
     using ::testing::SetArrayArgument;
+    using ::testing::AtLeast;
 
     static const string TEST_INTERFACE = "Ethernet4";
 

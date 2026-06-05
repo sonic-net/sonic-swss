@@ -201,10 +201,15 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
 
 std::string RouteOrch::getLinkLocalEui64Addr(void)
 {
+    return getLinkLocalEui64Addr(gMacAddress);
+}
+
+std::string RouteOrch::getLinkLocalEui64Addr(const MacAddress &mac)
+{
     SWSS_LOG_ENTER();
 
     string        ip_prefix;
-    const uint8_t *gmac = gMacAddress.getMac();
+    const uint8_t *gmac = mac.getMac();
 
     uint8_t        eui64_interface_id[EUI64_INTF_ID_LEN];
     char           ipv6_ll_addr[INET6_ADDRSTRLEN] = {0};

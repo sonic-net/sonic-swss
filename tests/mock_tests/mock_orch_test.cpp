@@ -143,7 +143,10 @@ void MockOrchTest::SetUp()
     ut_orch_list.push_back((Orch **)&gVrfOrch);
     global_orch_list.insert((Orch **)&gVrfOrch);
 
-    gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch, m_chassis_app_db.get());
+    vector<table_name_with_pri_t> intf_tables = {
+        { APP_INTF_TABLE_NAME, IntfsOrch::intfsorch_pri }
+    };
+    gIntfsOrch = new IntfsOrch(m_app_db.get(), intf_tables, gVrfOrch, m_chassis_app_db.get());
     gDirectory.set(gIntfsOrch);
     ut_orch_list.push_back((Orch **)&gIntfsOrch);
     global_orch_list.insert((Orch **)&gIntfsOrch);
@@ -152,6 +155,19 @@ void MockOrchTest::SetUp()
     gDirectory.set(gPortsOrch);
     ut_orch_list.push_back((Orch **)&gPortsOrch);
     global_orch_list.insert((Orch **)&gPortsOrch);
+
+    // Create EvpnMhOrch early so its ES/DF state is available when PortsOrch
+    // processes bridge ports and VLAN members (matches production code order)
+    TableConnector appDbDfTable(m_app_db.get(), "EVPN_DF_TABLE");
+    TableConnector confDbEvpnEsTable(m_config_db.get(), "EVPN_ETHERNET_SEGMENT");
+    vector<TableConnector> evpn_df_es_table_connectors = {
+        appDbDfTable,
+        confDbEvpnEsTable,
+    };
+    gEvpnMhOrch = new EvpnMhOrch(evpn_df_es_table_connectors);
+    gDirectory.set(gEvpnMhOrch);
+    ut_orch_list.push_back((Orch **)&gEvpnMhOrch);
+    global_orch_list.insert((Orch **)&gEvpnMhOrch);
 
     const int fgnhgorch_pri = 15;
 
