@@ -275,31 +275,31 @@ void getCfgSwitchType(DBConnector *cfgDb, string &switch_type, string &switch_su
 }
 
 /*
- * DEVICE_METADATA|localhost route_state_async_publish: if value is "disabled", turn off async route state publish.
+ * SYSTEM_DEFAULTS|async_rec status: if value is "disabled", turn off async route state publish.
  * Otherwise keep default gRouteStateAsyncPublish == true. Must run before OrchDaemon::init() constructs RouteOrch.
  */
 void getCfgRouteStateAsyncPublish(DBConnector *cfgDb)
 {
-    Table cfgDeviceMetaDataTable(cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
+    Table cfgSystemDefaultsTable(cfgDb, CFG_SYSTEM_DEFAULTS_TABLE_NAME);
     string val;
 
     try
     {
-        if (!cfgDeviceMetaDataTable.hget("localhost", "route_state_async_publish", val))
+        if (!cfgSystemDefaultsTable.hget("async_rec", "status", val))
         {
             return;
         }
     }
     catch (const std::system_error &e)
     {
-        SWSS_LOG_WARN("Could not read route_state_async_publish from CONFIG_DB: %s; default enabled", e.what());
+        SWSS_LOG_WARN("Could not read SYSTEM_DEFAULTS|async_rec status from CONFIG_DB: %s; default enabled", e.what());
         return;
     }
 
     if (val == "disabled")
     {
         gRouteStateAsyncPublish = false;
-        SWSS_LOG_NOTICE("route_state_async_publish is disabled in DEVICE_METADATA|localhost; synchronous route state publish");
+        SWSS_LOG_NOTICE("SYSTEM_DEFAULTS|async_rec status is disabled; synchronous route state publish");
     }
 }
 
