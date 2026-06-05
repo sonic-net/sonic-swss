@@ -228,6 +228,10 @@ private:
     // and ask RouteOrch to re-evaluate NHG bindings.
     std::set<std::string> m_arsInterfacesPendingEnable;
 
+    bool m_portScalingFactorSupported = true;
+    bool m_portPastWeightSupported    = true;
+    bool m_portFutureWeightSupported  = true;
+
     std::unordered_map<std::string, std::string> m_nexthopArsBindings;
     // nhgOid → ARS_NHG_TABLE row key. Written by bindArsToNhg so we can
     // reliably delete the row later on NHG removal (via forgetNhg) without

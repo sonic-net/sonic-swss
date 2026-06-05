@@ -2372,6 +2372,23 @@ bool ArsOrch::setPortArsEnable(const string &portName, bool enable)
         return false;
     }
 
+    // Mellanox SAI rejects SAI_PORT_ATTR_ARS_ENABLE with
+    // SAI_STATUS_INVALID_PARAMETER when port_config->rifs > 0. syncd
+    // treats the rejection as fatal and sends switch_shutdown_request,
+    // killing orchagent. Guard BEFORE the SAI call so syncd never sees
+    // the known-failure case.
+    if (port.m_rif_id != 0)
+    {
+        SWSS_LOG_ERROR("ARS: skipping SAI_PORT_ATTR_ARS_ENABLE=%s on %s — "
+                       "port has RIF oid:0x%" PRIx64 ". Mellanox SAI forbids "
+                       "toggling ARS on a port with RIFs. Use config reload "
+                       "with ARS pre-configured, or remove IPs before "
+                       "enabling ARS.",
+                       enable ? "true" : "false", portName.c_str(),
+                       port.m_rif_id);
+        return false;
+    }
+
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_ARS_ENABLE;
     attr.value.booldata = enable;
@@ -2380,46 +2397,8 @@ bool ArsOrch::setPortArsEnable(const string &portName, bool enable)
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        // Mellanox SAI rejects SAI_PORT_ATTR_ARS_ENABLE with
-        // SAI_STATUS_INVALID_PARAMETER when port_config->rifs > 0, i.e.
-        // when a router interface is bound to the port.  The supported
-        // workaround is to enable ARS BEFORE any RIF is created — the
-        // orch-list ordering (gArsOrch before gIntfsOrch, commit cbb87df6)
-        // ensures this at cold boot / config reload.  The port-up retry
-        // handler (eb8f03bd) covers transient boot-time failures.
-        //
-        // A previous implementation (commit 16845cf0) attempted an
-        // automatic "RIF bounce" here: remove the RIF via SAI, enable
-        // ARS, then re-create the RIF.  This was removed because:
-        //
-        //  1. It destroys the RIF behind IntfsOrch/NeighOrch's back,
-        //     orphaning next-hop objects that reference the old RIF OID.
-        //     Subsequent neighbor programming fails with
-        //     SAI_STATUS_INVALID_PARAMETER on SAI_API_NEXT_HOP (stale
-        //     OID removal) and orchagent enters an infinite retry loop.
-        //
-        //  2. On Spectrum-4, the SAI often returns SAI_STATUS_NOT_SUPPORTED
-        //     even after the RIF is removed, so the bounce destroys the
-        //     RIF for nothing and leaves the port in a broken state.
-        //
-        // If this error appears at runtime, the operator should remove
-        // IPs from the port, enable ARS, then re-add IPs — or use
-        // config reload with ARS config pre-written to CONFIG_DB.
-        if (status == SAI_STATUS_INVALID_PARAMETER && port.m_rif_id != 0)
-        {
-            SWSS_LOG_ERROR("ARS: set SAI_PORT_ATTR_ARS_ENABLE=%s on %s failed "
-                           "(INVALID_PARAMETER — port has RIF oid:0x%" PRIx64 "). "
-                           "Mellanox SAI forbids toggling ARS on a port with "
-                           "RIFs. Use config reload with ARS pre-configured, "
-                           "or remove IPs before enabling ARS.",
-                           enable ? "true" : "false", portName.c_str(),
-                           port.m_rif_id);
-        }
-        else
-        {
-            SWSS_LOG_ERROR("ARS: set SAI_PORT_ATTR_ARS_ENABLE on %s failed: %s",
-                           portName.c_str(), sai_serialize_status(status).c_str());
-        }
+        SWSS_LOG_ERROR("ARS: set SAI_PORT_ATTR_ARS_ENABLE on %s failed: %s",
+                       portName.c_str(), sai_serialize_status(status).c_str());
         return false;
     }
 
@@ -2608,6 +2587,15 @@ bool ArsOrch::setPortArsScalingFactor(const string &portName, const ArsPortProfi
                         portName.c_str(), speedMbps, factor / 10, factor % 10, factor);
     }
 
+    if (!m_portScalingFactorSupported)
+    {
+        SWSS_LOG_NOTICE("ARS: SAI_PORT_ATTR_ARS_PORT_LOAD_SCALING_FACTOR not "
+                        "implemented on this platform — skipping SET on %s "
+                        "(factor=%u). The SDK may derive scaling internally.",
+                        portName.c_str(), factor);
+        return true;
+    }
+
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_ARS_PORT_LOAD_SCALING_FACTOR;
     attr.value.u32 = factor;
@@ -2669,27 +2657,45 @@ bool ArsOrch::setPortArsWeights(const string &portName, uint32_t pastWeight, uin
 
     if (pastWeight > 0)
     {
-        attr.id = SAI_PORT_ATTR_ARS_PORT_LOAD_PAST_WEIGHT;
-        attr.value.u32 = pastWeight;
-        sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
-        if (status != SAI_STATUS_SUCCESS)
+        if (!m_portPastWeightSupported)
         {
-            SWSS_LOG_WARN("ARS: set past weight on %s failed: %s",
-                          portName.c_str(), sai_serialize_status(status).c_str());
-            success = false;
+            SWSS_LOG_NOTICE("ARS: SAI_PORT_ATTR_ARS_PORT_LOAD_PAST_WEIGHT not "
+                            "implemented — skipping SET on %s (weight=%u)",
+                            portName.c_str(), pastWeight);
+        }
+        else
+        {
+            attr.id = SAI_PORT_ATTR_ARS_PORT_LOAD_PAST_WEIGHT;
+            attr.value.u32 = pastWeight;
+            sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_WARN("ARS: set past weight on %s failed: %s",
+                              portName.c_str(), sai_serialize_status(status).c_str());
+                success = false;
+            }
         }
     }
 
     if (futureWeight > 0)
     {
-        attr.id = SAI_PORT_ATTR_ARS_PORT_LOAD_FUTURE_WEIGHT;
-        attr.value.u32 = futureWeight;
-        sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
-        if (status != SAI_STATUS_SUCCESS)
+        if (!m_portFutureWeightSupported)
         {
-            SWSS_LOG_WARN("ARS: set future weight on %s failed: %s",
-                          portName.c_str(), sai_serialize_status(status).c_str());
-            success = false;
+            SWSS_LOG_NOTICE("ARS: SAI_PORT_ATTR_ARS_PORT_LOAD_FUTURE_WEIGHT not "
+                            "implemented — skipping SET on %s (weight=%u)",
+                            portName.c_str(), futureWeight);
+        }
+        else
+        {
+            attr.id = SAI_PORT_ATTR_ARS_PORT_LOAD_FUTURE_WEIGHT;
+            attr.value.u32 = futureWeight;
+            sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_WARN("ARS: set future weight on %s failed: %s",
+                              portName.c_str(), sai_serialize_status(status).c_str());
+                success = false;
+            }
         }
     }
 
@@ -2883,6 +2889,36 @@ void ArsOrch::publishArsCaps()
         }
         SWSS_LOG_NOTICE("ARS profile capability %s: %s", attrName.c_str(), capStr.c_str());
         m_stateArsCapTable.set(attrName, {{attrName, capStr}});
+    }
+
+    // Probe per-port ARS attributes so we never send unsupported SETs to
+    // syncd (which treats any SET failure as fatal -> shutdown).
+    {
+        sai_attr_capability_t ac = {};
+        sai_status_t qs = sai_query_attribute_capability(
+            gSwitchId, SAI_OBJECT_TYPE_PORT,
+            (sai_attr_id_t)SAI_PORT_ATTR_ARS_PORT_LOAD_SCALING_FACTOR, &ac);
+        m_portScalingFactorSupported = (qs == SAI_STATUS_SUCCESS && ac.set_implemented);
+        SWSS_LOG_NOTICE("ARS: SAI_PORT_ATTR_ARS_PORT_LOAD_SCALING_FACTOR set_supported=%s",
+                        m_portScalingFactorSupported ? "true" : "false");
+    }
+    {
+        sai_attr_capability_t ac = {};
+        sai_status_t qs = sai_query_attribute_capability(
+            gSwitchId, SAI_OBJECT_TYPE_PORT,
+            (sai_attr_id_t)SAI_PORT_ATTR_ARS_PORT_LOAD_PAST_WEIGHT, &ac);
+        m_portPastWeightSupported = (qs == SAI_STATUS_SUCCESS && ac.set_implemented);
+        SWSS_LOG_NOTICE("ARS: SAI_PORT_ATTR_ARS_PORT_LOAD_PAST_WEIGHT set_supported=%s",
+                        m_portPastWeightSupported ? "true" : "false");
+    }
+    {
+        sai_attr_capability_t ac = {};
+        sai_status_t qs = sai_query_attribute_capability(
+            gSwitchId, SAI_OBJECT_TYPE_PORT,
+            (sai_attr_id_t)SAI_PORT_ATTR_ARS_PORT_LOAD_FUTURE_WEIGHT, &ac);
+        m_portFutureWeightSupported = (qs == SAI_STATUS_SUCCESS && ac.set_implemented);
+        SWSS_LOG_NOTICE("ARS: SAI_PORT_ATTR_ARS_PORT_LOAD_FUTURE_WEIGHT set_supported=%s",
+                        m_portFutureWeightSupported ? "true" : "false");
     }
 }
 
