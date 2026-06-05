@@ -229,6 +229,46 @@ namespace mirrororch_test
         ASSERT_FALSE(gMirrorOrch->sessionExists("truncate_nocap_session"));
     }
 
+    TEST_F(MirrorOrchTest, CreateEntryRejectsNonNumericSampleRate)
+    {
+        // A non-numeric sample_rate cannot be parsed by to_uint and must be
+        // rejected.
+        ASSERT_NE(gMirrorOrch, nullptr);
+
+        vector<FieldValueTuple> data;
+        data.emplace_back("type", "ERSPAN");
+        data.emplace_back("src_ip", "10.0.0.1");
+        data.emplace_back("dst_ip", "10.0.0.2");
+        data.emplace_back("dscp", "8");
+        data.emplace_back("ttl", "64");
+        data.emplace_back("direction", "RX");
+        data.emplace_back("sample_rate", "not_a_number");
+
+        auto status = gMirrorOrch->createEntry("bad_rate_session", data);
+        ASSERT_EQ(status, task_process_status::task_invalid_entry);
+        ASSERT_FALSE(gMirrorOrch->sessionExists("bad_rate_session"));
+    }
+
+    TEST_F(MirrorOrchTest, CreateEntryRejectsNonNumericTruncateSize)
+    {
+        // A non-numeric truncate_size cannot be parsed by to_uint and must be
+        // rejected.
+        ASSERT_NE(gMirrorOrch, nullptr);
+
+        vector<FieldValueTuple> data;
+        data.emplace_back("type", "ERSPAN");
+        data.emplace_back("src_ip", "10.0.0.1");
+        data.emplace_back("dst_ip", "10.0.0.2");
+        data.emplace_back("dscp", "8");
+        data.emplace_back("ttl", "64");
+        data.emplace_back("direction", "RX");
+        data.emplace_back("truncate_size", "not_a_number");
+
+        auto status = gMirrorOrch->createEntry("bad_truncate_session", data);
+        ASSERT_EQ(status, task_process_status::task_invalid_entry);
+        ASSERT_FALSE(gMirrorOrch->sessionExists("bad_truncate_session"));
+    }
+
     TEST_F(MirrorOrchTest, CreateEntryWithSampleRate)
     {
         // Verify createEntry correctly parses sample_rate and truncate_size.

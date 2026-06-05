@@ -485,19 +485,19 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
             {
                 try {
                     entry.sample_rate = to_uint<uint32_t>(fvValue(i));
-                } catch (const exception& e) { // LCOV_EXCL_LINE: YANG validates input
-                    SWSS_LOG_ERROR("Invalid sample_rate for session %s: %s", key.c_str(), e.what()); // LCOV_EXCL_LINE: YANG validates input
-                    return task_process_status::task_invalid_entry; // LCOV_EXCL_LINE
-                } // LCOV_EXCL_LINE
+                } catch (const exception& e) {
+                    SWSS_LOG_ERROR("Invalid sample_rate for session %s: %s", key.c_str(), e.what());
+                    return task_process_status::task_invalid_entry;
+                }
             }
             else if (fvField(i) == MIRROR_SESSION_TRUNCATE_SIZE)
             {
                 try {
                     entry.truncate_size = to_uint<uint32_t>(fvValue(i));
-                } catch (const exception& e) { // LCOV_EXCL_LINE: YANG validates input
-                    SWSS_LOG_ERROR("Invalid truncate_size for session %s: %s", key.c_str(), e.what()); // LCOV_EXCL_LINE: YANG validates input
-                    return task_process_status::task_invalid_entry; // LCOV_EXCL_LINE
-                } // LCOV_EXCL_LINE
+                } catch (const exception& e) {
+                    SWSS_LOG_ERROR("Invalid truncate_size for session %s: %s", key.c_str(), e.what());
+                    return task_process_status::task_invalid_entry;
+                }
             }
             else
             {
