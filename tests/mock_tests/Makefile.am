@@ -9,11 +9,11 @@ CXXFLAGS = -g -O0
 
 CFLAGS_SAI = -I /usr/include/sai
 
-TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
+TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
 
-noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
+noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
 
-LDADD_SAI = -lsaimeta -lsaimetadata -lsaivs -lsairedis
+LDADD_SAI = -lsaivs -lsairedis -lsaimeta -lsaimetadata
 
 if DEBUG
 DBGFLAGS = -ggdb -DDEBUG
@@ -31,12 +31,13 @@ tests_INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib -I$
 tests_SOURCES = aclorch_ut.cpp \
                 aclorch_rule_ut.cpp \
                 portsorch_ut.cpp \
-                vxlanorch_ut.cpp \
                 routeorch_ut.cpp \
                 qosorch_ut.cpp \
                 bufferorch_ut.cpp \
                 buffermgrdyn_ut.cpp \
                 fdborch/flush_syncd_notif_ut.cpp \
+                macmoveguard/macmoveguard_ut.cpp \
+                fdborch/fdborch_vxlan_ut.cpp \
                 copp_ut.cpp \
                 copporch_ut.cpp \
                 saispy_ut.cpp \
@@ -61,7 +62,10 @@ tests_SOURCES = aclorch_ut.cpp \
                 flowcounterrouteorch_ut.cpp \
                 orchdaemon_ut.cpp \
                 intfsorch_ut.cpp \
+                evpnmhorch_ut.cpp \
+                vxlanorch_ut.cpp \
                 mux_rollback_ut.cpp \
+                mux_subnet_slicing_ut.cpp \
                 warmrestartassist_ut.cpp \
                 test_failure_handling.cpp \
                 switchorch_ut.cpp \
@@ -71,8 +75,11 @@ tests_SOURCES = aclorch_ut.cpp \
                 dashorch_ut.cpp \
                 dashvnetorch_ut.cpp \
                 dashhaorch_ut.cpp \
+                dashhafloworch_ut.cpp \
                 dashrouteorch_ut.cpp \
+                dashtunnelorch_ut.cpp \
                 dashportmaporch_ut.cpp \
+                dashmeterorch_ut.cpp \
                 twamporch_ut.cpp \
                 stporch_ut.cpp \
                 srv6orch_ut.cpp \
@@ -80,15 +87,23 @@ tests_SOURCES = aclorch_ut.cpp \
                 portphyattr_ut.cpp \
 		portphyserdesattr_ut.cpp \
                 counternameupdater_ut.cpp \
+                hftelgroup_ut.cpp \
                 hftelprofile_ut.cpp \
                 mock_orch_test.cpp \
                 mock_dash_orch_test.cpp \
                 zmq_orch_ut.cpp \
                 retrycache_ut.cpp \
+                saihelper_ut.cpp \
                 mock_saihelper.cpp \
                 mirrororch_ut.cpp \
                 hftelorch_ut.cpp \
+                hftelorch_notify_ut.cpp \
                 hftelorch_is_supported_sai_wrap.cpp \
+                shlorch_ut.cpp \
+                mock_sai_fdb.cpp \
+                mock_sai_tunnel.cpp \
+                icmporch_ut.cpp \
+                icmporch_sai_wrap.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
@@ -102,6 +117,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/fgnhgorch.cpp \
                 $(top_srcdir)/orchagent/nhgbase.cpp \
                 $(top_srcdir)/orchagent/nhgorch.cpp \
+                $(top_srcdir)/orchagent/l2nhgorch.cpp \
                 $(top_srcdir)/orchagent/cbf/cbfnhgorch.cpp \
                 $(top_srcdir)/orchagent/cbf/nhgmaporch.cpp \
                 $(top_srcdir)/orchagent/neighorch.cpp \
@@ -109,6 +125,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/port/port_capabilities.cpp \
                 $(top_srcdir)/orchagent/port/porthlpr.cpp \
                 $(top_srcdir)/orchagent/portsorch.cpp \
+                $(top_srcdir)/orchagent/evpnmhorch.cpp \
                 $(top_srcdir)/orchagent/fabricportsorch.cpp \
                 $(top_srcdir)/orchagent/copporch.cpp \
                 $(top_srcdir)/orchagent/tunneldecaporch.cpp \
@@ -117,6 +134,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/bufferorch.cpp \
                 $(top_srcdir)/orchagent/mirrororch.cpp \
                 $(top_srcdir)/orchagent/fdborch.cpp \
+                $(top_srcdir)/orchagent/macmoveguard.cpp \
                 $(top_srcdir)/orchagent/aclorch.cpp \
                 $(top_srcdir)/orchagent/pbh/pbhcap.cpp \
                 $(top_srcdir)/orchagent/pbh/pbhcnt.cpp \
@@ -143,6 +161,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/dtelorch.cpp \
                 $(top_srcdir)/orchagent/flexcounterorch.cpp \
                 $(top_srcdir)/orchagent/watermarkorch.cpp \
+                $(top_srcdir)/orchagent/notificationconsumerstatsorch.cpp \
                 $(top_srcdir)/orchagent/chassisorch.cpp \
                 $(top_srcdir)/orchagent/sfloworch.cpp \
                 $(top_srcdir)/orchagent/debugcounterorch.cpp \
@@ -170,8 +189,10 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/dash/dashtunnelorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashvnetorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashhaorch.cpp \
+                $(top_srcdir)/orchagent/dash/dashhafloworch.cpp \
                 $(top_srcdir)/orchagent/dash/dashmeterorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashportmaporch.cpp \
+                $(top_srcdir)/orchagent/dash/dashresulthelper.cpp \
                 $(top_srcdir)/orchagent/dash/dashcounter.cpp \
                 $(top_srcdir)/cfgmgr/buffermgrdyn.cpp \
                 $(top_srcdir)/warmrestart/warmRestartAssist.cpp \
@@ -184,9 +205,12 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/high_frequency_telemetry/hftelprofile.cpp \
                 $(top_srcdir)/orchagent/high_frequency_telemetry/counternameupdater.cpp \
                 $(top_srcdir)/orchagent/high_frequency_telemetry/hftelutils.cpp \
-                $(top_srcdir)/orchagent/high_frequency_telemetry/hftelgroup.cpp
+                $(top_srcdir)/orchagent/high_frequency_telemetry/hftelgroup.cpp \
+                $(top_srcdir)/orchagent/shlorch.cpp
 
 
+
+tests_SOURCES += common/vxlan_ut_helpers.cpp
 tests_SOURCES += $(FLEX_CTR_DIR)/flex_counter_manager.cpp $(FLEX_CTR_DIR)/flex_counter_stat_manager.cpp $(FLEX_CTR_DIR)/flow_counter_handler.cpp $(FLEX_CTR_DIR)/flowcounterrouteorch.cpp
 tests_SOURCES += $(DEBUG_CTR_DIR)/debug_counter.cpp $(DEBUG_CTR_DIR)/drop_counter.cpp
 tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
@@ -212,7 +236,8 @@ tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
 
 tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_INCLUDES)
-tests_LDFLAGS = -Wl,--wrap=sai_query_stats_st_capability -Wl,--wrap=sai_query_attribute_capability
+tests_LDFLAGS = -Wl,--wrap=sai_query_stats_st_capability -Wl,--wrap=sai_query_attribute_capability \
+                -Wl,--wrap=sai_query_attribute_enum_values_capability -Wl,--wrap=sai_metadata_get_attr_metadata
 tests_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis -lpthread \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lgmock -lgmock_main -lprotobuf -ldashapi
 
@@ -275,6 +300,10 @@ tests_teammgrd_SOURCES = teammgrd/teammgr_ut.cpp \
 tests_teammgrd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/cfgmgr -I$(top_srcdir)/lib
 tests_teammgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_teammgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_teammgrd_INCLUDES)
+tests_teammgrd_CXXFLAGS = -Wl,-wrap,nl_socket_alloc -Wl,-wrap,nl_socket_free -Wl,-wrap,nl_connect \
+        -Wl,-wrap,nl_close -Wl,-wrap,if_nametoindex -Wl,-wrap,rtnl_link_alloc \
+        -Wl,-wrap,rtnl_link_put -Wl,-wrap,nl_addr_build -Wl,-wrap,nl_addr_put \
+        -Wl,-wrap,rtnl_link_set_addr -Wl,-wrap,rtnl_link_get_kernel -Wl,-wrap,rtnl_link_change
 tests_teammgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -ldl -lhiredis \
         -lswsscommon -lgtest -lyaml-cpp -lgtest_main -lzmq -lpthread -lgmock -lgmock_main
 
@@ -285,6 +314,7 @@ tests_fpmsyncd_SOURCES = fpmsyncd/test_fpmlink.cpp \
                          fpmsyncd/receive_srv6_steer_routes_ut.cpp \
                          fpmsyncd/receive_srv6_mysids_ut.cpp \
                          fpmsyncd/ut_helpers_fpmsyncd.cpp \
+                         fpmsyncd/fpmsyncd_evpn_mh_ut.cpp \
                          fake_netlink.cpp \
                          fake_warmstarthelper.cpp \
                          fake_producerstatetable.cpp \
@@ -302,6 +332,25 @@ tests_fpmsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST
 tests_fpmsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_fpmsyncd_INCLUDES)
 tests_fpmsyncd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
         -lswsscommon -lswsscommon -lyaml-cpp -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lgmock_main
+
+## fdbsyncd unit tests
+
+tests_fdbsyncd_SOURCES = fdbsyncd/fdbsyncd_ut.cpp \
+                         fdbsyncd/fake_warmstarthelper.cpp \
+                         fdbsyncd/fake_warmstartassist.cpp \
+                         fdbsyncd/fake_producerstatetable.cpp \
+                         fdbsyncd/fake_subscriberstatetable.cpp \
+                         mock_dbconnector.cpp \
+                         mock_table.cpp \
+                         mock_hiredis.cpp \
+                         mock_redisreply.cpp \
+                         $(top_srcdir)/fdbsyncd/fdbsync.cpp
+
+tests_fdbsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/tests_fdbsyncd -I$(top_srcdir)/lib -I$(top_srcdir)/warmrestart
+tests_fdbsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
+tests_fdbsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_fdbsyncd_INCLUDES)
+tests_fdbsyncd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
+        -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lgmock_main
 
 ## response publisher unit tests
 
@@ -346,12 +395,16 @@ tests_nbrmgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredi
 
 
 tests_teamsyncd_SOURCES = teamsync_ut.cpp \
-                          $(top_srcdir)/teamsyncd/teamsync.cpp
+                          $(top_srcdir)/teamsyncd/teamsync.cpp \
+                          mock_dbconnector.cpp \
+                          mock_table.cpp \
+                          mock_hiredis.cpp \
+                          mock_redisreply.cpp
 
 tests_teamsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/teamsyncd
 tests_teamsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_teamsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_teamsyncd_INCLUDES)
 tests_teamsyncd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 \
-        -lswsscommon -lyaml-cpp -lgtest -lgtest_main -lpthread -lteam -lteamdctl
+        -lswsscommon -lyaml-cpp -ldl -lhiredis -lgtest -lgtest_main -lpthread -lteam -lteamdctl -lnl-route-3
 
 LOG_DRIVER = $(top_srcdir)/run-gtest-suite.py

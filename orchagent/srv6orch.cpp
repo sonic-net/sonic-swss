@@ -2,6 +2,7 @@
 #include <sstream>
 #include <inttypes.h>
 #include <iterator>
+#include <memory>
 
 #include "routeorch.h"
 #include "logger.h"
@@ -1055,7 +1056,8 @@ bool Srv6Orch::createUpdateSidList(const string sid_name, const string sid_list,
         return true;
     }
     SWSS_LOG_INFO("Segment count %d", segment_list.count);
-    segment_list.list = new sai_ip6_t[segment_list.count];
+    auto segment_buf = std::make_unique<sai_ip6_t[]>(segment_list.count);
+    segment_list.list = segment_buf.get();
     uint32_t index = 0;
 
     for (string ip_str : sid_ips)
@@ -1112,7 +1114,6 @@ bool Srv6Orch::createUpdateSidList(const string sid_name, const string sid_list,
             return false;
         }
     }
-    delete segment_list.list;
     return true;
 }
 

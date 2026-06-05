@@ -4,12 +4,15 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "dbconnector.h"
 #include "notificationconsumer.h"
 #include "orch.h"
 #include "p4orch/object_manager_interface.h"
 #include "p4orch/p4oidmapper.h"
 #include "response_publisher_interface.h"
 #include "return_code.h"
+#include "table.h"
+
 extern "C"
 {
 #include "sai.h"
@@ -67,7 +70,8 @@ class WcmpManager : public ObjectManagerInterface
 {
   public:
    WcmpManager(P4OidMapper* p4oidMapper,
-               ResponsePublisherInterface* publisher) {
+               ResponsePublisherInterface* publisher)
+       : m_asic_db("ASIC_DB", 0), m_asic_state_table(&m_asic_db, "ASIC_STATE") {
      SWSS_LOG_ENTER();
 
      assert(p4oidMapper != nullptr);
@@ -162,6 +166,8 @@ class WcmpManager : public ObjectManagerInterface
     // Owners of pointers below must outlive this class's instance.
     P4OidMapper *m_p4OidMapper;
     std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
+    swss::DBConnector m_asic_db;
+    swss::Table m_asic_state_table;
     ResponsePublisherInterface* m_publisher;
 
     friend class p4orch::test::WcmpManagerTest;

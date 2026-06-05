@@ -8,11 +8,13 @@
 #include "converter.h"
 #include "swssnet.h"
 #include "notifier.h"
+#include "notificationconsumerstatsorch.h"
 #include "sai_serialize.h"
 #include "directory.h"
 #include "notifications.h"
 #include "icmporch.h"
 #include "switchorch.h"
+#include <algorithm>
 #include <string>
 
 using namespace std;
@@ -50,8 +52,17 @@ IcmpOrch::IcmpOrch(DBConnector *db, string tableName, TableConnector stateDbIcmp
         return;
     }
 
+    if (!resolve_stats_count_mode())
+    {
+        SWSS_LOG_WARN("ICMP stats count mode resolution failed, will try to create ICMP session without explicit stats count mode");
+    }
+
     DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
     m_icmpStateNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    m_icmpStateNotificationConsumer->setOpAllowList({"icmp_echo_session_state_change"});
+    m_icmpStateNotificationConsumer->setStatsLabel("IcmpOrch:icmp_echo_session_state_change");
+    if (gNotifConsumerStatsOrch)
+        gNotifConsumerStatsOrch->registerConsumer("IcmpOrch:icmp_echo_session_state_change", m_icmpStateNotificationConsumer);
 
     // Clean up state database ICMP entries
     vector<string> keys;
@@ -71,6 +82,58 @@ IcmpOrch::~IcmpOrch(void)
 {
     // do nothing, just log
     SWSS_LOG_ENTER();
+}
+
+bool IcmpOrch::resolve_stats_count_mode()
+{
+    m_stats_count_mode_initialized = false;
+
+    const auto *meta = sai_metadata_get_attr_metadata(
+        SAI_OBJECT_TYPE_ICMP_ECHO_SESSION,
+        SAI_ICMP_ECHO_SESSION_ATTR_STATS_COUNT_MODE);
+    if (!meta || !meta->isenum)
+    {
+        SWSS_LOG_WARN("sai_metadata_get_attr_metadata for SAI_ICMP_ECHO_SESSION_ATTR_STATS_COUNT_MODE failed");
+        return false;
+    }
+
+    std::vector<int32_t> values_list(meta->enummetadata->valuescount);
+    sai_s32_list_t values;
+    values.count = static_cast<uint32_t>(values_list.size());
+    values.list = values_list.data();
+
+    auto status = sai_query_attribute_enum_values_capability(
+        gSwitchId,
+        SAI_OBJECT_TYPE_ICMP_ECHO_SESSION,
+        SAI_ICMP_ECHO_SESSION_ATTR_STATS_COUNT_MODE,
+        &values);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("sai_query_attribute_enum_values_capability for SAI_ICMP_ECHO_SESSION_ATTR_STATS_COUNT_MODE failed");
+        return false;
+    }
+
+    auto *end = values.list + values.count;
+
+    static const sai_stats_count_mode_t preferred_modes[] = {
+        SAI_STATS_COUNT_MODE_PACKET_AND_BYTE,
+        SAI_STATS_COUNT_MODE_PACKET,
+        SAI_STATS_COUNT_MODE_BYTE,
+        SAI_STATS_COUNT_MODE_NONE,
+    };
+
+    for (auto mode : preferred_modes)
+    {
+        if (std::find(values.list, end, static_cast<int32_t>(mode)) != end)
+        {
+            m_stats_count_mode = mode;
+            m_stats_count_mode_initialized = true;
+            return true;
+        }
+    }
+
+    SWSS_LOG_WARN("No supported stats count mode found");
+    return false;
 }
 
 void IcmpOrch::doTask(Consumer &consumer)
@@ -277,7 +340,7 @@ bool IcmpOrch::remove_icmp_session(const string& key)
 {
     if (m_icmp_session_map.find(key) == m_icmp_session_map.end())
     {
-        SWSS_LOG_ERROR("Request to remove non-existing ICMP session for %s", key.c_str());
+        SWSS_LOG_WARN("Request to remove non-existing ICMP session for %s", key.c_str());
         return true;
     }
 
@@ -557,6 +620,17 @@ SaiOffloadHandlerStatus IcmpSaiSessionHandler::do_create()
         m_attr_val_map[SAI_ICMP_ECHO_SESSION_ATTR_TX_INTERVAL] = val;
         m_fv_vector.push_back({m_tx_interval_fname, "0"});
         m_fv_map[m_tx_interval_fname] = "0";
+    }
+
+    if (m_orch.m_stats_count_mode_initialized)
+    {
+        sai_attribute_value_t statsCountModeAttr{};
+        statsCountModeAttr.s32 = m_orch.m_stats_count_mode;
+        m_attr_val_map[SAI_ICMP_ECHO_SESSION_ATTR_STATS_COUNT_MODE] = statsCountModeAttr;
+    }
+    else
+    {
+        SWSS_LOG_WARN("%s, Stats count mode capability unresolved", m_name.c_str());
     }
 
     // update the hw_lookup parameter in fv_vector

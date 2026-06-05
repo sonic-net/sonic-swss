@@ -100,16 +100,10 @@ class FieldValueTupleWrapperBase {
 
 class RouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
     public:
-    RouteTableFieldValueTupleWrapper(const string & _key,
-                                     string && _protocol,
-                                     bool _nbZmqEnabled) :
-          FieldValueTupleWrapperBase(_key, _nbZmqEnabled),
-          protocol(std::move(_protocol)) {}
-    RouteTableFieldValueTupleWrapper(const string && _key,
-                                     string && _protocol,
-                                     bool _nbZmqEnabled) :
-          FieldValueTupleWrapperBase(std::move(_key), _nbZmqEnabled),
-          protocol(std::move(_protocol)) {}
+    RouteTableFieldValueTupleWrapper(const string & _key, string && _protocol, bool _nbZmqEnabled, bool _includeEmptyFields = false) :
+          FieldValueTupleWrapperBase(_key, _nbZmqEnabled), protocol(std::move(_protocol)), includeEmptyFields(_includeEmptyFields) {}
+    RouteTableFieldValueTupleWrapper(const string && _key, string && _protocol, bool _nbZmqEnabled, bool _includeEmptyFields = false) :
+          FieldValueTupleWrapperBase(std::move(_key), _nbZmqEnabled), protocol(std::move(_protocol)), includeEmptyFields(_includeEmptyFields) {}
 
     vector<FieldValueTuple> fieldValueTupleVector() override;
 
@@ -125,20 +119,19 @@ class RouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
     string segment = string();
     string seg_src = string();
     string fallback_to_default_route = string("false");
+    bool includeEmptyFields = false;
 };
 
 class LabelRouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
     public:
-    LabelRouteTableFieldValueTupleWrapper(const string & _key,
-                                          string && _protocol,
-                                          bool _nbZmqEnabled) :
+    LabelRouteTableFieldValueTupleWrapper(const string & _key, string && _protocol, bool _nbZmqEnabled, bool _includeEmptyFields = false) :
         FieldValueTupleWrapperBase(_key, _nbZmqEnabled),
-        protocol(std::move(_protocol)) {}
-    LabelRouteTableFieldValueTupleWrapper(const string && _key,
-                                          string && _protocol,
-                                          bool _nbZmqEnabled) :
+        protocol(std::move(_protocol)),
+        includeEmptyFields(_includeEmptyFields) {}
+    LabelRouteTableFieldValueTupleWrapper(const string && _key, string && _protocol, bool _nbZmqEnabled, bool _includeEmptyFields = false) :
         FieldValueTupleWrapperBase(std::move(_key), _nbZmqEnabled),
-        protocol(std::move(_protocol)) {}
+        protocol(std::move(_protocol)),
+        includeEmptyFields(_includeEmptyFields) {}
 
     vector<FieldValueTuple> fieldValueTupleVector() override;
 
@@ -148,6 +141,7 @@ class LabelRouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase 
     string ifname = string();
     string mpls_nh = string();
     string mpls_pop = string();
+    bool includeEmptyFields = false;
 };
 
 class VnetRouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
@@ -220,6 +214,8 @@ class RouteSync : public NetMsg
 public:
     enum { MAX_ADDR_SIZE = 64 };
 
+    virtual ~RouteSync();
+
     RouteSync(RedisPipeline *pipeline);
 
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
@@ -256,7 +252,9 @@ public:
 
     void onFpmConnected(FpmInterface& fpm)
     {
-        m_fpmInterface = &fpm;
+        if (!m_fpmInterface) {
+            m_fpmInterface = &fpm;
+        }
     }
 
     void onFpmDisconnected()
@@ -280,8 +278,12 @@ private:
     ProducerStateTable  m_vnet_routeTable;
     /* vnet vxlan tunnel table */  
     ProducerStateTable  m_vnet_tunnelTable;
-    /* Warm start helper */
-    WarmStartHelper m_warmStartHelper;
+    /* EVPN Split Horizon Table */
+    ProducerStateTable  m_evpn_shlTable;
+    /* EVPN DF Table (Designated Forwarder) */
+    ProducerStateTable  m_evpn_dfTable;
+    /* EVPN ES Backup NextHopGroup Table */
+    ProducerStateTable  m_evpn_esBackupNhgTable;
     /* srv6 mySid table */
     ProducerStateTable m_srv6MySidTable; 
     /* srv6 sid list table */
@@ -297,6 +299,8 @@ private:
 
     /* SID list to refcount */
     map<string, uint32_t> m_srv6_sidlist_refcnt;
+
+    WarmStartHelper  m_warmStartHelper;
 
     bool                m_isSuppressionEnabled{false};
     FpmInterface*       m_fpmInterface {nullptr};
@@ -329,6 +333,10 @@ private:
 
     /* Handle prefix route */
     void onEvpnRouteMsg(struct nlmsghdr *h, int len);
+    void onEvpnShlMsg(struct nlmsghdr *h, int len);
+    void onEvpnDfMsg(struct nlmsghdr *h, int len);
+    void onEvpnEsBackupNhgMsg(struct nlmsghdr *h, int len);
+    void onTcFilterMsg(struct nlmsghdr *h, int len);
 
     /* Handle routes containing an SRv6 nexthop */
     void onSrv6SteerRouteMsg(struct nlmsghdr *h, int len);
@@ -405,7 +413,8 @@ private:
     void updatePicContextGroupDb(const NextHopGroup& nhg);
     void getNextHopGroupFields(const NextHopGroup& nhg, string& nexthops, string& ifnames, string& weights, uint8_t af = AF_INET);
     void getPicContextGroupFields(const NextHopGroup& nhg, struct NextHopField& nhField, uint8_t af = AF_INET);
-    bool isNbZmqEnabled() const {
+    bool isNbZmqEnabled() const
+    {
         return m_zmqClient != nullptr;
     }
 
