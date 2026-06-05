@@ -509,8 +509,24 @@ bool RouteOrch::validnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t& 
         {
             nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID;
             auto seq_it = nhopgroup->second.nhopgroup_members.find(nexthop);
-            nhgm_attr.value.u32 = (seq_it != nhopgroup->second.nhopgroup_members.end())
-                                      ? seq_it->second.seq_id : 0;
+            if (seq_it != nhopgroup->second.nhopgroup_members.end())
+            {
+                nhgm_attr.value.u32 = seq_it->second.seq_id;
+            }
+            else
+            {
+                uint32_t seq_id = 1;
+                for (auto key_it = nhopgroup->first.getNextHops().begin();
+                     key_it != nhopgroup->first.getNextHops().end();
+                     ++key_it, ++seq_id)
+                {
+                    if (*key_it == *nhkey)
+                    {
+                        break;
+                    }
+                }
+                nhgm_attr.value.u32 = seq_id;
+            }
             nhgm_attrs.push_back(nhgm_attr);
         }
 
@@ -1860,8 +1876,6 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops, const bool i
                            next_hop_group_id);
             if (gArsOrch)
                 gArsOrch->forgetNhg(next_hop_group_id);
-            m_nextHopGroupCount--;
-            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
             m_syncdNextHopGroups.erase(nexthops);
             return true;
         }
@@ -2520,22 +2534,35 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             }
         }
 
-        next_hop_id = m_syncdNextHopGroups[nextHops].next_hop_group_id;
+        auto it_nhg = m_syncdNextHopGroups.find(nextHops);
+        if (it_nhg != m_syncdNextHopGroups.end())
+        {
+            next_hop_id = it_nhg->second.next_hop_group_id;
+        }
+        else
+        {
+            next_hop_id = SAI_NULL_OBJECT_ID;
+        }
 
         if (next_hop_id == SAI_NULL_OBJECT_ID)
         {
-            SWSS_LOG_ERROR("NHG for %s has NULL OID in m_syncdNextHopGroups "
-                           "— likely a ghost entry from operator[]. "
+            SWSS_LOG_ERROR("NHG for %s has NULL OID — missing or ghost entry. "
                            "Erasing and rebuilding.",
                            nextHops.to_string().c_str());
-            m_syncdNextHopGroups.erase(nextHops);
+            if (it_nhg != m_syncdNextHopGroups.end())
+            {
+                m_syncdNextHopGroups.erase(it_nhg);
+            }
 
             if (!addNextHopGroup(nextHops))
             {
                 addTempRoute(ctx, nextHops);
                 return false;
             }
-            next_hop_id = m_syncdNextHopGroups[nextHops].next_hop_group_id;
+            it_nhg = m_syncdNextHopGroups.find(nextHops);
+            next_hop_id = (it_nhg != m_syncdNextHopGroups.end())
+                              ? it_nhg->second.next_hop_group_id
+                              : SAI_NULL_OBJECT_ID;
         }
     }
 
