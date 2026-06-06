@@ -431,6 +431,19 @@ int main(int argc, char **argv)
     WarmStart::checkWarmStart("orchagent", "swss");
 
     /*
+     * Block SIGHUP signal until the Recorder is initialized and the SIGHUP
+     * handler is installed to avoid race conditions.
+     */
+    sigset_t hupmask;
+    sigemptyset(&hupmask);
+    sigaddset(&hupmask, SIGHUP);
+    if (sigprocmask(SIG_BLOCK, &hupmask, nullptr))
+    {
+        SWSS_LOG_ERROR("failed to block SIGHUP during startup");
+        exit(1);
+    }
+
+    /*
      * Construct the Recorder singleton before registering fatal handlers so
      * fatal_signal_handler() never triggers function-local static initialization.
      */
@@ -439,6 +452,12 @@ int main(int argc, char **argv)
     if (signal(SIGHUP, sighup_handler) == SIG_ERR)
     {
         SWSS_LOG_ERROR("failed to setup SIGHUP action");
+        exit(1);
+    }
+
+    if (sigprocmask(SIG_UNBLOCK, &hupmask, nullptr))
+    {
+        SWSS_LOG_ERROR("failed to unblock SIGHUP during startup");
         exit(1);
     }
 
