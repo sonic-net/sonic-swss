@@ -7,6 +7,8 @@
 #include "orch.h"
 #include "portsorch.h"
 
+#define SFLOW_DROP_MONITOR_CONFIG_PATH "/usr/share/sonic/templates/sflow_mod.json"
+
 struct SflowPortInfo
 {
     bool            admin_state;
@@ -47,6 +49,8 @@ public:
 
     bool enableDropMonitor(int32_t limit_rate);
     bool disableDropMonitor();
+
+    uint32_t getDropMonitorCpuQueue(const std::string& path = SFLOW_DROP_MONITOR_CONFIG_PATH);
 
 private:
     bool            m_enable;

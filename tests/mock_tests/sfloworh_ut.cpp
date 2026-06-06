@@ -469,6 +469,33 @@ namespace sflow_test
         }
     }
 
+    /* Test: getDropMonitorCpuQueue fallback when config file not found */
+    TEST_F(SflowOrchTest, SflowDropMonitorCpuQueueFileNotFound)
+    {
+        MockSflowOrch mock_orch;
+        uint32_t queue = Portal::SflowOrchInternal::getSflowDropMonitorCpuQueue(
+            mock_orch.get(), "./nonexistent_sflow_mod.json");
+        ASSERT_EQ(queue, 47);
+    }
+
+    /* Test: getDropMonitorCpuQueue reads valid config file */
+    TEST_F(SflowOrchTest, SflowDropMonitorCpuQueueFromFile)
+    {
+        MockSflowOrch mock_orch;
+        uint32_t queue = Portal::SflowOrchInternal::getSflowDropMonitorCpuQueue(
+            mock_orch.get(), "./sflow_mod_valid.json");
+        ASSERT_EQ(queue, 99);
+    }
+
+    /* Test: getDropMonitorCpuQueue fallback when config value is invalid type */
+    TEST_F(SflowOrchTest, SflowDropMonitorCpuQueueInvalidValue)
+    {
+        MockSflowOrch mock_orch;
+        uint32_t queue = Portal::SflowOrchInternal::getSflowDropMonitorCpuQueue(
+            mock_orch.get(), "./sflow_mod_invalid.json");
+        ASSERT_EQ(queue, 47);
+    }
+
 }
 
 

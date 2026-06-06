@@ -120,6 +120,11 @@ struct Portal
         {
             return obj.m_sflowDropMonitor.m_limitRate;
         }
+
+        static uint32_t getSflowDropMonitorCpuQueue(SflowOrch &obj, const std::string& path)
+        {
+            return obj.m_sflowDropMonitor.getDropMonitorCpuQueue(path);
+        }
     };
 
     struct TwampOrchInternal

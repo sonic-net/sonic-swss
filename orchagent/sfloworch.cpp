@@ -2,6 +2,9 @@
 #include "sfloworch.h"
 #include "tokenize.h"
 
+#include <fstream>
+#include "nlohmann/json.hpp"
+
 using namespace std;
 using namespace swss;
 
@@ -14,7 +17,8 @@ extern sai_port_api_t*         sai_port_api;
 extern sai_object_id_t         gSwitchId;
 extern PortsOrch*              gPortsOrch;
 
-// TODO: Add the value to copp_cfg.j2
+// Default CPU queue for sFlow drop monitor.
+// Can be overridden by /usr/share/sonic/templates/sflow_mod.json
 #define SFLOW_DROP_MONITOR_CPU_QUEUE 47
 
 bool SflowDropMonitor::enableDropMonitor(int32_t limit_rate)
@@ -27,14 +31,13 @@ bool SflowDropMonitor::enableDropMonitor(int32_t limit_rate)
             return true;
         }
 
-        // Reenable drop monitor when rate limit is changed
+        // Rate changed: disable first, then re-initialize below
         if (!disableDropMonitor())
         {
             SWSS_LOG_ERROR("Failed to disable drop monitor for reconfiguration.");
             return false;
         }
-
-        return enableDropMonitor(limit_rate);
+        // fall through to initializeDropMonitor
     }
 
     if (!initializeDropMonitor(limit_rate))
@@ -94,6 +97,30 @@ bool SflowDropMonitor::disableDropMonitor()
     m_limitRate = 0;
     m_enable = false;
     return true;
+}
+
+uint32_t SflowDropMonitor::getDropMonitorCpuQueue(const std::string& path)
+{
+    std::ifstream ifs(path);
+    if (!ifs.is_open())
+    {
+        SWSS_LOG_NOTICE("sFlow MOD config file not found: %s, using default queue %d",
+                        path.c_str(), SFLOW_DROP_MONITOR_CPU_QUEUE);
+        return SFLOW_DROP_MONITOR_CPU_QUEUE;
+    }
+
+    try
+    {
+        nlohmann::json j = nlohmann::json::parse(ifs);
+        uint32_t queue = j.at("drop_monitor_queue").get<uint32_t>();
+        return queue;
+    }
+    catch (const nlohmann::json::exception& e)
+    {
+        SWSS_LOG_WARN("Failed to parse sFlow MOD config %s: %s, using default queue %d",
+                      path.c_str(), e.what(), SFLOW_DROP_MONITOR_CPU_QUEUE);
+        return SFLOW_DROP_MONITOR_CPU_QUEUE;
+    }
 }
 
 bool SflowDropMonitor::createTamReport()
@@ -525,7 +552,7 @@ bool SflowDropMonitor::createHostifTrapGroup()
     }
 
     attr.id = SAI_HOSTIF_TRAP_GROUP_ATTR_QUEUE;
-    attr.value.u32 = SFLOW_DROP_MONITOR_CPU_QUEUE;
+    attr.value.u32 = getDropMonitorCpuQueue();
     attributes.push_back(attr);
     if (m_policer != SAI_NULL_OBJECT_ID)
     {
