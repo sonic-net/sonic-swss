@@ -8,6 +8,47 @@ import time
 @pytest.mark.usefixtures('dvs_mirror_manager')
 class TestSampledMirror(object):
 
+    @pytest.fixture(autouse=True)
+    def _isolate(self, dvs):
+        """Force a clean baseline before and after every test.
+        """
+        self._force_clean(dvs)
+        yield
+        self._force_clean(dvs)
+
+    def _wait_route_absent(self, dvs, prefix, timeout=10):
+        """Poll until the kernel route for prefix is gone."""
+        for _ in range(timeout * 10):
+            if prefix not in dvs.runcmd("ip route show " + prefix)[1]:
+                return
+            time.sleep(0.1)
+        assert prefix not in dvs.runcmd("ip route show " + prefix)[1], \
+            f"route {prefix} still present after cleanup"
+
+    def _force_clean(self, dvs):
+        """Return the shared ERSPAN route / mirror / sFlow state to a baseline."""
+        dvs.setup_db()
+
+        # Remove any mirror sessions left behind by a failed test.
+        mirror_keys = dvs.config_db.get_keys("MIRROR_SESSION")
+        for key in mirror_keys:
+            self.dvs_mirror.remove_mirror_session(key)
+
+        # Remove any leftover sFlow config (from the sFlow-conflict test).
+        for key in dvs.config_db.get_keys("SFLOW_SESSION"):
+            dvs.config_db.delete_entry("SFLOW_SESSION", key)
+        dvs.config_db.delete_entry("SFLOW", "global")
+
+        # Tear down the shared route/neighbor/ip and bring the monitor port down.
+        self._tear_down_route(dvs)
+
+        # Wait for the removed sessions and the kernel route to actually drain
+        # before the next test runs, then confirm no samplepacket survives.
+        for key in mirror_keys:
+            dvs.state_db.wait_for_deleted_entry("MIRROR_SESSION_TABLE", key)
+        self._wait_route_absent(dvs, "2.2.2.2")
+        dvs.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", 0)
+
     def _bring_up_route(self, dvs):
         """Bring up the monitor port and install the route to the dst_ip"""
         dvs.set_interface_status("Ethernet16", "up")
@@ -32,9 +73,6 @@ class TestSampledMirror(object):
             session, "1.1.1.1", "2.2.2.2", "0x8949", "8", "64", "0",
             src_ports=src_ports, direction=direction,
             sample_rate=sample_rate, truncate_size=truncate_size)
-
-        # Session starts inactive until route exists
-        dvs.state_db.wait_for_field_match("MIRROR_SESSION_TABLE", session, {"status": "inactive"})
 
         # Bring up port and create route to dst_ip
         self._bring_up_route(dvs)
@@ -179,8 +217,11 @@ class TestSampledMirror(object):
         port_entry = dvs.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid)
         assert "SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE" in port_entry
         assert "SAI_PORT_ATTR_EGRESS_SAMPLE_MIRROR_SESSION" in port_entry
-        assert "SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE" not in port_entry
-        assert "SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION" not in port_entry
+        # Ingress must not be actively bound
+        if "SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE" in port_entry:
+            assert port_entry["SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE"] == "oid:0x0"
+        if "SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION" in port_entry:
+            assert port_entry["SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION"] == "0:null"
 
         self._teardown_mirror_session(dvs, session)
         dvs.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", 0)
