@@ -5215,6 +5215,197 @@ namespace portsorch_test
         ASSERT_NE(port.m_lag_id, SAI_NULL_OBJECT_ID) << "Port should be a LAG member after second doTask";
     }
 
+    /*
+     * Regression test for LAG/VLAN race (inverse of issue #23635).
+     *
+     * Issue: When a port is added to a LAG and a VLAN member SET is queued while
+     * orchagent still has m_lag_member_id set, addBridgePort/addVlanMember must not
+     * call SAI (SAI_STATUS_INVALID_PORT_NUMBER on some platforms).
+     *
+     * Fix: PortsOrch defers VLAN member SET when a physical port's m_lag_member_id
+     * Test: LAG member on port first, then VLAN member SET only (no LAG DEL in same
+     * batch). Uses a distinct port/LAG/VLAN from VlanMemberSucceedsAfterLagMemberRemoved
+     * because saivs state persists across tests in one process.
+     */
+    TEST_F(VlanLagRaceTest, VlanMemberAddDeferredWhileLagMemberActive)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table lagTable = Table(m_app_db.get(), APP_LAG_TABLE_NAME);
+        Table lagMemberTable = Table(m_app_db.get(), APP_LAG_MEMBER_TABLE_NAME);
+        Table vlanTable = Table(m_app_db.get(), APP_VLAN_TABLE_NAME);
+        Table vlanMemberTable = Table(m_app_db.get(), APP_VLAN_MEMBER_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        auto portIt = ports.begin();
+        ++portIt;
+        string testPort = portIt->first;
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        lagTable.set("PortChannel2",
+            {
+                {"admin_status", "up"},
+                {"mtu", "9100"}
+            }
+        );
+        string lagMemberKey = string("PortChannel2") + lagMemberTable.getTableNameSeparator() + testPort;
+        lagMemberTable.set(lagMemberKey, { {"status", "enabled"} });
+
+        gPortsOrch->addExistingData(&lagTable);
+        gPortsOrch->addExistingData(&lagMemberTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        for (auto tableName : {APP_LAG_TABLE_NAME, APP_LAG_MEMBER_TABLE_NAME})
+        {
+            vector<string> ts;
+            auto exec = gPortsOrch->getExecutor(tableName);
+            auto consumer = static_cast<Consumer *>(exec);
+            consumer->dumpPendingTasks(ts);
+            ASSERT_TRUE(ts.empty()) << "LAG setup should complete: " << tableName;
+        }
+
+        Port port;
+        gPortsOrch->getPort(testPort, port);
+        ASSERT_NE(port.m_lag_member_id, SAI_NULL_OBJECT_ID) << "Port should be a LAG member before VLAN add";
+
+        vlanTable.set("Vlan51",
+            {
+                {"admin_status", "up"},
+                {"mtu", "9100"}
+            }
+        );
+        string vlanMemberKey = string("Vlan51") + vlanMemberTable.getTableNameSeparator() + testPort;
+        vlanMemberTable.set(vlanMemberKey, { {"tagging_mode", "untagged"} });
+
+        gPortsOrch->addExistingData(&vlanTable);
+        gPortsOrch->addExistingData(&vlanMemberTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port vlan;
+        ASSERT_TRUE(gPortsOrch->getPort("Vlan51", vlan));
+        ASSERT_EQ(vlan.m_members.find(testPort), vlan.m_members.end())
+            << "VLAN member add must defer while port is LAG member";
+
+        {
+            vector<string> ts;
+            auto exec = gPortsOrch->getExecutor(APP_VLAN_MEMBER_TABLE_NAME);
+            auto consumer = static_cast<Consumer *>(exec);
+            consumer->dumpPendingTasks(ts);
+            ASSERT_EQ(ts.size(), 1) << "Exactly one VLAN member task should be pending";
+
+            string expectedSubstr = vlanMemberKey + "|SET";
+            ASSERT_NE(ts[0].find(expectedSubstr), string::npos)
+                << "Pending task should be the SET for " << vlanMemberKey
+                << ", got: " << ts[0];
+        }
+
+        gPortsOrch->getPort(testPort, port);
+        ASSERT_NE(port.m_lag_member_id, SAI_NULL_OBJECT_ID) << "Port should still be a LAG member";
+    }
+
+    TEST_F(VlanLagRaceTest, VlanMemberSucceedsAfterLagMemberRemoved)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table lagTable = Table(m_app_db.get(), APP_LAG_TABLE_NAME);
+        Table lagMemberTable = Table(m_app_db.get(), APP_LAG_MEMBER_TABLE_NAME);
+        Table vlanTable = Table(m_app_db.get(), APP_VLAN_TABLE_NAME);
+        Table vlanMemberTable = Table(m_app_db.get(), APP_VLAN_MEMBER_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        string testPort = ports.begin()->first;
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        lagTable.set("PortChannel1",
+            {
+                {"admin_status", "up"},
+                {"mtu", "9100"}
+            }
+        );
+        string lagMemberKey = string("PortChannel1") + lagMemberTable.getTableNameSeparator() + testPort;
+        lagMemberTable.set(lagMemberKey, { {"status", "enabled"} });
+
+        gPortsOrch->addExistingData(&lagTable);
+        gPortsOrch->addExistingData(&lagMemberTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        vlanTable.set("Vlan50",
+            {
+                {"admin_status", "up"},
+                {"mtu", "9100"}
+            }
+        );
+        string vlanMemberKey = string("Vlan50") + vlanMemberTable.getTableNameSeparator() + testPort;
+        vlanMemberTable.set(vlanMemberKey, { {"tagging_mode", "untagged"} });
+
+        gPortsOrch->addExistingData(&vlanTable);
+        gPortsOrch->addExistingData(&vlanMemberTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        {
+            vector<string> ts;
+            auto exec = gPortsOrch->getExecutor(APP_VLAN_MEMBER_TABLE_NAME);
+            auto consumer = static_cast<Consumer *>(exec);
+            consumer->dumpPendingTasks(ts);
+            ASSERT_EQ(ts.size(), 1) << "VLAN member SET should be deferred while LAG member is active";
+        }
+
+        std::deque<KeyOpFieldsValuesTuple> lagMemberDelEntries;
+        lagMemberDelEntries.push_back({lagMemberKey, DEL_COMMAND, {}});
+        auto lagMemberConsumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_LAG_MEMBER_TABLE_NAME));
+        lagMemberConsumer->addToSync(lagMemberDelEntries);
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port port;
+        gPortsOrch->getPort(testPort, port);
+        ASSERT_EQ(port.m_lag_member_id, SAI_NULL_OBJECT_ID) << "LAG member should be removed";
+
+        {
+            vector<string> ts;
+            auto exec = gPortsOrch->getExecutor(APP_LAG_MEMBER_TABLE_NAME);
+            auto consumer = static_cast<Consumer *>(exec);
+            consumer->dumpPendingTasks(ts);
+            ASSERT_TRUE(ts.empty()) << "LAG member DEL should complete";
+        }
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        gPortsOrch->getPort(testPort, port);
+        ASSERT_NE(port.m_bridge_port_id, SAI_NULL_OBJECT_ID)
+            << "Bridge port should be created after LAG member removal";
+
+        for (auto tableName : {APP_VLAN_TABLE_NAME, APP_VLAN_MEMBER_TABLE_NAME})
+        {
+            vector<string> ts;
+            auto exec = gPortsOrch->getExecutor(tableName);
+            auto consumer = static_cast<Consumer *>(exec);
+            consumer->dumpPendingTasks(ts);
+            ASSERT_TRUE(ts.empty()) << "All VLAN tasks should complete: " << tableName;
+        }
+
+        Port vlan;
+        ASSERT_TRUE(gPortsOrch->getPort("Vlan50", vlan));
+        ASSERT_NE(vlan.m_members.find(testPort), vlan.m_members.end())
+            << "Port should be a VLAN member after deferred SET completes";
+    }
+
     struct PostPortInitTests : PortsOrchTest
     {
     };

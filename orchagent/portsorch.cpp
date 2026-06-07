@@ -5975,6 +5975,12 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
         /* When VLAN member is to be created before VLAN is created */
         if (!getPort(vlan_alias, vlan))
         {
+            if (op == DEL_COMMAND)
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
             SWSS_LOG_INFO("Failed to locate VLAN %s", vlan_alias.c_str());
             it++;
             continue;
@@ -6010,6 +6016,15 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
             if (vlan.m_members.find(port_alias) != vlan.m_members.end())
             {
                 it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            /* Defer vlan member add while port is still a LAG member in orchagent */
+            if (isValidPortTypeForLagMember(port) && port.m_lag_member_id != SAI_NULL_OBJECT_ID)
+            {
+                SWSS_LOG_INFO("Port %s is still a LAG member (lmid:%" PRIx64 "), delaying vlan member add",
+                               port.m_alias.c_str(), port.m_lag_member_id);
+                it++;
                 continue;
             }
 
