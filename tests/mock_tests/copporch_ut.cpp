@@ -523,6 +523,168 @@ namespace copporch_test
         }
     }
 
+    TEST_F(CoppOrchTest, CpuQueueShaper_HappyPath)
+    {
+        MockCoppOrch coppOrch;
+
+        // Static tracking variables for mock verification
+        static bool scheduler_created;
+        static int meter_type;
+        static uint64_t max_rate;
+        static uint32_t set_queue_count;
+
+        scheduler_created = false;
+        meter_type = -1;
+        max_rate = 0;
+        set_queue_count = 0;
+
+        auto orig_create_scheduler = sai_scheduler_api->create_scheduler;
+        auto orig_set_queue_attribute = sai_queue_api->set_queue_attribute;
+
+        // Mock create_scheduler to track attributes
+        sai_scheduler_api->create_scheduler =
+            [](sai_object_id_t *oid, sai_object_id_t switch_id,
+               uint32_t attr_count, const sai_attribute_t *attrs) -> sai_status_t {
+                scheduler_created = true;
+                for (uint32_t i = 0; i < attr_count; i++)
+                {
+                    if (attrs[i].id == SAI_SCHEDULER_ATTR_METER_TYPE)
+                        meter_type = attrs[i].value.s32;
+                    if (attrs[i].id == SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_RATE)
+                        max_rate = attrs[i].value.u64;
+                }
+                static uint64_t next_oid = 0x5000;
+                *oid = next_oid++;
+                return SAI_STATUS_SUCCESS;
+            };
+
+        // Mock set_queue_attribute to count scheduler applications
+        sai_queue_api->set_queue_attribute =
+            [](sai_object_id_t queue_id, const sai_attribute_t *attr) -> sai_status_t {
+                if (attr->id == SAI_QUEUE_ATTR_SCHEDULER_PROFILE_ID)
+                    set_queue_count++;
+                return SAI_STATUS_SUCCESS;
+            };
+
+        Portal::CoppOrchInternal::applyCpuQueueShaper(coppOrch.get());
+
+        // Verify scheduler was created with correct attributes
+        EXPECT_TRUE(scheduler_created);
+        EXPECT_EQ(meter_type, (int)SAI_METER_TYPE_PACKETS);
+        EXPECT_EQ(max_rate, (uint64_t)600);
+        // Verify shaper was applied to 2 queues (queue 0 and queue 7)
+        EXPECT_EQ(set_queue_count, (uint32_t)2);
+
+        // Restore
+        sai_scheduler_api->create_scheduler = orig_create_scheduler;
+        sai_queue_api->set_queue_attribute = orig_set_queue_attribute;
+    }
+
+    TEST_F(CoppOrchTest, CpuQueueShaper_CreateSchedulerFail)
+    {
+        MockCoppOrch coppOrch;
+
+        // Save original create_scheduler
+        auto orig_create_scheduler = sai_scheduler_api->create_scheduler;
+
+        // Mock create_scheduler to fail
+        sai_scheduler_api->create_scheduler =
+            [](sai_object_id_t *, sai_object_id_t, uint32_t, const sai_attribute_t *) -> sai_status_t {
+                return SAI_STATUS_NOT_SUPPORTED;
+            };
+
+        // Should not crash — logs error and returns
+        EXPECT_NO_THROW(Portal::CoppOrchInternal::applyCpuQueueShaper(coppOrch.get()));
+
+        // Restore
+        sai_scheduler_api->create_scheduler = orig_create_scheduler;
+    }
+
+    TEST_F(CoppOrchTest, CpuQueueShaper_GetQueueListFail)
+    {
+        MockCoppOrch coppOrch;
+
+        // Save original get_port_attribute
+        auto orig_get_port_attribute = sai_port_api->get_port_attribute;
+
+        // Mock get_port_attribute: succeed on queue count, fail on queue list
+        sai_port_api->get_port_attribute =
+            [](sai_object_id_t port_id, uint32_t attr_count, sai_attribute_t *attr_list) -> sai_status_t {
+                if (attr_list[0].id == SAI_PORT_ATTR_QOS_QUEUE_LIST)
+                {
+                    return SAI_STATUS_FAILURE;
+                }
+                if (attr_list[0].id == SAI_PORT_ATTR_QOS_NUMBER_OF_QUEUES)
+                {
+                    attr_list[0].value.u32 = 8;
+                    return SAI_STATUS_SUCCESS;
+                }
+                return SAI_STATUS_SUCCESS;
+            };
+
+        EXPECT_NO_THROW(Portal::CoppOrchInternal::applyCpuQueueShaper(coppOrch.get()));
+
+        // Restore
+        sai_port_api->get_port_attribute = orig_get_port_attribute;
+    }
+
+    TEST_F(CoppOrchTest, CpuQueueShaper_QueueCountTooSmall)
+    {
+        MockCoppOrch coppOrch;
+
+        auto orig_get_port_attribute = sai_port_api->get_port_attribute;
+        auto orig_create_scheduler = sai_scheduler_api->create_scheduler;
+        auto orig_set_queue_attribute = sai_queue_api->set_queue_attribute;
+
+        static uint32_t set_queue_count;
+        set_queue_count = 0;
+
+        // Mock get_port_attribute: return queue_count=1 so queue 7 is skipped
+        sai_port_api->get_port_attribute =
+            [](sai_object_id_t port_id, uint32_t attr_count, sai_attribute_t *attr_list) -> sai_status_t {
+                if (attr_list[0].id == SAI_PORT_ATTR_QOS_NUMBER_OF_QUEUES)
+                {
+                    attr_list[0].value.u32 = 1;
+                    return SAI_STATUS_SUCCESS;
+                }
+                if (attr_list[0].id == SAI_PORT_ATTR_QOS_QUEUE_LIST)
+                {
+                    attr_list[0].value.objlist.count = 1;
+                    if (attr_list[0].value.objlist.list)
+                    {
+                        attr_list[0].value.objlist.list[0] = 0x1234;
+                    }
+                    return SAI_STATUS_SUCCESS;
+                }
+                return SAI_STATUS_SUCCESS;
+            };
+
+        // Mock create_scheduler to return success with a fake OID
+        sai_scheduler_api->create_scheduler =
+            [](sai_object_id_t *oid, sai_object_id_t, uint32_t, const sai_attribute_t *) -> sai_status_t {
+                *oid = 0x6000;
+                return SAI_STATUS_SUCCESS;
+            };
+
+        // Mock set_queue_attribute to count applications
+        sai_queue_api->set_queue_attribute =
+            [](sai_object_id_t, const sai_attribute_t *attr) -> sai_status_t {
+                if (attr->id == SAI_QUEUE_ATTR_SCHEDULER_PROFILE_ID)
+                    set_queue_count++;
+                return SAI_STATUS_SUCCESS;
+            };
+
+        EXPECT_NO_THROW(Portal::CoppOrchInternal::applyCpuQueueShaper(coppOrch.get()));
+
+        // Only queue 0 should be applied; queue 7 is skipped (7 >= 1)
+        EXPECT_EQ(set_queue_count, (uint32_t)1);
+
+        // Restore
+        sai_port_api->get_port_attribute = orig_get_port_attribute;
+        sai_scheduler_api->create_scheduler = orig_create_scheduler;
+        sai_queue_api->set_queue_attribute = orig_set_queue_attribute;
+    }
+
     TEST_F(CoppOrchTest, TrapWithPolicer_AddRemove)
     {
         const std::string trapGroupName = "queue4_group2";
