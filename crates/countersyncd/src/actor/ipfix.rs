@@ -878,24 +878,12 @@ impl IpfixActor {
                     }
 
                     for (key, val) in record.values.iter() {
-                        // Check if this is the observation time field or system time field
-                        let is_time_field = match key {
-                            DataRecordKey::Unrecognized(field_spec) => {
-                                let field_id = field_spec.information_element_identifier;
-                                let is_standard_field = field_spec.enterprise_number.is_none();
-
-                                (field_id == OBSERVATION_TIME_NANOSECONDS
-                                    || field_id == OBSERVATION_TIME_SECONDS)
-                                    && is_standard_field
-                            }
-                            _ => false,
-                        };
-
-                        if is_time_field {
+                        if should_skip_field(key) {
                             if let DataRecordKey::Unrecognized(field_spec) = key {
                                 debug!(
-                                    "Skipping time field (ID: {})",
-                                    field_spec.information_element_identifier
+                                    "Skipping non-counter field (ID: {}, enterprise: {:?})",
+                                    field_spec.information_element_identifier,
+                                    field_spec.enterprise_number
                                 );
                             }
                             continue;
@@ -1011,6 +999,34 @@ const OBSERVATION_TIME_NANOSECONDS: u16 = 325;
 /// - Semantics: default
 /// - Status: current
 const OBSERVATION_TIME_SECONDS: u16 = 322;
+
+/// Returns `true` for IPFIX data record fields that should not be turned into a SAIStat.
+///
+/// Two field shapes are skipped:
+/// 1. **Standard IPFIX time fields** (E-bit unset, Element ID 322 or 325). These are
+///    parsed elsewhere to populate observation_time and are not counters.
+/// 2. **Vendor padding fields** (E-bit set, Enterprise Number == 0). Some SAI
+///    implementations emit placeholder field specifiers with `Enterprise=0x00000000`
+///    inside the IPFIX template. IANA reserves Private Enterprise Number 0
+///    (RFC 5102 §3.1), so any such field cannot identify a real SAI counter — without
+///    this check it would be reported as a synthetic `unknown_0` stat.
+fn should_skip_field(key: &DataRecordKey) -> bool {
+    match key {
+        DataRecordKey::Unrecognized(field_spec) => {
+            let field_id = field_spec.information_element_identifier;
+            let ent = field_spec.enterprise_number;
+
+            let is_time_field = ent.is_none()
+                && (field_id == OBSERVATION_TIME_NANOSECONDS
+                    || field_id == OBSERVATION_TIME_SECONDS);
+
+            let is_vendor_padding = matches!(ent, Some(0));
+
+            is_time_field || is_vendor_padding
+        }
+        _ => false,
+    }
+}
 
 /// Extracts observation time from an IPFIX data record.
 ///
@@ -1202,6 +1218,47 @@ mod test {
             expected.join("\n"),
             logs_string
         );
+    }
+
+    fn unrecognized_field(element_id: u16, enterprise: Option<u32>) -> DataRecordKey {
+        DataRecordKey::Unrecognized(ipfixrw::parser::FieldSpecifier::new(
+            enterprise, element_id, 8,
+        ))
+    }
+
+    #[test]
+    fn test_should_skip_time_fields() {
+        // observationTimeNanoseconds and observationTimeSeconds with E-bit unset
+        // are standard IPFIX time fields and must be dropped before SAIStat creation.
+        assert!(should_skip_field(&unrecognized_field(325, None)));
+        assert!(should_skip_field(&unrecognized_field(322, None)));
+    }
+
+    #[test]
+    fn test_should_skip_vendor_padding_field() {
+        // E-bit set, Enterprise Number 0 — vendor padding field. IANA reserves PEN 0,
+        // so this cannot identify a real SAI counter and must be dropped to avoid
+        // emitting a synthetic unknown_0 stat.
+        assert!(should_skip_field(&unrecognized_field(0, Some(0))));
+        // Padding fields with non-zero element ID but Enterprise=0 are still padding.
+        assert!(should_skip_field(&unrecognized_field(42, Some(0))));
+    }
+
+    #[test]
+    fn test_should_not_skip_real_stat_fields() {
+        // E-bit set with a valid (non-zero) Enterprise Number is a real SAI counter
+        // field — PORT IF_IN_OCTETS, QUEUE BYTES, IPG CURR_OCCUPANCY_CELLS, etc.
+        assert!(!should_skip_field(&unrecognized_field(1, Some(0x0001_0000)))); // PORT
+        assert!(!should_skip_field(&unrecognized_field(1, Some(0x0015_0001)))); // QUEUE
+        assert!(!should_skip_field(&unrecognized_field(1, Some(0x001a_0009)))); // IPG
+    }
+
+    #[test]
+    fn test_should_not_skip_non_time_standard_fields() {
+        // Standard IPFIX fields (E-bit unset) other than 322/325 are not handled
+        // here and should fall through (they'll be processed downstream).
+        assert!(!should_skip_field(&unrecognized_field(8, None)));
+        assert!(!should_skip_field(&unrecognized_field(324, None))); // microseconds, not handled
     }
 
     #[test]
