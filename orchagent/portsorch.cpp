@@ -3753,6 +3753,33 @@ ReturnCode PortsOrch::setPortLinkEventDampingAiedConfig(Port &port,
                                                         sai_redis_link_event_damping_algo_aied_config_t &config) {
 
     SWSS_LOG_ENTER();
+
+    // Validate decay_half_life must not exceed max_suppress_time
+    if (config.decay_half_life > config.max_suppress_time)
+    {
+        SWSS_LOG_WARN("Invalid link event damping configuration for port %s: "
+                      "decay_half_life (%u ms) must not exceed max_suppress_time (%u ms)",
+                      port.m_alias.c_str(), config.decay_half_life, config.max_suppress_time);
+    }
+
+    // Validate suppress_threshold must be greater than reuse_threshold
+    if (config.suppress_threshold <= config.reuse_threshold)
+    {
+        SWSS_LOG_WARN("Invalid link event damping configuration for port %s: "
+                      "suppress_threshold (%u) must be greater than reuse_threshold (%u)",
+                      port.m_alias.c_str(), config.suppress_threshold, config.reuse_threshold);
+    }
+
+    // Validate flap_penalty is reasonable relative to suppress_threshold
+    // A single flap should not immediately trigger suppression, so flap_penalty should be less than suppress_threshold
+    if (config.flap_penalty >= config.suppress_threshold)
+    {
+        SWSS_LOG_WARN("Link event damping configuration for port %s: "
+                      "flap_penalty (%u) is greater than or equal to suppress_threshold (%u). "
+                      "A single flap will immediately trigger suppression.",
+                      port.m_alias.c_str(), config.flap_penalty, config.suppress_threshold);
+    }
+
     sai_attribute_t attr;
     attr.id = SAI_REDIS_PORT_ATTR_LINK_EVENT_DAMPING_ALGO_AIED_CONFIG;
     attr.value.ptr = (void *) &config;
