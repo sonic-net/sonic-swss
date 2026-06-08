@@ -201,7 +201,13 @@ namespace ut_helper
                 { "lanes", lanes_str },
                 { "speed", "1000" },
                 { "mtu", "6000" },
-                { "admin_status", "up" }
+                { "admin_status", "up" },
+                // PortConfig::role.value has no default initializer; without
+                // an explicit role here, p.m_role is read from uninitialized
+                // memory and intermittently matches Rec/Inb, which would make
+                // the recycle/inband gates in portsorch silently skip serdes
+                // and PHY-attr setup for these ports.
+                { "role", "Ext" }
             };
 
             auto key = FRONT_PANEL_PORT_PREFIX + to_string(i);
