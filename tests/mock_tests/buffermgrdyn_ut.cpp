@@ -188,6 +188,8 @@ namespace buffermgrdyn_test
 
             WarmStart::initialize("buffermgrd", "swss");
             WarmStart::checkWarmStart("buffermgrd", "swss");
+
+            ClearMockRedisReply();
         }
 
         void StartBufferManager(shared_ptr<vector<KeyOpFieldsValuesTuple>> zero_profile=nullptr)
@@ -208,6 +210,7 @@ namespace buffermgrdyn_test
             };
 
             m_dynamicBuffer = new BufferMgrDynamic(m_config_db.get(), m_state_db.get(), m_app_db.get(), m_app_state_db.get(), buffer_table_connectors, nullptr, zero_profile);
+            m_dynamicBuffer->m_saiSyncPollIntervalSec = 0;
         }
 
         void ClearMockRedisReply()
@@ -216,21 +219,44 @@ namespace buffermgrdyn_test
             mockReply = nullptr;
         }
 
+        // UT-only mock tree. mock_hiredis returns a copy per redisGetReply; release here.
         void SetRedisScriptReply(const vector<string> &values)
         {
             ClearMockRedisReply();
 
             mockReply = (redisReply *)calloc(1, sizeof(redisReply));
+            if (mockReply == nullptr)
+            {
+                return;
+            }
+
             mockReply->type = REDIS_REPLY_ARRAY;
-            mockReply->elements = values.size();
             mockReply->element = (redisReply **)calloc(values.size(), sizeof(redisReply *));
+            if (mockReply->element == nullptr)
+            {
+                free(mockReply);
+                mockReply = nullptr;
+                return;
+            }
+
+            mockReply->elements = values.size();
 
             for (size_t i = 0; i < values.size(); i++)
             {
                 mockReply->element[i] = (redisReply *)calloc(1, sizeof(redisReply));
+                if (mockReply->element[i] == nullptr)
+                {
+                    continue;
+                }
+
                 mockReply->element[i]->type = REDIS_REPLY_STRING;
                 mockReply->element[i]->len = values[i].length();
                 mockReply->element[i]->str = (char *)calloc(values[i].length() + 1, sizeof(char));
+                if (mockReply->element[i]->str == nullptr)
+                {
+                    continue;
+                }
+
                 memcpy(mockReply->element[i]->str, values[i].c_str(), values[i].length());
             }
         }

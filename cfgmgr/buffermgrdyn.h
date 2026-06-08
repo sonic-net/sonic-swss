@@ -271,6 +271,9 @@ private:
     // Profiles waiting for SAI sync in refreshSharedHeadroomPool
     std::vector<std::string> m_shpProfilesToCheck;
 
+    // Seconds between SAI sync polls in waitWithRetry. 0 selects a 100 ms poll.
+    unsigned int m_saiSyncPollIntervalSec;
+
     // Initializers
     void initTableHandlerMap();
     void parseGearboxInfo(std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> gearboxInfo);
