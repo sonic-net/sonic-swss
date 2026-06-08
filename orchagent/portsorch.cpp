@@ -3757,19 +3757,17 @@ ReturnCode PortsOrch::setPortLinkEventDampingAiedConfig(Port &port,
     // Validate decay_half_life must not exceed max_suppress_time
     if (config.decay_half_life > config.max_suppress_time)
     {
-        SWSS_LOG_ERROR("Invalid link event damping configuration for port %s: "
-                       "decay_half_life (%u ms) must not exceed max_suppress_time (%u ms)",
-                       port.m_alias.c_str(), config.decay_half_life, config.max_suppress_time);
-        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "decay_half_life exceeds max_suppress_time";
+        SWSS_LOG_WARN("Invalid link event damping configuration for port %s: "
+                      "decay_half_life (%u ms) must not exceed max_suppress_time (%u ms)",
+                      port.m_alias.c_str(), config.decay_half_life, config.max_suppress_time);
     }
 
     // Validate suppress_threshold must be greater than reuse_threshold
     if (config.suppress_threshold <= config.reuse_threshold)
     {
-        SWSS_LOG_ERROR("Invalid link event damping configuration for port %s: "
-                       "suppress_threshold (%u) must be greater than reuse_threshold (%u)",
-                       port.m_alias.c_str(), config.suppress_threshold, config.reuse_threshold);
-        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "suppress_threshold must be greater than reuse_threshold";
+        SWSS_LOG_WARN("Invalid link event damping configuration for port %s: "
+                      "suppress_threshold (%u) must be greater than reuse_threshold (%u)",
+                      port.m_alias.c_str(), config.suppress_threshold, config.reuse_threshold);
     }
 
     // Validate flap_penalty is reasonable relative to suppress_threshold
