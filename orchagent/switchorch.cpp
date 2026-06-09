@@ -26,6 +26,7 @@ extern MacAddress gVxlanMacAddress;
 extern CrmOrch *gCrmOrch;
 extern event_handle_t g_events_handle;
 extern string gMyAsicName;
+extern string gMySwitchType;
 
 // defines ------------------------------------------------------------------------------------------------------------
 
@@ -51,7 +52,9 @@ const map<string, sai_switch_attr_t> switch_attribute_map =
     {"vxlan_port",                          SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT},
     {"vxlan_router_mac",                    SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC},
     {"ecmp_hash_offset",                    SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_OFFSET},
-    {"lag_hash_offset",                     SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET}
+    {"lag_hash_offset",                     SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET},
+    {"credit_watchdog",                     SAI_SWITCH_ATTR_CREDIT_WD},
+    {"credit_watchdog_timer",               SAI_SWITCH_ATTR_CREDIT_WD_TIMER}
 };
 
 const map<string, sai_switch_tunnel_attr_t> switch_tunnel_attribute_map =
@@ -699,6 +702,35 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                         else
                         {
                             attr.value.u8 = to_uint<uint8_t>(value);
+                        }
+                        break;
+
+                    case SAI_SWITCH_ATTR_CREDIT_WD:
+                        // SAI gates this attribute to VOQ switches (validonly
+                        // SAI_SWITCH_ATTR_TYPE == SAI_SWITCH_TYPE_VOQ). Skip on
+                        // non-VOQ rather than letting SAI return NOT_SUPPORTED.
+                        if (gMySwitchType != "voq")
+                        {
+                            SWSS_LOG_NOTICE("credit_watchdog is VOQ-only; switch type is '%s', skipping",
+                                            gMySwitchType.c_str());
+                            unsupported_attr = true;
+                        }
+                        else
+                        {
+                            attr.value.booldata = to_uint<bool>(value);
+                        }
+                        break;
+
+                    case SAI_SWITCH_ATTR_CREDIT_WD_TIMER:
+                        if (gMySwitchType != "voq")
+                        {
+                            SWSS_LOG_NOTICE("credit_watchdog_timer is VOQ-only; switch type is '%s', skipping",
+                                            gMySwitchType.c_str());
+                            unsupported_attr = true;
+                        }
+                        else
+                        {
+                            attr.value.u32 = to_uint<uint32_t>(value);
                         }
                         break;
 
