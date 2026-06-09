@@ -118,6 +118,7 @@ class RouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
     string router_mac = string();
     string segment = string();
     string seg_src = string();
+    string fallback_to_default_route = string("false");
     bool includeEmptyFields = false;
 };
 
@@ -293,6 +294,9 @@ private:
     ProducerStateTable  m_nexthop_groupTable;
     ProducerStateTable  m_pic_context_groupTable;
     map<uint32_t,NextHopGroup> m_nh_groups;
+    uint32_t route_tag_not_to_appdb;
+    uint32_t route_tag_fallback_to_default_route;
+
     /* SID list to refcount */
     map<string, uint32_t> m_srv6_sidlist_refcnt;
 
