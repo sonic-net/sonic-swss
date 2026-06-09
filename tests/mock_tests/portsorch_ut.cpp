@@ -5226,6 +5226,8 @@ namespace portsorch_test
      * Test: LAG member on port first, then VLAN member SET only (no LAG DEL in same
      * batch). Uses a distinct port/LAG/VLAN from VlanMemberSucceedsAfterLagMemberRemoved
      * because saivs state persists across tests in one process.
+     * Then removes the VLAN and queues member DEL to cover the erase path when the
+     * vlan is already gone (!getPort + DEL_COMMAND).
      */
     TEST_F(VlanLagRaceTest, VlanMemberAddDeferredWhileLagMemberActive)
     {
@@ -5310,6 +5312,32 @@ namespace portsorch_test
 
         gPortsOrch->getPort(testPort, port);
         ASSERT_NE(port.m_lag_member_id, SAI_NULL_OBJECT_ID) << "Port should still be a LAG member";
+
+        // Deferred SET is replaced by DEL via consumer coalescing; after Vlan51 is
+        // removed, doVlanMemberTask must erase the DEL (member never existed in vlan).
+        std::deque<KeyOpFieldsValuesTuple> vlanDelEntries;
+        vlanDelEntries.push_back({"Vlan51", DEL_COMMAND, {}});
+        auto vlanConsumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_VLAN_TABLE_NAME));
+        vlanConsumer->addToSync(vlanDelEntries);
+
+        std::deque<KeyOpFieldsValuesTuple> vlanMemberDelEntries;
+        vlanMemberDelEntries.push_back({vlanMemberKey, DEL_COMMAND, {}});
+        auto vlanMemberConsumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_VLAN_MEMBER_TABLE_NAME));
+        vlanMemberConsumer->addToSync(vlanMemberDelEntries);
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port vlanAfterDel;
+        ASSERT_FALSE(gPortsOrch->getPort("Vlan51", vlanAfterDel)) << "Vlan51 should be removed";
+
+        for (auto tableName : {APP_VLAN_TABLE_NAME, APP_VLAN_MEMBER_TABLE_NAME})
+        {
+            vector<string> ts;
+            auto exec = gPortsOrch->getExecutor(tableName);
+            auto consumer = static_cast<Consumer *>(exec);
+            consumer->dumpPendingTasks(ts);
+            ASSERT_TRUE(ts.empty()) << "VLAN teardown should complete with no pending tasks: " << tableName;
+        }
     }
 
     TEST_F(VlanLagRaceTest, VlanMemberSucceedsAfterLagMemberRemoved)
