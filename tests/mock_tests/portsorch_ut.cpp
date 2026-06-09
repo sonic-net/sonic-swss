@@ -4582,6 +4582,148 @@ namespace portsorch_test
         ts.clear();
     }
 
+    /*
+     * This test checks that invalid LAG field validation happens on orchagent level
+     * and no SAI LAG create call is executed when learn_mode is invalid.
+     * It also verifies that the invalid task is removed from the pending task list.
+     */
+    TEST_F(PortsOrchTest, LagIsNotCreatedWhenLearnModeIsInvalid)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table lagTable = Table(m_app_db.get(), APP_LAG_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        /*
+         * Next we will prepare some configuration data to be consumed by PortsOrch
+         * 32 Ports, 1 LAG with invalid learn_mode.
+         */
+
+        // Populate pot table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+
+        lagTable.set("PortChannel0001",
+            {
+                {"admin_status", "up"},
+                {"mtu", "9100"},
+                {"learn_mode", "111"}
+            }
+        );
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+        gPortsOrch->addExistingData(&lagTable);
+
+        // save original api since we will spy
+        auto orig_lag_api = sai_lag_api;
+        sai_lag_api = new sai_lag_api_t();
+        memcpy(sai_lag_api, orig_lag_api, sizeof(*sai_lag_api));
+
+        bool lagCreateCalled = false;
+
+        auto lagSpy = SpyOn<SAI_API_LAG, SAI_OBJECT_TYPE_LAG>(&sai_lag_api->create_lag);
+        lagSpy->callFake([&](sai_object_id_t *oid, sai_object_id_t swoid, uint32_t count, const sai_attribute_t * attrs) -> sai_status_t
+            {
+                lagCreateCalled = true;
+                return orig_lag_api->create_lag(oid, swoid, count, attrs);
+            }
+        );
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        sai_lag_api = orig_lag_api;
+
+        // verify there was no SAI call executed.
+        ASSERT_FALSE(lagCreateCalled);
+
+        vector<string> ts;
+
+        // check was processed
+        auto exec = gPortsOrch->getExecutor(APP_LAG_TABLE_NAME);
+        auto consumer = static_cast<Consumer*>(exec);
+        ts.clear();
+        consumer->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+    }
+
+    /*
+     * This test checks that invalid LAG field validation happens on orchagent level
+     * and no SAI LAG create call is executed when oper_status is invalid.
+     * It also verifies that the invalid task is removed from the pending task list.
+     */
+    TEST_F(PortsOrchTest, LagIsNotCreatedWhenOperStatusIsInvalid)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table lagTable = Table(m_app_db.get(), APP_LAG_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        /*
+         * Next we will prepare some configuration data to be consumed by PortsOrch
+         * 32 Ports, 1 LAG with invalid oper_status.
+         */
+
+        // Populate pot table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+
+        lagTable.set("PortChannel0001",
+            {
+                {"admin_status", "up"},
+                {"mtu", "9100"},
+                {"oper_status", "111"}
+            }
+        );
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+        gPortsOrch->addExistingData(&lagTable);
+
+        // save original api since we will spy
+        auto orig_lag_api = sai_lag_api;
+        sai_lag_api = new sai_lag_api_t();
+        memcpy(sai_lag_api, orig_lag_api, sizeof(*sai_lag_api));
+
+        bool lagCreateCalled = false;
+
+        auto lagSpy = SpyOn<SAI_API_LAG, SAI_OBJECT_TYPE_LAG>(&sai_lag_api->create_lag);
+        lagSpy->callFake([&](sai_object_id_t *oid, sai_object_id_t swoid, uint32_t count, const sai_attribute_t * attrs) -> sai_status_t
+            {
+                lagCreateCalled = true;
+                return orig_lag_api->create_lag(oid, swoid, count, attrs);
+            }
+        );
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        sai_lag_api = orig_lag_api;
+
+        // verify there was no SAI call executed.
+        ASSERT_FALSE(lagCreateCalled);
+
+        vector<string> ts;
+
+        // check was processed
+        auto exec = gPortsOrch->getExecutor(APP_LAG_TABLE_NAME);
+        auto consumer = static_cast<Consumer*>(exec);
+        ts.clear();
+        consumer->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+    }
+
     /* This test passes an incorrect LAG entry and verifies that this entry is not
      * erased from the consumer table.
      */

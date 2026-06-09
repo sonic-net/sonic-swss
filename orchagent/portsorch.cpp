@@ -6181,6 +6181,7 @@ void PortsOrch::doLagTask(Consumer &consumer)
             int32_t switch_id = -1;
             string tpid_string;
             uint16_t tpid = 0;
+            bool invalid_field = false;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -6196,8 +6197,8 @@ void PortsOrch::doLagTask(Consumer &consumer)
                     if (cit == learn_mode_map.cend())
                     {
                         SWSS_LOG_ERROR("Invalid MAC learn mode: %s", learn_mode_str.c_str());
-                        it++;
-                        continue;
+                        invalid_field = true;
+                        break;
                     }
 
                     learn_mode = cit->second;
@@ -6208,8 +6209,8 @@ void PortsOrch::doLagTask(Consumer &consumer)
                     if (!string_oper_status.count(operation_status))
                     {
                         SWSS_LOG_ERROR("Invalid operation status value:%s", operation_status.c_str());
-                        it++;
-                        continue;
+                        invalid_field = true;
+                        break;
                     }
                 }
                 else if (fvField(i) == "lag_id")
@@ -6228,6 +6229,12 @@ void PortsOrch::doLagTask(Consumer &consumer)
                     tpid = (uint16_t)stoi(tpid_string, 0, 16);
                     SWSS_LOG_DEBUG("reading TPID string:%s to uint16: 0x%x", tpid_string.c_str(), tpid);
                  }
+            }
+
+            if (invalid_field)
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
             }
 
             if (table_name == CHASSIS_APP_LAG_TABLE_NAME)
