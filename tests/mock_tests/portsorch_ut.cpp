@@ -5236,6 +5236,7 @@ namespace portsorch_test
         Table vlanMemberTable = Table(m_app_db.get(), APP_VLAN_MEMBER_TABLE_NAME);
 
         auto ports = ut_helper::getInitialSaiPorts();
+        ASSERT_GE(ports.size(), 2u) << "Need at least two ports for this test";
         auto portIt = ports.begin();
         ++portIt;
         string testPort = portIt->first;
@@ -5344,6 +5345,20 @@ namespace portsorch_test
         gPortsOrch->addExistingData(&lagTable);
         gPortsOrch->addExistingData(&lagMemberTable);
         static_cast<Orch *>(gPortsOrch)->doTask();
+
+        for (auto tableName : {APP_LAG_TABLE_NAME, APP_LAG_MEMBER_TABLE_NAME})
+        {
+            vector<string> ts;
+            auto exec = gPortsOrch->getExecutor(tableName);
+            auto consumer = static_cast<Consumer *>(exec);
+            consumer->dumpPendingTasks(ts);
+            ASSERT_TRUE(ts.empty()) << "LAG setup should complete: " << tableName;
+        }
+        {
+            Port port;
+            ASSERT_TRUE(gPortsOrch->getPort(testPort, port));
+            ASSERT_NE(port.m_lag_member_id, SAI_NULL_OBJECT_ID) << "Port should be a LAG member before VLAN add";
+        }
 
         vlanTable.set("Vlan50",
             {

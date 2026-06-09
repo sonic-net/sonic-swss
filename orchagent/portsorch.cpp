@@ -5969,7 +5969,6 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
         vlan_alias = VLAN_PREFIX + to_string(vlan_id);
         string op = kfvOp(t);
 
-        assert(m_portList.find(vlan_alias) != m_portList.end());
         Port vlan, port;
 
         /* When VLAN member is to be created before VLAN is created */
