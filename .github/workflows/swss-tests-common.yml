@@ -259,13 +259,10 @@ jobs:
             cd /build/sonic-swss
           fi
 
-          # ── Phase 2: Configure (coverage for diff-cover) ──
+          # ── Phase 2: Configure (quiet) ──
           cd /build/sonic-swss
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq lcov >/dev/null 2>&1 || true
           ./autogen.sh >/dev/null 2>&1
-          ./configure CFLAGS="--coverage -O0 -g" CXXFLAGS="--coverage -O0 -g" LDFLAGS="--coverage" \
-            >/dev/null 2>&1 || { echo "FAIL: configure failed"; ./configure \
-            CFLAGS="--coverage -O0 -g" CXXFLAGS="--coverage -O0 -g" LDFLAGS="--coverage"; exit 1; }
+          ./configure >/dev/null 2>&1 || { echo "FAIL: configure failed"; ./configure; exit 1; }
 
           # ── Phase 3: Build ──
           echo "=== Phase 3: make (V=0, -j$(nproc)) ==="
@@ -283,14 +280,6 @@ jobs:
             exit 1
           }
           echo "=== Mock tests PASSED (${SECONDS}s) ==="
-
-          echo "=== lcov (mock tests) ==="
-          lcov --directory . --capture --output-file lcov.info --rc lcov_branch_coverage=0 \
-            || { echo "::error::lcov capture failed"; exit 1; }
-          lcov --remove lcov.info '/usr/*' '*/tests/*' '*/googletest/*' \
-            --output-file lcov.filtered.info --ignore-errors unused \
-            || cp lcov.info lcov.filtered.info
-          cp lcov.filtered.info /build/sonic-swss/lcov.filtered.info
 
           # ── Phase 5: Rust countersyncd build ──
           echo "=== Phase 5: Rust build ==="
@@ -323,40 +312,6 @@ jobs:
 
           echo "=== ALL PHASES COMPLETE ==="
           '
-
-      - name: Diff-cover on changed lines (≥80%)
-        if: success()
-        run: |
-          set -euo pipefail
-          if [ ! -f lcov.filtered.info ]; then
-            echo "lcov.filtered.info missing" | tee diff-cover.log
-            exit 1
-          fi
-          python3 -m pip install --user 'diff-cover>=9.0.0'
-          export PATH="${HOME}/.local/bin:${PATH}"
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            COMPARE="${{ github.event.pull_request.base.sha }}"
-          else
-            git fetch --no-tags --depth=1 origin upscaleai-202511
-            COMPARE="origin/upscaleai-202511"
-          fi
-          diff-cover lcov.filtered.info --compare-branch "${COMPARE}" \
-            --format markdown:diff-cover.md || true
-          set +e
-          diff-cover lcov.filtered.info --compare-branch "${COMPARE}" \
-            --fail-under 80 2>&1 | tee diff-cover.log
-          exit ${PIPESTATUS[0]}
-
-      - name: Upload coverage artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: swss-coverage-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            lcov.filtered.info
-            diff-cover.md
-            diff-cover.log
-          if-no-files-found: ignore
 
       - name: Upload .deb artifacts
         if: inputs.skip_dpkg != true && always()

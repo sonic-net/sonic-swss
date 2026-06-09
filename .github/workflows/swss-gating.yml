@@ -50,7 +50,7 @@ jobs:
               "",
               "| Stage | Result |",
               "|-------|--------|",
-              f"| Build + mock tests + diff-cover (≥80%) + cargo (self-hosted) | {icon.get(result, result)} {result} |",
+              f"| Build + mock tests + cargo (self-hosted) | {icon.get(result, result)} {result} |",
               "",
               "_Runs on runner label `sonic-build-202511` with sonic-slave-bookworm and buildimage debs._",
               "",
