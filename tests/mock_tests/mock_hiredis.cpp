@@ -44,12 +44,13 @@ static redisReply *duplicateRedisReply(const redisReply *src)
         dst->len = src->len;
     }
 
-    dst->elements = src->elements;
+    dst->elements = 0;
     if (src->elements > 0 && src->element != nullptr)
     {
         dst->element = (redisReply **)calloc(src->elements, sizeof(redisReply *));
         if (dst->element != nullptr)
         {
+            dst->elements = src->elements;
             for (size_t i = 0; i < src->elements; i++)
             {
                 dst->element[i] = duplicateRedisReply(src->element[i]);
