@@ -2059,9 +2059,10 @@ bool BufferMgrDynamic::isSharedHeadroomPoolEnabledInSai()
 
 task_process_status BufferMgrDynamic::waitWithRetry(const function<bool()> &checker, const string &description)
 {
-    SWSS_LOG_NOTICE("Checking SAI sync status: %d checks (up to ~%d s) for %s",
+    const unsigned int maxWaitSec = (BUFFER_PROFILE_SYNC_MAX_CHECKS - 1) * m_saiSyncPollIntervalSec;
+    SWSS_LOG_NOTICE("Checking SAI sync status: %d checks (up to ~%u s) for %s",
                     BUFFER_PROFILE_SYNC_MAX_CHECKS,
-                    BUFFER_PROFILE_SYNC_MAX_CHECKS - 1,
+                    maxWaitSec,
                     description.c_str());
 
     if (checker())
