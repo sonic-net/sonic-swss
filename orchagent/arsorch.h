@@ -61,6 +61,13 @@ struct ArsObjectEntry
     // continue to bind — operators who explicitly write admin_state=down
     // now cause unbinding, which matches intent.
     bool            enabled  = true;
+    // Mellanox SAI rejects set_ars_attribute with OBJECT_IN_USE once any
+    // NHG references the object.  Since NHGs bind almost immediately after
+    // creation (via doArsInterfaceTask → bindArsToExistingNhgs), we set
+    // this flag right after create_ars/deferred-reuse so that all
+    // subsequent CONFIG_DB updates are cached locally.  The cached values
+    // take effect on the next delete/re-create cycle.
+    bool            saiSetBlocked = false;
     std::string     profileName;
     std::string     portProfileName;
 };
@@ -139,6 +146,13 @@ private:
     bool unbindArsFromLag(const std::string &lagName);
 
     bool setPortArsEnable(const std::string &portName, bool enable);
+
+    // Orchestrated RIF migration: when setPortArsEnable fails because the
+    // port already has a RIF, this method tears down neighbors/NHs/RIF via
+    // proper orch coordination, enables ARS on the bare port, then rebuilds
+    // the RIF and all dependent objects. Uses make-before-break for NHGs
+    // to minimize forwarding disruption.
+    bool migratePortToArs(const std::string &portName);
 
     // Wholesale enable/disable of the ARS data-plane state. Called from the
     // global ARS|GLOBAL admin_state transitions so that a toggle to "down"
@@ -241,4 +255,31 @@ private:
     // reliably delete the row later on NHG removal (via forgetNhg) without
     // having to reconstruct the key.
     std::unordered_map<sai_object_id_t, std::string> m_nhgStateKeys;
+
+    // ── Batch migration: defer NHG member re-addition ──────────────────
+    //
+    // When ports are migrated across separate consumer events (the typical
+    // case: each ARS_INTERFACES entry arrives ~1s apart), re-adding a
+    // port's NHG member immediately would create a mixed AR / non-AR
+    // member state in the NHG. Mellanox SDK programs the ECMP with a
+    // vport-based next-hop (AR) alongside port-based next-hops (non-AR),
+    // which triggers an asynchronous hardware error and
+    // switch_shutdown_request ~15 ms later.
+    //
+    // Fix: migratePortToArs always defers Phase 10/11 when
+    // m_batchMigrationMode is set, appending to m_deferredNhgMembers.
+    // After each doArsInterfaceTask call, processDeferredNhgMembers()
+    // checks whether ALL remaining (non-deferred) members of the NHG
+    // belong to ports that are already ARS-enabled. If any non-AR member
+    // port remains, the deferred members stay queued for the next call.
+    // Only when the NHG is fully AR-ready (empty or all-AR) are members
+    // flushed — bind ARS first, then add all members atomically.
+    struct DeferredNhgMember {
+        NextHopGroupKey nhgKey;
+        NextHopKey      nhKey;
+        uint32_t        seqId;
+    };
+    std::vector<DeferredNhgMember> m_deferredNhgMembers;
+    bool m_batchMigrationMode = false;
+    void processDeferredNhgMembers();
 };

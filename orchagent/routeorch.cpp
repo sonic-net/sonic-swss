@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <time.h>
+#include <unistd.h>
 #include <inttypes.h>
 #include <algorithm>
 #include "routeorch.h"
@@ -1606,6 +1607,24 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
 
     auto nhgType = m_switchOrch->getEcmpNhgType();
 
+    // On Mellanox, ARS binding is write-once: it MUST be set at NHG creation
+    // time. If ARS is enabled and an ARS object can be resolved for this NHG,
+    // include SAI_NEXT_HOP_GROUP_ATTR_ARS_OBJECT_ID in the create attributes.
+    sai_object_id_t createTimeArsOid = SAI_NULL_OBJECT_ID;
+    if (gArsOrch && gArsOrch->isArsEnabled())
+    {
+        createTimeArsOid = gArsOrch->resolveArsForNhg(SAI_NULL_OBJECT_ID, nexthops);
+        if (createTimeArsOid != SAI_NULL_OBJECT_ID)
+        {
+            nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_ARS_OBJECT_ID;
+            nhg_attr.value.oid = createTimeArsOid;
+            nhg_attrs.push_back(nhg_attr);
+            SWSS_LOG_NOTICE("ARS: creating NHG %s with ARS 0x%" PRIx64
+                            " at creation time (Mellanox write-once)",
+                            nexthops.to_string().c_str(), createTimeArsOid);
+        }
+    }
+
     sai_object_id_t next_hop_group_id;
     sai_status_t status = sai_next_hop_group_api->create_next_hop_group(&next_hop_group_id,
                                                                         gSwitchId,
@@ -1628,7 +1647,9 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
 
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
 
-    if (gArsOrch && gArsOrch->isArsEnabled())
+    // ARS binding was already done at creation time if createTimeArsOid is set.
+    // Only attempt post-creation bind if it wasn't set at creation.
+    if (gArsOrch && gArsOrch->isArsEnabled() && createTimeArsOid == SAI_NULL_OBJECT_ID)
     {
         auto arsOid = gArsOrch->resolveArsForNhg(next_hop_group_id, nexthops);
         if (arsOid != SAI_NULL_OBJECT_ID)
@@ -1962,6 +1983,10 @@ void RouteOrch::bindArsToExistingNhgs()
     if (!gArsOrch || !gArsOrch->isArsEnabled())
         return;
 
+    // Collect NHGs that need ARS binding into a separate list because
+    // recreateNhgsWithArs may modify m_syncdNextHopGroups.
+    vector<pair<NextHopGroupKey, sai_object_id_t>> nhgsNeedingArs;
+
     for (auto &entry : m_syncdNextHopGroups)
     {
         sai_object_id_t nhgOid = entry.second.next_hop_group_id;
@@ -1976,6 +2001,28 @@ void RouteOrch::bindArsToExistingNhgs()
                 SWSS_LOG_NOTICE("ARS: retroactively bound ARS to NHG %s",
                                 entry.first.to_string().c_str());
             }
+            else
+            {
+                nhgsNeedingArs.push_back({entry.first, nhgOid});
+            }
+        }
+    }
+
+    // For NHGs where bindArsToNhg failed (Mellanox write-once: NHG has
+    // members), fall back to make-before-break NHG recreation. Find a
+    // port name from the NHG key to drive recreateNhgsWithArs.
+    for (auto &nhgInfo : nhgsNeedingArs)
+    {
+        const NextHopGroupKey &nhgKey = nhgInfo.first;
+        auto nhSet = nhgKey.getNextHops();
+        if (!nhSet.empty())
+        {
+            const string &portName = nhSet.begin()->alias;
+            SWSS_LOG_NOTICE("ARS: falling back to make-before-break NHG "
+                            "recreation for NHG %s via port %s",
+                            nhgKey.to_string().c_str(), portName.c_str());
+            recreateNhgsWithArs(portName);
+            break;
         }
     }
 }
@@ -1987,18 +2034,180 @@ void RouteOrch::unbindArsFromAllNhgs()
     if (!gArsOrch)
         return;
 
+    // Collect OIDs first because unbindArsFromNhg→forceUnbindArsFromNhg
+    // may erase from m_syncdNextHopGroups (invalidating iterators).
+    vector<sai_object_id_t> nhgOids;
     for (auto &entry : m_syncdNextHopGroups)
     {
-        sai_object_id_t nhgOid = entry.second.next_hop_group_id;
-        if (nhgOid == SAI_NULL_OBJECT_ID)
-            continue;
+        if (entry.second.next_hop_group_id != SAI_NULL_OBJECT_ID)
+            nhgOids.push_back(entry.second.next_hop_group_id);
+    }
 
+    for (auto nhgOid : nhgOids)
+    {
         if (gArsOrch->unbindArsFromNhg(nhgOid))
         {
-            SWSS_LOG_NOTICE("ARS: unbound ARS from NHG %s",
-                            entry.first.to_string().c_str());
+            SWSS_LOG_NOTICE("ARS: unbound ARS from NHG (oid 0x%" PRIx64 ")",
+                            nhgOid);
         }
     }
+}
+
+bool RouteOrch::forceUnbindArsFromNhg(sai_object_id_t nhgOid)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto it = m_syncdNextHopGroups.begin(); it != m_syncdNextHopGroups.end(); ++it)
+    {
+        if (it->second.next_hop_group_id != nhgOid)
+            continue;
+
+        const NextHopGroupKey &nhgKey = it->first;
+
+        SWSS_LOG_NOTICE("ARS: force-unbinding ARS from NHG %s (oid 0x%" PRIx64
+                        ") by DELETING the NHG (Mellanox cannot set_attribute "
+                        "ARS=NULL — write-once restriction)",
+                        nhgKey.to_string().c_str(), nhgOid);
+
+        // Step 1: Remove all NHG members
+        uint32_t removedCount = 0;
+        for (auto &mem : it->second.nhopgroup_members)
+        {
+            sai_status_t st = sai_next_hop_group_api->remove_next_hop_group_member(
+                mem.second.next_hop_id);
+            if (st == SAI_STATUS_SUCCESS)
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+                removedCount++;
+            }
+            else
+            {
+                SWSS_LOG_ERROR("ARS: force-unbind failed to remove member %s "
+                               "(oid 0x%" PRIx64 ") rc=%d",
+                               mem.first.to_string().c_str(),
+                               mem.second.next_hop_id, st);
+            }
+        }
+        SWSS_LOG_NOTICE("ARS: force-unbind removed %u/%zu members from NHG 0x%" PRIx64,
+                        removedCount, it->second.nhopgroup_members.size(), nhgOid);
+
+        // Step 2: Remove routes that reference this NHG from SAI and orchagent
+        // map. This both frees SAI dependencies and ensures re-enablement
+        // treats routes as new (clean make-before-break on fresh NHGs).
+        //
+        // First pass: match by nhg_key (fast, covers normal case).
+        // Second pass: match by NHG OID (catches stale references left by
+        // the ordered-ECMP reuse path where the route's nhg_key was updated
+        // to a new key but the underlying SAI NHG OID was never removed).
+        size_t routesRemoved = 0;
+        for (auto &vrfRoutes : m_syncdRoutes)
+        {
+            vector<IpPrefix> toErase;
+            for (auto &routeEntry : vrfRoutes.second)
+            {
+                bool match = false;
+                if (routeEntry.second.nhg_key == nhgKey)
+                {
+                    match = true;
+                }
+                else
+                {
+                    auto nhgIt = m_syncdNextHopGroups.find(routeEntry.second.nhg_key);
+                    if (nhgIt != m_syncdNextHopGroups.end() &&
+                        nhgIt->second.next_hop_group_id == nhgOid)
+                    {
+                        match = true;
+                        SWSS_LOG_NOTICE("ARS: force-unbind found route %s "
+                                        "referencing NHG 0x%" PRIx64
+                                        " via key %s (OID-based fallback)",
+                                        routeEntry.first.to_string().c_str(),
+                                        nhgOid,
+                                        routeEntry.second.nhg_key.to_string().c_str());
+                    }
+                }
+
+                if (!match)
+                    continue;
+
+                sai_route_entry_t sai_route;
+                sai_route.switch_id = gSwitchId;
+                sai_route.vr_id = vrfRoutes.first;
+                copy(sai_route.destination, routeEntry.first);
+
+                sai_status_t st = sai_route_api->remove_route_entry(&sai_route);
+                if (st == SAI_STATUS_SUCCESS)
+                {
+                    routesRemoved++;
+                    toErase.push_back(routeEntry.first);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("ARS: force-unbind failed to remove route %s "
+                                   "rc=%d",
+                                   routeEntry.first.to_string().c_str(), st);
+                }
+            }
+            for (auto &prefix : toErase)
+                vrfRoutes.second.erase(prefix);
+        }
+        SWSS_LOG_NOTICE("ARS: force-unbind removed %zu routes for NHG 0x%" PRIx64,
+                        routesRemoved, nhgOid);
+
+        // Step 3: Delete the NHG from SAI. SAI internally releases
+        // the ARS object reference (ref_count decreases).
+        if (gArsOrch)
+            gArsOrch->forgetNhg(nhgOid);
+
+        sai_status_t rmSt = sai_next_hop_group_api->remove_next_hop_group(nhgOid);
+        if (rmSt != SAI_STATUS_SUCCESS)
+        {
+            // Mellanox SAI can transiently return OBJECT_IN_USE if the ASIC
+            // hasn't finished draining forwarding-plane references after the
+            // route/member removals above. Retry once after a brief yield.
+            SWSS_LOG_NOTICE("ARS: remove_next_hop_group(0x%" PRIx64
+                           ") returned %s — retrying after yield",
+                           nhgOid, sai_serialize_status(rmSt).c_str());
+            usleep(50000); // 50ms
+            rmSt = sai_next_hop_group_api->remove_next_hop_group(nhgOid);
+        }
+        if (rmSt != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("ARS: force-unbind remove_next_hop_group(0x%" PRIx64
+                           ") FAILED rc=%d — NHG leaked in SAI. Erasing from "
+                           "orchagent tracking to prevent repeated failed "
+                           "cleanup attempts that can cascade into SDK shutdown.",
+                           nhgOid, rmSt);
+            m_syncdNextHopGroups.erase(it);
+            return false;
+        }
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+
+        // Step 4: Clean up orchagent maps
+        SWSS_LOG_NOTICE("ARS: force-unbind COMPLETE for NHG %s: deleted NHG "
+                        "0x%" PRIx64 " (members_removed=%u routes_removed=%zu)",
+                        nhgKey.to_string().c_str(), nhgOid,
+                        removedCount, routesRemoved);
+        m_syncdNextHopGroups.erase(it);
+
+        // Step 5: Re-trigger route processing for deleted routes.
+        // The routes still exist in APPL_DB (FRR hasn't changed them), but
+        // we just removed them from m_syncdRoutes and ASIC_DB. Without
+        // re-injection, routeOrch will never re-process them because no new
+        // consumer event arrives from APPL_DB.  Use addExistingData() to
+        // replay the APPL_DB entries into the consumer's todo queue so
+        // routeOrch re-programs them in the next doTask cycle.
+        if (routesRemoved > 0)
+        {
+            size_t replayed = addExistingData(APP_ROUTE_TABLE_NAME);
+            SWSS_LOG_NOTICE("ARS: force-unbind replayed %zu APPL_DB route "
+                            "entries for re-processing after deleting %zu "
+                            "routes from ASIC_DB",
+                            replayed, routesRemoved);
+        }
+
+        return true;
+    }
+    return false;
 }
 
 void RouteOrch::rebindArsForAllNhgs()
@@ -2008,31 +2217,449 @@ void RouteOrch::rebindArsForAllNhgs()
     if (!gArsOrch)
         return;
 
+    // Collect keys first because unbindArsFromNhg→forceUnbindArsFromNhg
+    // may erase from m_syncdNextHopGroups (invalidating iterators).
+    vector<pair<NextHopGroupKey, sai_object_id_t>> nhgList;
     for (auto &entry : m_syncdNextHopGroups)
     {
-        sai_object_id_t nhgOid = entry.second.next_hop_group_id;
-        if (nhgOid == SAI_NULL_OBJECT_ID)
+        if (entry.second.next_hop_group_id != SAI_NULL_OBJECT_ID)
+            nhgList.push_back({entry.first, entry.second.next_hop_group_id});
+    }
+
+    for (size_t i = 0; i < nhgList.size(); ++i)
+    {
+        const NextHopGroupKey &nhgKey = nhgList[i].first;
+        sai_object_id_t nhgOid = nhgList[i].second;
+
+        // NHG may have been erased by a previous forceUnbindArsFromNhg
+        if (m_syncdNextHopGroups.find(nhgKey) == m_syncdNextHopGroups.end())
             continue;
 
-        // Clear any existing binding first, then let the resolver decide
-        // whether a new one applies. This way admin_state=down, profile
-        // rebind, and interface remapping all converge through the same
-        // path.
         gArsOrch->unbindArsFromNhg(nhgOid);
 
         if (!gArsOrch->isArsEnabled())
             continue;
 
-        auto arsOid = gArsOrch->resolveArsForNhg(nhgOid, entry.first);
+        auto arsOid = gArsOrch->resolveArsForNhg(nhgOid, nhgKey);
         if (arsOid != SAI_NULL_OBJECT_ID)
         {
             if (gArsOrch->bindArsToNhg(nhgOid, arsOid))
             {
                 SWSS_LOG_NOTICE("ARS: rebound ARS to NHG %s",
-                                entry.first.to_string().c_str());
+                                nhgKey.to_string().c_str());
             }
         }
     }
+}
+
+void RouteOrch::recreateNhgsWithArs(const string &portName)
+{
+    SWSS_LOG_ENTER();
+
+    if (!gArsOrch || !gArsOrch->isArsEnabled())
+    {
+        SWSS_LOG_NOTICE("ARS-NHG-RECREATE[%s]: skipped — ARS not enabled or ArsOrch null",
+                        portName.c_str());
+        return;
+    }
+
+    SWSS_LOG_NOTICE("ARS-NHG-RECREATE[%s]: scanning %zu NHGs for affected entries",
+                    portName.c_str(), m_syncdNextHopGroups.size());
+
+    vector<NextHopGroupKey> nhgsToRecreate;
+
+    for (auto &entry : m_syncdNextHopGroups)
+    {
+        if (entry.second.next_hop_group_id == SAI_NULL_OBJECT_ID)
+            continue;
+
+        set<NextHopKey> nhSet = entry.first.getNextHops();
+        bool hasPortMember = false;
+        for (auto &nh : nhSet)
+        {
+            if (nh.alias == portName)
+            {
+                hasPortMember = true;
+                break;
+            }
+        }
+
+        if (!hasPortMember)
+            continue;
+
+        auto arsOid = gArsOrch->resolveArsForNhg(entry.second.next_hop_group_id, entry.first);
+        if (arsOid == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_INFO("ARS-NHG-RECREATE[%s]: NHG %s contains port but "
+                          "resolveArsForNhg returned NULL — no ARS object applicable",
+                          portName.c_str(), entry.first.to_string().c_str());
+            continue;
+        }
+
+        // Try in-place bind first
+        if (gArsOrch->bindArsToNhg(entry.second.next_hop_group_id, arsOid))
+        {
+            SWSS_LOG_NOTICE("ARS-NHG-RECREATE[%s]: in-place bind SUCCESS for "
+                            "NHG %s (nhg_oid=0x%" PRIx64 " ars_oid=0x%" PRIx64 ") "
+                            "— no make-before-break needed",
+                            portName.c_str(), entry.first.to_string().c_str(),
+                            entry.second.next_hop_group_id, arsOid);
+            continue;
+        }
+
+        SWSS_LOG_INFO("ARS-NHG-RECREATE[%s]: NHG %s (oid=0x%" PRIx64
+                      " members=%u ref_count=%d) needs make-before-break",
+                      portName.c_str(), entry.first.to_string().c_str(),
+                      entry.second.next_hop_group_id,
+                      entry.second.nh_member_install_count,
+                      entry.second.ref_count);
+        nhgsToRecreate.push_back(entry.first);
+    }
+
+    if (nhgsToRecreate.empty())
+    {
+        SWSS_LOG_NOTICE("ARS-NHG-RECREATE[%s]: no NHGs require recreation",
+                        portName.c_str());
+        return;
+    }
+
+    SWSS_LOG_NOTICE("ARS-NHG-RECREATE[%s]: %zu NHGs queued for make-before-break",
+                    portName.c_str(), nhgsToRecreate.size());
+
+    size_t nhgSuccess = 0, nhgFail = 0;
+    for (auto &nhgKey : nhgsToRecreate)
+    {
+        auto nhgIt = m_syncdNextHopGroups.find(nhgKey);
+        if (nhgIt == m_syncdNextHopGroups.end())
+            continue;
+
+        sai_object_id_t oldNhgOid = nhgIt->second.next_hop_group_id;
+        if (oldNhgOid == SAI_NULL_OBJECT_ID)
+            continue;
+
+        SWSS_LOG_NOTICE("ARS-NHG-RECREATE[%s]: --- BEGIN NHG %s (old_oid=0x%" PRIx64
+                        " members=%u ref_count=%d) ---",
+                        portName.c_str(), nhgKey.to_string().c_str(),
+                        oldNhgOid, nhgIt->second.nh_member_install_count,
+                        nhgIt->second.ref_count);
+
+        // Step 1+2: Create new NHG with ARS bound at creation time.
+        // On Mellanox the NHG-ARS binding is write-once and MUST be supplied
+        // in the create_next_hop_group attribute list. A post-creation
+        // set_next_hop_group_attribute(ARS) is rejected/unreliable, and
+        // ArsOrch::bindArsToNhg() short-circuits (returns true without acting)
+        // for an OID not yet present in m_syncdNextHopGroups — which is exactly
+        // the case for this freshly-created NHG. Resolve the ARS object up
+        // front (resolveArsForNhg uses the key, not the OID) and pass
+        // SAI_NEXT_HOP_GROUP_ATTR_ARS_OBJECT_ID so the SDK programs the ECMP
+        // as AR-capable from birth.
+        auto arsOid = gArsOrch->resolveArsForNhg(oldNhgOid, nhgKey);
+
+        vector<sai_attribute_t> nhg_attrs;
+        sai_attribute_t nhg_attr;
+        nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
+        nhg_attr.value.s32 = m_switchOrch->getEcmpNhgType();
+        nhg_attrs.push_back(nhg_attr);
+
+        if (arsOid != SAI_NULL_OBJECT_ID)
+        {
+            nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_ARS_OBJECT_ID;
+            nhg_attr.value.oid = arsOid;
+            nhg_attrs.push_back(nhg_attr);
+        }
+
+        sai_object_id_t newNhgOid;
+        sai_status_t status = sai_next_hop_group_api->create_next_hop_group(
+            &newNhgOid, gSwitchId, (uint32_t)nhg_attrs.size(), nhg_attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("ARS-NHG-RECREATE[%s]: Step1 FAILED - "
+                           "create_next_hop_group (ars=0x%" PRIx64 ") SAI rc=%d "
+                           "for NHG %s. Possible resource exhaustion "
+                           "(current count=%u max=%u).",
+                           portName.c_str(), arsOid, status,
+                           nhgKey.to_string().c_str(),
+                           m_nextHopGroupCount, m_maxNextHopGroupCount);
+            nhgFail++;
+            continue;
+        }
+
+        m_nextHopGroupCount++;
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+
+        SWSS_LOG_INFO("ARS-NHG-RECREATE[%s]: Step1 created NHG: "
+                      "new_oid=0x%" PRIx64 " type=%d ars=0x%" PRIx64,
+                      portName.c_str(), newNhgOid, nhg_attr.value.s32, arsOid);
+
+        // Step 3: Add members to new NHG
+        set<NextHopKey> nhSet = nhgKey.getNextHops();
+        NextHopGroupMembers newMembers;
+        bool memberFailure = false;
+        uint32_t seqIdx = 1;
+
+        for (auto &nhKey : nhSet)
+        {
+            if (!m_neighOrch->hasNextHop(nhKey))
+            {
+                SWSS_LOG_INFO("ARS-NHG-RECREATE[%s]: Step3 skipping NH %s — "
+                              "not in NeighOrch (down/unresolved?)",
+                              portName.c_str(), nhKey.to_string().c_str());
+                continue;
+            }
+
+            sai_object_id_t nhOid = m_neighOrch->getNextHopId(nhKey);
+            if (nhOid == SAI_NULL_OBJECT_ID)
+            {
+                SWSS_LOG_WARN("ARS-NHG-RECREATE[%s]: Step3 NH %s exists but "
+                              "OID is NULL — NH creation likely failed earlier",
+                              portName.c_str(), nhKey.to_string().c_str());
+                continue;
+            }
+
+            vector<sai_attribute_t> member_attrs;
+            sai_attribute_t m_attr;
+
+            m_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID;
+            m_attr.value.oid = newNhgOid;
+            member_attrs.push_back(m_attr);
+
+            m_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
+            m_attr.value.oid = nhOid;
+            member_attrs.push_back(m_attr);
+
+            if (m_switchOrch->checkOrderedEcmpEnable() &&
+                m_switchOrch->getEcmpNhgType() == SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP)
+            {
+                m_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID;
+                m_attr.value.u32 = seqIdx;
+                member_attrs.push_back(m_attr);
+            }
+
+            if (nhKey.weight)
+            {
+                m_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT;
+                m_attr.value.u32 = nhKey.weight;
+                member_attrs.push_back(m_attr);
+            }
+
+            sai_object_id_t newMemberOid;
+            status = sai_next_hop_group_api->create_next_hop_group_member(
+                &newMemberOid, gSwitchId,
+                (uint32_t)member_attrs.size(), member_attrs.data());
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("ARS-NHG-RECREATE[%s]: Step3 FAILED - "
+                               "create_member(nhg=0x%" PRIx64 " nh=0x%" PRIx64
+                               " nh_key=%s seq=%u weight=%u) SAI rc=%d. "
+                               "Rolling back new NHG.",
+                               portName.c_str(), newNhgOid, nhOid,
+                               nhKey.to_string().c_str(), seqIdx,
+                               nhKey.weight, status);
+                memberFailure = true;
+                break;
+            }
+
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+
+            NextHopGroupMemberEntry memberEntry;
+            memberEntry.next_hop_id = newMemberOid;
+            memberEntry.seq_id = seqIdx;
+            newMembers[nhKey] = memberEntry;
+            seqIdx++;
+        }
+
+        if (memberFailure)
+        {
+            SWSS_LOG_ERROR("ARS-NHG-RECREATE[%s]: Step3 rolling back %zu members "
+                           "and destroying new NHG 0x%" PRIx64,
+                           portName.c_str(), newMembers.size(), newNhgOid);
+            for (auto &mem : newMembers)
+            {
+                sai_next_hop_group_api->remove_next_hop_group_member(mem.second.next_hop_id);
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+            }
+            gArsOrch->forgetNhg(newNhgOid);
+            sai_next_hop_group_api->remove_next_hop_group(newNhgOid);
+            m_nextHopGroupCount--;
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+            nhgFail++;
+            continue;
+        }
+
+        SWSS_LOG_INFO("ARS-NHG-RECREATE[%s]: Step3 added %zu members to new NHG 0x%" PRIx64,
+                      portName.c_str(), newMembers.size(), newNhgOid);
+
+        // Verify new NHG has at least as many members as the old one
+        if (newMembers.size() < nhgIt->second.nh_member_install_count)
+        {
+            SWSS_LOG_ERROR("ARS-NHG-RECREATE[%s]: Step3 new NHG has fewer members "
+                           "(%zu) than old NHG (%u). Aborting cutover to prevent "
+                           "traffic loss. Cleaning up new NHG 0x%" PRIx64,
+                           portName.c_str(), newMembers.size(),
+                           nhgIt->second.nh_member_install_count, newNhgOid);
+            for (auto &mem : newMembers)
+            {
+                sai_next_hop_group_api->remove_next_hop_group_member(mem.second.next_hop_id);
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+            }
+            gArsOrch->forgetNhg(newNhgOid);
+            sai_next_hop_group_api->remove_next_hop_group(newNhgOid);
+            m_nextHopGroupCount--;
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+            nhgFail++;
+            continue;
+        }
+
+        // Step 4: Repoint all routes from old NHG to new NHG
+        sai_attribute_t route_attr;
+        route_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+        route_attr.value.oid = newNhgOid;
+
+        size_t routesRepointed = 0;
+        bool repointFailed = false;
+        vector<sai_route_entry_t> repointedRoutes;
+
+        for (auto &vrfRoutes : m_syncdRoutes)
+        {
+            if (repointFailed)
+                break;
+            for (auto &routeEntry : vrfRoutes.second)
+            {
+                if (routeEntry.second.nhg_key != nhgKey)
+                    continue;
+                if (!routeEntry.second.nhg_index.empty())
+                    continue;
+
+                sai_route_entry_t sai_route;
+                sai_route.switch_id = gSwitchId;
+                sai_route.vr_id = vrfRoutes.first;
+                copy(sai_route.destination, routeEntry.first);
+
+                status = sai_route_api->set_route_entry_attribute(&sai_route, &route_attr);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("ARS-NHG-RECREATE[%s]: Step4 FAILED to repoint "
+                                   "route %s vrf=0x%" PRIx64 " from old_nhg=0x%" PRIx64
+                                   " to new_nhg=0x%" PRIx64 " SAI rc=%d — "
+                                   "aborting NHG recreation and rolling back",
+                                   portName.c_str(),
+                                   routeEntry.first.to_string().c_str(),
+                                   vrfRoutes.first, oldNhgOid, newNhgOid, status);
+                    repointFailed = true;
+                    break;
+                }
+                else
+                {
+                    routesRepointed++;
+                    repointedRoutes.push_back(sai_route);
+                }
+            }
+        }
+
+        if (repointFailed)
+        {
+            SWSS_LOG_ERROR("ARS-NHG-RECREATE[%s]: Step4 ROLLBACK — reverting %zu "
+                           "already-repointed routes back to old_nhg=0x%" PRIx64
+                           " and destroying new_nhg=0x%" PRIx64,
+                           portName.c_str(), repointedRoutes.size(),
+                           oldNhgOid, newNhgOid);
+
+            bool rollbackIncomplete = false;
+            route_attr.value.oid = oldNhgOid;
+            for (auto &sai_route : repointedRoutes)
+            {
+                sai_status_t rb_st = sai_route_api->set_route_entry_attribute(
+                    &sai_route, &route_attr);
+                if (rb_st != SAI_STATUS_SUCCESS)
+                {
+                    rollbackIncomplete = true;
+                    SWSS_LOG_ERROR("ARS-NHG-RECREATE[%s]: Step4 ROLLBACK FAILED — "
+                                   "could not revert route back to old NHG, "
+                                   "SAI rc=%d. Route still references new_nhg=0x%" PRIx64,
+                                   portName.c_str(), rb_st, newNhgOid);
+                }
+            }
+
+            if (rollbackIncomplete)
+            {
+                SWSS_LOG_ERROR("ARS-NHG-RECREATE[%s]: ROLLBACK INCOMPLETE — "
+                               "preserving BOTH old_nhg=0x%" PRIx64 " and "
+                               "new_nhg=0x%" PRIx64 " to avoid dangling references. "
+                               "Manual cleanup or config reload required.",
+                               portName.c_str(), oldNhgOid, newNhgOid);
+                nhgFail++;
+                return;
+            }
+
+            for (auto &mem : newMembers)
+            {
+                sai_next_hop_group_api->remove_next_hop_group_member(mem.second.next_hop_id);
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+            }
+            gArsOrch->forgetNhg(newNhgOid);
+            sai_next_hop_group_api->remove_next_hop_group(newNhgOid);
+            m_nextHopGroupCount--;
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+            nhgFail++;
+            continue;
+        }
+
+        SWSS_LOG_NOTICE("ARS-NHG-RECREATE[%s]: Step4 repointed %zu routes "
+                        "from old_nhg=0x%" PRIx64 " to new_nhg=0x%" PRIx64,
+                        portName.c_str(), routesRepointed,
+                        oldNhgOid, newNhgOid);
+
+        // Step 5: Delete old NHG members and NHG
+        auto &oldMembers = nhgIt->second.nhopgroup_members;
+        size_t oldMemberCount = oldMembers.size();
+        for (auto &mem : oldMembers)
+        {
+            status = sai_next_hop_group_api->remove_next_hop_group_member(mem.second.next_hop_id);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_WARN("ARS-NHG-RECREATE[%s]: Step5 failed to remove "
+                              "old member 0x%" PRIx64 " (nh=%s) from old_nhg=0x%" PRIx64
+                              " SAI rc=%d (non-fatal, NHG will be destroyed)",
+                              portName.c_str(), mem.second.next_hop_id,
+                              mem.first.to_string().c_str(), oldNhgOid, status);
+            }
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+        }
+
+        gArsOrch->forgetNhg(oldNhgOid);
+        status = sai_next_hop_group_api->remove_next_hop_group(oldNhgOid);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("ARS-NHG-RECREATE[%s]: Step5 FAILED to remove "
+                           "old NHG 0x%" PRIx64 " SAI rc=%d. "
+                           "Preserving both NHGs — old leaked in ASIC, new is active. "
+                           "Software state will track the new NHG.",
+                           portName.c_str(), oldNhgOid, status);
+        }
+        else
+        {
+            m_nextHopGroupCount--;
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+        }
+
+        // Step 6: Update orchagent state
+        nhgIt->second.next_hop_group_id = newNhgOid;
+        nhgIt->second.nhopgroup_members = newMembers;
+        nhgIt->second.nh_member_install_count = (uint32_t)newMembers.size();
+
+        SWSS_LOG_NOTICE("ARS-NHG-RECREATE[%s]: --- DONE NHG %s --- "
+                        "old_oid=0x%" PRIx64 " (had %zu members) → "
+                        "new_oid=0x%" PRIx64 " (%zu members, ARS bound) "
+                        "routes_repointed=%zu",
+                        portName.c_str(), nhgKey.to_string().c_str(),
+                        oldNhgOid, oldMemberCount,
+                        newNhgOid, newMembers.size(), routesRepointed);
+        nhgSuccess++;
+    }
+
+    SWSS_LOG_NOTICE("ARS-NHG-RECREATE[%s]: ===== COMPLETE ===== "
+                    "%zu/%zu NHGs recreated with ARS (%zu failed)",
+                    portName.c_str(), nhgSuccess, nhgsToRecreate.size(), nhgFail);
 }
 
 void RouteOrch::addNextHopRoute(const NextHopKey& nextHop, const RouteKey& routeKey)

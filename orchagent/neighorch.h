@@ -88,6 +88,11 @@ public:
     sai_object_id_t getLocalNextHopId(const NextHopKey&);
     int getNextHopRefCount(const NextHopKey&);
 
+    const NextHopTable& getSyncdNextHops() const { return m_syncdNextHops; }
+    NextHopTable& getSyncdNextHops() { return m_syncdNextHops; }
+    const NeighborTable& getSyncdNeighbors() const { return m_syncdNeighbors; }
+    NeighborTable& getSyncdNeighbors() { return m_syncdNeighbors; }
+
     void increaseNextHopRefCount(const NextHopKey&, uint32_t count = 1);
     void decreaseNextHopRefCount(const NextHopKey&, uint32_t count = 1);
 

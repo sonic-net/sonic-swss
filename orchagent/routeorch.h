@@ -244,11 +244,18 @@ public:
     // down so the data plane actually stops doing adaptive routing instead of
     // silently keeping stale SAI_NEXT_HOP_GROUP_ATTR_ARS_OBJECT_ID bindings.
     void unbindArsFromAllNhgs();
+    bool forceUnbindArsFromNhg(sai_object_id_t nhgOid);
     // Recompute the ARS binding for every known NHG. Used when the resolver's
     // output may have changed (e.g. an ARS_OBJECT.admin_state was toggled, a
     // profile was rebound, or an ARS_INTERFACE now references a different
     // object). Unbinds unconditionally, then re-resolves and re-binds.
     void rebindArsForAllNhgs();
+
+    // Make-before-break NHG recreation: for each NHG that contains a next hop
+    // on `portName`, create a new NHG with ARS binding, repoint all routes,
+    // then delete the old NHG. Called by ArsOrch::migratePortToArs() after the
+    // RIF has been migrated to AR type and next hops rebuilt with new OIDs.
+    void recreateNhgsWithArs(const std::string &portName);
 
     bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
     bool removeRoute(RouteBulkContext& ctx);
@@ -286,6 +293,7 @@ public:
     void decreaseNextHopGroupCount();
     bool checkNextHopGroupCount();
     const RouteTables& getSyncdRoutes() const { return m_syncdRoutes; }
+    NextHopGroupTable& getSyncdNextHopGroups() { return m_syncdNextHopGroups; }
 
 private:
     SwitchOrch *m_switchOrch;

@@ -4202,21 +4202,16 @@ void AclOrch::initDefaultTableTypes(const string& platform, const string& sub_pl
     // Placeholder for control plane tables
     addAclTableType(builder.withName(TABLE_TYPE_CTRLPLANE).build());
 
-    addAclTableType(
-        builder.withName(TABLE_TYPE_ARS)
-            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
-            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_LAG)
-            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_SWITCH)
-            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IP))
-            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IP))
-            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL))
-            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT))
-            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
-            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6))
-            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6))
-            .withAction(SAI_ACL_ACTION_TYPE_DISABLE_ARS_FORWARDING)
-            .build()
-    );
+    // TABLE_TYPE_ARS is intentionally NOT registered.  On Mellanox the
+    // ars-classifier-daemon programs ARS ACL classifier slots via the
+    // Mellanox SDK (sx_api_ar_default_classification_set etc.), not via
+    // SAI ACL tables.  Registering the type causes aclOrch to call
+    // create_acl_table with bind-point SWITCH + action
+    // DISABLE_ARS_FORWARDING, which the Mellanox SAI rejects with
+    // SAI_STATUS_INVALID_ATTR_VALUE_0, crashing syncd.
+    // CONFIG_DB entries with type=ARS or ARS_CLASSIFIER are silently
+    // skipped by aclOrch (getAclTableType returns nullptr) and handled
+    // entirely by the daemon.
 }
 
 void AclOrch::queryAclActionCapability()
