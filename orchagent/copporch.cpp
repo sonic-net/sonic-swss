@@ -24,12 +24,13 @@ extern "C" {
 using namespace swss;
 using namespace std;
 
-extern sai_hostif_api_t*    sai_hostif_api;
-extern sai_policer_api_t*   sai_policer_api;
-extern sai_switch_api_t*    sai_switch_api;
-extern sai_port_api_t*      sai_port_api;
-extern sai_scheduler_api_t* sai_scheduler_api;
-extern sai_queue_api_t*     sai_queue_api;
+extern sai_hostif_api_t*           sai_hostif_api;
+extern sai_policer_api_t*          sai_policer_api;
+extern sai_switch_api_t*           sai_switch_api;
+extern sai_port_api_t*             sai_port_api;
+extern sai_scheduler_api_t*        sai_scheduler_api;
+extern sai_scheduler_group_api_t*  sai_scheduler_group_api;
+extern sai_queue_api_t*            sai_queue_api;
 
 extern sai_object_id_t      gSwitchId;
 extern PortsOrch*           gPortsOrch;
@@ -222,44 +223,7 @@ void CoppOrch::applyCpuQueueShaper()
 {
     SWSS_LOG_ENTER();
 
-    // Capability query: SAI_QUEUE_ATTR_SCHEDULER_PROFILE_ID (set)
-    sai_attr_capability_t capability;
     sai_status_t status;
-
-    status = sai_query_attribute_capability(gSwitchId,
-                SAI_OBJECT_TYPE_QUEUE,
-                SAI_QUEUE_ATTR_SCHEDULER_PROFILE_ID,
-                &capability);
-    if (status != SAI_STATUS_SUCCESS || !capability.set_implemented)
-    {
-        SWSS_LOG_NOTICE("CPU queue shaper: SAI_QUEUE_ATTR_SCHEDULER_PROFILE_ID "
-                        "set not supported (status=%d), skipping", status);
-        return;
-    }
-
-    // Capability query: SAI_SCHEDULER_ATTR_METER_TYPE (create)
-    status = sai_query_attribute_capability(gSwitchId,
-                SAI_OBJECT_TYPE_SCHEDULER,
-                SAI_SCHEDULER_ATTR_METER_TYPE,
-                &capability);
-    if (status != SAI_STATUS_SUCCESS || !capability.create_implemented)
-    {
-        SWSS_LOG_NOTICE("CPU queue shaper: SAI_SCHEDULER_ATTR_METER_TYPE "
-                        "create not supported (status=%d), skipping", status);
-        return;
-    }
-
-    // Capability query: SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_RATE (create)
-    status = sai_query_attribute_capability(gSwitchId,
-                SAI_OBJECT_TYPE_SCHEDULER,
-                SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_RATE,
-                &capability);
-    if (status != SAI_STATUS_SUCCESS || !capability.create_implemented)
-    {
-        SWSS_LOG_NOTICE("CPU queue shaper: SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_RATE "
-                        "create not supported (status=%d), skipping", status);
-        return;
-    }
 
     // Get CPU port
     Port cpu;
@@ -314,6 +278,34 @@ void CoppOrch::applyCpuQueueShaper()
         return;
     }
 
+    // Determine apply method: scheduler groups (default) or queue-direct (fallback)
+    bool use_scheduler_groups = false;
+    vector<sai_object_id_t> sched_group_list;
+
+    attr.id = SAI_PORT_ATTR_QOS_NUMBER_OF_SCHEDULER_GROUPS;
+    status = sai_port_api->get_port_attribute(cpu.m_port_id, 1, &attr);
+    if (status == SAI_STATUS_SUCCESS && attr.value.u32 > 0)
+    {
+        uint32_t group_count = attr.value.u32;
+        sched_group_list.resize(group_count);
+
+        attr.id = SAI_PORT_ATTR_QOS_SCHEDULER_GROUP_LIST;
+        attr.value.objlist.count = group_count;
+        attr.value.objlist.list = sched_group_list.data();
+        status = sai_port_api->get_port_attribute(cpu.m_port_id, 1, &attr);
+        if (status == SAI_STATUS_SUCCESS)
+        {
+            use_scheduler_groups = true;
+            SWSS_LOG_NOTICE("CPU port has %u scheduler groups, using scheduler group path",
+                            group_count);
+        }
+    }
+
+    if (!use_scheduler_groups)
+    {
+        SWSS_LOG_NOTICE("No scheduler groups on CPU port, falling back to queue-direct path");
+    }
+
     // Apply to CPU queue 0 and queue 7 by direct index
     const uint32_t target_queues[] = {0, 7};
     for (auto qindex : target_queues)
@@ -325,12 +317,70 @@ void CoppOrch::applyCpuQueueShaper()
             continue;
         }
 
-        sai_attribute_t set_attr;
-        set_attr.id = SAI_QUEUE_ATTR_SCHEDULER_PROFILE_ID;
-        set_attr.value.oid = scheduler_id;
-        status = sai_queue_api->set_queue_attribute(queue_list[qindex], &set_attr);
-        SWSS_LOG_NOTICE("Applied 600 pps shaper to CPU queue %u, status:%d",
-                        qindex, status);
+        if (use_scheduler_groups)
+        {
+            // Find the scheduler group whose child list contains this queue
+            sai_object_id_t target_group = SAI_NULL_OBJECT_ID;
+            for (auto group_id : sched_group_list)
+            {
+                sai_attribute_t grp_attr;
+                grp_attr.id = SAI_SCHEDULER_GROUP_ATTR_CHILD_COUNT;
+                status = sai_scheduler_group_api->get_scheduler_group_attribute(
+                            group_id, 1, &grp_attr);
+                if (status != SAI_STATUS_SUCCESS || grp_attr.value.u32 == 0)
+                {
+                    continue;
+                }
+
+                uint32_t child_count = grp_attr.value.u32;
+                vector<sai_object_id_t> children(child_count);
+                grp_attr.id = SAI_SCHEDULER_GROUP_ATTR_CHILD_LIST;
+                grp_attr.value.objlist.count = child_count;
+                grp_attr.value.objlist.list = children.data();
+                status = sai_scheduler_group_api->get_scheduler_group_attribute(
+                            group_id, 1, &grp_attr);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    continue;
+                }
+
+                for (uint32_t c = 0; c < grp_attr.value.objlist.count; c++)
+                {
+                    if (children[c] == queue_list[qindex])
+                    {
+                        target_group = group_id;
+                        break;
+                    }
+                }
+                if (target_group != SAI_NULL_OBJECT_ID)
+                {
+                    break;
+                }
+            }
+
+            if (target_group == SAI_NULL_OBJECT_ID)
+            {
+                SWSS_LOG_WARN("No scheduler group found for CPU queue %u, skipping", qindex);
+                continue;
+            }
+
+            sai_attribute_t set_attr;
+            set_attr.id = SAI_SCHEDULER_GROUP_ATTR_SCHEDULER_PROFILE_ID;
+            set_attr.value.oid = scheduler_id;
+            status = sai_scheduler_group_api->set_scheduler_group_attribute(
+                        target_group, &set_attr);
+            SWSS_LOG_NOTICE("Applied 600 pps shaper to CPU queue %u via scheduler group, "
+                            "status:%d", qindex, status);
+        }
+        else
+        {
+            sai_attribute_t set_attr;
+            set_attr.id = SAI_QUEUE_ATTR_SCHEDULER_PROFILE_ID;
+            set_attr.value.oid = scheduler_id;
+            status = sai_queue_api->set_queue_attribute(queue_list[qindex], &set_attr);
+            SWSS_LOG_NOTICE("Applied 600 pps shaper to CPU queue %u via queue-direct, "
+                            "status:%d", qindex, status);
+        }
     }
 }
 
