@@ -579,7 +579,7 @@ namespace copporch_test
         // Verify scheduler was created with correct attributes
         EXPECT_TRUE(scheduler_created);
         EXPECT_EQ(meter_type, (int)SAI_METER_TYPE_PACKETS);
-        EXPECT_EQ(max_rate, (uint64_t)600);
+        EXPECT_EQ(max_rate, (uint64_t)1234);
         // Verify shaper was applied to 2 queues (queue 0 and queue 7)
         EXPECT_EQ(applied_count, (uint32_t)2);
 

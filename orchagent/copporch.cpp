@@ -267,7 +267,7 @@ void CoppOrch::applyCpuQueueShaper()
     sched_attrs.push_back(sa);
 
     sa.id = SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_RATE;
-    sa.value.u64 = 600;
+    sa.value.u64 = 1234;
     sched_attrs.push_back(sa);
 
     status = sai_scheduler_api->create_scheduler(&scheduler_id, gSwitchId,
@@ -369,7 +369,7 @@ void CoppOrch::applyCpuQueueShaper()
             set_attr.value.oid = scheduler_id;
             status = sai_scheduler_group_api->set_scheduler_group_attribute(
                         target_group, &set_attr);
-            SWSS_LOG_NOTICE("Applied 600 pps shaper to CPU queue %u via scheduler group, "
+            SWSS_LOG_NOTICE("Applied 1234 pps shaper to CPU queue %u via scheduler group, "
                             "status:%d", qindex, status);
         }
         else
@@ -378,7 +378,7 @@ void CoppOrch::applyCpuQueueShaper()
             set_attr.id = SAI_QUEUE_ATTR_SCHEDULER_PROFILE_ID;
             set_attr.value.oid = scheduler_id;
             status = sai_queue_api->set_queue_attribute(queue_list[qindex], &set_attr);
-            SWSS_LOG_NOTICE("Applied 600 pps shaper to CPU queue %u via queue-direct, "
+            SWSS_LOG_NOTICE("Applied 1234 pps shaper to CPU queue %u via queue-direct, "
                             "status:%d", qindex, status);
         }
     }
