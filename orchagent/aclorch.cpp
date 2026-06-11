@@ -731,9 +731,39 @@ AclTableTypeBuilder& AclTableTypeBuilder::withBindPointType(sai_acl_bind_point_t
     return *this;
 }
 
+/*
+ * Returns true if the platform/SAI implements the given ACL table match field.
+ *
+ * Uses sai_query_attribute_capability() for SAI_OBJECT_TYPE_ACL_TABLE. If the
+ * capability query itself is not implemented (returns a non-SUCCESS status) we
+ * preserve the historical behavior and assume the field is supported, so
+ * platforms that do not implement the query are unaffected.
+ */
+static bool isAclTableMatchFieldSupported(sai_acl_table_attr_t matchField)
+{
+    sai_attr_capability_t capability;
+    sai_status_t status = sai_query_attribute_capability(
+        gSwitchId, SAI_OBJECT_TYPE_ACL_TABLE, matchField, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_INFO("sai_query_attribute_capability(ACL_TABLE, %d) returned %d; "
+                      "assuming match field is supported", matchField, status);
+        return true;
+    }
+    return capability.create_implemented;
+}
+
 AclTableTypeBuilder& AclTableTypeBuilder::withMatch(shared_ptr<AclTableMatchInterface> match)
 {
-    m_tableType.m_matches.emplace(match->getId(), match);
+    auto matchField = match->getId();
+    if (!isAclTableMatchFieldSupported(matchField))
+    {
+        const auto *meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_ACL_TABLE, matchField);
+        SWSS_LOG_NOTICE("Skipping ACL table match field %s: not supported by the platform",
+                        meta ? meta->attridname : std::to_string(static_cast<int>(matchField)).c_str());
+        return *this;
+    }
+    m_tableType.m_matches.emplace(matchField, match);
     return *this;
 }
 

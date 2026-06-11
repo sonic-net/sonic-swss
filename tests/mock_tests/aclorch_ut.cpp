@@ -1,5 +1,8 @@
 #include "ut_helper.h"
 #include "flowcounterrouteorch.h"
+#include "hftelorch_is_supported_sai_wrap.h"
+
+#include <cstring>
 
 extern sai_object_id_t gSwitchId;
 
@@ -145,6 +148,103 @@ namespace aclorch_test
         SaiAttributeList attr_list(SAI_OBJECT_TYPE_ACL_TABLE, v, false);
 
         ASSERT_TRUE(Check::AttrListEq(SAI_OBJECT_TYPE_ACL_TABLE, res->attr_list, attr_list));
+    }
+
+    /*
+     * The following tests cover AclTableTypeBuilder::withMatch() gating each ACL
+     * table match field on sai_query_attribute_capability(SAI_OBJECT_TYPE_ACL_TABLE,
+     * <field>). A match field is only added when the platform reports it as
+     * supported (create_implemented); when the capability query is unimplemented
+     * the field is assumed supported so existing platforms are unaffected.
+     */
+
+    /*
+     * Field reported unsupported by the platform is dropped from the table type,
+     * while supported fields are retained.
+     */
+    TEST_F(AclTest, MatchFieldCapabilityGate_DropsUnsupportedField)
+    {
+        sai_cap_ut::AttrCapabilityOverrideGuard guard(
+            [](sai_object_type_t objectType, sai_attr_id_t attrId,
+               sai_attr_capability_t *cap, sai_status_t *status) -> bool {
+                if (objectType != SAI_OBJECT_TYPE_ACL_TABLE)
+                {
+                    return false;
+                }
+                std::memset(cap, 0, sizeof(*cap));
+                bool supported = (attrId != SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID);
+                cap->create_implemented = supported;
+                cap->set_implemented = supported;
+                cap->get_implemented = supported;
+                *status = SAI_STATUS_SUCCESS;
+                return true;
+            });
+
+        AclTableTypeBuilder builder;
+        auto tableType = builder
+            .withName("TEST_TABLE_TYPE")
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IP))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IP))
+            .build();
+
+        const auto &matches = tableType.getMatches();
+        EXPECT_EQ(matches.count(SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID), 0U);
+        EXPECT_EQ(matches.count(SAI_ACL_TABLE_ATTR_FIELD_SRC_IP), 1U);
+        EXPECT_EQ(matches.count(SAI_ACL_TABLE_ATTR_FIELD_DST_IP), 1U);
+    }
+
+    /*
+     * When the capability query itself is not implemented, the field is assumed
+     * supported (preserves behavior on platforms that do not implement the query).
+     */
+    TEST_F(AclTest, MatchFieldCapabilityGate_QueryUnimplementedKeepsField)
+    {
+        sai_cap_ut::AttrCapabilityOverrideGuard guard(
+            [](sai_object_type_t objectType, sai_attr_id_t /*attrId*/,
+               sai_attr_capability_t * /*cap*/, sai_status_t *status) -> bool {
+                if (objectType != SAI_OBJECT_TYPE_ACL_TABLE)
+                {
+                    return false;
+                }
+                *status = SAI_STATUS_NOT_IMPLEMENTED;
+                return true;
+            });
+
+        AclTableTypeBuilder builder;
+        auto tableType = builder
+            .withName("TEST_TABLE_TYPE")
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID))
+            .build();
+
+        EXPECT_EQ(tableType.getMatches().count(SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID), 1U);
+    }
+
+    /* Field reported supported by the platform is retained. */
+    TEST_F(AclTest, MatchFieldCapabilityGate_SupportedFieldKept)
+    {
+        sai_cap_ut::AttrCapabilityOverrideGuard guard(
+            [](sai_object_type_t objectType, sai_attr_id_t /*attrId*/,
+               sai_attr_capability_t *cap, sai_status_t *status) -> bool {
+                if (objectType != SAI_OBJECT_TYPE_ACL_TABLE)
+                {
+                    return false;
+                }
+                std::memset(cap, 0, sizeof(*cap));
+                cap->create_implemented = true;
+                cap->set_implemented = true;
+                cap->get_implemented = true;
+                *status = SAI_STATUS_SUCCESS;
+                return true;
+            });
+
+        AclTableTypeBuilder builder;
+        auto tableType = builder
+            .withName("TEST_TABLE_TYPE")
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID))
+            .build();
+
+        EXPECT_EQ(tableType.getMatches().count(SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID), 1U);
     }
 
     struct MockAclOrch

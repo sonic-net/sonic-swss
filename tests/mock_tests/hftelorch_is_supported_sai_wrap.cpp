@@ -21,6 +21,15 @@ namespace
     };
 
     static thread_local Hook g_hook = Hook::None;
+
+    /*
+     * Generic, test-settable override for sai_query_attribute_capability. This is
+     * the single shared GNU-ld --wrap point for that symbol, so any UT can program
+     * a result here. When set and the callback returns true, the provided status
+     * and capability are used verbatim; otherwise the wrap falls through to the
+     * hftel enum hooks / __real_ behavior, leaving existing tests unchanged.
+     */
+    static thread_local sai_cap_ut::AttrCapabilityOverride g_attr_cap_override;
 }
 
 extern "C"
@@ -56,6 +65,21 @@ extern "C"
         _In_ sai_attr_id_t attr_id,
         _Out_ sai_attr_capability_t *attr_capability)
     {
+        if (g_attr_cap_override)
+        {
+            sai_attr_capability_t cap;
+            std::memset(&cap, 0, sizeof(cap));
+            sai_status_t st = SAI_STATUS_SUCCESS;
+            if (g_attr_cap_override(object_type, attr_id, &cap, &st))
+            {
+                if (attr_capability)
+                {
+                    *attr_capability = cap;
+                }
+                return st;
+            }
+        }
+
         if (g_hook == Hook::None)
         {
             return __real_sai_query_attribute_capability(switch_id, object_type, attr_id, attr_capability);
@@ -156,5 +180,18 @@ namespace hftel_is_supported_ut
     void setSaiHookAllSupported()
     {
         g_hook = Hook::AllSupported;
+    }
+}
+
+namespace sai_cap_ut
+{
+    void setAttrCapabilityOverride(AttrCapabilityOverride fn)
+    {
+        g_attr_cap_override = std::move(fn);
+    }
+
+    void clearAttrCapabilityOverride()
+    {
+        g_attr_cap_override = nullptr;
     }
 }
