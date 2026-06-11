@@ -148,7 +148,8 @@ namespace fdborch_vxlan_ut
                                     app_fdb_tables,
                                     stateDbFdb,
                                     stateMclagDbFdb,
-                                    m_portsOrch.get());
+                                    m_portsOrch.get(),
+                                    m_config_db.get());
 
             ASSERT_EQ(gVrfOrch, nullptr);
             gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
@@ -3507,7 +3508,7 @@ namespace fdborch_vxlan_ut
         fdbData.bridge_port_id = m_portsOrch->m_portList[ETH0].m_bridge_port_id;
         fdbData.type = "static";
         fdbData.origin = FDB_ORIGIN_MCLAG_ADVERTIZED;
-        fdbData.dest_type = UNKNOWN;
+        fdbData.dest_type = FdbDest::UNKNOWN;
         fdbData.dest_value = "";
         fdbData.is_flush_pending = false;
 
@@ -3555,7 +3556,7 @@ namespace fdborch_vxlan_ut
         fdbData.bridge_port_id = m_portsOrch->m_portList[ETH0].m_bridge_port_id;
         fdbData.type = "static";
         fdbData.origin = FDB_ORIGIN_MCLAG_ADVERTIZED;
-        fdbData.dest_type = UNKNOWN;
+        fdbData.dest_type = FdbDest::UNKNOWN;
         fdbData.dest_value = "";
         fdbData.is_flush_pending = false;
 
@@ -3588,7 +3589,7 @@ namespace fdborch_vxlan_ut
         fdbData.bridge_port_id = m_portsOrch->m_portList[ETH0].m_bridge_port_id;
         fdbData.type = "static";
         fdbData.origin = FDB_ORIGIN_MCLAG_ADVERTIZED;
-        fdbData.dest_type = UNKNOWN;
+        fdbData.dest_type = FdbDest::UNKNOWN;
         fdbData.dest_value = "";
         fdbData.is_flush_pending = false;
 
@@ -3670,7 +3671,7 @@ namespace fdborch_vxlan_ut
         fdbData.bridge_port_id = m_portsOrch->m_portList[ETH0].m_bridge_port_id;
         fdbData.type = "static";
         fdbData.origin = FDB_ORIGIN_MCLAG_ADVERTIZED;
-        fdbData.dest_type = UNKNOWN;
+        fdbData.dest_type = FdbDest::UNKNOWN;
         fdbData.dest_value = "";
         fdbData.is_flush_pending = false;
 
@@ -3701,7 +3702,7 @@ namespace fdborch_vxlan_ut
         fdbData.bridge_port_id = m_portsOrch->m_portList[ETH0].m_bridge_port_id;
         fdbData.type = "dynamic";
         fdbData.origin = FDB_ORIGIN_LEARN;
-        fdbData.dest_type = UNKNOWN;
+        fdbData.dest_type = FdbDest::UNKNOWN;
         fdbData.dest_value = "";
         fdbData.is_flush_pending = false;
 
@@ -3800,7 +3801,7 @@ namespace fdborch_vxlan_ut
         fdbData.bridge_port_id = tunnel_bp_id;  // Tunnel bridge port
         fdbData.type = "static";
         fdbData.origin = FDB_ORIGIN_VXLAN_ADVERTIZED;
-        fdbData.dest_type = VTEP;
+        fdbData.dest_type = FdbDest::VTEP;
         fdbData.dest_value = "10.0.0.1";
         fdbData.is_flush_pending = false;
 
@@ -3833,7 +3834,7 @@ namespace fdborch_vxlan_ut
         fdbData.bridge_port_id = m_portsOrch->m_portList[ETH0].m_bridge_port_id;
         fdbData.type = "static";
         fdbData.origin = FDB_ORIGIN_MCLAG_ADVERTIZED;
-        fdbData.dest_type = UNKNOWN;
+        fdbData.dest_type = FdbDest::UNKNOWN;
         fdbData.dest_value = "";
         fdbData.is_flush_pending = false;
         fdbData.allow_mac_move = false;

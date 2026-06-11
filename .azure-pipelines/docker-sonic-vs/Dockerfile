@@ -14,7 +14,7 @@ COPY ["debs", "/debs"]
 # same, even though contents have changed) are checked between the previous and current layer.
 RUN dpkg --remove --force-all libswsscommon
 RUN apt --fix-broken install -y
-RUN dpkg --purge python3-swsscommon sonic-db-cli libsaimetadata libsairedis libsaivs syncd-vs swss sonic-eventd libdashapi framework libnexthopgroup
+RUN dpkg --purge python3-swsscommon sonic-db-cli libsaimetadata libsairedis libsaivs syncd-vs swss sonic-eventd libdashapi framework
 
 RUN apt-get update
 
