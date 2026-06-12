@@ -462,12 +462,16 @@ jobs:
         env:
           BRANCH_NAME: ${{ github.ref_name }}
         run: |
+          DAY="$(date -u +"%Y-%m-%d")"
           SAFE_REF="${BRANCH_NAME//\//_}"
-          DATE="$(date -u +"%Y-%m-%d-%H:%M")"
-          S3_DEST="s3://${S3_COVERAGE_PATH}/sonic-swss/${DATE}/${SAFE_REF}"
+          S3_DEST="s3://${S3_COVERAGE_PATH}/sonic-swss/${DAY}/${SAFE_REF}"
           echo "s3_dest=${S3_DEST}" >> "$GITHUB_OUTPUT"
           ssh ec2 bash -s <<SCRIPT
           set -ex
+          if aws s3 ls "${S3_DEST}/coverage.info" >/dev/null 2>&1; then
+            echo "Coverage report already uploaded today: ${S3_DEST}/"
+            exit 0
+          fi
           aws s3 sync /tmp/swss-coverage/html/ "${S3_DEST}/" \
             --exclude "*.gcda" --exclude "*.gcno"
           aws s3 cp /tmp/swss-coverage/coverage.info "${S3_DEST}/coverage.info"
