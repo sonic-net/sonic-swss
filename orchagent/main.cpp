@@ -80,7 +80,7 @@ uint32_t gCfgSystemPorts = 0;
 string gMyHostName = "";
 string gMyAsicName = "";
 bool gTraditionalFlexCounter = false;
-bool gRouteStateAsyncPublish = true;
+bool gRouteStateAsyncPublish = false;
 uint32_t create_switch_timeout = 0;
 bool gMultiAsicVoq = false;
 
@@ -104,7 +104,7 @@ void usage()
     cout << "    -b batch_size: set consumer table pop operation batch size (default 128)" << endl;
     cout << "    -m MAC: set switch MAC address" << endl;
     cout << "    -i INST_ID: set the ASIC instance_id in multi-asic platform" << endl;
-    cout << "    -A: enable async swss.rec recording path" << endl;
+    cout << "    -A: enable async swss.rec recording and async route state publish path" << endl;
     cout << "    -s enable synchronous mode (deprecated, use -z)" << endl;
     cout << "    -z redis communication mode (redis_async|redis_sync|zmq_sync), default: redis_async" << endl;
     cout << "    -f swss_rec_filename: swss record log filename(default 'swss.rec')" << endl;
@@ -272,35 +272,6 @@ void getCfgSwitchType(DBConnector *cfgDb, string &switch_type, string &switch_su
         SWSS_LOG_ERROR("System error in parsing switch subtype: %s", e.what());
     }
 
-}
-
-/*
- * SYSTEM_DEFAULTS|async_rec status: if value is "disabled", turn off async route state publish.
- * Otherwise keep default gRouteStateAsyncPublish == true. Must run before OrchDaemon::init() constructs RouteOrch.
- */
-void getCfgRouteStateAsyncPublish(DBConnector *cfgDb)
-{
-    Table cfgSystemDefaultsTable(cfgDb, CFG_SYSTEM_DEFAULTS_TABLE_NAME);
-    string val;
-
-    try
-    {
-        if (!cfgSystemDefaultsTable.hget("async_rec", "status", val))
-        {
-            return;
-        }
-    }
-    catch (const std::system_error &e)
-    {
-        SWSS_LOG_WARN("Could not read SYSTEM_DEFAULTS|async_rec status from CONFIG_DB: %s; default enabled", e.what());
-        return;
-    }
-
-    if (val == "disabled")
-    {
-        gRouteStateAsyncPublish = false;
-        SWSS_LOG_NOTICE("SYSTEM_DEFAULTS|async_rec status is disabled; synchronous route state publish");
-    }
 }
 
 bool isChassisAppDbPresent()
@@ -532,7 +503,8 @@ int main(int argc, char **argv)
             break;
         case 'A':
             Recorder::Instance().swss.setAsync(true);
-            SWSS_LOG_NOTICE("Async swss recorder enabled");
+            gRouteStateAsyncPublish = true;
+            SWSS_LOG_NOTICE("Async swss recorder and async route state publish enabled");
             break;
         case 'd':
             record_location = optarg;
@@ -1045,8 +1017,6 @@ int main(int argc, char **argv)
         /* Initialize the ring before OrchDaemon initializing Orchs */
         orchDaemon->enableRingBuffer();
     }
-
-    getCfgRouteStateAsyncPublish(&config_db);
 
     if (!orchDaemon->init())
     {

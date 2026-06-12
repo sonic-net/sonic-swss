@@ -93,6 +93,8 @@ ResponsePublisher::ResponsePublisher(const std::string& dbName, bool buffered,
 {
     if (db_write_thread)
     {
+        // With a db update thread, the worker thread owns notification publish/flush
+        // (m_ntf_pipe) and DB writes, to avoid cross-thread RedisPipeline access.
         m_update_thread = std::unique_ptr<std::thread>(new std::thread(&ResponsePublisher::stateUpdateThread, this));
     }
 }
@@ -190,11 +192,6 @@ void ResponsePublisher::publish(const std::string &table, const std::string &key
         state_attrs = intent_attrs;
     }
     publish(table, key, intent_attrs, status, state_attrs, replace);
-}
-
-void ResponsePublisher::setAsyncFullPublish(bool enable)
-{
-    m_async_full_publish = enable;
 }
 
 void ResponsePublisher::publishAsyncBatch()
@@ -333,12 +330,9 @@ void ResponsePublisher::flush()
 {
     if (m_update_thread != nullptr)
     {
-        // When m_async_full_publish, only the worker may use m_ntf_pipe (batch publish);
-        // flushing it here would race with the worker and can drop state/notification Redis ops.
-        if (!m_async_full_publish)
-        {
-            m_ntf_pipe->flush();
-        }
+        // The worker thread owns m_ntf_pipe; flushing it here would race with the
+        // worker and can drop state/notification Redis ops. Enqueue a flush marker
+        // so the worker flushes m_ntf_pipe and m_db_pipe in its own context.
         {
             std::lock_guard<std::mutex> lock(m_lock);
             m_queue.emplace(/*table=*/"", /*key=*/"", /*values =*/std::vector<swss::FieldValueTuple>{}, /*op=*/"",
@@ -400,10 +394,7 @@ void ResponsePublisher::stateUpdateThread()
                 }
                 responses.clear();
             }
-            if (m_async_full_publish)
-            {
-                m_ntf_pipe->flush();
-            }
+            m_ntf_pipe->flush();
             m_db_pipe->flush();
         }
         else if (e.fullPublishBatch)

@@ -64,12 +64,6 @@ class ResponsePublisher : public ResponsePublisherInterface
     // Enqueue the current async batch as one queue item. No-op if empty or if no state update thread.
     void publishAsyncBatch();
 
-    // When true and the response publisher state update thread is used, all notifications for this publisher 
-    // are sent from that thread (publishAsync path). flush() then flushes the notification pipeline on the 
-    // response publisher state update thread as well, avoiding concurrent use of the notification RedisPipeline 
-    // from two threads.
-    void setAsyncFullPublish(bool enable);
-
     /**
      * @brief Flush pending responses
      */
@@ -140,9 +134,8 @@ class ResponsePublisher : public ResponsePublisherInterface
   std::unordered_map<std::string, std::vector<swss::KeyOpFieldsValuesTuple>>
       responses;  // Cache the responses to send them together in flush(). Only
                   // used when ZMQ is enabled.
-    // When true with m_update_thread, full publish (incl. notifications) runs on the response publisher 
-    // state update thread; flush() coordinates m_ntf_pipe flush there.
-    bool m_async_full_publish{false};
+                  // When m_update_thread exists, responses is owned by the
+                  // update thread context only.
     std::vector<asyncPublishItem> m_async_publish_pending;
     // Thread to write to DB, notify and record.
     std::unique_ptr<std::thread> m_update_thread;

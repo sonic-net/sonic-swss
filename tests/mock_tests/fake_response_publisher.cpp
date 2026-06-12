@@ -39,11 +39,6 @@ void ResponsePublisher::publish(
     }
 }
 
-void ResponsePublisher::setAsyncFullPublish(bool enable)
-{
-    (void)enable;
-}
-
 void ResponsePublisher::publishAsync(
     const std::string& table, const std::string& key,
     const std::vector<swss::FieldValueTuple>& intent_attrs, const ReturnCode& status, bool replace)

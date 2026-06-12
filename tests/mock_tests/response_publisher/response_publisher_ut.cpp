@@ -104,6 +104,27 @@ TEST(ResponsePublisher, PublishAsyncNoThreadFallsBackToSyncPublish)
     ASSERT_EQ(value, "ok");
 }
 
+TEST(ResponsePublisher, PublishAsyncNoThreadBatchFlushKeepsSyncDisableFlow)
+{
+    DBConnector conn{"APPL_STATE_DB", 0};
+    Table stateTable{&conn, "ROUTE_TABLE"};
+    std::string value;
+
+    // Simulates gRouteStateAsyncPublish=false path in RouteOrch:
+    // ResponsePublisher constructed without db update thread.
+    ResponsePublisher publisher{"APPL_STATE_DB", /*buffered=*/false, /*db_write_thread=*/false};
+    publisher.m_directDbWrite = true;
+
+    publisher.publishAsync("ROUTE_TABLE", "10.0.1.0/24", {{"protocol", "bgp"}, {"state", "ok"}},
+                           ReturnCode(SAI_STATUS_SUCCESS));
+    // No-op without db_write_thread; kept to mirror RouteOrch flow.
+    publisher.publishAsyncBatch();
+    publisher.flush();
+
+    ASSERT_TRUE(stateTable.hget("10.0.1.0/24", "state", value));
+    ASSERT_EQ(value, "ok");
+}
+
 TEST(ResponsePublisher, PublishAsyncBatchWithWorkerWritesAllKeys)
 {
     DBConnector conn{"APPL_STATE_DB", 0};
@@ -111,8 +132,6 @@ TEST(ResponsePublisher, PublishAsyncBatchWithWorkerWritesAllKeys)
 
     ResponsePublisher publisher{"APPL_STATE_DB", /*buffered=*/false, /*db_write_thread=*/true};
     publisher.m_directDbWrite = true;
-    publisher.setAsyncFullPublish(true);
-
     publisher.publishAsync("ROUTE_TABLE", "10.1.0.0/24", {{"protocol", "bgp"}, {"state", "ok"}},
                            ReturnCode(SAI_STATUS_SUCCESS));
     publisher.publishAsync("ROUTE_TABLE", "10.2.0.0/24", {{"protocol", "bgp"}, {"state", "ok"}},
@@ -132,6 +151,26 @@ TEST(ResponsePublisher, PublishAsyncBatchWithWorkerWritesAllKeys)
     ASSERT_EQ(v, "ok");
 }
 
+TEST(ResponsePublisher, PublishAsyncWorkerPublishesViaUpdateThread)
+{
+    DBConnector conn{"APPL_STATE_DB", 0};
+    Table stateTable{&conn, "ROUTE_TABLE"};
+
+    // With db_write_thread=true the worker thread owns notification/DB publish;
+    // no separate enable call is needed.
+    ResponsePublisher publisher{"APPL_STATE_DB", /*buffered=*/false, /*db_write_thread=*/true};
+    publisher.m_directDbWrite = true;
+
+    publisher.publishAsync("ROUTE_TABLE", "10.1.9.0/24", {{"protocol", "bgp"}, {"state", "ok"}},
+                           ReturnCode(SAI_STATUS_SUCCESS));
+    publisher.publishAsyncBatch();
+    publisher.flush();
+
+    std::string v;
+    ASSERT_TRUE(pollHget(stateTable, "10.1.9.0/24", "state", &v));
+    ASSERT_EQ(v, "ok");
+}
+
 TEST(ResponsePublisher, PublishAsyncWithoutBatchThenFlushDoesNotWriteState)
 {
     DBConnector conn{"APPL_STATE_DB", 0};
@@ -140,8 +179,6 @@ TEST(ResponsePublisher, PublishAsyncWithoutBatchThenFlushDoesNotWriteState)
     {
         ResponsePublisher publisher{"APPL_STATE_DB", false, true};
         publisher.m_directDbWrite = true;
-        publisher.setAsyncFullPublish(true);
-
         publisher.publishAsync("ROUTE_TABLE", "10.9.9.0/24", {{"protocol", "bgp"}, {"state", "ok"}},
                                ReturnCode(SAI_STATUS_SUCCESS));
         /* Missing publishAsyncBatch(): pending stays in m_async_publish_pending; flush only drains pipes. */
@@ -160,8 +197,6 @@ TEST(ResponsePublisher, PublishAsyncBatchEmptyIsNoOpThenFlush)
 {
     DBConnector conn{"APPL_STATE_DB", 0};
     ResponsePublisher publisher{"APPL_STATE_DB", false, true};
-    publisher.setAsyncFullPublish(true);
-
     publisher.publishAsyncBatch();
     publisher.flush();
     /* No ASSERT on DB: should complete without deadlock/hang. */
@@ -175,8 +210,6 @@ TEST(ResponsePublisher, PublishAsyncErrorStatusSkipsApplStateWrite)
 
     ResponsePublisher publisher{"APPL_STATE_DB", false, true};
     publisher.m_directDbWrite = true;
-    publisher.setAsyncFullPublish(true);
-
     publisher.publishAsync("ROUTE_TABLE", "10.8.0.0/24", {{"protocol", "bgp"}, {"state", "bad"}},
                            ReturnCode(SAI_STATUS_INVALID_PARAMETER));
     publisher.publishAsyncBatch();
@@ -193,7 +226,6 @@ TEST(ResponsePublisher, PublishAsyncRespectsEnableDbWriteAndNotifyToggle)
 
     ResponsePublisher publisher{"APPL_STATE_DB", false, true};
     publisher.m_directDbWrite = true;
-    publisher.setAsyncFullPublish(true);
     publisher.setEnableDbWriteAndNotify(false);
 
     publisher.publishAsync("ROUTE_TABLE", "10.8.1.0/24", {{"state", "off"}}, ReturnCode(SAI_STATUS_SUCCESS));
@@ -219,8 +251,6 @@ TEST(ResponsePublisher, PublishAsyncTwoSequentialBatches)
 
     ResponsePublisher publisher{"APPL_STATE_DB", false, true};
     publisher.m_directDbWrite = true;
-    publisher.setAsyncFullPublish(true);
-
     publisher.publishAsync("ROUTE_TABLE", "10.10.1.0/24", {{"state", "a"}}, ReturnCode(SAI_STATUS_SUCCESS));
     publisher.publishAsyncBatch();
     publisher.flush();
@@ -247,8 +277,6 @@ TEST(ResponsePublisher, PublishAsyncBatchWithRecorderUsesTimestampRecord)
     {
         ResponsePublisher publisher{"APPL_STATE_DB", false, true};
         publisher.m_directDbWrite = true;
-        publisher.setAsyncFullPublish(true);
-
         publisher.publishAsync("ROUTE_TABLE", "10.11.0.0/24", {{"state", "rec"}}, ReturnCode(SAI_STATUS_SUCCESS));
         publisher.publishAsyncBatch();
         publisher.flush();
@@ -285,8 +313,6 @@ TEST(ResponsePublisher, PublishAsyncBatchWithZmqWorkerQueuesResponses)
 
     ResponsePublisher publisher{"APPL_STATE_DB", false, true, &zmq};
     publisher.m_directDbWrite = true;
-    publisher.setAsyncFullPublish(true);
-
     publisher.publishAsync("ROUTE_TABLE", "10.20.0.0/24", {{"state", "z"}}, ReturnCode(SAI_STATUS_SUCCESS));
     publisher.publishAsyncBatch();
     publisher.flush();
@@ -296,24 +322,6 @@ TEST(ResponsePublisher, PublishAsyncBatchWithZmqWorkerQueuesResponses)
     ASSERT_EQ(v, "z");
 }
 
-TEST(ResponsePublisher, PublishAsyncBatchWorkerNotAsyncFullPublishFlushesNtfOnCaller)
-{
-    DBConnector conn{"APPL_STATE_DB", 0};
-    Table stateTable{&conn, "ROUTE_TABLE"};
-
-    ResponsePublisher publisher{"APPL_STATE_DB", false, true};
-    publisher.m_directDbWrite = true;
-    publisher.setAsyncFullPublish(false);
-
-    publisher.publishAsync("ROUTE_TABLE", "10.21.0.0/24", {{"state", "nf"}}, ReturnCode(SAI_STATUS_SUCCESS));
-    publisher.publishAsyncBatch();
-    publisher.flush();
-
-    std::string v;
-    ASSERT_TRUE(pollHget(stateTable, "10.21.0.0/24", "state", &v));
-    ASSERT_EQ(v, "nf");
-}
-
 TEST(ResponsePublisher, PublishAsyncBatchOkDeleteEmptyIntentWritesDel)
 {
     DBConnector conn{"APPL_STATE_DB", 0};
@@ -321,8 +329,6 @@ TEST(ResponsePublisher, PublishAsyncBatchOkDeleteEmptyIntentWritesDel)
 
     ResponsePublisher publisher{"APPL_STATE_DB", false, true};
     publisher.m_directDbWrite = true;
-    publisher.setAsyncFullPublish(true);
-
     publisher.publishAsync("ROUTE_TABLE", "10.22.0.0/24", {{"state", "before"}}, ReturnCode(SAI_STATUS_SUCCESS));
     publisher.publishAsyncBatch();
     publisher.flush();
