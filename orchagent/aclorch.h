@@ -80,6 +80,7 @@
 #define ACTION_META_DATA                    "META_DATA_ACTION"
 #define ACTION_DSCP                         "DSCP_ACTION"
 #define ACTION_INNER_SRC_MAC_REWRITE_ACTION "INNER_SRC_MAC_REWRITE_ACTION"
+#define ACTION_POLICER_ACTION               "POLICER_ACTION"
 
 #define PACKET_ACTION_FORWARD      "FORWARD"
 #define PACKET_ACTION_DROP         "DROP"
@@ -419,6 +420,23 @@ class AclRuleInnerSrcMacRewrite: public AclRule
      void onUpdate(SubjectType, void *) override;
  };
  
+class AclRulePolicer: public AclRule
+{
+public:
+    AclRulePolicer(AclOrch *m_pAclOrch, string rule, string table, bool createCounter = true);
+
+    bool validateAddAction(string attr_name, string attr_value);
+    bool validate();
+    void onUpdate(SubjectType, void *) override;
+
+protected:
+    bool createRule() override;
+    bool removeRule() override;
+
+    string m_policerName;
+    bool m_policerRefHeld {false};
+};
+
 class AclRuleMirror: public AclRule
 {
 public:
