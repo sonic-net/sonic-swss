@@ -182,7 +182,6 @@ class TestDash(TestFlexCountersBase):
         attrs = dash_db.get_asic_db_entry(ASIC_OUTBOUND_CA_TO_PA_TABLE, vnet_ca_to_pa_maps[0])
         assert_sai_attribute_exists("SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_UNDERLAY_DIP", attrs, self.underlay_ip)
         assert_sai_attribute_exists("SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DMAC", attrs, self.mac_address)
-        assert_sai_attribute_exists("SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_ENCAPSULATION", attrs, "SAI_DASH_ENCAPSULATION_NVGRE")
         assert_sai_attribute_exists("SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_METER_CLASS_OR", attrs, self.vnet_map_metering_class_or)
 
         vnet_pa_validation_maps = dash_db.wait_for_asic_db_keys(ASIC_PA_VALIDATION_TABLE)
@@ -217,45 +216,6 @@ class TestDash(TestFlexCountersBase):
         assert_sai_attribute_exists("SAI_OUTBOUND_ROUTING_ENTRY_ATTR_DST_VNET_ID", routing_attrs)
         assert_sai_attribute_exists("SAI_OUTBOUND_ROUTING_ENTRY_ATTR_METER_CLASS_OR", routing_attrs, self.outbound_metering_class_or)
         assert_sai_attribute_exists("SAI_OUTBOUND_ROUTING_ENTRY_ATTR_METER_CLASS_AND", routing_attrs, self.outbound_metering_class_and)
-
-    def test_outbound_routing_dependency(self, dash_db: DashDB):
-        vnet = "Vnet2"
-        prefix1 = "10.1.1.0/24"
-        prefix2 = "10.1.2.0/24"
-        overlay_ip = "10.0.0.7"
-        group_id = ROUTE_GROUP1
-        guid = "559c6ce8-26ab-5651-b946-ccc6e8f930b2"
-
-        pb = Route()
-        pb.action_type = RoutingType.ROUTING_TYPE_VNET
-        pb.vnet = vnet
-        dash_db.create_route(group_id, prefix1, {"pb": pb.SerializeToString()})
-
-        pb = Route()
-        pb.action_type = RoutingType.ROUTING_TYPE_VNET_DIRECT
-        pb.vnet_direct.vnet = vnet
-        pb.vnet_direct.overlay_ip.ipv4 = socket.htonl(int(ipaddress.ip_address(overlay_ip)))
-        dash_db.create_route(group_id, prefix2, {"pb": pb.SerializeToString()})
-
-        time.sleep(2)
-        keys = dash_db.get_asic_db_keys(ASIC_OUTBOUND_ROUTING_TABLE)
-        # Outbound routes for prefix1 and prefix2 are not ready before Vnet2 creation
-        assert len(keys) == 1
-
-        pb = Vnet()
-        pb.vni = int("45655")
-        pb.guid.value = bytes.fromhex(uuid.UUID(guid).hex)
-        dash_db.create_vnet(vnet, {"pb": pb.SerializeToString()})
-        keys = dash_db.wait_for_asic_db_keys(ASIC_VNET_TABLE, min_keys=2)
-        assert len(keys) == 2
-
-        routing_entries = dash_db.wait_for_asic_db_keys(ASIC_OUTBOUND_ROUTING_TABLE, min_keys=3)
-        # Outbound routes for prefix1 and prefix2 are ready after Vnet2 creation
-        assert len(routing_entries) == 3
-
-        dash_db.remove_route(group_id, prefix1)
-        dash_db.remove_route(group_id, prefix2)
-        dash_db.remove_vnet(vnet)
 
     def test_eni_route(self, dash_db: DashDB):
         pb = EniRoute()

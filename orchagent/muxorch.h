@@ -36,6 +36,12 @@ enum MuxCableType
     ACTIVE_ACTIVE
 };
 
+enum MuxNbrHandlerType
+{
+    NBR_HANDLER_HOST_ROUTE,
+    NBR_HANDLER_PREFIX_BASED
+};
+
 struct MuxRouteBulkContext
 {
     std::deque<sai_status_t>            object_statuses;            // Bulk statuses
@@ -86,33 +92,47 @@ class MuxNbrHandler
 {
 public:
     MuxNbrHandler() : gRouteBulker(sai_route_api, gMaxBulkSize) {};
+    virtual ~MuxNbrHandler() = default;
 
-    bool enable(bool update_rt);
-    bool disable(sai_object_id_t);
-    void update(NextHopKey nh, sai_object_id_t, bool = true, MuxState = MuxState::MUX_STATE_INIT);
+    virtual bool enable(bool update_rt);
+    virtual bool disable(sai_object_id_t);
+    virtual void update(NextHopKey nh, sai_object_id_t, bool = true, MuxState = MuxState::MUX_STATE_INIT);
 
-    sai_object_id_t getNextHopId(const NextHopKey);
+    virtual sai_object_id_t getNextHopId(const NextHopKey);
     MuxNeighbor getNeighbors() const { return neighbors_; };
     string getAlias() const { return alias_; };
     void clearBulkers() { gRouteBulker.clear(); };
 
-private:
+protected:
     bool removeRoutes(std::list<MuxRouteBulkContext>& bulk_ctx_list);
     bool addRoutes(std::list<MuxRouteBulkContext>& bulk_ctx_list);
+    bool setBulkRouteNH(std::list<MuxRouteBulkContext>& bulk_ctx_list);
 
     inline void updateTunnelRoute(NextHopKey, bool = true);
 
-private:
+protected:
     MuxNeighbor neighbors_;
     string alias_;
     EntityBulker<sai_route_api_t> gRouteBulker;
+};
+
+// Mux Prefix-Based Neighbor Handler for adding/removing neighbors with prefix-based routing
+class MuxPrefixBasedNbrHandler : public MuxNbrHandler
+{
+public:
+    MuxPrefixBasedNbrHandler() = default;
+    ~MuxPrefixBasedNbrHandler() override = default;
+
+    bool enable(bool update_rt) override;
+    bool disable(sai_object_id_t) override;
+    void update(NextHopKey nh, sai_object_id_t, bool = true, MuxState = MuxState::MUX_STATE_INIT) override;
 };
 
 // Mux Cable object
 class MuxCable
 {
 public:
-    MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress peer_ip, MuxCableType cable_type);
+    MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress peer_ip, MuxCableType cable_type, MuxNbrHandlerType nbr_handler_type, IpPrefix slice_ip6 = IpPrefix("::/0"));
 
     bool isActive() const
     {
@@ -129,12 +149,30 @@ public:
     bool isStateChangeFailed() { return st_chg_failed_; }
 
     bool isIpInSubnet(IpAddress ip);
+
+    // Per-cable IPv6 slice prefix. "::/0" means no slice configured.
+    bool hasSlicePrefix() const { return !slice_ip6_.getIp().isZero(); }
+    const IpPrefix& getSlicePrefix() const { return slice_ip6_; }
+    const IpPrefix& getServerIp6() const { return srv_ip6_; }
+    const std::string& getMuxName() const { return mux_name_; }
+    bool isIpInSlice(const IpAddress& ip) const
+    {
+        return (hasSlicePrefix() && !ip.isV4() && slice_ip6_.isAddressInSubnet(ip));
+    }
     void updateNeighbor(NextHopKey nh, bool add);
     void updateRoutes();
     void updateRoutesForNextHop(NextHopKey nh);
+
+    // Slice supernet route tracking (see refreshSliceRoute in muxorch.cpp).
+    void refreshSliceRoute();
     sai_object_id_t getNextHopId(const NextHopKey nh)
     {
         return nbr_handler_->getNextHopId(nh);
+    }
+
+    MuxNbrHandlerType getNbrHandlerType() const
+    {
+        return nbr_handler_type_;
     }
 
 private:
@@ -147,6 +185,7 @@ private:
 
     string mux_name_;
     MuxCableType cable_type_;
+    MuxNbrHandlerType nbr_handler_type_;
 
     MuxState state_ = MuxState::MUX_STATE_INIT;
     MuxState prev_state_;
@@ -155,6 +194,12 @@ private:
 
     IpPrefix srv_ip4_, srv_ip6_;
     IpAddress peer_ip4_;
+
+    // "::/0" sentinel = no slice configured.
+    IpPrefix slice_ip6_;
+
+    // Nexthop OID the slice route points at; NULL when not installed.
+    sai_object_id_t slice_route_nh_oid_ = SAI_NULL_OBJECT_ID;
 
     MuxOrch *mux_orch_;
     MuxCableOrch *mux_cb_orch_;
@@ -176,6 +221,8 @@ const request_description_t mux_cfg_request_description = {
                 { "soc_ipv6", REQ_T_IP_PREFIX },
                 { "cable_type", REQ_T_STRING },
                 { "prober_type", REQ_T_STRING },
+                { "neighbor_mode", REQ_T_STRING },
+                { "server_ipv6_subnet", REQ_T_IP_PREFIX },
             },
             { }
 };
@@ -217,12 +264,37 @@ public:
         return mux_cable_tb_.at(portName).get();
     }
 
-    bool isSkipNeighbor(const IpAddress& nbr)
+    bool isSkipNeighbor(const IpAddress& nbr) const
     {
         return (skip_neighbors_.find(nbr) != skip_neighbors_.end());
     }
 
+    // Get the port name for a skip neighbor, returns empty string if not found
+    std::string getSkipNeighborPort(const IpAddress& nbr) const
+    {
+        auto it = skip_neighbors_.find(nbr);
+        if (it != skip_neighbors_.end())
+        {
+            return it->second;
+        }
+        return "";
+    }
+
+    bool isMuxCablePrefixBased(const std::string& portName) const
+    {
+        if (!isMuxExists(portName))
+        {
+            return false;
+        }
+        return mux_cable_tb_.at(portName)->getNbrHandlerType() == MuxNbrHandlerType::NBR_HANDLER_PREFIX_BASED;
+    }
+
     MuxCable* findMuxCableInSubnet(IpAddress);
+
+    MuxCable* findMuxCableBySlice(IpAddress);
+    bool isSuppressedNeighbor(const IpAddress& ip, const std::string& port_name, MuxCable** out_cable = nullptr);
+    bool isSliceConfigured() const { return sliced_cable_count_ > 0; }
+    bool isMuxPortPrefixNbr(const IpAddress&, const MacAddress&, string&);
     bool isNeighborActive(const IpAddress&, const MacAddress&, string&);
     void update(SubjectType, void *);
 
@@ -230,6 +302,7 @@ public:
     void removeNexthop(NextHopKey);
     bool containsNextHop(const NextHopKey&);
     bool isMuxNexthops(const NextHopGroupKey&);
+    bool hasPrefixBasedMuxNexthop(const std::set<NextHopKey>&);
     string getNexthopMuxName(NextHopKey);
     sai_object_id_t getNextHopId(const NextHopKey&);
 
@@ -262,6 +335,9 @@ private:
     void updateNeighbor(const NeighborUpdate&);
     void updateFdb(const FdbUpdate&);
 
+    // Helper function to convert neighbor to MUX neighbor
+    bool convertNeighborToMux(const NeighborEntry& neighbor_entry, const string& port_name, const string& context);
+
     /***
      * Methods for managing tunnel routes for neighbor IPs not associated
      * with a specific mux cable
@@ -269,9 +345,12 @@ private:
     void createStandaloneTunnelRoute(IpAddress neighborIp);
     void removeStandaloneTunnelRoute(IpAddress neighborIp);
 
-    void addSkipNeighbors(const std::set<IpAddress> &neighbors)
+    void addSkipNeighbors(const std::set<IpAddress> &neighbors, const std::string& port_name)
     {
-        skip_neighbors_.insert(neighbors.begin(), neighbors.end());
+        for (const auto& nbr : neighbors)
+        {
+            skip_neighbors_[nbr] = port_name;
+        }
     }
 
     void removeSkipNeighbors(const std::set<IpAddress> &neighbors)
@@ -297,10 +376,17 @@ private:
 
     MuxCfgRequest request_;
     std::set<IpAddress> standalone_tunnel_neighbors_;
-    std::set<IpAddress> skip_neighbors_;
+    std::map<IpAddress, std::string> skip_neighbors_;
+    // NHs disabled in SAI due to slice port-affinity; MAC kept for FDB-move lookup.
+    std::map<NeighborEntry, MacAddress> suppressed_neighbors_;
+    size_t sliced_cable_count_ = 0;
 
     bool enable_cache_neigh_updates_ = false;
     std::vector<NeighborUpdate> cached_neigh_updates_;
+
+    bool prefix_nbrs_supported_ = true;
+
+    std::unique_ptr<Table> state_mux_cable_table_;
 };
 
 const request_description_t mux_cable_request_description = {

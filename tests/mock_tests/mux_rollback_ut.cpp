@@ -6,12 +6,17 @@
 #undef protected
 #include "ut_helper.h"
 #define private public
+#define protected public
 #include "neighorch.h"
 #include "muxorch.h"
+#include "fdborch.h"
+#undef protected
 #undef private
 #include "mock_orchagent_main.h"
 #include "mock_sai_api.h"
 #include "mock_orch_test.h"
+#include "nexthopkey.h"
+#include "ipaddress.h"
 #include "gtest/gtest.h"
 #include <string>
 
@@ -20,7 +25,7 @@ EXTERN_MOCK_FNS
 namespace mux_rollback_test
 {
     DEFINE_SAI_API_MOCK(neighbor);
-    DEFINE_SAI_API_MOCK(route);
+    DEFINE_SAI_API_MOCK_SPECIFY_ENTRY_WITH_SET(route, route);
     DEFINE_SAI_GENERIC_API_MOCK(acl, acl_entry);
     DEFINE_SAI_GENERIC_API_OBJECT_BULK_MOCK(next_hop, next_hop);
     using ::testing::_;
@@ -30,6 +35,7 @@ namespace mux_rollback_test
     using ::testing::Throw;
     using ::testing::DoAll;
     using ::testing::SetArrayArgument;
+    using ::testing::AtLeast;
 
     static const string TEST_INTERFACE = "Ethernet4";
 
@@ -37,12 +43,15 @@ namespace mux_rollback_test
     sai_bulk_remove_neighbor_entry_fn old_remove_neighbor_entries;
     sai_bulk_create_route_entry_fn old_create_route_entries;
     sai_bulk_remove_route_entry_fn old_remove_route_entries;
+    sai_bulk_set_route_entry_attribute_fn old_set_route_entries_attribute;
     sai_bulk_object_create_fn old_object_create;
     sai_bulk_object_remove_fn old_object_remove;
 
     class MuxRollbackTest : public MockOrchTest
     {
     protected:
+        std::string m_neighbor_mode = "host-route";
+
         void SetMuxStateFromAppDb(std::string state)
         {
             Table mux_cable_table = Table(m_app_db.get(), APP_MUX_CABLE_TABLE_NAME);
@@ -55,6 +64,12 @@ namespace mux_rollback_test
         {
             m_MuxCable->setState(state);
             EXPECT_EQ(state, m_MuxCable->getState());
+        }
+
+        bool IsPrefixBasedMuxNeighbor()
+        {
+            NextHopKey nhKey = NextHopKey(IpAddress(SERVER_IP1), VLAN_1000);
+            return gNeighOrch->isPrefixNeighborNh(nhKey);
         }
 
         void ApplyInitialConfigs()
@@ -109,6 +124,7 @@ namespace mux_rollback_test
 
             mux_cable_table.set(TEST_INTERFACE, { { "server_ipv4", SERVER_IP1 + "/32" },
                                                   { "server_ipv6", "a::a/128" },
+                                                  { "neighbor_mode", m_neighbor_mode },
                                                   { "state", "auto" } });
 
             gPortsOrch->addExistingData(&port_table);
@@ -151,12 +167,14 @@ namespace mux_rollback_test
             old_object_remove = gNeighOrch->gNextHopBulker.remove_entries;
             old_create_route_entries = m_MuxCable->nbr_handler_->gRouteBulker.create_entries;
             old_remove_route_entries = m_MuxCable->nbr_handler_->gRouteBulker.remove_entries;
+            old_set_route_entries_attribute = m_MuxCable->nbr_handler_->gRouteBulker.set_entries_attribute;
             gNeighOrch->gNeighBulker.create_entries = mock_create_neighbor_entries;
             gNeighOrch->gNeighBulker.remove_entries = mock_remove_neighbor_entries;
             gNeighOrch->gNextHopBulker.create_entries = mock_create_next_hops;
             gNeighOrch->gNextHopBulker.remove_entries = mock_remove_next_hops;
             m_MuxCable->nbr_handler_->gRouteBulker.create_entries = mock_create_route_entries;
             m_MuxCable->nbr_handler_->gRouteBulker.remove_entries = mock_remove_route_entries;
+            m_MuxCable->nbr_handler_->gRouteBulker.set_entries_attribute = mock_set_route_entries_attribute;
         }
 
         void PreTearDown() override
@@ -172,14 +190,27 @@ namespace mux_rollback_test
             gNeighOrch->gNextHopBulker.remove_entries = old_object_remove;
             m_MuxCable->nbr_handler_->gRouteBulker.create_entries = old_create_route_entries;
             m_MuxCable->nbr_handler_->gRouteBulker.remove_entries = old_remove_route_entries;
+            m_MuxCable->nbr_handler_->gRouteBulker.set_entries_attribute = old_set_route_entries_attribute;
+        }
+    };
+
+    class MuxRollbackPrefixRouteTest : public MuxRollbackTest
+    {
+    public:
+        MuxRollbackPrefixRouteTest()
+        {
+            m_neighbor_mode = "prefix-route";
         }
     };
 
     TEST_F(MuxRollbackTest, StandbyToActiveNeighborAlreadyExists)
     {
-        std::vector<sai_status_t> exp_status{SAI_STATUS_ITEM_ALREADY_EXISTS};
-        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entries)
-            .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_ALREADY_EXISTS)));
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            std::vector<sai_status_t> exp_status{SAI_STATUS_ITEM_ALREADY_EXISTS};
+            EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entries)
+                .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_ALREADY_EXISTS)));
+        }
         SetAndAssertMuxState(ACTIVE_STATE);
     }
 
@@ -187,25 +218,48 @@ namespace mux_rollback_test
     {
         SetAndAssertMuxState(ACTIVE_STATE);
         std::vector<sai_status_t> exp_status{SAI_STATUS_ITEM_NOT_FOUND};
-        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entries)
-            .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_NOT_FOUND)));
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entries)
+                .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_NOT_FOUND)));
+        }
         SetAndAssertMuxState(STANDBY_STATE);
     }
 
     TEST_F(MuxRollbackTest, StandbyToActiveRouteNotFound)
     {
         std::vector<sai_status_t> exp_status{SAI_STATUS_ITEM_NOT_FOUND};
-        EXPECT_CALL(*mock_sai_route_api, remove_route_entries)
-            .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_NOT_FOUND)));
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            EXPECT_CALL(*mock_sai_route_api, remove_route_entries)
+                .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_NOT_FOUND)));
+        }
         SetAndAssertMuxState(ACTIVE_STATE);
+    }
+
+    TEST_F(MuxRollbackPrefixRouteTest, StandbyToActiveSetRouteAttrNotFoundRollbackToStandby)
+    {
+        std::vector<sai_status_t> exp_status_not_found{SAI_STATUS_ITEM_NOT_FOUND};
+        std::vector<sai_status_t> exp_status_success{SAI_STATUS_SUCCESS};
+        EXPECT_CALL(*mock_sai_route_api, set_route_entries_attribute)
+            .WillOnce(DoAll(SetArrayArgument<4>(exp_status_not_found.begin(), exp_status_not_found.end()),
+                            Return(SAI_STATUS_ITEM_NOT_FOUND)))
+            .WillOnce(DoAll(SetArrayArgument<4>(exp_status_success.begin(), exp_status_success.end()),
+                            Return(SAI_STATUS_SUCCESS)));
+        SetMuxStateFromAppDb(ACTIVE_STATE);
+        EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
     }
 
     TEST_F(MuxRollbackTest, ActiveToStandbyRouteAlreadyExists)
     {
         SetAndAssertMuxState(ACTIVE_STATE);
         std::vector<sai_status_t> exp_status{SAI_STATUS_ITEM_ALREADY_EXISTS};
-        EXPECT_CALL(*mock_sai_route_api, create_route_entries)
-            .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_ALREADY_EXISTS)));
+
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            EXPECT_CALL(*mock_sai_route_api, create_route_entries)
+                .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_ALREADY_EXISTS)));
+        }
         SetAndAssertMuxState(STANDBY_STATE);
     }
 
@@ -226,78 +280,264 @@ namespace mux_rollback_test
 
     TEST_F(MuxRollbackTest, StandbyToActiveNextHopAlreadyExists)
     {
-        std::vector<sai_status_t> exp_status{SAI_STATUS_ITEM_ALREADY_EXISTS};
-        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
-            .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_ALREADY_EXISTS)));
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            std::vector<sai_status_t> exp_status{SAI_STATUS_ITEM_ALREADY_EXISTS};
+            EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
+                .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_ALREADY_EXISTS)));
+        }
         SetAndAssertMuxState(ACTIVE_STATE);
     }
 
     TEST_F(MuxRollbackTest, ActiveToStandbyNextHopNotFound)
     {
         SetAndAssertMuxState(ACTIVE_STATE);
-        std::vector<sai_status_t> exp_status{SAI_STATUS_ITEM_NOT_FOUND};
-        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hops)
-            .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_NOT_FOUND)));
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            std::vector<sai_status_t> exp_status{SAI_STATUS_ITEM_NOT_FOUND};
+            EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hops)
+                .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_NOT_FOUND)));
+        }
         SetAndAssertMuxState(STANDBY_STATE);
     }
 
     TEST_F(MuxRollbackTest, StandbyToActiveRuntimeErrorRollbackToStandby)
     {
-        EXPECT_CALL(*mock_sai_route_api, remove_route_entries)
-            .WillOnce(Throw(runtime_error("Mock runtime error")));
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            EXPECT_CALL(*mock_sai_route_api, remove_route_entries)
+                .WillOnce(Throw(runtime_error("Mock runtime error")));
+        }
         SetMuxStateFromAppDb(ACTIVE_STATE);
-        EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        if (IsPrefixBasedMuxNeighbor())
+        {
+            // With prefix-based neighbors, state transition should succeed
+            EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
+        }
+        else
+        {
+            // Without prefix-based neighbors, expect rollback to standby
+            EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        }
     }
 
     TEST_F(MuxRollbackTest, ActiveToStandbyRuntimeErrorRollbackToActive)
     {
         SetAndAssertMuxState(ACTIVE_STATE);
-        EXPECT_CALL(*mock_sai_route_api, create_route_entries)
-            .WillOnce(Throw(runtime_error("Mock runtime error")));
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            EXPECT_CALL(*mock_sai_route_api, create_route_entries)
+                .WillOnce(Throw(runtime_error("Mock runtime error")));
+        }
         SetMuxStateFromAppDb(STANDBY_STATE);
-        EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
+        if (IsPrefixBasedMuxNeighbor())
+        {
+            // With prefix-based neighbors, state transition should succeed
+            EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        }
+        else
+        {
+            // Without prefix-based neighbors, expect rollback to active
+            EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
+        }
     }
 
     TEST_F(MuxRollbackTest, StandbyToActiveLogicErrorRollbackToStandby)
     {
-        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entries)
-            .WillOnce(Throw(logic_error("Mock logic error")));
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entries)
+                .WillOnce(Throw(logic_error("Mock logic error")));
+        }
         SetMuxStateFromAppDb(ACTIVE_STATE);
-        EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        if (IsPrefixBasedMuxNeighbor())
+        {
+            // With prefix-based neighbors, state transition should succeed
+            EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
+        }
+        else
+        {
+            // Without prefix-based neighbors, expect rollback to standby
+            EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        }
     }
 
     TEST_F(MuxRollbackTest, ActiveToStandbyLogicErrorRollbackToActive)
     {
         SetAndAssertMuxState(ACTIVE_STATE);
-        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entries)
-            .WillOnce(Throw(logic_error("Mock logic error")));
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entries)
+                .WillOnce(Throw(logic_error("Mock logic error")));
+        }
         SetMuxStateFromAppDb(STANDBY_STATE);
-        EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
+        if (IsPrefixBasedMuxNeighbor())
+        {
+            // With prefix-based neighbors, state transition should succeed
+            EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        }
+        else
+        {
+            // Without prefix-based neighbors, expect rollback to active
+            EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
+        }
     }
 
     TEST_F(MuxRollbackTest, StandbyToActiveExceptionRollbackToStandby)
     {
-        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
-            .WillOnce(Throw(exception()));
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
+                .WillOnce(Throw(exception()));
+        }
         SetMuxStateFromAppDb(ACTIVE_STATE);
-        EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        if (IsPrefixBasedMuxNeighbor())
+        {
+            // With prefix-based neighbors, state transition should succeed
+            EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
+        }
+        else
+        {
+            // Without prefix-based neighbors, expect rollback to standby
+            EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        }
     }
 
     TEST_F(MuxRollbackTest, ActiveToStandbyExceptionRollbackToActive)
     {
         SetAndAssertMuxState(ACTIVE_STATE);
-        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hops)
-            .WillOnce(Throw(exception()));
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hops)
+                .WillOnce(Throw(exception()));
+        }
         SetMuxStateFromAppDb(STANDBY_STATE);
-        EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
+        if (IsPrefixBasedMuxNeighbor())
+        {
+            // With prefix-based neighbors, state transition should succeed
+            EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        }
+        else
+        {
+            // Without prefix-based neighbors, expect rollback to active
+            EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
+        }
     }
 
     TEST_F(MuxRollbackTest, StandbyToActiveNextHopTableFullRollbackToActive)
     {
         std::vector<sai_status_t> exp_status{SAI_STATUS_TABLE_FULL};
-        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
-            .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_TABLE_FULL)));
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
+                .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_TABLE_FULL)));
+        }
         SetMuxStateFromAppDb(ACTIVE_STATE);
-        EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        if (IsPrefixBasedMuxNeighbor())
+        {
+            // With prefix-based neighbors, state transition should succeed
+            EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
+        }
+        else
+        {
+            // Without prefix-based neighbors, expect rollback to standby
+            EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        }
+    }
+
+    // Covers MuxOrch::updateFdb shared-MAC fallback: when an FDB add on a
+    // mux port matches the MAC of a neighbor that bypassed mux registration
+    // (e.g. learned while the FDB was aged out), the fallback loop converts
+    // it. The negative-filter neighbors (different MAC, prefix_route) must
+    // be skipped so unrelated NeighOrch entries are not touched.
+    TEST_F(MuxRollbackTest, UpdateFdbConvertsStrandedSharedMacNeighbor)
+    {
+        if (IsPrefixBasedMuxNeighbor())
+        {
+            GTEST_SKIP() << "Fallback path is for host-route mux neighbors";
+        }
+
+        // Use a MAC distinct from the fixture's SERVER_IP1 (MAC4) so the
+        // first loop's port-move branch finds no match and leaves
+        // found_existing_mux_neighbor false, letting the fallback fire.
+        const MacAddress shared_mac("62:f9:65:10:2f:05");
+        const MacAddress other_mac("aa:bb:cc:dd:ee:ff");
+
+        // Stranded same-MAC neighbor that the fallback should convert.
+        IpAddress ip_stranded("192.168.0.3");
+        NeighborEntry stranded_entry(ip_stranded, VLAN_1000);
+        NextHopKey stranded_nh(ip_stranded, VLAN_1000);
+        gNeighOrch->m_syncdNeighbors[stranded_entry] =
+            { shared_mac, /*hw_configured*/ false, 0, /*prefix_route*/ false };
+
+        // Different-MAC neighbor — must hit the mac-mismatch continue.
+        IpAddress ip_other_mac("192.168.0.4");
+        NeighborEntry other_mac_entry(ip_other_mac, VLAN_1000);
+        NextHopKey other_mac_nh(ip_other_mac, VLAN_1000);
+        gNeighOrch->m_syncdNeighbors[other_mac_entry] =
+            { other_mac, false, 0, false };
+
+        // Prefix-route same-MAC neighbor — must hit the prefix_route continue.
+        IpAddress ip_prefix("192.168.0.5");
+        NeighborEntry prefix_entry(ip_prefix, VLAN_1000);
+        NextHopKey prefix_nh(ip_prefix, VLAN_1000);
+        gNeighOrch->m_syncdNeighbors[prefix_entry] =
+            { shared_mac, false, 0, /*prefix_route*/ true };
+
+        // Pre-populate the FDB cache so getMuxPort() resolves shared_mac to
+        // TEST_INTERFACE without going through SAI notifications.
+        Port vlan_port, eth_port;
+        ASSERT_TRUE(gPortsOrch->getVlanByVlanId(1000, vlan_port));
+        ASSERT_TRUE(gPortsOrch->getPort(TEST_INTERFACE, eth_port));
+        FdbEntry fdb_entry;
+        fdb_entry.mac = shared_mac;
+        fdb_entry.bv_id = vlan_port.m_vlan_info.vlan_oid;
+        fdb_entry.port_name = TEST_INTERFACE;
+        FdbData fdb_data{};
+        fdb_data.bridge_port_id = eth_port.m_bridge_port_id;
+        fdb_data.type = "dynamic";
+        fdb_data.origin = FDB_ORIGIN_LEARN;
+        gFdbOrch->m_entries[fdb_entry] = fdb_data;
+
+        ASSERT_EQ(m_MuxOrch->mux_nexthop_tb_.find(stranded_nh),
+                  m_MuxOrch->mux_nexthop_tb_.end());
+
+        FdbUpdate update;
+        update.entry = fdb_entry;
+        update.add = true;
+        update.type = "dynamic";
+        m_MuxOrch->updateFdb(update);
+
+        // The stranded neighbor must now be a mux nexthop on TEST_INTERFACE.
+        auto it = m_MuxOrch->mux_nexthop_tb_.find(stranded_nh);
+        ASSERT_NE(it, m_MuxOrch->mux_nexthop_tb_.end());
+        EXPECT_EQ(TEST_INTERFACE, it->second);
+
+        // Mac-mismatch and prefix-route neighbors must remain untouched.
+        EXPECT_EQ(m_MuxOrch->mux_nexthop_tb_.find(other_mac_nh),
+                  m_MuxOrch->mux_nexthop_tb_.end());
+        EXPECT_EQ(m_MuxOrch->mux_nexthop_tb_.find(prefix_nh),
+                  m_MuxOrch->mux_nexthop_tb_.end());
+
+        // Clean up the entries we injected so we don't bleed into other tests.
+        gNeighOrch->m_syncdNeighbors.erase(stranded_entry);
+        gNeighOrch->m_syncdNeighbors.erase(other_mac_entry);
+        gNeighOrch->m_syncdNeighbors.erase(prefix_entry);
+        m_MuxOrch->mux_nexthop_tb_.erase(stranded_nh);
+        gFdbOrch->m_entries.erase(fdb_entry);
+    }
+
+    // Delete FDB events must be a no-op for updateFdb so that mac aging does
+    // not tear down mux neighbor state out from under the cable.
+    TEST_F(MuxRollbackTest, UpdateFdbDeleteIsNoOp)
+    {
+        FdbUpdate update;
+        update.entry.mac = MacAddress("62:f9:65:10:2f:04");
+        update.entry.port_name = TEST_INTERFACE;
+        update.add = false;
+
+        size_t before = m_MuxOrch->mux_nexthop_tb_.size();
+        m_MuxOrch->updateFdb(update);
+        EXPECT_EQ(before, m_MuxOrch->mux_nexthop_tb_.size());
     }
 }

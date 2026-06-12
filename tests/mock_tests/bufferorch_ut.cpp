@@ -318,9 +318,13 @@ namespace bufferorch_test
 
             ASSERT_EQ(gVrfOrch, nullptr);
             gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
+            vector<table_name_with_pri_t> intf_tables = {
+                { APP_INTF_TABLE_NAME,  IntfsOrch::intfsorch_pri},
+                { APP_SAG_TABLE_NAME,   IntfsOrch::intfsorch_pri}
+            };
 
             ASSERT_EQ(gIntfsOrch, nullptr);
-            gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch, m_chassis_app_db.get());
+            gIntfsOrch = new IntfsOrch(m_app_db.get(), intf_tables, gVrfOrch, m_chassis_app_db.get());
 
             const int fdborch_pri = 20;
 
@@ -333,7 +337,8 @@ namespace bufferorch_test
             TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
             TableConnector stateMclagDbFdb(m_state_db.get(), STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
             ASSERT_EQ(gFdbOrch, nullptr);
-            gFdbOrch = new FdbOrch(m_app_db.get(), app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
+            gFdbOrch = new FdbOrch(m_app_db.get(), app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch,
+                                   m_config_db.get());
 
             ASSERT_EQ(gNeighOrch, nullptr);
             gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassis_app_db.get());
@@ -480,6 +485,55 @@ namespace bufferorch_test
                             });
         gBufferOrch->addExistingData(&bufferPoolTable);
         EXPECT_CALL(*gMockResponsePublisher, publish(APP_BUFFER_POOL_TABLE_NAME, "ingress_lossless_pool", std::vector<FieldValueTuple>{{"xoff", "10240"}}, ReturnCode(SAI_STATUS_SUCCESS), true)).Times(1);
+        static_cast<Orch *>(gBufferOrch)->doTask();
+
+        gMockResponsePublisher.reset();
+    }
+
+    TEST_F(BufferOrchTest, BufferOrchTestLosslessBufferProfilePublish)
+    {
+        gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        Table bufferProfileTable = Table(m_app_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
+
+        // Create a lossless buffer profile with xoff field
+        bufferProfileTable.set("test_lossless_profile",
+                               {
+                                   {"pool", "ingress_lossless_pool"},
+                                   {"dynamic_th", "0"},
+                                   {"size", "39936"},
+                                   {"xon", "19456"},
+                                   {"xoff", "20480"}
+                               });
+        gBufferOrch->addExistingData(&bufferProfileTable);
+        // Creating a new profile should publish the result
+        EXPECT_CALL(*gMockResponsePublisher, publish(
+            APP_BUFFER_PROFILE_TABLE_NAME,
+            "test_lossless_profile",
+            std::vector<FieldValueTuple>{
+                {"pool", "ingress_lossless_pool"},
+                {"dynamic_th", "0"},
+                {"size", "39936"},
+                {"xon", "19456"},
+                {"xoff", "20480"}
+            },
+            ReturnCode(SAI_STATUS_SUCCESS),
+            true)).Times(1);
+        static_cast<Orch *>(gBufferOrch)->doTask();
+
+        // Delete the lossless buffer profile
+        entries.push_back({"test_lossless_profile", "DEL", {}});
+        auto consumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PROFILE_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+        // Deleting a lossless profile should publish the result with empty fvs
+        EXPECT_CALL(*gMockResponsePublisher, publish(
+            APP_BUFFER_PROFILE_TABLE_NAME,
+            "test_lossless_profile",
+            std::vector<FieldValueTuple>{},
+            ReturnCode(SAI_STATUS_SUCCESS),
+            true)).Times(1);
         static_cast<Orch *>(gBufferOrch)->doTask();
 
         gMockResponsePublisher.reset();

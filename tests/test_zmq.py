@@ -154,3 +154,20 @@ class TestZmqDash(object):
         dvs.runcmd("cp /usr/bin/orchagent.sh_usage_ut_backup /usr/bin/orchagent.sh")
         dvs.stop_swss()
         dvs.start_swss()
+
+    def test_ring_thread(self, dvs):
+        # Improve test code coverage, change orchagent to enable ring thread
+        dvs.runcmd("cp /usr/bin/orchagent.sh /usr/bin/orchagent.sh_ring_ut_backup")
+        dvs.runcmd("sed -i.bak 's/\/usr\/bin\/orchagent /\/usr\/bin\/orchagent -R /g' /usr/bin/orchagent.sh")
+        dvs.stop_swss()
+        dvs.start_swss()
+
+        # wait orchagent start
+        time.sleep(3)
+        process_statue = dvs.runcmd("ps -ef")
+        zmq_logger.debug("Process status: {}".format(process_statue))
+
+        # revert change
+        dvs.runcmd("cp /usr/bin/orchagent.sh_ring_ut_backup /usr/bin/orchagent.sh")
+        dvs.stop_swss()
+        dvs.start_swss()

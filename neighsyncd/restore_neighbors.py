@@ -20,7 +20,12 @@ from pyroute2.netlink.rtnl import ndmsg
 from socket import AF_INET,AF_INET6
 import logging
 logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
-from scapy.all import conf, in6_getnsma, inet_pton, inet_ntop, in6_getnsmac, get_if_hwaddr, Ether, ARP, IPv6, ICMPv6ND_NS, ICMPv6NDOptSrcLLAddr
+
+# Avoid long startup delays when route tables are large.
+from scapy.config import conf
+conf.route_autoload = False
+conf.route6_autoload = False
+from scapy.all import in6_getnsma, inet_pton, inet_ntop, in6_getnsmac, get_if_hwaddr, Ether, ARP, IPv6, ICMPv6ND_NS, ICMPv6NDOptSrcLLAddr
 from swsscommon import swsscommon
 import errno
 import syslog
@@ -245,25 +250,40 @@ def restore_update_kernel_neighbors(intf_neigh_map, timeout=DEF_TIME_OUT):
                 intf_idx = ipclass.link_lookup(ifname=intf)[0]
                 # create socket per intf to send packets
                 s = conf.L2socket(iface=intf)
+                retry_intf = False
+                try:
+                    # Only two families: 'IPv4' and 'IPv6'
+                    for family in ip_family.keys():
+                        # if ip address assigned and if we have neighs in this family, restore them
+                        src_ip = first_ip_on_intf(intf, family)
+                        if src_ip and (family in family_neigh_map):
+                            neigh_list = family_neigh_map[family]
+                            for dst_ip, dmac in neigh_list:
+                                # use netlink to set neighbor entries
+                                set_neigh_in_kernel(ipclass, family, intf_idx, dst_ip, dmac)
 
-                # Only two families: 'IPv4' and 'IPv6'
-                for family in ip_family.keys():
-                    # if ip address assigned and if we have neighs in this family, restore them
-                    src_ip = first_ip_on_intf(intf, family)
-                    if src_ip and (family in family_neigh_map):
-                        neigh_list = family_neigh_map[family]
-                        for dst_ip, dmac in neigh_list:
-                            # use netlink to set neighbor entries
-                            set_neigh_in_kernel(ipclass, family, intf_idx, dst_ip, dmac)
+                                log_info('Sending Neigh with family: {}, intf_idx: {}, ip: {}, mac: {}'.format(
+                                family, intf_idx, dst_ip, dmac))
+                                # sending arp/ns packet to update kernel neigh info
+                                try:
+                                    s.send(build_arp_ns_pkt(family, src_mac, src_ip, dst_ip))
+                                except OSError as e:
+                                    if e.errno == errno.ENETDOWN:
+                                        log_warning('Interface {} went down while restoring {} neighbor {}; retrying'.format(
+                                        intf, family, dst_ip))
+                                        retry_intf = True
+                                        break
+                                    raise
+                            if retry_intf:
+                                break
+                            # delete this family on the intf
+                            del intf_neigh_map[intf][family]
+                finally:
+                    # close the pkt socket
+                    s.close()
 
-                            log_info('Sending Neigh with family: {}, intf_idx: {}, ip: {}, mac: {}'.format(
-                            family, intf_idx, dst_ip, dmac))
-                            # sending arp/ns packet to update kernel neigh info
-                            s.send(build_arp_ns_pkt(family, src_mac, src_ip, dst_ip))
-                        # delete this family on the intf
-                        del intf_neigh_map[intf][family]
-                # close the pkt socket
-                s.close()
+                if retry_intf:
+                    continue
 
                 # if all families are deleted, remove the key
                 if len(intf_neigh_map[intf]) == 0:

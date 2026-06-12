@@ -17,6 +17,7 @@
 #include "swssnet.h"
 #include "tokenize.h"
 #include "crmorch.h"
+#include "dashresulthelper.h"
 #include "saihelper.h"
 #include "directory.h"
 #include "flex_counter_manager.h"
@@ -66,6 +67,10 @@ DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, DBConnector *app_
 
     m_counter_db = std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
     m_eni_name_table = make_unique<Table>(m_counter_db.get(), COUNTERS_ENI_NAME_MAP);
+    m_eni_oid_table = make_unique<Table>(m_counter_db.get(), COUNTERS_ENI_OID_MAP);
+    m_dpu_counter_db = std::shared_ptr<DBConnector>(new DBConnector("DPU_COUNTERS_DB", 0, true));
+    m_dpu_eni_name_table = make_unique<Table>(m_dpu_counter_db.get(), COUNTERS_ENI_NAME_MAP);
+    m_dpu_eni_oid_table = make_unique<Table>(m_dpu_counter_db.get(), COUNTERS_ENI_OID_MAP);
     dash_eni_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ENI_TABLE_NAME);
     dash_eni_route_result_table_ = make_unique<Table>(app_state_db, APP_DASH_ENI_ROUTE_TABLE_NAME);
     dash_qos_result_table_ = make_unique<Table>(app_state_db, APP_DASH_QOS_TABLE_NAME);
@@ -99,34 +104,79 @@ bool DashOrch::hasApplianceEntry()
     return !appliance_entries_.empty();
 }
 
+bool DashOrch::isHaFlowOwnerAttrSupported()
+{
+    SWSS_LOG_ENTER();
+
+    std::call_once(m_ha_flow_owner_attr_once_flag, [this]() {
+        sai_attr_capability_t capability;
+        sai_status_t status = sai_query_attribute_capability(
+                gSwitchId,
+                (sai_object_type_t)SAI_OBJECT_TYPE_ENI,
+                SAI_ENI_ATTR_IS_HA_FLOW_OWNER,
+                &capability);
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query SAI_ENI_ATTR_IS_HA_FLOW_OWNER capability: %d", status);
+            m_ha_flow_owner_attr_supported = false;
+        }
+        else
+        {
+            m_ha_flow_owner_attr_supported = capability.set_implemented || capability.create_implemented;
+        }
+    });
+
+    return m_ha_flow_owner_attr_supported;
+}
+
 bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::appliance::Appliance &entry)
 {
     SWSS_LOG_ENTER();
 
-    auto it = appliance_entries_.find(appliance_id);
-
-    if (it != appliance_entries_.end())
-    {
-        if (!MessageDifferencer::Equivalent(it->second.metadata.trusted_vnis(), entry.trusted_vnis()))
-        {
-            SWSS_LOG_INFO("Appliance Entry %s already exists with different trusted vnis", appliance_id.c_str());
-            removeApplianceTrustedVni(appliance_id, it->second.metadata);
-            addApplianceTrustedVni(appliance_id, entry);
-        }
-        else
-        {
-            SWSS_LOG_WARN("Appliance Entry already exists for %s", appliance_id.c_str());
-        }
-        return true;
-    }
     if (!appliance_entries_.empty())
     {
         SWSS_LOG_ERROR("Appliance entry is a singleton and already exists");
+        return true;
+    }
+
+    sai_object_id_t sai_appliance_id = SAI_NULL_OBJECT_ID;
+    if (!createApplianceSaiObjects(appliance_id, entry, sai_appliance_id))
+    {
         return false;
     }
 
-    sai_object_id_t sai_appliance_id = 0UL;
+    appliance_entries_[appliance_id] = ApplianceEntry { sai_appliance_id, entry };
+    // clear out the trusted VNIs list. They will be readded by addApplianceTrustedVni() after successful creation to ensure that internal cache state is consistent with SAI state
+    appliance_entries_[appliance_id].metadata.clear_trusted_vnis_list();
+    SWSS_LOG_NOTICE("Created appliance, vip and direction lookup entries for %s", appliance_id.c_str());
+
+    if (!entry.trusted_vnis_list().empty())
+    {
+        bool all_trusted_vnis_added = addApplianceTrustedVni(appliance_id, entry);
+        if (!all_trusted_vnis_added)
+        {
+            SWSS_LOG_ERROR("Failed to add all trusted vni entries for appliance %s. Removing appliance entry.", appliance_id.c_str());
+            removeApplianceEntry(appliance_id);
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool DashOrch::createApplianceSaiObjects(const string& appliance_id, const dash::appliance::Appliance &entry, sai_object_id_t &sai_appliance_id)
+{
+    SWSS_LOG_ENTER();
+
     sai_status_t status;
+
+    sai_vip_entry_t vip_entry;
+    vip_entry.switch_id = gSwitchId;
+
+    sai_direction_lookup_entry_t direction_lookup_entry;
+    direction_lookup_entry.switch_id = gSwitchId;
+    direction_lookup_entry.vni = entry.vm_vni();
 
     sai_attr_capability_t capability;
     status = sai_query_attribute_capability(gSwitchId, (sai_object_type_t)SAI_OBJECT_TYPE_DASH_APPLIANCE, SAI_DASH_APPLIANCE_ATTR_LOCAL_REGION_ID, &capability);
@@ -145,17 +195,23 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
             task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_APPLIANCE, status);
             if (handle_status != task_success)
             {
-                return parseHandleSaiStatusFailure(handle_status);
+                return false;
             }
         }
     }
 
-    sai_vip_entry_t vip_entry;
-    vip_entry.switch_id = gSwitchId;
     if (!to_sai(entry.sip(), vip_entry.vip))
     {
+        SWSS_LOG_ERROR("Failed to convert SIP for appliance %s", appliance_id.c_str());
+        // Cleanup: only appliance may have been created
+        if (sai_appliance_id != SAI_NULL_OBJECT_ID)
+        {
+            sai_dash_appliance_api->remove_dash_appliance(sai_appliance_id);
+            sai_appliance_id = SAI_NULL_OBJECT_ID;
+        }
         return false;
     }
+
     sai_attribute_t appliance_attr;
     appliance_attr.id = SAI_VIP_ENTRY_ATTR_ACTION;
     appliance_attr.value.u32 = SAI_VIP_ENTRY_ACTION_ACCEPT;
@@ -166,14 +222,16 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_VIP, status);
         if (handle_status != task_success)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            if (sai_appliance_id != SAI_NULL_OBJECT_ID)
+            {
+                sai_dash_appliance_api->remove_dash_appliance(sai_appliance_id);
+                sai_appliance_id = SAI_NULL_OBJECT_ID;
+            }
+            return false;
         }
     }
 
-    sai_direction_lookup_entry_t direction_lookup_entry;
     vector<sai_attribute_t> direction_lookup_attrs;
-    direction_lookup_entry.switch_id = gSwitchId;
-    direction_lookup_entry.vni = entry.vm_vni();
     appliance_attr.id = SAI_DIRECTION_LOOKUP_ENTRY_ATTR_ACTION;
     if (entry.has_outbound_direction_lookup())
     {
@@ -201,46 +259,53 @@ bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::applian
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_DIRECTION_LOOKUP, status);
         if (handle_status != task_success)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            sai_dash_vip_api->remove_vip_entry(&vip_entry);
+            if (sai_appliance_id != SAI_NULL_OBJECT_ID)
+            {
+                sai_dash_appliance_api->remove_dash_appliance(sai_appliance_id);
+                sai_appliance_id = SAI_NULL_OBJECT_ID;
+            }
+            return false;
         }
-    }
-    appliance_entries_[appliance_id] = ApplianceEntry { sai_appliance_id, entry };
-    SWSS_LOG_NOTICE("Created appliance, vip and direction lookup entries for %s", appliance_id.c_str());
-
-    if (entry.has_trusted_vnis())
-    {
-        addApplianceTrustedVni(appliance_id, entry);
     }
 
     return true;
 }
 
-void DashOrch::addApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance& entry)
+bool DashOrch::addApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance& entry)
 {
     SWSS_LOG_ENTER();
     sai_global_trusted_vni_entry_t trusted_vni_entry;
     trusted_vni_entry.switch_id = gSwitchId;
     sai_u32_range_t vni_range;
-    if (!to_sai(entry.trusted_vnis(), vni_range))
-    {
-        SWSS_LOG_ERROR("Failed to convert trusted vni range for appliance");
-        return;
-    }
+    bool success = true;
 
-    trusted_vni_entry.vni_range = vni_range;
-    sai_status_t status = sai_dash_trusted_vni_api->create_global_trusted_vni_entry(&trusted_vni_entry, 0, NULL);
-    if (status != SAI_STATUS_SUCCESS)
+    for (int i = 0; i < entry.trusted_vnis_list_size(); i++)
     {
-        SWSS_LOG_ERROR("Failed to create global trusted vni entry with range %u-%u for appliance", vni_range.min, vni_range.max);
-        task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_TRUSTED_VNI, status);
-        if (handle_status != task_success)
+        const auto& vni_range_pb = entry.trusted_vnis_list(i);
+        if (!to_sai(vni_range_pb, vni_range))
         {
-            parseHandleSaiStatusFailure(handle_status);
+            SWSS_LOG_ERROR("Failed to convert trusted vni range for appliance");
+            success = false;
+            continue;
         }
+        trusted_vni_entry.vni_range = vni_range;
+        sai_status_t status = sai_dash_trusted_vni_api->create_global_trusted_vni_entry(&trusted_vni_entry, 0, NULL);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create global trusted vni entry with range %u-%u for appliance", vni_range.min, vni_range.max);
+            task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_TRUSTED_VNI, status);
+            if (handle_status != task_success)
+            {
+                success = false;
+                continue;
+            }
+        }
+        SWSS_LOG_NOTICE("Created global trusted vni entry for appliance with range %u-%u",
+                        vni_range.min, vni_range.max);
+        appliance_entries_[appliance_id].metadata.mutable_trusted_vnis_list()->Add()->CopyFrom(vni_range_pb);
     }
-    appliance_entries_[appliance_id].metadata.mutable_trusted_vnis()->CopyFrom(entry.trusted_vnis());
-    SWSS_LOG_NOTICE("Created global trusted vni entry for appliance with range %u-%u",
-                    vni_range.min, vni_range.max);
+    return success;
 }
 
 bool DashOrch::removeApplianceEntry(const string& appliance_id)
@@ -256,21 +321,35 @@ bool DashOrch::removeApplianceEntry(const string& appliance_id)
     }
 
     const auto& entry = appliance_entries_[appliance_id].metadata;
+
+    if (!entry.trusted_vnis_list().empty())
+    {
+        bool all_trusted_vnis_removed = removeApplianceTrustedVni(appliance_id, entry);
+        if (!all_trusted_vnis_removed)
+        {
+            SWSS_LOG_ERROR("Failed to remove all trusted vni entries for appliance %s.", appliance_id.c_str());
+            return false;
+        }
+    }
+
     sai_vip_entry_t vip_entry;
     vip_entry.switch_id = gSwitchId;
-    if (!to_sai(entry.sip(), vip_entry.vip))
+    if (to_sai(entry.sip(), vip_entry.vip))
     {
-        return false;
-    }
-    status = sai_dash_vip_api->remove_vip_entry(&vip_entry);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to remove vip entry for %s", appliance_id.c_str());
-        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_VIP, status);
-        if (handle_status != task_success)
+        status = sai_dash_vip_api->remove_vip_entry(&vip_entry);
+        if (status != SAI_STATUS_SUCCESS)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            SWSS_LOG_ERROR("Failed to remove vip entry for %s", appliance_id.c_str());
+            task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_VIP, status);
+            if (handle_status != task_success)
+            {
+                return false;
+            }
         }
+    }
+    else
+    {
+        SWSS_LOG_WARN("Failed to convert SIP for appliance %s during removal, skipping VIP cleanup", appliance_id.c_str());
     }
 
     sai_direction_lookup_entry_t direction_lookup_entry;
@@ -283,12 +362,12 @@ bool DashOrch::removeApplianceEntry(const string& appliance_id)
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_DIRECTION_LOOKUP, status);
         if (handle_status != task_success)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            return false;
         }
     }
 
     auto sai_appliance_id = appliance_entries_[appliance_id].appliance_id;
-    if (sai_appliance_id != 0UL)
+    if (sai_appliance_id != SAI_NULL_OBJECT_ID)
     {
         status = sai_dash_appliance_api->remove_dash_appliance(sai_appliance_id);
         if (status != SAI_STATUS_SUCCESS && status != SAI_STATUS_NOT_IMPLEMENTED)
@@ -297,51 +376,51 @@ bool DashOrch::removeApplianceEntry(const string& appliance_id)
             task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_APPLIANCE, status);
             if (handle_status != task_success)
             {
-                return parseHandleSaiStatusFailure(handle_status);
+                return false;
             }
         }
     }
 
-    if (entry.has_trusted_vnis())
-    {
-        removeApplianceTrustedVni(appliance_id, entry);
-    }
-
     appliance_entries_.erase(appliance_id);
     SWSS_LOG_NOTICE("Removed appliance, vip and direction lookup entries for %s", appliance_id.c_str());
-
-
     return true;
 }
 
-void DashOrch::removeApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance& entry)
+bool DashOrch::removeApplianceTrustedVni(const std::string& appliance_id, const dash::appliance::Appliance& entry)
 {
     SWSS_LOG_ENTER();
     sai_global_trusted_vni_entry_t trusted_vni_entry;
     trusted_vni_entry.switch_id = gSwitchId;
     sai_u32_range_t vni_range;
+    bool success = true;
 
-    if (!to_sai(entry.trusted_vnis(), vni_range))
+    // iterate backwards since we use RemoveLast() to remove the trusted vni entries from internal cache as SAI entries are removed, to ensure the internal cache state is consistent with SAI state in case of failure in the middle of the loop
+    for (int i = entry.trusted_vnis_list_size() - 1; i >= 0; i--)
     {
-        SWSS_LOG_ERROR("Failed to convert trusted vni range for appliance");
-        return;
-    }
-
-    trusted_vni_entry.vni_range = vni_range;
-    sai_status_t status = sai_dash_trusted_vni_api->remove_global_trusted_vni_entry(&trusted_vni_entry);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to remove global trusted vni entry with range %u-%u for appliance", vni_range.min, vni_range.max);
-        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t)SAI_API_DASH_TRUSTED_VNI, status);
-        if (handle_status != task_success)
+        const auto& vni_range_pb = entry.trusted_vnis_list(i);
+        if (!to_sai(vni_range_pb, vni_range))
         {
-            parseHandleSaiStatusFailure(handle_status);
+            SWSS_LOG_ERROR("Failed to convert trusted vni range for appliance");
+            success = false;
+            continue;
         }
+        trusted_vni_entry.vni_range = vni_range;
+        sai_status_t status = sai_dash_trusted_vni_api->remove_global_trusted_vni_entry(&trusted_vni_entry);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove global trusted vni entry with range %u-%u for appliance", vni_range.min, vni_range.max);
+            task_process_status handle_status = handleSaiRemoveStatus((sai_api_t)SAI_API_DASH_TRUSTED_VNI, status);
+            if (handle_status != task_success)
+            {
+                success = false;
+                continue;
+            }
+        }
+        SWSS_LOG_NOTICE("Removed global trusted vni entry for appliance with range %u-%u",
+                        vni_range.min, vni_range.max);
+        appliance_entries_[appliance_id].metadata.mutable_trusted_vnis_list()->RemoveLast();
     }
-
-    appliance_entries_[appliance_id].metadata.clear_trusted_vnis();
-    SWSS_LOG_NOTICE("Removed global trusted vni entry for appliance with range %u-%u",
-                    vni_range.min, vni_range.max);
+    return success;
 }
 
 void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
@@ -355,45 +434,53 @@ void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
         KeyOpFieldsValuesTuple t = it->second;
         string appliance_id = kfvKey(t);
         string op = kfvOp(t);
-        result = DASH_RESULT_SUCCESS;
 
-        if (op == SET_COMMAND)
+        try
         {
-            dash::appliance::Appliance entry;
+            result = DASH_RESULT_SUCCESS;
 
-            if (!parsePbMessage(kfvFieldsValues(t), entry))
+            if (op == SET_COMMAND)
             {
-                SWSS_LOG_WARN("Requires protobuff at appliance :%s", appliance_id.c_str());
+                dash::appliance::Appliance entry;
+
+                if (!parsePbMessage(kfvFieldsValues(t), entry))
+                {
+                    SWSS_LOG_ERROR("Requires protobuff at appliance :%s", appliance_id.c_str());
+                    writeResultToDB(dash_appliance_result_table_, appliance_id, DASH_RESULT_FAILURE);
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+
+                if (!addApplianceEntry(appliance_id, entry))
+                {
+                    SWSS_LOG_ERROR("Failed to add appliance entry for %s", appliance_id.c_str());
+                    result = DASH_RESULT_FAILURE;
+                }
                 it = consumer.m_toSync.erase(it);
-                continue;
+                writeResultToDB(dash_appliance_result_table_, appliance_id, result);
             }
-
-            if (addApplianceEntry(appliance_id, entry))
+            else if (op == DEL_COMMAND)
             {
+                if (removeApplianceEntry(appliance_id))
+                {
+                    removeResultFromDB(dash_appliance_result_table_, appliance_id);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Failed to remove appliance entry for %s", appliance_id.c_str());
+                }
                 it = consumer.m_toSync.erase(it);
             }
             else
             {
-                result = DASH_RESULT_FAILURE;
-                it++;
-            }
-            writeResultToDB(dash_appliance_result_table_, appliance_id, result);
-        }
-        else if (op == DEL_COMMAND)
-        {
-            if (removeApplianceEntry(appliance_id))
-            {
+                SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
                 it = consumer.m_toSync.erase(it);
-                removeResultFromDB(dash_appliance_result_table_, appliance_id);
-            }
-            else
-            {
-                it++;
             }
         }
-        else
+        catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
+            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", consumer.getTableName().c_str(), appliance_id.c_str(), e.what());
+            writeResultToDB(dash_appliance_result_table_, appliance_id, DASH_RESULT_FAILURE);
             it = consumer.m_toSync.erase(it);
         }
     }
@@ -442,56 +529,65 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
         KeyOpFieldsValuesTuple t = it->second;
         string routing_type_str = kfvKey(t);
         string op = kfvOp(t);
-        dash::route_type::RoutingType routing_type;
-        result = DASH_RESULT_SUCCESS;
 
-        std::transform(routing_type_str.begin(), routing_type_str.end(), routing_type_str.begin(), ::toupper);
-        routing_type_str = "ROUTING_TYPE_" + routing_type_str;
-
-        if (!dash::route_type::RoutingType_Parse(routing_type_str, &routing_type))
+        try
         {
-            SWSS_LOG_WARN("Invalid routing type %s", routing_type_str.c_str());
-            it = consumer.m_toSync.erase(it);
-            continue;
-        }
+            dash::route_type::RoutingType routing_type;
+            result = DASH_RESULT_SUCCESS;
 
-        if (op == SET_COMMAND)
-        {
-            dash::route_type::RouteType entry;
+            std::transform(routing_type_str.begin(), routing_type_str.end(), routing_type_str.begin(), ::toupper);
+            routing_type_str = "ROUTING_TYPE_" + routing_type_str;
 
-            if (!parsePbMessage(kfvFieldsValues(t), entry))
+            if (!dash::route_type::RoutingType_Parse(routing_type_str, &routing_type))
             {
-                SWSS_LOG_WARN("Requires protobuff at routing type :%s", routing_type_str.c_str());
+                SWSS_LOG_ERROR("Invalid routing type %s", routing_type_str.c_str());
+                writeResultToDB(dash_routing_type_result_table_, routing_type_str, DASH_RESULT_FAILURE);
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
 
-            if (addRoutingTypeEntry(routing_type, entry))
+            if (op == SET_COMMAND)
             {
+                dash::route_type::RouteType entry;
+
+                if (!parsePbMessage(kfvFieldsValues(t), entry))
+                {
+                    SWSS_LOG_ERROR("Requires protobuff at routing type :%s", routing_type_str.c_str());
+                    writeResultToDB(dash_routing_type_result_table_, routing_type_str, DASH_RESULT_FAILURE);
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+
+                if (!addRoutingTypeEntry(routing_type, entry))
+                {
+                    SWSS_LOG_ERROR("Failed to add routing type entry for %s", routing_type_str.c_str());
+                    result = DASH_RESULT_FAILURE;
+                }
+                it = consumer.m_toSync.erase(it);
+                writeResultToDB(dash_routing_type_result_table_, routing_type_str, result);
+            }
+            else if (op == DEL_COMMAND)
+            {
+                if (removeRoutingTypeEntry(routing_type))
+                {
+                    removeResultFromDB(dash_routing_type_result_table_, routing_type_str);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Failed to remove routing type entry for %s", routing_type_str.c_str());
+                }
                 it = consumer.m_toSync.erase(it);
             }
             else
             {
-                result = DASH_RESULT_FAILURE;
-                it++;
-            }
-            writeResultToDB(dash_routing_type_result_table_, routing_type_str, result);
-        }
-        else if (op == DEL_COMMAND)
-        {
-            if (removeRoutingTypeEntry(routing_type))
-            {
+                SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
                 it = consumer.m_toSync.erase(it);
-                removeResultFromDB(dash_routing_type_result_table_, routing_type_str);
-            }
-            else
-            {
-                it++;
             }
         }
-        else
+        catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
+            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", consumer.getTableName().c_str(), routing_type_str.c_str(), e.what());
+            writeResultToDB(dash_routing_type_result_table_, routing_type_str, DASH_RESULT_FAILURE);
             it = consumer.m_toSync.erase(it);
         }
     }
@@ -515,7 +611,7 @@ bool DashOrch::setEniAdminState(const string& eni, const EniEntry& entry)
         task_process_status handle_status = handleSaiSetStatus((sai_api_t) SAI_API_DASH_ENI, status);
         if (handle_status != task_success)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            return false;
         }
     }
     eni_entries_[eni].metadata.set_admin_state(entry.metadata.admin_state());
@@ -532,13 +628,13 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
 
     if (!vnet.empty() && gVnetNameToId.find(vnet) == gVnetNameToId.end())
     {
-        SWSS_LOG_INFO("Retry as vnet %s not found", vnet.c_str());
+        SWSS_LOG_ERROR("Failed to find vnet %s for ENI %s", vnet.c_str(), eni.c_str());
         return false;
     }
 
     if (appliance_entries_.empty())
     {
-        SWSS_LOG_INFO("Retry as no appliance table entry found");
+        SWSS_LOG_ERROR("No appliance table entry found for ENI %s", eni.c_str());
         return false;
     }
 
@@ -553,7 +649,7 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
         sai_object_id_t meter_policy_oid = dash_meter_orch->getMeterPolicyOid(v4_meter_policy);
         if (meter_policy_oid == SAI_NULL_OBJECT_ID)
         {
-            SWSS_LOG_INFO("Retry as v4 meter_policy %s not found", v4_meter_policy.c_str());
+            SWSS_LOG_ERROR("Failed to find v4 meter_policy %s for ENI %s", v4_meter_policy.c_str(), eni.c_str());
             return false;
         }
     }
@@ -562,7 +658,7 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
         sai_object_id_t meter_policy_oid = dash_meter_orch->getMeterPolicyOid(v6_meter_policy);
         if (meter_policy_oid == SAI_NULL_OBJECT_ID)
         {
-            SWSS_LOG_INFO("Retry as v6 meter_policy %s not found", v6_meter_policy.c_str());
+            SWSS_LOG_ERROR("Failed to find v6 meter_policy %s for ENI %s", v6_meter_policy.c_str(), eni.c_str());
             return false;
         }
     }
@@ -650,25 +746,31 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
             eni_attrs.push_back(eni_attr);
             SWSS_LOG_INFO("Setting HA Scope ID %" PRIx64 " for ENI %s", ha_scope_entry.ha_scope_id, eni.c_str());
 
-            // Set HA flow owner based on HA role
-            eni_attr.id = SAI_ENI_ATTR_IS_HA_FLOW_OWNER;
-            if (ha_scope_entry.metadata.ha_role() == dash::types::HA_ROLE_ACTIVE || ha_scope_entry.metadata.ha_role() == dash::types::HA_ROLE_STANDALONE)
+            if (isHaFlowOwnerAttrSupported())
             {
-                eni_attr.value.booldata = true;
-                SWSS_LOG_INFO("Setting HA flow owner to true (ACTIVE) for ENI %s", eni.c_str());
-            }
-            else if (ha_scope_entry.metadata.ha_role() == dash::types::HA_ROLE_STANDBY)
-            {
-                eni_attr.value.booldata = false;
-                SWSS_LOG_INFO("Setting HA flow owner to false (STANDBY) for ENI %s", eni.c_str());
+                eni_attr.id = SAI_ENI_ATTR_IS_HA_FLOW_OWNER;
+                if (ha_scope_entry.metadata.ha_role() == dash::types::HA_ROLE_ACTIVE || ha_scope_entry.metadata.ha_role() == dash::types::HA_ROLE_STANDALONE)
+                {
+                    eni_attr.value.booldata = true;
+                    SWSS_LOG_INFO("Setting HA flow owner to true (ACTIVE) for ENI %s", eni.c_str());
+                }
+                else if (ha_scope_entry.metadata.ha_role() == dash::types::HA_ROLE_STANDBY)
+                {
+                    eni_attr.value.booldata = false;
+                    SWSS_LOG_INFO("Setting HA flow owner to false (STANDBY) for ENI %s", eni.c_str());
+                }
+                else
+                {
+                    // For other roles (DEAD, SWITCHING_TO_ACTIVE), default to false
+                    eni_attr.value.booldata = false;
+                    SWSS_LOG_INFO("Setting HA flow owner to false (role: %s) for ENI %s", dash::types::HaRole_Name(ha_scope_entry.metadata.ha_role()).c_str(), eni.c_str());
+                }
+                eni_attrs.push_back(eni_attr);
             }
             else
             {
-                // For other roles (DEAD, SWITCHING_TO_ACTIVE), default to false
-                eni_attr.value.booldata = false;
-                SWSS_LOG_INFO("Setting HA flow owner to false (role: %s) for ENI %s", dash::types::HaRole_Name(ha_scope_entry.metadata.ha_role()).c_str(), eni.c_str());
+                SWSS_LOG_INFO("SAI_ENI_ATTR_IS_HA_FLOW_OWNER not supported, skipping for ENI %s", eni.c_str());
             }
-            eni_attrs.push_back(eni_attr);
         }
         else
         {
@@ -698,7 +800,7 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_ENI, status);
         if (handle_status != task_success)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            return false;
         }
     }
 
@@ -743,7 +845,7 @@ bool DashOrch::addEniAddrMapEntry(const string& eni, const EniEntry& entry)
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_ENI, status);
         if (handle_status != task_success)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            return false;
         }
     }
 
@@ -754,33 +856,42 @@ bool DashOrch::addEniAddrMapEntry(const string& eni, const EniEntry& entry)
     return true;
 }
 
-void DashOrch::addEniTrustedVnis(const std::string& eni, const EniEntry& entry)
+bool DashOrch::addEniTrustedVnis(const std::string& eni, const EniEntry& entry)
 {
     SWSS_LOG_ENTER();
     sai_eni_trusted_vni_entry_t trusted_vni_entry;
     trusted_vni_entry.switch_id = gSwitchId;
     trusted_vni_entry.eni_id = entry.eni_id;
     sai_u32_range_t vni_range;
-    if (!to_sai(entry.metadata.trusted_vnis(), vni_range))
-    {
-        SWSS_LOG_ERROR("Failed to convert trusted vni range for ENI %s", entry.metadata.eni_id().c_str());
-        return;
-    }
-    trusted_vni_entry.vni_range = vni_range;
+    bool success = true;
 
-    sai_status_t status = sai_dash_trusted_vni_api->create_eni_trusted_vni_entry(&trusted_vni_entry, 0, NULL);
-    if (status != SAI_STATUS_SUCCESS)
+    for (int i = 0; i < entry.metadata.trusted_vnis_list_size(); i++)
     {
-        SWSS_LOG_ERROR("Failed to create ENI trusted vni entry with range %u-%u for ENI %s", vni_range.min, vni_range.max, entry.metadata.eni_id().c_str());
-        task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_TRUSTED_VNI, status);
-        if (handle_status != task_success)
+        dash::types::ValueOrRange vni_range_pb = entry.metadata.trusted_vnis_list(i);
+        if (!to_sai(vni_range_pb, vni_range))
         {
-            parseHandleSaiStatusFailure(handle_status);
+            SWSS_LOG_ERROR("Failed to convert trusted vni range for ENI %s", entry.metadata.eni_id().c_str());
+            success = false;
+            continue;
         }
+        trusted_vni_entry.vni_range = vni_range;
+
+        sai_status_t status = sai_dash_trusted_vni_api->create_eni_trusted_vni_entry(&trusted_vni_entry, 0, NULL);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create ENI trusted vni entry with range %u-%u for ENI %s", vni_range.min, vni_range.max, entry.metadata.eni_id().c_str());
+            task_process_status handle_status = handleSaiCreateStatus((sai_api_t)SAI_API_DASH_TRUSTED_VNI, status);
+            if (handle_status != task_success)
+            {
+                success = false;
+                continue;
+            }
+        }
+        eni_entries_[eni].metadata.mutable_trusted_vnis_list()->Add()->CopyFrom(vni_range_pb);
+        SWSS_LOG_NOTICE("Created ENI trusted vni entry for ENI %s with range %u-%u",
+                        entry.metadata.eni_id().c_str(), vni_range.min, vni_range.max);
     }
-    eni_entries_[eni].metadata.mutable_trusted_vnis()->CopyFrom(entry.metadata.trusted_vnis());
-    SWSS_LOG_NOTICE("Created ENI trusted vni entry for ENI %s with range %u-%u",
-                    entry.metadata.eni_id().c_str(), vni_range.min, vni_range.max);
+    return success;
 }
 
 bool DashOrch::addEni(const string& eni, EniEntry &entry)
@@ -791,13 +902,6 @@ bool DashOrch::addEni(const string& eni, EniEntry &entry)
     if (it != eni_entries_.end())
     {
         bool changed = false;
-        if (!MessageDifferencer::Equivalent(it->second.metadata.trusted_vnis(), entry.metadata.trusted_vnis()))
-        {
-            SWSS_LOG_INFO("ENI %s trusted vnis have changed", eni.c_str());
-            removeEniTrustedVnis(eni, it->second);
-            addEniTrustedVnis(eni, entry);
-            changed = true;
-        }
         if (it->second.metadata.admin_state() != entry.metadata.admin_state())
         {
             SWSS_LOG_INFO("ENI %s already exists, updating admin state", eni.c_str());
@@ -810,15 +914,35 @@ bool DashOrch::addEni(const string& eni, EniEntry &entry)
         return true;
     }
 
-    if (!addEniObject(eni, entry) || !addEniAddrMapEntry(eni, entry))
+    if (!addEniObject(eni, entry))
     {
         return false;
     }
-    eni_entries_[eni] = entry;
 
-    if (entry.metadata.has_trusted_vnis())
+    eni_entries_[eni] = entry;
+    // clear out the trusted VNIs list. They will be readded by addEniTrustedVni() after successful creation to ensure that internal cache state is consistent with SAI state
+    eni_entries_[eni].metadata.clear_trusted_vnis_list();
+
+    if (!addEniAddrMapEntry(eni, entry))
     {
-        addEniTrustedVnis(eni, entry);
+        SWSS_LOG_ERROR("Failed to add ENI address map entry for %s. Removing ENI object.", eni.c_str());
+        if (!removeEniObject(eni))
+        {
+            SWSS_LOG_ERROR("Failed to remove ENI object while cleaning up %s", eni.c_str());
+        }
+        eni_entries_.erase(eni);
+        return false;
+    }
+
+    if (!entry.metadata.trusted_vnis_list().empty())
+    {
+        bool all_trusted_vnis_added = addEniTrustedVnis(eni, entry);
+        if (!all_trusted_vnis_added)
+        {
+            SWSS_LOG_ERROR("Failed to add all trusted vni entries for ENI %s. Removing ENI entry.", eni.c_str());
+            removeEni(eni);
+            return false;
+        }
     }
 
     return true;
@@ -844,25 +968,25 @@ bool DashOrch::removeEniObject(const string& eni)
     EniEntry entry = eni_entries_[eni];
     DashMeterOrch *dash_meter_orch = gDirectory.get<DashMeterOrch*>();
 
-    MeterCounter.removeFromFC(entry.eni_id, eni);
-    EniCounter.removeFromFC(entry.eni_id, eni);
-    removeEniMapEntry(entry.eni_id, eni);
-
     sai_status_t status = sai_dash_eni_api->remove_eni(entry.eni_id);
     if (status != SAI_STATUS_SUCCESS)
     {
-        //Retry later if object is in use
         if (status == SAI_STATUS_OBJECT_IN_USE)
         {
+            SWSS_LOG_ERROR("Failed to remove ENI object for %s: object in use", eni.c_str());
             return false;
         }
         SWSS_LOG_ERROR("Failed to remove ENI object for %s", eni.c_str());
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_ENI, status);
         if (handle_status != task_success)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            return false;
         }
     }
+
+    MeterCounter.removeFromFC(entry.eni_id, eni);
+    EniCounter.removeFromFC(entry.eni_id, eni);
+    removeEniMapEntry(entry.eni_id, eni);
 
     const string &v4_meter_policy  = entry.metadata.has_v4_meter_policy_id() ?
                                      entry.metadata.v4_meter_policy_id() : "";
@@ -906,7 +1030,7 @@ bool DashOrch::removeEniAddrMapEntry(const string& eni)
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_ENI, status);
         if (handle_status != task_success)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            return false;
         }
     }
 
@@ -917,34 +1041,42 @@ bool DashOrch::removeEniAddrMapEntry(const string& eni)
     return true;
 }
 
-void DashOrch::removeEniTrustedVnis(const std::string& eni, const EniEntry& entry)
+bool DashOrch::removeEniTrustedVnis(const std::string& eni, const EniEntry& entry)
 {
     SWSS_LOG_ENTER();
     sai_eni_trusted_vni_entry_t trusted_vni_entry;
     trusted_vni_entry.switch_id = gSwitchId;
     trusted_vni_entry.eni_id = entry.eni_id;
     sai_u32_range_t vni_range;
+    bool success = true;
 
-    if (!to_sai(entry.metadata.trusted_vnis(), vni_range))
+    for (int i = entry.metadata.trusted_vnis_list_size() - 1; i >= 0; i--)
     {
-        SWSS_LOG_ERROR("Failed to convert trusted vni range for ENI %s", entry.metadata.eni_id().c_str());
-        return;
-    }
-
-    trusted_vni_entry.vni_range = vni_range;
-    sai_status_t status = sai_dash_trusted_vni_api->remove_eni_trusted_vni_entry(&trusted_vni_entry);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to remove ENI trusted vni entry with range %u-%u for ENI %s", vni_range.min, vni_range.max, entry.metadata.eni_id().c_str());
-        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t)SAI_API_DASH_TRUSTED_VNI, status);
-        if (handle_status != task_success)
+        dash::types::ValueOrRange vni_range_pb = entry.metadata.trusted_vnis_list(i);
+        if (!to_sai(vni_range_pb, vni_range))
         {
-            parseHandleSaiStatusFailure(handle_status);
+            SWSS_LOG_ERROR("Failed to convert trusted vni range for ENI %s", entry.metadata.eni_id().c_str());
+            success = false;
+            continue;
         }
+
+        trusted_vni_entry.vni_range = vni_range;
+        sai_status_t status = sai_dash_trusted_vni_api->remove_eni_trusted_vni_entry(&trusted_vni_entry);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove ENI trusted vni entry with range %u-%u for ENI %s", vni_range.min, vni_range.max, entry.metadata.eni_id().c_str());
+            task_process_status handle_status = handleSaiRemoveStatus((sai_api_t)SAI_API_DASH_TRUSTED_VNI, status);
+            if (handle_status != task_success)
+            {
+                success = false;
+                continue;
+            }
+        }
+        eni_entries_[eni].metadata.mutable_trusted_vnis_list()->RemoveLast();
+        SWSS_LOG_NOTICE("Removed ENI trusted vni entry for ENI %s with range %u-%u",
+                        entry.metadata.eni_id().c_str(), vni_range.min, vni_range.max);
     }
-    eni_entries_[eni].metadata.clear_trusted_vnis();
-    SWSS_LOG_NOTICE("Removed ENI trusted vni entry for ENI %s with range %u-%u",
-                    entry.metadata.eni_id().c_str(), vni_range.min, vni_range.max);
+    return success;
 }
 
 bool DashOrch::removeEni(const string& eni)
@@ -957,9 +1089,14 @@ bool DashOrch::removeEni(const string& eni)
         return true;
     }
 
-    if (eni_entries_[eni].metadata.has_trusted_vnis())
+    if (!eni_entries_[eni].metadata.trusted_vnis_list().empty())
     {
-        removeEniTrustedVnis(eni, eni_entries_[eni]);
+        bool all_trusted_vnis_removed = removeEniTrustedVnis(eni, eni_entries_[eni]);
+        if (!all_trusted_vnis_removed)
+        {
+            SWSS_LOG_ERROR("Failed to remove all trusted vni entries for ENI %s.", eni.c_str());
+            return false;
+        }
     }
 
     if (!removeEniAddrMapEntry(eni) || !removeEniObject(eni))
@@ -980,47 +1117,55 @@ void DashOrch::doTaskEniTable(ConsumerBase& consumer)
     uint32_t result;
     while (it != consumer.m_toSync.end())
     {
-        auto t = it->second;
+        KeyOpFieldsValuesTuple t = it->second;
         string eni = kfvKey(t);
         string op = kfvOp(t);
-        result = DASH_RESULT_SUCCESS;
-        if (op == SET_COMMAND)
+
+        try
         {
-            EniEntry entry;
-
-            if (!parsePbMessage(kfvFieldsValues(t), entry.metadata))
+            result = DASH_RESULT_SUCCESS;
+            if (op == SET_COMMAND)
             {
-                SWSS_LOG_WARN("Requires protobuff at ENI :%s", eni.c_str());
+                EniEntry entry;
+
+                if (!parsePbMessage(kfvFieldsValues(t), entry.metadata))
+                {
+                    SWSS_LOG_ERROR("Requires protobuff at ENI :%s", eni.c_str());
+                    writeResultToDB(dash_eni_result_table_, eni, DASH_RESULT_FAILURE);
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+
+                if (!addEni(eni, entry))
+                {
+                    SWSS_LOG_ERROR("Failed to add ENI entry for %s", eni.c_str());
+                    result = DASH_RESULT_FAILURE;
+                }
                 it = consumer.m_toSync.erase(it);
-                continue;
+                writeResultToDB(dash_eni_result_table_, eni, result);
             }
-
-            if (addEni(eni, entry))
+            else if (op == DEL_COMMAND)
             {
+                if (removeEni(eni))
+                {
+                    removeResultFromDB(dash_eni_result_table_, eni);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Failed to remove ENI entry for %s", eni.c_str());
+                }
                 it = consumer.m_toSync.erase(it);
             }
             else
             {
-                result = DASH_RESULT_FAILURE;
-                it++;
-            }
-            writeResultToDB(dash_eni_result_table_, eni, result);
-        }
-        else if (op == DEL_COMMAND)
-        {
-            if (removeEni(eni))
-            {
+                SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
                 it = consumer.m_toSync.erase(it);
-                removeResultFromDB(dash_eni_result_table_, eni);
-            }
-            else
-            {
-                it++;
             }
         }
-        else
+        catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
+            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", consumer.getTableName().c_str(), eni.c_str(), e.what());
+            writeResultToDB(dash_eni_result_table_, eni, DASH_RESULT_FAILURE);
             it = consumer.m_toSync.erase(it);
         }
     }
@@ -1064,45 +1209,53 @@ void DashOrch::doTaskQosTable(ConsumerBase& consumer)
         KeyOpFieldsValuesTuple t = it->second;
         string qos_name = kfvKey(t);
         string op = kfvOp(t);
-        result = DASH_RESULT_SUCCESS;
 
-        if (op == SET_COMMAND)
+        try
         {
-            dash::qos::Qos entry;
+            result = DASH_RESULT_SUCCESS;
 
-            if (!parsePbMessage(kfvFieldsValues(t), entry))
+            if (op == SET_COMMAND)
             {
-                SWSS_LOG_WARN("Requires protobuff at QOS :%s", qos_name.c_str());
+                dash::qos::Qos entry;
+
+                if (!parsePbMessage(kfvFieldsValues(t), entry))
+                {
+                    SWSS_LOG_ERROR("Requires protobuff at QOS :%s", qos_name.c_str());
+                    writeResultToDB(dash_qos_result_table_, qos_name, DASH_RESULT_FAILURE);
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+
+                if (!addQosEntry(qos_name, entry))
+                {
+                    SWSS_LOG_ERROR("Failed to add QOS entry for %s", qos_name.c_str());
+                    result = DASH_RESULT_FAILURE;
+                }
                 it = consumer.m_toSync.erase(it);
-                continue;
+                writeResultToDB(dash_qos_result_table_, qos_name, result);
             }
-
-            if (addQosEntry(qos_name, entry))
+            else if (op == DEL_COMMAND)
             {
+                if (removeQosEntry(qos_name))
+                {
+                    removeResultFromDB(dash_qos_result_table_, qos_name);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Failed to remove QOS entry for %s", qos_name.c_str());
+                }
                 it = consumer.m_toSync.erase(it);
             }
             else
             {
-                result = DASH_RESULT_FAILURE;
-                it++;
-            }
-            writeResultToDB(dash_qos_result_table_, qos_name, result);
-        }
-        else if (op == DEL_COMMAND)
-        {
-            if (removeQosEntry(qos_name))
-            {
+                SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
                 it = consumer.m_toSync.erase(it);
-                removeResultFromDB(dash_qos_result_table_, qos_name);
-            }
-            else
-            {
-                it++;
             }
         }
-        else
+        catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
+            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", consumer.getTableName().c_str(), qos_name.c_str(), e.what());
+            writeResultToDB(dash_qos_result_table_, qos_name, DASH_RESULT_FAILURE);
             it = consumer.m_toSync.erase(it);
         }
     }
@@ -1115,7 +1268,7 @@ bool DashOrch::setEniRoute(const std::string& eni, const dash::eni_route::EniRou
 
     if (eni_entries_.find(eni) == eni_entries_.end())
     {
-        SWSS_LOG_INFO("ENI %s not yet created, not programming ENI route entry", eni.c_str());
+        SWSS_LOG_ERROR("ENI %s not yet created, cannot program ENI route entry", eni.c_str());
         return false;
     }
 
@@ -1123,7 +1276,7 @@ bool DashOrch::setEniRoute(const std::string& eni, const dash::eni_route::EniRou
     sai_object_id_t route_group_oid = dash_route_orch->getRouteGroupOid(entry.group_id());
     if (route_group_oid == SAI_NULL_OBJECT_ID)
     {
-        SWSS_LOG_INFO("Route group not yet created, skipping route entry for ENI %s", entry.group_id().c_str());
+        SWSS_LOG_ERROR("Route group %s not found, cannot set route entry for ENI %s", entry.group_id().c_str(), eni.c_str());
         return false;
     }
 
@@ -1155,7 +1308,7 @@ bool DashOrch::setEniRoute(const std::string& eni, const dash::eni_route::EniRou
         task_process_status handle_status = handleSaiSetStatus((sai_api_t) SAI_API_DASH_ENI, status);
         if (handle_status != task_success)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            return false;
         }
     }
     eni_route_entries_[eni] = entry;
@@ -1194,7 +1347,7 @@ bool DashOrch::removeEniRoute(const std::string& eni)
             task_process_status handle_status = handleSaiSetStatus((sai_api_t) SAI_API_DASH_ENI, status);
             if (handle_status != task_success)
             {
-                return parseHandleSaiStatusFailure(handle_status);
+                return false;
             }
         }
     }
@@ -1217,45 +1370,53 @@ void DashOrch::doTaskEniRouteTable(ConsumerBase& consumer)
         KeyOpFieldsValuesTuple t = it->second;
         string eni = kfvKey(t);
         string op = kfvOp(t);
-        result = DASH_RESULT_SUCCESS;
 
-        if (op == SET_COMMAND)
+        try
         {
-            dash::eni_route::EniRoute entry;
+            result = DASH_RESULT_SUCCESS;
 
-            if (!parsePbMessage(kfvFieldsValues(t), entry))
+            if (op == SET_COMMAND)
             {
-                SWSS_LOG_WARN("Requires protobuf at ENI route:%s", eni.c_str());
+                dash::eni_route::EniRoute entry;
+
+                if (!parsePbMessage(kfvFieldsValues(t), entry))
+                {
+                    SWSS_LOG_ERROR("Requires protobuf at ENI route:%s", eni.c_str());
+                    writeResultToDB(dash_eni_route_result_table_, eni, DASH_RESULT_FAILURE);
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+
+                if (!setEniRoute(eni, entry))
+                {
+                    SWSS_LOG_ERROR("Failed to set ENI route for %s", eni.c_str());
+                    result = DASH_RESULT_FAILURE;
+                }
                 it = consumer.m_toSync.erase(it);
-                continue;
+                writeResultToDB(dash_eni_route_result_table_, eni, result);
             }
-
-            if (setEniRoute(eni, entry))
+            else if (op == DEL_COMMAND)
             {
+                if (removeEniRoute(eni))
+                {
+                    removeResultFromDB(dash_eni_route_result_table_, eni);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Failed to remove ENI route for %s", eni.c_str());
+                }
                 it = consumer.m_toSync.erase(it);
             }
             else
             {
-                result = DASH_RESULT_FAILURE;
-                it++;
-            }
-            writeResultToDB(dash_eni_route_result_table_, eni, result);
-        }
-        else if (op == DEL_COMMAND)
-        {
-            if (removeEniRoute(eni))
-            {
+                SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
                 it = consumer.m_toSync.erase(it);
-                removeResultFromDB(dash_eni_route_result_table_, eni);
-            }
-            else
-            {
-                it++;
             }
         }
-        else
+        catch (const std::exception& e)
         {
-            SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
+            SWSS_LOG_ERROR("Exception caught processing %s entry %s: %s", consumer.getTableName().c_str(), eni.c_str(), e.what());
+            writeResultToDB(dash_eni_route_result_table_, eni, DASH_RESULT_FAILURE);
             it = consumer.m_toSync.erase(it);
         }
     }
@@ -1295,30 +1456,6 @@ void DashOrch::doTask(ConsumerBase& consumer)
     }
 }
 
-template<>
-void DashOrch::DashCounter<CounterType::ENI>::fetchStats()
-{
-    counter_stats.clear();
-    auto stat_enum_list = queryAvailableCounterStats((sai_object_type_t)SAI_OBJECT_TYPE_ENI);
-    for (auto &stat_enum: stat_enum_list)
-    {
-        auto counter_id = static_cast<sai_eni_stat_t>(stat_enum);
-        counter_stats.insert(sai_serialize_eni_stat(counter_id));
-    }
-}
-
-template<>
-void DashOrch::DashCounter<CounterType::DASH_METER>::fetchStats()
-{
-    counter_stats.clear();
-    auto stat_enum_list = queryAvailableCounterStats((sai_object_type_t)SAI_OBJECT_TYPE_METER_BUCKET_ENTRY);
-    for (auto &stat_enum: stat_enum_list)
-    {
-        auto counter_id = static_cast<sai_meter_bucket_entry_stat_t>(stat_enum);
-        counter_stats.insert(sai_serialize_meter_bucket_entry_stat(counter_id));
-    }
-}
-
 void DashOrch::addEniMapEntry(sai_object_id_t oid, const string &name) 
 {
     SWSS_LOG_ENTER();
@@ -1331,9 +1468,16 @@ void DashOrch::addEniMapEntry(sai_object_id_t oid, const string &name)
 
     const auto id = sai_serialize_object_id(oid);
     SWSS_LOG_INFO("Adding ENI map entry for %s, id: %s", name.c_str(), id.c_str());
+
     std::vector<FieldValueTuple> eniNameFvs;
     eniNameFvs.emplace_back(name, id);
     m_eni_name_table->set("", eniNameFvs);
+    m_dpu_eni_name_table->set("", eniNameFvs);
+
+    std::vector<FieldValueTuple> eniOidFvs;
+    eniOidFvs.emplace_back(id, name);
+    m_eni_oid_table->set("", eniOidFvs);
+    m_dpu_eni_oid_table->set("", eniOidFvs);
 }
 
 void DashOrch::removeEniMapEntry(sai_object_id_t oid, const string &name) 
@@ -1347,7 +1491,13 @@ void DashOrch::removeEniMapEntry(sai_object_id_t oid, const string &name)
     }
 
     m_eni_name_table->hdel("", name);
-    SWSS_LOG_INFO("Removing ENI map entry for %s, id: %s", name.c_str(), sai_serialize_object_id(oid).c_str());
+    m_dpu_eni_name_table->hdel("", name);
+
+    const auto id = sai_serialize_object_id(oid);
+    m_eni_oid_table->hdel("", id);
+    m_dpu_eni_oid_table->hdel("", id);
+
+    SWSS_LOG_INFO("Removing ENI map entry for %s, id: %s", name.c_str(), id.c_str());
 }
 
 dash::types::IpAddress DashOrch::getApplianceVip()
