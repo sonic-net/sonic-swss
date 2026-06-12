@@ -3319,6 +3319,76 @@ class TestVnetOrch(object):
         delete_vxlan_tunnel(dvs, tunnel_name)
         vnet_obj.check_del_vxlan_tunnel(dvs)
 
+    '''
+    VNET tunnel route with a directly-connected local endpoint.
+    '''
+    def test_vnet_orch_local_endpoint_alias_resolution(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+
+        tunnel_name = 'tunnel_local_ep'
+        vnet_name = 'Vnet_local_ep'
+        route_prefix = '103.100.1.1/32'
+        endpoint = '20.20.20.5'
+        backup_endpoint = '20.20.20.6'
+        neighbor_mac = '00:01:02:03:04:05'
+
+        self.setup_db(dvs)
+        vnet_obj.fetch_exist_entries(dvs)
+
+        try:
+            self.create_l3_intf("Ethernet0", "")
+            self.add_ip_address("Ethernet0", "20.20.20.1/24")
+            self.set_admin_status("Ethernet0", "down")
+            time.sleep(1)
+            self.set_admin_status("Ethernet0", "up")
+
+            create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+            create_vnet_entry(dvs, vnet_name, tunnel_name, '1001', "")
+            vnet_obj.check_vnet_entry(dvs, vnet_name)
+            vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '1001')
+            vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+
+            # Add the route before the neighbor exists, so the cached NextHopKey
+            # must resolve the local interface when the monitor later goes up.
+            create_vnet_routes(dvs, route_prefix, vnet_name, "%s,%s" % (endpoint, backup_endpoint),
+                               ep_monitor="%s,%s" % (endpoint, backup_endpoint), primary=endpoint,
+                               monitoring='custom', check_directly_connected=True)
+            self.add_neighbor("Ethernet0", endpoint, neighbor_mac)
+            update_monitor_session_state(dvs, route_prefix, endpoint, 'up')
+            time.sleep(2)
+
+            nhids = get_all_created_entries(asic_db, vnet_obj.ASIC_NEXT_HOP, set())
+            tbl_nh = swsscommon.Table(asic_db, vnet_obj.ASIC_NEXT_HOP)
+            neighbor_nh = None
+            for nhid in nhids:
+                status, nh_fvs = tbl_nh.get(nhid)
+                nh_fvs = dict(nh_fvs)
+                assert status
+                if nh_fvs.get('SAI_NEXT_HOP_ATTR_IP') == endpoint and nh_fvs.get('SAI_NEXT_HOP_ATTR_TYPE') == 'SAI_NEXT_HOP_TYPE_IP':
+                    neighbor_nh = nhid
+                    break
+            assert neighbor_nh is not None
+
+            def _access_function():
+                for route_key in self.adb.get_keys(vnet_obj.ASIC_ROUTE_ENTRY):
+                    route_entry = json.loads(route_key)
+                    if route_entry["dest"] == route_prefix:
+                        return (True, self.adb.get_entry(vnet_obj.ASIC_ROUTE_ENTRY, route_key))
+                return (False, None)
+
+            _, route = wait_for_result(_access_function)
+            assert route["SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"] == neighbor_nh
+
+        finally:
+            self.cdb.delete_entry("VNET_ROUTE_TUNNEL", "%s|%s" % (vnet_name, route_prefix))
+            self.remove_neighbor("Ethernet0", endpoint)
+            delete_vnet_entry(dvs, vnet_name)
+            delete_vxlan_tunnel(dvs, tunnel_name)
+            self.remove_ip_address("Ethernet0", "20.20.20.1/24")
+            self.set_admin_status("Ethernet0", "down")
+            self.cdb.delete_entry("INTERFACE", "Ethernet0")
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
