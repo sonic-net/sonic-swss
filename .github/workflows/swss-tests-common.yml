@@ -290,7 +290,7 @@ jobs:
           lcov --remove lcov.info '/usr/*' '*/tests/*' '*/googletest/*' \
             --output-file lcov.filtered.info --ignore-errors unused \
             || cp lcov.info lcov.filtered.info
-          cp lcov.filtered.info /build/sonic-swss/lcov.filtered.info
+          cp lcov.filtered.info /build/sonic-swss/lcov.filtered.info 2>/dev/null || :
 
           # ── Phase 5: Rust countersyncd build ──
           echo "=== Phase 5: Rust build ==="
