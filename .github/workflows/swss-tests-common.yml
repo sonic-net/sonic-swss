@@ -336,6 +336,7 @@ jobs:
           export PATH="${HOME}/.local/bin:${PATH}"
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             COMPARE="${{ github.event.pull_request.base.sha }}"
+            git fetch --no-tags origin "${COMPARE}"
           else
             git fetch --no-tags --depth=1 origin upscaleai-202511
             COMPARE="origin/upscaleai-202511"
