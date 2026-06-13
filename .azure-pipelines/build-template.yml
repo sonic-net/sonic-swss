@@ -172,8 +172,6 @@ jobs:
         target/debs/${{ parameters.debian_version }}/libnl-nf-3-200_*.deb
         target/debs/${{ parameters.debian_version }}/libnl-nf-3-dev_*.deb
         target/debs/${{ parameters.debian_version }}/libyang3_*.deb
-        target/debs/${{ parameters.debian_version }}/libnexthopgroup_*.deb
-        target/debs/${{ parameters.debian_version }}/libnexthopgroup-dev_*.deb
     displayName: "Download common libs"
   - task: DownloadPipelineArtifact@2
     inputs:
