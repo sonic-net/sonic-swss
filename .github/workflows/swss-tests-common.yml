@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.ref_name }}
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Checkout sonic-swss-common (from source branch)
@@ -335,10 +335,11 @@ jobs:
           python3 -m pip install --user 'diff-cover>=9.0.0'
           export PATH="${HOME}/.local/bin:${PATH}"
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            COMPARE="${{ github.event.pull_request.base.sha }}"
-            git fetch --no-tags origin "${COMPARE}"
+            BASE="${{ github.event.pull_request.base.ref }}"
+            git fetch --no-tags origin "${BASE}"
+            COMPARE="origin/${BASE}"
           else
-            git fetch --no-tags --depth=1 origin upscaleai-202511
+            git fetch --no-tags origin upscaleai-202511
             COMPARE="origin/upscaleai-202511"
           fi
           diff-cover lcov.filtered.info --compare-branch "${COMPARE}" \
