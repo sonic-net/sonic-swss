@@ -741,16 +741,26 @@ AclTableTypeBuilder& AclTableTypeBuilder::withBindPointType(sai_acl_bind_point_t
  */
 static bool isAclTableMatchFieldSupported(sai_acl_table_attr_t matchField)
 {
-    sai_attr_capability_t capability;
+    sai_attr_capability_t capability = {};
     sai_status_t status = sai_query_attribute_capability(
         gSwitchId, SAI_OBJECT_TYPE_ACL_TABLE, matchField, &capability);
-    if (status != SAI_STATUS_SUCCESS)
+
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        return capability.create_implemented;
+    }
+
+    // Preserve historical behavior only when the capability query itself is unsupported.
+    if (status == SAI_STATUS_NOT_IMPLEMENTED || status == SAI_STATUS_NOT_SUPPORTED)
     {
         SWSS_LOG_INFO("sai_query_attribute_capability(ACL_TABLE, %d) returned %d; "
                       "assuming match field is supported", matchField, status);
         return true;
     }
-    return capability.create_implemented;
+
+    SWSS_LOG_WARN("sai_query_attribute_capability(ACL_TABLE, %d) returned %d; "
+                  "treating match field as unsupported", matchField, status);
+    return false;
 }
 
 AclTableTypeBuilder& AclTableTypeBuilder::withMatch(shared_ptr<AclTableMatchInterface> match)

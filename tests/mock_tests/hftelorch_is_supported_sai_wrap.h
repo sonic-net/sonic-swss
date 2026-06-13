@@ -1,8 +1,10 @@
 #pragma once
 
 #include <functional>
+#include <utility>
 
 #include <saitypes.h>
+#include <saiobject.h>
 
 namespace sai_cap_ut
 {
