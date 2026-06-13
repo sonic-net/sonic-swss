@@ -463,13 +463,18 @@ jobs:
           BRANCH_NAME: ${{ github.ref_name }}
         run: |
           DAY="$(date -u +"%Y-%m-%d")"
+          STAMP="$(date -u +"%Y-%m-%d-%H:%M")"
           SAFE_REF="${BRANCH_NAME//\//_}"
-          S3_DEST="s3://${S3_COVERAGE_PATH}/sonic-swss/${DAY}/${SAFE_REF}"
+          S3_DEST="s3://${S3_COVERAGE_PATH}/sonic-swss/${STAMP}/${SAFE_REF}"
           echo "s3_dest=${S3_DEST}" >> "$GITHUB_OUTPUT"
           ssh ec2 bash -s <<SCRIPT
           set -ex
-          if aws s3 ls "${S3_DEST}/coverage.info" >/dev/null 2>&1; then
-            echo "Coverage report already uploaded today: ${S3_DEST}/"
+          if aws s3api list-objects-v2 \
+            --bucket "${S3_COVERAGE_PATH}" \
+            --prefix "sonic-swss/${DAY}" \
+            --query "Contents[?contains(Key, '${SAFE_REF}/coverage.info')].Key | [0]" \
+            --output text 2>/dev/null | grep -qv '^None$'; then
+            echo "Coverage report already uploaded today for ${SAFE_REF}"
             exit 0
           fi
           aws s3 sync /tmp/swss-coverage/html/ "${S3_DEST}/" \
