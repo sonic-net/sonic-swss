@@ -290,6 +290,16 @@ jobs:
           lcov --remove lcov.info '/usr/*' '*/tests/*' '*/googletest/*' \
             --output-file lcov.filtered.info --ignore-errors unused \
             || cp lcov.info lcov.filtered.info
+          if lcov --help 2>&1 | grep -q substitute; then
+            lcov --add-tracefile lcov.filtered.info \
+              --substitute 's#/build/sonic-swss/##' \
+              --output-file lcov.normalized.info \
+              --ignore-errors unused
+            mv lcov.normalized.info lcov.filtered.info
+          else
+            sed 's#/build/sonic-swss/##g' lcov.filtered.info > lcov.normalized.info
+            mv lcov.normalized.info lcov.filtered.info
+          fi
           cp lcov.filtered.info /build/sonic-swss/lcov.filtered.info 2>/dev/null || :
 
           # ── Phase 5: Rust countersyncd build ──
@@ -324,31 +334,39 @@ jobs:
           echo "=== ALL PHASES COMPLETE ==="
           '
 
-      - name: Diff-cover on changed lines (≥80%)
-        if: success()
+      - name: Configure AWS credentials
+        if: success() && github.event_name == 'pull_request'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION || 'us-west-2' }}
+
+      - name: Coverage gate vs S3 dashboard baseline
+        if: success() && github.event_name == 'pull_request'
+        env:
+          S3_COVERAGE_BUCKET: ${{ vars.S3_COVERAGE_BUCKET }}
+          COVERAGE_BASELINE_BRANCH: ${{ github.event.pull_request.base.ref }}
+          NEW_FILE_COVERAGE_MIN: ${{ vars.NEW_FILE_COVERAGE_MIN || '80' }}
+          COVERAGE_DROP_TOLERANCE: ${{ vars.COVERAGE_DROP_TOLERANCE || '5' }}
         run: |
           set -euo pipefail
           if [ ! -f lcov.filtered.info ]; then
-            echo "lcov.filtered.info missing" | tee diff-cover.log
+            echo "lcov.filtered.info missing" | tee coverage-gate.log
             exit 1
           fi
-          python3 -m pip install --user 'diff-cover>=9.0.0'
-          export PATH="${HOME}/.local/bin:${PATH}"
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            BASE="${{ github.event.pull_request.base.ref }}"
-            git fetch --no-tags origin "${BASE}"
-            COMPARE="origin/${BASE}"
-          else
-            git fetch --no-tags origin upscaleai-202511
-            COMPARE="origin/upscaleai-202511"
-          fi
-          diff-cover lcov.filtered.info --compare-branch "${COMPARE}" \
-            --format markdown:diff-cover.md || true
-          set +e
-          COVERAGE_FAIL_UNDER="${{ vars.COVERAGE_FAIL_UNDER || '80' }}"
-          diff-cover lcov.filtered.info --compare-branch "${COMPARE}" \
-            --fail-under "${COVERAGE_FAIL_UNDER}" 2>&1 | tee diff-cover.log
-          exit ${PIPESTATUS[0]}
+          chmod +x .github/scripts/fetch_baseline_coverage.sh
+          .github/scripts/fetch_baseline_coverage.sh baseline.info
+          BASE="${{ github.event.pull_request.base.ref }}"
+          git fetch --no-tags origin "${BASE}"
+          COMPARE="origin/${BASE}"
+          python3 .github/scripts/gate_pr_file_coverage.py \
+            --pr-lcov lcov.filtered.info \
+            --baseline-lcov baseline.info \
+            --compare-ref "${COMPARE}" \
+            --new-file-min "${NEW_FILE_COVERAGE_MIN}" \
+            --tolerance "${COVERAGE_DROP_TOLERANCE}" \
+            --report-md coverage-gate.md 2>&1 | tee coverage-gate.log
 
       - name: Upload coverage artifacts
         if: always()
@@ -357,8 +375,9 @@ jobs:
           name: swss-coverage-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             lcov.filtered.info
-            diff-cover.md
-            diff-cover.log
+            baseline.info
+            coverage-gate.md
+            coverage-gate.log
           if-no-files-found: ignore
 
       - name: Upload .deb artifacts
