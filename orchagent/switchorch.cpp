@@ -335,7 +335,7 @@ ReturnCode SwitchOrch::createAclGroup(const sai_acl_stage_t &group_stage, refere
     acl_grp_attrs.push_back(acl_grp_attr);
 
     acl_grp_attr.id = SAI_ACL_TABLE_GROUP_ATTR_TYPE;
-    acl_grp_attr.value.s32 = SAI_ACL_TABLE_GROUP_TYPE_PARALLEL;
+    acl_grp_attr.value.s32 = querySupportedAclTableGroupType(gSwitchId);
     acl_grp_attrs.push_back(acl_grp_attr);
 
     acl_grp_attr.id = SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST;

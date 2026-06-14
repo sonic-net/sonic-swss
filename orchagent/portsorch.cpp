@@ -2868,7 +2868,7 @@ bool PortsOrch::createBindAclTableGroup(sai_object_id_t  port_oid,
         group_attrs.push_back(group_attr);
 
         group_attr.id = SAI_ACL_TABLE_GROUP_ATTR_TYPE;
-        group_attr.value.s32 = SAI_ACL_TABLE_GROUP_TYPE_PARALLEL;
+        group_attr.value.s32 = querySupportedAclTableGroupType(gSwitchId);
         group_attrs.push_back(group_attr);
 
         status = sai_acl_api->create_acl_table_group(&group_oid_ref, gSwitchId,
