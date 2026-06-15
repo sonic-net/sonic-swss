@@ -3587,9 +3587,12 @@ class TestVnetOrch(object):
         tunnel_name = 'tunnel_local_ep'
         vnet_name = 'Vnet_local_ep'
         route_prefix = '103.100.1.1/32'
+        ecmp_route_prefix = '103.100.1.2/32'
         endpoint = '20.20.20.5'
+        ecmp_endpoint = '20.20.20.7'
         backup_endpoint = '20.20.20.6'
         neighbor_mac = '00:01:02:03:04:05'
+        ecmp_neighbor_mac = '00:01:02:03:04:07'
 
         self.setup_db(dvs)
         vnet_obj.fetch_exist_entries(dvs)
@@ -3612,8 +3615,14 @@ class TestVnetOrch(object):
             create_vnet_routes(dvs, route_prefix, vnet_name, "%s,%s" % (endpoint, backup_endpoint),
                                ep_monitor="%s,%s" % (endpoint, backup_endpoint), primary=endpoint,
                                monitoring='custom', check_directly_connected=True)
+            create_vnet_routes(dvs, ecmp_route_prefix, vnet_name, "%s,%s" % (endpoint, ecmp_endpoint),
+                               ep_monitor="%s,%s" % (endpoint, ecmp_endpoint), primary="%s,%s" % (endpoint, ecmp_endpoint),
+                               monitoring='custom', check_directly_connected=True)
             self.add_neighbor("Ethernet0", endpoint, neighbor_mac)
+            self.add_neighbor("Ethernet0", ecmp_endpoint, ecmp_neighbor_mac)
             update_monitor_session_state(dvs, route_prefix, endpoint, 'up')
+            update_monitor_session_state(dvs, ecmp_route_prefix, endpoint, 'up')
+            update_monitor_session_state(dvs, ecmp_route_prefix, ecmp_endpoint, 'up')
             time.sleep(2)
 
             nhids = get_all_created_entries(asic_db, vnet_obj.ASIC_NEXT_HOP, set())
@@ -3638,8 +3647,20 @@ class TestVnetOrch(object):
             _, route = wait_for_result(_access_function)
             assert route["SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"] == neighbor_nh
 
+            def _ecmp_route_function():
+                for route_key in self.adb.get_keys(vnet_obj.ASIC_ROUTE_ENTRY):
+                    route_entry = json.loads(route_key)
+                    if route_entry["dest"] == ecmp_route_prefix:
+                        return (True, route_key)
+                return (False, None)
+
+            _, ecmp_route_key = wait_for_result(_ecmp_route_function)
+            vnet_obj.check_vnet_local_route_nexthops(dvs, ecmp_route_key, [endpoint, ecmp_endpoint])
+
         finally:
+            self.cdb.delete_entry("VNET_ROUTE_TUNNEL", "%s|%s" % (vnet_name, ecmp_route_prefix))
             self.cdb.delete_entry("VNET_ROUTE_TUNNEL", "%s|%s" % (vnet_name, route_prefix))
+            self.remove_neighbor("Ethernet0", ecmp_endpoint)
             self.remove_neighbor("Ethernet0", endpoint)
             delete_vnet_entry(dvs, vnet_name)
             delete_vxlan_tunnel(dvs, tunnel_name)
