@@ -1077,15 +1077,22 @@ class TestFpmSyncResponse(TestRouteBase):
         route_entry = json.loads(output)
         return bool(route_entry[route][0].get('offloaded'))
 
-    @pytest.mark.xfail(reason="BGP suppress FIB disabled on master/202405 - https://github.com/sonic-net/sonic-buildimage/issues/19092")
     @pytest.mark.parametrize("suppress_state", ["enabled", "disabled"])
     def test_offload(self, suppress_state, setup, dvs):
         route = "1.1.1.0/24"
 
-        # enable route suppression
+        # configure suppress-fib-pending
         rc, _ = dvs.runcmd(f"config suppress-fib-pending {suppress_state}")
         assert rc == 0, "Failed to configure suppress-fib-pending"
 
+        # Container restart is used here as a quick substitute for a full config
+        # reload or device reboot, which is the only supported way to apply
+        # suppress-fib-pending config changes. This is intentionally unsupported
+        # in production but sufficient for DVS unit test purposes.
+        dvs.stop_fpmsyncd()
+        dvs.stop_swss()
+        dvs.start_swss()
+        dvs.start_fpmsyncd()
         time.sleep(5)
 
         try:
@@ -1116,6 +1123,10 @@ class TestFpmSyncResponse(TestRouteBase):
 
             # make sure route suppression is disabled
             dvs.runcmd("config suppress-fib-pending disabled")
+            dvs.stop_fpmsyncd()
+            dvs.stop_swss()
+            dvs.start_swss()
+            dvs.start_fpmsyncd()
 
 
 class TestSubnetDecapVipRoute(TestRouteBase):
