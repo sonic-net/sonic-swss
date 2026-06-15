@@ -2239,18 +2239,35 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
 
             if (!effective.empty())
             {
+                int tc_val;
+                try
+                {
+                    tc_val = stoi(effective);
+                }
+                catch (const std::exception &e)
+                {
+                    SWSS_LOG_ERROR("Invalid default_tc/default_cos value '%s' on port %s: %s",
+                                   effective.c_str(), port_name.c_str(), e.what());
+                    continue;
+                }
+                if (tc_val < 0 || tc_val > 7)
+                {
+                    SWSS_LOG_ERROR("default_tc/default_cos value %d out of range [0-7] on port %s",
+                                   tc_val, port_name.c_str());
+                    continue;
+                }
                 sai_attribute_t attr;
                 attr.id = SAI_PORT_ATTR_QOS_DEFAULT_TC;
-                attr.value.u8 = (uint8_t)stoi(effective);
+                attr.value.u8 = static_cast<uint8_t>(tc_val);
                 sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
-                    SWSS_LOG_ERROR("Failed to set default TC %s on port %s, rv:%d",
-                                   effective.c_str(), port_name.c_str(), status);
+                    SWSS_LOG_ERROR("Failed to set default TC %d on port %s, rv:%d",
+                                   tc_val, port_name.c_str(), status);
                 }
                 else
                 {
-                    SWSS_LOG_NOTICE("Set default TC to %s on port %s", effective.c_str(), port_name.c_str());
+                    SWSS_LOG_NOTICE("Set default TC to %d on port %s", tc_val, port_name.c_str());
                 }
             }
         }

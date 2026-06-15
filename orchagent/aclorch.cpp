@@ -2208,7 +2208,7 @@ const string& AclRulePacket::getTrapGroup() const
 void AclRulePacket::setPolicer(const string& policer)
 {
     m_policer = policer;
-    SWSS_LOG_NOTICE("ACL rule %s: POLICER set to '%s'", m_id.c_str(), policer.c_str());
+    SWSS_LOG_INFO("ACL rule %s: POLICER set to '%s'", m_id.c_str(), policer.c_str());
 }
 
 const string& AclRulePacket::getPolicer() const
@@ -2317,8 +2317,10 @@ bool AclRulePacket::createRule()
         sai_object_id_t policer_oid = SAI_NULL_OBJECT_ID;
         if (!gPolicerOrch->getPolicerOid(m_policer, policer_oid))
         {
-            SWSS_LOG_ERROR("ACL rule %s: policer '%s' not found",
-                           m_id.c_str(), m_policer.c_str());
+            /* Policer may not be processed yet on config reload;
+             * returning false keeps the rule in m_toSync for retry. */
+            SWSS_LOG_WARN("ACL rule %s: policer '%s' not ready, will retry",
+                          m_id.c_str(), m_policer.c_str());
             return false;
         }
 
@@ -2363,16 +2365,16 @@ bool AclRulePacket::removeRule()
 {
     SWSS_LOG_ENTER();
 
-    if (!m_policer.empty())
-    {
-        gPolicerOrch->decreaseRefCount(m_policer);
-        SWSS_LOG_NOTICE("ACL rule %s: released policer '%s'",
-                        m_id.c_str(), m_policer.c_str());
-    }
-
     if (!AclRule::removeRule())
     {
         return false;
+    }
+
+    if (!m_policer.empty())
+    {
+        gPolicerOrch->decreaseRefCount(m_policer);
+        SWSS_LOG_INFO("ACL rule %s: released policer '%s'",
+                      m_id.c_str(), m_policer.c_str());
     }
 
     if (m_hostifTableEntryOid != SAI_NULL_OBJECT_ID)
