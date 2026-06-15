@@ -73,6 +73,7 @@ namespace dashhaorch_ut
     {
     protected:
         std::unique_ptr<MockBfdOrch> m_mockBfdOrch;
+        shared_ptr<swss::DBConnector> m_dpu_state_db;
 
         virtual DashHaOrch* CreateDashHaOrch(const vector<string>& dash_ha_tables)
         {
@@ -82,6 +83,7 @@ namespace dashhaorch_ut
         void PostSetUp() override
         {
             m_mockBfdOrch = std::make_unique<MockBfdOrch>(m_app_db.get(), m_state_db.get());
+            m_dpu_state_db = make_shared<swss::DBConnector>("DPU_STATE_DB", 0);
 
             vector<string> dash_ha_tables = {
                 APP_DASH_HA_SET_TABLE_NAME,
@@ -458,6 +460,38 @@ namespace dashhaorch_ut
                 )
             );
             static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
+        void SetHaScopeBrainSplitRecovered()
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SCOPE_TABLE_NAME, 1, 1),
+                m_dashHaOrch, APP_DASH_HA_SCOPE_TABLE_NAME));
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>(
+                    {
+                        {
+                            "HA_SET_1",
+                            SET_COMMAND,
+                            {
+                                {"version", "1"},
+                                {"ha_role", "active"},
+                                {"brainsplit_recovered", "true"}
+                            }
+                        }
+                    }
+                )
+            );
+            static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+        }
+
+        void ExpectHaScopeStateField(const std::string &field, const std::string &expected)
+        {
+            swss::Table state_table(m_dpu_state_db.get(), STATE_DASH_HA_SCOPE_STATE_TABLE_NAME);
+            std::string value;
+            ASSERT_TRUE(state_table.hget("HA_SET_1", field, value));
+            EXPECT_EQ(value, expected);
         }
 
         void RandomTable()
@@ -993,6 +1027,11 @@ namespace dashhaorch_ut
 
         HaScopeEvent(SAI_HA_SCOPE_EVENT_SPLIT_BRAIN_DETECTED,
             SAI_DASH_HA_ROLE_ACTIVE, SAI_DASH_HA_STATE_ACTIVE);
+        ExpectHaScopeStateField("brainsplit_recover_pending", "true");
+
+        SetHaScopeBrainSplitRecovered();
+
+        ExpectHaScopeStateField("brainsplit_recover_pending", "false");
 
         RemoveHaScope();
         RemoveHaSet();

@@ -817,6 +817,17 @@ bool DashHaOrch::setHaScopeFlowReconcileRequest(const std::string &key)
     return true;
 }
 
+bool DashHaOrch::clearHaScopeBrainSplitRecoverPending(const std::string &key)
+{
+    SWSS_LOG_ENTER();
+
+    std::vector<FieldValueTuple> fvs = {{"brainsplit_recover_pending", "false"}};
+    m_dpuStateDbHaScopeTable->set(key, fvs);
+    SWSS_LOG_NOTICE("Cleared HA Scope brainsplit recover pending flag for %s", key.c_str());
+
+    return true;
+}
+
 bool DashHaOrch::setHaScopeActivateRoleRequest(const std::string &key)
 {
     SWSS_LOG_ENTER();
@@ -952,6 +963,16 @@ void DashHaOrch::doTaskHaScopeTable(ConsumerBase &consumer)
         if (op == SET_COMMAND)
         {
             dash::ha_scope::HaScope entry;
+            bool brainSplitRecovered = false;
+
+            for (const auto &fieldValue : kfvFieldsValues(tuple))
+            {
+                if (fvField(fieldValue) == "brainsplit_recovered")
+                {
+                    brainSplitRecovered = fvValue(fieldValue) == "true" || fvValue(fieldValue) == "1";
+                    break;
+                }
+            }
 
             auto existing_it = m_ha_scope_entries.find(key);
             if (existing_it != m_ha_scope_entries.end())
@@ -982,6 +1003,10 @@ void DashHaOrch::doTaskHaScopeTable(ConsumerBase &consumer)
 
             if (addHaScopeEntry(key, entry))
             {
+                if (brainSplitRecovered)
+                {
+                    clearHaScopeBrainSplitRecoverPending(key);
+                }
                 it = consumer.m_toSync.erase(it);
             }
             else
