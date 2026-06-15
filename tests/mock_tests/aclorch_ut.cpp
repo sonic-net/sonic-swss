@@ -326,6 +326,8 @@ namespace aclorch_test
             sai_api_query(SAI_API_MPLS, (void **)&sai_mpls_api);
             sai_api_query(SAI_API_ACL, (void **)&sai_acl_api);
             sai_api_query(SAI_API_NEXT_HOP_GROUP, (void **)&sai_next_hop_group_api);
+            sai_api_query(SAI_API_POLICER, (void **)&sai_policer_api);
+            sai_api_query(SAI_API_HOSTIF, (void **)&sai_hostif_api);
 
             sai_attribute_t attr;
 
@@ -443,14 +445,15 @@ namespace aclorch_test
                 TableConnector(m_config_db.get(), CFG_PORT_STORM_CONTROL_TABLE_NAME)
             };
             TableConnector stateDbStorm(m_state_db.get(), "BUM_STORM_CAPABILITY");
-            PolicerOrch *policer_orch = new PolicerOrch(policer_tables, gPortsOrch);
+            ASSERT_EQ(gPolicerOrch, nullptr);
+            gPolicerOrch = new PolicerOrch(policer_tables, gPortsOrch);
 
             TableConnector stateDbMirrorSession(m_state_db.get(), STATE_MIRROR_SESSION_TABLE_NAME);
             TableConnector confDbMirrorSession(m_config_db.get(), CFG_MIRROR_SESSION_TABLE_NAME);
 
             ASSERT_EQ(gMirrorOrch, nullptr);
             gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession,
-                                         gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch, gSwitchOrch);
+                                         gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, gPolicerOrch, gSwitchOrch);
 
             auto consumer = unique_ptr<Consumer>(new Consumer(
                 new swss::ConsumerStateTable(m_app_db.get(), APP_PORT_TABLE_NAME, 1, 1), gPortsOrch, APP_PORT_TABLE_NAME));
@@ -467,6 +470,8 @@ namespace aclorch_test
             gSwitchOrch = nullptr;
             delete gMirrorOrch;
             gMirrorOrch = nullptr;
+            delete gPolicerOrch;
+            gPolicerOrch = nullptr;
             delete gRouteOrch;
             gRouteOrch = nullptr;
             delete gFlowCounterRouteOrch;
@@ -503,6 +508,8 @@ namespace aclorch_test
             sai_neighbor_api = nullptr;
             sai_next_hop_api = nullptr;
             sai_mpls_api = nullptr;
+            sai_policer_api = nullptr;
+            sai_hostif_api = nullptr;
         }
 
         shared_ptr<MockAclOrch> createAclOrch()
@@ -2364,5 +2371,117 @@ namespace aclorch_test
         });
         orch->doAclRuleTask(ruleKofvt);
         ASSERT_NE(orch->getAclRule(aclTableName, aclRuleName), nullptr);
+    }
+
+    /*
+     * UPSW-2156: ACL rule with POLICER action.
+     * When policer does not exist, createRule should fail gracefully
+     * (WARN log, not crash) and the rule stays pending for retry.
+     */
+    TEST_F(AclOrchTest, AclRule_PolicerNotReady)
+    {
+        string acl_table_id = "acl_table_pol";
+        string acl_rule_id  = "acl_rule_pol";
+
+        auto orch = createAclOrch();
+
+        auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id,
+                SET_COMMAND,
+                { { ACL_TABLE_DESCRIPTION, "policer test" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_L3 },
+                  { ACL_TABLE_STAGE, STAGE_INGRESS },
+                  { ACL_TABLE_PORTS, "1,2" } } } });
+
+        orch->doAclTableTask(kvfAclTable);
+        ASSERT_NE(orch->getTableById(acl_table_id), SAI_NULL_OBJECT_ID);
+
+        auto kvfAclRule = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id + "|" + acl_rule_id,
+                SET_COMMAND,
+                { { ACTION_PACKET_ACTION, PACKET_ACTION_FORWARD },
+                  { ACTION_POLICER, "nonexistent_policer" },
+                  { MATCH_SRC_IP, "10.0.0.1/32" } } } });
+
+        orch->doAclRuleTask(kvfAclRule);
+
+        // Rule should NOT be created (policer doesn't exist)
+        const auto &acl_tables = orch->getAclTables();
+        auto it_table = acl_tables.find(orch->getTableById(acl_table_id));
+        ASSERT_NE(it_table, acl_tables.end());
+        auto it_rule = it_table->second.rules.find(acl_rule_id);
+        ASSERT_EQ(it_rule, it_table->second.rules.end());
+    }
+
+    /*
+     * UPSW-2156: ACL rule with POLICER action — full lifecycle.
+     * Create policer first, then ACL rule with policer ref,
+     * then delete the rule.
+     */
+    TEST_F(AclOrchTest, AclRule_PolicerLifecycle)
+    {
+        string acl_table_id = "acl_table_pol2";
+        string acl_rule_id  = "acl_rule_pol2";
+        string policer_name = "test_policer";
+
+        auto orch = createAclOrch();
+
+        // Create policer in CONFIG_DB and drain PolicerOrch
+        Table policerTable(m_config_db.get(), CFG_POLICER_TABLE_NAME);
+        policerTable.set(policer_name,
+                         {
+                             {"meter_type", "packets"},
+                             {"mode", "sr_tcm"},
+                             {"cir", "600"},
+                             {"cbs", "600"},
+                             {"red_packet_action", "drop"}
+                         });
+        gPolicerOrch->addExistingData(&policerTable);
+        static_cast<Orch *>(gPolicerOrch)->doTask();
+
+        // Verify policer was created
+        sai_object_id_t policer_oid = SAI_NULL_OBJECT_ID;
+        ASSERT_TRUE(gPolicerOrch->getPolicerOid(policer_name, policer_oid));
+        ASSERT_NE(policer_oid, SAI_NULL_OBJECT_ID);
+
+        // Create ACL table
+        auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id,
+                SET_COMMAND,
+                { { ACL_TABLE_DESCRIPTION, "policer lifecycle" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_L3 },
+                  { ACL_TABLE_STAGE, STAGE_INGRESS },
+                  { ACL_TABLE_PORTS, "1,2" } } } });
+
+        orch->doAclTableTask(kvfAclTable);
+        ASSERT_NE(orch->getTableById(acl_table_id), SAI_NULL_OBJECT_ID);
+
+        // Create ACL rule with policer
+        auto kvfAclRule = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id + "|" + acl_rule_id,
+                SET_COMMAND,
+                { { ACTION_PACKET_ACTION, PACKET_ACTION_FORWARD },
+                  { ACTION_POLICER, policer_name },
+                  { MATCH_SRC_IP, "10.0.0.1/32" } } } });
+
+        orch->doAclRuleTask(kvfAclRule);
+
+        // Rule should be created with policer
+        const auto &acl_tables = orch->getAclTables();
+        auto it_table = acl_tables.find(orch->getTableById(acl_table_id));
+        ASSERT_NE(it_table, acl_tables.end());
+        auto it_rule = it_table->second.rules.find(acl_rule_id);
+        ASSERT_NE(it_rule, it_table->second.rules.end());
+
+        // Delete ACL rule — decreaseRefCount must happen after removeRule
+        kvfAclRule = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id + "|" + acl_rule_id,
+                DEL_COMMAND,
+                {} } });
+
+        orch->doAclRuleTask(kvfAclRule);
+
+        it_rule = it_table->second.rules.find(acl_rule_id);
+        ASSERT_EQ(it_rule, it_table->second.rules.end());
     }
 } // namespace nsAclOrchTest

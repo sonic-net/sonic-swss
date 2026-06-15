@@ -2103,6 +2103,16 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
             }
 
             SWSS_LOG_INFO("Disabled PFC on port %s", port_name.c_str());
+
+            /* Reset default TC to 0 (SAI default) on DEL */
+            sai_attribute_t tc_attr;
+            tc_attr.id = SAI_PORT_ATTR_QOS_DEFAULT_TC;
+            tc_attr.value.u8 = 0;
+            sai_status_t tc_status = sai_port_api->set_port_attribute(port.m_port_id, &tc_attr);
+            if (tc_status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to reset default TC on port %s, rv:%d", port_name.c_str(), tc_status);
+            }
         }
 
         removeObject(m_qos_maps, CFG_PORT_QOS_MAP_TABLE_NAME, key);
@@ -2153,6 +2163,11 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
                 pfcwd_sw_enable = bitmask;
             }
         }
+        else if (fvField(*it) == "default_tc" || fvField(*it) == "default_cos")
+        {
+            /* Both default_tc and default_cos map to SAI_PORT_ATTR_QOS_DEFAULT_TC.
+             * default_tc takes precedence if both are set. */
+        }
     }
 
     /* Remove any map that was configured but isn't there any longer. */
@@ -2202,6 +2217,59 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
                 }
             }
             SWSS_LOG_INFO("Applied %s to port %s", it->second.first.c_str(), port_name.c_str());
+        }
+
+        /* UPSW-2163/2164/2165: Handle default_tc and default_cos scalar fields.
+         * Both map to SAI_PORT_ATTR_QOS_DEFAULT_TC. If both are present,
+         * default_tc takes precedence (more explicit). */
+        {
+            string default_tc_str, default_cos_str;
+            for (auto fit = kfvFieldsValues(tuple).begin(); fit != kfvFieldsValues(tuple).end(); fit++)
+            {
+                if (fvField(*fit) == "default_tc")
+                    default_tc_str = fvValue(*fit);
+                else if (fvField(*fit) == "default_cos")
+                    default_cos_str = fvValue(*fit);
+            }
+            string effective;
+            if (!default_tc_str.empty())
+                effective = default_tc_str;
+            else if (!default_cos_str.empty())
+                effective = default_cos_str;
+
+            if (!effective.empty())
+            {
+                int tc_val;
+                try
+                {
+                    tc_val = stoi(effective);
+                }
+                catch (const std::exception &e)
+                {
+                    SWSS_LOG_ERROR("Invalid default_tc/default_cos value '%s' on port %s: %s",
+                                   effective.c_str(), port_name.c_str(), e.what());
+                    continue;
+                }
+                if (tc_val < 0 || tc_val > 7)
+                {
+                    SWSS_LOG_ERROR("default_tc/default_cos value %d out of range [0-7] on port %s",
+                                   tc_val, port_name.c_str());
+                    continue;
+                }
+                sai_attribute_t attr;
+                attr.id = SAI_PORT_ATTR_QOS_DEFAULT_TC;
+                attr.value.u8 = static_cast<uint8_t>(tc_val);
+                sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to set default TC %d on port %s, rv:%d",
+                                   tc_val, port_name.c_str(), status);
+                }
+                else
+                {
+                    SWSS_LOG_NOTICE("Set default TC to %d on port %s", tc_val, port_name.c_str());
+                }
+            }
         }
 
         sai_uint8_t old_pfc_enable = 0;

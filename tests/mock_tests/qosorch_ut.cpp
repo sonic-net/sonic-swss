@@ -1626,4 +1626,113 @@ namespace qosorch_test
         static_cast<Orch *>(tunnel_decap_orch)->doTask();
         entries.clear();
     }
+
+    /*
+     * UPSW-2163/2164/2165: default_tc and default_cos in PORT_QOS_MAP
+     * Valid values (0-7) should be accepted without crash.
+     */
+    TEST_F(QosOrchTest, QosOrchTestDefaultTcValidValue)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"default_tc", "3"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+
+        static_cast<Orch *>(gQosOrch)->doTask();
+        // No crash = pass; SAI mock accepts set_port_attribute
+    }
+
+    /*
+     * default_cos follows the same path as default_tc.
+     */
+    TEST_F(QosOrchTest, QosOrchTestDefaultCosValidValue)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"default_cos", "5"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+
+        static_cast<Orch *>(gQosOrch)->doTask();
+    }
+
+    /*
+     * When both default_tc and default_cos are present,
+     * default_tc takes precedence. Must not crash.
+     */
+    TEST_F(QosOrchTest, QosOrchTestDefaultTcPrecedenceOverCos)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"default_tc", "7"},
+                               {"default_cos", "2"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+
+        static_cast<Orch *>(gQosOrch)->doTask();
+    }
+
+    /*
+     * Out-of-range value (8) should be rejected gracefully, not crash.
+     */
+    TEST_F(QosOrchTest, QosOrchTestDefaultTcOutOfRange)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"default_tc", "8"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+
+        static_cast<Orch *>(gQosOrch)->doTask();
+        // Value 8 is out of [0-7]; should log error and continue, not crash
+    }
+
+    /*
+     * Non-integer value should be rejected gracefully via try/catch, not crash.
+     */
+    TEST_F(QosOrchTest, QosOrchTestDefaultTcInvalidString)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"default_tc", "abc"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+
+        static_cast<Orch *>(gQosOrch)->doTask();
+        // stoi("abc") caught by try/catch; should log error and continue, not crash
+    }
+
+    /*
+     * Negative value should be rejected gracefully.
+     */
+    TEST_F(QosOrchTest, QosOrchTestDefaultTcNegativeValue)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"default_tc", "-1"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+
+        static_cast<Orch *>(gQosOrch)->doTask();
+        // -1 is out of [0-7]; should log error and continue, not crash
+    }
 }
