@@ -1554,11 +1554,11 @@ TEST_F(FdbSyncdEvpnMhTest, TestMacDelVxlan)
 
     // Now call macDelVxlan which should find and process the entry
     m_mockFdbSync.macDelVxlan(key);
-    ASSERT_EQ(m_mockFdbSync.m_mac.count(key), 0);
+    ASSERT_EQ(0u, m_mockFdbSync.m_mac.count(key));
 
     // A later kernel delete for the same VXLAN FDB entry is expected after a local MAC wins.
     m_mockFdbSync.macDelVxlan(key);
-    ASSERT_EQ(m_mockFdbSync.m_mac.count(key), 0);
+    ASSERT_EQ(0u, m_mockFdbSync.m_mac.count(key));
 
 }
 
