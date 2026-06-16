@@ -957,16 +957,16 @@ namespace protnhg_test
         removeEcmpNhg(standby_nhg_key.to_string());
     }
 
-    TEST_F(ProtNhgTest, BuildProtNhgKeySortsPrimaries)
+    TEST_F(ProtNhgTest, BuildProtNhgKeyDiffersByPrimary)
     {
         NextHopKey nh_a(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey nh_b(IpAddress("10.0.0.2"), string("Ethernet0"));
         NextHopKey standby(IpAddress("10.0.0.100"), string("Ethernet4"));
 
-        string key_ab = NhgOrch::buildProtNhgKey({nh_a, nh_b}, standby);
-        string key_ba = NhgOrch::buildProtNhgKey({nh_b, nh_a}, standby);
+        string key_ab = NhgOrch::buildProtNhgKey(nh_a, standby);
+        string key_ba = NhgOrch::buildProtNhgKey(nh_b, standby);
 
-        EXPECT_EQ(key_ab, key_ba);
+        EXPECT_NE(key_ab, key_ba);
     }
 
     /* --- Protection NHG key prefix tests --- */
@@ -976,7 +976,7 @@ namespace protnhg_test
         NextHopKey primary(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby(IpAddress("10.0.0.100"), string("Ethernet4"));
 
-        string key = NhgOrch::buildProtNhgKey({primary}, standby, true);
+        string key = NhgOrch::buildProtNhgKey(primary, standby, true);
         EXPECT_EQ(key.substr(0, 8), "prot:hw:");
         EXPECT_NE(key.find("10.0.0.1@Ethernet0"), string::npos);
     }
@@ -986,7 +986,7 @@ namespace protnhg_test
         NextHopKey primary(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby(IpAddress("10.0.0.100"), string("Ethernet4"));
 
-        string key = NhgOrch::buildProtNhgKey({primary}, standby, false);
+        string key = NhgOrch::buildProtNhgKey(primary, standby, false);
         EXPECT_EQ(key.substr(0, 8), "prot:sw:");
     }
 
@@ -1013,8 +1013,8 @@ namespace protnhg_test
         NextHopKey primary(IpAddress("10.0.0.1"), string("Ethernet0"));
         NextHopKey standby(IpAddress("10.0.0.100"), string("Ethernet4"));
 
-        string hw_key = NhgOrch::buildProtNhgKey({primary}, standby, true);
-        string sw_key = NhgOrch::buildProtNhgKey({primary}, standby, false);
+        string hw_key = NhgOrch::buildProtNhgKey(primary, standby, true);
+        string sw_key = NhgOrch::buildProtNhgKey(primary, standby, false);
         EXPECT_NE(hw_key, sw_key);
     }
 
