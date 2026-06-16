@@ -44,11 +44,29 @@ void ResponsePublisher::writeToDB(
     const std::vector<swss::FieldValueTuple>& values, const std::string& op,
     bool replace) {}
 
-void ResponsePublisher::setEnableDbWriteAndNotify(bool enable_db_write_and_notify)
+
+void ResponsePublisher::setWarmbootStateOnFailure(
+    const std::string& app_name, bool set_on_fail)
 {
     if (gMockResponsePublisher)
     {
-        gMockResponsePublisher->setEnableDbWriteAndNotify(enable_db_write_and_notify);
+        gMockResponsePublisher->setWarmbootStateOnFailure(app_name, set_on_fail);
+    }
+}
+
+void ResponsePublisher::setEnableDbWrite(bool enable)
+{
+    if (gMockResponsePublisher)
+    {
+        gMockResponsePublisher->setEnableDbWrite(enable);
+    }
+}
+
+void ResponsePublisher::setEnableNotify(bool enable)
+{
+    if (gMockResponsePublisher)
+    {
+        gMockResponsePublisher->setEnableNotify(enable);
     }
 }
 
