@@ -7,6 +7,8 @@
 #include "orch.h"
 #include "portsorch.h"
 
+#define SFLOW_DROP_MONITOR_CONFIG_PATH "/usr/share/sonic/templates/sflow_mod.json"
+
 struct SflowPortInfo
 {
     bool            admin_state;
@@ -18,6 +20,81 @@ struct SflowSession
 {
     sai_object_id_t m_sample_id;
     uint32_t        ref_count;
+};
+
+class SflowDropMonitor
+{
+public:
+    SflowDropMonitor()
+        : m_enable(false)
+        , m_limitRate(0)
+        , m_tamReport(SAI_NULL_OBJECT_ID)
+        , m_tamEventAction(SAI_NULL_OBJECT_ID)
+        , m_tamTransport(SAI_NULL_OBJECT_ID)
+        , m_tamEvent(SAI_NULL_OBJECT_ID)
+        , m_tamCollector(SAI_NULL_OBJECT_ID)
+        , m_tam(SAI_NULL_OBJECT_ID)
+        , m_policer(SAI_NULL_OBJECT_ID)
+        , m_hostifTrapGroup(SAI_NULL_OBJECT_ID)
+        , m_hostifUserDefinedTrap(SAI_NULL_OBJECT_ID)
+    { }
+
+    inline bool isEnabled() {
+        return m_enable;
+    }
+
+    inline int32_t getLimitRate() {
+        return m_limitRate;
+    }
+
+    bool enableDropMonitor(int32_t limit_rate);
+    bool disableDropMonitor();
+
+    uint32_t getDropMonitorCpuQueue(const std::string& path = SFLOW_DROP_MONITOR_CONFIG_PATH);
+
+private:
+    bool            m_enable;
+    int32_t         m_limitRate; // packet per second
+
+    sai_object_id_t m_tamReport;
+    sai_object_id_t m_tamEventAction;
+    sai_object_id_t m_tamTransport;
+    sai_object_id_t m_tamEvent;
+    sai_object_id_t m_tamCollector;
+    sai_object_id_t m_tam;
+    sai_object_id_t m_policer;
+    sai_object_id_t m_hostifTrapGroup;
+    sai_object_id_t m_hostifUserDefinedTrap;
+
+    bool createTamReport();
+    bool removeTamReport();
+
+    bool createTamEventAction();
+    bool removeTamEventAction();
+
+    bool createTamTransport();
+    bool removeTamTransport();
+
+    bool createTamEvent();
+    bool removeTamEvent();
+
+    bool createTamCollector();
+    bool removeTamCollector();
+
+    bool createTam();
+    bool removeTam();
+
+    bool createPolicer(int32_t rate);
+    bool removePolicer();
+
+    bool createHostifTrapGroup();
+    bool removeHostifTrapGroup();
+
+    bool createHostifUserDefinedTrap();
+    bool removeHostifUserDefinedTrap();
+
+    bool initializeDropMonitor(int32_t limit_rate);
+    void cleanupDropMonitor();
 };
 
 /* SAI Port to Sflow Port Info Map */
@@ -35,6 +112,8 @@ private:
     SflowPortInfoMap    m_sflowPortInfoMap;
     SflowRateSampleMap  m_sflowRateSampleMap;
     bool                m_sflowStatus;
+    SflowDropMonitor    m_sflowDropMonitor;
+
 
     virtual void doTask(Consumer& consumer);
     bool sflowCreateSession(uint32_t rate, SflowSession &session);
@@ -46,5 +125,7 @@ private:
     bool sflowUpdateSampleDirection(sai_object_id_t port_id, string old_dir, string new_dir);
     uint32_t sflowSessionGetRate(sai_object_id_t sample_id);
     bool handleSflowSessionDel(sai_object_id_t port_id);
-    void sflowExtractInfo(std::vector<FieldValueTuple> &fvs, bool &admin, uint32_t &rate, string &dir);
+    void sflowExtractInfo(vector<FieldValueTuple> &fvs, bool &admin, uint32_t &rate, string &dir);
+    void sflowExtractGlobalInfo(vector<FieldValueTuple> &fvs, bool &admin, uint32_t &rate, string &dir, int32_t &drop_monitor_limit);
+
 };
