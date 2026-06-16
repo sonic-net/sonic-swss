@@ -360,7 +360,7 @@ public:
     /**
      * @brief Flush pending responses
      */
-    void flushResponses();
+    virtual void flushResponses();
 protected:
     ConsumerMap m_consumerMap;
     RetryCacheMap m_retryCaches;
