@@ -889,7 +889,7 @@ void FdbSync::macDelVxlan(string key)
         macDelVxlanDB(key);
         m_mac.erase(key);
     } else {
-        SWSS_LOG_ERROR("DEL_KEY %s entry doesn't exist", key.c_str());
+        SWSS_LOG_DEBUG("DEL_KEY %s ignored; entry is not present in VXLAN FDB cache", key.c_str());
     }
 }
 
