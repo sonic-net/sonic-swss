@@ -1106,6 +1106,48 @@ void VxlanTunnel::updateRemoteEndPointRefCnt(bool inc, tunnel_refcnt_t& tnl_refc
     }
 }
 
+void VxlanTunnel::updateRemoteEndPointRef(const std::string remote_vtep, bool inc,
+                                          tunnel_user_t usr)
+{
+    tunnel_refcnt_t tnl_refcnts;
+
+    auto it = tnl_users_.find(remote_vtep);
+    if (inc)
+    {
+        if (it == tnl_users_.end())
+        {
+            memset(&tnl_refcnts, 0, sizeof(tunnel_refcnt_t));
+        }
+        else
+        {
+            tnl_refcnts = it->second;
+        }
+
+        updateRemoteEndPointRefCnt(true, tnl_refcnts, usr);
+        tnl_users_[remote_vtep] = tnl_refcnts;
+        SWSS_LOG_DEBUG("Incrementing remote end point %s user %d reference to %d [imr:%d ip:%d]",
+                       remote_vtep.c_str(), usr,
+                       tnl_refcnts.imr_refcnt + tnl_refcnts.mac_refcnt + tnl_refcnts.ip_refcnt,
+                       tnl_refcnts.imr_refcnt, tnl_refcnts.ip_refcnt);
+    }
+    else
+    {
+        if (it == tnl_users_.end())
+        {
+            SWSS_LOG_ERROR("Cannot decrement ref. End point not referenced %s", remote_vtep.c_str());
+            return;
+        }
+
+        tnl_refcnts = it->second;
+        updateRemoteEndPointRefCnt(false, tnl_refcnts, usr);
+        it->second = tnl_refcnts;
+        SWSS_LOG_DEBUG("Decrementing remote end point %s user %d reference to %d [imr:%d ip:%d]",
+                       remote_vtep.c_str(), usr,
+                       tnl_refcnts.imr_refcnt + tnl_refcnts.mac_refcnt + tnl_refcnts.ip_refcnt,
+                       tnl_refcnts.imr_refcnt, tnl_refcnts.ip_refcnt);
+    }
+}
+
 void VxlanTunnel::updateRemoteEndPointIpRef(const std::string remote_vtep, bool inc)
 {
     tunnel_refcnt_t tnl_refcnts;
@@ -1767,12 +1809,12 @@ bool  VxlanTunnelOrch::addTunnelUser(const std::string remote_vtep, uint32_t vni
 
     if (!isDipTunnelsSupported())
     {
-        if (vtep_ptr->getRemoteEndPointIPRefCnt(remote_vtep) <= 0)
+        if (vtep_ptr->getRemoteEndPointRefCnt(remote_vtep) <= 0)
         {
             vtep_ptr->updateStateDbForP2MP(remote_vtep, true);
         }
 
-        vtep_ptr->updateRemoteEndPointIpRef(remote_vtep, true);
+        vtep_ptr->updateRemoteEndPointRef(remote_vtep, true, usr);
 
         SWSS_LOG_NOTICE("refcnt for remote %s = %d [imr:%d ip:%d]",
                          remote_vtep.c_str(),
@@ -1829,7 +1871,7 @@ bool  VxlanTunnelOrch::delTunnelUser(const std::string remote_vtep, uint32_t vni
     {
         port_tunnel_name = getTunnelPortName(vtep_ptr->getSrcIP().to_string(), true);
         gPortsOrch->getPort(port_tunnel_name,tunnelPort);
-        vtep_ptr->updateRemoteEndPointIpRef(remote_vtep, false);
+        vtep_ptr->updateRemoteEndPointRef(remote_vtep, false, usr);
 
         SWSS_LOG_NOTICE("refcnt for remote %s = %d [imr:%d ip:%d]",
                          remote_vtep.c_str(),
@@ -1838,7 +1880,7 @@ bool  VxlanTunnelOrch::delTunnelUser(const std::string remote_vtep, uint32_t vni
                          vtep_ptr->getRemoteEndPointIPRefCnt(remote_vtep));
 
         // Clean up tnl_users_ entry if refcount reaches zero
-        if (vtep_ptr->getRemoteEndPointIPRefCnt(remote_vtep) <= 0)
+        if (vtep_ptr->getRemoteEndPointRefCnt(remote_vtep) <= 0)
         {
             vtep_ptr->updateStateDbForP2MP(remote_vtep, false);
             vtep_ptr->eraseRemoteEndPoint(remote_vtep);
