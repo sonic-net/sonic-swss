@@ -721,8 +721,9 @@ public:
     {
         if (!m_stats_count_mode_initialized)
         {
-            SWSS_LOG_WARN("%s, Stats count mode capability unresolved",
-                          Derived::m_name.c_str());
+             // initialize() already logged any resolution failure; avoid per-session warning spam.
+             SWSS_LOG_DEBUG("%s, Stats count mode capability unresolved",
+                            Derived::m_name.c_str());
             return;
         }
 
@@ -964,7 +965,7 @@ public:
 
         if (!m_supported)
         {
-            SWSS_LOG_WARN("%s selective counters not supported; ignoring state change",
+            SWSS_LOG_WARN("%s session counters not supported; ignoring state change",
                     Derived::m_name.c_str());
             return;
         }
@@ -974,7 +975,7 @@ public:
             return;
         }
 
-        SWSS_LOG_NOTICE("%s selective counters state -> %s",
+        SWSS_LOG_NOTICE("%s session counters state -> %s",
                 Derived::m_name.c_str(), enable ? "enabled" : "disabled");
 
         m_enabled = enable;
