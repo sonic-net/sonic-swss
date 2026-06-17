@@ -117,6 +117,26 @@ bool SflowOrch::isSflowSamplePacket(sai_object_id_t oid)
     return false;
 }
 
+// Check-before-set: refuse to bind sFlow if this port's samplepacket attr is
+// already owned by another (non-sFlow) feature
+bool SflowOrch::isSamplepacketFreeForSflow(sai_object_id_t port_id, sai_port_attr_t attr_id,
+                                           sai_object_id_t sample_id, const char* dir_name)
+{
+    sai_attribute_t check_attr;
+    check_attr.id = attr_id;
+    if (sai_port_api->get_port_attribute(port_id, 1, &check_attr) == SAI_STATUS_SUCCESS
+        && check_attr.value.oid != SAI_NULL_OBJECT_ID
+        && check_attr.value.oid != sample_id
+        && !isSflowSamplePacket(check_attr.value.oid))
+    {
+        SWSS_LOG_ERROR("Port %" PRIx64 " %s_SAMPLEPACKET_ENABLE already bound to "
+                       "OID 0x%" PRIx64 ", cannot bind sFlow",
+                       port_id, dir_name, check_attr.value.oid);
+        return false;
+    }
+    return true;
+}
+
 bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id, string direction)
 {
     sai_attribute_t attr;
@@ -128,53 +148,20 @@ bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id,
     bool need_ingress = (direction == "both" || direction == "rx");
     bool need_egress  = (direction == "both" || direction == "tx");
 
-    // Phase 1: pre-check both directions before touching any SAI state, so that
-    // a conflict on the second direction never leaves the first direction in a
-    // half-applied state with no refcount.
-    if (need_ingress)
+    // If the port's samplepacket is already owned by another (non-sFlow) feature, refuse to bind.
+    if (need_ingress &&
+        !isSamplepacketFreeForSflow(port_id, SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE, sample_id, "INGRESS"))
     {
-        sai_attribute_t check_attr;
-        check_attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
-        if (sai_port_api->get_port_attribute(port_id, 1, &check_attr) == SAI_STATUS_SUCCESS
-            && check_attr.value.oid != SAI_NULL_OBJECT_ID
-            && check_attr.value.oid != sample_id
-            && !isSflowSamplePacket(check_attr.value.oid))
-        {
-            SWSS_LOG_ERROR("Port %" PRIx64 " INGRESS_SAMPLEPACKET_ENABLE already bound to "
-                           "OID 0x%" PRIx64 ", cannot bind sFlow",
-                           port_id, check_attr.value.oid);
-            return false;
-        }
+        return false;
+    }
+    if (need_egress &&
+        !isSamplepacketFreeForSflow(port_id, SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE, sample_id, "EGRESS"))
+    {
+        return false;
     }
 
-    if (need_egress)
-    {
-        sai_attribute_t check_attr_egr;
-        check_attr_egr.id = SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
-        if (sai_port_api->get_port_attribute(port_id, 1, &check_attr_egr) == SAI_STATUS_SUCCESS
-            && check_attr_egr.value.oid != SAI_NULL_OBJECT_ID
-            && check_attr_egr.value.oid != sample_id
-            && !isSflowSamplePacket(check_attr_egr.value.oid))
-        {
-            SWSS_LOG_ERROR("Port %" PRIx64 " EGRESS_SAMPLEPACKET_ENABLE already bound to "
-                           "OID 0x%" PRIx64 ", cannot bind sFlow",
-                           port_id, check_attr_egr.value.oid);
-            return false;
-        }
-    }
-
-    // Phase 2: apply ingress
-    bool ingress_applied = false;
-    sai_object_id_t prev_ingress_oid = SAI_NULL_OBJECT_ID;
     if (need_ingress)
     {
-        sai_attribute_t save_attr;
-        save_attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
-        if (sai_port_api->get_port_attribute(port_id, 1, &save_attr) == SAI_STATUS_SUCCESS)
-        {
-            prev_ingress_oid = save_attr.value.oid;
-        }
-
         attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
         attr.value.oid = sample_id;
         sai_rc = sai_port_api->set_port_attribute(port_id, &attr);
@@ -188,13 +175,8 @@ bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id,
                 return parseHandleSaiStatusFailure(handle_status);
             }
         }
-        else
-        {
-            ingress_applied = true;
-        }
     }
 
-    // Phase 2: apply egress (rollback ingress on failure to keep state atomic)
     if (need_egress)
     {
         attr.id = SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
@@ -204,20 +186,6 @@ bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id,
         if (sai_rc != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to set session %" PRIx64 " on port %" PRIx64, sample_id, port_id);
-
-            if (ingress_applied)
-            {
-                sai_attribute_t rollback_attr;
-                rollback_attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
-                rollback_attr.value.oid = prev_ingress_oid;
-                sai_status_t rb_rc = sai_port_api->set_port_attribute(port_id, &rollback_attr);
-                if (rb_rc != SAI_STATUS_SUCCESS)
-                {
-                    SWSS_LOG_ERROR("Failed to rollback ingress samplepacket on port %" PRIx64
-                                   " after egress failure, status %d", port_id, rb_rc);
-                }
-            }
-
             task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, sai_rc);
             if (handle_status != task_success)
             {
@@ -301,37 +269,16 @@ bool SflowOrch::sflowUpdateSampleDirection(sai_object_id_t port_id, string old_d
         egr_sample_oid = port_info->second.m_sample_id;
     }
 
-    // Pre-check both directions before touching any SAI state
-    if (ing_sample_oid != SAI_NULL_OBJECT_ID)
+    // Check-before-set: on a direction change
+    if (ing_sample_oid != SAI_NULL_OBJECT_ID &&
+        !isSamplepacketFreeForSflow(port_id, SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE, ing_sample_oid, "INGRESS"))
     {
-        sai_attribute_t check_attr;
-        check_attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
-        if (sai_port_api->get_port_attribute(port_id, 1, &check_attr) == SAI_STATUS_SUCCESS
-            && check_attr.value.oid != SAI_NULL_OBJECT_ID
-            && check_attr.value.oid != ing_sample_oid
-            && !isSflowSamplePacket(check_attr.value.oid))
-        {
-            SWSS_LOG_ERROR("Port %" PRIx64 " INGRESS_SAMPLEPACKET_ENABLE already bound to "
-                           "OID 0x%" PRIx64 ", cannot update sFlow direction",
-                           port_id, check_attr.value.oid);
-            return false;
-        }
+        return false;
     }
-
-    if (egr_sample_oid != SAI_NULL_OBJECT_ID)
+    if (egr_sample_oid != SAI_NULL_OBJECT_ID &&
+        !isSamplepacketFreeForSflow(port_id, SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE, egr_sample_oid, "EGRESS"))
     {
-        sai_attribute_t check_attr_egr;
-        check_attr_egr.id = SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
-        if (sai_port_api->get_port_attribute(port_id, 1, &check_attr_egr) == SAI_STATUS_SUCCESS
-            && check_attr_egr.value.oid != SAI_NULL_OBJECT_ID
-            && check_attr_egr.value.oid != egr_sample_oid
-            && !isSflowSamplePacket(check_attr_egr.value.oid))
-        {
-            SWSS_LOG_ERROR("Port %" PRIx64 " EGRESS_SAMPLEPACKET_ENABLE already bound to "
-                           "OID 0x%" PRIx64 ", cannot update sFlow direction",
-                           port_id, check_attr_egr.value.oid);
-            return false;
-        }
+        return false;
     }
 
     attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
