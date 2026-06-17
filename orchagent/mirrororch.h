@@ -51,7 +51,6 @@ struct MirrorEntry
 
     struct
     {
-        NeighborEntry neighbor;
         MacAddress mac;
         Port port;
         sai_object_id_t portId;
