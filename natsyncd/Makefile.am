@@ -1,4 +1,4 @@
-INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/warmrestart
+INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/warmrestart -I $(top_srcdir)/../sonic-swss-common/common
 
 bin_PROGRAMS = natsyncd
 
