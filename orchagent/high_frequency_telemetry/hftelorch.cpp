@@ -343,6 +343,16 @@ bool HFTelOrch::querySupportedTelTypeModes(
         SAI_OBJECT_TYPE_TAM_TEL_TYPE,
         SAI_TAM_TEL_TYPE_ATTR_MODE,
         &values);
+    if (status == SAI_STATUS_BUFFER_OVERFLOW)
+    {
+        valuesList.resize(values.count);
+        values.list = valuesList.data();
+        status = sai_query_attribute_enum_values_capability(
+            switch_id,
+            SAI_OBJECT_TYPE_TAM_TEL_TYPE,
+            SAI_TAM_TEL_TYPE_ATTR_MODE,
+            &values);
+    }
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_NOTICE("HFTel: SAI_TAM_TEL_TYPE_ATTR_MODE capability query failed (status=%d)", status);
@@ -351,6 +361,7 @@ bool HFTelOrch::querySupportedTelTypeModes(
 
     for (uint32_t i = 0; i < values.count; i++)
     {
+        SWSS_LOG_NOTICE("HFTel: SAI_TAM_TEL_TYPE_ATTR_MODE capability[%u] = %d", i, values.list[i]);
         if (values.list[i] == SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE)
         {
             single_supported = true;
