@@ -40,6 +40,7 @@ public:
 
         int getFd() override;
         uint64_t readData() override;
+        int onChange();
 
         /* member_name -> enabled|disabled */
         std::map<std::string, bool> m_lagMembers;
@@ -47,7 +48,6 @@ public:
         bool oper_state;
         unsigned int mtu;
     protected:
-        int onChange();
         static int teamdHandler(struct team_handle *th, void *arg,
                                 team_change_type_mask_t type_mask);
         static const struct team_change_handler gPortChangeHandler;
